@@ -28,7 +28,10 @@ import { ApiWaveRepOverview } from '@/api/generated/models/ApiWaveRepOverview';
 import { ApiWaveRepRating } from '@/api/generated/models/ApiWaveRepRating';
 import { identityFetcher } from '@/api/identities/identity.fetcher';
 import { getValidatedByJoiOrThrow } from '@/api/validation';
-import { assertWaveAndParentVisibleOrThrow } from '@/api/waves/wave-access.helpers';
+import {
+  assertWaveAndParentVisibleOrThrow,
+  getGroupsUserIsEligibleForReadContext
+} from '@/api/waves/wave-access.helpers';
 import { waveRepOverviewApiService } from '@/api/waves/wave-rep-overview.api.service';
 import {
   waveScoreService,
@@ -252,14 +255,10 @@ router.get(
 );
 
 async function assertWaveVisible(waveId: string, ctx: RequestContext) {
-  const authenticatedProfileId =
-    ctx.authenticationContext?.getActingAsId() ?? null;
-  const eligibleGroups = authenticatedProfileId
-    ? await userGroupsService.getGroupsUserIsEligibleFor(
-        authenticatedProfileId,
-        ctx.timer
-      )
-    : [];
+  const eligibleGroups = await getGroupsUserIsEligibleForReadContext(
+    userGroupsService,
+    ctx
+  );
   const wave = await wavesApiDb.findWaveById(waveId, ctx.connection);
   if (!wave) {
     throw new NotFoundException(`Wave ${waveId} not found`);

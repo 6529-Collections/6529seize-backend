@@ -208,6 +208,9 @@ describe('DeviceSignedWritesService', () => {
       .mockImplementation(async (fn) => fn(connection));
     jest.mocked(identities.getProfileIdByWallet).mockResolvedValue(PROFILE_ID);
     jest.mocked(drops.findWaveIdByDropId).mockResolvedValue(WAVE_ID);
+    jest
+      .mocked(drops.findDropById)
+      .mockResolvedValue({ id: DROP_ID, author_id: PROFILE_ID } as never);
   });
 
   function createVectorDrop(
@@ -823,6 +826,121 @@ describe('DeviceSignedWritesService', () => {
       ).rejects.toBe(failure);
       expect(write).toHaveBeenCalledTimes(1);
       expect(db.deleteDropAuthorSignature).not.toHaveBeenCalled();
+    });
+
+    it('does not clear the author signature of another profile before a failed unsigned EDIT', async () => {
+      jest.mocked(drops.findDropById).mockResolvedValue({
+        id: DROP_ID,
+        author_id: 'other-profile'
+      } as never);
+      const failure = new Error('Only the author can update this drop');
+      const write = jest.fn().mockRejectedValue(failure);
+
+      await expect(
+        service.mutateDrop(
+          {
+            envelope: undefined,
+            kind: DeviceEventKind.EDIT,
+            dropId: DROP_ID,
+            waveId: WAVE_ID,
+            body: {}
+          },
+          write,
+          ctx()
+        )
+      ).rejects.toBe(failure);
+
+      expect(db.deleteDropAuthorSignature).not.toHaveBeenCalled();
+    });
+
+    it('does not clear the author signature before an unsigned EDIT by a proxy without drop rights', async () => {
+      const failure = new Error('forbidden');
+      await expect(
+        service.mutateDrop(
+          {
+            envelope: undefined,
+            kind: DeviceEventKind.EDIT,
+            dropId: DROP_ID,
+            waveId: WAVE_ID,
+            body: {}
+          },
+          jest.fn().mockRejectedValue(failure),
+          {
+            authenticationContext: new AuthenticationContext({
+              authenticatedWallet: WALLET,
+              authenticatedProfileId: 'proxy-profile',
+              roleProfileId: PROFILE_ID,
+              activeProxyActions: []
+            })
+          }
+        )
+      ).rejects.toBe(failure);
+
+      expect(db.deleteDropAuthorSignature).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('signed mutations by a non-author', () => {
+    it('does not clear the author signature before a signed TOMBSTONE by a non-author and keeps it when the write fails', async () => {
+      jest.mocked(drops.findDropById).mockResolvedValue({
+        id: DROP_ID,
+        author_id: 'other-profile'
+      } as never);
+      const { envelope } = signedEnvelope({
+        kind: DeviceEventKind.TOMBSTONE,
+        seq: 1760000000001,
+        refs: [DROP_ID],
+        bodyHash: ZERO_BODY_HASH,
+        bodySize: 0
+      });
+      const failure = new Error('not allowed to delete');
+
+      await expect(
+        service.mutateDrop(
+          {
+            envelope,
+            kind: DeviceEventKind.TOMBSTONE,
+            dropId: DROP_ID,
+            body: null
+          },
+          jest.fn().mockRejectedValue(failure),
+          ctx()
+        )
+      ).rejects.toBe(failure);
+
+      expect(db.deleteDropAuthorSignature).not.toHaveBeenCalled();
+      expect(db.deleteReservedEvent).toHaveBeenCalled();
+    });
+
+    it('clears the author signature after a successful signed TOMBSTONE by a non-author', async () => {
+      jest.mocked(drops.findDropById).mockResolvedValue({
+        id: DROP_ID,
+        author_id: 'other-profile'
+      } as never);
+      const { envelope } = signedEnvelope({
+        kind: DeviceEventKind.TOMBSTONE,
+        seq: 1760000000001,
+        refs: [DROP_ID],
+        bodyHash: ZERO_BODY_HASH,
+        bodySize: 0
+      });
+      const write = jest.fn().mockResolvedValue(undefined);
+
+      await service.mutateDrop(
+        {
+          envelope,
+          kind: DeviceEventKind.TOMBSTONE,
+          dropId: DROP_ID,
+          body: null
+        },
+        write,
+        ctx()
+      );
+
+      expect(db.deleteDropAuthorSignature).toHaveBeenCalledTimes(1);
+      expect(
+        jest.mocked(db.deleteDropAuthorSignature).mock.invocationCallOrder[0]
+      ).toBeGreaterThan(write.mock.invocationCallOrder[0]);
     });
   });
 });
