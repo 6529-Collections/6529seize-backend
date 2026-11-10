@@ -76,10 +76,11 @@ export function resolveBindings(
             );
           return bindings.homepage_url as string;
         })();
-  const supplied =
+  const mediaRecord =
     bindings.media && typeof bindings.media === 'object' ? bindings.media : {};
+  const supplied = new Map(Object.entries(mediaRecord));
   const selectedIds = new Set(selected.map((asset) => asset.id));
-  for (const id of Object.keys(supplied))
+  for (const id of Object.keys(mediaRecord))
     if (!selectedIds.has(id))
       reject(
         'BINDING_NOT_SELECTED',
@@ -88,13 +89,14 @@ export function resolveBindings(
       );
   const media = new Map<string, string>();
   for (const asset of selected) {
-    if (!Object.prototype.hasOwnProperty.call(supplied, asset.id))
+    const bound = supplied.get(asset.id);
+    if (bound === undefined)
       reject(
         'MISSING_MEDIA_BINDING',
         'Every selected asset needs a public media URL binding.',
         asset.id
       );
-    media.set(asset.id, publicMediaUrl(asset.id, supplied[asset.id]));
+    media.set(asset.id, publicMediaUrl(asset.id, bound));
   }
   return { base, homepage, media };
 }

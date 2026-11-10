@@ -43,13 +43,18 @@
   <body>
     <div id="note"></div>
     <div id="mirador"></div>
-    <script src="https://unpkg.com/mirador@3.3.0/dist/mirador.min.js"></script>
+    <!-- Pinned mirador@3.3.0; SRI computed from the fetched dist/mirador.min.js (2,089,341 bytes). -->
+    <script
+      src="https://unpkg.com/mirador@3.3.0/dist/mirador.min.js"
+      integrity="sha384-k/r5UrI+Ic8F0V9TCYmu63AmAPL2JDdRbBESFligIXgD8gtukEtg6PrEbkbYAO7M"
+      crossorigin="anonymous"
+    ></script>
     <script>
       (function () {
         var params = new URLSearchParams(window.location.search);
         var manifest = params.get('manifest');
         var note = document.getElementById('note');
-        if (!manifest || !/^\/[A-Za-z0-9._\/-]+\.json$/.test(manifest)) {
+        if (!manifest || !/^\/[A-Za-z0-9._/-]+\.json$/.test(manifest)) {
           note.textContent =
             'Pass ?manifest=/src/artwork-documentation/museum/fixtures/publication/<case>.json (a local path served by python -m http.server).';
           return;

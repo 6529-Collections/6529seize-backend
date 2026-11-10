@@ -35,7 +35,13 @@ class LockedResolver(etree.Resolver):
         return self.resolve_string(data, context, base_url=url)
 
 
-RIGHTS_PREFIXES = ('http://creativecommons.org/licenses/', 'http://creativecommons.org/publicdomain/', 'http://rightsstatements.org/vocab/')
+# The IIIF Presentation 3 schema mandates the http form of these vocabulary URIs.
+# They are compared as identifiers only; nothing is fetched.
+RIGHTS_PREFIXES = (  # NOSONAR: normative IIIF rights vocabulary identifiers, never requested over the network.
+    'http://creativecommons.org/licenses/',  # NOSONAR
+    'http://creativecommons.org/publicdomain/',  # NOSONAR
+    'http://rightsstatements.org/vocab/',  # NOSONAR
+)
 
 
 def corpus_file(directory, item):
@@ -52,7 +58,7 @@ def validate_publication(data, iiif_validator):
     manifest = json.loads(data)
     verify_selector_types(manifest)
     iiif_validator.validate(manifest)
-    check(list(manifest.keys())[0] == '@context', 'Publication manifest must start with @context')
+    check(next(iter(manifest)) == '@context', 'Publication manifest must start with @context')
     check(isinstance(manifest.get('rights'), str) and manifest['rights'].startswith(RIGHTS_PREFIXES), 'Publication rights must be a Creative Commons or RightsStatements.org http URI')
     check(isinstance(manifest.get('requiredStatement'), dict), 'Publication manifest needs a required statement')
     check(isinstance(manifest.get('items'), list) and len(manifest['items']) > 0, 'Publication manifest needs at least one canvas')

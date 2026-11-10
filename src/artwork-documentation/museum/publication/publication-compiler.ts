@@ -30,9 +30,14 @@ import {
 
 export const IIIF_CONTEXT = 'http://iiif.io/api/presentation/3/context.json'; // NOSONAR: canonical IIIF namespace identifier, never fetched.
 /** Media profiles whose complete work is a running program rather than fixed bytes. */
-const LIVE_MEDIA_PROFILES = ['generative', 'interactive', 'html'];
+const LIVE_MEDIA_PROFILES = new Set(['generative', 'interactive', 'html']);
 const SOURCE_HASH = /^[a-f0-9]{64}$/;
 
+function compareCodeUnits(a: string, b: string): number {
+  if (a < b) return -1;
+  if (a > b) return 1;
+  return 0;
+}
 const draftPrefix = (context: ContextRecord) =>
   `https://example.invalid/publication-draft/${context.id}`;
 const en = (text: string) => ({ en: [text] });
@@ -65,8 +70,7 @@ function resolveSelection(
     const link = links.get(asset.id);
     if (
       asset.intended_visibility !== 'public_record' ||
-      !link ||
-      link.intended_visibility !== 'public_record'
+      link?.intended_visibility !== 'public_record'
     )
       reject(
         'PRIVATE_ASSET',
@@ -91,7 +95,7 @@ export function isLiveWork(context: ContextRecord): boolean {
   );
   return (
     Array.isArray(profiles) &&
-    profiles.some((profile) => LIVE_MEDIA_PROFILES.includes(profile))
+    profiles.some((profile) => LIVE_MEDIA_PROFILES.has(profile))
   );
 }
 
@@ -235,7 +239,9 @@ function summary(context: ContextRecord): Record<string, string[]> | null {
       !version.text
     )
       continue;
-    (result[version.language] ??= []).push(version.text);
+    const texts = result[version.language] ?? [];
+    texts.push(version.text);
+    result[version.language] = texts;
   }
   return Object.keys(result).length ? result : null;
 }
@@ -320,9 +326,7 @@ function normalizedInput(input: PublicationInput) {
     snapshot: input.snapshot,
     source_sha256: input.source_sha256,
     selection: {
-      asset_ids: [...input.selection.asset_ids].sort((a, b) =>
-        a < b ? -1 : a > b ? 1 : 0
-      )
+      asset_ids: [...input.selection.asset_ids].sort(compareCodeUnits)
     },
     bindings: input.bindings,
     rights: input.rights,

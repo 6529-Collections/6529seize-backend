@@ -206,6 +206,35 @@ export class ArtworkPublicationService {
     return revision.id;
   }
 
+  /** Context access through the same gate as dossier exports. */
+  private async authorized(
+    id: string,
+    ctx: RequestContext,
+    lock = false
+  ): Promise<ContextAccess> {
+    const access = await this.core.authorizeContext(id, ctx, lock);
+    requireExportAccess(access);
+    return access;
+  }
+
+  /** Idempotent, authorized mutation inside a context-locked transaction. */
+  private async mutate<T extends Record<string, unknown>>(
+    id: string,
+    mutation: Mutation,
+    body: unknown,
+    ctx: RequestContext,
+    run: (access: ContextAccess, transaction: RequestContext) => Promise<T>
+  ): Promise<T> {
+    const initial = await this.authorized(id, ctx);
+    return this.core.db.idempotent(
+      digest([initial.actorProfileId, mutation.route, mutation.key]),
+      digest(body),
+      ctx,
+      async (transaction) =>
+        run(await this.authorized(id, transaction, true), transaction)
+    );
+  }
+
   async publish(
     id: string,
     body: unknown,
@@ -213,15 +242,12 @@ export class ArtworkPublicationService {
     ctx: RequestContext
   ): Promise<PublicationSummary> {
     const request = this.request(body);
-    const initial = await this.core.authorizeContext(id, ctx);
-    requireExportAccess(initial);
-    const reference = await this.core.db.idempotent(
-      digest([initial.actorProfileId, mutation.route, mutation.key]),
-      digest(body),
+    const reference = await this.mutate(
+      id,
+      mutation,
+      body,
       ctx,
-      async (transaction) => {
-        const access = await this.core.authorizeContext(id, transaction, true);
-        requireExportAccess(access);
+      async (access, transaction) => {
         if (mutation.expectedVersion !== access.context.draft_version)
           fail(409, 'DRAFT_CONFLICT');
         const snapshot = await this.dossier.snapshot(access, transaction);
@@ -312,8 +338,10 @@ export class ArtworkPublicationService {
           ctx
         );
     } catch (error) {
+      const reason =
+        error instanceof Error ? error.message : JSON.stringify(error);
       this.logger.warn(
-        `Publication ${publicationId} immutable copy failed: ${String(error)}`
+        `Publication ${publicationId} immutable copy failed: ${reason}`
       );
     }
   }
@@ -338,14 +366,12 @@ export class ArtworkPublicationService {
     publicationId: string,
     ctx: RequestContext
   ): Promise<PublicationSummary> {
-    const access = await this.core.authorizeContext(id, ctx);
-    requireExportAccess(access);
+    const access = await this.authorized(id, ctx);
     return summary(await this.row(access, publicationId, ctx));
   }
 
   async list(id: string, ctx: RequestContext): Promise<PublicationSummary[]> {
-    const access = await this.core.authorizeContext(id, ctx);
-    requireExportAccess(access);
+    await this.authorized(id, ctx);
     const rows = await this.core.db.query<PublicationRow>(
       `SELECT ${SUMMARY_COLUMNS} FROM ${AD_PUBLICATIONS} WHERE context_id=:id ORDER BY version DESC LIMIT 200`,
       { id },
@@ -361,15 +387,12 @@ export class ArtworkPublicationService {
     ctx: RequestContext
   ): Promise<PublicationSummary> {
     if (!UUID.test(publicationId)) fail(404, 'UNAVAILABLE');
-    const initial = await this.core.authorizeContext(id, ctx);
-    requireExportAccess(initial);
-    await this.core.db.idempotent(
-      digest([initial.actorProfileId, mutation.route, mutation.key]),
-      digest(mutation.body ?? null),
+    await this.mutate(
+      id,
+      mutation,
+      mutation.body ?? null,
       ctx,
-      async (transaction) => {
-        const access = await this.core.authorizeContext(id, transaction, true);
-        requireExportAccess(access);
+      async (access, transaction) => {
         const row = await this.row(access, publicationId, transaction, true);
         if (row.state === 'published') {
           const now = Date.now();
