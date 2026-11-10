@@ -455,5 +455,6 @@ export const RESERVED_HANDLES = [
   'community-activity',
   'open-data',
   'stream',
-  'drop-control'
+  'drop-control',
+  'sanctions'
 ];

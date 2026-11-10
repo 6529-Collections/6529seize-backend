@@ -1,0 +1,109 @@
+{
+  "schema": "6529.sanctions-inputs.v1",
+  "sources": [
+    {
+      "source": "ca-sema",
+      "files": [
+        {
+          "name": "sema-lmes.xml",
+          "url": "fixture",
+          "sha256": "0100be0485dde2550de78ca30d2a40d212a6d4337397b663e20edcd45f0eed21",
+          "bytes": 512,
+          "fetched_at": "2026-01-15T00:00:00.000Z"
+        }
+      ]
+    },
+    {
+      "source": "ch-seco",
+      "files": [
+        {
+          "name": "consolidated-list.xml",
+          "url": "fixture",
+          "sha256": "967a1b52b8a01fa4e3425111d2777122195d8eb7f669461a987dc38fa9b056de",
+          "bytes": 1706,
+          "fetched_at": "2026-01-15T00:00:00.000Z"
+        }
+      ]
+    },
+    {
+      "source": "eu-fsf",
+      "files": [
+        {
+          "name": "xmlFullSanctionsList_1_1.xml",
+          "url": "fixture",
+          "sha256": "f4a984f6d5c74def07e8b3f30f62b73032e9917f4af792e81cac5eb6da46f005",
+          "bytes": 1009,
+          "fetched_at": "2026-01-15T00:00:00.000Z"
+        }
+      ]
+    },
+    {
+      "source": "il-nbctf",
+      "files": [
+        {
+          "name": "orders-0.json",
+          "url": "fixture",
+          "sha256": "b0d6eddd95191457d92db23307720e7c15db4ebc81729b26d502886eee287713",
+          "bytes": 751,
+          "fetched_at": "2026-01-15T00:00:00.000Z"
+        },
+        {
+          "name": "wallets-0.json",
+          "url": "fixture",
+          "sha256": "346a87e1a583e7d5ed7aa8b8e10e1408c7b8bb7631612dd9483e235b00b68926",
+          "bytes": 992,
+          "fetched_at": "2026-01-15T00:00:00.000Z"
+        }
+      ]
+    },
+    {
+      "source": "jp-mof",
+      "files": [
+        {
+          "name": "shisantouketsu20260105.csv",
+          "url": "fixture",
+          "sha256": "d88b7c4889d39ad444c5dc8d2759f9da281bb38a95e7881271846a3e57c1043e",
+          "bytes": 733,
+          "fetched_at": "2026-01-15T00:00:00.000Z"
+        }
+      ]
+    },
+    {
+      "source": "kr-fsc",
+      "files": [
+        {
+          "name": "kr-fsc.pinned.json",
+          "url": "fixture",
+          "sha256": "15d0e752645ff969d6e59ca78a0b42772ec104a6b9e8ddf5df56d632f11a64e3",
+          "bytes": 825,
+          "fetched_at": "2026-01-15T00:00:00.000Z"
+        }
+      ]
+    },
+    {
+      "source": "uk-fcdo",
+      "files": [
+        {
+          "name": "UK-Sanctions-List.xml",
+          "url": "fixture",
+          "sha256": "3416d1850ad520a455e3d3f79f328218051422df19d5b03edf520a35d4ce0063",
+          "bytes": 1555,
+          "fetched_at": "2026-01-15T00:00:00.000Z"
+        }
+      ]
+    },
+    {
+      "source": "us-ofac-sdn",
+      "files": [
+        {
+          "name": "SDN.XML",
+          "url": "fixture",
+          "sha256": "adaa79ef3992464d71f88b8c678e1af47a0c9688afaecee822106ce3f0c83193",
+          "bytes": 2496,
+          "fetched_at": "2026-01-15T00:00:00.000Z"
+        }
+      ]
+    }
+  ],
+  "checks": []
+}

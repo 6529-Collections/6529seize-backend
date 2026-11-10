@@ -1,0 +1,61 @@
+{
+  "description": "buildSanctionsList(fixtures/inputs) must produce fixtures/expected/sanctions-list.v1.json byte for byte.",
+  "sha256": "8a80b389ff6ba08b997ad7fd1f5f3bc74c2922d50fa4cabc0c77b19da3dd85b7",
+  "cid": "bafkreiekqczyt73lucfzs6wx7upv6o6hjqusfviputflyddxwgo2hxmfw4",
+  "bytes": 8439,
+  "totals": {
+    "addresses": 13,
+    "listings": 18,
+    "sources": 8
+  },
+  "report": [
+    {
+      "source": "ca-sema",
+      "evm_addresses": 0,
+      "listings": 0,
+      "unattributed": []
+    },
+    {
+      "source": "ch-seco",
+      "evm_addresses": 2,
+      "listings": 2,
+      "unattributed": []
+    },
+    {
+      "source": "eu-fsf",
+      "evm_addresses": 2,
+      "listings": 2,
+      "unattributed": []
+    },
+    {
+      "source": "il-nbctf",
+      "evm_addresses": 2,
+      "listings": 3,
+      "unattributed": []
+    },
+    {
+      "source": "jp-mof",
+      "evm_addresses": 3,
+      "listings": 3,
+      "unattributed": []
+    },
+    {
+      "source": "kr-fsc",
+      "evm_addresses": 2,
+      "listings": 2,
+      "unattributed": []
+    },
+    {
+      "source": "uk-fcdo",
+      "evm_addresses": 2,
+      "listings": 2,
+      "unattributed": []
+    },
+    {
+      "source": "us-ofac-sdn",
+      "evm_addresses": 3,
+      "listings": 4,
+      "unattributed": []
+    }
+  ]
+}

@@ -1,0 +1,108 @@
+{
+  "schema": "6529.sanctions-pinned-source.v1",
+  "source": "kr-fsc",
+  "published": "2026-01-14",
+  "document": {
+    "title": "Annex to FSC Notice No. 2026-2 (Regulation on designation and revocation of persons subject to financial transaction restrictions), 1,066 persons",
+    "url": "https://www.law.go.kr/LSW/flDownload.do?flSeq=160993933",
+    "sha256": "ce63cff3a74b15a09a646ea8040d8d4fcbf4d4a8caa882b749a8e04b65a41806",
+    "bytes": 751167,
+    "format": "pdf"
+  },
+  "alternate_documents": [
+    {
+      "title": "Same annex, HWPX edition",
+      "url": "https://www.law.go.kr/LSW/flDownload.do?flSeq=160993821",
+      "sha256": "f76623ef39a04b9c92388e8abb531b5d45f259f19a813833284391a3b3bd3850",
+      "bytes": 150338,
+      "format": "hwpx"
+    }
+  ],
+  "review": {
+    "extracted_on": "2026-11-06",
+    "method": "Text of the PDF annex; every 'Digital Currency Address - ETH' in entries 738 and 771 copied as published, with the inline designation date. Cross-checked against an independent extraction (10 addresses, identical).",
+    "second_check": null
+  },
+  "entries": [
+    {
+      "entry_id": "738",
+      "entity": "LAZARUS GROUP",
+      "programs": [
+        "Act on Prohibition Against the Financing of Terrorism and Proliferation of Weapons of Mass Destruction, art. 4(1)(2)"
+      ],
+      "listed_on": "2023-02-10",
+      "addresses": [
+        {
+          "address": "0x098B716B8Aaf21512996dC57EB0615e2383E2f96",
+          "labels": [
+            "ETH"
+          ]
+        },
+        {
+          "address": "0xa0e1c89Ef1a489c9C7dE96311eD5Ce5D32c20E4B",
+          "labels": [
+            "ETH"
+          ]
+        },
+        {
+          "address": "0x3Cffd56B47B7b41c56258D9C7731ABaDc360E073",
+          "labels": [
+            "ETH"
+          ]
+        },
+        {
+          "address": "0x53b6936513e738f44FB50d2b9476730C0Ab3Bfc1",
+          "labels": [
+            "ETH"
+          ]
+        },
+        {
+          "address": "0x35fB6f6DB4fb05e6A4cE86f2C93691425626d4b1",
+          "labels": [
+            "ETH"
+          ]
+        },
+        {
+          "address": "0xF7B31119c2682c88d88D455dBb9d5932c65Cf1bE",
+          "labels": [
+            "ETH"
+          ]
+        },
+        {
+          "address": "0x3e37627dEAA754090fBFbb8bd226c1CE66D255e9",
+          "labels": [
+            "ETH"
+          ]
+        },
+        {
+          "address": "0x08723392Ed15743cc38513C4925f5e6be5c17243",
+          "labels": [
+            "ETH"
+          ]
+        }
+      ]
+    },
+    {
+      "entry_id": "771",
+      "entity": "JINYONG IT COOPERATION COMPANY",
+      "programs": [
+        "Act on Prohibition Against the Financing of Terrorism and Proliferation of Weapons of Mass Destruction, art. 4(1)(2)"
+      ],
+      "listed_on": "2023-05-24",
+      "addresses": [
+        {
+          "address": "0xb6f5ec1a0a9cd1526536d3f0426c429529471f40",
+          "labels": [
+            "ETH"
+          ]
+        },
+        {
+          "address": "0x54a71549cc3bb5fbfe851226e1bb920ad4f5415e",
+          "labels": [
+            "ETH"
+          ]
+        }
+      ]
+    }
+  ]
+}
