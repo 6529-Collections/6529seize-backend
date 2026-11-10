@@ -1,11 +1,14 @@
 import { createHash } from 'node:crypto';
-import { resolvePreviewHost } from './nft-preview-dns';
 import { HttpError } from './lib/http';
-import * as http from 'node:http';
-import * as https from 'node:https';
-import { isIP } from 'node:net';
 import type { Readable } from 'node:stream';
-import fetch, { Response } from 'node-fetch';
+import type { Response } from 'node-fetch';
+import {
+  openPublicResponse,
+  PinnedAddress,
+  PinnedResponse,
+  resolvePublicTarget,
+  sendPinnedRequest
+} from '@/http/public-fetch';
 import { PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { env } from '@/env';
 import { Logger } from '@/logging';
@@ -50,12 +53,6 @@ interface RenderedPreview {
   readonly small: Buffer;
   readonly width: number | null;
   readonly height: number | null;
-}
-
-interface PinnedDnsResolution {
-  readonly hostname: string;
-  readonly address: string;
-  readonly family: 4 | 6;
 }
 
 interface PathSegmentSanitizerState {
@@ -1123,67 +1120,52 @@ export class NftLinkMediaPreviewService {
     const maxRedirects =
       env.getIntOrNull('NFT_LINK_MEDIA_PREVIEW_MAX_REDIRECTS') ?? 3;
 
-    let currentUrl = url;
-    for (let i = 0; i <= maxRedirects; i++) {
-      signal.throwIfAborted();
-      const pinnedDns = await this.resolveSafeRemoteUrl(currentUrl, signal);
-      signal.throwIfAborted();
-      const download = await this.fetchWithTimeout(
-        currentUrl,
-        timeoutMs,
-        pinnedDns,
-        signal
-      );
-      const { response } = download;
-      try {
-        if (this.isRedirect(response.status)) {
-          const location = response.headers.get('location');
-          if (!location) {
-            throw new Error(
-              `Redirect without Location header for ${currentUrl}`
-            );
-          }
-          currentUrl = new URL(location, currentUrl).toString();
-          continue;
-        }
-        if (!response.ok) {
-          throw new HttpError(
-            response.status,
-            currentUrl,
-            `HTTP ${response.status} for ${currentUrl}`
+    // Each hop goes through this service's own validation and request steps.
+    const download = await openPublicResponse(url, {
+      maxRedirects,
+      signal,
+      resolveTarget: (target, hopSignal) =>
+        this.resolveSafeRemoteUrl(target, hopSignal),
+      sendRequest: (target, pinned, hopSignal) =>
+        this.fetchWithTimeout(target, timeoutMs, pinned, hopSignal)
+    });
+    const { response, finalUrl } = download;
+    try {
+      if (!response.ok) {
+        throw new HttpError(
+          response.status,
+          finalUrl,
+          `HTTP ${response.status} for ${finalUrl}`
+        );
+      }
+      // Headers can mislabel video as image. This coarse guard only rejects
+      // bodies too large for either kind; streamed bytes enforce the kind's cap.
+      const contentLength = response.headers.get('content-length');
+      if (contentLength) {
+        const parsed = Number(contentLength);
+        if (Number.isFinite(parsed) && parsed > headerLimit) {
+          throw new NftPreviewOversizeError(
+            headerLimit,
+            parsed,
+            'content-length',
+            policy
           );
         }
-        // Headers can mislabel video as image. This coarse guard only rejects
-        // bodies too large for either kind; streamed bytes enforce the kind's cap.
-        const contentLength = response.headers.get('content-length');
-        if (contentLength) {
-          const parsed = Number(contentLength);
-          if (Number.isFinite(parsed) && parsed > headerLimit) {
-            throw new NftPreviewOversizeError(
-              headerLimit,
-              parsed,
-              'content-length',
-              policy
-            );
-          }
-        }
-        const bytes = await this.readBodyWithLimit(
-          response,
-          maxBytes,
-          videoBytes,
-          imageOnly
-        );
-        return {
-          finalUrl: currentUrl,
-          bytes,
-          contentType: response.headers.get('content-type')
-        };
-      } finally {
-        download.cancel();
       }
+      const bytes = await this.readBodyWithLimit(
+        response,
+        maxBytes,
+        videoBytes,
+        imageOnly
+      );
+      return {
+        finalUrl,
+        bytes,
+        contentType: response.headers.get('content-type')
+      };
+    } finally {
+      download.cancel();
     }
-
-    throw new Error(`Too many redirects while fetching ${url}`);
   }
 
   private getMaxPreviewBytes(): number {
@@ -1199,41 +1181,18 @@ export class NftLinkMediaPreviewService {
   private async fetchWithTimeout(
     url: string,
     timeoutMs: number,
-    pinnedDns: PinnedDnsResolution,
+    pinnedDns: PinnedAddress,
     signal?: AbortSignal
-  ): Promise<{ response: Response; cancel: () => void }> {
-    const controller = new AbortController();
-    const abort = () => controller.abort();
-    signal?.addEventListener('abort', abort, { once: true });
-    if (signal?.aborted) controller.abort();
-    const timeout = setTimeout(() => controller.abort(), timeoutMs);
-    try {
-      const response = await fetch(url, {
-        method: 'GET',
-        redirect: 'manual',
-        headers: {
-          'user-agent': FETCH_USER_AGENT,
-          accept: 'image/*,*/*;q=0.8'
-        },
-        agent: this.createPinnedAgent(url, pinnedDns) as any,
-        signal: controller.signal as any
-      });
-      return {
-        response,
-        cancel: () => {
-          // node-fetch2 pipes through a PassThrough: destroy alone need not
-          // abort the owning request. Keep its AbortController until disposal.
-          signal?.removeEventListener('abort', abort);
-          controller.abort();
-          (response.body as Readable | null)?.destroy();
-        }
-      };
-    } catch (error) {
-      signal?.removeEventListener('abort', abort);
-      throw error;
-    } finally {
-      clearTimeout(timeout);
-    }
+  ): Promise<PinnedResponse> {
+    return await sendPinnedRequest(url, pinnedDns, {
+      method: 'GET',
+      headers: {
+        'user-agent': FETCH_USER_AGENT,
+        accept: 'image/*,*/*;q=0.8'
+      },
+      timeoutMs,
+      signal
+    });
   }
 
   private async readBodyWithLimit(
@@ -1286,178 +1245,11 @@ export class NftLinkMediaPreviewService {
     });
   }
 
-  private isRedirect(status: number): boolean {
-    return (
-      status === 301 ||
-      status === 302 ||
-      status === 303 ||
-      status === 307 ||
-      status === 308
-    );
-  }
-
-  private createPinnedAgent(
-    urlString: string,
-    pinnedDns: PinnedDnsResolution
-  ): http.Agent | https.Agent {
-    const parsed = new URL(urlString);
-    const lookup = this.createPinnedLookup(pinnedDns);
-    if (parsed.protocol === 'https:') {
-      return new https.Agent({
-        keepAlive: false,
-        lookup,
-        servername: pinnedDns.hostname
-      });
-    }
-    return new http.Agent({
-      keepAlive: false,
-      lookup
-    } as http.AgentOptions & { lookup: typeof lookup });
-  }
-
-  private createPinnedLookup(pinnedDns: PinnedDnsResolution) {
-    return (
-      hostname: string,
-      optionsOrCallback: any,
-      maybeCallback?: any
-    ): void => {
-      const options =
-        typeof optionsOrCallback === 'function'
-          ? {}
-          : (optionsOrCallback ?? {});
-      const callback =
-        typeof optionsOrCallback === 'function'
-          ? optionsOrCallback
-          : maybeCallback;
-      if (typeof callback !== 'function') {
-        throw new Error(`Pinned DNS lookup callback is missing`);
-      }
-      if (hostname !== pinnedDns.hostname) {
-        callback(
-          new Error(
-            `Pinned DNS lookup hostname mismatch: expected ${pinnedDns.hostname}, got ${hostname}`
-          )
-        );
-        return;
-      }
-      if (
-        typeof options.family === 'number' &&
-        options.family !== 0 &&
-        options.family !== pinnedDns.family
-      ) {
-        callback(
-          new Error(
-            `Pinned DNS family mismatch for ${hostname}: requested ${options.family}, pinned ${pinnedDns.family}`
-          )
-        );
-        return;
-      }
-      if (options.all) {
-        callback(null, [
-          {
-            address: pinnedDns.address,
-            family: pinnedDns.family
-          }
-        ]);
-        return;
-      }
-      callback(null, pinnedDns.address, pinnedDns.family);
-    };
-  }
-
   private async resolveSafeRemoteUrl(
     urlString: string,
     signal?: AbortSignal
-  ): Promise<PinnedDnsResolution> {
-    let parsed: URL;
-    try {
-      parsed = new URL(urlString);
-    } catch {
-      throw new Error(`Invalid preview source URL: ${urlString}`);
-    }
-
-    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
-      throw new Error(
-        `Unsupported preview source protocol: ${parsed.protocol}`
-      );
-    }
-
-    const hostname = parsed.hostname;
-    if (!hostname) {
-      throw new Error(`Preview source hostname is empty`);
-    }
-
-    const records = await resolvePreviewHost(hostname, signal);
-    if (!records.length) {
-      throw new Error(`Failed to resolve hostname ${hostname}`);
-    }
-    for (const record of records) {
-      if (this.isPrivateOrLocalIp(record.address)) {
-        throw new Error(
-          `Blocked preview source host ${hostname}; resolves to private/local address ${record.address}`
-        );
-      }
-    }
-
-    const selected = records[0];
-    return {
-      hostname,
-      address: selected.address,
-      family: selected.family === 6 ? 6 : 4
-    };
-  }
-
-  private isPrivateOrLocalIp(address: string): boolean {
-    if (address.startsWith('::ffff:')) {
-      return this.isPrivateOrLocalIp(address.slice('::ffff:'.length));
-    }
-
-    switch (isIP(address)) {
-      case 4:
-        return this.isPrivateOrLocalIpv4(address);
-      case 6:
-        return this.isPrivateOrLocalIpv6(address);
-      default:
-        return true;
-    }
-  }
-
-  private isPrivateOrLocalIpv4(address: string): boolean {
-    const parts = this.parseIpv4Octets(address);
-    if (!parts) {
-      return true;
-    }
-    const [a, b] = parts;
-    if (a === 10 || a === 127 || a === 0) return true;
-    if (a === 169 && b === 254) return true;
-    if (a === 172 && b >= 16 && b <= 31) return true;
-    if (a === 192 && b === 168) return true;
-    if (a === 100 && b >= 64 && b <= 127) return true;
-    if (a === 198 && (b === 18 || b === 19)) return true;
-    return a >= 224;
-  }
-
-  private parseIpv4Octets(address: string): number[] | null {
-    const parts = address.split('.').map(Number);
-    if (
-      parts.length !== 4 ||
-      parts.some((p) => !Number.isFinite(p) || p < 0 || p > 255)
-    ) {
-      return null;
-    }
-    return parts;
-  }
-
-  private isPrivateOrLocalIpv6(address: string): boolean {
-    const lower = address.toLowerCase();
-    if (lower === '::1' || lower === '::') return true;
-    if (this.hasAnyPrefix(lower, ['fc', 'fd'])) return true;
-    if (this.hasAnyPrefix(lower, ['fe8', 'fe9', 'fea', 'feb'])) return true;
-    return false;
-  }
-
-  private hasAnyPrefix(value: string, prefixes: string[]): boolean {
-    return prefixes.some((prefix) => value.startsWith(prefix));
+  ): Promise<PinnedAddress> {
+    return await resolvePublicTarget(urlString, { signal });
   }
 }
 
