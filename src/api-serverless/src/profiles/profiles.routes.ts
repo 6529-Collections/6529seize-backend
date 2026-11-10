@@ -221,9 +221,7 @@ router.post(
 router.post(
   `/:identity/pfp`,
   needsAuthenticatedUser(),
-  initMulterSingleMiddleware('pfp', {
-    maxFileSizeBytes: PROFILE_PICTURE_MAX_BYTES
-  }),
+  initMulterSingleMiddleware('pfp'),
   async function (
     req: Request<
       {
@@ -388,9 +386,11 @@ const ApiCreateOrUpdateProfileRequestSchema: Joi.ObjectSchema<ApiCreateOrUpdateP
       .valid(...Object.values(ApiProfileClassification))
       .required(),
     sub_classification: Joi.string().optional().allow(null).default(null),
-    // Checked against the stored value in createOrUpdateProfile: an
-    // unchanged picture is kept, a new one must be on the allowlist.
-    pfp_url: Joi.string().optional().allow(null).default(null)
+    pfp_url: Joi.string()
+      .optional()
+      .regex(/^(?:ipfs:\/\/|https:\/\/d3lqz0a4bldqgf).+$/)
+      .allow(null)
+      .default(null)
   }).custom((value, helpers) => {
     const { banner_1, banner_2 } = value;
 

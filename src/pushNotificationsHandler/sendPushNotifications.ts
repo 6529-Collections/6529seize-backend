@@ -6,7 +6,6 @@ import {
   SendResponse
 } from 'firebase-admin/lib/messaging/messaging-api';
 import { Logger } from '../logging';
-import { isAllowedPushNotificationImageUrl } from '@/profiles/profile-picture-url';
 import { numbers } from '../numbers';
 import { emojify } from './emojify';
 import { sanitizePushNotificationText } from './push-notification-text';
@@ -54,9 +53,14 @@ function preparePushNotificationLine(value: string | null | undefined): string {
   ).trim();
 }
 
-/** Only images served from our own media hosts are attached. */
 function isFcmAcceptableImageUrl(url: string | undefined): boolean {
-  return isAllowedPushNotificationImageUrl(url);
+  if (!url || typeof url !== 'string' || !url.trim()) return false;
+  try {
+    const u = new URL(url.trim());
+    return u.protocol === 'https:' || u.protocol === 'http:';
+  } catch {
+    return false;
+  }
 }
 
 function init() {

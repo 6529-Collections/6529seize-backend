@@ -58,10 +58,6 @@ import { xTdhRepository, XTdhRepository } from '../xtdh/xtdh.repository';
 import { profileWavesDb, ProfileWavesDb } from '@/profiles/profile-waves.db';
 import { waveGroupNotificationSubscriptionsDb } from '@/notifications/wave-group-notification-subscriptions.db';
 import { mentionAliasesDb } from '@/mention-aliases/mention-aliases.db';
-import {
-  isAllowedProfilePictureUpdate,
-  PROFILE_MEDIA_HOST
-} from '@/profiles/profile-picture-url';
 import { artistArtworkAlertsDb } from '@/notifications/artist-artwork-alerts.db';
 import {
   dropPollsDb,
@@ -224,16 +220,6 @@ export class ProfilesService {
       );
     let creatorOrUpdatorIdentityResponse =
       identityResponse[creator_or_updater_wallet];
-    if (
-      !isAllowedProfilePictureUpdate(pfp_url, [
-        creatorOrUpdatorIdentityResponse?.identity?.pfp,
-        creatorOrUpdatorIdentityResponse?.profile?.pfp_url
-      ])
-    ) {
-      throw new BadRequestException(
-        `Profile picture must be an ipfs:// URL or an https URL on ${PROFILE_MEDIA_HOST}`
-      );
-    }
     if (!creatorOrUpdatorIdentityResponse) {
       const id = randomUUID();
       await identitiesDb.insertIdentity(
