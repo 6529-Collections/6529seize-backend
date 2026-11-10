@@ -259,30 +259,35 @@ export const fetchSingleAddressTDHMemesSeasons = async (address: string) => {
 export async function fetchTDHAbove(value: number, includeEntries: boolean) {
   const block = await getBlock();
   const merkleRoot = await getMerkleRoot(block);
+  if (!includeEntries) {
+    const countRows = await sqlExecutor.execute<{ count: number | string }>(
+      `SELECT COUNT(*) AS count from ${CONSOLIDATED_WALLETS_TDH_TABLE} WHERE boosted_tdh >= :value`,
+      { value }
+    );
+    return {
+      count: Number(countRows[0]?.count ?? 0),
+      block,
+      merkle_root: merkleRoot
+    };
+  }
   const sql = `
-    SELECT * from ${CONSOLIDATED_WALLETS_TDH_TABLE} 
+    SELECT consolidation_key, boosted_tdh, wallets from ${CONSOLIDATED_WALLETS_TDH_TABLE}
     WHERE boosted_tdh >= :value
     ORDER BY boosted_tdh DESC
   `;
   const tdh = await sqlExecutor.execute(sql, { value });
-  const response: any = {
+  return {
     count: tdh.length,
     block,
-    merkle_root: merkleRoot
+    merkle_root: merkleRoot,
+    entries: tdh.map((t: any) => ({
+      consolidation_key: t.consolidation_key,
+      tdh: t.boosted_tdh,
+      addresses: JSON.parse(t.wallets).map((w: string) => w.toLowerCase()),
+      block,
+      merkle_root: merkleRoot
+    }))
   };
-  if (includeEntries) {
-    response.entries = tdh.map((t: any) => {
-      return {
-        consolidation_key: t.consolidation_key,
-        tdh: t.boosted_tdh,
-        addresses: JSON.parse(t.wallets).map((w: string) => w.toLowerCase()),
-        block,
-        merkle_root: merkleRoot
-      };
-    });
-  }
-
-  return response;
 }
 
 export async function fetchTDHPercentile(percentile: number) {

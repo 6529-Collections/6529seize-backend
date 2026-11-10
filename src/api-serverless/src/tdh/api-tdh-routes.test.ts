@@ -17,7 +17,12 @@ import { Server } from 'http';
 import { BadRequestException, ApiCompliantException } from '@/exceptions';
 import { resolveMetricsSort } from '@/api/tdh/api.tdh.metrics-sort';
 import { MetricsConsolidatedTdhView } from '@/api/tdh/api.tdh.db';
-import router, { resolveMetricsTdhView } from '@/api/tdh/api.tdh.routes';
+import router, {
+  MAX_TDH_CSV_ROWS,
+  MAX_TDH_JSON_PAGE_SIZE,
+  MAX_TDH_SEARCH_TERMS,
+  resolveMetricsTdhView
+} from '@/api/tdh/api.tdh.routes';
 
 function createTestApp() {
   const app = express();
@@ -272,7 +277,7 @@ describe('api.tdh.routes', () => {
         'level',
         'DESC',
         1,
-        Number.MAX_SAFE_INTEGER,
+        MAX_TDH_CSV_ROWS,
         {
           search: undefined,
           content: undefined,
@@ -281,6 +286,78 @@ describe('api.tdh.routes', () => {
           tdhView: MetricsConsolidatedTdhView.BOOSTED
         }
       );
+    });
+
+    it('clamps the JSON page size', async () => {
+      mockFetchConsolidatedMetrics.mockResolvedValueOnce({
+        count: 0,
+        page: 1,
+        next: null,
+        data: []
+      });
+
+      const response = await getRoute(
+        '/api/tdh/consolidated_metrics?page_size=1000000'
+      );
+
+      expect(response.status).toBe(200);
+      expect(mockFetchConsolidatedMetrics).toHaveBeenCalledWith(
+        'level',
+        'DESC',
+        1,
+        MAX_TDH_JSON_PAGE_SIZE,
+        expect.anything()
+      );
+    });
+
+    it('keeps the page size the web app uses', async () => {
+      mockFetchConsolidatedMetrics.mockResolvedValueOnce({
+        count: 0,
+        page: 1,
+        next: null,
+        data: []
+      });
+
+      await getRoute('/api/tdh/consolidated_metrics?page_size=50&page=3');
+
+      expect(mockFetchConsolidatedMetrics).toHaveBeenCalledWith(
+        'level',
+        'DESC',
+        3,
+        50,
+        expect.anything()
+      );
+    });
+
+    it('accepts up to the maximum number of search terms', async () => {
+      mockFetchConsolidatedMetrics.mockResolvedValueOnce({
+        count: 0,
+        page: 1,
+        next: null,
+        data: []
+      });
+      const terms = Array.from({ length: MAX_TDH_SEARCH_TERMS }, (_, i) =>
+        String(i)
+      ).join(',');
+
+      const response = await getRoute(
+        `/api/tdh/consolidated_metrics?search=${terms}`
+      );
+
+      expect(response.status).toBe(200);
+    });
+
+    it('returns 400 for too many search terms', async () => {
+      const terms = Array.from({ length: MAX_TDH_SEARCH_TERMS + 1 }, (_, i) =>
+        String(i)
+      ).join(',');
+
+      const response = await getRoute(
+        `/api/tdh/consolidated_metrics?search=${terms}`
+      );
+
+      expect(response.status).toBe(400);
+      expect(mockFetchConsolidatedMetrics).not.toHaveBeenCalled();
     });
   });
 });
