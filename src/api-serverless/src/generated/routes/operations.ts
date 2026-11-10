@@ -262,6 +262,7 @@ import { ApiWaveMentionSearchResult } from '@/api/generated/models/ApiWaveMentio
 import { ApiWaveMetadata } from '@/api/generated/models/ApiWaveMetadata';
 import { ApiWaveOverview } from '@/api/generated/models/ApiWaveOverview';
 import { ApiWaveOverviewPage } from '@/api/generated/models/ApiWaveOverviewPage';
+import { ApiWaveParticipation } from '@/api/generated/models/ApiWaveParticipation';
 import { ApiWaveSearchAuthor } from '@/api/generated/models/ApiWaveSearchAuthor';
 import { ApiWaveV3 } from '@/api/generated/models/ApiWaveV3';
 
@@ -4656,6 +4657,22 @@ export type PrepareMyWaveChatHistoryPurgeRequest = Request<
   ApiResponse<PrepareMyWaveChatHistoryPurgeResponse>,
   never,
   PrepareMyWaveChatHistoryPurgeQuery,
+  Record<string, never>
+>;
+
+export interface GetWaveParticipationPathParams {
+  "id": string;
+}
+
+export type GetWaveParticipationQuery = Record<string, never>;
+
+export type GetWaveParticipationResponse = ApiWaveParticipation;
+
+export type GetWaveParticipationRequest = Request<
+  GetWaveParticipationPathParams,
+  ApiResponse<GetWaveParticipationResponse>,
+  never,
+  GetWaveParticipationQuery,
   Record<string, never>
 >;
 

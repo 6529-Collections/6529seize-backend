@@ -11,10 +11,8 @@ import {
   WaveDisplayOverride
 } from '@/api/waves/direct-message-wave-display.service';
 import { isWaveCreatorOrAdmin } from '@/waves/wave-admin.helpers';
-import {
-  canDeleteRepliesInWave,
-  canReplyInWaveChat
-} from '@/waves/wave-chat-replies.helpers';
+import { canDeleteRepliesInWave } from '@/waves/wave-chat-replies.helpers';
+import { evaluateWavePolicyDecisions } from '@/waves/wave-participation-decision';
 
 export type WaveMinSource = {
   is_direct_message?: boolean | null;
@@ -90,6 +88,15 @@ export function mapWaveToApiWaveMin({
   const authenticatedUserCanView =
     wave.visibility_group_id === null ||
     groupIdsUserIsEligibleFor.includes(wave.visibility_group_id);
+  // The min view carries no cooldown state and never reflected slow mode or
+  // the unencrypted-DM cutoff, so the policy runs without them.
+  const participation = evaluateWavePolicyDecisions({
+    wave: { ...wave, chat_slow_mode_cooldown_ms: null },
+    authenticatedProfileId,
+    groupIdsUserIsEligibleFor,
+    nextDropTimestamp: null,
+    legacyDmClosed: false
+  });
   return {
     id: wave.id,
     is_direct_message: wave.is_direct_message === true,
@@ -109,13 +116,9 @@ export function mapWaveToApiWaveMin({
       (wave.participation_group_id === null ||
         groupIdsUserIsEligibleFor.includes(wave.participation_group_id)),
     authenticated_user_eligible_to_chat:
-      authenticatedUserCanView &&
-      wave.chat_enabled &&
-      (wave.chat_group_id === null ||
-        groupIdsUserIsEligibleFor.includes(wave.chat_group_id)),
+      authenticatedUserCanView && participation.CHAT.allowed,
     authenticated_user_eligible_to_reply:
-      authenticatedUserCanView &&
-      canReplyInWaveChat({ wave, groupIdsUserIsEligibleFor }),
+      authenticatedUserCanView && participation.REPLY.allowed,
     authenticated_user_can_delete_replies: canDeleteRepliesInWave({
       wave,
       authenticatedProfileId,

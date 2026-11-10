@@ -58,11 +58,8 @@ import {
   withInFlightWaveOverviewStaticCacheRead,
   writeWaveOverviewStaticCache
 } from '@/api/waves/wave-overview-static-cache';
-import { resolveNextDropAllowed } from '@/waves/wave-chat-slow-mode.helpers';
-import {
-  canDeleteRepliesInWave,
-  canReplyInWaveChat
-} from '@/waves/wave-chat-replies.helpers';
+import { canDeleteRepliesInWave } from '@/waves/wave-chat-replies.helpers';
+import { evaluateWavePolicyDecisions } from '@/waves/wave-participation-decision';
 
 export interface ApiWaveOverviewMapperOptions {
   readonly groupIdsUserIsEligibleFor?: string[];
@@ -569,23 +566,20 @@ export class ApiWaveOverviewMapper {
     contextProfileId: string;
     nextDropTimestamp?: number;
   }): ApiWaveOverviewContextProfileContext {
-    const nextDropAllowed = resolveNextDropAllowed({
+    // The unencrypted-DM cutoff never shaped these booleans; it stays out.
+    const participation = evaluateWavePolicyDecisions({
       wave,
       authenticatedProfileId: contextProfileId,
       groupIdsUserIsEligibleFor,
-      nextDropTimestamp
+      nextDropTimestamp,
+      legacyDmClosed: false
     });
+    const nextDropAllowed = participation.REPLY.retry_at;
     const result: ApiWaveOverviewContextProfileContext = {
       subscribed: subscribedActions.includes(ActivityEventAction.DROP_CREATED),
       pinned: pinnedWaveIds.has(wave.id),
-      can_chat:
-        wave.chat_enabled &&
-        (wave.chat_group_id === null ||
-          groupIdsUserIsEligibleFor.includes(wave.chat_group_id)) &&
-        nextDropAllowed === undefined,
-      can_reply:
-        canReplyInWaveChat({ wave, groupIdsUserIsEligibleFor }) &&
-        nextDropAllowed === undefined,
+      can_chat: participation.CHAT.allowed,
+      can_reply: participation.REPLY.allowed,
       can_delete_replies: canDeleteRepliesInWave({
         wave,
         authenticatedProfileId: contextProfileId,

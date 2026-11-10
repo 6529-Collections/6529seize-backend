@@ -156,8 +156,15 @@ import {
 } from '@/waves/wave-chat-slow-mode.helpers';
 import {
   canReplyInWaveChat,
-  isCollapsedWaveReply
+  isCollapsedWaveReply,
+  isWaveChatGroupMember
 } from '@/waves/wave-chat-replies.helpers';
+import {
+  evaluateWavePolicyDecision,
+  WaveParticipationAction,
+  WaveParticipationDecision,
+  WaveParticipationReasonCode
+} from '@/waves/wave-participation-decision';
 import { isWaveCreatorOrAdmin } from '@/waves/wave-admin.helpers';
 import { parseDecentralizedMediaRef } from '@/decentralized-media/decentralized-media';
 import { Logger } from '@/logging';
@@ -355,6 +362,62 @@ export function sanitizeDropStructuredFields(
         (metadata) => metadata.data_key !== '' && metadata.data_value !== ''
       )
   };
+}
+
+export const WAVE_PARTICIPATION_UNAVAILABLE_MESSAGE =
+  'Membership eligibility is temporarily unavailable';
+
+function waveParticipationDenialMessage(
+  decision: WaveParticipationDecision
+): string {
+  switch (decision.reason_code) {
+    case WaveParticipationReasonCode.NOT_AUTHENTICATED:
+      return 'You need to create a profile before you can create a drop';
+    case WaveParticipationReasonCode.PROXY_LACKS_ACTION:
+      return `Proxy doesn't have permission to create drops`;
+    case WaveParticipationReasonCode.NOT_IN_CHAT_GROUP:
+      return `User is not eligible for this wave`;
+    case WaveParticipationReasonCode.CHAT_DISABLED:
+      return `Chat drops are not allowed in this wave`;
+    case WaveParticipationReasonCode.LEGACY_DM_CLOSED:
+      return legacyDmClosedMessage();
+    case WaveParticipationReasonCode.SLOW_MODE_COOLDOWN:
+      return `Slow mode is enabled. You can create your next chat drop at ${decision.retry_at}`;
+    case undefined:
+      return WAVE_PARTICIPATION_UNAVAILABLE_MESSAGE;
+    default:
+      return assertUnreachable(decision.reason_code);
+  }
+}
+
+/**
+ * Turns a denied participation decision into the exception the write path
+ * has always thrown for that situation: same status, same message, plus the
+ * stable reason code (the `LEGACY_DM_CLOSED_CODE` precedent).
+ */
+export function throwIfWaveParticipationDenied(
+  decision: WaveParticipationDecision
+): void {
+  if (decision.allowed) {
+    return;
+  }
+  if (decision.evaluation === 'UNAVAILABLE') {
+    throw new CustomApiCompliantException(
+      503,
+      WAVE_PARTICIPATION_UNAVAILABLE_MESSAGE
+    );
+  }
+  throw new CustomApiCompliantException(
+    403,
+    waveParticipationDenialMessage(decision),
+    decision.reason_code
+  );
+}
+
+export function waveParticipationActionForDrop(
+  model: Pick<CreateOrUpdateDropModel, 'reply_to'>
+): WaveParticipationAction {
+  return model.reply_to ? 'REPLY' : 'CHAT';
 }
 
 export class CreateOrUpdateDropUseCase {
@@ -1427,21 +1490,21 @@ export class CreateOrUpdateDropUseCase {
     if (!wave) {
       throw new BadRequestException(`Wave ${waveId} not found`);
     }
-    const groupId =
-      model.drop_type === DropType.PARTICIPATORY
-        ? wave.participation_group_id
-        : wave.chat_group_id;
-    if (
-      !isDescriptionDrop &&
-      !isNativeEntryContent &&
-      groupId &&
-      !groupIdsUserIsEligibleFor.includes(groupId) &&
-      !(await this.isOpenReplyAllowed(
-        { model, wave, groupIdsUserIsEligibleFor },
-        connection
-      ))
-    ) {
-      throw new ForbiddenException(`User is not eligible for this wave`);
+    if (!isDescriptionDrop && !isNativeEntryContent) {
+      if (model.drop_type === DropType.CHAT) {
+        await this.verifyChatParticipation(
+          { model, wave, groupIdsUserIsEligibleFor },
+          connection
+        );
+      } else {
+        const groupId =
+          model.drop_type === DropType.PARTICIPATORY
+            ? wave.participation_group_id
+            : wave.chat_group_id;
+        if (groupId && !groupIdsUserIsEligibleFor.includes(groupId)) {
+          throw new ForbiddenException(`User is not eligible for this wave`);
+        }
+      }
     }
     this.verifyGroupMentions({
       model,
@@ -1482,6 +1545,50 @@ export class CreateOrUpdateDropUseCase {
         );
     timer?.stop(`${CreateOrUpdateDropUseCase.name}->verifyWaveLimitations`);
     return validatedModel;
+  }
+
+  /**
+   * The shared participation decision gates chat drops exactly as
+   * `GET /waves/{id}/participation` explains them. Slow mode is reserved
+   * atomically later (`verifyChatSlowModeLimitations`), so the cooldown input
+   * is left empty here. The reply target's visibility is payload validation
+   * and stays outside the decision.
+   */
+  private async verifyChatParticipation(
+    {
+      model,
+      wave,
+      groupIdsUserIsEligibleFor
+    }: {
+      model: CreateOrUpdateDropModel;
+      wave: WaveEntity;
+      groupIdsUserIsEligibleFor: string[];
+    },
+    connection: ConnectionWrapper<any>
+  ): Promise<void> {
+    const action = waveParticipationActionForDrop(model);
+    throwIfWaveParticipationDenied(
+      evaluateWavePolicyDecision({
+        action,
+        wave,
+        authenticatedProfileId: this.getRequiredAuthorId(model),
+        groupIdsUserIsEligibleFor,
+        nextDropTimestamp: null,
+        legacyDmClosed:
+          wave.is_direct_message === true &&
+          isLegacyDmClosed(Time.currentMillis())
+      })
+    );
+    if (
+      action === 'REPLY' &&
+      !isWaveChatGroupMember({ wave, groupIdsUserIsEligibleFor }) &&
+      !(await this.isOpenReplyAllowed(
+        { model, wave, groupIdsUserIsEligibleFor },
+        connection
+      ))
+    ) {
+      throw new ForbiddenException(`User is not eligible for this wave`);
+    }
   }
 
   /**
@@ -1571,8 +1678,23 @@ export class CreateOrUpdateDropUseCase {
         { timer, connection }
       );
       if (blockedUntil !== null) {
-        throw new ForbiddenException(
-          `Slow mode is enabled. You can create your next chat drop at ${blockedUntil}`
+        throwIfWaveParticipationDenied(
+          evaluateWavePolicyDecision({
+            action: waveParticipationActionForDrop(model),
+            wave,
+            authenticatedProfileId: authorId,
+            groupIdsUserIsEligibleFor,
+            nextDropTimestamp: blockedUntil,
+            legacyDmClosed: false,
+            now
+          })
+        );
+        // The reservation is the source of truth: deny even if the pure
+        // policy would not (it cannot happen for a reserved cooldown).
+        throw new CustomApiCompliantException(
+          403,
+          `Slow mode is enabled. You can create your next chat drop at ${blockedUntil}`,
+          WaveParticipationReasonCode.SLOW_MODE_COOLDOWN
         );
       }
     } finally {
