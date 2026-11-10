@@ -1,0 +1,151 @@
+# IPFS storage stack. Edit this CloudFormation template directly.
+AWSTemplateFormatVersion: '2010-09-09'
+Description: '6529 IPFS: isolated persistent storage or replaceable candidate infrastructure'
+Parameters:
+  Environment:
+    Type: String
+    AllowedValues:
+      - prod
+Resources:
+  Blocks:
+    Type: AWS::S3::Bucket
+    Properties:
+      VersioningConfiguration:
+        Status: Enabled
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerEnforced
+      Tags:
+        - Key: Service
+          Value: 6529-ipfs
+        - Key: Environment
+          Value:
+            Ref: Environment
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+  BlocksPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket:
+        Ref: Blocks
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Deny
+            Principal: '*'
+            Action: s3:*
+            Resource:
+              - Fn::GetAtt:
+                  - Blocks
+                  - Arn
+              - Fn::Sub: ${Blocks.Arn}/*
+            Condition:
+              Bool:
+                aws:SecureTransport: 'false'
+  Backups:
+    Type: AWS::S3::Bucket
+    Properties:
+      VersioningConfiguration:
+        Status: Enabled
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerEnforced
+      Tags:
+        - Key: Service
+          Value: 6529-ipfs
+        - Key: Environment
+          Value:
+            Ref: Environment
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+  BackupsPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket:
+        Ref: Backups
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Deny
+            Principal: '*'
+            Action: s3:*
+            Resource:
+              - Fn::GetAtt:
+                  - Backups
+                  - Arn
+              - Fn::Sub: ${Backups.Arn}/*
+            Condition:
+              Bool:
+                aws:SecureTransport: 'false'
+  Artifacts:
+    Type: AWS::S3::Bucket
+    Properties:
+      VersioningConfiguration:
+        Status: Enabled
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerEnforced
+      Tags:
+        - Key: Service
+          Value: 6529-ipfs
+        - Key: Environment
+          Value:
+            Ref: Environment
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+  ArtifactsPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket:
+        Ref: Artifacts
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Deny
+            Principal: '*'
+            Action: s3:*
+            Resource:
+              - Fn::GetAtt:
+                  - Artifacts
+                  - Arn
+              - Fn::Sub: ${Artifacts.Arn}/*
+            Condition:
+              Bool:
+                aws:SecureTransport: 'false'
+Outputs:
+  BlocksBucket:
+    Value:
+      Ref: Blocks
+  BackupsBucket:
+    Value:
+      Ref: Backups
+  ArtifactsBucket:
+    Value:
+      Ref: Artifacts

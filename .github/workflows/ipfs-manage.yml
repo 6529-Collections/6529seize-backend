@@ -82,7 +82,12 @@ jobs:
           if os.environ['IPFS_OPERATION']!='plan':
               mutation_guard(config,os.environ['IPFS_SOURCE_SHA'],os.environ)
           PY
-      - name: Render an offline plan
+      - name: Install the YAML reader for the controller
+        run: |
+          python3 -m venv "$RUNNER_TEMP/ipfs-control-tools"
+          "$RUNNER_TEMP/ipfs-control-tools/bin/pip" install -r ops/ipfs/requirements-control.txt
+          echo "$RUNNER_TEMP/ipfs-control-tools/bin" >> "$GITHUB_PATH"
+      - name: Show an offline plan
         if: inputs.operation == 'plan'
         run: |
           python3 ops/ipfs/control.py plan --environment "$IPFS_ENVIRONMENT" \

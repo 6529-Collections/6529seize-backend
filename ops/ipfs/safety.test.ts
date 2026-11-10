@@ -4,6 +4,12 @@ import { join } from 'node:path';
 import { parse } from 'yaml';
 
 const directory = __dirname;
+function cloudformation(kind: 'access' | 'storage' | 'compute' | 'edge') {
+  return parse(
+    readFileSync(join(directory, 'cloudformation', `${kind}.yaml`), 'utf8')
+  );
+}
+
 const config = {
   environment: 'prod',
   accountId: '111111111111',
@@ -92,12 +98,40 @@ describe('IPFS source, environment and production isolation', () => {
 });
 
 describe('IPFS infrastructure and state protections', () => {
-  test('all infrastructure templates and the CLI reject a separate staging target', () => {
-    const environments = JSON.parse(
+  test('offline plans contain the checked-in YAML template and validated parameters', () => {
+    const result = JSON.parse(
       python(
-        `from infrastructure import render\nprint(json.dumps([render(kind)['Parameters']['Environment']['AllowedValues'] for kind in ['access','storage','compute','edge']]))`
+        `import control\nfrom argparse import Namespace\ndef forbidden(*args,**kwargs):raise AssertionError('Offline plan called AWS')\ncontrol.aws=forbidden\nprint(json.dumps(control.plan(config,Namespace(kind='storage',slot='candidate',parameters={}))))`
       )
     );
+    expect(result).toEqual({
+      stackName: 'seize-ipfs-prod-storage',
+      template: cloudformation('storage'),
+      parameters: [{ ParameterKey: 'Environment', ParameterValue: 'prod' }]
+    });
+  });
+
+  test('CloudFormation receives the checked-in YAML file directly', () => {
+    const path = python(
+      `import control,os\nfrom argparse import Namespace\ncaptured=[]\ndef aws(service,operation,*args,**kwargs):\n if operation=='list-stacks':return {'StackSummaries':[]}\n if operation=='create-change-set':\n  captured.append(args[args.index('--template-body')+1]);return {'Id':'fixture'}\n raise AssertionError('Unexpected AWS operation')\ncontrol.aws=aws\ncontrol.wait_change_set=lambda *args:None\nos.environ.update(GITHUB_RUN_ID='1',GITHUB_RUN_ATTEMPT='1',IPFS_CLOUDFORMATION_ROLE_ARN='arn:aws:iam::111111111111:role/fixture')\ncontrol.apply(config,Namespace(kind='storage',slot='candidate',parameters={},sha='${sha}'))\nprint(captured[0])`
+    );
+    expect(path).toBe(
+      `file://${join(directory, 'cloudformation', 'storage.yaml')}`
+    );
+  });
+
+  test('template selection rejects paths outside the checked-in stack list', () => {
+    expect(
+      python(
+        `from control import template_path\ntry:\n template_path('../environments/prod')\nexcept ValueError as error:\n print(str(error))`
+      )
+    ).toBe('Unknown CloudFormation template');
+  });
+
+  test('all infrastructure templates and the CLI reject a separate staging target', () => {
+    const environments = (
+      ['access', 'storage', 'compute', 'edge'] as const
+    ).map((kind) => cloudformation(kind).Parameters.Environment.AllowedValues);
     expect(environments).toEqual([['prod'], ['prod'], ['prod'], ['prod']]);
     const result = spawnSync(
       'python3',
@@ -109,12 +143,8 @@ describe('IPFS infrastructure and state protections', () => {
   });
 
   test('bootstraps repository/environment OIDC trust and bounded runtime roles', () => {
-    const access = JSON.parse(
-      python('from infrastructure import access\nprint(json.dumps(access()))')
-    );
-    const compute = JSON.parse(
-      python('from infrastructure import compute\nprint(json.dumps(compute()))')
-    );
+    const access = cloudformation('access');
+    const compute = cloudformation('compute');
     expect(
       access.Resources.DeploymentRole.Properties.AssumeRolePolicyDocument
         .Statement[0].Condition.StringEquals[
@@ -151,9 +181,7 @@ describe('IPFS infrastructure and state protections', () => {
   });
 
   test('retains every data bucket on deletion and replacement and enables versioning', () => {
-    const template = JSON.parse(
-      python('from infrastructure import storage\nprint(json.dumps(storage()))')
-    );
+    const template = cloudformation('storage');
     for (const name of ['Blocks', 'Backups', 'Artifacts']) {
       expect(template.Resources[name]).toMatchObject({
         DeletionPolicy: 'Retain',
@@ -172,9 +200,7 @@ describe('IPFS infrastructure and state protections', () => {
   });
 
   test('keeps block deletion forbidden, RPC private and the EC2 role narrowly scoped', () => {
-    const template = JSON.parse(
-      python('from infrastructure import compute\nprint(json.dumps(compute()))')
-    );
+    const template = cloudformation('compute');
     const serialized = JSON.stringify(template);
     expect(serialized).toContain('s3:DeleteObjectVersion');
     expect(serialized).not.toContain('s3:*');
@@ -212,7 +238,7 @@ describe('IPFS infrastructure and state protections', () => {
     ).toBe('rejected');
   });
 
-  test('offline render works without AWS credentials or a CLI', () => {
+  test('offline YAML validation works without AWS credentials or a CLI', () => {
     const result = spawnSync(
       'python3',
       [join(directory, 'control.py'), 'validate'],

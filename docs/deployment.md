@@ -3,7 +3,9 @@
 ## IPFS infrastructure
 
 IPFS has a separate explicit-dispatch workflow, `Manage IPFS infrastructure`, and
-an [operations/recovery runbook](../ops/ipfs/README.md). It provisions isolated
+an [operations/recovery runbook](../ops/ipfs/README.md). Its four directly maintained
+CloudFormation YAML templates are in `ops/ipfs/cloudformation/`; the controller
+submits those files without generating templates. It provisions isolated
 candidate servers and persistent storage, builds the pinned Kubo/S3 runtime,
 and verifies backup/restore before publication. It is not a Lambda service in
 `Deploy a service`. No IPFS deployment runs on merge or push. The existing

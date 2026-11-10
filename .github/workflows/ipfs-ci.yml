@@ -29,6 +29,11 @@ jobs:
           node-version: '22.17.1'
           cache: npm
       - run: ./bin/6529 ci
+      - name: Install Python controller and CloudFormation validation tools
+        run: |
+          python3 -m venv "$RUNNER_TEMP/ipfs-cfn-tools"
+          "$RUNNER_TEMP/ipfs-cfn-tools/bin/pip" install -r ops/ipfs/requirements-control.txt cfn-lint==1.46.0
+          echo "$RUNNER_TEMP/ipfs-cfn-tools/bin" >> "$GITHUB_PATH"
       - run: ./bin/6529 exec jest --config ops/ipfs/jest.config.cjs
       - name: Validate offline templates and shell syntax
         run: |
@@ -37,13 +42,7 @@ jobs:
           bash -n ops/ipfs/bootstrap.sh
           PYTHONPYCACHEPREFIX="$RUNNER_TEMP/ipfs-pycache" python3 -m compileall -q ops/ipfs
       - name: Validate CloudFormation against AWS resource schemas
-        run: |
-          python3 -m venv "$RUNNER_TEMP/ipfs-cfn-tools"
-          "$RUNNER_TEMP/ipfs-cfn-tools/bin/pip" install cfn-lint==1.46.0
-          for kind in access storage compute edge; do
-            python3 ops/ipfs/infrastructure.py "$kind" > "$RUNNER_TEMP/ipfs-$kind.json"
-          done
-          "$RUNNER_TEMP/ipfs-cfn-tools/bin/cfn-lint" "$RUNNER_TEMP"/ipfs-{access,storage,compute,edge}.json
+        run: cfn-lint ops/ipfs/cloudformation/*.yaml
   rehearsal:
     name: IPFS pinned build and isolated restore rehearsal
     needs: validate

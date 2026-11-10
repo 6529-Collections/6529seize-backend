@@ -1,0 +1,126 @@
+# IPFS edge stack. Edit this CloudFormation template directly.
+AWSTemplateFormatVersion: '2010-09-09'
+Description: '6529 IPFS: isolated persistent storage or replaceable candidate infrastructure'
+Parameters:
+  Environment:
+    Type: String
+    AllowedValues:
+      - prod
+  OriginHost:
+    Type: String
+    AllowedPattern: '[a-z0-9.-]+'
+  GatewayHost:
+    Type: String
+    AllowedPattern: '[a-z0-9.-]+'
+  ApiHost:
+    Type: String
+    AllowedPattern: '[a-z0-9.-]+'
+  PublicIp:
+    Type: String
+    AllowedPattern: '[0-9.]+'
+  HostedZoneId:
+    Type: String
+  CertificateArn:
+    Type: String
+    Description: Existing us-east-1 ACM certificate for GatewayHost
+Resources:
+  Distribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        Aliases:
+          - Ref: GatewayHost
+        HttpVersion: http2
+        IPV6Enabled: true
+        ViewerCertificate:
+          AcmCertificateArn:
+            Ref: CertificateArn
+          SslSupportMethod: sni-only
+          MinimumProtocolVersion: TLSv1.2_2021
+        Origins:
+          - Id: ipfs
+            DomainName:
+              Ref: OriginHost
+            CustomOriginConfig:
+              OriginProtocolPolicy: https-only
+              OriginSSLProtocols:
+                - TLSv1.2
+              HTTPSPort: 443
+        DefaultCacheBehavior:
+          TargetOriginId: ipfs
+          ViewerProtocolPolicy: redirect-to-https
+          AllowedMethods:
+            - GET
+            - HEAD
+          CachedMethods:
+            - GET
+            - HEAD
+          Compress: true
+          CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad
+        CacheBehaviors:
+          - PathPattern: /ipfs/*
+            TargetOriginId: ipfs
+            ViewerProtocolPolicy: redirect-to-https
+            AllowedMethods:
+              - GET
+              - HEAD
+            CachedMethods:
+              - GET
+              - HEAD
+            Compress: true
+            CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6
+      Tags:
+        - Key: Environment
+          Value:
+            Ref: Environment
+        - Key: Service
+          Value: 6529-ipfs
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+  OriginDns:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      HostedZoneId:
+        Ref: HostedZoneId
+      Name:
+        Ref: OriginHost
+      Type: A
+      TTL: '60'
+      ResourceRecords:
+        - Ref: PublicIp
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+  ApiDns:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      HostedZoneId:
+        Ref: HostedZoneId
+      Name:
+        Ref: ApiHost
+      Type: A
+      TTL: '60'
+      ResourceRecords:
+        - Ref: PublicIp
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+  GatewayDns:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      HostedZoneId:
+        Ref: HostedZoneId
+      Name:
+        Ref: GatewayHost
+      Type: A
+      AliasTarget:
+        DNSName:
+          Fn::GetAtt:
+            - Distribution
+            - DomainName
+        HostedZoneId: Z2FDTNDATAQYW2
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+Outputs:
+  DistributionId:
+    Value:
+      Ref: Distribution

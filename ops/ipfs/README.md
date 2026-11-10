@@ -9,14 +9,29 @@ No workflow runs a deployment on push or PR.
 
 ## Ownership and layout
 
-| File                                    | Responsibility                                                                                                |
-| --------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
-| `versions.json`, `build-kubo.sh`        | Pinned Kubo and S3 commits, verified Go toolchain and nginx package, bundled S3 binary, artifact checksums    |
-| `infrastructure.py`                     | CloudFormation for retained/versioned storage, immutable EC2 candidates, and dedicated gateway DNS/CloudFront |
-| `common.py`, `control.py`               | Environment/source/account checks, offline plans, explicit infrastructure and SSM operations                  |
-| `bootstrap.sh`, `host.py`, `templates/` | Candidate-only installation, systemd/nginx/TLS configuration, verification, backup, restore                   |
-| `safety.test.ts`, `rehearse.py`         | Offline safety contracts and real-binary loopback S3/HTTPS/recovery rehearsal                                 |
-| `environments/prod.json`                | Non-secret inventory and a disabled production-change policy                                                  |
+| File                                    | Responsibility                                                                            |
+| --------------------------------------- | ----------------------------------------------------------------------------------------- |
+| `cloudformation/access.yaml`            | OIDC deployment/service roles and runtime permissions boundary                            |
+| `cloudformation/storage.yaml`           | Retained, versioned private block/backup/artifact buckets                                 |
+| `cloudformation/compute.yaml`           | Immutable EC2 replacement candidate, security group, role, EIP and alarm                  |
+| `cloudformation/edge.yaml`              | Dedicated gateway CloudFront distribution and DNS                                         |
+| `versions.json`, `build-kubo.sh`        | Pinned Kubo/S3/Go/nginx versions, build and artifact checksums                            |
+| `common.py`, `control.py`               | Source/account/target guards, YAML loading, offline plans and explicit AWS/SSM operations |
+| `requirements-control.txt`              | Pinned PyYAML dependency for the GitHub runner/local controller only                      |
+| `bootstrap.sh`, `host.py`, `templates/` | EC2 installation, systemd/nginx/TLS configuration, verification, backup and restore       |
+| `safety.test.ts`, `rehearse.py`         | Safety contracts and real-binary loopback S3/HTTPS/recovery rehearsal                     |
+| `environments/prod.json`                | Existing-resource inventory and disabled production-change policy                         |
+
+Edit the four CloudFormation YAML files directly. They are the infrastructure
+source of truth; there is no template generator. The controller reads their
+parameter definitions and submits the selected YAML file unchanged to AWS
+CloudFormation. The long-form `Ref`/`Fn::Sub`/`Fn::GetAtt` mappings are standard
+CloudFormation syntax.
+
+The JSON files are inputs: `versions.json` pins software, and
+`environments/prod.json` records policy/inventory. Actual deployment settings
+come from `IPFS_CONFIG` and explicit workflow parameters described below. The
+EC2 runtime does not need PyYAML or the infrastructure templates.
 
 There are no Lambda, API-contract, database, or frontend changes. Existing app
 endpoints remain unchanged. IPFS is an independent deployment unit, not a Lambda
@@ -83,10 +98,13 @@ an older executable.
 ## Local and PR validation
 
 ```bash
+python3 -m venv /tmp/ipfs-control-tools
+source /tmp/ipfs-control-tools/bin/activate
+python3 -m pip install -r ops/ipfs/requirements-control.txt cfn-lint==1.46.0
 ./bin/6529 ci
 ./bin/6529 exec jest --config ops/ipfs/jest.config.cjs
 python3 ops/ipfs/control.py validate
-python3 ops/ipfs/infrastructure.py compute > /tmp/ipfs-compute.json
+cfn-lint ops/ipfs/cloudformation/*.yaml
 bash -n ops/ipfs/build-kubo.sh
 bash -n ops/ipfs/bootstrap.sh
 ```
@@ -108,8 +126,8 @@ block is retrieved, including the bootstrap directory and retained backup root.
 ## One-time production access bootstrap (future authorized rollout)
 
 The initial access roles and mandatory runtime permissions boundary are also
-defined in code. An existing authorized bootstrap operator renders `access` and
-creates `seize-ipfs-prod-access` with `CAPABILITY_NAMED_IAM`, passing
+defined in `cloudformation/access.yaml`. An existing authorized bootstrap operator
+submits that file directly to CloudFormation to create `seize-ipfs-prod-access` with `CAPABILITY_NAMED_IAM`, passing
 `Environment=prod`, the existing `GitHubOidcProviderArn`, a dedicated
 `HostedZoneId`/`DnsSuffix`, and the exact `GitHubRepositorySubject` prefix if the
 repository uses immutable OIDC IDs. The subject always appends
@@ -119,10 +137,6 @@ Neither Actions nor any other IPFS stack can modify this access stack or boundar
 This bootstrap requires separate explicit authorization; it has not been executed.
 Review the policies and validate their AWS authorization paths before serving
 traffic; schema validation alone does not establish that they work.
-
-```bash
-python3 ops/ipfs/infrastructure.py access > /tmp/ipfs-access.json
-```
 
 1. Create GitHub environment `ipfs-prod`, restricted to `main`. Reuse
    the existing GitHub OIDC provider; do not configure long-lived AWS access keys.
@@ -182,7 +196,7 @@ source.
 
 | Operation               | Effect                                                                                                                   |
 | ----------------------- | ------------------------------------------------------------------------------------------------------------------------ |
-| `plan`                  | Offline template/parameter rendering; no AWS authentication or changes                                                   |
+| `plan`                  | Read the checked-in YAML and show parameters; no AWS authentication or changes                                           |
 | `apply`, kind `storage` | New retained/versioned storage stack; updates reject resource removal/replacement                                        |
 | `apply`, kind `compute` | New immutable candidate slot; refuses an existing slot                                                                   |
 | `deploy`                | Build/rehearse/package/upload a release, fetch its exact S3 version and verify checksums, install on an unused candidate |

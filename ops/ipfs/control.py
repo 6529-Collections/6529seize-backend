@@ -1,16 +1,37 @@
-"""Explicit GitHub Actions controller. No AWS calls are made by render/validate."""
+"""Explicit GitHub Actions controller. No AWS calls are made by plan/validate."""
 import argparse
 import base64
 import json
 import os
 import shlex
-import tempfile
 import time
 import uuid
 from pathlib import Path
 
+import yaml
+
 from common import ROOT, RECEIPT_PROTOCOL, aws, digest, matches, mutation_guard, require, source_guard, validate_config
-from infrastructure import render
+
+TEMPLATE_PATHS = {
+    "access": ROOT / "cloudformation" / "access.yaml",
+    "storage": ROOT / "cloudformation" / "storage.yaml",
+    "compute": ROOT / "cloudformation" / "compute.yaml",
+    "edge": ROOT / "cloudformation" / "edge.yaml",
+}
+
+
+def template_path(kind):
+    require(kind in TEMPLATE_PATHS, "Unknown CloudFormation template")
+    return TEMPLATE_PATHS[kind]
+
+
+def load_template(kind):
+    source = template_path(kind).read_text()
+    require(len(source.encode()) < 51200, "Template exceeds inline limit")
+    document = yaml.safe_load(source)
+    require(isinstance(document, dict) and isinstance(document.get("Parameters"), dict)
+            and isinstance(document.get("Resources"), dict), "Invalid CloudFormation template")
+    return document
 
 
 def account(config):
@@ -37,7 +58,7 @@ def stack_name(config, kind, slot):
 
 def stack_parameters(config, kind, supplied):
     require(isinstance(supplied, dict), "Infrastructure parameters must be a JSON object")
-    definitions = render(kind)["Parameters"]
+    definitions = load_template(kind)["Parameters"]
     values = {"Environment": config["environment"]}
     mapped = {"BlocksBucket": "blocksBucket", "BackupsBucket": "backupsBucket", "ArtifactsBucket": "artifactsBucket",
               "OriginHost": "originHost", "ApiHost": "apiHost", "GatewayHost": "gatewayHost", "HostedZoneId": "hostedZoneId"}
@@ -80,7 +101,7 @@ def plan(config, args):
     # Offline plan: same document used for a future apply. Does not create an AWS
     # change set, assume credentials, or mutate the existing environment.
     return {"stackName": stack_name(config, args.kind, args.slot),
-            "template": render(args.kind), "parameters": stack_parameters(config, args.kind, args.parameters)}
+            "template": load_template(args.kind), "parameters": stack_parameters(config, args.kind, args.parameters)}
 
 
 def apply(config, args):
@@ -97,19 +118,16 @@ def apply(config, args):
         public_ip = next(item["ParameterValue"] for item in document["parameters"] if item["ParameterKey"] == "PublicIp")
         require(public_ip == instance.get("PublicIpAddress"), "Edge must point to the verified candidate")
         command(config, "python3 /opt/6529-ipfs/current/host.py verify", "verify")
-    with tempfile.TemporaryDirectory() as directory:
-        path = Path(directory) / "template.json"
-        path.write_text(json.dumps(document["template"]))
-        run_id = os.environ.get("GITHUB_RUN_ID", "")
-        attempt = os.environ.get("GITHUB_RUN_ATTEMPT", "1")
-        require(matches(r"[0-9]+", run_id) and matches(r"[0-9]+", attempt), "Missing Actions run identity")
-        change_name = "seize-ipfs-" + config["environment"] + "-" + args.sha + "-" + run_id + "-" + attempt + "-" + uuid.uuid4().hex[:8]
-        change_set = aws("cloudformation", "create-change-set", "--region", config["region"],
-                         "--stack-name", name, "--change-set-name", change_name,
-                         "--change-set-type", "UPDATE" if found else "CREATE",
-                         "--template-body", "file://" + str(path), "--parameters", json.dumps(document["parameters"]),
-                         "--capabilities", "CAPABILITY_NAMED_IAM", "--description", "IPFS reviewed source " + args.sha,
-                         "--role-arn", os.environ["IPFS_CLOUDFORMATION_ROLE_ARN"])
+    run_id = os.environ.get("GITHUB_RUN_ID", "")
+    attempt = os.environ.get("GITHUB_RUN_ATTEMPT", "1")
+    require(matches(r"[0-9]+", run_id) and matches(r"[0-9]+", attempt), "Missing Actions run identity")
+    change_name = "seize-ipfs-" + config["environment"] + "-" + args.sha + "-" + run_id + "-" + attempt + "-" + uuid.uuid4().hex[:8]
+    change_set = aws("cloudformation", "create-change-set", "--region", config["region"],
+                     "--stack-name", name, "--change-set-name", change_name,
+                     "--change-set-type", "UPDATE" if found else "CREATE",
+                     "--template-body", "file://" + str(template_path(args.kind)), "--parameters", json.dumps(document["parameters"]),
+                     "--capabilities", "CAPABILITY_NAMED_IAM", "--description", "IPFS reviewed source " + args.sha,
+                     "--role-arn", os.environ["IPFS_CLOUDFORMATION_ROLE_ARN"])
     change_id = change_set["Id"]
     description = wait_change_set(config, change_id)
     if description is None:
@@ -271,9 +289,9 @@ def main():
     parser.add_argument("--backup-version")
     args = parser.parse_args()
     if args.operation == "validate":
-        for kind in ("access", "storage", "compute", "edge"):
-            require(len(json.dumps(render(kind)).encode()) < 51200, "Template exceeds inline limit")
-        print("IPFS templates render offline; no AWS credentials or live endpoints used")
+        for kind in TEMPLATE_PATHS:
+            load_template(kind)
+        print("IPFS YAML templates load offline; no AWS credentials or live endpoints used")
         return
     config = validate_config(json.loads(args.config.read_text()) if args.config else json.loads(os.environ["IPFS_CONFIG"]))
     require(config["environment"] == args.environment, "Environment selection mismatch")
