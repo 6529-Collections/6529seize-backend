@@ -106,6 +106,8 @@ describe('legacy plain-text sign-in routes', () => {
     AUTH_STRUCTURED_SIGNATURES_REQUIRED:
       process.env.AUTH_STRUCTURED_SIGNATURES_REQUIRED,
     AUTH_WALLET_CHAIN_ID: process.env.AUTH_WALLET_CHAIN_ID,
+    AUTH_LEGACY_TEXT_CHALLENGE_TTL_SECONDS:
+      process.env.AUTH_LEGACY_TEXT_CHALLENGE_TTL_SECONDS,
     ETHEREUM_RPC_URL: process.env.ETHEREUM_RPC_URL
   };
   let nowMs: number;
@@ -116,6 +118,7 @@ describe('legacy plain-text sign-in routes', () => {
     delete process.env.AUTH_LEGACY_TEXT_LOGIN_DISABLED;
     delete process.env.AUTH_STRUCTURED_SIGNATURES_REQUIRED;
     delete process.env.AUTH_WALLET_CHAIN_ID;
+    delete process.env.AUTH_LEGACY_TEXT_CHALLENGE_TTL_SECONDS;
     // No contract-wallet lookups over the network for wrong signatures.
     delete process.env.ETHEREUM_RPC_URL;
     nowMs = BASE_NOW_MS;
@@ -166,6 +169,22 @@ describe('legacy plain-text sign-in routes', () => {
       expect(payload.exp! - payload.iat!).toBe(300);
     }
   );
+
+  it('gives slow signers the configured lifetime', async () => {
+    process.env.AUTH_LEGACY_TEXT_CHALLENGE_TTL_SECONDS = '1800';
+    const challenge = await issueChallenge();
+    nowMs += 25 * 60_000;
+
+    await expect(
+      loginHandler(loginRequest(challenge), makeResponse())
+    ).resolves.toBeUndefined();
+
+    const late = await issueChallenge();
+    nowMs += 31 * 60_000;
+    await expect(
+      loginHandler(loginRequest(late), makeResponse())
+    ).rejects.toThrow('jwt expired');
+  });
 
   it('signs in once with a current challenge and records the format', async () => {
     const challenge = await issueChallenge();

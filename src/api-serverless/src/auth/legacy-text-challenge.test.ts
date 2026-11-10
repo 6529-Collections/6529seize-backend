@@ -8,9 +8,12 @@ import * as fc from 'fast-check';
 import * as jwt from 'jsonwebtoken';
 import { getAccessTokenClaimsOrNull } from '@/api/auth/access-token-wallet';
 import {
+  getLegacyTextChallengeTtlSeconds,
   isLegacyTextLoginDisabled,
+  MAX_LEGACY_TEXT_CHALLENGE_TTL_SECONDS,
+  MIN_LEGACY_TEXT_CHALLENGE_TTL_SECONDS,
   isStringFormChallengeAccepted,
-  LEGACY_TEXT_CHALLENGE_TTL_SECONDS,
+  DEFAULT_LEGACY_TEXT_CHALLENGE_TTL_SECONDS,
   LEGACY_TEXT_CHALLENGE_TYPE,
   legacyLoginFormatOf,
   resetStringFormTransitionForTests,
@@ -49,8 +52,73 @@ describe('legacy text challenge tokens', () => {
 
     expect(payload.challenge_type).toBe(LEGACY_TEXT_CHALLENGE_TYPE);
     expect(payload.nonce).toBe('text to sign');
-    expect(payload.exp! - payload.iat!).toBe(LEGACY_TEXT_CHALLENGE_TTL_SECONDS);
+    expect(payload.exp! - payload.iat!).toBe(
+      DEFAULT_LEGACY_TEXT_CHALLENGE_TTL_SECONDS
+    );
     expect(payload.iat).toBeGreaterThanOrEqual(before);
+  });
+
+  describe('challenge lifetime', () => {
+    const original = process.env.AUTH_LEGACY_TEXT_CHALLENGE_TTL_SECONDS;
+
+    afterEach(() => {
+      if (original === undefined) {
+        delete process.env.AUTH_LEGACY_TEXT_CHALLENGE_TTL_SECONDS;
+      } else {
+        process.env.AUTH_LEGACY_TEXT_CHALLENGE_TTL_SECONDS = original;
+      }
+    });
+
+    function signedLifetime(): number {
+      const payload = jwt.verify(
+        signLegacyTextChallenge('text to sign', SECRET),
+        SECRET
+      ) as jwt.JwtPayload;
+      return payload.exp! - payload.iat!;
+    }
+
+    it.each([
+      [undefined, 300],
+      ['', 300],
+      ['900', 900],
+      [' 1800 ', 1800],
+      ['60', 60],
+      ['3600', 3600],
+      ['59', 60],
+      ['0', 60],
+      ['3601', 3600],
+      ['99999999999999999999999', 3600],
+      ['-5', 300],
+      ['12.5', 300],
+      ['5m', 300],
+      ['abc', 300]
+    ])(
+      'AUTH_LEGACY_TEXT_CHALLENGE_TTL_SECONDS=%p gives %p seconds',
+      (value, seconds) => {
+        if (value === undefined) {
+          delete process.env.AUTH_LEGACY_TEXT_CHALLENGE_TTL_SECONDS;
+        } else {
+          process.env.AUTH_LEGACY_TEXT_CHALLENGE_TTL_SECONDS = value;
+        }
+        expect(getLegacyTextChallengeTtlSeconds()).toBe(seconds);
+        expect(signedLifetime()).toBe(seconds);
+      }
+    );
+
+    it('never throws and stays in range for any value', () => {
+      fc.assert(
+        fc.property(fc.string(), (value) => {
+          process.env.AUTH_LEGACY_TEXT_CHALLENGE_TTL_SECONDS = value;
+          const seconds = getLegacyTextChallengeTtlSeconds();
+          expect(seconds).toBeGreaterThanOrEqual(
+            MIN_LEGACY_TEXT_CHALLENGE_TTL_SECONDS
+          );
+          expect(seconds).toBeLessThanOrEqual(
+            MAX_LEGACY_TEXT_CHALLENGE_TTL_SECONDS
+          );
+        })
+      );
+    });
   });
 
   it('round-trips any message', () => {
@@ -79,7 +147,10 @@ describe('legacy text challenge tokens', () => {
         iat: Math.floor(Date.now() / 1000) - 600
       },
       SECRET,
-      { algorithm: 'HS256', expiresIn: LEGACY_TEXT_CHALLENGE_TTL_SECONDS }
+      {
+        algorithm: 'HS256',
+        expiresIn: DEFAULT_LEGACY_TEXT_CHALLENGE_TTL_SECONDS
+      }
     );
     expect(() => verifyLegacyLoginChallengeToken(token, SECRET)).toThrow(
       'jwt expired'
@@ -219,6 +290,12 @@ describe('old string-form challenge transition', () => {
     await expect(
       isStringFormChallengeAccepted(nowMs + STRING_FORM_TRANSITION_MS)
     ).resolves.toBe(false);
+  });
+
+  it('ends the old form at 2026-11-17T00:00Z', () => {
+    expect(new Date(STRING_FORM_LAST_ACCEPTED_AT_MS).toISOString()).toBe(
+      '2026-11-17T00:00:00.000Z'
+    );
   });
 
   it('refuses the old form from the last accepted day on, whatever Redis holds', async () => {
