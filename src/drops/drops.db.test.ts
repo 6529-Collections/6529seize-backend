@@ -1314,6 +1314,140 @@ describeWithSeed(
       ]);
     });
 
+    it('filters one thread in an inline wave before paginating', async () => {
+      await sqlExecutor.executeNativeQueriesInTransaction(
+        async (connection) => {
+          const tx = { ...ctx, connection };
+          await sqlExecutor.execute(
+            `insert into ${DROPS_TABLE}
+            (id, serial_no, wave_id, author_id, created_at, parts_count, drop_type, reply_to_drop_id)
+            values ('mixed-root', 513, :waveId, 'profile-alice', 513, 1, 'CHAT', null),
+                   ('mixed-reply', 514, :waveId, 'profile-bob', 514, 1, 'CHAT', 'mixed-root'),
+                   ('mixed-nested-reply', 515, :waveId, 'profile-carol', 515, 1, 'CHAT', 'mixed-reply')`,
+            { waveId: inlineRepliesWave.id },
+            { wrappedConnection: connection }
+          );
+          await sqlExecutor.execute(
+            `insert into ${DROP_RELATIONS_TABLE} (parent_id, child_id, child_serial_no, wave_id)
+            values ('mixed-root', 'mixed-reply', 514, :waveId),
+                   ('mixed-root', 'mixed-nested-reply', 515, :waveId),
+                   ('mixed-reply', 'mixed-nested-reply', 515, :waveId)`,
+            { waveId: inlineRepliesWave.id },
+            { wrappedConnection: connection }
+          );
+          const setCollapsed = (collapseReplies: boolean) =>
+            repo.setDropReplyCollapse(
+              {
+                dropId: 'mixed-root',
+                waveId: inlineRepliesWave.id,
+                collapseReplies
+              },
+              tx
+            );
+          const readFeed = async (
+            respect_drop_reply_collapse: boolean,
+            serial_no_limit: number | null = null
+          ) =>
+            (
+              await repo.findLatestDropsSimple(
+                {
+                  wave_id: inlineRepliesWave.id,
+                  amount: 2,
+                  serial_no_limit,
+                  search_strategy: 'FIND_OLDER',
+                  drop_type: null,
+                  respect_drop_reply_collapse
+                },
+                tx
+              )
+            ).map((drop) => drop.id);
+
+          await expect(repo.hasDropReplies('mixed-root', tx)).resolves.toBe(
+            true
+          );
+          await expect(
+            repo.hasDropReplies('mixed-nested-reply', tx)
+          ).resolves.toBe(false);
+          await setCollapsed(true);
+          await expect(readFeed(false)).resolves.toEqual([
+            'mixed-nested-reply',
+            'mixed-reply'
+          ]);
+          await expect(readFeed(true)).resolves.toEqual([
+            'mixed-root',
+            'inline-reply'
+          ]);
+          await expect(readFeed(true, 512)).resolves.toEqual(['inline-root']);
+          await expect(
+            repo.findDropIdsInWaveRange(
+              {
+                wave_id: inlineRepliesWave.id,
+                min_serial_no: 0,
+                max_serial_no: 999,
+                limit: 10,
+                group_ids_user_is_eligible_for: [],
+                respect_drop_reply_collapse: true
+              },
+              tx
+            )
+          ).resolves.toEqual([
+            { id: 'inline-root', serial_no: 511 },
+            { id: 'inline-reply', serial_no: 512 },
+            { id: 'mixed-root', serial_no: 513 }
+          ]);
+          await expect(
+            repo.findCollapsedReplyRoots(
+              ['mixed-nested-reply', 'inline-reply'],
+              tx
+            )
+          ).resolves.toEqual({
+            'mixed-nested-reply': { id: 'mixed-root', serial_no: 513 }
+          });
+          await expect(
+            repo.countCollapsedRepliesOfGivenDrops(
+              ['mixed-root', 'inline-root'],
+              tx
+            )
+          ).resolves.toEqual({ 'mixed-root': 2 });
+          await setCollapsed(false);
+          await expect(repo.hasDropReplies('mixed-root', tx)).resolves.toBe(
+            true
+          );
+          await expect(readFeed(true)).resolves.toEqual([
+            'mixed-nested-reply',
+            'mixed-reply'
+          ]);
+          await sqlExecutor.execute(
+            `delete from ${DROP_RELATIONS_TABLE} where parent_id in ('mixed-root', 'mixed-reply')`,
+            {},
+            { wrappedConnection: connection }
+          );
+          await sqlExecutor.execute(
+            `delete from ${DROPS_TABLE} where id in ('mixed-root', 'mixed-reply', 'mixed-nested-reply')`,
+            {},
+            { wrappedConnection: connection }
+          );
+        }
+      );
+    });
+
+    it('resolves the top-level ancestor for a wave-wide collapsed reply', async () => {
+      const replyIds = [
+        'collapsed-nested-reply',
+        'collapsed-reply',
+        'inline-reply'
+      ];
+      await expect(
+        repo.findCollapsedReplyRoots(replyIds, ctx)
+      ).resolves.toEqual({});
+      await expect(
+        repo.findCollapsedReplyRoots(replyIds, ctx, true)
+      ).resolves.toEqual({
+        'collapsed-nested-reply': { id: 'collapsed-root', serial_no: 501 },
+        'collapsed-reply': { id: 'collapsed-root', serial_no: 501 }
+      });
+    });
+
     it('counts existing thread replies only in collapsed-reply waves', async () => {
       await expect(
         repo.countCollapsedRepliesOfGivenDrops(

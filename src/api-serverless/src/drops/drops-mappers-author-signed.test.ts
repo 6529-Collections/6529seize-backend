@@ -70,6 +70,7 @@ function createMapper(signedDropIds: string[]) {
     getDropMedia: jest.fn().mockResolvedValue({}),
     getWinDecisionsForDrops: jest.fn().mockResolvedValue({}),
     findDeletedDrops: jest.fn().mockResolvedValue({}),
+    findCollapsedReplyRoots: jest.fn().mockResolvedValue({}),
     findDropIdsOfWavesWhereNegativeVotesAreNotAllowed: jest
       .fn()
       .mockResolvedValue([]),
@@ -120,7 +121,7 @@ function createMapper(signedDropIds: string[]) {
     moderationDb as any,
     authorSignaturesDb
   );
-  return { mapper, moderationDb, authorSignaturesDb };
+  return { mapper, dropsDb, moderationDb, authorSignaturesDb };
 }
 
 function mapRoots(mapper: DropsMappers) {
@@ -151,6 +152,24 @@ describe('DropsMappers author signed drops', () => {
   });
 
   afterEach(() => jest.restoreAllMocks());
+
+  it('maps the collapsed root only onto the reply in a mixed batch', async () => {
+    const { mapper, dropsDb } = createMapper([]);
+    const root = { id: 'parent', serial_no: 2 };
+    dropsDb.findCollapsedReplyRoots.mockResolvedValue({
+      'root-reply': root
+    });
+
+    const [reply, parent, plainDrop] = await mapRoots(mapper);
+
+    expect(dropsDb.findCollapsedReplyRoots).toHaveBeenCalledWith(
+      ['root-reply'],
+      expect.anything()
+    );
+    expect(reply.collapsed_reply_thread).toEqual(root);
+    expect(parent.collapsed_reply_thread).toBeUndefined();
+    expect(plainDrop.collapsed_reply_thread).toBeUndefined();
+  });
 
   it('marks signed roots, replies and quotes from one de-duplicated lookup', async () => {
     const { mapper, authorSignaturesDb } = createMapper([

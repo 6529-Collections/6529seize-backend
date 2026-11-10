@@ -172,6 +172,27 @@ failure, and replaces all loaded pages together on refresh/expiry. It offers
 Retry and Load more controls alongside automatic scrolling. This adds no table,
 migration, queue or loop. Deploy `api` before the frontend in each environment.
 
+## Reply placement on a single drop
+
+The author can set reply placement on a top-level chat drop while its wave
+uses inline replies. The API saves the preference on the drop and uses
+existing reply ancestry to filter descendants before paginating the chat
+timeline. Clients opt into the mixed timeline through the V2 feed and
+drop-ID pagination APIs. Individual placement keeps the existing unread and
+notification rules for inline waves. Thread reads keep returning descendants and reply
+payloads identify the top-level drop for links and live updates. Placement updates
+include whether the thread has replies, so empty toggles can update the message
+without reloading the timeline.
+
+The wave's `chat.replies.collapsed` setting takes precedence. When it is
+enabled, all replies are collapsed regardless of the top-level drop's stored
+`collapse_replies` preference. On V2 serial-number lookups, a descendant's
+`collapsed_reply_thread` identifies its top-level drop under either collapse
+mode, including when the top-level drop's individual preference is `false`.
+
+Deploy `dbMigrationsLoop` first to synchronize the additive column and refresh
+the compatibility view, then deploy the API and the frontend.
+
 ## Wave eligibility
 
 The maintained direct eligibility implementation serves profile-to-groups reads;
