@@ -10,7 +10,7 @@ import type { LedgerRow, OwnerRow } from './state-audit.manifest';
 const WALLET_BATCH = 250;
 const READ_ONLY = { forcePool: DbPoolName.READ };
 
-type RawLedgerRow = {
+export type RawLedgerRow = {
   transaction: string;
   block: number | string;
   from_address: string;
@@ -50,7 +50,7 @@ function normalizeOwnerRow(row: RawOwnerRow): OwnerRow {
   };
 }
 
-function compareLedgerRows(a: LedgerRow, b: LedgerRow): number {
+export function compareLedgerRows(a: LedgerRow, b: LedgerRow): number {
   return (
     a.block - b.block ||
     a.transaction.localeCompare(b.transaction) ||

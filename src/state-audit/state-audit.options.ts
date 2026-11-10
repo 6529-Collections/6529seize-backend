@@ -75,7 +75,10 @@ Exit codes: 0 clean, 3 differences_found, 4 inconclusive, 2 usage error,
 1 execution failure.
 
 --help prints this text without connecting to the database or the RPC.
-The command never writes to the database and never enqueues reconciliation.
+The audit never writes to the database and never enqueues reconciliation.
+
+Applying a reviewed manifest is a separate, gated subcommand:
+  6529 run state-audit -- apply --help
 `;
 
 function usageError(message: string): never {

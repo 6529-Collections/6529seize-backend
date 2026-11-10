@@ -7,6 +7,65 @@ import {
   transferWallets
 } from './transfer-reconciliation.db';
 
+/** The ledger upsert shared by discovery and the state-audit apply step. */
+export const TRANSACTIONS_UPSERT_SQL = `
+  insert into ${TRANSACTIONS_TABLE} (
+    created_at, 
+    transaction, 
+    block, 
+    transaction_date, 
+    from_address, 
+    to_address, 
+    contract, 
+    token_id, 
+    token_count, 
+    value, 
+    royalties, 
+    gas_gwei, 
+    gas_price, 
+    gas_price_gwei, 
+    gas, 
+    primary_proceeds,
+    eth_price_usd,
+    value_usd,
+    gas_usd
+  ) values (
+    :created_at,
+    :transaction,
+    :block,
+    :transaction_date,
+    :from_address,
+    :to_address,
+    :contract,
+    :token_id,
+    :token_count,
+    :value,
+    :royalties,
+    :gas_gwei,
+    :gas_price,
+    :gas_price_gwei,
+    :gas,
+    :primary_proceeds,
+    :eth_price_usd,
+    :value_usd,
+    :gas_usd
+  ) on duplicate key update
+      created_at = :created_at,
+      block = :block,
+      transaction_date = :transaction_date,
+      token_count = :token_count,
+      value = :value,
+      royalties = :royalties,
+      gas_gwei = :gas_gwei,
+      gas_price = :gas_price,
+      gas_price_gwei = :gas_price_gwei,
+      gas = :gas,
+      primary_proceeds = :primary_proceeds,
+      eth_price_usd = :eth_price_usd,
+      value_usd = :value_usd,
+      gas_usd = :gas_usd
+`;
+
 export class TransactionsDiscoveryDb extends LazyDbAccessCompatibleService {
   async getLatestTransactionsBlockForContract(
     contract: string
@@ -30,67 +89,9 @@ export class TransactionsDiscoveryDb extends LazyDbAccessCompatibleService {
               { wrappedConnection: connection }
             )
           );
-          await this.db.execute(
-            `
-                insert into ${TRANSACTIONS_TABLE} (
-                  created_at, 
-                  transaction, 
-                  block, 
-                  transaction_date, 
-                  from_address, 
-                  to_address, 
-                  contract, 
-                  token_id, 
-                  token_count, 
-                  value, 
-                  royalties, 
-                  gas_gwei, 
-                  gas_price, 
-                  gas_price_gwei, 
-                  gas, 
-                  primary_proceeds,
-                  eth_price_usd,
-                  value_usd,
-                  gas_usd
-                ) values (
-                  :created_at,
-                  :transaction,
-                  :block,
-                  :transaction_date,
-                  :from_address,
-                  :to_address,
-                  :contract,
-                  :token_id,
-                  :token_count,
-                  :value,
-                  :royalties,
-                  :gas_gwei,
-                  :gas_price,
-                  :gas_price_gwei,
-                  :gas,
-                  :primary_proceeds,
-                  :eth_price_usd,
-                  :value_usd,
-                  :gas_usd
-                ) on duplicate key update
-                    created_at = :created_at,
-                    block = :block,
-                    transaction_date = :transaction_date,
-                    token_count = :token_count,
-                    value = :value,
-                    royalties = :royalties,
-                    gas_gwei = :gas_gwei,
-                    gas_price = :gas_price,
-                    gas_price_gwei = :gas_price_gwei,
-                    gas = :gas,
-                    primary_proceeds = :primary_proceeds,
-                    eth_price_usd = :eth_price_usd,
-                    value_usd = :value_usd,
-                    gas_usd = :gas_usd
-      `,
-            transaction,
-            { wrappedConnection: connection }
-          );
+          await this.db.execute(TRANSACTIONS_UPSERT_SQL, transaction, {
+            wrappedConnection: connection
+          });
         }
         await transferReconciliationDb.enqueue(
           transferWallets(transactions),

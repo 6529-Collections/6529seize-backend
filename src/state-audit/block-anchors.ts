@@ -37,7 +37,7 @@ function anchorOf(block: Block): BlockAnchor {
  * read can prove it inspected the same chain.
  */
 export async function readBlockAnchors(
-  rpc: StateAuditRpc,
+  rpc: Pick<StateAuditRpc, 'getBlock'>,
   fromBlock: number,
   toBlock: number
 ): Promise<BlockAnchors> {
