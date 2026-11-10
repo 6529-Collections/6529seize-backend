@@ -223,7 +223,8 @@ describe('waves v2 handlers', () => {
           limit: '200',
           serial_no_limit: '100',
           search_strategy: ApiDropSearchStrategy.Newer,
-          drop_type: ApiDropType.Chat
+          drop_type: ApiDropType.Chat,
+          respect_drop_reply_collapse: 'true'
         }
       } as any;
 
@@ -237,7 +238,8 @@ describe('waves v2 handlers', () => {
           serial_no_limit: 100,
           search_strategy: ApiDropSearchStrategy.Newer,
           drop_type: ApiDropType.Chat,
-          curation_id: null
+          curation_id: null,
+          respect_drop_reply_collapse: true
         },
         {
           authenticationContext,
