@@ -105,7 +105,7 @@ def validate_config(config):
     allowed = {"environment", "accountId", "region", "blocksBucket", "backupsBucket", "artifactsBucket",
                "originHost", "apiHost", "gatewayHost", "hostedZoneId", "acmeEmail", "instanceId"}
     require(not set(config).difference(allowed), "Unknown config field; credentials do not belong in deployment config")
-    require(config.get("environment") in ("staging", "prod"), "Invalid environment")
+    require(config.get("environment") == "prod", "IPFS supports only the prod environment")
     require(matches(r"\d{12}", config.get("accountId")), "accountId must be explicit")
     require(matches(r"[a-z]{2}-[a-z]+-\d", config.get("region")), "Invalid region")
     for key in ("blocksBucket", "backupsBucket", "artifactsBucket"):
@@ -133,10 +133,9 @@ def environment_policy(environment):
 def source_guard(config, sha, environ):
     validate_config(config)
     require(matches(r"[a-f0-9]{40}", sha), "A full reviewed source SHA is required")
-    branch = "main" if config["environment"] == "prod" else "1a-staging"
     require(environ.get("GITHUB_ACTIONS") == "true", "Mutations run only through GitHub Actions")
     require(environ.get("GITHUB_REPOSITORY") == "6529-Collections/6529seize-backend", "Unexpected repository")
-    require(environ.get("GITHUB_REF") == "refs/heads/" + branch, "Wrong environment branch")
+    require(environ.get("GITHUB_REF") == "refs/heads/main", "IPFS deployments require main")
     require(environ.get("GITHUB_SHA") == sha, "Dispatch SHA does not match reviewed source SHA")
 
 

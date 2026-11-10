@@ -260,7 +260,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("operation", choices=["validate", "plan", "apply", "deploy", "backup", "restore", "verify"])
     parser.add_argument("--config", type=Path)
-    parser.add_argument("--environment", choices=["staging", "prod"], default="staging")
+    parser.add_argument("--environment", choices=["prod"], default="prod")
     parser.add_argument("--sha", default="")
     parser.add_argument("--kind", choices=["storage", "compute", "edge"], default="storage")
     parser.add_argument("--slot", default="candidate")

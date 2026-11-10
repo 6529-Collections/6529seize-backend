@@ -119,7 +119,7 @@ class Daemon:
         self.environment = {**os.environ, "IPFS_PATH": str(repo), "IPFS_TELEMETRY": "off", "DO_NOT_TRACK": "1", "AWS_EC2_METADATA_DISABLED": "true"}
         subprocess.run([str(binary), "init", "--profile=server", "--empty-repo"], env=self.environment,
                        capture_output=True, check=True, timeout=60)
-        host.configure_repo({"region": "us-east-1", "blocksBucket": "fixture-blocks", "environment": "staging"}, repo, endpoint)
+        host.configure_repo({"region": "us-east-1", "blocksBucket": "fixture-blocks", "environment": "prod"}, repo, endpoint)
         path = repo / "config"
         config = json.loads(path.read_text())
         config["Addresses"]["API"] = "/ip4/127.0.0.1/tcp/" + str(self.api_port)
@@ -222,7 +222,7 @@ def https_rehearsal(bundle, work, daemon, payload, cid):
         require(curl(ORIGIN_HOST, IPFS_PREFIX + cid, "--range", "0-9") == payload[:10], "HTTPS range mismatch")
         require(curl(API_HOST, "/api/v0/version", "-X", "POST", "-o", "/dev/null", "-w", "%{http_code}") == b"403", "Restricted RPC exposed")
         require(curl(API_HOST, "/api/v0/files/cp", "-X", "POST", "-o", "/dev/null", "-w", "%{http_code}") == b"403", "MFS RPC exposed")
-        uploaded = json.loads(curl(API_HOST, "/api/v0/add?pin=true", "-F", "file=@" + str(work / PAYLOAD_FILENAME), "-H", "Origin: https://staging.6529.io"))["Hash"]
+        uploaded = json.loads(curl(API_HOST, "/api/v0/add?pin=true", "-F", "file=@" + str(work / PAYLOAD_FILENAME), "-H", "Origin: https://6529.io"))["Hash"]
         require(uploaded == cid, "HTTPS upload changed the CID")
         headers = curl(ORIGIN_HOST, IPFS_PREFIX + cid, "-I").decode().lower()
         require("content-length: " + str(len(payload)) in headers and "immutable" in headers, "HEAD/cache header mismatch")
@@ -262,7 +262,7 @@ def main():
             # Exercise the actual backup/restore implementation. Only the S3
             # transport and systemd calls are replaced; the private archive,
             # version selection, checksum, RPC state and recovery are real.
-            config = {"environment": "staging", "region": "us-east-1", "blocksBucket": "fixture-blocks", "backupsBucket": "fixture-backups"}
+            config = {"environment": "prod", "region": "us-east-1", "blocksBucket": "fixture-blocks", "backupsBucket": "fixture-backups"}
             host.SETTINGS = work / "first-settings"
             archive = {}
             def aws_fixture(*args):
@@ -290,7 +290,7 @@ def main():
             host.REPO = second.repo
             host.SETTINGS = work / "settings"
             host.SETTINGS.mkdir()
-            (host.SETTINGS / "managed.json").write_text(json.dumps({"environment": "staging", "role": "candidate"}))
+            (host.SETTINGS / "managed.json").write_text(json.dumps({"environment": "prod", "role": "candidate"}))
             def systemd_fixture(*args):
                 require(args in (("systemctl", "stop", "nginx"), ("systemctl", "start", "nginx")), "Unexpected fixture host mutation")
             host.run = systemd_fixture

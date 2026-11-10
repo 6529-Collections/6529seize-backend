@@ -10,10 +10,13 @@ and verifies backup/restore before publication. It is not a Lambda service in
 production server, data bucket, DNS, and shared media distribution remain outside
 this workflow; production changes are disabled in its checked-in policy.
 
-The future staging order is storage, compute, runtime deployment, backup/restore
-rehearsal on a second candidate, verification, then dedicated gateway publication.
-No backend Lambda or frontend redeploy is needed. Active-host updates are rejected;
-production adoption requires a separately reviewed and validated traffic handover.
+IPFS has one shared deployment target, `prod`; there is no separate IPFS staging
+environment or staging release phase. The workflow runs only from `main` through
+`ipfs-prod`. Local/CI recovery fixtures create no AWS environment. A future
+authorized production rollout must validate an unpublished replacement candidate
+before traffic handover. No backend Lambda or frontend redeploy is needed.
+Active-host updates are rejected; production adoption requires a separately
+reviewed implementation and validated writer/traffic handover.
 
 Agents and developers deploy with ordinary merges and the repository's GitHub
 Actions workflows. Use the phase authorized by the user; a staging request does

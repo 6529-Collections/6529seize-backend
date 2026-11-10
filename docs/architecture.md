@@ -2907,6 +2907,10 @@ and logical pin/MFS/identity backup and restoration. `ipfs-ci.yml` rehearses the
 real binary with disposable loopback S3 and HTTPS fixtures. The explicit-dispatch
 `ipfs-manage.yml` workflow validates the reviewed source, environment, account,
 and candidate identity before assuming deployment authority or sending SSM work.
+IPFS has one shared deployment target, `prod`, with dispatch restricted to `main`
+and the `ipfs-prod` GitHub environment. It has no separate staging deployment.
+Local/CI fixtures create no AWS environment; future production rollouts validate
+an unpublished replacement candidate before traffic handover.
 
 There is no change to the application's IPFS API contract or deployed resources.
 The existing production instance and data bucket are not adopted; production

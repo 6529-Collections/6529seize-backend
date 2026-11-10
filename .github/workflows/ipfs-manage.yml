@@ -4,10 +4,6 @@ name: Manage IPFS infrastructure
 on:
   workflow_dispatch:
     inputs:
-      environment:
-        type: choice
-        required: true
-        options: [staging, prod]
       operation:
         type: choice
         required: true
@@ -42,7 +38,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: ipfs-manage-${{ inputs.environment }}
+  group: ipfs-manage-prod
   cancel-in-progress: false
 
 jobs:
@@ -50,16 +46,15 @@ jobs:
     if: >-
       github.repository == '6529-Collections/6529seize-backend' &&
       github.sha == inputs.expected_source_sha &&
-      ((inputs.environment == 'staging' && github.ref == 'refs/heads/1a-staging') ||
-       (inputs.environment == 'prod' && github.ref == 'refs/heads/main'))
+      github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
-    environment: ipfs-${{ inputs.environment }}
+    environment: ipfs-prod
     timeout-minutes: 180
     permissions:
       contents: read
       id-token: write
     env:
-      IPFS_ENVIRONMENT: ${{ inputs.environment }}
+      IPFS_ENVIRONMENT: prod
       IPFS_OPERATION: ${{ inputs.operation }}
       IPFS_KIND: ${{ inputs.kind }}
       IPFS_SLOT: ${{ inputs.slot }}

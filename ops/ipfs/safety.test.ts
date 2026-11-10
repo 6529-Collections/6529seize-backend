@@ -5,7 +5,7 @@ import { parse } from 'yaml';
 
 const directory = __dirname;
 const config = {
-  environment: 'staging',
+  environment: 'prod',
   accountId: '111111111111',
   region: 'us-east-1',
   blocksBucket: 'fixture-blocks',
@@ -22,7 +22,7 @@ const sha = 'a'.repeat(40);
 const environment = {
   GITHUB_ACTIONS: 'true',
   GITHUB_REPOSITORY: '6529-Collections/6529seize-backend',
-  GITHUB_REF: 'refs/heads/1a-staging',
+  GITHUB_REF: 'refs/heads/main',
   GITHUB_SHA: sha
 };
 
@@ -40,15 +40,16 @@ function python(body: string, value: unknown = config) {
 }
 
 describe('IPFS source, environment and production isolation', () => {
-  test('accepts only the reviewed staging source', () => {
+  test('accepts the reviewed main source', () => {
     expect(
       python(
-        `from common import mutation_guard\nmutation_guard(config,'${sha}',${JSON.stringify(environment)})\nprint('ok')`
+        `from common import source_guard\nsource_guard(config,'${sha}',${JSON.stringify(environment)})\nprint('ok')`
       )
     ).toBe('ok');
   });
 
   test.each([
+    ['separate staging environment', { environment: 'staging' }],
     ['wrong account format', { accountId: 'unknown' }],
     ['production block store', { blocksBucket: '6529ipfs' }],
     ['production backup store', { backupsBucket: '6529ipfs' }],
@@ -69,18 +70,18 @@ describe('IPFS source, environment and production isolation', () => {
 
   test.each([
     { GITHUB_SHA: 'b'.repeat(40) },
-    { GITHUB_REF: 'refs/heads/main' },
+    { GITHUB_REF: 'refs/heads/1a-staging' },
     { GITHUB_ACTIONS: 'false' },
     { GITHUB_REPOSITORY: 'attacker/fork' }
   ])('rejects mismatched dispatch identity %j', (changes) => {
     expect(
       python(
-        `from common import mutation_guard\ntry:\n mutation_guard(config,'${sha}',${JSON.stringify({ ...environment, ...changes })})\nexcept ValueError:\n print('rejected')`
+        `from common import source_guard\ntry:\n source_guard(config,'${sha}',${JSON.stringify({ ...environment, ...changes })})\nexcept ValueError:\n print('rejected')`
       )
     ).toBe('rejected');
   });
 
-  test('production remains disabled even from its correct branch and account', () => {
+  test('production remains disabled with valid configuration and reviewed main source', () => {
     expect(
       python(
         `from common import mutation_guard\ntry:\n mutation_guard(config,'${sha}',${JSON.stringify({ ...environment, GITHUB_REF: 'refs/heads/main' })})\nexcept ValueError as error:\n print(str(error))`,
@@ -91,6 +92,22 @@ describe('IPFS source, environment and production isolation', () => {
 });
 
 describe('IPFS infrastructure and state protections', () => {
+  test('all infrastructure templates and the CLI reject a separate staging target', () => {
+    const environments = JSON.parse(
+      python(
+        `from infrastructure import render\nprint(json.dumps([render(kind)['Parameters']['Environment']['AllowedValues'] for kind in ['access','storage','compute','edge']]))`
+      )
+    );
+    expect(environments).toEqual([['prod'], ['prod'], ['prod'], ['prod']]);
+    const result = spawnSync(
+      'python3',
+      [join(directory, 'control.py'), 'plan', '--environment', 'staging'],
+      { encoding: 'utf8' }
+    );
+    expect(result.status).toBe(2);
+    expect(result.stderr).toContain("invalid choice: 'staging'");
+  });
+
   test('bootstraps repository/environment OIDC trust and bounded runtime roles', () => {
     const access = JSON.parse(
       python('from infrastructure import access\nprint(json.dumps(access()))')
@@ -182,7 +199,7 @@ describe('IPFS infrastructure and state protections', () => {
   test('existing active or untagged hosts fail before a command is sent', () => {
     expect(
       python(
-        `import control\nfor role in ['active','unknown']:\n control.aws=lambda *args: {'Reservations':[{'Instances':[{'State':{'Name':'running'},'Tags':[{'Key':'Service','Value':'6529-ipfs'},{'Key':'Environment','Value':'staging'},{'Key':'IpfsRole','Value':role}]}]}]}\n try:\n  control.candidate(config)\n except ValueError:\n  print('rejected')`
+        `import control\nfor role in ['active','unknown']:\n control.aws=lambda *args: {'Reservations':[{'Instances':[{'State':{'Name':'running'},'Tags':[{'Key':'Service','Value':'6529-ipfs'},{'Key':'Environment','Value':'prod'},{'Key':'IpfsRole','Value':role}]}]}]}\n try:\n  control.candidate(config)\n except ValueError:\n  print('rejected')`
       )
     ).toBe('rejected\nrejected');
   });
@@ -230,7 +247,7 @@ describe('IPFS recovery and artifact integrity', () => {
         protocol: '6529.ipfs.receipt.v1',
         operation: 'backup',
         result: {
-          backupKey: 'staging/fixture/metadata.tar.gz',
+          backupKey: 'prod/fixture/metadata.tar.gz',
           versionId: 'version',
           pinCount: 3,
           ignoredPrivateField: 'fixture-only'
@@ -238,7 +255,7 @@ describe('IPFS recovery and artifact integrity', () => {
       }
     );
     expect(JSON.parse(result)).toEqual({
-      backupKey: 'staging/fixture/metadata.tar.gz',
+      backupKey: 'prod/fixture/metadata.tar.gz',
       versionId: 'version',
       pinCount: 3
     });
@@ -368,9 +385,12 @@ test('management only dispatches explicitly and cannot cancel a running deployme
   );
   expect(Object.keys(workflow.on)).toEqual(['workflow_dispatch']);
   expect(workflow.concurrency['cancel-in-progress']).toBe(false);
-  expect(workflow.jobs.manage.environment).toBe(
-    'ipfs-${{ inputs.environment }}'
+  expect(workflow.on.workflow_dispatch.inputs).not.toHaveProperty(
+    'environment'
   );
+  expect(workflow.jobs.manage.environment).toBe('ipfs-prod');
+  expect(workflow.jobs.manage.env.IPFS_ENVIRONMENT).toBe('prod');
+  expect(workflow.concurrency.group).toBe('ipfs-manage-prod');
   const yaml = JSON.stringify(workflow);
   expect(yaml).toContain('mutation_guard');
   expect(yaml).toContain('expected_source_sha');

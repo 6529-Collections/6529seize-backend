@@ -3,7 +3,9 @@
 This directory owns a reproducible **new IPFS candidate**, its pinned runtime,
 logical backups, restoration, and a dedicated gateway. It does not adopt or
 change the currently serving production resources. Production mutations are
-disabled in `environments/prod.json`. No workflow runs a deployment on push or PR.
+disabled in `environments/prod.json`. There is one shared IPFS deployment target,
+`prod`; the application staging environment does not get a separate IPFS service.
+No workflow runs a deployment on push or PR.
 
 ## Ownership and layout
 
@@ -95,31 +97,34 @@ direct/recursive pins, MFS, restart persistence, a fresh independent identity,
 restoration and its restart, nginx TLS, upload, range/HEAD, and restricted routes.
 It never assumes AWS credentials or contacts live gateways. The fixture is not a
 substitute for AWS IAM, EC2 reboot, Certbot, CloudFront, production-load, or online
-P2P testing. Those require a later authorized staging release.
+P2P testing. Those require explicitly authorized validation of an unpublished
+replacement candidate before production traffic handover. Local/CI fixtures
+create no AWS environment.
 
 The rehearsal also injects an interruption after one MFS subtree has been copied,
 then retries and repeats the completed restore. Every explicit fixture pin's root
 block is retrieved, including the bootstrap directory and retained backup root.
 
-## One-time staging bootstrap
+## One-time production access bootstrap (future authorized rollout)
 
 The initial access roles and mandatory runtime permissions boundary are also
 defined in code. An existing authorized bootstrap operator renders `access` and
-creates `seize-ipfs-staging-access` with `CAPABILITY_NAMED_IAM`, passing
-`Environment=staging`, the existing `GitHubOidcProviderArn`, a dedicated
+creates `seize-ipfs-prod-access` with `CAPABILITY_NAMED_IAM`, passing
+`Environment=prod`, the existing `GitHubOidcProviderArn`, a dedicated
 `HostedZoneId`/`DnsSuffix`, and the exact `GitHubRepositorySubject` prefix if the
 repository uses immutable OIDC IDs. The subject always appends
-`:environment:ipfs-staging`; it cannot select another repository or environment.
+`:environment:ipfs-prod`; it cannot select another repository or environment.
 The stack returns the deployment/service role ARNs and `RuntimeBoundaryArn`.
 Neither Actions nor any other IPFS stack can modify this access stack or boundary.
-Review these policies and rehearse them in AWS before promotion; schema validation
-does not establish that all service authorization paths work.
+This bootstrap requires separate explicit authorization; it has not been executed.
+Review the policies and validate their AWS authorization paths before serving
+traffic; schema validation alone does not establish that they work.
 
 ```bash
 python3 ops/ipfs/infrastructure.py access > /tmp/ipfs-access.json
 ```
 
-1. Create GitHub environment `ipfs-staging`, restricted to `1a-staging`. Reuse
+1. Create GitHub environment `ipfs-prod`, restricted to `main`. Reuse
    the existing GitHub OIDC provider; do not configure long-lived AWS access keys.
 2. Review and create the access stack above with existing bootstrap authority.
    Its controller policy scopes stack mutations, SSM targets, artifact writes,
@@ -130,7 +135,7 @@ python3 ops/ipfs/infrastructure.py access > /tmp/ipfs-access.json
 3. Verify the dedicated DNS suffix, runtime permissions boundary, and generated
    bucket namespace against the actual account. The service role can create
    new EC2 and CloudFront resources; validate those AWS authorization paths and
-   the instance's SSM/S3/ACME access during the staging rehearsal.
+   the replacement instance's SSM/S3/ACME access before any traffic handover.
 4. Set environment variables `IPFS_DEPLOY_ROLE_ARN`,
    `IPFS_CLOUDFORMATION_ROLE_ARN`, `IPFS_REGION`, `IPFS_ACCOUNT_ID`, and
    `IPFS_CONFIG` (JSON, **no credentials**). Their account/region must agree.
@@ -139,15 +144,15 @@ Configuration shape (replace all example values):
 
 ```json
 {
-  "environment": "staging",
+  "environment": "prod",
   "accountId": "111111111111",
   "region": "us-east-1",
-  "blocksBucket": "new-staging-blocks-bucket",
-  "backupsBucket": "new-staging-backups-bucket",
-  "artifactsBucket": "new-staging-artifacts-bucket",
-  "originHost": "ipfs-origin-staging.example.com",
-  "apiHost": "ipfs-api-staging.example.com",
-  "gatewayHost": "ipfs-staging.example.com",
+  "blocksBucket": "new-prod-blocks-bucket",
+  "backupsBucket": "new-prod-backups-bucket",
+  "artifactsBucket": "new-prod-artifacts-bucket",
+  "originHost": "ipfs-origin-candidate.example.com",
+  "apiHost": "ipfs-api-candidate.example.com",
+  "gatewayHost": "ipfs-candidate.example.com",
   "hostedZoneId": "Z123456789",
   "acmeEmail": "operations@example.com",
   "instanceId": "i-11111111111111111"
@@ -164,13 +169,16 @@ an EIP is assigned without exposing SSH, RPC, or the raw gateway.
 
 ## Explicit Actions operations
 
-After the normal authorized merge into `1a-staging`, dispatch
-`.github/workflows/ipfs-manage.yml` with environment `staging` and the exact
-reviewed `expected_source_sha`. `main` is the only production source branch, but
-production operations are currently disabled by policy before AWS authentication.
-One concurrency group serializes all operations per environment; runs never
-cancel each other. Inputs are passed as arguments or environment data, never
-interpolated into shell source.
+After an explicitly authorized merge into `main`, dispatch
+`.github/workflows/ipfs-manage.yml` with the exact reviewed `expected_source_sha`.
+There is no deployment-environment selector: the workflow uses only `ipfs-prod`,
+and the controller and all templates accept only `prod`. Mutations remain disabled
+by the checked-in policy before AWS authentication. Enabling them and adopting the
+existing resources require a separately reviewed rollout; changing the policy
+alone does not remove the existing-resource fences below.
+One concurrency group serializes all IPFS operations; runs never cancel each other.
+Inputs are passed as arguments or environment data, never interpolated into shell
+source.
 
 | Operation               | Effect                                                                                                                   |
 | ----------------------- | ------------------------------------------------------------------------------------------------------------------------ |
@@ -189,11 +197,15 @@ Data settings and ACME hostnames come from config and cannot be
 overridden by workflow parameters. Edge parameters are `PublicIp` and
 `CertificateArn`. All template parameters are checked before AWS calls.
 
-Suggested staging sequence: storage → compute → deploy → upload fixture content
-→ backup → second compute slot → deploy → restore → verify → publish edge for
-that verified slot. Check HTTPS/CORS, all public restricted routes, byte ranges,
-CloudFront behavior, EC2 reboot persistence, alarms/notifications, and a rollback
-drill. Attach the evidence to the promotion PR. No Lambda redeploy is required.
+For a future authorized production rollout, provision access/storage as needed,
+create an unpublished replacement compute slot, deploy, restore the recorded state,
+and verify it before any traffic handover. A temporary replacement server is part
+of the production deployment procedure, not a separate staging IPFS environment.
+Check HTTPS/CORS, public restricted routes, byte ranges, CloudFront behavior, reboot
+persistence, alarms/notifications, and rollback. Existing data adoption and the
+writer/traffic handover still require the implementation described below. Do not
+publish an isolated empty bucket as a replacement for production content. Attach
+validation evidence to the rollout PR. No Lambda redeploy is required.
 
 Published hosts are sealed locally and tagged active before DNS can point to
 them. Deployment and restore refuse active hosts; backups and verification can
@@ -218,8 +230,9 @@ requires a fresh candidate. Failed infrastructure creation or installation uses
 a new immutable slot, with retained resources inventoried before later cleanup.
 
 The native rehearsal uses self-signed loopback TLS and consumes no ACME quota.
-For repeated AWS DNS/ACME troubleshooting, first use Let's Encrypt's staging
-service (`certbot --staging`) on disposable dedicated hostnames. Those certificates
+For repeated DNS/ACME troubleshooting, first use the certificate authority's test
+endpoint (`certbot --staging`) on disposable dedicated hostnames. This is a TLS
+issuance test, not a separate IPFS deployment environment. Those certificates
 are not publicly trusted and must not be published behind CloudFront. Normal
 installation requests a publicly trusted certificate and stops on issuance
 failure; it does not repeatedly retry ACME. Recreating candidates can hit both

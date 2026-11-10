@@ -78,14 +78,14 @@ def storage():
                 "Condition": {"Bool": {"aws:SecureTransport": "false"}},
             }]},
         })
-    return template({"Environment": parameter(AllowedValues=["staging", "prod"])},
+    return template({"Environment": parameter(AllowedValues=["prod"])},
                     resources, {name + "Bucket": ref(name) for name in ("Blocks", "Backups", "Artifacts")})
 
 
 def access():
     """One-time operator bootstrap; never implicitly deployed by Actions."""
     parameters = {
-        "Environment": parameter(AllowedValues=["staging", "prod"]),
+        "Environment": parameter(AllowedValues=["prod"]),
         "GitHubOidcProviderArn": parameter(Description="Existing GitHub OIDC provider ARN"),
         "GitHubRepositorySubject": parameter(Default="repo:6529-Collections/6529seize-backend",
             AllowedPattern=r"repo:6529-Collections(@[0-9]+)?/6529seize-backend(@[0-9]+)?",
@@ -204,7 +204,7 @@ def access():
 
 def compute():
     parameters = {
-        "Environment": parameter(AllowedValues=["staging", "prod"]),
+        "Environment": parameter(AllowedValues=["prod"]),
         "VpcId": parameter("AWS::EC2::VPC::Id"),
         "SubnetId": parameter("AWS::EC2::Subnet::Id"),
         "ImageId": parameter("AWS::EC2::Image::Id", Description="Pinned Ubuntu 24.04 amd64 AMI with SSM Agent"),
@@ -306,7 +306,7 @@ def edge():
     # Dedicated new hostnames only. Never use this to replace the shared production
     # distribution: its Arweave/S3 behaviors are owned elsewhere.
     parameters = {
-        "Environment": parameter(AllowedValues=["staging", "prod"]),
+        "Environment": parameter(AllowedValues=["prod"]),
         "OriginHost": parameter(AllowedPattern=HOST_PATTERN),
         "GatewayHost": parameter(AllowedPattern=HOST_PATTERN),
         "ApiHost": parameter(AllowedPattern=HOST_PATTERN),

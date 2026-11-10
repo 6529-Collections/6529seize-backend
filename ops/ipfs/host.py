@@ -107,7 +107,7 @@ def configure_repo(config, repo=REPO, endpoint=None):
     data["Addresses"]["Gateway"] = "/ip4/127.0.0.1/tcp/8080"
     data["Routing"]["Type"] = "dhtclient"
     data["API"]["HTTPHeaders"] = {
-        "Access-Control-Allow-Origin": ["https://6529.io"] if config["environment"] == "prod" else ["https://staging.6529.io"],
+        "Access-Control-Allow-Origin": ["https://6529.io"],
         "Access-Control-Allow-Methods": ["POST", "OPTIONS"],
     }
     path.write_text(json.dumps(data, indent=2))
