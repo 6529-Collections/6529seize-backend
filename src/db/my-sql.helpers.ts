@@ -35,6 +35,10 @@ import {
   retireProxySession,
   sqlFingerprint
 } from '@/db/proxy-session-pinning';
+import {
+  assertNamedParametersBindable,
+  formatNamedParameters
+} from '@/db/sql-named-parameters';
 
 const logger = Logger.get('MYSQL_HELPERS');
 
@@ -343,6 +347,22 @@ export async function execSQLWithParams<T>(
   options?: DbQueryOptions,
   timing?: SqlOperationTiming
 ): Promise<T[]> {
+  // Check parameter values before the driver formats the statement: a throw
+  // from queryFormat would skip onResult and keep a borrowed connection.
+  try {
+    assertNamedParametersBindable(sql, params);
+  } catch (error) {
+    settleProxySession({
+      connection,
+      sql,
+      statementBytes: null,
+      privateFamily: null,
+      closeConnection,
+      pool: timing?.pool,
+      pinScope: captureProxyPinScope()
+    });
+    throw error;
+  }
   return withSqlBudgetQueryOptions(
     connection,
     options,
@@ -479,14 +499,5 @@ function privateFingerprint(family: PrivateQueryFamily, sql: string): string {
 }
 
 function prepareStatement(query: string, values: Record<string, any>) {
-  return query.replace(/:(\w+)/g, function (txt: any, key: any) {
-    if (values.hasOwnProperty(key)) {
-      const value = values[key];
-      if (Array.isArray(value)) {
-        return value.map((v) => mysql.escape(v)).join(', ');
-      }
-      return mysql.escape(value);
-    }
-    return txt;
-  });
+  return formatNamedParameters(query, values);
 }
