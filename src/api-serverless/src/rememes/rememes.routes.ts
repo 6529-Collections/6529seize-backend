@@ -41,6 +41,18 @@ export const RememesQuerySchema: Joi.ObjectSchema<RememesQuery> =
     token_type: Joi.string().pattern(ALPHANUMERIC).max(50).allow('')
   }).unknown(true);
 
+/** Parses JSON columns in place and drops internal processing fields. */
+export function toPublicRememeRow(row: any): any {
+  row.metadata = JSON.parse(row.metadata);
+  row.media = JSON.parse(row.media);
+  row.contract_opensea_data = JSON.parse(row.contract_opensea_data);
+  row.meme_references = JSON.parse(row.meme_references);
+  row.replicas = row.replicas.split(',');
+  // Media-processing diagnostics are internal; they are not part of the API.
+  delete row.s3_image_processing_error;
+  return row;
+}
+
 router.get(``, async function (req: any, res: any) {
   const query = getValidatedByJoiOrThrow(req.query, RememesQuerySchema);
   const memeIds = query.meme_id;
@@ -72,13 +84,7 @@ router.get(``, async function (req: any, res: any) {
       sortDir
     )
     .then((result) => {
-      result.data.map((a: any) => {
-        a.metadata = JSON.parse(a.metadata);
-        a.media = JSON.parse(a.media);
-        a.contract_opensea_data = JSON.parse(a.contract_opensea_data);
-        a.meme_references = JSON.parse(a.meme_references);
-        a.replicas = a.replicas.split(',');
-      });
+      result.data.forEach(toPublicRememeRow);
       return returnPaginatedResult(result, req, res);
     });
 });
