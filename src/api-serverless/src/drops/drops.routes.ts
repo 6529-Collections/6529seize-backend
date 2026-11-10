@@ -201,6 +201,13 @@ router.post(
       apiRequest,
       NewDropSchema
     );
+    // A proxy grant may be scoped to a wave allowlist. Checked on the
+    // validated wave id, before any signature or visibility work.
+    if (!authenticationContext.hasRightsToPostInWave(newDrop.wave_id)) {
+      throw new ForbiddenException(
+        `Proxy is not allowed to create drops in this wave`
+      );
+    }
     const invalidPart = newDrop.parts.find(
       (part) =>
         (part.content?.trim()?.length ?? 0) === 0 &&
@@ -339,6 +346,13 @@ router.post(
     const waveId = await dropsDb.findWaveIdByDropId(dropId, { timer });
     if (!waveId) {
       throw new NotFoundException(`Could not find drop ${dropId}'s wave`);
+    }
+    // Editing as a proxy needs the same CREATE_DROP_TO_WAVE grant, scoped to
+    // the drop's wave, as creating. The author check in updateDrop still runs.
+    if (!authenticationContext.hasRightsToPostInWave(waveId)) {
+      throw new ForbiddenException(
+        `Proxy is not allowed to edit drops in this wave`
+      );
     }
     await assertDropIsCorrectlySigned(
       {

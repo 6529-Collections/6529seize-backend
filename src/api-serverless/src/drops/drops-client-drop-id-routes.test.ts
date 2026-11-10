@@ -6,6 +6,7 @@ import {
   CustomApiCompliantException
 } from '@/exceptions';
 import * as auth from '@/api/auth/auth';
+import { AuthenticationContext } from '@/auth-context';
 import { wavesApiDb } from '@/api/waves/waves.api.db';
 import { identityFetcher } from '@/api/identities/identity.fetcher';
 import { dropCreationService } from '@/api/drops/drop-creation.api.service';
@@ -90,11 +91,9 @@ describe('POST /drops with client_drop_id (waves R11-5)', () => {
       drop: entry({ client_drop_id: CLIENT_DROP_ID }) as never,
       termsOfService: TERMS
     });
-    jest.spyOn(auth, 'getAuthenticationContext').mockResolvedValue({
-      getActingAsId: () => 'author-profile',
-      isAuthenticatedAsProxy: () => false,
-      isUserFullyAuthenticated: () => true
-    } as Awaited<ReturnType<typeof auth.getAuthenticationContext>>);
+    jest
+      .spyOn(auth, 'getAuthenticationContext')
+      .mockResolvedValue(AuthenticationContext.fromProfileId('author-profile'));
     jest.spyOn(wavesApiDb, 'findWaveById').mockResolvedValue({
       id: WAVE_ID,
       name: 'Signed wave',

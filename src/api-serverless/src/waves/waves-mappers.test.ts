@@ -452,3 +452,123 @@ describe('WavesMappers', () => {
     expect(mapped.voting.credit_scope).toBe(ApiWaveCreditScope.Wave);
   });
 });
+
+import { AuthenticationContext } from '@/auth-context';
+import { ProfileProxyActionType } from '@/entities/IProfileProxyAction';
+
+describe('WavesMappers with a wave-scoped proxy grant', () => {
+  function proxyContext(waveAllowlist: readonly string[] | null) {
+    return new AuthenticationContext({
+      authenticatedWallet: '0xgrantee',
+      authenticatedProfileId: 'grantee',
+      roleProfileId: 'grantor',
+      activeProxyActions: [
+        {
+          id: 'post',
+          type: ProfileProxyActionType.CREATE_DROP_TO_WAVE,
+          credit_amount: null,
+          credit_spent: null,
+          wave_allowlist: waveAllowlist
+        }
+      ]
+    });
+  }
+
+  function waveEntity(id: string) {
+    return {
+      ...aWave({ type: WaveType.CHAT }, { id, name: id, serial_no: 1 }),
+      participation_required_metadata: [],
+      participation_required_media: []
+    };
+  }
+
+  async function map(
+    authenticationContext: AuthenticationContext,
+    noRightToParticipate = false
+  ) {
+    const mapper = new WavesMappers({} as any, {} as any, {} as any, {} as any);
+    const waves = [waveEntity('wave-1'), waveEntity('wave-2')];
+    const metrics = Object.fromEntries(
+      waves.map((wave) => [
+        wave.id,
+        {
+          wave_id: wave.id,
+          drops_count: 0,
+          subscribers_count: 0,
+          participatory_drops_count: 0,
+          latest_drop_timestamp: 0
+        }
+      ])
+    );
+    jest.spyOn(mapper as any, 'getRelatedData').mockResolvedValue({
+      contributors: {},
+      profiles: Object.fromEntries(
+        waves.map((wave) => [wave.created_by, { id: wave.created_by }])
+      ),
+      curations: {},
+      displayByWaveId: {},
+      creationDrops: Object.fromEntries(
+        waves.map((wave) => [
+          wave.description_drop_id,
+          { id: wave.description_drop_id }
+        ])
+      ),
+      subscribedActions: {},
+      metrics,
+      authenticatedUserMetrics: {},
+      authenticatedUserReaderMetrics: {},
+      chatDropCooldowns: {},
+      yourParticipationDropsCountByWaveId: {},
+      yourUnreadDropsCountByWaveId: {},
+      firstUnreadDropSerialNoByWaveId: {},
+      wavePauses: {},
+      decisionsDoneByWaveId: {},
+      votingCreditNftsByWaveId: {},
+      pinnedWaveIds: new Set<string>(),
+      identityWaveIds: new Set<string>(),
+      authenticatedUserId: 'grantor'
+    });
+    const mapped = await mapper.waveEntitiesToApiWaves(
+      {
+        waveEntities: waves,
+        groupIdsUserIsEligibleFor: [],
+        noRightToVote: false,
+        noRightToParticipate
+      },
+      { authenticationContext }
+    );
+    return Object.fromEntries(
+      mapped.map((wave) => [
+        wave.id,
+        wave.participation.authenticated_user_eligible
+      ])
+    );
+  }
+
+  it('reports a restricted proxy ineligible only in waves outside its allowlist', async () => {
+    await expect(map(proxyContext(['wave-1']))).resolves.toEqual({
+      'wave-1': true,
+      'wave-2': false
+    });
+  });
+
+  it('keeps a legacy grant eligible everywhere', async () => {
+    await expect(map(proxyContext(null))).resolves.toEqual({
+      'wave-1': true,
+      'wave-2': true
+    });
+  });
+
+  it('never overrides a caller that already denied participation', async () => {
+    await expect(map(proxyContext(['wave-1']), true)).resolves.toEqual({
+      'wave-1': false,
+      'wave-2': false
+    });
+  });
+
+  it('does not touch a non-proxy user', async () => {
+    await expect(
+      map(AuthenticationContext.fromProfileId('grantor'))
+    ).resolves.toEqual({ 'wave-1': true, 'wave-2': true });
+  });
+});

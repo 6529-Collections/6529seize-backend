@@ -57,14 +57,23 @@ export function getWaveMinPermissionMask(
 ): {
   noRightToVote: boolean;
   noRightToParticipate: boolean;
+  /**
+   * Per-wave form of `noRightToParticipate`: also true for a proxy whose
+   * CREATE_DROP_TO_WAVE grant is scoped to an allowlist that omits the wave.
+   */
+  noRightToParticipateIn: (waveId: string) => boolean;
 } {
+  const noRightToParticipate = !authenticationContext?.hasRightsTo(
+    ProfileProxyActionType.CREATE_DROP_TO_WAVE
+  );
   return {
     noRightToVote: !authenticationContext?.hasRightsTo(
       ProfileProxyActionType.RATE_WAVE_DROP
     ),
-    noRightToParticipate: !authenticationContext?.hasRightsTo(
-      ProfileProxyActionType.CREATE_DROP_TO_WAVE
-    )
+    noRightToParticipate,
+    noRightToParticipateIn: (waveId: string) =>
+      noRightToParticipate ||
+      !authenticationContext?.hasRightsToPostInWave(waveId)
   };
 }
 

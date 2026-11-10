@@ -9,13 +9,16 @@ import {
   AuthenticationContext
 } from '../../../auth-context';
 import { ProfileProxyActionType } from '../../../entities/IProfileProxyAction';
-import { Time, Timer } from '../../../time';
-import * as mcache from 'memory-cache';
+import { Timer } from '../../../time';
 import { identitiesDb } from '../../../identities/identities.db';
 import { identityFetcher } from '../identities/identity.fetcher';
 import { enums } from '../../../enums';
 import { loggerContext } from '../../../logger-context';
 import { UnauthorisedException } from '@/exceptions';
+import {
+  getCachedAuthenticationContext,
+  putCachedAuthenticationContext
+} from './auth-context-cache';
 
 export function getJwtSecret(): string {
   const jwtsecret = process.env.JWT_SECRET;
@@ -126,8 +129,10 @@ export async function getAuthenticationContext(
     return AuthenticationContext.notAuthenticated();
   }
   const roleProfileId = (req.user as any).role as string | null;
-  const cacheKey = `auth-context-${authenticatedWallet}-${roleProfileId}`;
-  const cachedContext = mcache.get(cacheKey);
+  const cachedContext = getCachedAuthenticationContext(
+    authenticatedWallet,
+    roleProfileId
+  );
   if (cachedContext) {
     return cachedContext;
   }
@@ -154,7 +159,8 @@ export async function getAuthenticationContext(
             id: action.id,
             type: enums.resolve(ProfileProxyActionType, action.action_type)!,
             credit_spent: action.credit_spent,
-            credit_amount: action.credit_amount
+            credit_amount: action.credit_amount,
+            wave_allowlist: action.wave_allowlist ?? null
           }))
       );
   }
@@ -168,7 +174,11 @@ export async function getAuthenticationContext(
   // A wallet without a profile is usually about to create one. Caching that
   // answer would keep the new profile invisible on this instance for a minute.
   if (authenticatedProfileId) {
-    mcache.put(cacheKey, authenticationContext, Time.minutes(1).toMillis());
+    putCachedAuthenticationContext(
+      authenticatedWallet,
+      roleProfileId,
+      authenticationContext
+    );
   }
   return authenticationContext;
 }

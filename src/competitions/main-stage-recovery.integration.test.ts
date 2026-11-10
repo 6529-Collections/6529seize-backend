@@ -98,7 +98,8 @@ const proxyContext = {
         id: 'recovery-proxy-rate',
         type: ProfileProxyActionType.RATE_WAVE_DROP,
         credit_amount: null,
-        credit_spent: null
+        credit_spent: null,
+        wave_allowlist: null
       }
     ]
   })

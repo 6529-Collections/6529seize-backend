@@ -15,6 +15,20 @@ import {
   LazyDbAccessCompatibleService
 } from '../sql-executor';
 import { Time } from '../time';
+import {
+  parseStoredWaveAllowlist,
+  serializeWaveAllowlist
+} from './proxy-wave-allowlist';
+
+function toProfileProxyActionEntity(
+  row: Record<string, any>
+): ProfileProxyActionEntity {
+  return {
+    ...(row as ProfileProxyActionEntity),
+    is_active: !!row.is_active,
+    wave_allowlist: parseStoredWaveAllowlist(row.wave_allowlist)
+  };
+}
 
 export class ProfileProxiesDb extends LazyDbAccessCompatibleService {
   async insertProfileProxy({
@@ -126,7 +140,7 @@ export class ProfileProxiesDb extends LazyDbAccessCompatibleService {
   }): Promise<{ actionId: string }> {
     const actionId = randomUUID();
     await this.db.execute(
-      `insert into ${PROFILE_PROXY_ACTIONS_TABLE} (id, proxy_id, action_type, credit_amount, credit_spent, start_time, end_time, created_at) values (:id, :proxy_id, :action_type, :credit_amount, :credit_spent, :start_time, :end_time, :created_at)`,
+      `insert into ${PROFILE_PROXY_ACTIONS_TABLE} (id, proxy_id, action_type, credit_amount, credit_spent, start_time, end_time, wave_allowlist, created_at) values (:id, :proxy_id, :action_type, :credit_amount, :credit_spent, :start_time, :end_time, :wave_allowlist, :created_at)`,
       {
         id: actionId,
         proxy_id: profileProxyAction.proxy_id,
@@ -135,6 +149,9 @@ export class ProfileProxiesDb extends LazyDbAccessCompatibleService {
         credit_spent: profileProxyAction.credit_spent,
         start_time: profileProxyAction.start_time,
         end_time: profileProxyAction.end_time,
+        wave_allowlist: serializeWaveAllowlist(
+          profileProxyAction.wave_allowlist
+        ),
         created_at: Time.currentMillis()
       },
       { wrappedConnection: connection }
@@ -158,11 +175,7 @@ export class ProfileProxiesDb extends LazyDbAccessCompatibleService {
     if (!actions.length) {
       return null;
     }
-    const action = actions[0];
-    return {
-      ...action,
-      is_active: !!action.is_active
-    };
+    return toProfileProxyActionEntity(actions[0]);
   }
 
   async findProfileProxyActionsByProxyIdAndActionType({
@@ -180,10 +193,7 @@ export class ProfileProxiesDb extends LazyDbAccessCompatibleService {
       { proxy_id, action_type },
       opts
     );
-    return actions.map((action) => ({
-      ...action,
-      is_active: !!action.is_active
-    }));
+    return actions.map(toProfileProxyActionEntity);
   }
 
   async findProfileProxyReceivedActionsByProfileId({
@@ -199,10 +209,7 @@ export class ProfileProxiesDb extends LazyDbAccessCompatibleService {
       { target_id },
       opts
     );
-    return actions.map((action) => ({
-      ...action,
-      is_active: !!action.is_active
-    }));
+    return actions.map(toProfileProxyActionEntity);
   }
 
   async findProfileProxyGrantedActionsByProfileId({
@@ -218,10 +225,7 @@ export class ProfileProxiesDb extends LazyDbAccessCompatibleService {
       { created_by },
       opts
     );
-    return actions.map((action) => ({
-      ...action,
-      is_active: !!action.is_active
-    }));
+    return actions.map(toProfileProxyActionEntity);
   }
 
   async findProfileProxyGrantedActionsByGrantorAndGrantee({
@@ -240,10 +244,7 @@ export class ProfileProxiesDb extends LazyDbAccessCompatibleService {
       `,
       { grantor, grantee }
     );
-    return actions.map((action) => ({
-      ...action,
-      is_active: !!action.is_active
-    }));
+    return actions.map(toProfileProxyActionEntity);
   }
 
   async findProfileProxyActionsByProxyId({
@@ -259,10 +260,7 @@ export class ProfileProxiesDb extends LazyDbAccessCompatibleService {
       { proxy_id },
       opts
     );
-    return actions.map((action) => ({
-      ...action,
-      is_active: !!action.is_active
-    }));
+    return actions.map(toProfileProxyActionEntity);
   }
 
   async findActiveProfileProxyActionsByProxyIds({
@@ -274,7 +272,7 @@ export class ProfileProxiesDb extends LazyDbAccessCompatibleService {
       return [];
     }
     const now = Time.currentMillis();
-    return await this.db.execute<ProfileProxyActionEntity>(
+    const actions = await this.db.execute<Record<string, any>>(
       `select * from ${PROFILE_PROXY_ACTIONS_TABLE} 
       where proxy_id in (:proxy_ids) 
       and start_time <= :now 
@@ -284,6 +282,7 @@ export class ProfileProxiesDb extends LazyDbAccessCompatibleService {
       and (accepted_at is not null and accepted_at < :now)`,
       { proxy_ids, now }
     );
+    return actions.map(toProfileProxyActionEntity);
   }
 
   async acceptProfileProxyAction({
@@ -360,28 +359,34 @@ export class ProfileProxiesDb extends LazyDbAccessCompatibleService {
     action_id,
     credit_amount,
     end_time,
+    wave_allowlist,
     connection
   }: {
     readonly action_id: string;
     readonly credit_amount?: number;
     readonly end_time?: number | null;
+    /** `undefined` leaves the stored scope untouched. */
+    readonly wave_allowlist?: readonly string[];
     readonly connection?: ConnectionWrapper<any>;
   }): Promise<void> {
-    if (!credit_amount && end_time === undefined) {
-      return;
-    }
+    const assignments: string[] = [];
     const params: Record<string, any> = { id: action_id };
-    let query = `update ${PROFILE_PROXY_ACTIONS_TABLE} set `;
     if (credit_amount) {
-      query += `credit_amount = :credit_amount`;
+      assignments.push(`credit_amount = :credit_amount`);
       params.credit_amount = credit_amount;
     }
     if (end_time !== undefined) {
-      query += `${credit_amount ? ', ' : ''}end_time = :end_time`;
+      assignments.push(`end_time = :end_time`);
       params.end_time = end_time;
     }
-    query += ` where id = :id`;
-
+    if (wave_allowlist !== undefined) {
+      assignments.push(`wave_allowlist = :wave_allowlist`);
+      params.wave_allowlist = serializeWaveAllowlist(wave_allowlist);
+    }
+    if (!assignments.length) {
+      return;
+    }
+    const query = `update ${PROFILE_PROXY_ACTIONS_TABLE} set ${assignments.join(', ')} where id = :id`;
     await this.db.execute(query, params, { wrappedConnection: connection });
   }
 

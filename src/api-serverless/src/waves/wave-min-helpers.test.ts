@@ -110,3 +110,91 @@ describe('mapWaveToApiWaveMin', () => {
     expect(mapped.voting_credit_scope).toBe('WAVE');
   });
 });
+
+import { getWaveMinPermissionMask } from '@/api/waves/wave-min.helpers';
+import { AuthenticationContext } from '@/auth-context';
+import { ProfileProxyActionType } from '@/entities/IProfileProxyAction';
+
+describe('getWaveMinPermissionMask with a wave-scoped proxy grant', () => {
+  function proxyContext(waveAllowlist: readonly string[] | null) {
+    return new AuthenticationContext({
+      authenticatedWallet: '0xgrantee',
+      authenticatedProfileId: 'grantee',
+      roleProfileId: 'grantor',
+      activeProxyActions: [
+        {
+          id: 'post',
+          type: ProfileProxyActionType.CREATE_DROP_TO_WAVE,
+          credit_amount: null,
+          credit_spent: null,
+          wave_allowlist: waveAllowlist
+        }
+      ]
+    });
+  }
+
+  function participationFlag(noRightToParticipate: boolean): boolean {
+    return mapWaveToApiWaveMin({
+      wave: {
+        id: 'wave-2',
+        name: 'Wave 2',
+        picture: null,
+        description_drop_id: 'd',
+        created_by: 'creator',
+        last_drop_time: 0,
+        submission_type: null,
+        chat_enabled: true,
+        chat_group_id: null,
+        chat_replies_open: false,
+        voting_group_id: null,
+        participation_group_id: null,
+        admin_group_id: null,
+        voting_credit_type: 'TDH',
+        voting_credit_scope: 'WAVE',
+        voting_credit_nfts: null,
+        voting_period_start: null,
+        voting_period_end: null,
+        visibility_group_id: null,
+        admin_drop_deletion_enabled: false,
+        forbid_negative_votes: false
+      },
+      displayByWaveId: {},
+      groupIdsUserIsEligibleFor: [],
+      noRightToVote: false,
+      noRightToParticipate,
+      pinned: false,
+      identityWave: false,
+      authenticatedProfileId: 'grantee'
+    }).authenticated_user_eligible_to_participate;
+  }
+
+  it('keeps the wave-independent flag and adds a per-wave one', () => {
+    const mask = getWaveMinPermissionMask(proxyContext(['wave-1']));
+    expect(mask.noRightToParticipate).toBe(false);
+    expect(mask.noRightToParticipateIn('wave-1')).toBe(false);
+    expect(mask.noRightToParticipateIn('wave-2')).toBe(true);
+    expect(participationFlag(mask.noRightToParticipateIn('wave-2'))).toBe(
+      false
+    );
+    expect(participationFlag(mask.noRightToParticipateIn('wave-1'))).toBe(true);
+  });
+
+  it('is unrestricted for a legacy grant and for a non-proxy user', () => {
+    expect(
+      getWaveMinPermissionMask(proxyContext(null)).noRightToParticipateIn(
+        'wave-2'
+      )
+    ).toBe(false);
+    expect(
+      getWaveMinPermissionMask(
+        AuthenticationContext.fromProfileId('me')
+      ).noRightToParticipateIn('wave-2')
+    ).toBe(false);
+  });
+
+  it('denies everything without a context', () => {
+    const mask = getWaveMinPermissionMask(undefined);
+    expect(mask.noRightToParticipate).toBe(true);
+    expect(mask.noRightToParticipateIn('wave-1')).toBe(true);
+  });
+});

@@ -97,7 +97,8 @@ describe('quick vote window handler', () => {
                 id: 'action',
                 type: action,
                 credit_amount: null,
-                credit_spent: null
+                credit_spent: null,
+                wave_allowlist: null
               }
             ]
           : []

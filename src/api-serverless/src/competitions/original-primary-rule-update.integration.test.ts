@@ -142,7 +142,8 @@ describeWithSeed('Original primary native rule update policy', [], () => {
           id: 'proxy-action',
           type: ProfileProxyActionType.CREATE_WAVE,
           credit_amount: null,
-          credit_spent: null
+          credit_spent: null,
+          wave_allowlist: null
         }
       ]
     });
