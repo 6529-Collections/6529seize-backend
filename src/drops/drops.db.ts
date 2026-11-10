@@ -1173,8 +1173,13 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     }
   }
 
+  /**
+   * Hydrates light drops by id. Drops in waves the viewer cannot read are
+   * left out whatever ids are passed in.
+   */
   async findLightDropsByIds(
     dropIds: string[],
+    groupIdsUserIsEligibleFor: string[],
     ctx: RequestContext
   ): Promise<DropWithMediaAndPart[]> {
     if (!dropIds.length) {
@@ -1185,6 +1190,9 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     ctx.timer?.start(timerLabel);
     try {
       const dropFields = this.getDropEntitySelectFields('d');
+      const visibleWaveFilter = this.getVisibleWaveFilterSql(
+        groupIdsUserIsEligibleFor
+      );
       return await this.db.execute<DropWithMediaAndPart>(
         `select ${dropFields},
     dp.drop_part_id as part_drop_part_id,
@@ -1233,8 +1241,9 @@ export class DropsDb extends LazyDbAccessCompatibleService {
          join ${legacyGetView(WAVES_TABLE)} w on d.wave_id = w.id
          join ${IDENTITIES_TABLE} i on i.profile_id = d.author_id
          where d.id in (:dropIds)
+           and (${visibleWaveFilter})
          order by d.serial_no desc`,
-        { dropIds },
+        { dropIds, groupsUserIsEligibleFor: groupIdsUserIsEligibleFor },
         { wrappedConnection: ctx.connection }
       );
     } finally {

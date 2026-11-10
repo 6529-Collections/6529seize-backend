@@ -237,6 +237,7 @@ export class DropsApiService {
         );
     const entities = await this.dropsDb.findLightDropsByIds(
       lightDropIds.map((it) => it.id),
+      group_ids_user_is_eligible_for,
       ctx
     );
     const hiddenDropIds = await competitionAnonymityService.hiddenDropIds(

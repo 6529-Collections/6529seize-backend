@@ -1,4 +1,5 @@
 import { Request, Response } from 'express';
+import { optionalQueryString } from '@/api/query-values';
 import * as Joi from 'joi';
 import { REP_CATEGORY_PATTERN } from '@/entities/IAbusivenessDetectionResult';
 import { RateMatter } from '@/entities/IRating';
@@ -228,7 +229,8 @@ router.get(
     const timer = Timer.getFromRequest(req);
     const authenticationContext = await getAuthenticationContext(req, timer);
     await assertWaveVisible(req.params.id, { authenticationContext, timer });
-    const fromIdentity = req.query.from_identity?.trim() || null;
+    const fromIdentity =
+      optionalQueryString(req.query, 'from_identity')?.trim() || null;
     const raterProfileId = fromIdentity
       ? await identityFetcher.getProfileIdByIdentityKey(
           { identityKey: fromIdentity },
@@ -243,7 +245,7 @@ router.get(
       rater_profile_id: raterProfileId,
       matter_target_id: req.params.id,
       matter: RateMatter.WAVE_REP,
-      category: req.query.category ?? null
+      category: optionalQueryString(req.query, 'category') ?? null
     });
     res.send({ rating });
   }
