@@ -73,11 +73,8 @@ import {
   getApproveWaveDecisionCounts,
   isApproveWaveClosed
 } from '@/waves/wave-approve.helpers';
-import { resolveNextDropAllowed } from '@/waves/wave-chat-slow-mode.helpers';
-import {
-  canDeleteRepliesInWave,
-  canReplyInWaveChat
-} from '@/waves/wave-chat-replies.helpers';
+import { canDeleteRepliesInWave } from '@/waves/wave-chat-replies.helpers';
+import { evaluateWavePolicyDecisions } from '@/waves/wave-participation-decision';
 import {
   mapWaveRepSummary,
   mapWaveScore
@@ -461,22 +458,20 @@ export class WavesMappers {
         wave: waveEntity,
         groupIdsUserIsEligibleFor
       });
-    const nextDropAllowed = resolveNextDropAllowed({
+    // Visibility is the API's 404 concern and the unencrypted-DM cutoff never
+    // shaped these booleans; both stay outside the shared policy decision.
+    const chatPolicy = evaluateWavePolicyDecisions({
       wave: waveEntity,
       authenticatedProfileId: relatedData.authenticatedUserId,
       groupIdsUserIsEligibleFor,
-      nextDropTimestamp: chatDropCooldowns[waveEntity.id]?.next_drop_timestamp
+      nextDropTimestamp: chatDropCooldowns[waveEntity.id]?.next_drop_timestamp,
+      legacyDmClosed: false
     });
+    const nextDropAllowed = chatPolicy.REPLY.retry_at;
     const authenticatedUserEligibleToChat =
-      authenticatedUserCanView &&
-      (waveEntity.chat_group_id === null ||
-        groupIdsUserIsEligibleFor.includes(waveEntity.chat_group_id)) &&
-      waveEntity.chat_enabled &&
-      nextDropAllowed === undefined;
+      authenticatedUserCanView && chatPolicy.CHAT.allowed;
     const authenticatedUserEligibleToReply =
-      authenticatedUserCanView &&
-      canReplyInWaveChat({ wave: waveEntity, groupIdsUserIsEligibleFor }) &&
-      nextDropAllowed === undefined;
+      authenticatedUserCanView && chatPolicy.REPLY.allowed;
     const chat: ApiWaveChatConfig = {
       scope: {
         group: resolveGroup(waveEntity.chat_group_id)
