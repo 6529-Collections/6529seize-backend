@@ -65,10 +65,19 @@ Each selected image is read and parsed first:
   `stripMetadataWithPixelCheck` (`src/media/metadata-strip/`), which copies
   image data verbatim and must prove the same size, orientation, render
   stream and decoded pixel hash. HDR gain maps are kept and their pixels
-  verified as well.
-- Skipped and listed, never re-encoded: files that do not verify, files whose
-  HDR gain map would be dropped, unsupported containers (AVIF, HEIF, TIFF,
-  SVG), objects over 64 MiB, `Content-Encoding` objects and missing objects.
+  verified as well. The pixel check hashes decoded pixels in 64 MiB bands, so
+  large photos, PNGs and long GIFs verify in bounded memory (see
+  [pixel check bounds](image-upload-format-validation.md#pixel-check-bounds)).
+- The container is read from the file's bytes, never from the key's extension
+  or the stored `Content-Type`. A file whose extension names another
+  container (for example a PNG saved as `.jpg`) is stripped as what it really
+  is, its headers are kept exactly as they were, and it is listed under
+  `extension_mismatch` by `<extension>-><container>`.
+- Skipped and listed, never re-encoded: files that do not verify (including
+  images beyond the pixel check's limits), files whose HDR gain map would be
+  dropped, unsupported containers (AVIF, HEIF, TIFF, SVG), objects over
+  `--max-source-bytes` (default 256 MiB, the upload limit), `Content-Encoding`
+  objects and missing objects.
 
 The report counts files per category without recording any value: `gps`,
 `serial` (body, lens and camera serials, image IDs, maker notes),
@@ -164,7 +173,12 @@ NODE_ENV=production ./bin/6529 run drop-media:backfill -- purge-originals --envi
 ```
 
 Other options: `--concurrency` (1-8, default 2), `--page-size` (default 500),
-`--no-video-probe` and `--report <path>`. Run one scan at a time; conditional
+`--no-video-probe`, `--report <path>` and `--max-source-bytes` (bytes, or with
+a `KiB`, `MiB` or `GiB` suffix; 1 MiB to 1 GiB, default `256MiB`). Each object
+in flight holds its source and stripped output, briefly a second output, one
+64 MiB pixel band and the decoder's state (up to about 520 MiB for the largest
+whole-frame images), so plan for about `--concurrency` x (3 x
+`--max-source-bytes` + 600 MiB) of memory: about 2.7 GiB at the defaults. Run one scan at a time; conditional
 writes keep concurrent runs from overwriting each other's results. A scan
 saves its report after completed pages (at most every 15 seconds) and at the
 end, and stops after 25 consecutive
@@ -172,11 +186,34 @@ object failures (for example missing permissions), so `next_cursor` survives
 an interruption; `invalidate` resubmits any CDN paths a stopped run did not
 send.
 
+### Re-running skipped keys
+
+`--keys-from-report <path>` limits a scan to keys that an earlier scan report
+listed under `keys.skipped`, for the reasons in `--skip-reasons` (default
+`verification_failed,too_large,unparseable_container`). The scan still walks
+and classifies every database row, so the selection, decision-entry
+exclusions and the shared-bucket guard apply to each key exactly as in a full
+scan; only listed keys that are still chat images are downloaded and
+processed. Videos are not probed. The report's `key_filter` section gives the
+keys requested and processed, and `keys.not_selected` lists requested keys
+that are no longer selected (now excluded, ambiguous, deleted or out of
+scope). A reason whose list in the source report was cut at 10,000 keys is
+noted in `key_filter.truncated_in_source`; those keys need a full scan.
+
+```bash
+# Read-only: rescan only what the earlier dry run skipped for these reasons
+NODE_ENV=production ./bin/6529 run drop-media:backfill -- scan --environment prod --dry-run --keys-from-report scan-dry-run.json --skip-reasons verification_failed,too_large,unparseable_container --report scan-dry-run-retry.json
+```
+
+It combines with `--execute`, `--run-id`, `--limit`, `--resume-after` and
+`--max-source-bytes`, but not with `--sample`.
+
 The JSON report (default `drop-media-backfill-<command>-<run id>.json`)
 contains counts, object keys and reasons only: selection counts (chat images
 and videos, DMs, replies, duplicates, out of scope), exclusions and ambiguous
 keys by reason, category counts, objects inspected, to rewrite, rewritten,
-unchanged, skipped and failed (with keys), HDR gain maps kept, bytes
+unchanged, skipped, extension mismatches and failed (with keys), HDR gain
+maps kept, bytes
 downloaded and to rewrite, video counts, CDN invalidations, samples and
 `next_cursor`. Key lists stop at 10,000 entries per list.
 

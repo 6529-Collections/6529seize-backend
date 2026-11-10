@@ -56,3 +56,39 @@ export function sniffImageContainer(input: Buffer): SniffedImage {
   }
   return { kind: 'unsupported', name: unsupportedName(input) };
 }
+
+/** Extensions mapped to the container names `sniffImageContainer` reports. */
+const EXTENSION_CONTAINERS: Readonly<Record<string, string>> = {
+  jpg: 'jpeg',
+  jpeg: 'jpeg',
+  jpe: 'jpeg',
+  jfif: 'jpeg',
+  png: 'png',
+  webp: 'webp',
+  gif: 'gif',
+  avif: 'avif',
+  heic: 'heif',
+  heif: 'heif',
+  tif: 'tiff',
+  tiff: 'tiff',
+  bmp: 'bmp',
+  svg: 'svg-or-xml'
+};
+
+/**
+ * The key's extension when it names a different container than the bytes
+ * hold; null when they agree or the key has no extension.
+ */
+export function extensionMismatch(
+  key: string,
+  sniffed: SniffedImage
+): { extension: string; container: string } | null {
+  const name = key.slice(key.lastIndexOf('/') + 1);
+  const dot = name.lastIndexOf('.');
+  if (dot <= 0 || dot === name.length - 1) return null;
+  const extension = name.slice(dot + 1).toLowerCase();
+  const container =
+    sniffed.kind === 'supported' ? sniffed.format : sniffed.name;
+  const expected = EXTENSION_CONTAINERS[extension] ?? extension;
+  return expected === container ? null : { extension, container };
+}

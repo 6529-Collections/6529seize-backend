@@ -8,6 +8,8 @@ import {
   LosslessStripFormat
 } from '@/media/metadata-strip/lossless-metadata-strip';
 import {
+  LOSSLESS_STRIP_MAX_SOURCE_BYTES,
+  PixelCheckOptions,
   PixelVerifiedStripOutcome,
   stripMetadataWithPixelCheck
 } from '@/media/metadata-strip/pixel-verified-metadata-strip';
@@ -23,17 +25,24 @@ import {
 } from './backfill-storage';
 import { ChatMediaTarget } from './chat-media-candidates';
 import { findIdentifyingMetadata } from './identifying-metadata';
-import { sniffImageContainer } from './image-container';
+import {
+  extensionMismatch,
+  SniffedImage,
+  sniffImageContainer
+} from './image-container';
 import { CleanState, MetadataCategory } from './metadata-category';
 import { invalidationPathsFor } from './media-references';
 
 /** Marks objects this tool rewrote, so restore only touches its own writes. */
 export const BACKFILL_RUN_METADATA_KEY = 'metadata-backfill-run';
 /**
- * The lossless path holds the source, its output and a decoded copy in
- * memory; it matches the upload sanitizer's lossless source limit.
+ * Default `--max-source-bytes`: the upload limit, which the upload sanitizer
+ * also strips losslessly. Each object in flight holds its source and output
+ * (and briefly a second output) next to one 64 MiB pixel band and the
+ * decoder's state, so peak memory is about `--concurrency` x (3 x this +
+ * 600 MiB).
  */
-export const BACKFILL_MAX_IMAGE_BYTES = 64 * 1024 * 1024;
+export const BACKFILL_MAX_IMAGE_BYTES = LOSSLESS_STRIP_MAX_SOURCE_BYTES;
 
 export enum ObjectSkipReason {
   MISSING_OBJECT = 'missing_object',
@@ -48,7 +57,17 @@ export enum ObjectSkipReason {
   CHANGED_DURING_RUN = 'changed_during_run'
 }
 
-export type ImageOutcome =
+/**
+ * The key's file extension names a different container than the bytes hold,
+ * for example `extension: 'jpg'`, `container: 'png'`. The file is handled as
+ * the container it really is, and its headers are kept as they are.
+ */
+export interface ExtensionMismatch {
+  readonly extension: string;
+  readonly container: string;
+}
+
+export type ImageOutcome = (
   | {
       readonly kind: 'skipped';
       readonly reason: ObjectSkipReason;
@@ -69,11 +88,13 @@ export type ImageOutcome =
       readonly gainMapsKept: number;
       /** False in a dry run. */
       readonly written: boolean;
-    };
+    }
+) & { readonly extensionMismatch?: ExtensionMismatch };
 
 export type StripFunction = (
   input: Buffer,
-  format: LosslessStripFormat
+  format: LosslessStripFormat,
+  options?: PixelCheckOptions
 ) => Promise<PixelVerifiedStripOutcome>;
 
 export interface ObjectProcessorDeps {
@@ -87,6 +108,7 @@ export interface ObjectProcessorDeps {
   readonly runId: string;
   readonly now: () => Date;
   readonly strip?: StripFunction;
+  /** Larger objects are skipped as too large; see BACKFILL_MAX_IMAGE_BYTES. */
   readonly maxImageBytes?: number;
 }
 
@@ -167,12 +189,32 @@ export class ChatMediaObjectProcessor {
     throw error;
   }
 
+  /**
+   * The container comes from the bytes, never the key's extension or the
+   * stored Content-Type; a mismatch is reported with the outcome.
+   */
   private async inspectAndRewrite(
     target: ChatMediaTarget,
     head: ObjectHead,
     original: Buffer
   ): Promise<ImageOutcome> {
     const sniffed = sniffImageContainer(original);
+    const mismatch = extensionMismatch(target.key, sniffed);
+    const outcome = await this.inspectContainer(
+      target,
+      head,
+      original,
+      sniffed
+    );
+    return mismatch ? { ...outcome, extensionMismatch: mismatch } : outcome;
+  }
+
+  private async inspectContainer(
+    target: ChatMediaTarget,
+    head: ObjectHead,
+    original: Buffer,
+    sniffed: SniffedImage
+  ): Promise<ImageOutcome> {
     if (sniffed.kind === 'unsupported') {
       return skipped(ObjectSkipReason.UNSUPPORTED_FORMAT, original.length);
     }
@@ -201,7 +243,9 @@ export class ChatMediaObjectProcessor {
         size: original.length
       };
     }
-    const stripped = await this.strip(original, sniffed.format);
+    const stripped = await this.strip(original, sniffed.format, {
+      maxSourceBytes: this.maxImageBytes
+    });
     if (stripped.kind !== 'lossless') {
       return skipped(
         ObjectSkipReason.VERIFICATION_FAILED,

@@ -3,7 +3,7 @@ import { CLOUDFRONT_LINK } from '@/constants';
 import { DropType } from '@/entities/IDrop';
 import { identifyingJpeg } from '@/media/metadata-strip/fixtures/identifying-image-fixtures';
 import { InMemoryObjectStore } from '@/tests/fixtures/media-object-store.fixture';
-import { BackfillReport } from './backfill-report';
+import { BackfillReport, KeyFilterReport } from './backfill-report';
 import { SafetyCopyLayout } from './backfill-storage';
 import { CdnInvalidator, InvalidationQueue } from './cdn-invalidation';
 import {
@@ -322,6 +322,37 @@ describe('ChatMediaScan', () => {
     await expect(scan.run()).rejects.toThrow('consecutive failures');
     expect(report.objects.failed).toBeGreaterThanOrEqual(25);
     expect(report.objects.failed).toBeLessThan(30);
+  });
+
+  it('--keys-from-report processes only listed keys still selected as chat', async () => {
+    const requested = ['drops/a/chat.jpg', 'drops/e/art.jpg', 'drops/gone.jpg'];
+    const { scan, report } = await scenario({
+      execute: false,
+      options: { onlyKeys: new Set(requested) }
+    });
+    report.keyFilter = new KeyFilterReport(
+      'scan-dry-run.json',
+      ['verification_failed'],
+      requested.length,
+      {}
+    );
+
+    expect(await scan.run()).toBe(true);
+    const json = JSON.parse(JSON.stringify(report.toJSON()));
+
+    // Every row is still classified: the decision entry stays excluded.
+    expect(json.selection.excluded).toEqual({ decision_entry_media: 2 });
+    expect(json.objects.inspected).toBe(1);
+    expect(json.keys.to_rewrite).toEqual({ keys: ['drops/a/chat.jpg'] });
+    expect(json.videos).toMatchObject({ chat_videos: 0, probed: 0 });
+    expect(json.key_filter).toMatchObject({
+      requested: 3,
+      processed: 1,
+      not_selected: 2
+    });
+    expect(json.keys.not_selected).toEqual({
+      keys: ['drops/e/art.jpg', 'drops/gone.jpg']
+    });
   });
 
   it('--sample processes a random subset and lists it for hand checks', async () => {

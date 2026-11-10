@@ -1,4 +1,4 @@
-import { writeFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { CLOUDFRONT_DISTRIBUTION } from '@/constants';
 import {
@@ -11,7 +11,7 @@ import { Logger } from '@/logging';
 import { getS3 } from '@/s3.client';
 import { doInDbContext } from '@/secrets';
 import { BackfillOriginals } from './backfill-originals';
-import { BackfillReport } from './backfill-report';
+import { BackfillReport, KeyFilterReport } from './backfill-report';
 import {
   assertSafetyLocation,
   MediaObjectStore,
@@ -30,6 +30,7 @@ import { chatMediaBackfillDb } from './chat-media-backfill.db';
 import { ChatMediaObjectProcessor } from './chat-media-object-processor';
 import { ChatMediaScan } from './chat-media-scan';
 import { DecisionEntryExclusions } from './decision-entry-exclusions';
+import { skippedKeysFromReport } from './skipped-keys';
 
 const logger = Logger.get('CHAT_MEDIA_BACKFILL');
 const EXCLUSION_REFRESH_MILLIS = 60_000;
@@ -77,11 +78,41 @@ function writeReport(
   logger.info(`Report written to ${path}`);
 }
 
+/** The keys an earlier report skipped, when the scan is limited to them. */
+function readKeyFilter(
+  options: ScanCliOptions
+): { keys: ReadonlySet<string>; report: KeyFilterReport } | null {
+  if (!options.keysFromReport || !options.skipReasons) return null;
+  const path = resolve(options.keysFromReport);
+  const { keys, listed, truncated } = skippedKeysFromReport(
+    JSON.parse(readFileSync(path, 'utf8')),
+    options.skipReasons
+  );
+  logger.info(
+    `Processing only ${keys.size} keys skipped in ${path}: ${JSON.stringify(listed)}`
+  );
+  if (Object.keys(truncated).length) {
+    logger.warn(
+      `The report's key lists were full; these keys are missing: ${JSON.stringify(truncated)}`
+    );
+  }
+  return {
+    keys,
+    report: new KeyFilterReport(
+      options.keysFromReport,
+      options.skipReasons,
+      keys.size,
+      truncated
+    )
+  };
+}
+
 async function runScan(options: ScanCliOptions): Promise<void> {
   const stage = assertEnvironment(options);
   const publicStore = new S3MediaObjectStore(getS3(), publicBucket());
   const runId = options.runId ?? newRunId(new Date());
   logger.info(`[RUN ID ${runId}]`);
+  const keyFilter = readKeyFilter(options);
   const report = new BackfillReport(
     runId,
     'scan',
@@ -93,10 +124,14 @@ async function runScan(options: ScanCliOptions): Promise<void> {
       concurrency: options.concurrency,
       page_size: options.pageSize,
       resume_after: options.resumeAfter,
-      probe_videos: options.probeVideos
+      probe_videos: options.probeVideos && !keyFilter,
+      max_source_bytes: options.maxSourceBytes,
+      keys_from_report: options.keysFromReport,
+      skip_reasons: options.skipReasons
     },
     new Date()
   );
+  report.keyFilter = keyFilter?.report ?? null;
   report.publicBucket = {
     name: publicStore.bucket,
     versioning: await publicStore.versioningStatus()
@@ -131,7 +166,8 @@ async function runScan(options: ScanCliOptions): Promise<void> {
         publicStore,
         writer,
         runId,
-        now: () => new Date()
+        now: () => new Date(),
+        maxImageBytes: options.maxSourceBytes
       }),
       publicStore,
       invalidations,
@@ -142,7 +178,12 @@ async function runScan(options: ScanCliOptions): Promise<void> {
         writeReport(options, runId, report)
       )
     },
-    { ...options, exclusionRefreshMillis: EXCLUSION_REFRESH_MILLIS }
+    {
+      ...options,
+      probeVideos: options.probeVideos && !keyFilter,
+      exclusionRefreshMillis: EXCLUSION_REFRESH_MILLIS,
+      onlyKeys: keyFilter?.keys ?? null
+    }
   );
   let completed = false;
   try {

@@ -29,6 +29,11 @@ export interface ScanOptions {
   readonly pageSize: number;
   /** Execute runs re-read new decision entries this often. */
   readonly exclusionRefreshMillis: number;
+  /**
+   * When set, only these keys are processed (videos are not probed). Every
+   * row is still selected and classified, so exclusions apply as usual.
+   */
+  readonly onlyKeys?: ReadonlySet<string> | null;
 }
 
 export interface ScanDeps {
@@ -60,7 +65,9 @@ interface Page {
  * wave pictures) in id order, classifies it against the decision-entry
  * exclusions and processes chat images with bounded concurrency. `--limit`
  * stops after that many images; `--sample` picks a uniform random sample
- * of all chat images and processes only those.
+ * of all chat images and processes only those. `onlyKeys` processes only
+ * listed keys that are still selected as chat media; the others are
+ * reported as not selected once the scan completes.
  */
 export class ChatMediaScan {
   private readonly logger = Logger.get('CHAT_MEDIA_BACKFILL');
@@ -109,7 +116,25 @@ export class ChatMediaScan {
       await this.flushInvalidations();
       return false;
     }
+    if (completed) this.recordUnselectedKeys();
     return completed;
+  }
+
+  /** Requested keys that no row selected as a chat target. */
+  private recordUnselectedKeys(): void {
+    const filter = this.deps.report.keyFilter;
+    if (!filter || !this.options.onlyKeys) return;
+    this.options.onlyKeys.forEach((key) => {
+      if (!this.seenKeys.has(key)) filter.notSelected.add(key);
+    });
+  }
+
+  private isRequested(target: ChatMediaTarget): boolean {
+    const only = this.options.onlyKeys;
+    if (!only) return true;
+    if (!only.has(target.key)) return false;
+    if (this.deps.report.keyFilter) this.deps.report.keyFilter.processed++;
+    return true;
   }
 
   private async refreshExclusionsIfDue(): Promise<void> {
@@ -141,6 +166,7 @@ export class ChatMediaScan {
       }
       this.seenKeys.add(target.key);
       this.deps.report.recordTarget(target);
+      if (!this.isRequested(target)) continue;
       if (target.kind === 'video') videos.push(target);
       else this.takeImage(target, targets);
     }

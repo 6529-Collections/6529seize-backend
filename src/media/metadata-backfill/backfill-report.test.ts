@@ -1,5 +1,6 @@
 import {
   BackfillReport,
+  KeyFilterReport,
   KeyList,
   REPORT_KEY_LIST_LIMIT
 } from './backfill-report';
@@ -81,6 +82,49 @@ describe('BackfillReport', () => {
       verification_failed: { keys: ['drops/a/3.jpg'] }
     });
     expect(json.completed).toBe(true);
+  });
+
+  it('lists extension mismatches and the key filter', () => {
+    const report = new BackfillReport(
+      'run',
+      'scan',
+      'dry-run',
+      'prod',
+      {},
+      new Date(0)
+    );
+    report.keyFilter = new KeyFilterReport(
+      'scan-dry-run.json',
+      [ObjectSkipReason.VERIFICATION_FAILED],
+      2,
+      { verification_failed: 4 }
+    );
+    report.keyFilter.processed = 1;
+    report.keyFilter.notSelected.add('drops/e/entry.jpg');
+    report.recordImageOutcome(target('drops/a/photo.jpg'), {
+      kind: 'rewrite',
+      categories: [MetadataCategory.GPS],
+      originalSize: 10,
+      strippedSize: 8,
+      gainMapsKept: 0,
+      written: false,
+      extensionMismatch: { extension: 'jpg', container: 'png' }
+    });
+    const json = JSON.parse(JSON.stringify(report.toJSON()));
+
+    expect(json.objects.extension_mismatch).toEqual({ 'jpg->png': 1 });
+    expect(json.keys.extension_mismatch).toEqual({
+      'jpg->png': { keys: ['drops/a/photo.jpg'] }
+    });
+    expect(json.key_filter).toEqual({
+      source_report: 'scan-dry-run.json',
+      skip_reasons: ['verification_failed'],
+      requested: 2,
+      processed: 1,
+      not_selected: 1,
+      truncated_in_source: { verification_failed: 4 }
+    });
+    expect(json.keys.not_selected).toEqual({ keys: ['drops/e/entry.jpg'] });
   });
 
   it('caps key lists but keeps exact counts', () => {

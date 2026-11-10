@@ -1,10 +1,17 @@
 import { assertRunId } from './backfill-storage';
+import {
+  BACKFILL_MAX_IMAGE_BYTES,
+  ObjectSkipReason
+} from './chat-media-object-processor';
 import { parseCursor, ScanCursor } from './scan-cursor';
+import { DEFAULT_RETRY_SKIP_REASONS, parseSkipReasons } from './skipped-keys';
 
 export const BACKFILL_USAGE = `Usage (dry run unless --execute):
   scan             --environment <prod|staging|local> [--execute] [--limit N | --sample N]
                    [--concurrency N] [--page-size N] [--resume-after <phase>:<id>]
                    [--run-id ID] [--no-video-probe] [--report PATH]
+                   [--max-source-bytes N[KiB|MiB|GiB]] (default 256MiB)
+                   [--keys-from-report PATH [--skip-reasons R1,R2]]
   restore          --environment <env> --run-id ID [--key PUBLIC_KEY] [--execute] [--report PATH]
   invalidate       --environment <env> --run-id ID [--execute] [--report PATH]
   purge-originals  --environment <env> --run-id ID --older-than 7d
@@ -14,6 +21,8 @@ const DEFAULT_CONCURRENCY = 2;
 const MAX_CONCURRENCY = 8;
 const DEFAULT_PAGE_SIZE = 500;
 const MAX_PAGE_SIZE = 2000;
+const MIN_SOURCE_BYTES = 1024 * 1024;
+const MAX_SOURCE_BYTES = 1024 * 1024 * 1024;
 const ENVIRONMENTS = ['prod', 'staging', 'local'];
 const COMMANDS = ['scan', 'restore', 'invalidate', 'purge-originals'] as const;
 
@@ -34,6 +43,12 @@ export interface ScanCliOptions extends CommonOptions {
   readonly pageSize: number;
   readonly resumeAfter: ScanCursor | null;
   readonly probeVideos: boolean;
+  /** Larger objects are skipped as too_large. */
+  readonly maxSourceBytes: number;
+  /** A scan report whose skipped keys are the only ones processed. */
+  readonly keysFromReport: string | null;
+  /** Which of that report's skip reasons to take keys from. */
+  readonly skipReasons: readonly ObjectSkipReason[] | null;
 }
 
 export interface RestoreCliOptions extends CommonOptions {
@@ -76,7 +91,10 @@ const VALUED = new Set([
   '--run-id',
   '--report',
   '--key',
-  '--older-than'
+  '--older-than',
+  '--max-source-bytes',
+  '--keys-from-report',
+  '--skip-reasons'
 ]);
 
 type ParsedArgs = { flags: Set<string>; values: Map<string, string> };
@@ -116,6 +134,58 @@ function positiveInt(
     throw new Error(`${name} must be an integer between 1 and ${max}`);
   }
   return value;
+}
+
+const BYTE_UNITS: Readonly<Record<string, number>> = {
+  '': 1,
+  b: 1,
+  kib: 1024,
+  mib: 1024 ** 2,
+  gib: 1024 ** 3
+};
+
+/** Bytes, optionally in KiB, MiB or GiB: `268435456` or `256MiB`. */
+export function parseByteSize(value: string): number {
+  const match = /^(\d+)\s*([a-z]*)$/i.exec(value.trim());
+  const unit = match ? BYTE_UNITS[match[2].toLowerCase()] : undefined;
+  if (!match || unit === undefined) {
+    throw new Error(`Invalid size "${value}"; use e.g. 268435456 or 256MiB`);
+  }
+  return Number(match[1]) * unit;
+}
+
+function maxSourceBytes(values: Map<string, string>): number {
+  const raw = values.get('--max-source-bytes');
+  if (raw === undefined) return BACKFILL_MAX_IMAGE_BYTES;
+  const bytes = parseByteSize(raw);
+  if (bytes < MIN_SOURCE_BYTES || bytes > MAX_SOURCE_BYTES) {
+    throw new Error('--max-source-bytes must be between 1MiB and 1GiB');
+  }
+  return bytes;
+}
+
+function keyFilter(
+  values: Map<string, string>,
+  sample: number | null
+): Pick<ScanCliOptions, 'keysFromReport' | 'skipReasons'> {
+  const keysFromReport = values.get('--keys-from-report') ?? null;
+  const reasons = values.get('--skip-reasons');
+  if (keysFromReport === null) {
+    if (reasons !== undefined) {
+      throw new Error('--skip-reasons needs --keys-from-report');
+    }
+    return { keysFromReport, skipReasons: null };
+  }
+  if (sample !== null) {
+    throw new Error('--sample draws from all media; drop --keys-from-report');
+  }
+  return {
+    keysFromReport,
+    skipReasons:
+      reasons === undefined
+        ? DEFAULT_RETRY_SKIP_REASONS
+        : parseSkipReasons(reasons)
+  };
 }
 
 /** `7d` or `168h`. */
@@ -172,7 +242,9 @@ function scanOptions(parsed: ParsedArgs, base: CommonOptions): ScanCliOptions {
     pageSize:
       positiveInt(values, '--page-size', MAX_PAGE_SIZE) ?? DEFAULT_PAGE_SIZE,
     resumeAfter: resume === undefined ? null : parseCursor(resume),
-    probeVideos: !flags.has('--no-video-probe') && !base.execute
+    probeVideos: !flags.has('--no-video-probe') && !base.execute,
+    maxSourceBytes: maxSourceBytes(values),
+    ...keyFilter(values, sample)
   };
 }
 
@@ -182,7 +254,10 @@ function rejectScanOnly(values: Map<string, string>, command: string) {
     '--sample',
     '--concurrency',
     '--page-size',
-    '--resume-after'
+    '--resume-after',
+    '--max-source-bytes',
+    '--keys-from-report',
+    '--skip-reasons'
   ]) {
     if (values.has(name))
       throw new Error(`${name} does not apply to ${command}`);

@@ -42,6 +42,31 @@ function increment(counts: Counts, name: string, by = 1): void {
   counts[name] = (counts[name] ?? 0) + by;
 }
 
+/** A scan limited to keys an earlier report skipped. */
+export class KeyFilterReport {
+  readonly notSelected = new KeyList();
+  processed = 0;
+
+  constructor(
+    readonly sourceReport: string,
+    readonly reasons: readonly string[],
+    readonly requested: number,
+    /** Keys the source report left out because its lists were full. */
+    readonly truncatedInSource: Readonly<Record<string, number>>
+  ) {}
+
+  toJSON() {
+    return {
+      source_report: this.sourceReport,
+      skip_reasons: this.reasons,
+      requested: this.requested,
+      processed: this.processed,
+      not_selected: this.notSelected.keys.length + this.notSelected.truncated,
+      truncated_in_source: this.truncatedInSource
+    };
+  }
+}
+
 export interface SampleEntry {
   readonly key: string;
   readonly source: string;
@@ -82,6 +107,10 @@ export class BackfillReport {
     gain_maps_kept: 0
   };
   readonly skipped = new KeyedCounts();
+  /** Keys whose extension names another container, by `<ext>-><container>`. */
+  readonly extensionMismatch = new KeyedCounts();
+  /** Set when the scan only processes keys listed in an earlier report. */
+  keyFilter: KeyFilterReport | null = null;
   readonly failedKeys: { key: string; error: string }[] = [];
   readonly rewrittenKeys = new KeyList();
   readonly toRewriteKeys = new KeyList();
@@ -142,6 +171,10 @@ export class BackfillReport {
 
   recordImageOutcome(target: ChatMediaTarget, outcome: ImageOutcome): void {
     this.objects.inspected++;
+    if (outcome.extensionMismatch) {
+      const { extension, container } = outcome.extensionMismatch;
+      this.extensionMismatch.add(`${extension}->${container}`, target.key);
+    }
     if (outcome.kind === 'clean') {
       increment(this.objects.unchanged, outcome.state);
       increment(this.categories, outcome.state);
@@ -220,7 +253,12 @@ export class BackfillReport {
         ambiguous: this.ambiguous.counts
       },
       categories: this.categories,
-      objects: { ...this.objects, skipped: this.skipped.counts },
+      objects: {
+        ...this.objects,
+        skipped: this.skipped.counts,
+        extension_mismatch: this.extensionMismatch.counts
+      },
+      key_filter: this.keyFilter,
       bytes: this.bytes,
       videos: this.videos,
       invalidation: this.invalidation,
@@ -228,6 +266,8 @@ export class BackfillReport {
         excluded: this.excluded.keys,
         ambiguous: this.ambiguous.keys,
         skipped: this.skipped.keys,
+        extension_mismatch: this.extensionMismatch.keys,
+        not_selected: this.keyFilter?.notSelected ?? null,
         failed: this.failedKeys,
         to_rewrite: this.toRewriteKeys,
         rewritten: this.rewrittenKeys

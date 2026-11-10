@@ -17,6 +17,7 @@ import { InMemoryObjectStore } from '@/tests/fixtures/media-object-store.fixture
 import { SafetyCopyLayout, SafetyCopyManifest } from './backfill-storage';
 import { ChatMediaSource, ChatMediaTarget } from './chat-media-candidates';
 import {
+  BACKFILL_MAX_IMAGE_BYTES,
   BACKFILL_RUN_METADATA_KEY,
   ChatMediaObjectProcessor,
   ObjectSkipReason,
@@ -32,6 +33,11 @@ const HEADERS = {
   contentDisposition: 'inline',
   metadata: { 'format-validated': 'true' }
 };
+/** An ISO media `ftyp` box with the `avif` brand. */
+const AVIF_HEADER = Buffer.concat([
+  Buffer.from('0000001c', 'hex'),
+  Buffer.from('ftypavif0000', 'latin1')
+]);
 
 function target(key = KEY): ChatMediaTarget {
   return {
@@ -305,6 +311,64 @@ describe('ChatMediaObjectProcessor', () => {
       reason: ObjectSkipReason.CHANGED_DURING_RUN
     });
     expect(publicStore.bodyOf(KEY)!.equals(replacement)).toBe(true);
+  });
+
+  it('strips a file as the container its bytes hold, keeping its headers', async () => {
+    const png = await identifyingPng();
+    const { publicStore, processor } = setup({ execute: true });
+    publicStore.seed(KEY, png, HEADERS);
+
+    const outcome = await processor.processImage(target());
+
+    expect(outcome).toMatchObject({
+      kind: 'rewrite',
+      written: true,
+      extensionMismatch: { extension: 'jpg', container: 'png' }
+    });
+    const stripped = publicStore.bodyOf(KEY)!;
+    expect(describeImageContainer(stripped, 'png').metadataBlocks).toEqual([]);
+    expect((await Sharp(stripped).metadata()).format).toBe('png');
+    expect(publicStore.headersOf(KEY)).toMatchObject({
+      contentType: 'image/jpeg',
+      cacheControl: HEADERS.cacheControl,
+      contentDisposition: HEADERS.contentDisposition
+    });
+  });
+
+  it('reports a mismatched extension on a file it skips', async () => {
+    const { publicStore, processor } = setup({ execute: false });
+    publicStore.seed('drops/a/x.jpg', AVIF_HEADER);
+    expect(await processor.processImage(target('drops/a/x.jpg'))).toEqual({
+      kind: 'skipped',
+      reason: ObjectSkipReason.UNSUPPORTED_FORMAT,
+      categories: [],
+      size: 16,
+      extensionMismatch: { extension: 'jpg', container: 'avif' }
+    });
+  });
+
+  it('defaults to the upload limit and passes the source limit to the strip', async () => {
+    expect(BACKFILL_MAX_IMAGE_BYTES).toBe(256 * 1024 * 1024);
+    const { jpeg } = await identifyingJpeg();
+    const strip = jest.fn<ReturnType<StripFunction>, Parameters<StripFunction>>(
+      async () => ({ kind: 'unverified', reason: 'synthetic' })
+    );
+    const publicStore = new InMemoryObjectStore('public-bucket');
+    publicStore.seed(KEY, jpeg, HEADERS);
+    const processor = new ChatMediaObjectProcessor({
+      publicStore,
+      writer: null,
+      runId: RUN_ID,
+      now: () => new Date(),
+      strip,
+      maxImageBytes: 512 * 1024 * 1024
+    });
+
+    await processor.processImage(target());
+
+    expect(strip).toHaveBeenCalledWith(expect.any(Buffer), 'jpeg', {
+      maxSourceBytes: 512 * 1024 * 1024
+    });
   });
 
   it('skips missing, oversized, encoded and unsupported objects', async () => {
