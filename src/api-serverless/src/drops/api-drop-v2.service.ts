@@ -5,6 +5,7 @@ import {
   competitionDropVotersCsv
 } from '@/api/competitions/competition-drop-votes.service';
 import { withoutLegacyCompetitionGetFacade } from '@/competitions/legacy-competition-get-facade';
+import { mapDropMedia } from './drop-media.mapper';
 import { NotFoundException } from '@/exceptions';
 import { RequestContext } from '@/request.context';
 import { dropsDb, DropsDb } from '@/drops/drops.db';
@@ -439,10 +440,7 @@ export class ApiDropV2Service {
       if (part.content !== null) {
         apiPart.content = part.content;
       }
-      const apiMedia = media.map((row) => ({
-        url: row.url,
-        mime_type: row.mime_type
-      }));
+      const apiMedia = media.map(mapDropMedia);
       if (apiMedia.length) {
         apiPart.media = apiMedia;
       }

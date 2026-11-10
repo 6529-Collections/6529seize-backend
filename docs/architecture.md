@@ -762,7 +762,7 @@ this API support while new clients are deployed; roll back the frontend first.
    The on-demand media resizer spools each S3 source into its own temporary file before metadata inspection and conversion. A shared 256 MiB source limit rejects oversized inputs with HTTP 422. PNG uses measured 100 MP/8-bit and 64 MP/16-bit admission, a 100,000-pixel input-side limit, and disposable Sharp child processes. PNG output is capped at 4096 pixels per side, two million pixels and 10 MiB encoded; ordinary fit/orientation behavior is preserved and oversized results are fitted inside a bounded box. Each PNG child has a 256 MiB JS heap, a 30-second lifetime and a sampled 1 GiB combined parent/child RSS watchdog. These are guards with headroom under the 2 GiB Lambda allocation, not hard native allocation guarantees. Corrupt/over-limit input is permanent; timeout, allocation/worker, monitor and I/O failures remain operational. Source and output files live until upload completes and are removed after success or failure. Non-PNG codecs retain the conservative 512 MiB decoded-work estimate; animated GIF admission counts every frame. Baseline 8-bit JPEG admission accounts conservatively for the decoder shrink used by the requested resize; progressive JPEGs and other codecs retain the full-input estimate. When a GIF animation exceeds the budget, only its first frame is resized if that frame independently fits. Otherwise it remains HTTP 422. Originals are unchanged, and already-posted images can receive previews on demand without re-uploading. Resize, rotation and output contracts are preserved for ordinary accepted inputs. Multipart upload concurrency is one, and the temporary directory is removed after completion or failure. These admission limits reduce resource risk; they do not guarantee a maximum native allocation for every codec. The specific HEIF missing-compression-plugin error is returned as `422 UNSUPPORTED_CODEC`, regardless of the filename or MIME label. One operational report is claimed per original S3 key and source version (VersionId, or ETag for unversioned objects), across resize variants and Lambda instances, using an empty conditional-write marker under `_resize-rejections/v1/` in the existing source bucket. Later requests retain warning logs and the controlled response; replacing the source enables a new report. Marker failures remain operational errors. Detected HEIF/HEVC inputs now use an isolated, pinned WebAssembly HEVC decoder and explicit JPEG output, independent of the source suffix/MIME label. The child has separate source/pixel, JS heap, WASM memory and time budgets. Confirmed permanent HEVC decoder rejections use `_resize-rejections/v2/` markers keyed by source revision and decoder policy: later requests still spool/inspect the source but skip pixel decoding and return HTTP 422. Source or decoder-policy changes permit another attempt. S3/worker/timeout/allocation failures remain operational; the generic Sharp HEIF `(7.0)` error is not broadly suppressed. A source length mismatch remains operational before decoding or caching. See [media-resizer-unsupported-input.md](media-resizer-unsupported-input.md) for decoder, alert and recovery limits.
    Chat image stripping is lossless when it verifies (pixels and ICC profile unchanged, Orientation kept); decision-entry uploads are never stripped and keep the artist's file name, while chat and wave uploads get neutral `<upload id>.<ext>` public names. See [image-upload-format-validation.md](image-upload-format-validation.md). Chat images published before stripping can be rewritten in place by an operator-run CLI (no Lambda) that skips decision entries, keeps private safety copies in the ingest bucket and batches CloudFront invalidations; see [chat media metadata backfill](chat-media-metadata-backfill.md).
 
-   Drop/wave image finalization now generates and verifies both legacy `AUTOx450` and `AUTOx1080` previews using the same admission and PNG renderer as on-demand resizing before it can mark media ready. All image source handling and re-encoding privacy stripping are file-based; full source and encoded-original buffers are not retained in the parent, except that lossless stripping reads sources of up to 64 MiB into memory. PNG original stripping uses an isolated child; other original re-encodes must fit the conservative full-decode budget without preview shrink or discarded GIF frames. The original and both derivatives must be stored before the ready transition and ingest deletion. Derivative storage failures remain retryable and never imply ready. A retry regenerates the previews and overwrites the same keys; a ready-message redelivery only retries best-effort private-source deletion. Other formats retain their format/privacy transformations and existing animated-GIF first-frame fallback. The sanitizer reserves 1 GiB ephemeral storage for source, sanitized original and derivatives. Existing ready uploads are not requeued; the corrected on-demand PNG path can populate their missing derivatives without changing source/drop URLs.
+   Drop/wave image finalization now generates and verifies both legacy `AUTOx450` and `AUTOx1080` previews using the same admission and PNG renderer as on-demand resizing before it can mark media ready. All image source handling and re-encoding privacy stripping are file-based; full source and encoded-original buffers are not retained in the parent, except that lossless stripping reads sources of up to 256 MiB (the upload limit) into memory and frees them before previews are rendered. Its pixel check decodes in bands of at most 64 MiB, so memory does not grow with image size; it is bounded by a 268 MP pixel ceiling, a 64 MP frame cap for whole-frame decoders, the PNG upload limits and a 240-second budget (see [image-upload-format-validation.md](image-upload-format-validation.md#pixel-check-bounds)). PNG original stripping uses an isolated child when the lossless strip does not verify; other original re-encodes must fit the conservative full-decode budget without preview shrink or discarded GIF frames. The original and both derivatives must be stored before the ready transition and ingest deletion. Derivative storage failures remain retryable and never imply ready. A retry regenerates the previews and overwrites the same keys; a ready-message redelivery only retries best-effort private-source deletion. Other formats retain their format/privacy transformations and existing animated-GIF first-frame fallback. The sanitizer reserves 1 GiB ephemeral storage for source, sanitized original and derivatives. Existing ready uploads are not requeued; the corrected on-demand PNG path can populate their missing derivatives without changing source/drop URLs.
    The animation-preview implementation (requires `mediaResizerLoop` deployment) handles versioned GIF requests (`AUTOx450_gifv2`, and the other existing sizes with `_gifv2` appended) with animation-preserving processing instead of the legacy first-frame fallback. The suffix is removed before checking the existing size whitelist and resolving the original key, but retained in the S3 derivative key. AUTO sizes use a sequential native decode and one resize directly to bounded output dimensions; fixed crop sizes retain individually coalesced frames and a repeated-scan guard. The bounded RGBA strip is spooled before encoding; output resolution can shrink further to bound the complete animation. The deployment catalog sets this worker to 2048 MiB for CPU headroom while retaining its processing deadline and source/output safety limits. Frame timing, loop count, and transparency are retained. Admission limits cover source bytes, per-frame pixels, frame count, repeated decoder work, retained output, and processing time. An eligible original that already fits an AUTO dimension is copied unchanged. See [GIF animation previews](gif-animation-previews.md) for limits, rollout, and compatibility. Originals and legacy derivative keys are not overwritten.
    Public media objects carry `Cache-Control` set when they are written, because the media CloudFront distribution also serves the desktop app's update feeds (`6529-core-app/`, `6529-staging-core-app/`), which must not be cached long. Keys that never receive different bytes use `public, max-age=31536000, immutable`: drop, wave and distribution uploads (random id per upload; multipart uploads set it at creation), sanitized drop media, profile pictures, rememe images (write-once), device video posters and NFT link previews. Per-token NFT originals and derivatives under `images/` and `videos/` are rewritten in place when a token's media source changes, so they use `public, max-age=86400`, as do on-demand resizer outputs and upload-generated previews at those same derivative keys. Single-PUT presigned uploads and MediaConvert renditions do not set it yet.
 
@@ -1288,30 +1288,42 @@ lock, so other competitions' snapshot and decision runs are never blocked by it.
 A consolidated-TDH run (`persistConsolidatedTDH`, from `delegationsLoop` and
 `tdhLoop`) is a sequence of short transactions rather than one:
 
-- A: the TDH tables, plus a pending generation in `identity_tdh_sync_state`.
+- A: the TDH tables, their `tdh_blocks` row (so the block record always
+  matches the TDH rows, even if the Lambda is killed later) and a pending
+  generation in `identity_tdh_sync_state`. A full rewrite (`tdhLoop`) also
+  arms its "TDH calculations done" announcement.
 - B: identities for new consolidations and profile merges, with the merged
   profiles' wave subscriber counts recounted (not every wave's). Its
   unread-cache and wave-score effects run as soon as it commits.
 - C: identity metrics (`rep`, `cic`, `tdh`, `basetdh_rate`, `level_raw`),
   recomputed from ratings and consolidated TDH in primary-key chunks, each one
   short transaction writing final values, so no reset value is ever visible.
+  Each chunk records the walk's position in the same transaction.
 - D: TDH overvote revocation, against the synced identities, one transaction
   per candidate competition. A competition busy past the lock wait is skipped,
   logged and counted (`failed=n`), and picked up by the next revocation.
-- E: the generation is marked synced.
+- E: TDH consumers are told: a full rewrite's "TDH calculations done" event
+  (xTDH, over-rate revocation, wave scores) is published exactly once, any
+  other write enqueues the xTDH recalculation. Then the generation is marked
+  synced.
 
-B to E run under a renewed lease row, one run at a time. If an invocation
-stops after A, or B to E fail, the generation stays pending and the next
-`delegationsLoop` or `tdhLoop` start finishes B to E, which are idempotent; a
-failure is logged and sent to Sentry without stopping delegations, the TDH
-block record or the xTDH trigger. A lease taken over by another invocation is
-logged as a warning only. Any transaction writing both `ratings` and
-`identities` takes the `ratings` locks first. The TDH tables and identities
-are no longer updated atomically: between A and C, readers combining them see
-the previous run's identities for seconds, and a vote is checked against the
-pre-run credit, as just before any run. Deploy `dbMigrationsLoop`
-first (the marker table), then `delegationsLoop`, `tdhLoop`,
-`overRatesRevocationLoop` and `api`.
+`tdhLoop` runs only A and leaves B to E to `delegationsLoop`, which syncs
+after its own partial writes and resumes pending generations at start. Each
+`delegationsLoop` invocation spends at most five minutes on the sync: it stops
+cleanly between chunks or steps and the next invocation resumes, skipping B
+when it already committed for that generation and continuing after the last
+committed chunk. B to E run under a renewed lease row, one run at a time; a
+failure is logged and sent to Sentry, without stopping delegations, and stays
+pending. A lease taken over by another invocation is logged as a warning only.
+TDH consumers run after the identities are synced, as before; xTDH's
+`level_raw` update and C's chunks both compute from the row's current values,
+so an xTDH run that lands between invocations stays consistent. Any
+transaction writing both `ratings` and `identities` takes the `ratings` locks
+first. The TDH tables and identities are no longer updated atomically: until C
+reaches a row, readers combining them see the previous run's identities, and
+a vote is checked against the pre-run credit, as just before any run. Deploy
+`dbMigrationsLoop` first (the marker table and its columns), then
+`delegationsLoop`, `tdhLoop`, `overRatesRevocationLoop` and `api`.
 
 Winners paginate by win time, newest first; My Votes excludes completed winners
 without deleting historical allocations. Personal votes sort by signed vote value
@@ -1386,6 +1398,20 @@ Weighted scoring consumes these native observations. Entry content revisions
 retain complete score history and use existing native update events to delimit
 the scoring revision. Current allocations, immutable decision voter snapshots,
 and awards retain their existing separate native tables.
+
+Leaderboard-only refreshes read AGGREGATE observations; decision and curation
+execution retain both streams for immutable per-voter winner snapshots. History
+reads start at active entries and use the competition/entry history index before
+sorting, avoiding the history of departed entries. `competition_score_resets`
+projects the latest full-content reset's revision and three independent sequence
+cutoffs. Reset events and their projection commit in the same transaction;
+presentation-only edits never replace a reset. The outbox stays the audit source.
+`competition_score_reset_state` records resumable backfill progress and an
+explicit reader cutover. Readers use the event-based lookup until the operator
+completes and verifies the copy and enables the projection. The operator-only
+`dbMigrationsLoop` scope can compare both readers in one snapshot and disable
+projected reads for rollback. See [score history rollout](competition-score-history-rollout.md).
+
 
 Vote Activity combines competition-scoped shared profile logs and native vote
 history. Exact `<competition-id>:<sequence>` identities deduplicate before
