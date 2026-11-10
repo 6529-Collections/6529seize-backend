@@ -166,8 +166,10 @@ Resources:
                   - cloudformation:GetResource
                   - cloudformation:GetTemplateSummary
                   - cloudformation:ListStacks
-                # Cloud Control GetResource does not support resource ARNs.
-                Resource: '*'
+                # Cloud Control GetResource, ListStacks and template-body
+                # GetTemplateSummary have no resource ARN to scope. These reads
+                # are regional; the controller fixes the four resource identities.
+                Resource: '*' # NOSONAR
                 Condition:
                   StringEquals:
                     aws:RequestedRegion: us-east-1
