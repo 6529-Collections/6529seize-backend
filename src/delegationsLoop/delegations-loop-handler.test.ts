@@ -221,16 +221,60 @@ describe('delegations loop on-demand reconsolidation', () => {
       consolidateSubscriptions
     ].forEach((fn) => expect(fn).toHaveBeenCalledTimes(1));
     expect(db.persistNftDelegationBlock).toHaveBeenCalledWith(26_000_001, 1);
-    // A pending identities sync is finished before new chain events, within
-    // the invocation's sync budget.
+    // A pending identities sync is finished after the delegations work, so
+    // it never delays it, within the invocation's sync budget.
     expect(startIdentitySyncBudget).toHaveBeenCalledTimes(1);
     expect(resumePendingIdentityTdhSync).toHaveBeenCalledTimes(1);
     expect(
-      jest.mocked(resumePendingIdentityTdhSync).mock.invocationCallOrder[0]
+      jest.mocked(startIdentitySyncBudget).mock.invocationCallOrder[0]
     ).toBeLessThan(
       jest.mocked(delegations.findDelegationTransactions).mock
         .invocationCallOrder[0]
     );
+    expect(
+      jest.mocked(resumePendingIdentityTdhSync).mock.invocationCallOrder[0]
+    ).toBeGreaterThan(
+      jest.mocked(db.persistNftDelegationBlock).mock.invocationCallOrder[0]
+    );
+  });
+
+  it('still resumes the pending identities sync when the delegations work fails, and fails with the work error', async () => {
+    jest.mocked(delegations.findDelegationTransactions).mockResolvedValue({
+      latestBlock: 26_000_001,
+      latestBlockTimestamp: 1,
+      consolidations: [],
+      registrations: [],
+      revocation: []
+    });
+    jest
+      .mocked(db.persistNftDelegationBlock)
+      .mockRejectedValue(new Error('checkpoint failure'));
+    jest
+      .mocked(resumePendingIdentityTdhSync)
+      .mockRejectedValue(new Error('resume failure'));
+
+    await expect(invoke({ source: 'aws.events' })).rejects.toThrow(
+      'checkpoint failure'
+    );
+    expect(resumePendingIdentityTdhSync).toHaveBeenCalledTimes(1);
+  });
+
+  it('fails the invocation when only the resume fails', async () => {
+    jest.mocked(delegations.findDelegationTransactions).mockResolvedValue({
+      latestBlock: 26_000_001,
+      latestBlockTimestamp: 1,
+      consolidations: [],
+      registrations: [],
+      revocation: []
+    });
+    jest
+      .mocked(resumePendingIdentityTdhSync)
+      .mockRejectedValue(new Error('resume failure'));
+
+    await expect(invoke({ source: 'aws.events' })).rejects.toThrow(
+      'resume failure'
+    );
+    expect(db.persistNftDelegationBlock).toHaveBeenCalledWith(26_000_001, 1);
   });
 
   it('stops the pipeline and rejects the invocation when a stage fails', async () => {

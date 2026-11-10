@@ -204,8 +204,12 @@ describeWithSeed(
         .spyOn(sentryContext, 'captureException')
         .mockImplementation(() => undefined);
 
+      // This generation needs a full walk, which the sync after a TDH write
+      // would leave to the loop resume: run it here.
       await expect(
-        syncIdentitiesAfterTdhOrLeavePending('AFTER_TDH_WRITE')
+        syncIdentitiesAfterTdhOrLeavePending('AFTER_TDH_WRITE', {
+          deferFullWalk: false
+        })
       ).resolves.toBe('FAILED');
       await expect(resumePendingIdentityTdhSync()).resolves.toBeUndefined();
 
@@ -228,6 +232,7 @@ describeWithSeed(
 
       await expect(
         syncIdentitiesAfterTdhOrLeavePending('AFTER_TDH_WRITE', {
+          deferFullWalk: false,
           chunkRows: 3,
           afterChunk: async (chunk) => {
             if (chunk === 1)
