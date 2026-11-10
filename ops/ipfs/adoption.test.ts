@@ -390,5 +390,14 @@ print(rejected(lambda:a.verify(manifest,template)))
     expect(create.Resource).toBe(
       'arn:aws:cloudformation:us-east-1:987989283142:stack/seize-ipfs-prod-adopted/*'
     );
+    const execute = policy.find((statement: { Action: string[] }) =>
+      statement.Action.includes('cloudformation:ExecuteChangeSet')
+    );
+    expect(
+      execute.Condition.StringLike['cloudformation:ChangeSetName']
+    ).toEqual([
+      'seize-ipfs-prod-import-*',
+      'arn:aws:cloudformation:us-east-1:987989283142:changeSet/seize-ipfs-prod-import-*/*'
+    ]);
   });
 });

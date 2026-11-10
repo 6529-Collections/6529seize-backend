@@ -209,7 +209,11 @@ Resources:
                 Resource: arn:aws:cloudformation:us-east-1:987989283142:stack/seize-ipfs-prod-adopted/*
                 Condition:
                   StringLike:
-                    cloudformation:ChangeSetName: seize-ipfs-prod-import-*
+                    # The controller executes by exact ARN, not a mutable name.
+                    # Cover both IAM context representations of ChangeSetName.
+                    cloudformation:ChangeSetName:
+                      - seize-ipfs-prod-import-*
+                      - arn:aws:cloudformation:us-east-1:987989283142:changeSet/seize-ipfs-prod-import-*/*
               - Effect: Allow
                 Action:
                   - iam:PassRole
