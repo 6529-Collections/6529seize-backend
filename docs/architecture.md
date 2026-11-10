@@ -740,6 +740,26 @@ Background Lambdas that read or write application state use a shared `doInDbCont
 
 MySQL is the integration contract between nearly all modules. API routes, scheduled pollers, queue workers, and derived-data loops all read and write shared tables. Redis is secondary and mostly disposable: API request cache, rate limiting, webhook dedupe, locks, and selected feature caches can fail open or be repopulated from MySQL.
 
+### API request budgets
+
+The rate-limiting middleware charges each request to per source address
+buckets keyed by the API Gateway source IP, with IPv6 addresses grouped by
+their /64 prefix. Anonymous requests use `ip:<address>` with the
+unauthenticated limits. A request with a valid access token uses its
+`wallet:<address>` bucket with the authenticated limits and also a
+per-address ceiling `ip-auth:<address>` (defaults 240 burst, 60 requests per
+second over 60 seconds; `API_RATE_LIMIT_AUTH_IP_BURST`,
+`API_RATE_LIMIT_AUTH_IP_SUSTAINED_RPS`,
+`API_RATE_LIMIT_AUTH_IP_SUSTAINED_WINDOW_SECONDS`). `GET /api/auth/nonce`,
+`GET /api/auth/session-nonce`, `POST /api/auth/login` and
+`POST /api/auth/session-login` also use a per-address sign-in budget
+(defaults 10 burst, 60 per minute; `API_RATE_LIMIT_SIGN_IN_*` with the same
+suffixes). Any rejecting bucket answers 429 with the existing body; headers
+come from the primary bucket unless another one rejects. Signed internal
+requests still skip rate limiting. A request admitted because a check could
+not run logs one `rate_limit_fail_open` warning per minute per container with
+the admitted count and emits the `6529/RateLimit FailOpen` metric.
+
 ### Session refresh recovery
 
 `POST /api/auth/session-refresh` uses a separate Redis rate-limit namespace.

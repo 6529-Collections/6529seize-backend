@@ -1,5 +1,6 @@
 import { Request } from 'express';
 import { createHmac, timingSafeEqual } from 'node:crypto';
+import { isIP } from 'node:net';
 import { env } from '../../../env';
 import { Logger } from '../../../logging';
 import { getRedisClient } from '../../../redis';
@@ -12,10 +13,32 @@ export interface RateLimitConfig {
   sustainedWindowSeconds: number;
 }
 
+function bucketConfig(
+  prefix: string,
+  defaults: RateLimitConfig
+): RateLimitConfig {
+  return {
+    burst: env.getIntOrNull(`${prefix}_BURST`) ?? defaults.burst,
+    sustainedRps:
+      env.getIntOrNull(`${prefix}_SUSTAINED_RPS`) ?? defaults.sustainedRps,
+    sustainedWindowSeconds:
+      env.getIntOrNull(`${prefix}_SUSTAINED_WINDOW_SECONDS`) ??
+      defaults.sustainedWindowSeconds
+  };
+}
+
 export function getRateLimitConfig(): {
   enabled: boolean;
   authenticated: RateLimitConfig;
   unauthenticated: RateLimitConfig;
+  /**
+   * Per source address ceiling for requests that carry a valid access
+   * token, on top of the per-wallet budget: wallets are free to create, so
+   * one address cannot multiply its budget by rotating them.
+   */
+  authenticatedAddress: RateLimitConfig;
+  /** Per source address budget for the sign-in nonce and login endpoints. */
+  signIn: RateLimitConfig;
   sessionRefresh: RateLimitConfig;
   internal: {
     enabled: boolean;
@@ -54,6 +77,20 @@ export function getRateLimitConfig(): {
       sustainedWindowSeconds:
         env.getIntOrNull('API_RATE_LIMIT_UNAUTH_SUSTAINED_WINDOW_SECONDS') ?? 60
     },
+    // Four fully used wallet budgets, so several signed-in people behind one
+    // NAT stay well inside it.
+    authenticatedAddress: bucketConfig('API_RATE_LIMIT_AUTH_IP', {
+      burst: 240,
+      sustainedRps: 60,
+      sustainedWindowSeconds: 60
+    }),
+    // A sign-in is one nonce and one login request; 60 per minute per
+    // address leaves room for retries, several wallets and shared networks.
+    signIn: bucketConfig('API_RATE_LIMIT_SIGN_IN', {
+      burst: 10,
+      sustainedRps: 1,
+      sustainedWindowSeconds: 60
+    }),
     sessionRefresh: {
       burst: env.getIntOrNull('API_RATE_LIMIT_REFRESH_BURST') ?? 90,
       sustainedRps:
@@ -87,6 +124,56 @@ export function calculateRetryAfter(resetTime: number): number {
   const now = Date.now();
   const retryAfter = Math.ceil((resetTime - now) / 1000);
   return Math.max(1, retryAfter);
+}
+
+function expandIpv6Groups(address: string): string[] | null {
+  const halves = address.toLowerCase().split('::');
+  if (halves.length > 2) return null;
+  const toGroups = (part: string): string[] =>
+    part
+      ? part.split(':').flatMap((group) =>
+          // An embedded IPv4 tail fills the last two groups.
+          group.includes('.') ? ['0', '0'] : [group]
+        )
+      : [];
+  const head = toGroups(halves[0]);
+  if (halves.length === 1) return head.length === 8 ? head : null;
+  const tail = toGroups(halves[1]);
+  const missing = 8 - head.length - tail.length;
+  if (missing < 0) return null;
+  return [...head, ...new Array<string>(missing).fill('0'), ...tail];
+}
+
+/**
+ * The rate limit key for a source address. IPv4 addresses stay whole; IPv6
+ * addresses are grouped by their /64 prefix, which is what a single
+ * subscriber or host is normally assigned, so one network cannot spread
+ * requests over many addresses of its own prefix.
+ */
+export function rateLimitAddressKey(ip: string): string {
+  if (isIP(ip) !== 6) return ip;
+  const groups = expandIpv6Groups(ip.split('%')[0]);
+  if (!groups) return ip;
+  const prefix = groups
+    .slice(0, 4)
+    .map((group) => Number.parseInt(group, 16).toString(16))
+    .join(':');
+  return `${prefix}::/64`;
+}
+
+const SIGN_IN_ROUTES: readonly { method: string; path: RegExp }[] = [
+  { method: 'GET', path: /^\/api\/auth\/nonce\/?$/i },
+  { method: 'GET', path: /^\/api\/auth\/session-nonce\/?$/i },
+  { method: 'POST', path: /^\/api\/auth\/login\/?$/i },
+  { method: 'POST', path: /^\/api\/auth\/session-login\/?$/i }
+];
+
+/** Nonce and login requests, which share the tighter sign-in budget. */
+export function isSignInRequest(method: string, path: string): boolean {
+  const upperMethod = method.toUpperCase();
+  return SIGN_IN_ROUTES.some(
+    (route) => route.method === upperMethod && route.path.test(path)
+  );
 }
 
 export function sanitizeIdentifier(identifier: string): string {

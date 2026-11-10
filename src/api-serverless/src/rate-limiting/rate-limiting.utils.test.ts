@@ -1,9 +1,12 @@
+import * as fc from 'fast-check';
 import { getRedisClient } from '../../../redis';
 import {
   calculateRetryAfter,
   generateBurstKey,
   generateSustainedKey,
   getRateLimitConfig,
+  isSignInRequest,
+  rateLimitAddressKey,
   sanitizeIdentifier
 } from './rate-limiting.utils';
 
@@ -207,6 +210,122 @@ describe('rate-limiting.utils', () => {
 
     it('handles string with only problematic characters', () => {
       expect(sanitizeIdentifier('@#$%')).toBe('____');
+    });
+  });
+
+  describe('per-address and sign-in budgets', () => {
+    const originalEnv = process.env;
+
+    beforeEach(() => {
+      process.env = { ...originalEnv };
+      (getRedisClient as jest.Mock).mockReturnValue({});
+    });
+
+    afterEach(() => {
+      process.env = originalEnv;
+    });
+
+    it('defaults the authenticated address ceiling and sign-in budget', () => {
+      const config = getRateLimitConfig();
+
+      expect(config.authenticatedAddress).toEqual({
+        burst: 240,
+        sustainedRps: 60,
+        sustainedWindowSeconds: 60
+      });
+      expect(config.signIn).toEqual({
+        burst: 10,
+        sustainedRps: 1,
+        sustainedWindowSeconds: 60
+      });
+    });
+
+    it('reads both budgets from the environment', () => {
+      process.env.API_RATE_LIMIT_AUTH_IP_BURST = '500';
+      process.env.API_RATE_LIMIT_AUTH_IP_SUSTAINED_RPS = '100';
+      process.env.API_RATE_LIMIT_AUTH_IP_SUSTAINED_WINDOW_SECONDS = '30';
+      process.env.API_RATE_LIMIT_SIGN_IN_BURST = '4';
+      process.env.API_RATE_LIMIT_SIGN_IN_SUSTAINED_RPS = '2';
+      process.env.API_RATE_LIMIT_SIGN_IN_SUSTAINED_WINDOW_SECONDS = '120';
+
+      const config = getRateLimitConfig();
+
+      expect(config.authenticatedAddress).toEqual({
+        burst: 500,
+        sustainedRps: 100,
+        sustainedWindowSeconds: 30
+      });
+      expect(config.signIn).toEqual({
+        burst: 4,
+        sustainedRps: 2,
+        sustainedWindowSeconds: 120
+      });
+    });
+  });
+
+  describe('rateLimitAddressKey', () => {
+    it.each(['192.168.1.1', '10.0.0.255', '1.2.3.4'])(
+      'keeps IPv4 address %s whole',
+      (ip) => {
+        expect(rateLimitAddressKey(ip)).toBe(ip);
+      }
+    );
+
+    it.each([
+      ['2001:db8:1:2::1', '2001:db8:1:2::/64'],
+      ['2001:0DB8:0001:0002:0003:0004:0005:0006', '2001:db8:1:2::/64'],
+      ['2001:db8::1', '2001:db8:0:0::/64'],
+      ['::1', '0:0:0:0::/64'],
+      ['::', '0:0:0:0::/64'],
+      ['fe80::1%eth0', 'fe80:0:0:0::/64'],
+      ['64:ff9b::192.0.2.33', '64:ff9b:0:0::/64'],
+      ['2001:db8:1:2:3:4:5:6', '2001:db8:1:2::/64']
+    ])('groups IPv6 address %s as %s', (ip, expected) => {
+      expect(rateLimitAddressKey(ip)).toBe(expected);
+    });
+
+    it('maps every address of a /64 to one key', () => {
+      fc.assert(
+        fc.property(
+          fc.array(fc.integer({ min: 0, max: 0xffff }), {
+            minLength: 4,
+            maxLength: 4
+          }),
+          (suffix) => {
+            const ip = `2001:db8:aa:bb:${suffix.map((g) => g.toString(16)).join(':')}`;
+            expect(rateLimitAddressKey(ip)).toBe('2001:db8:aa:bb::/64');
+          }
+        )
+      );
+    });
+
+    it('produces a key that survives identifier sanitizing unambiguously', () => {
+      expect(
+        sanitizeIdentifier(`ip:${rateLimitAddressKey('2001:db8::1')}`)
+      ).toBe('ip:2001:db8:0:0::_64');
+    });
+  });
+
+  describe('isSignInRequest', () => {
+    it.each([
+      ['GET', '/api/auth/nonce'],
+      ['GET', '/api/auth/nonce/'],
+      ['get', '/api/auth/session-nonce'],
+      ['POST', '/api/auth/login'],
+      ['POST', '/api/auth/session-login']
+    ])('matches %s %s', (method, path) => {
+      expect(isSignInRequest(method, path)).toBe(true);
+    });
+
+    it.each([
+      ['POST', '/api/auth/nonce'],
+      ['GET', '/api/auth/login'],
+      ['POST', '/api/auth/session-refresh'],
+      ['POST', '/api/auth/login/extra'],
+      ['GET', '/api/auth/nonces'],
+      ['GET', '/auth/nonce']
+    ])('does not match %s %s', (method, path) => {
+      expect(isSignInRequest(method, path)).toBe(false);
     });
   });
 });
