@@ -51,6 +51,7 @@ import {
 } from '@/competitions/default-competition';
 import { ApiDefaultCompetition } from '@/api/generated/models/ApiDefaultCompetition';
 import { competitionCommandRepository } from './competition-command.repository';
+import { competitionEntryRepository } from '@/competitions/competition-entry.repository';
 
 export type CompetitionPermissions = {
   readonly view: true;
@@ -66,6 +67,7 @@ export type PublicCompetition = Omit<
   'execution_mode' | 'decision_pauses' | 'configuration_activated_at'
 > & {
   readonly permissions: CompetitionPermissions;
+  readonly your_active_entries_count?: number | null;
 };
 
 export type WaveHub = {
@@ -227,6 +229,7 @@ export class CompetitionService {
       eligibleGroups,
       ctx
     );
+    const activeEntryCounts = await this.viewerActiveEntryCounts(page, ctx);
     const data = await Promise.all(
       page.map((competition) =>
         this.toPublicCompetition(
@@ -237,7 +240,8 @@ export class CompetitionService {
           records.some(
             (record) =>
               record.id === competition.id && record.legacy_wave_id === wave.id
-          )
+          ),
+          activeEntryCounts
         )
       )
     );
@@ -274,7 +278,8 @@ export class CompetitionService {
         ctx
       ),
       ctx,
-      resolved.record.legacy_wave_id === resolved.wave.id
+      resolved.record.legacy_wave_id === resolved.wave.id,
+      await this.viewerActiveEntryCounts([competition], ctx)
     );
   }
 
@@ -612,12 +617,26 @@ export class CompetitionService {
     return [...waveGroups.filter((id) => !groupIds.has(id)), ...nativeGroups];
   }
 
+  private async viewerActiveEntryCounts(
+    competitions: readonly Competition[],
+    ctx: RequestContext
+  ): Promise<Record<string, number> | null> {
+    const profileId = getWaveReadContextProfileId(ctx.authenticationContext);
+    if (!profileId) return null;
+    return competitionEntryRepository.countActiveByCompetitionIds(
+      competitions.map((competition) => competition.id),
+      profileId,
+      ctx
+    );
+  }
+
   private async toPublicCompetition(
     competition: Competition,
     wave: WaveEntity,
     eligibleGroups: string[],
     ctx: RequestContext,
-    originalPrimary: boolean
+    originalPrimary: boolean,
+    activeEntryCounts: Record<string, number> | null
   ): Promise<PublicCompetition> {
     const {
       execution_mode: _execution,
@@ -649,6 +668,10 @@ export class CompetitionService {
       !isCompetitionDecisionPending(competition, now);
     return {
       ...publicData,
+      your_active_entries_count:
+        activeEntryCounts === null
+          ? null
+          : (activeEntryCounts[competition.id] ?? 0),
       permissions: {
         view: true,
         submit:
