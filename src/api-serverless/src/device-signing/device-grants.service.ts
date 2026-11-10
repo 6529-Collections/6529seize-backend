@@ -1,4 +1,5 @@
 import { ApiDeviceGrant } from '@/api/generated/models/ApiDeviceGrant';
+import { ApiDeviceSecurityNotice } from '@/api/generated/models/ApiDeviceSecurityNotice';
 import { ApiRegisterDeviceGrantRequest } from '@/api/generated/models/ApiRegisterDeviceGrantRequest';
 import { mainnetContractWalletVerifier } from '@/api/e2ee/e2ee-context';
 import { AuthenticationContext } from '@/auth-context';
@@ -58,6 +59,7 @@ export interface VerifiedLoginGrant {
   readonly chainId: number;
   readonly issuedAt: Date;
   readonly deviceLabel: string | null | undefined;
+  readonly encryptedDmDeviceKey?: string;
 }
 
 type GrantCallerContext = RequestContext & {
@@ -131,7 +133,10 @@ export class DeviceGrantsService {
       expires_at: grant.terms.expiresAtSeconds * 1000,
       created_at: this.now(),
       revoked_at: null,
-      last_used_at: null
+      last_used_at: null,
+      ...(grant.encryptedDmDeviceKey
+        ? { notice_encrypted_dm_device_key: grant.encryptedDmDeviceKey }
+        : {})
     };
     return this.storeGrant(entity, ctx);
   }
@@ -199,7 +204,10 @@ export class DeviceGrantsService {
         expires_at: grant.expires_at * 1000,
         created_at: nowMs,
         revoked_at: null,
-        last_used_at: null
+        last_used_at: null,
+        ...(grant.mls_device_key
+          ? { notice_encrypted_dm_device_key: grant.mls_device_key }
+          : {})
       },
       ctx
     );
@@ -249,6 +257,32 @@ export class DeviceGrantsService {
       ? await this.db.findGrantsOfProfile(caller.profileId, ctx)
       : await this.db.findGrantsOfWallet(caller.wallet, ctx);
     return grants.map(toOwnedApiDeviceGrant);
+  }
+
+  async listCallerSecurityNotices(
+    ctx: GrantCallerContext
+  ): Promise<ApiDeviceSecurityNotice[]> {
+    const caller = this.resolveCaller(ctx.authenticationContext);
+    const notices = await this.db.findPendingSecurityNotices(
+      caller.profileId,
+      caller.wallet,
+      this.now(),
+      ctx,
+      this.appGrantDeps.e2eeEnabled()
+    );
+    return notices.map(
+      ({
+        signing_grant_id,
+        signing_device_key,
+        encrypted_dm_device_key,
+        device_label
+      }) => ({
+        signing_grant_id,
+        signing_device_key,
+        encrypted_dm_device_key,
+        device_label
+      })
+    );
   }
 
   async renameCallerGrant(

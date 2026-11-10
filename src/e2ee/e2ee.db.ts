@@ -355,17 +355,32 @@ export class E2eeDb extends LazyDbAccessCompatibleService {
         expires_at_seconds, origin, grant_id, wallet_signature, verified_via,
         label, platform, created_at, updated_at, last_seen_at, revoked_at,
         revoker_device_key, revocation_signed_at_seconds, revocation_signature,
-        grant_message
+        grant_message, notice_pending
       ) values (
         :device_key, :profile_id, :wallet, :ciphersuite, :grant_version,
         :ciphersuites, :issued_at_seconds,
         :expires_at_seconds, :origin, :grant_id, :wallet_signature,
         :verified_via, :label, :platform, :created_at, :updated_at,
-        :last_seen_at, null, null, null, null, :grant_message
+        :last_seen_at, null, null, null, null, :grant_message, :grant_message is null
       )`,
       { ...device },
       connection
     );
+  }
+
+  async acknowledgeDeviceNotice(
+    deviceKey: string,
+    connection: Conn
+  ): Promise<void> {
+    const affectedRows = await this.write(
+      `update ${E2EE_DEVICES_TABLE} set notice_pending = false
+       where device_key = :deviceKey`,
+      { deviceKey },
+      connection
+    );
+    if (affectedRows !== 1) {
+      throw new Error('Could not persist encrypted DM device acknowledgment');
+    }
   }
 
   async renewDevice(

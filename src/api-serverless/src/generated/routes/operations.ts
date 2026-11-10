@@ -107,6 +107,7 @@ import { ApiDeleteEulaConsentRequest } from '@/api/generated/models/ApiDeleteEul
 import { ApiDeleteEulaConsentResponse } from '@/api/generated/models/ApiDeleteEulaConsentResponse';
 import { ApiDeleteMyWaveChatHistoryResponse } from '@/api/generated/models/ApiDeleteMyWaveChatHistoryResponse';
 import { ApiDeviceGrant } from '@/api/generated/models/ApiDeviceGrant';
+import { ApiDeviceSecurityNotice } from '@/api/generated/models/ApiDeviceSecurityNotice';
 import { ApiDmDropsUnreadCount } from '@/api/generated/models/ApiDmDropsUnreadCount';
 import { ApiDmUnreadSnapshot } from '@/api/generated/models/ApiDmUnreadSnapshot';
 import { ApiDrop } from '@/api/generated/models/ApiDrop';
@@ -1502,6 +1503,20 @@ export type RevokeDeviceGrantRequest = Request<
   Record<string, never>
 >;
 
+export type GetDeviceSecurityNoticesPathParams = Record<string, never>;
+
+export type GetDeviceSecurityNoticesQuery = Record<string, never>;
+
+export type GetDeviceSecurityNoticesResponse = ApiDeviceSecurityNotice[];
+
+export type GetDeviceSecurityNoticesRequest = Request<
+  GetDeviceSecurityNoticesPathParams,
+  ApiResponse<GetDeviceSecurityNoticesResponse>,
+  never,
+  GetDeviceSecurityNoticesQuery,
+  Record<string, never>
+>;
+
 export interface GetWalletDistributionAllocationsPathParams {
   "contract": string;
   "card_id": number;
@@ -1895,6 +1910,22 @@ export type E2eeGetDeviceRequest = Request<
   ApiResponse<E2eeGetDeviceResponse>,
   never,
   E2eeGetDeviceQuery,
+  Record<string, never>
+>;
+
+export interface E2eeAcknowledgeDeviceNoticePathParams {
+  "device_key": string;
+}
+
+export type E2eeAcknowledgeDeviceNoticeQuery = Record<string, never>;
+
+export type E2eeAcknowledgeDeviceNoticeResponse = ApiE2eeAck;
+
+export type E2eeAcknowledgeDeviceNoticeRequest = Request<
+  E2eeAcknowledgeDeviceNoticePathParams,
+  ApiResponse<E2eeAcknowledgeDeviceNoticeResponse>,
+  never,
+  E2eeAcknowledgeDeviceNoticeQuery,
   Record<string, never>
 >;
 

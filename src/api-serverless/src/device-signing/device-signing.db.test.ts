@@ -1,5 +1,6 @@
 import 'reflect-metadata';
 import { sqlExecutor } from '@/sql-executor';
+import { DEVICE_GRANTS_TABLE } from '@/constants/db-tables';
 import { describeWithSeed } from '@/tests/_setup/seed';
 import {
   anAddressConsolidationKeys,
@@ -118,6 +119,63 @@ describeWithSeed(
       const [stored] = await repo.findGrantsOfProfile(PROFILE_ID, ctx);
       expect(Boolean(stored?.notice_acknowledged)).toBe(true);
       expect(stored?.revoked_at).toBeNull();
+    });
+
+    it('lists new linked grants once and clears the notice after acknowledgment', async () => {
+      const id = hex('1', 64);
+      const mlsKey = hex('e', 64);
+      const linked = {
+        ...aGrant(id, WALLET_B, 1),
+        notice_encrypted_dm_device_key: mlsKey
+      };
+      const oldId = hex('2', 64);
+      const revokedId = hex('3', 64);
+      await repo.insertGrant(linked, ctx);
+      await repo.insertGrant(aGrant(oldId, WALLET_A, 2), ctx);
+      await sqlExecutor.execute(
+        `update ${DEVICE_GRANTS_TABLE} set notice_pending = false where id = :oldId`,
+        { oldId }
+      );
+      await repo.insertGrant(aGrant(revokedId, WALLET_A, 3), ctx);
+      await repo.revokeGrant(revokedId, 4, ctx);
+      await repo.insertGrant(aGrant(hex('4', 64), WALLET_C, 4), ctx);
+
+      const findNotices = () =>
+        repo.findPendingSecurityNotices(PROFILE_ID, WALLET_A, 5, ctx);
+      await expect(findNotices()).resolves.toMatchObject([
+        {
+          signing_grant_id: id,
+          signing_device_key: linked.device_key,
+          encrypted_dm_device_key: mlsKey,
+          device_label: linked.device_label
+        }
+      ]);
+      await expect(
+        repo.findPendingSecurityNotices(null, WALLET_C, 5, ctx)
+      ).resolves.toMatchObject([{ signing_grant_id: hex('4', 64) }]);
+      await expect(
+        repo.findPendingSecurityNotices(PROFILE_ID, WALLET_A, 5, ctx, false)
+      ).resolves.toMatchObject([
+        { signing_grant_id: id, encrypted_dm_device_key: mlsKey }
+      ]);
+      await expect(
+        repo.findPendingSecurityNotices(null, WALLET_B, 5, ctx)
+      ).resolves.toMatchObject([
+        { signing_grant_id: id, encrypted_dm_device_key: null }
+      ]);
+      await expect(
+        repo.findPendingSecurityNotices(PROFILE_ID, WALLET_A, 1002, ctx)
+      ).resolves.toEqual([]);
+
+      await repo.executeNativeQueriesInTransaction(async (connection) => {
+        const txCtx = { ...ctx, connection };
+        await repo.lockGrant(id, txCtx);
+        await repo.acknowledgeGrant(id, txCtx);
+      });
+      await expect(findNotices()).resolves.toEqual([]);
+      await expect(repo.findGrantById(id, ctx)).resolves.toMatchObject({
+        revoked_at: null
+      });
     });
 
     it('lists grants of every wallet of the profile, newest first', async () => {

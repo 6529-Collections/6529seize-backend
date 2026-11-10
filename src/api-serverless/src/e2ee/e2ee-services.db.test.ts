@@ -8,6 +8,7 @@ import {
 } from '@/api/e2ee/e2ee-context';
 import { directMessageAdmissionService } from '@/api/direct-messages/direct-message-admission.instance';
 import { computeDeviceGrantId } from '@/api/device-signing/device-grant-message';
+import { DeviceSigningDb } from '@/api/device-signing/device-signing.db';
 import { createSiweWebAuthChallenge } from '@/api/wallet-signatures/siwe-wallet-auth';
 import { E2eeEventPublisher } from '@/api/e2ee/e2ee-events';
 import { createE2eeServices } from '@/api/e2ee/e2ee.handlers';
@@ -541,6 +542,54 @@ describeWithSeed('E2EE delivery service', [], () => {
       expect(await services.devices.getProfileDevices(alice.id)).toHaveLength(
         1
       );
+    });
+
+    it('acknowledges a standalone device for its owner without revoking it', async () => {
+      const alice = aProfile();
+      const bob = aProfile();
+      const key = await registerDevice(alice);
+      const { key: linked } = await registerLoginGrantDevice(alice);
+      expect(
+        Boolean((await db.getDevice(linked.publicKey))?.notice_pending)
+      ).toBe(false);
+      const notices = new DeviceSigningDb(() => sqlExecutor);
+      const findNotices = () =>
+        notices.findPendingSecurityNotices(
+          alice.id,
+          alice.wallet.address,
+          now,
+          {}
+        );
+
+      await expect(findNotices()).resolves.toMatchObject([
+        { signing_grant_id: null, encrypted_dm_device_key: key.publicKey }
+      ]);
+      await expect(
+        notices.findPendingSecurityNotices(
+          alice.id,
+          alice.wallet.address,
+          now,
+          {},
+          false
+        )
+      ).resolves.toEqual([]);
+      await expect(
+        services.devices.acknowledgeDeviceNotice(bob.id, key.publicKey)
+      ).rejects.toBeInstanceOf(E2eeApiException);
+      await expect(
+        services.devices.acknowledgeDeviceNotice(alice.id, linked.publicKey)
+      ).rejects.toBeInstanceOf(E2eeApiException);
+      await expect(findNotices()).resolves.toHaveLength(1);
+
+      await services.devices.acknowledgeDeviceNotice(alice.id, key.publicKey);
+      await services.devices.acknowledgeDeviceNotice(alice.id, key.publicKey);
+      await expect(findNotices()).resolves.toEqual([]);
+      await expect(db.getDevice(key.publicKey)).resolves.toMatchObject({
+        revoked_at: null
+      });
+      now += DAY;
+      await registerDevice(alice, key);
+      await expect(findNotices()).resolves.toEqual([]);
     });
 
     it('looks up devices of profiles and by key in one request', async () => {

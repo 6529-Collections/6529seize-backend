@@ -230,6 +230,12 @@ without device parameters are unchanged.
   acknowledgment of an active Signed Posts grant. It is idempotent and leaves
   the grant's permissions intact. The authenticated owner sees the state in
   `GET /api/device-grants` from any device. Public signature proofs omit it.
+  `GET /api/device-security-notices` lists pending notices for newly authorized
+  devices. A combined signing and encryption grant uses the same signing
+  acknowledgment from either UI. Standalone Encrypted DM devices use
+  `POST /api/e2ee/devices/{device_key}/acknowledge`. Both routes require the
+  owner. Grants and encryption devices created before the pending notice
+  fields were introduced are not added to the new list.
 - App device grants (6529 Mobile and 6529 Desktop, whose sign-in is not a
   SIWE web session): `POST /api/device-grants` registers an EIP-712 grant the
   signed-in wallet signed outside sign-in. Domain `6529 Device Grant`,

@@ -97,6 +97,7 @@ import {
   E2eeGetBlobChunkRequest,
   E2eeGetDeviceGroupsRequest,
   E2eeGetDeviceRequest,
+  E2eeAcknowledgeDeviceNoticeRequest,
   E2eeRenameDeviceRequest,
   E2eeGetGroupLogRequest,
   E2eeGetGroupRequest,
@@ -218,6 +219,14 @@ export async function revokeE2eeDeviceOfLoginGrant(
   grantId: string
 ): Promise<void> {
   await services.devices.revokeDeviceOfLoginGrant(grantId);
+}
+
+export async function handleE2eeAcknowledgeDeviceNotice(
+  req: E2eeAcknowledgeDeviceNoticeRequest
+): Promise<ApiE2eeAck> {
+  const caller = await e2eeCaller(req);
+  await services.devices.acknowledgeDeviceNotice(caller, deviceKeyOf(req));
+  return { acknowledged: true };
 }
 
 export async function handleE2eeRenameDevice(

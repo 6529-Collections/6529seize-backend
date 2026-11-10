@@ -1,10 +1,12 @@
 import { getAuthenticationContext } from '@/api/auth/auth';
 import { ApiDeviceGrant } from '@/api/generated/models/ApiDeviceGrant';
+import { ApiDeviceSecurityNotice } from '@/api/generated/models/ApiDeviceSecurityNotice';
 import { ApiDropSignedEvents } from '@/api/generated/models/ApiDropSignedEvents';
 import { ApiRegisterDeviceGrantRequest } from '@/api/generated/models/ApiRegisterDeviceGrantRequest';
 import {
   AcknowledgeDeviceGrantRequest,
   GetDeviceGrantsRequest,
+  GetDeviceSecurityNoticesRequest,
   GetDropSignedEventsRequest,
   RegisterDeviceGrantRequest,
   RenameDeviceGrantRequest,
@@ -29,6 +31,17 @@ export async function handleGetDeviceGrants(
   const timer = Timer.getFromRequest(req);
   const authenticationContext = await getAuthenticationContext(req, timer);
   return deviceGrantsService.listCallerGrants({
+    timer,
+    authenticationContext
+  });
+}
+
+export async function handleGetDeviceSecurityNotices(
+  req: GetDeviceSecurityNoticesRequest
+): Promise<ApiDeviceSecurityNotice[]> {
+  const timer = Timer.getFromRequest(req);
+  const authenticationContext = await getAuthenticationContext(req, timer);
+  return deviceGrantsService.listCallerSecurityNotices({
     timer,
     authenticationContext
   });

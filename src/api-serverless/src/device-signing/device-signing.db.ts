@@ -3,6 +3,7 @@ import {
   DEVICE_GRANTS_TABLE,
   DEVICE_SIGNED_EVENTS_TABLE,
   DROP_AUTHOR_SIGNATURES_TABLE,
+  E2EE_DEVICES_TABLE,
   IDENTITIES_TABLE
 } from '@/constants';
 import { DbPoolName } from '@/db-query.options';
@@ -13,6 +14,13 @@ import { RequestContext } from '@/request.context';
 import { dbSupplier, LazyDbAccessCompatibleService } from '@/sql-executor';
 
 export const DEVICE_GRANTS_LIST_LIMIT = 100;
+
+export interface DeviceSecurityNoticeRow {
+  readonly signing_grant_id: string | null;
+  readonly signing_device_key: string | null;
+  readonly encrypted_dm_device_key: string | null;
+  readonly device_label: string;
+}
 
 export class DeviceSigningDb extends LazyDbAccessCompatibleService {
   private readonly logger = Logger.get(this.constructor.name);
@@ -27,13 +35,14 @@ export class DeviceSigningDb extends LazyDbAccessCompatibleService {
       `insert into ${DEVICE_GRANTS_TABLE} (
         id, wallet, key_type, device_key, scopes, device_label, domain,
         message, wallet_signature, chain_id, issued_at, expires_at,
-        created_at, revoked_at, last_used_at
+        created_at, revoked_at, last_used_at, notice_pending,
+        notice_encrypted_dm_device_key
       ) values (
         :id, :wallet, :key_type, :device_key, :scopes, :device_label, :domain,
         :message, :wallet_signature, :chain_id, :issued_at, :expires_at,
-        :created_at, :revoked_at, :last_used_at
+        :created_at, :revoked_at, :last_used_at, true, :noticeMlsKey
       )`,
-      { ...grant },
+      { ...grant, noticeMlsKey: grant.notice_encrypted_dm_device_key ?? null },
       ctx
     );
   }
@@ -105,6 +114,59 @@ export class DeviceSigningDb extends LazyDbAccessCompatibleService {
     );
   }
 
+  /** Reads both permissions together so one linked grant has one notice. */
+  async findPendingSecurityNotices(
+    profileId: string | null,
+    wallet: string,
+    now: number,
+    ctx: RequestContext,
+    encryptedDmsEnabled = true
+  ): Promise<DeviceSecurityNoticeRow[]> {
+    // Encrypted DM permissions belong to profiles, even when signing falls back to the wallet.
+    const showStandalone = encryptedDmsEnabled && profileId !== null;
+    const signingOwner = profileId
+      ? `g.wallet in (
+           select a.address from ${ADDRESS_CONSOLIDATION_KEY} a
+           join ${IDENTITIES_TABLE} i on i.consolidation_key = a.consolidation_key
+           where i.profile_id = :profileId
+         )`
+      : 'g.wallet = :wallet';
+    return this.timedExecute<DeviceSecurityNoticeRow>(
+      'findPendingSecurityNotices',
+      `select g.id as signing_grant_id, g.device_key as signing_device_key,
+              case when :profileId is not null then g.notice_encrypted_dm_device_key end
+                as encrypted_dm_device_key,
+              coalesce(e.label, g.device_label) as device_label,
+              g.created_at as created_at
+       from ${DEVICE_GRANTS_TABLE} g
+       left join ${E2EE_DEVICES_TABLE} e
+         on e.grant_id = g.id and e.profile_id = :profileId
+         and e.device_key = g.notice_encrypted_dm_device_key
+         and e.grant_message is not null and e.revoked_at is null
+         and e.expires_at_seconds > :nowSeconds
+       where ${signingOwner} and g.notice_pending = true
+         and g.notice_acknowledged = false
+         and g.revoked_at is null and g.expires_at > :now
+       union all
+       select null, null, e.device_key, e.label, e.created_at
+       from ${E2EE_DEVICES_TABLE} e
+       where :showStandalone and e.profile_id = :profileId and e.notice_pending = true
+         and e.grant_message is null and e.revoked_at is null
+         and e.expires_at_seconds > :nowSeconds
+       order by created_at desc, signing_grant_id desc, encrypted_dm_device_key desc
+       limit ${DEVICE_GRANTS_LIST_LIMIT}`,
+      {
+        profileId,
+        wallet,
+        now,
+        nowSeconds: Math.floor(now / 1000),
+        showStandalone
+      },
+      ctx,
+      DbPoolName.WRITE
+    );
+  }
+
   async lockGrant(
     id: string,
     ctx: RequestContext
@@ -139,7 +201,8 @@ export class DeviceSigningDb extends LazyDbAccessCompatibleService {
   async acknowledgeGrant(id: string, ctx: RequestContext): Promise<void> {
     const result = await this.timedExecute(
       'acknowledgeGrant',
-      `update ${DEVICE_GRANTS_TABLE} set notice_acknowledged = true where id = :id`,
+      `update ${DEVICE_GRANTS_TABLE}
+       set notice_acknowledged = true, notice_pending = false where id = :id`,
       { id },
       ctx,
       DbPoolName.WRITE
