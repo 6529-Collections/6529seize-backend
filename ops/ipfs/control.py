@@ -222,7 +222,9 @@ def host_operation(config, args):
     candidate(config, allow_active=args.operation in ("backup", "verify"))
     if args.operation == "deploy":
         require(args.bundle and matches(r"[a-f0-9]{64}", args.bundle_sha256), "A verified bundle is required")
-        artifact_directory = Path(os.environ["RUNNER_TEMP"]).resolve()
+        runner_directory = os.environ.get("RUNNER_TEMP")
+        require(runner_directory, "RUNNER_TEMP is required for Actions deployment")
+        artifact_directory = Path(runner_directory).resolve()
         require(Path(args.bundle).resolve() == artifact_directory / "ipfs-bundle.tar.gz", "Bundle must be the runner's prepared release archive")
         require(digest(args.bundle, artifact_directory) == args.bundle_sha256, "Bundle checksum mismatch")
         key = config["environment"] + "/" + args.sha + "/bundle-" + args.bundle_sha256 + ".tar.gz"

@@ -245,28 +245,45 @@ describe('IPFS recovery and artifact integrity', () => {
   });
 
   test.each([
-    'not a receipt',
-    JSON.stringify({
-      protocol: '6529.ipfs.receipt.v1',
-      operation: 'backup',
-      result: { pinCount: 3 }
-    }),
-    JSON.stringify({
-      protocol: '6529.ipfs.receipt.v1',
-      operation: 'verify',
-      result: {}
-    })
+    {
+      output: 'not a receipt',
+      expectedError: 'No valid SSM operation receipt'
+    },
+    {
+      output: JSON.stringify({
+        protocol: '6529.ipfs.receipt.v1',
+        operation: 'backup',
+        result: { pinCount: 3 }
+      }),
+      expectedError: 'Missing or invalid required SSM receipt fields'
+    },
+    {
+      output: JSON.stringify({
+        protocol: '6529.ipfs.receipt.v1',
+        operation: 'verify',
+        result: {}
+      }),
+      expectedError: 'SSM receipt operation mismatch'
+    }
   ])(
-    'never reports success with a missing or mismatched receipt: %s',
-    (output) => {
+    'rejects a receipt with the expected reason: $expectedError',
+    ({ output, expectedError }) => {
       expect(
         python(
-          `from control import parse_receipt\ntry:\n parse_receipt(config,'backup')\nexcept ValueError:\n print('rejected')`,
+          `from control import parse_receipt\noutput_text=json.loads(sys.argv[2])\nassert isinstance(output_text,str)\ntry:\n parse_receipt(output_text,'backup')\nexcept ValueError as error:\n print(str(error))`,
           output
         )
-      ).toBe('rejected');
+      ).toContain(expectedError);
     }
   );
+
+  test('deployment reports a missing runner directory before reading an artifact', () => {
+    expect(
+      python(
+        `import os\nfrom argparse import Namespace\nfrom pathlib import Path\nfrom unittest.mock import patch\nfrom control import host_operation\nos.environ.pop('RUNNER_TEMP',None)\nwith patch('control.candidate'):\n try:\n  host_operation(config,Namespace(operation='deploy',bundle=Path('/unused'),bundle_sha256='a'*64))\n except ValueError as error:\n  print(str(error))`
+      )
+    ).toBe('RUNNER_TEMP is required for Actions deployment');
+  });
 
   test('hashing rejects a symlink that leaves the permitted artifact directory', () => {
     expect(

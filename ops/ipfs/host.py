@@ -281,6 +281,8 @@ def mfs_entries(saved, call):
 
 
 def existing_mfs(entries, call):
+    # files/cp attaches an immutable subtree reference. Matching hashes can be
+    # reused after interruption without copying or overwriting that subtree.
     current = call(MFS_LIST, {"arg": "/"}).get("Entries") or []
     require(isinstance(current, list), "Malformed current MFS listing")
     names = set()

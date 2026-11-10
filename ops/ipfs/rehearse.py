@@ -34,6 +34,7 @@ ORIGIN_HOST = 'origin.fixture'
 IPFS_PREFIX = '/ipfs/'
 PAYLOAD_FILENAME = 'payload.bin'
 FILE_STAT = 'files/stat'
+MFS_COPY = 'files/cp'
 
 class S3(http.server.BaseHTTPRequestHandler):
     objects = {}
@@ -65,7 +66,8 @@ class S3(http.server.BaseHTTPRequestHandler):
         url = urllib.parse.urlparse(self.path)
         query = urllib.parse.parse_qs(url.query)
         if "list-type" in query:
-            root = ET.Element("ListBucketResult", xmlns="http://s3.amazonaws.com/doc/2006-03-01/")  # NOSONAR: S3 XML namespace identifier, never a network request.
+            # The S3 protocol defines this XML namespace; it is never requested over the network.
+            root = ET.Element("ListBucketResult", xmlns="http://s3.amazonaws.com/doc/2006-03-01/")  # NOSONAR(S5332)
             ET.SubElement(root, "Name").text = "fixture-blocks"
             ET.SubElement(root, "IsTruncated").text = "false"
             prefix = query.get("prefix", [""])[0]
@@ -244,9 +246,9 @@ def main():
             payload = bytes(range(256)) * 4096
             (work / PAYLOAD_FILENAME).write_bytes(payload)
             cid = first.cli("add", "-Q", str(work / PAYLOAD_FILENAME))
-            first.rpc("files/cp", {"arg": [IPFS_PREFIX + cid, "/restored"]})
+            first.rpc(MFS_COPY, {"arg": [IPFS_PREFIX + cid, "/restored"]})
             first.rpc("files/mkdir", {"arg": "/nested"})
-            first.rpc("files/cp", {"arg": [IPFS_PREFIX + cid, "/nested/payload"]})
+            first.rpc(MFS_COPY, {"arg": [IPFS_PREFIX + cid, "/nested/payload"]})
             direct = first.cli("block", "put", "--format=raw", str(work / PAYLOAD_FILENAME))
             first.rpc("pin/add", {"arg": direct, "recursive": "false"})
             saved = {"schema": 1, "pins": {cid: "recursive", direct: "direct"},
@@ -296,7 +298,7 @@ def main():
             copies = 0
             def interrupted_rpc(operation, *args, **kwargs):
                 nonlocal copies
-                if operation == "files/cp":
+                if operation == MFS_COPY:
                     copies += 1
                     if copies == 2:
                         raise ConnectionError("Synthetic interrupted restore")
