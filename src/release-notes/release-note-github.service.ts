@@ -483,6 +483,12 @@ export class ReleaseNoteGitHubService {
     ancestorSha: string,
     descendantSha: string
   ): Promise<boolean> {
+    const fullSha = /^[a-f0-9]{40}$/;
+    if (!fullSha.test(ancestorSha) || !fullSha.test(descendantSha)) {
+      throw new NonRetryableReleaseNoteError(
+        'Release-note ancestry requires two full lowercase commit SHAs'
+      );
+    }
     if (ancestorSha === descendantSha) {
       return true;
     }

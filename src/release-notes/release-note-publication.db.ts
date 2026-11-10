@@ -70,21 +70,28 @@ export class ReleaseNotePublicationDb extends LazyDbAccessCompatibleService {
     },
     ctx: RequestContext
   ): Promise<PublishedFrontendReleaseRange[]> {
-    return this.db.execute<PublishedFrontendReleaseRange>(
-      `select d.id, d.wave_id, d.serial_no,
-              substring_index(part.content, char(10), 1) as content,
+    const ranges = await this.db.execute<
+      PublishedFrontendReleaseRange & { readonly published_at: number }
+    >(
+      `select d.id, d.wave_id, d.serial_no, d.created_at as published_at,
+              nullif(substring_index(part.content, char(10), 1), '') as content,
               cast(p.current_run_number as char) as run_number,
               p.previous_sha, p.current_sha,
               (select m.data_value from ${DROP_METADATA_TABLE} m
                where m.drop_id = d.id and m.data_key = 'release_note_deployed_at'
-               limit 1) as deployed_at
+               order by m.id asc limit 1) as deployed_at
        from ${RELEASE_NOTE_STREAM_STATES_TABLE} s
        join ${RELEASE_NOTE_PUBLICATIONS_TABLE} p on p.stream_key = s.stream_key
        join ${DROPS_TABLE} d on d.id = p.last_drop_id
        join ${DROPS_PARTS_TABLE} part on part.drop_id = d.id and part.drop_part_id = 1
        where s.repository = :repository and s.branch = 'main' and s.environment = 'prod'
          and p.status = :completed and d.author_id = :authorId and d.wave_id in (:waveIds)
-       order by cast(p.current_run_id as unsigned) asc`,
+         and exists (select 1 from ${DROP_METADATA_TABLE} m
+                     where m.drop_id = d.id and m.data_key = 'release_note_repository'
+                       and m.data_value = s.repository)
+         and exists (select 1 from ${DROP_METADATA_TABLE} m
+                     where m.drop_id = d.id and m.data_key = 'release_note_sha'
+                       and m.data_value = p.current_sha)`,
       {
         repository,
         waveIds,
@@ -92,6 +99,14 @@ export class ReleaseNotePublicationDb extends LazyDbAccessCompatibleService {
         completed: ReleaseNotePublicationStatus.Completed
       },
       queryOptions(ctx)
+    );
+    const deploymentTime = (range: (typeof ranges)[number]) => {
+      const timestamp = Date.parse(range.deployed_at ?? '');
+      return Number.isNaN(timestamp) ? range.published_at : timestamp;
+    };
+    return ranges.sort(
+      (a, b) =>
+        deploymentTime(a) - deploymentTime(b) || a.serial_no - b.serial_no
     );
   }
 

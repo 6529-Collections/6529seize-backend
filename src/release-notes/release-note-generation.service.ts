@@ -768,36 +768,68 @@ export class ReleaseNoteGenerationService {
     frontendSha: string,
     ranges: readonly PublishedFrontendReleaseRange[]
   ): Promise<PublishedFrontendReleaseRange | undefined> {
-    // Deployments follow production main in run order. Find the first head
-    // containing the pin without comparing it to every published release.
-    let low = 0;
-    let high = ranges.length;
+    const ancestry = new Map<string, Promise<boolean>>();
+    const containsPin = (sha: string) => {
+      const cached = ancestry.get(sha);
+      if (cached) {
+        return cached;
+      }
+      const result = this.githubService.isCommitAncestor(
+        FRONTEND_REPOSITORY,
+        frontendSha,
+        sha
+      );
+      ancestry.set(sha, result);
+      return result;
+    };
+
+    // A published range has an ancestral baseline. Only adjacent ranges
+    // sharing a boundary establish monotone ancestry across their heads.
+    for (let start = 0; start < ranges.length; ) {
+      let end = start + 1;
+      while (
+        end < ranges.length &&
+        ranges[end].previous_sha === ranges[end - 1].current_sha
+      ) {
+        end++;
+      }
+      const match = await this.findFrontendReleaseInChain(
+        ranges,
+        start,
+        end,
+        containsPin
+      );
+      if (match) {
+        return match;
+      }
+      start = end;
+    }
+    return undefined;
+  }
+
+  private async findFrontendReleaseInChain(
+    ranges: readonly PublishedFrontendReleaseRange[],
+    start: number,
+    end: number,
+    containsPin: (sha: string) => Promise<boolean>
+  ): Promise<PublishedFrontendReleaseRange | undefined> {
+    if (
+      !(await containsPin(ranges[end - 1].current_sha)) ||
+      (await containsPin(ranges[start].previous_sha))
+    ) {
+      return undefined;
+    }
+    let low = start;
+    let high = end - 1;
     while (low < high) {
       const middle = Math.floor((low + high) / 2);
-      if (
-        await this.githubService.isCommitAncestor(
-          FRONTEND_REPOSITORY,
-          frontendSha,
-          ranges[middle].current_sha
-        )
-      ) {
+      if (await containsPin(ranges[middle].current_sha)) {
         high = middle;
       } else {
         low = middle + 1;
       }
     }
-    const first = ranges[low];
-    if (
-      first &&
-      !(await this.githubService.isCommitAncestor(
-        FRONTEND_REPOSITORY,
-        frontendSha,
-        first.previous_sha
-      ))
-    ) {
-      return first;
-    }
-    return undefined;
+    return ranges[low];
   }
 
   private async findReleaseNoteReceipt(

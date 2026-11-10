@@ -1092,7 +1092,9 @@ describe('ReleaseNoteGenerationService', () => {
         })
       );
       const createDrop = jest.fn().mockResolvedValue({ id: 'created-drop' });
-      const findPublishedFrontendReleaseRanges = jest.fn();
+      const findPublishedFrontendReleaseRanges = jest
+        .fn()
+        .mockResolvedValue([]);
       const service = new ReleaseNoteGenerationService(
         {
           getReleaseContext: jest.fn().mockResolvedValue({
@@ -1230,7 +1232,9 @@ describe('ReleaseNoteGenerationService', () => {
     ) {
       const createDrop = jest.fn().mockResolvedValue({ id: 'desktop-drop' });
       const isCommitAncestor = jest.fn(
-        async (_repo: string, _pin: string, sha: string) =>
+        async (repo: string, pin: string, sha: string) =>
+          repo === '6529-Collections/6529seize-frontend' &&
+          pin === frontendSha &&
           containingShas.includes(sha)
       );
       const findPublishedFrontendReleaseRanges = jest
@@ -1294,6 +1298,37 @@ describe('ReleaseNoteGenerationService', () => {
         data_key: 'release_note_frontend_sha',
         data_value: frontendSha
       });
+    });
+
+    it('finds the first matching note when an out-of-order deployment breaks the ancestry chain', async () => {
+      const { service, createDrop } = buildService(
+        [publishedRanges[1], publishedRanges[0], publishedRanges[2]],
+        [deploy2135, deploy2136]
+      );
+
+      await expect(service.generateAndPost(desktopRequest, {})).resolves.toBe(
+        'published'
+      );
+      expect(
+        createDrop.mock.calls[0][0].createDropRequest.parts[0].content
+      ).toContain('serialNo=2135');
+    });
+
+    it('uses the saved baseline when a later published note covers a gap', async () => {
+      const { service, createDrop } = buildService(
+        [
+          publishedRanges[0],
+          { ...publishedRanges[2], previous_sha: deploy2134 }
+        ],
+        [deploy2136]
+      );
+
+      await expect(service.generateAndPost(desktopRequest, {})).resolves.toBe(
+        'published'
+      );
+      expect(
+        createDrop.mock.calls[0][0].createDropRequest.parts[0].content
+      ).toContain('serialNo=2136');
     });
 
     it.each([

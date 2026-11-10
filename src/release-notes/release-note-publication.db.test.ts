@@ -34,56 +34,82 @@ describeWithSeed(
   () => {
     const repository = new ReleaseNotePublicationDb(() => sqlExecutor);
 
-    it('returns saved ranges only for completed publications with a matching drop', async () => {
-      await repository.preparePublication(
-        {
-          publicationId: 'published',
-          stream,
-          currentRun,
-          bootstrapPreviousRun: previousRun
-        },
-        {}
-      );
-      const dropId = 'frontend-release-drop';
+    it('orders completed ranges by deployment time and verifies the drop identity', async () => {
       const waveId = 'deploy-wave';
       const authorId = 'bot-profile';
       const deployedAt = '2026-11-10T15:20:15.890Z';
-      await sqlExecutor.execute(
-        `insert into ${DROPS_TABLE} (id, wave_id, author_id, created_at, parts_count)
-         values (:dropId, :waveId, :authorId, 1, 1)`,
-        { dropId, waveId, authorId }
-      );
-      await sqlExecutor.execute(
-        `insert into ${DROPS_PARTS_TABLE} (drop_id, drop_part_id, content)
-         values (:dropId, 1, :content)`,
-        { dropId, content: 'Frontend heading\nBody' }
-      );
-      await sqlExecutor.execute(
-        `insert into ${DROP_METADATA_TABLE} (drop_id, wave_id, data_key, data_value)
-         values (:dropId, :waveId, 'release_note_deployed_at', :deployedAt)`,
-        { dropId, waveId, deployedAt }
-      );
-      await repository.recordPlan('published', 1, {});
-      await repository.recordPart(
-        { publicationId: 'published', partNumber: 1, totalParts: 1, dropId },
-        {}
-      );
+      const nextRun = {
+        id: '32472000000',
+        number: 1661,
+        sha: 'cccccccccccccccccccccccccccccccccccccccc'
+      };
+
+      async function recordRange(run: typeof currentRun, timestamp: string) {
+        const publicationId = `publication-${run.number}`;
+        const dropId = `frontend-drop-${run.number}`;
+        await repository.preparePublication(
+          {
+            publicationId,
+            stream,
+            currentRun: run,
+            bootstrapPreviousRun: previousRun
+          },
+          {}
+        );
+        await sqlExecutor.execute(
+          `insert into ${DROPS_TABLE} (id, serial_no, wave_id, author_id, created_at, parts_count)
+           values (:dropId, :serialNo, :waveId, :authorId, 1, 1)`,
+          { dropId, serialNo: run.number, waveId, authorId }
+        );
+        await sqlExecutor.execute(
+          `insert into ${DROPS_PARTS_TABLE} (drop_id, drop_part_id, content)
+           values (:dropId, 1, :content)`,
+          { dropId, content: 'Frontend heading\nBody' }
+        );
+        await sqlExecutor.execute(
+          `insert into ${DROP_METADATA_TABLE} (drop_id, wave_id, data_key, data_value)
+           values (:dropId, :waveId, 'release_note_deployed_at', :timestamp),
+                  (:dropId, :waveId, 'release_note_repository', :repo),
+                  (:dropId, :waveId, 'release_note_sha', :sha)`,
+          { dropId, waveId, timestamp, repo: stream.repository, sha: run.sha }
+        );
+        await repository.recordPlan(publicationId, 1, {});
+        await repository.recordPart(
+          { publicationId, partNumber: 1, totalParts: 1, dropId },
+          {}
+        );
+        return { publicationId, dropId };
+      }
+
       const filter = {
         repository: stream.repository,
         waveIds: [waveId, 'legacy-wave'],
         authorId
       };
+      const first = await recordRange(currentRun, deployedAt);
       await expect(
         repository.findPublishedFrontendReleaseRanges(filter, {})
       ).resolves.toEqual([]);
 
-      await repository.completePublication('published', {});
+      await repository.completePublication(first.publicationId, {});
+      const second = await recordRange(
+        nextRun,
+        '2026-11-10T17:00:00.000+02:00'
+      );
+      await repository.completePublication(second.publicationId, {});
 
       await expect(
         repository.findPublishedFrontendReleaseRanges(filter, {})
       ).resolves.toEqual([
         expect.objectContaining({
-          id: dropId,
+          id: second.dropId,
+          serial_no: nextRun.number,
+          previous_sha: currentRun.sha,
+          current_sha: nextRun.sha
+        }),
+        expect.objectContaining({
+          id: first.dropId,
+          serial_no: currentRun.number,
           wave_id: waveId,
           run_number: String(currentRun.number),
           previous_sha: previousRun.sha,
@@ -92,6 +118,14 @@ describeWithSeed(
           content: 'Frontend heading'
         })
       ]);
+      await sqlExecutor.execute(
+        `update ${DROP_METADATA_TABLE} set data_value = '6529-Collections/6529seize-backend'
+         where drop_id = :dropId and data_key = 'release_note_repository'`,
+        { dropId: second.dropId }
+      );
+      await expect(
+        repository.findPublishedFrontendReleaseRanges(filter, {})
+      ).resolves.toEqual([expect.objectContaining({ id: first.dropId })]);
       await expect(
         repository.findPublishedFrontendReleaseRanges(
           { ...filter, authorId: 'other-profile' },

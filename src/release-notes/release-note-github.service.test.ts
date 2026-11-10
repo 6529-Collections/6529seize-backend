@@ -118,6 +118,7 @@ describe('ReleaseNoteGitHubService', () => {
 
   it.each([
     ['ahead', true],
+    ['identical', true],
     ['behind', false],
     ['diverged', false]
   ])(
@@ -126,30 +127,51 @@ describe('ReleaseNoteGitHubService', () => {
       const mockFetch = fetch as unknown as jest.Mock;
       mockFetch.mockResolvedValueOnce(response({ status }));
       const repository = '6529-Collections/6529seize-frontend';
+      const pin = 'a'.repeat(40);
+      const head = 'b'.repeat(40);
 
       await expect(
-        new ReleaseNoteGitHubService().isCommitAncestor(
-          repository,
-          'pin',
-          'head'
-        )
+        new ReleaseNoteGitHubService().isCommitAncestor(repository, pin, head)
       ).resolves.toBe(expected);
       expect(mockFetch).toHaveBeenCalledWith(
-        `https://api.github.com/repos/${repository}/compare/pin...head?per_page=1`,
+        `https://api.github.com/repos/${repository}/compare/${pin}...${head}?per_page=1`,
         expect.anything()
       );
     }
   );
 
   it('treats a release baseline equal to the pin as containing it without an API call', async () => {
+    const pin = 'a'.repeat(40);
     await expect(
       new ReleaseNoteGitHubService().isCommitAncestor(
         '6529-Collections/6529seize-frontend',
-        'pin',
-        'pin'
+        pin,
+        pin
       )
     ).resolves.toBe(true);
     expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it('rejects an invalid stored SHA before calling GitHub', async () => {
+    await expect(
+      new ReleaseNoteGitHubService().isCommitAncestor(
+        '6529-Collections/6529seize-frontend',
+        'a'.repeat(40),
+        'main'
+      )
+    ).rejects.toThrow('requires two full lowercase commit SHAs');
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it('treats a missing GitHub ancestry status as a dependency error', async () => {
+    (fetch as unknown as jest.Mock).mockResolvedValueOnce(response({}));
+    await expect(
+      new ReleaseNoteGitHubService().isCommitAncestor(
+        '6529-Collections/6529seize-frontend',
+        'a'.repeat(40),
+        'b'.repeat(40)
+      )
+    ).rejects.toThrow('GitHub did not return an ancestry status');
   });
 
   it('loads the allowlisted prompt from the exact deployed SHA', async () => {
