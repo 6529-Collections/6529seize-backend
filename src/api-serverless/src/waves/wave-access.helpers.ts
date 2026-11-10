@@ -95,6 +95,48 @@ export async function assertWaveAndParentVisibleOrThrow<
   return wave;
 }
 
+/**
+ * Asserts that the wave (and its parent) is visible to the given profile.
+ * Eligible groups are only loaded when the wave or its parent can be
+ * restricted; they are returned when loaded so callers can reuse them.
+ */
+export async function assertWaveAndParentVisibleToProfileOrThrow<
+  TWave extends {
+    visibility_group_id: string | null;
+    parent_wave_id?: string | null;
+  }
+>({
+  wave,
+  profileId,
+  userGroupsService,
+  message,
+  wavesApiDb,
+  ctx
+}: {
+  wave: TWave | null;
+  profileId: string | null;
+  userGroupsService: Pick<UserGroupsService, 'getGroupsUserIsEligibleFor'>;
+  message: string;
+  wavesApiDb: WavesApiDb;
+  ctx: RequestContext;
+}): Promise<{
+  wave: TWave;
+  groupsUserIsEligibleFor: string[] | undefined;
+}> {
+  const groupsUserIsEligibleFor =
+    wave && (wave.visibility_group_id || wave.parent_wave_id)
+      ? await userGroupsService.getGroupsUserIsEligibleFor(profileId, ctx.timer)
+      : undefined;
+  const visibleWave = await assertWaveAndParentVisibleOrThrow({
+    wave,
+    groupsUserIsEligibleFor: groupsUserIsEligibleFor ?? [],
+    message,
+    wavesApiDb,
+    ctx
+  });
+  return { wave: visibleWave, groupsUserIsEligibleFor };
+}
+
 export function getAuthenticatedNonProxyProfileIdOrThrow(
   ctx: RequestContext,
   proxyErrorMessage: string
