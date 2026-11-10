@@ -12,6 +12,7 @@ import { assertCompetitionOpen } from '@/api/competitions/competition-command-ac
 import type { DefaultCompetitionRecord } from '@/competitions/default-competition';
 import { NativeCompetitionReader } from '@/competitions/native-competition.reader';
 import { competitionCommandRepository } from '@/competitions/competition-command.repository';
+import { competitionEntryRepository } from '@/competitions/competition-entry.repository';
 
 function nativeRecord(id: string, waveId: string, createdAt: number) {
   return {
@@ -124,6 +125,9 @@ describe('CompetitionService', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    jest
+      .spyOn(competitionEntryRepository, 'countActiveByCompetitionIds')
+      .mockResolvedValue({});
     repository.listNativePauses.mockResolvedValue({
       data: [],
       has_more: false,
@@ -332,12 +336,54 @@ describe('CompetitionService', () => {
 
   it('keeps entry and vote permissions false for anonymous readers', async () => {
     const competition = await service.getCompetition(wave.id, first.id, {});
+    expect(competition.your_active_entries_count).toBeNull();
+    expect(
+      competitionEntryRepository.countActiveByCompetitionIds
+    ).not.toHaveBeenCalled();
     expect(competition.permissions).toMatchObject({
       view: true,
       submit: false,
       vote: false,
       administer: false
     });
+  });
+
+  it('returns the acting profile count and batches counts for a competition page', async () => {
+    const counts = jest.mocked(
+      competitionEntryRepository.countActiveByCompetitionIds
+    );
+    counts.mockResolvedValue({ [first.id]: 3 });
+    const readContext = {
+      authenticationContext: {
+        isUserFullyAuthenticated: () => true,
+        isAuthenticatedAsProxy: () => false,
+        getActingAsId: () => 'profile-viewer',
+        hasRightsTo: () => true
+      }
+    } as never;
+    const detail = await service.getCompetition(wave.id, first.id, readContext);
+    expect(detail.your_active_entries_count).toBe(3);
+    expect(counts).toHaveBeenLastCalledWith(
+      [first.id],
+      'profile-viewer',
+      readContext
+    );
+
+    counts.mockClear();
+    const page = await service.listCompetitions(
+      wave.id,
+      { limit: 10, direction: 'ASC', sort: 'created_at' },
+      readContext
+    );
+    expect(
+      page.data.map((competition) => competition.your_active_entries_count)
+    ).toEqual([3, 0]);
+    expect(counts).toHaveBeenCalledTimes(1);
+    expect(counts).toHaveBeenCalledWith(
+      [first.id, second.id],
+      'profile-viewer',
+      readContext
+    );
   });
 
   it('keeps submit and vote permissions false when native execution is disabled', async () => {
