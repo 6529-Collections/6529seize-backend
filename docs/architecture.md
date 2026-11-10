@@ -2905,3 +2905,13 @@ drain old invocations for 900 seconds after the worker update and 30 seconds aft
 the API update, then synchronize that scope and deploy the frontend. The column's
 stored values are intentionally discarded; rolling back older writers requires
 recreating the nullable column first.
+
+### All wave browsing
+
+`GET /v2/waves/all` captures accessible non-DM root wave IDs in a shared Redis
+snapshot, scoped to the read-context profile or guest, for 15 minutes. It includes
+pinned waves and roots without metrics. Continuation reads preserve that ID order
+and recheck visibility; activity cannot move IDs between pages. Subwaves remain
+accessible through their parents. The API returns 410 for expired snapshots and
+503 when shared storage is unavailable rather than silently truncating the list.
+Deploy the `api` service before the frontend that consumes this additive endpoint.
