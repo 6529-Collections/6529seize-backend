@@ -1,7 +1,8 @@
 import { createHmac, randomBytes, randomUUID } from 'node:crypto';
 import * as jwt from 'jsonwebtoken';
 import { env } from '@/env';
-import { BadRequestException } from '@/exceptions';
+import { BadRequestException, UnauthorisedException } from '@/exceptions';
+import { profileProxyApiService } from '@/api/proxies/proxy.api.service';
 import {
   WalletAuthClientType,
   WalletAuthSessionEntity
@@ -92,6 +93,37 @@ export function issueAccessToken(
     }
   );
   return { token, expiresAt };
+}
+
+/**
+ * A stored session role other than the wallet's own profile is a proxy role.
+ * It may only be re-issued while the grantor still has at least one active
+ * proxy action for this wallet's profile.
+ */
+export async function assertSessionRoleStillGranted(
+  address: string,
+  role: string | null
+): Promise<void> {
+  if (!role) {
+    return;
+  }
+  const ownProfileId = await identitiesDb.getProfileIdByWallet(
+    address.toLowerCase()
+  );
+  if (ownProfileId && ownProfileId === role) {
+    return;
+  }
+  const hasActiveAction = ownProfileId
+    ? await profileProxyApiService.hasAnyActiveProxyAction({
+        granted_by_profile_id: role,
+        granted_to_profile_id: ownProfileId
+      })
+    : false;
+  if (!hasActiveAction) {
+    throw new UnauthorisedException(
+      'Session role has no active proxy actions. Sign in again.'
+    );
+  }
 }
 
 export function isAuthConnectionSharingEnabled(): boolean {
@@ -327,6 +359,7 @@ export async function refreshWebSession({
       now
     });
   }
+  await assertSessionRoleStillGranted(existing.address, existing.role);
   const expiresAt = getSessionRefreshExpiresAt();
   const rotated = await authDb.rotateWebSessionSecret({
     sessionId: existing.id,
@@ -385,6 +418,7 @@ async function recoverIdempotentWebSessionRefresh({
   ) {
     return null;
   }
+  await assertSessionRoleStillGranted(current.address, current.role);
 
   return toRefreshedWebSession({
     session: current,
@@ -725,6 +759,7 @@ export async function refreshNativeSession({
   ) {
     return null;
   }
+  await assertSessionRoleStillGranted(current.address, current.role);
   const accessToken = issueAccessToken(current.address, current.role);
   return {
     response: {
