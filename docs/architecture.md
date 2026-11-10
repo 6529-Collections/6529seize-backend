@@ -2908,7 +2908,9 @@ and logical pin/MFS/identity backup and restoration. Four checked-in CloudFormat
 YAML files under `ops/ipfs/cloudformation/` own access, storage, compute and edge
 definitions. The controller reads and submits those files directly; there is no
 Python template generator. Its pinned PyYAML reader runs only on the controller,
-not the EC2 runtime. `ipfs-ci.yml` rehearses the real binary with disposable
+not the EC2 runtime. S3 request logs and CloudFront access logs use separate private
+log buckets; only the CloudFront log bucket enables ACLs for the logging API.
+`ipfs-ci.yml` rehearses the real binary with disposable
 loopback S3 and HTTPS fixtures. The explicit-dispatch
 `ipfs-manage.yml` workflow validates the reviewed source, environment, account,
 and candidate identity before assuming deployment authority or sending SSM work.

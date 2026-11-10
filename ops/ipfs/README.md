@@ -12,7 +12,7 @@ No workflow runs a deployment on push or PR.
 | File                                    | Responsibility                                                                            |
 | --------------------------------------- | ----------------------------------------------------------------------------------------- |
 | `cloudformation/access.yaml`            | OIDC deployment/service roles and runtime permissions boundary                            |
-| `cloudformation/storage.yaml`           | Retained, versioned private block/backup/artifact buckets                                 |
+| `cloudformation/storage.yaml`           | Retained private data buckets and separate S3/CloudFront access-log buckets               |
 | `cloudformation/compute.yaml`           | Immutable EC2 replacement candidate, security group, role, EIP and alarm                  |
 | `cloudformation/edge.yaml`              | Dedicated gateway CloudFront distribution and DNS                                         |
 | `versions.json`, `build-kubo.sh`        | Pinned Kubo/S3/Go/nginx versions, build and artifact checksums                            |
@@ -51,6 +51,16 @@ retained on stack deletion/replacement. The runtime role explicitly denies block
 deletion. Automatic garbage collection is never enabled. Retention protects data;
 it is not a substitute for recovery drills or an independent disaster-recovery
 copy of the S3 block store.
+
+The data buckets and dedicated CloudFront log bucket send S3 request logs to a
+separate encrypted, private S3 audit sink. The sink is not itself logged, avoiding
+recursive delivery; its write policy accepts only the S3 logging service, this
+account, and the storage stack's generated bucket namespace. CloudFront standard
+logging uses its own private bucket with ACLs enabled as required by that API;
+ACLs remain disabled on content, backup, artifact and S3 audit buckets. CloudFront
+cookies are not logged. Both log buckets have 90-day current/noncurrent-version
+expiration rules. Pass the storage stack's `CloudFrontLogsBucket` output as the
+edge template's `LogsBucket` parameter. Validate actual delivery during rollout.
 
 Backups flush MFS, collect a stable pin inventory and MFS root through RPC, pin that root,
 and upload a checksummed private archive with node identity to versioned backup
@@ -175,11 +185,14 @@ Configuration shape (replace all example values):
 
 For the initial storage stack, bucket names in config can be proposed placeholders;
 the template generates new globally unique names. After its successful creation,
-copy the three stack outputs into `IPFS_CONFIG` before provisioning compute.
+copy `BlocksBucket`, `BackupsBucket`, and `ArtifactsBucket` into `IPFS_CONFIG`
+before provisioning compute. Record `CloudFrontLogsBucket` for the edge
+`LogsBucket` parameter; log buckets are not part of the host configuration.
 The instance ID is required only for host operations or edge publication. Use an
 explicit pinned Canonical Ubuntu 24.04 amd64 AMI with the standard SSM snap service.
 The subnet needs outbound HTTPS and DNS access and a route to the internet;
-an EIP is assigned without exposing SSH, RPC, or the raw gateway.
+automatic public IPv4 assignment is disabled, and an explicit EIP is assigned.
+Only HTTPS is exposed; SSH, RPC and the raw gateway have no inbound rules.
 
 ## Explicit Actions operations
 
@@ -209,7 +222,8 @@ Compute parameters are `VpcId`, `SubnetId`, `ImageId`, `IngressCidr`,
 `RuntimeBoundaryArn` from the access stack, and optional `InstanceType`.
 Data settings and ACME hostnames come from config and cannot be
 overridden by workflow parameters. Edge parameters are `PublicIp` and
-`CertificateArn`. All template parameters are checked before AWS calls.
+`CertificateArn`, plus `LogsBucket` from the storage stack. All template parameters
+are checked before AWS calls.
 
 For a future authorized production rollout, provision access/storage as needed,
 create an unpublished replacement compute slot, deploy, restore the recorded state,

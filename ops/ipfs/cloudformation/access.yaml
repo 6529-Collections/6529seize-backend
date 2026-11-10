@@ -66,7 +66,14 @@ Resources:
               - ec2messages:GetEndpoint
               - ec2messages:GetMessages
               - ec2messages:SendReply
-            Resource: '*'
+            # Matches AmazonSSMManagedInstanceCore's agent API scope. The boundary
+            # grants nothing by itself; the instance still needs that managed policy.
+            # https://docs.aws.amazon.com/aws-managed-policy/latest/reference/AmazonSSMManagedInstanceCore.html
+            Resource: '*' # NOSONAR
+            Condition:
+              StringEquals:
+                aws:RequestedRegion:
+                  Ref: AWS::Region
           - Effect: Allow
             Action:
               - route53:ListHostedZones
@@ -114,7 +121,16 @@ Resources:
                   - ec2:RunInstances
                   - ec2:CreateSecurityGroup
                   - ec2:AllocateAddress
-                Resource: '*'
+                Resource:
+                  - Fn::Sub: arn:${AWS::Partition}:ec2:${AWS::Region}::image/*
+                  - Fn::Sub: arn:${AWS::Partition}:ec2:${AWS::Region}::snapshot/*
+                  - Fn::Sub: arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:instance/*
+                  - Fn::Sub: arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:volume/*
+                  - Fn::Sub: arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:network-interface/*
+                  - Fn::Sub: arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:security-group/*
+                  - Fn::Sub: arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:subnet/*
+                  - Fn::Sub: arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:vpc/*
+                  - Fn::Sub: arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:elastic-ip/*
                 Condition:
                   StringEquals:
                     aws:RequestedRegion:
@@ -133,7 +149,12 @@ Resources:
                   - ec2:ReleaseAddress
                   - ec2:AssociateAddress
                   - ec2:DisassociateAddress
-                Resource: '*'
+                Resource:
+                  - Fn::Sub: arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:instance/*
+                  - Fn::Sub: arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:security-group/*
+                  - Fn::Sub: arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:elastic-ip/*
+                  - Fn::Sub: arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:network-interface/*
+                  - Fn::Sub: arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:volume/*
                 Condition:
                   StringEquals:
                     ec2:ResourceTag/Environment:
@@ -142,7 +163,12 @@ Resources:
               - Effect: Allow
                 Action:
                   - ec2:CreateTags
-                Resource: '*'
+                Resource:
+                  - Fn::Sub: arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:instance/*
+                  - Fn::Sub: arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:volume/*
+                  - Fn::Sub: arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:network-interface/*
+                  - Fn::Sub: arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:security-group/*
+                  - Fn::Sub: arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:elastic-ip/*
                 Condition:
                   StringEquals:
                     ec2:CreateAction:
@@ -196,6 +222,8 @@ Resources:
                   - s3:DeleteBucketPolicy
                   - s3:GetEncryptionConfiguration
                   - s3:PutEncryptionConfiguration
+                  - s3:GetLifecycleConfiguration
+                  - s3:PutLifecycleConfiguration
                 Resource:
                   Fn::Sub: arn:${AWS::Partition}:s3:::seize-ipfs-${Environment}-storage-*
               - Effect: Allow
@@ -210,7 +238,10 @@ Resources:
               - Effect: Allow
                 Action:
                   - cloudfront:CreateDistribution
-                Resource: '*'
+                # CreateDistribution has no resource-level authorization support.
+                # Its request must still carry both ownership tags below.
+                # https://docs.aws.amazon.com/service-authorization/latest/reference/list_cloudfront.html
+                Resource: '*' # NOSONAR
                 Condition:
                   StringEquals:
                     aws:RequestTag/Environment:
@@ -247,7 +278,8 @@ Resources:
                   - cloudfront:GetDistribution
                   - cloudfront:GetDistributionConfig
                   - cloudfront:ListTagsForResource
-                Resource: '*'
+                Resource:
+                  Fn::Sub: arn:${AWS::Partition}:cloudfront::${AWS::AccountId}:distribution/*
               - Effect: Allow
                 Action:
                   - cloudfront:UpdateDistribution

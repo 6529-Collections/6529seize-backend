@@ -191,6 +191,73 @@ describe('IPFS infrastructure and state protections', () => {
     }
   });
 
+  test('separates private content, CloudFront logs and the S3 access-log sink', () => {
+    const storage = cloudformation('storage');
+    for (const name of ['Blocks', 'Backups', 'Artifacts', 'CloudFrontLogs']) {
+      expect(storage.Resources[name].DependsOn).toBe('S3AccessLogsPolicy');
+      expect(
+        storage.Resources[name].Properties.LoggingConfiguration
+          .DestinationBucketName
+      ).toEqual({ Ref: 'S3AccessLogs' });
+    }
+    for (const name of ['Blocks', 'Backups', 'Artifacts', 'S3AccessLogs']) {
+      expect(
+        storage.Resources[name].Properties.OwnershipControls.Rules
+      ).toEqual([{ ObjectOwnership: 'BucketOwnerEnforced' }]);
+    }
+    expect(
+      storage.Resources.CloudFrontLogs.Properties.OwnershipControls.Rules
+    ).toEqual([{ ObjectOwnership: 'BucketOwnerPreferred' }]);
+    expect(storage.Resources.S3AccessLogs.Properties).not.toHaveProperty(
+      'LoggingConfiguration'
+    );
+    expect(
+      storage.Resources.S3AccessLogsPolicy.Properties.PolicyDocument
+        .Statement[0].Condition
+    ).toEqual({
+      StringEquals: { 'aws:SourceAccount': { Ref: 'AWS::AccountId' } },
+      ArnLike: {
+        'aws:SourceArn': {
+          'Fn::Sub': 'arn:${AWS::Partition}:s3:::${AWS::StackName}-*'
+        }
+      },
+      ArnNotEquals: {
+        'aws:SourceArn': { 'Fn::GetAtt': ['S3AccessLogs', 'Arn'] }
+      }
+    });
+    expect(
+      storage.Resources.S3AccessLogsPolicy.Properties.PolicyDocument
+        .Statement[1].Condition.Bool
+    ).toEqual({
+      'aws:SecureTransport': 'false',
+      'aws:PrincipalIsAWSService': 'false'
+    });
+    const edge = cloudformation('edge');
+    expect(
+      edge.Resources.Distribution.Properties.DistributionConfig.Logging
+    ).toMatchObject({
+      Bucket: { 'Fn::Sub': '${LogsBucket}.s3.${AWS::URLSuffix}' },
+      IncludeCookies: false
+    });
+  });
+
+  test('EC2 mutation permissions stay within named resource types and the stack region', () => {
+    const statements: { Action: string[]; Resource: unknown }[] =
+      cloudformation('access').Resources.CloudFormationRole.Properties
+        .Policies[0].PolicyDocument.Statement;
+    const mutations = statements.filter((statement) =>
+      statement.Action.some(
+        (action) =>
+          action.startsWith('ec2:') && !action.startsWith('ec2:Describe')
+      )
+    );
+    expect(mutations.length).toBeGreaterThan(0);
+    for (const statement of mutations) {
+      expect(statement.Resource).not.toBe('*');
+      expect(JSON.stringify(statement.Resource)).toContain('${AWS::Region}');
+    }
+  });
+
   test('refuses destructive changes and conditional replacements', () => {
     expect(
       python(
@@ -217,6 +284,20 @@ describe('IPFS infrastructure and state protections', () => {
     expect(
       template.Resources.Instance.Properties.MetadataOptions.HttpTokens
     ).toBe('required');
+    expect(template.Resources.Instance.Properties).not.toHaveProperty(
+      'SubnetId'
+    );
+    expect(template.Resources.Instance.Properties).not.toHaveProperty(
+      'SecurityGroupIds'
+    );
+    expect(template.Resources.Instance.Properties.NetworkInterfaces).toEqual([
+      {
+        DeviceIndex: '0',
+        AssociatePublicIpAddress: false,
+        SubnetId: { Ref: 'SubnetId' },
+        GroupSet: [{ Ref: 'SecurityGroup' }]
+      }
+    ]);
     expect(
       template.Resources.Instance.Properties.UserData['Fn::Base64']['Fn::Sub']
     ).not.toContain('ipfs daemon');

@@ -23,6 +23,10 @@ Parameters:
   CertificateArn:
     Type: String
     Description: Existing us-east-1 ACM certificate for GatewayHost
+  LogsBucket:
+    Type: String
+    AllowedPattern: '[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]'
+    Description: CloudFrontLogsBucket output from the storage stack; dedicated ACL-enabled log bucket
 Resources:
   Distribution:
     Type: AWS::CloudFront::Distribution
@@ -33,6 +37,12 @@ Resources:
           - Ref: GatewayHost
         HttpVersion: http2
         IPV6Enabled: true
+        Logging:
+          Bucket:
+            Fn::Sub: ${LogsBucket}.s3.${AWS::URLSuffix}
+          IncludeCookies: false
+          Prefix:
+            Fn::Sub: cloudfront/${AWS::StackName}/
         ViewerCertificate:
           AcmCertificateArn:
             Ref: CertificateArn

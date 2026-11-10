@@ -158,10 +158,13 @@ Resources:
         Ref: ImageId
       InstanceType:
         Ref: InstanceType
-      SubnetId:
-        Ref: SubnetId
-      SecurityGroupIds:
-        - Ref: SecurityGroup
+      NetworkInterfaces:
+        - DeviceIndex: '0'
+          AssociatePublicIpAddress: false
+          SubnetId:
+            Ref: SubnetId
+          GroupSet:
+            - Ref: SecurityGroup
       IamInstanceProfile:
         Ref: Profile
       MetadataOptions:

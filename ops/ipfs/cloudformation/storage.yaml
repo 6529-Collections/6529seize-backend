@@ -7,9 +7,146 @@ Parameters:
     AllowedValues:
       - prod
 Resources:
-  Blocks:
+  # The access-log sink intentionally has no server-access logging of its own:
+  # logging the destination produces recursive log delivery. Its policy below
+  # accepts S3 log delivery only from this account and storage stack's namespace.
+  S3AccessLogs:
     Type: AWS::S3::Bucket
     Properties:
+      VersioningConfiguration:
+        Status: Enabled
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerEnforced
+      LifecycleConfiguration:
+        Rules:
+          - Id: ExpireAccessLogs
+            Status: Enabled
+            ExpirationInDays: 90
+            NoncurrentVersionExpiration:
+              NoncurrentDays: 90
+      Tags:
+        - Key: Service
+          Value: 6529-ipfs
+        - Key: Environment
+          Value:
+            Ref: Environment
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+  S3AccessLogsPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket:
+        Ref: S3AccessLogs
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: logging.s3.amazonaws.com
+            Action: s3:PutObject
+            Resource:
+              Fn::Sub: ${S3AccessLogs.Arn}/s3/*
+            Condition:
+              StringEquals:
+                aws:SourceAccount:
+                  Ref: AWS::AccountId
+              ArnLike:
+                aws:SourceArn:
+                  Fn::Sub: arn:${AWS::Partition}:s3:::${AWS::StackName}-*
+              ArnNotEquals:
+                aws:SourceArn:
+                  Fn::GetAtt:
+                    - S3AccessLogs
+                    - Arn
+          - Effect: Deny
+            Principal: '*'
+            Action: s3:*
+            Resource:
+              - Fn::GetAtt:
+                  - S3AccessLogs
+                  - Arn
+              - Fn::Sub: ${S3AccessLogs.Arn}/*
+            Condition:
+              Bool:
+                aws:SecureTransport: 'false'
+                # AWS service calls can redact transport context; keep log delivery working.
+                aws:PrincipalIsAWSService: 'false'
+  # Legacy CloudFront Logging requires ACLs. Only this log bucket enables them;
+  # content/backup/artifact buckets and the S3 audit sink keep ACLs disabled.
+  CloudFrontLogs:
+    Type: AWS::S3::Bucket
+    DependsOn: S3AccessLogsPolicy
+    Properties:
+      VersioningConfiguration:
+        Status: Enabled
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerPreferred
+      LoggingConfiguration:
+        DestinationBucketName:
+          Ref: S3AccessLogs
+        LogFilePrefix: s3/cloudfront-logs/
+      LifecycleConfiguration:
+        Rules:
+          - Id: ExpireAccessLogs
+            Status: Enabled
+            ExpirationInDays: 90
+            NoncurrentVersionExpiration:
+              NoncurrentDays: 90
+      Tags:
+        - Key: Service
+          Value: 6529-ipfs
+        - Key: Environment
+          Value:
+            Ref: Environment
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+  CloudFrontLogsPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket:
+        Ref: CloudFrontLogs
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Deny
+            Principal: '*'
+            Action: s3:*
+            Resource:
+              - Fn::GetAtt:
+                  - CloudFrontLogs
+                  - Arn
+              - Fn::Sub: ${CloudFrontLogs.Arn}/*
+            Condition:
+              Bool:
+                aws:SecureTransport: 'false'
+  Blocks:
+    Type: AWS::S3::Bucket
+    DependsOn: S3AccessLogsPolicy
+    Properties:
+      LoggingConfiguration:
+        DestinationBucketName:
+          Ref: S3AccessLogs
+        LogFilePrefix: s3/blocks/
       VersioningConfiguration:
         Status: Enabled
       BucketEncryption:
@@ -53,7 +190,12 @@ Resources:
                 aws:SecureTransport: 'false'
   Backups:
     Type: AWS::S3::Bucket
+    DependsOn: S3AccessLogsPolicy
     Properties:
+      LoggingConfiguration:
+        DestinationBucketName:
+          Ref: S3AccessLogs
+        LogFilePrefix: s3/backups/
       VersioningConfiguration:
         Status: Enabled
       BucketEncryption:
@@ -97,7 +239,12 @@ Resources:
                 aws:SecureTransport: 'false'
   Artifacts:
     Type: AWS::S3::Bucket
+    DependsOn: S3AccessLogsPolicy
     Properties:
+      LoggingConfiguration:
+        DestinationBucketName:
+          Ref: S3AccessLogs
+        LogFilePrefix: s3/artifacts/
       VersioningConfiguration:
         Status: Enabled
       BucketEncryption:
@@ -140,6 +287,12 @@ Resources:
               Bool:
                 aws:SecureTransport: 'false'
 Outputs:
+  S3AccessLogsBucket:
+    Value:
+      Ref: S3AccessLogs
+  CloudFrontLogsBucket:
+    Value:
+      Ref: CloudFrontLogs
   BlocksBucket:
     Value:
       Ref: Blocks
