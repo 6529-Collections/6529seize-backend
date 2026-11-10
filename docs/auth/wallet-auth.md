@@ -1,12 +1,14 @@
 # Wallet Authentication
 
-Revision: July 2026
+Revision: November 2026
 
 This document describes the current wallet authentication contract and the
 session-v2 flow. Web session challenges use ERC-4361 Sign-In with Ethereum
 (SIWE), while native and desktop clients retain the 6529 structured-signature
 format. The auth system intentionally keeps legacy endpoints stable. The API
-contract and database schema are unchanged; no database migration is required.
+contract is unchanged. Session and grant registration records are nullable
+columns added by `dbMigrationsLoop` entity synchronization; no data migration
+is required.
 
 ## Compatibility Model
 
@@ -70,6 +72,9 @@ For native clients:
 - The structured message uses `Domain: native`.
 - The structured message uses `Session Type: native`.
 - No browser client origin is included.
+- The `Purpose` line says that 6529.io never asks for this message in a web
+  browser, only the 6529 Mobile app and API clients do. Clients sign the
+  returned text as is; desktop challenges keep the shorter purpose.
 
 For 6529 Desktop clients:
 
@@ -261,6 +266,34 @@ without device parameters are unchanged.
   omits them); `0` is rejected. Signed writes, expiry and revocation treat it
   exactly like a sign-in grant. Idempotent on grant id.
 
+- Grant origins: after the signature verifies, `POST /api/device-grants` and
+  `POST /api/e2ee/devices` compare the signed `origin` with the origins
+  recognised for the request's API host: the hosts of the web origins
+  credentialed sign-in accepts there (`6529.io` on `api.6529.io`,
+  `staging.6529.io` on `api.staging.6529.io`, local hosts on a local API,
+  plus `WEB_APP_ORIGIN`, `WEB_APP_ADDITIONAL_ORIGINS` and
+  `AUTH_WEB_CREDENTIAL_ORIGINS`) and `6529 Desktop`. Each check writes an
+  EMF line `_type: 6529.device_grant_origin.v1` (namespace
+  `6529/DeviceGrants`, metric `GrantOriginChecks`, dimensions
+  `Route`+`Verdict`, `Route`+`Reason` and `Route`+`ClientType`+`Binding`;
+  fields `Policy`, `Decision`, `RequestOrigin`, `RequestOriginKind`,
+  `Origin`, `GrantId`, `ApiHost`). `Reason` is `web_origin` or `app_origin`
+  when recognised, else `other_environment`, `loopback` or `unrecognized`;
+  an unrecognised origin also logs a warning starting
+  `[DEVICE GRANT ORIGIN UNRECOGNIZED]`. With
+  `DEVICE_GRANT_ORIGIN_POLICY=enforce` such a registration answers 400
+  (`Invalid device grant: unrecognized origin`, or the encrypted-messages
+  bad-grant error with `unrecognized_origin`); by default it is accepted
+  exactly as before. Stored grants are never re-checked.
+- Registration records: `device_grants` rows record how the grant was
+  registered: `registered_client_type`, `registered_binding` and
+  `registered_session_id` (for a sign-in grant: `web`, `siwe` and the web
+  session it created; for an app grant: the caller's access-token claims
+  below) and `registered_request_origin` (the request `Origin`, normalized;
+  another scheme such as an app web view's is kept lowercased). Each is null
+  when unknown, including for grants stored before these columns existed.
+  The API response shape is unchanged.
+
 - `POST /drops`, `POST /drops/{id}`, `DELETE /drops/{id}` and
   `POST|DELETE /drops/{id}/reaction` accept an optional `device_signature`
   (`grant_id`, `seq`, `claimed_time`, `signature`). The server strips it from
@@ -296,6 +329,25 @@ without device parameters are unchanged.
   If the post-write signature-status read fails, `withStoredAuthorSignature`
   returns the previously mapped status, which may be stale until a later
   successful read.
+
+## Access Token Claims
+
+Access tokens carry `id`, `sub` (wallet), `exp`, the optional `role` and
+these optional session claims:
+
+- `ct`: the session type that minted the token: `web`, `native`, `desktop`,
+  or `legacy` for `/auth/login` and `/auth/redeem-refresh-token`.
+- `sb`: how the wallet approved the session: `siwe` (origin-checked web
+  sign-in), `structured` (6529 structured sign-in text), `share` (redeemed
+  connection-share code) or `legacy_text` (plain-text `/auth/login`). It is
+  absent for legacy refresh-token redemption and for sessions created before
+  `wallet_auth_sessions.signature_format` was recorded.
+- `sid`: the `wallet_auth_sessions` id of a session-v2 token.
+
+Refresh keeps `ct` and `sb` from the stored session. No route requires these
+claims: tokens without them, or with values a build does not know, verify
+and authorize exactly as before. The API reads them into
+`AuthenticationContext.accessTokenSession`; clients ignore them.
 
 ## Session V2 Refresh And Logout
 
@@ -394,10 +446,11 @@ only while both connection sharing and legacy refresh redemption are enabled.
 The revised auth flow uses these relevant flags/config values:
 
 - `AUTH_STRUCTURED_SIGNATURES_REQUIRED`: default false. When true, legacy signature verification paths reject unstructured wallet messages where structured verification is used.
+- `DEVICE_GRANT_ORIGIN_POLICY`: default (unset) is log only. `enforce` refuses new app device grants and encrypted-messages device grants whose signed origin is not recognised for the API host (see Device Signing Grants). Any other value is treated as unset and logged once.
 - `WEB_APP_ORIGIN`: canonical first-party web app origin. The backend uses it to derive credentialed CORS origins and SIWE domain/URI checks. Values must be exact origins without credentials, a non-root path, query, or fragment.
 - `WEB_APP_ADDITIONAL_ORIGINS`: comma-separated extra exact first-party web app origins. These are additive to the built-in defaults and `WEB_APP_ORIGIN`.
 - Built-in web app origin defaults: `api.6529.io` allows credentialed web auth from `https://6529.io`; `api.staging.6529.io` allows credentialed web auth from `https://staging.6529.io`; localhost API hosts allow common localhost frontend ports.
-- `AUTH_SIGNATURE_ALLOWED_DOMAINS`: comma-separated extra exact domains allowed for first-party web structured signatures. The built-in production domains include `6529.io`, `www.6529.io`, and `app.6529.io`; web app origins also derive allowed signature domains; non-production also allows localhost origins.
+- `AUTH_SIGNATURE_ALLOWED_DOMAINS`: comma-separated extra exact domains allowed for first-party web structured signatures. The built-in production domains include `6529.io`, `www.6529.io`, and `app.6529.io`; web app origins also derive allowed signature domains, taken from the request's API host (the web origins credentialed sign-in accepts there), so `api.6529.io` does not accept `staging.6529.io` unless it is configured; non-production also allows localhost origins.
 - `AUTH_SIGNATURE_ALLOWED_DOMAIN_SUFFIXES`: comma-separated domain suffixes allowed for first-party web structured signatures. A value of `staging.6529.io` allows `staging.6529.io` and any host below it, such as `app.staging.6529.io`, but does not allow lookalike hosts such as `fake-staging.6529.io`.
 - Session-v2 nonce audience: new web SIWE envelope tokens require the exact accepted request API Host and fail closed when it is missing, malformed, or unrecognized. Native and desktop structured messages preserve their existing accepted-Host behavior and compatibility fallback.
 - `AUTH_SIGNATURE_ALLOWED_AUDIENCES`: optional comma-separated audiences accepted during structured-signature verification.
@@ -419,12 +472,19 @@ There is intentionally no `AUTH_LEGACY_REFRESH_ENABLED` flag. Legacy refresh red
 `wallet_auth_sessions` stores session-v2 refresh state:
 
 - Web sessions store a hashed cookie secret plus signed domain/client-origin metadata.
-- Native sessions store a hashed native refresh token.
+- Native sessions store a hashed native refresh token. Native and desktop
+  sessions created by a structured sign-in also store the signed `Domain`
+  and, for desktop, `Client Origin`.
+- `signature_format` (`siwe`, `structured` or `share`) and `request_origin`
+  (the request `Origin` at sign-in, when sent) are recorded for new
+  sessions; older rows keep null.
 - Both session types store wallet address, optional role, expiry, last-use time, and revocation time.
 
 `device_grants` stores wallet-signed device signing grants: the exact SIWE
 message and wallet signature, wallet, Ed25519 key, scopes, label, domain,
-chain, issue, expiry, revocation and last-use times.
+chain, issue, expiry, revocation and last-use times, and the nullable
+registration record (`registered_client_type`, `registered_binding`,
+`registered_request_origin`, `registered_session_id`).
 
 `device_signed_events` stores every device-signed drop write: the signed event
 fields, the canonical body exactly as hashed, the Ed25519 signature, the drop it

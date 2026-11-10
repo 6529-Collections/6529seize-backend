@@ -4,7 +4,10 @@ import { Network } from '@/ethereum-rpc/ethereum-rpc-network';
 import { getEthereumRpcProvider } from '@/ethereum-rpc/ethereum-rpc-provider';
 import { Logger } from '@/logging';
 import { getRedisClient } from '@/redis';
-import { getWebAppSignatureDomains } from '../web-app-origins';
+import {
+  getWebAppSignatureDomains,
+  getWebAppSignatureDomainsForApiHost
+} from '../web-app-origins';
 
 const logger = Logger.get('STRUCTURED_WALLET_SIGNATURES');
 
@@ -99,6 +102,14 @@ interface VerifyStructuredWalletSignatureParams {
   expectedKind?: StructuredWalletSignatureKind;
   consumeNonce?: boolean;
   requireAllowedDomain?: boolean;
+  // With requireAllowedDomain: the request's API host, so only that API's
+  // first-party web domains are accepted (see isStructuredSignatureDomainAllowed).
+  domainScope?: StructuredSignatureDomainScope;
+}
+
+/** The API host whose first-party web domains a signature may name. */
+export interface StructuredSignatureDomainScope {
+  readonly apiHost: unknown;
 }
 
 interface VerifyWalletMessageSignatureParams {
@@ -302,7 +313,8 @@ export async function verifyStructuredWalletSignature({
   expectedPayloadHash,
   expectedKind,
   consumeNonce = true,
-  requireAllowedDomain = false
+  requireAllowedDomain = false,
+  domainScope
 }: VerifyStructuredWalletSignatureParams): Promise<string | null> {
   const parsed = parseStructuredWalletSignatureMessage(message);
   const expectedAddressLowerCase = expectedAddress.toLowerCase();
@@ -318,7 +330,8 @@ export async function verifyStructuredWalletSignature({
     (expectedKind && parsed.kind !== expectedKind) ||
     !isSignatureTimingValid(parsed) ||
     !isStructuredSignatureAudienceAllowed(parsed.audience) ||
-    (requireAllowedDomain && !isStructuredSignatureDomainAllowed(parsed.domain))
+    (requireAllowedDomain &&
+      !isStructuredSignatureDomainAllowed(parsed.domain, domainScope))
   ) {
     return null;
   }
@@ -508,7 +521,18 @@ export function isStructuredSignatureAudienceAllowed(
   ]).has(audience);
 }
 
-export function isStructuredSignatureDomainAllowed(domain: string): boolean {
+/**
+ * Whether a first-party web signature may name this domain. With a scope, the
+ * web-app domains are those of the request's API host only, so the
+ * production API refuses the staging web domain (and the reverse); without
+ * one, every built-in web-app domain. The built-in production domains and
+ * the AUTH_SIGNATURE_ALLOWED_DOMAINS / _SUFFIXES configuration apply either
+ * way.
+ */
+export function isStructuredSignatureDomainAllowed(
+  domain: string,
+  scope?: StructuredSignatureDomainScope
+): boolean {
   if (isLocalhostSignatureHostAllowed(domain)) {
     return true;
   }
@@ -517,10 +541,13 @@ export function isStructuredSignatureDomainAllowed(domain: string): boolean {
     process.env.NODE_ENV === 'production'
       ? []
       : LOCAL_SIGNATURE_ALLOWED_DOMAINS;
+  const webAppDomains = scope
+    ? getWebAppSignatureDomainsForApiHost(scope.apiHost)
+    : getWebAppSignatureDomains();
   if (
     new Set([
       ...DEFAULT_SIGNATURE_ALLOWED_DOMAINS,
-      ...getWebAppSignatureDomains(),
+      ...webAppDomains,
       ...localDomains,
       ...getConfiguredNormalizedDomains('AUTH_SIGNATURE_ALLOWED_DOMAINS')
     ]).has(domain)
