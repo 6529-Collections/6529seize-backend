@@ -477,9 +477,10 @@ jobs:
         run: |
           set -euo pipefail
           VERSION_DESCRIPTION="$(git rev-parse --short HEAD) - $(date) - $(git rev-parse --abbrev-ref HEAD) - $(git show -s --format=%s)"
-          aws lambda update-function-code --function-name  mediaResizerLoop --zip-file fileb://src/mediaResizerLoop/dist/index.zip
+          # Update commands return the full function configuration; keep it out of the log.
+          aws lambda update-function-code --function-name  mediaResizerLoop --zip-file fileb://src/mediaResizerLoop/dist/index.zip > /dev/null
           aws lambda wait function-updated-v2 --function-name mediaResizerLoop
-          aws lambda update-function-configuration --function-name mediaResizerLoop --runtime nodejs22.x --memory-size 2048 --description "$VERSION_DESCRIPTION"
+          aws lambda update-function-configuration --function-name mediaResizerLoop --runtime nodejs22.x --memory-size 2048 --description "$VERSION_DESCRIPTION" > /dev/null
           aws lambda wait function-updated-v2 --function-name mediaResizerLoop
           ACTUAL_MEMORY_SIZE="$(aws lambda get-function-configuration --function-name mediaResizerLoop --query MemorySize --output text)"
           if [ "$ACTUAL_MEMORY_SIZE" != "2048" ]; then
@@ -525,11 +526,10 @@ jobs:
           AWS_MAX_ATTEMPTS=1 aws lambda invoke --function-name "$INPUT_SERVICE" \
             --cli-read-timeout 960 --cli-binary-format raw-in-base64-out --payload "$payload" response.json > meta.json
 
-          printf "\nresponse.json:\n"
-          cat response.json
-          printf "\n\nmeta.json:\n"
-          cat meta.json
-          printf "\n"
+          # Print only status fields and the acknowledged scope. Error messages
+          # and results stay in the function's CloudWatch logs.
+          printf 'Invocation metadata: %s\n' "$(jq -c '{StatusCode, FunctionError, ExecutedVersion}' meta.json 2>/dev/null || printf unreadable)"
+          printf 'Invocation response: %s\n' "$(jq -c 'if type == "object" then {schema_scope, errorType} else {type: type} end' response.json 2>/dev/null || printf unreadable)"
 
           if ! jq -e 'type == "object" and .FunctionError == null' meta.json > /dev/null; then
             echo "Lambda invocation returned a function error or invalid metadata"
