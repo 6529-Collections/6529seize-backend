@@ -34070,6 +34070,13 @@ components:
             JSON; wallet_signature is its typed-data signature and grant_id its
             EIP-712 digest. Null for direct EIP-712 MlsDeviceGrant
             registrations.
+        counts_toward_limit:
+          type: boolean
+          description: >-
+            Only in GET /e2ee/me. True when the device takes one of max_devices
+            slots of its grant version: not revoked, not expired, and seen
+            (registered, renewed or used) in the last 30 days. Idle active
+            devices stay usable but do not block enrolling another device.
     ApiE2eeDeviceGrant:
       type: object
       description: >-
@@ -34433,6 +34440,10 @@ components:
             $ref: "#/components/schemas/ApiE2eeKeyPackageStatus"
         max_devices:
           type: integer
+          description: >-
+            Devices per grant version that may count toward the limit at once
+            (see counts_toward_limit); enrolling another device beyond it
+            returns E2EE_DEVICE_LIMIT.
         attachments_enabled:
           type: boolean
           description: >-

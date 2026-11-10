@@ -1,4 +1,5 @@
 import {
+  countsTowardDeviceLimit,
   E2eeServiceDeps,
   enforceE2eeRateLimit,
   filterByE2eeRateLimit,
@@ -29,6 +30,7 @@ import { ApiE2eeUploadKeyPackagesRequest } from '@/api/generated/models/ApiE2eeU
 import {
   E2EE_CIPHERSUITE,
   E2EE_DEVICE_LISTING_WINDOW_MS,
+  E2EE_DEVICE_LIMIT_IDLE_WINDOW_MS,
   E2EE_MAX_ACTIVE_DEVICES,
   E2EE_MAX_DEVICE_GROUPS,
   E2EE_MAX_KEY_PACKAGE_BYTES,
@@ -200,9 +202,13 @@ export class E2eeDevicesService {
     const statuses = await this.getKeyPackageStatuses(
       active.map((device) => device.device_key)
     );
+    const nowMs = this.deps.now();
     return {
       profile_id: callerProfileId,
-      devices: devices.map(toApiE2eeDevice),
+      devices: devices.map((device) => ({
+        ...toApiE2eeDevice(device),
+        counts_toward_limit: countsTowardDeviceLimit(device, nowMs)
+      })),
       key_packages: statuses,
       max_devices: E2EE_MAX_ACTIVE_DEVICES,
       attachments_enabled: this.deps.attachmentsEnabled()
@@ -499,14 +505,17 @@ export class E2eeDevicesService {
           Number(existing.grant_version ?? 1) === grantVersion;
         // Counted per grant version: while v1 grants are honoured, a profile
         // at the limit can still enroll its devices on v2 before the old
-        // devices expire or are revoked.
+        // devices expire or are revoked. Only devices seen recently count, so
+        // devices that are no longer used (cleared browser data, a lost
+        // phone) do not keep a profile at the limit until they expire.
         if (
           !keepsSlot &&
           (await this.db.countActiveDevices(
             callerProfileId,
             atSeconds,
             connection,
-            grantVersion
+            grantVersion,
+            now - E2EE_DEVICE_LIMIT_IDLE_WINDOW_MS
           )) >= E2EE_MAX_ACTIVE_DEVICES
         ) {
           throw e2eeErrors.deviceLimit(E2EE_MAX_ACTIVE_DEVICES);
