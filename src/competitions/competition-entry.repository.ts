@@ -266,6 +266,25 @@ export class CompetitionEntryRepository extends LazyDbAccessCompatibleService {
     return Number(row?.count ?? 0);
   }
 
+  public async countActiveByCompetitionIds(
+    competitionIds: readonly string[],
+    profileId: string,
+    ctx: RequestContext
+  ): Promise<Record<string, number>> {
+    if (!competitionIds.length) return {};
+    const rows = await this.rows<{ competition_id: string; count: number }>(
+      'countActiveByCompetitionIds',
+      `select competition_id, count(*) as count from ${COMPETITION_ENTRIES_TABLE}
+       where competition_id in (:competitionIds) and submitter_id=:profileId and status='ACTIVE'
+       group by competition_id`,
+      { competitionIds, profileId },
+      ctx
+    );
+    return Object.fromEntries(
+      rows.map((row) => [row.competition_id, Number(row.count)])
+    );
+  }
+
   public async findNominationStatuses(
     competitionId: string,
     profileId: string,
