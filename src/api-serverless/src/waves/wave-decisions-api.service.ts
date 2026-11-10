@@ -31,7 +31,10 @@ import {
   WaveDecisionWinnerDropEntity,
   WaveDecisionWinnerPrize
 } from '@/entities/IWaveDecision';
-import { assertWaveAndParentVisibleOrThrow } from '@/api/waves/wave-access.helpers';
+import {
+  assertWaveAndParentVisibleOrThrow,
+  getGroupsUserIsEligibleForReadContext
+} from '@/api/waves/wave-access.helpers';
 
 interface ConcludedWaveDecisionData {
   readonly decisionEntities: WaveDecisionEntity[];
@@ -135,11 +138,10 @@ export class WaveDecisionsApiService {
     query: WaveDecisionsQuery,
     ctx: RequestContext
   ): Promise<ConcludedWaveDecisionData> {
-    const groupsUserIsEligibleFor =
-      await this.userGroupsService.getGroupsUserIsEligibleFor(
-        ctx.authenticationContext?.getActingAsId() ?? null,
-        ctx.timer
-      );
+    const groupsUserIsEligibleFor = await getGroupsUserIsEligibleForReadContext(
+      this.userGroupsService,
+      ctx
+    );
     const waveEntity = await this.wavesApiDb.findWaveById(
       query.wave_id,
       ctx.connection
@@ -221,11 +223,10 @@ export class WaveDecisionsApiService {
       if (!waveEntity) {
         throw new NotFoundException(`Wave not found`);
       }
-      const eligibleGroups =
-        await this.userGroupsService.getGroupsUserIsEligibleFor(
-          ctx.authenticationContext?.getActingAsId() ?? null,
-          ctx.timer
-        );
+      const eligibleGroups = await getGroupsUserIsEligibleForReadContext(
+        this.userGroupsService,
+        ctx
+      );
       await assertWaveAndParentVisibleOrThrow({
         wave: waveEntity,
         groupsUserIsEligibleFor: eligibleGroups,
@@ -286,11 +287,10 @@ export class WaveDecisionsApiService {
       if (!waveEntity) {
         throw new NotFoundException(`Wave not found`);
       }
-      const eligibleGroups =
-        await this.userGroupsService.getGroupsUserIsEligibleFor(
-          ctx.authenticationContext?.getActingAsId() ?? null,
-          ctx.timer
-        );
+      const eligibleGroups = await getGroupsUserIsEligibleForReadContext(
+        this.userGroupsService,
+        ctx
+      );
       await assertWaveAndParentVisibleOrThrow({
         wave: waveEntity,
         groupsUserIsEligibleFor: eligibleGroups,

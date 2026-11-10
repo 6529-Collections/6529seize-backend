@@ -1,6 +1,8 @@
 import { authDb } from './auth.db';
 import { identitiesDb } from '@/identities/identities.db';
+import { profileProxyApiService } from '@/api/proxies/proxy.api.service';
 import {
+  assertSessionRoleStillGranted,
   clearWalletSessionCookie,
   clearWalletSessionCookieForAddressAndOrigin,
   clearWalletSessionCookieForOrigin,
@@ -49,6 +51,10 @@ jest.mock('@/identities/identities.db', () => ({
   identitiesDb: { getProfileIdByWallet: jest.fn() }
 }));
 
+jest.mock('@/api/proxies/proxy.api.service', () => ({
+  profileProxyApiService: { hasAnyActiveProxyAction: jest.fn() }
+}));
+
 const authDbMock = authDb as jest.Mocked<typeof authDb>;
 
 function toCookieRequestHeader(setCookies: readonly string[]): string {
@@ -89,6 +95,9 @@ describe('auth-session-v2', () => {
     jest
       .mocked(identitiesDb.getProfileIdByWallet)
       .mockResolvedValue('profile-1');
+    jest
+      .mocked(profileProxyApiService.hasAnyActiveProxyAction)
+      .mockResolvedValue(true);
     process.env.JWT_SECRET = 'test-jwt-secret';
     process.env.JWT_EXPIRY_SECONDS = '900';
     process.env.AUTH_SESSION_HASH_SECRET = 'test-session-hash-secret';
@@ -1526,6 +1535,131 @@ describe('auth-session-v2', () => {
       const [consumeParams] =
         authDbMock.consumeWalletConnectionShare.mock.calls[0];
       expect(consumeParams.clientFamily).toBe('desktop');
+    });
+  });
+
+  describe('stored proxy role re-check', () => {
+    function nativeSession(role: string | null) {
+      return {
+        id: 'session-1',
+        address: '0xabc',
+        role,
+        client_type: 'native' as const,
+        secret_hash: null,
+        refresh_token_hash: 'old-hash',
+        user_agent_hash: null,
+        signature_domain: null,
+        client_origin: null,
+        created_at: new Date(),
+        last_used_at: new Date(),
+        expires_at: new Date(Date.now() + 60_000),
+        revoked_at: null
+      };
+    }
+
+    function mockNativeRotation(role: string | null) {
+      authDbMock.getActiveNativeSessionByRefreshHash.mockResolvedValue(
+        nativeSession(role)
+      );
+      authDbMock.rotateNativeSessionRefreshToken.mockImplementation(
+        async (params) => ({
+          ...nativeSession(role),
+          refresh_token_hash: params.nextRefreshTokenHash,
+          last_used_at: params.now,
+          expires_at: params.expiresAt
+        })
+      );
+    }
+
+    it('allows no role and the own profile role without a proxy lookup', async () => {
+      await expect(
+        assertSessionRoleStillGranted('0xabc', null)
+      ).resolves.toBeUndefined();
+      await expect(
+        assertSessionRoleStillGranted('0xabc', 'profile-1')
+      ).resolves.toBeUndefined();
+      expect(
+        profileProxyApiService.hasAnyActiveProxyAction
+      ).not.toHaveBeenCalled();
+    });
+
+    it('allows a proxy role while the grantor has an active action', async () => {
+      await expect(
+        assertSessionRoleStillGranted('0xABC', 'grantor-profile')
+      ).resolves.toBeUndefined();
+      expect(
+        profileProxyApiService.hasAnyActiveProxyAction
+      ).toHaveBeenCalledWith({
+        granted_by_profile_id: 'grantor-profile',
+        granted_to_profile_id: 'profile-1'
+      });
+    });
+
+    it('rejects a proxy role without active actions', async () => {
+      jest
+        .mocked(profileProxyApiService.hasAnyActiveProxyAction)
+        .mockResolvedValue(false);
+      await expect(
+        assertSessionRoleStillGranted('0xabc', 'grantor-profile')
+      ).rejects.toThrow('no active proxy actions');
+    });
+
+    it('rejects a role for a wallet without a profile', async () => {
+      jest.mocked(identitiesDb.getProfileIdByWallet).mockResolvedValue(null);
+      await expect(
+        assertSessionRoleStillGranted('0xabc', 'grantor-profile')
+      ).rejects.toThrow('no active proxy actions');
+      expect(
+        profileProxyApiService.hasAnyActiveProxyAction
+      ).not.toHaveBeenCalled();
+    });
+
+    it('fails native refresh for a proxy role without active actions', async () => {
+      jest
+        .mocked(profileProxyApiService.hasAnyActiveProxyAction)
+        .mockResolvedValue(false);
+      mockNativeRotation('grantor-profile');
+
+      await expect(
+        refreshNativeSession({
+          address: '0xABC',
+          nativeRefreshToken: 'raw-native-refresh-token'
+        })
+      ).rejects.toThrow('no active proxy actions');
+    });
+
+    it('refreshes native sessions for a proxy role with an active action', async () => {
+      mockNativeRotation('grantor-profile');
+
+      const result = await refreshNativeSession({
+        address: '0xABC',
+        nativeRefreshToken: 'raw-native-refresh-token'
+      });
+
+      expect(result?.response.role).toBe('grantor-profile');
+    });
+
+    it('fails web refresh for a proxy role without active actions before rotating', async () => {
+      jest
+        .mocked(profileProxyApiService.hasAnyActiveProxyAction)
+        .mockResolvedValue(false);
+      authDbMock.getActiveWebSessionBySecretHash.mockResolvedValue(
+        webSession({
+          id: 'session-a',
+          address: '0xabc',
+          role: 'grantor-profile'
+        })
+      );
+
+      await expect(
+        refreshWebSession({
+          cookie: { sessionId: 'session-a', secret: 'secret-a' },
+          expectedAddress: '0xabc',
+          requestOrigin: 'https://6529.io',
+          apiHost: 'api.6529.io'
+        })
+      ).rejects.toThrow('no active proxy actions');
+      expect(authDbMock.rotateWebSessionSecret).not.toHaveBeenCalled();
     });
   });
 });

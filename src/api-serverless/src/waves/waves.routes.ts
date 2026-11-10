@@ -89,6 +89,7 @@ import { ApiWaveCurationRequest } from '@/api/generated/models/ApiWaveCurationRe
 import { curationsApiService } from '@/api/curations/curations.api.service';
 import { ApiCurationDropsPage } from '@/api/generated/models/ApiCurationDropsPage';
 import waveRepRoutes from './wave-rep.routes';
+import { getValidatedDirectMessageRecipientAddresses } from './direct-message-wave-request';
 import {
   waveScoreService,
   WaveScoreDirtyRefreshReason
@@ -215,17 +216,13 @@ router.post(
     ) {
       throw new ForbiddenException(`Proxy is not allowed to create waves`);
     }
-    const request = getValidatedByJoiOrThrow(
+    const recipientAddresses = getValidatedDirectMessageRecipientAddresses(
       req.body,
-      Joi.object<{
-        identity_addresses: string[];
-      }>({
-        identity_addresses: Joi.array().items(Joi.string()).min(1).required()
-      })
+      [
+        creatorProfile.primary_wallet,
+        ...(creatorProfile.wallets ?? []).map((it) => it.wallet)
+      ]
     );
-    if (request.identity_addresses.includes(authenticatedProfileId)) {
-      throw new BadRequestException(`You cannot DM yourself.`);
-    }
     if (isLegacyDmClosed(Time.currentMillis())) {
       throw new CustomApiCompliantException(
         403,
@@ -236,7 +233,7 @@ router.post(
 
     const userGroup = await userGroupsService.findOrCreateDirectMessageGroup(
       creatorProfile,
-      request.identity_addresses,
+      recipientAddresses,
       requestContext
     );
 
@@ -423,14 +420,26 @@ router.delete('/:id/pins', needsAuthenticatedUser(), async (req, res) => {
 });
 
 router.post('/:id/mute', needsAuthenticatedUser(), async (req, res) => {
-  await handleSimpleWaveAction(req, res, (waveId, ctx) =>
-    waveApiService.muteWave({ waveId }, ctx)
+  await handleSimpleWaveAction(
+    req,
+    res,
+    (waveId, ctx) => waveApiService.muteWave({ waveId }, ctx),
+    {
+      disallowProxy: true,
+      proxyErrorMessage: `Proxy is not allowed to mute waves`
+    }
   );
 });
 
 router.delete('/:id/mute', needsAuthenticatedUser(), async (req, res) => {
-  await handleSimpleWaveAction(req, res, (waveId, ctx) =>
-    waveApiService.unmuteWave({ waveId }, ctx)
+  await handleSimpleWaveAction(
+    req,
+    res,
+    (waveId, ctx) => waveApiService.unmuteWave({ waveId }, ctx),
+    {
+      disallowProxy: true,
+      proxyErrorMessage: `Proxy is not allowed to unmute waves`
+    }
   );
 });
 

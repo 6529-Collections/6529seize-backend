@@ -25,6 +25,21 @@ import {
   IdentityFetcher
 } from '../identities/identity.fetcher';
 import { enums } from '../../../enums';
+import { RequestContext } from '@/request.context';
+import { NotFoundException } from '@/exceptions';
+import { dropsDb as defaultDropsDb, DropsDb } from '@/drops/drops.db';
+import {
+  wavesApiDb as defaultWavesApiDb,
+  WavesApiDb
+} from '@/api/waves/waves.api.db';
+import {
+  assertWaveAndParentVisibleOrThrow,
+  getGroupsUserIsEligibleForReadContext
+} from '@/api/waves/wave-access.helpers';
+import {
+  competitionAnonymityService,
+  CompetitionAnonymityService
+} from '@/competitions/competition-anonymity';
 
 export class IdentitySubscriptionsApiService {
   constructor(
@@ -32,17 +47,20 @@ export class IdentitySubscriptionsApiService {
     private readonly wavesApiService: WaveApiService,
     private readonly dropsApiService: DropsApiService,
     private readonly identityFetcher: IdentityFetcher,
-    private readonly userGroupsService: UserGroupsService
+    private readonly userGroupsService: UserGroupsService,
+    private readonly wavesApiDb: WavesApiDb = defaultWavesApiDb,
+    private readonly dropsDb: DropsDb = defaultDropsDb,
+    private readonly competitionAnonymity: CompetitionAnonymityService = competitionAnonymityService
   ) {}
 
   public async findOutgoingSubscriptionsOfType(
     params: OutgoingIdentitySubscriptionsParams,
     authenticationContext: AuthenticationContext
   ): Promise<ApiOutgoingIdentitySubscriptionsPage> {
-    const eligibleGroupIds =
-      await this.userGroupsService.getGroupsUserIsEligibleFor(
-        params.subscriber_id
-      );
+    const eligibleGroupIds = await getGroupsUserIsEligibleForReadContext(
+      this.userGroupsService,
+      { authenticationContext }
+    );
     const idsAndActions =
       await this.identitySubscriptionsDb.findTargetIdsAndActionsForTarget(
         params,
@@ -122,11 +140,15 @@ export class IdentitySubscriptionsApiService {
   }
 
   async findIncomingSubscriptionsOfType(
-    params: IncomingIdentitySubscriptionsParams
+    params: IncomingIdentitySubscriptionsParams,
+    ctx: RequestContext
   ): Promise<ApiIncomingIdentitySubscriptionsPage> {
+    const excludedSubscriberId =
+      await this.assertTargetReadableAndGetHiddenSubscriber(params, ctx);
     const identityIdsAndActions =
       await this.identitySubscriptionsDb.findSubscriberIdsAndActionsForTarget(
-        params
+        params,
+        excludedSubscriberId
       );
     const identityIds = Object.keys(identityIdsAndActions);
     const profiles = await this.identityFetcher.getOverviewsByIds(
@@ -135,7 +157,8 @@ export class IdentitySubscriptionsApiService {
     );
     const count =
       await this.identitySubscriptionsDb.countDistinctSubscriberIdsForTarget(
-        params
+        params,
+        excludedSubscriberId
       );
     const data: ApiIdentityAndSubscriptionActions[] = Object.entries(
       identityIdsAndActions
@@ -154,6 +177,52 @@ export class IdentitySubscriptionsApiService {
       page: params.page,
       next: count > params.page_size * params.page
     };
+  }
+
+  /**
+   * Wave and drop subscribers are only listed when the viewer can read the
+   * wave (and its parent). For an anonymous competition entry the author's
+   * own subscription is left out, so the listing cannot reveal the author.
+   */
+  private async assertTargetReadableAndGetHiddenSubscriber(
+    params: IncomingIdentitySubscriptionsParams,
+    ctx: RequestContext
+  ): Promise<string | null> {
+    const targetType = params.target_type;
+    if (targetType === ActivityEventTargetType.IDENTITY) {
+      return null;
+    }
+    const notFoundMessage = `${targetType} ${params.target_id} not found`;
+    const drop =
+      targetType === ActivityEventTargetType.DROP
+        ? await this.dropsDb.findDropById(params.target_id, ctx.connection)
+        : null;
+    const waveId =
+      targetType === ActivityEventTargetType.DROP
+        ? (drop?.wave_id ?? null)
+        : params.target_id;
+    if (!waveId) {
+      throw new NotFoundException(notFoundMessage);
+    }
+    const groupsUserIsEligibleFor = await getGroupsUserIsEligibleForReadContext(
+      this.userGroupsService,
+      ctx
+    );
+    await assertWaveAndParentVisibleOrThrow({
+      wave: await this.wavesApiDb.findWaveById(waveId, ctx.connection),
+      groupsUserIsEligibleFor,
+      message: notFoundMessage,
+      wavesApiDb: this.wavesApiDb,
+      ctx
+    });
+    if (!drop) {
+      return null;
+    }
+    const hiddenDropIds = await this.competitionAnonymity.hiddenDropIds(
+      [drop.id],
+      ctx
+    );
+    return hiddenDropIds.has(drop.id) ? drop.author_id : null;
   }
 }
 
