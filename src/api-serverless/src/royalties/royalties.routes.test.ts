@@ -24,6 +24,8 @@ jest.mock('@/api/api-helpers', () => ({
 }));
 
 import { fetchRoyaltiesUploads } from '@/db-api';
+import { BadRequestException } from '@/exceptions';
+import { fetchRoyalties } from './royalties.db';
 import './royalties.routes';
 
 type Handler = (req: any, res: any) => Promise<unknown>;
@@ -72,4 +74,78 @@ describe('royalties uploads pagination', () => {
       page: 2
     });
   });
+});
+
+describe('royalties collection report', () => {
+  function collectionHandler(): Handler {
+    const call = mockRouterGet.mock.calls.find(
+      ([registered]) => registered === '/collection/:collection_type'
+    );
+    if (!call) {
+      throw new Error('no handler registered for /collection/:collection_type');
+    }
+    return call[call.length - 1];
+  }
+
+  function response() {
+    return {
+      json: jest.fn().mockReturnThis(),
+      status: jest.fn().mockReturnThis(),
+      send: jest.fn().mockReturnThis()
+    };
+  }
+
+  beforeEach(() => {
+    jest.mocked(fetchRoyalties).mockReset().mockResolvedValue([]);
+  });
+
+  it('awaits the query and responds with its rows', async () => {
+    const rows = [{ token_id: 1 }] as any;
+    jest.mocked(fetchRoyalties).mockResolvedValue(rows);
+    const res = response();
+
+    await collectionHandler()(
+      {
+        params: { collection_type: 'memes' },
+        query: { from_date: '2026-01-01', to_date: '2026-01-31', artist: 'A' }
+      },
+      res
+    );
+
+    expect(fetchRoyalties).toHaveBeenCalledWith(
+      'memes',
+      false,
+      'A',
+      '2026-01-01',
+      '2026-01-31',
+      undefined,
+      undefined
+    );
+    expect(res.json).toHaveBeenCalledWith(rows);
+  });
+
+  it('propagates a query failure instead of leaving the request open', async () => {
+    const failure = new Error('db down');
+    jest.mocked(fetchRoyalties).mockRejectedValue(failure);
+
+    await expect(
+      collectionHandler()(
+        { params: { collection_type: 'memes' }, query: {} },
+        response()
+      )
+    ).rejects.toBe(failure);
+  });
+
+  it.each(['yesterday', '2026-13-45', '2026-01-01; DROP'])(
+    'rejects the malformed date %p',
+    async (value) => {
+      await expect(
+        collectionHandler()(
+          { params: { collection_type: 'memes' }, query: { to_date: value } },
+          response()
+        )
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(fetchRoyalties).not.toHaveBeenCalled();
+    }
+  );
 });

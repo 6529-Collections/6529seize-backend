@@ -20,6 +20,10 @@ import {
 import { sqlExecutor } from '../sql-executor';
 import { markSubscriptionCoverageDirty } from '../subscription-coverage/subscription-coverage-dirty';
 import { invalidateUpcomingSubscriptionCaches } from '@/subscriptionsDaily/subscription-cache';
+import {
+  hasMinimumBalanceForAutomaticMode,
+  InsufficientSubscriptionBalanceException
+} from '@/api/subscriptions/insufficient-subscription-balance.exception';
 
 const logger = Logger.get('SUBSCRIPTIONS_TOP_UP_DB');
 
@@ -75,14 +79,11 @@ export async function persistTopUps(topUps: SubscriptionTopUp[]) {
       await topUpsRepo.save(topUp);
 
       if (setToAutoSubscribe) {
-        try {
-          await updateSubscriptionMode(consolidationKey, true, qrHolder);
-        } catch (e) {
-          logger.warn(
-            `Error setting subscription mode to auto-subscribe for ${consolidationKey}: ${e}`
-          );
-          throw e;
-        }
+        await enableAutomaticModeAfterFirstTopUp(
+          consolidationKey,
+          balance.balance,
+          qrHolder
+        );
       }
       dirtyConsolidationKeys.add(consolidationKey);
       processedTopUps.push(topUp);
@@ -120,6 +121,40 @@ export async function persistTopUps(topUps: SubscriptionTopUp[]) {
       seizeDomain,
       etherscanLink: link
     });
+  }
+}
+
+/**
+ * A first top-up switches the consolidation to automatic mode when it covers
+ * at least one mint. A smaller first top-up keeps the current mode: that is
+ * an expected outcome and must not roll back the batch. Any other failure
+ * (for example a lock wait timeout) still propagates so the whole batch
+ * rolls back and is retried.
+ */
+async function enableAutomaticModeAfterFirstTopUp(
+  consolidationKey: string,
+  balance: number,
+  qrHolder: unknown
+): Promise<void> {
+  if (!hasMinimumBalanceForAutomaticMode(balance)) {
+    logger.info(
+      `First top-up for ${consolidationKey} is below the mint price; subscription mode left unchanged`
+    );
+    return;
+  }
+  try {
+    await updateSubscriptionMode(consolidationKey, true, qrHolder);
+  } catch (e) {
+    if (e instanceof InsufficientSubscriptionBalanceException) {
+      logger.info(
+        `Balance for ${consolidationKey} does not cover a mint; subscription mode left unchanged`
+      );
+      return;
+    }
+    logger.warn(
+      `Error setting subscription mode to auto-subscribe for ${consolidationKey}: ${e}`
+    );
+    throw e;
   }
 }
 

@@ -260,7 +260,9 @@ async function createFinalSubscriptions(
           newMeme,
           dateStr
         );
-        finalSubscriptions.push(finalSub);
+        if (finalSub) {
+          finalSubscriptions.push(finalSub);
+        }
         newSubscriptionLogs.push(subscriptionLog);
       } else {
         logger.info(
@@ -306,7 +308,7 @@ async function addFundedFinalSubscription(
   newMeme: number,
   dateStr: string
 ): Promise<{
-  finalSub: NFTFinalSubscription;
+  finalSub: NFTFinalSubscription | null;
   subscriptionLog: SubscriptionLog;
 }> {
   let createdAt = sub.updated_at?.getTime() ?? Time.now().toMillis();
@@ -327,7 +329,7 @@ async function addFundedFinalSubscription(
     autoSub,
     eligibilityCount
   );
-  const subscribedCount = Math.min(
+  const subscribedCount = resolveFinalSubscriptionCount(
     eligibilityCount,
     requestedCount,
     affordableCount
@@ -336,6 +338,19 @@ async function addFundedFinalSubscription(
     logger.info(
       `[CAPPED BY BALANCE] ${sub.consolidation_key} requested x${requestedCount}, affordable x${affordableCount}, final x${subscribedCount}`
     );
+  }
+  if (subscribedCount === null) {
+    logger.warn(
+      `[NON-POSITIVE COUNT FOR ${sub.consolidation_key}] requested x${requestedCount}, eligibility x${eligibilityCount} : [SKIPPING]`
+    );
+    return {
+      finalSub: null,
+      subscriptionLog: {
+        consolidation_key: sub.consolidation_key,
+        log: `No Subscription Count for Meme #${newMeme} on ${dateStr} - Not Added to Final Subscription`,
+        additional_info: `Subscription Count: x${requestedCount} - Eligibility: x${eligibilityCount}`
+      }
+    };
   }
   const finalSub: NFTFinalSubscription = {
     subscribed_at: subscribedAt,
@@ -360,6 +375,23 @@ async function addFundedFinalSubscription(
   };
 
   return { finalSub, subscriptionLog };
+}
+
+/**
+ * The edition count that reaches the final subscription table: the smallest
+ * of eligibility, the requested count and what the balance affords, rounded
+ * down. Returns null when that is not a positive integer, so a row with a
+ * zero, negative or malformed count is left out of the final table.
+ */
+export function resolveFinalSubscriptionCount(
+  eligibilityCount: number,
+  requestedCount: number,
+  affordableCount: number
+): number | null {
+  const count = Math.floor(
+    Math.min(eligibilityCount, requestedCount, affordableCount)
+  );
+  return Number.isSafeInteger(count) && count >= 1 ? count : null;
 }
 
 export function resolveRequestedSubscriptionCount(

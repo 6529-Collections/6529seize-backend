@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { Request, Response } from 'express';
 import { numbers } from '../../numbers';
 import { Time } from '../../time';
@@ -8,6 +9,7 @@ import {
   SORT_DIRECTIONS
 } from './api-constants';
 import { MAX_PAGE, normalizePage, normalizePageSize } from './page-request';
+import { normalizeWebAppOrigin } from './web-app-origins';
 
 const { json2csv } = require('json-2-csv');
 
@@ -15,31 +17,118 @@ function getCacheKeyPrefix(): string {
   return `__SEIZE_CACHE_${process.env.NODE_ENV}__`;
 }
 
+/**
+ * Longest request URL (path plus normalised query) kept verbatim in a cache
+ * key. A longer URL keeps its path, so path based evictions still match it,
+ * and replaces the query with a SHA-256 of the whole normalised URL.
+ */
+export const MAX_VERBATIM_CACHE_KEY_URL_LENGTH = 512;
+const HASHED_QUERY_PARAM = '__q';
+const HASHED_PATH = '/__hashed-path';
+
+function compareByName(a: [string, string], b: [string, string]): number {
+  if (a[0] < b[0]) {
+    return -1;
+  }
+  return a[0] > b[0] ? 1 : 0;
+}
+
+/**
+ * The request URL in canonical form: the raw path followed by the query
+ * parameters sorted by name. Values sharing a name keep their relative
+ * order, so `?a=1&a=2` and `?a=2&a=1` stay distinct.
+ */
+export function normalizeRequestUrl(url: string): string {
+  const queryStart = url.indexOf('?');
+  if (queryStart < 0) {
+    return url;
+  }
+  const path = url.slice(0, queryStart);
+  const entries = Array.from(
+    new URLSearchParams(url.slice(queryStart + 1)).entries()
+  ).sort(compareByName);
+  const query = new URLSearchParams(entries).toString();
+  return query ? `${path}?${query}` : path;
+}
+
 export function cacheKey(req: Request) {
-  return getCacheKeyPrefix() + (req.originalUrl || req.url);
+  const normalized = normalizeRequestUrl(req.originalUrl || req.url || '');
+  if (normalized.length <= MAX_VERBATIM_CACHE_KEY_URL_LENGTH) {
+    return getCacheKeyPrefix() + normalized;
+  }
+  const queryStart = normalized.indexOf('?');
+  const path = queryStart < 0 ? normalized : normalized.slice(0, queryStart);
+  const keyPath =
+    path.length <= MAX_VERBATIM_CACHE_KEY_URL_LENGTH ? path : HASHED_PATH;
+  const digest = createHash('sha256').update(normalized).digest('hex');
+  return `${getCacheKeyPrefix()}${keyPath}?${HASHED_QUERY_PARAM}=${digest}`;
+}
+
+const KNOWN_API_HOSTS = new Set(['api.6529.io', 'api.staging.6529.io']);
+const LOOPBACK_HOSTNAMES = new Set(['localhost', '127.0.0.1', '[::1]']);
+
+function hostnameOf(host: string): string {
+  if (host.startsWith('[')) {
+    return host.slice(0, host.indexOf(']') + 1);
+  }
+  return host.split(':')[0];
+}
+
+/**
+ * The origin for absolute pagination links. A configured `API_PUBLIC_ORIGIN`
+ * wins; otherwise the request host is used only when it is a known API host
+ * or a loopback address. Any other host yields root-relative links.
+ */
+function paginationOrigin(req: Request): string {
+  const configured = normalizeWebAppOrigin(process.env.API_PUBLIC_ORIGIN);
+  if (configured) {
+    return configured;
+  }
+  const host = req.get('host')?.trim().toLowerCase();
+  if (!host) {
+    return '';
+  }
+  if (KNOWN_API_HOSTS.has(host) || LOOPBACK_HOSTNAMES.has(hostnameOf(host))) {
+    return normalizeWebAppOrigin(`${req.protocol}://${host}`) ?? '';
+  }
+  return '';
+}
+
+function parseRequestPath(originalUrl: string): URL | null {
+  const rooted = originalUrl.startsWith('/') ? originalUrl : `/${originalUrl}`;
+  try {
+    return new URL(`http://placeholder.invalid${rooted}`);
+  } catch {
+    return null;
+  }
 }
 
 function fullUrl(req: Request, next: string | null) {
-  let url = `${req.protocol}://${req.get('host')}${req.originalUrl}`;
-
   const hasNext = next === 'true';
 
   if (!hasNext) {
     return null;
   }
 
-  const newUrl = new URL(url);
-  const params = newUrl.searchParams;
+  const parsed = parseRequestPath(req.originalUrl ?? '');
+  if (!parsed) {
+    return null;
+  }
+  const params = parsed.searchParams;
+  // Collapse leading slashes so a relative link can never become
+  // protocol-relative.
+  const path = parsed.pathname.replace(/^\/+/, '/');
 
   if (params.has('page')) {
     const page = normalizePage(params.get('page'));
     if (page >= MAX_PAGE) {
       return null;
     }
-    newUrl.searchParams.delete('page');
-    newUrl.searchParams.append('page', String(page + 1));
-    return newUrl.toString();
+    params.delete('page');
+    params.append('page', String(page + 1));
+    return `${paginationOrigin(req)}${path}${parsed.search}`;
   } else {
+    let url = `${paginationOrigin(req)}${path}${parsed.search}`;
     if (!url.includes('?')) {
       url += '?';
     }
