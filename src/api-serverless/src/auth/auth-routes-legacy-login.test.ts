@@ -347,12 +347,15 @@ describe('legacy plain-text sign-in routes', () => {
       role: null
     });
     await redeemHandler(
-      makeRequest({ body: { token: 'legacy-refresh' } }),
+      makeRequest({ body: { token: 'ab'.repeat(32) } }),
       makeResponse()
     );
     redeemRefreshTokenMock.mockResolvedValueOnce(null);
     await expect(
-      redeemHandler(makeRequest({ body: { token: 'unknown' } }), makeResponse())
+      redeemHandler(
+        makeRequest({ body: { token: 'cd'.repeat(32) } }),
+        makeResponse()
+      )
     ).rejects.toThrow('Invalid refresh token');
 
     expect(
