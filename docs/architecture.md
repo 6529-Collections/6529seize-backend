@@ -184,6 +184,12 @@ payloads identify the top-level drop for links and live updates. Placement updat
 include whether the thread has replies, so empty toggles can update the message
 without reloading the timeline.
 
+The wave's `chat.replies.collapsed` setting takes precedence. When it is
+enabled, all replies are collapsed regardless of the top-level drop's stored
+`collapse_replies` preference. On V2 serial-number lookups, a descendant's
+`collapsed_reply_thread` identifies its top-level drop under either collapse
+mode, including when the top-level drop's individual preference is `false`.
+
 Deploy `dbMigrationsLoop` first to synchronize the additive column and refresh
 the compatibility view, then deploy the API and the frontend.
 
