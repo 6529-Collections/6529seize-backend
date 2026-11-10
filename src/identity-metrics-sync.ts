@@ -243,7 +243,10 @@ function partitionScopedRows(
  *
  * Lock order (the rule for every transaction writing ratings and identities):
  * ratings row locks before identities row locks, identities in key order.
- * The rating path updates ratings, then applies its delta to identities. A
+ * A rating write that checks the rater's credit (and the over-rate
+ * revocation) takes its rater's rating_credit_locks row before both; nothing
+ * here locks that table. The rating path updates ratings, then applies its
+ * delta to identities. A
  * chunk first takes shared locks on the consolidated TDH rows and on the
  * ratings of its profiles, then updates its identities, so it never holds an
  * identities lock while waiting for a ratings lock. A rating in flight makes

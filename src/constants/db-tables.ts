@@ -74,6 +74,7 @@ export const NFTS_HISTORY_CLAIMS_TABLE = 'nfts_history_claims';
 export const REMEMES_TABLE = 'rememes';
 export const REMEMES_UPLOADS = 'uploads_rememes';
 export const RATINGS_TABLE = 'ratings';
+export const RATING_CREDIT_LOCKS_TABLE = 'rating_credit_locks';
 export const DROPS_VOTES_CREDIT_SPENDINGS_TABLE =
   'drops_votes_credit_spendings';
 export const DROP_VOTER_STATE_TABLE = 'drop_voter_states';

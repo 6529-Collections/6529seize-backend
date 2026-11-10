@@ -25,6 +25,19 @@ describe('RatingsDb over-rate cleanup queries', () => {
     );
   });
 
+  it('gives a rater without an identity no credit, so its ratings are reduced', async () => {
+    const executor = createExecutor();
+    const repo = new RatingsDb(() => executor as never);
+
+    await repo.getOverRateMatters();
+
+    const [sql] = executor.execute.mock.calls[0];
+    expect(sql).toContain('coalesce(i.tdh + i.xtdh, 0) as rater_credit');
+    expect(sql).toContain(
+      'where floor(coalesce(i.tdh + i.xtdh, 0)) < abs(rt.tally)'
+    );
+  });
+
   it('excludes help6529 Help6529 Credits rows while selecting ratings to reduce', async () => {
     const executor = createExecutor();
     const repo = new RatingsDb(() => executor as never);
