@@ -9,8 +9,9 @@ import {
 /**
  * Challenges for the plain-text sign-in (`GET /auth/nonce`, then
  * `POST /auth/login`). The server signature is a JWT whose payload names the
- * challenge type and the text to sign; it expires after five minutes and
- * signs in once.
+ * challenge type and the text to sign; it expires after
+ * AUTH_LEGACY_TEXT_CHALLENGE_TTL_SECONDS (five minutes by default) and signs
+ * in once.
  *
  * Builds before this one signed the text itself as the JWT payload, with no
  * expiry. Such a challenge is still accepted, once, during a short
@@ -24,10 +25,12 @@ import {
 const logger = Logger.get('LEGACY_TEXT_CHALLENGE');
 
 export const LEGACY_TEXT_CHALLENGE_TYPE = 'legacy_nonce';
-export const LEGACY_TEXT_CHALLENGE_TTL_SECONDS = 5 * 60;
+export const DEFAULT_LEGACY_TEXT_CHALLENGE_TTL_SECONDS = 5 * 60;
+export const MIN_LEGACY_TEXT_CHALLENGE_TTL_SECONDS = 60;
+export const MAX_LEGACY_TEXT_CHALLENGE_TTL_SECONDS = 60 * 60;
 export const STRING_FORM_TRANSITION_MS = 15 * 60 * 1000;
-/** 2026-12-01T00:00:00Z. */
-export const STRING_FORM_LAST_ACCEPTED_AT_MS = Date.UTC(2026, 11, 1);
+/** 2026-11-17T00:00:00Z. */
+export const STRING_FORM_LAST_ACCEPTED_AT_MS = Date.UTC(2026, 10, 17);
 const STRING_FORM_TRANSITION_KEY =
   'auth_legacy_text_challenge_string_form_until';
 const STRING_FORM_TRANSITION_KEY_EXTRA_MS = 24 * 60 * 60 * 1000;
@@ -59,6 +62,23 @@ export function isLegacyTextLoginDisabled(): boolean {
   return process.env.AUTH_LEGACY_TEXT_LOGIN_DISABLED === 'true';
 }
 
+/**
+ * Lifetime of a new plain-text challenge in seconds:
+ * AUTH_LEGACY_TEXT_CHALLENGE_TTL_SECONDS clamped to 60-3600, so operations
+ * can give slow signers (multi-owner contract wallets) more time without a
+ * deploy. Unset or not a whole number means 300. Never throws.
+ */
+export function getLegacyTextChallengeTtlSeconds(): number {
+  const text = process.env.AUTH_LEGACY_TEXT_CHALLENGE_TTL_SECONDS?.trim();
+  if (!text || !/^\d+$/.test(text)) {
+    return DEFAULT_LEGACY_TEXT_CHALLENGE_TTL_SECONDS;
+  }
+  return Math.min(
+    MAX_LEGACY_TEXT_CHALLENGE_TTL_SECONDS,
+    Math.max(MIN_LEGACY_TEXT_CHALLENGE_TTL_SECONDS, Number(text))
+  );
+}
+
 export function signLegacyTextChallenge(
   message: string,
   jwtSecret: string
@@ -68,7 +88,7 @@ export function signLegacyTextChallenge(
     jwtSecret,
     {
       algorithm: JWT_ALGORITHM,
-      expiresIn: LEGACY_TEXT_CHALLENGE_TTL_SECONDS
+      expiresIn: getLegacyTextChallengeTtlSeconds()
     }
   );
 }
