@@ -6,8 +6,7 @@ import * as SwaggerUI from 'swagger-ui-express';
 import { numbers } from '@/numbers';
 import { CustomApiCompliantException } from '@/exceptions';
 import { getValidatedByJoiOrThrow } from '@/api/validation';
-
-const YAML = require('yamljs');
+import { loadOpenApiSpec } from '@/api/openapi-spec-loader';
 
 const router = asyncRouter();
 
@@ -33,7 +32,7 @@ const OracleNftsParamsSchema = Joi.object<OracleNftsParams>({
   id: Joi.number().integer().optional()
 });
 
-const swaggerDocumentOracle = YAML.load('openapi.oracle.yaml');
+const swaggerDocumentOracle = loadOpenApiSpec('openapi.oracle.yaml').document;
 router.use(
   '/docs',
   SwaggerUI.serveFiles(swaggerDocumentOracle, { explorer: true }),
