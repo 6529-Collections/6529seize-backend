@@ -16,6 +16,18 @@ function createExecutor() {
 }
 
 describe('AuthDb', () => {
+  it('deletes only the legacy refresh token row of the given wallet', async () => {
+    const { authDb, execute } = createExecutor();
+
+    await authDb.deleteLegacyRefreshTokenForAddress('0xabc');
+
+    expect(execute).toHaveBeenCalledTimes(1);
+    expect(execute).toHaveBeenCalledWith(
+      'delete from refresh_tokens where address = :address',
+      { address: '0xabc' }
+    );
+  });
+
   it('stores the validated role when creating a legacy refresh token', async () => {
     const { authDb, execute, oneOrNull } = createExecutor();
     oneOrNull.mockResolvedValueOnce(null);

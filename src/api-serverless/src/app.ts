@@ -148,6 +148,7 @@ import {
   rateLimitingMiddleware
 } from './rate-limiting/rate-limiting.middleware';
 import { createAccessTokenStrategy } from '@/api/auth/access-token-strategy';
+import { startStringFormTransition } from '@/api/auth/legacy-text-challenge';
 import { setNoStoreHeaders } from '@/api/response-headers';
 import { requestLogMiddleware } from '@/api/request-log.middleware';
 import {
@@ -674,6 +675,10 @@ async function initializeApp() {
   // (ERROR log, EMF metric) and treated as not started; nothing else changes.
   logger.info(describeE2eeSuiteTransition());
   await initRedis({ failFast: API_REDIS_FAIL_FAST_OPTIONS });
+  // Plain-text sign-in challenges issued before this build stay valid for a
+  // short transition that starts with the first instance of the build. Not
+  // awaited: start-up never waits on it.
+  void startStringFormTransition();
   initRateLimiting();
   passport.use(createAccessTokenStrategy(getJwtSecret()));
   passport.use(new AnonymousStrategy());

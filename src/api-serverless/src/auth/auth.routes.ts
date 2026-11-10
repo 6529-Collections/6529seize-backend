@@ -15,6 +15,7 @@ import { asyncRouter } from '../async.router';
 import { getValidatedByJoiOrThrow } from '../validation';
 import {
   BadRequestException,
+  CustomApiCompliantException,
   UnauthorisedException
 } from '../../../exceptions';
 import { ApiNonceResponse } from '../generated/models/ApiNonceResponse';
@@ -57,6 +58,7 @@ import {
 } from './auth-session-v2';
 import {
   buildStructuredWalletSignatureMessage,
+  consumeLegacyTextChallengeNonce,
   consumeStructuredWalletSignatureNonce,
   ETHEREUM_MAINNET_CHAIN_ID,
   getDefaultStructuredWalletSignatureAudience,
@@ -101,6 +103,18 @@ import {
 } from '@/e2ee/e2ee-suite-policy';
 import { isE2eeEnabled } from '@/e2ee/e2ee-flag';
 import { identitiesDb } from '@/identities/identities.db';
+import {
+  isLegacyTextLoginDisabled,
+  isStringFormChallengeAccepted,
+  type LegacyLoginChallenge,
+  legacyLoginFormatOf,
+  signLegacyTextChallenge,
+  verifyLegacyLoginChallengeToken
+} from '@/api/auth/legacy-text-challenge';
+import {
+  recordLegacyAuthUseOnFinish,
+  setLegacyLoginFormat
+} from '@/api/auth/legacy-auth-metrics';
 
 const router = asyncRouter();
 const logger = Logger.get('AUTH_ROUTES');
@@ -145,6 +159,12 @@ router.get(
     req: Request<any, any, any, NonceQueryRequest, any>,
     res: Response<ApiResponse<ApiNonceResponse>>
   ) {
+    if (isLegacyTextLoginDisabled()) {
+      throw new CustomApiCompliantException(
+        410,
+        'Plain-text sign-in is disabled; use /auth/session-nonce'
+      );
+    }
     const nonceRequest = getValidatedByJoiOrThrow(
       req.query,
       NonceQueryRequestSchema
@@ -172,7 +192,7 @@ ${signerAddress}
 
 Nonce (Unique Identifier)
 ${randomUUID()}`;
-    const serverSignature = jwt.sign(nonce, getJwtSecret());
+    const serverSignature = signLegacyTextChallenge(nonce, getJwtSecret());
     res.status(200).send({
       nonce,
       server_signature: serverSignature
@@ -349,6 +369,7 @@ function requestedMlsSuites(
 
 router.post(
   `/login`,
+  recordLegacyAuthUseOnFinish('login'),
   async function (
     req: Request<any, any, ApiLoginRequest, any, any>,
     res: Response<ApiResponse<ApiLoginResponse>>
@@ -358,9 +379,9 @@ router.post(
     const { server_signature, client_signature, role, client_address } =
       loginRequest;
     try {
-      const nonce = verifyServerSignature(server_signature);
+      const challenge = verifyServerSignature(server_signature, res);
       const signingAddress = await verifyClientSignature(
-        nonce,
+        challenge,
         client_signature,
         client_address ?? null
       );
@@ -787,6 +808,7 @@ router.post(
 
 router.post(
   '/connection-share/legacy-desktop',
+  recordLegacyAuthUseOnFinish('legacy_desktop_link'),
   needsAuthenticatedUser(),
   async function (
     req: Request<
@@ -851,6 +873,7 @@ router.post(
 
 router.post(
   '/redeem-refresh-token',
+  recordLegacyAuthUseOnFinish('redeem_refresh_token'),
   async function (
     req: Request<any, any, ApiRedeemRefreshTokenRequest, any, any>,
     res: Response<ApiResponse<ApiRedeemRefreshTokenResponse>>
@@ -1010,21 +1033,37 @@ async function resolveLegacyRefreshRole({
   return resolvedRole;
 }
 
-function verifyServerSignature(serverSignature: string): string {
-  const nonce = jwt.verify(serverSignature, getJwtSecret(), {
-    algorithms: ['HS256']
-  });
-  if (!nonce || typeof nonce !== 'string') {
-    throw new Error('Invalid server signature');
+function verifyServerSignature(
+  serverSignature: string,
+  res: Response<any>
+): LegacyLoginChallenge {
+  const challenge = verifyLegacyLoginChallengeToken(
+    serverSignature,
+    getJwtSecret()
+  );
+  setLegacyLoginFormat(res, legacyLoginFormatOf(challenge));
+  return challenge;
+}
+
+async function assertTextLoginChallengeAccepted(
+  challenge: LegacyLoginChallenge
+): Promise<void> {
+  if (isLegacyTextLoginDisabled()) {
+    throw new Error(
+      'Plain-text sign-in is disabled; use /auth/session-nonce and /auth/session-login'
+    );
   }
-  return nonce;
+  if (challenge.form === 'string' && !(await isStringFormChallengeAccepted())) {
+    throw new Error('Sign-in challenge expired');
+  }
 }
 
 async function verifyClientSignature(
-  nonce: string,
+  challenge: LegacyLoginChallenge,
   clientSignature: string,
   clientAddress: string | null
 ): Promise<string> {
+  const nonce = challenge.message;
   clientAddress = clientAddress?.toLowerCase() ?? null;
   if (isStructuredWalletSignatureMessage(nonce)) {
     if (!clientAddress) {
@@ -1051,6 +1090,7 @@ async function verifyClientSignature(
     return signingAddress;
   }
 
+  await assertTextLoginChallengeAccepted(challenge);
   if (isStructuredSignaturesRequired()) {
     throw new Error('Structured wallet signature required');
   }
@@ -1063,6 +1103,10 @@ async function verifyClientSignature(
   });
   if (!signingAddress) {
     throw new Error('Invalid client signature');
+  }
+  // Each plain-text challenge signs in once, like structured messages above.
+  if (!(await consumeLegacyTextChallengeNonce(nonce, challenge.expiresAtMs))) {
+    throw new Error('Invalid or consumed wallet auth challenge');
   }
   return signingAddress;
 }

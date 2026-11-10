@@ -33,9 +33,9 @@ Connection sharing is a separate optional flow:
 
 ## Legacy Flow
 
-`GET /api/auth/nonce` keeps the legacy request shape. It accepts `signer_address` and optional `short_nonce`, then returns a nonce and server signature.
+`GET /api/auth/nonce` keeps the legacy request shape. It accepts `signer_address` and optional `short_nonce`, then returns a nonce and server signature. Clients pass `server_signature` back unchanged. It is a JWT whose payload names the challenge type (`legacy_nonce`) and the text to sign, and it expires five minutes after issue.
 
-`POST /api/auth/login` verifies the signed nonce, resolves the optional role/proxy identity, returns a JWT access token, and returns the legacy refresh token from `refresh_tokens`. The refresh-token row stores the server-resolved role from the signed login so future refreshes continue the same legacy session role instead of accepting a new client-selected role.
+`POST /api/auth/login` verifies the signed nonce, resolves the optional role/proxy identity, returns a JWT access token, and returns the legacy refresh token from `refresh_tokens`. Each plain-text challenge signs in once: it is consumed in the same Redis store as structured nonces and, like them, is refused when that store is unavailable outside local and test runs. Builds before November 2026 signed the text itself as the JWT payload, without an expiry. Such a challenge is accepted once during a 15-minute transition that starts when the first API instance of the new build starts (shared through Redis; nothing to configure), and never from 2026-12-01. Structured messages from `/auth/session-nonce` keep working on `/auth/login` with their own expiry and single use. Usage is reported as the EMF metric `6529/Auth` `LegacyAuthCalls` by route, challenge format, coarse client family and outcome. The refresh-token row stores the server-resolved role from the signed login so future refreshes continue the same legacy session role instead of accepting a new client-selected role.
 
 `POST /api/auth/redeem-refresh-token` redeems the legacy refresh token for a fresh JWT access token. It remains enabled while legacy clients are supported. Refresh preserves the role already bound to that refresh token. If an existing production refresh token has no bound role yet, the first refresh that supplies a role validates it server-side and binds it to that token; later refreshes must match the bound role. Unbound refreshes without a requested role return a wallet-only JWT.
 
@@ -329,7 +329,10 @@ For native and desktop sessions:
 web clients send `client_address` so logout targets the matching address-scoped
 cookie and does not revoke whichever account last wrote the compatibility
 cookie. When `all_sessions=true`, it revokes all wallet auth sessions for the
-verified target address. Web logout also checks the request `Origin` against the
+verified target address and removes that wallet's legacy refresh token, so
+older Desktop builds that hold it are signed out as well (the next legacy
+sign-in issues a new one). A single-session logout leaves the legacy refresh
+token in place. Web logout also checks the request `Origin` against the
 stored session origin before revoking an existing session.
 
 ## Connection Sharing
@@ -394,6 +397,7 @@ only while both connection sharing and legacy refresh redemption are enabled.
 The revised auth flow uses these relevant flags/config values:
 
 - `AUTH_STRUCTURED_SIGNATURES_REQUIRED`: default false. When true, legacy signature verification paths reject unstructured wallet messages where structured verification is used.
+- `AUTH_LEGACY_TEXT_LOGIN_DISABLED`: default false. When true, `GET /auth/nonce` answers `410` and `POST /auth/login` refuses plain-text signatures. Structured messages on `/auth/login`, the session-v2 routes and drop, rememe and NextGen signatures are not affected. Turn it on once the `LegacyAuthCalls` metric shows no current client signing in with plain text.
 - `WEB_APP_ORIGIN`: canonical first-party web app origin. The backend uses it to derive credentialed CORS origins and SIWE domain/URI checks. Values must be exact origins without credentials, a non-root path, query, or fragment.
 - `WEB_APP_ADDITIONAL_ORIGINS`: comma-separated extra exact first-party web app origins. These are additive to the built-in defaults and `WEB_APP_ORIGIN`.
 - Built-in web app origin defaults: `api.6529.io` allows credentialed web auth from `https://6529.io`; `api.staging.6529.io` allows credentialed web auth from `https://staging.6529.io`; localhost API hosts allow common localhost frontend ports.
