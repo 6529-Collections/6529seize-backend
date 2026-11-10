@@ -169,6 +169,7 @@ export { ProfileCmsUploadEntity } from './IProfileCmsUpload';
 export { PushNotificationDevice } from './IPushNotification';
 export { PushNotificationSettingsEntity } from './IPushNotificationSettings';
 export { Rating } from './IRating';
+export { RatingCreditLockEntity } from './IRatingCreditLock';
 export { RefreshToken } from './IRefreshToken';
 export {
   ReleaseDigestEntity,

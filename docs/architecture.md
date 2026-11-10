@@ -1366,10 +1366,16 @@ TDH consumers run after the identities are synced, as before; xTDH's
 `level_raw` update and C's chunks both compute from the row's current values,
 so an xTDH run that lands between invocations stays consistent. Any
 transaction writing both `ratings` and `identities` takes the `ratings` locks
-first. The TDH tables and identities are no longer updated atomically: until C
+first. A rating write that checks its rater's credit (single and bulk REP,
+CIC and wave REP ratings) and the over-rate revocation first take that
+rater's `rating_credit_locks` row for the matter, which nothing else locks:
+one rater's credit checks run one at a time without changing that order.
+Profile merges also move the ratings, xTDH grants and other profile-id-keyed
+data of merged identities without a handle (a profiles row). The TDH tables
+and identities are no longer updated atomically: until C
 reaches a row, readers combining them see the previous run's identities, and
 a vote is checked against the pre-run credit, as just before any run. Deploy
-`dbMigrationsLoop` first (the marker and scope tables and their columns),
+`dbMigrationsLoop` first (the marker, scope and rating credit lock tables),
 then `api` (rating writers stamp `last_modified` with the database clock),
 `delegationsLoop`, `tdhLoop` and `overRatesRevocationLoop`. Profiles are
 created with their identity's primary address as `primary_wallet`.
