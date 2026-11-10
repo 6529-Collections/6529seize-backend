@@ -44,6 +44,7 @@ import {
   PROFILE_PICTURE_MAX_BYTES,
   profilePictureIpfsUploadService
 } from './profile-picture-ipfs-upload';
+import { ProfilePictureUrlSchema } from '@/api/profiles/profile-picture-url';
 
 const router = asyncRouter();
 const logger = Logger.get('ProfilesRoutes');
@@ -221,7 +222,9 @@ router.post(
 router.post(
   `/:identity/pfp`,
   needsAuthenticatedUser(),
-  initMulterSingleMiddleware('pfp'),
+  initMulterSingleMiddleware('pfp', {
+    maxFileSizeBytes: PROFILE_PICTURE_MAX_BYTES
+  }),
   async function (
     req: Request<
       {
@@ -386,11 +389,7 @@ const ApiCreateOrUpdateProfileRequestSchema: Joi.ObjectSchema<ApiCreateOrUpdateP
       .valid(...Object.values(ApiProfileClassification))
       .required(),
     sub_classification: Joi.string().optional().allow(null).default(null),
-    pfp_url: Joi.string()
-      .optional()
-      .regex(/^(?:ipfs:\/\/|https:\/\/d3lqz0a4bldqgf).+$/)
-      .allow(null)
-      .default(null)
+    pfp_url: ProfilePictureUrlSchema.optional().allow(null).default(null)
   }).custom((value, helpers) => {
     const { banner_1, banner_2 } = value;
 

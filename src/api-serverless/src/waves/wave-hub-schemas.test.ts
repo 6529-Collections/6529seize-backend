@@ -3,6 +3,7 @@ import {
   legacyWaveHubPatch,
   UpdateWaveHubSchema
 } from './wave-hub.schemas';
+import { WaveSchema } from './wave-write.schemas';
 import { ApiCreateNewWave } from '@/api/generated/models/ApiCreateNewWave';
 import { ApiUpdateWaveRequest } from '@/api/generated/models/ApiUpdateWaveRequest';
 import { getValidatedByJoiOrThrow } from '@/api/validation';
@@ -100,5 +101,26 @@ describe('wave-only HTTP contracts', () => {
     expect(() =>
       legacyWaveHubPatch(null as unknown as ApiUpdateWaveRequest)
     ).toThrow();
+  });
+});
+
+describe('wave picture on the full wave schema', () => {
+  const picture = WaveSchema.extract('picture');
+
+  it.each([
+    'https://d3lqz0a4bldqgf.cloudfront.net/waves/author/picture.png',
+    null
+  ])('accepts %s', (value) => {
+    expect(picture.validate(value).error).toBeUndefined();
+  });
+
+  it.each([
+    'https://d3lqz0a4bldqgfXcloudfrontXnet/a.png',
+    'https://d3lqz0a4bldqgf-cloudfront.net/a.png',
+    'https://d3lqz0a4bldqgf.cloudfront.net.example/a.png',
+    'https://d3lqz0a4bldqgf.cloudfront.net:8443/a.png',
+    'https://d3lqz0a4bldqgf.cloudfront.net@example.com/a.png'
+  ])('rejects %s', (value) => {
+    expect(picture.validate(value).error).toBeDefined();
   });
 });
