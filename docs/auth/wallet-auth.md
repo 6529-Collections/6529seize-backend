@@ -6,7 +6,8 @@ This document describes the current wallet authentication contract and the
 session-v2 flow. Web session challenges use ERC-4361 Sign-In with Ethereum
 (SIWE), while native and desktop clients retain the 6529 structured-signature
 format. The auth system intentionally keeps legacy endpoints stable. The API
-contract and database schema are unchanged; no database migration is required.
+contract is unchanged. Schema changes are additive entity columns applied by
+`dbMigrationsLoop`; no migration file is required.
 
 ## Compatibility Model
 
@@ -377,6 +378,25 @@ Redemption atomically marks the share consumed, so the same code cannot be
 redeemed again. Expiry is checked during redemption. These paths do not
 immediately delete the stored share row or its setup ciphertext.
 
+A wallet has at most one live link per target client type and kind (with or
+without device setup): creating a share marks the wallet's earlier unconsumed,
+unexpired share of the same target and kind consumed, without a session, so
+an old QR code or link stops working once its source shows a new one. A plain
+link and a device-setup link for the same target can be live together, so
+going back from secure setup to a plain link keeps the plain link valid.
+Device-setup links expire after `AUTH_CONNECTION_SHARE_SETUP_TTL_SECONDS`
+(default 120 seconds), plain links after
+`AUTH_CONNECTION_SHARE_CODE_TTL_SECONDS` (default 300 seconds).
+
+A redeem records the coarse client family of the redeeming request (for
+example `desktop` or `browser`, never the user agent) in
+`consumed_client_family`, logs the share id, target and whether device setup
+was returned, and emits the EMF metric `6529/Auth` `ConnectionShareRedeems` by
+target, outcome and device setup. A source address that sends 20 invalid,
+used or expired codes within 10 minutes gets `429` until the window ends; the
+counter is kept in Redis under a keyed hash of the address and the limiter is
+off when Redis is unavailable.
+
 The desktop compatibility flow remains available for legacy Desktop builds that
 still need the legacy refresh-token handoff:
 
@@ -413,6 +433,7 @@ The revised auth flow uses these relevant flags/config values:
 - `AUTH_CONNECTION_SHARING_DISABLED`: default false. Set to `true` only to disable `/auth/connection-share`, `/auth/connection-share/legacy-desktop`, and `/auth/connection-share/redeem`; otherwise connection sharing is enabled.
 - `AUTH_LEGACY_REFRESH_DISABLED`: default false. Set to `true` only after the configured v2 migration deadline and final shutdown checks to make `/auth/redeem-refresh-token` and the legacy desktop connection-sharing bridge unavailable without removing the endpoints.
 - `AUTH_CONNECTION_SHARE_CODE_TTL_SECONDS`: one-time connection share code lifetime. Defaults to 300 seconds.
+- `AUTH_CONNECTION_SHARE_SETUP_TTL_SECONDS`: lifetime of connection share codes that carry encrypted device setup. Defaults to 120 seconds and is never longer than `AUTH_CONNECTION_SHARE_CODE_TTL_SECONDS`; a missing or non-positive value means the default.
 - `AUTH_LEGACY_WS_QUERY_TOKEN_ENABLED`: default true. Controls legacy WebSocket JWT query-token support.
 
 There is intentionally no `AUTH_SESSION_V2_ENABLED` flag. Session-v2 endpoints are separate from the legacy endpoints, so exposing them does not change legacy client behavior.
@@ -443,7 +464,9 @@ content.
 - Wallet address and optional role to share.
 - Target client type.
 - Expiry and consumption metadata.
-- The native session id created when the share is redeemed.
+- The native session id created when the share is redeemed (null for a share
+  retired by a newer one).
+- The coarse client family of the redeeming request.
 
 `refresh_tokens` stores legacy refresh-token compatibility state:
 
