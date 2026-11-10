@@ -1283,8 +1283,14 @@ request.
 
 Waves are chat, visibility and administration hubs containing zero or more native
 competitions under `/v3/waves`. Competition configuration and entry state own
-submissions, eligibility, voting, weighted scores, decisions and winners. Current
-navigation/settings/entries/voting/My Votes/leaderboards/winners/admin use the
+submissions, eligibility, voting, weighted scores, decisions and winners.
+Competition detail and list responses include `your_active_entries_count` for the
+acting read profile (null for anonymous readers). Counts include only ACTIVE
+entries in that competition, match the entry-creation limit, and are batched for
+each list page. The frontend uses them for submission capacity in headers and
+forms. This additive response needs only `api` deployed before the frontend;
+there is no entity or migration change.
+Current navigation/settings/entries/voting/My Votes/leaderboards/winners/admin use the
 competition resources for every competition. The scoped `entry-contexts` GET
 batches up to 50 visible entries, current/at-decision vote summaries and their
 awards; it resolves competition access once and applies content visibility to the
