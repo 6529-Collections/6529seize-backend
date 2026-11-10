@@ -334,21 +334,29 @@ export class E2eeDb extends LazyDbAccessCompatibleService {
   /**
    * Active devices of a profile; with `grantVersion`, only devices whose
    * grant has that version (v1 and v2 devices are limited separately while
-   * both are honoured).
+   * both are honoured); with `seenSinceMs`, only devices last seen (or, for
+   * rows without a last-seen time, created) at or after it.
    */
   async countActiveDevices(
     profileId: string,
     nowSeconds: number,
     connection: Conn,
-    grantVersion?: number
+    grantVersion?: number,
+    seenSinceMs?: number
   ): Promise<number> {
     const row = await this.one<{ cnt: number }>(
       `select count(*) as cnt from ${E2EE_DEVICES_TABLE}
        where profile_id = :profileId
          and revoked_at is null
          and expires_at_seconds > :nowSeconds
-         ${grantVersion === undefined ? '' : 'and grant_version = :grantVersion'}`,
-      { profileId, nowSeconds, grantVersion: grantVersion ?? null },
+         ${grantVersion === undefined ? '' : 'and grant_version = :grantVersion'}
+         ${seenSinceMs === undefined ? '' : 'and coalesce(last_seen_at, created_at) >= :seenSinceMs'}`,
+      {
+        profileId,
+        nowSeconds,
+        grantVersion: grantVersion ?? null,
+        seenSinceMs: seenSinceMs ?? null
+      },
       connection
     );
     return Number(row?.cnt ?? 0);
