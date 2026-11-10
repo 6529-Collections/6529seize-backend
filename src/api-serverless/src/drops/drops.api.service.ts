@@ -97,8 +97,11 @@ import {
 } from '@/content-moderation/content-moderation.db';
 import { ApiDropModerationStatus } from '@/api/generated/models/ApiDropModerationStatus';
 import { withWaveLogsTimeoutGuard } from './wave-logs-timeout';
+import { Logger } from '@/logging';
 
 export class DropsApiService {
+  private readonly logger = Logger.get(this.constructor.name);
+
   constructor(
     private readonly dropsMappers: DropsMappers,
     private readonly dropsDb: DropsDb,
@@ -135,6 +138,74 @@ export class DropsApiService {
         ctx.connection
       )
       .then((it) => it[0]);
+  }
+
+  /**
+   * The drops among `dropIds` that findDropByIdOrThrow would return to the
+   * caller, mapped the same way; unknown and unreadable ids are left out.
+   */
+  public async findReadableDropsByIds(
+    dropIds: string[],
+    ctx: RequestContext
+  ): Promise<ApiDrop[]> {
+    if (!dropIds.length) {
+      return [];
+    }
+    const contextProfileId = getWaveReadContextProfileId(
+      ctx.authenticationContext
+    );
+    const group_ids_user_is_eligible_for =
+      await this.userGroupsService.getGroupsUserIsEligibleFor(contextProfileId);
+    const dropEntities = await this.dropsDb.findDropsByIdsWithEligibilityCheck(
+      dropIds,
+      group_ids_user_is_eligible_for,
+      ctx.connection
+    );
+    if (!dropEntities.length) {
+      return [];
+    }
+    const map = (entities: DropEntity[]) =>
+      this.dropsMappers.convertToDropFulls(
+        {
+          dropEntities: entities,
+          authenticationContext: ctx.authenticationContext
+        },
+        ctx.connection
+      );
+    try {
+      return await map(dropEntities);
+    } catch (error) {
+      return this.mapReadableDropsOneByOne(dropEntities, map, error);
+    }
+  }
+
+  /**
+   * After a failed bulk mapping, maps each drop on its own so that one drop
+   * the mapper cannot handle is left out instead of failing the whole read.
+   * When no drop can be mapped, the original error is thrown as before.
+   */
+  private async mapReadableDropsOneByOne(
+    dropEntities: DropEntity[],
+    map: (entities: DropEntity[]) => Promise<ApiDrop[]>,
+    bulkError: unknown
+  ): Promise<ApiDrop[]> {
+    const mapped: ApiDrop[] = [];
+    let failed = 0;
+    for (const entity of dropEntities) {
+      try {
+        mapped.push(...(await map([entity])));
+      } catch {
+        failed++;
+      }
+    }
+    if (!mapped.length) {
+      throw bulkError;
+    }
+    this.logger.error(
+      `Mapped the ${dropEntities.length} drops of a batch read one by one after the bulk mapping failed; left out ${failed} that could not be mapped`,
+      bulkError
+    );
+    return mapped;
   }
 
   public async findViewableDropByIdOrThrow(

@@ -1064,6 +1064,34 @@ describeWithSeed(
       ).resolves.toMatchObject({ id: 'drop-private' });
     });
 
+    it('finds several drops by id with the same wave read rule as one by id', async () => {
+      const ids = [
+        'drop-public-b',
+        'drop-private',
+        'drop-public-a-old',
+        'drop-missing'
+      ];
+      for (const groups of [[], ['admin-group'], ['group-1']]) {
+        const one = await Promise.all(
+          ids.map((id) =>
+            repo.findDropByIdWithEligibilityCheck(id, groups, undefined)
+          )
+        );
+        const several = await repo.findDropsByIdsWithEligibilityCheck(
+          ids,
+          groups,
+          undefined
+        );
+        expect(new Set(several.map((it) => it.id))).toEqual(
+          new Set(one.filter((it) => it !== null).map((it) => it!.id))
+        );
+        expect(several).toHaveLength(one.filter((it) => it !== null).length);
+      }
+      await expect(
+        repo.findDropsByIdsWithEligibilityCheck([], ['group-1'], undefined)
+      ).resolves.toEqual([]);
+    });
+
     it('does not find private drop ids in a wave range through admin-group-only eligibility', async () => {
       await expect(
         repo.findDropIdsInWaveRange(
