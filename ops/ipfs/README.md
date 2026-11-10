@@ -1,28 +1,32 @@
 # IPFS infrastructure and recovery
 
 This directory owns a reproducible **new IPFS candidate**, its pinned runtime,
-logical backups, restoration, and a dedicated gateway. It does not adopt or
-change the currently serving production resources. Production mutations are
+logical backups, restoration, and a dedicated gateway. It also provides a separate,
+disabled **import-only adoption path** for the currently serving resources.
+No resources have been imported or changed. Production mutations are
 disabled in `environments/prod.json`. There is one shared IPFS deployment target,
 `prod`; the application staging environment does not get a separate IPFS service.
 No workflow runs a deployment on push or PR.
 
 ## Ownership and layout
 
-| File                                    | Responsibility                                                                            |
-| --------------------------------------- | ----------------------------------------------------------------------------------------- |
-| `cloudformation/access.yaml`            | OIDC deployment/service roles and runtime permissions boundary                            |
-| `cloudformation/storage.yaml`           | Retained private data buckets and separate S3/CloudFront access-log buckets               |
-| `cloudformation/compute.yaml`           | Immutable EC2 replacement candidate, security group, role, EIP and alarm                  |
-| `cloudformation/edge.yaml`              | Dedicated gateway CloudFront distribution and DNS                                         |
-| `versions.json`, `build-kubo.sh`        | Pinned Kubo/S3/Go/nginx versions, build and artifact checksums                            |
-| `common.py`, `control.py`               | Source/account/target guards, YAML loading, offline plans and explicit AWS/SSM operations |
-| `requirements-control.txt`              | Pinned PyYAML dependency for the GitHub runner/local controller only                      |
-| `bootstrap.sh`, `host.py`, `templates/` | EC2 installation, systemd/nginx/TLS configuration, verification, backup and restore       |
-| `safety.test.ts`, `rehearse.py`         | Safety contracts and real-binary loopback S3/HTTPS/recovery rehearsal                     |
-| `environments/prod.json`                | Existing-resource inventory and disabled production-change policy                         |
+| File                                        | Responsibility                                                                                    |
+| ------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| `cloudformation/access.yaml`                | OIDC deployment/service roles and runtime permissions boundary                                    |
+| `cloudformation/storage.yaml`               | Retained private data buckets and separate S3/CloudFront access-log buckets                       |
+| `cloudformation/compute.yaml`               | Immutable EC2 replacement candidate, security group, role, EIP and alarm                          |
+| `cloudformation/edge.yaml`                  | Dedicated gateway CloudFront distribution and DNS                                                 |
+| `cloudformation/adoption.yaml`              | Observed production bucket, instance, security group and complete shared CDN baseline             |
+| `cloudformation/adoption-access.yaml`       | Separate OIDC/import roles with configuration-read and ownership-tag access                       |
+| `adoption.py`, `environments/adoption.json` | Exact import identities, native-model fingerprints, import preparation/execution and drift checks |
+| `versions.json`, `build-kubo.sh`            | Pinned Kubo/S3/Go/nginx versions, build and artifact checksums                                    |
+| `common.py`, `control.py`                   | Source/account/target guards, YAML loading, offline plans and explicit AWS/SSM operations         |
+| `requirements-control.txt`                  | Pinned PyYAML dependency for the GitHub runner/local controller only                              |
+| `bootstrap.sh`, `host.py`, `templates/`     | EC2 installation, systemd/nginx/TLS configuration, verification, backup and restore               |
+| `safety.test.ts`, `rehearse.py`             | Safety contracts and real-binary loopback S3/HTTPS/recovery rehearsal                             |
+| `environments/prod.json`                    | Existing-resource inventory and disabled production-change policy                                 |
 
-Edit the four CloudFormation YAML files directly. They are the infrastructure
+Edit the CloudFormation YAML files directly. They are the infrastructure
 source of truth; there is no template generator. The controller reads their
 parameter definitions and submits the selected YAML file unchanged to AWS
 CloudFormation. The long-form `Ref`/`Fn::Sub`/`Fn::GetAtt` mappings are standard
@@ -110,10 +114,11 @@ an older executable.
 ```bash
 python3 -m venv /tmp/ipfs-control-tools
 source /tmp/ipfs-control-tools/bin/activate
-python3 -m pip install -r ops/ipfs/requirements-control.txt cfn-lint==1.46.0
+python3 -m pip install -r ops/ipfs/requirements-control.txt cfn-lint==1.60.0
 ./bin/6529 ci
 ./bin/6529 exec jest --config ops/ipfs/jest.config.cjs
 python3 ops/ipfs/control.py validate
+python3 ops/ipfs/adoption.py plan
 cfn-lint ops/ipfs/cloudformation/*.yaml
 bash -n ops/ipfs/build-kubo.sh
 bash -n ops/ipfs/bootstrap.sh
@@ -268,40 +273,119 @@ duplicate-identifier and registered-domain limits. Inspect the restricted Certbo
 diagnostics and honor the CA's retry time before another real issuance attempt.
 See [Let's Encrypt rate limits](https://letsencrypt.org/docs/rate-limits/).
 
-## Production adoption and traffic handover
+## Import the existing production resources (future authorized operation)
 
-This is **not** authorization to adopt production. The checked-in production
-inventory identifies the existing server, bucket and shared distribution. The
-controller rejects those targets as well as existing production DNS names, even
-when callers supply their IDs directly. Merely merging this PR starts nothing.
+`adoption.yaml` describes the configuration observed in AWS on November 10, 2026.
+It retains the existing `6529ipfs` bucket, EC2 instance, its exclusively used
+security group, and the **entire shared CloudFront distribution**. The CDN baseline
+includes all three origins/aliases, ordered cache behaviors, media function and
+policy references, certificate, WAF and logging configuration. The dedicated
+`edge.yaml` is never substituted for that shared distribution.
 
-Before removing those fences in a future reviewed release:
+An import records CloudFormation ownership; it does not reinstall the daemon,
+move content, enable bucket versioning, tighten the security group, or switch
+traffic. The baseline deliberately preserves current settings, including the
+unversioned bucket, legacy SSH/swarm rules and unencrypted root volume. New
+candidate templates retain their stricter defaults. Hardening the live resources
+requires a separately reviewed change after adoption.
 
-1. Capture the live nginx/systemd/Kubo settings with secrets and identity removed
-   from Git; compare them with the desired templates. Verify backups and recovery
-   access. Account for uploads since every backup.
-2. Model/import supported existing persistent resources with retain policies;
-   use an import-only change set and drift checks before updates. Imports do not
-   prove that template values match reality. Do not recreate the production bucket.
-3. Preserve the **entire shared distribution**: `media.6529.io`, its `/arweave/*`
-   and `/s3/*` behaviors/functions/policies, existing aliases, certificate and WAF.
-   This directory's dedicated edge template cannot replace that distribution.
-4. Rehearse the production-size restore with isolated identity and tightly scoped
-   read-only access before any production content-write permissions are granted.
-5. Implement and validate the traffic-handover contract: continue serving reads
-   from a healthy node, durably hold/retry uploads during the final state capture,
-   transfer all completed writes/pins/MFS, retain one authoritative writer, then
-   switch both gateway and API traffic and verify every pin and new uploads.
-   DNS propagation and CloudFront caching must be accounted for. Two unsynchronized
-   writable daemons are not a safe deployment strategy.
-6. Only after that rehearsal, enable the reviewed production adoption path and
-   its narrowly scoped OIDC/IAM permissions. Retain the old host and backups until
-   rollback and recovery evidence is complete.
+The import manifest is evidence: exact resource IDs and hashes of the full native
+Cloud Control read models after excluding the provider's read-only properties.
+It does not generate YAML. The audit also checks every property declared in YAML,
+so editing a descriptor cannot silently import a different desired configuration.
+EC2 duplicate representations (`NetworkInterfaces`, `Volumes`, `SecurityGroups`)
+remain covered by the native-model hash while the YAML uses the equivalent
+top-level instance properties. Custom tags and cache-behavior order are checked;
+AWS-owned stack tags and irrelevant SG-rule ordering are normalized.
 
-The current single-host setup cannot provide zero downtime merely by restarting
-Kubo. Rather than claiming otherwise, these workflows fail closed on active-host
-updates and do not automate production traffic handover. Adding production adoption
-and that validated handover is a prerequisite to a future production release.
+The import does **not** take ownership of the shared `EC2SSMRole`, its policies,
+VPC/subnets, volume as a separate resource, AMI, DNS records, edge functions,
+referenced cache/response policies, certificates, WAF, or host files. Their
+references are preserved. Cloud Control does not return write-only properties
+such as some launch inputs; the fingerprint is not a backup of disk contents,
+nginx/systemd/Kubo settings, credentials, or node identity. Capture those privately
+and verify the logical recovery backup before a runtime migration.
+
+Both `changesEnabled` and `adoptionEnabled` in `environments/prod.json` are false.
+No adoption workflow has been dispatched and merging this PR executes nothing.
+The existing `control.py` candidate path continues rejecting the live bucket,
+server and production hostnames; adoption never lifts those runtime/traffic fences.
+
+For a future explicitly authorized import:
+
+1. With bootstrap authority, create `seize-ipfs-prod-adoption-access` from
+   `adoption-access.yaml` with `CAPABILITY_NAMED_IAM`, the existing GitHub OIDC
+   provider ARN and correct repository subject prefix. Do not broaden the normal
+   deployment role. The new service role can read configuration and attach
+   CloudFormation ownership tags; it cannot change service behavior. Neither role
+   has SSM command, DNS change, S3 object write, EC2 modification, or CloudFront
+   configuration-update/deletion permissions. The original shared-CDN deny remains
+   intact in `access.yaml`.
+2. Configure `IPFS_ADOPTION_ROLE_ARN` and `IPFS_ADOPTION_SERVICE_ROLE_ARN` from its
+   outputs in the existing `ipfs-prod` GitHub environment restricted to `main`.
+   No `IPFS_CONFIG`, AWS keys, new IPFS environment, or new block bucket is needed.
+3. Run **Adopt existing IPFS resources / audit** at the exact reviewed main SHA.
+   It reads AWS and fails if configuration or identities differ from the reviewed
+   baseline, or another live instance uses the source security group. This audit
+   is available while mutation switches are disabled. It prints only public
+   identifiers/check results, never raw resource models or credentials.
+4. If the baseline has drifted, stop. Inspect the changed AWS configuration in
+   restricted tooling, edit the YAML directly to the intended unchanged baseline,
+   and review the new native-model and template hashes in `adoption.json`. Do not
+   merely replace a failed hash to bypass review. The offline `plan` command does
+   not fetch AWS or regenerate descriptors.
+5. In a separately approved change, enable both switches, then run **prepare**.
+   It creates an `IMPORT` change set for exactly four retained resources and
+   verifies its full action list, source/baseline binding and original template.
+   It never executes it. Review the returned exact change-set ARN and AWS changes.
+6. Run **execute** with the same source SHA and exact prepared ARN. It repeats the
+   live audit immediately before execution, imports, enables stack termination
+   protection, installs a deny-all resource-update stack policy, and requires exact
+   ownership plus `IN_SYNC` drift for every imported resource. These are stack
+   metadata protections; live resource properties remain unchanged.
+7. Keep the adoption stack's import-only service role and update prohibition. Disable
+   the adoption switch again after the one-time import. Run **verify** for later
+   ownership/template/baseline/drift checks. Drift detection updates CloudFormation
+   diagnostic metadata but cannot alter resource configuration.
+
+Adoption shares `ipfs-manage-prod` concurrency with candidate management. An
+interrupted **prepare** reconciles its deterministic source/baseline-bound change
+set rather than creating another. An interrupted **execute** resumes the same ARN,
+waits for completion, then reapplies protections and verification. A timeout is
+not rollback. Failed/rolled-back imports, foreign pending changes, deleted stacks,
+wrong roles and changed templates require operator investigation; the controller
+never falls back to CREATE/UPDATE, deletion, or an automatically selected latest
+change set. Import failure may leave stack metadata or partial ownership: inspect
+restricted stack events before a new reviewed attempt. Do not delete retained data
+or restart the serving host to resolve it.
+
+Local tests cover failure/retry contracts; a read-only audit matched the real AWS
+baseline. No real import, OIDC role bootstrap or AWS permission execution has been
+tested, since that would require changing production/account state.
+
+## Runtime and traffic handover remains a separate migration
+
+Importing infrastructure does not yet make a runtime deployment safe. Production
+traffic remains fenced. The planned stable front door is an AWS Application Load
+Balancer with separate writer/gateway target groups. Before exposing that path,
+implement and rehearse the legacy nginx bridge (including clients with cached
+DNS), target health and request draining, and a final monotonic pin/MFS transfer
+that preserves uploads accepted by the replacement. API upload calls include
+synchronous requests; simply returning 503 while capturing metadata is insufficient.
+
+Validate a production-size restoration with an independent identity and tightly
+scoped read-only block access first. The initial backup can become stale while
+uploads continue. After switching the writer and draining the old requests, the
+final source snapshot must be merged without erasing the replacement's new pins;
+rollback must reconcile those new writes in the reverse direction. Keep the old
+host and versioned backups until recovery and rollback evidence is complete.
+Canonical DNS records need a separately guarded migration: Route53 record sets
+are not supported by this import path. No ALB, bridge, canonical DNS update,
+live-bucket candidate write access, or writer switch is provisioned by adoption.
+
+This separation lets CloudFormation first record today's deployment without
+changing its behavior. A later reviewed handover controller can manage runtime
+replacements after the writer/draining protocol has been validated.
 
 References: [CloudFormation resource import](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/import-resources-manually.html),
 [Systems Manager Run Command](https://docs.aws.amazon.com/systems-manager/latest/userguide/run-command.html),

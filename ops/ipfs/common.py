@@ -132,6 +132,11 @@ def environment_policy(environment):
 
 def source_guard(config, sha, environ):
     validate_config(config)
+    source_identity_guard(sha, environ)
+
+
+def source_identity_guard(sha, environ):
+    """Shared source check, including operations that do not use candidate config."""
     require(matches(r"[a-f0-9]{40}", sha), "A full reviewed source SHA is required")
     require(environ.get("GITHUB_ACTIONS") == "true", "Mutations run only through GitHub Actions")
     require(environ.get("GITHUB_REPOSITORY") == "6529-Collections/6529seize-backend", "Unexpected repository")

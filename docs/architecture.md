@@ -2904,7 +2904,7 @@ recreating the nullable column first.
 
 `ops/ipfs/` defines isolated persistent S3 storage, replaceable EC2 candidates,
 the pinned Kubo binary with its bundled S3 datastore, nginx/systemd/TLS setup,
-and logical pin/MFS/identity backup and restoration. Four checked-in CloudFormation
+and logical pin/MFS/identity backup and restoration. Checked-in CloudFormation
 YAML files under `ops/ipfs/cloudformation/` own access, storage, compute and edge
 definitions. The controller reads and submits those files directly; there is no
 Python template generator. Its pinned PyYAML reader runs only on the controller,
@@ -2920,11 +2920,27 @@ Local/CI fixtures create no AWS environment; future production rollouts validate
 an unpublished replacement candidate before traffic handover.
 
 There is no change to the application's IPFS API contract or deployed resources.
-The existing production instance and data bucket are not adopted; production
-mutations are disabled by checked-in policy. The live CloudFront distribution is
+The existing production instance and data bucket have not been adopted; production
+mutations are disabled by checked-in policy. A separate `ipfs-adopt.yml` workflow
+and import-only `adoption.yaml` baseline cover that bucket, instance, its exclusively
+used security group and the entire shared CDN. `adoption.py` requires exact IDs,
+full native-model fingerprints, matching declared properties and an IMPORT-only
+change set bound to one source SHA/baseline. Preparation and execution are separate
+dispatches; retries reconcile the same change-set ARN. Successful adoption requires
+exact ownership, original template equality and per-resource drift checks, then
+retains an import-only service role, termination protection and a deny-all resource
+update stack policy. `adoption-access.yaml` defines dedicated roles limited to
+configuration reads and ownership tags, without SSM command, content-object write
+or DNS-change permissions.
+The adoption switch also remains false. Network/IAM dependencies, canonical DNS,
+edge policy/function implementations and host files are referenced, not imported.
+
+The live CloudFront distribution is
 shared with Arweave and S3 media and is not replaced by the new dedicated gateway
 template. Published candidates are sealed before DNS publication; active-daemon
-updates and restoration over a serving node are rejected. Production adoption
-and zero-downtime writer/traffic handover require a later reviewed release and
-replacement validation evidence. See the [IPFS runbook](../ops/ipfs/README.md) for
-ownership, recovery limitations, deployment order, and the adoption prerequisites.
+updates and restoration over a serving node are rejected. Adoption does not
+permit that candidate path to target the live bucket or canonical hostnames.
+Runtime/writer traffic handover remains a separate reviewed migration requiring
+replacement validation, a stable front door, request draining and reconciliation
+of all completed writes. See the [IPFS runbook](../ops/ipfs/README.md) for exact
+ownership boundaries, recovery limitations, deployment order and adoption steps.

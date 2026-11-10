@@ -32,12 +32,13 @@ jobs:
       - name: Install Python controller and CloudFormation validation tools
         run: |
           python3 -m venv "$RUNNER_TEMP/ipfs-cfn-tools"
-          "$RUNNER_TEMP/ipfs-cfn-tools/bin/pip" install -r ops/ipfs/requirements-control.txt cfn-lint==1.46.0
+          "$RUNNER_TEMP/ipfs-cfn-tools/bin/pip" install -r ops/ipfs/requirements-control.txt cfn-lint==1.60.0
           echo "$RUNNER_TEMP/ipfs-cfn-tools/bin" >> "$GITHUB_PATH"
       - run: ./bin/6529 exec jest --config ops/ipfs/jest.config.cjs
       - name: Validate offline templates and shell syntax
         run: |
           python3 ops/ipfs/control.py validate
+          python3 ops/ipfs/adoption.py plan
           bash -n ops/ipfs/build-kubo.sh
           bash -n ops/ipfs/bootstrap.sh
           PYTHONPYCACHEPREFIX="$RUNNER_TEMP/ipfs-pycache" python3 -m compileall -q ops/ipfs

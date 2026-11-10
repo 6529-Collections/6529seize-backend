@@ -291,6 +291,10 @@ def main():
     if args.operation == "validate":
         for kind in TEMPLATE_PATHS:
             load_template(kind)
+        from adoption import baseline
+        baseline()
+        require(isinstance(yaml.safe_load((ROOT / "cloudformation" / "adoption-access.yaml").read_text()).get("Resources"), dict),
+                "Invalid adoption access template")
         print("IPFS YAML templates load offline; no AWS credentials or live endpoints used")
         return
     config = validate_config(json.loads(args.config.read_text()) if args.config else json.loads(os.environ["IPFS_CONFIG"]))
