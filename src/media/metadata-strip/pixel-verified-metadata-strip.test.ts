@@ -55,7 +55,7 @@ describe('stripMetadataWithPixelCheck', () => {
     });
   });
 
-  it('declines to decode a PNG too large to compare in memory', async () => {
+  it('declines to decode a PNG above the upload PNG limits', async () => {
     const header = Buffer.alloc(13);
     header.writeUInt32BE(30_000, 0);
     header.writeUInt32BE(30_000, 4);
@@ -71,8 +71,32 @@ describe('stripMetadataWithPixelCheck', () => {
     const decode = jest.spyOn(Sharp.prototype, 'metadata');
     await expect(stripMetadataWithPixelCheck(huge, 'png')).resolves.toEqual({
       kind: 'unverified',
-      reason: 'Image is too large to compare decoded pixels in memory'
+      reason: 'PNG is too large to decode for the pixel check'
     });
     expect(decode).not.toHaveBeenCalled();
+  });
+
+  it('reports a source above the caller limit without parsing it', async () => {
+    const { jpeg } = await identifyingJpeg();
+    const strip = jest.spyOn(lossless, 'stripMetadataLosslessly');
+    await expect(
+      stripMetadataWithPixelCheck(jpeg, 'jpeg', {
+        maxSourceBytes: jpeg.length - 1
+      })
+    ).resolves.toEqual({
+      kind: 'unverified',
+      reason: 'Source is larger than the lossless strip limit'
+    });
+    expect(strip).not.toHaveBeenCalled();
+  });
+
+  it('reports a decode that runs out of time', async () => {
+    const { jpeg } = await identifyingJpeg();
+    await expect(
+      stripMetadataWithPixelCheck(jpeg, 'jpeg', { limits: { timeBudgetMs: 0 } })
+    ).resolves.toEqual({
+      kind: 'unverified',
+      reason: 'Pixel check ran out of time'
+    });
   });
 });
