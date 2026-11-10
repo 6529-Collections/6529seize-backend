@@ -111,6 +111,44 @@ export function stripProfilePictureMetadata(
   }
 }
 
+export interface PreparedProfilePicture {
+  readonly bytes: Buffer;
+  readonly contentType: string;
+  readonly extension: string;
+}
+
+/**
+ * Checks an uploaded profile picture (present, at most
+ * PROFILE_PICTURE_MAX_BYTES, a PNG, JPEG, GIF or WebP by its own bytes) and
+ * returns it with identifying metadata removed. Shared by every picture
+ * upload route so they accept and store the same thing.
+ */
+export function prepareProfilePicture(
+  file: Pick<Express.Multer.File, 'buffer'> | undefined
+): PreparedProfilePicture {
+  const bytes = file?.buffer;
+  if (!bytes?.length) {
+    throw new BadRequestException('No profile picture provided');
+  }
+  if (bytes.length > PROFILE_PICTURE_MAX_BYTES) {
+    logger.warn(
+      `Rejected a profile picture of ${bytes.length} bytes, above the ${PROFILE_PICTURE_MAX_BYTES} byte limit`
+    );
+    throw new CustomApiCompliantException(413, 'Profile picture is too large');
+  }
+  const format = detectProfilePictureFormat(bytes);
+  if (!format) {
+    throw new BadRequestException(
+      'Profile picture must be a PNG, JPEG, GIF or WebP image'
+    );
+  }
+  return {
+    bytes: stripProfilePictureMetadata(bytes, format.container),
+    contentType: format.contentType,
+    extension: format.extension
+  };
+}
+
 export class ProfilePictureIpfsUploadService {
   constructor(
     private readonly uploader: Pick<IpfsFileUploader, 'uploadFile'>
@@ -119,26 +157,11 @@ export class ProfilePictureIpfsUploadService {
   public async upload(
     file: Pick<Express.Multer.File, 'buffer'> | undefined
   ): Promise<{ pfp_url: string }> {
-    const bytes = file?.buffer;
-    if (!bytes?.length) {
-      throw new BadRequestException('No profile picture provided');
-    }
-    if (bytes.length > PROFILE_PICTURE_MAX_BYTES) {
-      throw new CustomApiCompliantException(
-        413,
-        'Profile picture is too large'
-      );
-    }
-    const format = detectProfilePictureFormat(bytes);
-    if (!format) {
-      throw new BadRequestException(
-        'Profile picture must be a PNG, JPEG, GIF or WebP image'
-      );
-    }
+    const picture = prepareProfilePicture(file);
     const { url } = await this.uploader.uploadFile({
-      fileName: `pfp.${format.extension}`,
-      fileBuffer: stripProfilePictureMetadata(bytes, format.container),
-      contentType: format.contentType
+      fileName: `pfp.${picture.extension}`,
+      fileBuffer: picture.bytes,
+      contentType: picture.contentType
     });
     return { pfp_url: url };
   }

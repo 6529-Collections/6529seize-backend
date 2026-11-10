@@ -263,6 +263,19 @@ kept under the same structural checks (byte-identical gain map image data, MPF
 offsets on its SOI, allowlisted XMP only); a gain map that does not pass them
 is dropped and the SDR image is pinned.
 
+The older `POST /profiles/{identity}/pfp` route (a meme id, or a file stored in
+the images bucket under `pfp/<env>/`) runs uploaded files through the same
+checks and strip: 2 MiB limit, format from the bytes, and the object stored
+with that format's extension and content type.
+
+`pfp_url` on `POST /profiles` accepts an image URL on the media host, checked
+exactly (`https`, that host name, no userinfo or port, a non-empty path), or an
+`ipfs://` link. A bare CID (`Qm…` CIDv0 or base32 `b…` CIDv1) is what both the
+API pin and the desktop app's local IPFS node produce. Other `ipfs://` forms are
+logged as `[PROFILE_PICTURE_IPFS_FORM]` and still accepted unless
+`PROFILE_PICTURE_IPFS_URLS_STRICT=true` (unset by default), which rejects them.
+Wave `picture` URLs are checked against the same host.
+
 ## Profile collecting and marketplace operations
 
 The API owns `/collect/*` and `/market/*`. Collecting derives versioned catalogs
