@@ -217,6 +217,14 @@ changes, and displayed/final quantities are capped without rewriting manual
 requests or historical finalized allocations. These facts continue to be served
 through the frontend's generated `/help-index.json`.
 
+Backend proxy wave-scope authoring facts are maintained in
+[`docs/proxy-wave-allowlist.md`](../docs/proxy-wave-allowlist.md#help6529-knowledge-authoring-facts):
+a `CREATE_DROP_TO_WAVE` proxy grant may be limited to a list of waves, legacy
+grants stay unrestricted, the list never grants wave access, and it can be
+replaced but not cleared. The frontend corpus has no proxy record yet; these
+facts require a frontend corpus entry and do not add a second live knowledge
+source.
+
 Backend TDH ranking authoring facts are maintained in
 [`docs/tdh-ranking.md`](../docs/tdh-ranking.md#help-knowledge-authoring-facts):
 ordinal ranks use the existing score criteria followed by a canonical-address
@@ -775,7 +783,6 @@ are expanded without model generation. Supported placeholders are `percentage`,
 `minimum_block`, `checkpoint`, and `from_block`. Deploy this backend before the
 companion corpus templates. No new API, persistence, service, or Desktop build is
 needed; the reply loop consumes the updated frontend-owned corpus.
-
 
 ## Image upload format policy
 

@@ -4,6 +4,7 @@ import { AddressInfo } from 'node:net';
 import { ethers } from 'ethers';
 import { ApiCompliantException } from '@/exceptions';
 import * as auth from '@/api/auth/auth';
+import { AuthenticationContext } from '@/auth-context';
 import { wavesApiDb } from '@/api/waves/waves.api.db';
 import { identityFetcher } from '@/api/identities/identity.fetcher';
 import { dropCreationService } from '@/api/drops/drop-creation.api.service';
@@ -78,11 +79,9 @@ describe('POST /drops EIP-712 integration with mocked persistence', () => {
       );
     clearStructuredWalletSignatureReplayCacheForTests();
     jest.mocked(getRedisClient).mockReturnValue(null);
-    jest.spyOn(auth, 'getAuthenticationContext').mockResolvedValue({
-      getActingAsId: () => 'author-profile',
-      isAuthenticatedAsProxy: () => false,
-      isUserFullyAuthenticated: () => true
-    } as Awaited<ReturnType<typeof auth.getAuthenticationContext>>);
+    jest
+      .spyOn(auth, 'getAuthenticationContext')
+      .mockResolvedValue(AuthenticationContext.fromProfileId('author-profile'));
     jest.spyOn(wavesApiDb, 'findWaveById').mockResolvedValue({
       id: fixture.wave.id,
       name: fixture.wave.name,

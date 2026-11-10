@@ -321,7 +321,7 @@ export class DropsMappers {
           connection
         )
     );
-    const { noRightToVote, noRightToParticipate } = getWaveMinPermissionMask(
+    const { noRightToVote, noRightToParticipateIn } = getWaveMinPermissionMask(
       effectiveAuthenticationContext
     );
     return dWoW.map<ApiDrop>((d) => {
@@ -335,7 +335,7 @@ export class DropsMappers {
             displayByWaveId: waveDisplayByWaveId,
             groupIdsUserIsEligibleFor: group_ids_user_is_eligible_for,
             noRightToVote,
-            noRightToParticipate,
+            noRightToParticipate: noRightToParticipateIn(wave.id),
             pinned: pinnedWaveIds.has(wave.id),
             identityWave: identityWaveIds.has(wave.id),
             authenticatedProfileId: readContextProfileId
@@ -685,7 +685,7 @@ export class DropsMappers {
     const contextProfileId = getWaveReadContextProfileId(
       ctx.authenticationContext
     );
-    const { noRightToVote, noRightToParticipate } = getWaveMinPermissionMask(
+    const { noRightToVote, noRightToParticipateIn } = getWaveMinPermissionMask(
       ctx.authenticationContext
     );
     const timed = <T>(step: string, work: () => Promise<T>) =>
@@ -812,7 +812,7 @@ export class DropsMappers {
           displayByWaveId: mentionedWaveDisplayByWaveId,
           groupIdsUserIsEligibleFor,
           noRightToVote,
-          noRightToParticipate,
+          noRightToParticipate: noRightToParticipateIn(wave.id),
           pinned: pinnedMentionedWaveIds.has(wave.id),
           identityWave: identityWaveIds.has(wave.id),
           authenticatedProfileId: contextProfileId

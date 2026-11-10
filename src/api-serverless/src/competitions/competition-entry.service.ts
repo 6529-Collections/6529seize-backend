@@ -202,7 +202,8 @@ export class CompetitionEntryService {
     await assertCompetitionGroup(
       competition.participation.group_id,
       ProfileProxyActionType.CREATE_DROP_TO_WAVE,
-      tx
+      tx,
+      waveId
     );
     assertCompetitionOpen(competition, Date.now(), 'submit');
     const limit = competition.participation.max_entries_per_participant;

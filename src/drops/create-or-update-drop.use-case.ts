@@ -103,6 +103,7 @@ import {
   ProfileProxyApiService
 } from '@/api/proxies/proxy.api.service';
 import { ProfileProxyActionType } from '@/entities/IProfileProxyAction';
+import { isWaveAllowedByAllowlist } from '@/profile-proxies/proxy-wave-allowlist';
 import { deleteDrop, DeleteDropUseCase } from './delete-drop.use-case';
 import { dropVotingDb, DropVotingDb } from '@/api/drops/drop-voting.db';
 import { identityFetcher } from '@/api/identities/identity.fetcher';
@@ -395,10 +396,7 @@ export class CreateOrUpdateDropUseCase {
   ): Promise<number> {
     const auth = ctx.authenticationContext;
     const authorId = auth?.getActingAsId();
-    if (
-      !authorId ||
-      !auth?.hasRightsTo(ProfileProxyActionType.CREATE_DROP_TO_WAVE)
-    ) {
+    if (!authorId || !auth?.hasRightsToPostInWave(waveId)) {
       throw new ForbiddenException('Posting rights are required');
     }
     const [wave, groups] = await Promise.all([
@@ -489,6 +487,48 @@ export class CreateOrUpdateDropUseCase {
     };
   }
 
+  /**
+   * Defence in depth for every delegated write that reaches this use case:
+   * when the drop is written by a proxy (resolved from `proxy_id`, or from
+   * `proxy_identity` for callers that only know the identity), the grantor
+   * must hold an active CREATE_DROP_TO_WAVE grant for the proxy that covers
+   * `model.wave_id`. Returns the resolved proxy profile id, or null when the
+   * author writes for themselves.
+   */
+  private async assertProxyMayPostInWave(
+    model: CreateOrUpdateDropModel,
+    authorId: string
+  ): Promise<string | null> {
+    const proxyIdentity = model.proxy_identity;
+    const proxyId =
+      model.proxy_id ??
+      (proxyIdentity
+        ? await identityFetcher.getProfileIdByIdentityKeyOrThrow(
+            { identityKey: proxyIdentity },
+            {}
+          )
+        : null);
+    if (!proxyId) {
+      return null;
+    }
+    const grant = await this.proxyService.findActiveProxyAction({
+      granted_by_profile_id: authorId,
+      granted_to_profile_id: proxyId,
+      action: ProfileProxyActionType.CREATE_DROP_TO_WAVE
+    });
+    if (!grant) {
+      throw new BadRequestException(
+        `Identity ${model.author_identity} hasn't allowed identity ${proxyIdentity ?? proxyId} to create drops on it's behalf`
+      );
+    }
+    if (!isWaveAllowedByAllowlist(grant.wave_allowlist, model.wave_id)) {
+      throw new ForbiddenException(
+        `Proxy is not allowed to create drops in this wave`
+      );
+    }
+    return proxyId;
+  }
+
   private async isOrdinaryChatMutation(
     model: CreateOrUpdateDropModel,
     connection: ConnectionWrapper<any>
@@ -562,26 +602,11 @@ export class CreateOrUpdateDropUseCase {
           resolvedModel = { ...resolvedModel, author_id: resolvedAuthorId };
           authorId = resolvedAuthorId;
         }
-        if (!!resolvedModel.proxy_identity && !resolvedModel.proxy_id) {
-          const proxyIdentity = resolvedModel.proxy_identity;
-          const resolvedProxyId =
-            await identityFetcher.getProfileIdByIdentityKeyOrThrow(
-              {
-                identityKey: proxyIdentity
-              },
-              {}
-            );
-          const hasRequiredProxyAction =
-            await this.proxyService.hasActiveProxyAction({
-              granted_by_profile_id: authorId,
-              granted_to_profile_id: resolvedProxyId,
-              action: ProfileProxyActionType.CREATE_DROP_TO_WAVE
-            });
-          if (!hasRequiredProxyAction) {
-            throw new BadRequestException(
-              `Identity ${resolvedModel.author_identity} hasn't allowed identity ${resolvedModel.proxy_identity} to create drops on it's behalf`
-            );
-          }
+        const resolvedProxyId = await this.assertProxyMayPostInWave(
+          resolvedModel,
+          authorId
+        );
+        if (resolvedProxyId) {
           resolvedModel = { ...resolvedModel, proxy_id: resolvedProxyId };
         }
         const entryCtx: RequestContext = {

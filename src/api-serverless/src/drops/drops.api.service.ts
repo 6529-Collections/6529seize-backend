@@ -617,7 +617,7 @@ export class DropsApiService {
     const context_profile_id = getWaveReadContextProfileId(
       authenticationContext
     );
-    const { noRightToVote, noRightToParticipate } = getWaveMinPermissionMask(
+    const { noRightToVote, noRightToParticipateIn } = getWaveMinPermissionMask(
       authenticationContext
     );
     const group_ids_user_is_eligible_for =
@@ -671,7 +671,7 @@ export class DropsApiService {
       displayByWaveId,
       groupIdsUserIsEligibleFor: group_ids_user_is_eligible_for,
       noRightToVote,
-      noRightToParticipate,
+      noRightToParticipate: noRightToParticipateIn(visibleWave.id),
       pinned: pinnedWaveIds.has(wave_id),
       identityWave: identityWaveIds.has(wave_id),
       authenticatedProfileId: context_profile_id
@@ -955,7 +955,7 @@ export class DropsApiService {
     next: boolean;
   }> {
     const authContext = ctx.authenticationContext!;
-    const { noRightToVote, noRightToParticipate } =
+    const { noRightToVote, noRightToParticipateIn } =
       getWaveMinPermissionMask(authContext);
     let authenticatedProfileId: string | null = null;
     if (authContext) {
@@ -1038,7 +1038,7 @@ export class DropsApiService {
       displayByWaveId,
       groupIdsUserIsEligibleFor,
       noRightToVote,
-      noRightToParticipate,
+      noRightToParticipate: noRightToParticipateIn(visibleWaveEntity.id),
       pinned: pinnedWaveIds.has(params.wave_id),
       identityWave: identityWaveIds.has(params.wave_id),
       authenticatedProfileId

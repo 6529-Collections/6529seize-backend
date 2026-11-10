@@ -38,6 +38,14 @@ export class ProfileProxyActionEntity {
 
   @Column({ type: 'boolean', default: false })
   readonly is_active!: boolean;
+
+  /**
+   * CREATE_DROP_TO_WAVE only. NULL (every pre-existing row) keeps the legacy
+   * unrestricted grant; a JSON array of wave ids restricts the grant to those
+   * waves. Stored as JSON text; `ProfileProxiesDb` decodes it to `string[]`.
+   */
+  @Column({ type: 'json', nullable: true, default: null })
+  readonly wave_allowlist!: string[] | null;
 }
 
 export enum ProfileProxyActionType {

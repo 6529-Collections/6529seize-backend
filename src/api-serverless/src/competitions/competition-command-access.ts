@@ -115,13 +115,37 @@ export function assertCompetitionOpen(
   }
 }
 
+/**
+ * Posting rights for `action` in the decision's wave. For
+ * CREATE_DROP_TO_WAVE a proxy's grant also has to cover `waveId` (its wave
+ * allowlist is null or names the wave); other actions are unaffected.
+ */
+function hasRightsToActInWave(
+  action: ProfileProxyActionType,
+  waveId: string | undefined,
+  ctx: RequestContext
+): boolean {
+  const auth = ctx.authenticationContext;
+  if (!auth?.hasRightsTo(action)) {
+    return false;
+  }
+  if (
+    waveId !== undefined &&
+    action === ProfileProxyActionType.CREATE_DROP_TO_WAVE
+  ) {
+    return auth.hasRightsToPostInWave(waveId);
+  }
+  return true;
+}
+
 export async function assertCompetitionGroup(
   groupId: string | null,
   action: ProfileProxyActionType,
-  ctx: RequestContext
+  ctx: RequestContext,
+  waveId?: string
 ): Promise<void> {
   if (
-    !ctx.authenticationContext?.hasRightsTo(action) ||
+    !hasRightsToActInWave(action, waveId, ctx) ||
     (groupId !== null &&
       !(
         await userGroupsService.getGroupsUserIsEligibleForByIds(

@@ -28,6 +28,12 @@ import {
 } from '../identities/identity.fetcher';
 import { ApiIdentity } from '../generated/models/ApiIdentity';
 import { profileActivityLogsDb } from '../../../profileActivityLogs/profile-activity-logs.db';
+import {
+  isWaveAllowedByAllowlist,
+  normalizeWaveAllowlist
+} from '@/profile-proxies/proxy-wave-allowlist';
+import { invalidateCachedProxyAuthenticationContexts } from '@/api/auth/auth-context-cache';
+import { Logger } from '@/logging';
 
 const ACTION_MAP: Record<ApiProfileProxyActionType, ProfileProxyActionType> = {
   [ApiProfileProxyActionType.AllocateRep]: ProfileProxyActionType.ALLOCATE_REP,
@@ -58,11 +64,38 @@ interface CanDoAcceptancePayload {
 }
 
 export class ProfileProxyApiService {
+  private readonly logger = Logger.get(this.constructor.name);
+
   constructor(
     private readonly identityFetcher: IdentityFetcher,
     private readonly profileProxiesDb: ProfileProxiesDb,
     private readonly profileProxiesMapper: ProfileProxiesMapper
   ) {}
+
+  /**
+   * Drops this instance's cached authentication contexts of the grantee
+   * acting as the grantor, so a grant change is honoured by the next request
+   * here. Best effort: a lookup failure only leaves the entry to expire.
+   */
+  private async invalidateGranteeAuthenticationContexts(
+    proxy: ApiProfileProxy
+  ): Promise<void> {
+    try {
+      const grantee =
+        await this.identityFetcher.getIdentityAndConsolidationsByIdentityKey(
+          { identityKey: proxy.granted_to.id },
+          {}
+        );
+      invalidateCachedProxyAuthenticationContexts({
+        granteeWallets: grantee?.wallets?.map((it) => it.wallet) ?? [],
+        grantorProfileId: proxy.created_by.id
+      });
+    } catch (error) {
+      this.logger.warn(
+        `Could not invalidate cached auth contexts for proxy ${proxy.id}: ${error}`
+      );
+    }
+  }
 
   private async getTargetOrThrow({
     target_id
@@ -293,7 +326,12 @@ export class ProfileProxyApiService {
       .then((it) => it[0] ?? null);
   }
 
-  async hasActiveProxyAction({
+  /**
+   * The currently active grant of `action` from grantor to grantee, or null.
+   * "Active" is the same time predicate the auth context uses
+   * (`isProxyActionActive`), so revocation, rejection and expiry all apply.
+   */
+  async findActiveProxyAction({
     granted_by_profile_id,
     granted_to_profile_id,
     action
@@ -301,14 +339,48 @@ export class ProfileProxyApiService {
     readonly granted_by_profile_id: string;
     readonly granted_to_profile_id: string;
     readonly action: ProfileProxyActionType;
-  }): Promise<boolean> {
+  }): Promise<ApiProfileProxyAction | null> {
     const proxy = await this.getProxyByGrantedByAndGrantedTo({
       granted_by_profile_id,
       granted_to_profile_id
     });
-    return !!proxy?.actions
-      ?.filter(isProxyActionActive)
-      ?.find((it) => it.action_type === action.toString());
+    return (
+      proxy?.actions
+        ?.filter(isProxyActionActive)
+        ?.find((it) => it.action_type === action.toString()) ?? null
+    );
+  }
+
+  /**
+   * With `wave_id`, a CREATE_DROP_TO_WAVE grant also has to cover that wave
+   * (its `wave_allowlist` is null or names the wave).
+   */
+  async hasActiveProxyAction({
+    granted_by_profile_id,
+    granted_to_profile_id,
+    action,
+    wave_id
+  }: {
+    readonly granted_by_profile_id: string;
+    readonly granted_to_profile_id: string;
+    readonly action: ProfileProxyActionType;
+    readonly wave_id?: string;
+  }): Promise<boolean> {
+    const activeAction = await this.findActiveProxyAction({
+      granted_by_profile_id,
+      granted_to_profile_id,
+      action
+    });
+    if (!activeAction) {
+      return false;
+    }
+    if (
+      wave_id !== undefined &&
+      action === ProfileProxyActionType.CREATE_DROP_TO_WAVE
+    ) {
+      return isWaveAllowedByAllowlist(activeAction.wave_allowlist, wave_id);
+    }
+    return true;
   }
 
   private async isActionExists({
@@ -388,6 +460,26 @@ export class ProfileProxyApiService {
     );
   }
 
+  /**
+   * Resolves the wave scope of a new grant. Only CREATE_DROP_TO_WAVE accepts
+   * one; it is validated here again (after Joi) so a malformed or empty list
+   * can never reach the database.
+   */
+  private resolveNewActionWaveAllowlist(
+    action: ProxyApiRequestAction
+  ): string[] | null {
+    const requested = (action as { wave_allowlist?: unknown }).wave_allowlist;
+    if (requested === undefined || requested === null) {
+      return null;
+    }
+    if (action.action_type !== ApiProfileProxyActionType.CreateDropToWave) {
+      throw new BadRequestException(
+        'wave_allowlist is only supported for CREATE_DROP_TO_WAVE actions'
+      );
+    }
+    return normalizeWaveAllowlist(requested);
+  }
+
   async createProfileProxyAction({
     proxy,
     action
@@ -395,6 +487,7 @@ export class ProfileProxyApiService {
     readonly proxy: ApiProfileProxy;
     readonly action: ProxyApiRequestAction;
   }): Promise<ProfileProxyActionEntity> {
+    const wave_allowlist = this.resolveNewActionWaveAllowlist(action);
     const action_exists = await this.isActionExists({
       proxy_id: proxy.id,
       action
@@ -408,7 +501,8 @@ export class ProfileProxyApiService {
       start_time: Time.currentMillis(),
       end_time: action.end_time ?? null,
       credit_amount: 'credit_amount' in action ? action.credit_amount : null,
-      credit_spent: 'credit_amount' in action ? 0 : null
+      credit_spent: 'credit_amount' in action ? 0 : null,
+      wave_allowlist
     };
     const profileProxyAction = await this.persistProfileProxyAction(
       {
@@ -416,6 +510,7 @@ export class ProfileProxyApiService {
       },
       proxy
     );
+    await this.invalidateGranteeAuthenticationContexts(proxy);
     return {
       ...profileProxyAction,
       is_active: !!profileProxyAction.is_active
@@ -571,36 +666,39 @@ export class ProfileProxyApiService {
       id: proxy_id
     });
     const is_active = !action.revoked_at;
-    return await this.profileProxiesDb.executeNativeQueriesInTransaction(
-      async (connection) => {
-        await this.profileProxiesDb.acceptProfileProxyAction({
-          action_id,
-          connection,
-          is_active
-        });
-        await profileActivityLogsDb.insert(
-          {
-            profile_id: proxy.granted_to.id,
-            contents: JSON.stringify({
-              proxy_id,
-              action_id,
-              type: action.action_type,
-              state_change_type: AcceptActionRequestActionEnum.Accept
-            }),
-            target_id: proxy.created_by.id,
-            type: ProfileActivityLogType.PROXY_ACTION_STATE_CHANGED,
-            proxy_id: null,
-            additional_data_1: null,
-            additional_data_2: null
-          },
-          connection
-        );
-        return await this.findProfileProxyActionByIdOrThrow({
-          id: action_id,
-          connection
-        });
-      }
-    );
+    const updatedAction =
+      await this.profileProxiesDb.executeNativeQueriesInTransaction(
+        async (connection) => {
+          await this.profileProxiesDb.acceptProfileProxyAction({
+            action_id,
+            connection,
+            is_active
+          });
+          await profileActivityLogsDb.insert(
+            {
+              profile_id: proxy.granted_to.id,
+              contents: JSON.stringify({
+                proxy_id,
+                action_id,
+                type: action.action_type,
+                state_change_type: AcceptActionRequestActionEnum.Accept
+              }),
+              target_id: proxy.created_by.id,
+              type: ProfileActivityLogType.PROXY_ACTION_STATE_CHANGED,
+              proxy_id: null,
+              additional_data_1: null,
+              additional_data_2: null
+            },
+            connection
+          );
+          return await this.findProfileProxyActionByIdOrThrow({
+            id: action_id,
+            connection
+          });
+        }
+      );
+    await this.invalidateGranteeAuthenticationContexts(proxy);
+    return updatedAction;
   }
 
   private async rejectProfileProxyAction({
@@ -615,35 +713,38 @@ export class ProfileProxyApiService {
     const proxy = await this.findProfileProxyByIdOrThrow({
       id: proxy_id
     });
-    return await this.profileProxiesDb.executeNativeQueriesInTransaction(
-      async (connection) => {
-        await this.profileProxiesDb.rejectProfileProxyAction({
-          action_id,
-          connection
-        });
-        await profileActivityLogsDb.insert(
-          {
-            profile_id: proxy.granted_to.id,
-            contents: JSON.stringify({
-              proxy_id,
-              action_id,
-              type: action.action_type,
-              state_change_type: AcceptActionRequestActionEnum.Reject
-            }),
-            target_id: proxy.created_by.id,
-            type: ProfileActivityLogType.PROXY_ACTION_STATE_CHANGED,
-            proxy_id: null,
-            additional_data_1: null,
-            additional_data_2: null
-          },
-          connection
-        );
-        return await this.findProfileProxyActionByIdOrThrow({
-          id: action_id,
-          connection
-        });
-      }
-    );
+    const updatedAction =
+      await this.profileProxiesDb.executeNativeQueriesInTransaction(
+        async (connection) => {
+          await this.profileProxiesDb.rejectProfileProxyAction({
+            action_id,
+            connection
+          });
+          await profileActivityLogsDb.insert(
+            {
+              profile_id: proxy.granted_to.id,
+              contents: JSON.stringify({
+                proxy_id,
+                action_id,
+                type: action.action_type,
+                state_change_type: AcceptActionRequestActionEnum.Reject
+              }),
+              target_id: proxy.created_by.id,
+              type: ProfileActivityLogType.PROXY_ACTION_STATE_CHANGED,
+              proxy_id: null,
+              additional_data_1: null,
+              additional_data_2: null
+            },
+            connection
+          );
+          return await this.findProfileProxyActionByIdOrThrow({
+            id: action_id,
+            connection
+          });
+        }
+      );
+    await this.invalidateGranteeAuthenticationContexts(proxy);
+    return updatedAction;
   }
 
   private async revokeProfileProxyAction({
@@ -658,35 +759,38 @@ export class ProfileProxyApiService {
     const proxy = await this.findProfileProxyByIdOrThrow({
       id: proxy_id
     });
-    return await this.profileProxiesDb.executeNativeQueriesInTransaction(
-      async (connection) => {
-        await this.profileProxiesDb.revokeProfileProxyAction({
-          action_id,
-          connection
-        });
-        await profileActivityLogsDb.insert(
-          {
-            profile_id: proxy.created_by.id,
-            contents: JSON.stringify({
-              proxy_id,
-              action_id,
-              type: action.action_type,
-              state_change_type: AcceptActionRequestActionEnum.Revoke
-            }),
-            target_id: proxy.granted_to.id,
-            type: ProfileActivityLogType.PROXY_ACTION_STATE_CHANGED,
-            proxy_id: null,
-            additional_data_1: null,
-            additional_data_2: null
-          },
-          connection
-        );
-        return await this.findProfileProxyActionByIdOrThrow({
-          id: action_id,
-          connection
-        });
-      }
-    );
+    const updatedAction =
+      await this.profileProxiesDb.executeNativeQueriesInTransaction(
+        async (connection) => {
+          await this.profileProxiesDb.revokeProfileProxyAction({
+            action_id,
+            connection
+          });
+          await profileActivityLogsDb.insert(
+            {
+              profile_id: proxy.created_by.id,
+              contents: JSON.stringify({
+                proxy_id,
+                action_id,
+                type: action.action_type,
+                state_change_type: AcceptActionRequestActionEnum.Revoke
+              }),
+              target_id: proxy.granted_to.id,
+              type: ProfileActivityLogType.PROXY_ACTION_STATE_CHANGED,
+              proxy_id: null,
+              additional_data_1: null,
+              additional_data_2: null
+            },
+            connection
+          );
+          return await this.findProfileProxyActionByIdOrThrow({
+            id: action_id,
+            connection
+          });
+        }
+      );
+    await this.invalidateGranteeAuthenticationContexts(proxy);
+    return updatedAction;
   }
 
   private async restoreProfileProxyAction({
@@ -702,36 +806,39 @@ export class ProfileProxyApiService {
       id: proxy_id
     });
     const is_active = !!action.accepted_at && !action.rejected_at;
-    return await this.profileProxiesDb.executeNativeQueriesInTransaction(
-      async (connection) => {
-        await this.profileProxiesDb.restoreProfileProxyAction({
-          action_id,
-          connection,
-          is_active
-        });
-        await profileActivityLogsDb.insert(
-          {
-            profile_id: proxy.created_by.id,
-            contents: JSON.stringify({
-              proxy_id,
-              action_id,
-              type: action.action_type,
-              state_change_type: AcceptActionRequestActionEnum.Restore
-            }),
-            target_id: proxy.granted_to.id,
-            type: ProfileActivityLogType.PROXY_ACTION_STATE_CHANGED,
-            proxy_id: null,
-            additional_data_1: null,
-            additional_data_2: null
-          },
-          connection
-        );
-        return await this.findProfileProxyActionByIdOrThrow({
-          id: action_id,
-          connection
-        });
-      }
-    );
+    const updatedAction =
+      await this.profileProxiesDb.executeNativeQueriesInTransaction(
+        async (connection) => {
+          await this.profileProxiesDb.restoreProfileProxyAction({
+            action_id,
+            connection,
+            is_active
+          });
+          await profileActivityLogsDb.insert(
+            {
+              profile_id: proxy.created_by.id,
+              contents: JSON.stringify({
+                proxy_id,
+                action_id,
+                type: action.action_type,
+                state_change_type: AcceptActionRequestActionEnum.Restore
+              }),
+              target_id: proxy.granted_to.id,
+              type: ProfileActivityLogType.PROXY_ACTION_STATE_CHANGED,
+              proxy_id: null,
+              additional_data_1: null,
+              additional_data_2: null
+            },
+            connection
+          );
+          return await this.findProfileProxyActionByIdOrThrow({
+            id: action_id,
+            connection
+          });
+        }
+      );
+    await this.invalidateGranteeAuthenticationContexts(proxy);
+    return updatedAction;
   }
 
   async changeProfileProxyActionStatus({
@@ -758,22 +865,57 @@ export class ProfileProxyApiService {
     }
   }
 
+  /**
+   * Validates a replacement wave scope on update. `undefined` keeps the stored
+   * scope. `null` is refused: lifting a restriction back to "every wave" is
+   * not offered through update, so a client that serialises untouched fields
+   * as null can never widen a grant by accident.
+   */
+  private resolveUpdatedWaveAllowlist(
+    profileProxyAction: ProfileProxyActionEntity,
+    wave_allowlist: unknown
+  ): string[] | undefined {
+    if (wave_allowlist === undefined) {
+      return undefined;
+    }
+    if (
+      profileProxyAction.action_type !==
+      ProfileProxyActionType.CREATE_DROP_TO_WAVE
+    ) {
+      throw new BadRequestException(
+        'wave_allowlist is only supported for CREATE_DROP_TO_WAVE actions'
+      );
+    }
+    if (wave_allowlist === null) {
+      throw new BadRequestException(
+        'wave_allowlist cannot be lifted by update; revoke the action instead'
+      );
+    }
+    return normalizeWaveAllowlist(wave_allowlist) ?? undefined;
+  }
+
   async updateProfileProxyAction({
     profile_id,
     proxy_id,
     action_id,
     credit_amount,
-    end_time
+    end_time,
+    wave_allowlist
   }: {
     readonly proxy_id: string;
     readonly action_id: string;
     readonly profile_id: string;
     readonly credit_amount?: number;
     readonly end_time?: number | null;
+    readonly wave_allowlist?: readonly string[] | null;
   }): Promise<ProfileProxyActionEntity> {
-    if (!credit_amount && end_time === undefined) {
+    if (
+      !credit_amount &&
+      end_time === undefined &&
+      wave_allowlist === undefined
+    ) {
       throw new BadRequestException(
-        'Credit amount or end time must be provided'
+        'Credit amount, end time or wave allowlist must be provided'
       );
     }
     const { profileProxy, profileProxyAction } =
@@ -792,39 +934,48 @@ export class ProfileProxyApiService {
     ) {
       throw new BadRequestException('Action does not have credit');
     }
-
-    return await this.profileProxiesDb.executeNativeQueriesInTransaction(
-      async (connection) => {
-        await this.profileProxiesDb.updateProfileProxyAction({
-          action_id,
-          credit_amount,
-          end_time,
-          connection
-        });
-        await profileActivityLogsDb.insert(
-          {
-            profile_id: profileProxy.created_by.id,
-            contents: JSON.stringify({
-              proxy_id,
-              action_id,
-              type: profileProxyAction.action_type,
-              credit_amount,
-              end_time
-            }),
-            target_id: profileProxy.granted_to.id,
-            type: ProfileActivityLogType.PROXY_ACTION_CHANGED,
-            proxy_id: null,
-            additional_data_1: null,
-            additional_data_2: null
-          },
-          connection
-        );
-        return await this.findProfileProxyActionByIdOrThrow({
-          id: action_id,
-          connection
-        });
-      }
+    const updatedWaveAllowlist = this.resolveUpdatedWaveAllowlist(
+      profileProxyAction,
+      wave_allowlist
     );
+
+    const updatedAction =
+      await this.profileProxiesDb.executeNativeQueriesInTransaction(
+        async (connection) => {
+          await this.profileProxiesDb.updateProfileProxyAction({
+            action_id,
+            credit_amount,
+            end_time,
+            wave_allowlist: updatedWaveAllowlist,
+            connection
+          });
+          await profileActivityLogsDb.insert(
+            {
+              profile_id: profileProxy.created_by.id,
+              contents: JSON.stringify({
+                proxy_id,
+                action_id,
+                type: profileProxyAction.action_type,
+                credit_amount,
+                end_time,
+                wave_allowlist: updatedWaveAllowlist
+              }),
+              target_id: profileProxy.granted_to.id,
+              type: ProfileActivityLogType.PROXY_ACTION_CHANGED,
+              proxy_id: null,
+              additional_data_1: null,
+              additional_data_2: null
+            },
+            connection
+          );
+          return await this.findProfileProxyActionByIdOrThrow({
+            id: action_id,
+            connection
+          });
+        }
+      );
+    await this.invalidateGranteeAuthenticationContexts(profileProxy);
+    return updatedAction;
   }
 }
 

@@ -25,6 +25,8 @@ import { ProfileProxyActionEntity } from '../../../entities/IProfileProxyAction'
 import { ApiUpdateProxyActionRequest } from '../generated/models/ApiUpdateProxyActionRequest';
 import { identityFetcher } from '../identities/identity.fetcher';
 import { Timer } from '../../../time';
+import { ApiCreateNewProfileProxyCreateWaveParticipationDropAction } from '../generated/models/ApiCreateNewProfileProxyCreateWaveParticipationDropAction';
+import { PROXY_WAVE_ALLOWLIST_MAX_ENTRIES } from '@/profile-proxies/proxy-wave-allowlist';
 
 const router = asyncRouter();
 
@@ -229,6 +231,7 @@ router.put(
       action_id,
       credit_amount: validRequest.credit_amount,
       end_time: validRequest.end_time,
+      wave_allowlist: validRequest.wave_allowlist,
       profile_id: requesterProfileId
     });
 
@@ -274,12 +277,22 @@ const NewProfileProxyReadWaveActionSchema =
     end_time: Joi.number().optional().allow(null)
   });
 
+// Wave ids are opaque strings. An empty list is refused (it would be a grant
+// that posts nowhere) and so are duplicates, so the stored scope is exactly
+// what the grantor sent or the request fails as a whole.
+const WaveAllowlistSchema = Joi.array()
+  .items(Joi.string().min(1).max(100))
+  .min(1)
+  .max(PROXY_WAVE_ALLOWLIST_MAX_ENTRIES)
+  .unique();
+
 const NewProfileProxyCreateDropToWaveActionSchema =
-  Joi.object<ApiCreateNewProfileProxyCreateWaveAction>({
+  Joi.object<ApiCreateNewProfileProxyCreateWaveParticipationDropAction>({
     action_type: Joi.string()
       .valid(ApiProfileProxyActionType.CreateDropToWave)
       .required(),
-    end_time: Joi.number().optional().allow(null)
+    end_time: Joi.number().optional().allow(null),
+    wave_allowlist: WaveAllowlistSchema.optional().allow(null)
   });
 
 const NewProfileProxyRateWaveDropActionSchema =
@@ -304,8 +317,12 @@ const AcceptActionRequestSchema = Joi.object<AcceptActionRequest>({
     .valid(...Object.values(AcceptActionRequestActionEnum))
 });
 
+// `wave_allowlist: null` is deliberately not accepted here: update can
+// replace or narrow a wave scope, never lift it (see docs/proxy-wave-allowlist.md).
 const UpdateActionRequestSchema = Joi.object<ApiUpdateProxyActionRequest>({
   end_time: Joi.number().optional().allow(null),
-  credit_amount: Joi.number().optional()
+  credit_amount: Joi.number().optional(),
+  wave_allowlist: WaveAllowlistSchema.optional()
 });
+
 export default router;

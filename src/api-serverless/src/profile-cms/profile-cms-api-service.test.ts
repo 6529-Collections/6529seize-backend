@@ -2125,7 +2125,8 @@ function delegatedPublisherContext(): RequestContext {
           id: 'publish-cms-action',
           type: ProfileProxyActionType.PUBLISH_CMS,
           credit_amount: null,
-          credit_spent: null
+          credit_spent: null,
+          wave_allowlist: null
         }
       ]
     })

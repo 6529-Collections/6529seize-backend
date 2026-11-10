@@ -316,13 +316,18 @@ export class WavesMappers {
       groupIdsUserIsEligibleFor,
       ctx
     );
+    const authenticationContext = ctx.authenticationContext;
     return waveEntities.map<ApiWave>((waveEntity) =>
       this.mapWaveEntityToApiWave({
         waveEntity,
         relatedData,
         noRightToVote,
         groupIdsUserIsEligibleFor,
-        noRightToParticipate
+        // A proxy grant scoped to a wave allowlist cannot participate in the
+        // waves it omits, whatever the caller's wave-independent mask says.
+        noRightToParticipate:
+          noRightToParticipate ||
+          !!authenticationContext?.isProxyBarredFromPostingInWave(waveEntity.id)
       })
     );
   }

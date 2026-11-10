@@ -901,7 +901,8 @@ describe('CurationsApiService', () => {
             id: 'proxy-action-1',
             type: ProfileProxyActionType.READ_WAVE,
             credit_amount: null,
-            credit_spent: null
+            credit_spent: null,
+            wave_allowlist: null
           }
         ]
       }),
