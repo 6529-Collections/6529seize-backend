@@ -88,7 +88,10 @@ import type {
   StructuredWalletSignatureSessionType
 } from '../wallet-signatures/structured-wallet-signatures';
 import type { WalletAuthClientType } from '@/entities/IWalletAuthSession';
-import { normalizeWebAppOrigin } from '../web-app-origins';
+import {
+  normalizeWebAppOrigin,
+  toRecordedRequestOrigin
+} from '../web-app-origins';
 import { Logger } from '@/logging';
 import { ApiDeviceGrant } from '@/api/generated/models/ApiDeviceGrant';
 import {
@@ -96,6 +99,7 @@ import {
   parseDeviceScopesParam
 } from '@/api/device-signing/device-grant-message';
 import { deviceGrantsService } from '@/api/device-signing/device-grants.service';
+import type { GrantRegistrationRequest } from '@/api/device-signing/grant-origins';
 import { MlsDeviceGrantRequest } from '@/api/device-signing/combined-device-grant';
 import {
   decodeE2eeSuiteSet,
@@ -123,6 +127,7 @@ import {
   recordFailedConnectionShareRedeem
 } from '@/api/auth/connection-share-redeem-guard';
 import { getIp } from '@/api/policies/policies';
+import { legacyLoginAccessTokenSession } from '@/api/auth/access-token-session';
 
 const router = asyncRouter();
 const logger = Logger.get('AUTH_ROUTES');
@@ -269,7 +274,11 @@ router.get(
       chainId: authWalletChainId,
       nonce: randomUUID(),
       action: 'login',
-      purpose: 'Sign this message to authenticate with 6529.'
+      // Native text is signed outside a browser sign-in; say so to the signer.
+      purpose:
+        nonceContext.sessionType === 'native'
+          ? 'Sign this message to authenticate with 6529. 6529.io never asks for this message in a web browser, only the 6529 Mobile app and API clients do.'
+          : 'Sign this message to authenticate with 6529.'
     });
     const serverSignature = jwt.sign(signableMessage, getJwtSecret());
     res.status(200).send({
@@ -398,7 +407,11 @@ router.post(
         role ?? null,
         timer
       );
-      const accessToken = issueAccessToken(signingAddress, chosenRole).token;
+      const accessToken = issueAccessToken(
+        signingAddress,
+        chosenRole,
+        legacyLoginAccessTokenSession(challenge.message)
+      ).token;
       const refreshToken = await authDb.retrieveOrGenerateRefreshToken(
         signingAddress,
         chosenRole
@@ -495,7 +508,8 @@ async function loginWithSiweSessionChallenge({
     signature: loginRequest.client_signature,
     expectedAddress: loginRequest.client_address,
     expectedChainId: getAuthWalletChainId(),
-    expectedClientOrigin: signedClientOrigin
+    expectedClientOrigin: signedClientOrigin,
+    domainScope: { apiHost: req.headers.host }
   });
   if (!verified) {
     throw new UnauthorisedException('Invalid client signature');
@@ -516,14 +530,24 @@ async function loginWithSiweSessionChallenge({
     userAgent: getUserAgent(req),
     signatureDomain: verified.domain,
     clientOrigin: signedClientOrigin,
-    apiHost: req.headers.host
+    apiHost: req.headers.host,
+    signatureFormat: 'siwe'
   });
   const deviceGrant = await storeVerifiedDeviceGrant({
     verified,
     message,
     walletSignature: loginRequest.client_signature,
     deviceLabel: loginRequest.device_label,
-    timer
+    timer,
+    registration: {
+      apiHost: req.headers.host,
+      requestOrigin: signedClientOrigin,
+      session: {
+        clientType: 'web',
+        binding: 'siwe',
+        sessionId: created.sessionId
+      }
+    }
   });
   res.setHeader('Set-Cookie', created.setCookie);
   res
@@ -545,13 +569,15 @@ async function storeVerifiedDeviceGrant({
   message,
   walletSignature,
   deviceLabel,
-  timer
+  timer,
+  registration
 }: {
   readonly verified: VerifiedSiweWebAuth;
   readonly message: string;
   readonly walletSignature: string;
   readonly deviceLabel: string | undefined;
   readonly timer: Timer;
+  readonly registration: GrantRegistrationRequest;
 }): Promise<ApiDeviceGrant | null> {
   if (!verified.deviceGrant) {
     return null;
@@ -566,7 +592,8 @@ async function storeVerifiedDeviceGrant({
         domain: verified.domain,
         chainId: verified.chainId,
         issuedAt: verified.issuedAt,
-        deviceLabel
+        deviceLabel,
+        registration
       },
       { timer }
     );
@@ -599,7 +626,8 @@ async function loginWithLegacySessionChallenge({
     message,
     signature: loginRequest.client_signature,
     expectedAddress: loginRequest.client_address,
-    parsedMessage
+    parsedMessage,
+    apiHost: req.headers.host
   });
   const chosenRole = await resolveAuthenticatedRole(
     signingAddress,
@@ -617,7 +645,13 @@ async function loginWithLegacySessionChallenge({
       address: signingAddress,
       role: chosenRole,
       userAgent: getUserAgent(req),
-      clientType: loginRequest.client_type
+      clientType: loginRequest.client_type,
+      origin: {
+        signatureFormat: 'structured',
+        signatureDomain: parsedMessage.domain,
+        clientOrigin: parsedMessage.clientOrigin ?? null,
+        requestOrigin: toRecordedRequestOrigin(req.headers.origin)
+      }
     });
     res.status(201).send(created.response);
     return;
@@ -634,7 +668,8 @@ async function loginWithLegacySessionChallenge({
     userAgent: getUserAgent(req),
     signatureDomain: parsedMessage.domain,
     clientOrigin: parsedMessage.clientOrigin,
-    apiHost: req.headers.host
+    apiHost: req.headers.host,
+    signatureFormat: 'structured'
   });
   res.setHeader('Set-Cookie', created.setCookie);
   res.status(201).send(created.response);
@@ -668,12 +703,14 @@ async function verifyLegacySessionWalletSignature({
   message,
   signature,
   expectedAddress,
-  parsedMessage
+  parsedMessage,
+  apiHost
 }: {
   readonly message: string;
   readonly signature: string;
   readonly expectedAddress: string;
   readonly parsedMessage: ParsedStructuredWalletSignatureMessage;
+  readonly apiHost: unknown;
 }): Promise<string> {
   if (!ethers.isAddress(expectedAddress)) {
     throw new BadRequestException('Invalid client address');
@@ -686,6 +723,7 @@ async function verifyLegacySessionWalletSignature({
     expectedAction: 'login',
     expectedKind: 'authentication',
     requireAllowedDomain: parsedMessage.sessionType === 'first_party_web',
+    domainScope: { apiHost },
     consumeNonce: false
   });
   if (!signingAddress) {
@@ -1290,7 +1328,9 @@ function resolveSessionNonceContext(
       'Wallet auth web sessions require a valid Origin header'
     );
   }
-  if (!isStructuredSignatureDomainAllowed(domain)) {
+  if (
+    !isStructuredSignatureDomainAllowed(domain, { apiHost: req.headers.host })
+  ) {
     throw new BadRequestException(
       'Wallet auth web sessions require a first-party Origin'
     );

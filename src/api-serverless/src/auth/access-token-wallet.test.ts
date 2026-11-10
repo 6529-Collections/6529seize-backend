@@ -173,3 +173,71 @@ describe('getAccessTokenClaimsOrNull', () => {
     );
   });
 });
+
+describe('access token session claims', () => {
+  const exp = Math.floor(Date.now() / 1000) + 60;
+  const sessionId = '7d0f5b5e-2c1c-4c2e-9d4b-0b3a1a2c3d4e';
+
+  it('returns the session claims of a current token', () => {
+    expect(
+      getAccessTokenClaimsOrNull({
+        id: 'id',
+        sub: WALLET,
+        exp,
+        ct: 'native',
+        sb: 'share',
+        sid: sessionId
+      })
+    ).toEqual({
+      wallet: WALLET.toLowerCase(),
+      role: undefined,
+      exp,
+      clientType: 'native',
+      binding: 'share',
+      sessionId
+    });
+  });
+
+  it('keeps accepting a token minted before the session claims, unchanged', () => {
+    const claims = getAccessTokenClaimsOrNull({ id: 'id', sub: WALLET, exp });
+    expect(claims).toEqual({
+      wallet: WALLET.toLowerCase(),
+      role: undefined,
+      exp
+    });
+    expect(
+      Object.keys(claims ?? {}).sort((a, b) => a.localeCompare(b))
+    ).toEqual(['exp', 'role', 'wallet']);
+  });
+
+  it('accepts a token whose session claims this build does not know', () => {
+    fc.assert(
+      fc.property(
+        fc.jsonValue(),
+        fc.jsonValue(),
+        fc.jsonValue(),
+        (ct, sb, sid) => {
+          expect(
+            getAccessTokenClaimsOrNull({ sub: WALLET, exp, ct, sb, sid })
+              ?.wallet
+          ).toBe(WALLET.toLowerCase());
+        }
+      )
+    );
+  });
+
+  it('verifies a signed token with and without session claims', () => {
+    for (const payload of [
+      { id: 'id', sub: WALLET },
+      { id: 'id', sub: WALLET, ct: 'web', sb: 'siwe', sid: sessionId },
+      { id: 'id', sub: WALLET, ct: 'legacy', sb: 'legacy_text' }
+    ]) {
+      expect(
+        getVerifiedAccessTokenWalletOrNull(
+          `Bearer ${sign(payload)}`,
+          resolveSecret
+        )
+      ).toBe(WALLET.toLowerCase());
+    }
+  });
+});

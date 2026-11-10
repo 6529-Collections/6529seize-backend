@@ -30,6 +30,7 @@ import {
   getStructuredWalletSignatureAudienceForHost,
   isStructuredSignatureDomainAllowed,
   isStructuredWalletSignatureMessage,
+  type StructuredSignatureDomainScope,
   verifyWalletMessageSignature
 } from '@/api/wallet-signatures/structured-wallet-signatures';
 
@@ -149,6 +150,8 @@ interface VerifySiweWebAuthSignatureParams {
   readonly expectedAddress: string;
   readonly expectedChainId: number;
   readonly expectedClientOrigin: string;
+  // The request's API host: the SIWE domain must be one of its web domains.
+  readonly domainScope?: StructuredSignatureDomainScope;
   readonly now?: Date;
 }
 
@@ -524,6 +527,7 @@ export async function verifySiweWebAuthSignature({
   expectedAddress,
   expectedChainId,
   expectedClientOrigin,
+  domainScope,
   now = new Date()
 }: VerifySiweWebAuthSignatureParams): Promise<VerifiedSiweWebAuth | null> {
   const parsed = parseSiweWebAuthMessage(message);
@@ -536,7 +540,7 @@ export async function verifySiweWebAuthSignature({
     parsed.address.toLowerCase() !== expectedAddress.toLowerCase() ||
     parsed.chainId !== expectedChainId ||
     parsed.uri !== normalizedExpectedOrigin ||
-    !isStructuredSignatureDomainAllowed(parsed.domain) ||
+    !isStructuredSignatureDomainAllowed(parsed.domain, domainScope) ||
     !isSiweTimingValid(parsed, now)
   ) {
     return null;

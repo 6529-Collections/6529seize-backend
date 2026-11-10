@@ -14,7 +14,8 @@ import { randomBytes } from 'node:crypto';
 import { equalIgnoreCase } from '../../../strings';
 import {
   WalletAuthClientType,
-  WalletAuthSessionEntity
+  WalletAuthSessionEntity,
+  WalletAuthSignatureFormat
 } from '../../../entities/IWalletAuthSession';
 import { WalletConnectionShareEntity } from '../../../entities/IWalletConnectionShare';
 
@@ -42,6 +43,8 @@ type CreateWalletAuthSessionParams = {
   readonly signatureDomain: string | null;
   readonly clientOrigin: string | null;
   readonly expiresAt: Date;
+  readonly signatureFormat?: WalletAuthSignatureFormat | null;
+  readonly requestOrigin?: string | null;
 };
 
 type CreateWalletConnectionShareParams = {
@@ -148,9 +151,13 @@ export class AuthDb extends LazyDbAccessCompatibleService {
   ): Promise<WalletAuthSessionEntity> {
     await this.db.execute(
       `insert into ${WALLET_AUTH_SESSIONS_TABLE}
-       (id, address, role, client_type, secret_hash, refresh_token_hash, user_agent_hash, signature_domain, client_origin, expires_at)
-       values (:id, :address, :role, :clientType, :secretHash, :refreshTokenHash, :userAgentHash, :signatureDomain, :clientOrigin, :expiresAt)`,
-      params,
+       (id, address, role, client_type, secret_hash, refresh_token_hash, user_agent_hash, signature_domain, client_origin, expires_at, signature_format, request_origin)
+       values (:id, :address, :role, :clientType, :secretHash, :refreshTokenHash, :userAgentHash, :signatureDomain, :clientOrigin, :expiresAt, :signatureFormat, :requestOrigin)`,
+      {
+        ...params,
+        signatureFormat: params.signatureFormat ?? null,
+        requestOrigin: params.requestOrigin ?? null
+      },
       getDbOptions(connection)
     );
     return this.getWalletAuthSessionByIdOrThrow(params.id, connection);

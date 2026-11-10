@@ -311,4 +311,141 @@ describe('DeviceGrantsService.registerAppGrant', () => {
       )
     ).rejects.toThrow('encrypted messages need a profile');
   });
+
+  describe('registration record and origin check', () => {
+    const SESSION_ID = '7d0f5b5e-2c1c-4c2e-9d4b-0b3a1a2c3d4e';
+    let savedPolicy: string | undefined;
+    let write: jest.SpyInstance;
+
+    beforeEach(() => {
+      savedPolicy = process.env.DEVICE_GRANT_ORIGIN_POLICY;
+      delete process.env.DEVICE_GRANT_ORIGIN_POLICY;
+      write = jest
+        .spyOn(process.stdout, 'write')
+        .mockImplementation(() => true);
+    });
+
+    afterEach(() => {
+      write.mockRestore();
+      if (savedPolicy === undefined) {
+        delete process.env.DEVICE_GRANT_ORIGIN_POLICY;
+      } else {
+        process.env.DEVICE_GRANT_ORIGIN_POLICY = savedPolicy;
+      }
+    });
+
+    function registeringCaller(origin: string | null = 'https://6529.io') {
+      return {
+        ...caller(),
+        registration: {
+          apiHost: 'api.6529.io',
+          requestOrigin: origin,
+          session: {
+            clientType: 'native' as const,
+            binding: 'structured' as const,
+            sessionId: SESSION_ID
+          }
+        }
+      };
+    }
+
+    function originLines() {
+      return write.mock.calls
+        .map(([chunk]) => String(chunk))
+        .filter((line) => line.includes('6529.device_grant_origin.v1'))
+        .map((line) => JSON.parse(line));
+    }
+
+    it('stores how the grant was registered', async () => {
+      await service.registerAppGrant(
+        await signedRequest(),
+        registeringCaller()
+      );
+
+      expect(jest.mocked(db.insertGrant).mock.calls[0][0]).toMatchObject({
+        domain: '6529.io',
+        registered_client_type: 'native',
+        registered_binding: 'structured',
+        registered_request_origin: 'https://6529.io',
+        registered_session_id: SESSION_ID
+      });
+      expect(originLines()[0]).toMatchObject({
+        Route: 'device_grants',
+        Verdict: 'recognized',
+        Reason: 'web_origin',
+        Decision: 'accepted'
+      });
+    });
+
+    it('stores nulls for a caller whose token has no session claims', async () => {
+      await service.registerAppGrant(await signedRequest(), caller());
+
+      expect(jest.mocked(db.insertGrant).mock.calls[0][0]).toMatchObject({
+        registered_client_type: null,
+        registered_binding: null,
+        registered_request_origin: null,
+        registered_session_id: null
+      });
+    });
+
+    it('accepts and logs an unrecognised origin by default', async () => {
+      await service.registerAppGrant(
+        await signedRequest({ origin: 'localhost:43123' }),
+        registeringCaller('http://localhost:43123')
+      );
+
+      expect(db.insertGrant).toHaveBeenCalledTimes(1);
+      expect(originLines()[0]).toMatchObject({
+        Verdict: 'unrecognized',
+        Reason: 'loopback',
+        Policy: 'log',
+        Decision: 'accepted'
+      });
+    });
+
+    it('refuses an unrecognised origin when enforcing', async () => {
+      process.env.DEVICE_GRANT_ORIGIN_POLICY = 'enforce';
+
+      await expect(
+        service.registerAppGrant(
+          await signedRequest({ origin: 'staging.6529.io' }),
+          registeringCaller()
+        )
+      ).rejects.toThrow('Invalid device grant: unrecognized origin');
+      expect(db.insertGrant).not.toHaveBeenCalled();
+    });
+
+    it('still stores the origins honest clients sign when enforcing', async () => {
+      process.env.DEVICE_GRANT_ORIGIN_POLICY = 'enforce';
+
+      await service.registerAppGrant(
+        await signedRequest(),
+        registeringCaller()
+      );
+      await service.registerAppGrant(
+        await signedRequest({
+          origin: '6529 Desktop',
+          issued_at: NOW_SECONDS - 60
+        }),
+        registeringCaller(null)
+      );
+
+      expect(db.insertGrant).toHaveBeenCalledTimes(2);
+    });
+
+    it('checks the origin only after the signature verified', async () => {
+      process.env.DEVICE_GRANT_ORIGIN_POLICY = 'enforce';
+
+      await expect(
+        service.registerAppGrant(
+          await signedRequest(
+            { origin: 'unlisted.example' },
+            Wallet.createRandom()
+          ),
+          registeringCaller()
+        )
+      ).rejects.toThrow('Invalid device grant: signer_mismatch');
+      expect(originLines()).toHaveLength(0);
+    });
+  });
 });

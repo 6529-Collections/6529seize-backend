@@ -110,7 +110,11 @@ function owner(req: AgentRequest): CmsAgentOwner {
         .pattern(/^0x[a-fA-F0-9]{40}$/)
         .required(),
       role: Joi.string().max(100).allow(null).optional(),
-      exp: Joi.number().optional()
+      exp: Joi.number().optional(),
+      // Optional access-token session claims (getAccessTokenClaimsOrNull).
+      clientType: Joi.string().optional(),
+      binding: Joi.string().optional(),
+      sessionId: Joi.string().optional()
     }).required()
   );
   return { wallet: user.wallet.toLowerCase(), role: user.role ?? null };

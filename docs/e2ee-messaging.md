@@ -236,6 +236,15 @@ through `verifyContractWalletSignatureHash`. The grant wallet must map to the
 caller's profile. A profile has at most 10 active devices per grant version;
 re-registering an unrevoked key of the same profile renews its grant.
 
+The signed `origin` is checked against the origins recognised for the API
+host and the verdict is logged, exactly as for app device grants
+(`DEVICE_GRANT_ORIGIN_POLICY`, `docs/auth/wallet-auth.md`); by default an
+unrecognised origin is still accepted. Both registration routes record on the
+device row how it was last registered: `registered_client_type`,
+`registered_binding` and `registered_session_id` from the caller's access
+token, and `registered_request_origin` from the request `Origin` (each null
+when unknown). These columns are not part of any API response.
+
 `POST /e2ee/devices/login-grant` (NC8) registers the MLS key that a combined
 sign-in grant also granted (`docs/auth/wallet-auth.md`), with no second
 wallet signature. The body names the `grant_id` the session login returned.
