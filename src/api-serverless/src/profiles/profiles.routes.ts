@@ -41,10 +41,6 @@ import { profileWavesApiService } from '@/api/profiles/profile-waves.api.service
 import { helpBotCreditsService } from '@/help-bot/help-bot-credits.service';
 import { Logger } from '@/logging';
 import {
-  isAllowedProfilePictureUrl,
-  PROFILE_MEDIA_HOST
-} from '@/profiles/profile-picture-url';
-import {
   PROFILE_PICTURE_MAX_BYTES,
   profilePictureIpfsUploadService
 } from './profile-picture-ipfs-upload';
@@ -392,17 +388,9 @@ const ApiCreateOrUpdateProfileRequestSchema: Joi.ObjectSchema<ApiCreateOrUpdateP
       .valid(...Object.values(ApiProfileClassification))
       .required(),
     sub_classification: Joi.string().optional().allow(null).default(null),
-    pfp_url: Joi.string()
-      .optional()
-      .custom((value: string, helpers) =>
-        isAllowedProfilePictureUrl(value)
-          ? value
-          : helpers.message({
-              custom: `Profile picture must be an ipfs:// URL or an https URL on ${PROFILE_MEDIA_HOST}`
-            })
-      )
-      .allow(null)
-      .default(null)
+    // Checked against the stored value in createOrUpdateProfile: an
+    // unchanged picture is kept, a new one must be on the allowlist.
+    pfp_url: Joi.string().optional().allow(null).default(null)
   }).custom((value, helpers) => {
     const { banner_1, banner_2 } = value;
 

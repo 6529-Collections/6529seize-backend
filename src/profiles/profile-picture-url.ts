@@ -56,6 +56,20 @@ export function isAllowedProfilePictureUrl(
 }
 
 /**
+ * A profile update may keep the profile picture it already has, whatever its
+ * form; any other value must pass isAllowedProfilePictureUrl. Null clears it.
+ */
+export function isAllowedProfilePictureUpdate(
+  submitted: string | null | undefined,
+  stored: readonly (string | null | undefined)[]
+): boolean {
+  if (submitted === null || submitted === undefined) return true;
+  if (stored.some((value) => typeof value === 'string' && value === submitted))
+    return true;
+  return isAllowedProfilePictureUrl(submitted);
+}
+
+/**
  * Images attached to push notifications must be https URLs on our media CDN,
  * or the media resolver's own IPFS gateway paths.
  */

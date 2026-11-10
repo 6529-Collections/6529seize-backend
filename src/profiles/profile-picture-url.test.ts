@@ -1,5 +1,6 @@
 import fc from 'fast-check';
 import {
+  isAllowedProfilePictureUpdate,
   isAllowedProfilePictureUrl,
   isAllowedPushNotificationImageUrl,
   PROFILE_MEDIA_HOST
@@ -80,6 +81,32 @@ describe('isAllowedProfilePictureUrl', () => {
         ).toBe(false);
       })
     );
+  });
+});
+
+describe('isAllowedProfilePictureUpdate', () => {
+  const legacy = 'https://d3lqz0a4bldqgf.example.com/legacy.png';
+  const cdn = 'https://d3lqz0a4bldqgf.cloudfront.net/pfp/a.webp';
+
+  it('accepts an unchanged stored value that predates the allowlist', () => {
+    expect(isAllowedProfilePictureUpdate(legacy, [legacy, legacy])).toBe(true);
+    expect(isAllowedProfilePictureUpdate(legacy, [null, legacy])).toBe(true);
+  });
+
+  it('rejects changing to a value outside the allowlist', () => {
+    expect(isAllowedProfilePictureUpdate(legacy, [cdn, cdn])).toBe(false);
+    expect(isAllowedProfilePictureUpdate(legacy, [null, undefined])).toBe(
+      false
+    );
+  });
+
+  it('accepts changing to an allowed value or clearing it', () => {
+    expect(isAllowedProfilePictureUpdate(cdn, [legacy, legacy])).toBe(true);
+    expect(isAllowedProfilePictureUpdate(`ipfs://${CID_V1}`, [legacy])).toBe(
+      true
+    );
+    expect(isAllowedProfilePictureUpdate(null, [legacy])).toBe(true);
+    expect(isAllowedProfilePictureUpdate(undefined, [])).toBe(true);
   });
 });
 
