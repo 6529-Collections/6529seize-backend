@@ -38,9 +38,12 @@ import { DropType } from '../entities/IDrop';
 import { appFeatures } from '../app-features';
 import { nativeMainStageEntriesSource } from '@/competitions/competition-main-stage.repository';
 import { legacyTypedDropsSql } from '@/competitions/legacy-typed-drops';
+import { DbPoolName } from '@/db-query.options';
 import {
+  chunkSqlInListValues,
   querySqlInListChunks,
-  SQL_IN_LIST_CHUNK_BYTES
+  SQL_IN_LIST_CHUNK_BYTES,
+  SQL_IN_LIST_PAGE_VALUES
 } from '@/db/sql-in-list-chunks';
 import {
   isLegacyCompetitionGetFacadeScope,
@@ -512,34 +515,45 @@ export class IdentitiesDb extends LazyDbAccessCompatibleService {
     );
   }
 
+  /**
+   * Copies identities.primary_address to profiles.primary_wallet for the given
+   * profiles where they differ. Callers pass every profile whose identity or
+   * profile row they changed (consolidation step B: the identities it wrote
+   * and the merged profiles); no other profile is read or locked.
+   */
   async syncProfileAddressesFromIdentitiesToProfiles(
+    profileIds: string[],
     connection: ConnectionWrapper<any>
   ) {
-    // A broad UPDATE locks unchanged profiles until the consolidation's metrics
-    // work commits, blocking posting's moderation lock. Discover differences
-    // without locks, then force indexed writes only for those stable profile IDs.
-    // Keyset pages bound discovery memory without depending on mutable handles.
-    // Callers finish identity consolidation writes on this connection first.
-    // Concurrent primary-address writers update profiles and identities together
-    // in updatePrimaryAddress; this snapshot need not chase their later commits.
-    let afterProfileId: string | null = null;
-    while (true) {
+    // A broad UPDATE locks unchanged profiles until the consolidation's
+    // transaction commits, blocking posting's moderation lock. Discover
+    // differences without locks, then force indexed writes only for those
+    // stable profile IDs. Callers finish identity consolidation writes on this
+    // connection first. Concurrent primary-address writers update profiles and
+    // identities together in updatePrimaryAddress; this snapshot need not
+    // chase their later commits.
+    const sortedIds = collections
+      .distinct(profileIds)
+      .sort((a, b) => a.localeCompare(b));
+    for (const ids of chunkSqlInListValues(
+      sortedIds,
+      SQL_IN_LIST_CHUNK_BYTES,
+      SQL_IN_LIST_PAGE_VALUES
+    )) {
       // external_id is a nonunique index here; the profile PK is its handle.
       const changedProfiles: { external_id: string }[] = await this.db.execute(
         `select distinct p.external_id
-         from ${PROFILES_TABLE} p
+         from ${PROFILES_TABLE} p force index (idx_profile_external_id)
          join ${IDENTITIES_TABLE} i on i.profile_id = p.external_id
-         where p.primary_wallet != i.primary_address
-           and (:afterProfileId is null or p.external_id > :afterProfileId)
-         order by p.external_id asc
-         limit 100`,
-        { afterProfileId },
+         where p.external_id in (:profileIds)
+           and p.primary_wallet != i.primary_address
+         order by p.external_id asc`,
+        { profileIds: ids },
         { wrappedConnection: connection }
       );
-      if (!changedProfiles.length) return;
-      // An IN batch can still choose a full index scan and lock unchanged rows.
-      // Point lookups keep that lock scope narrow. The connection is shared, so
-      // writes must execute sequentially.
+      // An IN batch can still choose a full index scan and lock unchanged
+      // rows. Point lookups keep that lock scope narrow. The connection is
+      // shared, so writes must execute sequentially.
       for (const profile of changedProfiles) {
         await this.db.execute(
           `update ${PROFILES_TABLE} p force index (idx_profile_external_id)
@@ -550,6 +564,45 @@ export class IdentitiesDb extends LazyDbAccessCompatibleService {
           { profileId: profile.external_id },
           { wrappedConnection: connection }
         );
+      }
+    }
+  }
+
+  /**
+   * The all-profiles check, for any writer that leaves profiles.primary_wallet
+   * behind identities.primary_address. Run outside any transaction, so it
+   * holds no locks: discovery is a plain read in keyset pages on the reader
+   * (a repair: replica lag only defers a fix to the next run), and each
+   * correction is its own indexed point update on the writer, which re-checks
+   * the difference. Returns the profiles fixed.
+   */
+  async syncAllProfileAddresses(): Promise<number> {
+    let fixed = 0;
+    let afterProfileId: string | null = null;
+    for (;;) {
+      // external_id is a nonunique index here; the profile PK is its handle.
+      const changedProfiles: { external_id: string }[] = await this.db.execute(
+        `select distinct p.external_id
+         from ${PROFILES_TABLE} p
+         join ${IDENTITIES_TABLE} i on i.profile_id = p.external_id
+         where p.primary_wallet != i.primary_address
+           and (:afterProfileId is null or p.external_id > :afterProfileId)
+         order by p.external_id asc
+         limit 100`,
+        { afterProfileId },
+        { forcePool: DbPoolName.READ }
+      );
+      if (!changedProfiles.length) return fixed;
+      for (const profile of changedProfiles) {
+        const result = await this.db.execute(
+          `update ${PROFILES_TABLE} p force index (idx_profile_external_id)
+           join ${IDENTITIES_TABLE} i on i.profile_id = p.external_id
+           set p.primary_wallet = i.primary_address
+           where p.external_id = :profileId
+             and p.primary_wallet != i.primary_address`,
+          { profileId: profile.external_id }
+        );
+        if (this.db.getAffectedRows(result) > 0) fixed++;
       }
       afterProfileId = changedProfiles[changedProfiles.length - 1].external_id;
     }

@@ -118,15 +118,21 @@ export const handler = sentryContext.wrapLambdaHandler(
             : undefined;
 
         logger.info(`[START_BLOCK ${startBlock}]`);
-        // Finish an identities sync a previous run left after its TDH write.
-        await resumePendingIdentityTdhSync();
-        const health = await DelegationsLoopHealth.start(false);
-        const delegationsResponse = await handleDelegations(startBlock, health);
-        await persistNftDelegationBlock(
-          delegationsResponse.block,
-          delegationsResponse.blockTimestamp
-        );
-        health.completed(delegationsResponse.blockTimestamp);
+        // Delegations first; then finish any identities sync left pending (a
+        // tdhLoop full write, a deferred full walk, a spent budget), within
+        // what is left of the invocation's sync budget.
+        await thenResumePendingIdentitySync(async () => {
+          const health = await DelegationsLoopHealth.start(false);
+          const delegationsResponse = await handleDelegations(
+            startBlock,
+            health
+          );
+          await persistNftDelegationBlock(
+            delegationsResponse.block,
+            delegationsResponse.blockTimestamp
+          );
+          health.completed(delegationsResponse.blockTimestamp);
+        });
       },
       {
         logger,
@@ -160,6 +166,29 @@ export const handler = sentryContext.wrapLambdaHandler(
     );
   }
 );
+
+/**
+ * Runs the delegations work, then the pending identities sync, also when the
+ * work fails. The work's error wins: a resume failure after it is only
+ * logged.
+ */
+async function thenResumePendingIdentitySync(
+  work: () => Promise<void>
+): Promise<void> {
+  try {
+    await work();
+  } catch (error) {
+    try {
+      await resumePendingIdentityTdhSync();
+    } catch (resumeError) {
+      logger.error(
+        `[IDENTITIES SYNC RESUME FAILED AFTER A FAILED RUN] ${resumeError}`
+      );
+    }
+    throw error;
+  }
+  await resumePendingIdentityTdhSync();
+}
 
 async function handleDelegations(
   startBlock: number | undefined,
