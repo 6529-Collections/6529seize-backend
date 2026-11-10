@@ -19,6 +19,11 @@ import { sqs, SQS } from '@/sqs';
 import { Time } from '@/time';
 import { NftLinkEntity } from '@/entities/INftLink';
 import { NftPreviewOversizeError } from './nft-preview-size-policy';
+import {
+  detectStorableVideoContentType,
+  StorableVideoContentType,
+  videoExtensionForContentType
+} from '@/media/video-container';
 import type {
   NftLinkMediaPreviewJobMessage,
   NftLinkMediaPreviewKind
@@ -227,7 +232,29 @@ export class NftLinkMediaPreviewService {
       );
       const classified = this.classifyDownloadedMedia(downloaded);
       if (classified.kind === 'video') {
-        const uploaded = await this.uploadVideoSource(prepared, downloaded);
+        const videoContentType = detectStorableVideoContentType(
+          downloaded.bytes
+        );
+        if (!videoContentType) {
+          await this.nftLinksDb.updateMediaPreviewWithFailure(
+            {
+              canonicalId: prepared.canonicalId,
+              fence,
+              status: 'SKIPPED',
+              message: `Preview skipped for unsupported video container (detector=${classified.detector}, mime=${classified.mimeType ?? 'unknown'})`
+            },
+            ctx
+          );
+          this.logger.info(
+            `Skipped NFT link video preview for ${prepared.canonicalId}: container is not mp4, webm or quicktime`
+          );
+          return;
+        }
+        const uploaded = await this.uploadVideoSource(
+          prepared,
+          downloaded,
+          videoContentType
+        );
         const stored = await this.nftLinksDb.updateMediaPreviewWithSuccess(
           {
             canonicalId: prepared.canonicalId,
@@ -239,7 +266,7 @@ export class NftLinkMediaPreviewService {
             smallUrl: uploaded.url,
             width: null,
             height: null,
-            mimeType: classified.mimeType,
+            mimeType: videoContentType,
             bytes: downloaded.bytes.length
           },
           ctx
@@ -425,7 +452,8 @@ export class NftLinkMediaPreviewService {
 
   private async uploadVideoSource(
     prepared: PreparedPreviewSource,
-    downloaded: DownloadedRemoteImage
+    downloaded: DownloadedRemoteImage,
+    contentType: StorableVideoContentType
   ): Promise<{ url: string; key: string }> {
     const bucket = env.getStringOrThrow('S3_BUCKET');
     const fileServerUrl = this.trimTrailingSlashes(
@@ -436,11 +464,8 @@ export class NftLinkMediaPreviewService {
       .digest('hex')
       .slice(0, 24);
     const environmentPrefix = this.getPreviewEnvironmentPrefix();
-    const mimeType = this.extractMimeType(downloaded.contentType);
-    const extension = this.resolveVideoFileExtension(
-      downloaded.finalUrl,
-      mimeType
-    );
+    // Stored type and extension come from the sniffed container only.
+    const extension = videoExtensionForContentType(contentType);
     const key = `drops/nftlinkvideos/${environmentPrefix}/${canonicalHash}/${prepared.sourceHash}.${extension}`;
 
     await this.getS3Client().send(
@@ -448,7 +473,7 @@ export class NftLinkMediaPreviewService {
         Bucket: bucket,
         Key: key,
         Body: downloaded.bytes,
-        ContentType: mimeType ?? undefined,
+        ContentType: contentType,
         CacheControl: 'public, max-age=31536000, immutable',
         Metadata: {
           source_url_sha256: prepared.sourceHash,
@@ -960,36 +985,6 @@ export class NftLinkMediaPreviewService {
       .toString('ascii')
       .toLowerCase()
       .includes(expected.toLowerCase());
-  }
-
-  private resolveVideoFileExtension(
-    urlString: string,
-    mimeType: string | null
-  ): string {
-    const mimeExtension = this.videoExtensionFromMimeType(mimeType);
-    if (mimeExtension) {
-      return mimeExtension;
-    }
-    const pathExtension = this.extractPathExtension(urlString);
-    if (this.isKnownVideoExtension(pathExtension)) {
-      return pathExtension;
-    }
-    return 'mp4';
-  }
-
-  private videoExtensionFromMimeType(mimeType: string | null): string | null {
-    switch (mimeType) {
-      case 'video/mp4':
-        return 'mp4';
-      case 'video/quicktime':
-        return 'mov';
-      case 'video/x-msvideo':
-        return 'avi';
-      case 'video/webm':
-        return 'webm';
-      default:
-        return null;
-    }
   }
 
   private extractPathExtension(urlString: string): string | null {
