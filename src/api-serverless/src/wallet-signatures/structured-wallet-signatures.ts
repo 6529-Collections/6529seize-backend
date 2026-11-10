@@ -662,8 +662,32 @@ function getProviderForChain(chainId: number): ethers.JsonRpcProvider | null {
 export async function consumeStructuredWalletSignatureNonce(
   parsed: ParsedStructuredWalletSignatureMessage
 ): Promise<boolean> {
-  const key = buildReplayKey(parsed);
-  const expiresAtMs = parsed.expirationTime.getTime();
+  return consumeReplayKey(
+    buildReplayKey(parsed),
+    parsed.expirationTime.getTime()
+  );
+}
+
+/**
+ * Marks a plain-text sign-in challenge (`GET /auth/nonce`) used. True the
+ * first time only; same store and fail-closed rule as structured nonces.
+ * `expiresAtMs` is when the challenge stops being accepted.
+ */
+export async function consumeLegacyTextChallengeNonce(
+  message: string,
+  expiresAtMs: number
+): Promise<boolean> {
+  const messageHash = createHash('sha256').update(message).digest('hex');
+  return consumeReplayKey(
+    ['wallet_signature_nonce_v2', 'legacy_text_login', messageHash].join(':'),
+    expiresAtMs
+  );
+}
+
+async function consumeReplayKey(
+  key: string,
+  expiresAtMs: number
+): Promise<boolean> {
   const remainingLifetimeMs = expiresAtMs - Date.now();
   if (remainingLifetimeMs <= 0) {
     return false;
@@ -693,7 +717,7 @@ export async function consumeStructuredWalletSignatureNonce(
   }
 }
 
-function canUseLocalNonceReplayFallback(): boolean {
+export function canUseLocalNonceReplayFallback(): boolean {
   return process.env.NODE_ENV === 'local' || process.env.NODE_ENV === 'test';
 }
 
