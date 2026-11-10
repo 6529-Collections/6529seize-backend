@@ -67,6 +67,7 @@ describe('E2EE generated routes', () => {
   it.each([
     ['GET', '/e2ee/me'],
     ['POST', '/e2ee/devices'],
+    ['POST', `/e2ee/devices/${HEX32}/acknowledge`],
     ['GET', `/e2ee/devices/${HEX32}`],
     ['POST', `/e2ee/groups/${HEX32}/entries`],
     ['GET', `/e2ee/groups/${HEX32}/log?device_key=${HEX32}`],

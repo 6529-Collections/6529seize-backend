@@ -537,7 +537,10 @@ async function storeVerifiedDeviceGrant({
         domain: verified.domain,
         chainId: verified.chainId,
         issuedAt: verified.issuedAt,
-        deviceLabel
+        deviceLabel,
+        ...(verified.mlsDeviceGrant
+          ? { encryptedDmDeviceKey: verified.mlsDeviceGrant.deviceKey }
+          : {})
       },
       { timer }
     );

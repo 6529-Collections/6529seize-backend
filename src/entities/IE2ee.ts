@@ -111,6 +111,10 @@ export class E2eeDeviceEntity {
   // Null for direct EIP-712 MlsDeviceGrant registrations.
   @Column({ type: 'text', nullable: true, default: null })
   readonly grant_message!: string | null;
+
+  // Standalone enrollment only. Linked devices use the signing grant notice.
+  @Column({ type: 'boolean', default: false })
+  readonly notice_pending?: boolean;
 }
 
 /** Uploaded MLS KeyPackages. One-time rows are deleted when claimed. */

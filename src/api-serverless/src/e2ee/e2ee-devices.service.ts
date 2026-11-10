@@ -226,6 +226,25 @@ export class E2eeDevicesService {
     });
   }
 
+  async acknowledgeDeviceNotice(
+    callerProfileId: string,
+    deviceKey: string
+  ): Promise<void> {
+    await this.db.executeNativeQueriesInTransaction(async (connection) => {
+      const device = await this.db.lockDevice(deviceKey, connection);
+      if (
+        device?.profile_id !== callerProfileId ||
+        !isActiveDevice(device, nowSeconds(this.deps)) ||
+        device.grant_message !== null
+      ) {
+        throw e2eeErrors.notYourDevice();
+      }
+      if (device.notice_pending) {
+        await this.db.acknowledgeDeviceNotice(deviceKey, connection);
+      }
+    });
+  }
+
   async renameDevice(
     callerProfileId: string,
     deviceKey: string,
