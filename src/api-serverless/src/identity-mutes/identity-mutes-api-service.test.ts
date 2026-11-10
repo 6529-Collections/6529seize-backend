@@ -52,7 +52,8 @@ function createService() {
   );
   const ctx = {
     authenticationContext: {
-      getActingAsId: jest.fn().mockReturnValue('muter-1')
+      getActingAsId: jest.fn().mockReturnValue('muter-1'),
+      isAuthenticatedAsProxy: jest.fn().mockReturnValue(false)
     }
   };
   return {
@@ -238,6 +239,21 @@ describe('IdentityMutesApiService DM unread synchronization', () => {
       wsListenersNotifier.notifyAboutDmUnreadStateChanged
     ).not.toHaveBeenCalled();
   });
+
+  it.each(['getIdentityMuteState', 'muteIdentity', 'unmuteIdentity'] as const)(
+    'rejects proxy sessions in %s before touching mute state',
+    async (serviceMethod) => {
+      const { ctx, identityMutesDb, service } = createService();
+      ctx.authenticationContext.isAuthenticatedAsProxy.mockReturnValue(true);
+
+      await expect(
+        service[serviceMethod]('muted-handle', ctx as never)
+      ).rejects.toThrow('Proxies cannot manage identity mutes');
+
+      expect(identityMutesDb.muteIdentity).not.toHaveBeenCalled();
+      expect(identityMutesDb.unmuteIdentity).not.toHaveBeenCalled();
+    }
+  );
 });
 
 it.each([

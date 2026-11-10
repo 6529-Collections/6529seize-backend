@@ -315,26 +315,63 @@ export function redactQuotedDropsOutsideAudience(
   return audienceDrop;
 }
 
+function removeWaveAuthRequestContext(wave: object): void {
+  const viewerScopedWave = wave as Record<string, unknown>;
+  viewerScopedWave.authenticated_user_eligible_to_vote = undefined;
+  viewerScopedWave.authenticated_user_eligible_to_participate = undefined;
+  viewerScopedWave.authenticated_user_eligible_to_chat = undefined;
+  viewerScopedWave.authenticated_user_eligible_to_reply = undefined;
+  viewerScopedWave.authenticated_user_can_delete_replies = undefined;
+  viewerScopedWave.authenticated_user_admin = undefined;
+}
+
+/**
+ * Broadcast payloads reach the whole wave audience, so a mentioned wave keeps
+ * its details only when it is public. Clients resolve the others by wave_id
+ * with their own access.
+ */
+function removeMentionedWaveDetailsOutsidePublicWaves(
+  drop: ApiDrop | ApiDropWithoutWave
+): void {
+  for (const mentionedWave of drop.mentioned_waves ?? []) {
+    const wave = mentionedWave.wave;
+    if (!wave) {
+      continue;
+    }
+    if (wave.visibility_group_id !== null || wave.is_direct_message === true) {
+      delete mentionedWave.wave;
+    } else {
+      removeWaveAuthRequestContext(wave);
+    }
+  }
+}
+
 function removeDropsAuthRequestContext(
   drop: ApiDrop | ApiDropWithoutWave,
-  creditLeft: number
+  creditLeft: number,
+  isRoot = true
 ): ApiDrop {
   const modifiedDrop: ApiDrop = JSON.parse(JSON.stringify(drop));
   const maybeWave = (drop as ApiDrop).wave;
   const modifiedWave = maybeWave ? { ...maybeWave } : undefined;
   if (modifiedWave) {
-    (modifiedWave as any).authenticated_user_eligible_to_vote = undefined;
-    (modifiedWave as any).authenticated_user_eligible_to_participate =
-      undefined;
-    (modifiedWave as any).authenticated_user_eligible_to_chat = undefined;
-    (modifiedWave as any).authenticated_user_eligible_to_reply = undefined;
-    (modifiedWave as any).authenticated_user_can_delete_replies = undefined;
-    (modifiedWave as any).authenticated_user_admin = undefined;
+    removeWaveAuthRequestContext(modifiedWave);
     (modifiedWave as any).credit_left = creditLeft;
     (modifiedDrop.wave as any) = modifiedWave;
     (modifiedDrop.author as any).subscribed_actions = undefined;
     (modifiedDrop as any).context_profile_context = undefined;
   }
+  if (!isRoot) {
+    // Embedded (quoted or replied-to) drops carry the request maker's view.
+    // The recipient's viewer_context is only injected for the root drop.
+    modifiedDrop.context_profile_context = null;
+    modifiedDrop.subscribed_actions = [];
+    if (modifiedDrop.author) {
+      modifiedDrop.author.subscribed_actions = [];
+    }
+    delete modifiedDrop.viewer_context;
+  }
+  removeMentionedWaveDetailsOutsidePublicWaves(modifiedDrop);
   if (modifiedDrop.poll?.anonymous) {
     modifiedDrop.poll.voted = [];
   }
@@ -342,14 +379,16 @@ function removeDropsAuthRequestContext(
     if (part.quoted_drop?.drop) {
       part.quoted_drop.drop = removeDropsAuthRequestContext(
         part.quoted_drop.drop,
-        creditLeft
+        creditLeft,
+        false
       );
     }
   }
   if (modifiedDrop.reply_to?.drop) {
     modifiedDrop.reply_to.drop = removeDropsAuthRequestContext(
       modifiedDrop.reply_to.drop,
-      creditLeft
+      creditLeft,
+      false
     );
   }
   return modifiedDrop;

@@ -1497,6 +1497,34 @@ describe('WaveApiService subwave creation authorization', () => {
       })
     ).rejects.toThrow(`Subwaves cannot be parent waves`);
   });
+
+  it('rejects direct message waves as parent waves', async () => {
+    const parentWave = aWave(
+      {
+        created_by: 'creator-profile',
+        admin_group_id: 'dm-group',
+        visibility_group_id: 'dm-group',
+        is_direct_message: true
+      },
+      {
+        id: 'parent-wave',
+        name: 'DM',
+        serial_no: 1
+      }
+    );
+    const { service } = createService({
+      parentWave,
+      eligibleGroups: ['dm-group']
+    });
+
+    await expect(
+      (service as any).validateSubwaveCreationParent({
+        request,
+        actingAsId: 'creator-profile',
+        ctx: { timer: undefined }
+      })
+    ).rejects.toThrow(`Direct message waves cannot be parent waves`);
+  });
 });
 
 describe('WaveApiService authenticated wave actions', () => {
@@ -1947,4 +1975,81 @@ describe('WaveApiService direct-message mute synchronization', () => {
       );
     }
   );
+});
+
+describe('WaveApiService.findOrCreateDirectMessageWave for an existing DM', () => {
+  function createService() {
+    const wavesApiDb = {
+      findWaveByGroupId: jest.fn().mockResolvedValue({ id: 'dm-wave' })
+    };
+    const service = new WaveApiService(
+      wavesApiDb as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any
+    );
+    const findWaveByIdOrThrow = jest
+      .spyOn(service, 'findWaveByIdOrThrow')
+      .mockResolvedValue({ id: 'dm-wave' } as any);
+    return { service, findWaveByIdOrThrow };
+  }
+
+  function proxyContext(actions: string[]) {
+    return new AuthenticationContext({
+      authenticatedWallet: '0xproxy',
+      authenticatedProfileId: 'proxy-profile',
+      roleProfileId: 'grantor-profile',
+      activeProxyActions: actions.map((type, index) => ({
+        id: `action-${index}`,
+        type: type as any,
+        credit_amount: null,
+        credit_spent: null
+      }))
+    });
+  }
+
+  it('does not return an existing DM to a proxy without READ_WAVE', async () => {
+    const { service, findWaveByIdOrThrow } = createService();
+
+    await expect(
+      service.findOrCreateDirectMessageWave({ id: 'dm-group' } as any, {
+        authenticationContext: proxyContext(['CREATE_WAVE'])
+      })
+    ).rejects.toThrow(
+      new ForbiddenException('Proxy is not allowed to read waves')
+    );
+    expect(findWaveByIdOrThrow).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [
+      'a proxy with READ_WAVE',
+      () => proxyContext(['CREATE_WAVE', 'READ_WAVE'])
+    ],
+    ['a direct session', () => AuthenticationContext.fromProfileId('creator')]
+  ])('returns the existing DM to %s', async (_label, context) => {
+    const { service, findWaveByIdOrThrow } = createService();
+
+    await expect(
+      service.findOrCreateDirectMessageWave({ id: 'dm-group' } as any, {
+        authenticationContext: context()
+      })
+    ).resolves.toEqual({ id: 'dm-wave' });
+    expect(findWaveByIdOrThrow).toHaveBeenCalledWith(
+      'dm-wave',
+      ['dm-group'],
+      expect.anything()
+    );
+  });
 });

@@ -72,7 +72,7 @@ import {
   WsListenersNotifier
 } from '@/api/ws/ws-listeners-notifier';
 import { DbPoolName } from '@/db-query.options';
-import { assertWaveAndParentVisibleOrThrow } from '@/api/waves/wave-access.helpers';
+import { assertWaveAndParentVisibleToProfileOrThrow } from '@/api/waves/wave-access.helpers';
 import {
   isReadStateSyncEnabled,
   readStateNotifier as defaultReadStateNotifier,
@@ -212,27 +212,26 @@ export class NotificationsApiService {
     const timerLabel = `${this.constructor.name}->syncWaveReadState`;
     ctx.timer?.start(timerLabel);
     try {
-      const wave = await this.wavesApiDb.findById(
-        waveId,
-        ctx.connection,
-        DbPoolName.WRITE
-      );
-      const isDirectMessage = wave?.is_direct_message === true;
-      let groupsUserIsEligibleFor: string[] | undefined;
-      if (isDirectMessage) {
-        groupsUserIsEligibleFor =
-          await this.userGroupsService.getGroupsUserIsEligibleFor(
+      const visible = await assertWaveAndParentVisibleToProfileOrThrow({
+        wave: await this.wavesApiDb.findById(
+          waveId,
+          ctx.connection,
+          DbPoolName.WRITE
+        ),
+        profileId: identityId,
+        userGroupsService: this.userGroupsService,
+        message: `Wave ${waveId} not found.`,
+        wavesApiDb: this.wavesApiDb,
+        ctx
+      });
+      const isDirectMessage = visible.wave.is_direct_message === true;
+      const groupsUserIsEligibleFor = isDirectMessage
+        ? (visible.groupsUserIsEligibleFor ??
+          (await this.userGroupsService.getGroupsUserIsEligibleFor(
             identityId,
             ctx.timer
-          );
-        await assertWaveAndParentVisibleOrThrow({
-          wave,
-          groupsUserIsEligibleFor,
-          message: `Wave ${waveId} not found.`,
-          wavesApiDb: this.wavesApiDb,
-          ctx
-        });
-      }
+          )))
+        : undefined;
       const notificationsMarked =
         await this.identityNotificationsDb.markUnreadWaveNotificationsAsRead(
           waveId,
@@ -312,26 +311,19 @@ export class NotificationsApiService {
     requestDmUnreadState = false
   ): Promise<ApiDmUnreadConversationState | null> {
     ctx.timer?.start(`${this.constructor.name}->markWaveNotificationsAsRead`);
-    const wave = await this.wavesApiDb.findById(
-      waveId,
-      ctx.connection,
-      DbPoolName.WRITE
-    );
-    let groupsUserIsEligibleFor: string[] | undefined;
-    if (wave?.is_direct_message) {
-      groupsUserIsEligibleFor =
-        await this.userGroupsService.getGroupsUserIsEligibleFor(
-          identityId,
-          ctx.timer
-        );
-      await assertWaveAndParentVisibleOrThrow({
-        wave,
-        groupsUserIsEligibleFor,
+    const { wave, groupsUserIsEligibleFor } =
+      await assertWaveAndParentVisibleToProfileOrThrow({
+        wave: await this.wavesApiDb.findById(
+          waveId,
+          ctx.connection,
+          DbPoolName.WRITE
+        ),
+        profileId: identityId,
+        userGroupsService: this.userGroupsService,
         message: `Wave ${waveId} not found.`,
         wavesApiDb: this.wavesApiDb,
         ctx
       });
-    }
     const markedNotifications =
       await this.identityNotificationsDb.markWaveNotificationsAsRead(
         waveId,

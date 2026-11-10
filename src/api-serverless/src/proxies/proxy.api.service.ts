@@ -311,6 +311,20 @@ export class ProfileProxyApiService {
       ?.find((it) => it.action_type === action.toString());
   }
 
+  async hasAnyActiveProxyAction({
+    granted_by_profile_id,
+    granted_to_profile_id
+  }: {
+    readonly granted_by_profile_id: string;
+    readonly granted_to_profile_id: string;
+  }): Promise<boolean> {
+    const proxy = await this.getProxyByGrantedByAndGrantedTo({
+      granted_by_profile_id,
+      granted_to_profile_id
+    });
+    return !!proxy?.actions?.some(isProxyActionActive);
+  }
+
   private async isActionExists({
     proxy_id,
     action

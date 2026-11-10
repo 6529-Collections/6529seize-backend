@@ -241,7 +241,8 @@ export class IdentitySubscriptionsDb extends LazyDbAccessCompatibleService {
   async findSubscriberIdsAndActionsForTarget(
     params: IncomingIdentitySubscriptionsParams,
     eligibility: SubscriberEligibility = [],
-    ctx: RequestContext = {}
+    ctx: RequestContext = {},
+    excludedSubscriberId: string | null = null
   ): Promise<Record<string, ActivityEventAction[]>> {
     const filter = subscriberEligibilitySql(eligibility);
     return this.db
@@ -254,6 +255,7 @@ export class IdentitySubscriptionsDb extends LazyDbAccessCompatibleService {
              where s.target_id = :target_id
                and s.target_type = :target_type
                ${filter.clause}
+               ${excludedSubscriberId ? 'and s.subscriber_id <> :excludedSubscriberId' : ''}
              group by 1)
       select scr.id, scr.actions from scr
       order by scr.level_raw desc, scr.id asc
@@ -262,6 +264,7 @@ export class IdentitySubscriptionsDb extends LazyDbAccessCompatibleService {
         {
           ...params,
           ...filter.params,
+          excludedSubscriberId,
           offset: (params.page - 1) * params.page_size,
           limit: params.page_size
         },
@@ -326,7 +329,8 @@ export class IdentitySubscriptionsDb extends LazyDbAccessCompatibleService {
   async countDistinctSubscriberIdsForTarget(
     params: Omit<IncomingIdentitySubscriptionsParams, 'page' | 'page_size'>,
     eligibility: SubscriberEligibility = [],
-    ctx: RequestContext = {}
+    ctx: RequestContext = {},
+    excludedSubscriberId: string | null = null
   ): Promise<number> {
     const filter = subscriberEligibilitySql(eligibility);
     return this.db
@@ -337,8 +341,9 @@ export class IdentitySubscriptionsDb extends LazyDbAccessCompatibleService {
          from ${IDENTITY_SUBSCRIPTIONS_TABLE} s
          join ${IDENTITIES_TABLE} i on i.profile_id = s.subscriber_id
          where s.target_id = :target_id and s.target_type = :target_type
+         ${excludedSubscriberId ? 'and s.subscriber_id <> :excludedSubscriberId' : ''}
          ${filter.clause}`,
-        { ...params, ...filter.params },
+        { ...params, ...filter.params, excludedSubscriberId },
         ctx.connection ? { wrappedConnection: ctx.connection } : undefined
       )
       .then((it) => it?.cnt ?? 0);

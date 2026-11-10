@@ -1562,3 +1562,102 @@ describe('NotificationsApiService wave notification preferences', () => {
     );
   });
 });
+
+describe('NotificationsApiService wave read visibility', () => {
+  function createService(
+    wave: Record<string, unknown> | null,
+    eligible: string[]
+  ) {
+    const identityNotificationsDb = {
+      markWaveNotificationsAsRead: jest.fn().mockResolvedValue(0)
+    };
+    const wavesApiDb = {
+      findById: jest.fn().mockResolvedValue(wave),
+      findWaveById: jest.fn().mockResolvedValue({
+        visibility_group_id: 'parent-group',
+        parent_wave_id: null
+      }),
+      updateWaveReaderMetricLatestReadTimestamp: jest
+        .fn()
+        .mockResolvedValue(undefined)
+    };
+    const userGroupsService = {
+      getGroupsUserIsEligibleFor: jest.fn().mockResolvedValue(eligible)
+    };
+    const wsListenersNotifier = {
+      findConnectedNotificationRecipients: jest.fn().mockResolvedValue([]),
+      notifyAboutIdentityNotificationsChanged: jest
+        .fn()
+        .mockResolvedValue(undefined)
+    };
+    const service = new NotificationsApiService(
+      {} as any,
+      userGroupsService as any,
+      {} as any,
+      {} as any,
+      identityNotificationsDb as any,
+      {} as any,
+      wavesApiDb as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      wsListenersNotifier as any
+    );
+    return { service, identityNotificationsDb, wavesApiDb, userGroupsService };
+  }
+
+  it.each([
+    ['a missing wave', null, []],
+    [
+      'a private wave the reader cannot see',
+      {
+        is_direct_message: false,
+        visibility_group_id: 'group-1',
+        parent_wave_id: null
+      },
+      []
+    ],
+    [
+      'a public subwave of a hidden parent',
+      {
+        is_direct_message: false,
+        visibility_group_id: null,
+        parent_wave_id: 'parent'
+      },
+      []
+    ]
+  ])('rejects %s before writing read state', async (_label, wave, eligible) => {
+    const { service, identityNotificationsDb, wavesApiDb } = createService(
+      wave,
+      eligible
+    );
+
+    await expect(
+      service.markWaveNotificationsAsRead('wave-1', 'profile-1', {})
+    ).rejects.toThrow(new NotFoundException('Wave wave-1 not found.'));
+
+    expect(
+      identityNotificationsDb.markWaveNotificationsAsRead
+    ).not.toHaveBeenCalled();
+    expect(
+      wavesApiDb.updateWaveReaderMetricLatestReadTimestamp
+    ).not.toHaveBeenCalled();
+  });
+
+  it('marks a private wave read for a member', async () => {
+    const { service, wavesApiDb } = createService(
+      {
+        is_direct_message: false,
+        visibility_group_id: 'group-1',
+        parent_wave_id: null
+      },
+      ['group-1']
+    );
+
+    await service.markWaveNotificationsAsRead('wave-1', 'profile-1', {});
+
+    expect(
+      wavesApiDb.updateWaveReaderMetricLatestReadTimestamp
+    ).toHaveBeenCalledWith('wave-1', 'profile-1', {});
+  });
+});

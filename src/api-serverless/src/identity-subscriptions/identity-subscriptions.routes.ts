@@ -1,5 +1,9 @@
 import { asyncRouter } from '../async.router';
-import { getAuthenticationContext, needsAuthenticatedUser } from '../auth/auth';
+import {
+  getAuthenticationContext,
+  maybeAuthenticatedUser,
+  needsAuthenticatedUser
+} from '../auth/auth';
 import { Request, Response } from 'express';
 import { ApiResponse } from '../api-response';
 import { getValidatedByJoiOrThrow } from '../validation';
@@ -49,6 +53,7 @@ router.get(
 
 router.get(
   '/incoming/:target_type/:target_id',
+  maybeAuthenticatedUser(),
   async (
     req: Request<
       { target_type: ActivityEventTargetType; target_id: string },
@@ -59,11 +64,13 @@ router.get(
     >,
     res: Response<ApiResponse<ApiIncomingIdentitySubscriptionsPage>>
   ) => {
+    const timer = Timer.getFromRequest(req);
+    const authenticationContext = await getAuthenticationContext(req, timer);
     let targetId: string | null = req.params.target_id;
     if (req.params.target_type === ActivityEventTargetType.IDENTITY) {
       targetId = await identityFetcher.getProfileIdByIdentityKeyOrThrow(
         { identityKey: targetId },
-        { timer: Timer.getFromRequest(req) }
+        { timer }
       );
     }
     const params = getValidatedByJoiOrThrow(
@@ -77,7 +84,7 @@ router.get(
     const response =
       await identitySubscriptionsApiService.findIncomingSubscriptionsOfType(
         params,
-        { timer: Timer.getFromRequest(req) }
+        { authenticationContext, timer }
       );
     res.send(response);
   }
