@@ -29,10 +29,15 @@ use the same reconsolidation function, in the same order:
 1. Recalculate affected wallets' TDH at the latest UTC midnight.
 2. Persist partial consolidated TDH and reconcile identities/profiles.
    The identities sync after the TDH write runs in short transactions within
-   a five-minute budget per invocation; whatever it does not finish, or a
-   failure (logged as `[IDENTITIES SYNC FAILED]`), is left pending for the next
-   `delegationsLoop` start rather than failing the invocation. The xTDH
-   recalculation is queued once the sync completes.
+   a five-minute budget per invocation, recomputing only the identities the
+   write and its merges changed (plus recently rated profiles). A sync that
+   needs a walk of every identity (after `tdhLoop`'s full rewrite, or the
+   daily reconciliation) is left pending: a scheduled invocation resumes it
+   after its delegations work; this maintenance action has no such resume,
+   so the next scheduled invocation does it. Whatever a sync does not
+   finish, or a failure (logged as `[IDENTITIES SYNC FAILED]`), is likewise
+   left pending rather than failing the invocation. The xTDH recalculation
+   is queued once the sync completes.
 3. Rebuild consolidated NFT ownership, owner balances, and activity.
 4. Reconcile subscription records.
 5. For the maintenance action, update primary addresses for all affected wallets.

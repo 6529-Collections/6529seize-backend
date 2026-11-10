@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { IDENTITY_TDH_SYNC_STATE_TABLE } from '@/constants';
 import { DbPoolName } from '@/db-query.options';
+import { identityTdhSyncScopeDb } from '@/identity-tdh-sync-scope.db';
 import {
   ConnectionWrapper,
   dbSupplier,
@@ -13,7 +14,15 @@ const SYNCED = 'synced';
 const LEASE = 'lease';
 const METRICS_WALK = 'metrics_walk';
 const FULL_ANNOUNCE = 'full_announce';
-const ROW_IDS = [PENDING, SYNCED, LEASE, METRICS_WALK, FULL_ANNOUNCE];
+const FULL_WALK = 'full_walk';
+const ROW_IDS = [
+  PENDING,
+  SYNCED,
+  LEASE,
+  METRICS_WALK,
+  FULL_ANNOUNCE,
+  FULL_WALK
+];
 
 /**
  * The rows are never deleted, so the pending generation only grows and the
@@ -52,7 +61,8 @@ export class IdentityTdhSyncStateDb extends LazyDbAccessCompatibleService {
               ('${SYNCED}', 0, 0, null, 0, 0),
               ('${LEASE}', 0, 0, null, 0, 0),
               ('${METRICS_WALK}', 0, 0, null, 0, 0),
-              ('${FULL_ANNOUNCE}', 0, 0, null, 0, 0)`
+              ('${FULL_ANNOUNCE}', 0, 0, null, 0, 0),
+              ('${FULL_WALK}', 0, 0, null, 0, 0)`
     );
   }
 
@@ -135,14 +145,73 @@ export class IdentityTdhSyncStateDb extends LazyDbAccessCompatibleService {
     };
   }
 
-  /** After B committed: step C for `generation` walks from the first key. */
-  async startMetricsWalk(generation: number): Promise<void> {
+  /**
+   * After B committed: step C for `generation` walks from the first key. The
+   * walk also records the ratings watermark it establishes once synced: the
+   * database's clock now, less `ratingsMarginSeconds`.
+   */
+  async startMetricsWalk(
+    generation: number,
+    ratingsMarginSeconds: number
+  ): Promise<void> {
     await this.db.execute(
       `update ${IDENTITY_TDH_SYNC_STATE_TABLE}
-       set generation = :generation, walk_after = '', updated_at = :now
+       set generation = :generation, walk_after = '',
+           ratings_since = greatest(unix_timestamp() - :ratingsMarginSeconds, 1),
+           updated_at = :now
+       where id = '${METRICS_WALK}'`,
+      { generation, ratingsMarginSeconds, now: Time.currentMillis() }
+    );
+  }
+
+  /**
+   * After B committed for a newer `generation`: a full walk in progress
+   * carries on after its last committed chunk instead of starting over. Its
+   * watermark stays that of its first start, which is the earlier one.
+   */
+  async continueMetricsWalk(generation: number): Promise<void> {
+    await this.db.execute(
+      `update ${IDENTITY_TDH_SYNC_STATE_TABLE}
+       set generation = :generation, updated_at = :now
        where id = '${METRICS_WALK}'`,
       { generation, now: Time.currentMillis() }
     );
+  }
+
+  /** The ratings watermark the current walk establishes once synced. */
+  async readWalkRatingsSince(): Promise<number> {
+    const row = await this.db.oneOrNull<{ ratings_since: number | string }>(
+      `select ratings_since from ${IDENTITY_TDH_SYNC_STATE_TABLE}
+       where id = '${METRICS_WALK}'`,
+      undefined,
+      { forcePool: DbPoolName.WRITE }
+    );
+    return Number(row?.ratings_since ?? 0);
+  }
+
+  /**
+   * Ratings modified at or after this time (database clock, epoch seconds)
+   * may not be reflected in identities yet; 0 when no sync has set it.
+   */
+  async readSyncedRatingsSince(): Promise<number> {
+    const row = await this.db.oneOrNull<{ ratings_since: number | string }>(
+      `select ratings_since from ${IDENTITY_TDH_SYNC_STATE_TABLE}
+       where id = '${SYNCED}'`,
+      undefined,
+      { forcePool: DbPoolName.WRITE }
+    );
+    return Number(row?.ratings_since ?? 0);
+  }
+
+  /** When step C last walked every identity (epoch ms), 0 if never. */
+  async readLastFullWalkAt(): Promise<number> {
+    const row = await this.db.oneOrNull<{ updated_at: number | string }>(
+      `select updated_at from ${IDENTITY_TDH_SYNC_STATE_TABLE}
+       where id = '${FULL_WALK}'`,
+      undefined,
+      { forcePool: DbPoolName.WRITE }
+    );
+    return Number(row?.updated_at ?? 0);
   }
 
   /** In the chunk's transaction: the walk resumes after this chunk. */
@@ -204,14 +273,43 @@ export class IdentityTdhSyncStateDb extends LazyDbAccessCompatibleService {
     return Number(row?.generation ?? 0) > 0;
   }
 
-  /** Raises the synced generation; never lowers it. */
-  async markSynced(generation: number, block: number): Promise<void> {
-    await this.db.execute(
-      `update ${IDENTITY_TDH_SYNC_STATE_TABLE}
-       set generation = :generation, block = :block, updated_at = :now
-       where id = '${SYNCED}' and generation < :generation`,
-      { generation, block, now: Time.currentMillis() }
-    );
+  /**
+   * Raises the synced generation (never lowers it) with the ratings watermark
+   * its walk established, records a full walk, and drops the scope rows the
+   * synced generations no longer need, in one transaction.
+   */
+  async markSynced({
+    generation,
+    block,
+    ratingsSince,
+    fullWalk
+  }: {
+    generation: number;
+    block: number;
+    ratingsSince: number;
+    fullWalk: boolean;
+  }): Promise<void> {
+    const now = Time.currentMillis();
+    await this.executeNativeQueriesInTransaction(async (connection) => {
+      await this.db.execute(
+        `update ${IDENTITY_TDH_SYNC_STATE_TABLE}
+         set generation = :generation, block = :block,
+             ratings_since = :ratingsSince, updated_at = :now
+         where id = '${SYNCED}' and generation < :generation`,
+        { generation, block, ratingsSince, now },
+        { wrappedConnection: connection }
+      );
+      if (fullWalk) {
+        await this.db.execute(
+          `update ${IDENTITY_TDH_SYNC_STATE_TABLE}
+           set generation = :generation, block = :block, updated_at = :now
+           where id = '${FULL_WALK}'`,
+          { generation, block, now },
+          { wrappedConnection: connection }
+        );
+      }
+      await identityTdhSyncScopeDb.deleteThrough(generation, connection);
+    });
   }
 
   /**

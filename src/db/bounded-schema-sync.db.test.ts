@@ -3,6 +3,7 @@ import { DataSource } from 'typeorm';
 import {
   DISTRIBUTION_NORMALIZED_TABLE,
   EXTERNAL_INDEXED_TRANSFERS_TABLE,
+  IDENTITY_TDH_SYNC_SCOPE_TABLE,
   IDENTITY_TDH_SYNC_STATE_TABLE,
   COMPETITION_SCORE_RESETS_TABLE,
   COMPETITION_SCORE_RESET_STATE_TABLE,
@@ -160,6 +161,37 @@ describe('synchronizeSchemaBounded on MySQL', () => {
       sleep: noSleep
     });
     expect(result).toEqual({ planned: 1, applied: 1 });
+    await expect(plannedStatements()).resolves.toEqual([]);
+  });
+
+  it('upgrades the identities sync tables from the previous release with one CREATE TABLE and one ADD COLUMN', async () => {
+    // As the previous release left them: no scope table, no ratings_since.
+    await sqlExecutor.execute(
+      `drop table \`${IDENTITY_TDH_SYNC_SCOPE_TABLE}\``
+    );
+    await sqlExecutor.execute(
+      `alter table \`${IDENTITY_TDH_SYNC_STATE_TABLE}\` drop column ratings_since`
+    );
+
+    const planned = await plannedStatements();
+    expect(planned).toHaveLength(2);
+    expect(planned).toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(
+          new RegExp(`^CREATE TABLE \`${IDENTITY_TDH_SYNC_SCOPE_TABLE}\``)
+        ),
+        expect.stringMatching(
+          new RegExp(
+            `^ALTER TABLE \`${IDENTITY_TDH_SYNC_STATE_TABLE}\` ADD \`ratings_since\``
+          )
+        )
+      ])
+    );
+
+    const result = await synchronizeSchemaBounded(dataSource, {
+      sleep: noSleep
+    });
+    expect(result).toEqual({ planned: 2, applied: 2 });
     await expect(plannedStatements()).resolves.toEqual([]);
   });
 
