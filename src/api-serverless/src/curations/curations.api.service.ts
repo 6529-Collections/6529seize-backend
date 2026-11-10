@@ -447,17 +447,23 @@ export class CurationsApiService {
       ctx,
       `Proxies can't curate drops`
     );
+    const notFoundMessage = `Drop ${dropId} not found`;
     const drop = await this.dropsDb.findDropById(dropId, ctx.connection);
     if (!drop) {
-      throw new NotFoundException(`Drop ${dropId} not found`);
+      throw new NotFoundException(notFoundMessage);
     }
-    const wave = await this.wavesApiDb.findWaveById(
-      drop.wave_id,
-      ctx.connection
-    );
-    if (!wave) {
-      throw new NotFoundException(`Wave ${drop.wave_id} not found`);
-    }
+    const groupsUserIsEligibleFor =
+      await this.userGroupsService.getGroupsUserIsEligibleFor(
+        profileId,
+        ctx.timer
+      );
+    const wave = await assertWaveAndParentVisibleOrThrow({
+      wave: await this.wavesApiDb.findWaveById(drop.wave_id, ctx.connection),
+      groupsUserIsEligibleFor,
+      message: notFoundMessage,
+      wavesApiDb: this.wavesApiDb,
+      ctx
+    });
     const curation = await this.curationsDb.findWaveCurationById(
       {
         id: curationId,
@@ -468,13 +474,11 @@ export class CurationsApiService {
     if (!curation) {
       throw new NotFoundException(`Curation ${curationId} not found`);
     }
-    await this.assertProfileCanCurateCuration(
-      {
-        profileId,
-        curation
-      },
-      ctx
-    );
+    if (!groupsUserIsEligibleFor.includes(curation.community_group_id)) {
+      throw new ForbiddenException(
+        `You are not eligible to curate in this curation`
+      );
+    }
     return { profileId, drop, wave, curation };
   }
 
@@ -514,22 +518,6 @@ export class CurationsApiService {
     );
     if (!lockedCuration) {
       throw new NotFoundException(`Curation ${curation.id} not found`);
-    }
-  }
-
-  private async assertProfileCanCurateCuration(
-    param: { profileId: string; curation: WaveCurationEntity },
-    ctx: RequestContext
-  ): Promise<void> {
-    const groupsUserIsEligibleFor =
-      await this.userGroupsService.getGroupsUserIsEligibleFor(
-        param.profileId,
-        ctx.timer
-      );
-    if (!groupsUserIsEligibleFor.includes(param.curation.community_group_id)) {
-      throw new ForbiddenException(
-        `You are not eligible to curate in this curation`
-      );
     }
   }
 

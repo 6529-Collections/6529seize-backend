@@ -1144,6 +1144,7 @@ describeWithSeed(
     it('hydrates wave, author, first part and first-part media only', async () => {
       const results = await repo.findLightDropsByIds(
         ['drop-public-a-old', 'drop-public-a-new'],
+        [],
         ctx
       );
 
@@ -1171,6 +1172,23 @@ describeWithSeed(
       ]);
     });
 
+    it('hydrates light drops only from waves the viewer can read', async () => {
+      const ids = ['drop-public-a-new', 'drop-private'];
+
+      await expect(
+        repo
+          .findLightDropsByIds(ids, [], ctx)
+          .then((rows) => rows.map((it) => it.id))
+      ).resolves.toEqual(['drop-public-a-new']);
+      await expect(
+        repo
+          .findLightDropsByIds(ids, ['group-1'], ctx)
+          .then((rows) =>
+            rows.map((it) => it.id).sort((a, b) => a.localeCompare(b))
+          )
+      ).resolves.toEqual(['drop-private', 'drop-public-a-new']);
+    });
+
     it('carries known media layout hints (waves R11-2) and omits unknown ones', async () => {
       await sqlExecutor.execute(
         `insert into ${DROP_MEDIA_UPLOADS_TABLE}
@@ -1188,6 +1206,7 @@ describeWithSeed(
 
       const [light] = await repo.findLightDropsByIds(
         ['drop-public-a-old'],
+        [],
         ctx
       );
       const media = await repo.getDropMedia([

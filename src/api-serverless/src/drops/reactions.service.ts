@@ -3,9 +3,16 @@ import { inSequence } from '@/db/in-sequence';
 import { RequestContext } from '../../../request.context';
 import {
   BadRequestException,
+  CustomApiCompliantException,
   ForbiddenException,
   NotFoundException
 } from '../../../exceptions';
+import {
+  isLegacyDmClosed,
+  LEGACY_DM_CLOSED_CODE,
+  legacyDmClosedMessage
+} from '@/legacy-dm/legacy-dm-retention';
+import { Time } from '@/time';
 import { wavesApiDb, WavesApiDb } from '../waves/waves.api.db';
 import {
   userGroupsService,
@@ -566,6 +573,13 @@ export class ReactionsService {
     if (!wave.chat_enabled) {
       throw new ForbiddenException(
         'Chatting and reacting is not enabled in this wave'
+      );
+    }
+    if (wave.is_direct_message && isLegacyDmClosed(Time.currentMillis())) {
+      throw new CustomApiCompliantException(
+        403,
+        legacyDmClosedMessage(),
+        LEGACY_DM_CLOSED_CODE
       );
     }
     ctx.timer?.stop(`${this.constructor.name}->validateDrop`);

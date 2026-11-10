@@ -2,6 +2,7 @@ import * as Joi from 'joi';
 import { AuthenticationContext } from '@/auth-context';
 import { dropsDb, DropsDb } from '@/drops/drops.db';
 import { DeviceGrantEntity } from '@/entities/IDeviceGrant';
+import { ProfileProxyActionType } from '@/entities/IProfileProxyAction';
 import { DeviceSignedEventEntity } from '@/entities/IDeviceSignedEvent';
 import { ApiCompliantException, NotFoundException } from '@/exceptions';
 import { identitiesDb, IdentitiesDb } from '@/identities/identities.db';
@@ -270,7 +271,7 @@ export class DeviceSignedWritesService {
     if (SIGNED_AUTHOR_SIGNATURE_EFFECT[kind] !== 'none') {
       // Fail safe: if finalize later fails, the drop reads as not author
       // signed instead of pointing at an event for older content.
-      await this.clearAuthorSignatureBestEffort(dropId, ctx);
+      await this.clearAuthorSignatureBeforeAuthorWrite(dropId, ctx);
     }
     return this.runReserved(reservation, write, () => dropId, ctx);
   }
@@ -444,12 +445,12 @@ export class DeviceSignedWritesService {
     kind: DeviceEventKind,
     dropId: string,
     write: () => Promise<T>,
-    ctx: RequestContext
+    ctx: SignedWriteContext
   ): Promise<T> {
     const clearsSignature = UNSIGNED_AUTHOR_SIGNATURE_EFFECT[kind] === 'clear';
     if (clearsSignature && kind === DeviceEventKind.EDIT) {
       // Never let a failed clear leave edited content marked as author signed.
-      await this.clearAuthorSignatureBestEffort(dropId, ctx);
+      await this.clearAuthorSignatureBeforeAuthorWrite(dropId, ctx);
     }
     const result = await write();
     if (clearsSignature) {
@@ -508,6 +509,33 @@ export class DeviceSignedWritesService {
         error
       );
     }
+  }
+
+  /**
+   * Clears the author signature ahead of the write only when the acting
+   * profile is the drop's author. Anyone else has not yet been authorized by
+   * the write itself, so their writes clear the signature only after the
+   * write succeeds (finalize or the unsigned post-write clear).
+   */
+  private async clearAuthorSignatureBeforeAuthorWrite(
+    dropId: string,
+    ctx: SignedWriteContext
+  ): Promise<void> {
+    const { authenticationContext } = ctx;
+    const actingAsId = authenticationContext.getActingAsId();
+    if (
+      !actingAsId ||
+      !authenticationContext.hasRightsTo(
+        ProfileProxyActionType.CREATE_DROP_TO_WAVE
+      )
+    ) {
+      return;
+    }
+    const drop = await this.drops.findDropById(dropId, ctx.connection);
+    if (drop?.author_id !== actingAsId) {
+      return;
+    }
+    await this.clearAuthorSignatureBestEffort(dropId, ctx);
   }
 
   private async clearAuthorSignatureBestEffort(

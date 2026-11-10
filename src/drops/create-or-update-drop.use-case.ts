@@ -2395,14 +2395,11 @@ export class CreateOrUpdateDropUseCase {
               (it) => it.id === dropId && it.parts_count >= dropPartId
             ) ?? null
         );
-      if (!replyToEntity) {
+      // A missing target and one in another wave share one response so the
+      // error does not reveal whether a drop exists in another wave.
+      if (replyToEntity?.wave_id !== model.wave_id) {
         throw new BadRequestException(
-          `Invalid reply. Drop $${dropId}/${dropPartId} doesn't exist`
-        );
-      }
-      if (replyToEntity.wave_id !== model.wave_id) {
-        throw new BadRequestException(
-          `Invalid reply. Drop you are replying to is not in the same wave as you attempt to create a drop in`
+          `Invalid reply target: ${dropId}/${dropPartId}`
         );
       }
     }

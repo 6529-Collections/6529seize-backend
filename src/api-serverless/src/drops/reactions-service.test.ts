@@ -565,4 +565,66 @@ describe('ReactionsService', () => {
       ).toHaveBeenCalledWith(drop, callerCtx);
     });
   });
+
+  describe('closed unencrypted direct messages', () => {
+    const originalCutoff = process.env.LEGACY_DM_DELETION_CUTOFF;
+
+    afterEach(() => {
+      if (originalCutoff === undefined) {
+        delete process.env.LEGACY_DM_DELETION_CUTOFF;
+      } else {
+        process.env.LEGACY_DM_DELETION_CUTOFF = originalCutoff;
+      }
+    });
+
+    function directMessageWave() {
+      (wavesDb.findById as jest.Mock).mockResolvedValue({
+        id: dropEntity.wave_id,
+        chat_enabled: true,
+        visibility_group_id: 'dm-group',
+        is_direct_message: true
+      });
+    }
+
+    it.each([
+      [
+        'adding',
+        () =>
+          service.addReaction(dropEntity.id, 'profile-1', ':+1:', ctx as any)
+      ],
+      [
+        'removing',
+        () => service.removeReaction(dropEntity.id, 'profile-1', ctx as any)
+      ]
+    ])(
+      'rejects %s a reaction once unencrypted DMs are closed',
+      async (_label, act) => {
+        process.env.LEGACY_DM_DELETION_CUTOFF = '2020-01-01T00:00:00Z';
+        directMessageWave();
+
+        await expect(act()).rejects.toMatchObject({ code: 'LEGACY_DM_CLOSED' });
+        expect(reactionsDb.addReaction).not.toHaveBeenCalled();
+        expect(reactionsDb.removeReaction).not.toHaveBeenCalled();
+      }
+    );
+
+    it('allows reactions in direct messages before the cutoff', async () => {
+      process.env.LEGACY_DM_DELETION_CUTOFF = '2999-01-01T00:00:00Z';
+      directMessageWave();
+      (reactionsDb.addReaction as jest.Mock).mockResolvedValue(false);
+
+      await expect(
+        service.addReaction(dropEntity.id, 'profile-1', ':+1:', ctx as any)
+      ).resolves.toBe(drop);
+    });
+
+    it('allows reactions in ordinary waves after the cutoff', async () => {
+      process.env.LEGACY_DM_DELETION_CUTOFF = '2020-01-01T00:00:00Z';
+      (reactionsDb.addReaction as jest.Mock).mockResolvedValue(false);
+
+      await expect(
+        service.addReaction(dropEntity.id, 'profile-1', ':+1:', ctx as any)
+      ).resolves.toBe(drop);
+    });
+  });
 });

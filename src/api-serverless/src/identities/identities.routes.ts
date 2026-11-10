@@ -221,6 +221,11 @@ router.get(
     if (!authenticatedProfileId) {
       throw new ForbiddenException(`Please create a profile first`);
     }
+    if (authenticationContext.isAuthenticatedAsProxy()) {
+      throw new ForbiddenException(
+        `Proxies cannot manage identity subscriptions`
+      );
+    }
     const profileId = await identityFetcher.getProfileIdByIdentityKey(
       { identityKey: req.params.id },
       { authenticationContext, timer }
@@ -251,6 +256,11 @@ router.post(
     const authenticatedProfileId = authenticationContext.getActingAsId();
     if (!authenticatedProfileId) {
       throw new ForbiddenException(`Please create a profile first`);
+    }
+    if (authenticationContext.isAuthenticatedAsProxy()) {
+      throw new ForbiddenException(
+        `Proxies cannot manage identity subscriptions`
+      );
     }
     const request = getValidatedByJoiOrThrow(
       req.body,
@@ -290,6 +300,11 @@ router.delete(
     const authenticatedProfileId = authenticationContext.getActingAsId();
     if (!authenticatedProfileId) {
       throw new ForbiddenException(`Please create a profile first`);
+    }
+    if (authenticationContext.isAuthenticatedAsProxy()) {
+      throw new ForbiddenException(
+        `Proxies cannot manage identity subscriptions`
+      );
     }
     const request = getValidatedByJoiOrThrow(
       req.body,

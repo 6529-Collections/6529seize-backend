@@ -19,6 +19,9 @@ import { registerPushNotificationTokenRequestSchema } from './register-push-noti
 
 const router = asyncRouter();
 
+const PROXY_PUSH_NOTIFICATIONS_MESSAGE =
+  'Proxies cannot manage push notifications';
+
 router.post(
   `/register`,
   needsAuthenticatedUser(),
@@ -43,6 +46,9 @@ router.post(
       throw new ForbiddenException(
         'You need to create a profile to register for push notifications'
       );
+    }
+    if (authenticationContext.isAuthenticatedAsProxy()) {
+      throw new ForbiddenException(PROXY_PUSH_NOTIFICATIONS_MESSAGE);
     }
 
     const resolvedProfileId = profile_id ?? actingAsProfileId;
@@ -108,6 +114,9 @@ router.get(
         'You need to create a profile to view devices'
       );
     }
+    if (authenticationContext.isAuthenticatedAsProxy()) {
+      throw new ForbiddenException(PROXY_PUSH_NOTIFICATIONS_MESSAGE);
+    }
 
     const devices = await getDevicesForProfile(profileId);
     res.send(devices);
@@ -127,6 +136,9 @@ router.delete(
       throw new ForbiddenException(
         'You need to create a profile to delete devices'
       );
+    }
+    if (authenticationContext.isAuthenticatedAsProxy()) {
+      throw new ForbiddenException(PROXY_PUSH_NOTIFICATIONS_MESSAGE);
     }
 
     const deviceId = req.params.device_id;
@@ -148,6 +160,9 @@ router.get(
       throw new ForbiddenException(
         'You need to create a profile to access push notification settings'
       );
+    }
+    if (authenticationContext.isAuthenticatedAsProxy()) {
+      throw new ForbiddenException(PROXY_PUSH_NOTIFICATIONS_MESSAGE);
     }
 
     const deviceId = req.params.device_id;
@@ -180,6 +195,9 @@ router.put(
       throw new ForbiddenException(
         'You need to create a profile to update push notification settings'
       );
+    }
+    if (authenticationContext.isAuthenticatedAsProxy()) {
+      throw new ForbiddenException(PROXY_PUSH_NOTIFICATIONS_MESSAGE);
     }
 
     const deviceId = req.params.device_id;
