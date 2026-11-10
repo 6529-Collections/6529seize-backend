@@ -5,10 +5,11 @@ services:
       context: ./dockerfiles/devmysql
     restart: always
     environment:
+      # Local development defaults only; never reuse these credentials elsewhere.
       MYSQL_ROOT_PASSWORD: password
       TZ: UTC
     ports:
-      - "3306:3306"
+      - "127.0.0.1:3306:3306"
     volumes:
       - dbdata:/var/lib/mysql
       - ./dockerfiles/devmysql/my.cnf:/etc/mysql/conf.d/z-custom.cnf:ro
@@ -18,7 +19,7 @@ services:
     restart: always
     command: redis-server
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
 
 volumes:
   dbdata:
