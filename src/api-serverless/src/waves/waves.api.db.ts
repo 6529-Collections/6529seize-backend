@@ -3235,6 +3235,35 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
       .then((res) => res.map((it) => this.parseWaveEntity(it)));
   }
 
+  public async findAllRootWaveIds(
+    {
+      identityId,
+      eligibleGroups
+    }: {
+      readonly identityId: string | null;
+      readonly eligibleGroups: string[];
+    },
+    ctx: RequestContext
+  ): Promise<string[]> {
+    // Include quiet waves without metrics and pinned waves. Capture every ID in
+    // one query so activity cannot move a wave across a pagination boundary.
+    const rows = await withoutLegacyCompetitionGetFacade(() =>
+      this.db.execute<{ id: string }>(
+        `select w.id from ${legacyGetView(WAVES_TABLE)} w
+         left join ${WAVE_METRICS_TABLE} wm on wm.wave_id = w.id
+         left join ${WAVE_READER_METRICS_TABLE} wrm
+           on wrm.wave_id = w.id and wrm.reader_id = :identityId
+         where w.parent_wave_id is null and w.is_direct_message = false
+           and ${this.getWaveVisibilityFilter('w', eligibleGroups, 'eligibleGroups')}
+         order by case when coalesce(wrm.muted, false) then 0
+           else coalesce(wm.latest_drop_timestamp, 0) end desc, w.id desc`,
+        { identityId, eligibleGroups },
+        ctx.connection ? { wrappedConnection: ctx.connection } : undefined
+      )
+    );
+    return rows.map((row) => row.id);
+  }
+
   public async findJoinedRootWaveIds(
     {
       identityId,
