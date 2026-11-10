@@ -50,5 +50,5 @@ export class WalletConnectionShareEntity {
    * retired by a newer share or redeemed before this column existed.
    */
   @Column({ type: 'varchar', length: 16, nullable: true, default: null })
-  readonly consumed_client_family!: string | null;
+  readonly consumed_client_family?: string | null;
 }

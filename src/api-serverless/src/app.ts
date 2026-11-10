@@ -70,8 +70,8 @@ import * as Sentry from '@sentry/serverless';
 import { NextFunction, Request, Response } from 'express';
 import * as Joi from 'joi';
 import * as passport from 'passport';
-import { ApiCompliantException } from '@/exceptions';
-import { sendApiError } from '@/api/api-error-middleware';
+import { sendApiError, toApiCompliantError } from '@/api/api-error-middleware';
+import { optionalQueryDigits, optionalQueryString } from '@/api/query-values';
 import * as sentryContext from '../../sentry.context';
 import { Time } from '@/time';
 import { DropType } from '@/entities/IDrop';
@@ -627,8 +627,9 @@ async function postSentryAlertDrop({
 
 function customErrorMiddleware() {
   return (err: Error, _: Request, res: Response, next: NextFunction) => {
-    if (err instanceof ApiCompliantException) {
-      sendApiError(err, res);
+    const apiError = toApiCompliantError(err);
+    if (apiError) {
+      sendApiError(apiError, res);
       next();
     } else {
       res.status(500).send({ error: 'Something went wrong...' });
@@ -926,8 +927,8 @@ function wireApp() {
           ? req.query.sort_direction
           : 'desc';
 
-      const contracts = req.query.contract;
-      const nfts = req.query.id;
+      const contracts = optionalQueryString(req.query, 'contract');
+      const nfts = optionalQueryString(req.query, 'id');
       await db
         .fetchNFTs(pageSize, page, contracts, nfts, sortDir)
         .then((result) => {
@@ -969,7 +970,7 @@ function wireApp() {
     `/nfts/gradients`,
     cacheRequest(),
     async function (req: any, res: any) {
-      const id = req.query.id;
+      const id = optionalQueryString(req.query, 'id');
       const pageSize = getPageSize(req, NFTS_PAGE_SIZE);
       const page = getPage(req);
 
@@ -1020,8 +1021,8 @@ function wireApp() {
           ? req.query.sort_direction
           : 'desc';
 
-      const nfts = req.query.id;
-      const memeIds = req.query.meme_id;
+      const nfts = optionalQueryString(req.query, 'id');
+      const memeIds = optionalQueryString(req.query, 'meme_id');
 
       await db
         .fetchLabNFTs(memeIds, pageSize, page, nfts, sortDir)
@@ -1050,8 +1051,8 @@ function wireApp() {
       const pageSize = getPageSize(req, NFTS_PAGE_SIZE);
       const page = getPage(req);
 
-      const nfts = req.query.id;
-      const seasons = req.query.season;
+      const nfts = optionalQueryString(req.query, 'id');
+      const seasons = optionalQueryString(req.query, 'season');
 
       const sort =
         req.query.sort && MEMES_EXTENDED_SORT.includes(req.query.sort)
@@ -1134,7 +1135,7 @@ function wireApp() {
     cacheRequest(),
     async function (req: any, res: any) {
       const pageSize = getPageSize(req);
-      const search = req.query.search;
+      const search = optionalQueryString(req.query, 'search');
 
       await db.searchNfts(search, pageSize).then((result) => {
         return res.json(result);
@@ -1149,8 +1150,8 @@ function wireApp() {
       const pageSize = getPageSize(req);
       const page = getPage(req);
 
-      const nfts = req.query.id;
-      const collections = req.query.collection;
+      const nfts = optionalQueryString(req.query, 'id');
+      const collections = optionalQueryString(req.query, 'collection');
 
       await db
         .fetchLabExtended(pageSize, page, nfts, collections)
@@ -1167,9 +1168,9 @@ function wireApp() {
       const pageSize = getPageSize(req);
       const page = getPage(req);
 
-      const wallets = req.query.wallet;
-      const contracts = req.query.contract;
-      const nfts = req.query.id;
+      const wallets = optionalQueryString(req.query, 'wallet');
+      const contracts = optionalQueryString(req.query, 'contract');
+      const nfts = optionalQueryString(req.query, 'id');
 
       const filter =
         req.query.filter && TRANSACTION_FILTERS.includes(req.query.filter)
@@ -1190,8 +1191,8 @@ function wireApp() {
       const pageSize = getPageSize(req);
       const page = getPage(req);
 
-      const wallets = req.query.wallet;
-      const nfts = req.query.id;
+      const wallets = optionalQueryString(req.query, 'wallet');
+      const nfts = optionalQueryString(req.query, 'id');
 
       const filter =
         req.query.filter && TRANSACTION_FILTERS.includes(req.query.filter)
@@ -1239,7 +1240,7 @@ function wireApp() {
     `/consolidations`,
     cacheRequest(),
     async function (req: any, res: any) {
-      const block = req.query.block;
+      const block = optionalQueryDigits(req.query, 'block');
       const pageSize = getPageSize(req, DEFAULT_MAX_SIZE);
       const page = getPage(req);
 

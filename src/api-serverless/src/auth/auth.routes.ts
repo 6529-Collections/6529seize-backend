@@ -5,6 +5,7 @@ import { ApiResponse } from '../api-response';
 import * as Joi from 'joi';
 import { ethers } from 'ethers';
 import { env } from '@/env';
+import { WALLET_REGEX } from '@/constants';
 import { isWebAuthCredentialOriginAllowed } from '../api-constants';
 import {
   getAuthenticatedWalletOrNull,
@@ -947,12 +948,13 @@ router.post(
     res: Response<ApiResponse<ApiRedeemRefreshTokenResponse>>
   ) {
     assertLegacyRefreshEnabled();
-    const tokenAddress = req.body.address?.toLowerCase();
-    const refreshToken = req.body.token;
-    const role = req.body.role ?? null;
-    if (!refreshToken) {
-      throw new BadRequestException('Refresh token is required');
-    }
+    const body = getValidatedByJoiOrThrow(
+      req.body,
+      RedeemRefreshTokenRequestSchema
+    );
+    const tokenAddress = body.address?.toLowerCase();
+    const refreshToken = body.token;
+    const role = body.role ?? null;
     const redeemedAddress = await authDb.redeemRefreshToken(
       tokenAddress,
       refreshToken
@@ -1458,6 +1460,20 @@ async function getAuthenticatedConnectionShareContext(
   }
   return { authenticatedWallet, authRole };
 }
+
+const REFRESH_TOKEN_REQUIRED_MESSAGE = 'Refresh token is required';
+
+export const RedeemRefreshTokenRequestSchema: Joi.ObjectSchema<ApiRedeemRefreshTokenRequest> =
+  Joi.object<ApiRedeemRefreshTokenRequest>({
+    token: Joi.string().hex().max(256).required().messages({
+      'any.required': REFRESH_TOKEN_REQUIRED_MESSAGE,
+      'string.empty': REFRESH_TOKEN_REQUIRED_MESSAGE
+    }),
+    address: Joi.string().pattern(WALLET_REGEX).allow('', null).optional(),
+    role: Joi.string().max(100).allow('', null).optional()
+  })
+    .unknown(true)
+    .required();
 
 const LoginRequestSchema: Joi.ObjectSchema<ApiLoginRequest> =
   Joi.object<ApiLoginRequest>({
