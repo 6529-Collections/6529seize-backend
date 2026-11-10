@@ -319,7 +319,13 @@ describe('push send outcomes across reporting layers', () => {
       responses: [{ success: false, error: initial }]
     });
     send.mockResolvedValue('recovered');
-    const inputs = [input(1, 1, 'https://example.com/image.png')];
+    const inputs = [
+      input(
+        1,
+        1,
+        'https://d3lqz0a4bldqgf.cloudfront.net/pfp/production/image.png'
+      )
+    ];
     await withOperationalContext('request-image', async () => {
       const results = await sendMessages(inputs);
       expect(results[0].response).toEqual({
@@ -349,7 +355,13 @@ describe('push send outcomes across reporting layers', () => {
     });
     const finalError = providerError('messaging/server-unavailable');
     send.mockRejectedValue(finalError);
-    const inputs = [input(1, 1, 'https://example.com/image.png')];
+    const inputs = [
+      input(
+        1,
+        1,
+        'https://d3lqz0a4bldqgf.cloudfront.net/pfp/production/image.png'
+      )
+    ];
     await withOperationalContext('request-image-failed', async () => {
       const results = await sendMessages(inputs);
       expect(results[0].response.error).toBe(finalError);
@@ -399,7 +411,13 @@ describe('push send outcomes across reporting layers', () => {
         throw new Error(privateText);
       originalInfo(message);
     });
-    const inputs = [input(1, 1, 'https://example.com/image.png')];
+    const inputs = [
+      input(
+        1,
+        1,
+        'https://d3lqz0a4bldqgf.cloudfront.net/pfp/production/image.png'
+      )
+    ];
     const results = await sendMessages(inputs);
     expect(results[0].response.success).toBe(true);
     await expect(handleSendResults(messages(inputs), results)).resolves.toEqual(

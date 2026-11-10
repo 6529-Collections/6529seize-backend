@@ -41,6 +41,10 @@ import { profileWavesApiService } from '@/api/profiles/profile-waves.api.service
 import { helpBotCreditsService } from '@/help-bot/help-bot-credits.service';
 import { Logger } from '@/logging';
 import {
+  isAllowedProfilePictureUrl,
+  PROFILE_MEDIA_HOST
+} from '@/profiles/profile-picture-url';
+import {
   PROFILE_PICTURE_MAX_BYTES,
   profilePictureIpfsUploadService
 } from './profile-picture-ipfs-upload';
@@ -221,7 +225,9 @@ router.post(
 router.post(
   `/:identity/pfp`,
   needsAuthenticatedUser(),
-  initMulterSingleMiddleware('pfp'),
+  initMulterSingleMiddleware('pfp', {
+    maxFileSizeBytes: PROFILE_PICTURE_MAX_BYTES
+  }),
   async function (
     req: Request<
       {
@@ -388,7 +394,13 @@ const ApiCreateOrUpdateProfileRequestSchema: Joi.ObjectSchema<ApiCreateOrUpdateP
     sub_classification: Joi.string().optional().allow(null).default(null),
     pfp_url: Joi.string()
       .optional()
-      .regex(/^(?:ipfs:\/\/|https:\/\/d3lqz0a4bldqgf).+$/)
+      .custom((value: string, helpers) =>
+        isAllowedProfilePictureUrl(value)
+          ? value
+          : helpers.message({
+              custom: `Profile picture must be an ipfs:// URL or an https URL on ${PROFILE_MEDIA_HOST}`
+            })
+      )
       .allow(null)
       .default(null)
   }).custom((value, helpers) => {

@@ -1,4 +1,5 @@
 import { ApiIdentitySubscriptionTargetAction } from '@/api/generated/models/ApiIdentitySubscriptionTargetAction';
+import Sharp from 'sharp';
 import { IdentitiesService } from './identities.service';
 
 const mockS3Send = jest.fn();
@@ -56,8 +57,9 @@ describe('IdentitiesService subscriptions', () => {
 });
 
 describe('IdentitiesService profile pictures', () => {
-  it('uploads a new picture to a fresh key with long-lived caching', async () => {
+  function createService() {
     process.env.AWS_6529_IMAGES_BUCKET_NAME = 'images-bucket';
+    mockS3Send.mockReset();
     mockS3Send.mockResolvedValue({ $metadata: { httpStatusCode: 200 } });
     const identitiesDb = {
       executeNativeQueriesInTransaction: jest.fn(
@@ -74,33 +76,61 @@ describe('IdentitiesService profile pictures', () => {
         wallets: [{ wallet: '0xwallet' }]
       })
     };
-    const service = new IdentitiesService(
+    return new IdentitiesService(
       identitiesDb as any,
       {} as any,
       {} as any,
       identityFetcher as any,
       {} as any
     );
+  }
 
-    const { pfp_url } = await service.updateProfilePfp({
+  function upload(
+    service: IdentitiesService,
+    file: Partial<Express.Multer.File>
+  ) {
+    return service.updateProfilePfp({
       authenticatedWallet: '0xwallet',
       identity: 'someone',
-      memeOrFile: {
-        file: {
-          originalname: 'avatar.PNG',
-          buffer: Buffer.from('image')
-        } as Express.Multer.File
-      }
+      memeOrFile: { file: file as Express.Multer.File }
+    });
+  }
+
+  it('uploads a new picture to a fresh key typed from its bytes', async () => {
+    const service = createService();
+    const png = await Sharp({
+      create: { width: 2, height: 2, channels: 3, background: '#ff0000' }
+    })
+      .png()
+      .toBuffer();
+
+    // The client file name is ignored; the bytes decide the stored type.
+    const { pfp_url } = await upload(service, {
+      originalname: 'avatar.webp',
+      buffer: png
     });
 
     expect(mockS3Send).toHaveBeenCalledTimes(1);
     const input = mockS3Send.mock.calls[0][0].input;
     expect(input).toMatchObject({
       Bucket: 'images-bucket',
-      ContentType: 'image/webp',
+      ContentType: 'image/png',
       CacheControl: 'public, max-age=31536000, immutable'
     });
-    expect(input.Key).toMatch(/^pfp\/[^/]+\/[0-9a-f-]{36}\.webp$/);
+    expect(input.Key).toMatch(/^pfp\/[^/]+\/[0-9a-f-]{36}\.png$/);
     expect(pfp_url).toContain(`/${input.Key}?d=`);
+  });
+
+  it.each([
+    ['markup named as an image', Buffer.from('<svg></svg>'), 400],
+    ['an oversized file', Buffer.alloc(2 * 1024 * 1024 + 1, 0xff), 413]
+  ])('rejects %s without uploading it', async (_label, buffer, status) => {
+    const service = createService();
+    const error = await upload(service, {
+      originalname: 'avatar.png',
+      buffer
+    }).catch((e) => e);
+    expect(error.getStatusCode()).toBe(status);
+    expect(mockS3Send).not.toHaveBeenCalled();
   });
 });

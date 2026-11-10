@@ -48,6 +48,30 @@ describe('sending budgeted push messages', () => {
     }));
   });
 
+  it.each([
+    ['https://d3lqz0a4bldqgf.cloudfront.net/pfp/production/a.webp', true],
+    [
+      'https://media.6529.io/ipfs/bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi',
+      true
+    ],
+    ['https://example.com/image.jpg', false],
+    ['http://d3lqz0a4bldqgf.cloudfront.net/pfp/a.webp', false],
+    ['https://d3lqz0a4bldqgf.cloudfront.net.example.com/a.webp', false],
+    ['https://d3lqz0a4bldqgf.cloudfront.net@example.com/a.webp', false],
+    ['https://media.6529.io/other/a.webp', false],
+    [
+      'ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi',
+      false
+    ]
+  ])(
+    'attaches image %s only from our media hosts (%s)',
+    async (imageUrl, kept) => {
+      await sendMessages([input(1, { imageUrl })]);
+      const sent = sendEach.mock.calls[0][0][0];
+      expect(sent.notification.imageUrl).toBe(kept ? imageUrl : undefined);
+    }
+  );
+
   it('reports a sender mismatch once before returning it for quarantine', async () => {
     const error = {
       code: 'messaging/mismatched-credential',
@@ -139,7 +163,8 @@ describe('sending budgeted push messages', () => {
     const results = await sendMessages([
       input(1, {
         body: '👋'.repeat(5000),
-        imageUrl: 'https://example.com/image.jpg',
+        imageUrl:
+          'https://d3lqz0a4bldqgf.cloudfront.net/pfp/production/image.webp',
         badge: 3
       })
     ]);
