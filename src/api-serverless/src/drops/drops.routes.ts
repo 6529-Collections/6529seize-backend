@@ -56,6 +56,7 @@ import { helpBotTriggerService } from '@/help-bot/help-bot-trigger.service';
 import { Logger } from '@/logging';
 import { wsListenersNotifier } from '@/api/ws/ws-listeners-notifier';
 import { DbPoolName } from '@/db-query.options';
+import { optionalQueryString } from '@/api/query-values';
 import { assertWaveAndParentVisibleOrThrow } from '@/api/waves/wave-access.helpers';
 import { getStructuredWalletSignatureAudienceForHost } from '@/api/wallet-signatures/structured-wallet-signatures';
 import {
@@ -1022,21 +1023,24 @@ export async function prepLatestDropsSearchQuery(
   >
 ) {
   const limit = numbers.parseIntOrNull(req.query.limit) ?? 10;
-  const wave_id = req.query.wave_id ?? null;
-  const curation_id = req.query.curation_id ?? null;
-  const curation_name = req.query.curation_name?.trim() || null;
-  const group_id = req.query.group_id ?? null;
+  const wave_id = optionalQueryString(req.query, 'wave_id') ?? null;
+  const curation_id = optionalQueryString(req.query, 'curation_id') ?? null;
+  const curation_name =
+    optionalQueryString(req.query, 'curation_name')?.trim() || null;
+  const group_id = optionalQueryString(req.query, 'group_id') ?? null;
   const include_replies = req.query.include_replies === 'true';
-  const drop_type_str = (req.query.drop_type as string) ?? null;
+  const drop_type_str = optionalQueryString(req.query, 'drop_type');
   const drop_type_enum = enums.resolve(ApiDropType, drop_type_str) ?? null;
-  const author_id = req.query.author
+  const author = optionalQueryString(req.query, 'author');
+  const author_id = author
     ? await identityFetcher.getProfileIdByIdentityKeyOrThrow(
-        { identityKey: req.query.author },
+        { identityKey: author },
         { timer: Timer.getFromRequest(req) }
       )
     : null;
-  const ids = req.query.ids
-    ? req.query.ids
+  const idsQuery = optionalQueryString(req.query, 'ids');
+  const ids = idsQuery
+    ? idsQuery
         .split(',')
         .map((id) => id.trim())
         .filter((id) => id.length > 0)
