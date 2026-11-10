@@ -303,22 +303,53 @@ export class AuthDb extends LazyDbAccessCompatibleService {
     return this.getWalletConnectionShareByIdOrThrow(params.id);
   }
 
+  /**
+   * Retires the live (unconsumed, unexpired) shares of a wallet for one
+   * target that are of the same kind (with or without device setup), so a
+   * new share is the only live one of its kind. Retired shares are marked
+   * consumed without a session.
+   */
+  async retireLiveWalletConnectionShares(params: {
+    readonly address: string;
+    readonly targetClientType: WalletAuthClientType;
+    readonly withDeviceSetup: boolean;
+    readonly now: Date;
+  }): Promise<number> {
+    const result = await this.db.execute(
+      `update ${WALLET_CONNECTION_SHARES_TABLE}
+       set consumed_at = :now
+       where address = :address
+         and target_client_type = :targetClientType
+         and encrypted_device_setup is ${params.withDeviceSetup ? 'not null' : 'null'}
+         and consumed_at is null
+         and expires_at > :now`,
+      {
+        address: params.address,
+        targetClientType: params.targetClientType,
+        now: params.now
+      }
+    );
+    return this.db.getAffectedRows(result);
+  }
+
   async consumeWalletConnectionShare(
     params: {
       readonly connectionShareCodeHash: string;
       readonly targetClientType: WalletAuthClientType;
       readonly now: Date;
+      readonly clientFamily?: string | null;
     },
     connection?: AuthDbConnection
   ): Promise<WalletConnectionShareEntity | null> {
     const result = await this.db.execute(
       `update ${WALLET_CONNECTION_SHARES_TABLE}
-       set consumed_at = :now
+       set consumed_at = :now,
+           consumed_client_family = :clientFamily
        where connection_share_code_hash = :connectionShareCodeHash
          and target_client_type = :targetClientType
          and consumed_at is null
          and expires_at > :now`,
-      params,
+      { ...params, clientFamily: params.clientFamily ?? null },
       getDbOptions(connection)
     );
     if (this.db.getAffectedRows(result) !== 1) {

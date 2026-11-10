@@ -36,6 +36,7 @@ jest.mock('./auth.db', () => ({
     revokeWalletAuthSessionByRefreshHash: jest.fn(),
     deleteLegacyRefreshTokenForAddress: jest.fn(),
     createWalletConnectionShare: jest.fn(),
+    retireLiveWalletConnectionShares: jest.fn(),
     consumeWalletConnectionShare: jest.fn(),
     markWalletConnectionShareSession: jest.fn(),
     executeNativeQueriesInTransaction: jest.fn(async (fn) =>
@@ -1208,7 +1209,8 @@ describe('auth-session-v2', () => {
         created_at: new Date(),
         expires_at: params.expiresAt,
         consumed_at: null,
-        consumed_session_id: null
+        consumed_session_id: null,
+        consumed_client_family: null
       })
     );
     authDbMock.consumeWalletConnectionShare.mockResolvedValue({
@@ -1221,7 +1223,8 @@ describe('auth-session-v2', () => {
       created_at: new Date(),
       expires_at: new Date(Date.now() + 60_000),
       consumed_at: new Date(),
-      consumed_session_id: null
+      consumed_session_id: null,
+      consumed_client_family: null
     });
     authDbMock.createWalletAuthSession.mockImplementation(async (params) => ({
       id: params.id,
@@ -1308,7 +1311,8 @@ describe('auth-session-v2', () => {
         created_at: new Date(),
         expires_at: params.expiresAt,
         consumed_at: null,
-        consumed_session_id: null
+        consumed_session_id: null,
+        consumed_client_family: null
       })
     );
     authDbMock.consumeWalletConnectionShare.mockResolvedValue({
@@ -1321,7 +1325,8 @@ describe('auth-session-v2', () => {
       created_at: new Date(),
       expires_at: new Date(Date.now() + 60_000),
       consumed_at: new Date(),
-      consumed_session_id: null
+      consumed_session_id: null,
+      consumed_client_family: null
     });
     authDbMock.createWalletAuthSession.mockImplementation(async (params) => ({
       id: params.id,
@@ -1393,6 +1398,135 @@ describe('auth-session-v2', () => {
         userAgent: 'Mozilla/5.0'
       })
     ).rejects.toThrow('refresh-token clients only');
+  });
+
+  describe('one live link per wallet, target and kind', () => {
+    const originalTtl = {
+      code: process.env.AUTH_CONNECTION_SHARE_CODE_TTL_SECONDS,
+      setup: process.env.AUTH_CONNECTION_SHARE_SETUP_TTL_SECONDS
+    };
+
+    beforeEach(() => {
+      delete process.env.AUTH_CONNECTION_SHARE_CODE_TTL_SECONDS;
+      delete process.env.AUTH_CONNECTION_SHARE_SETUP_TTL_SECONDS;
+      jest
+        .mocked(identitiesDb.getProfileIdByWallet)
+        .mockResolvedValue('own-profile');
+      authDbMock.createWalletConnectionShare.mockImplementation(
+        async (params) => ({
+          id: params.id,
+          connection_share_code_hash: params.connectionShareCodeHash,
+          address: params.address,
+          role: params.role,
+          target_client_type: params.targetClientType,
+          encrypted_device_setup: params.encryptedDeviceSetup,
+          created_at: new Date(),
+          expires_at: params.expiresAt,
+          consumed_at: null,
+          consumed_session_id: null,
+          consumed_client_family: null
+        })
+      );
+    });
+
+    afterAll(() => {
+      for (const [name, value] of [
+        ['AUTH_CONNECTION_SHARE_CODE_TTL_SECONDS', originalTtl.code],
+        ['AUTH_CONNECTION_SHARE_SETUP_TTL_SECONDS', originalTtl.setup]
+      ] as const) {
+        if (value === undefined) {
+          delete process.env[name];
+        } else {
+          process.env[name] = value;
+        }
+      }
+    });
+
+    function lifetimeSeconds(created: { expires_at: Date }): number {
+      return Math.round((created.expires_at.getTime() - Date.now()) / 1000);
+    }
+
+    it('retires the previous plain link of the same target before storing a new one', async () => {
+      const created = await createConnectionShare({
+        address: '0xABC',
+        role: null,
+        targetClientType: 'native'
+      });
+
+      expect(authDbMock.retireLiveWalletConnectionShares).toHaveBeenCalledWith({
+        address: '0xabc',
+        targetClientType: 'native',
+        withDeviceSetup: false,
+        now: expect.any(Date)
+      });
+      expect(
+        authDbMock.retireLiveWalletConnectionShares.mock.invocationCallOrder[0]
+      ).toBeLessThan(
+        authDbMock.createWalletConnectionShare.mock.invocationCallOrder[0]
+      );
+      expect(lifetimeSeconds(created)).toBe(300);
+    });
+
+    it('retires only device-setup links when a device-setup link is created, and gives it 120 seconds', async () => {
+      const created = await createConnectionShare({
+        address: '0xABC',
+        role: null,
+        targetClientType: 'desktop',
+        encryptedDeviceSetup: 'v1.ciphertext'
+      });
+
+      expect(authDbMock.retireLiveWalletConnectionShares).toHaveBeenCalledWith({
+        address: '0xabc',
+        targetClientType: 'desktop',
+        withDeviceSetup: true,
+        now: expect.any(Date)
+      });
+      expect(lifetimeSeconds(created)).toBe(120);
+    });
+
+    it('uses the configured setup lifetime but never more than the plain lifetime', async () => {
+      process.env.AUTH_CONNECTION_SHARE_SETUP_TTL_SECONDS = '90';
+      const configured = await createConnectionShare({
+        address: '0xABC',
+        role: null,
+        targetClientType: 'native',
+        encryptedDeviceSetup: 'v1.ciphertext'
+      });
+      process.env.AUTH_CONNECTION_SHARE_CODE_TTL_SECONDS = '60';
+      const capped = await createConnectionShare({
+        address: '0xABC',
+        role: null,
+        targetClientType: 'native',
+        encryptedDeviceSetup: 'v1.ciphertext'
+      });
+      process.env.AUTH_CONNECTION_SHARE_SETUP_TTL_SECONDS = '0';
+      process.env.AUTH_CONNECTION_SHARE_CODE_TTL_SECONDS = '600';
+      const invalid = await createConnectionShare({
+        address: '0xABC',
+        role: null,
+        targetClientType: 'native',
+        encryptedDeviceSetup: 'v1.ciphertext'
+      });
+
+      expect(lifetimeSeconds(configured)).toBe(90);
+      expect(lifetimeSeconds(capped)).toBe(60);
+      expect(lifetimeSeconds(invalid)).toBe(120);
+    });
+
+    it('records the coarse client family of the redeeming client, never its user agent', async () => {
+      authDbMock.consumeWalletConnectionShare.mockResolvedValueOnce(null);
+
+      await redeemConnectionShare({
+        connectionShareCode: 'a'.repeat(64),
+        targetClientType: 'desktop',
+        userAgent:
+          'Mozilla/5.0 (Windows NT 10.0) AppleWebKit/537.36 Chrome/124.0 Electron/30.0.0 Safari/537.36'
+      });
+
+      const [consumeParams] =
+        authDbMock.consumeWalletConnectionShare.mock.calls[0];
+      expect(consumeParams.clientFamily).toBe('desktop');
+    });
   });
 });
 

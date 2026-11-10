@@ -41,4 +41,63 @@ describeWithSeed('Encrypted connection-share consumption', [], () => {
     });
     await expect(consume()).resolves.toBeNull();
   });
+
+  it('retires only the live share of the same wallet, target and kind', async () => {
+    const repo = new AuthDb(() => sqlExecutor);
+    const now = new Date();
+    const wallet = '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+    const share = (
+      id: string,
+      overrides: Partial<{
+        address: string;
+        targetClientType: 'native' | 'desktop';
+        encryptedDeviceSetup: string | null;
+        expiresAt: Date;
+      }> = {}
+    ) =>
+      repo.createWalletConnectionShare({
+        id,
+        connectionShareCodeHash: `${id}${'0'.repeat(64)}`.slice(0, 64),
+        encryptedDeviceSetup: null,
+        address: wallet,
+        role: null,
+        targetClientType: 'native',
+        expiresAt: new Date(now.getTime() + 60_000),
+        ...overrides
+      });
+    await share('plain-native');
+    await share('setup-native', { encryptedDeviceSetup: 'v1.ciphertext' });
+    await share('plain-desktop', { targetClientType: 'desktop' });
+    await share('plain-other', {
+      address: '0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
+    });
+
+    await expect(
+      repo.retireLiveWalletConnectionShares({
+        address: wallet,
+        targetClientType: 'native',
+        withDeviceSetup: false,
+        now
+      })
+    ).resolves.toBe(1);
+
+    const consume = (id: string, targetClientType: 'native' | 'desktop') =>
+      repo.consumeWalletConnectionShare({
+        connectionShareCodeHash: `${id}${'0'.repeat(64)}`.slice(0, 64),
+        targetClientType,
+        now,
+        clientFamily: 'browser'
+      });
+    await expect(consume('plain-native', 'native')).resolves.toBeNull();
+    await expect(consume('setup-native', 'native')).resolves.toMatchObject({
+      id: 'setup-native',
+      consumed_client_family: 'browser'
+    });
+    await expect(consume('plain-desktop', 'desktop')).resolves.toMatchObject({
+      id: 'plain-desktop'
+    });
+    await expect(consume('plain-other', 'native')).resolves.toMatchObject({
+      id: 'plain-other'
+    });
+  });
 });

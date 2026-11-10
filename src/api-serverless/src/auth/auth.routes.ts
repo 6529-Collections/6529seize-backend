@@ -115,6 +115,12 @@ import {
   recordLegacyAuthUseOnFinish,
   setLegacyLoginFormat
 } from '@/api/auth/legacy-auth-metrics';
+import {
+  isConnectionShareRedeemLimited,
+  recordConnectionShareRedeem,
+  recordFailedConnectionShareRedeem
+} from '@/api/auth/connection-share-redeem-guard';
+import { getIp } from '@/api/policies/policies';
 
 const router = asyncRouter();
 const logger = Logger.get('AUTH_ROUTES');
@@ -859,14 +865,38 @@ router.post(
       req.body,
       RedeemConnectionShareRequestSchema
     );
+    const target = redeemRequest.target_client_type;
+    const sourceIp = getIp(req);
+    if (await isConnectionShareRedeemLimited(sourceIp)) {
+      recordConnectionShareRedeem({
+        target,
+        outcome: 'limited',
+        withDeviceSetup: false
+      });
+      throw new CustomApiCompliantException(
+        429,
+        'Too many invalid connection share codes; try again later'
+      );
+    }
     const redeemed = await redeemConnectionShare({
       connectionShareCode: redeemRequest.connection_share_code,
       targetClientType: redeemRequest.target_client_type,
       userAgent: getUserAgent(req)
     });
     if (!redeemed) {
+      await recordFailedConnectionShareRedeem(sourceIp);
+      recordConnectionShareRedeem({
+        target,
+        outcome: 'refused',
+        withDeviceSetup: false
+      });
       throw new UnauthorisedException('Invalid connection share code');
     }
+    recordConnectionShareRedeem({
+      target,
+      outcome: 'ok',
+      withDeviceSetup: redeemed.response.encrypted_device_setup != null
+    });
     res.status(201).send(redeemed.response);
   }
 );
