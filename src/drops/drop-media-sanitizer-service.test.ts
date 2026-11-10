@@ -22,6 +22,12 @@ import {
   identifyingJpeg,
   identifyingWebp
 } from '@/media/metadata-strip/fixtures/identifying-image-fixtures';
+import {
+  largeGif,
+  largeJpeg
+} from '@/media/metadata-strip/fixtures/large-image-fixtures';
+import { stripMetadataLosslessly } from '@/media/metadata-strip/lossless-metadata-strip';
+import * as uploadImagePreviews from '@/media/upload-image-previews';
 import * as mediaPlaceholder from './media-placeholder';
 
 const ORIENTATION_6_EXIF = Buffer.concat([
@@ -553,6 +559,59 @@ describe('image format validation before publication', () => {
       if (format === 'gif') expect(body).toEqual(animatedGifFixture());
     }
   );
+
+  it.each([
+    // 36 MP: the old pixel check gave up, and the re-encode fallback's own
+    // decoded-work budget then rejected the upload.
+    ['jpeg', () => largeJpeg(6_000)],
+    ['gif', () => largeGif(400)]
+  ] as const)(
+    'publishes a large chat %s stripped losslessly instead of failing it',
+    async (format, make) => {
+      const input = await make();
+      const p = pipeline(
+        input,
+        `image/${format}`,
+        'true',
+        DropMediaUploadPurpose.CHAT
+      );
+      await p.process();
+      expect(p.uploadsDb.transitionStatus).toHaveBeenLastCalledWith(
+        expect.objectContaining({ toStatus: DropMediaUploadStatus.READY })
+      );
+      const body = p.publicSend.mock.calls[0][0].input.Body as Buffer;
+      expect(body).toEqual(stripMetadataLosslessly(input, format).output);
+      expectNoIdentifyingStrings(body);
+    },
+    120_000
+  );
+
+  it('frees the source and stripped buffers before rendering previews', async () => {
+    const { jpeg } = await identifyingJpeg();
+    const output = stripMetadataLosslessly(jpeg, 'jpeg').output;
+    // Unpooled, like the large buffers this protects against.
+    const stripped = Buffer.alloc(output.length);
+    output.copy(stripped);
+    let source: Buffer | undefined;
+    jest
+      .spyOn(pixelVerifiedStrip, 'stripMetadataWithPixelCheck')
+      .mockImplementation(async (input) => {
+        source = input;
+        return { kind: 'lossless', buffer: stripped, removed: [] };
+      });
+    const render = uploadImagePreviews.prepareUploadImagePreviews;
+    const lengthsAtPreview: number[] = [];
+    jest
+      .spyOn(uploadImagePreviews, 'prepareUploadImagePreviews')
+      .mockImplementation(async (...args) => {
+        lengthsAtPreview.push(source!.length, stripped.length);
+        return render(...args);
+      });
+    const p = pipeline(jpeg, 'image/jpeg', 'true', DropMediaUploadPurpose.CHAT);
+    await p.process();
+    expect(p.publicSend.mock.calls[0][0].input.Body).toEqual(output);
+    expect(lengthsAtPreview).toEqual([0, 0]);
+  });
 
   it.each(['true', 'false'])(
     'publishes decision entry bytes unchanged with policy %s',
