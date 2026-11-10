@@ -28,6 +28,7 @@ import {
   IdentityNotificationsDb
 } from '../notifications/identity-notifications.db';
 import { RequestContext } from '../request.context';
+import { assertProfilePictureUrlChangeAllowed } from '@/api/profiles/profile-picture-url';
 import {
   reactionsDb,
   ReactionsDb
@@ -220,6 +221,10 @@ export class ProfilesService {
       );
     let creatorOrUpdatorIdentityResponse =
       identityResponse[creator_or_updater_wallet];
+    assertProfilePictureUrlChangeAllowed(pfp_url, [
+      creatorOrUpdatorIdentityResponse?.identity?.pfp,
+      creatorOrUpdatorIdentityResponse?.profile?.pfp_url
+    ]);
     if (!creatorOrUpdatorIdentityResponse) {
       const id = randomUUID();
       await identitiesDb.insertIdentity(

@@ -1,6 +1,8 @@
 import fc from 'fast-check';
 import { Logger } from '@/logging';
+import { BadRequestException } from '@/exceptions';
 import {
+  assertProfilePictureUrlChangeAllowed,
   describeIpfsUrlShape,
   isBareCidIpfsUrl,
   isMediaHostUrl,
@@ -12,9 +14,24 @@ const schema = ProfilePictureUrlSchema.optional().allow(null).default(null);
 const CID_V0 = 'QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG';
 const CID_V1 = 'bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi';
 
-function validate(value: unknown): { value?: unknown; error?: string } {
+/**
+ * What POST /profiles does with a picture URL the profile does not have yet:
+ * the request schema, then the checks for a changed value.
+ */
+function validate(
+  value: unknown,
+  stored: Array<string | null> = []
+): { value?: unknown; error?: string } {
   const result = schema.validate(value);
-  return { value: result.value, error: result.error?.message };
+  if (result.error) {
+    return { value: result.value, error: result.error.message };
+  }
+  try {
+    assertProfilePictureUrlChangeAllowed(result.value, stored);
+  } catch (error) {
+    return { value: result.value, error: (error as Error).message };
+  }
+  return { value: result.value, error: undefined };
 }
 
 const warn = jest.fn();
@@ -157,5 +174,63 @@ describe('profile picture ipfs:// URLs', () => {
     expect(isBareCidIpfsUrl(`ipfs://${CID_V0.slice(0, -1)}0`)).toBe(false);
     expect(isBareCidIpfsUrl(`ipfs://${CID_V1}`)).toBe(true);
     expect(isBareCidIpfsUrl(`ipfs://${CID_V1.slice(0, 40)}`)).toBe(false);
+  });
+});
+
+describe('profile picture URLs already stored for the profile', () => {
+  const lookAlike = 'https://d3lqz0a4bldqgf.cloudfront.net.example/pfp.png';
+  const withUserinfo = 'https://d3lqz0a4bldqgf@example.com/pfp.png';
+
+  it.each([lookAlike, withUserinfo])(
+    'keeps accepting %s when it is resent unchanged',
+    (url) => {
+      expect(validate(url, [null, url])).toEqual({
+        value: url,
+        error: undefined
+      });
+    }
+  );
+
+  it('does not log or reject an unchanged ipfs:// value in strict mode', () => {
+    process.env.PROFILE_PICTURE_IPFS_URLS_STRICT = 'true';
+    const url = `ipfs://${CID_V1}/pfp.png`;
+
+    expect(validate(url, [url]).error).toBeUndefined();
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it('refuses the same value when it replaces a different stored picture', () => {
+    expect(() =>
+      assertProfilePictureUrlChangeAllowed(lookAlike, [
+        'https://d3lqz0a4bldqgf.cloudfront.net/pfp/production/a.webp'
+      ])
+    ).toThrow(BadRequestException);
+    expect(() =>
+      assertProfilePictureUrlChangeAllowed(withUserinfo, [null, undefined])
+    ).toThrow(BadRequestException);
+  });
+
+  it('accepts ordinary new values and a cleared picture whatever is stored', () => {
+    expect(() =>
+      assertProfilePictureUrlChangeAllowed(`ipfs://${CID_V0}`, [lookAlike])
+    ).not.toThrow();
+    expect(() =>
+      assertProfilePictureUrlChangeAllowed(
+        'https://d3lqz0a4bldqgf.cloudfront.net/pfp/production/b.webp',
+        [lookAlike]
+      )
+    ).not.toThrow();
+    expect(() =>
+      assertProfilePictureUrlChangeAllowed(null, [lookAlike])
+    ).not.toThrow();
+  });
+
+  it('still refuses values outside the previously accepted shape, stored or not', () => {
+    for (const url of [
+      'https://example.com/pfp.png',
+      'data:image/png;base64,AA'
+    ]) {
+      expect(validate(url, [url]).error).toBeDefined();
+    }
   });
 });

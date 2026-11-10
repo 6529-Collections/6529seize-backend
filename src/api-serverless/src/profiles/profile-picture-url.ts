@@ -1,5 +1,6 @@
 import * as Joi from 'joi';
 import { CLOUDFRONT_LINK } from '@/constants';
+import { BadRequestException } from '@/exceptions';
 import { Logger } from '@/logging';
 
 const logger = Logger.get('PROFILE_PICTURE_URL');
@@ -86,20 +87,46 @@ function checkIpfsUrl(value: string): boolean {
   return !strict;
 }
 
-/**
- * `pfp_url` is either an image on the media host or an ipfs:// link. Media
- * host URLs are checked exactly (scheme, host, no userinfo or port). ipfs://
- * links that are not a bare CID are logged and, until the strict switch is on,
- * still accepted.
- */
-export const ProfilePictureUrlSchema = Joi.string().custom(
-  (value: string, helpers) => {
-    if (isMediaHostUrl(value)) {
-      return value;
-    }
-    if (ANY_IPFS_URL_REGEX.test(value) && checkIpfsUrl(value)) {
-      return value;
-    }
-    return helpers.message({ custom: INVALID_PROFILE_PICTURE_URL_MESSAGE });
-  }
+// What POST /profiles has always accepted. Profile edits resend the stored
+// picture URL, so a stored value keeps passing this even when it would fail
+// the exact checks below.
+const PREVIOUSLY_ACCEPTED_URL_REGEX =
+  /^(?:ipfs:\/\/|https:\/\/d3lqz0a4bldqgf).+$/;
+
+/** Request-level shape of `pfp_url`, unchanged from before. */
+export const ProfilePictureUrlSchema = Joi.string().regex(
+  PREVIOUSLY_ACCEPTED_URL_REGEX
 );
+
+/**
+ * Whether a newly set `pfp_url` is allowed: an image on the media host
+ * (checked exactly: scheme, host, no userinfo or port) or an ipfs:// link.
+ * ipfs:// links that are not a bare CID are logged and, until the strict
+ * switch is on, still accepted.
+ */
+export function isAllowedNewProfilePictureUrl(value: string): boolean {
+  return (
+    isMediaHostUrl(value) ||
+    (ANY_IPFS_URL_REGEX.test(value) && checkIpfsUrl(value))
+  );
+}
+
+/**
+ * Applies the exact checks only when `submitted` differs from every value
+ * already stored for the profile: an unchanged picture URL is kept as it is,
+ * so edits that resend it (name, banner, classification) keep working.
+ */
+export function assertProfilePictureUrlChangeAllowed(
+  submitted: string | null | undefined,
+  stored: ReadonlyArray<string | null | undefined>
+): void {
+  if (submitted === null || submitted === undefined) {
+    return;
+  }
+  if (stored.some((value) => value === submitted)) {
+    return;
+  }
+  if (!isAllowedNewProfilePictureUrl(submitted)) {
+    throw new BadRequestException(INVALID_PROFILE_PICTURE_URL_MESSAGE);
+  }
+}
