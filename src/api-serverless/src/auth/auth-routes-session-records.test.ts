@@ -310,7 +310,8 @@ function makeResponse() {
   const response = {
     setHeader: jest.fn(),
     send: jest.fn(),
-    status: jest.fn()
+    status: jest.fn(),
+    locals: {}
   };
   response.status.mockReturnValue(response);
   return response;

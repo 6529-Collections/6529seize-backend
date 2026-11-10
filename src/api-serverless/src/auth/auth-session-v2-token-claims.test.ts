@@ -258,7 +258,8 @@ describe('session-v2 access token claims', () => {
       created_at: new Date(),
       expires_at: new Date(Date.now() + 60_000),
       consumed_at: new Date(),
-      consumed_session_id: null
+      consumed_session_id: null,
+      consumed_client_family: null
     });
 
     const redeemed = await redeemConnectionShare({
