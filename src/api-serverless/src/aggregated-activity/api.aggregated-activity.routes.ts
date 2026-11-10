@@ -1,4 +1,6 @@
 import { Request, Response } from 'express';
+import * as Joi from 'joi';
+import { getValidatedByJoiOrThrow } from '@/api/validation';
 import { asyncRouter } from '../async.router';
 
 import { enums } from '../../../enums';
@@ -39,6 +41,23 @@ export const AGGREGATED_ACTIVITY_SORT = [
   'burns'
 ];
 
+interface AggregatedActivityQuery {
+  sort?: string;
+  page: number;
+  page_size: number;
+  search?: string;
+  season?: number;
+}
+
+export const AggregatedActivityQuerySchema: Joi.ObjectSchema<AggregatedActivityQuery> =
+  Joi.object<AggregatedActivityQuery>({
+    sort: Joi.string().allow(''),
+    page: Joi.number().integer().positive().default(1),
+    page_size: Joi.number().integer().positive().default(DEFAULT_PAGE_SIZE),
+    search: Joi.string().max(2000).allow(''),
+    season: Joi.number().integer().positive()
+  }).unknown(true);
+
 router.get(
   '/',
   cacheRequest(),
@@ -62,17 +81,20 @@ router.get(
     >,
     res: any
   ) {
-    let page = req.query.page ?? 1;
-    let pageSize = req.query.page_size ?? DEFAULT_PAGE_SIZE;
+    const query = getValidatedByJoiOrThrow(
+      req.query,
+      AggregatedActivityQuerySchema
+    );
+    let page = query.page;
+    let pageSize = query.page_size;
     const sort =
-      req.query.sort &&
-      AGGREGATED_ACTIVITY_SORT.includes(req.query.sort.toLowerCase())
-        ? req.query.sort
+      query.sort && AGGREGATED_ACTIVITY_SORT.includes(query.sort.toLowerCase())
+        ? query.sort
         : AGGREGATED_ACTIVITY_SORT[0];
     const sortDir = resolveSortDirection(req.query.sort_direction);
-    const search = req.query.search;
+    const search = query.search;
     const content = enums.resolve(MetricsContent, req.query.content);
-    const season = req.query.season;
+    const season = query.season;
     const collector = enums.resolve(MetricsCollector, req.query.collector);
 
     const downloadPage = req.query.download_page;
