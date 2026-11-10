@@ -1,0 +1,189 @@
+{
+  "@context": "http://iiif.io/api/presentation/3/context.json",
+  "id": "https://6529.io/iiif/objects/stream-still-image/manifest",
+  "type": "Manifest",
+  "label": {
+    "none": [
+      "Synthetic media capture vector"
+    ]
+  },
+  "summary": {
+    "en": [
+      "A synthetic artwork record for checking capture and archival interchange."
+    ]
+  },
+  "metadata": [
+    {
+      "label": {
+        "en": [
+          "Record status"
+        ]
+      },
+      "value": {
+        "en": [
+          "Published presentation compiled from the artist-confirmed dossier snapshot."
+        ]
+      }
+    },
+    {
+      "label": {
+        "en": [
+          "Source record digest"
+        ]
+      },
+      "value": {
+        "en": [
+          "sha256:9491f230ded7ccf6e059ca338dfa1e182c563d8abee433181052a243fdb60e2a"
+        ]
+      }
+    },
+    {
+      "label": {
+        "en": [
+          "Publication compiler"
+        ]
+      },
+      "value": {
+        "en": [
+          "museum-publication-1.0.0"
+        ]
+      }
+    },
+    {
+      "label": {
+        "en": [
+          "Resource role"
+        ]
+      },
+      "value": {
+        "en": [
+          "synthetic.svg — Authorized manifestation"
+        ]
+      }
+    }
+  ],
+  "requiredStatement": {
+    "label": {
+      "en": [
+        "Credit"
+      ]
+    },
+    "value": {
+      "en": [
+        "Synthetic Test Artist, Test Work, 2026. CC0 1.0."
+      ]
+    }
+  },
+  "rights": "http://creativecommons.org/publicdomain/zero/1.0/",
+  "provider": [
+    {
+      "id": "https://6529.io/museum",
+      "type": "Agent",
+      "label": {
+        "en": [
+          "6529 Museum"
+        ]
+      }
+    }
+  ],
+  "homepage": [
+    {
+      "id": "https://6529.io/iiif/objects/stream-still-image",
+      "type": "Text",
+      "label": {
+        "en": [
+          "Museum object page"
+        ]
+      },
+      "format": "text/html"
+    }
+  ],
+  "seeAlso": [
+    {
+      "id": "https://6529.io/iiif/objects/stream-still-image/source",
+      "type": "Dataset",
+      "label": {
+        "en": [
+          "Source dossier record"
+        ]
+      },
+      "format": "application/json"
+    }
+  ],
+  "thumbnail": [
+    {
+      "id": "https://media.example/publication/still-image/30000000-0000-4000-8000-000000000100.svg",
+      "type": "Image",
+      "format": "image/svg+xml",
+      "width": 10,
+      "height": 10
+    }
+  ],
+  "rendering": [
+    {
+      "id": "https://media.example/publication/still-image/30000000-0000-4000-8000-000000000100.svg",
+      "type": "Image",
+      "format": "image/svg+xml",
+      "label": {
+        "none": [
+          "synthetic.svg — Authorized manifestation"
+        ]
+      },
+      "width": 10,
+      "height": 10
+    }
+  ],
+  "items": [
+    {
+      "id": "https://6529.io/iiif/objects/stream-still-image/canvas/30000000-0000-4000-8000-000000000501",
+      "type": "Canvas",
+      "label": {
+        "none": [
+          "synthetic.svg"
+        ]
+      },
+      "width": 10,
+      "height": 10,
+      "items": [
+        {
+          "id": "https://6529.io/iiif/objects/stream-still-image/page/30000000-0000-4000-8000-000000000501/painting",
+          "type": "AnnotationPage",
+          "items": [
+            {
+              "id": "https://6529.io/iiif/objects/stream-still-image/annotation/30000000-0000-4000-8000-000000000501/resource-0",
+              "type": "Annotation",
+              "motivation": "painting",
+              "body": {
+                "id": "https://media.example/publication/still-image/30000000-0000-4000-8000-000000000100.svg",
+                "type": "Image",
+                "format": "image/svg+xml",
+                "label": {
+                  "none": [
+                    "synthetic.svg"
+                  ]
+                },
+                "width": 10,
+                "height": 10
+              },
+              "target": "https://6529.io/iiif/objects/stream-still-image/canvas/30000000-0000-4000-8000-000000000501#xywh=0,0,10,10"
+            }
+          ]
+        }
+      ],
+      "metadata": [
+        {
+          "label": {
+            "en": [
+              "Resource role"
+            ]
+          },
+          "value": {
+            "en": [
+              "synthetic.svg — Authorized manifestation"
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

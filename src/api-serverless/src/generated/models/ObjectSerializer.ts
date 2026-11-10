@@ -106,6 +106,13 @@ export * from '../models/ApiArtworkMuseumRecordInput';
 export * from '../models/ApiArtworkMuseumRecordPayload';
 export * from '../models/ApiArtworkMuseumRecordPayloadEvidenceInner';
 export * from '../models/ApiArtworkMuseumRecords';
+export * from '../models/ApiArtworkPublication';
+export * from '../models/ApiArtworkPublicationBindings';
+export * from '../models/ApiArtworkPublicationProvider';
+export * from '../models/ApiArtworkPublicationRequest';
+export * from '../models/ApiArtworkPublicationRequiredStatement';
+export * from '../models/ApiArtworkPublicationRights';
+export * from '../models/ApiArtworkPublicationSelection';
 export * from '../models/ApiAttachment';
 export * from '../models/ApiAttachmentKind';
 export * from '../models/ApiAttachmentSafety';
@@ -628,6 +635,7 @@ export * from '../models/ApiModerationCurrentState';
 export * from '../models/ApiModerationEvaluation';
 export * from '../models/ApiModerationReviewCase';
 export * from '../models/ApiModerationReviewCasePage';
+export * from '../models/ApiMuseumIiifManifest';
 export * from '../models/ApiNft';
 export * from '../models/ApiNftActivityEvent';
 export * from '../models/ApiNftActivityPage';
@@ -1096,6 +1104,13 @@ import { ApiArtworkMuseumRecordInput   , ApiArtworkMuseumRecordInputEventStatusE
 import { ApiArtworkMuseumRecordPayload   , ApiArtworkMuseumRecordPayloadEventStatusEnum         , ApiArtworkMuseumRecordPayloadRecordingBasisEnum   } from '../models/ApiArtworkMuseumRecordPayload';
 import { ApiArtworkMuseumRecordPayloadEvidenceInner } from '../models/ApiArtworkMuseumRecordPayloadEvidenceInner';
 import { ApiArtworkMuseumRecords } from '../models/ApiArtworkMuseumRecords';
+import { ApiArtworkPublication    , ApiArtworkPublicationStateEnum          } from '../models/ApiArtworkPublication';
+import { ApiArtworkPublicationBindings } from '../models/ApiArtworkPublicationBindings';
+import { ApiArtworkPublicationProvider } from '../models/ApiArtworkPublicationProvider';
+import { ApiArtworkPublicationRequest    , ApiArtworkPublicationRequestRolesEnum   } from '../models/ApiArtworkPublicationRequest';
+import { ApiArtworkPublicationRequiredStatement } from '../models/ApiArtworkPublicationRequiredStatement';
+import { ApiArtworkPublicationRights } from '../models/ApiArtworkPublicationRights';
+import { ApiArtworkPublicationSelection } from '../models/ApiArtworkPublicationSelection';
 import { ApiAttachment         } from '../models/ApiAttachment';
 import { ApiAttachmentKind } from '../models/ApiAttachmentKind';
 import { ApiAttachmentSafety      } from '../models/ApiAttachmentSafety';
@@ -1618,6 +1633,7 @@ import { ApiModerationCurrentState, ApiModerationCurrentStateProfileStatusEnum  
 import { ApiModerationEvaluation    , ApiModerationEvaluationOutcomeEnum           } from '../models/ApiModerationEvaluation';
 import { ApiModerationReviewCase, ApiModerationReviewCaseCheckOutcomeEnum    , ApiModerationReviewCaseSubjectTypeEnum            } from '../models/ApiModerationReviewCase';
 import { ApiModerationReviewCasePage } from '../models/ApiModerationReviewCasePage';
+import { ApiMuseumIiifManifest } from '../models/ApiMuseumIiifManifest';
 import { ApiNft      , ApiNftTokenTypeEnum                               } from '../models/ApiNft';
 import { ApiNftActivityEvent , ApiNftActivityEventKindEnum                   } from '../models/ApiNftActivityEvent';
 import { ApiNftActivityPage } from '../models/ApiNftActivityPage';
@@ -2032,6 +2048,8 @@ let enumsMap: Set<string> = new Set<string>([
     "ApiArtworkMuseumRecordInputEventStatusEnum",
     "ApiArtworkMuseumRecordPayloadEventStatusEnum",
     "ApiArtworkMuseumRecordPayloadRecordingBasisEnum",
+    "ApiArtworkPublicationStateEnum",
+    "ApiArtworkPublicationRequestRolesEnum",
     "ApiAttachmentKind",
     "ApiAttachmentSafetyScanner",
     "ApiAttachmentSafetyStatus",
@@ -2391,6 +2409,13 @@ let typeMap: {[index: string]: any} = {
     "ApiArtworkMuseumRecordPayload": ApiArtworkMuseumRecordPayload,
     "ApiArtworkMuseumRecordPayloadEvidenceInner": ApiArtworkMuseumRecordPayloadEvidenceInner,
     "ApiArtworkMuseumRecords": ApiArtworkMuseumRecords,
+    "ApiArtworkPublication": ApiArtworkPublication,
+    "ApiArtworkPublicationBindings": ApiArtworkPublicationBindings,
+    "ApiArtworkPublicationProvider": ApiArtworkPublicationProvider,
+    "ApiArtworkPublicationRequest": ApiArtworkPublicationRequest,
+    "ApiArtworkPublicationRequiredStatement": ApiArtworkPublicationRequiredStatement,
+    "ApiArtworkPublicationRights": ApiArtworkPublicationRights,
+    "ApiArtworkPublicationSelection": ApiArtworkPublicationSelection,
     "ApiAttachment": ApiAttachment,
     "ApiAttachmentSafety": ApiAttachmentSafety,
     "ApiAuthSettings": ApiAuthSettings,
@@ -2863,6 +2888,7 @@ let typeMap: {[index: string]: any} = {
     "ApiModerationEvaluation": ApiModerationEvaluation,
     "ApiModerationReviewCase": ApiModerationReviewCase,
     "ApiModerationReviewCasePage": ApiModerationReviewCasePage,
+    "ApiMuseumIiifManifest": ApiMuseumIiifManifest,
     "ApiNft": ApiNft,
     "ApiNftActivityEvent": ApiNftActivityEvent,
     "ApiNftActivityPage": ApiNftActivityPage,
