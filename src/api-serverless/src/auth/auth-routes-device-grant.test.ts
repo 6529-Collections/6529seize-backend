@@ -468,7 +468,16 @@ describe('wallet auth device grants', () => {
           domain: '6529.io',
           chainId: 1,
           issuedAt: new Date(parsed.issuedAt!),
-          deviceLabel: 'Chrome on macOS'
+          deviceLabel: 'Chrome on macOS',
+          registration: {
+            apiHost: 'api.6529.io',
+            requestOrigin: 'https://6529.io',
+            session: {
+              clientType: 'web',
+              binding: 'siwe',
+              sessionId: undefined
+            }
+          }
         },
         expect.anything()
       );

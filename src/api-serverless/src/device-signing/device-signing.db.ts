@@ -36,13 +36,23 @@ export class DeviceSigningDb extends LazyDbAccessCompatibleService {
         id, wallet, key_type, device_key, scopes, device_label, domain,
         message, wallet_signature, chain_id, issued_at, expires_at,
         created_at, revoked_at, last_used_at, notice_pending,
-        notice_encrypted_dm_device_key
+        notice_encrypted_dm_device_key, registered_client_type,
+        registered_binding, registered_request_origin, registered_session_id
       ) values (
         :id, :wallet, :key_type, :device_key, :scopes, :device_label, :domain,
         :message, :wallet_signature, :chain_id, :issued_at, :expires_at,
-        :created_at, :revoked_at, :last_used_at, true, :noticeMlsKey
+        :created_at, :revoked_at, :last_used_at, true, :noticeMlsKey,
+        :registered_client_type, :registered_binding,
+        :registered_request_origin, :registered_session_id
       )`,
-      { ...grant, noticeMlsKey: grant.notice_encrypted_dm_device_key ?? null },
+      {
+        registered_client_type: null,
+        registered_binding: null,
+        registered_request_origin: null,
+        registered_session_id: null,
+        ...grant,
+        noticeMlsKey: grant.notice_encrypted_dm_device_key ?? null
+      },
       ctx
     );
   }

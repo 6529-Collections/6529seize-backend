@@ -78,6 +78,11 @@ import {
   recoversToAppGrantWallet
 } from '@/api/device-signing/app-device-grant';
 import { computeDeviceGrantId } from '@/api/device-signing/device-grant-message';
+import {
+  checkGrantOrigin,
+  GrantRegistrationRequest,
+  toGrantRegistrationRecord
+} from '@/api/device-signing/grant-origins';
 import { parseSiweWebAuthMessage } from '@/api/wallet-signatures/siwe-wallet-auth';
 import { Logger } from '@/logging';
 import { ConnectionWrapper } from '@/sql-executor';
@@ -322,7 +327,8 @@ export class E2eeDevicesService {
 
   private async verifyRegistration(
     callerProfileId: string,
-    request: ApiE2eeRegisterDeviceRequest
+    request: ApiE2eeRegisterDeviceRequest,
+    registration: GrantRegistrationRequest | null
   ) {
     const grant = normalizeE2eeDeviceGrant({
       ...request.grant
@@ -337,6 +343,13 @@ export class E2eeDevicesService {
     });
     if (!verification.ok) throw e2eeErrors.badGrant(verification.reason);
     await this.requireWalletOfCaller(callerProfileId, grant.wallet);
+    const originCheck = checkGrantOrigin({
+      route: 'e2ee_devices',
+      origin: grant.origin,
+      grantId: verification.grantId,
+      request: registration
+    });
+    if (originCheck.refused) throw e2eeErrors.badGrant('unrecognized_origin');
     return {
       grant,
       grantId: verification.grantId,
@@ -422,28 +435,38 @@ export class E2eeDevicesService {
 
   async registerDevice(
     callerProfileId: string,
-    request: ApiE2eeRegisterDeviceRequest
+    request: ApiE2eeRegisterDeviceRequest,
+    registration: GrantRegistrationRequest | null = null
   ): Promise<ApiE2eeDevice> {
-    const verified = await this.verifyRegistration(callerProfileId, request);
-    return this.storeDevice(callerProfileId, verified, request);
+    const verified = await this.verifyRegistration(
+      callerProfileId,
+      request,
+      registration
+    );
+    return this.storeDevice(callerProfileId, verified, request, registration);
   }
 
-  /** NC8: registration through a combined sign-in grant, no new signature. */
+  /**
+   * NC8: registration through a combined sign-in grant, no new signature.
+   * The stored grant's origin was checked when it was stored.
+   */
   async registerLoginGrantDevice(
     callerProfileId: string,
-    request: ApiE2eeRegisterLoginGrantDeviceRequest
+    request: ApiE2eeRegisterLoginGrantDeviceRequest,
+    registration: GrantRegistrationRequest | null = null
   ): Promise<ApiE2eeDevice> {
     const verified = await this.verifyLoginGrantRegistration(
       callerProfileId,
       request
     );
-    return this.storeDevice(callerProfileId, verified, request);
+    return this.storeDevice(callerProfileId, verified, request, registration);
   }
 
   private async storeDevice(
     callerProfileId: string,
     verified: VerifiedDeviceGrant,
-    request: { readonly label?: string; readonly platform: unknown }
+    request: { readonly label?: string; readonly platform: unknown },
+    registration: GrantRegistrationRequest | null
   ): Promise<ApiE2eeDevice> {
     const { grant } = verified;
     const now = this.deps.now();
@@ -467,7 +490,8 @@ export class E2eeDevicesService {
       grant_message: verified.grantMessage,
       label: sanitizeE2eeDeviceLabel(request.label),
       platform: String(request.platform),
-      updated_at: now
+      updated_at: now,
+      ...toGrantRegistrationRecord(registration)
     };
     const device = await this.db.executeNativeQueriesInTransaction(
       async (connection) => {

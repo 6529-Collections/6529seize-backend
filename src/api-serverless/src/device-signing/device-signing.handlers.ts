@@ -22,6 +22,7 @@ import {
   registerDeviceGrantSchema
 } from './device-signing.validation';
 import { dropSignedEventsService } from './drop-signed-events.service';
+import { grantRegistrationRequestOf } from './grant-origins';
 
 const logger = Logger.get('DEVICE_SIGNING_HANDLERS');
 
@@ -57,7 +58,14 @@ export async function handleRegisterDeviceGrant(
       req.body as ApiRegisterDeviceGrantRequest,
       registerDeviceGrantSchema
     ),
-    { timer, authenticationContext }
+    {
+      timer,
+      authenticationContext,
+      registration: grantRegistrationRequestOf(
+        req,
+        authenticationContext.accessTokenSession
+      )
+    }
   );
 }
 

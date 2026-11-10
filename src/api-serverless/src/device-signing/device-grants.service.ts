@@ -46,6 +46,11 @@ import {
   toApiDeviceGrant,
   toOwnedApiDeviceGrant
 } from './device-signing.mappers';
+import {
+  checkGrantOrigin,
+  GrantRegistrationRequest,
+  toGrantRegistrationRecord
+} from './grant-origins';
 
 const GRANT_ID_PATTERN = /^0x[0-9a-f]{64}$/;
 
@@ -60,10 +65,14 @@ export interface VerifiedLoginGrant {
   readonly issuedAt: Date;
   readonly deviceLabel: string | null | undefined;
   readonly encryptedDmDeviceKey?: string;
+  // The sign-in request and the session it created, recorded on the grant.
+  readonly registration?: GrantRegistrationRequest | null;
 }
 
 type GrantCallerContext = RequestContext & {
   readonly authenticationContext: AuthenticationContext;
+  // The registering request, recorded on a new app grant.
+  readonly registration?: GrantRegistrationRequest | null;
 };
 
 /**
@@ -136,7 +145,8 @@ export class DeviceGrantsService {
       last_used_at: null,
       ...(grant.encryptedDmDeviceKey
         ? { notice_encrypted_dm_device_key: grant.encryptedDmDeviceKey }
-        : {})
+        : {}),
+      ...toGrantRegistrationRecord(grant.registration)
     };
     return this.storeGrant(entity, ctx);
   }
@@ -188,6 +198,18 @@ export class DeviceGrantsService {
         `Invalid device grant: ${verification.reason}`
       );
     }
+    const registration = ctx.registration ?? null;
+    const originCheck = checkGrantOrigin({
+      route: 'device_grants',
+      origin: grant.origin,
+      grantId: verification.grantId,
+      request: registration
+    });
+    if (originCheck.refused) {
+      throw new BadRequestException(
+        'Invalid device grant: unrecognized origin'
+      );
+    }
     return this.storeGrant(
       {
         id: verification.grantId,
@@ -207,7 +229,8 @@ export class DeviceGrantsService {
         last_used_at: null,
         ...(grant.mls_device_key
           ? { notice_encrypted_dm_device_key: grant.mls_device_key }
-          : {})
+          : {}),
+        ...toGrantRegistrationRecord(registration)
       },
       ctx
     );

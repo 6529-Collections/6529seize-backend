@@ -1,4 +1,8 @@
-import { getAuthenticationContext } from '@/api/auth/auth';
+import {
+  getAccessTokenSessionOrNull,
+  getAuthenticationContext
+} from '@/api/auth/auth';
+import { grantRegistrationRequestOf } from '@/api/device-signing/grant-origins';
 import {
   E2eeBackupServiceDeps,
   E2eeBackupsService
@@ -192,7 +196,8 @@ export async function handleE2eeRegisterDevice(
   const caller = await e2eeCaller(req);
   return services.devices.registerDevice(
     caller,
-    body<ApiE2eeRegisterDeviceRequest>(req.body, e2eeRegisterDeviceSchema)
+    body<ApiE2eeRegisterDeviceRequest>(req.body, e2eeRegisterDeviceSchema),
+    grantRegistrationRequestOf(req, getAccessTokenSessionOrNull(req))
   );
 }
 
@@ -205,7 +210,8 @@ export async function handleE2eeRegisterLoginGrantDevice(
     body<ApiE2eeRegisterLoginGrantDeviceRequest>(
       req.body,
       e2eeRegisterLoginGrantDeviceSchema
-    )
+    ),
+    grantRegistrationRequestOf(req, getAccessTokenSessionOrNull(req))
   );
 }
 
