@@ -9,7 +9,7 @@ const MAX_SNAPSHOT_WAVES = 50000;
 const snapshotUnavailable = (collection: string) =>
   new CustomApiCompliantException(
     503,
-    `${collection} waves are temporarily unavailable. Please retry.`,
+    `${collection === 'all' ? 'All' : 'Joined'} waves are temporarily unavailable. Please retry.`,
     `${collection.toUpperCase()}_WAVE_SNAPSHOT_UNAVAILABLE`
   );
 const CURSOR_PATTERN =
@@ -97,7 +97,7 @@ export class JoinedWaveSnapshotStore {
     if (!snapshot || snapshot.expiresAt <= Date.now()) {
       throw new CustomApiCompliantException(
         410,
-        `${this.collection} wave list expired. Refresh the list to continue.`,
+        `${this.collection === 'all' ? 'All' : 'Joined'} wave list expired. Refresh the list to continue.`,
         `${this.collection.toUpperCase()}_WAVE_SNAPSHOT_EXPIRED`
       );
     }
