@@ -6,7 +6,8 @@ This document describes the current wallet authentication contract and the
 session-v2 flow. Web session challenges use ERC-4361 Sign-In with Ethereum
 (SIWE), while native and desktop clients retain the 6529 structured-signature
 format. The auth system intentionally keeps legacy endpoints stable. The API
-contract and database schema are unchanged; no database migration is required.
+contract is unchanged. Schema changes are additive entity columns applied by
+`dbMigrationsLoop`; no migration file is required.
 
 ## Compatibility Model
 
@@ -33,9 +34,9 @@ Connection sharing is a separate optional flow:
 
 ## Legacy Flow
 
-`GET /api/auth/nonce` keeps the legacy request shape. It accepts `signer_address` and optional `short_nonce`, then returns a nonce and server signature.
+`GET /api/auth/nonce` keeps the legacy request shape. It accepts `signer_address` and optional `short_nonce`, then returns a nonce and server signature. Clients pass `server_signature` back unchanged. It is a JWT whose payload names the challenge type (`legacy_nonce`) and the text to sign, and it expires after `AUTH_LEGACY_TEXT_CHALLENGE_TTL_SECONDS` (five minutes by default).
 
-`POST /api/auth/login` verifies the signed nonce, resolves the optional role/proxy identity, returns a JWT access token, and returns the legacy refresh token from `refresh_tokens`. The refresh-token row stores the server-resolved role from the signed login so future refreshes continue the same legacy session role instead of accepting a new client-selected role.
+`POST /api/auth/login` verifies the signed nonce, resolves the optional role/proxy identity, returns a JWT access token, and returns the legacy refresh token from `refresh_tokens`. Each plain-text challenge signs in once: it is consumed in the same Redis store as structured nonces and, like them, is refused when that store is unavailable outside local and test runs. Builds before November 2026 signed the text itself as the JWT payload, without an expiry. Such a challenge is accepted once during a 15-minute transition that starts when the first API instance of the new build starts (shared through Redis; nothing to configure), and never from 2026-11-17T00:00Z (UTC). Structured messages from `/auth/session-nonce` keep working on `/auth/login` with their own expiry and single use. Usage is reported as the EMF metric `6529/Auth` `LegacyAuthCalls` by route, challenge format, coarse client family and outcome. The refresh-token row stores the server-resolved role from the signed login so future refreshes continue the same legacy session role instead of accepting a new client-selected role.
 
 `POST /api/auth/redeem-refresh-token` redeems the legacy refresh token for a fresh JWT access token. It remains enabled while legacy clients are supported. Refresh preserves the role already bound to that refresh token. If an existing production refresh token has no bound role yet, the first refresh that supplies a role validates it server-side and binds it to that token; later refreshes must match the bound role. Unbound refreshes without a requested role return a wallet-only JWT.
 
@@ -335,7 +336,10 @@ For native and desktop sessions:
 web clients send `client_address` so logout targets the matching address-scoped
 cookie and does not revoke whichever account last wrote the compatibility
 cookie. When `all_sessions=true`, it revokes all wallet auth sessions for the
-verified target address. Web logout also checks the request `Origin` against the
+verified target address and removes that wallet's legacy refresh token, so
+older Desktop builds that hold it are signed out as well (the next legacy
+sign-in issues a new one). A single-session logout leaves the legacy refresh
+token in place. Web logout also checks the request `Origin` against the
 stored session origin before revoking an existing session.
 
 ## Connection Sharing
@@ -380,6 +384,25 @@ Redemption atomically marks the share consumed, so the same code cannot be
 redeemed again. Expiry is checked during redemption. These paths do not
 immediately delete the stored share row or its setup ciphertext.
 
+A wallet has at most one live link per target client type and kind (with or
+without device setup): creating a share marks the wallet's earlier unconsumed,
+unexpired share of the same target and kind consumed, without a session, so
+an old QR code or link stops working once its source shows a new one. A plain
+link and a device-setup link for the same target can be live together, so
+going back from secure setup to a plain link keeps the plain link valid.
+Device-setup links expire after `AUTH_CONNECTION_SHARE_SETUP_TTL_SECONDS`
+(default 120 seconds), plain links after
+`AUTH_CONNECTION_SHARE_CODE_TTL_SECONDS` (default 300 seconds).
+
+A redeem records the coarse client family of the redeeming request (for
+example `desktop` or `browser`, never the user agent) in
+`consumed_client_family`, logs the share id, target and whether device setup
+was returned, and emits the EMF metric `6529/Auth` `ConnectionShareRedeems` by
+target, outcome and device setup. A source address that sends 20 invalid,
+used or expired codes within 10 minutes gets `429` until the window ends; the
+counter is kept in Redis under a keyed hash of the address and the limiter is
+off when Redis is unavailable.
+
 The desktop compatibility flow remains available for legacy Desktop builds that
 still need the legacy refresh-token handoff:
 
@@ -400,6 +423,8 @@ only while both connection sharing and legacy refresh redemption are enabled.
 The revised auth flow uses these relevant flags/config values:
 
 - `AUTH_STRUCTURED_SIGNATURES_REQUIRED`: default false. When true, legacy signature verification paths reject unstructured wallet messages where structured verification is used.
+- `AUTH_LEGACY_TEXT_CHALLENGE_TTL_SECONDS`: lifetime of new `GET /auth/nonce` challenges. Defaults to 300 seconds; values are clamped to 60-3600 and anything that is not a whole number means the default. Widen it if signers with multi-owner contract wallets cannot finish within five minutes.
+- `AUTH_LEGACY_TEXT_LOGIN_DISABLED`: default false. When true, `GET /auth/nonce` answers `410` and `POST /auth/login` refuses plain-text signatures. Structured messages on `/auth/login`, the session-v2 routes and drop, rememe and NextGen signatures are not affected. Turn it on once the `LegacyAuthCalls` metric shows no current client signing in with plain text.
 - `WEB_APP_ORIGIN`: canonical first-party web app origin. The backend uses it to derive credentialed CORS origins and SIWE domain/URI checks. Values must be exact origins without credentials, a non-root path, query, or fragment.
 - `WEB_APP_ADDITIONAL_ORIGINS`: comma-separated extra exact first-party web app origins. These are additive to the built-in defaults and `WEB_APP_ORIGIN`.
 - Built-in web app origin defaults: `api.6529.io` allows credentialed web auth from `https://6529.io`; `api.staging.6529.io` allows credentialed web auth from `https://staging.6529.io`; localhost API hosts allow common localhost frontend ports.
@@ -414,6 +439,7 @@ The revised auth flow uses these relevant flags/config values:
 - `AUTH_CONNECTION_SHARING_DISABLED`: default false. Set to `true` only to disable `/auth/connection-share`, `/auth/connection-share/legacy-desktop`, and `/auth/connection-share/redeem`; otherwise connection sharing is enabled.
 - `AUTH_LEGACY_REFRESH_DISABLED`: default false. Set to `true` only after the configured v2 migration deadline and final shutdown checks to make `/auth/redeem-refresh-token` and the legacy desktop connection-sharing bridge unavailable without removing the endpoints.
 - `AUTH_CONNECTION_SHARE_CODE_TTL_SECONDS`: one-time connection share code lifetime. Defaults to 300 seconds.
+- `AUTH_CONNECTION_SHARE_SETUP_TTL_SECONDS`: lifetime of connection share codes that carry encrypted device setup. Defaults to 120 seconds and is never longer than `AUTH_CONNECTION_SHARE_CODE_TTL_SECONDS`; a missing or non-positive value means the default.
 - `AUTH_LEGACY_WS_QUERY_TOKEN_ENABLED`: default true. Controls legacy WebSocket JWT query-token support.
 
 There is intentionally no `AUTH_SESSION_V2_ENABLED` flag. Session-v2 endpoints are separate from the legacy endpoints, so exposing them does not change legacy client behavior.
@@ -444,7 +470,9 @@ content.
 - Wallet address and optional role to share.
 - Target client type.
 - Expiry and consumption metadata.
-- The native session id created when the share is redeemed.
+- The native session id created when the share is redeemed (null for a share
+  retired by a newer one).
+- The coarse client family of the redeeming request.
 
 `refresh_tokens` stores legacy refresh-token compatibility state:
 

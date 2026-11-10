@@ -28,12 +28,17 @@ import {
   ApiSessionWebResponse,
   ApiSessionWebResponseClientTypeEnum
 } from '@/api/generated/models/ApiSessionWebResponse';
+import { clientFamilyOf } from '@/api/auth/client-family';
+import { Logger } from '@/logging';
+
+const logger = Logger.get('AUTH_SESSION_V2');
 
 export const WALLET_SESSION_COOKIE_NAME = '6529_session';
 const WALLET_SESSION_ADDRESS_COOKIE_PREFIX = `${WALLET_SESSION_COOKIE_NAME}_`;
 
 const DEFAULT_SESSION_REFRESH_DAYS = 30;
 const DEFAULT_CONNECTION_SHARE_CODE_TTL_SECONDS = 5 * 60;
+const DEFAULT_CONNECTION_SHARE_SETUP_TTL_SECONDS = 2 * 60;
 const IDEMPOTENT_WEB_SESSION_REFRESH_WINDOW_MS = Time.seconds(30).toMillis();
 const IDEMPOTENT_WEB_SESSION_REFRESH_CLOCK_SKEW_MS = Time.seconds(5).toMillis();
 
@@ -800,7 +805,7 @@ export async function logoutWebSession({
       continue;
     }
     if (allSessions) {
-      await authDb.revokeWalletAuthSessionsForAddress(existing.address, now);
+      await signOutAllSessionsOfAddress(existing.address, now);
     } else {
       await authDb.revokeWalletAuthSession(existing.id, now);
     }
@@ -840,11 +845,25 @@ export async function logoutNativeSession({
       clientType
     );
     if (existing) {
-      await authDb.revokeWalletAuthSessionsForAddress(existing.address, now);
+      await signOutAllSessionsOfAddress(existing.address, now);
     }
     return;
   }
   await authDb.revokeWalletAuthSessionByRefreshHash(refreshTokenHash, now);
+}
+
+/**
+ * Sign out everywhere for the wallet of a verified session: revokes its
+ * session-v2 sessions and removes its legacy refresh token, so older Desktop
+ * builds holding that token are signed out too. A later legacy sign-in
+ * issues a new token.
+ */
+async function signOutAllSessionsOfAddress(
+  address: string,
+  now: Date
+): Promise<void> {
+  await authDb.revokeWalletAuthSessionsForAddress(address, now);
+  await authDb.deleteLegacyRefreshTokenForAddress(address);
 }
 
 export async function createConnectionShare({
@@ -870,7 +889,16 @@ export async function createConnectionShare({
     shareRole = null;
   }
   const connectionShareCode = createOpaqueSecret();
-  const expiresAt = getConnectionShareExpiresAt();
+  const withDeviceSetup = encryptedDeviceSetup !== null;
+  const expiresAt = getConnectionShareExpiresAt(withDeviceSetup);
+  // One live link per wallet, target and kind: a new link retires the
+  // previous one, which its source no longer shows.
+  await authDb.retireLiveWalletConnectionShares({
+    address: address.toLowerCase(),
+    targetClientType,
+    withDeviceSetup,
+    now: new Date()
+  });
   const share = await authDb.createWalletConnectionShare({
     id: randomUUID(),
     connectionShareCodeHash: hashSecret(connectionShareCode),
@@ -910,7 +938,8 @@ export async function redeemConnectionShare({
         {
           connectionShareCodeHash: hashSecret(connectionShareCode),
           targetClientType,
-          now: new Date()
+          now: new Date(),
+          clientFamily: clientFamilyOf(userAgent)
         },
         connection
       );
@@ -933,6 +962,7 @@ export async function redeemConnectionShare({
       );
       return {
         ...createdSession,
+        shareId: share.id,
         encryptedDeviceSetup: share.encrypted_device_setup ?? null
       };
     }
@@ -940,6 +970,9 @@ export async function redeemConnectionShare({
   if (!session) {
     return null;
   }
+  logger.info(
+    `[CONNECTION SHARE REDEEMED] [SHARE ${session.shareId}] [TARGET ${targetClientType}] [DEVICE SETUP ${session.encryptedDeviceSetup === null ? 'no' : 'yes'}] [CLIENT ${clientFamilyOf(userAgent)}]`
+  );
   return {
     response: {
       address: session.response.address,
@@ -1226,11 +1259,27 @@ function getSessionRefreshExpiresAt(): Date {
   return new Date(Date.now() + Time.days(days).toMillis());
 }
 
-function getConnectionShareExpiresAt(): Date {
+/**
+ * Plain links live AUTH_CONNECTION_SHARE_CODE_TTL_SECONDS (300 s). Links that
+ * carry device setup live AUTH_CONNECTION_SHARE_SETUP_TTL_SECONDS (120 s),
+ * never longer than plain links; a missing or non-positive value means the
+ * default.
+ */
+function getConnectionShareExpiresAt(withDeviceSetup: boolean): Date {
   const seconds =
     env.getIntOrNull('AUTH_CONNECTION_SHARE_CODE_TTL_SECONDS') ??
     DEFAULT_CONNECTION_SHARE_CODE_TTL_SECONDS;
-  return new Date(Date.now() + Time.seconds(seconds).toMillis());
+  const configuredSetupSeconds = env.getIntOrNull(
+    'AUTH_CONNECTION_SHARE_SETUP_TTL_SECONDS'
+  );
+  const setupSeconds =
+    configuredSetupSeconds !== null && configuredSetupSeconds > 0
+      ? configuredSetupSeconds
+      : DEFAULT_CONNECTION_SHARE_SETUP_TTL_SECONDS;
+  const lifetimeSeconds = withDeviceSetup
+    ? Math.min(seconds, setupSeconds)
+    : seconds;
+  return new Date(Date.now() + Time.seconds(lifetimeSeconds).toMillis());
 }
 
 function toDate(value: Date | string): Date {
