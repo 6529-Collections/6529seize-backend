@@ -2,6 +2,7 @@
 import { Request } from 'express';
 import { ApiResponse } from '@/api/api-response';
 import { ApiActiveWaveVotesPage } from '@/api/generated/models/ApiActiveWaveVotesPage';
+import { ApiAllWavesPage } from '@/api/generated/models/ApiAllWavesPage';
 import { ApiArchiveProfileCmsPackageRequest } from '@/api/generated/models/ApiArchiveProfileCmsPackageRequest';
 import { ApiArtistArtworkAlert } from '@/api/generated/models/ApiArtistArtworkAlert';
 import { ApiArtworkDocumentationAssetLinkRequest } from '@/api/generated/models/ApiArtworkDocumentationAssetLinkRequest';
@@ -3990,6 +3991,23 @@ export type GetActiveWaveVotesRequest = Request<
   ApiResponse<GetActiveWaveVotesResponse>,
   never,
   GetActiveWaveVotesQuery,
+  Record<string, never>
+>;
+
+export type GetAllWavesPathParams = Record<string, never>;
+
+export interface GetAllWavesQuery {
+  "page_size"?: number;
+  "cursor"?: string;
+}
+
+export type GetAllWavesResponse = ApiAllWavesPage;
+
+export type GetAllWavesRequest = Request<
+  GetAllWavesPathParams,
+  ApiResponse<GetAllWavesResponse>,
+  never,
+  GetAllWavesQuery,
   Record<string, never>
 >;
 
