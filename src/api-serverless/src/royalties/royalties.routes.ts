@@ -1,16 +1,14 @@
 import { Request, Response } from 'express';
-import * as mcache from 'memory-cache';
 import { fetchRoyaltiesUploads } from '../../../db-api';
 import { Logger } from '../../../logging';
-import { CACHE_TIME_MS, PaginatedResponse } from '../api-constants';
+import { PaginatedResponse } from '../api-constants';
 import {
-  cacheKey,
   getPage,
   getPageSize,
-  resolveIntParam,
   returnCSVResult,
   returnPaginatedResult
 } from '../api-helpers';
+import { parseCollectionReportQuery } from '@/api/collection-report-query';
 import { asyncRouter } from '../async.router';
 import { cacheRequest } from '../request-cache';
 import { fetchRoyalties, RoyaltyResponse } from './royalties.db';
@@ -29,7 +27,7 @@ interface RoyaltyUploadResponse {
 
 router.get(
   `/collection/:collection_type`,
-  function (
+  async function (
     req: Request<
       {
         collection_type: string;
@@ -50,18 +48,16 @@ router.get(
   ) {
     const collectionType = req.params.collection_type;
     if (collectionType === 'memes' || collectionType === 'memelab') {
-      const fromBlockResolved = resolveIntParam(req.query.from_block);
-      const toBlockResolved = resolveIntParam(req.query.to_block);
-      return returnRoyalties(
+      const query = parseCollectionReportQuery(req.query);
+      return await returnRoyalties(
         collectionType,
-        req.query.primary === 'true',
-        req.query.artist as string,
-        req.query.from_date as string,
-        req.query.to_date as string,
-        fromBlockResolved,
-        toBlockResolved,
-        req.query.download === 'true',
-        req,
+        query.primary,
+        query.artist as string,
+        query.from_date as string,
+        query.to_date as string,
+        query.from_block,
+        query.to_block,
+        query.download,
         res
       );
     } else {
@@ -93,7 +89,7 @@ router.get(
   }
 );
 
-function returnRoyalties(
+async function returnRoyalties(
   type: 'memes' | 'memelab',
   isPrimary: boolean,
   artist: string,
@@ -102,10 +98,9 @@ function returnRoyalties(
   fromBlock: number | undefined,
   toBlock: number | undefined,
   download: boolean,
-  req: Request,
   res: Response
 ) {
-  fetchRoyalties(
+  const results: RoyaltyResponse[] = await fetchRoyalties(
     type,
     isPrimary,
     artist,
@@ -113,22 +108,16 @@ function returnRoyalties(
     toDate,
     fromBlock,
     toBlock
-  ).then(async (results: RoyaltyResponse[]) => {
-    logger.info(
-      `[${type.toUpperCase()} FROM_DATE ${fromDate} TO_DATE ${toDate} - Fetched ${
-        results.length
-      }`
-    );
+  );
+  logger.info(
+    `[${type.toUpperCase()} FROM_DATE ${fromDate} TO_DATE ${toDate} - Fetched ${
+      results.length
+    }`
+  );
 
-    if (results.length > 0) {
-      mcache.put(cacheKey(req), results, CACHE_TIME_MS);
-    }
-
-    if (download) {
-      results.forEach((r) => delete r.thumbnail);
-      return await returnCSVResult(`royalties_${type}`, results, res);
-    } else {
-      return res.json(results);
-    }
-  });
+  if (download) {
+    results.forEach((r) => delete r.thumbnail);
+    return await returnCSVResult(`royalties_${type}`, results, res);
+  }
+  return res.json(results);
 }
