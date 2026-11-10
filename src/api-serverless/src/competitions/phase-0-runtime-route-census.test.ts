@@ -38,6 +38,12 @@ const ACCEPTED_ROUTE_CACHE_CHANGES = new Map<string, ManifestRoute['cache']>([
   ['/api/waves/:id', 'cached']
 ]);
 
+// Optional authentication keeps anonymous callers working; it lets members
+// list followers of waves they can read.
+const ACCEPTED_ROUTE_AUTH_CHANGES = new Map<string, ManifestRoute['auth']>([
+  ['/api/identity-subscriptions/incoming/:target_type/:target_id', 'optional']
+]);
+
 const ACCEPTED_ROUTE_SOURCE_MOVES = new Map<string, string>([
   [
     '/api/policies/eula-consent/:deviceId',
@@ -223,9 +229,11 @@ describe('Phase 0 permanent mounted GET route census', () => {
         );
         continue;
       }
-      if (best.auth !== 'unknown' && best.auth !== route.auth) {
+      const expectedAuth =
+        ACCEPTED_ROUTE_AUTH_CHANGES.get(route.path) ?? route.auth;
+      if (best.auth !== 'unknown' && best.auth !== expectedAuth) {
         failures.push(
-          `${route.path}: auth changed from ${route.auth} to ${best.auth}`
+          `${route.path}: auth changed from ${expectedAuth} to ${best.auth}`
         );
       } else if (
         best.auth === 'unknown' &&

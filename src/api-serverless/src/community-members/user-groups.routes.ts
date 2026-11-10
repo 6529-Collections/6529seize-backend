@@ -291,6 +291,9 @@ router.post(
     if (!savingProfileId) {
       throw new ForbiddenException(`Please create a profile first.`);
     }
+    if (authenticationContext.isAuthenticatedAsProxy()) {
+      throw new ForbiddenException(`Proxies cannot change group visibility`);
+    }
     const request = getValidatedByJoiOrThrow(
       {
         visible: req.body.visible,

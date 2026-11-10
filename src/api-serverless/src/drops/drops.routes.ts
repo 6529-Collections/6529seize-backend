@@ -57,7 +57,7 @@ import { Logger } from '@/logging';
 import { wsListenersNotifier } from '@/api/ws/ws-listeners-notifier';
 import { DbPoolName } from '@/db-query.options';
 import { optionalQueryString } from '@/api/query-values';
-import { assertWaveAndParentVisibleOrThrow } from '@/api/waves/wave-access.helpers';
+import { assertWaveAndParentVisibleToProfileOrThrow } from '@/api/waves/wave-access.helpers';
 import { getStructuredWalletSignatureAudienceForHost } from '@/api/wallet-signatures/structured-wallet-signatures';
 import {
   deviceSignedWritesService,
@@ -787,17 +787,15 @@ router.post(
     const drop = drops[0];
     const waveId = drop.wave_id;
     const newTimestamp = drop.created_at - 1;
-    const wave = await wavesApiDb.findById(waveId, undefined, DbPoolName.WRITE);
-    if (wave?.is_direct_message) {
-      const groupsUserIsEligibleFor =
-        await userGroupsService.getGroupsUserIsEligibleFor(identityId, timer);
-      await assertWaveAndParentVisibleOrThrow({
-        wave,
-        groupsUserIsEligibleFor,
-        message: `Wave ${waveId} not found.`,
-        wavesApiDb,
-        ctx: { timer, authenticationContext }
-      });
+    const { wave } = await assertWaveAndParentVisibleToProfileOrThrow({
+      wave: await wavesApiDb.findById(waveId, undefined, DbPoolName.WRITE),
+      profileId: identityId,
+      userGroupsService,
+      message: `Wave ${waveId} not found.`,
+      wavesApiDb,
+      ctx: { timer, authenticationContext }
+    });
+    if (wave.is_direct_message) {
       await wavesApiDb.setDirectMessageUnreadFromSerial(
         {
           waveId,
