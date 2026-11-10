@@ -4,7 +4,7 @@
   "region": "us-east-1",
   "stackName": "seize-ipfs-prod-adopted",
   "observedAt": "2026-11-10",
-  "templateSha256": "5dd5be449e215615a25adf1c710b707cf76916b50699a207291c2ed898d98434",
+  "templateSha256": "4b8528b5312b8be725b3c06de75d56abed5fe1908f85f16844afeda7ef376556",
   "resources": {
     "Blocks": {
       "type": "AWS::S3::Bucket",
@@ -40,7 +40,7 @@
     },
     "ServerSecurityGroup": {
       "type": "AWS::EC2::SecurityGroup",
-      "identifierKey": "GroupId",
+      "identifierKey": "Id",
       "identifier": "sg-03b5af7f71e361d25",
       "modelSha256": "3225bac80e176c1c6182fdfd72cdbdacb60d2231eccde7ee78c65c9831c6a42d",
       "readOnlyProperties": [

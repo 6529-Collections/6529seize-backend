@@ -60,7 +60,7 @@ Resources:
               - ssm:ListAssociations
             # EC2 Describe actions require Resource '*'. This is read-only and
             # regional; no SSM command or content-object access is granted.
-            Resource: '*'
+            Resource: '*' # NOSONAR
             Condition:
               StringEquals:
                 aws:RequestedRegion: us-east-1
@@ -164,6 +164,7 @@ Resources:
               - Effect: Allow
                 Action:
                   - cloudformation:GetResource
+                  - cloudformation:GetTemplateSummary
                   - cloudformation:ListStacks
                 # Cloud Control GetResource does not support resource ARNs.
                 Resource: '*'

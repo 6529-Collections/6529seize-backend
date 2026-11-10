@@ -111,6 +111,8 @@ an older executable.
 
 ## Local and PR validation
 
+Use Python 3.10 or newer for the CloudFormation validator (CI uses Ubuntu 24.04).
+
 ```bash
 python3 -m venv /tmp/ipfs-control-tools
 source /tmp/ipfs-control-tools/bin/activate
@@ -298,7 +300,8 @@ remain covered by the native-model hash while the YAML uses the equivalent
 top-level instance properties. Custom tags and cache-behavior order are checked;
 AWS-owned stack tags and irrelevant SG-rule ordering are normalized.
 
-The import does **not** take ownership of the shared `EC2SSMRole`, its policies,
+The import does **not** take ownership of the block bucket's separate bucket policy,
+the shared `EC2SSMRole`, its policies,
 VPC/subnets, volume as a separate resource, AMI, DNS records, edge functions,
 referenced cache/response policies, certificates, WAF, or host files. Their
 references are preserved. Cloud Control does not return write-only properties
@@ -325,7 +328,9 @@ For a future explicitly authorized import:
    outputs in the existing `ipfs-prod` GitHub environment restricted to `main`.
    No `IPFS_CONFIG`, AWS keys, new IPFS environment, or new block bucket is needed.
 3. Run **Adopt existing IPFS resources / audit** at the exact reviewed main SHA.
-   It reads AWS and fails if configuration or identities differ from the reviewed
+   AWS first confirms each template resource's import identifier (the security
+   group uses `Id`, even though the EC2 API calls it `GroupId`). The audit fails if
+   configuration or identities differ from the reviewed
    baseline, or another live instance uses the source security group. This audit
    is available while mutation switches are disabled. It prints only public
    identifiers/check results, never raw resource models or credentials.

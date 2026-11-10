@@ -21,7 +21,7 @@ POLICY = {"Statement": [{"Effect": "Deny", "Action": "Update:*", "Principal": "*
 EXPECTED = {
     "Blocks": ("AWS::S3::Bucket", "BucketName", "6529ipfs"),
     "Server": ("AWS::EC2::Instance", "InstanceId", "i-0012c6236ad1292e8"),
-    "ServerSecurityGroup": ("AWS::EC2::SecurityGroup", "GroupId", "sg-03b5af7f71e361d25"),
+    "ServerSecurityGroup": ("AWS::EC2::SecurityGroup", "Id", "sg-03b5af7f71e361d25"),
     "SharedDistribution": ("AWS::CloudFront::Distribution", "Id", "E1D6I3Z3M5F0H4"),
 }
 TERMINAL = {"IMPORT_COMPLETE", "UPDATE_COMPLETE", "UPDATE_ROLLBACK_COMPLETE"}
@@ -109,6 +109,7 @@ def model_matches(declared, actual):
 
 def audit(manifest, template):
     identity(manifest)
+    import_schema(manifest)
     checked = []
     for name, resource in manifest["resources"].items():
         response = aws("cloudcontrol", "get-resource", *region_args(manifest), "--type-name", resource["type"], "--identifier", resource["identifier"])
@@ -126,6 +127,21 @@ def audit(manifest, template):
     require(len(instances) == 1 and instances[0]["InstanceId"] == EXPECTED["Server"][2], "Production security group is shared or its instance changed")
     require(instances[0]["State"]["Name"] == "running", "Production instance is not running; investigate before adoption")
     return {"matched": checked, "baselineSha256": fingerprint(manifest), "configurationChanged": False}
+
+
+def import_schema(manifest):
+    # Provider import identifiers can differ from familiar EC2 field names.
+    # For example, CloudFormation currently imports a security group using Id,
+    # while EC2 calls the same physical identifier GroupId. Ask AWS explicitly.
+    result = aws("cloudformation", "get-template-summary", *region_args(manifest), "--template-body", "file://" + str(TEMPLATE))
+    seen = set()
+    for row in result["ResourceIdentifierSummaries"]:
+        for name in row["LogicalResourceIds"]:
+            require(name in manifest["resources"] and name not in seen, "Unexpected AWS import resource schema")
+            item = manifest["resources"][name]
+            require(row["ResourceType"] == item["type"] and item["identifierKey"] in row["ResourceIdentifiers"], "AWS import identifier differs from the manifest: " + name)
+            seen.add(name)
+    require(seen == set(EXPECTED), "AWS did not identify every import resource")
 
 
 def imports(manifest):

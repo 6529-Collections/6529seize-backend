@@ -28,6 +28,9 @@ drift='IN_SYNC'
 def aws(service,operation,*args,**kwargs):
  calls.append((service,operation,args))
  if operation=='get-caller-identity': return {'Account':manifest['accountId']}
+ if operation=='get-template-summary':return {'ResourceIdentifierSummaries':[
+  {'ResourceType':kind,'LogicalResourceIds':[name],'ResourceIdentifiers':['Id' if name in ('ServerSecurityGroup','SharedDistribution') else key]}
+  for name,(kind,key,identifier) in a.EXPECTED.items()]}
  if operation=='get-resource':
   identifier=args[args.index('--identifier')+1]
   name=next(name for name,item in manifest['resources'].items() if item['identifier']==identifier)
@@ -135,6 +138,16 @@ template['Resources']['Server']['Properties']['InstanceType']='m7i.large'
 print(rejected(lambda:a.audit(manifest,template)))
 `)
     ).toContain('Template properties differ');
+  });
+
+  test('uses the import identifier returned by AWS, not the EC2 API field name', () => {
+    expect(
+      python(`
+manifest['resources']['ServerSecurityGroup']['identifierKey']='GroupId'
+print(rejected(lambda:a.audit(manifest,template)))
+assert not any(operation=='get-resource' for service,operation,args in calls)
+`)
+    ).toContain('AWS import identifier differs');
   });
 
   test('refuses a shared legacy security group and a wrong AWS account', () => {

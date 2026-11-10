@@ -12,7 +12,11 @@ Metadata:
     not endorsed for new servers.
 Resources:
   Blocks:
-    Type: AWS::S3::Bucket
+    # Import-only observed state: no versioning/logging. A separate BucketPolicy
+    # is outside ownership here; creating one is forbidden during IMPORT. The new
+    # storage template enforces TLS/versioning/logging. Harden the live bucket in
+    # a separately authorized change after adoption, without falsifying baseline.
+    Type: AWS::S3::Bucket # NOSONAR
     DeletionPolicy: Retain
     UpdateReplacePolicy: Retain
     Properties:
@@ -230,7 +234,9 @@ Resources:
           FromPort: 4001
           ToPort: 4001
           IpProtocol: tcp
-        - CidrIp: 0.0.0.0/0
+        # Existing SSH exposure must match during import. New compute has no SSH
+        # ingress. Closing this rule requires a separately authorized live change.
+        - CidrIp: 0.0.0.0/0 # NOSONAR
           Description: SSH Access
           FromPort: 22
           ToPort: 22
@@ -243,7 +249,9 @@ Resources:
         - CidrIp: 0.0.0.0/0
           IpProtocol: '-1'
   Server:
-    Type: AWS::EC2::Instance
+    # Import preserves its existing interface/public-IP mode; the full native
+    # model fingerprint covers it. New compute explicitly disables automatic IPs.
+    Type: AWS::EC2::Instance # NOSONAR
     Metadata:
       cfn-lint:
         config:
