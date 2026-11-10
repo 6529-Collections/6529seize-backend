@@ -1,7 +1,11 @@
 import {
+  DROP_METADATA_TABLE,
+  DROPS_PARTS_TABLE,
+  DROPS_TABLE,
   RELEASE_NOTE_PUBLICATIONS_TABLE,
   RELEASE_NOTE_STREAM_STATES_TABLE
 } from '@/constants';
+import type { ReleaseNoteDropReference } from '@/drops/drops.db';
 import {
   ReleaseNotePublicationEntity,
   ReleaseNotePublicationStatus
@@ -39,6 +43,12 @@ export interface BlockedReleaseNotePublication {
   readonly blockedByRunNumber: number;
 }
 
+export interface PublishedFrontendReleaseRange extends ReleaseNoteDropReference {
+  readonly wave_id: string;
+  readonly previous_sha: string;
+  readonly current_sha: string;
+}
+
 function queryOptions(ctx: RequestContext) {
   return ctx.connection ? { wrappedConnection: ctx.connection } : undefined;
 }
@@ -46,6 +56,43 @@ function queryOptions(ctx: RequestContext) {
 export class ReleaseNotePublicationDb extends LazyDbAccessCompatibleService {
   public constructor(sqlExecutorSupplier: () => SqlExecutor = dbSupplier) {
     super(sqlExecutorSupplier);
+  }
+
+  public async findPublishedFrontendReleaseRanges(
+    {
+      repository,
+      waveIds,
+      authorId
+    }: {
+      repository: string;
+      waveIds: readonly string[];
+      authorId: string;
+    },
+    ctx: RequestContext
+  ): Promise<PublishedFrontendReleaseRange[]> {
+    return this.db.execute<PublishedFrontendReleaseRange>(
+      `select d.id, d.wave_id, d.serial_no,
+              substring_index(part.content, char(10), 1) as content,
+              cast(p.current_run_number as char) as run_number,
+              p.previous_sha, p.current_sha,
+              (select m.data_value from ${DROP_METADATA_TABLE} m
+               where m.drop_id = d.id and m.data_key = 'release_note_deployed_at'
+               limit 1) as deployed_at
+       from ${RELEASE_NOTE_STREAM_STATES_TABLE} s
+       join ${RELEASE_NOTE_PUBLICATIONS_TABLE} p on p.stream_key = s.stream_key
+       join ${DROPS_TABLE} d on d.id = p.last_drop_id
+       join ${DROPS_PARTS_TABLE} part on part.drop_id = d.id and part.drop_part_id = 1
+       where s.repository = :repository and s.branch = 'main' and s.environment = 'prod'
+         and p.status = :completed and d.author_id = :authorId and d.wave_id in (:waveIds)
+       order by cast(p.current_run_id as unsigned) asc`,
+      {
+        repository,
+        waveIds,
+        authorId,
+        completed: ReleaseNotePublicationStatus.Completed
+      },
+      queryOptions(ctx)
+    );
   }
 
   public async findStreamState(

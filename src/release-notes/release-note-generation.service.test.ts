@@ -1092,6 +1092,7 @@ describe('ReleaseNoteGenerationService', () => {
         })
       );
       const createDrop = jest.fn().mockResolvedValue({ id: 'created-drop' });
+      const findPublishedFrontendReleaseRanges = jest.fn();
       const service = new ReleaseNoteGenerationService(
         {
           getReleaseContext: jest.fn().mockResolvedValue({
@@ -1114,7 +1115,9 @@ describe('ReleaseNoteGenerationService', () => {
         {
           findDropIdByMetadata: jest.fn().mockResolvedValue(null),
           findReleaseNoteDropBySourceSha
-        } as unknown as DropsDb
+        } as unknown as DropsDb,
+        undefined,
+        { findPublishedFrontendReleaseRanges }
       );
 
       await expect(service.generateAndPost(desktopRequest, {})).resolves.toBe(
@@ -1130,6 +1133,7 @@ describe('ReleaseNoteGenerationService', () => {
         }),
         {}
       );
+      expect(findPublishedFrontendReleaseRanges).not.toHaveBeenCalled();
       expect(findReleaseNoteDropBySourceSha).toHaveBeenNthCalledWith(
         2,
         expect.objectContaining({ waveId: 'releases-wave' }),
@@ -1181,6 +1185,149 @@ describe('ReleaseNoteGenerationService', () => {
       );
     }
   );
+
+  describe('Desktop frontend release range lookup', () => {
+    const frontendSha = 'c430af2ed4ae9e75fc5844dca2c0dd99a5ff0103';
+    const coreSha = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+    const deploy2134 = '8bd3a52c139a23a6bfa2f1218d44a0fd44a5f94b';
+    const deploy2135 = '9870b3b90580adbc8ebfc68442579ff1a54f3ad3';
+    const deploy2136 = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+    const publishedRanges = [
+      {
+        run: '2134',
+        baseline: 'cccccccccccccccccccccccccccccccccccccccc',
+        head: deploy2134
+      },
+      { run: '2135', baseline: deploy2134, head: deploy2135 },
+      { run: '2136', baseline: deploy2135, head: deploy2136 }
+    ].map(({ run, baseline, head }) => ({
+      id: `frontend-${run}`,
+      serial_no: Number(run),
+      wave_id: 'deploy-wave',
+      content: null,
+      run_number: run,
+      deployed_at: '2026-11-10T15:20:15.890Z',
+      previous_sha: baseline,
+      current_sha: head
+    }));
+    const desktopRequest: ReleaseNoteGenerationRequest = {
+      ...request,
+      repo: '6529-core',
+      workflow: 'Publish',
+      sha: coreSha,
+      service: 'desktop',
+      prompt_path: 'ops/release-notes/desktop-release-notes.prompt.md',
+      release_group_services: ['desktop'],
+      pull_request_number: null,
+      release_group_runs: undefined,
+      release_version: '0.4.0',
+      frontend_sha: frontendSha
+    };
+
+    function buildService(
+      ranges: typeof publishedRanges,
+      containingShas: readonly string[]
+    ) {
+      const createDrop = jest.fn().mockResolvedValue({ id: 'desktop-drop' });
+      const isCommitAncestor = jest.fn(
+        async (_repo: string, _pin: string, sha: string) =>
+          containingShas.includes(sha)
+      );
+      const findPublishedFrontendReleaseRanges = jest
+        .fn()
+        .mockResolvedValue(ranges);
+      const service = new ReleaseNoteGenerationService(
+        {
+          isCommitAncestor,
+          getReleaseContext: jest.fn().mockResolvedValue({
+            ...context,
+            current_sha: coreSha,
+            pull_requests: [],
+            commit_messages: ['Changed desktop behavior']
+          }),
+          getReleasePrompt: jest.fn().mockResolvedValue('Desktop prompt.')
+        } as unknown as ReleaseNoteGitHubService,
+        {
+          promptAndGetReply: jest
+            .fn()
+            .mockResolvedValue(
+              JSON.stringify({ bullets: ['Improved desktop wallet behavior.'] })
+            )
+        } as AiPrompter,
+        { createDrop } as unknown as DropCreationApiService,
+        {
+          getIdsByHandles: jest.fn().mockResolvedValue({})
+        } as unknown as IdentitiesDb,
+        {},
+        createDropsRepository(),
+        undefined,
+        { findPublishedFrontendReleaseRanges }
+      );
+      return {
+        service,
+        createDrop,
+        isCommitAncestor,
+        findPublishedFrontendReleaseRanges
+      };
+    }
+
+    it('links the first published range containing the pin using the deployed head in the label', async () => {
+      const { service, createDrop, findPublishedFrontendReleaseRanges } =
+        buildService(publishedRanges, [deploy2135, deploy2136]);
+
+      await expect(service.generateAndPost(desktopRequest, {})).resolves.toBe(
+        'published'
+      );
+      expect(findPublishedFrontendReleaseRanges).toHaveBeenCalledWith(
+        {
+          repository: '6529-Collections/6529seize-frontend',
+          authorId: 'bot-profile',
+          waveIds: ['deploy-wave', 'releases-wave']
+        },
+        {}
+      );
+      const drop = createDrop.mock.calls[0][0].createDropRequest;
+      expect(drop.parts[0].content).toContain(
+        '[Frontend Deploy #2135 · commit 9870b3b9 — Nov 10, 3:20 PM UTC](https://6529.io/waves/deploy-wave?serialNo=2135)'
+      );
+      expect(drop.metadata).toContainEqual({
+        data_key: 'release_note_frontend_sha',
+        data_value: frontendSha
+      });
+    });
+
+    it.each([
+      { scenario: 'no published notes', ranges: [], containingShas: [] },
+      {
+        scenario: 'unrelated notes',
+        ranges: publishedRanges,
+        containingShas: []
+      },
+      {
+        scenario: 'only a later note whose baseline already contains the pin',
+        ranges: [publishedRanges[2]],
+        containingShas: [deploy2135, deploy2136]
+      }
+    ])(
+      'leaves the Desktop note unpublished with $scenario',
+      async ({ ranges, containingShas }) => {
+        const { service, createDrop, isCommitAncestor } = buildService(
+          ranges,
+          containingShas
+        );
+
+        await expect(
+          service.generateAndPost(desktopRequest, {})
+        ).rejects.toThrow(
+          `No Frontend release note contains commit ${frontendSha}`
+        );
+        expect(createDrop).not.toHaveBeenCalled();
+        if (ranges.length === 0) {
+          expect(isCommitAncestor).not.toHaveBeenCalled();
+        }
+      }
+    );
+  });
 
   it('rejects overly detailed Desktop bullets instead of publishing fallback copy', async () => {
     const frontendSha = '63630a3e27c37296bbe39d9813b014a824265a56';

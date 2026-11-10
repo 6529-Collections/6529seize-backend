@@ -116,6 +116,42 @@ describe('ReleaseNoteGitHubService', () => {
     }
   });
 
+  it.each([
+    ['ahead', true],
+    ['behind', false],
+    ['diverged', false]
+  ])(
+    'interprets GitHub comparison status %s for ancestry',
+    async (status, expected) => {
+      const mockFetch = fetch as unknown as jest.Mock;
+      mockFetch.mockResolvedValueOnce(response({ status }));
+      const repository = '6529-Collections/6529seize-frontend';
+
+      await expect(
+        new ReleaseNoteGitHubService().isCommitAncestor(
+          repository,
+          'pin',
+          'head'
+        )
+      ).resolves.toBe(expected);
+      expect(mockFetch).toHaveBeenCalledWith(
+        `https://api.github.com/repos/${repository}/compare/pin...head?per_page=1`,
+        expect.anything()
+      );
+    }
+  );
+
+  it('treats a release baseline equal to the pin as containing it without an API call', async () => {
+    await expect(
+      new ReleaseNoteGitHubService().isCommitAncestor(
+        '6529-Collections/6529seize-frontend',
+        'pin',
+        'pin'
+      )
+    ).resolves.toBe(true);
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
   it('loads the allowlisted prompt from the exact deployed SHA', async () => {
     (fetch as unknown as jest.Mock).mockResolvedValue({
       ok: true,

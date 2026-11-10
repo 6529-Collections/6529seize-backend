@@ -30,6 +30,11 @@ import {
 import { NonRetryableReleaseNoteError } from './release-note-errors';
 import { releaseDigestDb, ReleaseDigestDb } from './release-digest.db';
 import { buildReleaseDigestEntries } from './release-digest-entries';
+import {
+  PublishedFrontendReleaseRange,
+  releaseNotePublicationDb,
+  ReleaseNotePublicationDb
+} from './release-note-publication.db';
 
 interface GeneratedReleaseNote {
   readonly number: number;
@@ -515,7 +520,11 @@ export class ReleaseNoteGenerationService {
     private readonly digestEntries: Pick<
       ReleaseDigestDb,
       'recordEntries'
-    > = releaseDigestDb
+    > = releaseDigestDb,
+    private readonly publications: Pick<
+      ReleaseNotePublicationDb,
+      'findPublishedFrontendReleaseRanges'
+    > = releaseNotePublicationDb
   ) {}
 
   public async generateAndPost(
@@ -740,7 +749,55 @@ export class ReleaseNoteGenerationService {
         };
       }
     }
+
+    const ranges = await this.publications.findPublishedFrontendReleaseRanges(
+      { repository: FRONTEND_REPOSITORY, waveIds, authorId: botProfileId },
+      ctx
+    );
+    const range = await this.findFrontendReleaseRange(frontendSha, ranges);
+    if (range) {
+      return {
+        label: getFrontendReleaseNoteLabel(range, range.current_sha),
+        url: `${RELEASES_WEB_BASE_URL}/${range.wave_id}?serialNo=${range.serial_no}`
+      };
+    }
     throw new Error(`No Frontend release note contains commit ${frontendSha}`);
+  }
+
+  private async findFrontendReleaseRange(
+    frontendSha: string,
+    ranges: readonly PublishedFrontendReleaseRange[]
+  ): Promise<PublishedFrontendReleaseRange | undefined> {
+    // Deployments follow production main in run order. Find the first head
+    // containing the pin without comparing it to every published release.
+    let low = 0;
+    let high = ranges.length;
+    while (low < high) {
+      const middle = Math.floor((low + high) / 2);
+      if (
+        await this.githubService.isCommitAncestor(
+          FRONTEND_REPOSITORY,
+          frontendSha,
+          ranges[middle].current_sha
+        )
+      ) {
+        high = middle;
+      } else {
+        low = middle + 1;
+      }
+    }
+    const first = ranges[low];
+    if (
+      first &&
+      !(await this.githubService.isCommitAncestor(
+        FRONTEND_REPOSITORY,
+        frontendSha,
+        first.previous_sha
+      ))
+    ) {
+      return first;
+    }
+    return undefined;
   }
 
   private async findReleaseNoteReceipt(

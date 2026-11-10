@@ -1,4 +1,7 @@
 import {
+  DROP_METADATA_TABLE,
+  DROPS_PARTS_TABLE,
+  DROPS_TABLE,
   RELEASE_NOTE_PUBLICATIONS_TABLE,
   RELEASE_NOTE_STREAM_STATES_TABLE
 } from '@/constants';
@@ -30,6 +33,72 @@ describeWithSeed(
   { table: RELEASE_NOTE_PUBLICATIONS_TABLE, rows: [] },
   () => {
     const repository = new ReleaseNotePublicationDb(() => sqlExecutor);
+
+    it('returns saved ranges only for completed publications with a matching drop', async () => {
+      await repository.preparePublication(
+        {
+          publicationId: 'published',
+          stream,
+          currentRun,
+          bootstrapPreviousRun: previousRun
+        },
+        {}
+      );
+      const dropId = 'frontend-release-drop';
+      const waveId = 'deploy-wave';
+      const authorId = 'bot-profile';
+      const deployedAt = '2026-11-10T15:20:15.890Z';
+      await sqlExecutor.execute(
+        `insert into ${DROPS_TABLE} (id, wave_id, author_id, created_at, parts_count)
+         values (:dropId, :waveId, :authorId, 1, 1)`,
+        { dropId, waveId, authorId }
+      );
+      await sqlExecutor.execute(
+        `insert into ${DROPS_PARTS_TABLE} (drop_id, drop_part_id, content)
+         values (:dropId, 1, :content)`,
+        { dropId, content: 'Frontend heading\nBody' }
+      );
+      await sqlExecutor.execute(
+        `insert into ${DROP_METADATA_TABLE} (drop_id, wave_id, data_key, data_value)
+         values (:dropId, :waveId, 'release_note_deployed_at', :deployedAt)`,
+        { dropId, waveId, deployedAt }
+      );
+      await repository.recordPlan('published', 1, {});
+      await repository.recordPart(
+        { publicationId: 'published', partNumber: 1, totalParts: 1, dropId },
+        {}
+      );
+      const filter = {
+        repository: stream.repository,
+        waveIds: [waveId, 'legacy-wave'],
+        authorId
+      };
+      await expect(
+        repository.findPublishedFrontendReleaseRanges(filter, {})
+      ).resolves.toEqual([]);
+
+      await repository.completePublication('published', {});
+
+      await expect(
+        repository.findPublishedFrontendReleaseRanges(filter, {})
+      ).resolves.toEqual([
+        expect.objectContaining({
+          id: dropId,
+          wave_id: waveId,
+          run_number: String(currentRun.number),
+          previous_sha: previousRun.sha,
+          current_sha: currentRun.sha,
+          deployed_at: deployedAt,
+          content: 'Frontend heading'
+        })
+      ]);
+      await expect(
+        repository.findPublishedFrontendReleaseRanges(
+          { ...filter, authorId: 'other-profile' },
+          {}
+        )
+      ).resolves.toEqual([]);
+    });
 
     it('freezes the baseline, records progress, and advances the cursor atomically', async () => {
       const prepared = await repository.preparePublication(

@@ -478,6 +478,31 @@ export class ReleaseNoteGitHubService {
     throw new Error('GitHub release context request exhausted retries');
   }
 
+  public async isCommitAncestor(
+    repository: string,
+    ancestorSha: string,
+    descendantSha: string
+  ): Promise<boolean> {
+    if (ancestorSha === descendantSha) {
+      return true;
+    }
+    const comparison = await this.api<GitHubCompareResponse>(
+      `/repos/${repository}/compare/${encodeURIComponent(ancestorSha)}...${encodeURIComponent(descendantSha)}?per_page=1`
+    );
+    switch (comparison.status) {
+      case 'ahead':
+      case 'identical':
+        return true;
+      case 'behind':
+      case 'diverged':
+        return false;
+      default:
+        throw new ReleaseNoteDependencyError(
+          `GitHub did not return an ancestry status for ${repository} ${ancestorSha}...${descendantSha}`
+        );
+    }
+  }
+
   public async getReleasePrompt(
     request: ReleaseNoteGenerationRequest
   ): Promise<string> {
