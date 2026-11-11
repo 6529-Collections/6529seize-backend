@@ -1,0 +1,26 @@
+[Unit]
+Description=6529 IPFS managed candidate
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ipfs
+Group=ipfs
+Environment=IPFS_PATH=/var/lib/6529-ipfs
+Environment=IPFS_TELEMETRY=off
+Environment=DO_NOT_TRACK=1
+ExecStart=/opt/6529-ipfs/current/ipfs daemon --migrate=false
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=120
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/6529-ipfs
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

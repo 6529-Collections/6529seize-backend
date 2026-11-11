@@ -13,9 +13,9 @@ it('executes bounded native operations without invoking business processing', as
   );
   expect(result).toMatchObject({
     status: 'ok',
-    sharp: '0.35.4',
-    vips: '8.18.6',
-    heif: '1.23.2'
+    sharp: '0.35.5',
+    vips: '8.18.7',
+    heif: '1.23.5'
   });
   expect(business).not.toHaveBeenCalled();
 });

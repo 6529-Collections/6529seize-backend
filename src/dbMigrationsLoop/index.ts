@@ -31,6 +31,7 @@ import { NftLinkEntity } from '@/entities/INftLink';
 import { applyNftLinkPageRetrySchema } from './nft-link-page-retry-schema';
 import { getDataSource } from '@/db';
 import { synchronizeSchemaBounded } from '@/db/bounded-schema-sync';
+import { isDestructivePlanAcknowledgement } from '@/db/schema-sync-plan-check';
 import { CompetitionLifecycleEventEntity } from '@/entities/ICompetition';
 import { installLegacyCompetitionGetFacade } from '@/competitions/legacy-competition-get-facade';
 import { dbSupplier } from '@/sql-executor';
@@ -121,16 +122,58 @@ function schemaScope(event: unknown, scheduledInvocation: boolean) {
   return scope;
 }
 
+export const DESTRUCTIVE_PLAN_ACKNOWLEDGEMENT_FIELD =
+  'approved_destructive_plan_sha256';
+
+/**
+ * The SHA-256 of a destructive schema sync plan an operator approved, from
+ * the invocation payload. Only explicit invocations may carry one, and it
+ * must be a lowercase SHA-256 hex digest.
+ */
+export function destructivePlanAcknowledgement(
+  event: unknown,
+  scheduledInvocation: boolean
+): string | null {
+  if (
+    !event ||
+    typeof event !== 'object' ||
+    !Object.prototype.hasOwnProperty.call(
+      event,
+      DESTRUCTIVE_PLAN_ACKNOWLEDGEMENT_FIELD
+    )
+  ) {
+    return null;
+  }
+  const value = (event as Record<string, unknown>)[
+    DESTRUCTIVE_PLAN_ACKNOWLEDGEMENT_FIELD
+  ];
+  if (scheduledInvocation || !isDestructivePlanAcknowledgement(value)) {
+    throw new Error(
+      `${DESTRUCTIVE_PLAN_ACKNOWLEDGEMENT_FIELD} must be the SHA-256 reported for the plan, on an explicit invocation`
+    );
+  }
+  return value as string;
+}
+
 export const handler = sentryContext.wrapLambdaHandler(async (event) => {
   const scheduledInvocation = isScheduledInvocation(event);
   const scope = schemaScope(event, scheduledInvocation);
+  const acknowledgedDestructivePlanSha256 = destructivePlanAcknowledgement(
+    event,
+    scheduledInvocation
+  );
+  // Only added when present, so ordinary invocations keep their options.
+  const schemaSync = acknowledgedDestructivePlanSha256
+    ? { schemaSync: { acknowledgedDestructivePlanSha256 } }
+    : {};
   logger.info(`[RUNNING]`);
   if (scope === 'competition-score-resets') {
     await doInDbContext(() => Promise.resolve(), {
       logger,
       entities: [CompetitionScoreResetEntity, CompetitionScoreResetStateEntity],
       syncEntities: true,
-      skipRedis: true
+      skipRedis: true,
+      ...schemaSync
     });
     return { schema_scope: scope };
   }
@@ -146,7 +189,8 @@ export const handler = sentryContext.wrapLambdaHandler(async (event) => {
       logger,
       entities: [CompetitionLifecycleEventEntity],
       syncEntities: true,
-      skipRedis: true
+      skipRedis: true,
+      ...schemaSync
     });
     return { schema_scope: scope };
   }
@@ -156,7 +200,8 @@ export const handler = sentryContext.wrapLambdaHandler(async (event) => {
       logger,
       entities: [NFTHistoryReplayJobEntity],
       syncEntities: true,
-      skipRedis: true
+      skipRedis: true,
+      ...schemaSync
     });
     return { schema_scope: scope };
   }
@@ -166,7 +211,8 @@ export const handler = sentryContext.wrapLambdaHandler(async (event) => {
       logger,
       entities: [NFTHistoryEventEntity],
       syncEntities: true,
-      skipRedis: true
+      skipRedis: true,
+      ...schemaSync
     });
     return { schema_scope: scope };
   }
@@ -202,7 +248,8 @@ export const handler = sentryContext.wrapLambdaHandler(async (event) => {
       logger,
       entities: [VotingCreditReleaseEntity, VotingCreditReleaseRecipientEntity],
       syncEntities: true,
-      skipRedis: true
+      skipRedis: true,
+      ...schemaSync
     });
     return { schema_scope: scope };
   }
@@ -212,7 +259,8 @@ export const handler = sentryContext.wrapLambdaHandler(async (event) => {
       logger,
       entities: [MarketDepthPublicationLockEntity],
       syncEntities: true,
-      skipRedis: true
+      skipRedis: true,
+      ...schemaSync
     });
     logger.info('[FINISHED MARKET DEPTH PUBLICATION LOCK SCHEMA]');
     return { schema_scope: scope };
@@ -253,7 +301,8 @@ export const handler = sentryContext.wrapLambdaHandler(async (event) => {
         WalletTransferWalletDailyEntity
       ],
       syncEntities: true,
-      skipRedis: true
+      skipRedis: true,
+      ...schemaSync
     });
     logger.info('[FINISHED WALLET TRANSFER ANALYSIS SCHEMA]');
     return { schema_scope: scope };
@@ -263,7 +312,9 @@ export const handler = sentryContext.wrapLambdaHandler(async (event) => {
       // Synchronization ignores tables outside the current entity registry; retirement is operator-only.
       if (!scheduledInvocation && scope === 'full') {
         await assertCompetitionSchemaSyncSafe(dbSupplier());
-        await synchronizeSchemaBounded(getDataSource());
+        await synchronizeSchemaBounded(getDataSource(), {
+          acknowledgedDestructivePlanSha256
+        });
         await applyWaveScoreInputIndexSchema();
       }
       if (

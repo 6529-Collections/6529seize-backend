@@ -37,6 +37,8 @@ import {
 } from '@/api/generated/models/ApiSessionWebResponse';
 import { clientFamilyOf } from '@/api/auth/client-family';
 import { Logger } from '@/logging';
+import { isDeadlockError } from '@/e2ee/e2ee-encoding';
+import type { WalletConnectionShareEntity } from '@/entities/IWalletConnectionShare';
 
 const logger = Logger.get('AUTH_SESSION_V2');
 
@@ -46,6 +48,8 @@ const WALLET_SESSION_ADDRESS_COOKIE_PREFIX = `${WALLET_SESSION_COOKIE_NAME}_`;
 const DEFAULT_SESSION_REFRESH_DAYS = 30;
 const DEFAULT_CONNECTION_SHARE_CODE_TTL_SECONDS = 5 * 60;
 const DEFAULT_CONNECTION_SHARE_SETUP_TTL_SECONDS = 2 * 60;
+const MIN_CONNECTION_SHARE_CODE_TTL_SECONDS = 60;
+const MAX_CONNECTION_SHARE_CODE_TTL_SECONDS = 60 * 60;
 const IDEMPOTENT_WEB_SESSION_REFRESH_WINDOW_MS = Time.seconds(30).toMillis();
 const IDEMPOTENT_WEB_SESSION_REFRESH_CLOCK_SKEW_MS = Time.seconds(5).toMillis();
 
@@ -894,13 +898,26 @@ export async function logoutNativeSession({
  * session-v2 sessions and removes its legacy refresh token, so older Desktop
  * builds holding that token are signed out too. A later legacy sign-in
  * issues a new token.
+ *
+ * The two writes are not one transaction on purpose. Revoking the sessions
+ * is the sign-out the caller asked for and must not depend on the legacy
+ * table: if removing the legacy token fails after the sessions were revoked,
+ * the sign-out still succeeds and the failure is logged (the token stays
+ * valid until the next sign-out of all sessions).
  */
 async function signOutAllSessionsOfAddress(
   address: string,
   now: Date
 ): Promise<void> {
   await authDb.revokeWalletAuthSessionsForAddress(address, now);
-  await authDb.deleteLegacyRefreshTokenForAddress(address);
+  try {
+    await authDb.deleteLegacyRefreshTokenForAddress(address);
+  } catch (error) {
+    logger.error(
+      '[SIGN_OUT_ALL_LEGACY_REFRESH_TOKEN_NOT_REMOVED] Sessions were revoked; the legacy refresh token could not be removed',
+      error
+    );
+  }
 }
 
 export async function createConnectionShare({
@@ -928,23 +945,47 @@ export async function createConnectionShare({
   const connectionShareCode = createOpaqueSecret();
   const withDeviceSetup = encryptedDeviceSetup !== null;
   const expiresAt = getConnectionShareExpiresAt(withDeviceSetup);
+  const shareId = randomUUID();
   // One live link per wallet, target and kind: a new link retires the
-  // previous one, which its source no longer shows.
-  await authDb.retireLiveWalletConnectionShares({
-    address: address.toLowerCase(),
-    targetClientType,
-    withDeviceSetup,
-    now: new Date()
-  });
-  const share = await authDb.createWalletConnectionShare({
-    id: randomUUID(),
-    connectionShareCodeHash: hashSecret(connectionShareCode),
-    encryptedDeviceSetup,
-    address: address.toLowerCase(),
-    role: shareRole,
-    targetClientType,
-    expiresAt
-  });
+  // previous one, which its source no longer shows. Both in one transaction,
+  // so a failed create leaves the previous link live.
+  const storeShare = () =>
+    authDb.executeNativeQueriesInTransaction(async (connection) => {
+      await authDb.retireLiveWalletConnectionShares(
+        {
+          address: address.toLowerCase(),
+          targetClientType,
+          withDeviceSetup,
+          now: new Date()
+        },
+        connection
+      );
+      return authDb.createWalletConnectionShare(
+        {
+          id: shareId,
+          connectionShareCodeHash: hashSecret(connectionShareCode),
+          encryptedDeviceSetup,
+          address: address.toLowerCase(),
+          role: shareRole,
+          targetClientType,
+          expiresAt
+        },
+        connection
+      );
+    });
+  let share: WalletConnectionShareEntity;
+  try {
+    share = await storeShare();
+  } catch (error) {
+    // When no live link matches, the retire takes a gap lock, so two creates
+    // in the same address gap (two tabs, two new wallets) can deadlock on
+    // their inserts. The victim was rolled back; run it once more, where it
+    // sees and retires the other create's committed link.
+    if (!isDeadlockError(error)) {
+      throw error;
+    }
+    share = await storeShare();
+  }
   const queryParams = new URLSearchParams();
   queryParams.set('connection_share_code', connectionShareCode);
   queryParams.set('address', share.address);
@@ -1324,9 +1365,7 @@ function getSessionRefreshExpiresAt(): Date {
  * default.
  */
 function getConnectionShareExpiresAt(withDeviceSetup: boolean): Date {
-  const seconds =
-    env.getIntOrNull('AUTH_CONNECTION_SHARE_CODE_TTL_SECONDS') ??
-    DEFAULT_CONNECTION_SHARE_CODE_TTL_SECONDS;
+  const seconds = getConnectionShareCodeTtlSeconds();
   const configuredSetupSeconds = env.getIntOrNull(
     'AUTH_CONNECTION_SHARE_SETUP_TTL_SECONDS'
   );
@@ -1338,6 +1377,24 @@ function getConnectionShareExpiresAt(withDeviceSetup: boolean): Date {
     ? Math.min(seconds, setupSeconds)
     : seconds;
   return new Date(Date.now() + Time.seconds(lifetimeSeconds).toMillis());
+}
+
+/**
+ * AUTH_CONNECTION_SHARE_CODE_TTL_SECONDS clamped to 60-3600 seconds, the
+ * same rule as AUTH_LEGACY_TEXT_CHALLENGE_TTL_SECONDS: unset or not a whole
+ * number (including a negative one) means 300. Never throws.
+ */
+function getConnectionShareCodeTtlSeconds(): number {
+  const text = env
+    .getStringOrNull('AUTH_CONNECTION_SHARE_CODE_TTL_SECONDS')
+    ?.trim();
+  if (!text || !/^\d+$/.test(text)) {
+    return DEFAULT_CONNECTION_SHARE_CODE_TTL_SECONDS;
+  }
+  return Math.min(
+    MAX_CONNECTION_SHARE_CODE_TTL_SECONDS,
+    Math.max(MIN_CONNECTION_SHARE_CODE_TTL_SECONDS, Number(text))
+  );
 }
 
 function toDate(value: Date | string): Date {

@@ -3,9 +3,16 @@ const mockHasDevicePoster = jest.fn();
 jest.mock('./has-device-poster', () => ({
   hasDeviceVideoPoster: (...args: unknown[]) => mockHasDevicePoster(...args)
 }));
+const mockAdmitVideoConversion = jest.fn();
+jest.mock('./video-conversion-admission', () => ({
+  ...jest.requireActual('./video-conversion-admission'),
+  admitVideoConversion: (...args: unknown[]) =>
+    mockAdmitVideoConversion(...args)
+}));
 const mockPrepEnvironment = jest.fn();
 const mockDoInDbContext = jest.fn();
 const mockLoggerInfo = jest.fn();
+const mockLoggerWarn = jest.fn();
 const mockGetStringOrThrow = jest.fn((name: string) => {
   const values: Record<string, string> = {
     MC_ENDPOINT: 'https://mediaconvert.example.com',
@@ -34,7 +41,8 @@ jest.mock('../env', () => ({
 jest.mock('../logging', () => ({
   Logger: {
     get: jest.fn(() => ({
-      info: mockLoggerInfo
+      info: mockLoggerInfo,
+      warn: mockLoggerWarn
     }))
   }
 }));
@@ -72,6 +80,9 @@ describe('dropVideoConversionInvokerLoop', () => {
     jest.clearAllMocks();
     mockSend.mockReset();
     mockHasDevicePoster.mockReset().mockResolvedValue(false);
+    mockAdmitVideoConversion
+      .mockReset()
+      .mockResolvedValue({ convert: true, etag: 'etag' });
     mockPrepEnvironment.mockResolvedValue(undefined);
     mockSend.mockResolvedValue(undefined).mockResolvedValueOnce({
       JobTemplate: {
@@ -223,10 +234,67 @@ describe('dropVideoConversionInvokerLoop', () => {
 
     expect(mockPrepEnvironment).toHaveBeenCalledTimes(1);
     expect(mockDoInDbContext).not.toHaveBeenCalled();
+    expect(mockAdmitVideoConversion).not.toHaveBeenCalled();
     expect(MediaConvertClient).not.toHaveBeenCalled();
     expect(CreateJobCommand).not.toHaveBeenCalled();
     expect(GetJobTemplateCommand).not.toHaveBeenCalled();
     expect(mockSend).not.toHaveBeenCalled();
+  });
+
+  it('checks the announced object version and size before any MediaConvert call', async () => {
+    await handler(
+      {
+        id: 'event-1',
+        detail: {
+          object: { key: canonicalVideoKey, etag: 'abc', size: 1234 }
+        }
+      },
+      {} as any,
+      jest.fn()
+    );
+
+    expect(mockAdmitVideoConversion).toHaveBeenCalledWith({
+      s3: expect.any(Object),
+      bucket: '6529-test-bucket',
+      key: canonicalVideoKey,
+      eventEtag: 'abc',
+      eventSize: 1234,
+      eventId: 'event-1',
+      limits: { maxBytes: 2 * 1024 ** 3, maxJobsPerKey: 3, windowMs: 86400000 },
+      now: expect.any(Number)
+    });
+    expect(CreateJobCommand).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(['too_large', 'duplicate', 'job_cap', 'superseded', 'missing'])(
+    'starts no job when admission answers %s',
+    async (reason) => {
+      mockAdmitVideoConversion.mockResolvedValue({ convert: false, reason });
+
+      await handler(
+        { id: 'event-1', detail: { object: { key: canonicalVideoKey } } },
+        {} as any,
+        jest.fn()
+      );
+
+      expect(MediaConvertClient).not.toHaveBeenCalled();
+      expect(GetJobTemplateCommand).not.toHaveBeenCalled();
+      expect(CreateJobCommand).not.toHaveBeenCalled();
+      expect(mockSend).not.toHaveBeenCalled();
+      expect(mockLoggerWarn).toHaveBeenCalledWith(
+        expect.stringContaining(`[VIDEO_CONVERSION_SKIPPED] ${reason}`)
+      );
+    }
+  );
+
+  it('converts NFT link preview videos, whose renditions clients play', async () => {
+    const key = 'drops/nftlinkvideos/prod/abc/def.mp4';
+    await handler({ detail: { object: { key } } }, {} as any, jest.fn());
+
+    expect(mockAdmitVideoConversion).toHaveBeenCalledWith(
+      expect.objectContaining({ key })
+    );
+    expect(CreateJobCommand).toHaveBeenCalledTimes(1);
   });
 
   it('preserves deployed config through secret loading and warm invocations', async () => {

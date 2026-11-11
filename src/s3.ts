@@ -28,7 +28,8 @@ import { REWRITABLE_MEDIA_CACHE_CONTROL } from '@/media/media-cache-control';
 const logger = Logger.get('S3');
 const limit = pLimit(3);
 
-axiosRetry(axios, {
+// axios-retry's CommonJS typings resolve axios's .d.cts declarations.
+axiosRetry(axios as Parameters<typeof axiosRetry>[0], {
   retries: 3,
   retryDelay: axiosRetry.exponentialDelay,
   retryCondition: (error) => {

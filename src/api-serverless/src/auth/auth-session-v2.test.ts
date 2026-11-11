@@ -1,4 +1,5 @@
 import { authDb } from './auth.db';
+import { Logger } from '@/logging';
 import { identitiesDb } from '@/identities/identities.db';
 import { profileProxyApiService } from '@/api/proxies/proxy.api.service';
 import {
@@ -11,6 +12,7 @@ import {
   createWebSession,
   getActiveWebSession,
   getWalletSessionCookieNameForAddress,
+  hashSecret,
   hasActiveNativeSessionForAddressAndRole,
   hasActiveWebSessionForAddressAndRole,
   isAuthConnectionSharingEnabled,
@@ -903,6 +905,99 @@ describe('auth-session-v2', () => {
     ).not.toHaveBeenCalled();
   });
 
+  describe('when the legacy refresh token cannot be removed', () => {
+    let logError: jest.SpyInstance;
+
+    beforeEach(() => {
+      logError = jest
+        .spyOn(Logger.prototype, 'error')
+        .mockImplementation(() => undefined);
+      authDbMock.deleteLegacyRefreshTokenForAddress.mockRejectedValueOnce(
+        new Error('lock wait timeout')
+      );
+    });
+
+    afterEach(() => {
+      logError.mockRestore();
+      authDbMock.deleteLegacyRefreshTokenForAddress.mockReset();
+    });
+
+    it('still signs a web session out of all sessions and logs it', async () => {
+      authDbMock.getActiveWebSessionBySecretHash.mockResolvedValueOnce(
+        webSession({ id: 'session-a', address: '0xaaa' })
+      );
+
+      const setCookie = await logoutWebSession({
+        cookieHeader: `${WALLET_SESSION_COOKIE_NAME}=${encodeURIComponent('session-a.secret-a')}`,
+        address: null,
+        allSessions: true,
+        requestOrigin: 'https://6529.io',
+        apiHost: 'api.6529.io'
+      });
+
+      expect(setCookie).toEqual(expect.anything());
+      expect(
+        authDbMock.revokeWalletAuthSessionsForAddress
+      ).toHaveBeenCalledWith('0xaaa', expect.any(Date));
+      expect(
+        authDbMock.revokeWalletAuthSessionsForAddress.mock
+          .invocationCallOrder[0]
+      ).toBeLessThan(
+        authDbMock.deleteLegacyRefreshTokenForAddress.mock
+          .invocationCallOrder[0]
+      );
+      expect(logError).toHaveBeenCalledTimes(1);
+      expect(String(logError.mock.calls[0][0])).toContain(
+        '[SIGN_OUT_ALL_LEGACY_REFRESH_TOKEN_NOT_REMOVED]'
+      );
+      expect(String(logError.mock.calls[0][0])).not.toContain('0xaaa');
+    });
+
+    it('still signs a native session out of all sessions', async () => {
+      authDbMock.getActiveNativeSessionByRefreshHash.mockResolvedValueOnce({
+        ...webSession({ id: 'session-n', address: '0xabc' }),
+        client_type: 'native',
+        secret_hash: null,
+        refresh_token_hash: 'refresh-hash'
+      } as any);
+
+      await expect(
+        logoutNativeSession({
+          address: '0xABC',
+          nativeRefreshToken: 'valid-native-refresh-token',
+          allSessions: true
+        })
+      ).resolves.toBeUndefined();
+
+      expect(
+        authDbMock.revokeWalletAuthSessionsForAddress
+      ).toHaveBeenCalledWith('0xabc', expect.any(Date));
+      expect(logError).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it('fails sign-out of all sessions when the sessions cannot be revoked', async () => {
+    authDbMock.getActiveWebSessionBySecretHash.mockResolvedValueOnce(
+      webSession({ id: 'session-a', address: '0xaaa' })
+    );
+    authDbMock.revokeWalletAuthSessionsForAddress.mockRejectedValueOnce(
+      new Error('db down')
+    );
+
+    await expect(
+      logoutWebSession({
+        cookieHeader: `${WALLET_SESSION_COOKIE_NAME}=${encodeURIComponent('session-a.secret-a')}`,
+        address: null,
+        allSessions: true,
+        requestOrigin: 'https://6529.io',
+        apiHost: 'api.6529.io'
+      })
+    ).rejects.toThrow('db down');
+    expect(
+      authDbMock.deleteLegacyRefreshTokenForAddress
+    ).not.toHaveBeenCalled();
+  });
+
   it('keeps the legacy refresh token on a single native sign-out', async () => {
     await logoutNativeSession({
       address: '0xABC',
@@ -1294,8 +1389,9 @@ describe('auth-session-v2', () => {
       created.connection_share_code
     );
     expect(consumeParams.targetClientType).toBe('native');
+    // One transaction to create the share, one to redeem it.
     expect(authDbMock.executeNativeQueriesInTransaction).toHaveBeenCalledTimes(
-      1
+      2
     );
     expect(authDbMock.markWalletConnectionShareSession).toHaveBeenCalledWith(
       'share-1',
@@ -1462,12 +1558,15 @@ describe('auth-session-v2', () => {
         targetClientType: 'native'
       });
 
-      expect(authDbMock.retireLiveWalletConnectionShares).toHaveBeenCalledWith({
-        address: '0xabc',
-        targetClientType: 'native',
-        withDeviceSetup: false,
-        now: expect.any(Date)
-      });
+      expect(authDbMock.retireLiveWalletConnectionShares).toHaveBeenCalledWith(
+        {
+          address: '0xabc',
+          targetClientType: 'native',
+          withDeviceSetup: false,
+          now: expect.any(Date)
+        },
+        { connection: { id: 'tx' } }
+      );
       expect(
         authDbMock.retireLiveWalletConnectionShares.mock.invocationCallOrder[0]
       ).toBeLessThan(
@@ -1484,12 +1583,15 @@ describe('auth-session-v2', () => {
         encryptedDeviceSetup: 'v1.ciphertext'
       });
 
-      expect(authDbMock.retireLiveWalletConnectionShares).toHaveBeenCalledWith({
-        address: '0xabc',
-        targetClientType: 'desktop',
-        withDeviceSetup: true,
-        now: expect.any(Date)
-      });
+      expect(authDbMock.retireLiveWalletConnectionShares).toHaveBeenCalledWith(
+        {
+          address: '0xabc',
+          targetClientType: 'desktop',
+          withDeviceSetup: true,
+          now: expect.any(Date)
+        },
+        { connection: { id: 'tx' } }
+      );
       expect(lifetimeSeconds(created)).toBe(120);
     });
 
@@ -1520,6 +1622,141 @@ describe('auth-session-v2', () => {
       expect(lifetimeSeconds(configured)).toBe(90);
       expect(lifetimeSeconds(capped)).toBe(60);
       expect(lifetimeSeconds(invalid)).toBe(120);
+    });
+
+    it('retires and creates in one transaction, so a failed create leaves the previous link live', async () => {
+      const transactionConnection = { connection: { id: 'create-tx' } };
+      const transactions: Array<'committed' | 'rolled back'> = [];
+      authDbMock.executeNativeQueriesInTransaction.mockImplementationOnce(
+        async (fn: any) => {
+          try {
+            const result = await fn(transactionConnection);
+            transactions.push('committed');
+            return result;
+          } catch (error) {
+            transactions.push('rolled back');
+            throw error;
+          }
+        }
+      );
+      authDbMock.createWalletConnectionShare.mockRejectedValueOnce(
+        new Error('insert failed')
+      );
+
+      await expect(
+        createConnectionShare({
+          address: '0xABC',
+          role: null,
+          targetClientType: 'native'
+        })
+      ).rejects.toThrow('insert failed');
+
+      expect(transactions).toEqual(['rolled back']);
+      expect(authDbMock.retireLiveWalletConnectionShares).toHaveBeenCalledWith(
+        expect.objectContaining({ address: '0xabc' }),
+        transactionConnection
+      );
+      expect(authDbMock.createWalletConnectionShare).toHaveBeenCalledWith(
+        expect.objectContaining({ address: '0xabc' }),
+        transactionConnection
+      );
+      // Not a deadlock: no second attempt.
+      expect(
+        authDbMock.executeNativeQueriesInTransaction
+      ).toHaveBeenCalledTimes(1);
+    });
+
+    describe('when two creates deadlock', () => {
+      const deadlock = () =>
+        Object.assign(
+          new Error('Deadlock found when trying to get lock; try restarting'),
+          { code: 'ER_LOCK_DEADLOCK', errno: 1213 }
+        );
+
+      it('runs the create once more and returns the code it committed', async () => {
+        authDbMock.createWalletConnectionShare.mockRejectedValueOnce(
+          deadlock()
+        );
+
+        const created = await createConnectionShare({
+          address: '0xABC',
+          role: null,
+          targetClientType: 'native'
+        });
+
+        expect(
+          authDbMock.executeNativeQueriesInTransaction
+        ).toHaveBeenCalledTimes(2);
+        expect(
+          authDbMock.retireLiveWalletConnectionShares
+        ).toHaveBeenCalledTimes(2);
+        const [[firstAttempt], [committed]] =
+          authDbMock.createWalletConnectionShare.mock.calls;
+        expect(committed.connectionShareCodeHash).toBe(
+          hashSecret(created.connection_share_code)
+        );
+        expect(committed.id).toBe(firstAttempt.id);
+        expect(created.expires_at).toEqual(committed.expiresAt);
+      });
+
+      it('gives up after a second deadlock with the same error as before', async () => {
+        authDbMock.createWalletConnectionShare
+          .mockRejectedValueOnce(deadlock())
+          .mockRejectedValueOnce(deadlock());
+
+        await expect(
+          createConnectionShare({
+            address: '0xABC',
+            role: null,
+            targetClientType: 'native'
+          })
+        ).rejects.toMatchObject({ code: 'ER_LOCK_DEADLOCK' });
+        expect(
+          authDbMock.executeNativeQueriesInTransaction
+        ).toHaveBeenCalledTimes(2);
+      });
+    });
+
+    it.each([
+      ['unset', undefined, 300],
+      ['in range', '600', 600],
+      ['below the minimum', '30', 60],
+      ['zero', '0', 60],
+      ['above the maximum', '7200', 3600],
+      ['negative', '-5', 300],
+      ['fractional', '1.5', 300],
+      ['not a number', 'five minutes', 300],
+      ['blank', '  ', 300]
+    ])(
+      'clamps a plain link lifetime that is %s',
+      async (_label, configured, expectedSeconds) => {
+        if (configured === undefined) {
+          delete process.env.AUTH_CONNECTION_SHARE_CODE_TTL_SECONDS;
+        } else {
+          process.env.AUTH_CONNECTION_SHARE_CODE_TTL_SECONDS = configured;
+        }
+
+        const created = await createConnectionShare({
+          address: '0xABC',
+          role: null,
+          targetClientType: 'native'
+        });
+
+        expect(lifetimeSeconds(created)).toBe(expectedSeconds);
+      }
+    );
+
+    it('keeps setup links within the clamped plain link lifetime', async () => {
+      process.env.AUTH_CONNECTION_SHARE_CODE_TTL_SECONDS = '10';
+
+      const created = await createConnectionShare({
+        address: '0xABC',
+        role: null,
+        targetClientType: 'native',
+        encryptedDeviceSetup: 'v1.ciphertext'
+      });
+
+      expect(lifetimeSeconds(created)).toBe(60);
     });
 
     it('records the coarse client family of the redeeming client, never its user agent', async () => {

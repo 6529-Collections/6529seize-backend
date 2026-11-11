@@ -3,6 +3,7 @@ import { imageSize } from 'image-size';
 import {
   CompleteMultipartUploadCommand,
   CreateMultipartUploadCommand,
+  HeadObjectCommand,
   ListPartsCommand,
   PutObjectCommand,
   S3Client
@@ -20,6 +21,14 @@ import {
 } from '@/media/chat-video-poster';
 import { Logger } from '@/logging';
 
+// Upload budget accounting is covered in upload-media-budget.test.ts.
+jest.mock('@/api/media/media-upload-budget.service', () => ({
+  mediaUploadBudgetService: {
+    reserve: jest.fn(),
+    release: jest.fn(),
+    recordSize: jest.fn()
+  }
+}));
 jest.mock('image-size', () => {
   const actual = jest.requireActual<typeof import('image-size')>('image-size');
   return { ...actual, imageSize: jest.fn(actual.imageSize) };
@@ -377,7 +386,7 @@ describe('video upload completion ordering', () => {
     // Chat uploads get a neutral name: the upload id and the extension.
     expect(started.key).toMatch(/^drops\/([0-9a-f-]{36})\/\1\.mp4$/);
     send.mockClear();
-    send.mockResolvedValue({ Key: started.key });
+    send.mockResolvedValue({ Key: started.key, ContentLength: 1000 });
     await uploads.completeMultipartUpload({
       ...request,
       key: started.key,
@@ -387,7 +396,8 @@ describe('video upload completion ordering', () => {
     expect(send.mock.calls.map(([command]) => command.constructor)).toEqual([
       ListPartsCommand,
       PutObjectCommand,
-      CompleteMultipartUploadCommand
+      CompleteMultipartUploadCommand,
+      HeadObjectCommand
     ]);
     expect(send.mock.calls[0][0].input).toMatchObject({
       Key: started.key,
@@ -420,7 +430,7 @@ describe('video upload completion ordering', () => {
       .mockImplementation((command) =>
         command instanceof PutObjectCommand
           ? posterStored
-          : Promise.resolve({ Key: key })
+          : Promise.resolve({ Key: key, ContentLength: 1000 })
       );
     const completion = service(send).uploads.completeMultipartUpload({
       ...request,
@@ -436,13 +446,16 @@ describe('video upload completion ordering', () => {
     expect(send.mock.calls.map(([command]) => command.constructor)).toEqual([
       ListPartsCommand,
       PutObjectCommand,
-      CompleteMultipartUploadCommand
+      CompleteMultipartUploadCommand,
+      HeadObjectCommand
     ]);
   });
   it.each([malformedIcns(), orientedJpeg(6)])(
     'completes the video without storing an unsafe or rotated poster',
     async (bytes) => {
-      const send = jest.fn().mockResolvedValue({ Key: key });
+      const send = jest
+        .fn()
+        .mockResolvedValue({ Key: key, ContentLength: 1000 });
       await expect(
         service(send).uploads.completeMultipartUpload({
           ...request,
@@ -450,7 +463,8 @@ describe('video upload completion ordering', () => {
         })
       ).resolves.toMatchObject({ media_status: 'ready' });
       expect(send.mock.calls.map(([command]) => command.constructor)).toEqual([
-        CompleteMultipartUploadCommand
+        CompleteMultipartUploadCommand,
+        HeadObjectCommand
       ]);
       expect(mockWarn).toHaveBeenCalledWith(
         'Device poster unavailable; using backend frame capture',
@@ -465,7 +479,9 @@ describe('video upload completion ordering', () => {
   ])(
     'still completes the video when poster preparation fails: $failure',
     async ({ failure, stage }) => {
-      const send = jest.fn().mockResolvedValue({ Key: key });
+      const send = jest
+        .fn()
+        .mockResolvedValue({ Key: key, ContentLength: 1000 });
       if (failure === 'lookup failure')
         send.mockRejectedValueOnce(new Error('AccessDenied'));
       if (failure === 'storage failure')
@@ -479,12 +495,13 @@ describe('video upload completion ordering', () => {
             failure === 'invalid' ? 'invalid' : jpeg().toString('base64')
         })
       ).resolves.toMatchObject({ media_status: 'ready' });
-      expect(send.mock.lastCall?.[0]).toBeInstanceOf(
+      expect(send.mock.lastCall?.[0]).toBeInstanceOf(HeadObjectCommand);
+      expect(send.mock.calls.at(-2)?.[0]).toBeInstanceOf(
         CompleteMultipartUploadCommand
       );
       if (failure === 'lookup failure') {
         expect(send.mock.calls.map(([command]) => command.constructor)).toEqual(
-          [ListPartsCommand, CompleteMultipartUploadCommand]
+          [ListPartsCommand, CompleteMultipartUploadCommand, HeadObjectCommand]
         );
       }
       expect(mockWarn).toHaveBeenCalledWith(

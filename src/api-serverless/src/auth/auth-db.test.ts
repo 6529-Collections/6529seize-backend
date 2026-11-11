@@ -363,12 +363,52 @@ describe('AuthDb', () => {
 
     expect(execute).toHaveBeenCalledWith(
       expect.stringContaining('encrypted_device_setup'),
-      expect.objectContaining({ encryptedDeviceSetup: 'v1.encrypted-payload' })
+      expect.objectContaining({ encryptedDeviceSetup: 'v1.encrypted-payload' }),
+      { forcePool: DbPoolName.WRITE }
     );
     expect(oneOrNull).toHaveBeenCalledWith(
       expect.stringContaining('wallet_connection_shares'),
       { id: 'share-1' },
       { forcePool: DbPoolName.WRITE }
+    );
+  });
+
+  it('retires and creates connection shares on a given transaction connection', async () => {
+    const { authDb, oneOrNull, execute } = createExecutor();
+    oneOrNull.mockResolvedValueOnce({ id: 'share-1' });
+    const connection = { connection: { id: 'tx' } } as any;
+    const now = new Date();
+
+    await authDb.retireLiveWalletConnectionShares(
+      {
+        address: '0xabc',
+        targetClientType: 'native',
+        withDeviceSetup: false,
+        now
+      },
+      connection
+    );
+    await authDb.createWalletConnectionShare(
+      {
+        id: 'share-1',
+        connectionShareCodeHash: 'share-hash',
+        encryptedDeviceSetup: null,
+        address: '0xabc',
+        role: null,
+        targetClientType: 'native',
+        expiresAt: now
+      },
+      connection
+    );
+
+    expect(execute.mock.calls.map(([, , options]) => options)).toEqual([
+      { wrappedConnection: connection },
+      { wrappedConnection: connection }
+    ]);
+    expect(oneOrNull).toHaveBeenCalledWith(
+      expect.stringContaining('wallet_connection_shares'),
+      { id: 'share-1' },
+      { wrappedConnection: connection }
     );
   });
 });
