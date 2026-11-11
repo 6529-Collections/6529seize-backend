@@ -3021,14 +3021,19 @@ Runtime deployment remains disabled by checked-in policy. A separate
 `ipfs-adopt.yml` workflow and import-only `adoption.yaml` baseline cover the existing
 production bucket, instance, its exclusively used security group and the entire
 shared CDN. `adoption.py` requires exact IDs,
-full native-model fingerprints, matching declared properties and an IMPORT-only
+full native-model and CloudFront API configuration fingerprints, matching declared properties and an IMPORT-only
 change set bound to one source SHA/baseline. Preparation and execution are separate
 dispatches; retries reconcile the same change-set ARN. Successful adoption requires
 exact ownership, original template equality and per-resource drift checks, then
 retains an import-only service role, termination protection and a deny-all resource
 update stack policy. `adoption-access.yaml` defines dedicated roles limited to
 configuration reads and ownership tags, without SSM command, content-object write
-or DNS-change permissions.
+or DNS-change permissions. CloudFormation's post-import tagging invokes the
+CloudFront UPDATE handler even for unchanged configuration. A deadline-bound
+service-role permission for only the existing shared distribution accommodates
+that provider call; it defaults to expired and is closed immediately after import.
+The GitHub controller remains explicitly denied, and the entire API configuration
+must match the reviewed fingerprint before and after import.
 The separate adoption switch is enabled only for the authorized ownership import
 and reset after verification; adoption additionally requires runtime deployment to
 remain locked. Network/IAM dependencies, canonical DNS,
