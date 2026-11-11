@@ -1,0 +1,77 @@
+--- a/s3.go
++++ b/s3.go
+@@ -56,6 +56,7 @@
+ }
+ 
+ type Config struct {
++	ReadOnly            bool
+ 	AccessKey           string
+ 	SecretKey           string
+ 	SessionToken        string
+@@ -136,6 +137,13 @@
+ }
+ 
+ func (s *S3Bucket) Put(ctx context.Context, k ds.Key, value []byte) error {
++	if s.ReadOnly {
++		existing, err := s.Get(ctx, k)
++		if err != nil || !bytes.Equal(existing, value) {
++			return fmt.Errorf("s3ds: read-only validation rejects new or different block")
++		}
++		return nil
++	}
+ 	log.Debugf("put: %s", k)
+ 	_, err := s.S3.PutObjectWithContext(ctx, &s3.PutObjectInput{
+ 		Bucket: aws.String(s.Bucket),
+@@ -201,6 +209,9 @@
+ }
+ 
+ func (s *S3Bucket) Delete(ctx context.Context, k ds.Key) error {
++	if s.ReadOnly {
++		return fmt.Errorf("s3ds: read-only validation rejects deletion")
++	}
+ 	log.Debugf("delete: %s", k)
+ 	_, err := s.S3.DeleteObjectWithContext(ctx, &s3.DeleteObjectInput{
+ 		Bucket: aws.String(s.Bucket),
+@@ -371,6 +382,17 @@
+ }
+ 
+ func (b *s3Batch) Commit(ctx context.Context) error {
++	if b.s.ReadOnly {
++		for key, op := range b.ops {
++			if op.delete {
++				return fmt.Errorf("s3ds: read-only validation rejects deletion")
++			}
++			if err := b.s.Put(ctx, ds.NewKey(key), op.val); err != nil {
++				return err
++			}
++		}
++		return nil
++	}
+ 	log.Debugf("committing batch with %d operations", len(b.ops))
+ 	var (
+ 		deleteObjs []*s3.ObjectIdentifier
+--- a/plugin/s3ds.go
++++ b/plugin/s3ds.go
+@@ -54,6 +54,14 @@
+ 		}
+ 
+ 		// Optional.
++		var readOnly bool
++		if value, exists := m["readOnly"]; exists {
++			var valid bool
++			readOnly, valid = value.(bool)
++			if !valid {
++				return nil, fmt.Errorf("s3ds: readOnly must be a boolean")
++			}
++		}
+ 
+ 		var sessionToken string
+ 		if v, ok := m["sessionToken"]; ok {
+@@ -100,6 +108,7 @@
+ 
+ 		return &S3Config{
+ 			cfg: s3ds.Config{
++				ReadOnly:            readOnly,
+ 				Region:              region,
+ 				Bucket:              bucket,
+ 				AccessKey:           accessKey,

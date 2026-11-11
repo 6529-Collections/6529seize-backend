@@ -51,12 +51,21 @@ def rpc(operation, query=None, raw=False, timeout=120):
 
 
 def pin_inventory():
-    keys = rpc(PIN_LIST, {"type": "all"})["Keys"]
+    keys = pin_entries(rpc)
     return {cid: entry["Type"] for cid, entry in keys.items() if entry["Type"] in ("recursive", "direct")}
 
 
+def pin_entries(call):
+    # Empty pin categories are encoded as {}, not {"Keys": {}}. Avoid the
+    # expensive implicit-pin DAG walk and preserve explicit pin names.
+    result = {}
+    for kind in ("recursive", "direct"):
+        result.update(call(PIN_LIST, {"type": kind, "names": "true"}).get("Keys") or {})
+    return result
+
+
 def references():
-    entries = rpc(PIN_LIST, {"type": "all"})["Keys"]
+    entries = pin_entries(rpc)
     pins = {cid: entry["Type"] for cid, entry in entries.items() if entry["Type"] in ("recursive", "direct")}
     return {"pins": pins, "pinNames": {cid: entries[cid].get("Name", "") for cid in pins},
             "mfsRoot": rpc(FILE_STAT, {"arg": "/", "hash": "true"})["Hash"]}
@@ -92,6 +101,8 @@ def datastore(config, endpoint=None):
              "rootDirectory": "ipfs", "accessKey": "", "secretKey": ""}
     if endpoint:
         store.update(regionEndpoint=endpoint, accessKey="fixture", secretKey="fixture")
+    if config.get("readOnly") is True:
+        store["readOnly"] = True
     return {"type": "mount", "mounts": [
         {"mountpoint": "/blocks", "type": "measure", "prefix": "s3.datastore", "child": store},
         {"mountpoint": "/", "type": "measure", "prefix": "leveldb.datastore",
@@ -295,7 +306,7 @@ def existing_mfs(entries, call):
 
 
 def restore_pins(saved, call):
-    current = call(PIN_LIST, {"type": "all"})["Keys"]
+    current = pin_entries(call)
     for cid, kind in saved["pins"].items():
         require(kind in ("recursive", "direct"), "Unsupported pin type")
         name = saved.get("pinNames", {}).get(cid, "")
@@ -357,7 +368,7 @@ def restore_session(config, key, version, checksum):
 
 
 def verify_restored_pins(saved):
-    entries = rpc(PIN_LIST, {"type": "all"})["Keys"]
+    entries = pin_entries(rpc)
     pins = {cid: entry["Type"] for cid, entry in entries.items() if entry["Type"] in ("recursive", "direct")}
     require(pins == saved["pins"], "Restored pins differ")
     require(all(entries[cid].get("Name", "") == name for cid, name in saved.get("pinNames", {}).items()), "Restored pin names differ")
