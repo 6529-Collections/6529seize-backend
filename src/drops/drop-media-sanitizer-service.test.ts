@@ -625,6 +625,37 @@ describe('image format validation before publication', () => {
     );
   });
 
+  it('rejects excessive dimensions before stripping and reports how to recover', async () => {
+    const input = fixture('jpeg');
+    const metadata = await Sharp(input).metadata();
+    jest.spyOn(Sharp.prototype, 'metadata').mockResolvedValue({
+      ...metadata,
+      width: 20000,
+      height: 20000,
+      isProgressive: false
+    });
+    const strip = jest.spyOn(pixelVerifiedStrip, 'stripMetadataWithPixelCheck');
+    const p = pipeline(
+      input,
+      'image/jpeg',
+      'true',
+      DropMediaUploadPurpose.CHAT
+    );
+    await p.process();
+    expect(strip).not.toHaveBeenCalled();
+    expect(p.publicSend).not.toHaveBeenCalled();
+    expect(p.uploadsDb.transitionStatus).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        toStatus: DropMediaUploadStatus.FAILED,
+        patch: expect.objectContaining({
+          error_reason: expect.stringMatching(
+            /20000 x 20000.*Reduce its dimensions/
+          )
+        })
+      })
+    );
+  });
+
   it('preserves JPEG metadata and orientation exactly with stripping disabled', async () => {
     const input = fixture('jpeg');
     expect((await Sharp(input).metadata()).exif).toBeDefined();

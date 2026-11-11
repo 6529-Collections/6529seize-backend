@@ -12,11 +12,11 @@ import {
 } from './lossless-metadata-strip';
 
 /**
- * Raw pixels for the equality check stay in memory, one image at a time.
- * Matches the media workers' 512 MiB decoded-work budget, which allows four
- * working copies of the decoded image.
+ * Hash one decoded image at a time. A 76.5 MP JPEG passed verification and
+ * preview generation at 838 MiB peak in a 2 GiB Lambda runtime container.
+ * Re-encoding retains its separate, more conservative decoded-work budget.
  */
-export const PIXEL_CHECK_MAX_DECODED_BYTES = 128 * 1024 * 1024;
+export const PIXEL_CHECK_MAX_DECODED_BYTES = 384 * 1024 * 1024;
 const PIXEL_CHECK_TIMEOUT_SECONDS = 30;
 const INPUT_PIXEL_BACKSTOP = 1_000_000_000;
 
@@ -40,7 +40,9 @@ interface DecodedPixels {
   readonly digest: string;
 }
 
-function decodedBytes(metadata: Metadata): number {
+type PixelMetadata = Pick<Metadata, 'width' | 'height' | 'depth' | 'channels'>;
+
+function decodedBytes(metadata: PixelMetadata): number {
   const bytesPerSample = metadata.depth === 'ushort' ? 2 : 1;
   // With animated decoding, height already spans every frame.
   return (
@@ -48,6 +50,16 @@ function decodedBytes(metadata: Metadata): number {
     (metadata.height ?? 0) *
     Math.max(4, metadata.channels ?? 4) *
     bytesPerSample
+  );
+}
+
+/** Admission only; a lossless strip must still pass the actual pixel check. */
+export function canVerifyDecodedPixels(metadata: PixelMetadata): boolean {
+  const bytes = decodedBytes(metadata);
+  return (
+    Number.isSafeInteger(bytes) &&
+    bytes > 0 &&
+    bytes <= PIXEL_CHECK_MAX_DECODED_BYTES
   );
 }
 
