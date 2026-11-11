@@ -42,6 +42,8 @@ import { mapAttachmentToApiAttachment } from '@/api/attachments/attachments.mapp
 import { attachmentsStatusNotifier } from '@/attachments/attachments-status-notifier';
 import { randomUUID } from 'node:crypto';
 import { Time, Timer } from '@/time';
+import { mediaUploadBudgetService } from '@/api/media/media-upload-budget.service';
+import { MediaUploadBudgetSource } from '@/entities/IMediaUploadBudget';
 
 const router = asyncRouter();
 
@@ -118,13 +120,27 @@ router.post(
 
     const attachmentId = randomUUID();
     const now = Time.currentMillis();
-    const { key, upload_id } =
-      await uploadAttachmentsService.createMultipartUpload({
+    await mediaUploadBudgetService.reserve({
+      id: attachmentId,
+      profileId: authenticatedProfileId,
+      source: MediaUploadBudgetSource.ATTACHMENT
+    });
+    let started: { key: string; upload_id: string };
+    try {
+      started = await uploadAttachmentsService.createMultipartUpload({
         attachmentId,
         authorId: authenticatedProfileId,
         contentType: validated.content_type,
         fileName: validated.file_name
       });
+    } catch (error) {
+      await mediaUploadBudgetService.release(
+        attachmentId,
+        authenticatedProfileId
+      );
+      throw error;
+    }
+    const { key, upload_id } = started;
     const attachment: AttachmentEntity = {
       id: attachmentId,
       owner_profile_id: authenticatedProfileId,
@@ -224,6 +240,18 @@ router.post(
       await uploadAttachmentsService.completeMultipartUpload(validatedRequest);
     } catch (error) {
       throw mapMultipartCompletionError(error);
+    }
+    // The key matched the request's above. Counts the stored bytes against
+    // the uploader's rolling upload budget; never fails the completion.
+    const size = await uploadAttachmentsService.readObjectSize(
+      validatedRequest.key
+    );
+    if (size !== null) {
+      await mediaUploadBudgetService.recordSize(
+        attachment.id,
+        authenticatedProfileId,
+        size
+      );
     }
     const completedAt = Time.currentMillis();
     await attachmentsDb.updateAttachment(

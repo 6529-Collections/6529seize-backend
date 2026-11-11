@@ -203,6 +203,13 @@ export class NativeCompetitionRuntimeService {
   /**
    * `activeVotes` are the voter's active votes when the caller already read
    * them in this transaction (exactly what getVoterActiveVotes returns).
+   *
+   * With `afterEntryHistory`, each change is stamped no earlier than its
+   * entry's latest score history row, read under the competition lock: a
+   * caller whose `occurredAt` was taken before the lock (a loop pass) may
+   * reconcile after a vote stamped later than that. History orders by time
+   * before sequence, so an earlier stamp would put this newer aggregate
+   * before the vote's older one and leave the older one as the latest.
    */
   public async reconcileVoterCredit(
     params: {
@@ -211,6 +218,7 @@ export class NativeCompetitionRuntimeService {
       availableCredit: number;
       creditScope: string;
       occurredAt: number;
+      afterEntryHistory?: boolean;
     },
     ctx: RequestContext,
     activeVotes?: readonly { entryId: string; value: number }[]
@@ -242,7 +250,7 @@ export class NativeCompetitionRuntimeService {
         entryId: vote.entryId,
         voterProfileId: params.voterProfileId,
         value: vote.value,
-        occurredAt: params.occurredAt
+        occurredAt: await this.reconciliationTime(params, vote.entryId, ctx)
       };
       await this.repository.replaceVoteForReconciliation(mutation, ctx);
       await this.repository.recordVoteChange(
@@ -250,6 +258,24 @@ export class NativeCompetitionRuntimeService {
         ctx
       );
     }
+  }
+
+  private async reconciliationTime(
+    params: {
+      competitionId: string;
+      occurredAt: number;
+      afterEntryHistory?: boolean;
+    },
+    entryId: string,
+    ctx: RequestContext
+  ): Promise<number> {
+    if (!params.afterEntryHistory) return params.occurredAt;
+    const latest = await this.repository.latestEntryHistoryTime(
+      params.competitionId,
+      entryId,
+      ctx
+    );
+    return Math.max(params.occurredAt, latest ?? params.occurredAt);
   }
 
   private async reconcileCompetitionCredit(
@@ -265,8 +291,8 @@ export class NativeCompetitionRuntimeService {
         : null;
     // DROP scope checks every voter's votes: read the budgets and the votes
     // in a few paged statements instead of ~4 statements per voter. Same
-    // transaction and lock; reconciliation reads nothing it writes, so the
-    // writes (and their order) are unchanged.
+    // transaction and lock; reconciling one voter changes no other voter's
+    // budget or votes, so the writes (and their order) are unchanged.
     const dropBudgets =
       scope === WaveCreditScope.DROP
         ? await this.credits.getDropBudgets(competition, voters, ctx)
@@ -297,13 +323,16 @@ export class NativeCompetitionRuntimeService {
         budget.spent <= budget.available
       )
         return;
+      // `now` is the pass's time, possibly taken before this lock: a vote
+      // written since then is stamped later than `now`.
       await this.reconcileVoterCredit(
         {
           competitionId: competition.id,
           voterProfileId,
           availableCredit: budget.available,
           creditScope: competition.voting.credit_scope,
-          occurredAt: now
+          occurredAt: now,
+          afterEntryHistory: true
         },
         ctx,
         dropVotes?.get(voterProfileId)

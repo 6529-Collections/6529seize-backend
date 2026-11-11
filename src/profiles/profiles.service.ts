@@ -406,44 +406,34 @@ export class ProfilesService {
       );
       // Data keyed by the source profile id moves for every source identity:
       // one without a profiles row (no handle) still owns ratings, xTDH
-      // grants, drops and the rest. Steps that concern the profiles row, and
-      // steps that would lock whole tables (unindexed columns, the competition
-      // outbox) or fail on a key collision for the many consolidations of
-      // identities without a handle, still need the profiles row.
+      // grants, drops and the rest. Every step reads the source's rows
+      // through an index and resolves key collisions in the target's favour,
+      // so it is cheap and cannot fail for the many consolidations of
+      // identities without a handle. Only the steps about the profiles row
+      // itself need that row.
       const withProfileRow = async (step: () => Promise<unknown>) => {
         if (sourceProfile) {
           await step();
         }
       };
-      // Locks every undelivered competition outbox row.
-      await withProfileRow(() =>
-        artistArtworkAlertsDb.mergeProfile(sourceIdentity, target, {
-          connection: connectionHolder
-        })
-      );
+      // Locks only the source's own receipts and preferences.
+      await artistArtworkAlertsDb.mergeProfile(sourceIdentity, target, {
+        connection: connectionHolder
+      });
       await this.mergeProfileStatements(
         sourceIdentity,
         target,
         connectionHolder
       );
       await this.mergeRatings(sourceIdentity, target, connectionHolder);
-      // profile_proxies.target_id/created_by, profile_proxy_actions.proxy_id
-      // and the community_groups profile columns are not indexed.
-      await withProfileRow(() =>
-        this.mergeProxies(sourceIdentity, target, connectionHolder)
-      );
-      await withProfileRow(() =>
-        this.mergeGroups(sourceIdentity, target, connectionHolder)
-      );
+      await this.mergeProxies(sourceIdentity, target, connectionHolder);
+      await this.mergeGroups(sourceIdentity, target, connectionHolder);
       await this.mergeWaves(sourceIdentity, target, connectionHolder);
       await this.mergeDrops(sourceIdentity, target, connectionHolder);
-      // Updates a primary key column: fails when both have the same card.
-      await withProfileRow(() =>
-        this.mergeMemesPrevoteArtistProfiles(
-          sourceIdentity,
-          target,
-          connectionHolder
-        )
+      await this.mergeMemesPrevoteArtistProfiles(
+        sourceIdentity,
+        target,
+        connectionHolder
       );
       await this.mergeNotifications(sourceIdentity, target, connectionHolder);
       await this.mergeXTdhGrants(sourceIdentity, target, connectionHolder);
@@ -453,10 +443,7 @@ export class ProfilesService {
         connectionHolder
       );
       await this.mergeReactionsStuff(sourceIdentity, target, connectionHolder);
-      // drop_poll_votes.voter_id is not indexed.
-      await withProfileRow(() =>
-        this.mergePollVotingStuff(sourceIdentity, target, connectionHolder)
-      );
+      await this.mergePollVotingStuff(sourceIdentity, target, connectionHolder);
       await this.mergeBookmarks(sourceIdentity, target, connectionHolder);
       await this.mergeCurations(sourceIdentity, target, connectionHolder);
       await this.mergeQuickVoteSkips(sourceIdentity, target, connectionHolder);

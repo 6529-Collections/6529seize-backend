@@ -517,6 +517,30 @@ export class NativeCompetitionRuntimeRepository extends LazyDbAccessCompatibleSe
     return votes;
   }
 
+  /**
+   * The time of the entry's latest score history row, or null without one.
+   * Every history writer holds the competition lock the caller holds; the
+   * locking read sees a vote committed just before this transaction took
+   * that lock even when its snapshot is older. It reads one index row.
+   */
+  public async latestEntryHistoryTime(
+    competitionId: string,
+    entryId: string,
+    ctx: RequestContext
+  ): Promise<number | null> {
+    this.requireTransaction(ctx);
+    const [row] = await this.query<{ occurred_at: number | string }>(
+      'latestEntryHistoryTime',
+      `select occurred_at from ${COMPETITION_SCORE_HISTORY_TABLE}
+      force index (idx_competition_score_history_entry_time)
+      where competition_id = :competitionId and entry_id = :entryId
+      order by occurred_at desc, sequence desc limit 1 for share`,
+      { competitionId, entryId },
+      ctx
+    );
+    return row ? Number(row.occurred_at) : null;
+  }
+
   public async replaceVoteForReconciliation(
     params: {
       competitionId: string;

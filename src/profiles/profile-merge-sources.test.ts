@@ -41,12 +41,8 @@ const ALL_STEPS = [
   'profile groups'
 ];
 
+/** Steps about the profiles row itself; everything else runs for every source. */
 const PROFILE_ROW_ONLY_STEPS = new Set([
-  'artist artwork alerts',
-  'proxies',
-  'groups',
-  'memes prevote artist profiles',
-  'poll votes',
   'delete source profile row',
   'profile archived log'
 ]);
@@ -90,10 +86,14 @@ function createService(sourceHasProfileRow: boolean) {
     deleteProfileIdsInProfileGroups: jest.fn(),
     insertProfileIdsInProfileGroups: jest.fn()
   };
+  const profileProxiesDb = {
+    deleteAllProxiesAndActionsForProfile: step('proxies')
+  };
+  const dropPollsDb = { mergeOnProfileIdChange: step('poll votes') };
   const service = new ProfilesService(
     profilesDb as any,
     ratingsService as any,
-    { deleteAllProxiesAndActionsForProfile: step('proxies') } as any,
+    profileProxiesDb as any,
     cicService as any,
     userGroupsDb as any,
     { migrateBoosterIdsInBoosts: step('boosts') } as any,
@@ -105,12 +105,12 @@ function createService(sourceHasProfileRow: boolean) {
     { mergeOnProfileIdChange: step('curations') } as any,
     { mergeOnProfileIdChange: step('quick vote skips') } as any,
     { mergeOnProfileIdChange: step('profile waves') } as any,
-    { mergeOnProfileIdChange: step('poll votes') } as any
+    dropPollsDb as any
   );
   jest
     .spyOn(identitiesDb, 'getIdentityByProfileId')
     .mockResolvedValue({ profile_id: TARGET } as any);
-  jest
+  const artworkAlerts = jest
     .spyOn(artistArtworkAlertsDb, 'mergeProfile')
     .mockImplementation(step('artist artwork alerts'));
   jest
@@ -134,7 +134,16 @@ function createService(sourceHasProfileRow: boolean) {
   jest
     .spyOn(profileActivityLogsDb, 'insert')
     .mockImplementation(step('profile archived log'));
-  return { service, steps, ratingsService };
+  return {
+    service,
+    steps,
+    ratingsService,
+    profilesDb,
+    profileProxiesDb,
+    userGroupsDb,
+    dropPollsDb,
+    artworkAlerts
+  };
 }
 
 async function merge(service: ProfilesService) {
@@ -173,5 +182,39 @@ describe('profile merge of one source identity', () => {
     expect(
       ratingsService.transferAllReceivedProfileRatings
     ).toHaveBeenCalledWith(SOURCE, TARGET, CONNECTION);
+  });
+
+  it('runs the indexed artwork, proxy, group, prevote and poll steps for a source without a profiles row', async () => {
+    const {
+      service,
+      profilesDb,
+      profileProxiesDb,
+      userGroupsDb,
+      dropPollsDb,
+      artworkAlerts
+    } = createService(false);
+
+    await merge(service);
+
+    expect(artworkAlerts).toHaveBeenCalledWith(SOURCE, TARGET, {
+      connection: CONNECTION
+    });
+    expect(
+      profileProxiesDb.deleteAllProxiesAndActionsForProfile
+    ).toHaveBeenCalledWith(SOURCE, CONNECTION);
+    expect(userGroupsDb.migrateProfileIdsInGroups).toHaveBeenCalledWith(
+      SOURCE,
+      TARGET,
+      CONNECTION
+    );
+    expect(
+      profilesDb.migrateProfileIdsInMemesPrevoteArtistProfiles
+    ).toHaveBeenCalledWith(SOURCE, TARGET, CONNECTION);
+    expect(dropPollsDb.mergeOnProfileIdChange).toHaveBeenCalledWith(
+      { previous_id: SOURCE, new_id: TARGET },
+      { connection: CONNECTION }
+    );
+    expect(profilesDb.deleteProfile).not.toHaveBeenCalled();
+    expect(profilesDb.updateProfileId).not.toHaveBeenCalled();
   });
 });
