@@ -10,11 +10,11 @@ import {
 import * as Joi from 'joi';
 import { PROFILE_HANDLE_REGEX } from '@/constants';
 import { getValidatedByJoiOrThrow } from '../validation';
-import { NotFoundException } from '../../../exceptions';
+import { BadRequestException, NotFoundException } from '../../../exceptions';
 import { initMulterSingleMiddleware } from '../multer-middleware';
 
 import { asyncRouter } from '../async.router';
-import { RESERVED_HANDLES } from './profiles.constants';
+import { isHandleReservedFor } from './profiles.constants';
 import { ProfileClassification } from '../../../entities/IProfile';
 import {
   CreateOrUpdateProfileCommand,
@@ -27,7 +27,7 @@ import profileCollectedRoutes from './collected/collected.routes';
 import profilePrimaryAddressRoutes from './profile-primary-address.routes';
 import profileProfileProxiesRoutes from './proxies/profile-proxies.routes';
 import { giveReadReplicaTimeToCatchUp } from '../api-helpers';
-import { getProfileClassificationsBySubclassification } from './profile.helper';
+import { resolveSubClassification } from './profile.helper';
 import { ApiIdentity } from '../generated/models/ApiIdentity';
 import { ApiCreateOrUpdateProfileRequest } from '../generated/models/ApiCreateOrUpdateProfileRequest';
 import { ApiProfileClassification } from '../generated/models/ApiProfileClassification';
@@ -97,16 +97,6 @@ router.get(
         message: `Invalid username. Use 3-15 letters, numbers, or underscores.`
       });
     }
-    if (
-      RESERVED_HANDLES.map((h) => h.toLowerCase()).includes(
-        proposedHandle.toLowerCase()
-      )
-    ) {
-      return res.status(200).send({
-        available: false,
-        message: `This username is not available. Please choose a different one.`
-      });
-    }
     const authenticatedHandle = maybeAuthenticatedWallet
       ? (
           await identityFetcher.getIdentityAndConsolidationsByIdentityKey(
@@ -117,6 +107,12 @@ router.get(
           )
         )?.handle
       : null;
+    if (isHandleReservedFor(proposedHandle, authenticatedHandle)) {
+      return res.status(200).send({
+        available: false,
+        message: `This username is not available. Please choose a different one.`
+      });
+    }
     if (proposedHandle.toLowerCase() !== authenticatedHandle?.toLowerCase()) {
       const profile =
         await identityFetcher.getIdentityAndConsolidationsByIdentityKey(
@@ -158,19 +154,23 @@ router.post(
       req.body,
       ApiCreateOrUpdateProfileRequestSchema
     );
-    let subClassification = sub_classification;
-    if (subClassification !== null) {
-      const classifications =
-        enums.resolve(
-          ProfileClassification,
-          getProfileClassificationsBySubclassification(
-            subClassification
-          ).toString()
-        ) ?? ProfileClassification.PSEUDONYM;
-      if (!classifications.includes(classification)) {
-        subClassification = null;
+    if (isHandleReservedFor(handle, null)) {
+      const currentHandle = (
+        await identityFetcher.getIdentityAndConsolidationsByIdentityKey(
+          { identityKey: getWalletOrThrow(req) },
+          { timer: Timer.getFromRequest(req) }
+        )
+      )?.handle;
+      if (isHandleReservedFor(handle, currentHandle)) {
+        throw new BadRequestException(
+          `This username is not available. Please choose a different one.`
+        );
       }
     }
+    const subClassification = resolveSubClassification(
+      sub_classification,
+      classification
+    );
     const createProfileCommand: CreateOrUpdateProfileCommand = {
       handle,
       banner_1,
@@ -344,17 +344,6 @@ const ApiCreateOrUpdateProfileRequestSchema: Joi.ObjectSchema<ApiCreateOrUpdateP
       .min(3)
       .max(15)
       .regex(PROFILE_HANDLE_REGEX)
-      .custom((value, helpers) => {
-        const lowerCaseValue = value.toLowerCase();
-        if (
-          RESERVED_HANDLES.map((h) => h.toLowerCase()).includes(lowerCaseValue)
-        ) {
-          return helpers.message({
-            custom: `This username is not available. Please choose a different one.`
-          });
-        }
-        return value;
-      })
       .required()
       .messages({
         'string.pattern.base': `Invalid username. Use 3-15 letters, numbers, or underscores.`

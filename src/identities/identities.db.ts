@@ -867,6 +867,11 @@ export class IdentitiesDb extends LazyDbAccessCompatibleService {
           .then((it) => it?.profile_id ?? null);
       }
       if (key.endsWith('.eth')) {
+        // Resolves a name through the cached reverse record (ens.display),
+        // not a forward resolution. New reverse records are stored only in
+        // ENS normalised form (see ens-lookup.ts); rows cached earlier may
+        // still hold other spellings until the ENS refresh loop revisits
+        // them, and lower() keeps those reachable.
         return await this.db
           .oneOrNull<{ profile_id: string }>(
             `

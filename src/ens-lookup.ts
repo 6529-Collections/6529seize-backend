@@ -1,4 +1,4 @@
-import { Contract, JsonRpcProvider } from 'ethers';
+import { Contract, ensNormalize, JsonRpcProvider } from 'ethers';
 import { Logger } from '@/logging';
 import { getRpcProvider } from '@/rpc-provider';
 import { text } from '@/text';
@@ -60,6 +60,24 @@ function classifyEnsError(error: unknown): string {
     : 'UNKNOWN';
 }
 
+/**
+ * A reverse-resolved name is used only when it is already in ENS normalised
+ * form (ENSIP-15). Any other name, including one that normalises to a
+ * different string, is treated as no name.
+ */
+export function normalisedEnsNameOrNull(
+  name: string | null | undefined
+): string | null {
+  if (!name) {
+    return null;
+  }
+  try {
+    return ensNormalize(name) === name ? name : null;
+  } catch {
+    return null;
+  }
+}
+
 async function findEnsViaUniversalResolver(
   provider: JsonRpcProvider,
   address: string
@@ -76,10 +94,11 @@ async function findEnsViaUniversalResolver(
       ENS_ETH_COIN_TYPE,
       { enableCcipRead: true }
     );
+    const name = normalisedEnsNameOrNull(primaryName);
     logger.info(
-      `[ENS_UNIVERSAL_RESOLVER] [OUTCOME=${primaryName ? 'hit' : 'miss'}]`
+      `[ENS_UNIVERSAL_RESOLVER] [OUTCOME=${name ? 'hit' : primaryName ? 'unnormalised' : 'miss'}]`
     );
-    return { status: 'resolved', name: primaryName || null };
+    return { status: 'resolved', name };
   } catch (error: unknown) {
     // Stable outcomes can be counted without logging wallets or RPC credentials.
     logger.info(
@@ -97,7 +116,7 @@ async function lookupAddressWithProvider(
   address: string
 ): Promise<string | null> {
   try {
-    const ens = await provider.lookupAddress(address);
+    const ens = normalisedEnsNameOrNull(await provider.lookupAddress(address));
     if (ens) {
       logger.debug(
         `[ENS LOOKUP HIT] [PROVIDER ${providerName}] [ADDRESS ${address}] [ENS ${ens}]`

@@ -34,6 +34,7 @@ import { wavesApiDb } from '../waves/waves.api.db';
 import { invalidateWaveUnreadCacheForReaderWave } from '../waves/wave-unread-cache';
 import { dropCheeringService } from './drop-cheering.service';
 import { dropCreationService } from './drop-creation.api.service';
+import { assertProxyMayEditDrops } from '@/api/drops/drop-proxy-rights';
 import { dropSignatureVerifier } from './drop-signature-verifier';
 import {
   ApiAddReactionToDropRequestSchema,
@@ -331,6 +332,7 @@ router.post(
     if (!authenticationContext.isUserFullyAuthenticated()) {
       throw new ForbiddenException(`Create a profile before updating a drop`);
     }
+    assertProxyMayEditDrops(authenticationContext);
     const dropId = req.params.drop_id;
     const updateRequest: ApiUpdateDropRequest = getValidatedByJoiOrThrow(
       apiRequest,
