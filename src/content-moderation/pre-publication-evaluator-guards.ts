@@ -1,5 +1,6 @@
 import { env } from '@/env';
 import { Logger } from '@/logging';
+import { metricEnvironment } from '@/metric-environment';
 import { redisGet, redisSetJson } from '@/redis';
 import { Time } from '@/time';
 import { createHash } from 'node:crypto';
@@ -82,13 +83,6 @@ export type PrePublicationEvaluatorEvent =
 
 export const PRE_PUBLICATION_EVALUATOR_FALLBACK_LOG_MARKER =
   'CONTENT_MODERATION_EVALUATOR_FALLBACK_ALLOW';
-
-function metricEnvironment(): string {
-  if ((process.env.SENTRY_ENVIRONMENT ?? '').includes('staging')) {
-    return 'staging';
-  }
-  return process.env.AWS_REGION === 'us-east-1' ? 'prod' : 'unknown';
-}
 
 /**
  * One CloudWatch EMF record per evaluator decision in

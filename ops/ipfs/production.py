@@ -58,6 +58,16 @@ def stack(name):
     return result[0]
 
 
+def wait_ssm_online(instance_id):
+    filters = json.dumps([{'Key': 'InstanceIds', 'Values': [instance_id]}])
+    for _ in range(120):
+        rows = call('ssm', 'describe-instance-information', '--filters', filters)['InstanceInformationList']
+        if any(row['InstanceId'] == instance_id and row['PingStatus'] == 'Online' for row in rows):
+            return
+        time.sleep(5)
+    raise TimeoutError('Replacement did not register with Systems Manager')
+
+
 def outputs(value):
     return {item['OutputKey']: item['OutputValue'] for item in value.get('Outputs', [])}
 
@@ -125,10 +135,13 @@ def validate_receipt(request, value):
         checks = {'restore-read-only': ['readOnlyVerified'], 'enable-writes': ['writesEnabled', 'mfsVerified'],
                   'prepare-source': ['nginxVerified', 'directUploadsDrained'],
                   'configure-nginx': ['nginxVerified', 'directUploadsDrained'], 'sync': ['mfsVerified'],
-                  'verify': ['uploadPinRead', 'httpsVerified', 'rangeVerified', 'restrictedRpc'], 'reboot': ['rebootScheduled']}
+                  'verify': ['uploadPinRead', 'httpsVerified', 'rangeVerified', 'restrictedRpc'],
+                  'peer-health': ['privateHttpsVerified'], 'reboot': ['rebootScheduled']}
         require(operation in checks and all(value.get(key) is True for key in checks[operation]), 'Incomplete host verification receipt')
         if operation == 'verify':
             require(isinstance(value.get('cid'), str) and isinstance(value.get('payloadBase64'), str), 'Missing upload verification reference')
+        if operation == 'peer-health':
+            require(value.get('peerInstanceId') == request['peer']['instanceId'], 'Wrong private HTTPS peer')
     return value
 
 
@@ -262,13 +275,16 @@ class Controller:
         if instance_id == CONTEXT['legacyInstanceId']:
             require([g['GroupId'] for g in value['SecurityGroups']] == [CONTEXT['legacySecurityGroupId']] and
                     value.get('PublicIpAddress') == CONTEXT['legacyPublicIp'], 'Legacy network differs from the adopted baseline')
+            group_id = CONTEXT['legacySecurityGroupId']
         else:
             tags = {x['Key']: x['Value'] for x in value.get('Tags', [])}
             require(tags.get('Service') == '6529-ipfs' and tags.get('Environment') == 'prod' and
                     tags.get('aws:cloudformation:stack-name', '').startswith('seize-ipfs-prod-runtime-') and
                     tags.get('aws:cloudformation:logical-id') == 'Instance', 'Unmanaged replacement')
+            group_id = outputs(wait_stack(tags['aws:cloudformation:stack-name']))['SecurityGroupId']
+        require(group_id in {g['GroupId'] for g in value['SecurityGroups']}, 'Runtime security group is not attached')
         return {'instanceId': instance_id, 'privateIp': value['PrivateIpAddress'], 'publicIp': value.get('PublicIpAddress'),
-                'securityGroupId': value['SecurityGroups'][0]['GroupId']}
+                'securityGroupId': group_id}
 
     def host(self, node, operation, label=None, **values):
         artifact = self.state['artifact']
@@ -318,6 +334,8 @@ os.execv('/usr/bin/python3',['python3',str(release/'production_host.py'),%r])
                 print(json.dumps({'retryingFailedCommand': command_id, 'operation': operation}), flush=True)
                 saved = None
         if not saved:
+            if operation == 'install':
+                wait_ssm_online(node['instanceId'])
             result = call('ssm', 'send-command', '--instance-ids', node['instanceId'], '--document-name', 'AWS-RunShellScript',
                           '--parameters', json.dumps({'commands': [script], 'executionTimeout': ['7200']}),
                           '--comment', '6529 IPFS ' + self.id + ' ' + operation)
@@ -335,7 +353,12 @@ os.execv('/usr/bin/python3',['python3',str(release/'production_host.py'),%r])
             result = rows[0]
             require(result['InstanceId'] == node['instanceId'], 'SSM command target mismatch')
             if result['Status'] == 'Success':
-                return parse_host_output(result['CommandPlugins'][0]['Output'], request)
+                # ListCommandInvocations truncates plugin output to 2,500 characters.
+                # The full response API permits 24,000 and preserves the TLS
+                # certificate/status receipt without weakening validation.
+                full = call('ssm', 'get-command-invocation', '--command-id', command_id, '--instance-id', node['instanceId'])
+                require(full['Status'] == 'Success', 'SSM result changed while fetching its full receipt')
+                return parse_host_output(full['StandardOutputContent'], request)
             require(result['Status'] in ('Pending', 'InProgress', 'Delayed'), 'SSM failed; inspect the recorded command in restricted tooling')
             time.sleep(5)
         raise TimeoutError('SSM command is still running; resume its recorded command ID')
@@ -479,7 +502,9 @@ os.execv('/usr/bin/python3',['python3',str(release/'production_host.py'),%r])
         runtime_name = 'seize-ipfs-prod-runtime-' + self.id
         runtime_parameters = {'VpcId': CONTEXT['vpcId'], 'SubnetId': CONTEXT['subnetIds'][0], 'ImageId': CONTEXT['imageId'],
                               'InstanceType': 't3.large', 'FrontdoorSecurityGroup': frontdoor['SecurityGroupId'],
-                              'SourceSecurityGroup': source['securityGroupId'], 'RuntimeBoundaryArn': CONTEXT['runtimeBoundaryArn'], 'AllowWrites': 'false'}
+                              'RuntimePeerSecurityGroup': frontdoor['RuntimePeerGroupId'],
+                              'SourceSecurityGroup': source['securityGroupId'], 'RuntimeBoundaryArn': CONTEXT['runtimeBoundaryArn'],
+                              'AllowWrites': 'false', 'PublishSwarm': 'false'}
         runtime = self.once('runtime-created', lambda: self.apply(runtime_name, 'runtime', runtime_parameters, []))
         target = self.once('target-discovery', lambda: self.node(runtime['InstanceId']))
         self.record('target', target)
@@ -493,8 +518,13 @@ os.execv('/usr/bin/python3',['python3',str(release/'production_host.py'),%r])
         probe = self.once('target-verified', lambda: self.host(target, 'verify'))
         self.once('reboot-requested', lambda: self.host(target, 'reboot'))
         self.once('reboot-verified', lambda: self.verify_reboot(target, probe))
+        self.once('swarm-published', lambda: self.apply(runtime_name, 'runtime', {**write_parameters, 'PublishSwarm': 'true'}, ['SecurityGroup']))
         self.once('public-swarm', lambda: self.verify_swarm(target))
         self.once('source-bridge', lambda: self.host(source, 'prepare-source', **routing))
+        for sender, receiver in [(source, target), (target, source)]:
+            self.once('peer-https-' + sender['instanceId'],
+                      lambda sender=sender, receiver=receiver: self.host(sender, 'peer-health',
+                             peer={**receiver, 'certificate': self.current_status(receiver)['certificate']}))
         values = dict(self.state['frontdoorParameters'])
         values['Slot' + self.state['targetSlot'].upper() + 'InstanceId'] = target['instanceId']
         frontdoor = self.once('target-registered', lambda: self.frontdoor(values))
@@ -569,6 +599,7 @@ os.execv('/usr/bin/python3',['python3',str(release/'production_host.py'),%r])
                     current = self.current_status(target)
                     if current['bootId'] != old_boot:
                         require(current['router']['mode'] == 'serve' and not current['router']['mfsReady'], 'Writer fence did not survive reboot')
+                        require(current.get('rebootRequired') is False, 'Installed OS security updates still require a reboot')
                         require(current['version'] == self.state['versions']['kuboVersion'], 'Wrong rebooted version')
                         self.host(target, 'verify', rebootCheck=True)
                         return {'rebootPersistenceVerified': True, 'bootId': current['bootId'], 'probeCid': probe['cid']}

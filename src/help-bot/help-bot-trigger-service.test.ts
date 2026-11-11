@@ -8,6 +8,10 @@ import {
   HELP_BOT_SPAM_REACTION
 } from './help-bot.config';
 import { HelpBotTriggerService } from './help-bot-trigger.service';
+import {
+  WAVE_CHAT_REPLY_GROUP_ID,
+  WAVE_CHAT_REPLY_TRUTH_TABLE
+} from '@/waves/wave-chat-reply-truth-table.fixture';
 
 function createRequest(
   content: string,
@@ -620,6 +624,29 @@ describe('HelpBotTriggerService', () => {
     expect(userGroups.getGroupsUserIsEligibleForByIds).not.toHaveBeenCalled();
     expect(sqs.sendToQueueName).toHaveBeenCalled();
   });
+
+  it.each(WAVE_CHAT_REPLY_TRUTH_TABLE)(
+    'answers exactly when drop creation would accept the reply: %o',
+    async ({ inChatGroup, canReply, ...chat }) => {
+      const { service, sqs, userGroups } = createService({
+        wave: { visibility_group_id: null, is_direct_message: false, ...chat }
+      });
+      userGroups.getGroupsUserIsEligibleForByIds.mockResolvedValue(
+        inChatGroup ? [WAVE_CHAT_REPLY_GROUP_ID] : []
+      );
+
+      await service.handleCreatedDrop(
+        {
+          createDropRequest: createRequest('@help6529 what is tdh'),
+          createdDrop: createDrop({ id: 'drop-1' }),
+          authorProfileId: 'user-profile'
+        },
+        {} as never
+      );
+
+      expect(sqs.sendToQueueName).toHaveBeenCalledTimes(canReply ? 1 : 0);
+    }
+  );
 
   it('declines without charging once the wave daily answer limit is reached', async () => {
     const { service, interactionsDb, creditsService, reactionService, sqs } =

@@ -227,9 +227,9 @@ function verifyMp4() {
 }
 
 async function main() {
-  assert.equal(sharp.versions.sharp, '0.35.4');
-  assert.equal(sharp.versions.vips, '8.18.6');
-  assert.equal(sharp.versions.heif, '1.23.2');
+  assert.equal(sharp.versions.sharp, '0.35.5');
+  assert.equal(sharp.versions.vips, '8.18.7');
+  assert.equal(sharp.versions.heif, '1.23.5');
   if (process.argv.includes('--lambda')) {
     assert.equal(process.platform, 'linux');
     assert.equal(process.arch, 'x64');
@@ -271,7 +271,7 @@ async function main() {
       () => {}
     );
     assert.equal(smoke.status, 'ok');
-    assert.equal(smoke.sharp, '0.35.4');
+    assert.equal(smoke.sharp, '0.35.5');
     const loadedNativeModules = Object.keys(require.cache).filter((file) =>
       file.endsWith('.node')
     );

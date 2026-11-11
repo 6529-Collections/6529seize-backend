@@ -98,7 +98,11 @@ Before the evaluator is called:
   do not count and are still served.
 
 The `PrePublicationEvaluator` metric also records `INVOKED`, `CACHED_VERDICT`,
-and `BUDGET_EXCEEDED` events.
+and `BUDGET_EXCEEDED` events. Its `Environment` dimension comes from the
+deployment's configured environment name (`SENTRY_ENVIRONMENT`, then
+`OPS_ENVIRONMENT`, then `NODE_ENV`), the same label the drop creation metrics
+use; a name that is not recognisably production, staging or development is
+reported as `unknown`.
 
 The model's category or rationale is not reflected directly into the generic
 user-facing rejection response. The parser also enforces semantic consistency:

@@ -1244,4 +1244,62 @@ describe('fetchHelpIndexWithTimeout', () => {
       )
     ).rejects.toThrow('exceeded 20ms');
   });
+
+  it('leaves no unhandled rejection when the fetch fails after the timeout', async () => {
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown) => unhandled.push(reason);
+    process.on('unhandledRejection', onUnhandled);
+    try {
+      let rejectLate: (reason: Error) => void = () => undefined;
+      const lateFetch = new Promise<Response>((_, reject) => {
+        rejectLate = reject;
+      });
+      await expect(
+        fetchHelpIndexWithTimeout(
+          'https://6529.io/help-index.json',
+          10,
+          100,
+          async () => lateFetch
+        )
+      ).rejects.toThrow('exceeded 10ms');
+      rejectLate(new Error('aborted'));
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(unhandled).toEqual([]);
+    } finally {
+      process.off('unhandledRejection', onUnhandled);
+    }
+  });
+
+  it('caps the body on the default fetch path of the frontend source', async () => {
+    // The body passes the cap and then never ends: only a cap applied while
+    // reading can end this request before the fetch timeout.
+    const oversizedAndStalled = new Response(
+      new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new Uint8Array(HELP_BOT_INDEX_MAX_BYTES + 1));
+        }
+      }),
+      { status: 200 }
+    );
+    const fetchSpy = jest
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(oversizedAndStalled);
+    try {
+      const source = new FrontendHelpBotKnowledgeSource();
+      const error = await source.findMatch('what is tdh?').then(
+        () => null,
+        (e: unknown) => e
+      );
+      expect(error).toBeInstanceOf(HelpBotKnowledgeUnavailableError);
+      expect(
+        (error as HelpBotKnowledgeUnavailableError).originalError
+      ).toBeInstanceOf(HelpBotIndexTooLargeError);
+      expect(fetchSpy).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.objectContaining({ signal: expect.any(AbortSignal) })
+      );
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
 });

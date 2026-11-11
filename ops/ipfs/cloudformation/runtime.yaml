@@ -13,6 +13,8 @@ Parameters:
     AllowedValues: [t3.large, t3.xlarge, m7i.large]
   FrontdoorSecurityGroup:
     Type: AWS::EC2::SecurityGroup::Id
+  RuntimePeerSecurityGroup:
+    Type: AWS::EC2::SecurityGroup::Id
   SourceSecurityGroup:
     Type: AWS::EC2::SecurityGroup::Id
   RuntimeBoundaryArn:
@@ -21,9 +23,15 @@ Parameters:
     Type: String
     Default: 'false'
     AllowedValues: ['false', 'true']
+  PublishSwarm:
+    Type: String
+    Default: 'false'
+    AllowedValues: ['false', 'true']
 Conditions:
   WritesAllowed:
     Fn::Equals: [{ Ref: AllowWrites }, 'true']
+  SwarmPublished:
+    Fn::Equals: [{ Ref: PublishSwarm }, 'true']
 Resources:
   Role:
     Type: AWS::IAM::Role
@@ -96,10 +104,13 @@ Resources:
           ToPort: 443
           SourceSecurityGroupId:
             Ref: SourceSecurityGroup
-        - IpProtocol: tcp
-          FromPort: 4001
-          ToPort: 4001
-          CidrIp: 0.0.0.0/0 # NOSONAR: preserve the existing public IPFS peer protocol; RPC, gateway and SSH remain private.
+        - Fn::If:
+            - SwarmPublished
+            - IpProtocol: tcp
+              FromPort: 4001
+              ToPort: 4001
+              CidrIp: 0.0.0.0/0 # NOSONAR: preserve IPFS peering only after security updates and reboot validation; RPC/gateway/SSH stay private.
+            - Ref: AWS::NoValue
       Tags:
         - Key: Service
           Value: 6529-ipfs
@@ -119,7 +130,7 @@ Resources:
           AssociatePublicIpAddress: true # NOSONAR: outbound SSM/S3 in the existing public subnet; HTTPS is restricted and the original TCP swarm service is preserved.
           SubnetId:
             Ref: SubnetId
-          GroupSet: [{ Ref: SecurityGroup }]
+          GroupSet: [{ Ref: SecurityGroup }, { Ref: RuntimePeerSecurityGroup }]
       IamInstanceProfile:
         Ref: Profile
       DisableApiTermination: true
@@ -149,7 +160,18 @@ Resources:
           set -euo pipefail
           export DEBIAN_FRONTEND=noninteractive
           apt-get -o Acquire::Retries=3 update
-          apt-get -o Acquire::Retries=3 install -y --no-install-recommends python3 curl ca-certificates awscli openssl
+          apt-get -o Acquire::Retries=3 -o DPkg::Lock::Timeout=600 -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold full-upgrade -y
+          apt-get -o Acquire::Retries=3 -o DPkg::Lock::Timeout=600 install -y --no-install-recommends python3 curl ca-certificates openssl unzip
+          # The Noble AMI has no apt candidate for awscli. This archive's hash
+          # was checked after verifying the detached AWS CLI Team signature.
+          cli_dir=$(mktemp -d)
+          trap 'rm -rf -- "$cli_dir"' EXIT
+          curl -fsSL --proto '=https' --retry 3 --max-time 180 \
+            -o "$cli_dir/awscli.zip" https://awscli.amazonaws.com/awscli-exe-linux-x86_64-2.39.6.zip
+          printf '%s  %s\n' '7a121264f2637a3b90767aaf5bdd43ee88b8c925a931d0479fa2ce22b1a2fa76' "$cli_dir/awscli.zip" | sha256sum --check --status
+          unzip -q "$cli_dir/awscli.zip" -d "$cli_dir"
+          "$cli_dir/aws/install" --bin-dir /usr/local/bin --install-dir /usr/local/aws-cli
+          /usr/local/bin/aws --version
           install -d -m 700 /etc/6529-ipfs
           printf '%s\n' '{"environment":"prod","role":"candidate"}' > /etc/6529-ipfs/managed.json
           chmod 600 /etc/6529-ipfs/managed.json
