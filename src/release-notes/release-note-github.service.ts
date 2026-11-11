@@ -493,10 +493,11 @@ export class ReleaseNoteGitHubService {
   }
 
   public async isCommitAncestor(
-    repository: string,
+    repo: string,
     ancestorSha: string,
     descendantSha: string
   ): Promise<boolean> {
+    const repository = normalizeRepository(repo);
     const fullSha = /^[a-f0-9]{40}$/;
     if (!fullSha.test(ancestorSha) || !fullSha.test(descendantSha)) {
       throw new NonRetryableReleaseNoteError(

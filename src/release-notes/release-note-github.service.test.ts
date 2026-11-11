@@ -163,6 +163,18 @@ describe('ReleaseNoteGitHubService', () => {
     expect(fetch).not.toHaveBeenCalled();
   });
 
+  it('rejects a repository outside the release-note allowlist for ancestry comparisons', async () => {
+    const pin = 'a'.repeat(40);
+    await expect(
+      new ReleaseNoteGitHubService().isCommitAncestor(
+        'another-owner/6529seize-frontend',
+        pin,
+        pin
+      )
+    ).rejects.toThrow('Unsupported release notes repository');
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
   it('treats a missing GitHub ancestry status as a dependency error', async () => {
     (fetch as unknown as jest.Mock).mockResolvedValueOnce(response({}));
     await expect(
