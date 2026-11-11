@@ -2788,6 +2788,25 @@ Attempt five and later, missing/invalid retry metadata, and all other failures
 remain reportable. Conflict Sentry events include the receive count and retry
 limit; the existing dead-letter alarm remains the exhaustion backstop.
 
+### xTDH grant bounds
+
+An all-tokens grant pays each owned token id `rate / divisor` per day. The
+divisor is the larger of the contract's recorded `total_supply` and the number
+of distinct token ids with ownership history before the cutoff, so a grant's
+tokens never receive more than its rate per day in total, including when more
+ids are owned than the supply recorded at snapshot time. With no more observed
+ids than the recorded supply, results are unchanged; a grant without a recorded
+supply still pays nothing. This applies to identity xTDH, rates and the grant
+and token stats alike; `xTdhLoop` computes it.
+
+Grant creation (`POST /xtdh/grants`) checks the token list as strings before
+any range is expanded: at most `XTDH_GRANT_MAX_TOKENS` tokens (default 10,000,
+the web token picker's own limit) and `XTDH_GRANT_MAX_RANGE_WIDTH` per range
+(default 10,000), with range ends no larger than the largest safe integer;
+larger requests get 400. An identity may have at most `XTDH_MAX_PENDING_GRANTS`
+grants waiting for review (default 50); the next one gets 409
+`PENDING_GRANT_LIMIT`.
+
 ### Transfer reconciliation after late indexing
 
 Independent contract indexers atomically queue per-wallet `owners` and `activity`

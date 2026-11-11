@@ -93,12 +93,37 @@ inc_counts AS (
 )
 `;
 
+/**
+ * Per-token daily credit is `rate / denom`. An ALL grant pays every token id
+ * owned at the cutoff, which can be more ids than the supply the contract
+ * reported when it was snapshotted (later mints, or a misreported supply),
+ * so its divisor is the larger of the two: a grant's tokens never receive
+ * more than its rate per day in total. With no more observed ids than the
+ * recorded supply the divisor, and every result, is unchanged; a grant with
+ * no recorded supply still pays nothing, as before.
+ */
 const CTE_GRANT_DIVISOR = `
+all_grant_token_counts AS (
+  SELECT
+    h.\`partition\`,
+    COUNT(DISTINCT h.token_id) AS observed_cnt
+  FROM ${EXTERNAL_INDEXED_OWNERSHIP_721_HISTORY_TABLE} h
+  WHERE h.\`partition\` IN (
+      SELECT target_partition FROM gr WHERE token_mode = '${XTdhGrantTokenMode.ALL}'
+    )
+    AND h.since_time < (SELECT cut_ms FROM cutoff)
+  GROUP BY h.\`partition\`
+),
 grant_divisor AS (
   SELECT
     gr.id,
     CASE
-      WHEN gr.token_mode = 'ALL' THEN COALESCE(c.total_supply, 0)
+      WHEN gr.token_mode = 'ALL' THEN
+        CASE
+          WHEN COALESCE(c.total_supply, 0) > 0
+            THEN GREATEST(c.total_supply, COALESCE(ac.observed_cnt, 0))
+          ELSE 0
+        END
       ELSE COALESCE(ic.inc_cnt, 0)
     END AS denom
   FROM gr
@@ -106,6 +131,8 @@ grant_divisor AS (
     ON c.\`partition\` = gr.target_partition
   LEFT JOIN inc_counts ic
     ON ic.grant_id = gr.id
+  LEFT JOIN all_grant_token_counts ac
+    ON ac.\`partition\` = gr.target_partition
 )`;
 
 const CTE_GRANT_TOKENS = `
@@ -2069,6 +2096,25 @@ LEFT JOIN received_day rd
       );
     } finally {
       ctx.timer?.stop(`${this.constructor.name}->lockOldestPendingGrant`);
+    }
+  }
+
+  /** Grants by this grantor still waiting for review (grantor_id index). */
+  public async countPendingGrantsByGrantor(
+    grantorId: string,
+    ctx: RequestContext
+  ): Promise<number> {
+    try {
+      ctx.timer?.start(`${this.constructor.name}->countPendingGrantsByGrantor`);
+      const row = await this.db.oneOrNull<{ cnt: number | string }>(
+        `select count(*) as cnt from ${XTDH_GRANTS_TABLE}
+         where grantor_id = :grantorId and status = :pending`,
+        { grantorId, pending: XTdhGrantStatus.PENDING },
+        { wrappedConnection: ctx.connection }
+      );
+      return Number(row?.cnt ?? 0);
+    } finally {
+      ctx.timer?.stop(`${this.constructor.name}->countPendingGrantsByGrantor`);
     }
   }
 
