@@ -17,9 +17,14 @@ validate (no secrets, no id-token)
 
 ### `validate` job
 
-- Runs the existing dispatch-input, branch, `expected_source_sha`, and
-  `AWS_DEPLOY_ROLE_ARN` checks. Outputs the validated service, environment, and
-  account ID.
+- Runs the existing dispatch-input checks (environment, service and
+  `db_schema_scope` values), the branch check (`main` for `prod`,
+  `1a-staging` for `staging`), the `expected_source_sha` check, and the
+  production-only, staging-only and release-note precondition checks. Outputs
+  the validated service and environment.
+- Has no `environment:`, so it cannot read `vars.AWS_DEPLOY_ROLE_ARN` (an
+  environment-scoped variable). The role ARN format check and the account ID
+  derived from it move to the `deploy` job (below).
 
 ### `build` job
 
@@ -27,11 +32,15 @@ validate (no secrets, no id-token)
   and variables are not available. No `id-token: write`.
 - Checks out `github.sha` with `persist-credentials: false` and verifies it.
 - Installs with `./bin/6529 ci --ignore-scripts` where the service builds
-  without lifecycle scripts. Keep an explicit allowlist (in
-  `src/config/deploy-services.json`) for services that still need install
-  scripts, and review that list when dependencies change.
-- Runs the existing service build to produce `dist/index.zip` (and
-  `src/api-serverless/dist/index.zip` for `api`).
+  without install scripts. Pass the flag on the command line only: with
+  `ignore-scripts` set in npm configuration, npm also skips `prebuild` and
+  `postbuild`, and the `postbuild` hook is what zips `dist/index.zip`. Keep an
+  explicit allowlist (in `src/config/deploy-services.json`) for services that
+  still need install scripts, and review that list when dependencies change.
+- Runs the existing service build (`6529 run build`, whose `postbuild` writes
+  `dist/index.zip`, or `src/api-serverless/dist/index.zip` for `api`). The
+  resources-only stacks (`dropMediaIngestStorage`,
+  `artworkDocumentationStorage`) build a placeholder zip and deploy no code.
 - Writes a `SHA256SUMS` manifest for the packaged files and uploads the package
   and manifest with `actions/upload-artifact` (short retention). Publishes the
   package digest as a job output.
@@ -40,16 +49,27 @@ validate (no secrets, no id-token)
 
 - `needs: [validate, build]`, `environment:` as today, `id-token: write`,
   `contents: read`, `actions: read`.
+- Validates `AWS_DEPLOY_ROLE_ARN` and derives the account ID for
+  `allowed-account-ids` here, where the environment variable is available,
+  before any credential step.
 - Checks out the same `github.sha` for Serverless definitions and deploy
-  scripts only. Installs only the pinned deploy tooling (the Serverless
-  framework; the AWS CLI is on the runner image) from the lockfile with install
-  scripts disabled; it does not rebuild application code.
+  scripts only. Installs the deploy tooling from the root lockfile with
+  install scripts disabled: the Serverless framework that the `sls-deploy:*`
+  scripts run from the root `node_modules`, and every plugin the
+  `serverless.yaml` files list (currently `serverless-offline`, which
+  Serverless loads at deploy time even though nothing is run offline). The
+  AWS CLI and `jq` come from the runner image. It does not install service
+  packages or rebuild application code.
 - Downloads the artifact, verifies `SHA256SUMS` and that the digest equals the
-  `build` job output, then places the package where the existing
-  `package.artifact: dist/index.zip` settings expect it.
+  `build` job output, then restores the package to the path its deploy step
+  reads: `dist/index.zip` in the service directory for Serverless services
+  (`package.artifact: dist/index.zip`) and for `mediaResizerLoop` and
+  `nextgenMediaProxyInterceptor`, which upload it with the AWS CLI, and
+  `src/api-serverless/dist/index.zip` for `api`, which is also uploaded with
+  the AWS CLI rather than through Serverless.
 - Only then assumes the role through OIDC and runs the existing deploy,
-  immutable-code (`CodeSha256`), stack, invocation, and health verification
-  steps unchanged.
+  environment selection, immutable-code (`CodeSha256`), stack, invocation, and
+  health verification steps unchanged.
 
 ### Points to resolve before implementing
 
