@@ -21,10 +21,12 @@ import {
   MEMES_CONTRACT,
   MEMELAB_CONTRACT,
   NFTS_MEME_LAB_TABLE,
+  NEWSLETTER_EDITION_SOURCES_TABLE,
   NFTS_TABLE,
   TRANSACTIONS_TABLE,
   WAVES_DECISION_WINNER_DROPS_TABLE
 } from '@/constants';
+import { NewsletterEditionStatus } from '@/entities/INewsletterEdition';
 import { connect, disconnect, getDataSource } from '@/db';
 import { setSqlExecutor, sqlExecutor } from '@/sql-executor';
 import { describeWithSeed } from '@/tests/_setup/seed';
@@ -358,12 +360,9 @@ describeWithSeed(
             serial_no: 101
           })
         ]);
-        const result = await new NewsletterCollector(lambdaDb).collect(
-          window,
-          'destination',
-          'publisher',
-          {}
-        );
+        const { material: result } = await new NewsletterCollector(
+          lambdaDb
+        ).collect(window, 'destination', 'publisher', {});
         expect(
           result.sources.find((source) => source.url.endsWith('serialNo=101'))
         ).toMatchObject({
@@ -455,12 +454,9 @@ describeWithSeed(
     });
 
     it('collects an older public root and winner without following a private quote', async () => {
-      const result = await new NewsletterCollector(db).collect(
-        window,
-        'destination',
-        'publisher',
-        {}
-      );
+      const { material: result, registry } = await new NewsletterCollector(
+        db
+      ).collect(window, 'destination', 'publisher', {});
       const reply = result.sources.find((source) =>
         source.url.endsWith('serialNo=101')
       )!;
@@ -480,7 +476,26 @@ describeWithSeed(
           url: `https://6529.io/waves/${MAIN_STAGE_WAVE_ID}?serialNo=105`
         })
       ]);
-      const serialized = JSON.stringify(result);
+      // The registry is built from the same rows: ids, times and context flags match.
+      expect(registry.get('drop:reply')).toMatchObject({
+        kind: 'DROP',
+        canonical_url: 'https://6529.io/waves/public?serialNo=101',
+        time: '2026-09-23T00:00:00.001Z',
+        context_only: false,
+        author_handle: 'Ayla',
+        wave_id: 'public',
+        drop_id: 'reply'
+      });
+      expect(registry.get('drop:old-root')?.context_only).toBe(true);
+      expect(registry.get('identity:author')?.canonical_url).toBe(
+        'https://6529.io/Ayla'
+      );
+      expect(registry.has('drop:drop-private')).toBe(false);
+      expect(registry.has('drop:hidden')).toBe(false);
+      const serialized = JSON.stringify({
+        result,
+        registry: Array.from(registry.values())
+      });
       for (const text of [
         'Private secret wave',
         'drop-private',
@@ -593,7 +608,7 @@ describeWithSeed(
         new Date(window.start).toISOString()
       );
       expect(mints[0].mint_date).toEqual(nft.mint_date.toISOString());
-      const material = await new NewsletterCollector(db).collect(
+      const { material, registry } = await new NewsletterCollector(db).collect(
         window,
         'destination',
         'publisher',
@@ -601,11 +616,18 @@ describeWithSeed(
       );
       expect(material.mints[0]).toEqual(
         expect.objectContaining({
+          source_id: 'mint:the-memes:552',
           card: 552,
           url: 'https://6529.io/the-memes/552',
           artists: [{ handle: 'Ayla', url: 'https://6529.io/Ayla' }]
         })
       );
+      expect(registry.get('mint:the-memes:552')).toMatchObject({
+        kind: 'MINT',
+        canonical_url: 'https://6529.io/the-memes/552',
+        title: 'The First Believer',
+        time: new Date(window.start).toISOString()
+      });
     });
   }
 );
@@ -633,7 +655,7 @@ describeWithSeed(
   ],
   () => {
     it('uses the correct collection page even when card numbers overlap', async () => {
-      const result = await new NewsletterCollector(db).collect(
+      const { material: result } = await new NewsletterCollector(db).collect(
         window,
         'destination',
         'publisher',
@@ -641,6 +663,7 @@ describeWithSeed(
       );
       expect(result.mints).toEqual([
         expect.objectContaining({
+          source_id: 'mint:meme-lab:552',
           collection: 'Meme Lab',
           card: 552,
           url: 'https://6529.io/meme-lab/552'
@@ -649,3 +672,90 @@ describeWithSeed(
     });
   }
 );
+
+const editionSource = (
+  id: string,
+  time: number,
+  kind: 'DROP' | 'WINNER' | 'MINT' | 'IDENTITY' = 'DROP'
+) => ({
+  source_id: id,
+  kind,
+  canonical_url: `https://6529.io/waves/public?serialNo=${time}`,
+  title: `Title ${id}`,
+  author_handle: 'Ayla',
+  wave_id: kind === 'MINT' ? null : 'public',
+  wave_name: kind === 'MINT' ? null : 'Public',
+  observed_at: new Date(window.end + 5).toISOString(),
+  content_fingerprint: 'f'.repeat(64),
+  time: new Date(time).toISOString(),
+  context_only: time < window.start,
+  drop_id: kind === 'MINT' ? null : id.split(':')[1],
+  team_wave: false
+});
+
+describeWithSeed('newsletter edition persistence', [], () => {
+  const rejected = {
+    edition_id: 'daily:2026-09-23',
+    status: NewsletterEditionStatus.Rejected,
+    window_start: window.start,
+    window_end: window.end,
+    mode: 'scheduled' as const,
+    drop_id: null,
+    raw_output: '{"sections":[]}',
+    rejection_reasons: ['unknown source id "drop:x"'],
+    sources: [editionSource('drop:a', window.start + 1)]
+  };
+
+  it('round-trips a rejected edition with its reasons and registry snapshot, without source rows', async () => {
+    expect(await db.findEdition(rejected.edition_id, {})).toBeNull();
+    await db.saveEdition(rejected, {});
+    expect(await db.findEdition(rejected.edition_id, {})).toEqual(rejected);
+    expect(
+      await sqlExecutor.execute(
+        `select * from ${NEWSLETTER_EDITION_SOURCES_TABLE} where edition_id = :id`,
+        { id: rejected.edition_id }
+      )
+    ).toEqual([]);
+  });
+
+  it('upgrades a retried edition to PUBLISHED and materializes source rows exactly once', async () => {
+    await db.saveEdition(rejected, {});
+    const published = {
+      ...rejected,
+      status: NewsletterEditionStatus.Published,
+      drop_id: 'drop-1',
+      rejection_reasons: null,
+      sources: [
+        editionSource('drop:a', window.start + 1),
+        editionSource('mint:the-memes:552', window.start + 2, 'MINT')
+      ]
+    };
+    await db.saveEdition(published, {});
+    await db.saveEdition(published, {});
+    expect(await db.findEdition(published.edition_id, {})).toEqual(published);
+    const rows = await sqlExecutor.execute<Record<string, unknown>>(
+      `select * from ${NEWSLETTER_EDITION_SOURCES_TABLE} where edition_id = :id order by source_id`,
+      { id: published.edition_id }
+    );
+    expect(rows).toEqual([
+      expect.objectContaining({
+        edition_id: 'daily:2026-09-23',
+        source_id: 'drop:a',
+        kind: 'DROP',
+        drop_id: 'a',
+        wave_id: 'public',
+        time: window.start + 1,
+        collected_at: window.end + 5,
+        canonical_url: `https://6529.io/waves/public?serialNo=${window.start + 1}`,
+        content_fingerprint: 'f'.repeat(64),
+        context_only: false
+      }),
+      expect.objectContaining({
+        source_id: 'mint:the-memes:552',
+        kind: 'MINT',
+        drop_id: null,
+        wave_id: null
+      })
+    ]);
+  });
+});
