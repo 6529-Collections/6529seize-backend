@@ -151,6 +151,32 @@ export class CmsDb extends LazyDbAccessCompatibleService {
     );
   }
 
+  public async countSitesByOwner(ownerProfileId: string): Promise<number> {
+    const row = await this.db.oneOrNull<{ cnt: number }>(
+      `
+        SELECT COUNT(*) AS cnt
+        FROM ${CMS_SITES_TABLE}
+        WHERE owner_profile_id = :ownerProfileId
+      `,
+      { ownerProfileId }
+    );
+    return Number(row?.cnt ?? 0);
+  }
+
+  public async countPublishedPackagesByOwner(
+    ownerProfileId: string
+  ): Promise<number> {
+    const row = await this.db.oneOrNull<{ cnt: number }>(
+      `
+        SELECT COUNT(*) AS cnt
+        FROM ${CMS_PUBLISHED_PACKAGES_TABLE}
+        WHERE owner_profile_id = :ownerProfileId
+      `,
+      { ownerProfileId }
+    );
+    return Number(row?.cnt ?? 0);
+  }
+
   public async findPublishedPackageByHash(
     packageHash: string
   ): Promise<CmsPublishedPackageRow | null> {

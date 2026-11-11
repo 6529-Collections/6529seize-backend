@@ -42,6 +42,7 @@ import { enums } from '../../../enums';
 import { RequestContext } from '@/request.context';
 import { profileCicOverviewApiService } from './profile-cic-overview.api.service';
 import { moderationPresentationService } from '@/content-moderation/moderation-presentation.service';
+import { MAX_CIC_STATEMENT_COMMENT_LENGTH } from '@/cic/cic-statement-validation';
 
 const router = asyncRouter({ mergeParams: true });
 
@@ -413,7 +414,11 @@ const ApiCreateOrUpdateProfileCicStatementSchema: Joi.ObjectSchema<ApiCreateProf
       .valid(...Object.values(ApiCicStatementGroup))
       .required(),
     statement_type: Joi.string().required().min(1).max(250),
-    statement_comment: Joi.string().allow(null).optional().default(null),
+    statement_comment: Joi.string()
+      .max(MAX_CIC_STATEMENT_COMMENT_LENGTH)
+      .allow(null)
+      .optional()
+      .default(null),
     statement_value: Joi.string().min(1).max(2048).required()
   });
 

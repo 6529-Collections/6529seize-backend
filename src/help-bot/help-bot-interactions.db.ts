@@ -47,6 +47,14 @@ export interface InsertHelpBotInteractionResult {
   readonly created: boolean;
 }
 
+const HELP_BOT_ANSWERABLE_STATUSES: readonly HelpBotInteractionStatus[] = [
+  HelpBotInteractionStatus.SEEN,
+  HelpBotInteractionStatus.ANSWERING,
+  HelpBotInteractionStatus.ANSWERED,
+  HelpBotInteractionStatus.NO_RELIABLE_SOURCE,
+  HelpBotInteractionStatus.FAILED
+];
+
 export interface CountRecentAuthorInteractionsRequest {
   readonly authorProfileId: string;
   readonly sinceMillis: number;
@@ -223,6 +231,60 @@ export class HelpBotInteractionsDb extends LazyDbAccessCompatibleService {
       { wrappedConnection: ctx.connection }
     );
     return Number(row?.interaction_count ?? 0);
+  }
+
+  /**
+   * Counts interactions accepted for an answer since `sinceMillis`, either in
+   * one wave or across all waves. Declined interactions (spam, credits, daily
+   * limit) are excluded so they do not consume the daily allowance.
+   */
+  public async countRecentAnswerable(
+    {
+      waveId,
+      sinceMillis
+    }: {
+      readonly waveId: string | null;
+      readonly sinceMillis: number;
+    },
+    ctx: RequestContext
+  ): Promise<number> {
+    const row = await this.db.oneOrNull<{ readonly interaction_count: number }>(
+      `
+        SELECT COUNT(1) AS interaction_count
+        FROM ${HELP_BOT_INTERACTIONS_TABLE}
+        WHERE status IN (:answerableStatuses)
+          AND created_at >= :sinceMillis
+          ${waveId === null ? '' : 'AND wave_id = :waveId'}
+      `,
+      {
+        answerableStatuses: HELP_BOT_ANSWERABLE_STATUSES,
+        sinceMillis,
+        waveId
+      },
+      { wrappedConnection: ctx.connection }
+    );
+    return Number(row?.interaction_count ?? 0);
+  }
+
+  public async markDailyLimitReached(
+    {
+      id,
+      failureReason
+    }: {
+      readonly id: string;
+      readonly failureReason: string;
+    },
+    ctx: RequestContext
+  ): Promise<void> {
+    await this.markCompleted(
+      {
+        id,
+        status: HelpBotInteractionStatus.DAILY_LIMIT_REACHED,
+        replyDropId: null,
+        failureReason
+      },
+      ctx
+    );
   }
 
   public async markAnswered(

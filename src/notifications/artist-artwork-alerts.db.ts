@@ -5,6 +5,7 @@ import {
   COMPETITION_OUTBOX_TABLE
 } from '@/constants';
 import { stableUuid } from '@/competitions/competition-id';
+import { COMPETITION_EVENT_EFFECTS_KEY_INDEX } from '@/entities/ICompetitionRuntime';
 import { DbPoolName } from '@/db-query.options';
 import { RequestContext } from '@/request.context';
 import { dbSupplier, LazyDbAccessCompatibleService } from '@/sql-executor';
@@ -103,15 +104,22 @@ export class ArtistArtworkAlertsDb extends LazyDbAccessCompatibleService {
       throw new Error('Artwork preference merge requires a transaction');
     // Only unfinished events can run again. Transfer their receipts before
     // preferences, preserving the same receipt -> preference lock order as delivery.
+    // Merges run for every consolidated identity, most of which never had a
+    // receipt: read from the source's receipts by key, so the locking read
+    // holds only those receipts, their outbox rows and the key's index range
+    // (which holds back a new source receipt, and one whose key sorts right
+    // next to it, until the merge commits), never every undelivered outbox row.
     const receipts = await this.query<{
       event_id: string;
       result: unknown;
       completed_at: number;
     }>(
       'mergeProfile',
-      `select f.event_id, f.result, f.completed_at from ${COMPETITION_OUTBOX_TABLE} o
-       join ${COMPETITION_EVENT_EFFECTS_TABLE} f on f.event_id = o.id and f.effect_key = :sourceKey
-       where o.delivered_at is null and f.completed_at is not null order by o.id for update`,
+      `select straight_join f.event_id, f.result, f.completed_at
+       from ${COMPETITION_EVENT_EFFECTS_TABLE} f force index (${COMPETITION_EVENT_EFFECTS_KEY_INDEX})
+       join ${COMPETITION_OUTBOX_TABLE} o on o.id = f.event_id
+       where f.effect_key = :sourceKey and f.completed_at is not null and o.delivered_at is null
+       order by o.id for update`,
       { sourceKey: `artwork:${source}` },
       ctx
     );
@@ -136,19 +144,40 @@ export class ArtistArtworkAlertsDb extends LazyDbAccessCompatibleService {
         ctx
       );
     }
+    // One statement per side, so each reads its own index (the primary key
+    // for subscribers, artist_artwork_alert_recipients for artists) instead
+    // of possibly scanning, and locking, the whole table for an OR.
+    // Subscriber side: (source, x) becomes (target, x); self-pairs drop.
     await this.query(
       'mergeProfile',
       `insert into ${ARTIST_ARTWORK_ALERTS_TABLE} (subscriber_id,artist_id,enabled_at)
-       select if(a.subscriber_id=:source,:target,a.subscriber_id), if(a.artist_id=:source,:target,a.artist_id), a.enabled_at
-       from ${ARTIST_ARTWORK_ALERTS_TABLE} a where (a.subscriber_id=:source or a.artist_id=:source)
-         and if(a.subscriber_id=:source,:target,a.subscriber_id) <> if(a.artist_id=:source,:target,a.artist_id)
+       select :target, a.artist_id, a.enabled_at
+       from ${ARTIST_ARTWORK_ALERTS_TABLE} a where a.subscriber_id=:source
+         and a.artist_id <> :source and a.artist_id <> :target
+       on duplicate key update enabled_at=least(${ARTIST_ARTWORK_ALERTS_TABLE}.enabled_at,values(enabled_at))`,
+      { source, target },
+      ctx
+    );
+    // Artist side: (x, source) becomes (x, target); self-pairs drop.
+    await this.query(
+      'mergeProfile',
+      `insert into ${ARTIST_ARTWORK_ALERTS_TABLE} (subscriber_id,artist_id,enabled_at)
+       select a.subscriber_id, :target, a.enabled_at
+       from ${ARTIST_ARTWORK_ALERTS_TABLE} a where a.artist_id=:source
+         and a.subscriber_id <> :source and a.subscriber_id <> :target
        on duplicate key update enabled_at=least(${ARTIST_ARTWORK_ALERTS_TABLE}.enabled_at,values(enabled_at))`,
       { source, target },
       ctx
     );
     await this.query(
       'mergeProfile',
-      `delete from ${ARTIST_ARTWORK_ALERTS_TABLE} where subscriber_id=:source or artist_id=:source`,
+      `delete from ${ARTIST_ARTWORK_ALERTS_TABLE} where subscriber_id=:source`,
+      { source },
+      ctx
+    );
+    await this.query(
+      'mergeProfile',
+      `delete from ${ARTIST_ARTWORK_ALERTS_TABLE} where artist_id=:source`,
       { source },
       ctx
     );

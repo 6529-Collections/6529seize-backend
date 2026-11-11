@@ -149,11 +149,12 @@ router.post(
   ) => {
     const timer = Timer.getFromRequest(req);
     const authenticationContext = await getAuthenticationContext(req, timer);
-    const apiUserGroup = getValidatedByJoiOrThrow(req.body, NewUserGroupSchema);
     const savingProfileId = authenticationContext.authenticatedProfileId;
     if (!savingProfileId) {
       throw new ForbiddenException(`Please create a profile first.`);
     }
+    rejectProxySession(authenticationContext, `Proxies cannot create groups`);
+    const apiUserGroup = getValidatedByJoiOrThrow(req.body, NewUserGroupSchema);
     const relatedIdentities = collections.distinct(
       [
         apiUserGroup.group.rep.user_identity,

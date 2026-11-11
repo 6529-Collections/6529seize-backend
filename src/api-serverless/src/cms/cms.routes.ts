@@ -44,9 +44,14 @@ const publishPackageSchema = Joi.object<ApiCmsPublishPackageRequest>({
   title: Joi.string().trim().min(1).max(255).required(),
   description: Joi.string().trim().max(5000).allow(null).optional(),
   static_path: Joi.string().trim().min(1).max(500).required(),
-  canonical_url: Joi.string().trim().uri().max(1000).allow(null).optional(),
+  canonical_url: Joi.string()
+    .trim()
+    .uri({ scheme: ['https'] })
+    .max(1000)
+    .allow(null)
+    .optional(),
   package_json: Joi.object().unknown(true).required(),
-  storage: Joi.array().items(storageLocationSchema).min(1).required(),
+  storage: Joi.array().items(storageLocationSchema).min(1).max(20).required(),
   signature: Joi.object().unknown(true).required(),
   set_primary: Joi.boolean().optional()
 });
