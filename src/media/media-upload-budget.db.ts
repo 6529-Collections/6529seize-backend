@@ -1,5 +1,8 @@
 import { MEDIA_UPLOAD_BUDGET_ENTRIES_TABLE, PROFILES_TABLE } from '@/constants';
-import { MediaUploadBudgetEntryEntity } from '@/entities/IMediaUploadBudget';
+import {
+  MediaUploadBudgetEntryEntity,
+  MediaUploadBudgetSource
+} from '@/entities/IMediaUploadBudget';
 import {
   ConnectionWrapper,
   dbSupplier,
@@ -8,22 +11,44 @@ import {
 
 export interface MediaUploadBudgetUsage {
   readonly uploads: number;
+  /** Recorded sizes, and the reserved bytes of entries without one. */
   readonly bytes: number;
   /** Creation time of the oldest upload still in the window. */
   readonly oldestAt: number | null;
 }
 
+export interface PendingMediaUploadSize {
+  readonly id: string;
+  readonly source: MediaUploadBudgetSource;
+  readonly pending_object_key: string;
+  readonly created_at: number;
+}
+
+/** Bounds every list read and batch delete of this table. */
+export const MEDIA_UPLOAD_BUDGET_MAX_ROWS_PER_STATEMENT = 1000;
+
+function boundedLimit(limit: number): number {
+  return Math.max(
+    1,
+    Math.min(MEDIA_UPLOAD_BUDGET_MAX_ROWS_PER_STATEMENT, Math.floor(limit))
+  );
+}
+
 export class MediaUploadBudgetDb extends LazyDbAccessCompatibleService {
-  /** Serializes one profile's reservations so the budget cannot be raced. */
+  /**
+   * Serializes one profile's reservations so the budget cannot be raced.
+   * False when no profiles row has this id: nothing was locked.
+   */
   async lockProfile(
     profileId: string,
     connection: ConnectionWrapper<any>
-  ): Promise<void> {
-    await this.db.execute(
+  ): Promise<boolean> {
+    const rows = await this.db.execute<{ external_id: string }>(
       `select external_id from ${PROFILES_TABLE} where external_id = :profileId for update`,
       { profileId },
       { wrappedConnection: connection }
     );
+    return rows.length > 0;
   }
 
   async usageSince(
@@ -37,7 +62,7 @@ export class MediaUploadBudgetDb extends LazyDbAccessCompatibleService {
       oldest_at: number | string | null;
     }>(
       `select count(*) as uploads,
-         coalesce(sum(size_bytes), 0) as bytes,
+         coalesce(sum(coalesce(size_bytes, reserved_bytes)), 0) as bytes,
          min(created_at) as oldest_at
        from ${MEDIA_UPLOAD_BUDGET_ENTRIES_TABLE}
        where profile_id = :profileId and created_at > :sinceMs`,
@@ -60,9 +85,11 @@ export class MediaUploadBudgetDb extends LazyDbAccessCompatibleService {
   ): Promise<void> {
     await this.db.execute(
       `insert into ${MEDIA_UPLOAD_BUDGET_ENTRIES_TABLE}
-         (id, profile_id, source, created_at, size_bytes, pending_object_key)
+         (id, profile_id, source, created_at, size_bytes, reserved_bytes,
+          pending_object_key, size_checked_at)
        values
-         (:id, :profile_id, :source, :created_at, :size_bytes, :pending_object_key)`,
+         (:id, :profile_id, :source, :created_at, :size_bytes, :reserved_bytes,
+          :pending_object_key, :size_checked_at)`,
       entry,
       { wrappedConnection: connection }
     );
@@ -75,6 +102,7 @@ export class MediaUploadBudgetDb extends LazyDbAccessCompatibleService {
     );
   }
 
+  /** Settles an entry at its stored size; it is no longer pending. */
   async recordSize(
     id: string,
     profileId: string,
@@ -88,27 +116,66 @@ export class MediaUploadBudgetDb extends LazyDbAccessCompatibleService {
     );
   }
 
-  /** The profile's single-PUT uploads created before `beforeMs` with no size yet. */
-  async findPendingSizes(
+  /** Keeps an entry pending after a read that could not settle it. */
+  async markSizeChecked(
+    id: string,
     profileId: string,
-    sinceMs: number,
-    beforeMs: number,
-    limit: number
-  ): Promise<{ id: string; pending_object_key: string }[]> {
-    return this.db.execute<{ id: string; pending_object_key: string }>(
-      `select id, pending_object_key from ${MEDIA_UPLOAD_BUDGET_ENTRIES_TABLE}
-       where profile_id = :profileId and created_at > :sinceMs and created_at < :beforeMs
-         and pending_object_key is not null
-       order by created_at asc
-       limit :limit`,
-      { profileId, sinceMs, beforeMs, limit }
+    checkedAt: number
+  ): Promise<void> {
+    await this.db.execute(
+      `update ${MEDIA_UPLOAD_BUDGET_ENTRIES_TABLE}
+       set size_checked_at = :checkedAt
+       where id = :id and profile_id = :profileId and pending_object_key is not null`,
+      { id, profileId, checkedAt }
     );
+  }
+
+  /**
+   * The profile's pending entries in the window created before
+   * `createdBefore` and not checked since `checkedBefore`, least recently
+   * checked first, at most `limit`.
+   */
+  async findPendingSizes({
+    profileId,
+    sinceMs,
+    createdBefore,
+    checkedBefore,
+    limit
+  }: {
+    profileId: string;
+    sinceMs: number;
+    createdBefore: number;
+    checkedBefore: number;
+    limit: number;
+  }): Promise<PendingMediaUploadSize[]> {
+    const rows = await this.db.execute<
+      Omit<PendingMediaUploadSize, 'created_at'> & {
+        created_at: number | string;
+      }
+    >(
+      `select id, source, pending_object_key, created_at
+       from ${MEDIA_UPLOAD_BUDGET_ENTRIES_TABLE}
+       where profile_id = :profileId
+         and created_at > :sinceMs and created_at < :createdBefore
+         and pending_object_key is not null
+         and (size_checked_at is null or size_checked_at < :checkedBefore)
+       order by coalesce(size_checked_at, 0) asc, created_at asc
+       limit :limit`,
+      {
+        profileId,
+        sinceMs,
+        createdBefore,
+        checkedBefore,
+        limit: boundedLimit(limit)
+      }
+    );
+    return rows.map((row) => ({ ...row, created_at: Number(row.created_at) }));
   }
 
   async deleteOlderThan(cutoffMs: number, limit: number): Promise<number> {
     const result = await this.db.execute(
       `delete from ${MEDIA_UPLOAD_BUDGET_ENTRIES_TABLE} where created_at < :cutoffMs limit :limit`,
-      { cutoffMs, limit }
+      { cutoffMs, limit: boundedLimit(limit) }
     );
     return this.db.getAffectedRows(result);
   }

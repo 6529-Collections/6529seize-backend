@@ -242,40 +242,40 @@ export class NativeCompetitionRuntimeService {
     const previousByEntry = new Map(
       current.map((vote) => [vote.entryId, vote.value])
     );
-    for (const vote of reduced) {
-      const previousVote = previousByEntry.get(vote.entryId) ?? 0;
-      if (vote.value === previousVote) continue;
+    const changes = reduced.filter(
+      (vote) => vote.value !== (previousByEntry.get(vote.entryId) ?? 0)
+    );
+    if (!changes.length) return;
+    // One read for all of this voter's changed entries. Each entry changes
+    // once per voter, so the times stay the latest while these writes run.
+    const latestHistory = params.afterEntryHistory
+      ? await this.repository.latestEntryHistoryTimes(
+          params.competitionId,
+          changes.map((vote) => vote.entryId),
+          ctx
+        )
+      : new Map<string, number>();
+    for (const vote of changes) {
       const mutation = {
         competitionId: params.competitionId,
         entryId: vote.entryId,
         voterProfileId: params.voterProfileId,
         value: vote.value,
-        occurredAt: await this.reconciliationTime(params, vote.entryId, ctx)
+        occurredAt: Math.max(
+          params.occurredAt,
+          latestHistory.get(vote.entryId) ?? params.occurredAt
+        )
       };
       await this.repository.replaceVoteForReconciliation(mutation, ctx);
       await this.repository.recordVoteChange(
-        { ...mutation, previousVote, reason: 'CREDIT_OVERSPENT' },
+        {
+          ...mutation,
+          previousVote: previousByEntry.get(vote.entryId) ?? 0,
+          reason: 'CREDIT_OVERSPENT'
+        },
         ctx
       );
     }
-  }
-
-  private async reconciliationTime(
-    params: {
-      competitionId: string;
-      occurredAt: number;
-      afterEntryHistory?: boolean;
-    },
-    entryId: string,
-    ctx: RequestContext
-  ): Promise<number> {
-    if (!params.afterEntryHistory) return params.occurredAt;
-    const latest = await this.repository.latestEntryHistoryTime(
-      params.competitionId,
-      entryId,
-      ctx
-    );
-    return Math.max(params.occurredAt, latest ?? params.occurredAt);
   }
 
   private async reconcileCompetitionCredit(

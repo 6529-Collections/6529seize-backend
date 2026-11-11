@@ -64,19 +64,9 @@ resources:
               Resource:
                 Fn::Sub: arn:${AWS::Partition}:s3:::${self:functions.dropVideoConversionInvokerLoop.environment.S3_BUCKET}/renditions/drops/*/poster/*_device.jpg
             - Effect: Allow
-              Action:
-                - s3:ListMultipartUploadParts
-                # HEAD of the uploaded video before a job is created.
-                - s3:GetObject
+              Action: s3:ListMultipartUploadParts
               Resource:
                 Fn::Sub: arn:${AWS::Partition}:s3:::${self:functions.dropVideoConversionInvokerLoop.environment.S3_BUCKET}/drops/*
-            # Per-key ledger of started conversion jobs (conditional writes).
-            - Effect: Allow
-              Action:
-                - s3:GetObject
-                - s3:PutObject
-              Resource:
-                Fn::Sub: arn:${AWS::Partition}:s3:::${self:functions.dropVideoConversionInvokerLoop.environment.S3_BUCKET}/_video-conversion-ledger/*
 
     DropsVideoCreatedRule:
       Type: AWS::Events::Rule

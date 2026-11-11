@@ -1,5 +1,6 @@
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { CLOUDFRONT_LINK } from '@/constants';
+import { Time } from '@/time';
 import { UploadMediaService } from '@/api/media/upload-media.service';
 import { ApiDropMediaStatus } from '@/api/generated/models/ApiDropMediaStatus';
 import {
@@ -884,10 +885,14 @@ describe('UploadMediaService', () => {
       fromStatuses: ['completing'],
       toStatus: 'processing'
     });
+    const [{ claimedAt, reclaimBefore }] =
+      uploadsDb.claimSanitizerEnqueue.mock.calls[0];
     expect(uploadsDb.claimSanitizerEnqueue).toHaveBeenCalledWith({
       id: 'media-upload-123',
-      claimedAt: expect.any(Number)
+      claimedAt: expect.any(Number),
+      reclaimBefore: expect.any(Number)
     });
+    expect(claimedAt - reclaimBefore).toBe(5 * 60 * 1000);
     expect(enqueue).toHaveBeenCalledWith({
       mediaUploadId: 'media-upload-123'
     });
@@ -1051,8 +1056,12 @@ describe('UploadMediaService', () => {
     };
     const uploadsDb = {
       findByPublicKeyAndS3UploadId: jest.fn(async () => ({ ...record })),
-      claimSanitizerEnqueue: jest.fn(async ({ claimedAt }) => {
-        if (record.sanitizer_enqueued_at !== null) return false;
+      claimSanitizerEnqueue: jest.fn(async ({ claimedAt, reclaimBefore }) => {
+        if (
+          record.sanitizer_enqueued_at !== null &&
+          record.sanitizer_enqueued_at >= reclaimBefore
+        )
+          return false;
         record.sanitizer_enqueued_at = claimedAt;
         return true;
       })
@@ -1074,6 +1083,60 @@ describe('UploadMediaService', () => {
       });
 
     expect(enqueue).toHaveBeenCalledTimes(1);
+  });
+
+  it('sends the message again when a claim is older than five minutes and the upload is still processing', async () => {
+    const now = jest.spyOn(Time, 'currentMillis').mockReturnValue(1_000_000);
+    const record = {
+      id: 'media-upload-123',
+      profile_id: 'author-123',
+      status: 'processing',
+      // A completion claimed the message and stopped before sending it.
+      sanitizer_enqueued_at: 1_000_000 as number | null,
+      ingest_bucket: 'ingest-bucket',
+      ingest_key: 'staging/drop-media-ingest/drops/key.jpg',
+      s3_upload_id: 'upload-123',
+      public_url: `${CLOUDFRONT_LINK}/drops/key.jpg`
+    };
+    const uploadsDb = {
+      findByPublicKeyAndS3UploadId: jest.fn(async () => ({ ...record })),
+      claimSanitizerEnqueue: jest.fn(async ({ claimedAt, reclaimBefore }) => {
+        if (
+          record.sanitizer_enqueued_at !== null &&
+          record.sanitizer_enqueued_at >= reclaimBefore
+        )
+          return false;
+        record.sanitizer_enqueued_at = claimedAt;
+        return true;
+      })
+    };
+    const enqueue = jest.fn().mockResolvedValue(undefined);
+    const service = new UploadMediaService(
+      () => ({ send: jest.fn() }) as any,
+      () => ({ send: jest.fn() }) as any,
+      uploadsDb as any,
+      enqueue
+    );
+    const complete = () =>
+      service.completeMultipartUpload({
+        key: 'drops/key.jpg',
+        upload_id: 'upload-123',
+        parts: [{ etag: '"etag-1"', part_no: 1 }],
+        authenticatedProfileId: 'author-123'
+      });
+
+    try {
+      now.mockReturnValue(1_000_000 + 4 * 60 * 1000);
+      await complete();
+      expect(enqueue).not.toHaveBeenCalled();
+
+      now.mockReturnValue(1_000_000 + 5 * 60 * 1000 + 1);
+      await complete();
+      await complete();
+      expect(enqueue).toHaveBeenCalledTimes(1);
+    } finally {
+      now.mockRestore();
+    }
   });
 
   it('rejects tracked upload completion for another profile', async () => {

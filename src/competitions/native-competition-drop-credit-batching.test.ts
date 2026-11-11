@@ -87,7 +87,9 @@ function setUp(batched: boolean, activeVoters = ACTIVE_VOTERS) {
       }));
     });
   // No score history after the pass time: changes keep the pass time.
-  jest.spyOn(repository, 'latestEntryHistoryTime').mockResolvedValue(null);
+  jest
+    .spyOn(repository, 'latestEntryHistoryTimes')
+    .mockResolvedValue(new Map());
   jest
     .spyOn(repository, 'replaceVoteForReconciliation')
     .mockImplementation(async (mutation) => {

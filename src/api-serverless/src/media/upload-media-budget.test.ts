@@ -15,20 +15,23 @@ jest.mock('@aws-sdk/s3-request-presigner', () => ({
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const ORIGINAL_ENV = { ...process.env };
+const MIB = 1024 * 1024;
+
+type Send = jest.Mock;
 
 function setUp({
-  publicSend = jest.fn(
-    async (..._args: unknown[]): Promise<any> => ({
-      UploadId: 'session'
-    })
-  ),
-  ingestSend = jest.fn(
-    async (..._args: unknown[]): Promise<any> => ({
-      UploadId: 'ingest-session'
-    })
-  ),
-  uploadsDb = {} as Record<string, jest.Mock>
+  publicSend,
+  ingestSend,
+  uploadsDb = {}
+}: {
+  publicSend?: Send;
+  ingestSend?: Send;
+  uploadsDb?: Record<string, jest.Mock>;
 } = {}) {
+  const publicS3Send: Send =
+    publicSend ?? jest.fn(async () => ({ UploadId: 'session' }));
+  const ingestS3Send: Send =
+    ingestSend ?? jest.fn(async () => ({ UploadId: 'ingest-session' }));
   const budget = {
     reserve: jest.fn(async (..._args: unknown[]) => undefined),
     release: jest.fn(async (..._args: unknown[]) => undefined),
@@ -43,13 +46,23 @@ function setUp({
     ...uploadsDb
   };
   const service = new UploadMediaService(
-    () => ({ send: publicSend }) as unknown as S3Client,
-    () => ({ send: ingestSend }) as unknown as S3Client,
+    () => ({ send: publicS3Send }) as unknown as S3Client,
+    () => ({ send: ingestS3Send }) as unknown as S3Client,
     db as unknown as DropMediaUploadsDb,
     jest.fn().mockResolvedValue(undefined),
     budget as unknown as MediaUploadBudget
   );
-  return { service, budget, db, publicSend, ingestSend };
+  return {
+    service,
+    budget,
+    db,
+    publicSend: publicS3Send,
+    ingestSend: ingestS3Send
+  };
+}
+
+function reservation(budget: ReturnType<typeof setUp>['budget']) {
+  return budget.reserve.mock.calls[0][0] as Record<string, string>;
 }
 
 describe('UploadMediaService upload budget', () => {
@@ -64,7 +77,7 @@ describe('UploadMediaService upload budget', () => {
     process.env = { ...ORIGINAL_ENV };
   });
 
-  it('counts a single-PUT drop upload, with its key, before signing it', async () => {
+  it('counts a single-PUT drop upload, with its key and type, before signing it', async () => {
     const { service, budget, db } = setUp();
 
     const result = await service.createSingedDropMediaUploadUrl({
@@ -73,15 +86,15 @@ describe('UploadMediaService upload budget', () => {
       author_id: 'author'
     });
 
-    const [reservation] = budget.reserve.mock.calls[0] as [Record<string, any>];
-    expect(reservation).toMatchObject({
+    expect(reservation(budget)).toEqual({
+      id: expect.stringMatching(UUID),
       profileId: 'author',
       source: 'drop',
-      pendingObjectKey: new URL(result.media_url).pathname.slice(1)
+      objectKey: new URL(result.media_url).pathname.slice(1),
+      contentType: 'video/mp4'
     });
-    expect(reservation.id).toMatch(UUID);
     expect(db.createUpload).toHaveBeenCalledWith(
-      expect.objectContaining({ id: reservation.id })
+      expect.objectContaining({ id: reservation(budget).id })
     );
     expect(budget.reserve.mock.invocationCallOrder[0]).toBeLessThan(
       jest.mocked(getSignedUrl).mock.invocationCallOrder.at(-1)!
@@ -98,14 +111,13 @@ describe('UploadMediaService upload budget', () => {
     });
 
     const key = new URL(result.media_url).pathname.slice(1);
-    expect(budget.reserve).toHaveBeenCalledWith(
-      expect.objectContaining({
-        profileId: 'author',
-        source: 'wave',
-        pendingObjectKey: key,
-        id: key.split('/')[2].replace('.mp4', '')
-      })
-    );
+    expect(reservation(budget)).toEqual({
+      id: key.split('/')[2].replace('.mp4', ''),
+      profileId: 'author',
+      source: 'wave',
+      objectKey: key,
+      contentType: 'video/mp4'
+    });
   });
 
   it.each([
@@ -114,7 +126,7 @@ describe('UploadMediaService upload budget', () => {
     ['wave', 'video/mp4'],
     ['wave', 'image/png']
   ])(
-    'counts a %s multipart upload of %s by its upload id',
+    'counts a %s multipart upload of %s at its public key',
     async (source, content_type) => {
       const { service, budget, db } = setUp();
       const input = { content_type, file_name: 'file', author_id: 'author' };
@@ -124,14 +136,17 @@ describe('UploadMediaService upload budget', () => {
           ? await service.getDropMediaMultipartUploadKeyAndUploadId(input)
           : await service.getWaveMediaMultipartUploadKeyAndUploadId(input);
 
-      const [reservation] = budget.reserve.mock.calls[0] as [
-        Record<string, any>
-      ];
-      expect(reservation).toMatchObject({ profileId: 'author', source });
-      expect(reservation.pendingObjectKey).toBeUndefined();
-      expect(started.key).toContain(reservation.id);
+      expect(reservation(budget)).toMatchObject({
+        profileId: 'author',
+        source,
+        objectKey: started.key,
+        contentType: content_type
+      });
+      expect(started.key).toContain(reservation(budget).id);
       if (db.createUpload.mock.calls.length)
-        expect(db.createUpload.mock.calls[0][0].id).toBe(reservation.id);
+        expect(db.createUpload.mock.calls[0][0].id).toBe(
+          reservation(budget).id
+        );
     }
   );
 
@@ -161,100 +176,159 @@ describe('UploadMediaService upload budget', () => {
     expect(budget.release).not.toHaveBeenCalled();
   });
 
-  it('gives the reservation back when preparing the upload fails', async () => {
-    const { service, budget, publicSend } = setUp();
-    publicSend.mockRejectedValue(new Error('S3 unavailable'));
-
-    await expect(
-      service.getDropMediaMultipartUploadKeyAndUploadId({
-        content_type: 'video/mp4',
-        file_name: 'clip.mp4',
-        author_id: 'author'
-      })
-    ).rejects.toThrow('S3 unavailable');
-
-    const [{ id }] = budget.reserve.mock.calls[0] as [{ id: string }];
-    expect(budget.release).toHaveBeenCalledWith(id, 'author');
-  });
-
-  it('reads single-PUT sizes from the public bucket, missing objects as null', async () => {
-    const { service, budget, publicSend } = setUp();
-    await service.createSingedDropMediaUploadUrl({
-      content_type: 'audio/mpeg',
-      file_name: 'a.mp3',
+  describe('gives the reservation back when preparation fails', () => {
+    const video = {
+      content_type: 'video/mp4',
+      file_name: 'clip.mp4',
       author_id: 'author'
+    };
+    const image = { ...video, content_type: 'image/png', file_name: 'a.png' };
+    const failingS3: Send = jest.fn(async () => {
+      throw new Error('S3 unavailable');
     });
-    const [{ readObjectSize }] = budget.reserve.mock.calls[0] as [
-      { readObjectSize: (key: string) => Promise<number | null> }
-    ];
-
-    publicSend.mockResolvedValueOnce({ ContentLength: 1234 });
-    await expect(readObjectSize('drops/x/x.mp3')).resolves.toBe(1234);
-    expect(publicSend.mock.lastCall?.[0]).toBeInstanceOf(HeadObjectCommand);
-    expect((publicSend.mock.lastCall?.[0] as HeadObjectCommand).input).toEqual({
-      Bucket: 'public-bucket',
-      Key: 'drops/x/x.mp3'
-    });
-    for (const status of [404, 403]) {
-      publicSend.mockRejectedValueOnce(
-        Object.assign(new Error('missing'), {
-          $metadata: { httpStatusCode: status }
-        })
+    const failingDb = {
+      createUpload: jest.fn().mockRejectedValue(new Error('DB unavailable'))
+    };
+    it.each([
+      [
+        'drop single-PUT, signing',
+        { signing: true },
+        (s: UploadMediaService) => s.createSingedDropMediaUploadUrl(video)
+      ],
+      [
+        'drop single-PUT, upload record',
+        { uploadsDb: failingDb },
+        (s: UploadMediaService) => s.createSingedDropMediaUploadUrl(video)
+      ],
+      [
+        'wave single-PUT, signing',
+        { signing: true },
+        (s: UploadMediaService) => s.createSingedWaveMediaUploadUrl(video)
+      ],
+      [
+        'drop multipart video, S3',
+        { publicSend: failingS3 },
+        (s: UploadMediaService) =>
+          s.getDropMediaMultipartUploadKeyAndUploadId(video)
+      ],
+      [
+        'drop multipart video, upload record',
+        { uploadsDb: failingDb },
+        (s: UploadMediaService) =>
+          s.getDropMediaMultipartUploadKeyAndUploadId(video)
+      ],
+      [
+        'drop multipart image, ingest S3',
+        { ingestSend: failingS3 },
+        (s: UploadMediaService) =>
+          s.getDropMediaMultipartUploadKeyAndUploadId(image)
+      ],
+      [
+        'wave multipart image, upload record',
+        { uploadsDb: failingDb },
+        (s: UploadMediaService) =>
+          s.getWaveMediaMultipartUploadKeyAndUploadId(image)
+      ]
+    ])('%s', async (_, failure, prepare) => {
+      if ('signing' in failure)
+        jest
+          .mocked(getSignedUrl)
+          .mockRejectedValueOnce(new Error('signing failed'));
+      const { service, budget } = setUp(
+        'signing' in failure ? {} : (failure as Parameters<typeof setUp>[0])
       );
-      await expect(readObjectSize('drops/x/x.mp3')).resolves.toBeNull();
-    }
-    publicSend.mockRejectedValueOnce(new Error('throttled'));
-    await expect(readObjectSize('drops/x/x.mp3')).rejects.toThrow('throttled');
+
+      await expect(prepare(service)).rejects.toThrow(/unavailable|failed/);
+
+      expect(budget.release).toHaveBeenCalledTimes(1);
+      expect(budget.release).toHaveBeenCalledWith(
+        reservation(budget).id,
+        'author'
+      );
+    });
   });
 
-  it('records the size of completed directly published media', async () => {
+  describe('directly published media completion', () => {
     const uploadId = '12345678-1234-1234-1234-123456789012';
-    const publicSend = jest.fn(async (command: unknown) =>
-      command instanceof HeadObjectCommand
-        ? { ContentLength: 777 }
-        : { Key: 'k' }
-    );
     const key = `drops/${uploadId}/${uploadId}.mp4`;
-    const { service, budget } = setUp({
-      publicSend,
-      uploadsDb: {
-        findByPublicKeyAndS3UploadId: jest.fn().mockResolvedValue({
-          id: uploadId,
-          profile_id: 'author',
-          status: 'uploading',
-          declared_mime_type: 'video/mp4',
-          public_key: key,
-          s3_upload_id: 'session'
-        })
-      }
+    const tracked = {
+      findByPublicKeyAndS3UploadId: jest.fn().mockResolvedValue({
+        id: uploadId,
+        profile_id: 'author',
+        status: 'uploading',
+        declared_mime_type: 'video/mp4',
+        public_key: key,
+        s3_upload_id: 'session'
+      }),
+      updateUpload: jest.fn()
+    };
+    const complete = (service: UploadMediaService, completionKey = key) =>
+      service.completeMultipartUpload({
+        key: completionKey,
+        upload_id: 'session',
+        parts: [{ etag: 'e', part_no: 1 }],
+        authenticatedProfileId: 'author'
+      });
+    const sizedSend = (size: number): Send =>
+      jest.fn(async (command: unknown) =>
+        command instanceof HeadObjectCommand
+          ? { ContentLength: size }
+          : { Key: key }
+      );
+
+    it('records the completed size of a tracked upload', async () => {
+      const publicSend = sizedSend(777);
+      const { service, budget } = setUp({ publicSend, uploadsDb: tracked });
+
+      await complete(service);
+
+      expect(budget.recordSize).toHaveBeenCalledWith(uploadId, 'author', 777);
+      expect(
+        publicSend.mock.calls.map(([c]) => (c as object).constructor)
+      ).toEqual([CompleteMultipartUploadCommand, HeadObjectCommand]);
     });
 
-    await service.completeMultipartUpload({
-      key,
-      upload_id: 'session',
-      parts: [{ etag: 'e', part_no: 1 }],
-      authenticatedProfileId: 'author'
+    it('does not count untracked legacy keys', async () => {
+      const { service, budget } = setUp({ publicSend: sizedSend(777) });
+
+      await complete(service, 'drops/author_author/old/video.mp4');
+
+      expect(budget.recordSize).not.toHaveBeenCalled();
     });
 
-    expect(budget.recordSize).toHaveBeenCalledWith(uploadId, 'author', 777);
-    expect(
-      publicSend.mock.calls.map(([c]) => (c as object).constructor)
-    ).toEqual([CompleteMultipartUploadCommand, HeadObjectCommand]);
+    it('settles an oversized upload at its size before refusing it', async () => {
+      const { service, budget } = setUp({
+        publicSend: sizedSend(600 * MIB),
+        uploadsDb: tracked
+      });
 
-    // Untracked legacy keys were never counted.
-    budget.recordSize.mockClear();
-    const untracked = setUp({ publicSend });
-    await untracked.service.completeMultipartUpload({
-      key: 'drops/author_author/old/video.mp4',
-      upload_id: 'session',
-      parts: [{ etag: 'e', part_no: 1 }],
-      authenticatedProfileId: 'author'
+      await expect(complete(service)).rejects.toMatchObject({
+        code: 'MEDIA_TOO_LARGE'
+      });
+
+      expect(budget.recordSize).toHaveBeenCalledWith(
+        uploadId,
+        'author',
+        600 * MIB
+      );
+      expect(budget.release).not.toHaveBeenCalled();
     });
-    expect(untracked.budget.recordSize).not.toHaveBeenCalled();
+
+    it('leaves the entry pending when completion fails and may be retried', async () => {
+      const publicSend: Send = jest.fn(async () => {
+        throw Object.assign(new Error('InvalidPart'), { name: 'InvalidPart' });
+      });
+      const { service, budget } = setUp({ publicSend, uploadsDb: tracked });
+
+      await expect(complete(service)).rejects.toThrow('InvalidPart');
+
+      expect(budget.recordSize).not.toHaveBeenCalled();
+      expect(budget.release).not.toHaveBeenCalled();
+    });
   });
 
-  it('records the size of a completed private image upload', async () => {
-    const upload = {
+  describe('private image completion', () => {
+    const upload = () => ({
       id: 'image-upload',
       profile_id: 'author',
       status: 'uploading',
@@ -263,49 +337,86 @@ describe('UploadMediaService upload budget', () => {
       ingest_key: 'staging/drop-media-ingest/drops/image.png',
       s3_upload_id: 'ingest-session',
       public_url: 'https://cdn.example/drops/image.png'
-    };
-    const ingestSend = jest.fn(async (command: unknown) =>
-      command instanceof HeadObjectCommand ? { ContentLength: 555 } : {}
-    );
-    const { service, budget } = setUp({
-      ingestSend,
-      uploadsDb: {
-        findByPublicKeyAndS3UploadId: jest.fn().mockResolvedValue(upload)
-      }
     });
-
-    await service.completeMultipartUpload({
-      key: 'drops/image.png',
-      upload_id: 'ingest-session',
-      parts: [{ etag: 'e', part_no: 1 }],
-      authenticatedProfileId: 'author'
-    });
-
-    expect(budget.recordSize).toHaveBeenCalledWith(
-      'image-upload',
-      'author',
-      555
-    );
-    expect((ingestSend.mock.calls[1][0] as HeadObjectCommand).input).toEqual({
-      Bucket: 'ingest-bucket',
-      Key: 'staging/drop-media-ingest/drops/image.png'
-    });
-
-    // A failed size read never fails the completion.
-    ingestSend.mockImplementation(async (command: unknown) => {
-      if (command instanceof HeadObjectCommand) throw new Error('denied');
-      return {};
-    });
-    budget.recordSize.mockClear();
-    await expect(
+    const complete = (service: UploadMediaService) =>
       service.completeMultipartUpload({
         key: 'drops/image.png',
         upload_id: 'ingest-session',
         parts: [{ etag: 'e', part_no: 1 }],
         authenticatedProfileId: 'author'
-      })
-    ).resolves.toMatchObject({ media_status: 'processing' });
-    expect(budget.recordSize).not.toHaveBeenCalled();
+      });
+
+    it('records the size of the completed ingest object', async () => {
+      const ingestSend: Send = jest.fn(async (command: unknown) =>
+        command instanceof HeadObjectCommand ? { ContentLength: 555 } : {}
+      );
+      const { service, budget } = setUp({
+        ingestSend,
+        uploadsDb: {
+          findByPublicKeyAndS3UploadId: jest.fn().mockResolvedValue(upload())
+        }
+      });
+
+      await complete(service);
+
+      expect(budget.recordSize).toHaveBeenCalledWith(
+        'image-upload',
+        'author',
+        555
+      );
+      expect((ingestSend.mock.calls[1][0] as HeadObjectCommand).input).toEqual({
+        Bucket: 'ingest-bucket',
+        Key: 'staging/drop-media-ingest/drops/image.png'
+      });
+    });
+
+    it.each([
+      ['forbidden', { $metadata: { httpStatusCode: 403 } }],
+      ['missing', { name: 'NotFound', $metadata: { httpStatusCode: 404 } }]
+    ])(
+      'leaves the entry pending when the size read is %s, without failing completion',
+      async (_, failure) => {
+        const ingestSend: Send = jest.fn(async (command: unknown) => {
+          if (command instanceof HeadObjectCommand)
+            throw Object.assign(new Error('head failed'), failure);
+          return {};
+        });
+        const { service, budget } = setUp({
+          ingestSend,
+          uploadsDb: {
+            findByPublicKeyAndS3UploadId: jest.fn().mockResolvedValue(upload())
+          }
+        });
+
+        await expect(complete(service)).resolves.toMatchObject({
+          media_status: 'processing'
+        });
+        expect(budget.recordSize).not.toHaveBeenCalled();
+      }
+    );
+
+    it('settles a failed completion at 0', async () => {
+      const ingestSend: Send = jest.fn(async () => {
+        throw new Error('NoSuchUpload');
+      });
+      const { service, budget, db } = setUp({
+        ingestSend,
+        uploadsDb: {
+          findByPublicKeyAndS3UploadId: jest.fn().mockResolvedValue(upload())
+        }
+      });
+
+      await expect(complete(service)).rejects.toThrow('NoSuchUpload');
+
+      expect(db.transitionStatus).toHaveBeenCalledWith(
+        expect.objectContaining({ toStatus: 'failed' })
+      );
+      expect(budget.recordSize).toHaveBeenCalledWith(
+        'image-upload',
+        'author',
+        0
+      );
+    });
   });
 
   it('does not count distribution photos', async () => {

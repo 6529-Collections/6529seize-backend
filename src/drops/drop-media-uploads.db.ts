@@ -217,23 +217,33 @@ export class DropMediaUploadsDb extends LazyDbAccessCompatibleService {
   }
 
   /**
-   * Claims the single sanitizer message of a processing upload. False when
-   * it is not processing or a message was already claimed.
+   * Claims the sanitizer message of a processing upload: the first claim,
+   * or again once the previous claim is older than `reclaimBefore` while the
+   * sanitizer has still not taken the upload (it stays processing until the
+   * sanitizer starts). False when it is not processing or a recent claim
+   * exists.
    */
   async claimSanitizerEnqueue({
     id,
-    claimedAt
+    claimedAt,
+    reclaimBefore
   }: {
     id: string;
     claimedAt: number;
+    reclaimBefore: number;
   }): Promise<boolean> {
     const result = await this.db.execute(
       `update ${DROP_MEDIA_UPLOADS_TABLE}
        set sanitizer_enqueued_at = :claimedAt
        where id = :id
          and status = :processing
-         and sanitizer_enqueued_at is null`,
-      { id, claimedAt, processing: DropMediaUploadStatus.PROCESSING }
+         and (sanitizer_enqueued_at is null or sanitizer_enqueued_at < :reclaimBefore)`,
+      {
+        id,
+        claimedAt,
+        reclaimBefore,
+        processing: DropMediaUploadStatus.PROCESSING
+      }
     );
     return this.db.getAffectedRows(result) === 1;
   }
