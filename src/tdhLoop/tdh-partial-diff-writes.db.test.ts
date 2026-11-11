@@ -862,4 +862,38 @@ describe('partial TDH writes send only the rows that change', () => {
       [HISTORIC_CONSOLIDATED_WALLETS_TDH_TABLE]: groups
     });
   });
+
+  it('compares the affected wallets with their TDH rows as stored at the write, not as the snapshot saw them', async () => {
+    async function run(writeAllRows: boolean) {
+      await resetTestDatabase();
+      await seedWorld();
+      const groups = groupsBefore();
+      const storedTdh = snapshotRows(
+        getDataSource().getMetadata(TDH),
+        await fetchTDHForBlock(BLOCK)
+      );
+      // A same-block rerun rewrites wallet 5's row after the snapshot.
+      await sqlExecutor.execute(
+        `update ${WALLETS_TDH_TABLE} set tdh = tdh + 1 where wallet = :wallet and block = :block`,
+        { wallet: wallet(5), block: BLOCK }
+      );
+      await persistTDH(
+        BLOCK,
+        walletRows(groups, true),
+        seasonRows(groups, true).map(
+          ({ key, ...row }) => ({ ...row, wallet: key }) as TDHMemes
+        ),
+        editionRows(groups).map(
+          ({ key, ...row }) => ({ ...row, wallet: key }) as TDHEditions
+        ),
+        [wallet(5)],
+        { storedTdh, writeAllRows }
+      );
+      return sqlExecutor.execute(
+        `select * from ${WALLETS_TDH_TABLE} order by wallet, block`
+      );
+    }
+
+    expect(await run(false)).toEqual(await run(true));
+  });
 });

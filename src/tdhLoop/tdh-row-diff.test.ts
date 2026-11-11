@@ -144,6 +144,11 @@ describe('partial TDH writes: what counts as unchanged', () => {
       written({ ...base, ranks: null }, { ...base, ranks: undefined })
     ).toBe(false);
     expect(written(base, { ...base, tdh: Number.NaN })).toBe(true);
+    // Even when the stored value has the same fraction (not from datetime(0)).
+    const fraction = new Date('2026-11-09T23:59:59.400Z');
+    expect(
+      written({ ...base, date: fraction }, { ...base, date: fraction })
+    ).toBe(true);
     expect(written({ ...base, ranks: '{not json' }, base)).toBe(true);
   });
 
@@ -284,6 +289,8 @@ describe('JSON as MySQL stores it', () => {
       true
     );
     expect(same(-0, 0)).toBe(true);
+    // JSON.parse puts index-like keys first.
+    expect(same({ a: 1, '10': 2 }, JSON.parse('{"a": 1, "10": 2}'))).toBe(true);
   });
 
   it('tells apart values that differ', () => {

@@ -117,7 +117,8 @@ import {
   releaseStoredRows,
   RowDiffColumns,
   rowsToWrite,
-  StoredRows
+  StoredRows,
+  withScopeRows
 } from '@/tdhLoop/tdh-row-diff';
 import {
   budgetOf,
@@ -1254,15 +1255,36 @@ export async function persistTDH(
       await writePartialTdhTable('TDH WALLET ROWS', tdhRepo, tdh, {
         write,
         writeAllRows: options.writeAllRows,
-        // The snapshot was read before this transaction: a same-block
-        // rewrite committed in between is not seen. Only delegationsLoop
-        // (reserved concurrency 1) writes partially.
-        stored: async () =>
-          options.storedTdh ??
-          readStoredRows(manager, tdhRepo.metadata, {
-            filter: { column: 'block', value: block },
+        // Rows outside the scope come from the snapshot, read before this
+        // transaction: a same-block rewrite committed in between is not seen
+        // there. Only delegationsLoop (reserved concurrency 1) writes
+        // partially. The affected wallets' rows are read again here, locked,
+        // so the scope is compared with, and deletes, what is stored now.
+        stored: async () => {
+          const atBlock = { column: 'block', values: [block] };
+          if (!options.storedTdh) {
+            return readStoredRows(manager, tdhRepo.metadata, {
+              filter: [atBlock],
+              write
+            });
+          }
+          const scope = await readStoredRows(manager, tdhRepo.metadata, {
+            filter: [
+              atBlock,
+              {
+                column: 'wallet',
+                values: wallets.map((wallet) => wallet.toLowerCase())
+              }
+            ],
             write
-          }),
+          });
+          return withScopeRows(
+            options.storedTdh,
+            scope,
+            tdhRepo.metadata,
+            write
+          );
+        },
         deleteScope: deleteWallets(
           tdhRepo,
           'LOWER(wallet) = :wallet AND block = :block '
@@ -1581,7 +1603,7 @@ export async function persistHistoricConsolidatedTDH(
         writeAllRows,
         stored: (write) =>
           readStoredRows(entityManager, historicTdhRepo.metadata, {
-            filter: { column: 'block', value: block },
+            filter: [{ column: 'block', values: [block] }],
             write
           }),
         deleteScope: () =>

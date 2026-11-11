@@ -99,8 +99,20 @@ function isOmitted(value: unknown): boolean {
   return value === undefined || typeof value === 'function';
 }
 
-/** MySQL's order of a JSON object's keys: by length, then bytewise. */
-function mysqlKeyOrder(a: string, b: string): number {
+/** Whether JavaScript orders a key as an array index (first, numerically). */
+function isIndexKey(key: string): boolean {
+  return /^(?:0|[1-9]\d{0,9})$/.test(key) && Number(key) < 4294967295;
+}
+
+/**
+ * The key order of a stored JSON object as read back: MySQL orders keys by
+ * length, then bytewise, and JSON.parse then puts index-like keys first, in
+ * numeric order.
+ */
+function storedKeyOrder(a: string, b: string): number {
+  const aIndex = isIndexKey(a);
+  if (aIndex !== isIndexKey(b)) return aIndex ? -1 : 1;
+  if (aIndex) return Number(a) - Number(b);
   if (a.length !== b.length) return a.length - b.length;
   if (a === b) return 0;
   return a < b ? -1 : 1;
@@ -108,8 +120,8 @@ function mysqlKeyOrder(a: string, b: string): number {
 
 /**
  * A computed JSON value as MySQL stores it, in the text JSON.stringify gives
- * the value MySQL reads back (`storedJson`): object keys in MySQL's order (it
- * sorts them by length, then bytewise); undefined and functions dropped from
+ * the value MySQL reads back (`storedJson`): object keys in the order they
+ * are read back in (`storedKeyOrder`); undefined and functions dropped from
  * objects and null in arrays; NaN and Infinity null; toJSON applied. A value
  * JSON cannot hold (a bigint, a symbol) is UNKNOWN, which no stored text
  * contains. If MySQL ever ordered keys differently, rows would only be
@@ -143,7 +155,7 @@ export function canonicalJson(value: unknown): string {
   const record = value as Record<string, unknown>;
   let text = '{';
   let first = true;
-  for (const key of Object.keys(record).sort(mysqlKeyOrder)) {
+  for (const key of Object.keys(record).sort(storedKeyOrder)) {
     const item = record[key];
     if (isOmitted(item)) continue;
     if (!first) text += ',';
@@ -405,6 +417,34 @@ export type StoredRows = {
   readonly keys: Map<string, unknown[]>;
 };
 
+/**
+ * `stored` (a snapshot, which keeps every row's key values) with its rows in
+ * the write's scope replaced by `scope`, read since: so the scope is compared
+ * with, and deletes, what is stored at the write.
+ */
+export function withScopeRows(
+  stored: StoredRows,
+  scope: StoredRows,
+  metadata: EntityMetadata,
+  write: PartialTableWrite
+): StoredRows {
+  if (stored.signature !== scope.signature) {
+    throw new Error(`${metadata.tableName}: scope rows read for other columns`);
+  }
+  const plan = planFor(metadata);
+  stored.keys.forEach((values, key) => {
+    if (write.inScope(keyValuesOf(plan, values))) {
+      stored.digests.delete(key);
+      stored.refreshed.delete(key);
+      stored.keys.delete(key);
+    }
+  });
+  scope.digests.forEach((digest, key) => stored.digests.set(key, digest));
+  scope.refreshed.forEach((text, key) => stored.refreshed.set(key, text));
+  scope.keys.forEach((values, key) => stored.keys.set(key, values));
+  return stored;
+}
+
 /** Frees a table's stored rows once compared. */
 export function releaseStoredRows(stored: StoredRows): void {
   stored.digests.clear();
@@ -486,7 +526,11 @@ export async function readStoredRows(
     filter,
     write
   }: {
-    readonly filter?: { readonly column: string; readonly value: unknown };
+    /** Only the rows whose columns have one of the given values. */
+    readonly filter?: readonly {
+      readonly column: string;
+      readonly values: readonly unknown[];
+    }[];
     readonly write: PartialTableWrite;
   }
 ): Promise<StoredRows> {
@@ -497,9 +541,17 @@ export async function readStoredRows(
     write.inScope
   );
   const keep = (row: ObjectLiteral) => add((i) => row[plan.databaseNames[i]]);
+  if (filter?.some(({ values }) => values.length === 0)) return stored;
+
   const name = (identifier: string) => `\`${identifier.replace(/`/g, '``')}\``;
-  const sql = `select * from ${name(metadata.tableName)}${filter ? ` where ${name(filter.column)} = ?` : ''}`;
-  const params = filter ? [filter.value] : [];
+  const where = (filter ?? [])
+    .map(
+      ({ column, values }) =>
+        `${name(column)} in (${values.map(() => '?').join(', ')})`
+    )
+    .join(' and ');
+  const sql = `select * from ${name(metadata.tableName)}${where ? ` where ${where}` : ''}`;
+  const params = (filter ?? []).flatMap(({ values }) => [...values]);
   const queryRunner = manager.queryRunner;
   if (!queryRunner) {
     // Outside a transaction: nothing to stream on or hold locks for, so the
