@@ -18,6 +18,8 @@ import { ProfileClassification } from '../entities/IProfile';
 import {
   MAX_ART_LINK_LENGTH,
   prepareCicStatementForInsert,
+  validateCicStatementCount,
+  validateCicStatementShape,
   validateNftAccountStatementConstraints
 } from './cic-statement-validation';
 
@@ -252,6 +254,7 @@ export class CicService {
     };
     moderationRequestId?: string;
   }) {
+    validateCicStatementShape(statement);
     const statementToInsert = prepareCicStatementForInsert(statement);
     this.validateCicStatement(statementToInsert);
     const isBio =
@@ -309,6 +312,7 @@ export class CicService {
           statementToInsert,
           existingStatements
         );
+        validateCicStatementCount(statementToInsert, existingStatements);
         const preexistingStatement = existingStatements.find(
           (existingStatement) =>
             existingStatement.statement_type ===

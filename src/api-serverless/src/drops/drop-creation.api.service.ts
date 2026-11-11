@@ -74,6 +74,7 @@ import {
 } from '@/help-bot/help-bot-daily-activity-credit-queue.service';
 
 import { BadRequestException, CustomApiCompliantException } from '@/exceptions';
+import { assertProxyMayEditDrops } from '@/api/drops/drop-proxy-rights';
 import {
   dropClientIdsDb,
   DropClientIdsDb,
@@ -1437,6 +1438,7 @@ export class DropCreationApiService {
     },
     ctx: RequestContext
   ): Promise<{ drop: ApiDrop; changed: boolean }> {
+    assertProxyMayEditDrops(ctx.authenticationContext);
     const drop = await this.dropsDb.findDropById(dropId);
     if (!drop) {
       throw new NotFoundException(`Drop ${dropId} not found`);

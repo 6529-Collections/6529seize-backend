@@ -3,6 +3,8 @@ jest.mock('@/competitions/competition-entry-drop-hooks');
 import { waveScoreService } from '@/api/waves/wave-score.service';
 import { invalidateWaveUnreadCacheForWave } from '@/api/waves/wave-unread-cache';
 import { DropType } from '@/entities/IDrop';
+import { AuthenticationContext } from '@/auth-context';
+import { ProfileProxyActionType } from '@/entities/IProfileProxyAction';
 import { waveDropMetricsRefreshService } from '@/drops/wave-drop-metrics-refresh.service';
 import { sendIdentityPushNotifications } from '@/api/push-notifications/push-notifications.service';
 import { DbPoolName } from '@/db-query.options';
@@ -287,6 +289,47 @@ describe('DropCreationApiService.toggleHideLinkPreview', () => {
 });
 
 describe('DropCreationApiService.updateDrop', () => {
+  it('requires the drop creation proxy action before loading the drop', async () => {
+    const dropsDb = { findDropById: jest.fn() };
+    const service = new DropCreationApiService(
+      {} as never,
+      dropsDb as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never
+    );
+    const proxyContext = new AuthenticationContext({
+      authenticatedWallet: '0xproxy',
+      authenticatedProfileId: 'proxy-profile',
+      roleProfileId: 'grantor-profile',
+      activeProxyActions: [
+        {
+          id: 'action-1',
+          type: ProfileProxyActionType.READ_WAVE,
+          credit_amount: null,
+          credit_spent: null
+        }
+      ]
+    });
+
+    await expect(
+      service.updateDrop(
+        {
+          dropId: 'drop-1',
+          request: {} as never,
+          authorId: 'grantor-profile',
+          representativeId: 'proxy-profile'
+        },
+        { authenticationContext: proxyContext } as never
+      )
+    ).rejects.toThrow(`Proxy doesn't have permission to edit drops`);
+    expect(dropsDb.findDropById).not.toHaveBeenCalled();
+  });
+
   it('rejects a non-author before preparing or moderating the update', async () => {
     const dropsDb = {
       findDropById: jest.fn().mockResolvedValue({

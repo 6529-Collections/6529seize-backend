@@ -318,3 +318,28 @@ export function getProfileClassificationsBySubclassification(
     ] ?? []
   );
 }
+
+/**
+ * The sub-classification to store for a profile: kept only when it is a known
+ * sub-classification of the given classification, otherwise null.
+ */
+export function resolveSubClassification(
+  subClassification: string | null | undefined,
+  classification: string
+): string | null {
+  if (
+    subClassification === null ||
+    subClassification === undefined ||
+    !Object.prototype.hasOwnProperty.call(
+      sub_classification_to_classification,
+      subClassification
+    )
+  ) {
+    return null;
+  }
+  return getProfileClassificationsBySubclassification(subClassification).some(
+    (it) => it === classification
+  )
+    ? subClassification
+    : null;
+}

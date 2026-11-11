@@ -22,6 +22,13 @@ import {
   CmsSiteRow
 } from './cms.db';
 import { getCmsPackageHash, hashCmsJson } from './cms.hashing';
+import {
+  assertLegacyCmsJsonBounded,
+  LEGACY_CMS_MAX_PACKAGE_JSON_BYTES,
+  LEGACY_CMS_MAX_PUBLISHED_PACKAGES_PER_PROFILE,
+  LEGACY_CMS_MAX_SIGNATURE_JSON_BYTES,
+  LEGACY_CMS_MAX_SITES_PER_PROFILE
+} from './cms-package-bounds';
 
 type CmsServiceContext = RequestContext & {
   readonly authenticationContext: AuthenticationContext;
@@ -188,6 +195,14 @@ export class CmsApiService {
     if (existing) {
       throw new BadRequestException('CMS site slug already exists.');
     }
+    if (
+      (await cmsDb.countSitesByOwner(ownerProfileId)) >=
+      LEGACY_CMS_MAX_SITES_PER_PROFILE
+    ) {
+      throw new BadRequestException(
+        `A profile can have at most ${LEGACY_CMS_MAX_SITES_PER_PROFILE} CMS sites.`
+      );
+    }
     const now = Time.currentMillis();
     const site = {
       id: ids.uniqueShortId(),
@@ -250,6 +265,16 @@ export class CmsApiService {
   ): Promise<ApiCmsPublishedSite> {
     assertHash(request.package_hash, 'package_hash');
     assertHash(request.payload_hash, 'payload_hash');
+    assertLegacyCmsJsonBounded(
+      request.package_json,
+      'package_json',
+      LEGACY_CMS_MAX_PACKAGE_JSON_BYTES
+    );
+    assertLegacyCmsJsonBounded(
+      request.signature,
+      'signature',
+      LEGACY_CMS_MAX_SIGNATURE_JSON_BYTES
+    );
     const ownerProfileId = requireAuthenticatedProfileId(ctx);
     const wallet = requireAuthenticatedWallet(ctx);
     const site = await cmsDb.findSiteById(siteId);
@@ -266,6 +291,15 @@ export class CmsApiService {
     if (existingPackage && existingPackage.site_id !== siteId) {
       throw new BadRequestException(
         'CMS package hash already belongs to a different site.'
+      );
+    }
+    if (
+      !existingPackage &&
+      (await cmsDb.countPublishedPackagesByOwner(ownerProfileId)) >=
+        LEGACY_CMS_MAX_PUBLISHED_PACKAGES_PER_PROFILE
+    ) {
+      throw new BadRequestException(
+        `A profile can publish at most ${LEGACY_CMS_MAX_PUBLISHED_PACKAGES_PER_PROFILE} CMS packages.`
       );
     }
     const publishedAt = Time.currentMillis();
