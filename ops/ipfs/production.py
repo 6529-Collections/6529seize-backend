@@ -297,6 +297,12 @@ if not release.exists():
   manifest=json.loads((stage/'release.json').read_text());checked(manifest['sourceSha']==%r)
   checked(all((stage/name).resolve().is_relative_to(stage) and hashlib.sha256((stage/name).read_bytes()).hexdigest()==value for name,value in manifest['files'].items()))
   release.parent.mkdir(parents=True,exist_ok=True);os.rename(stage,release)
+# The archive contains public code/binaries, never runtime config or keys.
+# SSM's umask is 077 and tar's data filter leaves directory modes private;
+# normalize this tree so the unprivileged ipfs service can execute its binary.
+for directory in [release.parent.parent,release.parent,release]: directory.chmod(0o755)
+for entry in release.rglob('*'):
+ entry.chmod(0o755 if entry.is_dir() or entry in [release/'ipfs',release/'upload-router'] else 0o644)
 os.execv('/usr/bin/python3',['python3',str(release/'production_host.py'),%r])
 ''' % (json.dumps(artifact), release, CONTEXT['artifactsBucket'], release_sha, encoded)
         script = 'set -eu\numask 077\nexport AWS_CONFIG_FILE=/dev/null AWS_SHARED_CREDENTIALS_FILE=/dev/null AWS_EC2_METADATA_DISABLED=false\nunset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_PROFILE AWS_DEFAULT_PROFILE\ncloud-init status --wait >/dev/null\npython3 - <<\'IPFS_PRODUCTION\'\n' + bootstrap + '\nIPFS_PRODUCTION\n'

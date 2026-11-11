@@ -3,7 +3,10 @@
 No AWS credentials, production data, resource provisioning, or public IPFS peers
 are used. This is functional recovery evidence, not an AWS or load-test result.
 """
+import ast
+import base64
 import hashlib
+import shutil
 import http.server
 import json
 import os
@@ -294,6 +297,45 @@ def verify_restored_content(second, pins, cid, payload):
     require(second.rpc("cat", {"arg": cid}, raw=True) == payload, "Restored content differs")
 
 
+def release_permissions_rehearsal(bundle, work):
+    # Execute the actual SSM bootstrap with only its AWS download/exec replaced
+    # by local fixtures. This exercises tar's data filter under SSM's 077 umask.
+    manifest = json.loads((bundle / 'release.json').read_text())
+    archive_path = work / 'release.tar.gz'
+    with tarfile.open(archive_path, 'w:gz') as archive:
+        archive.add(bundle, arcname='.')
+    artifact = {'key': 'fixture.tar.gz', 'version': 'fixture-version', 'sha256': hashlib.sha256(archive_path.read_bytes()).hexdigest()}
+    tree = ast.parse((Path(__file__).parent / 'production.py').read_text())
+    templates = [node.value.left.value for node in ast.walk(tree)
+                 if isinstance(node, ast.Assign) and any(isinstance(t, ast.Name) and t.id == 'bootstrap' for t in node.targets)
+                 and isinstance(node.value, ast.BinOp) and isinstance(node.value.left, ast.Constant)]
+    require(len(templates) == 1, 'Exactly one production bootstrap must be rehearsed')
+    destination = work / 'public-release' / 'releases' / manifest['sourceSha']
+    request = base64.b64encode(b'{}').decode()
+    script = templates[0] % (json.dumps(artifact), str(destination), 'fixture-artifacts', manifest['sourceSha'], request)
+    original_run, original_exec = subprocess.run, os.execv
+    invoked = []
+    def download(command, **_kwargs):
+        require(command[:3] == ['aws', 's3api', 'get-object'], 'Unexpected bootstrap command')
+        shutil.copyfile(archive_path, command[-1])
+        return subprocess.CompletedProcess(command, 0)
+    previous_umask = os.umask(0o077)
+    try:
+        subprocess.run = download
+        os.execv = lambda command, arguments: invoked.append((command, arguments))
+        exec(compile(script, '<production-bootstrap>', 'exec'), {})
+    finally:
+        subprocess.run, os.execv = original_run, original_exec
+        os.umask(previous_umask)
+    require(invoked and invoked[0][0] == '/usr/bin/python3', 'Bootstrap did not reach host operations')
+    for directory in [destination.parent.parent, destination.parent, destination]:
+        require(directory.stat().st_mode & 0o777 == 0o755, 'Service cannot traverse the release parents')
+    require(all(path.stat().st_mode & 0o005 == 0o005 for path in [destination / 'ipfs', destination / 'upload-router']),
+            'The service user cannot read/execute its binaries')
+    require(all(path.stat().st_mode & 0o005 == 0o005 for path in destination.rglob('*') if path.is_dir()),
+            'The service user cannot traverse a release directory')
+
+
 def main():
     bundle = Path(sys.argv[1]).resolve()
     processes = []
@@ -302,6 +344,7 @@ def main():
     thread.start()
     with tempfile.TemporaryDirectory(prefix="ipfs-recovery-") as directory:
         work = Path(directory)
+        release_permissions_rehearsal(bundle, work)
         try:
             binary = bundle / "ipfs"
             first = Daemon(binary, work / "first", LOOPBACK_HTTP + str(server.server_port), work)
@@ -408,7 +451,7 @@ def main():
             second.start()
             require(second.rpc(FILE_STAT, {"arg": "/", "hash": "true"})["Hash"] == saved["mfsRoot"], "Restored MFS did not persist")
             bidirectional_handover(first, second, work)
-            print(json.dumps({"passed": True, "checks": ["bundled-s3-startup", "bootstrap-pin-content", "all-restored-pin-root-blocks", "multi-chunk-upload", "recursive-and-direct-pins", "mfs-nested-directories", "restart-persistence", "independent-identity", "private-logical-backup", "versioned-checksummed-restore", "pin-and-mfs-restoration", "interrupted-restore-resume", "idempotent-restore", "restored-restart", "nginx-https", "range", "head", "restricted-rpc", "https-upload", "read-only-production-style-pin-restore", "read-only-new-block-rejection", "bidirectional-final-state-with-concurrent-uploads", "production-nginx-cached-dns-bridge"], "awsResourcesCreated": 0}))
+            print(json.dumps({"passed": True, "checks": ["bundled-s3-startup", "bootstrap-pin-content", "all-restored-pin-root-blocks", "multi-chunk-upload", "recursive-and-direct-pins", "mfs-nested-directories", "restart-persistence", "independent-identity", "private-logical-backup", "versioned-checksummed-restore", "pin-and-mfs-restoration", "interrupted-restore-resume", "idempotent-restore", "restored-restart", "nginx-https", "range", "head", "restricted-rpc", "https-upload", "read-only-production-style-pin-restore", "read-only-new-block-rejection", "bidirectional-final-state-with-concurrent-uploads", "production-nginx-cached-dns-bridge", "ssm-private-umask-service-execution"], "awsResourcesCreated": 0}))
         finally:
             for daemon in processes:
                 daemon.stop()
