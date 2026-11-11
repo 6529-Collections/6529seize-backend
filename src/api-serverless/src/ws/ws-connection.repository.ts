@@ -36,6 +36,7 @@ import {
 import { WsDiagnosticOperation } from '@/api/ws/ws-operation-diagnostics';
 import { broadcastPurposeFilterSql } from '@/ws-delivery/ws-connection-purpose';
 import {
+  anonymousOnlyOwnWaveSql,
   FollowerAudience,
   followerAudienceConditionSql,
   followerAudienceParams,
@@ -658,7 +659,8 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
 
   /**
    * Joins online connections to the visibility-checked group membership query.
-   * Ungrouped waves retain their existing anonymous-recipient behavior.
+   * Ungrouped waves reach signed-in sockets as before; anonymous sockets get
+   * only the wave they subscribed to or declared open.
    */
   private async getGroupRecipients(
     {
@@ -697,8 +699,11 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
         ws.jwt_expiry as jwt_expiry
       from ${WS_CONNECTIONS_TABLE} ws
       where (ws.wave_id = :waveId or ws.wave_id is null)
+        and ${anonymousOnlyOwnWaveSql('ws', ':waveId', ':anonymousIdentityId')}
         and ${purposeFilterSql(options)}`,
-          audience ? followerAudienceParams(audience) : { waveId }
+          audience
+            ? followerAudienceParams(audience)
+            : { waveId, anonymousIdentityId: ANON_USER_ID }
         )
         .then((res) =>
           res.map((it) => ({
