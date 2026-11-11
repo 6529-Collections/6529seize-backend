@@ -22,6 +22,7 @@ from pathlib import Path
 from common import require
 
 LOOPBACK_HTTP = "http://127.0.0.1:"
+ADD_PATH = "/api/v0/add"
 
 
 def available_port():
@@ -93,7 +94,7 @@ class TLSProxy(http.server.BaseHTTPRequestHandler):
         body = self.rfile.read(int(self.headers.get("Content-Length", "0")))
         # The fixture forwards only these literal test endpoints, never an
         # arbitrary request path or authority supplied by a client.
-        paths = {"/api/v0/add": "/api/v0/add", "/api/v0/add?slow=true": "/api/v0/add?slow=true",
+        paths = {ADD_PATH: ADD_PATH, "/api/v0/add?slow=true": "/api/v0/add?slow=true",
                  "/api/v0/add?to-files=/pending": "/api/v0/add?to-files=/pending",
                  "/api/v0/add?to-files=/rollback": "/api/v0/add?to-files=/rollback"}
         require(self.path in paths, "Unexpected TLS fixture path")
@@ -107,7 +108,7 @@ class TLSProxy(http.server.BaseHTTPRequestHandler):
 
 
 def upload(port, query="", payload=b"accepted-upload"):
-    request = urllib.request.Request(LOOPBACK_HTTP + str(port) + "/api/v0/add" + query, data=payload)
+    request = urllib.request.Request(LOOPBACK_HTTP + str(port) + ADD_PATH + query, data=payload)
     with urllib.request.urlopen(request, timeout=30) as response:
         require(response.status == 200, "Upload was rejected during handover")
         return json.loads(response.read())
@@ -131,7 +132,7 @@ def main():
                 sockets[identity] = root / (identity + ".sock")
                 command = [str(binary), "--listen", "127.0.0.1:" + str(ports[identity]), "--upstream", LOOPBACK_HTTP + str(backend.server_port),
                            "--control", str(sockets[identity]), "--state", str(state), "--node-id", identity, "--source-sha", "a" * 40]
-                process = subprocess.Popen(command, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)  # NOSONAR: fixed basename in the CI-built test bundle; no shell or external input.
+                process = subprocess.Popen(command, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)  # NOSONAR(S8701) fixed basename in the CI-built test bundle; no shell or external input.
                 processes.append(process)
                 for _ in range(100):
                     if sockets[identity].exists():

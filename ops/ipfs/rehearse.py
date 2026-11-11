@@ -265,6 +265,13 @@ def bidirectional_handover(first, second, work):
         require(target.rpc("cat", {"arg": accepted_cid}, raw=True).decode() == new_file.read_text(), "Accepted destination content was lost")
 
 
+def verify_restored_content(second, pins, cid, payload):
+    for root_cid, entry in pins.items():
+        if entry["Type"] in ("recursive", "direct"):
+            require(second.rpc("block/get", {"arg": root_cid}, raw=True), "Restored pin content is missing")
+    require(second.rpc("cat", {"arg": cid}, raw=True) == payload, "Restored content differs")
+
+
 def main():
     bundle = Path(sys.argv[1]).resolve()
     processes = []
@@ -371,10 +378,7 @@ def main():
             host.restore(config, receipt["backupKey"], receipt["versionId"])
             pins = second.rpc("pin/ls", {"type": "all"})["Keys"]
             require(all(pins[cid]["Type"] == kind for cid, kind in saved["pins"].items()), "Restore lost pin types")
-            for root_cid, entry in pins.items():
-                if entry["Type"] in ("recursive", "direct"):
-                    require(second.rpc("block/get", {"arg": root_cid}, raw=True), "Restored pin content is missing")
-            require(second.rpc("cat", {"arg": cid}, raw=True) == payload, "Restored content differs")
+            verify_restored_content(second, pins, cid, payload)
             second.stop()
             second.start()
             require(second.rpc(FILE_STAT, {"arg": "/", "hash": "true"})["Hash"] == saved["mfsRoot"], "Restored MFS did not persist")
