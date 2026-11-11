@@ -37,32 +37,86 @@ describeWithSeed(
     it('lets exactly one completion claim the message of a processing upload', async () => {
       const claims = await Promise.all(
         [10, 11, 12].map((claimedAt) =>
-          db.claimSanitizerEnqueue({ id: 'processing', claimedAt })
+          db.claimSanitizerEnqueue({
+            id: 'processing',
+            claimedAt,
+            reclaimBefore: 0
+          })
         )
       );
 
       expect(claims.filter(Boolean)).toHaveLength(1);
       expect(
-        await db.claimSanitizerEnqueue({ id: 'processing', claimedAt: 13 })
+        await db.claimSanitizerEnqueue({
+          id: 'processing',
+          claimedAt: 13,
+          reclaimBefore: 0
+        })
       ).toBe(false);
       expect(
-        await db.claimSanitizerEnqueue({ id: 'ready', claimedAt: 13 })
+        await db.claimSanitizerEnqueue({
+          id: 'ready',
+          claimedAt: 13,
+          reclaimBefore: 0
+        })
       ).toBe(false);
     });
 
     it('gives a claim back only to its own claimant', async () => {
-      await db.claimSanitizerEnqueue({ id: 'processing', claimedAt: 10 });
+      await db.claimSanitizerEnqueue({
+        id: 'processing',
+        claimedAt: 10,
+        reclaimBefore: 0
+      });
 
       await db.releaseSanitizerEnqueue({ id: 'processing', claimedAt: 99 });
       expect(
-        await db.claimSanitizerEnqueue({ id: 'processing', claimedAt: 11 })
+        await db.claimSanitizerEnqueue({
+          id: 'processing',
+          claimedAt: 11,
+          reclaimBefore: 0
+        })
       ).toBe(false);
 
       await db.releaseSanitizerEnqueue({ id: 'processing', claimedAt: 10 });
       expect(
-        await db.claimSanitizerEnqueue({ id: 'processing', claimedAt: 12 })
+        await db.claimSanitizerEnqueue({
+          id: 'processing',
+          claimedAt: 12,
+          reclaimBefore: 0
+        })
       ).toBe(true);
       expect((await db.findById('processing'))?.sanitizer_enqueued_at).toBe(12);
+    });
+
+    it('lets a later completion reclaim a stale claim while the upload is still processing', async () => {
+      await db.claimSanitizerEnqueue({
+        id: 'processing',
+        claimedAt: 1000,
+        reclaimBefore: 0
+      });
+
+      expect(
+        await db.claimSanitizerEnqueue({
+          id: 'processing',
+          claimedAt: 1100,
+          reclaimBefore: 1000
+        })
+      ).toBe(false);
+      expect(
+        await db.claimSanitizerEnqueue({
+          id: 'processing',
+          claimedAt: 2000,
+          reclaimBefore: 1001
+        })
+      ).toBe(true);
+      expect(
+        await db.claimSanitizerEnqueue({
+          id: 'ready',
+          claimedAt: 2000,
+          reclaimBefore: 999999
+        })
+      ).toBe(false);
     });
   }
 );

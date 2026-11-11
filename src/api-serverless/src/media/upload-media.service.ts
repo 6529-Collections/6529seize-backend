@@ -71,6 +71,8 @@ export interface DistributionPhotoScope {
 }
 
 export const SINGLE_PUT_UPLOAD_URL_EXPIRY = Time.minutes(15);
+/** A sanitizer claim this old, on an upload still processing, may be sent again. */
+export const SANITIZER_ENQUEUE_RECLAIM_MS = Time.minutes(5).toMillis();
 
 export class UploadMediaService {
   private readonly logger = Logger.get(this.constructor.name);
@@ -795,7 +797,10 @@ export class UploadMediaService {
    * One sanitizer message per upload: the completion call that claims the
    * upload's enqueue marker sends it; repeated completion calls find the
    * marker and send nothing. A failed send gives the claim back so the
-   * client's retry sends it.
+   * client's retry sends it. If the claimant stopped before sending (or the
+   * message was lost), the upload stays processing: a completion call after
+   * SANITIZER_ENQUEUE_RECLAIM_MS claims and sends it again, at most once per
+   * that interval and only until the sanitizer takes the upload.
    */
   private async enqueueSanitizationOnce(
     upload: DropMediaUploadEntity
@@ -803,7 +808,8 @@ export class UploadMediaService {
     const claimedAt = Time.currentMillis();
     const claimed = await this.dropMediaUploadsDb.claimSanitizerEnqueue({
       id: upload.id,
-      claimedAt
+      claimedAt,
+      reclaimBefore: claimedAt - SANITIZER_ENQUEUE_RECLAIM_MS
     });
     if (!claimed) {
       return;
