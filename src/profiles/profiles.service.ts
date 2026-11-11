@@ -426,10 +426,7 @@ export class ProfilesService {
       );
       await this.mergeRatings(sourceIdentity, target, connectionHolder);
       await this.mergeProxies(sourceIdentity, target, connectionHolder);
-      // The community_groups profile columns are not indexed.
-      await withProfileRow(() =>
-        this.mergeGroups(sourceIdentity, target, connectionHolder)
-      );
+      await this.mergeGroups(sourceIdentity, target, connectionHolder);
       await this.mergeWaves(sourceIdentity, target, connectionHolder);
       await this.mergeDrops(sourceIdentity, target, connectionHolder);
       // Updates a primary key column: fails when both have the same card.
