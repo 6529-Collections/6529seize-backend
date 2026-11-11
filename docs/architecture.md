@@ -827,6 +827,8 @@ this API support while new clients are deployed; roll back the frontend first.
 
 6. S3 and CloudFront serve media. All new drop/wave image multipart uploads use private ingest and the image worker, regardless of `DROP_MEDIA_SANITIZE_IMAGES`. The worker checks the container format against the declared MIME type before publication and rejects HEIC/HEIF with export guidance. The API captures the privacy choice in private multipart object metadata: false preserves original image bytes and true retains metadata stripping; missing policy preserves sanitization for older queued uploads. Published validation and privacy markers are separate. Single-PUT image preparation and legacy untracked public image multipart sessions cannot bypass the gate. Transport length failures remain operational. See [image-upload-format-validation.md](image-upload-format-validation.md) for scope, limits and compatibility. AVIF still-image drop uploads always convert through this worker, even when `DROP_MEDIA_SANITIZE_IMAGES=false`. The worker applies orientation, strips metadata, and publishes WebP at quality 95 for compatibility with older supported mobile viewers. Multipart completion/status responses return the published `mime_type`, and drop references validate that type. AVIF admission rejects sequences, invalid content, images over 64 million pixels, dimensions over 16,383 pixels, and file-type headers over 4 KiB before publication. These AVIF decoder and header bounds remain separate from the PNG and other codec preview policies below. Image processing uses a shared 256 MiB source ceiling; other media retains the existing 500 MB transport limit. Verify shared ingest storage, then deploy the sanitizer in each environment before enabling AVIF through the API and frontend. API deployment verifies the ingest bucket and sanitizer queue exist.
 
+   Staging retains the streaming verifier and its `PIXEL_CHECK_LIMITS` admission bounds; the separate 512 MiB re-encoding work budget remains unchanged. Non-PNG preview and sanitization budget admission happens from metadata before lossless stripping. Failed jobs remain terminal on ordinary delivery. An operator can explicitly retry one upload through the authenticated Lambda/SQS path with `{"media_upload_id":"<id>","retry_failed":true}`: the worker conditionally resets only `failed` to `processing`, clears the old error/completion time, and runs the normal validation/publication pipeline. A concurrent claim is not overwritten, and a ready upload only retries source cleanup. The private ingest object must still exist (or be restored from an authorized original backup) before retrying. Success publishes to the same keys, marks the existing upload ready and broadcasts the existing drop update.
+
    Other drop and wave image uploads can first land in a private ingest bucket, then `dropMediaSanitizer` strips metadata and publishes the sanitized full-size original to the public bucket before CloudFront/resizer paths serve it. Other specialized media paths include on-demand resizing, video conversion, and NextGen metadata placeholder interception. Drop-video multipart completion can accept a bounded device-generated JPEG, validate and strip its metadata, and store it before completing the original video. Conversion always keeps the existing HLS/MP4 renditions and adds bounded first-frame/one-second JPEGs only if a validated device poster is unavailable. Chat prefers the device image, then the later backend image, falling back to the first for legacy or short clips, and displays it before Play without fetching video bytes. The worker reads and expands the existing MediaConvert template without modifying it; its deployment includes template-scoped read and device-poster access policies. Before a job it skips objects that are gone, superseded or over a configurable size (2 GiB default), and allows one job per object version and a configurable number of jobs per key per window, recorded in a per-key S3 ledger (`_video-conversion-ledger/` in the media bucket) written with conditional writes. The HEAD and the ledger rely on the shared execution role's existing access to that bucket; the function adds no inline grants for them. The API execution role also needs narrow device-poster write and pending-upload read access. Existing uploads need a separate authorized replay. See [chat video previews](chat-video-previews.md) for storage and rollout details.
    The on-demand media resizer spools each S3 source into its own temporary file before metadata inspection and conversion. A shared 256 MiB source limit rejects oversized inputs with HTTP 422. PNG uses measured 100 MP/8-bit and 64 MP/16-bit admission, a 100,000-pixel input-side limit, and disposable Sharp child processes. PNG output is capped at 4096 pixels per side, two million pixels and 10 MiB encoded; ordinary fit/orientation behavior is preserved and oversized results are fitted inside a bounded box. Each PNG child has a 256 MiB JS heap, a 30-second lifetime and a sampled 1 GiB combined parent/child RSS watchdog. These are guards with headroom under the 2 GiB Lambda allocation, not hard native allocation guarantees. Corrupt/over-limit input is permanent; timeout, allocation/worker, monitor and I/O failures remain operational. Source and output files live until upload completes and are removed after success or failure. Non-PNG codecs retain the conservative 512 MiB decoded-work estimate; animated GIF admission counts every frame. Baseline 8-bit JPEG admission accounts conservatively for the decoder shrink used by the requested resize; progressive JPEGs and other codecs retain the full-input estimate. When a GIF animation exceeds the budget, only its first frame is resized if that frame independently fits. Otherwise it remains HTTP 422. Originals are unchanged, and already-posted images can receive previews on demand without re-uploading. Resize, rotation and output contracts are preserved for ordinary accepted inputs. Multipart upload concurrency is one, and the temporary directory is removed after completion or failure. These admission limits reduce resource risk; they do not guarantee a maximum native allocation for every codec. The specific HEIF missing-compression-plugin error is returned as `422 UNSUPPORTED_CODEC`, regardless of the filename or MIME label. One operational report is claimed per original S3 key and source version (VersionId, or ETag for unversioned objects), across resize variants and Lambda instances, using an empty conditional-write marker under `_resize-rejections/v1/` in the existing source bucket. Later requests retain warning logs and the controlled response; replacing the source enables a new report. Marker failures remain operational errors. Detected HEIF/HEVC inputs now use an isolated, pinned WebAssembly HEVC decoder and explicit JPEG output, independent of the source suffix/MIME label. The child has separate source/pixel, JS heap, WASM memory and time budgets. Confirmed permanent HEVC decoder rejections use `_resize-rejections/v2/` markers keyed by source revision and decoder policy: later requests still spool/inspect the source but skip pixel decoding and return HTTP 422. Source or decoder-policy changes permit another attempt. S3/worker/timeout/allocation failures remain operational; the generic Sharp HEIF `(7.0)` error is not broadly suppressed. A source length mismatch remains operational before decoding or caching. See [media-resizer-unsupported-input.md](media-resizer-unsupported-input.md) for decoder, alert and recovery limits.
    Chat image stripping is lossless when it verifies (pixels and ICC profile unchanged, Orientation kept); decision-entry uploads are never stripped and keep the artist's file name, while chat and wave uploads get neutral `<upload id>.<ext>` public names. See [image-upload-format-validation.md](image-upload-format-validation.md).
@@ -3077,3 +3079,64 @@ and recheck visibility; activity cannot move IDs between pages. Subwaves remain
 accessible through their parents. The API returns 410 for expired snapshots and
 503 when shared storage is unavailable rather than silently truncating the list.
 Deploy the `api` service before the frontend that consumes this additive endpoint.
+
+## IPFS infrastructure management
+
+`ops/ipfs/` defines isolated persistent S3 storage, replaceable EC2 candidates,
+the pinned Kubo binary with its bundled S3 datastore, nginx/systemd/TLS setup,
+and logical pin/MFS/identity backup and restoration. Checked-in CloudFormation
+YAML files under `ops/ipfs/cloudformation/` own access, storage, compute and edge
+definitions. The controller reads and submits those files directly; there is no
+Python template generator. Its pinned PyYAML reader runs only on the controller,
+not the EC2 runtime. S3 request logs and CloudFront access logs use separate private
+log buckets; only the CloudFront log bucket enables ACLs for the logging API.
+`ipfs-ci.yml` rehearses the real binary with disposable
+loopback S3 and HTTPS fixtures. The explicit-dispatch
+`ipfs-manage.yml` workflow validates the reviewed source, environment, account,
+and candidate identity before assuming deployment authority or sending SSM work.
+IPFS has one shared deployment target, `prod`, with dispatch restricted to `main`
+and the `ipfs-prod` GitHub environment. It has no separate staging deployment.
+Local/CI fixtures create no AWS environment; future production rollouts validate
+an unpublished replacement candidate before traffic handover.
+
+The application's IPFS API contract and serving configuration remain unchanged.
+Runtime deployment remains disabled by checked-in policy. A separate
+`ipfs-adopt.yml` workflow and import-only `adoption.yaml` baseline cover the existing
+production bucket, instance, its exclusively used security group and the entire
+shared CDN. `adoption.py` requires exact IDs,
+full native-model and CloudFront API configuration fingerprints, matching declared
+properties and an IMPORT-only
+change set bound to one source SHA/baseline. Preparation and execution are separate
+dispatches; retries reconcile the same change-set ARN. Successful adoption requires
+exact ownership, original template equality and per-resource drift checks, then
+retains an import-only service role, termination protection and a deny-all resource
+update stack policy. `adoption-access.yaml` defines dedicated roles limited to
+configuration reads and ownership tags, without SSM command, content-object write
+or DNS-change permissions. CloudFormation's post-import tagging invokes the
+CloudFront UPDATE handler even for unchanged configuration. A deadline-bound
+service-role permission for only the existing shared distribution accommodates
+that provider call; it defaults to expired and is closed immediately after import.
+The GitHub controller remains explicitly denied, and the entire API configuration
+must match the reviewed fingerprint before and after import.
+The separate adoption switch is enabled only for the authorized ownership import
+and reset after verification; adoption additionally requires runtime deployment to
+remain locked. Network/IAM dependencies, canonical DNS,
+edge policy/function implementations and host files are referenced, not imported.
+
+Stage 1 ownership import completed on November 11, 2026. The four existing resources
+are owned by `seize-ipfs-prod-adopted`, verified `IN_SYNC`, retained and protected
+against deletion and resource updates. The temporary CloudFront provider window
+is closed, both checked-in mutation switches are disabled, and serving
+configuration remains unchanged. The [adoption record](../ops/ipfs/adoption-record.json)
+contains the reviewed source, exact change set and verification runs. Runtime
+deployment and traffic handover still require the separate migration below.
+
+The live CloudFront distribution is
+shared with Arweave and S3 media and is not replaced by the new dedicated gateway
+template. Published candidates are sealed before DNS publication; active-daemon
+updates and restoration over a serving node are rejected. Adoption does not
+permit that candidate path to target the live bucket or canonical hostnames.
+Runtime/writer traffic handover remains a separate reviewed migration requiring
+replacement validation, a stable front door, request draining and reconciliation
+of all completed writes. See the [IPFS runbook](../ops/ipfs/README.md) for exact
+ownership boundaries, recovery limitations, deployment order and adoption steps.

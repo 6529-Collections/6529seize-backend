@@ -93,6 +93,11 @@ jobs:
           cache: 'npm'
       - name: Install dependencies
         run: ./bin/6529 ci && pushd src/api-serverless && ../../bin/6529 ci && popd
+      - name: Install IPFS controller test dependencies
+        run: |
+          python3 -m venv "$RUNNER_TEMP/ipfs-control-tools"
+          "$RUNNER_TEMP/ipfs-control-tools/bin/pip" install -r ops/ipfs/requirements-control.txt
+          echo "$RUNNER_TEMP/ipfs-control-tools/bin" >> "$GITHUB_PATH"
       - name: Test backend shard
         # Preserve the existing worker, heap and timeout limits on each runner.
         timeout-minutes: 45
