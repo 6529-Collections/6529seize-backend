@@ -37,6 +37,8 @@ import { competitionDeliveryErrorCode } from '@/competitions/competition-deliver
 /** The most one dispatch pass spends delivering events. */
 export const DISPATCH_BUDGET_MS = 240_000;
 const DISPATCH_MAX_BATCHES = 10;
+/** Time share decision results get while other events are waiting. */
+const PRIORITY_SHARE = 0.5;
 
 export class CompetitionEventDispatcher {
   private readonly logger = Logger.get(this.constructor.name);
@@ -84,27 +86,52 @@ export class CompetitionEventDispatcher {
 
   /**
    * Delivers pending outbox events for up to `budgetMs` (at most four
-   * minutes) and ten batches of 100. Decision results are claimed first,
-   * then everything else oldest first. Claimed events left when the budget
-   * runs out are released for the next pass.
+   * minutes) and ten batches of 100. Decision results are claimed first and
+   * batches then alternate with the rest of the outbox, oldest first, so
+   * neither starves the other: while both have events, decision results get
+   * at most every other batch and, until the rest is drained, half of the
+   * time. Claimed events left when their time runs out are released for the
+   * next pass.
    */
   public async dispatchPending(
     ctx: RequestContext = {},
     now = Date.now(),
     { budgetMs = DISPATCH_BUDGET_MS }: { budgetMs?: number } = {}
   ): Promise<void> {
-    const deadline = Date.now() + Math.min(DISPATCH_BUDGET_MS, budgetMs);
-    let batches = 0;
-    for (const priority of [true, false]) {
-      while (batches < DISPATCH_MAX_BATCHES && Date.now() < deadline) {
-        batches++;
-        const params = { now, limit: 100, leaseMs: 10 * 60_000 };
-        const records = priority
-          ? await this.outbox.claimPriorityOutbox(params, ctx)
-          : await this.outbox.claimOutbox(params, ctx);
-        await this.deliverClaimed(records, ctx, deadline);
-        if (records.length < 100) break;
-      }
+    const startedAt = Date.now();
+    const budget = Math.min(DISPATCH_BUDGET_MS, budgetMs);
+    const deadline = startedAt + budget;
+    const priorityDeadline = startedAt + Math.ceil(budget * PRIORITY_SHARE);
+    const drained: { priority: boolean; ordinary: boolean } = {
+      priority: false,
+      ordinary: false
+    };
+    let priorityTurn = true;
+    for (
+      let batch = 0;
+      batch < DISPATCH_MAX_BATCHES &&
+      Date.now() < deadline &&
+      !(drained.priority && drained.ordinary);
+      batch++
+    ) {
+      // Decision results keep their full share only once the rest is drained.
+      const priorityOpen =
+        !drained.priority &&
+        (drained.ordinary || Date.now() < priorityDeadline);
+      const priority: boolean =
+        priorityOpen && (priorityTurn || drained.ordinary);
+      const params = { now, limit: 100, leaseMs: 10 * 60_000 };
+      const records = priority
+        ? await this.outbox.claimPriorityOutbox(params, ctx)
+        : await this.outbox.claimOutbox(params, ctx);
+      await this.deliverClaimed(
+        records,
+        ctx,
+        priority && !drained.ordinary ? priorityDeadline : deadline
+      );
+      if (records.length < 100)
+        drained[priority ? 'priority' : 'ordinary'] = true;
+      priorityTurn = !priority;
     }
   }
 

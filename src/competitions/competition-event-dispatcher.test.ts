@@ -237,6 +237,102 @@ describe('CompetitionEventDispatcher', () => {
     expect(deps.outbox.claimOutbox).toHaveBeenCalledTimes(1);
   });
 
+  describe('with a large backlog of decision results', () => {
+    const batchOf = (prefix: string, eventType: string) =>
+      Array.from({ length: 100 }, (_, i) => ({
+        id: `${prefix}-${i}`,
+        event: { ...event, event_id: `${prefix}-${i}`, event_type: eventType },
+        attempts: 1,
+        lease_token: `${prefix}-${i}`
+      }));
+
+    it('alternates batches so ordinary events are still claimed every pass', async () => {
+      const deps = dependencies();
+      const order: string[] = [];
+      let priorityBatch = 0;
+      let ordinaryBatch = 0;
+      deps.outbox.claimPriorityOutbox.mockImplementation(async () => {
+        order.push('priority');
+        return batchOf(`d${priorityBatch++}`, 'COMPETITION_DECISION_COMPLETED');
+      });
+      deps.outbox.claimOutbox.mockImplementation(async () => {
+        order.push('ordinary');
+        return batchOf(`v${ordinaryBatch++}`, 'COMPETITION_VOTE_CHANGED');
+      });
+
+      await deps.dispatcher.dispatchPending({}, 100);
+
+      expect(order).toEqual([
+        'priority',
+        'ordinary',
+        'priority',
+        'ordinary',
+        'priority',
+        'ordinary',
+        'priority',
+        'ordinary',
+        'priority',
+        'ordinary'
+      ]);
+      const acknowledged = deps.outbox.acknowledgeOutbox.mock.calls.map(
+        ([id]) => id as string
+      );
+      expect(acknowledged.filter((id) => id.startsWith('v'))).toHaveLength(500);
+      expect(acknowledged.filter((id) => id.startsWith('d'))).toHaveLength(500);
+    });
+
+    it('gives decision results at most half the time while other events wait', async () => {
+      const deps = dependencies();
+      let now = 0;
+      jest.spyOn(Date, 'now').mockImplementation(() => now);
+      // Each decision result takes a second to deliver.
+      deps.sockets.notifyAboutCompetitionUpdate.mockImplementation(
+        async (e: NativeCompetitionEvent) => {
+          if (e.event_type === 'COMPETITION_DECISION_COMPLETED') now += 1_000;
+        }
+      );
+      deps.outbox.claimPriorityOutbox.mockImplementation(async () =>
+        batchOf('d', 'COMPETITION_DECISION_COMPLETED')
+      );
+      deps.outbox.claimOutbox.mockImplementation(async () =>
+        batchOf('v', 'COMPETITION_VOTE_CHANGED')
+      );
+
+      await deps.dispatcher.dispatchPending({}, 0, { budgetMs: 100_000 });
+
+      const acknowledged = deps.outbox.acknowledgeOutbox.mock.calls.map(
+        ([id]) => id as string
+      );
+      // 50 decision results fit in their half; the rest are released and
+      // every remaining batch goes to the waiting events.
+      expect(acknowledged.filter((id) => id.startsWith('d'))).toHaveLength(50);
+      expect(deps.outbox.deferOutbox).toHaveBeenCalledTimes(50);
+      expect(deps.outbox.claimPriorityOutbox).toHaveBeenCalledTimes(1);
+      expect(deps.outbox.claimOutbox).toHaveBeenCalledTimes(9);
+      expect(acknowledged.filter((id) => id.startsWith('v'))).toHaveLength(900);
+    });
+
+    it('lets decision results use the whole budget once the rest is drained', async () => {
+      const deps = dependencies();
+      let now = 0;
+      jest.spyOn(Date, 'now').mockImplementation(() => now);
+      deps.sockets.notifyAboutCompetitionUpdate.mockImplementation(async () => {
+        now += 1_000;
+      });
+      deps.outbox.claimOutbox.mockResolvedValue([]);
+      deps.outbox.claimPriorityOutbox
+        .mockResolvedValueOnce(batchOf('a', 'COMPETITION_DECISION_COMPLETED'))
+        .mockResolvedValueOnce(batchOf('b', 'COMPETITION_DECISION_COMPLETED'));
+
+      await deps.dispatcher.dispatchPending({}, 0, { budgetMs: 100_000 });
+
+      // The first batch keeps to its half while ordinary events may still
+      // be waiting; after they turn out drained the second gets the rest.
+      expect(deps.outbox.acknowledgeOutbox).toHaveBeenCalledTimes(100);
+      expect(deps.outbox.claimOutbox).toHaveBeenCalledTimes(1);
+    });
+  });
+
   it('never spends more than four minutes even when given longer', async () => {
     const deps = dependencies();
     let now = 0;
