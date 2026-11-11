@@ -15,13 +15,17 @@ const accessAbi = new Interface([
 export async function forgeSettingsAccess(
   config: DropForgeConfig,
   wallet: string | null
-): Promise<{ can_edit: boolean; can_top_up: boolean }> {
+): Promise<{
+  can_edit: boolean;
+  can_edit_preparation: boolean;
+  can_top_up: boolean;
+}> {
   if (!wallet)
     throw new ForbiddenException('Drop Forge administrator access required');
   const includes = (values: string[]) =>
     values.some((value) => value.toLowerCase() === wallet.toLowerCase());
   if (includes(getClaimsAdminWallets()))
-    return { can_edit: true, can_top_up: true };
+    return { can_edit: true, can_edit_preparation: true, can_top_up: true };
   const provider = getEthereumRpcProvider(config.chainId);
   const owner = await rpcWithDeadline(
     provider.call({
@@ -33,9 +37,9 @@ export async function forgeSettingsAccess(
     String(accessAbi.decodeFunctionResult('owner', owner)[0]).toLowerCase() ===
     wallet.toLowerCase()
   )
-    return { can_edit: true, can_top_up: true };
+    return { can_edit: true, can_edit_preparation: true, can_top_up: true };
   if (includes(getDistributionAdminWallets()))
-    return { can_edit: false, can_top_up: true };
+    return { can_edit: false, can_edit_preparation: true, can_top_up: true };
   const admin = await rpcWithDeadline(
     provider.call({
       to: config.creator,
@@ -43,6 +47,6 @@ export async function forgeSettingsAccess(
     })
   );
   if (accessAbi.decodeFunctionResult('isAdmin', admin)[0] === true)
-    return { can_edit: false, can_top_up: true };
+    return { can_edit: false, can_edit_preparation: false, can_top_up: true };
   throw new ForbiddenException('Drop Forge administrator access required');
 }

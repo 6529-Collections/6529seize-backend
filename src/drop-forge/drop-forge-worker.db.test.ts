@@ -200,6 +200,14 @@ describe('Drop Forge durable worker', () => {
     );
     await restarted.tick(id);
     expect(signer.sign).toHaveBeenCalledTimes(1);
+    await updateForgeSettings(testConfig, testConfig.signer, {
+      revision: 0,
+      max_artist_payment_eth: '0.0005'
+    });
+    chain.broadcast.mockClear();
+    chain.now.mockResolvedValue(due + 150);
+    await restarted.tick(id);
+    expect(chain.broadcast).not.toHaveBeenCalled();
     chain.receipt.mockResolvedValue({
       status: 1,
       blockNumber: 100,

@@ -11,7 +11,7 @@ jest.mock('@/sql-executor', () => ({
 }));
 jest.mock('@/drop-forge/drop-forge.wake', () => ({ wakeDropForge: jest.fn() }));
 const readSettings = jest.mocked(sqlExecutor.oneOrNull);
-const config = { ...testConfig, maxArtistPayment: undefined };
+const config = testConfig;
 beforeEach(() => {
   jest.clearAllMocks();
   jest.mocked(sqlExecutor.execute).mockResolvedValue([]);
@@ -20,6 +20,8 @@ beforeEach(() => {
     revision: 3,
     automation_enabled: true,
     pay_artist_enabled: true,
+    max_artist_payment_wei: null,
+    preparation_enabled: false,
     updated_by: null,
     updated_at: 0
   });
@@ -39,9 +41,18 @@ it('allows switching launch execution Off after its payout cap is removed', asyn
   const update = jest
     .mocked(sqlExecutor.execute)
     .mock.calls.find(([sql]) => sql.startsWith('UPDATE'));
-  expect(update?.[1]).toMatchObject(input);
+  expect(update?.[1]).toMatchObject({
+    automation_enabled: false,
+    pay_artist_enabled: true
+  });
 });
 it('refuses resuming execution with artist payments enabled and no cap', async () => {
+  readSettings.mockResolvedValue({
+    id: 'settings',
+    revision: 3,
+    automation_enabled: false,
+    pay_artist_enabled: true
+  });
   await expect(
     updateForgeSettings(config, testConfig.signer, {
       revision: 3,

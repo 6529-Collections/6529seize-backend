@@ -12,7 +12,7 @@ transitions from per-drop one-time EventBridge Scheduler events. Both handlers d
 to disabled. Winner selection, craft publication, keys, gas funding, creator-admin
 grants and enabling optional artist payments remain operator responsibilities.
 
-Both hub settings start Off. With tracking enabled, due disabled actions still report skips to the operations wave. Research and optional Pay Artist run together at 18:00 Europe/Athens the following day.
+All three hub switches start Off. Due disabled launch actions still report skips to the operations wave. Research and optional Pay Artist run together at 18:00 Europe/Athens the following day.
 
 ## Configuration and authority
 
@@ -23,8 +23,6 @@ services need the same `DROP_FORGE_ALERT_PROFILE_IDS` configuration.
 
 | Setting                                 | Meaning                                                                                                                                  |
 | -------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| `DROP_FORGE_AUTOMATION_ENABLED`  | Exact `true` enables launch tracking; the persisted Automatic launch switch separately permits execution                                 |
-| `DROP_FORGE_PREPARATION_ENABLED`        | Exact `true` enables queued EMMA preparation/finalization                                                                                |
 | `DROP_FORGE_SIGNER_ADDRESS`             | Expected operational wallet address derived from the KMS public key                                                                      |
 | `DROP_FORGE_KMS_KEY_ID`                 | KMS asymmetric `ECC_SECG_P256K1`, `SIGN_VERIFY` key in the worker's AWS region                                                           |
 | `DROP_FORGE_OPERATIONS_WAVE_ID`         | Manually confirmed Drop Forge Ops wave UUID                                                                                                  |
@@ -34,9 +32,7 @@ services need the same `DROP_FORGE_ALERT_PROFILE_IDS` configuration.
 | `DROP_FORGE_REPORT_DEVICE_GRANT_ID` | Active Signed Posts grant issued by the posting profile's wallet |
 
 The stage policy fixes network/creator/proxy/receiver, 12 confirmations, and gas
-ceilings (100 gwei, 5,000,000 gas, 0.1 ETH gas cost per transaction). The explicit
-`DROP_FORGE_MAX_ARTIST_PAYMENT_ETH` cap remains required before enabling payouts.
-Deployment supplies the stage; no manual stage secret or calendar URL is needed.
+ceilings (100 gwei, 5,000,000 gas, 0.1 ETH gas cost per transaction). Deployment supplies the stage; no manual stage secret or calendar URL is needed.
 
 Dedicated execution and Scheduler delivery roles are referenced by versioned
 stage configuration, not GitHub variables. The API publishes targeted SQS work;
@@ -266,7 +262,7 @@ outstanding allocations instead. Every retry archives the settled nonce evidence
 
 The targeted handler always reconciles existing signed intents when configured,
 including while execution is Off. No separate recovery flag is required.
-Fresh-nonce retry/delivery still requires `DROP_FORGE_AUTOMATION_ENABLED=true`.
+Fresh-nonce retry and delivery require **Automatic launch** to be On.
 Provision keys, permission, reviewed stage policy and reporting configuration before use. Empty RPC
 results, a timeout, a missed deadline, pause or launch cancellation never prove
 that signed bytes are invalid. Never clear signer reservations through a DB reset.
@@ -310,7 +306,7 @@ Already-current `claimsBuilder`, `subscriptionsDaily` and `helpBotReplyLoop` do 
 need redeployment for automation-only changes.
 Deploy `dbMigrationsLoop` for entity sync, then `transactionsLoop` for finalized
 creator scan coverage, then `dropForgeLaunchHandler`, then
-`memesDistributionHandler`, then `api`, with both flags disabled, followed by the
+`memesDistributionHandler`, then `api`, followed by the
 dependent frontend controls. The new handlers create their own wave
 reports; existing reporting services do not need redeployment for these alerts.
 Make `DROP_FORGE_ALERT_PROFILE_IDS` available to the API and both handlers.
@@ -370,19 +366,21 @@ dynamic top-up cannot consume the edition supply still owed to them.
 ## Launch Automation settings and artist payment
 
 The Drop Forge hub shows Launch Automation to every authorized Drop Forge user.
-Both database settings default Off, separately per chain/creator in each environment.
-Only the current creator owner or `CLAIMS_ADMIN_WALLETS` can edit them. Ordinary
-on-chain admins and `DISTRIBUTION_ADMIN_WALLETS` can view and fund the wallet.
-These permissions are checked by the API, independently of the UI.
+The three switches default Off and the payment cap starts unset. Settings are
+stored per chain and creator in the environment database. The creator owner
+and `CLAIMS_ADMIN_WALLETS` can change all four controls. Wallets in
+`DISTRIBUTION_ADMIN_WALLETS` can also change EMMA preparation. The API enforces
+these permissions. The panel displays all values to authorized users.
 
-`DROP_FORGE_AUTOMATION_ENABLED` is the outer environment capability. Once provisioned,
-set it to true to accept tracked Launch requests and install one-time schedules.
-The hub's Automatic launch switch then controls new transactions. Off still allows
-scheduled handlers to report each due action as skipped, once per settings revision,
-without marking the action completed. Turning it on wakes active claims; only actions
-still within their windows execute. No historical claims are created or swept.
-Signed receipts continue reconciliation; Off stops fresh signing and rebroadcast,
-not transactions already accepted by the chain. EMMA preparation remains independent.
+Automatic launch controls new submissions. Off keeps scheduled reports and
+receipt reconciliation active. The handler reports due disabled actions once
+per settings revision without marking the action completed. Turning it on wakes
+active claims, and actions still within their windows can execute.
+
+EMMA preparation controls Process and Finalize independently. Off blocks new
+jobs and lets a running step finish before pausing at its saved checkpoint.
+Turning it back On wakes pending jobs. A job waiting for EMMA authentication
+still needs the operator to sign in and resume it.
 
 Automatic artist payment defaults Off. At 18:00 Europe/Athens the following day,
 its independent action checks the current settings, exact manual payment evidence,
@@ -392,9 +390,10 @@ subscriptions, calculated with integer wei. The recipient comes from the claim's
 payment details, including designated payees. Recipient and amount freeze with the
 intent and are checked again before signing. Missing/incomplete accounting, a changed
 payee/amount or a manual completion checkbox without a transaction blocks payment.
-A zero amount completes without a transfer. The positive runtime
-`DROP_FORGE_MAX_ARTIST_PAYMENT_ETH` cap is required before enabling payments; existing
-transaction gas caps remain separate. Successful payment mirrors `PAY_ARTIST` into
+A zero amount completes without a transfer. Set a positive **Maximum ETH per
+payout** in the panel before enabling payments. The handler checks this limit
+against the exact amount in wei, and gas caps are applied independently.
+Successful payment mirrors `PAY_ARTIST` into
 the manual Launch view. Signed payments use the same wallet reservation, crash-safe
 broadcast and canonical receipt/reorg checks as other actions. Speed-up preserves
 the exact recipient/value/nonce; cancellation sends zero ETH to the signer.

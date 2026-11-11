@@ -33,6 +33,8 @@ import {
   ForbiddenException
 } from '@/exceptions';
 import { Timer } from '@/time';
+import { getDropForgePolicy } from '@/drop-forge/drop-forge.policy';
+import { readForgeSettings } from '@/drop-forge/drop-forge.settings';
 import { createProcess } from '@/drop-forge/drop-forge.workflow';
 import { isAddress } from 'ethers';
 import { encryptPreparationAuth } from '@/drop-forge/drop-forge.preparation-auth';
@@ -209,9 +211,9 @@ export async function createDropForgeDistributionJob(
       paramsSchema
     );
     const body = getValidatedByJoiOrThrow(req.body, jobSchema);
-    if (process.env.DROP_FORGE_PREPARATION_ENABLED !== 'true')
+    if (!(await readForgeSettings(getDropForgePolicy())).preparation_enabled)
       throw new BadRequestException(
-        'Background distribution processing is disabled'
+        'EMMA preparation is Off in Drop Forge Launch Automation'
       );
     const job = Object.assign(new DropForgeJobEntity(), {
       id: body.request_id,

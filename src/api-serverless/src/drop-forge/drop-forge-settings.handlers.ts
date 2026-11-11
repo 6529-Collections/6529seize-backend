@@ -1,14 +1,13 @@
 import { rpcWithDeadline } from '@/drop-forge/drop-forge.chain';
+import { formatEther } from 'ethers';
 import { Request } from 'express';
 import * as Joi from 'joi';
 import { getAuthenticatedWalletOrNull } from '@/api/auth/auth';
 import { getValidatedByJoiOrThrow } from '@/api/validation';
-import {
-  automationEnabled,
-  getDropForgeConfig
-} from '@/drop-forge/drop-forge.config';
+import { getDropForgeConfig } from '@/drop-forge/drop-forge.config';
 import { forgeSettingsAccess } from '@/drop-forge/drop-forge.access';
 import {
+  artistPaymentLimitPattern,
   readForgeSettings,
   updateForgeSettings
 } from '@/drop-forge/drop-forge.settings';
@@ -24,6 +23,7 @@ import {
   ForbiddenException
 } from '@/exceptions';
 import { ApiDropForgeFundingResponse } from '@/api/generated/models/ApiDropForgeFundingResponse';
+import { ApiDropForgeSettingsRequest } from '@/api/generated/models/ApiDropForgeSettingsRequest';
 import { ApiDropForgeSettings } from '@/api/generated/models/ApiDropForgeSettings';
 
 async function settingsCall<T>(fn: () => Promise<T>): Promise<T> {
@@ -54,7 +54,11 @@ export async function getDropForgeSettings(
     return {
       revision: settings.revision,
       automation_enabled: settings.automation_enabled,
+      preparation_enabled: settings.preparation_enabled,
       pay_artist_enabled: settings.pay_artist_enabled,
+      max_artist_payment_eth: settings.max_artist_payment_wei
+        ? formatEther(settings.max_artist_payment_wei)
+        : null,
       updated_by: settings.updated_by,
       updated_at: settings.updated_at,
       ...access,
@@ -62,10 +66,7 @@ export async function getDropForgeSettings(
       contract: config.creator,
       signer_address: config.signer,
       ens_name: ens,
-      balance_wei: typeof balance === 'bigint' ? balance.toString() : null,
-      execution_available: automationEnabled(),
-      artist_payment_available:
-        !!config.maxArtistPayment && config.maxArtistPayment > BigInt(0)
+      balance_wei: typeof balance === 'bigint' ? balance.toString() : null
     };
   });
 }
@@ -77,25 +78,33 @@ export async function putDropForgeSettings(
     const config = getDropForgeConfig();
     const wallet = getAuthenticatedWalletOrNull(req);
     const access = await forgeSettingsAccess(config, wallet);
-    if (!access.can_edit)
-      throw new ForbiddenException(
-        'Only the creator owner or configured claims administrators may change launch settings'
-      );
     const input = getValidatedByJoiOrThrow(
       req.body,
-      Joi.object<{
-        revision: number;
-        automation_enabled: boolean;
-        pay_artist_enabled: boolean;
-      }>({
+      Joi.object<ApiDropForgeSettingsRequest>({
         revision: Joi.number().integer().min(0).required(),
-        automation_enabled: Joi.boolean().strict().required(),
-        pay_artist_enabled: Joi.boolean().strict().required()
-      })
+        automation_enabled: Joi.boolean().strict(),
+        preparation_enabled: Joi.boolean().strict(),
+        pay_artist_enabled: Joi.boolean().strict(),
+        max_artist_payment_eth: Joi.string()
+          .pattern(artistPaymentLimitPattern)
+          .allow(null)
+      }).or(
+        'automation_enabled',
+        'preparation_enabled',
+        'pay_artist_enabled',
+        'max_artist_payment_eth'
+      )
     );
-    if (input.automation_enabled && !automationEnabled())
-      throw new LaunchSafetyError(
-        'Launch execution is not enabled for this environment'
+    if (input.preparation_enabled !== undefined && !access.can_edit_preparation)
+      throw new ForbiddenException('EMMA preparation settings access required');
+    if (
+      !access.can_edit &&
+      (input.automation_enabled !== undefined ||
+        input.pay_artist_enabled !== undefined ||
+        input.max_artist_payment_eth !== undefined)
+    )
+      throw new ForbiddenException(
+        'Only the creator owner or configured claims administrators may change launch or payment settings'
       );
     await updateForgeSettings(config, wallet!, input);
     return getDropForgeSettings(req);

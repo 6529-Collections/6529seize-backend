@@ -36,7 +36,6 @@ const request = (operation = 'CANCEL') =>
 beforeEach(() => {
   jest.spyOn(config, 'getDropForgeConfig').mockReturnValue(testConfig);
   jest.spyOn(config, 'launchConfigured').mockReturnValue(true);
-  jest.spyOn(config, 'automationEnabled').mockReturnValue(false);
   jest
     .spyOn(auth, 'getAuthenticatedWalletOrNull')
     .mockReturnValue(testConfig.signer);
@@ -61,15 +60,6 @@ it('permits cancellation with recovery enabled while normal scheduled execution 
   );
   expect(wake.wakeDropForge).not.toHaveBeenCalled();
 });
-it.each(['RETRY', 'DELIVER_REMAINING'])(
-  'does not permit %s while scheduled signing is disabled',
-  async (operation) => {
-    await expect(recoverDropForgeLaunch(request(operation))).rejects.toThrow(
-      'Enable scheduled execution'
-    );
-    expect(DropForgeRecovery.prototype.request).not.toHaveBeenCalled();
-  }
-);
 it('rejects unconfigured recovery and missing existing-transaction evidence', async () => {
   jest.mocked(config.launchConfigured).mockReturnValue(false);
   await expect(recoverDropForgeLaunch(request())).rejects.toThrow(

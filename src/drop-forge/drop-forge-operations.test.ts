@@ -17,9 +17,7 @@ import {
 } from '@/drop-forge/drop-forge.test-fixtures';
 import { LaunchRecord } from '@/drop-forge/drop-forge.types';
 let record: LaunchRecord;
-const previous = process.env.DROP_FORGE_AUTOMATION_ENABLED;
 beforeEach(() => {
-  process.env.DROP_FORGE_AUTOMATION_ENABLED = 'true';
   record = {
     id: 'launch',
     revision: 1,
@@ -56,8 +54,6 @@ beforeEach(() => {
 });
 afterEach(() => {
   jest.restoreAllMocks();
-  if (previous === undefined) delete process.env.DROP_FORGE_AUTOMATION_ENABLED;
-  else process.env.DROP_FORGE_AUTOMATION_ENABLED = previous;
 });
 it('reopens only metadata work and deduplicates requests without replaying completed airdrops', async () => {
   await requestMetadataUpdate(1, {});

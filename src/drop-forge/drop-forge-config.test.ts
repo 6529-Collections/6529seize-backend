@@ -1,7 +1,4 @@
-import {
-  getDropForgeConfig,
-  automationEnabled
-} from '@/drop-forge/drop-forge.config';
+import { getDropForgeConfig } from '@/drop-forge/drop-forge.config';
 import { getDropForgePolicy } from '@/drop-forge/drop-forge.policy';
 import { testConfig } from '@/drop-forge/drop-forge.test-fixtures';
 const previous = { ...process.env };
@@ -38,17 +35,6 @@ it('cannot override contract, receiver or gas policy with retired secrets', () =
   process.env.DROP_FORGE_CREATOR_CONTRACT = testConfig.signer;
   process.env.DROP_FORGE_PAYMENT_RECEIVER = testConfig.signer;
   process.env.DROP_FORGE_MAX_TX_COST_ETH = '999';
+  process.env.DROP_FORGE_MAX_ARTIST_PAYMENT_ETH = 'invalid';
   expect(getDropForgeConfig()).toEqual(expected);
-});
-it('keeps the explicit artist payment budget separate from gas policy', () => {
-  delete process.env.DROP_FORGE_MAX_ARTIST_PAYMENT_ETH;
-  expect(getDropForgeConfig().maxArtistPayment).toBeUndefined();
-  process.env.DROP_FORGE_MAX_ARTIST_PAYMENT_ETH = '0.25';
-  expect(getDropForgeConfig().maxArtistPayment).toBe(
-    BigInt('250000000000000000')
-  );
-});
-it('keeps the environment execution switch off by default', () => {
-  delete process.env.DROP_FORGE_AUTOMATION_ENABLED;
-  expect(automationEnabled()).toBe(false);
 });

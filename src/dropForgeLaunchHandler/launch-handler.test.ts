@@ -2,6 +2,7 @@ import { runLaunchDelivery } from './index';
 import { dropForgeRepository } from '@/drop-forge/drop-forge.repository';
 import { DropForgeWorker } from '@/drop-forge/drop-forge.worker';
 import * as dispatch from '@/drop-forge/drop-forge.dispatch';
+import { readForgeSettings } from '@/drop-forge/drop-forge.settings';
 import * as config from '@/drop-forge/drop-forge.config';
 import { reportLaunchEvents } from '@/drop-forge/drop-forge.notifier';
 import {
@@ -52,7 +53,6 @@ beforeEach(() => {
     data: testLaunchData()
   };
   jest.spyOn(config, 'getDropForgeConfig').mockReturnValue(testConfig);
-  jest.spyOn(config, 'automationEnabled').mockReturnValue(true);
   jest
     .spyOn(dropForgeRepository, 'find')
     .mockImplementation(async () => current);
@@ -128,12 +128,21 @@ it('does not acknowledge a reporting failure or silently discard disabled queued
     runLaunchDelivery({ id: current.id, revision: 5 })
   ).rejects.toThrow('wave delivery');
   expect(dispatch.continueLaunch).not.toHaveBeenCalled();
-  jest.mocked(config.automationEnabled).mockReturnValue(false);
+  jest.mocked(readForgeSettings).mockResolvedValueOnce({
+    id: 'settings',
+    revision: 2,
+    automation_enabled: false,
+    preparation_enabled: false,
+    pay_artist_enabled: false,
+    max_artist_payment_wei: null,
+    updated_by: null,
+    updated_at: 0
+  });
   await runLaunchDelivery({ id: current.id, revision: 5 });
   expect(dispatch.continueLaunch).toHaveBeenLastCalledWith(
     current,
     expect.any(Number),
-    false,
-    expect.any(Object)
+    true,
+    expect.objectContaining({ automation_enabled: false })
   );
 });

@@ -30,7 +30,7 @@ export async function clearDropForgeTestTables(): Promise<void> {
     await sqlExecutor.execute(`DELETE FROM ${table}`);
   }
   await sqlExecutor.execute(
-    `INSERT INTO ${DROP_FORGE_SETTINGS_TABLE} (id, automation_enabled, pay_artist_enabled) VALUES (:id, true, true)`,
+    `INSERT INTO ${DROP_FORGE_SETTINGS_TABLE} (id, automation_enabled, pay_artist_enabled, max_artist_payment_wei) VALUES (:id, true, true, '1000000000000000000')`,
     { id: forgeSettingsId(testConfig) }
   );
 }

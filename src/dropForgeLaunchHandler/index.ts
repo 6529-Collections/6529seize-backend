@@ -1,8 +1,5 @@
 import type { SQSHandler } from 'aws-lambda';
-import {
-  automationEnabled,
-  getDropForgeConfig
-} from '@/drop-forge/drop-forge.config';
+import { getDropForgeConfig } from '@/drop-forge/drop-forge.config';
 import { EthereumLaunchChain } from '@/drop-forge/drop-forge.chain';
 import { dropForgeRepository } from '@/drop-forge/drop-forge.repository';
 import { reportLaunchEvents } from '@/drop-forge/drop-forge.notifier';
@@ -41,27 +38,25 @@ export async function runLaunchDelivery(
   const now = Math.floor(Date.now() / 1000);
   // Install every future group before attempting opening work. Earlier action
   // failures cannot prevent the later phase deliveries from being triggered.
-  if (automationEnabled() && ['ARMED', 'RUNNING'].includes(record.state))
+  if (['ARMED', 'RUNNING'].includes(record.state))
     await scheduleLaunchGroups(record, now);
   const watchdog = await launchWatchdog(
     { id: record.id, revision: record.revision },
     now
   );
   try {
-    if (automationEnabled())
-      await recordPostMintPreview(
-        record.id,
-        config,
-        dropForgeRepository,
-        chain,
-        now
-      );
+    await recordPostMintPreview(
+      record.id,
+      config,
+      dropForgeRepository,
+      chain,
+      now
+    );
     const worker = new DropForgeWorker(
       config,
       dropForgeRepository,
       chain,
-      new KmsTransactionSigner(config.keyId, config.signer),
-      automationEnabled()
+      new KmsTransactionSigner(config.keyId, config.signer)
     );
     let reportsDelivered = await reportLaunchEvents(
       config,
@@ -84,7 +79,7 @@ export async function runLaunchDelivery(
     await continueLaunch(
       updated,
       Math.floor(Date.now() / 1000),
-      automationEnabled(),
+      true,
       await readForgeSettings(config)
     );
   } finally {

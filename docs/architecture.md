@@ -2586,14 +2586,16 @@ proven prior nonce settlement; unknown evidence blocks further wallet use.
 
 ### Launch settings and funding boundary
 
-The `drop_forge_settings` row is scoped by chain/creator and defaults both switches
-Off. API changes use an optimistic revision and row lock; only the creator owner
-or configured claims-list wallet can edit. Workers check the same row while
-reserving, committing a signature and considering rebroadcast. Turning Off retains
-future one-time deliveries for disabled-action reporting and signed-receipt tracking.
-Skip reporting is deduplicated per action/settings revision and does not complete
-an allocation. Enabling wakes existing active claims without creating historical
-launches. Environment kill switches remain an outer capability; EMMA is independent.
+The `drop_forge_settings` row is scoped by chain and creator. The three switches
+default Off and the per-payout cap is nullable and stored in wei. API changes
+use an optimistic revision and row lock. The creator owner and configured claims
+admins can edit all fields. Distribution admins can also edit EMMA preparation.
+The launch worker checks the same row while reserving, committing a signature
+and submitting the transaction. Turning Automatic launch Off retains scheduled
+skip reporting and signed-receipt tracking. Re-enabling wakes eligible active
+claims. The distribution handler checks preparation at each step boundary.
+Re-enabling preparation publishes wakes with the enabling settings revision so
+an early delivery waits for the settings transaction to commit.
 
 The `PAY_ARTIST` action stores the exact wei amount and designated payee in the
 existing launch ledger. Fresh paid-mint/subscription accounting must match confirmed

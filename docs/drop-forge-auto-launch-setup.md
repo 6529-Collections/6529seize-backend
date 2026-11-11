@@ -224,9 +224,6 @@ Add the reporting and wallet values above to the regional runtime secret, plus:
 | ----------------------------------- | ------------------------------------------------------------------------------------------- |
 | `ETHEREUM_RPC_URL` | Existing mainnet HTTP(S) RPC configuration |
 | `ETHEREUM_SEPOLIA_RPC_URL` | Existing Sepolia HTTP(S) RPC configuration |
-| `DROP_FORGE_MAX_ARTIST_PAYMENT_ETH` | Positive per-payment ETH cap, required before enabling Automatic artist payment; no default |
-| `DROP_FORGE_AUTOMATION_ENABLED` | Default disabled; exact `true` enables scheduled launch work |
-| `DROP_FORGE_PREPARATION_ENABLED` | Default disabled; exact `true` enables EMMA preparation/finalization |
 
 Contract bindings, receiver, chain, confirmations and gas limits live in
 `src/drop-forge/drop-forge.policy.ts`: staging uses Sepolia's existing creator,
@@ -268,9 +265,8 @@ to finish in the exact same second. Missing, older or pre-close coverage defers 
 The creator consumer in `transactionsLoop` records finalized scan coverage only
 after normal discovery and an explicit bounded rescan succeed. Empty blocks are
 covered; incomplete pagination or a changed block cannot advance the marker.
-Existing transaction history is retained. `DROP_FORGE_AUTOMATION_ENABLED=true`
-enables this coverage tracking for `DROP_FORGE_CREATOR_CONTRACT` (mainnet Memes
-fallback); the normal indexing path and existing reporting destinations are unchanged.
+Existing transaction history is retained. The versioned production policy selects
+the mainnet Memes creator for coverage tracking.
 Explicit start/end backfills do not advance normal coverage. The ordinary contract
 history must already be complete; the marker does not certify or repair old data.
 The existing transaction discovery service indexes mainnet. It publishes coverage
@@ -356,15 +352,15 @@ On a DLQ alarm, inspect the exact message and ledger, fix authorization/network/
 configuration, then use SQS **Start DLQ redrive** to its original queue. Redrive does
 not authorize repeating airdrops or releasing a nonce. Inspect both handler DLQs,
 Lambda errors and Scheduler delivery metrics; never delete an uncertain transaction
-record. Disabled flags retain queued deliveries for retry/DLQ instead of accepting
-and discarding work.
+record. When EMMA preparation is Off, jobs remain saved at their checkpoints.
+Turning it back On sends fresh deliveries for pending jobs.
 
 For the observation rollout:
 
 1. Configure and verify all IDs, IAM permissions, KMS binding and limits.
-2. Enable preparation when ready to use EMMA Process and Finalize. Complete EMMA,
-   then publish Craft.
-3. Enable the environment capability and the hub's Automatic launch switch while **withholding on-chain creator-admin permission
+2. Turn on **EMMA preparation** in Launch Automation when ready to use Process
+   and Finalize. Complete EMMA, then publish Craft.
+3. Turn on **Automatic launch** while **withholding on-chain creator-admin permission
    from the KMS wallet**, then click **Launch** before the mint window. Backend
    operator authorization is a separate requirement.
 4. Continue normal manual Launch operations. Use the coordinated controls so hashes
@@ -407,24 +403,21 @@ mean that the transaction disappeared or should be sent again with a fresh nonce
 
 ## 8. Configure the Launch Automation panel
 
-After the environment capability is enabled, the hub's Automatic launch and
-Automatic artist payment settings both start Off. The settings are stored in SQL,
-not Secrets Manager, so changing them takes effect without redeploying services.
-The creator owner and `CLAIMS_ADMIN_WALLETS` can edit. Every Drop Forge administrator,
-including distribution-list and ordinary on-chain admins, can read the panel and
-use Top Up ETH. Changing contract admins remains owner-only on chain.
+The three switches start Off and the payout limit starts empty for each
+environment's chain and creator. The creator owner and `CLAIMS_ADMIN_WALLETS`
+can edit all four controls. `DISTRIBUTION_ADMIN_WALLETS` can also edit EMMA
+preparation. All Drop Forge administrators can view the settings and use Top
+Up ETH. The creator owner manages contract administrators on chain.
 
-Keep the environment capability on when using the hub's Off switch: this lets accepted
-Launch plans retain their one-time phase and 18:00 post-mint schedules and report
-why each due action was skipped. Off prevents new execution while retaining
-confirmation/recovery tracking. Deployment kill switches still stop their documented
-worker paths; they are not a replacement for the operator-facing switch.
+Automatic launch Off keeps accepted plans, scheduled reports and transaction
+reconciliation active. Due actions report why they were skipped. EMMA preparation
+Off blocks new requests and pauses pending jobs at the next checkpoint. On
+resumes pending jobs. These settings are stored in SQL and can be changed from
+the hub.
 
-Configure `DROP_FORGE_MAX_ARTIST_PAYMENT_ETH` in the regional `prod/lambdas` secret
-before enabling artist payment and refresh the API/launch handler configuration.
-Choose a positive maximum for one artist payout; no value is invented by deployment.
-If the cap is later removed, you can still turn launch execution or artist payment Off;
-a new payment opt-in or re-enabling execution with payment enabled requires the cap.
+Set a positive **Maximum ETH per payout** before turning on **Automatic artist
+payment**. Turn payments Off before clearing the limit. Cap changes apply to
+new submissions. The worker continues tracking any payout it already submitted.
 Fund the KMS wallet for payouts plus gas. Mint proceeds still go to the separate
 payment receiver. Verify the claim's payment details/designated payee and completed
 subscription accounting. Research and optional Pay Artist are independent actions
@@ -433,7 +426,7 @@ mints defer payment rather than using a partial amount. Record manual Pay Artist
 transaction hashes; a checked completion flag alone cannot authorize another payment.
 
 No new Lambda, queue or GitHub variable is added for these controls. Schema sync
-must include the new settings and funding entities before deploying the updated
-API and launch handler. Top-ups use the connected wallet and are reported after
+must include the settings and funding entities and the new settings columns before
+deploying the updated API, launch handler and distribution handler. Top-ups use the connected wallet and are reported after
 canonical confirmation, including tracked same-nonce replacements/cancellations.
 Validate these new money-transfer paths on Sepolia before enabling production payouts.

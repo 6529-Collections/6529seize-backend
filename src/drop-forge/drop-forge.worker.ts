@@ -30,6 +30,7 @@ import {
 import { RequestContext } from '@/request.context';
 import { isResearchAirdrop } from '@/drop-forge/drop-forge.research';
 import {
+  artistPaymentLimit,
   readForgeSettings,
   disabledActionReason,
   recordDisabledAction
@@ -63,8 +64,7 @@ export class DropForgeWorker {
     private readonly config: DropForgeConfig,
     private readonly repository: DropForgeRepository,
     private readonly chain: LaunchChain,
-    private readonly signer: { sign(unsigned: string): Promise<string> },
-    private readonly scheduledEnabled = true
+    private readonly signer: { sign(unsigned: string): Promise<string> }
   ) {}
 
   async tick(target?: string): Promise<void> {
@@ -85,7 +85,7 @@ export class DropForgeWorker {
         for (const candidate of candidates) {
           const record = await this.repository.lockLaunch(candidate.id, ctx);
           if (await this.reconcileDisabled(record, ctx, settings)) continue;
-          if (!runnable(record) || !this.scheduledEnabled) {
+          if (!runnable(record)) {
             await this.reconcileInactive(record, ctx);
             continue;
           }
@@ -112,7 +112,7 @@ export class DropForgeWorker {
       ).tick(work.record.id);
       return;
     }
-    if (work.action.state === 'RESERVED' && this.scheduledEnabled) {
+    if (work.action.state === 'RESERVED') {
       if (work.record.data.events.some((event) => !event.drop_id)) return;
       await this.sign(walletId, work);
     }
@@ -126,7 +126,6 @@ export class DropForgeWorker {
   ): Promise<boolean> {
     if (
       settings.automation_enabled ||
-      !this.scheduledEnabled ||
       ['DRAFT', 'COMPLETED', 'CANCELLED'].includes(record.state)
     )
       return false;
@@ -141,7 +140,7 @@ export class DropForgeWorker {
     settings: DropForgeSettingsEntity,
     ctx: RequestContext
   ): Promise<void> {
-    if (settings.automation_enabled || !this.scheduledEnabled) return;
+    if (settings.automation_enabled) return;
     const before = record.data.events.length;
     for (const due of dueActions(record, await this.chain.now()).filter(
       (it) => it.state !== 'SIGNED'
@@ -231,12 +230,10 @@ export class DropForgeWorker {
     const expiredUnsigned =
       action.state === 'RESERVED' &&
       runnable(record) &&
-      this.scheduledEnabled &&
       (await this.chain.now()) >= action.deadline - 120;
     if (
       action.state === 'RESERVED' &&
       (!runnable(record) ||
-        !this.scheduledEnabled ||
         !!disabledActionReason(settings, action) ||
         expiredUnsigned)
     ) {
@@ -371,7 +368,13 @@ export class DropForgeWorker {
       if ((action.retry_at ?? 0) > now) return null;
       if (await this.observe(record, action)) return null;
       if (this.deferAction(record, action, now)) return null;
-      work = await this.prepareAction(record, action, pending, ctx);
+      work = await this.prepareAction(
+        record,
+        action,
+        pending,
+        ctx,
+        artistPaymentLimit(settings)
+      );
     } catch (error) {
       if (now < action.deadline - 120 || !action.window_reported) {
         reportActionFailure(
@@ -468,7 +471,8 @@ export class DropForgeWorker {
     record: LaunchRecord,
     action: LaunchAction,
     pending: PendingSigner,
-    ctx: RequestContext
+    ctx: RequestContext,
+    artistPaymentCap: bigint
   ): Promise<Work> {
     if (action.state !== 'PENDING')
       throw new LaunchSafetyError('Action state differs from signer ledger');
@@ -492,7 +496,11 @@ export class DropForgeWorker {
       delete action.expected_supply;
       delete action.airdrop_baseline;
     }
-    action.unsigned_tx = await this.chain.prepare(record.data, action);
+    action.unsigned_tx = await this.chain.prepare(
+      record.data,
+      action,
+      artistPaymentCap
+    );
     action.state = 'RESERVED';
     delete action.supply_retry_count;
     delete action.settlement_error;
@@ -511,7 +519,17 @@ export class DropForgeWorker {
     try {
       if ((await this.chain.now()) >= work.action.deadline - 120)
         throw new LaunchSafetyError('Signing deadline passed');
-      await this.chain.verify(work.record.data, work.action);
+      const settings = await readForgeSettings(this.config);
+      if (disabledActionReason(settings, work.action)) {
+        // The next tick releases the unsigned reservation under the wallet lock.
+        return;
+      }
+      await this.chain.verify(
+        work.record.data,
+        work.action,
+        false,
+        artistPaymentLimit(settings)
+      );
       const source = await this.repository.source(
         work.record.data.contract,
         work.record.data.claim_id,
@@ -645,15 +663,15 @@ export class DropForgeWorker {
   private async reconcile(walletId: string, launch: string): Promise<void> {
     // Receipt reads are safe to repeat. Broadcast happens only after the raw
     // transaction and its hash have committed to the durable ledger.
-    const broadcast = await this.repository.wallet(
+    await this.repository.wallet(
       walletId,
-      async (pending, ctx): Promise<string | null> => {
-        if (pending.launch_id !== launch) return null;
+      async (pending, ctx) => {
+        if (pending.launch_id !== launch) return;
         const record = await this.repository.lockLaunch(launch, ctx);
         const action = record.data.actions.find(
           (it) => it.id === pending.action_id
         )!;
-        if (action.state !== 'SIGNED' || action.recovery) return null;
+        if (action.state !== 'SIGNED' || action.recovery) return;
         const receipt = await this.chain.receipt(action.hash!);
         if (receipt && receipt.confirmations >= this.config.confirmations) {
           await this.applyVerifiedReceipt(
@@ -665,7 +683,7 @@ export class DropForgeWorker {
           );
           await mirrorCompletion(record, ctx);
           await this.repository.save(record, ctx);
-          return null;
+          return;
         }
         if (record.data.plan_version !== DROP_FORGE_PLAN_VERSION) {
           setLaunchState(
@@ -674,11 +692,11 @@ export class DropForgeWorker {
             'Legacy signed intent requires manual reconciliation; rebroadcast is prohibited'
           );
           await this.repository.save(record, ctx);
-          return null;
+          return;
         }
-        if (receipt || !runnable(record) || !this.scheduledEnabled) return null;
+        if (receipt || !runnable(record)) return;
         const settings = await readForgeSettings(this.config, ctx, true);
-        if (disabledActionReason(settings, action)) return null;
+        if (disabledActionReason(settings, action)) return;
         const nonce = Transaction.from(action.signed_tx!).nonce;
         if ((await this.chain.nonce(record.data.signer, false)) > nonce) {
           // Inclusion may happen between the first receipt and nonce reads.
@@ -695,7 +713,7 @@ export class DropForgeWorker {
               await mirrorCompletion(record, ctx);
               await this.repository.save(record, ctx);
             }
-            return null;
+            return;
           }
           setLaunchState(
             record,
@@ -703,7 +721,7 @@ export class DropForgeWorker {
             'Signer nonce was consumed without a canonical receipt; manual recovery required'
           );
           await this.repository.save(record, ctx);
-          return null;
+          return;
         }
         if ((await this.chain.now()) >= action.deadline - 120) {
           setLaunchState(
@@ -712,47 +730,29 @@ export class DropForgeWorker {
             `Execution deadline reached for ${action.id}; outstanding transaction still requires reconciliation`
           );
           await this.repository.save(record, ctx);
-          return null;
+          return;
         }
-        return this.prepareBroadcast(record, action, ctx);
+        await this.broadcastAction(
+          record,
+          action,
+          ctx,
+          artistPaymentLimit(settings)
+        );
       },
       {}
     );
-    if (broadcast) {
-      // Errors, including timeouts and already-known responses, cannot justify
-      // a fresh nonce. The next invocation reconciles this exact hash.
-      try {
-        await this.chain.broadcast(broadcast);
-      } catch {
-        await this.repository.wallet(
-          walletId,
-          async (_, ctx) => {
-            const record = await this.repository.lockLaunch(launch, ctx);
-            const hash = Transaction.from(broadcast).hash;
-            const action = record.data.actions.find((it) => it.hash === hash);
-            if (!action) return;
-            addLaunchEvent(
-              record,
-              `Claim #${record.data.claim_id}: Broadcast attempt failed for ${action.id}: ${hash}; exact signed transaction retained pending receipt reconciliation.`,
-              true
-            );
-            await this.repository.save(record, ctx);
-          },
-          {}
-        );
-      }
-    }
   }
 
-  private async prepareBroadcast(
+  private async broadcastAction(
     record: LaunchRecord,
     action: LaunchAction,
-    ctx: RequestContext
-  ): Promise<string | null> {
+    ctx: RequestContext,
+    artistPaymentCap: bigint
+  ): Promise<void> {
     const now = await this.chain.now();
-    if ((action.retry_at ?? 0) > now) return null;
+    if ((action.retry_at ?? 0) > now) return;
     try {
-      await this.chain.verify(record.data, action);
+      await this.chain.verify(record.data, action, false, artistPaymentCap);
     } catch (error) {
       reportActionFailure(
         record,
@@ -764,11 +764,21 @@ export class DropForgeWorker {
         error
       );
       await this.repository.save(record, ctx);
-      return null;
+      return;
     }
     action.retry_at = now + 60;
+    // Keep the settings lock until submission returns so Off and cap reductions
+    // take effect before any later broadcast. Always retain the original hash.
+    try {
+      await this.chain.broadcast(action.signed_tx!);
+    } catch {
+      addLaunchEvent(
+        record,
+        `Claim #${record.data.claim_id}: Broadcast attempt failed for ${action.id}: ${action.hash}; exact signed transaction retained pending receipt reconciliation.`,
+        true
+      );
+    }
     await this.repository.save(record, ctx);
-    return action.signed_tx!;
   }
 
   private async applyVerifiedReceipt(

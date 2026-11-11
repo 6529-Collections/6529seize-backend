@@ -19,7 +19,6 @@ jest.mock('@/transactions/transaction-scan-checkpoint', () => ({
 const old = { ...process.env };
 beforeEach(() => {
   process.env.DROP_FORGE_STAGE = 'prod';
-  process.env.DROP_FORGE_AUTOMATION_ENABLED = 'false';
   process.env.TRANSACTIONS_CONTRACT_ADDRESS = MEMES_CONTRACT;
   delete process.env.TRANSACTIONS_LOOP_START_BLOCK;
   delete process.env.TRANSACTIONS_LOOP_END_BLOCK;

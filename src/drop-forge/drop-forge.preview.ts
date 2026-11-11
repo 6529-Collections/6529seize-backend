@@ -2,7 +2,7 @@ import { formatEther } from 'ethers';
 import { DropForgeConfig } from './drop-forge.config';
 import { EthereumLaunchChain } from './drop-forge.chain';
 import { addLaunchEvent, DropForgeRepository } from './drop-forge.repository';
-import { readForgeSettings } from './drop-forge.settings';
+import { artistPaymentLimit, readForgeSettings } from './drop-forge.settings';
 import { LaunchSafetyError, SupplyEvidenceError } from './drop-forge.types';
 import { RESEARCH_DELAY_SECONDS } from './drop-forge.research';
 
@@ -52,7 +52,7 @@ export async function recordPostMintPreview(
         const payment = artistPreviewLabel(
           preview.payment,
           alreadyPaid,
-          config
+          artistPaymentLimit(settings)
         );
         const status = settings.automation_enabled
           ? 'Scheduled for **18:00 Europe/Athens**, subject to fresh checks.'
@@ -94,15 +94,12 @@ function artistPreviewLabel(
     ReturnType<EthereumLaunchChain['previewPostMint']>
   >['payment'],
   alreadyPaid: boolean,
-  config: DropForgeConfig
+  cap: bigint
 ): string {
   if (alreadyPaid) return 'Already completed';
   if (!payment) return 'Off';
   const amount = `${formatEther(payment.amount_wei)} ETH`;
-  if (
-    !config.maxArtistPayment ||
-    BigInt(payment.amount_wei) > config.maxArtistPayment
-  )
+  if (BigInt(payment.amount_wei) > cap)
     return `${amount} · blocked by the configured payment limit`;
   return amount;
 }

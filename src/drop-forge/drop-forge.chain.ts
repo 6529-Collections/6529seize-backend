@@ -85,10 +85,19 @@ export interface LaunchChain {
   ): Promise<ChainReceipt | null>;
   now(): Promise<number>;
   nonce(address: string, pending: boolean): Promise<number>;
-  prepare(data: LaunchData, action: LaunchAction): Promise<string>;
+  prepare(
+    data: LaunchData,
+    action: LaunchAction,
+    artistPaymentCap?: bigint
+  ): Promise<string>;
   receipt(hash: string): Promise<ChainReceipt | null>;
   broadcast(raw: string): Promise<void>;
-  verify(data: LaunchData, action: LaunchAction): Promise<void>;
+  verify(
+    data: LaunchData,
+    action: LaunchAction,
+    captureSupply?: boolean,
+    artistPaymentCap?: bigint
+  ): Promise<void>;
   inspectTransaction?(
     contract: string,
     claim: number,
@@ -99,7 +108,8 @@ export interface LaunchChain {
   prepareRecovery?(
     data: LaunchData,
     action: LaunchAction,
-    operation: 'SPEED_UP' | 'CANCEL'
+    operation: 'SPEED_UP' | 'CANCEL',
+    artistPaymentCap?: bigint
   ): Promise<string>;
   recoveryEvidence?(
     data: LaunchData,
@@ -230,14 +240,15 @@ export class EthereumLaunchChain implements LaunchChain {
   async prepareRecovery(
     data: LaunchData,
     action: LaunchAction,
-    operation: 'SPEED_UP' | 'CANCEL'
+    operation: 'SPEED_UP' | 'CANCEL',
+    artistPaymentCap?: bigint
   ): Promise<string> {
     this.assertBinding(data);
     if (
       operation === 'SPEED_UP' &&
       (isResearchAirdrop(action) || action.kind === 'PAY_ARTIST')
     )
-      await this.verify(data, action);
+      await this.verify(data, action, false, artistPaymentCap);
     return rpcWithDeadline(
       new RecoveryChain(this.config, this.provider).prepare(
         data,
@@ -283,7 +294,8 @@ export class EthereumLaunchChain implements LaunchChain {
   async verify(
     data: LaunchData,
     action: LaunchAction,
-    captureSupply = false
+    captureSupply = false,
+    artistPaymentCap?: bigint
   ): Promise<void> {
     assertPhaseScopedPlan(data);
     this.assertBinding(data);
@@ -292,7 +304,12 @@ export class EthereumLaunchChain implements LaunchChain {
         'Operational signer lacks creator-admin permission'
       );
     if (action.kind === 'PAY_ARTIST') {
-      await this.verifyArtistPayment(data, action, captureSupply);
+      await this.verifyArtistPayment(
+        data,
+        action,
+        captureSupply,
+        artistPaymentCap
+      );
       return;
     }
     let result: string;
@@ -610,15 +627,13 @@ export class EthereumLaunchChain implements LaunchChain {
   private async verifyArtistPayment(
     data: LaunchData,
     action: LaunchAction,
-    capture: boolean
+    capture: boolean,
+    cap?: bigint
   ): Promise<void> {
     verifyPaymentTiming(data, action, await this.now());
     const quote = await this.paymentQuote(data);
     assertPaymentQuote(action, quote, capture);
-    if (
-      !this.config.maxArtistPayment ||
-      BigInt(quote.amount_wei) > this.config.maxArtistPayment
-    )
+    if (!cap || BigInt(quote.amount_wei) > cap)
       throw new LaunchSafetyError(
         'Artist payment exceeds the configured payment limit'
       );
@@ -935,7 +950,11 @@ export class EthereumLaunchChain implements LaunchChain {
         : {})
     };
   }
-  async prepare(data: LaunchData, action: LaunchAction): Promise<string> {
+  async prepare(
+    data: LaunchData,
+    action: LaunchAction,
+    artistPaymentCap?: bigint
+  ): Promise<string> {
     if (action.kind === 'METADATA') {
       const current = await this.readClaim(data);
       if (!current)
@@ -954,7 +973,7 @@ export class EthereumLaunchChain implements LaunchChain {
         );
       action.phase = phase;
     }
-    await this.verify(data, action, true);
+    await this.verify(data, action, true, artistPaymentCap);
     const [latest, pending, fee] = await Promise.all([
       this.nonce(data.signer, false),
       this.nonce(data.signer, true),

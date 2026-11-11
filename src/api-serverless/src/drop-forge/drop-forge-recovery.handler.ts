@@ -7,8 +7,7 @@ import { getAuthenticatedWalletOrNull } from '@/api/auth/auth';
 import { getValidatedByJoiOrThrow } from '@/api/validation';
 import {
   getDropForgeConfig,
-  launchConfigured,
-  automationEnabled
+  launchConfigured
 } from '@/drop-forge/drop-forge.config';
 import { assertLaunchAccess, mapLaunch } from '@/drop-forge/drop-forge.service';
 import { DropForgeRecovery } from '@/drop-forge/drop-forge.recovery';
@@ -69,13 +68,6 @@ export async function recoverDropForgeLaunch(
     if (!launchConfigured())
       throw new LaunchSafetyError(
         'Drop Forge transaction recovery is not configured'
-      );
-    if (
-      ['RETRY', 'DELIVER_REMAINING'].includes(body.operation) &&
-      !automationEnabled()
-    )
-      throw new LaunchSafetyError(
-        'Enable scheduled execution before authorizing fresh-nonce delivery'
       );
     const wallet = getAuthenticatedWalletOrNull(req);
     await assertLaunchAccess(wallet, contract);

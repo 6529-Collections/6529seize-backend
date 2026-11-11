@@ -4,9 +4,12 @@ import {
 } from '@/api/drop-forge/drop-forge.handlers';
 import { CreateDropForgeDistributionJobRequest } from '@/api/generated/routes/operations';
 import * as access from '@/api/subscriptions/api.subscriptions.allowlist';
+import { getDropForgePolicy } from '@/drop-forge/drop-forge.policy';
+import { readForgeSettings } from '@/drop-forge/drop-forge.settings';
 import * as workflow from '@/drop-forge/drop-forge.workflow';
 import * as wake from '@/drop-forge/drop-forge.wake';
 import { DropForgeJobEntity } from '@/entities/IDropForgeLaunch';
+import { MEMES_CONTRACT } from '@/constants';
 import { testConfig } from '@/drop-forge/drop-forge.test-fixtures';
 
 const request = () =>
@@ -20,9 +23,23 @@ const request = () =>
       phase_ids: ['a', 'b', 'c']
     }
   }) as unknown as CreateDropForgeDistributionJobRequest;
-const previous = process.env.DROP_FORGE_PREPARATION_ENABLED;
+jest.mock('@/drop-forge/drop-forge.policy');
+jest.mock('@/drop-forge/drop-forge.settings');
+const settings = {
+  id: 'settings',
+  revision: 1,
+  automation_enabled: false,
+  preparation_enabled: true,
+  pay_artist_enabled: false,
+  max_artist_payment_wei: null,
+  updated_by: null,
+  updated_at: 0
+};
 beforeEach(() => {
-  process.env.DROP_FORGE_PREPARATION_ENABLED = 'true';
+  jest
+    .mocked(getDropForgePolicy)
+    .mockReturnValue({ ...testConfig, chainId: 1, creator: MEMES_CONTRACT });
+  jest.mocked(readForgeSettings).mockResolvedValue(settings);
   jest.spyOn(access, 'authenticateSubscriptionsAdmin').mockReturnValue(true);
   jest.spyOn(workflow, 'createProcess').mockImplementation(async (job) => ({
     ...job,
@@ -33,13 +50,22 @@ beforeEach(() => {
 });
 afterEach(() => {
   jest.restoreAllMocks();
-  if (previous === undefined) delete process.env.DROP_FORGE_PREPARATION_ENABLED;
-  else process.env.DROP_FORGE_PREPARATION_ENABLED = previous;
 });
 it('checks admin access before handing any operator credential to the durable workflow', async () => {
   jest.mocked(access.authenticateSubscriptionsAdmin).mockReturnValue(false);
   await expect(createDropForgeDistributionJob(request())).rejects.toThrow(
     'administrator access'
+  );
+  expect(workflow.createProcess).not.toHaveBeenCalled();
+  expect(wake.wakeDropForge).not.toHaveBeenCalled();
+});
+it('rejects starting a new job when persisted preparation is Off', async () => {
+  jest.mocked(readForgeSettings).mockResolvedValue({
+    ...settings,
+    preparation_enabled: false
+  });
+  await expect(createDropForgeDistributionJob(request())).rejects.toThrow(
+    'EMMA preparation is Off'
   );
   expect(workflow.createProcess).not.toHaveBeenCalled();
   expect(wake.wakeDropForge).not.toHaveBeenCalled();

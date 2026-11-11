@@ -150,7 +150,8 @@ export class DropForgeJobsRepository {
   async processOne(
     process: (job: DropForgeJobEntity, ctx: RequestContext) => Promise<object>,
     ctx: RequestContext,
-    id?: string
+    id?: string,
+    shouldProcess?: (ctx: RequestContext) => Promise<boolean>
   ): Promise<boolean> {
     const timer = 'DropForgeJobsRepository->processOne';
     ctx.timer?.start(timer);
@@ -163,7 +164,8 @@ export class DropForgeJobsRepository {
             { id: id ?? null },
             { wrappedConnection: connection }
           );
-          if (!job) return false;
+          if (!job || (shouldProcess && !(await shouldProcess(txCtx))))
+            return false;
           await sqlExecutor.execute('SAVEPOINT drop_forge_job', undefined, {
             wrappedConnection: connection
           });
@@ -218,6 +220,29 @@ export class DropForgeJobsRepository {
       ctx.timer?.stop(timer);
     }
   }
+  async wakePending(
+    preparationRevision: number,
+    ctx: RequestContext
+  ): Promise<void> {
+    const jobs = await sqlExecutor.execute<{
+      id: string;
+      dispatch_revision: number;
+    }>(
+      `SELECT id, dispatch_revision FROM ${DROP_FORGE_JOBS_TABLE} WHERE status = 'PENDING' ORDER BY id`,
+      undefined,
+      { wrappedConnection: ctx.connection }
+    );
+    for (const job of jobs)
+      await wakeDropForge(
+        {
+          id: job.id,
+          revision: Number(job.dispatch_revision),
+          preparation_revision: preparationRevision
+        },
+        true
+      );
+  }
+
   async dispatch(job: DropForgeJobEntity, ctx: RequestContext): Promise<void> {
     const current = await sqlExecutor.oneOrNull<DropForgeJobEntity>(
       `SELECT * FROM ${DROP_FORGE_JOBS_TABLE} WHERE id = :id FOR UPDATE`,

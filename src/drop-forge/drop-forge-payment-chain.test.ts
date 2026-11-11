@@ -51,7 +51,7 @@ function setup(cap = BigInt(1000)) {
     })
   };
   const chain = new EthereumLaunchChain(
-    { ...testConfig, maxArtistPayment: cap },
+    testConfig,
     provider as unknown as JsonRpcProvider
   );
   jest.spyOn(chain, 'now').mockResolvedValue(action.due + 60);
@@ -68,24 +68,24 @@ function setup(cap = BigInt(1000)) {
     paid_count: 2,
     subscriptions_count: 0
   });
-  return { data, action, provider, chain };
+  return { data, action, provider, chain, cap };
 }
 afterEach(() => jest.restoreAllMocks());
 it('prepares the exact ETH payment with empty calldata and includes principal in its balance check', async () => {
   const f = setup();
-  const tx = Transaction.from(await f.chain.prepare(f.data, f.action));
+  const tx = Transaction.from(await f.chain.prepare(f.data, f.action, f.cap));
   expect(tx.to!.toLowerCase()).toBe(recipient);
   expect(tx.value).toBe(BigInt(1000));
   expect(tx.data).toBe('0x');
   expect(f.action.payment?.amount_wei).toBe('1000');
   f.provider.getBalance.mockResolvedValue(BigInt(2520000));
-  await expect(f.chain.prepare(f.data, f.action)).rejects.toThrow(
+  await expect(f.chain.prepare(f.data, f.action, f.cap)).rejects.toThrow(
     'insufficient'
   );
 });
 it('refuses an artist payment above its separate cap before gas estimation', async () => {
   const f = setup(BigInt(999));
-  await expect(f.chain.prepare(f.data, f.action)).rejects.toThrow(
+  await expect(f.chain.prepare(f.data, f.action, f.cap)).rejects.toThrow(
     'payment limit'
   );
   expect(f.provider.estimateGas).not.toHaveBeenCalled();

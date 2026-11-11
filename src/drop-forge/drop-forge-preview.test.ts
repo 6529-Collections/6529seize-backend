@@ -3,7 +3,10 @@ import { recordPostMintPreview } from './drop-forge.preview';
 import { readForgeSettings } from './drop-forge.settings';
 import { LaunchRecord, SupplyEvidenceError } from './drop-forge.types';
 import { testConfig, testLaunchData } from './drop-forge.test-fixtures';
-jest.mock('./drop-forge.settings', () => ({ readForgeSettings: jest.fn() }));
+jest.mock('./drop-forge.settings', () => ({
+  ...jest.requireActual('./drop-forge.settings'),
+  readForgeSettings: jest.fn()
+}));
 function fixture() {
   const record: LaunchRecord = {
     id: 'launch',
@@ -42,6 +45,8 @@ beforeEach(() => {
     revision: 1,
     automation_enabled: true,
     pay_artist_enabled: false,
+    preparation_enabled: false,
+    max_artist_payment_wei: null,
     updated_by: null,
     updated_at: 0
   });
@@ -84,6 +89,8 @@ it('does not present disabled automation as a promised transfer', async () => {
     revision: 1,
     automation_enabled: false,
     pay_artist_enabled: false,
+    preparation_enabled: false,
+    max_artist_payment_wei: null,
     updated_by: null,
     updated_at: 0
   });

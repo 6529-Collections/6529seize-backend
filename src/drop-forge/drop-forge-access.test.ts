@@ -30,29 +30,34 @@ it('permits claims-list admins to edit without on-chain admin authority', async 
     .mockReturnValue([testConfig.signer.toLowerCase()]);
   expect(await forgeSettingsAccess(testConfig, testConfig.signer)).toEqual({
     can_edit: true,
+    can_edit_preparation: true,
     can_top_up: true
   });
 });
 it('permits the creator owner to edit', async () => {
   chain(testConfig.signer, false);
-  expect(
-    (await forgeSettingsAccess(testConfig, testConfig.signer)).can_edit
-  ).toBe(true);
+  expect(await forgeSettingsAccess(testConfig, testConfig.signer)).toEqual({
+    can_edit: true,
+    can_edit_preparation: true,
+    can_top_up: true
+  });
 });
 it('permits ordinary on-chain admins to view and fund, without editing', async () => {
   chain(other, true);
   expect(await forgeSettingsAccess(testConfig, testConfig.signer)).toEqual({
     can_edit: false,
+    can_edit_preparation: false,
     can_top_up: true
   });
 });
-it('permits distribution-list admins to view and fund, without editing', async () => {
+it('permits distribution-list admins to edit preparation only and fund', async () => {
   chain(other, false);
   jest
     .spyOn(settings, 'getDistributionAdminWallets')
     .mockReturnValue([testConfig.signer]);
   expect(await forgeSettingsAccess(testConfig, testConfig.signer)).toEqual({
     can_edit: false,
+    can_edit_preparation: true,
     can_top_up: true
   });
 });

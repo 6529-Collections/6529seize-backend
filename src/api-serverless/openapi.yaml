@@ -33777,23 +33777,30 @@ components:
       required:
         - revision
         - automation_enabled
+        - preparation_enabled
+        - max_artist_payment_eth
         - pay_artist_enabled
         - updated_by
         - updated_at
         - can_edit
+        - can_edit_preparation
         - can_top_up
         - chain_id
         - contract
         - signer_address
         - ens_name
         - balance_wei
-        - execution_available
-        - artist_payment_available
       properties:
         revision:
           type: integer
         automation_enabled:
           type: boolean
+        preparation_enabled:
+          type: boolean
+        max_artist_payment_eth:
+          type: string
+          nullable: true
+          pattern: ^\d{1,59}(?:\.\d{1,18})?$
         pay_artist_enabled:
           type: boolean
         updated_by:
@@ -33802,6 +33809,8 @@ components:
         updated_at:
           type: integer
         can_edit:
+          type: boolean
+        can_edit_preparation:
           type: boolean
         can_top_up:
           type: boolean
@@ -33817,21 +33826,21 @@ components:
         balance_wei:
           type: string
           nullable: true
-        execution_available:
-          type: boolean
-        artist_payment_available:
-          type: boolean
     ApiDropForgeSettingsRequest:
       type: object
       required:
         - revision
-        - automation_enabled
-        - pay_artist_enabled
       properties:
         revision:
           type: integer
         automation_enabled:
           type: boolean
+        preparation_enabled:
+          type: boolean
+        max_artist_payment_eth:
+          type: string
+          nullable: true
+          pattern: ^\d{1,59}(?:\.\d{1,18})?$
         pay_artist_enabled:
           type: boolean
     ApiDropForgeSupplyEvidence:

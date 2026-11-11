@@ -24,6 +24,7 @@ import {
 } from '@/drop-forge/drop-forge.recovery-chain';
 import { RequestContext } from '@/request.context';
 import {
+  artistPaymentLimit,
   disabledActionReason,
   readForgeSettings
 } from '@/drop-forge/drop-forge.settings';
@@ -114,9 +115,23 @@ export class DropForgeRecovery {
           request.operation === 'RETRY' ||
           request.operation === 'DELIVER_REMAINING'
         ) {
+          if (
+            !(await readForgeSettings(this.config, txCtx, true))
+              .automation_enabled
+          )
+            throw new LaunchSafetyError(
+              'Enable Automatic launch before authorizing fresh-nonce delivery'
+            );
           await this.retry(record, action, pending, request.operation);
         } else {
-          await this.queueReplacement(record, action, pending, wallet, request);
+          await this.queueReplacement(
+            record,
+            action,
+            pending,
+            wallet,
+            request,
+            txCtx
+          );
         }
         action.recovery_requests ??= [];
         action.recovery_requests.push({
@@ -141,7 +156,8 @@ export class DropForgeRecovery {
     action: LaunchAction,
     pending: Reservation,
     wallet: string,
-    request: ApiDropForgeRecoveryRequest
+    request: ApiDropForgeRecoveryRequest,
+    txCtx: RequestContext
   ): Promise<void> {
     this.reserveRecovery(record, action, pending);
     action.recovery!.resume_scheduled ??= record.state !== 'PAUSED';
@@ -155,7 +171,7 @@ export class DropForgeRecovery {
           throw new LaunchSafetyError(
             'Cancellation already requested; original action cannot be sped up'
           );
-        await this.verifySpeedUp(record, action);
+        await this.verifySpeedUp(record, action, txCtx);
       } else {
         action.recovery!.attempts = action.recovery!.attempts.filter(
           (it) => it.signed_tx || it.operation !== 'SPEED_UP'
@@ -239,14 +255,10 @@ export class DropForgeRecovery {
   private async verifySpeedUp(
     record: LaunchRecord,
     action: LaunchAction,
-    ctx: RequestContext = {}
-  ): Promise<void> {
-    if (
-      disabledActionReason(
-        await readForgeSettings(this.config, ctx, !!ctx.connection),
-        action
-      )
-    )
+    ctx: RequestContext
+  ): Promise<bigint> {
+    const settings = await readForgeSettings(this.config, ctx, true);
+    if (disabledActionReason(settings, action))
       throw new LaunchSafetyError(
         'Launch settings disable new execution or speed-up; cancellation and receipt reconciliation remain available'
       );
@@ -267,7 +279,9 @@ export class DropForgeRecovery {
       throw new LaunchSafetyError(
         'Frozen Craft/distribution changed; speed-up is prohibited'
       );
-    await this.chain.verify(record.data, action);
+    const cap = artistPaymentLimit(settings);
+    await this.chain.verify(record.data, action, false, cap);
+    return cap;
   }
   private async retry(
     record: LaunchRecord,
@@ -347,12 +361,15 @@ export class DropForgeRecovery {
             if (record.data.events.some((it) => !it.drop_id)) return null;
             if (attempt.operation === 'ORIGINAL' || !this.chain.prepareRecovery)
               throw new LaunchSafetyError('Recovery signing is unavailable');
-            if (attempt.operation === 'SPEED_UP')
-              await this.verifySpeedUp(record, action, ctx);
+            const cap =
+              attempt.operation === 'SPEED_UP'
+                ? await this.verifySpeedUp(record, action, ctx)
+                : undefined;
             attempt.unsigned_tx ??= await this.chain.prepareRecovery(
               record.data,
               action,
-              attempt.operation
+              attempt.operation,
+              cap
             );
             await this.repository.save(record, ctx);
             return { record, action, attempt };
@@ -423,15 +440,15 @@ export class DropForgeRecovery {
     );
   }
   private async broadcast(id: string): Promise<void> {
-    const raw = await this.repository.wallet(
+    await this.repository.wallet(
       this.walletId,
       async (pending, ctx) => {
-        if (pending.launch_id !== id) return null;
+        if (pending.launch_id !== id) return;
         const record = await this.repository.lockLaunch(id, ctx);
         const action = record.data.actions.find(
           (it) => it.id === pending.action_id
         )!;
-        if (await this.settle(record, action, pending, ctx)) return null;
+        if (await this.settle(record, action, pending, ctx)) return;
         const recovery = action.recovery!;
         const attempt = [...recovery.attempts]
           .reverse()
@@ -440,7 +457,7 @@ export class DropForgeRecovery {
               it.signed_tx &&
               (!recovery.cancel_requested || it.operation === 'CANCEL')
           );
-        if (!attempt) return null;
+        if (!attempt) return;
         if (attempt.operation !== 'CANCEL')
           await this.verifySpeedUp(record, action, ctx);
         const tx = validateRecoveryTransaction(record.data, action, attempt);
@@ -453,32 +470,24 @@ export class DropForgeRecovery {
           throw new LaunchSafetyError(
             'Recovery broadcast exceeds current gas budget; receipt reconciliation continues'
           );
-        return attempt.signed_tx!;
+        try {
+          await this.chain.broadcast(attempt.signed_tx!);
+        } catch (error) {
+          if (
+            error instanceof Error &&
+            error.message.toLowerCase().includes('already known')
+          )
+            return;
+          setLaunchState(
+            record,
+            'BLOCKED',
+            'Recovery RPC submission outcome is uncertain; signed evidence and wallet reservation retained'
+          );
+          await this.repository.save(record, ctx);
+        }
       },
       {}
     );
-    if (raw) {
-      try {
-        await this.chain.broadcast(raw);
-      } catch (error) {
-        if (
-          error instanceof Error &&
-          error.message.toLowerCase().includes('already known')
-        )
-          return;
-        await this.repository.change(
-          id,
-          (record) => {
-            setLaunchState(
-              record,
-              'BLOCKED',
-              'Recovery RPC submission outcome is uncertain; signed evidence and wallet reservation retained'
-            );
-          },
-          {}
-        );
-      }
-    }
   }
   private async applyRecoveryEvidence(
     record: LaunchRecord,

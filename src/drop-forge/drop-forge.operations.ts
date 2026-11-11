@@ -1,6 +1,5 @@
 import { randomUUID, createHash } from 'node:crypto';
 import {
-  automationEnabled,
   launchConfigured,
   getDropForgeConfig
 } from '@/drop-forge/drop-forge.config';
@@ -30,8 +29,6 @@ export async function readyLaunch(
   claim: number,
   ctx: RequestContext
 ): Promise<LaunchRecord> {
-  if (!automationEnabled())
-    throw new LaunchSafetyError('Automatic launch execution is disabled');
   const config = getDropForgeConfig();
   const id = launchId(config.chainId, config.creator, claim);
   const existing = await dropForgeRepository.find(id, ctx);
@@ -92,8 +89,6 @@ export async function requestMetadataUpdate(
   claim: number,
   ctx: RequestContext
 ): Promise<LaunchRecord> {
-  if (!automationEnabled())
-    throw new LaunchSafetyError('Automatic launch execution is disabled');
   const config = getDropForgeConfig();
   const id = launchId(config.chainId, config.creator, claim);
   const source = await dropForgeRepository.source(config.creator, claim, ctx);

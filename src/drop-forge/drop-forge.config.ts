@@ -1,4 +1,4 @@
-import { getAddress, isAddress, parseEther } from 'ethers';
+import { getAddress, isAddress } from 'ethers';
 import { UUID_REGEX } from '@/constants';
 import { getDropForgePolicy } from '@/drop-forge/drop-forge.policy';
 import { LaunchSafetyError } from '@/drop-forge/drop-forge.types';
@@ -9,7 +9,6 @@ export interface DropForgeReportingConfig {
   recipientIds: string[];
 }
 export interface DropForgeConfig extends DropForgeReportingConfig {
-  maxArtistPayment?: bigint;
   chainId: number;
   creator: string;
   proxy: string;
@@ -23,9 +22,6 @@ export interface DropForgeConfig extends DropForgeReportingConfig {
 }
 export const launchConfigured = () =>
   Boolean(process.env.DROP_FORGE_KMS_KEY_ID?.trim());
-
-export const automationEnabled = () =>
-  process.env.DROP_FORGE_AUTOMATION_ENABLED === 'true';
 
 function required(name: string): string {
   const value = process.env[name]?.trim();
@@ -44,13 +40,6 @@ export function getDropForgeConfig(): DropForgeConfig {
   return {
     ...policy,
     ...reporting,
-    ...(process.env.DROP_FORGE_MAX_ARTIST_PAYMENT_ETH?.trim()
-      ? {
-          maxArtistPayment: parseEther(
-            process.env.DROP_FORGE_MAX_ARTIST_PAYMENT_ETH.trim()
-          )
-        }
-      : {}),
     signer: address('DROP_FORGE_SIGNER_ADDRESS'),
     keyId: required('DROP_FORGE_KMS_KEY_ID')
   };

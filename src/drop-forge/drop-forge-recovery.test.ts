@@ -17,13 +17,19 @@ import {
   testSource,
   testWallet
 } from '@/drop-forge/drop-forge.test-fixtures';
+import { readForgeSettings } from '@/drop-forge/drop-forge.settings';
 import { mapLaunch } from '@/drop-forge/drop-forge.service';
 jest.mock('@/drop-forge/drop-forge.settings', () => ({
   ...jest.requireActual('@/drop-forge/drop-forge.settings'),
   readForgeSettings: jest.fn(async () => ({
+    id: 'settings',
     revision: 1,
     automation_enabled: true,
-    pay_artist_enabled: true
+    pay_artist_enabled: true,
+    preparation_enabled: false,
+    max_artist_payment_wei: '1000000000000000000',
+    updated_by: null,
+    updated_at: 0
   }))
 }));
 jest.mock('@/api/minting-claims/minting-claim-actions.db', () => ({
@@ -426,15 +432,33 @@ it('allows cancellation to supersede an unsigned speed-up after its window close
   expect(Transaction.from(f.chain.broadcast.mock.calls[0][0]).data).toBe('0x');
 });
 
+it.each(['RETRY', 'DELIVER_REMAINING'])(
+  'rejects %s when the persisted Automatic launch switch is Off',
+  async (operation) => {
+    const f = setup();
+    await f.start();
+    jest.mocked(readForgeSettings).mockResolvedValueOnce({
+      ...(await readForgeSettings(testConfig)),
+      automation_enabled: false
+    });
+    await expect(f.request(operation)).rejects.toThrow(
+      'Enable Automatic launch'
+    );
+  }
+);
+
 it('recovery-only execution releases unsigned reservations without signing or starting any phase', async () => {
   const f = setup();
   f.action.state = 'RESERVED';
+  jest.mocked(readForgeSettings).mockResolvedValueOnce({
+    ...(await readForgeSettings(testConfig)),
+    automation_enabled: false
+  });
   await new DropForgeWorker(
     testConfig,
     f.repository,
     f.chain as unknown as LaunchChain,
-    f.signer,
-    false
+    f.signer
   ).tick();
   expect(f.action.state).toBe('PENDING');
   expect(f.pending.launch_id).toBeNull();

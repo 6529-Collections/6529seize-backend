@@ -21,10 +21,8 @@ import {
   testPlan
 } from '@/drop-forge/drop-forge.test-fixtures';
 import { clearDropForgeTestTables } from '@/drop-forge/drop-forge.db-test-fixtures';
-const previous = process.env.DROP_FORGE_AUTOMATION_ENABLED;
 beforeEach(async () => {
   await clearDropForgeTestTables();
-  process.env.DROP_FORGE_AUTOMATION_ENABLED = 'true';
   jest.spyOn(config, 'getDropForgeConfig').mockReturnValue(testConfig);
   jest.spyOn(config, 'launchConfigured').mockReturnValue(true);
   jest
@@ -43,8 +41,6 @@ beforeEach(async () => {
 });
 afterEach(() => {
   jest.restoreAllMocks();
-  if (previous === undefined) delete process.env.DROP_FORGE_AUTOMATION_ENABLED;
-  else process.env.DROP_FORGE_AUTOMATION_ENABLED = previous;
 });
 it('accepts concurrent Ready clicks as one immediately due launch', async () => {
   const [a, b] = await Promise.all([readyLaunch(1, {}), readyLaunch(1, {})]);
