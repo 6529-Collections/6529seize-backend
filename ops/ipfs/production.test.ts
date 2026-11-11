@@ -85,7 +85,7 @@ rejected(lambda:c.frontdoor({**values,'SlotAInstanceId':'replacement'}))
 rejected(lambda:c.frontdoor({**values,'SlotBInstanceId':'replacement','ActiveSlot':'b'}))
 rejected(lambda:c.frontdoor({**values,'VpcId':'other'}))
 assert c.frontdoor({**values,'SlotBInstanceId':'replacement'})==['GatewayB','WriterB']
-assert c.frontdoor({**values,'ActiveSlot':'b'})==['ActiveWriterHealth','ApiRule','GatewayRule','ValidationRule']
+assert c.frontdoor({**values,'ActiveSlot':'b'})==['ActiveWriterHealth','ApiRule','GatewayRule','MediaGatewayRule','ValidationRule']
 print('isolated')
 `)
     ).toBe('isolated');

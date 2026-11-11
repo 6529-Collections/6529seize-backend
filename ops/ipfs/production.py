@@ -131,13 +131,25 @@ def validate_receipt(request, value):
     return value
 
 
+def parse_host_output(output, request):
+    for line in reversed(output.splitlines()):
+        try:
+            envelope = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(envelope, dict) and envelope.get('protocol') == RECEIPT:
+            require(not envelope.get('failed'), 'Host operation failed')
+            return validate_receipt(request, envelope.get('result'))
+    raise ValueError('SSM success has no validated operation receipt')
+
+
 class Controller:
     def __init__(self, args):
         self.args = args
         self.id = validate_id(args.deployment_id)
         self.sha = args.sha
         self.key = 'prod/deployments/' + self.id + '.json'
-        self.path = Path(os.environ['RUNNER_TEMP']) / ('ipfs-' + self.id + '.json')
+        self.path = Path(os.environ['RUNNER_TEMP']) / 'ipfs-production-journal.json'
         self.state = {'deploymentId': self.id, 'sourceSha': self.sha, 'versions': json.loads((ROOT / 'versions.json').read_text()), 'steps': {}}
         existing = call('s3api', 'list-object-versions', '--bucket', CONTEXT['backupsBucket'], '--prefix', self.key,
                         '--max-keys', '10')
@@ -147,6 +159,7 @@ class Controller:
                  '--version-id', latest[0]['VersionId'], str(self.path))
             self.state = json.loads(self.path.read_text())
             require(args.operation != 'migrate' or self.state['sourceSha'] == self.sha, 'Deployment ID belongs to another release; use a new ID for new source')
+        require(self.state['deploymentId'] == self.id and matches(r'[a-f0-9]{40}', self.state.get('sourceSha')), 'Deployment journal identity mismatch')
         require(not existing.get('DeleteMarkers'), 'Deployment journal was deleted; investigate rather than recreate')
 
     def save(self):
@@ -194,6 +207,16 @@ class Controller:
                           '--client-token', change_name)
             changes[key] = result['Id']; self.save()
         arn = changes[key]
+        description = self.prepared_change(arn, name, desired, document, allowed)
+        if description['ExecutionStatus'] == 'AVAILABLE':
+            call('cloudformation', 'execute-change-set', '--change-set-name', arn, '--client-request-token', change_name)
+        else:
+            require(description['ExecutionStatus'] in ('EXECUTE_IN_PROGRESS', 'EXECUTE_COMPLETE'), 'Change set cannot be resumed')
+        value = wait_stack(name)
+        self.protect(name)
+        return outputs(value)
+
+    def prepared_change(self, arn, name, desired, document, allowed):
         for _ in range(120):
             description = call('cloudformation', 'describe-change-set', '--change-set-name', arn)
             require(description['StackName'] == name and description['Description'] == self.sha, 'Change set binding mismatch')
@@ -209,13 +232,7 @@ class Controller:
         actual_template = call('cloudformation', 'get-template', '--change-set-name', arn)['TemplateBody']
         require(normalize_template(actual_template) == document, 'Prepared template differs from reviewed YAML')
         require({x['ParameterKey']: x['ParameterValue'] for x in description['Parameters']} == desired, 'Prepared parameters changed')
-        if description['ExecutionStatus'] == 'AVAILABLE':
-            call('cloudformation', 'execute-change-set', '--change-set-name', arn, '--client-request-token', change_name)
-        else:
-            require(description['ExecutionStatus'] in ('EXECUTE_IN_PROGRESS', 'EXECUTE_COMPLETE'), 'Change set cannot be resumed')
-        value = wait_stack(name)
-        self.protect(name)
-        return outputs(value)
+        return description
 
     def protect(self, name):
         call('cloudformation', 'update-termination-protection', '--stack-name', name, '--enable-termination-protection')
@@ -236,7 +253,10 @@ class Controller:
     def node(self, instance_id):
         value = call('ec2', 'describe-instances', '--instance-ids', instance_id)['Reservations'][0]['Instances'][0]
         require(value['InstanceId'] == instance_id and value['VpcId'] == CONTEXT['vpcId'] and value['State']['Name'] == 'running', 'Unexpected or stopped instance')
-        if instance_id != CONTEXT['legacyInstanceId']:
+        if instance_id == CONTEXT['legacyInstanceId']:
+            require([g['GroupId'] for g in value['SecurityGroups']] == [CONTEXT['legacySecurityGroupId']] and
+                    value.get('PublicIpAddress') == CONTEXT['legacyPublicIp'], 'Legacy network differs from the adopted baseline')
+        else:
             tags = {x['Key']: x['Value'] for x in value.get('Tags', [])}
             require(tags.get('Service') == '6529-ipfs' and tags.get('Environment') == 'prod' and
                     tags.get('aws:cloudformation:stack-name', '').startswith('seize-ipfs-prod-runtime-') and
@@ -246,6 +266,7 @@ class Controller:
 
     def host(self, node, operation, label=None, **values):
         artifact = self.state['artifact']
+        validate_reference(artifact, 'prod/' + self.state['sourceSha'] + '/')
         release_sha = self.state['sourceSha']
         request = {'instanceId': node['instanceId'], 'sha': release_sha, 'operation': operation, **values}
         if label: request['label'] = label
@@ -255,22 +276,24 @@ class Controller:
         # binds both archive bytes and the manifest to this reviewed source.
         bootstrap = '''import hashlib,json,os,pathlib,subprocess,tarfile,tempfile
 artifact=json.loads(%r); release=pathlib.Path(%r)
+def checked(value):
+ if not value: raise ValueError('Release archive verification failed')
 if not release.exists():
  with tempfile.TemporaryDirectory() as temporary:
   path=pathlib.Path(temporary)/'bundle.tar.gz'
   subprocess.run(['aws','s3api','get-object','--region','us-east-1','--bucket',%r,'--key',artifact['key'],'--version-id',artifact['version'],str(path)],check=True,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
-  assert hashlib.sha256(path.read_bytes()).hexdigest()==artifact['sha256']
+  checked(hashlib.sha256(path.read_bytes()).hexdigest()==artifact['sha256'])
   stage=pathlib.Path(temporary)/'release';stage.mkdir()
   with tarfile.open(path,'r:gz') as archive:
-   members=archive.getmembers();assert len(members)<1024 and sum(m.size for m in members)<600*1024*1024
-   assert all((m.isfile() or m.isdir()) and not m.name.startswith('/') and (stage/m.name).resolve().is_relative_to(stage) for m in members)
+   members=archive.getmembers();checked(len(members)<1024 and sum(m.size for m in members)<600*1024*1024)
+   checked(all((m.isfile() or m.isdir()) and not m.name.startswith('/') and (stage/m.name).resolve().is_relative_to(stage) for m in members))
    archive.extractall(stage,members=members,filter='data')
-  manifest=json.loads((stage/'release.json').read_text());assert manifest['sourceSha']==%r
-  assert all(hashlib.sha256((stage/name).read_bytes()).hexdigest()==value for name,value in manifest['files'].items())
+  manifest=json.loads((stage/'release.json').read_text());checked(manifest['sourceSha']==%r)
+  checked(all((stage/name).resolve().is_relative_to(stage) and hashlib.sha256((stage/name).read_bytes()).hexdigest()==value for name,value in manifest['files'].items()))
   release.parent.mkdir(parents=True,exist_ok=True);os.rename(stage,release)
 os.execv('/usr/bin/python3',['python3',str(release/'production_host.py'),%r])
 ''' % (json.dumps(artifact), release, CONTEXT['artifactsBucket'], release_sha, encoded)
-        script = 'set -eu\numask 077\ncloud-init status --wait >/dev/null\npython3 - <<\'IPFS_PRODUCTION\'\n' + bootstrap + '\nIPFS_PRODUCTION\n'
+        script = 'set -eu\numask 077\nexport AWS_CONFIG_FILE=/dev/null AWS_SHARED_CREDENTIALS_FILE=/dev/null AWS_EC2_METADATA_DISABLED=false\nunset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_PROFILE AWS_DEFAULT_PROFILE\ncloud-init status --wait >/dev/null\npython3 - <<\'IPFS_PRODUCTION\'\n' + bootstrap + '\nIPFS_PRODUCTION\n'
         token = fingerprint(request)
         commands = self.state.setdefault('commands', {})
         saved = commands.get(token)
@@ -289,19 +312,18 @@ os.execv('/usr/bin/python3',['python3',str(release/'production_host.py'),%r])
             command_id = result['Command']['CommandId']
             commands[token] = {'id': command_id, 'node': node['instanceId'], 'operation': operation}; self.save()
         print(json.dumps({'commandId': command_id, 'instanceId': node['instanceId'], 'operation': operation}), flush=True)
+        return self.wait_host(command_id, node, request)
+
+    def wait_host(self, command_id, node, request):
         for _ in range(1440):
             rows = call('ssm', 'list-command-invocations', '--command-id', command_id, '--details')['CommandInvocations']
-            if not rows: time.sleep(5); continue
+            if not rows:
+                time.sleep(5)
+                continue
             result = rows[0]
+            require(result['InstanceId'] == node['instanceId'], 'SSM command target mismatch')
             if result['Status'] == 'Success':
-                output = result['CommandPlugins'][0]['Output']
-                for line in reversed(output.splitlines()):
-                    try: envelope = json.loads(line)
-                    except ValueError: continue
-                    if isinstance(envelope, dict) and envelope.get('protocol') == RECEIPT:
-                        require(not envelope.get('failed') and isinstance(envelope.get('result'), dict), 'Host operation failed')
-                        return validate_receipt(request, envelope['result'])
-                raise ValueError('SSM success has no validated operation receipt')
+                return parse_host_output(result['CommandPlugins'][0]['Output'], request)
             require(result['Status'] in ('Pending', 'InProgress', 'Delayed'), 'SSM failed; inspect the recorded command in restricted tooling')
             time.sleep(5)
         raise TimeoutError('SSM command is still running; resume its recorded command ID')
@@ -345,7 +367,7 @@ os.execv('/usr/bin/python3',['python3',str(release/'production_host.py'),%r])
             require(changed.issubset({'ActiveSlot', 'SlotAInstanceId', 'SlotBInstanceId'}), 'Front door network/certificate changes require a separate review')
             if 'ActiveSlot' in changed:
                 require(changed == {'ActiveSlot'}, 'Do not combine target registration with traffic switching')
-                allowed.update(['ApiRule', 'GatewayRule', 'ValidationRule', 'ActiveWriterHealth'])
+                allowed.update(['ApiRule', 'GatewayRule', 'MediaGatewayRule', 'ValidationRule', 'ActiveWriterHealth'])
             for slot in ['a', 'b']:
                 if 'Slot' + slot.upper() + 'InstanceId' in changed:
                     require(previous['ActiveSlot'] != slot, 'Never replace the currently serving target')

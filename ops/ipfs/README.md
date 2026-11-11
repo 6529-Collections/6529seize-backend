@@ -64,7 +64,8 @@ flowchart LR
 ```
 
 The shared CDN configuration, media/Arweave/S3 behaviors and public IPFS hostnames
-stay the same. Only `api-ipfs.6529.io` and `ipfs-origin.6529.io` A records are
+stay the same. The ALB/nginx routes preserve forwarded viewer Host headers for
+all existing IPFS and media aliases. Only `api-ipfs.6529.io` and `ipfs-origin.6529.io` A records are
 UPSERTed to ALB aliases. Route53 record sets cannot use the Stage 1 import path;
 these two transitions are controller-managed, with exact names/types/actions
 restricted in IAM. All other new AWS resources are native CloudFormation resources.

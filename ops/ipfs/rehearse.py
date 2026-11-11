@@ -183,13 +183,13 @@ def https_rehearsal(bundle, work, daemon, payload, cid, production=False):
     subprocess.run(["dpkg-deb", "-x", str(bundle / "nginx.deb"), str(package)], check=True)
     key, certificate = work / "key.pem", work / "cert.pem"
     subprocess.run(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "1", "-keyout", str(key),
-                    "-out", str(certificate), "-subj", "/CN=origin.fixture", "-addext", "subjectAltName=DNS:origin.fixture,DNS:api.fixture"],
+                    "-out", str(certificate), "-subj", "/CN=origin.fixture", "-addext", "subjectAltName=DNS:origin.fixture,DNS:api.fixture,DNS:ipfs.6529.io,DNS:ipfs-cache.6529.io,DNS:media.6529.io"],
                    capture_output=True, check=True)
     tls_port = port()
     if production:
         import production_host
         routing, site = production_host.render_nginx('fixture', {
-            'frontdoorDns': 'fixture.us-east-1.elb.amazonaws.com', 'peerIps': ['172.31.30.106']})
+            'frontdoorDns': 'fixture.us-east-1.elb.amazonaws.com', 'peerIps': ['192.0.2.10']}) # NOSONAR(S1313) RFC 5737 fixture peer; never contacted.
         config = 'user www-data;\nworker_processes 1;\npid /run/nginx.pid;\nevents { worker_connections 1024; }\nhttp {\naccess_log /var/log/nginx/access.log;\n' + routing + site + '\n}\n'
         config = config.replace('https://fixture.us-east-1.elb.amazonaws.com', 'https://127.0.0.1:' + str(tls_port))
         config = config.replace('/etc/6529-ipfs/tls/cert.pem', str(certificate)).replace('/etc/6529-ipfs/tls/key.pem', str(key))
@@ -250,6 +250,8 @@ def https_rehearsal(bundle, work, daemon, payload, cid, production=False):
                                      "-F", "file=@" + str(work / PAYLOAD_FILENAME),
                                      "-H", "X-Forwarded-For: 192.0.2.123", "-H", "X-6529-IPFS-Hop: 1"))["Hash"]
             require(bridged == cid, "Cached-DNS HTTPS upload failed or looped")
+            for alias in ["ipfs.6529.io", "ipfs-cache.6529.io", "media.6529.io"]:
+                require(curl(alias, IPFS_PREFIX + cid) == payload, "Forwarded viewer hostname lost its gateway route")
             require(curl(ORIGIN_HOST, IPFS_PREFIX + cid, "--interface", "127.0.0.2", "--range", "0-9") == payload[:10], "Cached-DNS gateway bridge failed")
         headers = curl(ORIGIN_HOST, IPFS_PREFIX + cid, "-I").decode().lower()
         require("content-length: " + str(len(payload)) in headers and "immutable" in headers, "HEAD/cache header mismatch")

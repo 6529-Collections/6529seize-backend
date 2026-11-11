@@ -116,7 +116,7 @@ Resources:
         Ref: InstanceType
       NetworkInterfaces:
         - DeviceIndex: '0'
-          AssociatePublicIpAddress: true # NOSONAR: outbound SSM/S3 in the existing public subnet; ingress is SG-restricted to ALB/previous writer.
+          AssociatePublicIpAddress: true # NOSONAR: outbound SSM/S3 in the existing public subnet; HTTPS is restricted and the original TCP swarm service is preserved.
           SubnetId:
             Ref: SubnetId
           GroupSet: [{ Ref: SecurityGroup }]

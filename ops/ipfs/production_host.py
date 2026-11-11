@@ -28,6 +28,12 @@ from handover_state import merge_pins, replace_fenced_mfs, snapshot, state_hash
 SETTINGS = Path('/etc/6529-ipfs')
 CONTEXT = json.loads((ROOT / 'environments/production-deployment.json').read_text())
 SOCKET = '/run/6529-ipfs-router/control.sock'
+ROUTER_STATE = 'router-state.json'
+JSON_SUFFIX = '.json'
+IPFS_UNIT = Path('/etc/systemd/system/ipfs.service')
+NGINX_DIRECTORY = Path('/etc/nginx')
+IPFS_PREFIX = '/ipfs/'
+METADATA = 'http://169.254.169.254/latest/' # NOSONAR(S1313) AWS IMDSv2 fixed link-local endpoint, never a public host.
 
 
 class UnixConnection(http.client.HTTPConnection):
@@ -54,7 +60,7 @@ def set_router(mode, ready, target=None):
     if target:
         desired.update(target='https://' + str(ipaddress.IPv4Address(target['privateIp'])) + ':443',
                        targetNodeId=target['instanceId'], certificate=target['certificate'])
-    persisted = json.loads((SETTINGS / 'router-state.json').read_text())
+    persisted = json.loads((SETTINGS / ROUTER_STATE).read_text())
     if all(persisted.get(k) == v for k, v in desired.items()) and (mode == 'forward' or not persisted.get('target')):
         return previous
     desired['epoch'] = previous['epoch'] + 1
@@ -63,10 +69,10 @@ def set_router(mode, ready, target=None):
 
 def node_identity():
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
-    request = urllib.request.Request('http://169.254.169.254/latest/api/token', data=b'', method='PUT',
+    request = urllib.request.Request(METADATA + 'api/token', data=b'', method='PUT',
                                      headers={'X-aws-ec2-metadata-token-ttl-seconds': '60'})
     token = opener.open(request, timeout=5).read().decode()
-    request = urllib.request.Request('http://169.254.169.254/latest/meta-data/instance-id',
+    request = urllib.request.Request(METADATA + 'meta-data/instance-id',
                                      headers={'X-aws-ec2-metadata-token': token})
     return opener.open(request, timeout=5).read().decode()
 
@@ -95,9 +101,9 @@ def save_transfer(node, saved, label):
                            if k in ('NoFetch', 'NoDNSLink', 'PublicGateways', 'RootRedirect', 'HTTPHeaders')}}
     value = {**saved, 'sourceInstanceId': node, 'sourcePeerId': host.rpc('id')['ID'],
              'serving': serving, 'createdAt': datetime.datetime.now(datetime.timezone.utc).isoformat()}
-    path = SETTINGS / ('transfer-' + label + '.json')
+    path = SETTINGS / ('transfer-' + label + JSON_SUFFIX)
     write_private(path, value)
-    result = private_upload(path, 'prod/transfers/' + node + '/' + label + '-' + state_hash(value) + '.json')
+    result = private_upload(path, 'prod/transfers/' + node + '/' + label + '-' + state_hash(value) + JSON_SUFFIX)
     return {**result, 'pinCount': len(saved['pins']), 'mfsRoot': saved['mfsRoot']}
 
 
@@ -113,7 +119,7 @@ def read_transfer(reference):
 
 
 def backup(node, request):
-    unit = Path('/etc/systemd/system/ipfs.service').read_text()
+    unit = IPFS_UNIT.read_text()
     require('--enable-gc' not in unit, 'Disable automatic content GC through a reviewed migration before handover')
     saved = snapshot(host.rpc)
     transfer = save_transfer(node, saved, request['label'])
@@ -123,8 +129,8 @@ def backup(node, request):
         archive = Path(temporary) / 'recovery.tar.gz'
         with tarfile.open(archive, 'w:gz') as output:
             for path in (repo(node) / 'config', repo(node) / 'keystore', repo(node) / 'datastore_spec',
-                         repo(node) / 'version', Path('/etc/nginx'), Path('/etc/letsencrypt'),
-                         Path('/etc/systemd/system/ipfs.service'), SETTINGS):
+                         repo(node) / 'version', NGINX_DIRECTORY, Path('/etc/letsencrypt'),
+                         IPFS_UNIT, SETTINGS):
                 if path.exists():
                     output.add(path, arcname=str(path).lstrip('/'))
         prefix = 'legacy' if is_legacy(node) else 'runtime'
@@ -142,7 +148,7 @@ def verify_release(sha):
 
 def router_service(node, sha, ready):
     SETTINGS.mkdir(mode=0o700, parents=True, exist_ok=True)
-    state_path = SETTINGS / 'router-state.json'
+    state_path = SETTINGS / ROUTER_STATE
     if not state_path.exists():
         write_private(state_path, {'mode': 'serve', 'epoch': 0, 'mfsReady': ready})
     if Path(SOCKET).exists():
@@ -200,7 +206,7 @@ def install(node, request):
              '-addext', 'subjectAltName=DNS:api-ipfs.6529.io,DNS:ipfs-origin.6529.io')
     (tls / 'key.pem').chmod(0o600)
     unit = (ROOT / 'templates/ipfs.service').read_text().replace('/opt/6529-ipfs/current', str(ROOT))
-    Path('/etc/systemd/system/ipfs.service').write_text(unit)
+    IPFS_UNIT.write_text(unit)
     host.run('systemctl', 'daemon-reload'); host.run('systemctl', 'enable', '--now', 'ipfs')
     host.wait_ready()
     require(host.rpc('id')['ID'] != saved['sourcePeerId'], 'Replacement must have an independent identity')
@@ -215,7 +221,7 @@ def restore_read_only(node, request):
     saved = read_transfer(request['transfer'])
     count = merge_pins(saved, host.rpc)
     # pin/add traverses the full DAG; also prove the immutable MFS root is readable.
-    host.rpc('ls', {'arg': '/ipfs/' + saved['mfsRoot']}, timeout=1800)
+    host.rpc('ls', {'arg': IPFS_PREFIX + saved['mfsRoot']}, timeout=1800)
     write_private(SETTINGS / 'read-only-verified.json', {'transfer': request['transfer'], 'pinCount': count})
     return {'readOnlyVerified': True, 'pinCount': count, 'mfsRoot': saved['mfsRoot']}
 
@@ -265,6 +271,10 @@ def render_nginx(node, request):
         config += 'map $ipfs_local $ipfs_' + name + '_upstream { 1 http://127.0.0.1:' + str(port) + '; 0 https://' + dns + '; }\n'
     # AWS VPC resolver resolves only the fixed ALB DNS for the cached-DNS bridge.
     config += 'resolver 169.254.169.253 valid=30s ipv6=off;\n'
+    if is_legacy(node):
+        config += 'include /etc/letsencrypt/options-ssl-nginx.conf;\nssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;\n'
+    else:
+        config += 'ssl_session_tickets off;\n'
     site = (ROOT / 'templates/production-site.conf').read_text()
     for kind in ['API', 'GATEWAY']:
         certificate, key = certificate_paths(node, kind)
@@ -282,13 +292,13 @@ def certificate_paths(node, kind):
 def nginx_site(node, site, marker):
     if is_legacy(node):
         path = Path('/etc/nginx/sites-enabled/ipfs.6529.io.conf').resolve()
-        require(marker.exists() or digest(path, Path('/etc/nginx')) == CONTEXT['legacySiteSha256'] or
+        require(marker.exists() or digest(path, NGINX_DIRECTORY) == CONTEXT['legacySiteSha256'] or
                 path.read_text() == site, 'Legacy nginx differs from the reviewed baseline')
     else:
         path = Path('/etc/nginx/conf.d/6529-ipfs-site.conf')
     if marker.exists():
         previous = json.loads(marker.read_text())
-        require(digest(path, Path('/etc/nginx')) == previous['siteSha256'], 'Managed nginx site drifted')
+        require(digest(path, NGINX_DIRECTORY) == previous['siteSha256'], 'Managed nginx site drifted')
     return path
 
 
@@ -336,7 +346,7 @@ def configure_nginx(node, request):
     host.run('systemctl', 'reload', 'nginx')
     wait_nginx_workers(old_workers)
     write_private(marker, {'frontdoorDns': request['frontdoorDns'], 'peerIps': request['peerIps'],
-                          'directUploadsDrained': True, 'siteSha256': digest(path, Path('/etc/nginx'))})
+                          'directUploadsDrained': True, 'siteSha256': digest(path, NGINX_DIRECTORY)})
     return {'nginxVerified': True, 'directUploadsDrained': True}
 
 
@@ -350,7 +360,7 @@ def status(node):
     result = {'instanceId': node, 'version': host.rpc('version')['Version'],
               'peerId': host.rpc('id')['ID'], 'mfsRoot': host.rpc('files/stat', {'arg': '/', 'hash': 'true'})['Hash'],
               'bootId': Path('/proc/sys/kernel/random/boot_id').read_text().strip(), 'readOnly': read_only(node)}
-    if (SETTINGS / 'router-state.json').exists(): result['router'] = router()
+    if (SETTINGS / ROUTER_STATE).exists(): result['router'] = router()
     cert = Path('/etc/letsencrypt/live/api-ipfs.6529.io/fullchain.pem') if is_legacy(node) else SETTINGS / 'tls/cert.pem'
     if cert.exists(): result['certificate'] = cert.read_text()
     return result
@@ -361,12 +371,12 @@ def sync(node, request):
     require(not read_only(node), 'Final sync needs the validated writer role')
     saved = read_transfer(request['transfer'])
     count = merge_pins(saved, host.rpc)
-    replace_fenced_mfs(saved, host.rpc, router, SETTINGS / ('sync-' + request['migrationId'] + '.json'),
+    replace_fenced_mfs(saved, host.rpc, router, SETTINGS / ('sync-' + request['migrationId'] + JSON_SUFFIX),
                        request['migrationId'], request['baselineRoot'])
     return {'pinCount': count, 'mfsVerified': True, 'mfsRoot': saved['mfsRoot']}
 
 
-def verify(node):
+def verify():
     # Retain the probe's pin so a later gateway/reboot check can read it.
     payload = ('6529 production IPFS ' + secrets.token_hex(24)).encode()
     boundary = '6529-ipfs-health'
@@ -379,8 +389,8 @@ def verify(node):
         return host.run('curl', '--silent', '--show-error', '--fail', '--insecure', '--noproxy', '*',
                         '--resolve', name + ':443:127.0.0.1', *extra, 'https://' + name + path)
     require(json.loads(https('api-ipfs.6529.io', '/health'))['Version'] == host.rpc('version')['Version'], 'HTTPS health mismatch')
-    require(https('ipfs-origin.6529.io', '/ipfs/' + cid) == payload, 'HTTPS gateway content mismatch')
-    require(https('ipfs-origin.6529.io', '/ipfs/' + cid, '-H', 'Range: bytes=0-3') == payload[:4], 'Gateway byte range mismatch')
+    require(https('ipfs-origin.6529.io', IPFS_PREFIX + cid) == payload, 'HTTPS gateway content mismatch')
+    require(https('ipfs-origin.6529.io', IPFS_PREFIX + cid, '-H', 'Range: bytes=0-3') == payload[:4], 'Gateway byte range mismatch')
     forbidden = host.run('curl', '--silent', '--insecure', '--noproxy', '*', '--resolve', 'api-ipfs.6529.io:443:127.0.0.1',
                          '-X', 'POST', '-o', '/dev/null', '-w', '%{http_code}', 'https://api-ipfs.6529.io/api/v0/pin/ls')
     require(forbidden == b'403', 'Public administrative RPC must be forbidden')
@@ -424,13 +434,15 @@ def main(request):
     node = node_identity()
     require(node == request['instanceId'], 'EC2 identity mismatch')
     verify_release(request['sha'])
+    identity = aws('sts', 'get-caller-identity', '--region', CONTEXT['region'])
+    require(identity['Account'] == CONTEXT['accountId'] and identity['Arn'].endswith('/' + node), 'Host AWS calls must use its instance role')
     if not is_legacy(node):
         require(json.loads((SETTINGS / 'managed.json').read_text())['environment'] == 'prod', 'Unexpected runtime')
     actions = {'install': install, 'backup': backup_operation, 'status': lambda n, _: status(n),
                'restore-read-only': restore_read_only, 'enable-writes': enable_writes,
                'prepare-source': prepare_source, 'configure-nginx': configure_nginx,
                'fence': fence_operation, 'snapshot': snapshot_operation, 'sync': sync,
-               'verify': lambda n, _: verify(n), 'reboot': reboot_operation}
+               'verify': lambda _node, _: verify(), 'reboot': reboot_operation}
     require(request['operation'] in actions, 'Unknown production operation')
     return actions[request['operation']](node, request)
 
