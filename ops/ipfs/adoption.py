@@ -68,6 +68,7 @@ def baseline():
     require(manifest.get("schema") == 1 and manifest.get("accountId") == "987989283142"
             and manifest.get("region") == "us-east-1" and manifest.get("stackName") == STACK, "Unexpected adoption target")
     require(manifest.get("templateSha256") == hashlib.sha256(TEMPLATE.read_bytes()).hexdigest(), "Adoption template changed; review and refresh its baseline fingerprint")
+    require(matches(r"[a-f0-9]{64}", manifest.get("distributionConfigSha256")), "Missing approved full CloudFront API configuration fingerprint")
     require(set(manifest["resources"]) == set(EXPECTED) == set(template["Resources"]), "Adoption resource set changed")
     require(not template.get("Transform") and not template.get("Outputs") and not template.get("Parameters"), "Import baseline cannot add stack attributes or parameters")
     for name, (kind, key, identifier) in EXPECTED.items():
@@ -112,6 +113,10 @@ def model_matches(declared, actual):
 def audit(manifest, template):
     identity(manifest)
     import_schema(manifest)
+    # Hash configuration only, excluding the response ETag. CallerReference is
+    # immutable on an existing distribution and remains covered by the hash.
+    distribution = aws("cloudfront", "get-distribution-config", "--id", EXPECTED["SharedDistribution"][2])["DistributionConfig"]
+    require(fingerprint(distribution) == manifest["distributionConfigSha256"], "Full CloudFront API configuration differs from the approved baseline")
     checked = []
     for name, resource in manifest["resources"].items():
         response = aws("cloudcontrol", "get-resource", *region_args(manifest), "--type-name", resource["type"], "--identifier", resource["identifier"])

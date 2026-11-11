@@ -1,7 +1,7 @@
-# Bootstrap separately with existing authority. These roles can only read live
-# resource configuration, attach ownership tags and import into one fixed stack.
+# Bootstrap separately with existing authority. Outside the explicit temporary
+# provider window, these roles permit only reads, ownership tags and stack metadata.
 AWSTemplateFormatVersion: '2010-09-09'
-Description: 6529 IPFS import-only access; configuration reads and ownership tags only
+Description: 6529 IPFS import access; locked by default with a bounded CloudFront provider window
 Parameters:
   GitHubOidcProviderArn:
     Type: String
@@ -9,6 +9,11 @@ Parameters:
     Type: String
     Default: repo:6529-Collections/6529seize-backend
     AllowedPattern: repo:6529-Collections(@[0-9]+)?/6529seize-backend(@[0-9]+)?
+  CloudFrontImportUpdateExpiresAt:
+    Type: String
+    Default: '1970-01-01T00:00:00Z'
+    AllowedPattern: '[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z'
+    Description: Temporary UTC deadline for the provider's unchanged-config import update; leave at epoch outside the authorized import window
 Resources:
   ReadPolicy:
     Type: AWS::IAM::ManagedPolicy
@@ -84,7 +89,6 @@ Resources:
               - ec2:Authorize*
               - ec2:Revoke*
               - ec2:DeleteTags
-              - cloudfront:UpdateDistribution
               - cloudfront:DeleteDistribution
               - cloudfront:CreateDistribution
               - cloudfront:UntagResource
@@ -93,6 +97,14 @@ Resources:
             # Defense in depth: neither role may change service configuration even
             # if an identity policy is later attached accidentally.
             Resource: '*'
+          - Effect: Deny
+            Action: cloudfront:UpdateDistribution
+            Resource: '*'
+            Condition:
+              # Complement the service role's strict '<': expiry itself is denied.
+              DateGreaterThanEquals:
+                aws:CurrentTime:
+                  Ref: CloudFrontImportUpdateExpiresAt
   ServiceRole:
     Type: AWS::IAM::Role
     Properties:
@@ -111,8 +123,17 @@ Resources:
           PolicyDocument:
             Version: '2012-10-17'
             Statement:
-              # CloudFormation can attach ownership tags during import, even
-              # though IMPORT never updates resource configuration. No caller
+              # The provider invokes its configuration UPDATE handler for import
+              # tagging even when all properties match. Only this existing CDN
+              # receives a bounded window, after exact preflight fingerprinting.
+              - Effect: Allow
+                Action: cloudfront:UpdateDistribution
+                Resource: arn:aws:cloudfront::987989283142:distribution/E1D6I3Z3M5F0H4
+                Condition:
+                  DateLessThan:
+                    aws:CurrentTime:
+                      Ref: CloudFrontImportUpdateExpiresAt
+              # CloudFormation attaches ownership tags during import. No caller
               # supplies custom stack tags. Existing Name tags are preserved.
               - Effect: Allow
                 Action: ec2:CreateTags
@@ -161,6 +182,11 @@ Resources:
           PolicyDocument:
             Version: '2012-10-17'
             Statement:
+              # Only the CloudFormation service role may use the bounded provider
+              # window; the GitHub controller remains unable to update the CDN.
+              - Effect: Deny
+                Action: cloudfront:UpdateDistribution
+                Resource: '*'
               - Effect: Allow
                 Action:
                   - cloudformation:GetResource
@@ -223,6 +249,9 @@ Resources:
                   StringEquals:
                     iam:PassedToService: cloudformation.amazonaws.com
 Outputs:
+  CloudFrontImportUpdateExpiresAt:
+    Value:
+      Ref: CloudFrontImportUpdateExpiresAt
   AdoptionRoleArn:
     Value:
       Fn::GetAtt: [AdoptionRole, Arn]

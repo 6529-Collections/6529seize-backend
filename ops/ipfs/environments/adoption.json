@@ -4,7 +4,7 @@
   "region": "us-east-1",
   "stackName": "seize-ipfs-prod-adopted",
   "observedAt": "2026-11-11",
-  "templateSha256": "670891a61de213552d8ab97201c7809ac4ea454c845202ef91b366a36b9f5c64",
+  "templateSha256": "1e898b1385b7e30afa0c60da255506512f2155c693297599d3b294550e316916",
   "resources": {
     "Blocks": {
       "type": "AWS::S3::Bucket",
@@ -33,20 +33,14 @@
       "identifierKey": "Id",
       "identifier": "E1D6I3Z3M5F0H4",
       "modelSha256": "346320df598e6533c01ce8bec477f6fd37cb6d87f9ebbba1ae0e8756ae793d88",
-      "readOnlyProperties": [
-        "/properties/Id",
-        "/properties/DomainName"
-      ]
+      "readOnlyProperties": ["/properties/Id", "/properties/DomainName"]
     },
     "ServerSecurityGroup": {
       "type": "AWS::EC2::SecurityGroup",
       "identifierKey": "Id",
       "identifier": "sg-03b5af7f71e361d25",
       "modelSha256": "3225bac80e176c1c6182fdfd72cdbdacb60d2231eccde7ee78c65c9831c6a42d",
-      "readOnlyProperties": [
-        "/properties/Id",
-        "/properties/GroupId"
-      ]
+      "readOnlyProperties": ["/properties/Id", "/properties/GroupId"]
     },
     "Server": {
       "type": "AWS::EC2::Instance",
@@ -63,5 +57,6 @@
         "/properties/State"
       ]
     }
-  }
+  },
+  "distributionConfigSha256": "08d8e7bfb9a9df162d3f5661536ba451099c5da51c1bdf6f72d130fa5fb61cec"
 }
