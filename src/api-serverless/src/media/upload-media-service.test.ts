@@ -2,7 +2,12 @@ import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { CLOUDFRONT_LINK } from '@/constants';
 import { UploadMediaService } from '@/api/media/upload-media.service';
 import { ApiDropMediaStatus } from '@/api/generated/models/ApiDropMediaStatus';
-import { S3Client } from '@aws-sdk/client-s3';
+import {
+  CompleteMultipartUploadCommand,
+  DeleteObjectCommand,
+  HeadObjectCommand,
+  S3Client
+} from '@aws-sdk/client-s3';
 import { DropMediaUploadsDb } from '@/drops/drop-media-uploads.db';
 import {
   DropMediaUploadEntity,
@@ -511,7 +516,7 @@ describe('UploadMediaService', () => {
     expect(
       getSignedUrlMock.mock.calls[getSignedUrlMock.mock.calls.length - 1]?.[0]
     ).toBe(publicS3);
-    publicS3.send.mockResolvedValue({ Key: started.key });
+    publicS3.send.mockResolvedValue({ Key: started.key, ContentLength: 1000 });
     await expect(
       service.completeMultipartUpload({
         ...started,
@@ -711,7 +716,9 @@ describe('UploadMediaService', () => {
   describe('distribution photo keys', () => {
     function distributionService() {
       const publicS3 = {
-        send: jest.fn().mockResolvedValue({ Key: 'completed-key' })
+        send: jest
+          .fn()
+          .mockResolvedValue({ Key: 'completed-key', ContentLength: 1000 })
       };
       const uploadsDb = {
         findByPublicKeyAndS3UploadId: jest.fn().mockResolvedValue(null)
@@ -744,8 +751,10 @@ describe('UploadMediaService', () => {
       });
 
       expect(getSignedUrlMock).toHaveBeenCalledTimes(1);
-      expect(publicS3.send).toHaveBeenCalledTimes(1);
+      // Completion, then the size check of the completed photo.
+      expect(publicS3.send).toHaveBeenCalledTimes(2);
       expect(publicS3.send.mock.calls[0][0].input).toMatchObject({ Key: key });
+      expect(publicS3.send.mock.calls[1][0]).toBeInstanceOf(HeadObjectCommand);
     });
 
     it.each([
@@ -830,7 +839,8 @@ describe('UploadMediaService', () => {
         s3_upload_id: 'upload-123',
         public_url: `${CLOUDFRONT_LINK}/drops/key.jpg`
       }),
-      transitionStatus: jest.fn().mockResolvedValue(true)
+      transitionStatus: jest.fn().mockResolvedValue(true),
+      claimSanitizerEnqueue: jest.fn().mockResolvedValue(true)
     };
     const enqueue = jest.fn().mockResolvedValue(undefined);
 
@@ -866,6 +876,10 @@ describe('UploadMediaService', () => {
       fromStatuses: ['completing'],
       toStatus: 'processing'
     });
+    expect(uploadsDb.claimSanitizerEnqueue).toHaveBeenCalledWith({
+      id: 'media-upload-123',
+      claimedAt: expect.any(Number)
+    });
     expect(enqueue).toHaveBeenCalledWith({
       mediaUploadId: 'media-upload-123'
     });
@@ -891,7 +905,9 @@ describe('UploadMediaService', () => {
         s3_upload_id: 'upload-123',
         public_url: `${CLOUDFRONT_LINK}/drops/key.jpg`
       }),
-      transitionStatus: jest.fn().mockResolvedValue(true)
+      transitionStatus: jest.fn().mockResolvedValue(true),
+      claimSanitizerEnqueue: jest.fn().mockResolvedValue(true),
+      releaseSanitizerEnqueue: jest.fn().mockResolvedValue(undefined)
     };
     const enqueue = jest.fn().mockRejectedValue(new Error('sqs maybe sent'));
 
@@ -926,6 +942,12 @@ describe('UploadMediaService', () => {
       fromStatuses: ['completing'],
       toStatus: 'processing'
     });
+    // The claim is given back, so a retried completion sends the message.
+    const [{ claimedAt }] = uploadsDb.claimSanitizerEnqueue.mock.calls[0];
+    expect(uploadsDb.releaseSanitizerEnqueue).toHaveBeenCalledWith({
+      id: 'media-upload-123',
+      claimedAt
+    });
   });
 
   it('rejects untracked drop media part signing for another profile', async () => {
@@ -956,51 +978,94 @@ describe('UploadMediaService', () => {
     ).rejects.toThrow('Cannot write this media upload');
   });
 
-  it('re-enqueues sanitization when completion is retried for a processing upload', async () => {
-    const ingestS3 = {
-      send: jest.fn()
+  it.each([
+    ['sends the message a failed send left unsent', true],
+    ['sends nothing more once the message was sent', false]
+  ])(
+    'on a retried completion of a processing upload, %s',
+    async (_, unsent) => {
+      const ingestS3 = {
+        send: jest.fn()
+      };
+      const uploadsDb = {
+        findByPublicKeyAndS3UploadId: jest.fn().mockResolvedValue({
+          id: 'media-upload-123',
+          profile_id: 'author-123',
+          status: 'processing',
+          ingest_bucket: 'ingest-bucket',
+          ingest_key: 'staging/drop-media-ingest/drops/key.jpg',
+          s3_upload_id: 'upload-123',
+          public_url: `${CLOUDFRONT_LINK}/drops/key.jpg`
+        }),
+        transitionStatus: jest.fn(),
+        claimSanitizerEnqueue: jest.fn().mockResolvedValue(unsent)
+      };
+      const enqueue = jest.fn().mockResolvedValue(undefined);
+
+      const service = new UploadMediaService(
+        () =>
+          ({
+            send: jest.fn()
+          }) as any,
+        () => ingestS3 as any,
+        uploadsDb as any,
+        enqueue
+      );
+
+      const result = await service.completeMultipartUpload({
+        key: 'drops/key.jpg',
+        upload_id: 'upload-123',
+        parts: [{ etag: '"etag-1"', part_no: 1 }],
+        authenticatedProfileId: 'author-123'
+      });
+
+      expect(ingestS3.send).not.toHaveBeenCalled();
+      expect(uploadsDb.transitionStatus).not.toHaveBeenCalled();
+      expect(enqueue).toHaveBeenCalledTimes(unsent ? 1 : 0);
+      expect(result).toEqual({
+        media_url: `${CLOUDFRONT_LINK}/drops/key.jpg`,
+        media_upload_id: 'media-upload-123',
+        media_status: ApiDropMediaStatus.Processing
+      });
+    }
+  );
+
+  it('sends one sanitizer message however often a processing upload is completed', async () => {
+    const record = {
+      id: 'media-upload-123',
+      profile_id: 'author-123',
+      status: 'processing',
+      sanitizer_enqueued_at: null as number | null,
+      ingest_bucket: 'ingest-bucket',
+      ingest_key: 'staging/drop-media-ingest/drops/key.jpg',
+      s3_upload_id: 'upload-123',
+      public_url: `${CLOUDFRONT_LINK}/drops/key.jpg`
     };
     const uploadsDb = {
-      findByPublicKeyAndS3UploadId: jest.fn().mockResolvedValue({
-        id: 'media-upload-123',
-        profile_id: 'author-123',
-        status: 'processing',
-        ingest_bucket: 'ingest-bucket',
-        ingest_key: 'staging/drop-media-ingest/drops/key.jpg',
-        s3_upload_id: 'upload-123',
-        public_url: `${CLOUDFRONT_LINK}/drops/key.jpg`
-      }),
-      transitionStatus: jest.fn()
+      findByPublicKeyAndS3UploadId: jest.fn(async () => ({ ...record })),
+      claimSanitizerEnqueue: jest.fn(async ({ claimedAt }) => {
+        if (record.sanitizer_enqueued_at !== null) return false;
+        record.sanitizer_enqueued_at = claimedAt;
+        return true;
+      })
     };
     const enqueue = jest.fn().mockResolvedValue(undefined);
-
     const service = new UploadMediaService(
-      () =>
-        ({
-          send: jest.fn()
-        }) as any,
-      () => ingestS3 as any,
+      () => ({ send: jest.fn() }) as any,
+      () => ({ send: jest.fn() }) as any,
       uploadsDb as any,
       enqueue
     );
 
-    const result = await service.completeMultipartUpload({
-      key: 'drops/key.jpg',
-      upload_id: 'upload-123',
-      parts: [{ etag: '"etag-1"', part_no: 1 }],
-      authenticatedProfileId: 'author-123'
-    });
+    for (let call = 0; call < 5; call++)
+      await service.completeMultipartUpload({
+        key: 'drops/key.jpg',
+        upload_id: 'upload-123',
+        parts: [{ etag: '"etag-1"', part_no: 1 }],
+        authenticatedProfileId: 'author-123'
+      });
 
-    expect(ingestS3.send).not.toHaveBeenCalled();
-    expect(uploadsDb.transitionStatus).not.toHaveBeenCalled();
-    expect(enqueue).toHaveBeenCalledWith({
-      mediaUploadId: 'media-upload-123'
-    });
-    expect(result).toEqual({
-      media_url: `${CLOUDFRONT_LINK}/drops/key.jpg`,
-      media_upload_id: 'media-upload-123',
-      media_status: ApiDropMediaStatus.Processing
-    });
+    expect(enqueue).toHaveBeenCalledTimes(1);
   });
 
   it('rejects tracked upload completion for another profile', async () => {
@@ -1154,9 +1219,10 @@ describe('mandatory image validation gate', () => {
 
   it('keeps untracked video completion working', async () => {
     process.env.S3_BUCKET = 'public-bucket';
-    const send = jest
-      .fn()
-      .mockResolvedValue({ Key: 'drops/author_author/old/video.mp4' });
+    const send = jest.fn().mockResolvedValue({
+      Key: 'drops/author_author/old/video.mp4',
+      ContentLength: 1000
+    });
     const service = new UploadMediaService(
       () => ({ send }) as any,
       () => ({ send }) as any,
@@ -1172,7 +1238,10 @@ describe('mandatory image validation gate', () => {
       authenticatedProfileId: 'author'
     });
     expect(result.media_status).toBe(ApiDropMediaStatus.Ready);
-    expect(send).toHaveBeenCalledTimes(1);
+    expect(send.mock.calls.map(([command]) => command.constructor)).toEqual([
+      CompleteMultipartUploadCommand,
+      HeadObjectCommand
+    ]);
   });
 
   it('does not issue a single-PUT wave image URL with sanitization disabled', async () => {
@@ -1185,5 +1254,124 @@ describe('mandatory image validation gate', () => {
         author_id: 'author'
       })
     ).rejects.toThrow('file format can be validated');
+  });
+});
+
+describe('directly published multipart media size', () => {
+  const env = { ...process.env };
+  const LIMIT = 500 * 1024 * 1024;
+  afterEach(() => {
+    process.env = { ...env };
+  });
+
+  function setUp(size: number | undefined) {
+    process.env.S3_BUCKET = 'public-bucket';
+    const send = jest.fn(async (command: unknown) =>
+      command instanceof HeadObjectCommand
+        ? { ContentLength: size }
+        : { Key: 'drops/upload/upload.mp4' }
+    );
+    const uploadsDb = {
+      findByPublicKeyAndS3UploadId: jest.fn().mockResolvedValue({
+        id: 'upload',
+        profile_id: 'author',
+        status: 'uploading',
+        declared_mime_type: 'video/mp4',
+        public_key: 'drops/upload/upload.mp4',
+        public_url: `${CLOUDFRONT_LINK}/drops/upload/upload.mp4`,
+        s3_upload_id: 'session'
+      }),
+      updateUpload: jest.fn()
+    };
+    const service = new UploadMediaService(
+      () => ({ send }) as any,
+      () => ({ send: jest.fn() }) as any,
+      uploadsDb as any,
+      jest.fn()
+    );
+    const complete = () =>
+      service.completeMultipartUpload({
+        key: 'drops/upload/upload.mp4',
+        upload_id: 'session',
+        parts: [{ part_no: 1, etag: 'etag' }],
+        authenticatedProfileId: 'author'
+      });
+    return { send, uploadsDb, complete };
+  }
+
+  it('accepts media at the documented limit', async () => {
+    const { send, uploadsDb, complete } = setUp(LIMIT);
+
+    await expect(complete()).resolves.toMatchObject({
+      media_status: ApiDropMediaStatus.Ready
+    });
+    expect(send.mock.calls[1][0]).toBeInstanceOf(HeadObjectCommand);
+    expect((send.mock.calls[1][0] as HeadObjectCommand).input).toEqual({
+      Bucket: 'public-bucket',
+      Key: 'drops/upload/upload.mp4'
+    });
+    expect(uploadsDb.updateUpload).toHaveBeenCalledWith({
+      id: 'upload',
+      patch: expect.objectContaining({ status: 'ready' })
+    });
+  });
+
+  it('refuses larger media with 413, removes it and fails the upload', async () => {
+    const { send, uploadsDb, complete } = setUp(LIMIT + 1);
+
+    await expect(complete()).rejects.toMatchObject({
+      message: 'Media files can be at most 500 MiB',
+      code: 'MEDIA_TOO_LARGE',
+      details: { max_bytes: LIMIT }
+    });
+    await expect(complete()).rejects.toHaveProperty('getStatusCode');
+    expect(
+      send.mock.calls
+        .slice(0, 3)
+        .map(([command]) => (command as object).constructor)
+    ).toEqual([
+      CompleteMultipartUploadCommand,
+      HeadObjectCommand,
+      DeleteObjectCommand
+    ]);
+    expect((send.mock.calls[2][0] as DeleteObjectCommand).input).toEqual({
+      Bucket: 'public-bucket',
+      Key: 'drops/upload/upload.mp4'
+    });
+    expect(uploadsDb.updateUpload).toHaveBeenCalledWith({
+      id: 'upload',
+      patch: expect.objectContaining({
+        status: 'failed',
+        error_reason: 'Media is larger than 500 MiB'
+      })
+    });
+    expect(uploadsDb.updateUpload).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        patch: expect.objectContaining({ status: 'ready' })
+      })
+    );
+  });
+
+  it('still refuses oversized media when removing it fails', async () => {
+    const { send, complete } = setUp(LIMIT + 1);
+    send.mockImplementation(async (command: unknown) => {
+      if (command instanceof DeleteObjectCommand)
+        throw new Error('AccessDenied');
+      return command instanceof HeadObjectCommand
+        ? { ContentLength: LIMIT + 1 }
+        : { Key: 'drops/upload/upload.mp4' };
+    });
+
+    const error = await complete().catch((e) => e);
+    expect(error.getStatusCode()).toBe(413);
+  });
+
+  it('does not report media ready when its size cannot be read', async () => {
+    const { uploadsDb, complete } = setUp(undefined);
+
+    await expect(complete()).rejects.toThrow(
+      'Could not read the size of completed media drops/upload/upload.mp4'
+    );
+    expect(uploadsDb.updateUpload).not.toHaveBeenCalled();
   });
 });

@@ -1,6 +1,8 @@
 import {
   CompleteMultipartUploadCommand,
   CreateMultipartUploadCommand,
+  DeleteObjectCommand,
+  HeadObjectCommand,
   PutObjectCommand,
   S3Client,
   UploadPartCommand
@@ -15,7 +17,13 @@ import { ApiDropMediaStatus } from '../generated/models/ApiDropMediaStatus';
 import { ApiStartMultipartMediaUploadResponse } from '../generated/models/ApiStartMultipartMediaUploadResponse';
 import { getFileExtension, slugifyBaseName } from './sanitize-file-name';
 import { CLOUDFRONT_LINK } from '@/constants';
-import { BadRequestException, ForbiddenException } from '@/exceptions';
+import {
+  BadRequestException,
+  CustomApiCompliantException,
+  ForbiddenException
+} from '@/exceptions';
+import { Logger } from '@/logging';
+import { MAX_DIRECT_MULTIPART_MEDIA_BYTES } from '@/api/media/media-upload-limits';
 import {
   createDropMediaIngestKey,
   DROP_MEDIA_SANITIZE_UPLOAD_METADATA_KEY,
@@ -60,6 +68,8 @@ export interface DistributionPhotoScope {
 export const SINGLE_PUT_UPLOAD_URL_EXPIRY = Time.minutes(15);
 
 export class UploadMediaService {
+  private readonly logger = Logger.get(this.constructor.name);
+
   constructor(
     private readonly getS3: () => S3Client,
     private readonly getIngestS3: () => S3Client = getDropMediaIngestS3,
@@ -255,6 +265,7 @@ export class UploadMediaService {
     });
 
     const completeResp = await this.getS3().send(completeCmd);
+    await this.assertCompletedMediaWithinLimit({ key, upload });
     if (upload) {
       await this.dropMediaUploadsDb.updateUpload({
         id: upload.id,
@@ -268,6 +279,59 @@ export class UploadMediaService {
       media_url: `${CLOUDFRONT_LINK}/${completeResp.Key}`,
       media_status: ApiDropMediaStatus.Ready
     };
+  }
+
+  /**
+   * Media published straight from a multipart upload has no later processing
+   * step that checks its size: read the completed object's size from S3 and
+   * refuse it above the documented transport limit. A refused object is
+   * removed (best effort) and its upload record marked failed, so it cannot
+   * be attached to a drop.
+   */
+  private async assertCompletedMediaWithinLimit({
+    key,
+    upload
+  }: {
+    key: string;
+    upload: DropMediaUploadEntity | null;
+  }): Promise<number> {
+    const bucket = this.getS3Bucket();
+    const head = await this.getS3().send(
+      new HeadObjectCommand({ Bucket: bucket, Key: key })
+    );
+    const size = head.ContentLength;
+    if (typeof size !== 'number') {
+      throw new Error(`Could not read the size of completed media ${key}`);
+    }
+    if (size <= MAX_DIRECT_MULTIPART_MEDIA_BYTES) {
+      return size;
+    }
+    try {
+      await this.getS3().send(
+        new DeleteObjectCommand({ Bucket: bucket, Key: key })
+      );
+    } catch (error) {
+      this.logger.warn(
+        `Could not remove oversized media ${key}: ${error instanceof Error ? error.message : String(error)}`
+      );
+    }
+    const limitMib = MAX_DIRECT_MULTIPART_MEDIA_BYTES / (1024 * 1024);
+    if (upload) {
+      await this.dropMediaUploadsDb.updateUpload({
+        id: upload.id,
+        patch: {
+          status: DropMediaUploadStatus.FAILED,
+          error_reason: `Media is larger than ${limitMib} MiB`,
+          completed_at: Time.currentMillis()
+        }
+      });
+    }
+    throw new CustomApiCompliantException(
+      413,
+      `Media files can be at most ${limitMib} MiB`,
+      'MEDIA_TOO_LARGE',
+      { max_bytes: MAX_DIRECT_MULTIPART_MEDIA_BYTES }
+    );
   }
 
   public async createSignedDistributionPhotoUploadUrl({
@@ -602,13 +666,7 @@ export class UploadMediaService {
       );
     }
 
-    try {
-      await this.enqueueSanitization({ mediaUploadId: upload.id });
-    } catch {
-      throw new Error(
-        `Failed to enqueue sanitization for media upload ${upload.id}`
-      );
-    }
+    await this.enqueueSanitizationOnce(upload);
 
     return {
       media_url: upload.public_url,
@@ -616,6 +674,43 @@ export class UploadMediaService {
       media_upload_id: upload.id,
       media_status: ApiDropMediaStatus.Processing
     };
+  }
+
+  /**
+   * One sanitizer message per upload: the completion call that claims the
+   * upload's enqueue marker sends it; repeated completion calls find the
+   * marker and send nothing. A failed send gives the claim back so the
+   * client's retry sends it.
+   */
+  private async enqueueSanitizationOnce(
+    upload: DropMediaUploadEntity
+  ): Promise<void> {
+    const claimedAt = Time.currentMillis();
+    const claimed = await this.dropMediaUploadsDb.claimSanitizerEnqueue({
+      id: upload.id,
+      claimedAt
+    });
+    if (!claimed) {
+      return;
+    }
+    try {
+      await this.enqueueSanitization({ mediaUploadId: upload.id });
+    } catch {
+      try {
+        await this.dropMediaUploadsDb.releaseSanitizerEnqueue({
+          id: upload.id,
+          claimedAt
+        });
+      } catch (releaseError) {
+        this.logger.error(
+          `Could not release the sanitizer enqueue claim of media upload ${upload.id}`,
+          releaseError
+        );
+      }
+      throw new Error(
+        `Failed to enqueue sanitization for media upload ${upload.id}`
+      );
+    }
   }
 
   /** Keep concurrent completion responses consistent with the published format. */

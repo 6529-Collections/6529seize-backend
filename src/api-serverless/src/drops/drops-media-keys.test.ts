@@ -143,7 +143,10 @@ describe('drop-media multipart keys', () => {
     mockUploadsDb.updateUpload.mockImplementation(async ({ patch }) => {
       Object.assign(upload, patch);
     });
-    mockPublicS3.send.mockResolvedValue({ Key: 'drops/abc/clip.wav' });
+    mockPublicS3.send.mockResolvedValue({
+      Key: 'drops/abc/clip.wav',
+      ContentLength: 1000
+    });
 
     const first = await post('/completion', {
       upload_id: 'upload-1',
@@ -151,7 +154,8 @@ describe('drop-media multipart keys', () => {
       parts
     });
     expect(first.status).toBe(200);
-    expect(mockPublicS3.send).toHaveBeenCalledTimes(1);
+    // Completion, then the size check of the completed object.
+    expect(mockPublicS3.send).toHaveBeenCalledTimes(2);
     expect(mockPublicS3.send.mock.calls[0][0].input).toMatchObject({
       Bucket: 'media-bucket',
       Key: 'drops/abc/clip.wav',
@@ -166,13 +170,14 @@ describe('drop-media multipart keys', () => {
     expect(repeat.status).toBe(200);
     const repeated = (await repeat.json()) as { media_status: string };
     expect(repeated.media_status).toBe('ready');
-    expect(mockPublicS3.send).toHaveBeenCalledTimes(1);
+    expect(mockPublicS3.send).toHaveBeenCalledTimes(2);
   });
 
   it('still completes this author’s untracked (legacy) drop media key', async () => {
     mockUploadsDb.findByPublicKeyAndS3UploadId.mockResolvedValue(null);
     mockPublicS3.send.mockResolvedValue({
-      Key: 'drops/author_profile-1/clip.mp4'
+      Key: 'drops/author_profile-1/clip.mp4',
+      ContentLength: 1000
     });
 
     const response = await post('/completion', {
@@ -182,6 +187,6 @@ describe('drop-media multipart keys', () => {
     });
 
     expect(response.status).toBe(200);
-    expect(mockPublicS3.send).toHaveBeenCalledTimes(1);
+    expect(mockPublicS3.send).toHaveBeenCalledTimes(2);
   });
 });

@@ -96,4 +96,11 @@ export class DropMediaUploadEntity {
   /** Null for uploads started before purposes were recorded. */
   @Column({ type: 'varchar', length: 20, nullable: true, default: null })
   readonly purpose?: DropMediaUploadPurpose | null;
+
+  /**
+   * When multipart completion sent this upload's one sanitizer message;
+   * null until then (and for uploads that never go to the sanitizer).
+   */
+  @Column({ type: 'bigint', nullable: true, default: null })
+  readonly sanitizer_enqueued_at?: number | null;
 }
