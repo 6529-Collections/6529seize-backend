@@ -194,8 +194,13 @@ export class CompetitionOutboxEntity {
   readonly delivered_at!: number | null;
 }
 
+/** Finds one recipient's receipts across events (profile merges). */
+export const COMPETITION_EVENT_EFFECTS_KEY_INDEX =
+  'idx_competition_event_effects_key';
+
 @Entity(COMPETITION_EVENT_EFFECTS_TABLE)
 @Unique('uq_competition_event_effect', ['event_id', 'effect_key'])
+@Index(COMPETITION_EVENT_EFFECTS_KEY_INDEX, ['effect_key'])
 export class CompetitionEventEffectEntity {
   @PrimaryColumn({ type: 'varchar', length: 36 })
   readonly id!: string;

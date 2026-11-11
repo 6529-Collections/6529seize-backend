@@ -415,12 +415,10 @@ export class ProfilesService {
           await step();
         }
       };
-      // Locks every undelivered competition outbox row.
-      await withProfileRow(() =>
-        artistArtworkAlertsDb.mergeProfile(sourceIdentity, target, {
-          connection: connectionHolder
-        })
-      );
+      // Locks only the source's own receipts and preferences.
+      await artistArtworkAlertsDb.mergeProfile(sourceIdentity, target, {
+        connection: connectionHolder
+      });
       await this.mergeProfileStatements(
         sourceIdentity,
         target,

@@ -16,6 +16,57 @@ function barrier() {
   return { ready, release };
 }
 
+async function insertOutboxEvent(id: string, semanticKey: string) {
+  await sqlExecutor.execute(
+    `insert into ${tables.COMPETITION_OUTBOX_TABLE}
+    (id,competition_id,wave_id,semantic_key,event,created_at,next_attempt_at,attempts)
+    values (:id,'competition','wave',:semanticKey,'{}',1,1,0)`,
+    { id, semanticKey }
+  );
+}
+
+async function completeReceipt(event: string, key: string) {
+  await sqlExecutor.execute(
+    `insert into ${tables.COMPETITION_EVENT_EFFECTS_TABLE} (id,event_id,effect_key,result,completed_at)
+    values (:id,:event,:key,'[7]',10)`,
+    { id: stableUuid(event, key), event, key }
+  );
+}
+
+async function receiptKeys(event: string): Promise<string[]> {
+  const rows = await sqlExecutor.execute<{ effect_key: string }>(
+    `select effect_key from ${tables.COMPETITION_EVENT_EFFECTS_TABLE}
+    where event_id=:event order by effect_key`,
+    { event }
+  );
+  return rows.map((row) => row.effect_key);
+}
+
+/** Runs one write in its own transaction, failing fast instead of waiting on a lock. */
+async function writeWithoutWaiting(
+  sql: string,
+  params: Record<string, unknown>
+) {
+  await sqlExecutor.executeNativeQueriesInTransaction(async (connection) => {
+    await sqlExecutor.execute(
+      'set session innodb_lock_wait_timeout = 1',
+      {},
+      { wrappedConnection: connection }
+    );
+    try {
+      await sqlExecutor.execute(sql, params, {
+        wrappedConnection: connection
+      });
+    } finally {
+      await sqlExecutor.execute(
+        'set session innodb_lock_wait_timeout = default',
+        {},
+        { wrappedConnection: connection }
+      );
+    }
+  });
+}
+
 describeWithSeed(
   'Independent artist artwork preferences',
   [
@@ -279,6 +330,94 @@ describeWithSeed(
       );
       expect(notify).toHaveBeenCalledTimes(1);
       expect(await recipients(2)).toEqual([]);
+    });
+
+    it('leaves other undelivered events claimable while a merge is open', async () => {
+      const otherEvent = randomUUID();
+      await insertOutboxEvent(eventId, 'merge-source-event');
+      await insertOutboxEvent(otherEvent, 'merge-other-event');
+      await completeReceipt(eventId, 'artwork:source');
+      await completeReceipt(otherEvent, 'artwork:viewer');
+      const merged = barrier();
+      const finishMerge = barrier();
+      const merge = sqlExecutor.executeNativeQueriesInTransaction(
+        async (connection) => {
+          await db.mergeProfile('source', 'target', { connection });
+          merged.release();
+          await finishMerge.ready;
+        }
+      );
+      await merged.ready;
+      try {
+        // An outbox claim, a new event and a receipt outside the source key's
+        // index range do not wait for the merge transaction.
+        await writeWithoutWaiting(
+          `update ${tables.COMPETITION_OUTBOX_TABLE} set lease_token='lease' where id=:otherEvent`,
+          { otherEvent }
+        );
+        await writeWithoutWaiting(
+          `insert into ${tables.COMPETITION_OUTBOX_TABLE}
+          (id,competition_id,wave_id,semantic_key,event,created_at,next_attempt_at,attempts)
+          values (:id,'competition','wave','merge-new-event','{}',1,1,0)`,
+          { id: randomUUID() }
+        );
+        await writeWithoutWaiting(
+          `insert into ${tables.COMPETITION_EVENT_EFFECTS_TABLE} (id,event_id,effect_key)
+          values (:id,:otherEvent,'notify:viewer')`,
+          { id: randomUUID(), otherEvent }
+        );
+      } finally {
+        finishMerge.release();
+        await merge;
+      }
+      expect(await receiptKeys(eventId)).toEqual([
+        'artwork:source',
+        'artwork:target'
+      ]);
+      expect(await receiptKeys(otherEvent)).toEqual([
+        'artwork:viewer',
+        'notify:viewer'
+      ]);
+    });
+
+    it('moves only the source receipts of undelivered events', async () => {
+      const deliveredEvent = randomUUID();
+      await insertOutboxEvent(eventId, 'pending-event');
+      await insertOutboxEvent(deliveredEvent, 'delivered-event');
+      await sqlExecutor.execute(
+        `update ${tables.COMPETITION_OUTBOX_TABLE} set delivered_at=5 where id=:deliveredEvent`,
+        { deliveredEvent }
+      );
+      await completeReceipt(eventId, 'artwork:source');
+      await completeReceipt(deliveredEvent, 'artwork:source');
+      await completeReceipt(eventId, 'artwork:viewer');
+      await sqlExecutor.executeNativeQueriesInTransaction((connection) =>
+        db.mergeProfile('source', 'target', { connection })
+      );
+      expect(await receiptKeys(eventId)).toEqual([
+        'artwork:source',
+        'artwork:target',
+        'artwork:viewer'
+      ]);
+      expect(await receiptKeys(deliveredEvent)).toEqual(['artwork:source']);
+    });
+
+    it('changes nothing for a source without receipts or preferences', async () => {
+      await insertOutboxEvent(eventId, 'untouched-event');
+      await completeReceipt(eventId, 'artwork:viewer');
+      await db.setEnabled({ subscriberId: 'viewer', artistId: 'artist' }, true);
+      const before = await sqlExecutor.execute(
+        `select * from ${tables.ARTIST_ARTWORK_ALERTS_TABLE}`
+      );
+      await sqlExecutor.executeNativeQueriesInTransaction((connection) =>
+        db.mergeProfile('no-handle', 'target', { connection })
+      );
+      expect(
+        await sqlExecutor.execute(
+          `select * from ${tables.ARTIST_ARTWORK_ALERTS_TABLE}`
+        )
+      ).toEqual(before);
+      expect(await receiptKeys(eventId)).toEqual(['artwork:viewer']);
     });
 
     it('finds a merged subscriber even when its ID sorts before a completed recipient', async () => {
