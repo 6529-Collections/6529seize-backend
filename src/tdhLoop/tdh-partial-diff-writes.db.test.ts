@@ -50,7 +50,10 @@ const DATE = new Date('2026-11-09T23:59:59Z');
  * cross second boundaries, with a .500 among them.
  */
 const RUN = Date.parse('2026-11-10T04:34:11.250Z');
-const computedAt = (index: number) => new Date(RUN + index * 125);
+/** The same partial run again, 10 minutes later. */
+const RUN_AGAIN = RUN + 10 * 60_000;
+const computedAt = (index: number, runAt = RUN) =>
+  new Date(runAt + index * 125);
 const CONTRACT = '0x33fd426905f149f8376e227d0c9d3340aad17af1';
 const SEASONS = [1, 2, 3];
 const TOKENS = [1, 2, 3, 4];
@@ -182,13 +185,13 @@ function walletRows(groups: Group[], shuffleKeys = false): TDH[] {
  */
 function consolidatedRows(
   groups: Group[],
-  { shuffleKeys = false, computed = false } = {}
+  { shuffleKeys = false, computed = false, runAt = RUN } = {}
 ) {
   return walletRows(groups, shuffleKeys).map(
     ({ wallet: key, ...row }, index) =>
       ({
         ...row,
-        date: computed ? computedAt(index) : DATE,
+        date: computed ? computedAt(index, runAt) : DATE,
         consolidation_key: key,
         consolidation_display: key,
         boosted_tdh_rate: 0,
@@ -330,7 +333,7 @@ async function seedWorld() {
 }
 
 /** One partial run, both levels, as the reconsolidation computes them. */
-async function partialRun(writeAllRows: boolean) {
+async function partialRun(writeAllRows: boolean, runAt = RUN) {
   const storedTdh = snapshotRows(
     getDataSource().getMetadata(TDH),
     await fetchTDHForBlock(BLOCK)
@@ -353,7 +356,7 @@ async function partialRun(writeAllRows: boolean) {
   const groupsAfter = consolidatedGroupsAfter();
   await persistConsolidatedTDH(
     BLOCK,
-    consolidatedRows(groupsAfter, { shuffleKeys: true, computed: true }),
+    consolidatedRows(groupsAfter, { shuffleKeys: true, computed: true, runAt }),
     seasonRows(groupsAfter).map(
       ({ key, ...row }) =>
         ({ ...row, consolidation_key: key }) as ConsolidatedTDHMemes
@@ -386,10 +389,14 @@ const TABLES: Record<string, string> = {
   [TDH_NFT_TABLE]: 'id, contract, consolidation_key'
 };
 
-/** Rows sent in full, and rows of which only one column is refreshed. */
+/**
+ * Rows sent in full, rows of which only one column is refreshed, and rows
+ * deleted by key (the reference path deletes by scope instead).
+ */
 async function countWrites(write: () => Promise<void>) {
   const written: Record<string, number> = {};
   const refreshed: Record<string, number> = {};
+  const deleted: Record<string, number> = {};
   const count = (
     counts: Record<string, number>,
     table: string,
@@ -399,6 +406,7 @@ async function countWrites(write: () => Promise<void>) {
   };
   const upsert = batches.upsertTdhInBatches;
   const refresh = batches.refreshTdhColumnInBatches;
+  const remove = batches.deleteTdhRowsInBatches;
   const upsertSpy = jest
     .spyOn(batches, 'upsertTdhInBatches')
     .mockImplementation(async (repository, rows) => {
@@ -411,14 +419,26 @@ async function countWrites(write: () => Promise<void>) {
       count(refreshed, repository.metadata.tableName, rows.length);
       return refresh(repository, rows, column);
     });
+  const deleteSpy = jest
+    .spyOn(batches, 'deleteTdhRowsInBatches')
+    .mockImplementation(async (repository, keys) => {
+      count(deleted, repository.metadata.tableName, keys.length);
+      return remove(repository, keys);
+    });
   try {
     await write();
   } finally {
     upsertSpy.mockRestore();
     refreshSpy.mockRestore();
+    deleteSpy.mockRestore();
   }
-  return { written, refreshed };
+  return { written, refreshed, deleted };
 }
+
+/** No row of any table. */
+const NOTHING = Object.fromEntries(
+  Object.keys(TABLES).map((table) => [table, 0])
+);
 
 /**
  * Every row of every table, as stored, and MySQL's table checksums. The
@@ -499,7 +519,7 @@ describe('partial TDH writes send only the rows that change', () => {
     return { state: await dump(), ...counts };
   }
 
-  it('leaves every table as writing every row does, byte for byte, sending only new, changed and rewritten rows', async () => {
+  it('leaves every table as writing every row does, byte for byte, sending only new and changed rows', async () => {
     const reference = await runAndDump(true);
     const changedOnly = await runAndDump(false);
 
@@ -530,17 +550,26 @@ describe('partial TDH writes send only the rows that change', () => {
         groups.length -
         changedOnly.written[HISTORIC_CONSOLIDATED_WALLETS_TDH_TABLE]
     });
-    // Editions carry no ranks: only the affected groups' rows are sent.
-    expect(changedOnly.written[TDH_EDITIONS_TABLE]).toBe(
-      editionRows(walletGroupsAfter()).filter((row) =>
-        [wallet(3), wallet(4)].includes(row.key)
-      ).length
-    );
+    // Editions carry no ranks. Wallet 3 gains token 1; wallet 4, in scope
+    // too, is unchanged.
+    expect(changedOnly.written[TDH_EDITIONS_TABLE]).toBe(1);
+    expect(changedOnly.deleted[TDH_EDITIONS_TABLE]).toBe(0);
+    // Groups 2 and 3 are gone (merged), the merged group and group 13 are
+    // new, and group 5, in scope too, is unchanged.
+    const merged = `${wallet(2)}-${wallet(3)}`;
     expect(changedOnly.written[CONSOLIDATED_TDH_EDITIONS_TABLE]).toBe(
-      editionRows(consolidatedGroupsAfter()).filter((row) =>
-        [`${wallet(2)}-${wallet(3)}`, wallet(5), wallet(13)].includes(row.key)
+      editionRows(groups).filter((row) =>
+        [merged, wallet(13)].includes(row.key)
       ).length
     );
+    expect(changedOnly.deleted[CONSOLIDATED_TDH_EDITIONS_TABLE]).toBe(
+      editionRows(groupsBefore()).filter((row) =>
+        [wallet(2), wallet(3)].includes(row.key)
+      ).length
+    );
+    // Group rows: groups 2 and 3 are gone, and group 5 moved up a rank, so
+    // its stored row is deleted and written again.
+    expect(changedOnly.deleted[CONSOLIDATED_WALLETS_TDH_TABLE]).toBe(3);
   });
 
   it('stores a half as MySQL rounds it into an integer column: away from zero', async () => {
@@ -777,21 +806,13 @@ describe('partial TDH writes send only the rows that change', () => {
     const changedOnly = await run(false);
 
     expect(changedOnly.after).toEqual(reference.after);
-    // Only group 5's rows, deleted and written again.
-    const holdings = Object.keys(groupsBefore()[4].holdings).length;
-    expect(changedOnly.written).toEqual({
-      [WALLETS_TDH_TABLE]: 1,
-      [WALLETS_TDH_MEMES_TABLE]: SEASONS.length,
-      [TDH_EDITIONS_TABLE]: holdings,
-      [CONSOLIDATED_WALLETS_TDH_TABLE]: 1,
-      [CONSOLIDATED_WALLETS_TDH_MEMES_TABLE]: SEASONS.length,
-      [CONSOLIDATED_TDH_EDITIONS_TABLE]: holdings,
-      [HISTORIC_CONSOLIDATED_WALLETS_TDH_TABLE]: 1,
-      [TDH_NFT_TABLE]: holdings
-    });
+    // Wallet 5 and group 5, in scope, are unchanged too: nothing is sent but
+    // each consolidated row's computation time.
+    expect(changedOnly.written).toEqual(NOTHING);
+    expect(changedOnly.deleted).toEqual(NOTHING);
     expect(changedOnly.refreshed).toEqual({
-      [CONSOLIDATED_WALLETS_TDH_TABLE]: 11,
-      [HISTORIC_CONSOLIDATED_WALLETS_TDH_TABLE]: 11
+      [CONSOLIDATED_WALLETS_TDH_TABLE]: 12,
+      [HISTORIC_CONSOLIDATED_WALLETS_TDH_TABLE]: 12
     });
     // Apart from the consolidated rows' computation time, nothing changed,
     // and the stale rate is back to the computed one.
@@ -816,5 +837,29 @@ describe('partial TDH writes send only the rows that change', () => {
         (row) => (row as { date: Date }).date
       )
     ).not.toContainEqual(DATE);
+  });
+
+  it('sends nothing but the computation times when the same partial write runs again', async () => {
+    async function twice(writeAllRows: boolean) {
+      await resetTestDatabase();
+      await seedWorld();
+      await partialRun(writeAllRows);
+      const again = await countWrites(() =>
+        partialRun(writeAllRows, RUN_AGAIN)
+      );
+      return { state: await dump(), ...again };
+    }
+
+    const reference = await twice(true);
+    const changedOnly = await twice(false);
+
+    expect(changedOnly.state).toEqual(reference.state);
+    expect(changedOnly.written).toEqual(NOTHING);
+    expect(changedOnly.deleted).toEqual(NOTHING);
+    const groups = consolidatedGroupsAfter().length;
+    expect(changedOnly.refreshed).toEqual({
+      [CONSOLIDATED_WALLETS_TDH_TABLE]: groups,
+      [HISTORIC_CONSOLIDATED_WALLETS_TDH_TABLE]: groups
+    });
   });
 });
