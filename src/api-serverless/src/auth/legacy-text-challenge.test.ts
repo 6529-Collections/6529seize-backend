@@ -14,6 +14,7 @@ import {
   MIN_LEGACY_TEXT_CHALLENGE_TTL_SECONDS,
   isStringFormChallengeAccepted,
   DEFAULT_LEGACY_TEXT_CHALLENGE_TTL_SECONDS,
+  getStringFormChallengeStatus,
   LEGACY_TEXT_CHALLENGE_TYPE,
   legacyLoginFormatOf,
   resetStringFormTransitionForTests,
@@ -350,5 +351,41 @@ describe('old string-form challenge transition', () => {
     await expect(
       isStringFormChallengeAccepted(BEFORE_LAST_DAY_MS)
     ).resolves.toBe(false);
+  });
+
+  it('says closed once the transition or the last accepted day has passed, unavailable when it cannot tell', async () => {
+    const redis = fakeRedis();
+    getRedisClientMock.mockReturnValue(redis);
+    const startMs = BEFORE_LAST_DAY_MS - STRING_FORM_TRANSITION_MS * 4;
+    await startStringFormTransition(startMs);
+
+    await expect(getStringFormChallengeStatus(startMs)).resolves.toBe(
+      'accepted'
+    );
+    await expect(
+      getStringFormChallengeStatus(startMs + STRING_FORM_TRANSITION_MS)
+    ).resolves.toBe('closed');
+    await expect(
+      getStringFormChallengeStatus(STRING_FORM_LAST_ACCEPTED_AT_MS)
+    ).resolves.toBe('closed');
+
+    process.env.NODE_ENV = 'production';
+    getRedisClientMock.mockReturnValue(null);
+    await expect(
+      getStringFormChallengeStatus(BEFORE_LAST_DAY_MS)
+    ).resolves.toBe('unavailable');
+  });
+
+  it('keeps the transition record for at least a day past the last accepted day', async () => {
+    const redis = fakeRedis();
+    getRedisClientMock.mockReturnValue(redis);
+
+    await startStringFormTransition(STRING_FORM_LAST_ACCEPTED_AT_MS - 1);
+
+    expect(redis.set).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.any(String),
+      expect.objectContaining({ EX: 24 * 3600 + 1 })
+    );
   });
 });

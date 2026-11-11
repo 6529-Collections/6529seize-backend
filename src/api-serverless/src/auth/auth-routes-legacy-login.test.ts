@@ -69,6 +69,7 @@ jest.mock('../proxies/proxy.api.service', () => ({
 import { EventEmitter } from 'node:events';
 import { ethers } from 'ethers';
 import * as jwt from 'jsonwebtoken';
+import * as walletSignatures from '../wallet-signatures/structured-wallet-signatures';
 import {
   buildStructuredWalletSignatureMessage,
   clearStructuredWalletSignatureReplayCacheForTests
@@ -267,6 +268,126 @@ describe('legacy plain-text sign-in routes', () => {
     await expect(
       loginHandler(loginRequest(challenge), makeResponse())
     ).rejects.toThrow('Sign-in challenge expired');
+  });
+
+  describe('old-form challenges that can no longer sign in', () => {
+    let verifySignature: jest.SpyInstance;
+
+    beforeEach(() => {
+      verifySignature = jest.spyOn(
+        walletSignatures,
+        'verifyWalletMessageSignature'
+      );
+    });
+
+    it('refuses after the transition without checking the wallet signature', async () => {
+      const inWindow = await issueOldFormChallenge();
+      await expect(
+        loginHandler(loginRequest(inWindow), makeResponse())
+      ).resolves.toBeUndefined();
+      expect(verifySignature).toHaveBeenCalledTimes(1);
+      verifySignature.mockClear();
+
+      nowMs += STRING_FORM_TRANSITION_MS;
+      const late = await issueOldFormChallenge();
+      await expect(
+        loginHandler(loginRequest(late), makeResponse())
+      ).rejects.toThrow('Authentication failed: Sign-in challenge expired');
+      // A replay of the challenge that already signed in is refused the
+      // same way once the transition is over.
+      await expect(
+        loginHandler(loginRequest(inWindow), makeResponse())
+      ).rejects.toThrow('Authentication failed: Sign-in challenge expired');
+
+      expect(verifySignature).not.toHaveBeenCalled();
+      expect(retrieveOrGenerateRefreshTokenMock).toHaveBeenCalledTimes(1);
+      expect(
+        emittedMetrics().map(({ Format, Outcome, Refusal }) => ({
+          Format,
+          Outcome,
+          Refusal
+        }))
+      ).toEqual([
+        { Format: 'text_previous_form', Outcome: 'ok', Refusal: 'none' },
+        {
+          Format: 'text_previous_form',
+          Outcome: 'refused',
+          Refusal: 'form_closed'
+        },
+        {
+          Format: 'text_previous_form',
+          Outcome: 'refused',
+          Refusal: 'form_closed'
+        }
+      ]);
+    });
+
+    it('refuses from 2026-11-17T00:00Z without checking the wallet signature', async () => {
+      nowMs = Date.UTC(2026, 10, 17);
+      const challenge = await issueOldFormChallenge();
+
+      await expect(
+        loginHandler(loginRequest(challenge), makeResponse())
+      ).rejects.toThrow('Authentication failed: Sign-in challenge expired');
+      expect(verifySignature).not.toHaveBeenCalled();
+      expect(emittedMetrics()).toEqual([
+        expect.objectContaining({
+          Route: 'login',
+          Format: 'text_previous_form',
+          Outcome: 'refused',
+          Refusal: 'form_closed'
+        })
+      ]);
+    });
+
+    it('does not report a closed form when the transition cannot be read', async () => {
+      process.env.NODE_ENV = 'production';
+      const challenge = await issueOldFormChallenge();
+
+      await expect(
+        loginHandler(loginRequest(challenge), makeResponse())
+      ).rejects.toThrow('Sign-in challenge expired');
+      expect(verifySignature).not.toHaveBeenCalled();
+      expect(emittedMetrics()).toEqual([
+        expect.objectContaining({ Outcome: 'refused', Refusal: 'other' })
+      ]);
+    });
+
+    it('still checks current challenges and replays inside the transition as before', async () => {
+      const current = await issueChallenge();
+      const old = await issueOldFormChallenge();
+
+      await loginHandler(loginRequest(current), makeResponse());
+      await loginHandler(loginRequest(old), makeResponse());
+      await expect(
+        loginHandler(loginRequest(old), makeResponse())
+      ).rejects.toThrow('Invalid or consumed wallet auth challenge');
+
+      expect(verifySignature).toHaveBeenCalledTimes(3);
+      expect(
+        emittedMetrics().map(({ Format, Refusal }) => ({ Format, Refusal }))
+      ).toEqual([
+        { Format: 'text', Refusal: 'none' },
+        { Format: 'text_previous_form', Refusal: 'none' },
+        { Format: 'text_previous_form', Refusal: 'other' }
+      ]);
+    });
+
+    it('leaves structured messages to their own checks after the cut-off', async () => {
+      nowMs = STRING_FORM_LAST_ACCEPTED_AT_MS + 3600_000;
+      const structured = await issueStructuredChallenge();
+
+      await expect(
+        loginHandler(loginRequest(structured), makeResponse())
+      ).resolves.toBeUndefined();
+      expect(emittedMetrics()).toEqual([
+        expect.objectContaining({
+          Format: 'structured',
+          Outcome: 'ok',
+          Refusal: 'none'
+        })
+      ]);
+    });
   });
 
   it('keeps structured messages on /auth/login working after the transition', async () => {

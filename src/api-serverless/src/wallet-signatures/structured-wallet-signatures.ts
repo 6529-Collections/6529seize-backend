@@ -689,7 +689,11 @@ async function consumeReplayKey(
   expiresAtMs: number
 ): Promise<boolean> {
   const remainingLifetimeMs = expiresAtMs - Date.now();
-  if (remainingLifetimeMs <= 0) {
+  // An expired (or unreadable, NaN) expiry is refused here, before anything
+  // is written. Past this check remainingLifetimeMs is a finite number above
+  // zero, so ttlSeconds below is a whole number of at least 1 and the Redis
+  // EX can never be zero or negative.
+  if (!Number.isFinite(remainingLifetimeMs) || remainingLifetimeMs <= 0) {
     return false;
   }
   const ttlSeconds = Math.ceil(remainingLifetimeMs / 1000);

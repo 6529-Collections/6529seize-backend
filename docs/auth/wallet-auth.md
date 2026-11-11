@@ -37,7 +37,7 @@ Connection sharing is a separate optional flow:
 
 `GET /api/auth/nonce` keeps the legacy request shape. It accepts `signer_address` and optional `short_nonce`, then returns a nonce and server signature. Clients pass `server_signature` back unchanged. It is a JWT whose payload names the challenge type (`legacy_nonce`) and the text to sign, and it expires after `AUTH_LEGACY_TEXT_CHALLENGE_TTL_SECONDS` (five minutes by default).
 
-`POST /api/auth/login` verifies the signed nonce, resolves the optional role/proxy identity, returns a JWT access token, and returns the legacy refresh token from `refresh_tokens`. Each plain-text challenge signs in once: it is consumed in the same Redis store as structured nonces and, like them, is refused when that store is unavailable outside local and test runs. Builds before November 2026 signed the text itself as the JWT payload, without an expiry. Such a challenge is accepted once during a 15-minute transition that starts when the first API instance of the new build starts (shared through Redis; nothing to configure), and never from 2026-11-17T00:00Z (UTC). Structured messages from `/auth/session-nonce` keep working on `/auth/login` with their own expiry and single use. Usage is reported as the EMF metric `6529/Auth` `LegacyAuthCalls` by route, challenge format, coarse client family and outcome. The refresh-token row stores the server-resolved role from the signed login so future refreshes continue the same legacy session role instead of accepting a new client-selected role.
+`POST /api/auth/login` verifies the signed nonce, resolves the optional role/proxy identity, returns a JWT access token, and returns the legacy refresh token from `refresh_tokens`. Each plain-text challenge signs in once: it is consumed in the same Redis store as structured nonces and, like them, is refused when that store is unavailable outside local and test runs. Builds before November 2026 signed the text itself as the JWT payload, without an expiry. Such a challenge is accepted once during a 15-minute transition that starts when the first API instance of the new build starts (shared through Redis; nothing to configure), and never from 2026-11-17T00:00Z (UTC). Structured messages from `/auth/session-nonce` keep working on `/auth/login` with their own expiry and single use. An old-form challenge is refused before its wallet signature is checked once the transition or that day has passed. Usage is reported as the EMF metric `6529/Auth` `LegacyAuthCalls` by route, challenge format, coarse client family and outcome, and by route and refusal reason (`Refusal`: `none` when accepted, `form_closed` for an old-form challenge refused because its transition or last day has passed, `other` for any other refusal); an alarm can watch `Route=login, Refusal=form_closed`. The refresh-token row stores the server-resolved role from the signed login so future refreshes continue the same legacy session role instead of accepting a new client-selected role.
 
 `POST /api/auth/redeem-refresh-token` redeems the legacy refresh token for a fresh JWT access token. It remains enabled while legacy clients are supported. Refresh preserves the role already bound to that refresh token. If an existing production refresh token has no bound role yet, the first refresh that supplies a role validates it server-side and binds it to that token; later refreshes must match the bound role. Unbound refreshes without a requested role return a wallet-only JWT.
 
@@ -327,9 +327,13 @@ without device parameters are unchanged.
   Each readable drop carries only its content events (post, edit, delete), at
   most 20 (the first, the current one and the newest; `truncated_drop_ids`
   lists drops with more), and the grant proofs of all listed events are
-  returned once in the top-level `grants`. The drops router hands
-  `GET /drops/signed-events` on to the generated routes so it is not read as a
-  drop id.
+  returned once in the top-level `grants`. The events left out of a truncated
+  drop may reference grants that are not in `grants`, so clients verify such a
+  drop through the single route. If mapping the drops together fails, they
+  are mapped one by one, and no drop is started after three seconds; drops
+  that cannot be mapped or are not started in that time are listed in
+  `unavailable`. The drops router hands `GET /drops/signed-events` on to the
+  generated routes so it is not read as a drop id.
 - Every drop the API serializes (`ApiDrop`, `ApiDropWithoutWave` and
   `ApiDropV2`, including websocket drop updates) carries the optional
   `is_author_signed`: true exactly when that drop has a
@@ -400,8 +404,10 @@ cookie and does not revoke whichever account last wrote the compatibility
 cookie. When `all_sessions=true`, it revokes all wallet auth sessions for the
 verified target address and removes that wallet's legacy refresh token, so
 older Desktop builds that hold it are signed out as well (the next legacy
-sign-in issues a new one). A single-session logout leaves the legacy refresh
-token in place. Web logout also checks the request `Origin` against the
+sign-in issues a new one). Revoking the sessions is the part that must
+succeed: if the legacy refresh token cannot be removed afterwards, the logout
+still succeeds and logs `[SIGN_OUT_ALL_LEGACY_REFRESH_TOKEN_NOT_REMOVED]`. A
+single-session logout leaves the legacy refresh token in place. Web logout also checks the request `Origin` against the
 stored session origin before revoking an existing session.
 
 ## Connection Sharing
@@ -449,12 +455,17 @@ immediately delete the stored share row or its setup ciphertext.
 A wallet has at most one live link per target client type and kind (with or
 without device setup): creating a share marks the wallet's earlier unconsumed,
 unexpired share of the same target and kind consumed, without a session, so
-an old QR code or link stops working once its source shows a new one. A plain
-link and a device-setup link for the same target can be live together, so
-going back from secure setup to a plain link keeps the plain link valid.
+an old QR code or link stops working once its source shows a new one. Retiring
+the old share and storing the new one happen in one transaction, so a failed
+create leaves the previous link live. Two creates that deadlock on the
+address index (for example two tabs creating a first link at once) are
+retried once. A plain link and a device-setup link for the same target can be
+live together, so going back from secure setup to a plain link keeps the
+plain link valid.
 Device-setup links expire after `AUTH_CONNECTION_SHARE_SETUP_TTL_SECONDS`
 (default 120 seconds), plain links after
-`AUTH_CONNECTION_SHARE_CODE_TTL_SECONDS` (default 300 seconds).
+`AUTH_CONNECTION_SHARE_CODE_TTL_SECONDS` (default 300 seconds, clamped to
+60-3600).
 
 A redeem records the coarse client family of the redeeming request (for
 example `desktop` or `browser`, never the user agent) in
@@ -501,7 +512,7 @@ The revised auth flow uses these relevant flags/config values:
 - `AUTH_SESSION_V2_REFRESH_DAYS`: session refresh lifetime in days. Defaults to 30.
 - `AUTH_CONNECTION_SHARING_DISABLED`: default false. Set to `true` only to disable `/auth/connection-share`, `/auth/connection-share/legacy-desktop`, and `/auth/connection-share/redeem`; otherwise connection sharing is enabled.
 - `AUTH_LEGACY_REFRESH_DISABLED`: default false. Set to `true` only after the configured v2 migration deadline and final shutdown checks to make `/auth/redeem-refresh-token` and the legacy desktop connection-sharing bridge unavailable without removing the endpoints.
-- `AUTH_CONNECTION_SHARE_CODE_TTL_SECONDS`: one-time connection share code lifetime. Defaults to 300 seconds.
+- `AUTH_CONNECTION_SHARE_CODE_TTL_SECONDS`: one-time connection share code lifetime. Defaults to 300 seconds; values are clamped to 60-3600 and anything that is not a whole number means the default.
 - `AUTH_CONNECTION_SHARE_SETUP_TTL_SECONDS`: lifetime of connection share codes that carry encrypted device setup. Defaults to 120 seconds and is never longer than `AUTH_CONNECTION_SHARE_CODE_TTL_SECONDS`; a missing or non-positive value means the default.
 - `AUTH_LEGACY_WS_QUERY_TOKEN_ENABLED`: default true. Controls legacy WebSocket JWT query-token support.
 
