@@ -37,6 +37,8 @@ import {
 } from '@/api/generated/models/ApiSessionWebResponse';
 import { clientFamilyOf } from '@/api/auth/client-family';
 import { Logger } from '@/logging';
+import { isDeadlockError } from '@/e2ee/e2ee-encoding';
+import type { WalletConnectionShareEntity } from '@/entities/IWalletConnectionShare';
 
 const logger = Logger.get('AUTH_SESSION_V2');
 
@@ -943,11 +945,12 @@ export async function createConnectionShare({
   const connectionShareCode = createOpaqueSecret();
   const withDeviceSetup = encryptedDeviceSetup !== null;
   const expiresAt = getConnectionShareExpiresAt(withDeviceSetup);
+  const shareId = randomUUID();
   // One live link per wallet, target and kind: a new link retires the
   // previous one, which its source no longer shows. Both in one transaction,
   // so a failed create leaves the previous link live.
-  const share = await authDb.executeNativeQueriesInTransaction(
-    async (connection) => {
+  const storeShare = () =>
+    authDb.executeNativeQueriesInTransaction(async (connection) => {
       await authDb.retireLiveWalletConnectionShares(
         {
           address: address.toLowerCase(),
@@ -959,7 +962,7 @@ export async function createConnectionShare({
       );
       return authDb.createWalletConnectionShare(
         {
-          id: randomUUID(),
+          id: shareId,
           connectionShareCodeHash: hashSecret(connectionShareCode),
           encryptedDeviceSetup,
           address: address.toLowerCase(),
@@ -969,8 +972,20 @@ export async function createConnectionShare({
         },
         connection
       );
+    });
+  let share: WalletConnectionShareEntity;
+  try {
+    share = await storeShare();
+  } catch (error) {
+    // When no live link matches, the retire takes a gap lock, so two creates
+    // in the same address gap (two tabs, two new wallets) can deadlock on
+    // their inserts. The victim was rolled back; run it once more, where it
+    // sees and retires the other create's committed link.
+    if (!isDeadlockError(error)) {
+      throw error;
     }
-  );
+    share = await storeShare();
+  }
   const queryParams = new URLSearchParams();
   queryParams.set('connection_share_code', connectionShareCode);
   queryParams.set('address', share.address);

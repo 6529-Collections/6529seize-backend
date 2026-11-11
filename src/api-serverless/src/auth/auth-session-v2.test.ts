@@ -12,6 +12,7 @@ import {
   createWebSession,
   getActiveWebSession,
   getWalletSessionCookieNameForAddress,
+  hashSecret,
   hasActiveNativeSessionForAddressAndRole,
   hasActiveWebSessionForAddressAndRole,
   isAuthConnectionSharingEnabled,
@@ -1659,6 +1660,61 @@ describe('auth-session-v2', () => {
         expect.objectContaining({ address: '0xabc' }),
         transactionConnection
       );
+      // Not a deadlock: no second attempt.
+      expect(
+        authDbMock.executeNativeQueriesInTransaction
+      ).toHaveBeenCalledTimes(1);
+    });
+
+    describe('when two creates deadlock', () => {
+      const deadlock = () =>
+        Object.assign(
+          new Error('Deadlock found when trying to get lock; try restarting'),
+          { code: 'ER_LOCK_DEADLOCK', errno: 1213 }
+        );
+
+      it('runs the create once more and returns the code it committed', async () => {
+        authDbMock.createWalletConnectionShare.mockRejectedValueOnce(
+          deadlock()
+        );
+
+        const created = await createConnectionShare({
+          address: '0xABC',
+          role: null,
+          targetClientType: 'native'
+        });
+
+        expect(
+          authDbMock.executeNativeQueriesInTransaction
+        ).toHaveBeenCalledTimes(2);
+        expect(
+          authDbMock.retireLiveWalletConnectionShares
+        ).toHaveBeenCalledTimes(2);
+        const [[firstAttempt], [committed]] =
+          authDbMock.createWalletConnectionShare.mock.calls;
+        expect(committed.connectionShareCodeHash).toBe(
+          hashSecret(created.connection_share_code)
+        );
+        expect(committed.id).toBe(firstAttempt.id);
+        expect(created.expires_at).toEqual(committed.expiresAt);
+      });
+
+      it('gives up after a second deadlock with the same error as before', async () => {
+        authDbMock.createWalletConnectionShare
+          .mockRejectedValueOnce(deadlock())
+          .mockRejectedValueOnce(deadlock());
+
+        await expect(
+          createConnectionShare({
+            address: '0xABC',
+            role: null,
+            targetClientType: 'native'
+          })
+        ).rejects.toMatchObject({ code: 'ER_LOCK_DEADLOCK' });
+        expect(
+          authDbMock.executeNativeQueriesInTransaction
+        ).toHaveBeenCalledTimes(2);
+      });
     });
 
     it.each([

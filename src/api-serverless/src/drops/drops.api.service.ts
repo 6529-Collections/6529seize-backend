@@ -100,9 +100,11 @@ import { withWaveLogsTimeoutGuard } from './wave-logs-timeout';
 import { Logger } from '@/logging';
 
 /**
- * Time the one-by-one mapping of a batch read may take after the bulk
- * mapping failed. Drops not reached in time are left out, like drops the
- * mapper cannot handle.
+ * Time after which the one-by-one mapping of a batch read (after the bulk
+ * mapping failed) starts no further drop. It is checked between drops: a
+ * mapping already running is not cut short, so the fallback can take this
+ * long plus one mapping. Drops not started in time are left out, like drops
+ * the mapper cannot handle.
  */
 export const ONE_BY_ONE_DROP_MAPPING_BUDGET_MS = 3_000;
 
@@ -189,9 +191,11 @@ export class DropsApiService {
   /**
    * After a failed bulk mapping, maps each drop on its own so that one drop
    * the mapper cannot handle is left out instead of failing the whole read.
-   * Drops are mapped in order until ONE_BY_ONE_DROP_MAPPING_BUDGET_MS has
-   * passed; the rest are left out too. When no drop can be mapped, the
-   * original error is thrown as before.
+   * Drops are mapped in order, and none is started once
+   * ONE_BY_ONE_DROP_MAPPING_BUDGET_MS has passed; the rest are left out too.
+   * When no drop was mapped, the original error is thrown as before; that
+   * includes a first drop that fails after running past the budget, since
+   * no other drop is then tried.
    */
   private async mapReadableDropsOneByOne(
     dropEntities: DropEntity[],

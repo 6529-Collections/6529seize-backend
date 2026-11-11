@@ -330,10 +330,10 @@ without device parameters are unchanged.
   returned once in the top-level `grants`. The events left out of a truncated
   drop may reference grants that are not in `grants`, so clients verify such a
   drop through the single route. If mapping the drops together fails, they
-  are mapped one by one for at most three seconds; drops that cannot be mapped
-  or are not reached in that time are listed in `unavailable`. The drops
-  router hands `GET /drops/signed-events` on to the generated routes so it is
-  not read as a drop id.
+  are mapped one by one, and no drop is started after three seconds; drops
+  that cannot be mapped or are not started in that time are listed in
+  `unavailable`. The drops router hands `GET /drops/signed-events` on to the
+  generated routes so it is not read as a drop id.
 - Every drop the API serializes (`ApiDrop`, `ApiDropWithoutWave` and
   `ApiDropV2`, including websocket drop updates) carries the optional
   `is_author_signed`: true exactly when that drop has a
@@ -457,9 +457,11 @@ without device setup): creating a share marks the wallet's earlier unconsumed,
 unexpired share of the same target and kind consumed, without a session, so
 an old QR code or link stops working once its source shows a new one. Retiring
 the old share and storing the new one happen in one transaction, so a failed
-create leaves the previous link live. A plain
-link and a device-setup link for the same target can be live together, so
-going back from secure setup to a plain link keeps the plain link valid.
+create leaves the previous link live. Two creates that deadlock on the
+address index (for example two tabs creating a first link at once) are
+retried once. A plain link and a device-setup link for the same target can be
+live together, so going back from secure setup to a plain link keeps the
+plain link valid.
 Device-setup links expire after `AUTH_CONNECTION_SHARE_SETUP_TTL_SECONDS`
 (default 120 seconds), plain links after
 `AUTH_CONNECTION_SHARE_CODE_TTL_SECONDS` (default 300 seconds, clamped to
