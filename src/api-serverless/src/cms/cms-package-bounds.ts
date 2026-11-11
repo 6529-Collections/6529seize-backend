@@ -12,27 +12,64 @@ export const LEGACY_CMS_MAX_PUBLISHED_PACKAGES_PER_PROFILE = 200;
 const UNSUPPORTED_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
 const URL_SCHEME_PREFIX_LENGTH = 32;
 const UNSAFE_URL_SCHEME = /^(?:javascript|vbscript|data):/;
+// Zero-width and invisible formatting characters that render as nothing and
+// can split a scheme name without being visible.
+const ZERO_WIDTH_CODE_POINTS = new Set([
+  0x00ad, // soft hyphen
+  0x180e, // Mongolian vowel separator
+  0x200b, // zero width space
+  0x200c, // zero width non-joiner
+  0x200d, // zero width joiner
+  0x200e, // left-to-right mark
+  0x200f, // right-to-left mark
+  0x2060, // word joiner
+  0xfeff // zero width no-break space
+]);
+
+function isIgnoredInScheme(code: number): boolean {
+  return code <= 0x1f || code === 0x7f || ZERO_WIDTH_CODE_POINTS.has(code);
+}
 
 /**
- * Whether a string reads as a javascript:, vbscript: or data: URL the way a
- * browser parses it: leading whitespace and control characters, and tabs or
- * line breaks inside the scheme, are ignored.
+ * Whether a string reads as a javascript:, vbscript: or data: URL. Leading
+ * whitespace is ignored, and ASCII control characters and zero-width
+ * characters are ignored wherever they appear before the scheme is read.
  */
 export function isUnsafeUrlString(value: string): boolean {
   let offset = 0;
-  while (offset < value.length && value.charCodeAt(offset) <= 0x20) {
+  while (
+    offset < value.length &&
+    (value.charCodeAt(offset) === 0x20 ||
+      isIgnoredInScheme(value.charCodeAt(offset)))
+  ) {
     offset++;
   }
-  const start = value
-    .slice(offset, offset + URL_SCHEME_PREFIX_LENGTH)
-    .replace(/[\t\n\r]/g, '')
-    .toLowerCase();
-  return UNSAFE_URL_SCHEME.test(start);
+  let prefix = '';
+  for (
+    let i = offset;
+    i < value.length && prefix.length < URL_SCHEME_PREFIX_LENGTH;
+    i++
+  ) {
+    if (!isIgnoredInScheme(value.charCodeAt(i))) {
+      prefix += value[i];
+    }
+  }
+  return UNSAFE_URL_SCHEME.test(prefix.toLowerCase());
+}
+
+function serializedJson(input: unknown, fieldName: string): string {
+  try {
+    return JSON.stringify(input) ?? '';
+  } catch {
+    throw new BadRequestException(
+      `${fieldName} is too deeply nested or large.`
+    );
+  }
 }
 
 /**
  * Bounds a JSON document submitted to the legacy CMS publish route: its
- * serialized size, nesting depth and node count, unsupported property names
+ * nesting depth and node count (checked first), its serialized size, unsupported property names
  * and javascript:/vbscript:/data: URL strings anywhere in it.
  */
 export function assertLegacyCmsJsonBounded(
@@ -40,12 +77,6 @@ export function assertLegacyCmsJsonBounded(
   fieldName: string,
   maxBytes: number
 ): void {
-  const serialized = JSON.stringify(input) ?? '';
-  if (Buffer.byteLength(serialized, 'utf8') > maxBytes) {
-    throw new BadRequestException(
-      `${fieldName} must not exceed ${maxBytes} bytes.`
-    );
-  }
   const stack: Array<{ value: unknown; depth: number }> = [
     { value: input, depth: 0 }
   ];
@@ -77,5 +108,13 @@ export function assertLegacyCmsJsonBounded(
       }
       stack.push({ value: child, depth: depth + 1 });
     }
+  }
+  // Serialised only after the depth and node bounds hold, so stringifying
+  // cannot recurse without limit.
+  const serialized = serializedJson(input, fieldName);
+  if (Buffer.byteLength(serialized, 'utf8') > maxBytes) {
+    throw new BadRequestException(
+      `${fieldName} must not exceed ${maxBytes} bytes.`
+    );
   }
 }
