@@ -216,9 +216,10 @@ Resources:
             SmoothStreaming: false
             OriginRequestPolicyId: acba4595-bd28-49b8-b9fe-13317c0390fa
             CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6
-      Tags:
-        - Value: ipfs-6529-cache
-          Key: Name
+      # CloudFront has cloudFormationSystemTags=false. Declaring its unchanged
+      # Name tag makes import call the configuration UPDATE handler for tagging.
+      # Leave tags unmanaged here so import remains read-only for CloudFront;
+      # the complete native-model fingerprint still verifies the existing tags.
   ServerSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     DeletionPolicy: Retain

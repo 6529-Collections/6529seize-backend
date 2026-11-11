@@ -301,6 +301,15 @@ remain covered by the native-model hash while the YAML uses the equivalent
 top-level instance properties. Custom tags and cache-behavior order are checked;
 AWS-owned stack tags and irrelevant SG-rule ordering are normalized.
 
+CloudFront declares `cloudFormationSystemTags=false` in its registered resource
+schema. Its import template deliberately omits `Tags`: declaring even the existing
+unchanged Name tag causes CloudFormation's import tagging step to invoke the full
+configuration UPDATE handler. The import role keeps `UpdateDistribution` explicitly
+denied. Existing CloudFront tags remain in place and are covered by the full native
+fingerprint, rather than managed through CloudFormation's Tags property. An initial
+attempt with the Name tag declared rolled back with no resource configuration
+changes because that deny blocked the provider's update call.
+
 The import does **not** take ownership of the block bucket's separate bucket policy,
 the shared `EC2SSMRole`, its policies,
 VPC/subnets, volume as a separate resource, AMI, DNS records, edge functions,
