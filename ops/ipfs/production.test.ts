@@ -259,6 +259,155 @@ print('actual writer reported')
     ).toBe('actual writer reported');
   });
 
+  test('reads the full SSM result when the list response truncates a certificate receipt', () => {
+    expect(
+      python(`
+c=object.__new__(p.Controller)
+node={'instanceId':'i-source'}
+request={'instanceId':'i-source','operation':'status'}
+value={'instanceId':'i-source','version':'0.43.1','mfsRoot':'root','bootId':'boot','readOnly':False,'certificate':'certificate-data'*500}
+output=json.dumps({'protocol':p.RECEIPT,'result':value})
+assert len(output)>2500
+calls=[]
+def call(service,operation,*args):
+ calls.append(operation)
+ if operation=='list-command-invocations':return {'CommandInvocations':[{'InstanceId':'i-source','Status':'Success','CommandPlugins':[{'Output':output[:2500]}]}]}
+ if operation=='get-command-invocation':return {'Status':'Success','StandardOutputContent':output}
+ raise AssertionError(operation)
+p.call=call
+assert c.wait_host('command',node,request)['certificate']==value['certificate']
+assert calls==['list-command-invocations','get-command-invocation']
+print('complete receipt')
+`)
+    ).toBe('complete receipt');
+  });
+
+  test('keeps public peering closed while installing OS security updates and until reboot validation', () => {
+    const template = parse(
+      readFileSync(join(__dirname, 'cloudformation/runtime.yaml'), 'utf8')
+    );
+    expect(template.Parameters.PublishSwarm.Default).toBe('false');
+    expect(
+      template.Resources.Instance.Properties.UserData['Fn::Base64']
+    ).toContain('full-upgrade -y');
+    const ingress =
+      template.Resources.SecurityGroup.Properties.SecurityGroupIngress;
+    expect(ingress).toContainEqual({
+      'Fn::If': [
+        'SwarmPublished',
+        {
+          IpProtocol: 'tcp',
+          FromPort: 4001,
+          ToPort: 4001,
+          CidrIp: '0.0.0.0/0'
+        },
+        { Ref: 'AWS::NoValue' }
+      ]
+    });
+  });
+
+  test('validates both private peer paths and retains write access before publishing peering or switching traffic', () => {
+    expect(
+      python(`
+c=object.__new__(p.Controller);c.id='release';c.sha='a'*40;c.state={'steps':{}};c.save=lambda:None
+events=[];updates=[]
+source={'instanceId':'old','securityGroupId':'source-group','privateIp':'172.31.20.1','publicIp':'18.1.1.1'}
+target={'instanceId':'new','securityGroupId':'target-group','privateIp':'172.31.20.2','publicIp':'18.1.1.2'}
+c.baseline=lambda:{}
+c.discover_source=lambda:{'source':source,'sourceSlot':'a','targetSlot':'b','frontdoorParameters':{}}
+c.upload=lambda:{};c.source_ready=lambda _:{}
+door={'SecurityGroupId':'frontdoor-group','RuntimePeerGroupId':'private-peers','DnsName':'alb','HealthAlarm':'alb-alarm'}
+c.frontdoor=lambda _:door;c.node=lambda _:target
+def apply(name,template,values,allowed):
+ updates.append((dict(values),allowed));return {'InstanceId':'new','HealthAlarm':'instance-alarm'}
+c.apply=apply
+def host(node,operation,**values):
+ events.append((operation,node['instanceId'],values))
+ return {'transfer':{},'cid':'probe'}
+c.host=host;c.current_status=lambda _:{'certificate':'public-certificate'}
+c.verify_reboot=lambda *args:events.append(('reboot-verified',None,{}))
+c.verify_swarm=lambda *args:events.append(('swarm',None,{}))
+c.healthy=lambda _:{};c.check_public=lambda *args:{}
+c.dns=lambda _:events.append(('dns',None,{}))
+c.promote=lambda *args:events.append(('promote',None,{})) or {}
+c.verify_alarms=lambda _:None
+c.migrate()
+assert [(v['AllowWrites'],v['PublishSwarm']) for v,_ in updates]==[('false','false'),('true','false'),('true','true')]
+assert updates[-1][1]==['SecurityGroup']
+assert all(v['RuntimePeerSecurityGroup']=='private-peers' for v,_ in updates)
+assert all(set(v)==set(p.yaml.safe_load((p.ROOT/'cloudformation/runtime.yaml').read_text())['Parameters']) for v,_ in updates)
+names=[e[0] for e in events]
+assert names.index('reboot-verified')<names.index('swarm')
+checks=[e for e in events if e[0]=='peer-health']
+assert [(e[1],e[2]['peer']['instanceId']) for e in checks]==[('old','new'),('new','old')]
+assert max(i for i,e in enumerate(events) if e[0]=='peer-health')<names.index('dns')<names.index('promote')
+print('bidirectional and ordered')
+`)
+    ).toBe('bidirectional and ordered');
+  });
+
+  test('requires a current security-update receipt after reboot before public peering can open', () => {
+    expect(
+      python(`
+c=object.__new__(p.Controller);c.state={'steps':{'reboot-requested':{'bootId':'before'}},'versions':{'kuboVersion':'0.43.1'}}
+p.call=lambda *args:{'InstanceInformationList':[{'PingStatus':'Online'}]};p.time.sleep=lambda _:None
+verified=[];c.host=lambda *args,**kwargs:verified.append(True)
+base={'bootId':'after','router':{'mode':'serve','mfsReady':False},'version':'0.43.1'}
+for extra in [{},{'rebootRequired':True}]:
+ c.current_status=lambda _,extra=extra:{**base,**extra}
+ try:c.verify_reboot({'instanceId':'new'}, {'cid':'probe'})
+ except TimeoutError:pass
+ else:raise AssertionError('Unsafe reboot accepted')
+assert verified==[]
+c.current_status=lambda _:{**base,'rebootRequired':False}
+assert c.verify_reboot({'instanceId':'new'}, {'cid':'probe'})['rebootPersistenceVerified']
+assert verified==[True]
+print('fails closed')
+`)
+    ).toBe('fails closed');
+  });
+
+  test('allows mutual private HTTPS without opening the peer group to the public internet', () => {
+    const door = parse(
+      readFileSync(join(__dirname, 'cloudformation/frontdoor.yaml'), 'utf8')
+    );
+    const runtime = parse(
+      readFileSync(join(__dirname, 'cloudformation/runtime.yaml'), 'utf8')
+    );
+    expect(door.Resources.RuntimePeerGroup.Properties).not.toHaveProperty(
+      'SecurityGroupIngress'
+    );
+    expect(door.Resources.RuntimePeerIngress.Properties).toEqual({
+      GroupId: { Ref: 'RuntimePeerGroup' },
+      SourceSecurityGroupId: { Ref: 'RuntimePeerGroup' },
+      IpProtocol: 'tcp',
+      FromPort: 443,
+      ToPort: 443
+    });
+    expect(
+      runtime.Resources.Instance.Properties.NetworkInterfaces[0].GroupSet
+    ).toContainEqual({ Ref: 'RuntimePeerSecurityGroup' });
+  });
+
+  test('checks private peer TLS using the canonical hostname, recorded certificate and reviewed subnet', () => {
+    expect(
+      python(`${rejected}
+import production_host as h
+peer={'instanceId':'other','privateIp':'172.31.20.2','certificate':'recorded-certificate'}
+def run(*args):
+ assert '--insecure' not in args
+ assert args[args.index('--resolve')+1]=='api-ipfs.6529.io:443:172.31.20.2'
+ assert Path(args[args.index('--cacert')+1]).read_text()=='recorded-certificate'
+ return b'{"Version":"0.43.1"}'
+h.host.run=run
+assert h.peer_health('self',{'peer':peer})['privateHttpsVerified']
+rejected(lambda:h.peer_health('self',{'peer':{**peer,'privateIp':'8.8.8.8'}}))
+rejected(lambda:p.validate_receipt({'operation':'peer-health','peer':peer},{'privateHttpsVerified':True,'peerInstanceId':'wrong'}))
+print('private TLS verified')
+`)
+    ).toBe('private TLS verified');
+  });
+
   test('only offers explicit production operations through the protected main environment', () => {
     const workflow = parse(
       readFileSync(

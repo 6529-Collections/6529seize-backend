@@ -13,6 +13,8 @@ Parameters:
     AllowedValues: [t3.large, t3.xlarge, m7i.large]
   FrontdoorSecurityGroup:
     Type: AWS::EC2::SecurityGroup::Id
+  RuntimePeerSecurityGroup:
+    Type: AWS::EC2::SecurityGroup::Id
   SourceSecurityGroup:
     Type: AWS::EC2::SecurityGroup::Id
   RuntimeBoundaryArn:
@@ -21,9 +23,15 @@ Parameters:
     Type: String
     Default: 'false'
     AllowedValues: ['false', 'true']
+  PublishSwarm:
+    Type: String
+    Default: 'false'
+    AllowedValues: ['false', 'true']
 Conditions:
   WritesAllowed:
     Fn::Equals: [{ Ref: AllowWrites }, 'true']
+  SwarmPublished:
+    Fn::Equals: [{ Ref: PublishSwarm }, 'true']
 Resources:
   Role:
     Type: AWS::IAM::Role
@@ -96,10 +104,13 @@ Resources:
           ToPort: 443
           SourceSecurityGroupId:
             Ref: SourceSecurityGroup
-        - IpProtocol: tcp
-          FromPort: 4001
-          ToPort: 4001
-          CidrIp: 0.0.0.0/0 # NOSONAR: preserve the existing public IPFS peer protocol; RPC, gateway and SSH remain private.
+        - Fn::If:
+            - SwarmPublished
+            - IpProtocol: tcp
+              FromPort: 4001
+              ToPort: 4001
+              CidrIp: 0.0.0.0/0 # NOSONAR: preserve IPFS peering only after security updates and reboot validation; RPC/gateway/SSH stay private.
+            - Ref: AWS::NoValue
       Tags:
         - Key: Service
           Value: 6529-ipfs
@@ -119,7 +130,7 @@ Resources:
           AssociatePublicIpAddress: true # NOSONAR: outbound SSM/S3 in the existing public subnet; HTTPS is restricted and the original TCP swarm service is preserved.
           SubnetId:
             Ref: SubnetId
-          GroupSet: [{ Ref: SecurityGroup }]
+          GroupSet: [{ Ref: SecurityGroup }, { Ref: RuntimePeerSecurityGroup }]
       IamInstanceProfile:
         Ref: Profile
       DisableApiTermination: true
@@ -149,6 +160,7 @@ Resources:
           set -euo pipefail
           export DEBIAN_FRONTEND=noninteractive
           apt-get -o Acquire::Retries=3 update
+          apt-get -o Acquire::Retries=3 -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold full-upgrade -y
           apt-get -o Acquire::Retries=3 install -y --no-install-recommends python3 curl ca-certificates awscli openssl
           install -d -m 700 /etc/6529-ipfs
           printf '%s\n' '{"environment":"prod","role":"candidate"}' > /etc/6529-ipfs/managed.json

@@ -359,7 +359,8 @@ def prepare_source(node, request):
 def status(node):
     result = {'instanceId': node, 'version': host.rpc('version')['Version'],
               'peerId': host.rpc('id')['ID'], 'mfsRoot': host.rpc('files/stat', {'arg': '/', 'hash': 'true'})['Hash'],
-              'bootId': Path('/proc/sys/kernel/random/boot_id').read_text().strip(), 'readOnly': read_only(node)}
+              'bootId': Path('/proc/sys/kernel/random/boot_id').read_text().strip(), 'readOnly': read_only(node),
+              'kernel': os.uname().release, 'rebootRequired': Path('/var/run/reboot-required').exists()}
     if (SETTINGS / ROUTER_STATE).exists(): result['router'] = router()
     cert = Path('/etc/letsencrypt/live/api-ipfs.6529.io/fullchain.pem') if is_legacy(node) else SETTINGS / 'tls/cert.pem'
     if cert.exists(): result['certificate'] = cert.read_text()
@@ -397,6 +398,20 @@ def verify():
     return {'uploadPinRead': True, 'httpsVerified': True, 'rangeVerified': True, 'restrictedRpc': True,
             'version': host.rpc('version')['Version'],
             'cid': cid, 'payloadBase64': base64.b64encode(payload).decode()}
+
+
+def peer_health(_node, request):
+    peer = request['peer']
+    address = ipaddress.IPv4Address(peer['privateIp'])
+    require(any(address in ipaddress.IPv4Network(cidr) for cidr in CONTEXT['subnetCidrs']), 'Peer outside reviewed production subnets')
+    with tempfile.TemporaryDirectory() as temporary:
+        certificate = Path(temporary) / 'peer.pem'
+        certificate.write_text(peer['certificate'])
+        response = host.run('curl', '--silent', '--show-error', '--fail', '--noproxy', '*', '--max-time', '30',
+                            '--cacert', str(certificate), '--resolve', 'api-ipfs.6529.io:443:' + str(address),
+                            'https://api-ipfs.6529.io/health')
+    require(isinstance(json.loads(response).get('Version'), str), 'Private peer HTTPS health failed')
+    return {'privateHttpsVerified': True, 'peerInstanceId': peer['instanceId']}
 
 
 def backup_operation(node, request):
@@ -443,7 +458,7 @@ def main(request):
                'restore-read-only': restore_read_only, 'enable-writes': enable_writes,
                'prepare-source': prepare_source, 'configure-nginx': configure_nginx,
                'fence': fence_operation, 'snapshot': snapshot_operation, 'sync': sync,
-               'verify': lambda _node, _: verify(), 'reboot': reboot_operation}
+               'verify': lambda _node, _: verify(), 'peer-health': peer_health, 'reboot': reboot_operation}
     require(request['operation'] in actions, 'Unknown production operation')
     return actions[request['operation']](node, request)
 
