@@ -13,6 +13,9 @@ sha='a'*40
 role='arn:aws:iam::987989283142:role/seize-ipfs-prod-adoption-service'
 models={name:copy.deepcopy(resource['Properties']) for name,resource in template['Resources'].items()}
 models['Server']['Volumes']=[{'Device':'/dev/sda1','VolumeId':'vol-fixture'}]
+api_config={'CallerReference':'immutable-creation-reference','Origins':{'Items':[{'Id':'fixture'}]}}
+etag='version-before'
+manifest['distributionConfigSha256']=a.fingerprint(api_config)
 for name,model in models.items():
  manifest['resources'][name]['modelSha256']=a.fingerprint(a.normalize(model,manifest['resources'][name]['readOnlyProperties']))
 change_id='arn:aws:cloudformation:us-east-1:987989283142:changeSet/'+a.expected_change_name(sha,manifest)+'/fixture-id'
@@ -28,6 +31,7 @@ drift='IN_SYNC'
 def aws(service,operation,*args,**kwargs):
  calls.append((service,operation,args))
  if operation=='get-caller-identity': return {'Account':manifest['accountId']}
+ if operation=='get-distribution-config':return {'ETag':etag,'DistributionConfig':copy.deepcopy(api_config)}
  if operation=='get-template-summary':return {'ResourceIdentifierSummaries':[
   {'ResourceType':kind,'LogicalResourceIds':[name],'ResourceIdentifiers':['Id' if name in ('ServerSecurityGroup','SharedDistribution') else key]}
   for name,(kind,key,identifier) in a.EXPECTED.items()]}
@@ -82,9 +86,9 @@ describe('production IPFS import baseline', () => {
     // Import preserves the unversioned bucket; enabling versioning is an update.
     expect(resources.Blocks.Properties.VersioningConfiguration).toBeUndefined();
     const cdn = resources.SharedDistribution.Properties.DistributionConfig;
-    // The registry does not support CloudFormation system tags for CloudFront.
-    // An explicit Name tag invokes its full UPDATE handler during import.
-    expect(resources.SharedDistribution.Properties.Tags).toBeUndefined();
+    expect(resources.SharedDistribution.Properties.Tags).toEqual([
+      { Key: 'Name', Value: 'ipfs-6529-cache' }
+    ]);
     expect(cdn.Aliases).toEqual([
       'ipfs-cache.6529.io',
       'ipfs.6529.io',
@@ -152,6 +156,32 @@ template['Resources']['Server']['Properties']['InstanceType']='m7i.large'
 print(rejected(lambda:a.audit(manifest,template)))
 `)
     ).toContain('Template properties differ');
+  });
+
+  test('rejects full API configuration drift outside the CloudFormation model', () => {
+    expect(
+      python(`
+api_config['UnmodeledFutureField']='unexpected'
+print(rejected(lambda:a.audit(manifest,template)))
+`)
+    ).toContain('Full CloudFront API configuration differs');
+  });
+
+  test('ignores API response versions while retaining immutable identity and nested configuration', () => {
+    expect(
+      python(`
+etag='version-after'
+a.audit(manifest,template)
+api_config['Origins']['Items'][0]['Id']='changed-origin'
+print(rejected(lambda:a.audit(manifest,template)))
+`)
+    ).toContain('Full CloudFront API configuration differs');
+    expect(
+      python(`
+api_config['CallerReference']='different-distribution-identity'
+print(rejected(lambda:a.audit(manifest,template)))
+`)
+    ).toContain('Full CloudFront API configuration differs');
   });
 
   test('uses the import identifier returned by AWS, not the EC2 API field name', () => {
@@ -413,7 +443,6 @@ print(rejected(lambda:a.verify(manifest,template)))
       expect.arrayContaining([
         'ssm:SendCommand',
         'route53:ChangeResourceRecordSets',
-        'cloudfront:UpdateDistribution',
         's3:PutObject*'
       ])
     );
@@ -438,5 +467,51 @@ print(rejected(lambda:a.verify(manifest,template)))
       'seize-ipfs-prod-import-*',
       'arn:aws:cloudformation:us-east-1:987989283142:changeSet/seize-ipfs-prod-import-*/*'
     ]);
+  });
+
+  test('limits the CloudFront provider update to one distribution before an explicit deadline', () => {
+    const access = parse(
+      readFileSync(
+        join(directory, 'cloudformation/adoption-access.yaml'),
+        'utf8'
+      )
+    );
+    expect(access.Parameters.CloudFrontImportUpdateExpiresAt.Default).toBe(
+      '1970-01-01T00:00:00Z'
+    );
+    const deadline = { Ref: 'CloudFrontImportUpdateExpiresAt' };
+    const shared =
+      access.Resources.ReadPolicy.Properties.PolicyDocument.Statement;
+    expect(shared).toContainEqual({
+      Effect: 'Deny',
+      Action: 'cloudfront:UpdateDistribution',
+      Resource: '*',
+      Condition: { DateGreaterThanEquals: { 'aws:CurrentTime': deadline } }
+    });
+    const service =
+      access.Resources.ServiceRole.Properties.Policies[0].PolicyDocument
+        .Statement;
+    expect(
+      service.filter(
+        (statement: { Action: string }) =>
+          statement.Action === 'cloudfront:UpdateDistribution'
+      )
+    ).toEqual([
+      {
+        Effect: 'Allow',
+        Action: 'cloudfront:UpdateDistribution',
+        Resource:
+          'arn:aws:cloudfront::987989283142:distribution/E1D6I3Z3M5F0H4',
+        Condition: { DateLessThan: { 'aws:CurrentTime': deadline } }
+      }
+    ]);
+    const controller =
+      access.Resources.AdoptionRole.Properties.Policies[0].PolicyDocument
+        .Statement;
+    expect(controller).toContainEqual({
+      Effect: 'Deny',
+      Action: 'cloudfront:UpdateDistribution',
+      Resource: '*'
+    });
   });
 });

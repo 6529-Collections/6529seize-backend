@@ -301,14 +301,26 @@ remain covered by the native-model hash while the YAML uses the equivalent
 top-level instance properties. Custom tags and cache-behavior order are checked;
 AWS-owned stack tags and irrelevant SG-rule ordering are normalized.
 
-CloudFront declares `cloudFormationSystemTags=false` in its registered resource
-schema. Its import template deliberately omits `Tags`: declaring even the existing
-unchanged Name tag causes CloudFormation's import tagging step to invoke the full
-configuration UPDATE handler. The import role keeps `UpdateDistribution` explicitly
-denied. Existing CloudFront tags remain in place and are covered by the full native
-fingerprint, rather than managed through CloudFormation's Tags property. An initial
-attempt with the Name tag declared rolled back with no resource configuration
-changes because that deny blocked the provider's update call.
+CloudFormation's post-import tagging invokes CloudFront's configuration UPDATE
+handler, including when `Tags` is omitted. Two import attempts established this
+and rolled back because the original explicit deny blocked the provider call;
+resource configurations stayed unchanged. The template preserves the existing
+Name tag. The manifest additionally fingerprints the **entire CloudFront API
+DistributionConfig**, including fields outside the CloudFormation read model,
+and checks it immediately before execution and again during verification.
+Only the response's `ETag` is excluded; `CallerReference` remains covered because
+[AWS prohibits changing it on an existing distribution](https://docs.aws.amazon.com/cloudfront/latest/APIReference/API_UpdateDistribution.html).
+
+`CloudFrontImportUpdateExpiresAt` defaults to the Unix epoch, explicitly denying
+`UpdateDistribution`. Only during an authorized import may bootstrap authority set
+a short future UTC deadline. Before that deadline, only the CloudFormation service
+role may reapply configuration to this one existing distribution; the GitHub
+controller remains explicitly denied. IAM cannot compare an update request's
+configuration with the baseline: the exact reviewed IMPORT template, preflight
+fingerprint and post-import verification provide that check. Restore the parameter
+to the epoch immediately after import completes or rolls back, then verify the
+explicit deny is effective again. This temporary allowance does not enable runtime
+deployment, server modification, S3 content writes or DNS changes.
 
 The import does **not** take ownership of the block bucket's separate bucket policy,
 the shared `EC2SSMRole`, its policies,
@@ -332,10 +344,11 @@ For a future explicitly authorized import:
    `adoption-access.yaml` with `CAPABILITY_NAMED_IAM`, the existing GitHub OIDC
    provider ARN and correct repository subject prefix. Do not broaden the normal
    deployment role. The new service role can read configuration and attach
-   CloudFormation ownership tags; it cannot change service behavior. Neither role
-   has SSM command, DNS change, S3 object write, EC2 modification, or CloudFront
-   configuration-update/deletion permissions. The original shared-CDN deny remains
-   intact in `access.yaml`.
+   CloudFormation ownership tags. Leave `CloudFrontImportUpdateExpiresAt` at its
+   epoch default. Neither role has SSM command, DNS change, S3 object write, EC2
+   modification, or CloudFront deletion permissions. CloudFront configuration
+   updates are explicitly denied outside the bounded service-role window described
+   above. The original shared-CDN deny remains intact in `access.yaml`.
 2. Configure `IPFS_ADOPTION_ROLE_ARN` and `IPFS_ADOPTION_SERVICE_ROLE_ARN` from its
    outputs in the existing `ipfs-prod` GitHub environment restricted to `main`.
    No `IPFS_CONFIG`, AWS keys, new IPFS environment, or new block bucket is needed.
@@ -348,7 +361,8 @@ For a future explicitly authorized import:
    identifiers/check results, never raw resource models or credentials.
 4. If the baseline has drifted, stop. Inspect the changed AWS configuration in
    restricted tooling, edit the YAML directly to the intended unchanged baseline,
-   and review the new native-model and template hashes in `adoption.json`. Do not
+   and review the new native-model, full CloudFront API and template hashes in
+   `adoption.json`. Do not
    merely replace a failed hash to bypass review. The offline `plan` command does
    not fetch AWS or regenerate descriptors.
 5. For the authorized operation, enable only `adoptionEnabled`, leaving
@@ -356,12 +370,17 @@ For a future explicitly authorized import:
    It creates an `IMPORT` change set for exactly four retained resources and
    verifies its full action list, source/baseline binding and original template.
    It never executes it. Review the returned exact change-set ARN and AWS changes.
-6. Run **execute** with the same source SHA and exact prepared ARN. It repeats the
+6. With bootstrap authority, set a short `CloudFrontImportUpdateExpiresAt` deadline
+   on the access stack. Check that only the service role may update the one CDN
+   before expiry, and all other write restrictions remain effective.
+   Run **execute** with the same source SHA and exact prepared ARN. It repeats the
    live audit immediately before execution, imports, enables stack termination
    protection, installs a deny-all resource-update stack policy, and requires exact
    ownership plus `IN_SYNC` drift for every imported resource. These are stack
    metadata protections; live resource properties remain unchanged.
-7. Keep the adoption stack's import-only service role and update prohibition. Disable
+7. Immediately after a terminal import outcome, restore the access-stack deadline
+   to the epoch and confirm `UpdateDistribution` is explicitly denied again.
+   Keep the adoption stack's import-only service role and update prohibition. Disable
    the adoption switch again after the one-time import. Run **verify** for later
    ownership/template/baseline/drift checks. Drift detection updates CloudFormation
    diagnostic metadata but cannot alter resource configuration.
@@ -377,9 +396,10 @@ change set. Import failure may leave stack metadata or partial ownership: inspec
 restricted stack events before a new reviewed attempt. Do not delete retained data
 or restart the serving host to resolve it.
 
-Local tests cover failure/retry contracts; a read-only audit matched the real AWS
-baseline. No real import, OIDC role bootstrap or AWS permission execution has been
-tested, since that would require changing production/account state.
+Local tests cover failure/retry contracts. The real OIDC roles, read-only audits,
+IMPORT preparation and rollback have been exercised against AWS. Successful
+ownership and drift verification are required before adoption is recorded as
+complete; the runtime deployment switch stays disabled throughout.
 
 ## Runtime and traffic handover remains a separate migration
 
