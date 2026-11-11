@@ -868,7 +868,15 @@ describeWithSeed('E2EE delivery service', [], () => {
       expect(
         await db.countOneTimeKeyPackages(bobDevice.publicKey, nowSeconds())
       ).toBe(0);
-      expect(events.map((event) => event.method)).toEqual(['deviceRevoked']);
+      expect(events).toEqual([
+        {
+          method: 'deviceRevoked',
+          args: [
+            expect.arrayContaining([alice.id, bob.id]),
+            { profile_id: bob.id, device_key: bobDevice.publicKey }
+          ]
+        }
+      ]);
       await revokeGrant();
       expect(events).toHaveLength(1);
 
