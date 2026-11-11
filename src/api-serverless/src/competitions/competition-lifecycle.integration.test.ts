@@ -201,6 +201,44 @@ describeWithSeed(
       expect(updated.participation.anonymous_submissions).toBe(false);
     });
 
+    it('caps concurrently published competitions per wave and frees a slot when one is archived', async () => {
+      process.env.COMPETITION_MAX_PUBLISHED_PER_WAVE = '2';
+      try {
+        const drafts = [await draft(), await draft(), await draft()];
+        const publish = (competition: { id: string; config_version: number }) =>
+          service.action(
+            wave.id,
+            competition.id,
+            'publish',
+            {
+              idempotency_key: randomUUID(),
+              config_version: competition.config_version
+            },
+            ctx
+          );
+        const first = await publish(drafts[0]);
+        await publish(drafts[1]);
+        await expect(publish(drafts[2])).rejects.toMatchObject({
+          code: 'PUBLISHED_COMPETITION_LIMIT'
+        });
+        await service.action(
+          wave.id,
+          first.id,
+          'archive',
+          {
+            idempotency_key: randomUUID(),
+            config_version: first.config_version
+          },
+          ctx
+        );
+        await expect(publish(drafts[2])).resolves.toMatchObject({
+          id: drafts[2].id
+        });
+      } finally {
+        delete process.env.COMPETITION_MAX_PUBLISHED_PER_WAVE;
+      }
+    });
+
     it('scopes vote activity to visible entries in the chosen competition and masks drafts and mismatched parents', async () => {
       const first = await draft();
       const second = await draft();

@@ -36,6 +36,7 @@ import {
   WALLETS_TDH_TABLE
 } from '@/constants';
 import { RememeSource } from './entities/IRememe';
+import { canonicalRememeMemeId } from './rememe-meme-id';
 import {
   ConnectionWrapper,
   setSqlExecutor,
@@ -49,6 +50,7 @@ import { getConsolidationsSql } from './sql_helpers';
 import { Nft } from '@/alchemy-sdk';
 import { createHash, randomUUID } from 'node:crypto';
 import * as mysql from 'mysql';
+import { mysqlSslConnectionOptions } from './db-ssl';
 import {
   DEFAULT_PAGE_SIZE,
   NFTSearchResult,
@@ -183,7 +185,8 @@ export async function connect() {
     password: process.env.DB_PASS,
     charset: 'utf8mb4',
     database: process.env.DB_NAME,
-    typeCast: CustomTypeCaster
+    typeCast: CustomTypeCaster,
+    ...mysqlSslConnectionOptions()
   });
   read_pool = mysql.createPool({
     connectionLimit: 10,
@@ -196,7 +199,8 @@ export async function connect() {
     password: process.env.DB_PASS_READ,
     charset: 'utf8mb4',
     database: process.env.DB_NAME,
-    typeCast: CustomTypeCaster
+    typeCast: CustomTypeCaster,
+    ...mysqlSslConnectionOptions()
   });
   class DbImpl extends SqlExecutor {
     async execute<T>(
@@ -496,10 +500,10 @@ async function fetchArtistsNamesByTable(field: string) {
 }
 
 export async function fetchLabNFTs(
-  memeIds: string,
+  memeIds: string | undefined,
   pageSize: number,
   page: number,
-  nfts: string,
+  nfts: string | undefined,
   sortDir: string
 ) {
   let filters = '';
@@ -546,8 +550,8 @@ export async function fetchLabNFTs(
 export async function fetchNFTs(
   pageSize: number,
   page: number,
-  contracts: string,
-  nfts: string,
+  contracts: string | undefined,
+  nfts: string | undefined,
   sortDir: string
 ) {
   let filters = '';
@@ -574,7 +578,7 @@ export async function fetchNFTs(
 }
 
 export async function fetchGradients(
-  idStr: string,
+  idStr: string | undefined,
   pageSize: number,
   page: number,
   sort: string,
@@ -611,8 +615,8 @@ export async function fetchGradients(
 export async function fetchMemesExtended(
   pageSize: number,
   page: number,
-  nfts: string,
-  seasons: string,
+  nfts: string | undefined,
+  seasons: string | undefined,
   sort: string,
   sortDir: string
 ) {
@@ -712,7 +716,7 @@ export async function fetchMemesLatest() {
 }
 
 export async function searchNfts(
-  search: string,
+  search: string | undefined,
   pageSize: number
 ): Promise<NFTSearchResult[]> {
   const query = typeof search === 'string' ? search.trim() : '';
@@ -893,8 +897,8 @@ async function getTransactionFilters(
 export async function fetchLabTransactions(
   pageSize: number,
   page: number,
-  wallets: string,
-  nfts: string,
+  wallets: string | undefined,
+  nfts: string | undefined,
   type_filter: string
 ) {
   const filters = await getTransactionFilters(wallets, nfts, type_filter);
@@ -1334,8 +1338,8 @@ export async function fetchEns(address: string) {
 export async function fetchLabExtended(
   pageSize: number,
   page: number,
-  nfts: string,
-  collections: string
+  nfts: string | undefined,
+  collections: string | undefined
 ) {
   let filters = '';
   const params: any = {};
@@ -1420,7 +1424,7 @@ export async function fetchPrimaryWallet(wallets: string[]) {
 export async function fetchConsolidations(
   pageSize: number,
   page: number,
-  block: string
+  block: string | undefined
 ) {
   let filters = constructFilters('', "wallets like '%, %'");
   const params: any = {};
@@ -1569,12 +1573,12 @@ export async function fetchNftHistory(
 }
 
 export async function fetchRememes(
-  memeIds: string,
+  memeIds: string | undefined,
   pageSize: number,
   page: number,
-  contract: string,
-  id: string,
-  tokenType: string,
+  contract: string | undefined,
+  id: string | undefined,
+  tokenType: string | undefined,
   sort: string,
   sortDirection: string
 ) {
@@ -1584,13 +1588,16 @@ export async function fetchRememes(
   const params: any = {};
 
   if (memeIds) {
-    memeIds.split(',').forEach((nft_id) => {
-      const paramName = `nft_id${nft_id}`;
+    memeIds.split(',').forEach((nft_id, index) => {
+      const paramName = `nft_id${index}`;
       filters = constructFilters(
         filters,
         `JSON_CONTAINS(${REMEMES_TABLE}.meme_references, :${paramName},'$')`
       );
-      params[paramName] = nft_id;
+      // Non-canonical pieces are bound as a JSON string literal: still valid
+      // JSON for JSON_CONTAINS, and it never matches a numeric reference.
+      params[paramName] =
+        canonicalRememeMemeId(nft_id) ?? JSON.stringify(nft_id);
     });
   }
   if (tokenType) {

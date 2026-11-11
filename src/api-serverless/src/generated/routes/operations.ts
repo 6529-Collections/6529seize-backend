@@ -123,6 +123,7 @@ import { ApiDropPollVotersPage } from '@/api/generated/models/ApiDropPollVotersP
 import { ApiDropReactionV2 } from '@/api/generated/models/ApiDropReactionV2';
 import { ApiDropSearchPage } from '@/api/generated/models/ApiDropSearchPage';
 import { ApiDropSignedEvents } from '@/api/generated/models/ApiDropSignedEvents';
+import { ApiDropSignedEventsBatch } from '@/api/generated/models/ApiDropSignedEventsBatch';
 import { ApiDropsLeaderboardPageV2 } from '@/api/generated/models/ApiDropsLeaderboardPageV2';
 import { ApiDropV2 } from '@/api/generated/models/ApiDropV2';
 import { ApiDropV2Page } from '@/api/generated/models/ApiDropV2Page';
@@ -1670,6 +1671,22 @@ export type SetDropReplyCollapseRequest = Request<
   ApiResponse<SetDropReplyCollapseResponse>,
   ApiSetDropReplyCollapseRequest,
   SetDropReplyCollapseQuery,
+  Record<string, never>
+>;
+
+export type GetDropsSignedEventsPathParams = Record<string, never>;
+
+export interface GetDropsSignedEventsQuery {
+  "drop_ids": string;
+}
+
+export type GetDropsSignedEventsResponse = ApiDropSignedEventsBatch;
+
+export type GetDropsSignedEventsRequest = Request<
+  GetDropsSignedEventsPathParams,
+  ApiResponse<GetDropsSignedEventsResponse>,
+  never,
+  GetDropsSignedEventsQuery,
   Record<string, never>
 >;
 

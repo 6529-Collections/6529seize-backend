@@ -10,7 +10,11 @@ import {
   ReleaseNoteDependencyError,
   UntrustedReleaseNoteMetadataError
 } from './release-note-errors';
-import { isAllowedReleaseNotesPrompt } from './release-note-prompts.config';
+import {
+  CI_REPOSITORY_OWNER,
+  getAllowedCiRepositoryName,
+  isAllowedReleaseNotesPrompt
+} from './release-note-prompts.config';
 
 interface GitHubWorkflowRun {
   readonly id: number;
@@ -151,8 +155,18 @@ const NON_HUMAN_GITHUB_LOGINS = new Set([
   'web-flow'
 ]);
 
+/**
+ * The URL path of an allowlisted repository (`owner/name`, each segment
+ * URL-encoded). Any other repository is rejected.
+ */
 function normalizeRepository(repo: string): string {
-  return repo.includes('/') ? repo : `6529-Collections/${repo}`;
+  const name = getAllowedCiRepositoryName(repo);
+  if (!name) {
+    throw new NonRetryableReleaseNoteError(
+      `Unsupported release notes repository ${repo}`
+    );
+  }
+  return `${encodeURIComponent(CI_REPOSITORY_OWNER)}/${encodeURIComponent(name)}`;
 }
 
 function getRepoName(repo: string): string {
@@ -616,7 +630,7 @@ export class ReleaseNoteGitHubService {
     await this.getValidatedCurrentRun(repository, request);
     const pullRequestNumber = request.pull_request_number!;
     const pullRequest = await this.api<GitHubPullRequest>(
-      `/repos/${repository}/pulls/${pullRequestNumber}`
+      `/repos/${repository}/pulls/${encodeURIComponent(pullRequestNumber)}`
     );
     const branch = normalizeBranch(request.branch);
     const mergeCommitSha = pullRequest.merge_commit_sha?.trim();
@@ -772,7 +786,7 @@ export class ReleaseNoteGitHubService {
       query.set('per_page', String(WORKFLOW_RUN_PAGE_SIZE));
       query.set('page', String(page));
       const payload = await this.api<GitHubWorkflowRunsResponse>(
-        `/repos/${repository}/actions/workflows/${currentRun.workflow_id}/runs?${query.toString()}`
+        `/repos/${repository}/actions/workflows/${encodeURIComponent(currentRun.workflow_id)}/runs?${query.toString()}`
       );
       const runs = payload.workflow_runs ?? [];
       const previousRun = runs
@@ -1017,7 +1031,7 @@ export class ReleaseNoteGitHubService {
     const commits: GitHubCommit[] = [];
     for (let page = 1; page <= MAX_PULL_REQUEST_COMMIT_PAGES; page++) {
       const pageCommits = await this.api<GitHubCommit[]>(
-        `/repos/${repository}/pulls/${pullRequestNumber}/commits?per_page=${PAGE_SIZE}&page=${page}`
+        `/repos/${repository}/pulls/${encodeURIComponent(pullRequestNumber)}/commits?per_page=${PAGE_SIZE}&page=${page}`
       );
       commits.push(...pageCommits);
       if (pageCommits.length < PAGE_SIZE) {
@@ -1057,7 +1071,7 @@ export class ReleaseNoteGitHubService {
     const files: GitHubPullRequestFile[] = [];
     for (let page = 1; page <= MAX_FILE_PAGES; page++) {
       const pageFiles = await this.api<GitHubPullRequestFile[]>(
-        `/repos/${repository}/pulls/${pullRequestNumber}/files?per_page=${PAGE_SIZE}&page=${page}`
+        `/repos/${repository}/pulls/${encodeURIComponent(pullRequestNumber)}/files?per_page=${PAGE_SIZE}&page=${page}`
       );
       files.push(
         ...pageFiles.map(({ filename, additions, deletions, changes }) => ({

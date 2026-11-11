@@ -867,6 +867,11 @@ export class IdentitiesDb extends LazyDbAccessCompatibleService {
           .then((it) => it?.profile_id ?? null);
       }
       if (key.endsWith('.eth')) {
+        // Resolves a name through the cached reverse record (ens.display),
+        // not a forward resolution. New reverse records are stored only in
+        // ENS normalised form (see ens-lookup.ts); rows cached earlier may
+        // still hold other spellings until the ENS refresh loop revisits
+        // them, and lower() keeps those reachable.
         return await this.db
           .oneOrNull<{ profile_id: string }>(
             `
@@ -1424,12 +1429,16 @@ export class IdentitiesDb extends LazyDbAccessCompatibleService {
       .then((result) => result?.tdh ?? 0);
   }
 
-  async getTdhAndXTdhCombinedAndFloored(profileId: string): Promise<number> {
+  async getTdhAndXTdhCombinedAndFloored(
+    profileId: string,
+    connection?: ConnectionWrapper<any>
+  ): Promise<number> {
     return this.db
       .oneOrNull<{ res: number }>(
         `
         select floor(tdh + xtdh) as res from ${IDENTITIES_TABLE} where profile_id = :profileId`,
-        { profileId }
+        { profileId },
+        connection ? { wrappedConnection: connection } : undefined
       )
       .then((result) => result?.res ?? 0);
   }

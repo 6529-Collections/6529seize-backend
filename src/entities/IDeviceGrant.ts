@@ -62,4 +62,18 @@ export class DeviceGrantEntity {
   // The key authorized by a combined grant, even before it registers in MLS.
   @Column({ type: 'varchar', length: 66, nullable: true, default: null })
   readonly notice_encrypted_dm_device_key?: string | null;
+
+  // How the grant was registered. Null for grants stored before this was
+  // recorded, or when the registering access token did not say.
+  @Column({ type: 'varchar', length: 16, nullable: true, default: null })
+  readonly registered_client_type?: string | null;
+
+  @Column({ type: 'varchar', length: 16, nullable: true, default: null })
+  readonly registered_binding?: string | null;
+
+  @Column({ type: 'varchar', length: 255, nullable: true, default: null })
+  readonly registered_request_origin?: string | null;
+
+  @Column({ type: 'varchar', length: 36, nullable: true, default: null })
+  readonly registered_session_id?: string | null;
 }

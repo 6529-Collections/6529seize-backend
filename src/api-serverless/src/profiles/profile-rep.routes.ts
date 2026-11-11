@@ -1,4 +1,5 @@
 import { asyncRouter } from '../async.router';
+import { optionalQueryString } from '@/api/query-values';
 import {
   getAuthenticationContext,
   maybeAuthenticatedUser,
@@ -213,7 +214,8 @@ router.get(
     res: Response<ApiResponse<ApiProfileReceivedRepRatesState>>
   ) {
     const identity = req.params.identity.toLowerCase();
-    const raterIdentity = req.query.rater?.toLowerCase() ?? null;
+    const raterIdentity =
+      optionalQueryString(req.query, 'rater')?.toLowerCase() ?? null;
     const timer = Timer.getFromRequest(req);
     const targetProfileId =
       await identityFetcher.getProfileIdByIdentityKeyOrThrow(
@@ -249,7 +251,7 @@ router.get(
     res: Response<ApiResponse<ApiRatingWithProfileInfoAndLevel[]>>
   ) {
     const targetIdentity = req.params.identity.toLowerCase();
-    const category = req.query.category;
+    const category = optionalQueryString(req.query, 'category');
     if (!category) {
       throw new BadRequestException(`Query parameter "category" is required`);
     }

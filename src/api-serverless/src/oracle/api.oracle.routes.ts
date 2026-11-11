@@ -19,7 +19,7 @@ type TdhAboveParams = {
 };
 
 const TdhAboveParamsSchema = Joi.object<TdhAboveParams>({
-  value: Joi.number().required(),
+  value: Joi.number().integer().min(0).max(Number.MAX_SAFE_INTEGER).required(),
   extra: Joi.string().valid('entries').optional()
 });
 

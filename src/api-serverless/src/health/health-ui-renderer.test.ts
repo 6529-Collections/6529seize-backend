@@ -50,3 +50,24 @@ describe('health UI IPFS status', () => {
     }
   );
 });
+
+describe('health UI base URL', () => {
+  it('escapes the request-derived base URL', () => {
+    const html = renderHealthUI(
+      buildHealthData(true),
+      'https://api.6529.io"><script>x</script>'
+    );
+    expect(html).not.toContain('<script>x</script>');
+    expect(html).toContain(
+      'content="https://api.6529.io&quot;&gt;&lt;script&gt;x&lt;/script&gt;/health/ui"'
+    );
+  });
+
+  it('keeps a normal base URL unchanged', () => {
+    expect(
+      renderHealthUI(buildHealthData(true), 'https://api.6529.io')
+    ).toContain(
+      '<meta property="og:url" content="https://api.6529.io/health/ui">'
+    );
+  });
+});

@@ -7,6 +7,10 @@ import { nativeCompetitionRuntimeService } from '@/competitions/native-competiti
 import { competitionEventDispatcher } from '@/competitions/competition-event-dispatcher';
 import { runCompetitionWorkerTasks } from '@/competitions/competition-worker-tasks';
 import { observeDecisionBacklogs } from './loop-health';
+import {
+  decisionLoopBudget,
+  finalDispatchBudgetMs
+} from './decision-loop-budget';
 
 const logger = Logger.get('WAVE_DECISION_EXECUTION_LOOP');
 
@@ -15,16 +19,39 @@ export const handler = sentryContext.wrapLambdaHandler(
     await doInDbContext(
       async () => {
         const timer = new Timer('WAVE_DECISION_EXECUTION_LOOP');
+        const remainingMillis = context?.getRemainingTimeInMillis
+          ? () => context.getRemainingTimeInMillis()
+          : undefined;
+        const budget = decisionLoopBudget();
         try {
           await runCompetitionWorkerTasks([
+            // Outbox delivery gets its share before any decision work.
+            () =>
+              competitionEventDispatcher.dispatchPending(
+                { timer },
+                Date.now(),
+                { budgetMs: budget.dispatchFirstMs }
+              ),
             () =>
               nativeCompetitionRuntimeService.processDueCompetitions({
                 timer,
-                remainingMillis: context?.getRemainingTimeInMillis
-                  ? () => context.getRemainingTimeInMillis()
-                  : undefined
+                remainingMillis,
+                budgetMs: budget.decisionsBudgetMs,
+                competitionDeadlineMs: budget.competitionDeadlineMs,
+                reserveMillis: budget.reserveMillis
               }),
-            () => competitionEventDispatcher.dispatchPending({ timer })
+            // Then the results of this pass's decisions, and the rest.
+            async () => {
+              const budgetMs = finalDispatchBudgetMs(remainingMillis?.());
+              // No time left before the safety margin: the next
+              // invocation's first delivery picks the events up.
+              if (budgetMs === 0) return;
+              await competitionEventDispatcher.dispatchPending(
+                { timer },
+                Date.now(),
+                budgetMs === undefined ? {} : { budgetMs }
+              );
+            }
           ]);
         } finally {
           if (

@@ -29,6 +29,7 @@ jest.mock('@/api/api-helpers', () => ({
 }));
 
 import router from './profiles.routes';
+import { identitiesService } from '../identities/identities.service';
 
 const uploadFile = jest.mocked(ipfsFileUploader.uploadFile);
 // A complete 1x1 RGBA PNG: profile pictures are parsed to strip metadata.
@@ -44,13 +45,17 @@ async function upload({
   fileName = 'avatar.png',
   type = 'image/png',
   field = 'pfp',
-  authenticated = true
+  authenticated = true,
+  endpoint = '/profiles/pfp/ipfs',
+  fields = {}
 }: {
   bytes?: Buffer;
   fileName?: string;
   type?: string;
   field?: string;
   authenticated?: boolean;
+  endpoint?: string;
+  fields?: Record<string, string>;
 }): Promise<{ status: number; body: any }> {
   const app = express();
   app.use('/profiles', router);
@@ -73,11 +78,14 @@ async function upload({
       throw new Error('Missing test address');
     }
     const form = new FormData();
+    for (const [name, value] of Object.entries(fields)) {
+      form.append(name, value);
+    }
     if (bytes) {
       form.append(field, new Blob([bytes], { type }), fileName);
     }
     const response = await fetch(
-      `http://127.0.0.1:${address.port}/profiles/pfp/ipfs`,
+      `http://127.0.0.1:${address.port}${endpoint}`,
       {
         method: 'POST',
         headers: authenticated ? { authorization: 'Bearer test-session' } : {},
@@ -162,5 +170,55 @@ describe('POST /profiles/pfp/ipfs', () => {
     ]);
 
     expect((await upload({ bytes })).status).toBe(201);
+  });
+});
+
+describe('POST /profiles/:identity/pfp', () => {
+  let updateProfilePfp: jest.SpyInstance;
+
+  beforeEach(() => {
+    updateProfilePfp = jest
+      .spyOn(identitiesService, 'updateProfilePfp')
+      .mockResolvedValue({ pfp_url: 'https://example.invalid/stored' });
+  });
+
+  afterEach(() => {
+    updateProfilePfp.mockRestore();
+  });
+
+  it('still sets a meme picture without a file', async () => {
+    const response = await upload({
+      endpoint: '/profiles/someone/pfp',
+      fields: { meme: '7' }
+    });
+
+    expect(response.status).toBe(201);
+    expect(updateProfilePfp).toHaveBeenCalledWith({
+      authenticatedWallet: '0x1111111111111111111111111111111111111111',
+      identity: 'someone',
+      memeOrFile: { file: undefined, meme: 7 }
+    });
+  });
+
+  it('passes a file within the limit on to the service', async () => {
+    const response = await upload({
+      endpoint: '/profiles/someone/pfp',
+      bytes: PNG
+    });
+
+    expect(response.status).toBe(201);
+    expect(updateProfilePfp.mock.calls[0][0].memeOrFile.file.buffer).toEqual(
+      PNG
+    );
+  });
+
+  it('rejects a file over 2 MiB with 413 before the service sees it', async () => {
+    const response = await upload({
+      endpoint: '/profiles/someone/pfp',
+      bytes: Buffer.concat([PNG, Buffer.alloc(PROFILE_PICTURE_MAX_BYTES)])
+    });
+
+    expect(response.status).toBe(413);
+    expect(updateProfilePfp).not.toHaveBeenCalled();
   });
 });

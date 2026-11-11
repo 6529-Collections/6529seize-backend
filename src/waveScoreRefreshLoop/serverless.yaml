@@ -96,16 +96,14 @@ resources:
             - Effect: 'Allow'
               Principal:
                 Service: 'sns.amazonaws.com'
+              # SNS only delivers messages; scope delivery to the subscribed topic.
               Action:
                 - sqs:SendMessage
-                - sqs:ReceiveMessage
-                - sqs:DeleteMessage
-                - sqs:GetQueueUrl
-                - sqs:GetQueueAttributes
-                - sqs:ListQueueTags
-                - sqs:ChangeMessageVisibility
               Resource:
                 - !GetAtt WaveScoreRefreshStartQueue.Arn
+              Condition:
+                ArnEquals:
+                  aws:SourceArn: arn:aws:sns:${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):region}:987989283142:tdh-calculation-done.fifo
     WaveScoreDirtyRefreshQueuePolicy:
       Type: 'AWS::SQS::QueuePolicy'
       Properties:

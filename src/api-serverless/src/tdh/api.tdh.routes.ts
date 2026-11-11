@@ -15,7 +15,12 @@ import { ApiResponse } from '@/api/api-response';
 import { asyncRouter } from '@/api/async.router';
 import { ApiConsolidatedTdh } from '@/api/generated/models/ApiConsolidatedTdh';
 import { identityFetcher } from '@/api/identities/identity.fetcher';
-import { DEFAULT_PAGE_SIZE } from '@/api/page-request';
+import {
+  DEFAULT_MAX_SIZE,
+  DEFAULT_PAGE_SIZE,
+  normalizePage,
+  normalizePageSize
+} from '@/api/page-request';
 import { cacheRequest } from '@/api/request-cache';
 import { resolveMetricsSort } from '@/api/tdh/api.tdh.metrics-sort';
 import { getValidatedByJoiOrThrow } from '@/api/validation';
@@ -64,6 +69,27 @@ const ConsolidatedMetricsQuerySchema: Joi.ObjectSchema<ConsolidatedMetricsQuery>
     download_all: Joi.boolean().default(false)
   }).unknown(true);
 
+/** Largest page served as JSON; larger requests are clamped. */
+export const MAX_TDH_JSON_PAGE_SIZE = DEFAULT_MAX_SIZE;
+/**
+ * Row limit for the `download_all` CSV export of the whole leaderboard. It
+ * is far above the number of consolidations and only bounds the query.
+ */
+export const MAX_TDH_CSV_ROWS = 100_000;
+/** Most comma-separated terms accepted in `search`. */
+export const MAX_TDH_SEARCH_TERMS = 50;
+
+export function assertSearchTermLimit(search: unknown) {
+  if (typeof search !== 'string') {
+    return;
+  }
+  if (search.split(',').length > MAX_TDH_SEARCH_TERMS) {
+    throw new BadRequestException(
+      `search accepts at most ${MAX_TDH_SEARCH_TERMS} comma-separated terms`
+    );
+  }
+}
+
 export function resolveMetricsTdhView(
   tdhView: unknown
 ): MetricsConsolidatedTdhView {
@@ -110,14 +136,19 @@ router.get(
   ) {
     const contract = req.params.contract;
     const nftId = req.params.nft_id;
-    const page = req.query.page ?? 1;
-    const pageSize = req.query.page_size ?? DEFAULT_PAGE_SIZE;
+    const page = normalizePage(req.query.page);
+    const pageSize = normalizePageSize(
+      req.query.page_size,
+      MAX_TDH_JSON_PAGE_SIZE,
+      DEFAULT_PAGE_SIZE
+    );
     const sort =
       req.query.sort && NFT_TDH_SORT.includes(req.query.sort.toLowerCase())
         ? req.query.sort
         : NFT_TDH_SORT[0];
     const sortDir = resolveSortDirection(req.query.sort_direction);
     const search = req.query.search;
+    assertSearchTermLimit(search);
 
     await fetchNftTdh(
       contract,
@@ -162,10 +193,11 @@ router.get(
       ConsolidatedMetricsQuerySchema
     );
     let page = query.page;
-    let pageSize = query.page_size;
+    let pageSize = Math.min(query.page_size, MAX_TDH_JSON_PAGE_SIZE);
     const sort = resolveMetricsSort(query.sort);
     const sortDir = query.sort_direction;
     const search = query.search;
+    assertSearchTermLimit(search);
     const content = enums.resolve(MetricsContent, query.content);
     const season = query.season;
     const collector = enums.resolve(MetricsCollector, query.collector);
@@ -174,7 +206,7 @@ router.get(
     const downloadPage = query.download_page;
     const downloadAll = query.download_all;
     if (downloadAll) {
-      pageSize = Number.MAX_SAFE_INTEGER;
+      pageSize = MAX_TDH_CSV_ROWS;
       page = 1;
     }
 

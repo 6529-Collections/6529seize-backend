@@ -126,7 +126,10 @@ describeWithSeed(
       const mlsKey = hex('e', 64);
       const linked = {
         ...aGrant(id, WALLET_B, 1),
-        notice_encrypted_dm_device_key: mlsKey
+        notice_encrypted_dm_device_key: mlsKey,
+        registered_client_type: 'web',
+        registered_binding: 'siwe',
+        registered_request_origin: 'https://6529.io'
       };
       const oldId = hex('2', 64);
       const revokedId = hex('3', 64);
@@ -173,9 +176,7 @@ describeWithSeed(
         await repo.acknowledgeGrant(id, txCtx);
       });
       await expect(findNotices()).resolves.toEqual([]);
-      await expect(repo.findGrantById(id, ctx)).resolves.toMatchObject({
-        revoked_at: null
-      });
+      await expect(repo.findGrantById(id, ctx)).resolves.toMatchObject(linked);
     });
 
     it('lists grants of every wallet of the profile, newest first', async () => {
@@ -257,6 +258,77 @@ describeWithSeed(
 
       const events = await repo.findEventsByDropId('d', ctx);
       expect(events.map((it) => Number(it.seq))).toEqual([10, 20]);
+    });
+
+    describe('batch reads', () => {
+      function eventId(n: number): string {
+        return `0x${n.toString(16).padStart(64, '0')}`;
+      }
+
+      async function attach(
+        n: number,
+        dropId: string,
+        overrides: Partial<DeviceSignedEventEntity> = {}
+      ) {
+        await repo.reserveEvent(anEvent(eventId(n), n, overrides), ctx);
+        await repo.attachEventToDrop({ eventId: eventId(n), dropId }, ctx);
+      }
+
+      it('returns the content events of several drops, oldest first per drop, without reactions', async () => {
+        await attach(1, 'drop-a');
+        await attach(2, 'drop-b');
+        await attach(3, 'drop-a', { kind: 2 });
+        await attach(4, 'drop-a', { kind: 4 });
+        await attach(5, 'drop-c');
+
+        const { events, truncatedDropIds } =
+          await repo.findContentEventsByDropIds(['drop-a', 'drop-b'], 18, ctx);
+
+        expect(events.map((it) => [it.drop_id, Number(it.seq)])).toEqual([
+          ['drop-a', 1],
+          ['drop-a', 3],
+          ['drop-b', 2]
+        ]);
+        expect(events[0]).not.toHaveProperty('newest_rank');
+        expect(events[0]).not.toHaveProperty('drop_event_count');
+        expect(truncatedDropIds.size).toBe(0);
+      });
+
+      it('keeps the first, the current and the newest events of a long history', async () => {
+        for (let n = 1; n <= 30; n++) {
+          await attach(n, 'drop-a', { kind: n === 1 ? 1 : 2 });
+        }
+        await repo.upsertDropAuthorSignature(
+          { dropId: 'drop-a', eventId: eventId(5), signedAt: 5 },
+          ctx
+        );
+
+        const { events, truncatedDropIds } =
+          await repo.findContentEventsByDropIds(['drop-a'], 3, ctx);
+
+        expect(events.map((it) => Number(it.seq))).toEqual([1, 5, 28, 29, 30]);
+        expect(Array.from(truncatedDropIds)).toEqual(['drop-a']);
+      });
+
+      it('maps drops to their current event', async () => {
+        await repo.upsertDropAuthorSignature(
+          { dropId: 'drop-a', eventId: eventId(1), signedAt: 1 },
+          ctx
+        );
+
+        const current = await repo.findDropAuthorSignatureEventIds(
+          ['drop-a', 'drop-b'],
+          ctx
+        );
+
+        expect(Array.from(current.entries())).toEqual([['drop-a', eventId(1)]]);
+        await expect(
+          repo.findDropAuthorSignatureEventIds([], ctx)
+        ).resolves.toEqual(new Map());
+        await expect(
+          repo.findContentEventsByDropIds([], 18, ctx)
+        ).resolves.toEqual({ events: [], truncatedDropIds: new Set() });
+      });
     });
 
     it('upserts and clears the author signature of a drop', async () => {

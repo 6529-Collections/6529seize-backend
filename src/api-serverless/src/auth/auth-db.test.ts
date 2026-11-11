@@ -16,6 +16,82 @@ function createExecutor() {
 }
 
 describe('AuthDb', () => {
+  it.each([
+    [false, 'encrypted_device_setup is null'],
+    [true, 'encrypted_device_setup is not null']
+  ])(
+    'retires only live shares of the same wallet, target and kind (setup %p)',
+    async (withDeviceSetup, kindClause) => {
+      const { authDb, execute } = createExecutor();
+      const now = new Date();
+
+      await expect(
+        authDb.retireLiveWalletConnectionShares({
+          address: '0xabc',
+          targetClientType: 'native',
+          withDeviceSetup,
+          now
+        })
+      ).resolves.toBe(1);
+
+      const [sql, params] = execute.mock.calls[0];
+      const normalized = String(sql).split(/\s+/).join(' ');
+      expect(normalized).toContain('set consumed_at = :now');
+      expect(normalized).toContain('where address = :address');
+      expect(normalized).toContain(
+        'and target_client_type = :targetClientType'
+      );
+      expect(normalized).toContain(`and ${kindClause} and consumed_at is null`);
+      expect(normalized).toContain('and expires_at > :now');
+      expect(normalized).not.toContain('consumed_session_id');
+      expect(params).toEqual({
+        address: '0xabc',
+        targetClientType: 'native',
+        now
+      });
+    }
+  );
+
+  it('records the redeeming client family with the consumption', async () => {
+    const { authDb, execute, oneOrNull } = createExecutor();
+    oneOrNull.mockResolvedValueOnce({ id: 'share-1' });
+    const now = new Date();
+
+    await authDb.consumeWalletConnectionShare({
+      connectionShareCodeHash: 'share-hash',
+      targetClientType: 'native',
+      now,
+      clientFamily: 'browser'
+    });
+    await authDb.consumeWalletConnectionShare({
+      connectionShareCodeHash: 'share-hash',
+      targetClientType: 'native',
+      now
+    });
+
+    expect(execute.mock.calls[0][0]).toContain(
+      'consumed_client_family = :clientFamily'
+    );
+    expect(execute.mock.calls[0][1]).toEqual(
+      expect.objectContaining({ clientFamily: 'browser' })
+    );
+    expect(execute.mock.calls[1][1]).toEqual(
+      expect.objectContaining({ clientFamily: null })
+    );
+  });
+
+  it('deletes only the legacy refresh token row of the given wallet', async () => {
+    const { authDb, execute } = createExecutor();
+
+    await authDb.deleteLegacyRefreshTokenForAddress('0xabc');
+
+    expect(execute).toHaveBeenCalledTimes(1);
+    expect(execute).toHaveBeenCalledWith(
+      'delete from refresh_tokens where address = :address',
+      { address: '0xabc' }
+    );
+  });
+
   it('stores the validated role when creating a legacy refresh token', async () => {
     const { authDb, execute, oneOrNull } = createExecutor();
     oneOrNull.mockResolvedValueOnce(null);
@@ -271,7 +347,8 @@ describe('AuthDb', () => {
       created_at: new Date(),
       expires_at: new Date(),
       consumed_at: null,
-      consumed_session_id: null
+      consumed_session_id: null,
+      consumed_client_family: null
     });
 
     await authDb.createWalletConnectionShare({

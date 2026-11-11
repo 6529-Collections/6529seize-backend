@@ -39,8 +39,6 @@ export const ALCHEMY_SETTINGS = {
   maxRetries: 10
 };
 
-export const INFURA_KEY = 'b496145d088a4fe5a5861a6db9ee2034';
-
 export const CONSOLIDATIONS_LIMIT = 4;
 // Groups up to this size form exactly as they always have. A group can only
 // grow past it when one member registered every link in both directions at or

@@ -26,6 +26,15 @@ jest.mock('@/arweave-gateway-fallback', () => ({
   withArweaveFallback: jest.fn()
 }));
 
+jest.mock('@/http/public-fetch', () => ({
+  ...jest.requireActual('@/http/public-fetch'),
+  publicFetch: jest.fn()
+}));
+
+jest.mock('@/media/raster-image-format', () => ({
+  detectRasterImageFormat: jest.fn()
+}));
+
 jest.mock('./media-checker', () => ({
   mediaChecker: {
     getContentType: jest.fn()
@@ -52,6 +61,8 @@ import {
 } from './entities/IRememe';
 import { mediaChecker } from './media-checker';
 import { persistRememesS3 } from './s3_rememes';
+import { publicFetch, PublicResponseTooLargeError } from '@/http/public-fetch';
+import { detectRasterImageFormat } from '@/media/raster-image-format';
 
 const BASE_KEY = '0xabc-1.';
 
@@ -59,6 +70,10 @@ describe('persistRememesS3', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     process.env.AWS_6529_IMAGES_BUCKET_NAME = 'test-bucket';
+    jest
+      .mocked(withArweaveFallback)
+      .mockImplementation((url, fetchFn) => fetchFn(url));
+    jest.mocked(detectRasterImageFormat).mockResolvedValue('png');
   });
 
   it('persists existing legacy S3 assets without probing or uploading', async () => {
@@ -155,10 +170,9 @@ describe('persistRememesS3', () => {
   it('normalizes MIME content types and stores allow-listed S3 content types', async () => {
     mockS3Objects({});
     jest.mocked(mediaChecker.getContentType).mockResolvedValue('image/png');
-    jest.mocked(withArweaveFallback).mockResolvedValue(
+    jest.mocked(publicFetch).mockResolvedValue(
       buildFetchResponse({
         body: Buffer.from('image-bytes'),
-        contentLength: '11',
         contentType: 'text/html'
       })
     );
@@ -230,10 +244,9 @@ describe('persistRememesS3', () => {
   it('falls back to the media gateway when metadata image is not fetchable', async () => {
     mockS3Objects({});
     jest.mocked(mediaChecker.getContentType).mockResolvedValue('image/png');
-    jest.mocked(withArweaveFallback).mockResolvedValue(
+    jest.mocked(publicFetch).mockResolvedValue(
       buildFetchResponse({
         body: Buffer.from('image-bytes'),
-        contentLength: '11',
         contentType: 'image/png'
       })
     );
@@ -265,27 +278,136 @@ describe('persistRememesS3', () => {
     ]);
   });
 
-  it('does not buffer oversized remote media responses', async () => {
-    const arrayBuffer = jest.fn();
+  it('fetches through the public transport with a byte cap and records oversize', async () => {
     mockS3Objects({});
     jest.mocked(mediaChecker.getContentType).mockResolvedValue('png');
-    jest.mocked(withArweaveFallback).mockResolvedValue(
-      buildFetchResponse({
-        arrayBuffer,
-        contentLength: '200000000'
-      })
-    );
+    jest
+      .mocked(publicFetch)
+      .mockRejectedValue(
+        new PublicResponseTooLargeError(104857600, 200000000, 'content-length')
+      );
 
     await persistRememesS3([buildRememe()]);
 
-    expect(arrayBuffer).not.toHaveBeenCalled();
+    expect(publicFetch).toHaveBeenCalledWith(
+      'https://example.test/rememe.png',
+      expect.objectContaining({ method: 'GET', maxBytes: 100 * 1024 * 1024 })
+    );
     expect(PutObjectCommand).not.toHaveBeenCalled();
     expect(persistRememes).toHaveBeenCalledWith([
       expect.objectContaining({
         s3_image_original: null,
         s3_image_processing_status: RememeS3ProcessingStatus.TRANSIENT_ERROR,
         s3_image_processing_attempts: 1,
-        s3_image_processing_error: expect.stringContaining('too large')
+        s3_image_processing_error: expect.stringContaining('byte limit')
+      })
+    ]);
+  });
+
+  it('stores the original with the decoded format, not the probed one', async () => {
+    mockS3Objects({});
+    jest.mocked(mediaChecker.getContentType).mockResolvedValue('image/gif');
+    jest.mocked(detectRasterImageFormat).mockResolvedValue('jpeg');
+    jest
+      .mocked(publicFetch)
+      .mockResolvedValue(buildFetchResponse({ body: Buffer.from('jpeg') }));
+    jest
+      .mocked(resizeImageBufferToHeight)
+      .mockResolvedValue(Buffer.from('resized-image'));
+
+    await persistRememesS3([buildRememe()]);
+
+    expect(PutObjectCommand).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        Key: `rememes/images/original/${BASE_KEY}jpeg`,
+        ContentType: 'image/jpeg'
+      })
+    );
+    expect(PutObjectCommand).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        Key: `rememes/images/scaled/${BASE_KEY}webp`,
+        ContentType: 'image/webp'
+      })
+    );
+  });
+
+  it('does not store an original whose bytes are not an image', async () => {
+    mockS3Objects({});
+    jest.mocked(mediaChecker.getContentType).mockResolvedValue('image/png');
+    jest.mocked(detectRasterImageFormat).mockResolvedValue(null);
+    jest
+      .mocked(publicFetch)
+      .mockResolvedValue(
+        buildFetchResponse({ body: Buffer.from('<html></html>') })
+      );
+
+    await persistRememesS3([buildRememe()]);
+
+    expect(PutObjectCommand).not.toHaveBeenCalled();
+    expect(persistRememes).toHaveBeenCalledWith([
+      expect.objectContaining({
+        s3_image_original: null,
+        s3_image_processing_status: RememeS3ProcessingStatus.TRANSIENT_ERROR,
+        s3_image_processing_error: 'Rememe media is not a supported image'
+      })
+    ]);
+  });
+
+  it.each([
+    [
+      'mp4',
+      Buffer.from('000000186674797069736f6d0000000069736f6d6d703432', 'hex'),
+      'mp4',
+      'video/mp4'
+    ],
+    [
+      'webm',
+      Buffer.concat([
+        Buffer.from([0x1a, 0x45, 0xdf, 0xa3]),
+        Buffer.from('....webm')
+      ]),
+      'webm',
+      'video/webm'
+    ]
+  ])(
+    'stores a %s original typed from its container',
+    async (probed, bytes, extension, contentType) => {
+      mockS3Objects({});
+      jest
+        .mocked(mediaChecker.getContentType)
+        .mockResolvedValue(`video/${probed}`);
+      jest
+        .mocked(publicFetch)
+        .mockResolvedValue(buildFetchResponse({ body: bytes }));
+
+      await persistRememesS3([buildRememe()]);
+
+      expect(PutObjectCommand).toHaveBeenCalledTimes(1);
+      expect(PutObjectCommand).toHaveBeenCalledWith(
+        expect.objectContaining({
+          Key: `rememes/images/original/${BASE_KEY}${extension}`,
+          ContentType: contentType
+        })
+      );
+    }
+  );
+
+  it('does not store a video original whose bytes are not a known container', async () => {
+    mockS3Objects({});
+    jest.mocked(mediaChecker.getContentType).mockResolvedValue('video/mp4');
+    jest
+      .mocked(publicFetch)
+      .mockResolvedValue(buildFetchResponse({ body: Buffer.from('<svg/>') }));
+
+    await persistRememesS3([buildRememe()]);
+
+    expect(PutObjectCommand).not.toHaveBeenCalled();
+    expect(persistRememes).toHaveBeenCalledWith([
+      expect.objectContaining({
+        s3_image_original: null,
+        s3_image_processing_status: RememeS3ProcessingStatus.UNSUPPORTED
       })
     ]);
   });
@@ -342,39 +464,20 @@ function mockS3Objects(objectsByPrefix: Record<string, string[]>) {
 }
 
 function buildFetchResponse({
-  arrayBuffer,
   body,
-  contentLength,
   contentType
 }: {
-  arrayBuffer?: jest.Mock;
   body?: Buffer;
-  contentLength?: string;
   contentType?: string;
 }) {
-  const responseBody = body ?? Buffer.alloc(0);
   return {
     ok: true,
     status: 200,
-    statusText: 'OK',
+    finalUrl: 'https://example.test/rememe.png',
     headers: {
-      get: (name: string) => {
-        if (name === 'content-length') {
-          return contentLength ?? responseBody.byteLength.toString();
-        }
-        if (name === 'content-type') {
-          return contentType ?? null;
-        }
-        return null;
-      }
-    },
-    arrayBuffer:
-      arrayBuffer ??
-      jest.fn(async () =>
-        responseBody.buffer.slice(
-          responseBody.byteOffset,
-          responseBody.byteOffset + responseBody.byteLength
-        )
-      )
+      get: (name: string) =>
+        name === 'content-type' ? (contentType ?? null) : null
+    } as never,
+    body: body ?? Buffer.alloc(0)
   };
 }

@@ -24,7 +24,6 @@ import {
 } from '@/entities/IProfileActivityLog';
 import { profileActivityLogsDb } from '@/profileActivityLogs/profile-activity-logs.db';
 import { ConnectionWrapper } from '@/sql-executor';
-import path from 'path';
 import { PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { randomUUID } from 'crypto';
 import {
@@ -55,6 +54,10 @@ import {
   ContentModerationDb,
   contentModerationDb
 } from '@/content-moderation/content-moderation.db';
+import {
+  PreparedProfilePicture,
+  prepareProfilePicture
+} from '@/api/profiles/profile-picture-ipfs-upload';
 
 let pfpS3Client: S3Client | undefined;
 
@@ -296,31 +299,27 @@ export class IdentitiesService {
           throw new BadRequestException(`Meme ${meme} not found`);
         });
     } else if (file) {
-      const extension = path.extname(file.originalname)?.toLowerCase();
-      if (!['.png', '.jpg', '.jpeg', '.gif', '.webp'].includes(extension)) {
-        throw new BadRequestException('Invalid file type');
-      }
-      return await this.uploadPfpToS3(file, extension);
+      // The file name and declared type are ignored: the format comes from
+      // the bytes, and the stored copy has identifying metadata removed.
+      return await this.uploadPfpToS3(prepareProfilePicture(file));
     } else {
       throw new BadRequestException('No PFP provided');
     }
   }
 
-  private async uploadPfpToS3(file: any, fileExtension: string) {
+  private async uploadPfpToS3(picture: PreparedProfilePicture) {
     const s3 = getPfpS3Client();
 
     const myBucket = process.env.AWS_6529_IMAGES_BUCKET_NAME!;
 
-    const keyExtension: string = fileExtension !== '.gif' ? 'webp' : 'gif';
-
-    const key = `pfp/${process.env.NODE_ENV}/${randomUUID()}.${keyExtension}`;
+    const key = `pfp/${process.env.NODE_ENV}/${randomUUID()}.${picture.extension}`;
 
     const uploadedScaledImage = await s3.send(
       new PutObjectCommand({
         Bucket: myBucket,
         Key: key,
-        Body: file.buffer,
-        ContentType: `image/${keyExtension}`,
+        Body: picture.bytes,
+        ContentType: picture.contentType,
         // Each upload gets a fresh random key, so the bytes never change.
         CacheControl: IMMUTABLE_MEDIA_CACHE_CONTROL
       })

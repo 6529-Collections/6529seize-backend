@@ -8,15 +8,30 @@ import { ApiNonceResponse } from '@/api/generated/models/ApiNonceResponse';
 import { ApiLoginResponse } from '@/api/generated/models/ApiLoginResponse';
 import { ApiLoginRequest } from '@/api/generated/models/ApiLoginRequest';
 import { NewsletterWindow } from './newsletter.config';
+import { filterModelOutputText } from '@/model-output-filter';
 
 const API = 'https://api.6529.io/api';
 const markdown = new MarkdownIt({ html: false, linkify: false });
 const READING_WORDS_PER_MINUTE = 250;
+const NEWSLETTER_LINK_ORIGINS = ['https://6529.io'];
+
+/**
+ * The edition is model-written from public messages, so before posting it
+ * keeps links only to https://6529.io (others become plain text) and turns
+ * group mention tokens such as @all into plain words.
+ */
+export function filterNewsletterEdition(body: string): string {
+  return filterModelOutputText(body, {
+    allowedOrigins: NEWSLETTER_LINK_ORIGINS,
+    sourceText: null
+  });
+}
 
 export function newsletterMarkdown(
-  body: string,
+  modelBody: string,
   window: NewsletterWindow
 ): string {
+  const body = filterNewsletterEdition(modelBody);
   const day = new Date(window.start).toISOString().slice(0, 10);
   // Count visible prose and link labels, excluding Markdown syntax and URLs.
   const prose = markdown

@@ -44,6 +44,12 @@ export function isE2eeCiphersuite(value: unknown): value is number {
 }
 
 export const E2EE_MAX_ACTIVE_DEVICES = 10;
+/**
+ * Only active devices seen (registered, renewed or used) within this window
+ * count toward E2EE_MAX_ACTIVE_DEVICES. Devices idle for longer stay active
+ * and usable; they just no longer block enrolling another device.
+ */
+export const E2EE_DEVICE_LIMIT_IDLE_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
 export const E2EE_GRANT_MAX_LIFETIME_SECONDS = 181 * 24 * 60 * 60;
 /** A grant may be issued at most this far ahead of the server clock. */
 export const E2EE_GRANT_MAX_FUTURE_SKEW_SECONDS = 10 * 60;

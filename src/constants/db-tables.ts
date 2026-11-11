@@ -74,6 +74,7 @@ export const NFTS_HISTORY_CLAIMS_TABLE = 'nfts_history_claims';
 export const REMEMES_TABLE = 'rememes';
 export const REMEMES_UPLOADS = 'uploads_rememes';
 export const RATINGS_TABLE = 'ratings';
+export const RATING_CREDIT_LOCKS_TABLE = 'rating_credit_locks';
 export const DROPS_VOTES_CREDIT_SPENDINGS_TABLE =
   'drops_votes_credit_spendings';
 export const DROP_VOTER_STATE_TABLE = 'drop_voter_states';
@@ -185,6 +186,7 @@ export const DROP_REFERENCED_NFTS_TABLE = 'drops_referenced_nfts';
 export const DROP_METADATA_TABLE = 'drops_metadatas';
 export const DROP_MEDIA_TABLE = 'drop_medias';
 export const DROP_MEDIA_UPLOADS_TABLE = 'drop_media_uploads';
+export const MEDIA_UPLOAD_BUDGET_ENTRIES_TABLE = 'media_upload_budget_entries';
 export const DROP_BOOSTS_TABLE = 'drop_boosts';
 export const DROP_CURATIONS_TABLE = 'drop_curations';
 export const DROP_BOOKMARKS_TABLE = 'drop_bookmarks';
@@ -292,6 +294,7 @@ export const COMPETITION_OUTCOME_AWARDS_TABLE = 'competition_outcome_awards';
 export const COMPETITION_OUTBOX_TABLE = 'competition_outbox';
 export const COMPETITION_EVENT_EFFECTS_TABLE = 'competition_event_effects';
 export const COMPETITION_CLAIMS_TABLE = 'competition_claims';
+export const COMPETITION_WORKER_CURSORS_TABLE = 'competition_worker_cursors';
 
 export const COMPETITION_COMMANDS_TABLE = 'competition_commands';
 export const COMPETITION_SIGNATURE_NONCES_TABLE =

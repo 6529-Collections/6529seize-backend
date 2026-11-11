@@ -46,6 +46,7 @@ import {
   WALLETS_TDH_TABLE
 } from '@/constants';
 import { DbQueryOptions } from './db-query.options';
+import { mysqlSslConnectionOptions } from './db-ssl';
 import { writeDelegations } from '@/delegation-row';
 import { Artist } from './entities/IArtist';
 import {
@@ -126,6 +127,7 @@ import {
   withSqlBudgetQueryOptions
 } from '@/db/sql-execution-budget';
 import type { PoolConnection } from 'mysql';
+import { formatNamedParameters } from '@/db/sql-named-parameters';
 
 const logger = Logger.get('DB');
 
@@ -179,7 +181,8 @@ export async function connect(
     synchronize: false,
     logging: false,
     charset: 'utf8mb4',
-    timezone: 'Etc/UTC'
+    timezone: 'Etc/UTC',
+    ...mysqlSslConnectionOptions()
   });
 
   try {
@@ -340,16 +343,7 @@ function prepareStatement(
   sql: string,
   params: { [p: string]: any } | Record<string, any> | undefined
 ) {
-  return sql.replace(/:(\w+)/g, function (txt: string, key: string) {
-    if (params?.hasOwnProperty(key)) {
-      const val = params[key];
-      if (Array.isArray(val)) {
-        return val.map((v) => mysql.escape(v)).join(', ');
-      }
-      return mysql.escape(val);
-    }
-    return txt;
-  });
+  return formatNamedParameters(sql, params);
 }
 
 function serializeQueryRows(result: unknown): unknown[] {

@@ -57,6 +57,8 @@ export class DropPollOptionEntity {
 @Entity(DROP_POLL_VOTES_TABLE)
 @Index('idx_drop_poll_vote_wave_drop', ['wave_id', 'drop_id'])
 @Index('idx_drop_poll_vote_option_time', ['poll_id', 'option_no', 'vote_time'])
+// Profile merges find a voter's votes, and the target's vote in each poll.
+@Index('idx_drop_poll_vote_voter_poll', ['voter_id', 'poll_id'])
 export class DropPollVoteEntity {
   @PrimaryColumn({ type: 'varchar', length: 100, nullable: false })
   readonly poll_id!: string;
