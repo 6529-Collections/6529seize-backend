@@ -21,8 +21,9 @@ import {
  *
  * In both modes an old signed-in socket counts as viewing a wave when the
  * same identity has a socket subscribed to it (old builds keep a per-wave
- * socket for the open wave but take drops on their app socket), and old
- * anonymous sockets, which cannot be told apart, keep today's audience.
+ * socket for the open wave but take drops on their app socket). Anonymous
+ * sockets get only the wave they subscribed to or declared open, with or
+ * without this setting.
  */
 export type FollowerAudienceMode = 'legacy-clients' | 'all';
 
@@ -91,15 +92,32 @@ function identitiesViewingSql(): string {
 }
 
 /**
- * Sockets that keep today's audience in this mode: in `legacy-clients`,
- * every socket of a build that stores `client_version`; in both modes, old
- * anonymous sockets.
+ * Anonymous sockets receive public-wave frames only for the wave they
+ * subscribed to or declared open. The web client keeps no anonymous app
+ * socket (it disconnects without a token) and its signed-out wave view uses
+ * a socket subscribed to that wave, so no client relies on more.
+ * Signed-in sockets are not affected by this condition.
+ */
+export function anonymousOnlyOwnWaveSql(
+  alias: string,
+  waveParam: string,
+  anonymousParam: string
+): string {
+  return `(${alias}.identity_id <> ${anonymousParam}
+            or ${alias}.wave_id = ${waveParam}
+            or ${alias}.open_wave_id = ${waveParam})`;
+}
+
+/**
+ * Signed-in sockets that keep today's audience in this mode: in
+ * `legacy-clients`, every signed-in socket of a build that stores
+ * `client_version`; none in `all`. Anonymous sockets never do: they get the
+ * wave they subscribed to or opened, which the other branches select.
  */
 function unnarrowedSql(mode: FollowerAudienceMode, alias = 'ws'): string {
-  const oldAnonymous = `(${alias}.client_version is null and ${alias}.identity_id = :audienceAnonymous)`;
   return mode === 'legacy-clients'
-    ? `(${alias}.client_version is not null or ${oldAnonymous})`
-    : oldAnonymous;
+    ? `(${alias}.client_version is not null and ${alias}.identity_id <> :audienceAnonymous)`
+    : '(1 = 0)';
 }
 
 /**
@@ -122,16 +140,17 @@ export function followerAudienceConditionSql(
 }
 
 /**
- * Ungrouped (public) waves. Today every socket that is not subscribed to
- * another wave gets the frame. Narrowed, it is the union of:
+ * Ungrouped (public) waves. Without this setting every signed-in socket that
+ * is not subscribed to another wave gets the frame. Narrowed, it is the
+ * union of:
  * 1. sockets subscribed to the wave (wave_id index);
  * 2. sockets that declared it open with SET_OPEN_WAVE (open_wave_id index);
  * 3. followers' sockets not subscribed to another wave (identity_subscriptions
  *    target_id, then ws_connections by identity);
  * 4. old signed-in sockets whose identity has a socket subscribed to the
  *    wave (wave_id index, then ws_connections by identity);
- * 5. sockets that keep today's audience in this mode, not subscribed to
- *    another wave (wave_id index on null, as today).
+ * 5. signed-in sockets that keep today's audience in this mode, not
+ *    subscribed to another wave (wave_id index on null, as today).
  */
 export function ungroupedFollowerAudienceSql({
   table,

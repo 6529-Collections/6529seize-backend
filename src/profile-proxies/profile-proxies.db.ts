@@ -425,29 +425,50 @@ export class ProfileProxiesDb extends LazyDbAccessCompatibleService {
     return this.db.getAffectedRows(result) === 1;
   }
 
+  /**
+   * Deletes every proxy granted by or to the profile, with its actions and
+   * credit balances. Profile merges call this for every consolidated
+   * identity, most of which have no proxies: each side is found through its
+   * own index, locking only that profile's proxies (and the index ranges
+   * where new ones would go), and nothing else runs when there are none.
+   */
   async deleteAllProxiesAndActionsForProfile(
     profileId: string,
     connectionHolder: ConnectionWrapper<any>
   ) {
+    const opts = { wrappedConnection: connectionHolder };
+    const proxyIds = new Set<string>();
+    for (const column of ['target_id', 'created_by'] as const) {
+      const rows = await this.db.execute<{ id: string }>(
+        `select id from ${PROFILE_PROXIES_TABLE} where ${column} = :profileId for update`,
+        { profileId },
+        opts
+      );
+      rows.forEach((row) => proxyIds.add(row.id));
+    }
+    if (!proxyIds.size) {
+      return;
+    }
+    const proxy_ids = Array.from(proxyIds);
+
     await this.db.execute(
-      `delete balances from ${PROFILE_PROXY_RATING_CREDIT_BALANCES_TABLE} balances
-      join ${PROFILE_PROXY_ACTIONS_TABLE} actions on balances.proxy_action_id = actions.id
-      join ${PROFILE_PROXIES_TABLE} proxies on actions.proxy_id = proxies.id
-      where proxies.target_id = :profileId or proxies.created_by = :profileId`,
-      { profileId },
-      { wrappedConnection: connectionHolder }
+      `delete balances from ${PROFILE_PROXY_ACTIONS_TABLE} actions
+      straight_join ${PROFILE_PROXY_RATING_CREDIT_BALANCES_TABLE} balances on balances.proxy_action_id = actions.id
+      where actions.proxy_id in (:proxy_ids)`,
+      { proxy_ids },
+      opts
     );
 
     await this.db.execute(
-      `delete from ${PROFILE_PROXY_ACTIONS_TABLE} where proxy_id in (select id from ${PROFILE_PROXIES_TABLE} where target_id = :profileId or created_by = :profileId)`,
-      { profileId },
-      { wrappedConnection: connectionHolder }
+      `delete from ${PROFILE_PROXY_ACTIONS_TABLE} where proxy_id in (:proxy_ids)`,
+      { proxy_ids },
+      opts
     );
 
     await this.db.execute(
-      `delete from ${PROFILE_PROXIES_TABLE} where target_id = :profileId or created_by = :profileId`,
-      { profileId },
-      { wrappedConnection: connectionHolder }
+      `delete from ${PROFILE_PROXIES_TABLE} where id in (:proxy_ids)`,
+      { proxy_ids },
+      opts
     );
   }
 }

@@ -104,7 +104,11 @@ describe('DeviceGrantsService', () => {
           expires_at: 1807876800000,
           created_at: NOW,
           revoked_at: null,
-          last_used_at: null
+          last_used_at: null,
+          registered_client_type: null,
+          registered_binding: null,
+          registered_request_origin: null,
+          registered_session_id: null
         },
         {}
       );
@@ -122,6 +126,30 @@ describe('DeviceGrantsService', () => {
         revoked_at: null,
         last_used_at: null
       });
+    });
+
+    it('records the sign-in session that stored the grant', async () => {
+      const sessionId = '7d0f5b5e-2c1c-4c2e-9d4b-0b3a1a2c3d4e';
+      const grant = await service.storeLoginGrant(
+        {
+          ...verifiedGrant,
+          registration: {
+            apiHost: 'api.staging.6529.io',
+            requestOrigin: 'https://staging.6529.io',
+            session: { clientType: 'web', binding: 'siwe', sessionId }
+          }
+        },
+        {}
+      );
+
+      expect(jest.mocked(db.insertGrant).mock.calls[0][0]).toMatchObject({
+        registered_client_type: 'web',
+        registered_binding: 'siwe',
+        registered_request_origin: 'https://staging.6529.io',
+        registered_session_id: sessionId
+      });
+      // The API response shape is unchanged.
+      expect(grant).not.toHaveProperty('registered_client_type');
     });
 
     it('returns the stored grant when it already exists', async () => {

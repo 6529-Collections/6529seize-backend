@@ -3,6 +3,7 @@ import { ManifoldAdapter } from './manifold';
 import { getAdapterFor } from './registry';
 import { NftLinkResolver } from '../nft-link-resolver';
 import { validateLinkUrl } from '../nft-link-resolver.validator';
+import { routePublicNetworkToFixtures } from '@/tests/fixtures/public-network-fixture';
 
 jest.mock('node-fetch', () => ({
   ...jest.requireActual('node-fetch'),
@@ -38,6 +39,11 @@ async function resolveInstance(data: unknown) {
 }
 
 describe('Manifold instance metadata through the real adapter and resolver', () => {
+  let restoreNetwork: () => void;
+  beforeAll(() => {
+    restoreNetwork = routePublicNetworkToFixtures();
+  });
+  afterAll(() => restoreNetwork());
   beforeEach(() => {
     jest.mocked(fetch).mockReset();
     jest.mocked(getAdapterFor).mockReturnValue(new ManifoldAdapter());

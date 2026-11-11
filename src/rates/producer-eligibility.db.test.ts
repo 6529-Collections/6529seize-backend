@@ -211,11 +211,15 @@ describeWithSeed(
             { rater: raterId, target: recipientId },
             { wrappedConnection: connection }
           );
-          const pending =
-            await ratingsDb.getAllRepRatingsForTargetsAndCategories(
-              { targets: [recipientId], categories: ['test-rep'] },
-              { connection }
-            );
+          const pending = await ratingsDb.getRaterRepRatingsForUpdate(
+            {
+              rater_profile_id: raterId,
+              pairs: [
+                { matter_target_id: recipientId, matter_category: 'test-rep' }
+              ]
+            },
+            { connection }
+          );
           expect(pending).toMatchObject([{ rating: 3 }]);
           throw new Error('deliberate rollback');
         })

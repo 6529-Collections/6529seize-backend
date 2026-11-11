@@ -32,6 +32,7 @@ import { ApiGroupBeneficiaryGrantMatchMode } from '../generated/models/ApiGroupB
 import { ApiGroupNftOwnershipMatchMode } from '../generated/models/ApiGroupNftOwnershipMatchMode';
 import { waveApiService } from '../waves/wave.api.service';
 import { GroupDescriptionSchema } from './group-description.schema';
+import { rejectProxySession } from '@/api/proxy-session-guard';
 
 const router = asyncRouter();
 
@@ -148,11 +149,12 @@ router.post(
   ) => {
     const timer = Timer.getFromRequest(req);
     const authenticationContext = await getAuthenticationContext(req, timer);
-    const apiUserGroup = getValidatedByJoiOrThrow(req.body, NewUserGroupSchema);
     const savingProfileId = authenticationContext.authenticatedProfileId;
     if (!savingProfileId) {
       throw new ForbiddenException(`Please create a profile first.`);
     }
+    rejectProxySession(authenticationContext, `Proxies cannot create groups`);
+    const apiUserGroup = getValidatedByJoiOrThrow(req.body, NewUserGroupSchema);
     const relatedIdentities = collections.distinct(
       [
         apiUserGroup.group.rep.user_identity,
@@ -291,6 +293,10 @@ router.post(
     if (!savingProfileId) {
       throw new ForbiddenException(`Please create a profile first.`);
     }
+    rejectProxySession(
+      authenticationContext,
+      `Proxies cannot change group visibility`
+    );
     const request = getValidatedByJoiOrThrow(
       {
         visible: req.body.visible,

@@ -34,6 +34,7 @@ import { wavesApiDb } from '../waves/waves.api.db';
 import { invalidateWaveUnreadCacheForReaderWave } from '../waves/wave-unread-cache';
 import { dropCheeringService } from './drop-cheering.service';
 import { dropCreationService } from './drop-creation.api.service';
+import { assertProxyMayEditDrops } from '@/api/drops/drop-proxy-rights';
 import { dropSignatureVerifier } from './drop-signature-verifier';
 import {
   ApiAddReactionToDropRequestSchema,
@@ -56,7 +57,8 @@ import { helpBotTriggerService } from '@/help-bot/help-bot-trigger.service';
 import { Logger } from '@/logging';
 import { wsListenersNotifier } from '@/api/ws/ws-listeners-notifier';
 import { DbPoolName } from '@/db-query.options';
-import { assertWaveAndParentVisibleOrThrow } from '@/api/waves/wave-access.helpers';
+import { optionalQueryString } from '@/api/query-values';
+import { assertWaveAndParentVisibleToProfileOrThrow } from '@/api/waves/wave-access.helpers';
 import { getStructuredWalletSignatureAudienceForHost } from '@/api/wallet-signatures/structured-wallet-signatures';
 import {
   deviceSignedWritesService,
@@ -147,6 +149,13 @@ router.get(
     );
     res.send(latestDrops);
   }
+);
+
+// GET /drops/signed-events is served by the generated OpenAPI routes, which
+// are mounted after this router; without this, '/:drop_id' below would read
+// "signed-events" as a drop id and answer 404.
+router.get('/signed-events', (_req: Request, _res: Response, next) =>
+  next('router')
 );
 
 router.get(
@@ -323,6 +332,7 @@ router.post(
     if (!authenticationContext.isUserFullyAuthenticated()) {
       throw new ForbiddenException(`Create a profile before updating a drop`);
     }
+    assertProxyMayEditDrops(authenticationContext);
     const dropId = req.params.drop_id;
     const updateRequest: ApiUpdateDropRequest = getValidatedByJoiOrThrow(
       apiRequest,
@@ -786,17 +796,15 @@ router.post(
     const drop = drops[0];
     const waveId = drop.wave_id;
     const newTimestamp = drop.created_at - 1;
-    const wave = await wavesApiDb.findById(waveId, undefined, DbPoolName.WRITE);
-    if (wave?.is_direct_message) {
-      const groupsUserIsEligibleFor =
-        await userGroupsService.getGroupsUserIsEligibleFor(identityId, timer);
-      await assertWaveAndParentVisibleOrThrow({
-        wave,
-        groupsUserIsEligibleFor,
-        message: `Wave ${waveId} not found.`,
-        wavesApiDb,
-        ctx: { timer, authenticationContext }
-      });
+    const { wave } = await assertWaveAndParentVisibleToProfileOrThrow({
+      wave: await wavesApiDb.findById(waveId, undefined, DbPoolName.WRITE),
+      profileId: identityId,
+      userGroupsService,
+      message: `Wave ${waveId} not found.`,
+      wavesApiDb,
+      ctx: { timer, authenticationContext }
+    });
+    if (wave.is_direct_message) {
       await wavesApiDb.setDirectMessageUnreadFromSerial(
         {
           waveId,
@@ -979,21 +987,24 @@ export async function prepLatestDropsSearchQuery(
   >
 ) {
   const limit = numbers.parseIntOrNull(req.query.limit) ?? 10;
-  const wave_id = req.query.wave_id ?? null;
-  const curation_id = req.query.curation_id ?? null;
-  const curation_name = req.query.curation_name?.trim() || null;
-  const group_id = req.query.group_id ?? null;
+  const wave_id = optionalQueryString(req.query, 'wave_id') ?? null;
+  const curation_id = optionalQueryString(req.query, 'curation_id') ?? null;
+  const curation_name =
+    optionalQueryString(req.query, 'curation_name')?.trim() || null;
+  const group_id = optionalQueryString(req.query, 'group_id') ?? null;
   const include_replies = req.query.include_replies === 'true';
-  const drop_type_str = (req.query.drop_type as string) ?? null;
+  const drop_type_str = optionalQueryString(req.query, 'drop_type');
   const drop_type_enum = enums.resolve(ApiDropType, drop_type_str) ?? null;
-  const author_id = req.query.author
+  const author = optionalQueryString(req.query, 'author');
+  const author_id = author
     ? await identityFetcher.getProfileIdByIdentityKeyOrThrow(
-        { identityKey: req.query.author },
+        { identityKey: author },
         { timer: Timer.getFromRequest(req) }
       )
     : null;
-  const ids = req.query.ids
-    ? req.query.ids
+  const idsQuery = optionalQueryString(req.query, 'ids');
+  const ids = idsQuery
+    ? idsQuery
         .split(',')
         .map((id) => id.trim())
         .filter((id) => id.length > 0)

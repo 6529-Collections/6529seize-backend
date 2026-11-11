@@ -165,6 +165,7 @@ import { validateMainStageMediaSize } from '@/drops/main-stage-media-validator';
 import { RequestContext } from '@/request.context';
 import {
   getPrePublicationContentFingerprint,
+  PrePublicationEvaluateOptions,
   prePublicationModerationService,
   PrePublicationModerationService
 } from '@/content-moderation/pre-publication-moderation.service';
@@ -786,7 +787,8 @@ export class CreateOrUpdateDropUseCase {
 
   public async preparePrePublication(
     model: CreateOrUpdateDropModel,
-    ctx: RequestContext
+    ctx: RequestContext,
+    options: PrePublicationEvaluateOptions = {}
   ): Promise<PrePublicationPreparation> {
     const sanitizedModel = sanitizeDropStructuredFields(model);
     const operation: 'CREATE' | 'UPDATE' =
@@ -815,10 +817,14 @@ export class CreateOrUpdateDropUseCase {
       // asynchronous validation pipeline and are not inspected here.
       parts: sanitizedModel.parts.map((part) => ({ content: part.content }))
     };
-    const review = await this.moderationService.evaluate(moderationInput, {
-      ...ctx,
-      connection: undefined
-    });
+    const review = await this.moderationService.evaluate(
+      moderationInput,
+      {
+        ...ctx,
+        connection: undefined
+      },
+      options
+    );
     return {
       dropId,
       operation,
@@ -830,6 +836,54 @@ export class CreateOrUpdateDropUseCase {
       requestId: ctx.moderationRequestId,
       currentRevision
     };
+  }
+
+  /**
+   * Read-only checks that a new drop can be posted in its wave: the wave
+   * exists, the drop type fits the wave, chat is enabled for chat drops, and
+   * the author is in the wave's chat or participation group (or the wave has
+   * open replies). The transactional write repeats the full validation; this
+   * only lets the create path reject before the pre-publication evaluator.
+   */
+  public async assertCanCreateDropInWave(
+    model: CreateOrUpdateDropModel,
+    ctx: RequestContext
+  ): Promise<void> {
+    const sanitizedModel = sanitizeDropStructuredFields(model);
+    if (sanitizedModel.drop_id !== null) {
+      return;
+    }
+    const authorId = this.getRequiredAuthorId(sanitizedModel);
+    const [wave, groupIdsUserIsEligibleFor] = await Promise.all([
+      this.wavesApiDb.findById(sanitizedModel.wave_id, ctx.connection),
+      this.userGroupsService.getGroupsUserIsEligibleFor(authorId, ctx.timer)
+    ]);
+    if (!wave) {
+      throw new BadRequestException(`Wave ${sanitizedModel.wave_id} not found`);
+    }
+    if (
+      wave.type === WaveType.CHAT &&
+      sanitizedModel.drop_type !== DropType.CHAT
+    ) {
+      throw new BadRequestException('Chat waves only allow chat drops');
+    }
+    if (sanitizedModel.drop_type === DropType.CHAT && !wave.chat_enabled) {
+      throw new ForbiddenException(`Chat drops are not allowed in this wave`);
+    }
+    const groupId =
+      sanitizedModel.drop_type === DropType.PARTICIPATORY
+        ? wave.participation_group_id
+        : wave.chat_group_id;
+    if (
+      groupId &&
+      !groupIdsUserIsEligibleFor.includes(groupId) &&
+      !(await this.isOpenReplyAllowed(
+        { model: sanitizedModel, wave, groupIdsUserIsEligibleFor },
+        ctx.connection as ConnectionWrapper<any>
+      ))
+    ) {
+      throw new ForbiddenException(`User is not eligible for this wave`);
+    }
   }
 
   public async preResolveIdentityNomination(
@@ -2395,14 +2449,11 @@ export class CreateOrUpdateDropUseCase {
               (it) => it.id === dropId && it.parts_count >= dropPartId
             ) ?? null
         );
-      if (!replyToEntity) {
+      // A missing target and one in another wave share one response so the
+      // error does not reveal whether a drop exists in another wave.
+      if (replyToEntity?.wave_id !== model.wave_id) {
         throw new BadRequestException(
-          `Invalid reply. Drop $${dropId}/${dropPartId} doesn't exist`
-        );
-      }
-      if (replyToEntity.wave_id !== model.wave_id) {
-        throw new BadRequestException(
-          `Invalid reply. Drop you are replying to is not in the same wave as you attempt to create a drop in`
+          `Invalid reply target: ${dropId}/${dropPartId}`
         );
       }
     }

@@ -4,7 +4,8 @@ import type { WavesApiDb } from '@/api/waves/waves.api.db';
 import {
   getGroupsUserIsEligibleForReadContext,
   getWaveManagementContextOrThrow,
-  assertWaveAndParentVisibleOrThrow
+  assertWaveAndParentVisibleOrThrow,
+  assertWaveAndParentVisibleToProfileOrThrow
 } from './wave-access.helpers';
 
 describe('independent subwave visibility', () => {
@@ -113,5 +114,87 @@ describe('getWaveManagementContextOrThrow', () => {
     ).rejects.toThrow(ForbiddenException);
 
     expect(validateWave).not.toHaveBeenCalled();
+  });
+});
+
+describe('assertWaveAndParentVisibleToProfileOrThrow', () => {
+  const wavesApiDb = {
+    findWaveById: jest.fn().mockResolvedValue({
+      visibility_group_id: 'parent-group',
+      parent_wave_id: null
+    })
+  } as unknown as WavesApiDb;
+
+  function userGroups(eligible: string[]) {
+    return {
+      getGroupsUserIsEligibleFor: jest.fn().mockResolvedValue(eligible)
+    };
+  }
+
+  it('throws not found for a missing wave without loading eligibility', async () => {
+    const userGroupsService = userGroups([]);
+    await expect(
+      assertWaveAndParentVisibleToProfileOrThrow({
+        wave: null,
+        profileId: 'profile-1',
+        userGroupsService,
+        message: 'Wave w not found.',
+        wavesApiDb,
+        ctx: {}
+      })
+    ).rejects.toThrow(new NotFoundException('Wave w not found.'));
+    expect(userGroupsService.getGroupsUserIsEligibleFor).not.toHaveBeenCalled();
+  });
+
+  it('accepts a public root wave without loading eligibility', async () => {
+    const userGroupsService = userGroups([]);
+    const wave = { visibility_group_id: null, parent_wave_id: null };
+    await expect(
+      assertWaveAndParentVisibleToProfileOrThrow({
+        wave,
+        profileId: 'profile-1',
+        userGroupsService,
+        message: 'not found',
+        wavesApiDb,
+        ctx: {}
+      })
+    ).resolves.toEqual({ wave, groupsUserIsEligibleFor: undefined });
+    expect(userGroupsService.getGroupsUserIsEligibleFor).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [
+      'a private wave',
+      { visibility_group_id: 'group-1', parent_wave_id: null }
+    ],
+    [
+      'a public subwave of a private parent',
+      { visibility_group_id: null, parent_wave_id: 'parent' }
+    ]
+  ])('hides %s from a non-member', async (_label, wave) => {
+    await expect(
+      assertWaveAndParentVisibleToProfileOrThrow({
+        wave,
+        profileId: 'profile-1',
+        userGroupsService: userGroups([]),
+        message: 'not found',
+        wavesApiDb,
+        ctx: {}
+      })
+    ).rejects.toThrow(NotFoundException);
+  });
+
+  it('returns the loaded groups for a member', async () => {
+    const wave = { visibility_group_id: 'group-1', parent_wave_id: null };
+    await expect(
+      assertWaveAndParentVisibleToProfileOrThrow({
+        wave,
+        profileId: 'profile-1',
+        userGroupsService: userGroups(['group-1']),
+        message: 'not found',
+        wavesApiDb,
+        ctx: {}
+      })
+    ).resolves.toEqual({ wave, groupsUserIsEligibleFor: ['group-1'] });
   });
 });

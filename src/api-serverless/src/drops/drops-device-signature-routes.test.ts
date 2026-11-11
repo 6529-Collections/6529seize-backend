@@ -203,6 +203,11 @@ describe('POST /drops device signatures', () => {
       jest
         .spyOn(dropsDb, 'findWaveIdByDropId')
         .mockResolvedValue(VECTOR_BODY.wave_id);
+      jest.spyOn(dropsDb, 'findDropById').mockResolvedValue({
+        id: dropId,
+        wave_id: VECTOR_BODY.wave_id,
+        author_id: 'author-profile'
+      } as Awaited<ReturnType<typeof dropsDb.findDropById>>);
       jest
         .spyOn(deviceSignedWritesService, 'verifyAndReserve')
         .mockResolvedValue({

@@ -16,6 +16,7 @@ import {
 } from './ws-connection.repository';
 import { WsConnectionPurpose } from '@/entities/IWSConnection';
 import { legacyGetView } from '@/competitions/legacy-competition-get-facade';
+import { ANON_USER_ID } from './ws';
 
 describe('WsConnectionRepository', () => {
   afterEach(() => {
@@ -398,6 +399,40 @@ describe('WsConnectionRepository', () => {
       );
       expect(insert[1]).toMatchObject({ client_version: 'abc1234' });
     });
+
+    it.each([false, true])(
+      'limits anonymous sockets of a public wave audience to the wave they subscribed to or opened (system=%s)',
+      async (system) => {
+        const oneOrNull = jest.fn().mockResolvedValue({
+          visibility_group_id: null,
+          parent_wave_id: null,
+          parent_id: null,
+          parent_parent_id: null,
+          parent_group_id: null
+        });
+        const execute = jest.fn().mockResolvedValue([]);
+        const repo = new WsConnectionRepository(
+          () => ({ oneOrNull, execute }) as never,
+          {} as never
+        );
+        const method = system
+          ? repo.getCurrentlyOnlineCommunityMemberConnectionIdsForSystemBroadcast.bind(
+              repo
+            )
+          : repo.getCurrentlyOnlineCommunityMemberConnectionIds.bind(repo);
+
+        await method({ waveId: 'wave', groupId: null }, {});
+
+        const [sql, params] = execute.mock.calls[0];
+        expect(String(sql).replace(/\s+/g, ' ')).toContain(
+          'and (ws.identity_id <> :anonymousIdentityId or ws.wave_id = :waveId or ws.open_wave_id = :waveId)'
+        );
+        expect(params).toEqual({
+          waveId: 'wave',
+          anonymousIdentityId: ANON_USER_ID
+        });
+      }
+    );
 
     it.each([false, true])(
       'leaves typing sockets out of wave audiences unless asked (system=%s)',

@@ -74,6 +74,7 @@ import {
 } from '@/help-bot/help-bot-daily-activity-credit-queue.service';
 
 import { BadRequestException, CustomApiCompliantException } from '@/exceptions';
+import { assertProxyMayEditDrops } from '@/api/drops/drop-proxy-rights';
 import {
   dropClientIdsDb,
   DropClientIdsDb,
@@ -326,9 +327,15 @@ export class DropCreationApiService {
       await this.createOrUpdateDrop.preResolveIdentityNomination(createModel, {
         timer: ctx.timer
       });
+    // Wave and eligibility checks run before the pre-publication model
+    // evaluator, and only for content that needs it.
     const prePublication = await this.createOrUpdateDrop.preparePrePublication(
       createModel,
-      ctx
+      ctx,
+      {
+        beforeModelEvaluation: () =>
+          this.createOrUpdateDrop.assertCanCreateDropInWave(createModel, ctx)
+      }
     );
     hops.set('drop_pre_commit_ms', hops.elapsed());
     let created: Awaited<
@@ -1098,6 +1105,7 @@ export class DropCreationApiService {
     },
     ctx: RequestContext
   ): Promise<{ drop: ApiDrop; changed: boolean }> {
+    assertProxyMayEditDrops(ctx.authenticationContext);
     const drop = await this.dropsDb.findDropById(dropId);
     if (!drop) {
       throw new NotFoundException(`Drop ${dropId} not found`);

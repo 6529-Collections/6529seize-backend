@@ -199,15 +199,33 @@ export class ProfilesDb extends LazyDbAccessCompatibleService {
     );
   }
 
+  /**
+   * Gives the source's prevote artist cards to the target. profile_id is
+   * part of the primary key, so a card both already have stays once, as the
+   * target's, instead of failing the merge with a duplicate key.
+   */
   async migrateProfileIdsInMemesPrevoteArtistProfiles(
     profileToBeMerged: string,
     target: string,
     connectionHolder: ConnectionWrapper<any>
   ) {
+    if (profileToBeMerged === target) {
+      return;
+    }
+    const params = { profileToBeMerged, target };
+    const opts = { wrappedConnection: connectionHolder };
+    await this.db.execute(
+      `delete source_card from ${MEMES_PREVOTE_ARTIST_PROFILES_TABLE} source_card
+       join ${MEMES_PREVOTE_ARTIST_PROFILES_TABLE} target_card
+         on target_card.profile_id = :target and target_card.card_no = source_card.card_no
+       where source_card.profile_id = :profileToBeMerged`,
+      params,
+      opts
+    );
     await this.db.execute(
       `update ${MEMES_PREVOTE_ARTIST_PROFILES_TABLE} set profile_id = :target where profile_id = :profileToBeMerged`,
-      { profileToBeMerged, target },
-      { wrappedConnection: connectionHolder }
+      params,
+      opts
     );
   }
 
