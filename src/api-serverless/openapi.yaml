@@ -15477,10 +15477,11 @@ paths:
         - Policies
       summary: Delete the EULA acceptance for a device
       operationId: deleteEulaConsent
-      security: []
+      security:
+        - bearerAuth: []
       x-6529-router:
         enabled: true
-        auth: none
+        auth: required
         handler:
           import: "@/api/policies/eula-consent.handlers"
           name: handleDeleteEulaConsent
@@ -15499,6 +15500,8 @@ paths:
                 $ref: "#/components/schemas/ApiDeleteEulaConsentResponse"
         "400":
           description: Invalid device identifier
+        "401":
+          description: Authentication required
   /policies/eula-consent/{deviceId}:
     get:
       tags:
