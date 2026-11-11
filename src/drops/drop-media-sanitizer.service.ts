@@ -94,12 +94,14 @@ export class DropMediaSanitizerService {
 
   async processUpload({
     mediaUploadId,
-    approximateReceiveCount
+    approximateReceiveCount,
+    retryFailed = false
   }: {
     mediaUploadId: string;
     approximateReceiveCount: number;
+    retryFailed?: boolean;
   }): Promise<void> {
-    const upload = await this.dropMediaUploadsDb.findById(mediaUploadId);
+    let upload = await this.dropMediaUploadsDb.findById(mediaUploadId);
     if (!upload) {
       throw new PermanentMediaSanitizationError(
         `Drop media upload ${mediaUploadId} not found`
@@ -110,7 +112,15 @@ export class DropMediaSanitizerService {
       return;
     }
     if (upload.status === DropMediaUploadStatus.FAILED) {
-      return;
+      if (!retryFailed) return;
+      const reset = await this.dropMediaUploadsDb.transitionStatus({
+        id: upload.id,
+        fromStatuses: [DropMediaUploadStatus.FAILED],
+        toStatus: DropMediaUploadStatus.PROCESSING,
+        patch: { error_reason: null, completed_at: null }
+      });
+      if (!reset) return;
+      upload = { ...upload, status: DropMediaUploadStatus.PROCESSING };
     }
     if (!(await this.claimUploadForSanitizing(upload))) {
       return;

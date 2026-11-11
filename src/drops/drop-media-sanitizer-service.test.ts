@@ -376,9 +376,10 @@ describe('image format validation before publication', () => {
       () => ({ send: ingestSend }) as any,
       notifier as any
     );
-    const process = (approximateReceiveCount = 1) =>
+    const process = (approximateReceiveCount = 1, retryFailed = false) =>
       service.processUpload({
         mediaUploadId: 'upload',
+        retryFailed,
         approximateReceiveCount
       });
     return {
@@ -940,6 +941,52 @@ describe('image format validation before publication', () => {
     expect(p.ingestSend.mock.calls.at(-1)![0]).toBeInstanceOf(
       DeleteObjectCommand
     );
+  });
+
+  it('reprocesses a failed upload only when explicitly requested', async () => {
+    const p = pipeline(
+      fixture('jpeg'),
+      'image/jpeg',
+      'true',
+      DropMediaUploadPurpose.CHAT
+    );
+    const failed = {
+      ...(await p.uploadsDb.findById()),
+      status: DropMediaUploadStatus.FAILED
+    };
+    p.uploadsDb.findById.mockResolvedValueOnce(failed);
+    await p.process();
+    expect(p.uploadsDb.transitionStatus).not.toHaveBeenCalled();
+    expect(p.ingestSend).not.toHaveBeenCalled();
+    p.uploadsDb.findById.mockResolvedValueOnce(failed);
+    await p.process(1, true);
+    expect(p.uploadsDb.transitionStatus).toHaveBeenNthCalledWith(1, {
+      id: 'upload',
+      fromStatuses: [DropMediaUploadStatus.FAILED],
+      toStatus: DropMediaUploadStatus.PROCESSING,
+      patch: { error_reason: null, completed_at: null }
+    });
+    expect(p.publicSend).toHaveBeenCalledTimes(3);
+    expect(p.uploadsDb.transitionStatus).toHaveBeenLastCalledWith(
+      expect.objectContaining({ toStatus: DropMediaUploadStatus.READY })
+    );
+    const transitions = p.uploadsDb.transitionStatus.mock.calls.length;
+    await p.process(1, true);
+    expect(p.publicSend).toHaveBeenCalledTimes(3);
+    expect(p.uploadsDb.transitionStatus).toHaveBeenCalledTimes(transitions);
+  });
+
+  it('does not process an explicit retry that loses the failed-state claim', async () => {
+    const p = pipeline(fixture('jpeg'));
+    p.uploadsDb.findById.mockResolvedValueOnce({
+      ...(await p.uploadsDb.findById()),
+      status: DropMediaUploadStatus.FAILED
+    });
+    p.uploadsDb.transitionStatus.mockResolvedValueOnce(false);
+    await p.process(1, true);
+    expect(p.ingestSend).not.toHaveBeenCalled();
+    expect(p.publicSend).not.toHaveBeenCalled();
+    expect(p.notifier.notifyStatusTransition).not.toHaveBeenCalled();
   });
 
   it('rejects a non-stream SDK body as operational before publishing', async () => {
