@@ -247,6 +247,39 @@ export async function redisSetIfAbsent(
 }
 
 /**
+ * SET key NX with a TTL in milliseconds: true when this call created the
+ * key, false when it already existed, null when Redis is disabled or
+ * unavailable.
+ */
+export async function redisSetIfAbsentForMillis(
+  key: string,
+  ttlMillis: number
+): Promise<boolean | null> {
+  if (!redis) {
+    return null;
+  }
+  return runFailOpenCommand<boolean | null>(
+    'SET NX PX',
+    null,
+    async (client) => {
+      const result = await client.set(key, '1', {
+        PX: Math.max(1, Math.ceil(ttlMillis)),
+        NX: true
+      });
+      return result === 'OK';
+    }
+  );
+}
+
+/** DEL that gives up quietly while Redis is disabled or unavailable. */
+export async function redisDeleteIfAvailable(key: string): Promise<void> {
+  if (!redis) {
+    return;
+  }
+  await runFailOpenCommand<number>('DEL', 0, (client) => client.del(key));
+}
+
+/**
  * Return undefined while another instance owns a cold-cache refresh.
  *
  * The publish script touches `key` and `${key}:refresh-lease` together, so
@@ -687,4 +720,77 @@ export async function redisSortedSetAddAndCount(
     throw new TypeError('Invalid count from Redis pipeline');
   }
   return count;
+}
+
+export interface RedisTokenBucket {
+  readonly key: string;
+  /** Tokens a full bucket holds: the burst it admits. */
+  readonly capacity: number;
+  /** Tokens added back per second, up to the capacity. */
+  readonly refillPerSecond: number;
+}
+
+/**
+ * Each bucket is a hash of its token count and refill time. A bucket that
+ * does not exist yet starts full. Tokens are taken from every bucket only
+ * when each one holds at least one, so a rejected call consumes nothing.
+ */
+const TAKE_TOKENS_SCRIPT = `
+local now = tonumber(ARGV[1])
+local ttl = tonumber(ARGV[2])
+local states = {}
+local allowed = 1
+for i, key in ipairs(KEYS) do
+  local capacity = tonumber(ARGV[1 + i * 2])
+  local refill = tonumber(ARGV[2 + i * 2])
+  local stored = redis.call('HMGET', key, 't', 'ts')
+  local tokens = tonumber(stored[1])
+  local ts = tonumber(stored[2])
+  if tokens == nil or ts == nil then
+    tokens = capacity
+    ts = now
+  end
+  if now > ts then
+    tokens = math.min(capacity, tokens + (now - ts) * refill / 1000)
+    ts = now
+  end
+  if tokens < 1 then allowed = 0 end
+  states[i] = { tokens, ts }
+end
+for i, key in ipairs(KEYS) do
+  local tokens = states[i][1]
+  if allowed == 1 then tokens = tokens - 1 end
+  redis.call('HSET', key, 't', tostring(tokens), 'ts', tostring(states[i][2]))
+  redis.call('PEXPIRE', key, ttl)
+end
+return allowed`;
+
+/**
+ * Takes one token from each bucket, or none when any of them is empty, in
+ * one script. Every key must hash to the same Redis Cluster slot (share a
+ * `{tag}`). Returns null when Redis is not configured; in fail-fast mode an
+ * unreachable Redis rejects with RedisUnavailableError.
+ */
+export async function redisTakeTokens(
+  buckets: readonly RedisTokenBucket[],
+  nowMillis: number,
+  ttlMillis: number
+): Promise<boolean | null> {
+  if (!redis) {
+    return null;
+  }
+  const result = await runBoundedCommand('token bucket', (client) =>
+    client.eval(TAKE_TOKENS_SCRIPT, {
+      keys: buckets.map((bucket) => bucket.key),
+      arguments: [
+        String(Math.floor(nowMillis)),
+        String(Math.max(1, Math.ceil(ttlMillis))),
+        ...buckets.flatMap((bucket) => [
+          String(bucket.capacity),
+          String(bucket.refillPerSecond)
+        ])
+      ]
+    })
+  );
+  return Number(result) === 1;
 }

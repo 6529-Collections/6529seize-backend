@@ -965,21 +965,22 @@ export class WsListenersNotifier {
         artist_of_prevote_cards: artistOfPrevoteCards[identityId] ?? [],
         is_wave_creator: waveCreatorIds.has(identityId)
       };
-      const now = Time.currentMillis();
+      const message = JSON.stringify(
+        userIsTypingMessage({
+          wave_id: waveId,
+          timestamp: Time.currentMillis(),
+          profile: profile
+        })
+      );
       stage = 'delivery';
-      await Promise.all(
-        connectionIds.map((connectionId: string) =>
-          this.appWebSockets.send({
-            connectionId,
-            message: JSON.stringify(
-              userIsTypingMessage({
-                wave_id: waveId,
-                timestamp: now,
-                profile: profile
-              })
-            )
-          })
-        )
+      // The same capped pool as every other fan-out, so a busy wave's
+      // typing frames cannot open an unbounded number of sends at once.
+      await forEachConcurrent(
+        connectionIds,
+        async (connectionId: string) => {
+          await this.appWebSockets.send({ connectionId, message });
+        },
+        { concurrency: wsFanoutConcurrency() }
       );
     } catch (error) {
       if (!isExpectedClientError(error)) {
