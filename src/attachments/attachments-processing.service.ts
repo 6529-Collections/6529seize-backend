@@ -29,10 +29,10 @@ import {
   slugifyBaseName
 } from '@/api/media/sanitize-file-name';
 import { Time } from '@/time';
+import { MAX_CSV_BYTES } from '@/attachments/attachment-limits';
 
 const csvParser = require('csv-parser');
 
-const MAX_CSV_BYTES = 50 * 1024 * 1024;
 const MAX_CSV_ROWS = 100_000;
 const MAX_CSV_COLUMNS = 256;
 const MAX_CSV_CELL_LENGTH = 256 * 1024;
