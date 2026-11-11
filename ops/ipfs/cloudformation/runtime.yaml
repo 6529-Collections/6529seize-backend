@@ -1,0 +1,163 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Immutable production IPFS replacement; initially reads existing blocks without writes
+Parameters:
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+  SubnetId:
+    Type: AWS::EC2::Subnet::Id
+  ImageId:
+    Type: AWS::EC2::Image::Id
+  InstanceType:
+    Type: String
+    Default: t3.large
+    AllowedValues: [t3.large, t3.xlarge, m7i.large]
+  FrontdoorSecurityGroup:
+    Type: AWS::EC2::SecurityGroup::Id
+  SourceSecurityGroup:
+    Type: AWS::EC2::SecurityGroup::Id
+  RuntimeBoundaryArn:
+    Type: String
+  AllowWrites:
+    Type: String
+    Default: 'false'
+    AllowedValues: ['false', 'true']
+Conditions:
+  WritesAllowed:
+    Fn::Equals: [{ Ref: AllowWrites }, 'true']
+Resources:
+  Role:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName:
+        Fn::Sub: ${AWS::StackName}-runtime
+      PermissionsBoundary:
+        Ref: RuntimeBoundaryArn
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Action: sts:AssumeRole
+            Principal:
+              Service: ec2.amazonaws.com
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+      Policies:
+        - PolicyName: content-and-recovery
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: s3:ListBucket
+                Resource: arn:aws:s3:::6529ipfs
+                Condition:
+                  StringLike:
+                    s3:prefix: [ipfs, ipfs/*]
+              - Effect: Allow
+                Action: s3:GetObject
+                Resource: arn:aws:s3:::6529ipfs/ipfs/*
+              - Fn::If:
+                  - WritesAllowed
+                  - Effect: Allow
+                    Action: s3:PutObject
+                    Resource: arn:aws:s3:::6529ipfs/ipfs/*
+                  - Ref: AWS::NoValue
+              - Effect: Deny
+                Action: [s3:DeleteObject, s3:DeleteObjectVersion]
+                Resource: arn:aws:s3:::6529ipfs/*
+              - Effect: Allow
+                Action: [s3:GetObject, s3:GetObjectVersion, s3:PutObject]
+                Resource: arn:aws:s3:::seize-ipfs-prod-recovery-backups-987989283142/prod/transfers/*
+              - Effect: Allow
+                Action: s3:PutObject
+                Resource: arn:aws:s3:::seize-ipfs-prod-recovery-backups-987989283142/prod/private/runtime/*
+              - Effect: Allow
+                Action: [s3:GetObject, s3:GetObjectVersion]
+                Resource: arn:aws:s3:::seize-ipfs-prod-recovery-artifacts-987989283142/prod/*
+  Profile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      InstanceProfileName:
+        Fn::Sub: ${AWS::StackName}-runtime
+      Roles: [{ Ref: Role }]
+  SecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: IPFS HTTPS only from the front door and the previous writer
+      VpcId:
+        Ref: VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          SourceSecurityGroupId:
+            Ref: FrontdoorSecurityGroup
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          SourceSecurityGroupId:
+            Ref: SourceSecurityGroup
+      Tags:
+        - Key: Service
+          Value: 6529-ipfs
+        - Key: Environment
+          Value: prod
+  Instance:
+    Type: AWS::EC2::Instance
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      ImageId:
+        Ref: ImageId
+      InstanceType:
+        Ref: InstanceType
+      NetworkInterfaces:
+        - DeviceIndex: '0'
+          AssociatePublicIpAddress: true
+          SubnetId:
+            Ref: SubnetId
+          GroupSet: [{ Ref: SecurityGroup }]
+      IamInstanceProfile:
+        Ref: Profile
+      DisableApiTermination: true
+      MetadataOptions:
+        HttpTokens: required
+        HttpPutResponseHopLimit: 1
+      BlockDeviceMappings:
+        - DeviceName: /dev/sda1
+          Ebs:
+            VolumeSize: 50
+            VolumeType: gp3
+            Encrypted: true
+            DeleteOnTermination: false
+      Tags:
+        - Key: Service
+          Value: 6529-ipfs
+        - Key: Environment
+          Value: prod
+        - Key: IpfsRole
+          Value: candidate
+        - Key: Name
+          Value:
+            Fn::Sub: ${AWS::StackName}
+      UserData:
+        Fn::Base64: |
+          #!/bin/bash
+          set -euo pipefail
+          export DEBIAN_FRONTEND=noninteractive
+          apt-get -o Acquire::Retries=3 update
+          apt-get -o Acquire::Retries=3 install -y --no-install-recommends python3 curl ca-certificates awscli openssl
+          install -d -m 700 /etc/6529-ipfs
+          printf '%s\n' '{"environment":"prod","role":"candidate"}' > /etc/6529-ipfs/managed.json
+          chmod 600 /etc/6529-ipfs/managed.json
+          systemctl enable --now snap.amazon-ssm-agent.amazon-ssm-agent.service
+Outputs:
+  InstanceId:
+    Value: { Ref: Instance }
+  PrivateIp:
+    Value:
+      Fn::GetAtt: [Instance, PrivateIp]
+  SecurityGroupId:
+    Value: { Ref: SecurityGroup }
+  RuntimeRoleArn:
+    Value:
+      Fn::GetAtt: [Role, Arn]

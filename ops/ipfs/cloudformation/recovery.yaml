@@ -1,0 +1,94 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Private versioned IPFS recovery state and reviewed runtime releases
+Resources:
+  Backups:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketName: seize-ipfs-prod-recovery-backups-987989283142
+      VersioningConfiguration:
+        Status: Enabled
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerEnforced
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      Tags:
+        - Key: Service
+          Value: 6529-ipfs
+        - Key: Environment
+          Value: prod
+  Artifacts:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketName: seize-ipfs-prod-recovery-artifacts-987989283142
+      VersioningConfiguration:
+        Status: Enabled
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerEnforced
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      Tags:
+        - Key: Service
+          Value: 6529-ipfs
+        - Key: Environment
+          Value: prod
+  BackupsPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket:
+        Ref: Backups
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Deny
+            Principal: '*'
+            Action: s3:*
+            Resource:
+              - Fn::GetAtt: [Backups, Arn]
+              - Fn::Sub: ${Backups.Arn}/*
+            Condition:
+              Bool:
+                aws:SecureTransport: 'false'
+  ArtifactsPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket:
+        Ref: Artifacts
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Deny
+            Principal: '*'
+            Action: s3:*
+            Resource:
+              - Fn::GetAtt: [Artifacts, Arn]
+              - Fn::Sub: ${Artifacts.Arn}/*
+            Condition:
+              Bool:
+                aws:SecureTransport: 'false'
+Outputs:
+  BackupsBucket:
+    Value:
+      Ref: Backups
+  ArtifactsBucket:
+    Value:
+      Ref: Artifacts

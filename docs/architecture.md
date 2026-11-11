@@ -3057,3 +3057,15 @@ Runtime/writer traffic handover remains a separate reviewed migration requiring
 replacement validation, a stable front door, request draining and reconciliation
 of all completed writes. See the [IPFS runbook](../ops/ipfs/README.md) for exact
 ownership boundaries, recovery limitations, deployment order and adoption steps.
+
+Stage 2 development adds handwritten production templates for a stable ALB front
+door with separate writer/gateway target groups, immutable replacement runtimes,
+private versioned recovery/artifact buckets and dedicated deployment authority.
+The old security group and shared CloudFront distribution are not changed by
+these templates. A local upload router persists writer fences, forwards new
+uploads synchronously, tracks source requests until completion and holds mutable
+`to-files` operations until final MFS transfer. Pin transfer retains both nodes'
+completed uploads. Read-only restoration compares existing S3 block bytes and
+rejects new writes through both the plugin and IAM. These foundations alone do
+not switch production; the reviewed deployment controller must validate and
+perform the authorized handover.
