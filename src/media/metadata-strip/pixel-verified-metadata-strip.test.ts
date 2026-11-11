@@ -1,6 +1,9 @@
 import Sharp from 'sharp';
 import * as lossless from './lossless-metadata-strip';
-import { stripMetadataWithPixelCheck } from './pixel-verified-metadata-strip';
+import {
+  canVerifyDecodedPixels,
+  stripMetadataWithPixelCheck
+} from './pixel-verified-metadata-strip';
 import {
   identifyingGif,
   identifyingJpeg,
@@ -11,6 +14,23 @@ import {
 
 describe('stripMetadataWithPixelCheck', () => {
   afterEach(() => jest.restoreAllMocks());
+
+  it('admits a 76.5 MP JPEG while retaining a bounded verification budget', () => {
+    const metadata = {
+      width: 8500,
+      height: 9000,
+      channels: 3 as const,
+      depth: 'uchar' as const
+    };
+    expect(canVerifyDecodedPixels(metadata)).toBe(true);
+    expect(
+      canVerifyDecodedPixels({ ...metadata, width: 17000, height: 18000 })
+    ).toBe(false);
+    expect(canVerifyDecodedPixels({ ...metadata, depth: 'ushort' })).toBe(
+      false
+    );
+    expect(canVerifyDecodedPixels({ ...metadata, width: 0 })).toBe(false);
+  });
 
   it.each<[lossless.LosslessStripFormat, () => Promise<Buffer>]>([
     ['jpeg', async () => (await identifyingJpeg()).jpeg],
