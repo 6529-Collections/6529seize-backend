@@ -11,10 +11,19 @@ import {
 } from './pre-publication-moderation.service';
 import { ModerationReviewDb } from './moderation-review.db';
 import { Logger } from '@/logging';
-import { PRE_PUBLICATION_EVALUATOR_FALLBACK_LOG_MARKER } from './pre-publication-evaluator-guards';
+import {
+  DEFAULT_PRE_PUBLICATION_EVALUATOR_PROFILE_HOURLY_LIMIT,
+  PRE_PUBLICATION_EVALUATOR_FALLBACK_LOG_MARKER
+} from './pre-publication-evaluator-guards';
 import { BedrockAnthropicRefusalError } from '@/bedrock-anthropic';
 
-function createService() {
+function createService({
+  ServiceClass = PrePublicationModerationService,
+  verdicts = new Map<string, unknown>()
+}: {
+  ServiceClass?: typeof PrePublicationModerationService;
+  verdicts?: Map<string, unknown>;
+} = {}) {
   const moderationDb = {
     getProfileStatus: jest
       .fn()
@@ -23,7 +32,6 @@ function createService() {
     countRecentEvaluatorInvocations: jest.fn().mockResolvedValue(0),
     recordPrePublicationCheck: jest.fn().mockResolvedValue(undefined)
   };
-  const verdicts = new Map<string, unknown>();
   const verdictCache = {
     get: jest.fn(async (key: string) => (verdicts.get(key) as any) ?? null),
     set: jest.fn(async (key: string, value: unknown) => {
@@ -47,7 +55,7 @@ function createService() {
     finish: jest.fn().mockResolvedValue(undefined)
   };
   return {
-    service: new PrePublicationModerationService(
+    service: new ServiceClass(
       moderationDb as any,
       aiService as any,
       reviews as unknown as ModerationReviewDb,
@@ -58,6 +66,26 @@ function createService() {
     reviews,
     verdictCache
   };
+}
+
+/**
+ * The service loaded in its own module registry with a different evaluator
+ * policy version, as a deployment with an updated policy would run it.
+ */
+function serviceClassWithPolicyVersion(
+  policyVersion: string
+): typeof PrePublicationModerationService {
+  let ServiceClass: typeof PrePublicationModerationService;
+  jest.isolateModules(() => {
+    jest.doMock('./content-moderation-ai.service', () => ({
+      ...jest.requireActual('./content-moderation-ai.service'),
+      PRE_PUBLICATION_EVALUATOR_VERSION: policyVersion
+    }));
+    ServiceClass =
+      require('./pre-publication-moderation.service').PrePublicationModerationService;
+  });
+  jest.dontMock('./content-moderation-ai.service');
+  return ServiceClass!;
 }
 
 function input(content: string) {
@@ -386,6 +414,50 @@ describe('PrePublicationModerationService', () => {
 
     expect(aiService.assessPrePublication).toHaveBeenCalledTimes(2);
   });
+
+  it('does not reuse a verdict cached under another policy version', async () => {
+    const verdicts = new Map<string, unknown>();
+    const current = createService({ verdicts });
+    const updated = createService({
+      verdicts,
+      ServiceClass: serviceClassWithPolicyVersion(
+        'pre-publication-evaluator-next'
+      )
+    });
+
+    await current.service.evaluate(input('I will kill you'), {});
+    await updated.service.evaluate(input('I will kill you'), {});
+
+    expect(current.aiService.assessPrePublication).toHaveBeenCalledTimes(1);
+    expect(updated.aiService.assessPrePublication).toHaveBeenCalledTimes(1);
+    expect(updated.verdictCache.get).toHaveBeenCalledTimes(1);
+    expect(updated.verdictCache.get.mock.calls[0][0]).not.toBe(
+      current.verdictCache.get.mock.calls[0][0]
+    );
+    expect(verdicts.size).toBe(2);
+  });
+
+  it.each([
+    [DEFAULT_PRE_PUBLICATION_EVALUATOR_PROFILE_HOURLY_LIMIT - 1, true],
+    [DEFAULT_PRE_PUBLICATION_EVALUATOR_PROFILE_HOURLY_LIMIT, false]
+  ])(
+    'with %i evaluator calls in the window, calls the evaluator: %s',
+    async (used, allowed) => {
+      const { service, aiService, moderationDb } = createService();
+      moderationDb.countRecentEvaluatorInvocations.mockResolvedValue(used);
+
+      const outcome = service.evaluate(input('I will kill you'), {});
+      if (allowed) {
+        await expect(outcome).resolves.toBeDefined();
+        expect(aiService.assessPrePublication).toHaveBeenCalledTimes(1);
+      } else {
+        await expect(outcome).rejects.toMatchObject({
+          code: CONTENT_MODERATION_REVIEW_LIMIT_CODE
+        });
+        expect(aiService.assessPrePublication).not.toHaveBeenCalled();
+      }
+    }
+  );
 
   it('refuses to call the evaluator once the profile budget is used', async () => {
     const { service, aiService, moderationDb } = createService();

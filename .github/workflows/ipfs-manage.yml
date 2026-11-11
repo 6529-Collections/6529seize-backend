@@ -1,0 +1,101 @@
+name: Manage production IPFS
+
+# Only explicit, reviewed main-branch dispatches can change production.
+on:
+  workflow_dispatch:
+    inputs:
+      operation:
+        type: choice
+        required: true
+        default: plan
+        options: [plan, migrate, verify, backup, rollback, promote]
+      deployment_id:
+        description: '3-12 lowercase letters/digits/dashes; new ID for each release, existing ID for rollback/verification'
+        type: string
+        required: true
+      expected_source_sha:
+        description: 'Full reviewed main SHA; must equal this dispatch commit'
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ipfs-manage-prod
+  cancel-in-progress: false
+
+jobs:
+  manage:
+    if: >-
+      github.repository == '6529-Collections/6529seize-backend' &&
+      github.sha == inputs.expected_source_sha && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    environment: ipfs-prod
+    timeout-minutes: 360
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      IPFS_ENVIRONMENT: prod
+      IPFS_SOURCE_SHA: ${{ inputs.expected_source_sha }}
+      IPFS_OPERATION: ${{ inputs.operation }}
+      IPFS_DEPLOYMENT_ID: ${{ inputs.deployment_id }}
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Check reviewed source and runtime switch before AWS authentication
+        run: |
+          python3 - <<'PY'
+          import os,sys
+          sys.path.insert(0,'ops/ipfs')
+          from common import source_identity_guard,runtime_mutation_guard,require,matches
+          source_identity_guard(os.environ['IPFS_SOURCE_SHA'],os.environ)
+          require(matches(r'[a-z][a-z0-9-]{2,11}',os.environ['IPFS_DEPLOYMENT_ID']),'Invalid deployment ID')
+          require(os.environ['IPFS_DEPLOYMENT_ID']!='access','Deployment ID reserved for bootstrap authority')
+          if os.environ['IPFS_OPERATION']!='plan':
+              runtime_mutation_guard(os.environ['IPFS_SOURCE_SHA'],os.environ)
+          PY
+      - name: Install controller YAML reader
+        run: |
+          python3 -m venv "$RUNNER_TEMP/ipfs-control-tools"
+          "$RUNNER_TEMP/ipfs-control-tools/bin/pip" install -r ops/ipfs/requirements-control.txt
+          echo "$RUNNER_TEMP/ipfs-control-tools/bin" >> "$GITHUB_PATH"
+      - name: Offline plan
+        if: inputs.operation == 'plan'
+        run: python3 ops/ipfs/production.py plan --sha "$IPFS_SOURCE_SHA" --deployment-id "$IPFS_DEPLOYMENT_ID"
+      - name: Build pinned release on the runner
+        if: inputs.operation == 'migrate'
+        env:
+          IPFS_BUILD_OUTPUT: ${{ runner.temp }}/ipfs-release
+        run: bash ops/ipfs/build-kubo.sh
+      - name: Rehearse the exact release before AWS authentication
+        if: inputs.operation == 'migrate'
+        env:
+          AWS_EC2_METADATA_DISABLED: 'true'
+        run: |
+          python3 ops/ipfs/rehearse.py "$RUNNER_TEMP/ipfs-release"
+          python3 ops/ipfs/rehearse_router.py "$RUNNER_TEMP/ipfs-release"
+          tar -czf "$RUNNER_TEMP/ipfs-bundle.tar.gz" -C "$RUNNER_TEMP/ipfs-release" .
+      - name: Authenticate with production IPFS OIDC authority
+        if: inputs.operation != 'plan'
+        uses: aws-actions/configure-aws-credentials@e7f100cf4c008499ea8adda475de1042d6975c7b # v6.2.0
+        with:
+          role-to-assume: ${{ vars.IPFS_RUNTIME_ROLE_ARN }}
+          aws-region: us-east-1
+          allowed-account-ids: '987989283142'
+          role-session-name: ipfs-${{ github.run_id }}
+          role-duration-seconds: 21600
+      - name: Execute the explicit production operation
+        if: inputs.operation != 'plan'
+        env:
+          IPFS_RUNTIME_SERVICE_ROLE_ARN: ${{ vars.IPFS_RUNTIME_SERVICE_ROLE_ARN }}
+        run: |
+          arguments=()
+          if [[ "$IPFS_OPERATION" == migrate ]]; then
+            arguments+=(--bundle "$RUNNER_TEMP/ipfs-bundle.tar.gz")
+          fi
+          python3 -u ops/ipfs/production.py "$IPFS_OPERATION" --sha "$IPFS_SOURCE_SHA" \
+            --deployment-id "$IPFS_DEPLOYMENT_ID" "${arguments[@]}"

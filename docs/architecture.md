@@ -639,14 +639,14 @@ through `1a-staging` without deploying this service there. See
 | `nftsLoop`                               | Discover, refresh, and audit NFTs.                                                                                                                                  |
 | `transactionsLoop`                       | Index MEMES, Gradients, and Meme Lab transfers.                                                                                                                     |
 | `nftOwnersLoop`                          | Maintain current owner balance snapshots.                                                                                                                           |
-| `nftHistoryLoop`                         | Maintain NFT metadata history.                                                                                                                                         |
+| `nftHistoryLoop`                         | Maintain NFT metadata history.                                                                                                                                      |
 | `delegationsLoop`                        | Sync delegation.cash and consolidation data.                                                                                                                        |
 | `nextgenContractLoop`                    | Index NextGen contract events.                                                                                                                                      |
 | `nextgenMetadataLoop`                    | Refresh NextGen metadata.                                                                                                                                           |
 | `externalCollectionSnapshottingLoop`     | Snapshot external collection ownership.                                                                                                                             |
 | `externalCollectionLiveTailingLoop`      | Live-tail external collection transfers.                                                                                                                            |
 | `transactionsProcessingLoop`             | Normalize raw transactions into processed state.                                                                                                                    |
-| `tdhLoop`                                | Calculate TDH, publish wallet/consolidated CSVs through bounded Arweave gateway failover with public ArDrive download links, and publish TDH completion.                                                 |
+| `tdhLoop`                                | Calculate TDH, publish wallet/consolidated CSVs through bounded Arweave gateway failover with public ArDrive download links, and publish TDH completion.            |
 | `tdhHistoryLoop`                         | Write historical TDH snapshots.                                                                                                                                     |
 | `ownersBalancesLoop`                     | Project owner balance aggregates.                                                                                                                                   |
 | `aggregatedActivityLoop`                 | Calculate activity aggregates.                                                                                                                                      |
@@ -698,37 +698,37 @@ reset behavior, and the required writer-before-collector deployment order.
 
 ### Triggered Lambdas
 
-| Lambda                           | Trigger                                                                                                                             | Purpose                                                                                                                     |
-| -------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
-| `api` / `seizeAPI`               | API Gateway HTTP/WebSocket                                                                                                          | Public REST API and WebSocket boundary.                                                                                     |
-| `claimsBuilder`                  | SQS `claims-builder`                                                                                                                | Build minting claims from winning drops.                                                                                    |
-| `claimsMediaArweaveUploader`     | SQS `claims-media-arweave-upload`                                                                                                   | Upload claim media and metadata to Arweave.                                                                                 |
-| `s3Uploader`                     | SQS `s3-uploader-jobs`                                                                                                              | Mirror, compress, and upload NFT media.                                                                                     |
-| `attachmentsOrchestrator`        | SQS `attachments-orchestration` and S3 object-created event                                                                         | Find uploaded attachment objects, retry, and enqueue processing.                                                            |
-| `attachmentsProcessor`           | SQS `attachments-processing`                                                                                                        | Scan/process attachments.                                                                                                   |
-| `dropMediaSanitizer`             | SQS `drop-media-sanitizer`                                                                                                          | Strip metadata from private-ingest drop/wave image uploads and publish sanitized originals.                                 |
-| `nftLinkRefresherLoop`           | SQS `nft-link-refreshes`                                                                                                            | Resolve external NFT links.                                                                                                 |
-| `nftLinkMediaPreviewLoop`        | SQS `nft-link-media-previews`                                                                                                       | Generate media previews for NFT links.                                                                                      |
+| Lambda                           | Trigger                                                                                                                             | Purpose                                                                                                                                                                                 |
+| -------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `api` / `seizeAPI`               | API Gateway HTTP/WebSocket                                                                                                          | Public REST API and WebSocket boundary.                                                                                                                                                 |
+| `claimsBuilder`                  | SQS `claims-builder`                                                                                                                | Build minting claims from winning drops.                                                                                                                                                |
+| `claimsMediaArweaveUploader`     | SQS `claims-media-arweave-upload`                                                                                                   | Upload claim media and metadata to Arweave.                                                                                                                                             |
+| `s3Uploader`                     | SQS `s3-uploader-jobs`                                                                                                              | Mirror, compress, and upload NFT media.                                                                                                                                                 |
+| `attachmentsOrchestrator`        | SQS `attachments-orchestration` and S3 object-created event                                                                         | Find uploaded attachment objects, retry, and enqueue processing.                                                                                                                        |
+| `attachmentsProcessor`           | SQS `attachments-processing`                                                                                                        | Scan/process attachments.                                                                                                                                                               |
+| `dropMediaSanitizer`             | SQS `drop-media-sanitizer`                                                                                                          | Strip metadata from private-ingest drop/wave image uploads and publish sanitized originals.                                                                                             |
+| `nftLinkRefresherLoop`           | SQS `nft-link-refreshes`                                                                                                            | Resolve external NFT links.                                                                                                                                                             |
+| `nftLinkMediaPreviewLoop`        | SQS `nft-link-media-previews`                                                                                                       | Generate media previews for NFT links.                                                                                                                                                  |
 | `pushNotificationsHandler`       | SQS `firebase-push-notifications`                                                                                                   | Deliver Firebase pushes and recipient-scoped WebSocket notification invalidations after notification rows are durable; also content-free `e2ee_wake` notifications for encrypted chats. |
-| `helpBotReplyLoop`               | SQS `help-bot-replies`                                                                                                              | Answer `@help6529` interactions and direct follow-ups to bot replies.                                                       |
-| `helpBotDailyActivityCreditLoop` | SQS `help-bot-daily-activity-credits.fifo` with EventBridge wakeup fallback                                                         | Grant idempotent once-per-UTC-day activity credits from durable post-drop requests.                                         |
-| `releaseNotesGenerationLoop`     | SQS `release-note-generation`                                                                                                       | Publish production Backend, Frontend, and Desktop release notes as `ci6529`.                                                |
-| `waveDropMetricsRefreshLoop`     | SQS `wave-drop-metrics-refresh-dirty.fifo`; EventBridge fallback                                                                    | Repair materialized wave/dropper drop counts and latest-drop timestamps after drop deletes.                                 |
-| `xTdhLoop`                       | SNS `tdh-calculation-done.fifo` or a direct post-persistence partial-TDH enqueue via SQS `xtdh-start.fifo`; self-queued stats phase | Recalculate the xTDH universe after TDH finishes, then rebuild and publish xTDH stats in a follow-up queue message.         |
-| `overRatesRevocationLoop`        | SNS `tdh-calculation-done.fifo` via SQS `over-rates-revocation-start.fifo`                                                          | Revoke over-rates after TDH changes.                                                                                        |
-| `waveScoreRefreshLoop`           | SNS `tdh-calculation-done.fifo` via SQS `wave-score-refresh-start.fifo`; SQS `wave-score-refresh-dirty.fifo`; EventBridge fallback  | Refresh materialized wave REP and Wave Score discovery fields after TDH changes or wave/drop/rating/subscription mutations. |
-| `mediaResizerLoop`               | CloudFront/request path                                                                                                             | Resize images on demand.                                                                                                    |
-| `nextgenMediaProxyInterceptor`   | Lambda@Edge / CloudFront request                                                                                                    | Provide NextGen metadata fallback.                                                                                          |
-| `dropVideoConversionInvokerLoop` | S3 object-created event for `drops/`                                                                                                | Invoke MediaConvert for uploaded drop videos.                                                                               |
+| `helpBotReplyLoop`               | SQS `help-bot-replies`                                                                                                              | Answer `@help6529` interactions and direct follow-ups to bot replies.                                                                                                                   |
+| `helpBotDailyActivityCreditLoop` | SQS `help-bot-daily-activity-credits.fifo` with EventBridge wakeup fallback                                                         | Grant idempotent once-per-UTC-day activity credits from durable post-drop requests.                                                                                                     |
+| `releaseNotesGenerationLoop`     | SQS `release-note-generation`                                                                                                       | Publish production Backend, Frontend, and Desktop release notes as `ci6529`.                                                                                                            |
+| `waveDropMetricsRefreshLoop`     | SQS `wave-drop-metrics-refresh-dirty.fifo`; EventBridge fallback                                                                    | Repair materialized wave/dropper drop counts and latest-drop timestamps after drop deletes.                                                                                             |
+| `xTdhLoop`                       | SNS `tdh-calculation-done.fifo` or a direct post-persistence partial-TDH enqueue via SQS `xtdh-start.fifo`; self-queued stats phase | Recalculate the xTDH universe after TDH finishes, then rebuild and publish xTDH stats in a follow-up queue message.                                                                     |
+| `overRatesRevocationLoop`        | SNS `tdh-calculation-done.fifo` via SQS `over-rates-revocation-start.fifo`                                                          | Revoke over-rates after TDH changes.                                                                                                                                                    |
+| `waveScoreRefreshLoop`           | SNS `tdh-calculation-done.fifo` via SQS `wave-score-refresh-start.fifo`; SQS `wave-score-refresh-dirty.fifo`; EventBridge fallback  | Refresh materialized wave REP and Wave Score discovery fields after TDH changes or wave/drop/rating/subscription mutations.                                                             |
+| `mediaResizerLoop`               | CloudFront/request path                                                                                                             | Resize images on demand.                                                                                                                                                                |
+| `nextgenMediaProxyInterceptor`   | Lambda@Edge / CloudFront request                                                                                                    | Provide NextGen metadata fallback.                                                                                                                                                      |
+| `dropVideoConversionInvokerLoop` | S3 object-created event for `drops/`                                                                                                | Invoke MediaConvert for uploaded drop videos.                                                                                                                                           |
 
 ### Manual Or One-Off Lambdas
 
-| Lambda                            | Purpose                                                           |
-| --------------------------------- | ----------------------------------------------------------------- |
-| `dbMigrationsLoop`                | TypeORM entity synchronization, usually run from deploy workflow. |
-| `customReplayLoop`                | Controlled replay job.                                            |
-| `populateHistoricConsolidatedTdh` | Historic consolidated TDH backfill.                               |
-| `teamLoop`                        | Team CSV and Arweave upload.                                      |
+| Lambda                            | Purpose                                                                                                                                                              |
+| --------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `dbMigrationsLoop`                | TypeORM entity synchronization, usually run from deploy workflow; plans that drop data are classified first ([schema sync plan check](./schema-sync-plan-check.md)). |
+| `customReplayLoop`                | Controlled replay job.                                                                                                                                               |
+| `populateHistoricConsolidatedTdh` | Historic consolidated TDH backfill.                                                                                                                                  |
+| `teamLoop`                        | Team CSV and Arweave upload.                                                                                                                                         |
 
 ## Runtime Shape
 
@@ -818,7 +818,9 @@ this API support while new clients are deployed; roll back the frontend first.
 
 6. S3 and CloudFront serve media. All new drop/wave image multipart uploads use private ingest and the image worker, regardless of `DROP_MEDIA_SANITIZE_IMAGES`. The worker checks the container format against the declared MIME type before publication and rejects HEIC/HEIF with export guidance. The API captures the privacy choice in private multipart object metadata: false preserves original image bytes and true retains metadata stripping; missing policy preserves sanitization for older queued uploads. Published validation and privacy markers are separate. Single-PUT image preparation and legacy untracked public image multipart sessions cannot bypass the gate. Transport length failures remain operational. See [image-upload-format-validation.md](image-upload-format-validation.md) for scope, limits and compatibility. AVIF still-image drop uploads always convert through this worker, even when `DROP_MEDIA_SANITIZE_IMAGES=false`. The worker applies orientation, strips metadata, and publishes WebP at quality 95 for compatibility with older supported mobile viewers. Multipart completion/status responses return the published `mime_type`, and drop references validate that type. AVIF admission rejects sequences, invalid content, images over 64 million pixels, dimensions over 16,383 pixels, and file-type headers over 4 KiB before publication. These AVIF decoder and header bounds remain separate from the PNG and other codec preview policies below. Image processing uses a shared 256 MiB source ceiling; other media retains the existing 500 MB transport limit. Verify shared ingest storage, then deploy the sanitizer in each environment before enabling AVIF through the API and frontend. API deployment verifies the ingest bucket and sanitizer queue exist.
 
-   Other drop and wave image uploads can first land in a private ingest bucket, then `dropMediaSanitizer` strips metadata and publishes the sanitized full-size original to the public bucket before CloudFront/resizer paths serve it. Other specialized media paths include on-demand resizing, video conversion, and NextGen metadata placeholder interception. Drop-video multipart completion can accept a bounded device-generated JPEG, validate and strip its metadata, and store it before completing the original video. Conversion always keeps the existing HLS/MP4 renditions and adds bounded first-frame/one-second JPEGs only if a validated device poster is unavailable. Chat prefers the device image, then the later backend image, falling back to the first for legacy or short clips, and displays it before Play without fetching video bytes. The worker reads and expands the existing MediaConvert template without modifying it; its deployment includes template-scoped read and device-poster access policies. The API execution role also needs narrow device-poster write and pending-upload read access. Existing uploads need a separate authorized replay. See [chat video previews](chat-video-previews.md) for storage and rollout details.
+   Metadata verification permits at most 384 MiB of decoded pixels, hashed one image at a time; the separate 512 MiB re-encoding work budget remains unchanged. Non-PNG preview and sanitization budget admission happens from metadata before lossless stripping. Failed jobs remain terminal on ordinary delivery. An operator can explicitly retry one upload through the authenticated Lambda/SQS path with `{"media_upload_id":"<id>","retry_failed":true}`: the worker conditionally resets only `failed` to `processing`, clears the old error/completion time, and runs the normal validation/publication pipeline. A concurrent claim is not overwritten, and a ready upload only retries source cleanup. The private ingest object must still exist (or be restored from an authorized original backup) before retrying. Success publishes to the same keys, marks the existing upload ready and broadcasts the existing drop update.
+
+   Other drop and wave image uploads can first land in a private ingest bucket, then `dropMediaSanitizer` strips metadata and publishes the sanitized full-size original to the public bucket before CloudFront/resizer paths serve it. Other specialized media paths include on-demand resizing, video conversion, and NextGen metadata placeholder interception. Drop-video multipart completion can accept a bounded device-generated JPEG, validate and strip its metadata, and store it before completing the original video. Conversion always keeps the existing HLS/MP4 renditions and adds bounded first-frame/one-second JPEGs only if a validated device poster is unavailable. Chat prefers the device image, then the later backend image, falling back to the first for legacy or short clips, and displays it before Play without fetching video bytes. The worker reads and expands the existing MediaConvert template without modifying it; its deployment includes template-scoped read and device-poster access policies. Before a job it skips objects that are gone, superseded or over a configurable size (2 GiB default), and allows one job per object version and a configurable number of jobs per key per window, recorded in a per-key S3 ledger (`_video-conversion-ledger/` in the media bucket) written with conditional writes. The HEAD and the ledger rely on the shared execution role's existing access to that bucket; the function adds no inline grants for them. The API execution role also needs narrow device-poster write and pending-upload read access. Existing uploads need a separate authorized replay. See [chat video previews](chat-video-previews.md) for storage and rollout details.
    The on-demand media resizer spools each S3 source into its own temporary file before metadata inspection and conversion. A shared 256 MiB source limit rejects oversized inputs with HTTP 422. PNG uses measured 100 MP/8-bit and 64 MP/16-bit admission, a 100,000-pixel input-side limit, and disposable Sharp child processes. PNG output is capped at 4096 pixels per side, two million pixels and 10 MiB encoded; ordinary fit/orientation behavior is preserved and oversized results are fitted inside a bounded box. Each PNG child has a 256 MiB JS heap, a 30-second lifetime and a sampled 1 GiB combined parent/child RSS watchdog. These are guards with headroom under the 2 GiB Lambda allocation, not hard native allocation guarantees. Corrupt/over-limit input is permanent; timeout, allocation/worker, monitor and I/O failures remain operational. Source and output files live until upload completes and are removed after success or failure. Non-PNG codecs retain the conservative 512 MiB decoded-work estimate; animated GIF admission counts every frame. Baseline 8-bit JPEG admission accounts conservatively for the decoder shrink used by the requested resize; progressive JPEGs and other codecs retain the full-input estimate. When a GIF animation exceeds the budget, only its first frame is resized if that frame independently fits. Otherwise it remains HTTP 422. Originals are unchanged, and already-posted images can receive previews on demand without re-uploading. Resize, rotation and output contracts are preserved for ordinary accepted inputs. Multipart upload concurrency is one, and the temporary directory is removed after completion or failure. These admission limits reduce resource risk; they do not guarantee a maximum native allocation for every codec. The specific HEIF missing-compression-plugin error is returned as `422 UNSUPPORTED_CODEC`, regardless of the filename or MIME label. One operational report is claimed per original S3 key and source version (VersionId, or ETag for unversioned objects), across resize variants and Lambda instances, using an empty conditional-write marker under `_resize-rejections/v1/` in the existing source bucket. Later requests retain warning logs and the controlled response; replacing the source enables a new report. Marker failures remain operational errors. Detected HEIF/HEVC inputs now use an isolated, pinned WebAssembly HEVC decoder and explicit JPEG output, independent of the source suffix/MIME label. The child has separate source/pixel, JS heap, WASM memory and time budgets. Confirmed permanent HEVC decoder rejections use `_resize-rejections/v2/` markers keyed by source revision and decoder policy: later requests still spool/inspect the source but skip pixel decoding and return HTTP 422. Source or decoder-policy changes permit another attempt. S3/worker/timeout/allocation failures remain operational; the generic Sharp HEIF `(7.0)` error is not broadly suppressed. A source length mismatch remains operational before decoding or caching. See [media-resizer-unsupported-input.md](media-resizer-unsupported-input.md) for decoder, alert and recovery limits.
    Chat image stripping is lossless when it verifies (pixels and ICC profile unchanged, Orientation kept); decision-entry uploads are never stripped and keep the artist's file name, while chat and wave uploads get neutral `<upload id>.<ext>` public names. See [image-upload-format-validation.md](image-upload-format-validation.md).
 
@@ -1371,8 +1373,18 @@ A consolidated-TDH run (`persistConsolidatedTDH`, from `delegationsLoop` and
   arms its "TDH calculations done" announcement. A partial write
   (`delegationsLoop`) also records, in `identity_tdh_sync_scope`, the
   consolidation keys it replaced and those whose boosted TDH or rate it
-  changed (it rewrites every row with new ranks; unchanged values are not
-  recorded).
+  changed (unchanged values are not recorded). A partial write computes every
+  group's row again (other groups are re-ranked) but sends only the rows that
+  change: computed rows are compared, column by column as MySQL stores them,
+  with the stored ones (read `for share`, so a concurrent writer waits for it
+  to commit, and kept only as SHA-256 digests); new and changed rows are
+  written, and the affected groups' stored rows that changed or are gone are
+  deleted first, so the tables end as deleting the affected groups and
+  writing every row did. A recomputed group's row carries its computation
+  time (`date`), so one that is otherwise unchanged gets only that column;
+  `boosted_tdh_rate` is not compared, since the same transaction sets it
+  again for every row. The same applies to the wallet-level TDH tables it
+  writes first (`updateTDH`).
 - B: identities for new consolidations and profile merges, with the merged
   profiles' wave subscriber counts recounted (not every wave's), and the
   primary wallets of only the profiles it touched (the identities it wrote and
@@ -1517,7 +1529,6 @@ completes and verifies the copy and enables the projection. The operator-only
 `dbMigrationsLoop` scope can compare both readers in one snapshot and disable
 projected reads for rollback. See [score history rollout](competition-score-history-rollout.md).
 
-
 Vote Activity combines competition-scoped shared profile logs and native vote
 history. Exact `<competition-id>:<sequence>` identities deduplicate before
 pagination; equal values/timestamps never imply a duplicate. IDs, timestamps,
@@ -1609,8 +1620,14 @@ Important API responsibilities:
   `GET /device-grants` and the `POST` endpoints for `/device-grants/{grantId}/label`,
   `/device-grants/{grantId}/acknowledge`, and `/device-grants/{grantId}/revoke`
   return `notice_acknowledged`. Grant registration (`POST /device-grants`)
-  and public signature proofs omit the field. See the device signing grants
-  section of that document.
+  and public signature proofs omit the field. The owner-only
+  `GET /device-security-notices` reads active pending signing and Encrypted DM
+  authorizations from the primary. A linked authorization is represented by its
+  signing grant, while `POST /e2ee/devices/{device_key}/acknowledge` clears a
+  standalone Encrypted DM notice. Both acknowledgment paths leave permissions
+  intact. The additive schema must be synchronized by `dbMigrationsLoop`
+  before deploying `api`. See the device signing grants section of that
+  document.
 - Public read APIs for NFTs, TDH, waves, drops, profiles, community metrics,
   subscriptions, and notifications. Wallet distribution allocation reads
   combine Phase 0–2 distribution rows with Public subscription airdrops, while
@@ -1665,7 +1682,7 @@ Important API responsibilities:
   clients that synchronize unread state through WebSockets.
 - Authenticated social writes: drops, votes, reactions, curations, subscriptions, groups, proxies, profile CMS package drafts/publish actions, minting claims, and push settings.
 - `@help6529` trigger detection after drop creation. The API writes a durable `help_bot_interactions` row, reacts with the bot's seen marker, and enqueues the reply worker when the `help6529` profile exists.
-- Upload preparation and multipart completion for drop media, wave media, distribution photos, and attachments. All new drop/wave image multipart uploads complete into private ingest storage for mandatory format validation; metadata stripping remains a separately captured upload policy. They return `media_status=processing` and publish a `DROP_UPDATE` websocket event with reason `MEDIA_STATUS` after the sanitizer marks the media ready or failed. Participatory drops in the configured Main Stage wave accept managed-CDN GLB media and verify each stored S3 object's authoritative size is no more than 250 MB (250,000,000 bytes) before attachment.
+- Upload preparation and multipart completion for drop media, wave media, distribution photos, and attachments. All new drop/wave image multipart uploads complete into private ingest storage for mandatory format validation; metadata stripping remains a separately captured upload policy. They return `media_status=processing` and publish a `DROP_UPDATE` websocket event with reason `MEDIA_STATUS` after the sanitizer marks the media ready or failed. Each such upload sends one sanitizer message: repeated completion calls send none once it was sent (a failed send is retried by the next call). If the upload is still processing five minutes after a claim (the claimant stopped before sending, or the message was lost), a later completion call sends it again, at most once per five minutes. Media that multipart completion publishes directly (video, audio, models, distribution photos) is checked with a HEAD of the completed object against the documented 500 MiB transport limit; larger objects are removed (best effort), their upload record fails and the call answers 413 `MEDIA_TOO_LARGE`. Preparing a drop/wave media upload or an attachment counts against a per-profile rolling 24-hour upload budget (`media_upload_budget_entries`, modelled on the E2EE blob quota: one row per prepared upload, reservations serialized by the profile row lock). Preparation answers 429 `MEDIA_UPLOAD_BUDGET_EXCEEDED` (with `retry_after_seconds`) at `MEDIA_UPLOAD_BUDGET_UPLOADS_PER_DAY` uploads (default 500) or when the upload could exceed `MEDIA_UPLOAD_BUDGET_BYTES_PER_DAY` (default 20 GiB); a profile id without a profiles row is refused. Clients do not declare sizes, so an upload counts the largest size allowed for its kind (256 MiB images, 500 MiB other media, 25 MiB PDF and 50 MiB CSV attachments) until its size is known. Multipart completion records the size (an oversized or failed upload is settled, not released); otherwise the entry stays pending with its object key, and a later preparation by the same profile reads a few pending sizes from S3: a size settles the entry, a missing object settles it at 0 only two hours after preparation (when its upload URLs have expired), and an inconclusive read (403, throttling, network) leaves it pending to be read again after ten minutes. A reservation whose preparation fails is released. Distribution photos are not counted. Participatory drops in the configured Main Stage wave accept managed-CDN GLB media and verify each stored S3 object's authoritative size is no more than 250 MB (250,000,000 bytes) before attachment.
 - WebSocket connection registration and real-time wave-related messages.
 - Operational endpoints such as health, docs, RPC/proxy routes, webhooks, and deploy-related routes.
 
@@ -2986,3 +3003,77 @@ and recheck visibility; activity cannot move IDs between pages. Subwaves remain
 accessible through their parents. The API returns 410 for expired snapshots and
 503 when shared storage is unavailable rather than silently truncating the list.
 Deploy the `api` service before the frontend that consumes this additive endpoint.
+
+## IPFS infrastructure management
+
+IPFS has one production environment. `ops/ipfs/cloudformation/` contains plain
+CloudFormation YAML, submitted directly to AWS; Python does not generate the
+infrastructure descriptors. `production.py` orchestrates native change sets,
+versioned artifacts, SSM, recovery, traffic changes and verification through the
+explicit-dispatch `ipfs-manage.yml` workflow. Source/account guards and the checked-in
+runtime switch precede AWS authentication; dispatch is restricted to reviewed
+`main` commits and the protected `ipfs-prod` GitHub environment. There is no staging
+IPFS deployment. Native CI fixtures create no AWS resources.
+
+Stage 1 completed on November 11, 2026. `seize-ipfs-prod-adopted` owns the original
+`6529ipfs` bucket, EC2 instance, exclusively used security group and entire shared
+CloudFront distribution. The resources were verified `IN_SYNC`, retained and
+protected with termination protection and a deny-all update policy. The separate
+import authority has no runtime, content-write or DNS permissions. CloudFormation
+post-import tagging required a deadline-bound provider update permission for the
+shared CDN; that window is closed. The one-time import switch remains disabled.
+The [adoption record](../ops/ipfs/adoption-record.json) preserves the exact source,
+change set, identifiers and successful verification runs.
+
+Stage 2 adds native production templates for private versioned recovery/artifact/
+log buckets, dedicated OIDC/CloudFormation authority, a stable HTTPS ALB and immutable
+replacement servers. The ALB references the existing wildcard certificate and
+has separate writer/gateway target groups for two reusable slots. Only the inactive
+slot may be registered; promotion changes listener weights and the active-writer
+health alarm. The two canonical API/origin DNS A records move to guarded ALB
+aliases without deletion. Record-set import is unsupported by the Stage 1 path,
+so the controller manages those exact two UPSERTs with IAM name/type/action
+restrictions. Shared CloudFront configuration and media/Arweave/S3 behaviors stay
+at the adopted baseline.
+
+Runtime candidates use encrypted retained disks, independent peer identities,
+private loopback Kubo API/gateway endpoints, and HTTPS ingress restricted to the
+ALB and previous writer. Managed writers also share a private HTTPS security group
+that allows mutual handover and rollback on later replacements. Both private TLS
+paths are checked before DNS or traffic changes; the original security group
+remains frozen. Bootstrap installs current OS security updates; public TCP port
+4001 stays closed until reboot validation, then preserves the original IPFS peer
+service; raw RPC/gateway, SSH and UDP swarm ports remain closed. Their roles initially read existing S3 blocks without
+write/delete access. Full recursive/direct pin restoration and immutable MFS reads
+must pass before a role-only update permits Put. A reviewed patch to the pinned
+S3 plugin validates repeated initialization writes by comparing existing bytes;
+in read-only mode it sends no S3 Put/Delete. New writes, HTTPS/ranges/restricted
+RPC and reboot persistence are then verified before the serving host changes.
+
+The upload router uses a root-only Unix control socket and persistent epochs.
+It tracks accepted source uploads to completion and forwards later uploads
+synchronously to the verified replacement. Ordinary immutable uploads continue;
+mutable `to-files` uploads wait until the final MFS directory is transferred.
+Logical transfer unions pins so new uploads on either host survive promotion and
+rollback. Private archives preserve recovery identities/configuration separately
+from public-CID transfer objects; an open LevelDB is never copied. The original
+nginx bridge supports cached-DNS clients and distinguishes the original ALB socket
+peer from the restored client address, preventing loops and duplicate rate limiting.
+Pre-reload nginx workers must drain before the final writer snapshot.
+
+The production operation performs a real reverse handover and final promotion,
+checks uploads through all IPFS/CDN aliases, preserves the CDN fingerprint and
+requires healthy ALB/EC2 alarms. ALB/S3 access logs are private; alarms do not add an
+SNS/email destination. The previous host, daemon and private recovery archive stay
+available for rollback and cached-DNS traffic. No content deletion, garbage
+collection, old-host termination, backend Lambda or frontend deployment is part
+of this operation. Merging alone performs no deployment. The first migration must
+complete and its evidence be recorded before runtime ownership is considered active.
+
+Versioned deployment journals record change-set ARNs and SSM command IDs before
+waiting. Interrupted runs reconcile those exact operations and persisted router/
+MFS journals. Repeated rollback to an already active writer verifies it without
+copying stale state. The earlier isolated candidate tooling remains for offline
+contracts and cannot target the live resources; it is not the production workflow.
+See the [IPFS runbook](../ops/ipfs/README.md) for operation order, authority,
+ownership boundaries and recovery procedures.

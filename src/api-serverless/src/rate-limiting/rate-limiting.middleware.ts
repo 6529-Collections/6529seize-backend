@@ -138,8 +138,9 @@ function bucketsFor(
 function decidingResult(results: readonly RateLimitResult[]): RateLimitResult {
   const rejected = results.filter((result) => !result.allowed);
   if (!rejected.length) return results[0];
-  return rejected.reduce((latest, result) =>
-    result.resetTime > latest.resetTime ? result : latest
+  return rejected.reduce(
+    (latest, result) => (result.resetTime > latest.resetTime ? result : latest),
+    rejected[0]
   );
 }
 

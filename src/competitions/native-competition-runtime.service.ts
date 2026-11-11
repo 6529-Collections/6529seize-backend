@@ -203,6 +203,13 @@ export class NativeCompetitionRuntimeService {
   /**
    * `activeVotes` are the voter's active votes when the caller already read
    * them in this transaction (exactly what getVoterActiveVotes returns).
+   *
+   * With `afterEntryHistory`, each change is stamped no earlier than its
+   * entry's latest score history row, read under the competition lock: a
+   * caller whose `occurredAt` was taken before the lock (a loop pass) may
+   * reconcile after a vote stamped later than that. History orders by time
+   * before sequence, so an earlier stamp would put this newer aggregate
+   * before the vote's older one and leave the older one as the latest.
    */
   public async reconcileVoterCredit(
     params: {
@@ -211,6 +218,7 @@ export class NativeCompetitionRuntimeService {
       availableCredit: number;
       creditScope: string;
       occurredAt: number;
+      afterEntryHistory?: boolean;
     },
     ctx: RequestContext,
     activeVotes?: readonly { entryId: string; value: number }[]
@@ -234,19 +242,37 @@ export class NativeCompetitionRuntimeService {
     const previousByEntry = new Map(
       current.map((vote) => [vote.entryId, vote.value])
     );
-    for (const vote of reduced) {
-      const previousVote = previousByEntry.get(vote.entryId) ?? 0;
-      if (vote.value === previousVote) continue;
+    const changes = reduced.filter(
+      (vote) => vote.value !== (previousByEntry.get(vote.entryId) ?? 0)
+    );
+    if (!changes.length) return;
+    // One read for all of this voter's changed entries. Each entry changes
+    // once per voter, so the times stay the latest while these writes run.
+    const latestHistory = params.afterEntryHistory
+      ? await this.repository.latestEntryHistoryTimes(
+          params.competitionId,
+          changes.map((vote) => vote.entryId),
+          ctx
+        )
+      : new Map<string, number>();
+    for (const vote of changes) {
       const mutation = {
         competitionId: params.competitionId,
         entryId: vote.entryId,
         voterProfileId: params.voterProfileId,
         value: vote.value,
-        occurredAt: params.occurredAt
+        occurredAt: Math.max(
+          params.occurredAt,
+          latestHistory.get(vote.entryId) ?? params.occurredAt
+        )
       };
       await this.repository.replaceVoteForReconciliation(mutation, ctx);
       await this.repository.recordVoteChange(
-        { ...mutation, previousVote, reason: 'CREDIT_OVERSPENT' },
+        {
+          ...mutation,
+          previousVote: previousByEntry.get(vote.entryId) ?? 0,
+          reason: 'CREDIT_OVERSPENT'
+        },
         ctx
       );
     }
@@ -265,8 +291,8 @@ export class NativeCompetitionRuntimeService {
         : null;
     // DROP scope checks every voter's votes: read the budgets and the votes
     // in a few paged statements instead of ~4 statements per voter. Same
-    // transaction and lock; reconciliation reads nothing it writes, so the
-    // writes (and their order) are unchanged.
+    // transaction and lock; reconciling one voter changes no other voter's
+    // budget or votes, so the writes (and their order) are unchanged.
     const dropBudgets =
       scope === WaveCreditScope.DROP
         ? await this.credits.getDropBudgets(competition, voters, ctx)
@@ -297,13 +323,16 @@ export class NativeCompetitionRuntimeService {
         budget.spent <= budget.available
       )
         return;
+      // `now` is the pass's time, possibly taken before this lock: a vote
+      // written since then is stamped later than `now`.
       await this.reconcileVoterCredit(
         {
           competitionId: competition.id,
           voterProfileId,
           availableCredit: budget.available,
           creditScope: competition.voting.credit_scope,
-          occurredAt: now
+          occurredAt: now,
+          afterEntryHistory: true
         },
         ctx,
         dropVotes?.get(voterProfileId)

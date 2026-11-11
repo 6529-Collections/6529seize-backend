@@ -35,6 +35,11 @@ functions:
       S3_BUCKET:          6529bucket
       BUCKET_REGION:      eu-west-1
       MC_DROPS_VIDEO_TEMPLATE_NAME: Drops_HLS_MP4_360_720
+      # Conversion bounds (see video-conversion-admission.ts): 2 GiB per
+      # object, at most 3 jobs per object key in 24 hours.
+      DROP_VIDEO_CONVERSION_MAX_BYTES: '2147483648'
+      DROP_VIDEO_CONVERSION_MAX_JOBS_PER_KEY: '3'
+      DROP_VIDEO_CONVERSION_JOB_WINDOW_HOURS: '24'
 
 resources:
   Resources:

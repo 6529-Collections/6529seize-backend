@@ -1,7 +1,8 @@
-import { Column, Entity, PrimaryColumn } from 'typeorm';
+import { Column, Entity, Index, PrimaryColumn } from 'typeorm';
 import { PROFILE_PROXY_ACTIONS_TABLE } from '@/constants';
 
 @Entity(PROFILE_PROXY_ACTIONS_TABLE)
+@Index('idx_profile_proxy_actions_proxy_id', ['proxy_id'])
 export class ProfileProxyActionEntity {
   @PrimaryColumn({ type: 'varchar', length: 100 })
   readonly id!: string;

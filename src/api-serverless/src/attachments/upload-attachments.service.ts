@@ -9,6 +9,7 @@ import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { Time } from '@/time';
 import { getFileExtension } from '@/api/media/sanitize-file-name';
 import { CustomApiCompliantException } from '@/exceptions';
+import { ObjectSizeRead, readObjectSize } from '@/media/object-size';
 
 export class UploadAttachmentsService {
   constructor(private readonly getS3: () => S3Client) {}
@@ -24,7 +25,7 @@ export class UploadAttachmentsService {
     contentType: string;
     fileName: string;
   }): Promise<{ key: string; upload_id: string }> {
-    const key = this.createAttachmentKey({
+    const key = this.attachmentKey({
       attachmentId,
       authorId,
       fileName
@@ -90,6 +91,12 @@ export class UploadAttachmentsService {
     };
   }
 
+  /** The stored size of an uploaded attachment, or null if it cannot be read. */
+  /** Throws when the answer is inconclusive (see readObjectSize). */
+  async readObjectSize(key: string): Promise<ObjectSizeRead> {
+    return readObjectSize(this.getS3(), this.getBucket(), key);
+  }
+
   private async createMultipartUploadId({
     key,
     contentType
@@ -113,7 +120,8 @@ export class UploadAttachmentsService {
     return response.UploadId;
   }
 
-  private createAttachmentKey({
+  /** Where an attachment's original is uploaded (the same for the same input). */
+  attachmentKey({
     attachmentId,
     authorId,
     fileName

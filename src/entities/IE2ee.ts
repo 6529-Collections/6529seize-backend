@@ -112,6 +112,10 @@ export class E2eeDeviceEntity {
   @Column({ type: 'text', nullable: true, default: null })
   readonly grant_message!: string | null;
 
+  // Standalone enrollment only. Linked devices use the signing grant notice.
+  @Column({ type: 'boolean', default: false })
+  readonly notice_pending?: boolean;
+
   // How the device was last registered. Null for devices registered before
   // this was recorded, or when the access token did not say.
   @Column({ type: 'varchar', length: 16, nullable: true, default: null })

@@ -8,6 +8,10 @@ import {
 } from '@/api/e2ee/e2ee-context';
 import { directMessageAdmissionService } from '@/api/direct-messages/direct-message-admission.instance';
 import { computeDeviceGrantId } from '@/api/device-signing/device-grant-message';
+import { DeviceGrantsService } from '@/api/device-signing/device-grants.service';
+import { DeviceSigningDb } from '@/api/device-signing/device-signing.db';
+import { AuthenticationContext } from '@/auth-context';
+import { identitiesDb } from '@/identities/identities.db';
 import { createSiweWebAuthChallenge } from '@/api/wallet-signatures/siwe-wallet-auth';
 import { E2eeEventPublisher } from '@/api/e2ee/e2ee-events';
 import { createE2eeServices } from '@/api/e2ee/e2ee.handlers';
@@ -543,6 +547,54 @@ describeWithSeed('E2EE delivery service', [], () => {
       );
     });
 
+    it('acknowledges a standalone device for its owner without revoking it', async () => {
+      const alice = aProfile();
+      const bob = aProfile();
+      const key = await registerDevice(alice);
+      const { key: linked } = await registerLoginGrantDevice(alice);
+      expect(
+        Boolean((await db.getDevice(linked.publicKey))?.notice_pending)
+      ).toBe(false);
+      const notices = new DeviceSigningDb(() => sqlExecutor);
+      const findNotices = () =>
+        notices.findPendingSecurityNotices(
+          alice.id,
+          alice.wallet.address,
+          now,
+          {}
+        );
+
+      await expect(findNotices()).resolves.toMatchObject([
+        { signing_grant_id: null, encrypted_dm_device_key: key.publicKey }
+      ]);
+      await expect(
+        notices.findPendingSecurityNotices(
+          alice.id,
+          alice.wallet.address,
+          now,
+          {},
+          false
+        )
+      ).resolves.toEqual([]);
+      await expect(
+        services.devices.acknowledgeDeviceNotice(bob.id, key.publicKey)
+      ).rejects.toBeInstanceOf(E2eeApiException);
+      await expect(
+        services.devices.acknowledgeDeviceNotice(alice.id, linked.publicKey)
+      ).rejects.toBeInstanceOf(E2eeApiException);
+      await expect(findNotices()).resolves.toHaveLength(1);
+
+      await services.devices.acknowledgeDeviceNotice(alice.id, key.publicKey);
+      await services.devices.acknowledgeDeviceNotice(alice.id, key.publicKey);
+      await expect(findNotices()).resolves.toEqual([]);
+      await expect(db.getDevice(key.publicKey)).resolves.toMatchObject({
+        revoked_at: null
+      });
+      now += DAY;
+      await registerDevice(alice, key);
+      await expect(findNotices()).resolves.toEqual([]);
+    });
+
     it('looks up devices of profiles and by key in one request', async () => {
       const alice = aProfile();
       const bob = aProfile();
@@ -747,7 +799,7 @@ describeWithSeed('E2EE delivery service', [], () => {
       ).toBeNull();
     });
 
-    it('revoking the sign-in grant removes its device from every roster', async () => {
+    it('rolls back a failed combined revocation and stops delivery on retry', async () => {
       const alice = aProfile();
       const bob = aProfile();
       const aliceDevice = await registerDevice(alice);
@@ -759,7 +811,48 @@ describeWithSeed('E2EE delivery service', [], () => {
       });
       events = [];
 
-      await services.devices.revokeDeviceOfLoginGrant(grantId);
+      const signingDb = new DeviceSigningDb(() => sqlExecutor);
+      const grants = new DeviceGrantsService(
+        signingDb,
+        identitiesDb,
+        () => now
+      );
+      const revokeGrant = () =>
+        grants.revokeCallerGrant(
+          grantId,
+          {
+            authenticationContext: new AuthenticationContext({
+              authenticatedWallet: bob.wallet.address,
+              authenticatedProfileId: null,
+              roleProfileId: null,
+              activeProxyActions: []
+            })
+          },
+          (id, connection) =>
+            services.devices.revokeDeviceOfLoginGrant(id, connection)
+        );
+      const failure = new Error('could not delete device key packages');
+      const deleteKeyPackages = jest
+        .spyOn(db, 'deleteKeyPackagesOfDevice')
+        .mockRejectedValueOnce(failure);
+      try {
+        await expect(revokeGrant()).rejects.toThrow(failure);
+      } finally {
+        deleteKeyPackages.mockRestore();
+      }
+      await expect(signingDb.findGrantById(grantId, {})).resolves.toMatchObject(
+        {
+          revoked_at: null
+        }
+      );
+      await expect(
+        services.devices.getDevice(bobDevice.publicKey)
+      ).resolves.toMatchObject({
+        revoked_at: null
+      });
+      expect(events).toHaveLength(0);
+
+      await expect(revokeGrant()).resolves.toMatchObject({ revoked_at: now });
 
       const revoked = await services.devices.getDevice(bobDevice.publicKey);
       expect(revoked.revoked_at).toBe(now);
@@ -775,8 +868,16 @@ describeWithSeed('E2EE delivery service', [], () => {
       expect(
         await db.countOneTimeKeyPackages(bobDevice.publicKey, nowSeconds())
       ).toBe(0);
-      expect(events.map((event) => event.method)).toEqual(['deviceRevoked']);
-      await services.devices.revokeDeviceOfLoginGrant(grantId);
+      expect(events).toEqual([
+        {
+          method: 'deviceRevoked',
+          args: [
+            expect.arrayContaining([alice.id, bob.id]),
+            { profile_id: bob.id, device_key: bobDevice.publicKey }
+          ]
+        }
+      ]);
+      await revokeGrant();
       expect(events).toHaveLength(1);
 
       // The device's own signed revocation can still be stored afterwards.

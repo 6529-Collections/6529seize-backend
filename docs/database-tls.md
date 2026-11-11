@@ -4,10 +4,20 @@ MySQL connections from the TypeORM data source (`src/db.ts`) and the API read
 and write pools (`src/db-api.ts`) support opt-in TLS. It is off by default, so
 existing environments keep their current behaviour until it is enabled.
 
-| Variable         | Effect                                                                                                                                     |
-| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
-| `DB_SSL`         | `true` enables TLS with server certificate verification (`rejectUnauthorized: true`). Any other value, or unset, keeps TLS off.            |
-| `DB_SSL_CA_FILE` | Optional path to a PEM bundle used as the trusted CA list when `DB_SSL=true`. Unset uses Node's default trust store. Read at connect time. |
+| Variable         | Effect                                                                                                                                                               |
+| ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `DB_SSL`         | `true` enables TLS with server certificate chain verification (`rejectUnauthorized: true`; no host name check, see below). Any other value, or unset, keeps TLS off. |
+| `DB_SSL_CA_FILE` | Optional path to a PEM bundle used as the trusted CA list when `DB_SSL=true`. Unset uses Node's default trust store. Read at connect time.                           |
+
+Certificate verification with the current `mysql` driver checks the server's
+certificate chain against the trusted CA list but does not check that the
+certificate was issued for the host being connected to: the driver starts TLS
+without passing the host name to Node's TLS layer, so host name verification
+does not run. `DB_SSL=true` therefore protects against passive interception
+and against certificates from untrusted authorities, but must not be relied on
+to verify the database host's identity. Treat host verification as missing
+until the driver is replaced with one that verifies the host name (for example
+`mysql2`).
 
 Which trust source fits depends on the endpoint:
 

@@ -13,7 +13,10 @@ import { asyncRouter } from '../async.router';
 import { validateRememe, validateRememeAdd } from './rememes_validation';
 import * as Joi from 'joi';
 import { getValidatedByJoiOrThrow } from '@/api/validation';
-import { canonicalRememeMemeId } from '@/rememe-meme-id';
+import {
+  canonicalRememeMemeId,
+  MAX_REMEME_MEME_ID_DIGITS
+} from '@/rememe-meme-id';
 
 const router = asyncRouter();
 
@@ -27,9 +30,13 @@ interface RememesQuery {
 }
 
 const ALPHANUMERIC = /^[A-Za-z0-9]+$/;
-// Up to MAX_REMEMES_MEME_IDS comma-separated non-negative integers.
+// One non-negative integer with at most MAX_REMEME_MEME_ID_DIGITS significant
+// digits. Leading zeros are allowed and removed by canonicalRememeMemeId; the
+// two alternatives never match the same input.
+const MEME_ID_PATTERN = `(?:0*[1-9]\\d{0,${MAX_REMEME_MEME_ID_DIGITS - 1}}|0+)`;
+// Up to MAX_REMEMES_MEME_IDS comma-separated meme ids.
 const MEME_IDS_PATTERN = new RegExp(
-  `^\\d{1,20}(?:,\\d{1,20}){0,${MAX_REMEMES_MEME_IDS - 1}}$`
+  `^${MEME_ID_PATTERN}(?:,${MEME_ID_PATTERN}){0,${MAX_REMEMES_MEME_IDS - 1}}$`
 );
 
 /** Rewrites each meme id to its canonical integer form ("007" -> "7"). */
