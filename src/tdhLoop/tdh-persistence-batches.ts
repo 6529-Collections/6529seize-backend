@@ -38,8 +38,9 @@ export async function upsertTdhInBatches<Entity extends ObjectLiteral>(
 
 /**
  * Sets one column of existing rows, matched by primary key, to each row's own
- * value, and nothing else. Values are prepared as the upsert prepares them,
- * so the column stores what a full-row write would.
+ * value, and nothing else. Each batch joins the table, by its primary key, to
+ * a derived table of the batch's keys and values. Values are prepared as the
+ * upsert prepares them, so the column stores what a full-row write would.
  */
 export async function refreshTdhColumnInBatches<Entity extends ObjectLiteral>(
   repository: Repository<Entity>,
@@ -54,28 +55,26 @@ export async function refreshTdhColumnInBatches<Entity extends ObjectLiteral>(
   }
   const driver = manager.connection.driver;
   const name = (databaseName: string) => driver.escape(databaseName);
-  const value = (row: Entity, of: ColumnMetadata) =>
-    driver.preparePersistentValue(of.getEntityValue(row), of);
+  const columns = [...keys, column];
+  // The derived table's columns: k0, k1, … for the keys, then v.
+  const aliases = columns.map((_, i) => (i < keys.length ? `k${i}` : 'v'));
+  const firstRow = `select ${aliases.map((alias) => `? as ${alias}`).join(', ')}`;
+  const otherRow = `select ${aliases.map(() => '?').join(', ')}`;
   const keyMatch = keys
-    .map((key) => `${name(key.databaseName)} = ?`)
+    .map((key, i) => `t.${name(key.databaseName)} = d.k${i}`)
     .join(' and ');
-  const keyTuple = `(${keys.map((key) => name(key.databaseName)).join(', ')})`;
-  const placeholders = `(${keys.map(() => '?').join(', ')})`;
   for (let offset = 0; offset < rows.length; offset += TDH_SAVE_BATCH_SIZE) {
     const batch = rows.slice(offset, offset + TDH_SAVE_BATCH_SIZE);
-    const params: unknown[] = [];
-    for (const row of batch) {
-      params.push(...keys.map((key) => value(row, key)), value(row, column));
-    }
-    for (const row of batch) {
-      params.push(...keys.map((key) => value(row, key)));
-    }
+    const params = batch.flatMap((row) =>
+      columns.map((of: ColumnMetadata) =>
+        driver.preparePersistentValue(of.getEntityValue(row), of)
+      )
+    );
+    const derived = batch
+      .map((_, i) => (i === 0 ? firstRow : otherRow))
+      .join(' union all ');
     await repository.query(
-      `update ${name(metadata.tableName)} set ${name(column.databaseName)} = case ${batch
-        .map(() => `when ${keyMatch} then ?`)
-        .join(' ')} end where ${keyTuple} in (${batch
-        .map(() => placeholders)
-        .join(', ')})`,
+      `update ${name(metadata.tableName)} t join (${derived}) d on ${keyMatch} set t.${name(column.databaseName)} = d.v`,
       params
     );
   }
