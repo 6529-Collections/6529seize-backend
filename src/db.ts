@@ -1528,6 +1528,11 @@ async function deleteConsolidationsByKeys<Entity extends ObjectLiteral>(
   }
 }
 
+/**
+ * Sets every consolidated row's boosted TDH rate. It must keep updating every
+ * row: partial writes do not compare `boosted_tdh_rate`
+ * (`CONSOLIDATED_TDH_DIFF_COLUMNS`), and rely on this to correct it.
+ */
 async function updateBoostedTdhRates(connection: ConnectionWrapper<any>) {
   const sql = `
       UPDATE ${CONSOLIDATED_WALLETS_TDH_TABLE} cw

@@ -592,6 +592,17 @@ describe('partial TDH writes send only the rows that change', () => {
       await resetTestDatabase();
       await seedWorld();
       const before = await dump();
+      // A stale rate on an unchanged row: not compared, but still corrected.
+      await sqlExecutor.execute(
+        `update ${CONSOLIDATED_WALLETS_TDH_TABLE} set boosted_tdh_rate = 999 where consolidation_key = :key`,
+        { key: wallet(7) }
+      );
+      expect(
+        await sqlExecutor.execute(
+          `select boosted_tdh_rate from ${CONSOLIDATED_WALLETS_TDH_TABLE} where consolidation_key = :key`,
+          { key: wallet(7) }
+        )
+      ).toEqual([{ boosted_tdh_rate: 999 }]);
       const groups = groupsBefore();
       const storedTdh = snapshotRows(
         getDataSource().getMetadata(TDH),
@@ -654,7 +665,8 @@ describe('partial TDH writes send only the rows that change', () => {
       [CONSOLIDATED_WALLETS_TDH_TABLE]: 11,
       [HISTORIC_CONSOLIDATED_WALLETS_TDH_TABLE]: 11
     });
-    // Apart from the consolidated rows' computation time, nothing changed.
+    // Apart from the consolidated rows' computation time, nothing changed,
+    // and the stale rate is back to the computed one.
     const stamped = [
       CONSOLIDATED_WALLETS_TDH_TABLE,
       HISTORIC_CONSOLIDATED_WALLETS_TDH_TABLE

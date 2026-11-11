@@ -261,7 +261,9 @@ function parsedJson(value: unknown): unknown {
 
 /**
  * The stored rows of `metadata`'s table (optionally filtered), read on the
- * caller's transaction so they match what it writes against.
+ * caller's transaction so they match what it writes against. The rows are
+ * streamed, so each driver row is dropped once its values are kept: a table
+ * is never held twice in memory.
  */
 export async function readStoredRows(
   manager: EntityManager,
@@ -269,12 +271,8 @@ export async function readStoredRows(
   filter?: { readonly sql: string; readonly params: unknown[] }
 ): Promise<StoredRows> {
   const plan = planFor(metadata);
-  const rows: ObjectLiteral[] = await manager.query(
-    `select * from \`${metadata.tableName}\`${filter ? ` where ${filter.sql}` : ''}`,
-    filter?.params ?? []
-  );
   const stored: StoredRows = new Map();
-  for (const row of rows) {
+  const keep = (row: ObjectLiteral) => {
     const values = plan.databaseNames.map((name, i) =>
       plan.isJson[i] ? parsedJson(row[name]) : row[name]
     );
@@ -282,7 +280,30 @@ export async function readStoredRows(
       rowKey(plan, (i) => values[i]),
       values
     );
+  };
+  const sql = `select * from \`${metadata.tableName}\`${filter ? ` where ${filter.sql}` : ''}`;
+  const params = filter?.params ?? [];
+  const queryRunner = manager.queryRunner;
+  if (!queryRunner) {
+    // Outside a transaction: nothing to stream on.
+    const rows: ObjectLiteral[] = await manager.query(sql, params);
+    rows.forEach(keep);
+    return stored;
   }
+  const stream = await queryRunner.stream(sql, params);
+  await new Promise<void>((resolve, reject) => {
+    let failure: unknown = null;
+    stream.on('data', (row: ObjectLiteral) => {
+      if (failure !== null) return; // drain, so the connection stays usable
+      try {
+        keep(row);
+      } catch (error) {
+        failure = error;
+      }
+    });
+    stream.on('error', reject);
+    stream.on('end', () => (failure === null ? resolve() : reject(failure)));
+  });
   return stored;
 }
 
