@@ -31,6 +31,24 @@ Conditions:
   HasSlotB:
     Fn::Not: [{ Fn::Equals: [{ Ref: SlotBInstanceId }, ''] }]
 Resources:
+  RuntimePeerGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Private HTTPS between managed production IPFS writers for handover and rollback
+      VpcId: { Ref: VpcId }
+      Tags:
+        - Key: Service
+          Value: 6529-ipfs
+        - Key: Environment
+          Value: prod
+  RuntimePeerIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: { Ref: RuntimePeerGroup }
+      SourceSecurityGroupId: { Ref: RuntimePeerGroup }
+      IpProtocol: tcp
+      FromPort: 443
+      ToPort: 443
   SecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
@@ -285,6 +303,8 @@ Outputs:
     Value: { Ref: LoadBalancer }
   SecurityGroupId:
     Value: { Ref: SecurityGroup }
+  RuntimePeerGroupId:
+    Value: { Ref: RuntimePeerGroup }
   WriterAArn:
     Value: { Ref: WriterA }
   WriterBArn:

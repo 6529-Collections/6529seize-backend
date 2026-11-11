@@ -79,6 +79,11 @@ public SSH, API port 5001 or gateway port 8080. Its public IPv4 supplies outboun
 access in the existing public subnet; inbound HTTPS is restricted to the ALB and
 previous writer security groups. Public TCP port 4001 preserves the original IPFS
 peer service; UDP swarm ports, SSH, raw RPC and the raw gateway stay closed.
+Every managed runtime also joins a stable private peer security group. Its only
+ingress is HTTPS from that same group, allowing both directions of later handovers
+and rollbacks. The original server's security group remains unchanged. Before DNS
+or traffic changes, both writers must verify the other's private HTTPS path and
+certificate; the peer addresses must be inside the reviewed production subnets.
 
 The original nginx bridge distinguishes ALB/local traffic by the original socket
 peer. Cached-DNS requests go to the ALB; requests arriving from the ALB stay local,
@@ -99,7 +104,11 @@ names in the workflow inputs.
 2. Verify the full shared CDN configuration against the adopted baseline. Back up
    the current logical state and private identity/configuration before host edits.
 3. Create an unpublished ALB if needed, then a new retained runtime from YAML.
-   Its role initially has only Get/List access to the live S3 blocks. Give it an
+   Its role initially has only Get/List access to the live S3 blocks. Bootstrap
+   installs current OS security updates and the pinned, checksum-verified AWS
+   CLI installer. The workflow waits for the candidate to register with Systems
+   Manager before requesting installation. Public TCP peering remains closed
+   until the reboot gate passes. Give it an
    independent peer identity; never copy the serving peer's private identity.
 4. Restore every explicit recursive/direct pin and name. Recursive restoration
    traverses the actual DAG, and the immutable MFS root must be readable. The

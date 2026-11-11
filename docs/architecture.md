@@ -2249,6 +2249,16 @@ completion semantics and AWS IAM invocation permissions. This action does not
 depend on mutable Sentry environment labels, including when AWS reuses a runtime
 that has already loaded regional secrets.
 
+An invocation that reconsolidated (by chain events or by this action), or that
+resumed an identities sync (the nightly full walk among them), ends with a full
+garbage collection (`heap-release.ts`; `NODE_OPTIONS=--expose-gc` in its
+`serverless.yaml`), logged as `[GC AFTER RECONSOLIDATION]` or
+`[GC AFTER IDENTITIES SYNC]`; a failure there is only logged. Lambda freezes a
+warm sandbox between invocations, so V8 gets no idle time to collect a run's
+garbage, and the next run would allocate on top of it: without the collection,
+the instance's Max Memory Used creeps up run after run. Other invocations skip
+it.
+
 `xTdhLoop` uses a two-phase FIFO queue flow. A full nightly TDH run relies only
 on the TDH completion SNS topic, published after the remaining TDH work
 finishes, to deliver the universe phase through `xtdh-start.fifo`. A partial TDH
@@ -3113,7 +3123,11 @@ at the adopted baseline.
 
 Runtime candidates use encrypted retained disks, independent peer identities,
 private loopback Kubo API/gateway endpoints, and HTTPS ingress restricted to the
-ALB and previous writer. Public TCP port 4001 preserves the original IPFS peer
+ALB and previous writer. Managed writers also share a private HTTPS security group
+that allows mutual handover and rollback on later replacements. Both private TLS
+paths are checked before DNS or traffic changes; the original security group
+remains frozen. Bootstrap installs current OS security updates; public TCP port
+4001 stays closed until reboot validation, then preserves the original IPFS peer
 service; raw RPC/gateway, SSH and UDP swarm ports remain closed. Their roles initially read existing S3 blocks without
 write/delete access. Full recursive/direct pin restoration and immutable MFS reads
 must pass before a role-only update permits Put. A reviewed patch to the pinned
