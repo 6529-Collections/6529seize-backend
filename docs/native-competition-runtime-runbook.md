@@ -26,6 +26,14 @@ the same key return 409. Receipt, domain writes, nonce consumption and outbox
 events commit together. Moderation preparation runs before the entry/hub
 transaction; publication authorization and constraints are checked inside it.
 
+Publishing a draft fails with 409 `PUBLISHED_COMPETITION_LIMIT` when its wave
+already has `COMPETITION_MAX_PUBLISHED_PER_WAVE` (default 25) published
+competitions, or the profile that created the draft already has
+`COMPETITION_MAX_PUBLISHED_PER_CREATOR` (default 50) across waves. Paused
+competitions count; ended, cancelled and archived ones do not. `0` turns a cap
+off. Concurrent publications of different drafts are not serialized, so a cap
+can be exceeded by the number of simultaneous publish requests.
+
 Every update/action supplies `config_version`. Stale versions return 409.
 Published types cannot change. After the first accepted entry, credits,
 signing, timing, decisions and outcomes are immutable. Participation and voting
