@@ -115,7 +115,10 @@ import {
 } from '@/notifications/wave-group-notification-subscriptions.db';
 import { sendIdentityPushNotifications } from '@/api/push-notifications/push-notifications.service';
 import { isWaveCreatorOrAdmin } from '@/waves/wave-admin.helpers';
-import { assertWaveAndParentVisibleOrThrow } from '@/api/waves/wave-access.helpers';
+import {
+  assertWaveAndParentVisibleOrThrow,
+  getWaveReadContextProfileId
+} from '@/api/waves/wave-access.helpers';
 
 import { waveMetadataDb } from '@/api/waves/wave-metadata.db';
 import { dropPollsDb } from '@/api/drops/drop-polls.db';
@@ -1032,6 +1035,11 @@ export class WaveApiService {
     if (visibleParentWave.parent_wave_id !== null) {
       throw new BadRequestException(`Subwaves cannot be parent waves`);
     }
+    if (visibleParentWave.is_direct_message) {
+      throw new BadRequestException(
+        `Direct message waves cannot be parent waves`
+      );
+    }
     if (
       !isWaveCreatorOrAdmin({
         authenticatedProfileId: actingAsId,
@@ -1078,6 +1086,9 @@ export class WaveApiService {
       ctx
     );
     if (existingWave) {
+      if (!getWaveReadContextProfileId(ctx.authenticationContext)) {
+        throw new ForbiddenException(`Proxy is not allowed to read waves`);
+      }
       return this.findWaveByIdOrThrow(existingWave.id, [userGroup.id], ctx);
     }
     const waveRequest: ApiCreateNewWave = {

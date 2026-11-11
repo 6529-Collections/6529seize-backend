@@ -12,6 +12,7 @@ import { nativeCompetitionRuntimeRepository } from '@/competitions/native-compet
 import { nativeCompetitionRuntimeService } from '@/competitions/native-competition-runtime.service';
 import { competitionDropVotesDb } from '@/competitions/competition-drop-votes.db';
 import { isCompetitionDecisionPending } from '@/competitions/competition-decision-gate';
+import { competitionVoteChangeBudget } from '@/competitions/competition-vote-change-budget';
 import { legacyCompetitionEntryId } from '@/competitions/competition-id';
 import { VoteForDropModel } from '@/drops/vote-for-drop.model';
 import { RequestContext } from '@/request.context';
@@ -105,6 +106,7 @@ export async function voteForMigratedLegacyEntry(
   competitionCreditService.assertVoteFits(budget, model.votes);
   const previous = budget.current_vote!;
   if (previous === model.votes) return false;
+  await competitionVoteChangeBudget.spend(record.id, model.voter_id);
   await competitionInteractionRepository.setVote(
     record.id,
     entry.id,

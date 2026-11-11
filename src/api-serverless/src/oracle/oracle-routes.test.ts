@@ -223,6 +223,9 @@ describe('preserved Oracle TDH reads', () => {
     '/tdh/percentile/0',
     '/tdh/percentile/10001',
     '/tdh/cutoff/0',
+    '/tdh/above/-1',
+    '/tdh/above/1.5',
+    '/tdh/above/abc',
     '/address/0xabc/memes/invalid',
     '/nfts/memes_seasons/invalid'
   ])('preserves validation on %s', async (path) => {

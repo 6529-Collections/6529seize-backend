@@ -5,6 +5,7 @@ import { getAdapterFor } from './adapters/registry';
 import { validateLinkUrl } from './nft-link-resolver.validator';
 import { RequiredNftPageNotFoundError } from './nft-link-page-retry';
 import { HttpError } from './lib/http';
+import { routePublicNetworkToFixtures } from '@/tests/fixtures/public-network-fixture';
 
 jest.mock('node-fetch', () => ({
   ...jest.requireActual('node-fetch'),
@@ -19,6 +20,11 @@ const response = (status: number, url: string, body = '') =>
   new Response(body, { status, url });
 
 describe('required page error provenance through real HTTP/resolver paths', () => {
+  let restoreNetwork: () => void;
+  beforeAll(() => {
+    restoreNetwork = routePublicNetworkToFixtures();
+  });
+  afterAll(() => restoreNetwork());
   beforeEach(() => {
     jest.mocked(fetch).mockReset();
     jest.mocked(getAdapterFor).mockReturnValue(null);
@@ -80,11 +86,20 @@ describe('required page error provenance through real HTTP/resolver paths', () =
   );
 
   it('does not treat 200 HTML mentioning 404, a missing image, or a redirected 404 as canonical page 404', async () => {
-    for (const result of [
-      response(200, page, '404 not found'),
-      response(404, page + '/moved')
+    for (const results of [
+      [response(200, page, '404 not found')],
+      [
+        new Response('', {
+          status: 301,
+          url: page,
+          headers: { location: page + '/moved' }
+        }),
+        response(404, page + '/moved')
+      ]
     ]) {
-      jest.mocked(fetch).mockResolvedValueOnce(result);
+      for (const result of results) {
+        jest.mocked(fetch).mockResolvedValueOnce(result);
+      }
       await expect(
         new NftLinkResolver().resolve(page, {})
       ).rejects.not.toBeInstanceOf(RequiredNftPageNotFoundError);

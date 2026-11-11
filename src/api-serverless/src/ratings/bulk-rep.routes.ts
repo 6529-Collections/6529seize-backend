@@ -28,6 +28,13 @@ router.post(
   }
 );
 
+/** As for POST /ratings. */
+export const MAX_BULK_REP_TARGETS = 100;
+/** Each distinct category is checked before anything is written. */
+export const MAX_BULK_REP_CATEGORIES = 10;
+/** The range of the ratings.rating column. */
+const MAX_REP_RATING = 2_147_483_647;
+
 const BulkRepTargetSchema: Joi.ObjectSchema<ApiBulkRepTarget> =
   Joi.object<ApiBulkRepTarget>({
     address: Joi.string()
@@ -37,7 +44,9 @@ const BulkRepTargetSchema: Joi.ObjectSchema<ApiBulkRepTarget> =
         'string.pattern.base': `Invalid address.`
       })
       .lowercase(),
+    // Trimmed, as the single REP rating route stores its category.
     category: Joi.string()
+      .trim()
       .required()
       .min(1)
       .max(100)
@@ -45,12 +54,27 @@ const BulkRepTargetSchema: Joi.ObjectSchema<ApiBulkRepTarget> =
       .messages({
         'string.pattern.base': `Invalid category. Category can't be longer than 100 characters. It can only alphanumeric characters, spaces, commas, punctuation, parentheses and single quotes.`
       }),
-    amount: Joi.number().integer().required()
+    amount: Joi.number()
+      .integer()
+      .min(-MAX_REP_RATING)
+      .max(MAX_REP_RATING)
+      .required()
   });
 
-const BulkRepRequestSchema: Joi.ObjectSchema<ApiBulkRepRequest> =
+export const BulkRepRequestSchema: Joi.ObjectSchema<ApiBulkRepRequest> =
   Joi.object<ApiBulkRepRequest>({
-    targets: Joi.array().items(BulkRepTargetSchema).required()
+    targets: Joi.array()
+      .items(BulkRepTargetSchema)
+      .max(MAX_BULK_REP_TARGETS)
+      .required()
+      .custom((targets: ApiBulkRepTarget[], helpers) =>
+        new Set(targets.map((target) => target.category)).size >
+        MAX_BULK_REP_CATEGORIES
+          ? helpers.message({
+              custom: `"targets" can use at most ${MAX_BULK_REP_CATEGORIES} distinct categories`
+            })
+          : targets
+      )
   });
 
 export default router;

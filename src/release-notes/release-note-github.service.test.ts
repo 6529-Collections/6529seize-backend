@@ -292,6 +292,19 @@ describe('ReleaseNoteGitHubService', () => {
     expect(fetch).not.toHaveBeenCalled();
   });
 
+  it.each(['other/6529seize-frontend', 'unknown-repo'])(
+    'rejects the repository %s before calling GitHub',
+    async (repo) => {
+      await expect(
+        new ReleaseNoteGitHubService().getValidatedReleaseRun({
+          ...request,
+          repo
+        })
+      ).rejects.toThrow(`Unsupported release notes repository ${repo}`);
+      expect(fetch).not.toHaveBeenCalled();
+    }
+  );
+
   it('builds a backend release context from exactly the declared PR', async () => {
     (fetch as unknown as jest.Mock)
       .mockResolvedValueOnce(

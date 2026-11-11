@@ -39,6 +39,10 @@ import {
   reducedNativeVotes,
   flooredWeightedNativeVote
 } from './native-competition-runtime.helpers';
+import {
+  competitionWorkerCursorStore,
+  CompetitionWorkerCursorStore
+} from './competition-worker-cursor';
 
 type RuntimeState = {
   entries: NativeRuntimeEntry[];
@@ -74,6 +78,48 @@ export const OFF_LOCK_RETRY_MIN_REMAINING_MS = 60_000;
 export type OffLockRunOptions = {
   readonly remainingMillis?: () => number;
 };
+
+/**
+ * Bounds of one decision pass. Without them a pass visits every competition,
+ * as before. Scoring and decisions of each competition are unchanged; the
+ * bounds only decide which competitions this pass starts.
+ */
+export type DecisionPassBounds = {
+  /** Start no further competition once the pass has run this long. */
+  readonly budgetMs?: number;
+  /**
+   * Move on from a competition still running after this long. Its run is
+   * never cut short (its transaction commits or rolls back as usual); it
+   * finishes alongside the next competitions and the pass waits for it
+   * before returning, so no transaction outlives the invocation.
+   */
+  readonly competitionDeadlineMs?: number;
+  /** Start no further competition when the invocation has less left. */
+  readonly reserveMillis?: number;
+};
+
+/** Competitions past their deadline that may still be running at once. */
+export const DECISION_PASS_MAX_OVERRUNNING = 2;
+/** The decision worker's resume point in `competition_worker_cursors`. */
+export const DECISION_PASS_CURSOR = 'native_decisions';
+
+const DEADLINE_PASSED = Symbol('deadline passed');
+
+async function withinDeadline<T>(
+  run: Promise<T>,
+  deadlineMs: number | undefined
+): Promise<T | typeof DEADLINE_PASSED> {
+  if (deadlineMs === undefined) return run;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<typeof DEADLINE_PASSED>((resolve) => {
+    timer = setTimeout(() => resolve(DEADLINE_PASSED), deadlineMs);
+  });
+  try {
+    return await Promise.race([run, deadline]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 /** Test seam: runs between the off-lock computation and the locked write. */
 export type OffLockRefreshHooks = {
@@ -147,12 +193,23 @@ export class NativeCompetitionRuntimeService {
       CompetitionCreditService,
       'getBudget' | 'getWaveBudgets' | 'getDropBudgets'
     >,
-    private readonly executionRouter: CompetitionExecutionRouter
+    private readonly executionRouter: CompetitionExecutionRouter,
+    private readonly cursors: Pick<
+      CompetitionWorkerCursorStore,
+      'read' | 'save'
+    > = competitionWorkerCursorStore
   ) {}
 
   /**
    * `activeVotes` are the voter's active votes when the caller already read
    * them in this transaction (exactly what getVoterActiveVotes returns).
+   *
+   * With `afterEntryHistory`, each change is stamped no earlier than its
+   * entry's latest score history row, read under the competition lock: a
+   * caller whose `occurredAt` was taken before the lock (a loop pass) may
+   * reconcile after a vote stamped later than that. History orders by time
+   * before sequence, so an earlier stamp would put this newer aggregate
+   * before the vote's older one and leave the older one as the latest.
    */
   public async reconcileVoterCredit(
     params: {
@@ -161,6 +218,7 @@ export class NativeCompetitionRuntimeService {
       availableCredit: number;
       creditScope: string;
       occurredAt: number;
+      afterEntryHistory?: boolean;
     },
     ctx: RequestContext,
     activeVotes?: readonly { entryId: string; value: number }[]
@@ -184,19 +242,37 @@ export class NativeCompetitionRuntimeService {
     const previousByEntry = new Map(
       current.map((vote) => [vote.entryId, vote.value])
     );
-    for (const vote of reduced) {
-      const previousVote = previousByEntry.get(vote.entryId) ?? 0;
-      if (vote.value === previousVote) continue;
+    const changes = reduced.filter(
+      (vote) => vote.value !== (previousByEntry.get(vote.entryId) ?? 0)
+    );
+    if (!changes.length) return;
+    // One read for all of this voter's changed entries. Each entry changes
+    // once per voter, so the times stay the latest while these writes run.
+    const latestHistory = params.afterEntryHistory
+      ? await this.repository.latestEntryHistoryTimes(
+          params.competitionId,
+          changes.map((vote) => vote.entryId),
+          ctx
+        )
+      : new Map<string, number>();
+    for (const vote of changes) {
       const mutation = {
         competitionId: params.competitionId,
         entryId: vote.entryId,
         voterProfileId: params.voterProfileId,
         value: vote.value,
-        occurredAt: params.occurredAt
+        occurredAt: Math.max(
+          params.occurredAt,
+          latestHistory.get(vote.entryId) ?? params.occurredAt
+        )
       };
       await this.repository.replaceVoteForReconciliation(mutation, ctx);
       await this.repository.recordVoteChange(
-        { ...mutation, previousVote, reason: 'CREDIT_OVERSPENT' },
+        {
+          ...mutation,
+          previousVote: previousByEntry.get(vote.entryId) ?? 0,
+          reason: 'CREDIT_OVERSPENT'
+        },
         ctx
       );
     }
@@ -215,8 +291,8 @@ export class NativeCompetitionRuntimeService {
         : null;
     // DROP scope checks every voter's votes: read the budgets and the votes
     // in a few paged statements instead of ~4 statements per voter. Same
-    // transaction and lock; reconciliation reads nothing it writes, so the
-    // writes (and their order) are unchanged.
+    // transaction and lock; reconciling one voter changes no other voter's
+    // budget or votes, so the writes (and their order) are unchanged.
     const dropBudgets =
       scope === WaveCreditScope.DROP
         ? await this.credits.getDropBudgets(competition, voters, ctx)
@@ -247,13 +323,16 @@ export class NativeCompetitionRuntimeService {
         budget.spent <= budget.available
       )
         return;
+      // `now` is the pass's time, possibly taken before this lock: a vote
+      // written since then is stamped later than `now`.
       await this.reconcileVoterCredit(
         {
           competitionId: competition.id,
           voterProfileId,
           availableCredit: budget.available,
           creditScope: competition.voting.credit_scope,
-          occurredAt: now
+          occurredAt: now,
+          afterEntryHistory: true
         },
         ctx,
         dropVotes?.get(voterProfileId)
@@ -636,27 +715,154 @@ export class NativeCompetitionRuntimeService {
     return outcome;
   }
 
+  /**
+   * One decision pass. It starts after the competition the previous pass
+   * last started and wraps around, so a pass that runs out of its budget is
+   * continued by the next one instead of starting over from the first
+   * competition. Within the bounds every competition is visited, as before.
+   */
   public async processDueCompetitions({
     now = Date.now(),
     timer,
-    remainingMillis
+    remainingMillis,
+    budgetMs,
+    competitionDeadlineMs,
+    reserveMillis
   }: {
     now?: number;
     timer?: Timer;
     remainingMillis?: () => number;
-  } = {}): Promise<void> {
-    const failed = await this.forEachNativeCompetition(
-      timer,
-      'decisions',
-      (competitionId, ctx) =>
-        this.processCompetition(competitionId, now, ctx, { remainingMillis })
-    );
+  } & DecisionPassBounds = {}): Promise<void> {
+    const startedAt = Date.now();
+    const outOfTime = () =>
+      (budgetMs !== undefined && Date.now() - startedAt >= budgetMs) ||
+      (remainingMillis !== undefined &&
+        reserveMillis !== undefined &&
+        remainingMillis() < reserveMillis);
+    const start = await this.cursors.read(DECISION_PASS_CURSOR);
+    const overrunning = new Set<Promise<void>>();
+    let started = 0;
+    let failed = 0;
+    let overran = 0;
+    let incomplete = false;
+    const visit = async (id: string): Promise<boolean> => {
+      if (outOfTime()) {
+        incomplete = true;
+        return false;
+      }
+      // Saved before the run: a competition that never finishes is still
+      // passed over by the next pass, which starts after it. A failure only
+      // counts as failed; a pass with time left still visits every
+      // competition, so a failing one is retried every pass as before.
+      await this.cursors.save(DECISION_PASS_CURSOR, id, Date.now());
+      started++;
+      const run = this.runCompetitionPass(id, 'decisions', timer, (ctx) =>
+        this.processCompetition(id, now, ctx, { remainingMillis })
+      );
+      const result = await withinDeadline(run, competitionDeadlineMs);
+      if (result !== DEADLINE_PASSED) {
+        if (!result) failed++;
+        return true;
+      }
+      overran++;
+      this.logger.warn('native_competition_execution_deadline_passed', {
+        competition_id: id,
+        operation: 'decisions',
+        deadline_ms: competitionDeadlineMs
+      });
+      const tracked: Promise<void> = run
+        .then((succeeded) => {
+          if (!succeeded) failed++;
+        })
+        .finally(() => overrunning.delete(tracked));
+      overrunning.add(tracked);
+      if (overrunning.size >= DECISION_PASS_MAX_OVERRUNNING)
+        await Promise.race(overrunning);
+      return true;
+    };
+    try {
+      await this.visitRotation(start, timer, visit);
+    } finally {
+      await Promise.all(overrunning);
+    }
+    if (incomplete || overran) {
+      this.logger.warn('native_competition_decision_pass_bounded', {
+        started,
+        failed,
+        overran,
+        incomplete,
+        duration_ms: Date.now() - startedAt
+      });
+    }
+    const pending = failed > 0 || incomplete;
     reportLoopHealth({
       operation: 'native_execution',
-      pending: failed > 0,
+      pending,
       recovery: 'automatic',
-      ...(failed ? {} : { progressAt: Math.floor(Date.now() / 1000) })
+      ...(pending ? {} : { progressAt: Math.floor(Date.now() / 1000) })
     });
+  }
+
+  /**
+   * Visits active competitions in id order starting after `start`, then from
+   * the beginning through `start`, until `visit` returns false.
+   */
+  private async visitRotation(
+    start: string,
+    timer: Timer | undefined,
+    visit: (id: string) => Promise<boolean>
+  ): Promise<void> {
+    const passes: { afterId: string; throughId?: string }[] = start
+      ? [{ afterId: start }, { afterId: '', throughId: start }]
+      : [{ afterId: '' }];
+    for (const pass of passes) {
+      let afterId = pass.afterId;
+      for (;;) {
+        const ids =
+          pass.throughId === undefined
+            ? await this.repository.discoverCompetitions(afterId, 100, {
+                timer
+              })
+            : await this.repository.discoverCompetitions(
+                afterId,
+                100,
+                { timer },
+                pass.throughId
+              );
+        if (!ids.length) break;
+        for (const id of ids) {
+          if (!(await visit(id))) return;
+        }
+        afterId = ids[ids.length - 1];
+      }
+    }
+  }
+
+  /** Runs one competition and logs its outcome; resolves false on failure. */
+  private async runCompetitionPass(
+    id: string,
+    operation: 'leaderboard' | 'decisions',
+    timer: Timer | undefined,
+    execute: (ctx: RequestContext) => Promise<void>
+  ): Promise<boolean> {
+    const startedAt = Date.now();
+    try {
+      await execute({ timer });
+      this.logger.info('native_competition_execution_completed', {
+        competition_id: id,
+        operation,
+        duration_ms: Date.now() - startedAt
+      });
+      return true;
+    } catch {
+      // Do not log signed payloads, user content or DB error values.
+      this.logger.error('native_competition_execution_failed', {
+        competition_id: id,
+        operation,
+        duration_ms: Date.now() - startedAt
+      });
+      return false;
+    }
   }
 
   private async forEachNativeCompetition(
@@ -672,23 +878,12 @@ export class NativeCompetitionRuntimeService {
       });
       if (!ids.length) break;
       for (const id of ids) {
-        const startedAt = Date.now();
-        try {
-          await execute(id, { timer });
-          this.logger.info('native_competition_execution_completed', {
-            competition_id: id,
-            operation,
-            duration_ms: Date.now() - startedAt
-          });
-        } catch {
+        if (
+          !(await this.runCompetitionPass(id, operation, timer, (ctx) =>
+            execute(id, ctx)
+          ))
+        )
           failed++;
-          // Do not log signed payloads, user content or DB error values.
-          this.logger.error('native_competition_execution_failed', {
-            competition_id: id,
-            operation,
-            duration_ms: Date.now() - startedAt
-          });
-        }
       }
       afterId = ids[ids.length - 1];
     }

@@ -16,6 +16,7 @@ import {
   reportPushImageRetry,
   reportPushSendDiagnostic
 } from '@/pushNotificationsHandler/push-send-diagnostics';
+import { isAllowedPushNotificationImageUrl } from '@/pushNotificationsHandler/push-notification-image-url';
 
 const logger = Logger.get('PUSH_NOTIFICATIONS_HANDLER_SEND');
 
@@ -51,16 +52,6 @@ function preparePushNotificationLine(value: string | null | undefined): string {
   return emojify(
     sanitizePushNotificationText(raw).replace(/@\[(.+?)\]/g, '@$1')
   ).trim();
-}
-
-function isFcmAcceptableImageUrl(url: string | undefined): boolean {
-  if (!url || typeof url !== 'string' || !url.trim()) return false;
-  try {
-    const u = new URL(url.trim());
-    return u.protocol === 'https:' || u.protocol === 'http:';
-  } catch {
-    return false;
-  }
 }
 
 function init() {
@@ -198,8 +189,8 @@ function buildMessage(
     preparePushNotificationLine(input.body) || DEFAULT_PUSH_NOTIFICATION_BODY;
 
   const notification: Notification = { title, body };
-  if (includeImage && isFcmAcceptableImageUrl(input.imageUrl)) {
-    notification.imageUrl = input.imageUrl!.trim();
+  if (includeImage && isAllowedPushNotificationImageUrl(input.imageUrl)) {
+    notification.imageUrl = input.imageUrl.trim();
   }
 
   const data = buildMessageData(input);

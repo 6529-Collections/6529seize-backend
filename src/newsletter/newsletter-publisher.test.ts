@@ -2,6 +2,7 @@ import { verifyMessage, Wallet } from 'ethers';
 import { NewDropSchema } from '@/api/drops/drop.validator';
 import { ApiLoginRequest } from '@/api/generated/models/ApiLoginRequest';
 import {
+  filterNewsletterEdition,
   NewsletterPublisher,
   newsletterMarkdown
 } from './newsletter-publisher';
@@ -94,5 +95,30 @@ describe('newsletter publisher', () => {
       'does not fit'
     );
     expect(() => newsletterMarkdown(' ', window)).toThrow('does not fit');
+  });
+});
+
+describe('newsletter edition text rules', () => {
+  const window = { start: 0, end: 86_400_000, scheduled: true };
+
+  it('keeps 6529.io links and turns other links into plain text', () => {
+    const text = newsletterMarkdown(
+      'Read [the story](https://6529.io/waves/w?serialNo=1) and [claim here](https://example.com/claim) or https://example.com/x.',
+      window
+    );
+    expect(text).toContain('[the story](https://6529.io/waves/w?serialNo=1)');
+    expect(text).toContain('claim here');
+    expect(text).not.toContain('example.com');
+  });
+
+  it('turns group mention tokens into plain words', () => {
+    expect(
+      filterNewsletterEdition('Thanks @all and @contributors, ping @devs6529')
+    ).toBe('Thanks all and contributors, ping devs6529');
+  });
+
+  it('leaves handle links intact', () => {
+    const body = 'Art by [punk6529](https://6529.io/punk6529).';
+    expect(filterNewsletterEdition(body)).toBe(body);
   });
 });

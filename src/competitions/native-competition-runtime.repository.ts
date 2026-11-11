@@ -162,6 +162,13 @@ function safeAggregateRating(value: number | string): number {
   return rating;
 }
 
+/** Outbox events that carry a decision's results, delivered first. */
+export const PRIORITY_OUTBOX_EVENT_TYPES: readonly string[] = [
+  'COMPETITION_DECISION_COMPLETED',
+  'COMPETITION_OUTCOME_CREATED',
+  'COMPETITION_ENTRY_STATUS_CHANGED'
+];
+
 /** All state changes require the caller's competition row lock. The lock is
  * also the execution lease: it is released atomically with commit/rollback. */
 export class NativeCompetitionRuntimeRepository extends LazyDbAccessCompatibleService {
@@ -192,17 +199,23 @@ export class NativeCompetitionRuntimeRepository extends LazyDbAccessCompatibleSe
     }
   }
 
+  /**
+   * Active, published competitions after `afterId` in id order; with
+   * `throughId`, only up to and including that id.
+   */
   public async discoverCompetitions(
     afterId: string,
     limit: number,
-    ctx: RequestContext
+    ctx: RequestContext,
+    throughId?: string
   ): Promise<string[]> {
     const rows = await this.query<{ id: string }>(
       'discoverCompetitions',
       `select id from ${COMPETITIONS_TABLE}
       where execution_mode = 'ACTIVE' and lifecycle = 'PUBLISHED'
-      and id > :afterId order by id asc limit :limit`,
-      { afterId, limit },
+      and id > :afterId${throughId === undefined ? '' : ' and id <= :throughId'}
+      order by id asc limit :limit`,
+      { afterId, limit, ...(throughId === undefined ? {} : { throughId }) },
       ctx
     );
     return rows.map((row) => row.id);
@@ -502,6 +515,49 @@ export class NativeCompetitionRuntimeRepository extends LazyDbAccessCompatibleSe
       }
     );
     return votes;
+  }
+
+  /**
+   * The time of each given entry's latest score history row; entries without
+   * history are absent. Every history writer holds the competition lock the
+   * caller holds, so this locking read sees a vote committed just before
+   * this transaction took that lock even when its snapshot is older, and the
+   * shared locks it takes contend with no writer. One statement per page of
+   * entries: MAX per entry over (competition_id, entry_id, occurred_at, ...)
+   * is answered from the index.
+   */
+  public async latestEntryHistoryTimes(
+    competitionId: string,
+    entryIds: readonly string[],
+    ctx: RequestContext
+  ): Promise<Map<string, number>> {
+    this.requireTransaction(ctx);
+    const latest = new Map<string, number>();
+    await readSequentially(
+      chunkSqlInListValues(
+        Array.from(new Set(entryIds)),
+        SQL_IN_LIST_CHUNK_BYTES,
+        SQL_IN_LIST_PAGE_VALUES
+      ),
+      async (page) => {
+        const rows = await this.query<{
+          entry_id: string;
+          occurred_at: number | string;
+        }>(
+          'latestEntryHistoryTimes',
+          `select entry_id, max(occurred_at) as occurred_at
+          from ${COMPETITION_SCORE_HISTORY_TABLE}
+          force index (idx_competition_score_history_entry_time)
+          where competition_id = :competitionId and entry_id in (:entryIds)
+          group by entry_id for share`,
+          { competitionId, entryIds: page },
+          ctx
+        );
+        for (const row of rows)
+          latest.set(row.entry_id, Number(row.occurred_at));
+      }
+    );
+    return latest;
   }
 
   public async replaceVoteForReconciliation(
@@ -1085,27 +1141,63 @@ export class NativeCompetitionRuntimeRepository extends LazyDbAccessCompatibleSe
     params: { now: number; limit: number; leaseMs?: number },
     ctx: RequestContext = {}
   ): Promise<NativeCompetitionOutboxRecord[]> {
+    return this.claimPendingOutbox('claimOutbox', params, '', {}, ctx);
+  }
+
+  /**
+   * Claims pending decision results (completed decisions, their winners'
+   * status changes and awards) oldest first, ahead of the rest of the
+   * outbox. It reads the same pending rows as claimOutbox.
+   */
+  public async claimPriorityOutbox(
+    params: { now: number; limit: number; leaseMs?: number },
+    ctx: RequestContext = {}
+  ): Promise<NativeCompetitionOutboxRecord[]> {
+    return this.claimPendingOutbox(
+      'claimPriorityOutbox',
+      params,
+      `and json_unquote(json_extract(event, '$.event_type')) in (:priorityEventTypes)`,
+      { priorityEventTypes: [...PRIORITY_OUTBOX_EVENT_TYPES] },
+      ctx
+    );
+  }
+
+  private async claimPendingOutbox(
+    operation: string,
+    params: { now: number; limit: number; leaseMs?: number },
+    filterSql: string,
+    filterParams: Record<string, unknown>,
+    ctx: RequestContext
+  ): Promise<NativeCompetitionOutboxRecord[]> {
     if (!ctx.connection)
       return this.executeNativeQueriesInTransaction((connection) =>
-        this.claimOutbox(params, { ...ctx, connection })
+        this.claimPendingOutbox(operation, params, filterSql, filterParams, {
+          ...ctx,
+          connection
+        })
       );
     const rows = await this.query<{
       id: string;
       event: NativeCompetitionEvent | string;
       attempts: number;
     }>(
-      'claimOutbox',
+      operation,
       `select id, event, attempts from ${COMPETITION_OUTBOX_TABLE}
       where delivered_at is null and next_attempt_at <= :now and (lease_until is null or lease_until <= :now)
+      ${filterSql}
       order by created_at asc, id asc limit :limit for update skip locked`,
-      { now: params.now, limit: Math.max(1, Math.min(100, params.limit)) },
+      {
+        ...filterParams,
+        now: params.now,
+        limit: Math.max(1, Math.min(100, params.limit))
+      },
       ctx
     );
     const result: NativeCompetitionOutboxRecord[] = [];
     for (const row of rows) {
       const leaseToken = randomUUID();
       await this.query(
-        'claimOutbox',
+        operation,
         `update ${COMPETITION_OUTBOX_TABLE} set lease_token = :leaseToken, lease_until = :leaseUntil, attempts = attempts + 1 where id = :id`,
         {
           id: row.id,

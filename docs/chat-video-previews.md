@@ -116,9 +116,24 @@ template. The role ARN and policy role name identify the same configured account
 
 Each EventBridge event ID produces a stable 64-character job request token.
 MediaConvert deduplicates repeat submissions within its one-minute idempotency
-window. Later redelivery can still submit another job; durable deduplication is
-not introduced here. Keys come from the upload service's generated author/upload
-UUID path and sanitized filename, and are passed as opaque S3 keys.
+window. Keys come from the upload service's generated author/upload UUID path
+and sanitized filename, and are passed as opaque S3 keys.
+
+Before any MediaConvert call the worker bounds the work per object
+(`video-conversion-admission.ts`). It HEADs the object and skips it when it no
+longer exists, when a later write replaced the version the event announced, or
+when it is larger than `DROP_VIDEO_CONVERSION_MAX_BYTES` (default 2 GiB; the
+event's reported size is used if HEAD is forbidden). Each started job is
+recorded in a small per-key ledger object under `_video-conversion-ledger/v1/`,
+written only with S3 conditional writes so concurrent events for one key cannot
+both pass. A version (key + ETag) gets one job: a repeated PUT of identical
+bytes, or another event for it, is skipped, while a redelivery of the same
+event may retry its own submission. At most
+`DROP_VIDEO_CONVERSION_MAX_JOBS_PER_KEY` jobs (default 3) start per key within
+`DROP_VIDEO_CONVERSION_JOB_WINDOW_HOURS` (default 24). Skips log
+`[VIDEO_CONVERSION_SKIPPED]` with the reason. NFT link preview videos under
+`drops/nftlinkvideos/` are converted like uploads: clients play their
+renditions through the same `/drops/` rendition convention.
 
 Before enabling this frontend, deploy the converter and its policy, then the
 API completion handler. The converter's existing shared `lambda-vpc-role`
@@ -132,9 +147,14 @@ JPEGs alongside an existing device poster. The frontend still prefers the device
 poster; this safe fallback does not block uploads or require a new rollout gate.
 
 Existing endpoint, execution role, template, bucket, and region configuration
-remain required. There are no new environment variables, services, queues or
-migrations. The converter remains a shared-media, staging-only service under
-the current catalog; API deployment follows the ordinary environment catalog.
+remain required. The conversion bounds above are set in the function's
+Serverless environment; there are no new services, queues or migrations. The
+HEAD of drop originals and the reads and conditional writes under
+`_video-conversion-ledger/` use the shared execution role's existing access to
+the media bucket (its attached managed policy); the function's inline policy is
+unchanged, because deployments may not change policies on that shared role.
+The converter remains a shared-media, staging-only service under the current
+catalog; API deployment follows the ordinary environment catalog.
 Keep the converter deployed before API/FE so clients without a usable device
 poster still get fallback capture. Old clients omit the optional field. An
 older API may reject it, so deploying frontend first is unsupported. Rolling
