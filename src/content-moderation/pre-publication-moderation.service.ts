@@ -28,10 +28,21 @@ import {
   contentModerationDb,
   ContentModerationDb
 } from './content-moderation.db';
+import {
+  getPrePublicationEvaluatorProfileHourlyLimit,
+  PRE_PUBLICATION_EVALUATOR_BUDGET_WINDOW,
+  PRE_PUBLICATION_EVALUATOR_FALLBACK_LOG_MARKER,
+  PrePublicationVerdictCache,
+  prePublicationVerdictCacheKey,
+  recordPrePublicationEvaluatorEvent,
+  redisPrePublicationVerdictCache
+} from './pre-publication-evaluator-guards';
 
 export const PRE_PUBLICATION_GATE_VERSION = 'deterministic-gate-2026-08-1';
 export const CONTENT_MODERATION_REJECTION_CODE = 'CONTENT_MODERATION_REJECTED';
 export const PROFILE_SUSPENDED_REJECTION_CODE = 'PROFILE_SUSPENDED';
+export const CONTENT_MODERATION_REVIEW_LIMIT_CODE =
+  'CONTENT_MODERATION_REVIEW_LIMIT';
 const DUPLICATE_WINDOW = Time.minutes(10);
 const DUPLICATE_SIGNAL_THRESHOLD = 4;
 const URL_EDGE_PUNCTUATION = new Set(['.', '!', '?', ';', ':']);
@@ -47,6 +58,16 @@ export interface PrePublicationDropInput {
   readonly operation: 'CREATE' | 'UPDATE';
   readonly title: string | null;
   readonly parts: ReadonlyArray<{ readonly content: string | null }>;
+}
+
+export interface PrePublicationEvaluateOptions {
+  /**
+   * Cheap authorization and wave validation for the write. It runs only when
+   * the content needs the model evaluator, and before any review item is
+   * opened or the evaluator is called, so a write that would fail validation
+   * never reaches the model.
+   */
+  readonly beforeModelEvaluation?: () => Promise<void>;
 }
 
 export interface PrePublicationDecision {
@@ -122,7 +143,8 @@ export class PrePublicationModerationService {
   constructor(
     private readonly moderationDb: ContentModerationDb,
     private readonly aiService: ContentModerationAiService,
-    private readonly reviews: ModerationReviewDb = moderationReviewDb
+    private readonly reviews: ModerationReviewDb = moderationReviewDb,
+    private readonly verdictCache: PrePublicationVerdictCache = redisPrePublicationVerdictCache
   ) {}
 
   async assertPostingAllowed(
@@ -143,7 +165,8 @@ export class PrePublicationModerationService {
 
   async evaluate(
     input: PrePublicationDropInput,
-    ctx: RequestContext
+    ctx: RequestContext,
+    options: PrePublicationEvaluateOptions = {}
   ): Promise<PrePublicationDecision | undefined> {
     const profileStatus = await this.moderationDb.getProfileStatus(
       input.authorProfileId,
@@ -160,6 +183,13 @@ export class PrePublicationModerationService {
             contentFingerprint,
             ctx
           );
+    if (
+      screen.signal &&
+      !screen.directRejectionReason &&
+      profileStatus !== ModeratedProfileStatus.SUSPENDED
+    ) {
+      await options.beforeModelEvaluation?.();
+    }
     const reviewInput = makeReviewInput(input, screen.signal, ctx);
     const existingReview = await this.reviews.find(reviewInput, ctx);
     const detailed =
@@ -271,33 +301,64 @@ export class PrePublicationModerationService {
       );
       return publicationDecision(input, generation);
     }
+    const signal = screen.signal;
+    const verdictKey = prePublicationVerdictCacheKey({
+      policyVersion: PRE_PUBLICATION_EVALUATOR_VERSION,
+      modelId: getConfiguredBedrockAnthropicModelId(
+        'CONTENT_MODERATION_BEDROCK_MODEL_ID',
+        DEFAULT_CLAUDE_SONNET_4_5_BEDROCK_MODEL_ID
+      ),
+      signal,
+      content
+    });
+    const cachedAssessment = await this.verdictCache.get(verdictKey);
     let assessment: Awaited<
       ReturnType<ContentModerationAiService['assessPrePublication']>
     >;
-    try {
-      assessment = await this.aiService.assessPrePublication({
-        signal: screen.signal,
-        content
-      });
-    } catch {
-      this.logger.error(
-        'Pre-publication evaluator failed; allowing ambiguous content'
-      );
-      await this.record(
+    if (cachedAssessment) {
+      recordPrePublicationEvaluatorEvent('CACHED_VERDICT');
+      assessment = cachedAssessment;
+    } else {
+      await this.assertEvaluatorBudget(
         input,
-        {
-          contentFingerprint,
-          signal: screen.signal,
-          outcome: PrePublicationCheckOutcome.ALLOW,
-          aiInvoked: true,
-          evaluatorResult: {
-            evaluator_error: true,
-            fallback: 'ALLOW'
-          }
-        },
+        { contentFingerprint, signal },
         ctx
       );
-      return publicationDecision(input);
+      try {
+        assessment = await this.aiService.assessPrePublication({
+          signal,
+          content
+        });
+      } catch (error) {
+        // Unchanged product behaviour: an unavailable evaluator allows the
+        // post. The marker and metric make every such fallback visible.
+        recordPrePublicationEvaluatorEvent('ERROR_FALLBACK_ALLOW');
+        this.logger.error(
+          `${PRE_PUBLICATION_EVALUATOR_FALLBACK_LOG_MARKER} Pre-publication evaluator failed; allowing ambiguous content`,
+          {
+            signal,
+            authorProfileId: input.authorProfileId,
+            error: error instanceof Error ? error.message : String(error)
+          }
+        );
+        await this.record(
+          input,
+          {
+            contentFingerprint,
+            signal,
+            outcome: PrePublicationCheckOutcome.ALLOW,
+            aiInvoked: true,
+            evaluatorResult: {
+              evaluator_error: true,
+              fallback: 'ALLOW'
+            }
+          },
+          ctx
+        );
+        return publicationDecision(input);
+      }
+      recordPrePublicationEvaluatorEvent('INVOKED');
+      await this.verdictCache.set(verdictKey, assessment);
     }
 
     const outcome =
@@ -309,10 +370,14 @@ export class PrePublicationModerationService {
       input,
       {
         contentFingerprint,
-        signal: screen.signal,
+        signal,
         outcome,
-        aiInvoked: true,
-        evaluatorResult: { ...assessment }
+        // A cached verdict made no model call, so it is not counted against
+        // the profile's evaluator budget.
+        aiInvoked: !cachedAssessment,
+        evaluatorResult: cachedAssessment
+          ? { ...assessment, cached_verdict: true }
+          : { ...assessment }
       },
       ctx
     );
@@ -324,6 +389,54 @@ export class PrePublicationModerationService {
       );
     }
     return publicationDecision(input);
+  }
+
+  /**
+   * Each profile may cause a bounded number of evaluator calls per rolling
+   * hour. Beyond it the post is refused with a retry-later response instead
+   * of calling the model again.
+   */
+  private async assertEvaluatorBudget(
+    input: PrePublicationDropInput,
+    {
+      contentFingerprint,
+      signal
+    }: { readonly contentFingerprint: string; readonly signal: string },
+    ctx: RequestContext
+  ): Promise<void> {
+    const limit = getPrePublicationEvaluatorProfileHourlyLimit();
+    const used = await this.moderationDb.countRecentEvaluatorInvocations(
+      {
+        authorProfileId: input.authorProfileId,
+        since:
+          Time.currentMillis() -
+          PRE_PUBLICATION_EVALUATOR_BUDGET_WINDOW.toMillis()
+      },
+      ctx.connection
+    );
+    if (used < limit) {
+      return;
+    }
+    recordPrePublicationEvaluatorEvent('BUDGET_EXCEEDED');
+    this.logger.warn(
+      `Pre-publication evaluator budget of ${limit} per hour reached for profile ${input.authorProfileId}`
+    );
+    await this.record(
+      input,
+      {
+        contentFingerprint,
+        signal,
+        outcome: PrePublicationCheckOutcome.REJECT,
+        aiInvoked: false,
+        evaluatorResult: { reason: 'EVALUATOR_BUDGET_EXCEEDED', limit }
+      },
+      ctx
+    );
+    throw new CustomApiCompliantException(
+      429,
+      'Several of your recent posts needed an extra review. Please wait a while before posting this again.',
+      CONTENT_MODERATION_REVIEW_LIMIT_CODE
+    );
   }
 
   private async runDeterministicScreen(

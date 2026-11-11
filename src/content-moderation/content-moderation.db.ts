@@ -1800,6 +1800,25 @@ export class ContentModerationDb extends LazyDbAccessCompatibleService {
     return Number(row?.match_count ?? 0);
   }
 
+  /** Pre-publication checks for a profile that called the model evaluator. */
+  async countRecentEvaluatorInvocations(
+    input: { authorProfileId: string; since: number },
+    connection?: ConnectionWrapper<any>
+  ): Promise<number> {
+    const row = await this.db.oneOrNull<{ invocation_count: number }>(
+      `
+        select count(*) as invocation_count
+        from ${CONTENT_MODERATION_PRE_PUBLICATION_CHECKS_TABLE}
+        where author_profile_id = :authorProfileId
+          and created_at >= :since
+          and evaluator_version is not null
+      `,
+      input,
+      this.connectionOptions(connection)
+    );
+    return Number(row?.invocation_count ?? 0);
+  }
+
   async recordPrePublicationCheck(
     input: PrePublicationCheckRecord,
     connection?: ConnectionWrapper<any>

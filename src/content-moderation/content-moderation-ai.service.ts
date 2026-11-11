@@ -43,7 +43,7 @@ interface StructuredAssessment {
   readonly evidence: unknown[];
 }
 
-interface PrePublicationAssessment {
+export interface PrePublicationAssessment {
   readonly outcome: PrePublicationCheckOutcome;
   readonly category: string;
   readonly confidence: number;

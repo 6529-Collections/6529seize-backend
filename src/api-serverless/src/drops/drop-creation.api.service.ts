@@ -327,9 +327,15 @@ export class DropCreationApiService {
       await this.createOrUpdateDrop.preResolveIdentityNomination(createModel, {
         timer: ctx.timer
       });
+    // Wave and eligibility checks run before the pre-publication model
+    // evaluator, and only for content that needs it.
     const prePublication = await this.createOrUpdateDrop.preparePrePublication(
       createModel,
-      ctx
+      ctx,
+      {
+        beforeModelEvaluation: () =>
+          this.createOrUpdateDrop.assertCanCreateDropInWave(createModel, ctx)
+      }
     );
     hops.set('drop_pre_commit_ms', hops.elapsed());
     let created: Awaited<

@@ -781,6 +781,22 @@ describe('ContentModerationDb', () => {
     ).rejects.toThrow(BadRequestException);
   });
 
+  it('counts only pre-publication checks that called the evaluator', async () => {
+    const { db, executor } = createDb();
+    executor.oneOrNull.mockResolvedValueOnce({ invocation_count: 3 });
+
+    await expect(
+      db.countRecentEvaluatorInvocations({
+        authorProfileId: 'profile-1',
+        since: 100
+      })
+    ).resolves.toBe(3);
+
+    const [sql, params] = executor.oneOrNull.mock.calls[0];
+    expect(sql).toContain('evaluator_version is not null');
+    expect(params).toEqual({ authorProfileId: 'profile-1', since: 100 });
+  });
+
   it('deletes expired pre-publication checks by retention cutoff', async () => {
     const { db, executor } = createDb();
     executor.execute.mockResolvedValue({ affectedRows: 3 });
