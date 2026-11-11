@@ -82,6 +82,9 @@ describe('production IPFS import baseline', () => {
     // Import preserves the unversioned bucket; enabling versioning is an update.
     expect(resources.Blocks.Properties.VersioningConfiguration).toBeUndefined();
     const cdn = resources.SharedDistribution.Properties.DistributionConfig;
+    // The registry does not support CloudFormation system tags for CloudFront.
+    // An explicit Name tag invokes its full UPDATE handler during import.
+    expect(resources.SharedDistribution.Properties.Tags).toBeUndefined();
     expect(cdn.Aliases).toEqual([
       'ipfs-cache.6529.io',
       'ipfs.6529.io',
