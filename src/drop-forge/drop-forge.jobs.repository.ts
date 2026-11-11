@@ -232,15 +232,20 @@ export class DropForgeJobsRepository {
       undefined,
       { wrappedConnection: ctx.connection }
     );
-    for (const job of jobs)
-      await wakeDropForge(
-        {
-          id: job.id,
-          revision: Number(job.dispatch_revision),
-          preparation_revision: preparationRevision
-        },
-        true
-      );
+    await jobs.reduce(
+      (pending, job) =>
+        pending.then(() =>
+          wakeDropForge(
+            {
+              id: job.id,
+              revision: Number(job.dispatch_revision),
+              preparation_revision: preparationRevision
+            },
+            true
+          )
+        ),
+      Promise.resolve()
+    );
   }
 
   async dispatch(job: DropForgeJobEntity, ctx: RequestContext): Promise<void> {
