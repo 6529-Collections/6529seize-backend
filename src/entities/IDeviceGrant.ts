@@ -55,6 +55,14 @@ export class DeviceGrantEntity {
   @Column({ type: 'boolean', nullable: false, default: false })
   readonly notice_acknowledged?: boolean;
 
+  // Existing grants predate the account-wide notice list.
+  @Column({ type: 'boolean', default: false })
+  readonly notice_pending?: boolean;
+
+  // The key authorized by a combined grant, even before it registers in MLS.
+  @Column({ type: 'varchar', length: 66, nullable: true, default: null })
+  readonly notice_encrypted_dm_device_key?: string | null;
+
   // How the grant was registered. Null for grants stored before this was
   // recorded, or when the registering access token did not say.
   @Column({ type: 'varchar', length: 16, nullable: true, default: null })

@@ -504,7 +504,12 @@ describe('wallet auth device grants', () => {
       expect(storeLoginGrantMock).toHaveBeenCalledTimes(1);
       expect(storeLoginGrantMock.mock.calls[0][0]).toMatchObject({
         terms: { deviceKey: DEVICE_KEY },
-        message: nonce.signable_message
+        message: nonce.signable_message,
+        encryptedDmDeviceKey: MLS_DEVICE_KEY,
+        registration: {
+          requestOrigin: 'https://6529.io',
+          session: { clientType: 'web', binding: 'siwe' }
+        }
       });
       expect(nonce.signable_message).toContain(
         `- urn:6529:mls-device-grant:v1:${E2EE_CIPHERSUITE}:${MLS_DEVICE_KEY.slice(2)}:`

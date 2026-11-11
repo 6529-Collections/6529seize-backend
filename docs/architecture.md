@@ -1621,8 +1621,14 @@ Important API responsibilities:
   `GET /device-grants` and the `POST` endpoints for `/device-grants/{grantId}/label`,
   `/device-grants/{grantId}/acknowledge`, and `/device-grants/{grantId}/revoke`
   return `notice_acknowledged`. Grant registration (`POST /device-grants`)
-  and public signature proofs omit the field. See the device signing grants
-  section of that document.
+  and public signature proofs omit the field. The owner-only
+  `GET /device-security-notices` reads active pending signing and Encrypted DM
+  authorizations from the primary. A linked authorization is represented by its
+  signing grant, while `POST /e2ee/devices/{device_key}/acknowledge` clears a
+  standalone Encrypted DM notice. Both acknowledgment paths leave permissions
+  intact. The additive schema must be synchronized by `dbMigrationsLoop`
+  before deploying `api`. See the device signing grants section of that
+  document.
 - Public read APIs for NFTs, TDH, waves, drops, profiles, community metrics,
   subscriptions, and notifications. Wallet distribution allocation reads
   combine Phase 0–2 distribution rows with Public subscription airdrops, while
@@ -3059,3 +3065,15 @@ Runtime/writer traffic handover remains a separate reviewed migration requiring
 replacement validation, a stable front door, request draining and reconciliation
 of all completed writes. See the [IPFS runbook](../ops/ipfs/README.md) for exact
 ownership boundaries, recovery limitations, deployment order and adoption steps.
+
+Stage 2 development adds handwritten production templates for a stable ALB front
+door with separate writer/gateway target groups, immutable replacement runtimes,
+private versioned recovery/artifact buckets and dedicated deployment authority.
+The old security group and shared CloudFront distribution are not changed by
+these templates. A local upload router persists writer fences, forwards new
+uploads synchronously, tracks source requests until completion and holds mutable
+`to-files` operations until final MFS transfer. Pin transfer retains both nodes'
+completed uploads. Read-only restoration compares existing S3 block bytes and
+rejects new writes through both the plugin and IAM. These foundations alone do
+not switch production; the reviewed deployment controller must validate and
+perform the authorized handover.

@@ -415,6 +415,30 @@ traffic handover remain a separate authorized stage.
 
 ## Runtime and traffic handover remains a separate migration
 
+Stage 2 is authorized and under development. The production front door,
+immutable replacement and recovery/access resources are described directly in
+`cloudformation/frontdoor.yaml`, `runtime.yaml`, `recovery.yaml` and
+`runtime-access.yaml`. These templates do not run on merge. Existing production
+traffic remains on the legacy server until the reviewed handover controller
+validates and explicitly switches it.
+
+The upload router tracks accepted requests through a durable writer fence. After
+the fence, new requests are forwarded synchronously to the verified replacement;
+old accepted requests finish on the source. Ordinary immutable uploads continue.
+Uploads using `to-files` wait behind a separate mutable-state fence until the
+source's final MFS root is installed. Pin transfer is a union, preserving uploads
+already accepted by the replacement. The same protocol applies in reverse for
+rollback. The root-only Unix control socket uses persistent epochs so a stale
+controller cannot undo a newer fence.
+
+Read-only validation uses a reviewed patch to the pinned S3 plugin. Kubo repeats
+an initialization Put even when its root block already exists. In validation mode
+the plugin accepts that call only when a Get returns exactly the same bytes; it
+never sends a Put or Delete to S3. IAM separately withholds block-write permission
+until validation succeeds. The release carries the patch and its checksum.
+Native rehearsals exercise this behavior and real synchronous upload forwarding,
+draining, mutable-write waiting and stale-controller rejection without AWS data.
+
 Importing infrastructure does not yet make a runtime deployment safe. Production
 traffic remains fenced. The planned stable front door is an AWS Application Load
 Balancer with separate writer/gateway target groups. Before exposing that path,
