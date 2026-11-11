@@ -1655,8 +1655,10 @@ Important API responsibilities:
   signing/storage authority.
 - Public decentralized media resolution under `/media/resolve`, which maps
   native `ipfs://`, `ipns://`, and `ar://` references plus recognized gateway
-  URLs to canonical native URIs, `media.6529.io` resolver URLs, and explicit
-  external fallback URLs. This v1 API does not proxy media bytes.
+  URLs to canonical native URIs, resolver URLs on the path gateway selected by
+  `MEDIA_RESOLVER_ENDPOINT` (default `media.6529.io`; URLs on
+  `media.6529usercontent.com` and its per-CID hosts are accepted as input),
+  and explicit external fallback URLs. This v1 API does not proxy media bytes.
 - Authenticated direct-message unread summary under `/dm-drops/unread`,
   retaining the lightweight `{ count }` contract for legacy clients, plus the
   authoritative per-conversation state under `/dm-drops/unread/snapshot` for

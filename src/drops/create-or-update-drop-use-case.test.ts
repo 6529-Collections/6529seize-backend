@@ -3778,6 +3778,36 @@ describe('CreateOrUpdateDropUseCase', () => {
     ).not.toThrow();
   });
 
+  it.each([
+    'https://media.6529usercontent.com/ipfs/bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi/file.html',
+    'https://media.6529usercontent.com/ipns/k51qzi5uqu5dl/file.html',
+    'https://media.6529usercontent.com/arweave/OI6-rpJ2C3Ab4HiZRWt5A1SumhjnYigmSPBPX0ICBj8/file.html',
+    'https://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi.ipfs.6529usercontent.com/file.html'
+  ])('accepts html uploads from the content-domain media hosts: %s', (url) => {
+    expect(() =>
+      validateDropMediaAttachment({
+        mimeType: 'text/html',
+        url,
+        dropType: DropType.CHAT
+      })
+    ).not.toThrow();
+  });
+
+  it.each([
+    'https://evil.6529usercontent.com/ipfs/bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi/file.html',
+    'https://a.b.ipfs.6529usercontent.com/file.html',
+    'https://media.6529usercontent.com.evil.example/ipfs/bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi/file.html',
+    'http://media.6529usercontent.com/ipfs/bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi/file.html'
+  ])('rejects html uploads from look-alike content-domain hosts: %s', (url) => {
+    expect(() =>
+      validateDropMediaAttachment({
+        mimeType: 'text/html',
+        url,
+        dropType: DropType.CHAT
+      })
+    ).toThrow('text/html needs to be served from IPFS, IPNS, or Arweave');
+  });
+
   it('accepts html uploads from recognized IPFS gateway URLs', () => {
     expect(() =>
       validateDropMediaAttachment({
