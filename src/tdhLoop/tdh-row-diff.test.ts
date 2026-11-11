@@ -1,5 +1,10 @@
 import { EntityMetadata } from 'typeorm';
-import { rowsToWrite, snapshotRows } from '@/tdhLoop/tdh-row-diff';
+import {
+  RowDiffColumns,
+  rowsToWrite,
+  RowWrites,
+  snapshotRows
+} from '@/tdhLoop/tdh-row-diff';
 
 type Column = {
   propertyName: string;
@@ -35,7 +40,7 @@ const columns = [
   column('boost', 'double'),
   column('date', 'datetime'),
   column('ranks', 'json', { isNullable: true }),
-  column('rate', 'double', { default: 0 })
+  column('rate', 'double', { isNullable: true, default: 0 })
 ];
 const metadata = {
   columns,
@@ -52,16 +57,23 @@ const base = {
   rate: 0.5
 };
 
+function writes(
+  stored: object,
+  computed: object,
+  columns?: RowDiffColumns
+): RowWrites<object> {
+  return rowsToWrite(
+    metadata,
+    [computed],
+    snapshotRows(metadata, [stored]),
+    () => false,
+    columns
+  );
+}
+
 /** Whether `computed` is written over `stored`, outside the delete scope. */
 function written(stored: object, computed: object): boolean {
-  return (
-    rowsToWrite(
-      metadata,
-      [computed],
-      snapshotRows(metadata, [stored]),
-      () => false
-    ).length === 1
-  );
+  return writes(stored, computed).upserts.length === 1;
 }
 
 describe('partial TDH writes: what counts as unchanged', () => {
@@ -89,6 +101,9 @@ describe('partial TDH writes: what counts as unchanged', () => {
     expect(
       written(base, { ...base, ranks: [{ id: 1, rank: 3, extra: 1 }] })
     ).toBe(true);
+    expect(
+      written({ ...base, ranks: [{ id: 1, rank: 3, extra: 1 }] }, base)
+    ).toBe(true);
     expect(written(base, { ...base, ranks: [] })).toBe(true);
     // A key's exact case is stored, though MySQL matches it either way.
     expect(written(base, { ...base, wallet: '0xABC' })).toBe(true);
@@ -104,6 +119,9 @@ describe('partial TDH writes: what counts as unchanged', () => {
     expect(written({ ...base, rate: 0 }, { ...base, rate: undefined })).toBe(
       true
     );
+    expect(written({ ...base, rate: null }, { ...base, rate: undefined })).toBe(
+      true
+    );
     expect(
       written({ ...base, ranks: null }, { ...base, ranks: undefined })
     ).toBe(false);
@@ -111,16 +129,10 @@ describe('partial TDH writes: what counts as unchanged', () => {
   });
 
   it('writes a new row, and always one in the delete scope', () => {
-    expect(
-      rowsToWrite(
-        metadata,
-        [{ ...base, season: 2 }],
-        snapshotRows(metadata, [base]),
-        () => false
-      )
-    ).toHaveLength(1);
+    expect(written(base, { ...base, season: 2 })).toBe(true);
     expect(
       rowsToWrite(metadata, [base], snapshotRows(metadata, [base]), () => true)
+        .upserts
     ).toHaveLength(1);
   });
 
@@ -130,6 +142,54 @@ describe('partial TDH writes: what counts as unchanged', () => {
     const stored = snapshotRows(metadata, [row]);
     row.ranks[0].rank = 5;
 
-    expect(rowsToWrite(metadata, [row], stored, () => false)).toEqual([row]);
+    expect(rowsToWrite(metadata, [row], stored, () => false).upserts).toEqual([
+      row
+    ]);
+  });
+
+  it('does not compare a column the transaction sets again for every row', () => {
+    const recomputed: RowDiffColumns = { recomputed: ['rate'] };
+    expect(writes(base, { ...base, rate: 0 }, recomputed)).toEqual({
+      upserts: [],
+      refreshes: []
+    });
+    const changed = { ...base, rate: 0, tdh: 13 };
+    expect(writes(base, changed, recomputed).upserts).toEqual([changed]);
+  });
+
+  it('refreshes only the refreshed column of a row that differs nowhere else', () => {
+    const refreshed: RowDiffColumns = { refreshed: 'date' };
+    const later = { ...base, date: new Date('2026-11-10T04:34:11.500Z') };
+    expect(writes(base, later, refreshed)).toEqual({
+      upserts: [],
+      refreshes: [later]
+    });
+    const changed = { ...later, boost: 1.3 };
+    expect(writes(base, changed, refreshed)).toEqual({
+      upserts: [changed],
+      refreshes: []
+    });
+    expect(writes(base, { ...base }, refreshed)).toEqual({
+      upserts: [],
+      refreshes: []
+    });
+    // In the delete scope or new: written in full.
+    expect(
+      rowsToWrite(
+        metadata,
+        [later],
+        snapshotRows(metadata, [base]),
+        () => true,
+        refreshed
+      ).upserts
+    ).toEqual([later]);
+    const added = { ...later, season: 2 };
+    expect(writes(base, added, refreshed).upserts).toEqual([added]);
+  });
+
+  it('rejects key or unknown columns as recomputed or refreshed', () => {
+    expect(() => writes(base, base, { refreshed: 'wallet' })).toThrow();
+    expect(() => writes(base, base, { recomputed: ['season'] })).toThrow();
+    expect(() => writes(base, base, { refreshed: 'missing' })).toThrow();
   });
 });

@@ -1347,8 +1347,11 @@ A consolidated-TDH run (`persistConsolidatedTDH`, from `delegationsLoop` and
   group's row again (other groups are re-ranked) but sends only the rows that
   change: the affected groups' rows, deleted and inserted as before, and other
   rows that are new or differ from the stored ones, compared column by column
-  as MySQL stores them. The same applies to the wallet-level TDH tables it
-  writes first (`updateTDH`).
+  as MySQL stores them. Consolidated and historic rows carry their
+  computation time (`date`), new on every run, so a row that is otherwise
+  unchanged gets only that column; `boosted_tdh_rate` is not compared, since
+  the same transaction sets it again for every row. The same applies to the
+  wallet-level TDH tables it writes first (`updateTDH`).
 - B: identities for new consolidations and profile merges, with the merged
   profiles' wave subscriber counts recounted (not every wave's), and the
   primary wallets of only the profiles it touched (the identities it wrote and

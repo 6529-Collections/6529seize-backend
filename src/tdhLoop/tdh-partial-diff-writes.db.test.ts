@@ -45,6 +45,12 @@ import { resetTestDatabase } from '@/tests/_setup/testDatabase';
 const BLOCK = 500;
 const OLDER_BLOCK = 499;
 const DATE = new Date('2026-11-09T23:59:59Z');
+/**
+ * A partial run stamps each consolidated row with its own `new Date()`; these
+ * cross second boundaries, with a .500 among them.
+ */
+const RUN = Date.parse('2026-11-10T04:34:11.250Z');
+const computedAt = (index: number) => new Date(RUN + index * 125);
 const CONTRACT = '0x33fd426905f149f8376e227d0c9d3340aad17af1';
 const SEASONS = [1, 2, 3];
 const TOKENS = [1, 2, 3, 4];
@@ -170,11 +176,19 @@ function walletRows(groups: Group[], shuffleKeys = false): TDH[] {
   );
 }
 
-function consolidatedRows(groups: Group[], shuffleKeys = false) {
+/**
+ * Consolidated rows as the consolidation computes them: `boosted_tdh_rate` 0
+ * (the write sets it), and, in a partial run (`computed`), a new `date`.
+ */
+function consolidatedRows(
+  groups: Group[],
+  { shuffleKeys = false, computed = false } = {}
+) {
   return walletRows(groups, shuffleKeys).map(
-    ({ wallet: key, ...row }) =>
+    ({ wallet: key, ...row }, index) =>
       ({
         ...row,
+        date: computed ? computedAt(index) : DATE,
         consolidation_key: key,
         consolidation_display: key,
         boosted_tdh_rate: 0,
@@ -293,29 +307,26 @@ async function seedWorld() {
     manager.getRepository(TDHEditions),
     editionRows(before).map(({ key, ...row }) => ({ ...row, wallet: key }))
   );
-  await insertWithoutUpdate(
-    manager.getRepository(ConsolidatedTDH),
-    consolidatedRows(before)
-  );
-  await insertWithoutUpdate(
-    manager.getRepository(ConsolidatedTDHMemes),
-    seasonRows(before).map(({ key, ...row }) => ({
-      ...row,
-      consolidation_key: key
-    }))
-  );
-  await insertWithoutUpdate(
-    manager.getRepository(ConsolidatedTDHEditions),
-    editionRows(before).map(({ key, ...row }) => ({
-      ...row,
-      consolidation_key: key
-    }))
+  // The consolidated level as the nightly full rewrite leaves it, its boosted
+  // TDH rates set.
+  await persistConsolidatedTDH(
+    BLOCK,
+    consolidatedRows(before),
+    seasonRows(before).map(
+      ({ key, ...row }) =>
+        ({ ...row, consolidation_key: key }) as ConsolidatedTDHMemes
+    ),
+    editionRows(before).map(
+      ({ key, ...row }) =>
+        ({ ...row, consolidation_key: key }) as ConsolidatedTDHEditions
+    ),
+    nftRows(before),
+    { mode: 'FULL' },
+    DATE
   );
   await insertWithoutUpdate(manager.getRepository(HistoricConsolidatedTDH), [
-    ...consolidatedRows(before),
     { ...consolidatedRows(before)[0], block: OLDER_BLOCK }
   ]);
-  await insertWithoutUpdate(manager.getRepository(NftTDH), nftRows(before));
 }
 
 /** One partial run, both levels, as the reconsolidation computes them. */
@@ -342,7 +353,7 @@ async function partialRun(writeAllRows: boolean) {
   const groupsAfter = consolidatedGroupsAfter();
   await persistConsolidatedTDH(
     BLOCK,
-    consolidatedRows(groupsAfter, true),
+    consolidatedRows(groupsAfter, { shuffleKeys: true, computed: true }),
     seasonRows(groupsAfter).map(
       ({ key, ...row }) =>
         ({ ...row, consolidation_key: key }) as ConsolidatedTDHMemes
@@ -374,6 +385,40 @@ const TABLES: Record<string, string> = {
   [HISTORIC_CONSOLIDATED_WALLETS_TDH_TABLE]: 'block, consolidation_key',
   [TDH_NFT_TABLE]: 'id, contract, consolidation_key'
 };
+
+/** Rows sent in full, and rows of which only one column is refreshed. */
+async function countWrites(write: () => Promise<void>) {
+  const written: Record<string, number> = {};
+  const refreshed: Record<string, number> = {};
+  const count = (
+    counts: Record<string, number>,
+    table: string,
+    rows: number
+  ) => {
+    counts[table] = (counts[table] ?? 0) + rows;
+  };
+  const upsert = batches.upsertTdhInBatches;
+  const refresh = batches.refreshTdhColumnInBatches;
+  const upsertSpy = jest
+    .spyOn(batches, 'upsertTdhInBatches')
+    .mockImplementation(async (repository, rows) => {
+      count(written, repository.metadata.tableName, rows.length);
+      return upsert(repository, rows);
+    });
+  const refreshSpy = jest
+    .spyOn(batches, 'refreshTdhColumnInBatches')
+    .mockImplementation(async (repository, rows, column) => {
+      count(refreshed, repository.metadata.tableName, rows.length);
+      return refresh(repository, rows, column);
+    });
+  try {
+    await write();
+  } finally {
+    upsertSpy.mockRestore();
+    refreshSpy.mockRestore();
+  }
+  return { written, refreshed };
+}
 
 /** Every row of every table, as stored, and MySQL's table checksums. */
 async function dump() {
@@ -437,21 +482,8 @@ describe('partial TDH writes send only the rows that change', () => {
   async function runAndDump(writeAllRows: boolean) {
     await resetTestDatabase();
     await seedWorld();
-    const written: Record<string, number> = {};
-    const upsert = batches.upsertTdhInBatches;
-    const spy = jest
-      .spyOn(batches, 'upsertTdhInBatches')
-      .mockImplementation(async (repository, rows) => {
-        const table = repository.metadata.tableName;
-        written[table] = (written[table] ?? 0) + rows.length;
-        return upsert(repository, rows);
-      });
-    try {
-      await partialRun(writeAllRows);
-    } finally {
-      spy.mockRestore();
-    }
-    return { state: await dump(), written };
+    const counts = await countWrites(() => partialRun(writeAllRows));
+    return { state: await dump(), ...counts };
   }
 
   it('leaves every table as writing every row does, byte for byte, sending only new, changed and rewritten rows', async () => {
@@ -472,9 +504,19 @@ describe('partial TDH writes send only the rows that change', () => {
       [HISTORIC_CONSOLIDATED_WALLETS_TDH_TABLE]: groups.length,
       [TDH_NFT_TABLE]: nftRows(groups).length
     });
+    expect(reference.refreshed).toEqual({});
     for (const [table, rows] of Object.entries(changedOnly.written)) {
       expect(rows).toBeLessThan(reference.written[table]);
     }
+    // Each consolidated row has a new computation time: the rows not sent in
+    // full get that column alone.
+    expect(changedOnly.refreshed).toEqual({
+      [CONSOLIDATED_WALLETS_TDH_TABLE]:
+        groups.length - changedOnly.written[CONSOLIDATED_WALLETS_TDH_TABLE],
+      [HISTORIC_CONSOLIDATED_WALLETS_TDH_TABLE]:
+        groups.length -
+        changedOnly.written[HISTORIC_CONSOLIDATED_WALLETS_TDH_TABLE]
+    });
     // Editions carry no ranks: only the affected groups' rows are sent.
     expect(changedOnly.written[TDH_EDITIONS_TABLE]).toBe(
       editionRows(walletGroupsAfter()).filter((row) =>
@@ -544,44 +586,95 @@ describe('partial TDH writes send only the rows that change', () => {
   });
 
   it('writes nothing outside the affected groups when the write changes no value', async () => {
-    await seedWorld();
-    const storedTdh = snapshotRows(
-      getDataSource().getMetadata(TDH),
-      await fetchTDHForBlock(BLOCK)
-    );
-    const before = await dump();
-    const written: Record<string, number> = {};
-    const upsert = batches.upsertTdhInBatches;
-    jest
-      .spyOn(batches, 'upsertTdhInBatches')
-      .mockImplementation(async (repository, rows) => {
-        const table = repository.metadata.tableName;
-        written[table] = (written[table] ?? 0) + rows.length;
-        return upsert(repository, rows);
+    // As the first run of each pair in prod: one key replaced, nothing else
+    // changed but each consolidated row's computation time.
+    async function run(writeAllRows: boolean) {
+      await resetTestDatabase();
+      await seedWorld();
+      const before = await dump();
+      const groups = groupsBefore();
+      const storedTdh = snapshotRows(
+        getDataSource().getMetadata(TDH),
+        await fetchTDHForBlock(BLOCK)
+      );
+      const counts = await countWrites(async () => {
+        await persistTDH(
+          BLOCK,
+          walletRows(groups, true),
+          seasonRows(groups, true).map(
+            ({ key, ...row }) => ({ ...row, wallet: key }) as TDHMemes
+          ),
+          editionRows(groups).map(
+            ({ key, ...row }) => ({ ...row, wallet: key }) as TDHEditions
+          ),
+          [wallet(5)],
+          { storedTdh, writeAllRows }
+        );
+        await persistConsolidatedTDH(
+          BLOCK,
+          consolidatedRows(groups, { shuffleKeys: true, computed: true }),
+          seasonRows(groups).map(
+            ({ key, ...row }) =>
+              ({ ...row, consolidation_key: key }) as ConsolidatedTDHMemes
+          ),
+          editionRows(groups).map(
+            ({ key, ...row }) =>
+              ({ ...row, consolidation_key: key }) as ConsolidatedTDHEditions
+          ),
+          nftRows(groups),
+          {
+            mode: 'PARTIAL',
+            wallets: [wallet(5)],
+            consolidationKeysToReplace: [wallet(5)]
+          },
+          DATE,
+          { writeAllRows }
+        );
       });
-    const groups = groupsBefore();
+      return { before, after: await dump(), ...counts };
+    }
 
-    await persistTDH(
-      BLOCK,
-      walletRows(groups, true),
-      seasonRows(groups, true).map(
-        ({ key, ...row }) => ({ ...row, wallet: key }) as TDHMemes
-      ),
-      editionRows(groups).map(
-        ({ key, ...row }) => ({ ...row, wallet: key }) as TDHEditions
-      ),
-      [wallet(5)],
-      { storedTdh }
-    );
+    const reference = await run(true);
+    const changedOnly = await run(false);
 
-    // Only wallet 5's rows, deleted and written again.
-    expect(written).toEqual({
+    expect(changedOnly.after).toEqual(reference.after);
+    // Only group 5's rows, deleted and written again.
+    const holdings = Object.keys(groupsBefore()[4].holdings).length;
+    expect(changedOnly.written).toEqual({
       [WALLETS_TDH_TABLE]: 1,
       [WALLETS_TDH_MEMES_TABLE]: SEASONS.length,
-      [TDH_EDITIONS_TABLE]: Object.keys(groups[4].holdings).length
+      [TDH_EDITIONS_TABLE]: holdings,
+      [CONSOLIDATED_WALLETS_TDH_TABLE]: 1,
+      [CONSOLIDATED_WALLETS_TDH_MEMES_TABLE]: SEASONS.length,
+      [CONSOLIDATED_TDH_EDITIONS_TABLE]: holdings,
+      [HISTORIC_CONSOLIDATED_WALLETS_TDH_TABLE]: 1,
+      [TDH_NFT_TABLE]: holdings
     });
-    const after = await dump();
-    expect(after.tables).toEqual(before.tables);
-    expect(after.checksums).toEqual(before.checksums);
+    expect(changedOnly.refreshed).toEqual({
+      [CONSOLIDATED_WALLETS_TDH_TABLE]: 11,
+      [HISTORIC_CONSOLIDATED_WALLETS_TDH_TABLE]: 11
+    });
+    // Apart from the consolidated rows' computation time, nothing changed.
+    const stamped = [
+      CONSOLIDATED_WALLETS_TDH_TABLE,
+      HISTORIC_CONSOLIDATED_WALLETS_TDH_TABLE
+    ];
+    const withoutDates = (tables: Record<string, unknown[]>) =>
+      Object.fromEntries(
+        Object.entries(tables).map(([table, rows]) => [
+          table,
+          stamped.includes(table)
+            ? rows.map((row) => ({ ...(row as object), date: undefined }))
+            : rows
+        ])
+      );
+    expect(withoutDates(changedOnly.after.tables)).toEqual(
+      withoutDates(changedOnly.before.tables)
+    );
+    expect(
+      changedOnly.after.tables[CONSOLIDATED_WALLETS_TDH_TABLE].map(
+        (row) => (row as { date: Date }).date
+      )
+    ).not.toContainEqual(DATE);
   });
 });

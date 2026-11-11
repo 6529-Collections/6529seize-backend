@@ -10,6 +10,12 @@ import { ColumnMetadata } from 'typeorm/metadata/ColumnMetadata';
  * cannot be known exactly (an undefined value without a NULL default, a
  * fractional date, an unknown column type), the row counts as changed.
  *
+ * Two kinds of column are not compared like the rest (`RowDiffColumns`): a
+ * column the same transaction sets again for every row afterwards, whose
+ * written value never survives, and a column that takes a new value on every
+ * run (a computation time), which a row that is otherwise unchanged gets
+ * through a narrow update instead of a full-row upsert.
+ *
  * One limit: MySQL prints a JSON double with up to 15 significant digits, so
  * a stored value with more digits reads back rounded. A row whose computed
  * JSON equals what is read back is not rewritten and keeps the stored value:
@@ -280,26 +286,85 @@ export async function readStoredRows(
   return stored;
 }
 
+/** Columns of one table that a partial write does not compare as values. */
+export type RowDiffColumns = {
+  /**
+   * Set again for every row later in the same transaction, from other
+   * tables: the value written never survives, so it is not compared.
+   */
+  readonly recomputed?: readonly string[];
+  /**
+   * Takes a new value on every run. A row that differs from the stored row
+   * only here is refreshed: this column alone is updated.
+   */
+  readonly refreshed?: string;
+};
+
+export type RowWrites<Entity> = {
+  /** Rows to upsert in full: new, changed, or in the delete scope. */
+  readonly upserts: Entity[];
+  /** Rows that differ from the stored row only in the refreshed column. */
+  readonly refreshes: Entity[];
+};
+
+function columnIndex(
+  plan: TablePlan,
+  metadata: EntityMetadata,
+  propertyName: string
+): number {
+  const index = plan.columns.findIndex(
+    (column) => column.propertyName === propertyName
+  );
+  if (index < 0 || plan.primary.includes(index)) {
+    throw new Error(
+      `${metadata.tableName}: ${propertyName} is not a non-key column`
+    );
+  }
+  return index;
+}
+
 /**
  * The rows a partial write must send: every row it rewrote in full (its
  * delete scope, deleted just before), and any other row that is new or
- * differs from the stored one. The rest are already stored as they are.
+ * differs from the stored one; rows that differ only in the refreshed column
+ * are returned apart. The rest are already stored as they are.
  */
 export function rowsToWrite<Entity extends ObjectLiteral>(
   metadata: EntityMetadata,
   rows: readonly Entity[],
   stored: StoredRows,
-  isRewritten: (row: Entity) => boolean
-): Entity[] {
+  isRewritten: (row: Entity) => boolean,
+  { recomputed = [], refreshed }: RowDiffColumns = {}
+): RowWrites<Entity> {
   const plan = planFor(metadata);
-  const columnCount = plan.columns.length;
-  return rows.filter((row) => {
-    if (isRewritten(row)) return true;
-    const current = stored.get(rowKey(plan, (i) => plan.entityValues[i](row)));
-    if (!current) return true;
-    for (let i = 0; i < columnCount; i++) {
-      if (!plan.equals[i](plan.entityValues[i](row), current[i])) return true;
+  const skipped = new Set(
+    recomputed.map((name) => columnIndex(plan, metadata, name))
+  );
+  const refreshedAt =
+    refreshed === undefined ? -1 : columnIndex(plan, metadata, refreshed);
+  const compared = plan.columns.map((_, i) => i).filter((i) => !skipped.has(i));
+  const upserts: Entity[] = [];
+  const refreshes: Entity[] = [];
+  for (const row of rows) {
+    const current = isRewritten(row)
+      ? undefined
+      : stored.get(rowKey(plan, (i) => plan.entityValues[i](row)));
+    if (!current) {
+      upserts.push(row);
+      continue;
     }
-    return false;
-  });
+    let changed = false;
+    let refresh = false;
+    for (const i of compared) {
+      if (plan.equals[i](plan.entityValues[i](row), current[i])) continue;
+      if (i !== refreshedAt) {
+        changed = true;
+        break;
+      }
+      refresh = true;
+    }
+    if (changed) upserts.push(row);
+    else if (refresh) refreshes.push(row);
+  }
+  return { upserts, refreshes };
 }

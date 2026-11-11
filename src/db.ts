@@ -106,9 +106,13 @@ import { identityTdhSyncScopeDb } from './identity-tdh-sync-scope.db';
 import { Logger } from './logging';
 import { metricsRecorder } from './metrics/MetricsRecorder';
 import { deleteAll, insertWithoutUpdate, resetRepository } from './orm_helpers';
-import { upsertTdhInBatches } from '@/tdhLoop/tdh-persistence-batches';
+import {
+  refreshTdhColumnInBatches,
+  upsertTdhInBatches
+} from '@/tdhLoop/tdh-persistence-batches';
 import {
   readStoredRows,
+  RowDiffColumns,
   rowsToWrite,
   StoredRows
 } from '@/tdhLoop/tdh-row-diff';
@@ -1141,7 +1145,8 @@ export type PartialTdhWriteOptions = {
  * One table of a partial TDH write. Its delete scope was deleted just
  * before, so rows in it (`isRewritten`) are inserted in full as always. Of
  * the other rows, which a partial write only re-ranks, only the new or
- * changed ones are sent; the stored state ends as if every row was written.
+ * changed ones are sent, and those that differ only in `columns.refreshed`
+ * get that column alone; the stored state ends as if every row was written.
  */
 async function upsertPartialTdhRows<Entity extends ObjectLiteral>(
   label: string,
@@ -1150,17 +1155,36 @@ async function upsertPartialTdhRows<Entity extends ObjectLiteral>(
   isRewritten: (row: Entity) => boolean,
   {
     stored,
-    writeAllRows
+    writeAllRows,
+    columns = {}
   }: {
     stored: () => Promise<StoredRows>;
     writeAllRows?: boolean;
+    columns?: RowDiffColumns;
   }
 ): Promise<void> {
-  const toWrite = writeAllRows
-    ? rows
-    : rowsToWrite(repository.metadata, rows, await stored(), isRewritten);
-  await upsertTdhInBatches(repository, toWrite);
-  logger.info(`[${label}] [WROTE ${toWrite.length} OF ${rows.length} ROWS]`);
+  if (writeAllRows) {
+    await upsertTdhInBatches(repository, rows);
+    logger.info(`[${label}] [WROTE ${rows.length} OF ${rows.length} ROWS]`);
+    return;
+  }
+  const { upserts, refreshes } = rowsToWrite(
+    repository.metadata,
+    rows,
+    await stored(),
+    isRewritten,
+    columns
+  );
+  await upsertTdhInBatches(repository, upserts);
+  if (columns.refreshed !== undefined && refreshes.length > 0) {
+    await refreshTdhColumnInBatches(repository, refreshes, columns.refreshed);
+  }
+  logger.info(
+    `[${label}] [WROTE ${upserts.length} OF ${rows.length} ROWS]` +
+      (columns.refreshed === undefined
+        ? ''
+        : ` [REFRESHED ${columns.refreshed} ON ${refreshes.length}]`)
+  );
 }
 
 function inLowercased(values: readonly string[]): (value: string) => boolean {
@@ -1295,6 +1319,17 @@ export type ConsolidatedTdhPersistenceScope =
     };
 
 /**
+ * Consolidated rows: every row's `date` is the time it was computed
+ * (`new Date()`), so it changes on every run and an otherwise unchanged row
+ * gets just that column. `boosted_tdh_rate` is computed as 0 and set again
+ * for every row by `updateBoostedTdhRates` in the same transaction.
+ */
+const CONSOLIDATED_TDH_DIFF_COLUMNS: RowDiffColumns = {
+  recomputed: ['boosted_tdh_rate'],
+  refreshed: 'date'
+};
+
+/**
  * Step A of a consolidated-TDH run: the TDH tables, their `tdh_blocks` row and
  * the pending identities sync marker, in one short transaction, so the block
  * record always matches the TDH rows. Identities, merges, metrics and overvote
@@ -1350,7 +1385,8 @@ export async function persistConsolidatedTDH(
         (row) => isReplaced(row.consolidation_key),
         {
           writeAllRows,
-          stored: () => readStoredRows(manager, tdhRepo.metadata)
+          stored: () => readStoredRows(manager, tdhRepo.metadata),
+          columns: CONSOLIDATED_TDH_DIFF_COLUMNS
         }
       );
       await upsertPartialTdhRows(
@@ -1545,7 +1581,9 @@ export async function persistHistoricConsolidatedTDH(
           readStoredRows(entityManager, historicTdhRepo.metadata, {
             sql: 'block = ?',
             params: [block]
-          })
+          }),
+        // Computed with a new date on every run, as the consolidated rows.
+        columns: { refreshed: 'date' }
       }
     );
   } else {
