@@ -48,7 +48,15 @@ export const HELP_BOT_REPLY_QUEUE_NAME = 'help-bot-replies';
  * content limit.
  */
 export const HELP_BOT_INTERACTION_QUESTION_MAX_UTF8_BYTES = 65_535;
-export const HELP_BOT_ANSWERING_LEASE_MS = 180_000;
+/**
+ * How long an ANSWERING claim blocks other deliveries. It must outlast the
+ * helpBotReplyLoop Lambda timeout (120 s) so a running attempt is never
+ * reclaimed, and stay below the help-bot-replies SQS visibility timeout
+ * (150 s) so a redelivered message always finds an expired claim and can
+ * take over an attempt that died. helpBotReplyLoop/serverless.test.ts pins
+ * this ordering.
+ */
+export const HELP_BOT_ANSWERING_LEASE_MS = 135_000;
 export const HELP_BOT_SEEN_REACTION = ':eyes:';
 export const HELP_BOT_SUCCESS_REACTION = ':white_check_mark:';
 export const HELP_BOT_FAILURE_REACTION = ':warning:';

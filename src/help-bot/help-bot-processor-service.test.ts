@@ -9,6 +9,7 @@ import {
 } from './help-bot.config';
 import {
   capHelpBotQuestion,
+  HelpBotAnswerLeaseHeldError,
   HelpBotProcessorService
 } from './help-bot-processor.service';
 import { HelpBotInteractionRow } from './help-bot-interactions.db';
@@ -526,6 +527,70 @@ describe('HelpBotProcessorService', () => {
     await service.processInteraction('interaction-1', {} as never);
 
     expect(answer.mock.calls[0][0].question).toHaveLength(2000);
+  });
+
+  it('returns a delivery to the queue while another attempt holds the answering lease', async () => {
+    const answer = jest.fn();
+    const { service, interactionsDb } = createProcessor({
+      interaction: createInteraction(),
+      answer,
+      reply: jest.fn()
+    });
+    interactionsDb.claimForAnswering.mockResolvedValue(null);
+    interactionsDb.findById.mockResolvedValue(
+      createInteraction({
+        status: HelpBotInteractionStatus.ANSWERING,
+        answer_started_at: 1
+      })
+    );
+
+    await expect(
+      service.processInteraction('interaction-1', {} as never)
+    ).rejects.toBeInstanceOf(HelpBotAnswerLeaseHeldError);
+    expect(answer).not.toHaveBeenCalled();
+  });
+
+  it('acknowledges a redelivery for an interaction that is already finished', async () => {
+    const answer = jest.fn();
+    const { service, interactionsDb } = createProcessor({
+      interaction: createInteraction(),
+      answer,
+      reply: jest.fn()
+    });
+    interactionsDb.claimForAnswering.mockResolvedValue(null);
+    interactionsDb.findById.mockResolvedValue(
+      createInteraction({ status: HelpBotInteractionStatus.ANSWERED })
+    );
+
+    await expect(
+      service.processInteraction('interaction-1', {} as never)
+    ).resolves.toBeUndefined();
+    expect(answer).not.toHaveBeenCalled();
+  });
+
+  it('answers a redelivery that reclaimed an expired answering lease', async () => {
+    const answer = jest.fn().mockResolvedValue({
+      type: 'ANSWER',
+      answer: 'TDH stands for Total Days Held.',
+      record: {}
+    });
+    const reply = jest.fn().mockResolvedValue({ id: 'bot-reply-drop' });
+    const { service, interactionsDb } = createProcessor({
+      interaction: createInteraction({
+        status: HelpBotInteractionStatus.ANSWERING,
+        answer_started_at: 1
+      }),
+      answer,
+      reply
+    });
+
+    await service.processInteraction('interaction-1', {} as never);
+
+    expect(answer).toHaveBeenCalledTimes(1);
+    expect(interactionsDb.markAnswered).toHaveBeenCalledWith(
+      { id: 'interaction-1', replyDropId: 'bot-reply-drop' },
+      {}
+    );
   });
 
   it('caps questions by code point without splitting surrogate pairs', () => {

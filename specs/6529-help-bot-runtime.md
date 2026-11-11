@@ -469,6 +469,13 @@ Idempotency rules:
 - Replies and reactions target `target_drop_id` when present, otherwise
   `trigger_drop_id` for older rows.
 - If an interaction exists in `SEEN` or `ANSWERING`, do not enqueue another job.
+- The worker claims an interaction by moving it to `ANSWERING` with a
+  135-second lease (`HELP_BOT_ANSWERING_LEASE_MS`). The lease is longer than
+  the `helpBotReplyLoop` Lambda timeout (120 s) and shorter than the
+  `help-bot-replies` visibility timeout (150 s). A delivery that finds the lease
+  still held fails so SQS redelivers it; the redelivery then either sees a
+  finished interaction and acknowledges it, or reclaims the expired lease of an
+  attempt that died. After five receives the message moves to the DLQ.
 - If an interaction is `ANSWERED`, do not answer again unless explicit retry
   behavior is added later.
 - Bot-authored messages must not trigger the bot.

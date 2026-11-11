@@ -3,6 +3,7 @@ import { ApiDrop } from '@/api/generated/models/ApiDrop';
 import { Logger } from '@/logging';
 import { DEVS_6529_MENTION_TOKEN } from '@/constants/mentions';
 import { RequestContext } from '@/request.context';
+import { HelpBotInteractionStatus } from '@/entities/IHelpBotInteraction';
 import {
   HELP_BOT_BASE_URL,
   HELP_BOT_BEDROCK_MODEL_ID,
@@ -79,6 +80,16 @@ function getInteractionTargetDropId(
   return interaction.target_drop_id ?? interaction.trigger_drop_id;
 }
 
+export class HelpBotAnswerLeaseHeldError extends Error {
+  constructor(interactionId: string) {
+    super(
+      `Help bot interaction ${interactionId} is being answered by another attempt; retrying after the lease`
+    );
+    this.name = 'HelpBotAnswerLeaseHeldError';
+    Object.setPrototypeOf(this, HelpBotAnswerLeaseHeldError.prototype);
+  }
+}
+
 export class HelpBotProcessorService {
   private readonly logger = Logger.get(this.constructor.name);
 
@@ -109,6 +120,7 @@ export class HelpBotProcessorService {
       ctx
     );
     if (!interaction) {
+      await this.assertNoActiveAnswerLease(interactionId, ctx);
       return;
     }
 
@@ -188,6 +200,23 @@ export class HelpBotProcessorService {
         refundCredit: !answerProduced,
         ctx
       });
+    }
+  }
+
+  /**
+   * A delivery that cannot claim the interaction while another attempt still
+   * holds the ANSWERING lease is returned to the queue instead of being
+   * acknowledged. The lease is shorter than the queue visibility timeout, so
+   * the redelivery either sees a finished interaction or reclaims the expired
+   * lease of an attempt that died.
+   */
+  private async assertNoActiveAnswerLease(
+    interactionId: string,
+    ctx: RequestContext
+  ): Promise<void> {
+    const current = await this.interactionsDb.findById(interactionId, ctx);
+    if (current?.status === HelpBotInteractionStatus.ANSWERING) {
+      throw new HelpBotAnswerLeaseHeldError(interactionId);
     }
   }
 
