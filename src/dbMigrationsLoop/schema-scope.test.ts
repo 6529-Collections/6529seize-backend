@@ -36,6 +36,7 @@ jest.mock('@/competitions/retired-competition-storage', () => ({
   assertCompetitionSchemaSyncSafe: jest.fn()
 }));
 import { handler } from './index';
+import { synchronizeSchemaBounded } from '@/db/bounded-schema-sync';
 import { DropEntity } from '@/entities/IDrop';
 import { applyWaveScoreInputIndexSchema } from './wave-score-input-index-schema';
 jest.mock('./wave-score-input-index-schema', () => ({
@@ -390,6 +391,71 @@ describe('dbMigrationsLoop explicit schema scope', () => {
     expect(logInfo).not.toHaveBeenCalledWith(
       expect.stringContaining('PENDING SCHEMA')
     );
+  });
+
+  describe('destructive schema plan acknowledgement', () => {
+    const approved = 'c'.repeat(64);
+
+    it('passes an approved plan hash to the full schema sync', async () => {
+      await expect(
+        invoke({
+          schema_scope: 'full',
+          approved_destructive_plan_sha256: approved
+        })
+      ).resolves.toBeUndefined();
+      expect(synchronizeSchemaBounded).toHaveBeenCalledWith(getDataSource(), {
+        acknowledgedDestructivePlanSha256: approved
+      });
+    });
+
+    it('passes no acknowledgement when the payload has none', async () => {
+      await invoke({ schema_scope: 'full' });
+      expect(synchronizeSchemaBounded).toHaveBeenCalledWith(getDataSource(), {
+        acknowledgedDestructivePlanSha256: null
+      });
+    });
+
+    it('passes an approved plan hash to an entity-scoped sync', async () => {
+      await expect(
+        invoke({
+          schema_scope: 'voting-credit-returns',
+          approved_destructive_plan_sha256: approved
+        })
+      ).resolves.toEqual({ schema_scope: 'voting-credit-returns' });
+      expect(doInDbContext).toHaveBeenCalledWith(expect.any(Function), {
+        logger: expect.anything(),
+        entities: [
+          VotingCreditReleaseEntity,
+          VotingCreditReleaseRecipientEntity
+        ],
+        syncEntities: true,
+        skipRedis: true,
+        schemaSync: { acknowledgedDestructivePlanSha256: approved }
+      });
+    });
+
+    it.each(['', 'C'.repeat(64), 'c'.repeat(63), null, 42, {}])(
+      'rejects acknowledgement %j before opening a database context',
+      async (value) => {
+        await expect(
+          invoke({
+            schema_scope: 'full',
+            approved_destructive_plan_sha256: value
+          })
+        ).rejects.toThrow('approved_destructive_plan_sha256 must be');
+        expect(doInDbContext).not.toHaveBeenCalled();
+      }
+    );
+
+    it('rejects an acknowledgement on a scheduled event', async () => {
+      await expect(
+        invoke({
+          ...scheduledEvent,
+          approved_destructive_plan_sha256: approved
+        })
+      ).rejects.toThrow('approved_destructive_plan_sha256 must be');
+      expect(doInDbContext).not.toHaveBeenCalled();
+    });
   });
 
   it.each(['', 'unknown', null, undefined, {}, 42])(

@@ -7,7 +7,7 @@ import {
   UserGroupsService
 } from '@/api/community-members/user-groups.service';
 import { WaveEntity } from '@/entities/IWave';
-import { canReplyInWaveChat } from '@/waves/wave-chat-replies.helpers';
+import { canProfileReplyInWaveChat } from '@/waves/wave-chat-replies.helpers';
 import { Logger } from '@/logging';
 import { RequestContext } from '@/request.context';
 import { sqs, SQS } from '@/sqs';
@@ -286,29 +286,25 @@ export class HelpBotTriggerService {
   }
 
   /**
-   * Mirrors the chat eligibility the drop writer applies to the bot's reply
-   * (chat enabled, plus chat group membership unless replies are open), so a
-   * question in a wave the bot cannot answer is declined before any credit
-   * is charged or model call is made.
+   * Applies the same chat reply rule as drop creation (chat enabled, plus
+   * chat group membership unless replies are open), so a question in a wave
+   * the bot cannot answer is declined before any credit is charged or model
+   * call is made.
    */
   private async canBotReplyInWave(
     botProfileId: string,
     wave: WaveEntity,
     ctx: RequestContext
   ): Promise<boolean> {
-    if (!wave.chat_enabled) {
-      return false;
-    }
-    if (wave.chat_group_id === null || wave.chat_replies_open) {
-      return true;
-    }
-    const groupIdsUserIsEligibleFor =
-      await this.userGroups.getGroupsUserIsEligibleForByIds(
-        botProfileId,
-        [wave.chat_group_id],
-        ctx.timer
-      );
-    return canReplyInWaveChat({ wave, groupIdsUserIsEligibleFor });
+    return canProfileReplyInWaveChat({
+      wave,
+      findEligibleGroupIds: (groupIds) =>
+        this.userGroups.getGroupsUserIsEligibleForByIds(
+          botProfileId,
+          groupIds,
+          ctx.timer
+        )
+    });
   }
 
   private async findDailyLimitReason(

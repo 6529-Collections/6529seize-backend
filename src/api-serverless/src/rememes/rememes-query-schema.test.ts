@@ -3,6 +3,7 @@ jest.mock('@/db-api', () => ({}));
 import fc from 'fast-check';
 import { getValidatedByJoiOrThrow } from '@/api/validation';
 import { BadRequestException } from '@/exceptions';
+import { MAX_REMEME_MEME_ID_DIGITS } from '@/rememe-meme-id';
 import { MAX_REMEMES_MEME_IDS, RememesQuerySchema } from './rememes.routes';
 
 function validate(query: Record<string, unknown>) {
@@ -63,6 +64,22 @@ describe('rememes query validation', () => {
     );
     expect(() => validate({ meme_id: '1'.repeat(21) })).toThrow(
       BadRequestException
+    );
+  });
+
+  it('reports over-long ids with the same error as other malformed ids', () => {
+    const patternError = /fails to match the comma-separated meme ids pattern/;
+    expect(() => validate({ meme_id: '1,a' })).toThrow(patternError);
+    fc.assert(
+      fc.property(
+        fc.integer({ min: MAX_REMEME_MEME_ID_DIGITS + 1, max: 25 }),
+        fc.integer({ min: 1, max: 9 }),
+        fc.nat({ max: 3 }),
+        (digits, leading, zeros) => {
+          const id = '0'.repeat(zeros) + leading + '0'.repeat(digits - 1);
+          expect(() => validate({ meme_id: `1,${id}` })).toThrow(patternError);
+        }
+      )
     );
   });
 

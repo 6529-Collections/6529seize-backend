@@ -732,12 +732,12 @@ reset behavior, and the required writer-before-collector deployment order.
 
 ### Manual Or One-Off Lambdas
 
-| Lambda                            | Purpose                                                           |
-| --------------------------------- | ----------------------------------------------------------------- |
-| `dbMigrationsLoop`                | TypeORM entity synchronization, usually run from deploy workflow. |
-| `customReplayLoop`                | Controlled replay job.                                            |
-| `populateHistoricConsolidatedTdh` | Historic consolidated TDH backfill.                               |
-| `teamLoop`                        | Team CSV and Arweave upload.                                      |
+| Lambda                            | Purpose                                                                                                                                                              |
+| --------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `dbMigrationsLoop`                | TypeORM entity synchronization, usually run from deploy workflow; plans that drop data are classified first ([schema sync plan check](./schema-sync-plan-check.md)). |
+| `customReplayLoop`                | Controlled replay job.                                                                                                                                               |
+| `populateHistoricConsolidatedTdh` | Historic consolidated TDH backfill.                                                                                                                                  |
+| `teamLoop`                        | Team CSV and Arweave upload.                                                                                                                                         |
 
 ## Runtime Shape
 

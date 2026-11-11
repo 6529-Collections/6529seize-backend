@@ -13,6 +13,7 @@ jest.mock('@/ethereum-rpc/ethereum-rpc-client', () => ({
 }));
 
 import fc from 'fast-check';
+import { ForbiddenException } from '@/exceptions';
 import { identitiesDb } from '@/identities/identities.db';
 import { AuthenticationContext } from '@/auth-context';
 import { DropType } from '@/entities/IDrop';
@@ -55,6 +56,10 @@ import { memeCollaborationsService } from '@/meme-collaborations/meme-collaborat
 import { nativeEntryContentPermit } from '@/competitions/competition-entry-content';
 import { CompetitionRecord } from '@/competitions/competition.repository';
 import { ConnectionWrapper } from '@/sql-executor';
+import {
+  WAVE_CHAT_REPLY_GROUP_ID,
+  WAVE_CHAT_REPLY_TRUTH_TABLE
+} from '@/waves/wave-chat-reply-truth-table.fixture';
 
 type ModerationServiceMock = jest.Mocked<
   Pick<PrePublicationModerationService, 'evaluate' | 'assertPostingAllowed'>
@@ -3714,6 +3719,42 @@ describe('CreateOrUpdateDropUseCase', () => {
         verifyGate(useCase, createChatDropModel({ reply_to: replyTo }))
       ).rejects.toThrow('User is not eligible for this wave');
     });
+
+    it.each(WAVE_CHAT_REPLY_TRUTH_TABLE)(
+      'accepts a reply to a visible drop exactly per the chat reply table: %o',
+      async ({ inChatGroup, canReply, ...chat }) => {
+        const dropsDb = {
+          findDropByIdWithEligibilityCheck: jest
+            .fn()
+            .mockResolvedValue({ id: 'announcement-1', wave_id: 'wave-1' })
+        };
+        const wavesApiDb = {
+          findById: jest
+            .fn()
+            .mockResolvedValue(createRestrictedChatWave({ ...chat }))
+        };
+        const userGroupsService = {
+          getGroupsUserIsEligibleFor: jest
+            .fn()
+            .mockResolvedValue(inChatGroup ? [WAVE_CHAT_REPLY_GROUP_ID] : [])
+        };
+        const useCase = createUseCaseWithMocks({
+          dropsDb,
+          wavesApiDb,
+          userGroupsService
+        });
+
+        const outcome = useCase.assertCanCreateDropInWave(
+          createChatDropModel({ reply_to: replyTo }) as any,
+          { connection: {} } as any
+        );
+        if (canReply) {
+          await expect(outcome).resolves.toBeUndefined();
+        } else {
+          await expect(outcome).rejects.toThrow(ForbiddenException);
+        }
+      }
+    );
 
     it('rejects outsider replies when chat is disabled', async () => {
       const { useCase, dropsDb } = createGateUseCase({
