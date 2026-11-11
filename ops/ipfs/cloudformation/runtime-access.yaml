@@ -161,12 +161,18 @@ Resources:
                   - iam:PutRolePolicy
                   - iam:DeleteRolePolicy
                   - iam:GetRolePolicy
+                  - iam:ListRolePolicies
+                  - iam:ListAttachedRolePolicies
+                  - iam:ListRoleTags
                   - iam:CreateInstanceProfile
                   - iam:GetInstanceProfile
                   - iam:DeleteInstanceProfile
                   - iam:ListInstanceProfilesForRole
                   - iam:AddRoleToInstanceProfile
                   - iam:RemoveRoleFromInstanceProfile
+                  - iam:TagInstanceProfile
+                  - iam:UntagInstanceProfile
+                  - iam:ListInstanceProfileTags
                 Resource:
                   - arn:aws:iam::987989283142:role/seize-ipfs-prod-runtime-*-runtime
                   - arn:aws:iam::987989283142:instance-profile/seize-ipfs-prod-runtime-*-runtime
@@ -220,10 +226,22 @@ Resources:
               - Effect: Allow
                 Action: [acm:DescribeCertificate, acm:ListCertificates]
                 Resource: '*' # NOSONAR: AWS describe/list APIs require a wildcard resource.
+              - Effect: Allow
+                Action:
+                  [
+                    cloudwatch:PutMetricAlarm,
+                    cloudwatch:DeleteAlarms,
+                    cloudwatch:DescribeAlarms,
+                    cloudwatch:TagResource,
+                    cloudwatch:UntagResource,
+                    cloudwatch:ListTagsForResource
+                  ]
+                Resource: arn:aws:cloudwatch:us-east-1:987989283142:alarm:seize-ipfs-prod-*
   DeploymentRole:
     Type: AWS::IAM::Role
     Properties:
       RoleName: seize-ipfs-prod-runtime-deploy
+      MaxSessionDuration: 21600
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
         Statement:
@@ -241,6 +259,16 @@ Resources:
           PolicyDocument:
             Version: '2012-10-17'
             Statement:
+              - Effect: Deny
+                Action:
+                  - cloudformation:CreateChangeSet
+                  - cloudformation:ExecuteChangeSet
+                  - cloudformation:CreateStack
+                  - cloudformation:UpdateStack
+                  - cloudformation:DeleteStack
+                  - cloudformation:SetStackPolicy
+                  - cloudformation:UpdateTerminationProtection
+                Resource: arn:aws:cloudformation:us-east-1:987989283142:stack/seize-ipfs-prod-runtime-access/*
               - Effect: Allow
                 Action:
                   [
@@ -305,6 +333,15 @@ Resources:
                 Resource:
                   - arn:aws:s3:::seize-ipfs-prod-recovery-artifacts-987989283142
                   - arn:aws:s3:::seize-ipfs-prod-recovery-backups-987989283142
+              - Effect: Allow
+                Action: s3:ListBucketVersions
+                Resource: arn:aws:s3:::seize-ipfs-prod-recovery-backups-987989283142
+                Condition:
+                  StringLike:
+                    s3:prefix: prod/deployments/*
+              - Effect: Allow
+                Action: cloudwatch:DescribeAlarms
+                Resource: arn:aws:cloudwatch:us-east-1:987989283142:alarm:seize-ipfs-prod-*
               - Effect: Allow
                 Action: route53:ListResourceRecordSets
                 Resource: arn:aws:route53:::hostedzone/Z034375922ON0KJSHH6TF

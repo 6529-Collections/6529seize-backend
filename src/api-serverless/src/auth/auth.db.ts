@@ -126,6 +126,9 @@ export class AuthDb extends LazyDbAccessCompatibleService {
   }
 
   async deleteLegacyRefreshTokenForAddress(address: string): Promise<void> {
+    // `refresh_tokens.address` declares no collation, so it has the schema
+    // default DB_TEXT_COLLATION (case-insensitive): rows stored with any
+    // address casing match.
     await this.db.execute(
       `delete from ${REFRESH_TOKENS_TABLE} where address = :address`,
       { address }
@@ -299,15 +302,17 @@ export class AuthDb extends LazyDbAccessCompatibleService {
   }
 
   async createWalletConnectionShare(
-    params: CreateWalletConnectionShareParams
+    params: CreateWalletConnectionShareParams,
+    connection?: AuthDbConnection
   ): Promise<WalletConnectionShareEntity> {
     await this.db.execute(
       `insert into ${WALLET_CONNECTION_SHARES_TABLE}
        (id, connection_share_code_hash, address, role, target_client_type, expires_at, encrypted_device_setup)
        values (:id, :connectionShareCodeHash, :address, :role, :targetClientType, :expiresAt, :encryptedDeviceSetup)`,
-      params
+      params,
+      getDbOptions(connection)
     );
-    return this.getWalletConnectionShareByIdOrThrow(params.id);
+    return this.getWalletConnectionShareByIdOrThrow(params.id, connection);
   }
 
   /**
@@ -316,12 +321,15 @@ export class AuthDb extends LazyDbAccessCompatibleService {
    * new share is the only live one of its kind. Retired shares are marked
    * consumed without a session.
    */
-  async retireLiveWalletConnectionShares(params: {
-    readonly address: string;
-    readonly targetClientType: WalletAuthClientType;
-    readonly withDeviceSetup: boolean;
-    readonly now: Date;
-  }): Promise<number> {
+  async retireLiveWalletConnectionShares(
+    params: {
+      readonly address: string;
+      readonly targetClientType: WalletAuthClientType;
+      readonly withDeviceSetup: boolean;
+      readonly now: Date;
+    },
+    connection?: AuthDbConnection
+  ): Promise<number> {
     const result = await this.db.execute(
       `update ${WALLET_CONNECTION_SHARES_TABLE}
        set consumed_at = :now
@@ -334,7 +342,8 @@ export class AuthDb extends LazyDbAccessCompatibleService {
         address: params.address,
         targetClientType: params.targetClientType,
         now: params.now
-      }
+      },
+      getDbOptions(connection)
     );
     return this.db.getAffectedRows(result);
   }

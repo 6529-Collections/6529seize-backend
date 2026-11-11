@@ -3,7 +3,10 @@
 No AWS credentials, production data, resource provisioning, or public IPFS peers
 are used. This is functional recovery evidence, not an AWS or load-test result.
 """
+import ast
+import base64
 import hashlib
+import shutil
 import http.server
 import json
 import os
@@ -178,15 +181,27 @@ class Daemon:
             stop(self.process)
 
 
-def https_rehearsal(bundle, work, daemon, payload, cid):
+def https_rehearsal(bundle, work, daemon, payload, cid, production=False):
     package = work / "nginx-package"
     subprocess.run(["dpkg-deb", "-x", str(bundle / "nginx.deb"), str(package)], check=True)
     key, certificate = work / "key.pem", work / "cert.pem"
     subprocess.run(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "1", "-keyout", str(key),
-                    "-out", str(certificate), "-subj", "/CN=origin.fixture", "-addext", "subjectAltName=DNS:origin.fixture,DNS:api.fixture"],
+                    "-out", str(certificate), "-subj", "/CN=origin.fixture", "-addext", "subjectAltName=DNS:origin.fixture,DNS:api.fixture,DNS:ipfs.6529.io,DNS:ipfs-cache.6529.io,DNS:media.6529.io"],
                    capture_output=True, check=True)
     tls_port = port()
-    config = (bundle / "templates/nginx.conf").read_text()
+    if production:
+        import production_host
+        routing, site = production_host.render_nginx('fixture', {
+            'frontdoorDns': 'fixture.us-east-1.elb.amazonaws.com', 'peerIps': ['192.0.2.10']}) # NOSONAR(S1313) RFC 5737 fixture peer; never contacted.
+        config = 'user www-data;\nworker_processes 1;\npid /run/nginx.pid;\nevents { worker_connections 1024; }\nhttp {\naccess_log /var/log/nginx/access.log;\n' + routing + site + '\n}\n'
+        config = config.replace('https://fixture.us-east-1.elb.amazonaws.com', 'https://127.0.0.1:' + str(tls_port))
+        config = config.replace('/etc/6529-ipfs/tls/cert.pem', str(certificate)).replace('/etc/6529-ipfs/tls/key.pem', str(key))
+        config = config.replace('/etc/ssl/certs/ca-certificates.crt', str(certificate))
+        config = config.replace('api-ipfs.6529.io', API_HOST).replace('ipfs-origin.6529.io', ORIGIN_HOST)
+        config = config.replace('listen 80;', 'listen 127.0.0.1:' + str(port()) + ';')
+        config = config.replace('127.0.0.1:9080', '127.0.0.1:' + str(daemon.api_port))
+    else:
+        config = (bundle / "templates/nginx.conf").read_text()
     replacements = {
         "user www-data;": "user " + pwd.getpwuid(os.geteuid()).pw_name + ";", "/run/nginx.pid": str(work / "nginx.pid"),
         "/var/log/nginx/error.log": str(work / "nginx-error.log"),
@@ -231,6 +246,16 @@ def https_rehearsal(bundle, work, daemon, payload, cid):
         require(curl(API_HOST, "/api/v0/files/cp", "-X", "POST", "-o", "/dev/null", "-w", "%{http_code}") == b"403", "MFS RPC exposed")
         uploaded = json.loads(curl(API_HOST, "/api/v0/add?pin=true", "-F", "file=@" + str(work / PAYLOAD_FILENAME), "-H", "Origin: https://6529.io"))["Hash"]
         require(uploaded == cid, "HTTPS upload changed the CID")
+        if production:
+            # A cached-DNS client reaches nginx twice while the front door still
+            # targets the source. Its upload must be rate-limited exactly once.
+            bridged = json.loads(curl(API_HOST, "/api/v0/add?pin=true", "--interface", "127.0.0.2",
+                                     "-F", "file=@" + str(work / PAYLOAD_FILENAME),
+                                     "-H", "X-Forwarded-For: 192.0.2.123", "-H", "X-6529-IPFS-Hop: 1"))["Hash"]
+            require(bridged == cid, "Cached-DNS HTTPS upload failed or looped")
+            for alias in ["ipfs.6529.io", "ipfs-cache.6529.io", "media.6529.io"]:
+                require(curl(alias, IPFS_PREFIX + cid) == payload, "Forwarded viewer hostname lost its gateway route")
+            require(curl(ORIGIN_HOST, IPFS_PREFIX + cid, "--interface", "127.0.0.2", "--range", "0-9") == payload[:10], "Cached-DNS gateway bridge failed")
         headers = curl(ORIGIN_HOST, IPFS_PREFIX + cid, "-I").decode().lower()
         require("content-length: " + str(len(payload)) in headers and "immutable" in headers, "HEAD/cache header mismatch")
     finally:
@@ -272,6 +297,45 @@ def verify_restored_content(second, pins, cid, payload):
     require(second.rpc("cat", {"arg": cid}, raw=True) == payload, "Restored content differs")
 
 
+def release_permissions_rehearsal(bundle, work):
+    # Execute the actual SSM bootstrap with only its AWS download/exec replaced
+    # by local fixtures. This exercises tar's data filter under SSM's 077 umask.
+    manifest = json.loads((bundle / 'release.json').read_text())
+    archive_path = work / 'release.tar.gz'
+    with tarfile.open(archive_path, 'w:gz') as archive:
+        archive.add(bundle, arcname='.')
+    artifact = {'key': 'fixture.tar.gz', 'version': 'fixture-version', 'sha256': hashlib.sha256(archive_path.read_bytes()).hexdigest()}
+    tree = ast.parse((Path(__file__).parent / 'production.py').read_text())
+    templates = [node.value.left.value for node in ast.walk(tree)
+                 if isinstance(node, ast.Assign) and any(isinstance(t, ast.Name) and t.id == 'bootstrap' for t in node.targets)
+                 and isinstance(node.value, ast.BinOp) and isinstance(node.value.left, ast.Constant)]
+    require(len(templates) == 1, 'Exactly one production bootstrap must be rehearsed')
+    destination = work / 'public-release' / 'releases' / manifest['sourceSha']
+    request = base64.b64encode(b'{}').decode()
+    script = templates[0] % (json.dumps(artifact), str(destination), 'fixture-artifacts', manifest['sourceSha'], request)
+    original_run, original_exec = subprocess.run, os.execv
+    invoked = []
+    def download(command, **_kwargs):
+        require(command[:3] == ['aws', 's3api', 'get-object'], 'Unexpected bootstrap command')
+        shutil.copyfile(archive_path, command[-1])
+        return subprocess.CompletedProcess(command, 0)
+    previous_umask = os.umask(0o077)
+    try:
+        subprocess.run = download
+        os.execv = lambda command, arguments: invoked.append((command, arguments))
+        exec(compile(script, '<production-bootstrap>', 'exec'), {})
+    finally:
+        subprocess.run, os.execv = original_run, original_exec
+        os.umask(previous_umask)
+    require(invoked and invoked[0][0] == '/usr/bin/python3', 'Bootstrap did not reach host operations')
+    for directory in [destination.parent.parent, destination.parent, destination]:
+        require(directory.stat().st_mode & 0o777 == 0o755, 'Service cannot traverse the release parents')
+    require(all(path.stat().st_mode & 0o005 == 0o005 for path in [destination / 'ipfs', destination / 'upload-router']),
+            'The service user cannot read/execute its binaries')
+    require(all(path.stat().st_mode & 0o005 == 0o005 for path in destination.rglob('*') if path.is_dir()),
+            'The service user cannot traverse a release directory')
+
+
 def main():
     bundle = Path(sys.argv[1]).resolve()
     processes = []
@@ -280,6 +344,7 @@ def main():
     thread.start()
     with tempfile.TemporaryDirectory(prefix="ipfs-recovery-") as directory:
         work = Path(directory)
+        release_permissions_rehearsal(bundle, work)
         try:
             binary = bundle / "ipfs"
             first = Daemon(binary, work / "first", LOOPBACK_HTTP + str(server.server_port), work)
@@ -296,6 +361,9 @@ def main():
                      "mfsRoot": first.rpc(FILE_STAT, {"arg": "/", "hash": "true"})["Hash"]}
             first_id = first.rpc("id")["ID"]
             https_rehearsal(bundle, work, first, payload, cid)
+            production_work = work / 'production-nginx'; production_work.mkdir()
+            (production_work / PAYLOAD_FILENAME).write_bytes(payload)
+            https_rehearsal(bundle, production_work, first, payload, cid, production=True)
             first.stop()
             first.start()
             require(first.rpc("cat", {"arg": cid}, raw=True) == payload, "Restart lost content")
@@ -383,7 +451,7 @@ def main():
             second.start()
             require(second.rpc(FILE_STAT, {"arg": "/", "hash": "true"})["Hash"] == saved["mfsRoot"], "Restored MFS did not persist")
             bidirectional_handover(first, second, work)
-            print(json.dumps({"passed": True, "checks": ["bundled-s3-startup", "bootstrap-pin-content", "all-restored-pin-root-blocks", "multi-chunk-upload", "recursive-and-direct-pins", "mfs-nested-directories", "restart-persistence", "independent-identity", "private-logical-backup", "versioned-checksummed-restore", "pin-and-mfs-restoration", "interrupted-restore-resume", "idempotent-restore", "restored-restart", "nginx-https", "range", "head", "restricted-rpc", "https-upload", "read-only-production-style-pin-restore", "read-only-new-block-rejection", "bidirectional-final-state-with-concurrent-uploads"], "awsResourcesCreated": 0}))
+            print(json.dumps({"passed": True, "checks": ["bundled-s3-startup", "bootstrap-pin-content", "all-restored-pin-root-blocks", "multi-chunk-upload", "recursive-and-direct-pins", "mfs-nested-directories", "restart-persistence", "independent-identity", "private-logical-backup", "versioned-checksummed-restore", "pin-and-mfs-restoration", "interrupted-restore-resume", "idempotent-restore", "restored-restart", "nginx-https", "range", "head", "restricted-rpc", "https-upload", "read-only-production-style-pin-restore", "read-only-new-block-rejection", "bidirectional-final-state-with-concurrent-uploads", "production-nginx-cached-dns-bridge", "ssm-private-umask-service-execution"], "awsResourcesCreated": 0}))
         finally:
             for daemon in processes:
                 daemon.stop()

@@ -87,10 +87,10 @@ describe('IPFS source, environment and production isolation', () => {
     ).toBe('rejected');
   });
 
-  test('production remains disabled with valid configuration and reviewed main source', () => {
+  test('a closed production policy rejects valid configuration and reviewed main source', () => {
     expect(
       python(
-        `from common import mutation_guard\ntry:\n mutation_guard(config,'${sha}',${JSON.stringify({ ...environment, GITHUB_REF: 'refs/heads/main' })})\nexcept ValueError as error:\n print(str(error))`,
+        `import common\ncommon.environment_policy=lambda _:{'changesEnabled':False}\nfrom common import mutation_guard\ntry:\n mutation_guard(config,'${sha}',${JSON.stringify({ ...environment, GITHUB_REF: 'refs/heads/main' })})\nexcept ValueError as error:\n print(str(error))`,
         { ...config, environment: 'prod' }
       )
     ).toContain('Production changes are disabled');

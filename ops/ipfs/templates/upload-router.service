@@ -1,0 +1,20 @@
+[Unit]
+Description=6529 IPFS synchronous upload router
+After=network-online.target ipfs.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=@RELEASE@/upload-router --node-id @NODE@ --source-sha @SHA@
+Restart=on-failure
+RestartSec=2
+RuntimeDirectory=6529-ipfs-router
+RuntimeDirectoryMode=0700
+UMask=0077
+NoNewPrivileges=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/etc/6529-ipfs /run/6529-ipfs-router
+
+[Install]
+WantedBy=multi-user.target

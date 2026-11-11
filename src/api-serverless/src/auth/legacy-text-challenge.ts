@@ -147,11 +147,27 @@ export function legacyLoginFormatOf(
 export async function isStringFormChallengeAccepted(
   nowMs: number = Date.now()
 ): Promise<boolean> {
+  return (await getStringFormChallengeStatus(nowMs)) === 'accepted';
+}
+
+/**
+ * `accepted` inside the transition; `closed` once the transition or the last
+ * accepted day has passed; `unavailable` when the transition cannot be read
+ * (refused as well, but not because the form has closed).
+ */
+export type StringFormChallengeStatus = 'accepted' | 'closed' | 'unavailable';
+
+export async function getStringFormChallengeStatus(
+  nowMs: number = Date.now()
+): Promise<StringFormChallengeStatus> {
   if (nowMs >= STRING_FORM_LAST_ACCEPTED_AT_MS) {
-    return false;
+    return 'closed';
   }
   const acceptedUntilMs = await readOrStartStringFormTransition(nowMs);
-  return acceptedUntilMs !== null && nowMs < acceptedUntilMs;
+  if (acceptedUntilMs === null) {
+    return 'unavailable';
+  }
+  return nowMs < acceptedUntilMs ? 'accepted' : 'closed';
 }
 
 /**
@@ -184,6 +200,8 @@ async function readOrStartStringFormTransition(
     return readOrStartLocalTransition(proposedUntilMs);
   }
   try {
+    // Both callers return before this point from the last accepted day on,
+    // so nowMs < STRING_FORM_LAST_ACCEPTED_AT_MS and EX is at least one day.
     await redis.set(STRING_FORM_TRANSITION_KEY, String(proposedUntilMs), {
       NX: true,
       EX: Math.ceil(
