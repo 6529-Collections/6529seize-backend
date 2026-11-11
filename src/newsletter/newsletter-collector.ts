@@ -1,3 +1,4 @@
+import { Logger } from '@/logging';
 import { RequestContext } from '@/request.context';
 import { NewsletterWindow, TEAM_WAVE_IDS } from './newsletter.config';
 import { NewsletterCollectionBudget } from './newsletter-collection-budget';
@@ -8,6 +9,8 @@ import {
   NewsletterMedia,
   NewsletterMint
 } from './newsletter.db';
+
+const logger = Logger.get('NEWSLETTER_COLLECTOR');
 
 export const discussionUrl = (drop: NewsletterDrop): string =>
   `https://6529.io/waves/${drop.wave_id}?serialNo=${drop.serial_no}`;
@@ -112,7 +115,11 @@ function sourceForDrop(
 }
 
 export class NewsletterCollector {
-  constructor(private readonly db: NewsletterDb) {}
+  constructor(
+    private readonly db: NewsletterDb,
+    private readonly createBudget: () => NewsletterCollectionBudget = () =>
+      new NewsletterCollectionBudget()
+  ) {}
 
   async collect(
     window: NewsletterWindow,
@@ -120,7 +127,7 @@ export class NewsletterCollector {
     excludedAuthorId: string,
     ctx: RequestContext
   ): Promise<NewsletterMaterial> {
-    const budget = new NewsletterCollectionBudget();
+    const budget = this.createBudget();
     const waves = await this.db.activeWaves(window, excludedWaveId, ctx);
     budget.checkTime();
     const drops = new Map<string, NewsletterDrop>();
@@ -158,6 +165,12 @@ export class NewsletterCollector {
       },
       ctx
     );
+    const truncation = budget.truncationSummary();
+    if (truncation) {
+      logger.warn('Newsletter material was capped per wave or author', {
+        truncation
+      });
+    }
     const partsByDrop = groupByDrop(parts);
     const mediaByDrop = groupByDrop(media);
     return {
@@ -225,9 +238,9 @@ export class NewsletterCollector {
         authorId,
         ctx
       );
-      budget.addDrops(page.length);
-      result.push(...page);
-      if (page.length < 500) return result;
+      result.push(...budget.admitDrops(page));
+      // A wave that used its share is not read further.
+      if (page.length < 500 || budget.isWaveFull(waveId)) return result;
       const last = page[page.length - 1];
       cursor = { createdAt: last.created_at, serialNo: last.serial_no };
     }
@@ -249,8 +262,7 @@ export class NewsletterCollector {
     let pending = Array.from(drops.keys());
     const attempted = new Set(pending);
     // Follow reply and quote chains to their publicly accessible beginnings.
-    while (pending.length) {
-      budget.nextContextRound();
+    while (pending.length && budget.nextContextRound()) {
       const referenced = new Set<string>();
       for (let i = 0; i < pending.length; i += 500) {
         const ids = pending.slice(i, i + 500);
@@ -277,8 +289,7 @@ export class NewsletterCollector {
           authorId,
           ctx
         );
-        budget.addDrops(context.length);
-        for (const drop of context) {
+        for (const drop of budget.admitDrops(context)) {
           drops.set(drop.id, drop);
           pending.push(drop.id);
         }
@@ -299,11 +310,19 @@ export class NewsletterCollector {
       this.db.parts(ids, ctx),
       this.db.media(ids, ctx)
     ]);
+    const admittedParts = batchParts.map((part) =>
+      part.content
+        ? {
+            ...part,
+            content: budget.admitText(drops.get(part.drop_id), part.content)
+          }
+        : part
+    );
     budget.addContent([
-      ...batchParts.map((part) => part.content ?? ''),
+      ...admittedParts.map((part) => part.content ?? ''),
       ...batchMedia.map((item) => item.url)
     ]);
-    parts.push(...batchParts);
+    parts.push(...admittedParts);
     media.push(...batchMedia);
     const replies = ids.map((id) => drops.get(id)?.reply_to_drop_id);
     const quotes = batchParts.map((part) => part.quoted_drop_id);
