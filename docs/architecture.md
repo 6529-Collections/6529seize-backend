@@ -2414,7 +2414,7 @@ flowchart LR
   Worker --> Chain[Creator and lazy claim contracts]
   Prep --> Wave[Configured operations wave]
   Worker --> Wave
-  Wave -->|Failures only| Alerts[Configured drops6529 profiles]
+  Wave -->|Failures only| Alerts[Configured Drop Forge alert profiles]
 ```
 
 ### Drop Forge scheduled groups
@@ -2479,7 +2479,7 @@ endpoints retain their response shapes. Completed downloads are paginated reads
 of persisted results.
 
 Reporting drops and outbox acknowledgements share a DB transaction. Push
-transport runs after commit. `@drops6529` resolves configured profile IDs
+transport runs after commit. `@dropforgeops` resolves configured profile IDs
 through existing visibility and notification rules. Both handlers create their own
 reports in `DROP_FORGE_OPERATIONS_WAVE_ID`; failures tag the group, while successes
 and detected-complete skips do not. Existing subscription alerts retain `@devs6529`

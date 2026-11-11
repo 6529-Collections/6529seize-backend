@@ -1,8 +1,8 @@
 # Drop Forge launch automation setup
 
 This is the setup guide for EMMA Process and Finalize, Craft Launch/Update Claim,
-scheduled launch actions, and reports mentioning `@drops6529`. Operational behavior,
-phase times, manual evidence and transaction recovery are described in
+scheduled launch actions, and reports mentioning `@dropforgeops`.
+Operational behavior, phase times, manual evidence and transaction recovery are described in
 [Drop Forge automated launch operations](drop-forge-auto-launch.md). The
 [architecture overview](architecture.md#drop-forge-automated-launch) shows the
 components, queue delivery, signing boundary and exact scheduled groups.
@@ -39,38 +39,38 @@ needs to be supplied manually.
 
 ## 2. Set up the wave and profiles
 
-Create or choose a dedicated operations wave with chat enabled. Choose the profile
-that should author reports and the profiles to notify on failures.
+For staging, create or choose a dedicated Chat wave named **Drop Forge Ops**.
+Use a regular wallet to create the posting profile `@drops6529` and choose the
+profiles to notify on failures. Record the staging wave and profile UUIDs.
 
 | Runtime setting | Required value |
 | -------------------------------- | ------------------------------------------------ |
-| `DROP_FORGE_OPERATIONS_WAVE_ID` | Operations wave UUID |
-| `DROP_FORGE_BOT_PROFILE_ID` | Existing posting profile UUID |
-| `DROPS_6529_MENTION_PROFILE_IDS` | Nonempty comma-separated recipient profile UUIDs |
+| `DROP_FORGE_OPERATIONS_WAVE_ID` | Drop Forge Ops wave UUID |
+| `DROP_FORGE_BOT_PROFILE_ID` | Posting profile UUID for `@drops6529` |
+| `DROP_FORGE_ALERT_PROFILE_IDS` | Nonempty comma-separated recipient profile UUIDs |
 
 The posting profile must see the wave (and its parent, if any) and have chat access.
 Every alert recipient must be able to see it. Configure group membership accordingly.
 The worker validates these permissions before accepting a launch and before reporting.
 
-`@drops6529` expands to those recipients through the same global-mention mechanism
-as `@devs6529`. It is a reserved mention shortcut, not a requirement to create a
-profile with that handle. The posting profile may be separate from the KMS wallet.
-No additional posting-profile authentication token or ENS name is required.
+`@dropforgeops` expands to those recipients through the same global-mention
+mechanism as `@devs6529`. Use `@drops6529` to mention the posting profile
+directly. The posting profile uses a separate wallet from the KMS signer.
+Its profile UUID is sufficient to configure report posting.
 
 Make the recipient setting available to `api`, `dropForgeLaunchHandler` and
 `memesDistributionHandler`. The new handlers create their own reports and resolve
 mention recipients when creating each drop. Existing subscription and other
 reporting services do not need redeployment or new recipient configuration for
 these automation alerts. Their existing `@devs6529` alerts are unchanged.
-The old shortcut and its old configuration key are not aliases for the new name.
 
 ### What tags the group, and where
 
-| Source | When `@drops6529` is included | Wave destination |
+| Source | When `@dropforgeops` is included | Wave destination |
 | -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------- |
 | `dropForgeLaunchHandler` | Recorded failures for initialization, claim updates, airdrops (including Research), signing/broadcasting and manual/recovery reconciliation | `DROP_FORGE_OPERATIONS_WAVE_ID` |
 | `memesDistributionHandler` | Failed processing/finalization jobs or jobs paused because EMMA authorization expired/was denied; an explicit distribution reset does not tag the group | `DROP_FORGE_OPERATIONS_WAVE_ID` |
-| A normal post containing the global shortcut | A chat participant includes `@drops6529` | The wave where the participant posts it |
+| A normal post containing the global shortcut | A chat participant includes `@dropforgeops` | The wave where the participant posts it |
 
 Successful actions, already-completed skips and ordinary status reports go to the
 same operations wave without tagging the group. The shortcut selects recipients,
@@ -266,7 +266,7 @@ work safely waits. Earlier signing/phase/recovery exercises remain separate.
 At **17:15 Europe/Athens**, one queued preview calculates the Research remainder
 and optional artist payment, showing whether automation/payment is Off or blocked
 by its existing limit. A normal preview is untagged. A mismatch/unavailable-evidence
-warning tags `@drops6529` once. Its stored result is never recalculated on retry;
+warning tags `@dropforgeops` once. Its stored result is never recalculated on retry;
 only failed wave delivery can be retried. A missed preview is not calculated once
 18:00 execution has started. The preview does not sign or approve a transaction.
 
@@ -299,7 +299,7 @@ The shared-calendar foundation is a separately merged prerequisite. Confirm its
 rollout in the target environment using [calendar maintenance](shared-memes-calendar.md).
 Already-current `claimsBuilder`, `subscriptionsDaily` and `helpBotReplyLoop` do not
 need redeployment for an automation-only release: their code is unchanged by this
-feature, and they are not reporting dependencies for `@drops6529`. The calendar
+feature, and they are not reporting dependencies for `@dropforgeops`. The calendar
 guide also covers retired network settings and year-round timing coverage.
 
 Apply the generated monitoring stack updates before enabling either workflow.
@@ -357,7 +357,7 @@ For the observation rollout:
    already-completed work is skipped after confirmed evidence. Earlier ordinary
    readiness failures do not block later groups. Unsigned failed actions retry at
    most once per minute within their execution window and each actual failed attempt
-   reports and tags `@drops6529`, so repeated alerts during observation are expected.
+   reports and tags `@dropforgeops`, so repeated alerts during observation are expected.
 
 The permission check rejects new transaction preparation before signing or
 broadcasting, so those permission failures do not spend gas. This validates timing,

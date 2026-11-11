@@ -19,7 +19,7 @@ Both hub settings start Off. With tracking enabled, due disabled actions still r
 Supply configuration through the existing environment/secrets loading path.
 Keep signer settings stable until every outstanding transaction is reconciled.
 The API and worker need the same launch configuration; notification-producing
-services need the same `DROPS_6529_MENTION_PROFILE_IDS` configuration.
+services need the same `DROP_FORGE_ALERT_PROFILE_IDS` configuration.
 
 | Setting                                 | Meaning                                                                                                                                  |
 | -------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
@@ -27,9 +27,9 @@ services need the same `DROPS_6529_MENTION_PROFILE_IDS` configuration.
 | `DROP_FORGE_PREPARATION_ENABLED`        | Exact `true` enables queued EMMA preparation/finalization                                                                                |
 | `DROP_FORGE_SIGNER_ADDRESS`             | Expected operational wallet address derived from the KMS public key                                                                      |
 | `DROP_FORGE_KMS_KEY_ID`                 | KMS asymmetric `ECC_SECG_P256K1`, `SIGN_VERIFY` key in the worker's AWS region                                                           |
-| `DROP_FORGE_OPERATIONS_WAVE_ID`         | Manually confirmed operations wave UUID                                                                                                  |
-| `DROP_FORGE_BOT_PROFILE_ID`             | Existing bot profile UUID, with permission to chat in that wave                                                                          |
-| `DROPS_6529_MENTION_PROFILE_IDS` | Manually supplied comma-separated profile UUIDs; all must exist and see the wave                                                         |
+| `DROP_FORGE_OPERATIONS_WAVE_ID`         | Manually confirmed Drop Forge Ops wave UUID                                                                                                  |
+| `DROP_FORGE_BOT_PROFILE_ID`             | `@drops6529` posting profile UUID, with permission to chat in that wave                                                                          |
+| `DROP_FORGE_ALERT_PROFILE_IDS` | Manually supplied comma-separated profile UUIDs; all must exist and see the wave                                                         |
 
 The stage policy fixes network/creator/proxy/receiver, 12 confirmations, and gas
 ceilings (100 gwei, 5,000,000 gas, 0.1 ETH gas cost per transaction). The explicit
@@ -153,7 +153,7 @@ per transaction, at most 20,000 phase-recipient entries per plan):
   signing. Confirmed manual Research receipts are reconciled separately from
   subscriber allocations, and their supply reduces any remaining top-up.
   Completion mirrors `RESEARCH_AIRDROP` into Launch and posts wave activity with
-  transaction links; failures use the existing `@drops6529` alert path.
+  transaction links; failures use the existing `@dropforgeops` alert path.
   Optional Pay Artist is a separate action in the same post-mint group; an ordinary Research failure does not cancel its eligibility.
 
 For each initialization/transition, admission requires
@@ -220,7 +220,7 @@ hash remains reorg evidence and still stops conflicting writes.
 
 Unknown nonce consumption, a reorg, revoked admin permission, insufficient gas,
 changed source/configuration, or a missed deadline blocks the launch and records
-an error report with `@drops6529`. `RESUME` requires the latest revision and
+an error report with `@dropforgeops`. `RESUME` requires the latest revision and
 rechecks source, proofs, scope and timing. It does not replace a transaction,
 reset a nonce, or replay a reverted airdrop. Outstanding transactions can block
 other launches using the same signer until reconciled.
@@ -309,7 +309,7 @@ creator scan coverage, then `dropForgeLaunchHandler`, then
 `memesDistributionHandler`, then `api`, with both flags disabled, followed by the
 dependent frontend controls. The new handlers create their own wave
 reports; existing reporting services do not need redeployment for these alerts.
-Make `DROPS_6529_MENTION_PROFILE_IDS` available to the API and both handlers.
+Make `DROP_FORGE_ALERT_PROFILE_IDS` available to the API and both handlers.
 Existing subscription alerts retain their `@devs6529` mention and configured wave.
 Apply the generated monitoring stack updates and deploy frontend mention
 compatibility before enablement.

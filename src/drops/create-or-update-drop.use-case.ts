@@ -135,7 +135,7 @@ import {
   CLOUDFRONT_LINK,
   DEVS_6529_MENTION,
   DEVS_6529_MENTION_TOKEN,
-  DROPS_6529_MENTION_TOKEN,
+  DROP_FORGE_ALERT_MENTION_TOKEN,
   UUID_REGEX,
   WALLET_REGEX
 } from '@/constants';
@@ -218,7 +218,7 @@ const GROUP_MENTION_TOKENS: Readonly<Record<DropGroupMention, string>> = {
   [DropGroupMention.CONTRIBUTORS]: 'contributors',
   [DropGroupMention.ADMINS]: 'admins',
   [DropGroupMention.DEVS_6529]: DEVS_6529_MENTION_TOKEN,
-  [DropGroupMention.DROPS_6529]: DROPS_6529_MENTION_TOKEN
+  [DropGroupMention.DROPS_6529]: DROP_FORGE_ALERT_MENTION_TOKEN
 };
 const ADMIN_ONLY_GROUP_MENTIONS = [
   DropGroupMention.ALL,
@@ -236,7 +236,7 @@ function createGroupMentionPattern(token: string): RegExp {
 
 const GROUP_MENTION_PATTERNS: Readonly<Record<DropGroupMention, RegExp>> = {
   [DropGroupMention.DROPS_6529]: createGroupMentionPattern(
-    DROPS_6529_MENTION_TOKEN
+    DROP_FORGE_ALERT_MENTION_TOKEN
   ),
   [DropGroupMention.ALL]: createGroupMentionPattern(
     GROUP_MENTION_TOKENS[DropGroupMention.ALL]
@@ -2860,7 +2860,7 @@ export class CreateOrUpdateDropUseCase {
           ? env.getStringArray('DEVS_6529_MENTION_PROFILE_IDS', ',')
           : []),
         ...(model.mentioned_groups.includes(DropGroupMention.DROPS_6529)
-          ? env.getStringArray('DROPS_6529_MENTION_PROFILE_IDS', ',')
+          ? env.getStringArray('DROP_FORGE_ALERT_PROFILE_IDS', ',')
           : [])
       ]
         .map((id) => id.trim())

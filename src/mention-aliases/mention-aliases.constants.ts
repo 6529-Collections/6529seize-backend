@@ -1,4 +1,7 @@
-import { DEVS_6529_MENTION_TOKEN } from '@/constants/mentions';
+import {
+  DEVS_6529_MENTION_TOKEN,
+  DROP_FORGE_ALERT_MENTION_TOKEN
+} from '@/constants/mentions';
 
 export const MENTION_ALIAS_MIN_LENGTH = 3;
 export const MENTION_ALIAS_MAX_LENGTH = 15;
@@ -24,7 +27,7 @@ export const RESERVED_MENTION_ALIASES = new Set([
   'developer',
   'developers',
   '6529devs',
-  'drops6529',
+  DROP_FORGE_ALERT_MENTION_TOKEN,
   DEVS_6529_MENTION_TOKEN
 ]);
 

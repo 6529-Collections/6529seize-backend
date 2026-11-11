@@ -1766,11 +1766,17 @@ describe('CreateOrUpdateDropUseCase', () => {
     ).not.toThrow();
   });
 
-  it('resolves @drops6529 to configured profiles with wave visibility filtering', async () => {
+  it('keeps the Drop Forge posting profile out of group mentions', () => {
+    expect(
+      normalizeDropGroupMentions({ parts: [{ content: 'Hello @drops6529' }] })
+    ).toEqual([]);
+  });
+
+  it('resolves @dropforgeops to configured profiles with wave visibility filtering', async () => {
     jest
       .spyOn(env, 'getStringArray')
       .mockImplementation((name) =>
-        name === 'DROPS_6529_MENTION_PROFILE_IDS'
+        name === 'DROP_FORGE_ALERT_PROFILE_IDS'
           ? ['visible-forger', 'hidden-forger']
           : []
       );
@@ -1790,7 +1796,7 @@ describe('CreateOrUpdateDropUseCase', () => {
     const useCase = createUseCaseWithMocks({ userGroupsService });
     expect(
       normalizeDropGroupMentions({
-        parts: [{ content: 'failure @drops6529' }]
+        parts: [{ content: 'failure @dropforgeops' }]
       })
     ).toEqual([DropGroupMention.DROPS_6529]);
     await expect(

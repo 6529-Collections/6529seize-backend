@@ -10,7 +10,7 @@ import {
   testLaunchData
 } from '@/drop-forge/drop-forge.test-fixtures';
 import { LaunchRecord } from '@/drop-forge/drop-forge.types';
-import { DROPS_6529_MENTION } from '@/constants/mentions';
+import { DROP_FORGE_ALERT_MENTION } from '@/constants/mentions';
 jest.mock('@/drops/create-or-update-drop.use-case', () => ({
   createOrUpdateDrop: { execute: jest.fn() }
 }));
@@ -83,7 +83,7 @@ it('posts new preview output only in the operations wave and tags only failures'
     expect(messages[0].parts[0].content).toBe(
       '🔔 **Public mint closed**\n\nResearch: 18 editions'
     );
-    expect(messages[1].parts[0].content).toContain(DROPS_6529_MENTION);
+    expect(messages[1].parts[0].content).toContain(DROP_FORGE_ALERT_MENTION);
   } finally {
     if (previous === undefined)
       delete process.env.DEPLOYER_ANNOUNCEMENTS_WAVE_IDS;

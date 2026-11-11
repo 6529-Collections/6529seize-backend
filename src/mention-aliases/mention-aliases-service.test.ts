@@ -76,7 +76,7 @@ describe('MentionAliasesService', () => {
     'team',
     '6529DEVS',
     'devs6529',
-    '@Drops6529'
+    '@DropForgeOps'
   ])('rejects reserved shortcut %s', async (alias) => {
     const { db } = createDb();
     const service = new MentionAliasesService(db as any);
