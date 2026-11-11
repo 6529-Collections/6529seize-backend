@@ -17,6 +17,7 @@ import {
 } from '@/competitions/competition.repository';
 import { nativeCompetitionRuntimeRepository } from '@/competitions/native-competition-runtime.repository';
 import { nativeCompetitionRuntimeService } from '@/competitions/native-competition-runtime.service';
+import { competitionPublicationCapacity } from '@/competitions/competition-publication-capacity';
 import {
   CompetitionEntity,
   CompetitionExecutionMode,
@@ -378,6 +379,11 @@ export class CompetitionLifecycleService {
             tx
           );
           this.validatePublicationDates(config, now);
+          if (record.lifecycle === CompetitionLifecycle.DRAFT)
+            await competitionPublicationCapacity.assertCanPublish(
+              { competitionId, waveId, actorId: actor },
+              tx
+            );
         }
         await nativeCompetitionRuntimeService.enqueueDueTransitions(
           competition,
