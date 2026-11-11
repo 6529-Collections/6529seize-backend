@@ -425,11 +425,8 @@ export class ProfilesService {
         connectionHolder
       );
       await this.mergeRatings(sourceIdentity, target, connectionHolder);
-      // profile_proxies.target_id/created_by, profile_proxy_actions.proxy_id
-      // and the community_groups profile columns are not indexed.
-      await withProfileRow(() =>
-        this.mergeProxies(sourceIdentity, target, connectionHolder)
-      );
+      await this.mergeProxies(sourceIdentity, target, connectionHolder);
+      // The community_groups profile columns are not indexed.
       await withProfileRow(() =>
         this.mergeGroups(sourceIdentity, target, connectionHolder)
       );

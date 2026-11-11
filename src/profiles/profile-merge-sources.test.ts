@@ -42,7 +42,6 @@ const ALL_STEPS = [
 ];
 
 const PROFILE_ROW_ONLY_STEPS = new Set([
-  'proxies',
   'groups',
   'memes prevote artist profiles',
   'poll votes',
