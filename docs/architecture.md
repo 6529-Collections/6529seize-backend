@@ -3038,7 +3038,8 @@ at the adopted baseline.
 
 Runtime candidates use encrypted retained disks, independent peer identities,
 private loopback Kubo API/gateway endpoints, and HTTPS ingress restricted to the
-ALB and previous writer. Public TCP port 4001 preserves the original IPFS peer
+ALB and previous writer. Bootstrap installs current OS security updates; public TCP port 4001 stays closed
+until reboot validation, then preserves the original IPFS peer
 service; raw RPC/gateway, SSH and UDP swarm ports remain closed. Their roles initially read existing S3 blocks without
 write/delete access. Full recursive/direct pin restoration and immutable MFS reads
 must pass before a role-only update permits Put. A reviewed patch to the pinned

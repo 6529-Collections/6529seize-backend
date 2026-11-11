@@ -335,7 +335,12 @@ os.execv('/usr/bin/python3',['python3',str(release/'production_host.py'),%r])
             result = rows[0]
             require(result['InstanceId'] == node['instanceId'], 'SSM command target mismatch')
             if result['Status'] == 'Success':
-                return parse_host_output(result['CommandPlugins'][0]['Output'], request)
+                # ListCommandInvocations truncates plugin output to 2,500 characters.
+                # The full response API permits 24,000 and preserves the TLS
+                # certificate/status receipt without weakening validation.
+                full = call('ssm', 'get-command-invocation', '--command-id', command_id, '--instance-id', node['instanceId'])
+                require(full['Status'] == 'Success', 'SSM result changed while fetching its full receipt')
+                return parse_host_output(full['StandardOutputContent'], request)
             require(result['Status'] in ('Pending', 'InProgress', 'Delayed'), 'SSM failed; inspect the recorded command in restricted tooling')
             time.sleep(5)
         raise TimeoutError('SSM command is still running; resume its recorded command ID')
@@ -479,7 +484,8 @@ os.execv('/usr/bin/python3',['python3',str(release/'production_host.py'),%r])
         runtime_name = 'seize-ipfs-prod-runtime-' + self.id
         runtime_parameters = {'VpcId': CONTEXT['vpcId'], 'SubnetId': CONTEXT['subnetIds'][0], 'ImageId': CONTEXT['imageId'],
                               'InstanceType': 't3.large', 'FrontdoorSecurityGroup': frontdoor['SecurityGroupId'],
-                              'SourceSecurityGroup': source['securityGroupId'], 'RuntimeBoundaryArn': CONTEXT['runtimeBoundaryArn'], 'AllowWrites': 'false'}
+                              'SourceSecurityGroup': source['securityGroupId'], 'RuntimeBoundaryArn': CONTEXT['runtimeBoundaryArn'],
+                              'AllowWrites': 'false', 'PublishSwarm': 'false'}
         runtime = self.once('runtime-created', lambda: self.apply(runtime_name, 'runtime', runtime_parameters, []))
         target = self.once('target-discovery', lambda: self.node(runtime['InstanceId']))
         self.record('target', target)
@@ -493,6 +499,7 @@ os.execv('/usr/bin/python3',['python3',str(release/'production_host.py'),%r])
         probe = self.once('target-verified', lambda: self.host(target, 'verify'))
         self.once('reboot-requested', lambda: self.host(target, 'reboot'))
         self.once('reboot-verified', lambda: self.verify_reboot(target, probe))
+        self.once('swarm-published', lambda: self.apply(runtime_name, 'runtime', {**write_parameters, 'PublishSwarm': 'true'}, ['SecurityGroup']))
         self.once('public-swarm', lambda: self.verify_swarm(target))
         self.once('source-bridge', lambda: self.host(source, 'prepare-source', **routing))
         values = dict(self.state['frontdoorParameters'])
@@ -569,6 +576,7 @@ os.execv('/usr/bin/python3',['python3',str(release/'production_host.py'),%r])
                     current = self.current_status(target)
                     if current['bootId'] != old_boot:
                         require(current['router']['mode'] == 'serve' and not current['router']['mfsReady'], 'Writer fence did not survive reboot')
+                        require(current.get('rebootRequired') is False, 'Installed OS security updates still require a reboot')
                         require(current['version'] == self.state['versions']['kuboVersion'], 'Wrong rebooted version')
                         self.host(target, 'verify', rebootCheck=True)
                         return {'rebootPersistenceVerified': True, 'bootId': current['bootId'], 'probeCid': probe['cid']}

@@ -359,7 +359,8 @@ def prepare_source(node, request):
 def status(node):
     result = {'instanceId': node, 'version': host.rpc('version')['Version'],
               'peerId': host.rpc('id')['ID'], 'mfsRoot': host.rpc('files/stat', {'arg': '/', 'hash': 'true'})['Hash'],
-              'bootId': Path('/proc/sys/kernel/random/boot_id').read_text().strip(), 'readOnly': read_only(node)}
+              'bootId': Path('/proc/sys/kernel/random/boot_id').read_text().strip(), 'readOnly': read_only(node),
+              'kernel': os.uname().release, 'rebootRequired': Path('/var/run/reboot-required').exists()}
     if (SETTINGS / ROUTER_STATE).exists(): result['router'] = router()
     cert = Path('/etc/letsencrypt/live/api-ipfs.6529.io/fullchain.pem') if is_legacy(node) else SETTINGS / 'tls/cert.pem'
     if cert.exists(): result['certificate'] = cert.read_text()

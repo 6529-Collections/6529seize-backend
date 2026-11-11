@@ -99,7 +99,9 @@ names in the workflow inputs.
 2. Verify the full shared CDN configuration against the adopted baseline. Back up
    the current logical state and private identity/configuration before host edits.
 3. Create an unpublished ALB if needed, then a new retained runtime from YAML.
-   Its role initially has only Get/List access to the live S3 blocks. Give it an
+   Its role initially has only Get/List access to the live S3 blocks. Bootstrap
+   installs current OS security updates; public TCP peering remains closed until
+   the reboot gate passes. Give it an
    independent peer identity; never copy the serving peer's private identity.
 4. Restore every explicit recursive/direct pin and name. Recursive restoration
    traverses the actual DAG, and the immutable MFS root must be readable. The

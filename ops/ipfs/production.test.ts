@@ -259,6 +259,53 @@ print('actual writer reported')
     ).toBe('actual writer reported');
   });
 
+  test('reads the full SSM result when the list response truncates a certificate receipt', () => {
+    expect(
+      python(`
+c=object.__new__(p.Controller)
+node={'instanceId':'i-source'}
+request={'instanceId':'i-source','operation':'status'}
+value={'instanceId':'i-source','version':'0.43.1','mfsRoot':'root','bootId':'boot','readOnly':False,'certificate':'certificate-data'*500}
+output=json.dumps({'protocol':p.RECEIPT,'result':value})
+assert len(output)>2500
+calls=[]
+def call(service,operation,*args):
+ calls.append(operation)
+ if operation=='list-command-invocations':return {'CommandInvocations':[{'InstanceId':'i-source','Status':'Success','CommandPlugins':[{'Output':output[:2500]}]}]}
+ if operation=='get-command-invocation':return {'Status':'Success','StandardOutputContent':output}
+ raise AssertionError(operation)
+p.call=call
+assert c.wait_host('command',node,request)['certificate']==value['certificate']
+assert calls==['list-command-invocations','get-command-invocation']
+print('complete receipt')
+`)
+    ).toBe('complete receipt');
+  });
+
+  test('keeps public peering closed while installing OS security updates and until reboot validation', () => {
+    const template = parse(
+      readFileSync(join(__dirname, 'cloudformation/runtime.yaml'), 'utf8')
+    );
+    expect(template.Parameters.PublishSwarm.Default).toBe('false');
+    expect(
+      template.Resources.Instance.Properties.UserData['Fn::Base64']
+    ).toContain('full-upgrade -y');
+    const ingress =
+      template.Resources.SecurityGroup.Properties.SecurityGroupIngress;
+    expect(ingress).toContainEqual({
+      'Fn::If': [
+        'SwarmPublished',
+        {
+          IpProtocol: 'tcp',
+          FromPort: 4001,
+          ToPort: 4001,
+          CidrIp: '0.0.0.0/0'
+        },
+        { Ref: 'AWS::NoValue' }
+      ]
+    });
+  });
+
   test('only offers explicit production operations through the protected main environment', () => {
     const workflow = parse(
       readFileSync(
