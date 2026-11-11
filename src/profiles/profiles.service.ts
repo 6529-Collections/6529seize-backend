@@ -406,10 +406,11 @@ export class ProfilesService {
       );
       // Data keyed by the source profile id moves for every source identity:
       // one without a profiles row (no handle) still owns ratings, xTDH
-      // grants, drops and the rest. Steps that concern the profiles row, and
-      // steps that would lock whole tables (unindexed columns, the competition
-      // outbox) or fail on a key collision for the many consolidations of
-      // identities without a handle, still need the profiles row.
+      // grants, drops and the rest. Every step reads the source's rows
+      // through an index and resolves key collisions in the target's favour,
+      // so it is cheap and cannot fail for the many consolidations of
+      // identities without a handle. Only the steps about the profiles row
+      // itself need that row.
       const withProfileRow = async (step: () => Promise<unknown>) => {
         if (sourceProfile) {
           await step();
@@ -429,13 +430,10 @@ export class ProfilesService {
       await this.mergeGroups(sourceIdentity, target, connectionHolder);
       await this.mergeWaves(sourceIdentity, target, connectionHolder);
       await this.mergeDrops(sourceIdentity, target, connectionHolder);
-      // Updates a primary key column: fails when both have the same card.
-      await withProfileRow(() =>
-        this.mergeMemesPrevoteArtistProfiles(
-          sourceIdentity,
-          target,
-          connectionHolder
-        )
+      await this.mergeMemesPrevoteArtistProfiles(
+        sourceIdentity,
+        target,
+        connectionHolder
       );
       await this.mergeNotifications(sourceIdentity, target, connectionHolder);
       await this.mergeXTdhGrants(sourceIdentity, target, connectionHolder);
