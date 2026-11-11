@@ -17,6 +17,14 @@ import {
 jest.mock('@aws-sdk/s3-request-presigner', () => ({
   getSignedUrl: jest.fn()
 }));
+// Upload budget accounting is covered in upload-media-budget.test.ts.
+jest.mock('@/api/media/media-upload-budget.service', () => ({
+  mediaUploadBudgetService: {
+    reserve: jest.fn(),
+    release: jest.fn(),
+    recordSize: jest.fn()
+  }
+}));
 
 const ORIGINAL_ENV = { ...process.env };
 const UUID = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}';

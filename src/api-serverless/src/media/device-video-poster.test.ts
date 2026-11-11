@@ -21,6 +21,14 @@ import {
 } from '@/media/chat-video-poster';
 import { Logger } from '@/logging';
 
+// Upload budget accounting is covered in upload-media-budget.test.ts.
+jest.mock('@/api/media/media-upload-budget.service', () => ({
+  mediaUploadBudgetService: {
+    reserve: jest.fn(),
+    release: jest.fn(),
+    recordSize: jest.fn()
+  }
+}));
 jest.mock('image-size', () => {
   const actual = jest.requireActual<typeof import('image-size')>('image-size');
   return { ...actual, imageSize: jest.fn(actual.imageSize) };

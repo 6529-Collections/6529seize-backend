@@ -14,6 +14,14 @@ jest.mock('../auth/auth', () => ({
       next(),
   getAuthenticatedProfileIdOrNull: jest.fn(async () => 'profile-1')
 }));
+// Upload budget accounting is covered in upload-media-budget.test.ts.
+jest.mock('@/api/media/media-upload-budget.service', () => ({
+  mediaUploadBudgetService: {
+    reserve: jest.fn(),
+    release: jest.fn(),
+    recordSize: jest.fn()
+  }
+}));
 jest.mock('@aws-sdk/s3-request-presigner', () => ({
   getSignedUrl: jest.fn(async () => 'https://signed-part-url.example')
 }));

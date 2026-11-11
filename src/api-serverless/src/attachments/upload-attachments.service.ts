@@ -1,6 +1,7 @@
 import {
   CompleteMultipartUploadCommand,
   CreateMultipartUploadCommand,
+  HeadObjectCommand,
   S3Client,
   UploadPartCommand
 } from '@aws-sdk/client-s3';
@@ -88,6 +89,18 @@ export class UploadAttachmentsService {
       bucket: this.getBucket(),
       key
     };
+  }
+
+  /** The stored size of an uploaded attachment, or null if it cannot be read. */
+  async readObjectSize(key: string): Promise<number | null> {
+    try {
+      const head = await this.getS3().send(
+        new HeadObjectCommand({ Bucket: this.getBucket(), Key: key })
+      );
+      return typeof head.ContentLength === 'number' ? head.ContentLength : null;
+    } catch {
+      return null;
+    }
   }
 
   private async createMultipartUploadId({

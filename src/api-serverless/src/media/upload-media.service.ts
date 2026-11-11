@@ -25,6 +25,11 @@ import {
 import { Logger } from '@/logging';
 import { MAX_DIRECT_MULTIPART_MEDIA_BYTES } from '@/api/media/media-upload-limits';
 import {
+  MediaUploadBudget,
+  mediaUploadBudgetService
+} from '@/api/media/media-upload-budget.service';
+import { MediaUploadBudgetSource } from '@/entities/IMediaUploadBudget';
+import {
   createDropMediaIngestKey,
   DROP_MEDIA_SANITIZE_UPLOAD_METADATA_KEY,
   getDropMediaIngestS3,
@@ -74,7 +79,8 @@ export class UploadMediaService {
     private readonly getS3: () => S3Client,
     private readonly getIngestS3: () => S3Client = getDropMediaIngestS3,
     private readonly dropMediaUploadsDb: DropMediaUploadsDb = defaultDropMediaUploadsDb,
-    private readonly enqueueSanitization: SanitizerQueue = enqueueDropMediaSanitization
+    private readonly enqueueSanitization: SanitizerQueue = enqueueDropMediaSanitization,
+    private readonly uploadBudget: MediaUploadBudget = mediaUploadBudgetService
   ) {}
 
   public async createSingedDropMediaUploadUrl({
@@ -90,17 +96,27 @@ export class UploadMediaService {
   }): Promise<{ upload_url: string; media_url: string; content_type: string }> {
     this.assertSinglePutImageUploadAllowed(content_type);
     const { key, uploadId } = this.createDropMediaKey({ file_name, purpose });
-    const result = await this.createSignedMediaUrl({ key, content_type });
-    await this.recordPublicUploadOwner({
-      id: uploadId,
-      key,
-      contentType: content_type,
-      authorId: author_id,
-      s3UploadId: `single-put:${randomUUID()}`,
-      purpose,
-      ready: true
-    });
-    return result;
+    return await this.withBudgetedUpload(
+      {
+        id: uploadId,
+        profileId: author_id,
+        source: MediaUploadBudgetSource.DROP,
+        pendingObjectKey: key
+      },
+      async () => {
+        const result = await this.createSignedMediaUrl({ key, content_type });
+        await this.recordPublicUploadOwner({
+          id: uploadId,
+          key,
+          contentType: content_type,
+          authorId: author_id,
+          s3UploadId: `single-put:${randomUUID()}`,
+          purpose,
+          ready: true
+        });
+        return result;
+      }
+    );
   }
 
   public async createSingedWaveMediaUploadUrl({
@@ -113,8 +129,58 @@ export class UploadMediaService {
     content_type: string;
   }): Promise<ApiCreateMediaUrlResponse> {
     this.assertSinglePutImageUploadAllowed(content_type);
-    const { key } = this.createWaveMediaKey({ file_name, author_id });
-    return await this.createSignedMediaUrl({ key, content_type });
+    const { key, uploadId } = this.createWaveMediaKey({ file_name, author_id });
+    return await this.withBudgetedUpload(
+      {
+        id: uploadId,
+        profileId: author_id,
+        source: MediaUploadBudgetSource.WAVE,
+        pendingObjectKey: key
+      },
+      () => this.createSignedMediaUrl({ key, content_type })
+    );
+  }
+
+  /**
+   * Counts the upload against its author's rolling upload budget (429 once
+   * it is used up) before anything is created, and gives the reservation
+   * back if preparing the upload fails.
+   */
+  private async withBudgetedUpload<T>(
+    reservation: {
+      id: string;
+      profileId: string;
+      source: MediaUploadBudgetSource;
+      pendingObjectKey?: string;
+    },
+    prepare: () => Promise<T>
+  ): Promise<T> {
+    await this.uploadBudget.reserve({
+      ...reservation,
+      readObjectSize: (key) => this.readPublicObjectSize(key)
+    });
+    try {
+      return await prepare();
+    } catch (error) {
+      await this.uploadBudget.release(reservation.id, reservation.profileId);
+      throw error;
+    }
+  }
+
+  /** The stored size of a public object; null when it does not exist. */
+  private async readPublicObjectSize(key: string): Promise<number | null> {
+    try {
+      const head = await this.getS3().send(
+        new HeadObjectCommand({ Bucket: this.getS3Bucket(), Key: key })
+      );
+      return typeof head.ContentLength === 'number' ? head.ContentLength : null;
+    } catch (error) {
+      // Without list permission S3 answers a missing key with 403.
+      const status = (error as { $metadata?: { httpStatusCode?: number } })
+        ?.$metadata?.httpStatusCode;
+      if (status === 404 || status === 403) return null;
+      throw error;
+    }
   }
 
   /** Wave pictures are always chat media: stripped, with a neutral name. */
@@ -265,8 +331,10 @@ export class UploadMediaService {
     });
 
     const completeResp = await this.getS3().send(completeCmd);
-    await this.assertCompletedMediaWithinLimit({ key, upload });
+    const size = await this.assertCompletedMediaWithinLimit({ key, upload });
     if (upload) {
+      // Tracked uploads are the budgeted ones (their id is the entry's id).
+      await this.uploadBudget.recordSize(upload.id, upload.profile_id, size);
       await this.dropMediaUploadsDb.updateUpload({
         id: upload.id,
         patch: {
@@ -449,7 +517,28 @@ export class UploadMediaService {
     return { key: `drops/${uploadId}/${sanitizedFileName}`, uploadId };
   }
 
-  private async createMultipartUpload({
+  private async createMultipartUpload(
+    upload: ReservedMediaKey & {
+      content_type: string;
+      author_id: string;
+      source: MediaUploadSource;
+      purpose: DropMediaUploadPurpose;
+    }
+  ): Promise<ApiStartMultipartMediaUploadResponse> {
+    return await this.withBudgetedUpload(
+      {
+        id: upload.uploadId,
+        profileId: upload.author_id,
+        source:
+          upload.source === DropMediaUploadSource.WAVE
+            ? MediaUploadBudgetSource.WAVE
+            : MediaUploadBudgetSource.DROP
+      },
+      () => this.startMultipartUpload(upload)
+    );
+  }
+
+  private async startMultipartUpload({
     key,
     uploadId: mediaUploadId,
     content_type,
@@ -650,6 +739,7 @@ export class UploadMediaService {
           `Drop media upload ${upload.id} is not in uploading state`
         );
       }
+      await this.recordIngestUploadSize(upload);
     } else if (
       upload.status === DropMediaUploadStatus.COMPLETING ||
       upload.status === DropMediaUploadStatus.SANITIZING
@@ -674,6 +764,31 @@ export class UploadMediaService {
       media_upload_id: upload.id,
       media_status: ApiDropMediaStatus.Processing
     };
+  }
+
+  /** Counts a completed private image upload's bytes; never fails completion. */
+  private async recordIngestUploadSize(
+    upload: DropMediaUploadEntity
+  ): Promise<void> {
+    try {
+      const head = await this.getIngestS3().send(
+        new HeadObjectCommand({
+          Bucket: upload.ingest_bucket,
+          Key: upload.ingest_key
+        })
+      );
+      if (typeof head.ContentLength === 'number') {
+        await this.uploadBudget.recordSize(
+          upload.id,
+          upload.profile_id,
+          head.ContentLength
+        );
+      }
+    } catch (error) {
+      this.logger.warn(
+        `Could not read the size of media upload ${upload.id}: ${error instanceof Error ? error.message : String(error)}`
+      );
+    }
   }
 
   /**
