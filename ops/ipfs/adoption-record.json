@@ -1,0 +1,56 @@
+{
+  "schema": 1,
+  "stage": 1,
+  "completedAt": "2026-11-11T09:40:15.430686+00:00",
+  "accountId": "987989283142",
+  "region": "us-east-1",
+  "sourceSha": "7f87afe0ad616ddd1b56f5f996089e4e2ef96641",
+  "stackName": "seize-ipfs-prod-adopted",
+  "stackId": "arn:aws:cloudformation:us-east-1:987989283142:stack/seize-ipfs-prod-adopted/77a0a550-ddb2-11f1-93dd-0e4ffc68be55",
+  "accessStackId": "arn:aws:cloudformation:us-east-1:987989283142:stack/seize-ipfs-prod-adoption-access/ce10a820-dda0-11f1-a12b-0afffe4f7d1d",
+  "changeSetId": "arn:aws:cloudformation:us-east-1:987989283142:changeSet/seize-ipfs-prod-import-7f87afe0ad616ddd1b56f5f996089e4e2ef96641-8c2e92c42689cb20/17ea4050-8440-4b49-b43b-db11638bfe80",
+  "baselineSha256": "8c2e92c42689cb208560d2ef8fb2a93d84f2b29cc546b16ef17028c1bb429dee",
+  "templateSha256": "1e898b1385b7e30afa0c60da255506512f2155c693297599d3b294550e316916",
+  "distributionConfigSha256": "08d8e7bfb9a9df162d3f5661536ba451099c5da51c1bdf6f72d130fa5fb61cec",
+  "resources": {
+    "Blocks": {
+      "type": "AWS::S3::Bucket",
+      "identifier": "6529ipfs",
+      "driftStatus": "IN_SYNC"
+    },
+    "Server": {
+      "type": "AWS::EC2::Instance",
+      "identifier": "i-0012c6236ad1292e8",
+      "driftStatus": "IN_SYNC"
+    },
+    "ServerSecurityGroup": {
+      "type": "AWS::EC2::SecurityGroup",
+      "identifier": "sg-03b5af7f71e361d25",
+      "driftStatus": "IN_SYNC"
+    },
+    "SharedDistribution": {
+      "type": "AWS::CloudFront::Distribution",
+      "identifier": "E1D6I3Z3M5F0H4",
+      "driftStatus": "IN_SYNC"
+    }
+  },
+  "protections": {
+    "terminationProtection": true,
+    "retainOnDeleteAndReplace": true,
+    "denyAllResourceUpdates": true,
+    "cloudFrontImportUpdateExpiresAt": "1970-01-01T00:00:00Z",
+    "cloudFrontUpdatesExplicitlyDeniedForBothRoles": true,
+    "providerWindowClosedAt": "2026-11-11T09:38:04.272656+00:00"
+  },
+  "verification": {
+    "configurationChanged": false,
+    "runtimeHealthy": true,
+    "runtimeDeploymentEnabled": false,
+    "separateStagingEnvironmentCreated": false
+  },
+  "successfulRuns": {
+    "prepare": "https://github.com/6529-Collections/6529seize-backend/actions/runs/42995609303",
+    "execute": "https://github.com/6529-Collections/6529seize-backend/actions/runs/42996500404",
+    "verifyAfterPermissionReset": "https://github.com/6529-Collections/6529seize-backend/actions/runs/42996908122"
+  }
+}
