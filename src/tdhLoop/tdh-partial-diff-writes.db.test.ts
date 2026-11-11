@@ -460,11 +460,9 @@ async function dump() {
 }
 
 describe('partial TDH writes send only the rows that change', () => {
-  let observer: SqlExecutor;
   let appExecutor: SqlExecutor;
 
   beforeAll(async () => {
-    observer = sqlExecutor;
     await connect([
       TDH,
       TDHMemes,
@@ -482,7 +480,6 @@ describe('partial TDH writes send only the rows that change', () => {
 
   afterAll(async () => {
     await disconnect();
-    setSqlExecutor(observer);
   });
 
   beforeEach(async () => {

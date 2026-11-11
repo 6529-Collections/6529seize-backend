@@ -173,6 +173,13 @@ describe('partial TDH writes: what counts as unchanged', () => {
       upserts: [],
       refreshes: []
     });
+    // A key matched in another case is written in full, never refreshed: the
+    // refresh joins on the exact key text.
+    const recased = { ...later, wallet: '0xABC' };
+    expect(writes(base, recased, refreshed)).toEqual({
+      upserts: [recased],
+      refreshes: []
+    });
     // In the delete scope or new: written in full.
     expect(
       rowsToWrite(

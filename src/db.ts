@@ -1252,11 +1252,14 @@ export async function persistTDH(
         (row) => isAffected(row.wallet),
         {
           writeAllRows: options.writeAllRows,
+          // The snapshot was read before this transaction: a same-block
+          // rewrite committed in between is not seen. Only delegationsLoop
+          // (reserved concurrency 1) writes partially.
           stored: async () =>
             options.storedTdh ??
             readStoredRows(manager, tdhRepo.metadata, {
-              sql: 'block = ?',
-              params: [block]
+              column: 'block',
+              value: block
             })
         }
       );
@@ -1592,8 +1595,8 @@ export async function persistHistoricConsolidatedTDH(
         writeAllRows,
         stored: () =>
           readStoredRows(entityManager, historicTdhRepo.metadata, {
-            sql: 'block = ?',
-            params: [block]
+            column: 'block',
+            value: block
           }),
         // Computed with a new date on every run, as the consolidated rows.
         columns: { refreshed: 'date' }

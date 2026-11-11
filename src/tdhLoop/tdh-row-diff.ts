@@ -263,7 +263,8 @@ function parsedJson(value: unknown): unknown {
 }
 
 /**
- * The stored rows of `metadata`'s table (optionally filtered), read on the
+ * The stored rows of `metadata`'s table (optionally only those whose
+ * `filter.column` equals `filter.value`), read on the
  * caller's transaction so they match what it writes against: a locking read
  * (`for share`), which sees the latest committed rows and keeps them locked
  * until the caller commits, as overwriting every row did. A concurrent writer
@@ -274,7 +275,7 @@ function parsedJson(value: unknown): unknown {
 export async function readStoredRows(
   manager: EntityManager,
   metadata: EntityMetadata,
-  filter?: { readonly sql: string; readonly params: unknown[] }
+  filter?: { readonly column: string; readonly value: unknown }
 ): Promise<StoredRows> {
   const plan = planFor(metadata);
   const stored: StoredRows = new Map();
@@ -287,11 +288,13 @@ export async function readStoredRows(
       values
     );
   };
-  const sql = `select * from \`${metadata.tableName}\`${filter ? ` where ${filter.sql}` : ''}`;
-  const params = filter?.params ?? [];
+  const name = (identifier: string) => `\`${identifier.replace(/`/g, '``')}\``;
+  const sql = `select * from ${name(metadata.tableName)}${filter ? ` where ${name(filter.column)} = ?` : ''}`;
+  const params = filter ? [filter.value] : [];
   const queryRunner = manager.queryRunner;
   if (!queryRunner) {
-    // Outside a transaction: nothing to stream on, or to hold locks for.
+    // Outside a transaction: nothing to stream on or hold locks for, so the
+    // whole result is buffered. Every partial write runs in a transaction.
     const rows: ObjectLiteral[] = await manager.query(sql, params);
     rows.forEach(keep);
     return stored;
