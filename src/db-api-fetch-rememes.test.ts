@@ -1,6 +1,7 @@
 import 'reflect-metadata';
 import fc from 'fast-check';
 import { fetchRememes } from '@/db-api';
+import { canonicalRememeMemeId } from '@/rememe-meme-id';
 import { setSqlExecutor, SqlExecutor } from '@/sql-executor';
 
 jest.mock('@/redis', () => ({
@@ -48,7 +49,9 @@ describe('fetchRememes meme id filters', () => {
           executeMock.mockClear();
           const { sql, params } = await run(pieces.join(','));
           pieces.forEach((piece, index) => {
-            expect(params[`nft_id${index}`]).toBe(piece);
+            expect(params[`nft_id${index}`]).toBe(
+              canonicalRememeMemeId(piece) ?? JSON.stringify(piece)
+            );
             expect(sql).toContain(`:nft_id${index},'$'`);
           });
           expect(
