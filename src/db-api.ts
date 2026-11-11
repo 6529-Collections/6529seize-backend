@@ -36,6 +36,7 @@ import {
   WALLETS_TDH_TABLE
 } from '@/constants';
 import { RememeSource } from './entities/IRememe';
+import { canonicalRememeMemeId } from './rememe-meme-id';
 import {
   ConnectionWrapper,
   setSqlExecutor,
@@ -1593,7 +1594,10 @@ export async function fetchRememes(
         filters,
         `JSON_CONTAINS(${REMEMES_TABLE}.meme_references, :${paramName},'$')`
       );
-      params[paramName] = nft_id;
+      // Non-canonical pieces are bound as a JSON string literal: still valid
+      // JSON for JSON_CONTAINS, and it never matches a numeric reference.
+      params[paramName] =
+        canonicalRememeMemeId(nft_id) ?? JSON.stringify(nft_id);
     });
   }
   if (tokenType) {

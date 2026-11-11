@@ -14,6 +14,9 @@ import {
   NEXTGEN_CORE_CONTRACT
 } from '@/nextgen/nextgen_constants';
 import { sqlExecutor } from '@/sql-executor';
+import { Logger } from '@/logging';
+
+const logger = Logger.get('API_ORACLE_DB');
 
 const formatNumber = (num: number) => {
   return parseFloat(num.toFixed(0));
@@ -256,6 +259,26 @@ export const fetchSingleAddressTDHMemesSeasons = async (address: string) => {
   };
 };
 
+/** Lowercased wallet addresses from a JSON array column, or null if malformed. */
+function parseWalletAddresses(wallets: unknown): string[] | null {
+  if (typeof wallets !== 'string') {
+    return null;
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(wallets);
+  } catch {
+    return null;
+  }
+  if (
+    !Array.isArray(parsed) ||
+    !parsed.every((wallet) => typeof wallet === 'string')
+  ) {
+    return null;
+  }
+  return parsed.map((wallet: string) => wallet.toLowerCase());
+}
+
 export async function fetchTDHAbove(value: number, includeEntries: boolean) {
   const block = await getBlock();
   const merkleRoot = await getMerkleRoot(block);
@@ -280,13 +303,24 @@ export async function fetchTDHAbove(value: number, includeEntries: boolean) {
     count: tdh.length,
     block,
     merkle_root: merkleRoot,
-    entries: tdh.map((t: any) => ({
-      consolidation_key: t.consolidation_key,
-      tdh: t.boosted_tdh,
-      addresses: JSON.parse(t.wallets).map((w: string) => w.toLowerCase()),
-      block,
-      merkle_root: merkleRoot
-    }))
+    entries: tdh.flatMap((t: any) => {
+      const addresses = parseWalletAddresses(t.wallets);
+      if (addresses === null) {
+        logger.warn(
+          `Skipping TDH entry with malformed wallets: consolidation_key=${t.consolidation_key}`
+        );
+        return [];
+      }
+      return [
+        {
+          consolidation_key: t.consolidation_key,
+          tdh: t.boosted_tdh,
+          addresses,
+          block,
+          merkle_root: merkleRoot
+        }
+      ];
+    })
   };
 }
 

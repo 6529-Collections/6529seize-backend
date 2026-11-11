@@ -238,16 +238,18 @@ export class EthereumRpcClient {
     const deadline = new Promise<never>((_resolve, reject) => {
       timer = setTimeout(() => reject(ensResolveDeadlineError()), timeoutMs);
     });
+    const lookup = this.withProviderRetries(() => {
+      // Stops further retries once the caller has been answered.
+      if (Date.now() >= deadlineAt) throw ensResolveDeadlineError();
+      return this.provider.resolveName(name);
+    });
+    // When the deadline wins, the lookup may still settle later; its outcome
+    // is no longer observed, so it must not surface as an unhandled rejection.
+    lookup.catch(() => undefined);
     try {
-      return await Promise.race([
-        this.withProviderRetries(() => {
-          // Stops further retries once the caller has been answered.
-          if (Date.now() >= deadlineAt) throw ensResolveDeadlineError();
-          return this.provider.resolveName(name);
-        }),
-        deadline
-      ]);
+      return await Promise.race([lookup, deadline]);
     } finally {
+      // When the lookup wins, the deadline never fires and never rejects.
       clearTimeout(timer);
     }
   }

@@ -47,6 +47,9 @@ interface AggregatedActivityQuery {
   page_size: number;
   search?: string;
   season?: number;
+  content?: string;
+  collector?: string;
+  sort_direction?: string;
 }
 
 export const AggregatedActivityQuerySchema: Joi.ObjectSchema<AggregatedActivityQuery> =
@@ -55,7 +58,10 @@ export const AggregatedActivityQuerySchema: Joi.ObjectSchema<AggregatedActivityQ
     page: Joi.number().integer().positive().default(1),
     page_size: Joi.number().integer().positive().default(DEFAULT_PAGE_SIZE),
     search: Joi.string().max(2000).allow(''),
-    season: Joi.number().integer().positive()
+    season: Joi.number().integer().positive(),
+    content: Joi.string().max(100).allow(''),
+    collector: Joi.string().max(100).allow(''),
+    sort_direction: Joi.string().max(10).allow('')
   }).unknown(true);
 
 router.get(
@@ -91,11 +97,11 @@ router.get(
       query.sort && AGGREGATED_ACTIVITY_SORT.includes(query.sort.toLowerCase())
         ? query.sort
         : AGGREGATED_ACTIVITY_SORT[0];
-    const sortDir = resolveSortDirection(req.query.sort_direction);
+    const sortDir = resolveSortDirection(query.sort_direction);
     const search = query.search;
-    const content = enums.resolve(MetricsContent, req.query.content);
+    const content = enums.resolve(MetricsContent, query.content);
     const season = query.season;
-    const collector = enums.resolve(MetricsCollector, req.query.collector);
+    const collector = enums.resolve(MetricsCollector, query.collector);
 
     const downloadPage = req.query.download_page;
     const downloadAll = req.query.download_all;

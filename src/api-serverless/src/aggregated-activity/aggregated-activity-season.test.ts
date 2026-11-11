@@ -2,7 +2,7 @@ import 'reflect-metadata';
 import fc from 'fast-check';
 import { fetchAggregatedActivity } from './api.aggregated-activity.db';
 import { AggregatedActivityQuerySchema } from './api.aggregated-activity.routes';
-import { MetricsCollector, MetricsContent } from '../tdh/api.tdh.db';
+import { MetricsCollector, MetricsContent } from '@/api/tdh/api.tdh.db';
 import { getValidatedByJoiOrThrow } from '@/api/validation';
 import { BadRequestException } from '@/exceptions';
 import { setSqlExecutor, SqlExecutor } from '@/sql-executor';
@@ -96,7 +96,11 @@ describe('aggregated activity query validation', () => {
     { page: 'x' },
     { page_size: '-1' },
     { search: ['a', 'b'] },
-    { search: { a: 'b' } }
+    { search: { a: 'b' } },
+    { content: ['memes', 'gradients'] },
+    { sort_direction: ['ASC', 'DESC'] },
+    { collector: ['memes', 'gradients'] },
+    { sort_direction: { a: 'b' } }
   ])('rejects %p', (query) => {
     expect(() => validate(query)).toThrow(BadRequestException);
   });

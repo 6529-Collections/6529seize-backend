@@ -52,6 +52,47 @@ describe('EthereumRpcClient.resolveName deadline', () => {
     expect(jest.getTimerCount()).toBe(0);
   });
 
+  it('does not surface a late lookup failure after the deadline', async () => {
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown) => unhandled.push(reason);
+    process.on('unhandledRejection', onUnhandled);
+    try {
+      jest.spyOn(provider, 'resolveName').mockImplementation(
+        () =>
+          new Promise((_resolve, reject) => {
+            setTimeout(
+              () => reject(new Error('late failure')),
+              ENS_RESOLVE_NAME_TIMEOUT_MS * 2
+            );
+          })
+      );
+      const result = getEthereumRpcClient()
+        .resolveName('late.eth')
+        .catch((error) => error);
+      await jest.advanceTimersByTimeAsync(ENS_RESOLVE_NAME_TIMEOUT_MS);
+      expect(await result).toMatchObject({ code: ENS_RESOLVE_DEADLINE_CODE });
+      await jest.advanceTimersByTimeAsync(ENS_RESOLVE_NAME_TIMEOUT_MS * 2);
+      jest.useRealTimers();
+      await new Promise((resolve) => setImmediate(resolve));
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(unhandled).toEqual([]);
+    } finally {
+      process.off('unhandledRejection', onUnhandled);
+    }
+  });
+
+  it('clears the deadline timer when the lookup fails first', async () => {
+    jest
+      .spyOn(provider, 'resolveName')
+      .mockRejectedValue(new Error('not retried'));
+    const client = getEthereumRpcClient();
+    const timersBefore = jest.getTimerCount();
+    await expect(client.resolveName('broken.eth')).rejects.toThrow(
+      'not retried'
+    );
+    expect(jest.getTimerCount()).toBe(timersBefore);
+  });
+
   it('stops retrying transient failures once the deadline has passed', async () => {
     const resolve = jest
       .spyOn(provider, 'resolveName')

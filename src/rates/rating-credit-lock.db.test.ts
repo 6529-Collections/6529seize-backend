@@ -11,7 +11,6 @@ import { ratingsService } from '@/rates/ratings.service';
 import { sqlExecutor } from '@/sql-executor';
 import { describeWithSeed } from '@/tests/_setup/seed';
 import { anIdentity, withIdentities } from '@/tests/fixtures/identity.fixture';
-import { Time } from '@/time';
 
 const raterId = 'aaaaaaaa-aaaa-4aaa-8aaa-000000000301';
 const firstTargetId = 'aaaaaaaa-aaaa-4aaa-8aaa-000000000302';
@@ -52,11 +51,13 @@ async function creditSpent(): Promise<number> {
   return Number(row?.spent ?? 0);
 }
 
-async function waitFor(condition: () => boolean) {
-  for (let i = 0; i < 100 && !condition(); i++) {
-    await Time.millis(50).sleep();
-  }
-  expect(condition()).toBe(true);
+/** A promise that can be resolved from outside, used to signal test steps. */
+function latch(): { promise: Promise<void>; open: () => void } {
+  let open!: () => void;
+  const promise = new Promise<void>((resolve) => {
+    open = resolve;
+  });
+  return { promise, open };
 }
 
 describeWithSeed(
@@ -86,28 +87,44 @@ describeWithSeed(
 
     it('lets one of two concurrent ratings of one rater on different targets spend the credit', async () => {
       // Hold the first rating open after its credit check; the second must
-      // wait for it instead of reading the same spent credit.
-      let releaseFirst!: () => void;
-      const firstHeld = new Promise<void>((resolve) => {
-        releaseFirst = resolve;
-      });
+      // wait for it instead of reading the same spent credit. Every step is
+      // signalled through latches, so the order checked below is causal.
+      const events: string[] = [];
+      const firstAtUpdate = latch();
+      const releaseFirst = latch();
+      const secondLockRequested = latch();
       const updateRating = ratingsDb.updateRating.bind(ratingsDb);
       let updates = 0;
       jest
         .spyOn(ratingsDb, 'updateRating')
         .mockImplementation(async (...args) => {
           updates++;
-          if (updates === 1) await firstHeld;
+          if (updates === 1) {
+            firstAtUpdate.open();
+            await releaseFirst.promise;
+          }
           return updateRating(...args);
+        });
+      const lockRaterCreditOnMatter =
+        ratingsDb.lockRaterCreditOnMatter.bind(ratingsDb);
+      let lockCalls = 0;
+      jest
+        .spyOn(ratingsDb, 'lockRaterCreditOnMatter')
+        .mockImplementation(async (...args) => {
+          const call = ++lockCalls;
+          if (call === 2) secondLockRequested.open();
+          await lockRaterCreditOnMatter(...args);
+          events.push(`lock ${call} acquired`);
         });
       const getRating = jest.spyOn(ratingsDb, 'getRating');
 
       const first = rate(firstTargetId, 60);
-      await waitFor(() => updates === 1);
+      await firstAtUpdate.promise;
       const second = rate(secondTargetId, 60);
-      await Time.millis(500).sleep();
+      await secondLockRequested.promise;
       expect(getRating).toHaveBeenCalledTimes(1);
-      releaseFirst();
+      events.push('first released');
+      releaseFirst.open();
 
       const results = await Promise.allSettled([first, second]);
       expect(results.map((result) => result.status)).toEqual([
@@ -118,6 +135,12 @@ describeWithSeed(
         /^Not enough credit left to spend on this matter/
       );
       expect(await creditSpent()).toBe(60);
+      // The second lock was only granted after the first rating was let go.
+      expect(events).toEqual([
+        'lock 1 acquired',
+        'first released',
+        'lock 2 acquired'
+      ]);
     });
 
     it('lets two raters, and one rater on two matters, hold their locks at once', async () => {

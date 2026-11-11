@@ -244,6 +244,11 @@ const DEDUPE_UNAVAILABLE: SentryWebhookResult = {
  * Handles a verified Sentry alert webhook. A payload is posted at most once
  * per event id and per identical body within the dedupe window. Without
  * Redis nothing is posted (503) rather than posting without deduplication.
+ *
+ * Dedupe keys are written only after a successful post. If posting fails the
+ * endpoint answers 500, nothing is recorded, and the processing lock is
+ * released, so Sentry's redelivery may post the alert. The lock only keeps
+ * concurrent deliveries of the same alert from being processed at once.
  */
 export async function processSentryAlertWebhook({
   body,
@@ -305,6 +310,7 @@ export async function processSentryAlertWebhook({
     }
     return NOTHING_TO_DO;
   } catch (err) {
+    // No dedupe key is stored here on purpose: a retried delivery may post.
     logger.error(`Failed to post Sentry alert drop: ${err}`);
     return { status: 500, body: 'Failed to post alert' };
   } finally {
