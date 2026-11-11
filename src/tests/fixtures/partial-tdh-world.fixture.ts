@@ -220,6 +220,11 @@ export function seasonRows(groups: Group[], tieForFirst = false) {
   );
 }
 
+/**
+ * Edition rows. Their hodl rates are dyadic (quarters over 1024), so
+ * `updateBoostedTdhRates` sums them exactly whatever order MySQL joins them
+ * in, and two runs of the same write store the same boosted TDH rates.
+ */
 export function editionRows(groups: Group[]) {
   return groups.flatMap((group) =>
     Object.entries(group.holdings).map(([token, holding]) => ({
@@ -229,7 +234,7 @@ export function editionRows(groups: Group[]) {
       edition_id: 1,
       balance: holding.balance,
       days_held: Math.round(holding.tdh),
-      hodl_rate: holding.tdh / 1000
+      hodl_rate: holding.tdh / 1024
     }))
   );
 }
@@ -440,31 +445,19 @@ export const NOTHING = Object.fromEntries(
 );
 
 /**
- * Every row of every table, as stored, and MySQL's table checksums. The
- * boosted TDH rate compares to 12 significant digits, and its table has no
- * checksum: MySQL sums a group's edition rates in its join order, which can
- * change between two runs of the same write (on either path).
+ * Every row of every table, as stored, MySQL's table checksums, the TDH block
+ * rows and the identities sync scope. All exact: the fixture's hodl rates sum
+ * exactly in any order (`editionRows`), so the boosted TDH rates are too.
  */
 export async function dump() {
   const tables: Record<string, unknown[]> = {};
   for (const [table, order] of Object.entries(TABLES)) {
-    const rows = await sqlExecutor.execute<Record<string, unknown>>(
+    tables[table] = await sqlExecutor.execute(
       `select * from ${table} order by ${order}`
     );
-    tables[table] =
-      table === CONSOLIDATED_WALLETS_TDH_TABLE
-        ? rows.map((row) => ({
-            ...row,
-            boosted_tdh_rate: Number(
-              Number(row.boosted_tdh_rate).toPrecision(12)
-            )
-          }))
-        : rows;
   }
   const checksums = await sqlExecutor.execute(
-    `checksum table ${Object.keys(TABLES)
-      .filter((table) => table !== CONSOLIDATED_WALLETS_TDH_TABLE)
-      .join(', ')}`
+    `checksum table ${Object.keys(TABLES).join(', ')}`
   );
   return {
     tables,
