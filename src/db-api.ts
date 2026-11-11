@@ -49,6 +49,7 @@ import { getConsolidationsSql } from './sql_helpers';
 import { Nft } from '@/alchemy-sdk';
 import { createHash, randomUUID } from 'node:crypto';
 import * as mysql from 'mysql';
+import { mysqlSslConnectionOptions } from './db-ssl';
 import {
   DEFAULT_PAGE_SIZE,
   NFTSearchResult,
@@ -183,7 +184,8 @@ export async function connect() {
     password: process.env.DB_PASS,
     charset: 'utf8mb4',
     database: process.env.DB_NAME,
-    typeCast: CustomTypeCaster
+    typeCast: CustomTypeCaster,
+    ...mysqlSslConnectionOptions()
   });
   read_pool = mysql.createPool({
     connectionLimit: 10,
@@ -196,7 +198,8 @@ export async function connect() {
     password: process.env.DB_PASS_READ,
     charset: 'utf8mb4',
     database: process.env.DB_NAME,
-    typeCast: CustomTypeCaster
+    typeCast: CustomTypeCaster,
+    ...mysqlSslConnectionOptions()
   });
   class DbImpl extends SqlExecutor {
     async execute<T>(

@@ -42,6 +42,9 @@ function deployMediaResizer(overrides: Record<string, string> = {}) {
       printf '%s\\n' "$*" >&2
       if [ "$2" = "$MOCK_FAILURE" ] || [ "$*" = "$MOCK_FAILURE" ]; then return 42; fi
       if [ "$2" = "get-function-configuration" ]; then printf '%s' "$MOCK_MEMORY"; fi
+      if [ "$2" = "update-function-code" ] || [ "$2" = "update-function-configuration" ]; then
+        printf '%s' "$MOCK_UPDATE_OUTPUT"
+      fi
     }
     ${deploy.run}
   `
@@ -53,6 +56,7 @@ function deployMediaResizer(overrides: Record<string, string> = {}) {
         ...process.env,
         MOCK_MEMORY: '2048',
         MOCK_FAILURE: '',
+        MOCK_UPDATE_OUTPUT: '',
         ...overrides
       }
     }
@@ -77,6 +81,17 @@ it('waits for both code and configuration updates and verifies GIF-worker memory
   expect(calls[4]).toContain(
     'get-function-configuration --function-name mediaResizerLoop --query MemorySize --output text'
   );
+});
+
+it('keeps the returned function configuration out of the log', () => {
+  const result = deployMediaResizer({
+    MOCK_UPDATE_OUTPUT: JSON.stringify({
+      Environment: { Variables: { SETTING: 'value-not-for-logs' } }
+    })
+  });
+  expect(result.status).toBe(0);
+  expect(result.stdout).not.toContain('value-not-for-logs');
+  expect(result.stderr).not.toContain('value-not-for-logs');
 });
 
 it('reports the actual and expected memory when verification fails', () => {
@@ -510,6 +525,44 @@ describe('generated deployment source guard', () => {
       );
       expect(result.status).toBe(1);
       expect(result.stdout).toContain('did not acknowledge');
+    }
+  );
+
+  it('prints only invocation status fields, never the raw error payload', () => {
+    const result = invokeMigrationScope(
+      'maintenance',
+      {
+        StatusCode: 200,
+        FunctionError: 'Unhandled',
+        ExecutedVersion: '$LATEST'
+      },
+      {
+        errorType: 'QueryFailedError',
+        errorMessage: 'value-not-for-logs',
+        stackTrace: ['value-not-for-logs']
+      }
+    );
+    expect(result.status).toBe(1);
+    expect(result.stdout).toContain(
+      'Invocation metadata: {"StatusCode":200,"FunctionError":"Unhandled","ExecutedVersion":"$LATEST"}'
+    );
+    expect(result.stdout).toContain(
+      'Invocation response: {"schema_scope":null,"errorType":"QueryFailedError"}'
+    );
+    expect(result.stdout).not.toContain('value-not-for-logs');
+    expect(result.stderr).not.toContain('value-not-for-logs');
+  });
+
+  it.each([null, 'not json'])(
+    'summarizes an unexpected invocation response %j without failing early',
+    (response) => {
+      const result = invokeMigrationScope(
+        'full',
+        { StatusCode: 200 },
+        response
+      );
+      expect(result.status).toBe(0);
+      expect(result.stdout).toContain('Invocation response: {"type":');
     }
   );
 
