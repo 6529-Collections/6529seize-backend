@@ -1371,8 +1371,18 @@ A consolidated-TDH run (`persistConsolidatedTDH`, from `delegationsLoop` and
   arms its "TDH calculations done" announcement. A partial write
   (`delegationsLoop`) also records, in `identity_tdh_sync_scope`, the
   consolidation keys it replaced and those whose boosted TDH or rate it
-  changed (it rewrites every row with new ranks; unchanged values are not
-  recorded).
+  changed (unchanged values are not recorded). A partial write computes every
+  group's row again (other groups are re-ranked) but sends only the rows that
+  change: computed rows are compared, column by column as MySQL stores them,
+  with the stored ones (read `for share`, so a concurrent writer waits for it
+  to commit, and kept only as SHA-256 digests); new and changed rows are
+  written, and the affected groups' stored rows that changed or are gone are
+  deleted first, so the tables end as deleting the affected groups and
+  writing every row did. A recomputed group's row carries its computation
+  time (`date`), so one that is otherwise unchanged gets only that column;
+  `boosted_tdh_rate` is not compared, since the same transaction sets it
+  again for every row. The same applies to the wallet-level TDH tables it
+  writes first (`updateTDH`).
 - B: identities for new consolidations and profile merges, with the merged
   profiles' wave subscriber counts recounted (not every wave's), and the
   primary wallets of only the profiles it touched (the identities it wrote and
