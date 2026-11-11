@@ -1,6 +1,7 @@
 import { dropsService, DropsApiService } from '@/api/drops/drops.api.service';
 import { ApiDrop } from '@/api/generated/models/ApiDrop';
 import { Logger } from '@/logging';
+import { DEVS_6529_MENTION_TOKEN } from '@/constants/mentions';
 import { RequestContext } from '@/request.context';
 import {
   HELP_BOT_BASE_URL,
@@ -62,6 +63,14 @@ export function capHelpBotQuestion(question: string, maxChars: number): string {
     return question;
   }
   return codePoints.slice(0, maxChars).join('');
+}
+
+function techTeamMentionAllowance(escalateToTechTeam: boolean): {
+  readonly allowedGroupMentions?: readonly string[];
+} {
+  return escalateToTechTeam
+    ? { allowedGroupMentions: [DEVS_6529_MENTION_TOKEN] }
+    : {};
 }
 
 function getInteractionTargetDropId(
@@ -132,9 +141,10 @@ export class HelpBotProcessorService {
         return;
       }
 
+      const escalateToTechTeam = answer.escalateToTechTeam ?? false;
       const reviewedAnswer = this.buildReviewedAnswer({
         answer: answer.answer,
-        escalateToTechTeam: answer.escalateToTechTeam ?? false
+        escalateToTechTeam
       });
       const reply = await this.dropWriter.reply(
         {
@@ -142,7 +152,8 @@ export class HelpBotProcessorService {
           waveId: interaction.wave_id,
           replyToDropId: getInteractionTargetDropId(interaction),
           interactionId: interaction.id,
-          message: reviewedAnswer
+          message: reviewedAnswer,
+          ...techTeamMentionAllowance(escalateToTechTeam)
         },
         ctx
       );
@@ -225,7 +236,8 @@ export class HelpBotProcessorService {
         interactionId: interaction.id,
         message: escalateToTechTeam
           ? buildHelpBotNoReliableSourceReply()
-          : HELP_BOT_OUT_OF_SCOPE_REPLY
+          : HELP_BOT_OUT_OF_SCOPE_REPLY,
+        ...techTeamMentionAllowance(escalateToTechTeam)
       },
       ctx
     );

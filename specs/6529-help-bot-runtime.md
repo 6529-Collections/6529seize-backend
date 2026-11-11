@@ -501,6 +501,35 @@ deciding canonical facts or links without retrieved context. If Bedrock fails
 or times out after a reliable record is found, V1 uses the deterministic record
 answer.
 
+Prompt structure: instructions and retrieved knowledge (facts, brief answer,
+public-data catalog) go in the Bedrock `system` prompt. The participant's
+question and any previous bot answer go in the user message as JSON-encoded
+string values inside `<user_question>` / `<previous_bot_answer>` tags, with
+`<` and `>` escaped so the value cannot close its tag. Public-data result rows
+are passed the same way inside `<public_data_rows>`.
+
+Reply output rules (`help-bot-output-filter.ts`) apply to every answer path
+(knowledge, Stream, Desktop, calendar, public data, fixed replies) when the
+answerer returns, and again in the reply writer for every posted message:
+
+- Links stay clickable only when they are `https` URLs on `https://6529.io` or
+  the environment base URL origin (`https://staging.6529.io` in staging).
+  Other Markdown links keep their label as plain text; other bare URLs and
+  autolinks are removed; images become their alt text.
+- Group mention tokens (`@all`, `@contributors`, `@admins`, `@devs6529`)
+  become plain words. The only exception is the bot-appended `@devs6529`
+  escalation on uncertain or in-scope no-reliable-source replies.
+- User mentions (`@[handle]` or `@handle`) stay only when the retrieved record
+  text contains them; the bot's own handle is always kept.
+
+The reply writer posts as a trusted system author and keeps the exemptions
+from wave link rules and slow mode: link-disabled waves only accept CDN/GIF
+links, so answers with canonical 6529.io links need the link exemption, and it
+applies only to filtered text whose links are all on 6529.io. Each reply
+answers one participant drop that already passed slow mode; the bot's own
+cooldown would otherwise reject the second participant's answer after the
+model work, and reply volume is bounded by the per-wave daily limit.
+
 ## 8. Answer Examples
 
 ### 8.1 TDH

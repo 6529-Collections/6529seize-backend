@@ -79,7 +79,8 @@ describe('HelpBotProcessorService', () => {
         replyToDropId: 'original-question-drop',
         interactionId: 'interaction-1',
         message:
-          "I don't have enough knowledge to help you here. I'm flagging this so the tech team can double-check: @devs6529"
+          "I don't have enough knowledge to help you here. I'm flagging this so the tech team can double-check: @devs6529",
+        allowedGroupMentions: ['devs6529']
       },
       ctx
     );
@@ -232,7 +233,8 @@ describe('HelpBotProcessorService', () => {
         replyToDropId: 'question-drop',
         interactionId: 'interaction-1',
         message:
-          "I might not be fully sure on this one, so here is my best answer.\n\nI'm flagging this so the tech team can double-check: @devs6529"
+          "I might not be fully sure on this one, so here is my best answer.\n\nI'm flagging this so the tech team can double-check: @devs6529",
+        allowedGroupMentions: ['devs6529']
       },
       ctx
     );
