@@ -394,8 +394,10 @@ cookie and does not revoke whichever account last wrote the compatibility
 cookie. When `all_sessions=true`, it revokes all wallet auth sessions for the
 verified target address and removes that wallet's legacy refresh token, so
 older Desktop builds that hold it are signed out as well (the next legacy
-sign-in issues a new one). A single-session logout leaves the legacy refresh
-token in place. Web logout also checks the request `Origin` against the
+sign-in issues a new one). Revoking the sessions is the part that must
+succeed: if the legacy refresh token cannot be removed afterwards, the logout
+still succeeds and logs `[SIGN_OUT_ALL_LEGACY_REFRESH_TOKEN_NOT_REMOVED]`. A
+single-session logout leaves the legacy refresh token in place. Web logout also checks the request `Origin` against the
 stored session origin before revoking an existing session.
 
 ## Connection Sharing
@@ -443,12 +445,15 @@ immediately delete the stored share row or its setup ciphertext.
 A wallet has at most one live link per target client type and kind (with or
 without device setup): creating a share marks the wallet's earlier unconsumed,
 unexpired share of the same target and kind consumed, without a session, so
-an old QR code or link stops working once its source shows a new one. A plain
+an old QR code or link stops working once its source shows a new one. Retiring
+the old share and storing the new one happen in one transaction, so a failed
+create leaves the previous link live. A plain
 link and a device-setup link for the same target can be live together, so
 going back from secure setup to a plain link keeps the plain link valid.
 Device-setup links expire after `AUTH_CONNECTION_SHARE_SETUP_TTL_SECONDS`
 (default 120 seconds), plain links after
-`AUTH_CONNECTION_SHARE_CODE_TTL_SECONDS` (default 300 seconds).
+`AUTH_CONNECTION_SHARE_CODE_TTL_SECONDS` (default 300 seconds, clamped to
+60-3600).
 
 A redeem records the coarse client family of the redeeming request (for
 example `desktop` or `browser`, never the user agent) in
@@ -495,7 +500,7 @@ The revised auth flow uses these relevant flags/config values:
 - `AUTH_SESSION_V2_REFRESH_DAYS`: session refresh lifetime in days. Defaults to 30.
 - `AUTH_CONNECTION_SHARING_DISABLED`: default false. Set to `true` only to disable `/auth/connection-share`, `/auth/connection-share/legacy-desktop`, and `/auth/connection-share/redeem`; otherwise connection sharing is enabled.
 - `AUTH_LEGACY_REFRESH_DISABLED`: default false. Set to `true` only after the configured v2 migration deadline and final shutdown checks to make `/auth/redeem-refresh-token` and the legacy desktop connection-sharing bridge unavailable without removing the endpoints.
-- `AUTH_CONNECTION_SHARE_CODE_TTL_SECONDS`: one-time connection share code lifetime. Defaults to 300 seconds.
+- `AUTH_CONNECTION_SHARE_CODE_TTL_SECONDS`: one-time connection share code lifetime. Defaults to 300 seconds; values are clamped to 60-3600 and anything that is not a whole number means the default.
 - `AUTH_CONNECTION_SHARE_SETUP_TTL_SECONDS`: lifetime of connection share codes that carry encrypted device setup. Defaults to 120 seconds and is never longer than `AUTH_CONNECTION_SHARE_CODE_TTL_SECONDS`; a missing or non-positive value means the default.
 - `AUTH_LEGACY_WS_QUERY_TOKEN_ENABLED`: default true. Controls legacy WebSocket JWT query-token support.
 
