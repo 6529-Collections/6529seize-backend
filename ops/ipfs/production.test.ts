@@ -129,6 +129,7 @@ assert [(n,o) for n,o,_ in operations]==[('new','fence'),('old','fence'),('old',
 assert operations[0][2]['mfsReady'] is False and operations[4][2]['mfsReady'] is True
 assert operations[0][2]['handoverId']=='release-first'
 assert operations[3][2]['baselineRoot']=='baseline'
+assert operations[6][2]['handoverId']=='release-first'
 print('ordered')
 `)
     ).toBe('ordered');
@@ -225,6 +226,37 @@ print('resume required')
           'arn:aws:cloudformation:us-east-1:987989283142:stack/seize-ipfs-prod-runtime-access/*'
       })
     );
+  });
+
+  test('validates rollback against the verified previous version instead of requiring the replacement version', () => {
+    expect(
+      python(`
+from types import SimpleNamespace
+import base64
+c=object.__new__(p.Controller);c.state={'versions':{'kuboVersion':'new-version'}}
+probe={'version':'previous-version','payloadBase64':base64.b64encode(b'probe').decode(),'cid':'local-probe'}
+def run(arguments,**kwargs):
+ url=arguments[-1]
+ if '/api/v0/add' in url:return SimpleNamespace(returncode=0,stdout=b'{"Hash":"public-probe"}')
+ if url.endswith('/health'):return SimpleNamespace(returncode=0,stdout=b'{"Version":"previous-version"}')
+ return SimpleNamespace(returncode=0,stdout=b'probe public path')
+p.subprocess.run=run
+assert c.check_public(probe)['publicHttpsVerified']
+print('previous version verified')
+`)
+    ).toBe('previous version verified');
+  });
+
+  test('replaying a completed migration verifies the real current writer without replaying old handovers', () => {
+    expect(
+      python(`
+c=object.__new__(p.Controller);c.state={'completed':{'activeSlot':'b'}}
+c.verify_current=lambda:{'activeSlot':'a','activeInstanceId':'old','verified':True}
+result=c.migrate()
+assert result['alreadyCompleted'] and result['activeSlot']=='a'
+print('actual writer reported')
+`)
+    ).toBe('actual writer reported');
   });
 
   test('only offers explicit production operations through the protected main environment', () => {

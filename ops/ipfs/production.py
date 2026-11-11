@@ -413,7 +413,7 @@ os.execv('/usr/bin/python3',['python3',str(release/'production_host.py'),%r])
             path = Path(temporary) / 'probe.txt'; path.write_bytes(public_payload)
             response = curl('/api/v0/add?pin=true', ['-F', 'file=@' + str(path)])
         uploaded = json.loads(response.splitlines()[-1])['Hash']
-        require(json.loads(curl('/health'))['Version'] == self.state['versions']['kuboVersion'], 'Public runtime version mismatch')
+        require(json.loads(curl('/health'))['Version'] == probe.get('version', self.state['versions']['kuboVersion']), 'Public runtime version mismatch')
         if frontdoor:
             require(curl('/ipfs/' + uploaded) == public_payload, 'Inactive target cannot read the verified upload')
         else:
@@ -457,12 +457,14 @@ os.execv('/usr/bin/python3',['python3',str(release/'production_host.py'),%r])
         values = dict(self.state['frontdoorParameters']); values['ActiveSlot'] = target_slot
         self.once(label + '-traffic-switched', lambda: self.frontdoor(values))
         self.record('frontdoorParameters', values)
-        probe = self.once(label + '-probe', lambda: self.host(target, 'verify'))
+        probe = self.once(label + '-probe', lambda: self.host(target, 'verify', handoverId=migration))
         self.once(label + '-public-verified', lambda: self.check_public(probe))
         self.baseline()
         return {'activeInstanceId': target['instanceId'], 'activeSlot': target_slot, 'transfer': final['transfer'], 'probeCid': probe['cid']}
 
     def migrate(self):
+        if self.state.get('completed'):
+            return {**self.verify_current(), 'alreadyCompleted': True}
         self.once('cdn-baseline', self.baseline)
         self.once('source-discovery', self.discover_source)
         
@@ -519,6 +521,16 @@ os.execv('/usr/bin/python3',['python3',str(release/'production_host.py'),%r])
         else:
             require(node['instanceId'] == CONTEXT['legacyInstanceId'], 'Managed source is missing its writer router')
         return {'sourceWriterReady': True, 'instanceId': node['instanceId']}
+
+    def verify_current(self):
+        current = parameters(wait_stack(FRONTDOOR))
+        instance_id = current['Slot' + current['ActiveSlot'].upper() + 'InstanceId']
+        require(instance_id in {self.state['source']['instanceId'], self.state['target']['instanceId']},
+                'Another deployment superseded this one; use its deployment ID')
+        node = self.node(instance_id)
+        probe = self.host(node, 'verify', nonce=str(time.time_ns()))
+        self.check_public(probe); self.baseline()
+        return {'activeInstanceId': instance_id, 'activeSlot': current['ActiveSlot'], 'verified': True}
 
     def verify_alarms(self, names):
         for _ in range(120):
@@ -593,10 +605,7 @@ def main():
             node = target if active == controller.state['targetSlot'] else source
             result = controller.host(node, 'backup', label=controller.id + '-manual-' + str(int(time.time())))
         else:
-            current = parameters(stack(FRONTDOOR)); node = controller.node(current['Slot' + current['ActiveSlot'].upper() + 'InstanceId'])
-            probe = controller.host(node, 'verify', nonce=str(time.time_ns()))
-            controller.check_public(probe); controller.baseline()
-            result = {'activeInstanceId': node['instanceId'], 'activeSlot': current['ActiveSlot'], 'verified': True}
+            result = controller.verify_current()
     print(json.dumps({'protocol': RECEIPT, 'operation': args.operation, 'result': result}))
 
 

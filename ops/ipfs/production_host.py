@@ -395,6 +395,7 @@ def verify():
                          '-X', 'POST', '-o', '/dev/null', '-w', '%{http_code}', 'https://api-ipfs.6529.io/api/v0/pin/ls')
     require(forbidden == b'403', 'Public administrative RPC must be forbidden')
     return {'uploadPinRead': True, 'httpsVerified': True, 'rangeVerified': True, 'restrictedRpc': True,
+            'version': host.rpc('version')['Version'],
             'cid': cid, 'payloadBase64': base64.b64encode(payload).decode()}
 
 
