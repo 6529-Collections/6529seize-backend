@@ -420,8 +420,14 @@ export async function fetchHelpIndexWithTimeout(
       text: async () => body
     };
   };
+  const loading = load();
+  // Whichever side loses the race may still settle later (an aborted fetch
+  // rejects after the timeout); observe both so neither surfaces as an
+  // unhandled rejection.
+  loading.catch(() => undefined);
+  timedOut.catch(() => undefined);
   try {
-    return await Promise.race([load(), timedOut]);
+    return await Promise.race([loading, timedOut]);
   } finally {
     clearTimeout(timeout);
   }
@@ -1262,7 +1268,8 @@ export class FrontendHelpBotKnowledgeSource implements HelpBotKnowledgeSource {
   private cacheExpiresAt = 0;
 
   constructor(
-    private readonly fetcher: HelpBotIndexFetcher = fetchHelpIndexWithTimeout
+    private readonly fetcher: HelpBotIndexFetcher = (url, timeoutMs) =>
+      fetchHelpIndexWithTimeout(url, timeoutMs, HELP_BOT_INDEX_MAX_BYTES)
   ) {}
 
   public async findMatch(

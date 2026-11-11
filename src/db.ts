@@ -1,6 +1,9 @@
 import { refreshTransactionUsdAtWrite } from '@/eth-prices/transaction-usd';
 import 'reflect-metadata';
-import { synchronizeSchemaBounded } from '@/db/bounded-schema-sync';
+import {
+  SchemaSyncOptions,
+  synchronizeSchemaBounded
+} from '@/db/bounded-schema-sync';
 import {
   closeAfterCommitScope,
   openAfterCommitScope,
@@ -173,7 +176,8 @@ function validateDbConnectionSelection(
 export async function connect(
   entities: any[] = [],
   syncEntities = false,
-  selection?: DbConnectionSelection
+  selection?: DbConnectionSelection,
+  schemaSync?: Pick<SchemaSyncOptions, 'acknowledgedDestructivePlanSha256'>
 ) {
   validateDbConnectionSelection(syncEntities, selection);
   logger.info(
@@ -218,7 +222,7 @@ export async function connect(
     if (!AppDataSource.isInitialized)
       throw new Error('Schema sync needs an initialized data source');
     try {
-      await synchronizeSchemaBounded(AppDataSource);
+      await synchronizeSchemaBounded(AppDataSource, schemaSync);
     } catch (error) {
       // Fail the run rather than continue on a partly synchronized schema;
       // the next run plans again from the live schema.
