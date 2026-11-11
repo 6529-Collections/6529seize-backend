@@ -1,6 +1,10 @@
+import * as fc from 'fast-check';
 import { AuthenticationContext } from '@/auth-context';
 import { Logger } from '@/logging';
-import { DropsApiService } from './drops.api.service';
+import {
+  DropsApiService,
+  ONE_BY_ONE_DROP_MAPPING_BUDGET_MS
+} from './drops.api.service';
 
 function aDrop(id: string) {
   return { id, wave_id: 'wave-1' };
@@ -98,6 +102,83 @@ describe('DropsApiService.findReadableDropsByIds', () => {
     expect(String(logError.mock.calls[0][0])).toContain(
       'left out 1 that could not be mapped'
     );
+  });
+
+  describe('after a failed bulk mapping', () => {
+    let nowMs: number;
+
+    beforeEach(() => {
+      nowMs = Date.UTC(2026, 10, 12);
+      jest.spyOn(Date, 'now').mockImplementation(() => nowMs);
+    });
+
+    /** Like mapperFailingOn, but every call takes `callMs`. */
+    function slowMapperFailingOn(callMs: number, ...broken: string[]) {
+      const fast = mapperFailingOn(...broken);
+      return jest.fn(async (args: { dropEntities: any[] }) => {
+        nowMs += callMs;
+        return fast(args);
+      });
+    }
+
+    it('stops mapping one by one when the time budget is spent and leaves the rest out', async () => {
+      const callMs = ONE_BY_ONE_DROP_MAPPING_BUDGET_MS / 3;
+      const ids = ['a', 'b', 'c', 'd', 'e', 'f'];
+      const convert = slowMapperFailingOn(callMs, 'b');
+      const { service } = createService(ids.map(aDrop), convert);
+
+      await expect(service.findReadableDropsByIds(ids, ctx)).resolves.toEqual([
+        { id: 'a', mapped: true },
+        { id: 'c', mapped: true }
+      ]);
+      // The failed bulk call, then a, b and c; d, e and f are not tried.
+      expect(convert).toHaveBeenCalledTimes(4);
+      expect(String(logError.mock.calls[0][0])).toContain(
+        'left out 1 that could not be mapped and 3 not tried'
+      );
+    });
+
+    it('never runs one-by-one mapping for longer than the budget plus one call', async () => {
+      await fc.assert(
+        fc.asyncProperty(
+          fc.integer({ min: 1, max: 50 }),
+          fc.integer({ min: 1, max: 2 * ONE_BY_ONE_DROP_MAPPING_BUDGET_MS }),
+          async (count, callMs) => {
+            const ids = Array.from({ length: count }, (_, i) => `drop-${i}`);
+            const convert = slowMapperFailingOn(callMs, 'drop-0');
+            const { service } = createService(ids.map(aDrop), convert);
+            const fallbackStartMs = nowMs + callMs;
+
+            const result = await service
+              .findReadableDropsByIds(ids, ctx)
+              .catch(() => []);
+
+            expect(nowMs - fallbackStartMs).toBeLessThan(
+              ONE_BY_ONE_DROP_MAPPING_BUDGET_MS + callMs
+            );
+            const resultIds = result.map((drop) => drop.id);
+            expect(resultIds).toEqual(
+              ids.filter((id) => resultIds.includes(id))
+            );
+            expect(resultIds).not.toContain('drop-0');
+          }
+        )
+      );
+    });
+
+    it('maps every drop when the calls fit in the budget', async () => {
+      const ids = ['a', 'b', 'c'];
+      const convert = slowMapperFailingOn(1, 'b');
+      const { service } = createService(ids.map(aDrop), convert);
+
+      await expect(service.findReadableDropsByIds(ids, ctx)).resolves.toEqual([
+        { id: 'a', mapped: true },
+        { id: 'c', mapped: true }
+      ]);
+      expect(String(logError.mock.calls[0][0])).toContain(
+        'left out 1 that could not be mapped and 0 not tried'
+      );
+    });
   });
 
   it('fails as before when no drop can be mapped', async () => {

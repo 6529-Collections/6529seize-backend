@@ -99,6 +99,13 @@ import { ApiDropModerationStatus } from '@/api/generated/models/ApiDropModeratio
 import { withWaveLogsTimeoutGuard } from './wave-logs-timeout';
 import { Logger } from '@/logging';
 
+/**
+ * Time the one-by-one mapping of a batch read may take after the bulk
+ * mapping failed. Drops not reached in time are left out, like drops the
+ * mapper cannot handle.
+ */
+export const ONE_BY_ONE_DROP_MAPPING_BUDGET_MS = 3_000;
+
 export class DropsApiService {
   private readonly logger = Logger.get(this.constructor.name);
 
@@ -182,16 +189,24 @@ export class DropsApiService {
   /**
    * After a failed bulk mapping, maps each drop on its own so that one drop
    * the mapper cannot handle is left out instead of failing the whole read.
-   * When no drop can be mapped, the original error is thrown as before.
+   * Drops are mapped in order until ONE_BY_ONE_DROP_MAPPING_BUDGET_MS has
+   * passed; the rest are left out too. When no drop can be mapped, the
+   * original error is thrown as before.
    */
   private async mapReadableDropsOneByOne(
     dropEntities: DropEntity[],
     map: (entities: DropEntity[]) => Promise<ApiDrop[]>,
     bulkError: unknown
   ): Promise<ApiDrop[]> {
+    const deadlineMs = Date.now() + ONE_BY_ONE_DROP_MAPPING_BUDGET_MS;
     const mapped: ApiDrop[] = [];
     let failed = 0;
+    let notTried = 0;
     for (const entity of dropEntities) {
+      if (Date.now() >= deadlineMs) {
+        notTried++;
+        continue;
+      }
       try {
         mapped.push(...(await map([entity])));
       } catch {
@@ -202,7 +217,7 @@ export class DropsApiService {
       throw bulkError;
     }
     this.logger.error(
-      `Mapped the ${dropEntities.length} drops of a batch read one by one after the bulk mapping failed; left out ${failed} that could not be mapped`,
+      `Mapped the ${dropEntities.length} drops of a batch read one by one after the bulk mapping failed; left out ${failed} that could not be mapped and ${notTried} not tried within ${ONE_BY_ONE_DROP_MAPPING_BUDGET_MS} ms`,
       bulkError
     );
     return mapped;

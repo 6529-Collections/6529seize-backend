@@ -321,9 +321,13 @@ without device parameters are unchanged.
   Each readable drop carries only its content events (post, edit, delete), at
   most 20 (the first, the current one and the newest; `truncated_drop_ids`
   lists drops with more), and the grant proofs of all listed events are
-  returned once in the top-level `grants`. The drops router hands
-  `GET /drops/signed-events` on to the generated routes so it is not read as a
-  drop id.
+  returned once in the top-level `grants`. The events left out of a truncated
+  drop may reference grants that are not in `grants`, so clients verify such a
+  drop through the single route. If mapping the drops together fails, they
+  are mapped one by one for at most three seconds; drops that cannot be mapped
+  or are not reached in that time are listed in `unavailable`. The drops
+  router hands `GET /drops/signed-events` on to the generated routes so it is
+  not read as a drop id.
 - Every drop the API serializes (`ApiDrop`, `ApiDropWithoutWave` and
   `ApiDropV2`, including websocket drop updates) carries the optional
   `is_author_signed`: true exactly when that drop has a
