@@ -108,6 +108,9 @@ describeWithSeed(
         socket('nonfollower-open', viewer.profile_id!, publicWave.id),
         socket('anonymous-closed', ANON_USER_ID, null),
         socket('anonymous-open', ANON_USER_ID, publicWave.id),
+        // An anonymous socket not subscribed to a wave that declared, with
+        // SET_OPEN_WAVE, that its tab has the public wave open.
+        socket('anonymous-app-open', ANON_USER_ID, null, null, publicWave.id),
         socket('subwave-follower-closed', subwaveFollower.profile_id!, null),
         socket(
           'typing-open',
@@ -187,14 +190,13 @@ describeWithSeed(
       else process.env.WS_AUDIENCE_FOLLOWERS = env;
     });
 
-    it('keeps today’s public audience with the flag off', async () => {
+    it('keeps today’s signed-in public audience with the flag off', async () => {
       withFlag(false);
       expect(await recipients(publicWave.id)).toEqual([
-        'anonymous-closed',
+        'anonymous-app-open',
         'anonymous-open',
         'app-open',
         'follower-closed',
-        'new-anonymous-closed',
         'new-closed',
         'nonfollower-closed',
         'nonfollower-open',
@@ -207,6 +209,23 @@ describeWithSeed(
       expect(await recipients(otherWave.id)).toContain('app-open');
     });
 
+    it.each([false, true, 'legacy-clients' as const])(
+      'sends anonymous sockets only the wave they subscribed to or opened (flag %p)',
+      async (flag) => {
+        withFlag(flag);
+        for (const system of [false, true]) {
+          const anonymous = (await recipients(publicWave.id, system)).filter(
+            (id) => id.startsWith('anonymous') || id.startsWith('new-anonymous')
+          );
+          expect(anonymous).toEqual(['anonymous-app-open', 'anonymous-open']);
+          const elsewhere = await recipients(otherWave.id, system);
+          expect(elsewhere.filter((id) => id.includes('anonymous'))).toEqual(
+            []
+          );
+        }
+      }
+    );
+
     it('treats an app socket’s declared open wave as viewing it with the flag on', async () => {
       withFlag(true);
       expect(await recipients(publicWave.id)).toContain('app-open');
@@ -216,9 +235,8 @@ describeWithSeed(
 
     // In "all" mode (also WS_AUDIENCE_FOLLOWERS=true) every socket is narrowed.
     const narrowedForAll = [
-      // Old anonymous sockets cannot be told apart: today's audience.
-      'anonymous-closed',
       // Anyone with the wave open, signed in or not.
+      'anonymous-app-open',
       'anonymous-open',
       'app-open',
       // A follower with the wave closed.
@@ -241,8 +259,8 @@ describeWithSeed(
         withFlag(flag);
         expect(await recipients(publicWave.id, system)).toEqual(narrowedForAll);
         // Left out: non-followers with the wave closed (old or current
-        // build), a current anonymous socket without it open, a follower
-        // subscribed to another wave (as today) and the typing socket.
+        // build), anonymous sockets without it open, a follower subscribed
+        // to another wave (as today) and the typing socket.
       }
     );
 
@@ -251,9 +269,7 @@ describeWithSeed(
       async (system) => {
         withFlag('legacy-clients');
         expect(await recipients(publicWave.id, system)).toEqual(
-          [...narrowedForAll, 'new-anonymous-closed', 'new-closed'].sort(
-            (a, b) => a.localeCompare(b)
-          )
+          [...narrowedForAll, 'new-closed'].sort((a, b) => a.localeCompare(b))
         );
         // Still left out: an old build that neither follows nor views it.
         expect(await recipients(publicWave.id, system)).not.toContain(
@@ -271,7 +287,6 @@ describeWithSeed(
     it('sends a subwave’s frames to followers of the subwave and of its parent', async () => {
       withFlag(true);
       expect(await recipients(subwave.id)).toEqual([
-        'anonymous-closed',
         'follower-closed',
         'subwave-follower-closed'
       ]);

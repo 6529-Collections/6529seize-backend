@@ -952,13 +952,19 @@ export class WsListenersNotifier {
     }
   }
 
+  /**
+   * Sends the sender's typing frame to the wave's typing audience. Resolves
+   * true when at least one recipient socket accepted it, false when nothing
+   * was delivered (no recipient socket, or every send was refused); access
+   * failures reject as before.
+   */
   async notifyAboutUserIsTyping({
     identityId,
     waveId
   }: {
     identityId: string;
     waveId: string;
-  }) {
+  }): Promise<boolean> {
     let stage = 'identity';
     try {
       if (identityId === ANON_USER_ID) {
@@ -988,6 +994,7 @@ export class WsListenersNotifier {
         throw new NotFoundException('Wave not found');
       }
       const connectionIds = recipients.map((it) => it.connectionId);
+      if (!connectionIds.length) return false;
       stage = 'profile_enrichment';
       const [
         mainStageSubscriptions,
@@ -1031,22 +1038,29 @@ export class WsListenersNotifier {
         artist_of_prevote_cards: artistOfPrevoteCards[identityId] ?? [],
         is_wave_creator: waveCreatorIds.has(identityId)
       };
-      const now = Time.currentMillis();
-      stage = 'delivery';
-      await Promise.all(
-        connectionIds.map((connectionId: string) =>
-          this.appWebSockets.send({
-            connectionId,
-            message: JSON.stringify(
-              userIsTypingMessage({
-                wave_id: waveId,
-                timestamp: now,
-                profile: profile
-              })
-            )
-          })
-        )
+      const message = JSON.stringify(
+        userIsTypingMessage({
+          wave_id: waveId,
+          timestamp: Time.currentMillis(),
+          profile: profile
+        })
       );
+      stage = 'delivery';
+      let delivered = false;
+      // The same capped pool as every other fan-out, so a busy wave's
+      // typing frames cannot open an unbounded number of sends at once.
+      await forEachConcurrent(
+        connectionIds,
+        async (connectionId: string) => {
+          const result = await this.appWebSockets.send({
+            connectionId,
+            message
+          });
+          if (sendOutcome(result) === 'sent') delivered = true;
+        },
+        { concurrency: wsFanoutConcurrency() }
+      );
+      return delivered;
     } catch (error) {
       if (!isExpectedClientError(error)) {
         try {

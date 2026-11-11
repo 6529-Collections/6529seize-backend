@@ -740,6 +740,28 @@ Background Lambdas that read or write application state use a shared `doInDbCont
 
 MySQL is the integration contract between nearly all modules. API routes, scheduled pollers, queue workers, and derived-data loops all read and write shared tables. Redis is secondary and mostly disposable: API request cache, rate limiting, webhook dedupe, locks, and selected feature caches can fail open or be repopulated from MySQL.
 
+### API request budgets
+
+The rate-limiting middleware charges each request to per source address
+buckets keyed by the API Gateway source IP, with IPv6 addresses grouped by
+their /64 prefix (zone ids ignored, IPv4-mapped addresses keyed by their IPv4
+address, and any address that cannot be parsed sharing one `ipv6-unparsed`
+key). Anonymous requests use `ip:<address>` with the
+unauthenticated limits. A request with a valid access token uses its
+`wallet:<address>` bucket with the authenticated limits and also a
+per-address ceiling `ip-auth:<address>` (defaults 240 burst, 60 requests per
+second over 60 seconds; `API_RATE_LIMIT_AUTH_IP_BURST`,
+`API_RATE_LIMIT_AUTH_IP_SUSTAINED_RPS`,
+`API_RATE_LIMIT_AUTH_IP_SUSTAINED_WINDOW_SECONDS`). `GET /api/auth/nonce`,
+`GET /api/auth/session-nonce`, `POST /api/auth/login` and
+`POST /api/auth/session-login` also use a per-address sign-in budget
+(defaults 10 burst, 60 per minute; `API_RATE_LIMIT_SIGN_IN_*` with the same
+suffixes). Any rejecting bucket answers 429 with the existing body; headers
+come from the primary bucket unless another one rejects. Signed internal
+requests still skip rate limiting. A request admitted because a check could
+not run logs one `rate_limit_fail_open` warning per minute per container with
+the admitted count and emits the `6529/RateLimit FailOpen` metric.
+
 ### Session refresh recovery
 
 `POST /api/auth/session-refresh` uses a separate Redis rate-limit namespace.
@@ -1235,6 +1257,8 @@ Artist artwork alerts use an independent `artist_artwork_alerts` preference keye
 
 `waveDecisionExecutionLoop` reads pending recipients in batches of at most 100 and continues through additional batches within a 20-second artwork budget. It checks the deadline before each batch and between recipients, within the dispatcher's overall budget. These are cooperative bounds, not cancellation of an in-flight database or group lookup. Completed effect receipts identify progress; partial delivery releases the existing outbox lease for another pass. Notification rows, effect receipts and push-outbox handoffs commit together. The existing push worker publishes the saved IDs, so resuming delivery does not repeat completed recipient work or lose a push after committing its notification. Terminal content decisions use the primary database. Public waves with public parents skip group eligibility work; private access resolves only the relevant groups before taking receipt/preference locks and rechecks visibility and global preferences in the effect transaction.
 
+Each `waveDecisionExecutionLoop` invocation delivers the competition outbox first (up to 60 seconds), then runs the decision pass, then delivers again with what is left (at most four minutes). Each delivery claims decision results (`COMPETITION_DECISION_COMPLETED`, `COMPETITION_OUTCOME_CREATED`, `COMPETITION_ENTRY_STATUS_CHANGED`) first, then alternates batches with the other events, oldest first; while other events are waiting, decision results get at most every other batch and half of the delivery's time, so both make progress every invocation. The decision pass starts after the competition the previous pass last started, kept in the `competition_worker_cursors` table (`CompetitionWorkerCursorEntity`, created by `dbMigrationsLoop`; an in-memory cursor is used while it is missing), and wraps around. It starts no competition after 5 minutes or with less than 5 minutes of the invocation left, and moves on from a competition still running after 2 minutes; that run is never cut short and the pass waits for it before returning, with at most two such runs at once (`WAVE_DECISION_LOOP_DISPATCH_FIRST_MS`, `WAVE_DECISION_LOOP_DECISIONS_BUDGET_MS`, `WAVE_DECISION_LOOP_COMPETITION_DEADLINE_MS`). A bounded pass logs `native_competition_decision_pass_bounded` and reports the native execution health as pending. Scoring and decisions are unchanged; each competition still replays its full vote history, and incremental scoring is future work.
+
 Profile consolidation remaps both preference IDs, preserves the earliest opt-in when pairs collide, removes self-pairs, and transfers completed recipient receipts for unfinished events. Current wave/parent access, mutes, blocks, moderation and profile preferences apply, and both reads and push delivery suppress hidden attribution or withdrawn entries. The existing push queue, device settings and registration capability gates are reused. Deploy the preference schema, compatible push/competition consumers and profile-consolidation consumer before the API producer, then the frontend contract.
 
 Notification invalidation is emitted only after the push worker loads durable notification rows. It intentionally remains independent from mobile push registration, mute settings, and delivery success because those controls affect Firebase delivery only; the durable row remains visible through the authenticated REST feed. Duplicate SQS deliveries may repeat this idempotent invalidation without duplicating notification data.
@@ -1246,6 +1270,10 @@ If authentication or notification identity sync finds that the stored connection
 A socket may declare its purpose once on `$connect` with `purpose=typing`, stored in nullable `ws_connections.purpose`. `WSConnectionEntity` is registered in `src/entities/entities.ts`, so the full `dbMigrationsLoop` schema sync adds the column; every connection query reads it, so `dbMigrationsLoop` must deploy before `api`. Typing-purpose sockets receive only `USER_IS_TYPING` for their subscribed wave; drop, deletion, rating, reaction, competition, attachment, notification and NFT-link broadcasts from the API leave them out, so each tab gets each of those frames once through its app socket. Sockets without a purpose keep the legacy audience rules.
 
 Typing updates use the server-authenticated connection profile when resolving private visibility groups. The sender must appear in the current child/parent membership intersection for the active wave before a typing message is sent; recipients retain the same intersection. Successful typing is acknowledged with 200, expected access failures keep client-error status, and unexpected failures emit only bounded operation-stage and error labels.
+
+Inbound `$default` frames other than PING spend a per-connection token bucket before any database read: 30 frames burst refilled at 5 per second (`WS_FRAME_BUDGET_BURST`, `WS_FRAME_BUDGET_PER_SECOND`), and USER_IS_TYPING also spends a typing bucket of 5 refilled at 0.5 per second (`WS_TYPING_FRAME_BUDGET_BURST`, `WS_TYPING_FRAME_BUDGET_PER_SECOND`). Both buckets live in Redis under one hash tag per connection; while Redis is unavailable each container keeps a bounded in-memory copy. An over-budget frame gets a 429 route response and no further work. A typing notification for an identity and wave covers further typing frames from that identity on that wave for `WS_TYPING_COALESCE_MS` (default 3000, below the web client's four second send interval and five second display window); covered frames are acknowledged with 200 without a fan-out. Typing fan-out uses the shared `WS_FANOUT_CONCURRENCY` send pool. Frame logs carry the frame type and byte size, never the body.
+
+Public-wave frames reach an anonymous socket only for the wave it subscribed to (`SUBSCRIBE_TO_WAVE`) or declared open (`SET_OPEN_WAVE`), with or without `WS_AUDIENCE_FOLLOWERS`. The web client disconnects its app socket without a token, and its signed-out wave view uses a socket subscribed to that wave, so signed-out live viewing is unchanged. Signed-in audiences are unchanged.
 
 Outbound WebSocket delivery uses one policy in `src/ws-delivery/`, shared by the API, background senders and the worker-specific NFT-link notifier. Final 429s retain a hashed connection identifier and bounded SDK metadata in warnings and low-cardinality EMF metrics; they do not emit per-send operational errors. Shared Redis cooldowns use exponential backoff with jitter and a short endpoint pause for broad throttling. Normal healthy sends remain concurrent. Atomic leases apply only to recovery probes. Each connection has one content-free pending refresh marker; user content and credentials are never queued. A revision prevents an in-flight recovery from acknowledging newer missed updates.
 
@@ -2768,6 +2796,25 @@ Sentry error. The invocation still fails, preserving rollback and SQS retry.
 Attempt five and later, missing/invalid retry metadata, and all other failures
 remain reportable. Conflict Sentry events include the receive count and retry
 limit; the existing dead-letter alarm remains the exhaustion backstop.
+
+### xTDH grant bounds
+
+An all-tokens grant pays each owned token id `rate / divisor` per day. The
+divisor is the larger of the contract's recorded `total_supply` and the number
+of distinct token ids with ownership history before the cutoff, so a grant's
+tokens never receive more than its rate per day in total, including when more
+ids are owned than the supply recorded at snapshot time. With no more observed
+ids than the recorded supply, results are unchanged; a grant without a recorded
+supply still pays nothing. This applies to identity xTDH, rates and the grant
+and token stats alike; `xTdhLoop` computes it.
+
+Grant creation (`POST /xtdh/grants`) checks the token list as strings before
+any range is expanded: at most `XTDH_GRANT_MAX_TOKENS` tokens (default 10,000,
+the web token picker's own limit) and `XTDH_GRANT_MAX_RANGE_WIDTH` per range
+(default 10,000), with range ends no larger than the largest safe integer;
+larger requests get 400. An identity may have at most `XTDH_MAX_PENDING_GRANTS`
+grants waiting for review (default 50); the next one gets 409
+`PENDING_GRANT_LIMIT`.
 
 ### Transfer reconciliation after late indexing
 

@@ -1,7 +1,12 @@
 import { RateLimitingService } from './rate-limiting.service';
 import { RateLimitConfig } from './rate-limiting.utils';
-import { getRedisClient, redisSortedSetAddAndCount } from '../../../redis';
+import {
+  getRedisClient,
+  RedisUnavailableError,
+  redisSortedSetAddAndCount
+} from '../../../redis';
 import { RedisClientType } from 'redis';
+import { rateLimitFailOpenReporter } from './rate-limiting-fail-open';
 
 jest.mock('../../../redis', () => ({
   ...jest.requireActual('../../../redis'),
@@ -101,6 +106,40 @@ describe('RateLimitingService', () => {
 
       // Should fail open
       expect(result.allowed).toBe(true);
+    });
+
+    it('marks and reports every fail-open result', async () => {
+      const record = jest
+        .spyOn(rateLimitFailOpenReporter, 'record')
+        .mockImplementation(() => undefined);
+      (redisSortedSetAddAndCount as jest.Mock)
+        .mockRejectedValueOnce(new RedisUnavailableError('down'))
+        .mockRejectedValueOnce(new Error('unexpected'));
+
+      const unavailable = await service.checkRateLimit('a', config);
+      const failed = await service.checkRateLimit('b', config);
+      (getRedisClient as jest.Mock).mockReturnValue(null);
+      const disabled = await service.checkRateLimit('c', config);
+
+      expect([unavailable, failed, disabled].map((r) => r.failedOpen)).toEqual([
+        true,
+        true,
+        true
+      ]);
+      expect(record.mock.calls).toEqual([
+        ['redis_unavailable'],
+        ['check_failed'],
+        ['redis_unavailable']
+      ]);
+      record.mockRestore();
+    });
+
+    it('does not mark checked results as fail-open', async () => {
+      (redisSortedSetAddAndCount as jest.Mock).mockResolvedValue(1);
+
+      const result = await service.checkRateLimit('a', config);
+
+      expect(result.failedOpen).toBeUndefined();
     });
   });
 
