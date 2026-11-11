@@ -55,8 +55,7 @@ export async function signForgeReport(
   const grant = await deviceSigningDb.lockGrant(grantId, ctx);
   const claimedTime = Date.now();
   if (
-    !grant ||
-    grant.revoked_at !== null ||
+    grant?.revoked_at !== null ||
     Number(grant.expires_at) <= claimedTime ||
     !deserializeDeviceGrantScopes(grant.scopes).includes('post')
   ) {
