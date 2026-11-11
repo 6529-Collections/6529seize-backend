@@ -33,7 +33,8 @@ jest.mock('@/api/auth/auth', () => ({
 jest.mock('./user-groups.service', () => ({
   userGroupsService: {
     changeVisibility: jest.fn(),
-    getGroupsUserIsEligibleFor: jest.fn()
+    getGroupsUserIsEligibleFor: jest.fn(),
+    save: jest.fn()
   }
 }));
 
@@ -60,6 +61,7 @@ describe('route registration', () => {
       mockRoutes.map(({ file, method, path }) => `${file} ${method} ${path}`)
     ).toEqual(
       expect.arrayContaining([
+        'user-groups post /',
         'user-groups post /:group_id/visible',
         'eligible-for get /'
       ])
@@ -138,6 +140,21 @@ describe('POST /groups/:group_id/visible', () => {
       expect.any(Function)
     );
     expect(res.send).toHaveBeenCalledWith({ id: 'group-1' });
+  });
+});
+
+describe('POST /groups', () => {
+  beforeEach(() => jest.clearAllMocks());
+
+  it('rejects a proxy session even with every proxy action', async () => {
+    jest
+      .mocked(getAuthenticationContext)
+      .mockResolvedValue(proxyContext(Object.values(ProfileProxyActionType)));
+
+    await expect(
+      route('user-groups', 'post', '/')({ body: {} }, { send: jest.fn() })
+    ).rejects.toThrow(new ForbiddenException('Proxies cannot create groups'));
+    expect(userGroupsService.save).not.toHaveBeenCalled();
   });
 });
 
