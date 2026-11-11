@@ -225,6 +225,43 @@ describe('HelpBotInteractionsDb', () => {
     );
   });
 
+  it('counts only answerable interactions for a wave daily limit', async () => {
+    const sqlExecutor = createSqlExecutor({ executeResult: [0, 0] });
+    sqlExecutor.oneOrNull.mockResolvedValue({ interaction_count: '7' });
+    const db = createDb(sqlExecutor);
+
+    await expect(
+      db.countRecentAnswerable({ waveId: 'wave-1', sinceMillis: 10 }, ctx)
+    ).resolves.toBe(7);
+
+    const [sql, params] = sqlExecutor.oneOrNull.mock.calls[0];
+    expect(sql).toContain('AND wave_id = :waveId');
+    expect(params).toEqual(
+      expect.objectContaining({ waveId: 'wave-1', sinceMillis: 10 })
+    );
+    expect(params.answerableStatuses).not.toContain(
+      HelpBotInteractionStatus.SPAM_SUPPRESSED
+    );
+    expect(params.answerableStatuses).not.toContain(
+      HelpBotInteractionStatus.DAILY_LIMIT_REACHED
+    );
+    expect(params.answerableStatuses).not.toContain(
+      HelpBotInteractionStatus.INSUFFICIENT_CREDITS
+    );
+  });
+
+  it('counts answerable interactions across all waves for the global limit', async () => {
+    const sqlExecutor = createSqlExecutor({ executeResult: [0, 0] });
+    sqlExecutor.oneOrNull.mockResolvedValue({ interaction_count: 3 });
+    const db = createDb(sqlExecutor);
+
+    await expect(
+      db.countRecentAnswerable({ waveId: null, sinceMillis: 10 }, ctx)
+    ).resolves.toBe(3);
+
+    expect(sqlExecutor.oneOrNull.mock.calls[0][0]).not.toContain('wave_id');
+  });
+
   it('does not claim interactions when API mysql update metadata has no affected rows', async () => {
     const sqlExecutor = createSqlExecutor({ executeResult: [0, 0] });
     const db = createDb(sqlExecutor);

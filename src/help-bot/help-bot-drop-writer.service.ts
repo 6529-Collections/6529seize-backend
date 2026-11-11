@@ -14,6 +14,7 @@ import { RequestContext } from '@/request.context';
 import { dropsDb, DropsDb } from '@/drops/drops.db';
 import { dropsService, DropsApiService } from '@/api/drops/drops.api.service';
 import { HELP_BOT_HANDLE } from './help-bot.config';
+import { filterHelpBotReplyText } from './help-bot-output-filter';
 import { Logger } from '@/logging';
 import { withHelpBotAuthentication } from './help-bot.auth';
 import {
@@ -37,17 +38,30 @@ export class HelpBotDropWriterService {
       waveId,
       replyToDropId,
       interactionId,
-      message
+      message,
+      allowedGroupMentions = []
     }: {
       readonly botProfileId: string;
       readonly waveId: string;
       readonly replyToDropId: string;
       readonly interactionId: string;
       readonly message: string;
+      /**
+       * Group mention tokens the bot itself appended (the `@devs6529`
+       * escalation). Any other group mention is posted as plain text.
+       */
+      readonly allowedGroupMentions?: readonly string[];
     },
     ctx: RequestContext
   ): Promise<ApiDrop> {
     const botCtx = withHelpBotAuthentication(botProfileId, ctx);
+    // Last gate for every bot reply: links only to 6529.io and no group
+    // mentions beyond the explicit escalation. User mentions were already
+    // checked against the source knowledge by the answerer.
+    const content = filterHelpBotReplyText(message, {
+      allowedGroupMentions,
+      sourceText: null
+    });
     const model: CreateOrUpdateDropModel = {
       drop_id: null,
       wave_id: waveId,
@@ -58,7 +72,7 @@ export class HelpBotDropWriterService {
       title: null,
       parts: [
         {
-          content: message,
+          content,
           quoted_drop: null,
           media: [],
           attachments: []
@@ -90,8 +104,17 @@ export class HelpBotDropWriterService {
             await this.createOrUpdateDrop.execute(model, false, {
               timer: ctx.timer,
               connection,
+              // The bot is a system author: its replies skip pre-publication
+              // review and the posting-allowed check, and carry no media.
               prePublication: { trustedSystem: true },
+              // Link-disabled waves only accept CDN/GIF links, so answers
+              // with canonical 6529.io help links need this. The content was
+              // filtered above, so every remaining link is on 6529.io.
               bypassChatLinkRestrictions: true,
+              // Each reply answers one participant drop that already passed
+              // slow mode; the bot's own cooldown would otherwise reject the
+              // answer to a second participant after the model work is done.
+              // Volume is bounded by the per-wave daily answer limit.
               bypassChatSlowModeRestrictions: true
             });
           await this.dropsDb.updateHideLinkPreview(

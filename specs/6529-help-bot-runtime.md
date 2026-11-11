@@ -113,6 +113,19 @@ grant amount from `HELP_BOT_CREDIT_GRANT`. When the env var is missing, the
 default grant is 10 credits. `HELP_BOT_QUESTION_CREDIT_COST` remains a fixed
 hardcoded cost of 1 credit per question.
 
+The credit is charged when the trigger is accepted. It is refunded only when
+the worker fails before or while producing the answer (knowledge source,
+calendar, public data, or model failure, or an enqueue failure). Once an answer
+or no-reliable-source outcome has been produced, a failure to post it keeps the
+charge; the interaction is marked `FAILED` with a `Failed to post produced
+answer` reason.
+
+Before creating an interaction, the trigger checks that the bot profile can
+reply in the wave with the same chat eligibility the reply writer applies:
+chat must be enabled, and the bot must belong to the wave chat group unless
+replies are open. When it cannot, the trigger is skipped without an
+interaction row, credit charge, reaction, or model call.
+
 ## 3. Non-Goals
 
 - Do not answer without a user trigger.
@@ -153,9 +166,15 @@ pages while users wait for answers. It fetches the generated index, validates a
 usable record set, caches successful loads for five minutes,
 and keeps the previous valid cache if a refresh fails. The runtime retrieves a
 bounded set of top matching records and passes the primary record plus related
-facts into the answer context. Fetches use the hardcoded five-second timeout so
-a slow index endpoint fails into the technical-failure reply path instead of
-stalling the worker.
+facts into the answer context. Fetches use the hardcoded five-second timeout,
+which covers the whole request including reading the body, so a slow index
+endpoint fails into the technical-failure reply path instead of stalling the
+worker. The body is read with a 4 MiB cap (`HELP_BOT_INDEX_MAX_BYTES`); a larger
+body is treated as a failed refresh. Record `canonical_path` and
+`related_paths` values must be root-relative paths (not `//`-prefixed) or
+`https` URLs on `https://6529.io` or the environment base URL origin. A record
+whose canonical path fails this check is skipped, and failing related paths
+are dropped.
 
 ### 4.2 Versioned Stream review corpus
 
@@ -450,6 +469,13 @@ Idempotency rules:
 - Replies and reactions target `target_drop_id` when present, otherwise
   `trigger_drop_id` for older rows.
 - If an interaction exists in `SEEN` or `ANSWERING`, do not enqueue another job.
+- The worker claims an interaction by moving it to `ANSWERING` with a
+  135-second lease (`HELP_BOT_ANSWERING_LEASE_MS`). The lease is longer than
+  the `helpBotReplyLoop` Lambda timeout (120 s) and shorter than the
+  `help-bot-replies` visibility timeout (150 s). A delivery that finds the lease
+  still held fails so SQS redelivers it; the redelivery then either sees a
+  finished interaction and acknowledges it, or reclaims the expired lease of an
+  attempt that died. After five receives the message moves to the DLQ.
 - If an interaction is `ANSWERED`, do not answer again unless explicit retry
   behavior is added later.
 - Bot-authored messages must not trigger the bot.
@@ -487,6 +513,35 @@ The LLM is responsible for natural wording only. It is not responsible for
 deciding canonical facts or links without retrieved context. If Bedrock fails
 or times out after a reliable record is found, V1 uses the deterministic record
 answer.
+
+Prompt structure: instructions and retrieved knowledge (facts, brief answer,
+public-data catalog) go in the Bedrock `system` prompt. The participant's
+question and any previous bot answer go in the user message as JSON-encoded
+string values inside `<user_question>` / `<previous_bot_answer>` tags, with
+`<` and `>` escaped so the value cannot close its tag. Public-data result rows
+are passed the same way inside `<public_data_rows>`.
+
+Reply output rules (`help-bot-output-filter.ts`) apply to every answer path
+(knowledge, Stream, Desktop, calendar, public data, fixed replies) when the
+answerer returns, and again in the reply writer for every posted message:
+
+- Links stay clickable only when they are `https` URLs on `https://6529.io` or
+  the environment base URL origin (`https://staging.6529.io` in staging).
+  Other Markdown links keep their label as plain text; other bare URLs and
+  autolinks are removed; images become their alt text.
+- Group mention tokens (`@all`, `@contributors`, `@admins`, `@devs6529`)
+  become plain words. The only exception is the bot-appended `@devs6529`
+  escalation on uncertain or in-scope no-reliable-source replies.
+- User mentions (`@[handle]` or `@handle`) stay only when the retrieved record
+  text contains them; the bot's own handle is always kept.
+
+The reply writer posts as a trusted system author and keeps the exemptions
+from wave link rules and slow mode: link-disabled waves only accept CDN/GIF
+links, so answers with canonical 6529.io links need the link exemption, and it
+applies only to filtered text whose links are all on 6529.io. Each reply
+answers one participant drop that already passed slow mode; the bot's own
+cooldown would otherwise reject the second participant's answer after the
+model work, and reply volume is bounded by the per-wave daily limit.
 
 ## 8. Answer Examples
 
@@ -555,9 +610,17 @@ Initial controls:
 - Per-user trigger limit: more than 5 accepted triggers in 60 seconds records
   the interaction as `SPAM_SUPPRESSED`, reacts `⛔️` to the triggering drop,
   and skips queueing/reply generation.
-- Per-wave trigger limit.
-- Global bot concurrency limit.
-- Maximum prompt/context token budget.
+- Per-wave and global daily limits: interactions accepted for an answer
+  (`SEEN`, `ANSWERING`, `ANSWERED`, `NO_RELIABLE_SOURCE`, `FAILED`) are counted
+  over a rolling 24 hours. Above `HELP_BOT_WAVE_DAILY_ANSWER_LIMIT` (default
+  300 per wave) or `HELP_BOT_GLOBAL_DAILY_ANSWER_LIMIT` (default 3000 across
+  all waves), the trigger records `DAILY_LIMIT_REACHED`, reacts `⛔️`, and does
+  not charge a credit, queue work, or reply. Both limits are read by the API
+  that accepts triggers.
+- Global bot concurrency limit (reply worker reserved concurrency).
+- Maximum prompt/context token budget. The question text passed to the models
+  is capped at `HELP_BOT_MAX_QUESTION_CHARS` (default 2,000 characters, counted
+  by code point); the stored interaction keeps the full derived question.
 - Skip private/restricted/direct-message waves before reading parent context,
   creating interactions, queueing work, or calling Bedrock.
 - Ignore bot mentions inside bot-authored messages.

@@ -52,6 +52,10 @@ import {
   HELP_BOT_SIGNUP_CREDIT_GRANT
 } from './help-bot.config';
 import {
+  defaultHelpBotAllowedOrigins,
+  filterHelpBotReplyText
+} from './help-bot-output-filter';
+import {
   frontendStreamKnowledgeSource,
   HelpBotStreamKnowledgeSource
 } from './help-bot-stream-knowledge';
@@ -87,6 +91,16 @@ export interface HelpBotLlmRenderer {
     readonly record: HelpBotKnowledgeRecord;
     readonly canonicalUrl: string;
   }): Promise<string>;
+}
+
+function knowledgeRecordText(record: HelpBotKnowledgeRecord): string {
+  return [
+    record.title,
+    record.linkLabel,
+    record.briefAnswer ?? '',
+    ...record.facts,
+    ...(record.answerLinks ?? []).map((link) => link.label)
+  ].join('\n');
 }
 
 function toCanonicalUrl(baseUrl: string, path: string): string {
@@ -1544,7 +1558,24 @@ export class HelpBotAnswerer {
     private readonly streamKnowledgeSource: HelpBotStreamKnowledgeSource = frontendStreamKnowledgeSource
   ) {}
 
+  /** Every answer path leaves through the shared reply text rules. */
   public async answer(
+    request: HelpBotAnswerRequest
+  ): Promise<HelpBotAnswerResult> {
+    const result = await this.answerFromSources(request);
+    if (result.type !== 'ANSWER') {
+      return result;
+    }
+    return {
+      ...result,
+      answer: filterHelpBotReplyText(result.answer, {
+        allowedOrigins: defaultHelpBotAllowedOrigins(request.baseUrl),
+        sourceText: knowledgeRecordText(result.record)
+      })
+    };
+  }
+
+  private async answerFromSources(
     request: HelpBotAnswerRequest
   ): Promise<HelpBotAnswerResult> {
     const boundaryAnswer = buildBoundaryAnswer(request.question);

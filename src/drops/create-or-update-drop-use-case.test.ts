@@ -1208,6 +1208,82 @@ describe('CreateOrUpdateDropUseCase', () => {
     });
   });
 
+  describe('wave checks before pre-publication evaluation', () => {
+    function setup(
+      wave: Record<string, unknown> | null,
+      groups: string[] = []
+    ) {
+      const findById = jest.fn().mockResolvedValue(
+        wave && {
+          id: 'wave-1',
+          type: WaveType.CHAT,
+          chat_enabled: true,
+          chat_group_id: null,
+          participation_group_id: null,
+          chat_replies_open: false,
+          ...wave
+        }
+      );
+      const getGroupsUserIsEligibleFor = jest.fn().mockResolvedValue(groups);
+      const useCase = createUseCaseWithMocks({
+        wavesApiDb: { findById },
+        userGroupsService: { getGroupsUserIsEligibleFor }
+      });
+      return { useCase, findById };
+    }
+
+    const model = () =>
+      createChatDropModel({ author_id: 'author-1', wave_id: 'wave-1' });
+
+    it('accepts a chat drop the author may post', async () => {
+      const { useCase } = setup({});
+      await expect(
+        useCase.assertCanCreateDropInWave(model(), {})
+      ).resolves.toBeUndefined();
+    });
+
+    it('rejects a missing wave', async () => {
+      const { useCase } = setup(null);
+      await expect(
+        useCase.assertCanCreateDropInWave(model(), {})
+      ).rejects.toThrow('Wave wave-1 not found');
+    });
+
+    it('rejects a chat drop when chat is disabled', async () => {
+      const { useCase } = setup({ chat_enabled: false });
+      await expect(
+        useCase.assertCanCreateDropInWave(model(), {})
+      ).rejects.toThrow('Chat drops are not allowed in this wave');
+    });
+
+    it('rejects an author outside the chat group', async () => {
+      const { useCase } = setup({ chat_group_id: 'chat-group' }, ['other']);
+      await expect(
+        useCase.assertCanCreateDropInWave(model(), {})
+      ).rejects.toThrow('User is not eligible for this wave');
+    });
+
+    it('accepts an author inside the chat group', async () => {
+      const { useCase } = setup({ chat_group_id: 'chat-group' }, [
+        'chat-group'
+      ]);
+      await expect(
+        useCase.assertCanCreateDropInWave(model(), {})
+      ).resolves.toBeUndefined();
+    });
+
+    it('leaves edits to the transactional validation', async () => {
+      const { useCase, findById } = setup(null);
+      await expect(
+        useCase.assertCanCreateDropInWave(
+          createChatDropModel({ author_id: 'author-1', drop_id: 'drop-1' }),
+          {}
+        )
+      ).resolves.toBeUndefined();
+      expect(findById).not.toHaveBeenCalled();
+    });
+  });
+
   it('prepares moderation before the caller opens the write transaction', async () => {
     const moderationService = {
       evaluate: jest
@@ -1242,7 +1318,8 @@ describe('CreateOrUpdateDropUseCase', () => {
     });
     expect(moderationService.evaluate).toHaveBeenCalledWith(
       expect.objectContaining({ authorProfileId: 'author-1' }),
-      expect.objectContaining({ connection: undefined })
+      expect.objectContaining({ connection: undefined }),
+      {}
     );
   });
 

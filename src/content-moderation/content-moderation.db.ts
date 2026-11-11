@@ -1367,6 +1367,24 @@ export class ContentModerationDb extends LazyDbAccessCompatibleService {
     );
   }
 
+  /** Distinct profiles with an open report on the drop. */
+  async countOpenReportersForDrop(
+    dropId: string,
+    connection?: ConnectionWrapper<any>
+  ): Promise<number> {
+    const row = await this.db.oneOrNull<{ reporter_count: number }>(
+      `
+        select count(distinct reporter_profile_id) as reporter_count
+        from ${CONTENT_MODERATION_REPORTS_TABLE}
+        where drop_id = :dropId
+          and status = :openStatus
+      `,
+      { dropId, openStatus: ContentReportStatus.OPEN },
+      this.connectionOptions(connection)
+    );
+    return Number(row?.reporter_count ?? 0);
+  }
+
   async tryAiQuarantineForOpenReport(
     input: {
       reportId: string;
@@ -1809,6 +1827,25 @@ export class ContentModerationDb extends LazyDbAccessCompatibleService {
       this.connectionOptions(connection)
     );
     return Number(row?.match_count ?? 0);
+  }
+
+  /** Pre-publication checks for a profile that called the model evaluator. */
+  async countRecentEvaluatorInvocations(
+    input: { authorProfileId: string; since: number },
+    connection?: ConnectionWrapper<any>
+  ): Promise<number> {
+    const row = await this.db.oneOrNull<{ invocation_count: number }>(
+      `
+        select count(*) as invocation_count
+        from ${CONTENT_MODERATION_PRE_PUBLICATION_CHECKS_TABLE}
+        where author_profile_id = :authorProfileId
+          and created_at >= :since
+          and evaluator_version is not null
+      `,
+      input,
+      this.connectionOptions(connection)
+    );
+    return Number(row?.invocation_count ?? 0);
   }
 
   async recordPrePublicationCheck(
