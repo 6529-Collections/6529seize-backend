@@ -27,7 +27,7 @@ import profileCollectedRoutes from './collected/collected.routes';
 import profilePrimaryAddressRoutes from './profile-primary-address.routes';
 import profileProfileProxiesRoutes from './proxies/profile-proxies.routes';
 import { giveReadReplicaTimeToCatchUp } from '../api-helpers';
-import { getProfileClassificationsBySubclassification } from './profile.helper';
+import { resolveSubClassification } from './profile.helper';
 import { ApiIdentity } from '../generated/models/ApiIdentity';
 import { ApiCreateOrUpdateProfileRequest } from '../generated/models/ApiCreateOrUpdateProfileRequest';
 import { ApiProfileClassification } from '../generated/models/ApiProfileClassification';
@@ -158,19 +158,10 @@ router.post(
       req.body,
       ApiCreateOrUpdateProfileRequestSchema
     );
-    let subClassification = sub_classification;
-    if (subClassification !== null) {
-      const classifications =
-        enums.resolve(
-          ProfileClassification,
-          getProfileClassificationsBySubclassification(
-            subClassification
-          ).toString()
-        ) ?? ProfileClassification.PSEUDONYM;
-      if (!classifications.includes(classification)) {
-        subClassification = null;
-      }
-    }
+    const subClassification = resolveSubClassification(
+      sub_classification,
+      classification
+    );
     const createProfileCommand: CreateOrUpdateProfileCommand = {
       handle,
       banner_1,
