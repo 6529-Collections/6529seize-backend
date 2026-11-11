@@ -744,7 +744,9 @@ MySQL is the integration contract between nearly all modules. API routes, schedu
 
 The rate-limiting middleware charges each request to per source address
 buckets keyed by the API Gateway source IP, with IPv6 addresses grouped by
-their /64 prefix. Anonymous requests use `ip:<address>` with the
+their /64 prefix (zone ids ignored, IPv4-mapped addresses keyed by their IPv4
+address, and any address that cannot be parsed sharing one `ipv6-unparsed`
+key). Anonymous requests use `ip:<address>` with the
 unauthenticated limits. A request with a valid access token uses its
 `wallet:<address>` bucket with the authenticated limits and also a
 per-address ceiling `ip-auth:<address>` (defaults 240 burst, 60 requests per

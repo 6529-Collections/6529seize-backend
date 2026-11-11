@@ -126,22 +126,84 @@ export function calculateRetryAfter(resetTime: number): number {
   return Math.max(1, retryAfter);
 }
 
-function expandIpv6Groups(address: string): string[] | null {
+/** The one key shared by IPv6 addresses that cannot be parsed into groups. */
+export const IPV6_UNPARSED_KEY = 'ipv6-unparsed';
+
+const IPV6_GROUP = /^[0-9a-f]{1,4}$/;
+
+/** Splits one side of `::` into 16-bit groups; a dotted tail fills two. */
+function ipv6PartGroups(part: string): number[] | null {
+  if (!part) return [];
+  const groups: number[] = [];
+  const pieces = part.split(':');
+  for (let i = 0; i < pieces.length; i++) {
+    const piece = pieces[i];
+    if (piece.includes('.')) {
+      if (i !== pieces.length - 1 || isIP(piece) !== 4) return null;
+      const [a, b, c, d] = piece.split('.').map(Number);
+      groups.push(a * 256 + b, c * 256 + d);
+    } else if (IPV6_GROUP.test(piece)) {
+      groups.push(Number.parseInt(piece, 16));
+    } else {
+      return null;
+    }
+  }
+  return groups;
+}
+
+/** The eight 16-bit groups of an IPv6 address without a zone id. */
+function expandIpv6Groups(address: string): number[] | null {
   const halves = address.toLowerCase().split('::');
   if (halves.length > 2) return null;
-  const toGroups = (part: string): string[] =>
-    part
-      ? part.split(':').flatMap((group) =>
-          // An embedded IPv4 tail fills the last two groups.
-          group.includes('.') ? ['0', '0'] : [group]
-        )
-      : [];
-  const head = toGroups(halves[0]);
+  const head = ipv6PartGroups(halves[0]);
+  const tail = halves.length === 2 ? ipv6PartGroups(halves[1]) : [];
+  if (!head || !tail) return null;
   if (halves.length === 1) return head.length === 8 ? head : null;
-  const tail = toGroups(halves[1]);
   const missing = 8 - head.length - tail.length;
-  if (missing < 0) return null;
-  return [...head, ...new Array<string>(missing).fill('0'), ...tail];
+  if (missing < 1) return null;
+  return [...head, ...new Array<number>(missing).fill(0), ...tail];
+}
+
+/** Node's own canonical form of an IPv6 address, or null. */
+function canonicalIpv6(address: string): string | null {
+  try {
+    const hostname = new URL(`http://[${address}]/`).hostname;
+    return hostname.startsWith('[') && hostname.endsWith(']')
+      ? hostname.slice(1, -1)
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The rate limit key of an IPv6 address: its /64 prefix, or the IPv4
+ * address an IPv4-mapped address (::ffff:a.b.c.d) carries. The zone id is
+ * ignored. An address that cannot be parsed shares one key rather than
+ * getting a bucket of its own.
+ */
+export function ipv6RateLimitKey(ip: string): string {
+  const address = ip.split('%')[0];
+  const fallback = canonicalIpv6(address);
+  const groups =
+    expandIpv6Groups(address) ??
+    (fallback === null ? null : expandIpv6Groups(fallback));
+  if (!groups) return IPV6_UNPARSED_KEY;
+  if (
+    groups.slice(0, 5).every((group) => group === 0) &&
+    groups[5] === 0xffff
+  ) {
+    return [
+      groups[6] >> 8,
+      groups[6] & 0xff,
+      groups[7] >> 8,
+      groups[7] & 0xff
+    ].join('.');
+  }
+  return `${groups
+    .slice(0, 4)
+    .map((group) => group.toString(16))
+    .join(':')}::/64`;
 }
 
 /**
@@ -151,14 +213,7 @@ function expandIpv6Groups(address: string): string[] | null {
  * requests over many addresses of its own prefix.
  */
 export function rateLimitAddressKey(ip: string): string {
-  if (isIP(ip) !== 6) return ip;
-  const groups = expandIpv6Groups(ip.split('%')[0]);
-  if (!groups) return ip;
-  const prefix = groups
-    .slice(0, 4)
-    .map((group) => Number.parseInt(group, 16).toString(16))
-    .join(':');
-  return `${prefix}::/64`;
+  return isIP(ip) === 6 ? ipv6RateLimitKey(ip) : ip;
 }
 
 const SIGN_IN_ROUTES: readonly { method: string; path: RegExp }[] = [

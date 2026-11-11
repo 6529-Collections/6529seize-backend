@@ -5,6 +5,8 @@ import {
   generateBurstKey,
   generateSustainedKey,
   getRateLimitConfig,
+  IPV6_UNPARSED_KEY,
+  ipv6RateLimitKey,
   isSignInRequest,
   rateLimitAddressKey,
   sanitizeIdentifier
@@ -303,6 +305,81 @@ describe('rate-limiting.utils', () => {
       expect(
         sanitizeIdentifier(`ip:${rateLimitAddressKey('2001:db8::1')}`)
       ).toBe('ip:2001:db8:0:0::_64');
+    });
+
+    it.each([
+      ['fe80::1%eth0', 'fe80:0:0:0::/64'],
+      ['fe80::abcd%25', 'fe80:0:0:0::/64'],
+      ['fe80:0:0:0:1:2:3:4%en0', 'fe80:0:0:0::/64'],
+      ['2001:db8:1:2::1%1', '2001:db8:1:2::/64']
+    ])('ignores the zone id of %s', (ip, expected) => {
+      expect(rateLimitAddressKey(ip)).toBe(expected);
+    });
+
+    it.each([
+      ['::ffff:1.2.3.4', '1.2.3.4'],
+      ['::FFFF:192.168.1.1', '192.168.1.1'],
+      ['::ffff:c0a8:101', '192.168.1.1'],
+      ['0:0:0:0:0:ffff:7f00:1', '127.0.0.1'],
+      ['0000:0000:0000:0000:0000:FFFF:0A00:0001', '10.0.0.1']
+    ])('keys IPv4-mapped address %s by its IPv4 address %s', (ip, expected) => {
+      expect(rateLimitAddressKey(ip)).toBe(expected);
+    });
+
+    it('charges an IPv4-mapped address to the same key as the IPv4 address', () => {
+      expect(rateLimitAddressKey('::ffff:203.0.113.9')).toBe(
+        rateLimitAddressKey('203.0.113.9')
+      );
+    });
+
+    it.each([
+      ['::', '0:0:0:0::/64'],
+      ['::0', '0:0:0:0::/64'],
+      ['1::', '1:0:0:0::/64'],
+      ['::1:2:3:4:5:6:7', '0:1:2:3::/64'],
+      ['1:2:3:4:5:6:7::', '1:2:3:4::/64'],
+      ['1:2:3::4:5:6:7', '1:2:3:0::/64'],
+      ['0001:0002:0003:0004::', '1:2:3:4::/64'],
+      ['ABCD:EF01:2345:6789:ABCD:EF01:2345:6789', 'abcd:ef01:2345:6789::/64'],
+      ['::192.0.2.1', '0:0:0:0::/64'],
+      ['::ffff:0:1.2.3.4', '0:0:0:0::/64'],
+      ['1:2:3:4:5:6:1.2.3.4', '1:2:3:4::/64']
+    ])('groups the odd but valid form %s as %s', (ip, expected) => {
+      expect(rateLimitAddressKey(ip)).toBe(expected);
+    });
+
+    it('gives addresses it cannot parse one shared key, never their own', () => {
+      expect(ipv6RateLimitKey('not:an:address::x')).toBe(IPV6_UNPARSED_KEY);
+      expect(ipv6RateLimitKey('1::2::3')).toBe(IPV6_UNPARSED_KEY);
+      expect(ipv6RateLimitKey('1:2:3:4:5:6:7:8:9')).toBe(IPV6_UNPARSED_KEY);
+      expect(ipv6RateLimitKey(':::')).toBe(IPV6_UNPARSED_KEY);
+    });
+
+    it('keys every textual form of an address the same as Node’s canonical form', () => {
+      fc.assert(
+        fc.property(
+          fc.array(fc.integer({ min: 0, max: 0xffff }), {
+            minLength: 8,
+            maxLength: 8
+          }),
+          fc.boolean(),
+          (groups, padded) => {
+            const full = groups
+              .map((g) =>
+                padded ? g.toString(16).padStart(4, '0') : g.toString(16)
+              )
+              .join(':');
+            const canonical = new URL(`http://[${full}]/`).hostname.slice(
+              1,
+              -1
+            );
+            expect(rateLimitAddressKey(full)).toBe(
+              rateLimitAddressKey(canonical)
+            );
+            expect(rateLimitAddressKey(full)).not.toBe(IPV6_UNPARSED_KEY);
+          }
+        )
+      );
     });
   });
 
