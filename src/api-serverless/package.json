@@ -63,7 +63,7 @@
     "eslint": "^9.27.0",
     "eslint-config-prettier": "^10.1.5",
     "eslint-plugin-prettier": "^5.4.0",
-    "js-yaml": "^4.1.1",
+    "js-yaml": "^4.3.2",
     "serverless": "^4.31.2",
     "serverless-esbuild": "^1.57.2",
     "serverless-offline": "^14.7.3",
