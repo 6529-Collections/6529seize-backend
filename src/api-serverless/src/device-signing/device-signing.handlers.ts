@@ -1,11 +1,13 @@
 import { getAuthenticationContext } from '@/api/auth/auth';
 import { ApiDeviceGrant } from '@/api/generated/models/ApiDeviceGrant';
 import { ApiDropSignedEvents } from '@/api/generated/models/ApiDropSignedEvents';
+import { ApiDropSignedEventsBatch } from '@/api/generated/models/ApiDropSignedEventsBatch';
 import { ApiRegisterDeviceGrantRequest } from '@/api/generated/models/ApiRegisterDeviceGrantRequest';
 import {
   AcknowledgeDeviceGrantRequest,
   GetDeviceGrantsRequest,
   GetDropSignedEventsRequest,
+  GetDropsSignedEventsRequest,
   RegisterDeviceGrantRequest,
   RenameDeviceGrantRequest,
   RevokeDeviceGrantRequest
@@ -17,9 +19,13 @@ import { getValidatedByJoiOrThrow } from '@/api/validation';
 import { deviceGrantsService } from './device-grants.service';
 import {
   deviceLabelRenameSchema,
+  parseDropSignedEventsBatchIds,
   registerDeviceGrantSchema
 } from './device-signing.validation';
-import { dropSignedEventsService } from './drop-signed-events.service';
+import {
+  DROP_SIGNED_EVENTS_BATCH_MAX_DROPS,
+  dropSignedEventsService
+} from './drop-signed-events.service';
 import { grantRegistrationRequestOf } from './grant-origins';
 
 const logger = Logger.get('DEVICE_SIGNING_HANDLERS');
@@ -110,6 +116,21 @@ export async function handleGetDropSignedEvents(
   const timer = Timer.getFromRequest(req);
   const authenticationContext = await getAuthenticationContext(req, timer);
   return dropSignedEventsService.findForDrop(req.params.dropId, {
+    timer,
+    authenticationContext
+  });
+}
+
+export async function handleGetDropsSignedEvents(
+  req: GetDropsSignedEventsRequest
+): Promise<ApiDropSignedEventsBatch> {
+  const dropIds = parseDropSignedEventsBatchIds(
+    req.query.drop_ids,
+    DROP_SIGNED_EVENTS_BATCH_MAX_DROPS
+  );
+  const timer = Timer.getFromRequest(req);
+  const authenticationContext = await getAuthenticationContext(req, timer);
+  return dropSignedEventsService.findForDrops(dropIds, {
     timer,
     authenticationContext
   });

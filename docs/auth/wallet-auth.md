@@ -313,6 +313,17 @@ without device parameters are unchanged.
   shows its author as anonymous (anonymous competition entries), it returns
   the empty result of an unsigned drop instead: signed bodies are the content
   and grant proofs name the author's wallet.
+- `GET /api/drops/signed-events?drop_ids=<id,id,...>` (1 to 50 ids) answers
+  the same question for several drops at once. Readability, moderation and
+  anonymity are decided per drop exactly as for the single route (one
+  eligibility-checked query, the same drop mapping, the same anonymity rule);
+  ids the caller cannot read, existing or not, are listed in `unavailable`.
+  Each readable drop carries only its content events (post, edit, delete), at
+  most 20 (the first, the current one and the newest; `truncated_drop_ids`
+  lists drops with more), and the grant proofs of all listed events are
+  returned once in the top-level `grants`. The drops router hands
+  `GET /drops/signed-events` on to the generated routes so it is not read as a
+  drop id.
 - Every drop the API serializes (`ApiDrop`, `ApiDropWithoutWave` and
   `ApiDropV2`, including websocket drop updates) carries the optional
   `is_author_signed`: true exactly when that drop has a

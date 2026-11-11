@@ -414,6 +414,7 @@ export * from '../models/ApiDropResolvedIdentityProfileV2';
 export * from '../models/ApiDropSearchPage';
 export * from '../models/ApiDropSearchStrategy';
 export * from '../models/ApiDropSignedEvents';
+export * from '../models/ApiDropSignedEventsBatch';
 export * from '../models/ApiDropSubscriptionActions';
 export * from '../models/ApiDropSubscriptionTargetAction';
 export * from '../models/ApiDropTraceItem';
@@ -1407,6 +1408,7 @@ import { ApiDropResolvedIdentityProfileV2             } from '../models/ApiDropR
 import { ApiDropSearchPage } from '../models/ApiDropSearchPage';
 import { ApiDropSearchStrategy } from '../models/ApiDropSearchStrategy';
 import { ApiDropSignedEvents } from '../models/ApiDropSignedEvents';
+import { ApiDropSignedEventsBatch } from '../models/ApiDropSignedEventsBatch';
 import { ApiDropSubscriptionActions } from '../models/ApiDropSubscriptionActions';
 import { ApiDropSubscriptionTargetAction } from '../models/ApiDropSubscriptionTargetAction';
 import { ApiDropTraceItem } from '../models/ApiDropTraceItem';
@@ -2673,6 +2675,7 @@ let typeMap: {[index: string]: any} = {
     "ApiDropResolvedIdentityProfileV2": ApiDropResolvedIdentityProfileV2,
     "ApiDropSearchPage": ApiDropSearchPage,
     "ApiDropSignedEvents": ApiDropSignedEvents,
+    "ApiDropSignedEventsBatch": ApiDropSignedEventsBatch,
     "ApiDropSubscriptionActions": ApiDropSubscriptionActions,
     "ApiDropTraceItem": ApiDropTraceItem,
     "ApiDropV2": ApiDropV2,

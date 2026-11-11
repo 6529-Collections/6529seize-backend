@@ -880,6 +880,33 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     );
   }
 
+  /**
+   * The drops among `ids` the caller may read: the same wave read rule as
+   * findDropByIdWithEligibilityCheck, for several ids in one query.
+   */
+  async findDropsByIdsWithEligibilityCheck(
+    ids: string[],
+    group_ids_user_is_eligible_for: string[],
+    connection?: ConnectionWrapper<any>
+  ): Promise<DropEntity[]> {
+    if (!ids.length) {
+      return [];
+    }
+    const opts = connection ? { wrappedConnection: connection } : {};
+    return this.db.execute<DropEntity>(
+      `
+        select d.* from ${DROPS_TABLE} d
+         join waves w on d.wave_id = w.id and ${waveReadAccessSql('w', group_ids_user_is_eligible_for.length > 0, 'group_ids_user_is_eligible_for')}
+         where d.id in (:ids)
+        `,
+      {
+        ids,
+        group_ids_user_is_eligible_for
+      },
+      opts
+    );
+  }
+
   async findDropByIdWithoutEligibilityCheck(
     id: string,
     connection?: ConnectionWrapper<any>

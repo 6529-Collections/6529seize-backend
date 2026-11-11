@@ -11,8 +11,16 @@ import { DeviceSignedEventEntity } from '@/entities/IDeviceSignedEvent';
 import { Logger } from '@/logging';
 import { RequestContext } from '@/request.context';
 import { dbSupplier, LazyDbAccessCompatibleService } from '@/sql-executor';
+import { DeviceEventKind } from './device-event';
 
 export const DEVICE_GRANTS_LIST_LIMIT = 100;
+
+/** The events that decide a drop's content: post, edit and delete. */
+const DROP_CONTENT_EVENT_KINDS = [
+  DeviceEventKind.POST,
+  DeviceEventKind.EDIT,
+  DeviceEventKind.TOMBSTONE
+];
 
 export class DeviceSigningDb extends LazyDbAccessCompatibleService {
   private readonly logger = Logger.get(this.constructor.name);
@@ -330,6 +338,88 @@ export class DeviceSigningDb extends LazyDbAccessCompatibleService {
       { dropId },
       ctx
     );
+  }
+
+  /** drop id to current_event_id, for the drops that have one. */
+  async findDropAuthorSignatureEventIds(
+    dropIds: readonly string[],
+    ctx: RequestContext
+  ): Promise<Map<string, string>> {
+    if (!dropIds.length) {
+      return new Map();
+    }
+    const rows = await this.timedExecute<{
+      drop_id: string;
+      event_id: string;
+    }>(
+      'findDropAuthorSignatureEventIds',
+      `select drop_id, event_id from ${DROP_AUTHOR_SIGNATURES_TABLE} where drop_id in (:dropIds)`,
+      { dropIds },
+      ctx
+    );
+    return new Map(rows.map((row) => [row.drop_id, row.event_id]));
+  }
+
+  /**
+   * Content events (post, edit, delete) of several drops, oldest first per
+   * drop. Per drop at most `newestPerDrop` newest events are returned, plus
+   * the first event and the drop's current event when those are older;
+   * `truncatedDropIds` names the drops that have more.
+   */
+  async findContentEventsByDropIds(
+    dropIds: readonly string[],
+    newestPerDrop: number,
+    ctx: RequestContext
+  ): Promise<{
+    events: DeviceSignedEventEntity[];
+    truncatedDropIds: Set<string>;
+  }> {
+    if (!dropIds.length) {
+      return { events: [], truncatedDropIds: new Set() };
+    }
+    const rows = await this.timedExecute<
+      DeviceSignedEventEntity & {
+        readonly newest_rank: number;
+        readonly oldest_rank: number;
+        readonly drop_event_count: number;
+      }
+    >(
+      'findContentEventsByDropIds',
+      `select ranked.* from (
+         select e.*,
+           row_number() over (partition by e.drop_id
+             order by e.created_at desc, e.seq desc, e.id desc) as newest_rank,
+           row_number() over (partition by e.drop_id
+             order by e.created_at asc, e.seq asc, e.id asc) as oldest_rank,
+           count(*) over (partition by e.drop_id) as drop_event_count
+         from ${DEVICE_SIGNED_EVENTS_TABLE} e
+         where e.drop_id in (:dropIds) and e.kind in (:kinds)
+       ) ranked
+       left join ${DROP_AUTHOR_SIGNATURES_TABLE} s
+         on s.drop_id = ranked.drop_id and s.event_id = ranked.id
+       where ranked.newest_rank <= :newestPerDrop
+          or ranked.oldest_rank = 1
+          or s.event_id is not null
+       order by ranked.drop_id asc, ranked.created_at asc, ranked.seq asc, ranked.id asc`,
+      { dropIds, kinds: DROP_CONTENT_EVENT_KINDS, newestPerDrop },
+      ctx
+    );
+    const returnedPerDrop = new Map<string, number>();
+    const totalPerDrop = new Map<string, number>();
+    const events = rows.map(
+      ({ newest_rank, oldest_rank, drop_event_count, ...event }) => {
+        const dropId = event.drop_id!;
+        returnedPerDrop.set(dropId, (returnedPerDrop.get(dropId) ?? 0) + 1);
+        totalPerDrop.set(dropId, Number(drop_event_count));
+        return event;
+      }
+    );
+    const truncatedDropIds = new Set(
+      Array.from(totalPerDrop.entries())
+        .filter(([dropId, total]) => total > (returnedPerDrop.get(dropId) ?? 0))
+        .map(([dropId]) => dropId)
+    );
+    return { events, truncatedDropIds };
   }
 
   private async insertIgnoringDuplicate(
