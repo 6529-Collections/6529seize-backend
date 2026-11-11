@@ -789,6 +789,46 @@ describeWithSeed(
       );
     });
 
+    it('orders a pass reconciliation after a vote written since the pass started', async () => {
+      await vote(rankId, rankEntry, -60, 10, 'overspent');
+      // Written after the pass running at 500 started, before it took the lock.
+      await vote(rankId, secondRankEntry, 60, 700, 'overspent');
+
+      await service.refreshCompetition(rankId, 500);
+
+      expect(
+        await repository.getVoterActiveVotes(rankId, 'overspent', {})
+      ).toEqual([
+        { entryId: rankEntry, value: -50 },
+        { entryId: secondRankEntry, value: 50 }
+      ]);
+      const aggregates = async (entryId: string) =>
+        (await repository.listHistory(rankId, {}))
+          .filter((row) => row.entry_id === entryId && row.kind === 'AGGREGATE')
+          .map((row) => [row.occurred_at, row.aggregate_value]);
+      // The reconciled aggregate sorts last; the older history keeps the pass time.
+      expect(await aggregates(secondRankEntry)).toEqual([
+        [700, 60],
+        [700, 50]
+      ]);
+      expect(await aggregates(rankEntry)).toEqual([
+        [10, -60],
+        [500, -50]
+      ]);
+
+      await service.refreshCompetition(rankId, 800);
+      expect(
+        await sqlExecutor.execute(
+          `select entry_id, rating from ${COMPETITION_LEADERBOARD_ENTRIES_TABLE}
+           where competition_id = :rankId order by entry_id`,
+          { rankId }
+        )
+      ).toEqual([
+        { entry_id: rankEntry, rating: -50 },
+        { entry_id: secondRankEntry, rating: 50 }
+      ]);
+    });
+
     it('retains published missing-entry snapshots while removing unpublished and inactive standings', async () => {
       await sqlExecutor.execute(
         `update ${COMPETITION_ENTRIES_TABLE} set status='WITHDRAWN' where id=:id`,
