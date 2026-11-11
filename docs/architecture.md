@@ -1374,8 +1374,9 @@ A consolidated-TDH run (`persistConsolidatedTDH`, from `delegationsLoop` and
   changed (unchanged values are not recorded). A partial write computes every
   group's row again (other groups are re-ranked) but sends only the rows that
   change: the affected groups' rows, deleted and inserted as before, and other
-  rows that are new or differ from the stored ones, compared column by column
-  as MySQL stores them. Consolidated and historic rows carry their
+  rows that are new or differ from the stored ones (read `for share`, so a
+  concurrent writer waits for it to commit), compared column by column as
+  MySQL stores them. Consolidated and historic rows carry their
   computation time (`date`), new on every run, so a row that is otherwise
   unchanged gets only that column; `boosted_tdh_rate` is not compared, since
   the same transaction sets it again for every row. The same applies to the

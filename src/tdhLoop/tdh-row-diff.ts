@@ -16,10 +16,13 @@ import { ColumnMetadata } from 'typeorm/metadata/ColumnMetadata';
  * run (a computation time), which a row that is otherwise unchanged gets
  * through a narrow update instead of a full-row upsert.
  *
- * One limit: MySQL prints a JSON double with up to 15 significant digits, so
- * a stored value with more digits reads back rounded. A row whose computed
- * JSON equals what is read back is not rewritten and keeps the stored value:
- * every query reads the same text either way.
+ * JSON doubles: MySQL rounds some doubles when it stores JSON, with no fixed
+ * number of digits (27.900000000000002 is stored as 27.9, 1234.5678901234567
+ * as 1234.567890123457, while 0.30000000000000004 is kept). What is read back
+ * is what is stored: writing the read-back value stores the same bytes, and
+ * JSON_EXTRACT comparisons see the read-back value too (MySQL 8.0, Aurora
+ * 8.0.42). So a row whose computed JSON equals what is read back is left as
+ * it is. No current SQL reads the numbers inside these JSON columns.
  */
 
 const INTEGER_TYPES = new Set([
@@ -261,7 +264,10 @@ function parsedJson(value: unknown): unknown {
 
 /**
  * The stored rows of `metadata`'s table (optionally filtered), read on the
- * caller's transaction so they match what it writes against. The rows are
+ * caller's transaction so they match what it writes against: a locking read
+ * (`for share`), which sees the latest committed rows and keeps them locked
+ * until the caller commits, as overwriting every row did. A concurrent writer
+ * (a full rewrite, a rerun) waits for the partial write. The rows are
  * streamed, so each driver row is dropped once its values are kept: a table
  * is never held twice in memory.
  */
@@ -285,12 +291,12 @@ export async function readStoredRows(
   const params = filter?.params ?? [];
   const queryRunner = manager.queryRunner;
   if (!queryRunner) {
-    // Outside a transaction: nothing to stream on.
+    // Outside a transaction: nothing to stream on, or to hold locks for.
     const rows: ObjectLiteral[] = await manager.query(sql, params);
     rows.forEach(keep);
     return stored;
   }
-  const stream = await queryRunner.stream(sql, params);
+  const stream = await queryRunner.stream(`${sql} for share`, params);
   await new Promise<void>((resolve, reject) => {
     let failure: unknown = null;
     stream.on('data', (row: ObjectLiteral) => {

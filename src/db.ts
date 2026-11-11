@@ -1135,6 +1135,7 @@ export type PartialTdhWriteOptions = {
    * The wallets TDH rows at this block as stored when the write was
    * computed (`fetchTDHForBlock`, copied before ranking), so the table, whose
    * rows for one block are scattered over every block's, is not read again.
+   * Cleared once compared, to free it before the next tables are read.
    */
   readonly storedTdh?: StoredRows;
   /** Write every computed row, as before (the equivalence tests' reference). */
@@ -1147,6 +1148,11 @@ export type PartialTdhWriteOptions = {
  * the other rows, which a partial write only re-ranks, only the new or
  * changed ones are sent, and those that differ only in `columns.refreshed`
  * get that column alone; the stored state ends as if every row was written.
+ *
+ * Sending fewer rows changes which rows share an upsert batch, and a batch
+ * updates the columns its rows set (`upsertTdhInBatches`). That stays
+ * equivalent while every computed row of a table sets the same columns, as
+ * the TDH row builders do.
  */
 async function upsertPartialTdhRows<Entity extends ObjectLiteral>(
   label: string,
@@ -1168,13 +1174,15 @@ async function upsertPartialTdhRows<Entity extends ObjectLiteral>(
     logger.info(`[${label}] [WROTE ${rows.length} OF ${rows.length} ROWS]`);
     return;
   }
+  const storedRows = await stored();
   const { upserts, refreshes } = rowsToWrite(
     repository.metadata,
     rows,
-    await stored(),
+    storedRows,
     isRewritten,
     columns
   );
+  storedRows.clear(); // free it before the next table is read
   await upsertTdhInBatches(repository, upserts);
   if (columns.refreshed !== undefined && refreshes.length > 0) {
     await refreshTdhColumnInBatches(repository, refreshes, columns.refreshed);

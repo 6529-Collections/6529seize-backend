@@ -420,16 +420,32 @@ async function countWrites(write: () => Promise<void>) {
   return { written, refreshed };
 }
 
-/** Every row of every table, as stored, and MySQL's table checksums. */
+/**
+ * Every row of every table, as stored, and MySQL's table checksums. The
+ * boosted TDH rate compares to 12 significant digits, and its table has no
+ * checksum: MySQL sums a group's edition rates in its join order, which can
+ * change between two runs of the same write (on either path).
+ */
 async function dump() {
   const tables: Record<string, unknown[]> = {};
   for (const [table, order] of Object.entries(TABLES)) {
-    tables[table] = await sqlExecutor.execute(
+    const rows = await sqlExecutor.execute<Record<string, unknown>>(
       `select * from ${table} order by ${order}`
     );
+    tables[table] =
+      table === CONSOLIDATED_WALLETS_TDH_TABLE
+        ? rows.map((row) => ({
+            ...row,
+            boosted_tdh_rate: Number(
+              Number(row.boosted_tdh_rate).toPrecision(12)
+            )
+          }))
+        : rows;
   }
   const checksums = await sqlExecutor.execute(
-    `checksum table ${Object.keys(TABLES).join(', ')}`
+    `checksum table ${Object.keys(TABLES)
+      .filter((table) => table !== CONSOLIDATED_WALLETS_TDH_TABLE)
+      .join(', ')}`
   );
   return {
     tables,
@@ -556,33 +572,148 @@ describe('partial TDH writes send only the rows that change', () => {
     expect(stored.map((it) => Number(it.tdh))).toEqual([3, -3, 1]);
   });
 
-  it('reads the same text either way when a stored JSON double has more digits than MySQL prints', async () => {
+  it('stores the same bytes either way when MySQL rounds a JSON double', async () => {
     const precise = (row: TDH): TDH => ({
       ...row,
-      memes: row.memes.map((meme) => ({ ...meme, tdh: 27.900000000000002 }))
+      memes: row.memes.map((meme, i) => ({
+        ...meme,
+        tdh: i === 0 ? 27.900000000000002 : 1234.5678901234567
+      }))
     });
     async function run(writeAllRows: boolean) {
       await resetTestDatabase();
       const groups = groupsBefore();
-      // The nightly rewrite stored a value with 17 significant digits.
+      // The nightly rewrite wrote values that MySQL rounds when storing.
       await insertWithoutUpdate(
         getDataSource().manager.getRepository(TDH),
         walletRows(groups).map(precise)
       );
-      // As updateTDH: the rows read back (MySQL prints 15 digits), written
-      // again for every wallet but one.
+      // As updateTDH: the rows read back, rounded, written again for every
+      // wallet but one.
       const snapshot = await fetchTDHForBlock(BLOCK);
-      expect(snapshot[0].memes[0].tdh).toBe(27.9);
+      expect(snapshot[0].memes.map((meme: TokenTDH) => meme.tdh)).toEqual([
+        27.9, 1234.567890123457, 1234.567890123457
+      ]);
       await persistTDH(BLOCK, snapshot as TDH[], [], [], [wallet(5)], {
         storedTdh: snapshotRows(getDataSource().getMetadata(TDH), snapshot),
         writeAllRows
       });
-      return sqlExecutor.execute(
-        `select * from ${WALLETS_TDH_TABLE} order by wallet, block`
-      );
+      return {
+        rows: await sqlExecutor.execute(
+          `select * from ${WALLETS_TDH_TABLE} order by wallet, block`
+        ),
+        checksum: await sqlExecutor.execute(
+          `checksum table ${WALLETS_TDH_TABLE}`
+        )
+      };
     }
 
     expect(await run(false)).toEqual(await run(true));
+  });
+
+  /**
+   * Starts a write to an unchanged row of `table` on another connection once
+   * the partial write has read that table, and returns the order in which
+   * the partial write committed and the other write went through.
+   */
+  async function concurrentWriteOrder(
+    table: string,
+    otherWrite: string,
+    partialWrite: () => Promise<void>
+  ): Promise<string[]> {
+    const events: string[] = [];
+    let other: Promise<void> | undefined;
+    const upsert = batches.upsertTdhInBatches;
+    const spy = jest
+      .spyOn(batches, 'upsertTdhInBatches')
+      .mockImplementation(async (repository, rows) => {
+        if (!other && repository.metadata.tableName === table) {
+          const runner = getDataSource().createQueryRunner();
+          other = runner
+            .query(otherWrite)
+            .then(() => {
+              events.push('other write');
+            })
+            .finally(() => runner.release());
+          await new Promise((resolve) => setTimeout(resolve, 500));
+          events.push('partial write still open');
+        }
+        return upsert(repository, rows);
+      });
+    try {
+      await partialWrite();
+    } finally {
+      spy.mockRestore();
+    }
+    events.push('partial write committed');
+    await other;
+    return events;
+  }
+
+  it('locks the rows it compares: a concurrent writer waits until the partial write commits', async () => {
+    await seedWorld();
+    const groups = groupsBefore();
+    const order = [
+      'partial write still open',
+      'partial write committed',
+      'other write'
+    ];
+
+    // Wallet level: wallet 9's memes rows are compared, not written. (Its
+    // deletes, which scan the table, lock every row here already.)
+    expect(
+      await concurrentWriteOrder(
+        WALLETS_TDH_MEMES_TABLE,
+        `update ${WALLETS_TDH_MEMES_TABLE} set balance = balance + 1 where wallet = '${wallet(9)}'`,
+        () =>
+          persistTDH(
+            BLOCK,
+            walletRows(groups, true),
+            seasonRows(groups, true).map(
+              ({ key, ...row }) => ({ ...row, wallet: key }) as TDHMemes
+            ),
+            editionRows(groups).map(
+              ({ key, ...row }) => ({ ...row, wallet: key }) as TDHEditions
+            ),
+            [wallet(5)],
+            {
+              storedTdh: snapshotRows(
+                getDataSource().getMetadata(TDH),
+                walletRows(groups)
+              )
+            }
+          )
+      )
+    ).toEqual(order);
+
+    // Consolidated level: group 9's memes rows are compared, not written;
+    // only the locking read holds them.
+    expect(
+      await concurrentWriteOrder(
+        CONSOLIDATED_WALLETS_TDH_MEMES_TABLE,
+        `update ${CONSOLIDATED_WALLETS_TDH_MEMES_TABLE} set balance = balance + 1 where consolidation_key = '${wallet(9)}'`,
+        () =>
+          persistConsolidatedTDH(
+            BLOCK,
+            consolidatedRows(groups, { shuffleKeys: true, computed: true }),
+            seasonRows(groups).map(
+              ({ key, ...row }) =>
+                ({ ...row, consolidation_key: key }) as ConsolidatedTDHMemes
+            ),
+            editionRows(groups).map(
+              ({ key, ...row }) =>
+                ({ ...row, consolidation_key: key }) as ConsolidatedTDHEditions
+            ),
+            nftRows(groups),
+            {
+              mode: 'PARTIAL',
+              wallets: [wallet(5)],
+              consolidationKeysToReplace: [wallet(5)]
+            },
+            DATE
+          )
+      )
+    ).toEqual(order);
   });
 
   it('writes nothing outside the affected groups when the write changes no value', async () => {
