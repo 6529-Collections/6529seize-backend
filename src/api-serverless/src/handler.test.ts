@@ -65,11 +65,23 @@ jest.mock('./ws/ws-listeners-notifier', () => ({
   }
 }));
 
-jest.mock('./ws/ws-log-redaction', () => ({
-  redactWebSocketMessageForLog: jest.fn((message) => message)
+jest.mock('./ws/ws-frame-budget', () => ({
+  wsFrameBudget: { take: jest.fn(async () => 'allowed') }
+}));
+
+jest.mock('./ws/ws-typing-coalescer', () => ({
+  wsTypingCoalescer: {
+    claim: jest.fn(async () => true),
+    release: jest.fn(async () => undefined)
+  }
 }));
 
 const { handler } = require('./handler') as typeof import('./handler');
+const { wsFrameBudget } =
+  require('./ws/ws-frame-budget') as typeof import('./ws/ws-frame-budget');
+const { wsTypingCoalescer } =
+  require('./ws/ws-typing-coalescer') as typeof import('./ws/ws-typing-coalescer');
+const { Logger } = require('../../logging') as typeof import('../../logging');
 const appWebSocketsMock = appWebSockets as jest.Mocked<typeof appWebSockets>;
 const authenticateWebSocketJwtOrGetByConnectionIdMock =
   authenticateWebSocketJwtOrGetByConnectionId as jest.MockedFunction<
@@ -486,7 +498,7 @@ describe('handler websocket typing', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
-    typing.mockReset().mockResolvedValue(undefined);
+    typing.mockReset().mockResolvedValue(true);
     authenticateWebSocketJwtOrGetByConnectionIdMock.mockResolvedValue({
       identityId: 'authenticated-profile',
       jwtExpiry: 4102444800
@@ -532,6 +544,159 @@ describe('handler websocket typing', () => {
       statusCode: 500,
       body: JSON.stringify({ message: 'Failed to process message' })
     });
+  });
+
+  it('acknowledges a typing frame covered by a recent notification without a fan-out', async () => {
+    jest.mocked(wsTypingCoalescer.claim).mockResolvedValueOnce(false);
+
+    await expect(handler(event(), {} as Context, jest.fn())).resolves.toEqual({
+      statusCode: 200,
+      body: JSON.stringify({ message: 'OK' })
+    });
+    expect(wsTypingCoalescer.claim).toHaveBeenCalledWith(
+      'authenticated-profile',
+      waveId
+    );
+    expect(typing).not.toHaveBeenCalled();
+  });
+
+  it('frees the coalescing window when the notification fails', async () => {
+    typing.mockRejectedValue(new NotFoundException('private wave'));
+
+    await handler(event(), {} as Context, jest.fn());
+
+    expect(wsTypingCoalescer.release).toHaveBeenCalledWith(
+      'authenticated-profile',
+      waveId
+    );
+  });
+
+  it('frees the coalescing window when nothing was delivered', async () => {
+    typing.mockResolvedValue(false);
+
+    await expect(handler(event(), {} as Context, jest.fn())).resolves.toEqual({
+      statusCode: 200,
+      body: JSON.stringify({ message: 'OK' })
+    });
+
+    expect(wsTypingCoalescer.claim).toHaveBeenCalledTimes(1);
+    expect(wsTypingCoalescer.release).toHaveBeenCalledWith(
+      'authenticated-profile',
+      waveId
+    );
+  });
+
+  it('keeps the coalescing window claimed after a delivered notification', async () => {
+    typing.mockResolvedValue(true);
+
+    await handler(event(), {} as Context, jest.fn());
+
+    expect(wsTypingCoalescer.claim).toHaveBeenCalledTimes(1);
+    expect(wsTypingCoalescer.release).not.toHaveBeenCalled();
+  });
+
+  it('never coalesces anonymous typing frames', async () => {
+    authenticateWebSocketJwtOrGetByConnectionIdMock.mockResolvedValue({
+      identityId: jest.requireActual('./ws/ws').ANON_USER_ID,
+      jwtExpiry: 0
+    });
+    typing.mockRejectedValue(new UnauthorisedException('anonymous'));
+
+    const response = await handler(event(), {} as Context, jest.fn());
+
+    expect(response).toMatchObject({ statusCode: 401 });
+    expect(wsTypingCoalescer.claim).not.toHaveBeenCalled();
+  });
+});
+
+describe('handler websocket frame budget', () => {
+  const frame = (body: unknown) =>
+    ({
+      requestContext: { routeKey: '$default', connectionId: 'connection-9' },
+      body: JSON.stringify(body)
+    }) as unknown as APIGatewayEvent;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    authenticateWebSocketJwtOrGetByConnectionIdMock.mockResolvedValue({
+      identityId: 'authenticated-profile',
+      jwtExpiry: 4102444800
+    });
+  });
+
+  it('answers an over-budget frame with 429 before any connection lookup', async () => {
+    jest.mocked(wsFrameBudget.take).mockResolvedValueOnce('rejected');
+
+    const response = await handler(
+      frame({ type: WsMessageType.SET_OPEN_WAVE, wave_id: null }),
+      {} as Context,
+      jest.fn()
+    );
+
+    expect(response).toEqual({
+      statusCode: 429,
+      body: JSON.stringify({ message: 'Too many messages' })
+    });
+    expect(wsFrameBudget.take).toHaveBeenCalledWith(
+      'connection-9',
+      WsMessageType.SET_OPEN_WAVE
+    );
+    expect(
+      authenticateWebSocketJwtOrGetByConnectionIdMock
+    ).not.toHaveBeenCalled();
+    expect(
+      appWebSocketsMock.updateOpenWaveForConnection
+    ).not.toHaveBeenCalled();
+  });
+
+  it('passes the typing frame type so the stricter budget applies', async () => {
+    await handler(
+      frame({
+        type: WsMessageType.USER_IS_TYPING,
+        wave_id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
+      }),
+      {} as Context,
+      jest.fn()
+    );
+
+    expect(wsFrameBudget.take).toHaveBeenCalledWith(
+      'connection-9',
+      WsMessageType.USER_IS_TYPING
+    );
+  });
+
+  it.each([
+    ['an unknown type', { type: 'SOMETHING_ELSE' }],
+    ['a frame without a type', { wave_id: 'x' }],
+    ['a non-object frame', 42]
+  ])('charges %s to the frame budget as an unknown type', async (_, body) => {
+    await handler(frame(body), {} as Context, jest.fn());
+
+    expect(wsFrameBudget.take).toHaveBeenCalledWith('connection-9', null);
+  });
+
+  it('logs the frame type and size but not its body', async () => {
+    const token = 'secret-access-token-value';
+    appWebSocketsMock.send.mockResolvedValue(undefined as never);
+    authenticateWebSocketTokenMock.mockResolvedValue(null);
+    const body = { type: WsMessageType.AUTHENTICATE, access_token: token };
+
+    await handler(frame(body), {} as Context, jest.fn());
+
+    const logged = jest
+      .mocked(Logger.get)
+      .mock.results.flatMap((result) =>
+        (result.value.info as jest.Mock).mock.calls.map((call) =>
+          String(call[0])
+        )
+      )
+      .filter((line) => line.startsWith('WS $default.'));
+    expect(logged).toEqual([
+      `WS $default. Identity: authenticated-profile. Type: AUTHENTICATE. Bytes: ${
+        JSON.stringify(body).length
+      }`
+    ]);
+    expect(logged.join('\n')).not.toContain(token);
   });
 });
 
@@ -822,6 +987,7 @@ describe('handler websocket PING and disconnect', () => {
     expect(
       authenticateWebSocketJwtOrGetByConnectionIdMock
     ).not.toHaveBeenCalled();
+    expect(wsFrameBudget.take).not.toHaveBeenCalled();
   });
 
   it('rejects an invalid PING without a reply or authentication', async () => {

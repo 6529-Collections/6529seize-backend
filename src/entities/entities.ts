@@ -286,6 +286,7 @@ export { PushNotificationCancellationEntity } from './IPushNotificationCancellat
 export { WebSocketOutboxEntity } from './IWebSocketOutbox';
 
 export * from './ICompetitionRuntime';
+export { CompetitionWorkerCursorEntity } from './ICompetitionWorkerCursor';
 
 export * from './ICompetitionCommand';
 export * from './ICompetitionEntryContentVersion';

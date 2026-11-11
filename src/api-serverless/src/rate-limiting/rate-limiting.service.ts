@@ -1,14 +1,19 @@
 import { randomBytes } from 'node:crypto';
-import { Logger } from '../../../logging';
-import { getRedisClient, redisSortedSetAddAndCount } from '../../../redis';
+import {
+  getRedisClient,
+  RedisUnavailableError,
+  redisSortedSetAddAndCount
+} from '../../../redis';
 import {
   RateLimitConfig,
   generateBurstKey,
   generateSustainedKey,
   sanitizeIdentifier
 } from './rate-limiting.utils';
-
-const logger = Logger.get('RATE_LIMIT_SERVICE');
+import {
+  RateLimitFailOpenReason,
+  rateLimitFailOpenReporter
+} from './rate-limiting-fail-open';
 
 // Generate a unique value for Redis sorted set entries
 function generateUniqueValue(timestamp: number): string {
@@ -22,6 +27,22 @@ export interface RateLimitResult {
   remaining: number;
   resetTime: number;
   limit: number;
+  /** Admitted without a check because the limit could not be read. */
+  failedOpen?: boolean;
+}
+
+function failOpen(
+  config: RateLimitConfig,
+  reason: RateLimitFailOpenReason
+): RateLimitResult {
+  rateLimitFailOpenReporter.record(reason);
+  return {
+    allowed: true,
+    remaining: config.burst,
+    resetTime: Date.now() + 1000,
+    limit: config.burst,
+    failedOpen: true
+  };
 }
 
 export class RateLimitingService {
@@ -32,13 +53,7 @@ export class RateLimitingService {
     const redis = getRedisClient();
     if (!redis) {
       // If Redis is not available, allow the request (fail open)
-      logger.warn('Redis not available, allowing request');
-      return {
-        allowed: true,
-        remaining: config.burst,
-        resetTime: Date.now() + 1000,
-        limit: config.burst
-      };
+      return failOpen(config, 'redis_unavailable');
     }
 
     const sanitizedId = sanitizeIdentifier(identifier);
@@ -77,14 +92,14 @@ export class RateLimitingService {
         limit: Math.min(burstResult.limit, sustainedResult.limit)
       };
     } catch (error) {
-      logger.error(`Rate limit check failed: ${error}`);
-      // Fail open - allow request if rate limiting fails
-      return {
-        allowed: true,
-        remaining: config.burst,
-        resetTime: Date.now() + 1000,
-        limit: config.burst
-      };
+      // Fail open - allow request if rate limiting fails. The reporter logs
+      // a rate-limited warning rather than one line per request.
+      return failOpen(
+        config,
+        error instanceof RedisUnavailableError
+          ? 'redis_unavailable'
+          : 'check_failed'
+      );
     }
   }
 

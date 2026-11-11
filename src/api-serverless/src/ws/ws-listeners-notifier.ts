@@ -107,6 +107,11 @@ function sendOutcome(result: unknown): FanoutSendOutcome {
     : 'sent';
 }
 
+/** Typing frames handed to the socket or to the recipient's durable queue. */
+function isAcceptedTypingOutcome(outcome: FanoutSendOutcome): boolean {
+  return outcome === 'sent' || outcome === 'resync_pending';
+}
+
 export interface NotificationConnectionRecipient {
   readonly connectionId: string;
   readonly identityId: string;
@@ -1281,13 +1286,20 @@ export class WsListenersNotifier {
     }
   }
 
+  /**
+   * Sends the sender's typing frame to the wave's typing audience. Resolves
+   * true when at least one recipient accepted it (inline send, or durable
+   * queue for a durable-capable socket), false when nothing was accepted (no
+   * recipient socket, or every send was gone/failed); access and send
+   * failures reject as before.
+   */
   async notifyAboutUserIsTyping({
     identityId,
     waveId
   }: {
     identityId: string;
     waveId: string;
-  }) {
+  }): Promise<boolean> {
     let stage = 'identity';
     try {
       if (identityId === ANON_USER_ID) {
@@ -1317,6 +1329,7 @@ export class WsListenersNotifier {
         throw new NotFoundException('Wave not found');
       }
       const connectionIds = recipients.map((it) => it.connectionId);
+      if (!connectionIds.length) return false;
       stage = 'profile_enrichment';
       const [
         mainStageSubscriptions,
@@ -1360,20 +1373,31 @@ export class WsListenersNotifier {
         artist_of_prevote_cards: artistOfPrevoteCards[identityId] ?? [],
         is_wave_creator: waveCreatorIds.has(identityId)
       };
-      const now = Time.currentMillis();
-      stage = 'delivery';
-      await forEachWebSocketRecipient(connectionIds, (connectionId: string) =>
-        this.appWebSockets.send({
-          connectionId,
-          message: JSON.stringify(
-            userIsTypingMessage({
-              wave_id: waveId,
-              timestamp: now,
-              profile: profile
-            })
-          )
+      // Serialized once: every recipient receives the identical frame.
+      const message = JSON.stringify(
+        userIsTypingMessage({
+          wave_id: waveId,
+          timestamp: Time.currentMillis(),
+          profile: profile
         })
       );
+      stage = 'delivery';
+      let delivered = false;
+      // The bounded recipient pool shared by every other fan-out, so a busy
+      // wave's typing frames cannot open an unbounded number of sends.
+      await forEachWebSocketRecipient(
+        connectionIds,
+        async (connectionId: string) => {
+          const result = await this.appWebSockets.send({
+            connectionId,
+            message
+          });
+          // A durable-capable recipient's frame is accepted into its queue
+          // (resync_pending) rather than sent inline; both count as accepted.
+          if (isAcceptedTypingOutcome(sendOutcome(result))) delivered = true;
+        }
+      );
+      return delivered;
     } catch (error) {
       if (!isExpectedClientError(error)) {
         try {

@@ -296,6 +296,7 @@ export const COMPETITION_OUTCOME_AWARDS_TABLE = 'competition_outcome_awards';
 export const COMPETITION_OUTBOX_TABLE = 'competition_outbox';
 export const COMPETITION_EVENT_EFFECTS_TABLE = 'competition_event_effects';
 export const COMPETITION_CLAIMS_TABLE = 'competition_claims';
+export const COMPETITION_WORKER_CURSORS_TABLE = 'competition_worker_cursors';
 
 export const COMPETITION_COMMANDS_TABLE = 'competition_commands';
 export const COMPETITION_SIGNATURE_NONCES_TABLE =
