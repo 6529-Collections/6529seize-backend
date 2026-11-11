@@ -18,8 +18,9 @@ security group and entire shared CDN against reviewed native-model fingerprints,
 prepares an exact four-resource IMPORT change set, then requires a separate execute
 dispatch with its ARN. Ownership, template equality and per-resource drift must
 pass. Its dedicated service role permits only configuration reads and ownership tags; adoption
-adds termination protection and a deny-all update stack policy. Both adoption and
-production mutation switches remain false; no resources have been imported.
+adds termination protection and a deny-all update stack policy. Runtime deployment
+stays disabled throughout adoption. Its separate import switch is temporarily
+enabled only for the authorized operation and reset after verification.
 It shares candidate-management concurrency and creates no separate IPFS environment.
 
 IPFS has one shared deployment target, `prod`; there is no separate IPFS staging

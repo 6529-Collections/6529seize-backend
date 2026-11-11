@@ -4,7 +4,7 @@ Description:
   6529 production IPFS observed baseline for import only; preserve existing
   configuration.
 Metadata:
-  ObservedAt: '2026-11-10'
+  ObservedAt: '2026-11-11'
   AccountId: '987989283142'
   Region: us-east-1
   Purpose:
@@ -112,7 +112,9 @@ Resources:
         PriceClass: PriceClass_All
         DefaultCacheBehavior:
           Compress: true
-          FunctionAssociations: []
+          FunctionAssociations:
+            - FunctionARN: arn:aws:cloudfront::987989283142:function/usercontent-legacy-media-redirect
+              EventType: viewer-request
           LambdaFunctionAssociations: []
           TargetOriginId: ipfs-origin.6529.io-mpdrdgbr8bk
           ViewerProtocolPolicy: redirect-to-https
@@ -149,7 +151,9 @@ Resources:
             RestrictionType: none
         CacheBehaviors:
           - Compress: true
-            FunctionAssociations: []
+            FunctionAssociations:
+              - FunctionARN: arn:aws:cloudfront::987989283142:function/usercontent-legacy-media-redirect
+                EventType: viewer-request
             LambdaFunctionAssociations: []
             TargetOriginId: ipfs-origin.6529.io-mpdrdgbr8bk
             ViewerProtocolPolicy: redirect-to-https

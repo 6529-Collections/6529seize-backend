@@ -3,8 +3,8 @@
   "accountId": "987989283142",
   "region": "us-east-1",
   "stackName": "seize-ipfs-prod-adopted",
-  "observedAt": "2026-11-10",
-  "templateSha256": "4b8528b5312b8be725b3c06de75d56abed5fe1908f85f16844afeda7ef376556",
+  "observedAt": "2026-11-11",
+  "templateSha256": "1e898b1385b7e30afa0c60da255506512f2155c693297599d3b294550e316916",
   "resources": {
     "Blocks": {
       "type": "AWS::S3::Bucket",
@@ -32,7 +32,7 @@
       "type": "AWS::CloudFront::Distribution",
       "identifierKey": "Id",
       "identifier": "E1D6I3Z3M5F0H4",
-      "modelSha256": "d7b149aba0e65dea7ecf876bdc9fd55250dc1470c830b109a3ab177ba4e8b0cc",
+      "modelSha256": "346320df598e6533c01ce8bec477f6fd37cb6d87f9ebbba1ae0e8756ae793d88",
       "readOnlyProperties": [
         "/properties/Id",
         "/properties/DomainName"

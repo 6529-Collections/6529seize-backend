@@ -2,9 +2,10 @@
 
 This directory owns a reproducible **new IPFS candidate**, its pinned runtime,
 logical backups, restoration, and a dedicated gateway. It also provides a separate,
-disabled **import-only adoption path** for the currently serving resources.
-No resources have been imported or changed. Production mutations are
-disabled in `environments/prod.json`. There is one shared IPFS deployment target,
+**import-only adoption path** for the currently serving resources.
+Runtime deployment remains disabled in `environments/prod.json`; the separate
+adoption switch is enabled only for the authorized ownership operation and reset
+after verification. There is one shared IPFS deployment target,
 `prod`; the application staging environment does not get a separate IPFS service.
 No workflow runs a deployment on push or PR.
 
@@ -277,7 +278,7 @@ See [Let's Encrypt rate limits](https://letsencrypt.org/docs/rate-limits/).
 
 ## Import the existing production resources (future authorized operation)
 
-`adoption.yaml` describes the configuration observed in AWS on November 10, 2026.
+`adoption.yaml` describes the configuration observed in AWS on November 11, 2026.
 It retains the existing `6529ipfs` bucket, EC2 instance, its exclusively used
 security group, and the **entire shared CloudFront distribution**. The CDN baseline
 includes all three origins/aliases, ordered cache behaviors, media function and
@@ -309,8 +310,10 @@ such as some launch inputs; the fingerprint is not a backup of disk contents,
 nginx/systemd/Kubo settings, credentials, or node identity. Capture those privately
 and verify the logical recovery backup before a runtime migration.
 
-Both `changesEnabled` and `adoptionEnabled` in `environments/prod.json` are false.
-No adoption workflow has been dispatched and merging this PR executes nothing.
+`changesEnabled` remains false throughout adoption. The independently controlled
+`adoptionEnabled` switch is temporarily true for the authorized import, then reset
+to false after ownership and drift verification. Adoption refuses to run while
+runtime deployment is unlocked. Merging the PR starts no deployment or import.
 The existing `control.py` candidate path continues rejecting the live bucket,
 server and production hostnames; adoption never lifts those runtime/traffic fences.
 
@@ -339,7 +342,8 @@ For a future explicitly authorized import:
    and review the new native-model and template hashes in `adoption.json`. Do not
    merely replace a failed hash to bypass review. The offline `plan` command does
    not fetch AWS or regenerate descriptors.
-5. In a separately approved change, enable both switches, then run **prepare**.
+5. For the authorized operation, enable only `adoptionEnabled`, leaving
+   `changesEnabled=false`, then run **prepare**.
    It creates an `IMPORT` change set for exactly four retained resources and
    verifies its full action list, source/baseline binding and original template.
    It never executes it. Review the returned exact change-set ARN and AWS changes.

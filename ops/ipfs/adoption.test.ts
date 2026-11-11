@@ -99,6 +99,17 @@ describe('production IPFS import baseline', () => {
           'arn:aws:cloudfront::987989283142:function/media-prefix-router'
       }
     ]);
+    const legacyRedirect = [
+      {
+        EventType: 'viewer-request',
+        FunctionARN:
+          'arn:aws:cloudfront::987989283142:function/usercontent-legacy-media-redirect'
+      }
+    ];
+    expect(cdn.DefaultCacheBehavior.FunctionAssociations).toEqual(
+      legacyRedirect
+    );
+    expect(cdn.CacheBehaviors[0].FunctionAssociations).toEqual(legacyRedirect);
     expect(cdn.WebACLId).toContain('CreatedByCloudFront-14fdc626');
     expect(python('print(len(a.baseline()[0]["resources"]))')).toBe('4');
   });
@@ -190,6 +201,7 @@ print('ok')
       expect(
         python(`
 a.os.environ.update(GITHUB_ACTIONS='true',GITHUB_REPOSITORY='6529-Collections/6529seize-backend',GITHUB_REF='refs/heads/main',GITHUB_SHA=sha)
+a.environment_policy=lambda _:{'changesEnabled':False,'adoptionEnabled':False}
 a.aws=lambda *args,**kwargs:(_ for _ in ()).throw(AssertionError('AWS called before guard'))
 sys.argv=['adoption.py','${operation}','--sha',sha]
 print(rejected(a.main))
@@ -200,15 +212,39 @@ print(rejected(a.main))
 
   test.each([
     { changesEnabled: true, adoptionEnabled: false },
-    { changesEnabled: false, adoptionEnabled: true }
-  ])('requires both production switches: %j', (policy) => {
-    expect(
-      python(`
+    { changesEnabled: false, adoptionEnabled: false }
+  ])(
+    'rejects disabled adoption independently of runtime policy: %j',
+    (policy) => {
+      expect(
+        python(`
 a.os.environ.update(GITHUB_ACTIONS='true',GITHUB_REPOSITORY='6529-Collections/6529seize-backend',GITHUB_REF='refs/heads/main',GITHUB_SHA=sha)
 a.environment_policy=lambda _:json.loads('${JSON.stringify(policy)}')
 print(rejected(lambda:a.guarded(sha,mutation=True)))
 `)
-    ).toContain('Production adoption is disabled');
+      ).toContain('Production adoption is disabled');
+    }
+  );
+
+  test('allows authorized adoption while runtime deployment remains disabled', () => {
+    expect(
+      python(`
+a.os.environ.update(GITHUB_ACTIONS='true',GITHUB_REPOSITORY='6529-Collections/6529seize-backend',GITHUB_REF='refs/heads/main',GITHUB_SHA=sha)
+a.environment_policy=lambda _:{'changesEnabled':False,'adoptionEnabled':True}
+a.guarded(sha,mutation=True)
+print('allowed')
+`)
+    ).toBe('allowed');
+  });
+
+  test('refuses adoption while runtime deployment is unlocked', () => {
+    expect(
+      python(`
+a.os.environ.update(GITHUB_ACTIONS='true',GITHUB_REPOSITORY='6529-Collections/6529seize-backend',GITHUB_REF='refs/heads/main',GITHUB_SHA=sha)
+a.environment_policy=lambda _:{'changesEnabled':True,'adoptionEnabled':True}
+print(rejected(lambda:a.guarded(sha,mutation=True)))
+`)
+    ).toContain('Runtime deployment must remain disabled');
   });
 });
 

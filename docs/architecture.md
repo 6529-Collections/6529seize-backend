@@ -3016,11 +3016,11 @@ and the `ipfs-prod` GitHub environment. It has no separate staging deployment.
 Local/CI fixtures create no AWS environment; future production rollouts validate
 an unpublished replacement candidate before traffic handover.
 
-There is no change to the application's IPFS API contract or deployed resources.
-The existing production instance and data bucket have not been adopted; production
-mutations are disabled by checked-in policy. A separate `ipfs-adopt.yml` workflow
-and import-only `adoption.yaml` baseline cover that bucket, instance, its exclusively
-used security group and the entire shared CDN. `adoption.py` requires exact IDs,
+The application's IPFS API contract and serving configuration remain unchanged.
+Runtime deployment remains disabled by checked-in policy. A separate
+`ipfs-adopt.yml` workflow and import-only `adoption.yaml` baseline cover the existing
+production bucket, instance, its exclusively used security group and the entire
+shared CDN. `adoption.py` requires exact IDs,
 full native-model fingerprints, matching declared properties and an IMPORT-only
 change set bound to one source SHA/baseline. Preparation and execution are separate
 dispatches; retries reconcile the same change-set ARN. Successful adoption requires
@@ -3029,7 +3029,9 @@ retains an import-only service role, termination protection and a deny-all resou
 update stack policy. `adoption-access.yaml` defines dedicated roles limited to
 configuration reads and ownership tags, without SSM command, content-object write
 or DNS-change permissions.
-The adoption switch also remains false. Network/IAM dependencies, canonical DNS,
+The separate adoption switch is enabled only for the authorized ownership import
+and reset after verification; adoption additionally requires runtime deployment to
+remain locked. Network/IAM dependencies, canonical DNS,
 edge policy/function implementations and host files are referenced, not imported.
 
 The live CloudFront distribution is

@@ -93,8 +93,10 @@ def guarded(sha, mutation=False):
     source_identity_guard(sha, os.environ)
     if mutation:
         policy = environment_policy("prod")
-        require(policy.get("changesEnabled") is True and policy.get("adoptionEnabled") is True,
+        require(policy.get("adoptionEnabled") is True,
                 "Production adoption is disabled in the checked-in environment policy")
+        require(policy.get("changesEnabled") is False,
+                "Runtime deployment must remain disabled during production adoption")
     return manifest
 
 
