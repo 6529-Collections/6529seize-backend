@@ -2,7 +2,8 @@ import { EventEmitter } from 'node:events';
 import {
   recordLegacyAuthUse,
   recordLegacyAuthUseOnFinish,
-  setLegacyLoginFormat
+  setLegacyLoginFormat,
+  setLegacyLoginFormClosed
 } from './legacy-auth-metrics';
 
 function fakeResponse(statusCode: number) {
@@ -43,8 +44,53 @@ describe('legacy auth usage metrics', () => {
         Format: 'text',
         Client: 'curl',
         Outcome: 'ok',
+        Refusal: 'none',
         LegacyAuthCalls: 1
       })
+    ]);
+  });
+
+  it('keeps the existing dimension sets and adds Route+Refusal', () => {
+    recordLegacyAuthUse({
+      route: 'login',
+      format: 'text_previous_form',
+      userAgent: null,
+      outcome: 'refused',
+      refusal: 'form_closed'
+    });
+
+    const [line] = emitted();
+    expect((line._aws as any).CloudWatchMetrics[0].Dimensions).toEqual([
+      ['Route', 'Format', 'Outcome'],
+      ['Route', 'Client', 'Outcome'],
+      ['Route', 'Refusal']
+    ]);
+    expect(line).toEqual(
+      expect.objectContaining({ Outcome: 'refused', Refusal: 'form_closed' })
+    );
+  });
+
+  it('reports a closed old form only on a refusal', () => {
+    const closed = fakeResponse(401);
+    const accepted = fakeResponse(201);
+    const other = fakeResponse(401);
+    const middleware = recordLegacyAuthUseOnFinish('login');
+    for (const res of [closed, accepted, other]) {
+      middleware({ headers: {} } as any, res as any, jest.fn());
+    }
+
+    setLegacyLoginFormClosed(closed as any);
+    setLegacyLoginFormClosed(accepted as any);
+    closed.emit('finish');
+    accepted.emit('finish');
+    other.emit('finish');
+
+    expect(
+      emitted().map(({ Outcome, Refusal }) => ({ Outcome, Refusal }))
+    ).toEqual([
+      { Outcome: 'refused', Refusal: 'form_closed' },
+      { Outcome: 'ok', Refusal: 'none' },
+      { Outcome: 'refused', Refusal: 'other' }
     ]);
   });
 
