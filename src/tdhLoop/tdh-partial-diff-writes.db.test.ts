@@ -230,7 +230,8 @@ function editionRows(groups: Group[]) {
       edition_id: 1,
       balance: holding.balance,
       days_held: Math.round(holding.tdh),
-      hodl_rate: holding.tdh / 1000
+      // These fixture rates sum exactly regardless of MySQL's join order.
+      hodl_rate: holding.tdh / 1024
     }))
   );
 }
@@ -440,32 +441,16 @@ const NOTHING = Object.fromEntries(
   Object.keys(TABLES).map((table) => [table, 0])
 );
 
-/**
- * Every row of every table, as stored, and MySQL's table checksums. The
- * boosted TDH rate compares to 12 significant digits, and its table has no
- * checksum: MySQL sums a group's edition rates in its join order, which can
- * change between two runs of the same write (on either path).
- */
+/** Every row of every table, as stored, and MySQL's table checksums. */
 async function dump() {
   const tables: Record<string, unknown[]> = {};
   for (const [table, order] of Object.entries(TABLES)) {
-    const rows = await sqlExecutor.execute<Record<string, unknown>>(
+    tables[table] = await sqlExecutor.execute<Record<string, unknown>>(
       `select * from ${table} order by ${order}`
     );
-    tables[table] =
-      table === CONSOLIDATED_WALLETS_TDH_TABLE
-        ? rows.map((row) => ({
-            ...row,
-            boosted_tdh_rate: Number(
-              Number(row.boosted_tdh_rate).toPrecision(12)
-            )
-          }))
-        : rows;
   }
   const checksums = await sqlExecutor.execute(
-    `checksum table ${Object.keys(TABLES)
-      .filter((table) => table !== CONSOLIDATED_WALLETS_TDH_TABLE)
-      .join(', ')}`
+    `checksum table ${Object.keys(TABLES).join(', ')}`
   );
   return {
     tables,
