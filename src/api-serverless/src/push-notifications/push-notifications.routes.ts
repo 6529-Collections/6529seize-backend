@@ -11,6 +11,7 @@ import { ApiRegisterPushNotificationTokenRequest } from '../generated/models/Api
 import { getValidatedByJoiOrThrow } from '../validation';
 import { pushNotificationSettingsDb } from './push-notification-settings.db';
 import { deleteDevice, getDevicesForProfile } from './push-notifications.db';
+import { rejectProxySession } from '@/api/proxy-session-guard';
 
 import { requestInstallationBadgeRefresh } from './push-notifications.service';
 import { registerInstallationDevice } from './push-installation.db';
@@ -47,9 +48,7 @@ router.post(
         'You need to create a profile to register for push notifications'
       );
     }
-    if (authenticationContext.isAuthenticatedAsProxy()) {
-      throw new ForbiddenException(PROXY_PUSH_NOTIFICATIONS_MESSAGE);
-    }
+    rejectProxySession(authenticationContext, PROXY_PUSH_NOTIFICATIONS_MESSAGE);
 
     const resolvedProfileId = profile_id ?? actingAsProfileId;
 
@@ -114,9 +113,7 @@ router.get(
         'You need to create a profile to view devices'
       );
     }
-    if (authenticationContext.isAuthenticatedAsProxy()) {
-      throw new ForbiddenException(PROXY_PUSH_NOTIFICATIONS_MESSAGE);
-    }
+    rejectProxySession(authenticationContext, PROXY_PUSH_NOTIFICATIONS_MESSAGE);
 
     const devices = await getDevicesForProfile(profileId);
     res.send(devices);
@@ -137,9 +134,7 @@ router.delete(
         'You need to create a profile to delete devices'
       );
     }
-    if (authenticationContext.isAuthenticatedAsProxy()) {
-      throw new ForbiddenException(PROXY_PUSH_NOTIFICATIONS_MESSAGE);
-    }
+    rejectProxySession(authenticationContext, PROXY_PUSH_NOTIFICATIONS_MESSAGE);
 
     const deviceId = req.params.device_id;
     await deleteDevice(profileId, deviceId);
@@ -161,9 +156,7 @@ router.get(
         'You need to create a profile to access push notification settings'
       );
     }
-    if (authenticationContext.isAuthenticatedAsProxy()) {
-      throw new ForbiddenException(PROXY_PUSH_NOTIFICATIONS_MESSAGE);
-    }
+    rejectProxySession(authenticationContext, PROXY_PUSH_NOTIFICATIONS_MESSAGE);
 
     const deviceId = req.params.device_id;
     const settings =
@@ -196,9 +189,7 @@ router.put(
         'You need to create a profile to update push notification settings'
       );
     }
-    if (authenticationContext.isAuthenticatedAsProxy()) {
-      throw new ForbiddenException(PROXY_PUSH_NOTIFICATIONS_MESSAGE);
-    }
+    rejectProxySession(authenticationContext, PROXY_PUSH_NOTIFICATIONS_MESSAGE);
 
     const deviceId = req.params.device_id;
     const validatedSettings = getValidatedByJoiOrThrow(
