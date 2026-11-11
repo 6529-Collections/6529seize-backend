@@ -357,82 +357,85 @@ describe('DeviceGrantsService', () => {
   });
 
   describe('revokeCallerGrant', () => {
-    it('revokes a grant of the caller profile and returns it', async () => {
-      jest
-        .mocked(db.findGrantById)
-        .mockResolvedValueOnce(aGrant())
-        .mockResolvedValueOnce(aGrant({ revoked_at: NOW }));
+    const connection = { connection: 'tx' };
+    const revokeLinkedDevice = jest.fn(async () => {});
+    const revoke = (id = GRANT_ID, ctx = callerContext()) =>
+      service.revokeCallerGrant(id, ctx, revokeLinkedDevice);
 
-      const grant = await service.revokeCallerGrant(GRANT_ID, callerContext());
+    beforeEach(() => {
+      revokeLinkedDevice.mockReset().mockResolvedValue(undefined);
+      jest
+        .mocked(db.executeNativeQueriesInTransaction)
+        .mockImplementation(async (run) => run(connection));
+      jest.mocked(db.lockGrant).mockResolvedValue(aGrant());
+      jest.mocked(identities.getIdentityByWallet).mockResolvedValue({
+        ...mock(IdentityEntity),
+        profile_id: 'profile-1'
+      });
+    });
+
+    it('revokes the caller grant and linked device on the same connection', async () => {
+      const grant = await revoke();
 
       expect(db.revokeGrant).toHaveBeenCalledWith(
         GRANT_ID,
         NOW,
-        expect.anything()
+        expect.objectContaining({ connection })
       );
+      expect(revokeLinkedDevice).toHaveBeenCalledWith(GRANT_ID, connection);
       expect(grant.revoked_at).toBe(NOW);
     });
 
-    it('is idempotent for an already revoked grant', async () => {
-      jest
-        .mocked(db.findGrantById)
-        .mockResolvedValue(aGrant({ revoked_at: 123 }));
+    it('retries the linked revocation for an already revoked grant', async () => {
+      jest.mocked(db.lockGrant).mockResolvedValue(aGrant({ revoked_at: 123 }));
 
-      const grant = await service.revokeCallerGrant(GRANT_ID, callerContext());
+      const grant = await revoke();
 
       expect(db.revokeGrant).not.toHaveBeenCalled();
+      expect(revokeLinkedDevice).toHaveBeenCalledWith(GRANT_ID, connection);
       expect(grant.revoked_at).toBe(123);
     });
 
     it('hides grants of other profiles', async () => {
-      jest.mocked(db.findGrantById).mockResolvedValue(aGrant());
-      jest.mocked(identities.getProfileIdByWallet).mockResolvedValue('other');
+      jest.mocked(identities.getIdentityByWallet).mockResolvedValue({
+        ...mock(IdentityEntity),
+        profile_id: 'other'
+      });
 
-      await expect(
-        service.revokeCallerGrant(GRANT_ID, callerContext())
-      ).rejects.toBeInstanceOf(NotFoundException);
+      await expect(revoke()).rejects.toBeInstanceOf(NotFoundException);
       expect(db.revokeGrant).not.toHaveBeenCalled();
+      expect(revokeLinkedDevice).not.toHaveBeenCalled();
     });
 
     it('compares wallets directly for profileless callers', async () => {
       jest
-        .mocked(db.findGrantById)
+        .mocked(db.lockGrant)
         .mockResolvedValue(aGrant({ wallet: `0x${'2'.repeat(40)}` }));
 
       await expect(
-        service.revokeCallerGrant(
-          GRANT_ID,
-          callerContext({ authenticatedProfileId: null })
-        )
+        revoke(GRANT_ID, callerContext({ authenticatedProfileId: null }))
       ).rejects.toBeInstanceOf(NotFoundException);
-      expect(identities.getProfileIdByWallet).not.toHaveBeenCalled();
+      expect(identities.getIdentityByWallet).not.toHaveBeenCalled();
     });
 
     it.each(['not-a-grant-id', GRANT_ID.toUpperCase()])(
       'returns 404 for malformed id %s without a lookup',
       async (grantId) => {
-        await expect(
-          service.revokeCallerGrant(grantId, callerContext())
-        ).rejects.toBeInstanceOf(NotFoundException);
-        expect(db.findGrantById).not.toHaveBeenCalled();
+        await expect(revoke(grantId)).rejects.toBeInstanceOf(NotFoundException);
+        expect(db.lockGrant).not.toHaveBeenCalled();
       }
     );
 
     it('returns 404 for unknown grants', async () => {
-      jest.mocked(db.findGrantById).mockResolvedValue(null);
-      await expect(
-        service.revokeCallerGrant(GRANT_ID, callerContext())
-      ).rejects.toBeInstanceOf(NotFoundException);
+      jest.mocked(db.lockGrant).mockResolvedValue(null);
+      await expect(revoke()).rejects.toBeInstanceOf(NotFoundException);
     });
 
     it('is not available to proxies', async () => {
       await expect(
-        service.revokeCallerGrant(
-          GRANT_ID,
-          callerContext({ roleProfileId: 'principal-profile' })
-        )
+        revoke(GRANT_ID, callerContext({ roleProfileId: 'principal-profile' }))
       ).rejects.toBeInstanceOf(ForbiddenException);
-      expect(db.findGrantById).not.toHaveBeenCalled();
+      expect(db.lockGrant).not.toHaveBeenCalled();
     });
   });
 });

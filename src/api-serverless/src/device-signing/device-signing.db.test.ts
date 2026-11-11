@@ -126,7 +126,10 @@ describeWithSeed(
       const mlsKey = hex('e', 64);
       const linked = {
         ...aGrant(id, WALLET_B, 1),
-        notice_encrypted_dm_device_key: mlsKey
+        notice_encrypted_dm_device_key: mlsKey,
+        registered_client_type: 'web',
+        registered_binding: 'siwe',
+        registered_request_origin: 'https://6529.io'
       };
       const oldId = hex('2', 64);
       const revokedId = hex('3', 64);
@@ -173,9 +176,7 @@ describeWithSeed(
         await repo.acknowledgeGrant(id, txCtx);
       });
       await expect(findNotices()).resolves.toEqual([]);
-      await expect(repo.findGrantById(id, ctx)).resolves.toMatchObject({
-        revoked_at: null
-      });
+      await expect(repo.findGrantById(id, ctx)).resolves.toMatchObject(linked);
     });
 
     it('lists grants of every wallet of the profile, newest first', async () => {
