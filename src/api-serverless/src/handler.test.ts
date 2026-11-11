@@ -460,7 +460,7 @@ describe('handler websocket typing', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
-    typing.mockReset().mockResolvedValue(undefined);
+    typing.mockReset().mockResolvedValue(true);
     authenticateWebSocketJwtOrGetByConnectionIdMock.mockResolvedValue({
       identityId: 'authenticated-profile',
       jwtExpiry: 4102444800
@@ -531,6 +531,30 @@ describe('handler websocket typing', () => {
       'authenticated-profile',
       waveId
     );
+  });
+
+  it('frees the coalescing window when nothing was delivered', async () => {
+    typing.mockResolvedValue(false);
+
+    await expect(handler(event(), {} as Context, jest.fn())).resolves.toEqual({
+      statusCode: 200,
+      body: JSON.stringify({ message: 'OK' })
+    });
+
+    expect(wsTypingCoalescer.claim).toHaveBeenCalledTimes(1);
+    expect(wsTypingCoalescer.release).toHaveBeenCalledWith(
+      'authenticated-profile',
+      waveId
+    );
+  });
+
+  it('keeps the coalescing window claimed after a delivered notification', async () => {
+    typing.mockResolvedValue(true);
+
+    await handler(event(), {} as Context, jest.fn());
+
+    expect(wsTypingCoalescer.claim).toHaveBeenCalledTimes(1);
+    expect(wsTypingCoalescer.release).not.toHaveBeenCalled();
   });
 
   it('never coalesces anonymous typing frames', async () => {

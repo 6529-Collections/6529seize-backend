@@ -35,16 +35,24 @@ describe('typing fan-out', () => {
     }
   });
 
-  function notifierWithRecipients(count: number) {
+  function notifierWithRecipients(
+    count: number,
+    outcome: (connectionId: string) => unknown = () => undefined,
+    includeSender = true
+  ) {
     const repository = mock(WsConnectionRepository);
     repository.getCurrentlyOnlineCommunityMemberConnectionIds.mockResolvedValue(
       [
-        {
-          connectionId: 'sender-socket',
-          profileId: 'sender',
-          wave_id: 'wave',
-          jwtExpiry: 0
-        },
+        ...(includeSender
+          ? [
+              {
+                connectionId: 'sender-socket',
+                profileId: 'sender',
+                wave_id: 'wave',
+                jwtExpiry: 0
+              }
+            ]
+          : []),
         ...Array.from({ length: count }, (_, i) => ({
           connectionId: `socket-${i}`,
           profileId: `viewer-${i}`,
@@ -62,11 +70,12 @@ describe('typing fan-out', () => {
     let inFlight = 0;
     let peak = 0;
     const send = jest.fn(
-      async (_input: { connectionId: string; message: string }) => {
+      async (input: { connectionId: string; message: string }) => {
         inFlight++;
         peak = Math.max(peak, inFlight);
         await new Promise((resolve) => setImmediate(resolve));
         inFlight--;
+        return outcome(input.connectionId);
       }
     );
     const notifier = new WsListenersNotifier(
@@ -106,5 +115,47 @@ describe('typing fan-out', () => {
     expect(frame.type).toBe('USER_IS_TYPING');
     expect(frame.data.wave_id).toBe('wave');
     expect(frame.data.profile.id).toBe('sender');
+  });
+
+  it('reports a delivered typing frame', async () => {
+    const { notifier } = notifierWithRecipients(2);
+
+    await expect(
+      notifier.notifyAboutUserIsTyping({ identityId: 'sender', waveId: 'wave' })
+    ).resolves.toBe(true);
+  });
+
+  it('reports delivery when only some sends are accepted', async () => {
+    const { notifier } = notifierWithRecipients(3, (id) =>
+      id === 'socket-1' ? { status: 'sent' } : { status: 'gone' }
+    );
+
+    await expect(
+      notifier.notifyAboutUserIsTyping({ identityId: 'sender', waveId: 'wave' })
+    ).resolves.toBe(true);
+  });
+
+  it.each(['gone', 'failed', 'resync_pending'])(
+    'reports nothing delivered when every send is %s',
+    async (status) => {
+      const { notifier, send } = notifierWithRecipients(3, () => ({ status }));
+
+      await expect(
+        notifier.notifyAboutUserIsTyping({
+          identityId: 'sender',
+          waveId: 'wave'
+        })
+      ).resolves.toBe(false);
+      expect(send).toHaveBeenCalledTimes(4);
+    }
+  );
+
+  it('rejects without sending when the sender is not in the wave audience', async () => {
+    const { notifier, send } = notifierWithRecipients(3, undefined, false);
+
+    await expect(
+      notifier.notifyAboutUserIsTyping({ identityId: 'sender', waveId: 'wave' })
+    ).rejects.toThrow('Wave not found');
+    expect(send).not.toHaveBeenCalled();
   });
 });

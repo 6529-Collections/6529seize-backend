@@ -262,8 +262,10 @@ async function answerPing(
 
 /**
  * One typing notification per identity and wave within the coalescing
- * window; repeats inside it are acknowledged without a fan-out. Anonymous
- * frames are never coalesced, so they keep their authentication error.
+ * window; repeats inside it are acknowledged without a fan-out. The window
+ * stays claimed only when a notification was delivered: a refused or
+ * undelivered one frees it for the next frame. Anonymous frames are never
+ * coalesced, so they keep their authentication error.
  */
 async function notifyTypingCoalesced(
   identityId: string,
@@ -273,16 +275,23 @@ async function notifyTypingCoalesced(
   if (coalesce && !(await wsTypingCoalescer.claim(identityId, waveId))) {
     return;
   }
+  const release = async () => {
+    if (!coalesce) return;
+    await wsTypingCoalescer.release(identityId, waveId).catch(() => {
+      // The window expires on its own.
+    });
+  };
+  let delivered: boolean;
   try {
-    await wsListenersNotifier.notifyAboutUserIsTyping({ identityId, waveId });
+    delivered = await wsListenersNotifier.notifyAboutUserIsTyping({
+      identityId,
+      waveId
+    });
   } catch (error) {
-    if (coalesce) {
-      await wsTypingCoalescer.release(identityId, waveId).catch(() => {
-        // The window expires on its own.
-      });
-    }
+    await release();
     throw error;
   }
+  if (!delivered) await release();
 }
 
 const KNOWN_FRAME_TYPES: ReadonlySet<string> = new Set(
