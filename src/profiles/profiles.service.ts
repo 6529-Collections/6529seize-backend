@@ -445,10 +445,7 @@ export class ProfilesService {
         connectionHolder
       );
       await this.mergeReactionsStuff(sourceIdentity, target, connectionHolder);
-      // drop_poll_votes.voter_id is not indexed.
-      await withProfileRow(() =>
-        this.mergePollVotingStuff(sourceIdentity, target, connectionHolder)
-      );
+      await this.mergePollVotingStuff(sourceIdentity, target, connectionHolder);
       await this.mergeBookmarks(sourceIdentity, target, connectionHolder);
       await this.mergeCurations(sourceIdentity, target, connectionHolder);
       await this.mergeQuickVoteSkips(sourceIdentity, target, connectionHolder);
