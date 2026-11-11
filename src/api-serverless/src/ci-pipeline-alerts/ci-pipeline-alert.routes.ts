@@ -12,6 +12,11 @@ import { getValidatedByJoiOrThrow } from '@/api/validation';
 import { RELEASE_NOTE_DEPLOYED_AT_PATTERN } from '@/release-notes/release-note-generation-queue';
 import { GITHUB_CONTRIBUTOR_LOGIN_PATTERN } from '@/release-notes/release-note-contributors.config';
 import {
+  CI_REPOSITORY_NAMES,
+  CI_REPOSITORY_OWNER,
+  getAllowedCiRepositoryName
+} from '@/release-notes/release-note-prompts.config';
+import {
   CiPipelineAlertRequest,
   ciPipelineAlertService
 } from './ci-pipeline-alert.service';
@@ -47,7 +52,18 @@ const CiPipelineAlertRequestSchema: Joi.ObjectSchema<CiPipelineAlertRequest> =
     alert_type: Joi.string()
       .valid('workflow', 'deploy', 'web_e2e')
       .default('workflow'),
-    repo: Joi.string().trim().min(1).max(200).required(),
+    repo: Joi.string()
+      .trim()
+      .min(1)
+      .max(200)
+      .required()
+      .custom((value: string, helpers) =>
+        getAllowedCiRepositoryName(value)
+          ? value
+          : helpers.message({
+              custom: `repo must be one of ${CI_REPOSITORY_NAMES.join(', ')}, optionally prefixed with ${CI_REPOSITORY_OWNER}/`
+            })
+      ),
     workflow: Joi.string().trim().min(1).max(200).required(),
     status: Joi.string().valid('success', 'failure').required(),
     title: Joi.string().trim().min(1).max(250).required(),

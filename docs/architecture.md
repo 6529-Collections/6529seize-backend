@@ -263,6 +263,23 @@ kept under the same structural checks (byte-identical gain map image data, MPF
 offsets on its SOI, allowlisted XMP only); a gain map that does not pass them
 is dropped and the SDR image is pinned.
 
+The older `POST /profiles/{identity}/pfp` route (a meme id, or a file stored in
+the images bucket under `pfp/<env>/`) runs uploaded files through the same
+checks and strip: 2 MiB limit, format from the bytes, and the object stored
+with that format's extension and content type.
+
+A new `pfp_url` on `POST /profiles` must be an image URL on the media host,
+checked exactly (`https`, that host name, no userinfo or port, a non-empty
+path), or an `ipfs://` link. Profile edits resend the stored picture URL, so a
+value equal to the one already stored for the profile is kept as it is (it
+only has to match the earlier `ipfs://` or `https://d3lqz0a4bldqgf` prefix
+rule). A bare CID (`Qm…` CIDv0 or base32 `b…` CIDv1) is what both the
+API pin and the desktop app's local IPFS node produce. Other `ipfs://` forms are
+logged as `[PROFILE_PICTURE_IPFS_FORM]` and still accepted unless
+`PROFILE_PICTURE_IPFS_URLS_STRICT=true` (unset by default), which rejects them.
+Wave `picture` URLs are checked against the same host; wave updates already
+checked the exact host before, so resent wave pictures are unaffected.
+
 ## Profile collecting and marketplace operations
 
 The API owns `/collect/*` and `/market/*`. Collecting derives versioned catalogs
@@ -723,6 +740,28 @@ Background Lambdas that read or write application state use a shared `doInDbCont
 
 MySQL is the integration contract between nearly all modules. API routes, scheduled pollers, queue workers, and derived-data loops all read and write shared tables. Redis is secondary and mostly disposable: API request cache, rate limiting, webhook dedupe, locks, and selected feature caches can fail open or be repopulated from MySQL.
 
+### API request budgets
+
+The rate-limiting middleware charges each request to per source address
+buckets keyed by the API Gateway source IP, with IPv6 addresses grouped by
+their /64 prefix (zone ids ignored, IPv4-mapped addresses keyed by their IPv4
+address, and any address that cannot be parsed sharing one `ipv6-unparsed`
+key). Anonymous requests use `ip:<address>` with the
+unauthenticated limits. A request with a valid access token uses its
+`wallet:<address>` bucket with the authenticated limits and also a
+per-address ceiling `ip-auth:<address>` (defaults 240 burst, 60 requests per
+second over 60 seconds; `API_RATE_LIMIT_AUTH_IP_BURST`,
+`API_RATE_LIMIT_AUTH_IP_SUSTAINED_RPS`,
+`API_RATE_LIMIT_AUTH_IP_SUSTAINED_WINDOW_SECONDS`). `GET /api/auth/nonce`,
+`GET /api/auth/session-nonce`, `POST /api/auth/login` and
+`POST /api/auth/session-login` also use a per-address sign-in budget
+(defaults 10 burst, 60 per minute; `API_RATE_LIMIT_SIGN_IN_*` with the same
+suffixes). Any rejecting bucket answers 429 with the existing body; headers
+come from the primary bucket unless another one rejects. Signed internal
+requests still skip rate limiting. A request admitted because a check could
+not run logs one `rate_limit_fail_open` warning per minute per container with
+the admitted count and emits the `6529/RateLimit FailOpen` metric.
+
 ### Session refresh recovery
 
 `POST /api/auth/session-refresh` uses a separate Redis rate-limit namespace.
@@ -779,7 +818,7 @@ this API support while new clients are deployed; roll back the frontend first.
 
 6. S3 and CloudFront serve media. All new drop/wave image multipart uploads use private ingest and the image worker, regardless of `DROP_MEDIA_SANITIZE_IMAGES`. The worker checks the container format against the declared MIME type before publication and rejects HEIC/HEIF with export guidance. The API captures the privacy choice in private multipart object metadata: false preserves original image bytes and true retains metadata stripping; missing policy preserves sanitization for older queued uploads. Published validation and privacy markers are separate. Single-PUT image preparation and legacy untracked public image multipart sessions cannot bypass the gate. Transport length failures remain operational. See [image-upload-format-validation.md](image-upload-format-validation.md) for scope, limits and compatibility. AVIF still-image drop uploads always convert through this worker, even when `DROP_MEDIA_SANITIZE_IMAGES=false`. The worker applies orientation, strips metadata, and publishes WebP at quality 95 for compatibility with older supported mobile viewers. Multipart completion/status responses return the published `mime_type`, and drop references validate that type. AVIF admission rejects sequences, invalid content, images over 64 million pixels, dimensions over 16,383 pixels, and file-type headers over 4 KiB before publication. These AVIF decoder and header bounds remain separate from the PNG and other codec preview policies below. Image processing uses a shared 256 MiB source ceiling; other media retains the existing 500 MB transport limit. Verify shared ingest storage, then deploy the sanitizer in each environment before enabling AVIF through the API and frontend. API deployment verifies the ingest bucket and sanitizer queue exist.
 
-   Other drop and wave image uploads can first land in a private ingest bucket, then `dropMediaSanitizer` strips metadata and publishes the sanitized full-size original to the public bucket before CloudFront/resizer paths serve it. Other specialized media paths include on-demand resizing, video conversion, and NextGen metadata placeholder interception. Drop-video multipart completion can accept a bounded device-generated JPEG, validate and strip its metadata, and store it before completing the original video. Conversion always keeps the existing HLS/MP4 renditions and adds bounded first-frame/one-second JPEGs only if a validated device poster is unavailable. Chat prefers the device image, then the later backend image, falling back to the first for legacy or short clips, and displays it before Play without fetching video bytes. The worker reads and expands the existing MediaConvert template without modifying it; its deployment includes template-scoped read and device-poster access policies. The API execution role also needs narrow device-poster write and pending-upload read access. Existing uploads need a separate authorized replay. See [chat video previews](chat-video-previews.md) for storage and rollout details.
+   Other drop and wave image uploads can first land in a private ingest bucket, then `dropMediaSanitizer` strips metadata and publishes the sanitized full-size original to the public bucket before CloudFront/resizer paths serve it. Other specialized media paths include on-demand resizing, video conversion, and NextGen metadata placeholder interception. Drop-video multipart completion can accept a bounded device-generated JPEG, validate and strip its metadata, and store it before completing the original video. Conversion always keeps the existing HLS/MP4 renditions and adds bounded first-frame/one-second JPEGs only if a validated device poster is unavailable. Chat prefers the device image, then the later backend image, falling back to the first for legacy or short clips, and displays it before Play without fetching video bytes. The worker reads and expands the existing MediaConvert template without modifying it; its deployment includes template-scoped read and device-poster access policies. Before a job it skips objects that are gone, superseded or over a configurable size (2 GiB default), and allows one job per object version and a configurable number of jobs per key per window, recorded in a per-key S3 ledger (`_video-conversion-ledger/` in the media bucket) written with conditional writes. The HEAD and the ledger rely on the shared execution role's existing access to that bucket; the function adds no inline grants for them. The API execution role also needs narrow device-poster write and pending-upload read access. Existing uploads need a separate authorized replay. See [chat video previews](chat-video-previews.md) for storage and rollout details.
    The on-demand media resizer spools each S3 source into its own temporary file before metadata inspection and conversion. A shared 256 MiB source limit rejects oversized inputs with HTTP 422. PNG uses measured 100 MP/8-bit and 64 MP/16-bit admission, a 100,000-pixel input-side limit, and disposable Sharp child processes. PNG output is capped at 4096 pixels per side, two million pixels and 10 MiB encoded; ordinary fit/orientation behavior is preserved and oversized results are fitted inside a bounded box. Each PNG child has a 256 MiB JS heap, a 30-second lifetime and a sampled 1 GiB combined parent/child RSS watchdog. These are guards with headroom under the 2 GiB Lambda allocation, not hard native allocation guarantees. Corrupt/over-limit input is permanent; timeout, allocation/worker, monitor and I/O failures remain operational. Source and output files live until upload completes and are removed after success or failure. Non-PNG codecs retain the conservative 512 MiB decoded-work estimate; animated GIF admission counts every frame. Baseline 8-bit JPEG admission accounts conservatively for the decoder shrink used by the requested resize; progressive JPEGs and other codecs retain the full-input estimate. When a GIF animation exceeds the budget, only its first frame is resized if that frame independently fits. Otherwise it remains HTTP 422. Originals are unchanged, and already-posted images can receive previews on demand without re-uploading. Resize, rotation and output contracts are preserved for ordinary accepted inputs. Multipart upload concurrency is one, and the temporary directory is removed after completion or failure. These admission limits reduce resource risk; they do not guarantee a maximum native allocation for every codec. The specific HEIF missing-compression-plugin error is returned as `422 UNSUPPORTED_CODEC`, regardless of the filename or MIME label. One operational report is claimed per original S3 key and source version (VersionId, or ETag for unversioned objects), across resize variants and Lambda instances, using an empty conditional-write marker under `_resize-rejections/v1/` in the existing source bucket. Later requests retain warning logs and the controlled response; replacing the source enables a new report. Marker failures remain operational errors. Detected HEIF/HEVC inputs now use an isolated, pinned WebAssembly HEVC decoder and explicit JPEG output, independent of the source suffix/MIME label. The child has separate source/pixel, JS heap, WASM memory and time budgets. Confirmed permanent HEVC decoder rejections use `_resize-rejections/v2/` markers keyed by source revision and decoder policy: later requests still spool/inspect the source but skip pixel decoding and return HTTP 422. Source or decoder-policy changes permit another attempt. S3/worker/timeout/allocation failures remain operational; the generic Sharp HEIF `(7.0)` error is not broadly suppressed. A source length mismatch remains operational before decoding or caching. See [media-resizer-unsupported-input.md](media-resizer-unsupported-input.md) for decoder, alert and recovery limits.
    Chat image stripping is lossless when it verifies (pixels and ICC profile unchanged, Orientation kept); decision-entry uploads are never stripped and keep the artist's file name, while chat and wave uploads get neutral `<upload id>.<ext>` public names. See [image-upload-format-validation.md](image-upload-format-validation.md).
 
@@ -806,8 +845,13 @@ Non-standard `trace_block` has a separate provider policy: Alchemy normally,
 or the existing mainnet 6529 trace endpoint with Alchemy fallback where selected.
 Selecting traces does not select the transaction/receipt provider. ENS no longer
 has a hidden 6529 endpoint fallback; its Universal Resolver fallback uses the
-configured ordinary provider and explicitly enables CCIP-Read for off-chain
-ENS records. Fallback errors retain their null result and emit only allowlisted
+configured ordinary provider. The shared provider (`getEthereumRpcProvider`)
+keeps CCIP-Read disabled, so request-path forward lookups and reverse lookups
+through it (identity search, ratings, drop nominations, primary-address
+changes, ENS discovery) resolve on-chain records only; off-chain names are
+filled in by ENS refresh, whose isolated provider performs CCIP-Read over the
+public-network transport. API forward lookups have a ten-second deadline.
+Fallback errors retain their null result and emit only allowlisted
 categories, separating resolver reverts from transport and off-chain failures
 without logging raw errors or revert arguments.
 
@@ -1213,6 +1257,8 @@ Artist artwork alerts use an independent `artist_artwork_alerts` preference keye
 
 `waveDecisionExecutionLoop` reads pending recipients in batches of at most 100 and continues through additional batches within a 20-second artwork budget. It checks the deadline before each batch and between recipients, within the dispatcher's overall budget. These are cooperative bounds, not cancellation of an in-flight database or group lookup. Completed effect receipts identify progress; partial delivery releases the existing outbox lease for another pass. Notification rows, effect receipts and push-outbox handoffs commit together. The existing push worker publishes the saved IDs, so resuming delivery does not repeat completed recipient work or lose a push after committing its notification. Terminal content decisions use the primary database. Public waves with public parents skip group eligibility work; private access resolves only the relevant groups before taking receipt/preference locks and rechecks visibility and global preferences in the effect transaction.
 
+Each `waveDecisionExecutionLoop` invocation delivers the competition outbox first (up to 60 seconds), then runs the decision pass, then delivers again with what is left (at most four minutes). Each delivery claims decision results (`COMPETITION_DECISION_COMPLETED`, `COMPETITION_OUTCOME_CREATED`, `COMPETITION_ENTRY_STATUS_CHANGED`) first, then alternates batches with the other events, oldest first; while other events are waiting, decision results get at most every other batch and half of the delivery's time, so both make progress every invocation. The decision pass starts after the competition the previous pass last started, kept in the `competition_worker_cursors` table (`CompetitionWorkerCursorEntity`, created by `dbMigrationsLoop`; an in-memory cursor is used while it is missing), and wraps around. It starts no competition after 5 minutes or with less than 5 minutes of the invocation left, and moves on from a competition still running after 2 minutes; that run is never cut short and the pass waits for it before returning, with at most two such runs at once (`WAVE_DECISION_LOOP_DISPATCH_FIRST_MS`, `WAVE_DECISION_LOOP_DECISIONS_BUDGET_MS`, `WAVE_DECISION_LOOP_COMPETITION_DEADLINE_MS`). A bounded pass logs `native_competition_decision_pass_bounded` and reports the native execution health as pending. Scoring and decisions are unchanged; each competition still replays its full vote history, and incremental scoring is future work.
+
 Profile consolidation remaps both preference IDs, preserves the earliest opt-in when pairs collide, removes self-pairs, and transfers completed recipient receipts for unfinished events. Current wave/parent access, mutes, blocks, moderation and profile preferences apply, and both reads and push delivery suppress hidden attribution or withdrawn entries. The existing push queue, device settings and registration capability gates are reused. Deploy the preference schema, compatible push/competition consumers and profile-consolidation consumer before the API producer, then the frontend contract.
 
 Notification invalidation is emitted only after the push worker loads durable notification rows. It intentionally remains independent from mobile push registration, mute settings, and delivery success because those controls affect Firebase delivery only; the durable row remains visible through the authenticated REST feed. Duplicate SQS deliveries may repeat this idempotent invalidation without duplicating notification data.
@@ -1224,6 +1270,10 @@ If authentication or notification identity sync finds that the stored connection
 A socket may declare its purpose once on `$connect` with `purpose=typing`, stored in nullable `ws_connections.purpose`. `WSConnectionEntity` is registered in `src/entities/entities.ts`, so the full `dbMigrationsLoop` schema sync adds the column; every connection query reads it, so `dbMigrationsLoop` must deploy before `api`. Typing-purpose sockets receive only `USER_IS_TYPING` for their subscribed wave; drop, deletion, rating, reaction, competition, attachment, notification and NFT-link broadcasts from the API leave them out, so each tab gets each of those frames once through its app socket. Sockets without a purpose keep the legacy audience rules.
 
 Typing updates use the server-authenticated connection profile when resolving private visibility groups. The sender must appear in the current child/parent membership intersection for the active wave before a typing message is sent; recipients retain the same intersection. Successful typing is acknowledged with 200, expected access failures keep client-error status, and unexpected failures emit only bounded operation-stage and error labels.
+
+Inbound `$default` frames other than PING spend a per-connection token bucket before any database read: 30 frames burst refilled at 5 per second (`WS_FRAME_BUDGET_BURST`, `WS_FRAME_BUDGET_PER_SECOND`), and USER_IS_TYPING also spends a typing bucket of 5 refilled at 0.5 per second (`WS_TYPING_FRAME_BUDGET_BURST`, `WS_TYPING_FRAME_BUDGET_PER_SECOND`). Both buckets live in Redis under one hash tag per connection; while Redis is unavailable each container keeps a bounded in-memory copy. An over-budget frame gets a 429 route response and no further work. A typing notification for an identity and wave covers further typing frames from that identity on that wave for `WS_TYPING_COALESCE_MS` (default 3000, below the web client's four second send interval and five second display window); covered frames are acknowledged with 200 without a fan-out. Typing fan-out uses the shared `WS_FANOUT_CONCURRENCY` send pool. Frame logs carry the frame type and byte size, never the body.
+
+Public-wave frames reach an anonymous socket only for the wave it subscribed to (`SUBSCRIBE_TO_WAVE`) or declared open (`SET_OPEN_WAVE`), with or without `WS_AUDIENCE_FOLLOWERS`. The web client disconnects its app socket without a token, and its signed-out wave view uses a socket subscribed to that wave, so signed-out live viewing is unchanged. Signed-in audiences are unchanged.
 
 Outbound WebSocket delivery uses one policy in `src/ws-delivery/`, shared by the API, background senders and the worker-specific NFT-link notifier. Final 429s retain a hashed connection identifier and bounded SDK metadata in warnings and low-cardinality EMF metrics; they do not emit per-send operational errors. Shared Redis cooldowns use exponential backoff with jitter and a short endpoint pause for broad throttling. Normal healthy sends remain concurrent. Atomic leases apply only to recovery probes. Each connection has one content-free pending refresh marker; user content and credentials are never queued. A revision prevents an in-flight recovery from acknowledging newer missed updates.
 
@@ -1321,8 +1371,18 @@ A consolidated-TDH run (`persistConsolidatedTDH`, from `delegationsLoop` and
   arms its "TDH calculations done" announcement. A partial write
   (`delegationsLoop`) also records, in `identity_tdh_sync_scope`, the
   consolidation keys it replaced and those whose boosted TDH or rate it
-  changed (it rewrites every row with new ranks; unchanged values are not
-  recorded).
+  changed (unchanged values are not recorded). A partial write computes every
+  group's row again (other groups are re-ranked) but sends only the rows that
+  change: computed rows are compared, column by column as MySQL stores them,
+  with the stored ones (read `for share`, so a concurrent writer waits for it
+  to commit, and kept only as SHA-256 digests); new and changed rows are
+  written, and the affected groups' stored rows that changed or are gone are
+  deleted first, so the tables end as deleting the affected groups and
+  writing every row did. A recomputed group's row carries its computation
+  time (`date`), so one that is otherwise unchanged gets only that column;
+  `boosted_tdh_rate` is not compared, since the same transaction sets it
+  again for every row. The same applies to the wallet-level TDH tables it
+  writes first (`updateTDH`).
 - B: identities for new consolidations and profile merges, with the merged
   profiles' wave subscriber counts recounted (not every wave's), and the
   primary wallets of only the profiles it touched (the identities it wrote and
@@ -1366,10 +1426,16 @@ TDH consumers run after the identities are synced, as before; xTDH's
 `level_raw` update and C's chunks both compute from the row's current values,
 so an xTDH run that lands between invocations stays consistent. Any
 transaction writing both `ratings` and `identities` takes the `ratings` locks
-first. The TDH tables and identities are no longer updated atomically: until C
+first. A rating write that checks its rater's credit (single and bulk REP,
+CIC and wave REP ratings) and the over-rate revocation first take that
+rater's `rating_credit_locks` row for the matter, which nothing else locks:
+one rater's credit checks run one at a time without changing that order.
+Profile merges also move the ratings, xTDH grants and other profile-id-keyed
+data of merged identities without a handle (a profiles row). The TDH tables
+and identities are no longer updated atomically: until C
 reaches a row, readers combining them see the previous run's identities, and
 a vote is checked against the pre-run credit, as just before any run. Deploy
-`dbMigrationsLoop` first (the marker and scope tables and their columns),
+`dbMigrationsLoop` first (the marker, scope and rating credit lock tables),
 then `api` (rating writers stamp `last_modified` with the database clock),
 `delegationsLoop`, `tdhLoop` and `overRatesRevocationLoop`. Profiles are
 created with their identity's primary address as `primary_wallet`.
@@ -1599,15 +1665,17 @@ Important API responsibilities:
   signing/storage authority.
 - Public decentralized media resolution under `/media/resolve`, which maps
   native `ipfs://`, `ipns://`, and `ar://` references plus recognized gateway
-  URLs to canonical native URIs, `media.6529.io` resolver URLs, and explicit
-  external fallback URLs. This v1 API does not proxy media bytes.
+  URLs to canonical native URIs, resolver URLs on the path gateway selected by
+  `MEDIA_RESOLVER_ENDPOINT` (default `media.6529.io`; URLs on
+  `media.6529usercontent.com` and its per-CID hosts are accepted as input),
+  and explicit external fallback URLs. This v1 API does not proxy media bytes.
 - Authenticated direct-message unread summary under `/dm-drops/unread`,
   retaining the lightweight `{ count }` contract for legacy clients, plus the
   authoritative per-conversation state under `/dm-drops/unread/snapshot` for
   clients that synchronize unread state through WebSockets.
 - Authenticated social writes: drops, votes, reactions, curations, subscriptions, groups, proxies, profile CMS package drafts/publish actions, minting claims, and push settings.
 - `@help6529` trigger detection after drop creation. The API writes a durable `help_bot_interactions` row, reacts with the bot's seen marker, and enqueues the reply worker when the `help6529` profile exists.
-- Upload preparation and multipart completion for drop media, wave media, distribution photos, and attachments. All new drop/wave image multipart uploads complete into private ingest storage for mandatory format validation; metadata stripping remains a separately captured upload policy. They return `media_status=processing` and publish a `DROP_UPDATE` websocket event with reason `MEDIA_STATUS` after the sanitizer marks the media ready or failed. Participatory drops in the configured Main Stage wave accept managed-CDN GLB media and verify each stored S3 object's authoritative size is no more than 250 MB (250,000,000 bytes) before attachment.
+- Upload preparation and multipart completion for drop media, wave media, distribution photos, and attachments. All new drop/wave image multipart uploads complete into private ingest storage for mandatory format validation; metadata stripping remains a separately captured upload policy. They return `media_status=processing` and publish a `DROP_UPDATE` websocket event with reason `MEDIA_STATUS` after the sanitizer marks the media ready or failed. Each such upload sends one sanitizer message: repeated completion calls send none once it was sent (a failed send is retried by the next call). If the upload is still processing five minutes after a claim (the claimant stopped before sending, or the message was lost), a later completion call sends it again, at most once per five minutes. Media that multipart completion publishes directly (video, audio, models, distribution photos) is checked with a HEAD of the completed object against the documented 500 MiB transport limit; larger objects are removed (best effort), their upload record fails and the call answers 413 `MEDIA_TOO_LARGE`. Preparing a drop/wave media upload or an attachment counts against a per-profile rolling 24-hour upload budget (`media_upload_budget_entries`, modelled on the E2EE blob quota: one row per prepared upload, reservations serialized by the profile row lock). Preparation answers 429 `MEDIA_UPLOAD_BUDGET_EXCEEDED` (with `retry_after_seconds`) at `MEDIA_UPLOAD_BUDGET_UPLOADS_PER_DAY` uploads (default 500) or when the upload could exceed `MEDIA_UPLOAD_BUDGET_BYTES_PER_DAY` (default 20 GiB); a profile id without a profiles row is refused. Clients do not declare sizes, so an upload counts the largest size allowed for its kind (256 MiB images, 500 MiB other media, 25 MiB PDF and 50 MiB CSV attachments) until its size is known. Multipart completion records the size (an oversized or failed upload is settled, not released); otherwise the entry stays pending with its object key, and a later preparation by the same profile reads a few pending sizes from S3: a size settles the entry, a missing object settles it at 0 only two hours after preparation (when its upload URLs have expired), and an inconclusive read (403, throttling, network) leaves it pending to be read again after ten minutes. A reservation whose preparation fails is released. Distribution photos are not counted. Participatory drops in the configured Main Stage wave accept managed-CDN GLB media and verify each stored S3 object's authoritative size is no more than 250 MB (250,000,000 bytes) before attachment.
 - WebSocket connection registration and real-time wave-related messages.
 - Operational endpoints such as health, docs, RPC/proxy routes, webhooks, and deploy-related routes.
 
@@ -2960,6 +3028,25 @@ Attempt five and later, missing/invalid retry metadata, and all other failures
 remain reportable. Conflict Sentry events include the receive count and retry
 limit; the existing dead-letter alarm remains the exhaustion backstop.
 
+### xTDH grant bounds
+
+An all-tokens grant pays each owned token id `rate / divisor` per day. The
+divisor is the larger of the contract's recorded `total_supply` and the number
+of distinct token ids with ownership history before the cutoff, so a grant's
+tokens never receive more than its rate per day in total, including when more
+ids are owned than the supply recorded at snapshot time. With no more observed
+ids than the recorded supply, results are unchanged; a grant without a recorded
+supply still pays nothing. This applies to identity xTDH, rates and the grant
+and token stats alike; `xTdhLoop` computes it.
+
+Grant creation (`POST /xtdh/grants`) checks the token list as strings before
+any range is expanded: at most `XTDH_GRANT_MAX_TOKENS` tokens (default 10,000,
+the web token picker's own limit) and `XTDH_GRANT_MAX_RANGE_WIDTH` per range
+(default 10,000), with range ends no larger than the largest safe integer;
+larger requests get 400. An identity may have at most `XTDH_MAX_PENDING_GRANTS`
+grants waiting for review (default 50); the next one gets 409
+`PENDING_GRANT_LIMIT`.
+
 ### Transfer reconciliation after late indexing
 
 Independent contract indexers atomically queue per-wallet `owners` and `activity`
@@ -3137,3 +3224,74 @@ drain old invocations for 900 seconds after the worker update and 30 seconds aft
 the API update, then synchronize that scope and deploy the frontend. The column's
 stored values are intentionally discarded; rolling back older writers requires
 recreating the nullable column first.
+
+### All wave browsing
+
+`GET /v2/waves/all` captures accessible non-DM root wave IDs in a shared Redis
+snapshot, scoped to the read-context profile or guest, for 15 minutes. It includes
+pinned waves and roots without metrics. Continuation reads preserve that ID order
+and recheck visibility; activity cannot move IDs between pages. Subwaves remain
+accessible through their parents. The API returns 410 for expired snapshots and
+503 when shared storage is unavailable rather than silently truncating the list.
+Deploy the `api` service before the frontend that consumes this additive endpoint.
+
+## IPFS infrastructure management
+
+`ops/ipfs/` defines isolated persistent S3 storage, replaceable EC2 candidates,
+the pinned Kubo binary with its bundled S3 datastore, nginx/systemd/TLS setup,
+and logical pin/MFS/identity backup and restoration. Checked-in CloudFormation
+YAML files under `ops/ipfs/cloudformation/` own access, storage, compute and edge
+definitions. The controller reads and submits those files directly; there is no
+Python template generator. Its pinned PyYAML reader runs only on the controller,
+not the EC2 runtime. S3 request logs and CloudFront access logs use separate private
+log buckets; only the CloudFront log bucket enables ACLs for the logging API.
+`ipfs-ci.yml` rehearses the real binary with disposable
+loopback S3 and HTTPS fixtures. The explicit-dispatch
+`ipfs-manage.yml` workflow validates the reviewed source, environment, account,
+and candidate identity before assuming deployment authority or sending SSM work.
+IPFS has one shared deployment target, `prod`, with dispatch restricted to `main`
+and the `ipfs-prod` GitHub environment. It has no separate staging deployment.
+Local/CI fixtures create no AWS environment; future production rollouts validate
+an unpublished replacement candidate before traffic handover.
+
+The application's IPFS API contract and serving configuration remain unchanged.
+Runtime deployment remains disabled by checked-in policy. A separate
+`ipfs-adopt.yml` workflow and import-only `adoption.yaml` baseline cover the existing
+production bucket, instance, its exclusively used security group and the entire
+shared CDN. `adoption.py` requires exact IDs,
+full native-model and CloudFront API configuration fingerprints, matching declared
+properties and an IMPORT-only
+change set bound to one source SHA/baseline. Preparation and execution are separate
+dispatches; retries reconcile the same change-set ARN. Successful adoption requires
+exact ownership, original template equality and per-resource drift checks, then
+retains an import-only service role, termination protection and a deny-all resource
+update stack policy. `adoption-access.yaml` defines dedicated roles limited to
+configuration reads and ownership tags, without SSM command, content-object write
+or DNS-change permissions. CloudFormation's post-import tagging invokes the
+CloudFront UPDATE handler even for unchanged configuration. A deadline-bound
+service-role permission for only the existing shared distribution accommodates
+that provider call; it defaults to expired and is closed immediately after import.
+The GitHub controller remains explicitly denied, and the entire API configuration
+must match the reviewed fingerprint before and after import.
+The separate adoption switch is enabled only for the authorized ownership import
+and reset after verification; adoption additionally requires runtime deployment to
+remain locked. Network/IAM dependencies, canonical DNS,
+edge policy/function implementations and host files are referenced, not imported.
+
+Stage 1 ownership import completed on November 11, 2026. The four existing resources
+are owned by `seize-ipfs-prod-adopted`, verified `IN_SYNC`, retained and protected
+against deletion and resource updates. The temporary CloudFront provider window
+is closed, both checked-in mutation switches are disabled, and serving
+configuration remains unchanged. The [adoption record](../ops/ipfs/adoption-record.json)
+contains the reviewed source, exact change set and verification runs. Runtime
+deployment and traffic handover still require the separate migration below.
+
+The live CloudFront distribution is
+shared with Arweave and S3 media and is not replaced by the new dedicated gateway
+template. Published candidates are sealed before DNS publication; active-daemon
+updates and restoration over a serving node are rejected. Adoption does not
+permit that candidate path to target the live bucket or canonical hostnames.
+Runtime/writer traffic handover remains a separate reviewed migration requiring
+replacement validation, a stable front door, request draining and reconciliation
+of all completed writes. See the [IPFS runbook](../ops/ipfs/README.md) for exact
+ownership boundaries, recovery limitations, deployment order and adoption steps.

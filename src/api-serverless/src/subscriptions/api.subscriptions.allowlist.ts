@@ -277,7 +277,13 @@ export async function splitAllowlistResults(
 
   const [subscriptions, walletMintingDelegations] = await Promise.all([
     fetchAllNftFinalSubscriptionsForContractAndToken(contract, tokenId, ctx),
-    fetchProcessedDelegations(MEMES_CONTRACT, USE_CASE_MINTING, undefined, ctx)
+    fetchProcessedDelegations(
+      MEMES_CONTRACT,
+      USE_CASE_MINTING,
+      undefined,
+      equalIgnoreCase(contract, MEMES_CONTRACT) ? tokenId : null,
+      ctx
+    )
   ]);
 
   const filteredSubscriptions = filterSubscriptions(wallets, subscriptions);

@@ -2,6 +2,7 @@
 import { Request } from 'express';
 import { ApiResponse } from '@/api/api-response';
 import { ApiActiveWaveVotesPage } from '@/api/generated/models/ApiActiveWaveVotesPage';
+import { ApiAllWavesPage } from '@/api/generated/models/ApiAllWavesPage';
 import { ApiArchiveProfileCmsPackageRequest } from '@/api/generated/models/ApiArchiveProfileCmsPackageRequest';
 import { ApiArtistArtworkAlert } from '@/api/generated/models/ApiArtistArtworkAlert';
 import { ApiArtworkDocumentationAssetLinkRequest } from '@/api/generated/models/ApiArtworkDocumentationAssetLinkRequest';
@@ -134,6 +135,7 @@ import { ApiDropPollVotersPage } from '@/api/generated/models/ApiDropPollVotersP
 import { ApiDropReactionV2 } from '@/api/generated/models/ApiDropReactionV2';
 import { ApiDropSearchPage } from '@/api/generated/models/ApiDropSearchPage';
 import { ApiDropSignedEvents } from '@/api/generated/models/ApiDropSignedEvents';
+import { ApiDropSignedEventsBatch } from '@/api/generated/models/ApiDropSignedEventsBatch';
 import { ApiDropsLeaderboardPageV2 } from '@/api/generated/models/ApiDropsLeaderboardPageV2';
 import { ApiDropV2 } from '@/api/generated/models/ApiDropV2';
 import { ApiDropV2Page } from '@/api/generated/models/ApiDropV2Page';
@@ -1900,6 +1902,22 @@ export type SetDropReplyCollapseRequest = Request<
   ApiResponse<SetDropReplyCollapseResponse>,
   ApiSetDropReplyCollapseRequest,
   SetDropReplyCollapseQuery,
+  Record<string, never>
+>;
+
+export type GetDropsSignedEventsPathParams = Record<string, never>;
+
+export interface GetDropsSignedEventsQuery {
+  "drop_ids": string;
+}
+
+export type GetDropsSignedEventsResponse = ApiDropSignedEventsBatch;
+
+export type GetDropsSignedEventsRequest = Request<
+  GetDropsSignedEventsPathParams,
+  ApiResponse<GetDropsSignedEventsResponse>,
+  never,
+  GetDropsSignedEventsQuery,
   Record<string, never>
 >;
 
@@ -4236,6 +4254,23 @@ export type GetActiveWaveVotesRequest = Request<
   ApiResponse<GetActiveWaveVotesResponse>,
   never,
   GetActiveWaveVotesQuery,
+  Record<string, never>
+>;
+
+export type GetAllWavesPathParams = Record<string, never>;
+
+export interface GetAllWavesQuery {
+  "page_size"?: number;
+  "cursor"?: string;
+}
+
+export type GetAllWavesResponse = ApiAllWavesPage;
+
+export type GetAllWavesRequest = Request<
+  GetAllWavesPathParams,
+  ApiResponse<GetAllWavesResponse>,
+  never,
+  GetAllWavesQuery,
   Record<string, never>
 >;
 

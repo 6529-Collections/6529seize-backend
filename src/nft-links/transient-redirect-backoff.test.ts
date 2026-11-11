@@ -15,6 +15,7 @@ import {
   requiredNftPage404,
   RequiredNftPageNotFoundError
 } from '@/nft-links/nft-link-page-retry';
+import { routePublicNetworkToFixtures } from '@/tests/fixtures/public-network-fixture';
 
 jest.mock('node-fetch', () => ({
   ...jest.requireActual('node-fetch'),
@@ -49,6 +50,9 @@ const wwwPage = 'https://www.transient.xyz/mint/synthetic-fixture';
 const canonical = validateLinkUrl(page);
 const response = (status: number, url: string, body = '') =>
   new Response(body, { status, url });
+// Redirects are followed by the transport itself, one validated hop at a time.
+const redirect = (from: string, to: string) =>
+  new Response('', { status: 301, url: from, headers: { location: to } });
 
 describe('Transient required-page redirect identity', () => {
   it.each([
@@ -149,6 +153,11 @@ describe('Transient required-page redirect identity', () => {
 });
 
 describe('Transient alias through HTTP, adapter, resolver and worker retry paths', () => {
+  let restoreNetwork: () => void;
+  beforeAll(() => {
+    restoreNetwork = routePublicNetworkToFixtures();
+  });
+  afterAll(() => restoreNetwork());
   beforeEach(() => {
     jest.useFakeTimers();
     jest.mocked(fetch).mockReset();
@@ -175,18 +184,19 @@ describe('Transient alias through HTTP, adapter, resolver and worker retry paths
         .mockRejectedValue(new Error('synthetic unavailable listing'))
     } as unknown as Contract);
     jest.mocked(getAdapterFor).mockReturnValue(new TransientAdapter());
+    const wwwTokenPage = tokenPage.replace('https://', 'https://www.');
     jest
       .mocked(fetch)
-      .mockResolvedValue(
-        response(404, tokenPage.replace('https://', 'https://www.'))
-      );
+      .mockResolvedValueOnce(redirect(tokenPage, wwwTokenPage))
+      .mockResolvedValueOnce(response(404, wwwTokenPage));
     await expect(
       new NftLinkResolver().resolve(tokenPage, {})
     ).rejects.toBeInstanceOf(RequiredNftPageNotFoundError);
-    expect(fetch).toHaveBeenCalledTimes(1);
-    expect(fetch).toHaveBeenCalledWith(
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(fetch).toHaveBeenNthCalledWith(
+      1,
       tokenPage,
-      expect.objectContaining({ method: 'GET' })
+      expect.objectContaining({ method: 'GET', redirect: 'manual' })
     );
   });
 
@@ -201,13 +211,17 @@ describe('Transient alias through HTTP, adapter, resolver and worker retry paths
         }
       })
     });
-    jest.mocked(fetch).mockResolvedValueOnce(response(404, wwwPage));
+    jest
+      .mocked(fetch)
+      .mockResolvedValueOnce(redirect(page, wwwPage))
+      .mockResolvedValueOnce(response(404, wwwPage));
     await expect(
       new NftLinkResolver().resolve(page, {})
     ).rejects.toBeInstanceOf(HttpError);
     jest.mocked(getAdapterFor).mockReturnValue(null);
     jest
       .mocked(fetch)
+      .mockResolvedValueOnce(redirect(page, wwwPage))
       .mockResolvedValueOnce(
         response(
           200,
@@ -257,11 +271,16 @@ describe('Transient alias through HTTP, adapter, resolver and worker retry paths
         notify,
         {} as SQS
       );
-      jest.mocked(fetch).mockImplementation(async () => response(404, final));
+      jest
+        .mocked(fetch)
+        .mockImplementation(async (url) =>
+          String(url) === page ? redirect(page, final) : response(404, final)
+        );
       const operation = service.attemptResolve(page, {});
       await jest.advanceTimersByTimeAsync(40_000);
       await operation;
-      expect(fetch).toHaveBeenCalledTimes(attempts);
+      // Each attempt is the redirect hop plus the final page request.
+      expect(fetch).toHaveBeenCalledTimes(attempts * 2);
       expect(db.updateWithFailure).toHaveBeenCalledTimes(1);
       const failure = db.updateWithFailure.mock.calls[0][0];
       expect(failure).toMatchObject({

@@ -1,0 +1,262 @@
+# IPFS compute stack. Edit this CloudFormation template directly.
+AWSTemplateFormatVersion: '2010-09-09'
+Description: '6529 IPFS: isolated persistent storage or replaceable candidate infrastructure'
+Parameters:
+  Environment:
+    Type: String
+    AllowedValues:
+      - prod
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+  SubnetId:
+    Type: AWS::EC2::Subnet::Id
+  ImageId:
+    Type: AWS::EC2::Image::Id
+    Description: Pinned Ubuntu 24.04 amd64 AMI with SSM Agent
+  InstanceType:
+    Type: String
+    Default: t3.large
+    AllowedValues:
+      - t3.large
+      - t3.xlarge
+      - m7i.large
+  BlocksBucket:
+    Type: String
+    AllowedPattern: '[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]'
+  BackupsBucket:
+    Type: String
+    AllowedPattern: '[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]'
+  ArtifactsBucket:
+    Type: String
+    AllowedPattern: '[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]'
+  IngressCidr:
+    Type: String
+    Description: IPv4 ingress CIDR for the isolated gateway; no SSH or RPC ingress
+    AllowedPattern: '[0-9./]+'
+  OriginHost:
+    Type: String
+    AllowedPattern: '[a-z0-9.-]+'
+  ApiHost:
+    Type: String
+    AllowedPattern: '[a-z0-9.-]+'
+  HostedZoneId:
+    Type: String
+  RuntimeBoundaryArn:
+    Type: String
+    Description: RuntimeBoundaryArn output from the one-time access stack
+  AlarmTopicArn:
+    Type: String
+    Default: ''
+    Description: Optional existing SNS topic whose policy permits CloudWatch alarm delivery
+Resources:
+  Role:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName:
+        Fn::Sub: ${AWS::StackName}-runtime
+      PermissionsBoundary:
+        Ref: RuntimeBoundaryArn
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - Fn::Sub: arn:${AWS::Partition}:iam::aws:policy/AmazonSSMManagedInstanceCore
+      Policies:
+        - PolicyName: ipfs-data
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:ListBucket
+                Resource:
+                  Fn::Sub: arn:${AWS::Partition}:s3:::${BlocksBucket}
+                Condition:
+                  StringLike:
+                    s3:prefix:
+                      - ipfs
+                      - ipfs/*
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                Resource:
+                  Fn::Sub: arn:${AWS::Partition}:s3:::${BlocksBucket}/ipfs/*
+              - Effect: Deny
+                Action:
+                  - s3:DeleteObject
+                  - s3:DeleteObjectVersion
+                Resource:
+                  Fn::Sub: arn:${AWS::Partition}:s3:::${BlocksBucket}/*
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:GetObjectVersion
+                  - s3:PutObject
+                Resource:
+                  Fn::Sub: arn:${AWS::Partition}:s3:::${BackupsBucket}/${Environment}/*
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:GetObjectVersion
+                Resource:
+                  Fn::Sub: arn:${AWS::Partition}:s3:::${ArtifactsBucket}/${Environment}/*
+              - Effect: Allow
+                Action:
+                  - route53:ListHostedZones
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - route53:GetChange
+                Resource:
+                  Fn::Sub: arn:${AWS::Partition}:route53:::change/*
+              - Effect: Allow
+                Action:
+                  - route53:ChangeResourceRecordSets
+                Resource:
+                  Fn::Sub: arn:${AWS::Partition}:route53:::hostedzone/${HostedZoneId}
+                Condition:
+                  ForAllValues:StringEquals:
+                    route53:ChangeResourceRecordSetsRecordTypes:
+                      - TXT
+                    route53:ChangeResourceRecordSetsNormalizedRecordNames:
+                      - Fn::Sub: _acme-challenge.${OriginHost}
+                      - Fn::Sub: _acme-challenge.${ApiHost}
+  Profile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      InstanceProfileName:
+        Fn::Sub: ${AWS::StackName}-runtime
+      Roles:
+        - Ref: Role
+  SecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: IPFS candidate HTTPS only; management uses SSM
+      VpcId:
+        Ref: VpcId
+      Tags:
+        - Key: Environment
+          Value:
+            Ref: Environment
+        - Key: Service
+          Value: 6529-ipfs
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp:
+            Ref: IngressCidr
+  Instance:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId:
+        Ref: ImageId
+      InstanceType:
+        Ref: InstanceType
+      NetworkInterfaces:
+        - DeviceIndex: '0'
+          AssociatePublicIpAddress: false
+          SubnetId:
+            Ref: SubnetId
+          GroupSet:
+            - Ref: SecurityGroup
+      IamInstanceProfile:
+        Ref: Profile
+      MetadataOptions:
+        HttpTokens: required
+        HttpPutResponseHopLimit: 1
+      DisableApiTermination: true
+      BlockDeviceMappings:
+        - DeviceName: /dev/sda1
+          Ebs:
+            VolumeSize: 30
+            VolumeType: gp3
+            Encrypted: true
+            DeleteOnTermination: false
+      Tags:
+        - Key: Name
+          Value:
+            Fn::Sub: 6529-ipfs-${Environment}-candidate
+        - Key: Service
+          Value: 6529-ipfs
+        - Key: Environment
+          Value:
+            Ref: Environment
+        - Key: IpfsRole
+          Value: candidate
+      UserData:
+        Fn::Base64:
+          Fn::Sub: |
+            #!/bin/bash
+            set -euo pipefail
+            export DEBIAN_FRONTEND=noninteractive
+            sed -i 's|http://|https://|g' /etc/apt/sources.list.d/ubuntu.sources
+            apt-get -o Acquire::Retries=3 update
+            apt-get -o Acquire::Retries=3 install -y --no-install-recommends python3 curl ca-certificates awscli
+            install -d -m 700 /etc/6529-ipfs
+            printf '%s\n' '{"environment":"${Environment}","role":"candidate"}' > /etc/6529-ipfs/managed.json
+            chmod 600 /etc/6529-ipfs/managed.json
+            # AMI must provide SSM Agent. No IPFS process or public listener starts at boot.
+            systemctl enable --now snap.amazon-ssm-agent.amazon-ssm-agent.service
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+  Address:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+      Tags:
+        - Key: Environment
+          Value:
+            Ref: Environment
+        - Key: Service
+          Value: 6529-ipfs
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+  AddressAssociation:
+    Type: AWS::EC2::EIPAssociation
+    Properties:
+      AllocationId:
+        Fn::GetAtt:
+          - Address
+          - AllocationId
+      InstanceId:
+        Ref: Instance
+  StatusAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: IPFS EC2 failed status check; connect AlarmActions to the monitoring account during rollout
+      Namespace: AWS/EC2
+      MetricName: StatusCheckFailed
+      Statistic: Maximum
+      Period: 60
+      EvaluationPeriods: 2
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: breaching
+      Dimensions:
+        - Name: InstanceId
+          Value:
+            Ref: Instance
+      AlarmActions:
+        Fn::If:
+          - HasAlarmTopic
+          - - Ref: AlarmTopicArn
+          - Ref: AWS::NoValue
+Outputs:
+  InstanceId:
+    Value:
+      Ref: Instance
+  PublicIp:
+    Value:
+      Ref: Address
+Conditions:
+  HasAlarmTopic:
+    Fn::Not:
+      - Fn::Equals:
+          - Ref: AlarmTopicArn
+          - ''

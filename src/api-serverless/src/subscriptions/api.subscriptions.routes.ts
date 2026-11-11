@@ -32,6 +32,11 @@ import { cacheRequest } from '@/api/request-cache';
 import { getValidatedByJoiOrThrow } from '@/api/validation';
 import { requireSubscriptionsAdmin } from '@/api/subscriptions/require-subscriptions-admin';
 import {
+  resolveUpcomingCardCount,
+  subscriptionCountRequestSchema,
+  subscriptionToggleRequestSchema
+} from '@/api/subscriptions/subscription-request-validation';
+import {
   authenticateSubscriptionsAdmin,
   resetAllowlist,
   validateDistribution
@@ -321,7 +326,7 @@ router.get(
     res: Response<NFTSubscription[] | string>
   ) {
     const consolidationKey = req.params.consolidation_key.toLowerCase();
-    const cardCount = numbers.parseIntOrNull(req.query.card_count) ?? 3;
+    const cardCount = resolveUpcomingCardCount(req.query.card_count);
 
     const result = await fetchUpcomingMemeSubscriptions(
       consolidationKey,
@@ -374,7 +379,7 @@ router.get(
     >,
     res: Response<SubscriptionCounts[]>
   ) {
-    const cardCount = numbers.parseIntOrNull(req.query.card_count) ?? 3;
+    const cardCount = resolveUpcomingCardCount(req.query.card_count);
     const result = await fetchUpcomingMemeSubscriptionCounts(cardCount);
     return res.json(result);
   }
@@ -506,11 +511,7 @@ router.post(
     }
     const requestPayload = getValidatedByJoiOrThrow(
       req.body,
-      Joi.object({
-        contract: Joi.string().required(),
-        token_id: Joi.number().required(),
-        subscribed: Joi.boolean().required()
-      })
+      subscriptionToggleRequestSchema
     );
     const nft = await getNft(requestPayload.contract, requestPayload.token_id);
     if (nft) {
@@ -558,11 +559,7 @@ router.post(
     }
     const requestPayload = getValidatedByJoiOrThrow(
       req.body,
-      Joi.object({
-        contract: Joi.string().required(),
-        token_id: Joi.number().required(),
-        count: Joi.number().required()
-      })
+      subscriptionCountRequestSchema
     );
     const nft = await getNft(requestPayload.contract, requestPayload.token_id);
     if (nft) {

@@ -48,6 +48,10 @@ import {
 } from '@/api/subscriptions/subscription-cutoff';
 import { markSubscriptionCoverageDirty } from '@/subscription-coverage/subscription-coverage-dirty';
 import { synchronizeAutomaticSubscriptionQuantities } from '@/subscriptionsDaily/subscription-quantity-sync.db';
+import {
+  hasMinimumBalanceForAutomaticMode,
+  InsufficientSubscriptionBalanceException
+} from '@/api/subscriptions/insufficient-subscription-balance.exception';
 
 const SUBSCRIPTIONS_START_ID = 220;
 
@@ -148,10 +152,8 @@ export async function updateSubscriptionMode(
       connection
     );
 
-    if (!balance || balance.balance < MEMES_MINT_PRICE) {
-      throw new BadRequestException(
-        `Not enough balance to set Subscription to Automatic. Need at least ${MEMES_MINT_PRICE} ETH.`
-      );
+    if (!hasMinimumBalanceForAutomaticMode(balance?.balance)) {
+      throw new InsufficientSubscriptionBalanceException();
     }
   }
 

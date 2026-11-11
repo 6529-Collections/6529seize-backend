@@ -47,10 +47,6 @@ router.post(
       );
     }
 
-    if (grantorProfileId.toLowerCase() === newProxy.target_id.toLowerCase()) {
-      throw new BadRequestException('You cannot create a proxy to yourself');
-    }
-
     const profileProxy = await profileProxyApiService.createProfileProxy({
       params: newProxy,
       grantorProfileId
@@ -246,7 +242,7 @@ const NewProfileProxyAllocateRepActionSchema =
       .valid(ApiProfileProxyActionType.AllocateRep)
       .required(),
     end_time: Joi.number().optional().allow(null),
-    credit_amount: Joi.number().min(1).required()
+    credit_amount: Joi.number().integer().min(1).required()
   });
 
 const NewProfileProxyAllocateCicActionSchema =
@@ -255,7 +251,7 @@ const NewProfileProxyAllocateCicActionSchema =
       .valid(ApiProfileProxyActionType.AllocateCic)
       .required(),
     end_time: Joi.number().optional().allow(null),
-    credit_amount: Joi.number().min(1).required()
+    credit_amount: Joi.number().integer().min(1).required()
   });
 
 const NewProfileProxyCreateWaveActionSchema =
@@ -306,6 +302,6 @@ const AcceptActionRequestSchema = Joi.object<AcceptActionRequest>({
 
 const UpdateActionRequestSchema = Joi.object<ApiUpdateProxyActionRequest>({
   end_time: Joi.number().optional().allow(null),
-  credit_amount: Joi.number().optional()
+  credit_amount: Joi.number().integer().min(0).optional()
 });
 export default router;

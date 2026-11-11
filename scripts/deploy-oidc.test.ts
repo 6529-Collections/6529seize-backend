@@ -152,6 +152,10 @@ describe('backend deployment OIDC boundary', () => {
     expect(workflow.permissions['id-token']).toBeUndefined();
   });
 
+  it('exposes no unused build tokens to every step', () => {
+    expect(workflow.env.SENTRY_AUTH_TOKEN).toBeUndefined();
+  });
+
   it('never passes legacy keys to either environment credential action', () => {
     const credentials = steps.filter((step) =>
       step.uses?.startsWith('aws-actions/configure-aws-credentials@')

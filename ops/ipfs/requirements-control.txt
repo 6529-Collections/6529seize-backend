@@ -1,0 +1,2 @@
+# GitHub runner/local controller only. The EC2 runtime uses the standard library.
+PyYAML==6.0.3

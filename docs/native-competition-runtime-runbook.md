@@ -26,6 +26,14 @@ the same key return 409. Receipt, domain writes, nonce consumption and outbox
 events commit together. Moderation preparation runs before the entry/hub
 transaction; publication authorization and constraints are checked inside it.
 
+Publishing a draft fails with 409 `PUBLISHED_COMPETITION_LIMIT` when its wave
+already has `COMPETITION_MAX_PUBLISHED_PER_WAVE` (default 25) published
+competitions, or the profile that created the draft already has
+`COMPETITION_MAX_PUBLISHED_PER_CREATOR` (default 50) across waves. Paused
+competitions count; ended, cancelled and archived ones do not. `0` turns a cap
+off. Concurrent publications of different drafts are not serialized, so a cap
+can be exceeded by the number of simultaneous publish requests.
+
 Every update/action supplies `config_version`. Stale versions return 409.
 Published types cannot change. After the first accepted entry, credits,
 signing, timing, decisions and outcomes are immutable. Participation and voting
@@ -88,6 +96,23 @@ and choose alert thresholds separately for leaderboard refreshes and decision
 passes, accounting for decision catch-up. Failed passes log the same operation
 and elapsed duration with `native_competition_execution_failed`.
 
+The decision worker resumes after the competition its previous pass last
+started (`competition_worker_cursors`, worker `native_decisions`) and wraps
+around, so a pass that stops early is continued instead of restarted. It stops
+starting competitions after `WAVE_DECISION_LOOP_DECISIONS_BUDGET_MS` (5 min)
+or with less than 5 minutes of the invocation left, and logs
+`native_competition_execution_deadline_passed` for a competition still running
+after `WAVE_DECISION_LOOP_COMPETITION_DEADLINE_MS` (2 min) while it moves on.
+That run still commits or rolls back as usual; the pass waits for it before
+returning and keeps at most two such runs in flight. A pass that stopped early
+or overran logs `native_competition_decision_pass_bounded`. Outbox delivery
+runs before (up to `WAVE_DECISION_LOOP_DISPATCH_FIRST_MS`, 60 s) and after the
+pass, claiming decision results first and then alternating batches with the
+other events; while those wait, decision results get at most half of each
+delivery's batches and time. The final delivery gets only the time left before
+a 30 s safety margin and is skipped when none is left. Scoring still replays
+each competition's full history; making it incremental is separate work.
+
 - Competition row locks serialize entry/vote/lifecycle/execution changes.
   Drop locks additionally prevent concurrent association, editing and deletion
   from bypassing one active nonterminal entry per drop.
@@ -107,6 +132,13 @@ and elapsed duration with `native_competition_execution_failed`.
   worker pass. Verify both workers are active and healthy before deploying this
   API and worker versions must share the native history contract during rollout.
   Reversal tooling is retired; preserve all accepted native events.
+- Each voter may change votes in one competition at most
+  `COMPETITION_VOTE_CHANGES_PER_MINUTE` times per minute (default 120, `0`
+  turns it off), counted in Redis per voter, competition and minute for native
+  vote commands and legacy rating requests alike. Only changes count; resending
+  the current value does not. A change past the budget returns 429
+  `VOTE_CHANGE_LIMIT` with `retry_after_seconds` before anything is written.
+  While Redis is unavailable changes are admitted.
 - Pause decisions leaves otherwise eligible entries/votes available. Rank
   occurrences inside an inclusive pause are skipped without shifting future
   occurrences. Approve evaluates accepted votes on resume, including a hold

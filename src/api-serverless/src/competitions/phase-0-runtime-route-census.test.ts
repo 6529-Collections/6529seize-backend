@@ -44,6 +44,12 @@ const ACCEPTED_ROUTE_CACHE_CHANGES = new Map<string, ManifestRoute['cache']>([
   ]
 ]);
 
+// Optional authentication keeps anonymous callers working; it lets members
+// list followers of waves they can read.
+const ACCEPTED_ROUTE_AUTH_CHANGES = new Map<string, ManifestRoute['auth']>([
+  ['/api/identity-subscriptions/incoming/:target_type/:target_id', 'optional']
+]);
+
 const ACCEPTED_ROUTE_SOURCE_MOVES = new Map<string, string>([
   [
     '/api/policies/eula-consent/:deviceId',
@@ -53,14 +59,29 @@ const ACCEPTED_ROUTE_SOURCE_MOVES = new Map<string, string>([
     '/api/waves/:id/subwaves',
     'src/api-serverless/src/generated/routes/openapi-generated.routes.ts:938'
   ],
-  // requestLogMiddleware and then the access-token strategy moved out of
-  // app.ts, shifting the hand-written routes up; these now sit nearer the
-  // catch-all '' GET than their baseline lines.
-  ['/api/rememes_uploads', 'src/api-serverless/src/app.ts:1267'],
-  ['/api/tdh_global_history', 'src/api-serverless/src/app.ts:1284'],
+  // requestLogMiddleware, the access-token strategy and then the Sentry alert
+  // formatting moved out of app.ts, shifting the hand-written routes up;
+  // these now sit nearer the catch-all '' GET than their baseline lines.
+  ['/api/nfts/:contract/media', 'src/api-serverless/src/app.ts:851'],
+  ['/api/nfts_memelab', 'src/api-serverless/src/app.ts:863'],
+  ['/api/memes_extended_data', 'src/api-serverless/src/app.ts:899'],
+  ['/api/new_memes_seasons', 'src/api-serverless/src/app.ts:928'],
+  ['/api/memes_lite', 'src/api-serverless/src/app.ts:938'],
+  ['/api/memelab_lite', 'src/api-serverless/src/app.ts:954'],
+  ['/api/memes_latest', 'src/api-serverless/src/app.ts:970'],
+  ['/api/nfts_search', 'src/api-serverless/src/app.ts:985'],
+  ['/api/lab_extended_data', 'src/api-serverless/src/app.ts:998'],
+  ['/api/transactions', 'src/api-serverless/src/app.ts:1016'],
+  ['/api/transactions_memelab', 'src/api-serverless/src/app.ts:1039'],
+  ['/api/tdh/gradients', 'src/api-serverless/src/app.ts:1062'],
+  ['/api/consolidations/:wallet', 'src/api-serverless/src/app.ts:1075'],
+  ['/api/consolidations', 'src/api-serverless/src/app.ts:1091'],
+  ['/api/nft_history/:contract/:nft_id', 'src/api-serverless/src/app.ts:1108'],
+  ['/api/rememes_uploads', 'src/api-serverless/src/app.ts:1129'],
+  ['/api/tdh_global_history', 'src/api-serverless/src/app.ts:1146'],
   [
     '/api/recent_tdh_history/:consolidation_key',
-    'src/api-serverless/src/app.ts:1303'
+    'src/api-serverless/src/app.ts:1165'
   ]
 ]);
 
@@ -229,9 +250,11 @@ describe('Phase 0 permanent mounted GET route census', () => {
         );
         continue;
       }
-      if (best.auth !== 'unknown' && best.auth !== route.auth) {
+      const expectedAuth =
+        ACCEPTED_ROUTE_AUTH_CHANGES.get(route.path) ?? route.auth;
+      if (best.auth !== 'unknown' && best.auth !== expectedAuth) {
         failures.push(
-          `${route.path}: auth changed from ${route.auth} to ${best.auth}`
+          `${route.path}: auth changed from ${expectedAuth} to ${best.auth}`
         );
       } else if (
         best.auth === 'unknown' &&

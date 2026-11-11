@@ -25,7 +25,8 @@ import {
 } from './ws/ws-message';
 import { ids } from '../../ids';
 import { wsListenersNotifier } from './ws/ws-listeners-notifier';
-import { redactWebSocketMessageForLog } from './ws/ws-log-redaction';
+import { wsFrameBudget } from '@/api/ws/ws-frame-budget';
+import { wsTypingCoalescer } from '@/api/ws/ws-typing-coalescer';
 import {
   isExpectedClientError,
   operationalResponse
@@ -259,15 +260,82 @@ async function answerPing(
   }
 }
 
+/**
+ * One typing notification per identity and wave within the coalescing
+ * window; repeats inside it are acknowledged without a fan-out. The window
+ * stays claimed only when a notification was delivered: a refused or
+ * undelivered one frees it for the next frame. Anonymous frames are never
+ * coalesced, so they keep their authentication error.
+ */
+async function notifyTypingCoalesced(
+  identityId: string,
+  waveId: string
+): Promise<void> {
+  const coalesce = identityId !== ANON_USER_ID;
+  if (coalesce && !(await wsTypingCoalescer.claim(identityId, waveId))) {
+    return;
+  }
+  const release = async () => {
+    if (!coalesce) return;
+    await wsTypingCoalescer.release(identityId, waveId).catch(() => {
+      // The window expires on its own.
+    });
+  };
+  let delivered: boolean;
+  try {
+    delivered = await wsListenersNotifier.notifyAboutUserIsTyping({
+      identityId,
+      waveId
+    });
+  } catch (error) {
+    await release();
+    throw error;
+  }
+  if (!delivered) await release();
+}
+
+const KNOWN_FRAME_TYPES: ReadonlySet<string> = new Set(
+  Object.values(WsMessageType)
+);
+
+/** The frame's type when it is one we know, for budgets and logs only. */
+function inboundFrameType(body: string | null): string | null {
+  try {
+    const type: unknown = Reflect.get(Object(JSON.parse(body ?? '{}')), 'type');
+    return typeof type === 'string' && KNOWN_FRAME_TYPES.has(type)
+      ? type
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function frameBytes(body: string | null): number {
+  return body ? Buffer.byteLength(body, 'utf8') : 0;
+}
+
 async function wsHandler(
   event: APIGatewayEvent
 ): Promise<APIGatewayProxyResult> {
   const wsHandlerLogger = Logger.get('wsHandler');
   const { routeKey, connectionId } = event.requestContext;
+  let frameType: string | null = null;
   if (routeKey === '$default') {
     // Answered before authentication: no database read or write.
     const ping = readPingFrame(event.body);
     if (ping) return answerPing(ping, connectionId!);
+    // Every other frame spends this connection's budget before any
+    // database read; typing frames also spend a stricter one.
+    frameType = inboundFrameType(event.body);
+    if ((await wsFrameBudget.take(connectionId!, frameType)) === 'rejected') {
+      wsHandlerLogger.info(
+        `WS $default over budget. Type: ${frameType ?? 'unknown'}. Bytes: ${frameBytes(event.body)}`
+      );
+      return {
+        statusCode: 429,
+        body: JSON.stringify({ message: 'Too many messages' })
+      };
+    }
   }
   const { identityId, jwtExpiry, purpose } =
     await authenticateWebSocketJwtOrGetByConnectionId(event);
@@ -313,11 +381,11 @@ async function wsHandler(
       try {
         const message = JSON.parse(event.body || '{}');
         setWebSocketDiagnosticOperation(message.type);
-        const logSafeMessage = redactWebSocketMessageForLog(message);
+        // Type and size only: frame bodies carry tokens and user content.
         wsHandlerLogger.info(
-          `WS $default. Identity: ${identityId}. Message: ${JSON.stringify(
-            logSafeMessage
-          )}`
+          `WS $default. Identity: ${identityId}. Type: ${
+            frameType ?? 'unknown'
+          }. Bytes: ${frameBytes(event.body)}`
         );
         switch (message.type) {
           case WsMessageType.AUTHENTICATE: {
@@ -440,12 +508,8 @@ async function wsHandler(
                 statusCode: 400,
                 body: JSON.stringify({ message: 'Invalid wave id' })
               };
-            } else {
-              await wsListenersNotifier.notifyAboutUserIsTyping({
-                identityId,
-                waveId
-              });
             }
+            await notifyTypingCoalesced(identityId, waveId);
             return {
               statusCode: 200,
               body: JSON.stringify({ message: 'OK' })

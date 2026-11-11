@@ -24,6 +24,7 @@ import {
   CiPipelineAlertTargetStore,
   CiPipelineDeployAlertTarget
 } from './ci-pipeline-alert-target.store';
+import { sanitizeAlertText } from '@/api/alerts/alert-text';
 
 export type CiPipelineAlertStatus = 'success' | 'failure';
 export type CiPipelineAlertType = 'workflow' | 'deploy' | 'web_e2e';
@@ -214,13 +215,6 @@ function getReleaseNoteEnqueueContext(
 
 function formatStatusEmoji(status: CiPipelineAlertStatus): string {
   return status === 'success' ? '✅' : '🚨';
-}
-
-function sanitizeAlertText(value: string): string {
-  return value
-    .replace(/\s+/g, ' ')
-    .replace(/[[\]<>]/g, (character) => `\\${character}`)
-    .trim();
 }
 
 function formatAlertDescription(

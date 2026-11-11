@@ -236,6 +236,15 @@ through `verifyContractWalletSignatureHash`. The grant wallet must map to the
 caller's profile. A profile has at most 10 active devices per grant version;
 re-registering an unrevoked key of the same profile renews its grant.
 
+The signed `origin` is checked against the origins recognised for the API
+host and the verdict is logged, exactly as for app device grants
+(`DEVICE_GRANT_ORIGIN_POLICY`, `docs/auth/wallet-auth.md`); by default an
+unrecognised origin is still accepted. Both registration routes record on the
+device row how it was last registered: `registered_client_type`,
+`registered_binding` and `registered_session_id` from the caller's access
+token, and `registered_request_origin` from the request `Origin` (each null
+when unknown). These columns are not part of any API response.
+
 `POST /e2ee/devices/login-grant` (NC8) registers the MLS key that a combined
 sign-in grant also granted (`docs/auth/wallet-auth.md`), with no second
 wallet signature. The body names the `grant_id` the session login returned.
@@ -356,7 +365,7 @@ profile always skips it.
 
 | Limit                                     | Value                                                                                                                                      |
 | ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
-| Active devices per profile                | 10                                                                                                                                         |
+| Active devices per profile                | 10 per grant version seen in the last 30 days (see below)                                                                                  |
 | Unclaimed one-time KeyPackages per device | 100 (`409 E2EE_KEY_PACKAGE_LIMIT` beyond)                                                                                                  |
 | KeyPackage size                           | 8 KiB (an X-Wing KeyPackage is about 2.7 KiB)                                                                                              |
 | Entry data                                | an entry bucket, at most 2 MiB                                                                                                             |
@@ -373,6 +382,17 @@ profile always skips it.
 | Attachment uploads                        | 100 per day per profile                                                                                                                    |
 | Eligibility checks                        | 600 per hour per profile                                                                                                                   |
 | Reports                                   | 100 per day per profile                                                                                                                    |
+
+The device limit counts active devices (not revoked, not expired) of the
+same grant version whose `last_seen_at` (or, when unset, `created_at`) is
+within the last 30 days (`E2EE_DEVICE_LIMIT_IDLE_WINDOW_MS`). Registration and
+renewal set `last_seen_at`, and every request a device makes as itself
+(`requireOwnActiveDevice`: group, log, welcome, message, KeyPackage, claim,
+attachment and backup routes) refreshes it at most every 5 minutes. A device
+idle for longer stays active, keeps its roster memberships and can resume at
+any time; it only stops blocking the enrolment of another device. Renewing an
+active device keeps its slot whatever its last-seen time. `GET /e2ee/me` marks
+each device with `counts_toward_limit`.
 
 Rate limits are fixed-window counters in `e2ee_rate_counters` (works without
 Redis and in every Lambda instance). Reads use the primary pool so ordering

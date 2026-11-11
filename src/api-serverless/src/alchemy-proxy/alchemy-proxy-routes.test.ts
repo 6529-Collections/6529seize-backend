@@ -1,19 +1,19 @@
 import type { Request, Response, RequestHandler } from 'express';
 
-jest.mock('express', () => ({
-  Router: jest.fn(() => ({ get: jest.fn(), post: jest.fn() }))
+jest.mock('@/api/async.router', () => ({
+  asyncRouter: jest.fn(() => ({ get: jest.fn(), post: jest.fn() }))
 }));
 jest.mock('@/alchemy', () => ({ getAlchemyInstance: jest.fn() }));
 jest.mock('@/api/request-cache', () => ({
   cacheRequest: jest.fn(() => jest.fn())
 }));
 
-import { Router } from 'express';
+import { asyncRouter } from '@/api/async.router';
 import { getAlchemyInstance } from '@/alchemy';
 import { CustomApiCompliantException } from '@/exceptions';
 import '@/api/alchemy-proxy/alchemy-proxy.routes';
 
-const mockRouter = jest.mocked(Router).mock.results[0].value;
+const mockRouter = jest.mocked(asyncRouter).mock.results[0].value;
 const mockGetContractMetadata = jest.fn();
 const ADDRESS = '0x0000000000000000000000000000000000000001';
 

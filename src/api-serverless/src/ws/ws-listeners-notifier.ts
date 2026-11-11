@@ -267,26 +267,129 @@ export function redactQuotedDropsOutsideAudience(
   return audienceDrop;
 }
 
+function collectMentionedWaveIdsWithDetails(
+  drop: ApiDrop | ApiDropWithoutWave,
+  waveIds: Set<string>
+): Set<string> {
+  for (const mentionedWave of drop.mentioned_waves ?? []) {
+    if (mentionedWave.wave) {
+      waveIds.add(mentionedWave.wave_id);
+    }
+  }
+  for (const part of drop.parts) {
+    if (part.quoted_drop?.drop) {
+      collectMentionedWaveIdsWithDetails(part.quoted_drop.drop, waveIds);
+    }
+  }
+  if (drop.reply_to?.drop) {
+    collectMentionedWaveIdsWithDetails(drop.reply_to.drop, waveIds);
+  }
+  return waveIds;
+}
+
+/** Ids of mentioned waves (root and embedded drops) that carry wave details. */
+export function getMentionedWaveIdsWithDetails(drop: ApiDrop): string[] {
+  return Array.from(collectMentionedWaveIdsWithDetails(drop, new Set()));
+}
+
+function redactMentionedWavesInPlace(
+  drop: ApiDrop | ApiDropWithoutWave,
+  showableWaveIds: ReadonlySet<string>
+): void {
+  for (const mentionedWave of drop.mentioned_waves ?? []) {
+    if (mentionedWave.wave && !showableWaveIds.has(mentionedWave.wave_id)) {
+      delete mentionedWave.wave;
+    }
+  }
+  for (const part of drop.parts) {
+    if (part.quoted_drop?.drop) {
+      redactMentionedWavesInPlace(part.quoted_drop.drop, showableWaveIds);
+    }
+  }
+  if (drop.reply_to?.drop) {
+    redactMentionedWavesInPlace(drop.reply_to.drop, showableWaveIds);
+  }
+}
+
+/**
+ * The wave summary on a mention does not say whether the wave is a subwave, so
+ * the broadcast keeps mentioned wave details only for ids the server confirmed
+ * as showable to any audience (public wave, and public parent for subwaves).
+ * Other mentions keep their wave_id and clients resolve them with their access.
+ */
+export function redactMentionedWavesOutsideShowableSet(
+  inputDrop: ApiDrop,
+  showableWaveIds: ReadonlySet<string>
+): ApiDrop {
+  if (
+    getMentionedWaveIdsWithDetails(inputDrop).every((waveId) =>
+      showableWaveIds.has(waveId)
+    )
+  ) {
+    return inputDrop;
+  }
+  const audienceDrop = structuredClone(inputDrop);
+  redactMentionedWavesInPlace(audienceDrop, showableWaveIds);
+  return audienceDrop;
+}
+
+function removeWaveAuthRequestContext(wave: object): void {
+  const viewerScopedWave = wave as Record<string, unknown>;
+  viewerScopedWave.authenticated_user_eligible_to_vote = undefined;
+  viewerScopedWave.authenticated_user_eligible_to_participate = undefined;
+  viewerScopedWave.authenticated_user_eligible_to_chat = undefined;
+  viewerScopedWave.authenticated_user_eligible_to_reply = undefined;
+  viewerScopedWave.authenticated_user_can_delete_replies = undefined;
+  viewerScopedWave.authenticated_user_admin = undefined;
+}
+
+/**
+ * Broadcast payloads reach the whole wave audience, so a mentioned wave keeps
+ * its details only when it is public. Clients resolve the others by wave_id
+ * with their own access.
+ */
+function removeMentionedWaveDetailsOutsidePublicWaves(
+  drop: ApiDrop | ApiDropWithoutWave
+): void {
+  for (const mentionedWave of drop.mentioned_waves ?? []) {
+    const wave = mentionedWave.wave;
+    if (!wave) {
+      continue;
+    }
+    if (wave.visibility_group_id !== null || wave.is_direct_message === true) {
+      delete mentionedWave.wave;
+    } else {
+      removeWaveAuthRequestContext(wave);
+    }
+  }
+}
+
 function removeDropsAuthRequestContext(
   drop: ApiDrop | ApiDropWithoutWave,
-  creditLeft: number
+  creditLeft: number,
+  isRoot = true
 ): ApiDrop {
   const modifiedDrop: ApiDrop = JSON.parse(JSON.stringify(drop));
   const maybeWave = (drop as ApiDrop).wave;
   const modifiedWave = maybeWave ? { ...maybeWave } : undefined;
   if (modifiedWave) {
-    (modifiedWave as any).authenticated_user_eligible_to_vote = undefined;
-    (modifiedWave as any).authenticated_user_eligible_to_participate =
-      undefined;
-    (modifiedWave as any).authenticated_user_eligible_to_chat = undefined;
-    (modifiedWave as any).authenticated_user_eligible_to_reply = undefined;
-    (modifiedWave as any).authenticated_user_can_delete_replies = undefined;
-    (modifiedWave as any).authenticated_user_admin = undefined;
+    removeWaveAuthRequestContext(modifiedWave);
     (modifiedWave as any).credit_left = creditLeft;
     (modifiedDrop.wave as any) = modifiedWave;
     (modifiedDrop.author as any).subscribed_actions = undefined;
     (modifiedDrop as any).context_profile_context = undefined;
   }
+  if (!isRoot) {
+    // Embedded (quoted or replied-to) drops carry the request maker's view.
+    // The recipient's viewer_context is only injected for the root drop.
+    modifiedDrop.context_profile_context = null;
+    modifiedDrop.subscribed_actions = [];
+    if (modifiedDrop.author) {
+      modifiedDrop.author.subscribed_actions = [];
+    }
+    delete modifiedDrop.viewer_context;
+  }
+  removeMentionedWaveDetailsOutsidePublicWaves(modifiedDrop);
   if (modifiedDrop.poll?.anonymous) {
     modifiedDrop.poll.voted = [];
   }
@@ -294,14 +397,16 @@ function removeDropsAuthRequestContext(
     if (part.quoted_drop?.drop) {
       part.quoted_drop.drop = removeDropsAuthRequestContext(
         part.quoted_drop.drop,
-        creditLeft
+        creditLeft,
+        false
       );
     }
   }
   if (modifiedDrop.reply_to?.drop) {
     modifiedDrop.reply_to.drop = removeDropsAuthRequestContext(
       modifiedDrop.reply_to.drop,
-      creditLeft
+      creditLeft,
+      false
     );
   }
   return modifiedDrop;
@@ -720,8 +825,8 @@ export class WsListenersNotifier {
           );
       measurement.queryDone(onlineProfiles.length);
       if (!onlineProfiles.length) return;
-      const audienceDrop = await this.restrictQuotesToWaveAudience(
-        inputDrop,
+      const audienceDrop = await this.restrictMentionedWavesToShowable(
+        await this.restrictQuotesToWaveAudience(inputDrop, ctx),
         ctx
       );
       const { hiddenDropIds, authorIdsByDropId } =
@@ -847,13 +952,19 @@ export class WsListenersNotifier {
     }
   }
 
+  /**
+   * Sends the sender's typing frame to the wave's typing audience. Resolves
+   * true when at least one recipient socket accepted it, false when nothing
+   * was delivered (no recipient socket, or every send was refused); access
+   * failures reject as before.
+   */
   async notifyAboutUserIsTyping({
     identityId,
     waveId
   }: {
     identityId: string;
     waveId: string;
-  }) {
+  }): Promise<boolean> {
     let stage = 'identity';
     try {
       if (identityId === ANON_USER_ID) {
@@ -883,6 +994,7 @@ export class WsListenersNotifier {
         throw new NotFoundException('Wave not found');
       }
       const connectionIds = recipients.map((it) => it.connectionId);
+      if (!connectionIds.length) return false;
       stage = 'profile_enrichment';
       const [
         mainStageSubscriptions,
@@ -926,22 +1038,29 @@ export class WsListenersNotifier {
         artist_of_prevote_cards: artistOfPrevoteCards[identityId] ?? [],
         is_wave_creator: waveCreatorIds.has(identityId)
       };
-      const now = Time.currentMillis();
-      stage = 'delivery';
-      await Promise.all(
-        connectionIds.map((connectionId: string) =>
-          this.appWebSockets.send({
-            connectionId,
-            message: JSON.stringify(
-              userIsTypingMessage({
-                wave_id: waveId,
-                timestamp: now,
-                profile: profile
-              })
-            )
-          })
-        )
+      const message = JSON.stringify(
+        userIsTypingMessage({
+          wave_id: waveId,
+          timestamp: Time.currentMillis(),
+          profile: profile
+        })
       );
+      stage = 'delivery';
+      let delivered = false;
+      // The same capped pool as every other fan-out, so a busy wave's
+      // typing frames cannot open an unbounded number of sends at once.
+      await forEachConcurrent(
+        connectionIds,
+        async (connectionId: string) => {
+          const result = await this.appWebSockets.send({
+            connectionId,
+            message
+          });
+          if (sendOutcome(result) === 'sent') delivered = true;
+        },
+        { concurrency: wsFanoutConcurrency() }
+      );
+      return delivered;
     } catch (error) {
       if (!isExpectedClientError(error)) {
         try {
@@ -991,6 +1110,23 @@ export class WsListenersNotifier {
         ctx
       );
     return redactQuotedDropsOutsideAudience(inputDrop, visibleQuotedDropIds);
+  }
+
+  /** Resolves mentioned wave visibility once per broadcast frame. */
+  private async restrictMentionedWavesToShowable(
+    inputDrop: ApiDrop,
+    ctx: RequestContext
+  ): Promise<ApiDrop> {
+    const mentionedWaveIds = getMentionedWaveIdsWithDetails(inputDrop);
+    if (!mentionedWaveIds.length) {
+      return inputDrop;
+    }
+    const showableWaveIds =
+      await this.wsConnectionRepository.findWaveIdsShowableToAnyAudience(
+        mentionedWaveIds,
+        ctx
+      );
+    return redactMentionedWavesOutsideShowableSet(inputDrop, showableWaveIds);
   }
 
   private async getCreditLeftsForOnlineProfiles(

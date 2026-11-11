@@ -76,6 +76,27 @@ describeWithSeed(
   ],
   () => {
     it.each([false, true])(
+      'All includes unjoined and metricless roots (facade=%s)',
+      async (facade) => {
+        const getIds = () => repo.findAllRootWaveIds(params, {});
+        const ids = await (facade
+          ? withLegacyCompetitionGetFacade(getIds)
+          : getIds());
+        expect(ids).toContain('unjoined-public');
+        expect(ids).toContain('joined-no-metrics');
+        expect(ids).toContain('joined-muted');
+        expect(ids).not.toContain('joined-child');
+        expect(ids).not.toContain('joined-dm');
+        expect(ids).not.toContain('joined-private');
+        const privateIds = await repo.findAllRootWaveIds(
+          { ...params, eligibleGroups: ['private-group'] },
+          {}
+        );
+        expect(privateIds).toContain('joined-private');
+      }
+    );
+
+    it.each([false, true])(
       'preserves membership, activity, and access in both read scopes (facade=%s)',
       async (facade) => {
         const getIds = () => repo.findJoinedRootWaveIds(params, {});

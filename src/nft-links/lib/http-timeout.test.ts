@@ -2,6 +2,8 @@ import fetch, { Response } from 'node-fetch';
 import { fetchTextWithTimeout, HttpError } from '@/nft-links/lib/http';
 import { getNftLinkResolutionBudget } from '@/nft-links/resolution-budget';
 import { Logger } from '@/logging';
+import { Readable } from 'node:stream';
+import { routePublicNetworkToFixtures } from '@/tests/fixtures/public-network-fixture';
 
 jest.mock('node-fetch', () => ({
   ...jest.requireActual('node-fetch'),
@@ -43,6 +45,11 @@ function diagnostic() {
 }
 
 describe('NFT metadata HTTP timeout diagnostics', () => {
+  let restoreNetwork: () => void;
+  beforeAll(() => {
+    restoreNetwork = routePublicNetworkToFixtures();
+  });
+  afterAll(() => restoreNetwork());
   beforeEach(() => {
     jest.useFakeTimers();
     jest.resetAllMocks();
@@ -125,18 +132,11 @@ describe('NFT metadata HTTP timeout diagnostics', () => {
   });
 
   it('keeps the timeout active while reading the response body', async () => {
-    fetchMock.mockImplementation(
-      async (_url, opts) =>
-        ({
-          ok: true,
-          status: 200,
-          headers: new Map(),
-          arrayBuffer: () =>
-            new Promise((_resolve, reject) => {
-              opts?.signal?.addEventListener('abort', () => reject(abortError));
-            })
-        }) as unknown as Response
-    );
+    fetchMock.mockImplementation(async (_url, opts) => {
+      const body = new Readable({ read() {} });
+      opts?.signal?.addEventListener('abort', () => body.destroy(abortError));
+      return new Response(body, { status: 200 });
+    });
     const result = fetchTextWithTimeout(url, options).catch((error) => error);
     await jest.advanceTimersByTimeAsync(5000);
     expect(await result).toBe(abortError);

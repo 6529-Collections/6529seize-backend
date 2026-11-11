@@ -1048,6 +1048,54 @@ describe('uploadMintingClaimToArweave', () => {
     expect(uploadedMetadata.animation_details).toEqual({ format: 'HTML' });
   });
 
+  it.each([
+    [
+      'https://media.6529usercontent.com/ipfs/bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi',
+      'ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi'
+    ],
+    [
+      'https://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi.ipfs.6529usercontent.com/index.html',
+      'ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi/index.html'
+    ],
+    [
+      'https://media.6529usercontent.com/arweave/OI6-rpJ2C3Ab4HiZRWt5A1SumhjnYigmSPBPX0ICBj8',
+      'https://arweave.net/OI6-rpJ2C3Ab4HiZRWt5A1SumhjnYigmSPBPX0ICBj8'
+    ],
+    [
+      'https://ipfs.6529.io/ipfs/bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi',
+      'https://ipfs.6529.io/ipfs/bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi'
+    ]
+  ])(
+    'stores html animation_url %s as %s',
+    async (animationUrl, expectedLocation) => {
+      uploadFileMock.mockReset();
+      uploadFileMock
+        .mockResolvedValueOnce({
+          url: 'https://arweave.net/OI6-rpJ2C3Ab4HiZRWt5A1SumhjnYigmSPBPX0ICBj8'
+        })
+        .mockResolvedValueOnce({
+          url: 'https://arweave.net/_MSzxiISR3AgFJqhzBoAbCtFGMglSqRmZi5NTgZLfL4'
+        });
+
+      const result = await uploadMintingClaimToArweave(
+        MEMES_CONTRACT,
+        baseClaim({
+          animation_url: animationUrl,
+          animation_details: JSON.stringify({
+            format: 'HTML'
+          })
+        })
+      );
+
+      expect(result.animationLocationUrl).toBe(expectedLocation);
+      const metadataUploadBuffer = uploadFileMock.mock.calls[1]?.[0] as Buffer;
+      const uploadedMetadata = JSON.parse(
+        metadataUploadBuffer.toString('utf8')
+      );
+      expect(uploadedMetadata.animation_url).toBe(expectedLocation);
+    }
+  );
+
   it('copies html arweave animation_url to animation_location as an Arweave URL', async () => {
     uploadFileMock.mockReset();
     uploadFileMock

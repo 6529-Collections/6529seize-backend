@@ -1,0 +1,77 @@
+name: Adopt existing IPFS resources
+
+# Imports reviewed ownership and verifies unchanged configuration. A separate,
+# default-expired service-role window accommodates CloudFormation's unchanged-
+# config CloudFront import handler. Runtime and traffic deployment stay separate.
+on:
+  workflow_dispatch:
+    inputs:
+      operation:
+        type: choice
+        required: true
+        default: audit
+        options: [audit, prepare, execute, verify]
+      expected_source_sha:
+        description: Full reviewed main SHA; must equal this dispatch commit
+        type: string
+        required: true
+      change_set_id:
+        description: Exact ARN from prepare, required for execute and retries
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+
+concurrency:
+  # Adoption and normal IPFS management cannot run concurrently.
+  group: ipfs-manage-prod
+  cancel-in-progress: false
+
+jobs:
+  adopt:
+    if: >-
+      github.repository == '6529-Collections/6529seize-backend' &&
+      github.sha == inputs.expected_source_sha &&
+      github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    environment: ipfs-prod
+    timeout-minutes: 90
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      IPFS_OPERATION: ${{ inputs.operation }}
+      IPFS_SOURCE_SHA: ${{ inputs.expected_source_sha }}
+      IPFS_CHANGE_SET_ID: ${{ inputs.change_set_id }}
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Install the YAML reader
+        run: |
+          python3 -m venv "$RUNNER_TEMP/ipfs-adoption-tools"
+          "$RUNNER_TEMP/ipfs-adoption-tools/bin/pip" install -r ops/ipfs/requirements-control.txt
+          echo "$RUNNER_TEMP/ipfs-adoption-tools/bin" >> "$GITHUB_PATH"
+      - name: Verify source and adoption policy before AWS authentication
+        run: |
+          python3 - <<'PY'
+          import os,sys
+          sys.path.insert(0,'ops/ipfs')
+          from adoption import guarded
+          guarded(os.environ['IPFS_SOURCE_SHA'],mutation=os.environ['IPFS_OPERATION'] in ('prepare','execute'))
+          PY
+      - name: Authenticate with the dedicated import role
+        uses: aws-actions/configure-aws-credentials@e7f100cf4c008499ea8adda475de1042d6975c7b # v6.2.0
+        with:
+          role-to-assume: ${{ vars.IPFS_ADOPTION_ROLE_ARN }}
+          aws-region: us-east-1
+          allowed-account-ids: '987989283142'
+          role-session-name: ipfs-adopt-${{ github.run_id }}
+      - name: Run the explicit adoption operation
+        env:
+          IPFS_ADOPTION_SERVICE_ROLE_ARN: ${{ vars.IPFS_ADOPTION_SERVICE_ROLE_ARN }}
+        run: |
+          python3 ops/ipfs/adoption.py "$IPFS_OPERATION" --sha "$IPFS_SOURCE_SHA" \
+            --change-set-id "$IPFS_CHANGE_SET_ID"

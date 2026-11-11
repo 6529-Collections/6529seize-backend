@@ -4,7 +4,15 @@ import {
   fromXTdhGrantEntityToModel,
   XTdhGrantModel
 } from './xtdh-grant.models';
-import { BadRequestException } from '../exceptions';
+import {
+  BadRequestException,
+  CustomApiCompliantException
+} from '../exceptions';
+import {
+  XTdhGrantLimits,
+  xTdhGrantLimits,
+  xTdhGrantTokensProblem
+} from './xtdh-grant-limits';
 import {
   XTdhGrantEntity,
   XTdhGrantStatus,
@@ -23,7 +31,8 @@ import { xTdhRepository, XTdhRepository } from './xtdh.repository';
 export class CreateXTdhGrantUseCase {
   constructor(
     private readonly xTdhRepository: XTdhRepository,
-    private readonly externalIndexingRepository: ExternalIndexingRepository
+    private readonly externalIndexingRepository: ExternalIndexingRepository,
+    private readonly limits: () => XTdhGrantLimits = xTdhGrantLimits
   ) {}
 
   public async handle(
@@ -37,9 +46,29 @@ export class CreateXTdhGrantUseCase {
           `Irrevocable grants are not supported yet`
         );
       }
+      const limits = this.limits();
+      // Checked on the request strings, before any range is expanded.
+      const tokensProblem = xTdhGrantTokensProblem(
+        command.target_tokens,
+        limits
+      );
+      if (tokensProblem) throw new BadRequestException(tokensProblem);
       return await this.xTdhRepository.executeNativeQueriesInTransaction(
         async (connection) => {
           const ctxWithConnection = { ...ctx, connection };
+          const pendingGrants =
+            await this.xTdhRepository.countPendingGrantsByGrantor(
+              command.grantor_id,
+              ctxWithConnection
+            );
+          if (pendingGrants >= limits.maxPendingGrants) {
+            throw new CustomApiCompliantException(
+              409,
+              `You already have ${pendingGrants} grants waiting to be processed, the most allowed at once (${limits.maxPendingGrants}). Try again once some of them are processed.`,
+              'PENDING_GRANT_LIMIT',
+              { limit: limits.maxPendingGrants }
+            );
+          }
           const indexerState =
             await this.externalIndexingRepository.upsertOrSelectCollection(
               {

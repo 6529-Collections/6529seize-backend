@@ -1,6 +1,7 @@
 import { customErrorMiddleware } from '@/api/api-error-middleware';
 import { WriteBusyException } from '@/api/write-transaction-budget';
 import { BadRequestException } from '@/exceptions';
+import { SqlParameterValueError } from '@/db/sql-named-parameters';
 
 type FakeResponse = {
   statusCode: number;
@@ -61,5 +62,28 @@ describe('customErrorMiddleware', () => {
     );
     expect(res.statusCode).toBe(400);
     expect(res.headers['Retry-After']).toBeUndefined();
+  });
+
+  it('answers an unsupported SQL parameter value with 400', () => {
+    const res = fakeResponse();
+    const next = jest.fn();
+    customErrorMiddleware()(
+      new SqlParameterValueError('contract'),
+      {} as never,
+      res as never,
+      next
+    );
+    expect(res.statusCode).toBe(400);
+    expect(res.body).toEqual({ error: 'Invalid request parameter' });
+    expect(next).toHaveBeenCalledWith();
+  });
+
+  it('answers other errors with 500 and passes them on', () => {
+    const res = fakeResponse();
+    const next = jest.fn();
+    const error = new Error('boom');
+    customErrorMiddleware()(error, {} as never, res as never, next);
+    expect(res.statusCode).toBe(500);
+    expect(next).toHaveBeenCalledWith(error);
   });
 });

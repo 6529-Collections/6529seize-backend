@@ -43,12 +43,39 @@ export async function fetchAirdropAddressForConsolidationKey(
   };
 }
 
+/**
+ * SQL condition restricting delegations to the token scope that applies.
+ *
+ * Without a token, only delegations for all tokens apply. With a token, a
+ * delegation for that exact token in the given collection applies as well.
+ */
+export function delegationTokenScopeCondition(tokenId?: number | null): {
+  sql: string;
+  params: Record<string, number>;
+} {
+  if (tokenId === undefined || tokenId === null) {
+    return { sql: 'all_tokens = 1', params: {} };
+  }
+  return {
+    sql: '(all_tokens = 1 OR (collection = :collection AND token_id = :scopeTokenId))',
+    params: { scopeTokenId: tokenId }
+  };
+}
+
+/**
+ * The most specific active delegation per delegator for the collection and
+ * use case. Token-specific delegations only apply when `tokenId` names their
+ * token; the token scope is filtered before ranking so that a token-specific
+ * delegation never shadows a delegation for all tokens.
+ */
 export async function fetchProcessedDelegations(
   collection: string,
   useCase: number,
   wallets?: string[],
+  tokenId?: number | null,
   ctx: RequestContext = {}
 ): Promise<Delegation[]> {
+  const tokenScope = delegationTokenScopeCondition(tokenId);
   const results = await sqlExecutor.execute(
     `
     SELECT * FROM (
@@ -70,6 +97,7 @@ export async function fetchProcessedDelegations(
       WHERE 
         (collection = :collection OR collection = :anyCollection)
         AND (use_case = :useCase OR use_case = :allUseCase)
+        AND ${tokenScope.sql}
     ) AS ranked
     WHERE ranked.rn = 1 AND expiry >= :expiry ${
       wallets ? ` AND LOWER(ranked.from_address) in (:wallets)` : ''
@@ -82,7 +110,8 @@ export async function fetchProcessedDelegations(
       allUseCase: USE_CASE_ALL,
       anyCollection: DELEGATION_ALL_ADDRESS,
       expiry: Date.now() / 1000,
-      wallets: wallets?.map((w) => w.toLowerCase())
+      wallets: wallets?.map((w) => w.toLowerCase()),
+      ...tokenScope.params
     },
     { wrappedConnection: ctx.connection }
   );

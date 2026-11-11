@@ -1,4 +1,4 @@
-import { normalizeIpfsUri } from './uri';
+import { normalizeArUri, normalizeIpfsUri, normalizeMetadataUri } from './uri';
 
 describe('normalizeIpfsUri', () => {
   const cid = 'QmYwAPJzv5CZsnAzt8auVTL6rQJ8K8Y1YwecqHHU1Q6iCk';
@@ -46,5 +46,43 @@ describe('normalizeIpfsUri', () => {
     expect(normalizeIpfsUri('https://example.com/image.png')).toBe(
       'https://example.com/image.png'
     );
+  });
+
+  describe('with the content-domain resolver endpoint configured', () => {
+    const originalValue = process.env.MEDIA_RESOLVER_ENDPOINT;
+
+    beforeEach(() => {
+      process.env.MEDIA_RESOLVER_ENDPOINT = 'https://media.6529usercontent.com';
+    });
+
+    afterEach(() => {
+      if (originalValue === undefined) {
+        delete process.env.MEDIA_RESOLVER_ENDPOINT;
+      } else {
+        process.env.MEDIA_RESOLVER_ENDPOINT = originalValue;
+      }
+    });
+
+    it('rewrites IPFS, Arweave and metadata URIs to the content-domain path gateway', () => {
+      const txid = 'OI6-rpJ2C3Ab4HiZRWt5A1SumhjnYigmSPBPX0ICBj8';
+      expect(normalizeIpfsUri(`ipfs://${cid}/image.png`)).toBe(
+        `https://media.6529usercontent.com/ipfs/${cid}/image.png`
+      );
+      expect(
+        normalizeIpfsUri(`https://media.6529.io/ipfs/${cid}/image.png`)
+      ).toBe(`https://media.6529usercontent.com/ipfs/${cid}/image.png`);
+      expect(normalizeArUri(`ar://${txid}`)).toBe(
+        `https://media.6529usercontent.com/arweave/${txid}`
+      );
+      expect(normalizeMetadataUri(`ipfs://${cidV1}/1.json`)).toBe(
+        `https://media.6529usercontent.com/ipfs/${cidV1}/1.json`
+      );
+    });
+
+    it('preserves non-IPFS urls', () => {
+      expect(normalizeIpfsUri('https://example.com/image.png')).toBe(
+        'https://example.com/image.png'
+      );
+    });
   });
 });
