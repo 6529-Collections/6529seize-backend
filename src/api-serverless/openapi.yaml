@@ -9257,11 +9257,11 @@ paths:
         route returns all of them); and the grants of every listed event are in
         the top-level grants, once each, so each drop's own grants array is
         empty. Ids the caller cannot read, whether or not such a drop exists,
-        are listed in unavailable instead. Duplicate ids are answered once.
-        For a drop listed in truncated_drop_ids, the events left out may
-        reference grants that are not in grants, so the batch cannot verify
-        that drop's whole history: read it through GET
-        /drops/{dropId}/signed-events instead.
+        are listed in unavailable instead. Duplicate ids are answered once. For
+        a drop listed in truncated_drop_ids, the events left out may reference
+        grants that are not in grants, so the batch cannot verify that drop's
+        whole history: read it through GET /drops/{dropId}/signed-events
+        instead.
       operationId: getDropsSignedEvents
       security:
         - bearerAuth: []
