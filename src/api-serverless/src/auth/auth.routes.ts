@@ -110,8 +110,8 @@ import {
 import { isE2eeEnabled } from '@/e2ee/e2ee-flag';
 import { identitiesDb } from '@/identities/identities.db';
 import {
+  getStringFormChallengeStatus,
   isLegacyTextLoginDisabled,
-  isStringFormChallengeAccepted,
   type LegacyLoginChallenge,
   legacyLoginFormatOf,
   signLegacyTextChallenge,
@@ -119,7 +119,8 @@ import {
 } from '@/api/auth/legacy-text-challenge';
 import {
   recordLegacyAuthUseOnFinish,
-  setLegacyLoginFormat
+  setLegacyLoginFormat,
+  setLegacyLoginFormClosed
 } from '@/api/auth/legacy-auth-metrics';
 import {
   isConnectionShareRedeemLimited,
@@ -400,7 +401,8 @@ router.post(
       const signingAddress = await verifyClientSignature(
         challenge,
         client_signature,
-        client_address ?? null
+        client_address ?? null,
+        res
       );
       const chosenRole = await resolveAuthenticatedRole(
         signingAddress,
@@ -1118,23 +1120,38 @@ function verifyServerSignature(
   return challenge;
 }
 
+/**
+ * Refuses a plain-text challenge that can no longer sign in. Runs before the
+ * wallet signature is verified, so a refused challenge never costs a
+ * signature check (an on-chain lookup for contract wallets).
+ */
 async function assertTextLoginChallengeAccepted(
-  challenge: LegacyLoginChallenge
+  challenge: LegacyLoginChallenge,
+  res: Response<any>
 ): Promise<void> {
   if (isLegacyTextLoginDisabled()) {
     throw new Error(
       'Plain-text sign-in is disabled; use /auth/session-nonce and /auth/session-login'
     );
   }
-  if (challenge.form === 'string' && !(await isStringFormChallengeAccepted())) {
-    throw new Error('Sign-in challenge expired');
+  if (challenge.form !== 'string') {
+    return;
   }
+  const status = await getStringFormChallengeStatus();
+  if (status === 'accepted') {
+    return;
+  }
+  if (status === 'closed') {
+    setLegacyLoginFormClosed(res);
+  }
+  throw new Error('Sign-in challenge expired');
 }
 
 async function verifyClientSignature(
   challenge: LegacyLoginChallenge,
   clientSignature: string,
-  clientAddress: string | null
+  clientAddress: string | null,
+  res: Response<any>
 ): Promise<string> {
   const nonce = challenge.message;
   clientAddress = clientAddress?.toLowerCase() ?? null;
@@ -1163,7 +1180,7 @@ async function verifyClientSignature(
     return signingAddress;
   }
 
-  await assertTextLoginChallengeAccepted(challenge);
+  await assertTextLoginChallengeAccepted(challenge, res);
   if (isStructuredSignaturesRequired()) {
     throw new Error('Structured wallet signature required');
   }
