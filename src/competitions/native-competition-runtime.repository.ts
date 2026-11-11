@@ -518,27 +518,46 @@ export class NativeCompetitionRuntimeRepository extends LazyDbAccessCompatibleSe
   }
 
   /**
-   * The time of the entry's latest score history row, or null without one.
-   * Every history writer holds the competition lock the caller holds; the
-   * locking read sees a vote committed just before this transaction took
-   * that lock even when its snapshot is older. It reads one index row.
+   * The time of each given entry's latest score history row; entries without
+   * history are absent. Every history writer holds the competition lock the
+   * caller holds, so this locking read sees a vote committed just before
+   * this transaction took that lock even when its snapshot is older, and the
+   * shared locks it takes contend with no writer. One statement per page of
+   * entries: MAX per entry over (competition_id, entry_id, occurred_at, ...)
+   * is answered from the index.
    */
-  public async latestEntryHistoryTime(
+  public async latestEntryHistoryTimes(
     competitionId: string,
-    entryId: string,
+    entryIds: readonly string[],
     ctx: RequestContext
-  ): Promise<number | null> {
+  ): Promise<Map<string, number>> {
     this.requireTransaction(ctx);
-    const [row] = await this.query<{ occurred_at: number | string }>(
-      'latestEntryHistoryTime',
-      `select occurred_at from ${COMPETITION_SCORE_HISTORY_TABLE}
-      force index (idx_competition_score_history_entry_time)
-      where competition_id = :competitionId and entry_id = :entryId
-      order by occurred_at desc, sequence desc limit 1 for share`,
-      { competitionId, entryId },
-      ctx
+    const latest = new Map<string, number>();
+    await readSequentially(
+      chunkSqlInListValues(
+        Array.from(new Set(entryIds)),
+        SQL_IN_LIST_CHUNK_BYTES,
+        SQL_IN_LIST_PAGE_VALUES
+      ),
+      async (page) => {
+        const rows = await this.query<{
+          entry_id: string;
+          occurred_at: number | string;
+        }>(
+          'latestEntryHistoryTimes',
+          `select entry_id, max(occurred_at) as occurred_at
+          from ${COMPETITION_SCORE_HISTORY_TABLE}
+          force index (idx_competition_score_history_entry_time)
+          where competition_id = :competitionId and entry_id in (:entryIds)
+          group by entry_id for share`,
+          { competitionId, entryIds: page },
+          ctx
+        );
+        for (const row of rows)
+          latest.set(row.entry_id, Number(row.occurred_at));
+      }
     );
-    return row ? Number(row.occurred_at) : null;
+    return latest;
   }
 
   public async replaceVoteForReconciliation(

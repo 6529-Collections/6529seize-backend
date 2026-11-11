@@ -10,14 +10,25 @@ const competition = {
   voting: { credit_scope: WaveCreditScope.WAVE }
 };
 
-function setUp(latestHistoryTime: number | null) {
+function setUp(
+  latestHistoryTime: number | null,
+  votes: { entryId: string; value: number }[] = [
+    { entryId: 'entry', value: 80 }
+  ],
+  latestByEntry?: Map<string, number>
+) {
   const writes: { kind: string; entryId: string; occurredAt: number }[] = [];
   const repository = {
     listActiveVoters: jest.fn().mockResolvedValue(['voter']),
-    getVoterActiveVotes: jest
+    getVoterActiveVotes: jest.fn().mockResolvedValue(votes),
+    latestEntryHistoryTimes: jest
       .fn()
-      .mockResolvedValue([{ entryId: 'entry', value: 80 }]),
-    latestEntryHistoryTime: jest.fn().mockResolvedValue(latestHistoryTime),
+      .mockResolvedValue(
+        latestByEntry ??
+          new Map(
+            latestHistoryTime === null ? [] : [['entry', latestHistoryTime]]
+          )
+      ),
     replaceVoteForReconciliation: jest.fn(async (mutation) => {
       writes.push({ kind: 'vote', ...mutation });
     }),
@@ -56,9 +67,9 @@ describe('credit reconciliation history time', () => {
 
     await reconcilePass();
 
-    expect(repository.latestEntryHistoryTime).toHaveBeenCalledWith(
+    expect(repository.latestEntryHistoryTimes).toHaveBeenCalledWith(
       'competition',
-      'entry',
+      ['entry'],
       { connection: {} }
     );
     expect(writes).toEqual([
@@ -101,8 +112,51 @@ describe('credit reconciliation history time', () => {
       { connection: {} as never }
     );
 
-    expect(repository.latestEntryHistoryTime).not.toHaveBeenCalled();
+    expect(repository.latestEntryHistoryTimes).not.toHaveBeenCalled();
     expect(writes.map((write) => write.occurredAt)).toEqual([650, 650]);
+  });
+
+  it('reads the history times of all reduced entries of a voter at once', async () => {
+    const { repository, writes, reconcilePass } = setUp(
+      null,
+      [
+        { entryId: 'later-vote', value: 40 },
+        { entryId: 'older-history', value: 40 },
+        { entryId: 'no-history', value: 0 }
+      ],
+      new Map([
+        ['later-vote', 900],
+        ['older-history', 100]
+      ])
+    );
+
+    await reconcilePass();
+
+    expect(repository.latestEntryHistoryTimes).toHaveBeenCalledTimes(1);
+    expect(repository.latestEntryHistoryTimes).toHaveBeenCalledWith(
+      'competition',
+      ['later-vote', 'older-history'],
+      { connection: {} }
+    );
+    expect(
+      writes
+        .filter((write) => write.kind === 'history')
+        .map((write) => [write.entryId, write.occurredAt])
+    ).toEqual([
+      ['later-vote', 900],
+      ['older-history', PASS_TIME]
+    ]);
+  });
+
+  it('reads no history when no vote needs reducing', async () => {
+    const { repository, writes, reconcilePass } = setUp(700, [
+      { entryId: 'entry', value: 50 }
+    ]);
+
+    await reconcilePass();
+
+    expect(repository.latestEntryHistoryTimes).not.toHaveBeenCalled();
+    expect(writes).toEqual([]);
   });
 
   it('lets the reconciled aggregate, not the earlier vote, be the latest score', () => {
