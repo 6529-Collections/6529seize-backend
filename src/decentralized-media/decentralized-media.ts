@@ -248,7 +248,7 @@ export function isFirstPartyMediaGatewayUrl(value: string): boolean {
   return (
     isStrictHttpsUrl(url) &&
     (hostname === USER_CONTENT_MEDIA_HOST ||
-      getUserContentIpfsLabel(hostname) !== null)
+      looksLikeIpfsCid(getUserContentIpfsLabel(hostname) ?? ''))
   );
 }
 
@@ -395,7 +395,7 @@ function parseUserContentIpfsHostUrl(
 
   const parts = splitPath(url.pathname);
   const nestedCid =
-    parts[0]?.toLowerCase() === 'ipfs' && parts[1] && looksLikeIpfsCid(parts[1])
+    parts[0] === 'ipfs' && parts[1] && looksLikeIpfsCid(parts[1])
       ? parts[1]
       : null;
   return nestedCid

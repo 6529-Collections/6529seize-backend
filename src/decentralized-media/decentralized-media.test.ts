@@ -395,6 +395,19 @@ describe('separate content domain for user media', () => {
       }
     });
 
+    it('matches the nested ipfs segment on a per-CID host exactly', () => {
+      const host = `https://${cidV1}.ipfs.6529usercontent.com`;
+      expect(
+        parseDecentralizedMediaRef(`${host}/ipfs/${otherCidV1}/x`)
+      ).toEqual({ protocol: 'ipfs', id: otherCidV1, path: 'x' });
+      expect(
+        parseDecentralizedMediaRef(`${host}/IPFS/${otherCidV1}/x`)
+      ).toEqual({ protocol: 'ipfs', id: cidV1, path: `IPFS/${otherCidV1}/x` });
+      expect(
+        parseDecentralizedMediaRef(`${host}/Ipfs/${otherCidV1}/x`)
+      ).toEqual({ protocol: 'ipfs', id: cidV1, path: `Ipfs/${otherCidV1}/x` });
+    });
+
     it('parses old and new path gateway URLs to the same reference', () => {
       for (const suffix of [
         `ipfs/${cid}/a.png`,
@@ -468,6 +481,8 @@ describe('separate content domain for user media', () => {
         `https://media.6529usercontent.com:444/ipfs/${cid}`,
         `https://evil.6529usercontent.com/ipfs/${cid}`,
         `https://a.b.ipfs.6529usercontent.com/x`,
+        `https://b${'a'.repeat(50)}.ipfs.6529usercontent.com/x`,
+        `https://bciq${'a'.repeat(56)}.ipfs.6529usercontent.com/x`,
         `https://media.6529usercontent.com.evil.example/ipfs/${cid}`,
         `ipfs://${cid}`,
         'not a url'
