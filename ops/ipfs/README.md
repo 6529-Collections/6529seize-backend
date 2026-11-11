@@ -3,9 +3,9 @@
 This directory owns a reproducible **new IPFS candidate**, its pinned runtime,
 logical backups, restoration, and a dedicated gateway. It also provides a separate,
 **import-only adoption path** for the currently serving resources.
-Runtime deployment remains disabled in `environments/prod.json`; the separate
-adoption switch is enabled only for the authorized ownership operation and reset
-after verification. There is one shared IPFS deployment target,
+Stage 1 ownership adoption completed on November 11, 2026. Both runtime deployment
+and the one-time adoption switch are disabled in `environments/prod.json`.
+There is one shared IPFS deployment target,
 `prod`; the application staging environment does not get a separate IPFS service.
 No workflow runs a deployment on push or PR.
 
@@ -20,6 +20,7 @@ No workflow runs a deployment on push or PR.
 | `cloudformation/adoption.yaml`              | Observed production bucket, instance, security group and complete shared CDN baseline             |
 | `cloudformation/adoption-access.yaml`       | Separate OIDC/import roles with configuration-read and ownership-tag access                       |
 | `adoption.py`, `environments/adoption.json` | Exact import identities, native-model fingerprints, import preparation/execution and drift checks |
+| `adoption-record.json`                      | Completed Stage 1 ownership, verification, protections and GitHub Actions evidence                |
 | `versions.json`, `build-kubo.sh`            | Pinned Kubo/S3/Go/nginx versions, build and artifact checksums                                    |
 | `common.py`, `control.py`                   | Source/account/target guards, YAML loading, offline plans and explicit AWS/SSM operations         |
 | `requirements-control.txt`                  | Pinned PyYAML dependency for the GitHub runner/local controller only                              |
@@ -396,10 +397,21 @@ change set. Import failure may leave stack metadata or partial ownership: inspec
 restricted stack events before a new reviewed attempt. Do not delete retained data
 or restart the serving host to resolve it.
 
-Local tests cover failure/retry contracts. The real OIDC roles, read-only audits,
-IMPORT preparation and rollback have been exercised against AWS. Successful
-ownership and drift verification are required before adoption is recorded as
-complete; the runtime deployment switch stays disabled throughout.
+Stage 1 completed on November 11, 2026: `seize-ipfs-prod-adopted` owns the existing
+four physical resources, all verified `IN_SYNC`. The stack has termination
+protection, retained resources and a deny-all resource-update policy. The provider
+deadline was reset to the epoch immediately after import; both roles again
+explicitly deny CloudFront configuration updates. Native fingerprints and the full
+CloudFront API configuration match the pre-import baseline, and the existing IPFS
+runtime remains healthy. No software installation, server restart, content
+migration, DNS change or traffic handover was performed.
+
+[`adoption-record.json`](adoption-record.json) records the source SHA, exact import
+change set, resource identities and successful workflow runs, including independent
+verification after the permission window closed. Both mutation switches are now
+disabled. Local contracts, the native recovery rehearsal and real AWS OIDC/import,
+rollback, ownership and drift checks have been exercised. Runtime deployment and
+traffic handover remain a separate authorized stage.
 
 ## Runtime and traffic handover remains a separate migration
 
