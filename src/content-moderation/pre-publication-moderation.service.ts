@@ -439,6 +439,30 @@ export class PrePublicationModerationService {
     );
   }
 
+  /**
+   * The content-only part of the deterministic screen: every signal except
+   * the repeated-content check, which needs history. Used to corroborate
+   * reported content.
+   */
+  findContentPatternSignal(content: string): string | null {
+    if (this.findKnownMaliciousHost(content)) {
+      return 'KNOWN_MALICIOUS_DESTINATION';
+    }
+    if (!content) {
+      return null;
+    }
+    if (this.hasStructuredSensitiveDataSignal(content)) {
+      return 'STRUCTURED_SENSITIVE_DATA';
+    }
+    if (this.hasExplicitThreatSignal(content)) {
+      return 'EXPLICIT_THREAT_PATTERN';
+    }
+    if (this.hasSexualExploitationSignal(content)) {
+      return 'SEXUAL_EXPLOITATION_PATTERN';
+    }
+    return null;
+  }
+
   private async runDeterministicScreen(
     input: PrePublicationDropInput,
     content: string,

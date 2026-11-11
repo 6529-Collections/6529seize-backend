@@ -1366,6 +1366,24 @@ export class ContentModerationDb extends LazyDbAccessCompatibleService {
     );
   }
 
+  /** Distinct profiles with an open report on the drop. */
+  async countOpenReportersForDrop(
+    dropId: string,
+    connection?: ConnectionWrapper<any>
+  ): Promise<number> {
+    const row = await this.db.oneOrNull<{ reporter_count: number }>(
+      `
+        select count(distinct reporter_profile_id) as reporter_count
+        from ${CONTENT_MODERATION_REPORTS_TABLE}
+        where drop_id = :dropId
+          and status = :openStatus
+      `,
+      { dropId, openStatus: ContentReportStatus.OPEN },
+      this.connectionOptions(connection)
+    );
+    return Number(row?.reporter_count ?? 0);
+  }
+
   async tryAiQuarantineForOpenReport(
     input: {
       reportId: string;

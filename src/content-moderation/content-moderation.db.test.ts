@@ -781,6 +781,20 @@ describe('ContentModerationDb', () => {
     ).rejects.toThrow(BadRequestException);
   });
 
+  it('counts distinct reporters with an open report on a drop', async () => {
+    const { db, executor } = createDb();
+    executor.oneOrNull.mockResolvedValueOnce({ reporter_count: '2' });
+
+    await expect(db.countOpenReportersForDrop('drop-1')).resolves.toBe(2);
+
+    const [sql, params] = executor.oneOrNull.mock.calls[0];
+    expect(sql).toContain('count(distinct reporter_profile_id)');
+    expect(params).toEqual({
+      dropId: 'drop-1',
+      openStatus: ContentReportStatus.OPEN
+    });
+  });
+
   it('counts only pre-publication checks that called the evaluator', async () => {
     const { db, executor } = createDb();
     executor.oneOrNull.mockResolvedValueOnce({ invocation_count: 3 });

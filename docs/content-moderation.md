@@ -208,7 +208,24 @@ The reported-content evaluator returns one of:
 - `URGENT_QUARANTINE`.
 
 Only `URGENT_QUARANTINE` with confidence of at least `0.95` can temporarily
-move an open report's drop to `AI_QUARANTINED`. Other outcomes stay visible and
+move an open report's drop to `AI_QUARANTINED`, and only when it is
+corroborated: at least `CONTENT_MODERATION_AUTO_QUARANTINE_MIN_REPORTERS`
+(default `2`) distinct profiles have an open report on the drop, or the drop's
+text produces one of the content-only deterministic signals from the table
+above (everything except the repeated-content check).
+Set `CONTENT_MODERATION_AUTO_QUARANTINE_SIGNAL_CORROBORATES=false` to require
+reporters only, or the minimum to `1` to restore single-report quarantine. An
+uncorroborated urgent assessment is saved on the report and the drop stays
+visible for human review. Reporters are counted inside the quarantine
+transaction.
+
+When the reported drop is a reply, the parent drop is included as context and
+labelled with `context_role`, `authored_by_reporter`, and `content_as_of`.
+Drop edit history is not retained, so the parent is its current version
+(`CURRENT_MAY_POSTDATE_REPLY`). The evaluator is told to read parent text the
+reporter wrote as the reporter's own framing, not as independent evidence.
+
+Other outcomes stay visible and
 remain available to the occasional moderator queue. If assessment fails, the
 report is retained with `NEEDS_HUMAN_REVIEW`, zero confidence, and an explicit
 classifier-unavailable rationale.
