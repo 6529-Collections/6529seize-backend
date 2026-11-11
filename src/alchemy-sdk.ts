@@ -151,7 +151,8 @@ function createAlchemyAxios(
     headers: { 'Content-Type': 'application/json' },
     timeout: timeoutMs
   });
-  axiosRetry(instance, {
+  // axios-retry's CommonJS typings resolve axios's .d.cts declarations.
+  axiosRetry(instance as Parameters<typeof axiosRetry>[0], {
     retries: maxRetries,
     retryDelay: axiosRetry.exponentialDelay,
     retryCondition: isRetryableAlchemyError,
