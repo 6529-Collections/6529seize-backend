@@ -29,6 +29,7 @@ import {
   mediaUploadBudgetService
 } from '@/api/media/media-upload-budget.service';
 import { MediaUploadBudgetSource } from '@/entities/IMediaUploadBudget';
+import { readObjectSize } from '@/media/object-size';
 import {
   createDropMediaIngestKey,
   DROP_MEDIA_SANITIZE_UPLOAD_METADATA_KEY,
@@ -103,7 +104,8 @@ export class UploadMediaService {
         id: uploadId,
         profileId: author_id,
         source: MediaUploadBudgetSource.DROP,
-        pendingObjectKey: key
+        objectKey: key,
+        contentType: content_type
       },
       async () => {
         const result = await this.createSignedMediaUrl({ key, content_type });
@@ -137,7 +139,8 @@ export class UploadMediaService {
         id: uploadId,
         profileId: author_id,
         source: MediaUploadBudgetSource.WAVE,
-        pendingObjectKey: key
+        objectKey: key,
+        contentType: content_type
       },
       () => this.createSignedMediaUrl({ key, content_type })
     );
@@ -146,41 +149,24 @@ export class UploadMediaService {
   /**
    * Counts the upload against its author's rolling upload budget (429 once
    * it is used up) before anything is created, and gives the reservation
-   * back if preparing the upload fails.
+   * back if preparing the upload fails. Every preparation path goes through
+   * here; the author is the authenticated profile.
    */
   private async withBudgetedUpload<T>(
     reservation: {
       id: string;
       profileId: string;
       source: MediaUploadBudgetSource;
-      pendingObjectKey?: string;
+      objectKey: string;
+      contentType: string;
     },
     prepare: () => Promise<T>
   ): Promise<T> {
-    await this.uploadBudget.reserve({
-      ...reservation,
-      readObjectSize: (key) => this.readPublicObjectSize(key)
-    });
+    await this.uploadBudget.reserve(reservation);
     try {
       return await prepare();
     } catch (error) {
       await this.uploadBudget.release(reservation.id, reservation.profileId);
-      throw error;
-    }
-  }
-
-  /** The stored size of a public object; null when it does not exist. */
-  private async readPublicObjectSize(key: string): Promise<number | null> {
-    try {
-      const head = await this.getS3().send(
-        new HeadObjectCommand({ Bucket: this.getS3Bucket(), Key: key })
-      );
-      return typeof head.ContentLength === 'number' ? head.ContentLength : null;
-    } catch (error) {
-      // Without list permission S3 answers a missing key with 403.
-      const status = (error as { $metadata?: { httpStatusCode?: number } })
-        ?.$metadata?.httpStatusCode;
-      if (status === 404 || status === 403) return null;
       throw error;
     }
   }
@@ -332,6 +318,8 @@ export class UploadMediaService {
       }
     });
 
+    // If completion fails here the client may retry it; the budget entry
+    // stays pending and keeps counting until its size is read.
     const completeResp = await this.getS3().send(completeCmd);
     const size = await this.assertCompletedMediaWithinLimit({ key, upload });
     if (upload) {
@@ -387,6 +375,8 @@ export class UploadMediaService {
     }
     const limitMib = MAX_DIRECT_MULTIPART_MEDIA_BYTES / (1024 * 1024);
     if (upload) {
+      // The bytes did reach the bucket: the upload stays counted at its size.
+      await this.uploadBudget.recordSize(upload.id, upload.profile_id, size);
       await this.dropMediaUploadsDb.updateUpload({
         id: upload.id,
         patch: {
@@ -534,7 +524,10 @@ export class UploadMediaService {
         source:
           upload.source === DropMediaUploadSource.WAVE
             ? MediaUploadBudgetSource.WAVE
-            : MediaUploadBudgetSource.DROP
+            : MediaUploadBudgetSource.DROP,
+        // Images are published here by the sanitizer; the rest directly.
+        objectKey: upload.key,
+        contentType: upload.content_type
       },
       () => this.startMultipartUpload(upload)
     );
@@ -729,6 +722,8 @@ export class UploadMediaService {
             completed_at: Time.currentMillis()
           }
         });
+        // A failed upload cannot be completed again and stored nothing.
+        await this.uploadBudget.recordSize(upload.id, upload.profile_id, 0);
         throw error;
       }
       const markedProcessing = await this.dropMediaUploadsDb.transitionStatus({
@@ -773,20 +768,20 @@ export class UploadMediaService {
     upload: DropMediaUploadEntity
   ): Promise<void> {
     try {
-      const head = await this.getIngestS3().send(
-        new HeadObjectCommand({
-          Bucket: upload.ingest_bucket,
-          Key: upload.ingest_key
-        })
+      const read = await readObjectSize(
+        this.getIngestS3(),
+        upload.ingest_bucket,
+        upload.ingest_key
       );
-      if (typeof head.ContentLength === 'number') {
+      if (read.exists) {
         await this.uploadBudget.recordSize(
           upload.id,
           upload.profile_id,
-          head.ContentLength
+          read.bytes
         );
       }
     } catch (error) {
+      // The entry stays pending and is read later from the public key.
       this.logger.warn(
         `Could not read the size of media upload ${upload.id}: ${error instanceof Error ? error.message : String(error)}`
       );

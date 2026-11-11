@@ -34,9 +34,22 @@ export class MediaUploadBudgetEntryEntity {
   readonly size_bytes!: number | null;
 
   /**
-   * A single-PUT upload has no completion call: its public key, until a
-   * later preparation by the same profile reads the object's size.
+   * Bytes the upload counts while its size is unknown: the largest size
+   * allowed for its kind (clients do not declare a size).
+   */
+  @Column({ type: 'bigint', default: 0 })
+  readonly reserved_bytes!: number;
+
+  /**
+   * Where the object is stored, while its size is unknown. A completion
+   * call records the size; otherwise (no completion call, as for single-PUT
+   * uploads, or an unreadable size) a later preparation by the same profile
+   * reads it from this key.
    */
   @Column({ type: 'varchar', length: 1000, nullable: true, default: null })
   readonly pending_object_key!: string | null;
+
+  /** When a size read last could not settle this entry; null before that. */
+  @Column({ type: 'bigint', nullable: true, default: null })
+  readonly size_checked_at!: number | null;
 }
