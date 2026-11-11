@@ -1,6 +1,16 @@
 import { DataSource, QueryRunner } from 'typeorm';
 import { RdbmsSchemaBuilder } from 'typeorm/schema-builder/RdbmsSchemaBuilder';
 import { Logger } from '@/logging';
+import {
+  checkSchemaPlan,
+  destructivePlanDecision,
+  informationSchemaCatalog,
+  PlannedSchemaStatement,
+  SchemaCatalog,
+  SchemaPlanCheck,
+  schemaSyncDestructiveGuardMode,
+  SchemaSyncDestructiveGuardMode
+} from './schema-sync-plan-check';
 
 /**
  * Every schema statement waits at most this long for its metadata lock.
@@ -22,6 +32,43 @@ type Sleep = (ms: number) => Promise<void>;
 export interface SchemaSyncResult {
   readonly planned: number;
   readonly applied: number;
+  /** Present when the plan contained destructive statements. */
+  readonly destructivePlanSha256?: string;
+}
+
+export interface SchemaSyncOptions {
+  readonly sleep?: Sleep;
+  /**
+   * `block` holds back a plan with destructive statements unless
+   * `acknowledgedDestructivePlanSha256` matches it; `report` (the default,
+   * from SCHEMA_SYNC_DESTRUCTIVE_GUARD) logs such a plan and applies it.
+   */
+  readonly destructiveGuardMode?: SchemaSyncDestructiveGuardMode;
+  /** SHA-256 an operator approved from a previously reported plan. */
+  readonly acknowledgedDestructivePlanSha256?: string | null;
+  /** Test seam; defaults to information_schema on the sync connection. */
+  readonly catalog?: SchemaCatalog;
+}
+
+/**
+ * The plan contained statements that remove data or relax a unique key and
+ * was not acknowledged; nothing from it was applied.
+ */
+export class SchemaSyncDestructivePlanRefusedError extends Error {
+  constructor(
+    public readonly destructivePlanSha256: string,
+    public readonly destructiveStatements: readonly string[]
+  ) {
+    super(
+      `Schema sync plan has ${destructiveStatements.length} destructive statement(s) and was not applied; to apply it, invoke with approved_destructive_plan_sha256=${destructivePlanSha256}`
+    );
+    this.name = 'SchemaSyncDestructivePlanRefusedError';
+    // Keeps instanceof working for the ES5 build target.
+    Object.setPrototypeOf(
+      this,
+      SchemaSyncDestructivePlanRefusedError.prototype
+    );
+  }
 }
 
 export class SchemaSyncLockedError extends Error {
@@ -62,7 +109,10 @@ const MYSQL_DEFAULT_LOCK_WAIT_SECONDS = 31536000;
  * Outside Lambda the matching log line is the signal.
  */
 function emitMetric(
-  name: 'SchemaSyncLockTimeout' | 'SchemaSyncFailed',
+  name:
+    | 'SchemaSyncLockTimeout'
+    | 'SchemaSyncFailed'
+    | 'SchemaSyncDestructivePlan',
   outcome: string,
   table: string
 ): void {
@@ -104,6 +154,12 @@ function emitMetric(
  *   plan), including its typeorm_metadata bookkeeping for generated columns.
  *   Planning only reads the catalog, so it never blocks other sessions.
  * - No statements: no DDL at all.
+ * - Classify the plan (schema-sync-plan-check.ts) before applying any of it.
+ *   A plan that drops columns, tables or unique keys is logged in full with
+ *   the SHA-256 of its destructive statements. With
+ *   SCHEMA_SYNC_DESTRUCTIVE_GUARD=block such a plan is not applied unless the
+ *   caller passes that SHA-256 as its acknowledgement; by default it is only
+ *   reported.
  * - Otherwise apply them one by one on one connection whose
  *   lock_wait_timeout is SCHEMA_SYNC_LOCK_WAIT_SECONDS. A lock timeout is
  *   retried with backoff; after SCHEMA_SYNC_ATTEMPTS the run fails, naming the
@@ -115,7 +171,7 @@ function emitMetric(
  */
 export async function synchronizeSchemaBounded(
   dataSource: DataSource,
-  options: { sleep?: Sleep } = {}
+  options: SchemaSyncOptions = {}
 ): Promise<SchemaSyncResult> {
   const sleep =
     options.sleep ??
@@ -124,6 +180,7 @@ export async function synchronizeSchemaBounded(
   const queryRunner = dataSource.createQueryRunner('master');
   let applied = 0;
   let planned: { query: string; parameters?: unknown[] }[] = [];
+  let destructivePlanSha256: string | null = null;
   try {
     await queryRunner.connect();
     const restoreLockWait = await shortenLockWait(queryRunner);
@@ -142,6 +199,16 @@ export async function synchronizeSchemaBounded(
         statements: planned.length,
         sql: planned.map((it) => shortSql(it.query))
       });
+      if (planned.length) {
+        destructivePlanSha256 = await guardDestructivePlan(
+          planned,
+          options.catalog ??
+            informationSchemaCatalog((sql, parameters) =>
+              queryRunner.query(sql, parameters)
+            ),
+          options
+        );
+      }
       for (const statement of planned) {
         await withLockRetry(
           () => queryRunner.query(statement.query, statement.parameters),
@@ -154,6 +221,7 @@ export async function synchronizeSchemaBounded(
       await restoreLockWait();
     }
   } catch (error) {
+    if (error instanceof SchemaSyncDestructivePlanRefusedError) throw error;
     emitMetric(
       'SchemaSyncFailed',
       error instanceof SchemaSyncLockedError ? 'locked' : 'error',
@@ -171,7 +239,64 @@ export async function synchronizeSchemaBounded(
     await queryRunner.release();
   }
   logger.info('[SCHEMA_SYNC_DONE]', { planned: planned.length, applied });
-  return { planned: planned.length, applied };
+  return destructivePlanSha256
+    ? { planned: planned.length, applied, destructivePlanSha256 }
+    : { planned: planned.length, applied };
+}
+
+/**
+ * Classifies the plan before anything is applied. A plan with destructive
+ * statements is logged in full with the SHA-256 of its destructive subset;
+ * in `block` mode it is refused (nothing applied) unless that SHA-256 was
+ * acknowledged. Returns the SHA-256, or null for a plan without them.
+ */
+async function guardDestructivePlan(
+  planned: readonly PlannedSchemaStatement[],
+  catalog: SchemaCatalog,
+  options: SchemaSyncOptions
+): Promise<string | null> {
+  const mode = options.destructiveGuardMode ?? schemaSyncDestructiveGuardMode();
+  let check: SchemaPlanCheck;
+  try {
+    check = await checkSchemaPlan(planned, catalog);
+  } catch (error) {
+    // The check never stops a sync it cannot judge in report mode.
+    if (mode === 'block') throw error;
+    logger.warn('[SCHEMA_SYNC_PLAN_CHECK_FAILED]', {
+      error: error instanceof Error ? error.message : String(error)
+    });
+    return null;
+  }
+  const decision = destructivePlanDecision(check, {
+    mode,
+    acknowledgedSha256: options.acknowledgedDestructivePlanSha256
+  });
+  if (decision === 'none') return null;
+  const sha256 = check.destructivePlanSha256!;
+  logger.warn('[SCHEMA_SYNC_DESTRUCTIVE_PLAN]', {
+    mode,
+    decision,
+    destructivePlanSha256: sha256,
+    destructive: check.destructive.length,
+    plan: check.statements.map((it) => ({
+      kind: it.kind,
+      reason: it.reason,
+      sql: it.query,
+      parameters: it.parameters
+    }))
+  });
+  emitMetric(
+    'SchemaSyncDestructivePlan',
+    decision,
+    statementTarget(check.destructive[0].query)
+  );
+  if (decision === 'refused') {
+    throw new SchemaSyncDestructivePlanRefusedError(
+      sha256,
+      check.destructive.map((it) => it.query)
+    );
+  }
+  return sha256;
 }
 
 async function shortenLockWait(
