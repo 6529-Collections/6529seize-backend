@@ -64,3 +64,7 @@ jobs:
           IPFS_TELEMETRY: 'off'
           DO_NOT_TRACK: '1'
         run: python3 ops/ipfs/rehearse.py "$RUNNER_TEMP/ipfs-release"
+      - name: Rehearse upload forwarding and mutable-state fencing
+        env:
+          AWS_EC2_METADATA_DISABLED: 'true'
+        run: python3 ops/ipfs/rehearse_router.py "$RUNNER_TEMP/ipfs-release"

@@ -24,6 +24,7 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 
 import host
+import handover_state
 from common import require
 
 
@@ -39,6 +40,8 @@ MFS_COPY = 'files/cp'
 class S3(http.server.BaseHTTPRequestHandler):
     objects = {}
     lock = threading.Lock()
+    reject_writes = False
+    writes = 0
 
     def log_message(self, *_args):
         # The disposable fixture does not log HTTP headers or payloads.
@@ -53,10 +56,14 @@ class S3(http.server.BaseHTTPRequestHandler):
             self.wfile.write(content)
 
     def do_PUT(self):
+        if self.reject_writes:
+            self.send(403, b"<Error><Code>AccessDenied</Code></Error>")
+            return
         path = urllib.parse.unquote(urllib.parse.urlparse(self.path).path)
         data = self.rfile.read(int(self.headers["Content-Length"]))
         with self.lock:
             self.objects[path] = data
+            type(self).writes += 1
         self.send(200)
 
     def do_HEAD(self):
@@ -111,7 +118,7 @@ def stop(process):
 
 
 class Daemon:
-    def __init__(self, binary, repo, endpoint, work):
+    def __init__(self, binary, repo, endpoint, work, read_only=False):
         self.repo = repo
         self.binary = binary
         self.api_port = port()
@@ -119,7 +126,7 @@ class Daemon:
         self.environment = {**os.environ, "IPFS_PATH": str(repo), "IPFS_TELEMETRY": "off", "DO_NOT_TRACK": "1", "AWS_EC2_METADATA_DISABLED": "true"}
         subprocess.run([str(binary), "init", "--profile=server", "--empty-repo"], env=self.environment,
                        capture_output=True, check=True, timeout=60)
-        host.configure_repo({"region": "us-east-1", "blocksBucket": "fixture-blocks", "environment": "prod"}, repo, endpoint)
+        host.configure_repo({"region": "us-east-1", "blocksBucket": "fixture-blocks", "environment": "prod", "readOnly": read_only}, repo, endpoint)
         path = repo / "config"
         config = json.loads(path.read_text())
         config["Addresses"]["API"] = "/ip4/127.0.0.1/tcp/" + str(self.api_port)
@@ -231,6 +238,40 @@ def https_rehearsal(bundle, work, daemon, payload, cid):
         log.close()
 
 
+def bidirectional_handover(first, second, work):
+    # Final-state transfer must preserve immutable uploads accepted by
+    # the destination after the initial snapshot, in either direction.
+    first.start()
+    for index, (source, target) in enumerate(((first, second), (second, first))):
+        base = handover_state.snapshot(source.rpc)
+        state_path = work / ("handover-" + str(index) + ".json")
+        fence = lambda index=index: {"mode": "serve", "mfsReady": False, "epoch": index + 1}
+        baseline = target.rpc(FILE_STAT, {"arg": "/", "hash": "true"})["Hash"]
+        handover_state.merge_pins(base, target.rpc)
+        handover_state.replace_fenced_mfs(base, target.rpc, fence, state_path, "initial-" + str(index), baseline)
+        state_path.unlink()
+        new_file = work / ("new-" + str(index) + ".txt")
+        new_file.write_text("destination upload accepted during handover " + str(index))
+        accepted_cid = target.cli("add", "-Q", str(new_file))
+        late_file = work / ("late-" + str(index) + ".txt")
+        late_file.write_text("source upload finished after initial snapshot " + str(index))
+        late_cid = source.cli("add", "-Q", str(late_file))
+        source.rpc(MFS_COPY, {"arg": [IPFS_PREFIX + late_cid, "/late-" + str(index)]})
+        final = handover_state.snapshot(source.rpc)
+        handover_state.merge_pins(final, target.rpc)
+        handover_state.replace_fenced_mfs(final, target.rpc, fence, state_path, "final-" + str(index), base["mfsRoot"])
+        actual_pins = handover_state.explicit_pins(target.rpc)["pins"]
+        require(accepted_cid in actual_pins and late_cid in actual_pins, "Handover or rollback erased an accepted upload")
+        require(target.rpc("cat", {"arg": accepted_cid}, raw=True).decode() == new_file.read_text(), "Accepted destination content was lost")
+
+
+def verify_restored_content(second, pins, cid, payload):
+    for root_cid, entry in pins.items():
+        if entry["Type"] in ("recursive", "direct"):
+            require(second.rpc("block/get", {"arg": root_cid}, raw=True), "Restored pin content is missing")
+    require(second.rpc("cat", {"arg": cid}, raw=True) == payload, "Restored content differs")
+
+
 def main():
     bundle = Path(sys.argv[1]).resolve()
     processes = []
@@ -259,6 +300,27 @@ def main():
             first.start()
             require(first.rpc("cat", {"arg": cid}, raw=True) == payload, "Restart lost content")
             require(first.rpc(FILE_STAT, {"arg": "/", "hash": "true"})["Hash"] == saved["mfsRoot"], "Restart lost MFS")
+            # Prove initialization and a full explicit-pin restore without any
+            # production-style S3 writes. Kubo may repeat Put for an existing
+            # root; the reviewed plugin mode compares the bytes instead.
+            S3.reject_writes = True
+            writes_before = S3.writes
+            validation = Daemon(binary, work / "read-only", LOOPBACK_HTTP + str(server.server_port), work, read_only=True)
+            processes.append(validation)
+            readonly_saved = handover_state.reference_state(first.rpc)
+            handover_state.merge_pins(readonly_saved, validation.rpc)
+            require(validation.rpc("cat", {"arg": cid}, raw=True) == payload, "Read-only restore changed content")
+            require(S3.writes == writes_before, "Read-only restore wrote content storage")
+            try:
+                validation.rpc("files/mkdir", {"arg": "/must-not-write"})
+                validation.rpc("files/flush", {"arg": "/"})
+            except urllib.error.HTTPError:
+                pass
+            else:
+                raise AssertionError("Read-only validation accepted a new block")
+            require(S3.writes == writes_before, "Read-only rejection wrote content storage")
+            validation.stop()
+            S3.reject_writes = False
             # Exercise the actual backup/restore implementation. Only the S3
             # transport and systemd calls are replaced; the private archive,
             # version selection, checksum, RPC state and recovery are real.
@@ -316,14 +378,12 @@ def main():
             host.restore(config, receipt["backupKey"], receipt["versionId"])
             pins = second.rpc("pin/ls", {"type": "all"})["Keys"]
             require(all(pins[cid]["Type"] == kind for cid, kind in saved["pins"].items()), "Restore lost pin types")
-            for root_cid, entry in pins.items():
-                if entry["Type"] in ("recursive", "direct"):
-                    require(second.rpc("block/get", {"arg": root_cid}, raw=True), "Restored pin content is missing")
-            require(second.rpc("cat", {"arg": cid}, raw=True) == payload, "Restored content differs")
+            verify_restored_content(second, pins, cid, payload)
             second.stop()
             second.start()
             require(second.rpc(FILE_STAT, {"arg": "/", "hash": "true"})["Hash"] == saved["mfsRoot"], "Restored MFS did not persist")
-            print(json.dumps({"passed": True, "checks": ["bundled-s3-startup", "bootstrap-pin-content", "all-restored-pin-root-blocks", "multi-chunk-upload", "recursive-and-direct-pins", "mfs-nested-directories", "restart-persistence", "independent-identity", "private-logical-backup", "versioned-checksummed-restore", "pin-and-mfs-restoration", "interrupted-restore-resume", "idempotent-restore", "restored-restart", "nginx-https", "range", "head", "restricted-rpc", "https-upload"], "awsResourcesCreated": 0}))
+            bidirectional_handover(first, second, work)
+            print(json.dumps({"passed": True, "checks": ["bundled-s3-startup", "bootstrap-pin-content", "all-restored-pin-root-blocks", "multi-chunk-upload", "recursive-and-direct-pins", "mfs-nested-directories", "restart-persistence", "independent-identity", "private-logical-backup", "versioned-checksummed-restore", "pin-and-mfs-restoration", "interrupted-restore-resume", "idempotent-restore", "restored-restart", "nginx-https", "range", "head", "restricted-rpc", "https-upload", "read-only-production-style-pin-restore", "read-only-new-block-rejection", "bidirectional-final-state-with-concurrent-uploads"], "awsResourcesCreated": 0}))
         finally:
             for daemon in processes:
                 daemon.stop()
