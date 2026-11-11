@@ -241,6 +241,7 @@ Resources:
     Type: AWS::IAM::Role
     Properties:
       RoleName: seize-ipfs-prod-runtime-deploy
+      MaxSessionDuration: 21600
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
         Statement:
@@ -258,6 +259,16 @@ Resources:
           PolicyDocument:
             Version: '2012-10-17'
             Statement:
+              - Effect: Deny
+                Action:
+                  - cloudformation:CreateChangeSet
+                  - cloudformation:ExecuteChangeSet
+                  - cloudformation:CreateStack
+                  - cloudformation:UpdateStack
+                  - cloudformation:DeleteStack
+                  - cloudformation:SetStackPolicy
+                  - cloudformation:UpdateTerminationProtection
+                Resource: arn:aws:cloudformation:us-east-1:987989283142:stack/seize-ipfs-prod-runtime-access/*
               - Effect: Allow
                 Action:
                   [

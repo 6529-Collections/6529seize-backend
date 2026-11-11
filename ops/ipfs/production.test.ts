@@ -151,6 +151,82 @@ print('trusted')
     ).toBe('trusted');
   });
 
+  test('uses a new change set when identical desired weights recur after rollback', () => {
+    expect(
+      python(`
+os.environ['IPFS_RUNTIME_SERVICE_ROLE_ARN']='arn:aws:iam::987989283142:role/seize-ipfs-prod-runtime-cloudformation'
+c=object.__new__(p.Controller);c.sha='a'*40;c.state={};c.save=lambda:None;c.protect=lambda _:None
+p.stack_exists=lambda _:True
+values={'VpcId':'vpc','SubnetIds':'a,b','CertificateArn':'cert','SlotAInstanceId':'old','SlotBInstanceId':'new','ActiveSlot':'a'}
+document=p.yaml.safe_load((p.ROOT/'cloudformation/frontdoor.yaml').read_text())
+revision=0;names=[];executed=[];plans={}
+def current(_):
+ return {'StackStatus':'UPDATE_COMPLETE','Parameters':[{'ParameterKey':k,'ParameterValue':v} for k,v in values.items()], 'LastUpdatedTime':str(revision),'CreationTime':'initial','Outputs':[]}
+p.stack=current;p.wait_stack=current
+def call(service,operation,*args):
+ global revision,values
+ if operation=='get-template':return {'TemplateBody':document}
+ if operation=='create-change-set':
+  name=args[args.index('--change-set-name')+1];names.append(name)
+  desired=json.loads(args[args.index('--parameters')+1])
+  plans[name]=desired
+  return {'Id':name}
+ if operation=='describe-change-set':
+  name=args[args.index('--change-set-name')+1]
+  return {'StackName':p.FRONTDOOR,'Description':c.sha,'Status':'CREATE_COMPLETE','ExecutionStatus':'AVAILABLE' if name not in executed else 'EXECUTE_COMPLETE',
+   'Parameters':plans[name],'Changes':[{'ResourceChange':{'LogicalResourceId':'ApiRule','Action':'Modify','Replacement':'False'}}]}
+ if operation=='execute-change-set':
+  name=args[args.index('--change-set-name')+1];executed.append(name)
+  values={x['ParameterKey']:x['ParameterValue'] for x in plans[name]};revision+=1;return {}
+ raise AssertionError(operation)
+p.call=call
+for active in ['b','a','b']:
+ c.apply(p.FRONTDOOR,'frontdoor',{**values,'ActiveSlot':active},['ApiRule'])
+assert len(executed)==3 and len(set(names))==3 and values['ActiveSlot']=='b'
+print('three real transitions')
+`)
+    ).toBe('three real transitions');
+  });
+
+  test('refuses a new migration while the current source is forwarding an unfinished handover', () => {
+    expect(
+      python(`${rejected}
+c=object.__new__(p.Controller)
+node={'instanceId':'managed'}
+for state in [{'mode':'forward','mfsReady':True},{'mode':'serve','mfsReady':False}]:
+ c.current_status=lambda _,state=state:{'router':state}
+ rejected(lambda:c.source_ready(node))
+c.current_status=lambda _:{'router':{'mode':'serve','mfsReady':True}}
+assert c.source_ready(node)['sourceWriterReady']
+rejected(lambda:p.validate_id('access'))
+print('resume required')
+`)
+    ).toBe('resume required');
+  });
+
+  test('separates runtime stack authority from the similarly named bootstrap stack', () => {
+    const template = parse(
+      readFileSync(
+        join(__dirname, 'cloudformation/runtime-access.yaml'),
+        'utf8'
+      )
+    );
+    const statements =
+      template.Resources.DeploymentRole.Properties.Policies[0].PolicyDocument
+        .Statement;
+    expect(statements).toContainEqual(
+      expect.objectContaining({
+        Effect: 'Deny',
+        Action: expect.arrayContaining([
+          'cloudformation:ExecuteChangeSet',
+          'cloudformation:SetStackPolicy'
+        ]),
+        Resource:
+          'arn:aws:cloudformation:us-east-1:987989283142:stack/seize-ipfs-prod-runtime-access/*'
+      })
+    );
+  });
+
   test('only offers explicit production operations through the protected main environment', () => {
     const workflow = parse(
       readFileSync(

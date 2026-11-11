@@ -54,6 +54,7 @@ jobs:
           from common import source_identity_guard,runtime_mutation_guard,require,matches
           source_identity_guard(os.environ['IPFS_SOURCE_SHA'],os.environ)
           require(matches(r'[a-z][a-z0-9-]{2,11}',os.environ['IPFS_DEPLOYMENT_ID']),'Invalid deployment ID')
+          require(os.environ['IPFS_DEPLOYMENT_ID']!='access','Deployment ID reserved for bootstrap authority')
           if os.environ['IPFS_OPERATION']!='plan':
               runtime_mutation_guard(os.environ['IPFS_SOURCE_SHA'],os.environ)
           PY
@@ -86,6 +87,7 @@ jobs:
           aws-region: us-east-1
           allowed-account-ids: '987989283142'
           role-session-name: ipfs-${{ github.run_id }}
+          role-duration-seconds: 21600
       - name: Execute the explicit production operation
         if: inputs.operation != 'plan'
         env:

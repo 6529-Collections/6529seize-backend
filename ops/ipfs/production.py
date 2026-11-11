@@ -31,6 +31,7 @@ def call(service, operation, *arguments):
 
 def validate_id(value):
     require(matches(r'[a-z][a-z0-9-]{2,11}', value), 'Deployment ID must be 3-12 lowercase letters/digits/dashes')
+    require(value != 'access', 'The access deployment ID is reserved for bootstrap authority')
     return value
 
 
@@ -182,6 +183,7 @@ class Controller:
         document = yaml.safe_load(template.read_text())
         require(set(desired) == set(document['Parameters']), 'Every infrastructure parameter must be explicit')
         exists = stack_exists(name)
+        revision = 'create'
         if exists:
             previous = stack(name)
             if previous['StackStatus'] == 'REVIEW_IN_PROGRESS':
@@ -194,7 +196,11 @@ class Controller:
             if parameters(previous) == desired:
                 self.protect(name)
                 return outputs(previous)
-        change_name = 'seize-ipfs-prod-' + fingerprint({'stack': name, 'sha': self.sha, 'parameters': desired})[:32]
+            revision = previous.get('LastUpdatedTime') or previous['CreationTime']
+        # The same desired weights recur during rollback and final promotion.
+        # Bind to the preceding stack revision so each transition gets a fresh
+        # change set, while retries before execution reuse the recorded ARN.
+        change_name = 'seize-ipfs-prod-' + fingerprint({'stack': name, 'sha': self.sha, 'revision': revision, 'parameters': desired})[:32]
         changes = self.state.setdefault('changeSets', {})
         key = name + '/' + change_name
         if key not in changes:
@@ -459,6 +465,7 @@ os.execv('/usr/bin/python3',['python3',str(release/'production_host.py'),%r])
         source = self.state['source']
         self.once('artifact', self.upload)
         self.state['artifact'] = self.state['steps']['artifact']; self.save()
+        self.once('source-writer-ready', lambda: self.source_ready(source))
         initial = self.once('initial-backup', lambda: self.host(source, 'backup', label=self.id + '-initial'))
         frontdoor = self.once('frontdoor-created', lambda: self.frontdoor(self.state['frontdoorParameters']))
         runtime_name = 'seize-ipfs-prod-runtime-' + self.id
@@ -496,6 +503,16 @@ os.execv('/usr/bin/python3',['python3',str(release/'production_host.py'),%r])
         self.verify_alarms([frontdoor['HealthAlarm'], runtime['HealthAlarm']])
         self.record('completed', result)
         return result
+
+    def source_ready(self, node):
+        current = self.current_status(node)
+        state = current.get('router')
+        if state:
+            require(state['mode'] == 'serve' and state['mfsReady'],
+                    'Unfinished writer handover: resume its original deployment instead of starting another')
+        else:
+            require(node['instanceId'] == CONTEXT['legacyInstanceId'], 'Managed source is missing its writer router')
+        return {'sourceWriterReady': True, 'instanceId': node['instanceId']}
 
     def verify_alarms(self, names):
         for _ in range(120):
