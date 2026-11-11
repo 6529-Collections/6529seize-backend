@@ -13,6 +13,7 @@ import { competitionInteractionRepository } from '@/competitions/competition-int
 import { competitionDropVotesDb } from '@/competitions/competition-drop-votes.db';
 import { competitionRepository } from '@/competitions/competition.repository';
 import { competitionService } from '@/competitions/competition.service';
+import { competitionVoteChangeBudget } from '@/competitions/competition-vote-change-budget';
 import { Competition } from '@/competitions/competition.types';
 import { NativeCompetitionReader } from '@/competitions/native-competition.reader';
 import { nativeCompetitionRuntimeRepository } from '@/competitions/native-competition-runtime.repository';
@@ -130,6 +131,8 @@ export class CompetitionVotingService {
           tx
         );
         competitionCreditService.assertVoteFits(budget, request.value);
+        if (request.value !== (budget.current_vote ?? 0))
+          await competitionVoteChangeBudget.spend(competitionId, actor);
         await competitionInteractionRepository.setVote(
           competitionId,
           entryId,

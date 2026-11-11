@@ -107,6 +107,13 @@ and elapsed duration with `native_competition_execution_failed`.
   worker pass. Verify both workers are active and healthy before deploying this
   API and worker versions must share the native history contract during rollout.
   Reversal tooling is retired; preserve all accepted native events.
+- Each voter may change votes in one competition at most
+  `COMPETITION_VOTE_CHANGES_PER_MINUTE` times per minute (default 120, `0`
+  turns it off), counted in Redis per voter, competition and minute for native
+  vote commands and legacy rating requests alike. Only changes count; resending
+  the current value does not. A change past the budget returns 429
+  `VOTE_CHANGE_LIMIT` with `retry_after_seconds` before anything is written.
+  While Redis is unavailable changes are admitted.
 - Pause decisions leaves otherwise eligible entries/votes available. Rank
   occurrences inside an inclusive pause are skipped without shifting future
   occurrences. Approve evaluates accepted votes on resume, including a hold

@@ -722,6 +722,35 @@ export async function redisSortedSetAddAndCount(
   return count;
 }
 
+const INCREMENT_IN_WINDOW_SCRIPT = `
+local count = redis.call('INCR', KEYS[1])
+if count == 1 then redis.call('EXPIRE', KEYS[1], tonumber(ARGV[1])) end
+return count`;
+
+/**
+ * Increments a counter that expires `ttlSeconds` after its first increment
+ * and returns the new count; null when Redis is disabled or unavailable.
+ */
+export async function redisIncrementWithExpiry(
+  key: string,
+  ttlSeconds: number
+): Promise<number | null> {
+  if (!redis) {
+    return null;
+  }
+  return runFailOpenCommand<number | null>(
+    'INCR with expiry',
+    null,
+    async (client) =>
+      Number(
+        await client.eval(INCREMENT_IN_WINDOW_SCRIPT, {
+          keys: [key],
+          arguments: [String(Math.max(1, Math.ceil(ttlSeconds)))]
+        })
+      )
+  );
+}
+
 export interface RedisTokenBucket {
   readonly key: string;
   /** Tokens a full bucket holds: the burst it admits. */
