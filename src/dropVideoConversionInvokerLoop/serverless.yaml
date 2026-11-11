@@ -35,6 +35,11 @@ functions:
       S3_BUCKET:          6529bucket
       BUCKET_REGION:      eu-west-1
       MC_DROPS_VIDEO_TEMPLATE_NAME: Drops_HLS_MP4_360_720
+      # Conversion bounds (see video-conversion-admission.ts): 2 GiB per
+      # object, at most 3 jobs per object key in 24 hours.
+      DROP_VIDEO_CONVERSION_MAX_BYTES: '2147483648'
+      DROP_VIDEO_CONVERSION_MAX_JOBS_PER_KEY: '3'
+      DROP_VIDEO_CONVERSION_JOB_WINDOW_HOURS: '24'
 
 resources:
   Resources:
@@ -59,9 +64,19 @@ resources:
               Resource:
                 Fn::Sub: arn:${AWS::Partition}:s3:::${self:functions.dropVideoConversionInvokerLoop.environment.S3_BUCKET}/renditions/drops/*/poster/*_device.jpg
             - Effect: Allow
-              Action: s3:ListMultipartUploadParts
+              Action:
+                - s3:ListMultipartUploadParts
+                # HEAD of the uploaded video before a job is created.
+                - s3:GetObject
               Resource:
                 Fn::Sub: arn:${AWS::Partition}:s3:::${self:functions.dropVideoConversionInvokerLoop.environment.S3_BUCKET}/drops/*
+            # Per-key ledger of started conversion jobs (conditional writes).
+            - Effect: Allow
+              Action:
+                - s3:GetObject
+                - s3:PutObject
+              Resource:
+                Fn::Sub: arn:${AWS::Partition}:s3:::${self:functions.dropVideoConversionInvokerLoop.environment.S3_BUCKET}/_video-conversion-ledger/*
 
     DropsVideoCreatedRule:
       Type: AWS::Events::Rule
