@@ -1157,11 +1157,15 @@ describe('ReleaseNoteGenerationService', () => {
               ]
             : []),
           '',
-          'In-app update available, direct download links:',
+          'In-app update available.',
           '',
-          '[Windows v0.3.13](https://d3lqz0a4bldqgf.cloudfront.net/6529-core-app/win/links/0.3.13.html)',
-          '[MacOS v0.3.13](https://d3lqz0a4bldqgf.cloudfront.net/6529-core-app/mac/links/0.3.13.html)',
-          '[Linux v0.3.13](https://d3lqz0a4bldqgf.cloudfront.net/6529-core-app/linux/links/0.3.13.html)',
+          'Visit [6529 Apps](https://6529.io/about/6529-apps) or use the direct download links below:',
+          '',
+          [
+            '[Windows](https://d3lqz0a4bldqgf.cloudfront.net/6529-core-app/win/links/0.3.13.html)',
+            '[macOS](https://d3lqz0a4bldqgf.cloudfront.net/6529-core-app/mac/links/0.3.13.html)',
+            '[Linux](https://d3lqz0a4bldqgf.cloudfront.net/6529-core-app/linux/links/0.3.13.html)'
+          ].join(' · '),
           '',
           'Published by @[prxt0]'
         ].join('\n')

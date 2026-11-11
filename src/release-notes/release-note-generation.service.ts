@@ -920,6 +920,24 @@ export class ReleaseNoteGenerationService {
       `- Web Updates through ${formatMarkdownLink(frontendRelease.label, frontendRelease.url)}`,
       ...bullets.map((bullet) => `- ${bullet}`)
     ];
+    const appsLink = formatMarkdownLink(
+      '6529 Apps',
+      'https://6529.io/about/6529-apps'
+    );
+    const downloadLinks = [
+      formatMarkdownLink(
+        'Windows',
+        `${DESKTOP_DOWNLOAD_BASE_URL}/win/links/${version}.html`
+      ),
+      formatMarkdownLink(
+        'macOS',
+        `${DESKTOP_DOWNLOAD_BASE_URL}/mac/links/${version}.html`
+      ),
+      formatMarkdownLink(
+        'Linux',
+        `${DESKTOP_DOWNLOAD_BASE_URL}/linux/links/${version}.html`
+      )
+    ].join(' · ');
     const content = [
       `## 🖥️ 6529 Desktop Release v${version}`,
       '',
@@ -931,20 +949,11 @@ export class ReleaseNoteGenerationService {
           ]
         : []),
       '',
-      'In-app update available, direct download links:',
+      'In-app update available.',
       '',
-      formatMarkdownLink(
-        `Windows v${version}`,
-        `${DESKTOP_DOWNLOAD_BASE_URL}/win/links/${version}.html`
-      ),
-      formatMarkdownLink(
-        `MacOS v${version}`,
-        `${DESKTOP_DOWNLOAD_BASE_URL}/mac/links/${version}.html`
-      ),
-      formatMarkdownLink(
-        `Linux v${version}`,
-        `${DESKTOP_DOWNLOAD_BASE_URL}/linux/links/${version}.html`
-      ),
+      `Visit ${appsLink} or use the direct download links below:`,
+      '',
+      downloadLinks,
       ...(publisherCredit ? ['', `Published by ${publisherCredit}`] : [])
     ].join('\n');
 
