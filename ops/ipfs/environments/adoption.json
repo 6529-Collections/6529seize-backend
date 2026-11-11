@@ -4,7 +4,7 @@
   "region": "us-east-1",
   "stackName": "seize-ipfs-prod-adopted",
   "observedAt": "2026-11-11",
-  "templateSha256": "1e898b1385b7e30afa0c60da255506512f2155c693297599d3b294550e316916",
+  "templateSha256": "670891a61de213552d8ab97201c7809ac4ea454c845202ef91b366a36b9f5c64",
   "resources": {
     "Blocks": {
       "type": "AWS::S3::Bucket",
