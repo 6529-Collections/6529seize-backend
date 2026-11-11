@@ -315,6 +315,72 @@ export function redactQuotedDropsOutsideAudience(
   return audienceDrop;
 }
 
+function collectMentionedWaveIdsWithDetails(
+  drop: ApiDrop | ApiDropWithoutWave,
+  waveIds: Set<string>
+): Set<string> {
+  for (const mentionedWave of drop.mentioned_waves ?? []) {
+    if (mentionedWave.wave) {
+      waveIds.add(mentionedWave.wave_id);
+    }
+  }
+  for (const part of drop.parts) {
+    if (part.quoted_drop?.drop) {
+      collectMentionedWaveIdsWithDetails(part.quoted_drop.drop, waveIds);
+    }
+  }
+  if (drop.reply_to?.drop) {
+    collectMentionedWaveIdsWithDetails(drop.reply_to.drop, waveIds);
+  }
+  return waveIds;
+}
+
+/** Ids of mentioned waves (root and embedded drops) that carry wave details. */
+export function getMentionedWaveIdsWithDetails(drop: ApiDrop): string[] {
+  return Array.from(collectMentionedWaveIdsWithDetails(drop, new Set()));
+}
+
+function redactMentionedWavesInPlace(
+  drop: ApiDrop | ApiDropWithoutWave,
+  showableWaveIds: ReadonlySet<string>
+): void {
+  for (const mentionedWave of drop.mentioned_waves ?? []) {
+    if (mentionedWave.wave && !showableWaveIds.has(mentionedWave.wave_id)) {
+      delete mentionedWave.wave;
+    }
+  }
+  for (const part of drop.parts) {
+    if (part.quoted_drop?.drop) {
+      redactMentionedWavesInPlace(part.quoted_drop.drop, showableWaveIds);
+    }
+  }
+  if (drop.reply_to?.drop) {
+    redactMentionedWavesInPlace(drop.reply_to.drop, showableWaveIds);
+  }
+}
+
+/**
+ * The wave summary on a mention does not say whether the wave is a subwave, so
+ * the broadcast keeps mentioned wave details only for ids the server confirmed
+ * as showable to any audience (public wave, and public parent for subwaves).
+ * Other mentions keep their wave_id and clients resolve them with their access.
+ */
+export function redactMentionedWavesOutsideShowableSet(
+  inputDrop: ApiDrop,
+  showableWaveIds: ReadonlySet<string>
+): ApiDrop {
+  if (
+    getMentionedWaveIdsWithDetails(inputDrop).every((waveId) =>
+      showableWaveIds.has(waveId)
+    )
+  ) {
+    return inputDrop;
+  }
+  const audienceDrop = structuredClone(inputDrop);
+  redactMentionedWavesInPlace(audienceDrop, showableWaveIds);
+  return audienceDrop;
+}
+
 function removeWaveAuthRequestContext(wave: object): void {
   const viewerScopedWave = wave as Record<string, unknown>;
   viewerScopedWave.authenticated_user_eligible_to_vote = undefined;
@@ -876,8 +942,8 @@ export class WsListenersNotifier {
       );
       measurement.queryDone(onlineProfiles.length);
       if (!onlineProfiles.length) return;
-      const audienceDrop = await this.restrictQuotesToWaveAudience(
-        inputDrop,
+      const audienceDrop = await this.restrictMentionedWavesToShowable(
+        await this.restrictQuotesToWaveAudience(inputDrop, ctx),
         ctx
       );
       const { hiddenDropIds, authorIdsByDropId } =
@@ -1357,6 +1423,23 @@ export class WsListenersNotifier {
         ctx
       );
     return redactQuotedDropsOutsideAudience(inputDrop, visibleQuotedDropIds);
+  }
+
+  /** Resolves mentioned wave visibility once per broadcast frame. */
+  private async restrictMentionedWavesToShowable(
+    inputDrop: ApiDrop,
+    ctx: RequestContext
+  ): Promise<ApiDrop> {
+    const mentionedWaveIds = getMentionedWaveIdsWithDetails(inputDrop);
+    if (!mentionedWaveIds.length) {
+      return inputDrop;
+    }
+    const showableWaveIds =
+      await this.wsConnectionRepository.findWaveIdsShowableToAnyAudience(
+        mentionedWaveIds,
+        ctx
+      );
+    return redactMentionedWavesOutsideShowableSet(inputDrop, showableWaveIds);
   }
 
   private async getCreditLeftsForOnlineProfiles(

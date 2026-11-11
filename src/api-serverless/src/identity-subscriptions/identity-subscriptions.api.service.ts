@@ -42,7 +42,8 @@ import {
 } from '@/api/waves/wave-access.helpers';
 import {
   competitionAnonymityService,
-  CompetitionAnonymityService
+  CompetitionAnonymityService,
+  competitionAnonymityViewerId
 } from '@/competitions/competition-anonymity';
 
 export class IdentitySubscriptionsApiService {
@@ -195,7 +196,8 @@ export class IdentitySubscriptionsApiService {
   /**
    * Wave and drop subscribers are only listed when the viewer can read the
    * wave (and its parent). For an anonymous competition entry the author's
-   * own subscription is left out, so the listing cannot reveal the author.
+   * own subscription is left out, so the listing cannot reveal the author,
+   * except when the viewer is that author.
    */
   private async assertTargetReadableAndGetHiddenSubscriber(
     params: IncomingIdentitySubscriptionsParams,
@@ -229,6 +231,12 @@ export class IdentitySubscriptionsApiService {
       ctx
     });
     if (!drop) {
+      return null;
+    }
+    // The author may always see their own subscription; resolve the viewer
+    // the same way competition anonymity does so proxies keep the exclusion
+    // unless they can read waves on the author's behalf.
+    if (competitionAnonymityViewerId(ctx) === drop.author_id) {
       return null;
     }
     const hiddenDropIds = await this.competitionAnonymity.hiddenDropIds(

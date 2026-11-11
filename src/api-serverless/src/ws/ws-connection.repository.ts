@@ -656,6 +656,37 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
   }
 
   /**
+   * Returns the subset of waveIds whose details may be sent to any audience:
+   * the wave is public and not a direct message, and when it is a subwave its
+   * parent exists, is a top-level wave, and is public and not a direct message
+   * too. Unknown ids are never returned.
+   */
+  async findWaveIdsShowableToAnyAudience(
+    waveIds: string[],
+    ctx: RequestContext
+  ): Promise<Set<string>> {
+    if (!waveIds.length) {
+      return new Set();
+    }
+    const rows = await this.db.execute<{ wave_id: string }>(
+      `select w.id as wave_id
+       from ${legacyGetView(WAVES_TABLE)} w
+       left join ${legacyGetView(WAVES_TABLE)} p on p.id = w.parent_wave_id
+       where w.id in (:waveIds)
+         and w.visibility_group_id is null
+         and coalesce(w.is_direct_message, false) = false
+         and (w.parent_wave_id is null
+           or (p.id is not null
+             and p.parent_wave_id is null
+             and p.visibility_group_id is null
+             and coalesce(p.is_direct_message, false) = false))`,
+      { waveIds },
+      { wrappedConnection: ctx.connection }
+    );
+    return new Set(rows.map((row) => row.wave_id));
+  }
+
+  /**
    * Joins online connections to the visibility-checked group membership query.
    * Ungrouped waves retain their existing anonymous-recipient behavior.
    */

@@ -85,6 +85,51 @@ describe('POST /bulk-rep request validation', () => {
     );
   });
 
+  it('accepts the category cap when every category also repeats with surrounding whitespace', () => {
+    const paddings = ['', ' ', '  ', '	'];
+    const targets = Array.from(
+      { length: MAX_BULK_REP_CATEGORIES * paddings.length },
+      (_, i) => {
+        const padding = paddings[Math.floor(i / MAX_BULK_REP_CATEGORIES)];
+        return {
+          address: address(i),
+          category: `${padding}Category ${i % MAX_BULK_REP_CATEGORIES}${padding}`,
+          amount: 1
+        };
+      }
+    );
+
+    const validated = validate({ targets });
+
+    expect(
+      new Set(validated.targets.map((target) => target.category)).size
+    ).toBe(MAX_BULK_REP_CATEGORIES);
+  });
+
+  it('rejects one more distinct category past the cap even among padded duplicates', () => {
+    const targets = [
+      ...Array.from({ length: MAX_BULK_REP_CATEGORIES }, (_, i) => ({
+        address: address(i),
+        category: ` Category ${i} `,
+        amount: 1
+      })),
+      ...Array.from({ length: MAX_BULK_REP_CATEGORIES }, (_, i) => ({
+        address: address(MAX_BULK_REP_CATEGORIES + i),
+        category: `Category ${i}`,
+        amount: 1
+      })),
+      {
+        address: address(2 * MAX_BULK_REP_CATEGORIES),
+        category: ' Another category ',
+        amount: 1
+      }
+    ];
+
+    expect(() => validate({ targets })).toThrow(
+      `"targets" can use at most ${MAX_BULK_REP_CATEGORIES} distinct categories`
+    );
+  });
+
   it.each([1.5, -0.25, 2_147_483_648, -2_147_483_648])(
     'rejects the amount %p',
     (amount) => {

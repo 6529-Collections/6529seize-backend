@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import {
   formatSentryAlertForDrop,
   processSentryAlertWebhook,
@@ -81,6 +82,33 @@ describe('processSentryAlertWebhook', () => {
     expect(second.postDrop).not.toHaveBeenCalled();
   });
 
+  it('hashes only the bytes of a body that is a view into a larger buffer', async () => {
+    const redis = fakeRedis();
+    const bodyText = JSON.stringify(payload(null));
+    const larger = Buffer.from(`PREFIX${bodyText}SUFFIX`);
+    const view = larger.subarray(6, 6 + Buffer.byteLength(bodyText));
+    expect(view.byteOffset).toBeGreaterThan(0);
+
+    await deliver(payload(null), redis, undefined, view);
+
+    const expectedHash = createHash('sha256').update(bodyText).digest('hex');
+    expect(redis.store.has(`sentry-webhook:body:${expectedHash}`)).toBe(true);
+    const copy = await deliver(
+      payload(null),
+      redis,
+      undefined,
+      Buffer.from(bodyText)
+    );
+    expect(copy.postDrop).not.toHaveBeenCalled();
+    const otherView = await deliver(
+      payload(null),
+      redis,
+      undefined,
+      Buffer.from(`PREFIX${bodyText}SUFFIX`).subarray(0, view.length)
+    );
+    expect(otherView.postDrop).toHaveBeenCalledTimes(1);
+  });
+
   it('does not post without Redis', async () => {
     const { result, postDrop } = await deliver(payload('event'), null);
     expect(result.status).toBe(503);
@@ -110,6 +138,46 @@ describe('processSentryAlertWebhook', () => {
     });
     expect((await deliver(body, redis, failing)).result.status).toBe(500);
     expect((await deliver(body, redis)).postDrop).toHaveBeenCalledTimes(1);
+  });
+
+  it('records nothing and releases the lock when posting fails', async () => {
+    const redis = fakeRedis();
+    const failing = jest.fn(async () => {
+      throw new Error('db');
+    });
+
+    const { result } = await deliver(payload('event'), redis, failing);
+
+    expect(result).toEqual({ status: 500, body: 'Failed to post alert' });
+    expect(failing).toHaveBeenCalledTimes(1);
+    expect(redis.store.size).toBe(0);
+  });
+
+  it('lets only one of two concurrent deliveries post', async () => {
+    const redis = fakeRedis();
+    let releasePost!: () => void;
+    const postHeld = new Promise<undefined>((resolve) => {
+      releasePost = () => resolve(undefined);
+    });
+    let postStarted!: () => void;
+    const posting = new Promise<void>((resolve) => {
+      postStarted = resolve;
+    });
+    const slowPost = jest.fn(() => {
+      postStarted();
+      return postHeld;
+    });
+    const body = payload('event');
+
+    const first = deliver(body, redis, slowPost);
+    await posting;
+    const second = await deliver(body, redis);
+    releasePost();
+
+    expect((await first).result.status).toBe(200);
+    expect(slowPost).toHaveBeenCalledTimes(1);
+    expect(second.postDrop).not.toHaveBeenCalled();
+    expect(redis.store.has('sentry-webhook:event:processing')).toBe(false);
   });
 
   it('ignores non-triggered actions', async () => {

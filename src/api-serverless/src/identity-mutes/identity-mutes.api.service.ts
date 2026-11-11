@@ -23,6 +23,7 @@ import {
   userGroupsService as defaultUserGroupsService,
   UserGroupsService
 } from '@/api/community-members/user-groups.service';
+import { rejectProxySession } from '@/api/proxy-session-guard';
 
 const DM_UNREAD_SYNC_PAGE_SIZE = 500;
 
@@ -131,9 +132,10 @@ export class IdentityMutesApiService {
     if (!muterId) {
       throw new ForbiddenException(`Please create a profile first`);
     }
-    if (ctx.authenticationContext?.isAuthenticatedAsProxy()) {
-      throw new ForbiddenException(`Proxies cannot manage identity mutes`);
-    }
+    rejectProxySession(
+      ctx.authenticationContext,
+      `Proxies cannot manage identity mutes`
+    );
 
     const mutedIdentityId =
       await this.identityFetcher.getProfileIdByIdentityKeyOrThrow(

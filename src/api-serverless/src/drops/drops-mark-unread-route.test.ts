@@ -24,14 +24,7 @@ jest.mock('@/api/auth/auth', () => ({
 }));
 
 jest.mock('@/api/waves/wave-unread-cache', () => ({
-  invalidateWaveUnreadCacheForReaderWave: jest
-    .fn()
-    .mockResolvedValue(undefined),
-  invalidateWaveUnreadCacheForWave: jest.fn().mockResolvedValue(undefined)
-}));
-
-jest.mock('@/redis', () => ({
-  getRedisClient: jest.fn().mockReturnValue(null)
+  invalidateWaveUnreadCacheForReaderWave: jest.fn().mockResolvedValue(undefined)
 }));
 
 import { getAuthenticationContext } from '@/api/auth/auth';

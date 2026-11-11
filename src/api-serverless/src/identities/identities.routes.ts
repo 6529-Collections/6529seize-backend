@@ -27,6 +27,7 @@ import { identitiesActivityApiService } from './identities.activity.api.service'
 import { cacheRequest } from '@/api/request-cache';
 import { identityMutesApiService } from '@/api/identity-mutes/identity-mutes.api.service';
 import { ProfileClassification } from '@/entities/IProfile';
+import { rejectProxySession } from '@/api/proxy-session-guard';
 
 const router = asyncRouter();
 
@@ -221,11 +222,10 @@ router.get(
     if (!authenticatedProfileId) {
       throw new ForbiddenException(`Please create a profile first`);
     }
-    if (authenticationContext.isAuthenticatedAsProxy()) {
-      throw new ForbiddenException(
-        `Proxies cannot manage identity subscriptions`
-      );
-    }
+    rejectProxySession(
+      authenticationContext,
+      `Proxies cannot manage identity subscriptions`
+    );
     const profileId = await identityFetcher.getProfileIdByIdentityKey(
       { identityKey: req.params.id },
       { authenticationContext, timer }
@@ -257,11 +257,10 @@ router.post(
     if (!authenticatedProfileId) {
       throw new ForbiddenException(`Please create a profile first`);
     }
-    if (authenticationContext.isAuthenticatedAsProxy()) {
-      throw new ForbiddenException(
-        `Proxies cannot manage identity subscriptions`
-      );
-    }
+    rejectProxySession(
+      authenticationContext,
+      `Proxies cannot manage identity subscriptions`
+    );
     const request = getValidatedByJoiOrThrow(
       req.body,
       IdentintitySubscriptionActionsSchema
@@ -301,11 +300,10 @@ router.delete(
     if (!authenticatedProfileId) {
       throw new ForbiddenException(`Please create a profile first`);
     }
-    if (authenticationContext.isAuthenticatedAsProxy()) {
-      throw new ForbiddenException(
-        `Proxies cannot manage identity subscriptions`
-      );
-    }
+    rejectProxySession(
+      authenticationContext,
+      `Proxies cannot manage identity subscriptions`
+    );
     const request = getValidatedByJoiOrThrow(
       req.body,
       IdentintitySubscriptionActionsSchema
