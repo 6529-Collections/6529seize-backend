@@ -53,6 +53,42 @@ export const HELP_BOT_SPAM_REACTION = ':no_entry:';
 export const HELP_BOT_INSUFFICIENT_CREDITS_REACTION = ':low_battery:';
 export const HELP_BOT_USER_SPAM_WINDOW_MS = 60_000;
 export const HELP_BOT_USER_SPAM_MAX_TRIGGERS_PER_WINDOW = 5;
+/**
+ * Upper bound on the question text handed to the answer models. The stored
+ * interaction keeps the full derived question; only the model input is cut.
+ */
+export const HELP_BOT_MAX_QUESTION_CHARS_ENV = 'HELP_BOT_MAX_QUESTION_CHARS';
+export const HELP_BOT_DEFAULT_MAX_QUESTION_CHARS = 2000;
+export function getHelpBotMaxQuestionChars(): number {
+  return getPositiveIntEnvOrDefault(
+    HELP_BOT_MAX_QUESTION_CHARS_ENV,
+    HELP_BOT_DEFAULT_MAX_QUESTION_CHARS
+  );
+}
+/**
+ * Rolling 24-hour limits on interactions that are queued for an answer. They
+ * keep model usage bounded per wave and overall while staying well above the
+ * normal daily volume.
+ */
+export const HELP_BOT_DAILY_WINDOW_MS = 24 * 60 * 60 * 1000;
+export const HELP_BOT_WAVE_DAILY_ANSWER_LIMIT_ENV =
+  'HELP_BOT_WAVE_DAILY_ANSWER_LIMIT';
+export const HELP_BOT_DEFAULT_WAVE_DAILY_ANSWER_LIMIT = 300;
+export const HELP_BOT_GLOBAL_DAILY_ANSWER_LIMIT_ENV =
+  'HELP_BOT_GLOBAL_DAILY_ANSWER_LIMIT';
+export const HELP_BOT_DEFAULT_GLOBAL_DAILY_ANSWER_LIMIT = 3000;
+export function getHelpBotWaveDailyAnswerLimit(): number {
+  return getPositiveIntEnvOrDefault(
+    HELP_BOT_WAVE_DAILY_ANSWER_LIMIT_ENV,
+    HELP_BOT_DEFAULT_WAVE_DAILY_ANSWER_LIMIT
+  );
+}
+export function getHelpBotGlobalDailyAnswerLimit(): number {
+  return getPositiveIntEnvOrDefault(
+    HELP_BOT_GLOBAL_DAILY_ANSWER_LIMIT_ENV,
+    HELP_BOT_DEFAULT_GLOBAL_DAILY_ANSWER_LIMIT
+  );
+}
 export const HELP_BOT_TECH_TEAM_MENTION = DEVS_6529_MENTION;
 export const HELP_BOT_CREDIT_CATEGORY = 'Help6529 Credits';
 export const HELP_BOT_RESERVED_CREDIT_CATEGORY_MESSAGE = `${HELP_BOT_CREDIT_CATEGORY} is a reserved REP category managed by ${HELP_BOT_HANDLE}.`;

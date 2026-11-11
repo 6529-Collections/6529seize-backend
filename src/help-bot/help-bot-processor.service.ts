@@ -10,7 +10,8 @@ import {
   HELP_BOT_SUCCESS_REACTION,
   HELP_BOT_TECH_TEAM_MENTION,
   HELP_BOT_TECHNICAL_FAILURE_REPLY,
-  buildHelpBotNoReliableSourceReply
+  buildHelpBotNoReliableSourceReply,
+  getHelpBotMaxQuestionChars
 } from './help-bot.config';
 import { HelpBotAnswerer, HelpBotLlmRenderer } from './help-bot.answerer';
 import { HelpBotBedrockRenderer } from './help-bot.bedrock-renderer';
@@ -54,6 +55,15 @@ function extractDropText(drop: ApiDrop): string {
     .trim();
 }
 
+/** Caps model input by code points so a surrogate pair is never split. */
+export function capHelpBotQuestion(question: string, maxChars: number): string {
+  const codePoints = Array.from(question);
+  if (codePoints.length <= maxChars) {
+    return question;
+  }
+  return codePoints.slice(0, maxChars).join('');
+}
+
 function getInteractionTargetDropId(
   interaction: HelpBotInteractionRow
 ): string {
@@ -93,6 +103,10 @@ export class HelpBotProcessorService {
       return;
     }
 
+    // The credit is refunded only while the answer is still being produced.
+    // Once an answer exists the model work is done, so a failure to post it
+    // (for example a wave rule that rejects the reply) keeps the charge.
+    let answerProduced = false;
     try {
       const previousBotAnswer = await this.getPreviousBotAnswer(
         interaction,
@@ -100,10 +114,14 @@ export class HelpBotProcessorService {
         ctx
       );
       const answer = await this.answererFactory().answer({
-        question: interaction.question,
+        question: capHelpBotQuestion(
+          interaction.question,
+          getHelpBotMaxQuestionChars()
+        ),
         previousBotAnswer,
         baseUrl: HELP_BOT_BASE_URL
       });
+      answerProduced = true;
       if (answer.type === 'NO_RELIABLE_SOURCE') {
         await this.replyWithNoReliableSource({
           botProfileId,
@@ -156,6 +174,7 @@ export class HelpBotProcessorService {
         botProfileId,
         interaction,
         error,
+        refundCredit: !answerProduced,
         ctx
       });
     }
@@ -252,18 +271,24 @@ export class HelpBotProcessorService {
     botProfileId,
     interaction,
     error,
+    refundCredit,
     ctx
   }: {
     readonly botProfileId: string;
     readonly interaction: HelpBotInteractionRow;
     readonly error: unknown;
+    readonly refundCredit: boolean;
     readonly ctx: RequestContext;
   }): Promise<void> {
     this.logger.error(
-      `Help bot failed to answer interaction ${interaction.id}`,
+      refundCredit
+        ? `Help bot failed to answer interaction ${interaction.id}`
+        : `Help bot produced an answer but failed to post it for interaction ${interaction.id}`,
       error
     );
-    await this.tryRefundQuestionCredit(interaction, ctx);
+    if (refundCredit) {
+      await this.tryRefundQuestionCredit(interaction, ctx);
+    }
     let replyDropId: string | null = null;
     try {
       const reply = await this.dropWriter.reply(
@@ -297,7 +322,9 @@ export class HelpBotProcessorService {
         {
           id: interaction.id,
           replyDropId,
-          failureReason: errorToMessage(error)
+          failureReason: refundCredit
+            ? errorToMessage(error)
+            : `Failed to post produced answer: ${errorToMessage(error)}`
         },
         ctx
       );

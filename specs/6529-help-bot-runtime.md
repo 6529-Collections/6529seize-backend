@@ -113,6 +113,19 @@ grant amount from `HELP_BOT_CREDIT_GRANT`. When the env var is missing, the
 default grant is 10 credits. `HELP_BOT_QUESTION_CREDIT_COST` remains a fixed
 hardcoded cost of 1 credit per question.
 
+The credit is charged when the trigger is accepted. It is refunded only when
+the worker fails before or while producing the answer (knowledge source,
+calendar, public data, or model failure, or an enqueue failure). Once an answer
+or no-reliable-source outcome has been produced, a failure to post it keeps the
+charge; the interaction is marked `FAILED` with a `Failed to post produced
+answer` reason.
+
+Before creating an interaction, the trigger checks that the bot profile can
+reply in the wave with the same chat eligibility the reply writer applies:
+chat must be enabled, and the bot must belong to the wave chat group unless
+replies are open. When it cannot, the trigger is skipped without an
+interaction row, credit charge, reaction, or model call.
+
 ## 3. Non-Goals
 
 - Do not answer without a user trigger.
@@ -555,9 +568,17 @@ Initial controls:
 - Per-user trigger limit: more than 5 accepted triggers in 60 seconds records
   the interaction as `SPAM_SUPPRESSED`, reacts `⛔️` to the triggering drop,
   and skips queueing/reply generation.
-- Per-wave trigger limit.
-- Global bot concurrency limit.
-- Maximum prompt/context token budget.
+- Per-wave and global daily limits: interactions accepted for an answer
+  (`SEEN`, `ANSWERING`, `ANSWERED`, `NO_RELIABLE_SOURCE`, `FAILED`) are counted
+  over a rolling 24 hours. Above `HELP_BOT_WAVE_DAILY_ANSWER_LIMIT` (default
+  300 per wave) or `HELP_BOT_GLOBAL_DAILY_ANSWER_LIMIT` (default 3000 across
+  all waves), the trigger records `DAILY_LIMIT_REACHED`, reacts `⛔️`, and does
+  not charge a credit, queue work, or reply. Both limits are read by the API
+  that accepts triggers.
+- Global bot concurrency limit (reply worker reserved concurrency).
+- Maximum prompt/context token budget. The question text passed to the models
+  is capped at `HELP_BOT_MAX_QUESTION_CHARS` (default 2,000 characters, counted
+  by code point); the stored interaction keeps the full derived question.
 - Skip private/restricted/direct-message waves before reading parent context,
   creating interactions, queueing work, or calling Bedrock.
 - Ignore bot mentions inside bot-authored messages.

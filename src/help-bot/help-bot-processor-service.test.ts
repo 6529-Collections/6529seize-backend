@@ -7,7 +7,10 @@ import {
   HELP_BOT_SUCCESS_REACTION,
   HELP_BOT_TECHNICAL_FAILURE_REPLY
 } from './help-bot.config';
-import { HelpBotProcessorService } from './help-bot-processor.service';
+import {
+  capHelpBotQuestion,
+  HelpBotProcessorService
+} from './help-bot-processor.service';
 import { HelpBotInteractionRow } from './help-bot-interactions.db';
 
 describe('HelpBotProcessorService', () => {
@@ -398,6 +401,135 @@ describe('HelpBotProcessorService', () => {
         interactionId: 'interaction-1'
       },
       ctx
+    );
+  });
+
+  function createInteraction(
+    overrides: Partial<HelpBotInteractionRow> = {}
+  ): HelpBotInteractionRow {
+    return {
+      id: 'interaction-1',
+      trigger_drop_id: 'question-drop',
+      target_drop_id: null,
+      wave_id: 'wave-1',
+      author_id: 'profile-1',
+      trigger_type: HelpBotInteractionTriggerType.MENTION,
+      question: 'what is tdh',
+      parent_bot_drop_id: null,
+      bot_reply_drop_id: null,
+      status: HelpBotInteractionStatus.SEEN,
+      knowledge_version: 'test',
+      failure_reason: null,
+      created_at: 1,
+      updated_at: 1,
+      answer_started_at: null,
+      completed_at: null,
+      ...overrides
+    };
+  }
+
+  function createProcessor({
+    interaction,
+    answer,
+    reply
+  }: {
+    readonly interaction: HelpBotInteractionRow;
+    readonly answer: jest.Mock;
+    readonly reply: jest.Mock;
+  }) {
+    const interactionsDb = {
+      claimForAnswering: jest.fn().mockResolvedValue(interaction),
+      findById: jest.fn().mockResolvedValue(interaction),
+      markAnswered: jest.fn(),
+      markNoReliableSource: jest.fn(),
+      markFailed: jest.fn()
+    };
+    const creditsService = {
+      refundQuestionCredit: jest.fn()
+    };
+    const service = new HelpBotProcessorService(
+      interactionsDb as never,
+      { setReaction: jest.fn() } as never,
+      { reply } as never,
+      {} as never,
+      {
+        resolveBotProfileId: jest.fn().mockResolvedValue('bot-profile')
+      } as never,
+      () => ({ answer }) as never,
+      creditsService as never
+    );
+    return { service, interactionsDb, creditsService };
+  }
+
+  it('keeps the credit when the produced answer cannot be posted', async () => {
+    const ctx = {} as never;
+    const answer = jest.fn().mockResolvedValue({
+      type: 'ANSWER',
+      answer: 'TDH stands for Total Days Held.',
+      record: {}
+    });
+    const reply = jest
+      .fn()
+      .mockRejectedValue(new Error('User is not eligible for this wave'));
+    const { service, interactionsDb, creditsService } = createProcessor({
+      interaction: createInteraction(),
+      answer,
+      reply
+    });
+
+    await service.processInteraction('interaction-1', ctx);
+
+    expect(answer).toHaveBeenCalledTimes(1);
+    expect(creditsService.refundQuestionCredit).not.toHaveBeenCalled();
+    expect(interactionsDb.markFailed).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: 'interaction-1',
+        replyDropId: null,
+        failureReason:
+          'Failed to post produced answer: User is not eligible for this wave'
+      }),
+      ctx
+    );
+  });
+
+  it('keeps the credit when the no-reliable-source reply cannot be posted', async () => {
+    const answer = jest.fn().mockResolvedValue({
+      type: 'NO_RELIABLE_SOURCE',
+      escalateToTechTeam: false
+    });
+    const reply = jest.fn().mockRejectedValue(new Error('slow mode'));
+    const { service, creditsService } = createProcessor({
+      interaction: createInteraction(),
+      answer,
+      reply
+    });
+
+    await service.processInteraction('interaction-1', {} as never);
+
+    expect(creditsService.refundQuestionCredit).not.toHaveBeenCalled();
+  });
+
+  it('passes at most the configured number of question characters to the answerer', async () => {
+    const answer = jest.fn().mockResolvedValue({
+      type: 'NO_RELIABLE_SOURCE',
+      escalateToTechTeam: false
+    });
+    const reply = jest.fn().mockResolvedValue({ id: 'bot-reply-drop' });
+    const { service } = createProcessor({
+      interaction: createInteraction({ question: 'q'.repeat(5000) }),
+      answer,
+      reply
+    });
+
+    await service.processInteraction('interaction-1', {} as never);
+
+    expect(answer.mock.calls[0][0].question).toHaveLength(2000);
+  });
+
+  it('caps questions by code point without splitting surrogate pairs', () => {
+    expect(capHelpBotQuestion('ab', 5)).toBe('ab');
+    expect(capHelpBotQuestion('\u{1F600}\u{1F600}\u{1F600}', 2)).toBe(
+      '\u{1F600}\u{1F600}'
     );
   });
 });
