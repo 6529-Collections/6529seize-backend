@@ -282,6 +282,22 @@ print('complete receipt')
     ).toBe('complete receipt');
   });
 
+  test('waits for the replacement itself to be online in Systems Manager', () => {
+    expect(
+      python(`
+responses=iter([[],[{'InstanceId':'other','PingStatus':'Online'}],[{'InstanceId':'new','PingStatus':'ConnectionLost'}],[{'InstanceId':'new','PingStatus':'Online'}]])
+def call(service,operation,option,filters):
+ assert (service,operation,option)==('ssm','describe-instance-information','--filters')
+ assert json.loads(filters)==[{'Key':'InstanceIds','Values':['new']}]
+ return {'InstanceInformationList':next(responses)}
+waits=[];p.call=call;p.time.sleep=waits.append
+p.wait_ssm_online('new')
+assert waits==[5,5,5]
+print('candidate registered')
+`)
+    ).toBe('candidate registered');
+  });
+
   test('keeps public peering closed while installing OS security updates and until reboot validation', () => {
     const template = parse(
       readFileSync(join(__dirname, 'cloudformation/runtime.yaml'), 'utf8')

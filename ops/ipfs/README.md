@@ -105,8 +105,10 @@ names in the workflow inputs.
    the current logical state and private identity/configuration before host edits.
 3. Create an unpublished ALB if needed, then a new retained runtime from YAML.
    Its role initially has only Get/List access to the live S3 blocks. Bootstrap
-   installs current OS security updates; public TCP peering remains closed until
-   the reboot gate passes. Give it an
+   installs current OS security updates and the pinned, checksum-verified AWS
+   CLI installer. The workflow waits for the candidate to register with Systems
+   Manager before requesting installation. Public TCP peering remains closed
+   until the reboot gate passes. Give it an
    independent peer identity; never copy the serving peer's private identity.
 4. Restore every explicit recursive/direct pin and name. Recursive restoration
    traverses the actual DAG, and the immutable MFS root must be readable. The
