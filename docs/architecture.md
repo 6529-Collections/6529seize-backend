@@ -3021,7 +3021,8 @@ Runtime deployment remains disabled by checked-in policy. A separate
 `ipfs-adopt.yml` workflow and import-only `adoption.yaml` baseline cover the existing
 production bucket, instance, its exclusively used security group and the entire
 shared CDN. `adoption.py` requires exact IDs,
-full native-model and CloudFront API configuration fingerprints, matching declared properties and an IMPORT-only
+full native-model and CloudFront API configuration fingerprints, matching declared
+properties and an IMPORT-only
 change set bound to one source SHA/baseline. Preparation and execution are separate
 dispatches; retries reconcile the same change-set ARN. Successful adoption requires
 exact ownership, original template equality and per-resource drift checks, then
@@ -3038,6 +3039,14 @@ The separate adoption switch is enabled only for the authorized ownership import
 and reset after verification; adoption additionally requires runtime deployment to
 remain locked. Network/IAM dependencies, canonical DNS,
 edge policy/function implementations and host files are referenced, not imported.
+
+Stage 1 ownership import completed on November 11, 2026. The four existing resources
+are owned by `seize-ipfs-prod-adopted`, verified `IN_SYNC`, retained and protected
+against deletion and resource updates. The temporary CloudFront provider window
+is closed, both checked-in mutation switches are disabled, and serving
+configuration remains unchanged. The [adoption record](../ops/ipfs/adoption-record.json)
+contains the reviewed source, exact change set and verification runs. Runtime
+deployment and traffic handover still require the separate migration below.
 
 The live CloudFront distribution is
 shared with Arweave and S3 media and is not replaced by the new dedicated gateway

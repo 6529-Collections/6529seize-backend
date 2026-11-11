@@ -1,7 +1,8 @@
 name: Adopt existing IPFS resources
 
-# Separate from replacement deployment: this workflow cannot publish DNS, run
-# SSM commands, install software, change resource properties, or create data.
+# Imports reviewed ownership and verifies unchanged configuration. A separate,
+# default-expired service-role window accommodates CloudFormation's unchanged-
+# config CloudFront import handler. Runtime and traffic deployment stay separate.
 on:
   workflow_dispatch:
     inputs:
