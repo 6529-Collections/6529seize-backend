@@ -125,6 +125,7 @@ import { e2eeCiphertextStore } from '@/e2ee/e2ee-ciphertext-store';
 import { E2EE_BLOB_ID_PATTERN } from '@/e2ee/e2ee-encoding';
 import { e2eeErrors } from '@/e2ee/e2ee-errors';
 import { isE2eeBackupsEnabled, isE2eeEnabled } from '@/e2ee/e2ee-flag';
+import type { ConnectionWrapper } from '@/sql-executor';
 import { Timer } from '@/time';
 import { Request } from 'express';
 import * as Joi from 'joi';
@@ -222,9 +223,10 @@ export async function handleE2eeRegisterLoginGrantDevice(
  * device behind a revoked grant.
  */
 export async function revokeE2eeDeviceOfLoginGrant(
-  grantId: string
+  grantId: string,
+  connection: ConnectionWrapper<unknown>
 ): Promise<void> {
-  await services.devices.revokeDeviceOfLoginGrant(grantId);
+  await services.devices.revokeDeviceOfLoginGrant(grantId, connection);
 }
 
 export async function handleE2eeAcknowledgeDeviceNotice(

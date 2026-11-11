@@ -15,7 +15,6 @@ import {
   RevokeDeviceGrantRequest
 } from '@/api/generated/routes/operations';
 import { revokeE2eeDeviceOfLoginGrant } from '@/api/e2ee/e2ee.handlers';
-import { Logger } from '@/logging';
 import { Timer } from '@/time';
 import { getValidatedByJoiOrThrow } from '@/api/validation';
 import { deviceGrantsService } from './device-grants.service';
@@ -29,8 +28,6 @@ import {
   dropSignedEventsService
 } from './drop-signed-events.service';
 import { grantRegistrationRequestOf } from './grant-origins';
-
-const logger = Logger.get('DEVICE_SIGNING_HANDLERS');
 
 export async function handleGetDeviceGrants(
   req: GetDeviceGrantsRequest
@@ -106,21 +103,11 @@ export async function handleRevokeDeviceGrant(
 ): Promise<ApiDeviceGrant> {
   const timer = Timer.getFromRequest(req);
   const authenticationContext = await getAuthenticationContext(req, timer);
-  const revoked = await deviceGrantsService.revokeCallerGrant(
+  return deviceGrantsService.revokeCallerGrant(
     req.params.grantId,
-    { timer, authenticationContext }
+    { timer, authenticationContext },
+    revokeE2eeDeviceOfLoginGrant
   );
-  // A combined sign-in grant also enrolled an encrypted-messages device:
-  // revoking the grant revokes that device too.
-  try {
-    await revokeE2eeDeviceOfLoginGrant(revoked.id);
-  } catch (error) {
-    logger.error(
-      `Failed to revoke the E2EE device of sign-in grant ${revoked.id}`,
-      error
-    );
-  }
-  return revoked;
 }
 
 export async function handleGetDropSignedEvents(

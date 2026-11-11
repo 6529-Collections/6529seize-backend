@@ -14,6 +14,7 @@ import {
 } from '@/exceptions';
 import { identitiesDb, IdentitiesDb } from '@/identities/identities.db';
 import { RequestContext } from '@/request.context';
+import type { ConnectionWrapper } from '@/sql-executor';
 import { e2eeDeviceSuites } from '@/e2ee/e2ee-suite-policy';
 
 /** What an app grant's encrypted-messages half says about suites. */
@@ -360,26 +361,32 @@ export class DeviceGrantsService {
 
   async revokeCallerGrant(
     grantId: string,
-    ctx: GrantCallerContext
+    ctx: GrantCallerContext,
+    revokeLinkedDevice: (
+      grantId: string,
+      connection: ConnectionWrapper<unknown>
+    ) => Promise<void>
   ): Promise<ApiDeviceGrant> {
     const caller = this.resolveCaller(ctx.authenticationContext);
     const notFound = new NotFoundException(`Device grant ${grantId} not found`);
     if (!GRANT_ID_PATTERN.test(grantId)) {
       throw notFound;
     }
-    const grant = await this.db.findGrantById(grantId, ctx);
-    if (!grant || !(await this.isCallerWallet(grant.wallet, caller))) {
-      throw notFound;
-    }
-    if (grant.revoked_at !== null) {
-      return toOwnedApiDeviceGrant(grant);
-    }
-    await this.db.revokeGrant(grantId, this.now(), ctx);
-    const revoked = await this.db.findGrantById(grantId, ctx);
-    if (!revoked) {
-      throw notFound;
-    }
-    return toOwnedApiDeviceGrant(revoked);
+    return this.db.executeNativeQueriesInTransaction(async (connection) => {
+      const txCtx = { ...ctx, connection };
+      const grant = await this.db.lockGrant(grantId, txCtx);
+      if (!grant || !(await this.isCallerWallet(grant.wallet, caller, txCtx))) {
+        throw notFound;
+      }
+      let revokedAt = grant.revoked_at;
+      if (revokedAt === null) {
+        revokedAt = this.now();
+        await this.db.revokeGrant(grantId, revokedAt, txCtx);
+      }
+      // Also completes any partial revocation left by an older deployment.
+      await revokeLinkedDevice(grantId, connection);
+      return toOwnedApiDeviceGrant({ ...grant, revoked_at: revokedAt });
+    });
   }
 
   private resolveCaller(authenticationContext: AuthenticationContext): {
