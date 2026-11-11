@@ -20,7 +20,10 @@ export function resolveHelpBotBaseUrl(
 
 export const HELP_BOT_BASE_URL = resolveHelpBotBaseUrl();
 export const HELP_BOT_INDEX_URL = `${HELP_BOT_BASE_URL}/help-index.json`;
+/** Total time for the help index request, including reading the body. */
 export const HELP_BOT_INDEX_FETCH_TIMEOUT_MS = 5000;
+/** Generous upper bound on the help index body; larger bodies are rejected. */
+export const HELP_BOT_INDEX_MAX_BYTES = 4 * 1024 * 1024;
 export const HELP_BOT_INDEX_CACHE_TTL_MS = 300_000;
 export const HELP_BOT_BEDROCK_MODEL_ID_ENV = 'HELP_BOT_BEDROCK_MODEL_ID';
 export const HELP_BOT_BEDROCK_MODEL_ID = getConfiguredBedrockAnthropicModelId(
@@ -45,7 +48,15 @@ export const HELP_BOT_REPLY_QUEUE_NAME = 'help-bot-replies';
  * content limit.
  */
 export const HELP_BOT_INTERACTION_QUESTION_MAX_UTF8_BYTES = 65_535;
-export const HELP_BOT_ANSWERING_LEASE_MS = 180_000;
+/**
+ * How long an ANSWERING claim blocks other deliveries. It must outlast the
+ * helpBotReplyLoop Lambda timeout (120 s) so a running attempt is never
+ * reclaimed, and stay below the help-bot-replies SQS visibility timeout
+ * (150 s) so a redelivered message always finds an expired claim and can
+ * take over an attempt that died. helpBotReplyLoop/serverless.test.ts pins
+ * this ordering.
+ */
+export const HELP_BOT_ANSWERING_LEASE_MS = 135_000;
 export const HELP_BOT_SEEN_REACTION = ':eyes:';
 export const HELP_BOT_SUCCESS_REACTION = ':white_check_mark:';
 export const HELP_BOT_FAILURE_REACTION = ':warning:';
@@ -53,6 +64,42 @@ export const HELP_BOT_SPAM_REACTION = ':no_entry:';
 export const HELP_BOT_INSUFFICIENT_CREDITS_REACTION = ':low_battery:';
 export const HELP_BOT_USER_SPAM_WINDOW_MS = 60_000;
 export const HELP_BOT_USER_SPAM_MAX_TRIGGERS_PER_WINDOW = 5;
+/**
+ * Upper bound on the question text handed to the answer models. The stored
+ * interaction keeps the full derived question; only the model input is cut.
+ */
+export const HELP_BOT_MAX_QUESTION_CHARS_ENV = 'HELP_BOT_MAX_QUESTION_CHARS';
+export const HELP_BOT_DEFAULT_MAX_QUESTION_CHARS = 2000;
+export function getHelpBotMaxQuestionChars(): number {
+  return getPositiveIntEnvOrDefault(
+    HELP_BOT_MAX_QUESTION_CHARS_ENV,
+    HELP_BOT_DEFAULT_MAX_QUESTION_CHARS
+  );
+}
+/**
+ * Rolling 24-hour limits on interactions that are queued for an answer. They
+ * keep model usage bounded per wave and overall while staying well above the
+ * normal daily volume.
+ */
+export const HELP_BOT_DAILY_WINDOW_MS = 24 * 60 * 60 * 1000;
+export const HELP_BOT_WAVE_DAILY_ANSWER_LIMIT_ENV =
+  'HELP_BOT_WAVE_DAILY_ANSWER_LIMIT';
+export const HELP_BOT_DEFAULT_WAVE_DAILY_ANSWER_LIMIT = 300;
+export const HELP_BOT_GLOBAL_DAILY_ANSWER_LIMIT_ENV =
+  'HELP_BOT_GLOBAL_DAILY_ANSWER_LIMIT';
+export const HELP_BOT_DEFAULT_GLOBAL_DAILY_ANSWER_LIMIT = 3000;
+export function getHelpBotWaveDailyAnswerLimit(): number {
+  return getPositiveIntEnvOrDefault(
+    HELP_BOT_WAVE_DAILY_ANSWER_LIMIT_ENV,
+    HELP_BOT_DEFAULT_WAVE_DAILY_ANSWER_LIMIT
+  );
+}
+export function getHelpBotGlobalDailyAnswerLimit(): number {
+  return getPositiveIntEnvOrDefault(
+    HELP_BOT_GLOBAL_DAILY_ANSWER_LIMIT_ENV,
+    HELP_BOT_DEFAULT_GLOBAL_DAILY_ANSWER_LIMIT
+  );
+}
 export const HELP_BOT_TECH_TEAM_MENTION = DEVS_6529_MENTION;
 export const HELP_BOT_CREDIT_CATEGORY = 'Help6529 Credits';
 export const HELP_BOT_RESERVED_CREDIT_CATEGORY_MESSAGE = `${HELP_BOT_CREDIT_CATEGORY} is a reserved REP category managed by ${HELP_BOT_HANDLE}.`;

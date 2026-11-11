@@ -5,10 +5,13 @@ import {
 import { CustomApiCompliantException } from '@/exceptions';
 import {
   CONTENT_MODERATION_REJECTION_CODE,
+  CONTENT_MODERATION_REVIEW_LIMIT_CODE,
   PROFILE_SUSPENDED_REJECTION_CODE,
   PrePublicationModerationService
 } from './pre-publication-moderation.service';
 import { ModerationReviewDb } from './moderation-review.db';
+import { Logger } from '@/logging';
+import { PRE_PUBLICATION_EVALUATOR_FALLBACK_LOG_MARKER } from './pre-publication-evaluator-guards';
 
 function createService() {
   const moderationDb = {
@@ -16,7 +19,15 @@ function createService() {
       .fn()
       .mockResolvedValue(ModeratedProfileStatus.ACTIVE),
     countRecentMatchingDrops: jest.fn().mockResolvedValue(0),
+    countRecentEvaluatorInvocations: jest.fn().mockResolvedValue(0),
     recordPrePublicationCheck: jest.fn().mockResolvedValue(undefined)
+  };
+  const verdicts = new Map<string, unknown>();
+  const verdictCache = {
+    get: jest.fn(async (key: string) => (verdicts.get(key) as any) ?? null),
+    set: jest.fn(async (key: string, value: unknown) => {
+      verdicts.set(key, value);
+    })
   };
   const aiService = {
     assessPrePublication: jest.fn().mockResolvedValue({
@@ -38,11 +49,13 @@ function createService() {
     service: new PrePublicationModerationService(
       moderationDb as any,
       aiService as any,
-      reviews as unknown as ModerationReviewDb
+      reviews as unknown as ModerationReviewDb,
+      verdictCache
     ),
     moderationDb,
     aiService,
-    reviews
+    reviews,
+    verdictCache
   };
 }
 
@@ -339,6 +352,114 @@ describe('PrePublicationModerationService', () => {
         outcome: 'REJECT'
       }),
       undefined
+    );
+  });
+
+  it('reuses a cached verdict for the same content and policy version', async () => {
+    const { service, aiService, moderationDb, verdictCache } = createService();
+
+    await service.evaluate(input('I will kill you'), {});
+    await service.evaluate(input('I will kill you'), {});
+
+    expect(aiService.assessPrePublication).toHaveBeenCalledTimes(1);
+    expect(verdictCache.set).toHaveBeenCalledTimes(1);
+    expect(moderationDb.recordPrePublicationCheck).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        evaluatorVersion: null,
+        evaluatorResult: expect.objectContaining({ cached_verdict: true })
+      }),
+      undefined
+    );
+  });
+
+  it('does not reuse a verdict for different content', async () => {
+    const { service, aiService } = createService();
+
+    await service.evaluate(input('I will kill you'), {});
+    await service.evaluate(input('We will kill you'), {});
+
+    expect(aiService.assessPrePublication).toHaveBeenCalledTimes(2);
+  });
+
+  it('refuses to call the evaluator once the profile budget is used', async () => {
+    const { service, aiService, moderationDb } = createService();
+    moderationDb.countRecentEvaluatorInvocations.mockResolvedValue(20);
+
+    await expect(
+      service.evaluate(input('I will kill you'), {})
+    ).rejects.toMatchObject({
+      code: CONTENT_MODERATION_REVIEW_LIMIT_CODE
+    });
+
+    expect(aiService.assessPrePublication).not.toHaveBeenCalled();
+    expect(moderationDb.countRecentEvaluatorInvocations).toHaveBeenCalledWith(
+      expect.objectContaining({ authorProfileId: 'profile-1' }),
+      undefined
+    );
+    expect(moderationDb.recordPrePublicationCheck).toHaveBeenCalledWith(
+      expect.objectContaining({
+        outcome: PrePublicationCheckOutcome.REJECT,
+        evaluatorVersion: null,
+        evaluatorResult: expect.objectContaining({
+          reason: 'EVALUATOR_BUDGET_EXCEEDED'
+        })
+      }),
+      undefined
+    );
+  });
+
+  it('serves a cached verdict even when the profile budget is used', async () => {
+    const { service, aiService, moderationDb } = createService();
+
+    await service.evaluate(input('I will kill you'), {});
+    moderationDb.countRecentEvaluatorInvocations.mockResolvedValue(1000);
+    await expect(
+      service.evaluate(input('I will kill you'), {})
+    ).resolves.toBeDefined();
+
+    expect(aiService.assessPrePublication).toHaveBeenCalledTimes(1);
+  });
+
+  it('runs wave validation before opening a review or calling the evaluator', async () => {
+    const { service, aiService, reviews } = createService();
+    const beforeModelEvaluation = jest
+      .fn()
+      .mockRejectedValue(new Error('User is not eligible for this wave'));
+
+    await expect(
+      service.evaluate(input('I will kill you'), {}, { beforeModelEvaluation })
+    ).rejects.toThrow('User is not eligible for this wave');
+
+    expect(beforeModelEvaluation).toHaveBeenCalledTimes(1);
+    expect(reviews.start).not.toHaveBeenCalled();
+    expect(aiService.assessPrePublication).not.toHaveBeenCalled();
+  });
+
+  it('skips wave validation for content that needs no evaluator', async () => {
+    const { service } = createService();
+    const beforeModelEvaluation = jest.fn();
+
+    await service.evaluate(
+      input('A perfectly ordinary message'),
+      {},
+      { beforeModelEvaluation }
+    );
+
+    expect(beforeModelEvaluation).not.toHaveBeenCalled();
+  });
+
+  it('logs a searchable marker when the evaluator falls back to allowing', async () => {
+    const errorSpy = jest
+      .spyOn(Logger.prototype, 'error')
+      .mockImplementation(() => undefined);
+    const { service, aiService } = createService();
+    aiService.assessPrePublication.mockRejectedValue(new Error('unavailable'));
+
+    await service.evaluate(input('I will kill you'), {});
+
+    expect(errorSpy).toHaveBeenCalledWith(
+      expect.stringContaining(PRE_PUBLICATION_EVALUATOR_FALLBACK_LOG_MARKER),
+      expect.objectContaining({ error: 'unavailable' })
     );
   });
 });

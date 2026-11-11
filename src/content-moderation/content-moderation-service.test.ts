@@ -20,6 +20,7 @@ type ContentModerationDbMock = jest.Mocked<
   Pick<
     ContentModerationDb,
     | 'applyModeratorDropDecision'
+    | 'countOpenReportersForDrop'
     | 'createReportWithViewerActions'
     | 'getAuditHistoryForDrops'
     | 'getBlockActivity'
@@ -66,7 +67,7 @@ function reportRow() {
   };
 }
 
-function createService() {
+function createService(reportedContent = 'reported content') {
   const snapshot = {
     drop_id: 'drop-1',
     author_profile_id: 'author-1',
@@ -75,7 +76,7 @@ function createService() {
     parts: [
       {
         part_no: 1,
-        content: 'reported content',
+        content: reportedContent,
         media: [],
         attachments: []
       }
@@ -90,6 +91,7 @@ function createService() {
     createReportWithViewerActions: jest.fn().mockResolvedValue(reportRow()),
     saveReportAssessment: jest.fn().mockResolvedValue(undefined),
     tryAiQuarantineForOpenReport: jest.fn().mockResolvedValue(true),
+    countOpenReportersForDrop: jest.fn().mockResolvedValue(1),
     applyModeratorDropDecision: jest.fn().mockResolvedValue(undefined),
     isModerator: jest.fn().mockResolvedValue(false),
     getModerationCounts: jest.fn().mockResolvedValue({
@@ -296,11 +298,17 @@ describe('ContentModerationService', () => {
       {}
     );
 
+    const labelledParent = {
+      ...parentSnapshot,
+      context_role: 'PARENT_OF_REPORTED_DROP',
+      authored_by_reporter: false,
+      content_as_of: 'CURRENT_MAY_POSTDATE_REPLY'
+    };
     expect(db.createReportWithViewerActions).toHaveBeenCalledWith(
       expect.objectContaining({
         contentSnapshot: {
           ...reportedReply,
-          parent_context: parentSnapshot
+          parent_context: labelledParent
         }
       }),
       {}
@@ -308,12 +316,47 @@ describe('ContentModerationService', () => {
     expect(aiService.assessReportedContent).toHaveBeenCalledWith({
       reason: ContentReportReason.OTHER,
       content: reportedReply,
-      parentContext: parentSnapshot
+      parentContext: labelledParent
     });
+  });
+
+  it('labels parent context written by the reporter', async () => {
+    const { service, db, aiService, snapshot } = createService();
+    const reportedReply = { ...snapshot, reply_to_drop_id: 'parent-drop' };
+    db.getDropSnapshot
+      .mockReset()
+      .mockResolvedValueOnce(reportedReply)
+      .mockResolvedValueOnce({
+        ...snapshot,
+        drop_id: 'parent-drop',
+        author_profile_id: 'reporter-1'
+      });
+
+    await service.submitReport(
+      {
+        dropId: 'drop-1',
+        reporterProfileId: 'reporter-1',
+        reason: ContentReportReason.OTHER,
+        notes: null,
+        hideDrop: false,
+        blockAuthor: false
+      },
+      {}
+    );
+
+    expect(aiService.assessReportedContent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        parentContext: expect.objectContaining({
+          drop_id: 'parent-drop',
+          authored_by_reporter: true
+        })
+      })
+    );
   });
 
   it('quarantines only an urgent AI recommendation', async () => {
     const { service, db, aiService } = createService();
+    db.countOpenReportersForDrop.mockResolvedValue(2);
     aiService.assessReportedContent.mockResolvedValue({
       recommendation: ContentModerationRecommendation.URGENT_QUARANTINE,
       category: 'CREDIBLE_THREAT',
@@ -358,6 +401,96 @@ describe('ContentModerationService', () => {
     );
   });
 
+  describe('corroboration before an urgent quarantine', () => {
+    const urgent = {
+      recommendation: ContentModerationRecommendation.URGENT_QUARANTINE,
+      category: 'CREDIBLE_THREAT',
+      confidence: 0.99,
+      rationale: 'Imminent safety risk',
+      evidence: []
+    };
+    const report = {
+      dropId: 'drop-1',
+      reporterProfileId: 'reporter-1',
+      reason: ContentReportReason.THREATS_OR_TARGETED_HARASSMENT,
+      notes: null,
+      hideDrop: false,
+      blockAuthor: false
+    };
+    const originalMin =
+      process.env.CONTENT_MODERATION_AUTO_QUARANTINE_MIN_REPORTERS;
+    const originalSignal =
+      process.env.CONTENT_MODERATION_AUTO_QUARANTINE_SIGNAL_CORROBORATES;
+
+    afterEach(() => {
+      for (const [name, value] of [
+        ['CONTENT_MODERATION_AUTO_QUARANTINE_MIN_REPORTERS', originalMin],
+        [
+          'CONTENT_MODERATION_AUTO_QUARANTINE_SIGNAL_CORROBORATES',
+          originalSignal
+        ]
+      ] as const) {
+        if (value === undefined) delete process.env[name];
+        else process.env[name] = value;
+      }
+    });
+
+    it('keeps a single uncorroborated report visible for human review', async () => {
+      const { service, db, aiService } = createService();
+      aiService.assessReportedContent.mockResolvedValue(urgent);
+
+      await service.submitReport(report, {});
+
+      expect(db.countOpenReportersForDrop).toHaveBeenCalledWith(
+        'drop-1',
+        expect.anything()
+      );
+      expect(db.tryAiQuarantineForOpenReport).not.toHaveBeenCalled();
+      expect(db.saveReportAssessment).toHaveBeenCalled();
+    });
+
+    it('quarantines once a second distinct reporter has an open report', async () => {
+      const { service, db, aiService } = createService();
+      aiService.assessReportedContent.mockResolvedValue(urgent);
+      db.countOpenReportersForDrop.mockResolvedValue(2);
+
+      await service.submitReport(report, {});
+
+      expect(db.tryAiQuarantineForOpenReport).toHaveBeenCalled();
+    });
+
+    it('quarantines a single report when the content has a deterministic signal', async () => {
+      const { service, db, aiService } = createService('I will kill you');
+      aiService.assessReportedContent.mockResolvedValue(urgent);
+
+      await service.submitReport(report, {});
+
+      expect(db.countOpenReportersForDrop).not.toHaveBeenCalled();
+      expect(db.tryAiQuarantineForOpenReport).toHaveBeenCalled();
+    });
+
+    it('can require reporters even when a signal is present', async () => {
+      process.env.CONTENT_MODERATION_AUTO_QUARANTINE_SIGNAL_CORROBORATES =
+        'false';
+      const { service, db, aiService } = createService('I will kill you');
+      aiService.assessReportedContent.mockResolvedValue(urgent);
+
+      await service.submitReport(report, {});
+
+      expect(db.tryAiQuarantineForOpenReport).not.toHaveBeenCalled();
+    });
+
+    it('can be configured back to single-report quarantine', async () => {
+      process.env.CONTENT_MODERATION_AUTO_QUARANTINE_MIN_REPORTERS = '1';
+      const { service, db, aiService } = createService();
+      aiService.assessReportedContent.mockResolvedValue(urgent);
+
+      await service.submitReport(report, {});
+
+      expect(db.tryAiQuarantineForOpenReport).toHaveBeenCalled();
+    });
+  });
+
   it('does not quarantine a low-confidence urgent recommendation', async () => {
     const { service, db, aiService } = createService();
     aiService.assessReportedContent.mockResolvedValue({
@@ -385,6 +518,7 @@ describe('ContentModerationService', () => {
 
   it('never lets an AI assessment downgrade an existing moderator removal', async () => {
     const { service, db, aiService } = createService();
+    db.countOpenReportersForDrop.mockResolvedValue(2);
     db.getPresentations.mockResolvedValue({
       'drop-1': {
         viewer: { author_blocked: false, drop_hidden: false },
