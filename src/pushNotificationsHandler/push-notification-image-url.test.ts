@@ -3,6 +3,8 @@ import { isAllowedPushNotificationImageUrl } from '@/pushNotificationsHandler/pu
 
 const CDN = 'https://d3lqz0a4bldqgf.cloudfront.net';
 const GATEWAY = 'https://media.6529.io';
+const CONTENT_GATEWAY = 'https://media.6529usercontent.com';
+const CID_V1 = 'bafybeieu3ufszpka5nyzhlcrf5cceiy6n3ug6fdx7chbntxvmf2p32ryhe';
 
 describe('isAllowedPushNotificationImageUrl', () => {
   it.each([
@@ -10,7 +12,10 @@ describe('isAllowedPushNotificationImageUrl', () => {
     `${CDN}/images/original/1.webp?v=2`,
     `  ${CDN}/pfp/abc.png  `,
     `${GATEWAY}/ipfs/QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG`,
-    `${GATEWAY}/ipfs/bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi/image.png`
+    `${GATEWAY}/ipfs/bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi/image.png`,
+    `${CONTENT_GATEWAY}/ipfs/QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG`,
+    `${CONTENT_GATEWAY}/ipfs/${CID_V1}/image.png`,
+    `  ${CONTENT_GATEWAY}/ipfs/${CID_V1}  `
   ])('allows %p', (url) => {
     expect(isAllowedPushNotificationImageUrl(url)).toBe(true);
   });
@@ -45,7 +50,20 @@ describe('isAllowedPushNotificationImageUrl', () => {
     ['https://evilmedia.6529.io/ipfs/abc'],
     ['https://media.6529.io@example.com/ipfs/abc'],
     ['https://user@media.6529.io/ipfs/abc'],
-    ['https://media.6529.io/ipfs/../pfp/abc']
+    ['https://media.6529.io/ipfs/../pfp/abc'],
+    [`${CONTENT_GATEWAY}/ipfs/`],
+    [`${CONTENT_GATEWAY}/arweave/abc`],
+    [`${CONTENT_GATEWAY}/ipfsx/abc`],
+    ['http://media.6529usercontent.com/ipfs/abc'],
+    ['https://media.6529usercontent.com:444/ipfs/abc'],
+    ['https://media.6529usercontent.com.example.com/ipfs/abc'],
+    ['https://evil.6529usercontent.com/ipfs/abc'],
+    ['https://evilmedia.6529usercontent.com/ipfs/abc'],
+    ['https://media.6529usercontent.com@example.com/ipfs/abc'],
+    ['https://user@media.6529usercontent.com/ipfs/abc'],
+    ['https://media.6529usercontent.com/ipfs/../pfp/abc'],
+    [`https://${CID_V1}.ipfs.6529usercontent.com/image.png`],
+    ['https://ipfs.6529.io/ipfs/abc']
   ])('rejects %p', (url) => {
     expect(isAllowedPushNotificationImageUrl(url as string | undefined)).toBe(
       false
@@ -57,7 +75,9 @@ describe('isAllowedPushNotificationImageUrl', () => {
       fc.property(fc.webUrl(), (url) => {
         const host = new URL(url).hostname;
         fc.pre(
-          host !== 'd3lqz0a4bldqgf.cloudfront.net' && host !== 'media.6529.io'
+          host !== 'd3lqz0a4bldqgf.cloudfront.net' &&
+            host !== 'media.6529.io' &&
+            host !== 'media.6529usercontent.com'
         );
         expect(isAllowedPushNotificationImageUrl(url)).toBe(false);
       })

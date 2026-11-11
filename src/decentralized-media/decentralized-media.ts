@@ -1,4 +1,29 @@
+import { Logger } from '@/logging';
+
 export const DEFAULT_MEDIA_RESOLVER_ORIGIN = 'https://media.6529.io';
+
+/**
+ * User-provided media can be served from a separate content domain: a path
+ * gateway (`media.<domain>`) and one host per CIDv1 (`<cid>.ipfs.<domain>`).
+ * URLs on both domains are always understood as input. Which path gateway
+ * the backend builds URLs on is selected by `MEDIA_RESOLVER_ENDPOINT`.
+ */
+const USER_CONTENT_DOMAIN = '6529usercontent.com';
+const USER_CONTENT_MEDIA_HOST = `media.${USER_CONTENT_DOMAIN}`;
+export const USER_CONTENT_MEDIA_RESOLVER_ORIGIN = `https://${USER_CONTENT_MEDIA_HOST}`;
+const USER_CONTENT_IPFS_HOST_SUFFIX = `.ipfs.${USER_CONTENT_DOMAIN}`;
+// Lowercase base32 CIDv1, exactly one DNS label.
+const USER_CONTENT_IPFS_LABEL_PATTERN = /^b[a-z2-7]{50,61}$/;
+
+export const MEDIA_RESOLVER_ENDPOINT_ENV = 'MEDIA_RESOLVER_ENDPOINT';
+
+const CONFIGURABLE_MEDIA_RESOLVER_ORIGINS: readonly string[] = [
+  DEFAULT_MEDIA_RESOLVER_ORIGIN,
+  USER_CONTENT_MEDIA_RESOLVER_ORIGIN
+];
+
+const logger = Logger.get('DECENTRALIZED_MEDIA');
+let lastUnsupportedEndpointLogged: string | null = null;
 
 export type DecentralizedMediaProtocol = 'ipfs' | 'ipns' | 'arweave';
 
@@ -27,12 +52,16 @@ export type ResolveDecentralizedMediaOptions = {
 
 const MEDIA_RESOLVER_HOST = 'media.6529.io';
 
+// The older 6529.io name of the path gateway. It stays an input alias and an
+// external fallback while the 6529.io path gateway is the configured one.
+const LEGACY_FIRST_PARTY_IPFS_PATH_GATEWAY = 'ipfs.6529.io';
+
 const IPFS_PATH_GATEWAYS = [
   'ipfs.io',
   'cf-ipfs.com',
   'cloudflare-ipfs.com',
   'gateway.pinata.cloud',
-  'ipfs.6529.io'
+  LEGACY_FIRST_PARTY_IPFS_PATH_GATEWAY
 ] as const;
 
 const IPFS_SUBDOMAIN_GATEWAY_SUFFIXES = [
@@ -72,9 +101,51 @@ export function toNativeUri(ref: DecentralizedMediaRef): string {
   return `${protocol}://${buildPath(ref.id, ref.path)}`;
 }
 
+/**
+ * Origin of the 6529 path gateway that resolver URLs are built on:
+ * `MEDIA_RESOLVER_ENDPOINT` when it names one of the 6529 path gateways,
+ * otherwise `https://media.6529.io`. Read on every call, because Lambda
+ * configuration is loaded after modules are imported.
+ */
+export function getMediaResolverOrigin(): string {
+  const configured = process.env[MEDIA_RESOLVER_ENDPOINT_ENV]?.trim();
+  if (!configured) return DEFAULT_MEDIA_RESOLVER_ORIGIN;
+
+  const origin = toConfigurableOrigin(configured);
+  if (origin) return origin;
+
+  if (lastUnsupportedEndpointLogged !== configured) {
+    lastUnsupportedEndpointLogged = configured;
+    logger.warn(
+      `[MEDIA_RESOLVER_ENDPOINT_UNSUPPORTED] ${JSON.stringify({
+        fallback: DEFAULT_MEDIA_RESOLVER_ORIGIN
+      })}`
+    );
+  }
+  return DEFAULT_MEDIA_RESOLVER_ORIGIN;
+}
+
+function toConfigurableOrigin(value: string): string | null {
+  try {
+    const url = new URL(value);
+    if (url.pathname !== '/' || url.search || url.hash) return null;
+    return CONFIGURABLE_MEDIA_RESOLVER_ORIGINS.includes(url.origin) &&
+      url.username === '' &&
+      url.password === ''
+      ? url.origin
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function isUserContentResolverOrigin(resolverOrigin: string): boolean {
+  return normalizeOrigin(resolverOrigin) === USER_CONTENT_MEDIA_RESOLVER_ORIGIN;
+}
+
 export function to6529ResolverUrl(
   ref: DecentralizedMediaRef,
-  resolverOrigin = DEFAULT_MEDIA_RESOLVER_ORIGIN
+  resolverOrigin = getMediaResolverOrigin()
 ): string {
   const prefix = ref.protocol === 'arweave' ? 'arweave' : ref.protocol;
   return `${normalizeOrigin(resolverOrigin)}/${prefix}/${buildPath(
@@ -83,7 +154,10 @@ export function to6529ResolverUrl(
   )}`;
 }
 
-export function toExternalFallbackUrls(ref: DecentralizedMediaRef): string[] {
+export function toExternalFallbackUrls(
+  ref: DecentralizedMediaRef,
+  resolverOrigin = getMediaResolverOrigin()
+): string[] {
   if (ref.protocol === 'arweave') {
     return [
       ...ARWEAVE_GATEWAYS.map(
@@ -98,7 +172,14 @@ export function toExternalFallbackUrls(ref: DecentralizedMediaRef): string[] {
   }
 
   const pathPrefix = ref.protocol === 'ipns' ? 'ipns' : 'ipfs';
-  const pathGatewayUrls = IPFS_PATH_GATEWAYS.map(
+  // With the separate content domain configured, the 6529.io path gateway is
+  // no longer offered as a fallback; its URLs are still understood as input.
+  const pathGateways = isUserContentResolverOrigin(resolverOrigin)
+    ? IPFS_PATH_GATEWAYS.filter(
+        (host) => host !== LEGACY_FIRST_PARTY_IPFS_PATH_GATEWAY
+      )
+    : IPFS_PATH_GATEWAYS;
+  const pathGatewayUrls = pathGateways.map(
     (host) => `https://${host}/${pathPrefix}/${buildPath(ref.id, ref.path)}`
   );
 
@@ -125,7 +206,7 @@ export function resolveDecentralizedMediaInputs(
 
 export function normalizeDecentralizedMediaUri(
   input: string | null | undefined,
-  resolverOrigin = DEFAULT_MEDIA_RESOLVER_ORIGIN
+  resolverOrigin = getMediaResolverOrigin()
 ): string | undefined {
   if (input == null) return undefined;
   const trimmed = input.trim();
@@ -141,12 +222,34 @@ export function getDecentralizedMediaFetchUrls(
   const parsed = parseDecentralizedMediaRef(input);
   if (!parsed) return [input];
 
+  const resolverOrigin = options.resolverOrigin ?? getMediaResolverOrigin();
   return [
-    to6529ResolverUrl(parsed, options.resolverOrigin),
+    to6529ResolverUrl(parsed, resolverOrigin),
     ...(options.includeExternalFallbacks === false
       ? []
-      : toExternalFallbackUrls(parsed))
+      : toExternalFallbackUrls(parsed, resolverOrigin))
   ];
+}
+
+/**
+ * Whether `value` is a URL on a 6529 media gateway: the 6529.io path gateway
+ * (by host name, as before), or, over https without userinfo or port, the
+ * content-domain path gateway or one of its per-CID hosts.
+ */
+export function isFirstPartyMediaGatewayUrl(value: string): boolean {
+  let url: URL;
+  try {
+    url = new URL(value.trim());
+  } catch {
+    return false;
+  }
+  if (url.hostname === MEDIA_RESOLVER_HOST) return true;
+  const hostname = normalizeHostname(url.hostname);
+  return (
+    isStrictHttpsUrl(url) &&
+    (hostname === USER_CONTENT_MEDIA_HOST ||
+      getUserContentIpfsLabel(hostname) !== null)
+  );
 }
 
 function resolveDecentralizedMediaInput(
@@ -163,6 +266,7 @@ function resolveDecentralizedMediaInput(
     };
   }
 
+  const resolverOrigin = options.resolverOrigin ?? getMediaResolverOrigin();
   return {
     input,
     recognized: true,
@@ -170,11 +274,11 @@ function resolveDecentralizedMediaInput(
     native_uri: toNativeUri(parsed.ref),
     id: parsed.ref.id,
     path: parsed.ref.path,
-    resolver_url: to6529ResolverUrl(parsed.ref, options.resolverOrigin),
+    resolver_url: to6529ResolverUrl(parsed.ref, resolverOrigin),
     external_fallback_urls:
       options.includeExternalFallbacks === false
         ? []
-        : toExternalFallbackUrls(parsed.ref),
+        : toExternalFallbackUrls(parsed.ref, resolverOrigin),
     warnings: parsed.warnings
   };
 }
@@ -199,6 +303,7 @@ function parseDecentralizedMedia(
   return (
     parse6529ResolverUrl(url) ??
     parseIpfsPathGatewayUrl(url) ??
+    parseUserContentIpfsHostUrl(url) ??
     parseIpfsSubdomainGatewayUrl(url) ??
     parseArweaveGatewayUrl(url) ??
     parseArweaveTxSubdomainUrl(url)
@@ -236,8 +341,14 @@ function parseNativeUri(input: string): ParsedDecentralizedMedia | null {
   return makeParsed(protocol, maybeId, parts.slice(1), warnings);
 }
 
+function is6529ResolverHost(url: URL): boolean {
+  const hostname = normalizeHostname(url.hostname);
+  if (hostname === MEDIA_RESOLVER_HOST) return true;
+  return hostname === USER_CONTENT_MEDIA_HOST && isStrictHttpsUrl(url);
+}
+
 function parse6529ResolverUrl(url: URL): ParsedDecentralizedMedia | null {
-  if (normalizeHostname(url.hostname) !== MEDIA_RESOLVER_HOST) return null;
+  if (!is6529ResolverHost(url)) return null;
 
   const parts = splitPath(url.pathname);
   const prefix = (parts[0] ?? '').toLowerCase();
@@ -266,6 +377,44 @@ function parseIpfsPathGatewayUrl(url: URL): ParsedDecentralizedMedia | null {
     parts[1] ?? '',
     parts.slice(2),
     getUrlWarnings(url)
+  );
+}
+
+/**
+ * Per-CID host of the content domain: `https://<cidv1>.ipfs.<domain>/<path>`
+ * is the same content as `/ipfs/<cidv1>/<path>` on the path gateway. Such a
+ * host also serves `/ipfs/<other cid>/<path>` from that other CID, so that
+ * form parses to the other CID.
+ */
+function parseUserContentIpfsHostUrl(
+  url: URL
+): ParsedDecentralizedMedia | null {
+  if (!isStrictHttpsUrl(url)) return null;
+  const label = getUserContentIpfsLabel(normalizeHostname(url.hostname));
+  if (label === null) return null;
+
+  const parts = splitPath(url.pathname);
+  const nestedCid =
+    parts[0]?.toLowerCase() === 'ipfs' && parts[1] && looksLikeIpfsCid(parts[1])
+      ? parts[1]
+      : null;
+  return nestedCid
+    ? makeParsed('ipfs', nestedCid, parts.slice(2), getUrlWarnings(url))
+    : makeParsed('ipfs', label, parts, getUrlWarnings(url));
+}
+
+function getUserContentIpfsLabel(hostname: string): string | null {
+  if (!hostname.endsWith(USER_CONTENT_IPFS_HOST_SUFFIX)) return null;
+  const label = hostname.slice(0, -USER_CONTENT_IPFS_HOST_SUFFIX.length);
+  return USER_CONTENT_IPFS_LABEL_PATTERN.test(label) ? label : null;
+}
+
+function isStrictHttpsUrl(url: URL): boolean {
+  return (
+    url.protocol === 'https:' &&
+    url.port === '' &&
+    url.username === '' &&
+    url.password === ''
   );
 }
 

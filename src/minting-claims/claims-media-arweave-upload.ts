@@ -21,6 +21,7 @@ import { Logger } from '@/logging';
 import { isMemesContract } from '@/minting-claims/external-url';
 import { MAX_MINTING_CLAIM_MEDIA_BYTES } from '@/minting-claims/media-limits';
 import {
+  isFirstPartyMediaGatewayUrl,
   parseDecentralizedMediaRef,
   toExternalFallbackUrls,
   toNativeUri
@@ -175,14 +176,6 @@ function isProtocolUrl(value: string): boolean {
   return /^[a-z][a-z0-9+.-]*:\/\//i.test(value);
 }
 
-function is6529MediaResolverUrl(value: string): boolean {
-  try {
-    return new URL(value).hostname.toLowerCase() === 'media.6529.io';
-  } catch {
-    return false;
-  }
-}
-
 function buildMintingClaimLocationUrl(
   location: string | null | undefined,
   allowProtocolPassthrough = false
@@ -196,7 +189,7 @@ function buildMintingClaimLocationUrl(
       return toExternalFallbackUrls(ref)[0] ?? trimmed;
     }
     if (allowProtocolPassthrough) {
-      return is6529MediaResolverUrl(trimmed) ? toNativeUri(ref) : trimmed;
+      return isFirstPartyMediaGatewayUrl(trimmed) ? toNativeUri(ref) : trimmed;
     }
     return toNativeUri(ref);
   }
