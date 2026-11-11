@@ -46,6 +46,7 @@ import {
   WALLETS_TDH_TABLE
 } from '@/constants';
 import { DbQueryOptions } from './db-query.options';
+import { mysqlSslConnectionOptions } from './db-ssl';
 import { writeDelegations } from '@/delegation-row';
 import { Artist } from './entities/IArtist';
 import {
@@ -180,7 +181,8 @@ export async function connect(
     synchronize: false,
     logging: false,
     charset: 'utf8mb4',
-    timezone: 'Etc/UTC'
+    timezone: 'Etc/UTC',
+    ...mysqlSslConnectionOptions()
   });
 
   try {
