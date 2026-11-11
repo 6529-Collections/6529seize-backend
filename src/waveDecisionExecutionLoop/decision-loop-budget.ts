@@ -72,13 +72,14 @@ export function decisionLoopBudget(
 }
 
 /**
- * The final delivery's share: what is left after the safety margin, at most
- * the dispatcher's own four minute cap, and at least a short attempt so
- * pending decision results are never skipped outright.
+ * The final delivery's share: what is left before the safety margin, never
+ * more (the dispatcher caps it at four minutes itself). 0 means there is no
+ * time left and the delivery is skipped; undefined means the invocation's
+ * remaining time is unknown and the dispatcher's own cap applies.
  */
 export function finalDispatchBudgetMs(
   remainingMillis: number | undefined
 ): number | undefined {
   if (remainingMillis === undefined) return undefined;
-  return Math.max(5_000, remainingMillis - DECISION_LOOP_SAFETY_MARGIN_MS);
+  return Math.max(0, remainingMillis - DECISION_LOOP_SAFETY_MARGIN_MS);
 }

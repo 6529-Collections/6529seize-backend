@@ -107,8 +107,11 @@ That run still commits or rolls back as usual; the pass waits for it before
 returning and keeps at most two such runs in flight. A pass that stopped early
 or overran logs `native_competition_decision_pass_bounded`. Outbox delivery
 runs before (up to `WAVE_DECISION_LOOP_DISPATCH_FIRST_MS`, 60 s) and after the
-pass, claiming decision results first. Scoring still replays each
-competition's full history; making it incremental is separate work.
+pass, claiming decision results first and then alternating batches with the
+other events; while those wait, decision results get at most half of each
+delivery's batches and time. The final delivery gets only the time left before
+a 30 s safety margin and is skipped when none is left. Scoring still replays
+each competition's full history; making it incremental is separate work.
 
 - Competition row locks serialize entry/vote/lifecycle/execution changes.
   Drop locks additionally prevent concurrent association, editing and deletion

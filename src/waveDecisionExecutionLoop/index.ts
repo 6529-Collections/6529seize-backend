@@ -41,9 +41,12 @@ export const handler = sentryContext.wrapLambdaHandler(
                 reserveMillis: budget.reserveMillis
               }),
             // Then the results of this pass's decisions, and the rest.
-            () => {
+            async () => {
               const budgetMs = finalDispatchBudgetMs(remainingMillis?.());
-              return competitionEventDispatcher.dispatchPending(
+              // No time left before the safety margin: the next
+              // invocation's first delivery picks the events up.
+              if (budgetMs === 0) return;
+              await competitionEventDispatcher.dispatchPending(
                 { timer },
                 Date.now(),
                 budgetMs === undefined ? {} : { budgetMs }

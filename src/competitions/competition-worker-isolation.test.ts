@@ -56,6 +56,21 @@ it('keeps the decision unit processing native work and pending durable effects',
   );
 });
 
+it('skips the last delivery when no time is left before the safety margin', async () => {
+  let remaining = 600_000;
+  jest
+    .mocked(nativeCompetitionRuntimeService.processDueCompetitions)
+    .mockImplementation(async () => {
+      remaining = 30_000;
+    });
+  await decisionHandler(
+    {} as never,
+    { getRemainingTimeInMillis: () => remaining } as never,
+    jest.fn()
+  );
+  expect(competitionEventDispatcher.dispatchPending).toHaveBeenCalledTimes(1);
+});
+
 it('gives the last delivery what is left of the invocation', async () => {
   let remaining = 600_000;
   jest

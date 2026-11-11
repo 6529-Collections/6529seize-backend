@@ -1,5 +1,6 @@
 import {
   DECISION_LOOP_BUDGET_DEFAULTS,
+  DECISION_LOOP_SAFETY_MARGIN_MS,
   decisionLoopBudget,
   finalDispatchBudgetMs
 } from './decision-loop-budget';
@@ -37,9 +38,31 @@ describe('decisionLoopBudget', () => {
 });
 
 describe('finalDispatchBudgetMs', () => {
-  it('leaves a safety margin and always allows a short attempt', () => {
+  it('leaves the dispatcher its own cap when the remaining time is unknown', () => {
     expect(finalDispatchBudgetMs(undefined)).toBeUndefined();
-    expect(finalDispatchBudgetMs(400_000)).toBe(370_000);
-    expect(finalDispatchBudgetMs(31_000)).toBe(5_000);
+  });
+
+  it.each([
+    [400_000, 370_000],
+    [30_001, 1],
+    [30_000, 0],
+    [29_999, 0],
+    [0, 0],
+    [-5, 0]
+  ])(
+    'grants %s ms remaining at most what is left before the margin (%s)',
+    (remaining, expected) => {
+      expect(finalDispatchBudgetMs(remaining)).toBe(expected);
+    }
+  );
+
+  it('never grants more than the time left before the safety margin', () => {
+    for (let remaining = -1_000; remaining <= 1_000_000; remaining += 997) {
+      const budget = finalDispatchBudgetMs(remaining)!;
+      expect(budget).toBeGreaterThanOrEqual(0);
+      expect(budget).toBeLessThanOrEqual(
+        Math.max(0, remaining - DECISION_LOOP_SAFETY_MARGIN_MS)
+      );
+    }
   });
 });
