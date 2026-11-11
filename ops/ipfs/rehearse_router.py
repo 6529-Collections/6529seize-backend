@@ -15,10 +15,13 @@ import sys
 import tempfile
 import threading
 import time
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
 from common import require
+
+LOOPBACK_HTTP = "http://127.0.0.1:"
 
 
 def available_port():
@@ -64,7 +67,8 @@ class Backend(http.server.BaseHTTPRequestHandler):
     lock = threading.Lock()
 
     def log_message(self, *_args):
-        pass
+        # The isolated fixture deliberately suppresses per-request logs.
+        return
 
     def do_POST(self):
         body = self.rfile.read(int(self.headers.get("Content-Length", "0")))
@@ -82,11 +86,18 @@ class Backend(http.server.BaseHTTPRequestHandler):
 
 class TLSProxy(http.server.BaseHTTPRequestHandler):
     def log_message(self, *_args):
-        pass
+        # The isolated fixture deliberately suppresses per-request logs.
+        return
 
     def do_POST(self):
         body = self.rfile.read(int(self.headers.get("Content-Length", "0")))
-        request = urllib.request.Request(self.server.destination + self.path, data=body, headers={"X-6529-IPFS-Hop": self.headers.get("X-6529-IPFS-Hop", "")})
+        # The fixture forwards only these literal test endpoints, never an
+        # arbitrary request path or authority supplied by a client.
+        paths = {"/api/v0/add": "/api/v0/add", "/api/v0/add?slow=true": "/api/v0/add?slow=true",
+                 "/api/v0/add?to-files=/pending": "/api/v0/add?to-files=/pending",
+                 "/api/v0/add?to-files=/rollback": "/api/v0/add?to-files=/rollback"}
+        require(self.path in paths, "Unexpected TLS fixture path")
+        request = urllib.request.Request(self.server.destination + paths[self.path], data=body, headers={"X-6529-IPFS-Hop": self.headers.get("X-6529-IPFS-Hop", "")})
         with urllib.request.urlopen(request, timeout=20) as response:
             data = response.read()
             self.send_response(response.status)
@@ -96,7 +107,7 @@ class TLSProxy(http.server.BaseHTTPRequestHandler):
 
 
 def upload(port, query="", payload=b"accepted-upload"):
-    request = urllib.request.Request("http://127.0.0.1:" + str(port) + "/api/v0/add" + query, data=payload)
+    request = urllib.request.Request(LOOPBACK_HTTP + str(port) + "/api/v0/add" + query, data=payload)
     with urllib.request.urlopen(request, timeout=30) as response:
         require(response.status == 200, "Upload was rejected during handover")
         return json.loads(response.read())
@@ -118,9 +129,9 @@ def main():
                 state.write_text(json.dumps({"mode": "serve", "epoch": 0, "mfsReady": identity == "source"}))
                 ports[identity] = available_port()
                 sockets[identity] = root / (identity + ".sock")
-                command = [str(binary), "--listen", "127.0.0.1:" + str(ports[identity]), "--upstream", "http://127.0.0.1:" + str(backend.server_port),
+                command = [str(binary), "--listen", "127.0.0.1:" + str(ports[identity]), "--upstream", LOOPBACK_HTTP + str(backend.server_port),
                            "--control", str(sockets[identity]), "--state", str(state), "--node-id", identity, "--source-sha", "a" * 40]
-                process = subprocess.Popen(command, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+                process = subprocess.Popen(command, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)  # NOSONAR: fixed basename in the CI-built test bundle; no shell or external input.
                 processes.append(process)
                 for _ in range(100):
                     if sockets[identity].exists():
@@ -133,8 +144,9 @@ def main():
                             "-subj", "/CN=api-ipfs.6529.io", "-addext", "subjectAltName=DNS:api-ipfs.6529.io"], capture_output=True, check=True)
             address = private_address()
             tls = http.server.ThreadingHTTPServer((address, 0), TLSProxy)
-            tls.destination = "http://127.0.0.1:" + str(ports["target"])
+            tls.destination = LOOPBACK_HTTP + str(ports["target"])
             context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+            context.minimum_version = ssl.TLSVersion.TLSv1_2
             context.load_cert_chain(cert, key)
             tls.socket = context.wrap_socket(tls.socket, server_side=True)
             servers.append(tls)
@@ -164,7 +176,7 @@ def main():
             # Reverse the exact protocol: the original host is prepared first,
             # then the current writer forwards and drains. New writes survive.
             reverse_tls = http.server.ThreadingHTTPServer((address, 0), TLSProxy)
-            reverse_tls.destination = "http://127.0.0.1:" + str(ports["source"])
+            reverse_tls.destination = LOOPBACK_HTTP + str(ports["source"])
             reverse_tls.socket = context.wrap_socket(reverse_tls.socket, server_side=True)
             servers.append(reverse_tls)
             threading.Thread(target=reverse_tls.serve_forever, daemon=True).start()

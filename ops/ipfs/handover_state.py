@@ -10,6 +10,9 @@ import time
 
 from common import require, write_private
 
+FILE_STAT = "files/stat"
+PIN_ADD = "pin/add"
+
 
 def explicit_pins(call):
     pins = {}
@@ -25,7 +28,7 @@ def explicit_pins(call):
 
 
 def reference_state(call):
-    return {**explicit_pins(call), "mfsRoot": call("files/stat", {"arg": "/", "hash": "true"})["Hash"]}
+    return {**explicit_pins(call), "mfsRoot": call(FILE_STAT, {"arg": "/", "hash": "true"})["Hash"]}
 
 
 def snapshot(call):
@@ -36,7 +39,7 @@ def snapshot(call):
             # Retain the immutable MFS root independently of the mutable handle.
             # The private snapshot is valid even if future uploads change MFS.
             if first["pins"].get(first["mfsRoot"]) != "recursive":
-                call("pin/add", {"arg": first["mfsRoot"], "recursive": "true"}, timeout=1800)
+                call(PIN_ADD, {"arg": first["mfsRoot"], "recursive": "true"}, timeout=1800)
                 first["pins"][first["mfsRoot"]] = "recursive"
                 first["pinNames"].setdefault(first["mfsRoot"], "")
             return first
@@ -61,7 +64,7 @@ def merge_pins(saved, call, workers=8):
         if existing == "recursive" or existing == kind:
             return
         name = current["pinNames"].get(cid) or saved["pinNames"].get(cid, "")
-        call("pin/add", {"arg": cid, "recursive": str(kind == "recursive").lower(), "name": name}, timeout=1800)
+        call(PIN_ADD, {"arg": cid, "recursive": str(kind == "recursive").lower(), "name": name}, timeout=1800)
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
         # Consume all results: an RPC failure cannot be hidden in a future.
@@ -91,14 +94,14 @@ def replace_fenced_mfs(saved, call, router, journal_path, migration_id, baseline
         journal = json.loads(journal_path.read_text())
         require(all(journal.get(key) == value for key, value in expected.items()), "Different state transfer already owns this node")
     else:
-        current = call("files/stat", {"arg": "/", "hash": "true"})["Hash"]
+        current = call(FILE_STAT, {"arg": "/", "hash": "true"})["Hash"]
         require(current == baseline_root, "Destination mutable state changed before its fence")
         write_private(journal_path, {**expected, "status": "copying"})
     # No public MFS operation can reach Kubo while this fence is held. On retry
     # it is safe to rebuild a partial tree; every previous root remains pinned.
-    current = call("files/stat", {"arg": "/", "hash": "true"})["Hash"]
+    current = call(FILE_STAT, {"arg": "/", "hash": "true"})["Hash"]
     if current != saved["mfsRoot"]:
-        call("pin/add", {"arg": current, "recursive": "true"}, timeout=1800)
+        call(PIN_ADD, {"arg": current, "recursive": "true"}, timeout=1800)
         for entry in call("files/ls", {"arg": "/"}).get("Entries") or []:
             call("files/rm", {"arg": "/" + entry["Name"], "recursive": "true"})
         listing = call("ls", {"arg": "/ipfs/" + saved["mfsRoot"]})["Objects"]
@@ -108,7 +111,7 @@ def replace_fenced_mfs(saved, call, router, journal_path, migration_id, baseline
             require(name and "/" not in name and name not in (".", ".."), "Invalid MFS child")
             call("files/cp", {"arg": ["/ipfs/" + saved["mfsRoot"] + "/" + name, "/" + name]})
     call("files/flush", {"arg": "/"})
-    require(call("files/stat", {"arg": "/", "hash": "true"})["Hash"] == saved["mfsRoot"], "MFS transfer differs from the final source root")
+    require(call(FILE_STAT, {"arg": "/", "hash": "true"})["Hash"] == saved["mfsRoot"], "MFS transfer differs from the final source root")
     require(router()["epoch"] == status["epoch"] and not router()["mfsReady"], "Mutable-write fence changed during transfer")
     write_private(journal_path, {**expected, "status": "complete"})
     return {"mfsVerified": True, "sourceRoot": saved["mfsRoot"]}

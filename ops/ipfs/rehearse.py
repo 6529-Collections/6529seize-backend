@@ -238,6 +238,33 @@ def https_rehearsal(bundle, work, daemon, payload, cid):
         log.close()
 
 
+def bidirectional_handover(first, second, work):
+    # Final-state transfer must preserve immutable uploads accepted by
+    # the destination after the initial snapshot, in either direction.
+    first.start()
+    for index, (source, target) in enumerate(((first, second), (second, first))):
+        base = handover_state.snapshot(source.rpc)
+        state_path = work / ("handover-" + str(index) + ".json")
+        fence = lambda index=index: {"mode": "serve", "mfsReady": False, "epoch": index + 1}
+        baseline = target.rpc(FILE_STAT, {"arg": "/", "hash": "true"})["Hash"]
+        handover_state.merge_pins(base, target.rpc)
+        handover_state.replace_fenced_mfs(base, target.rpc, fence, state_path, "initial-" + str(index), baseline)
+        state_path.unlink()
+        new_file = work / ("new-" + str(index) + ".txt")
+        new_file.write_text("destination upload accepted during handover " + str(index))
+        accepted_cid = target.cli("add", "-Q", str(new_file))
+        late_file = work / ("late-" + str(index) + ".txt")
+        late_file.write_text("source upload finished after initial snapshot " + str(index))
+        late_cid = source.cli("add", "-Q", str(late_file))
+        source.rpc(MFS_COPY, {"arg": [IPFS_PREFIX + late_cid, "/late-" + str(index)]})
+        final = handover_state.snapshot(source.rpc)
+        handover_state.merge_pins(final, target.rpc)
+        handover_state.replace_fenced_mfs(final, target.rpc, fence, state_path, "final-" + str(index), base["mfsRoot"])
+        actual_pins = handover_state.explicit_pins(target.rpc)["pins"]
+        require(accepted_cid in actual_pins and late_cid in actual_pins, "Handover or rollback erased an accepted upload")
+        require(target.rpc("cat", {"arg": accepted_cid}, raw=True).decode() == new_file.read_text(), "Accepted destination content was lost")
+
+
 def main():
     bundle = Path(sys.argv[1]).resolve()
     processes = []
@@ -351,31 +378,8 @@ def main():
             second.stop()
             second.start()
             require(second.rpc(FILE_STAT, {"arg": "/", "hash": "true"})["Hash"] == saved["mfsRoot"], "Restored MFS did not persist")
-            # Final-state transfer must preserve immutable uploads accepted by
-            # the destination after the initial snapshot, in either direction.
-            first.start()
-            for index, (source, target) in enumerate(((first, second), (second, first))):
-                base = handover_state.snapshot(source.rpc)
-                state_path = work / ("handover-" + str(index) + ".json")
-                fence = lambda: {"mode": "serve", "mfsReady": False, "epoch": index + 1}
-                baseline = target.rpc(FILE_STAT, {"arg": "/", "hash": "true"})["Hash"]
-                handover_state.merge_pins(base, target.rpc)
-                handover_state.replace_fenced_mfs(base, target.rpc, fence, state_path, "initial-" + str(index), baseline)
-                state_path.unlink()
-                new_file = work / ("new-" + str(index) + ".txt")
-                new_file.write_text("destination upload accepted during handover " + str(index))
-                accepted_cid = target.cli("add", "-Q", str(new_file))
-                late_file = work / ("late-" + str(index) + ".txt")
-                late_file.write_text("source upload finished after initial snapshot " + str(index))
-                late_cid = source.cli("add", "-Q", str(late_file))
-                source.rpc(MFS_COPY, {"arg": [IPFS_PREFIX + late_cid, "/late-" + str(index)]})
-                final = handover_state.snapshot(source.rpc)
-                handover_state.merge_pins(final, target.rpc)
-                handover_state.replace_fenced_mfs(final, target.rpc, fence, state_path, "final-" + str(index), base["mfsRoot"])
-                actual_pins = handover_state.explicit_pins(target.rpc)["pins"]
-                require(accepted_cid in actual_pins and late_cid in actual_pins, "Handover or rollback erased an accepted upload")
-                require(target.rpc("cat", {"arg": accepted_cid}, raw=True).decode() == new_file.read_text(), "Accepted destination content was lost")
-            print(json.dumps({"passed": True, "checks": ["bundled-s3-startup", "bootstrap-pin-content", "all-restored-pin-root-blocks", "multi-chunk-upload", "recursive-and-direct-pins", "mfs-nested-directories", "restart-persistence", "independent-identity", "private-logical-backup", "versioned-checksummed-restore", "pin-and-mfs-restoration", "interrupted-restore-resume", "idempotent-restore", "restored-restart", "nginx-https", "range", "head", "restricted-rpc", "https-upload", "read-only-production-style-pin-restore", "read-only-new-block-rejection"], "awsResourcesCreated": 0}))
+            bidirectional_handover(first, second, work)
+            print(json.dumps({"passed": True, "checks": ["bundled-s3-startup", "bootstrap-pin-content", "all-restored-pin-root-blocks", "multi-chunk-upload", "recursive-and-direct-pins", "mfs-nested-directories", "restart-persistence", "independent-identity", "private-logical-backup", "versioned-checksummed-restore", "pin-and-mfs-restoration", "interrupted-restore-resume", "idempotent-restore", "restored-restart", "nginx-https", "range", "head", "restricted-rpc", "https-upload", "read-only-production-style-pin-restore", "read-only-new-block-rejection", "bidirectional-final-state-with-concurrent-uploads"], "awsResourcesCreated": 0}))
         finally:
             for daemon in processes:
                 daemon.stop()

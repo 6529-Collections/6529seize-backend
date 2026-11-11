@@ -60,7 +60,7 @@ Resources:
               - ec2messages:GetEndpoint
               - ec2messages:GetMessages
               - ec2messages:SendReply
-            Resource: '*' # Agent APIs have no resource-level authorization.
+            Resource: '*' # NOSONAR: SSM agent/channel APIs do not support resource ARNs; region is constrained below.
             Condition:
               StringEquals: { aws:RequestedRegion: us-east-1 }
   LegacyRecoveryPolicy:
@@ -97,7 +97,7 @@ Resources:
             Statement:
               - Effect: Allow
                 Action: [ec2:Describe*, elasticloadbalancing:Describe*]
-                Resource: '*'
+                Resource: '*' # NOSONAR: AWS describe/list APIs require a wildcard resource.
               - Effect: Allow
                 Action: [ec2:RunInstances, ec2:CreateSecurityGroup]
                 Resource:
@@ -190,7 +190,7 @@ Resources:
                   - elasticloadbalancing:CreateListener
                   - elasticloadbalancing:CreateRule
                   - elasticloadbalancing:AddTags
-                Resource: '*'
+                Resource: '*' # NOSONAR: create APIs allocate new ARNs; both ownership request tags are mandatory.
                 Condition:
                   StringEquals:
                     aws:RequestTag/Service: 6529-ipfs
@@ -219,7 +219,7 @@ Resources:
                   - arn:aws:elasticloadbalancing:us-east-1:987989283142:targetgroup/seize-ipfs-prod-*/*
               - Effect: Allow
                 Action: [acm:DescribeCertificate, acm:ListCertificates]
-                Resource: '*'
+                Resource: '*' # NOSONAR: AWS describe/list APIs require a wildcard resource.
   DeploymentRole:
     Type: AWS::IAM::Role
     Properties:
@@ -253,7 +253,7 @@ Resources:
                     ssm:GetCommandInvocation,
                     cloudformation:ListStacks
                   ]
-                Resource: '*'
+                Resource: '*' # NOSONAR: AWS describe/list APIs require a wildcard resource.
               - Effect: Allow
                 Action:
                   [
