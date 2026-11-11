@@ -191,6 +191,68 @@ describe('decision pass bounds', () => {
     expect(running).toBe(0);
   });
 
+  it.each([undefined, 60_000])(
+    'attempts every competition each pass, including one that always fails (budget %p)',
+    async (budgetMs) => {
+      const f = fixture('b');
+      f.process.mockImplementation(async (id: string) => {
+        f.started.push(id);
+        if (id === 'c') throw new Error('always fails');
+      });
+
+      for (let pass = 0; pass < 3; pass++) {
+        f.started.length = 0;
+        await f.service.processDueCompetitions({
+          now: 1,
+          budgetMs,
+          competitionDeadlineMs: 1_000
+        });
+        expect([...f.started].sort((a, b) => a.localeCompare(b))).toEqual(IDS);
+        expect(f.started.filter((id) => id === 'c')).toHaveLength(1);
+        expect(reportLoopHealth).toHaveBeenLastCalledWith(
+          expect.objectContaining({ pending: true })
+        );
+      }
+      // A full rotation leaves the starting point where it was.
+      expect(f.cursor()).toBe('b');
+    }
+  );
+
+  it('retries a failed competition no later than the next full rotation when the budget runs out', async () => {
+    let clock = 0;
+    jest.spyOn(Date, 'now').mockImplementation(() => clock);
+    const f = fixture();
+    const attemptsOfC: number[] = [];
+    let pass = 0;
+    f.process.mockImplementation(async (id: string) => {
+      f.started.push(id);
+      clock += 100;
+      if (id === 'c') {
+        attemptsOfC.push(pass);
+        throw new Error('always fails');
+      }
+    });
+
+    // Two competitions fit in a pass; five passes cover two rotations.
+    for (pass = 0; pass < 5; pass++) {
+      await f.service.processDueCompetitions({ now: 1, budgetMs: 150 });
+    }
+
+    expect(f.started).toEqual([
+      'a',
+      'b',
+      'c',
+      'd',
+      'e',
+      'a',
+      'b',
+      'c',
+      'd',
+      'e'
+    ]);
+    expect(attemptsOfC).toEqual([1, 3]);
+  });
+
   it('keeps passes unbounded without bounds, as before', async () => {
     let clock = 0;
     jest.spyOn(Date, 'now').mockImplementation(() => clock);

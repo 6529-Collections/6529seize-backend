@@ -722,7 +722,9 @@ export class NativeCompetitionRuntimeService {
         return false;
       }
       // Saved before the run: a competition that never finishes is still
-      // passed over by the next pass, which starts after it.
+      // passed over by the next pass, which starts after it. A failure only
+      // counts as failed; a pass with time left still visits every
+      // competition, so a failing one is retried every pass as before.
       await this.cursors.save(DECISION_PASS_CURSOR, id, Date.now());
       started++;
       const run = this.runCompetitionPass(id, 'decisions', timer, (ctx) =>
