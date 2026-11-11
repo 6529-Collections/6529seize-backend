@@ -5,7 +5,8 @@ import {
 import {
   nativeCompetitionRuntimeRepository,
   NativeCompetitionRuntimeRepository,
-  NativeCompetitionEvent
+  NativeCompetitionEvent,
+  NativeCompetitionOutboxRecord
 } from './native-competition-runtime.repository';
 import {
   competitionEventRepository,
@@ -33,12 +34,20 @@ import { RequestContext } from '@/request.context';
 import { Logger } from '@/logging';
 import { competitionDeliveryErrorCode } from '@/competitions/competition-delivery-diagnostics';
 
+/** The most one dispatch pass spends delivering events. */
+export const DISPATCH_BUDGET_MS = 240_000;
+const DISPATCH_MAX_BATCHES = 10;
+
 export class CompetitionEventDispatcher {
   private readonly logger = Logger.get(this.constructor.name);
   public constructor(
     private readonly outbox: Pick<
       NativeCompetitionRuntimeRepository,
-      'claimOutbox' | 'acknowledgeOutbox' | 'retryOutbox' | 'deferOutbox'
+      | 'claimOutbox'
+      | 'claimPriorityOutbox'
+      | 'acknowledgeOutbox'
+      | 'retryOutbox'
+      | 'deferOutbox'
     >,
     private readonly repository: Pick<
       CompetitionEventRepository,
@@ -73,65 +82,78 @@ export class CompetitionEventDispatcher {
     > = pushNotificationOutboxDb
   ) {}
 
+  /**
+   * Delivers pending outbox events for up to `budgetMs` (at most four
+   * minutes) and ten batches of 100. Decision results are claimed first,
+   * then everything else oldest first. Claimed events left when the budget
+   * runs out are released for the next pass.
+   */
   public async dispatchPending(
     ctx: RequestContext = {},
-    now = Date.now()
+    now = Date.now(),
+    { budgetMs = DISPATCH_BUDGET_MS }: { budgetMs?: number } = {}
   ): Promise<void> {
-    const startedAt = Date.now();
-    const deadline = startedAt + 240_000;
-    for (
-      let batch = 0;
-      batch < 10 && Date.now() - startedAt < 240_000;
-      batch++
-    ) {
-      const records = await this.outbox.claimOutbox(
-        { now, limit: 100, leaseMs: 10 * 60_000 },
-        ctx
-      );
-      if (!records.length) return;
-      for (const record of records) {
-        try {
-          if (
-            Date.now() >= deadline ||
-            !(await this.dispatch(record.event, ctx, deadline))
-          ) {
-            await this.outbox.deferOutbox(
-              record.id,
-              record.lease_token,
-              Date.now(),
-              ctx
-            );
-            continue;
-          }
-          await this.outbox.acknowledgeOutbox(
-            record.id,
-            record.lease_token,
-            Date.now(),
-            ctx
-          );
-        } catch (error) {
-          await this.outbox.retryOutbox(
-            record.id,
-            record.lease_token,
-            Date.now(),
-            ctx
-          );
-          this.logger.error('competition_event_delivery_failed', {
-            event_id: record.id,
-            competition_id: record.event.competition_id,
-            attempts: record.attempts,
-            error_code: competitionDeliveryErrorCode(error)
-          });
-        }
+    const deadline = Date.now() + Math.min(DISPATCH_BUDGET_MS, budgetMs);
+    let batches = 0;
+    for (const priority of [true, false]) {
+      while (batches < DISPATCH_MAX_BATCHES && Date.now() < deadline) {
+        batches++;
+        const params = { now, limit: 100, leaseMs: 10 * 60_000 };
+        const records = priority
+          ? await this.outbox.claimPriorityOutbox(params, ctx)
+          : await this.outbox.claimOutbox(params, ctx);
+        await this.deliverClaimed(records, ctx, deadline);
+        if (records.length < 100) break;
       }
-      if (records.length < 100) return;
+    }
+  }
+
+  private async deliverClaimed(
+    records: readonly NativeCompetitionOutboxRecord[],
+    ctx: RequestContext,
+    deadline: number
+  ): Promise<void> {
+    for (const record of records) {
+      try {
+        if (
+          Date.now() >= deadline ||
+          !(await this.dispatch(record.event, ctx, deadline))
+        ) {
+          await this.outbox.deferOutbox(
+            record.id,
+            record.lease_token,
+            Date.now(),
+            ctx
+          );
+          continue;
+        }
+        await this.outbox.acknowledgeOutbox(
+          record.id,
+          record.lease_token,
+          Date.now(),
+          ctx
+        );
+      } catch (error) {
+        await this.outbox.retryOutbox(
+          record.id,
+          record.lease_token,
+          Date.now(),
+          ctx
+        );
+        this.logger.error('competition_event_delivery_failed', {
+          event_id: record.id,
+          competition_id: record.event.competition_id,
+          attempts: record.attempts,
+          error_code: competitionDeliveryErrorCode(error)
+        });
+      }
     }
   }
 
   public async dispatch(
     event: NativeCompetitionEvent,
     ctx: RequestContext,
-    deadline = Date.now() + 240_000
+    deadline = Date.now() + DISPATCH_BUDGET_MS
   ): Promise<boolean> {
     const context = await this.repository.getContext(event, ctx);
     // Draft IDs/configuration never leak to wave-wide subscriptions. Deleted

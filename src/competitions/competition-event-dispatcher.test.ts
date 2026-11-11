@@ -16,6 +16,7 @@ const event: NativeCompetitionEvent = {
 function dependencies() {
   const outbox = {
     claimOutbox: jest.fn(),
+    claimPriorityOutbox: jest.fn().mockResolvedValue([]),
     acknowledgeOutbox: jest.fn(),
     retryOutbox: jest.fn(),
     deferOutbox: jest.fn()
@@ -159,6 +160,100 @@ describe('CompetitionEventDispatcher', () => {
     ]);
     expect(deps.outbox.acknowledgeOutbox).not.toHaveBeenCalled();
     expect(deps.outbox.retryOutbox).not.toHaveBeenCalled();
+  });
+
+  it('delivers decision results before older ordinary events', async () => {
+    const deps = dependencies();
+    const delivered: string[] = [];
+    deps.sockets.notifyAboutCompetitionUpdate.mockImplementation(
+      async (e: NativeCompetitionEvent) => {
+        delivered.push(e.event_id);
+      }
+    );
+    const vote = (id: string) => ({
+      id,
+      event: { ...event, event_id: id, event_type: 'COMPETITION_VOTE_CHANGED' },
+      attempts: 1,
+      lease_token: id
+    });
+    deps.outbox.claimPriorityOutbox.mockResolvedValueOnce([
+      { id: 'decision', event, attempts: 1, lease_token: 'decision' }
+    ]);
+    deps.outbox.claimOutbox.mockResolvedValueOnce([
+      vote('vote-1'),
+      vote('vote-2')
+    ]);
+
+    await deps.dispatcher.dispatchPending({}, 100);
+
+    expect(delivered).toEqual(['event', 'vote-1', 'vote-2']);
+    expect(deps.outbox.claimPriorityOutbox).toHaveBeenCalledTimes(1);
+    expect(deps.outbox.claimOutbox).toHaveBeenCalledTimes(1);
+    expect(deps.outbox.acknowledgeOutbox).toHaveBeenCalledTimes(3);
+  });
+
+  it('keeps claiming decision results while full batches of them remain', async () => {
+    const deps = dependencies();
+    const batch = Array.from({ length: 100 }, (_, i) => ({
+      id: `d-${i}`,
+      event,
+      attempts: 1,
+      lease_token: `d-${i}`
+    }));
+    deps.outbox.claimPriorityOutbox
+      .mockResolvedValueOnce(batch)
+      .mockResolvedValueOnce([]);
+    deps.outbox.claimOutbox.mockResolvedValue([]);
+
+    await deps.dispatcher.dispatchPending({}, 100);
+
+    expect(deps.outbox.claimPriorityOutbox).toHaveBeenCalledTimes(2);
+    expect(deps.outbox.claimOutbox).toHaveBeenCalledTimes(1);
+  });
+
+  it('stops claiming once a shorter budget is spent', async () => {
+    const deps = dependencies();
+    let now = 0;
+    jest.spyOn(Date, 'now').mockImplementation(() => now);
+    deps.outbox.claimPriorityOutbox.mockResolvedValue([]);
+    deps.outbox.claimOutbox.mockResolvedValue([
+      { id: 'first', event, attempts: 1, lease_token: 'lease-1' },
+      { id: 'second', event, attempts: 1, lease_token: 'lease-2' }
+    ]);
+    deps.sockets.notifyAboutCompetitionUpdate.mockImplementationOnce(
+      async () => {
+        now = 60_000;
+      }
+    );
+
+    await deps.dispatcher.dispatchPending({}, 0, { budgetMs: 60_000 });
+
+    expect(deps.outbox.acknowledgeOutbox.mock.calls.map(([id]) => id)).toEqual([
+      'first'
+    ]);
+    expect(deps.outbox.deferOutbox.mock.calls.map(([id]) => id)).toEqual([
+      'second'
+    ]);
+    expect(deps.outbox.claimOutbox).toHaveBeenCalledTimes(1);
+  });
+
+  it('never spends more than four minutes even when given longer', async () => {
+    const deps = dependencies();
+    let now = 0;
+    jest.spyOn(Date, 'now').mockImplementation(() => now);
+    deps.outbox.claimOutbox.mockImplementation(async () => {
+      now += 100_000;
+      return Array.from({ length: 100 }, (_, i) => ({
+        id: `e-${now}-${i}`,
+        event,
+        attempts: 1,
+        lease_token: 'lease'
+      }));
+    });
+
+    await deps.dispatcher.dispatchPending({}, 0, { budgetMs: 900_000 });
+
+    expect(deps.outbox.claimOutbox).toHaveBeenCalledTimes(3);
   });
 
   it.each(['DRAFT', 'ARCHIVED'])(

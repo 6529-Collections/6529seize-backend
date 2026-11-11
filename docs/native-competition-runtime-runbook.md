@@ -88,6 +88,20 @@ and choose alert thresholds separately for leaderboard refreshes and decision
 passes, accounting for decision catch-up. Failed passes log the same operation
 and elapsed duration with `native_competition_execution_failed`.
 
+The decision worker resumes after the competition its previous pass last
+started (`competition_worker_cursors`, worker `native_decisions`) and wraps
+around, so a pass that stops early is continued instead of restarted. It stops
+starting competitions after `WAVE_DECISION_LOOP_DECISIONS_BUDGET_MS` (5 min)
+or with less than 5 minutes of the invocation left, and logs
+`native_competition_execution_deadline_passed` for a competition still running
+after `WAVE_DECISION_LOOP_COMPETITION_DEADLINE_MS` (2 min) while it moves on.
+That run still commits or rolls back as usual; the pass waits for it before
+returning and keeps at most two such runs in flight. A pass that stopped early
+or overran logs `native_competition_decision_pass_bounded`. Outbox delivery
+runs before (up to `WAVE_DECISION_LOOP_DISPATCH_FIRST_MS`, 60 s) and after the
+pass, claiming decision results first. Scoring still replays each
+competition's full history; making it incremental is separate work.
+
 - Competition row locks serialize entry/vote/lifecycle/execution changes.
   Drop locks additionally prevent concurrent association, editing and deletion
   from bypassing one active nonterminal entry per drop.
