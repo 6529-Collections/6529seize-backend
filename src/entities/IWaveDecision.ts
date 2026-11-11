@@ -1,45 +1,20 @@
-import { Column, Entity, Index, PrimaryColumn } from 'typeorm';
-import {
-  WAVES_DECISION_WINNER_DROPS_TABLE,
-  WAVES_DECISIONS_TABLE
-} from '@/constants';
+/** Permanent native-backed compatibility view shapes; no physical schema registration. */
 import {
   WaveOutcomeCredit,
   WaveOutcomeSubType,
   WaveOutcomeType
 } from './IWave';
-
-@Entity(WAVES_DECISIONS_TABLE)
-@Index('idx_wave_decisions_wave_time', ['wave_id', 'decision_time'], {
-  synchronize: false
-})
-export class WaveDecisionEntity {
-  @PrimaryColumn({ type: 'bigint', nullable: false })
-  readonly decision_time!: number;
-
-  @PrimaryColumn({ type: 'varchar', length: 100, nullable: false })
-  readonly wave_id!: string;
+export interface WaveDecisionEntity {
+  readonly decision_time: number;
+  readonly wave_id: string;
 }
-
-@Entity(WAVES_DECISION_WINNER_DROPS_TABLE)
-export class WaveDecisionWinnerDropEntity {
-  @PrimaryColumn({ type: 'bigint', nullable: false })
-  readonly decision_time!: number;
-
-  @PrimaryColumn({ type: 'varchar', length: 100, nullable: false })
-  readonly drop_id!: string;
-
-  @Column({ type: 'int', nullable: false })
-  readonly ranking!: number;
-
-  @Column({ type: 'bigint', nullable: false, default: 0 })
-  readonly final_vote!: number;
-
-  @Column({ type: 'json', nullable: false })
-  readonly prizes!: WaveDecisionWinnerPrize[];
-
-  @PrimaryColumn({ type: 'varchar', length: 100, nullable: false })
-  readonly wave_id!: string;
+export interface WaveDecisionWinnerDropEntity {
+  readonly decision_time: number;
+  readonly drop_id: string;
+  readonly ranking: number;
+  readonly final_vote: number;
+  readonly prizes: WaveDecisionWinnerPrize[];
+  readonly wave_id: string;
 }
 
 export interface WaveDecisionWinnerDropWithSaleEntity extends WaveDecisionWinnerDropEntity {

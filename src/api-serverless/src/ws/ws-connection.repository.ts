@@ -34,8 +34,70 @@ import {
   WsTransactionDiagnostics
 } from '@/api/ws/ws-transaction-diagnostics';
 import { WsDiagnosticOperation } from '@/api/ws/ws-operation-diagnostics';
+import { broadcastPurposeFilterSql } from '@/ws-delivery/ws-connection-purpose';
+import {
+  anonymousOnlyOwnWaveSql,
+  FollowerAudience,
+  followerAudienceConditionSql,
+  followerAudienceParams,
+  followerAudienceMode,
+  FollowerAudienceMode,
+  ungroupedFollowerAudienceSql
+} from '@/api/ws/ws-audience';
 
 type NotificationSubscription = { identityId: string; jwtExpiry: number };
+
+/** One online socket in a wave audience, with what its send fence needs. */
+export interface WaveRecipient {
+  readonly connectionId: string;
+  readonly profileId: string | null;
+  readonly wave_id: string | null;
+  /** Stored JWT expiry (epoch seconds), so sends skip a per-socket read. */
+  readonly jwtExpiry: number;
+}
+
+export interface WaveRecipientOptions {
+  /** Typing broadcasts only: include sockets opened with purpose=typing. */
+  readonly includeTypingSockets?: boolean;
+}
+
+/**
+ * Typing-purpose sockets only carry USER_IS_TYPING; every other wave frame
+ * reaches the tab through its app socket. Null purpose is a legacy socket.
+ */
+function purposeFilterSql(
+  options: WaveRecipientOptions = {},
+  alias = 'ws'
+): string {
+  return options.includeTypingSockets
+    ? '1 = 1'
+    : broadcastPurposeFilterSql(alias);
+}
+
+/** The `client_version` column is not there (yet, or any more). */
+export function isMissingClientVersionColumn(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false;
+  const { code, message } = error as { code?: unknown; message?: unknown };
+  return (
+    code === 'ER_BAD_FIELD_ERROR' &&
+    (typeof message !== 'string' || message.includes('client_version'))
+  );
+}
+
+let warnedMissingClientVersionColumn = false;
+
+function warnMissingClientVersionColumnOnce(logger: Logger): void {
+  if (warnedMissingClientVersionColumn) return;
+  warnedMissingClientVersionColumn = true;
+  logger.warn(
+    'ws_connections.client_version is missing; registering sockets without the client build until dbMigrationsLoop adds it'
+  );
+}
+
+/** Test hook: lets each test observe the once-only warning. */
+export function resetClientVersionColumnWarningForTests(): void {
+  warnedMissingClientVersionColumn = false;
+}
 
 export class WsConnectionRepository extends LazyDbAccessCompatibleService {
   private static readonly NOTIFICATION_CLEANUP_SAMPLE_DENOMINATOR = 100;
@@ -68,14 +130,39 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
         // The inserted connection row provides the same serialization point used
         // by reauthentication, subscription sync and deletion.
         recordWebSocketSqlPhase('insert_connection');
-        await this.db.execute(
-          `insert into ${WS_CONNECTIONS_TABLE} (connection_id, jwt_expiry, identity_id) values (:connection_id, :jwt_expiry, :identity_id)`,
-          entity,
-          {
-            wrappedConnection: transactionContext.connection,
-            bindInvocationContext: true
+        // Optional columns are written only when declared, so legacy sockets
+        // insert exactly as before.
+        const insert = (withClientVersion: boolean) => {
+          const columns = [
+            'connection_id',
+            'jwt_expiry',
+            'identity_id',
+            ...(entity.purpose ? ['purpose'] : []),
+            ...(withClientVersion ? ['client_version'] : [])
+          ];
+          return this.db.execute(
+            `insert into ${WS_CONNECTIONS_TABLE} (${columns.join(', ')}) values (${columns
+              .map((column) => `:${column}`)
+              .join(', ')})`,
+            entity,
+            {
+              wrappedConnection: transactionContext.connection,
+              bindInvocationContext: true
+            }
+          );
+        };
+        try {
+          await insert(!!entity.client_version);
+        } catch (error) {
+          // Build telemetry must never fail a connect: if the column is
+          // missing (a deploy-order slip or a rollback), register without it.
+          // A failed statement does not end the transaction.
+          if (!entity.client_version || !isMissingClientVersionColumn(error)) {
+            throw error;
           }
-        );
+          warnMissingClientVersionColumnOnce(this.logger);
+          await insert(false);
+        }
         await this.writeNotificationSubscriptions(
           entity.connection_id,
           subscriptions,
@@ -83,6 +170,30 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
         );
       }
     );
+  }
+
+  /**
+   * Records the wave the tab has open (SET_OPEN_WAVE, waves 1.3). Delivery
+   * only reads it with WS_AUDIENCE_FOLLOWERS on. Before dbMigrationsLoop has
+   * added the column this is a no-op, never an error for the client.
+   */
+  public async updateOpenWaveId(
+    params: { connectionId: string; waveId: string | null },
+    ctx: RequestContext
+  ): Promise<void> {
+    try {
+      await this.db.execute(
+        `update ${WS_CONNECTIONS_TABLE} set open_wave_id = :waveId where connection_id = :connectionId`,
+        params,
+        { wrappedConnection: ctx.connection }
+      );
+    } catch (error) {
+      const code = (error as { code?: unknown } | null)?.code;
+      if (code !== 'ER_BAD_FIELD_ERROR') throw error;
+      this.logger.warn(
+        'ws_connections.open_wave_id is missing; ignoring SET_OPEN_WAVE'
+      );
+    }
   }
 
   public async updateWaveId(
@@ -386,24 +497,31 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
     );
   }
 
+  /**
+   * Online wave members. Typing-purpose sockets are left out unless
+   * `includeTypingSockets` is set (only the typing broadcast does that).
+   */
   async getCurrentlyOnlineCommunityMemberConnectionIds(
     params: { groupId: string | null; waveId: string },
-    ctx: RequestContext
+    ctx: RequestContext,
+    options: WaveRecipientOptions = {}
   ) {
-    return this.getWaveRecipients(params.waveId, ctx, false);
+    return this.getWaveRecipients(params.waveId, ctx, false, options);
   }
 
   async getCurrentlyOnlineCommunityMemberConnectionIdsForSystemBroadcast(
     params: { groupId: string | null; waveId: string },
-    ctx: RequestContext
+    ctx: RequestContext,
+    options: WaveRecipientOptions = {}
   ) {
-    return this.getWaveRecipients(params.waveId, ctx, true);
+    return this.getWaveRecipients(params.waveId, ctx, true, options);
   }
 
   private async getWaveRecipients(
     waveId: string,
     ctx: RequestContext,
-    systemBroadcast: boolean
+    systemBroadcast: boolean,
+    options: WaveRecipientOptions
   ) {
     // Read both current groups: payloads and established subscriptions may be
     // stale after either the parent or child changes its audience.
@@ -413,8 +531,10 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
       parent_id: string | null;
       parent_parent_id: string | null;
       parent_group_id: string | null;
+      is_direct_message: number | boolean | null;
     }>(
       `select w.visibility_group_id, w.parent_wave_id, p.id as parent_id,
+              w.is_direct_message,
               p.parent_wave_id as parent_parent_id,
               p.visibility_group_id as parent_group_id
        from ${legacyGetView(WAVES_TABLE)} w left join ${legacyGetView(WAVES_TABLE)} p on p.id = w.parent_wave_id
@@ -429,11 +549,29 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
     ) {
       return [];
     }
-    const getRecipients = (groupId: string | null) =>
+    const getRecipients = (
+      groupId: string | null,
+      audience: FollowerAudience | null = null
+    ) =>
       systemBroadcast
-        ? this.getGroupRecipientsForSystemBroadcast({ groupId, waveId }, ctx)
-        : this.getGroupRecipients({ groupId, waveId }, ctx);
-    const recipients = await getRecipients(wave.visibility_group_id);
+        ? this.getGroupRecipientsForSystemBroadcast(
+            { groupId, waveId, audience },
+            ctx,
+            options
+          )
+        : this.getGroupRecipients({ groupId, waveId, audience }, ctx, options);
+    // Waves 1.3: the narrower audience, except for typing (its own rules)
+    // and DMs (every member always gets the frame). The parent-group pass
+    // below stays a pure visibility check.
+    const mode = followerAudienceMode();
+    const audience =
+      mode && !options.includeTypingSockets && !wave.is_direct_message
+        ? await this.findFollowerAudience(
+            { waveId, parentWaveId: wave.parent_wave_id, mode },
+            ctx
+          )
+        : null;
+    const recipients = await getRecipients(wave.visibility_group_id, audience);
     if (
       !wave.parent_group_id ||
       wave.parent_group_id === wave.visibility_group_id
@@ -447,6 +585,41 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
     return recipients.filter((recipient) =>
       permitted.has(recipient.connectionId)
     );
+  }
+
+  /**
+   * The waves whose followers are this wave's audience (waves 1.3): the wave,
+   * its parent, and its subwaves. One indexed read (waves.parent_wave_id).
+   */
+  private async findFollowerAudience(
+    {
+      waveId,
+      parentWaveId,
+      mode
+    }: {
+      waveId: string;
+      parentWaveId: string | null;
+      mode: FollowerAudienceMode;
+    },
+    ctx: RequestContext
+  ): Promise<FollowerAudience> {
+    const subwaves = parentWaveId
+      ? []
+      : await this.db.execute<{ id: string }>(
+          `select id from ${legacyGetView(WAVES_TABLE)} where parent_wave_id = :waveId`,
+          { waveId },
+          { wrappedConnection: ctx.connection }
+        );
+    return {
+      waveId,
+      followTargets: [
+        waveId,
+        ...(parentWaveId ? [parentWaveId] : []),
+        ...subwaves.map((it) => it.id)
+      ],
+      mode,
+      anonymousIdentityId: ANON_USER_ID
+    };
   }
 
   /**
@@ -485,21 +658,54 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
   }
 
   /**
+   * Returns the subset of waveIds whose details may be sent to any audience:
+   * the wave is public and not a direct message, and when it is a subwave its
+   * parent exists, is a top-level wave, and is public and not a direct message
+   * too. Unknown ids are never returned.
+   */
+  async findWaveIdsShowableToAnyAudience(
+    waveIds: string[],
+    ctx: RequestContext
+  ): Promise<Set<string>> {
+    if (!waveIds.length) {
+      return new Set();
+    }
+    const rows = await this.db.execute<{ wave_id: string }>(
+      `select w.id as wave_id
+       from ${legacyGetView(WAVES_TABLE)} w
+       left join ${legacyGetView(WAVES_TABLE)} p on p.id = w.parent_wave_id
+       where w.id in (:waveIds)
+         and w.visibility_group_id is null
+         and coalesce(w.is_direct_message, false) = false
+         and (w.parent_wave_id is null
+           or (p.id is not null
+             and p.parent_wave_id is null
+             and p.visibility_group_id is null
+             and coalesce(p.is_direct_message, false) = false))`,
+      { waveIds },
+      { wrappedConnection: ctx.connection }
+    );
+    return new Set(rows.map((row) => row.wave_id));
+  }
+
+  /**
    * Joins online connections to the visibility-checked group membership query.
-   * Ungrouped waves retain their existing anonymous-recipient behavior.
+   * Ungrouped waves reach signed-in sockets as before; anonymous sockets get
+   * only the wave they subscribed to or declared open.
    */
   private async getGroupRecipients(
     {
       groupId,
-      waveId
+      waveId,
+      audience = null
     }: {
       groupId: string | null;
       waveId: string;
+      audience?: FollowerAudience | null;
     },
-    ctx: RequestContext
-  ): Promise<
-    { connectionId: string; profileId: string | null; wave_id: string | null }[]
-  > {
+    ctx: RequestContext,
+    options: WaveRecipientOptions = {}
+  ): Promise<WaveRecipient[]> {
     ctx.timer?.start(
       `${this.constructor.name}->getCurrentlyOnlineCommunityMemberConnectionIds`
     );
@@ -509,19 +715,33 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
           connection_id: string;
           profile_id: string | null;
           wave_id: string | null;
+          jwt_expiry: number | string;
         }>(
-          `select
+          audience
+            ? ungroupedFollowerAudienceSql({
+                table: WS_CONNECTIONS_TABLE,
+                purposeFilter: purposeFilterSql(options),
+                mode: audience.mode
+              })
+            : `select
         ws.connection_id as connection_id,
         ws.identity_id as profile_id,
-        ws.wave_id as wave_id
-      from ${WS_CONNECTIONS_TABLE} ws where ws.wave_id = :waveId or ws.wave_id is null `,
-          { waveId }
+        ws.wave_id as wave_id,
+        ws.jwt_expiry as jwt_expiry
+      from ${WS_CONNECTIONS_TABLE} ws
+      where (ws.wave_id = :waveId or ws.wave_id is null)
+        and ${anonymousOnlyOwnWaveSql('ws', ':waveId', ':anonymousIdentityId')}
+        and ${purposeFilterSql(options)}`,
+          audience
+            ? followerAudienceParams(audience)
+            : { waveId, anonymousIdentityId: ANON_USER_ID }
         )
         .then((res) =>
           res.map((it) => ({
             connectionId: it.connection_id,
             wave_id: it.wave_id,
-            profileId: it.profile_id === ANON_USER_ID ? null : it.profile_id
+            profileId: it.profile_id === ANON_USER_ID ? null : it.profile_id,
+            jwtExpiry: Number(it.jwt_expiry)
           }))
         );
       ctx?.timer?.stop(
@@ -540,30 +760,11 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
       );
       return [];
     }
-    const sql = `
-      ${viewResult.sql} 
-      select
-        ws.connection_id as connection_id,
-        ws.identity_id as profile_id,
-        ws.wave_id as wave_id
-      from ${WS_CONNECTIONS_TABLE} ws
-      join ${UserGroupsService.GENERATED_VIEW} cm
-      on ws.identity_id = cm.profile_id
-    `;
-    const sqlParams = viewResult.params;
-    const result = await this.db
-      .execute<{
-        connection_id: string;
-        profile_id: string | null;
-        wave_id: string | null;
-      }>(sql, sqlParams)
-      .then((res) =>
-        res.map((it) => ({
-          connectionId: it.connection_id,
-          wave_id: it.wave_id,
-          profileId: it.profile_id === ANON_USER_ID ? null : it.profile_id
-        }))
-      );
+    const result = await this.selectGroupMemberRecipients(
+      viewResult,
+      audience,
+      options
+    );
     ctx?.timer?.stop(
       `${this.constructor.name}->getCurrentlyOnlineCommunityMemberConnectionIds`
     );
@@ -571,18 +772,67 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
   }
 
   /**
+   * Online sockets of the group members that `viewResult` selects, narrowed
+   * to the follower audience when there is one.
+   */
+  private async selectGroupMemberRecipients(
+    viewResult: { sql: string; params: Record<string, any> },
+    audience: FollowerAudience | null,
+    options: WaveRecipientOptions
+  ): Promise<WaveRecipient[]> {
+    const sql = `
+      ${viewResult.sql} 
+      select
+        ws.connection_id as connection_id,
+        ws.identity_id as profile_id,
+        ws.wave_id as wave_id,
+        ws.jwt_expiry as jwt_expiry
+      from ${WS_CONNECTIONS_TABLE} ws
+      join ${UserGroupsService.GENERATED_VIEW} cm
+      on ws.identity_id = cm.profile_id
+      where ${purposeFilterSql(options)}${
+        audience
+          ? `\n        and ${followerAudienceConditionSql(audience.mode, 'ws')}`
+          : ''
+      }
+    `;
+    const sqlParams = audience
+      ? { ...viewResult.params, ...followerAudienceParams(audience) }
+      : viewResult.params;
+    return this.db
+      .execute<{
+        connection_id: string;
+        profile_id: string | null;
+        wave_id: string | null;
+        jwt_expiry: number | string;
+      }>(sql, sqlParams)
+      .then((res) =>
+        res.map((it) => ({
+          connectionId: it.connection_id,
+          wave_id: it.wave_id,
+          profileId: it.profile_id === ANON_USER_ID ? null : it.profile_id,
+          jwtExpiry: Number(it.jwt_expiry)
+        }))
+      );
+  }
+
+  /**
    * Selects online members for trusted broadcasts, independent of caller visibility.
    * Missing groups yield no recipients; ungrouped waves use the regular path.
    */
   private async getGroupRecipientsForSystemBroadcast(
-    params: { groupId: string | null; waveId: string },
-    ctx: RequestContext
-  ): Promise<
-    { connectionId: string; profileId: string | null; wave_id: string | null }[]
-  > {
+    params: {
+      groupId: string | null;
+      waveId: string;
+      audience?: FollowerAudience | null;
+    },
+    ctx: RequestContext,
+    options: WaveRecipientOptions = {}
+  ): Promise<WaveRecipient[]> {
     if (params.groupId === null) {
-      return await this.getGroupRecipients(params, ctx);
+      return await this.getGroupRecipients(params, ctx, options);
     }
+    const audience = params.audience ?? null;
     const viewResult =
       await this.userGroupsService.getSqlAndParamsByGroupIdForSystemBroadcast(
         params.groupId,
@@ -592,30 +842,11 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
     if (viewResult === null) {
       return [];
     }
-    const sql = `
-      ${viewResult.sql} 
-      select
-        ws.connection_id as connection_id,
-        ws.identity_id as profile_id,
-        ws.wave_id as wave_id
-      from ${WS_CONNECTIONS_TABLE} ws
-      join ${UserGroupsService.GENERATED_VIEW} cm
-      on ws.identity_id = cm.profile_id
-    `;
-    const sqlParams = viewResult.params;
-    const result = await this.db
-      .execute<{
-        connection_id: string;
-        profile_id: string | null;
-        wave_id: string | null;
-      }>(sql, sqlParams)
-      .then((res) =>
-        res.map((it) => ({
-          connectionId: it.connection_id,
-          wave_id: it.wave_id,
-          profileId: it.profile_id === ANON_USER_ID ? null : it.profile_id
-        }))
-      );
+    const result = await this.selectGroupMemberRecipients(
+      viewResult,
+      audience,
+      options
+    );
     return result;
   }
 
@@ -827,7 +1058,8 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
   async findAllByWaveId(waveId: string): Promise<WSConnectionEntity[]> {
     return this.db.execute<WSConnectionEntity>(
       `
-    select * from ${WS_CONNECTIONS_TABLE} where wave_id = :waveId
+    select * from ${WS_CONNECTIONS_TABLE} ws
+    where wave_id = :waveId and ${purposeFilterSql()}
     `,
       { waveId }
     );
@@ -856,13 +1088,15 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
       .execute<{
         connection_id: string;
       }>(
-        `select connection_id from ${WS_CONNECTIONS_TABLE} where identity_id = :identityId`,
+        `select connection_id from ${WS_CONNECTIONS_TABLE} ws
+         where identity_id = :identityId and ${purposeFilterSql()}`,
         { identityId }
       )
       .then((res) => res.map((it) => it.connection_id));
   }
 
-  async findNotificationConnectionIdsByIdentityIds(
+  /** Primary (identity-authenticated) connections with an unexpired JWT. */
+  async findPrimaryConnectionIdsByIdentityIds(
     identityIds: string[]
   ): Promise<{ connectionId: string; identityId: string }[]> {
     const uniqueIdentityIds = Array.from(
@@ -873,21 +1107,10 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
     }
     return this.db
       .execute<{ connection_id: string; identity_id: string }>(
-        `select distinct recipients.connection_id, recipients.identity_id
-         from (
-           select connection_id, identity_id
-           from ${WS_CONNECTIONS_TABLE}
-           where identity_id in (:identityIds)
-             and jwt_expiry > unix_timestamp()
-           union
-           select subscriptions.connection_id, subscriptions.identity_id
-           from ${WS_NOTIFICATION_SUBSCRIPTIONS_TABLE} subscriptions
-           inner join ${WS_CONNECTIONS_TABLE} connections
-             on connections.connection_id = subscriptions.connection_id
-           where subscriptions.identity_id in (:identityIds)
-             and subscriptions.jwt_expiry > unix_timestamp()
-             and connections.jwt_expiry > unix_timestamp()
-         ) recipients`,
+        `select connection_id, identity_id from ${WS_CONNECTIONS_TABLE} ws
+         where identity_id in (:identityIds)
+           and jwt_expiry > unix_timestamp()
+           and ${purposeFilterSql()}`,
         { identityIds: uniqueIdentityIds }
       )
       .then((rows) =>
@@ -898,11 +1121,61 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
       );
   }
 
+  async findNotificationConnectionIdsByIdentityIds(
+    identityIds: string[]
+  ): Promise<
+    { connectionId: string; identityId: string; jwtExpiry: number }[]
+  > {
+    const uniqueIdentityIds = Array.from(
+      new Set(identityIds.filter((identityId) => !!identityId))
+    ).filter((identityId) => identityId !== ANON_USER_ID);
+    if (!uniqueIdentityIds.length) {
+      return [];
+    }
+    return this.db
+      .execute<{
+        connection_id: string;
+        identity_id: string;
+        jwt_expiry: number | string;
+      }>(
+        // Both branches report the connection's own expiry, so DISTINCT still
+        // collapses a connection reachable through both.
+        `select distinct recipients.connection_id, recipients.identity_id,
+                recipients.jwt_expiry
+         from (
+           select connection_id, identity_id, jwt_expiry
+           from ${WS_CONNECTIONS_TABLE} ws
+           where identity_id in (:identityIds)
+             and jwt_expiry > unix_timestamp()
+             and ${purposeFilterSql()}
+           union
+           select subscriptions.connection_id, subscriptions.identity_id,
+                  connections.jwt_expiry
+           from ${WS_NOTIFICATION_SUBSCRIPTIONS_TABLE} subscriptions
+           inner join ${WS_CONNECTIONS_TABLE} connections
+             on connections.connection_id = subscriptions.connection_id
+           where subscriptions.identity_id in (:identityIds)
+             and subscriptions.jwt_expiry > unix_timestamp()
+             and connections.jwt_expiry > unix_timestamp()
+             and ${purposeFilterSql({}, 'connections')}
+         ) recipients`,
+        { identityIds: uniqueIdentityIds }
+      )
+      .then((rows) =>
+        rows.map((row) => ({
+          connectionId: row.connection_id,
+          identityId: row.identity_id,
+          jwtExpiry: Number(row.jwt_expiry)
+        }))
+      );
+  }
+
   async findAllConnectionIds(): Promise<string[]> {
     return this.db
       .execute<{ connection_id: string }>(
         `
-    select distinct connection_id from ${WS_CONNECTIONS_TABLE}
+    select distinct connection_id from ${WS_CONNECTIONS_TABLE} ws
+    where ${purposeFilterSql()}
     `
       )
       .then((res) => res.map((it) => it.connection_id));

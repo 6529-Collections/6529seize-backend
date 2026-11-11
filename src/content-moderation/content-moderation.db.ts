@@ -8,6 +8,8 @@ import {
   CONTENT_MODERATION_PROFILE_STATES_TABLE,
   CONTENT_MODERATION_REPORTS_TABLE,
   CONTENT_MODERATION_ROLES_TABLE,
+  COMPETITIONS_TABLE,
+  COMPETITION_ENTRIES_TABLE,
   DROPS_PARTS_TABLE,
   DROPS_TABLE,
   DROP_ATTACHMENTS_TABLE,
@@ -36,6 +38,19 @@ import { randomUUID } from 'node:crypto';
 import { env } from '@/env';
 import { ActivityEventTargetType } from '@/entities/IActivityEvent';
 import type { ApiContentModerationBlockActivityItemActionEnum } from '@/api/generated/models/ApiContentModerationBlockActivityItem';
+import { anonymousCompetitionEntrySql } from '@/competitions/competition-anonymity';
+import { DbPoolName } from '@/db-query.options';
+import {
+  querySqlInListChunks,
+  SQL_IN_LIST_CHUNK_BYTES,
+  sqlInListBytes
+} from '@/db/sql-in-list-chunks';
+import {
+  anonymousNotificationActorDropId,
+  findAnonymousNotificationActorPairs,
+  NotificationActorWriteOptions
+} from '@/notifications/anonymous-notification-actor';
+import { invalidateWaveUnreadCacheForReaderAfterCommit } from '@/api/waves/wave-unread-cache';
 
 const REPORT_RATE_LIMIT_WINDOW_MS = 60 * 60 * 1000;
 const DEFAULT_REPORTS_PER_HOUR = 100;
@@ -298,6 +313,12 @@ export class ContentModerationDb extends LazyDbAccessCompatibleService {
           },
           connection
         );
+        // The blocked author's drops leave the blocker's unread counts in
+        // every wave.
+        await invalidateWaveUnreadCacheForReaderAfterCommit(
+          blockerProfileId,
+          connection
+        );
       }
     });
   }
@@ -344,6 +365,10 @@ export class ContentModerationDb extends LazyDbAccessCompatibleService {
             previousState: 'BLOCKED',
             newState: 'UNBLOCKED'
           },
+          connection
+        );
+        await invalidateWaveUnreadCacheForReaderAfterCommit(
+          blockerProfileId,
           connection
         );
       }
@@ -546,61 +571,79 @@ export class ContentModerationDb extends LazyDbAccessCompatibleService {
     }
     const dropIds = Array.from(new Set(drops.map((drop) => drop.id)));
     const authorIds = Array.from(new Set(drops.map((drop) => drop.author_id)));
+    const options = this.connectionOptions(connection);
+    // Every row below belongs to one listed drop or author, so chunked reads
+    // return exactly the single-statement rows. Report rows keep their
+    // newest-first order per drop because a drop never spans two chunks.
     const [stateRows, blockedRows, hiddenRows, reportRows] = await Promise.all([
-      this.db.execute<{ drop_id: string; status: DropModerationStatus }>(
-        `
-          select drop_id, status
-          from ${CONTENT_MODERATION_DROP_STATES_TABLE}
-          where drop_id in (:dropIds)
-        `,
-        { dropIds },
-        this.connectionOptions(connection)
+      this.inListChunks(dropIds, connection, (chunk) =>
+        this.db.execute<{ drop_id: string; status: DropModerationStatus }>(
+          `
+            select drop_id, status
+            from ${CONTENT_MODERATION_DROP_STATES_TABLE}
+            where drop_id in (:dropIds)
+          `,
+          { dropIds: chunk },
+          options
+        )
       ),
       viewerProfileId
-        ? this.db.execute<{ blocked_profile_id: string }>(
-            `
-              select blocked_profile_id
-              from ${CONTENT_MODERATION_PROFILE_BLOCKS_TABLE}
-              where blocker_profile_id = :viewerProfileId
-                and blocked_profile_id in (:authorIds)
-            `,
-            { viewerProfileId, authorIds },
-            this.connectionOptions(connection)
+        ? this.inListChunks(authorIds, connection, (chunk) =>
+            this.db.execute<{ blocked_profile_id: string }>(
+              `
+                select blocked_profile_id
+                from ${CONTENT_MODERATION_PROFILE_BLOCKS_TABLE}
+                where blocker_profile_id = :viewerProfileId
+                  and blocked_profile_id in (:authorIds)
+              `,
+              { viewerProfileId, authorIds: chunk },
+              options
+            )
           )
         : Promise.resolve([]),
       viewerProfileId
-        ? this.db.execute<{ drop_id: string }>(
-            `
-              select drop_id
-              from ${CONTENT_MODERATION_HIDDEN_DROPS_TABLE}
-              where profile_id = :viewerProfileId
-                and drop_id in (:dropIds)
-            `,
-            { viewerProfileId, dropIds },
-            this.connectionOptions(connection)
+        ? this.inListChunks(dropIds, connection, (chunk) =>
+            this.db.execute<{ drop_id: string }>(
+              `
+                select drop_id
+                from ${CONTENT_MODERATION_HIDDEN_DROPS_TABLE}
+                where profile_id = :viewerProfileId
+                  and drop_id in (:dropIds)
+              `,
+              { viewerProfileId, dropIds: chunk },
+              options
+            )
           )
         : Promise.resolve([]),
       viewerProfileId
-        ? this.db.execute<{
-            drop_id: string;
-            status: ContentReportStatus;
-            created_at: number;
-            id: string;
-          }>(
-            `
-              select drop_id, status, created_at, id
-              from ${CONTENT_MODERATION_REPORTS_TABLE}
-              where reporter_profile_id = :viewerProfileId
-                and drop_id in (:dropIds)
-              order by created_at desc, id desc
-            `,
-            { viewerProfileId, dropIds },
-            this.connectionOptions(connection)
+        ? this.inListChunks(dropIds, connection, (chunk) =>
+            this.db.execute<{
+              drop_id: string;
+              status: ContentReportStatus;
+              created_at: number;
+              id: string;
+            }>(
+              `
+                select drop_id, status, created_at, id
+                from ${CONTENT_MODERATION_REPORTS_TABLE}
+                where reporter_profile_id = :viewerProfileId
+                  and drop_id in (:dropIds)
+                order by created_at desc, id desc
+              `,
+              { viewerProfileId, dropIds: chunk },
+              options
+            )
           )
         : Promise.resolve([])
     ]);
     const states = new Map(stateRows.map((row) => [row.drop_id, row.status]));
     const blocked = new Set(blockedRows.map((row) => row.blocked_profile_id));
+    const anonymousDropIds = await this.findUnrevealedAnonymousDropIds(
+      drops
+        .filter((drop) => blocked.has(drop.author_id))
+        .map((drop) => drop.id),
+      connection
+    );
     const hidden = new Set(hiddenRows.map((row) => row.drop_id));
     const latestReportStatuses = reportRows.reduce<
       Map<string, ContentReportStatus>
@@ -616,7 +659,8 @@ export class ContentModerationDb extends LazyDbAccessCompatibleService {
         const reportStatus = latestReportStatuses.get(drop.id);
         acc[drop.id] = {
           viewer: {
-            author_blocked: blocked.has(drop.author_id),
+            author_blocked:
+              blocked.has(drop.author_id) && !anonymousDropIds.has(drop.id),
             drop_hidden: hidden.has(drop.id),
             ...(reportStatus !== undefined &&
             reportStatus !== ContentReportStatus.WITHDRAWN
@@ -640,8 +684,14 @@ export class ContentModerationDb extends LazyDbAccessCompatibleService {
     T extends {
       readonly identity_id: string;
       readonly additional_identity_id: string | null;
+      readonly cause?: string;
+      readonly related_drop_id?: string | null;
     }
-  >(notifications: T[], connection?: ConnectionWrapper<any>): Promise<T[]> {
+  >(
+    notifications: T[],
+    connection?: ConnectionWrapper<any>,
+    options: NotificationActorWriteOptions = {}
+  ): Promise<T[]> {
     const blockerIds = Array.from(
       new Set(notifications.map((row) => row.identity_id))
     );
@@ -655,27 +705,62 @@ export class ContentModerationDb extends LazyDbAccessCompatibleService {
     if (!blockerIds.length || !actorIds.length) {
       return notifications;
     }
-    const rows = await this.db.execute<{
-      blocker_profile_id: string;
-      blocked_profile_id: string;
-    }>(
-      `
-        select blocker_profile_id, blocked_profile_id
-        from ${CONTENT_MODERATION_PROFILE_BLOCKS_TABLE}
-        where blocker_profile_id in (:blockerIds)
-          and blocked_profile_id in (:actorIds)
-      `,
-      { blockerIds, actorIds },
-      this.connectionOptions(connection)
+    // Each row is one (blocker, blocked) pair: querying every pair of chunks
+    // returns exactly the single-statement rows. Usually one side is short
+    // (one recipient's page, or one actor's fan-out); it then stays whole and
+    // the other side gets the rest of the budget, so no pair product arises.
+    const [blockerBudget, actorBudget] = this.pairChunkBudgets(
+      sqlInListBytes(blockerIds),
+      sqlInListBytes(actorIds)
+    );
+    const rows = await this.inListChunks(
+      actorIds,
+      connection,
+      (actorChunk) =>
+        this.inListChunks(
+          blockerIds,
+          connection,
+          (blockerChunk) =>
+            this.db.execute<{
+              blocker_profile_id: string;
+              blocked_profile_id: string;
+            }>(
+              `
+                select blocker_profile_id, blocked_profile_id
+                from ${CONTENT_MODERATION_PROFILE_BLOCKS_TABLE}
+                where blocker_profile_id in (:blockerIds)
+                  and blocked_profile_id in (:actorIds)
+              `,
+              { blockerIds: blockerChunk, actorIds: actorChunk },
+              this.connectionOptions(connection)
+            ),
+          blockerBudget
+        ),
+      actorBudget
     );
     const blockedPairs = new Set(
       rows.map((row) => `${row.blocker_profile_id}:${row.blocked_profile_id}`)
     );
+    const anonymousActorPairs = await findAnonymousNotificationActorPairs(
+      notifications.filter(
+        (notification) =>
+          notification.additional_identity_id !== null &&
+          blockedPairs.has(
+            `${notification.identity_id}:${notification.additional_identity_id}`
+          )
+      ),
+      this.db,
+      connection,
+      options
+    );
     return notifications.filter((notification) => {
       const actorId = notification.additional_identity_id;
+      const anonymousDropId = anonymousNotificationActorDropId(notification);
       return (
         actorId === null ||
-        !blockedPairs.has(`${notification.identity_id}:${actorId}`)
+        !blockedPairs.has(`${notification.identity_id}:${actorId}`) ||
+        (anonymousDropId !== null &&
+          anonymousActorPairs.has(`${anonymousDropId}:${actorId}`))
       );
     });
   }
@@ -693,39 +778,67 @@ export class ContentModerationDb extends LazyDbAccessCompatibleService {
       return {};
     }
     const [blockRows, hiddenRows] = await Promise.all([
-      this.db.execute<{ blocker_profile_id: string }>(
-        `
-          select blocker_profile_id
-          from ${CONTENT_MODERATION_PROFILE_BLOCKS_TABLE}
-          where blocker_profile_id in (:viewerProfileIds)
-            and blocked_profile_id = :authorProfileId
-        `,
-        { ...input, viewerProfileIds },
-        this.connectionOptions(connection)
+      this.inListChunks(viewerProfileIds, connection, (chunk) =>
+        this.db.execute<{ blocker_profile_id: string }>(
+          `
+            select blocker_profile_id
+            from ${CONTENT_MODERATION_PROFILE_BLOCKS_TABLE}
+            where blocker_profile_id in (:viewerProfileIds)
+              and blocked_profile_id = :authorProfileId
+          `,
+          { ...input, viewerProfileIds: chunk },
+          this.connectionOptions(connection)
+        )
       ),
-      this.db.execute<{ profile_id: string }>(
-        `
-          select profile_id
-          from ${CONTENT_MODERATION_HIDDEN_DROPS_TABLE}
-          where profile_id in (:viewerProfileIds)
-            and drop_id = :dropId
-        `,
-        { ...input, viewerProfileIds },
-        this.connectionOptions(connection)
+      this.inListChunks(viewerProfileIds, connection, (chunk) =>
+        this.db.execute<{ profile_id: string }>(
+          `
+            select profile_id
+            from ${CONTENT_MODERATION_HIDDEN_DROPS_TABLE}
+            where profile_id in (:viewerProfileIds)
+              and drop_id = :dropId
+          `,
+          { ...input, viewerProfileIds: chunk },
+          this.connectionOptions(connection)
+        )
       )
     ]);
     const blockers = new Set(blockRows.map((row) => row.blocker_profile_id));
     const hiders = new Set(hiddenRows.map((row) => row.profile_id));
+    const anonymousDropIds = await this.findUnrevealedAnonymousDropIds(
+      blockers.size ? [input.dropId] : [],
+      connection
+    );
     return viewerProfileIds.reduce<Record<string, DropViewerModerationContext>>(
       (acc, profileId) => {
         acc[profileId] = {
-          author_blocked: blockers.has(profileId),
+          author_blocked:
+            blockers.has(profileId) && !anonymousDropIds.has(input.dropId),
           drop_hidden: hiders.has(profileId)
         };
         return acc;
       },
       {}
     );
+  }
+
+  /** Account blocks must not become an oracle for an unrevealed entry owner. */
+  private async findUnrevealedAnonymousDropIds(
+    dropIds: string[],
+    connection?: ConnectionWrapper<unknown>
+  ): Promise<Set<string>> {
+    if (!dropIds.length) return new Set();
+    const rows = await this.inListChunks(dropIds, connection, (chunk) =>
+      this.db.execute<{ drop_id: string }>(
+        `select distinct entry.drop_id from ${COMPETITION_ENTRIES_TABLE} entry
+         join ${COMPETITIONS_TABLE} competition on competition.id = entry.competition_id
+         where entry.drop_id in (:dropIds)
+           and ${anonymousCompetitionEntrySql('entry', 'competition')}`,
+        { dropIds: chunk },
+        { wrappedConnection: connection, forcePool: DbPoolName.WRITE }
+      )
+    );
+    return new Set(rows.map((row) => row.drop_id));
   }
 
   async filterUnavailableDropNotificationRows<
@@ -745,19 +858,21 @@ export class ContentModerationDb extends LazyDbAccessCompatibleService {
     if (!dropIds.length) {
       return notifications;
     }
-    const rows = await this.db.execute<{
-      drop_id: string;
-      author_id: string | null;
-    }>(
-      `
-        select s.drop_id, d.author_id
-        from ${CONTENT_MODERATION_DROP_STATES_TABLE} s
-        left join ${DROPS_TABLE} d on d.id = s.drop_id
-        where s.drop_id in (:dropIds)
-          and s.status <> '${DropModerationStatus.VISIBLE}'
-      `,
-      { dropIds },
-      this.connectionOptions(connection)
+    const rows = await this.inListChunks(dropIds, connection, (chunk) =>
+      this.db.execute<{
+        drop_id: string;
+        author_id: string | null;
+      }>(
+        `
+          select s.drop_id, d.author_id
+          from ${CONTENT_MODERATION_DROP_STATES_TABLE} s
+          left join ${DROPS_TABLE} d on d.id = s.drop_id
+          where s.drop_id in (:dropIds)
+            and s.status <> '${DropModerationStatus.VISIBLE}'
+        `,
+        { dropIds: chunk },
+        this.connectionOptions(connection)
+      )
     );
     const unavailableAuthors = new Map(
       rows.map((row) => [row.drop_id, row.author_id])
@@ -1251,6 +1366,24 @@ export class ContentModerationDb extends LazyDbAccessCompatibleService {
     );
   }
 
+  /** Distinct profiles with an open report on the drop. */
+  async countOpenReportersForDrop(
+    dropId: string,
+    connection?: ConnectionWrapper<any>
+  ): Promise<number> {
+    const row = await this.db.oneOrNull<{ reporter_count: number }>(
+      `
+        select count(distinct reporter_profile_id) as reporter_count
+        from ${CONTENT_MODERATION_REPORTS_TABLE}
+        where drop_id = :dropId
+          and status = :openStatus
+      `,
+      { dropId, openStatus: ContentReportStatus.OPEN },
+      this.connectionOptions(connection)
+    );
+    return Number(row?.reporter_count ?? 0);
+  }
+
   async tryAiQuarantineForOpenReport(
     input: {
       reportId: string;
@@ -1683,6 +1816,25 @@ export class ContentModerationDb extends LazyDbAccessCompatibleService {
       this.connectionOptions(connection)
     );
     return Number(row?.match_count ?? 0);
+  }
+
+  /** Pre-publication checks for a profile that called the model evaluator. */
+  async countRecentEvaluatorInvocations(
+    input: { authorProfileId: string; since: number },
+    connection?: ConnectionWrapper<any>
+  ): Promise<number> {
+    const row = await this.db.oneOrNull<{ invocation_count: number }>(
+      `
+        select count(*) as invocation_count
+        from ${CONTENT_MODERATION_PRE_PUBLICATION_CHECKS_TABLE}
+        where author_profile_id = :authorProfileId
+          and created_at >= :since
+          and evaluator_version is not null
+      `,
+      input,
+      this.connectionOptions(connection)
+    );
+    return Number(row?.invocation_count ?? 0);
   }
 
   async recordPrePublicationCheck(
@@ -2259,6 +2411,35 @@ export class ContentModerationDb extends LazyDbAccessCompatibleService {
 
   private connectionOptions(connection?: ConnectionWrapper<any>) {
     return connection ? { wrappedConnection: connection } : undefined;
+  }
+
+  /** Per-list budgets for a statement with two IN lists. */
+  private pairChunkBudgets(
+    firstBytes: number,
+    secondBytes: number
+  ): [number, number] {
+    const half = SQL_IN_LIST_CHUNK_BYTES / 2;
+    if (firstBytes <= half)
+      return [firstBytes || 1, SQL_IN_LIST_CHUNK_BYTES - firstBytes];
+    if (secondBytes <= half)
+      return [SQL_IN_LIST_CHUNK_BYTES - secondBytes, secondBytes || 1];
+    return [half, half];
+  }
+
+  /**
+   * Splits a per-row IN-list read so no statement exceeds the RDS Proxy pinning
+   * size. Chunks run one at a time on a caller-owned connection.
+   */
+  private inListChunks<R>(
+    values: readonly string[],
+    connection: ConnectionWrapper<unknown> | undefined,
+    query: (chunk: string[]) => Promise<R[]>,
+    maxBytes = SQL_IN_LIST_CHUNK_BYTES
+  ): Promise<R[]> {
+    return querySqlInListChunks(values, query, {
+      maxBytes,
+      sequential: !!connection
+    });
   }
 
   private async withTransaction<T>(

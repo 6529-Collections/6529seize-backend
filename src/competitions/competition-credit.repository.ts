@@ -9,10 +9,7 @@ import {
   CompetitionEntry
 } from '@/competitions/competition.types';
 
-export type CompetitionCreditNamespace = Pick<
-  Competition,
-  'id' | 'wave_id' | 'storage_mode'
->;
+export type CompetitionCreditNamespace = Pick<Competition, 'id' | 'wave_id'>;
 
 export type CompetitionCreditSpending = {
   readonly namespace_spent: number;
@@ -58,8 +55,7 @@ export class CompetitionCreditRepository extends LazyDbAccessCompatibleService {
     const timerName = `${this.constructor.name}->getSpending`;
     ctx.timer?.start(timerName);
     try {
-      // Storage mode is the only routing discriminator. In particular, a native
-      // competition never consumes votes from its shared wave's legacy primary.
+      // Credits are scoped to this competition, including native siblings.
       const sql = `select
              coalesce(sum(case when e.status = 'ACTIVE' then abs(v.value) else 0 end), 0) as namespace_spent,
              coalesce(sum(case when e.id = :entryId and e.status = 'ACTIVE' then abs(v.value) else 0 end), 0) as entry_spent,

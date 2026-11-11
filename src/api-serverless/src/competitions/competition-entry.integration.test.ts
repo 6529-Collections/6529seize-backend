@@ -37,6 +37,12 @@ import { NotFoundException } from '@/exceptions';
 import { competitionVotingService } from './competition-voting.service';
 import { createOrUpdateDrop } from '@/drops/create-or-update-drop.use-case';
 import * as pushNotifications from '@/api/push-notifications/push-notifications.service';
+import { apiDropV2Service } from '@/api/drops/api-drop-v2.service';
+import { PageSortDirection } from '@/api/page-request';
+import {
+  withLegacyCompetitionGetFacade,
+  isLegacyCompetitionGetFacadeScope
+} from '@/competitions/legacy-competition-get-facade';
 
 const actor = 'entry-author';
 const nativeMembersId = randomUUID();
@@ -83,7 +89,6 @@ const participation = {
 const record = {
   id: competitionId,
   wave_id: wave.id,
-  storage_mode: 'NATIVE',
   legacy_wave_id: null,
   execution_mode: 'ACTIVE',
   type: 'RANK',
@@ -254,7 +259,119 @@ describeWithSeed(
       else process.env.API_BASE_URL = originalApiBaseUrl;
     });
 
-    it('creates native submissions after legacy cutover without touching frozen vote tables', async () => {
+    it.each([false, true])(
+      'reads native vote details through the legacy GET scope with primary=%s',
+      async (primary) => {
+        if (primary) {
+          await sqlExecutor.execute(
+            `update ${tables.COMPETITIONS_TABLE} set legacy_wave_id=:waveId where id=:id`,
+            { waveId: wave.id, id: competitionId }
+          );
+        }
+        const entry = await service.create(
+          wave.id,
+          competitionId,
+          request(),
+          ctx
+        );
+        await withLegacyCompetitionGetFacade(async () => {
+          expect(
+            await apiDropV2Service.findVoteSummaryByDropIdOrThrow(
+              entry.drop_id,
+              ctx
+            )
+          ).toEqual({});
+        });
+        // A second allocation replaces the first and records both values.
+        for (const value of [7, -3]) {
+          await competitionVotingService.vote(
+            wave.id,
+            competitionId,
+            entry.id,
+            { idempotency_key: randomUUID(), config_version: 1, value },
+            ctx
+          );
+        }
+        await withLegacyCompetitionGetFacade(async () => {
+          expect(await dropsDb.findDropById(entry.drop_id)).toMatchObject({
+            drop_type: primary ? DropType.PARTICIPATORY : DropType.CHAT
+          });
+          const voters = await apiDropV2Service.findVotersByDropIdOrThrow(
+            entry.drop_id,
+            { page: 1, page_size: 20, sort_direction: PageSortDirection.DESC },
+            ctx
+          );
+          expect(voters).toMatchObject({
+            count: 1,
+            next: false,
+            data: [{ vote: -3, voter: { id: actor } }]
+          });
+          const logs = await apiDropV2Service.findVoteEditLogsByDropIdOrThrow(
+            entry.drop_id,
+            { offset: 0, limit: 20, sort_direction: PageSortDirection.DESC },
+            ctx
+          );
+          expect(logs).toMatchObject([
+            { old_vote: 7, new_vote: -3, voter: { id: actor } },
+            { old_vote: 0, new_vote: 7, voter: { id: actor } }
+          ]);
+          expect(
+            await apiDropV2Service.findVoteSummaryByDropIdOrThrow(
+              entry.drop_id,
+              ctx
+            )
+          ).toMatchObject({
+            vote_distribution: {
+              positive_total: 0,
+              negative_total: -3,
+              positive_votes: [],
+              negative_votes: [{ vote: -3, voter: { id: actor } }]
+            }
+          });
+          expect(
+            await apiDropV2Service.findVotersCsvByDropIdOrThrow(
+              entry.drop_id,
+              ctx
+            )
+          ).toMatchObject([{ handle: 'entrant', vote: -3 }]);
+          expect(isLegacyCompetitionGetFacadeScope()).toBe(true);
+        });
+        expect(await dropsDb.findDropById(entry.drop_id)).toMatchObject({
+          drop_type: DropType.COMPETITION
+        });
+      }
+    );
+
+    it.each([
+      { mainStage: true, anonymous: false, expected: true },
+      { mainStage: true, anonymous: true, expected: false },
+      { mainStage: false, anonymous: false, expected: false }
+    ])(
+      'freezes artwork alert eligibility on confirmed entry creation: %j',
+      async ({ mainStage, anonymous, expected }) => {
+        if (mainStage)
+          await sqlExecutor.execute(
+            `insert into ${tables.COMPETITION_CAPABILITIES_TABLE} (capability,competition_id,wave_id,assigned_at) values ('MAIN_STAGE',:competitionId,:waveId,1)`,
+            { competitionId, waveId: wave.id }
+          );
+        await updateParticipation({ anonymous_submissions: anonymous });
+        const input = request();
+        const created = await service.create(
+          wave.id,
+          competitionId,
+          input,
+          ctx
+        );
+        await service.create(wave.id, competitionId, input, ctx);
+        const rows = await sqlExecutor.execute<{ eligible: string }>(
+          `select json_unquote(json_extract(event, '$.data.artwork_alert_eligible')) as eligible from ${tables.COMPETITION_OUTBOX_TABLE} where json_unquote(json_extract(event, '$.competition_entry_id'))=:entry and json_unquote(json_extract(event, '$.event_type'))='COMPETITION_ENTRY_CREATED'`,
+          { entry: created.id }
+        );
+        expect(rows).toEqual([{ eligible: String(expected) }]);
+      }
+    );
+
+    it('creates native submissions with obsolete vote tables physically absent', async () => {
       await sqlExecutor.execute(
         `update ${tables.COMPETITIONS_TABLE} set legacy_wave_id=:waveId where id=:id`,
         { waveId: wave.id, id: competitionId }
@@ -274,10 +391,8 @@ describeWithSeed(
       ]) {
         expect(
           await sqlExecutor.execute(
-            `select * from ${table} where wave_id=:waveId`,
-            {
-              waveId: wave.id
-            }
+            `select TABLE_NAME from information_schema.TABLES where TABLE_SCHEMA=database() and TABLE_NAME=:table`,
+            { table }
           )
         ).toEqual([]);
       }
@@ -302,17 +417,10 @@ describeWithSeed(
       ])
         expect(
           await sqlExecutor.execute(
-            `select * from ${table} where drop_id=:dropId`,
-            { dropId: entry.drop_id }
+            `select TABLE_NAME from information_schema.TABLES where TABLE_SCHEMA=database() and TABLE_NAME=:table`,
+            { table }
           )
         ).toEqual([]);
-      // Retained physical rows are inert; the retired capture implementation is
-      // deliberately absent and native commands neither read nor mirror them.
-      await sqlExecutor.execute(
-        `insert into ${tables.WAVE_LEADERBOARD_ENTRIES_TABLE} (drop_id,wave_id,vote,timestamp)
-         values (:dropId,:waveId,99999,1)`,
-        { dropId: entry.drop_id, waveId: wave.id }
-      );
       expect(
         await competitionVotingService.vote(
           wave.id,
@@ -322,12 +430,6 @@ describeWithSeed(
           ctx
         )
       ).toMatchObject({ current_vote: 8 });
-      const retained = await sqlExecutor.execute<{ vote: number | string }>(
-        `select vote from ${tables.WAVE_LEADERBOARD_ENTRIES_TABLE} where drop_id=:dropId`,
-        { dropId: entry.drop_id }
-      );
-      expect(retained).toHaveLength(1);
-      expect(Number(retained[0].vote)).toBe(99999);
     });
     it('masks cross-wave content routes and a private parent from anonymous readers', async () => {
       const entry = await service.create(
@@ -540,7 +642,7 @@ describeWithSeed(
         ).rejects.toThrow('existing drops cannot be entered');
         await expect(
           repository.assertDropAvailable(entry.drop_id, randomUUID(), {})
-        ).rejects.toThrow('exactly one competition');
+        ).rejects.toThrow('exactly one decision');
       }
       expect(
         await sqlExecutor.execute(

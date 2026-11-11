@@ -6,7 +6,8 @@ Wave and parent visibility run before selection; action groups do not hide
 published readable competitions. Missing/unreadable waves return masked 404.
 
 Only native competition configuration participates. Drafts, unpublished archives,
-cancelled records and retired orphan adapters are excluded. Archived history
+and cancelled records are excluded. Deleted-wave orphan machinery is removed
+through the explicit cleanup procedure. Archived history
 requires completion evidence. Active precedes upcoming, which precedes completed;
 active/upcoming sort by earliest participation/voting start and completed by
 latest recorded end. A null start is unbounded, a null end remains open. Equal
@@ -22,4 +23,4 @@ The unpaginated projection reads only native selection columns using existing
 competition indexes. It does not aggregate old wave decisions, hydrate entries or
 consult obsolete wave competition columns. Choosing a sibling never repoints
 permanent old GETs from the immutable original primary. See the
-[runtime retirement rollout](./competition-runtime-retirement.md).
+[runtime retirement](./competition-runtime-retirement.md).

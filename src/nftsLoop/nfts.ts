@@ -10,6 +10,7 @@ import {
   NFT_SCALED60_IMAGE_LINK,
   NULL_ADDRESS
 } from '@/constants';
+import type { NftsLoopHealth } from '@/nftsLoop/loop-health';
 import { getAnimationPaths } from '@/nftsLoop/nft-animation-paths';
 import { deployerDropper } from '@/deployer-dropper';
 import { env } from '@/env';
@@ -46,6 +47,7 @@ import {
   normalizeMetadataPayload
 } from '@/metadata-payload';
 import { getRpcProvider } from '@/rpc-provider';
+import { withTransientRpcRetry } from '@/ethereum-rpc/transient-rpc-retry';
 import { equalIgnoreCase } from '@/strings';
 import { text } from '@/text';
 import { Time } from '@/time';
@@ -209,7 +211,8 @@ async function processNFTsForType(
   contracts: ContractConfig[],
   mode: NFT_MODE,
   provider: ethers.JsonRpcProvider,
-  updateHodlRate: boolean
+  updateHodlRate: boolean,
+  health?: NftsLoopHealth
 ) {
   const repo = getDataSource().getRepository(EntityClass);
   const existing = await repo.find();
@@ -226,7 +229,8 @@ async function processNFTsForType(
       mode,
       EntityClass,
       nftMap,
-      collectionType
+      collectionType,
+      health
     })
   ) {
     return;
@@ -239,7 +243,8 @@ async function processNFTsForType(
     contractMap,
     nftMap,
     provider,
-    newlyDiscoveredNfts
+    newlyDiscoveredNfts,
+    health
   });
 
   logInfo(`🔄 Updating supply for ${EntityClass.name}s`);
@@ -256,13 +261,15 @@ async function processNFTsForType(
   }
 
   await updateMemeReferences(nftMap, EntityClass);
-  await saveAndPostProcessNfts({
+  const saved = await saveAndPostProcessNfts({
     EntityClass,
     mode,
     nftMap,
     newlyDiscoveredNfts,
     collectionType
   });
+  if (saved) health?.committed();
+  else health?.verified();
 }
 
 function createNftProcessingMap(
@@ -297,8 +304,10 @@ async function maybeRunAuditModeAndReturn({
   mode,
   EntityClass,
   nftMap,
-  collectionType
+  collectionType,
+  health
 }: {
+  health?: NftsLoopHealth;
   mode: NFT_MODE;
   EntityClass: typeof NFT | typeof LabNFT;
   nftMap: Map<string, NftProcessingEntry>;
@@ -329,7 +338,8 @@ async function maybeRunAuditModeAndReturn({
     nfts,
     collectionType,
     bucket,
-    concurrency
+    concurrency,
+    onVerified: () => health?.committed()
   });
   logInfo(
     `✅ Enqueued audit S3 jobs for ${EntityClass.name}s [nfts=${summary.scannedNfts}] [scannedJobs=${summary.scannedJobs}] [enqueuedJobs=${summary.enqueuedJobs}] [skippedJobs=${summary.skippedJobs}]`
@@ -344,8 +354,10 @@ async function runDiscoverOrRefreshMode({
   contractMap,
   nftMap,
   provider,
-  newlyDiscoveredNfts
+  newlyDiscoveredNfts,
+  health
 }: {
+  health?: NftsLoopHealth;
   mode: NFT_MODE;
   EntityClass: typeof NFT | typeof LabNFT;
   contracts: ContractConfig[];
@@ -368,7 +380,7 @@ async function runDiscoverOrRefreshMode({
   }
 
   logInfo(`🔄 Refreshing existing ${EntityClass.name}s`);
-  await refreshExistingNFTs(nftMap, provider);
+  await refreshExistingNFTs(nftMap, provider, health);
   await populateMintStatsForEligibleNFTs(nftMap);
 }
 
@@ -391,7 +403,7 @@ async function saveAndPostProcessNfts({
 
   if (!toSave.length) {
     logInfo(`✅ No changes detected for ${EntityClass.name}s`);
-    return;
+    return false;
   }
 
   const outboxJobs = buildS3UploaderJobsForMode({
@@ -422,6 +434,7 @@ async function saveAndPostProcessNfts({
     EntityClass,
     newlyDiscoveredNfts
   });
+  return true;
 }
 
 function buildS3UploaderJobsForMode({
@@ -559,7 +572,10 @@ async function discoverForContract(
 
   while (true) {
     try {
-      const uri = await instance[method](nextId);
+      const uri = await withTransientRpcRetry<string>(
+        () => instance[method](nextId),
+        'nfts.discover.uri'
+      );
       validateUri(uri);
 
       const metadata = await fetchMetadata(uri);
@@ -901,7 +917,8 @@ function extractMemeRefs(
 
 async function refreshExistingNFTs(
   nftMap: Map<string, NftProcessingEntry>,
-  provider: ethers.JsonRpcProvider
+  provider: ethers.JsonRpcProvider,
+  health?: NftsLoopHealth
 ) {
   await Promise.all(
     Array.from(nftMap.values()).map(async (entry) => {
@@ -911,11 +928,12 @@ async function refreshExistingNFTs(
 
       try {
         await Promise.all([
-          updateUri(entry, contract, method),
+          updateUri(entry, contract, method, health),
           updateMintDate(entry),
           updateMintPrice(entry)
         ]);
       } catch (err: any) {
+        health?.notCompleted();
         logWarn(`⚠️ ${nft.contract} #${nft.id} refresh failed: ${err.message}`);
       }
     })
@@ -925,16 +943,23 @@ async function refreshExistingNFTs(
 async function updateUri(
   entry: NftProcessingEntry,
   contract: any,
-  method: 'tokenURI' | 'uri'
+  method: 'tokenURI' | 'uri',
+  health?: NftsLoopHealth
 ) {
   const { nft } = entry;
-  const uri = await contract[method](nft.id);
+  const uri = await withTransientRpcRetry<string>(
+    () => contract[method](nft.id),
+    'nfts.refresh.uri'
+  );
   const shouldFetch =
     (uri && uri !== nft.uri && isValidUrl(uri)) || !nft.metadata;
   if (!shouldFetch) return;
 
   const metadata = await fetchMetadata(uri);
-  if (!metadata) return;
+  if (!metadata) {
+    health?.notCompleted();
+    return;
+  }
 
   logInfo(
     `♻️ ${nft.contract} #${nft.id} resetting URI from ${
@@ -1280,13 +1305,20 @@ const getMintDate = async (contract: string, tokenId: number) => {
   return firstTransaction?.transaction_date;
 };
 
-export async function processNFTs(mode: NFT_MODE) {
+export async function processNFTs(mode: NFT_MODE, health?: NftsLoopHealth) {
   const previousMode = activeMode;
   activeMode = mode;
   try {
     const provider = getRpcProvider();
-    await processNFTsForType(NFT, NFT_CONTRACTS, mode, provider, true);
-    await processNFTsForType(LabNFT, LABNFT_CONTRACTS, mode, provider, false);
+    await processNFTsForType(NFT, NFT_CONTRACTS, mode, provider, true, health);
+    await processNFTsForType(
+      LabNFT,
+      LABNFT_CONTRACTS,
+      mode,
+      provider,
+      false,
+      health
+    );
     await publishPendingS3UploaderOutboxJobs(mode);
     if (mode === NFT_MODE.REFRESH) {
       await syncArtists();

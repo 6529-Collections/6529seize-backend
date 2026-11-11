@@ -16,6 +16,7 @@ import {
 import { IdentityMutesDb } from '@/api-serverless/src/identity-mutes/identity-mutes.db';
 import { ContentModerationDb } from '@/content-moderation/content-moderation.db';
 import { ProfilePreferencesDb } from '@/profile-preferences/profile-preferences.db';
+import { resetViewerGroupsCteSupport } from '@/waves/viewer-groups-cte';
 
 type IdentityMutesDbDouble = jest.Mocked<
   Pick<IdentityMutesDb, 'filterMutedNotificationRows'>
@@ -117,17 +118,71 @@ function createRepo({
 }
 
 describe('IdentityNotificationsDb', () => {
+  it('previews distinct mention recipients through mutes, blocks and notification preferences without writes', async () => {
+    const {
+      repo,
+      db,
+      identityMutesDb,
+      contentModerationDb,
+      profilePreferencesDb
+    } = createRepo({ filteredNotifications: [] });
+    identityMutesDb.filterMutedNotificationRows.mockImplementation(
+      async (rows) => rows.filter((row) => row.identity_id !== 'muted')
+    );
+    contentModerationDb.filterBlockedNotificationRows.mockImplementation(
+      async (rows) => rows.filter((row) => row.identity_id !== 'blocked')
+    );
+    profilePreferencesDb.getMany.mockResolvedValue(
+      new Map([
+        [
+          'disabled',
+          {
+            ...DEFAULT_PROFILE_PREFERENCES,
+            notifications: {
+              ...DEFAULT_PROFILE_PREFERENCES.notifications,
+              mentions_replies_quotes: false
+            }
+          }
+        ]
+      ])
+    );
+    await expect(
+      repo.countMentionRecipients(
+        ['enabled', 'enabled', 'muted', 'blocked', 'disabled'],
+        'author',
+        connection
+      )
+    ).resolves.toBe(1);
+    expect(db.bulkInsert).not.toHaveBeenCalled();
+    expect(db.executeNativeQueriesInTransaction).not.toHaveBeenCalled();
+    expect(identityMutesDb.filterMutedNotificationRows).toHaveBeenCalledWith(
+      expect.arrayContaining([
+        expect.objectContaining({
+          identity_id: 'enabled',
+          additional_identity_id: 'author',
+          related_drop_id: null
+        })
+      ]),
+      connection,
+      { allowPendingCompetitionEntry: true }
+    );
+  });
+
   const originalNotifierActivated = process.env.USER_NOTIFIER_ACTIVATED;
 
   beforeEach(() => {
     process.env.USER_NOTIFIER_ACTIVATED = 'true';
     jest.mocked(isActivated).mockReturnValue(true);
     jest.mocked(sendIdentityPushNotification).mockClear();
+    // These cases pin the inlined group list; the shared viewer-group table
+    // has its own suites (identity-notifications-shared-groups*.test.ts).
+    resetViewerGroupsCteSupport(false);
   });
 
   afterEach(() => {
     process.env.USER_NOTIFIER_ACTIVATED = originalNotifierActivated;
     jest.restoreAllMocks();
+    resetViewerGroupsCteSupport();
   });
 
   it('does not insert a notification when the actor is muted', async () => {
@@ -140,7 +195,8 @@ describe('IdentityNotificationsDb', () => {
 
     expect(identityMutesDb.filterMutedNotificationRows).toHaveBeenCalledWith(
       [row],
-      connection
+      connection,
+      { allowPendingCompetitionEntry: true }
     );
     expect(db.execute).not.toHaveBeenCalled();
     expect(sendIdentityPushNotification).not.toHaveBeenCalled();
@@ -161,7 +217,8 @@ describe('IdentityNotificationsDb', () => {
 
       expect(identityMutesDb.filterMutedNotificationRows).toHaveBeenCalledWith(
         [row],
-        connection
+        connection,
+        { allowPendingCompetitionEntry: true }
       );
       expect(db.execute).not.toHaveBeenCalled();
       expect(sendIdentityPushNotification).not.toHaveBeenCalled();
@@ -325,7 +382,8 @@ describe('IdentityNotificationsDb', () => {
 
     expect(identityMutesDb.filterMutedNotificationRows).toHaveBeenCalledWith(
       [row],
-      connection
+      connection,
+      { allowPendingCompetitionEntry: true }
     );
     expect(db.execute).toHaveBeenCalledWith(
       expect.stringContaining('insert into identity_notifications'),
@@ -495,7 +553,11 @@ describe('IdentityNotificationsDb', () => {
     const [sql, params] = execute.mock.calls[0];
     expect(sql).toContain('OR n.visibility_group_id IN (:eligible_group_ids)');
     expect(sql).toContain('AND COALESCE(r.muted, FALSE) = FALSE');
-    expect(sql).toContain('AND m.id IS NULL');
+    expect(sql).toContain('AND (m.id IS NULL OR (n.cause in');
+    expect(sql).toContain(
+      'anonymous_notification_entry.submitter_id = n.additional_identity_id'
+    );
+    expect(sql).toContain('anonymous_notification_entry.won_at is null');
     expect(params).toEqual(
       expect.objectContaining({
         identity_id: 'phoebeumzz',

@@ -73,7 +73,33 @@ an ownership claim or a value's known test status is not decisive by itself.
 - `REJECT` at confidence `>= 0.95` rejects the request.
 - `ALLOW`, a lower-confidence result, or an uncertain result allows it.
 - A timeout, model error, or malformed response is recorded as an evaluator
-  error and allows the request.
+  error and allows the request. Each such fallback logs
+  `CONTENT_MODERATION_EVALUATOR_FALLBACK_ALLOW` and emits the
+  `6529/ContentModeration` `PrePublicationEvaluator` EMF metric with
+  `Event=ERROR_FALLBACK_ALLOW`, so the fail-open rate can be alarmed on. Whether
+  to keep failing open is a separate product decision.
+
+Before the evaluator is called:
+
+- On the create path, the API runs read-only wave checks first (wave exists,
+  drop type fits the wave, chat enabled, author in the chat or participation
+  group unless replies are open). They run only for content that produced a
+  signal, before a review item is opened, so a post that would fail wave
+  validation never reaches the model. The transactional write repeats the full
+  validation.
+- A verdict for the same signal, exact text, evaluator policy version, and
+  model is reused for ten minutes (Redis, keyed by a SHA-256 digest; without
+  Redis there is no reuse). A reused verdict is recorded with
+  `cached_verdict: true` and no evaluator version.
+- Each profile may cause at most
+  `CONTENT_MODERATION_EVALUATOR_PROFILE_HOURLY_LIMIT` (default `20`) evaluator
+  calls per rolling hour, counted from recorded checks with an evaluator
+  version. Beyond that the request is refused with HTTP `429` and code
+  `CONTENT_MODERATION_REVIEW_LIMIT` without calling the model. Cached verdicts
+  do not count and are still served.
+
+The `PrePublicationEvaluator` metric also records `INVOKED`, `CACHED_VERDICT`,
+and `BUDGET_EXCEEDED` events.
 
 The model's category or rationale is not reflected directly into the generic
 user-facing rejection response. The parser also enforces semantic consistency:
@@ -111,13 +137,19 @@ again until they unblock it. The reverse relationship is not changed: blocking
 does not remove the blocked profile's subscriptions to the blocker, expose the
 block to that profile, or make either public profile unavailable.
 
-Blocking acts as a directional, privacy-preserving mute. One-to-one direct
-messages remain available under the normal direct-message admission policy,
-including conversations created after the block. For the blocker, the
-conversation is effectively muted and deprioritized without changing any saved
-manual mute setting. Messages from the blocked profile are retained but use the
-normal personal-block presentation until individually revealed. The blocked
-profile receives no delivery error or explicit block disclosure.
+Blocking acts as a directional, privacy-preserving mute for existing
+conversations, and it always wins over the blocker's direct-message policy for
+new ones. A blocked profile can never start a new direct message (one-to-one or
+group) that includes the blocker, whatever the blocker's policy and even if the
+blocker follows them; the refusal uses the same generic "doesn't accept new
+direct messages" response as the `NOBODY` policy, so the block is not
+disclosed. A blocker who tries to start a new conversation with a profile they
+blocked is told to unblock it first. Conversations that already exist stay
+available. For the blocker, an existing one-to-one conversation is effectively
+muted and deprioritized without changing any saved manual mute setting.
+Messages from the blocked profile are retained but use the normal personal-block
+presentation until individually revealed. The blocked profile receives no
+delivery error or explicit block disclosure in existing conversations.
 
 Group direct messages and shared Waves also remain usable. Drops from a profile
 the viewer blocked retain the normal personal-block presentation, and that
@@ -177,7 +209,24 @@ The reported-content evaluator returns one of:
 - `URGENT_QUARANTINE`.
 
 Only `URGENT_QUARANTINE` with confidence of at least `0.95` can temporarily
-move an open report's drop to `AI_QUARANTINED`. Other outcomes stay visible and
+move an open report's drop to `AI_QUARANTINED`, and only when it is
+corroborated: at least `CONTENT_MODERATION_AUTO_QUARANTINE_MIN_REPORTERS`
+(default `2`) distinct profiles have an open report on the drop, or the drop's
+text produces one of the content-only deterministic signals from the table
+above (everything except the repeated-content check).
+Set `CONTENT_MODERATION_AUTO_QUARANTINE_SIGNAL_CORROBORATES=false` to require
+reporters only, or the minimum to `1` to restore single-report quarantine. An
+uncorroborated urgent assessment is saved on the report and the drop stays
+visible for human review. Reporters are counted inside the quarantine
+transaction.
+
+When the reported drop is a reply, the parent drop is included as context and
+labelled with `context_role`, `authored_by_reporter`, and `content_as_of`.
+Drop edit history is not retained, so the parent is its current version
+(`CURRENT_MAY_POSTDATE_REPLY`). The evaluator is told to read parent text the
+reporter wrote as the reporter's own framing, not as independent evidence.
+
+Other outcomes stay visible and
 remain available to the occasional moderator queue. If assessment fails, the
 report is retained with `NEEDS_HUMAN_REVIEW`, zero confidence, and an explicit
 classifier-unavailable rationale.

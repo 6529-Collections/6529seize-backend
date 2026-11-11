@@ -58,7 +58,10 @@ jest.mock('@/competitions/competition-command.repository', () => ({
   }
 }));
 
-const action = (command: 'pause' | 'resume', reason?: string | null) =>
+const action = (
+  command: 'pause' | 'resume' | 'archive',
+  reason?: string | null
+) =>
   competitionLifecycleService.action(
     'wave',
     'competition',
@@ -74,11 +77,13 @@ const action = (command: 'pause' | 'resume', reason?: string | null) =>
 beforeEach(() => {
   jest.clearAllMocks();
   jest
+    .mocked(competitionCommandRepository.hasActivity)
+    .mockResolvedValue(false);
+  jest
     .mocked(competitionRepository.findCompetitionRecordById)
     .mockResolvedValue({
       id: 'competition',
-      wave_id: 'wave',
-      storage_mode: 'NATIVE'
+      wave_id: 'wave'
     } as never);
   jest
     .mocked(administerCompetitionWave)
@@ -108,7 +113,7 @@ it.each([undefined, null, '', '   ', '\n\t'])(
   }
 );
 
-it('persists the trimmed reason in pause and lifecycle history', async () => {
+it('persists the trimmed reason in pause history', async () => {
   await action('pause', '  Checking eligibility\nwith the team.  ');
   expect(competitionCommandRepository.pause).toHaveBeenCalledWith(
     'competition',
@@ -121,7 +126,6 @@ it('persists the trimmed reason in pause and lifecycle history', async () => {
     expect.anything(),
     'PUBLISHED',
     'admin',
-    'Checking eligibility\nwith the team.',
     expect.anything()
   );
   expect(nativeCompetitionRuntimeRepository.enqueueEvent).toHaveBeenCalled();
@@ -155,3 +159,32 @@ it('keeps the version guard for a pause with a reason', async () => {
   await expect(action('pause', 'Review')).rejects.toThrow('Version conflict');
   expect(competitionCommandRepository.pause).not.toHaveBeenCalled();
 });
+
+it.each([undefined, null, '', '   ', '\n\t', 'Old client reason'])(
+  'archives a published competition with activity without retaining a reason (%p)',
+  async (reason) => {
+    jest
+      .mocked(competitionCommandRepository.hasActivity)
+      .mockResolvedValue(true);
+    await action('archive', reason);
+    expect(competitionCommandRepository.hasActivity).not.toHaveBeenCalled();
+    expect(competitionCommandRepository.saveCompetition).toHaveBeenCalledWith(
+      expect.objectContaining({
+        lifecycle: 'ARCHIVED',
+        execution_mode: 'DISABLED'
+      }),
+      'admin',
+      expect.anything(),
+      {}
+    );
+    expect(competitionCommandRepository.recordLifecycle).toHaveBeenCalledWith(
+      expect.objectContaining({
+        lifecycle: 'ARCHIVED',
+        execution_mode: 'DISABLED'
+      }),
+      'PUBLISHED',
+      'admin',
+      {}
+    );
+  }
+);

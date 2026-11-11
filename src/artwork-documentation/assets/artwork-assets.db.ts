@@ -22,6 +22,35 @@ import type {
   Modules
 } from '@/artwork-documentation/artwork-documentation.types';
 
+/** Processing claims allowed per asset before it is marked failed. */
+export const MAX_ASSET_PROCESSING_ATTEMPTS = 360;
+export const ASSET_SCAN_TIMEOUT_MS = 6 * 60 * 60_000;
+
+/** True once an asset has used its attempts or outlived its scan window. */
+export function isAssetProcessingExhausted(
+  asset: Pick<StoredAsset, 'attempts' | 'created_at'>,
+  now: number
+): boolean {
+  return (
+    Number(asset.attempts) >= MAX_ASSET_PROCESSING_ATTEMPTS ||
+    now - Number(asset.created_at) >
+      ASSET_SCAN_TIMEOUT_MS + ARTWORK_UPLOAD_POLICY.upload_lifetime_ms
+  );
+}
+const PROCESSING_LEASE_MS = 15 * 60_000;
+const MAX_CLAIM_RETRY_DELAY_MS = 60 * 60_000;
+// Exhausted assets marked failed while looking for one to process.
+const MAX_EXHAUSTED_ASSETS_PER_CLAIM = 10;
+
+/**
+ * Extra delay after the lease before a claimed asset is offered again if
+ * its worker never finishes it: one minute per attempt, at most an hour.
+ * A finished attempt sets its own next_attempt_at.
+ */
+export function processingClaimRetryDelayMs(attempts: number): number {
+  return Math.min(Math.max(attempts, 1) * 60_000, MAX_CLAIM_RETRY_DELAY_MS);
+}
+
 export class ArtworkAssetsDb extends LazyDbAccessCompatibleService {
   async find(
     id: string,
@@ -181,24 +210,63 @@ export class ArtworkAssetsDb extends LazyDbAccessCompatibleService {
       { wrappedConnection: connection }
     );
   }
+  /**
+   * Claims the next processing asset. The claim takes a lease, counts the
+   * attempt and moves next_attempt_at past the lease with a growing delay,
+   * so an asset whose worker dies is not offered first on every tick. An
+   * asset that has used all its attempts is marked failed instead.
+   */
   async claimProcessing(now: number): Promise<StoredAsset | null> {
     return this.db.executeNativeQueriesInTransaction(async (connection) => {
-      // Keep characterization and multipart payloads out of the queue sort.
-      const candidate = await this.db.oneOrNull<Pick<StoredAsset, 'id'>>(
-        `select id from ${ARTWORK_ASSETS_TABLE} where state = 'processing' and next_attempt_at <= :now and lease_until < :now order by next_attempt_at asc limit 1 for update skip locked`,
-        { now },
-        { wrappedConnection: connection }
-      );
-      if (!candidate) return null;
-      const asset = await this.find(candidate.id, undefined, connection, true);
-      if (!asset) return null;
-      const lease = now + 15 * 60_000;
-      await this.update(
-        asset.id,
-        { lease_until: lease, attempts: asset.attempts + 1 },
-        connection
-      );
-      return { ...asset, lease_until: lease, attempts: asset.attempts + 1 };
+      for (
+        let exhausted = 0;
+        exhausted <= MAX_EXHAUSTED_ASSETS_PER_CLAIM;
+        exhausted++
+      ) {
+        // Keep characterization and multipart payloads out of the queue sort.
+        const candidate = await this.db.oneOrNull<Pick<StoredAsset, 'id'>>(
+          `select id from ${ARTWORK_ASSETS_TABLE} where state = 'processing' and next_attempt_at <= :now and lease_until < :now order by next_attempt_at asc limit 1 for update skip locked`,
+          { now },
+          { wrappedConnection: connection }
+        );
+        if (!candidate) return null;
+        const asset = await this.find(
+          candidate.id,
+          undefined,
+          connection,
+          true
+        );
+        if (!asset) return null;
+        if (isAssetProcessingExhausted(asset, now)) {
+          await this.update(
+            asset.id,
+            {
+              state: 'failed',
+              failure_code: 'ASSET_PROCESSING_TIMEOUT',
+              lease_until: 0,
+              next_attempt_at: now,
+              updated_at: now
+            },
+            connection
+          );
+          continue;
+        }
+        const lease = now + PROCESSING_LEASE_MS;
+        const attempts = Number(asset.attempts) + 1;
+        const nextAttemptAt = lease + processingClaimRetryDelayMs(attempts);
+        await this.update(
+          asset.id,
+          { lease_until: lease, attempts, next_attempt_at: nextAttemptAt },
+          connection
+        );
+        return {
+          ...asset,
+          lease_until: lease,
+          attempts,
+          next_attempt_at: nextAttemptAt
+        };
+      }
+      return null;
     });
   }
   async finishProcessing(
@@ -214,9 +282,12 @@ export class ArtworkAssetsDb extends LazyDbAccessCompatibleService {
           Number(current.lease_until) !== Number(asset.lease_until)
         )
           return;
+        const now = Date.now();
+        // A finished attempt replaces the claim's crash backoff; retries
+        // pass their own next_attempt_at.
         await this.update(
           asset.id,
-          { ...patch, lease_until: 0, updated_at: Date.now() },
+          { next_attempt_at: now, ...patch, lease_until: 0, updated_at: now },
           connection
         );
       }

@@ -1,4 +1,5 @@
 import { getEthereumRpcClient } from '@/ethereum-rpc/ethereum-rpc-client';
+import { withTransientRpcRetry } from '@/ethereum-rpc/transient-rpc-retry';
 import { ethers } from 'ethers';
 import {
   Alchemy,
@@ -65,8 +66,9 @@ export async function findCoreTransactions(
       );
       continue;
     }
-    const receipt = await getEthereumRpcClient(network).getTransaction(
-      transfer.hash
+    const receipt = await withTransientRpcRetry(
+      () => getEthereumRpcClient(network).getTransaction(transfer.hash),
+      'nextgen.getTransaction'
     );
     if (receipt) {
       const parsedReceipt = NEXTGEN_CORE_IFACE.parseTransaction({

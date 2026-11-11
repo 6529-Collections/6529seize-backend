@@ -128,6 +128,29 @@ describe('WavesApiDb effective direct-message mute state', () => {
     expect(effectiveMuteSql).toContain('count(distinct dm_member.profile_id)');
     expect(effectiveMuteSql).toContain('w.is_direct_message = true');
   });
+
+  it('compares profile_groups ids through a utf8mb3 conversion without an explicit collation', async () => {
+    const { db, repo } = createRepo();
+    db.execute.mockResolvedValue([]);
+
+    await repo.findWaveReaderMetricsByWaveIds(
+      { readerId: 'reader-1', waveIds: ['wave-1'] },
+      {}
+    );
+
+    const effectiveMuteSql = db.execute.mock.calls[1]![0] as string;
+    // The conversion keeps the profile_groups index usable while its ids are
+    // utf8mb3_bin and after #2355 moves them to the schema collation. An
+    // explicit COLLATE would lose the index (or fail) after the migration.
+    expect(
+      effectiveMuteSql.split('convert(dm_group.profile_group_id using utf8mb3)')
+        .length - 1
+    ).toBe(3);
+    expect(effectiveMuteSql).not.toMatch(/collate/i);
+    expect(effectiveMuteSql).not.toContain(
+      'profile_group_id = dm_group.profile_group_id'
+    );
+  });
 });
 
 describe('WavesApiDb DM unread state versions', () => {

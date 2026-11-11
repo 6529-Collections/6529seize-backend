@@ -82,8 +82,10 @@ a docs-only PR.
 - Reverse ENS first uses ethers lookup, then the Universal Resolver on the
   **same** configured endpoint. The previous hard-coded 6529 ordinary fallback
   is removed; lookup misses/errors still yield no name. Configuration failures
-  remain explicit. The Universal Resolver call explicitly enables CCIP-Read;
-  allowing it at provider level alone does not enable it for a contract call.
+  remain explicit. The Universal Resolver call requests CCIP-Read, but the
+  shared provider disables it (`disableCcipRead`), so off-chain primary names
+  are resolved only by ENS refresh's isolated provider and its public-network
+  gateway transport. `createEthereumRpcProvider` callers opt in explicitly.
 - NFT history, transactions, NextGen and subscription discovery keep indexed
   calls on Alchemy while ordinary reads use the shared boundary. Pagination,
   finality gaps, checkpoints, receipt reconciliation and value conversions are
@@ -92,6 +94,28 @@ a docs-only PR.
   module, not the published Alchemy SDK. It now exposes only indexed transfers
   and NFT REST capabilities. Its standard RPC methods and the Alchemy-derived
   `getRpcUrl*` helpers are removed.
+
+## Bounded internal-error retries for NFT and NextGen loops
+
+`nftsLoop` URI discovery/refresh and `nextgenContractLoop` ordinary RPC reads
+opt into `withTransientRpcRetry`. It recognizes the observed JSON-RPC
+`-32000: Internal error`, including ethers' `error` and `info.error` envelopes.
+This response can be delivered with HTTP 200 and can appear as either
+`UNKNOWN_ERROR` or `CALL_EXCEPTION: missing revert data`.
+
+The helper allows three retries after delays of 250 ms, 750 ms and 2 seconds,
+each with up to 20% additional jitter. Deliberate waiting is capped at 3.6
+seconds per read; RPC request time and existing transport retries are separate.
+Warnings record the operation, retry number and delay, and an info event records
+successful recovery. Error text, provider URLs and call payloads are omitted.
+Exhaustion preserves the original error and existing caller failure handling.
+Decoded contract reverts and unrecognized errors are not retried.
+
+Only individual reads are retried. NextGen transaction writes and checkpoints
+are not replayed by this helper. The default RPC client, indexed Alchemy calls,
+transaction submission, schema and API contracts are unchanged. Deploy
+`nftsLoop`, then `nextgenContractLoop`, sequentially in each environment; neither
+requires a new dependency deployment. No frontend deployment is required.
 
 ## Explicit retained dependencies and exceptions
 

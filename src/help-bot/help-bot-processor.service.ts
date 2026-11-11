@@ -1,7 +1,9 @@
 import { dropsService, DropsApiService } from '@/api/drops/drops.api.service';
 import { ApiDrop } from '@/api/generated/models/ApiDrop';
 import { Logger } from '@/logging';
+import { DEVS_6529_MENTION_TOKEN } from '@/constants/mentions';
 import { RequestContext } from '@/request.context';
+import { HelpBotInteractionStatus } from '@/entities/IHelpBotInteraction';
 import {
   HELP_BOT_BASE_URL,
   HELP_BOT_BEDROCK_MODEL_ID,
@@ -10,7 +12,8 @@ import {
   HELP_BOT_SUCCESS_REACTION,
   HELP_BOT_TECH_TEAM_MENTION,
   HELP_BOT_TECHNICAL_FAILURE_REPLY,
-  buildHelpBotNoReliableSourceReply
+  buildHelpBotNoReliableSourceReply,
+  getHelpBotMaxQuestionChars
 } from './help-bot.config';
 import { HelpBotAnswerer, HelpBotLlmRenderer } from './help-bot.answerer';
 import { HelpBotBedrockRenderer } from './help-bot.bedrock-renderer';
@@ -54,10 +57,37 @@ function extractDropText(drop: ApiDrop): string {
     .trim();
 }
 
+/** Caps model input by code points so a surrogate pair is never split. */
+export function capHelpBotQuestion(question: string, maxChars: number): string {
+  const codePoints = Array.from(question);
+  if (codePoints.length <= maxChars) {
+    return question;
+  }
+  return codePoints.slice(0, maxChars).join('');
+}
+
+function techTeamMentionAllowance(escalateToTechTeam: boolean): {
+  readonly allowedGroupMentions?: readonly string[];
+} {
+  return escalateToTechTeam
+    ? { allowedGroupMentions: [DEVS_6529_MENTION_TOKEN] }
+    : {};
+}
+
 function getInteractionTargetDropId(
   interaction: HelpBotInteractionRow
 ): string {
   return interaction.target_drop_id ?? interaction.trigger_drop_id;
+}
+
+export class HelpBotAnswerLeaseHeldError extends Error {
+  constructor(interactionId: string) {
+    super(
+      `Help bot interaction ${interactionId} is being answered by another attempt; retrying after the lease`
+    );
+    this.name = 'HelpBotAnswerLeaseHeldError';
+    Object.setPrototypeOf(this, HelpBotAnswerLeaseHeldError.prototype);
+  }
 }
 
 export class HelpBotProcessorService {
@@ -90,9 +120,14 @@ export class HelpBotProcessorService {
       ctx
     );
     if (!interaction) {
+      await this.assertNoActiveAnswerLease(interactionId, ctx);
       return;
     }
 
+    // The credit is refunded only while the answer is still being produced.
+    // Once an answer exists the model work is done, so a failure to post it
+    // (for example a wave rule that rejects the reply) keeps the charge.
+    let answerProduced = false;
     try {
       const previousBotAnswer = await this.getPreviousBotAnswer(
         interaction,
@@ -100,10 +135,14 @@ export class HelpBotProcessorService {
         ctx
       );
       const answer = await this.answererFactory().answer({
-        question: interaction.question,
+        question: capHelpBotQuestion(
+          interaction.question,
+          getHelpBotMaxQuestionChars()
+        ),
         previousBotAnswer,
         baseUrl: HELP_BOT_BASE_URL
       });
+      answerProduced = true;
       if (answer.type === 'NO_RELIABLE_SOURCE') {
         await this.replyWithNoReliableSource({
           botProfileId,
@@ -114,9 +153,10 @@ export class HelpBotProcessorService {
         return;
       }
 
+      const escalateToTechTeam = answer.escalateToTechTeam ?? false;
       const reviewedAnswer = this.buildReviewedAnswer({
         answer: answer.answer,
-        escalateToTechTeam: answer.escalateToTechTeam ?? false
+        escalateToTechTeam
       });
       const reply = await this.dropWriter.reply(
         {
@@ -124,7 +164,8 @@ export class HelpBotProcessorService {
           waveId: interaction.wave_id,
           replyToDropId: getInteractionTargetDropId(interaction),
           interactionId: interaction.id,
-          message: reviewedAnswer
+          message: reviewedAnswer,
+          ...techTeamMentionAllowance(escalateToTechTeam)
         },
         ctx
       );
@@ -156,8 +197,26 @@ export class HelpBotProcessorService {
         botProfileId,
         interaction,
         error,
+        refundCredit: !answerProduced,
         ctx
       });
+    }
+  }
+
+  /**
+   * A delivery that cannot claim the interaction while another attempt still
+   * holds the ANSWERING lease is returned to the queue instead of being
+   * acknowledged. The lease is shorter than the queue visibility timeout, so
+   * the redelivery either sees a finished interaction or reclaims the expired
+   * lease of an attempt that died.
+   */
+  private async assertNoActiveAnswerLease(
+    interactionId: string,
+    ctx: RequestContext
+  ): Promise<void> {
+    const current = await this.interactionsDb.findById(interactionId, ctx);
+    if (current?.status === HelpBotInteractionStatus.ANSWERING) {
+      throw new HelpBotAnswerLeaseHeldError(interactionId);
     }
   }
 
@@ -206,7 +265,8 @@ export class HelpBotProcessorService {
         interactionId: interaction.id,
         message: escalateToTechTeam
           ? buildHelpBotNoReliableSourceReply()
-          : HELP_BOT_OUT_OF_SCOPE_REPLY
+          : HELP_BOT_OUT_OF_SCOPE_REPLY,
+        ...techTeamMentionAllowance(escalateToTechTeam)
       },
       ctx
     );
@@ -252,18 +312,24 @@ export class HelpBotProcessorService {
     botProfileId,
     interaction,
     error,
+    refundCredit,
     ctx
   }: {
     readonly botProfileId: string;
     readonly interaction: HelpBotInteractionRow;
     readonly error: unknown;
+    readonly refundCredit: boolean;
     readonly ctx: RequestContext;
   }): Promise<void> {
     this.logger.error(
-      `Help bot failed to answer interaction ${interaction.id}`,
+      refundCredit
+        ? `Help bot failed to answer interaction ${interaction.id}`
+        : `Help bot produced an answer but failed to post it for interaction ${interaction.id}`,
       error
     );
-    await this.tryRefundQuestionCredit(interaction, ctx);
+    if (refundCredit) {
+      await this.tryRefundQuestionCredit(interaction, ctx);
+    }
     let replyDropId: string | null = null;
     try {
       const reply = await this.dropWriter.reply(
@@ -297,7 +363,9 @@ export class HelpBotProcessorService {
         {
           id: interaction.id,
           replyDropId,
-          failureReason: errorToMessage(error)
+          failureReason: refundCredit
+            ? errorToMessage(error)
+            : `Failed to post produced answer: ${errorToMessage(error)}`
         },
         ctx
       );

@@ -638,3 +638,214 @@ describe('physical SQL execution budgets', () => {
     expect(driver.statements).toEqual([]);
   });
 });
+
+describe('session retirement instead of restoration', () => {
+  const restore =
+    'SET SESSION max_execution_time = 0, innodb_lock_wait_timeout = 50';
+  function retiringDriver(
+    retireError?: Error,
+    intercept?: (sql: string, callback: Callback) => boolean
+  ) {
+    const driver = fakeDriver(intercept);
+    const retire = jest.fn(() => {
+      if (retireError) throw retireError;
+      driver.connection.destroy();
+    });
+    return { ...driver, retire, lease: { ...driver.lease, retire } };
+  }
+
+  it('retires after an acknowledged COMMIT without sending the restore', async () => {
+    const driver = retiringDriver();
+    await expect(
+      executeBudgetedSqlTransaction(
+        async () => driver.lease,
+        budget(),
+        async () => 'committed'
+      )
+    ).resolves.toBe('committed');
+    expect(driver.statements).toContain('COMMIT');
+    expect(driver.statements).not.toContain(restore);
+    expect(driver.retire).toHaveBeenCalledTimes(1);
+    expect(driver.destroy).toHaveBeenCalledTimes(1);
+    expect(driver.release).toHaveBeenCalledTimes(1);
+    expect(driver.retire.mock.invocationCallOrder[0]).toBeLessThan(
+      driver.release.mock.invocationCallOrder[0]
+    );
+  });
+
+  it('retires after an acknowledged ROLLBACK without marking the error destroyed', async () => {
+    const driver = retiringDriver();
+    const failure = new Error('work failed');
+    await expect(
+      executeBudgetedSqlTransaction(
+        async () => driver.lease,
+        budget(),
+        async () => {
+          throw failure;
+        }
+      )
+    ).rejects.toBe(failure);
+    expect(driver.statements).toContain('ROLLBACK');
+    expect(driver.statements).not.toContain(restore);
+    expect(driver.retire).toHaveBeenCalledTimes(1);
+    expect(driver.release).toHaveBeenCalledTimes(1);
+  });
+
+  it('restores the session variables when retirement fails', async () => {
+    const driver = retiringDriver(new Error('cannot destroy'));
+    await expect(
+      executeBudgetedSqlTransaction(
+        async () => driver.lease,
+        budget(),
+        async () => 'committed'
+      )
+    ).resolves.toBe('committed');
+    expect(driver.retire).toHaveBeenCalledTimes(1);
+    expect(driver.statements.slice(-1)).toEqual([restore]);
+    expect(driver.destroy).not.toHaveBeenCalled();
+    expect(driver.release).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not retire a session whose variables were never changed', async () => {
+    const driver = retiringDriver();
+    const invalid = fakeDriver(undefined, 'not-a-number');
+    const lease = { ...invalid.lease, retire: driver.retire };
+    await expect(
+      executeBudgetedSqlTransaction(async () => lease, budget(), jest.fn())
+    ).rejects.toThrow('Invalid saved SQL session value');
+    expect(driver.retire).not.toHaveBeenCalled();
+    // The SETUP failure itself aborts and disposes the session.
+    expect(invalid.destroy).toHaveBeenCalledTimes(1);
+    expect(invalid.release).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not retire again after an abort already destroyed the session', async () => {
+    const driver = retiringDriver(undefined, (sql, callback) => {
+      if (sql !== 'SELECT lost') return false;
+      queueMicrotask(() =>
+        callback(
+          Object.assign(new Error('lost'), {
+            fatal: true,
+            code: 'PROTOCOL_CONNECTION_LOST'
+          })
+        )
+      );
+      return true;
+    });
+    await expect(
+      executeBudgetedSqlTransaction(
+        async () => driver.lease,
+        budget(),
+        async () => execSQLWithParams('SELECT lost', driver.connection, false)
+      )
+    ).rejects.toMatchObject({
+      serverCode: 'PROTOCOL_CONNECTION_LOST',
+      connectionDestroyed: true
+    });
+    expect(driver.retire).not.toHaveBeenCalled();
+    expect(driver.destroy).toHaveBeenCalledTimes(1);
+    expect(driver.release).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('isolation level', () => {
+  it('runs at REPEATABLE READ by default', async () => {
+    const driver = fakeDriver();
+    await executeBudgetedSqlTransaction(
+      async () => driver.lease,
+      budget(),
+      async () => 'done'
+    );
+    expect(driver.statements).toContain(
+      'SET TRANSACTION ISOLATION LEVEL REPEATABLE READ'
+    );
+    expect(driver.statements).not.toContain(
+      'SET TRANSACTION ISOLATION LEVEL READ COMMITTED'
+    );
+  });
+
+  it('sets READ COMMITTED right before START TRANSACTION when asked', async () => {
+    const driver = fakeDriver();
+    await executeBudgetedSqlTransaction(
+      async () => driver.lease,
+      { ...budget(), isolationLevel: 'READ COMMITTED' },
+      async () => 'done'
+    );
+    const set = driver.statements.indexOf(
+      'SET TRANSACTION ISOLATION LEVEL READ COMMITTED'
+    );
+    expect(set).toBeGreaterThan(-1);
+    expect(driver.statements[set + 1]).toBe('START TRANSACTION');
+  });
+
+  it('rejects an isolation level outside the whitelist before acquiring', async () => {
+    const acquire = jest.fn();
+    await expect(
+      executeBudgetedSqlTransaction(
+        acquire,
+        {
+          ...budget(),
+          isolationLevel: 'READ UNCOMMITTED' as never
+        },
+        async () => 'done'
+      )
+    ).rejects.toThrow('Invalid SQL execution budget isolation level');
+    expect(acquire).not.toHaveBeenCalled();
+  });
+
+  it('refuses READ COMMITTED on a lease that begins its own transaction', async () => {
+    const driver = fakeDriver();
+    const begin = jest.fn();
+    const work = jest.fn();
+    await expect(
+      executeBudgetedSqlTransaction(
+        async () => ({
+          ...driver.lease,
+          transaction: {
+            begin,
+            commit: jest.fn(),
+            rollback: jest.fn()
+          }
+        }),
+        { ...budget(), isolationLevel: 'READ COMMITTED' },
+        work
+      )
+    ).rejects.toThrow('cannot begin a READ COMMITTED budgeted transaction');
+    expect(begin).not.toHaveBeenCalled();
+    expect(work).not.toHaveBeenCalled();
+  });
+
+  it('lets a lease that begins at READ COMMITTED run a READ COMMITTED budget', async () => {
+    const driver = fakeDriver();
+    const lease = {
+      ...driver.lease,
+      transaction: {
+        isolationLevel: 'READ COMMITTED' as const,
+        begin: async () => {
+          await execSQLWithParams(
+            'START TRANSACTION',
+            driver.connection,
+            false
+          );
+        },
+        commit: async () => {
+          await execSQLWithParams('COMMIT', driver.connection, false);
+        },
+        rollback: jest.fn()
+      }
+    };
+    await expect(
+      executeBudgetedSqlTransaction(
+        async () => lease,
+        { ...budget(), isolationLevel: 'READ COMMITTED' },
+        async () => 'done'
+      )
+    ).resolves.toBe('done');
+    // The lease begins at its own level; the executor sends no level of its own.
+    expect(driver.statements).toContain('START TRANSACTION');
+    expect(driver.statements).toContain('COMMIT');
+    expect(
+      driver.statements.some((sql) => sql.includes('ISOLATION LEVEL'))
+    ).toBe(false);
+  });
+});

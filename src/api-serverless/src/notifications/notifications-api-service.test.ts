@@ -8,14 +8,39 @@ import { IdentityNotificationCause } from '@/entities/IIdentityNotification';
 import { DropGroupMention } from '@/entities/IWaveGroupNotificationSubscription';
 import { NotFoundException } from '@/exceptions';
 import { DbPoolName } from '@/db-query.options';
+import {
+  anonymousCompetitionAuthor,
+  competitionAnonymityService
+} from '@/competitions/competition-anonymity';
 
 jest.mock('@/api/push-notifications/push-notifications.service', () => ({
   requestDeviceBadgeRefresh: jest.fn().mockResolvedValue(undefined)
 }));
 
 jest.mock('@/api/waves/wave-unread-cache', () => ({
+  // After-commit bumps from the DB chokepoints (drop insert/delete, reader
+  // metrics, wave insert, blocks and mutes).
+  invalidateWaveUnreadCacheForWaveAfterCommit: jest
+    .fn()
+    .mockResolvedValue(undefined),
+  invalidateWaveUnreadCacheForWavesAfterCommit: jest
+    .fn()
+    .mockResolvedValue(undefined),
+  invalidateWaveUnreadCacheForReaderWaveAfterCommit: jest
+    .fn()
+    .mockResolvedValue(undefined),
+  invalidateWaveUnreadCacheForReaderAfterCommit: jest
+    .fn()
+    .mockResolvedValue(undefined),
   invalidateWaveUnreadCacheForReaderWave: jest.fn().mockResolvedValue(undefined)
 }));
+
+beforeEach(() => {
+  jest
+    .spyOn(competitionAnonymityService, 'hiddenDropIds')
+    .mockResolvedValue(new Set());
+});
+afterEach(() => jest.restoreAllMocks());
 
 describe('NotificationsApiService V2 notifications', () => {
   afterEach(() => {
@@ -49,7 +74,8 @@ describe('NotificationsApiService V2 notifications', () => {
       getNotificationsForIdentity: jest.fn().mockResolvedValue({
         notifications: [],
         total_unread: 0
-      })
+      }),
+      countUnreadForIdentity: jest.fn().mockResolvedValue(5)
     };
     const userGroupsService = {
       getGroupsUserIsEligibleFor: jest.fn().mockResolvedValue(['group-1'])
@@ -92,6 +118,214 @@ describe('NotificationsApiService V2 notifications', () => {
       reactionsDb
     };
   }
+
+  it('counts unread notifications without loading or mapping any', async () => {
+    const {
+      service,
+      notificationsReader,
+      userGroupsService,
+      dropsService,
+      identityFetcher,
+      wavesApiDb
+    } = createService();
+    const authenticationContext = {
+      getActingAsId: () => 'profile-1'
+    } as any;
+    const timer = { start: jest.fn(), stop: jest.fn() } as any;
+
+    await expect(
+      service.getUnreadNotificationsCountV2(
+        { include_competitions: true },
+        authenticationContext,
+        { timer, authenticationContext }
+      )
+    ).resolves.toEqual({ unread_count: 5 });
+
+    expect(userGroupsService.getGroupsUserIsEligibleFor).toHaveBeenCalledWith(
+      'profile-1',
+      timer
+    );
+    expect(notificationsReader.countUnreadForIdentity).toHaveBeenCalledWith({
+      identity_id: 'profile-1',
+      eligible_group_ids: ['group-1'],
+      include_competitions: true
+    });
+    expect(
+      notificationsReader.getNotificationsForIdentity
+    ).not.toHaveBeenCalled();
+    expect(dropsService.findDropsV2ByIds).not.toHaveBeenCalled();
+    expect(identityFetcher.getApiIdentityOverviewsByIds).not.toHaveBeenCalled();
+    expect(wavesApiDb.findWavesByIds).not.toHaveBeenCalled();
+  });
+
+  it.each(
+    [
+      {
+        cause: IdentityNotificationCause.IDENTITY_MENTIONED,
+        data: {
+          mentioner_identity_id: 'author',
+          drop_id: 'entry',
+          wave_id: 'wave'
+        }
+      },
+      {
+        cause: IdentityNotificationCause.DROP_QUOTED,
+        data: {
+          quote_drop_author_id: 'author',
+          quote_drop_id: 'entry',
+          quoted_drop_id: 'parent',
+          wave_id: 'wave'
+        }
+      },
+      {
+        cause: IdentityNotificationCause.DROP_REPLIED,
+        data: {
+          reply_drop_author_id: 'author',
+          reply_drop_id: 'entry',
+          replied_drop_id: 'parent',
+          wave_id: 'wave'
+        }
+      },
+      {
+        cause: IdentityNotificationCause.ALL_DROPS,
+        data: {
+          additional_identity_id: 'author',
+          drop_id: 'entry',
+          wave_id: 'wave'
+        }
+      },
+      {
+        cause: IdentityNotificationCause.PRIORITY_ALERT,
+        data: {
+          additional_identity_id: 'author',
+          drop_id: 'entry',
+          wave_id: 'wave'
+        }
+      }
+    ].flatMap((notification) => [
+      { ...notification, hydratedAfterReveal: false },
+      { ...notification, hydratedAfterReveal: true }
+    ])
+  )(
+    'keeps the durable anonymous $cause actor when hydratedAfterReveal=$hydratedAfterReveal',
+    async ({ cause, data, hydratedAfterReveal }) => {
+      jest
+        .mocked(competitionAnonymityService.hiddenDropIds)
+        .mockResolvedValue(new Set(['entry']));
+      const { service, notificationsReader, dropsService, identityFetcher } =
+        createService();
+      const author = makeIdentity(
+        'author',
+        'private-handle',
+        'private-picture'
+      );
+      notificationsReader.getNotificationsForIdentity.mockResolvedValue({
+        notifications: [{ id: 1, created_at: 1, read_at: null, cause, data }],
+        total_unread: 1
+      });
+      identityFetcher.getApiIdentityOverviewsByIds.mockResolvedValue({
+        author
+      });
+      dropsService.findDropsV2ByIds.mockResolvedValue({
+        entry: {
+          id: 'entry',
+          author: hydratedAfterReveal
+            ? author
+            : anonymousCompetitionAuthor(author, 'entry')
+        },
+        parent: {
+          id: 'parent',
+          author: makeIdentity(
+            'parent-author',
+            'parent-handle',
+            'parent-picture'
+          )
+        }
+      });
+      const authenticationContext =
+        AuthenticationContext.fromProfileId('reader');
+      const response = await service.getNotificationsV2(
+        {
+          id_less_than: null,
+          limit: 10,
+          cause: null,
+          cause_exclude: null,
+          unread_only: false
+        },
+        authenticationContext,
+        { authenticationContext }
+      );
+      expect(response.notifications).toHaveLength(1);
+      expect(response.notifications[0].related_identity).toMatchObject({
+        handle: 'Anonymous',
+        is_anonymous: true
+      });
+      expect(
+        JSON.stringify(response.notifications[0].related_identity)
+      ).not.toContain('private-');
+      if (!hydratedAfterReveal) {
+        expect(JSON.stringify(response.notifications)).not.toContain(
+          'private-'
+        );
+      }
+    }
+  );
+
+  it('maps returned-credit snapshots without loading deleted drops or an actor', async () => {
+    const { service, notificationsReader, dropsService, identityFetcher } =
+      createService();
+    const data = {
+      event_id: 'release',
+      reason: 'AUTHOR_DELETED',
+      wave_id: 'wave',
+      competition_id: 'competition',
+      competition_title: 'Main Stage',
+      entry_id: 'entry',
+      drop_id: 'deleted',
+      submission_title: 'Freedom To Transcend',
+      credit_type: 'TDH',
+      amount: 500,
+      released_at: 1000
+    };
+    notificationsReader.getNotificationsForIdentity.mockResolvedValue({
+      notifications: [
+        {
+          id: 1,
+          created_at: 2000,
+          read_at: null,
+          cause: IdentityNotificationCause.VOTING_CREDITS_RETURNED,
+          data
+        }
+      ],
+      total_unread: 1
+    });
+    const authenticationContext = AuthenticationContext.fromProfileId('voter');
+    const result = await service.getNotificationsV2(
+      {
+        id_less_than: null,
+        limit: 10,
+        cause: null,
+        cause_exclude: null,
+        unread_only: false
+      },
+      authenticationContext,
+      { authenticationContext }
+    );
+    expect(result.notifications[0]).toMatchObject({
+      cause: ApiNotificationCause.VotingCreditsReturned,
+      related_identity: null,
+      related_drops: [],
+      additional_context: data
+    });
+    expect(dropsService.findDropsV2ByIds).toHaveBeenCalledWith(
+      [],
+      expect.anything()
+    );
+    expect(identityFetcher.getApiIdentityOverviewsByIds).toHaveBeenCalledWith(
+      [],
+      expect.anything()
+    );
+  });
 
   it('maps V2 notifications with ApiIdentityOverview and ApiDropV2', async () => {
     const { service, notificationsReader, identityFetcher, dropsService } =
@@ -490,6 +724,72 @@ describe('NotificationsApiService V2 notifications', () => {
     });
   });
 
+  it.each([
+    ['v1', false],
+    ['v1', true],
+    ['v2', false],
+    ['v2', true]
+  ] as const)(
+    'maps encrypted notifications in %s with sender present: %s',
+    async (version, hasSender) => {
+      const { service, notificationsReader, identityFetcher, dropsService } =
+        createService();
+      const sender = { id: 'sender-1', handle: 'alice' };
+      const profiles = { [sender.id]: sender };
+      identityFetcher.getApiIdentityOverviewsByIds.mockResolvedValue(profiles);
+      Object.assign(identityFetcher, {
+        getOverviewsByIds: jest.fn().mockResolvedValue(profiles)
+      });
+      Object.assign(dropsService, {
+        findDropsByIds: jest.fn().mockResolvedValue({})
+      });
+      const data = {
+        encrypted_group: `0x${'a'.repeat(64)}`,
+        ...(hasSender ? { encrypted_message_seq: 2 } : {})
+      };
+      const notification = {
+        id: 22,
+        created_at: 6000,
+        read_at: null,
+        cause: IdentityNotificationCause.E2EE_MESSAGE,
+        data: { ...data, ...(hasSender ? { sender_id: sender.id } : {}) }
+      };
+      notificationsReader.getNotificationsForIdentity.mockResolvedValue({
+        notifications: [notification],
+        total_unread: 1
+      });
+      const authenticationContext =
+        AuthenticationContext.fromProfileId('viewer-1');
+      const query = {
+        id_less_than: null,
+        limit: 10,
+        cause: null,
+        cause_exclude: null,
+        unread_only: false
+      };
+      const result =
+        version === 'v1'
+          ? await service.getNotifications(query, authenticationContext)
+          : await service.getNotificationsV2(query, authenticationContext, {
+              authenticationContext
+            });
+      expect(result).toEqual({
+        notifications: [
+          {
+            id: 22,
+            created_at: 6000,
+            read_at: null,
+            cause: ApiNotificationCause.E2EeMessage,
+            related_identity: hasSender ? sender : null,
+            related_drops: [],
+            additional_context: data
+          }
+        ],
+        unread_count: 1
+      });
+    }
+  );
+
   it('maps actorless subscription coverage notifications in V2', async () => {
     const { service, notificationsReader, identityFetcher, dropsService } =
       createService();
@@ -688,7 +988,7 @@ describe('NotificationsApiService realtime invalidation', () => {
     const identityNotificationsDb = {
       updateNotificationReadAt: jest.fn().mockResolvedValue(undefined),
       markAllNotificationsAsRead: jest.fn().mockResolvedValue(undefined),
-      markWaveNotificationsAsRead: jest.fn().mockResolvedValue(undefined)
+      markWaveNotificationsAsRead: jest.fn().mockResolvedValue(2)
     };
     const wavesApiDb = {
       findById: jest.fn().mockResolvedValue({ is_direct_message: false }),
@@ -818,7 +1118,7 @@ describe('NotificationsApiService realtime invalidation', () => {
         version: 9
       };
       const identityNotificationsDb = {
-        markWaveNotificationsAsRead: jest.fn().mockResolvedValue(undefined)
+        markWaveNotificationsAsRead: jest.fn().mockResolvedValue(1)
       };
       const wavesApiDb = {
         findById: jest.fn().mockResolvedValue({
@@ -899,6 +1199,89 @@ describe('NotificationsApiService realtime invalidation', () => {
       expect(
         wsListenersNotifier.notifyAboutIdentityNotificationsChanged
       ).toHaveBeenCalledWith(['profile-1']);
+    }
+  );
+
+  it.each([
+    ['an ordinary wave', false],
+    ['a direct message', true]
+  ])(
+    'sends no notification-count frame for %s read that marks no notification',
+    async (_label, isDirectMessage) => {
+      const identityNotificationsDb = {
+        markWaveNotificationsAsRead: jest.fn().mockResolvedValue(0)
+      };
+      const dmUnreadState = {
+        profile_id: 'profile-1',
+        wave_id: 'wave-1',
+        unread_count: 0,
+        first_unread_drop_serial_no: null,
+        latest_drop_serial_no: 44,
+        latest_read_serial_no: 44,
+        version: 3
+      };
+      const wavesApiDb = {
+        findById: jest.fn().mockResolvedValue({
+          is_direct_message: isDirectMessage,
+          visibility_group_id: isDirectMessage ? 'dm-group' : null,
+          parent_wave_id: null
+        }),
+        updateWaveReaderMetricLatestReadTimestamp: jest
+          .fn()
+          .mockResolvedValue(undefined),
+        markDirectMessageReadThroughSerial: jest
+          .fn()
+          .mockResolvedValue(undefined),
+        findDmUnreadConversationStates: jest
+          .fn()
+          .mockResolvedValue([dmUnreadState])
+      };
+      const recipients = [
+        { connectionId: 'connection-1', identityId: 'profile-1' }
+      ];
+      const wsListenersNotifier = {
+        findConnectedNotificationRecipients: jest
+          .fn()
+          .mockResolvedValue(recipients),
+        notifyAboutDmUnreadStateChanged: jest.fn().mockResolvedValue(undefined),
+        notifyAboutIdentityNotificationsChanged: jest
+          .fn()
+          .mockResolvedValue(undefined)
+      };
+      const userGroupsService = {
+        getGroupsUserIsEligibleFor: jest.fn().mockResolvedValue(['dm-group'])
+      };
+      const service = new NotificationsApiService(
+        {} as any,
+        userGroupsService as any,
+        {} as any,
+        {} as any,
+        identityNotificationsDb as any,
+        {} as any,
+        wavesApiDb as any,
+        {} as any,
+        {} as any,
+        {} as any,
+        wsListenersNotifier as any
+      );
+
+      await service.markWaveNotificationsAsRead(
+        'wave-1',
+        'profile-1',
+        {},
+        44,
+        false
+      );
+
+      expect(
+        wsListenersNotifier.notifyAboutIdentityNotificationsChanged
+      ).not.toHaveBeenCalled();
+      // The DM unread-state frame is unchanged: it carries the read position.
+      if (isDirectMessage) {
+        expect(
+          wsListenersNotifier.notifyAboutDmUnreadStateChanged
+        ).toHaveBeenCalledWith([dmUnreadState], recipients);
+      }
     }
   );
 
@@ -1177,5 +1560,104 @@ describe('NotificationsApiService wave notification preferences', () => {
       ['deleted-original-drop', 'quote-drop'],
       expect.anything()
     );
+  });
+});
+
+describe('NotificationsApiService wave read visibility', () => {
+  function createService(
+    wave: Record<string, unknown> | null,
+    eligible: string[]
+  ) {
+    const identityNotificationsDb = {
+      markWaveNotificationsAsRead: jest.fn().mockResolvedValue(0)
+    };
+    const wavesApiDb = {
+      findById: jest.fn().mockResolvedValue(wave),
+      findWaveById: jest.fn().mockResolvedValue({
+        visibility_group_id: 'parent-group',
+        parent_wave_id: null
+      }),
+      updateWaveReaderMetricLatestReadTimestamp: jest
+        .fn()
+        .mockResolvedValue(undefined)
+    };
+    const userGroupsService = {
+      getGroupsUserIsEligibleFor: jest.fn().mockResolvedValue(eligible)
+    };
+    const wsListenersNotifier = {
+      findConnectedNotificationRecipients: jest.fn().mockResolvedValue([]),
+      notifyAboutIdentityNotificationsChanged: jest
+        .fn()
+        .mockResolvedValue(undefined)
+    };
+    const service = new NotificationsApiService(
+      {} as any,
+      userGroupsService as any,
+      {} as any,
+      {} as any,
+      identityNotificationsDb as any,
+      {} as any,
+      wavesApiDb as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      wsListenersNotifier as any
+    );
+    return { service, identityNotificationsDb, wavesApiDb, userGroupsService };
+  }
+
+  it.each([
+    ['a missing wave', null, []],
+    [
+      'a private wave the reader cannot see',
+      {
+        is_direct_message: false,
+        visibility_group_id: 'group-1',
+        parent_wave_id: null
+      },
+      []
+    ],
+    [
+      'a public subwave of a hidden parent',
+      {
+        is_direct_message: false,
+        visibility_group_id: null,
+        parent_wave_id: 'parent'
+      },
+      []
+    ]
+  ])('rejects %s before writing read state', async (_label, wave, eligible) => {
+    const { service, identityNotificationsDb, wavesApiDb } = createService(
+      wave,
+      eligible
+    );
+
+    await expect(
+      service.markWaveNotificationsAsRead('wave-1', 'profile-1', {})
+    ).rejects.toThrow(new NotFoundException('Wave wave-1 not found.'));
+
+    expect(
+      identityNotificationsDb.markWaveNotificationsAsRead
+    ).not.toHaveBeenCalled();
+    expect(
+      wavesApiDb.updateWaveReaderMetricLatestReadTimestamp
+    ).not.toHaveBeenCalled();
+  });
+
+  it('marks a private wave read for a member', async () => {
+    const { service, wavesApiDb } = createService(
+      {
+        is_direct_message: false,
+        visibility_group_id: 'group-1',
+        parent_wave_id: null
+      },
+      ['group-1']
+    );
+
+    await service.markWaveNotificationsAsRead('wave-1', 'profile-1', {});
+
+    expect(
+      wavesApiDb.updateWaveReaderMetricLatestReadTimestamp
+    ).toHaveBeenCalledWith('wave-1', 'profile-1', {});
   });
 });

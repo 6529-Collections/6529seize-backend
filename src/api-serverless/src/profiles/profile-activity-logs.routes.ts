@@ -1,17 +1,17 @@
 import { asyncRouter } from '../async.router';
 import { ApiResponse } from '../api-response';
 import {
-  ApiProfileActivityLog,
   profileActivityLogsApiService,
   ProfileActivityLogsSearchRequest
 } from './profile-activity-logs-api.service';
 import { Request, Response } from 'express';
 import { ProfileActivityLogType } from '../../../entities/IProfileActivityLog';
-import { CountlessPage } from '../page-request';
+import { ApiProfileActivityLogPage } from '@/api/generated/models/ApiProfileActivityLogPage';
 import { getAuthenticationContext, maybeAuthenticatedUser } from '../auth/auth';
 import { Timer } from '../../../time';
 import { identitiesDb } from '@/identities/identities.db';
 import { identityFetcher } from '../identities/identity.fetcher';
+import { getNicActivityPageRequest } from './profile-nic-activity.cursor';
 
 const router = asyncRouter();
 
@@ -22,6 +22,8 @@ async function getBaseSearchRequest(
     any,
     {
       order?: string;
+      activity_scope?: string;
+      cursor?: string;
       profile?: string;
       target?: string;
       log_type?: ProfileActivityLogType;
@@ -37,6 +39,7 @@ async function getBaseSearchRequest(
 ): Promise<ProfileActivityLogsSearchRequest> {
   const timer = Timer.getFromRequest(req);
   const queryParams = req.query;
+  const nicPaging = getNicActivityPageRequest(queryParams);
   const order = queryParams.order?.toLowerCase() === 'asc' ? 'asc' : 'desc';
   const profile = queryParams.profile;
   const category = queryParams.category;
@@ -102,13 +105,15 @@ async function getBaseSearchRequest(
   const sizeProposal = parseInt(queryParams.page_size || '2000');
   const size = !isNaN(sizeProposal) && sizeProposal > 0 ? sizeProposal : 50;
   return {
+    activityScope: queryParams.activity_scope,
+    cursor: queryParams.cursor,
     group_id: req.query.group_id ?? null,
     profileId,
     order,
     includeProfileIdToIncoming,
     ratingMatter,
     category,
-    pageRequest: {
+    pageRequest: nicPaging ?? {
       page,
       page_size: size
     },
@@ -128,6 +133,8 @@ router.get(
       {
         group_id?: string;
         order?: string;
+        activity_scope?: string;
+        cursor?: string;
         profile?: string;
         target?: string;
         log_type?: ProfileActivityLogType;
@@ -139,7 +146,7 @@ router.get(
       },
       any
     >,
-    res: Response<ApiResponse<CountlessPage<ApiProfileActivityLog>>>
+    res: Response<ApiResponse<ApiProfileActivityLogPage>>
   ) {
     const timer = Timer.getFromRequest(req);
     const authenticationContext = await getAuthenticationContext(req, timer);

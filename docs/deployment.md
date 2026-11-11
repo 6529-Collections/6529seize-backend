@@ -80,6 +80,25 @@ run IDs to correlate E2E replies.
 
 ## Failure and rollback
 
+### Wave score input index
+
+For the author-first Wave Score aggregation, deploy `dbMigrationsLoop` with
+`db_schema_scope=wave-score-input-index` before the updated scoring consumers.
+This scope adds only `drops(wave_id, author_id, created_at)` as
+`idx_drop_wave_author_created`. It requires `ALGORITHM=INPLACE, LOCK=NONE`,
+limits metadata-lock waits to two seconds, checks the resulting full-column
+visible index, and skips unrelated synchronization, migrations, and maintenance.
+If the table is busy or online DDL is unsupported, the deployment fails without
+trying a blocking algorithm. Retry after investigating the failure.
+
+The history aggregation uses a MySQL index optimizer hint to select the covering
+index when available. MySQL ignores the hint before index installation, so the
+old scoring query and the new aggregation both work before and after creation.
+Roll back scoring consumers while keeping `dbMigrationsLoop` at an
+index-aware revision and retaining the additive index. Full manual schema
+synchronization also ensures this index through the same online helper; the
+entity marks it `synchronize: false` so TypeORM does not create or drop it itself.
+
 ### Retired membership materialisation
 
 The dedicated worker and dispatcher are no longer ordinary deployment choices.
@@ -94,6 +113,31 @@ runs enabled historical migrations; it ignores the unregistered retired tables.
 Select `maintenance` explicitly for this rollout to avoid unrelated schema work.
 
 ### Operational failures
+
+#### TDH export uploads
+
+`tdhLoop` uploads each wallet and consolidated CSV using `ardrive.net`, then
+`turbo-gateway.com` and `arweave.net` on failure. A successful gateway remains
+preferred for subsequent chunks. Uploads retain one signed transaction across
+failover, use at most eight concurrent chunks, limit each HTTP request to ten
+seconds, and stop each export after two minutes. Each request has at most two
+attempts per gateway. Permanent validation errors stop immediately. Failure
+logs include the transaction, gateway, operation, chunk, attempt, status and a
+short provider error code; they exclude keys, CSV bodies and provider stacks.
+Unknown HTTP 400 responses also fail over: broadcasters can aggregate temporary
+peer rejections under that status without returning a protocol error code.
+Those logs summarize peer success/failure counts and statuses. Between complete
+chunk retry rounds, allow thirty seconds for fresh headers to propagate; this
+backoff is canceled when the same two-minute export deadline expires.
+
+Deploy only `tdhLoop` for upload-only changes; unchanged schema and xTDH
+dependencies do not need redeployment. Verify both `/api/uploads` and
+`/api/consolidated_uploads` have the target snapshot date/block after invoking
+the loop. Also verify both Arweave uploads and their S3 mirrors in the run logs.
+New export links use the primary public gateway (`ardrive.net`) so readers do
+not depend on `arweave.net` returning complete files after a successful upload.
+The immutable Arweave transaction IDs, CSV schema and S3 mirror keys remain
+unchanged. Existing links retain their stored gateway URLs.
 
 The synchronous `dbMigrationsLoop` invocation waits up to 960 seconds for its
 900-second Lambda and disables AWS CLI retries for that invocation. If its response

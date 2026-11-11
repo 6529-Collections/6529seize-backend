@@ -102,3 +102,16 @@ it.each([
     'Invalid joined wave cursor'
   );
 });
+
+it('isolates All snapshots from Joined and from other viewers', async () => {
+  const allStore = new JoinedWaveSnapshotStore('all');
+  const snapshot = await allStore.create('alice', ['one', 'two'], 1);
+  const cursor = decodeJoinedWaveCursor(encodeJoinedWaveCursor(snapshot, 1));
+  expect(await allStore.read('alice', cursor)).toEqual(snapshot);
+  await expect(allStore.read('guest', cursor)).rejects.toMatchObject({
+    code: 'ALL_WAVE_SNAPSHOT_EXPIRED'
+  });
+  await expect(store.read('alice', cursor)).rejects.toMatchObject({
+    code: 'JOINED_WAVE_SNAPSHOT_EXPIRED'
+  });
+});

@@ -1,3 +1,4 @@
+import { competitionAnonymityService } from '@/competitions/competition-anonymity';
 import {
   competitionService,
   PublicCompetition
@@ -7,7 +8,6 @@ import {
   CompetitionRecord
 } from '@/competitions/competition.repository';
 import { competitionVoteActivityRepository } from '@/competitions/competition-vote-activity.repository';
-import { CompetitionStorageMode } from '@/entities/ICompetition';
 import { identityFetcher } from '@/api/identities/identity.fetcher';
 import { ApiProfileMin } from '@/api/generated/models/ApiProfileMin';
 import { NotFoundException } from '@/exceptions';
@@ -37,6 +37,9 @@ const read = () =>
 beforeEach(() => {
   jest.clearAllMocks();
   jest
+    .spyOn(competitionAnonymityService, 'hiddenDropIds')
+    .mockResolvedValue(new Set());
+  jest
     .mocked(competitionService.getCompetition)
     .mockResolvedValue({} as PublicCompetition);
   jest
@@ -44,8 +47,7 @@ beforeEach(() => {
     .mockResolvedValue({
       id: 'competition',
       wave_id: 'wave',
-      legacy_wave_id: 'wave',
-      storage_mode: CompetitionStorageMode.NATIVE
+      legacy_wave_id: 'wave'
     } as CompetitionRecord);
   jest
     .mocked(identityFetcher.getOverviewsByIds)
@@ -119,8 +121,7 @@ it('does not expose primary-wave logs through a separate native competition', as
     .mockResolvedValue({
       id: 'competition',
       wave_id: 'wave',
-      legacy_wave_id: null,
-      storage_mode: CompetitionStorageMode.NATIVE
+      legacy_wave_id: null
     } as CompetitionRecord);
   jest.mocked(competitionVoteActivityRepository.list).mockResolvedValue([
     {
@@ -141,8 +142,8 @@ it('does not expose primary-wave logs through a separate native competition', as
 it('masks unreadable competitions before querying any history', async () => {
   jest
     .mocked(competitionService.getCompetition)
-    .mockRejectedValue(new NotFoundException('Competition not found'));
-  await expect(read()).rejects.toThrow('Competition not found');
+    .mockRejectedValue(new NotFoundException('Decision not found'));
+  await expect(read()).rejects.toThrow('Decision not found');
   expect(
     competitionRepository.findCompetitionRecordById
   ).not.toHaveBeenCalled();
@@ -153,6 +154,30 @@ it('rejects a child from another wave without querying its history', async () =>
   jest
     .mocked(competitionRepository.findCompetitionRecordById)
     .mockResolvedValue({ wave_id: 'other-wave' } as CompetitionRecord);
-  await expect(read()).rejects.toThrow('Competition not found');
+  await expect(read()).rejects.toThrow('Decision not found');
   expect(competitionVoteActivityRepository.list).not.toHaveBeenCalled();
+});
+
+it('conceals an unrevealed submitter in vote activity while retaining voter attribution', async () => {
+  jest.mocked(competitionVoteActivityRepository.list).mockResolvedValue([
+    {
+      sequence: 1,
+      drop_id: 'hidden',
+      voter_profile_id: 'voter',
+      submitter_id: 'submitter',
+      previous_value: 0,
+      value: 1,
+      occurred_at: 100
+    }
+  ]);
+  jest
+    .spyOn(competitionAnonymityService, 'hiddenDropIds')
+    .mockResolvedValue(new Set(['hidden']));
+  const [event] = await read();
+  expect(event.invoker).toBe(profile);
+  expect(event.drop_author).toMatchObject({
+    handle: 'Anonymous',
+    is_anonymous: true
+  });
+  expect(event.drop_author?.id).not.toBe(submitter.id);
 });

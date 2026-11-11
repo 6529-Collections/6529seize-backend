@@ -28,9 +28,17 @@ export interface DeliveryClaim {
 
 // Every key shares a Redis Cluster slot. No payload, JWT or user identity is
 // retained. Connection IDs exist only in the private retry state, never metrics.
+let scopeCache: { endpoint: string; scope: string } | undefined;
+
 export function deliveryScope(): string {
   const endpoint = process.env.API_GATEWAY_WS_ENDPOINT ?? 'local';
-  return `ws-delivery:v1:{${createHash('sha256').update(endpoint).digest('hex').slice(0, 24)}}`;
+  if (scopeCache?.endpoint !== endpoint) {
+    scopeCache = {
+      endpoint,
+      scope: `ws-delivery:v1:{${createHash('sha256').update(endpoint).digest('hex').slice(0, 24)}}`
+    };
+  }
+  return scopeCache.scope;
 }
 
 export function connectionHash(connectionId: string): string {
@@ -39,13 +47,17 @@ export function connectionHash(connectionId: string): string {
     .digest('hex');
 }
 
+// One operation's logic, written against K and A instead of KEYS and ARGV so
+// the same text runs alone (K = KEYS, A = ARGV) and once per operation inside
+// a batch. K: connection, pending, minute, attempted, sent, throttled, pause,
+// pendingSince. A[1] is the operation's now, A[2] the connection hash.
 const commonLua = `
-local now = tonumber(ARGV[1])
-local id = ARGV[2]
+local now = tonumber(A[1])
+local id = A[2]
 local ttl = ${STATE_TTL_SECONDS}
 local function metric(name)
-  redis.call('HINCRBY', KEYS[3], name, 1)
-  redis.call('EXPIRE', KEYS[3], ttl)
+  redis.call('HINCRBY', K[3], name, 1)
+  redis.call('EXPIRE', K[3], ttl)
 end
 local function seen(key)
   redis.call('ZADD', key, now, id)
@@ -53,102 +65,318 @@ local function seen(key)
   redis.call('EXPIRE', key, ttl)
 end
 local function pending(at)
-  redis.call('HSET', KEYS[1], 'connectionId', ARGV[3])
-  redis.call('HINCRBY', KEYS[1], 'revision', 1)
-  redis.call('ZADD', KEYS[2], at, id)
-  redis.call('ZADD', KEYS[8], 'NX', now, id)
-  redis.call('EXPIRE', KEYS[1], ttl)
-  redis.call('EXPIRE', KEYS[2], ttl)
-  redis.call('EXPIRE', KEYS[8], ttl)
+  redis.call('HSET', K[1], 'connectionId', A[3])
+  redis.call('HINCRBY', K[1], 'revision', 1)
+  redis.call('ZADD', K[2], at, id)
+  redis.call('ZADD', K[8], 'NX', now, id)
+  redis.call('EXPIRE', K[1], ttl)
+  redis.call('EXPIRE', K[2], ttl)
+  redis.call('EXPIRE', K[8], ttl)
 end
 `;
 
-const claimLua = `${commonLua}
-local due = tonumber(redis.call('HGET', KEYS[1], 'nextAttempt') or '0')
-local lease = tonumber(redis.call('HGET', KEYS[1], 'leaseUntil') or '0')
-local pause = tonumber(redis.call('GET', KEYS[7]) or '0')
-local recovery = ARGV[5] == '1'
-local priority = ARGV[6] == '1'
-if recovery and not redis.call('ZSCORE', KEYS[2], id) then return {0,0,0,0} end
+// A: now, id, connectionId, token, recovery, priority.
+const claimBody = `${commonLua}
+local due = tonumber(redis.call('HGET', K[1], 'nextAttempt') or '0')
+local lease = tonumber(redis.call('HGET', K[1], 'leaseUntil') or '0')
+local pause = tonumber(redis.call('GET', K[7]) or '0')
+local recovery = A[5] == '1'
+local priority = A[6] == '1'
+if recovery and not redis.call('ZSCORE', K[2], id) then return {0,0,0,0} end
 if not priority and (due > now or lease > now or (not recovery and pause > now)) then
   metric('deferred')
   pending(math.max(due, lease, pause))
   return {0,0,0,0}
 end
-redis.call('HSET', KEYS[1], 'connectionId', ARGV[3])
+redis.call('HSET', K[1], 'connectionId', A[3])
 if recovery then
-  redis.call('HSET', KEYS[1], 'leaseToken', ARGV[4], 'leaseUntil', now + 30000)
+  redis.call('HSET', K[1], 'leaseToken', A[4], 'leaseUntil', now + 30000)
 end
-redis.call('EXPIRE', KEYS[1], ttl)
+redis.call('EXPIRE', K[1], ttl)
 metric('attempted')
-seen(KEYS[4])
-return {1, tonumber(redis.call('HGET', KEYS[1], 'revision') or '0'),
-  tonumber(redis.call('HGET', KEYS[1], 'failures') or '0'),
-  tonumber(redis.call('HGET', KEYS[1], 'firstFailureAt') or '0'),
-  redis.call('HGET', KEYS[1], 'canReconnect') == '1' and 1 or 0}
+seen(K[4])
+return {1, tonumber(redis.call('HGET', K[1], 'revision') or '0'),
+  tonumber(redis.call('HGET', K[1], 'failures') or '0'),
+  tonumber(redis.call('HGET', K[1], 'firstFailureAt') or '0'),
+  redis.call('HGET', K[1], 'canReconnect') == '1' and 1 or 0}
 `;
 
-const finishLua = `${commonLua}
-local result = ARGV[5]
+// A: now, id, connectionId, token, outcome, recovery, revision, jitter, coalesce.
+const finishBody = `${commonLua}
+local result = A[5]
 metric(result)
-if result == 'sent' then seen(KEYS[5]) end
-if result == 'throttled' then seen(KEYS[6]) end
-local recovery = ARGV[6] == '1'
-if recovery and redis.call('HGET', KEYS[1], 'leaseToken') ~= ARGV[4] then return 0 end
-if recovery then redis.call('HDEL', KEYS[1], 'leaseToken', 'leaseUntil') end
+if result == 'sent' then seen(K[5]) end
+if result == 'throttled' then seen(K[6]) end
+local recovery = A[6] == '1'
+if recovery and redis.call('HGET', K[1], 'leaseToken') ~= A[4] then return 0 end
+if recovery then redis.call('HDEL', K[1], 'leaseToken', 'leaseUntil') end
 if result == 'gone' then
-  redis.call('DEL', KEYS[1])
-  redis.call('ZREM', KEYS[2], id)
-  redis.call('ZREM', KEYS[8], id)
+  redis.call('DEL', K[1])
+  redis.call('ZREM', K[2], id)
+  redis.call('ZREM', K[8], id)
   return 0
 end
 if result == 'sent' then
-  redis.call('HSET', KEYS[1], 'failures', 0, 'firstFailureAt', 0)
-  redis.call('EXPIRE', KEYS[1], ttl)
+  redis.call('HSET', K[1], 'failures', 0, 'firstFailureAt', 0)
+  redis.call('EXPIRE', K[1], ttl)
 end
 if result == 'throttled' then
-  local failures = redis.call('HINCRBY', KEYS[1], 'failures', 1)
-  local first = tonumber(redis.call('HGET', KEYS[1], 'firstFailureAt') or '0')
+  local failures = redis.call('HINCRBY', K[1], 'failures', 1)
+  local first = tonumber(redis.call('HGET', K[1], 'firstFailureAt') or '0')
   if first == 0 then first = now end
   local delay = math.min(300000, 30000 * math.pow(2, math.min(failures - 1, 4)))
-  local nextAt = now + math.floor(delay * (0.75 + tonumber(ARGV[8]) * 0.5))
-  redis.call('HSET', KEYS[1], 'firstFailureAt', first, 'nextAttempt', nextAt)
-  if ARGV[9] ~= '0' then
+  local nextAt = now + math.floor(delay * (0.75 + tonumber(A[8]) * 0.5))
+  redis.call('HSET', K[1], 'firstFailureAt', first, 'nextAttempt', nextAt)
+  if A[9] ~= '0' then
     pending(nextAt)
-  elseif redis.call('ZSCORE', KEYS[2], id) then
-    redis.call('ZADD', KEYS[2], nextAt, id)
+  elseif redis.call('ZSCORE', K[2], id) then
+    redis.call('ZADD', K[2], nextAt, id)
   end
-  local failed = redis.call('ZCOUNT', KEYS[6], now - 60000, '+inf')
-  local attempted = redis.call('ZCOUNT', KEYS[4], now - 60000, '+inf')
+  local failed = redis.call('ZCOUNT', K[6], now - 60000, '+inf')
+  local attempted = redis.call('ZCOUNT', K[4], now - 60000, '+inf')
   if failed >= 5 and failed / math.max(1, attempted) >= 0.2 then
-    redis.call('SET', KEYS[7], now + 5000, 'PX', 10000)
+    redis.call('SET', K[7], now + 5000, 'PX', 10000)
   end
   if failures == 1 then return 1 end
   return 0
 end
 if result == 'sent' and recovery then
-  local revision = tonumber(redis.call('HGET', KEYS[1], 'revision') or '0')
-  if revision == tonumber(ARGV[7]) then
-    redis.call('HSET', KEYS[1], 'nextAttempt', 0)
-    redis.call('ZREM', KEYS[2], id)
-    redis.call('ZREM', KEYS[8], id)
-  elseif redis.call('ZSCORE', KEYS[2], id) then
-    local due = tonumber(redis.call('HGET', KEYS[1], 'nextAttempt') or '0')
-    redis.call('ZADD', KEYS[2], math.max(now, due), id)
+  local revision = tonumber(redis.call('HGET', K[1], 'revision') or '0')
+  if revision == tonumber(A[7]) then
+    redis.call('HSET', K[1], 'nextAttempt', 0)
+    redis.call('ZREM', K[2], id)
+    redis.call('ZREM', K[8], id)
+  elseif redis.call('ZSCORE', K[2], id) then
+    local due = tonumber(redis.call('HGET', K[1], 'nextAttempt') or '0')
+    redis.call('ZADD', K[2], math.max(now, due), id)
   end
 end
-if result == 'failed' and redis.call('ZSCORE', KEYS[2], id) then
-  redis.call('HSET', KEYS[1], 'nextAttempt', now + 60000)
-  redis.call('ZADD', KEYS[2], now + 60000, id)
-  redis.call('EXPIRE', KEYS[2], ttl)
-  redis.call('EXPIRE', KEYS[8], ttl)
+if result == 'failed' and redis.call('ZSCORE', K[2], id) then
+  redis.call('HSET', K[1], 'nextAttempt', now + 60000)
+  redis.call('ZADD', K[2], now + 60000, id)
+  redis.call('EXPIRE', K[2], ttl)
+  redis.call('EXPIRE', K[8], ttl)
 end
 return 0
 `;
 
+const operationsLua = `
+local function claim(K, A)
+${claimBody}
+end
+local function finish(K, A)
+${finishBody}
+end
+`;
+
+const claimLua = `${operationsLua}
+return claim(KEYS, ARGV)
+`;
+
+const finishLua = `${operationsLua}
+return finish(KEYS, ARGV)
+`;
+
+const CLAIM_ARGUMENTS = 6;
+const FINISH_ARGUMENTS = 9;
+const SHARED_KEYS = 6;
+
+/**
+ * Runs queued claims and finishes in order, as if each ran alone: the same
+ * operation bodies, back to back in one atomic call. KEYS: pending,
+ * attempted, sent, throttled, pause, pendingSince, then each operation's
+ * connection and minute keys. ARGV: per operation, 'c' or 'f' and its
+ * arguments. One operation's error is caught and returned in its place, so
+ * it fails alone, as it would have on its own.
+ */
+const batchLua = `${operationsLua}
+local results = {}
+local k = ${SHARED_KEYS} + 1
+local a = 1
+while a <= #ARGV do
+  local kind = ARGV[a]
+  local width = kind == 'c' and ${CLAIM_ARGUMENTS} or ${FINISH_ARGUMENTS}
+  local K = {KEYS[k], KEYS[1], KEYS[k + 1], KEYS[2], KEYS[3], KEYS[4], KEYS[5], KEYS[6]}
+  local A = {}
+  for j = 1, width do A[j] = ARGV[a + j] end
+  local ok, result = pcall(kind == 'c' and claim or finish, K, A)
+  if ok then
+    results[#results + 1] = result
+  elseif type(result) == 'table' and result.err then
+    results[#results + 1] = 'ERR ' .. result.err
+  else
+    results[#results + 1] = 'ERR ' .. tostring(result)
+  end
+  k = k + 2
+  a = a + 1 + width
+end
+return results
+`;
+
+type ScriptOptions = { keys: string[]; arguments: string[] };
+
+function isNoScript(error: unknown): boolean {
+  return error instanceof Error && error.message.startsWith('NOSCRIPT');
+}
+
+const scriptHashes = new Map<string, Promise<string>>();
+
+/** The script's hash as Redis reports it (SCRIPT LOAD), cached per process. */
+function scriptHash(script: string): Promise<string> {
+  let hash = scriptHashes.get(script);
+  if (!hash) {
+    hash = getRedisClient()!.scriptLoad(script);
+    scriptHashes.set(script, hash);
+    hash.catch(() => scriptHashes.delete(script));
+  }
+  return hash;
+}
+
+/**
+ * Sends the 40-byte script hash instead of the ~2 KB script on every call.
+ * A Redis that lost its script cache (restart, failover) answers NOSCRIPT;
+ * EVAL then runs the script once and the hash is loaded again next time.
+ */
+async function runScript(
+  script: string,
+  options: ScriptOptions
+): Promise<unknown> {
+  const client = getRedisClient()!;
+  try {
+    return await client.evalSha(await scriptHash(script), options);
+  } catch (error) {
+    if (!isNoScript(error)) throw error;
+    scriptHashes.delete(script);
+    return client.eval(script, options);
+  }
+}
+
+/** Fails fast when Redis is down and bounds each call to 250 ms. */
+async function bounded<T>(action: () => Promise<T>): Promise<T> {
+  const client = getRedisClient();
+  if (!client?.isReady) throw new Error('WebSocket recovery store unavailable');
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      action(),
+      new Promise<never>((_resolve, reject) => {
+        timeout = setTimeout(
+          () => reject(new Error('WebSocket recovery store timeout')),
+          250
+        );
+      })
+    ]);
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+/**
+ * `WS_DELIVERY_BATCHED_BOOKKEEPING=off` sends each claim and finish as its
+ * own call again. Read on use; anything else, or unset, batches.
+ */
+function batchedBookkeeping(): boolean {
+  const value =
+    process.env.WS_DELIVERY_BATCHED_BOOKKEEPING?.trim().toLowerCase();
+  return value !== 'off' && value !== 'false' && value !== '0';
+}
+
+/** Bounds one batch call's Lua run time and reply size. */
+const MAX_BATCH_OPERATIONS = 64;
+
+interface QueuedOperation {
+  readonly kind: 'c' | 'f';
+  readonly connectionKey: string;
+  readonly minuteKey: string;
+  readonly args: string[];
+  readonly resolve: (result: unknown) => void;
+  readonly reject: (error: unknown) => void;
+}
+
+/**
+ * Collects the claims and finishes requested in one turn of the event loop
+ * and runs them, in request order, in one Redis call. Operations requested
+ * concurrently (a fan-out's in-flight sends) then share one round trip and
+ * one command's overhead instead of paying it each. Order is preserved:
+ * calls go out in queue order on one connection, so Redis runs every
+ * operation in the order it was requested, as it did one call at a time.
+ */
+class BookkeepingBatcher {
+  private queue: QueuedOperation[] = [];
+  private queueScope = '';
+  private scheduled = false;
+
+  enqueue(scope: string, operation: QueuedOperation): void {
+    if (this.queue.length && scope !== this.queueScope) this.flush();
+    this.queueScope = scope;
+    this.queue.push(operation);
+    if (this.queue.length >= MAX_BATCH_OPERATIONS) {
+      this.flush();
+    } else if (!this.scheduled) {
+      this.scheduled = true;
+      setImmediate(() => {
+        this.scheduled = false;
+        this.flush();
+      });
+    }
+  }
+
+  private flush(): void {
+    const operations = this.queue;
+    if (!operations.length) return;
+    this.queue = [];
+    void runBatch(this.queueScope, operations);
+  }
+}
+
+async function runBatch(
+  scope: string,
+  operations: QueuedOperation[]
+): Promise<void> {
+  const keys = [
+    `${scope}:pending`,
+    `${scope}:attempted`,
+    `${scope}:sent`,
+    `${scope}:throttled`,
+    `${scope}:pause`,
+    `${scope}:pendingSince`
+  ];
+  const args: string[] = [];
+  for (const operation of operations) {
+    keys.push(operation.connectionKey, operation.minuteKey);
+    args.push(operation.kind, ...operation.args);
+  }
+  let results: unknown;
+  try {
+    results = await bounded(() =>
+      runScript(batchLua, { keys, arguments: args })
+    );
+  } catch (error) {
+    for (const operation of operations) operation.reject(error);
+    return;
+  }
+  const list = Array.isArray(results) ? results : [];
+  operations.forEach((operation, index) => {
+    const result: unknown = list[index];
+    if (result === undefined) {
+      operation.reject(
+        new Error('WebSocket recovery store returned no result')
+      );
+    } else if (typeof result === 'string' && result.startsWith('ERR')) {
+      operation.reject(new Error(result));
+    } else {
+      operation.resolve(result);
+    }
+  });
+}
+
 export class WebSocketDeliveryStore {
+  private readonly batcher = new BookkeepingBatcher();
+
+  constructor(private readonly batched: () => boolean = batchedBookkeeping) {}
+
   async enableReconnect(connectionId: string): Promise<void> {
-    await this.bounded(async () => {
+    await bounded(async () => {
       const key = `${deliveryScope()}:connection:${connectionHash(connectionId)}`;
       await getRedisClient()!
         .multi()
@@ -159,7 +387,7 @@ export class WebSocketDeliveryStore {
   }
 
   async forget(connectionId: string): Promise<void> {
-    await this.bounded(async () => {
+    await bounded(async () => {
       const base = deliveryScope();
       await getRedisClient()!
         .multi()
@@ -170,38 +398,51 @@ export class WebSocketDeliveryStore {
     });
   }
 
-  private keys(connectionId: string, now: number): string[] {
-    const base = deliveryScope();
-    return [
-      `${base}:connection:${connectionHash(connectionId)}`,
-      `${base}:pending`,
-      `${base}:minute:${Math.floor(now / 60_000)}`,
-      `${base}:attempted`,
-      `${base}:sent`,
-      `${base}:throttled`,
-      `${base}:pause`,
-      `${base}:pendingSince`
-    ];
-  }
-
-  private async bounded<T>(action: () => Promise<T>): Promise<T> {
-    const client = getRedisClient();
-    if (!client?.isReady)
-      throw new Error('WebSocket recovery store unavailable');
-    let timeout: ReturnType<typeof setTimeout> | undefined;
-    try {
-      return await Promise.race([
-        action(),
-        new Promise<never>((_resolve, reject) => {
-          timeout = setTimeout(
-            () => reject(new Error('WebSocket recovery store timeout')),
-            250
-          );
+  /**
+   * Runs one claim ('c') or finish ('f'): queued into the next batch, or as
+   * its own call when batching is off. Same keys and arguments either way.
+   */
+  private operation(
+    kind: 'c' | 'f',
+    connectionId: string,
+    now: number,
+    rest: string[]
+  ): Promise<unknown> {
+    const scope = deliveryScope();
+    const hash = connectionHash(connectionId);
+    const connectionKey = `${scope}:connection:${hash}`;
+    const minuteKey = `${scope}:minute:${Math.floor(now / 60_000)}`;
+    const args = [String(now), hash, connectionId, ...rest];
+    if (!this.batched()) {
+      return bounded(() =>
+        runScript(kind === 'c' ? claimLua : finishLua, {
+          keys: [
+            connectionKey,
+            `${scope}:pending`,
+            minuteKey,
+            `${scope}:attempted`,
+            `${scope}:sent`,
+            `${scope}:throttled`,
+            `${scope}:pause`,
+            `${scope}:pendingSince`
+          ],
+          arguments: args
         })
-      ]);
-    } finally {
-      clearTimeout(timeout);
+      );
     }
+    if (!getRedisClient()?.isReady) {
+      return Promise.reject(new Error('WebSocket recovery store unavailable'));
+    }
+    return new Promise((resolve, reject) => {
+      this.batcher.enqueue(scope, {
+        kind,
+        connectionKey,
+        minuteKey,
+        args,
+        resolve,
+        reject
+      });
+    });
   }
 
   async claim(
@@ -211,19 +452,11 @@ export class WebSocketDeliveryStore {
     now: number,
     priority = false
   ): Promise<DeliveryClaim> {
-    const result = (await this.bounded(() =>
-      getRedisClient()!.eval(claimLua, {
-        keys: this.keys(connectionId, now),
-        arguments: [
-          String(now),
-          connectionHash(connectionId),
-          connectionId,
-          token,
-          recovery ? '1' : '0',
-          priority ? '1' : '0'
-        ]
-      })
-    )) as number[];
+    const result = (await this.operation('c', connectionId, now, [
+      token,
+      recovery ? '1' : '0',
+      priority ? '1' : '0'
+    ])) as number[];
     return {
       acquired: result[0] === 1,
       revision: result[1],
@@ -243,27 +476,19 @@ export class WebSocketDeliveryStore {
     jitter: number;
     coalesce?: boolean;
   }): Promise<boolean> {
-    const result = await this.bounded(() =>
-      getRedisClient()!.eval(finishLua, {
-        keys: this.keys(input.connectionId, input.now),
-        arguments: [
-          String(input.now),
-          connectionHash(input.connectionId),
-          input.connectionId,
-          input.token,
-          input.outcome,
-          input.recovery ? '1' : '0',
-          String(input.revision),
-          String(input.jitter),
-          input.coalesce === false ? '0' : '1'
-        ]
-      })
-    );
+    const result = await this.operation('f', input.connectionId, input.now, [
+      input.token,
+      input.outcome,
+      input.recovery ? '1' : '0',
+      String(input.revision),
+      String(input.jitter),
+      input.coalesce === false ? '0' : '1'
+    ]);
     return Number(result) === 1;
   }
 
   async due(now: number, limit = 100): Promise<string[]> {
-    return this.bounded(async () => {
+    return bounded(async () => {
       const client = getRedisClient()!;
       const base = deliveryScope();
       const ids = await client.zRangeByScore(`${base}:pending`, 0, now, {
@@ -292,7 +517,7 @@ export class WebSocketDeliveryStore {
     now: number,
     excludeConnectionId?: string
   ): Promise<DeliverySnapshot> {
-    return this.bounded(async () => {
+    return bounded(async () => {
       const client = getRedisClient()!;
       const base = deliveryScope();
       const minute = Math.floor(now / 60_000);

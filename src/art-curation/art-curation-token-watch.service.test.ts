@@ -31,8 +31,7 @@ describe('ArtCurationTokenWatchService', () => {
       .mocked(competitionRepository.findCompetitionRecordById)
       .mockResolvedValue({
         id: 'curation',
-        wave_id: 'wave-1',
-        storage_mode: 'NATIVE'
+        wave_id: 'wave-1'
       } as never);
     jest
       .mocked(competitionRepository.findCapabilities)
@@ -201,8 +200,7 @@ describe('ArtCurationTokenWatchService', () => {
       .mocked(competitionRepository.findCompetitionRecordById)
       .mockResolvedValue({
         id: 'curation',
-        wave_id: 'different-hub',
-        storage_mode: 'NATIVE'
+        wave_id: 'different-hub'
       } as never);
     const { service, mocks } = createService({
       snapshotSubmissionState: jest.fn().mockResolvedValue({

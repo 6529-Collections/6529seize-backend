@@ -34,6 +34,7 @@ import { wavesApiDb } from '../waves/waves.api.db';
 import { invalidateWaveUnreadCacheForReaderWave } from '../waves/wave-unread-cache';
 import { dropCheeringService } from './drop-cheering.service';
 import { dropCreationService } from './drop-creation.api.service';
+import { assertProxyMayEditDrops } from '@/api/drops/drop-proxy-rights';
 import { dropSignatureVerifier } from './drop-signature-verifier';
 import {
   ApiAddReactionToDropRequestSchema,
@@ -56,16 +57,25 @@ import { helpBotTriggerService } from '@/help-bot/help-bot-trigger.service';
 import { Logger } from '@/logging';
 import { wsListenersNotifier } from '@/api/ws/ws-listeners-notifier';
 import { DbPoolName } from '@/db-query.options';
-import { assertWaveAndParentVisibleOrThrow } from '@/api/waves/wave-access.helpers';
+import { optionalQueryString } from '@/api/query-values';
+import { assertWaveAndParentVisibleToProfileOrThrow } from '@/api/waves/wave-access.helpers';
 import { getStructuredWalletSignatureAudienceForHost } from '@/api/wallet-signatures/structured-wallet-signatures';
+import {
+  deviceSignedWritesService,
+  stripDeviceSignature
+} from '@/api/device-signing/device-signed-writes.service';
+import { withStoredAuthorSignature } from '@/api/device-signing/author-signed-drop-response';
+import { DeviceEventKind } from '@/api/device-signing/device-event';
 
 const router = asyncRouter();
 const logger = Logger.get('DropsRoutes');
 
-const LatestDropsSerialNosQuerySchema: Joi.ObjectSchema<{
+const LatestDropsSearchQuerySchema: Joi.ObjectSchema<{
   serial_nos: number[] | null;
+  public_only: boolean;
 }> = Joi.object({
-  serial_nos: SerialNosQueryParamSchema
+  serial_nos: SerialNosQueryParamSchema,
+  public_only: Joi.boolean().default(false)
 });
 
 const ToggleHideLinkPreviewSchema: Joi.ObjectSchema<ApiToggleHideLinkPreviewRequest> =
@@ -95,6 +105,7 @@ router.get(
         ids?: string;
         serial_nos?: string;
         contains_media?: string;
+        public_only?: string;
       },
       any
     >,
@@ -113,7 +124,8 @@ router.get(
       drop_type,
       ids,
       serial_nos,
-      contains_media
+      contains_media,
+      public_only
     } = await prepLatestDropsSearchQuery(req);
     const latestDrops = await dropsService.findLatestDrops(
       {
@@ -130,12 +142,20 @@ router.get(
         drop_type,
         ids,
         serial_nos,
-        contains_media
+        contains_media,
+        public_only
       },
       { timer, authenticationContext }
     );
     res.send(latestDrops);
   }
+);
+
+// GET /drops/signed-events is served by the generated OpenAPI routes, which
+// are mounted after this router; without this, '/:drop_id' below would read
+// "signed-events" as a drop id and answer 404.
+router.get('/signed-events', (_req: Request, _res: Response, next) =>
+  next('router')
 );
 
 router.get(
@@ -165,6 +185,9 @@ router.post(
     req: Request<any, any, ApiCreateDropRequest, any, any>,
     res: Response<ApiResponse<ApiDrop>>
   ) => {
+    const { body: apiRequest, envelope: deviceSignature } =
+      stripDeviceSignature(req.body);
+    req.body = apiRequest;
     const timer = Timer.getFromRequest(req);
     const authenticationContext = await getAuthenticationContext(req, timer);
     const authorProfileId = authenticationContext.getActingAsId();
@@ -183,7 +206,6 @@ router.post(
         `Proxy doesn't have permission to create drops`
       );
     }
-    const apiRequest = req.body;
     const newDrop: ApiCreateDropRequest = getValidatedByJoiOrThrow(
       apiRequest,
       NewDropSchema
@@ -199,15 +221,11 @@ router.post(
         'Each drop part must have content, media, or attachments'
       );
     }
-    await assertDropIsCorrectlySigned(
-      apiRequest,
-      authorProfileId,
-      req.headers.host
-    );
     const createDropRequest: ApiCreateDropRequest & {
       author: { external_id: string };
     } = {
       author: { external_id: authorProfileId },
+      collaborator_ids: newDrop.collaborator_ids,
       title: newDrop.title,
       parts: newDrop.parts,
       referenced_nfts: newDrop.referenced_nfts,
@@ -221,23 +239,60 @@ router.post(
       drop_type: newDrop.drop_type,
       signature: newDrop.signature,
       hide_link_preview: newDrop.hide_link_preview,
-      is_additional_action_promised: newDrop.is_additional_action_promised
+      is_additional_action_promised: newDrop.is_additional_action_promised,
+      client_drop_id: newDrop.client_drop_id
     };
-    const createdDrop = await dropCreationService.createDrop(
-      {
-        createDropRequest,
-        authorId: authorProfileId,
-        representativeId: authenticationContext.isAuthenticatedAsProxy()
-          ? authenticationContext.roleProfileId!
-          : authorProfileId,
-        hideLinkPreview: newDrop.hide_link_preview,
-        requestDailyActivityCredit: true
-      },
-      {
-        timer,
-        authenticationContext,
-        moderationRequestId: req.get('Idempotency-Key')
+    // Idempotent retry (waves R11-5). This runs after validation, so the id
+    // is Joi's normalized output, and before any signature check: a retry
+    // resends the same body, and its wallet nonce or device envelope was
+    // already used by the first attempt, so a signature check would refuse
+    // a retry that changes nothing. The answer only returns the author's own
+    // existing drop when wave and content match; nothing is written.
+    if (createDropRequest.client_drop_id) {
+      const replayedDrop = await dropCreationService.findClientDropReplay(
+        { createDropRequest, authorId: authorProfileId },
+        { timer, authenticationContext }
+      );
+      if (replayedDrop) {
+        return res.send(
+          deviceSignature === undefined
+            ? replayedDrop
+            : await withStoredAuthorSignature(replayedDrop, { timer })
+        );
       }
+    }
+    // A body changed after signing, including one that adds client_drop_id,
+    // no longer matches its signature and is refused here.
+    await assertDropIsCorrectlySigned(
+      apiRequest,
+      authorProfileId,
+      req.headers.host
+    );
+    const createdDrop = await deviceSignedWritesService.createDrop(
+      {
+        envelope: deviceSignature,
+        waveId: newDrop.wave_id,
+        replyToDropId: newDrop.reply_to?.drop_id,
+        body: apiRequest
+      },
+      () =>
+        dropCreationService.createDrop(
+          {
+            createDropRequest,
+            authorId: authorProfileId,
+            representativeId: authenticationContext.isAuthenticatedAsProxy()
+              ? authenticationContext.roleProfileId!
+              : authorProfileId,
+            hideLinkPreview: newDrop.hide_link_preview,
+            requestDailyActivityCredit: true
+          },
+          {
+            timer,
+            authenticationContext,
+            moderationRequestId: req.get('Idempotency-Key')
+          }
+        ),
+      { timer, authenticationContext }
     );
     try {
       await helpBotTriggerService.handleCreatedDrop(
@@ -254,7 +309,11 @@ router.post(
         error
       );
     }
-    res.send(createdDrop);
+    res.send(
+      deviceSignature === undefined
+        ? createdDrop
+        : await withStoredAuthorSignature(createdDrop, { timer })
+    );
   }
 );
 
@@ -265,13 +324,16 @@ router.post(
     req: Request<{ drop_id: string }, any, ApiUpdateDropRequest, any, any>,
     res: Response<ApiResponse<ApiDrop>>
   ) => {
+    const { body: apiRequest, envelope: deviceSignature } =
+      stripDeviceSignature(req.body);
+    req.body = apiRequest;
     const timer = Timer.getFromRequest(req);
     const authenticationContext = await getAuthenticationContext(req, timer);
     if (!authenticationContext.isUserFullyAuthenticated()) {
       throw new ForbiddenException(`Create a profile before updating a drop`);
     }
+    assertProxyMayEditDrops(authenticationContext);
     const dropId = req.params.drop_id;
-    const apiRequest = req.body;
     const updateRequest: ApiUpdateDropRequest = getValidatedByJoiOrThrow(
       apiRequest,
       UpdateDropSchema
@@ -296,19 +358,37 @@ router.post(
       authorId,
       req.headers.host
     );
-    const updatedDrop = await dropCreationService.updateDrop(
+    const ctx = { timer, authenticationContext };
+    const { drop, changed } = await deviceSignedWritesService.mutateDrop(
       {
-        dropId: dropId,
-        request: updateRequest,
-        authorId: authorId,
-        representativeId: authenticationContext.getLoggedInUsersProfileId()!
+        envelope: deviceSignature,
+        kind: DeviceEventKind.EDIT,
+        dropId,
+        waveId,
+        body: apiRequest
       },
-      {
-        timer,
-        authenticationContext,
-        moderationRequestId: req.get('Idempotency-Key')
-      }
+      () =>
+        dropCreationService.updateDrop(
+          {
+            dropId: dropId,
+            request: updateRequest,
+            authorId: authorId,
+            representativeId: authenticationContext.getLoggedInUsersProfileId()!
+          },
+          {
+            ...ctx,
+            moderationRequestId: req.get('Idempotency-Key')
+          }
+        ),
+      ctx
     );
+    const updatedDrop =
+      deviceSignature === undefined
+        ? drop
+        : await withStoredAuthorSignature(drop, ctx);
+    if (changed) {
+      await wsListenersNotifier.notifyAboutDropUpdate(updatedDrop, ctx);
+    }
     res.send(updatedDrop);
   }
 );
@@ -320,16 +400,29 @@ router.delete(
     req: Request<{ drop_id: string }, any, any, any, any>,
     res: Response<ApiResponse<any>>
   ) => {
+    const { body, envelope: deviceSignature } = stripDeviceSignature(req.body);
+    req.body = body;
     const timer = Timer.getFromRequest(req);
     const authenticationContext = await getAuthenticationContext(req, timer);
-    await dropCreationService.deleteDropById(
+    const dropId = req.params.drop_id;
+    await deviceSignedWritesService.mutateDrop(
       {
-        id: req.params.drop_id
+        envelope: deviceSignature,
+        kind: DeviceEventKind.TOMBSTONE,
+        dropId,
+        body: null
       },
-      {
-        timer,
-        authenticationContext
-      }
+      () =>
+        dropCreationService.deleteDropById(
+          {
+            id: dropId
+          },
+          {
+            timer,
+            authenticationContext
+          }
+        ),
+      { timer, authenticationContext }
     );
     res.send({});
   }
@@ -586,8 +679,10 @@ router.post(
     >,
     res: Response<ApiResponse<ApiDrop>>
   ) => {
+    const { body, envelope: deviceSignature } = stripDeviceSignature(req.body);
+    req.body = body;
     const { reaction } = getValidatedByJoiOrThrow(
-      req.body,
+      body,
       ApiAddReactionToDropRequestSchema
     );
 
@@ -610,10 +705,19 @@ router.post(
       );
     }
 
-    const drop = await reactionsService.addReaction(
-      req.params.drop_id,
-      profileId,
-      reaction,
+    const dropId = req.params.drop_id;
+    const drop = await deviceSignedWritesService.mutateDrop(
+      {
+        envelope: deviceSignature,
+        kind: DeviceEventKind.REACT,
+        dropId,
+        body: { on: true, reaction }
+      },
+      () =>
+        reactionsService.addReaction(dropId, profileId, reaction, {
+          timer,
+          authenticationContext
+        }),
       { timer, authenticationContext }
     );
 
@@ -628,6 +732,8 @@ router.delete(
     req: Request<{ drop_id: string }, any, any, any, any>,
     res: Response<ApiResponse<ApiDrop>>
   ) => {
+    const { body, envelope: deviceSignature } = stripDeviceSignature(req.body);
+    req.body = body;
     const timer = Timer.getFromRequest(req);
     const authenticationContext = await getAuthenticationContext(req, timer);
     const profileId = authenticationContext.getActingAsId();
@@ -647,9 +753,19 @@ router.delete(
       );
     }
 
-    const drop = await reactionsService.removeReaction(
-      req.params.drop_id,
-      profileId,
+    const dropId = req.params.drop_id;
+    const drop = await deviceSignedWritesService.mutateDrop(
+      {
+        envelope: deviceSignature,
+        kind: DeviceEventKind.REACT,
+        dropId,
+        body: { on: false }
+      },
+      () =>
+        reactionsService.removeReaction(dropId, profileId, {
+          timer,
+          authenticationContext
+        }),
       { timer, authenticationContext }
     );
 
@@ -680,17 +796,15 @@ router.post(
     const drop = drops[0];
     const waveId = drop.wave_id;
     const newTimestamp = drop.created_at - 1;
-    const wave = await wavesApiDb.findById(waveId, undefined, DbPoolName.WRITE);
-    if (wave?.is_direct_message) {
-      const groupsUserIsEligibleFor =
-        await userGroupsService.getGroupsUserIsEligibleFor(identityId, timer);
-      await assertWaveAndParentVisibleOrThrow({
-        wave,
-        groupsUserIsEligibleFor,
-        message: `Wave ${waveId} not found.`,
-        wavesApiDb,
-        ctx: { timer, authenticationContext }
-      });
+    const { wave } = await assertWaveAndParentVisibleToProfileOrThrow({
+      wave: await wavesApiDb.findById(waveId, undefined, DbPoolName.WRITE),
+      profileId: identityId,
+      userGroupsService,
+      message: `Wave ${waveId} not found.`,
+      wavesApiDb,
+      ctx: { timer, authenticationContext }
+    });
+    if (wave.is_direct_message) {
       await wavesApiDb.setDirectMessageUnreadFromSerial(
         {
           waveId,
@@ -867,33 +981,37 @@ export async function prepLatestDropsSearchQuery(
       ids?: string;
       serial_nos?: string;
       contains_media?: string;
+      public_only?: string;
     },
     any
   >
 ) {
   const limit = numbers.parseIntOrNull(req.query.limit) ?? 10;
-  const wave_id = req.query.wave_id ?? null;
-  const curation_id = req.query.curation_id ?? null;
-  const curation_name = req.query.curation_name?.trim() || null;
-  const group_id = req.query.group_id ?? null;
+  const wave_id = optionalQueryString(req.query, 'wave_id') ?? null;
+  const curation_id = optionalQueryString(req.query, 'curation_id') ?? null;
+  const curation_name =
+    optionalQueryString(req.query, 'curation_name')?.trim() || null;
+  const group_id = optionalQueryString(req.query, 'group_id') ?? null;
   const include_replies = req.query.include_replies === 'true';
-  const drop_type_str = (req.query.drop_type as string) ?? null;
+  const drop_type_str = optionalQueryString(req.query, 'drop_type');
   const drop_type_enum = enums.resolve(ApiDropType, drop_type_str) ?? null;
-  const author_id = req.query.author
+  const author = optionalQueryString(req.query, 'author');
+  const author_id = author
     ? await identityFetcher.getProfileIdByIdentityKeyOrThrow(
-        { identityKey: req.query.author },
+        { identityKey: author },
         { timer: Timer.getFromRequest(req) }
       )
     : null;
-  const ids = req.query.ids
-    ? req.query.ids
+  const idsQuery = optionalQueryString(req.query, 'ids');
+  const ids = idsQuery
+    ? idsQuery
         .split(',')
         .map((id) => id.trim())
         .filter((id) => id.length > 0)
     : null;
-  const { serial_nos } = getValidatedByJoiOrThrow(
-    { serial_nos: req.query.serial_nos },
-    LatestDropsSerialNosQuerySchema
+  const { serial_nos, public_only } = getValidatedByJoiOrThrow(
+    { serial_nos: req.query.serial_nos, public_only: req.query.public_only },
+    LatestDropsSearchQuerySchema
   );
   const contains_media = req.query.contains_media === 'true';
   return {
@@ -907,7 +1025,8 @@ export async function prepLatestDropsSearchQuery(
     drop_type: drop_type_enum,
     ids,
     serial_nos,
-    contains_media
+    contains_media,
+    public_only
   };
 }
 

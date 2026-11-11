@@ -8,8 +8,10 @@ import {
 import { Logger } from '@/logging';
 import { CONSOLIDATIONS_LIMIT } from '@/constants';
 import {
+  HELP_BOT_BASE_URL,
   HELP_BOT_INDEX_CACHE_TTL_MS,
   HELP_BOT_INDEX_FETCH_TIMEOUT_MS,
+  HELP_BOT_INDEX_MAX_BYTES,
   HELP_BOT_INDEX_URL
 } from './help-bot.config';
 
@@ -353,14 +355,73 @@ export class HelpBotKnowledgeUnavailableError extends Error {
   }
 }
 
-async function fetchHelpIndexWithTimeout(
+export class HelpBotIndexTooLargeError extends Error {
+  constructor(maxBytes: number) {
+    super(`Frontend help index exceeds ${maxBytes} bytes`);
+    this.name = 'HelpBotIndexTooLargeError';
+    Object.setPrototypeOf(this, HelpBotIndexTooLargeError.prototype);
+  }
+}
+
+async function readBodyWithLimit(
+  response: Response,
+  maxBytes: number
+): Promise<string> {
+  const declaredLength = Number(response.headers.get('content-length'));
+  if (Number.isFinite(declaredLength) && declaredLength > maxBytes) {
+    throw new HelpBotIndexTooLargeError(maxBytes);
+  }
+  if (!response.body) {
+    return '';
+  }
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let totalBytes = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) {
+      break;
+    }
+    totalBytes += value.byteLength;
+    if (totalBytes > maxBytes) {
+      await reader.cancel().catch(() => undefined);
+      throw new HelpBotIndexTooLargeError(maxBytes);
+    }
+    chunks.push(value);
+  }
+  return Buffer.concat(chunks).toString('utf8');
+}
+
+/**
+ * The timeout covers the whole request, including reading the body, and the
+ * body is read with a byte cap so a slow or oversized index cannot stall or
+ * exhaust the worker.
+ */
+export async function fetchHelpIndexWithTimeout(
   url: string,
-  timeoutMs: number
+  timeoutMs: number,
+  maxBytes: number = HELP_BOT_INDEX_MAX_BYTES,
+  fetchImpl: typeof fetch = fetch
 ): Promise<HelpBotIndexResponse> {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  let timeout: NodeJS.Timeout | undefined;
+  const timedOut = new Promise<never>((_, reject) => {
+    timeout = setTimeout(() => {
+      controller.abort();
+      reject(new Error(`Frontend help index fetch exceeded ${timeoutMs}ms`));
+    }, timeoutMs);
+  });
+  const load = async (): Promise<HelpBotIndexResponse> => {
+    const response = await fetchImpl(url, { signal: controller.signal });
+    const body = response.ok ? await readBodyWithLimit(response, maxBytes) : '';
+    return {
+      ok: response.ok,
+      status: response.status,
+      text: async () => body
+    };
+  };
   try {
-    return await fetch(url, { signal: controller.signal });
+    return await Promise.race([load(), timedOut]);
   } finally {
     clearTimeout(timeout);
   }
@@ -388,8 +449,40 @@ function readBoolean(value: unknown): boolean | null {
   return typeof value === 'boolean' ? value : null;
 }
 
+const HELP_INDEX_LINK_ORIGINS: readonly string[] = Array.from(
+  new Set(['https://6529.io', new URL(HELP_BOT_BASE_URL).origin])
+);
+
+/**
+ * Help index paths become reply links, so they must be root-relative paths
+ * or https URLs on the 6529.io origin (or the environment base URL origin).
+ */
+export function isAllowedHelpIndexPath(path: string): boolean {
+  if (path.startsWith('/')) {
+    return !path.startsWith('//') && !path.includes('\\');
+  }
+  try {
+    const url = new URL(path);
+    return (
+      url.protocol === 'https:' &&
+      !url.username &&
+      !url.password &&
+      HELP_INDEX_LINK_ORIGINS.includes(url.origin)
+    );
+  } catch {
+    return false;
+  }
+}
+
 function readCanonicalPath(raw: Record<string, unknown>): string | null {
-  return readString(raw.canonicalPath) ?? readString(raw.canonical_path);
+  const path = readString(raw.canonicalPath) ?? readString(raw.canonical_path);
+  return path && isAllowedHelpIndexPath(path) ? path : null;
+}
+
+function readRelatedPaths(raw: Record<string, unknown>): string[] {
+  return readStringArray(raw.relatedPaths)
+    .concat(readStringArray(raw.related_paths))
+    .filter(isAllowedHelpIndexPath);
 }
 
 function readLinkLabel(
@@ -460,9 +553,7 @@ function normalizeRecord(value: unknown): HelpBotKnowledgeRecord | null {
       raw.answer_links === undefined
         ? undefined
         : readAnswerLinks(raw.answer_links),
-    relatedPaths: readStringArray(raw.relatedPaths).concat(
-      readStringArray(raw.related_paths)
-    ),
+    relatedPaths: readRelatedPaths(raw),
     tags: readStringArray(raw.tags),
     sourceRefs: readSourceRefs(raw)
   };
@@ -1206,7 +1297,11 @@ export class FrontendHelpBotKnowledgeSource implements HelpBotKnowledgeSource {
       if (!response.ok) {
         throw new Error(`Frontend help index returned HTTP ${response.status}`);
       }
-      const index = normalizeIndex(JSON.parse(await response.text()));
+      const body = await response.text();
+      if (Buffer.byteLength(body, 'utf8') > HELP_BOT_INDEX_MAX_BYTES) {
+        throw new HelpBotIndexTooLargeError(HELP_BOT_INDEX_MAX_BYTES);
+      }
+      const index = normalizeIndex(JSON.parse(body));
       if (!index) {
         throw new Error('Frontend help index is empty or invalid');
       }

@@ -7,11 +7,14 @@ import { ApiWaveType } from '@/api/generated/models/ApiWaveType';
 import { ApiUpdateWaveRequest } from '@/api/generated/models/ApiUpdateWaveRequest';
 import { getValidatedByJoiOrThrow } from '@/api/validation';
 import { UpdateWaveSchema, WaveSchema } from './wave-write.schemas';
+import { legacyWaveHubPatch } from './wave-hub.schemas';
 import {
+  COMPETITIONS_TABLE,
   DROPS_TABLE,
   MEMES_CONTRACT,
   WAVES_ARCHIVE_TABLE,
   WAVES_TABLE,
+  WAVE_METRICS_TABLE,
   WAVE_VOTING_CREDIT_NFTS_TABLE
 } from '@/constants';
 import { AuthenticationContext } from '@/auth-context';
@@ -23,17 +26,13 @@ import {
 import { DropsDb } from '@/drops/drops.db';
 import * as Entities from '@/entities/entities';
 import { UserGroupEntity } from '@/entities/IUserGroup';
-import { WaveCreditType, WaveEntity } from '@/entities/IWave';
+import { WaveCreditType, WaveEntity, WaveType } from '@/entities/IWave';
 import { RequestContext } from '@/request.context';
 import { sqlExecutor } from '@/sql-executor';
 import { resetTestDatabase } from '@/tests/_setup/testDatabase';
 import { seedNativeOriginalPrimaryFixture } from '@/tests/fixtures/native-competition.fixture';
 import { Timer } from '@/time';
 import { DataSource } from 'typeorm';
-import {
-  prepareWaveHubConfiguration,
-  finalizeWaveHubConfigurationCapture
-} from '@/waves/wave-hub-configuration-preparation';
 import { WaveApiService } from './wave.api.service';
 import { WavesApiDb } from './waves.api.db';
 import { WavesMappers } from './waves.mappers';
@@ -45,6 +44,20 @@ jest.mock('@/api/waves/wave-score.service', () => ({
   WaveScoreDirtyRefreshReason: { DROP_CHANGED: 'DROP_CHANGED' }
 }));
 jest.mock('@/api/waves/wave-unread-cache', () => ({
+  // After-commit bumps from the DB chokepoints (drop insert/delete, reader
+  // metrics, wave insert, blocks and mutes).
+  invalidateWaveUnreadCacheForWaveAfterCommit: jest
+    .fn()
+    .mockResolvedValue(undefined),
+  invalidateWaveUnreadCacheForWavesAfterCommit: jest
+    .fn()
+    .mockResolvedValue(undefined),
+  invalidateWaveUnreadCacheForReaderWaveAfterCommit: jest
+    .fn()
+    .mockResolvedValue(undefined),
+  invalidateWaveUnreadCacheForReaderAfterCommit: jest
+    .fn()
+    .mockResolvedValue(undefined),
   invalidateWaveUnreadCacheForWave: jest.fn().mockResolvedValue(undefined)
 }));
 jest.mock('@/api/api-helpers', () => ({
@@ -138,6 +151,9 @@ function serviceHarness() {
     'dm-members'
   ];
   const groups = {
+    getApiGroupsVisibleToRequesterByIds: jest.fn(async (ids: string[]) =>
+      ids.map((id) => ({ id }))
+    ),
     getApiGroupsByIds: jest.fn(async (ids: string[]) =>
       ids.map((id) => ({ id }))
     ),
@@ -262,7 +278,7 @@ function serviceHarness() {
     authenticationContext: AuthenticationContext.fromProfileId('creator'),
     timer: new Timer('native-hub-configuration')
   };
-  return { service, ctx, groupIds };
+  return { service, ctx, groupIds, groups };
 }
 
 function assertDisposableWaveSchema() {
@@ -300,14 +316,11 @@ async function restoreDisposableSchema() {
       'select COLUMN_NAME as name from information_schema.COLUMNS where TABLE_SCHEMA=database() and TABLE_NAME=:table',
       { table }
     );
-    expect(restored.map((column) => column.name)).toEqual(
-      expect.arrayContaining(
-        RETIRED_WAVE_COMPETITION_COLUMNS.filter(
-          (column) =>
-            table !== WAVES_ARCHIVE_TABLE || column !== 'next_decision_time'
-        )
-      )
-    );
+    expect(
+      restored
+        .map(({ name }) => name)
+        .filter((name) => RETIRED_WAVE_COMPETITION_COLUMNS.includes(name))
+    ).toEqual([]);
   }
   await installLegacyCompetitionGetFacade(sqlExecutor);
 }
@@ -315,14 +328,12 @@ async function restoreDisposableSchema() {
 async function removeDisposableWaveCompetitionColumns() {
   assertDisposableWaveSchema();
   for (const table of [WAVES_TABLE, WAVES_ARCHIVE_TABLE])
-    await sqlExecutor.execute(
-      `alter table ${table} ${RETIRED_WAVE_COMPETITION_COLUMNS.filter(
-        (column) =>
-          table !== WAVES_ARCHIVE_TABLE || column !== 'next_decision_time'
+    expect(
+      await sqlExecutor.execute(
+        'select COLUMN_NAME as name from information_schema.COLUMNS where TABLE_SCHEMA=database() and TABLE_NAME=:table and COLUMN_NAME in (:columns)',
+        { table, columns: RETIRED_WAVE_COMPETITION_COLUMNS }
       )
-        .map((column) => `drop column \`${column}\``)
-        .join(',')}`
-    );
+    ).toEqual([]);
 }
 
 describe('live native shared hub configuration', () => {
@@ -356,87 +367,44 @@ describe('live native shared hub configuration', () => {
     }
   );
 
-  it('reads and explicitly clears an existing Chat strategy after its obsolete columns and captures are absent', async () => {
-    await sqlExecutor.execute(
-      `create or replace view ${legacyGetView(WAVES_TABLE)} as select * from ${WAVES_TABLE}`
-    );
-    try {
-      await prepareWaveHubConfiguration(sqlExecutor);
-      const { service, ctx, groupIds } = serviceHarness();
-      const request = chatRequest();
-      const prepared = await service.prepareWaveCreation(request, ctx);
-      const created = await service.createWave(
-        request,
-        false,
-        ctx,
-        [],
-        prepared
-      );
-      const strategy = {
-        first_decision_time: 1712345678999,
-        subsequent_decisions: [3600000],
-        is_rolling: true
-      };
-      const overlays = await sqlExecutor.execute<{ name: string }>(
-        "select TRIGGER_NAME as name from information_schema.TRIGGERS where TRIGGER_SCHEMA=database() and TRIGGER_NAME like 'temporary_wave_hub_configuration_strategy_%'"
-      );
-      for (const overlay of overlays) {
-        expect(overlay.name).toMatch(
-          /^temporary_wave_hub_configuration_strategy_(wave|archive)_(insert|update)$/
-        );
-        await sqlExecutor.execute(`drop trigger \`${overlay.name}\``);
-      }
-      for (const table of [WAVES_TABLE, WAVES_ARCHIVE_TABLE])
-        await sqlExecutor.execute(
-          `update ${table} set decisions_strategy=cast(:strategy as json),
-        hub_voting_config=json_remove(hub_voting_config,'$.decision_strategy') where id=:id`,
-          { id: created.id, strategy: JSON.stringify(strategy) }
-        );
+  it('reads and explicitly clears retained Chat strategy metadata without obsolete columns or captures', async () => {
+    const { service, ctx, groupIds } = serviceHarness();
+    const request = chatRequest();
+    const prepared = await service.prepareWaveCreation(request, ctx);
+    const created = await service.createWave(request, false, ctx, [], prepared);
+    const strategy = {
+      first_decision_time: 1712345678999,
+      subsequent_decisions: [3600000],
+      is_rolling: true
+    };
+    for (const table of [WAVES_TABLE, WAVES_ARCHIVE_TABLE])
       await sqlExecutor.execute(
-        `create or replace view ${legacyGetView(WAVES_TABLE)} as select * from ${WAVES_TABLE}`
+        `update ${table} set hub_voting_config=json_set(hub_voting_config,'$.decision_strategy',cast(:strategy as json)) where id=:id`,
+        { id: created.id, strategy: JSON.stringify(strategy) }
       );
-      expect(
-        (await service.findWaveByIdOrThrow(created.id, groupIds, ctx)).wave
-          .decisions_strategy
-      ).toEqual(strategy);
-      await prepareWaveHubConfiguration(sqlExecutor);
-      await installLegacyCompetitionGetFacade(sqlExecutor);
-      expect(await finalizeWaveHubConfigurationCapture(sqlExecutor)).toEqual({
-        disabled_triggers: 14
-      });
-      await removeDisposableWaveCompetitionColumns();
-      expect(
-        (await service.findWaveByIdOrThrow(created.id, groupIds, ctx)).wave
-          .decisions_strategy
-      ).toEqual(strategy);
-      const edited = await service.updateWave(
-        created.id,
-        validateUpdate(request),
-        ctx
-      );
-      expect(edited.wave.decisions_strategy).toBeNull();
-      expect(
-        (await service.findWaveByIdOrThrow(created.id, groupIds, ctx)).wave
-          .decisions_strategy
-      ).toBeNull();
-      const archives = await sqlExecutor.execute<{ policy: string }>(
-        `select hub_voting_config as policy from ${WAVES_ARCHIVE_TABLE} where id=:id order by archive_id`,
-        { id: created.id }
-      );
-      expect(
-        archives.map((row) => {
-          expect(row.policy).not.toBeNull();
-          return JSON.parse(row.policy).decision_strategy;
-        })
-      ).toEqual([strategy, null]);
-    } finally {
-      try {
-        await installLegacyCompetitionGetFacade(sqlExecutor);
-        await finalizeWaveHubConfigurationCapture(sqlExecutor);
-      } finally {
-        await restoreDisposableSchema();
-      }
-    }
+    await removeDisposableWaveCompetitionColumns();
+    expect(
+      (await service.findWaveByIdOrThrow(created.id, groupIds, ctx)).wave
+        .decisions_strategy
+    ).toEqual(strategy);
+    const edited = await service.updateWave(
+      created.id,
+      validateUpdate(request),
+      ctx
+    );
+    expect(edited.wave.decisions_strategy).toBeNull();
+    expect(
+      (await service.findWaveByIdOrThrow(created.id, groupIds, ctx)).wave
+        .decisions_strategy
+    ).toBeNull();
+    const archives = await sqlExecutor.execute<{ policy: string }>(
+      `select hub_voting_config as policy from ${WAVES_ARCHIVE_TABLE} where id=:id order by archive_id`,
+      { id: created.id }
+    );
+    expect(
+      archives.map(({ policy }) => JSON.parse(policy).decision_strategy)
+    ).toEqual([strategy, null]);
+    await restoreDisposableSchema();
   });
 
   it('retains schema-validated CHAT credit, dates and independent private roles', async () => {
@@ -584,6 +552,207 @@ describe('live native shared hub configuration', () => {
     ]);
   });
 
+  it('edits shared metadata and chat without changing an identity competition', async () => {
+    const request = chatRequest();
+    const entity = await mapper.createWaveToNewWaveEntity({
+      id: 'identity-wave-edit',
+      serial_no: null,
+      created_at: 100,
+      updated_at: null,
+      request,
+      created_by: 'creator',
+      descriptionDropId: 'identity-description',
+      nextDecisionTime: null,
+      isDirectMessage: false
+    });
+    await repo.executeNativeQueriesInTransaction(async (connection) => {
+      await repo.insertWave(entity, { connection });
+    });
+    const original = await mapper.createWaveToNewWaveEntity({
+      id: entity.id,
+      serial_no: 1,
+      created_at: 100,
+      updated_at: null,
+      request: {
+        ...request,
+        name: 'Original competition title',
+        participation: {
+          ...request.participation,
+          submission_strategy: {
+            type: 'IDENTITY',
+            config: {
+              duplicates: 'NEVER_ALLOW',
+              who_can_be_submitted: 'EVERYONE'
+            }
+          }
+        },
+        wave: { ...request.wave, type: ApiWaveType.Rank }
+      } as ApiCreateNewWave,
+      created_by: 'creator',
+      descriptionDropId: entity.description_drop_id,
+      nextDecisionTime: null,
+      isDirectMessage: false
+    });
+    await seedNativeOriginalPrimaryFixture({ ...original, serial_no: 1 });
+    await sqlExecutor.bulkInsert(
+      DROPS_TABLE,
+      [
+        {
+          id: 'surviving-shared-drop',
+          wave_id: entity.id,
+          author_id: 'creator',
+          created_at: 100,
+          drop_type: 'CHAT',
+          parts_count: 1
+        }
+      ],
+      ['id', 'wave_id', 'author_id', 'created_at', 'drop_type', 'parts_count']
+    );
+    await sqlExecutor.bulkInsert(
+      WAVE_METRICS_TABLE,
+      [{ wave_id: entity.id, drops_count: 1 }],
+      ['wave_id', 'drops_count']
+    );
+    const dropsBefore = await sqlExecutor.execute(
+      `select * from ${DROPS_TABLE} where wave_id=:id`,
+      { id: entity.id }
+    );
+    const metricsBefore = await sqlExecutor.execute(
+      `select * from ${WAVE_METRICS_TABLE} where wave_id=:id`,
+      { id: entity.id }
+    );
+    const competitionsBefore = await sqlExecutor.execute(
+      `select * from ${COMPETITIONS_TABLE} where wave_id=:id`,
+      { id: entity.id }
+    );
+    const sharedBefore = await sqlExecutor.oneOrNull(
+      `select hub_participation_config,hub_voting_config from ${WAVES_TABLE} where id=:id`,
+      { id: entity.id }
+    );
+    const { service, ctx } = serviceHarness();
+    const edited = await service.updateWaveHub(
+      entity.id,
+      {
+        name: 'Renamed shared wave',
+        picture: 'https://d3lqz0a4bldqgf.cloudfront.net/new-picture.png',
+        chat: { links_disabled: true, slow_mode_cooldown_ms: 1000 }
+      },
+      ctx
+    );
+    expect(edited.name).toBe('Renamed shared wave');
+    expect(edited.chat.links_disabled).toBe(true);
+    expect(edited.chat.slow_mode_cooldown_ms).toBe(1000);
+    expect(
+      await sqlExecutor.execute(
+        `select * from ${COMPETITIONS_TABLE} where wave_id=:id`,
+        { id: entity.id }
+      )
+    ).toEqual(competitionsBefore);
+    expect(
+      await sqlExecutor.oneOrNull(
+        `select hub_participation_config,hub_voting_config from ${WAVES_TABLE} where id=:id`,
+        { id: entity.id }
+      )
+    ).toEqual(sharedBefore);
+    const reread = await repo.findWaveHubById(entity.id, false, ctx);
+    expect(reread?.name).toBe('Renamed shared wave');
+    expect((await repo.findWaveById(entity.id))?.name).toBe(
+      'Renamed shared wave'
+    );
+    await service.updateWaveHub(
+      entity.id,
+      { picture: null, chat: { slow_mode_cooldown_ms: null } },
+      ctx
+    );
+    const cleared = await repo.findWaveHubById(entity.id, false, ctx);
+    expect(cleared?.picture).toBeNull();
+    expect(cleared?.chat_slow_mode_cooldown_ms).toBeNull();
+    expect(cleared?.chat_links_disabled).toBeTruthy();
+    expect(cleared?.name).toBe('Renamed shared wave');
+    expect(
+      await sqlExecutor.execute(
+        `select * from ${DROPS_TABLE} where wave_id=:id`,
+        { id: entity.id }
+      )
+    ).toEqual(dropsBefore);
+    expect(
+      await sqlExecutor.execute(
+        `select * from ${WAVE_METRICS_TABLE} where wave_id=:id`,
+        { id: entity.id }
+      )
+    ).toEqual(metricsBefore);
+  });
+
+  it('validates legacy access edits and invalidates old and new groups without editing competitions', async () => {
+    const request = chatRequest();
+    const entity = await mapper.createWaveToNewWaveEntity({
+      id: 'legacy-access-edit',
+      serial_no: null,
+      created_at: 100,
+      updated_at: null,
+      request,
+      created_by: 'creator',
+      descriptionDropId: 'legacy-access-description',
+      nextDecisionTime: null,
+      isDirectMessage: false
+    });
+    await repo.executeNativeQueriesInTransaction(async (connection) =>
+      repo.insertWave(entity, { connection })
+    );
+    await seedNativeOriginalPrimaryFixture({
+      ...entity,
+      type: WaveType.RANK,
+      serial_no: 1
+    });
+    const competitionsBefore = await sqlExecutor.execute(
+      `select * from ${COMPETITIONS_TABLE} where wave_id=:id`,
+      { id: entity.id }
+    );
+    const { service, ctx, groups } = serviceHarness();
+    groups.findGroupIdsWithMembersOutsideContainingGroup.mockResolvedValueOnce([
+      'participants'
+    ]);
+    await expect(
+      service.updateWaveHub(
+        entity.id,
+        { chat: { scope: { group_id: 'participants' } } },
+        ctx
+      )
+    ).rejects.toThrow('group members must also belong to the View group');
+    expect(
+      (await repo.findWaveHubById(entity.id, false, ctx))?.chat_group_id
+    ).toBe('chatters');
+    const patch = legacyWaveHubPatch({
+      ...request,
+      visibility: { scope: { group_id: null } },
+      chat: {
+        ...request.chat,
+        enabled: false,
+        scope: { group_id: 'participants' }
+      },
+      wave: { ...request.wave, admin_group: { group_id: 'voters' } }
+    });
+    const edited = await service.updateWaveHub(entity.id, patch, ctx);
+    expect(edited.chat.enabled).toBe(false);
+    expect(edited.wave.admin_group.group?.id).toBe('voters');
+    expect(groups.onWaveRelatedGroupsChanged).toHaveBeenCalledWith(
+      expect.arrayContaining([
+        'viewers',
+        'chatters',
+        'admins',
+        'participants',
+        'voters'
+      ]),
+      ctx
+    );
+    expect(
+      await sqlExecutor.execute(
+        `select * from ${COMPETITIONS_TABLE} where wave_id=:id`,
+        { id: entity.id }
+      )
+    ).toEqual(competitionsBefore);
+  });
+
   it('keeps original competition settings authoritative without replacing the shared hub policy', async () => {
     const request = chatRequest();
     const entity = await mapper.createWaveToNewWaveEntity({
@@ -666,17 +835,13 @@ describe('live native shared hub configuration', () => {
       throw new Error('Physical absence requires the disposable Jest database');
     await installLegacyCompetitionGetFacade(sqlExecutor);
     try {
-      await sqlExecutor.execute(
-        `alter table ${WAVES_TABLE} ${RETIRED_WAVE_COMPETITION_COLUMNS.map((column) => `drop column \`${column}\``).join(',')}`
-      );
-      await sqlExecutor.execute(
-        `alter table ${WAVES_ARCHIVE_TABLE} ${RETIRED_WAVE_COMPETITION_COLUMNS.filter(
-          (column) => column !== 'next_decision_time'
+      await removeDisposableWaveCompetitionColumns();
+      expect(
+        await sqlExecutor.execute(
+          'select TABLE_NAME from information_schema.TABLES where TABLE_SCHEMA=database() and TABLE_NAME=:table',
+          { table: WAVE_VOTING_CREDIT_NFTS_TABLE }
         )
-          .map((column) => `drop column \`${column}\``)
-          .join(',')}`
-      );
-      await sqlExecutor.execute(`drop table ${WAVE_VOTING_CREDIT_NFTS_TABLE}`);
+      ).toEqual([]);
       const { service, ctx, groupIds } = serviceHarness();
       const request = chatRequest();
       const prepared = await service.prepareWaveCreation(request, ctx);

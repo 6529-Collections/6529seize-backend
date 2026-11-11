@@ -94,7 +94,7 @@ export class DropBookmarksDb extends LazyDbAccessCompatibleService {
     const waveFilter = param.wave_id ? 'AND d.wave_id = :wave_id' : '';
     const visibilityFilter = `AND ${waveReadAccessSql('w', param.group_ids_user_is_eligible_for.length > 0, 'group_ids')}`;
 
-    const [data, countResult] = await Promise.all([
+    const [data, count] = await Promise.all([
       this.db.execute<{ drop_id: string }>(
         `
         SELECT b.drop_id
@@ -104,7 +104,7 @@ export class DropBookmarksDb extends LazyDbAccessCompatibleService {
         WHERE b.identity_id = :identity_id
         ${waveFilter}
         ${visibilityFilter}
-        ORDER BY b.bookmarked_at ${param.sort_direction}
+        ORDER BY b.bookmarked_at ${param.sort_direction}, b.drop_id ${param.sort_direction}
         LIMIT :limit OFFSET :offset
         `,
         {
@@ -116,29 +116,38 @@ export class DropBookmarksDb extends LazyDbAccessCompatibleService {
         },
         connection ? { wrappedConnection: connection } : undefined
       ),
-      this.db.execute<{ cnt: number }>(
-        `
-        SELECT COUNT(*) as cnt
-        FROM ${DROP_BOOKMARKS_TABLE} b
-        JOIN drops d ON d.id = b.drop_id
-        JOIN waves w ON w.id = d.wave_id
-        WHERE b.identity_id = :identity_id
-        ${waveFilter}
-        ${visibilityFilter}
-        `,
-        {
-          identity_id: param.identity_id,
-          wave_id: param.wave_id,
-          group_ids: param.group_ids_user_is_eligible_for
-        },
-        connection ? { wrappedConnection: connection } : undefined
-      )
+      this.countBookmarkedDropsForIdentity(param, connection)
     ]);
 
     return {
       drop_ids: data.map((r) => r.drop_id),
-      count: countResult[0].cnt
+      count
     };
+  }
+
+  async countBookmarkedDropsForIdentity(
+    param: {
+      identity_id: string;
+      wave_id: string | null;
+      group_ids_user_is_eligible_for: string[];
+    },
+    connection?: ConnectionWrapper<any>
+  ): Promise<number> {
+    const waveFilter = param.wave_id ? 'AND d.wave_id = :wave_id' : '';
+    const visibilityFilter = `AND ${waveReadAccessSql('w', param.group_ids_user_is_eligible_for.length > 0, 'group_ids')}`;
+    const rows = await this.db.execute<{ cnt: number }>(
+      `SELECT COUNT(*) as cnt FROM ${DROP_BOOKMARKS_TABLE} b
+       JOIN drops d ON d.id = b.drop_id
+       JOIN waves w ON w.id = d.wave_id
+       WHERE b.identity_id = :identity_id ${waveFilter} ${visibilityFilter}`,
+      {
+        identity_id: param.identity_id,
+        wave_id: param.wave_id,
+        group_ids: param.group_ids_user_is_eligible_for
+      },
+      connection ? { wrappedConnection: connection } : undefined
+    );
+    return rows[0].cnt;
   }
 
   async mergeOnProfileIdChange(

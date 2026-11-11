@@ -1,4 +1,4 @@
-import { Contract, JsonRpcProvider } from 'ethers';
+import { Contract, ensNormalize, JsonRpcProvider } from 'ethers';
 import { Logger } from '@/logging';
 import { getRpcProvider } from '@/rpc-provider';
 import { text } from '@/text';
@@ -30,6 +30,17 @@ const ENS_ERROR_CODES = new Set([
   'BAD_DATA'
 ]);
 
+export type EnsLookupResult =
+  | { status: 'resolved'; name: string | null }
+  | { status: 'unavailable' };
+
+const ENS_ABSENT_CATEGORIES = new Set([
+  'RESOLVER_NOT_FOUND',
+  'RESOLVER_NOT_CONTRACT',
+  'UNSUPPORTED_RESOLVER_PROFILE',
+  'REVERSE_ADDRESS_MISMATCH'
+]);
+
 function classifyEnsError(error: unknown): string {
   if (!error || typeof error !== 'object' || !('code' in error)) {
     return 'UNKNOWN';
@@ -49,10 +60,28 @@ function classifyEnsError(error: unknown): string {
     : 'UNKNOWN';
 }
 
+/**
+ * A reverse-resolved name is used only when it is already in ENS normalised
+ * form (ENSIP-15). Any other name, including one that normalises to a
+ * different string, is treated as no name.
+ */
+export function normalisedEnsNameOrNull(
+  name: string | null | undefined
+): string | null {
+  if (!name) {
+    return null;
+  }
+  try {
+    return ensNormalize(name) === name ? name : null;
+  } catch {
+    return null;
+  }
+}
+
 async function findEnsViaUniversalResolver(
   provider: JsonRpcProvider,
   address: string
-): Promise<string | null> {
+): Promise<EnsLookupResult> {
   const universalResolver = new Contract(
     ENS_UNIVERSAL_RESOLVER,
     ENS_UNIVERSAL_RESOLVER_ABI,
@@ -65,16 +94,19 @@ async function findEnsViaUniversalResolver(
       ENS_ETH_COIN_TYPE,
       { enableCcipRead: true }
     );
+    const name = normalisedEnsNameOrNull(primaryName);
     logger.info(
-      `[ENS_UNIVERSAL_RESOLVER] [OUTCOME=${primaryName ? 'hit' : 'miss'}]`
+      `[ENS_UNIVERSAL_RESOLVER] [OUTCOME=${name ? 'hit' : primaryName ? 'unnormalised' : 'miss'}]`
     );
-    return primaryName || null;
+    return { status: 'resolved', name };
   } catch (error: unknown) {
     // Stable outcomes can be counted without logging wallets or RPC credentials.
     logger.info(
       `[ENS_UNIVERSAL_RESOLVER] [OUTCOME=error] [CATEGORY=${classifyEnsError(error)}]`
     );
-    return null;
+    return ENS_ABSENT_CATEGORIES.has(classifyEnsError(error))
+      ? { status: 'resolved', name: null }
+      : { status: 'unavailable' };
   }
 }
 
@@ -84,7 +116,7 @@ async function lookupAddressWithProvider(
   address: string
 ): Promise<string | null> {
   try {
-    const ens = await provider.lookupAddress(address);
+    const ens = normalisedEnsNameOrNull(await provider.lookupAddress(address));
     if (ens) {
       logger.debug(
         `[ENS LOOKUP HIT] [PROVIDER ${providerName}] [ADDRESS ${address}] [ENS ${ens}]`
@@ -105,12 +137,23 @@ export async function lookupPrimaryEnsName(
   // Configuration errors fail explicitly. Lookup misses/errors retain the
   // Universal Resolver fallback, but both reads use the configured provider.
   const provider = getRpcProvider();
+  const result = await lookupPrimaryEnsNameResult(address, provider);
+  return result.status === 'resolved' ? result.name : null;
+}
+
+/** Refresh callers distinguish an authoritative absence from provider failure. */
+export async function lookupPrimaryEnsNameResult(
+  address: string,
+  provider: JsonRpcProvider
+): Promise<EnsLookupResult> {
   const ens = await lookupAddressWithProvider(
     provider,
     'ethereum-rpc',
     address
   );
-  return ens ?? (await findEnsViaUniversalResolver(provider, address));
+  return ens
+    ? { status: 'resolved', name: ens }
+    : await findEnsViaUniversalResolver(provider, address);
 }
 
 export async function findEnsForAddress(

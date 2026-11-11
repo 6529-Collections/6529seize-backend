@@ -9,6 +9,7 @@ import { identityFetcher } from '@/api/identities/identity.fetcher';
 import { dropCreationService } from '@/api/drops/drop-creation.api.service';
 import { dropSignatureVerifier } from '@/api/drops/drop-signature-verifier';
 import { ApiDropType } from '@/api/generated/models/ApiDropType';
+import { DropHasher } from '@/api/drops/drop-hasher';
 import { getRedisClient } from '@/redis';
 import fixture from '@/api/wallet-signatures/fixtures/memes-submission-v1.json';
 import {
@@ -192,6 +193,61 @@ describe('POST /drops EIP-712 integration with mocked persistence', () => {
       expect.any(Object)
     );
   });
+
+  it.each([
+    { collaboratorIds: undefined },
+    { collaboratorIds: [] },
+    { collaboratorIds: ['11111111-1111-4111-8111-111111111111'] },
+    {
+      collaboratorIds: [
+        '11111111-1111-4111-8111-111111111111',
+        '22222222-2222-4222-8222-222222222222'
+      ]
+    }
+  ])(
+    'preserves signed initial collaborator IDs $collaboratorIds through the create endpoint',
+    async ({ collaboratorIds }) => {
+      const drop = {
+        ...signedRequest(),
+        collaborator_ids: collaboratorIds,
+        drop_type: ApiDropType.Participatory
+      };
+      const typedData = {
+        ...fixture.typedData,
+        message: {
+          ...fixture.typedData.message,
+          Verification: {
+            ...fixture.typedData.message.Verification,
+            PayloadHash: `0x${new DropHasher().hash({
+              drop,
+              termsOfService: fixture.terms
+            })}`
+          }
+        }
+      };
+      const wallet = new ethers.Wallet(
+        '0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80'
+      );
+      drop.signature = await wallet.signTypedData(
+        typedData.domain,
+        {
+          MemeCardSubmission: typedData.types.MemeCardSubmission,
+          SubmissionVerification: typedData.types.SubmissionVerification
+        },
+        typedData.message
+      );
+      drop.signature_message = JSON.stringify(typedData);
+
+      const response = await post(drop);
+
+      expect(response.status).toBe(200);
+      expect(dropCreationService.createDrop).toHaveBeenCalledTimes(1);
+      const [{ createDropRequest }] = jest.mocked(
+        dropCreationService.createDrop
+      ).mock.calls[0];
+      expect(createDropRequest.collaborator_ids).toEqual(collaboratorIds);
+    }
+  );
 
   it('rejects a replay before a second create', async () => {
     expect((await post(signedRequest())).status).toBe(200);

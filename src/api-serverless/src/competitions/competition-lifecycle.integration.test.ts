@@ -13,6 +13,11 @@ import {
   COMPETITION_CONFIG_VERSIONS_TABLE,
   COMPETITION_OUTCOMES_TABLE,
   COMPETITION_VOTE_HISTORY_TABLE,
+  COMPETITION_LIFECYCLE_EVENTS_TABLE,
+  COMPETITION_DECISIONS_TABLE,
+  COMPETITION_DECISION_WINNERS_TABLE,
+  COMPETITION_OUTCOME_AWARDS_TABLE,
+  DROPS_TABLE,
   WAVES_METADATA_TABLE
 } from '@/constants';
 import { CompetitionCapability } from '@/entities/ICompetition';
@@ -29,6 +34,11 @@ import { competitionCapabilityService } from '@/competitions/competition-capabil
 import { CompetitionDraftSchema } from './competition-configuration';
 import { competitionLifecycleService as service } from './competition-lifecycle.service';
 import { listCompetitionVoteActivity } from './competition-vote-activity.service';
+import { nativeCompetitionRuntimeService } from '@/competitions/native-competition-runtime.service';
+import { assertCompetitionOpen } from './competition-command-access';
+import { NativeCompetitionReader } from '@/competitions/native-competition.reader';
+import { competitionRepository } from '@/competitions/competition.repository';
+import { competitionEventRepository } from '@/competitions/competition-event.repository';
 
 const actor = 'competition-admin';
 const wave = aWave(
@@ -127,6 +137,106 @@ describeWithSeed(
     afterEach(() => {
       jest.restoreAllMocks();
       delete process.env.NATIVE_COMPETITION_CAPABILITY_OPERATORS;
+    });
+
+    it('defaults to public submissions and preserves anonymous configuration through publication and cloning', async () => {
+      const publicDraft = await draft();
+      expect(publicDraft.participation.anonymous_submissions).toBe(false);
+      const anonymousConfig = config();
+      anonymousConfig.participation.anonymous_submissions = true;
+      const anonymousDraft = await service.create(
+        wave.id,
+        { idempotency_key: randomUUID(), config: anonymousConfig },
+        ctx
+      );
+      expect(anonymousDraft.participation.anonymous_submissions).toBe(true);
+      const published = await service.action(
+        wave.id,
+        anonymousDraft.id,
+        'publish',
+        { idempotency_key: randomUUID(), config_version: 1 },
+        ctx
+      );
+      const changingPrivacy = {
+        ...anonymousConfig,
+        participation: {
+          ...anonymousConfig.participation,
+          anonymous_submissions: false
+        }
+      };
+      await expect(
+        service.update(
+          wave.id,
+          published.id,
+          {
+            idempotency_key: randomUUID(),
+            config_version: published.config_version,
+            config: changingPrivacy
+          },
+          ctx
+        )
+      ).rejects.toThrow('anonymity cannot change after publication');
+      await completeSchedule(published.id);
+      const clone = await service.action(
+        wave.id,
+        published.id,
+        'clone',
+        {
+          idempotency_key: randomUUID(),
+          config_version: published.config_version
+        },
+        ctx
+      );
+      expect(clone.participation.anonymous_submissions).toBe(true);
+      const updated = await service.update(
+        wave.id,
+        clone.id,
+        {
+          idempotency_key: randomUUID(),
+          config_version: clone.config_version,
+          config: changingPrivacy
+        },
+        ctx
+      );
+      expect(updated.participation.anonymous_submissions).toBe(false);
+    });
+
+    it('caps concurrently published competitions per wave and frees a slot when one is archived', async () => {
+      process.env.COMPETITION_MAX_PUBLISHED_PER_WAVE = '2';
+      try {
+        const drafts = [await draft(), await draft(), await draft()];
+        const publish = (competition: { id: string; config_version: number }) =>
+          service.action(
+            wave.id,
+            competition.id,
+            'publish',
+            {
+              idempotency_key: randomUUID(),
+              config_version: competition.config_version
+            },
+            ctx
+          );
+        const first = await publish(drafts[0]);
+        await publish(drafts[1]);
+        await expect(publish(drafts[2])).rejects.toMatchObject({
+          code: 'PUBLISHED_COMPETITION_LIMIT'
+        });
+        await service.action(
+          wave.id,
+          first.id,
+          'archive',
+          {
+            idempotency_key: randomUUID(),
+            config_version: first.config_version
+          },
+          ctx
+        );
+        await expect(publish(drafts[2])).resolves.toMatchObject({
+          id: drafts[2].id
+        });
+      } finally {
+        delete process.env.COMPETITION_MAX_PUBLISHED_PER_WAVE;
+      }
     });
 
     it('scopes vote activity to visible entries in the chosen competition and masks drafts and mismatched parents', async () => {
@@ -423,6 +533,227 @@ describeWithSeed(
       expect(renamed.config_version).toBe(3);
     });
 
+    it('archives an unused published competition without fabricating completion', async () => {
+      const first = await draft();
+      const published = await service.action(
+        wave.id,
+        first.id,
+        'publish',
+        { idempotency_key: randomUUID(), config_version: 1 },
+        ctx
+      );
+      expect(published.permissions).not.toHaveProperty(
+        'archive_requires_reason'
+      );
+      const archived = await service.action(
+        wave.id,
+        first.id,
+        'archive',
+        {
+          idempotency_key: randomUUID(),
+          config_version: published.config_version
+        },
+        ctx
+      );
+      expect(archived).toMatchObject({
+        lifecycle: 'ARCHIVED',
+        computed_phase: 'ARCHIVED',
+        ended_at: null,
+        permissions: {
+          submit: false,
+          vote: false
+        }
+      });
+    });
+
+    it('archives without a reason after deleted entries and historical votes and preserves them idempotently', async () => {
+      const first = await draft();
+      const published = await service.action(
+        wave.id,
+        first.id,
+        'publish',
+        { idempotency_key: randomUUID(), config_version: 1 },
+        ctx
+      );
+      const entryId = await activity(first.id);
+      await sqlExecutor.execute(
+        `UPDATE ${COMPETITION_ENTRIES_TABLE} SET status='DELETED' WHERE id=:entryId`,
+        { entryId }
+      );
+      await sqlExecutor.execute(
+        `INSERT INTO ${COMPETITION_VOTE_HISTORY_TABLE}
+         (competition_id,entry_id,voter_profile_id,value,previous_value,aggregate_value,credit_delta,occurred_at)
+         VALUES (:competitionId,:entryId,'voter',0,10,0,-10,1)`,
+        { competitionId: first.id, entryId }
+      );
+      const request = {
+        idempotency_key: randomUUID(),
+        config_version: published.config_version
+      };
+      const archived = await service.action(
+        wave.id,
+        first.id,
+        'archive',
+        request,
+        ctx
+      );
+      expect(
+        await service.action(wave.id, first.id, 'archive', request, ctx)
+      ).toEqual(archived);
+      const record = await competitionRepository.findCompetitionRecordById(
+        first.id,
+        ctx
+      );
+      const competition = await new NativeCompetitionReader(
+        competitionRepository,
+        ctx
+      ).getCompetition(record!, Date.now());
+      for (const command of ['submit', 'vote'] as const)
+        expect(() =>
+          assertCompetitionOpen(competition, Date.now(), command)
+        ).toThrow('not accepting');
+      await nativeCompetitionRuntimeService.processCompetition(
+        first.id,
+        Date.now() + 2 * 86400000
+      );
+      expect(
+        await sqlExecutor.execute(
+          `SELECT id FROM ${COMPETITION_DECISIONS_TABLE} WHERE competition_id=:id`,
+          { id: first.id }
+        )
+      ).toHaveLength(0);
+      expect(
+        await sqlExecutor.execute(
+          `SELECT id FROM ${COMPETITION_ENTRIES_TABLE} WHERE competition_id=:id`,
+          { id: first.id }
+        )
+      ).toHaveLength(1);
+      expect(
+        await sqlExecutor.execute(
+          `SELECT entry_id FROM ${COMPETITION_VOTE_HISTORY_TABLE} WHERE competition_id=:id`,
+          { id: first.id }
+        )
+      ).toHaveLength(1);
+      expect(
+        await sqlExecutor.execute(
+          `SELECT actor_id FROM ${COMPETITION_LIFECYCLE_EVENTS_TABLE}
+         WHERE competition_id=:id AND lifecycle='ARCHIVED'`,
+          { id: first.id }
+        )
+      ).toEqual([{ actor_id: actor }]);
+    });
+
+    it('waits for an executing decision, preserves its winners and awards, and prevents later decisions', async () => {
+      const input = config();
+      const firstDecision = Date.now() + 86400000;
+      input.rules.decisions_strategy = {
+        first_decision_time: firstDecision,
+        subsequent_decisions: [86400000],
+        is_rolling: true
+      };
+      const first = await service.create(
+        wave.id,
+        { idempotency_key: randomUUID(), config: input },
+        ctx
+      );
+      const published = await service.action(
+        wave.id,
+        first.id,
+        'publish',
+        { idempotency_key: randomUUID(), config_version: 1 },
+        ctx
+      );
+      const entryId = await activity(first.id);
+      await sqlExecutor.execute(
+        `INSERT INTO ${COMPETITION_CAPABILITIES_TABLE}
+         (capability,competition_id,wave_id,assigned_at) VALUES ('MAIN_STAGE',:id,:waveId,0)`,
+        { id: first.id, waveId: wave.id }
+      );
+      await sqlExecutor.execute(
+        `INSERT INTO ${DROPS_TABLE}
+         (id,wave_id,author_id,created_at,parts_count,drop_type)
+         VALUES (:id,:waveId,'entrant',1,1,'COMPETITION')`,
+        { id: `drop-${entryId}`, waveId: wave.id }
+      );
+      const historyTables = [
+        COMPETITION_ENTRIES_TABLE,
+        COMPETITION_DECISIONS_TABLE,
+        COMPETITION_DECISION_WINNERS_TABLE,
+        COMPETITION_OUTCOME_AWARDS_TABLE
+      ];
+      let archiving: ReturnType<typeof service.action> | undefined;
+      const before = await sqlExecutor.executeNativeQueriesInTransaction(
+        async (connection) => {
+          await nativeCompetitionRuntimeService.processCompetition(
+            first.id,
+            firstDecision + 1,
+            { ...ctx, connection }
+          );
+          const snapshots = [];
+          for (const table of historyTables)
+            snapshots.push(
+              await sqlExecutor.execute(
+                `SELECT * FROM ${table} WHERE competition_id=:id`,
+                { id: first.id },
+                { wrappedConnection: connection }
+              )
+            );
+          // Archiving must wait for the decision transaction's competition lock.
+          archiving = service.action(
+            wave.id,
+            first.id,
+            'archive',
+            {
+              idempotency_key: randomUUID(),
+              config_version: published.config_version,
+              reason: 'Retiring after the current decision'
+            },
+            ctx
+          );
+          return snapshots;
+        }
+      );
+      expect(before[1]).toHaveLength(1);
+      expect(before[2]).toHaveLength(1);
+      expect(before[3]).toHaveLength(1);
+      expect((await archiving)?.lifecycle).toBe('ARCHIVED');
+      const [decision] = await sqlExecutor.execute<{ id: string }>(
+        `SELECT id FROM ${COMPETITION_DECISIONS_TABLE} WHERE competition_id=:id`,
+        { id: first.id }
+      );
+      expect(
+        await competitionEventRepository.getPrivilegedWinners(
+          first.id,
+          decision.id,
+          ctx
+        )
+      ).toEqual([expect.objectContaining({ entry_id: entryId, rank: 1 })]);
+      await sqlExecutor.executeNativeQueriesInTransaction((connection) =>
+        competitionEventRepository.assertNativeClaim(
+          {
+            competition_id: first.id,
+            competition_entry_id: entryId,
+            decision_id: decision.id
+          },
+          `drop-${entryId}`,
+          { ...ctx, connection }
+        )
+      );
+      await nativeCompetitionRuntimeService.processCompetition(
+        first.id,
+        firstDecision + 3 * 86400000
+      );
+      for (let index = 0; index < historyTables.length; index++) {
+        const table = historyTables[index];
+        expect(
+          await sqlExecutor.execute(
+            `SELECT * FROM ${table} WHERE competition_id=:id`,
+            { id: first.id }
+          )
+        ).toEqual(before[index]);
+      }
+    });
+
     it('retains history when archiving a completed competition and only clones into a distinct draft', async () => {
       const first = await draft();
       await service.action(
@@ -478,7 +809,7 @@ describeWithSeed(
             connection
           })
         )
-      ).rejects.toThrow('competition history');
+      ).rejects.toThrow('decision history');
     });
 
     it('rejects stale configuration and records pause/resume without closing participation', async () => {

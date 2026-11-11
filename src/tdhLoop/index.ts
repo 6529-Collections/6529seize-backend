@@ -34,6 +34,7 @@ import { Time } from '../time';
 import { findNftTDH } from './nft_tdh';
 import { updateTDH } from './tdh';
 import { consolidateAndPersistTDH } from './tdh_consolidation';
+import { identityTdhSyncStateDb } from '../identity-tdh-sync-state.db';
 import { uploadTDH } from './tdh_upload';
 
 const logger = Logger.get('TDH_LOOP');
@@ -71,8 +72,22 @@ export const handler = sentryContext.wrapLambdaHandler(async () => {
 });
 
 export async function tdhLoop(force?: boolean) {
-  await tdh(force);
+  const computed = await tdh(force);
   await findNftTDH();
+  if (computed) {
+    // The identities sync for this TDH runs in delegationsLoop, which
+    // announces "TDH calculations done" once identities reflect it.
+    logger.info(
+      `[TDH CALCULATIONS DONE] [ANNOUNCED AFTER THE IDENTITIES SYNC]`
+    );
+    return;
+  }
+  if (await identityTdhSyncStateDb.hasPendingFullAnnouncement()) {
+    logger.info(
+      `[TDH CALCULATIONS DONE] [STILL WAITING FOR THE IDENTITIES SYNC]`
+    );
+    return;
+  }
   await notifier.notifyTdhCalculationsDone();
 }
 
@@ -118,7 +133,8 @@ async function recordMetrics() {
   }
 }
 
-async function tdh(force?: boolean) {
+/** True when this run computed and wrote today's TDH. */
+async function tdh(force?: boolean): Promise<boolean> {
   const lastTDHCalc = Time.latestUtcMidnight().toDate();
 
   const lastTdhDB = await fetchLatestTDHBDate();
@@ -134,11 +150,11 @@ async function tdh(force?: boolean) {
     await recordMetrics();
     await uploadTDH(block, blockTimestamp, tdh, false, true);
     await uploadTDH(block, blockTimestamp, consolidatedTdh, true, true);
-    return block;
+    return true;
   } else {
     logger.info(
       `[TODAY'S TDH ALREADY CALCULATED ${lastTdhFromNow} ago] [SKIPPING...]`
     );
-    return lastTdhDB.block;
+    return false;
   }
 }

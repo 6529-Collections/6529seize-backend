@@ -41,7 +41,6 @@ describeWithSeed(
         id,
         wave_id: 'hub',
         legacy_wave_id: id === first ? 'hub' : null,
-        storage_mode: 'NATIVE',
         execution_mode: 'ACTIVE',
         type: 'RANK',
         lifecycle: 'PUBLISHED',

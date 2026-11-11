@@ -5,9 +5,12 @@ import { maybeAuthenticatedUser, needsAuthenticatedUser } from '@/api/auth/auth'
 import { cacheRequest } from '@/api/request-cache';
 import { Time } from '@/time';
 import { Response } from 'express';
+import { DisableArtistArtworkAlertRequest, DisableArtistArtworkAlertResponse, EnableArtistArtworkAlertRequest, EnableArtistArtworkAlertResponse, GetArtistArtworkAlertRequest, GetArtistArtworkAlertResponse } from './operations';
 import { ArtworkDocumentationAppendMuseumRecordRequest, ArtworkDocumentationAppendMuseumRecordResponse, ArtworkDocumentationCancelDocumentationUploadRequest, ArtworkDocumentationCancelDocumentationUploadResponse, ArtworkDocumentationCommentDocumentationThreadRequest, ArtworkDocumentationCommentDocumentationThreadResponse, ArtworkDocumentationCompleteDocumentationUploadRequest, ArtworkDocumentationCompleteDocumentationUploadResponse, ArtworkDocumentationConfirmDocumentationRequest, ArtworkDocumentationConfirmDocumentationResponse, ArtworkDocumentationCreateArtworkDossierExportRequest, ArtworkDocumentationCreateArtworkDossierExportResponse, ArtworkDocumentationCreateDocumentationContextRequest, ArtworkDocumentationCreateDocumentationContextResponse, ArtworkDocumentationCreateDocumentationThreadRequest, ArtworkDocumentationCreateDocumentationThreadResponse, ArtworkDocumentationCreateDocumentationWorkRequest, ArtworkDocumentationCreateDocumentationWorkResponse, ArtworkDocumentationDownloadDocumentationAssetRequest, ArtworkDocumentationDownloadDocumentationAssetResponse, ArtworkDocumentationGetArtworkArtistRecordRequest, ArtworkDocumentationGetArtworkArtistRecordResponse, ArtworkDocumentationGetArtworkDossierExportRequest, ArtworkDocumentationGetArtworkDossierExportResponse, ArtworkDocumentationGetArtworkDossierRequest, ArtworkDocumentationGetArtworkDossierResponse, ArtworkDocumentationGetDocumentationContextRequest, ArtworkDocumentationGetDocumentationContextResponse, ArtworkDocumentationGetDocumentationProfilesRequest, ArtworkDocumentationGetDocumentationProfilesResponse, ArtworkDocumentationGetDocumentationPublicPreviewRequest, ArtworkDocumentationGetDocumentationPublicPreviewResponse, ArtworkDocumentationGetDocumentationRevisionRequest, ArtworkDocumentationGetDocumentationRevisionResponse, ArtworkDocumentationGetDocumentationUploadRequest, ArtworkDocumentationGetDocumentationUploadResponse, ArtworkDocumentationGetDocumentationWorkRequest, ArtworkDocumentationGetDocumentationWorkResponse, ArtworkDocumentationGrantDocumentationAccessRequest, ArtworkDocumentationGrantDocumentationAccessResponse, ArtworkDocumentationImportDocumentationSourceRequest, ArtworkDocumentationImportDocumentationSourceResponse, ArtworkDocumentationLinkDocumentationAssetRequest, ArtworkDocumentationLinkDocumentationAssetResponse, ArtworkDocumentationLinkDocumentationSourceRequest, ArtworkDocumentationLinkDocumentationSourceResponse, ArtworkDocumentationListDocumentationGrantsRequest, ArtworkDocumentationListDocumentationGrantsResponse, ArtworkDocumentationListDocumentationProgramRequest, ArtworkDocumentationListDocumentationProgramResponse, ArtworkDocumentationListDocumentationRevisionsRequest, ArtworkDocumentationListDocumentationRevisionsResponse, ArtworkDocumentationListDocumentationThreadsRequest, ArtworkDocumentationListDocumentationThreadsResponse, ArtworkDocumentationListDocumentationWorksRequest, ArtworkDocumentationListDocumentationWorksResponse, ArtworkDocumentationListMuseumRecordsRequest, ArtworkDocumentationListMuseumRecordsResponse, ArtworkDocumentationPatchDocumentationAssetLinkRequest, ArtworkDocumentationPatchDocumentationAssetLinkResponse, ArtworkDocumentationPatchDocumentationContextRequest, ArtworkDocumentationPatchDocumentationContextResponse, ArtworkDocumentationPatchDocumentationModuleRequest, ArtworkDocumentationPatchDocumentationModuleResponse, ArtworkDocumentationPatchDocumentationThreadRequest, ArtworkDocumentationPatchDocumentationThreadResponse, ArtworkDocumentationPinDocumentationArtistRequest, ArtworkDocumentationPinDocumentationArtistResponse, ArtworkDocumentationPreviewDocumentationSourceRequest, ArtworkDocumentationPreviewDocumentationSourceResponse, ArtworkDocumentationPreviewDocumentationUpgradeRequest, ArtworkDocumentationPreviewDocumentationUpgradeResponse, ArtworkDocumentationReviewDocumentationRequest, ArtworkDocumentationReviewDocumentationResponse, ArtworkDocumentationRevokeDocumentationAccessRequest, ArtworkDocumentationRevokeDocumentationAccessResponse, ArtworkDocumentationSignDocumentationPartsRequest, ArtworkDocumentationSignDocumentationPartsResponse, ArtworkDocumentationStartDocumentationUploadRequest, ArtworkDocumentationStartDocumentationUploadResponse, ArtworkDocumentationUnlinkDocumentationAssetRequest, ArtworkDocumentationUnlinkDocumentationAssetResponse, ArtworkDocumentationUpgradeDocumentationProfileRequest, ArtworkDocumentationUpgradeDocumentationProfileResponse } from './operations';
 import { AdvanceCollectPlanRequest, AdvanceCollectPlanResponse, AnalyzeCollectGoalRequest, AnalyzeCollectGoalResponse, AnalyzeCollectOffersRequest, AnalyzeCollectOffersResponse, CreateCollectDailyTdhPlanRequest, CreateCollectDailyTdhPlanResponse, CreateCollectPlanRequest, CreateCollectPlanResponse, CreateCollectRuleRequest, CreateCollectRuleResponse, CreateCollectTdhTargetPlanRequest, CreateCollectTdhTargetPlanResponse, GetCollectAssetsRequest, GetCollectAssetsResponse, GetCollectCapabilitiesRequest, GetCollectCapabilitiesResponse, GetCollectCatalogRequest, GetCollectCatalogResponse, GetCollectPlanRequest, GetCollectPlanResponse, GetCollectRuleRequest, GetCollectRuleResponse, GetCollectRulesRequest, GetCollectRulesResponse, GetCollectTdhListingsRequest, GetCollectTdhListingsResponse, GetMarketListingsRequest, GetMarketListingsResponse, PauseCollectRuleRequest, PauseCollectRuleResponse, PrepareCollectRuleRequest, PrepareCollectRuleResponse, ProjectCollectPurchasesRequest, ProjectCollectPurchasesResponse, RankCollectTdhPurchasesRequest, RankCollectTdhPurchasesResponse, ReconcileCollectRuleRequest, ReconcileCollectRuleResponse } from './operations';
-import { GetCompetitionEntryV3Request, GetCompetitionEntryV3Response, GetDropCompetitionContextV3Request, GetDropCompetitionContextV3Response, GetWaveCompetitionV3Request, GetWaveCompetitionV3Response, GetWaveHubV3Request, GetWaveHubV3Response, ListCompetitionDecisionsV3Request, ListCompetitionDecisionsV3Response, ListCompetitionEntriesV3Request, ListCompetitionEntriesV3Response, ListCompetitionEntryVotesV3Request, ListCompetitionEntryVotesV3Response, ListCompetitionLeaderboardV3Request, ListCompetitionLeaderboardV3Response, ListCompetitionOutcomeDistributionV3Request, ListCompetitionOutcomeDistributionV3Response, ListCompetitionOutcomesV3Request, ListCompetitionOutcomesV3Response, ListCompetitionPausesV3Request, ListCompetitionPausesV3Response, ListCompetitionVersionsV3Request, ListCompetitionVersionsV3Response, ListCompetitionVoteActivityV3Request, ListCompetitionVoteActivityV3Response, ListCompetitionVotersV3Request, ListCompetitionVotersV3Response, ListCompetitionWinnersV3Request, ListCompetitionWinnersV3Response, ListWaveCompetitionsV3Request, ListWaveCompetitionsV3Response } from './operations';
+import { GetCompetitionEntryContextsV3Request, GetCompetitionEntryContextsV3Response, GetCompetitionEntryV3Request, GetCompetitionEntryV3Response, GetDropCompetitionContextV3Request, GetDropCompetitionContextV3Response, GetWaveCompetitionV3Request, GetWaveCompetitionV3Response, GetWaveHubV3Request, GetWaveHubV3Response, ListCompetitionDecisionsV3Request, ListCompetitionDecisionsV3Response, ListCompetitionEntriesV3Request, ListCompetitionEntriesV3Response, ListCompetitionEntryVotesV3Request, ListCompetitionEntryVotesV3Response, ListCompetitionLeaderboardV3Request, ListCompetitionLeaderboardV3Response, ListCompetitionOutcomeDistributionV3Request, ListCompetitionOutcomeDistributionV3Response, ListCompetitionOutcomesV3Request, ListCompetitionOutcomesV3Response, ListCompetitionPausesV3Request, ListCompetitionPausesV3Response, ListCompetitionVersionsV3Request, ListCompetitionVersionsV3Response, ListCompetitionVoteActivityV3Request, ListCompetitionVoteActivityV3Response, ListCompetitionVotersV3Request, ListCompetitionVotersV3Response, ListCompetitionWinnersV3Request, ListCompetitionWinnersV3Response, ListWaveCompetitionsV3Request, ListWaveCompetitionsV3Response, UpdateWaveHubV3Request, UpdateWaveHubV3Response } from './operations';
+import { AcknowledgeDeviceGrantRequest, AcknowledgeDeviceGrantResponse, GetDeviceGrantsRequest, GetDeviceGrantsResponse, GetDropSignedEventsRequest, GetDropSignedEventsResponse, GetDropsSignedEventsRequest, GetDropsSignedEventsResponse, RegisterDeviceGrantRequest, RegisterDeviceGrantResponse, RenameDeviceGrantRequest, RenameDeviceGrantResponse, RevokeDeviceGrantRequest, RevokeDeviceGrantResponse } from './operations';
+import { E2eeAckWelcomeRequest, E2eeAckWelcomeResponse, E2eeActivateBackupRequest, E2eeActivateBackupResponse, E2eeAppendBackupChunkRequest, E2eeAppendBackupChunkResponse, E2eeCheckEligibilityRequest, E2eeCheckEligibilityResponse, E2eeClaimKeyPackagesRequest, E2eeClaimKeyPackagesResponse, E2eeCompactBackupRequest, E2eeCompactBackupResponse, E2eeCompleteBlobRequest, E2eeCompleteBlobResponse, E2eeCreateBackupRequest, E2eeCreateBackupResponse, E2eeCreateBlobRequest, E2eeCreateBlobResponse, E2eeCreateGroupRequest, E2eeCreateGroupResponse, E2eeDeleteBackupsRequest, E2eeDeleteBackupsResponse, E2eeGetBackupChunkRequest, E2eeGetBackupChunkResponse, E2eeGetBackupRequest, E2eeGetBackupResponse, E2eeGetBackupStatusRequest, E2eeGetBackupStatusResponse, E2eeGetBlobChunkRequest, E2eeGetBlobChunkResponse, E2eeGetDeviceGroupsRequest, E2eeGetDeviceGroupsResponse, E2eeGetDeviceRequest, E2eeGetDeviceResponse, E2eeGetGroupLogRequest, E2eeGetGroupLogResponse, E2eeGetGroupRequest, E2eeGetGroupResponse, E2eeGetMeRequest, E2eeGetMeResponse, E2eeGetProfileDevicesRequest, E2eeGetProfileDevicesResponse, E2eeGetTrustAndSafetyReportRequest, E2eeGetTrustAndSafetyReportResponse, E2eeGetWelcomesRequest, E2eeGetWelcomesResponse, E2eeListBackupChunksRequest, E2eeListBackupChunksResponse, E2eeListTrustAndSafetyReportsRequest, E2eeListTrustAndSafetyReportsResponse, E2eeLookupDevicesRequest, E2eeLookupDevicesResponse, E2eePutBlobChunkRequest, E2eePutBlobChunkResponse, E2eeRegisterDeviceRequest, E2eeRegisterDeviceResponse, E2eeRegisterLoginGrantDeviceRequest, E2eeRegisterLoginGrantDeviceResponse, E2eeRenameDeviceRequest, E2eeRenameDeviceResponse, E2eeRepairRosterRequest, E2eeRepairRosterResponse, E2eeReportMessageRequest, E2eeReportMessageResponse, E2eeRevokeDeviceRequest, E2eeRevokeDeviceResponse, E2eeSendMessageRequest, E2eeSendMessageResponse, E2eeSetTrustAndSafetyReportHoldRequest, E2eeSetTrustAndSafetyReportHoldResponse, E2eeSubmitEntryRequest, E2eeSubmitEntryResponse, E2eeUploadKeyPackagesRequest, E2eeUploadKeyPackagesResponse } from './operations';
 import { BeginMarketTransactionAttemptRequest, BeginMarketTransactionAttemptResponse, ContinueMarketOperationRequest, ContinueMarketOperationResponse, GetMarketBatchCapabilitiesRequest, GetMarketBatchCapabilitiesResponse, GetMarketOperationRequest, GetMarketOperationResponse, GetMarketOrderRequest, GetMarketOrderResponse, GetMarketOrdersRequest, GetMarketOrdersResponse, GetMyMarketOperationsRequest, GetMyMarketOperationsResponse, PreflightMarketBatchRequest, PreflightMarketBatchResponse, PrepareMarketOperationRequest, PrepareMarketOperationResponse, PublishMarketOperationRequest, PublishMarketOperationResponse, RejectMarketTransactionAttemptRequest, RejectMarketTransactionAttemptResponse, SubmitMarketOperationRequest, SubmitMarketOperationResponse } from './operations';
 import { GetModerationAccessRequest, GetModerationAccessResponse, GetModerationCheckRequest, GetModerationCheckResponse, GetModerationChecksRequest, GetModerationChecksResponse, GetModerationCountsRequest, GetModerationCountsResponse, GetModerationProfileCheckRequest, GetModerationProfileCheckResponse, GetModerationReportCheckRequest, GetModerationReportCheckResponse, GetModerationReviewCasesRequest, GetModerationReviewCasesResponse, ModerationCheckActionRequest, ModerationCheckActionResponse } from './operations';
 import { GetProfilePreferencesRequest, GetProfilePreferencesResponse, PutProfilePreferencesRequest, PutProfilePreferencesResponse } from './operations';
@@ -23,22 +26,30 @@ import { handleCreateCollectTdhTargetPlan } from '@/api/collect/collect-tdh-targ
 import { handleAnalyzeCollectGoal, handleGetCollectAssets, handleGetCollectCapabilities, handleGetCollectCatalog } from '@/api/collect/collect.handlers';
 import { handlePreviewGroupMembers } from '@/api/community-members/group-members-preview.handler';
 import { handleCreateCompetitionEntryV3, handleCreateCompetitionV3, handleCreateWaveHubV3, handleExecuteCompetitionActionV3, handleGetCompetitionConfigurationV3, handleGetCompetitionCreditBudgetV3, handleGetCompetitionEntryContentV3, handleGetDropCompetitionContextV3, handleListCompetitionAwardsV3, handleListCompetitionMyVotesV3, handleSetCompetitionVoteV3, handleUpdateCompetitionV3 } from '@/api/competitions/competition-commands.handlers';
+import { handleGetCompetitionEntryContextsV3 } from '@/api/competitions/competition-entry-contexts.handler';
 import { handleGetCompetitionEntryV3, handleGetDefaultWaveCompetitionV3, handleGetWaveCompetitionV3, handleGetWaveHubV3, handleListCompetitionDecisionsV3, handleListCompetitionEntriesV3, handleListCompetitionEntryVotesV3, handleListCompetitionLeaderboardV3, handleListCompetitionOutcomeDistributionV3, handleListCompetitionOutcomesV3, handleListCompetitionPausesV3, handleListCompetitionVersionsV3, handleListCompetitionVoteActivityV3, handleListCompetitionVotersV3, handleListCompetitionWinnersV3, handleListWaveCompetitionsV3 } from '@/api/competitions/competitions-v3.handlers';
 import { handleGetContentModerationBlockActivity } from '@/api/content-moderation/get-block-activity.handler';
 import { handleGetPublicContentModerationProfileStatus } from '@/api/content-moderation/get-public-profile-status.handler';
 import { handleGetModerationAccess, handleGetModerationCheck, handleGetModerationChecks, handleGetModerationCounts, handleGetModerationProfileCheck, handleGetModerationReportCheck, handleGetModerationReviewCases, handleModerationCheckAction } from '@/api/content-moderation/moderation-review.handlers';
+import { handleAcknowledgeDeviceGrant, handleGetDeviceGrants, handleGetDropSignedEvents, handleGetDropsSignedEvents, handleRegisterDeviceGrant, handleRenameDeviceGrant, handleRevokeDeviceGrant } from '@/api/device-signing/device-signing.handlers';
 import { handleGetWalletDistributionAllocations } from '@/api/distributions/get-wallet-distribution-allocations.handler';
 import { handleGetDmDropsUnread, handleGetDmUnreadSnapshot } from '@/api/dm-drops/dm-drops.handlers';
+import { getDropBookmarksStatus } from '@/api/drops/drop-bookmarks-status.handler';
 import { handleGetDropPollOptionVotersV2, handleGetWavePollsV2, handleVoteDropPollV2 } from '@/api/drops/drop-polls.handlers';
+import { handleSetDropReplyCollapse } from '@/api/drops/drop-reply-collapse.handler';
 import { handleDownloadDropV2VotersById, handleGetBoostedDropsV2, handleGetCuratedProfileWaveDropsV2, handleGetDropsV2, handleGetDropV2BoostsById, handleGetDropV2ById, handleGetDropV2MetadataById, handleGetDropV2PartById, handleGetDropV2ReactionsById, handleGetDropV2VoteEditLogsById, handleGetDropV2VotersById } from '@/api/drops/drops-v2.handlers';
 import { handleGetDropV2VoteSummaryById } from '@/api/drops/get-drop-vote-summary.handler';
 import { handleCreateProposalFrame } from '@/api/drops/proposal-frame.handlers';
+import { handleE2eeGetTrustAndSafetyReport, handleE2eeListTrustAndSafetyReports, handleE2eeSetTrustAndSafetyReportHold } from '@/api/e2ee/e2ee-trust-and-safety.handlers';
+import { handleE2eeAckWelcome, handleE2eeActivateBackup, handleE2eeAppendBackupChunk, handleE2eeCheckEligibility, handleE2eeClaimKeyPackages, handleE2eeCompactBackup, handleE2eeCompleteBlob, handleE2eeCreateBackup, handleE2eeCreateBlob, handleE2eeCreateGroup, handleE2eeDeleteBackups, handleE2eeGetBackup, handleE2eeGetBackupChunk, handleE2eeGetBackupStatus, handleE2eeGetBlobChunk, handleE2eeGetDevice, handleE2eeGetDeviceGroups, handleE2eeGetGroup, handleE2eeGetGroupLog, handleE2eeGetMe, handleE2eeGetProfileDevices, handleE2eeGetWelcomes, handleE2eeListBackupChunks, handleE2eeLookupDevices, handleE2eePutBlobChunk, handleE2eeRegisterDevice, handleE2eeRegisterLoginGrantDevice, handleE2eeRenameDevice, handleE2eeRepairRoster, handleE2eeReportMessage, handleE2eeRevokeDevice, handleE2eeSendMessage, handleE2eeSubmitEntry, handleE2eeUploadKeyPackages } from '@/api/e2ee/e2ee.handlers';
+import { handleDisableArtistArtworkAlert, handleEnableArtistArtworkAlert, handleGetArtistArtworkAlert } from '@/api/identity-subscriptions/artist-artwork-alerts.handlers';
 import { handleGetNftMarketActivity, handleGetNftMarketDepth } from '@/api/market-depth/market-depth.handlers';
 import { handlePreflightMarketBatch } from '@/api/marketplace/marketplace-batch-preflight.handler';
 import { handleBeginMarketTransactionAttempt, handleContinueMarketOperation, handleGetMarketBatchCapabilities, handleGetMarketOperation, handleGetMarketOrder, handleGetMarketOrders, handleGetMyMarketOperations, handlePrepareMarketOperation, handlePublishMarketOperation, handleRejectMarketTransactionAttempt, handleSubmitMarketOperation } from '@/api/marketplace/marketplace.handlers';
 import { handleResolveDecentralizedMedia } from '@/api/media/decentralized-media.handlers';
+import { getMemeCollaborationState, inviteMemeCollaborators, respondToMemeCollaboration } from '@/api/meme-collaborations/meme-collaborations.handlers';
 import { handleGetMemeCardDropMapping } from '@/api/memes/meme-card-drop-mappings.handlers';
-import { handleGetNotificationsV2 } from '@/api/notifications/notifications-v2.handlers';
+import { handleGetNotificationsUnreadCountV2, handleGetNotificationsV2 } from '@/api/notifications/notifications-v2.handlers';
 import { handleGetOgMetadataDrop, handleGetOgMetadataProfile, handleGetOgMetadataWave } from '@/api/og-metadata/og-metadata.handlers';
 import { handleDeleteEulaConsent, handleGetEulaConsent, handleSaveEulaConsent } from '@/api/policies/eula-consent.handlers';
 import { handleCreateProfileCmsAgentGrant, handleGetOwnerProfileCmsAgentProposal, handleGetProfileCmsAgentDraft, handleGetProfileCmsAgentProposal, handleListProfileCmsAgentGrants, handleListProfileCmsAgentProposals, handleReviewProfileCmsAgentProposal, handleRevokeProfileCmsAgentGrant, handleSubmitProfileCmsAgentProposal, handleValidateProfileCmsAgentCandidate } from '@/api/profile-cms/profile-cms-agent.handlers';
@@ -51,13 +62,17 @@ import { handleGetGlobalRepCategoryGivers, handleGetGlobalRepCategoryOverview, h
 import { handleGetSubscriptionCoverage } from '@/api/subscriptions/get-subscription-coverage.handler';
 import { handleGetTdhRules } from '@/api/tdh/get-tdh-rules.handler';
 import { handleGetActiveWaveVotes } from '@/api/waves/active-wave-votes.handler';
+import { handleGetAllWaves } from '@/api/waves/all-waves.handler';
 import { handleDeleteMyWaveChatHistory, handlePrepareMyWaveChatHistoryPurge } from '@/api/waves/delete-my-wave-chat-history.handler';
 import { handleGetJoinedWaves } from '@/api/waves/joined-waves.handler';
 import { handleGetProfileWaveActivity } from '@/api/waves/profile-wave-activity.handler';
+import { handleGetWaveAllMentionCount } from '@/api/waves/wave-all-mention-count.handler';
 import { handleValidateWaveGroups } from '@/api/waves/wave-group-validation.handler';
+import { handleUpdateWaveHubV3 } from '@/api/waves/wave-hub.handlers';
 import { handleSearchDraftWaveMentions, handleSearchWaveMentions } from '@/api/waves/wave-mention-search.handler';
-import { handleCreateWaveMetadata, handleDeleteWaveMetadata, handleGetDropRepliesV2, handleGetOfficialWaves, handleGetWaveCompetitionDropsV2, handleGetWaveDecisionsV2, handleGetWaveDropsV2, handleGetWaveLeaderboardV2, handleGetWaveMetadata, handleGetWavesV2, handleListWaveCurationDropsV2, handleListWaveSubwaves, handleSearchDropsInWaveV2, handleSearchWaveAuthorsV2 } from '@/api/waves/waves-v2.handlers';
-import { ArchiveProfileCmsPackageRequest, ArchiveProfileCmsPackageResponse, CreateCompetitionEntryV3Request, CreateCompetitionEntryV3Response, CreateCompetitionV3Request, CreateCompetitionV3Response, CreateProfileCmsAgentGrantRequest, CreateProfileCmsAgentGrantResponse, CreateProfileCmsWalletGallerySnapshotRequest, CreateProfileCmsWalletGallerySnapshotResponse, CreateProposalFrameRequest, CreateProposalFrameResponse, CreateWaveHubV3Request, CreateWaveHubV3Response, CreateWaveMetadataRequest, CreateWaveMetadataResponse, DeleteEulaConsentRequest, DeleteEulaConsentResponse, DeleteMyWaveChatHistoryRequest, DeleteMyWaveChatHistoryResponse, DeleteWaveMetadataRequest, DeleteWaveMetadataResponse, DownloadDropV2VotersByIdRequest, DownloadDropV2VotersByIdResponse, ExecuteCompetitionActionV3Request, ExecuteCompetitionActionV3Response, ExportProfileCmsPackageRequest, ExportProfileCmsPackageResponse, GetActiveWaveVotesRequest, GetActiveWaveVotesResponse, GetBoostedDropsV2Request, GetBoostedDropsV2Response, GetCompetitionConfigurationV3Request, GetCompetitionConfigurationV3Response, GetCompetitionCreditBudgetV3Request, GetCompetitionCreditBudgetV3Response, GetCompetitionEntryContentV3Request, GetCompetitionEntryContentV3Response, GetContentModerationBlockActivityRequest, GetContentModerationBlockActivityResponse, GetCuratedProfileWaveDropsV2Request, GetCuratedProfileWaveDropsV2Response, GetDefaultWaveCompetitionV3Request, GetDefaultWaveCompetitionV3Response, GetDmDropsUnreadRequest, GetDmDropsUnreadResponse, GetDmUnreadSnapshotRequest, GetDmUnreadSnapshotResponse, GetDropPollOptionVotersV2Request, GetDropPollOptionVotersV2Response, GetDropRepliesV2Request, GetDropRepliesV2Response, GetDropsV2Request, GetDropsV2Response, GetDropV2BoostsByIdRequest, GetDropV2BoostsByIdResponse, GetDropV2ByIdRequest, GetDropV2ByIdResponse, GetDropV2MetadataByIdRequest, GetDropV2MetadataByIdResponse, GetDropV2PartByIdRequest, GetDropV2PartByIdResponse, GetDropV2ReactionsByIdRequest, GetDropV2ReactionsByIdResponse, GetDropV2VoteEditLogsByIdRequest, GetDropV2VoteEditLogsByIdResponse, GetDropV2VotersByIdRequest, GetDropV2VotersByIdResponse, GetDropV2VoteSummaryByIdRequest, GetDropV2VoteSummaryByIdResponse, GetEulaConsentRequest, GetEulaConsentResponse, GetGlobalRepCategoryGiversRequest, GetGlobalRepCategoryGiversResponse, GetGlobalRepCategoryOverviewRequest, GetGlobalRepCategoryOverviewResponse, GetGlobalRepCategoryRatingsRequest, GetGlobalRepCategoryRatingsResponse, GetGlobalRepCategoryRecipientsRequest, GetGlobalRepCategoryRecipientsResponse, GetGlobalRepCategoryWaveContributorsRequest, GetGlobalRepCategoryWaveContributorsResponse, GetGlobalRepCategoryWaveOverviewRequest, GetGlobalRepCategoryWaveOverviewResponse, GetGlobalRepCategoryWavesRequest, GetGlobalRepCategoryWavesResponse, GetJoinedWavesRequest, GetJoinedWavesResponse, GetMemeCardDropMappingRequest, GetMemeCardDropMappingResponse, GetNftMarketActivityRequest, GetNftMarketActivityResponse, GetNftMarketDepthRequest, GetNftMarketDepthResponse, GetNotificationsV2Request, GetNotificationsV2Response, GetOfficialWavesRequest, GetOfficialWavesResponse, GetOgMetadataDropRequest, GetOgMetadataDropResponse, GetOgMetadataProfileRequest, GetOgMetadataProfileResponse, GetOgMetadataWaveRequest, GetOgMetadataWaveResponse, GetOwnerProfileCmsAgentProposalRequest, GetOwnerProfileCmsAgentProposalResponse, GetPrimaryProfileCmsPackageRequest, GetPrimaryProfileCmsPackageResponse, GetProfileCmsAgentDraftRequest, GetProfileCmsAgentDraftResponse, GetProfileCmsAgentProposalRequest, GetProfileCmsAgentProposalResponse, GetProfileCmsAgentSchemaBundleRequest, GetProfileCmsAgentSchemaBundleResponse, GetProfileCmsAgentSourcePacketRequest, GetProfileCmsAgentSourcePacketResponse, GetProfileCmsPackageByHashRequest, GetProfileCmsPackageByHashResponse, GetProfileCmsPackageByIdRequest, GetProfileCmsPackageByIdResponse, GetProfileCmsPackageByVersionRequest, GetProfileCmsPackageByVersionResponse, GetProfileWaveActivityRequest, GetProfileWaveActivityResponse, GetPublicContentModerationProfileStatusRequest, GetPublicContentModerationProfileStatusResponse, GetSubscriptionCoverageRequest, GetSubscriptionCoverageResponse, GetTdhRulesRequest, GetTdhRulesResponse, GetWalletDistributionAllocationsRequest, GetWalletDistributionAllocationsResponse, GetWaveCompetitionDropsV2Request, GetWaveCompetitionDropsV2Response, GetWaveDecisionsV2Request, GetWaveDecisionsV2Response, GetWaveDropsV2Request, GetWaveDropsV2Response, GetWaveLeaderboardV2Request, GetWaveLeaderboardV2Response, GetWaveMetadataRequest, GetWaveMetadataResponse, GetWavePollsV2Request, GetWavePollsV2Response, GetWavesV2Request, GetWavesV2Response, ListCompetitionAwardsV3Request, ListCompetitionAwardsV3Response, ListCompetitionMyVotesV3Request, ListCompetitionMyVotesV3Response, ListProfileCmsAgentGrantsRequest, ListProfileCmsAgentGrantsResponse, ListProfileCmsAgentProposalsRequest, ListProfileCmsAgentProposalsResponse, ListProfileCmsPackagesRequest, ListProfileCmsPackagesResponse, ListWaveCurationDropsV2Request, ListWaveCurationDropsV2Response, ListWaveSubwavesRequest, ListWaveSubwavesResponse, PrepareMyWaveChatHistoryPurgeRequest, PrepareMyWaveChatHistoryPurgeResponse, PreviewGroupMembersRequest, PreviewGroupMembersResponse, PublishProfileCmsPackageRequest, PublishProfileCmsPackageResponse, RefreshPushInstallationBadgeRequest, RefreshPushInstallationBadgeResponse, ResolveDecentralizedMediaRequest, ResolveDecentralizedMediaResponse, ReviewProfileCmsAgentProposalRequest, ReviewProfileCmsAgentProposalResponse, RevokeProfileCmsAgentGrantRequest, RevokeProfileCmsAgentGrantResponse, RevokePushInstallationRequest, RevokePushInstallationResponse, RollbackProfileCmsPackageRequest, RollbackProfileCmsPackageResponse, SaveEulaConsentRequest, SaveEulaConsentResponse, SaveProfileCmsPackageDraftRequest, SaveProfileCmsPackageDraftResponse, SearchDraftWaveMentionsRequest, SearchDraftWaveMentionsResponse, SearchDropsInWaveV2Request, SearchDropsInWaveV2Response, SearchWaveAuthorsV2Request, SearchWaveAuthorsV2Response, SearchWaveMentionsRequest, SearchWaveMentionsResponse, SetCompetitionVoteV3Request, SetCompetitionVoteV3Response, SubmitProfileCmsAgentProposalRequest, SubmitProfileCmsAgentProposalResponse, UnpublishProfileCmsPackageRequest, UnpublishProfileCmsPackageResponse, UpdateCompetitionV3Request, UpdateCompetitionV3Response, UploadProfileCmsPackageStorageRequest, UploadProfileCmsPackageStorageResponse, ValidateProfileCmsAgentCandidateRequest, ValidateProfileCmsAgentCandidateResponse, ValidateProfileCmsAgentPatchRequest, ValidateProfileCmsAgentPatchResponse, ValidateProfileCmsPackageRequest, ValidateProfileCmsPackageResponse, ValidateWaveGroupsRequest, ValidateWaveGroupsResponse, VoteDropPollV2Request, VoteDropPollV2Response } from './operations';
+import { handleGetWaveUndiscoveredDrops } from '@/api/waves/wave-quick-vote.handler';
+import { handleCreateWaveMetadata, handleDeleteWaveMetadata, handleGetDropRepliesV2, handleGetOfficialWaves, handleGetWaveCompetitionDropsV2, handleGetWaveDecisionsV2, handleGetWaveDropsV2, handleGetWaveLeaderboardV2, handleGetWaveMetadata, handleGetWavesV2, handleListWaveCurationDropsV2, handleListWaveSubwaves, handleSearchDropsInWaveV2, handleSearchDropsV2, handleSearchWaveAuthorsV2 } from '@/api/waves/waves-v2.handlers';
+import { ArchiveProfileCmsPackageRequest, ArchiveProfileCmsPackageResponse, CreateCompetitionEntryV3Request, CreateCompetitionEntryV3Response, CreateCompetitionV3Request, CreateCompetitionV3Response, CreateProfileCmsAgentGrantRequest, CreateProfileCmsAgentGrantResponse, CreateProfileCmsWalletGallerySnapshotRequest, CreateProfileCmsWalletGallerySnapshotResponse, CreateProposalFrameRequest, CreateProposalFrameResponse, CreateWaveHubV3Request, CreateWaveHubV3Response, CreateWaveMetadataRequest, CreateWaveMetadataResponse, DeleteEulaConsentRequest, DeleteEulaConsentResponse, DeleteMyWaveChatHistoryRequest, DeleteMyWaveChatHistoryResponse, DeleteWaveMetadataRequest, DeleteWaveMetadataResponse, DownloadDropV2VotersByIdRequest, DownloadDropV2VotersByIdResponse, ExecuteCompetitionActionV3Request, ExecuteCompetitionActionV3Response, ExportProfileCmsPackageRequest, ExportProfileCmsPackageResponse, GetActiveWaveVotesRequest, GetActiveWaveVotesResponse, GetAllWavesRequest, GetAllWavesResponse, GetBoostedDropsV2Request, GetBoostedDropsV2Response, GetCompetitionConfigurationV3Request, GetCompetitionConfigurationV3Response, GetCompetitionCreditBudgetV3Request, GetCompetitionCreditBudgetV3Response, GetCompetitionEntryContentV3Request, GetCompetitionEntryContentV3Response, GetContentModerationBlockActivityRequest, GetContentModerationBlockActivityResponse, GetCuratedProfileWaveDropsV2Request, GetCuratedProfileWaveDropsV2Response, GetDefaultWaveCompetitionV3Request, GetDefaultWaveCompetitionV3Response, GetDmDropsUnreadRequest, GetDmDropsUnreadResponse, GetDmUnreadSnapshotRequest, GetDmUnreadSnapshotResponse, GetDropBookmarksStatusRequest, GetDropBookmarksStatusResponse, GetDropPollOptionVotersV2Request, GetDropPollOptionVotersV2Response, GetDropRepliesV2Request, GetDropRepliesV2Response, GetDropsV2Request, GetDropsV2Response, GetDropV2BoostsByIdRequest, GetDropV2BoostsByIdResponse, GetDropV2ByIdRequest, GetDropV2ByIdResponse, GetDropV2MetadataByIdRequest, GetDropV2MetadataByIdResponse, GetDropV2PartByIdRequest, GetDropV2PartByIdResponse, GetDropV2ReactionsByIdRequest, GetDropV2ReactionsByIdResponse, GetDropV2VoteEditLogsByIdRequest, GetDropV2VoteEditLogsByIdResponse, GetDropV2VotersByIdRequest, GetDropV2VotersByIdResponse, GetDropV2VoteSummaryByIdRequest, GetDropV2VoteSummaryByIdResponse, GetEulaConsentRequest, GetEulaConsentResponse, GetGlobalRepCategoryGiversRequest, GetGlobalRepCategoryGiversResponse, GetGlobalRepCategoryOverviewRequest, GetGlobalRepCategoryOverviewResponse, GetGlobalRepCategoryRatingsRequest, GetGlobalRepCategoryRatingsResponse, GetGlobalRepCategoryRecipientsRequest, GetGlobalRepCategoryRecipientsResponse, GetGlobalRepCategoryWaveContributorsRequest, GetGlobalRepCategoryWaveContributorsResponse, GetGlobalRepCategoryWaveOverviewRequest, GetGlobalRepCategoryWaveOverviewResponse, GetGlobalRepCategoryWavesRequest, GetGlobalRepCategoryWavesResponse, GetJoinedWavesRequest, GetJoinedWavesResponse, GetMemeCardDropMappingRequest, GetMemeCardDropMappingResponse, GetMemeCollaborationStateRequest, GetMemeCollaborationStateResponse, GetNftMarketActivityRequest, GetNftMarketActivityResponse, GetNftMarketDepthRequest, GetNftMarketDepthResponse, GetNotificationsUnreadCountV2Request, GetNotificationsUnreadCountV2Response, GetNotificationsV2Request, GetNotificationsV2Response, GetOfficialWavesRequest, GetOfficialWavesResponse, GetOgMetadataDropRequest, GetOgMetadataDropResponse, GetOgMetadataProfileRequest, GetOgMetadataProfileResponse, GetOgMetadataWaveRequest, GetOgMetadataWaveResponse, GetOwnerProfileCmsAgentProposalRequest, GetOwnerProfileCmsAgentProposalResponse, GetPrimaryProfileCmsPackageRequest, GetPrimaryProfileCmsPackageResponse, GetProfileCmsAgentDraftRequest, GetProfileCmsAgentDraftResponse, GetProfileCmsAgentProposalRequest, GetProfileCmsAgentProposalResponse, GetProfileCmsAgentSchemaBundleRequest, GetProfileCmsAgentSchemaBundleResponse, GetProfileCmsAgentSourcePacketRequest, GetProfileCmsAgentSourcePacketResponse, GetProfileCmsPackageByHashRequest, GetProfileCmsPackageByHashResponse, GetProfileCmsPackageByIdRequest, GetProfileCmsPackageByIdResponse, GetProfileCmsPackageByVersionRequest, GetProfileCmsPackageByVersionResponse, GetProfileWaveActivityRequest, GetProfileWaveActivityResponse, GetPublicContentModerationProfileStatusRequest, GetPublicContentModerationProfileStatusResponse, GetSubscriptionCoverageRequest, GetSubscriptionCoverageResponse, GetTdhRulesRequest, GetTdhRulesResponse, GetWalletDistributionAllocationsRequest, GetWalletDistributionAllocationsResponse, GetWaveAllMentionCountRequest, GetWaveAllMentionCountResponse, GetWaveCompetitionDropsV2Request, GetWaveCompetitionDropsV2Response, GetWaveDecisionsV2Request, GetWaveDecisionsV2Response, GetWaveDropsV2Request, GetWaveDropsV2Response, GetWaveLeaderboardV2Request, GetWaveLeaderboardV2Response, GetWaveMetadataRequest, GetWaveMetadataResponse, GetWavePollsV2Request, GetWavePollsV2Response, GetWavesV2Request, GetWavesV2Response, GetWaveUndiscoveredDropsRequest, GetWaveUndiscoveredDropsResponse, InviteMemeCollaboratorsRequest, InviteMemeCollaboratorsResponse, ListCompetitionAwardsV3Request, ListCompetitionAwardsV3Response, ListCompetitionMyVotesV3Request, ListCompetitionMyVotesV3Response, ListProfileCmsAgentGrantsRequest, ListProfileCmsAgentGrantsResponse, ListProfileCmsAgentProposalsRequest, ListProfileCmsAgentProposalsResponse, ListProfileCmsPackagesRequest, ListProfileCmsPackagesResponse, ListWaveCurationDropsV2Request, ListWaveCurationDropsV2Response, ListWaveSubwavesRequest, ListWaveSubwavesResponse, PrepareMyWaveChatHistoryPurgeRequest, PrepareMyWaveChatHistoryPurgeResponse, PreviewGroupMembersRequest, PreviewGroupMembersResponse, PublishProfileCmsPackageRequest, PublishProfileCmsPackageResponse, RefreshPushInstallationBadgeRequest, RefreshPushInstallationBadgeResponse, ResolveDecentralizedMediaRequest, ResolveDecentralizedMediaResponse, RespondToMemeCollaborationRequest, RespondToMemeCollaborationResponse, ReviewProfileCmsAgentProposalRequest, ReviewProfileCmsAgentProposalResponse, RevokeProfileCmsAgentGrantRequest, RevokeProfileCmsAgentGrantResponse, RevokePushInstallationRequest, RevokePushInstallationResponse, RollbackProfileCmsPackageRequest, RollbackProfileCmsPackageResponse, SaveEulaConsentRequest, SaveEulaConsentResponse, SaveProfileCmsPackageDraftRequest, SaveProfileCmsPackageDraftResponse, SearchDraftWaveMentionsRequest, SearchDraftWaveMentionsResponse, SearchDropsInWaveV2Request, SearchDropsInWaveV2Response, SearchDropsV2Request, SearchDropsV2Response, SearchWaveAuthorsV2Request, SearchWaveAuthorsV2Response, SearchWaveMentionsRequest, SearchWaveMentionsResponse, SetCompetitionVoteV3Request, SetCompetitionVoteV3Response, SetDropReplyCollapseRequest, SetDropReplyCollapseResponse, SubmitProfileCmsAgentProposalRequest, SubmitProfileCmsAgentProposalResponse, UnpublishProfileCmsPackageRequest, UnpublishProfileCmsPackageResponse, UpdateCompetitionV3Request, UpdateCompetitionV3Response, UploadProfileCmsPackageStorageRequest, UploadProfileCmsPackageStorageResponse, ValidateProfileCmsAgentCandidateRequest, ValidateProfileCmsAgentCandidateResponse, ValidateProfileCmsAgentPatchRequest, ValidateProfileCmsAgentPatchResponse, ValidateProfileCmsPackageRequest, ValidateProfileCmsPackageResponse, ValidateWaveGroupsRequest, ValidateWaveGroupsResponse, VoteDropPollV2Request, VoteDropPollV2Response } from './operations';
 const router = asyncRouter();
 router.get(
   '/artwork-documentation/contexts/:id',
@@ -835,6 +850,61 @@ router.get(
 );
 
 router.get(
+  '/device-grants',
+  needsAuthenticatedUser(),
+  async (
+    req: GetDeviceGrantsRequest,
+    res: Response<ApiResponse<GetDeviceGrantsResponse>>
+  ) => {
+    res.send(await handleGetDeviceGrants(req));
+  }
+);
+
+router.post(
+  '/device-grants',
+  needsAuthenticatedUser(),
+  async (
+    req: RegisterDeviceGrantRequest,
+    res: Response<ApiResponse<RegisterDeviceGrantResponse>>
+  ) => {
+    res.send(await handleRegisterDeviceGrant(req));
+  }
+);
+
+router.post(
+  '/device-grants/:grantId/acknowledge',
+  needsAuthenticatedUser(),
+  async (
+    req: AcknowledgeDeviceGrantRequest,
+    res: Response<ApiResponse<AcknowledgeDeviceGrantResponse>>
+  ) => {
+    res.send(await handleAcknowledgeDeviceGrant(req));
+  }
+);
+
+router.post(
+  '/device-grants/:grantId/label',
+  needsAuthenticatedUser(),
+  async (
+    req: RenameDeviceGrantRequest,
+    res: Response<ApiResponse<RenameDeviceGrantResponse>>
+  ) => {
+    res.send(await handleRenameDeviceGrant(req));
+  }
+);
+
+router.post(
+  '/device-grants/:grantId/revoke',
+  needsAuthenticatedUser(),
+  async (
+    req: RevokeDeviceGrantRequest,
+    res: Response<ApiResponse<RevokeDeviceGrantResponse>>
+  ) => {
+    res.send(await handleRevokeDeviceGrant(req));
+  }
+);
+
+router.get(
   '/distributions/:contract/:card_id/wallet-allocations',
   cacheRequest({ ttl: Time.seconds(60) }),
   async (
@@ -878,6 +948,490 @@ router.post(
   }
 );
 
+router.get(
+  '/drops/signed-events',
+  maybeAuthenticatedUser(),
+  async (
+    req: GetDropsSignedEventsRequest,
+    res: Response<ApiResponse<GetDropsSignedEventsResponse>>
+  ) => {
+    res.send(await handleGetDropsSignedEvents(req));
+  }
+);
+
+router.get(
+  '/drops/:drop_id/collaborations',
+  maybeAuthenticatedUser(),
+  async (
+    req: GetMemeCollaborationStateRequest,
+    res: Response<ApiResponse<GetMemeCollaborationStateResponse>>
+  ) => {
+    res.send(await getMemeCollaborationState(req));
+  }
+);
+
+router.post(
+  '/drops/:drop_id/collaborations',
+  needsAuthenticatedUser(),
+  async (
+    req: InviteMemeCollaboratorsRequest,
+    res: Response<ApiResponse<InviteMemeCollaboratorsResponse>>
+  ) => {
+    res.send(await inviteMemeCollaborators(req));
+  }
+);
+
+router.post(
+  '/drops/:drop_id/collaborations/:invitation_id/response',
+  needsAuthenticatedUser(),
+  async (
+    req: RespondToMemeCollaborationRequest,
+    res: Response<ApiResponse<RespondToMemeCollaborationResponse>>
+  ) => {
+    res.send(await respondToMemeCollaboration(req));
+  }
+);
+
+router.get(
+  '/drops/:dropId/signed-events',
+  maybeAuthenticatedUser(),
+  async (
+    req: GetDropSignedEventsRequest,
+    res: Response<ApiResponse<GetDropSignedEventsResponse>>
+  ) => {
+    res.send(await handleGetDropSignedEvents(req));
+  }
+);
+
+router.post(
+  '/drops/:id/collapse-replies',
+  needsAuthenticatedUser(),
+  async (
+    req: SetDropReplyCollapseRequest,
+    res: Response<ApiResponse<SetDropReplyCollapseResponse>>
+  ) => {
+    res.send(await handleSetDropReplyCollapse(req));
+  }
+);
+
+router.get(
+  '/drops-bookmarked/status',
+  needsAuthenticatedUser(),
+  async (
+    req: GetDropBookmarksStatusRequest,
+    res: Response<ApiResponse<GetDropBookmarksStatusResponse>>
+  ) => {
+    res.send(await getDropBookmarksStatus(req));
+  }
+);
+
+router.delete(
+  '/e2ee/backup',
+  needsAuthenticatedUser(),
+  async (
+    req: E2eeDeleteBackupsRequest,
+    res: Response<ApiResponse<E2eeDeleteBackupsResponse>>
+  ) => {
+    res.send(await handleE2eeDeleteBackups(req));
+  }
+);
+
+router.get(
+  '/e2ee/backup',
+  needsAuthenticatedUser(),
+  async (
+    req: E2eeGetBackupStatusRequest,
+    res: Response<ApiResponse<E2eeGetBackupStatusResponse>>
+  ) => {
+    res.send(await handleE2eeGetBackupStatus(req));
+  }
+);
+
+router.post(
+  '/e2ee/backups',
+  needsAuthenticatedUser(),
+  async (
+    req: E2eeCreateBackupRequest,
+    res: Response<ApiResponse<E2eeCreateBackupResponse>>
+  ) => {
+    res.send(await handleE2eeCreateBackup(req));
+  }
+);
+
+router.get(
+  '/e2ee/backups/:backup_id',
+  needsAuthenticatedUser(),
+  async (
+    req: E2eeGetBackupRequest,
+    res: Response<ApiResponse<E2eeGetBackupResponse>>
+  ) => {
+    res.send(await handleE2eeGetBackup(req));
+  }
+);
+
+router.post(
+  '/e2ee/backups/:backup_id/activate',
+  needsAuthenticatedUser(),
+  async (
+    req: E2eeActivateBackupRequest,
+    res: Response<ApiResponse<E2eeActivateBackupResponse>>
+  ) => {
+    res.send(await handleE2eeActivateBackup(req));
+  }
+);
+
+router.get(
+  '/e2ee/backups/:backup_id/chunks',
+  needsAuthenticatedUser(),
+  async (
+    req: E2eeListBackupChunksRequest,
+    res: Response<ApiResponse<E2eeListBackupChunksResponse>>
+  ) => {
+    res.send(await handleE2eeListBackupChunks(req));
+  }
+);
+
+router.post(
+  '/e2ee/backups/:backup_id/chunks',
+  needsAuthenticatedUser(),
+  async (
+    req: E2eeAppendBackupChunkRequest,
+    res: Response<ApiResponse<E2eeAppendBackupChunkResponse>>
+  ) => {
+    res.send(await handleE2eeAppendBackupChunk(req));
+  }
+);
+
+router.get(
+  '/e2ee/backups/:backup_id/chunks/:seq',
+  needsAuthenticatedUser(),
+  async (
+    req: E2eeGetBackupChunkRequest,
+    res: Response<ApiResponse<E2eeGetBackupChunkResponse>>
+  ) => {
+    res.send(await handleE2eeGetBackupChunk(req));
+  }
+);
+
+router.post(
+  '/e2ee/backups/:backup_id/compact',
+  needsAuthenticatedUser(),
+  async (
+    req: E2eeCompactBackupRequest,
+    res: Response<ApiResponse<E2eeCompactBackupResponse>>
+  ) => {
+    res.send(await handleE2eeCompactBackup(req));
+  }
+);
+
+router.post(
+  '/e2ee/blobs',
+  needsAuthenticatedUser(),
+  async (
+    req: E2eeCreateBlobRequest,
+    res: Response<ApiResponse<E2eeCreateBlobResponse>>
+  ) => {
+    res.send(await handleE2eeCreateBlob(req));
+  }
+);
+
+router.get(
+  '/e2ee/blobs/:blob_id/chunks/:index',
+  needsAuthenticatedUser(),
+  async (
+    req: E2eeGetBlobChunkRequest,
+    res: Response<ApiResponse<E2eeGetBlobChunkResponse>>
+  ) => {
+    res.send(await handleE2eeGetBlobChunk(req));
+  }
+);
+
+router.put(
+  '/e2ee/blobs/:blob_id/chunks/:index',
+  needsAuthenticatedUser(),
+  async (
+    req: E2eePutBlobChunkRequest,
+    res: Response<ApiResponse<E2eePutBlobChunkResponse>>
+  ) => {
+    res.send(await handleE2eePutBlobChunk(req));
+  }
+);
+
+router.post(
+  '/e2ee/blobs/:blob_id/complete',
+  needsAuthenticatedUser(),
+  async (
+    req: E2eeCompleteBlobRequest,
+    res: Response<ApiResponse<E2eeCompleteBlobResponse>>
+  ) => {
+    res.send(await handleE2eeCompleteBlob(req));
+  }
+);
+
+router.post(
+  '/e2ee/devices',
+  needsAuthenticatedUser(),
+  async (
+    req: E2eeRegisterDeviceRequest,
+    res: Response<ApiResponse<E2eeRegisterDeviceResponse>>
+  ) => {
+    res.send(await handleE2eeRegisterDevice(req));
+  }
+);
+
+router.post(
+  '/e2ee/devices/login-grant',
+  needsAuthenticatedUser(),
+  async (
+    req: E2eeRegisterLoginGrantDeviceRequest,
+    res: Response<ApiResponse<E2eeRegisterLoginGrantDeviceResponse>>
+  ) => {
+    res.send(await handleE2eeRegisterLoginGrantDevice(req));
+  }
+);
+
+router.post(
+  '/e2ee/devices/lookup',
+  needsAuthenticatedUser(),
+  async (
+    req: E2eeLookupDevicesRequest,
+    res: Response<ApiResponse<E2eeLookupDevicesResponse>>
+  ) => {
+    res.send(await handleE2eeLookupDevices(req));
+  }
+);
+
+router.get(
+  '/e2ee/devices/:device_key',
+  needsAuthenticatedUser(),
+  async (
+    req: E2eeGetDeviceRequest,
+    res: Response<ApiResponse<E2eeGetDeviceResponse>>
+  ) => {
+    res.send(await handleE2eeGetDevice(req));
+  }
+);
+
+router.get(
+  '/e2ee/devices/:device_key/groups',
+  needsAuthenticatedUser(),
+  async (
+    req: E2eeGetDeviceGroupsRequest,
+    res: Response<ApiResponse<E2eeGetDeviceGroupsResponse>>
+  ) => {
+    res.send(await handleE2eeGetDeviceGroups(req));
+  }
+);
+
+router.post(
+  '/e2ee/devices/:device_key/key-packages',
+  needsAuthenticatedUser(),
+  async (
+    req: E2eeUploadKeyPackagesRequest,
+    res: Response<ApiResponse<E2eeUploadKeyPackagesResponse>>
+  ) => {
+    res.send(await handleE2eeUploadKeyPackages(req));
+  }
+);
+
+router.post(
+  '/e2ee/devices/:device_key/label',
+  needsAuthenticatedUser(),
+  async (
+    req: E2eeRenameDeviceRequest,
+    res: Response<ApiResponse<E2eeRenameDeviceResponse>>
+  ) => {
+    res.send(await handleE2eeRenameDevice(req));
+  }
+);
+
+router.post(
+  '/e2ee/devices/:device_key/revoke',
+  needsAuthenticatedUser(),
+  async (
+    req: E2eeRevokeDeviceRequest,
+    res: Response<ApiResponse<E2eeRevokeDeviceResponse>>
+  ) => {
+    res.send(await handleE2eeRevokeDevice(req));
+  }
+);
+
+router.get(
+  '/e2ee/devices/:device_key/welcomes',
+  needsAuthenticatedUser(),
+  async (
+    req: E2eeGetWelcomesRequest,
+    res: Response<ApiResponse<E2eeGetWelcomesResponse>>
+  ) => {
+    res.send(await handleE2eeGetWelcomes(req));
+  }
+);
+
+router.post(
+  '/e2ee/devices/:device_key/welcomes/:welcome_id/ack',
+  needsAuthenticatedUser(),
+  async (
+    req: E2eeAckWelcomeRequest,
+    res: Response<ApiResponse<E2eeAckWelcomeResponse>>
+  ) => {
+    res.send(await handleE2eeAckWelcome(req));
+  }
+);
+
+router.post(
+  '/e2ee/eligibility',
+  needsAuthenticatedUser(),
+  async (
+    req: E2eeCheckEligibilityRequest,
+    res: Response<ApiResponse<E2eeCheckEligibilityResponse>>
+  ) => {
+    res.send(await handleE2eeCheckEligibility(req));
+  }
+);
+
+router.post(
+  '/e2ee/groups',
+  needsAuthenticatedUser(),
+  async (
+    req: E2eeCreateGroupRequest,
+    res: Response<ApiResponse<E2eeCreateGroupResponse>>
+  ) => {
+    res.send(await handleE2eeCreateGroup(req));
+  }
+);
+
+router.get(
+  '/e2ee/groups/:group',
+  needsAuthenticatedUser(),
+  async (
+    req: E2eeGetGroupRequest,
+    res: Response<ApiResponse<E2eeGetGroupResponse>>
+  ) => {
+    res.send(await handleE2eeGetGroup(req));
+  }
+);
+
+router.post(
+  '/e2ee/groups/:group/entries',
+  needsAuthenticatedUser(),
+  async (
+    req: E2eeSubmitEntryRequest,
+    res: Response<ApiResponse<E2eeSubmitEntryResponse>>
+  ) => {
+    res.send(await handleE2eeSubmitEntry(req));
+  }
+);
+
+router.get(
+  '/e2ee/groups/:group/log',
+  needsAuthenticatedUser(),
+  async (
+    req: E2eeGetGroupLogRequest,
+    res: Response<ApiResponse<E2eeGetGroupLogResponse>>
+  ) => {
+    res.send(await handleE2eeGetGroupLog(req));
+  }
+);
+
+router.post(
+  '/e2ee/groups/:group/messages',
+  needsAuthenticatedUser(),
+  async (
+    req: E2eeSendMessageRequest,
+    res: Response<ApiResponse<E2eeSendMessageResponse>>
+  ) => {
+    res.send(await handleE2eeSendMessage(req));
+  }
+);
+
+router.post(
+  '/e2ee/groups/:group/roster',
+  needsAuthenticatedUser(),
+  async (
+    req: E2eeRepairRosterRequest,
+    res: Response<ApiResponse<E2eeRepairRosterResponse>>
+  ) => {
+    res.send(await handleE2eeRepairRoster(req));
+  }
+);
+
+router.post(
+  '/e2ee/key-packages/claim',
+  needsAuthenticatedUser(),
+  async (
+    req: E2eeClaimKeyPackagesRequest,
+    res: Response<ApiResponse<E2eeClaimKeyPackagesResponse>>
+  ) => {
+    res.send(await handleE2eeClaimKeyPackages(req));
+  }
+);
+
+router.get(
+  '/e2ee/me',
+  needsAuthenticatedUser(),
+  async (
+    req: E2eeGetMeRequest,
+    res: Response<ApiResponse<E2eeGetMeResponse>>
+  ) => {
+    res.send(await handleE2eeGetMe(req));
+  }
+);
+
+router.get(
+  '/e2ee/profiles/:profile_id/devices',
+  needsAuthenticatedUser(),
+  async (
+    req: E2eeGetProfileDevicesRequest,
+    res: Response<ApiResponse<E2eeGetProfileDevicesResponse>>
+  ) => {
+    res.send(await handleE2eeGetProfileDevices(req));
+  }
+);
+
+router.post(
+  '/e2ee/reports',
+  needsAuthenticatedUser(),
+  async (
+    req: E2eeReportMessageRequest,
+    res: Response<ApiResponse<E2eeReportMessageResponse>>
+  ) => {
+    res.send(await handleE2eeReportMessage(req));
+  }
+);
+
+router.get(
+  '/e2ee/trust-and-safety/reports',
+  needsAuthenticatedUser(),
+  async (
+    req: E2eeListTrustAndSafetyReportsRequest,
+    res: Response<ApiResponse<E2eeListTrustAndSafetyReportsResponse>>
+  ) => {
+    res.send(await handleE2eeListTrustAndSafetyReports(req));
+  }
+);
+
+router.get(
+  '/e2ee/trust-and-safety/reports/:report_id',
+  needsAuthenticatedUser(),
+  async (
+    req: E2eeGetTrustAndSafetyReportRequest,
+    res: Response<ApiResponse<E2eeGetTrustAndSafetyReportResponse>>
+  ) => {
+    res.send(await handleE2eeGetTrustAndSafetyReport(req));
+  }
+);
+
+router.post(
+  '/e2ee/trust-and-safety/reports/:report_id/hold',
+  needsAuthenticatedUser(),
+  async (
+    req: E2eeSetTrustAndSafetyReportHoldRequest,
+    res: Response<ApiResponse<E2eeSetTrustAndSafetyReportHoldResponse>>
+  ) => {
+    res.send(await handleE2eeSetTrustAndSafetyReportHold(req));
+  }
+);
+
 router.post(
   '/groups/preview-members',
   needsAuthenticatedUser(),
@@ -886,6 +1440,39 @@ router.post(
     res: Response<ApiResponse<PreviewGroupMembersResponse>>
   ) => {
     res.send(await handlePreviewGroupMembers(req));
+  }
+);
+
+router.delete(
+  '/identities/:id/artwork-alerts',
+  needsAuthenticatedUser(),
+  async (
+    req: DisableArtistArtworkAlertRequest,
+    res: Response<ApiResponse<DisableArtistArtworkAlertResponse>>
+  ) => {
+    res.send(await handleDisableArtistArtworkAlert(req));
+  }
+);
+
+router.get(
+  '/identities/:id/artwork-alerts',
+  needsAuthenticatedUser(),
+  async (
+    req: GetArtistArtworkAlertRequest,
+    res: Response<ApiResponse<GetArtistArtworkAlertResponse>>
+  ) => {
+    res.send(await handleGetArtistArtworkAlert(req));
+  }
+);
+
+router.post(
+  '/identities/:id/artwork-alerts',
+  needsAuthenticatedUser(),
+  async (
+    req: EnableArtistArtworkAlertRequest,
+    res: Response<ApiResponse<EnableArtistArtworkAlertResponse>>
+  ) => {
+    res.send(await handleEnableArtistArtworkAlert(req));
   }
 );
 
@@ -1598,6 +2185,17 @@ router.get(
 );
 
 router.get(
+  '/v2/drops/search',
+  maybeAuthenticatedUser(),
+  async (
+    req: SearchDropsV2Request,
+    res: Response<ApiResponse<SearchDropsV2Response>>
+  ) => {
+    res.send(await handleSearchDropsV2(req));
+  }
+);
+
+router.get(
   '/v2/drops/:id',
   maybeAuthenticatedUser(),
   async (
@@ -1741,6 +2339,17 @@ router.get(
 );
 
 router.get(
+  '/v2/notifications/unread-count',
+  needsAuthenticatedUser(),
+  async (
+    req: GetNotificationsUnreadCountV2Request,
+    res: Response<ApiResponse<GetNotificationsUnreadCountV2Response>>
+  ) => {
+    res.send(await handleGetNotificationsUnreadCountV2(req));
+  }
+);
+
+router.get(
   '/v2/official-waves',
   maybeAuthenticatedUser(),
   async (
@@ -1770,6 +2379,17 @@ router.get(
     res: Response<ApiResponse<GetActiveWaveVotesResponse>>
   ) => {
     res.send(await handleGetActiveWaveVotes(req));
+  }
+);
+
+router.get(
+  '/v2/waves/all',
+  maybeAuthenticatedUser(),
+  async (
+    req: GetAllWavesRequest,
+    res: Response<ApiResponse<GetAllWavesResponse>>
+  ) => {
+    res.send(await handleGetAllWaves(req));
   }
 );
 
@@ -1906,6 +2526,17 @@ router.get(
 );
 
 router.get(
+  '/v2/waves/:waveId/all-mention-count',
+  needsAuthenticatedUser(),
+  async (
+    req: GetWaveAllMentionCountRequest,
+    res: Response<ApiResponse<GetWaveAllMentionCountResponse>>
+  ) => {
+    res.send(await handleGetWaveAllMentionCount(req));
+  }
+);
+
+router.get(
   '/v2/waves/:waveId/mention-search',
   maybeAuthenticatedUser(),
   async (
@@ -1957,6 +2588,17 @@ router.get(
     res: Response<ApiResponse<GetWaveHubV3Response>>
   ) => {
     res.send(await handleGetWaveHubV3(req));
+  }
+);
+
+router.patch(
+  '/v3/waves/:wave_id',
+  needsAuthenticatedUser(),
+  async (
+    req: UpdateWaveHubV3Request,
+    res: Response<ApiResponse<UpdateWaveHubV3Response>>
+  ) => {
+    res.send(await handleUpdateWaveHubV3(req));
   }
 );
 
@@ -2137,6 +2779,17 @@ router.put(
 );
 
 router.get(
+  '/v3/waves/:wave_id/competitions/:competition_id/entry-contexts',
+  maybeAuthenticatedUser(),
+  async (
+    req: GetCompetitionEntryContextsV3Request,
+    res: Response<ApiResponse<GetCompetitionEntryContextsV3Response>>
+  ) => {
+    res.send(await handleGetCompetitionEntryContextsV3(req));
+  }
+);
+
+router.get(
   '/v3/waves/:wave_id/competitions/:competition_id/leaderboard',
   maybeAuthenticatedUser(),
   async (
@@ -2287,6 +2940,17 @@ router.get(
     res: Response<ApiResponse<ListWaveSubwavesResponse>>
   ) => {
     res.send(await handleListWaveSubwaves(req));
+  }
+);
+
+router.get(
+  '/waves/:id/undiscovered-drops',
+  needsAuthenticatedUser(),
+  async (
+    req: GetWaveUndiscoveredDropsRequest,
+    res: Response<ApiResponse<GetWaveUndiscoveredDropsResponse>>
+  ) => {
+    res.send(await handleGetWaveUndiscoveredDrops(req));
   }
 );
 export default router;

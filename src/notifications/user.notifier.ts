@@ -1,3 +1,4 @@
+import { inSequence } from '@/db/in-sequence';
 import { IdentityNotificationCause } from '../entities/IIdentityNotification';
 import { RequestContext } from '../request.context';
 import { ConnectionWrapper } from '../sql-executor';
@@ -8,6 +9,7 @@ import {
 } from './identity-notifications.db';
 import type { NewIdentityNotification } from './identity-notifications.db';
 import {
+  ArtistArtworkNotificationData,
   DropBoostNotificationData,
   DropPollVoteNotificationData,
   DropQuoteNotificationData,
@@ -19,13 +21,107 @@ import {
   IdentityRepNotificationData,
   IdentitySubscriptionNotificationData,
   SubscriptionCoverageNotificationData,
-  CompetitionLifecycleNotificationData
+  MemeCollaborationNotificationData,
+  CompetitionLifecycleNotificationData,
+  VotingCreditsReturnedNotificationData
 } from './user-notification.types';
 
 export class UserNotifier {
   constructor(
     private readonly identityNotificationsDb: IdentityNotificationsDb
   ) {}
+
+  public async notifyOfArtistArtwork(
+    recipientId: string,
+    data: ArtistArtworkNotificationData,
+    visibilityGroupId: string | null,
+    ctx: RequestContext
+  ): Promise<number[]> {
+    if (!ctx.connection)
+      throw new Error('Artwork alerts require an event effect transaction');
+    return this.identityNotificationsDb.insertManyNotifications(
+      [
+        {
+          identity_id: recipientId,
+          additional_identity_id: data.artist_id,
+          related_drop_id: data.drop_id,
+          related_drop_part_no: 1,
+          related_drop_2_id: null,
+          related_drop_2_part_no: null,
+          cause: IdentityNotificationCause.ARTIST_ARTWORK_SUBMITTED,
+          additional_data: { ...data },
+          wave_id: data.wave_id,
+          visibility_group_id: visibilityGroupId
+        }
+      ],
+      ctx.connection
+    );
+  }
+
+  public async notifyOfMemeCollaboration(
+    recipientId: string,
+    data: MemeCollaborationNotificationData,
+    visibilityGroupId: string | null,
+    ctx: RequestContext
+  ): Promise<number[]> {
+    return this.notifyOfMemeCollaborations(
+      [{ recipientId, data }],
+      visibilityGroupId,
+      ctx
+    );
+  }
+
+  public async notifyOfMemeCollaborations(
+    notifications: readonly {
+      recipientId: string;
+      data: MemeCollaborationNotificationData;
+    }[],
+    visibilityGroupId: string | null,
+    ctx: RequestContext
+  ): Promise<number[]> {
+    return this.identityNotificationsDb.insertManyNotifications(
+      notifications.map(({ recipientId, data }) => ({
+        identity_id: recipientId,
+        additional_identity_id: data.actor_id,
+        related_drop_id: data.drop_id,
+        related_drop_part_no: 1,
+        related_drop_2_id: null,
+        related_drop_2_part_no: null,
+        cause: IdentityNotificationCause.MEME_COLLABORATION,
+        additional_data: { ...data },
+        wave_id: data.wave_id,
+        visibility_group_id: visibilityGroupId
+      })),
+      ctx.connection
+    );
+  }
+
+  public async notifyOfVotingCreditReturns(
+    notifications: readonly {
+      recipientId: string;
+      data: VotingCreditsReturnedNotificationData;
+    }[],
+    visibilityGroupId: string | null,
+    ctx: RequestContext
+  ): Promise<number[]> {
+    if (!ctx.connection)
+      throw new Error('Credit return notifications require a transaction');
+    return this.identityNotificationsDb.insertManyNotifications(
+      notifications.map(({ recipientId, data }) => ({
+        identity_id: recipientId,
+        additional_identity_id: null,
+        related_drop_id: null,
+        related_drop_part_no: null,
+        related_drop_2_id: null,
+        related_drop_2_part_no: null,
+        cause: IdentityNotificationCause.VOTING_CREDITS_RETURNED,
+        additional_data: { ...data },
+        wave_id: data.wave_id,
+        visibility_group_id: visibilityGroupId
+      })),
+      ctx.connection
+    );
+  }
 
   public async notifyOfCompetitionLifecycle(
     recipientId: string,
@@ -318,28 +414,41 @@ export class UserNotifier {
     ctx: RequestContext
   ) {
     ctx.timer?.start('userNotifier->notifyOfWaveCreated');
-    await Promise.all(
+    await inSequence(
       identityIds
         .filter((it) => it !== createdBy)
-        .map((identityId) =>
-          this.identityNotificationsDb.insertNotification(
-            {
-              identity_id: identityId,
-              additional_identity_id: createdBy,
-              related_drop_id: null,
-              related_drop_part_no: null,
-              related_drop_2_id: null,
-              related_drop_2_part_no: null,
-              cause: IdentityNotificationCause.WAVE_CREATED,
-              additional_data: {},
-              wave_id: waveId,
-              visibility_group_id: null
-            },
-            ctx.connection
-          )
+        .map(
+          (identityId) => () =>
+            this.identityNotificationsDb.insertNotification(
+              {
+                identity_id: identityId,
+                additional_identity_id: createdBy,
+                related_drop_id: null,
+                related_drop_part_no: null,
+                related_drop_2_id: null,
+                related_drop_2_part_no: null,
+                cause: IdentityNotificationCause.WAVE_CREATED,
+                additional_data: {},
+                wave_id: waveId,
+                visibility_group_id: null
+              },
+              ctx.connection
+            )
         )
     );
     ctx.timer?.stop('userNotifier->notifyOfWaveCreated');
+  }
+
+  public async countMentionRecipients(
+    identityIds: string[],
+    authorId: string,
+    { connection }: RequestContext
+  ): Promise<number> {
+    return this.identityNotificationsDb.countMentionRecipients(
+      identityIds,
+      authorId,
+      connection
+    );
   }
 
   public async notifyWaveDropCreatedRecipients(

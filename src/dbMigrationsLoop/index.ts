@@ -1,3 +1,15 @@
+import {
+  CompetitionScoreResetEntity,
+  CompetitionScoreResetStateEntity
+} from '@/entities/ICompetitionScoreReset';
+import {
+  COMPETITION_SCORE_RESETS_SCOPE,
+  runCompetitionScoreResetsScope
+} from './competition-score-resets-scope';
+import {
+  VotingCreditReleaseEntity,
+  VotingCreditReleaseRecipientEntity
+} from '@/entities/IVotingCreditRelease';
 import { pushNotificationCancellationsDb } from '@/notifications/push-notification-cancellations.db';
 import * as sentryContext from '../sentry.context';
 import { Logger } from '../logging';
@@ -18,22 +30,22 @@ import { applyClaimsMediaUploadSchema } from './claims-media-schema';
 import { NftLinkEntity } from '@/entities/INftLink';
 import { applyNftLinkPageRetrySchema } from './nft-link-page-retry-schema';
 import { getDataSource } from '@/db';
+import { synchronizeSchemaBounded } from '@/db/bounded-schema-sync';
+import { CompetitionLifecycleEventEntity } from '@/entities/ICompetition';
 import { installLegacyCompetitionGetFacade } from '@/competitions/legacy-competition-get-facade';
-import { retireLegacyCompetitionRuntime } from '@/competitions/competition-runtime-retirement';
 import { dbSupplier } from '@/sql-executor';
-import { transferCompetitionRetirementHistory } from '@/competitions/competition-retirement-history';
-import {
-  assertCompetitionHistoryPreparationAllowed,
-  isCompetitionRuntimeRetired
-} from '@/competitions/competition-runtime-retirement-state';
-import { transferRetainedCompetitionDistributions } from '@/competitions/competition-retirement-distributions';
-import { transferRetainedCompetitionLeaderboardPublication } from '@/competitions/competition-retirement-leaderboard';
+import { deleteUnusedViewerGroupSets } from '@/waves/viewer-group-sets';
+import { assertCompetitionSchemaSyncSafe } from '@/competitions/retired-competition-storage';
 import { MarketDepthPublicationLockEntity } from '@/entities/IMarketDepthPublicationLock';
+import { NFTHistoryReplayJobEntity } from '@/entities/INFTHistoryReplayJob';
+import { NFTHistoryEventEntity } from '@/entities/INFTHistoryEvent';
+import { DropEntity } from '@/entities/IDrop';
+import { applyWaveScoreInputIndexSchema } from './wave-score-input-index-schema';
+import { E2eeBlobChunkEntity, E2eeBlobEntity } from '@/entities/IE2ee';
 import {
-  prepareWaveHubConfiguration,
-  finalizeWaveHubConfigurationCapture
-} from '@/waves/wave-hub-configuration-preparation';
-
+  E2EE_BLOB_MIGRATION_SCOPE,
+  runE2eeBlobMigrationScope
+} from './e2ee-blob-migration-scope';
 const DBMigrate = require('db-migrate');
 
 const logger = Logger.get('DB_MIGRATIONS_LOOP');
@@ -91,15 +103,18 @@ function schemaScope(event: unknown, scheduledInvocation: boolean) {
     scheduledInvocation ||
     (scope !== 'full' &&
       scope !== 'maintenance' &&
+      scope !== 'competition-lifecycle-events' &&
+      scope !== 'competition-score-resets' &&
+      scope !== COMPETITION_SCORE_RESETS_SCOPE &&
       scope !== 'wallet-transfer-analysis' &&
       scope !== 'claims-media-upload' &&
       scope !== 'nft-link-page-retry' &&
       scope !== 'market-depth-publication-lock' &&
-      scope !== 'competition-runtime-schema' &&
-      scope !== 'competition-runtime-retirement' &&
-      scope !== 'wave-hub-configuration-preparation' &&
-      scope !== 'wave-hub-configuration-finalize' &&
-      scope !== 'competition-history-preparation')
+      scope !== 'voting-credit-returns' &&
+      scope !== 'nft-history-events' &&
+      scope !== 'nft-history-replay' &&
+      scope !== 'wave-score-input-index' &&
+      scope !== E2EE_BLOB_MIGRATION_SCOPE)
   ) {
     throw new Error('Unsupported database schema scope for this invocation');
   }
@@ -110,69 +125,86 @@ export const handler = sentryContext.wrapLambdaHandler(async (event) => {
   const scheduledInvocation = isScheduledInvocation(event);
   const scope = schemaScope(event, scheduledInvocation);
   logger.info(`[RUNNING]`);
-  if (
-    scope === 'wave-hub-configuration-preparation' ||
-    scope === 'wave-hub-configuration-finalize'
-  ) {
-    const result = await doInDbContext(
-      async () =>
-        scope === 'wave-hub-configuration-preparation'
-          ? await prepareWaveHubConfiguration(dbSupplier())
-          : await finalizeWaveHubConfigurationCapture(dbSupplier()),
-      {
-        logger,
-        entities: Object.values(Entities),
-        syncEntities: false,
-        skipRedis: true
-      }
-    );
-    return { schema_scope: scope, ...result };
-  }
-  if (scope === 'competition-runtime-schema') {
+  if (scope === 'competition-score-resets') {
     await doInDbContext(() => Promise.resolve(), {
       logger,
-      entities: Object.values(Entities),
+      entities: [CompetitionScoreResetEntity, CompetitionScoreResetStateEntity],
+      syncEntities: true,
+      skipRedis: true
+    });
+    return { schema_scope: scope };
+  }
+  if (scope === COMPETITION_SCORE_RESETS_SCOPE) {
+    const report = await doInDbContext(
+      () => runCompetitionScoreResetsScope(event as Record<string, unknown>),
+      { logger, syncEntities: false, skipRedis: true }
+    );
+    return { schema_scope: scope, ...report };
+  }
+  if (scope === 'competition-lifecycle-events') {
+    await doInDbContext(() => Promise.resolve(), {
+      logger,
+      entities: [CompetitionLifecycleEventEntity],
       syncEntities: true,
       skipRedis: true
     });
     return { schema_scope: scope };
   }
 
-  if (scope === 'competition-history-preparation') {
-    const result = await doInDbContext(
-      async () => {
-        await assertCompetitionHistoryPreparationAllowed(dbSupplier());
-        return {
-          history: await transferCompetitionRetirementHistory(dbSupplier()),
-          distribution_history:
-            await transferRetainedCompetitionDistributions(dbSupplier()),
-          leaderboard_publication:
-            await transferRetainedCompetitionLeaderboardPublication(
-              dbSupplier()
-            )
-        };
-      },
-      {
-        logger,
-        entities: Object.values(Entities),
-        syncEntities: false,
-        skipRedis: true
-      }
-    );
-    return { schema_scope: scope, ...result };
+  if (scope === 'nft-history-replay') {
+    await doInDbContext(() => Promise.resolve(), {
+      logger,
+      entities: [NFTHistoryReplayJobEntity],
+      syncEntities: true,
+      skipRedis: true
+    });
+    return { schema_scope: scope };
   }
 
-  if (scope === 'competition-runtime-retirement') {
-    const result = await doInDbContext(
-      () => retireLegacyCompetitionRuntime(dbSupplier()),
+  if (scope === 'nft-history-events') {
+    await doInDbContext(() => Promise.resolve(), {
+      logger,
+      entities: [NFTHistoryEventEntity],
+      syncEntities: true,
+      skipRedis: true
+    });
+    return { schema_scope: scope };
+  }
+
+  if (scope === E2EE_BLOB_MIGRATION_SCOPE) {
+    // Operator-only data job; the deploy workflow never sends this scope.
+    const report = await doInDbContext(
+      () => runE2eeBlobMigrationScope(event as Record<string, unknown>),
       {
         logger,
-        entities: Object.values(Entities),
+        entities: [E2eeBlobEntity, E2eeBlobChunkEntity],
         syncEntities: false,
         skipRedis: true
       }
     );
-    return { schema_scope: scope, ...result };
+    logger.info(`[FINISHED E2EE BLOB MIGRATION] ${JSON.stringify(report)}`);
+    return { schema_scope: scope, ...report };
+  }
+  if (scope === 'wave-score-input-index') {
+    const addedIndexes = await doInDbContext(applyWaveScoreInputIndexSchema, {
+      logger,
+      entities: [DropEntity],
+      syncEntities: false,
+      skipRedis: true
+    });
+    logger.info(
+      `[FINISHED WAVE SCORE INPUT INDEX] added_indexes=${addedIndexes}`
+    );
+    return { schema_scope: scope };
+  }
+  if (scope === 'voting-credit-returns') {
+    await doInDbContext(() => Promise.resolve(), {
+      logger,
+      entities: [VotingCreditReleaseEntity, VotingCreditReleaseRecipientEntity],
+      syncEntities: true,
+      skipRedis: true
+    });
+    return { schema_scope: scope };
   }
 
   if (scope === 'market-depth-publication-lock') {
@@ -229,12 +261,14 @@ export const handler = sentryContext.wrapLambdaHandler(async (event) => {
   await doInDbContext(
     async () => {
       // Synchronization ignores tables outside the current entity registry; retirement is operator-only.
-      if (!scheduledInvocation && scope === 'full')
-        await getDataSource().synchronize();
+      if (!scheduledInvocation && scope === 'full') {
+        await assertCompetitionSchemaSyncSafe(dbSupplier());
+        await synchronizeSchemaBounded(getDataSource());
+        await applyWaveScoreInputIndexSchema();
+      }
       if (
         !scheduledInvocation &&
-        scope === 'full' &&
-        (await isCompetitionRuntimeRetired(dbSupplier()))
+        (scope === 'full' || scope === 'maintenance')
       ) {
         await installLegacyCompetitionGetFacade(dbSupplier());
       }
@@ -250,6 +284,12 @@ export const handler = sentryContext.wrapLambdaHandler(async (event) => {
         await dbmigrate.up();
       }
       await pushNotificationCancellationsDb.deleteExpired();
+      const deletedViewerGroupSets =
+        await deleteUnusedViewerGroupSets(dbSupplier());
+      if (deletedViewerGroupSets)
+        logger.info(
+          `Deleted ${deletedViewerGroupSets} unused viewer group sets`
+        );
       const deletedModerationChecks =
         await deleteExpiredContentModerationChecksInBatches(
           Time.currentMillis() - Time.days(30).toMillis()

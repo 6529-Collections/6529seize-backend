@@ -1,6 +1,10 @@
 import { INDEFINITE_COMPETITION_PAUSE_END } from './competition-phase';
 import { competitionEntryVisibleSql } from '@/competitions/competition-entry-visibility';
 import {
+  anonymousCompetitionEntrySql,
+  competitionAnonymityViewerId
+} from '@/competitions/competition-anonymity';
+import {
   COMPETITION_CAPABILITIES_TABLE,
   COMPETITION_CONFIG_VERSIONS_TABLE,
   COMPETITION_DECISIONS_TABLE,
@@ -185,7 +189,7 @@ export class CompetitionRepository extends LazyDbAccessCompatibleService {
   ): Promise<DefaultCompetitionRecord[]> {
     return this.timed(ctx, 'listDefaultCompetitionRecords', () =>
       this.db.execute<DefaultCompetitionRecord>(
-        `select id, storage_mode, type, lifecycle, published_at, ended_at, cancelled_at,
+        `select id, type, lifecycle, published_at, ended_at, cancelled_at,
          participation_starts_at, participation_ends_at, voting_starts_at, voting_ends_at, decision_config
          from ${COMPETITIONS_TABLE} where wave_id = :waveId`,
         { waveId },
@@ -294,6 +298,26 @@ export class CompetitionRepository extends LazyDbAccessCompatibleService {
     };
   }
 
+  public async findNativeEntriesByIds(
+    competitionId: string,
+    entryIds: readonly string[],
+    ctx: RequestContext
+  ): Promise<CompetitionEntry[]> {
+    if (!entryIds.length) return [];
+    const rows = await this.db.execute<NativeEntryRecord>(
+      `select ce.* from ${COMPETITION_ENTRIES_TABLE} ce
+       where ce.competition_id=:competitionId and ce.id in (:entryIds)
+         and ${competitionEntryVisibleSql('ce')}`,
+      { competitionId, entryIds },
+      dbOptions(ctx)
+    );
+    const byId = new Map(rows.map((row) => [row.id, this.mapNativeEntry(row)]));
+    return entryIds.flatMap((id) => {
+      const entry = byId.get(id);
+      return entry ? [entry] : [];
+    });
+  }
+
   public async listNativeEntries(
     competitionId: string,
     request: CompetitionPageRequest,
@@ -303,10 +327,18 @@ export class CompetitionRepository extends LazyDbAccessCompatibleService {
   ): Promise<CompetitionPage<CompetitionEntry>> {
     const statusFilter = statuses?.length ? 'and ce.status in (:statuses)' : '';
     const submitterFilter = submitterId
-      ? 'and ce.submitter_id = :submitterId'
+      ? `and ce.submitter_id = :submitterId ${
+          submitterId === competitionAnonymityViewerId(ctx)
+            ? ''
+            : `and not exists (select 1 from ${COMPETITIONS_TABLE} anonymity_competition
+                where anonymity_competition.id=ce.competition_id
+                  and ${anonymousCompetitionEntrySql('ce', 'anonymity_competition')})`
+        }`
       : '';
     let order: string;
-    if (request.sort === 'rating') {
+    if (request.sort === 'won_at') {
+      order = `coalesce(ce.won_at, ce.submitted_at) ${directionSql(request.direction)}, ce.\`rank\` asc, ce.id ${directionSql(request.direction)}`;
+    } else if (request.sort === 'rating') {
       order = `coalesce(leaderboard.rating, 0) ${directionSql(request.direction)},
                leaderboard.\`rank\` is null asc, leaderboard.\`rank\` asc,
                ce.id asc`;
@@ -378,6 +410,7 @@ export class CompetitionRepository extends LazyDbAccessCompatibleService {
     const orderColumns: Readonly<Record<string, string>> = {
       submitted_at: 'lb.submitted_at',
       real_time_rating: 'lb.real_time_rating',
+      decision_rating: 'coalesce(lb.decision_rating,lb.rating)',
       trend: '(lb.real_time_rating - lb.rating)',
       rating: 'lb.rating',
       price: 'prices.price'
@@ -393,12 +426,14 @@ export class CompetitionRepository extends LazyDbAccessCompatibleService {
        join ${COMPETITIONS_TABLE} c on c.id=lb.competition_id
        ${priceSelect}
        where lb.competition_id = :competitionId and ${competitionEntryVisibleSql('e')}
+       ${request.is_additional_action_promised === undefined ? '' : `and exists (select 1 from ${DROPS_TABLE} action_drop where action_drop.id=e.drop_id and coalesce(action_drop.is_additional_action_promised,0)=:additionalActionPromised)`}
        ${priceRequested ? 'and (:minPrice is null or prices.price>=:minPrice) and (:maxPrice is null or prices.price<=:maxPrice)' : ''}
        order by ${order}
        limit :offset, :rowLimit`,
       {
         competitionId,
         priceCurrency: request.price_currency ?? null,
+        additionalActionPromised: request.is_additional_action_promised ?? null,
         minPrice: request.min_price ?? null,
         maxPrice: request.max_price ?? null,
         offset: request.offset,

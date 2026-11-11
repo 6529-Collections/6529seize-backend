@@ -35,6 +35,61 @@ import {
   ModerationReportsView,
   ModerationReportRow
 } from './content-moderation.db';
+import {
+  prePublicationModerationService,
+  PrePublicationModerationService
+} from './pre-publication-moderation.service';
+import { env } from '@/env';
+
+export const AUTO_QUARANTINE_MIN_REPORTERS_ENV =
+  'CONTENT_MODERATION_AUTO_QUARANTINE_MIN_REPORTERS';
+export const AUTO_QUARANTINE_SIGNAL_CORROBORATES_ENV =
+  'CONTENT_MODERATION_AUTO_QUARANTINE_SIGNAL_CORROBORATES';
+const DEFAULT_AUTO_QUARANTINE_MIN_REPORTERS = 2;
+
+/**
+ * An urgent, high-confidence assessment hides a reported drop only when it
+ * is corroborated: by at least `minReporters` distinct open reporters
+ * (default 2), or by one report plus a deterministic content signal (on by
+ * default). `minReporters = 1` restores single-report quarantine.
+ */
+export interface AutoQuarantineCorroborationRule {
+  readonly minReporters: number;
+  readonly signalCorroborates: boolean;
+}
+
+export function getAutoQuarantineCorroborationRule(): AutoQuarantineCorroborationRule {
+  const rawMin = env.getStringOrNull(AUTO_QUARANTINE_MIN_REPORTERS_ENV)?.trim();
+  const minReporters = rawMin
+    ? Number(rawMin)
+    : DEFAULT_AUTO_QUARANTINE_MIN_REPORTERS;
+  if (!Number.isInteger(minReporters) || minReporters <= 0) {
+    throw new Error(
+      `${AUTO_QUARANTINE_MIN_REPORTERS_ENV} must be a positive integer`
+    );
+  }
+  const rawSignal = env
+    .getStringOrNull(AUTO_QUARANTINE_SIGNAL_CORROBORATES_ENV)
+    ?.trim()
+    .toLowerCase();
+  return {
+    minReporters,
+    signalCorroborates: rawSignal !== 'false'
+  };
+}
+
+function snapshotText(snapshot: Record<string, unknown>): string {
+  const parts = Array.isArray(snapshot.parts)
+    ? (snapshot.parts as Array<{ content?: string | null }>)
+    : [];
+  return [
+    typeof snapshot.title === 'string' ? snapshot.title : null,
+    ...parts.map((part) => part.content ?? null)
+  ]
+    .filter((value): value is string => !!value?.trim())
+    .map((value) => value.trim())
+    .join('\n');
+}
 
 export interface SubmitContentReportInput {
   readonly dropId: string;
@@ -50,6 +105,7 @@ type DropModerationDecision = 'ALLOW' | 'QUARANTINE' | 'REMOVE';
 type ContentModerationDbDependency = Pick<
   ContentModerationDb,
   | 'applyModeratorDropDecision'
+  | 'countOpenReportersForDrop'
   | 'createReportWithViewerActions'
   | 'getAuditHistoryForDrops'
   | 'getBlockActivity'
@@ -78,7 +134,11 @@ export class ContentModerationService {
   constructor(
     private readonly db: ContentModerationDbDependency,
     private readonly aiService: ContentModerationAiDependency,
-    private readonly reviews: ModerationReviewDb = moderationReviewDb
+    private readonly reviews: ModerationReviewDb = moderationReviewDb,
+    private readonly signalScreen: Pick<
+      PrePublicationModerationService,
+      'findContentPatternSignal'
+    > = prePublicationModerationService
   ) {}
 
   async submitReport(
@@ -96,7 +156,11 @@ export class ContentModerationService {
     if (snapshot.author_profile_id === input.reporterProfileId) {
       throw new BadRequestException(`You can't report your own post`);
     }
-    const parentContext = await this.getParentContext(snapshot, ctx);
+    const parentContext = await this.getParentContext(
+      snapshot,
+      input.reporterProfileId,
+      ctx
+    );
     const contentSnapshot = {
       ...snapshot,
       parent_context: parentContext
@@ -193,6 +257,10 @@ export class ContentModerationService {
             latestReview.override ||
             latestReview.version !== review.item.version + 1 ||
             (await this.reviews.currentRevision(latestReview, tx)) !== revision
+          )
+            return;
+          if (
+            !(await this.isQuarantineCorroborated(input.dropId, snapshot, tx))
           )
             return;
           const changed = await this.db.tryAiQuarantineForOpenReport(
@@ -437,16 +505,62 @@ export class ContentModerationService {
     }
   }
 
+  /**
+   * Single-report quarantine is not enough: the urgent assessment needs a
+   * second distinct reporter or a deterministic signal in the content.
+   * Counted inside the quarantine transaction so concurrent reports see
+   * each other.
+   */
+  private async isQuarantineCorroborated(
+    dropId: string,
+    snapshot: Record<string, unknown>,
+    ctx: RequestContext
+  ): Promise<boolean> {
+    const rule = getAutoQuarantineCorroborationRule();
+    if (
+      rule.signalCorroborates &&
+      this.signalScreen.findContentPatternSignal(snapshotText(snapshot))
+    ) {
+      return true;
+    }
+    if (rule.minReporters <= 1) {
+      return true;
+    }
+    const reporters = await this.db.countOpenReportersForDrop(
+      dropId,
+      ctx.connection
+    );
+    if (reporters >= rule.minReporters) {
+      return true;
+    }
+    this.logger.info(
+      `Urgent assessment for drop ${dropId} kept visible for human review: ${reporters} open reporter(s), no content signal`
+    );
+    return false;
+  }
+
+  /**
+   * The parent is labelled so the evaluator can tell context the reporter
+   * wrote apart from the reported author's text. Drop edit history is not
+   * retained, so the parent is the current version and says so.
+   */
   private async getParentContext(
     snapshot: Record<string, unknown> & { reply_to_drop_id?: unknown },
+    reporterProfileId: string,
     ctx: RequestContext
   ): Promise<Record<string, unknown> | null> {
     if (typeof snapshot.reply_to_drop_id === 'string') {
       try {
-        return await this.db.getDropSnapshot(
+        const parent = await this.db.getDropSnapshot(
           snapshot.reply_to_drop_id,
           ctx.connection
         );
+        return {
+          ...parent,
+          context_role: 'PARENT_OF_REPORTED_DROP',
+          authored_by_reporter: parent.author_profile_id === reporterProfileId,
+          content_as_of: 'CURRENT_MAY_POSTDATE_REPLY'
+        };
       } catch (error) {
         if (!(error instanceof NotFoundException)) {
           throw error;

@@ -150,15 +150,12 @@ function buildOptionalWebhookTextFields(
   };
 }
 
-export function buildGitHubWebhookDedupeKey(
-  event: GitHubWebhookEvent,
-  deliveryId: unknown
-): string {
-  const normalizedDeliveryId = normalizeString(deliveryId);
-  if (normalizedDeliveryId) {
-    return `gh-webhook:delivery:${normalizedDeliveryId}`;
-  }
-
+/**
+ * Dedupe key for a webhook event, built from what the event announces
+ * (kind, action and URL). Redeliveries and repeated sends of the same event
+ * share it whatever their delivery id.
+ */
+export function buildGitHubWebhookDedupeKey(event: GitHubWebhookEvent): string {
   return `gh-webhook:${event.kind}:${event.action}:${event.htmlUrl}`;
 }
 

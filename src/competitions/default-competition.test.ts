@@ -5,7 +5,6 @@ import {
 } from '@/competitions/default-competition';
 import {
   CompetitionLifecycle as Lifecycle,
-  CompetitionStorageMode as Storage,
   CompetitionType as Type
 } from '@/entities/ICompetition';
 import * as fc from 'fast-check';
@@ -16,7 +15,6 @@ function record(
 ): DefaultCompetitionRecord {
   return {
     id,
-    storage_mode: Storage.NATIVE,
     type: Type.RANK,
     lifecycle: Lifecycle.PUBLISHED,
     published_at: 1,
@@ -173,12 +171,6 @@ describe('default timing normalization', () => {
     }
   );
 
-  it('excludes retired adapters and orphan records from native default selection', () => {
-    expect(
-      select([record('orphan', { storage_mode: Storage.LEGACY_ADAPTER })])
-        .competition_id
-    ).toBeNull();
-  });
   it('treats null starts as unbounded and null ends as open', () => {
     expect(
       normalizeDefaultCompetition(

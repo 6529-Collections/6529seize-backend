@@ -41,7 +41,6 @@ export {
   CompetitionLifecycleEventEntity,
   CompetitionOutcomeDistributionItemEntity,
   CompetitionOutcomeEntity,
-  CompetitionParityObservationEntity,
   CompetitionPauseEntity,
   CompetitionVoteEntity
 } from './ICompetition';
@@ -69,6 +68,7 @@ export { DropNftLinkEntity } from './IDropNftLink';
 export { DropBookmarkEntity } from './IDropBookmark';
 export { DropQuickVoteSkipEntity } from './IDropQuickVoteSkip';
 export { DropCurationEntity } from './IDropCuration';
+export { DropClientIdEntity } from './IDropClientId';
 export {
   DropPollEntity,
   DropPollOptionEntity,
@@ -80,13 +80,8 @@ export {
   HelpBotDailyActivityCreditRequestStatus
 } from './IHelpBotDailyActivityCreditRequest';
 export { HelpBotInteractionEntity } from './IHelpBotInteraction';
-export { DropRankEntity } from './IDropRank';
 export { DropReactionsEntity } from './IDropReactions';
-export { DropRealVoteInTimeEntity } from './IDropRealVoteInTime';
-export { DropRealVoterVoteInTimeEntity } from './IDropRealVoterVoteInTime';
 export { DropRelationEntity } from './IDropRelation';
-export { DropVoteCreditSpending } from './IDropVoteCreditSpending';
-export { DropVoterStateEntity } from './IDropVoterState';
 export { ENS } from './IENS';
 export { EthPrice } from './IEthPrice';
 export { EULAConsent } from './IEULAPolicy';
@@ -137,6 +132,7 @@ export {
 } from './INextGen';
 export { LabExtendedData, LabNFT, MemesExtendedData, NFT } from './INFT';
 export { NFTHistory, NFTHistoryBlock, NFTHistoryClaim } from './INFTHistory';
+export { NFTHistoryEventEntity } from './INFTHistoryEvent';
 export {
   ConsolidatedNFTOwner,
   NFTOwner,
@@ -173,6 +169,7 @@ export { ProfileCmsUploadEntity } from './IProfileCmsUpload';
 export { PushNotificationDevice } from './IPushNotification';
 export { PushNotificationSettingsEntity } from './IPushNotificationSettings';
 export { Rating } from './IRating';
+export { RatingCreditLockEntity } from './IRatingCreditLock';
 export { RefreshToken } from './IRefreshToken';
 export {
   ReleaseDigestEntity,
@@ -236,17 +233,7 @@ export {
 } from './ITransactionsProcessing';
 export { ConsolidatedTDHUpload, UploadEntity } from './IUpload';
 export { UserGroupEntity } from './IUserGroup';
-export {
-  WaveArchiveEntity,
-  WaveDecisionPauseEntity,
-  WaveEntity,
-  WaveOutcomeDistributionItemEntity,
-  WaveOutcomeEntity
-} from './IWave';
-export {
-  WaveVotingCreditNftArchiveEntity,
-  WaveVotingCreditNftEntity
-} from './IWaveVotingCreditNft';
+export { WaveArchiveEntity, WaveEntity } from './IWave';
 export { WalletAuthSessionEntity } from './IWalletAuthSession';
 export type { WalletAuthClientType } from './IWalletAuthSession';
 export { WalletConnectionShareEntity } from './IWalletConnectionShare';
@@ -255,21 +242,15 @@ export {
   WalletTransferWalletDailyEntity,
   WalletTransferAnalysisStateEntity
 } from './IWalletTransferAnalysis';
-export {
-  WaveDecisionEntity,
-  WaveDecisionWinnerDropEntity
-} from './IWaveDecision';
 export { WaveChatDropCooldownEntity } from './IWaveChatDropCooldown';
 export { WaveDropMetricsRefreshRequestEntity } from './IWaveDropMetricsRefreshRequest';
 export { WaveDropperMetricEntity } from './IWaveDropperMetric';
-export { WaveLeaderboardEntryEntity } from './IWaveLeaderboardEntry';
 export { WaveMetadataEntity } from './IWaveMetadata';
 export { WaveMetricEntity } from './IWaveMetric';
 export { WaveScoreRefreshRequestEntity } from './IWaveScoreRefreshRequest';
 export { WaveReaderMetricEntity } from './IWaveReaderMetric';
 export { WaveCurationEntity } from './IWaveCuration';
 export { WaveGroupNotificationSubscriptionEntity } from './IWaveGroupNotificationSubscription';
-export { WinnerDropVoterVoteEntity } from './IWinnerDropVoterVote';
 export { WSConnectionEntity } from './IWSConnection';
 export { WSNotificationSubscriptionEntity } from './IWSNotificationSubscription';
 export { XTdhGrantEntity } from './IXTdhGrant';
@@ -303,6 +284,7 @@ export { PushDeviceLogoutFenceEntity } from './IPushDeviceLogoutFence';
 export { PushNotificationCancellationEntity } from './IPushNotificationCancellation';
 
 export * from './ICompetitionRuntime';
+export { CompetitionWorkerCursorEntity } from './ICompetitionWorkerCursor';
 
 export * from './ICompetitionCommand';
 export * from './ICompetitionEntryContentVersion';
@@ -310,8 +292,28 @@ export * from './ICompetitionEntryContentVersion';
 export * from './ICompetitionCapabilityAudit';
 export { PushNotificationOutboxEntity } from './IPushNotificationOutbox';
 export { SubscriptionCacheInvalidationEntity } from './ISubscriptionCacheInvalidation';
-export * from './ICompetitionMigration';
-
+export { DeviceGrantEntity } from './IDeviceGrant';
+export { DeviceSignedEventEntity } from './IDeviceSignedEvent';
+export { DropAuthorSignatureEntity } from './IDropAuthorSignature';
+export * from './IE2ee';
+export {
+  MemeCollaborationEntity,
+  MemeCollaborationInvitationEntity
+} from './IMemeCollaboration';
 export { TransferReconciliationEntity } from './ITransferReconciliation';
 
 export { MarketDepthPublicationLockEntity } from './IMarketDepthPublicationLock';
+
+export * from './IVotingCreditRelease';
+export { ReleaseNoteRecoveryJobEntity } from './IReleaseNoteRecoveryJob';
+
+export { ArtistArtworkAlertEntity } from './IArtistArtworkAlert';
+export { NFTHistoryReplayJobEntity } from './INFTHistoryReplayJob';
+export {
+  ViewerGroupSetEntity,
+  ViewerGroupSetMemberEntity
+} from './IViewerGroupSet';
+export { IdentityTdhSyncStateEntity } from './IIdentityTdhSyncState';
+export { IdentityTdhSyncScopeEntity } from './IIdentityTdhSyncScope';
+
+export * from './ICompetitionScoreReset';

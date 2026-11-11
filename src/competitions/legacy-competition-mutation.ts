@@ -21,8 +21,6 @@ export async function withLegacyPrimaryMutation<T>(
   action: (native: CompetitionRecord | null) => Promise<T>
 ): Promise<T> {
   const record = await competitionRepository.lockOriginalPrimary(waveId, ctx);
-  if (record && record.storage_mode !== 'NATIVE')
-    throw new Error('Retired competition storage cannot accept commands');
   return withLegacyCompetitionGetFacade(() => action(record));
 }
 

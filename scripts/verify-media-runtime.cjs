@@ -98,6 +98,43 @@ async function verifyImageScript() {
   assert.deepEqual(meta.delay, [80, 160]);
 }
 
+function verifyHeic() {
+  const script = `
+    const assert = require('node:assert/strict');
+    (async () => {
+      const heif = await require(process.argv[1])();
+      assert.equal(heif.heif_get_version(), '1.23.5');
+      const images = new heif.HeifDecoder().decode(require('node:fs').readFileSync(process.argv[3]));
+      const image = images.find(candidate => candidate.is_primary());
+      assert.ok(image);
+      const width = image.get_width(), height = image.get_height();
+      const pixels = await new Promise(resolve => image.display({ width, height,
+        data: new Uint8ClampedArray(width * height * 4) }, resolve));
+      assert.ok(pixels);
+      const sharp = require(process.argv[2]);
+      const jpeg = await sharp(Buffer.from(pixels.data), { raw: { width, height, channels: 4 } })
+        .resize(6, 6).jpeg().toBuffer();
+      assert.equal((await sharp(jpeg).metadata()).format, 'jpeg');
+      images.forEach(candidate => candidate.free());
+      process.stdout.write('heic-decode-ok');
+    })().catch(() => { process.exitCode = 1; });
+  `;
+  const output = execFileSync(
+    process.execPath,
+    [
+      '--max-old-space-size=256',
+      '--wasm-max-mem-pages=8192',
+      '-e',
+      script,
+      load.resolve('libheif-js/libheif-wasm/libheif-bundle.js'),
+      load.resolve('sharp'),
+      path.join(fixtures, 'heic')
+    ],
+    { encoding: 'utf8', timeout: 20000, maxBuffer: 16384 }
+  );
+  assert.equal(output, 'heic-decode-ok');
+}
+
 function verifyFfmpeg() {
   const ffmpeg = load('@ffmpeg-installer/ffmpeg');
   assert.ok(ffmpeg.path.startsWith(path.join(root, 'node_modules') + path.sep));
@@ -221,6 +258,7 @@ async function main() {
     fs.readFileSync(path.join(root, 'package.json'), 'utf8')
   );
   if (manifest.dependencies?.imagescript) await verifyImageScript();
+  if (manifest.dependencies?.['libheif-js']) verifyHeic();
   if (manifest.dependencies?.['fluent-ffmpeg']) verifyFfmpeg();
   if (manifest.dependencies?.['@contentauth/c2pa-node']) verifyC2pa();
   if (manifest.dependencies?.mp4box) verifyMp4();

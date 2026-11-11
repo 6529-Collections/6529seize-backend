@@ -1,3 +1,9 @@
+import {
+  DropSearchCursor,
+  encodeDropSearchCursor,
+  MAX_GLOBAL_SEARCH_PAGE
+} from '@/drops/drop-search-cursor';
+import { ApiDropSearchPage } from '@/api/generated/models/ApiDropSearchPage';
 import { collections } from '@/collections';
 import { assertUnreachable } from '@/assertions';
 import { DropEntity, DropType } from '@/entities/IDrop';
@@ -56,6 +62,7 @@ export interface FindWaveDropsFeedV2Request {
   readonly search_strategy: ApiDropSearchStrategy;
   readonly drop_type: ApiDropType | null;
   readonly curation_id: string | null;
+  readonly respect_drop_reply_collapse?: boolean;
 }
 
 export interface FindDropRepliesFeedV2Request {
@@ -444,6 +451,66 @@ export class ApiWaveV2Service {
     }
   }
 
+  public async searchDrops(
+    request: {
+      term?: string;
+      author_id?: string;
+      cursor?: DropSearchCursor;
+      page: number;
+      size: number;
+    },
+    ctx: RequestContext
+  ): Promise<ApiDropSearchPage> {
+    const groupIdsUserIsEligibleFor =
+      await getGroupsUserIsEligibleForReadContext(this.userGroupsService, ctx);
+    const entities = await this.dropsDb.searchDropsInWave(
+      {
+        term: request.term,
+        author_id: request.author_id,
+        group_ids_user_is_eligible_for: groupIdsUserIsEligibleFor,
+        limit: request.size + 1,
+        offset: 0,
+        cursor: request.cursor
+      },
+      ctx
+    );
+    const pageEntities = entities.slice(0, request.size);
+    if (!pageEntities.length) {
+      return { data: [], next: false, page: request.page };
+    }
+    const waveIds = Array.from(
+      new Set(pageEntities.map((drop) => drop.wave_id))
+    );
+    const [drops, waves] = await Promise.all([
+      this.apiDropMapper.mapDrops(pageEntities, ctx, {
+        groupIdsUserIsEligibleFor
+      }),
+      this.wavesApiDb
+        .findWavesByIdsEligibleForRead(
+          waveIds,
+          groupIdsUserIsEligibleFor,
+          ctx.connection
+        )
+        .then((rows) =>
+          this.apiWaveOverviewMapper.mapWaves(rows, ctx, {
+            groupIdsUserIsEligibleFor
+          })
+        )
+    ]);
+    const next =
+      entities.length > request.size && request.page < MAX_GLOBAL_SEARCH_PAGE;
+    const last = pageEntities[pageEntities.length - 1];
+    return {
+      ...(next ? { cursor: encodeDropSearchCursor(last) } : {}),
+      data: pageEntities.flatMap((drop) => {
+        const wave = waves[drop.wave_id];
+        return wave ? [{ ...drops[drop.id], wave }] : [];
+      }),
+      next,
+      page: request.page
+    };
+  }
+
   public async searchWaveAuthors(
     request: { wave_id: string; handle: string; limit: number },
     ctx: RequestContext
@@ -792,6 +859,7 @@ export class ApiWaveV2Service {
       search_strategy,
       curationFilter,
       drop_type,
+      respect_drop_reply_collapse,
       groupIdsUserIsEligibleFor
     }: FindWaveDropsFeedV2Request & {
       readonly wave: WaveEntity;
@@ -809,6 +877,9 @@ export class ApiWaveV2Service {
           search_strategy,
           curation_id: curationFilter,
           drop_type: this.resolveDropType(drop_type),
+          ...(respect_drop_reply_collapse
+            ? { respect_drop_reply_collapse }
+            : {}),
           exclude_replies: isWaveMainFeedWithoutReplies({
             wave,
             curationId: curationFilter

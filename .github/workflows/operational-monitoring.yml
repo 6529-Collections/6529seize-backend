@@ -4,6 +4,8 @@ on:
     paths:
       - 'ops/monitoring/**'
       - 'src/config/deploy-services.json'
+      - 'src/**/serverless.yaml'
+      - 'src/loop-health*'
       - 'src/operational-errors*'
       - 'src/logging.ts'
       - 'src/sentry.context.ts'

@@ -1,4 +1,8 @@
-import { legacyGetView } from '@/competitions/legacy-competition-get-facade';
+import {
+  legacyGetView,
+  withoutLegacyCompetitionGetFacade
+} from '@/competitions/legacy-competition-get-facade';
+import { legacyParticipantCandidatesCte } from '@/competitions/legacy-typed-drops';
 import { CompetitionRepository } from '@/competitions/competition.repository';
 import {
   dbSupplier,
@@ -7,7 +11,6 @@ import {
 import { RequestContext } from '../../../request.context';
 import {
   DROP_RANK_TABLE,
-  COMPETITIONS_TABLE,
   DROP_REAL_VOTE_IN_TIME_TABLE,
   DROP_REAL_VOTER_VOTE_IN_TIME_TABLE,
   DROP_VOTER_STATE_TABLE,
@@ -83,6 +86,26 @@ type DropSubmissionVotingSummaryRow = Omit<
   winning_min_threshold: number | null;
   time_lock_ms: number | null;
 };
+
+/**
+ * CTEs `participant_candidates` and `participants`: the participatory drops
+ * of the waves in `neededWaves` (a CTE with a `wave_id` column), as
+ * `legacyGetView(DROPS_TABLE)` defines them, without walking every drop of
+ * those waves (see legacyParticipantCandidatesCte, including why the statement
+ * must run with withoutLegacyCompetitionGetFacade). `participants` has id,
+ * wave_id and created_at.
+ */
+function participantDropsCtes(neededWaves: string): string {
+  const inNeededWaves = `IN (SELECT wave_id FROM ${neededWaves})`;
+  return `${legacyParticipantCandidatesCte(inNeededWaves)},
+    participants AS (
+      SELECT d.id, d.wave_id, d.created_at
+      FROM participant_candidates pc
+      JOIN ${legacyGetView(DROPS_TABLE)} d ON d.id = pc.id
+      WHERE d.drop_type = '${DropType.PARTICIPATORY}'
+        AND d.wave_id ${inNeededWaves}
+    )`;
+}
 
 export class DropVotingDb extends LazyDbAccessCompatibleService {
   public async getAggregateDropRankVote(
@@ -348,8 +371,16 @@ export class DropVotingDb extends LazyDbAccessCompatibleService {
     );
     try {
       const now = Time.currentMillis();
-      const rows = await this.db.execute<DropSubmissionVotingSummaryRow>(
-        `
+      // Materialize scoped scores with NO_MERGE at each consumer. Inlining the
+      // compatibility views repeats their native joins for every ranked drop;
+      // a shared materialization can instead index its projected drop_id.
+      // Winner-only waves need no live scores: their vote and place fields
+      // come from frozen decision history. The ranks read only the waves'
+      // participant candidates; outside the facade rewrite, see
+      // legacyParticipantCandidatesCte.
+      const rows = await withoutLegacyCompetitionGetFacade(() =>
+        this.db.execute<DropSubmissionVotingSummaryRow>(
+          `
         with target_submissions as (
           select id, wave_id, drop_type, created_at
           from ${legacyGetView(DROPS_TABLE)}
@@ -359,6 +390,25 @@ export class DropVotingDb extends LazyDbAccessCompatibleService {
         target_waves as (
           select distinct wave_id
           from target_submissions
+        ),
+        rank_waves as (
+          select distinct t.wave_id,
+            (w.time_lock_ms is not null and w.time_lock_ms > 0) as weighted
+          from target_submissions t
+          join ${legacyGetView(WAVES_TABLE)} w on w.id = t.wave_id
+          where t.drop_type = '${DropType.PARTICIPATORY}'
+        ),
+        ${legacyParticipantCandidatesCte('IN (SELECT wave_id FROM rank_waves)')},
+        scoped_realtime_votes as (
+          select drop_id, vote, last_increased
+          from ${legacyGetView(DROP_RANK_TABLE)}
+          where wave_id in (select wave_id from rank_waves where weighted = 0)
+        ),
+        scoped_leaderboard as (
+          select drop_id, vote, vote_on_decision_time, timestamp,
+            over_threshold_since_ms
+          from ${legacyGetView(WAVE_LEADERBOARD_ENTRIES_TABLE)}
+          where wave_id in (select wave_id from rank_waves)
         ),
         vote_counts as (
           select
@@ -385,41 +435,40 @@ export class DropVotingDb extends LazyDbAccessCompatibleService {
         realtime_ranks as (
           select drop_id, rnk
           from (
-            select
+            select /*+ NO_MERGE(r) */
               d.id as drop_id,
               rank() over (
                 partition by d.wave_id
                 order by cast(ifnull(r.vote, 0) as signed) desc,
                   ifnull(r.last_increased, d.created_at) asc
               ) as rnk
-            from ${legacyGetView(DROPS_TABLE)} d
-            left join ${legacyGetView(DROP_RANK_TABLE)} r on r.drop_id = d.id
+            from participant_candidates pc
+            join ${legacyGetView(DROPS_TABLE)} d on d.id = pc.id
+            left join scoped_realtime_votes r on r.drop_id = d.id
             where d.drop_type = '${DropType.PARTICIPATORY}'
-              and d.wave_id in (select wave_id from target_waves)
+              and d.wave_id in (select wave_id from rank_waves where weighted = 0)
           ) ranked
           where drop_id in (:dropIds)
         ),
         weighted_ranks as (
           select drop_id, rnk
           from (
-            select
+            select /*+ NO_MERGE(lb) */
               d.id as drop_id,
               rank() over (
                 partition by d.wave_id
                 order by cast(ifnull(lb.vote, 0) as signed) desc,
                   cast(ifnull(lb.timestamp, d.created_at) as signed) asc
               ) as rnk
-            from ${legacyGetView(DROPS_TABLE)} d
-            join ${legacyGetView(WAVES_TABLE)} w on w.id = d.wave_id
-            left join ${legacyGetView(WAVE_LEADERBOARD_ENTRIES_TABLE)} lb on lb.drop_id = d.id
+            from participant_candidates pc
+            join ${legacyGetView(DROPS_TABLE)} d on d.id = pc.id
+            left join scoped_leaderboard lb on lb.drop_id = d.id
             where d.drop_type = '${DropType.PARTICIPATORY}'
-              and d.wave_id in (select wave_id from target_waves)
-              and w.time_lock_ms is not null
-              and w.time_lock_ms > 0
+              and d.wave_id in (select wave_id from rank_waves where weighted = 1)
           ) ranked
           where drop_id in (:dropIds)
         )
-        select
+        select /*+ NO_MERGE(lb) */
           t.id as drop_id,
           t.drop_type as status,
           w.type as wave_type,
@@ -475,15 +524,16 @@ export class DropVotingDb extends LazyDbAccessCompatibleService {
         from target_submissions t
         join ${legacyGetView(WAVES_TABLE)} w on w.id = t.wave_id
         left join vote_counts vc on vc.drop_id = t.id
-        left join ${legacyGetView(WAVE_LEADERBOARD_ENTRIES_TABLE)} lb on lb.drop_id = t.id
+        left join scoped_leaderboard lb on lb.drop_id = t.id
         left join realtime_ranks rr on rr.drop_id = t.id
         left join weighted_ranks wr on wr.drop_id = t.id
         left join ${legacyGetView(WAVES_DECISION_WINNER_DROPS_TABLE)} wd on wd.drop_id = t.id
         left join winner_voter_counts wvc on wvc.drop_id = t.id
         left join decision_counts dc on dc.wave_id = t.wave_id
       `,
-        { dropIds, now },
-        { wrappedConnection: ctx.connection }
+          { dropIds, now },
+          { wrappedConnection: ctx.connection }
+        )
       );
       const overThresholdSinceByDropId =
         await this.getOverThresholdSinceByDropId(
@@ -788,11 +838,14 @@ export class DropVotingDb extends LazyDbAccessCompatibleService {
     ctx.timer?.start(
       `${this.constructor.name}->getParticipationDropsRealtimeRanks`
     );
-    const results = await this.db.execute<{ drop_id: string; rnk: number }>(
-      `
+    // Outside the facade rewrite: see participantDropsCtes.
+    const results = await withoutLegacyCompetitionGetFacade(() =>
+      this.db.execute<{ drop_id: string; rnk: number }>(
+        `
           WITH needed_waves AS (SELECT DISTINCT wave_id
                                 FROM ${legacyGetView(DROPS_TABLE)}
                                 WHERE id IN (:dropIds)),
+               ${participantDropsCtes('needed_waves')},
                all_ranks AS (
                    SELECT d.id  AS drop_id,
                           RANK() OVER (
@@ -800,16 +853,15 @@ export class DropVotingDb extends LazyDbAccessCompatibleService {
                               ORDER BY CAST(IFNULL(r.vote, 0) AS SIGNED) DESC,
                                   IFNULL(r.last_increased, d.created_at)
                               ) AS rnk
-                   FROM ${legacyGetView(DROPS_TABLE)} d
+                   FROM participants d
                             LEFT JOIN ${legacyGetView(DROP_RANK_TABLE)} r
                                       ON r.drop_id = d.id
-                   WHERE d.drop_type = 'PARTICIPATORY'
-                     AND d.wave_id IN (SELECT wave_id FROM needed_waves)
                )
           SELECT * FROM all_ranks WHERE drop_id IN (:dropIds)
       `,
-      { dropIds },
-      { wrappedConnection: ctx.connection }
+        { dropIds },
+        { wrappedConnection: ctx.connection }
+      )
     );
     ctx.timer?.stop(
       `${this.constructor.name}->getParticipationDropsRealtimeRanks`
@@ -826,27 +878,54 @@ export class DropVotingDb extends LazyDbAccessCompatibleService {
   async getTimeLockedDropsWeightedVotes(
     dropIds: string[],
     ctx: RequestContext
-  ) {
+  ): Promise<Record<string, number>> {
     if (!dropIds.length) {
       return {};
     }
     ctx.timer?.start(
       `${this.constructor.name}->getTimeLockedDropsWeightedVotes`
     );
+    // Keep every competitor in the requested waves, but materialize their
+    // leaderboard once so its compatibility joins are not repeated per drop.
     const sql = `
-    SELECT drop_id, rnk
-    FROM (select d.id as drop_id,
-                 rank() over (partition by d.wave_id order by cast(ifnull(r.vote, 0) as signed) desc , cast(ifnull(r.timestamp, d.created_at) as signed) asc) as rnk
-          from ${legacyGetView(DROPS_TABLE)} d
-                   join ${legacyGetView(WAVES_TABLE)} w on w.id = d.wave_id
-                   left join ${legacyGetView(WAVE_LEADERBOARD_ENTRIES_TABLE)} r on r.drop_id = d.id
-          where d.drop_type = '${DropType.PARTICIPATORY}' and w.time_lock_ms is not null and w.time_lock_ms > 0) drop_ranks
-    WHERE drop_id in (:dropIds)
-  `;
-    const results = await this.db.execute<{ drop_id: string; rnk: number }>(
-      sql,
-      { dropIds },
-      { wrappedConnection: ctx.connection }
+      with needed_waves as (
+        select distinct wave_id
+        from ${legacyGetView(DROPS_TABLE)}
+        where id in (:dropIds)
+      ),
+      ${participantDropsCtes('needed_waves')},
+      weighted_waves as (
+        select id as wave_id
+        from ${legacyGetView(WAVES_TABLE)}
+        where id in (select wave_id from needed_waves)
+          and time_lock_ms is not null and time_lock_ms > 0
+      ),
+      scoped_leaderboard as (
+        select drop_id, vote, timestamp
+        from ${legacyGetView(WAVE_LEADERBOARD_ENTRIES_TABLE)}
+        where wave_id in (select wave_id from weighted_waves)
+      )
+      select drop_id, rnk
+      from (
+        select /*+ NO_MERGE(r) */ d.id as drop_id,
+          rank() over (
+            partition by d.wave_id
+            order by cast(ifnull(r.vote, 0) as signed) desc,
+              cast(ifnull(r.timestamp, d.created_at) as signed) asc
+          ) as rnk
+        from participants d
+        left join scoped_leaderboard r on r.drop_id = d.id
+        where d.wave_id in (select wave_id from weighted_waves)
+      ) drop_ranks
+      where drop_id in (:dropIds)
+    `;
+    // Outside the facade rewrite: see participantDropsCtes.
+    const results = await withoutLegacyCompetitionGetFacade(() =>
+      this.db.execute<{ drop_id: string; rnk: number }>(
+        sql,
+        { dropIds },
+        { wrappedConnection: ctx.connection }
+      )
     );
     ctx.timer?.stop(
       `${this.constructor.name}->getTimeLockedDropsWeightedVotes`

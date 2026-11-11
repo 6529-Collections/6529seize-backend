@@ -693,7 +693,8 @@ export class WavesMappers {
             waveEntities.map((it) => it.description_drop_id)
           ),
           ctx.authenticationContext,
-          ctx.connection
+          ctx.connection,
+          ctx.timer
         )
         .then((drops) => {
           ctx.timer?.stop('dropsService->findDropsByIdsOrThrow');

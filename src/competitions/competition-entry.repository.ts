@@ -1,4 +1,5 @@
 import { assembleLegacyDropContent } from '@/competitions/competition-entry-content-source';
+import { anonymousCompetitionEntrySql } from '@/competitions/competition-anonymity';
 import {
   COMPETITION_ENTRIES_TABLE,
   COMPETITION_ENTRY_CONTENT_VERSIONS_TABLE,
@@ -74,7 +75,7 @@ export class CompetitionEntryRepository extends LazyDbAccessCompatibleService {
       'findNominationCompetitionIds',
       `select distinct c.id from ${COMPETITIONS_TABLE} c join ${COMPETITION_ENTRIES_TABLE} e on e.competition_id=c.id
        join ${DROP_METADATA_TABLE} metadata on metadata.drop_id=e.drop_id and metadata.data_key='identity'
-       where c.storage_mode='NATIVE' and json_unquote(json_extract(c.participation_config,'$.submission_type'))='IDENTITY'
+       where json_unquote(json_extract(c.participation_config,'$.submission_type'))='IDENTITY'
          and e.status in ('ACTIVE','WINNER') and metadata.data_value in (:profileIds) order by c.id`,
       { profileIds },
       ctx
@@ -189,7 +190,7 @@ export class CompetitionEntryRepository extends LazyDbAccessCompatibleService {
         'findDropEntries',
         `select e.*, c.legacy_wave_id is not null and not exists(select 1 from ${COMPETITION_OUTBOX_TABLE} event where event.competition_id=c.id and json_unquote(json_extract(event.event,'$.competition_entry_id'))=e.id and json_unquote(json_extract(event.event,'$.event_type'))='COMPETITION_ENTRY_CREATED') as legacy_origin, exists(select 1 from ${COMPETITION_ENTRY_CONTENT_VERSIONS_TABLE} v where v.entry_id=e.id and v.signature is not null) as signed
        from ${COMPETITION_ENTRIES_TABLE} e join ${COMPETITIONS_TABLE} c on c.id=e.competition_id
-       where e.drop_id=:dropId and c.storage_mode='NATIVE' order by e.competition_id,e.id${currentRead ? ' for update' : ''}`,
+       where e.drop_id=:dropId order by e.competition_id,e.id${currentRead ? ' for update' : ''}`,
         { dropId },
         ctx
       )
@@ -231,9 +232,7 @@ export class CompetitionEntryRepository extends LazyDbAccessCompatibleService {
     // even if a legacy caller already established a repeatable-read snapshot.
     const current = await this.findEntries(dropId, true, ctx);
     if (current.some((entry) => !ids.includes(entry.competition_id)))
-      competitionConflict(
-        'Competition membership changed. Retry the drop change'
-      );
+      competitionConflict('Decision membership changed. Retry the drop change');
     return current;
   }
 
@@ -250,9 +249,7 @@ export class CompetitionEntryRepository extends LazyDbAccessCompatibleService {
       ctx
     );
     if (occupied.length)
-      competitionConflict(
-        'A competition drop belongs to exactly one competition'
-      );
+      competitionConflict('A decision drop belongs to exactly one decision');
   }
 
   public async countActive(
@@ -267,6 +264,25 @@ export class CompetitionEntryRepository extends LazyDbAccessCompatibleService {
       ctx
     );
     return Number(row?.count ?? 0);
+  }
+
+  public async countActiveByCompetitionIds(
+    competitionIds: readonly string[],
+    profileId: string,
+    ctx: RequestContext
+  ): Promise<Record<string, number>> {
+    if (!competitionIds.length) return {};
+    const rows = await this.rows<{ competition_id: string; count: number }>(
+      'countActiveByCompetitionIds',
+      `select competition_id, count(*) as count from ${COMPETITION_ENTRIES_TABLE}
+       where competition_id in (:competitionIds) and submitter_id=:profileId and status='ACTIVE'
+       group by competition_id`,
+      { competitionIds, profileId },
+      ctx
+    );
+    return Object.fromEntries(
+      rows.map((row) => [row.competition_id, Number(row.count)])
+    );
   }
 
   public async findNominationStatuses(
@@ -333,9 +349,20 @@ export class CompetitionEntryRepository extends LazyDbAccessCompatibleService {
         ctx
       );
     }
+    // Keep the anonymity decision after content deletion: historical activity
+    // still references the drop and must not reveal a losing author later.
+    await this.rows(
+      'retainAnonymousEntry',
+      `update ${COMPETITION_ENTRIES_TABLE} e join ${COMPETITIONS_TABLE} c on c.id=e.competition_id
+       set e.status='WITHDRAWN', e.withdrawn_at=coalesce(e.withdrawn_at,:now)
+       where e.id=:entryId and ${anonymousCompetitionEntrySql('e', 'c')}`,
+      { entryId, now: Date.now() },
+      ctx
+    );
     await this.rows(
       'deleteEntry',
-      `delete from ${COMPETITION_ENTRIES_TABLE} where id=:entryId`,
+      `delete e from ${COMPETITION_ENTRIES_TABLE} e left join ${COMPETITIONS_TABLE} c on c.id=e.competition_id
+       where e.id=:entryId and not coalesce(${anonymousCompetitionEntrySql('e', 'c')}, false)`,
       { entryId },
       ctx
     );

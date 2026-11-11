@@ -12,6 +12,7 @@ import { nativeCompetitionRuntimeRepository } from '@/competitions/native-compet
 import { nativeCompetitionRuntimeService } from '@/competitions/native-competition-runtime.service';
 import { competitionDropVotesDb } from '@/competitions/competition-drop-votes.db';
 import { isCompetitionDecisionPending } from '@/competitions/competition-decision-gate';
+import { competitionVoteChangeBudget } from '@/competitions/competition-vote-change-budget';
 import { legacyCompetitionEntryId } from '@/competitions/competition-id';
 import { VoteForDropModel } from '@/drops/vote-for-drop.model';
 import { RequestContext } from '@/request.context';
@@ -29,11 +30,7 @@ export async function voteForMigratedLegacyEntry(
   model: VoteForDropModel,
   ctx: RequestContext
 ): Promise<boolean> {
-  if (
-    !ctx.connection ||
-    record.legacy_wave_id !== model.wave_id ||
-    record.storage_mode !== 'NATIVE'
-  )
+  if (!ctx.connection || record.legacy_wave_id !== model.wave_id)
     throw new Error('Native legacy voting requires its primary ownership lock');
   const now = Date.now();
   const competition = await new NativeCompetitionReader(
@@ -47,11 +44,11 @@ export async function voteForMigratedLegacyEntry(
   // This legacy request has no competition-bound signature envelope.
   if (competition.voting.signature_required)
     throw new ForbiddenException(
-      'This competition requires a signed vote; use the competition voting endpoint'
+      'This decision requires a signed vote; use the decision voting endpoint'
     );
   if (isCompetitionDecisionPending(competition, now))
     throw new ForbiddenException(
-      "Wave has unresolved decisions and votes can't be edited at the moment. Try again later"
+      "Wave has pending results and votes can't be edited at the moment. Try again later"
     );
   if (
     competition.voting.starts_at !== null &&
@@ -109,6 +106,7 @@ export async function voteForMigratedLegacyEntry(
   competitionCreditService.assertVoteFits(budget, model.votes);
   const previous = budget.current_vote!;
   if (previous === model.votes) return false;
+  await competitionVoteChangeBudget.spend(record.id, model.voter_id);
   await competitionInteractionRepository.setVote(
     record.id,
     entry.id,

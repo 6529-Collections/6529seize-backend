@@ -146,9 +146,103 @@ describeWithSeed(
     it('preserves a real native entry score and its runtime threshold', async () => {
       expect(await db.score(active, {})).toEqual({
         rating: 42,
+        decision_rating: 42,
         rank: 1,
         over_threshold_since: 1_234
       });
+    });
+  }
+);
+
+describeWithSeed(
+  'CompetitionDropVotesDb distribution and export',
+  [
+    {
+      table: COMPETITION_VOTES_TABLE,
+      rows: [12, 12, 5, 3, -10, -10, -3, -1, 0]
+        .map((value, index) => ({
+          id: `distribution-${index}`,
+          competition_id: active.competition_id,
+          entry_id: active.id,
+          voter_profile_id: `voter-${index}`,
+          value,
+          credit_spent: Math.abs(value),
+          created_at: 1,
+          updated_at: 1
+        }))
+        .concat([
+          {
+            id: 'other-entry-vote',
+            competition_id: active.competition_id,
+            entry_id: 'other-entry',
+            voter_profile_id: 'other-voter',
+            value: 999,
+            credit_spent: 999,
+            created_at: 1,
+            updated_at: 1
+          }
+        ])
+    },
+    {
+      table: COMPETITION_WINNER_VOTES_TABLE,
+      rows: [
+        {
+          decision_id: 'decision',
+          entry_id: winner.id,
+          competition_id: winner.competition_id,
+          voter_profile_id: 'winner-voter',
+          value: -7
+        },
+        {
+          decision_id: 'other-decision',
+          entry_id: winner.id,
+          competition_id: winner.competition_id,
+          voter_profile_id: 'winner-voter',
+          value: 999
+        }
+      ]
+    }
+  ],
+  () => {
+    const db = new CompetitionDropVotesDb(() => sqlExecutor);
+    it('totals every allocation while selecting three stable highlights per direction', async () => {
+      const rows = await db.distribution(active, {});
+      expect(rows.map(({ voter_id, vote }) => ({ voter_id, vote }))).toEqual([
+        { voter_id: 'voter-0', vote: 12 },
+        { voter_id: 'voter-1', vote: 12 },
+        { voter_id: 'voter-4', vote: -10 },
+        { voter_id: 'voter-5', vote: -10 },
+        { voter_id: 'voter-2', vote: 5 },
+        { voter_id: 'voter-6', vote: -3 }
+      ]);
+      for (const row of rows)
+        expect(row).toMatchObject({
+          positive_total: 32,
+          negative_total: -24,
+          drop_id: active.drop_id
+        });
+    });
+    it('exports all nonzero allocations by signed vote with stable ties', async () => {
+      expect(
+        (await db.allVoters(active, {})).map(({ voter_id, vote }) => ({
+          voter_id,
+          vote: Number(vote)
+        }))
+      ).toEqual([
+        { voter_id: 'voter-0', vote: 12 },
+        { voter_id: 'voter-1', vote: 12 },
+        { voter_id: 'voter-2', vote: 5 },
+        { voter_id: 'voter-3', vote: 3 },
+        { voter_id: 'voter-7', vote: -1 },
+        { voter_id: 'voter-6', vote: -3 },
+        { voter_id: 'voter-4', vote: -10 },
+        { voter_id: 'voter-5', vote: -10 }
+      ]);
+    });
+    it('exports only the winner snapshot for the selected decision', async () => {
+      expect(
+        (await db.allVoters(winner, {})).map(({ vote }) => Number(vote))
+      ).toEqual([-7]);
     });
   }
 );

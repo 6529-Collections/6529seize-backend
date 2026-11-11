@@ -179,20 +179,26 @@ export class ProfileProxyApiService {
     const target = await this.getTargetOrThrow({
       target_id
     });
-    if (!target.handle) {
+    // The target may be given as a profile id, handle, wallet or ENS name.
+    // Proxies are always stored against the resolved profile id.
+    const targetProfileId = target.id;
+    if (!target.handle || !targetProfileId) {
       throw new NotFoundException(
         `Profile with id ${target_id} does not exist`
       );
     }
+    if (targetProfileId.toLowerCase() === grantorProfileId.toLowerCase()) {
+      throw new BadRequestException('You cannot create a proxy to yourself');
+    }
     await this.targetNotAlreadyProxiedOrThrow({
-      target_id,
+      target_id: targetProfileId,
       created_by_profile_id: grantorProfileId,
       target_handle: target.handle
     });
 
     const createProfileProxyRequest: ProfileProxyEntity = {
       id: randomUUID(),
-      target_id,
+      target_id: targetProfileId,
       created_at: Time.currentMillis(),
       created_by: grantorProfileId
     };
@@ -309,6 +315,20 @@ export class ProfileProxyApiService {
     return !!proxy?.actions
       ?.filter(isProxyActionActive)
       ?.find((it) => it.action_type === action.toString());
+  }
+
+  async hasAnyActiveProxyAction({
+    granted_by_profile_id,
+    granted_to_profile_id
+  }: {
+    readonly granted_by_profile_id: string;
+    readonly granted_to_profile_id: string;
+  }): Promise<boolean> {
+    const proxy = await this.getProxyByGrantedByAndGrantedTo({
+      granted_by_profile_id,
+      granted_to_profile_id
+    });
+    return !!proxy?.actions?.some(isProxyActionActive);
   }
 
   private async isActionExists({

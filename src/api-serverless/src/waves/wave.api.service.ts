@@ -1,8 +1,14 @@
+import { inSequence } from '@/db/in-sequence';
+import {
+  applyWaveHubPatch,
+  waveHubAccessChanged
+} from '@/api/waves/wave-hub-update';
 import {
   withLegacyPrimaryMutation,
   reconcileAcceptedLegacySettings
 } from '@/competitions/legacy-competition-mutation';
 import { competitionHistoryRepository } from '@/competitions/competition-history.repository';
+import { wavesChangedNotifier } from '@/api/waves/waves-changed.notifier';
 import { waveGroupIds } from '@/waves/wave-group-ids';
 import { randomUUID } from 'crypto';
 import { GRADIENT_CONTRACT, MEMES_CONTRACT } from '@/constants';
@@ -45,7 +51,7 @@ import {
 } from '../../../notifications/user.notifier';
 import { numbers } from '../../../numbers';
 import { RequestContext } from '../../../request.context';
-import { Time } from '../../../time';
+import { Time, Timer } from '../../../time';
 import { giveReadReplicaTimeToCatchUp } from '../api-helpers';
 import {
   userGroupsService,
@@ -63,6 +69,7 @@ import { ApiGroupFull } from '../generated/models/ApiGroupFull';
 import { ApiSetPinnedDropRequest } from '../generated/models/ApiSetPinnedDropRequest';
 import { ApiUpdateWaveDecisionPause } from '../generated/models/ApiUpdateWaveDecisionPause';
 import { ApiUpdateWaveRequest } from '../generated/models/ApiUpdateWaveRequest';
+import { ApiUpdateWaveHubRequest } from '@/api/generated/models/ApiUpdateWaveHubRequest';
 import { ApiWave } from '../generated/models/ApiWave';
 import { ApiWaveCreditScope } from '../generated/models/ApiWaveCreditScope';
 import { ApiWaveCreditType } from '../generated/models/ApiWaveCreditType';
@@ -108,7 +115,10 @@ import {
 } from '@/notifications/wave-group-notification-subscriptions.db';
 import { sendIdentityPushNotifications } from '@/api/push-notifications/push-notifications.service';
 import { isWaveCreatorOrAdmin } from '@/waves/wave-admin.helpers';
-import { assertWaveAndParentVisibleOrThrow } from '@/api/waves/wave-access.helpers';
+import {
+  assertWaveAndParentVisibleOrThrow,
+  getWaveReadContextProfileId
+} from '@/api/waves/wave-access.helpers';
 
 import { waveMetadataDb } from '@/api/waves/wave-metadata.db';
 import { dropPollsDb } from '@/api/drops/drop-polls.db';
@@ -559,6 +569,8 @@ export class WaveApiService {
     });
     const { id, descriptionDropModel, descriptionPrePublication } =
       prepared ?? (await this.prepareWaveCreation(createWaveRequest, ctx));
+    // DM members other than the creator were added to the new wave.
+    let addedMemberIds: string[] = [];
     const { createdWave, pendingPushNotificationIds, dmUnreadRecipientIds } =
       await this.withWaveCreationTransaction(
         async (connection) => {
@@ -666,6 +678,11 @@ export class WaveApiService {
                 ctxWithConnection
               );
           }
+          if (waveEntity.is_direct_message) {
+            addedMemberIds = usersToNotify.filter(
+              (it) => it !== waveEntity.created_by
+            );
+          }
           await this.userNotifier.notifyOfWaveCreated(
             waveEntity.id,
             waveEntity.created_by,
@@ -733,6 +750,20 @@ export class WaveApiService {
         postCommitCtx
       );
       await sendIdentityPushNotifications(pendingPushNotificationIds);
+      // Waves 1.3: the creator now follows the wave and DM members were
+      // added to it, so their sockets refetch their wave lists.
+      await wavesChangedNotifier.notify([
+        {
+          profileId: actingAsId,
+          waveIds: [createdWave.id],
+          reason: 'FOLLOWED'
+        },
+        ...addedMemberIds.map((profileId) => ({
+          profileId,
+          waveIds: [createdWave.id],
+          reason: 'ADDED' as const
+        }))
+      ]);
     };
     if (deferredEffects) deferredEffects.push(afterCommit);
     else await afterCommit();
@@ -846,7 +877,7 @@ export class WaveApiService {
     const decisionStrategy = wave.decisions_strategy;
     if (wave.type !== WaveType.APPROVE && decisionStrategy === null) {
       throw new BadRequestException(
-        `Can't add pauses to wave without a decision strategy`
+        `Can't add pauses to wave without a results strategy`
       );
     }
     const nextDecisionTime = wave.next_decision_time
@@ -854,7 +885,7 @@ export class WaveApiService {
       : null;
     if (wave.type !== WaveType.APPROVE && !nextDecisionTime) {
       throw new BadRequestException(
-        `Can't add pauses to wave without a next decision time`
+        `Can't add pauses to wave without a next result time`
       );
     }
     const proposedEndTime = Time.millis(model.end_time);
@@ -863,7 +894,7 @@ export class WaveApiService {
     }
     if (nextDecisionTime?.isInPast()) {
       throw new BadRequestException(
-        `Can't modify pauses of a wave with unresolved decisions`
+        `Can't modify pauses of a wave with pending results`
       );
     }
     const currentPauses = await this.wavesApiDb.getWavePauses(wave.id, ctx);
@@ -914,12 +945,12 @@ export class WaveApiService {
       : null;
     if (wave.type !== WaveType.APPROVE && !nextDecisionTime) {
       throw new BadRequestException(
-        `Can't add pauses to wave without a next decision time`
+        `Can't add pauses to wave without a next result time`
       );
     }
     if (nextDecisionTime?.isInPast()) {
       throw new BadRequestException(
-        `Can't modify pauses of a wave with unresolved decisions`
+        `Can't modify pauses of a wave with pending results`
       );
     }
     const currentPauses = await this.wavesApiDb.getWavePauses(wave.id, ctx);
@@ -1004,6 +1035,11 @@ export class WaveApiService {
     if (visibleParentWave.parent_wave_id !== null) {
       throw new BadRequestException(`Subwaves cannot be parent waves`);
     }
+    if (visibleParentWave.is_direct_message) {
+      throw new BadRequestException(
+        `Direct message waves cannot be parent waves`
+      );
+    }
     if (
       !isWaveCreatorOrAdmin({
         authenticatedProfileId: actingAsId,
@@ -1050,6 +1086,9 @@ export class WaveApiService {
       ctx
     );
     if (existingWave) {
+      if (!getWaveReadContextProfileId(ctx.authenticationContext)) {
+        throw new ForbiddenException(`Proxy is not allowed to read waves`);
+      }
       return this.findWaveByIdOrThrow(existingWave.id, [userGroup.id], ctx);
     }
     const waveRequest: ApiCreateNewWave = {
@@ -1374,7 +1413,7 @@ export class WaveApiService {
     if (decisionStrategy !== null) {
       if (request.wave.type !== ApiWaveType.Rank) {
         throw new BadRequestException(
-          `Only waves of type RANK support a decision strategy.`
+          `Only waves of type RANK support a results strategy.`
         );
       }
       if (
@@ -1382,7 +1421,7 @@ export class WaveApiService {
         !decisionStrategy.subsequent_decisions.length
       ) {
         throw new BadRequestException(
-          `On rolling decision strategy subsequent decisions is mandatory`
+          `On rolling results strategy subsequent results are mandatory`
         );
       }
     }
@@ -1603,16 +1642,28 @@ export class WaveApiService {
   async findWaveByIdOrThrow(
     id: string,
     groupIdsUserIsEligibleFor: string[],
-    ctx: RequestContext
+    ctx: RequestContext,
+    sharedConfiguration = false
   ): Promise<ApiWave> {
     const authenticationContext = ctx.authenticationContext;
-    const entity = await assertWaveAndParentVisibleOrThrow({
-      wave: await this.wavesApiDb.findWaveById(id),
-      groupsUserIsEligibleFor: groupIdsUserIsEligibleFor,
-      message: `Wave ${id} not found`,
-      wavesApiDb: this.wavesApiDb,
-      ctx
-    });
+    const timerKey = `${this.constructor.name}->findWaveByIdOrThrow`;
+    const wave = await Timer.timed(ctx.timer, `${timerKey}.loadWave`, () =>
+      sharedConfiguration
+        ? this.wavesApiDb.findWaveHubById(id, false, ctx)
+        : this.wavesApiDb.findWaveById(id)
+    );
+    const entity = await Timer.timed(
+      ctx.timer,
+      `${timerKey}.assertVisible`,
+      () =>
+        assertWaveAndParentVisibleOrThrow({
+          wave,
+          groupsUserIsEligibleFor: groupIdsUserIsEligibleFor,
+          message: `Wave ${id} not found`,
+          wavesApiDb: this.wavesApiDb,
+          ctx
+        })
+    );
     const noRightToVote =
       !authenticationContext?.isUserFullyAuthenticated() ||
       (authenticationContext?.isAuthenticatedAsProxy() &&
@@ -1625,18 +1676,69 @@ export class WaveApiService {
         !authenticationContext?.hasProxyAction(
           ProfileProxyActionType.CREATE_DROP_TO_WAVE
         ));
-    return await this.waveMappers.waveEntityToApiWave(
-      {
-        waveEntity: entity,
-        groupIdsUserIsEligibleFor,
-        noRightToVote,
-        noRightToParticipate
-      },
-      ctx
+    return await Timer.timed(ctx.timer, `${timerKey}.mapWave`, () =>
+      this.waveMappers.waveEntityToApiWave(
+        {
+          waveEntity: entity,
+          groupIdsUserIsEligibleFor,
+          noRightToVote,
+          noRightToParticipate
+        },
+        ctx
+      )
     );
   }
 
-  async addWaveSubscriptionActions({
+  /**
+   * Follows (or adds actions to) a wave. After the change commits, a follow
+   * sends WAVES_CHANGED (waves 1.3) so the profile's sockets refetch their
+   * wave list.
+   */
+  async addWaveSubscriptionActions(params: {
+    subscriber: string;
+    waveId: string;
+    actions: ApiWaveSubscriptionTargetAction[];
+  }): Promise<ApiWaveSubscriptionTargetAction[]> {
+    const active = await this.addWaveSubscriptionActionsInTransaction(params);
+    if (
+      params.actions.includes(ApiWaveSubscriptionTargetAction.DropCreated) &&
+      active.includes(ApiWaveSubscriptionTargetAction.DropCreated)
+    ) {
+      await wavesChangedNotifier.notify([
+        {
+          profileId: params.subscriber,
+          waveIds: [params.waveId],
+          reason: 'FOLLOWED'
+        }
+      ]);
+    }
+    return active;
+  }
+
+  /** Unfollows (or removes actions from) a wave; an unfollow sends WAVES_CHANGED. */
+  async removeWaveSubscriptionActions(params: {
+    subscriber: string;
+    waveId: string;
+    actions: ApiWaveSubscriptionTargetAction[];
+  }): Promise<ApiWaveSubscriptionTargetAction[]> {
+    const active =
+      await this.removeWaveSubscriptionActionsInTransaction(params);
+    if (
+      params.actions.includes(ApiWaveSubscriptionTargetAction.DropCreated) &&
+      !active.includes(ApiWaveSubscriptionTargetAction.DropCreated)
+    ) {
+      await wavesChangedNotifier.notify([
+        {
+          profileId: params.subscriber,
+          waveIds: [params.waveId],
+          reason: 'UNFOLLOWED'
+        }
+      ]);
+    }
+    return active;
+  }
+
+  private async addWaveSubscriptionActionsInTransaction({
     subscriber,
     waveId,
     actions
@@ -1707,7 +1809,7 @@ export class WaveApiService {
     );
   }
 
-  async removeWaveSubscriptionActions({
+  private async removeWaveSubscriptionActionsInTransaction({
     subscriber,
     waveId,
     actions
@@ -2046,7 +2148,7 @@ export class WaveApiService {
           waveEntity.next_decision_time < Time.currentMillis()
         ) {
           throw new ForbiddenException(
-            `Wave has unresolved decisions and can't be edited at the moment. Try again later`
+            `Wave has pending results and can't be edited at the moment. Try again later`
           );
         }
 
@@ -2073,39 +2175,41 @@ export class WaveApiService {
     ctx: RequestContextWithConnection
   ) {
     await competitionHistoryRepository.assertWaveCanBeDeleted(waveId, ctx);
-    await Promise.all([
-      this.wavesApiDb.deleteDropPartsByWaveId(waveId, ctx),
-      this.wavesApiDb.deleteDropMentionsByWaveId(waveId, ctx),
-      this.wavesApiDb.deleteDropMentionedWavesByWaveId(waveId, ctx),
-      this.dropsDb.deleteDropGroupMentionsByWaveId(waveId, ctx),
-      this.wavesApiDb.deleteDropMediaByWaveId(waveId, ctx),
-      this.wavesApiDb.deleteDropReferencedNftsByWaveId(waveId, ctx),
-      this.wavesApiDb.deleteDropMetadataByWaveId(waveId, ctx),
-      this.reactionsService.deleteReactionsByWave(waveId, ctx),
-      this.wavesApiDb.deleteDropFeedItemsByWaveId(waveId, ctx),
-      this.wavesApiDb.deleteDropNotificationsByWaveId(waveId, ctx),
-      this.wavesApiDb.deleteDropSubscriptionsByWaveId(waveId, ctx),
-      dropPollsDb.deleteByWaveId(waveId, ctx),
-      this.waveGroupNotificationSubscriptionsDb.deleteByWaveId(
-        waveId,
-        ctx.connection
-      ),
-      profileWavesDb.deleteByWaveId(waveId, ctx),
-      this.curationsDb.deleteDropCurationsByWaveId(waveId, ctx),
-      this.wavesApiDb.deleteDropEntitiesByWaveId(waveId, ctx),
-      this.wavesApiDb.deleteWaveMetrics(waveId, ctx),
-      this.wavesApiDb.deleteWave(waveId, ctx),
-      this.curationsDb.deleteWaveCurationsByWaveId(waveId, ctx),
-      this.wavesApiDb.deleteDropRelations(waveId, ctx),
-      this.wavesApiDb.deleteBoosts(waveId, ctx),
-      waveMetadataDb.deleteByWaveId(waveId, ctx),
-      ratingsDb.deleteRatingsForMatter(
-        {
-          matter_target_id: waveId,
-          matter: RateMatter.WAVE_REP
-        },
-        ctx
-      )
+    await inSequence([
+      () => this.wavesApiDb.deleteDropPartsByWaveId(waveId, ctx),
+      () => this.wavesApiDb.deleteDropMentionsByWaveId(waveId, ctx),
+      () => this.wavesApiDb.deleteDropMentionedWavesByWaveId(waveId, ctx),
+      () => this.dropsDb.deleteDropGroupMentionsByWaveId(waveId, ctx),
+      () => this.wavesApiDb.deleteDropMediaByWaveId(waveId, ctx),
+      () => this.wavesApiDb.deleteDropReferencedNftsByWaveId(waveId, ctx),
+      () => this.wavesApiDb.deleteDropMetadataByWaveId(waveId, ctx),
+      () => this.reactionsService.deleteReactionsByWave(waveId, ctx),
+      () => this.wavesApiDb.deleteDropFeedItemsByWaveId(waveId, ctx),
+      () => this.wavesApiDb.deleteDropNotificationsByWaveId(waveId, ctx),
+      () => this.wavesApiDb.deleteDropSubscriptionsByWaveId(waveId, ctx),
+      () => dropPollsDb.deleteByWaveId(waveId, ctx),
+      () =>
+        this.waveGroupNotificationSubscriptionsDb.deleteByWaveId(
+          waveId,
+          ctx.connection
+        ),
+      () => profileWavesDb.deleteByWaveId(waveId, ctx),
+      () => this.curationsDb.deleteDropCurationsByWaveId(waveId, ctx),
+      () => this.wavesApiDb.deleteDropEntitiesByWaveId(waveId, ctx),
+      () => this.wavesApiDb.deleteWaveMetrics(waveId, ctx),
+      () => this.wavesApiDb.deleteWave(waveId, ctx),
+      () => this.curationsDb.deleteWaveCurationsByWaveId(waveId, ctx),
+      () => this.wavesApiDb.deleteDropRelations(waveId, ctx),
+      () => this.wavesApiDb.deleteBoosts(waveId, ctx),
+      () => waveMetadataDb.deleteByWaveId(waveId, ctx),
+      () =>
+        ratingsDb.deleteRatingsForMatter(
+          {
+            matter_target_id: waveId,
+            matter: RateMatter.WAVE_REP
+          },
+          ctx
+        )
     ]);
   }
 
@@ -2131,7 +2235,7 @@ export class WaveApiService {
       waveBeforeUpdate.next_decision_time < currentMillis
     ) {
       throw new ForbiddenException(
-        `Wave has unresolved decisions and can't be edited at the moment. Try again later`
+        `Wave has pending results and can't be edited at the moment. Try again later`
       );
     }
     if (
@@ -2168,6 +2272,184 @@ export class WaveApiService {
         );
       }
     }
+  }
+
+  private async mapEditedWaveHub(
+    wave: WaveEntity,
+    actor: string,
+    ctx: RequestContext
+  ): Promise<ApiWave> {
+    const eligible =
+      await this.userGroupsService.getGroupsUserIsEligibleForByIds(
+        actor,
+        waveGroupIds(wave)
+      );
+    return this.waveMappers.waveEntityToApiWave(
+      {
+        waveEntity: wave,
+        groupIdsUserIsEligibleFor: eligible,
+        noRightToVote: false,
+        noRightToParticipate: false
+      },
+      ctx
+    );
+  }
+
+  private async validateWaveHubUpdate(
+    before: WaveEntity,
+    after: WaveEntity,
+    actor: string,
+    groups: string[],
+    ctx: RequestContextWithConnection
+  ): Promise<void> {
+    const waveId = before.id;
+    if (
+      before.is_direct_message &&
+      (after.visibility_group_id !== before.visibility_group_id ||
+        after.chat_group_id !== before.chat_group_id ||
+        !after.chat_enabled)
+    ) {
+      throw new BadRequestException('Direct message access cannot be changed');
+    }
+    if (
+      after.visibility_group_id !== null &&
+      (await profileWavesDb.findSelectedWaveIdsByWaveIds([waveId], ctx)).has(
+        waveId
+      )
+    ) {
+      throw new BadRequestException('Profile waves must remain public');
+    }
+    if (waveHubAccessChanged(before, after)) {
+      const privilegeGroups: WavePrivilegeGroup[] = [
+        { role: ApiWaveGroupRole.Admin, groupId: after.admin_group_id }
+      ];
+      if (after.chat_enabled)
+        privilegeGroups.push({
+          role: ApiWaveGroupRole.Chat,
+          groupId: after.chat_group_id
+        });
+      const referencedGroupIds = collections.distinct(
+        [
+          after.visibility_group_id,
+          ...privilegeGroups.map((group) => group.groupId)
+        ].filter((id): id is string => id !== null)
+      );
+      this.assertNoInvalidWaveGroupRoles(
+        await this.findInvalidWaveGroupRoles(
+          {
+            visibilityGroupId: after.visibility_group_id,
+            privilegeGroups,
+            referencedGroupIds,
+            authenticatedAdminProfileId: actor,
+            enforceRequesterVisibility: true
+          },
+          ctx
+        )
+      );
+    }
+    await this.validateWaveParentOnUpdate({
+      waveBeforeUpdate: before,
+      groupIdsUserIsEligibleFor: groups,
+      ctx
+    });
+  }
+
+  /** Shared-wave edits never validate or rewrite native competition rules. */
+  async updateWaveHub(
+    waveId: string,
+    patch: ApiUpdateWaveHubRequest,
+    ctx: RequestContext
+  ): Promise<ApiWave> {
+    const authentication = this.getRequiredAuthenticationContext(ctx);
+    const actor = authentication.authenticatedProfileId;
+    if (!actor || authentication.isAuthenticatedAsProxy()) {
+      throw new ForbiddenException(
+        'Only an authenticated wave administrator can edit a wave'
+      );
+    }
+    const groups = await this.userGroupsService.getGroupsUserIsEligibleFor(
+      actor,
+      ctx.timer
+    );
+    const result = await this.withWaveSettingsTransaction(
+      async (connection) => {
+        const tx = { ...ctx, connection };
+        const before = await assertWaveAndParentVisibleOrThrow({
+          wave: await this.wavesApiDb.findWaveHubById(waveId, true, tx),
+          groupsUserIsEligibleFor: groups,
+          message: `Wave ${waveId} not found`,
+          wavesApiDb: this.wavesApiDb,
+          ctx: tx
+        });
+        if (
+          before.created_by !== actor &&
+          (!before.admin_group_id || !groups.includes(before.admin_group_id))
+        ) {
+          throw new ForbiddenException(
+            'Only wave administrators can edit a wave'
+          );
+        }
+        if (Object.keys(patch).length === 0) {
+          return {
+            wave: await this.mapEditedWaveHub(before, actor, tx),
+            changed: false,
+            groupIds: []
+          };
+        }
+        const after = applyWaveHubPatch(before, patch);
+        await this.validateWaveHubUpdate(before, after, actor, groups, tx);
+        const hubConfiguration =
+          await this.wavesApiDb.findWaveHubConfigurationForUpdate(waveId, tx);
+        await this.wavesApiDb.deleteWave(waveId, tx);
+        await this.wavesApiDb.insertWave(
+          {
+            ...after,
+            is_direct_message: after.is_direct_message ?? false,
+            voting_credit_nfts: []
+          },
+          tx,
+          {
+            preserveHubConfigurationFrom: hubConfiguration
+          }
+        );
+        if (after.visibility_group_id !== before.visibility_group_id) {
+          await this.wavesApiDb.updateVisibilityInFeedEntities(
+            { waveId, newVisibilityGroupId: after.visibility_group_id },
+            tx
+          );
+          await this.wavesApiDb.updateVisibilityInNotifications(
+            { waveId, newVisibilityGroupId: after.visibility_group_id },
+            tx
+          );
+        }
+        await this.metricsRecorder.recordActiveIdentity(
+          { identityId: actor },
+          tx
+        );
+        return {
+          wave: await this.mapEditedWaveHub(after, actor, tx),
+          changed: true,
+          groupIds: collections.distinct(
+            [
+              before.visibility_group_id,
+              before.chat_group_id,
+              before.admin_group_id,
+              after.visibility_group_id,
+              after.chat_group_id,
+              after.admin_group_id
+            ].filter((id): id is string => id !== null)
+          )
+        };
+      },
+      ctx
+    );
+    if (!ctx.connection && result.changed) {
+      await this.userGroupsService.onWaveRelatedGroupsChanged(
+        result.groupIds,
+        ctx
+      );
+    }
+    return result.wave;
   }
 
   async updateWave(
@@ -2290,15 +2572,17 @@ export class WaveApiService {
             const newVisibilityGroupId = request.visibility.scope.group_id;
             const oldVisibilityGroupId = waveBeforeUpdate.visibility_group_id;
             if (newVisibilityGroupId !== oldVisibilityGroupId) {
-              await Promise.all([
-                this.wavesApiDb.updateVisibilityInFeedEntities(
-                  { waveId, newVisibilityGroupId },
-                  ctxWithConnection
-                ),
-                this.wavesApiDb.updateVisibilityInNotifications(
-                  { waveId, newVisibilityGroupId },
-                  ctxWithConnection
-                )
+              await inSequence([
+                () =>
+                  this.wavesApiDb.updateVisibilityInFeedEntities(
+                    { waveId, newVisibilityGroupId },
+                    ctxWithConnection
+                  ),
+                () =>
+                  this.wavesApiDb.updateVisibilityInNotifications(
+                    { waveId, newVisibilityGroupId },
+                    ctxWithConnection
+                  )
               ]);
             }
             const noRightToVote =

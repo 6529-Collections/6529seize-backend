@@ -10,6 +10,7 @@ import {
 import { env } from '../../env';
 import { Logger } from '../../logging';
 import {
+  budgetOf,
   ConnectionWrapper,
   setSqlExecutor,
   SqlExecutor,
@@ -71,11 +72,12 @@ class DbImpl extends SqlExecutor {
     executable: (connectionHolder: ConnectionWrapper<any>) => Promise<T>,
     options?: SqlTransactionOptions
   ) {
-    if (options?.executionBudget) {
+    const budget = budgetOf(options);
+    if (budget) {
       return execBudgetedNativeTransactionally(
         executable,
         getConnectionsFromPool,
-        options.executionBudget
+        budget
       );
     }
     return getConnectionsFromPool().then((connection) =>

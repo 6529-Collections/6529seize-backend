@@ -72,8 +72,7 @@ export class ArtCurationTokenWatchService {
       competitionId,
       ctx
     );
-    if (record?.storage_mode !== 'NATIVE' || record.wave_id !== waveId)
-      return false;
+    if (record?.wave_id !== waveId) return false;
     return (
       await competitionRepository.findCapabilities(competitionId, ctx)
     ).includes(CompetitionCapability.CURATION);

@@ -397,6 +397,61 @@ Remaining direct gateway references should be either:
 - explicit legacy upload/MFS behavior,
 - explicit fallback/debug behavior.
 
+## Separate Content Domain For User Media
+
+User-provided media can also be served from a separate content domain:
+
+- path gateway `https://media.6529usercontent.com` (`/ipfs/<cid>/...`,
+  `/ipns/<name>/...`, `/arweave/<txid>/...`; no `/s3/*`);
+- one host per CIDv1, `https://<cidv1-base32>.ipfs.6529usercontent.com/<path>`,
+  where the label matches `^b[a-z2-7]{50,61}$`.
+
+Input. `src/decentralized-media/decentralized-media.ts` always understands
+both domains, whatever is configured:
+
+- `media.6529usercontent.com` URLs parse exactly like `media.6529.io` URLs,
+  but only over `https` with no port or userinfo.
+- A per-CID host parses to the CID from its label plus the path, so
+  `https://<cid>.ipfs.6529usercontent.com/a.png` is the same reference as
+  `https://media.6529usercontent.com/ipfs/<cid>/a.png`. A per-CID host also
+  serves `/ipfs/<other cid>/...` from that other CID, so that form parses to
+  the other CID. CIDs are not converted between versions.
+- Any other name under the domain (`evil.6529usercontent.com`,
+  `a.b.ipfs.6529usercontent.com`, labels that are not lowercase base32 CIDv1)
+  and look-alikes such as `media.6529usercontent.com.example` are not
+  recognised.
+
+Every consumer of the parser therefore accepts the new hosts wherever it
+accepts `media.6529.io`: `text/html` drop media, proposal frames,
+`/api/media/resolve`, NFT and NFT-history metadata fetches, and minting claim
+HTML animations (a first-party gateway URL on either domain is stored as its
+native `ipfs://` / Arweave form, as `media.6529.io` already was). Push
+notification images accept `https://media.6529usercontent.com/ipfs/...` with
+the same exact checks as `https://media.6529.io/ipfs/...`. Profile picture
+rules are unchanged; they never accepted gateway URLs.
+
+Output. `MEDIA_RESOLVER_ENDPOINT` selects the path gateway the backend builds
+resolver URLs on (read at call time, after Lambda configuration is loaded):
+
+| Value | Resolver URLs | `ipfs.6529.io` fallback |
+|---|---|---|
+| unset, empty, `https://media.6529.io` | `https://media.6529.io/...` (unchanged) | kept |
+| `https://media.6529usercontent.com` | `https://media.6529usercontent.com/...` | omitted |
+| anything else | `https://media.6529.io/...`, plus one `[MEDIA_RESOLVER_ENDPOINT_UNSUPPORTED]` warning | kept |
+
+The backend never builds per-CID host URLs. Proposal frames embed the
+resolver's path URL; with the content domain selected, the path gateway sends
+browser navigations to the per-CID host itself.
+
+Lambdas read the value from the regional `prod/lambdas` secret (`eu-west-1`
+for staging, `us-east-1` for production) like other runtime settings; local
+runs read `.env.<NODE_ENV>`. Rollback is removing the key.
+
+Stored data is not rewritten. URLs already stored on `media.6529.io` or
+`ipfs.6529.io` (for example drop media URLs, NFT link preview data, minting
+claim URLs and generated proposal frame documents) keep parsing exactly as
+before; `ipfs-cache.6529.io` was never recognised and still is not.
+
 ## Merge Order
 
 1. Backend PR: add shared resolver module and `/api/media/resolve`.

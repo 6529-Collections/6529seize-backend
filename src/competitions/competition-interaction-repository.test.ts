@@ -9,10 +9,7 @@ import {
   COMPETITION_WINNER_VOTES_TABLE,
   COMPETITION_DECISIONS_TABLE
 } from '@/constants';
-import {
-  CompetitionExecutionMode,
-  CompetitionStorageMode
-} from '@/entities/ICompetition';
+import { CompetitionExecutionMode } from '@/entities/ICompetition';
 import { sqlExecutor } from '@/sql-executor';
 import { describeWithSeed } from '@/tests/_setup/seed';
 import { CompetitionInteractionRepository } from './competition-interaction.repository';
@@ -25,7 +22,6 @@ const record = {
   id: 'aaa00000-0000-4000-8000-000000000001',
   wave_id: 'legacy-wave',
   legacy_wave_id: 'legacy-wave',
-  storage_mode: CompetitionStorageMode.LEGACY_ADAPTER,
   execution_mode: CompetitionExecutionMode.ACTIVE
 };
 const prize = {
@@ -182,16 +178,58 @@ describeWithSeed(
         3
       );
     });
-    it('preserves raw submitted winner votes as personal history while final weighted votes remain archived', async () => {
-      expect(await repository.myVotes(record, 'voter', 0, 10, {})).toEqual([
+    it('retains scoped descriptors on an active entry with an existing award', async () => {
+      const entryId = legacyCompetitionEntryId(record.id, 'first');
+      await sqlExecutor.execute(
+        `update ${COMPETITION_ENTRIES_TABLE} set status='ACTIVE' where id=:entryId`,
+        { entryId }
+      );
+      expect(await repository.awards(record, 0, 0, {}, [entryId])).toHaveLength(
+        2
+      );
+    });
+    it('excludes winners from active personal votes while preserving their recorded votes', async () => {
+      expect(await repository.myVotes(record, 'voter', 0, 10, {})).toEqual([]);
+      const retained = await sqlExecutor.execute<{ value: number }>(
+        `select value from ${COMPETITION_VOTES_TABLE} where id='vote'`,
+        {}
+      );
+      expect(Number(retained[0].value)).toBe(80);
+    });
+    it('orders personal votes by signed value, then vote time, across pages', async () => {
+      await sqlExecutor.execute(
+        `update ${COMPETITION_ENTRIES_TABLE} set status='ACTIVE' where competition_id=:competitionId`,
+        { competitionId: record.id }
+      );
+      await sqlExecutor.execute(
+        `insert into ${COMPETITION_VOTES_TABLE}
+          (id,competition_id,entry_id,voter_profile_id,value,credit_spent,created_at,updated_at)
+         values ('second-vote',:competitionId,:entryId,'voter',120,120,2,2)`,
         {
-          entry_id: legacyCompetitionEntryId(record.id, 'first'),
-          drop_id: 'first',
-          value: 80,
-          credit_spent: 80,
-          entry_status: 'WINNER'
+          competitionId: record.id,
+          entryId: legacyCompetitionEntryId(record.id, 'second')
         }
-      ]);
+      );
+      const readIds = async (offset = 0, limit = 10) =>
+        (await repository.myVotes(record, 'voter', offset, limit, {})).map(
+          (row) => row.drop_id
+        );
+      expect(await readIds()).toEqual(['second', 'first']);
+      expect(await readIds(1, 1)).toEqual(['first']);
+      await sqlExecutor.execute(
+        `update ${COMPETITION_VOTES_TABLE} set value=80,credit_spent=80 where id='second-vote'`,
+        {}
+      );
+      expect(await readIds()).toEqual(['first', 'second']);
+      await sqlExecutor.execute(
+        `update ${COMPETITION_VOTES_TABLE} set value=120,credit_spent=120 where id='second-vote'`,
+        {}
+      );
+      await sqlExecutor.execute(
+        `update ${COMPETITION_VOTES_TABLE} set value=-credit_spent`,
+        {}
+      );
+      expect(await readIds()).toEqual(['first', 'second']);
     });
   }
 );

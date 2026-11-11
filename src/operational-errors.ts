@@ -204,6 +204,7 @@ const context = new AsyncLocalStorage<{
   requestId: string | undefined;
   observedErrors: WeakSet<Error>;
   reported?: boolean;
+  loopHealthRead?: boolean;
 }>();
 const token = (value: string | undefined, limit: number): string | undefined =>
   value && value.length <= limit && /^[a-zA-Z0-9_.:-]+$/.test(value)
@@ -216,6 +217,19 @@ export function withOperationalContext<T>(
 ): T {
   return context.run(
     { requestId, observedErrors: new WeakSet<Error>() },
+    action
+  );
+}
+
+/** Best-effort monitoring reads retain source diagnostics without turning their
+ * own SQL failures into application incidents. Business execution stays outside. */
+export function withLoopHealthReadContext<T>(action: () => T): T {
+  return context.run(
+    {
+      requestId: context.getStore()?.requestId,
+      observedErrors: new WeakSet<Error>(),
+      loopHealthRead: true
+    },
     action
   );
 }
@@ -240,6 +254,11 @@ export function operationalError(
   diagnostic?: OperationalDiagnostic
 ): void {
   if (!process.env.AWS_LAMBDA_FUNCTION_NAME) return;
+  if (
+    context.getStore()?.loopHealthRead &&
+    ['DB', 'DB_API', 'MYSQL_HELPERS'].includes(component)
+  )
+    return;
   try {
     const error = values.find(
       (value): value is Error => value instanceof Error

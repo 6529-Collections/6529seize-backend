@@ -1,5 +1,5 @@
 import csv from 'csv-parser';
-import { ethers, hashMessage, keccak256 } from 'ethers';
+import { ethers, keccak256 } from 'ethers';
 import * as Joi from 'joi';
 import { MerkleTree } from 'merkletreejs';
 import path from 'node:path';
@@ -12,12 +12,10 @@ import {
 } from './abis';
 import { Logger } from '../../../logging';
 import { numbers } from '../../../numbers';
-import { equalIgnoreCase } from '../../../strings';
 import { getEthereumRpcProvider } from '@/ethereum-rpc/ethereum-rpc-provider';
 import { getNextgenRpcErrorCode } from '@/api/nextgen/nextgen-rpc-error';
 import {
   hashStructuredWalletSignaturePayload,
-  isStructuredSignaturesRequired,
   verifyStructuredWalletSignature
 } from '@/api/wallet-signatures/structured-wallet-signatures';
 
@@ -31,7 +29,7 @@ export enum NextGenAllowlistType {
 const nextgenSchema = Joi.object({
   wallet: Joi.string().required(),
   signature: Joi.string().required(),
-  signature_message: Joi.string().optional().allow(null),
+  signature_message: Joi.string().required(),
   collection_id: Joi.number().required(),
   uuid: Joi.string().required(),
   phase: Joi.string().required(),
@@ -46,7 +44,7 @@ const nextgenSchema = Joi.object({
 const nextgenCollectionBurnSchema = Joi.object({
   wallet: Joi.string().required(),
   signature: Joi.string().required(),
-  signature_message: Joi.string().optional().allow(null),
+  signature_message: Joi.string().required(),
   uuid: Joi.string().required(),
   collection_id: Joi.number().required(),
   burn_collection: Joi.string().required(),
@@ -116,8 +114,7 @@ export async function validateNextgen(req: any, res: any, next: any) {
     const signatureValidation = await validateSignature(
       value.wallet,
       value.signature,
-      value.uuid,
-      value.signature_message ?? null,
+      value.signature_message,
       getNextgenAllowlistSignaturePayload(value)
     );
 
@@ -194,8 +191,7 @@ export async function validateNextgenBurn(req: any, res: any, next: any) {
     const signatureValidation = await validateSignature(
       value.wallet,
       value.signature,
-      value.uuid,
-      value.signature_message ?? null,
+      value.signature_message,
       getNextgenBurnSignaturePayload(value)
     );
 
@@ -242,37 +238,26 @@ function handleValidationFailure(
   return next();
 }
 
+/**
+ * NextGen admin uploads accept only the structured signature, which binds the
+ * signature to the request payload, a single-use nonce and an expiry.
+ */
 async function validateSignature(
   address: string,
   signature: string,
-  uuid: string,
-  signatureMessage: string | null,
+  signatureMessage: string,
   payload: unknown
 ): Promise<boolean> {
-  if (signatureMessage) {
-    const signingAddress = await verifyStructuredWalletSignature({
-      message: signatureMessage,
-      signature,
-      expectedAddress: address,
-      expectedChainId: getNextGenChainId(),
-      expectedAction: 'nextgen_admin',
-      expectedKind: 'action',
-      expectedPayloadHash: hashStructuredWalletSignaturePayload(payload)
-    });
-    return signingAddress !== null;
-  }
-
-  if (isStructuredSignaturesRequired()) {
-    return false;
-  }
-
-  try {
-    const verifySigner = ethers.recoverAddress(hashMessage(uuid), signature);
-    return equalIgnoreCase(address, verifySigner);
-  } catch (e) {
-    logger.error('error', e);
-    return false;
-  }
+  const signingAddress = await verifyStructuredWalletSignature({
+    message: signatureMessage,
+    signature,
+    expectedAddress: address,
+    expectedChainId: getNextGenChainId(),
+    expectedAction: 'nextgen_admin',
+    expectedKind: 'action',
+    expectedPayloadHash: hashStructuredWalletSignaturePayload(payload)
+  });
+  return signingAddress !== null;
 }
 
 function getNextgenAllowlistSignaturePayload(

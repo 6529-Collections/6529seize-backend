@@ -3,22 +3,22 @@ import { CompetitionService } from '@/competitions/competition.service';
 import {
   CompetitionExecutionMode,
   CompetitionLifecycle,
-  CompetitionStorageMode,
   CompetitionType
 } from '@/entities/ICompetition';
 import { WaveType } from '@/entities/IWave';
-import { NotFoundException } from '@/exceptions';
+import { BadRequestException, NotFoundException } from '@/exceptions';
 import { aWave } from '@/tests/fixtures/wave.fixture';
 import { assertCompetitionOpen } from '@/api/competitions/competition-command-access';
 import type { DefaultCompetitionRecord } from '@/competitions/default-competition';
 import { NativeCompetitionReader } from '@/competitions/native-competition.reader';
+import { competitionCommandRepository } from '@/competitions/competition-command.repository';
+import { competitionEntryRepository } from '@/competitions/competition-entry.repository';
 
 function nativeRecord(id: string, waveId: string, createdAt: number) {
   return {
     id,
     wave_id: waveId,
     legacy_wave_id: null,
-    storage_mode: CompetitionStorageMode.NATIVE,
     execution_mode: CompetitionExecutionMode.DISABLED,
     type: CompetitionType.RANK,
     lifecycle: CompetitionLifecycle.PUBLISHED,
@@ -105,6 +105,7 @@ describe('CompetitionService', () => {
     parseCompetitionRecord: jest.fn((record) => record),
     findCapabilities: jest.fn().mockResolvedValue([]),
     findNativeEntry: jest.fn(),
+    listNativeLeaderboard: jest.fn(),
     listNativeVoters: jest.fn(),
     listNativeOutcomes: jest.fn(),
     listNativeDistribution: jest.fn(),
@@ -124,6 +125,9 @@ describe('CompetitionService', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    jest
+      .spyOn(competitionEntryRepository, 'countActiveByCompetitionIds')
+      .mockResolvedValue({});
     repository.listNativePauses.mockResolvedValue({
       data: [],
       has_more: false,
@@ -153,6 +157,82 @@ describe('CompetitionService', () => {
       has_more: false,
       next_cursor: null
     });
+  });
+
+  it('binds leaderboard cursors to the Additional Action filter', async () => {
+    repository.listNativeLeaderboard.mockResolvedValue({
+      data: [{ drop_id: 'promised-without-plan' }],
+      has_more: true
+    });
+    const request = {
+      limit: 1,
+      direction: 'DESC' as const,
+      sort: 'rating' as const,
+      is_additional_action_promised: true
+    };
+    const page = await service.listLeaderboard(wave.id, first.id, request, {});
+    expect(page.next_cursor).toEqual(expect.any(String));
+    await service.listLeaderboard(
+      wave.id,
+      first.id,
+      { ...request, cursor: page.next_cursor! },
+      {}
+    );
+    expect(repository.listNativeLeaderboard).toHaveBeenLastCalledWith(
+      first.id,
+      expect.objectContaining({
+        offset: 1,
+        is_additional_action_promised: true
+      }),
+      {}
+    );
+    for (const filter of [undefined, false]) {
+      await expect(
+        service.listLeaderboard(
+          wave.id,
+          first.id,
+          {
+            ...request,
+            cursor: page.next_cursor!,
+            is_additional_action_promised: filter
+          },
+          {}
+        )
+      ).rejects.toBeInstanceOf(BadRequestException);
+    }
+  });
+
+  it('accepts unfiltered leaderboard cursors issued before the promise filter existed', async () => {
+    repository.listNativeLeaderboard.mockResolvedValue({
+      data: [],
+      has_more: false
+    });
+    const cursor = new CompetitionCursorCodec().encode(
+      `competition:${first.id}:leaderboard`,
+      {
+        filters: {},
+        direction: 'DESC',
+        sort: 'rating',
+        price_currency: null,
+        min_price: null,
+        max_price: null
+      },
+      50
+    );
+    await service.listLeaderboard(
+      wave.id,
+      first.id,
+      { cursor, limit: 50, direction: 'DESC', sort: 'rating' },
+      {}
+    );
+    expect(repository.listNativeLeaderboard).toHaveBeenLastCalledWith(
+      first.id,
+      expect.objectContaining({
+        offset: 50,
+        is_additional_action_promised: undefined
+      }),
+      {}
+    );
   });
 
   it('resolves the default over every record without hydrating competitions or resolving action groups', async () => {
@@ -256,12 +336,54 @@ describe('CompetitionService', () => {
 
   it('keeps entry and vote permissions false for anonymous readers', async () => {
     const competition = await service.getCompetition(wave.id, first.id, {});
+    expect(competition.your_active_entries_count).toBeNull();
+    expect(
+      competitionEntryRepository.countActiveByCompetitionIds
+    ).not.toHaveBeenCalled();
     expect(competition.permissions).toMatchObject({
       view: true,
       submit: false,
       vote: false,
       administer: false
     });
+  });
+
+  it('returns the acting profile count and batches counts for a competition page', async () => {
+    const counts = jest.mocked(
+      competitionEntryRepository.countActiveByCompetitionIds
+    );
+    counts.mockResolvedValue({ [first.id]: 3 });
+    const readContext = {
+      authenticationContext: {
+        isUserFullyAuthenticated: () => true,
+        isAuthenticatedAsProxy: () => false,
+        getActingAsId: () => 'profile-viewer',
+        hasRightsTo: () => true
+      }
+    } as never;
+    const detail = await service.getCompetition(wave.id, first.id, readContext);
+    expect(detail.your_active_entries_count).toBe(3);
+    expect(counts).toHaveBeenLastCalledWith(
+      [first.id],
+      'profile-viewer',
+      readContext
+    );
+
+    counts.mockClear();
+    const page = await service.listCompetitions(
+      wave.id,
+      { limit: 10, direction: 'ASC', sort: 'created_at' },
+      readContext
+    );
+    expect(
+      page.data.map((competition) => competition.your_active_entries_count)
+    ).toEqual([3, 0]);
+    expect(counts).toHaveBeenCalledTimes(1);
+    expect(counts).toHaveBeenCalledWith(
+      [first.id, second.id],
+      'profile-viewer',
+      readContext
+    );
   });
 
   it('keeps submit and vote permissions false when native execution is disabled', async () => {
@@ -279,6 +401,40 @@ describe('CompetitionService', () => {
       submit: false,
       vote: false
     });
+  });
+
+  it('does not probe archive activity on detail or collection reads', async () => {
+    const activity = jest
+      .spyOn(competitionCommandRepository, 'hasActivity')
+      .mockResolvedValue(true);
+    const readContext = {
+      authenticationContext: {
+        isUserFullyAuthenticated: () => true,
+        isAuthenticatedAsProxy: () => false,
+        getActingAsId: () => wave.created_by,
+        hasRightsTo: () => true
+      }
+    } as never;
+    try {
+      const page = await service.listCompetitions(
+        wave.id,
+        { limit: 10, direction: 'ASC', sort: 'created_at' },
+        readContext
+      );
+      expect(page.data[0].permissions).not.toHaveProperty(
+        'archive_requires_reason'
+      );
+      expect(activity).not.toHaveBeenCalled();
+      const detail = await service.getCompetition(
+        wave.id,
+        first.id,
+        readContext
+      );
+      expect(detail.permissions).not.toHaveProperty('archive_requires_reason');
+      expect(activity).not.toHaveBeenCalled();
+    } finally {
+      activity.mockRestore();
+    }
   });
 
   it('resolves native-only access groups for detail and list permissions', async () => {

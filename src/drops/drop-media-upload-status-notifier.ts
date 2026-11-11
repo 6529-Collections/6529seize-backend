@@ -11,6 +11,7 @@ import {
 } from '@/drops/drop-media-uploads.db';
 import { Logger } from '@/logging';
 import { RequestContext } from '@/request.context';
+import { numbers } from '@/numbers';
 
 export class DropMediaUploadStatusNotifier {
   private readonly logger = Logger.get(this.constructor.name);
@@ -44,10 +45,20 @@ export class DropMediaUploadStatusNotifier {
             },
             ctx
           );
-          await this.wsListenersNotifier.notifyAboutDropUpdate(drop, ctx, {
-            reason: DROP_UPDATE_REASON_MEDIA_STATUS,
-            useSystemBroadcastAudience: true
-          });
+          // Worker DB pools can return BIGINT strings; ApiDrop wire fields are numbers.
+          await this.wsListenersNotifier.notifyAboutDropUpdate(
+            {
+              ...drop,
+              serial_no: numbers.parseIntOrThrow(drop.serial_no),
+              created_at: numbers.parseIntOrThrow(drop.created_at),
+              updated_at: numbers.parseIntOrNull(drop.updated_at)
+            },
+            ctx,
+            {
+              reason: DROP_UPDATE_REASON_MEDIA_STATUS,
+              useSystemBroadcastAudience: true
+            }
+          );
         })
       );
       results.forEach((result, index) => {

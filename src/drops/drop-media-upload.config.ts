@@ -7,6 +7,10 @@ export const DROP_MEDIA_INGEST_DEFAULT_REGION = 'eu-west-1';
 export const DROP_MEDIA_INGEST_BUCKET_PREFIX = '6529-drop-media-ingest';
 export const DROP_MEDIA_SANITIZED_METADATA_KEY = 'privacy-sanitized';
 export const DROP_MEDIA_SANITIZED_METADATA_VALUE = 'true';
+export const DROP_MEDIA_FORMAT_VALIDATED_METADATA_KEY = 'format-validated';
+export const DROP_MEDIA_SANITIZE_UPLOAD_METADATA_KEY =
+  'sanitize-image-metadata';
+export { MAX_SOURCE_BYTES as DROP_MEDIA_MAX_IMAGE_BYTES } from '@/media/resize-input';
 export const DROP_MEDIA_CACHE_CONTROL = IMMUTABLE_MEDIA_CACHE_CONTROL;
 
 let ingestS3: S3Client | undefined;

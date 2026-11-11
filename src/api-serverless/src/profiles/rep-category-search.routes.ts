@@ -95,8 +95,9 @@ router.get(
     if (isHelpBotCreditCategory(searchParam)) {
       throw new BadRequestException(HELP_BOT_RESERVED_CREDIT_CATEGORY_MESSAGE);
     }
+    // Read-only probe: no moderation rows and no new category suggestions.
     const abusivenessDetectionResult =
-      await abusivenessCheckService.checkRepPhrase(searchParam);
+      await abusivenessCheckService.probeRepPhrase(searchParam);
     if (abusivenessDetectionResult.status === 'DISALLOWED') {
       throw new BadRequestException(
         abusivenessDetectionResult.explanation ??

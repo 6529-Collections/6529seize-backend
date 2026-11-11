@@ -1,3 +1,4 @@
+import { inSequence } from '@/db/in-sequence';
 import {
   createOrUpdateDrop,
   CreateOrUpdateDropUseCase
@@ -59,8 +60,8 @@ export class DeployerDropper {
   ): Promise<number[]> {
     ctx.timer?.start(`${this.constructor.name}->drop`);
     const pendingPushNotificationIds = (
-      await Promise.all(
-        waves.map(async (waveId: string) => {
+      await inSequence(
+        waves.map((waveId: string) => async () => {
           const model: CreateOrUpdateDropModel = {
             drop_id: null,
             wave_id: waveId,

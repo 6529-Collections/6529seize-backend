@@ -30,6 +30,96 @@ The resizer's HTTP API uses AWS_PROXY payload 1.0 without request templates;
 request bodies remain inside the HTTP event envelope and cannot become this
 top-level operator payload.
 
+## Decision vote detail reads
+
+The existing drop voter, vote-history, summary, and CSV endpoints resolve native
+Decision submissions using their stored `COMPETITION` type outside the legacy
+GET compatibility scope. Their entry lookup independently enforces the Decision
+and parent wave's read permissions. This keeps standalone Decisions and migrated
+original-primary Decisions on the same native vote source even when older GET
+projections present their content as `CHAT` or `PARTICIPATORY`. Winner voter
+lists and exports use the saved snapshot for that entry's decision; active RANK
+summaries use current signed allocations. No stored drop types are rewritten.
+
+## Anonymous competition submissions
+
+Native competition participation configuration can opt into
+`anonymous_submissions`, defaulting to false and fixed after publication. Real
+drop and entry ownership remains internal. Shared public read and delivery
+policies replace unrevealed authors with an entry-specific anonymous profile;
+author-filtered searches and profile activity exclude those entries before
+pagination. Authenticated owners retain private management access. A saved
+`won_at` reveals only that entry, including in rolling competitions; other
+entries by the same author remain anonymous. User-submitted content and metadata
+are retained as submitted. Unrevealed anonymous entries do not inherit account
+blocks, preventing block-and-check identification; explicit drop hiding and
+platform moderation remain effective. Related author notices bypass account
+blocks and identity mutes only while their submitter remains anonymous;
+ordinary actor, wave and notification-category filters remain effective.
+Deleting an unrevealed submission retains
+a withdrawn membership tombstone so historical author activity stays private.
+
+The existing API, push notifications, Help Bot reply worker and media sanitizer
+share the identity presentation policy, including nested quote/reply and
+WebSocket fallback payloads. Newsletter source queries omit unrevealed entries
+before exposing their author attribution to the publishing pipeline. New drop
+uploads use random public object paths and keep ownership in existing private
+upload records. Legacy owner-bearing upload paths remain compatible for public
+submissions; anonymous entries require a fresh upload instead. Privacy decisions read the writer database to
+avoid exposing identities while a read replica catches up. A missing freshly
+committed membership would otherwise be mistaken for a public entry, even on
+connectionless reads. Every drop reader checks membership for the entire batch,
+including ordinary-looking chat drops: the legacy GET facade presents native
+sibling competition content as chat, so its projected drop type cannot establish
+whether an author is public. Push delivery batches unique entry IDs once per recipient
+batch, and WebSocket delivery batches embedded entries once per broadcast,
+skipping empty audiences. Request-local deduplication never survives a transaction
+or crosses viewers. Competition vote activity is an uncached viewer-scoped REST
+response; its frontend query key includes the connected and proxy profiles.
+The feature uses
+existing JSON configuration and winner records, without a new schema, queue,
+Lambda or environment variable. Deploy affected backend delivery workers and
+the video conversion invoker's compatible media-path reader before the API
+accepts the new setting, then deploy the frontend creation control.
+
+## Meme collaborator invitations
+
+Artwork submissions retain one author, voting result and minting claim. The API
+stores invitation status and the artwork/terms snapshot in `meme_collaborations`
+and `meme_collaboration_invitations`, created by entity synchronization. Only
+the invited identity can accept or decline; a proxy cannot consent. Acceptance
+is final. Invitee acceptance saves a nullable, submission-specific artist credit name (up to 200 characters) separately from the profile handle. Old clients without the field save their handle; older accepted records retain handle fallback. Pending identities are visible only to the submitter and their own
+invitee. Public drop V1/V2 mappings expose accepted collaborators and derive
+artist/profile/Collab metadata from those records.
+
+Native MAIN_STAGE decision transactions, including the transferred original Main Stage, lock the same
+collaboration row used by acceptance, save the accepted artist roster, and close
+pending invitations. Claims Builder consumes that saved roster for initial
+claim credits; pending invitations do not delay minting. Admins can edit all final claim credits, traits
+and artwork in Craft. The Arweave API and uploader use the saved claim with
+normal metadata/media validation, without consulting invitations or comparing
+it with the collaboration snapshot. Admin edits do not change invitation status
+or accepted-submission profile attribution. Existing submissions without a
+managed record remain compatible.
+
+Invitation, acceptance and author-cancellation notifications use the existing identity-notification
+and push pipelines with cause `MEME_COLLABORATION`. New generated endpoints are
+`GET /drops/{drop_id}/collaborations`,
+`POST /drops/{drop_id}/collaborations` (submitter-only additions on active
+designated Memes Main Stage entries, including transferred original submissions), and
+`POST /drops/{drop_id}/collaborations/{invitation_id}/response`; both use the
+existing wave visibility checks. Accepted identities participate in Main Stage
+profile artwork queries, without changing submission ownership or allowances.
+No new Lambda, queue, environment variable, or on-chain contract is introduced.
+
+After legacy runtime retirement, invitation eligibility and collaborator profile
+submissions/wins use native Main Stage membership rather than physical drop types
+or retired winner tables. Original submission routes pass their native owner to
+the invitation writer so consent uses that competition's terms. The retained
+wave GET compatibility projection supplies terms for older callers without an
+explicit competition ID. The retired wave decision service is not restored;
+`waveDecisionExecutionLoop` freezes credits through its native decision path.
+
 ## Oracle TDH API and retired Prenode registry
 
 The existing `api` service retains Oracle TDH totals, thresholds, percentile,
@@ -82,6 +172,27 @@ failure, and replaces all loaded pages together on refresh/expiry. It offers
 Retry and Load more controls alongside automatic scrolling. This adds no table,
 migration, queue or loop. Deploy `api` before the frontend in each environment.
 
+## Reply placement on a single drop
+
+The author can set reply placement on a top-level chat drop while its wave
+uses inline replies. The API saves the preference on the drop and uses
+existing reply ancestry to filter descendants before paginating the chat
+timeline. Clients opt into the mixed timeline through the V2 feed and
+drop-ID pagination APIs. Individual placement keeps the existing unread and
+notification rules for inline waves. Thread reads keep returning descendants and reply
+payloads identify the top-level drop for links and live updates. Placement updates
+include whether the thread has replies, so empty toggles can update the message
+without reloading the timeline.
+
+The wave's `chat.replies.collapsed` setting takes precedence. When it is
+enabled, all replies are collapsed regardless of the top-level drop's stored
+`collapse_replies` preference. On V2 serial-number lookups, a descendant's
+`collapsed_reply_thread` identifies its top-level drop under either collapse
+mode, including when the top-level drop's individual preference is `false`.
+
+Deploy `dbMigrationsLoop` first to synchronize the additive column and refresh
+the compatibility view, then deploy the API and the frontend.
+
 ## Wave eligibility
 
 The maintained direct eligibility implementation serves profile-to-groups reads;
@@ -131,6 +242,43 @@ popup, download, or top-navigation permissions. This preserves the existing
 interactive-art submission model without fetching arbitrary source content on
 the server. The template applies attribute escaping before every media branch;
 its separate URL guard also protects local previews, which do not use this API.
+
+## Profile picture uploads
+
+Authenticated `POST /profiles/pfp/ipfs` accepts one multipart `pfp` file of at
+most 2 MiB (multer rejects larger bodies with 413), recognizes PNG, JPEG, GIF or
+WebP from the file's own bytes, always strips identifying metadata with the
+lossless module in `src/media/metadata-strip/` (IPFS pins are permanent, so this
+ignores `DROP_MEDIA_SANITIZE_IMAGES`), and pins it with the shared IPFS uploader as a
+single unwrapped file (the configured `IPFS_API_UPLOAD_PATH` without
+`wrap-with-directory`). It returns `{ pfp_url: "ipfs://<cid>" }`; the caller then
+saves that URL through the existing `POST /profiles` validation. The web app
+uploads through this route instead of posting to the IPFS node from the
+browser. Deploy `api` before the frontend that calls it. No new service,
+database schema, or migration is required. The API bundle has no image decoder,
+so the strip is verified structurally (same size and orientation, byte-identical
+image data and ICC, no removed blocks left) and an image that cannot be stripped
+that way is rejected with a 400 instead of being pinned. JPEG HDR gain maps are
+kept under the same structural checks (byte-identical gain map image data, MPF
+offsets on its SOI, allowlisted XMP only); a gain map that does not pass them
+is dropped and the SDR image is pinned.
+
+The older `POST /profiles/{identity}/pfp` route (a meme id, or a file stored in
+the images bucket under `pfp/<env>/`) runs uploaded files through the same
+checks and strip: 2 MiB limit, format from the bytes, and the object stored
+with that format's extension and content type.
+
+A new `pfp_url` on `POST /profiles` must be an image URL on the media host,
+checked exactly (`https`, that host name, no userinfo or port, a non-empty
+path), or an `ipfs://` link. Profile edits resend the stored picture URL, so a
+value equal to the one already stored for the profile is kept as it is (it
+only has to match the earlier `ipfs://` or `https://d3lqz0a4bldqgf` prefix
+rule). A bare CID (`Qm…` CIDv0 or base32 `b…` CIDv1) is what both the
+API pin and the desktop app's local IPFS node produce. Other `ipfs://` forms are
+logged as `[PROFILE_PICTURE_IPFS_FORM]` and still accepted unless
+`PROFILE_PICTURE_IPFS_URLS_STRICT=true` (unset by default), which rejects them.
+Wave `picture` URLs are checked against the same host; wave updates already
+checked the exact host before, so resent wave pictures are unaffected.
 
 ## Profile collecting and marketplace operations
 
@@ -491,14 +639,14 @@ through `1a-staging` without deploying this service there. See
 | `nftsLoop`                               | Discover, refresh, and audit NFTs.                                                                                                                                  |
 | `transactionsLoop`                       | Index MEMES, Gradients, and Meme Lab transfers.                                                                                                                     |
 | `nftOwnersLoop`                          | Maintain current owner balance snapshots.                                                                                                                           |
-| `nftHistoryLoop`                         | Maintain ownership history.                                                                                                                                         |
+| `nftHistoryLoop`                         | Maintain NFT metadata history.                                                                                                                                         |
 | `delegationsLoop`                        | Sync delegation.cash and consolidation data.                                                                                                                        |
 | `nextgenContractLoop`                    | Index NextGen contract events.                                                                                                                                      |
 | `nextgenMetadataLoop`                    | Refresh NextGen metadata.                                                                                                                                           |
 | `externalCollectionSnapshottingLoop`     | Snapshot external collection ownership.                                                                                                                             |
 | `externalCollectionLiveTailingLoop`      | Live-tail external collection transfers.                                                                                                                            |
 | `transactionsProcessingLoop`             | Normalize raw transactions into processed state.                                                                                                                    |
-| `tdhLoop`                                | Calculate TDH and publish TDH completion.                                                                                                                           |
+| `tdhLoop`                                | Calculate TDH, publish wallet/consolidated CSVs through bounded Arweave gateway failover with public ArDrive download links, and publish TDH completion.                                                 |
 | `tdhHistoryLoop`                         | Write historical TDH snapshots.                                                                                                                                     |
 | `ownersBalancesLoop`                     | Project owner balance aggregates.                                                                                                                                   |
 | `aggregatedActivityLoop`                 | Calculate activity aggregates.                                                                                                                                      |
@@ -561,7 +709,7 @@ reset behavior, and the required writer-before-collector deployment order.
 | `dropMediaSanitizer`             | SQS `drop-media-sanitizer`                                                                                                          | Strip metadata from private-ingest drop/wave image uploads and publish sanitized originals.                                 |
 | `nftLinkRefresherLoop`           | SQS `nft-link-refreshes`                                                                                                            | Resolve external NFT links.                                                                                                 |
 | `nftLinkMediaPreviewLoop`        | SQS `nft-link-media-previews`                                                                                                       | Generate media previews for NFT links.                                                                                      |
-| `pushNotificationsHandler`       | SQS `firebase-push-notifications`                                                                                                   | Deliver Firebase pushes and recipient-scoped WebSocket notification invalidations after notification rows are durable.      |
+| `pushNotificationsHandler`       | SQS `firebase-push-notifications`                                                                                                   | Deliver Firebase pushes and recipient-scoped WebSocket notification invalidations after notification rows are durable; also content-free `e2ee_wake` notifications for encrypted chats. |
 | `helpBotReplyLoop`               | SQS `help-bot-replies`                                                                                                              | Answer `@help6529` interactions and direct follow-ups to bot replies.                                                       |
 | `helpBotDailyActivityCreditLoop` | SQS `help-bot-daily-activity-credits.fifo` with EventBridge wakeup fallback                                                         | Grant idempotent once-per-UTC-day activity credits from durable post-drop requests.                                         |
 | `releaseNotesGenerationLoop`     | SQS `release-note-generation`                                                                                                       | Publish production Backend, Frontend, and Desktop release notes as `ci6529`.                                                |
@@ -591,6 +739,28 @@ The API's Redis client is fail-fast: initialization waits a bounded time for the
 Background Lambdas that read or write application state use a shared `doInDbContext` wrapper. That wrapper prepares environment/secrets, initializes TypeORM-backed DB access, initializes Redis, runs the job, then disconnects. The `dropVideoConversionInvokerLoop` is intentionally environment-only: it loads config/secrets, filters the S3 object key, and invokes MediaConvert without opening MySQL or Redis connections.
 
 MySQL is the integration contract between nearly all modules. API routes, scheduled pollers, queue workers, and derived-data loops all read and write shared tables. Redis is secondary and mostly disposable: API request cache, rate limiting, webhook dedupe, locks, and selected feature caches can fail open or be repopulated from MySQL.
+
+### API request budgets
+
+The rate-limiting middleware charges each request to per source address
+buckets keyed by the API Gateway source IP, with IPv6 addresses grouped by
+their /64 prefix (zone ids ignored, IPv4-mapped addresses keyed by their IPv4
+address, and any address that cannot be parsed sharing one `ipv6-unparsed`
+key). Anonymous requests use `ip:<address>` with the
+unauthenticated limits. A request with a valid access token uses its
+`wallet:<address>` bucket with the authenticated limits and also a
+per-address ceiling `ip-auth:<address>` (defaults 240 burst, 60 requests per
+second over 60 seconds; `API_RATE_LIMIT_AUTH_IP_BURST`,
+`API_RATE_LIMIT_AUTH_IP_SUSTAINED_RPS`,
+`API_RATE_LIMIT_AUTH_IP_SUSTAINED_WINDOW_SECONDS`). `GET /api/auth/nonce`,
+`GET /api/auth/session-nonce`, `POST /api/auth/login` and
+`POST /api/auth/session-login` also use a per-address sign-in budget
+(defaults 10 burst, 60 per minute; `API_RATE_LIMIT_SIGN_IN_*` with the same
+suffixes). Any rejecting bucket answers 429 with the existing body; headers
+come from the primary bucket unless another one rejects. Signed internal
+requests still skip rate limiting. A request admitted because a check could
+not run logs one `rate_limit_fail_open` warning per minute per container with
+the admitted count and emits the `6529/RateLimit FailOpen` metric.
 
 ### Session refresh recovery
 
@@ -622,6 +792,22 @@ not part of this release. Recovery deliberately stops at the rotated session's
 expiry and never extends it. The legacy 30-second allowance starts at the
 successful rotation's `last_used_at`; repeated recovery does not reset it.
 
+### Native push logout reconciliation
+
+Push installation logout persists its original revocation targets on the client.
+When logout precedes the first registration, the API requires a live native
+session before writing a fence scoped to that installation secret. An optional
+`reconciliation_sessions` supplies connected-account proofs when the original
+targets are missing or no longer live; at least one must be live. These proofs
+authorize only this fence and are not revoked unless also present in `sessions`.
+Existing installation credentials, legacy
+token ownership checks, and revision ordering still apply. Replayed logout cannot
+delete profiles registered after the acknowledged revision.
+
+Deploy `api` before the frontend uses the optional proof. Existing clients remain
+compatible, and no schema or notification-worker deployment is needed. Retain
+this API support while new clients are deployed; roll back the frontend first.
+
 ## Main Data Flows
 
 1. Client requests enter through API Gateway and land in `seizeAPI`.
@@ -630,12 +816,15 @@ successful rotation's `last_used_at`; repeated recovery does not reset it.
 4. Derived-data Lambdas read canonical tables and write projections such as TDH, owner balances, aggregated activity, wave decisions, leaderboards, metrics, and reputation aggregates.
 5. SQS workers handle slow or retryable side effects through named queues: claim building, claim media Arweave uploads, S3 media mirroring, attachment orchestration/processing, NFT link resolution/previews, xTDH recalculation, Wave Score dirty refreshes, and notification delivery through Firebase plus recipient-scoped WebSocket invalidations.
 
-6. S3 and CloudFront serve media. AVIF still-image drop uploads always use private ingest and the sanitizer, even when `DROP_MEDIA_SANITIZE_IMAGES=false`. The worker applies orientation, strips metadata, and publishes WebP at quality 95 for compatibility with older supported mobile viewers. Multipart completion/status responses return the published `mime_type`, and drop references validate that type. AVIF admission rejects sequences, invalid content, images over 64 million pixels, dimensions over 16,383 pixels, and file-type headers over 4 KiB before publication. These decoder and header bounds apply only to AVIF; other formats retain their existing behavior. The existing 500 MB media byte limit remains. Verify shared ingest storage, then deploy the sanitizer in each environment before enabling AVIF through the API and frontend. API deployment verifies the ingest bucket and sanitizer queue exist.
+6. S3 and CloudFront serve media. All new drop/wave image multipart uploads use private ingest and the image worker, regardless of `DROP_MEDIA_SANITIZE_IMAGES`. The worker checks the container format against the declared MIME type before publication and rejects HEIC/HEIF with export guidance. The API captures the privacy choice in private multipart object metadata: false preserves original image bytes and true retains metadata stripping; missing policy preserves sanitization for older queued uploads. Published validation and privacy markers are separate. Single-PUT image preparation and legacy untracked public image multipart sessions cannot bypass the gate. Transport length failures remain operational. See [image-upload-format-validation.md](image-upload-format-validation.md) for scope, limits and compatibility. AVIF still-image drop uploads always convert through this worker, even when `DROP_MEDIA_SANITIZE_IMAGES=false`. The worker applies orientation, strips metadata, and publishes WebP at quality 95 for compatibility with older supported mobile viewers. Multipart completion/status responses return the published `mime_type`, and drop references validate that type. AVIF admission rejects sequences, invalid content, images over 64 million pixels, dimensions over 16,383 pixels, and file-type headers over 4 KiB before publication. These AVIF decoder and header bounds remain separate from the PNG and other codec preview policies below. Image processing uses a shared 256 MiB source ceiling; other media retains the existing 500 MB transport limit. Verify shared ingest storage, then deploy the sanitizer in each environment before enabling AVIF through the API and frontend. API deployment verifies the ingest bucket and sanitizer queue exist.
 
    Other drop and wave image uploads can first land in a private ingest bucket, then `dropMediaSanitizer` strips metadata and publishes the sanitized full-size original to the public bucket before CloudFront/resizer paths serve it. Other specialized media paths include on-demand resizing, video conversion, and NextGen metadata placeholder interception. Drop-video multipart completion can accept a bounded device-generated JPEG, validate and strip its metadata, and store it before completing the original video. Conversion always keeps the existing HLS/MP4 renditions and adds bounded first-frame/one-second JPEGs only if a validated device poster is unavailable. Chat prefers the device image, then the later backend image, falling back to the first for legacy or short clips, and displays it before Play without fetching video bytes. The worker reads and expands the existing MediaConvert template without modifying it; its deployment includes template-scoped read and device-poster access policies. The API execution role also needs narrow device-poster write and pending-upload read access. Existing uploads need a separate authorized replay. See [chat video previews](chat-video-previews.md) for storage and rollout details.
-   The on-demand media resizer spools each S3 source into its own temporary file before metadata inspection and conversion. A 256 MiB source limit and conservative 512 MiB decoded-work estimate reject unsupported or oversized inputs with HTTP 422; animated GIF admission counts every frame. Baseline 8-bit JPEG admission accounts conservatively for the decoder shrink used by the requested resize; progressive JPEGs and other codecs retain the full-input estimate. When a GIF animation exceeds the budget, only its first frame is resized if that frame independently fits. Otherwise it remains HTTP 422. Originals are unchanged, and already-posted images can receive previews on demand without re-uploading. Resize, rotation and output contracts are preserved for ordinary accepted inputs. Multipart upload concurrency is one, and the temporary directory is removed after completion or failure. These admission limits reduce resource risk; they do not guarantee a maximum native allocation for every codec. The specific HEIF missing-compression-plugin error is returned as `422 UNSUPPORTED_CODEC`, regardless of the filename or MIME label. One operational report is claimed per original S3 key and source version (VersionId, or ETag for unversioned objects), across resize variants and Lambda instances, using an empty conditional-write marker under `_resize-rejections/v1/` in the existing source bucket. Later requests retain warning logs and the controlled response; replacing the source enables a new report. Marker failures remain operational errors. See [media-resizer-unsupported-input.md](media-resizer-unsupported-input.md) for alert and recovery limits.
+   The on-demand media resizer spools each S3 source into its own temporary file before metadata inspection and conversion. A shared 256 MiB source limit rejects oversized inputs with HTTP 422. PNG uses measured 100 MP/8-bit and 64 MP/16-bit admission, a 100,000-pixel input-side limit, and disposable Sharp child processes. PNG output is capped at 4096 pixels per side, two million pixels and 10 MiB encoded; ordinary fit/orientation behavior is preserved and oversized results are fitted inside a bounded box. Each PNG child has a 256 MiB JS heap, a 30-second lifetime and a sampled 1 GiB combined parent/child RSS watchdog. These are guards with headroom under the 2 GiB Lambda allocation, not hard native allocation guarantees. Corrupt/over-limit input is permanent; timeout, allocation/worker, monitor and I/O failures remain operational. Source and output files live until upload completes and are removed after success or failure. Non-PNG codecs retain the conservative 512 MiB decoded-work estimate; animated GIF admission counts every frame. Baseline 8-bit JPEG admission accounts conservatively for the decoder shrink used by the requested resize; progressive JPEGs and other codecs retain the full-input estimate. When a GIF animation exceeds the budget, only its first frame is resized if that frame independently fits. Otherwise it remains HTTP 422. Originals are unchanged, and already-posted images can receive previews on demand without re-uploading. Resize, rotation and output contracts are preserved for ordinary accepted inputs. Multipart upload concurrency is one, and the temporary directory is removed after completion or failure. These admission limits reduce resource risk; they do not guarantee a maximum native allocation for every codec. The specific HEIF missing-compression-plugin error is returned as `422 UNSUPPORTED_CODEC`, regardless of the filename or MIME label. One operational report is claimed per original S3 key and source version (VersionId, or ETag for unversioned objects), across resize variants and Lambda instances, using an empty conditional-write marker under `_resize-rejections/v1/` in the existing source bucket. Later requests retain warning logs and the controlled response; replacing the source enables a new report. Marker failures remain operational errors. Detected HEIF/HEVC inputs now use an isolated, pinned WebAssembly HEVC decoder and explicit JPEG output, independent of the source suffix/MIME label. The child has separate source/pixel, JS heap, WASM memory and time budgets. Confirmed permanent HEVC decoder rejections use `_resize-rejections/v2/` markers keyed by source revision and decoder policy: later requests still spool/inspect the source but skip pixel decoding and return HTTP 422. Source or decoder-policy changes permit another attempt. S3/worker/timeout/allocation failures remain operational; the generic Sharp HEIF `(7.0)` error is not broadly suppressed. A source length mismatch remains operational before decoding or caching. See [media-resizer-unsupported-input.md](media-resizer-unsupported-input.md) for decoder, alert and recovery limits.
+   Chat image stripping is lossless when it verifies (pixels and ICC profile unchanged, Orientation kept); decision-entry uploads are never stripped and keep the artist's file name, while chat and wave uploads get neutral `<upload id>.<ext>` public names. See [image-upload-format-validation.md](image-upload-format-validation.md).
+
+   Drop/wave image finalization now generates and verifies both legacy `AUTOx450` and `AUTOx1080` previews using the same admission and PNG renderer as on-demand resizing before it can mark media ready. All image source handling and re-encoding privacy stripping are file-based; full source and encoded-original buffers are not retained in the parent, except that lossless stripping reads sources of up to 64 MiB into memory. PNG original stripping uses an isolated child; other original re-encodes must fit the conservative full-decode budget without preview shrink or discarded GIF frames. The original and both derivatives must be stored before the ready transition and ingest deletion. Derivative storage failures remain retryable and never imply ready. A retry regenerates the previews and overwrites the same keys; a ready-message redelivery only retries best-effort private-source deletion. Other formats retain their format/privacy transformations and existing animated-GIF first-frame fallback. The sanitizer reserves 1 GiB ephemeral storage for source, sanitized original and derivatives. Existing ready uploads are not requeued; the corrected on-demand PNG path can populate their missing derivatives without changing source/drop URLs.
    The animation-preview implementation (requires `mediaResizerLoop` deployment) handles versioned GIF requests (`AUTOx450_gifv2`, and the other existing sizes with `_gifv2` appended) with animation-preserving processing instead of the legacy first-frame fallback. The suffix is removed before checking the existing size whitelist and resolving the original key, but retained in the S3 derivative key. AUTO sizes use a sequential native decode and one resize directly to bounded output dimensions; fixed crop sizes retain individually coalesced frames and a repeated-scan guard. The bounded RGBA strip is spooled before encoding; output resolution can shrink further to bound the complete animation. The deployment catalog sets this worker to 2048 MiB for CPU headroom while retaining its processing deadline and source/output safety limits. Frame timing, loop count, and transparency are retained. Admission limits cover source bytes, per-frame pixels, frame count, repeated decoder work, retained output, and processing time. An eligible original that already fits an AUTO dimension is copied unchanged. See [GIF animation previews](gif-animation-previews.md) for limits, rollout, and compatibility. Originals and legacy derivative keys are not overwritten.
-   Public media objects carry `Cache-Control` set when they are written, because the media CloudFront distribution also serves the desktop app's update feeds (`6529-core-app/`, `6529-staging-core-app/`), which must not be cached long. Keys that never receive different bytes use `public, max-age=31536000, immutable`: drop, wave and distribution uploads (random id per upload; multipart uploads set it at creation), sanitized drop media, profile pictures, rememe images (write-once), device video posters and NFT link previews. Per-token NFT originals and derivatives under `images/` and `videos/` are rewritten in place when a token's media source changes, so they use `public, max-age=86400`, as do on-demand resizer outputs. Single-PUT presigned uploads and MediaConvert renditions do not set it yet.
+   Public media objects carry `Cache-Control` set when they are written, because the media CloudFront distribution also serves the desktop app's update feeds (`6529-core-app/`, `6529-staging-core-app/`), which must not be cached long. Keys that never receive different bytes use `public, max-age=31536000, immutable`: drop, wave and distribution uploads (random id per upload; multipart uploads set it at creation), sanitized drop media, profile pictures, rememe images (write-once), device video posters and NFT link previews. Per-token NFT originals and derivatives under `images/` and `videos/` are rewritten in place when a token's media source changes, so they use `public, max-age=86400`, as do on-demand resizer outputs and upload-generated previews at those same derivative keys. Single-PUT presigned uploads and MediaConvert renditions do not set it yet.
 
 7. Operational signals flow to Sentry, CloudWatch alarms, Discord, and SNS.
 
@@ -656,10 +845,30 @@ Non-standard `trace_block` has a separate provider policy: Alchemy normally,
 or the existing mainnet 6529 trace endpoint with Alchemy fallback where selected.
 Selecting traces does not select the transaction/receipt provider. ENS no longer
 has a hidden 6529 endpoint fallback; its Universal Resolver fallback uses the
-configured ordinary provider and explicitly enables CCIP-Read for off-chain
-ENS records. Fallback errors retain their null result and emit only allowlisted
+configured ordinary provider. The shared provider (`getEthereumRpcProvider`)
+keeps CCIP-Read disabled, so request-path forward lookups and reverse lookups
+through it (identity search, ratings, drop nominations, primary-address
+changes, ENS discovery) resolve on-chain records only; off-chain names are
+filled in by ENS refresh, whose isolated provider performs CCIP-Read over the
+public-network transport. API forward lookups have a ten-second deadline.
+Fallback errors retain their null result and emit only allowlisted
 categories, separating resolver reverts from transport and off-chain failures
 without logging raw errors or revert arguments.
+
+ENS refresh uses an isolated provider per wallet with a ten-second total lookup
+deadline, shortened to the remaining work budget. It owns and cancels both RPC
+and CCIP gateway HTTP requests, retaining mainnet verification and CCIP callback
+handling. Refresh reserves at least one minute for persistence and teardown.
+Resolver-controlled CCIP gateway requests require public IP literals and public
+DNS answers pinned to the connection, including on redirects. The configured RPC
+endpoint retains its trusted network policy. Redirects strip credentials across
+origins, and HTTP responses and decoded gzip output are limited to one MiB.
+Provider failures preserve the cached name and timestamp; failed wallets are
+excluded from subsequent batches in that invocation and retried on the next
+schedule. Successful lookups, including authoritative resolver absence, retain
+the existing persistence behavior. Refresh stops after 500 unavailable lookups
+per invocation to bound retry-exclusion query size during an outage. Discovery and other ENS callers keep their
+existing lookup contract.
 
 `NFT_INDEXER_RPC` remains the independently configured external-indexing/NFT-link
 capacity boundary. The unused API-root AWS Managed Blockchain `/rpc` proxy,
@@ -850,6 +1059,13 @@ including older responses without a recognizable instance ID. A listingType-only
 response keeps those legacy assets and uses an unknown market state with a view
 action, without inferring a claim price.
 
+A refresh broadcasts `MEDIA_LINK_UPDATED` only when the client frame changed:
+it compares the frame built from the row it locked with the frame built from
+the updated row, leaving out `last_successfully_updated`. That timestamp counts
+as a change only when the previous success is unknown or at least a day old, so
+clients' 3-day stale badge stays correct. Each decision emits
+`MediaLinkUpdateSent` or `MediaLinkUpdateSkipped` in `6529/NftLinkRefresher`.
+
 After persistence, a worker-specific notifier reads active WebSocket recipients
 once and sends the existing `MEDIA_LINK_UPDATED` payload with concurrency 10,
 five-second request limits, and a 15-second broadcast deadline. Notification
@@ -867,10 +1083,17 @@ unchanged. No API, schema, queue, or frontend deployment dependency is added.
 ### NFT market depth and activity
 
 `marketStatsLoop` legacy price pagination and market-depth REST requests share
-the existing Redis OpenSea request quota, with local pacing when Redis is
-unavailable. Successful price pages proceed as quota permits; retries and the
-shared refresh deadline remain bounded, and incomplete scans never replace stored
-prices.
+the existing Redis OpenSea request quota. Atomic grants space requests across
+workers; HTTP 429 responses publish a shared cooldown that honors Retry-After
+and cannot shorten another worker's pause. Waiting workers recheck the cooldown
+before acquiring quota. The existing rolling-window key remains compatible with
+older workers during deployment. Without Redis, pacing and cooldowns apply per
+client. The added keys use a hash tag containing the full legacy quota key, so
+all Lua keys share its existing Redis Cluster slot without renaming it.
+Throttled pages can make up to twelve attempts within the caller's
+deadline, with capped exponential backoff; other failures retain their existing
+attempt limits. Successful price pages proceed as quota permits, and incomplete
+scans never replace stored prices.
 
 `marketStatsLoop` publishes complete OpenSea order snapshots atomically with
 current orders and a persistent queue for reconciling disappeared orders.
@@ -1030,23 +1253,44 @@ Notification read/unread mutations also enqueue a `badge_refresh` job with the a
 
 The push worker's SQS event source is capped at 18 concurrent batches, below the Lambda's reserved concurrency of 20. This leaves two slots of headroom and keeps excess burst traffic queued instead of allowing the poller to exceed the function limit. The same cap applies in staging and production. Batch size remains 10; partial-batch retries, visibility timeout, dead-letter routing, and monitoring thresholds/frequency are unchanged. Queueing can increase during bursts, so queue-age and dead-letter alarms remain important. Deploy only `pushNotificationsHandler` to apply this event-source configuration.
 
+Artist artwork alerts use an independent `artist_artwork_alerts` preference keyed by recipient and artist, with the opt-in timestamp as the no-backfill boundary. The identity preference API permits direct profile sessions only, resolves only the target profile ID, and never changes feed subscriptions. Confirmed non-anonymous Main Stage entry creation freezes eligibility in the existing competition outbox.
+
+`waveDecisionExecutionLoop` reads pending recipients in batches of at most 100 and continues through additional batches within a 20-second artwork budget. It checks the deadline before each batch and between recipients, within the dispatcher's overall budget. These are cooperative bounds, not cancellation of an in-flight database or group lookup. Completed effect receipts identify progress; partial delivery releases the existing outbox lease for another pass. Notification rows, effect receipts and push-outbox handoffs commit together. The existing push worker publishes the saved IDs, so resuming delivery does not repeat completed recipient work or lose a push after committing its notification. Terminal content decisions use the primary database. Public waves with public parents skip group eligibility work; private access resolves only the relevant groups before taking receipt/preference locks and rechecks visibility and global preferences in the effect transaction.
+
+Each `waveDecisionExecutionLoop` invocation delivers the competition outbox first (up to 60 seconds), then runs the decision pass, then delivers again with what is left (at most four minutes). Each delivery claims decision results (`COMPETITION_DECISION_COMPLETED`, `COMPETITION_OUTCOME_CREATED`, `COMPETITION_ENTRY_STATUS_CHANGED`) first, then alternates batches with the other events, oldest first; while other events are waiting, decision results get at most every other batch and half of the delivery's time, so both make progress every invocation. The decision pass starts after the competition the previous pass last started, kept in the `competition_worker_cursors` table (`CompetitionWorkerCursorEntity`, created by `dbMigrationsLoop`; an in-memory cursor is used while it is missing), and wraps around. It starts no competition after 5 minutes or with less than 5 minutes of the invocation left, and moves on from a competition still running after 2 minutes; that run is never cut short and the pass waits for it before returning, with at most two such runs at once (`WAVE_DECISION_LOOP_DISPATCH_FIRST_MS`, `WAVE_DECISION_LOOP_DECISIONS_BUDGET_MS`, `WAVE_DECISION_LOOP_COMPETITION_DEADLINE_MS`). A bounded pass logs `native_competition_decision_pass_bounded` and reports the native execution health as pending. Scoring and decisions are unchanged; each competition still replays its full vote history, and incremental scoring is future work.
+
+Profile consolidation remaps both preference IDs, preserves the earliest opt-in when pairs collide, removes self-pairs, and transfers completed recipient receipts for unfinished events. Current wave/parent access, mutes, blocks, moderation and profile preferences apply, and both reads and push delivery suppress hidden attribution or withdrawn entries. The existing push queue, device settings and registration capability gates are reused. Deploy the preference schema, compatible push/competition consumers and profile-consolidation consumer before the API producer, then the frontend contract.
+
 Notification invalidation is emitted only after the push worker loads durable notification rows. It intentionally remains independent from mobile push registration, mute settings, and delivery success because those controls affect Firebase delivery only; the durable row remains visible through the authenticated REST feed. Duplicate SQS deliveries may repeat this idempotent invalidation without duplicating notification data.
 
 WebSocket registration and re-authentication persist the identity, JWT expiry and notification grants atomically. Existing connection mutations lock the connection row before subscription rows; identity resync and deletion use the same order, and missing connections cannot gain grants. Repository-owned mutations use transaction-scoped `READ COMMITTED` to avoid shared subscription-gap locks when different sockets replace empty grants. Pooled session defaults, caller-owned isolation and sampled cleanup keep their existing policies. Only a transaction's owner retries confirmed deadlocks, with at most three whole attempts and bounded jitter; caller-owned transactions and ambiguous failures propagate. Socket acknowledgements follow persistence, and socket/provider operations remain outside the retried transaction. New connections, re-authentication, and identity resyncs each retain a one-percent chance of running bounded cleanup of expired and orphaned subscriptions after persistence. The repository identity update method remains the sole write path for `ws_connections.identity_id`.
 
 If authentication or notification identity sync finds that the stored connection has disappeared, the API requests transport closure and then removes orphan subscription state before returning 410. This condition does not reject the credential and sends no authentication or subscription acknowledgement. Unexpected operation, close or cleanup failures remain 5xx, with fixed action/stage warning labels alongside the existing response error envelope. The mounted web application's health check can reconnect a disconnected socket using its current token; reconnect timing depends on client lifecycle and browser scheduling. The local WebSocket adapter follows the same closure path. This defensive recovery does not establish the cause of any historical connection loss.
 
+A socket may declare its purpose once on `$connect` with `purpose=typing`, stored in nullable `ws_connections.purpose`. `WSConnectionEntity` is registered in `src/entities/entities.ts`, so the full `dbMigrationsLoop` schema sync adds the column; every connection query reads it, so `dbMigrationsLoop` must deploy before `api`. Typing-purpose sockets receive only `USER_IS_TYPING` for their subscribed wave; drop, deletion, rating, reaction, competition, attachment, notification and NFT-link broadcasts from the API leave them out, so each tab gets each of those frames once through its app socket. Sockets without a purpose keep the legacy audience rules.
+
 Typing updates use the server-authenticated connection profile when resolving private visibility groups. The sender must appear in the current child/parent membership intersection for the active wave before a typing message is sent; recipients retain the same intersection. Successful typing is acknowledged with 200, expected access failures keep client-error status, and unexpected failures emit only bounded operation-stage and error labels.
+
+Inbound `$default` frames other than PING spend a per-connection token bucket before any database read: 30 frames burst refilled at 5 per second (`WS_FRAME_BUDGET_BURST`, `WS_FRAME_BUDGET_PER_SECOND`), and USER_IS_TYPING also spends a typing bucket of 5 refilled at 0.5 per second (`WS_TYPING_FRAME_BUDGET_BURST`, `WS_TYPING_FRAME_BUDGET_PER_SECOND`). Both buckets live in Redis under one hash tag per connection; while Redis is unavailable each container keeps a bounded in-memory copy. An over-budget frame gets a 429 route response and no further work. A typing notification for an identity and wave covers further typing frames from that identity on that wave for `WS_TYPING_COALESCE_MS` (default 3000, below the web client's four second send interval and five second display window); covered frames are acknowledged with 200 without a fan-out. Typing fan-out uses the shared `WS_FANOUT_CONCURRENCY` send pool. Frame logs carry the frame type and byte size, never the body.
+
+Public-wave frames reach an anonymous socket only for the wave it subscribed to (`SUBSCRIBE_TO_WAVE`) or declared open (`SET_OPEN_WAVE`), with or without `WS_AUDIENCE_FOLLOWERS`. The web client disconnects its app socket without a token, and its signed-out wave view uses a socket subscribed to that wave, so signed-out live viewing is unchanged. Signed-in audiences are unchanged.
 
 Outbound WebSocket delivery uses one policy in `src/ws-delivery/`, shared by the API, background senders and the worker-specific NFT-link notifier. Final 429s retain a hashed connection identifier and bounded SDK metadata in warnings and low-cardinality EMF metrics; they do not emit per-send operational errors. Shared Redis cooldowns use exponential backoff with jitter and a short endpoint pause for broad throttling. Normal healthy sends remain concurrent. Atomic leases apply only to recovery probes. Each connection has one content-free pending refresh marker; user content and credentials are never queued. A revision prevents an in-flight recovery from acknowledging newer missed updates.
 
 The scheduled `webSocketDeliveryLoop` drains due markers every minute, rechecks stored JWT expiry, and sends `RESYNC_REQUIRED`. It never replays competition outbox events, notifications or winner effects. Updated clients invalidate active HTTP queries after a staggered delay, including after reconnect and app/tab resume. Only an isolated persistently blocked listener that advertised `recovery_capability=resync_v1` may be closed, after observing healthy peers; confirmed transport closure precedes subscription deletion. Widespread failures inhibit that close policy. Existing 410 cleanup and error reporting for non-429 provider failures remain intact. Authentication and notification-identity acknowledgements have priority; legacy failures return an explicit failed outcome and never enqueue a substitute refresh marker.
+
+Build adoption: a client may declare its frontend build on `$connect` as `client_version=<git sha>` (7–40 hex characters; anything else is ignored). It is stored on `ws_connections.client_version`. Each `webSocketDeliveryLoop` run then emits the EMF gauge `6529/WebSocket ConnectedSockets`: the primary (non-typing) sockets per `ClientVersion`, with the top 20 builds by name, `other` for the rest and `none` for undeclared sockets, plus an undimensioned total. The gauge records only builds and counts, never who is connected. It is best effort and never fails the recovery run. Deploy `dbMigrationsLoop` (adds the column) before `api`; if the column is missing, `$connect` still registers the socket without its build and logs once, so a deploy-order slip or a rollback never fails a connect.
 
 Rolling fleet counters distinguish widespread throttling, a persistent outage even with a single listener, and an old retry backlog. The recovery worker emits the `6529/WebSocketDelivery` Degraded, WorkerHealthy and Pending metrics. CloudWatch alarms report sustained degradation, worker failure/missing heartbeat and repeated recovery-store failures, with explicit operational guidance in the isolated monitor. Application metrics retain SDK retries, 429s and cooldown suppressions because API Gateway metrics may omit 429s. Redis operations are bounded; unavailable recovery state fails open for direct sends, returns an explicit failed result when retry persistence is unknown, and retains independent monitoring. Retry state is versioned, endpoint-scoped and expires after two hours and five minutes without activity; deploying the worker before producers and the additive frontend consumer preserves a compatible rollout.
 
 ## API Boundary
 
 The API is organized by domain routers under `src/api-serverless/src`. The OpenAPI file defines the public contract and generated models. Legacy routes are wired manually, while newer OpenAPI operations can opt into generated route wiring through `x-6529-router` and thin domain handlers.
+
+`/e2ee/...` is the end-to-end encrypted messaging delivery service (D109),
+behind `E2EE_DMS_ENABLED` (off in production). It is a ciphertext-only
+orderer for MLS groups; see [End-to-end encrypted messaging](#end-to-end-encrypted-messaging-d109)
+below and [e2ee-messaging.md](./e2ee-messaging.md).
 
 `GET /tdh/rules` publishes current TDH boost definitions evaluated against the
 latest completed snapshot's eligible Meme card range. The latest row in
@@ -1089,11 +1333,142 @@ request.
 
 Waves are chat, visibility and administration hubs containing zero or more native
 competitions under `/v3/waves`. Competition configuration and entry state own
-submissions, eligibility, voting, weighted scores, decisions and winners. Current
-navigation/settings/entries/voting/My Votes/leaderboards/winners/admin use the
-competition resources for every competition. Creating a hub always creates a
-CHAT wave; competition creation is a separate native command. Historical physical
-RANK/APPROVE wave types remain schema-compatible and do not block hub updates.
+submissions, eligibility, voting, weighted scores, decisions and winners.
+Competition detail and list responses include `your_active_entries_count` for the
+acting read profile (null for anonymous readers). Counts include only ACTIVE
+entries in that competition, match the entry-creation limit, and are batched for
+each list page. The frontend uses them for submission capacity in headers and
+forms. This additive response needs only `api` deployed before the frontend;
+there is no entity or migration change.
+Current navigation/settings/entries/voting/My Votes/leaderboards/winners/admin use the
+competition resources for every competition. The scoped `entry-contexts` GET
+batches up to 50 visible entries, current/at-decision vote summaries and their
+awards; it resolves competition access once and applies content visibility to the
+batch. Leaderboard, winners and entry-context responses accept `include=cards`
+to return visible first-part content, complete metadata and native voting state
+in the same response. This projection bypasses legacy full-wave voting reads;
+summary refreshes reuse cached content, while opening a drop retains the full
+drop reader. The option is additive, with no schema changes; deploy `api` before
+the frontend that requests it.
+TDH publication discovers native overvotes in one set-based query per locked
+competition, using absolute active-entry spending and current TDH/xTDH or the
+configured NFT set. WAVE credit compares the shared total; DROP credit compares
+the largest individual allocation. Only over-limit voters enter the existing
+credit-reduction/history/notification path, and the leaderboard is rebuilt once
+after all reductions. Fully funded competitions do not reload vote history or
+rewrite leaderboards. Revocation finds candidate competitions first, without
+locking: active and published ones holding votes it could reduce (any non-zero
+active vote for TDH; the rating recipient's active votes for REP), whose stored
+configuration it applies to. It locks only those, re-checking each under its
+lock, so other competitions' snapshot and decision runs are never blocked by it.
+
+A consolidated-TDH run (`persistConsolidatedTDH`, from `delegationsLoop` and
+`tdhLoop`) is a sequence of short transactions rather than one:
+
+- A: the TDH tables, their `tdh_blocks` row (so the block record always
+  matches the TDH rows, even if the Lambda is killed later) and a pending
+  generation in `identity_tdh_sync_state`. A full rewrite (`tdhLoop`) also
+  arms its "TDH calculations done" announcement. A partial write
+  (`delegationsLoop`) also records, in `identity_tdh_sync_scope`, the
+  consolidation keys it replaced and those whose boosted TDH or rate it
+  changed (it rewrites every row with new ranks; unchanged values are not
+  recorded).
+- B: identities for new consolidations and profile merges, with the merged
+  profiles' wave subscriber counts recounted (not every wave's), and the
+  primary wallets of only the profiles it touched (the identities it wrote and
+  the merged profiles), which it also records in `identity_tdh_sync_scope`.
+  Its unread-cache and wave-score effects run as soon as it commits.
+- C: identity metrics (`rep`, `cic`, `tdh`, `basetdh_rate`, `level_raw`),
+  recomputed from ratings and consolidated TDH in chunks, each one short
+  transaction writing final values, so no reset value is ever visible. After
+  partial writes C covers only the recorded keys and profiles plus the targets
+  of ratings modified since the previous walk started, less 20 minutes (every
+  ratings writer stamps `last_modified` with the database clock and commits
+  within the Lambda limit, so no rating is missed). It walks every identity
+  in primary-key order after a full rewrite (or any write that recorded no
+  scope), after a scoped walk that did not finish within one budget, before
+  the first ratings watermark, and at least every 25 hours; each walk chunk
+  records the walk's position in the same transaction. A walk in progress
+  carries on from that position for a newer partial generation, and the
+  recorded scope is rechecked after every full walk. Each full walk is
+  followed by the all-profiles primary-wallet check, outside any
+  transaction, as a backstop for writers other than B.
+- D: TDH overvote revocation, against the synced identities, one transaction
+  per candidate competition. A competition busy past the lock wait is skipped,
+  logged and counted (`failed=n`), and picked up by the next revocation.
+- E: TDH consumers are told: a full rewrite's "TDH calculations done" event
+  (xTDH, over-rate revocation, wave scores) is published exactly once, any
+  other write enqueues the xTDH recalculation. Then the generation is marked
+  synced with C's ratings watermark, and its scope rows are deleted.
+
+`tdhLoop` runs only A and leaves B to E to `delegationsLoop`, which syncs
+after its own partial writes (a scoped C; a full walk waits) and resumes
+pending generations after its delegations work, also when that work fails. Each
+`delegationsLoop` invocation spends at most five minutes on the sync, except
+that the resume always gets at least 150 s (never past 12 minutes into the
+invocation), so long delegations work cannot starve a full walk: it stops
+cleanly between chunks or steps and the next invocation resumes, skipping B
+when it already committed for that generation and continuing after the last
+committed chunk. B to E run under a renewed lease row, one run at a time; a
+failure is logged and sent to Sentry, without stopping delegations, and stays
+pending. A lease taken over by another invocation is logged as a warning only.
+TDH consumers run after the identities are synced, as before; xTDH's
+`level_raw` update and C's chunks both compute from the row's current values,
+so an xTDH run that lands between invocations stays consistent. Any
+transaction writing both `ratings` and `identities` takes the `ratings` locks
+first. A rating write that checks its rater's credit (single and bulk REP,
+CIC and wave REP ratings) and the over-rate revocation first take that
+rater's `rating_credit_locks` row for the matter, which nothing else locks:
+one rater's credit checks run one at a time without changing that order.
+Profile merges also move the ratings, xTDH grants and other profile-id-keyed
+data of merged identities without a handle (a profiles row). The TDH tables
+and identities are no longer updated atomically: until C
+reaches a row, readers combining them see the previous run's identities, and
+a vote is checked against the pre-run credit, as just before any run. Deploy
+`dbMigrationsLoop` first (the marker, scope and rating credit lock tables),
+then `api` (rating writers stamp `last_modified` with the database clock),
+`delegationsLoop`, `tdhLoop` and `overRatesRevocationLoop`. Profiles are
+created with their identity's primary address as `primary_wallet`.
+
+Winners paginate by win time, newest first; My Votes excludes completed winners
+without deleting historical allocations. Personal votes sort by signed vote value
+descending, allocation update time ascending and drop ID ascending by default.
+The optional `sort` parameter accepts `vote_amount`, `leaderboard` or
+`last_voted`, applied before pagination. Leaderboard order uses the materialized
+competition rank with null ranks last and the same identity tie-breaker as the
+leaderboard (legacy drop ID, native entry ID). Last voted uses confirmed changed
+values in competition vote history plus retained competition-scoped
+`DROP_VOTE_EDIT` logs, excluding system reasons and unchanged saves. Missing
+history sorts last; timestamp ties use drop ID. Retained logs have second precision;
+exact linked native log projections are excluded so rounding cannot override native
+millisecond history. Allocation `updated_at` is not
+user recency because credit reconciliation and no-op commands also update it.
+Cursors bind actor, competition and sort; omitted and explicit `vote_amount`
+remain compatible with existing cursors. No schema migration is needed; deploy
+`api` before the frontend sort selector. Its optional
+`include=cards` response reuses the authorized lightweight competition card reader;
+deploy `api` before the frontend that requests this additive projection.
+Personal-vote cursors describe a live list, not a snapshot. After a vote edit,
+clients must refresh loaded pages from the first cursor before loading more,
+because changing a value can move an entry across page boundaries. The frontend
+invalidates the scoped My Votes query after each confirmed vote. The existing
+competition/voter index restricts reads to that actor's allocations; an additional
+sort index is deferred until query-plan evidence justifies a schema rollout.
+Wave metadata and Configuration edits use `PATCH /v3/waves/{wave_id}` with
+partial wave-owned fields. Omitted fields are retained; nullable fields can be
+cleared explicitly. The command locks the physical shared wave, archives its
+revision and preserves both stored hub policies without changing any competition.
+V3 wave reads expose the shared `configuration`, independent of the original
+competition projection. Legacy wave creation and editing accept and discard
+competition settings before validation; competition configuration mutations use
+the competition commands exclusively. Legacy wave pause commands are accepted
+without changing pauses. Compatibility wave names come from shared wave metadata;
+competition titles remain separately owned. Refresh the compatibility views with
+`dbMigrationsLoop` before deploying `api` and then the frontend.
+
+Creating a hub always creates a
+CHAT wave; competition creation is a separate native command. Historical RANK/APPROVE wire types are projected from native original-primary
+configuration; shared wave storage no longer owns a competition type.
 
 Shared CHAT participation and voting settings are live typed policies in
 `waves.hub_participation_config` and `waves.hub_voting_config`. They preserve
@@ -1103,13 +1478,8 @@ metadata. Strategy metadata preserves current GETs and explicit clearing; it doe
 not enroll a competition or enable CHAT decision execution. Current hub creation,
 editing and reading own these policies; `waves_archive` holds their snapshots.
 Original competition configuration continues to own original competition GETs.
-Explicit bounded preparation verifies retained policy parity. Temporary capture
-keeps prepared-version writes atomic during rollout. Four ordered strategy
-overlays extend the original ten capture bodies without replacing them;
-finalization validates body and dependency order before disabling the fourteen
-recognized captures. Already-retired policies missing the additive nullable
-strategy member mean null and never reimport obsolete physical values. This
-finalization occurs after the native API is healthy and old invocations drain.
+One-time policy preparation and all fourteen temporary capture triggers are
+retired. Current nullable strategy members never reimport obsolete physical values.
 
 Permanent unversioned/v2 wave/drop GETs use explicit native-backed compatibility
 views. Their ownership is the immutable `legacy_wave_id=wave_id` original primary,
@@ -1133,6 +1503,20 @@ Weighted scoring consumes these native observations. Entry content revisions
 retain complete score history and use existing native update events to delimit
 the scoring revision. Current allocations, immutable decision voter snapshots,
 and awards retain their existing separate native tables.
+
+Leaderboard-only refreshes read AGGREGATE observations; decision and curation
+execution retain both streams for immutable per-voter winner snapshots. History
+reads start at active entries and use the competition/entry history index before
+sorting, avoiding the history of departed entries. `competition_score_resets`
+projects the latest full-content reset's revision and three independent sequence
+cutoffs. Reset events and their projection commit in the same transaction;
+presentation-only edits never replace a reset. The outbox stays the audit source.
+`competition_score_reset_state` records resumable backfill progress and an
+explicit reader cutover. Readers use the event-based lookup until the operator
+completes and verifies the copy and enables the projection. The operator-only
+`dbMigrationsLoop` scope can compare both readers in one snapshot and disable
+projected reads for rollback. See [score history rollout](competition-score-history-rollout.md).
+
 
 Vote Activity combines competition-scoped shared profile logs and native vote
 history. Exact `<competition-id>:<sequence>` identities deduplicate before
@@ -1172,22 +1556,24 @@ Original Settings applies the native rule policy under the owner lock before
 saving. Credit rules freeze after any native voter history; permitted title and
 presentation edits remain available through both command routes.
 
-The original native creation/write/read/execution/shadow rollout flags and
-migration/reverse/reconciliation commands are retired. The migration Lambda has
-an inert transition artifact and zero reserved concurrency. Its physical
-Lambda, IAM, alarms and retained schema belong to a later explicit retirement.
-The isolated monitor's `retained-producers.json` keeps its existing log subscription,
-relay permissions, producer allowlists and alarms independently of the ordinary
-deploy catalog; the generated infrastructure remains unchanged.
-`dbMigrationsLoop` retains all old entities/columns to prevent TypeORM from
-silently deleting schema during this application-only release. Ordinary sync
-never runs a data transfer or physical retirement. Explicit preparation/final
-scopes transfer and verify history and disable the obsolete capture triggers.
-The complete native view set is the cutover boundary: repeated retirement never
-reimports retained physical data after native-only writes begin, and preparation
-is rejected after cutover. Ordinary full sync cannot make the initial view switch.
-The staged compatible writer/reader rollout, service order, parity checks and
-rollback boundaries are in the [runtime retirement runbook](./competition-runtime-retirement.md).
+The original creation/write/read/execution/shadow flags, storage selector and
+migration/reverse/reconciliation commands are removed. The inert
+`competitionMigrationLoop` and its dedicated continuation policy, version,
+invocation configuration, alarms and monitoring registrations are retired. Its
+private recovery artifacts remain independently retained; the native decision
+and leaderboard units remain deployed. `retained-producers.json` is empty.
+
+`dbMigrationsLoop` has no old competition entities or transition scopes. Manual
+`maintenance` installs the permanent native views without synchronizing entities;
+scheduled maintenance performs no DDL. Explicit `full` first rejects remaining
+retired columns, then synchronizes current entities and maintains native views.
+Intentional physical deletion is an operator boundary with encrypted snapshot,
+independent restore verification, exact schema/data manifest, old-invocation
+drain, short metadata-lock waits and online-only DDL. It never occurs implicitly
+through TypeORM. Repeated full maintenance must leave old objects absent.
+The [cleanup procedure](competition-storage-cleanup.md) specifies the compatible
+service order, recovery evidence and exact four deleted-wave orphan targets.
+Native history, receipts, claims and shared archival/user history remain intact.
 
 Default navigation evaluates only published native configuration with deterministic
 active/upcoming/completed ordering, inclusive end boundaries and server refresh
@@ -1196,7 +1582,8 @@ ordering/bounds and capability-specific presentation on competition-scoped APIs.
 The immutable Phase 0 GET fixtures and route/OpenAPI census remain enforced.
 Disposable MySQL acceptance physically removes old tables/wave columns and checks
 compatibility projections, native votes/history/activity and repeatable decisions.
-No staging table/column deletion, orphan cleanup or media/CDN cleanup occurs.
+Staging and production physical cleanup follow the separate reviewed manifest.
+Media/CDN objects are outside this cleanup.
 
 Important API responsibilities:
 
@@ -1212,7 +1599,18 @@ Important API responsibilities:
   requested with `client_type=native` or `client_type=desktop`. Both formats
   complete all semantic and wallet-signature checks before a final atomic nonce
   consumption. The full auth contract is documented in
-  [Wallet Authentication](auth/wallet-auth.md).
+  [Wallet Authentication](auth/wallet-auth.md). Web SIWE logins can also grant
+  a browser Ed25519 device key (`device_grants`) that then signs drop creates,
+  edits, deletes and reactions; the API verifies and stores those events in
+  `device_signed_events` and `drop_author_signatures` and serves them at
+  `/drops/{dropId}/signed-events`. The grant owner can acknowledge a
+  new-device notice through `POST /device-grants/{grantId}/acknowledge`. The
+  acknowledgment is stored on the grant and follows the owner across devices.
+  `GET /device-grants` and the `POST` endpoints for `/device-grants/{grantId}/label`,
+  `/device-grants/{grantId}/acknowledge`, and `/device-grants/{grantId}/revoke`
+  return `notice_acknowledged`. Grant registration (`POST /device-grants`)
+  and public signature proofs omit the field. See the device signing grants
+  section of that document.
 - Public read APIs for NFTs, TDH, waves, drops, profiles, community metrics,
   subscriptions, and notifications. Wallet distribution allocation reads
   combine Phase 0–2 distribution rows with Public subscription airdrops, while
@@ -1257,15 +1655,17 @@ Important API responsibilities:
   signing/storage authority.
 - Public decentralized media resolution under `/media/resolve`, which maps
   native `ipfs://`, `ipns://`, and `ar://` references plus recognized gateway
-  URLs to canonical native URIs, `media.6529.io` resolver URLs, and explicit
-  external fallback URLs. This v1 API does not proxy media bytes.
+  URLs to canonical native URIs, resolver URLs on the path gateway selected by
+  `MEDIA_RESOLVER_ENDPOINT` (default `media.6529.io`; URLs on
+  `media.6529usercontent.com` and its per-CID hosts are accepted as input),
+  and explicit external fallback URLs. This v1 API does not proxy media bytes.
 - Authenticated direct-message unread summary under `/dm-drops/unread`,
   retaining the lightweight `{ count }` contract for legacy clients, plus the
   authoritative per-conversation state under `/dm-drops/unread/snapshot` for
   clients that synchronize unread state through WebSockets.
 - Authenticated social writes: drops, votes, reactions, curations, subscriptions, groups, proxies, profile CMS package drafts/publish actions, minting claims, and push settings.
 - `@help6529` trigger detection after drop creation. The API writes a durable `help_bot_interactions` row, reacts with the bot's seen marker, and enqueues the reply worker when the `help6529` profile exists.
-- Upload preparation and multipart completion for drop media, wave media, distribution photos, and attachments. For AVIF drops unconditionally, and other supported drop/wave images when `DROP_MEDIA_SANITIZE_IMAGES=true`, image multipart uploads complete into private ingest storage, return `media_status=processing`, and publish a `DROP_UPDATE` websocket event with reason `MEDIA_STATUS` after the sanitizer marks the media ready or failed. Participatory drops in the configured Main Stage wave accept managed-CDN GLB media and verify each stored S3 object's authoritative size is no more than 250 MB (250,000,000 bytes) before attachment.
+- Upload preparation and multipart completion for drop media, wave media, distribution photos, and attachments. All new drop/wave image multipart uploads complete into private ingest storage for mandatory format validation; metadata stripping remains a separately captured upload policy. They return `media_status=processing` and publish a `DROP_UPDATE` websocket event with reason `MEDIA_STATUS` after the sanitizer marks the media ready or failed. Participatory drops in the configured Main Stage wave accept managed-CDN GLB media and verify each stored S3 object's authoritative size is no more than 250 MB (250,000,000 bytes) before attachment.
 - WebSocket connection registration and real-time wave-related messages.
 - Operational endpoints such as health, docs, RPC/proxy routes, webhooks, and deploy-related routes.
 
@@ -1273,14 +1673,10 @@ Wave rows can be top-level waves or subwaves through the nullable `parent_wave_i
 
 Wave overview `has_competition` is true for Rank or Approve wave types, or when the wave has any competition record, including drafts and completed competitions. Competition existence is fetched in one batch for the overview page and its visible parent waves.
 
-Ordinary chat drop creates and edits do not acquire the legacy competition
-ownership lock. Edits still lock any existing competition entry memberships,
-and use the stored drop type to decide whether the legacy owner lock is needed.
-Chat persistence does not initialize legacy leaderboard/vote-history rows, and
-chat edit row replacement does not clear legacy voting state; these writes
-otherwise acquire the same ownership lock through migration triggers. Competition
-submissions and permanent drop deletions retain the ownership fence so writes
-cannot race a legacy-to-native competition transfer.
+Ordinary chat drop creates and edits do not initialize obsolete competition
+storage. Edits lock existing native entry memberships; imported submissions and
+permanent deletion retain the native ownership fence. No migration trigger or
+legacy-to-native transfer participates in current writes.
 
 Wave writes enforce that every active Drop, Vote, Chat, and Admin membership is
 contained by the Wave View membership. The generated
@@ -1291,6 +1687,29 @@ are checked before replacing a Wave-referenced group, and runtime privilege
 flags remain intersected with View eligibility if group criteria later drift.
 
 The waves v2 read boundary keeps timeline, reply-thread, and curation feeds as separate contracts. `/v2/waves/{id}/drops` returns the wave timeline feed, `/v2/drops/{id}/replies` returns the reply thread for a root drop after resolving its owning visible wave, and `/v2/waves/{id}/curations/{curation_id}/drops` returns drops for one wave curation.
+
+Quick Vote's legacy `GET /waves/{id}/undiscovered-drop` remains compatible,
+while `GET /waves/{id}/undiscovered-drops` returns up to four ordered previews
+with one pair of exact counts. Both use the original legacy competition's
+active native entries and an indexed fallback for retained participatory drops
+without a projected native status. Votes and skips remain scoped to the acting
+profile; zero allocations are unrated, and either sign of nonzero allocation is
+rated. A single aggregate computes total unrated and unskipped unrated counts.
+Counts and previews are separate replica reads and may reflect concurrent vote
+or skip changes. This best-effort ordering applies to both the batch window and
+legacy single-drop offsets; neither endpoint promises a cross-request snapshot.
+A short unskipped read fills available remaining slots from skipped drops, up to
+the requested limit; concurrently exhausted skipped rows can still shorten it.
+Preview windows place newest unskipped drops before skipped drops ordered by
+oldest skip time, then newest drop time and serial number. These native reads
+bypass compatibility SQL rewriting; full drop mapping still uses the ordinary
+visibility and voting projections. The frontend keeps its primary request
+independent and reuses its footer cache,
+then batches the missing lookahead slots with a bounded offset. Ready primary
+candidates render before background previews; each cold window needs at most
+two count aggregates, or one when the primary is already cached. This adds no
+schema or worker;
+deploy only `api` before the dependent frontend in each environment.
 
 Current vote-allocation summaries use separate card and detail read paths.
 V2 rank-wave leaderboard responses can add an optional
@@ -1346,6 +1765,26 @@ columns as BIGINT, so their declared flags need explicit conversion. Field parsi
 must not read request context from a reused socket: that socket can have been
 opened by another request. Queries outside the compatibility scope retain numeric
 BIGINT values, including when they reuse a socket opened inside that scope.
+
+API pools reach MySQL through RDS Proxy. The proxy pins a client session to one
+database connection for the session's life after a statement over 16 KB or an
+untracked `SET SESSION`, and warm Lambda containers keep pooled sessions open.
+The API therefore measures each formatted statement and marks a connection
+pinned once a statement exceeds 16,000 bytes. Each Lambda invocation runs in a
+pin scope: pinned connections keep returning to the pool, so the rest of the
+invocation reuses them, and the scope destroys the idle ones when the
+invocation ends; one still borrowed then is re-checked at later invocation
+ends. A pinned connection released outside an open scope, such as background
+work that outlives its invocation, is destroyed at release. A connection whose
+destroy fails is taken out of the pool's idle list and never released again.
+Budgeted API transactions, which set session timeouts, destroy their
+connection after COMMIT or ROLLBACK instead of restoring the timeouts. Each
+disposal emits the `6529/DbProxy` `ProxyPinnedSessionRetired` metric (`When`
+is `release` or `request_end`) with a value-free statement fingerprint, and
+each invocation that pinned emits `ProxyPinnedSessionsRetiredPerRequest`.
+Long inlined `IN` lists that can be split per value use
+`querySqlInListChunks`, which keeps each statement's list near 12 KB. Loop mode
+is unchanged; loops disconnect after each invocation.
 
 The core architectural choice is that MySQL is both the system of record and the internal integration layer. This keeps the system understandable, but it makes table contracts, migrations, backfills, indexes, and worker idempotency especially important.
 
@@ -1487,10 +1926,34 @@ delivery fails open and the unfiltered notifications are inserted. The
 combined user-facing “Direct messages and wave activity” category, including
 new-wave, all-drops subscription, and priority-alert causes.
 
+Inbound direct-message admission has one decision point:
+`DirectMessageAdmissionService`
+(`src/api-serverless/src/direct-messages/direct-message-admission.service.ts`,
+pure rules in `src/direct-messages/direct-message-admission.ts`). It reads each
+recipient's policy, chosen group, follow relationship, and blocks in both
+directions in one set-based query, then decides in this order: a sender who
+blocked the recipient is told so; a recipient's block refuses with the generic
+"doesn't accept new messages" reason and is never disclosed; then `EVERYONE`,
+`PEOPLE_I_FOLLOW`, `NOBODY`, or `GROUP_MEMBERS`. `GROUP_MEMBERS` admits members
+of `direct_message_group_id`, evaluated with the platform group eligibility
+rules when the conversation starts (always fresh inside the creation
+transaction; non-transactional checks may reuse a result for 30 seconds per
+sender and group), and, while `direct_message_allow_people_i_follow` is on,
+people the recipient follows. A missing, hidden, or direct-message group fails
+closed to `PEOPLE_I_FOLLOW`, and the preferences API reports
+`direct_message_group_unavailable` so settings can warn. Refusals are 403s with
+stable `DM_*` codes plus the recipient handle; a group is named only when it is
+public. Legacy DM creation calls the service inside the group-creation
+transaction. E2EE eligibility, key-package claims and roster additions call the
+shared instance in `direct-message-admission.instance.ts` (roster additions
+inside the roster transaction with recipient rows locked); a target's block
+maps to `POLICY` there and only the caller's own block to `BLOCKED`.
+
 Roll out this table and its dependent workloads in this order:
 
 1. `dbMigrationsLoop` creates `profile_preferences` with legacy-compatible
-   defaults.
+   defaults (including the nullable `direct_message_group_id` and
+   `direct_message_allow_people_i_follow`, default true).
 2. Deploy `api` for preference endpoints, direct-message admission, and API
    notification writers.
 3. Deploy the `subscriptionsDaily` stack (including
@@ -1498,7 +1961,14 @@ Roll out this table and its dependent workloads in this order:
    these may proceed in parallel after the schema and API are live.
 
 Wallet auth session v2 state is stored in `wallet_auth_sessions` and one-time
-connection share state is stored in `wallet_connection_shares`. Web sessions
+connection share state is stored in `wallet_connection_shares`. Optional
+`encrypted_device_setup` carries AES-GCM ciphertext for fresh receiving-app
+signing/MLS keys plus a directly wallet-signed app grant. Its unlock key stays
+in the client link fragment and never reaches the API. Only own-account shares
+may carry it; redemption returns it once, bound to the one-time code's wallet
+and native/desktop target. The receiving client authenticates the grant again
+before local import and preserves any already usable local devices. Deploy
+`dbMigrationsLoop` before `api` when adding this nullable column. Web sessions
 persist the signed domain and normalized client origin so refresh and logout
 requests can be bound to the same browser origin that created the session. Web
 clients receive a compatibility `6529_session` cookie plus address-scoped
@@ -1519,15 +1989,26 @@ Most long-running scheduled jobs have reserved concurrency set low, usually `1`,
 
 Production CI notifications also feed the release-note queue; staging notifications never carry release-note fields. The API first posts the normal CI status drop. For a successful production notification with an allowlisted repository prompt path, it accepts either the legacy single release group or a v2 array of PR-scoped groups and enqueues one message per group. The queue defers initial delivery for 15 seconds so GitHub can settle the notifying workflow before validation. Each group contains its merged PR number and complete canonical service set, so one service deployment may update multiple overlapping PR groups. Frontend and Desktop publishes are one-service groups. Each successful backend service deploy records its workflow run under the merged PR number; runs may use different descendant SHAs. Every applicable successful service persists the group-level publish request, so no particular service or completion order owns finalization. The canonical completed-service set gates generation. Redis retains that group coordination and supplies a short-lived publication mutex, while MySQL owns durable run-range publication state.
 
-`releaseNotesGenerationLoop` validates the completed successful GitHub run, then freezes its baseline in `release_note_publications` from the per-workflow cursor in `release_note_stream_states`. A trusted notifying run that GitHub still reports as queued or in progress remains retryable, because the success-notification step can finish just before GitHub settles the enclosing workflow. Immutable run identity, SHA, workflow, branch, and terminal-conclusion mismatches still fail closed. Only an empty stream performs workflow-history bootstrap: it requests newest-first pages of 100 runs without GitHub's broken status, conclusion, or branch filters, validates production status, workflow identity, and branch locally, and fails closed after 1,000 candidates. Completing all parts, or determining that the range contains no PRs, advances the stream cursor in the same transaction that completes the publication. A partial or failed publication leaves the cursor unchanged and blocks later runs in that stream until it resumes. The worker loads the reviewed prompt from the deployed repository SHA and calls Amazon Bedrock using `RELEASE_NOTES_BEDROCK_MODEL_ID` or the Claude Sonnet 5.5 US geo inference profile (`us.anthropic.claude-sonnet-5-5`, medium effort, no sampling parameters) by default. A Bedrock system instruction treats the tagged release context as untrusted data and rejects instructions embedded in pull requests, commits, or filenames. Frontend PR discovery follows only first-parent mainline commits between production SHAs, while contributor enrichment still loads every commit author and committer from each selected PR. Backend and Frontend notes resolve configured GitHub contributors to 6529 profile mentions and render deterministic repository-specific headings and service links. Backend headings include every distinct grouped workflow run number as a link, ordered by run number. Genuine large releases are published in resumable groups of at most 20 PRs, with a distinct deterministic metadata id for every part. Desktop notes are requested only by the production `Publish` flow after its S3 download pages exist. They retain the Core first-parent change history so imported Frontend history is not summarized twice and resolve the exact Frontend release-note drop from the renderer-source SHA. New release drops carry repository, SHA, run, and deployment metadata; historical Frontend notes are matched only when their content contains the exact full commit URL. Desktop output has a deterministic heading, Frontend release link, and platform download links around compact model-generated user-facing bullets, with no PR or contributor lines.
+`releaseNotesGenerationLoop` validates the completed successful GitHub run, then freezes its baseline in `release_note_publications` from the per-workflow cursor in `release_note_stream_states`. A trusted notifying run that GitHub still reports as queued or in progress remains retryable, because the success-notification step can finish just before GitHub settles the enclosing workflow. Immutable run identity, SHA, workflow, branch, and terminal-conclusion mismatches still fail closed. Only an empty stream performs workflow-history bootstrap: it requests newest-first pages of 100 runs without GitHub's broken status, conclusion, or branch filters, validates production status, workflow identity, and branch locally, and fails closed after 1,000 candidates. Completing all parts, or determining that the range contains no PRs, advances the stream cursor in the same transaction that completes the publication. A partial or failed publication leaves the cursor unchanged and blocks later runs in that stream until it resumes. Per-run single-service notifications with a valid run number are first saved with their original envelope in `release_note_recovery_jobs`; PR-scoped backend groups retain the existing group/SQS policy. Pending work hands off a delayed message to the existing SQS queue before acknowledging its current delivery. There is no periodic trigger or idle recovery polling. A failed handoff fails the invocation so SQS retains the current message; transport exhaustion goes to the existing DLQ with the durable request still available for explicit operator recovery. Long retry deadlines are honored across bounded SQS delays without attempting publication early. Successors park behind an earlier saved run and are queued when the predecessor completes. Handoffs carry a ten-hop chain budget, including successor wakeups, without disabling Lambda recursion protection; exhausted chains retain their jobs for explicit operator recovery. Saved earlier jobs block later jobs in the stream even before workflow settlement. Waiting for GitHub settlement or publication order defers work without consuming a processing failure; the ordering transaction returns a normal blocked outcome, avoiding misleading database-failure alerts. Processing failures retain the job with exponential backoff, alert once after five failures, and continue recovery rather than exhausting a finite queue budget. Permanent errors retain a failed request for explicit operator retry; untrusted metadata is rejected without forged alerts. A first-ever deployment with no prior successful baseline is retained explicitly as `NO_BASELINE`, preserving the existing ability for a later deployment to bootstrap; no unfinished publication range is bypassed. Completion still uses the original baseline and deterministic drop receipts. GitHub transient HTTP/network failures receive bounded request retries and endpoint diagnostics. See [release-note recovery](../ops/release-notes/recovery.md) for operator recovery, on-demand recovery and rollback behavior. The worker loads the reviewed prompt from the deployed repository SHA and calls Amazon Bedrock using `RELEASE_NOTES_BEDROCK_MODEL_ID` or the Claude Sonnet 5.5 US geo inference profile (`us.anthropic.claude-sonnet-5-5`, medium effort, no sampling parameters) by default. A Bedrock system instruction treats the tagged release context as untrusted data and rejects instructions embedded in pull requests, commits, or filenames. Frontend PR discovery follows only first-parent mainline commits between production SHAs, while contributor enrichment still loads every commit author and committer from each selected PR. Backend and Frontend notes resolve configured GitHub contributors to 6529 profile mentions and render deterministic repository-specific headings and service links. Backend headings include every distinct grouped workflow run number as a link, ordered by run number. Genuine large releases are published in resumable groups of at most 20 PRs, with a distinct deterministic metadata id for every part. Desktop notes are requested only by the production `Publish` flow after its S3 download pages exist. They retain the Core first-parent change history so imported Frontend history is not summarized twice and resolve the exact Frontend release-note drop from the renderer-source SHA. New release drops carry repository, SHA, run, and deployment metadata; historical Frontend notes are matched only when their content contains the exact full commit URL. Desktop output has a deterministic heading, Frontend release link, and platform download links around compact model-generated user-facing bullets, with no PR or contributor lines.
 
-Deploy `dbMigrationsLoop` first so TypeORM creates the durable release-note tables, then deploy `releaseNotesGenerationLoop`, which depends on those tables.
+Deploy `dbMigrationsLoop` first so TypeORM creates the durable release-note tables, including `release_note_recovery_jobs`, then deploy `releaseNotesGenerationLoop`, which depends on those tables. No new IAM policy or EventBridge rule is required; the existing queue policy already permits the worker to send retry messages.
 
-Desktop notes publish to the public Releases wave `CI_RELEASES_WAVE_ID`. Backend and Frontend deploy notes publish to the production deploy feed `CI_PIPELINES_PROD_WAVE_ID` ("Deploys · Production"); receipt lookups also check `CI_RELEASES_WAVE_ID`, where those notes were published before the split, and Desktop notes link the Frontend note from whichever of the two waves holds it. All notes post as the profile configured by `CI_PIPELINES_BOT_PROFILE_ID`. Before each Backend or Frontend part is posted, its summarized pull requests are upserted into `release_digest_entries` for the daily digest; regenerated parts refresh their text but never release an entry a digest already claimed. Each published drop or multi-part batch carries a deterministic release-note metadata id. The worker reconciles those drop receipts with `next_part`, so a crash after drop creation but before the publication progress update still resumes without duplicating the part. Redis is required; PR-scoped group, publish-request, and dedupe state is retained for 7 days. The deterministic metadata on published drops remains the durable PR-scoped publication receipt, while MySQL is the durable publication and stream authority for non-PR releases. The processing lock lasts four minutes, shorter than the five-minute SQS visibility timeout, uses an owner token for release, and lock contention fails the invocation so SQS retains the message. Before starting another part, the worker leaves a 45-second Lambda budget and retries cleanly instead of relying on the three-minute hard timeout. A failed Desktop queue handoff immediately posts a normal production CI failure with the shared 🚨 heading and `@devs6529` mention. Deterministic queued failures post that same class of alert to `CI_PIPELINES_PROD_WAVE_ID`, report to Sentry, and stop retrying once the alert succeeds. Transient Desktop failures retain three SQS retries and post the terminal alert on attempt four; an alert-delivery failure uses the fifth receive to fail closed into the DLQ. Transient Backend and Frontend failures use four SQS retries, post the terminal production alert on attempt five, and then move to the DLQ. Malformed messages and GitHub run-metadata mismatches that cannot supply trusted run metadata are reported to Sentry and drained without attempting a CI alert.
+Desktop notes publish to the public Releases wave `CI_RELEASES_WAVE_ID`. Backend and Frontend deploy notes publish to the production deploy feed `CI_PIPELINES_PROD_WAVE_ID` ("Deploys · Production"); receipt lookups also check `CI_RELEASES_WAVE_ID`, where those notes were published before the split, and Desktop notes link the Frontend note from whichever of the two waves holds it. All notes post as the profile configured by `CI_PIPELINES_BOT_PROFILE_ID`. Before each Backend or Frontend part is posted, its summarized pull requests are upserted into `release_digest_entries` for the daily digest; regenerated parts refresh their text but never release an entry a digest already claimed. Each published drop or multi-part batch carries a deterministic release-note metadata id. The worker reconciles those drop receipts with `next_part`, so a crash after drop creation but before the publication progress update still resumes without duplicating the part. Redis is required; PR-scoped group, publish-request, and dedupe state is retained for 7 days. The deterministic metadata on published drops remains the durable PR-scoped publication receipt, while MySQL is the durable publication and stream authority for non-PR releases. The processing lock lasts four minutes, shorter than the five-minute SQS visibility timeout, uses an owner token for release, and lock contention fails the invocation so SQS retains the message. Before starting another part, the worker leaves a 45-second Lambda budget and retries cleanly instead of relying on the three-minute hard timeout. A failed Desktop queue handoff immediately posts a normal production CI failure with the shared 🚨 heading and `@devs6529` mention. Deterministic queued failures post that same class of alert to `CI_PIPELINES_PROD_WAVE_ID`, report to Sentry, and stop retrying once the alert succeeds. For legacy requests outside durable per-run recovery, transient Desktop failures retain three SQS retries and post the terminal alert on attempt four; an alert-delivery failure uses the fifth receive to fail closed into the DLQ. Transient Backend and Frontend failures use four SQS retries, post the terminal production alert on attempt five, and then move to the DLQ. Malformed messages and GitHub run-metadata mismatches that cannot supply trusted run metadata are reported to Sentry and drained without attempting a CI alert.
 
 `releaseDigestLoop` publishes one daily digest to `CI_RELEASES_WAVE_ID` at 23:30 UTC (before the 00:00 UTC Daily Post), as the CI bot profile. A scheduled run uses its EventBridge event time as the cutoff and its UTC date as the digest key, so retries repeat the same digest. In one transaction it creates the `release_digests` row for that key and claims every unclaimed `release_digest_entries` row deployed up to the cutoff (at most 200); an existing row for the key is reused, and no row is created when nothing is waiting. Before claiming, it finishes any earlier digest left `PENDING`. Generation calls Bedrock with `RELEASE_DIGEST_BEDROCK_MODEL_ID` or Claude Sonnet 5.5 by default, using schema-constrained JSON and the plain-language style in `src/release-notes/release-digest.prompt.ts`; code renders the heading, counts, sections, contributor credits and the link to the deploy feed. Model output may only reference supplied entry ids, and any entry the model omits is counted as behind-the-scenes work. After two failed generations it posts a plain one-line-per-change fallback. The drop carries `release_digest_id` metadata as its durable receipt, so a crash between posting and marking the digest published reconciles without a second post. Manual invocations accept `digest_key` (`YYYY-MM-DD` with an optional suffix) and `dry_run: true`, which returns the rendered text without claiming or posting. The function deploys only to production; deploy `dbMigrationsLoop` before `releaseNotesGenerationLoop` and `releaseDigestLoop` so the digest tables exist.
 
 Wave Score refreshes use a hybrid DB-backed/SQS pattern. Request-path mutations write `wave_score_refresh_requests` rows inside the same primary-DB transaction as the drop, rating, or subscription change, then publish a small wakeup message to `wave-score-refresh-dirty.fifo` after commit. `waveScoreRefreshLoop` drains dirty rows from the write pool, recalculates scores, and deletes a row only if its selected `(wave_id, dirty_at)` version still matches, so a wave dirtied again during processing remains queued. A one-minute EventBridge fallback invokes the same dirty drain in case enqueueing fails after the transaction commits.
+
+Scoring aggregates drop counts, latest timestamps, and recent counts by wave and
+author before joining current identity levels. The same author totals supply
+the concentration penalty, avoiding a second history scan. The covering index
+`drops(wave_id, author_id, created_at)` is declared on `DropEntity` and installed
+only through the online index helper in `dbMigrationsLoop`. An index optimizer
+hint selects this covering history scan when the index exists; MySQL ignores
+the hint when it is unavailable. Its explicit
+`wave-score-input-index` scope applies this additive index without general schema
+synchronization or unrelated maintenance. Score formulas, response fields, and
+refresh frequency remain unchanged.
 
 Wave drop metric repairs use the same DB-backed/SQS pattern. Drop deletes apply a bounded in-transaction counter decrement, write `wave_drop_metrics_refresh_requests`, and publish to `wave-drop-metrics-refresh-dirty.fifo` after commit. `waveDropMetricsRefreshLoop` drains from the write pool and runs the full wave/dropper metric reconciliation outside the API path, with an EventBridge fallback for missed wakeups.
 
@@ -1617,15 +2098,14 @@ changes, clock boundaries, and missed dirty writes. It reads subscription
 balances as decimal strings, derives demonstrated intent only from normalized
 balance, mode, top-up, intended-subscription, final-subscription, and redeemed
 rows, and uses a coverage-specific eligibility read where zero is meaningful.
-The shared schedule provider consumes the canonical frontend Meme calendar API,
-uses `mint_start` as a projected instant, caches one bounded horizon in memory,
-and never treats `mint_start` as an operational top-up deadline. It selects the
-calendar host from the explicit coverage environment or the Secrets
-Manager-provided `NODE_ENV` and fails closed when neither is authoritative. A
-live `/next` response is backfilled to retain the configured number of future
-drops. Failure or malformed data for a later token truncates the forecast to the
-contiguous valid prefix; failures are cached briefly to bound retry load, while
-successful cache TTLs start only after the calendar fetch completes.
+The shared schedule provider calculates a bounded future horizon from the bundled,
+versioned Memes calendar. Mint dates use Europe/Athens timezone rules including
+DST; only strictly future drops enter the forecast. The in-memory cache expires
+at the earlier of its TTL or the first projected mint start, so a cached drop
+cannot remain upcoming after opening. The horizon remains projected and bounded,
+and mint start is never an operational top-up deadline. Calendar HTTP host,
+environment, timeout and failure-cache settings are no longer used. The horizon
+and successful cache TTL settings remain supported.
 
 Alert transitions are serialized through a row lock in
 `subscription_coverage_alert_states`. The current alert state and actorless
@@ -1651,6 +2131,20 @@ changing alert or dirty state, while
 No request cache is used for the coverage read boundary, so a confirmed top-up
 or redemption can be reflected immediately.
 
+TDH persistence in `delegationsLoop` and `tdhLoop` synchronizes profile primary
+wallets in the same transaction as identity consolidation and metrics. It first
+reads bounded pages of address differences without locking profiles, then updates
+changed profiles through point lookups on the stable profile-ID index. This avoids
+retaining locks on unchanged profiles
+through the metrics recalculation, so ordinary posting can still acquire its
+moderation profile lock. Changed profiles remain protected by the consolidation
+transaction and roll back with it.
+Discovery uses the consolidation transaction's consistent read after its identity
+writes are complete. Each point update rechecks current identity/address values.
+Other primary-address changes use `IdentitiesDb.updatePrimaryAddress` to update
+both identity and profile rows in one transaction; the sync does not chase changes
+committed after its read snapshot.
+
 `delegationsLoop` also supports the explicit maintenance payload in staging and production
 `{"action":"reconsolidate","wallets":["<Ethereum address>"]}`. It expands
 requested seeds through old persisted and current confirmed groups, runs the
@@ -1669,11 +2163,30 @@ finishes, to deliver the universe phase through `xtdh-start.fifo`. A partial TDH
 reconsolidation from `delegationsLoop` instead enqueues one universe phase
 directly after its persistence and checkpoint writes complete. After either
 universe transaction commits, `xTdhLoop` enqueues a stats phase back to that
-FIFO queue, using the same FIFO message group as the universe message when one
+FIFO queue, using the same FIFO message group as the first universe request when one
 is available and the queue's default FIFO group otherwise. That shared message
 group is what orders each universe phase before its stats phase; the SQS event
-source batch size stays at `1` and Lambda reserved concurrency stays at `1` to
-avoid parallel xTDH work across groups. The stats phase rebuilds the inactive
+source batch size is `10` in
+`src/xTdhLoop/serverless.yaml` at `functions.xTdhLoop.events[0].sqs.batchSize`.
+Lambda reserved
+concurrency stays at `1` to avoid parallel xTDH work across groups.
+The handler coalesces each delivered batch into one operation. Any universe
+request selects one universe calculation and one replacement stats request;
+that replacement covers stats requests included in the same batch. A stats-only
+batch performs one stats rebuild. Requests from different FIFO groups can share
+the same global refresh, with the replacement stats message using the first
+universe request's group. The invocation succeeds only after the selected work
+finishes, including enqueueing replacement stats after the universe commits.
+Any failure rejects the entire batch for SQS retry. Conflict reporting uses the
+highest receive count in the batch and reports unknown metadata conservatively.
+Requests arriving during a calculation remain queued for a later invocation.
+SQS can deliver smaller batches; there is no FIFO batching window. Batch
+enablement follows verification of the batch-capable handler with batch size `1`
+in each environment. To roll back, revert the batch-enablement change and deploy
+`xTdhLoop` through the ordinary workflow. Verify the live event-source mapping is
+back at `1` before reverting batch-aware handling. The deployment-contract tests
+lock the batch limit, single-worker concurrency, and whole-batch retry policy.
+The stats phase rebuilds the inactive
 xTDH stats slot and activates it only after the rebuild succeeds; a redelivered
 stats message truncates and refills the inactive slot again before activation.
 Each grant/token stats `INSERT ... SELECT` runs in a dedicated `READ COMMITTED`
@@ -1710,7 +2223,7 @@ flowchart TD
   HelpBotWorker --> FrontendIndex["cached frontend /help-index.json"]
   HelpBotWorker --> StreamReviewIndex["frontend Stream review index"]
   StreamReviewIndex --> StreamKnowledge["validated catalog + selected evidence shards"]
-  HelpBotWorker --> FrontendCalendar["frontend meme calendar API"]
+  HelpBotWorker --> SharedCalendar["bundled shared Memes calendar"]
   HelpBotWorker --> PublicData["validated public DB query"]
   HelpBotWorker -. optional .-> Bedrock["Bedrock renderer"]
   HelpBotWorker --> BotReply["bot reply drop"]
@@ -1730,7 +2243,7 @@ Important details:
 - Stream questions take a dedicated path before generic FAQ matching. The worker discovers the active corpus from `/review-data/6529-stream/index.json`, validates its version, pinned commit, reference identity, knowledge identity, catalog checksum, and selected shard checksums, then caches by version/checksum for the same bounded refresh interval. A missing, withdrawn, or invalid active corpus clears stale Stream state and falls back to the concise generic Help index record.
 - Stream lookup combines exact names, signatures, selectors, topics, definition names, and source paths with weighted lexical retrieval over editorial, technical, readiness, risk, and release metadata. Bedrock receives only 4–10 deduplicated evidence records within an explicit character budget; full catalogs, shards, and raw source files are never prompt context.
 - Stream prompts treat structured declaration facts as authoritative, preserve protocol/script/test classifications, keep implementation/proposal/audit/deployment states distinct, and require ambiguity disclosure for unresolved overloads. Direct replies can retain Stream scope when the previous bot answer identifies the Stream review.
-- Meme Card drop timing uses the environment-matching frontend Memes calendar API (`/api/meme-calendar/next`, `/current`, and `/{id}`), which owns cadence, overrides, and mint-window calculations.
+- Meme Card drop timing uses the bundled shared Memes calendar for next/current/specific-mint lookups. The same pure queries back the frontend calendar API; no calendar HTTP request is made. Site URLs are used only for answer links. Invalid calendar inputs follow the existing failure path.
 - V1 also has a bounded public-data query-intent mode for aggregate backend data questions.
 - Bedrock selects a semantic public-data plan from a hardcoded catalog; Bedrock output never contains executable SQL, table names, columns, joins, or expressions.
 - The backend public-data compiler validates the selected entity, operation, metric, numeric filters, and limit, then emits parameterized SQL through the shared `SqlExecutor` with the read pool forced, hard row limits, and a MySQL execution-time hint injected by backend code.
@@ -1859,6 +2372,90 @@ For a documentation-only change, no Lambda redeploy is required.
 
 ## Architecture Notes
 
+### End-to-end encrypted messaging (D109)
+
+The API serves 35 generated `x-6529-router` routes under `/e2ee/...`
+(handlers in `src/api-serverless/src/e2ee/`, database and pure helpers in
+`src/e2ee/`). They are on only when `E2EE_DMS_ENABLED` is `true`, or when it is
+unset and `NODE_ENV` is `local` or `development`; otherwise they return 404
+`E2EE_DISABLED`. Clients run MLS; the backend verifies wallet-signed device
+grants (EIP-712, EIP-1271 on mainnet), stores wrapped ciphertext, and orders
+key changes: per-group transactions lock the `e2ee_groups` row first, entries
+must be signed by the stored epoch commit key, the first commit per epoch
+wins (unique `e2ee_log (group_handle, commit_epoch)` and the
+`e2ee_group_epochs` primary key back this up), and messages are accepted only
+for the current epoch. Delivery rosters (`e2ee_group_roster`) bound what each
+device can read by epoch window.
+
+New tables, created by `dbMigrationsLoop` entity sync: `e2ee_devices`,
+`e2ee_key_packages`, `e2ee_groups`, `e2ee_group_epochs`, `e2ee_group_roster`,
+`e2ee_log`, `e2ee_welcomes`, `e2ee_welcome_deliveries`, `e2ee_blobs`,
+`e2ee_blob_chunks`, `e2ee_reports`, `e2ee_report_access_log`,
+`e2ee_push_throttle`, `e2ee_rate_counters`, and for encrypted message-history
+backups `e2ee_backups`, `e2ee_backup_chunks` and `e2ee_ciphertext_objects`
+(the MySQL implementation of the `E2eeCiphertextStore` object-store interface,
+which an S3 store can replace). Their SQL is a private query
+family: statements and bound values never reach logs. Encrypted attachment
+chunk bytes sit behind `E2eeBlobStore`: MySQL (`e2ee_blob_chunks.data`, the
+default) or private S3 objects at `<E2EE_BLOB_S3_PREFIX>/<blob_id>/<index>`
+(`E2EE_BLOB_STORE=s3`; SSE-S3, no ACL, no CDN, streamed through the API after
+its membership checks). Each blob records its `storage` and exact S3
+location and is only read or deleted there; sizes stay in MySQL for the
+per-profile quotas (200 MiB per rolling 24 h, 1 GiB live), and pruning on
+every upload deletes S3 objects before rows. Misconfigured storage
+fails closed with 503 `E2EE_STORAGE_UNAVAILABLE`. The operator-only
+`dbMigrationsLoop` scope `e2ee-blobs-to-s3` copies MySQL blobs to S3 with
+read-back hash checks (dry run by default).
+`E2EE_ATTACHMENTS_ENABLED=false` (on by default) is a kill switch that makes
+the blob routes refuse before any database access. History backups
+(`/e2ee/backup`, `/e2ee/backups/...`) store only client ciphertext per profile
+(256 MiB quota) and have their own kill switch, `E2EE_BACKUPS_ENABLED=false`. Reports (severe-harm categories only) are read
+only by content moderators (the content-moderation queue's check) and the
+optional `E2EE_TRUST_AND_SAFETY_GROUP_ID` group through
+`/e2ee/trust-and-safety/...`, with every read written to
+`e2ee_report_access_log`, and are deleted after 180 days unless on hold. Rate limits are
+DB-backed fixed windows, and retention runs opportunistically in the API
+(no new Lambda). E2EE reads use the primary pool.
+
+After commit, the API sends best-effort WebSocket hints to primary
+connections (`E2EE_GROUP_EVENT`, `E2EE_WELCOME`, `E2EE_DEVICE_ADDED`,
+`E2EE_DEVICE_REVOKED`, `E2EE_ROSTER_CHANGED`; items inline only up to 16 KiB)
+and, throttled to one per (profile, group) per 60 s through
+`e2ee_push_throttle`, enqueues `{ "type": "e2ee_wake", "profile_ids", "reason" }`
+on the existing `firebase-push-notifications` queue. Separately, the API
+writes an in-app `E2EE_MESSAGE` notification for eligible message recipients,
+subject to their Direct messages notification preference. The row stores the
+sender in `additional_identity_id` and the opaque chat handle and message
+sequence in `additional_data`. It carries no message plaintext. Batch
+insertion avoids creating a second push outbox event. The API sends
+recipient-scoped invalidations, including to devices without local MLS keys.
+Devices with the keys can render a local preview of the referenced message.
+The push cooldown and delivery settings do not suppress inbox writes.
+`pushNotificationsHandler` sends content-free FCM notifications
+(`redirect: "e2ee"`, no sender, group or text) to registered devices whose
+profiles have Direct messages notifications enabled. No AI or moderation
+pipeline reads E2EE data. Deployment order:
+`dbMigrationsLoop`, then `pushNotificationsHandler`, then `api`.
+
+### Unencrypted DM retention (D146)
+
+Unencrypted ("legacy") DMs are waves with `is_direct_message` whose chat
+group is a DM group. From `LEGACY_DM_DELETION_CUTOFF` (default
+2026-12-01T00:00Z, `src/legacy-dm/legacy-dm-retention.ts`) the API refuses
+new drops in them and new DMs with `403 LEGACY_DM_CLOSED`. Their content is
+then deleted, except conversations under a legal hold (the CLI's `execute`
+requires `LEGACY_DM_HELD_WAVES` and never selects a held wave), by an
+explicit operator CLI, not a Lambda:
+`ops/scripts/legacy-dm-purge/cli.ts` (`plan` dry run, `execute`,
+`media-plan`, `media-execute`) over the table inventory in
+`src/legacy-dm/legacy-dm-purge.inventory.ts`, whose test fails when a new
+table references drops or waves without being listed. Media bytes in the
+images, ingest and attachments buckets are deleted from a write-ahead
+manifest. Backups and the rest of the procedure:
+[legacy-dm-deletion-runbook.md](./legacy-dm-deletion-runbook.md).
+`dbDumpsDaily` dumps a reviewed allowlist of public chain tables
+(`src/dbDumpsDaily/db-dumps-daily-tables.ts`).
+
 ### Private artwork documentation archive
 
 The dedicated processor also exposes closed IAM-only invocation actions for release
@@ -1983,7 +2580,8 @@ AWS-wide failures. Moderation evidence is excluded from this operational contrac
 Source log subscription filters retain their permission dependency and form one
 chain in ordinal logical-ID order. CloudFormation therefore updates them serially,
 avoiding a parallel burst against CloudWatch Logs subscription API limits while
-preserving filter identities, destinations and patterns. This increases source
+preserving filter identities and destinations; optional quoted terms accept both
+error and loop-health envelopes. This increases source
 stack update time; it does not rate-limit unrelated callers in the account/region.
 Selected serialized-worker throttle alarms, including release-note generation,
 require three breaching minutes out of five while invocation errors and OOM
@@ -1995,6 +2593,42 @@ detect sustained 30-minute backlog in either refresh queue and any visible
 dirty-refresh dead letter. Queue age is a transport guard, not proof of business
 completion. Protected alarm notifications include bounded infrastructure labels
 and numeric thresholds without forwarding free-form CloudWatch reasons.
+Background-worker throttle transitions now feed a shared impact evaluator instead
+of directly notifying through SNS. Its inventory is generated from existing
+schedules/SQS mappings; rate intervals at most five minutes with one reserved
+execution are marked as expected-overlap context. The existing source LogRelay
+also reconstructs finite `6529.ops.loop-health.v1` business observations. The
+normal collector binds service identity and applies a separate health admission
+budget. It stores monotonic observations in the existing receipt table. The
+existing one-minute Probe independently evaluates backlog, committed progress,
+telemetry freshness, recovery availability and decision deadline margins. It
+persists notification intent before enqueue and sends incident changes through
+the protected lane.
+Routine verified overlap has no incident or recovery. Missing business evidence
+produces explicit unconfirmed contention; invocation success is never a business
+recovery signal. Initial adapters cover delegation checkpoint/stage observations,
+native decision/outbox surveys, and independent dirty/full Wave Score refreshes.
+Score refresh health reads persisted dirty request versions on the writer before
+and after work, including handled failures; attempted-wave counts do not prove
+progress. Dirty age follows the original request creation and persisted score
+calculation timestamps; new writes and failed-attempt updates cannot manufacture
+refresh progress. Full scans report committed work and confirmed continuation handoffs,
+carrying their original request time in a message attribute that preserves FIFO
+body deduplication. Dirty catch-up cannot clear a pending full scan. Waiting full
+messages retain their independent SQS age guard, and diagnostic failures leave
+health unconfirmed. NFT processing health additionally separates discovery,
+refresh, audit and durable media publication. NextGen block checkpoint progress
+is published only after transaction commit and cannot clear independent handled
+reconciliation failures. Preview processing surveys persisted active backlog and
+saved READY results; terminal asset errors retain their independent application
+alerts. Event-driven idle surveys do not expire into noise, while new contention
+requires fresh evidence. Superseded preview completion failures stay in source
+logs without reporting a failure owned by another worker. These adapters reuse
+the existing relay, receipt table and Probe; no schema or trigger changes are
+needed. Other scheduled/queued workers retain their
+independent error and queue protections while awaiting business adapters. No
+application schedules, timeouts, concurrency, memory or public API contracts
+change. See [processing-health policies and rollout](../ops/monitoring/README.md#background-processing-health).
 Three exact audited low-CPU scale-in controls instead produce sanitized,
 deterministically keyed S3 audit objects when trusted source identity, metric
 configuration, observed low-direction reason grammar and numeric evidence match.
@@ -2151,6 +2785,32 @@ are retained for 14 days and have a visible-message CloudWatch alarm on the exis
 alarm topic. Repeated consolidation drift therefore cannot block the FIFO group
 until source retention expires. Deploying `xTdhLoop` also provisions these resources.
 
+Identity snapshot conflicts use a dedicated error type. For a single SQS record
+with a valid receive count, attempts one through four log a warning without a
+Sentry error. The invocation still fails, preserving rollback and SQS retry.
+Attempt five and later, missing/invalid retry metadata, and all other failures
+remain reportable. Conflict Sentry events include the receive count and retry
+limit; the existing dead-letter alarm remains the exhaustion backstop.
+
+### xTDH grant bounds
+
+An all-tokens grant pays each owned token id `rate / divisor` per day. The
+divisor is the larger of the contract's recorded `total_supply` and the number
+of distinct token ids with ownership history before the cutoff, so a grant's
+tokens never receive more than its rate per day in total, including when more
+ids are owned than the supply recorded at snapshot time. With no more observed
+ids than the recorded supply, results are unchanged; a grant without a recorded
+supply still pays nothing. This applies to identity xTDH, rates and the grant
+and token stats alike; `xTdhLoop` computes it.
+
+Grant creation (`POST /xtdh/grants`) checks the token list as strings before
+any range is expanded: at most `XTDH_GRANT_MAX_TOKENS` tokens (default 10,000,
+the web token picker's own limit) and `XTDH_GRANT_MAX_RANGE_WIDTH` per range
+(default 10,000), with range ends no larger than the largest safe integer;
+larger requests get 400. An identity may have at most `XTDH_MAX_PENDING_GRANTS`
+grants waiting for review (default 50); the next one gets 409
+`PENDING_GRANT_LIMIT`.
+
 ### Transfer reconciliation after late indexing
 
 Independent contract indexers atomically queue per-wallet `owners` and `activity`
@@ -2198,7 +2858,131 @@ The required key must be present and valid for all three runtimes in both region
 
 Configure production as `2026-10-15T00:00:00Z` and staging with its intended earlier cutoff before deployment. Schema sync still precedes the delegation indexer, TDH loop and API. Both environments index the same mainnet contract: staging registrations are real registrations, and pre-production-cutoff links require renewed consent after the production cutoff.
 
+Initial collaboration Artist credits use `&` for exactly two credited artists and `, ` for larger rosters; SEIZE Artist Profile always uses comma-separated handles. Confirmed invitee credit names are used in live metadata and the frozen mint-selection credit. Existing frozen claims and admin Craft edits are not rewritten.
+
+Collaboration retries retain each cancelled invitation under a distinct ID. The drop/profile index is non-unique; entity synchronization must remove the former unique index before API reinvites are enabled. Author and recipient state exposes the latest attempt only; historical invitation IDs cannot authorize a new attempt. Declined invitations cannot be resent. The five-collaborator cap counts pending and accepted attempts under the collaboration lock, preserving existing accepted rosters. API mutations send existing profile-scoped notification invalidations after commit, independently of push preferences. Acceptance also broadcasts accepted public attribution even when no notification row is created. No private invitation roster is added to public websocket payloads.
+
 WatchTower manual-review attention is derived from a subject-based union of
 open reports and pending moderation checks. The API groups this union before
 pagination and shares the case definition across queue and count surfaces; it
 adds no persisted case table, queue, service or background reconciliation.
+
+## Cross-wave message search
+
+`GET /v2/drops/search` reuses wave search text matching and accepts text, an
+author ID, or both. Live wave and parent-wave read eligibility is applied in
+SQL before cursor pagination over `(created_at, id)`. Queries have a 3-second
+SQL execution budget and at most 100 pages. DMs require a non-null eligible
+visibility group; malformed public DMs and unsupported deeper nesting fail closed.
+Physically deleted drops are absent from the base drops table. Each result carries an eligible wave
+overview for navigation. Deploy the additive `api` endpoint before the frontend
+uses it; no schema changes or additional services are required. Existing scoped
+search remains compatible.
+
+Clients follow the opaque response cursor while `next` is true, including when
+a concurrent visibility change removes every result on a page. The cursor is
+derived from the last scanned row so this safely advances through that case.
+
+## Voting credit return notifications
+
+When an ACTIVE native competition entry wins or is permanently deleted by its
+submitter, WAVE-scoped active allocations are released by the existing spending
+formula. The transition transaction records one `voting_credit_releases` header
+and copies nonzero current votes into `voting_credit_release_recipients` with a
+set-based INSERT SELECT. Amounts are absolute allocations, never weighted scores.
+The entry/competition lock serializes capture against voting and decision work.
+Titles, credit type, event identity and release time survive later hard deletion.
+
+`votingCreditReturnNotificationsLoop` is a separate 1-minute worker with reserved
+concurrency 1. Each invocation processes at most 20 pages of 100 recipients within
+40 seconds. A page locks its release header with SKIP LOCKED; notification rows,
+push-outbox rows, recipient cleanup and progress commit atomically. Failure rolls
+back the page and defers that release by a minute; after ten failed attempts it
+is parked for operator recovery without discarding recipients. Other releases remain eligible.
+Completed headers retain the release identity; processed recipient snapshots are
+removed. Five-minute backlog warnings, EMF pending/dead-letter counts and Lambda errors
+expose delayed delivery.
+No network publish or per-voter application loop runs in the transition path.
+
+The profile consolidation paths in `tdhLoop` and `delegationsLoop` transfer
+pending allocations to the retained profile before migrating existing notices.
+They lock only affected release headers; already delivered recipient rows stay
+deleted when the pending cursor restarts. Both current primary reads and the
+consolidation transaction's own writes are included in candidate discovery.
+
+`VOTING_CREDITS_RETURNED` uses snapshot context, nullable actor/drop references,
+existing vote preferences and live wave visibility. This deliberately survives
+ordinary drop notification cancellation. Native-competition-capable push devices
+receive links to the winning entry or, after deletion, its competition. API V1/V2
+map the additive cause without hydrating deleted drops. The EventBridge schedule
+is disabled on deployment and activated only after the dependent frontend is
+ready. See `ops/runbooks/voting-credit-returns.md` for activation and rollback.
+
+## Local Memes calendar
+
+Craft, subscription coverage and Help Bot calendar answers use the bundled, versioned Memes calendar instead of frontend HTTP calls. See [shared calendar maintenance](shared-memes-calendar.md) for canonical-source synchronization, rollout services and Athens/DST policy. Shared next/current/status queries also back the existing frontend API, preserving its routes and response shapes.
+
+### NFT metadata history
+
+`nftHistoryLoop` discovers history by creator contract and verified extension events, independently of transaction sender. Claim initialization, zero-address ERC1155 mint logs (including public paid mints), URI logs, and claim updates share one ordered decoder/planner. Direct zero-value calls to the creator contracts cover eventless top-level `setTokenURI` writes. Creator-scoped claim mappings come from verified initialization receipts and historical claim state, never from an assumption that claim ID equals token ID. Scheduled ingestion starts at the verified metadata initialization. Existing baselines are preserved until a reviewed repair. Finalized blocks are processed in up to five 200-block windows per invocation, with discovery split into 20-block chunks. The checkpoint advances only after every source transaction in a block commits; retries begin at the next block and repeat all transactions of an interrupted block idempotently. Completed block prefixes survive time-budget exhaustion or later failures. A failed decode, missing earlier baseline, or metadata fetch prevents advancement past its block. Unlisted claim logs incidentally present in a mint receipt are ignored; audit-explicit unlisted logs remain failures for review. Mapping and history writes for one scheduled source transaction are atomic and insert-only for baselines.
+
+Claim updates use additive `nfts_history_events` storage keyed by Ethereum transaction/log identity. The legacy URI-keyed `nfts_history` table and its primary key are preserved. Settings-only updates retain an audit row with no Timeline description. The API combines both tables and suppresses a legacy row only when its transaction is represented by an event for that NFT. A return to an earlier URI remains a separate edit. Historical insertion reconciles the immediate successor diff with an optimistic snapshot check and transaction-scoped row locks.
+
+Metadata downloads use the shared decentralized gateway catalog, validate every redirect, and enforce a streamed byte limit and one deadline across fallback attempts. Unsupported HTTPS origins fail the window for explicit policy review.
+
+The explicit `dbMigrationsLoop` scope `nft-history-events` synchronizes only the new event entity. Required service order is schema creation, `api`, then `nftHistoryLoop`; no frontend contract regeneration is required because the history response shape is unchanged.
+
+Manual `nft-history-replay` invocations reuse the event decoder and history processor with an isolated additive `nfts_history_replay_jobs` receipt/cursor table. Dry-run is read-only; apply is disabled by default and binds a UUID job to a reviewed manifest digest. Event writes and replay cursor advancement share a transaction, and bounded resume never advances the scheduled ingestion checkpoint. The explicit `nft-history-replay` schema scope creates only the job entity. No new scheduled service, queue, or public API is introduced. The additional manual mode `nft-history-source-replay` uses the same sender-independent source planner to recover missing claim mappings and Mint baselines, as well as edits. Its version-2 manifest and mode-qualified request prevent reuse of an old update-only job ID; existing version-1 jobs remain compatible. Dry-run uses an in-memory chronological overlay and writes nothing. Each approved source transaction commits its mapping/history changes and cursor together. The existing apply flag, finalized anchors, bounds, UUID identity and fresh-digest checks remain mandatory; source replay never registers the scheduled checkpoint entity. No additional schema synchronization or public API deployment is required once the original history event/job tables exist.
+
+### NFT history corrections
+
+Scheduled history starts with an Initialized record when the original metadata
+URI is set. Claim initialization, direct creation and burn-and-redeem setup
+provide that origin. Later issuance does not add a metadata Timeline entry.
+The two historical V3 claims use their setup as origin and the later assignment
+receipt to prove the token mapping. Claim URI updates can precede issuance.
+A same-URI settings update stays in the internal ledger.
+
+The manual `nft-history-repair` invocation reconciles one NFT from explicit
+finalized source transactions. It replaces an audited Mint baseline with its
+initialization transaction, preserving the original URI, and reconciles the
+selected Edit sources. The reviewed digest, history fingerprint, apply gate
+and job cursor protect the repair. The baseline change, event ledger writes
+and job completion share one transaction. See the [backfill runbook](nft-history-repair.md).
+
+### Private drop bookmarks
+
+The API owns private bookmark writes, the paginated `/drops-bookmarked/` list,
+and `/drops-bookmarked/status` count and optional per-drop state. These resolve
+the authenticated owner independently of an active proxy, apply the owner's wave
+read eligibility, and reuse the existing drop bookmark table. Private state is
+not delegated or emitted as public activity. `ApiWaveMin.is_direct_message`
+allows saved-message links to select the correct conversation shell. This runs
+in `api`; no additional worker or schema deployment is required.
+
+The authenticated `GET /v2/waves/{waveId}/all-mention-count` API previews the current
+`@all` audience for creators and admins, reusing follower, visibility and notification
+write filters without inserting notifications. The frontend confirms before posting.
+
+## Competition lifecycle audit storage
+
+`competition_lifecycle_events` records competition lifecycle, previous lifecycle,
+actor and timestamp. Archive actions do not require or store a reason. Pause
+reasons remain separately in `competition_pauses` and public pause history.
+The explicit `dbMigrationsLoop` scope `competition-lifecycle-events` synchronizes
+only the lifecycle event entity. Before removing its obsolete reason column,
+deploy `waveDecisionExecutionLoop` and `api` so every writer omits the column;
+drain old invocations for 900 seconds after the worker update and 30 seconds after
+the API update, then synchronize that scope and deploy the frontend. The column's
+stored values are intentionally discarded; rolling back older writers requires
+recreating the nullable column first.
+
+### All wave browsing
+
+`GET /v2/waves/all` captures accessible non-DM root wave IDs in a shared Redis
+snapshot, scoped to the read-context profile or guest, for 15 minutes. It includes
+pinned waves and roots without metrics. Continuation reads preserve that ID order
+and recheck visibility; activity cannot move IDs between pages. Subwaves remain
+accessible through their parents. The API returns 410 for expired snapshots and
+503 when shared storage is unavailable rather than silently truncating the list.
+Deploy the `api` service before the frontend that consumes this additive endpoint.

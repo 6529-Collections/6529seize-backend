@@ -11,6 +11,7 @@ import { competitionEntryService } from './competition-entry.service';
 import { RequestContext } from '@/request.context';
 import { DropEntity } from '@/entities/IDrop';
 import { NotFoundException } from '@/exceptions';
+import { withoutLegacyCompetitionGetFacade } from '@/competitions/legacy-competition-get-facade';
 
 export async function competitionDropVoteSummary(
   competition: Pick<Competition, 'decisions'>,
@@ -34,11 +35,15 @@ export async function competitionDropVoteSummary(
     entry.status === 'WINNER' || (competition.decisions.time_lock_ms ?? 0) > 0
       ? (score?.rating ?? 0)
       : totals.total;
+  const prediction =
+    entry.status !== 'WINNER' && (competition.decisions.time_lock_ms ?? 0) > 0
+      ? (score?.decision_rating ?? rating)
+      : rating;
   return {
     rating,
     over_threshold_since_ms: score?.over_threshold_since ?? null,
     realtime_rating: totals.total,
-    rating_prediction: entry.status === 'WINNER' ? rating : totals.total,
+    rating_prediction: prediction,
     raters_count: totals.count,
     voters_count_available: totals.voters_count_available,
     user_vote: totals.user_vote,
@@ -51,21 +56,20 @@ export async function competitionDropVoteSummary(
       }))
   };
 }
-async function visibleEntry(drop: DropEntity, ctx: RequestContext) {
-  const { entry } = await competitionEntryService.getDropContext(
-    drop.wave_id,
-    drop.id,
-    ctx
+async function visibleContext(drop: DropEntity, ctx: RequestContext) {
+  const { entry, competition } = await withoutLegacyCompetitionGetFacade(() =>
+    competitionEntryService.getDropContext(drop.wave_id, drop.id, ctx)
   );
-  if (!entry) throw new NotFoundException('Competition entry not found');
-  return entry;
+  if (!entry || !competition)
+    throw new NotFoundException('Decision entry not found');
+  return { entry, competition };
 }
 export async function competitionDropVoters(
   drop: DropEntity,
   params: { page: number; page_size: number; sort_direction: string },
   ctx: RequestContext
 ): Promise<ApiDropVotersPage> {
-  const entry = await visibleEntry(drop, ctx);
+  const { entry } = await visibleContext(drop, ctx);
   const [rows, totals] = await Promise.all([
     competitionDropVotesDb.voters(
       entry,
@@ -95,7 +99,7 @@ export async function competitionDropVoteLogs(
   params: { offset: number; limit: number; sort_direction: string },
   ctx: RequestContext
 ): Promise<ApiDropVoteEditLog[]> {
-  const entry = await visibleEntry(drop, ctx);
+  const { entry } = await visibleContext(drop, ctx);
   const rows = await competitionDropVotesDb.logs(
     entry,
     params.offset,
@@ -114,4 +118,36 @@ export async function competitionDropVoteLogs(
     created_at: Number(row.created_at),
     voter: profiles[row.voter_profile_id]
   }));
+}
+
+export async function competitionDropVoteDistribution(
+  drop: DropEntity,
+  ctx: RequestContext
+) {
+  const { entry, competition } = await visibleContext(drop, ctx);
+  if (competition.type !== 'RANK' || entry.status !== 'ACTIVE') return [];
+  return competitionDropVotesDb.distribution(entry, ctx);
+}
+
+export async function competitionDropVotersCsv(
+  drop: DropEntity,
+  ctx: RequestContext
+) {
+  const { entry } = await visibleContext(drop, ctx);
+  const rows = await competitionDropVotesDb.allVoters(entry, ctx);
+  const profiles = rows.length
+    ? await identityFetcher.getApiIdentityOverviewsByIds(
+        rows.map((row) => row.voter_id),
+        ctx
+      )
+    : {};
+  return rows.map((row) => {
+    const voter = profiles[row.voter_id];
+    return {
+      handle: voter?.handle ?? '',
+      level: voter?.level ?? 0,
+      primary_address: voter?.primary_address ?? '',
+      vote: Number(row.vote)
+    };
+  });
 }

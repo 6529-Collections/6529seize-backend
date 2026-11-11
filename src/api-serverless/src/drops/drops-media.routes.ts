@@ -10,6 +10,7 @@ import {
 import { ForbiddenException } from '../../../exceptions';
 import { NotFoundException } from '@/exceptions';
 import { uploadMediaService } from '../media/upload-media.service';
+import { multipartCompletionClientError } from '../media/multipart-completion-errors';
 import { dropMediaUploadsDb } from '@/drops/drop-media-uploads.db';
 import { ApiDropMediaStatus } from '@/api/generated/models/ApiDropMediaStatus';
 import { getValidatedByJoiOrThrow } from '../validation';
@@ -84,6 +85,7 @@ router.post(
       {
         content_type: req.body.content_type,
         file_name: req.body.file_name,
+        purpose: req.body.purpose,
         author: authenticatedProfileId
       },
       MediaPrepRequestSchema
@@ -91,7 +93,8 @@ router.post(
     const response = await uploadMediaService.createSingedDropMediaUploadUrl({
       content_type: validatedRequest.content_type,
       author_id: validatedRequest.author,
-      file_name: validatedRequest.file_name
+      file_name: validatedRequest.file_name,
+      purpose: validatedRequest.purpose
     });
     res.send(response);
   }
@@ -120,7 +123,8 @@ router.post(
       await uploadMediaService.getDropMediaMultipartUploadKeyAndUploadId({
         content_type: validatedRequest.content_type,
         author_id: validatedRequest.author,
-        file_name: validatedRequest.file_name
+        file_name: validatedRequest.file_name,
+        purpose: validatedRequest.purpose
       });
 
     res.send(response);
@@ -169,10 +173,17 @@ router.post(
       req.body,
       ApiCompleteMultipartUploadRequestSchema
     );
-    const response = await uploadMediaService.completeMultipartUpload({
-      ...validatedRequest,
-      authenticatedProfileId
-    });
+    let response: ApiCompleteMultipartUploadResponse;
+    try {
+      response = await uploadMediaService.completeMultipartUpload({
+        ...validatedRequest,
+        authenticatedProfileId
+      });
+    } catch (error) {
+      // An upload that no longer exists or parts that do not match it are
+      // the client's error (400), as on the attachments route.
+      throw multipartCompletionClientError(error) ?? error;
+    }
     res.send(response);
   }
 );

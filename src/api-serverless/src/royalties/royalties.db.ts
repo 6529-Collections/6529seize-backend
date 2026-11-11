@@ -14,6 +14,7 @@ import {
 import { Time } from '../../../time';
 import { sqlExecutor } from '../../../sql-executor';
 import * as mysql from 'mysql';
+import { artistListRegExp } from '@/api/collection-report-query';
 
 export interface RoyaltyResponse {
   token_id: number;
@@ -67,7 +68,7 @@ export function getRoyaltiesSql(
       nftFilters,
       `${nftsTable}.artist REGEXP :artist`
     );
-    params.artist = `(^|,| and )${artist}($|,| and )`;
+    params.artist = artistListRegExp(artist);
   }
 
   if (fromDate) {

@@ -3,6 +3,13 @@ import { WALLET_AUTH_SESSIONS_TABLE } from '@/constants';
 
 export type WalletAuthClientType = 'web' | 'native' | 'desktop';
 
+/**
+ * How the wallet approved a session: a SIWE web sign-in (origin checked), a
+ * structured 6529 sign-in text, or a connection-share code redeemed from an
+ * existing session.
+ */
+export type WalletAuthSignatureFormat = 'siwe' | 'structured' | 'share';
+
 @Entity(WALLET_AUTH_SESSIONS_TABLE)
 export class WalletAuthSessionEntity {
   @PrimaryColumn({ type: 'varchar', length: 36, nullable: false })
@@ -34,6 +41,14 @@ export class WalletAuthSessionEntity {
 
   @Column({ type: 'varchar', length: 255, nullable: true, default: null })
   readonly client_origin!: string | null;
+
+  // Null for sessions created before it was recorded.
+  @Column({ type: 'varchar', length: 16, nullable: true, default: null })
+  readonly signature_format?: WalletAuthSignatureFormat | null;
+
+  // Origin header of the request that created the session, when it sent one.
+  @Column({ type: 'varchar', length: 255, nullable: true, default: null })
+  readonly request_origin?: string | null;
 
   @Column({
     type: 'datetime',
