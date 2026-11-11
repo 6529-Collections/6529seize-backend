@@ -54,6 +54,19 @@ require('./user-groups.routes');
 mockCurrentFile = 'eligible-for';
 require('./user-groups-im-elgigible-for.routes');
 
+describe('route registration', () => {
+  it('registers the routes exercised below', () => {
+    expect(
+      mockRoutes.map(({ file, method, path }) => `${file} ${method} ${path}`)
+    ).toEqual(
+      expect.arrayContaining([
+        'user-groups post /:group_id/visible',
+        'eligible-for get /'
+      ])
+    );
+  });
+});
+
 function proxyContext(actions: ProfileProxyActionType[]) {
   return new AuthenticationContext({
     authenticatedWallet: '0xproxy',
@@ -69,9 +82,13 @@ function proxyContext(actions: ProfileProxyActionType[]) {
 }
 
 function route(file: string, method: string, path: string) {
-  return mockRoutes.find(
+  const registered = mockRoutes.find(
     (it) => it.file === file && it.method === method && it.path === path
-  )!.handler;
+  );
+  if (!registered) {
+    throw new Error(`Route not registered: ${file} ${method} ${path}`);
+  }
+  return registered.handler;
 }
 
 function request() {
