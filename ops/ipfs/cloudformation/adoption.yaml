@@ -1,0 +1,313 @@
+# Existing production baseline. Edit this YAML directly; imports never harden or replace resources.
+AWSTemplateFormatVersion: '2010-09-09'
+Description:
+  6529 production IPFS observed baseline for import only; preserve existing
+  configuration.
+Metadata:
+  ObservedAt: '2026-11-11'
+  AccountId: '987989283142'
+  Region: us-east-1
+  Purpose:
+    Import only. Existing SSH/swarm ingress and unencrypted root disk are preserved,
+    not endorsed for new servers.
+Resources:
+  Blocks:
+    # Import-only observed state: no versioning/logging. A separate BucketPolicy
+    # is outside ownership here; creating one is forbidden during IMPORT. The new
+    # storage template enforces TLS/versioning/logging. Harden the live bucket in
+    # a separately authorized change after adoption, without falsifying baseline.
+    Type: AWS::S3::Bucket # NOSONAR
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      AbacStatus: Disabled
+      PublicAccessBlockConfiguration:
+        RestrictPublicBuckets: true
+        BlockPublicPolicy: true
+        BlockPublicAcls: true
+        IgnorePublicAcls: true
+      BucketName: 6529ipfs
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerEnforced
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - BucketKeyEnabled: false
+            BlockedEncryptionTypes:
+              EncryptionType:
+                - SSE-C
+            ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+  SharedDistribution:
+    Type: AWS::CloudFront::Distribution
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      DistributionConfig:
+        Logging:
+          IncludeCookies: false
+          Bucket: ''
+          Prefix: ''
+        Comment: ''
+        DefaultRootObject: ''
+        Origins:
+          - ConnectionTimeout: 10
+            OriginAccessControlId: ''
+            ConnectionAttempts: 3
+            OriginCustomHeaders: []
+            DomainName: d3lqz0a4bldqgf.cloudfront.net
+            OriginShield:
+              Enabled: false
+            OriginPath: ''
+            Id: d3lqz0a4bldqgf.cloudfront.net
+            CustomOriginConfig:
+              IpAddressType: ipv4
+              OriginReadTimeout: 30
+              HTTPSPort: 443
+              OriginKeepaliveTimeout: 5
+              OriginSSLProtocols:
+                - TLSv1.2
+              HTTPPort: 80
+              OriginProtocolPolicy: https-only
+          - ConnectionTimeout: 10
+            OriginAccessControlId: ''
+            ConnectionAttempts: 3
+            OriginCustomHeaders: []
+            DomainName: arweave.net
+            OriginShield:
+              Enabled: false
+            OriginPath: ''
+            Id: arweave.net
+            CustomOriginConfig:
+              IpAddressType: ipv4
+              OriginReadTimeout: 30
+              HTTPSPort: 443
+              OriginKeepaliveTimeout: 5
+              OriginSSLProtocols:
+                - TLSv1.2
+              HTTPPort: 80
+              OriginProtocolPolicy: https-only
+          - ConnectionTimeout: 10
+            OriginAccessControlId: ''
+            ConnectionAttempts: 3
+            OriginCustomHeaders: []
+            DomainName: ipfs-origin.6529.io
+            OriginShield:
+              Enabled: false
+            OriginPath: ''
+            Id: ipfs-origin.6529.io-mpdrdgbr8bk
+            CustomOriginConfig:
+              IpAddressType: ipv4
+              OriginReadTimeout: 30
+              HTTPSPort: 443
+              OriginKeepaliveTimeout: 5
+              OriginSSLProtocols:
+                - TLSv1.2
+              HTTPPort: 80
+              OriginProtocolPolicy: https-only
+        ViewerCertificate:
+          SslSupportMethod: sni-only
+          MinimumProtocolVersion: TLSv1.2_2021
+          AcmCertificateArn: arn:aws:acm:us-east-1:987989283142:certificate/39d34d5f-a624-4127-8bbe-1aa07384664b
+        PriceClass: PriceClass_All
+        DefaultCacheBehavior:
+          Compress: true
+          FunctionAssociations:
+            - FunctionARN: arn:aws:cloudfront::987989283142:function/usercontent-legacy-media-redirect
+              EventType: viewer-request
+          LambdaFunctionAssociations: []
+          TargetOriginId: ipfs-origin.6529.io-mpdrdgbr8bk
+          ViewerProtocolPolicy: redirect-to-https
+          GrpcConfig:
+            Enabled: false
+          TrustedSigners: []
+          FieldLevelEncryptionId: ''
+          TrustedKeyGroups: []
+          AllowedMethods:
+            - HEAD
+            - GET
+          CachedMethods:
+            - HEAD
+            - GET
+          SmoothStreaming: false
+          CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad
+        Staging: false
+        CustomErrorResponses: []
+        ContinuousDeploymentPolicyId: ''
+        OriginGroups:
+          Quantity: 0
+          Items: []
+        Enabled: true
+        Aliases:
+          - ipfs-cache.6529.io
+          - ipfs.6529.io
+          - media.6529.io
+        IPV6Enabled: true
+        WebACLId: arn:aws:wafv2:us-east-1:987989283142:global/webacl/CreatedByCloudFront-14fdc626/666279fb-35bd-4ed3-8f0f-f4a53b750424
+        HttpVersion: http2
+        Restrictions:
+          GeoRestriction:
+            Locations: []
+            RestrictionType: none
+        CacheBehaviors:
+          - Compress: true
+            FunctionAssociations:
+              - FunctionARN: arn:aws:cloudfront::987989283142:function/usercontent-legacy-media-redirect
+                EventType: viewer-request
+            LambdaFunctionAssociations: []
+            TargetOriginId: ipfs-origin.6529.io-mpdrdgbr8bk
+            ViewerProtocolPolicy: redirect-to-https
+            GrpcConfig:
+              Enabled: false
+            TrustedSigners: []
+            FieldLevelEncryptionId: ''
+            TrustedKeyGroups: []
+            AllowedMethods:
+              - HEAD
+              - GET
+            PathPattern: /ipfs/*
+            CachedMethods:
+              - HEAD
+              - GET
+            SmoothStreaming: false
+            CachePolicyId: 83da9c7e-98b4-4e11-a168-04f0df8e2c65
+          - Compress: true
+            FunctionAssociations:
+              - FunctionARN: arn:aws:cloudfront::987989283142:function/media-prefix-router
+                EventType: viewer-request
+            LambdaFunctionAssociations: []
+            TargetOriginId: arweave.net
+            ViewerProtocolPolicy: redirect-to-https
+            ResponseHeadersPolicyId: 60669652-455b-4ae9-85a4-c4c02393f86c
+            GrpcConfig:
+              Enabled: false
+            TrustedSigners: []
+            FieldLevelEncryptionId: ''
+            TrustedKeyGroups: []
+            AllowedMethods:
+              - HEAD
+              - GET
+            PathPattern: /arweave/*
+            CachedMethods:
+              - HEAD
+              - GET
+            SmoothStreaming: false
+            CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6
+          - Compress: true
+            FunctionAssociations:
+              - FunctionARN: arn:aws:cloudfront::987989283142:function/media-prefix-router
+                EventType: viewer-request
+            LambdaFunctionAssociations: []
+            TargetOriginId: d3lqz0a4bldqgf.cloudfront.net
+            ViewerProtocolPolicy: redirect-to-https
+            ResponseHeadersPolicyId: 60669652-455b-4ae9-85a4-c4c02393f86c
+            GrpcConfig:
+              Enabled: false
+            TrustedSigners: []
+            FieldLevelEncryptionId: ''
+            TrustedKeyGroups: []
+            AllowedMethods:
+              - HEAD
+              - GET
+            PathPattern: /s3/*
+            CachedMethods:
+              - HEAD
+              - GET
+            SmoothStreaming: false
+            OriginRequestPolicyId: acba4595-bd28-49b8-b9fe-13317c0390fa
+            CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6
+      # CloudFront has cloudFormationSystemTags=false. Declaring its unchanged
+      # Name tag makes import call the configuration UPDATE handler for tagging.
+      # Leave tags unmanaged here so import remains read-only for CloudFront;
+      # the complete native-model fingerprint still verifies the existing tags.
+  ServerSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      GroupDescription: Security group for 6529 ipfs
+      GroupName: 6529-ipfs-sg
+      VpcId: vpc-0049175e3bed48694
+      SecurityGroupIngress:
+        - CidrIp: 0.0.0.0/0
+          Description: IPFS Gateway
+          FromPort: 80
+          ToPort: 80
+          IpProtocol: tcp
+        - CidrIp: 0.0.0.0/0
+          Description: IPFS Swarm
+          FromPort: 4001
+          ToPort: 4001
+          IpProtocol: tcp
+        # Existing SSH exposure must match during import. New compute has no SSH
+        # ingress. Closing this rule requires a separately authorized live change.
+        - CidrIp: 0.0.0.0/0 # NOSONAR
+          Description: SSH Access
+          FromPort: 22
+          ToPort: 22
+          IpProtocol: tcp
+        - CidrIp: 0.0.0.0/0
+          FromPort: 443
+          ToPort: 443
+          IpProtocol: tcp
+      SecurityGroupEgress:
+        - CidrIp: 0.0.0.0/0
+          IpProtocol: '-1'
+  Server:
+    # Import preserves its existing interface/public-IP mode; the full native
+    # model fingerprint covers it. New compute explicitly disables automatic IPs.
+    Type: AWS::EC2::Instance # NOSONAR
+    Metadata:
+      cfn-lint:
+        config:
+          # This import pins the observed AZ; it does not select an AZ for a new host.
+          ignore_checks: [W3010]
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      Tenancy: default
+      PrivateIpAddress: 172.31.30.106
+      BlockDeviceMappings:
+        - Ebs:
+            SnapshotId: snap-0ea137085731e5c98
+            VolumeType: gp3
+            Encrypted: false
+            Iops: 3000
+            VolumeSize: 30
+            DeleteOnTermination: true
+          DeviceName: /dev/sda1
+      IamInstanceProfile: EC2SSMRole
+      SubnetId: subnet-06b43f62a9c3c29ec
+      EbsOptimized: false
+      EnclaveOptions:
+        Enabled: false
+      ImageId: ami-0e2c8caa4b6378d8c
+      InstanceType: t2.large
+      Monitoring: false
+      Tags:
+        - Value: 6529-ipfs-server
+          Key: Name
+      HibernationOptions:
+        Configured: false
+      MetadataOptions:
+        HttpPutResponseHopLimit: 2
+        HttpProtocolIpv6: disabled
+        HttpTokens: required
+        InstanceMetadataTags: disabled
+        HttpEndpoint: enabled
+      InstanceInitiatedShutdownBehavior: stop
+      CpuOptions:
+        ThreadsPerCore: 1
+        CoreCount: 2
+      AvailabilityZone: us-east-1c
+      PrivateDnsNameOptions:
+        EnableResourceNameDnsARecord: true
+        HostnameType: ip-name
+        EnableResourceNameDnsAAAARecord: false
+      SecurityGroupIds:
+        - sg-03b5af7f71e361d25
+      DisableApiTermination: false
+      KeyName: seize-prod
+      SourceDestCheck: true
+      CreditSpecification:
+        CPUCredits: standard

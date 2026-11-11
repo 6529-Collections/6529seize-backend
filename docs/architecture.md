@@ -2996,3 +2996,50 @@ and recheck visibility; activity cannot move IDs between pages. Subwaves remain
 accessible through their parents. The API returns 410 for expired snapshots and
 503 when shared storage is unavailable rather than silently truncating the list.
 Deploy the `api` service before the frontend that consumes this additive endpoint.
+
+## IPFS infrastructure management
+
+`ops/ipfs/` defines isolated persistent S3 storage, replaceable EC2 candidates,
+the pinned Kubo binary with its bundled S3 datastore, nginx/systemd/TLS setup,
+and logical pin/MFS/identity backup and restoration. Checked-in CloudFormation
+YAML files under `ops/ipfs/cloudformation/` own access, storage, compute and edge
+definitions. The controller reads and submits those files directly; there is no
+Python template generator. Its pinned PyYAML reader runs only on the controller,
+not the EC2 runtime. S3 request logs and CloudFront access logs use separate private
+log buckets; only the CloudFront log bucket enables ACLs for the logging API.
+`ipfs-ci.yml` rehearses the real binary with disposable
+loopback S3 and HTTPS fixtures. The explicit-dispatch
+`ipfs-manage.yml` workflow validates the reviewed source, environment, account,
+and candidate identity before assuming deployment authority or sending SSM work.
+IPFS has one shared deployment target, `prod`, with dispatch restricted to `main`
+and the `ipfs-prod` GitHub environment. It has no separate staging deployment.
+Local/CI fixtures create no AWS environment; future production rollouts validate
+an unpublished replacement candidate before traffic handover.
+
+The application's IPFS API contract and serving configuration remain unchanged.
+Runtime deployment remains disabled by checked-in policy. A separate
+`ipfs-adopt.yml` workflow and import-only `adoption.yaml` baseline cover the existing
+production bucket, instance, its exclusively used security group and the entire
+shared CDN. `adoption.py` requires exact IDs,
+full native-model fingerprints, matching declared properties and an IMPORT-only
+change set bound to one source SHA/baseline. Preparation and execution are separate
+dispatches; retries reconcile the same change-set ARN. Successful adoption requires
+exact ownership, original template equality and per-resource drift checks, then
+retains an import-only service role, termination protection and a deny-all resource
+update stack policy. `adoption-access.yaml` defines dedicated roles limited to
+configuration reads and ownership tags, without SSM command, content-object write
+or DNS-change permissions.
+The separate adoption switch is enabled only for the authorized ownership import
+and reset after verification; adoption additionally requires runtime deployment to
+remain locked. Network/IAM dependencies, canonical DNS,
+edge policy/function implementations and host files are referenced, not imported.
+
+The live CloudFront distribution is
+shared with Arweave and S3 media and is not replaced by the new dedicated gateway
+template. Published candidates are sealed before DNS publication; active-daemon
+updates and restoration over a serving node are rejected. Adoption does not
+permit that candidate path to target the live bucket or canonical hostnames.
+Runtime/writer traffic handover remains a separate reviewed migration requiring
+replacement validation, a stable front door, request draining and reconciliation
+of all completed writes. See the [IPFS runbook](../ops/ipfs/README.md) for exact
+ownership boundaries, recovery limitations, deployment order and adoption steps.
