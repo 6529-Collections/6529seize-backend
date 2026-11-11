@@ -1621,8 +1621,14 @@ Important API responsibilities:
   `GET /device-grants` and the `POST` endpoints for `/device-grants/{grantId}/label`,
   `/device-grants/{grantId}/acknowledge`, and `/device-grants/{grantId}/revoke`
   return `notice_acknowledged`. Grant registration (`POST /device-grants`)
-  and public signature proofs omit the field. See the device signing grants
-  section of that document.
+  and public signature proofs omit the field. The owner-only
+  `GET /device-security-notices` reads active pending signing and Encrypted DM
+  authorizations from the primary. A linked authorization is represented by its
+  signing grant, while `POST /e2ee/devices/{device_key}/acknowledge` clears a
+  standalone Encrypted DM notice. Both acknowledgment paths leave permissions
+  intact. The additive schema must be synchronized by `dbMigrationsLoop`
+  before deploying `api`. See the device signing grants section of that
+  document.
 - Public read APIs for NFTs, TDH, waves, drops, profiles, community metrics,
   subscriptions, and notifications. Wallet distribution allocation reads
   combine Phase 0–2 distribution rows with Public subscription airdrops, while

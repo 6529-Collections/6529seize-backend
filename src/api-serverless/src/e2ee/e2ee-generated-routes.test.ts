@@ -67,6 +67,7 @@ describe('E2EE generated routes', () => {
   it.each([
     ['GET', '/e2ee/me'],
     ['POST', '/e2ee/devices'],
+    ['POST', `/e2ee/devices/${HEX32}/acknowledge`],
     ['GET', `/e2ee/devices/${HEX32}`],
     ['POST', `/e2ee/groups/${HEX32}/entries`],
     ['GET', `/e2ee/groups/${HEX32}/log?device_key=${HEX32}`],
@@ -92,6 +93,16 @@ describe('E2EE generated routes', () => {
       expect(getAuthenticationContext).not.toHaveBeenCalled();
     }
   );
+
+  it('rejects proxy sessions on the shared device notice list', async () => {
+    jest.mocked(getAuthenticationContext).mockResolvedValueOnce({
+      isAuthenticatedAsProxy: () => true
+    } as never);
+    await withServer(async (baseUrl) => {
+      const response = await fetch(`${baseUrl}/device-security-notices`);
+      expect(response.status).toBe(403);
+    });
+  });
 
   it('rejects proxies and callers without a profile when enabled', async () => {
     process.env.E2EE_DMS_ENABLED = 'true';

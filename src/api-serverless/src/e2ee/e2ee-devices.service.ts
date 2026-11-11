@@ -1,3 +1,4 @@
+import { afterCommit } from '@/db/after-commit';
 import {
   countsTowardDeviceLimit,
   E2eeServiceDeps,
@@ -234,6 +235,25 @@ export class E2eeDevicesService {
             ? null
             : Number(row.last_resort_expires_at)
       };
+    });
+  }
+
+  async acknowledgeDeviceNotice(
+    callerProfileId: string,
+    deviceKey: string
+  ): Promise<void> {
+    await this.db.executeNativeQueriesInTransaction(async (connection) => {
+      const device = await this.db.lockDevice(deviceKey, connection);
+      if (
+        device?.profile_id !== callerProfileId ||
+        !isActiveDevice(device, nowSeconds(this.deps)) ||
+        device.grant_message !== null
+      ) {
+        throw e2eeErrors.notYourDevice();
+      }
+      if (device.notice_pending) {
+        await this.db.acknowledgeDeviceNotice(deviceKey, connection);
+      }
     });
   }
 
@@ -686,34 +706,46 @@ export class E2eeDevicesService {
    * members see an unverified revocation (D109 2.4) until the device's own
    * signed revocation or expiry. Idempotent.
    */
-  async revokeDeviceOfLoginGrant(grantId: string): Promise<void> {
-    const device = await this.db.getUnrevokedDeviceOfLoginGrant(grantId);
+  async revokeDeviceOfLoginGrant(
+    grantId: string,
+    connection?: ConnectionWrapper<unknown>
+  ): Promise<void> {
+    if (!connection) {
+      return this.db.executeNativeQueriesInTransaction((tx) =>
+        this.revokeDeviceOfLoginGrant(grantId, tx)
+      );
+    }
+    const device = await this.db.getUnrevokedDeviceOfLoginGrant(
+      grantId,
+      connection
+    );
     if (!device) return;
     const deviceKey = device.device_key;
+    const locked = await this.db.lockDevice(deviceKey, connection);
+    if (
+      locked?.revoked_at !== null ||
+      locked.grant_id !== grantId ||
+      locked.grant_message === null
+    ) {
+      return;
+    }
     const recipients = await this.db.getProfilesSharingRosters(
       { deviceKey },
-      E2EE_MAX_DEVICE_GROUPS
+      E2EE_MAX_DEVICE_GROUPS,
+      connection
     );
     const now = this.deps.now();
-    const revokedNow = await this.db.executeNativeQueriesInTransaction(
-      async (connection) => {
-        const locked = await this.db.lockDevice(deviceKey, connection);
-        if (locked?.revoked_at !== null || locked.grant_id !== grantId) {
-          return false;
-        }
-        await this.db.markDeviceRevokedByGrant(
-          { deviceKey, revokedAtMs: now },
-          connection
-        );
-        await this.stopDelivery(deviceKey, now, connection);
-        return true;
-      }
+    await this.db.markDeviceRevokedByGrant(
+      { deviceKey, revokedAtMs: now },
+      connection
     );
-    if (!revokedNow) return;
-    await this.deps.events.deviceRevoked([device.profile_id, ...recipients], {
-      profile_id: device.profile_id,
-      device_key: deviceKey
-    });
+    await this.stopDelivery(deviceKey, now, connection);
+    await afterCommit(connection, () =>
+      this.deps.events.deviceRevoked([locked.profile_id, ...recipients], {
+        profile_id: locked.profile_id,
+        device_key: deviceKey
+      })
+    );
   }
 
   /** The upload's rows, each with the suite its KeyPackage bytes name. */
