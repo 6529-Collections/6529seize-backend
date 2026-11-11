@@ -224,7 +224,8 @@ Resources:
       Priority: 20
       Conditions:
         - Field: host-header
-          HostHeaderConfig: { Values: [ipfs-origin.6529.io] }
+          HostHeaderConfig:
+            Values: [ipfs-origin.6529.io, ipfs.6529.io, ipfs-cache.6529.io]
       Actions:
         - Type: forward
           ForwardConfig:
@@ -233,6 +234,46 @@ Resources:
                 Weight: { Fn::If: [SlotAActive, 100, 0] }
               - TargetGroupArn: { Ref: GatewayB }
                 Weight: { Fn::If: [SlotAActive, 0, 100] }
+  MediaGatewayRule:
+    Type: AWS::ElasticLoadBalancingV2::ListenerRule
+    Properties:
+      ListenerArn: { Ref: Listener }
+      Priority: 21
+      # The existing /ipfs/* cache policy forwards Host. Preserve media-alias
+      # fallback too, without changing the shared distribution or its function.
+      Conditions:
+        - Field: host-header
+          HostHeaderConfig: { Values: [media.6529.io] }
+      Actions:
+        - Type: forward
+          ForwardConfig:
+            TargetGroups:
+              - TargetGroupArn: { Ref: GatewayA }
+                Weight: { Fn::If: [SlotAActive, 100, 0] }
+              - TargetGroupArn: { Ref: GatewayB }
+                Weight: { Fn::If: [SlotAActive, 0, 100] }
+  ActiveWriterHealth:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: seize-ipfs-prod-active-writer-health
+      AlarmDescription: Active production IPFS writer must have a healthy HTTPS target
+      Namespace: AWS/ApplicationELB
+      MetricName: HealthyHostCount
+      Statistic: Minimum
+      Period: 60
+      EvaluationPeriods: 2
+      Threshold: 1
+      ComparisonOperator: LessThanThreshold
+      TreatMissingData: breaching
+      Dimensions:
+        - Name: LoadBalancer
+          Value: { Fn::GetAtt: [LoadBalancer, LoadBalancerFullName] }
+        - Name: TargetGroup
+          Value:
+            Fn::If:
+              - SlotAActive
+              - { Fn::GetAtt: [WriterA, TargetGroupFullName] }
+              - { Fn::GetAtt: [WriterB, TargetGroupFullName] }
 Outputs:
   DnsName:
     Value:
@@ -252,3 +293,5 @@ Outputs:
     Value: { Ref: GatewayA }
   GatewayBArn:
     Value: { Ref: GatewayB }
+  HealthAlarm:
+    Value: { Ref: ActiveWriterHealth }

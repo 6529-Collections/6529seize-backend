@@ -82,7 +82,7 @@ Resources:
   SecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
-      GroupDescription: IPFS HTTPS only from the front door and the previous writer
+      GroupDescription: Restricted IPFS HTTPS plus the existing public TCP swarm service
       VpcId:
         Ref: VpcId
       SecurityGroupIngress:
@@ -96,6 +96,10 @@ Resources:
           ToPort: 443
           SourceSecurityGroupId:
             Ref: SourceSecurityGroup
+        - IpProtocol: tcp
+          FromPort: 4001
+          ToPort: 4001
+          CidrIp: 0.0.0.0/0 # NOSONAR: preserve the existing public IPFS peer protocol; RPC, gateway and SSH remain private.
       Tags:
         - Key: Service
           Value: 6529-ipfs
@@ -112,7 +116,7 @@ Resources:
         Ref: InstanceType
       NetworkInterfaces:
         - DeviceIndex: '0'
-          AssociatePublicIpAddress: true # NOSONAR: outbound SSM/S3 in the existing public subnet; ingress is SG-restricted to ALB/previous writer.
+          AssociatePublicIpAddress: true # NOSONAR: outbound SSM/S3 in the existing public subnet; HTTPS is restricted and the original TCP swarm service is preserved.
           SubnetId:
             Ref: SubnetId
           GroupSet: [{ Ref: SecurityGroup }]
@@ -150,6 +154,22 @@ Resources:
           printf '%s\n' '{"environment":"prod","role":"candidate"}' > /etc/6529-ipfs/managed.json
           chmod 600 /etc/6529-ipfs/managed.json
           systemctl enable --now snap.amazon-ssm-agent.amazon-ssm-agent.service
+  InstanceHealth:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: { Fn::Sub: '${AWS::StackName}-instance-health' }
+      AlarmDescription: Managed IPFS runtime EC2 status checks must pass
+      Namespace: AWS/EC2
+      MetricName: StatusCheckFailed
+      Statistic: Maximum
+      Period: 60
+      EvaluationPeriods: 2
+      Threshold: 0
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: breaching
+      Dimensions:
+        - Name: InstanceId
+          Value: { Ref: Instance }
 Outputs:
   InstanceId:
     Value: { Ref: Instance }
@@ -161,3 +181,5 @@ Outputs:
   RuntimeRoleArn:
     Value:
       Fn::GetAtt: [Role, Arn]
+  HealthAlarm:
+    Value: { Ref: InstanceHealth }

@@ -51,6 +51,7 @@ GO111MODULE=off go build -trimpath -o "$destination/upload-router" "$ipfs_root/r
 curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
   "https://nginx.org/packages/ubuntu/pool/nginx/n/nginx/nginx_$(read_version nginxVersion)_amd64.deb" -o "$destination/nginx.deb"
 printf '%s  %s\n' "$(read_version nginxDebSha256)" "$destination/nginx.deb" | sha256sum -c -
+cp "$ipfs_root/production_host.py" "$destination/"
 cp "$ipfs_root/host.py" "$ipfs_root/common.py" "$ipfs_root/versions.json" "$destination/"
 cp "$ipfs_root/s3-read-only.patch" "$destination/"
 cp "$ipfs_root/handover_state.py" "$destination/"
