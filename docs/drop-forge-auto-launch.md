@@ -30,6 +30,8 @@ services need the same `DROP_FORGE_ALERT_PROFILE_IDS` configuration.
 | `DROP_FORGE_OPERATIONS_WAVE_ID`         | Manually confirmed Drop Forge Ops wave UUID                                                                                                  |
 | `DROP_FORGE_BOT_PROFILE_ID`             | `@drops6529` posting profile UUID, with permission to chat in that wave                                                                          |
 | `DROP_FORGE_ALERT_PROFILE_IDS` | Manually supplied comma-separated profile UUIDs; all must exist and see the wave                                                         |
+| `DROP_FORGE_REPORT_SIGNING_KEY_ID` | ARN of the dedicated Ed25519 report signing key |
+| `DROP_FORGE_REPORT_DEVICE_GRANT_ID` | Active Signed Posts grant issued by the posting profile's wallet |
 
 The stage policy fixes network/creator/proxy/receiver, 12 confirmations, and gas
 ceilings (100 gwei, 5,000,000 gas, 0.1 ETH gas cost per transaction). The explicit
@@ -39,7 +41,8 @@ Deployment supplies the stage; no manual stage secret or calendar URL is needed.
 Dedicated execution and Scheduler delivery roles are referenced by versioned
 stage configuration, not GitHub variables. The API publishes targeted SQS work;
 handlers consume only that job/claim and establish one-time phase/Research events
-and outstanding-work watchdogs. The preparation handler has no signing permission.
+and outstanding-work watchdogs. The preparation handler signs reports with the
+dedicated Ed25519 key. The launch handler also holds the Ethereum signing permission.
 See the setup guide for exact IAM grants, queue redrive and rollout ordering.
 The server derives dates locally from the [shared Memes calendar](shared-memes-calendar.md). It stores the calendar version, Athens timezone and exact UTC phase timestamps when Launch is accepted. Metadata updates and newer calendar versions never recalculate an active launch.
 
@@ -268,8 +271,9 @@ Provision keys, permission, reviewed stage policy and reporting configuration be
 results, a timeout, a missed deadline, pause or launch cancellation never prove
 that signed bytes are invalid. Never clear signer reservations through a DB reset.
 
-Wave drop creation and acknowledgement commit together; a reporting retry does
-not repost a committed event. Push delivery after that commit is best effort.
+The author-signed wave drop, its proof, and report acknowledgement commit
+together. A reporting retry reuses the pending report when signing fails, and
+push delivery after commit is best effort.
 Legacy DM history deletion preserves distribution-job checkpoints, wallet-funding
 receipts and their report acknowledgements. These records contain no DM message
 content; their `drop_id` fields identify reports. Deleting a report must not erase

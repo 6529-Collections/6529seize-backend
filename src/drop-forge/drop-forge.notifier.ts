@@ -5,6 +5,9 @@ import { sendIdentityPushNotifications } from '@/api/push-notifications/push-not
 import { DROP_FORGE_ALERT_MENTION } from '@/constants/mentions';
 import { DropForgeReportingConfig } from '@/drop-forge/drop-forge.config';
 import { DropForgeRepository } from '@/drop-forge/drop-forge.repository';
+import { signForgeReport } from '@/drop-forge/drop-forge.report-signing';
+import { ApiCreateDropRequest } from '@/api/generated/models/ApiCreateDropRequest';
+import { ApiDropType } from '@/api/generated/models/ApiDropType';
 import { createOrUpdateDrop } from '@/drops/create-or-update-drop.use-case';
 import { dropsDb } from '@/drops/drops.db';
 import { DropType } from '@/entities/IDrop';
@@ -92,6 +95,19 @@ export async function postForgeReport(
 ): Promise<{ drop_id: string; pending_push_notification_ids: number[] }> {
   const author = await validateForgeReporting(config, ctx);
   const alert = error ? '\n\n' + DROP_FORGE_ALERT_MENTION : '';
+  const content = formatOperationsPost(message, error) + alert;
+  const signedBody: ApiCreateDropRequest = {
+    wave_id: config.waveId,
+    drop_type: ApiDropType.Chat,
+    hide_link_preview: true,
+    title: null,
+    parts: [{ content, media: [] }],
+    referenced_nfts: [],
+    mentioned_users: [],
+    mentioned_waves: [],
+    metadata: [],
+    signature: null
+  };
   const { drop_id, pending_push_notification_ids } =
     await createOrUpdateDrop.execute(
       {
@@ -101,7 +117,7 @@ export async function postForgeReport(
         title: null,
         parts: [
           {
-            content: formatOperationsPost(message, error) + alert,
+            content,
             quoted_drop: null,
             media: []
           }
@@ -129,6 +145,7 @@ export async function postForgeReport(
     { drop_id, hide_link_preview: true },
     ctx
   );
+  await signForgeReport(drop_id, config.botId, signedBody, ctx);
   return { drop_id, pending_push_notification_ids };
 }
 

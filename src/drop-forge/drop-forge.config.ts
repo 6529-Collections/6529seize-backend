@@ -74,3 +74,12 @@ export function getDropForgeReportingConfig(): DropForgeReportingConfig {
     throw new LaunchSafetyError('Drop Forge reporting IDs must be UUIDs');
   return { waveId, botId, recipientIds };
 }
+
+export function getDropForgeReportSigningConfig() {
+  const keyId = required('DROP_FORGE_REPORT_SIGNING_KEY_ID');
+  const grantId = required('DROP_FORGE_REPORT_DEVICE_GRANT_ID');
+  if (!/^0x[0-9a-f]{64}$/.test(grantId)) {
+    throw new LaunchSafetyError('Drop Forge report grant ID must be a digest');
+  }
+  return { keyId, grantId };
+}

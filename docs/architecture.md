@@ -2479,8 +2479,10 @@ flowchart LR
   Prep --> DB
   Worker --> DB
   Worker --> KMS[AWS KMS secp256k1]
+  Worker --> ReportKMS[AWS KMS Ed25519 report key]
+  Prep --> ReportKMS
   Worker --> Chain[Creator and lazy claim contracts]
-  Prep --> Wave[Configured operations wave]
+  Prep --> Wave[Author-signed reports in the operations wave]
   Worker --> Wave
   Wave -->|Failures only| Alerts[Configured Drop Forge alert profiles]
 ```

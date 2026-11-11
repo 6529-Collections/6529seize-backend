@@ -8,6 +8,7 @@ import { NotFoundException } from '@/exceptions';
 import { IdentitiesDb } from '@/identities/identities.db';
 import { ProfileProxyActionType } from '@/entities/IProfileProxyAction';
 import {
+  canonicalizeEventBody,
   computeDeviceEventId,
   DeviceEventKind,
   ZERO_BODY_HASH
@@ -246,6 +247,49 @@ describe('DeviceSignedWritesService', () => {
   }
 
   describe('signed POST', () => {
+    it('records worker proof in the caller transaction and propagates a write failure', async () => {
+      jest.mocked(db.lockGrant).mockResolvedValue(aGrant());
+      jest.mocked(identities.getIdentityByWallet).mockResolvedValue({
+        profile_id: PROFILE_ID
+      } as never);
+      const body = {
+        wave_id: WAVE_ID,
+        parts: [{ content: 'report', media: [] }]
+      };
+      const { envelope, eventId } = signedEnvelope({
+        kind: DeviceEventKind.POST,
+        seq: 17,
+        refs: [],
+        ...canonicalizeEventBody(body)
+      });
+      const tx = { ...ctx(), connection };
+      const input = { dropId: DROP_ID, waveId: WAVE_ID, body, envelope };
+
+      await service.recordCreatedDropSignature(input, tx);
+
+      expect(db.lockGrant).toHaveBeenCalledWith(GRANT_ID, tx);
+      expect(db.reserveEvent).toHaveBeenCalledWith(
+        expect.objectContaining({ id: eventId, seq: 17 }),
+        tx
+      );
+      expect(db.attachEventToDrop).toHaveBeenCalledWith(
+        { eventId, dropId: DROP_ID },
+        tx
+      );
+      expect(db.upsertDropAuthorSignature).toHaveBeenCalledWith(
+        expect.objectContaining({ dropId: DROP_ID, eventId }),
+        tx
+      );
+      expect(db.executeNativeQueriesInTransaction).not.toHaveBeenCalled();
+
+      jest
+        .mocked(db.upsertDropAuthorSignature)
+        .mockRejectedValueOnce(new Error('proof write failed'));
+      await expect(
+        service.recordCreatedDropSignature(input, tx)
+      ).rejects.toThrow('proof write failed');
+    });
+
     it('verifies the contract vector, reserves, writes and finalizes', async () => {
       const write = jest.fn().mockResolvedValue({ id: 'new-drop' });
 

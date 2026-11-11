@@ -11,11 +11,15 @@ import {
 } from '@/drop-forge/drop-forge.test-fixtures';
 import { LaunchRecord } from '@/drop-forge/drop-forge.types';
 import { DROP_FORGE_ALERT_MENTION } from '@/constants/mentions';
+import { signForgeReport } from '@/drop-forge/drop-forge.report-signing';
 jest.mock('@/drops/create-or-update-drop.use-case', () => ({
   createOrUpdateDrop: { execute: jest.fn() }
 }));
 jest.mock('@/drops/drops.db', () => ({
   dropsDb: { updateHideLinkPreview: jest.fn().mockResolvedValue(undefined) }
+}));
+jest.mock('@/drop-forge/drop-forge.report-signing', () => ({
+  signForgeReport: jest.fn().mockResolvedValue(undefined)
 }));
 jest.mock('@/drop-forge/drop-forge.reporting-access', () => ({
   validateForgeReporting: jest.fn().mockResolvedValue('bot')
@@ -84,11 +88,42 @@ it('posts new preview output only in the operations wave and tags only failures'
       '🔔 **Public mint closed**\n\nResearch: 18 editions'
     );
     expect(messages[1].parts[0].content).toContain(DROP_FORGE_ALERT_MENTION);
+    expect(signForgeReport).toHaveBeenCalledWith(
+      'posted',
+      testConfig.botId,
+      expect.objectContaining({
+        wave_id: testConfig.waveId,
+        parts: [{ content: messages[1].parts[0].content, media: [] }],
+        hide_link_preview: true
+      }),
+      expect.any(Object)
+    );
   } finally {
     if (previous === undefined)
       delete process.env.DEPLOYER_ANNOUNCEMENTS_WAVE_IDS;
     else process.env.DEPLOYER_ANNOUNCEMENTS_WAVE_IDS = previous;
   }
+});
+it('leaves a report pending when signing fails and acknowledges its retry once', async () => {
+  records[0].data.events = [];
+  addLaunchEvent(records[0], 'Launch completed');
+  jest.mocked(createOrUpdateDrop.execute).mockResolvedValue({
+    drop_id: 'signed-report',
+    dm_unread_recipient_ids: [],
+    pending_push_notification_ids: [1]
+  });
+  jest
+    .mocked(signForgeReport)
+    .mockRejectedValueOnce(new Error('KMS unavailable'));
+
+  expect(await reportLaunchEvents(testConfig, repository, 'launch')).toBe(
+    false
+  );
+  expect(records[0].data.events[0].drop_id).toBeFalsy();
+  expect(sendIdentityPushNotifications).not.toHaveBeenCalled();
+  expect(await reportLaunchEvents(testConfig, repository, 'launch')).toBe(true);
+  expect(records[0].data.events[0].drop_id).toBe('signed-report');
+  expect(sendIdentityPushNotifications).toHaveBeenCalledTimes(1);
 });
 it('posts events in order and commits their acknowledgements before pushing notifications', async () => {
   type Report = Awaited<ReturnType<typeof createOrUpdateDrop.execute>>;

@@ -56,7 +56,23 @@ The worker validates these permissions before accepting a launch and before repo
 `@dropforgeops` expands to those recipients through the same global-mention
 mechanism as `@devs6529`. Use `@drops6529` to mention the posting profile
 directly. The posting profile uses a separate wallet from the KMS signer.
-Its profile UUID is sufficient to configure report posting.
+Use its profile UUID for report authorship.
+
+### Enroll the report signing key
+
+Create a dedicated `ECC_NIST_EDWARDS25519` signing key in the worker's AWS
+region. Export its raw 32-byte public key and have the wallet that owns
+`@drops6529` approve a [Signed Posts device grant](auth/wallet-auth.md#device-signing-grants)
+with only the `post` scope. Register the grant under that wallet in the target
+environment. Put the key ARN in `DROP_FORGE_REPORT_SIGNING_KEY_ID` and the
+registered grant ID in `DROP_FORGE_REPORT_DEVICE_GRANT_ID` in the regional
+runtime secret. Both handler roles need `kms:Sign` on that exact report key.
+The launch role separately retains access to the Ethereum transaction key.
+
+Keep the grant active and renew it before its expiry. Configure the new grant
+ID and refresh both workers after renewal. If the grant is unavailable or
+signing fails, reports stay pending for retry. Verify a staged report's
+author-signed status and proof before enabling scheduled work.
 
 Make the recipient setting available to `api`, `dropForgeLaunchHandler` and
 `memesDistributionHandler`. The new handlers create their own reports and resolve
@@ -94,10 +110,10 @@ runtime permissions for logs, VPC networking, Secrets Manager, database/Redis ac
 and the existing wave/push delivery path. Confirm network access to RPC, KMS, Secrets
 Manager and the upstream APIs from the configured subnets.
 
-Only the launch role receives `kms:GetPublicKey` and `kms:Sign`, scoped to the
-operational key created below. Permit that role in the KMS key policy too. Do not
-grant signing permission to the API, preparation role or shared Lambda role. Check
-existing broad IAM grants when reviewing the effective key policy.
+Scope the launch role's `kms:GetPublicKey` and `kms:Sign` to the Ethereum
+transaction key. Grant both handler roles `kms:Sign` on the separate Ed25519
+report key. Match those grants in the two key policies and review existing broad
+IAM grants when checking effective access.
 
 Role names are maintained in the stage configuration:
 
@@ -125,6 +141,7 @@ Required runtime permissions, scoped to this account and region:
   on `schedule/drop-forge-{stage}/forge-*`, plus `iam:PassRole` for only the
   Scheduler delivery role, restricted to `scheduler.amazonaws.com`.
 - Launch alone: `kms:GetPublicKey` and `kms:Sign` on the exact operational key.
+- Both handlers: `kms:Sign` on the dedicated Ed25519 report signing key.
 - Deployment role: existing scoped CloudFormation/SQS/alarms/event-source-mapping
   permissions, Scheduler schedule-group creation, and `iam:PassRole` on the two
   exact Lambda execution roles, restricted to `lambda.amazonaws.com`.
