@@ -252,6 +252,100 @@ describe('IdentitySubscriptionsApiService.findIncomingSubscriptionsOfType', () =
     ).toHaveBeenCalledWith(expect.anything(), 'author-1');
   });
 
+  describe('anonymous competition entry viewed by its author', () => {
+    function anonymousEntryService() {
+      return createService({
+        waves: { 'public-wave': publicWave },
+        drops: {
+          'drop-1': {
+            id: 'drop-1',
+            wave_id: 'public-wave',
+            author_id: MEMBER
+          }
+        },
+        hiddenDropIds: ['drop-1']
+      });
+    }
+
+    it('keeps the author subscription for the author', async () => {
+      const { service, identitySubscriptionsDb, competitionAnonymity } =
+        anonymousEntryService();
+
+      await service.findIncomingSubscriptionsOfType(
+        incoming(ActivityEventTargetType.DROP, 'drop-1'),
+        {
+          authenticationContext: new AuthenticationContext({
+            authenticatedWallet: '0xmember',
+            authenticatedProfileId: MEMBER,
+            roleProfileId: null,
+            activeProxyActions: []
+          })
+        }
+      );
+
+      expect(competitionAnonymity.hiddenDropIds).not.toHaveBeenCalled();
+      expect(
+        identitySubscriptionsDb.findSubscriberIdsAndActionsForTarget
+      ).toHaveBeenCalledWith(expect.anything(), null);
+      expect(
+        identitySubscriptionsDb.countDistinctSubscriberIdsForTarget
+      ).toHaveBeenCalledWith(expect.anything(), null);
+    });
+
+    it('keeps the author subscription for a proxy reading on the author behalf', async () => {
+      const { service, identitySubscriptionsDb } = anonymousEntryService();
+
+      await service.findIncomingSubscriptionsOfType(
+        incoming(ActivityEventTargetType.DROP, 'drop-1'),
+        {
+          authenticationContext: proxyContext([
+            ProfileProxyActionType.READ_WAVE
+          ])
+        }
+      );
+
+      expect(
+        identitySubscriptionsDb.findSubscriberIdsAndActionsForTarget
+      ).toHaveBeenCalledWith(expect.anything(), null);
+    });
+
+    it('leaves the author out for a proxy without READ_WAVE', async () => {
+      const { service, identitySubscriptionsDb } = anonymousEntryService();
+
+      await service.findIncomingSubscriptionsOfType(
+        incoming(ActivityEventTargetType.DROP, 'drop-1'),
+        { authenticationContext: proxyContext([]) }
+      );
+
+      expect(
+        identitySubscriptionsDb.findSubscriberIdsAndActionsForTarget
+      ).toHaveBeenCalledWith(expect.anything(), MEMBER);
+    });
+
+    it('leaves the author out for any other viewer', async () => {
+      const { service, identitySubscriptionsDb } = anonymousEntryService();
+
+      await service.findIncomingSubscriptionsOfType(
+        incoming(ActivityEventTargetType.DROP, 'drop-1'),
+        {
+          authenticationContext: new AuthenticationContext({
+            authenticatedWallet: '0xother',
+            authenticatedProfileId: 'other-profile',
+            roleProfileId: null,
+            activeProxyActions: []
+          })
+        }
+      );
+
+      expect(
+        identitySubscriptionsDb.findSubscriberIdsAndActionsForTarget
+      ).toHaveBeenCalledWith(expect.anything(), MEMBER);
+      expect(
+        identitySubscriptionsDb.countDistinctSubscriberIdsForTarget
+      ).toHaveBeenCalledWith(expect.anything(), MEMBER);
+    });
+  });
+
   it('keeps all subscribers of a drop that is not anonymous', async () => {
     const { service, identitySubscriptionsDb } = createService({
       waves: { 'public-wave': publicWave },
