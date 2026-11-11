@@ -9,7 +9,7 @@ import {
   persistConsolidatedTDH,
   persistTDH
 } from '@/db';
-import { releaseHeapAfterReconsolidation } from '@/delegationsLoop/heap-release';
+import { collectGarbageAfter } from '@/delegationsLoop/heap-release';
 import {
   ConsolidatedTDH,
   ConsolidatedTDHEditions,
@@ -127,7 +127,7 @@ describe('partial TDH writes on a warm instance', () => {
     for (let run = 1; run <= RUNS; run++) {
       // Each invocation computes its rows anew, as updateTDH does.
       await invocation(groupsBefore(GROUPS), RUN + run * 60_000);
-      releaseHeapAfterReconsolidation();
+      collectGarbageAfter('RECONSOLIDATION');
       // Settle what one collection can leave for the next (weak references,
       // finalizers), so only what is still reachable is measured.
       exposedGc();

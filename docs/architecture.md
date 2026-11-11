@@ -2174,13 +2174,15 @@ completion semantics and AWS IAM invocation permissions. This action does not
 depend on mutable Sentry environment labels, including when AWS reuses a runtime
 that has already loaded regional secrets.
 
-An invocation that reconsolidated (by chain events or by this action) ends with
-a full garbage collection (`heap-release.ts`; `NODE_OPTIONS=--expose-gc` in its
-`serverless.yaml`), logged as `[GC AFTER RECONSOLIDATION]`. Lambda freezes a
+An invocation that reconsolidated (by chain events or by this action), or that
+resumed an identities sync (the nightly full walk among them), ends with a full
+garbage collection (`heap-release.ts`; `NODE_OPTIONS=--expose-gc` in its
+`serverless.yaml`), logged as `[GC AFTER RECONSOLIDATION]` or
+`[GC AFTER IDENTITIES SYNC]`; a failure there is only logged. Lambda freezes a
 warm sandbox between invocations, so V8 gets no idle time to collect a run's
 garbage, and the next run would allocate on top of it: without the collection,
-the instance's Max Memory Used creeps up run after run. Invocations that
-reconsolidate nothing skip it.
+the instance's Max Memory Used creeps up run after run. Other invocations skip
+it.
 
 `xTdhLoop` uses a two-phase FIFO queue flow. A full nightly TDH run relies only
 on the TDH completion SNS topic, published after the remaining TDH work

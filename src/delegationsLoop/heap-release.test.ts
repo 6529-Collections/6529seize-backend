@@ -1,7 +1,7 @@
 import { spawnSync } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
-import { releaseHeapAfterReconsolidation } from './heap-release';
+import { collectGarbageAfter } from './heap-release';
 
 type GcHolder = { gc?: () => void };
 
@@ -14,13 +14,29 @@ describe('the garbage collection after a reconsolidation', () => {
     const gc = jest.fn();
     (globalThis as GcHolder).gc = gc;
 
-    releaseHeapAfterReconsolidation();
+    collectGarbageAfter('RECONSOLIDATION');
 
     expect(gc).toHaveBeenCalledTimes(1);
   });
 
   it('only logs when gc is not exposed', () => {
-    expect(() => releaseHeapAfterReconsolidation()).not.toThrow();
+    expect(() => collectGarbageAfter('RECONSOLIDATION')).not.toThrow();
+  });
+
+  it('never throws, whatever fails inside', () => {
+    (globalThis as GcHolder).gc = () => {
+      throw new Error('gc failure');
+    };
+    expect(() => collectGarbageAfter('IDENTITIES SYNC')).not.toThrow();
+    (globalThis as GcHolder).gc = jest.fn();
+    const memory = jest.spyOn(process, 'memoryUsage').mockImplementation(() => {
+      throw new Error('memory read failure');
+    });
+    try {
+      expect(() => collectGarbageAfter('RECONSOLIDATION')).not.toThrow();
+    } finally {
+      memory.mockRestore();
+    }
   });
 
   it('is exposed to the deployed delegationsLoop through NODE_OPTIONS', () => {

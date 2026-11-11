@@ -333,6 +333,49 @@ describe('delegations loop on-demand reconsolidation', () => {
       expect(gc).toHaveBeenCalledTimes(1);
     });
 
+    it('runs once after a minute that resumed an identities sync', async () => {
+      jest
+        .mocked(delegations.findDelegationTransactions)
+        .mockResolvedValue(noChainEvents);
+      jest.mocked(resumePendingIdentityTdhSync).mockResolvedValue(true);
+      await invoke({ source: 'aws.events' });
+      expect(gc).toHaveBeenCalledTimes(1);
+      expect(gc.mock.invocationCallOrder[0]).toBeGreaterThan(
+        jest.mocked(resumePendingIdentityTdhSync).mock.invocationCallOrder[0]
+      );
+    });
+
+    it('leaves the invocation result and error as they are when it fails', async () => {
+      const memory = jest
+        .spyOn(process, 'memoryUsage')
+        .mockImplementation(() => {
+          throw new Error('memory read failure');
+        });
+      try {
+        await expect(
+          invoke({ action: 'reconsolidate', wallets: [COLD] })
+        ).resolves.toEqual({
+          action: 'reconsolidate',
+          status: 'completed',
+          requested_wallets: [COLD],
+          affected_wallets: [COLD, HOT],
+          block: 26_000_000
+        });
+        jest
+          .mocked(db.fetchAllConsolidatedTdh)
+          .mockResolvedValueOnce(originalSnapshot)
+          .mockResolvedValueOnce(replacementSnapshot);
+        jest
+          .mocked(consolidateOwnerBalances)
+          .mockRejectedValue(new Error('balance failure'));
+        await expect(
+          invoke({ action: 'reconsolidate', wallets: [COLD] })
+        ).rejects.toThrow('balance failure');
+      } finally {
+        memory.mockRestore();
+      }
+    });
+
     it('does not run on a minute that reconsolidates nothing', async () => {
       jest
         .mocked(delegations.findDelegationTransactions)

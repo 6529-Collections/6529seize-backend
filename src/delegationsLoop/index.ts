@@ -66,7 +66,7 @@ import {
 } from './reconsolidation';
 import { readReconsolidationAction } from './reconsolidation-action';
 import { DelegationsLoopHealth } from './delegations-loop-health';
-import { releaseHeapAfterReconsolidation } from './heap-release';
+import { collectGarbageAfter } from './heap-release';
 import {
   resumePendingIdentityTdhSync,
   startIdentitySyncBudget
@@ -75,15 +75,18 @@ import {
 const logger = Logger.get('DELEGATIONS_LOOP');
 
 /**
- * Whether this invocation reconsolidated wallets, so its end collects the
- * run's garbage (a sandbox runs one invocation at a time).
+ * Whether this invocation reconsolidated wallets, or resumed an identities
+ * sync (the nightly full walk among them), so its end collects the run's
+ * garbage (a sandbox runs one invocation at a time).
  */
 let reconsolidated = false;
+let identitiesSynced = false;
 
 export const handler = sentryContext.wrapLambdaHandler(
   async (event: unknown) => {
     const requestedWallets = readReconsolidationAction(event);
     reconsolidated = false;
+    identitiesSynced = false;
     try {
       return await doInDbContext(
         async () => {
@@ -174,7 +177,8 @@ export const handler = sentryContext.wrapLambdaHandler(
         }
       );
     } finally {
-      if (reconsolidated) releaseHeapAfterReconsolidation();
+      if (reconsolidated) collectGarbageAfter('RECONSOLIDATION');
+      else if (identitiesSynced) collectGarbageAfter('IDENTITIES SYNC');
     }
   }
 );
@@ -191,7 +195,7 @@ async function thenResumePendingIdentitySync(
     await work();
   } catch (error) {
     try {
-      await resumePendingIdentityTdhSync();
+      identitiesSynced = await resumePendingIdentityTdhSync();
     } catch (resumeError) {
       logger.error(
         `[IDENTITIES SYNC RESUME FAILED AFTER A FAILED RUN] ${resumeError}`
@@ -199,7 +203,7 @@ async function thenResumePendingIdentitySync(
     }
     throw error;
   }
-  await resumePendingIdentityTdhSync();
+  identitiesSynced = await resumePendingIdentityTdhSync();
 }
 
 async function handleDelegations(
