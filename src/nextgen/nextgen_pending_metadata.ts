@@ -14,7 +14,8 @@ import { EntityManager } from 'typeorm';
 const logger = Logger.get('NEXTGEN_PENDING_METADATA');
 
 export async function processPendingMetadataTokens(
-  entityManager: EntityManager
+  entityManager: EntityManager,
+  onIncomplete?: () => void
 ) {
   const pending = await fetchPendingNextgenTokens(entityManager);
   const collections = await fetchNextGenCollections(entityManager);
@@ -24,6 +25,7 @@ export async function processPendingMetadataTokens(
   for (const token of pending) {
     const collection = collections.find((c) => c.id === token.collection_id);
     if (!collection) {
+      onIncomplete?.();
       logger.info(`[TOKEN ID ${token.id}] : [COLLECTION NOT FOUND]`);
       continue;
     }
@@ -57,6 +59,7 @@ export async function processPendingMetadataTokens(
         `[TOKEN ID ${token.id}] : [PENDING ${isPending}] : [METADATA LINK ${metadataLink}]`
       );
     } catch (e) {
+      onIncomplete?.();
       logger.info(
         `[TOKEN ID ${token.id}] : [ERROR FETCHING METADATA] : [METADATA LINK ${metadataLink}] : [ERROR ${e}]`
       );

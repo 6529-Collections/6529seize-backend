@@ -180,6 +180,18 @@ describe('RecalculateXTdhUseCase phase handling', () => {
     expect(mockSqsSend).not.toHaveBeenCalled();
   });
 
+  it('rejects after commit if the replacement stats request cannot be queued', async () => {
+    const { repository, stats, useCase } = makeUseCase();
+    const error = new Error('queue unavailable');
+    mockSqsSend.mockRejectedValueOnce(error);
+
+    await expect(useCase.handleUniversePhase({})).rejects.toBe(error);
+
+    expect(repository.publishIdentitySnapshot).toHaveBeenCalledTimes(1);
+    expect(mockSqsSend).toHaveBeenCalledTimes(1);
+    expect(stats.handle).not.toHaveBeenCalled();
+  });
+
   it('fails before the universe transaction when stats phase queue url is missing', async () => {
     const { repository, useCase } = makeUseCase();
     mockGetStringOrNull.mockReturnValue(null);

@@ -1,7 +1,8 @@
 import {
   operationalError,
   operationalResponse,
-  withOperationalContext
+  withOperationalContext,
+  withLoopHealthReadContext
 } from './operational-errors';
 import { BadRequestException, CustomApiCompliantException } from './exceptions';
 
@@ -22,6 +23,23 @@ describe('operational error envelopes', () => {
   afterEach(() => {
     process.env = original;
     output.mockRestore();
+  });
+  it('keeps diagnostic SQL failures out of application incidents without suppressing business errors or leaking the scope', async () => {
+    const failure = new Error('diagnostic read failed');
+    await withOperationalContext('request-123', async () => {
+      await withLoopHealthReadContext(async () => {
+        await Promise.resolve();
+        operationalError('DB_API', [failure]);
+        operationalError('DB', [failure]);
+        operationalError('MYSQL_HELPERS', [failure]);
+        expect(output).not.toHaveBeenCalled();
+        operationalError('UNEXPECTED_APPLICATION_COMPONENT', [
+          new Error('unexpected')
+        ]);
+      });
+      operationalError('DB_API', [failure]);
+    });
+    expect(output).toHaveBeenCalledTimes(2);
   });
   it('emits safe context without error messages, model text, user data or arbitrary fields', () => {
     withOperationalContext('request-123', () =>

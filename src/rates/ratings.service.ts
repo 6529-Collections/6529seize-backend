@@ -1,3 +1,4 @@
+import { inSequence } from '@/db/in-sequence';
 import { Request } from 'express';
 import { json2csv } from 'json-2-csv';
 import { ApiAvailableRatingCredit } from '../api-serverless/src/generated/models/ApiAvailableRatingCredit';
@@ -83,6 +84,8 @@ import {
   RatingStats,
   UpdateRatingRequest
 } from './ratings.db';
+
+const RATINGS_TRANSFER_PAGE_SIZE = 1000;
 
 interface UpdateRatingInternalResult {
   readonly identityUpdates: IdentityUpdate[];
@@ -264,6 +267,14 @@ export class RatingsService {
       ) {
         throw new BadRequestException(`User can not rate their own profile`);
       }
+      if (!skipCreditCheck) {
+        // Before the spent credit is read. Callers that already took it
+        // (bulk rating) take it again without waiting.
+        await this.ratingsDb.lockRaterCreditOnMatter(
+          { rater_profile_id: profileId, matter: request.matter },
+          connection
+        );
+      }
       timer?.start(
         `${this.constructor.name}->updateRatingUnsafe->ratinsDb->getRating`
       );
@@ -284,7 +295,10 @@ export class RatingsService {
         const creditSpentOnThisRequest =
           Math.abs(request.rating) - Math.abs(currentRating.rating);
         const totalCredit =
-          await identitiesDb.getTdhAndXTdhCombinedAndFloored(profileId);
+          await this.identitiesDb.getTdhAndXTdhCombinedAndFloored(
+            profileId,
+            connection
+          );
         if (totalCreditSpentOnMatter + creditSpentOnThisRequest > totalCredit) {
           throw new BadRequestException(
             `Not enough credit left to spend on this matter. Changing this vote would spend ${creditSpentOnThisRequest}, but profile only has ${
@@ -619,6 +633,15 @@ export class RatingsService {
       const changedWaveRepTargetIds =
         await this.ratingsDb.executeNativeQueriesInTransaction(
           async (connection) => {
+            // Read and rewrite the ratings one at a time with the rater's own
+            // rating writes on this matter, so neither overwrites the other.
+            await this.ratingsDb.lockRaterCreditOnMatter(
+              {
+                rater_profile_id: raterProfileId,
+                matter: overRatedMatter.matter
+              },
+              connection
+            );
             const changedWaveRepTargetIds: string[] = [];
             const ratings = await this.ratingsDb.getRatingsOnMatter(
               {
@@ -761,13 +784,44 @@ export class RatingsService {
     }
   }
 
+  /**
+   * Transfers ratings a page at a time. A transferred rating is set to 0 and
+   * leaves the non-zero ratings read, so the next page is the first page
+   * again (a growing offset would skip a page each time). A rating read again
+   * after its transfer would repeat forever, so that fails the transfer.
+   */
+  private async transferRatingsPageByPage(
+    readFirstPage: () => Promise<Rating[]>,
+    transferPage: (ratings: Rating[]) => Promise<void>
+  ): Promise<void> {
+    const transferred = new Set<string>();
+    for (
+      let ratings = await readFirstPage();
+      ratings.length;
+      ratings = await readFirstPage()
+    ) {
+      for (const rating of ratings) {
+        const key = JSON.stringify([
+          rating.rater_profile_id,
+          rating.matter_target_id,
+          rating.matter,
+          rating.matter_category
+        ]);
+        if (transferred.has(key)) {
+          throw new Error(`Rating ${key} is still non-zero after its transfer`);
+        }
+        transferred.add(key);
+      }
+      await transferPage(ratings);
+    }
+  }
+
   async transferAllGivenProfileRatings(
     sourceProfileId: string,
     targetProfileId: string,
     connectionHolder: ConnectionWrapper<any>
   ) {
-    let page = 1;
-    const { sourceProfileHandle, targetProfileHandle } = await identitiesDb
+    const { sourceProfileHandle, targetProfileHandle } = await this.identitiesDb
       .getProfileHandlesByIds([sourceProfileId, targetProfileId], {
         connection: connectionHolder
       })
@@ -777,47 +831,45 @@ export class RatingsService {
           targetProfileHandle: results[targetProfileId]
         };
       });
-    while (true) {
-      const ratings =
-        await this.ratingsDb.getNonZeroRatingsForProfileOlderFirst(
+    await this.transferRatingsPageByPage(
+      () =>
+        this.ratingsDb.getNonZeroRatingsForProfileOlderFirst(
           {
             rater_profile_id: sourceProfileId,
             page_request: {
-              page,
-              page_size: 1000
+              page: 1,
+              page_size: RATINGS_TRANSFER_PAGE_SIZE
             }
           },
           connectionHolder
+        ),
+      async (ratings) => {
+        await this.deleteRatingsForProfileArchival(
+          ratings,
+          sourceProfileHandle,
+          targetProfileHandle,
+          connectionHolder
         );
-      await this.deleteRatingsForProfileArchival(
-        ratings,
-        sourceProfileHandle,
-        targetProfileHandle,
-        connectionHolder
-      );
-      const rrr = ratings
-        .map((it) => ({
-          ...it,
-          rater_profile_id: targetProfileId
-        }))
-        .filter(
-          (it) =>
-            !(
-              it.matter_target_id === targetProfileId &&
-              getMattersWhereTargetIsProfile().includes(it.matter)
-            )
+        const rrr = ratings
+          .map((it) => ({
+            ...it,
+            rater_profile_id: targetProfileId
+          }))
+          .filter(
+            (it) =>
+              !(
+                it.matter_target_id === targetProfileId &&
+                getMattersWhereTargetIsProfile().includes(it.matter)
+              )
+          );
+        await this.insertRatingsAfterProfileArchival(
+          rrr,
+          sourceProfileHandle,
+          targetProfileHandle,
+          connectionHolder
         );
-      await this.insertRatingsAfterProfileArchival(
-        rrr,
-        sourceProfileHandle,
-        targetProfileHandle,
-        connectionHolder
-      );
-      if (!ratings.length) {
-        break;
       }
-      page++;
-    }
+    );
   }
 
   async transferAllReceivedProfileRatings(
@@ -825,51 +877,45 @@ export class RatingsService {
     targetProfile: string,
     connectionHolder: ConnectionWrapper<any>
   ) {
-    let page = 1;
-    while (true) {
-      const ratings =
-        await this.ratingsDb.getNonZeroRatingsForMatterAndTargetIdOlderFirst(
+    await this.transferRatingsPageByPage(
+      () =>
+        this.ratingsDb.getNonZeroRatingsForMatterAndTargetIdOlderFirst(
           {
             matter_target_id: sourceProfile,
             matters: getMattersWhereTargetIsProfile(),
             page_request: {
-              page,
-              page_size: 1000
+              page: 1,
+              page_size: RATINGS_TRANSFER_PAGE_SIZE
             }
           },
           connectionHolder
+        ),
+      async (ratings) => {
+        await this.deleteRatingsForProfileArchival(
+          ratings,
+          sourceProfile,
+          targetProfile,
+          connectionHolder
         );
-      if (!ratings.length) {
-        break;
+        await this.insertRatingsAfterProfileArchival(
+          ratings
+            .map((it) => ({
+              ...it,
+              matter_target_id: targetProfile
+            }))
+            .filter(
+              (it) =>
+                !(
+                  it.rater_profile_id === targetProfile &&
+                  getMattersWhereTargetIsProfile().includes(it.matter)
+                )
+            ),
+          sourceProfile,
+          targetProfile,
+          connectionHolder
+        );
       }
-      await this.deleteRatingsForProfileArchival(
-        ratings,
-        sourceProfile,
-        targetProfile,
-        connectionHolder
-      );
-      await this.insertRatingsAfterProfileArchival(
-        ratings
-          .map((it) => ({
-            ...it,
-            matter_target_id: targetProfile
-          }))
-          .filter(
-            (it) =>
-              !(
-                it.rater_profile_id === targetProfile &&
-                getMattersWhereTargetIsProfile().includes(it.matter)
-              )
-          ),
-        sourceProfile,
-        targetProfile,
-        connectionHolder
-      );
-      if (!ratings.length) {
-        break;
-      }
-      page++;
-    }
+    );
     await this.profileProxyRatingCreditBalancesDb.migrateMatterTargetId({
       oldTargetId: sourceProfile,
       newTargetId: targetProfile,
@@ -1065,6 +1111,11 @@ export class RatingsService {
         }
         const matter = enums.resolve(RateMatter, apiRequest.matter)!;
         this.assertUserCanRateCategory(matter, apiRequest.category);
+        // First lock of the transaction, before the rater's ratings are read.
+        await this.ratingsDb.lockRaterCreditOnMatter(
+          { rater_profile_id: actingAsId, matter },
+          connection
+        );
         const wallets = apiRequest.target_wallet_addresses.map((it) =>
           it.toLowerCase()
         );
@@ -1073,34 +1124,35 @@ export class RatingsService {
             wallets,
             connection
           );
-        await Promise.all(
+        await inSequence(
           wallets
             .filter((wallet) => !allIdentitiesByAddresses[wallet])
-            .map((address) =>
-              this.identitiesDb.insertIdentity(
-                {
-                  consolidation_key: address,
-                  primary_address: address,
-                  profile_id: null,
-                  handle: null,
-                  normalised_handle: null,
-                  banner1: null,
-                  banner2: null,
-                  pfp: null,
-                  classification: null,
-                  sub_classification: null,
-                  cic: 0,
-                  rep: 0,
-                  tdh: 0,
-                  xtdh: 0,
-                  produced_xtdh: 0,
-                  granted_xtdh: 0,
-                  level_raw: 0,
-                  xtdh_rate: 0,
-                  basetdh_rate: 0
-                },
-                connection
-              )
+            .map(
+              (address) => () =>
+                this.identitiesDb.insertIdentity(
+                  {
+                    consolidation_key: address,
+                    primary_address: address,
+                    profile_id: null,
+                    handle: null,
+                    normalised_handle: null,
+                    banner1: null,
+                    banner2: null,
+                    pfp: null,
+                    classification: null,
+                    sub_classification: null,
+                    cic: 0,
+                    rep: 0,
+                    tdh: 0,
+                    xtdh: 0,
+                    produced_xtdh: 0,
+                    granted_xtdh: 0,
+                    level_raw: 0,
+                    xtdh_rate: 0,
+                    basetdh_rate: 0
+                  },
+                  connection
+                )
             )
         );
         allIdentitiesByAddresses =
@@ -1118,18 +1170,19 @@ export class RatingsService {
             return acc;
           }, new Set<string>())
         );
-        await Promise.all(
-          addressesThatNeedNewProfiles.map((address) =>
-            profilesService.createOrUpdateProfileWithGivenTransaction(
-              {
-                handle: `id-${address}`,
-                classification: ProfileClassification.PSEUDONYM,
-                sub_classification: null,
-                creator_or_updater_wallet: address,
-                pfp_url: null
-              },
-              { connection }
-            )
+        await inSequence(
+          addressesThatNeedNewProfiles.map(
+            (address) => () =>
+              profilesService.createOrUpdateProfileWithGivenTransaction(
+                {
+                  handle: `id-${address}`,
+                  classification: ProfileClassification.PSEUDONYM,
+                  sub_classification: null,
+                  creator_or_updater_wallet: address,
+                  pfp_url: null
+                },
+                { connection }
+              )
           )
         );
         allIdentitiesByAddresses =
@@ -1309,6 +1362,13 @@ export class RatingsService {
 
   async bulkRep({ targets }: ApiBulkRepRequest, ctx: RequestContext) {
     const authenticationContext = ctx.authenticationContext!;
+    // Everything that needs no target profile is checked before any target
+    // profile is created.
+    const raterId = authenticationContext.getActingAsId();
+    if (!raterId) {
+      throw new ForbiddenException(`Create a profile before you rate`);
+    }
+    const repAction = this.getBulkRepProxyAction(authenticationContext);
     const proposedCategories = collections.distinct(
       targets.map((target) => target.category)
     );
@@ -1325,13 +1385,23 @@ export class RatingsService {
     await this.identitiesDb.executeNativeQueriesInTransaction(
       async (connection) => {
         const ctxWithConnection = { ...ctx, connection };
+        // First lock of the transaction, before the rater's ratings are read.
+        await this.ratingsDb.lockRaterCreditOnMatter(
+          { rater_profile_id: raterId, matter: RateMatter.REP },
+          connection
+        );
+        await this.assertTargetsAreNotRater(
+          raterId,
+          targetAddresses,
+          connection
+        );
         const profileIdsByTargetAddresses =
           await profilesService.makeSureProfilesAreCreatedAndGetProfileIdsByAddresses(
             targetAddresses,
             ctxWithConnection
           );
         const isRatingItself = Object.values(profileIdsByTargetAddresses).find(
-          (it) => it === authenticationContext.getActingAsId()
+          (it) => it === raterId
         );
         if (isRatingItself) {
           throw new BadRequestException(`User can't rate themselves`);
@@ -1352,7 +1422,7 @@ export class RatingsService {
           {} as Record<string, Record<string, number>>
         );
         const ratingChanges = await this.getRatingChanges(
-          { newRatingsByCategoryAndProfile, proposedCategories },
+          { raterId, newRatingsByCategoryAndProfile },
           ctxWithConnection
         );
         const creditWastedDuringThisBulkRating = ratingChanges.reduce(
@@ -1367,11 +1437,12 @@ export class RatingsService {
         );
         const [totalCredit, historicallySpentCredit] = await Promise.all([
           this.identitiesDb.getTdhAndXTdhCombinedAndFloored(
-            authenticationContext.getActingAsId()!
+            raterId,
+            connection
           ),
           this.ratingsDb.getTotalCreditSpent(
             RateMatter.REP,
-            authenticationContext.getActingAsId()!,
+            raterId,
             ctxWithConnection
           )
         ]);
@@ -1381,49 +1452,36 @@ export class RatingsService {
             `Not enough credit left to go through with this bulk rating`
           );
         }
-        if (authenticationContext.isAuthenticatedAsProxy()) {
-          const repAction =
-            authenticationContext.activeProxyActions[
-              ProfileProxyActionType.ALLOCATE_REP
-            ];
-          if (!repAction) {
-            throw new ForbiddenException(
-              `Proxy is not allowed to give REP ratings`
-            );
-          }
-          if (repAction.credit_amount !== null) {
-            const proxyCreditBoundaryDeltas = ratingChanges
-              .flatMap((profileRatingChange) =>
-                profileRatingChange.changes.map((ratingChange) => ({
-                  targetProfileId: profileRatingChange.profileId,
-                  category: ratingChange.category,
-                  requestedCreditBoundaryDelta:
-                    Math.abs(ratingChange.newRating) -
-                    Math.abs(ratingChange.oldRating)
-                }))
-              )
-              .filter((delta) => delta.requestedCreditBoundaryDelta !== 0)
-              .sort(
-                (a, b) =>
-                  a.targetProfileId.localeCompare(b.targetProfileId) ||
-                  a.category.localeCompare(b.category)
-              );
-            for (const delta of proxyCreditBoundaryDeltas) {
-              await this.applyProxyCreditDeltaStrict({
-                actionId: repAction.id,
-                matter: RateMatter.REP,
-                targetProfileId: delta.targetProfileId,
-                category: delta.category,
+        if (repAction && repAction.credit_amount !== null) {
+          const proxyCreditBoundaryDeltas = ratingChanges
+            .flatMap((profileRatingChange) =>
+              profileRatingChange.changes.map((ratingChange) => ({
+                targetProfileId: profileRatingChange.profileId,
+                category: ratingChange.category,
                 requestedCreditBoundaryDelta:
-                  delta.requestedCreditBoundaryDelta,
-                connection,
-                timer: ctx.timer
-              });
-            }
+                  Math.abs(ratingChange.newRating) -
+                  Math.abs(ratingChange.oldRating)
+              }))
+            )
+            .filter((delta) => delta.requestedCreditBoundaryDelta !== 0)
+            .sort(
+              (a, b) =>
+                a.targetProfileId.localeCompare(b.targetProfileId) ||
+                a.category.localeCompare(b.category)
+            );
+          for (const delta of proxyCreditBoundaryDeltas) {
+            await this.applyProxyCreditDeltaStrict({
+              actionId: repAction.id,
+              matter: RateMatter.REP,
+              targetProfileId: delta.targetProfileId,
+              category: delta.category,
+              requestedCreditBoundaryDelta: delta.requestedCreditBoundaryDelta,
+              connection,
+              timer: ctx.timer
+            });
           }
         }
         const now = Time.now().toDate();
-        const raterId = ctx.authenticationContext!.getActingAsId()!;
         const newRatingEntities = ratingChanges
           .map<Rating[]>((profileChange) =>
             profileChange.changes.map<Rating>((ratingChange) => ({
@@ -1480,17 +1538,26 @@ export class RatingsService {
             0
           )
         }));
-        await Promise.all([
-          this.identitiesDb.bulkUpdateReps(repBulkUpdates, ctxWithConnection),
-          this.eventScheduler.scheduleBulkRepRatingChangedEvents(
-            events,
-            connection
-          ),
-          profileActivityLogsDb.bulkInsertProfileActivityLogs(
-            logs,
-            ctxWithConnection
-          ),
-          this.ratingsDb.bulkUpsertRatings(newRatingEntities, ctxWithConnection)
+        // Ratings before identities, as every rating path: the identities
+        // metrics sync locks in that order too (identity-metrics-sync.ts).
+        await inSequence([
+          () =>
+            this.ratingsDb.bulkUpsertRatings(
+              newRatingEntities,
+              ctxWithConnection
+            ),
+          () =>
+            this.identitiesDb.bulkUpdateReps(repBulkUpdates, ctxWithConnection),
+          () =>
+            this.eventScheduler.scheduleBulkRepRatingChangedEvents(
+              events,
+              connection
+            ),
+          () =>
+            profileActivityLogsDb.bulkInsertProfileActivityLogs(
+              logs,
+              ctxWithConnection
+            )
         ]);
       }
     );
@@ -1498,22 +1565,36 @@ export class RatingsService {
 
   private async getRatingChanges(
     {
-      newRatingsByCategoryAndProfile,
-      proposedCategories
+      raterId,
+      newRatingsByCategoryAndProfile
     }: {
+      raterId: string;
       newRatingsByCategoryAndProfile: Record<string, Record<string, number>>;
-      proposedCategories: string[];
     },
     ctxWithConnection: RequestContext
   ) {
-    const ratingEntities =
-      await this.ratingsDb.getAllRepRatingsForTargetsAndCategories(
-        {
-          targets: Object.keys(newRatingsByCategoryAndProfile),
-          categories: proposedCategories
-        },
-        ctxWithConnection
-      );
+    // The rater's own current ratings, locked: only these are the old values.
+    const ratingEntities = await this.ratingsDb.getRaterRepRatingsForUpdate(
+      {
+        rater_profile_id: raterId,
+        pairs: Object.entries(newRatingsByCategoryAndProfile).flatMap(
+          ([matter_target_id, categoryRatings]) =>
+            Object.keys(categoryRatings).map((matter_category) => ({
+              matter_target_id,
+              matter_category
+            }))
+        )
+      },
+      ctxWithConnection
+    );
+    const ratingKey = (rater: string, target: string, category: string) =>
+      JSON.stringify([rater, target, category]);
+    const currentRatings = new Map(
+      ratingEntities.map((it) => [
+        ratingKey(it.rater_profile_id, it.matter_target_id, it.matter_category),
+        it.rating
+      ])
+    );
     const categoryRatingsByProfiles = Object.entries(
       newRatingsByCategoryAndProfile
     ).reduce(
@@ -1521,11 +1602,7 @@ export class RatingsService {
         acc[profileId] = Object.entries(categoryRatings).reduce(
           (accInner, [category, amount]) => {
             const oldRating =
-              ratingEntities.find(
-                (it) =>
-                  it.matter_target_id === profileId &&
-                  it.matter_category === category
-              )?.rating ?? 0;
+              currentRatings.get(ratingKey(raterId, profileId, category)) ?? 0;
             accInner[category] = {
               oldRating,
               newRating: amount
@@ -1554,6 +1631,41 @@ export class RatingsService {
           }))
       })
     );
+  }
+
+  /** The acting proxy's REP action; null when not acting as a proxy. */
+  private getBulkRepProxyAction(authenticationContext: AuthenticationContext) {
+    if (!authenticationContext.isAuthenticatedAsProxy()) {
+      return null;
+    }
+    const repAction =
+      authenticationContext.activeProxyActions[
+        ProfileProxyActionType.ALLOCATE_REP
+      ];
+    if (!repAction) {
+      throw new ForbiddenException(`Proxy is not allowed to give REP ratings`);
+    }
+    return repAction;
+  }
+
+  /** Rejects targets among the rater's own wallets, before any is created. */
+  private async assertTargetsAreNotRater(
+    raterId: string,
+    targetAddresses: string[],
+    connection: ConnectionWrapper<any>
+  ): Promise<void> {
+    const raterIdentity = await this.identitiesDb.getIdentityByProfileId(
+      raterId,
+      connection
+    );
+    const raterWallets = new Set(
+      raterIdentity?.consolidation_key.toLowerCase().split('-') ?? []
+    );
+    if (
+      targetAddresses.some((address) => raterWallets.has(address.toLowerCase()))
+    ) {
+      throw new BadRequestException(`User can't rate themselves`);
+    }
   }
 
   private assertUserCanRateCategory(

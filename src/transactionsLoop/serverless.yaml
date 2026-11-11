@@ -272,14 +272,11 @@ resources:
         - MemeLabTransactionsLoopThrottleAlarm
       Properties:
         AlarmName: !Sub "${AWS::StackName}-transactionIngestion-Incident"
-        AlarmDescription: !Sub "Transaction ingestion errors or sustained throttling in ${AWS::Region}"
+        AlarmDescription: !Sub "Transaction ingestion invocation errors in ${AWS::Region}; contention is assessed by operational monitoring"
         AlarmRule: !Sub >-
           ALARM("${AWS::StackName}-memesTransactionsLoop-Errors") OR
-          ALARM("${AWS::StackName}-memesTransactionsLoop-Throttles") OR
           ALARM("${AWS::StackName}-gradientsTransactionsLoop-Errors") OR
-          ALARM("${AWS::StackName}-gradientsTransactionsLoop-Throttles") OR
-          ALARM("${AWS::StackName}-memeLabTransactionsLoop-Errors") OR
-          ALARM("${AWS::StackName}-memeLabTransactionsLoop-Throttles")
+          ALARM("${AWS::StackName}-memeLabTransactionsLoop-Errors")
         AlarmActions:
           - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}
         OKActions:

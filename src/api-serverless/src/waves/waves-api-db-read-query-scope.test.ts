@@ -32,15 +32,23 @@ describe('hot GET query sources', () => {
     });
     expect(queries).toHaveLength(2);
     for (const sql of queries) {
-      expect(sql).toContain('from legacy_get_drops');
+      // The badge drop projection keeps the view's types but is read from
+      // base tables: native entries by status, other drops by stored type
+      // (legacyTypedDropsSql; its DB test compares it with the view).
+      expect(sql).toContain(
+        'join competition_entries e on e.competition_id = c.id'
+      );
       expect(sql).toContain('join waves hub');
-      expect(sql).not.toContain('legacy_get_waves');
+      expect(sql).not.toContain('legacy_get_');
     }
 
     queries.length = 0;
     await repo.getMainStageWinnerDropIds(['artist'], {});
     expect(queries[0]).toContain('from drops');
     expect(queries[0]).not.toContain('legacy_get_');
+    expect(queries[0]).not.toContain(
+      'join competition_entries e on e.competition_id = c.id'
+    );
   });
 
   it('keeps unread drop aggregates on base sources with explicit wave views and retains snapshot writer and transaction options', async () => {
@@ -49,6 +57,9 @@ describe('hot GET query sources', () => {
     const execute = jest.fn(
       async (sql: string, _params: unknown, opts?: DbQueryOptions) => {
         await Promise.resolve();
+        // The shared viewer-group table's one-off collation check is not a
+        // hot query source; with no rows it keeps the inlined group list.
+        if (sql.includes('information_schema.columns')) return [];
         queries.push(legacyCompetitionGetSql(sql));
         options.push(opts);
         return [];

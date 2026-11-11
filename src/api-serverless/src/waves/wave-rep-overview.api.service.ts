@@ -13,7 +13,10 @@ import { ApiWaveRepContributorsPage } from '@/api/generated/models/ApiWaveRepCon
 import { ApiWaveRepOverview } from '@/api/generated/models/ApiWaveRepOverview';
 import { RequestContext } from '@/request.context';
 import { WavesApiDb, wavesApiDb } from '@/api/waves/waves.api.db';
-import { assertWaveAndParentVisibleOrThrow } from '@/api/waves/wave-access.helpers';
+import {
+  assertWaveAndParentVisibleOrThrow,
+  getGroupsUserIsEligibleForReadContext
+} from '@/api/waves/wave-access.helpers';
 import {
   userGroupsService,
   UserGroupsService
@@ -168,14 +171,10 @@ export class WaveRepOverviewApiService {
     waveId: string,
     ctx: RequestContext
   ): Promise<void> {
-    const authenticatedProfileId =
-      ctx.authenticationContext?.getActingAsId() ?? null;
-    const eligibleGroups = authenticatedProfileId
-      ? await this.userGroupsService.getGroupsUserIsEligibleFor(
-          authenticatedProfileId,
-          ctx.timer
-        )
-      : [];
+    const eligibleGroups = await getGroupsUserIsEligibleForReadContext(
+      this.userGroupsService,
+      ctx
+    );
     const wave = await this.wavesApiDb.findWaveById(waveId, ctx.connection);
     if (!wave) {
       throw new NotFoundException(`Wave ${waveId} not found`);

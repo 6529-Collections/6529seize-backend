@@ -1,4 +1,8 @@
-import { ArtworkAssetsDb } from '@/artwork-documentation/assets/artwork-assets.db';
+import {
+  ArtworkAssetsDb,
+  MAX_ASSET_PROCESSING_ATTEMPTS,
+  processingClaimRetryDelayMs
+} from '@/artwork-documentation/assets/artwork-assets.db';
 import { anArtworkAsset } from '@/artwork-documentation/assets/artwork-assets.test-support';
 import {
   ARTWORK_ASSETS_TABLE,
@@ -100,4 +104,113 @@ describe('artwork asset queue row hydration', () => {
       expect(executor.execute).not.toHaveBeenCalled();
     }
   );
+});
+
+describe('artwork asset processing claim backoff', () => {
+  const now = 1_000_000_000;
+  const lease = now + 15 * 60_000;
+
+  it('moves next_attempt_at past the lease so a stuck asset is not offered first again', async () => {
+    const { db, executor } = claimExecutor();
+    const asset = anArtworkAsset({
+      state: 'processing',
+      attempts: 2,
+      created_at: now
+    });
+    executor.oneOrNull
+      .mockResolvedValueOnce({ id: asset.id })
+      .mockResolvedValueOnce(asset);
+
+    const claimed = await db.claimProcessing(now);
+
+    const expectedNext = lease + processingClaimRetryDelayMs(3);
+    expect(claimed).toMatchObject({
+      attempts: 3,
+      lease_until: lease,
+      next_attempt_at: expectedNext
+    });
+    expect(executor.execute.mock.calls[0][1]).toMatchObject({
+      attempts: 3,
+      lease_until: lease,
+      next_attempt_at: expectedNext
+    });
+    expect(expectedNext).toBeGreaterThan(lease);
+  });
+
+  it('grows the retry delay with attempts up to one hour', () => {
+    expect(processingClaimRetryDelayMs(1)).toBe(60_000);
+    expect(processingClaimRetryDelayMs(5)).toBe(5 * 60_000);
+    expect(processingClaimRetryDelayMs(500)).toBe(60 * 60_000);
+    for (let attempts = 1; attempts < 100; attempts++) {
+      expect(processingClaimRetryDelayMs(attempts + 1)).toBeGreaterThanOrEqual(
+        processingClaimRetryDelayMs(attempts)
+      );
+    }
+  });
+
+  it('marks an asset that used all attempts failed and claims the next one', async () => {
+    const { db, executor } = claimExecutor();
+    const exhausted = anArtworkAsset({
+      id: 'exhausted',
+      state: 'processing',
+      attempts: MAX_ASSET_PROCESSING_ATTEMPTS,
+      created_at: now
+    });
+    const next = anArtworkAsset({
+      id: 'next',
+      state: 'processing',
+      attempts: 0,
+      created_at: now
+    });
+    executor.oneOrNull
+      .mockResolvedValueOnce({ id: exhausted.id })
+      .mockResolvedValueOnce(exhausted)
+      .mockResolvedValueOnce({ id: next.id })
+      .mockResolvedValueOnce(next);
+
+    const claimed = await db.claimProcessing(now);
+
+    expect(claimed).toMatchObject({ id: 'next', attempts: 1 });
+    expect(executor.execute).toHaveBeenCalledTimes(2);
+    expect(executor.execute.mock.calls[0][1]).toMatchObject({
+      id: 'exhausted',
+      state: 'failed',
+      failure_code: 'ASSET_PROCESSING_TIMEOUT',
+      lease_until: 0
+    });
+  });
+
+  it('marks an asset past its scan window failed', async () => {
+    const { db, executor } = claimExecutor();
+    const stale = anArtworkAsset({
+      state: 'processing',
+      attempts: 1,
+      created_at: now - 31 * 60 * 60_000
+    });
+    executor.oneOrNull
+      .mockResolvedValueOnce({ id: stale.id })
+      .mockResolvedValueOnce(stale)
+      .mockResolvedValueOnce(null);
+
+    expect(await db.claimProcessing(now)).toBeNull();
+    expect(executor.execute.mock.calls[0][1]).toMatchObject({
+      state: 'failed',
+      failure_code: 'ASSET_PROCESSING_TIMEOUT'
+    });
+  });
+
+  it('stops after a bounded number of exhausted assets', async () => {
+    const { db, executor } = claimExecutor();
+    const exhausted = anArtworkAsset({
+      state: 'processing',
+      attempts: MAX_ASSET_PROCESSING_ATTEMPTS,
+      created_at: now
+    });
+    executor.oneOrNull.mockImplementation(async (sql: string) =>
+      sql.startsWith('select id') ? { id: exhausted.id } : exhausted
+    );
+
+    expect(await db.claimProcessing(now)).toBeNull();
+    expect(executor.execute.mock.calls.length).toBeLessThanOrEqual(11);
+  });
 });

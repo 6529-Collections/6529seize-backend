@@ -5,6 +5,7 @@ import {
   profileProxyApiService
 } from '../proxies/proxy.api.service';
 import {
+  AccessTokenSession,
   AuthenticatedProxyAction,
   AuthenticationContext
 } from '../../../auth-context';
@@ -15,6 +16,11 @@ import { identitiesDb } from '../../../identities/identities.db';
 import { identityFetcher } from '../identities/identity.fetcher';
 import { enums } from '../../../enums';
 import { loggerContext } from '../../../logger-context';
+import { UnauthorisedException } from '@/exceptions';
+import {
+  hasAccessTokenSessionClaims,
+  readAccessTokenSessionClaims
+} from '@/api/auth/access-token-session';
 
 export function getJwtSecret(): string {
   const jwtsecret = process.env.JWT_SECRET;
@@ -93,11 +99,33 @@ export function maybeAuthenticatedUser(): AnyRequestHandler {
 export function getAuthenticatedWalletOrNull(
   req: Request<any, any, any, any, any>
 ): string | null {
-  const user = req.user as any;
+  const user = req.user as { wallet?: unknown } | undefined;
   if (!user) {
     return null;
   }
+  if (typeof user.wallet !== 'string' || !user.wallet) {
+    throw new UnauthorisedException('Invalid access token');
+  }
   return user.wallet.toLowerCase();
+}
+
+/**
+ * Session claims of the caller's access token, or null when the request is
+ * anonymous or the token predates them.
+ */
+export function getAccessTokenSessionOrNull(
+  req: Request<any, any, any, any, any>
+): AccessTokenSession | null {
+  const user = req.user as Record<string, unknown> | undefined;
+  if (!user) {
+    return null;
+  }
+  const session = readAccessTokenSessionClaims({
+    ct: user.clientType,
+    sb: user.binding,
+    sid: user.sessionId
+  });
+  return hasAccessTokenSessionClaims(session) ? session : null;
 }
 
 export async function getAuthenticatedProfileIdOrNull(
@@ -122,7 +150,8 @@ export async function getAuthenticationContext(
     return AuthenticationContext.notAuthenticated();
   }
   const roleProfileId = (req.user as any).role as string | null;
-  const cacheKey = `auth-context-${authenticatedWallet}-${roleProfileId}`;
+  const accessTokenSession = getAccessTokenSessionOrNull(req);
+  const cacheKey = `auth-context-${authenticatedWallet}-${roleProfileId}-${accessTokenSessionCacheKey(accessTokenSession)}`;
   const cachedContext = mcache.get(cacheKey);
   if (cachedContext) {
     return cachedContext;
@@ -159,10 +188,23 @@ export async function getAuthenticationContext(
     authenticatedWallet,
     authenticatedProfileId,
     roleProfileId,
-    activeProxyActions
+    activeProxyActions,
+    accessTokenSession
   });
-  mcache.put(cacheKey, authenticationContext, Time.minutes(1).toMillis());
+  // A wallet without a profile is usually about to create one. Caching that
+  // answer would keep the new profile invisible on this instance for a minute.
+  if (authenticatedProfileId) {
+    mcache.put(cacheKey, authenticationContext, Time.minutes(1).toMillis());
+  }
   return authenticationContext;
+}
+
+function accessTokenSessionCacheKey(
+  session: AccessTokenSession | null
+): string {
+  return session
+    ? `${session.clientType}-${session.binding}-${session.sessionId}`
+    : 'none';
 }
 
 export function getWalletOrThrow(

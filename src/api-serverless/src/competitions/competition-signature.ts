@@ -47,7 +47,7 @@ export async function verifyCompetitionSignature(
 ): Promise<void> {
   if (!signature) {
     if (required)
-      throw new ForbiddenException('This competition requires a signature');
+      throw new ForbiddenException('This decision requires a signature');
     return;
   }
   const wallet = ctx.authenticationContext?.authenticatedWallet?.toLowerCase();
@@ -60,10 +60,10 @@ export async function verifyCompetitionSignature(
   try {
     envelope = JSON.parse(signature.message) as Record<string, unknown>;
   } catch {
-    throw new ForbiddenException('Invalid competition signature');
+    throw new ForbiddenException('Invalid decision signature');
   }
   if (!envelope || typeof envelope !== 'object' || Array.isArray(envelope)) {
-    throw new ForbiddenException('Invalid competition signature');
+    throw new ForbiddenException('Invalid decision signature');
   }
   const { issued_at: issuedAt, expires_at: expiresAt, nonce } = envelope;
   if (
@@ -81,7 +81,7 @@ export async function verifyCompetitionSignature(
       nonce
     )
   )
-    throw new ForbiddenException('Expired or invalid competition signature');
+    throw new ForbiddenException('Expired or invalid decision signature');
   const { payload, ...identity } = action;
   const expected = canonicalCompetitionJson({
     domain: '6529-competition-v1',
@@ -104,7 +104,7 @@ export async function verifyCompetitionSignature(
       chainId: 1
     }))
   )
-    throw new ForbiddenException('Invalid competition signature');
+    throw new ForbiddenException('Invalid decision signature');
   await competitionCommandRepository.consumeNonce(
     action.competition_id,
     actor,

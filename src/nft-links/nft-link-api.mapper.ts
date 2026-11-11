@@ -1,6 +1,7 @@
 import { ApiNftLinkData } from '@/api/generated/models/ApiNftLinkData';
 import { ApiNftLinkMediaPreviewStatusEnum } from '@/api/generated/models/ApiNftLinkMediaPreview';
 import { NftLinkEntity } from '@/entities/INftLink';
+import { toPublicNftLinkErrorMessage } from '@/nft-links/nft-link-error-category';
 
 export function mapNftLinkEntityToApiLink(
   entity: NftLinkEntity
@@ -14,7 +15,7 @@ export function mapNftLinkEntityToApiLink(
     name: entity.full_data?.asset?.title ?? null,
     description: entity.full_data?.asset?.description ?? null,
     media_uri: entity.media_uri,
-    last_error_message: entity.last_error_message,
+    last_error_message: toPublicNftLinkErrorMessage(entity.last_error_message),
     price: entity.price?.toString() ?? null,
     price_currency: entity.price_currency,
     last_successfully_updated: entity.last_successfully_updated,

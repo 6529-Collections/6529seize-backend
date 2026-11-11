@@ -2,6 +2,7 @@ import { DropType } from '../entities/IDrop';
 import { DropGroupMention } from '../entities/IWaveGroupNotificationSubscription';
 
 export interface CreateOrUpdateDropModel {
+  readonly collaborator_ids?: string[];
   readonly drop_id: string | null;
   readonly wave_id: string;
   readonly reply_to: DropPartIdentifierModel | null;

@@ -22,6 +22,10 @@ import { NftLinkEntity } from '@/entities/INftLink';
 import { giveReadReplicaTimeToCatchUp } from '@/api/api-helpers';
 import { ApiNftLinkData } from '@/api/generated/models/ApiNftLinkData';
 import { mapNftLinkEntityToApiLink } from '@/nft-links/nft-link-api.mapper';
+import {
+  mediaLinkUpdateDecision,
+  recordMediaLinkUpdateDecision
+} from '@/nft-links/nft-link-update-change';
 import { nftLinkMediaPreviewService } from '@/nft-links/nft-link-media-preview.service';
 import {
   getNftLinkResolutionBudget,
@@ -36,6 +40,7 @@ import {
   RequiredNftPageNotFoundError
 } from './nft-link-page-retry';
 import { HttpError } from './lib/http';
+import { categorizeNftLinkError } from '@/nft-links/nft-link-error-category';
 import type { NftRefreshObserver } from '@/nft-links/nft-refresh-observer';
 import type { OperationalDiagnostic } from '@/operational-errors';
 
@@ -248,15 +253,23 @@ export class NftLinkResolvingService {
           )
       );
       if (dataAfterUpdate) {
+        const data = this.entityToApiLink(dataAfterUpdate);
+        // Every socket gets this frame, so send it only when what clients
+        // see changed since the row this refresh locked.
+        const decision = mediaLinkUpdateDecision(
+          this.entityToApiLink(entity),
+          data,
+          Time.currentMillis(),
+          Number(entity.is_locked_since)
+        );
+        recordMediaLinkUpdateDecision(decision);
+        if (decision === 'unchanged') return;
         // The worker reads the primary and sends the complete cached payload.
         if (!getNftLinkResolutionBudget()) {
           await giveReadReplicaTimeToCatchUp();
         }
         await nftLinkResolutionStage('notify', () =>
-          this.wsListenersNotifier.notifyAboutNftLinkUpdate(
-            this.entityToApiLink(dataAfterUpdate),
-            ctx
-          )
+          this.wsListenersNotifier.notifyAboutNftLinkUpdate(data, ctx)
         );
       }
     } catch (notifyErr) {
@@ -336,10 +349,8 @@ export class NftLinkResolvingService {
           lockStamp,
           attemptedAt,
           retryState,
-          message:
-            lastError instanceof Error
-              ? lastError.message
-              : 'NFT link resolution failed'
+          // A fixed category only; the upstream error text stays in logs.
+          message: categorizeNftLinkError(lastError)
         },
         ctx
       )

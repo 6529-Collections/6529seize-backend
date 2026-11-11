@@ -44,7 +44,7 @@ export class CompetitionCursorCodec {
       }
       return payload.offset!;
     } catch {
-      throw new BadRequestException('Invalid competition cursor');
+      throw new BadRequestException('Invalid decision cursor');
     }
   }
 }

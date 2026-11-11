@@ -8,7 +8,18 @@ export interface SqlExecutionBudget {
   readonly maxStatementMillis: number;
   readonly finalizationReserveMillis: number;
   readonly lockWaitSeconds: number;
+  /** Defaults to REPEATABLE READ, the contract of every existing caller. */
+  readonly isolationLevel?: SqlBudgetIsolationLevel;
 }
+
+export type SqlBudgetIsolationLevel = 'REPEATABLE READ' | 'READ COMMITTED';
+
+/** Whitelisted statements: the level is never interpolated from input. */
+const SET_ISOLATION_LEVEL: Readonly<Record<SqlBudgetIsolationLevel, string>> =
+  Object.freeze({
+    'REPEATABLE READ': 'SET TRANSACTION ISOLATION LEVEL REPEATABLE READ',
+    'READ COMMITTED': 'SET TRANSACTION ISOLATION LEVEL READ COMMITTED'
+  });
 
 export interface SqlStatementLimits {
   readonly deadlineMonotonicMillis: number;
@@ -65,8 +76,18 @@ export interface SqlBudgetConnection {
   // Completion transfers ownership back to the pool; adapters must not defer it
   // after returning the physical connection to another borrower.
   readonly release: () => void | Promise<void>;
+  /**
+   * Optional disposal of a session whose budget variables were set, used
+   * instead of restoring them (RDS Proxy pins such sessions). It must
+   * synchronously take the physical connection out of circulation (destroy it,
+   * or guarantee it is never reused) or throw; on throw, the variables are
+   * restored as usual. `release` still runs afterwards for adapter bookkeeping.
+   */
+  readonly retire?: () => void;
   /** Actual adapter lifecycle preserves ORM transaction bookkeeping/subscribers. */
   readonly transaction?: {
+    /** The level `begin` starts at; REPEATABLE READ when not stated. */
+    readonly isolationLevel?: SqlBudgetIsolationLevel;
     readonly begin: () => Promise<void>;
     readonly commit: () => Promise<void>;
     readonly rollback: () => Promise<void>;
@@ -96,11 +117,21 @@ export function validateSqlExecutionBudget(
   ) {
     throw new Error('Invalid SQL execution budget deadline');
   }
+  if (
+    input.isolationLevel !== undefined &&
+    !Object.prototype.hasOwnProperty.call(
+      SET_ISOLATION_LEVEL,
+      input.isolationLevel
+    )
+  ) {
+    throw new Error('Invalid SQL execution budget isolation level');
+  }
   return Object.freeze({
     deadlineMonotonicMillis: input.deadlineMonotonicMillis,
     maxStatementMillis: input.maxStatementMillis,
     finalizationReserveMillis: input.finalizationReserveMillis,
-    lockWaitSeconds: input.lockWaitSeconds
+    lockWaitSeconds: input.lockWaitSeconds,
+    ...(input.isolationLevel ? { isolationLevel: input.isolationLevel } : {})
   });
 }
 
@@ -687,6 +718,22 @@ async function rollbackBudgetedTransaction(
   }
 }
 
+/**
+ * Disposes a session after its transaction outcome is settled. This is not an
+ * abort: it never marks errors connectionDestroyed, so retry decisions based on
+ * an acknowledged ROLLBACK are unchanged.
+ */
+function retireBudgetedSession(scope: SqlBudgetScope): void {
+  const retire = scope.connection.retire;
+  if (!retire || scope.destroyed) return;
+  try {
+    retire();
+    scope.destroyed = true;
+  } catch {
+    /* Restoration still returns clean session variables to the pool. */
+  }
+}
+
 async function restoreBudgetedSession(
   scope: SqlBudgetScope,
   saved: SavedSqlSession | undefined,
@@ -754,6 +801,7 @@ export async function executeBudgetedSqlTransaction<T>(
   const lease = await acquireBudgeted(acquire, budget);
   const { scope, restoreQuery } = await initializeBudgetedScope(lease, budget);
   let saved: SavedSqlSession | undefined;
+  let sessionChanged = false;
   let began = false;
   let completedWork: { result: T } | undefined;
   const query = (
@@ -775,15 +823,28 @@ export async function executeBudgetedSqlTransaction<T>(
       lock: normalizeSqlSessionInteger(raw.lock_seconds)
     };
     if (!saved.lock) throw new Error('Invalid saved SQL lock wait');
+    sessionChanged = true;
     await query(
       'SETUP',
       'SET SESSION max_execution_time = ?, innodb_lock_wait_timeout = ?',
       [budget.maxStatementMillis, budget.lockWaitSeconds]
     );
+    const isolationLevel = budget.isolationLevel ?? 'REPEATABLE READ';
     await scope.runPhase('SETUP', async () => {
-      if (lease.transaction) await lease.transaction.begin();
-      else {
-        await query('SETUP', 'SET TRANSACTION ISOLATION LEVEL REPEATABLE READ');
+      if (lease.transaction) {
+        // This lease begins its own transaction; it must begin it at the
+        // requested level, never silently at another one.
+        if (
+          isolationLevel !==
+          (lease.transaction.isolationLevel ?? 'REPEATABLE READ')
+        )
+          throw new Error(
+            `This SQL lease cannot begin a ${isolationLevel} budgeted transaction`
+          );
+        await lease.transaction.begin();
+      } else {
+        // SET TRANSACTION (not SESSION) applies to the next transaction only.
+        await query('SETUP', SET_ISOLATION_LEVEL[isolationLevel]);
         await query('SETUP', 'START TRANSACTION');
       }
     });
@@ -821,6 +882,8 @@ export async function executeBudgetedSqlTransaction<T>(
     await rollbackBudgetedTransaction(scope, began, query, error);
     throw error;
   } finally {
+    // COMMIT/ROLLBACK outcomes are settled above; disposal cannot change them.
+    if (sessionChanged) retireBudgetedSession(scope);
     await restoreBudgetedSession(scope, saved, query);
     // Acknowledged commit remains known committed after restoration failure.
     restoreQuery();

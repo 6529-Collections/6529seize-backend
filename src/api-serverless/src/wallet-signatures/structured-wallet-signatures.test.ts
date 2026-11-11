@@ -6,6 +6,7 @@ import {
   getStructuredWalletSignatureAudienceForHost,
   hashStructuredWalletSignaturePayload,
   isStructuredSignatureAudienceAllowed,
+  isStructuredSignatureDomainAllowed,
   parseStructuredWalletSignatureMessage,
   verifyStructuredWalletSignature
 } from './structured-wallet-signatures';
@@ -417,6 +418,28 @@ describe('structured wallet signatures', () => {
         consumeNonce: false
       })
     ).resolves.toBeNull();
+  });
+
+  it('accepts only exact hosts under configured domain suffixes', () => {
+    process.env.AUTH_SIGNATURE_ALLOWED_DOMAINS = '';
+    process.env.AUTH_SIGNATURE_ALLOWED_DOMAIN_SUFFIXES = 'staging.6529.io';
+
+    expect(isStructuredSignatureDomainAllowed('staging.6529.io')).toBe(true);
+    expect(isStructuredSignatureDomainAllowed('app.staging.6529.io')).toBe(
+      true
+    );
+    for (const lookalike of [
+      'evil.example/x.staging.6529.io',
+      'evil.example?x=.staging.6529.io',
+      'evil.example#.staging.6529.io',
+      String.raw`evil.example\.staging.6529.io`,
+      'user@app.staging.6529.io',
+      'APP.staging.6529.io',
+      'app.staging.6529.io.evil.example',
+      'fake-staging.6529.io'
+    ]) {
+      expect(isStructuredSignatureDomainAllowed(lookalike)).toBe(false);
+    }
   });
 
   it('rejects structured signatures for unsupported API audiences', async () => {

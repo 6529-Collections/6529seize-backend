@@ -8,18 +8,29 @@ import { runCompetitionWorkerTasks } from '@/competitions/competition-worker-tas
 
 const logger = Logger.get('WAVE_LEADERBOARD_SNAPSHOTTER_KOOP');
 
-export const handler = sentryContext.wrapLambdaHandler(async () => {
-  await doInDbContext(
-    async () => {
-      const timer = new Timer('WAVE_LEADERBOARD_SNAPSHOTTER_KOOP');
-      try {
-        await runCompetitionWorkerTasks([
-          () => nativeCompetitionRuntimeService.refreshNativeLeaderboards(timer)
-        ]);
-      } finally {
-        logger.info(`Finished executing ${timer.getReport()}`);
-      }
-    },
-    { logger, entities: [Transaction] }
-  );
-});
+export const handler = sentryContext.wrapLambdaHandler(
+  async (_event, context) => {
+    await doInDbContext(
+      async () => {
+        const timer = new Timer('WAVE_LEADERBOARD_SNAPSHOTTER_KOOP');
+        try {
+          await runCompetitionWorkerTasks([
+            () =>
+              nativeCompetitionRuntimeService.refreshNativeLeaderboards(
+                timer,
+                Date.now(),
+                {
+                  remainingMillis: context?.getRemainingTimeInMillis
+                    ? () => context.getRemainingTimeInMillis()
+                    : undefined
+                }
+              )
+          ]);
+        } finally {
+          logger.info(`Finished executing ${timer.getReport()}`);
+        }
+      },
+      { logger, entities: [Transaction] }
+    );
+  }
+);

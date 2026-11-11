@@ -17,11 +17,11 @@ import {
 } from '@/competitions/competition.repository';
 import { nativeCompetitionRuntimeRepository } from '@/competitions/native-competition-runtime.repository';
 import { nativeCompetitionRuntimeService } from '@/competitions/native-competition-runtime.service';
+import { competitionPublicationCapacity } from '@/competitions/competition-publication-capacity';
 import {
   CompetitionEntity,
   CompetitionExecutionMode,
   CompetitionLifecycle,
-  CompetitionStorageMode,
   CompetitionType
 } from '@/entities/ICompetition';
 import { BadRequestException } from '@/exceptions';
@@ -71,6 +71,7 @@ function immutableRules(config: ApiCompetitionDraftInput): unknown {
     rules: { ...rules.rules, ...editableApprovalRules },
     participation: {
       ...rules.participation,
+      anonymous_submissions: rules.participation.anonymous_submissions ?? false,
       scope: { ...rules.participation.scope, group_id: null }
     },
     voting: {
@@ -89,7 +90,6 @@ function newRecord(
     id: randomUUID(),
     wave_id: waveId,
     legacy_wave_id: null,
-    storage_mode: CompetitionStorageMode.NATIVE,
     execution_mode: CompetitionExecutionMode.DISABLED,
     lifecycle: CompetitionLifecycle.DRAFT,
     type: CompetitionType.RANK,
@@ -185,11 +185,8 @@ export class CompetitionLifecycleService {
       competitionId,
       ctx
     );
-    if (
-      record?.wave_id !== waveId ||
-      record.storage_mode !== CompetitionStorageMode.NATIVE
-    )
-      competitionConflict('Native competition configuration is unavailable');
+    if (record?.wave_id !== waveId)
+      competitionConflict('Native decision configuration is unavailable');
     return this.commandConfiguration(record, ctx);
   }
 
@@ -221,10 +218,16 @@ export class CompetitionLifecycleService {
             CompetitionLifecycle.PUBLISHED
           ].includes(record.lifecycle)
         )
-          competitionConflict(
-            'Clone a terminal competition to change its rules'
-          );
+          competitionConflict('Clone a terminal decision to change its rules');
         const previous = await this.commandConfiguration(record, tx);
+        if (
+          record.published_at !== null &&
+          (config.participation.anonymous_submissions ?? false) !==
+            (previous.participation.anonymous_submissions ?? false)
+        )
+          competitionConflict(
+            'Submission anonymity cannot change after publication'
+          );
         const originalPolicy =
           record.legacy_wave_id === record.wave_id
             ? await validateOriginalPrimaryRuleUpdate(
@@ -241,7 +244,7 @@ export class CompetitionLifecycleService {
           record.lifecycle === CompetitionLifecycle.PUBLISHED &&
           config.rules.type !== previous.rules.type
         )
-          competitionConflict('Published competition type cannot change');
+          competitionConflict('Published decision type cannot change');
         if (
           rulesChanged &&
           originalPolicy === null &&
@@ -341,7 +344,7 @@ export class CompetitionLifecycleService {
     await administerCompetitionWave(waveId, ctx);
     const reason = request.reason?.trim() || null;
     if (action === 'pause' && !reason)
-      throw new BadRequestException('A reason is required to pause decisions');
+      throw new BadRequestException('A reason is required to pause results');
     const actor = competitionActor(ctx);
     return competitionCommandRepository.command(
       actor,
@@ -365,7 +368,7 @@ export class CompetitionLifecycleService {
               CompetitionLifecycle.ARCHIVED
             ].includes(record.lifecycle)
           )
-            competitionConflict('Only terminal competitions can be cloned');
+            competitionConflict('Only terminal decisions can be cloned');
           const clone = newRecord(waveId, config, now);
           await this.persistNew(clone, config, actor, tx);
           return competitionService.getCompetition(waveId, clone.id, tx);
@@ -376,6 +379,11 @@ export class CompetitionLifecycleService {
             tx
           );
           this.validatePublicationDates(config, now);
+          if (record.lifecycle === CompetitionLifecycle.DRAFT)
+            await competitionPublicationCapacity.assertCanPublish(
+              { competitionId, waveId, actorId: actor },
+              tx
+            );
         }
         await nativeCompetitionRuntimeService.enqueueDueTransitions(
           competition,
@@ -415,7 +423,6 @@ export class CompetitionLifecycleService {
           next,
           record.lifecycle,
           actor,
-          reason,
           tx
         );
         const eventTypes: Record<
@@ -450,13 +457,8 @@ export class CompetitionLifecycleService {
       };
     }
     if (action === 'archive') {
-      if (
-        record.lifecycle === CompetitionLifecycle.PUBLISHED ||
-        record.lifecycle === CompetitionLifecycle.ARCHIVED
-      )
-        competitionConflict(
-          'Only drafts or completed competitions can be archived'
-        );
+      if (record.lifecycle === CompetitionLifecycle.ARCHIVED)
+        competitionConflict('Decision is already archived');
       return {
         ...record,
         lifecycle: CompetitionLifecycle.ARCHIVED,
@@ -465,7 +467,7 @@ export class CompetitionLifecycleService {
       };
     }
     if (record.lifecycle !== CompetitionLifecycle.PUBLISHED)
-      competitionConflict('This action requires a published competition');
+      competitionConflict('This action requires a published decision');
     return record;
   }
 
@@ -477,7 +479,7 @@ export class CompetitionLifecycleService {
       config.rules.decisions_strategy &&
       config.rules.decisions_strategy.first_decision_time <= now
     )
-      throw new BadRequestException('The first decision must be in the future');
+      throw new BadRequestException('The first result must be in the future');
     for (const period of [config.participation.period, config.voting.period]) {
       if (
         period?.max !== null &&
@@ -485,7 +487,7 @@ export class CompetitionLifecycleService {
         period.max <= now
       )
         throw new BadRequestException(
-          'Competition periods must not have ended before publication'
+          'Decision periods must not have ended before publication'
         );
     }
   }
@@ -512,7 +514,6 @@ export class CompetitionLifecycleService {
       record,
       null,
       actor,
-      null,
       ctx
     );
     await this.event(record, 'COMPETITION_CREATED', record.id, ctx);

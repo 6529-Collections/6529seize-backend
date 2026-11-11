@@ -13,14 +13,12 @@ import { competitionInteractionRepository } from '@/competitions/competition-int
 import { competitionDropVotesDb } from '@/competitions/competition-drop-votes.db';
 import { competitionRepository } from '@/competitions/competition.repository';
 import { competitionService } from '@/competitions/competition.service';
+import { competitionVoteChangeBudget } from '@/competitions/competition-vote-change-budget';
 import { Competition } from '@/competitions/competition.types';
 import { NativeCompetitionReader } from '@/competitions/native-competition.reader';
 import { nativeCompetitionRuntimeRepository } from '@/competitions/native-competition-runtime.repository';
 import { nativeCompetitionRuntimeService } from '@/competitions/native-competition-runtime.service';
-import {
-  CompetitionEntryStatus,
-  CompetitionStorageMode
-} from '@/entities/ICompetition';
+import { CompetitionEntryStatus } from '@/entities/ICompetition';
 import { ProfileProxyActionType } from '@/entities/IProfileProxyAction';
 import { NotFoundException } from '@/exceptions';
 import { RequestContext } from '@/request.context';
@@ -92,7 +90,7 @@ export class CompetitionVotingService {
           entryId,
           tx
         );
-        if (!entry) throw new NotFoundException('Competition entry not found');
+        if (!entry) throw new NotFoundException('Decision entry not found');
         if (entry.status !== CompetitionEntryStatus.ACTIVE)
           competitionConflict('Only active entries accept votes');
         await verifyCompetitionSignature(
@@ -133,6 +131,8 @@ export class CompetitionVotingService {
           tx
         );
         competitionCreditService.assertVoteFits(budget, request.value);
+        if (request.value !== (budget.current_vote ?? 0))
+          await competitionVoteChangeBudget.spend(competitionId, actor);
         await competitionInteractionRepository.setVote(
           competitionId,
           entryId,
@@ -203,8 +203,7 @@ export class CompetitionVotingService {
       competitionId,
       ctx
     );
-    if (!record || record.storage_mode !== CompetitionStorageMode.NATIVE)
-      throw new NotFoundException('Competition not found');
+    if (!record) throw new NotFoundException('Decision not found');
     const reader = new NativeCompetitionReader(competitionRepository, ctx);
     return reader.getCompetition(record, Date.now());
   }

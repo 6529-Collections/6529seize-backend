@@ -4,7 +4,6 @@ import {
   CompetitionEntryStatus,
   CompetitionExecutionMode,
   CompetitionLifecycle,
-  CompetitionStorageMode,
   CompetitionType
 } from '@/entities/ICompetition';
 
@@ -20,6 +19,7 @@ export enum CompetitionComputedPhase {
 }
 
 export type CompetitionParticipationConfig = {
+  readonly anonymous_submissions?: boolean;
   readonly group_id: string | null;
   readonly signature_required: boolean;
   readonly max_entries_per_participant: number | null;
@@ -69,7 +69,6 @@ export type Competition = {
   readonly configuration_activated_at?: number | null;
   readonly id: string;
   readonly wave_id: string;
-  readonly storage_mode: CompetitionStorageMode;
   readonly execution_mode: CompetitionExecutionMode;
   readonly type: CompetitionType;
   readonly lifecycle: CompetitionLifecycle;
@@ -193,14 +192,17 @@ export type CompetitionPage<T> = {
 };
 
 export type CompetitionPageRequest = {
+  readonly is_additional_action_promised?: boolean;
   readonly offset: number;
   readonly limit: number;
   readonly direction: 'ASC' | 'DESC';
   readonly sort?:
     | 'submitted_at'
+    | 'won_at'
     | 'rating'
     | 'rank'
     | 'real_time_rating'
+    | 'decision_rating'
     | 'trend'
     | 'price';
   readonly price_currency?: string | null;
@@ -210,7 +212,6 @@ export type CompetitionPageRequest = {
 
 export type CompetitionSnapshot = {
   readonly credit_budgets?: unknown;
-  readonly storage_mode: CompetitionStorageMode;
   readonly config_version: number;
   readonly configuration: unknown;
   readonly entries: unknown;
@@ -279,7 +280,6 @@ export type CompetitionRoutingRecord = {
   readonly id: string;
   readonly wave_id: string;
   readonly legacy_wave_id: string | null;
-  readonly storage_mode: CompetitionStorageMode;
   readonly execution_mode: CompetitionExecutionMode;
   readonly config_version?: number | string;
 };

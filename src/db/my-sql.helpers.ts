@@ -1,11 +1,21 @@
 import { AsyncResource } from 'node:async_hooks';
-import { ConnectionWrapper, SqlTransactionOptions } from '../sql-executor';
+import { createHash } from 'node:crypto';
+import {
+  budgetOf,
+  ConnectionWrapper,
+  SqlTransactionOptions
+} from '../sql-executor';
 import * as mysql from 'mysql';
 import { PoolConnection, TypeCast } from 'mysql';
 import { Time } from '../time';
 import { Logger } from '../logging';
 import { DbPoolName, DbQueryOptions } from '@/db-query.options';
 import { SqlOperationTiming } from '@/db/sql-operation-timing';
+import {
+  closeAfterCommitScope,
+  openAfterCommitScope,
+  runAfterCommitCallbacks
+} from '@/db/after-commit';
 import {
   isLegacyCompetitionGetFacadeScope,
   LEGACY_GET_BOOLEAN_FIELDS
@@ -15,6 +25,20 @@ import {
   withSqlBudgetQueryOptions,
   SqlExecutionBudgetExceededError
 } from '@/db/sql-execution-budget';
+import {
+  captureProxyPinScope,
+  markProxySessionPinned,
+  oversizedStatementBytes,
+  ProxyPinPool,
+  ProxyPinScopeRef,
+  releaseOrRetireProxySession,
+  retireProxySession,
+  sqlFingerprint
+} from '@/db/proxy-session-pinning';
+import {
+  assertNamedParametersBindable,
+  formatNamedParameters
+} from '@/db/sql-named-parameters';
 
 const logger = Logger.get('MYSQL_HELPERS');
 
@@ -60,6 +84,7 @@ const LegacyCompetitionGetTypeCaster: TypeCast = (field, next) => {
 };
 
 type PrivateQueryFamily =
+  | 'e2ee messaging'
   | 'artwork documentation'
   | 'market depth'
   | 'content moderation'
@@ -68,6 +93,11 @@ type PrivateQueryFamily =
   | 'membership runtime';
 
 function privateQueryFamily(sql: string): PrivateQueryFamily | null {
+  // Encrypted-messaging rows carry ciphertext, KeyPackages, welcomes and
+  // notify hints; neither statements nor bound values may reach logs.
+  if (/\be2ee_[a-z_]+\b/i.test(sql)) {
+    return 'e2ee messaging';
+  }
   if (
     /\bcompetition_(?:entry_content_versions|signature_nonces|commands)\b/i.test(
       sql
@@ -105,6 +135,7 @@ function describeQuery(sql: string, params?: Record<string, unknown>): string {
   const family = privateQueryFamily(sql);
   if (family === 'competition authorization')
     return '[private competition authorization query]';
+  if (family === 'e2ee messaging') return '[private e2ee messaging query]';
   if (family === 'artwork documentation') {
     return '[private artwork documentation query]';
   }
@@ -153,7 +184,8 @@ export async function execNativeTransactionally<T>(
   connection: PoolConnection,
   options?: SqlTransactionOptions
 ): Promise<T> {
-  if (options?.executionBudget) {
+  const budget = budgetOf(options);
+  if (budget) {
     let accepted = false;
     try {
       return await execBudgetedNativeTransactionally(
@@ -162,12 +194,13 @@ export async function execNativeTransactionally<T>(
           accepted = true;
           return Promise.resolve(connection);
         },
-        options.executionBudget
+        budget
       );
     } finally {
       if (!accepted) connection.release();
     }
   }
+  let committed: { result: T; afterCommit: (() => unknown)[] };
   try {
     if (options?.isolationLevel) {
       await beginIsolatedTransaction(connection, options);
@@ -177,17 +210,20 @@ export async function execNativeTransactionally<T>(
       // requires its own compatibility validation and deployment inventory.
       connection.beginTransaction();
     }
+    openAfterCommitScope(connection);
     const result = await executable({ connection: connection });
-    return await new Promise((resolve, reject) => {
+    await new Promise<void>((resolve, reject) => {
       connection.commit((err: any) => {
         if (err) {
           reject(err);
         } else {
-          resolve(result);
+          resolve();
         }
       });
     });
+    committed = { result, afterCommit: closeAfterCommitScope(connection) };
   } catch (e) {
+    closeAfterCommitScope(connection);
     if (options?.isolationLevel) {
       await new Promise<void>((resolve) =>
         connection.rollback(() => resolve())
@@ -197,29 +233,54 @@ export async function execNativeTransactionally<T>(
     }
     throw e;
   } finally {
-    connection.release();
+    // A statement in this transaction may have pinned the proxy session.
+    releaseOrRetireProxySession(connection, 'TRANSACTION');
   }
+  // Cache invalidations and similar effects must not see the transaction
+  // before other readers can: run them only after COMMIT, never on rollback.
+  await runAfterCommitCallbacks(committed.afterCommit);
+  return committed.result;
 }
 
-export function execBudgetedNativeTransactionally<T>(
+export async function execBudgetedNativeTransactionally<T>(
   executable: (
     connection: ConnectionWrapper<mysql.PoolConnection>
   ) => Promise<T>,
   acquire: () => Promise<mysql.PoolConnection>,
   budget: NonNullable<SqlTransactionOptions['executionBudget']>
 ): Promise<T> {
-  return executeBudgetedSqlTransaction(
-    async () => {
-      const connection = await acquire();
-      return {
-        handle: connection,
-        physical: connection,
-        release: () => connection.release()
-      };
-    },
-    budget,
-    (handle) => executable({ connection: handle as mysql.PoolConnection })
-  );
+  let scoped: object | undefined;
+  let result: T;
+  try {
+    result = await executeBudgetedSqlTransaction(
+      async () => {
+        const connection = await acquire();
+        return {
+          handle: connection,
+          physical: connection,
+          release: () => releaseOrRetireProxySession(connection, 'TRANSACTION'),
+          // Budget session variables pin the RDS Proxy session; retire it
+          // instead of restoring the variables and returning it to the pool.
+          retire: () =>
+            retireProxySession(connection, 'TRANSACTION', {
+              reason: 'session_settings'
+            })
+        };
+      },
+      budget,
+      (handle) => {
+        scoped = handle;
+        openAfterCommitScope(handle);
+        return executable({ connection: handle as mysql.PoolConnection });
+      }
+    );
+  } catch (e) {
+    if (scoped) closeAfterCommitScope(scoped);
+    throw e;
+  }
+  // Resolving means the COMMIT was acknowledged (see the budget executor).
+  await runAfterCommitCallbacks(scoped ? closeAfterCommitScope(scoped) : []);
+  return result;
 }
 
 async function beginIsolatedTransaction(
@@ -286,14 +347,41 @@ export async function execSQLWithParams<T>(
   options?: DbQueryOptions,
   timing?: SqlOperationTiming
 ): Promise<T[]> {
+  // Check parameter values before the driver formats the statement: a throw
+  // from queryFormat would skip onResult and keep a borrowed connection.
+  try {
+    assertNamedParametersBindable(sql, params);
+  } catch (error) {
+    settleProxySession({
+      connection,
+      sql,
+      statementBytes: null,
+      privateFamily: null,
+      closeConnection,
+      pool: timing?.pool,
+      pinScope: captureProxyPinScope()
+    });
+    throw error;
+  }
   return withSqlBudgetQueryOptions(
     connection,
     options,
     () =>
       new Promise((resolve, reject) => {
+        // mysql formats synchronously inside query(), so this measures this
+        // statement's final SQL before any other statement can reuse the hook.
+        let measured = false;
+        let statementBytes: number | null = null;
+        // The driver invokes onResult in the socket's async context, not this
+        // request's; capture the request's pin scope now.
+        const pinScope = captureProxyPinScope();
         connection.config.queryFormat = function (query, values) {
-          if (!values) return query;
-          return prepareStatement(query, values);
+          const formatted = values ? prepareStatement(query, values) : query;
+          if (!measured) {
+            measured = true;
+            statementBytes = oversizedStatementBytes(formatted);
+          }
+          return formatted;
         };
         const timer = Time.now();
         timing?.queryStarted();
@@ -310,9 +398,19 @@ export async function execSQLWithParams<T>(
               `SQL query took ${queryTook.toMillis()} ms to execute: ${queryDescription}`
             );
           }
-          if (closeConnection) {
-            connection?.release();
-          }
+          settleProxySession({
+            connection,
+            sql,
+            // mysql always formats through queryFormat; the template fallback
+            // only covers drivers that skip it and cannot see bound values.
+            statementBytes: measured
+              ? statementBytes
+              : oversizedStatementBytes(sql),
+            privateFamily,
+            closeConnection,
+            pool: timing?.pool,
+            pinScope
+          });
           if (err) {
             let description: string;
             if (err instanceof SqlExecutionBudgetExceededError)
@@ -351,15 +449,55 @@ export async function execSQLWithParams<T>(
   );
 }
 
+/**
+ * An oversized statement pins the proxy session even when it fails. A
+ * connection borrowed for this statement is retired now; a caller-owned or
+ * transaction connection is retired when its owner releases it.
+ */
+function settleProxySession({
+  connection,
+  sql,
+  statementBytes,
+  privateFamily,
+  closeConnection,
+  pool,
+  pinScope
+}: {
+  connection: mysql.PoolConnection;
+  sql: string;
+  statementBytes: number | null;
+  privateFamily: PrivateQueryFamily | null;
+  closeConnection: boolean;
+  pool: DbPoolName | 'supplied' | undefined;
+  pinScope: ProxyPinScopeRef | null;
+}): void {
+  if (statementBytes !== null) {
+    markProxySessionPinned(connection, {
+      reason: 'oversized_statement',
+      fingerprint: privateFamily
+        ? privateFingerprint(privateFamily, sql)
+        : sqlFingerprint(sql),
+      statementBytes
+    });
+  }
+  if (closeConnection) {
+    const label: ProxyPinPool = pool === DbPoolName.READ ? 'READ' : 'WRITE';
+    releaseOrRetireProxySession(connection, label, pinScope);
+  }
+}
+
+/**
+ * Private families never log statement text. A short hash of the scrubbed
+ * template (no literals, no bound values) still tells query shapes apart.
+ */
+function privateFingerprint(family: PrivateQueryFamily, sql: string): string {
+  const shape = createHash('sha256')
+    .update(sqlFingerprint(sql))
+    .digest('hex')
+    .slice(0, 8);
+  return `[private ${family} query #${shape}]`;
+}
+
 function prepareStatement(query: string, values: Record<string, any>) {
-  return query.replace(/:(\w+)/g, function (txt: any, key: any) {
-    if (values.hasOwnProperty(key)) {
-      const value = values[key];
-      if (Array.isArray(value)) {
-        return value.map((v) => mysql.escape(v)).join(', ');
-      }
-      return mysql.escape(value);
-    }
-    return txt;
-  });
+  return formatNamedParameters(query, values);
 }

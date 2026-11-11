@@ -43,6 +43,11 @@ import { nativeCompetitionRuntimeService } from './native-competition-runtime.se
 import { recordNativePrimaryVoteActivity } from './competition-vote-activity.writer';
 import { competitionCreditService } from './competition-credit.service';
 import { Timer } from '@/time';
+import {
+  readCommitted,
+  runWriteTransaction,
+  withRequestDeadline
+} from '@/api/write-transaction-budget';
 
 const day = 86_400_000;
 const start = Date.UTC(2026, 9, 1, 12);
@@ -118,33 +123,6 @@ describeWithSeed(
   [
     withWaves([wave]),
     {
-      table: tables.WAVE_OUTCOME_DISTRIBUTION_ITEMS_TABLE,
-      rows: [
-        {
-          wave_id: wave.id,
-          wave_outcome_position: 1,
-          wave_outcome_distribution_item_position: 1,
-          description: 'First',
-          amount: null
-        }
-      ]
-    },
-    {
-      table: tables.WAVE_OUTCOMES_TABLE,
-      rows: [
-        {
-          wave_id: wave.id,
-          wave_outcome_position: 1,
-          type: 'MANUAL',
-          subtype: null,
-          description: 'Synthetic winner',
-          credit: null,
-          rep_category: null,
-          amount: null
-        }
-      ]
-    },
-    {
       table: tables.IDENTITY_SUBSCRIPTIONS_TABLE,
       rows: [
         {
@@ -179,64 +157,6 @@ describeWithSeed(
           drop_type: 'PARTICIPATORY',
           signature: 'retained-legacy-signature',
           hide_link_preview: false
-        }
-      ]
-    },
-    {
-      table: tables.DROP_RANK_TABLE,
-      rows: [
-        {
-          drop_id: dropId,
-          wave_id: wave.id,
-          vote: 7,
-          last_increased: start - day
-        }
-      ]
-    },
-    {
-      table: tables.DROP_VOTER_STATE_TABLE,
-      rows: [{ drop_id: dropId, wave_id: wave.id, voter_id: actor, votes: 7 }]
-    },
-    {
-      table: tables.DROPS_VOTES_CREDIT_SPENDINGS_TABLE,
-      rows: [
-        {
-          drop_id: dropId,
-          wave_id: wave.id,
-          voter_id: actor,
-          credit_spent: 7,
-          created_at: start - day
-        }
-      ]
-    },
-    {
-      table: tables.DROP_REAL_VOTE_IN_TIME_TABLE,
-      rows: [
-        { drop_id: dropId, wave_id: wave.id, timestamp: start - day, vote: 7 }
-      ]
-    },
-    {
-      table: tables.DROP_REAL_VOTER_VOTE_IN_TIME_TABLE,
-      rows: [
-        {
-          drop_id: dropId,
-          wave_id: wave.id,
-          voter_id: actor,
-          timestamp: start - day,
-          vote: 7
-        }
-      ]
-    },
-    {
-      table: tables.WAVE_LEADERBOARD_ENTRIES_TABLE,
-      rows: [
-        {
-          drop_id: dropId,
-          wave_id: wave.id,
-          timestamp: start,
-          vote: 7,
-          vote_on_decision_time: 7,
-          over_threshold_since_ms: null
         }
       ]
     },
@@ -532,6 +452,39 @@ describeWithSeed(
       }
     );
 
+    it('saves a legacy vote under the READ COMMITTED request budget', async () => {
+      // The budget rejects overlapping statements, and runWriteTransaction
+      // would then rerun the work unbudgeted. One budgeted attempt proves the
+      // legacy vote path issues its statements one at a time.
+      const attempts: unknown[] = [];
+      await expect(
+        withRequestDeadline(30_000, () =>
+          runWriteTransaction((options) => {
+            attempts.push(options);
+            return sqlExecutor.executeNativeQueriesInTransaction(
+              (connection) =>
+                voteForDropUseCase.execute(
+                  {
+                    wave_id: wave.id,
+                    drop_id: dropId,
+                    voter_id: actor,
+                    votes: 17,
+                    proxy_id: proxy
+                  },
+                  { connection }
+                ),
+              readCommitted(options)
+            );
+          })
+        )
+      ).resolves.toBe(true);
+      expect(attempts).toHaveLength(1);
+      expect(attempts[0]).toMatchObject({
+        executionBudget: { lockWaitSeconds: 10 }
+      });
+      expect(await acceptedVote()).toEqual([{ value: 17, credit_spent: 17 }]);
+    });
+
     it.each(['native', 'legacy'] as const)(
       'reconciles reduced credit for the %s voter before validating the replacement',
       async (endpoint) => {
@@ -750,12 +703,6 @@ describeWithSeed(
           tables.COMPETITION_ENTRY_RUNTIME_TABLE,
           tables.COMPETITION_COMMANDS_TABLE,
           tables.COMPETITION_OUTBOX_TABLE,
-          tables.COMPETITION_LEGACY_MIRROR_PERMITS_TABLE,
-          tables.DROP_VOTER_STATE_TABLE,
-          tables.DROP_RANK_TABLE,
-          tables.DROPS_VOTES_CREDIT_SPENDINGS_TABLE,
-          tables.DROP_REAL_VOTE_IN_TIME_TABLE,
-          tables.DROP_REAL_VOTER_VOTE_IN_TIME_TABLE,
           tables.PROFILES_ACTIVITY_LOGS_TABLE,
           tables.PROFILE_LATEST_LOG_TABLE
         ])

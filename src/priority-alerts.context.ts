@@ -1,3 +1,4 @@
+import { inSequence } from '@/db/in-sequence';
 import { randomUUID } from 'node:crypto';
 import { dropsDb } from './drops/drops.db';
 import { DropType } from './entities/IDrop';
@@ -157,23 +158,24 @@ async function handlePriorityAlert(
 
       const memberIdsToNotify = memberIds.filter((id) => id !== senderId);
 
-      await Promise.all(
-        memberIdsToNotify.map((id) =>
-          identityNotificationsDb.insertNotification(
-            {
-              identity_id: id,
-              additional_identity_id: senderId,
-              related_drop_id: dropId,
-              related_drop_part_no: null,
-              related_drop_2_id: null,
-              related_drop_2_part_no: null,
-              wave_id: waveId,
-              cause: IdentityNotificationCause.PRIORITY_ALERT,
-              additional_data: {},
-              visibility_group_id: null
-            },
-            connection
-          )
+      await inSequence(
+        memberIdsToNotify.map(
+          (id) => () =>
+            identityNotificationsDb.insertNotification(
+              {
+                identity_id: id,
+                additional_identity_id: senderId,
+                related_drop_id: dropId,
+                related_drop_part_no: null,
+                related_drop_2_id: null,
+                related_drop_2_part_no: null,
+                wave_id: waveId,
+                cause: IdentityNotificationCause.PRIORITY_ALERT,
+                additional_data: {},
+                visibility_group_id: null
+              },
+              connection
+            )
         )
       );
 

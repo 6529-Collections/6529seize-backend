@@ -26,7 +26,9 @@ export const CompetitionDraftSchema = Joi.object<ApiCompetitionDraftInput>({
   description: Joi.string().max(50000).allow(null, '').required(),
   participation: WaveParticipationSchema.fork(['period'], (schema) =>
     schema.optional().default({ min: null, max: null })
-  ).required(),
+  )
+    .keys({ anonymous_submissions: Joi.boolean().strict().default(false) })
+    .required(),
   voting: WaveVotingSchema.fork(['period'], (schema) =>
     schema.optional().default({ min: null, max: null })
   ).required(),
@@ -100,6 +102,7 @@ export function configurationToRecord(
     type: input.rules.type as unknown as CompetitionType,
     presentation_config: input.presentation,
     participation_config: {
+      anonymous_submissions: input.participation.anonymous_submissions ?? false,
       group_id: input.participation.scope.group_id,
       signature_required: input.participation.signature_required,
       max_entries_per_participant:

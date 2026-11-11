@@ -57,6 +57,11 @@ import { Time, Timer } from '@/time';
 import * as mcache from 'memory-cache';
 import { RequestContext } from '@/request.context';
 import { readWaveCatalogueWithDiagnostics } from './wave-catalogue-read-diagnostics';
+import {
+  CatalogueRead,
+  RedisWaveGroupsCatalogueStore,
+  WaveGroupsCatalogue
+} from './wave-groups-catalogue';
 
 import { NEXTGEN_CORE_CONTRACT } from '@/nextgen/nextgen_constants';
 import { Network } from '@/ethereum-rpc/ethereum-rpc-network';
@@ -84,7 +89,7 @@ import {
   clearWaveGroupsCache,
   evictWaveGroupsEntityCache,
   getRedisClient,
-  WAVE_GROUPS_CACHE_KEY,
+  waitForRedisReady,
   WAVE_GROUPS_VERSION_CACHE_KEY
 } from '@/redis';
 import { env } from '@/env';
@@ -106,8 +111,8 @@ import {
   profilePreferencesDb,
   ProfilePreferencesDb
 } from '@/profile-preferences/profile-preferences.db';
-import { ProfileDirectMessagePolicy } from '@/entities/IProfilePreferences';
 import { ConnectionWrapper } from '@/sql-executor';
+import { DirectMessageAdmissionService } from '@/api/direct-messages/direct-message-admission.service';
 
 import { performance } from 'node:perf_hooks';
 import { randomInt } from 'node:crypto';
@@ -224,6 +229,21 @@ const DEFAULT_ELIGIBLE_GROUPS_CACHE_TTL_SEC = 60;
 const ELIGIBLE_GROUPS_MEMORY_CACHE_PREFIX = 'eligible-groups-v2';
 const ELIGIBLE_GROUPS_REDIS_CACHE_PREFIX = 'cache_6529_eligible_groups';
 const ELIGIBLE_GROUPS_LEASE_RENEW_MS = 1_000;
+/**
+ * How often a request waiting on another request's eligibility computation
+ * looks for its published result: 25-50 ms, jittered. A computation takes
+ * about 270 ms on average, so a longer poll mostly adds idle wait on top.
+ */
+const ELIGIBLE_GROUPS_PEER_POLL_MIN_MS = 25;
+const ELIGIBLE_GROUPS_PEER_POLL_JITTER_MS = 25;
+/**
+ * How long eligibility waits for a Redis client that is still connecting (a
+ * cold start whose first connection outlived its budget) before failing
+ * closed. Two cold starts returned 503 tens of ms before their client was
+ * ready; a real outage still fails closed after this wait.
+ */
+const ELIGIBILITY_REDIS_READY_WAIT_MS = 300;
+const WAVE_GROUPS_CACHE_TTL_DEFAULT_SEC = 60;
 const eligibleGroupsPromisesByProfileId = new Map<string, Promise<string[]>>();
 const logger = Logger.get('USER_GROUPS_SERVICE');
 const DEFAULT_BENEFICIARY_GRANT_MATCH_MODE =
@@ -239,12 +259,42 @@ async function resolveEligibilityReads<T extends readonly unknown[]>(reads: {
 export class UserGroupsService {
   public static readonly GENERATED_VIEW = 'user_groups_view';
 
+  /**
+   * Shared inbound DM admission (blocks, DM policy, group membership). Other
+   * conversation-creation paths use the same instance through
+   * `direct-message-admission.instance.ts`.
+   */
+  public readonly directMessageAdmission: DirectMessageAdmissionService;
+
+  /** Wave-related group entities, kept in memory per process (see the class). */
+  private readonly waveGroupsCatalogue = new WaveGroupsCatalogue({
+    store: () => {
+      const client = getRedisClient();
+      return client ? new RedisWaveGroupsCatalogueStore(client) : null;
+    },
+    load: (timer) => this.loadWaveRelatedGroupEntities(timer),
+    ttlSec: () =>
+      env.getIntOrNull('WAVE_GROUPS_CACHE_TTL_SEC') ??
+      WAVE_GROUPS_CACHE_TTL_DEFAULT_SEC,
+    readAndParse: (read, timer) => this.readWaveCatalogueBlob(read, timer)
+  });
+
   constructor(
     private readonly userGroupsDb: UserGroupsDb,
     private readonly abusivenessCheckService: AbusivenessCheckService,
     private readonly metricsRecorder: MetricsRecorder,
-    private readonly profilePreferences: ProfilePreferencesDb = profilePreferencesDb
-  ) {}
+    private readonly profilePreferences: ProfilePreferencesDb = profilePreferencesDb,
+    directMessageAdmission?: DirectMessageAdmissionService
+  ) {
+    this.directMessageAdmission =
+      directMessageAdmission ??
+      new DirectMessageAdmissionService({
+        preferences: this.profilePreferences,
+        groups: this,
+        groupNames: (groups, ctx) =>
+          moderationPresentationService.groupNames(groups, ctx)
+      });
+  }
 
   private async timeAsync<T>(
     timer: Timer | undefined,
@@ -458,39 +508,18 @@ export class UserGroupsService {
             creatorProfile.id!,
             connection
           );
-        this.assertDirectMessageRecipientsAllowed(
-          uniqueIdentityAddresses,
-          lockedRecipients
+        if (lockedRecipients.length !== uniqueIdentityAddresses.length) {
+          throw new BadRequestException(`Invalid identity addresses.`);
+        }
+        await this.directMessageAdmission.assertRecipientsAdmitted(
+          creatorProfile.id!,
+          lockedRecipients,
+          { connection, timer: ctx.timer }
         );
         const handles = lockedRecipients.map((recipient) => recipient.handle);
         return `DM - ${[creatorProfile.handle, ...handles].join(' / ')}`;
       }
     );
-  }
-
-  private assertDirectMessageRecipientsAllowed(
-    identityAddresses: string[],
-    recipients: Awaited<
-      ReturnType<ProfilePreferencesDb['getDirectMessageRecipients']>
-    >
-  ): void {
-    if (recipients.length !== identityAddresses.length) {
-      throw new BadRequestException(`Invalid identity addresses.`);
-    }
-    const blockedRecipient = recipients.find(
-      (recipient) =>
-        recipient.direct_message_policy === ProfileDirectMessagePolicy.NOBODY ||
-        (recipient.direct_message_policy ===
-          ProfileDirectMessagePolicy.PEOPLE_I_FOLLOW &&
-          !recipient.follows_creator)
-    );
-    if (!blockedRecipient) return;
-    const message =
-      blockedRecipient.direct_message_policy ===
-      ProfileDirectMessagePolicy.PEOPLE_I_FOLLOW
-        ? `You can't start a new direct message with @${blockedRecipient.handle} because they only accept messages from people they follow.`
-        : `You can't start a new direct message with @${blockedRecipient.handle} because they don't accept new direct messages.`;
-    throw new ForbiddenException(message);
   }
 
   private async whichOfGivenGroupsIsUserEligibleFor(
@@ -695,64 +724,39 @@ export class UserGroupsService {
     );
   }
 
-  private async getAllWaveRelatedGroupEntities(
+  private getAllWaveRelatedGroupEntities(
+    timer?: Timer,
+    signal?: AbortSignal
+  ): Promise<CatalogueRead> {
+    return this.waveGroupsCatalogue.get({ timer, signal });
+  }
+
+  /** The catalogue from the database: wave-related group ids, then entities. */
+  private async loadWaveRelatedGroupEntities(
     timer?: Timer
   ): Promise<UserGroupEntity[]> {
+    const givenGroups = await this.getAllWaveRelatedGroupIds(timer);
+    return this.userGroupsDb.getByIds(givenGroups, { timer });
+  }
+
+  /** Reads and parses the catalogue blob through the read diagnostics. */
+  private async readWaveCatalogueBlob(
+    read: () => Promise<string | null>,
+    timer?: Timer
+  ): Promise<{ groups: UserGroupEntity[]; bytes: number } | null> {
     const timerPrefix =
       'whichOfGivenGroupsIsUserEligibleFor->getGivenGroupEntities';
-    const redisClient = getRedisClient();
-    if (!redisClient) {
-      const givenGroups = await this.getAllWaveRelatedGroupIds(timer);
-      return await this.timeAsync(
-        timer,
-        `${timerPrefix}->redisUnavailableGetByIds`,
-        () =>
-          this.userGroupsDb.getByIds(givenGroups, {
-            timer
-          })
-      );
-    }
-
-    const cachedGroups = await readWaveCatalogueWithDiagnostics(
-      redisClient,
-      () =>
-        this.timeAsync(timer, `${timerPrefix}->redisGet`, () =>
-          redisClient.get(WAVE_GROUPS_CACHE_KEY)
-        ),
-      (raw) =>
-        this.timeSync(timer, `${timerPrefix}->redisJsonParse`, () =>
+    const result = await readWaveCatalogueWithDiagnostics(
+      getRedisClient() ?? {},
+      () => this.timeAsync(timer, `${timerPrefix}->redisGet`, read),
+      (raw) => ({
+        groups: this.timeSync(timer, `${timerPrefix}->redisJsonParse`, () =>
           JSON.parse(raw)
-        ) as UserGroupEntity[]
-    );
-    if (cachedGroups.hit) {
-      return cachedGroups.value;
-    }
-
-    // The waves + wave_curations scan only runs when the Redis entity blob
-    // misses. The cache key and the stored shape (array of UserGroupEntity)
-    // must stay unchanged for compatibility with other invalidation call
-    // sites and rolling deploys.
-    const givenGroups = await this.getAllWaveRelatedGroupIds(timer);
-    const value = await this.timeAsync(
-      timer,
-      `${timerPrefix}->redisMissGetByIds`,
-      () =>
-        this.userGroupsDb.getByIds(givenGroups, {
-          timer
-        })
-    );
-    const payload = this.timeSync(
-      timer,
-      `${timerPrefix}->redisJsonStringify`,
-      () => JSON.stringify(value)
-    );
-    const ttlSec = env.getIntOrNull('WAVE_GROUPS_CACHE_TTL_SEC') ?? 60;
-    await this.timeAsync(timer, `${timerPrefix}->redisSet`, () =>
-      redisClient.set(WAVE_GROUPS_CACHE_KEY, payload, {
-        EX: Time.seconds(ttlSec).toSeconds()
+        ) as UserGroupEntity[],
+        bytes: Buffer.byteLength(raw, 'utf8')
       })
     );
-    return value;
+    return result.hit ? result.value : null;
   }
 
   private async getAllWaveRelatedGroupIds(timer?: Timer): Promise<string[]> {
@@ -1138,6 +1142,8 @@ export class UserGroupsService {
     ) {
       return this.computeGroupsUserIsEligibleFor(profileId, timer);
     }
+    if (!getRedisClient()?.isReady)
+      await waitForRedisReady(ELIGIBILITY_REDIS_READY_WAIT_MS);
     const ttlSec = this.getEligibleGroupsCacheTtlSec();
     const cached = await this.getInitiallyCachedEligibleGroups(
       profileId,
@@ -1186,7 +1192,10 @@ export class UserGroupsService {
       }
       const remaining = deadline - performance.now();
       if (remaining > 0) {
-        await Time.millis(Math.min(remaining, 125 + randomInt(176))).sleep();
+        const pollMs =
+          ELIGIBLE_GROUPS_PEER_POLL_MIN_MS +
+          randomInt(ELIGIBLE_GROUPS_PEER_POLL_JITTER_MS + 1);
+        await Time.millis(Math.min(remaining, pollMs)).sleep();
       }
     }
     this.eligibilityUnavailable('timeout');
@@ -1274,6 +1283,9 @@ export class UserGroupsService {
       profileId,
       timer
     );
+    // Nothing published yet: skip the database and version reads, which only
+    // validate a result, so a frequent poll stays two Redis reads.
+    if (!peerEntry || signal?.aborted) return null;
     const [currentProfileChange, currentWaveVersion, markerAfterRead] =
       await Promise.all([
         this.userGroupsDb.getLatestProfileGroupChangeMillis(profileId),
@@ -1370,9 +1382,12 @@ export class UserGroupsService {
         return peerEntry.eligibleGroupIds;
       }
       const computeStartMillis = Time.currentMillis();
+      const computeReport: { catalogue?: CatalogueRead } = {};
       const results = await this.computeGroupsUserIsEligibleFor(
         profileId,
-        timer
+        timer,
+        signal,
+        computeReport
       );
       const computedAtMillis = Time.currentMillis();
       const [afterProfileChange, afterWaveVersion] = await Promise.all([
@@ -1439,7 +1454,9 @@ export class UserGroupsService {
         computeMs: computedAtMillis - computeStartMillis,
         resultCount: results.length,
         cached: true,
-        coordination: takeover ? 'takeover' : 'owner'
+        coordination: takeover ? 'takeover' : 'owner',
+        catalogue: computeReport.catalogue?.source,
+        catalogueRedisBytes: computeReport.catalogue?.redisBytes
       });
       return results;
     } finally {
@@ -1474,6 +1491,8 @@ export class UserGroupsService {
     readonly resultCount: number;
     readonly cached?: boolean;
     readonly coordination?: 'owner' | 'takeover';
+    readonly catalogue?: CatalogueRead['source'];
+    readonly catalogueRedisBytes?: number;
   }) {
     // Memory-cache hits are deliberately not logged: they are the dominant
     // path and would flood the logs without adding attribution value.
@@ -1493,13 +1512,17 @@ export class UserGroupsService {
     return afterMillis > beforeMillis;
   }
 
+  /** `report` receives where the catalogue came from, for the read log. */
   private async computeGroupsUserIsEligibleFor(
     profileId: string,
-    timer?: Timer | undefined
+    timer?: Timer | undefined,
+    signal?: AbortSignal,
+    report?: { catalogue?: CatalogueRead }
   ): Promise<string[]> {
-    const groupEntities = await this.getAllWaveRelatedGroupEntities(timer);
+    const catalogue = await this.getAllWaveRelatedGroupEntities(timer, signal);
+    if (report) report.catalogue = catalogue;
     return await this.whichOfGivenGroupsIsUserEligibleFor(
-      { profileId, preloadedGroupEntities: groupEntities },
+      { profileId, preloadedGroupEntities: catalogue.groups },
       timer
     );
   }

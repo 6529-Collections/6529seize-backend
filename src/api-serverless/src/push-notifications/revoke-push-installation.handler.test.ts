@@ -118,3 +118,34 @@ it('requires a token for migration cleanup before any mutation', async () => {
   ).rejects.toThrow();
   expect(revokeInstallation).not.toHaveBeenCalled();
 });
+
+it('validates a separate reconciliation proof without adding it to revocation targets', async () => {
+  const recovery = {
+    ...body,
+    reconciliation_sessions: [
+      {
+        address: '0x' + '1'.repeat(40),
+        native_refresh_token: 'fresh-proof'
+      }
+    ]
+  };
+  await handleRevokePushInstallation(request(recovery));
+  expect(revokeInstallation).toHaveBeenCalledWith(recovery, {});
+  expect(recovery.sessions).toEqual([]);
+});
+
+it.each([
+  { address: 'invalid', native_refresh_token: 'proof' },
+  { address: '0x' + '1'.repeat(40) },
+  { address: '0x' + '1'.repeat(40), native_refresh_token: 'x'.repeat(1025) }
+])('rejects malformed reconciliation proof before mutation', async (proof) => {
+  await expect(
+    handleRevokePushInstallation(
+      request({
+        ...body,
+        reconciliation_sessions: [proof]
+      })
+    )
+  ).rejects.toThrow();
+  expect(revokeInstallation).not.toHaveBeenCalled();
+});

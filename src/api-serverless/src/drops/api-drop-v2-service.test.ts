@@ -1,4 +1,5 @@
 import { AuthenticationContext } from '@/auth-context';
+import { DropMediaUploadStatus } from '@/entities/IDropMediaUpload';
 import {
   DropBoostEntity,
   DropEntity,
@@ -735,6 +736,14 @@ describe('ApiDropV2Service', () => {
       },
       ctx
     );
+    expect(deps.apiDropMapper.mapDrops).toHaveBeenCalledWith(
+      [firstDrop, secondDrop],
+      ctx,
+      {
+        groupIdsUserIsEligibleFor: ['group-1'],
+        includeWaveWideReplyRoots: true
+      }
+    );
     expect(deps.wavesApiDb.findWavesByIdsEligibleForRead).toHaveBeenCalledWith(
       ['wave-1', 'wave-2'],
       ['group-1'],
@@ -1022,99 +1031,115 @@ describe('ApiDropV2Service', () => {
     ).not.toHaveBeenCalled();
   });
 
-  it('finds visible drop part and maps only that part', async () => {
-    const { service, deps } = createService();
-    const authenticationContext =
-      AuthenticationContext.fromProfileId('viewer-1');
-    const connection = {} as any;
-    deps.dropsDb.findDropByIdWithEligibilityCheck.mockResolvedValue(
-      makeDrop({ parts_count: 2 })
-    );
-    deps.dropsDb.findDropPartByDropIdAndPartNo.mockResolvedValue(
-      makePart({
-        drop_part_id: 2,
+  it.each([
+    [null, 'ready'],
+    [DropMediaUploadStatus.SANITIZING, 'processing'],
+    [DropMediaUploadStatus.FAILED, 'failed']
+  ])(
+    'finds visible drop part and preserves media state %s',
+    async (status, expectedStatus) => {
+      const { service, deps } = createService();
+      const authenticationContext =
+        AuthenticationContext.fromProfileId('viewer-1');
+      const connection = {} as any;
+      deps.dropsDb.findDropByIdWithEligibilityCheck.mockResolvedValue(
+        makeDrop({ parts_count: 2 })
+      );
+      deps.dropsDb.findDropPartByDropIdAndPartNo.mockResolvedValue(
+        makePart({
+          drop_part_id: 2,
+          content: 'Second part',
+          quoted_drop_id: 'quoted-drop',
+          quoted_drop_part_id: 1
+        })
+      );
+      deps.dropsDb.findDropPartMedia.mockResolvedValue([
+        makeMedia({
+          id: 'media-2',
+          drop_part_id: 2,
+          media_status: status,
+          media_width: 927,
+          media_height: 447
+        })
+      ]);
+      deps.attachmentsDb.getDropPartAttachments.mockResolvedValue([
+        makeDropAttachment({ drop_part_id: 2 })
+      ]);
+      deps.attachmentsDb.findAttachmentsByIds.mockResolvedValue({
+        'attachment-1': makeAttachment()
+      });
+
+      const result = await service.findPartByDropIdOrThrow('drop-1', 2, {
+        authenticationContext,
+        connection
+      });
+
+      expect(result).toEqual({
+        part_no: 2,
+        viewer_context: {
+          author_blocked: false,
+          drop_hidden: false
+        },
+        moderation: {
+          status: 'VISIBLE',
+          can_view: true
+        },
         content: 'Second part',
-        quoted_drop_id: 'quoted-drop',
-        quoted_drop_part_id: 1
-      })
-    );
-    deps.dropsDb.findDropPartMedia.mockResolvedValue([
-      makeMedia({ id: 'media-2', drop_part_id: 2 })
-    ]);
-    deps.attachmentsDb.getDropPartAttachments.mockResolvedValue([
-      makeDropAttachment({ drop_part_id: 2 })
-    ]);
-    deps.attachmentsDb.findAttachmentsByIds.mockResolvedValue({
-      'attachment-1': makeAttachment()
-    });
-
-    const result = await service.findPartByDropIdOrThrow('drop-1', 2, {
-      authenticationContext,
-      connection
-    });
-
-    expect(result).toEqual({
-      part_no: 2,
-      viewer_context: {
-        author_blocked: false,
-        drop_hidden: false
-      },
-      moderation: {
-        status: 'VISIBLE',
-        can_view: true
-      },
-      content: 'Second part',
-      media: [
-        {
-          url: 'https://example.com/image.png',
-          mime_type: 'image/png'
+        media: [
+          {
+            url: 'https://example.com/image.png',
+            mime_type: 'image/png',
+            media_upload_id: null,
+            media_status: expectedStatus,
+            media_error: null,
+            width: 927,
+            height: 447
+          }
+        ],
+        attachments: [
+          {
+            attachment_id: 'attachment-1',
+            file_name: 'file.pdf',
+            mime_type: 'application/pdf',
+            kind: 'pdf',
+            status: 'ready',
+            url: 'https://example.com/file.pdf'
+          }
+        ],
+        quoted_drop: {
+          drop_id: 'quoted-drop',
+          drop_part_id: 1
         }
-      ],
-      attachments: [
+      });
+      expect(
+        deps.dropsDb.findDropByIdWithEligibilityCheck
+      ).toHaveBeenCalledWith('drop-1', ['group-1'], connection);
+      expect(deps.dropsDb.findDropPartByDropIdAndPartNo).toHaveBeenCalledWith(
+        'drop-1',
+        2,
         {
-          attachment_id: 'attachment-1',
-          file_name: 'file.pdf',
-          mime_type: 'application/pdf',
-          kind: 'pdf',
-          status: 'ready',
-          url: 'https://example.com/file.pdf'
+          authenticationContext,
+          connection
         }
-      ],
-      quoted_drop: {
-        drop_id: 'quoted-drop',
-        drop_part_id: 1
-      }
-    });
-    expect(deps.dropsDb.findDropByIdWithEligibilityCheck).toHaveBeenCalledWith(
-      'drop-1',
-      ['group-1'],
-      connection
-    );
-    expect(deps.dropsDb.findDropPartByDropIdAndPartNo).toHaveBeenCalledWith(
-      'drop-1',
-      2,
-      {
+      );
+      expect(deps.dropsDb.findDropPartMedia).toHaveBeenCalledWith('drop-1', 2, {
         authenticationContext,
         connection
-      }
-    );
-    expect(deps.dropsDb.findDropPartMedia).toHaveBeenCalledWith('drop-1', 2, {
-      authenticationContext,
-      connection
-    });
-    expect(deps.attachmentsDb.getDropPartAttachments).toHaveBeenCalledWith(
-      'drop-1',
-      2,
-      {
-        authenticationContext,
+      });
+      expect(deps.attachmentsDb.getDropPartAttachments).toHaveBeenCalledWith(
+        'drop-1',
+        2,
+        {
+          authenticationContext,
+          connection
+        }
+      );
+      expect(deps.attachmentsDb.findAttachmentsByIds).toHaveBeenCalledWith(
+        ['attachment-1'],
         connection
-      }
-    );
-    expect(deps.attachmentsDb.findAttachmentsByIds).toHaveBeenCalledWith(
-      ['attachment-1'],
-      connection
-    );
-  });
+      );
+    }
+  );
 
   it('returns a structural part tombstone without loading content or files', async () => {
     const { service, deps } = createService();

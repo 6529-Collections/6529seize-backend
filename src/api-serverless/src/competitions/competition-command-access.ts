@@ -6,8 +6,7 @@ import {
 import { wavesApiDb } from '@/api/waves/waves.api.db';
 import {
   CompetitionExecutionMode,
-  CompetitionLifecycle,
-  CompetitionStorageMode
+  CompetitionLifecycle
 } from '@/entities/ICompetition';
 import { ProfileProxyActionType } from '@/entities/IProfileProxyAction';
 import {
@@ -65,7 +64,7 @@ export async function administerCompetitionWave(
         !visible.groups.includes(visible.wave.admin_group_id)))
   ) {
     throw new ForbiddenException(
-      'Only wave administrators can manage competitions'
+      'Only wave administrators can manage decisions'
     );
   }
   return visible;
@@ -82,10 +81,8 @@ export async function lockNativeCompetition(
     competitionId,
     ctx
   );
-  if (record.storage_mode !== CompetitionStorageMode.NATIVE)
-    competitionConflict('Competition is unavailable');
   if (Number(record.config_version) !== version)
-    competitionConflict('Competition rules changed. Reload before retrying');
+    competitionConflict('Decision rules changed. Reload before retrying');
   const competition = await new NativeCompetitionReader(
     competitionRepository,
     ctx
@@ -102,7 +99,7 @@ export function assertCompetitionOpen(
     competition.lifecycle !== CompetitionLifecycle.PUBLISHED ||
     competition.execution_mode !== CompetitionExecutionMode.ACTIVE
   )
-    competitionConflict('Competition is not accepting entries or votes');
+    competitionConflict('Decision is not accepting entries or votes');
   const period =
     action === 'submit' ? competition.participation : competition.voting;
   if (
@@ -114,9 +111,7 @@ export function assertCompetitionOpen(
     );
   }
   if (isCompetitionDecisionPending(competition, now)) {
-    competitionConflict(
-      'A competition decision is being finalized. Retry shortly'
-    );
+    competitionConflict('Decision results are being finalized. Retry shortly');
   }
 }
 
@@ -137,7 +132,7 @@ export async function assertCompetitionGroup(
       ).includes(groupId))
   ) {
     throw new ForbiddenException(
-      'You are not eligible for this competition action'
+      'You are not eligible for this decision action'
     );
   }
 }

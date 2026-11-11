@@ -29,6 +29,48 @@ describe('UserNotificationMapper', () => {
     } as IdentityNotificationDeserialized;
   }
 
+  it.each(['INVITED', 'ACCEPTED'])(
+    'maps %s collaboration notifications to the artwork and invitation',
+    (event_type) => {
+      expect(
+        mapper.mapNotifications([
+          notificationEntity({
+            cause: IdentityNotificationCause.MEME_COLLABORATION,
+            additional_data: { event_type, invitation_id: 'invitation' }
+          })
+        ])[0]
+      ).toMatchObject({
+        cause: IdentityNotificationCause.MEME_COLLABORATION,
+        data: {
+          event_type,
+          drop_id: 'drop-1',
+          wave_id: 'wave-1',
+          actor_id: 'sender-1',
+          invitation_id: 'invitation'
+        }
+      });
+    }
+  );
+
+  it('preserves a saved artwork name and tolerates legacy missing names', () => {
+    for (const artwork_name of ['Test Cat', undefined, 123]) {
+      const mapped = mapper.mapNotifications([
+        notificationEntity({
+          cause: IdentityNotificationCause.MEME_COLLABORATION,
+          additional_data: {
+            event_type: 'INVITED',
+            invitation_id: 'invite',
+            artwork_name
+          }
+        })
+      ])[0];
+      expect(mapped.data).toMatchObject({ actor_id: 'sender-1' });
+      if (typeof artwork_name === 'string')
+        expect(mapped.data).toHaveProperty('artwork_name', artwork_name);
+      else expect(mapped.data).not.toHaveProperty('artwork_name');
+    }
+  });
+
   it('preserves wave id for all-drops and priority-alert notifications', () => {
     expect(
       mapper.mapNotifications([
@@ -156,5 +198,25 @@ describe('UserNotificationMapper', () => {
         }
       }
     ]);
+  });
+});
+
+it('maps encrypted notifications without including identity or plaintext', () => {
+  const [notification] = new UserNotificationMapper().mapNotifications([
+    {
+      id: 1,
+      identity_id: 'recipient',
+      cause: IdentityNotificationCause.E2EE_MESSAGE,
+      additional_data: { encrypted_group: '0xgroup' },
+      created_at: 123,
+      read_at: null
+    } as IdentityNotificationDeserialized
+  ]);
+  expect(notification).toEqual({
+    id: 1,
+    created_at: 123,
+    read_at: null,
+    cause: IdentityNotificationCause.E2EE_MESSAGE,
+    data: { encrypted_group: '0xgroup' }
   });
 });

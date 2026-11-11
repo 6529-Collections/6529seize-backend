@@ -21,6 +21,10 @@ export class WalletConnectionShareEntity {
   @Column({ type: 'varchar', length: 16, nullable: false })
   readonly target_client_type!: WalletAuthClientType;
 
+  /** One-time target-device setup. The decryption key stays in the link fragment. */
+  @Column({ type: 'text', nullable: true, default: null })
+  readonly encrypted_device_setup!: string | null;
+
   @Column({
     type: 'datetime',
     precision: 3,
@@ -39,4 +43,12 @@ export class WalletConnectionShareEntity {
 
   @Column({ type: 'varchar', length: 36, nullable: true, default: null })
   readonly consumed_session_id!: string | null;
+
+  /**
+   * Coarse client family of the request that redeemed the share (for example
+   * `desktop` or `browser`); never the user agent itself. Null for shares
+   * retired by a newer share or redeemed before this column existed.
+   */
+  @Column({ type: 'varchar', length: 16, nullable: true, default: null })
+  readonly consumed_client_family?: string | null;
 }

@@ -4,6 +4,10 @@ frames (red and green), delays of 80/160 ms and loop count 2. No user media or
 personal metadata is included. Keep these source bytes stable across upgrades
 so decoding and animation checks exercise inputs from the preceding codec.
 
+The HEIC fixture is a synthetic 32×32 red-to-blue gradient encoded with
+libheif 1.19.8/x265. It exercises HEVC decoding independently of the file suffix
+and MIME label. It contains no user image or personal metadata.
+
 The MP4 is the synthetic blue video from the museum test corpus. It contains no
 artist material and exercises the separately packaged MP4 parser. SHA-256:
 `f2979c5cdad603338e759b42671270d3d073abccb03cb5058a862c98389cdced`.

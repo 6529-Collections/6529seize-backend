@@ -1,17 +1,5 @@
-import {
-  Column,
-  Entity,
-  Index,
-  PrimaryColumn,
-  PrimaryGeneratedColumn
-} from 'typeorm';
-import {
-  WAVE_OUTCOME_DISTRIBUTION_ITEMS_TABLE,
-  WAVE_OUTCOMES_TABLE,
-  WAVES_ARCHIVE_TABLE,
-  WAVES_DECISION_PAUSES_TABLE,
-  WAVES_TABLE
-} from '@/constants';
+import { Column, Entity, Index, PrimaryGeneratedColumn } from 'typeorm';
+import { WAVES_ARCHIVE_TABLE, WAVES_TABLE } from '@/constants';
 import type {
   NativeWaveHubParticipationConfig,
   NativeWaveHubVotingConfig
@@ -66,8 +54,8 @@ export interface WaveBaseType {
   readonly forbid_negative_votes: boolean;
 }
 
-/** Retired competition columns stay registered through the additive retirement
- * release. Defaults let runtime inserts omit them without schema data loss. */
+/** Shared physical columns; the undecorated competition fields describe the
+ * permanent compatibility projection, never retired physical storage. */
 export class WaveBase implements WaveBaseType {
   @Column({ type: 'json', nullable: true })
   readonly hub_participation_config?: NativeWaveHubParticipationConfig | null;
@@ -99,39 +87,25 @@ export class WaveBase implements WaveBaseType {
   @Column({ type: 'varchar', length: 100, nullable: true })
   readonly admin_group_id!: string | null;
 
-  @Column({ type: 'varchar', length: 100, nullable: true })
   readonly voting_group_id!: string | null;
 
-  @Column({ type: 'varchar', length: 100, nullable: false, default: 'TDH' })
   readonly voting_credit_type!: WaveCreditType;
 
-  @Column({
-    type: 'varchar',
-    length: 20,
-    nullable: false,
-    default: 'WAVE'
-  })
   readonly voting_credit_scope!: WaveCreditScope;
 
-  @Column({ type: 'varchar', length: 100, nullable: true })
   readonly voting_credit_category!: string | null;
 
-  @Column({ type: 'varchar', length: 100, nullable: true })
   readonly voting_credit_creditor!: string | null;
 
-  @Column({ type: 'boolean', nullable: false, default: false })
   readonly voting_signature_required!: boolean;
 
-  @Column({ type: 'bigint', nullable: true })
   readonly voting_period_start!: number | null;
 
-  @Column({ type: 'bigint', nullable: true })
   readonly voting_period_end!: number | null;
 
   @Column({ type: 'varchar', length: 100, nullable: true })
   readonly visibility_group_id!: string | null;
 
-  @Column({ type: 'varchar', length: 100, nullable: true })
   readonly participation_group_id!: string | null;
 
   @Column({ type: 'boolean', nullable: false, default: true })
@@ -156,64 +130,45 @@ export class WaveBase implements WaveBaseType {
   @Column({ type: 'boolean', nullable: false, default: false })
   readonly chat_replies_collapsed!: boolean;
 
-  @Column({ type: 'bigint', nullable: true })
   readonly participation_max_applications_per_participant!: number | null;
 
-  @Column({ type: 'json', nullable: false, default: () => '(json_array())' })
   readonly participation_required_metadata!: WaveRequiredMetadataItem[];
 
-  @Column({ type: 'json', nullable: false, default: () => '(json_array())' })
   readonly participation_required_media!: ParticipationRequiredMedia[];
 
-  @Column({ type: 'varchar', length: 50, nullable: true, default: null })
   readonly submission_type!: WaveSubmissionType | null;
 
-  @Column({ type: 'varchar', length: 50, nullable: true, default: null })
   readonly identity_submission_strategy!: WaveIdentitySubmissionStrategy | null;
 
-  @Column({ type: 'varchar', length: 50, nullable: true, default: null })
   readonly identity_submission_duplicates!: WaveIdentitySubmissionDuplicates | null;
 
-  @Column({ type: 'bigint', nullable: true })
   readonly participation_period_start!: number | null;
 
-  @Column({ type: 'bigint', nullable: true })
   readonly participation_period_end!: number | null;
 
-  @Column({ type: 'boolean', nullable: false, default: false })
   readonly participation_signature_required!: boolean;
 
-  @Column({ type: 'varchar', length: 100, nullable: false, default: 'CHAT' })
   readonly type!: WaveType;
 
-  @Column({ type: 'bigint', nullable: true })
   readonly winning_min_threshold!: number | null;
 
-  @Column({ type: 'bigint', nullable: true })
   readonly winning_max_threshold!: number | null;
 
-  @Column({ type: 'bigint', nullable: false, default: 0 })
   readonly winning_threshold_min_duration_ms!: number;
 
-  @Column({ type: 'bigint', nullable: true })
   readonly max_winners!: number | null;
 
-  @Column({ type: 'bigint', nullable: true })
   readonly max_votes_per_identity_to_drop!: number | null;
 
-  @Column({ type: 'bigint', nullable: true })
   readonly time_lock_ms!: number | null;
 
-  @Column({ type: 'json', nullable: true })
   readonly decisions_strategy!: WaveDecisionStrategy | null;
 
-  @Column({ type: 'text', nullable: true, default: null })
   readonly participation_terms!: string | null;
 
   @Column({ type: 'boolean', nullable: false, default: false })
   readonly admin_drop_deletion_enabled!: boolean;
 
-  @Column({ type: 'boolean', nullable: false, default: false })
   readonly forbid_negative_votes!: boolean;
 
   @Index('idx_wave_is_direct_message')
@@ -232,8 +187,6 @@ export class WaveBase implements WaveBaseType {
 @Index('idx_wave_visibility_group_id', ['visibility_group_id'])
 @Index('idx_wave_admin_group_id', ['admin_group_id'])
 @Index('idx_wave_chat_group_id', ['chat_group_id'])
-@Index('idx_wave_participation_group_id', ['participation_group_id'])
-@Index('idx_wave_voting_group_id', ['voting_group_id'])
 export class WaveEntity extends WaveBase {
   @Column({ type: 'varchar', length: 100, unique: true, nullable: false })
   readonly id!: string;
@@ -241,26 +194,14 @@ export class WaveEntity extends WaveBase {
   @PrimaryGeneratedColumn({ type: 'bigint' })
   readonly serial_no!: number;
 
-  @Column({ type: 'bigint', nullable: true, default: null })
   readonly next_decision_time!: number | null;
 }
 
-@Entity(WAVES_DECISION_PAUSES_TABLE)
-export class WaveDecisionPauseEntity {
-  @PrimaryGeneratedColumn({ type: 'bigint' })
-  readonly id!: number;
-
-  @Index()
-  @Column({ type: 'varchar', length: 100, nullable: false })
-  readonly wave_id!: string;
-
-  @Column({ type: 'bigint', nullable: false })
-  readonly start_time!: number;
-
-  @Column({ type: 'bigint', nullable: false })
-  readonly end_time!: number;
-
-  @Column({ type: 'varchar', length: 2000, nullable: true })
+export interface WaveDecisionPauseEntity {
+  readonly id: number;
+  readonly wave_id: string;
+  readonly start_time: number;
+  readonly end_time: number;
   readonly reason?: string | null;
 }
 
@@ -348,42 +289,21 @@ export enum WaveOutcomeCredit {
   CIC = 'CIC'
 }
 
-@Entity(WAVE_OUTCOMES_TABLE)
-export class WaveOutcomeEntity {
-  @Index()
-  @PrimaryColumn({ type: 'varchar', length: 100, nullable: false })
-  readonly wave_id!: string;
-  @Index()
-  @PrimaryColumn({ type: 'int', nullable: false })
+export interface WaveOutcomeEntity {
+  readonly wave_id: string;
   readonly wave_outcome_position: number;
-  @Column({ type: 'varchar', length: 20, nullable: false })
-  readonly type!: WaveOutcomeType;
-  @Column({ type: 'varchar', length: 20, nullable: true })
-  readonly subtype!: WaveOutcomeSubType | null;
-  @Column({ type: 'text', nullable: false })
-  readonly description!: string;
-  @Column({ type: 'varchar', length: 20, nullable: true })
-  readonly credit!: WaveOutcomeCredit | null;
-  @Column({ type: 'text', nullable: true })
-  readonly rep_category!: string | null;
-  @Column({ type: 'bigint', nullable: true })
-  readonly amount!: number | null;
+  readonly type: WaveOutcomeType;
+  readonly subtype: WaveOutcomeSubType | null;
+  readonly description: string;
+  readonly credit: WaveOutcomeCredit | null;
+  readonly rep_category: string | null;
+  readonly amount: number | null;
 }
 
-@Entity(WAVE_OUTCOME_DISTRIBUTION_ITEMS_TABLE)
-export class WaveOutcomeDistributionItemEntity {
-  @Index()
-  @PrimaryColumn({ type: 'varchar', length: 100, nullable: false })
-  readonly wave_id!: string;
-  @Index()
-  @PrimaryColumn({ type: 'int', nullable: false })
+export interface WaveOutcomeDistributionItemEntity {
+  readonly wave_id: string;
   readonly wave_outcome_position: number;
-  @Index()
-  @PrimaryColumn({ type: 'int', nullable: false })
   readonly wave_outcome_distribution_item_position: number;
-  @Index()
-  @Column({ type: 'bigint', nullable: true })
-  readonly amount!: number | null;
-  @Column({ type: 'text', nullable: true })
-  readonly description!: string | null;
+  readonly amount: number | null;
+  readonly description: string | null;
 }

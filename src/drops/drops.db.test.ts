@@ -2,6 +2,7 @@ import 'reflect-metadata';
 import {
   DROP_CURATIONS_TABLE,
   DROP_MEDIA_TABLE,
+  DROP_MEDIA_UPLOADS_TABLE,
   DROP_RELATIONS_TABLE,
   DROPS_PARTS_TABLE,
   DROPS_TABLE,
@@ -57,6 +58,143 @@ const privateProfileWave = aWave(
 const directMessageProfileWave = aWave(
   { visibility_group_id: null, is_direct_message: true },
   { id: 'profile-wave-dm', serial_no: 14, name: 'Profile DM' }
+);
+
+const publicFeedWaves = [
+  publicWaveA,
+  privateWave,
+  aWave(
+    { parent_wave_id: publicWaveA.id, chat_group_id: 'posting-group' },
+    { id: 'public-feed-child', serial_no: 21, name: 'Public child' }
+  ),
+  aWave(
+    { parent_wave_id: privateWave.id },
+    { id: 'private-parent-child', serial_no: 22, name: 'Private parent child' }
+  ),
+  aWave(
+    { parent_wave_id: publicWaveA.id, visibility_group_id: 'group-1' },
+    { id: 'private-feed-child', serial_no: 23, name: 'Private child' }
+  ),
+  directMessageProfileWave
+];
+
+describeWithSeed(
+  'DropsDb public-only latest drops',
+  [
+    withWaves(publicFeedWaves),
+    withIdentities([authorAlice]),
+    {
+      table: DROPS_TABLE,
+      rows: [
+        {
+          id: 'public-root-old',
+          wave_id: publicWaveA.id,
+          serial_no: 201
+        },
+        {
+          id: 'public-root-reply',
+          wave_id: publicWaveA.id,
+          serial_no: 202,
+          reply_to_drop_id: 'public-root-old'
+        },
+        {
+          id: 'public-child',
+          wave_id: 'public-feed-child',
+          serial_no: 203
+        },
+        {
+          id: 'private-root',
+          wave_id: privateWave.id,
+          serial_no: 204
+        },
+        {
+          id: 'private-parent',
+          wave_id: 'private-parent-child',
+          serial_no: 205
+        },
+        {
+          id: 'private-child',
+          wave_id: 'private-feed-child',
+          serial_no: 206
+        },
+        {
+          id: 'direct-message',
+          wave_id: directMessageProfileWave.id,
+          serial_no: 207
+        }
+      ].map((drop) =>
+        aDropRow({
+          ...drop,
+          author_id: authorAlice.profile_id!,
+          created_at: drop.serial_no
+        })
+      )
+    }
+  ],
+  () => {
+    const query = {
+      amount: 2,
+      serial_no_less_than: null,
+      group_ids_user_is_eligible_for: ['group-1'],
+      group_id: null,
+      wave_id: null,
+      author_id: authorAlice.profile_id!,
+      include_replies: true,
+      drop_type: null,
+      ids: null,
+      serial_nos: null,
+      contains_media: false
+    };
+
+    it('filters private waves, private parents and DMs before applying the page limit', async () => {
+      const firstPage = await repo.findLatestDrops(
+        { ...query, public_only: true },
+        ctx
+      );
+      expect(firstPage.map((drop) => drop.id)).toEqual([
+        'public-child',
+        'public-root-reply'
+      ]);
+
+      const secondPage = await repo.findLatestDrops(
+        {
+          ...query,
+          public_only: true,
+          serial_no_less_than: firstPage[1].serial_no
+        },
+        ctx
+      );
+      expect(secondPage.map((drop) => drop.id)).toEqual(['public-root-old']);
+    });
+
+    it.each([undefined, false])(
+      'preserves eligible private results when public_only is %s',
+      async (public_only) => {
+        const drops = await repo.findLatestDrops(
+          { ...query, public_only },
+          ctx
+        );
+        expect(drops.map((drop) => drop.id)).toEqual([
+          'direct-message',
+          'private-child'
+        ]);
+      }
+    );
+
+    it.each([
+      privateWave.id,
+      'private-parent-child',
+      'private-feed-child',
+      directMessageProfileWave.id
+    ])(
+      'does not allow an explicit wave filter to bypass public-only scope for %s',
+      async (wave_id) => {
+        await expect(
+          repo.findLatestDrops({ ...query, wave_id, public_only: true }, ctx)
+        ).resolves.toEqual([]);
+      }
+    );
+  }
 );
 
 describeWithSeed(
@@ -926,6 +1064,34 @@ describeWithSeed(
       ).resolves.toMatchObject({ id: 'drop-private' });
     });
 
+    it('finds several drops by id with the same wave read rule as one by id', async () => {
+      const ids = [
+        'drop-public-b',
+        'drop-private',
+        'drop-public-a-old',
+        'drop-missing'
+      ];
+      for (const groups of [[], ['admin-group'], ['group-1']]) {
+        const one = await Promise.all(
+          ids.map((id) =>
+            repo.findDropByIdWithEligibilityCheck(id, groups, undefined)
+          )
+        );
+        const several = await repo.findDropsByIdsWithEligibilityCheck(
+          ids,
+          groups,
+          undefined
+        );
+        expect(new Set(several.map((it) => it.id))).toEqual(
+          new Set(one.filter((it) => it !== null).map((it) => it!.id))
+        );
+        expect(several).toHaveLength(one.filter((it) => it !== null).length);
+      }
+      await expect(
+        repo.findDropsByIdsWithEligibilityCheck([], ['group-1'], undefined)
+      ).resolves.toEqual([]);
+    });
+
     it('does not find private drop ids in a wave range through admin-group-only eligibility', async () => {
       await expect(
         repo.findDropIdsInWaveRange(
@@ -978,6 +1144,7 @@ describeWithSeed(
     it('hydrates wave, author, first part and first-part media only', async () => {
       const results = await repo.findLightDropsByIds(
         ['drop-public-a-old', 'drop-public-a-new'],
+        [],
         ctx
       );
 
@@ -1003,6 +1170,74 @@ describeWithSeed(
           media_error: null
         }
       ]);
+    });
+
+    it('hydrates light drops only from waves the viewer can read', async () => {
+      const ids = ['drop-public-a-new', 'drop-private'];
+
+      await expect(
+        repo
+          .findLightDropsByIds(ids, [], ctx)
+          .then((rows) => rows.map((it) => it.id))
+      ).resolves.toEqual(['drop-public-a-new']);
+      await expect(
+        repo
+          .findLightDropsByIds(ids, ['group-1'], ctx)
+          .then((rows) =>
+            rows.map((it) => it.id).sort((a, b) => a.localeCompare(b))
+          )
+      ).resolves.toEqual(['drop-private', 'drop-public-a-new']);
+    });
+
+    it('carries known media layout hints (waves R11-2) and omits unknown ones', async () => {
+      await sqlExecutor.execute(
+        `insert into ${DROP_MEDIA_UPLOADS_TABLE}
+           (id, profile_id, source, public_key, public_url, ingest_bucket, ingest_key,
+            s3_upload_id, declared_mime_type, status, created_at, updated_at,
+            width, height, thumbhash)
+         values ('upload-hinted', 'author', 'drop', 'k', 'https://example.com/hinted.png',
+            'b', 'i', 's3', 'image/png', 'ready', 1, 1, 640, 480, 'HBkSHYSIeHiPiHh8eJd4eTN0EEQG')`
+      );
+      await sqlExecutor.execute(
+        `insert into ${DROP_MEDIA_TABLE} (drop_id, drop_part_id, url, mime_type, media_upload_id, wave_id)
+         values ('drop-public-a-old', 1, 'https://example.com/hinted.png', 'image/png', 'upload-hinted', :waveId)`,
+        { waveId: publicWaveA.id }
+      );
+
+      const [light] = await repo.findLightDropsByIds(
+        ['drop-public-a-old'],
+        [],
+        ctx
+      );
+      const media = await repo.getDropMedia([
+        'drop-public-a-old',
+        'drop-public-a-new'
+      ]);
+
+      expect(JSON.parse(light.medias_json ?? '[]')).toEqual([
+        {
+          url: 'https://example.com/hinted.png',
+          mime_type: 'image/png',
+          media_upload_id: 'upload-hinted',
+          media_status: 'ready',
+          media_error: null,
+          width: 640,
+          height: 480,
+          thumbhash: 'HBkSHYSIeHiPiHh8eJd4eTN0EEQG'
+        }
+      ]);
+      expect(media['drop-public-a-old']).toEqual([
+        expect.objectContaining({
+          media_width: 640,
+          media_height: 480,
+          media_thumbhash: 'HBkSHYSIeHiPiHh8eJd4eTN0EEQG'
+        })
+      ]);
+      expect(media['drop-public-a-new'][0]).toMatchObject({
+        media_width: null,
+        media_height: null,
+        media_thumbhash: null
+      });
     });
   }
 );
@@ -1124,6 +1359,140 @@ describeWithSeed(
         'collapsed-reply',
         'collapsed-root'
       ]);
+    });
+
+    it('filters one thread in an inline wave before paginating', async () => {
+      await sqlExecutor.executeNativeQueriesInTransaction(
+        async (connection) => {
+          const tx = { ...ctx, connection };
+          await sqlExecutor.execute(
+            `insert into ${DROPS_TABLE}
+            (id, serial_no, wave_id, author_id, created_at, parts_count, drop_type, reply_to_drop_id)
+            values ('mixed-root', 513, :waveId, 'profile-alice', 513, 1, 'CHAT', null),
+                   ('mixed-reply', 514, :waveId, 'profile-bob', 514, 1, 'CHAT', 'mixed-root'),
+                   ('mixed-nested-reply', 515, :waveId, 'profile-carol', 515, 1, 'CHAT', 'mixed-reply')`,
+            { waveId: inlineRepliesWave.id },
+            { wrappedConnection: connection }
+          );
+          await sqlExecutor.execute(
+            `insert into ${DROP_RELATIONS_TABLE} (parent_id, child_id, child_serial_no, wave_id)
+            values ('mixed-root', 'mixed-reply', 514, :waveId),
+                   ('mixed-root', 'mixed-nested-reply', 515, :waveId),
+                   ('mixed-reply', 'mixed-nested-reply', 515, :waveId)`,
+            { waveId: inlineRepliesWave.id },
+            { wrappedConnection: connection }
+          );
+          const setCollapsed = (collapseReplies: boolean) =>
+            repo.setDropReplyCollapse(
+              {
+                dropId: 'mixed-root',
+                waveId: inlineRepliesWave.id,
+                collapseReplies
+              },
+              tx
+            );
+          const readFeed = async (
+            respect_drop_reply_collapse: boolean,
+            serial_no_limit: number | null = null
+          ) =>
+            (
+              await repo.findLatestDropsSimple(
+                {
+                  wave_id: inlineRepliesWave.id,
+                  amount: 2,
+                  serial_no_limit,
+                  search_strategy: 'FIND_OLDER',
+                  drop_type: null,
+                  respect_drop_reply_collapse
+                },
+                tx
+              )
+            ).map((drop) => drop.id);
+
+          await expect(repo.hasDropReplies('mixed-root', tx)).resolves.toBe(
+            true
+          );
+          await expect(
+            repo.hasDropReplies('mixed-nested-reply', tx)
+          ).resolves.toBe(false);
+          await setCollapsed(true);
+          await expect(readFeed(false)).resolves.toEqual([
+            'mixed-nested-reply',
+            'mixed-reply'
+          ]);
+          await expect(readFeed(true)).resolves.toEqual([
+            'mixed-root',
+            'inline-reply'
+          ]);
+          await expect(readFeed(true, 512)).resolves.toEqual(['inline-root']);
+          await expect(
+            repo.findDropIdsInWaveRange(
+              {
+                wave_id: inlineRepliesWave.id,
+                min_serial_no: 0,
+                max_serial_no: 999,
+                limit: 10,
+                group_ids_user_is_eligible_for: [],
+                respect_drop_reply_collapse: true
+              },
+              tx
+            )
+          ).resolves.toEqual([
+            { id: 'inline-root', serial_no: 511 },
+            { id: 'inline-reply', serial_no: 512 },
+            { id: 'mixed-root', serial_no: 513 }
+          ]);
+          await expect(
+            repo.findCollapsedReplyRoots(
+              ['mixed-nested-reply', 'inline-reply'],
+              tx
+            )
+          ).resolves.toEqual({
+            'mixed-nested-reply': { id: 'mixed-root', serial_no: 513 }
+          });
+          await expect(
+            repo.countCollapsedRepliesOfGivenDrops(
+              ['mixed-root', 'inline-root'],
+              tx
+            )
+          ).resolves.toEqual({ 'mixed-root': 2 });
+          await setCollapsed(false);
+          await expect(repo.hasDropReplies('mixed-root', tx)).resolves.toBe(
+            true
+          );
+          await expect(readFeed(true)).resolves.toEqual([
+            'mixed-nested-reply',
+            'mixed-reply'
+          ]);
+          await sqlExecutor.execute(
+            `delete from ${DROP_RELATIONS_TABLE} where parent_id in ('mixed-root', 'mixed-reply')`,
+            {},
+            { wrappedConnection: connection }
+          );
+          await sqlExecutor.execute(
+            `delete from ${DROPS_TABLE} where id in ('mixed-root', 'mixed-reply', 'mixed-nested-reply')`,
+            {},
+            { wrappedConnection: connection }
+          );
+        }
+      );
+    });
+
+    it('resolves the top-level ancestor for a wave-wide collapsed reply', async () => {
+      const replyIds = [
+        'collapsed-nested-reply',
+        'collapsed-reply',
+        'inline-reply'
+      ];
+      await expect(
+        repo.findCollapsedReplyRoots(replyIds, ctx)
+      ).resolves.toEqual({});
+      await expect(
+        repo.findCollapsedReplyRoots(replyIds, ctx, true)
+      ).resolves.toEqual({
+        'collapsed-nested-reply': { id: 'collapsed-root', serial_no: 501 },
+        'collapsed-reply': { id: 'collapsed-root', serial_no: 501 }
+      });
     });
 
     it('counts existing thread replies only in collapsed-reply waves', async () => {

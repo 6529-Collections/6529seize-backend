@@ -9,6 +9,7 @@ import {
   WAVES_TABLE
 } from '@/constants';
 import { RequestContext } from '@/request.context';
+import { DbPoolName } from '@/db-query.options';
 import { dbSupplier, LazyDbAccessCompatibleService } from '@/sql-executor';
 import {
   NativeCompetitionEvent,
@@ -54,15 +55,24 @@ export class CompetitionEventRepository extends LazyDbAccessCompatibleService {
     event: NativeCompetitionEvent,
     ctx: RequestContext
   ): Promise<CompetitionEventContext | null> {
-    const rows = await this.query<CompetitionEventContext>(
-      'getContext',
-      `select c.title, c.lifecycle, c.published_at, w.visibility_group_id
+    const timer = `${this.constructor.name}->getContext`;
+    ctx.timer?.start(timer);
+    try {
+      return await this.db.oneOrNull<CompetitionEventContext>(
+        `select c.title, c.lifecycle, c.published_at, w.visibility_group_id
       from ${COMPETITIONS_TABLE} c join ${WAVES_TABLE} w on w.id = c.wave_id
-      where c.id = :competitionId and c.wave_id = :waveId and c.storage_mode = 'NATIVE'`,
-      { competitionId: event.competition_id, waveId: event.wave_id },
-      ctx
-    );
-    return rows[0] ?? null;
+      where c.id = :competitionId and c.wave_id = :waveId`,
+        { competitionId: event.competition_id, waveId: event.wave_id },
+        {
+          wrappedConnection: ctx.connection,
+          ...(event.data.artwork_alert_eligible === true
+            ? { forcePool: DbPoolName.WRITE }
+            : {})
+        }
+      );
+    } finally {
+      ctx.timer?.stop(timer);
+    }
   }
 
   public async listFollowers(
@@ -161,16 +171,19 @@ export class CompetitionEventRepository extends LazyDbAccessCompatibleService {
         { competitionId },
         ctx
       );
+    // Archiving stops future decisions, but delayed delivery must retain the
+    // claims earned by an already finalized Main Stage decision.
     const rows = await this.query<NativeDecisionWinner>(
       'getPrivilegedWinners',
       `select e.id as entry_id, e.drop_id, e.submitter_id, w.\`rank\`, w.final_rating
       from ${COMPETITION_ENTRIES_TABLE} e
       join ${COMPETITION_DECISION_WINNERS_TABLE} w on w.entry_id = e.id and w.decision_id = e.decision_id and w.competition_id = e.competition_id
-      join ${COMPETITIONS_TABLE} c on c.id = e.competition_id and c.storage_mode = 'NATIVE'
+      join ${COMPETITIONS_TABLE} c on c.id = e.competition_id
       join ${WAVES_TABLE} hub on hub.id = c.wave_id and ${publicCompetitionWaveSql('hub')}
       join ${COMPETITION_CAPABILITIES_TABLE} cap on cap.competition_id = c.id and cap.wave_id = c.wave_id and cap.capability = 'MAIN_STAGE'
       where e.competition_id = :competitionId and e.decision_id = :decisionId and e.status = 'WINNER'
-        and c.lifecycle in ('PUBLISHED', 'ENDED') order by w.\`rank\` asc, e.id asc`,
+        and c.published_at is not null
+        and c.lifecycle in ('PUBLISHED', 'ENDED', 'ARCHIVED') order by w.\`rank\` asc, e.id asc`,
       { competitionId, decisionId },
       ctx
     );

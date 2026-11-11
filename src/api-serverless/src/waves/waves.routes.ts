@@ -1,4 +1,15 @@
-import { WaveSchema, UpdateWaveSchema } from '@/api/waves/wave-write.schemas';
+import { getGroupsUserIsEligibleForReadContext } from '@/api/waves/wave-access.helpers';
+import { optionalQueryString } from '@/api/query-values';
+import {
+  legacyWaveCreation,
+  legacyWaveHubPatch
+} from '@/api/waves/wave-hub.schemas';
+import {
+  isLegacyDmClosed,
+  LEGACY_DM_CLOSED_CODE,
+  legacyDmClosedMessage
+} from '@/legacy-dm/legacy-dm-retention';
+import { rejectProxySession } from '@/api/proxy-session-guard';
 export {
   WaveSchema,
   UpdateWaveSchema,
@@ -18,6 +29,7 @@ import { ProfileProxyActionType } from '../../../entities/IProfileProxyAction';
 import { enums } from '../../../enums';
 import {
   BadRequestException,
+  CustomApiCompliantException,
   ForbiddenException,
   NotFoundException
 } from '../../../exceptions';
@@ -34,6 +46,15 @@ import {
 } from '../auth/auth';
 import { userGroupsService } from '../community-members/user-groups.service';
 import { dropsService } from '../drops/drops.api.service';
+import {
+  WAVE_LOGS_TIMEOUT_TTL,
+  WaveLogsUnavailableException
+} from '../drops/wave-logs-timeout';
+import {
+  anonymousWaveResponseCache,
+  invalidateAnonymousWaveResponse,
+  markShareableWaveResponse
+} from './wave-response-cache';
 import { ApiCreateNewWave } from '../generated/models/ApiCreateNewWave';
 import { ApiDropSearchStrategy } from '../generated/models/ApiDropSearchStrategy';
 import { ApiDropsLeaderboardPage } from '../generated/models/ApiDropsLeaderboardPage';
@@ -69,6 +90,7 @@ import { ApiWaveCurationRequest } from '@/api/generated/models/ApiWaveCurationRe
 import { curationsApiService } from '@/api/curations/curations.api.service';
 import { ApiCurationDropsPage } from '@/api/generated/models/ApiCurationDropsPage';
 import waveRepRoutes from './wave-rep.routes';
+import { getValidatedDirectMessageRecipientAddresses } from './direct-message-wave-request';
 import {
   waveScoreService,
   WaveScoreDirtyRefreshReason
@@ -94,11 +116,9 @@ async function handleSimpleWaveAction(
   if (!authenticatedProfileId) {
     throw new ForbiddenException(`Please create a profile first`);
   }
-  if (
-    options?.disallowProxy &&
-    authenticationContext.isAuthenticatedAsProxy()
-  ) {
-    throw new ForbiddenException(
+  if (options?.disallowProxy) {
+    rejectProxySession(
+      authenticationContext,
       options.proxyErrorMessage ?? `Proxy is not allowed to perform this action`
     );
   }
@@ -129,7 +149,7 @@ router.post(
     ) {
       throw new ForbiddenException(`Proxy is not allowed to create waves`);
     }
-    let request = getValidatedByJoiOrThrow(req.body, WaveSchema);
+    let request = legacyWaveCreation(req.body);
     // Temporary hack to make sure old FE's work with new API's
     if (
       request.chat.scope.group_id === null &&
@@ -195,21 +215,24 @@ router.post(
     ) {
       throw new ForbiddenException(`Proxy is not allowed to create waves`);
     }
-    const request = getValidatedByJoiOrThrow(
+    const recipientAddresses = getValidatedDirectMessageRecipientAddresses(
       req.body,
-      Joi.object<{
-        identity_addresses: string[];
-      }>({
-        identity_addresses: Joi.array().items(Joi.string()).min(1).required()
-      })
+      [
+        creatorProfile.primary_wallet,
+        ...(creatorProfile.wallets ?? []).map((it) => it.wallet)
+      ]
     );
-    if (request.identity_addresses.includes(authenticatedProfileId)) {
-      throw new BadRequestException(`You cannot DM yourself.`);
+    if (isLegacyDmClosed(Time.currentMillis())) {
+      throw new CustomApiCompliantException(
+        403,
+        legacyDmClosedMessage(),
+        LEGACY_DM_CLOSED_CODE
+      );
     }
 
     const userGroup = await userGroupsService.findOrCreateDirectMessageGroup(
       creatorProfile,
-      request.identity_addresses,
+      recipientAddresses,
       requestContext
     );
 
@@ -231,38 +254,14 @@ router.post(
     const timer = Timer.getFromRequest(req);
     const authenticationContext = await getAuthenticationContext(req, timer);
     const requestContext: RequestContext = { authenticationContext, timer };
-    let request = getValidatedByJoiOrThrow(req.body, UpdateWaveSchema);
-    // Temporary hack to make sure old FE's work with new API's
-    if (
-      request.chat.scope.group_id === null &&
-      request.participation.scope.group_id !== null &&
-      request.wave.type === ApiWaveType.Chat
-    ) {
-      request = {
-        ...request,
-        chat: {
-          ...request.chat,
-          scope: { group_id: request.participation.scope.group_id },
-          enabled: request.chat.enabled
-        }
-      };
-    }
-    const wave = await waveApiService.updateWave(
+    const request = legacyWaveHubPatch(req.body);
+    const wave = await waveApiService.updateWaveHub(
       req.params.id,
       request,
       requestContext
     );
+    await invalidateAnonymousWaveResponse(req.params.id);
     await giveReadReplicaTimeToCatchUp();
-    await userGroupsService.onWaveRelatedGroupsChanged(
-      [
-        request.visibility.scope.group_id,
-        request.participation.scope.group_id,
-        request.chat.scope.group_id,
-        request.voting.scope.group_id,
-        request.wave.admin_group?.group_id
-      ],
-      requestContext
-    );
     res.send(wave);
   }
 );
@@ -290,6 +289,7 @@ router.use('/:id/rep', waveRepRoutes);
 router.get(
   '/:id',
   maybeAuthenticatedUser(),
+  anonymousWaveResponseCache(),
   async (
     req: Request<{ id: string }, any, any, any, any>,
     res: Response<ApiResponse<ApiWave>>
@@ -305,13 +305,13 @@ router.get(
           ProfileProxyActionType.READ_WAVE
         ])
         ? []
-        : await userGroupsService.getGroupsUserIsEligibleFor(profileId);
+        : await userGroupsService.getGroupsUserIsEligibleFor(profileId, timer);
     const wave = await waveApiService.findWaveByIdOrThrow(
       id,
       group_ids_user_is_eligible_for,
       { authenticationContext, timer }
     );
-
+    markShareableWaveResponse(res, profileId, wave);
     res.send(wave);
   }
 );
@@ -327,6 +327,7 @@ router.delete(
     const timer = Timer.getFromRequest(req);
     const authenticationContext = await getAuthenticationContext(req, timer);
     await waveApiService.deleteWave(id, { authenticationContext, timer });
+    await invalidateAnonymousWaveResponse(id);
     res.send({});
   }
 );
@@ -418,14 +419,26 @@ router.delete('/:id/pins', needsAuthenticatedUser(), async (req, res) => {
 });
 
 router.post('/:id/mute', needsAuthenticatedUser(), async (req, res) => {
-  await handleSimpleWaveAction(req, res, (waveId, ctx) =>
-    waveApiService.muteWave({ waveId }, ctx)
+  await handleSimpleWaveAction(
+    req,
+    res,
+    (waveId, ctx) => waveApiService.muteWave({ waveId }, ctx),
+    {
+      disallowProxy: true,
+      proxyErrorMessage: `Proxy is not allowed to mute waves`
+    }
   );
 });
 
 router.delete('/:id/mute', needsAuthenticatedUser(), async (req, res) => {
-  await handleSimpleWaveAction(req, res, (waveId, ctx) =>
-    waveApiService.unmuteWave({ waveId }, ctx)
+  await handleSimpleWaveAction(
+    req,
+    res,
+    (waveId, ctx) => waveApiService.unmuteWave({ waveId }, ctx),
+    {
+      disallowProxy: true,
+      proxyErrorMessage: `Proxy is not allowed to unmute waves`
+    }
   );
 });
 
@@ -496,7 +509,7 @@ router.get(
     const { id } = req.params;
     const timer = Timer.getFromRequest(req);
     const authenticationContext = await getAuthenticationContext(req);
-    const dropId = req.query.drop_id ?? null;
+    const dropId = optionalQueryString(req.query, 'drop_id') ?? null;
     const amount = numbers.parseIntOrNull(req.query.limit) ?? 200;
     const serialNoLessThan = numbers.parseIntOrNull(
       req.query.serial_no_less_than
@@ -508,11 +521,11 @@ router.get(
         ? (enums.resolve(ApiDropSearchStrategy, req.query.search_strategy) ??
           ApiDropSearchStrategy.Older)
         : ApiDropSearchStrategy.Older;
-    const drop_type_str = req.query.drop_type as string | undefined;
+    const drop_type_str = optionalQueryString(req.query, 'drop_type');
     const drop_type = drop_type_str
       ? (enums.resolve(ApiDropType, drop_type_str) ?? null)
       : null;
-    const curation_id = req.query.curation_id ?? null;
+    const curation_id = optionalQueryString(req.query, 'curation_id') ?? null;
     const result = await dropsService.findWaveDropsFeed(
       {
         wave_id: id,
@@ -759,18 +772,30 @@ router.get(
     if (logTypes.length === 0) {
       logTypes = [...DROP_LOG_TYPES];
     }
-    const result = await dropsService.findWaveLogs(
-      {
-        ...params,
-        wave_id: id,
-        log_types: logTypes
-      },
-      {
-        authenticationContext,
-        timer
+    try {
+      const result = await dropsService.findWaveLogs(
+        {
+          ...params,
+          wave_id: id,
+          log_types: logTypes
+        },
+        {
+          authenticationContext,
+          timer
+        }
+      );
+      res.send(result);
+    } catch (error) {
+      if (error instanceof WaveLogsUnavailableException) {
+        // The error middleware sends the 503 on this response, keeping
+        // headers already set.
+        res.setHeader(
+          'Retry-After',
+          WAVE_LOGS_TIMEOUT_TTL.toSeconds().toString()
+        );
       }
-    );
-    res.send(result);
+      throw error;
+    }
   }
 );
 
@@ -990,19 +1015,14 @@ router.post(
     const timer = Timer.getFromRequest(req);
     const authenticationContext = await getAuthenticationContext(req, timer);
 
-    const model: ApiUpdateWaveDecisionPause = getValidatedByJoiOrThrow(
-      req.body,
-      Joi.object<ApiUpdateWaveDecisionPause>({
-        id: Joi.number().integer().allow(null).default(null),
-        start_time: Joi.number().integer().min(0).required(),
-        end_time: Joi.number().integer().min(0).required()
-      })
+    // Keep the administration guard while ignoring the legacy pause command.
+    const ctx = { timer, authenticationContext };
+    await waveApiService.updateWaveHub(id, {}, ctx);
+    const groups = await getGroupsUserIsEligibleForReadContext(
+      userGroupsService,
+      ctx
     );
-
-    const result = await waveApiService.createOrUpdateWavePause(id, model, {
-      timer,
-      authenticationContext
-    });
+    const result = await waveApiService.findWaveByIdOrThrow(id, groups, ctx);
     res.send(result);
   }
 );
@@ -1014,19 +1034,21 @@ router.delete(
     req: Request<{ waveId: string; id: string }, any, any, any, any>,
     res: Response<ApiResponse<ApiWave>>
   ) => {
-    const { waveId, id } = req.params;
-    const pauseId = numbers.parseIntOrNull(id);
-    if (!pauseId) {
-      throw new BadRequestException('Invalid pause id');
-    }
-
+    const { waveId } = req.params;
     const timer = Timer.getFromRequest(req);
     const authenticationContext = await getAuthenticationContext(req, timer);
 
-    const result = await waveApiService.deleteWavePause(waveId, pauseId, {
-      timer,
-      authenticationContext
-    });
+    const ctx = { timer, authenticationContext };
+    await waveApiService.updateWaveHub(waveId, {}, ctx);
+    const groups = await getGroupsUserIsEligibleForReadContext(
+      userGroupsService,
+      ctx
+    );
+    const result = await waveApiService.findWaveByIdOrThrow(
+      waveId,
+      groups,
+      ctx
+    );
     res.send(result);
   }
 );

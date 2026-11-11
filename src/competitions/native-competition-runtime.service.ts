@@ -1,3 +1,4 @@
+import { recordNativeCompetitionRun } from './native-competition-metrics';
 import {
   CompetitionCreditService,
   competitionCreditService
@@ -6,7 +7,6 @@ import { Competition, CompetitionPause } from './competition.types';
 import {
   CompetitionLifecycle,
   CompetitionCapability,
-  CompetitionStorageMode,
   CompetitionType
 } from '@/entities/ICompetition';
 import {
@@ -16,6 +16,7 @@ import {
 import { Logger } from '@/logging';
 import { RequestContext } from '@/request.context';
 import { Timer } from '@/time';
+import { reportLoopHealth } from '@/loop-health';
 import { WaveCreditScope } from '@/entities/IWave';
 import { readSequentially } from '@/competitions/competition-read-sequence';
 import { computeCompetitionPhase } from './competition-phase';
@@ -24,6 +25,7 @@ import {
   nativeCompetitionRuntimeRepository,
   NativeDecisionWinner,
   NativeHistoryRow,
+  NativeLeaderboardRow,
   NativeRuntimeEntry
 } from './native-competition-runtime.repository';
 import {
@@ -37,12 +39,96 @@ import {
   reducedNativeVotes,
   flooredWeightedNativeVote
 } from './native-competition-runtime.helpers';
+import {
+  competitionWorkerCursorStore,
+  CompetitionWorkerCursorStore
+} from './competition-worker-cursor';
 
 type RuntimeState = {
   entries: NativeRuntimeEntry[];
   history: NativeHistoryRow[];
   pauses: CompetitionPause[];
 };
+
+/** Outcome of refreshing a leaderboard without holding the competition row. */
+/**
+ * 'changed': an input changed during the computation; 'decisions_due': an
+ * Approve competition has a decision to make. Either way nothing is written
+ * and the caller runs the locked run.
+ */
+export type OffLockLeaderboardRefresh =
+  | 'written'
+  | 'changed'
+  | 'decisions_due'
+  | 'inapplicable';
+
+/**
+ * Off-lock attempts before the locked run follows. A vote landing during the
+ * computation (seconds for the largest competitions) changes the inputs; a
+ * fresh attempt usually finds them quiet, while the locked run holds the row
+ * for the whole computation.
+ */
+export const OFF_LOCK_MAX_ATTEMPTS = 3;
+/** No further attempt once this competition's run has taken this long. */
+export const OFF_LOCK_RETRY_BUDGET_MS = 20_000;
+/** Nor when the invocation has less than this left. */
+export const OFF_LOCK_RETRY_MIN_REMAINING_MS = 60_000;
+
+/** A loop invocation's remaining time, when known (Lambda context). */
+export type OffLockRunOptions = {
+  readonly remainingMillis?: () => number;
+};
+
+/**
+ * Bounds of one decision pass. Without them a pass visits every competition,
+ * as before. Scoring and decisions of each competition are unchanged; the
+ * bounds only decide which competitions this pass starts.
+ */
+export type DecisionPassBounds = {
+  /** Start no further competition once the pass has run this long. */
+  readonly budgetMs?: number;
+  /**
+   * Move on from a competition still running after this long. Its run is
+   * never cut short (its transaction commits or rolls back as usual); it
+   * finishes alongside the next competitions and the pass waits for it
+   * before returning, so no transaction outlives the invocation.
+   */
+  readonly competitionDeadlineMs?: number;
+  /** Start no further competition when the invocation has less left. */
+  readonly reserveMillis?: number;
+};
+
+/** Competitions past their deadline that may still be running at once. */
+export const DECISION_PASS_MAX_OVERRUNNING = 2;
+/** The decision worker's resume point in `competition_worker_cursors`. */
+export const DECISION_PASS_CURSOR = 'native_decisions';
+
+const DEADLINE_PASSED = Symbol('deadline passed');
+
+async function withinDeadline<T>(
+  run: Promise<T>,
+  deadlineMs: number | undefined
+): Promise<T | typeof DEADLINE_PASSED> {
+  if (deadlineMs === undefined) return run;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<typeof DEADLINE_PASSED>((resolve) => {
+    timer = setTimeout(() => resolve(DEADLINE_PASSED), deadlineMs);
+  });
+  try {
+    return await Promise.race([run, deadline]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** Test seam: runs between the off-lock computation and the locked write. */
+export type OffLockRefreshHooks = {
+  readonly afterCompute?: () => Promise<void>;
+};
+
+function isTimeLocked(competition: Competition): boolean {
+  return (competition.decisions.time_lock_ms ?? 0) > 0;
+}
 
 type ScoredEntry = {
   entry: NativeRuntimeEntry;
@@ -105,11 +191,19 @@ export class NativeCompetitionRuntimeService {
     private readonly repository: NativeCompetitionRuntimeRepository,
     private readonly credits: Pick<
       CompetitionCreditService,
-      'getBudget' | 'getWaveBudgets'
+      'getBudget' | 'getWaveBudgets' | 'getDropBudgets'
     >,
-    private readonly executionRouter: CompetitionExecutionRouter
+    private readonly executionRouter: CompetitionExecutionRouter,
+    private readonly cursors: Pick<
+      CompetitionWorkerCursorStore,
+      'read' | 'save'
+    > = competitionWorkerCursorStore
   ) {}
 
+  /**
+   * `activeVotes` are the voter's active votes when the caller already read
+   * them in this transaction (exactly what getVoterActiveVotes returns).
+   */
   public async reconcileVoterCredit(
     params: {
       competitionId: string;
@@ -118,17 +212,20 @@ export class NativeCompetitionRuntimeService {
       creditScope: string;
       occurredAt: number;
     },
-    ctx: RequestContext
+    ctx: RequestContext,
+    activeVotes?: readonly { entryId: string; value: number }[]
   ): Promise<void> {
     if (!ctx.connection)
       throw new Error(
         'Credit reconciliation requires the competition transaction lock'
       );
-    const current = await this.repository.getVoterActiveVotes(
-      params.competitionId,
-      params.voterProfileId,
-      ctx
-    );
+    const current =
+      activeVotes ??
+      (await this.repository.getVoterActiveVotes(
+        params.competitionId,
+        params.voterProfileId,
+        ctx
+      ));
     const reduced = reducedNativeVotes(
       current,
       params.availableCredit,
@@ -161,13 +258,31 @@ export class NativeCompetitionRuntimeService {
     ctx: RequestContext
   ): Promise<void> {
     const voters = await this.repository.listActiveVoters(competition.id, ctx);
+    const scope = competition.voting.credit_scope;
     const waveBudgets =
-      competition.voting.credit_scope === WaveCreditScope.WAVE
+      scope === WaveCreditScope.WAVE
         ? await this.credits.getWaveBudgets(competition, voters, ctx)
+        : null;
+    // DROP scope checks every voter's votes: read the budgets and the votes
+    // in a few paged statements instead of ~4 statements per voter. Same
+    // transaction and lock; reconciliation reads nothing it writes, so the
+    // writes (and their order) are unchanged.
+    const dropBudgets =
+      scope === WaveCreditScope.DROP
+        ? await this.credits.getDropBudgets(competition, voters, ctx)
+        : null;
+    const dropVotes =
+      scope === WaveCreditScope.DROP
+        ? await this.repository.getVotersActiveVotes(
+            competition.id,
+            voters,
+            ctx
+          )
         : null;
     await readSequentially(voters, async (voterProfileId) => {
       const budget =
         waveBudgets?.get(voterProfileId) ??
+        dropBudgets?.get(voterProfileId) ??
         (await this.credits.getBudget(
           competition,
           voterProfileId,
@@ -190,7 +305,8 @@ export class NativeCompetitionRuntimeService {
           creditScope: competition.voting.credit_scope,
           occurredAt: now
         },
-        ctx
+        ctx,
+        dropVotes?.get(voterProfileId)
       );
     });
   }
@@ -218,7 +334,25 @@ export class NativeCompetitionRuntimeService {
       return;
     await this.emitScheduledTransitions(competition, now, ctx);
     await this.reconcileCompetitionCredit(competition, now, ctx);
-    const state = await this.loadState(competition.id, ctx);
+    await this.refreshLeaderboardAfterCreditReconciliation(
+      competition,
+      now,
+      ctx
+    );
+  }
+
+  /** Bulk TDH revocation has already reconciled every over-limit voter under
+   * this competition's transaction lock, including their notifications. */
+  public async refreshLeaderboardAfterCreditReconciliation(
+    competition: Competition,
+    now: number,
+    ctx: RequestContext
+  ): Promise<void> {
+    if (!ctx.connection)
+      throw new Error(
+        'Leaderboard refresh requires the competition transaction lock'
+      );
+    const state = await this.loadState(competition.id, ctx, true);
     await this.refreshLeaderboard(competition, state, now, ctx);
   }
 
@@ -278,31 +412,436 @@ export class NativeCompetitionRuntimeService {
 
   public async refreshNativeLeaderboards(
     timer: Timer,
-    now = Date.now()
+    now = Date.now(),
+    options: OffLockRunOptions = {}
   ): Promise<void> {
     await this.forEachNativeCompetition(
       timer,
       'leaderboard',
-      (competitionId, ctx) => this.refreshCompetition(competitionId, now, ctx)
+      (competitionId, ctx) =>
+        this.refreshLeaderboardForSnapshot(competitionId, now, ctx, {}, options)
     );
   }
 
+  /**
+   * The snapshotter's refresh. Transitions and credit reconciliation stay
+   * under the competition lock. A time-locked competition's leaderboard is
+   * then computed off the lock (refreshLeaderboardOffLock); if its inputs
+   * changed meanwhile, the locked refresh runs as before, so the snapshot is
+   * never older than one snapshotter interval.
+   */
+  public async refreshLeaderboardForSnapshot(
+    competitionId: string,
+    now: number,
+    ctx: RequestContext = {},
+    hooks: OffLockRefreshHooks = {},
+    options: OffLockRunOptions = {}
+  ): Promise<void> {
+    if (ctx.connection) return this.refreshCompetition(competitionId, now, ctx);
+    const startedAt = Date.now();
+    const next = await this.repository.executeNativeQueriesInTransaction(
+      async (connection): Promise<'skipped' | 'locked' | 'off_lock'> => {
+        const lockedCtx = { ...ctx, connection };
+        const competition = await this.repository.lockCompetition(
+          competitionId,
+          lockedCtx
+        );
+        if (
+          !competition ||
+          competition.lifecycle !== CompetitionLifecycle.PUBLISHED ||
+          !this.executionRouter.isNativeExecutionAllowed(competition)
+        )
+          return 'skipped';
+        await this.emitScheduledTransitions(competition, now, lockedCtx);
+        await this.reconcileCompetitionCredit(competition, now, lockedCtx);
+        if (isTimeLocked(competition)) return 'off_lock';
+        await this.refreshLeaderboardAfterCreditReconciliation(
+          competition,
+          now,
+          lockedCtx
+        );
+        return 'locked';
+      }
+    );
+    let lockedMs = Date.now() - startedAt;
+    if (next === 'skipped') return;
+    if (next === 'locked') {
+      recordNativeCompetitionRun({
+        competitionId,
+        operation: 'leaderboard',
+        path: 'locked',
+        lockedMs,
+        computeMs: 0,
+        durationMs: Date.now() - startedAt
+      });
+      return;
+    }
+    let computeMs = 0;
+    const { outcome, attempts } = await this.refreshLeaderboardOffLockRetrying(
+      competitionId,
+      now,
+      ctx,
+      hooks,
+      {
+        operation: 'leaderboard',
+        extraLockedMs: lockedMs,
+        onMeasured: (measured) => {
+          computeMs += measured.computeMs;
+          lockedMs += measured.writeLockedMs;
+        }
+      },
+      { startedAt, ...options }
+    );
+    if (outcome === 'changed') {
+      const fallbackStartedAt = Date.now();
+      await this.refreshCompetition(competitionId, now, ctx);
+      lockedMs += Date.now() - fallbackStartedAt;
+    }
+    recordNativeCompetitionRun({
+      competitionId,
+      operation: 'leaderboard',
+      path: outcome === 'changed' ? 'off_lock_fallback' : 'off_lock',
+      lockedMs,
+      computeMs,
+      durationMs: Date.now() - startedAt,
+      attempts
+    });
+  }
+
+  /**
+   * refreshLeaderboardOffLock, retried while its inputs keep changing during
+   * the computation (votes arriving), up to OFF_LOCK_MAX_ATTEMPTS attempts,
+   * OFF_LOCK_RETRY_BUDGET_MS of this run, and while the invocation has
+   * OFF_LOCK_RETRY_MIN_REMAINING_MS left. Only 'changed' retries: a due
+   * Approve decision goes to the locked run at once. A final 'changed' leaves
+   * the locked run to the caller, as before.
+   */
+  private async refreshLeaderboardOffLockRetrying(
+    competitionId: string,
+    now: number,
+    ctx: RequestContext,
+    hooks: OffLockRefreshHooks,
+    report: Parameters<
+      NativeCompetitionRuntimeService['refreshLeaderboardOffLock']
+    >[4] & { readonly operation: 'leaderboard' | 'decisions' },
+    { startedAt, remainingMillis }: OffLockRunOptions & { startedAt: number }
+  ): Promise<{ outcome: OffLockLeaderboardRefresh; attempts: number }> {
+    for (let attempts = 1; ; attempts++) {
+      const outcome = await this.refreshLeaderboardOffLock(
+        competitionId,
+        now,
+        ctx,
+        hooks,
+        // The locked transactions before the first attempt count once.
+        attempts === 1 ? report : { ...report, extraLockedMs: 0 }
+      );
+      if (
+        outcome !== 'changed' ||
+        attempts >= OFF_LOCK_MAX_ATTEMPTS ||
+        Date.now() - startedAt >= OFF_LOCK_RETRY_BUDGET_MS ||
+        (remainingMillis !== undefined &&
+          remainingMillis() < OFF_LOCK_RETRY_MIN_REMAINING_MS)
+      )
+        return { outcome, attempts };
+    }
+  }
+
+  /**
+   * Refreshes a leaderboard while holding the competition row only to write
+   * it. Entries, history and pauses are read in one consistent snapshot
+   * without the lock and scored there; the write then takes the lock and
+   * proceeds only if leaderboardInputsMark is unchanged since the snapshot.
+   * Otherwise a vote, entry, pause or configuration change landed during the
+   * computation and nothing is written ('changed'): no update is lost and no
+   * stale leaderboard overwrites a newer one. Decisions never use this.
+   */
+  public async refreshLeaderboardOffLock(
+    competitionId: string,
+    now: number,
+    ctx: RequestContext = {},
+    hooks: OffLockRefreshHooks = {},
+    report: {
+      operation: 'leaderboard' | 'decisions';
+      extraLockedMs?: number;
+      /** Receives the computation and this refresh's own locked write. */
+      onMeasured?: (measured: {
+        computeMs: number;
+        writeLockedMs: number;
+      }) => void;
+    } = { operation: 'leaderboard' }
+  ): Promise<OffLockLeaderboardRefresh> {
+    if (ctx.connection)
+      throw new Error('An off-lock refresh cannot join a transaction');
+    const computeStartedAt = Date.now();
+    const computed = await this.repository.executeNativeQueriesInTransaction(
+      async (connection) => {
+        const snapshotCtx = { ...ctx, connection };
+        const competition = await this.repository.readCompetition(
+          competitionId,
+          snapshotCtx
+        );
+        if (
+          !competition ||
+          competition.lifecycle !== CompetitionLifecycle.PUBLISHED ||
+          !this.executionRouter.isNativeExecutionAllowed(competition)
+        )
+          return null;
+        const mark = await this.repository.leaderboardInputsMark(
+          competitionId,
+          snapshotCtx
+        );
+        // This path only refreshes standings/checks whether a decision is due.
+        // A due approval falls back to the locked run, which reloads both
+        // streams before recording individual-voter winner snapshots.
+        const state = await this.loadState(competitionId, snapshotCtx, true);
+        // An Approve decision run decides from the same state at the same
+        // time; only a run with no decision to make stays off the lock.
+        const approveProgress =
+          report.operation === 'decisions' &&
+          competition.type === CompetitionType.APPROVE
+            ? await this.repository.decisionProgress(competitionId, snapshotCtx)
+            : null;
+        const decisionsDue =
+          approveProgress !== null &&
+          this.approveDecisionsDue(competition, state, approveProgress, now);
+        return {
+          competition,
+          mark,
+          approveProgress,
+          decisionsDue,
+          ...this.leaderboardRows(competition, state, now)
+        };
+      }
+    );
+    const computeMs = Date.now() - computeStartedAt;
+    if (!computed) return 'inapplicable';
+    if (computed.decisionsDue) {
+      report.onMeasured?.({ computeMs, writeLockedMs: 0 });
+      this.logger.info('native_competition_leaderboard_off_lock', {
+        competition_id: competitionId,
+        operation: report.operation,
+        outcome: 'decisions_due',
+        compute_ms: computeMs,
+        locked_ms: report.extraLockedMs ?? 0
+      });
+      return 'decisions_due';
+    }
+    await hooks.afterCompute?.();
+    const writeStartedAt = Date.now();
+    const outcome = await this.repository.executeNativeQueriesInTransaction(
+      async (connection): Promise<OffLockLeaderboardRefresh> => {
+        const lockedCtx = { ...ctx, connection };
+        const competition = await this.repository.lockCompetition(
+          competitionId,
+          lockedCtx
+        );
+        if (
+          !competition ||
+          competition.lifecycle !== CompetitionLifecycle.PUBLISHED ||
+          !this.executionRouter.isNativeExecutionAllowed(competition)
+        )
+          return 'inapplicable';
+        const mark = await this.repository.leaderboardInputsMark(
+          competitionId,
+          lockedCtx
+        );
+        if (mark !== computed.mark) return 'changed';
+        // "Nothing due" was decided from this decision progress; the mark
+        // covers decisions only through their entry and outbox writes.
+        if (computed.approveProgress) {
+          const progress = await this.repository.decisionProgress(
+            competitionId,
+            lockedCtx
+          );
+          if (
+            progress.completed !== computed.approveProgress.completed ||
+            progress.latest !== computed.approveProgress.latest
+          )
+            return 'changed';
+        }
+        await this.writeLeaderboard(
+          computed.competition,
+          computed.rows,
+          now,
+          computed.timeLocked,
+          lockedCtx
+        );
+        return 'written';
+      }
+    );
+    const writeLockedMs = Date.now() - writeStartedAt;
+    report.onMeasured?.({ computeMs, writeLockedMs });
+    const record = {
+      competition_id: competitionId,
+      operation: report.operation,
+      outcome,
+      compute_ms: computeMs,
+      locked_ms: writeLockedMs + (report.extraLockedMs ?? 0)
+    };
+    // 'changed' sends the run to its locked fallback, so it stays visible.
+    // LOG_LEVEL_NativeCompetitionRuntimeService=debug shows every refresh.
+    if (outcome === 'changed')
+      this.logger.info('native_competition_leaderboard_off_lock', record);
+    else this.logger.debug('native_competition_leaderboard_off_lock', record);
+    return outcome;
+  }
+
+  /**
+   * One decision pass. It starts after the competition the previous pass
+   * last started and wraps around, so a pass that runs out of its budget is
+   * continued by the next one instead of starting over from the first
+   * competition. Within the bounds every competition is visited, as before.
+   */
   public async processDueCompetitions({
     now = Date.now(),
-    timer
-  }: { now?: number; timer?: Timer } = {}): Promise<void> {
-    await this.forEachNativeCompetition(
-      timer,
-      'decisions',
-      (competitionId, ctx) => this.processCompetition(competitionId, now, ctx)
-    );
+    timer,
+    remainingMillis,
+    budgetMs,
+    competitionDeadlineMs,
+    reserveMillis
+  }: {
+    now?: number;
+    timer?: Timer;
+    remainingMillis?: () => number;
+  } & DecisionPassBounds = {}): Promise<void> {
+    const startedAt = Date.now();
+    const outOfTime = () =>
+      (budgetMs !== undefined && Date.now() - startedAt >= budgetMs) ||
+      (remainingMillis !== undefined &&
+        reserveMillis !== undefined &&
+        remainingMillis() < reserveMillis);
+    const start = await this.cursors.read(DECISION_PASS_CURSOR);
+    const overrunning = new Set<Promise<void>>();
+    let started = 0;
+    let failed = 0;
+    let overran = 0;
+    let incomplete = false;
+    const visit = async (id: string): Promise<boolean> => {
+      if (outOfTime()) {
+        incomplete = true;
+        return false;
+      }
+      // Saved before the run: a competition that never finishes is still
+      // passed over by the next pass, which starts after it. A failure only
+      // counts as failed; a pass with time left still visits every
+      // competition, so a failing one is retried every pass as before.
+      await this.cursors.save(DECISION_PASS_CURSOR, id, Date.now());
+      started++;
+      const run = this.runCompetitionPass(id, 'decisions', timer, (ctx) =>
+        this.processCompetition(id, now, ctx, { remainingMillis })
+      );
+      const result = await withinDeadline(run, competitionDeadlineMs);
+      if (result !== DEADLINE_PASSED) {
+        if (!result) failed++;
+        return true;
+      }
+      overran++;
+      this.logger.warn('native_competition_execution_deadline_passed', {
+        competition_id: id,
+        operation: 'decisions',
+        deadline_ms: competitionDeadlineMs
+      });
+      const tracked: Promise<void> = run
+        .then((succeeded) => {
+          if (!succeeded) failed++;
+        })
+        .finally(() => overrunning.delete(tracked));
+      overrunning.add(tracked);
+      if (overrunning.size >= DECISION_PASS_MAX_OVERRUNNING)
+        await Promise.race(overrunning);
+      return true;
+    };
+    try {
+      await this.visitRotation(start, timer, visit);
+    } finally {
+      await Promise.all(overrunning);
+    }
+    if (incomplete || overran) {
+      this.logger.warn('native_competition_decision_pass_bounded', {
+        started,
+        failed,
+        overran,
+        incomplete,
+        duration_ms: Date.now() - startedAt
+      });
+    }
+    const pending = failed > 0 || incomplete;
+    reportLoopHealth({
+      operation: 'native_execution',
+      pending,
+      recovery: 'automatic',
+      ...(pending ? {} : { progressAt: Math.floor(Date.now() / 1000) })
+    });
+  }
+
+  /**
+   * Visits active competitions in id order starting after `start`, then from
+   * the beginning through `start`, until `visit` returns false.
+   */
+  private async visitRotation(
+    start: string,
+    timer: Timer | undefined,
+    visit: (id: string) => Promise<boolean>
+  ): Promise<void> {
+    const passes: { afterId: string; throughId?: string }[] = start
+      ? [{ afterId: start }, { afterId: '', throughId: start }]
+      : [{ afterId: '' }];
+    for (const pass of passes) {
+      let afterId = pass.afterId;
+      for (;;) {
+        const ids =
+          pass.throughId === undefined
+            ? await this.repository.discoverCompetitions(afterId, 100, {
+                timer
+              })
+            : await this.repository.discoverCompetitions(
+                afterId,
+                100,
+                { timer },
+                pass.throughId
+              );
+        if (!ids.length) break;
+        for (const id of ids) {
+          if (!(await visit(id))) return;
+        }
+        afterId = ids[ids.length - 1];
+      }
+    }
+  }
+
+  /** Runs one competition and logs its outcome; resolves false on failure. */
+  private async runCompetitionPass(
+    id: string,
+    operation: 'leaderboard' | 'decisions',
+    timer: Timer | undefined,
+    execute: (ctx: RequestContext) => Promise<void>
+  ): Promise<boolean> {
+    const startedAt = Date.now();
+    try {
+      await execute({ timer });
+      this.logger.info('native_competition_execution_completed', {
+        competition_id: id,
+        operation,
+        duration_ms: Date.now() - startedAt
+      });
+      return true;
+    } catch {
+      // Do not log signed payloads, user content or DB error values.
+      this.logger.error('native_competition_execution_failed', {
+        competition_id: id,
+        operation,
+        duration_ms: Date.now() - startedAt
+      });
+      return false;
+    }
   }
 
   private async forEachNativeCompetition(
     timer: Timer | undefined,
     operation: 'leaderboard' | 'decisions',
     execute: (id: string, ctx: RequestContext) => Promise<void>
-  ): Promise<void> {
+  ): Promise<number> {
+    let failed = 0;
     let afterId = '';
     for (;;) {
       const ids = await this.repository.discoverCompetitions(afterId, 100, {
@@ -310,62 +849,175 @@ export class NativeCompetitionRuntimeService {
       });
       if (!ids.length) break;
       for (const id of ids) {
-        const startedAt = Date.now();
-        try {
-          await execute(id, { timer });
-          this.logger.info('native_competition_execution_completed', {
-            competition_id: id,
-            operation,
-            duration_ms: Date.now() - startedAt
-          });
-        } catch {
-          // Do not log signed payloads, user content or DB error values.
-          this.logger.error('native_competition_execution_failed', {
-            competition_id: id,
-            operation,
-            duration_ms: Date.now() - startedAt
-          });
-        }
+        if (
+          !(await this.runCompetitionPass(id, operation, timer, (ctx) =>
+            execute(id, ctx)
+          ))
+        )
+          failed++;
       }
       afterId = ids[ids.length - 1];
     }
+    return failed;
   }
 
   public async processCompetition(
     competitionId: string,
     now: number,
-    ctx: RequestContext = {}
+    ctx: RequestContext = {},
+    options: OffLockRunOptions = {}
   ): Promise<void> {
-    if (!ctx.connection)
-      return this.repository.executeNativeQueriesInTransaction((connection) =>
-        this.processCompetition(competitionId, now, { ...ctx, connection })
+    if (!ctx.connection) {
+      const startedAt = Date.now();
+      const next = await this.repository.executeNativeQueriesInTransaction(
+        (connection) =>
+          this.processCompetitionLocked(
+            competitionId,
+            now,
+            { ...ctx, connection },
+            true
+          )
       );
+      let lockedMs = Date.now() - startedAt;
+      if (next === 'skipped') return;
+      if (next !== 'refresh-off-lock') {
+        recordNativeCompetitionRun({
+          competitionId,
+          operation: 'decisions',
+          path: next,
+          lockedMs,
+          computeMs: 0,
+          durationMs: Date.now() - startedAt
+        });
+        return;
+      }
+      // A time-locked Rank with nothing due, or an Approve competition with
+      // no decision to make, only needs its leaderboard: that is computed off
+      // the lock. If its inputs changed meanwhile, or an Approve decision is
+      // due, the locked run follows once, as before this path existed, so a
+      // busy competition's leaderboard is never older than one decision run.
+      let computeMs = 0;
+      const { outcome, attempts } =
+        await this.refreshLeaderboardOffLockRetrying(
+          competitionId,
+          now,
+          ctx,
+          {},
+          {
+            operation: 'decisions',
+            extraLockedMs: lockedMs,
+            onMeasured: (measured) => {
+              computeMs += measured.computeMs;
+              lockedMs += measured.writeLockedMs;
+            }
+          },
+          { startedAt, ...options }
+        );
+      const lockedRunFollows =
+        outcome === 'changed' || outcome === 'decisions_due';
+      if (lockedRunFollows) {
+        const fallbackStartedAt = Date.now();
+        await this.repository.executeNativeQueriesInTransaction((connection) =>
+          this.processCompetitionLocked(
+            competitionId,
+            now,
+            { ...ctx, connection },
+            false
+          )
+        );
+        lockedMs += Date.now() - fallbackStartedAt;
+      }
+      recordNativeCompetitionRun({
+        competitionId,
+        operation: 'decisions',
+        path: lockedRunFollows ? 'off_lock_fallback' : 'off_lock',
+        lockedMs,
+        computeMs,
+        durationMs: Date.now() - startedAt,
+        attempts
+      });
+      return;
+    }
+    await this.processCompetitionLocked(competitionId, now, ctx, false);
+  }
+
+  private async processCompetitionLocked(
+    competitionId: string,
+    now: number,
+    ctx: RequestContext,
+    offLockRefresh: boolean
+  ): Promise<'skipped' | 'static' | 'locked' | 'refresh-off-lock'> {
     const competition = await this.repository.lockCompetition(
       competitionId,
       ctx
     );
     if (
       !competition ||
-      competition.storage_mode !== CompetitionStorageMode.NATIVE ||
       competition.lifecycle !== CompetitionLifecycle.PUBLISHED ||
       !this.executionRouter.isNativeExecutionAllowed(competition)
     )
-      return;
+      return 'skipped';
     await this.emitScheduledTransitions(competition, now, ctx);
+    const undue = await this.undueRank(competition, now, ctx);
+    if (undue === 'static') return 'static';
     await this.reconcileCompetitionCredit(competition, now, ctx);
+    // Credit stays reconciled under the lock every run; only the leaderboard
+    // computation (and, for Approve, finding that nothing is due) leaves it.
+    if (
+      offLockRefresh &&
+      (undue === 'time-locked' || competition.type === CompetitionType.APPROVE)
+    )
+      return 'refresh-off-lock';
     const state = await this.loadState(competition.id, ctx);
     if (competition.type === CompetitionType.RANK)
       await this.processRank(competition, state, now, ctx);
     else await this.processApprove(competition, state, now, ctx);
+    return 'locked';
+  }
+
+  /**
+   * True when this run has nothing to do for a Rank competition whose
+   * leaderboard cannot move with time: no decision is due, the stored next
+   * decision time is current, and there is no time lock. Its leaderboard then
+   * changes only through votes, entries, pauses or credit, which refresh it
+   * themselves or through the leaderboard snapshotter, so the decision run
+   * skips the credit reconciliation, state load and leaderboard rewrite it
+   * would otherwise repeat every minute under the competition lock.
+   * Time-locked and Approve competitions keep the full run: their standings
+   * move with time.
+   */
+  private async undueRank(
+    competition: Competition,
+    now: number,
+    ctx: RequestContext
+  ): Promise<'static' | 'time-locked' | null> {
+    if (competition.type !== CompetitionType.RANK) return null;
+    const progress = await this.repository.decisionProgress(
+      competition.id,
+      ctx
+    );
+    const next = nextNativeDecision(competition.decisions, progress.latest);
+    const stored = competition.decisions.next_decision_time;
+    // A stale stored time needs processRank's schedule update.
+    const undue =
+      next !== null &&
+      next >= now &&
+      stored !== null &&
+      Number(stored) === next;
+    if (!undue) return null;
+    return isTimeLocked(competition) ? 'time-locked' : 'static';
   }
 
   private async loadState(
     competitionId: string,
-    ctx: RequestContext
+    ctx: RequestContext,
+    aggregateOnly = false
   ): Promise<RuntimeState> {
     // A transaction connection is sequential; parallel queries cannot improve it.
     const entries = await this.repository.listActiveEntries(competitionId, ctx);
-    const history = await this.repository.listHistory(competitionId, ctx);
+    const history = aggregateOnly
+      ? await this.repository.listAggregateHistory(competitionId, ctx)
+      : await this.repository.listHistory(competitionId, ctx);
     const pauses = await this.repository.listPauses(competitionId, ctx);
     return { entries, history, pauses };
   }
@@ -485,7 +1137,17 @@ export class NativeCompetitionRuntimeService {
     time: number,
     ctx: RequestContext
   ): Promise<void> {
-    const timeLocked = (competition.decisions.time_lock_ms ?? 0) > 0;
+    const { rows, timeLocked } = this.leaderboardRows(competition, state, time);
+    await this.writeLeaderboard(competition, rows, time, timeLocked, ctx);
+  }
+
+  /** The leaderboard rows for `state` at `time`: pure, no reads or writes. */
+  private leaderboardRows(
+    competition: Competition,
+    state: RuntimeState,
+    time: number
+  ): { rows: NativeLeaderboardRow[]; timeLocked: boolean } {
+    const timeLocked = isTimeLocked(competition);
     const tieTime = (score: ScoredEntry): number =>
       timeLocked ? time : (score.lastIncreasedAt ?? score.entry.submitted_at);
     const scores = this.scores(competition, state, time).sort(
@@ -507,26 +1169,43 @@ export class NativeCompetitionRuntimeService {
         competition.decisions.next_decision_time ?? time
       ).map((score) => [score.entry.id, score.rating])
     );
-    await this.repository.saveLeaderboard(
+    const rows = scores.map((score, index) => {
+      const previous = scores[index - 1];
+      if (
+        !previous ||
+        previous.rating !== score.rating ||
+        tieTime(previous) !== tieTime(score)
+      )
+        rank = index + 1;
+      return {
+        ...score,
+        rank,
+        orderingTime: tieTime(score),
+        decisionRating: decisionRatings.get(score.entry.id) ?? score.rating
+      };
+    });
+    return { rows, timeLocked };
+  }
+
+  /** Saves leaderboard rows under the competition lock and announces a change. */
+  private async writeLeaderboard(
+    competition: Competition,
+    rows: NativeLeaderboardRow[],
+    time: number,
+    timeLocked: boolean,
+    ctx: RequestContext
+  ): Promise<void> {
+    const changed = await this.repository.saveLeaderboard(
       competition.id,
-      scores.map((score, index) => {
-        const previous = scores[index - 1];
-        if (
-          !previous ||
-          previous.rating !== score.rating ||
-          tieTime(previous) !== tieTime(score)
-        )
-          rank = index + 1;
-        return {
-          ...score,
-          rank,
-          orderingTime: tieTime(score),
-          decisionRating: decisionRatings.get(score.entry.id) ?? score.rating
-        };
-      }),
+      rows,
       time,
-      ctx
+      ctx,
+      { timeLocked }
     );
+    // Both loops refresh every published competition on a timer (every
+    // minute, every 5 minutes). An unchanged snapshot sends nothing: each
+    // event goes to every socket that can see the wave, and viewers refetch.
+    if (!changed) return;
     await this.repository.enqueueEvent(
       {
         key: `leaderboard:${time}`,
@@ -607,44 +1286,13 @@ export class NativeCompetitionRuntimeService {
   ): Promise<void> {
     const time = now;
     await this.refreshLeaderboard(competition, state, time, ctx);
-    if (
-      competition.voting.starts_at !== null &&
-      time < competition.voting.starts_at
-    )
-      return;
-    if (isPaused(state.pauses, time)) return;
-    const threshold = competition.decisions.winning_min_threshold;
-    if (threshold === null)
-      throw new Error('Approve competition requires a threshold');
+    if (!this.approveDecisionsOpen(competition, state, time)) return;
     const progress = await this.repository.decisionProgress(
       competition.id,
       ctx
     );
     const maxWinners = competition.decisions.max_winners;
-    const remaining =
-      maxWinners === null
-        ? state.entries.length
-        : Math.max(0, maxWinners - progress.completed);
-    const duration = competition.decisions.winning_threshold_min_duration_ms;
-    const eligible = this.scores(competition, state, time)
-      .filter(
-        (score) =>
-          score.rating >= threshold &&
-          (duration <= 0 ||
-            (score.overThresholdSince !== null &&
-              score.overThresholdSince + duration <= time))
-      )
-      .sort(
-        (a, b) =>
-          a.entry.submitted_at - b.entry.submitted_at ||
-          (competition.legacy_origin
-            ? a.entry.drop_id
-            : a.entry.id
-          ).localeCompare(
-            competition.legacy_origin ? b.entry.drop_id : b.entry.id
-          )
-      )
-      .slice(0, remaining);
+    const eligible = this.approveEligible(competition, state, progress, time);
     let scheduledAt = Math.max(time, (progress.latest ?? 0) + 1);
     let completed = progress.completed;
     for (const score of eligible) {
@@ -664,6 +1312,76 @@ export class NativeCompetitionRuntimeService {
     }
     const ended = maxWinners !== null && completed >= maxWinners;
     if (ended) await this.endCompetition(competition, now, ctx);
+  }
+
+  /** Whether processApprove goes past its leaderboard refresh at `time`. */
+  private approveDecisionsOpen(
+    competition: Competition,
+    state: RuntimeState,
+    time: number
+  ): boolean {
+    if (
+      competition.voting.starts_at !== null &&
+      time < competition.voting.starts_at
+    )
+      return false;
+    return !isPaused(state.pauses, time);
+  }
+
+  /** The entries processApprove approves at `time`, in order. Pure. */
+  private approveEligible(
+    competition: Competition,
+    state: RuntimeState,
+    progress: { completed: number },
+    time: number
+  ): ScoredEntry[] {
+    const threshold = competition.decisions.winning_min_threshold;
+    if (threshold === null)
+      throw new Error('Approve competition requires a threshold');
+    const maxWinners = competition.decisions.max_winners;
+    const remaining =
+      maxWinners === null
+        ? state.entries.length
+        : Math.max(0, maxWinners - progress.completed);
+    const duration = competition.decisions.winning_threshold_min_duration_ms;
+    return this.scores(competition, state, time)
+      .filter(
+        (score) =>
+          score.rating >= threshold &&
+          (duration <= 0 ||
+            (score.overThresholdSince !== null &&
+              score.overThresholdSince + duration <= time))
+      )
+      .sort(
+        (a, b) =>
+          a.entry.submitted_at - b.entry.submitted_at ||
+          (competition.legacy_origin
+            ? a.entry.drop_id
+            : a.entry.id
+          ).localeCompare(
+            competition.legacy_origin ? b.entry.drop_id : b.entry.id
+          )
+      )
+      .slice(0, remaining);
+  }
+
+  /**
+   * Whether processApprove, run on `state` at `time`, would write anything
+   * besides the leaderboard (a winner, the competition's end) or fail. Pure:
+   * the same inputs give processApprove's own answer.
+   */
+  private approveDecisionsDue(
+    competition: Competition,
+    state: RuntimeState,
+    progress: { completed: number },
+    time: number
+  ): boolean {
+    if (!this.approveDecisionsOpen(competition, state, time)) return false;
+    if (competition.decisions.winning_min_threshold === null) return true;
+    if (this.approveEligible(competition, state, progress, time).length)
+      return true;
+    const maxWinners = competition.decisions.max_winners;
+    return maxWinners !== null && progress.completed >= maxWinners;
   }
 
   private async endCompetition(

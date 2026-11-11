@@ -35,6 +35,10 @@ interface PrepareReleaseNotePublicationInput {
   readonly bootstrapPreviousRun: ReleaseNotePublicationRun | null;
 }
 
+export interface BlockedReleaseNotePublication {
+  readonly blockedByRunNumber: number;
+}
+
 function queryOptions(ctx: RequestContext) {
   return ctx.connection ? { wrappedConnection: ctx.connection } : undefined;
 }
@@ -65,7 +69,9 @@ export class ReleaseNotePublicationDb extends LazyDbAccessCompatibleService {
   public async preparePublication(
     input: PrepareReleaseNotePublicationInput,
     ctx: RequestContext
-  ): Promise<ReleaseNotePublicationEntity | null> {
+  ): Promise<
+    ReleaseNotePublicationEntity | BlockedReleaseNotePublication | null
+  > {
     const timerName = `${this.constructor.name}->preparePublication`;
     ctx.timer?.start(timerName);
     try {
@@ -113,9 +119,8 @@ export class ReleaseNotePublicationDb extends LazyDbAccessCompatibleService {
               txCtx
             );
             if (blocking) {
-              throw new Error(
-                `Release-note run ${blocking.current_run_number} must complete before run ${input.currentRun.number}`
-              );
+              // Waiting is a normal application outcome, not a failed DB transaction.
+              return { blockedByRunNumber: blocking.current_run_number };
             }
           }
 

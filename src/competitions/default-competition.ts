@@ -1,14 +1,9 @@
-import {
-  CompetitionLifecycle,
-  CompetitionStorageMode,
-  CompetitionType
-} from '@/entities/ICompetition';
+import { CompetitionLifecycle, CompetitionType } from '@/entities/ICompetition';
 import type { CompetitionRecord } from '@/competitions/competition.repository';
 
 export type DefaultCompetitionRecord = Pick<
   CompetitionRecord,
   | 'id'
-  | 'storage_mode'
   | 'type'
   | 'lifecycle'
   | 'published_at'
@@ -55,7 +50,6 @@ export function normalizeDefaultCompetition(
   now: number
 ): SelectionInput | null {
   if (
-    record.storage_mode !== CompetitionStorageMode.NATIVE ||
     record.published_at === null ||
     record.lifecycle === CompetitionLifecycle.DRAFT ||
     record.lifecycle === CompetitionLifecycle.CANCELLED ||

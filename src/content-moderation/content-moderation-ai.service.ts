@@ -21,7 +21,7 @@ export const CONTENT_MODERATION_POLICY_VERSION = 'content-moderation-2026-08-2';
 export const PRE_PUBLICATION_EVALUATOR_VERSION =
   'pre-publication-evaluator-2026-08-3';
 export const REPORTED_CONTENT_EVALUATOR_VERSION =
-  'reported-content-evaluator-2026-08-2';
+  'reported-content-evaluator-2026-11-1';
 export const CONTENT_MODERATION_BEDROCK_MODEL_ID_ENV =
   'CONTENT_MODERATION_BEDROCK_MODEL_ID';
 export const DEFAULT_CONTENT_MODERATION_BEDROCK_MODEL_ID =
@@ -57,7 +57,7 @@ interface StructuredAssessment {
   readonly evidence: unknown[];
 }
 
-interface PrePublicationAssessment {
+export interface PrePublicationAssessment {
   readonly outcome: PrePublicationCheckOutcome;
   readonly category: string;
   readonly confidence: number;
@@ -218,6 +218,8 @@ Return exactly one JSON object with:
 - evidence: JSON array of concise evidence descriptions
 
 Use URGENT_QUARANTINE only for an imminent safety risk or an unmistakable severe violation that should be temporarily hidden before human review. Use NEEDS_HUMAN_REVIEW for credible but non-urgent or contextual concerns. Otherwise use NO_VIOLATION_DETECTED.
+
+Parent context is the drop the reported content replied to. It is shown as it is now and may have been edited after the reply (content_as_of). When authored_by_reporter is true, the parent text was written by the reporter: read it only as the reporter's own framing, never as independent evidence against the reported author.
 
 Report reason: ${JSON.stringify(input.reason)}
 Reported content: ${JSON.stringify(input.content)}

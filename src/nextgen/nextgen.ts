@@ -1,4 +1,5 @@
 import { getEthereumRpcClient } from '@/ethereum-rpc/ethereum-rpc-client';
+import { withTransientRpcRetry } from '@/ethereum-rpc/transient-rpc-retry';
 import { Alchemy } from '@/alchemy-sdk';
 import { NextGenBlock } from '../entities/INextGen';
 import { findCoreEvents } from './nextgen_core_events';
@@ -13,12 +14,13 @@ import { Logger } from '../logging';
 import { processMissingMintData } from './nextgen_pending_mint_data';
 import { processMissingThumbnails } from './nextgen_pending_thumbnails';
 import { withNextgenDbLockRetry } from './nextgen-db-lock-retry';
+import type { NextgenLoopHealth } from '@/nextgenContractLoop/loop-health';
 
 const logger = Logger.get('NEXTGEN_CONTRACT');
 
 const BLOCK_THRESHOLD = 100000;
 
-export async function findNextGenTransactions() {
+export async function findNextGenTransactions(health?: NextgenLoopHealth) {
   const network = getNextgenNetwork();
   const alchemy = new Alchemy({
     network: network,
@@ -26,11 +28,15 @@ export async function findNextGenTransactions() {
     apiKey: process.env.ALCHEMY_API_KEY
   });
 
-  const latestBlock = await getEthereumRpcClient(network).getBlockNumber();
+  const latestBlock = await withTransientRpcRetry(
+    () => getEthereumRpcClient(network).getBlockNumber(),
+    'nextgen.getBlockNumber'
+  );
   const dataSource = getDataSource();
-  await withNextgenDbLockRetry(
+  const checkpoint = await withNextgenDbLockRetry(
     async () =>
       await dataSource.transaction('REPEATABLE READ', async (entityManager) => {
+        health?.beginAttempt();
         const startBlock = await fetchNextGenLatestBlock(entityManager);
 
         let endBlock = latestBlock;
@@ -59,7 +65,10 @@ export async function findNextGenTransactions() {
         await findCoreEvents(entityManager, startBlock, endBlock);
 
         const blockTimestamp = (
-          await getEthereumRpcClient(network).getBlock(endBlock)
+          await withTransientRpcRetry(
+            () => getEthereumRpcClient(network).getBlock(endBlock),
+            'nextgen.getBlock'
+          )
         ).timestamp;
 
         const nextgenBlock: NextGenBlock = {
@@ -69,15 +78,29 @@ export async function findNextGenTransactions() {
         await persistNextGenBlock(entityManager, nextgenBlock);
 
         if (!blockAdjusted) {
-          await processPendingMetadataTokens(entityManager);
-          await processMissingMintData(entityManager);
+          health?.startReconciliation();
+          await processPendingMetadataTokens(entityManager, () =>
+            health?.notCompleted()
+          );
+          await processMissingMintData(entityManager, () =>
+            health?.notCompleted()
+          );
           await refreshNextgenTokens(entityManager);
           await processMissingThumbnails(entityManager);
         }
+        return { startBlock: Number(startBlock), endBlock, blockTimestamp };
       }),
     {
       logger,
       operation: 'nextgen-contract-block-sync'
     }
+  );
+  // The whole transaction (including its checkpoint) has committed. A rollback
+  // or a retried transaction cannot manufacture business progress.
+  health?.committed(
+    checkpoint.startBlock,
+    checkpoint.endBlock,
+    latestBlock,
+    checkpoint.blockTimestamp
   );
 }

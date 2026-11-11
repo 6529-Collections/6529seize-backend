@@ -12,8 +12,14 @@ import {
   NftLinkResolutionDeadlineError,
   withNftLinkResolutionBudget
 } from '@/nft-links/resolution-budget';
+import { routePublicNetworkToFixtures } from '@/tests/fixtures/public-network-fixture';
 
 describe('NFT link network cancellation', () => {
+  let restoreNetwork: () => void;
+  beforeAll(() => {
+    restoreNetwork = routePublicNetworkToFixtures();
+  });
+  afterAll(() => restoreNetwork());
   let server: Server;
   let url: string;
   const sockets = new Set<Socket>();

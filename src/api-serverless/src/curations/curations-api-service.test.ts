@@ -1268,4 +1268,55 @@ describe('CurationsApiService', () => {
       )
     ).rejects.toThrow(`Curation priority_order must be between 1 and 2`);
   });
+
+  describe('curator writes on drops in restricted waves', () => {
+    const restrictedWave = {
+      id: 'wave-1',
+      type: WaveType.CHAT,
+      created_by: 'profile-2',
+      admin_group_id: null,
+      visibility_group_id: 'private-group',
+      parent_wave_id: null
+    };
+
+    it.each([
+      ['a missing drop', { drop: null }],
+      ['a missing wave', { wave: null }],
+      [
+        'a wave the curator cannot read',
+        { wave: restrictedWave, eligibleGroupIds: ['community-group-1'] }
+      ]
+    ])(
+      'returns the same not-found response for %s before the curator check',
+      async (_label, overrides) => {
+        const { service, curationsDb, ctx } = createService(overrides);
+
+        await expect(
+          service.addDropCuration(
+            'drop-1',
+            { curation_id: 'curation-1' } as any,
+            ctx
+          )
+        ).rejects.toThrow('Drop drop-1 not found');
+
+        expect(curationsDb.findWaveCurationById).not.toHaveBeenCalled();
+        expect(curationsDb.upsertDropCuration).not.toHaveBeenCalled();
+      }
+    );
+
+    it('allows curators who can read the restricted wave', async () => {
+      const { service, curationsDb, ctx } = createService({
+        wave: restrictedWave,
+        eligibleGroupIds: ['community-group-1', 'private-group']
+      });
+
+      await service.addDropCuration(
+        'drop-1',
+        { curation_id: 'curation-1' } as any,
+        ctx
+      );
+
+      expect(curationsDb.upsertDropCuration).toHaveBeenCalled();
+    });
+  });
 });

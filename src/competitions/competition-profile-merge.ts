@@ -8,6 +8,7 @@ import {
 } from '@/constants';
 import { SqlExecutor } from '@/sql-executor';
 import { RequestContext } from '@/request.context';
+import { mergePendingVotingCreditRecipients } from '@/notifications/voting-credit-returns-profile-merge';
 
 /** Consolidation locks native competitions before shared profile/drop changes. */
 export async function withCompetitionProfileMerge<T>(
@@ -21,7 +22,7 @@ export async function withCompetitionProfileMerge<T>(
   if (!ctx.connection) throw new Error('Profile merge requires a transaction');
   const options = { wrappedConnection: ctx.connection };
   const records = await db.execute<{ id: string }>(
-    `select c.id from ${COMPETITIONS_TABLE} c where c.storage_mode='NATIVE' and (
+    `select c.id from ${COMPETITIONS_TABLE} c where (
       exists(select 1 from ${COMPETITION_ENTRIES_TABLE} e where e.competition_id=c.id and e.submitter_id in (:sources)) or
       exists(select 1 from ${COMPETITION_VOTES_TABLE} v where v.competition_id=c.id and v.voter_profile_id in (:sources)) or
       exists(select 1 from ${COMPETITION_VOTE_HISTORY_TABLE} v where v.competition_id=c.id and (v.voter_profile_id in (:sources) or v.submitter_id in (:sources))) or
@@ -31,6 +32,7 @@ export async function withCompetitionProfileMerge<T>(
     { sources },
     options
   );
+  await mergePendingVotingCreditRecipients(db, sources, target, ctx);
   const result = await action();
   for (const record of records) {
     const params = { id: record.id, sources, target };

@@ -1,3 +1,4 @@
+import { readCompetitionEntryContexts } from './competition-entry-context.reader';
 import {
   handleGetWaveCompetitionV3,
   handleGetDefaultWaveCompetitionV3,
@@ -6,6 +7,7 @@ import {
   handleListWaveCompetitionsV3
 } from '@/api/competitions/competitions-v3.handlers';
 import { getAuthenticationContext } from '@/api/auth/auth';
+import { identityFetcher } from '@/api/identities/identity.fetcher';
 import {
   competitionService,
   PublicCompetition
@@ -23,8 +25,15 @@ import { ApiCompetitionCapability } from '@/api/generated/models/ApiCompetitionC
 import { ApiCompetitionParticipationConfigRequiredMediaEnum } from '@/api/generated/models/ApiCompetitionParticipationConfig';
 import { BadRequestException } from '@/exceptions';
 
+jest.mock('./competition-entry-context.reader', () => ({
+  readCompetitionEntryContexts: jest.fn()
+}));
+
 jest.mock('@/api/auth/auth', () => ({
   getAuthenticationContext: jest.fn()
+}));
+jest.mock('@/api/identities/identity.fetcher', () => ({
+  identityFetcher: { getOverviewsByIds: jest.fn() }
 }));
 jest.mock('@/competitions/competition.service', () => ({
   competitionService: {
@@ -232,23 +241,118 @@ describe('competition v3 handlers', () => {
     ).rejects.toBeInstanceOf(BadRequestException);
     expect(competitionService.listVoters).not.toHaveBeenCalled();
   });
+
+  it('embeds voter profiles from one batched lookup and omits unresolved ones', async () => {
+    const page = {
+      data: [
+        { profile_id: 'p1', votes: 5, credit_spent: 7 },
+        { profile_id: 'p2', votes: -3, credit_spent: 3 },
+        { profile_id: 'p1', votes: 1, credit_spent: 1 },
+        { profile_id: 'gone', votes: 1, credit_spent: 1 }
+      ],
+      next_cursor: 'next',
+      has_more: true
+    };
+    const p1 = { id: 'p1', handle: 'alice', pfp: null, primary_address: '0x1' };
+    const p2 = {
+      id: 'p2',
+      handle: null,
+      pfp: 'ipfs://p2',
+      primary_address: '0x2'
+    };
+    (competitionService.listVoters as jest.Mock).mockResolvedValue(page);
+    (identityFetcher.getOverviewsByIds as jest.Mock).mockResolvedValue({
+      p1,
+      p2
+    });
+
+    const response = await handleListCompetitionVotersV3({
+      params: { wave_id: 'wave-a', competition_id: competitionId },
+      query: {}
+    } as never);
+
+    expect(identityFetcher.getOverviewsByIds).toHaveBeenCalledTimes(1);
+    expect(identityFetcher.getOverviewsByIds).toHaveBeenCalledWith(
+      ['p1', 'p2', 'gone'],
+      { authenticationContext, timer: undefined }
+    );
+    expect(response).toEqual({
+      data: [
+        { profile_id: 'p1', votes: 5, credit_spent: 7, voter: p1 },
+        { profile_id: 'p2', votes: -3, credit_spent: 3, voter: p2 },
+        { profile_id: 'p1', votes: 1, credit_spent: 1, voter: p1 },
+        { profile_id: 'gone', votes: 1, credit_spent: 1 }
+      ],
+      next_cursor: 'next',
+      has_more: true
+    });
+    expect(response.data[3]).not.toHaveProperty('voter');
+  });
+
+  it('skips the identity lookup for an empty voter page', async () => {
+    (competitionService.listVoters as jest.Mock).mockResolvedValue({
+      data: [],
+      next_cursor: null,
+      has_more: false
+    });
+
+    await expect(
+      handleListCompetitionVotersV3({
+        params: { wave_id: 'wave-a', competition_id: competitionId },
+        query: {}
+      } as never)
+    ).resolves.toEqual({ data: [], next_cursor: null, has_more: false });
+    expect(identityFetcher.getOverviewsByIds).not.toHaveBeenCalled();
+  });
 });
 
-it.each(['rating', 'real_time_rating', 'submitted_at', 'trend'])(
-  'forwards leaderboard sort %s in the competition scope',
-  async (sort) => {
+it.each([
+  'rating',
+  'real_time_rating',
+  'decision_rating',
+  'submitted_at',
+  'trend'
+])('forwards leaderboard sort %s in the competition scope', async (sort) => {
+  await handleListCompetitionLeaderboardV3({
+    params: { wave_id: 'wave-a', competition_id: competitionId },
+    query: { sort }
+  } as never);
+  expect(competitionService.listLeaderboard).toHaveBeenLastCalledWith(
+    'wave-a',
+    competitionId,
+    expect.objectContaining({ sort, direction: 'DESC' }),
+    expect.anything()
+  );
+});
+
+it.each([
+  ['true', true],
+  ['false', false],
+  [undefined, undefined]
+])(
+  'accepts the optional Additional Action filter %s',
+  async (value, expected) => {
     await handleListCompetitionLeaderboardV3({
       params: { wave_id: 'wave-a', competition_id: competitionId },
-      query: { sort }
+      query: value === undefined ? {} : { is_additional_action_promised: value }
     } as never);
     expect(competitionService.listLeaderboard).toHaveBeenLastCalledWith(
       'wave-a',
       competitionId,
-      expect.objectContaining({ sort, direction: 'DESC' }),
+      expect.objectContaining({ is_additional_action_promised: expected }),
       expect.anything()
     );
   }
 );
+
+it('rejects invalid Additional Action filters', async () => {
+  await expect(
+    handleListCompetitionLeaderboardV3({
+      params: { wave_id: 'wave-a', competition_id: competitionId },
+      query: { is_additional_action_promised: 'maybe' }
+    } as never)
+  ).rejects.toBeInstanceOf(BadRequestException);
+});
 
 it('preserves curation price ordering and bounds in the competition scope', async () => {
   await handleListCompetitionLeaderboardV3({
@@ -286,3 +390,37 @@ it.each([{ min_price: -1 }, { max_price: -1 }, { price_currency: ' ' }])(
     ).rejects.toBeInstanceOf(BadRequestException);
   }
 );
+
+it('embeds authorized cards with the leaderboard page when requested', async () => {
+  const page = {
+    data: [
+      {
+        entry_id: 'hidden',
+        drop_id: 'hidden-drop',
+        competition_id: competitionId
+      },
+      { entry_id: 'entry', drop_id: 'drop', competition_id: competitionId }
+    ],
+    has_more: false,
+    next_cursor: null
+  };
+  jest
+    .mocked(competitionService.listLeaderboard)
+    .mockResolvedValue(page as never);
+  const cards = [{ entry: { id: 'entry' }, drop: { id: 'drop' } }];
+  jest
+    .mocked(readCompetitionEntryContexts)
+    .mockResolvedValue({ data: cards } as never);
+  const result = await handleListCompetitionLeaderboardV3({
+    params: { wave_id: 'wave-a', competition_id: competitionId },
+    query: { include: 'cards' }
+  } as never);
+  expect(result).toEqual({ ...page, cards });
+  expect(readCompetitionEntryContexts).toHaveBeenCalledWith(
+    'wave-a',
+    competitionId,
+    ['hidden', 'entry'],
+    expect.anything(),
+    true
+  );
+});

@@ -48,8 +48,7 @@ export class MemeCardDropMappingsDb extends LazyDbAccessCompatibleService {
         and entry.drop_id = claim.drop_id and entry.decision_id = claim.decision_id and entry.status = 'WINNER'
       join ${COMPETITION_DECISION_WINNERS_TABLE} winner on winner.entry_id = entry.id and winner.decision_id = claim.decision_id
         and winner.competition_id = claim.competition_id and winner.\`rank\` = 1
-      join ${COMPETITIONS_TABLE} competition on competition.id = claim.competition_id and competition.wave_id = entry.wave_id
-        and competition.storage_mode = 'NATIVE' and competition.published_at is not null
+      join ${COMPETITIONS_TABLE} competition on competition.id = claim.competition_id and competition.wave_id = entry.wave_id and competition.published_at is not null
       join ${WAVES_TABLE} hub on hub.id = competition.wave_id and ${publicCompetitionWaveSql('hub')}
       join ${COMPETITION_CAPABILITIES_TABLE} cap on cap.competition_id = claim.competition_id and cap.wave_id = entry.wave_id
         and cap.capability = 'MAIN_STAGE'`;

@@ -147,7 +147,7 @@ describeWithSeed(
         config_version: competition.config_version,
         config: {
           ...config,
-          title: 'Renamed wave',
+          title: 'Renamed competition',
           presentation: [
             { data_key: 'wave_display.rules.custom', data_value: 'Guidelines' }
           ]
@@ -159,7 +159,7 @@ describeWithSeed(
         request,
         ctx
       );
-      expect(updated.title).toBe('Renamed wave');
+      expect(updated.title).toBe('Renamed competition');
       expect(updated.config_version).toBeGreaterThan(
         competition.config_version
       );
@@ -178,7 +178,7 @@ describeWithSeed(
         id: wave.id
       });
       expect(persisted).toMatchObject({
-        name: 'Renamed wave',
+        name: wave.name,
         chat_links_disabled: true,
         chat_slow_mode_cooldown_ms: 60000,
         description_drop_id: wave.description_drop_id
@@ -556,7 +556,7 @@ describeWithSeed(
           },
           ctx
         )
-      ).rejects.toThrow('no active decision pause');
+      ).rejects.toThrow('no active results pause');
       expect((await selected()).config_version).toBe(
         competition.config_version
       );
@@ -603,7 +603,7 @@ describeWithSeed(
           },
           ctx
         )
-      ).rejects.toThrow('A decision pause already covers this interval');
+      ).rejects.toThrow('A results pause already covers this interval');
       const resumed = await service.action(
         wave.id,
         competition.id,

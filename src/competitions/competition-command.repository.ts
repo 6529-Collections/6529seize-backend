@@ -144,7 +144,7 @@ export class CompetitionCommandRepository extends LazyDbAccessCompatibleService 
         { competitionId, waveId },
         options(ctx)
       );
-      if (!row) throw new NotFoundException('Competition not found');
+      if (!row) throw new NotFoundException('Decision not found');
       return row;
     });
   }
@@ -213,13 +213,7 @@ export class CompetitionCommandRepository extends LazyDbAccessCompatibleService 
        ON DUPLICATE KEY UPDATE ${columns
          .filter(
            (key) =>
-             ![
-               'id',
-               'wave_id',
-               'legacy_wave_id',
-               'storage_mode',
-               'created_at'
-             ].includes(key)
+             !['id', 'wave_id', 'legacy_wave_id', 'created_at'].includes(key)
          )
          .map((key) => `${key} = VALUES(${key})`)
          .join(',')}`,
@@ -252,8 +246,7 @@ export class CompetitionCommandRepository extends LazyDbAccessCompatibleService 
         { competitionId, version },
         { wrappedConnection: ctx.connection }
       );
-      if (!row)
-        throw new NotFoundException('Competition configuration not found');
+      if (!row) throw new NotFoundException('Decision configuration not found');
       return typeof row.config === 'string'
         ? (JSON.parse(row.config) as T)
         : row.config;
@@ -265,12 +258,18 @@ export class CompetitionCommandRepository extends LazyDbAccessCompatibleService 
     ctx: RequestContext
   ): Promise<boolean> {
     return this.timed('hasActivity', ctx, async () => {
-      const row = await this.db.oneOrNull<{ id: string }>(
-        `SELECT id FROM ${COMPETITION_ENTRIES_TABLE} WHERE competition_id = :competitionId LIMIT 1`,
+      // Advisory permission reads may use the read pool. Commands supply their
+      // locked transaction connection; no routing or timeout options are dropped.
+      const row = await this.db.oneOrNull<{ found: number }>(
+        `select 1 as found
+         where exists(select 1 from ${COMPETITION_ENTRIES_TABLE} where competition_id=:competitionId)
+            or exists(select 1 from ${COMPETITION_VOTES_TABLE} where competition_id=:competitionId)
+            or exists(select 1 from ${COMPETITION_VOTE_HISTORY_TABLE} where competition_id=:competitionId)
+            or exists(select 1 from ${COMPETITION_SCORE_HISTORY_TABLE} where competition_id=:competitionId and kind='VOTER')`,
         { competitionId },
-        options(ctx)
+        { wrappedConnection: ctx.connection }
       );
-      return row !== null || this.hasVotes(competitionId, ctx);
+      return row !== null;
     });
   }
 
@@ -294,13 +293,12 @@ export class CompetitionCommandRepository extends LazyDbAccessCompatibleService 
     record: Pick<CompetitionEntity, 'id' | 'wave_id' | 'lifecycle'>,
     previous: CompetitionLifecycle | null,
     actorId: string,
-    reason: string | null,
     ctx: RequestContext
   ): Promise<void> {
     return this.timed('recordLifecycle', ctx, async () => {
       await this.db.execute(
-        `INSERT INTO ${COMPETITION_LIFECYCLE_EVENTS_TABLE} (id, competition_id, wave_id, previous_lifecycle, lifecycle, actor_id, reason, created_at)
-       VALUES (:id, :competitionId, :waveId, :previous, :lifecycle, :actorId, :reason, :now)`,
+        `INSERT INTO ${COMPETITION_LIFECYCLE_EVENTS_TABLE} (id, competition_id, wave_id, previous_lifecycle, lifecycle, actor_id, created_at)
+       VALUES (:id, :competitionId, :waveId, :previous, :lifecycle, :actorId, :now)`,
         {
           id: randomUUID(),
           competitionId: record.id,
@@ -308,7 +306,6 @@ export class CompetitionCommandRepository extends LazyDbAccessCompatibleService 
           previous,
           lifecycle: record.lifecycle,
           actorId,
-          reason,
           now: Date.now()
         },
         options(ctx)
@@ -432,7 +429,7 @@ export class CompetitionCommandRepository extends LazyDbAccessCompatibleService 
         options(ctx)
       );
       if (overlapping)
-        competitionConflict('A decision pause already covers this interval');
+        competitionConflict('A results pause already covers this interval');
       const source = await this.db.oneOrNull<{ next_id: number }>(
         `select coalesce(max(legacy_source_id),0)+1 as next_id from ${COMPETITION_PAUSES_TABLE} where competition_id=:competitionId`,
         { competitionId },
@@ -462,7 +459,7 @@ export class CompetitionCommandRepository extends LazyDbAccessCompatibleService 
         { competitionId, now },
         options(ctx)
       );
-      if (!pause) competitionConflict('There is no active decision pause');
+      if (!pause) competitionConflict('There is no active results pause');
       await this.db.execute(
         `UPDATE ${COMPETITION_PAUSES_TABLE} SET end_time = :now WHERE id = :id`,
         { id: pause.id, now },

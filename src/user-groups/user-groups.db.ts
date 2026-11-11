@@ -1,3 +1,4 @@
+import { inSequence } from '@/db/in-sequence';
 import {
   ConnectionWrapper,
   dbSupplier,
@@ -699,22 +700,25 @@ export class UserGroupsDb extends LazyDbAccessCompatibleService {
     new_profile_id: string,
     connectionHolder: ConnectionWrapper<any>
   ) {
-    await Promise.all([
-      this.db.execute(
-        `update ${USER_GROUPS_TABLE} set created_by = :new_profile_id where created_by = :old_profile_id`,
-        { old_profile_id, new_profile_id },
-        { wrappedConnection: connectionHolder }
-      ),
-      this.db.execute(
-        `update ${USER_GROUPS_TABLE} set cic_user = :new_profile_id where cic_user = :old_profile_id`,
-        { old_profile_id, new_profile_id },
-        { wrappedConnection: connectionHolder }
-      ),
-      this.db.execute(
-        `update ${USER_GROUPS_TABLE} set rep_user = :new_profile_id where rep_user = :old_profile_id`,
-        { old_profile_id, new_profile_id },
-        { wrappedConnection: connectionHolder }
-      )
+    await inSequence([
+      () =>
+        this.db.execute(
+          `update ${USER_GROUPS_TABLE} set created_by = :new_profile_id where created_by = :old_profile_id`,
+          { old_profile_id, new_profile_id },
+          { wrappedConnection: connectionHolder }
+        ),
+      () =>
+        this.db.execute(
+          `update ${USER_GROUPS_TABLE} set cic_user = :new_profile_id where cic_user = :old_profile_id`,
+          { old_profile_id, new_profile_id },
+          { wrappedConnection: connectionHolder }
+        ),
+      () =>
+        this.db.execute(
+          `update ${USER_GROUPS_TABLE} set rep_user = :new_profile_id where rep_user = :old_profile_id`,
+          { old_profile_id, new_profile_id },
+          { wrappedConnection: connectionHolder }
+        )
     ]);
   }
 
@@ -965,12 +969,10 @@ export class UserGroupsDb extends LazyDbAccessCompatibleService {
           select w.voting_group_id as id from ${legacyGetView(WAVES_TABLE)} w
           union all
           select json_unquote(json_extract(c.participation_config,'$.group_id')) as id
-          from ${COMPETITIONS_TABLE} c where c.storage_mode='NATIVE'
-            and json_type(json_extract(c.participation_config,'$.group_id'))='STRING'
+          from ${COMPETITIONS_TABLE} c where json_type(json_extract(c.participation_config,'$.group_id'))='STRING'
           union all
           select json_unquote(json_extract(c.voting_config,'$.group_id')) as id
-          from ${COMPETITIONS_TABLE} c where c.storage_mode='NATIVE'
-            and json_type(json_extract(c.voting_config,'$.group_id'))='STRING'
+          from ${COMPETITIONS_TABLE} c where json_type(json_extract(c.voting_config,'$.group_id'))='STRING'
           union all
           select wcg.community_group_id as id from ${WAVE_CURATIONS_TABLE} wcg
         ) x where id is not null

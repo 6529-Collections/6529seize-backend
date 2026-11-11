@@ -1,3 +1,4 @@
+import { votingCreditReturnsDb } from '@/notifications/voting-credit-returns.db';
 import { Competition } from '@/competitions/competition.types';
 import {
   competitionEntryRepository,
@@ -48,7 +49,7 @@ export class CompetitionEntryDropHooks {
           !entry.legacy_origin || entry.status === CompetitionEntryStatus.WINNER
       )
     )
-      throw new ForbiddenException('Competition submissions cannot be edited');
+      throw new ForbiddenException('Decision submissions cannot be edited');
     return { entries, reset_votes: true };
   }
 
@@ -63,7 +64,7 @@ export class CompetitionEntryDropHooks {
           !entry.legacy_origin || entry.status === CompetitionEntryStatus.WINNER
       )
     )
-      throw new ForbiddenException('Competition submissions cannot be edited');
+      throw new ForbiddenException('Decision submissions cannot be edited');
     return { entries, reset_votes: false };
   }
 
@@ -123,6 +124,20 @@ export class CompetitionEntryDropHooks {
     ctx: RequestContext
   ): Promise<void> {
     for (const entry of entries) {
+      if (
+        entry.status === CompetitionEntryStatus.ACTIVE &&
+        actorId === entry.submitter_id
+      )
+        await votingCreditReturnsDb.capture(
+          {
+            competitionId: entry.competition_id,
+            entryId: entry.id,
+            reason: 'AUTHOR_DELETED',
+            actorId,
+            occurredAt: Date.now()
+          },
+          ctx
+        );
       await competitionEntryRepository.deleteEntry(entry.id, ctx);
       await nativeCompetitionRuntimeService.refreshCompetition(
         entry.competition_id,

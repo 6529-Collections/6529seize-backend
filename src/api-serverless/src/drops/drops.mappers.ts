@@ -1,3 +1,10 @@
+import { mapDropMedia } from '@/api/drops/drop-media.mapper';
+import { memeCollaborationsDb } from '@/meme-collaborations/meme-collaborations.db';
+import {
+  anonymousCompetitionAuthor,
+  competitionAnonymityService
+} from '@/competitions/competition-anonymity';
+import { applyCollaborationPresentation } from '@/meme-collaborations/meme-collaboration-presentation';
 import {
   DropEntity,
   DropMediaEntity,
@@ -12,8 +19,6 @@ import { ConnectionWrapper } from '../../../sql-executor';
 import { ApiDrop } from '../generated/models/ApiDrop';
 import { ApiProfileMin } from '../generated/models/ApiProfileMin';
 import { ApiDropPart } from '../generated/models/ApiDropPart';
-import { ApiDropMedia } from '../generated/models/ApiDropMedia';
-import { ApiDropMediaStatus } from '../generated/models/ApiDropMediaStatus';
 import { ApiDropReferencedNFT } from '../generated/models/ApiDropReferencedNFT';
 import { ApiDropMentionedUser } from '../generated/models/ApiDropMentionedUser';
 import { ApiMentionedWave } from '../generated/models/ApiMentionedWave';
@@ -36,6 +41,7 @@ import {
 } from '../identity-subscriptions/identity-subscriptions.db';
 import { ApiDropWithoutWave } from '../generated/models/ApiDropWithoutWave';
 import { RequestContext } from '../../../request.context';
+import { Timer } from '../../../time';
 import { AuthenticationContext } from '../../../auth-context';
 import { ApiWaveMin } from '../generated/models/ApiWaveMin';
 import { DeletedDropEntity } from '../../../entities/IDeletedDrop';
@@ -50,7 +56,6 @@ import { ApiDropGroupMention } from '../generated/models/ApiDropGroupMention';
 import { dropVotingService, DropVotingService } from './drop-voting.service';
 import { dropVotingDb, DropVotingDb } from './drop-voting.db';
 import { WaveDecisionWinnerDropWithSaleEntity } from '@/entities/IWaveDecision';
-import { DropMediaUploadStatus } from '@/entities/IDropMediaUpload';
 import { ApiDropWinningContext } from '../generated/models/ApiDropWinningContext';
 import { ApiWaveOutcomeType } from '../generated/models/ApiWaveOutcomeType';
 import { ApiWaveOutcomeSubType } from '../generated/models/ApiWaveOutcomeSubType';
@@ -104,6 +109,10 @@ import {
 } from '@/content-moderation/content-moderation.db';
 import { DropModerationStatus } from '@/entities/IContentModeration';
 import { ApiDropModerationStatus } from '@/api/generated/models/ApiDropModerationStatus';
+import {
+  deviceSigningDb,
+  DeviceSigningDb
+} from '@/api/device-signing/device-signing.db';
 
 export class DropsMappers {
   constructor(
@@ -122,7 +131,11 @@ export class DropsMappers {
     private readonly nftLinkResolvingService: NftLinkResolvingService,
     private readonly attachmentsDb: AttachmentsDb,
     private readonly dropPollsDb: DropPollsDb,
-    private readonly moderationDb: ContentModerationDb = contentModerationDb
+    private readonly moderationDb: ContentModerationDb = contentModerationDb,
+    private readonly authorSignaturesDb: Pick<
+      DeviceSigningDb,
+      'findAuthorSignedDropIds'
+    > = deviceSigningDb
   ) {}
 
   public createDropApiToUseCaseModel({
@@ -160,6 +173,7 @@ export class DropsMappers {
     request: ApiUpdateDropRequest & {
       drop_type: ApiDropType;
       mentioned_groups?: ApiDropGroupMention[];
+      collaborator_ids?: string[];
       is_additional_action_promised?: boolean | null;
     };
     waveId: string;
@@ -169,6 +183,7 @@ export class DropsMappers {
     dropId?: string;
   }): CreateOrUpdateDropModel {
     return {
+      collaborator_ids: request.collaborator_ids,
       author_identity: authorId,
       author_id: authorId,
       proxy_identity: proxyId,
@@ -238,8 +253,11 @@ export class DropsMappers {
       contextProfileId?: string | null;
       authenticationContext?: AuthenticationContext;
     },
-    connection?: ConnectionWrapper<any>
+    connection?: ConnectionWrapper<any>,
+    timer?: Timer
   ): Promise<ApiDrop[]> {
+    const timed = <T>(step: string, work: () => Promise<T>) =>
+      Timer.timed(timer, `dropFulls.${step}`, work);
     const effectiveAuthenticationContext =
       authenticationContext ??
       (contextProfileId
@@ -258,35 +276,51 @@ export class DropsMappers {
       identityWaveIds,
       group_ids_user_is_eligible_for
     ] = await Promise.all([
-      this.convertToDropsWithoutWaves(dropEntities, {
-        connection,
-        authenticationContext: effectiveAuthenticationContext
-      }),
-      this.wavesApiDb.getWavesByDropIds(dropIds, connection),
-      this.wavesApiDb.findWaveVotingCreditNftsByWaveIds(waveIds, connection),
-      this.wavesApiDb.whichOfWavesArePinnedByGivenProfile(
-        {
-          waveIds,
-          profileId: readContextProfileId
-        },
-        { connection }
+      timed('convertToDropsWithoutWaves', () =>
+        this.convertToDropsWithoutWaves(dropEntities, {
+          connection,
+          authenticationContext: effectiveAuthenticationContext,
+          timer
+        })
       ),
-      profileWavesDb.findSelectedWaveIdsByWaveIds(waveIds, { connection }),
-      this.userGroupsService.getGroupsUserIsEligibleFor(
-        readContextProfileId ?? null
+      timed('getWavesByDropIds', () =>
+        this.wavesApiDb.getWavesByDropIds(dropIds, connection)
+      ),
+      timed('findWaveVotingCreditNftsByWaveIds', () =>
+        this.wavesApiDb.findWaveVotingCreditNftsByWaveIds(waveIds, connection)
+      ),
+      timed('whichOfWavesArePinnedByGivenProfile', () =>
+        this.wavesApiDb.whichOfWavesArePinnedByGivenProfile(
+          {
+            waveIds,
+            profileId: readContextProfileId
+          },
+          { connection }
+        )
+      ),
+      timed('findSelectedWaveIdsByWaveIds', () =>
+        profileWavesDb.findSelectedWaveIdsByWaveIds(waveIds, { connection })
+      ),
+      timed('getGroupsUserIsEligibleFor', () =>
+        this.userGroupsService.getGroupsUserIsEligibleFor(
+          readContextProfileId ?? null
+        )
       )
     ]);
-    const waveDisplayByWaveId =
-      await directMessageWaveDisplayService.resolveWaveDisplayByWaveIdForContext(
-        {
-          waveEntities: collections.distinctBy(
-            Object.values(waveOverviews),
-            (it) => it.id
-          ),
-          contextProfileId: readContextProfileId ?? null
-        },
-        connection
-      );
+    const waveDisplayByWaveId = await timed(
+      'resolveWaveDisplayByWaveIdForContext',
+      () =>
+        directMessageWaveDisplayService.resolveWaveDisplayByWaveIdForContext(
+          {
+            waveEntities: collections.distinctBy(
+              Object.values(waveOverviews),
+              (it) => it.id
+            ),
+            contextProfileId: readContextProfileId ?? null
+          },
+          connection
+        )
+    );
     const { noRightToVote, noRightToParticipate } = getWaveMinPermissionMask(
       effectiveAuthenticationContext
     );
@@ -317,15 +351,22 @@ export class DropsMappers {
   private async getAllDropsRelatedData(
     {
       dropEntities,
-      contextProfileId
+      contextProfileId,
+      bookmarkProfileId
     }: {
       dropEntities: DropEntity[];
       contextProfileId?: string | null;
+      bookmarkProfileId?: string | null;
     },
-    connection?: ConnectionWrapper<any>
+    connection?: ConnectionWrapper<any>,
+    timer?: Timer
   ) {
+    const timed = <T>(step: string, work: () => Promise<T>) =>
+      Timer.timed(timer, `dropsRelatedData.${step}`, work);
     const rootDropIds = dropEntities.map((it) => it.id);
-    const quoteIds = await this.dropsDb.getQuoteIds(rootDropIds, connection);
+    const quoteIds = await timed('quoteIds', () =>
+      this.dropsDb.getQuoteIds(rootDropIds, connection)
+    );
     const replyDropIds = dropEntities
       .map((it) => it.reply_to_drop_id)
       .filter((it) => it !== null) as string[];
@@ -335,8 +376,10 @@ export class DropsMappers {
       ...replyDropIds
     ]);
     const [allEntities, dropsParts] = await Promise.all([
-      this.dropsDb.getDropsByIds(dropIds, connection),
-      this.dropsDb.getDropsParts(dropIds, connection)
+      timed('allEntities', () =>
+        this.dropsDb.getDropsByIds(dropIds, connection)
+      ),
+      timed('dropsParts', () => this.dropsDb.getDropsParts(dropIds, connection))
     ]);
     const allReplyDropIds = allEntities
       .map((it) => it.reply_to_drop_id)
@@ -352,9 +395,8 @@ export class DropsMappers {
       ...allReplyDropIds,
       ...dropIds
     ]);
-    const dropAttachmentsPromise = this.attachmentsDb.getDropAttachments(
-      allDropIds,
-      connection
+    const dropAttachmentsPromise = timed('dropAttachments', () =>
+      this.attachmentsDb.getDropAttachments(allDropIds, connection)
     );
     const winningDropIds = allEntities
       .filter((it) => it.drop_type === DropType.WINNER)
@@ -390,32 +432,53 @@ export class DropsMappers {
       boostsByAuthenticatedUser,
       bookmarksByAuthenticatedUser,
       rootDropNftLinks,
-      dropPollsByDropId
+      dropPollsByDropId,
+      authorSignedDropIds
     ] = await Promise.all([
-      this.dropVotingDb.getParticipationDropsRealtimeRanks(
-        participatoryDropIds,
-        {
+      timed('dropsRanks', () =>
+        this.dropVotingDb.getParticipationDropsRealtimeRanks(
+          participatoryDropIds,
+          {
+            connection
+          }
+        )
+      ),
+      timed('submissionDropsVotingRanges', () =>
+        this.dropVotingService.findCreditLeftForVotingForDrops(
+          contextProfileId,
+          participatoryDropEntities,
           connection
-        }
+        )
       ),
-      this.dropVotingService.findCreditLeftForVotingForDrops(
-        contextProfileId,
-        participatoryDropEntities,
-        connection
+      timed('mentions', () =>
+        this.dropsDb.findMentionsByDropIds(allDropIds, connection)
       ),
-      this.dropsDb.findMentionsByDropIds(allDropIds, connection),
-      this.dropsDb.findDropGroupMentionsByDropIds(allDropIds, connection),
-      this.dropsDb.findMentionedWavesByDropIds(allDropIds, connection),
-      this.dropsDb.findReferencedNftsByDropIds(allDropIds, connection),
-      this.dropsDb.findMetadataByDropIds(allDropIds, connection),
-      this.dropVotingDb.findDropsTopContributors(participatoryDropIds, {
-        connection
-      }),
-      this.dropVotingDb.getTallyForDrops(
-        { dropIds: participatoryDropIds },
-        { connection }
+      timed('mentionedGroups', () =>
+        this.dropsDb.findDropGroupMentionsByDropIds(allDropIds, connection)
       ),
-      this.dropsDb.getDropMedia(allDropIds, connection),
+      timed('mentionedWaves', () =>
+        this.dropsDb.findMentionedWavesByDropIds(allDropIds, connection)
+      ),
+      timed('referencedNfts', () =>
+        this.dropsDb.findReferencedNftsByDropIds(allDropIds, connection)
+      ),
+      timed('metadata', () =>
+        this.dropsDb.findMetadataByDropIds(allDropIds, connection)
+      ),
+      timed('dropsTopVoters', () =>
+        this.dropVotingDb.findDropsTopContributors(participatoryDropIds, {
+          connection
+        })
+      ),
+      timed('dropsVoteCounts', () =>
+        this.dropVotingDb.getTallyForDrops(
+          { dropIds: participatoryDropIds },
+          { connection }
+        )
+      ),
+      timed('dropMedia', () =>
+        this.dropsDb.getDropMedia(allDropIds, connection)
+      ),
       dropAttachmentsPromise,
       dropAttachmentsPromise.then((dropAttachments) => {
         const attachmentIds = Array.from(
@@ -429,83 +492,122 @@ export class DropsMappers {
         if (!attachmentIds.length) {
           return {};
         }
-        return this.attachmentsDb.findAttachmentsByIds(
-          attachmentIds,
-          connection
+        return timed('attachmentsById', () =>
+          this.attachmentsDb.findAttachmentsByIds(attachmentIds, connection)
         );
       }),
       !contextProfileId
         ? Promise.resolve({} as Record<string, ActivityEventAction[]>)
-        : this.identitySubscriptionsDb.findIdentitySubscriptionActionsOfTargets(
-            {
-              subscriber_id: contextProfileId,
-              target_ids: dropIds,
-              target_type: ActivityEventTargetType.DROP
-            },
-            connection
+        : timed('subscribedActions', () =>
+            this.identitySubscriptionsDb.findIdentitySubscriptionActionsOfTargets(
+              {
+                subscriber_id: contextProfileId,
+                target_ids: dropIds,
+                target_type: ActivityEventTargetType.DROP
+              },
+              connection
+            )
           ),
-      this.dropsDb.getWinDecisionsForDrops(winningDropIds, { connection }),
-      this.dropVotingDb.getWinningDropsTopRaters(winningDropIds, {
-        connection
-      }),
-      this.dropVotingDb.getWinningDropsRatersCount(winningDropIds, {
-        connection
-      }),
+      timed('winDecisions', () =>
+        this.dropsDb.getWinDecisionsForDrops(winningDropIds, { connection })
+      ),
+      timed('winningDropsTopRaters', () =>
+        this.dropVotingDb.getWinningDropsTopRaters(winningDropIds, {
+          connection
+        })
+      ),
+      timed('winningDropsRatersCounts', () =>
+        this.dropVotingDb.getWinningDropsRatersCount(winningDropIds, {
+          connection
+        })
+      ),
       !contextProfileId
         ? Promise.resolve({} as Record<string, number>)
-        : this.dropVotingDb.getWinningDropsRatingsByVoter(
-            winningDropIds,
-            contextProfileId,
-            { connection }
+        : timed('winningDropsRatingsByVoter', () =>
+            this.dropVotingDb.getWinningDropsRatingsByVoter(
+              winningDropIds,
+              contextProfileId,
+              { connection }
+            )
           ),
-      this.dropVotingDb.getTimeLockedDropsWeightedVotes(participatoryDropIds, {
-        connection
-      }),
-      this.dropVotingDb.getWeightedDropRates(participatoryDropIds, {
-        connection
-      }),
-      this.dropsDb.findDeletedDrops(allDropIds, connection),
-      this.dropsDb.findDropIdsOfWavesWhereNegativeVotesAreNotAllowed(
-        allDropIds,
-        connection
-      ),
-      this.reactionsDb.getByDropIds(allDropIds, contextProfileId ?? null, {
-        connection
-      }),
-      this.dropsDb.countBoostsOfGivenDrops(allDropIds, { connection }),
-      contextProfileId
-        ? this.dropsDb.whichOfGivenDropsAreBoostedByIdentity(
-            allDropIds,
-            contextProfileId,
-            {
-              connection
-            }
-          )
-        : Promise.resolve(new Set<string>()),
-      contextProfileId
-        ? this.dropBookmarksDb.findBookmarkedDropIds(
-            {
-              identity_id: contextProfileId,
-              drop_ids: allDropIds
-            },
+      timed('weightedDropsRanks', () =>
+        this.dropVotingDb.getTimeLockedDropsWeightedVotes(
+          participatoryDropIds,
+          {
             connection
+          }
+        )
+      ),
+      timed('weightedDropsRates', () =>
+        this.dropVotingDb.getWeightedDropRates(participatoryDropIds, {
+          connection
+        })
+      ),
+      timed('deletedDrops', () =>
+        this.dropsDb.findDeletedDrops(allDropIds, connection)
+      ),
+      timed('dropsInWavesWhereNegativeVotesAreNotAllowed', () =>
+        this.dropsDb.findDropIdsOfWavesWhereNegativeVotesAreNotAllowed(
+          allDropIds,
+          connection
+        )
+      ),
+      timed('dropReactions', () =>
+        this.reactionsDb.getByDropIds(allDropIds, contextProfileId ?? null, {
+          connection
+        })
+      ),
+      timed('boostsCount', () =>
+        this.dropsDb.countBoostsOfGivenDrops(allDropIds, { connection })
+      ),
+      contextProfileId
+        ? timed('boostsByAuthenticatedUser', () =>
+            this.dropsDb.whichOfGivenDropsAreBoostedByIdentity(
+              allDropIds,
+              contextProfileId,
+              {
+                connection
+              }
+            )
           )
         : Promise.resolve(new Set<string>()),
-      this.dropNftLinksDb.findByDropIds(rootDropIds, connection),
-      this.dropPollsDb.findPollsByDropIds(allDropIds, {
-        connection,
-        authenticationContext: contextProfileId
-          ? AuthenticationContext.fromProfileId(contextProfileId)
-          : AuthenticationContext.notAuthenticated()
-      })
+      bookmarkProfileId
+        ? timed('bookmarksByAuthenticatedUser', () =>
+            this.dropBookmarksDb.findBookmarkedDropIds(
+              {
+                identity_id: bookmarkProfileId,
+                drop_ids: allDropIds
+              },
+              connection
+            )
+          )
+        : Promise.resolve(new Set<string>()),
+      timed('rootDropNftLinks', () =>
+        this.dropNftLinksDb.findByDropIds(rootDropIds, connection)
+      ),
+      timed('dropPollsByDropId', () =>
+        this.dropPollsDb.findPollsByDropIds(allDropIds, {
+          connection,
+          authenticationContext: contextProfileId
+            ? AuthenticationContext.fromProfileId(contextProfileId)
+            : AuthenticationContext.notAuthenticated()
+        })
+      ),
+      timed('authorSignedDropIds', () =>
+        this.authorSignaturesDb.findAuthorSignedDropIds(allDropIds, {
+          connection
+        })
+      )
     ]);
     const canonicalIdsOfRootDropLinks = collections.distinct(
       rootDropNftLinks.map((it) => it.canonical_id)
     );
     const resolvedNftLinksByCanonicalId = (
-      await this.nftLinksDb.findByCanonicalIds(canonicalIdsOfRootDropLinks, {
-        connection
-      })
+      await timed('resolvedNftLinks', () =>
+        this.nftLinksDb.findByCanonicalIds(canonicalIdsOfRootDropLinks, {
+          connection
+        })
+      )
     ).reduce(
       (acc, link) => {
         acc[link.canonical_id] = link;
@@ -571,7 +673,8 @@ export class DropsMappers {
       boostsByAuthenticatedUser,
       bookmarksByAuthenticatedUser,
       dropPollsByDropId,
-      rootDropNftLinksByDropId
+      rootDropNftLinksByDropId,
+      authorSignedDropIds
     };
   }
 
@@ -585,6 +688,8 @@ export class DropsMappers {
     const { noRightToVote, noRightToParticipate } = getWaveMinPermissionMask(
       ctx.authenticationContext
     );
+    const timed = <T>(step: string, work: () => Promise<T>) =>
+      Timer.timed(ctx.timer, `dropsWithoutWaves.${step}`, work);
     const {
       submissionDropsVotingRanges,
       mentions,
@@ -614,13 +719,17 @@ export class DropsMappers {
       boostsByAuthenticatedUser,
       bookmarksByAuthenticatedUser,
       dropPollsByDropId,
-      rootDropNftLinksByDropId
+      rootDropNftLinksByDropId,
+      authorSignedDropIds
     } = await this.getAllDropsRelatedData(
       {
         dropEntities: entities,
-        contextProfileId
+        contextProfileId,
+        bookmarkProfileId:
+          ctx.authenticationContext?.getLoggedInUsersProfileId()
       },
-      ctx.connection
+      ctx.connection,
+      ctx.timer
     );
     const rootDropIds = new Set(entities.map((it) => it.id));
     const mentionedWaveIds = collections.distinct(
@@ -637,54 +746,62 @@ export class DropsMappers {
       },
       {} as Record<string, ApiDropGroupMention[]>
     );
-    const groupIdsUserIsEligibleFor =
-      await this.userGroupsService.getGroupsUserIsEligibleFor(
-        contextProfileId ?? null
-      );
+    const groupIdsUserIsEligibleFor = await timed(
+      'getGroupsUserIsEligibleFor',
+      () =>
+        this.userGroupsService.getGroupsUserIsEligibleFor(
+          contextProfileId ?? null
+        )
+    );
     const [
       mentionedWaveEntities,
       mentionedWaveCreditNftsByWaveId,
       pinnedMentionedWaveIds,
       identityWaveIds,
       visibleQuotedDropIds
-    ] = await Promise.all([
-      mentionedWaveIds.length
-        ? this.wavesApiDb.findWavesByIdsEligibleForRead(
-            mentionedWaveIds,
-            groupIdsUserIsEligibleFor,
-            ctx.connection
-          )
-        : Promise.resolve([]),
-      this.wavesApiDb.findWaveVotingCreditNftsByWaveIds(
-        mentionedWaveIds,
-        ctx.connection
-      ),
-      this.wavesApiDb.whichOfWavesArePinnedByGivenProfile(
-        {
-          waveIds: mentionedWaveIds,
-          profileId: contextProfileId
-        },
-        { connection: ctx.connection }
-      ),
-      profileWavesDb.findSelectedWaveIdsByWaveIds(mentionedWaveIds, ctx),
-      this.findQuotedDropIdsVisibleToContext(
-        {
-          dropsParts,
-          allEntities,
-          deletedDrops,
-          groupIdsUserIsEligibleFor
-        },
-        ctx.connection
-      )
-    ]);
-    const mentionedWaveDisplayByWaveId =
-      await directMessageWaveDisplayService.resolveWaveDisplayByWaveIdForContext(
-        {
-          waveEntities: mentionedWaveEntities,
-          contextProfileId: contextProfileId ?? null
-        },
-        ctx.connection
-      );
+    ] = await timed('mentionedWavesAndQuotes', () =>
+      Promise.all([
+        mentionedWaveIds.length
+          ? this.wavesApiDb.findWavesByIdsEligibleForRead(
+              mentionedWaveIds,
+              groupIdsUserIsEligibleFor,
+              ctx.connection
+            )
+          : Promise.resolve([]),
+        this.wavesApiDb.findWaveVotingCreditNftsByWaveIds(
+          mentionedWaveIds,
+          ctx.connection
+        ),
+        this.wavesApiDb.whichOfWavesArePinnedByGivenProfile(
+          {
+            waveIds: mentionedWaveIds,
+            profileId: contextProfileId
+          },
+          { connection: ctx.connection }
+        ),
+        profileWavesDb.findSelectedWaveIdsByWaveIds(mentionedWaveIds, ctx),
+        this.findQuotedDropIdsVisibleToContext(
+          {
+            dropsParts,
+            allEntities,
+            deletedDrops,
+            groupIdsUserIsEligibleFor
+          },
+          ctx.connection
+        )
+      ])
+    );
+    const mentionedWaveDisplayByWaveId = await timed(
+      'mentionedWaveDisplay',
+      () =>
+        directMessageWaveDisplayService.resolveWaveDisplayByWaveIdForContext(
+          {
+            waveEntities: mentionedWaveEntities,
+            contextProfileId: contextProfileId ?? null
+          },
+          ctx.connection
+        )
+    );
     const mentionedWavesById = mentionedWaveEntities.reduce(
       (acc, wave) => {
         acc[wave.id] = mapWaveToApiWaveMin({
@@ -717,7 +834,12 @@ export class DropsMappers {
     );
     const [waveCurations, curatedDropsByManageableCurations] =
       await Promise.all([
-        this.curationsDb.findWaveCurationsByWaveIds(allWaveIds, ctx.connection),
+        timed('waveCurations', () =>
+          this.curationsDb.findWaveCurationsByWaveIds(
+            allWaveIds,
+            ctx.connection
+          )
+        ),
         Promise.resolve(new Set<string>())
       ]);
     const curationAccessGroupIdsByWave = waveCurations.reduce(
@@ -750,12 +872,14 @@ export class DropsMappers {
       .map((curation) => curation.id);
     const curatedDropIdsManageableByUser =
       manageableCurationIds.length && allDropIds.length
-        ? await this.curationsDb.findCuratedDropIdsByCurations(
-            {
-              dropIds: allDropIds,
-              curationIds: manageableCurationIds
-            },
-            ctx.connection
+        ? await timed('curatedDropIds', () =>
+            this.curationsDb.findCuratedDropIdsByCurations(
+              {
+                dropIds: allDropIds,
+                curationIds: manageableCurationIds
+              },
+              ctx.connection
+            )
           )
         : curatedDropsByManageableCurations;
     const dropCuratableById = allDropIds.reduce(
@@ -796,18 +920,20 @@ export class DropsMappers {
         ? AuthenticationContext.fromProfileId(contextProfileId)
         : AuthenticationContext.notAuthenticated()
     };
-    const profileMins = await this.identityFetcher.getOverviewsByIds(
-      allProfileIds,
-      identityContext
+    const profileMins = await timed('profileOverviews', () =>
+      this.identityFetcher.getOverviewsByIds(allProfileIds, identityContext)
     );
-    const resolvedIdentityProfilesByIds =
-      await this.identityFetcher.getDropResolvedIdentitiesByIds(
-        {
-          ids: identityMetadataProfileIds,
-          baseProfilesById: profileMins
-        },
-        identityContext
-      );
+    const resolvedIdentityProfilesByIds = await timed(
+      'resolvedIdentities',
+      () =>
+        this.identityFetcher.getDropResolvedIdentitiesByIds(
+          {
+            ids: identityMetadataProfileIds,
+            baseProfilesById: profileMins
+          },
+          identityContext
+        )
+    );
     const UNKNOWN_PROFILE: ApiProfileMin = {
       id: 'an-unknown-profile',
       handle: 'An unknown profile',
@@ -839,11 +965,50 @@ export class DropsMappers {
       },
       {} as Record<string, ApiProfileMin>
     );
-    const moderationPresentations = await this.moderationDb.getPresentations(
-      allEntities,
-      contextProfileId ?? null,
-      ctx.connection
+    const moderationPresentations = await timed('moderationPresentations', () =>
+      this.moderationDb.getPresentations(
+        allEntities,
+        contextProfileId ?? null,
+        ctx.connection
+      )
     );
+    const collaboratorsByDropId = await timed('collaborators', () =>
+      memeCollaborationsDb.acceptedByDrops(
+        allEntities.map((entity) => entity.id),
+        ctx
+      )
+    );
+    const collaborationPresentation = await timed(
+      'collaborationPresentation',
+      () =>
+        memeCollaborationsDb.presentationByDrops(
+          allEntities.map((entity) => entity.id),
+          ctx,
+          collaboratorsByDropId
+        )
+    );
+    const hiddenDropIds = await timed('hiddenDropIds', () =>
+      competitionAnonymityService.hiddenDropIds(
+        allEntities.map((entity) => entity.id),
+        ctx
+      )
+    );
+    const publicCollaborators = Object.fromEntries(
+      Object.entries(collaboratorsByDropId).filter(
+        ([id]) => !hiddenDropIds.has(id)
+      )
+    );
+    const publicPresentations = Object.fromEntries(
+      Object.entries(collaborationPresentation).filter(
+        ([id]) => !hiddenDropIds.has(id)
+      )
+    );
+    const replyIds = entities
+      .filter((drop) => drop.reply_to_drop_id)
+      .map((drop) => drop.id);
+    const collapsedReplyRoots = replyIds.length
+      ? await this.dropsDb.findCollapsedReplyRoots(replyIds, ctx)
+      : {};
     return entities.map<ApiDropWithoutWave>((dropEntity) => {
       const drop = this.toDrop({
         dropEntity,
@@ -883,14 +1048,49 @@ export class DropsMappers {
         dropPollsByDropId,
         rootDropNftLinksByDropId,
         rootDropIds,
-        visibleQuotedDropIds
+        visibleQuotedDropIds,
+        authorSignedDropIds
       });
+      const collapsedReplyRoot = collapsedReplyRoots[drop.id];
+      if (collapsedReplyRoot) drop.collapsed_reply_thread = collapsedReplyRoot;
+      applyCollaborationPresentation(
+        drop,
+        publicCollaborators,
+        publicPresentations
+      );
+      this.applyAnonymousAuthors(drop, hiddenDropIds);
       return this.applyModerationPresentation(
         drop,
         moderationPresentations,
         new Set<string>()
       );
     });
+  }
+
+  private applyAnonymousAuthors(
+    drop: ApiDropWithoutWave,
+    hiddenDropIds: ReadonlySet<string>,
+    visited = new WeakSet<ApiDropWithoutWave>()
+  ): void {
+    if (visited.has(drop)) return;
+    visited.add(drop);
+    if (hiddenDropIds.has(drop.id)) {
+      drop.author = anonymousCompetitionAuthor(drop.author, drop.id);
+      drop.collaborators = [];
+      delete drop.submission_artist;
+      // Signed events name the author's wallet.
+      drop.is_author_signed = false;
+    }
+    if (drop.reply_to?.drop)
+      this.applyAnonymousAuthors(drop.reply_to.drop, hiddenDropIds, visited);
+    for (const part of drop.parts) {
+      if (part.quoted_drop?.drop)
+        this.applyAnonymousAuthors(
+          part.quoted_drop.drop,
+          hiddenDropIds,
+          visited
+        );
+    }
   }
 
   /**
@@ -996,6 +1196,8 @@ export class DropsMappers {
       };
     });
     if (!presentation.moderation.can_view) {
+      delete drop.submission_artist;
+      drop.is_author_signed = false;
       drop.title = null;
       drop.referenced_nfts = [];
       drop.mentioned_users = [];
@@ -1054,7 +1256,8 @@ export class DropsMappers {
     dropPollsByDropId,
     rootDropNftLinksByDropId,
     rootDropIds,
-    visibleQuotedDropIds
+    visibleQuotedDropIds,
+    authorSignedDropIds
   }: {
     dropEntity: DropEntity;
     deletedDrops: Record<string, DeletedDropEntity>;
@@ -1100,6 +1303,7 @@ export class DropsMappers {
     rootDropNftLinksByDropId: Record<string, ApiDropNftLink[]>;
     rootDropIds: Set<string>;
     visibleQuotedDropIds: Set<string>;
+    authorSignedDropIds: ReadonlySet<string>;
   }): ApiDropWithoutWave {
     const replyToDropId = dropEntity.reply_to_drop_id;
     const dropWinDecision = winDecisions[dropEntity.id];
@@ -1267,7 +1471,8 @@ export class DropsMappers {
                   dropPollsByDropId,
                   rootDropNftLinksByDropId,
                   rootDropIds,
-                  visibleQuotedDropIds
+                  visibleQuotedDropIds,
+                  authorSignedDropIds
                 })
               : undefined
           }
@@ -1332,7 +1537,8 @@ export class DropsMappers {
                           dropPollsByDropId,
                           rootDropNftLinksByDropId,
                           rootDropIds,
-                          visibleQuotedDropIds
+                          visibleQuotedDropIds,
+                          authorSignedDropIds
                         })
                       : undefined
                   }
@@ -1341,13 +1547,7 @@ export class DropsMappers {
             media:
               (dropMedia[dropEntity.id] ?? [])
                 .filter((m) => m.drop_part_id === it.drop_part_id)
-                .map<ApiDropMedia>((it) => ({
-                  url: it.url,
-                  mime_type: it.mime_type,
-                  media_upload_id: it.media_upload_id,
-                  media_status: mapDropMediaUploadStatus(it.media_status),
-                  media_error: it.media_error ?? null
-                })) ?? [],
+                .map(mapDropMedia) ?? [],
             attachments: (dropAttachments[dropEntity.id] ?? [])
               .filter(
                 (attachment) => attachment.drop_part_id === it.drop_part_id
@@ -1404,9 +1604,15 @@ export class DropsMappers {
       subscribed_actions: subscribedActions[dropEntity.id] ?? [],
       winning_context: winningContext,
       is_signed: !!dropEntity.signature,
+      is_author_signed: authorSignedDropIds.has(dropEntity.id),
       reactions: dropReactions.get(dropEntity.id)?.reactions ?? [],
       boosts: boostsCount[dropEntity.id] ?? 0,
       is_additional_action_promised: dropEntity.is_additional_action_promised,
+      ...(dropEntity.drop_type === DropType.CHAT &&
+      !replyToDropId &&
+      dropEntity.collapse_replies !== undefined
+        ? { collapse_replies: !!dropEntity.collapse_replies }
+        : {}),
       hide_link_preview: !!dropEntity.hide_link_preview,
       poll: dropPollsByDropId[dropEntity.id]
         ? mapDropPollToApi(dropPollsByDropId[dropEntity.id])
@@ -1415,24 +1621,6 @@ export class DropsMappers {
         ? (rootDropNftLinksByDropId[dropEntity.id] ?? [])
         : []
     };
-  }
-}
-
-function mapDropMediaUploadStatus(
-  status: string | null | undefined
-): ApiDropMediaStatus {
-  switch (status) {
-    case ApiDropMediaStatus.Uploading:
-      return ApiDropMediaStatus.Uploading;
-    case ApiDropMediaStatus.Processing:
-    case DropMediaUploadStatus.COMPLETING:
-    case DropMediaUploadStatus.SANITIZING:
-      return ApiDropMediaStatus.Processing;
-    case ApiDropMediaStatus.Failed:
-      return ApiDropMediaStatus.Failed;
-    case ApiDropMediaStatus.Ready:
-    default:
-      return ApiDropMediaStatus.Ready;
   }
 }
 

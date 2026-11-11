@@ -55,12 +55,20 @@ describeWithSeed('active TDH voting discovery', withWaves(waves), () => {
   beforeEach(async () => {
     for (const wave of waves.filter((wave) => wave.type !== WaveType.CHAT))
       await seedNativeOriginalPrimaryFixture(wave);
-    // Retained physical configuration is deliberately contradictory. Discovery
-    // must continue to use immutable-original native configuration.
-    await sqlExecutor.execute(
-      `update ${WAVES_TABLE} set voting_period_end=0,voting_credit_type='REP',next_decision_time=0,max_winners=0`,
-      {}
-    );
+    expect(
+      await sqlExecutor.execute(
+        'select COLUMN_NAME from information_schema.COLUMNS where TABLE_SCHEMA=database() and TABLE_NAME=:table and COLUMN_NAME in (:columns)',
+        {
+          table: WAVES_TABLE,
+          columns: [
+            'voting_period_end',
+            'voting_credit_type',
+            'next_decision_time',
+            'max_winners'
+          ]
+        }
+      )
+    ).toEqual([]);
   });
 
   it('uses voting lifecycle and deadline order, not recent chat or reputation', async () => {

@@ -55,6 +55,25 @@ describe('Ethereum RPC provider foundation', () => {
     expect(() => factory()).toThrow('ETHEREUM_RPC_URL');
   });
 
+  it('keeps off-chain (CCIP-Read) lookups off unless a caller opts in', () => {
+    process.env.ETHEREUM_RPC_URL = 'https://rpc.example.test';
+    const factory = loadFactory();
+    expect(factory().disableCcipRead).toBe(true);
+    const { createEthereumRpcProvider } =
+      require('./ethereum-rpc-provider') as {
+        createEthereumRpcProvider: (
+          chainId?: number,
+          options?: { disableCcipRead?: boolean }
+        ) => JsonRpcProvider;
+      };
+    const isolatedDefault = createEthereumRpcProvider(1);
+    const optedIn = createEthereumRpcProvider(1, { disableCcipRead: false });
+    providers.add(isolatedDefault);
+    providers.add(optedIn);
+    expect(isolatedDefault.disableCcipRead).toBe(true);
+    expect(optedIn.disableCcipRead).toBe(false);
+  });
+
   it('replaces a destroyed cached provider and reuses its live replacement', async () => {
     process.env.ETHEREUM_RPC_URL = 'https://rpc.example.test';
     const factory = loadFactory();

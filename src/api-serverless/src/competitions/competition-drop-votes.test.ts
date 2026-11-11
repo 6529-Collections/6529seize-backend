@@ -1,7 +1,9 @@
 import {
   competitionDropVoteSummary,
   competitionDropVoters,
-  competitionDropVoteLogs
+  competitionDropVoteLogs,
+  competitionDropVoteDistribution,
+  competitionDropVotersCsv
 } from './competition-drop-votes.service';
 import { competitionDropVotesDb } from '@/competitions/competition-drop-votes.db';
 import { competitionEntryService } from './competition-entry.service';
@@ -26,7 +28,9 @@ jest.mock('@/competitions/competition-drop-votes.db', () => ({
     totals: jest.fn(),
     score: jest.fn(),
     voters: jest.fn(),
-    logs: jest.fn()
+    logs: jest.fn(),
+    distribution: jest.fn(),
+    allVoters: jest.fn()
   }
 }));
 const entry = {
@@ -35,7 +39,10 @@ const entry = {
   status: 'ACTIVE',
   rank: null
 } as CompetitionEntry;
-const competition = { decisions: { time_lock_ms: 0 } } as Competition;
+const competition = {
+  type: 'RANK',
+  decisions: { time_lock_ms: 0 }
+} as Competition;
 const drop = { id: 'drop', wave_id: 'wave' } as DropEntity;
 beforeEach(() => {
   jest.clearAllMocks();
@@ -48,9 +55,12 @@ beforeEach(() => {
     user_vote: 39,
     voters_count_available: true
   });
-  jest
-    .mocked(competitionDropVotesDb.score)
-    .mockResolvedValue({ rating: 0, rank: 1, over_threshold_since: 1234 });
+  jest.mocked(competitionDropVotesDb.score).mockResolvedValue({
+    rating: 0,
+    decision_rating: 20,
+    rank: 1,
+    over_threshold_since: 1234
+  });
   jest
     .mocked(competitionDropVotesDb.voters)
     .mockResolvedValue([{ voter_id: 'viewer', vote: 39 }]);
@@ -75,11 +85,12 @@ it('shows accepted votes immediately without waiting for a leaderboard refresh',
     top_raters: [{ rating: 39, profile: { id: 'viewer' } }]
   });
 });
-it('keeps weighted current totals separate from the full vote total', async () => {
+it('shows the next checkpoint projection separately from current and raw totals', async () => {
   const weighted = { decisions: { time_lock_ms: 1000 } } as Competition;
   expect(await competitionDropVoteSummary(weighted, entry, {})).toMatchObject({
     rating: 0,
-    rating_prediction: 39
+    realtime_rating: 39,
+    rating_prediction: 20
   });
 });
 it('uses the native voters and existing dropdown response shape', async () => {
@@ -137,6 +148,7 @@ it('distinguishes missing winner history from a zero count while preserving the 
   });
   jest.mocked(competitionDropVotesDb.score).mockResolvedValue({
     rating: 83321,
+    decision_rating: 99999,
     rank: 3,
     over_threshold_since: null
   });
@@ -145,8 +157,66 @@ it('distinguishes missing winner history from a zero count while preserving the 
     await competitionDropVoteSummary(competition, winner, {})
   ).toMatchObject({
     rating: 83321,
+    rating_prediction: 83321,
     raters_count: 0,
     voters_count_available: false,
     top_raters: []
   });
+});
+
+it.each([0, -15])(
+  'preserves a checkpoint projection of %s',
+  async (prediction) => {
+    jest.mocked(competitionDropVotesDb.score).mockResolvedValue({
+      rating: 0,
+      decision_rating: prediction,
+      rank: 1,
+      over_threshold_since: null
+    });
+    const weighted = { decisions: { time_lock_ms: 1000 } } as Competition;
+    expect(await competitionDropVoteSummary(weighted, entry, {})).toMatchObject(
+      {
+        rating_prediction: prediction,
+        realtime_rating: 39
+      }
+    );
+  }
+);
+
+it('does not read distribution for approve decisions or winner snapshots', async () => {
+  for (const context of [
+    { competition: { ...competition, type: 'APPROVE' }, entry },
+    { competition, entry: { ...entry, status: 'WINNER' } }
+  ]) {
+    jest
+      .mocked(competitionEntryService.getDropContext)
+      .mockResolvedValue(context as never);
+    expect(await competitionDropVoteDistribution(drop, {})).toEqual([]);
+  }
+  expect(competitionDropVotesDb.distribution).not.toHaveBeenCalled();
+});
+
+it('rejects a native drop without a visible entry instead of returning empty voters', async () => {
+  jest
+    .mocked(competitionEntryService.getDropContext)
+    .mockResolvedValue({ entry: null, competition: null });
+  await expect(
+    competitionDropVoters(
+      drop,
+      { page: 1, page_size: 20, sort_direction: 'DESC' },
+      {}
+    )
+  ).rejects.toThrow('Decision entry not found');
+  expect(competitionDropVotesDb.voters).not.toHaveBeenCalled();
+});
+
+it('exports signed votes in database order and tolerates an unavailable profile', async () => {
+  jest.mocked(competitionDropVotesDb.allVoters).mockResolvedValue([
+    { voter_id: 'viewer', vote: 39 },
+    { voter_id: 'missing', vote: -9 }
+  ]);
+  expect(await competitionDropVotersCsv(drop, {})).toEqual([
+    { handle: '', level: 0, primary_address: '', vote: 39 },
+    { handle: '', level: 0, primary_address: '', vote: -9 }
+  ]);
 });

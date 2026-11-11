@@ -14,10 +14,14 @@ import {
 import { NEXTGEN_CORE_ABI } from '../abis/nextgen';
 import { NextGenTokenTrait } from '../entities/INextGen';
 import { getRpcProvider } from '@/rpc-provider';
+import { withTransientRpcRetry } from '@/ethereum-rpc/transient-rpc-retry';
 
 const logger = Logger.get('NEXTGEN_PENDING_MINT_DATA');
 
-export async function processMissingMintData(entityManager: EntityManager) {
+export async function processMissingMintData(
+  entityManager: EntityManager,
+  onIncomplete?: () => void
+) {
   const missingData = await fetchMissingMintDataNextgenTokens(entityManager);
 
   if (missingData.length === 0) {
@@ -40,7 +44,10 @@ export async function processMissingMintData(entityManager: EntityManager) {
 
   for (const token of missingData) {
     try {
-      const tokenData = await contract.tokenData(token.id);
+      const tokenData = await withTransientRpcRetry<string>(
+        () => contract.tokenData(token.id),
+        'nextgen.tokenData'
+      );
       logger.info(`[TOKEN ID ${token.id}] : [TOKEN DATA] : [${tokenData}]`);
 
       token.mint_data = tokenData;
@@ -83,6 +90,7 @@ export async function processMissingMintData(entityManager: EntityManager) {
         newTraits.push(tokenTrait);
       }
     } catch (e) {
+      onIncomplete?.();
       logger.info(
         `[TOKEN ID ${token.id}] : [ERROR FETCHING TOKEN DATA] : [ERROR ${e}]`
       );

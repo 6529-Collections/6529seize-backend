@@ -56,6 +56,10 @@ jest.mock('./reconsolidation', () => ({
   getAffectedWallets: jest.fn(),
   getAffectedWalletsForAddresses: jest.fn()
 }));
+jest.mock('../identity-tdh-sync', () => ({
+  resumePendingIdentityTdhSync: jest.fn(),
+  startIdentitySyncBudget: jest.fn()
+}));
 
 import * as db from '../db';
 import * as delegations from '../delegations';
@@ -68,6 +72,10 @@ import { consolidateSubscriptions } from '../subscriptionsDaily/subscriptions';
 import { updateTDH } from '../tdhLoop/tdh';
 import { consolidateAndPersistTDH } from '../tdhLoop/tdh_consolidation';
 import { handler } from './index';
+import {
+  resumePendingIdentityTdhSync,
+  startIdentitySyncBudget
+} from '../identity-tdh-sync';
 import { doInDbContext } from '../secrets';
 import {
   getAffectedWallets,
@@ -212,6 +220,60 @@ describe('delegations loop on-demand reconsolidation', () => {
       consolidateActivity,
       consolidateSubscriptions
     ].forEach((fn) => expect(fn).toHaveBeenCalledTimes(1));
+    expect(db.persistNftDelegationBlock).toHaveBeenCalledWith(26_000_001, 1);
+    // A pending identities sync is finished after the delegations work, so
+    // it never delays it, within the invocation's sync budget.
+    expect(startIdentitySyncBudget).toHaveBeenCalledTimes(1);
+    expect(resumePendingIdentityTdhSync).toHaveBeenCalledTimes(1);
+    expect(
+      jest.mocked(startIdentitySyncBudget).mock.invocationCallOrder[0]
+    ).toBeLessThan(
+      jest.mocked(delegations.findDelegationTransactions).mock
+        .invocationCallOrder[0]
+    );
+    expect(
+      jest.mocked(resumePendingIdentityTdhSync).mock.invocationCallOrder[0]
+    ).toBeGreaterThan(
+      jest.mocked(db.persistNftDelegationBlock).mock.invocationCallOrder[0]
+    );
+  });
+
+  it('still resumes the pending identities sync when the delegations work fails, and fails with the work error', async () => {
+    jest.mocked(delegations.findDelegationTransactions).mockResolvedValue({
+      latestBlock: 26_000_001,
+      latestBlockTimestamp: 1,
+      consolidations: [],
+      registrations: [],
+      revocation: []
+    });
+    jest
+      .mocked(db.persistNftDelegationBlock)
+      .mockRejectedValue(new Error('checkpoint failure'));
+    jest
+      .mocked(resumePendingIdentityTdhSync)
+      .mockRejectedValue(new Error('resume failure'));
+
+    await expect(invoke({ source: 'aws.events' })).rejects.toThrow(
+      'checkpoint failure'
+    );
+    expect(resumePendingIdentityTdhSync).toHaveBeenCalledTimes(1);
+  });
+
+  it('fails the invocation when only the resume fails', async () => {
+    jest.mocked(delegations.findDelegationTransactions).mockResolvedValue({
+      latestBlock: 26_000_001,
+      latestBlockTimestamp: 1,
+      consolidations: [],
+      registrations: [],
+      revocation: []
+    });
+    jest
+      .mocked(resumePendingIdentityTdhSync)
+      .mockRejectedValue(new Error('resume failure'));
+
+    await expect(invoke({ source: 'aws.events' })).rejects.toThrow(
+      'resume failure'
+    );
     expect(db.persistNftDelegationBlock).toHaveBeenCalledWith(26_000_001, 1);
   });
 

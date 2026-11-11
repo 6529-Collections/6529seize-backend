@@ -1,8 +1,7 @@
 import { ProfileProxyActionType } from '@/entities/IProfileProxyAction';
 import {
   CompetitionEntryStatus,
-  CompetitionLifecycle,
-  CompetitionStorageMode
+  CompetitionLifecycle
 } from '@/entities/ICompetition';
 import { NotFoundException } from '@/exceptions';
 import { RequestContext } from '@/request.context';
@@ -52,6 +51,7 @@ import {
 } from '@/competitions/default-competition';
 import { ApiDefaultCompetition } from '@/api/generated/models/ApiDefaultCompetition';
 import { competitionCommandRepository } from './competition-command.repository';
+import { competitionEntryRepository } from '@/competitions/competition-entry.repository';
 
 export type CompetitionPermissions = {
   readonly view: true;
@@ -64,12 +64,10 @@ export type CompetitionPermissions = {
 
 export type PublicCompetition = Omit<
   Competition,
-  | 'storage_mode'
-  | 'execution_mode'
-  | 'decision_pauses'
-  | 'configuration_activated_at'
+  'execution_mode' | 'decision_pauses' | 'configuration_activated_at'
 > & {
   readonly permissions: CompetitionPermissions;
+  readonly your_active_entries_count?: number | null;
 };
 
 export type WaveHub = {
@@ -93,13 +91,16 @@ export type WaveHub = {
 export type CursorPageRequest<
   TSort extends string =
     | 'submitted_at'
+    | 'won_at'
     | 'rating'
     | 'rank'
     | 'real_time_rating'
+    | 'decision_rating'
     | 'trend'
     | 'price'
 > = {
   readonly cursor?: string;
+  readonly is_additional_action_promised?: boolean;
   readonly price_currency?: string;
   readonly min_price?: number;
   readonly max_price?: number;
@@ -173,7 +174,6 @@ export class CompetitionService {
     );
     const now = Time.currentMillis();
     const inputs = records.flatMap((record) => {
-      if (record.storage_mode !== CompetitionStorageMode.NATIVE) return [];
       const input = normalizeDefaultCompetition(record, now);
       return input ? [input] : [];
     });
@@ -204,11 +204,7 @@ export class CompetitionService {
     const mayReadDrafts = this.canAdminister(wave, eligibleGroups, ctx);
     const competitions = await Promise.all(
       records
-        .filter(
-          (record) =>
-            record.storage_mode === CompetitionStorageMode.NATIVE &&
-            (mayReadDrafts || record.published_at !== null)
-        )
+        .filter((record) => mayReadDrafts || record.published_at !== null)
         .map(async (record) => {
           const reader = this.createReader(record, ctx);
           return await reader.getCompetition(record, Time.currentMillis());
@@ -233,6 +229,7 @@ export class CompetitionService {
       eligibleGroups,
       ctx
     );
+    const activeEntryCounts = await this.viewerActiveEntryCounts(page, ctx);
     const data = await Promise.all(
       page.map((competition) =>
         this.toPublicCompetition(
@@ -243,7 +240,8 @@ export class CompetitionService {
           records.some(
             (record) =>
               record.id === competition.id && record.legacy_wave_id === wave.id
-          )
+          ),
+          activeEntryCounts
         )
       )
     );
@@ -280,7 +278,8 @@ export class CompetitionService {
         ctx
       ),
       ctx,
-      resolved.record.legacy_wave_id === resolved.wave.id
+      resolved.record.legacy_wave_id === resolved.wave.id,
+      await this.viewerActiveEntryCounts([competition], ctx)
     );
   }
 
@@ -425,7 +424,7 @@ export class CompetitionService {
       waveId,
       competitionId,
       'winners',
-      request,
+      { ...request, sort: 'won_at' },
       {},
       ctx,
       (resolved, page) => resolved.reader.listWinners(resolved.record, page)
@@ -506,6 +505,12 @@ export class CompetitionService {
   ): Promise<CompetitionPage<T>> {
     const resolved = await this.resolve(waveId, competitionId, ctx);
     const fingerprint = {
+      // Keep existing unfiltered cursors valid across this additive API rollout.
+      ...(request.is_additional_action_promised === undefined
+        ? {}
+        : {
+            is_additional_action_promised: request.is_additional_action_promised
+          }),
       filters,
       direction: request.direction,
       sort: request.sort ?? null,
@@ -522,7 +527,8 @@ export class CompetitionService {
       sort: request.sort,
       price_currency: request.price_currency,
       min_price: request.min_price,
-      max_price: request.max_price
+      max_price: request.max_price,
+      is_additional_action_promised: request.is_additional_action_promised
     });
     return {
       ...result,
@@ -548,7 +554,6 @@ export class CompetitionService {
     );
     if (
       record?.wave_id !== waveId ||
-      record.storage_mode !== CompetitionStorageMode.NATIVE ||
       (record.published_at === null &&
         !this.canAdminister(wave, eligibleGroups, ctx))
     ) {
@@ -594,10 +599,6 @@ export class CompetitionService {
   ): Promise<string[]> {
     const groupIds = new Set(
       competitions
-        .filter(
-          (competition) =>
-            competition.storage_mode === CompetitionStorageMode.NATIVE
-        )
         .flatMap((competition) => [
           competition.participation.group_id,
           competition.voting.group_id
@@ -616,15 +617,28 @@ export class CompetitionService {
     return [...waveGroups.filter((id) => !groupIds.has(id)), ...nativeGroups];
   }
 
+  private async viewerActiveEntryCounts(
+    competitions: readonly Competition[],
+    ctx: RequestContext
+  ): Promise<Record<string, number> | null> {
+    const profileId = getWaveReadContextProfileId(ctx.authenticationContext);
+    if (!profileId) return null;
+    return competitionEntryRepository.countActiveByCompetitionIds(
+      competitions.map((competition) => competition.id),
+      profileId,
+      ctx
+    );
+  }
+
   private async toPublicCompetition(
     competition: Competition,
     wave: WaveEntity,
     eligibleGroups: string[],
     ctx: RequestContext,
-    originalPrimary: boolean
+    originalPrimary: boolean,
+    activeEntryCounts: Record<string, number> | null
   ): Promise<PublicCompetition> {
     const {
-      storage_mode: _storage,
       execution_mode: _execution,
       decision_pauses: _decisionPauses,
       configuration_activated_at: _configurationActivatedAt,
@@ -654,6 +668,10 @@ export class CompetitionService {
       !isCompetitionDecisionPending(competition, now);
     return {
       ...publicData,
+      your_active_entries_count:
+        activeEntryCounts === null
+          ? null
+          : (activeEntryCounts[competition.id] ?? 0),
       permissions: {
         view: true,
         submit:
@@ -731,7 +749,7 @@ export class CompetitionService {
     competitionId: string
   ): NotFoundException {
     return new NotFoundException(
-      `Competition ${competitionId} for wave ${waveId} not found`
+      `Decision ${competitionId} for wave ${waveId} not found`
     );
   }
 }

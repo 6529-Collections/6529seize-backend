@@ -6,6 +6,7 @@ import { ApiSetCompetitionVoteRequest } from '@/api/generated/models/ApiSetCompe
 import * as tables from '@/constants';
 import { IdentityNotificationEntity } from '@/entities/IIdentityNotification';
 import { competitionCreditService } from '@/competitions/competition-credit.service';
+import * as redis from '@/redis';
 import { sqlExecutor } from '@/sql-executor';
 import { describeWithSeed } from '@/tests/_setup/seed';
 import { anIdentity, withIdentities } from '@/tests/fixtures/identity.fixture';
@@ -67,7 +68,6 @@ describeWithSeed(
         {
           id: competitionId,
           wave_id: wave.id,
-          storage_mode: 'NATIVE',
           execution_mode: 'ACTIVE',
           type: 'RANK',
           lifecycle: 'PUBLISHED',
@@ -239,6 +239,48 @@ describeWithSeed(
           `select sequence from ${tables.COMPETITION_VOTE_HISTORY_TABLE}`
         )
       ).toHaveLength(1);
+    });
+
+    it('rejects vote changes past the per-minute budget without writing them', async () => {
+      const counts = new Map<string, number>();
+      jest
+        .spyOn(redis, 'redisIncrementWithExpiry')
+        .mockImplementation(async (key) => {
+          counts.set(key, (counts.get(key) ?? 0) + 1);
+          return counts.get(key)!;
+        });
+      const original = process.env.COMPETITION_VOTE_CHANGES_PER_MINUTE;
+      process.env.COMPETITION_VOTE_CHANGES_PER_MINUTE = '2';
+      try {
+        await vote(10);
+        await vote(11);
+        const rejected = await vote(12).catch((error: unknown) => error);
+        expect(rejected).toMatchObject({
+          code: 'VOTE_CHANGE_LIMIT',
+          message: expect.stringContaining('Too many vote changes')
+        });
+        expect((rejected as { getStatusCode(): number }).getStatusCode()).toBe(
+          429
+        );
+        // Re-sending the current value is not a change and is not counted.
+        await expect(vote(11)).resolves.toMatchObject({ current_vote: 11 });
+        expect(
+          await sqlExecutor.execute(
+            `select value from ${tables.COMPETITION_VOTE_HISTORY_TABLE} order by sequence`
+          )
+        ).toEqual([{ value: 10 }, { value: 11 }]);
+        expect(
+          await sqlExecutor.execute(
+            `select value from ${tables.COMPETITION_VOTES_TABLE} where voter_profile_id=:voter`,
+            { voter }
+          )
+        ).toEqual([{ value: 11 }]);
+        expect(await notifications()).toHaveLength(2);
+      } finally {
+        if (original === undefined)
+          delete process.env.COMPETITION_VOTE_CHANGES_PER_MINUTE;
+        else process.env.COMPETITION_VOTE_CHANGES_PER_MINUTE = original;
+      }
     });
 
     it('does not notify the submitter about their own votes', async () => {

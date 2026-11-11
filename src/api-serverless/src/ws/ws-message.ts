@@ -16,6 +16,8 @@ export enum WsMessageType {
   DROP_REACTION_UPDATE = 'DROP_REACTION_UPDATE',
   USER_IS_TYPING = 'USER_IS_TYPING',
   SUBSCRIBE_TO_WAVE = 'SUBSCRIBE_TO_WAVE',
+  /** App socket: which wave the tab has open, or null (waves 1.3). */
+  SET_OPEN_WAVE = 'SET_OPEN_WAVE',
   AUTHENTICATE = 'AUTHENTICATE',
   AUTHENTICATED = 'AUTHENTICATED',
   AUTHENTICATION_FAILED = 'AUTHENTICATION_FAILED',
@@ -23,8 +25,18 @@ export enum WsMessageType {
   NOTIFICATION_IDENTITIES_SYNCED = 'NOTIFICATION_IDENTITIES_SYNCED',
   IDENTITY_NOTIFICATIONS_CHANGED = 'IDENTITY_NOTIFICATIONS_CHANGED',
   DM_UNREAD_STATE_CHANGED = 'DM_UNREAD_STATE_CHANGED',
+  /** A profile's followed or added waves changed (waves 1.3). */
+  WAVES_CHANGED = 'WAVES_CHANGED',
   MEDIA_LINK_UPDATED = 'MEDIA_LINK_UPDATED',
-  ATTACHMENT_STATUS_UPDATE = 'ATTACHMENT_STATUS_UPDATE'
+  ATTACHMENT_STATUS_UPDATE = 'ATTACHMENT_STATUS_UPDATE',
+  // End-to-end encrypted messaging (D109). Hints only: clients re-sync over
+  // REST. Payloads carry handles, sequence numbers and device keys, never
+  // plaintext.
+  E2EE_GROUP_EVENT = 'E2EE_GROUP_EVENT',
+  E2EE_WELCOME = 'E2EE_WELCOME',
+  E2EE_DEVICE_ADDED = 'E2EE_DEVICE_ADDED',
+  E2EE_DEVICE_REVOKED = 'E2EE_DEVICE_REVOKED',
+  E2EE_ROSTER_CHANGED = 'E2EE_ROSTER_CHANGED'
 }
 
 export interface WsMessage<MESSAGE_DATA> {
@@ -34,6 +46,7 @@ export interface WsMessage<MESSAGE_DATA> {
 }
 
 export const DROP_UPDATE_REASON_POLL_RESPONSE = 'POLL_RESPONSE';
+export const DROP_UPDATE_REASON_REPLY_COLLAPSE = 'REPLY_COLLAPSE';
 export const DROP_UPDATE_REASON_MEDIA_STATUS = 'MEDIA_STATUS';
 
 /**
@@ -45,6 +58,44 @@ export const DROP_UPDATE_REASON_MEDIA_STATUS = 'MEDIA_STATUS';
  * rejected frame.
  */
 export const DROP_UPDATE_MAX_UTF8_BYTES = 28 * 1024;
+
+/**
+ * Delivery timing on a serialized frame (additive top-level fields; clients
+ * that do not know them ignore them):
+ * - `server_received_at`: epoch ms when the API received the request that
+ *   produced this frame. Omitted for background producers.
+ * - `sent_at`: epoch ms when the server handed this frame to the gateway.
+ *
+ * Appending to the serialized text keeps the payload serialized once.
+ */
+/**
+ * Bytes reserved for the timing fields when a frame's size is checked against
+ * DROP_UPDATE_MAX_UTF8_BYTES, so a stamped frame stays within the ceiling.
+ * The longest form is `,"server_received_at":<13 digits>,"sent_at":<13 digits>`.
+ */
+export const DELIVERY_TIMESTAMPS_RESERVED_BYTES = 64;
+
+export function withDeliveryTimestamps(
+  message: string,
+  {
+    serverReceivedAt,
+    sentAt
+  }: { serverReceivedAt: number | null; sentAt: number }
+): string {
+  if (
+    !message.startsWith('{') ||
+    !message.endsWith('}') ||
+    message === '{}' ||
+    !Number.isFinite(sentAt)
+  ) {
+    return message;
+  }
+  const received =
+    serverReceivedAt === null || !Number.isFinite(serverReceivedAt)
+      ? ''
+      : `,"server_received_at":${Math.round(serverReceivedAt)}`;
+  return `${message.slice(0, -1)}${received},"sent_at":${Math.round(sentAt)}}`;
+}
 
 export type DropUpdateRefType =
   | WsMessageType.DROP_UPDATE
@@ -71,6 +122,9 @@ export interface DropUpdateRefMessageData {
   readonly author_id: string;
   readonly serial_no: number;
   readonly update_type: DropUpdateRefType;
+  readonly collapsed_reply_thread_id?: string;
+  readonly collapse_replies?: boolean;
+  readonly reply_placement_has_replies?: boolean;
   readonly reason?: string;
 }
 
@@ -158,6 +212,21 @@ export function dmUnreadStateChangedMessage(
     type: WsMessageType.DM_UNREAD_STATE_CHANGED,
     data: state
   };
+}
+
+export type WavesChangedReason = 'FOLLOWED' | 'UNFOLLOWED' | 'ADDED';
+
+export interface WavesChangedMessageData {
+  readonly profile_id: string;
+  readonly wave_ids: string[];
+  readonly reason: WavesChangedReason;
+}
+
+/** Tells a profile's sockets to refetch its wave list (FRAME-CONTRACTS 5). */
+export function wavesChangedMessage(
+  data: WavesChangedMessageData
+): WsMessage<WavesChangedMessageData> {
+  return { type: WsMessageType.WAVES_CHANGED, data };
 }
 
 export interface DropDeleteMessageData {

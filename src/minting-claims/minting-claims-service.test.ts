@@ -16,6 +16,10 @@ import type {
   MintingClaimImageDetails
 } from '@/entities/IMintingClaim';
 
+jest.mock('@/meme-collaborations/meme-collaborations.db', () => ({
+  memeCollaborationsDb: { context: jest.fn().mockResolvedValue(null) }
+}));
+
 jest.mock('@/http/safe-fetch', () => ({
   fetchPublicUrlToBuffer: jest.fn()
 }));
@@ -201,41 +205,26 @@ describe('MintingClaimsService claim season resolution', () => {
     getMaxSeasonIdMock.mockResolvedValue(16);
   });
 
-  async function resolveCalendarSeason(season: unknown): Promise<number> {
-    fetchPublicUrlToBufferMock.mockResolvedValue({
-      buffer: Buffer.from(JSON.stringify({ season })),
-      contentType: 'application/json',
-      finalUrl: 'https://6529.io/api/meme-calendar/521'
-    });
-    return await service.resolveSeasonForClaimBuild(521, ctx);
-  }
-
   it.each([
-    ['current', 16],
-    ['next', 17]
-  ])('accepts the %s season for a new claim', async (_label, season) => {
-    await expect(resolveCalendarSeason(season)).resolves.toBe(season);
+    [521, 16],
+    [564, 17]
+  ])('resolves claim %s locally to season %s', async (claim, season) => {
+    await expect(service.resolveSeasonForClaimBuild(claim, ctx)).resolves.toBe(
+      season
+    );
+    expect(fetchPublicUrlToBufferMock).not.toHaveBeenCalled();
   });
 
-  it.each([
-    ['historical', 15],
-    ['too-far future', 18],
-    ['nonpositive', 0]
-  ])(
-    'falls back to the current season for a %s calendar season',
-    async (_label, season) => {
-      await expect(resolveCalendarSeason(season)).resolves.toBe(16);
+  it.each([1, 1000, 0])(
+    'preserves the creation-window fallback for claim %s',
+    async (claim) => {
+      await expect(
+        service.resolveSeasonForClaimBuild(claim, ctx)
+      ).resolves.toBe(16);
+      expect(getMaxSeasonIdMock).toHaveBeenCalledTimes(1);
+      expect(fetchPublicUrlToBufferMock).not.toHaveBeenCalled();
     }
   );
-
-  it('fetches the season maximum once when the calendar request fails', async () => {
-    fetchPublicUrlToBufferMock.mockRejectedValue(new Error('calendar down'));
-
-    await expect(service.resolveSeasonForClaimBuild(521, ctx)).resolves.toBe(
-      16
-    );
-    expect(getMaxSeasonIdMock).toHaveBeenCalledTimes(1);
-  });
 });
 
 describe('MintingClaimsService media enrichment', () => {
