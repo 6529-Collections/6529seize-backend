@@ -33,7 +33,7 @@ it('paginates beyond 500 messages without dropping equal-timestamp entries', asy
     'publisher',
     {}
   );
-  expect(result.sources).toHaveLength(501);
+  expect(result.material.sources).toHaveLength(501);
   expect(recent).toHaveBeenNthCalledWith(
     2,
     'wave',
@@ -92,14 +92,14 @@ it('loads multi-hop public quote context once and stops at a private reference',
     'publisher',
     {}
   );
-  expect(result.sources).toHaveLength(3);
-  expect(result.sources[0].quoted_messages).toEqual([
+  expect(result.material.sources).toHaveLength(3);
+  expect(result.material.sources[0].quoted_messages).toEqual([
     'https://6529.io/waves/wave?serialNo=2'
   ]);
-  expect(result.sources[1].quoted_messages).toEqual([
+  expect(result.material.sources[1].quoted_messages).toEqual([
     'https://6529.io/waves/wave?serialNo=3'
   ]);
-  expect(result.sources[2].quoted_messages).toEqual([]);
+  expect(result.material.sources[2].quoted_messages).toEqual([]);
   expect(context.mock.calls.map((call) => call[0])).toEqual([
     ['drop-2'],
     ['drop-3'],
@@ -125,7 +125,7 @@ it('links a native designated winner to the exact competition entry', async () =
       entry_id: 'entry'
     }
   ]);
-  const material = await new NewsletterCollector(db).collect(
+  const { material, registry } = await new NewsletterCollector(db).collect(
     { start: 1000, end: 2000, scheduled: false },
     'destination',
     'publisher',
@@ -134,4 +134,12 @@ it('links a native designated winner to the exact competition entry', async () =
   expect(material.winners[0].url).toBe(
     'https://6529.io/waves/wave/competitions/contest?entry=entry'
   );
+  expect(material.winners[0].source_id).toBe('winner:contest:entry');
+  expect(registry.get('winner:contest:entry')).toMatchObject({
+    kind: 'WINNER',
+    canonical_url:
+      'https://6529.io/waves/wave/competitions/contest?entry=entry',
+    drop_id: 'drop-1',
+    time: new Date(1000).toISOString()
+  });
 });

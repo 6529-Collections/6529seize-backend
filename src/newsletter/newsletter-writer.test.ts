@@ -6,17 +6,21 @@ import { NewsletterMaterial, NewsletterSource } from './newsletter-collector';
 import { NewsletterWriter, sourceBatches } from './newsletter-writer';
 
 const source = (index: number, text = 'A public story'): NewsletterSource => ({
+  source_id: `drop:drop-${index}`,
   url: `https://6529.io/waves/public?serialNo=${index}`,
   discussion_start: `https://6529.io/waves/public?serialNo=${index}`,
+  discussion_start_source_id: `drop:drop-${index}`,
   wave: 'Public',
   team_wave: false,
   author: 'Ayla',
   author_url: 'https://6529.io/Ayla',
+  author_source_id: 'identity:author',
   time: '2026-09-23T12:00:00Z',
   context_only: false,
   title: null,
   text: [text],
   quoted_messages: [],
+  quoted_source_ids: [],
   media: []
 });
 const material: NewsletterMaterial = {
@@ -44,7 +48,10 @@ describe('newsletter Bedrock writing', () => {
     expect(JSON.parse(command.input.messages![0].content![0].text!)).toEqual(
       material
     );
-    expect(command.input.system![0].text).toContain('EVERY occurrence');
+    expect(command.input.system![0].text).toContain('Cite by source_id only');
+    expect(command.input.system![0].text).toContain(
+      'Return ONLY a JSON object'
+    );
   });
 
   it.each(['max_tokens', 'content_filtered', 'guardrail_intervened'])(
@@ -68,8 +75,11 @@ describe('newsletter Bedrock writing', () => {
       ),
       winners: [
         {
+          source_id: 'winner:contest:entry',
+          drop_source_id: 'drop:drop-10',
           author: 'Ayla',
           author_url: 'https://6529.io/Ayla',
+          author_source_id: 'identity:author',
           title: 'Winning Art',
           url: 'https://6529.io/waves/stage?serialNo=10',
           decision_time: '2026-09-23T12:00:00Z',
