@@ -1,0 +1,67 @@
+{
+  "schema": 1,
+  "accountId": "987989283142",
+  "region": "us-east-1",
+  "stackName": "seize-ipfs-prod-adopted",
+  "observedAt": "2026-11-11",
+  "templateSha256": "1e898b1385b7e30afa0c60da255506512f2155c693297599d3b294550e316916",
+  "resources": {
+    "Blocks": {
+      "type": "AWS::S3::Bucket",
+      "identifierKey": "BucketName",
+      "identifier": "6529ipfs",
+      "modelSha256": "260e6fa9a5c5194cc5940bb18dd6cfb96d0b261497b6a3febba2b81e2518b79d",
+      "readOnlyProperties": [
+        "/properties/Arn",
+        "/properties/DomainName",
+        "/properties/DualStackDomainName",
+        "/properties/RegionalDomainName",
+        "/properties/MetadataTableConfiguration/S3TablesDestination/TableNamespace",
+        "/properties/MetadataTableConfiguration/S3TablesDestination/TableArn",
+        "/properties/MetadataConfiguration/Destination",
+        "/properties/MetadataConfiguration/JournalTableConfiguration/TableName",
+        "/properties/MetadataConfiguration/JournalTableConfiguration/TableArn",
+        "/properties/MetadataConfiguration/InventoryTableConfiguration/TableName",
+        "/properties/MetadataConfiguration/InventoryTableConfiguration/TableArn",
+        "/properties/MetadataConfiguration/AnnotationTableConfiguration/TableName",
+        "/properties/MetadataConfiguration/AnnotationTableConfiguration/TableArn",
+        "/properties/WebsiteURL"
+      ]
+    },
+    "SharedDistribution": {
+      "type": "AWS::CloudFront::Distribution",
+      "identifierKey": "Id",
+      "identifier": "E1D6I3Z3M5F0H4",
+      "modelSha256": "346320df598e6533c01ce8bec477f6fd37cb6d87f9ebbba1ae0e8756ae793d88",
+      "readOnlyProperties": [
+        "/properties/Id",
+        "/properties/DomainName"
+      ]
+    },
+    "ServerSecurityGroup": {
+      "type": "AWS::EC2::SecurityGroup",
+      "identifierKey": "Id",
+      "identifier": "sg-03b5af7f71e361d25",
+      "modelSha256": "3225bac80e176c1c6182fdfd72cdbdacb60d2231eccde7ee78c65c9831c6a42d",
+      "readOnlyProperties": [
+        "/properties/Id",
+        "/properties/GroupId"
+      ]
+    },
+    "Server": {
+      "type": "AWS::EC2::Instance",
+      "identifierKey": "InstanceId",
+      "identifier": "i-0012c6236ad1292e8",
+      "modelSha256": "6abcccf6b19c3b4c9217aa52166d56dfb1f2991f609f0bbaad40da33dd029043",
+      "readOnlyProperties": [
+        "/properties/InstanceId",
+        "/properties/PrivateIp",
+        "/properties/PublicDnsName",
+        "/properties/PublicIp",
+        "/properties/PrivateDnsName",
+        "/properties/VpcId",
+        "/properties/State"
+      ]
+    }
+  }
+}

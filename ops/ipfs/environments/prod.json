@@ -1,0 +1,19 @@
+{
+  "environment": "prod",
+  "region": "us-east-1",
+  "accountId": "987989283142",
+  "changesEnabled": false,
+  "adoptionEnabled": true,
+  "existing": {
+    "instanceId": "i-0012c6236ad1292e8",
+    "blockBucket": "6529ipfs",
+    "blockPrefix": "ipfs",
+    "distributionId": "E1D6I3Z3M5F0H4",
+    "originId": "ipfs-origin.6529.io-mpdrdgbr8bk",
+    "originHost": "ipfs-origin.6529.io",
+    "apiHost": "api-ipfs.6529.io",
+    "gatewayHost": "ipfs.6529.io",
+    "sharedAliases": ["ipfs-cache.6529.io", "ipfs.6529.io", "media.6529.io"],
+    "preserveBehaviors": ["/arweave/*", "/s3/*"]
+  }
+}
