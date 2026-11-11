@@ -165,7 +165,7 @@ describe('bulk REP uses the rater own rating as the old rating', () => {
             ...others.map((rating, i) => aRating(`other-${i}`, rating)),
             ...(own === undefined ? [] : [aRating(RATER, own)])
           ];
-          const { service, identitiesDb } = createService({
+          const { service, identitiesDb, ratingsDb } = createService({
             lockedRatings,
             credit: 1_000_000,
             spent: 0
@@ -177,6 +177,16 @@ describe('bulk REP uses the rater own rating as the old rating', () => {
           expect(updates).toEqual([
             { profileId: TARGET, newRep: amount - (own ?? 0) }
           ]);
+          // Other raters' locked rows only exist as noise: none of them may
+          // be written back.
+          const upsertedRows: Rating[] =
+            ratingsDb.bulkUpsertRatings.mock.calls.flatMap(
+              ([rows]: [Rating[]]) => rows
+            );
+          for (const row of upsertedRows) {
+            expect(row.rater_profile_id).toBe(RATER);
+            expect(row.rating).toBe(amount);
+          }
         }
       ),
       { numRuns: 200 }

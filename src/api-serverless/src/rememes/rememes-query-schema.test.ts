@@ -42,6 +42,30 @@ describe('rememes query validation', () => {
     );
   });
 
+  it('normalises meme ids with leading zeros to canonical integers', () => {
+    expect(validate({ meme_id: '007,0,000,10' }).meme_id).toBe('7,0,0,10');
+    fc.assert(
+      fc.property(fc.nat(), fc.nat({ max: 5 }), (id, zeros) => {
+        expect(validate({ meme_id: '0'.repeat(zeros) + id }).meme_id).toBe(
+          String(id)
+        );
+      })
+    );
+  });
+
+  it('accepts canonical ids up to the digit limit only', () => {
+    expect(validate({ meme_id: '9'.repeat(15) }).meme_id).toBe('9'.repeat(15));
+    expect(validate({ meme_id: '00000' + '9'.repeat(15) }).meme_id).toBe(
+      '9'.repeat(15)
+    );
+    expect(() => validate({ meme_id: '1' + '0'.repeat(15) })).toThrow(
+      BadRequestException
+    );
+    expect(() => validate({ meme_id: '1'.repeat(21) })).toThrow(
+      BadRequestException
+    );
+  });
+
   it('rejects more meme ids than the maximum', () => {
     const meme_id = Array.from(
       { length: MAX_REMEMES_MEME_IDS + 1 },

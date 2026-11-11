@@ -1,5 +1,5 @@
 import { isIP } from 'node:net';
-import { publicFetch } from '@/http/public-fetch';
+import { publicFetch, PublicFetchTimeoutError } from '@/http/public-fetch';
 import { isPublicIpAddress } from '@/http/public-network-address';
 
 export type SafeFetchOptions = {
@@ -52,9 +52,19 @@ export function parseAndValidatePublicHttpUrl(url: string): URL {
 }
 
 /**
+ * Overall deadline for one fetch, as a multiple of the caller's per-hop
+ * timeout: one budget for reaching the final response headers and one for
+ * reading the body. A response that stalls mid-body is therefore cut off at
+ * twice the caller's timeout instead of running until the runtime limit.
+ */
+export const OVERALL_DEADLINE_TIMEOUT_MULTIPLIER = 2;
+
+/**
  * Fetches a public http(s) URL into memory. Every hop's DNS answers are
  * validated and the validated address is the one the connection uses.
- * `timeoutMs` bounds each hop until response headers arrive.
+ * `timeoutMs` bounds each hop until response headers arrive, and the whole
+ * fetch including the body read is bounded by
+ * `timeoutMs * OVERALL_DEADLINE_TIMEOUT_MULTIPLIER`.
  */
 export async function fetchPublicUrlToBuffer(
   url: string,
@@ -72,9 +82,13 @@ export async function fetchPublicUrlToBuffer(
       headers: options.headers,
       maxBytes,
       maxRedirects,
-      requestTimeoutMs: timeoutMs
+      requestTimeoutMs: timeoutMs,
+      timeoutMs: timeoutMs * OVERALL_DEADLINE_TIMEOUT_MULTIPLIER
     });
   } catch (err) {
+    if (err instanceof PublicFetchTimeoutError) {
+      throw new Error(`Fetch timed out after ${err.timeoutMs}ms: ${url}`);
+    }
     if (
       err instanceof Error &&
       (err.name === 'AbortError' ||

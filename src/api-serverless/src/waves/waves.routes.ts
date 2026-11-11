@@ -9,6 +9,7 @@ import {
   LEGACY_DM_CLOSED_CODE,
   legacyDmClosedMessage
 } from '@/legacy-dm/legacy-dm-retention';
+import { rejectProxySession } from '@/api/proxy-session-guard';
 export {
   WaveSchema,
   UpdateWaveSchema,
@@ -115,11 +116,9 @@ async function handleSimpleWaveAction(
   if (!authenticatedProfileId) {
     throw new ForbiddenException(`Please create a profile first`);
   }
-  if (
-    options?.disallowProxy &&
-    authenticationContext.isAuthenticatedAsProxy()
-  ) {
-    throw new ForbiddenException(
+  if (options?.disallowProxy) {
+    rejectProxySession(
+      authenticationContext,
       options.proxyErrorMessage ?? `Proxy is not allowed to perform this action`
     );
   }

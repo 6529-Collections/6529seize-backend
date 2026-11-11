@@ -207,4 +207,59 @@ describe('api.oracle.db', () => {
       'SELECT consolidation_key, boosted_tdh, wallets'
     );
   });
+
+  it('skips TDH entries with malformed wallets instead of failing', async () => {
+    const execute = installSqlExecutor();
+    execute.mockImplementation(async (sql: string) => {
+      if (sql.includes('MAX(block)')) return [{ block: 123 }];
+      if (sql.includes('merkle_root')) return [{ merkle_root: 'root' }];
+      if (sql.includes('boosted_tdh >= :value')) {
+        return [
+          {
+            consolidation_key: 'good',
+            boosted_tdh: 300,
+            wallets: JSON.stringify(['0xABC', '0xDef'])
+          },
+          { consolidation_key: 'not-json', boosted_tdh: 200, wallets: '[0x' },
+          {
+            consolidation_key: 'not-array',
+            boosted_tdh: 150,
+            wallets: JSON.stringify({ a: 1 })
+          },
+          {
+            consolidation_key: 'not-strings',
+            boosted_tdh: 120,
+            wallets: JSON.stringify([1])
+          },
+          { consolidation_key: 'missing', boosted_tdh: 110, wallets: null },
+          {
+            consolidation_key: 'also-good',
+            boosted_tdh: 100,
+            wallets: JSON.stringify(['0x1'])
+          }
+        ];
+      }
+      return [];
+    });
+
+    const result = await fetchTDHAbove(100, true);
+
+    expect(result.count).toBe(6);
+    expect(result.entries).toEqual([
+      {
+        consolidation_key: 'good',
+        tdh: 300,
+        addresses: ['0xabc', '0xdef'],
+        block: 123,
+        merkle_root: 'root'
+      },
+      {
+        consolidation_key: 'also-good',
+        tdh: 100,
+        addresses: ['0x1'],
+        block: 123,
+        merkle_root: 'root'
+      }
+    ]);
+  });
 });
