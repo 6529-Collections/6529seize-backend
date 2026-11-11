@@ -79,3 +79,24 @@ export async function refreshTdhColumnInBatches<Entity extends ObjectLiteral>(
     );
   }
 }
+
+/** Deletes rows by their primary key values (in the primary columns' order). */
+export async function deleteTdhRowsInBatches<Entity extends ObjectLiteral>(
+  repository: Repository<Entity>,
+  keys: readonly (readonly unknown[])[]
+): Promise<void> {
+  const { metadata, manager } = repository;
+  const driver = manager.connection.driver;
+  const columns = metadata.primaryColumns;
+  const tuple = `(${columns.map((column) => driver.escape(column.databaseName)).join(', ')})`;
+  const placeholders = `(${columns.map(() => '?').join(', ')})`;
+  for (let offset = 0; offset < keys.length; offset += TDH_SAVE_BATCH_SIZE) {
+    const batch = keys.slice(offset, offset + TDH_SAVE_BATCH_SIZE);
+    await repository.query(
+      `delete from ${driver.escape(metadata.tableName)} where ${tuple} in (${batch
+        .map(() => placeholders)
+        .join(', ')})`,
+      batch.flatMap((key) => [...key])
+    );
+  }
+}
