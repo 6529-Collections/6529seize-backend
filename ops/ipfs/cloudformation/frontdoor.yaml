@@ -233,6 +233,28 @@ Resources:
                 Weight: { Fn::If: [SlotAActive, 100, 0] }
               - TargetGroupArn: { Ref: GatewayB }
                 Weight: { Fn::If: [SlotAActive, 0, 100] }
+  ActiveWriterHealth:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: seize-ipfs-prod-active-writer-health
+      AlarmDescription: Active production IPFS writer must have a healthy HTTPS target
+      Namespace: AWS/ApplicationELB
+      MetricName: HealthyHostCount
+      Statistic: Minimum
+      Period: 60
+      EvaluationPeriods: 2
+      Threshold: 1
+      ComparisonOperator: LessThanThreshold
+      TreatMissingData: breaching
+      Dimensions:
+        - Name: LoadBalancer
+          Value: { Fn::GetAtt: [LoadBalancer, LoadBalancerFullName] }
+        - Name: TargetGroup
+          Value:
+            Fn::If:
+              - SlotAActive
+              - { Fn::GetAtt: [WriterA, TargetGroupFullName] }
+              - { Fn::GetAtt: [WriterB, TargetGroupFullName] }
 Outputs:
   DnsName:
     Value:
@@ -252,3 +274,5 @@ Outputs:
     Value: { Ref: GatewayA }
   GatewayBArn:
     Value: { Ref: GatewayB }
+  HealthAlarm:
+    Value: { Ref: ActiveWriterHealth }

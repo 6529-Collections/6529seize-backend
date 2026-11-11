@@ -1,0 +1,19 @@
+{
+  "accountId": "987989283142",
+  "region": "us-east-1",
+  "vpcId": "vpc-0049175e3bed48694",
+  "subnetIds": ["subnet-06b43f62a9c3c29ec", "subnet-01ae1a619f9f53485"],
+  "subnetCidrs": ["172.31.16.0/20", "172.31.32.0/20"],
+  "imageId": "ami-0e2c8caa4b6378d8c",
+  "certificateArn": "arn:aws:acm:us-east-1:987989283142:certificate/39d34d5f-a624-4127-8bbe-1aa07384664b",
+  "legacyInstanceId": "i-0012c6236ad1292e8",
+  "legacySecurityGroupId": "sg-03b5af7f71e361d25",
+  "legacyPublicIp": "18.232.173.145",
+  "legacySiteSha256": "6e284cb92f12d040fe4758644fd416b19d720f1f22b78de96cf160e789c181d9",
+  "blocksBucket": "6529ipfs",
+  "backupsBucket": "seize-ipfs-prod-recovery-backups-987989283142",
+  "artifactsBucket": "seize-ipfs-prod-recovery-artifacts-987989283142",
+  "hostedZoneId": "Z034375922ON0KJSHH6TF",
+  "distributionId": "E1D6I3Z3M5F0H4",
+  "runtimeBoundaryArn": "arn:aws:iam::987989283142:policy/seize-ipfs-prod-production-boundary"
+}

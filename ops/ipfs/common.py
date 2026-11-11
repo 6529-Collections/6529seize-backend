@@ -149,3 +149,12 @@ def mutation_guard(config, sha, environ):
     policy = environment_policy(config["environment"])
     require(policy["changesEnabled"], "Production changes are disabled in the checked-in environment policy")
     return policy
+
+
+def runtime_mutation_guard(sha, environ):
+    """Authorize the production runtime path without contacting AWS."""
+    source_identity_guard(sha, environ)
+    policy = environment_policy('prod')
+    require(policy['changesEnabled'], 'Production runtime changes are disabled')
+    require(not policy['adoptionEnabled'], 'Ownership import must remain disabled')
+    return policy

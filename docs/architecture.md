@@ -639,14 +639,14 @@ through `1a-staging` without deploying this service there. See
 | `nftsLoop`                               | Discover, refresh, and audit NFTs.                                                                                                                                  |
 | `transactionsLoop`                       | Index MEMES, Gradients, and Meme Lab transfers.                                                                                                                     |
 | `nftOwnersLoop`                          | Maintain current owner balance snapshots.                                                                                                                           |
-| `nftHistoryLoop`                         | Maintain NFT metadata history.                                                                                                                                         |
+| `nftHistoryLoop`                         | Maintain NFT metadata history.                                                                                                                                      |
 | `delegationsLoop`                        | Sync delegation.cash and consolidation data.                                                                                                                        |
 | `nextgenContractLoop`                    | Index NextGen contract events.                                                                                                                                      |
 | `nextgenMetadataLoop`                    | Refresh NextGen metadata.                                                                                                                                           |
 | `externalCollectionSnapshottingLoop`     | Snapshot external collection ownership.                                                                                                                             |
 | `externalCollectionLiveTailingLoop`      | Live-tail external collection transfers.                                                                                                                            |
 | `transactionsProcessingLoop`             | Normalize raw transactions into processed state.                                                                                                                    |
-| `tdhLoop`                                | Calculate TDH, publish wallet/consolidated CSVs through bounded Arweave gateway failover with public ArDrive download links, and publish TDH completion.                                                 |
+| `tdhLoop`                                | Calculate TDH, publish wallet/consolidated CSVs through bounded Arweave gateway failover with public ArDrive download links, and publish TDH completion.            |
 | `tdhHistoryLoop`                         | Write historical TDH snapshots.                                                                                                                                     |
 | `ownersBalancesLoop`                     | Project owner balance aggregates.                                                                                                                                   |
 | `aggregatedActivityLoop`                 | Calculate activity aggregates.                                                                                                                                      |
@@ -698,28 +698,28 @@ reset behavior, and the required writer-before-collector deployment order.
 
 ### Triggered Lambdas
 
-| Lambda                           | Trigger                                                                                                                             | Purpose                                                                                                                     |
-| -------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
-| `api` / `seizeAPI`               | API Gateway HTTP/WebSocket                                                                                                          | Public REST API and WebSocket boundary.                                                                                     |
-| `claimsBuilder`                  | SQS `claims-builder`                                                                                                                | Build minting claims from winning drops.                                                                                    |
-| `claimsMediaArweaveUploader`     | SQS `claims-media-arweave-upload`                                                                                                   | Upload claim media and metadata to Arweave.                                                                                 |
-| `s3Uploader`                     | SQS `s3-uploader-jobs`                                                                                                              | Mirror, compress, and upload NFT media.                                                                                     |
-| `attachmentsOrchestrator`        | SQS `attachments-orchestration` and S3 object-created event                                                                         | Find uploaded attachment objects, retry, and enqueue processing.                                                            |
-| `attachmentsProcessor`           | SQS `attachments-processing`                                                                                                        | Scan/process attachments.                                                                                                   |
-| `dropMediaSanitizer`             | SQS `drop-media-sanitizer`                                                                                                          | Strip metadata from private-ingest drop/wave image uploads and publish sanitized originals.                                 |
-| `nftLinkRefresherLoop`           | SQS `nft-link-refreshes`                                                                                                            | Resolve external NFT links.                                                                                                 |
-| `nftLinkMediaPreviewLoop`        | SQS `nft-link-media-previews`                                                                                                       | Generate media previews for NFT links.                                                                                      |
+| Lambda                           | Trigger                                                                                                                             | Purpose                                                                                                                                                                                 |
+| -------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `api` / `seizeAPI`               | API Gateway HTTP/WebSocket                                                                                                          | Public REST API and WebSocket boundary.                                                                                                                                                 |
+| `claimsBuilder`                  | SQS `claims-builder`                                                                                                                | Build minting claims from winning drops.                                                                                                                                                |
+| `claimsMediaArweaveUploader`     | SQS `claims-media-arweave-upload`                                                                                                   | Upload claim media and metadata to Arweave.                                                                                                                                             |
+| `s3Uploader`                     | SQS `s3-uploader-jobs`                                                                                                              | Mirror, compress, and upload NFT media.                                                                                                                                                 |
+| `attachmentsOrchestrator`        | SQS `attachments-orchestration` and S3 object-created event                                                                         | Find uploaded attachment objects, retry, and enqueue processing.                                                                                                                        |
+| `attachmentsProcessor`           | SQS `attachments-processing`                                                                                                        | Scan/process attachments.                                                                                                                                                               |
+| `dropMediaSanitizer`             | SQS `drop-media-sanitizer`                                                                                                          | Strip metadata from private-ingest drop/wave image uploads and publish sanitized originals.                                                                                             |
+| `nftLinkRefresherLoop`           | SQS `nft-link-refreshes`                                                                                                            | Resolve external NFT links.                                                                                                                                                             |
+| `nftLinkMediaPreviewLoop`        | SQS `nft-link-media-previews`                                                                                                       | Generate media previews for NFT links.                                                                                                                                                  |
 | `pushNotificationsHandler`       | SQS `firebase-push-notifications`                                                                                                   | Deliver Firebase pushes and recipient-scoped WebSocket notification invalidations after notification rows are durable; also content-free `e2ee_wake` notifications for encrypted chats. |
-| `helpBotReplyLoop`               | SQS `help-bot-replies`                                                                                                              | Answer `@help6529` interactions and direct follow-ups to bot replies.                                                       |
-| `helpBotDailyActivityCreditLoop` | SQS `help-bot-daily-activity-credits.fifo` with EventBridge wakeup fallback                                                         | Grant idempotent once-per-UTC-day activity credits from durable post-drop requests.                                         |
-| `releaseNotesGenerationLoop`     | SQS `release-note-generation`                                                                                                       | Publish production Backend, Frontend, and Desktop release notes as `ci6529`.                                                |
-| `waveDropMetricsRefreshLoop`     | SQS `wave-drop-metrics-refresh-dirty.fifo`; EventBridge fallback                                                                    | Repair materialized wave/dropper drop counts and latest-drop timestamps after drop deletes.                                 |
-| `xTdhLoop`                       | SNS `tdh-calculation-done.fifo` or a direct post-persistence partial-TDH enqueue via SQS `xtdh-start.fifo`; self-queued stats phase | Recalculate the xTDH universe after TDH finishes, then rebuild and publish xTDH stats in a follow-up queue message.         |
-| `overRatesRevocationLoop`        | SNS `tdh-calculation-done.fifo` via SQS `over-rates-revocation-start.fifo`                                                          | Revoke over-rates after TDH changes.                                                                                        |
-| `waveScoreRefreshLoop`           | SNS `tdh-calculation-done.fifo` via SQS `wave-score-refresh-start.fifo`; SQS `wave-score-refresh-dirty.fifo`; EventBridge fallback  | Refresh materialized wave REP and Wave Score discovery fields after TDH changes or wave/drop/rating/subscription mutations. |
-| `mediaResizerLoop`               | CloudFront/request path                                                                                                             | Resize images on demand.                                                                                                    |
-| `nextgenMediaProxyInterceptor`   | Lambda@Edge / CloudFront request                                                                                                    | Provide NextGen metadata fallback.                                                                                          |
-| `dropVideoConversionInvokerLoop` | S3 object-created event for `drops/`                                                                                                | Invoke MediaConvert for uploaded drop videos.                                                                               |
+| `helpBotReplyLoop`               | SQS `help-bot-replies`                                                                                                              | Answer `@help6529` interactions and direct follow-ups to bot replies.                                                                                                                   |
+| `helpBotDailyActivityCreditLoop` | SQS `help-bot-daily-activity-credits.fifo` with EventBridge wakeup fallback                                                         | Grant idempotent once-per-UTC-day activity credits from durable post-drop requests.                                                                                                     |
+| `releaseNotesGenerationLoop`     | SQS `release-note-generation`                                                                                                       | Publish production Backend, Frontend, and Desktop release notes as `ci6529`.                                                                                                            |
+| `waveDropMetricsRefreshLoop`     | SQS `wave-drop-metrics-refresh-dirty.fifo`; EventBridge fallback                                                                    | Repair materialized wave/dropper drop counts and latest-drop timestamps after drop deletes.                                                                                             |
+| `xTdhLoop`                       | SNS `tdh-calculation-done.fifo` or a direct post-persistence partial-TDH enqueue via SQS `xtdh-start.fifo`; self-queued stats phase | Recalculate the xTDH universe after TDH finishes, then rebuild and publish xTDH stats in a follow-up queue message.                                                                     |
+| `overRatesRevocationLoop`        | SNS `tdh-calculation-done.fifo` via SQS `over-rates-revocation-start.fifo`                                                          | Revoke over-rates after TDH changes.                                                                                                                                                    |
+| `waveScoreRefreshLoop`           | SNS `tdh-calculation-done.fifo` via SQS `wave-score-refresh-start.fifo`; SQS `wave-score-refresh-dirty.fifo`; EventBridge fallback  | Refresh materialized wave REP and Wave Score discovery fields after TDH changes or wave/drop/rating/subscription mutations.                                                             |
+| `mediaResizerLoop`               | CloudFront/request path                                                                                                             | Resize images on demand.                                                                                                                                                                |
+| `nextgenMediaProxyInterceptor`   | Lambda@Edge / CloudFront request                                                                                                    | Provide NextGen metadata fallback.                                                                                                                                                      |
+| `dropVideoConversionInvokerLoop` | S3 object-created event for `drops/`                                                                                                | Invoke MediaConvert for uploaded drop videos.                                                                                                                                           |
 
 ### Manual Or One-Off Lambdas
 
@@ -1526,7 +1526,6 @@ explicit reader cutover. Readers use the event-based lookup until the operator
 completes and verifies the copy and enables the projection. The operator-only
 `dbMigrationsLoop` scope can compare both readers in one snapshot and disable
 projected reads for rollback. See [score history rollout](competition-score-history-rollout.md).
-
 
 Vote Activity combines competition-scoped shared profile logs and native vote
 history. Exact `<competition-id>:<sequence>` identities deduplicate before
@@ -2999,73 +2998,70 @@ Deploy the `api` service before the frontend that consumes this additive endpoin
 
 ## IPFS infrastructure management
 
-`ops/ipfs/` defines isolated persistent S3 storage, replaceable EC2 candidates,
-the pinned Kubo binary with its bundled S3 datastore, nginx/systemd/TLS setup,
-and logical pin/MFS/identity backup and restoration. Checked-in CloudFormation
-YAML files under `ops/ipfs/cloudformation/` own access, storage, compute and edge
-definitions. The controller reads and submits those files directly; there is no
-Python template generator. Its pinned PyYAML reader runs only on the controller,
-not the EC2 runtime. S3 request logs and CloudFront access logs use separate private
-log buckets; only the CloudFront log bucket enables ACLs for the logging API.
-`ipfs-ci.yml` rehearses the real binary with disposable
-loopback S3 and HTTPS fixtures. The explicit-dispatch
-`ipfs-manage.yml` workflow validates the reviewed source, environment, account,
-and candidate identity before assuming deployment authority or sending SSM work.
-IPFS has one shared deployment target, `prod`, with dispatch restricted to `main`
-and the `ipfs-prod` GitHub environment. It has no separate staging deployment.
-Local/CI fixtures create no AWS environment; future production rollouts validate
-an unpublished replacement candidate before traffic handover.
+IPFS has one production environment. `ops/ipfs/cloudformation/` contains plain
+CloudFormation YAML, submitted directly to AWS; Python does not generate the
+infrastructure descriptors. `production.py` orchestrates native change sets,
+versioned artifacts, SSM, recovery, traffic changes and verification through the
+explicit-dispatch `ipfs-manage.yml` workflow. Source/account guards and the checked-in
+runtime switch precede AWS authentication; dispatch is restricted to reviewed
+`main` commits and the protected `ipfs-prod` GitHub environment. There is no staging
+IPFS deployment. Native CI fixtures create no AWS resources.
 
-The application's IPFS API contract and serving configuration remain unchanged.
-Runtime deployment remains disabled by checked-in policy. A separate
-`ipfs-adopt.yml` workflow and import-only `adoption.yaml` baseline cover the existing
-production bucket, instance, its exclusively used security group and the entire
-shared CDN. `adoption.py` requires exact IDs,
-full native-model and CloudFront API configuration fingerprints, matching declared
-properties and an IMPORT-only
-change set bound to one source SHA/baseline. Preparation and execution are separate
-dispatches; retries reconcile the same change-set ARN. Successful adoption requires
-exact ownership, original template equality and per-resource drift checks, then
-retains an import-only service role, termination protection and a deny-all resource
-update stack policy. `adoption-access.yaml` defines dedicated roles limited to
-configuration reads and ownership tags, without SSM command, content-object write
-or DNS-change permissions. CloudFormation's post-import tagging invokes the
-CloudFront UPDATE handler even for unchanged configuration. A deadline-bound
-service-role permission for only the existing shared distribution accommodates
-that provider call; it defaults to expired and is closed immediately after import.
-The GitHub controller remains explicitly denied, and the entire API configuration
-must match the reviewed fingerprint before and after import.
-The separate adoption switch is enabled only for the authorized ownership import
-and reset after verification; adoption additionally requires runtime deployment to
-remain locked. Network/IAM dependencies, canonical DNS,
-edge policy/function implementations and host files are referenced, not imported.
+Stage 1 completed on November 11, 2026. `seize-ipfs-prod-adopted` owns the original
+`6529ipfs` bucket, EC2 instance, exclusively used security group and entire shared
+CloudFront distribution. The resources were verified `IN_SYNC`, retained and
+protected with termination protection and a deny-all update policy. The separate
+import authority has no runtime, content-write or DNS permissions. CloudFormation
+post-import tagging required a deadline-bound provider update permission for the
+shared CDN; that window is closed. The one-time import switch remains disabled.
+The [adoption record](../ops/ipfs/adoption-record.json) preserves the exact source,
+change set, identifiers and successful verification runs.
 
-Stage 1 ownership import completed on November 11, 2026. The four existing resources
-are owned by `seize-ipfs-prod-adopted`, verified `IN_SYNC`, retained and protected
-against deletion and resource updates. The temporary CloudFront provider window
-is closed, both checked-in mutation switches are disabled, and serving
-configuration remains unchanged. The [adoption record](../ops/ipfs/adoption-record.json)
-contains the reviewed source, exact change set and verification runs. Runtime
-deployment and traffic handover still require the separate migration below.
+Stage 2 adds native production templates for private versioned recovery/artifact/
+log buckets, dedicated OIDC/CloudFormation authority, a stable HTTPS ALB and immutable
+replacement servers. The ALB references the existing wildcard certificate and
+has separate writer/gateway target groups for two reusable slots. Only the inactive
+slot may be registered; promotion changes listener weights and the active-writer
+health alarm. The two canonical API/origin DNS A records move to guarded ALB
+aliases without deletion. Record-set import is unsupported by the Stage 1 path,
+so the controller manages those exact two UPSERTs with IAM name/type/action
+restrictions. Shared CloudFront configuration and media/Arweave/S3 behaviors stay
+at the adopted baseline.
 
-The live CloudFront distribution is
-shared with Arweave and S3 media and is not replaced by the new dedicated gateway
-template. Published candidates are sealed before DNS publication; active-daemon
-updates and restoration over a serving node are rejected. Adoption does not
-permit that candidate path to target the live bucket or canonical hostnames.
-Runtime/writer traffic handover remains a separate reviewed migration requiring
-replacement validation, a stable front door, request draining and reconciliation
-of all completed writes. See the [IPFS runbook](../ops/ipfs/README.md) for exact
-ownership boundaries, recovery limitations, deployment order and adoption steps.
+Runtime candidates use encrypted retained disks, independent peer identities,
+private loopback Kubo API/gateway endpoints, and HTTPS ingress restricted to the
+ALB and previous writer. Public TCP port 4001 preserves the original IPFS peer
+service; raw RPC/gateway, SSH and UDP swarm ports remain closed. Their roles initially read existing S3 blocks without
+write/delete access. Full recursive/direct pin restoration and immutable MFS reads
+must pass before a role-only update permits Put. A reviewed patch to the pinned
+S3 plugin validates repeated initialization writes by comparing existing bytes;
+in read-only mode it sends no S3 Put/Delete. New writes, HTTPS/ranges/restricted
+RPC and reboot persistence are then verified before the serving host changes.
 
-Stage 2 development adds handwritten production templates for a stable ALB front
-door with separate writer/gateway target groups, immutable replacement runtimes,
-private versioned recovery/artifact buckets and dedicated deployment authority.
-The old security group and shared CloudFront distribution are not changed by
-these templates. A local upload router persists writer fences, forwards new
-uploads synchronously, tracks source requests until completion and holds mutable
-`to-files` operations until final MFS transfer. Pin transfer retains both nodes'
-completed uploads. Read-only restoration compares existing S3 block bytes and
-rejects new writes through both the plugin and IAM. These foundations alone do
-not switch production; the reviewed deployment controller must validate and
-perform the authorized handover.
+The upload router uses a root-only Unix control socket and persistent epochs.
+It tracks accepted source uploads to completion and forwards later uploads
+synchronously to the verified replacement. Ordinary immutable uploads continue;
+mutable `to-files` uploads wait until the final MFS directory is transferred.
+Logical transfer unions pins so new uploads on either host survive promotion and
+rollback. Private archives preserve recovery identities/configuration separately
+from public-CID transfer objects; an open LevelDB is never copied. The original
+nginx bridge supports cached-DNS clients and distinguishes the original ALB socket
+peer from the restored client address, preventing loops and duplicate rate limiting.
+Pre-reload nginx workers must drain before the final writer snapshot.
+
+The production operation performs a real reverse handover and final promotion,
+checks uploads through all IPFS/CDN aliases, preserves the CDN fingerprint and
+requires healthy ALB/EC2 alarms. ALB/S3 access logs are private; alarms do not add an
+SNS/email destination. The previous host, daemon and private recovery archive stay
+available for rollback and cached-DNS traffic. No content deletion, garbage
+collection, old-host termination, backend Lambda or frontend deployment is part
+of this operation. Merging alone performs no deployment. The first migration must
+complete and its evidence be recorded before runtime ownership is considered active.
+
+Versioned deployment journals record change-set ARNs and SSM command IDs before
+waiting. Interrupted runs reconcile those exact operations and persisted router/
+MFS journals. Repeated rollback to an already active writer verifies it without
+copying stale state. The earlier isolated candidate tooling remains for offline
+contracts and cannot target the live resources; it is not the production workflow.
+See the [IPFS runbook](../ops/ipfs/README.md) for operation order, authority,
+ownership boundaries and recovery procedures.
