@@ -38,6 +38,27 @@ export function canReplyInWaveChat({
 }
 
 /**
+ * canReplyInWaveChat for one profile, loading group eligibility only when the
+ * answer depends on it. Shared by every path that decides whether a profile
+ * may reply in a wave chat without already holding the profile's groups.
+ */
+export async function canProfileReplyInWaveChat({
+  wave,
+  findEligibleGroupIds
+}: {
+  wave: WaveChatAccessFields;
+  findEligibleGroupIds: (groupIds: string[]) => Promise<string[]>;
+}): Promise<boolean> {
+  const decidingGroupId =
+    wave.chat_enabled && !wave.chat_replies_open ? wave.chat_group_id : null;
+  const groupIdsUserIsEligibleFor =
+    decidingGroupId === null
+      ? []
+      : await findEligibleGroupIds([decidingGroupId]);
+  return canReplyInWaveChat({ wave, groupIdsUserIsEligibleFor });
+}
+
+/**
  * Collapsed-reply waves keep replies out of the main feed; curated views are
  * explicit selections and keep every drop.
  */
