@@ -308,6 +308,8 @@ resource configurations stayed unchanged. The template preserves the existing
 Name tag. The manifest additionally fingerprints the **entire CloudFront API
 DistributionConfig**, including fields outside the CloudFormation read model,
 and checks it immediately before execution and again during verification.
+Only the response's `ETag` is excluded; `CallerReference` remains covered because
+[AWS prohibits changing it on an existing distribution](https://docs.aws.amazon.com/cloudfront/latest/APIReference/API_UpdateDistribution.html).
 
 `CloudFrontImportUpdateExpiresAt` defaults to the Unix epoch, explicitly denying
 `UpdateDistribution`. Only during an authorized import may bootstrap authority set

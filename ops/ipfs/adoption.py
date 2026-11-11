@@ -113,6 +113,8 @@ def model_matches(declared, actual):
 def audit(manifest, template):
     identity(manifest)
     import_schema(manifest)
+    # Hash configuration only, excluding the response ETag. CallerReference is
+    # immutable on an existing distribution and remains covered by the hash.
     distribution = aws("cloudfront", "get-distribution-config", "--id", EXPECTED["SharedDistribution"][2])["DistributionConfig"]
     require(fingerprint(distribution) == manifest["distributionConfigSha256"], "Full CloudFront API configuration differs from the approved baseline")
     checked = []

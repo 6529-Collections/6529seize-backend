@@ -101,6 +101,7 @@ Resources:
             Action: cloudfront:UpdateDistribution
             Resource: '*'
             Condition:
+              # Complement the service role's strict '<': expiry itself is denied.
               DateGreaterThanEquals:
                 aws:CurrentTime:
                   Ref: CloudFrontImportUpdateExpiresAt

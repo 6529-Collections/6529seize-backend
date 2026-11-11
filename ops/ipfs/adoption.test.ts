@@ -13,7 +13,8 @@ sha='a'*40
 role='arn:aws:iam::987989283142:role/seize-ipfs-prod-adoption-service'
 models={name:copy.deepcopy(resource['Properties']) for name,resource in template['Resources'].items()}
 models['Server']['Volumes']=[{'Device':'/dev/sda1','VolumeId':'vol-fixture'}]
-api_config={'Origins':{'Items':[{'Id':'fixture'}]}}
+api_config={'CallerReference':'immutable-creation-reference','Origins':{'Items':[{'Id':'fixture'}]}}
+etag='version-before'
 manifest['distributionConfigSha256']=a.fingerprint(api_config)
 for name,model in models.items():
  manifest['resources'][name]['modelSha256']=a.fingerprint(a.normalize(model,manifest['resources'][name]['readOnlyProperties']))
@@ -30,7 +31,7 @@ drift='IN_SYNC'
 def aws(service,operation,*args,**kwargs):
  calls.append((service,operation,args))
  if operation=='get-caller-identity': return {'Account':manifest['accountId']}
- if operation=='get-distribution-config':return {'DistributionConfig':copy.deepcopy(api_config)}
+ if operation=='get-distribution-config':return {'ETag':etag,'DistributionConfig':copy.deepcopy(api_config)}
  if operation=='get-template-summary':return {'ResourceIdentifierSummaries':[
   {'ResourceType':kind,'LogicalResourceIds':[name],'ResourceIdentifiers':['Id' if name in ('ServerSecurityGroup','SharedDistribution') else key]}
   for name,(kind,key,identifier) in a.EXPECTED.items()]}
@@ -161,6 +162,23 @@ print(rejected(lambda:a.audit(manifest,template)))
     expect(
       python(`
 api_config['UnmodeledFutureField']='unexpected'
+print(rejected(lambda:a.audit(manifest,template)))
+`)
+    ).toContain('Full CloudFront API configuration differs');
+  });
+
+  test('ignores API response versions while retaining immutable identity and nested configuration', () => {
+    expect(
+      python(`
+etag='version-after'
+a.audit(manifest,template)
+api_config['Origins']['Items'][0]['Id']='changed-origin'
+print(rejected(lambda:a.audit(manifest,template)))
+`)
+    ).toContain('Full CloudFront API configuration differs');
+    expect(
+      python(`
+api_config['CallerReference']='different-distribution-identity'
 print(rejected(lambda:a.audit(manifest,template)))
 `)
     ).toContain('Full CloudFront API configuration differs');
