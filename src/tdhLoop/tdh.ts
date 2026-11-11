@@ -23,6 +23,7 @@ import {
   fetchAllSeasons,
   fetchTDHForBlock,
   fetchWalletTransactions,
+  getDataSource,
   persistTDH,
   retrieveWalletConsolidations
 } from '../db';
@@ -42,6 +43,7 @@ import { ConnectionWrapper, sqlExecutor } from '../sql-executor';
 import { equalIgnoreCase } from '../strings';
 import { Time } from '../time';
 import { calculateTdhEditions } from './tdh_editions';
+import { snapshotRows, StoredRows } from './tdh-row-diff';
 import { calculateMemesTdh } from './tdh_memes';
 import { extractMemesEditionSizes, extractNFTOwners } from './tdh_objects';
 import {
@@ -439,8 +441,12 @@ export const updateTDH = async (
   const boostedTdh = await calculateBoosts(ADJUSTED_SEASONS, walletsTDH);
 
   let rankedTdh: TDH[];
+  let storedTdh: StoredRows | undefined;
   if (startingWallets) {
     const allCurrentTdh = await fetchTDHForBlock(block);
+    // The rows as stored, before ranking updates these same objects: the
+    // partial write sends only the rows that change.
+    storedTdh = snapshotRows(getDataSource().getMetadata(TDH), allCurrentTdh);
     const allTdh = allCurrentTdh
       .filter(
         (t: TDH) => !startingWallets.some((sw) => equalIgnoreCase(sw, t.wallet))
@@ -474,7 +480,9 @@ export const updateTDH = async (
   )) as TDHMemes[];
 
   const tdhEditions = await calculateTdhEditions(rankedTdh);
-  await persistTDH(block, rankedTdh, memesTdh, tdhEditions, startingWallets);
+  await persistTDH(block, rankedTdh, memesTdh, tdhEditions, startingWallets, {
+    storedTdh
+  });
 
   return {
     block: block,
