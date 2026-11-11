@@ -103,6 +103,18 @@ function parseRequestPath(originalUrl: string): URL | null {
   }
 }
 
+/**
+ * Separator for appending one more parameter to a URL search string (as given
+ * by `URL.search`, which is empty when there is no query) without leaving an
+ * empty pair such as `?&page=2`.
+ */
+function querySeparatorFor(search: string): string {
+  if (!search) {
+    return '?';
+  }
+  return search.endsWith('&') ? '' : '&';
+}
+
 function fullUrl(req: Request, next: string | null) {
   const hasNext = next === 'true';
 
@@ -128,12 +140,8 @@ function fullUrl(req: Request, next: string | null) {
     params.append('page', String(page + 1));
     return `${paginationOrigin(req)}${path}${parsed.search}`;
   } else {
-    let url = `${paginationOrigin(req)}${path}${parsed.search}`;
-    if (!url.includes('?')) {
-      url += '?';
-    }
-    url += `&page=2`;
-    return url;
+    const search = parsed.search;
+    return `${paginationOrigin(req)}${path}${search}${querySeparatorFor(search)}page=2`;
   }
 }
 

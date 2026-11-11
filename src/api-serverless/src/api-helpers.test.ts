@@ -159,7 +159,7 @@ describe('returnPaginatedResult next link origin', () => {
       'https://api.staging.6529.io/api/things?page=2'
     );
     expect(nextFor('/api/things', 'localhost:3000')).toBe(
-      'https://localhost:3000/api/things?&page=2'
+      'https://localhost:3000/api/things?page=2'
     );
   });
 
@@ -170,7 +170,46 @@ describe('returnPaginatedResult next link origin', () => {
     expect(nextFor('/api/things?a=1', 'somewhere.example')).toBe(
       '/api/things?a=1&page=2'
     );
-    expect(nextFor('/api/things', undefined)).toBe('/api/things?&page=2');
+    expect(nextFor('/api/things', undefined)).toBe('/api/things?page=2');
+  });
+
+  it('adds the second page without an empty query pair', () => {
+    expect(nextFor('/api/things', 'api.6529.io')).toBe(
+      'https://api.6529.io/api/things?page=2'
+    );
+    expect(nextFor('/api/things?', 'api.6529.io')).toBe(
+      'https://api.6529.io/api/things?page=2'
+    );
+    expect(nextFor('/api/things?a=1', 'api.6529.io')).toBe(
+      'https://api.6529.io/api/things?a=1&page=2'
+    );
+    expect(nextFor('/api/things?a=1&', 'api.6529.io')).toBe(
+      'https://api.6529.io/api/things?a=1&page=2'
+    );
+    fc.assert(
+      fc.property(fc.webPath(), (path) => {
+        const next = nextFor(path, 'somewhere.example');
+        expect(next === null || !next.includes('?&')).toBe(true);
+      })
+    );
+  });
+
+  it('keeps plain http on a loopback host', () => {
+    const httpNext = (originalUrl: string, host: string) => {
+      const json = jest.fn((body: unknown) => body);
+      returnPaginatedResult(
+        { count: 10, page: 1, next: 'true', data: [] as number[] },
+        { protocol: 'http', get: () => host, originalUrl } as any,
+        { json } as any
+      );
+      return (json.mock.calls[0][0] as { next: string | null }).next;
+    };
+    expect(httpNext('/api/things', '127.0.0.1:3000')).toBe(
+      'http://127.0.0.1:3000/api/things?page=2'
+    );
+    expect(httpNext('/api/things?page=2', 'localhost:3000')).toBe(
+      'http://localhost:3000/api/things?page=3'
+    );
   });
 
   it('never produces a protocol-relative link', () => {
