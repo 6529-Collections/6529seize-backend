@@ -149,10 +149,12 @@ poster; this safe fallback does not block uploads or require a new rollout gate.
 Existing endpoint, execution role, template, bucket, and region configuration
 remain required. The conversion bounds above are set in the function's
 Serverless environment; there are no new services, queues or migrations. The
-policy also grants `s3:GetObject` on drop originals (HEAD) and
-`s3:GetObject`/`s3:PutObject` on `_video-conversion-ledger/`. The converter
-remains a shared-media, staging-only service under the current catalog; API
-deployment follows the ordinary environment catalog.
+HEAD of drop originals and the reads and conditional writes under
+`_video-conversion-ledger/` use the shared execution role's existing access to
+the media bucket (its attached managed policy); the function's inline policy is
+unchanged, because deployments may not change policies on that shared role.
+The converter remains a shared-media, staging-only service under the current
+catalog; API deployment follows the ordinary environment catalog.
 Keep the converter deployed before API/FE so clients without a usable device
 poster still get fallback capture. Old clients omit the optional field. An
 older API may reject it, so deploying frontend first is unsupported. Rolling
