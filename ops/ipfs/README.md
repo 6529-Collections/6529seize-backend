@@ -79,6 +79,11 @@ public SSH, API port 5001 or gateway port 8080. Its public IPv4 supplies outboun
 access in the existing public subnet; inbound HTTPS is restricted to the ALB and
 previous writer security groups. Public TCP port 4001 preserves the original IPFS
 peer service; UDP swarm ports, SSH, raw RPC and the raw gateway stay closed.
+Every managed runtime also joins a stable private peer security group. Its only
+ingress is HTTPS from that same group, allowing both directions of later handovers
+and rollbacks. The original server's security group remains unchanged. Before DNS
+or traffic changes, both writers must verify the other's private HTTPS path and
+certificate; the peer addresses must be inside the reviewed production subnets.
 
 The original nginx bridge distinguishes ALB/local traffic by the original socket
 peer. Cached-DNS requests go to the ALB; requests arriving from the ALB stay local,

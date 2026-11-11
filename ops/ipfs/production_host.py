@@ -400,6 +400,20 @@ def verify():
             'cid': cid, 'payloadBase64': base64.b64encode(payload).decode()}
 
 
+def peer_health(_node, request):
+    peer = request['peer']
+    address = ipaddress.IPv4Address(peer['privateIp'])
+    require(any(address in ipaddress.IPv4Network(cidr) for cidr in CONTEXT['subnetCidrs']), 'Peer outside reviewed production subnets')
+    with tempfile.TemporaryDirectory() as temporary:
+        certificate = Path(temporary) / 'peer.pem'
+        certificate.write_text(peer['certificate'])
+        response = host.run('curl', '--silent', '--show-error', '--fail', '--noproxy', '*', '--max-time', '30',
+                            '--cacert', str(certificate), '--resolve', 'api-ipfs.6529.io:443:' + str(address),
+                            'https://api-ipfs.6529.io/health')
+    require(isinstance(json.loads(response).get('Version'), str), 'Private peer HTTPS health failed')
+    return {'privateHttpsVerified': True, 'peerInstanceId': peer['instanceId']}
+
+
 def backup_operation(node, request):
     result = backup(node, request)
     write_private(SETTINGS / 'backup-complete.json', result)
@@ -444,7 +458,7 @@ def main(request):
                'restore-read-only': restore_read_only, 'enable-writes': enable_writes,
                'prepare-source': prepare_source, 'configure-nginx': configure_nginx,
                'fence': fence_operation, 'snapshot': snapshot_operation, 'sync': sync,
-               'verify': lambda _node, _: verify(), 'reboot': reboot_operation}
+               'verify': lambda _node, _: verify(), 'peer-health': peer_health, 'reboot': reboot_operation}
     require(request['operation'] in actions, 'Unknown production operation')
     return actions[request['operation']](node, request)
 

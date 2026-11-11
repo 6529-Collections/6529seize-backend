@@ -13,6 +13,8 @@ Parameters:
     AllowedValues: [t3.large, t3.xlarge, m7i.large]
   FrontdoorSecurityGroup:
     Type: AWS::EC2::SecurityGroup::Id
+  RuntimePeerSecurityGroup:
+    Type: AWS::EC2::SecurityGroup::Id
   SourceSecurityGroup:
     Type: AWS::EC2::SecurityGroup::Id
   RuntimeBoundaryArn:
@@ -128,7 +130,7 @@ Resources:
           AssociatePublicIpAddress: true # NOSONAR: outbound SSM/S3 in the existing public subnet; HTTPS is restricted and the original TCP swarm service is preserved.
           SubnetId:
             Ref: SubnetId
-          GroupSet: [{ Ref: SecurityGroup }]
+          GroupSet: [{ Ref: SecurityGroup }, { Ref: RuntimePeerSecurityGroup }]
       IamInstanceProfile:
         Ref: Profile
       DisableApiTermination: true
