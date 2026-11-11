@@ -3,6 +3,12 @@ import { HELP_BOT_HANDLE } from '@/help-bot/help-bot.config';
 import { isHandleReservedFor, RESERVED_HANDLES } from './profiles.constants';
 
 describe('isHandleReservedFor', () => {
+  it('reserves the validator route for new and renamed profiles, ignoring case', () => {
+    expect(isHandleReservedFor('validator', null)).toBe(true);
+    expect(isHandleReservedFor('Validator', 'someone')).toBe(true);
+    expect(isHandleReservedFor('VALIDATOR', undefined)).toBe(true);
+  });
+
   const botAndMentionTokens = [
     HELP_BOT_HANDLE,
     DEVS_6529_MENTION_TOKEN,
