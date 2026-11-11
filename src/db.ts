@@ -108,6 +108,11 @@ import { metricsRecorder } from './metrics/MetricsRecorder';
 import { deleteAll, insertWithoutUpdate, resetRepository } from './orm_helpers';
 import { upsertTdhInBatches } from '@/tdhLoop/tdh-persistence-batches';
 import {
+  readStoredRows,
+  rowsToWrite,
+  StoredRows
+} from '@/tdhLoop/tdh-row-diff';
+import {
   budgetOf,
   ConnectionWrapper,
   dbSupplier,
@@ -1120,12 +1125,56 @@ async function persistTdhUploadByTable(
   logger.info(`[TDH UPLOAD IN ${table} PERSISTED]`);
 }
 
+/** Partial TDH writes: what is already stored, and the reference path. */
+export type PartialTdhWriteOptions = {
+  /**
+   * The wallets TDH rows at this block as stored when the write was
+   * computed (`fetchTDHForBlock`, copied before ranking), so the table, whose
+   * rows for one block are scattered over every block's, is not read again.
+   */
+  readonly storedTdh?: StoredRows;
+  /** Write every computed row, as before (the equivalence tests' reference). */
+  readonly writeAllRows?: boolean;
+};
+
+/**
+ * One table of a partial TDH write. Its delete scope was deleted just
+ * before, so rows in it (`isRewritten`) are inserted in full as always. Of
+ * the other rows, which a partial write only re-ranks, only the new or
+ * changed ones are sent; the stored state ends as if every row was written.
+ */
+async function upsertPartialTdhRows<Entity extends ObjectLiteral>(
+  label: string,
+  repository: Repository<Entity>,
+  rows: Entity[],
+  isRewritten: (row: Entity) => boolean,
+  {
+    stored,
+    writeAllRows
+  }: {
+    stored: () => Promise<StoredRows>;
+    writeAllRows?: boolean;
+  }
+): Promise<void> {
+  const toWrite = writeAllRows
+    ? rows
+    : rowsToWrite(repository.metadata, rows, await stored(), isRewritten);
+  await upsertTdhInBatches(repository, toWrite);
+  logger.info(`[${label}] [WROTE ${toWrite.length} OF ${rows.length} ROWS]`);
+}
+
+function inLowercased(values: readonly string[]): (value: string) => boolean {
+  const set = new Set(values.map((value) => value.toLowerCase()));
+  return (value) => set.has(value.toLowerCase());
+}
+
 export async function persistTDH(
   block: number,
   tdh: TDH[],
   memesTdh: TDHMemes[],
   tdhEditions: TDHEditions[],
-  wallets?: string[]
+  wallets?: string[],
+  options: PartialTdhWriteOptions = {}
 ) {
   logger.info(
     `[TDH] [PERSISTING WALLETS TDH ${tdh.length}] : [MEMES TDH ${memesTdh.length}]`
@@ -1163,12 +1212,42 @@ export async function persistTDH(
             .execute();
         })
       );
-      await upsertTdhInBatches(tdhRepo, tdh);
-      logger.info(`[TDH] [SAVED WALLET ROWS ${tdh.length}]`);
-      await upsertTdhInBatches(tdhMemesRepo, memesTdh);
-      logger.info(`[TDH] [SAVED MEMES ROWS ${memesTdh.length}]`);
-      await upsertTdhInBatches(tdhEditionsRepo, tdhEditions);
-      logger.info(`[TDH] [SAVED EDITION ROWS ${tdhEditions.length}]`);
+      const isAffected = inLowercased(wallets);
+      await upsertPartialTdhRows(
+        'TDH WALLET ROWS',
+        tdhRepo,
+        tdh,
+        (row) => isAffected(row.wallet),
+        {
+          writeAllRows: options.writeAllRows,
+          stored: async () =>
+            options.storedTdh ??
+            readStoredRows(manager, tdhRepo.metadata, {
+              sql: 'block = ?',
+              params: [block]
+            })
+        }
+      );
+      await upsertPartialTdhRows(
+        'TDH MEMES ROWS',
+        tdhMemesRepo,
+        memesTdh,
+        (row) => isAffected(row.wallet),
+        {
+          writeAllRows: options.writeAllRows,
+          stored: () => readStoredRows(manager, tdhMemesRepo.metadata)
+        }
+      );
+      await upsertPartialTdhRows(
+        'TDH EDITION ROWS',
+        tdhEditionsRepo,
+        tdhEditions,
+        (row) => isAffected(row.wallet),
+        {
+          writeAllRows: options.writeAllRows,
+          stored: () => readStoredRows(manager, tdhEditionsRepo.metadata)
+        }
+      );
     } else {
       logger.info(`[TDH] [DELETING ALL WALLETS FOR BLOCK ${block}]`);
       await tdhRepo.delete({ block: block });
@@ -1230,7 +1309,8 @@ export async function persistConsolidatedTDH(
   tdhEditions: ConsolidatedTDHEditions[],
   nftTdh: NftTDH[],
   scope: ConsolidatedTdhPersistenceScope,
-  blockTimestamp: Date
+  blockTimestamp: Date,
+  { writeAllRows }: Pick<PartialTdhWriteOptions, 'writeAllRows'> = {}
 ) {
   logger.info(`[CONSOLIDATED TDH] PERSISTING WALLETS TDH [${tdh.length}]`);
   // Fails before any TDH write if the marker table is missing.
@@ -1262,13 +1342,36 @@ export async function persistConsolidatedTDH(
         tdhEditionsRepo,
         scope.consolidationKeysToReplace
       );
-      await upsertTdhInBatches(tdhRepo, tdh);
-      logger.info(`[CONSOLIDATED TDH] [SAVED GROUP ROWS ${tdh.length}]`);
-      await upsertTdhInBatches(tdhMemesRepo, memesTdh);
-      logger.info(`[CONSOLIDATED TDH] [SAVED MEMES ROWS ${memesTdh.length}]`);
-      await upsertTdhInBatches(tdhEditionsRepo, tdhEditions);
-      logger.info(
-        `[CONSOLIDATED TDH] [SAVED EDITION ROWS ${tdhEditions.length}]`
+      const isReplaced = inLowercased(scope.consolidationKeysToReplace);
+      await upsertPartialTdhRows(
+        'CONSOLIDATED TDH GROUP ROWS',
+        tdhRepo,
+        tdh,
+        (row) => isReplaced(row.consolidation_key),
+        {
+          writeAllRows,
+          stored: () => readStoredRows(manager, tdhRepo.metadata)
+        }
+      );
+      await upsertPartialTdhRows(
+        'CONSOLIDATED TDH MEMES ROWS',
+        tdhMemesRepo,
+        memesTdh,
+        (row) => isReplaced(row.consolidation_key),
+        {
+          writeAllRows,
+          stored: () => readStoredRows(manager, tdhMemesRepo.metadata)
+        }
+      );
+      await upsertPartialTdhRows(
+        'CONSOLIDATED TDH EDITION ROWS',
+        tdhEditionsRepo,
+        tdhEditions,
+        (row) => isReplaced(row.consolidation_key),
+        {
+          writeAllRows,
+          stored: () => readStoredRows(manager, tdhEditionsRepo.metadata)
+        }
       );
     } else {
       logger.info(`[CONSOLIDATED TDH] [DELETING ALL WALLETS]`);
@@ -1290,13 +1393,15 @@ export async function persistConsolidatedTDH(
       block,
       tdh,
       scope.mode === 'PARTIAL' ? scope.wallets : undefined,
-      scope.mode === 'PARTIAL' ? scope.consolidationKeysToReplace : undefined
+      scope.mode === 'PARTIAL' ? scope.consolidationKeysToReplace : undefined,
+      { writeAllRows }
     );
     await persistNftTdhWithManager(
       manager,
       nftTdh,
       scope.mode === 'PARTIAL' ? scope.wallets : undefined,
-      scope.mode === 'PARTIAL' ? scope.consolidationKeysToReplace : undefined
+      scope.mode === 'PARTIAL' ? scope.consolidationKeysToReplace : undefined,
+      { writeAllRows }
     );
     await persistTDHBlock(block, blockTimestamp, tdh, manager);
     // A full rewrite (tdhLoop) leaves the sync to delegationsLoop and has its
@@ -1412,7 +1517,8 @@ export async function persistHistoricConsolidatedTDH(
   block: number,
   tdh: ConsolidatedTDH[],
   wallets?: string[],
-  consolidationKeysToReplace?: string[]
+  consolidationKeysToReplace?: string[],
+  { writeAllRows }: Pick<PartialTdhWriteOptions, 'writeAllRows'> = {}
 ) {
   logger.info(`[HISTORIC CONSOLIDATED TDH] PERSISTING BLOCK [${block}]`);
   const historicTdhRepo = entityManager.getRepository(HistoricConsolidatedTDH);
@@ -1427,7 +1533,21 @@ export async function persistHistoricConsolidatedTDH(
       consolidationKeysToReplace,
       block
     );
-    await upsertTdhInBatches(historicTdhRepo, tdh);
+    const isReplaced = inLowercased(consolidationKeysToReplace);
+    await upsertPartialTdhRows(
+      'HISTORIC CONSOLIDATED TDH ROWS',
+      historicTdhRepo,
+      tdh as HistoricConsolidatedTDH[],
+      (row) => isReplaced(row.consolidation_key),
+      {
+        writeAllRows,
+        stored: () =>
+          readStoredRows(entityManager, historicTdhRepo.metadata, {
+            sql: 'block = ?',
+            params: [block]
+          })
+      }
+    );
   } else {
     await historicTdhRepo.delete({ block: block });
     await insertWithoutUpdate(historicTdhRepo, tdh);
@@ -1463,13 +1583,24 @@ async function persistNftTdhWithManager(
   manager: EntityManager,
   nftTdh: NftTDH[],
   wallets?: string[],
-  consolidationKeysToReplace?: string[]
+  consolidationKeysToReplace?: string[],
+  { writeAllRows }: Pick<PartialTdhWriteOptions, 'writeAllRows'> = {}
 ) {
   const nftTdhRepo = manager.getRepository(NftTDH);
   if (wallets) {
     logger.info(`[NFT TDH] [DELETING ${wallets.length} WALLETS]`);
     await deleteConsolidationsByKeys(nftTdhRepo, consolidationKeysToReplace!);
-    await upsertTdhInBatches(nftTdhRepo, nftTdh);
+    const isReplaced = inLowercased(consolidationKeysToReplace!);
+    await upsertPartialTdhRows(
+      'NFT TDH ROWS',
+      nftTdhRepo,
+      nftTdh,
+      (row) => isReplaced(row.consolidation_key),
+      {
+        writeAllRows,
+        stored: () => readStoredRows(manager, nftTdhRepo.metadata)
+      }
+    );
   } else {
     logger.info(`[NFT TDH] [DELETING ALL WALLETS]`);
     await deleteAll(nftTdhRepo);
