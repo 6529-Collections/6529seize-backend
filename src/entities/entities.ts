@@ -284,6 +284,7 @@ export { PushDeviceLogoutFenceEntity } from './IPushDeviceLogoutFence';
 export { PushNotificationCancellationEntity } from './IPushNotificationCancellation';
 
 export * from './ICompetitionRuntime';
+export { CompetitionWorkerCursorEntity } from './ICompetitionWorkerCursor';
 
 export * from './ICompetitionCommand';
 export * from './ICompetitionEntryContentVersion';
