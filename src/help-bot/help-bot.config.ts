@@ -20,7 +20,10 @@ export function resolveHelpBotBaseUrl(
 
 export const HELP_BOT_BASE_URL = resolveHelpBotBaseUrl();
 export const HELP_BOT_INDEX_URL = `${HELP_BOT_BASE_URL}/help-index.json`;
+/** Total time for the help index request, including reading the body. */
 export const HELP_BOT_INDEX_FETCH_TIMEOUT_MS = 5000;
+/** Generous upper bound on the help index body; larger bodies are rejected. */
+export const HELP_BOT_INDEX_MAX_BYTES = 4 * 1024 * 1024;
 export const HELP_BOT_INDEX_CACHE_TTL_MS = 300_000;
 export const HELP_BOT_BEDROCK_MODEL_ID_ENV = 'HELP_BOT_BEDROCK_MODEL_ID';
 export const HELP_BOT_BEDROCK_MODEL_ID = getConfiguredBedrockAnthropicModelId(

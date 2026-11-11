@@ -166,9 +166,15 @@ pages while users wait for answers. It fetches the generated index, validates a
 usable record set, caches successful loads for five minutes,
 and keeps the previous valid cache if a refresh fails. The runtime retrieves a
 bounded set of top matching records and passes the primary record plus related
-facts into the answer context. Fetches use the hardcoded five-second timeout so
-a slow index endpoint fails into the technical-failure reply path instead of
-stalling the worker.
+facts into the answer context. Fetches use the hardcoded five-second timeout,
+which covers the whole request including reading the body, so a slow index
+endpoint fails into the technical-failure reply path instead of stalling the
+worker. The body is read with a 4 MiB cap (`HELP_BOT_INDEX_MAX_BYTES`); a larger
+body is treated as a failed refresh. Record `canonical_path` and
+`related_paths` values must be root-relative paths (not `//`-prefixed) or
+`https` URLs on `https://6529.io` or the environment base URL origin. A record
+whose canonical path fails this check is skipped, and failing related paths
+are dropped.
 
 ### 4.2 Versioned Stream review corpus
 
