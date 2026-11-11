@@ -32,6 +32,30 @@ export function competitionVoteChangesPerMinute(
   return COMPETITION_VOTE_CHANGES_PER_MINUTE_DEFAULT;
 }
 
+/**
+ * One Redis key per voter, competition and minute. Both ids are percent
+ * encoded (`:`, `{`, `}` and `%` included), so neither can end the hash tag
+ * or shift the key's fields; empty ids are refused.
+ */
+export function competitionVoteChangeKey(
+  competitionId: string,
+  voterProfileId: string,
+  window: number
+): string {
+  for (const [name, value] of [
+    ['competition id', competitionId],
+    ['voter profile id', voterProfileId]
+  ] as const) {
+    if (typeof value !== 'string' || !value.length)
+      throw new Error(`Vote change budget needs a ${name}`);
+  }
+  if (!Number.isSafeInteger(window) || window < 0)
+    throw new Error('Vote change budget needs a whole minute window');
+  return `competition_vote_changes:{${encodeURIComponent(
+    competitionId
+  )}}:${encodeURIComponent(voterProfileId)}:${window}`;
+}
+
 export class CompetitionVoteChangeBudget {
   constructor(
     private readonly increment: typeof redisIncrementWithExpiry = (
@@ -54,7 +78,7 @@ export class CompetitionVoteChangeBudget {
     const now = this.now();
     const window = Math.floor(now / (WINDOW_SECONDS * 1000));
     const count = await this.increment(
-      `competition_vote_changes:{${competitionId}}:${voterProfileId}:${window}`,
+      competitionVoteChangeKey(competitionId, voterProfileId, window),
       WINDOW_SECONDS + 1
     );
     if (count === null || count <= limit) return;

@@ -3,6 +3,7 @@ import { CustomApiCompliantException } from '@/exceptions';
 import {
   COMPETITION_VOTE_CHANGES_PER_MINUTE_DEFAULT,
   CompetitionVoteChangeBudget,
+  competitionVoteChangeKey,
   competitionVoteChangesPerMinute
 } from './competition-vote-change-budget';
 
@@ -147,6 +148,62 @@ describe('CompetitionVoteChangeBudget', () => {
           }
         }
       )
+    );
+  });
+});
+
+describe('competitionVoteChangeKey', () => {
+  it('keeps plain ids readable', () => {
+    expect(competitionVoteChangeKey('competition-1', 'voter-1', 7)).toBe(
+      'competition_vote_changes:{competition-1}:voter-1:7'
+    );
+  });
+
+  it('encodes separators and hash tag braces inside ids', () => {
+    expect(competitionVoteChangeKey('a}:{b', 'v:1%', 0)).toBe(
+      'competition_vote_changes:{a%7D%3A%7Bb}:v%3A1%25:0'
+    );
+  });
+
+  it('never lets one pair of ids share a key with another', () => {
+    fc.assert(
+      fc.property(
+        fc.string({ minLength: 1 }),
+        fc.string({ minLength: 1 }),
+        fc.string({ minLength: 1 }),
+        fc.string({ minLength: 1 }),
+        (c1, v1, c2, v2) => {
+          fc.pre(c1 !== c2 || v1 !== v2);
+          expect(competitionVoteChangeKey(c1, v1, 1)).not.toBe(
+            competitionVoteChangeKey(c2, v2, 1)
+          );
+        }
+      )
+    );
+  });
+
+  it('keeps the whole competition id inside one hash tag', () => {
+    fc.assert(
+      fc.property(
+        fc.string({ minLength: 1 }),
+        fc.string({ minLength: 1 }),
+        (c, v) => {
+          const key = competitionVoteChangeKey(c, v, 3);
+          const tag = key.slice(key.indexOf('{') + 1, key.indexOf('}'));
+          expect(decodeURIComponent(tag)).toBe(c);
+          expect(key.split('{')).toHaveLength(2);
+          expect(key.split('}')).toHaveLength(2);
+        }
+      )
+    );
+  });
+
+  it.each([
+    ['', 'voter'],
+    ['competition', '']
+  ])('refuses empty ids (%j, %j)', (competitionId, voterId) => {
+    expect(() => competitionVoteChangeKey(competitionId, voterId, 1)).toThrow(
+      'Vote change budget needs'
     );
   });
 });
