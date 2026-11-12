@@ -33,7 +33,7 @@ describe('identity push notification settings', () => {
       ).toBe(false);
     }
   );
-  it.each(['android', null])(
+  it.each(['android', null, undefined])(
     'enables subscription coverage by default for platform %s',
     (platform) => {
       expect(DEFAULT_PUSH_NOTIFICATION_SETTINGS.subscription_coverage).toBe(

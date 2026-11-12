@@ -49,11 +49,17 @@ export function isNotificationEnabledForDevice(
 
 export function getEnabledCauses(
   settings: PushNotificationSettingsData,
-  includeCompetitions = false
+  includeCompetitions = false,
+  platform?: string | null
 ): IdentityNotificationCause[] {
   return (
     Object.values(IdentityNotificationCause) as IdentityNotificationCause[]
   ).filter((cause) =>
-    isNotificationEnabledForDevice(cause, settings, includeCompetitions)
+    isNotificationEnabledForDevice(
+      cause,
+      settings,
+      includeCompetitions,
+      platform
+    )
   );
 }
