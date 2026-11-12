@@ -1,7 +1,13 @@
-import { createHash } from 'node:crypto';
-import Sharp, { Metadata } from 'sharp';
 import {
-  describeImageContainer,
+  DecodedImage,
+  DecodedPixelDigest,
+  digestDecodedPixels,
+  inspectDecodedImage,
+  PIXEL_CHECK_LIMITS,
+  PixelCheckBudget,
+  PixelCheckLimits
+} from './decoded-pixel-digest';
+import {
   extractJpegGainMaps,
   GainMapStripOutcome,
   logDroppedGainMap,
@@ -11,14 +17,30 @@ import {
   stripMetadataLosslessly
 } from './lossless-metadata-strip';
 
+export {
+  canVerifyDecodedPixels,
+  PIXEL_CHECK_LIMITS
+} from './decoded-pixel-digest';
+export type {
+  PixelCheckLimits,
+  PixelCheckMetadata
+} from './decoded-pixel-digest';
+
 /**
- * Hash one decoded image at a time. A 76.5 MP JPEG passed verification and
- * preview generation at 838 MiB peak in a 2 GiB Lambda runtime container.
- * Re-encoding retains its separate, more conservative decoded-work budget.
+ * Default source ceiling for the in-memory lossless strip: the upload limit.
+ * The strip holds the source and its output (and, when a gain map does not
+ * verify, one more output) next to one pixel band and the decoder's working
+ * set; docs/image-upload-format-validation.md shows this fits the 2 GiB
+ * sanitizer Lambda. Callers with a different memory budget pass their own.
  */
-export const PIXEL_CHECK_MAX_DECODED_BYTES = 384 * 1024 * 1024;
-const PIXEL_CHECK_TIMEOUT_SECONDS = 30;
-const INPUT_PIXEL_BACKSTOP = 1_000_000_000;
+export const LOSSLESS_STRIP_MAX_SOURCE_BYTES = 256 * 1024 * 1024;
+
+export interface PixelCheckOptions {
+  /** Larger sources are reported unverified without being parsed. */
+  readonly maxSourceBytes?: number;
+  /** Overrides for {@link PIXEL_CHECK_LIMITS}. */
+  readonly limits?: Partial<PixelCheckLimits>;
+}
 
 export type PixelVerifiedStripOutcome =
   | {
@@ -30,84 +52,12 @@ export type PixelVerifiedStripOutcome =
     }
   | { readonly kind: 'unverified'; readonly reason: string };
 
-interface DecodedPixels {
-  readonly width: number;
-  readonly height: number;
-  readonly channels: number;
-  readonly pages: number;
-  readonly loop: number | null;
-  readonly delay: string;
-  readonly digest: string;
-}
-
-type PixelMetadata = Pick<Metadata, 'width' | 'height' | 'depth' | 'channels'>;
-
-function decodedBytes(metadata: PixelMetadata): number {
-  const bytesPerSample = metadata.depth === 'ushort' ? 2 : 1;
-  // With animated decoding, height already spans every frame.
-  return (
-    (metadata.width ?? 0) *
-    (metadata.height ?? 0) *
-    Math.max(4, metadata.channels ?? 4) *
-    bytesPerSample
-  );
-}
-
-/** Admission only; a lossless strip must still pass the actual pixel check. */
-export function canVerifyDecodedPixels(metadata: PixelMetadata): boolean {
-  const bytes = decodedBytes(metadata);
-  return (
-    Number.isSafeInteger(bytes) &&
-    bytes > 0 &&
-    bytes <= PIXEL_CHECK_MAX_DECODED_BYTES
-  );
-}
-
-function assertFitsPixelCheck(bytes: number): void {
-  if (
-    !Number.isSafeInteger(bytes) ||
-    bytes <= 0 ||
-    bytes > PIXEL_CHECK_MAX_DECODED_BYTES
-  ) {
-    throw new LosslessStripUnsupported(
-      'Image is too large to compare decoded pixels in memory'
-    );
-  }
-}
-
-/** Oriented pixels exactly as clients see them; every frame when animated. */
-async function decodePixels(
-  input: Buffer,
-  animated: boolean
-): Promise<DecodedPixels> {
-  const image = Sharp(input, {
-    animated,
-    failOn: 'none',
-    limitInputPixels: INPUT_PIXEL_BACKSTOP
-  }).timeout({ seconds: PIXEL_CHECK_TIMEOUT_SECONDS });
-  const metadata = await image.metadata();
-  assertFitsPixelCheck(decodedBytes(metadata));
-  const { data, info } = await image
-    .rotate()
-    .raw(metadata.depth === 'ushort' ? { depth: 'ushort' } : {})
-    .toBuffer({ resolveWithObject: true });
-  return {
-    width: info.width,
-    height: info.height,
-    channels: info.channels,
-    pages: metadata.pages ?? 1,
-    loop: metadata.loop ?? null,
-    delay: (metadata.delay ?? []).join(','),
-    digest: createHash('sha256').update(data).digest('hex')
-  };
-}
-
-function assertSamePixels(
-  before: DecodedPixels,
-  after: DecodedPixels,
-  subject = ''
-) {
-  for (const field of Object.keys(before) as (keyof DecodedPixels)[]) {
+function assertSameFields<T extends DecodedImage | DecodedPixelDigest>(
+  before: T,
+  after: T,
+  subject: string
+): void {
+  for (const field of Object.keys(before) as (keyof T & string)[]) {
     if (before[field] !== after[field]) {
       throw new LosslessStripUnsupported(
         `Decoded ${subject}${field} changed after stripping`
@@ -116,21 +66,49 @@ function assertSamePixels(
   }
 }
 
+/**
+ * Same orientation, size, frames, timing and pixels. Equal orientation and
+ * equal stored pixels mean equal oriented pixels, so stored pixels are
+ * hashed: auto-rotating would make libvips hold the whole image in memory.
+ */
+async function assertSamePixels(
+  input: Buffer,
+  output: Buffer,
+  format: LosslessStripFormat,
+  budget: PixelCheckBudget,
+  subject = ''
+): Promise<void> {
+  const before = await inspectDecodedImage(input, format, budget.limits);
+  const after = await inspectDecodedImage(output, format, budget.limits);
+  assertSameFields(before, after, subject);
+  assertSameFields(
+    await digestDecodedPixels(input, format, before, budget),
+    await digestDecodedPixels(output, format, after, budget),
+    subject
+  );
+}
+
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
 /** Each kept gain map decodes to the same size and pixels as the original. */
-async function assertSameGainMapPixels(input: Buffer, output: Buffer) {
+async function assertSameGainMapPixels(
+  input: Buffer,
+  output: Buffer,
+  budget: PixelCheckBudget
+) {
   const before = extractJpegGainMaps(input);
   const after = extractJpegGainMaps(output);
   if (before.length !== after.length) {
     throw new LosslessStripUnsupported('Gain map count changed');
   }
   for (let index = 0; index < before.length; index++) {
-    assertSamePixels(
-      await decodePixels(before[index], false),
-      await decodePixels(after[index], false),
+    await assertSamePixels(
+      before[index],
+      after[index],
+      'jpeg',
+      budget,
       'gain map '
     );
   }
@@ -143,11 +121,12 @@ async function assertSameGainMapPixels(input: Buffer, output: Buffer) {
 async function withVerifiedGainMaps(
   input: Buffer,
   format: LosslessStripFormat,
-  result: LosslessStripResult
+  result: LosslessStripResult,
+  budget: PixelCheckBudget
 ): Promise<Pick<LosslessStripResult, 'output' | 'gainMaps'>> {
   if (result.gainMaps?.kind !== 'kept') return result;
   try {
-    await assertSameGainMapPixels(input, result.output);
+    await assertSameGainMapPixels(input, result.output, budget);
     return result;
   } catch (error) {
     const reason = `Gain map pixels did not verify: ${errorMessage(error)}`;
@@ -161,32 +140,36 @@ async function withVerifiedGainMaps(
 
 /**
  * Lossless strip, proven twice: structurally (see stripMetadataLosslessly)
- * and by decoding input and output with sharp to the same oriented size,
+ * and by decoding input and output with sharp to the same orientation, size,
  * animation and pixel hash; kept JPEG gain maps must decode to the same
- * pixels too, or they are dropped. Any failure of the image itself is
- * reported, not thrown, so callers can fall back to re-encoding.
+ * pixels too, or they are dropped. Pixels are hashed band by band, so memory
+ * stays bounded for any image within PIXEL_CHECK_LIMITS. Any failure of the
+ * image itself, a limit included, is reported rather than thrown, so callers
+ * can fall back to re-encoding or skip the file.
  */
 export async function stripMetadataWithPixelCheck(
   input: Buffer,
-  format: LosslessStripFormat
+  format: LosslessStripFormat,
+  options: PixelCheckOptions = {}
 ): Promise<PixelVerifiedStripOutcome> {
+  const limits = { ...PIXEL_CHECK_LIMITS, ...options.limits };
+  const budget = { limits, deadline: Date.now() + limits.timeBudgetMs };
   try {
-    if (format === 'png') {
-      // Bound the in-process decode from IHDR before any native PNG parser
-      // runs, assuming the widest (16-bit RGBA) sample layout.
-      const { width, height } = describeImageContainer(input, 'png');
-      assertFitsPixelCheck(width * height * 8);
+    const maxSourceBytes =
+      options.maxSourceBytes ?? LOSSLESS_STRIP_MAX_SOURCE_BYTES;
+    if (input.length > maxSourceBytes) {
+      throw new LosslessStripUnsupported(
+        'Source is larger than the lossless strip limit'
+      );
     }
     const result = stripMetadataLosslessly(input, format);
     const { output, gainMaps } = await withVerifiedGainMaps(
       input,
       format,
-      result
+      result,
+      budget
     );
-    const animated = format === 'gif' || format === 'webp';
-    const before = await decodePixels(input, animated);
-    const after = await decodePixels(output, animated);
-    assertSamePixels(before, after);
+    await assertSamePixels(input, output, format, budget);
     return {
       kind: 'lossless',
       buffer: output,

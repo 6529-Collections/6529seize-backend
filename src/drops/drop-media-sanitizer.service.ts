@@ -13,8 +13,10 @@ import {
 import { sanitizePngFile } from '@/media/png-preview';
 import {
   canVerifyDecodedPixels,
+  LOSSLESS_STRIP_MAX_SOURCE_BYTES as DEFAULT_LOSSLESS_STRIP_MAX_SOURCE_BYTES,
   stripMetadataWithPixelCheck
 } from '@/media/metadata-strip/pixel-verified-metadata-strip';
+import { releaseBuffer } from '@/media/metadata-strip/release-buffer';
 import {
   prepareUploadImagePreviews,
   previewObjectKey,
@@ -69,10 +71,12 @@ type SharpInstance = ReturnType<typeof Sharp>;
 type LosslessFallbackReporter = (format: string, reason: string) => void;
 const SANITIZER_CLAIM_STALE_MS = Time.minutes(20).toMillis();
 /**
- * Lossless rewriting holds the source and its output in memory; larger
- * sources keep the file-based re-encoding path and its decode budget.
+ * Lossless rewriting holds the source and its output in memory, sized for
+ * this Lambda's 2 GiB (see the metadata-strip default); larger sources keep
+ * the file-based re-encoding path and its decode budget.
  */
-export const LOSSLESS_STRIP_MAX_SOURCE_BYTES = 64 * 1024 * 1024;
+export const LOSSLESS_STRIP_MAX_SOURCE_BYTES =
+  DEFAULT_LOSSLESS_STRIP_MAX_SOURCE_BYTES;
 
 export class PermanentMediaSanitizationError extends Error {
   constructor(message: string) {
@@ -527,7 +531,9 @@ async function imageHeader(input: Buffer | string): Promise<Buffer> {
 /**
  * Strip losslessly into the output file when the result verifies; false means
  * the caller re-encodes. Rewriting a container needs random access, so the
- * source is read into memory, which is why it is size-bounded.
+ * source is read into memory, which is why it is size-bounded. Both buffers
+ * are freed before returning: the PNG preview worker that follows shares a
+ * parent-plus-child RSS limit with this process.
  */
 async function stripFileLosslessly(
   input: string,
@@ -539,16 +545,24 @@ async function stripFileLosslessly(
     reportFallback(format, 'source is larger than the lossless strip limit');
     return false;
   }
-  const result = await stripMetadataWithPixelCheck(
-    await readFile(input),
-    format
-  );
-  if (result.kind === 'unverified') {
-    reportFallback(format, result.reason);
-    return false;
+  const source = await readFile(input);
+  try {
+    const result = await stripMetadataWithPixelCheck(source, format, {
+      maxSourceBytes: LOSSLESS_STRIP_MAX_SOURCE_BYTES
+    });
+    if (result.kind === 'unverified') {
+      reportFallback(format, result.reason);
+      return false;
+    }
+    try {
+      await writeFile(output, result.buffer);
+    } finally {
+      releaseBuffer(result.buffer);
+    }
+    return true;
+  } finally {
+    releaseBuffer(source);
   }
-  await writeFile(output, result.buffer);
-  return true;
 }
 
 /** Preserve original bytes when requested; previews never buffer in Node. */
