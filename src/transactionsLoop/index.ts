@@ -32,24 +32,31 @@ export const handler = sentryContext.wrapLambdaHandler(async () => {
         startingBlock,
         endBlock
       );
-      const policy = process.env.DROP_FORGE_STAGE ? getDropForgePolicy() : null;
-      if (
-        policy?.chainId === 1 &&
-        contract.toLowerCase() === policy.creator.toLowerCase() &&
-        startingBlock === null &&
-        endBlock === null
-      ) {
-        await checkpointTransactionScan(
-          policy.chainId,
-          contract,
-          getEthereumRpcProvider(policy.chainId),
-          (start, end) =>
-            transactionsDiscoveryService.getAndSaveTransactionsForContract(
-              contract,
-              start,
-              end
-            )
-        );
+      try {
+        const policy = process.env.DROP_FORGE_STAGE
+          ? getDropForgePolicy()
+          : null;
+        if (
+          policy?.chainId === 1 &&
+          contract.toLowerCase() === policy.creator.toLowerCase() &&
+          startingBlock === null &&
+          endBlock === null
+        ) {
+          await checkpointTransactionScan(
+            policy.chainId,
+            contract,
+            getEthereumRpcProvider(policy.chainId),
+            (start, end) =>
+              transactionsDiscoveryService.getAndSaveTransactionsForContract(
+                contract,
+                start,
+                end
+              )
+          );
+        }
+      } catch (error) {
+        logger.warn('Drop Forge finalized transaction scan failed');
+        sentryContext.captureException(error);
       }
     },
     { logger, entities: [Transaction, TransactionScanCheckpoint] }

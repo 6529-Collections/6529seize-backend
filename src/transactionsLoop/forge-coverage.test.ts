@@ -1,8 +1,11 @@
 import { handler } from './index';
+import { captureException } from '@/sentry.context';
+import { transactionsDiscoveryService } from '@/transactions/transactions-discovery.service';
 import { checkpointTransactionScan } from '@/transactions/transaction-scan-checkpoint';
 import { MEMES_CONTRACT } from '@/constants';
 jest.mock('@/sentry.context', () => ({
-  wrapLambdaHandler: (fn: unknown) => fn
+  wrapLambdaHandler: (fn: unknown) => fn,
+  captureException: jest.fn()
 }));
 jest.mock('@/secrets', () => ({
   doInDbContext: (fn: () => Promise<void>) => fn()
@@ -35,6 +38,31 @@ it('maintains mainnet coverage for signed-intent reconciliation with execution O
     expect.anything(),
     expect.any(Function)
   );
+});
+it('reports an unsuccessful Drop Forge scan and retries it on the next successful discovery run', async () => {
+  const error = new Error('Finalized coverage unavailable');
+  const scan = jest.mocked(checkpointTransactionScan);
+  scan.mockRejectedValueOnce(error);
+
+  await expect(handler({}, {} as never, jest.fn())).resolves.toBeUndefined();
+  expect(
+    transactionsDiscoveryService.getAndSaveTransactionsForContract
+  ).toHaveBeenCalledWith(MEMES_CONTRACT, null, null);
+  expect(captureException).toHaveBeenCalledWith(error);
+
+  await expect(handler({}, {} as never, jest.fn())).resolves.toBeUndefined();
+  expect(scan).toHaveBeenCalledTimes(2);
+  expect(captureException).toHaveBeenCalledTimes(1);
+});
+it('still fails the invocation when ordinary discovery fails', async () => {
+  const error = new Error('Ordinary indexing failed');
+  jest
+    .mocked(transactionsDiscoveryService.getAndSaveTransactionsForContract)
+    .mockRejectedValueOnce(error);
+
+  await expect(handler({}, {} as never, jest.fn())).rejects.toBe(error);
+  expect(checkpointTransactionScan).not.toHaveBeenCalled();
+  expect(captureException).not.toHaveBeenCalled();
 });
 it.each(['staging', 'historical', 'other-creator'])(
   'does not certify unrelated %s indexing',
