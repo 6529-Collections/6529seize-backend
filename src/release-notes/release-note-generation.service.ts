@@ -30,6 +30,11 @@ import {
 import { NonRetryableReleaseNoteError } from './release-note-errors';
 import { releaseDigestDb, ReleaseDigestDb } from './release-digest.db';
 import { buildReleaseDigestEntries } from './release-digest-entries';
+import {
+  PublishedFrontendReleaseRange,
+  releaseNotePublicationDb,
+  ReleaseNotePublicationDb
+} from './release-note-publication.db';
 
 interface GeneratedReleaseNote {
   readonly number: number;
@@ -515,7 +520,11 @@ export class ReleaseNoteGenerationService {
     private readonly digestEntries: Pick<
       ReleaseDigestDb,
       'recordEntries'
-    > = releaseDigestDb
+    > = releaseDigestDb,
+    private readonly publications: Pick<
+      ReleaseNotePublicationDb,
+      'findPublishedFrontendReleaseRanges'
+    > = releaseNotePublicationDb
   ) {}
 
   public async generateAndPost(
@@ -740,7 +749,87 @@ export class ReleaseNoteGenerationService {
         };
       }
     }
+
+    const ranges = await this.publications.findPublishedFrontendReleaseRanges(
+      { repository: FRONTEND_REPOSITORY, waveIds, authorId: botProfileId },
+      ctx
+    );
+    const range = await this.findFrontendReleaseRange(frontendSha, ranges);
+    if (range) {
+      return {
+        label: getFrontendReleaseNoteLabel(range, range.current_sha),
+        url: `${RELEASES_WEB_BASE_URL}/${range.wave_id}?serialNo=${range.serial_no}`
+      };
+    }
     throw new Error(`No Frontend release note contains commit ${frontendSha}`);
+  }
+
+  private async findFrontendReleaseRange(
+    frontendSha: string,
+    ranges: readonly PublishedFrontendReleaseRange[]
+  ): Promise<PublishedFrontendReleaseRange | undefined> {
+    const ancestry = new Map<string, Promise<boolean>>();
+    const containsPin = (sha: string) => {
+      const cached = ancestry.get(sha);
+      if (cached) {
+        return cached;
+      }
+      const result = this.githubService.isCommitAncestor(
+        FRONTEND_REPOSITORY,
+        frontendSha,
+        sha
+      );
+      ancestry.set(sha, result);
+      return result;
+    };
+
+    // A published range has an ancestral baseline. Only adjacent ranges
+    // sharing a boundary establish monotone ancestry across their heads.
+    for (let start = 0; start < ranges.length; ) {
+      let end = start + 1;
+      while (
+        end < ranges.length &&
+        ranges[end].previous_sha === ranges[end - 1].current_sha
+      ) {
+        end++;
+      }
+      const match = await this.findFrontendReleaseInChain(
+        ranges,
+        start,
+        end,
+        containsPin
+      );
+      if (match) {
+        return match;
+      }
+      start = end;
+    }
+    return undefined;
+  }
+
+  private async findFrontendReleaseInChain(
+    ranges: readonly PublishedFrontendReleaseRange[],
+    start: number,
+    end: number,
+    containsPin: (sha: string) => Promise<boolean>
+  ): Promise<PublishedFrontendReleaseRange | undefined> {
+    if (
+      !(await containsPin(ranges[end - 1].current_sha)) ||
+      (await containsPin(ranges[start].previous_sha))
+    ) {
+      return undefined;
+    }
+    let low = start;
+    let high = end - 1;
+    while (low < high) {
+      const middle = Math.floor((low + high) / 2);
+      if (await containsPin(ranges[middle].current_sha)) {
+        high = middle;
+      } else {
+        low = middle + 1;
+      }
+    }
+    return ranges[low];
   }
 
   private async findReleaseNoteReceipt(
@@ -831,6 +920,24 @@ export class ReleaseNoteGenerationService {
       `- Web Updates through ${formatMarkdownLink(frontendRelease.label, frontendRelease.url)}`,
       ...bullets.map((bullet) => `- ${bullet}`)
     ];
+    const appsLink = formatMarkdownLink(
+      '6529 Apps',
+      'https://6529.io/about/6529-apps'
+    );
+    const downloadLinks = [
+      formatMarkdownLink(
+        'Windows',
+        `${DESKTOP_DOWNLOAD_BASE_URL}/win/links/${version}.html`
+      ),
+      formatMarkdownLink(
+        'macOS',
+        `${DESKTOP_DOWNLOAD_BASE_URL}/mac/links/${version}.html`
+      ),
+      formatMarkdownLink(
+        'Linux',
+        `${DESKTOP_DOWNLOAD_BASE_URL}/linux/links/${version}.html`
+      )
+    ].join(' · ');
     const content = [
       `## 🖥️ 6529 Desktop Release v${version}`,
       '',
@@ -842,20 +949,11 @@ export class ReleaseNoteGenerationService {
           ]
         : []),
       '',
-      'In-app update available, direct download links:',
+      'In-app update available.',
       '',
-      formatMarkdownLink(
-        `Windows v${version}`,
-        `${DESKTOP_DOWNLOAD_BASE_URL}/win/links/${version}.html`
-      ),
-      formatMarkdownLink(
-        `MacOS v${version}`,
-        `${DESKTOP_DOWNLOAD_BASE_URL}/mac/links/${version}.html`
-      ),
-      formatMarkdownLink(
-        `Linux v${version}`,
-        `${DESKTOP_DOWNLOAD_BASE_URL}/linux/links/${version}.html`
-      ),
+      `Visit ${appsLink} or use the direct download links below:`,
+      '',
+      downloadLinks,
       ...(publisherCredit ? ['', `Published by ${publisherCredit}`] : [])
     ].join('\n');
 

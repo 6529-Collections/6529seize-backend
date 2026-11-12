@@ -11,6 +11,7 @@ import { ApiRegisterPushNotificationTokenRequest } from '../generated/models/Api
 import { getValidatedByJoiOrThrow } from '../validation';
 import { pushNotificationSettingsDb } from './push-notification-settings.db';
 import { deleteDevice, getDevicesForProfile } from './push-notifications.db';
+import { rejectProxySession } from '@/api/proxy-session-guard';
 
 import { requestInstallationBadgeRefresh } from './push-notifications.service';
 import { registerInstallationDevice } from './push-installation.db';
@@ -18,6 +19,9 @@ import { registerInstallationDevice } from './push-installation.db';
 import { registerPushNotificationTokenRequestSchema } from './register-push-notification.schema';
 
 const router = asyncRouter();
+
+const PROXY_PUSH_NOTIFICATIONS_MESSAGE =
+  'Proxies cannot manage push notifications';
 
 router.post(
   `/register`,
@@ -44,6 +48,7 @@ router.post(
         'You need to create a profile to register for push notifications'
       );
     }
+    rejectProxySession(authenticationContext, PROXY_PUSH_NOTIFICATIONS_MESSAGE);
 
     const resolvedProfileId = profile_id ?? actingAsProfileId;
 
@@ -108,6 +113,7 @@ router.get(
         'You need to create a profile to view devices'
       );
     }
+    rejectProxySession(authenticationContext, PROXY_PUSH_NOTIFICATIONS_MESSAGE);
 
     const devices = await getDevicesForProfile(profileId);
     res.send(devices);
@@ -128,6 +134,7 @@ router.delete(
         'You need to create a profile to delete devices'
       );
     }
+    rejectProxySession(authenticationContext, PROXY_PUSH_NOTIFICATIONS_MESSAGE);
 
     const deviceId = req.params.device_id;
     await deleteDevice(profileId, deviceId);
@@ -149,6 +156,7 @@ router.get(
         'You need to create a profile to access push notification settings'
       );
     }
+    rejectProxySession(authenticationContext, PROXY_PUSH_NOTIFICATIONS_MESSAGE);
 
     const deviceId = req.params.device_id;
     const settings =
@@ -181,6 +189,7 @@ router.put(
         'You need to create a profile to update push notification settings'
       );
     }
+    rejectProxySession(authenticationContext, PROXY_PUSH_NOTIFICATIONS_MESSAGE);
 
     const deviceId = req.params.device_id;
     const validatedSettings = getValidatedByJoiOrThrow(

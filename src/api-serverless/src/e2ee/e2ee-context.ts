@@ -5,6 +5,7 @@ import type { DirectMessageAdmissionService } from '@/api/direct-messages/direct
 import { directMessageAdmissionService } from '@/api/direct-messages/direct-message-admission.instance';
 import { verifyContractWalletSignatureHash } from '@/api/wallet-signatures/structured-wallet-signatures';
 import {
+  E2EE_DEVICE_LIMIT_IDLE_WINDOW_MS,
   E2EE_LAST_SEEN_UPDATE_INTERVAL_MS,
   E2EE_RETENTION,
   E2eeRateLimit
@@ -105,10 +106,29 @@ export function nowSeconds(deps: E2eeServiceDeps): number {
 }
 
 export function isActiveDevice(
-  device: E2eeDeviceRow,
+  device: Pick<E2eeDeviceRow, 'revoked_at' | 'expires_at_seconds'>,
   atSeconds: number
 ): boolean {
   return device.revoked_at === null && device.expires_at_seconds > atSeconds;
+}
+
+/**
+ * Whether the device takes one of its profile's E2EE_MAX_ACTIVE_DEVICES
+ * slots: active and seen within E2EE_DEVICE_LIMIT_IDLE_WINDOW_MS. Same rule as
+ * the count registration checks (E2eeDb.countActiveDevices with seenSinceMs).
+ */
+export function countsTowardDeviceLimit(
+  device: Pick<
+    E2eeDeviceRow,
+    'revoked_at' | 'expires_at_seconds' | 'last_seen_at' | 'created_at'
+  >,
+  nowMs: number
+): boolean {
+  return (
+    isActiveDevice(device, Math.floor(nowMs / 1000)) &&
+    Number(device.last_seen_at ?? device.created_at) >=
+      nowMs - E2EE_DEVICE_LIMIT_IDLE_WINDOW_MS
+  );
 }
 
 /** The device must be an active (not revoked, not expired) own device. */

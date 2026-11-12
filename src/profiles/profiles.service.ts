@@ -28,6 +28,7 @@ import {
   IdentityNotificationsDb
 } from '../notifications/identity-notifications.db';
 import { RequestContext } from '../request.context';
+import { assertProfilePictureUrlChangeAllowed } from '@/api/profiles/profile-picture-url';
 import {
   reactionsDb,
   ReactionsDb
@@ -220,6 +221,10 @@ export class ProfilesService {
       );
     let creatorOrUpdatorIdentityResponse =
       identityResponse[creator_or_updater_wallet];
+    assertProfilePictureUrlChangeAllowed(pfp_url, [
+      creatorOrUpdatorIdentityResponse?.identity?.pfp,
+      creatorOrUpdatorIdentityResponse?.profile?.pfp_url
+    ]);
     if (!creatorOrUpdatorIdentityResponse) {
       const id = randomUUID();
       await identitiesDb.insertIdentity(
@@ -284,7 +289,9 @@ export class ProfilesService {
       await this.profilesDb.insertProfileRecord(
         identityId,
         {
-          command: createProfileCommand
+          command: createProfileCommand,
+          primaryWallet:
+            creatorOrUpdatorIdentityResponse.identity.primary_address
         },
         ctx.connection!
       );
@@ -397,87 +404,76 @@ export class ProfilesService {
         sourceIdentity,
         connectionHolder
       );
-      if (sourceProfile) {
-        await artistArtworkAlertsDb.mergeProfile(sourceIdentity, target, {
-          connection: connectionHolder
-        });
-        await this.mergeProfileStatements(
-          sourceIdentity,
-          target,
-          connectionHolder
-        );
-        await this.mergeRatings(sourceIdentity, target, connectionHolder);
-        await this.mergeProxies(sourceIdentity, target, connectionHolder);
-        await this.mergeGroups(sourceIdentity, target, connectionHolder);
-        await this.mergeWaves(sourceIdentity, target, connectionHolder);
-        await this.mergeDrops(sourceIdentity, target, connectionHolder);
-        await this.mergeMemesPrevoteArtistProfiles(
-          sourceIdentity,
-          target,
-          connectionHolder
-        );
-        await this.mergeNotifications(sourceIdentity, target, connectionHolder);
-        await this.mergeXTdhGrants(sourceIdentity, target, connectionHolder);
-        await this.mergeIdentitySubscriptions(
-          sourceIdentity,
-          target,
-          connectionHolder
-        );
-        await this.mergeReactionsStuff(
-          sourceIdentity,
-          target,
-          connectionHolder
-        );
-        await this.mergePollVotingStuff(
-          sourceIdentity,
-          target,
-          connectionHolder
-        );
-        await this.mergeBookmarks(sourceIdentity, target, connectionHolder);
-        await this.mergeCurations(sourceIdentity, target, connectionHolder);
-        await this.mergeQuickVoteSkips(
-          sourceIdentity,
-          target,
-          connectionHolder
-        );
-        await this.profileWavesDb.mergeOnProfileIdChange(
-          {
-            previous_id: sourceIdentity,
-            new_id: target
-          },
-          { connection: connectionHolder }
-        );
-        const targetProfile = await this.profilesDb.getProfileById(
-          target,
-          connectionHolder
-        );
-        if (targetProfile) {
-          await this.profilesDb.deleteProfile(
-            { id: sourceIdentity },
-            connectionHolder
-          );
-        } else {
-          await this.profilesDb.updateProfileId(
-            { from: sourceIdentity, to: target },
-            connectionHolder
-          );
+      // Data keyed by the source profile id moves for every source identity:
+      // one without a profiles row (no handle) still owns ratings, xTDH
+      // grants, drops and the rest. Every step reads the source's rows
+      // through an index and resolves key collisions in the target's favour,
+      // so it is cheap and cannot fail for the many consolidations of
+      // identities without a handle. Only the steps about the profiles row
+      // itself need that row.
+      const withProfileRow = async (step: () => Promise<unknown>) => {
+        if (sourceProfile) {
+          await step();
         }
-        await this.mergeBoosts(sourceIdentity, target, connectionHolder);
-        await profileActivityLogsDb.changeSourceProfileIdInLogs(
-          {
-            oldSourceId: sourceIdentity,
-            newSourceId: target
-          },
-          connectionHolder
-        );
+      };
+      // Locks only the source's own receipts and preferences.
+      await artistArtworkAlertsDb.mergeProfile(sourceIdentity, target, {
+        connection: connectionHolder
+      });
+      await this.mergeProfileStatements(
+        sourceIdentity,
+        target,
+        connectionHolder
+      );
+      await this.mergeRatings(sourceIdentity, target, connectionHolder);
+      await this.mergeProxies(sourceIdentity, target, connectionHolder);
+      await this.mergeGroups(sourceIdentity, target, connectionHolder);
+      await this.mergeWaves(sourceIdentity, target, connectionHolder);
+      await this.mergeDrops(sourceIdentity, target, connectionHolder);
+      await this.mergeMemesPrevoteArtistProfiles(
+        sourceIdentity,
+        target,
+        connectionHolder
+      );
+      await this.mergeNotifications(sourceIdentity, target, connectionHolder);
+      await this.mergeXTdhGrants(sourceIdentity, target, connectionHolder);
+      await this.mergeIdentitySubscriptions(
+        sourceIdentity,
+        target,
+        connectionHolder
+      );
+      await this.mergeReactionsStuff(sourceIdentity, target, connectionHolder);
+      await this.mergePollVotingStuff(sourceIdentity, target, connectionHolder);
+      await this.mergeBookmarks(sourceIdentity, target, connectionHolder);
+      await this.mergeCurations(sourceIdentity, target, connectionHolder);
+      await this.mergeQuickVoteSkips(sourceIdentity, target, connectionHolder);
+      await this.profileWavesDb.mergeOnProfileIdChange(
+        {
+          previous_id: sourceIdentity,
+          new_id: target
+        },
+        { connection: connectionHolder }
+      );
+      await withProfileRow(() =>
+        this.retireSourceProfileRow(sourceIdentity, target, connectionHolder)
+      );
+      await this.mergeBoosts(sourceIdentity, target, connectionHolder);
+      await profileActivityLogsDb.changeSourceProfileIdInLogs(
+        {
+          oldSourceId: sourceIdentity,
+          newSourceId: target
+        },
+        connectionHolder
+      );
 
-        await profileActivityLogsDb.changeTargetProfileIdInLogs(
-          {
-            oldSourceId: sourceIdentity,
-            newSourceId: target
-          },
-          connectionHolder
-        );
+      await profileActivityLogsDb.changeTargetProfileIdInLogs(
+        {
+          oldSourceId: sourceIdentity,
+          newSourceId: target
+        },
+        connectionHolder
+      );
+      if (sourceProfile) {
         await profileActivityLogsDb.insert(
           {
             profile_id: sourceIdentity,
@@ -504,6 +500,29 @@ export class ProfilesService {
       );
       this.logger.info(
         `Merged identity ${sourceIdentity} to identity ${target}`
+      );
+    }
+  }
+
+  /** Deletes the source's profiles row, or gives it to a target without one. */
+  private async retireSourceProfileRow(
+    sourceIdentity: string,
+    target: string,
+    connectionHolder: ConnectionWrapper<any>
+  ) {
+    const targetProfile = await this.profilesDb.getProfileById(
+      target,
+      connectionHolder
+    );
+    if (targetProfile) {
+      await this.profilesDb.deleteProfile(
+        { id: sourceIdentity },
+        connectionHolder
+      );
+    } else {
+      await this.profilesDb.updateProfileId(
+        { from: sourceIdentity, to: target },
+        connectionHolder
       );
     }
   }

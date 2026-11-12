@@ -62,6 +62,7 @@ export interface FindWaveDropsFeedV2Request {
   readonly search_strategy: ApiDropSearchStrategy;
   readonly drop_type: ApiDropType | null;
   readonly curation_id: string | null;
+  readonly respect_drop_reply_collapse?: boolean;
 }
 
 export interface FindDropRepliesFeedV2Request {
@@ -858,6 +859,7 @@ export class ApiWaveV2Service {
       search_strategy,
       curationFilter,
       drop_type,
+      respect_drop_reply_collapse,
       groupIdsUserIsEligibleFor
     }: FindWaveDropsFeedV2Request & {
       readonly wave: WaveEntity;
@@ -875,6 +877,9 @@ export class ApiWaveV2Service {
           search_strategy,
           curation_id: curationFilter,
           drop_type: this.resolveDropType(drop_type),
+          ...(respect_drop_reply_collapse
+            ? { respect_drop_reply_collapse }
+            : {}),
           exclude_replies: isWaveMainFeedWithoutReplies({
             wave,
             curationId: curationFilter

@@ -47,6 +47,10 @@ const IS_PURE_PROFILE_GROUP_EXPRESSION = `
   'visible',
   'id'
 ])
+// Profile merges move these profile references for every merged identity.
+@Index('idx_user_groups_created_by', ['created_by'])
+@Index('idx_user_groups_cic_user', ['cic_user'])
+@Index('idx_user_groups_rep_user', ['rep_user'])
 export class UserGroupEntity {
   @PrimaryColumn({ type: 'varchar', length: 200, nullable: false })
   readonly id!: string;

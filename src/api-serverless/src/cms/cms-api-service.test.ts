@@ -187,8 +187,55 @@ function publishedSiteRow(): CmsPublishedSiteRow {
 describe('CmsApiService', () => {
   const service = new CmsApiService();
 
+  beforeEach(() => {
+    jest.spyOn(cmsDb, 'countSitesByOwner').mockResolvedValue(0);
+    jest.spyOn(cmsDb, 'countPublishedPackagesByOwner').mockResolvedValue(0);
+  });
+
   afterEach(() => {
     jest.restoreAllMocks();
+  });
+
+  it('caps the number of sites per profile', async () => {
+    jest.spyOn(cmsDb, 'findSiteByOwnerAndSlug').mockResolvedValue(null);
+    jest.spyOn(cmsDb, 'countSitesByOwner').mockResolvedValue(20);
+    const createSite = jest.spyOn(cmsDb, 'createSite').mockResolvedValue();
+
+    await expect(
+      service.createSite({ slug: 'more', title: 'More' }, authContext())
+    ).rejects.toThrow(BadRequestException);
+    expect(createSite).not.toHaveBeenCalled();
+  });
+
+  it('caps the number of new packages per profile', async () => {
+    jest.spyOn(cmsDb, 'findSiteById').mockResolvedValue(siteRow());
+    jest.spyOn(cmsDb, 'findPublishedPackageByHash').mockResolvedValue(null);
+    jest.spyOn(cmsDb, 'countPublishedPackagesByOwner').mockResolvedValue(200);
+    const publishPackage = jest
+      .spyOn(cmsDb, 'publishPackage')
+      .mockResolvedValue();
+
+    await expect(
+      service.publishPackage('site-1', publishRequest(), authContext())
+    ).rejects.toThrow(BadRequestException);
+    expect(publishPackage).not.toHaveBeenCalled();
+  });
+
+  it('rejects a package containing a javascript: URL', async () => {
+    const findSiteById = jest.spyOn(cmsDb, 'findSiteById');
+    const request = publishRequest();
+    const packageJson = request.package_json as any;
+    packageJson.payload.page.social.open_graph_image.url =
+      ' JavaScript:alert(1)';
+
+    await expect(
+      service.publishPackage('site-1', request, authContext())
+    ).rejects.toThrow(
+      new BadRequestException(
+        'package_json must not contain javascript:, vbscript: or data: URLs.'
+      )
+    );
+    expect(findSiteById).not.toHaveBeenCalled();
   });
 
   it('creates a profile-owned site with normalized slug', async () => {

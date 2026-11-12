@@ -3,6 +3,7 @@ import { DataSource } from 'typeorm';
 import {
   DISTRIBUTION_NORMALIZED_TABLE,
   EXTERNAL_INDEXED_TRANSFERS_TABLE,
+  IDENTITY_TDH_SYNC_SCOPE_TABLE,
   IDENTITY_TDH_SYNC_STATE_TABLE,
   COMPETITION_SCORE_RESETS_TABLE,
   COMPETITION_SCORE_RESET_STATE_TABLE,
@@ -13,6 +14,7 @@ import * as Entities from '@/entities/entities';
 import { sqlExecutor } from '@/sql-executor';
 import {
   SCHEMA_SYNC_ATTEMPTS,
+  SchemaSyncDestructivePlanRefusedError,
   synchronizeSchemaBounded
 } from './bounded-schema-sync';
 
@@ -110,6 +112,39 @@ describe('synchronizeSchemaBounded on MySQL', () => {
     await expect(plannedStatements()).resolves.toEqual([]);
   }, 60_000);
 
+  it('holds back a drift repair that drops a plain column until its plan is acknowledged', async () => {
+    await drift();
+    const before = await plannedStatements();
+
+    const refused = await synchronizeSchemaBounded(dataSource, {
+      sleep: noSleep,
+      destructiveGuardMode: 'block'
+    }).catch((error: unknown) => error);
+
+    // The int column TypeORM re-creates as tinyint loses its values; the
+    // generated column and index rebuilds in the same plan do not count.
+    expect(refused).toBeInstanceOf(SchemaSyncDestructivePlanRefusedError);
+    const { destructivePlanSha256, destructiveStatements } =
+      refused as SchemaSyncDestructivePlanRefusedError;
+    expect(destructiveStatements).toEqual([
+      `ALTER TABLE \`${EXTERNAL_INDEXED_TRANSFERS_TABLE}\` DROP COLUMN \`is_monetary_sale\``
+    ]);
+    // Nothing from the plan was applied.
+    await expect(plannedStatements()).resolves.toEqual(before);
+
+    const result = await synchronizeSchemaBounded(dataSource, {
+      sleep: noSleep,
+      destructiveGuardMode: 'block',
+      acknowledgedDestructivePlanSha256: destructivePlanSha256
+    });
+    expect(result).toEqual({
+      planned: before.length,
+      applied: before.length,
+      destructivePlanSha256
+    });
+    await expect(plannedStatements()).resolves.toEqual([]);
+  }, 60_000);
+
   it('adds the identities sync marker table with one CREATE TABLE and nothing else', async () => {
     await sqlExecutor.execute(
       `drop table \`${IDENTITY_TDH_SYNC_STATE_TABLE}\``
@@ -160,6 +195,37 @@ describe('synchronizeSchemaBounded on MySQL', () => {
       sleep: noSleep
     });
     expect(result).toEqual({ planned: 1, applied: 1 });
+    await expect(plannedStatements()).resolves.toEqual([]);
+  });
+
+  it('upgrades the identities sync tables from the previous release with one CREATE TABLE and one ADD COLUMN', async () => {
+    // As the previous release left them: no scope table, no ratings_since.
+    await sqlExecutor.execute(
+      `drop table \`${IDENTITY_TDH_SYNC_SCOPE_TABLE}\``
+    );
+    await sqlExecutor.execute(
+      `alter table \`${IDENTITY_TDH_SYNC_STATE_TABLE}\` drop column ratings_since`
+    );
+
+    const planned = await plannedStatements();
+    expect(planned).toHaveLength(2);
+    expect(planned).toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(
+          new RegExp(`^CREATE TABLE \`${IDENTITY_TDH_SYNC_SCOPE_TABLE}\``)
+        ),
+        expect.stringMatching(
+          new RegExp(
+            `^ALTER TABLE \`${IDENTITY_TDH_SYNC_STATE_TABLE}\` ADD \`ratings_since\``
+          )
+        )
+      ])
+    );
+
+    const result = await synchronizeSchemaBounded(dataSource, {
+      sleep: noSleep
+    });
+    expect(result).toEqual({ planned: 2, applied: 2 });
     await expect(plannedStatements()).resolves.toEqual([]);
   });
 

@@ -245,6 +245,37 @@ describe('DropsApiService', () => {
         });
       }
     );
+
+    it.each([
+      ['wave', 'wave-1', 'findLightDropIdsByWave'],
+      ['visible', null, 'findVisibleLightDropIds']
+    ] as const)(
+      'hydrates %s light drops with the viewer groups',
+      async (_label, waveId, idLookup) => {
+        const { service, dropsDb, userGroupsService, ctx } = createService();
+        userGroupsService.getGroupsUserIsEligibleFor.mockResolvedValue([
+          'group-a'
+        ]);
+        dropsDb[idLookup].mockResolvedValue([{ id: 'drop-1' }]);
+
+        await service.findLightDrops(
+          {
+            waveId,
+            limit: 10,
+            max_serial_no: null,
+            min_serial_no: null,
+            older_first: false
+          },
+          ctx
+        );
+
+        expect(dropsDb.findLightDropsByIds).toHaveBeenCalledWith(
+          ['drop-1'],
+          ['group-a'],
+          ctx
+        );
+      }
+    );
   });
 
   describe('findViewableDropByIdOrThrow', () => {

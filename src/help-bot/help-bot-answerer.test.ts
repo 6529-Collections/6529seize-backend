@@ -1479,6 +1479,28 @@ describe('HelpBotAnswerer', () => {
     }
   });
 
+  it('limits links in generated replies to 6529.io and drops group and user mentions', async () => {
+    const renderer: HelpBotLlmRenderer = {
+      renderAnswer: jest
+        .fn()
+        .mockResolvedValue(
+          'TDH is Total Days Held. Ping @all and @[someone], then visit [rewards](https://example.com/rewards) or https://example.com.'
+        )
+    };
+
+    const answer = await answerer(renderer).answer({
+      question: 'what is TDH?',
+      baseUrl: BASE_URL
+    });
+
+    expect(answer.type).toBe('ANSWER');
+    if (answer.type === 'ANSWER') {
+      expect(answer.answer).toBe(
+        'TDH is Total Days Held. Ping all and someone, then visit rewards or.\n\nMore info: [TDH](https://6529.io/network/tdh)'
+      );
+    }
+  });
+
   it('falls back to deterministic answers when the renderer fails', async () => {
     const renderer: HelpBotLlmRenderer = {
       renderAnswer: jest.fn().mockRejectedValue(new Error('bedrock down'))

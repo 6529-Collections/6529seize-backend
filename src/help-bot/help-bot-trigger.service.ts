@@ -2,6 +2,12 @@ import { dropsService, DropsApiService } from '@/api/drops/drops.api.service';
 import { ApiCreateDropRequest } from '@/api/generated/models/ApiCreateDropRequest';
 import { ApiDrop } from '@/api/generated/models/ApiDrop';
 import { wavesApiDb, WavesApiDb } from '@/api/waves/waves.api.db';
+import {
+  userGroupsService,
+  UserGroupsService
+} from '@/api/community-members/user-groups.service';
+import { WaveEntity } from '@/entities/IWave';
+import { canProfileReplyInWaveChat } from '@/waves/wave-chat-replies.helpers';
 import { Logger } from '@/logging';
 import { RequestContext } from '@/request.context';
 import { sqs, SQS } from '@/sqs';
@@ -16,7 +22,10 @@ import {
   HELP_BOT_SPAM_REACTION,
   HELP_BOT_USER_SPAM_MAX_TRIGGERS_PER_WINDOW,
   HELP_BOT_USER_SPAM_WINDOW_MS,
-  HELP_BOT_TECHNICAL_FAILURE_REPLY
+  HELP_BOT_TECHNICAL_FAILURE_REPLY,
+  HELP_BOT_DAILY_WINDOW_MS,
+  getHelpBotGlobalDailyAnswerLimit,
+  getHelpBotWaveDailyAnswerLimit
 } from './help-bot.config';
 import {
   helpBotCreditsService,
@@ -52,7 +61,11 @@ export class HelpBotTriggerService {
     private readonly sqs: SQS,
     private readonly profileResolver: HelpBotProfileResolver,
     private readonly wavesDb: WavesApiDb,
-    private readonly creditsService: HelpBotCreditsService
+    private readonly creditsService: HelpBotCreditsService,
+    private readonly userGroups: Pick<
+      UserGroupsService,
+      'getGroupsUserIsEligibleForByIds'
+    > = userGroupsService
   ) {}
 
   public async handleCreatedDrop(
@@ -75,9 +88,16 @@ export class HelpBotTriggerService {
         );
         return;
       }
-      if (!(await this.isPublicHelpBotWave(createdDrop.wave.id, ctx))) {
+      const wave = await this.findPublicHelpBotWave(createdDrop.wave.id, ctx);
+      if (!wave) {
         this.logger.debug(
           `Help bot trigger skipped for drop ${createdDrop.id}: non-public wave ${createdDrop.wave.id}`
+        );
+        return;
+      }
+      if (!(await this.canBotReplyInWave(botProfileId, wave, ctx))) {
+        this.logger.info(
+          `Help bot trigger skipped for drop ${createdDrop.id}: help bot cannot post in wave ${wave.id}`
         );
         return;
       }
@@ -144,6 +164,30 @@ export class HelpBotTriggerService {
         );
         this.logger.info(
           `Help bot trigger spam-suppressed drop ${createdDrop.id} interaction ${interaction.id}`
+        );
+        return;
+      }
+
+      const dailyLimitReason = await this.findDailyLimitReason(
+        trigger.waveId,
+        ctx
+      );
+      if (dailyLimitReason) {
+        await this.interactionsDb.markDailyLimitReached(
+          { id: interaction.id, failureReason: dailyLimitReason },
+          ctx
+        );
+        await this.trySetReaction(
+          {
+            botProfileId,
+            dropId: trigger.triggerDropId,
+            waveId: trigger.waveId,
+            reaction: HELP_BOT_SPAM_REACTION
+          },
+          ctx
+        );
+        this.logger.info(
+          `Help bot trigger declined drop ${createdDrop.id} interaction ${interaction.id}: ${dailyLimitReason}`
         );
         return;
       }
@@ -223,22 +267,68 @@ export class HelpBotTriggerService {
     }
   }
 
-  private async isPublicHelpBotWave(
+  private async findPublicHelpBotWave(
     waveId: string,
     ctx: RequestContext
-  ): Promise<boolean> {
+  ): Promise<WaveEntity | null> {
     // Public help must not process a public child beneath a restricted parent.
     const wave = (
       await this.wavesDb.findWavesByIds([waveId], [], ctx.connection)
     ).at(0);
     if (!wave) {
       this.logger.warn(`Could not resolve wave ${waveId} for help bot trigger`);
-      return false;
+      return null;
     }
     if (wave.visibility_group_id || wave.is_direct_message === true) {
-      return false;
+      return null;
     }
-    return true;
+    return wave;
+  }
+
+  /**
+   * Applies the same chat reply rule as drop creation (chat enabled, plus
+   * chat group membership unless replies are open), so a question in a wave
+   * the bot cannot answer is declined before any credit is charged or model
+   * call is made.
+   */
+  private async canBotReplyInWave(
+    botProfileId: string,
+    wave: WaveEntity,
+    ctx: RequestContext
+  ): Promise<boolean> {
+    return canProfileReplyInWaveChat({
+      wave,
+      findEligibleGroupIds: (groupIds) =>
+        this.userGroups.getGroupsUserIsEligibleForByIds(
+          botProfileId,
+          groupIds,
+          ctx.timer
+        )
+    });
+  }
+
+  private async findDailyLimitReason(
+    waveId: string,
+    ctx: RequestContext
+  ): Promise<string | null> {
+    const sinceMillis = Time.currentMillis() - HELP_BOT_DAILY_WINDOW_MS;
+    const waveLimit = getHelpBotWaveDailyAnswerLimit();
+    const waveCount = await this.interactionsDb.countRecentAnswerable(
+      { waveId, sinceMillis },
+      ctx
+    );
+    if (waveCount > waveLimit) {
+      return `Wave reached ${waveLimit} help bot answers in ${HELP_BOT_DAILY_WINDOW_MS}ms`;
+    }
+    const globalLimit = getHelpBotGlobalDailyAnswerLimit();
+    const globalCount = await this.interactionsDb.countRecentAnswerable(
+      { waveId: null, sinceMillis },
+      ctx
+    );
+    if (globalCount > globalLimit) {
+      return `Help bot reached ${globalLimit} answers in ${HELP_BOT_DAILY_WINDOW_MS}ms`;
+    }
+    return null;
   }
 
   private async isSpamSuppressed(

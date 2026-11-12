@@ -1,0 +1,381 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Production IPFS deployment authority; separate from the frozen ownership import
+Parameters:
+  GitHubOidcProviderArn:
+    Type: String
+  GitHubRepositorySubject:
+    Type: String
+    Default: repo:6529-Collections/6529seize-backend
+    AllowedPattern: repo:6529-Collections(@[0-9]+)?/6529seize-backend(@[0-9]+)?
+Resources:
+  RuntimeBoundary:
+    Type: AWS::IAM::ManagedPolicy
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      ManagedPolicyName: seize-ipfs-prod-production-boundary
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Action: s3:ListBucket
+            Resource: arn:aws:s3:::6529ipfs
+            Condition:
+              StringLike:
+                s3:prefix: [ipfs, ipfs/*]
+          - Effect: Allow
+            Action: [s3:GetObject, s3:PutObject]
+            Resource: arn:aws:s3:::6529ipfs/ipfs/*
+          - Effect: Deny
+            Action: [s3:DeleteObject, s3:DeleteObjectVersion]
+            Resource: arn:aws:s3:::6529ipfs/*
+          - Effect: Allow
+            Action: [s3:GetObject, s3:GetObjectVersion, s3:PutObject]
+            Resource:
+              - arn:aws:s3:::seize-ipfs-prod-recovery-backups-987989283142/prod/transfers/*
+              - arn:aws:s3:::seize-ipfs-prod-recovery-backups-987989283142/prod/private/runtime/*
+              - arn:aws:s3:::seize-ipfs-prod-recovery-artifacts-987989283142/prod/*
+          - Effect: Allow
+            Action:
+              - ssm:DescribeAssociation
+              - ssm:GetDeployablePatchSnapshotForInstance
+              - ssm:GetDocument
+              - ssm:DescribeDocument
+              - ssm:GetManifest
+              - ssm:ListAssociations
+              - ssm:ListInstanceAssociations
+              - ssm:PutInventory
+              - ssm:PutComplianceItems
+              - ssm:PutConfigurePackageResult
+              - ssm:UpdateAssociationStatus
+              - ssm:UpdateInstanceAssociationStatus
+              - ssm:UpdateInstanceInformation
+              - ssmmessages:CreateControlChannel
+              - ssmmessages:CreateDataChannel
+              - ssmmessages:OpenControlChannel
+              - ssmmessages:OpenDataChannel
+              - ec2messages:AcknowledgeMessage
+              - ec2messages:DeleteMessage
+              - ec2messages:FailMessage
+              - ec2messages:GetEndpoint
+              - ec2messages:GetMessages
+              - ec2messages:SendReply
+            Resource: '*' # NOSONAR: SSM agent/channel APIs do not support resource ARNs; region is constrained below.
+            Condition:
+              StringEquals: { aws:RequestedRegion: us-east-1 }
+  LegacyRecoveryPolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: seize-ipfs-production-recovery
+      Roles: [EC2SSMRole]
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Action: [s3:PutObject, s3:GetObject, s3:GetObjectVersion]
+            Resource:
+              - arn:aws:s3:::seize-ipfs-prod-recovery-backups-987989283142/prod/private/legacy/*
+              - arn:aws:s3:::seize-ipfs-prod-recovery-backups-987989283142/prod/transfers/*
+              - arn:aws:s3:::seize-ipfs-prod-recovery-artifacts-987989283142/prod/*
+            Condition:
+              ArnEquals:
+                ec2:SourceInstanceARN: arn:aws:ec2:us-east-1:987989283142:instance/i-0012c6236ad1292e8
+  ServiceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: seize-ipfs-prod-runtime-cloudformation
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Action: sts:AssumeRole
+            Principal: { Service: cloudformation.amazonaws.com }
+      Policies:
+        - PolicyName: production-infrastructure
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: [ec2:Describe*, elasticloadbalancing:Describe*]
+                Resource: '*' # NOSONAR: AWS describe/list APIs require a wildcard resource.
+              - Effect: Allow
+                Action: [ec2:RunInstances, ec2:CreateSecurityGroup]
+                Resource:
+                  - arn:aws:ec2:us-east-1::image/*
+                  - arn:aws:ec2:us-east-1::snapshot/*
+                  - arn:aws:ec2:us-east-1:987989283142:instance/*
+                  - arn:aws:ec2:us-east-1:987989283142:volume/*
+                  - arn:aws:ec2:us-east-1:987989283142:network-interface/*
+                  - arn:aws:ec2:us-east-1:987989283142:security-group/*
+                  - arn:aws:ec2:us-east-1:987989283142:subnet/*
+                  - arn:aws:ec2:us-east-1:987989283142:vpc/vpc-0049175e3bed48694
+              - Effect: Allow
+                Action: ec2:CreateTags
+                Resource: arn:aws:ec2:us-east-1:987989283142:*/*
+                Condition:
+                  StringEquals:
+                    { ec2:CreateAction: [RunInstances, CreateSecurityGroup] }
+              - Effect: Allow
+                Action:
+                  - ec2:CreateTags
+                  - ec2:DeleteTags
+                  - ec2:ModifyInstanceAttribute
+                  - ec2:TerminateInstances
+                  - ec2:AuthorizeSecurityGroupIngress
+                  - ec2:RevokeSecurityGroupIngress
+                  - ec2:AuthorizeSecurityGroupEgress
+                  - ec2:RevokeSecurityGroupEgress
+                  - ec2:DeleteSecurityGroup
+                Resource:
+                  - arn:aws:ec2:us-east-1:987989283142:instance/*
+                  - arn:aws:ec2:us-east-1:987989283142:security-group/*
+                Condition:
+                  StringEquals:
+                    ec2:ResourceTag/Service: 6529-ipfs
+                    ec2:ResourceTag/Environment: prod
+              - Effect: Deny
+                Action:
+                  [
+                    ec2:TerminateInstances,
+                    ec2:StopInstances,
+                    ec2:RebootInstances,
+                    ec2:ModifyInstanceAttribute
+                  ]
+                Resource: arn:aws:ec2:us-east-1:987989283142:instance/i-0012c6236ad1292e8
+              - Effect: Deny
+                Action:
+                  [cloudfront:UpdateDistribution, cloudfront:DeleteDistribution]
+                Resource: arn:aws:cloudfront::987989283142:distribution/E1D6I3Z3M5F0H4
+              - Effect: Allow
+                Action: iam:CreateRole
+                Resource: arn:aws:iam::987989283142:role/seize-ipfs-prod-runtime-*-runtime
+                Condition:
+                  StringEquals:
+                    iam:PermissionsBoundary: { Ref: RuntimeBoundary }
+              - Effect: Allow
+                Action:
+                  - iam:GetRole
+                  - iam:TagRole
+                  - iam:UntagRole
+                  - iam:DeleteRole
+                  - iam:PutRolePolicy
+                  - iam:DeleteRolePolicy
+                  - iam:GetRolePolicy
+                  - iam:ListRolePolicies
+                  - iam:ListAttachedRolePolicies
+                  - iam:ListRoleTags
+                  - iam:CreateInstanceProfile
+                  - iam:GetInstanceProfile
+                  - iam:DeleteInstanceProfile
+                  - iam:ListInstanceProfilesForRole
+                  - iam:AddRoleToInstanceProfile
+                  - iam:RemoveRoleFromInstanceProfile
+                  - iam:TagInstanceProfile
+                  - iam:UntagInstanceProfile
+                  - iam:ListInstanceProfileTags
+                Resource:
+                  - arn:aws:iam::987989283142:role/seize-ipfs-prod-runtime-*-runtime
+                  - arn:aws:iam::987989283142:instance-profile/seize-ipfs-prod-runtime-*-runtime
+              - Effect: Allow
+                Action: [iam:AttachRolePolicy, iam:DetachRolePolicy]
+                Resource: arn:aws:iam::987989283142:role/seize-ipfs-prod-runtime-*-runtime
+                Condition:
+                  ArnEquals:
+                    {
+                      iam:PolicyARN: 'arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore'
+                    }
+              - Effect: Allow
+                Action: iam:PassRole
+                Resource: arn:aws:iam::987989283142:role/seize-ipfs-prod-runtime-*-runtime
+                Condition:
+                  StringEquals: { iam:PassedToService: ec2.amazonaws.com }
+              - Effect: Allow
+                Action:
+                  - elasticloadbalancing:CreateLoadBalancer
+                  - elasticloadbalancing:CreateTargetGroup
+                  - elasticloadbalancing:CreateListener
+                  - elasticloadbalancing:CreateRule
+                  - elasticloadbalancing:AddTags
+                Resource: '*' # NOSONAR: create APIs allocate new ARNs; both ownership request tags are mandatory.
+                Condition:
+                  StringEquals:
+                    aws:RequestTag/Service: 6529-ipfs
+                    aws:RequestTag/Environment: prod
+              - Effect: Allow
+                Action:
+                  - elasticloadbalancing:CreateListener
+                  - elasticloadbalancing:CreateRule
+                  - elasticloadbalancing:ModifyListener
+                  - elasticloadbalancing:ModifyRule
+                  - elasticloadbalancing:ModifyTargetGroup
+                  - elasticloadbalancing:ModifyTargetGroupAttributes
+                  - elasticloadbalancing:ModifyLoadBalancerAttributes
+                  - elasticloadbalancing:RegisterTargets
+                  - elasticloadbalancing:DeregisterTargets
+                  - elasticloadbalancing:DeleteListener
+                  - elasticloadbalancing:DeleteRule
+                  - elasticloadbalancing:DeleteLoadBalancer
+                  - elasticloadbalancing:DeleteTargetGroup
+                  - elasticloadbalancing:AddTags
+                  - elasticloadbalancing:RemoveTags
+                Resource:
+                  - arn:aws:elasticloadbalancing:us-east-1:987989283142:loadbalancer/app/seize-ipfs-prod/*
+                  - arn:aws:elasticloadbalancing:us-east-1:987989283142:listener/app/seize-ipfs-prod/*/*
+                  - arn:aws:elasticloadbalancing:us-east-1:987989283142:listener-rule/app/seize-ipfs-prod/*/*/*
+                  - arn:aws:elasticloadbalancing:us-east-1:987989283142:targetgroup/seize-ipfs-prod-*/*
+              - Effect: Allow
+                Action: [acm:DescribeCertificate, acm:ListCertificates]
+                Resource: '*' # NOSONAR: AWS describe/list APIs require a wildcard resource.
+              - Effect: Allow
+                Action:
+                  [
+                    cloudwatch:PutMetricAlarm,
+                    cloudwatch:DeleteAlarms,
+                    cloudwatch:DescribeAlarms,
+                    cloudwatch:TagResource,
+                    cloudwatch:UntagResource,
+                    cloudwatch:ListTagsForResource
+                  ]
+                Resource: arn:aws:cloudwatch:us-east-1:987989283142:alarm:seize-ipfs-prod-*
+  DeploymentRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: seize-ipfs-prod-runtime-deploy
+      MaxSessionDuration: 21600
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Action: sts:AssumeRoleWithWebIdentity
+            Principal:
+              Federated: { Ref: GitHubOidcProviderArn }
+            Condition:
+              StringEquals:
+                token.actions.githubusercontent.com:aud: sts.amazonaws.com
+                token.actions.githubusercontent.com:sub:
+                  Fn::Sub: ${GitHubRepositorySubject}:environment:ipfs-prod
+      Policies:
+        - PolicyName: production-controller
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Deny
+                Action:
+                  - cloudformation:CreateChangeSet
+                  - cloudformation:ExecuteChangeSet
+                  - cloudformation:CreateStack
+                  - cloudformation:UpdateStack
+                  - cloudformation:DeleteStack
+                  - cloudformation:SetStackPolicy
+                  - cloudformation:UpdateTerminationProtection
+                Resource: arn:aws:cloudformation:us-east-1:987989283142:stack/seize-ipfs-prod-runtime-access/*
+              - Effect: Allow
+                Action:
+                  [
+                    ec2:DescribeInstances,
+                    ec2:DescribeSubnets,
+                    ec2:DescribeRouteTables,
+                    elasticloadbalancing:Describe*,
+                    ssm:DescribeInstanceInformation,
+                    ssm:ListCommandInvocations,
+                    ssm:GetCommandInvocation,
+                    cloudformation:ListStacks
+                  ]
+                Resource: '*' # NOSONAR: AWS describe/list APIs require a wildcard resource.
+              - Effect: Allow
+                Action:
+                  [
+                    cloudformation:CreateChangeSet,
+                    cloudformation:DescribeChangeSet,
+                    cloudformation:ExecuteChangeSet,
+                    cloudformation:GetTemplate,
+                    cloudformation:DescribeStacks,
+                    cloudformation:DescribeStackEvents,
+                    cloudformation:UpdateTerminationProtection,
+                    cloudformation:SetStackPolicy
+                  ]
+                Resource:
+                  - arn:aws:cloudformation:us-east-1:987989283142:stack/seize-ipfs-prod-recovery/*
+                  - arn:aws:cloudformation:us-east-1:987989283142:stack/seize-ipfs-prod-frontdoor/*
+                  - arn:aws:cloudformation:us-east-1:987989283142:stack/seize-ipfs-prod-runtime-*/*
+                  - arn:aws:cloudformation:us-east-1:987989283142:changeSet/seize-ipfs-prod-*/*
+              - Effect: Allow
+                Action: iam:PassRole
+                Resource: { Fn::GetAtt: [ServiceRole, Arn] }
+                Condition:
+                  StringEquals:
+                    { iam:PassedToService: cloudformation.amazonaws.com }
+              - Effect: Allow
+                Action: ssm:SendCommand
+                Resource:
+                  - arn:aws:ssm:us-east-1::document/AWS-RunShellScript
+                  - arn:aws:ec2:us-east-1:987989283142:instance/i-0012c6236ad1292e8
+              - Effect: Allow
+                Action: ssm:SendCommand
+                Resource: arn:aws:ec2:us-east-1:987989283142:instance/*
+                Condition:
+                  StringEquals:
+                    ssm:resourceTag/Service: 6529-ipfs
+                    ssm:resourceTag/Environment: prod
+              - Effect: Allow
+                Action: [s3:GetObject, s3:GetObjectVersion, s3:PutObject]
+                Resource:
+                  - arn:aws:s3:::seize-ipfs-prod-recovery-artifacts-987989283142/prod/*
+                  - arn:aws:s3:::seize-ipfs-prod-recovery-backups-987989283142/prod/transfers/*
+                  - arn:aws:s3:::seize-ipfs-prod-recovery-backups-987989283142/prod/deployments/*
+              - Effect: Allow
+                Action:
+                  [
+                    s3:GetBucketVersioning,
+                    s3:GetEncryptionConfiguration,
+                    s3:GetBucketPublicAccessBlock
+                  ]
+                Resource:
+                  - arn:aws:s3:::seize-ipfs-prod-recovery-artifacts-987989283142
+                  - arn:aws:s3:::seize-ipfs-prod-recovery-backups-987989283142
+              - Effect: Allow
+                Action: s3:ListBucketVersions
+                Resource: arn:aws:s3:::seize-ipfs-prod-recovery-backups-987989283142
+                Condition:
+                  StringLike:
+                    s3:prefix: prod/deployments/*
+              - Effect: Allow
+                Action: cloudwatch:DescribeAlarms
+                Resource: arn:aws:cloudwatch:us-east-1:987989283142:alarm:seize-ipfs-prod-*
+              - Effect: Allow
+                Action: route53:ListResourceRecordSets
+                Resource: arn:aws:route53:::hostedzone/Z034375922ON0KJSHH6TF
+              - Effect: Allow
+                Action:
+                  [
+                    cloudfront:GetDistribution,
+                    cloudfront:GetDistributionConfig,
+                    cloudfront:ListTagsForResource
+                  ]
+                Resource: arn:aws:cloudfront::987989283142:distribution/E1D6I3Z3M5F0H4
+              - Effect: Allow
+                Action: route53:GetChange
+                Resource: arn:aws:route53:::change/*
+              - Effect: Allow
+                Action: route53:ChangeResourceRecordSets
+                Resource: arn:aws:route53:::hostedzone/Z034375922ON0KJSHH6TF
+                Condition:
+                  ForAllValues:StringEquals:
+                    route53:ChangeResourceRecordSetsRecordTypes: [A]
+                    route53:ChangeResourceRecordSetsActions: [UPSERT]
+                    route53:ChangeResourceRecordSetsNormalizedRecordNames:
+                      [api-ipfs.6529.io, ipfs-origin.6529.io]
+              - Effect: Deny
+                Action:
+                  [cloudfront:UpdateDistribution, cloudfront:DeleteDistribution]
+                Resource: arn:aws:cloudfront::987989283142:distribution/E1D6I3Z3M5F0H4
+              - Effect: Deny
+                Action: [s3:DeleteObject, s3:DeleteObjectVersion]
+                Resource: arn:aws:s3:::6529ipfs/*
+Outputs:
+  DeploymentRoleArn:
+    Value: { Fn::GetAtt: [DeploymentRole, Arn] }
+  ServiceRoleArn:
+    Value: { Fn::GetAtt: [ServiceRole, Arn] }
+  RuntimeBoundaryArn:
+    Value: { Ref: RuntimeBoundary }

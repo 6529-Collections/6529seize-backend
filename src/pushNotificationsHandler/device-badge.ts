@@ -79,7 +79,9 @@ export async function withDeviceBadgeLock<T>(
 }
 
 /** Count the whole device from the primary and return only profiles still using this token. */
-export async function getDeviceBadgeState(device: BadgeDevice): Promise<{
+export async function getDeviceBadgeState(
+  device: BadgeDevice & { readonly platform?: string | null }
+): Promise<{
   count: number;
   profileIds: Set<string>;
 }> {
@@ -109,7 +111,8 @@ export async function getDeviceBadgeState(device: BadgeDevice): Promise<{
             row.profile_id === profileId &&
             row.token === device.token &&
             row.include_competitions === true
-        )
+        ),
+        device.platform
       );
       if (!enabledCauses.length) return 0;
       const groups =

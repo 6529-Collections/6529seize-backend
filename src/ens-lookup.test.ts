@@ -1,5 +1,9 @@
 import { getRpcProvider } from '@/rpc-provider';
-import { lookupPrimaryEnsName, lookupPrimaryEnsNameResult } from '@/ens-lookup';
+import {
+  lookupPrimaryEnsName,
+  lookupPrimaryEnsNameResult,
+  normalisedEnsNameOrNull
+} from '@/ens-lookup';
 import { Logger } from '@/logging';
 const mockReverse = jest.fn();
 jest.mock('@/logging', () => {
@@ -8,6 +12,7 @@ jest.mock('@/logging', () => {
 });
 jest.mock('@/rpc-provider', () => ({ getRpcProvider: jest.fn() }));
 jest.mock('ethers', () => ({
+  ensNormalize: jest.requireActual('ethers').ensNormalize,
   Contract: jest.fn(() => ({ reverse: mockReverse }))
 }));
 import { Contract } from 'ethers';
@@ -138,5 +143,53 @@ describe('ENS uses one configured RPC endpoint', () => {
       'ETHEREUM_RPC_URL'
     );
     expect(mockInfo).not.toHaveBeenCalled();
+  });
+});
+
+describe('normalisedEnsNameOrNull', () => {
+  it.each(['vitalik.eth', 'sub.name.eth', '6529.eth', '\u{1F600}.eth'])(
+    'keeps the normalised name %s',
+    (name) => {
+      expect(normalisedEnsNameOrNull(name)).toBe(name);
+    }
+  );
+
+  it.each([
+    'Vitalik.eth',
+    'VITALIK.ETH',
+    '\uFF56italik.eth',
+    'vitalik\u200B.eth',
+    'a..eth',
+    '',
+    null,
+    undefined
+  ])('treats %j as no name', (name) => {
+    expect(normalisedEnsNameOrNull(name)).toBeNull();
+  });
+});
+
+describe('ENS lookups require normalised names', () => {
+  const lookupAddress = jest.fn();
+  const provider = { lookupAddress };
+  beforeEach(() => {
+    jest.clearAllMocks();
+    jest.mocked(getRpcProvider).mockReturnValue(provider as never);
+  });
+
+  it('ignores an unnormalised reverse record from either lookup', async () => {
+    lookupAddress.mockResolvedValue('Vitalik.eth');
+    mockReverse.mockResolvedValue(['Vitalik.eth']);
+    await expect(
+      lookupPrimaryEnsNameResult('0xaddress', provider as never)
+    ).resolves.toEqual({ status: 'resolved', name: null });
+    expect(mockInfo.mock.calls).toEqual([
+      ['[ENS_UNIVERSAL_RESOLVER] [OUTCOME=unnormalised]']
+    ]);
+  });
+
+  it('uses a normalised Universal Resolver name after an unnormalised provider name', async () => {
+    lookupAddress.mockResolvedValue('Primary.eth');
+    mockReverse.mockResolvedValue(['primary.eth']);
+    expect(await lookupPrimaryEnsName('0xaddress')).toBe('primary.eth');
   });
 });

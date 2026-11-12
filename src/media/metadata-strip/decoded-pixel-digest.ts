@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import Sharp, { SharpOptions } from 'sharp';
+import Sharp, { Metadata, SharpOptions } from 'sharp';
 import { PNG_PREVIEW_LIMITS } from '@/media/png-preview-policy';
 import { walkJpeg } from './jpeg-structure';
 import type { LosslessStripFormat } from './lossless-metadata-strip';
@@ -98,6 +98,22 @@ function decoderOptions(
   };
 }
 
+/** The upload pipeline's PNG limits: 100 MP at 8 bits, 64 MP at 16 bits. */
+function pngWithinLimits(
+  width: number,
+  height: number,
+  sixteenBit: boolean
+): boolean {
+  const cap = sixteenBit
+    ? PNG_PREVIEW_LIMITS.pixels16
+    : PNG_PREVIEW_LIMITS.pixels8;
+  return (
+    width <= PNG_PREVIEW_LIMITS.inputSide &&
+    height <= PNG_PREVIEW_LIMITS.inputSide &&
+    width * height <= cap
+  );
+}
+
 /**
  * The upload pipeline's PNG limits (100 MP at 8 bits, 64 MP at 16 bits,
  * 100,000 pixels a side), read from IHDR before any native PNG parser runs.
@@ -108,17 +124,54 @@ export function assertPngWithinPixelCheck(input: Buffer): void {
   }
   const width = input.readUInt32BE(16);
   const height = input.readUInt32BE(20);
-  const cap =
-    input[24] === 16 ? PNG_PREVIEW_LIMITS.pixels16 : PNG_PREVIEW_LIMITS.pixels8;
-  if (
-    width > PNG_PREVIEW_LIMITS.inputSide ||
-    height > PNG_PREVIEW_LIMITS.inputSide ||
-    width * height > cap
-  ) {
+  if (!pngWithinLimits(width, height, input[24] === 16)) {
     throw new LosslessStripUnsupported(
       'PNG is too large to decode for the pixel check'
     );
   }
+}
+
+/** Sharp metadata of one page or of every page; see canVerifyDecodedPixels. */
+export type PixelCheckMetadata = Partial<
+  Pick<
+    Metadata,
+    'format' | 'width' | 'height' | 'pageHeight' | 'pages' | 'depth'
+  > & { isProgressive: boolean }
+>;
+
+const isPositiveInteger = (value: number | undefined): value is number =>
+  Number.isSafeInteger(value) && value! >= 1;
+
+/**
+ * Admission from metadata, before any pixel is decoded: whether an image is
+ * within the pixel check's bounds (every GIF or WebP page counted). A strip
+ * must still pass the check itself, which also holds a non-interleaved
+ * baseline JPEG (indistinguishable here) to the whole-frame cap. Without a
+ * format or a progressive flag the stricter rules apply.
+ */
+export function canVerifyDecodedPixels(
+  metadata: PixelCheckMetadata,
+  limits: PixelCheckLimits = PIXEL_CHECK_LIMITS
+): boolean {
+  const { format, width } = metadata;
+  // A single-page load reports one frame's height; an animated load adds
+  // pageHeight and reports every frame in height.
+  const height = metadata.pageHeight ?? metadata.height;
+  const pages =
+    format === 'gif' || format === 'webp' ? (metadata.pages ?? 1) : 1;
+  if (
+    !isPositiveInteger(width) ||
+    !isPositiveInteger(height) ||
+    !isPositiveInteger(pages) ||
+    width * height * pages > limits.maxPixels
+  ) {
+    return false;
+  }
+  if (format === 'png') {
+    return pngWithinLimits(width, height, metadata.depth === 'ushort');
+  }
+  const wholeFrame = format !== 'jpeg' || metadata.isProgressive !== false;
+  return !wholeFrame || width * height <= limits.maxWholeFramePixels;
 }
 
 /** Progressive and non-interleaved JPEGs buffer every coefficient. */

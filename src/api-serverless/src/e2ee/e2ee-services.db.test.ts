@@ -8,6 +8,10 @@ import {
 } from '@/api/e2ee/e2ee-context';
 import { directMessageAdmissionService } from '@/api/direct-messages/direct-message-admission.instance';
 import { computeDeviceGrantId } from '@/api/device-signing/device-grant-message';
+import { DeviceGrantsService } from '@/api/device-signing/device-grants.service';
+import { DeviceSigningDb } from '@/api/device-signing/device-signing.db';
+import { AuthenticationContext } from '@/auth-context';
+import { identitiesDb } from '@/identities/identities.db';
 import { createSiweWebAuthChallenge } from '@/api/wallet-signatures/siwe-wallet-auth';
 import { E2eeEventPublisher } from '@/api/e2ee/e2ee-events';
 import { createE2eeServices } from '@/api/e2ee/e2ee.handlers';
@@ -543,6 +547,54 @@ describeWithSeed('E2EE delivery service', [], () => {
       );
     });
 
+    it('acknowledges a standalone device for its owner without revoking it', async () => {
+      const alice = aProfile();
+      const bob = aProfile();
+      const key = await registerDevice(alice);
+      const { key: linked } = await registerLoginGrantDevice(alice);
+      expect(
+        Boolean((await db.getDevice(linked.publicKey))?.notice_pending)
+      ).toBe(false);
+      const notices = new DeviceSigningDb(() => sqlExecutor);
+      const findNotices = () =>
+        notices.findPendingSecurityNotices(
+          alice.id,
+          alice.wallet.address,
+          now,
+          {}
+        );
+
+      await expect(findNotices()).resolves.toMatchObject([
+        { signing_grant_id: null, encrypted_dm_device_key: key.publicKey }
+      ]);
+      await expect(
+        notices.findPendingSecurityNotices(
+          alice.id,
+          alice.wallet.address,
+          now,
+          {},
+          false
+        )
+      ).resolves.toEqual([]);
+      await expect(
+        services.devices.acknowledgeDeviceNotice(bob.id, key.publicKey)
+      ).rejects.toBeInstanceOf(E2eeApiException);
+      await expect(
+        services.devices.acknowledgeDeviceNotice(alice.id, linked.publicKey)
+      ).rejects.toBeInstanceOf(E2eeApiException);
+      await expect(findNotices()).resolves.toHaveLength(1);
+
+      await services.devices.acknowledgeDeviceNotice(alice.id, key.publicKey);
+      await services.devices.acknowledgeDeviceNotice(alice.id, key.publicKey);
+      await expect(findNotices()).resolves.toEqual([]);
+      await expect(db.getDevice(key.publicKey)).resolves.toMatchObject({
+        revoked_at: null
+      });
+      now += DAY;
+      await registerDevice(alice, key);
+      await expect(findNotices()).resolves.toEqual([]);
+    });
+
     it('looks up devices of profiles and by key in one request', async () => {
       const alice = aProfile();
       const bob = aProfile();
@@ -624,6 +676,108 @@ describeWithSeed('E2EE delivery service', [], () => {
       const bob = aProfile();
       await expectE2eeError(registerDevice(bob, keys[0]), 'E2EE_DEVICE_EXISTS');
     });
+
+    describe('device limit and idle devices', () => {
+      async function registerTen(profile: Profile): Promise<E2eeTestKey[]> {
+        const keys: E2eeTestKey[] = [];
+        for (let i = 0; i < E2EE_MAX_ACTIVE_DEVICES; i++) {
+          keys.push(await registerDevice(profile));
+        }
+        return keys;
+      }
+
+      async function use(profile: Profile, key: E2eeTestKey) {
+        await services.groups.getDeviceGroups(profile.id, key.publicKey);
+      }
+
+      it('enrolls an 11th device when one of ten has been idle for more than 30 days', async () => {
+        const alice = aProfile();
+        const keys = await registerTen(alice);
+        now += 31 * DAY;
+        for (const key of keys.slice(1)) await use(alice, key);
+
+        const eleventh = await registerDevice(alice);
+
+        const me = await services.devices.getMe(alice.id);
+        const counted = new Map(
+          me.devices.map((device) => [
+            device.device_key,
+            device.counts_toward_limit
+          ])
+        );
+        expect(counted.get(keys[0].publicKey)).toBe(false);
+        expect(counted.get(eleventh.publicKey)).toBe(true);
+        expect(
+          me.devices.filter((device) => device.counts_toward_limit)
+        ).toHaveLength(E2EE_MAX_ACTIVE_DEVICES);
+        expect(me.max_devices).toBe(E2EE_MAX_ACTIVE_DEVICES);
+        // The idle device was not revoked and still works as itself.
+        await use(alice, keys[0]);
+        expect(
+          (await services.devices.getDevice(keys[0].publicKey)).revoked_at
+        ).toBeNull();
+      });
+
+      it('refuses an 11th device when all ten were used in the last 30 days', async () => {
+        const alice = aProfile();
+        const keys = await registerTen(alice);
+        now += 31 * DAY;
+        for (const key of keys) await use(alice, key);
+
+        await expectE2eeError(registerDevice(alice), 'E2EE_DEVICE_LIMIT');
+      });
+
+      it('counts a device again once it is used after being idle', async () => {
+        const alice = aProfile();
+        const keys = await registerTen(alice);
+        now += 31 * DAY;
+        for (const key of keys.slice(1)) await use(alice, key);
+        await registerDevice(alice);
+        // The idle device resumes: eleven devices now count, so another
+        // enrolment waits, but no device loses service.
+        await use(alice, keys[0]);
+
+        await expectE2eeError(registerDevice(alice), 'E2EE_DEVICE_LIMIT');
+        await use(alice, keys[0]);
+        await use(alice, keys[1]);
+      });
+
+      it('renews an idle active device even when ten others count', async () => {
+        const alice = aProfile();
+        const keys = await registerTen(alice);
+        now += 31 * DAY;
+        for (const key of keys.slice(1)) await use(alice, key);
+        await registerDevice(alice);
+
+        await registerDevice(alice, keys[0]);
+
+        const renewed = await services.devices.getDevice(keys[0].publicKey);
+        expect(renewed.grant.issued_at).toBe(nowSeconds());
+        expect(renewed.last_seen_at).toBe(now);
+      });
+
+      it('marks revoked and expired devices as not counting', async () => {
+        const alice = aProfile();
+        const [kept, expiring] = [
+          await registerDevice(alice),
+          await registerDevice(alice)
+        ];
+        now += 179 * DAY;
+        await use(alice, kept);
+        await registerDevice(alice, kept);
+        now += 2 * DAY;
+
+        const me = await services.devices.getMe(alice.id);
+        const counted = new Map(
+          me.devices.map((device) => [
+            device.device_key,
+            device.counts_toward_limit
+          ])
+        );
+        expect(counted.get(kept.publicKey)).toBe(true);
+        expect(counted.get(expiring.publicKey)).toBe(false);
+      });
+    });
   });
 
   describe('combined sign-in grants (NC8)', () => {
@@ -645,7 +799,7 @@ describeWithSeed('E2EE delivery service', [], () => {
       ).toBeNull();
     });
 
-    it('revoking the sign-in grant removes its device from every roster', async () => {
+    it('rolls back a failed combined revocation and stops delivery on retry', async () => {
       const alice = aProfile();
       const bob = aProfile();
       const aliceDevice = await registerDevice(alice);
@@ -657,7 +811,48 @@ describeWithSeed('E2EE delivery service', [], () => {
       });
       events = [];
 
-      await services.devices.revokeDeviceOfLoginGrant(grantId);
+      const signingDb = new DeviceSigningDb(() => sqlExecutor);
+      const grants = new DeviceGrantsService(
+        signingDb,
+        identitiesDb,
+        () => now
+      );
+      const revokeGrant = () =>
+        grants.revokeCallerGrant(
+          grantId,
+          {
+            authenticationContext: new AuthenticationContext({
+              authenticatedWallet: bob.wallet.address,
+              authenticatedProfileId: null,
+              roleProfileId: null,
+              activeProxyActions: []
+            })
+          },
+          (id, connection) =>
+            services.devices.revokeDeviceOfLoginGrant(id, connection)
+        );
+      const failure = new Error('could not delete device key packages');
+      const deleteKeyPackages = jest
+        .spyOn(db, 'deleteKeyPackagesOfDevice')
+        .mockRejectedValueOnce(failure);
+      try {
+        await expect(revokeGrant()).rejects.toThrow(failure);
+      } finally {
+        deleteKeyPackages.mockRestore();
+      }
+      await expect(signingDb.findGrantById(grantId, {})).resolves.toMatchObject(
+        {
+          revoked_at: null
+        }
+      );
+      await expect(
+        services.devices.getDevice(bobDevice.publicKey)
+      ).resolves.toMatchObject({
+        revoked_at: null
+      });
+      expect(events).toHaveLength(0);
+
+      await expect(revokeGrant()).resolves.toMatchObject({ revoked_at: now });
 
       const revoked = await services.devices.getDevice(bobDevice.publicKey);
       expect(revoked.revoked_at).toBe(now);
@@ -673,8 +868,16 @@ describeWithSeed('E2EE delivery service', [], () => {
       expect(
         await db.countOneTimeKeyPackages(bobDevice.publicKey, nowSeconds())
       ).toBe(0);
-      expect(events.map((event) => event.method)).toEqual(['deviceRevoked']);
-      await services.devices.revokeDeviceOfLoginGrant(grantId);
+      expect(events).toEqual([
+        {
+          method: 'deviceRevoked',
+          args: [
+            expect.arrayContaining([alice.id, bob.id]),
+            { profile_id: bob.id, device_key: bobDevice.publicKey }
+          ]
+        }
+      ]);
+      await revokeGrant();
       expect(events).toHaveLength(1);
 
       // The device's own signed revocation can still be stored afterwards.

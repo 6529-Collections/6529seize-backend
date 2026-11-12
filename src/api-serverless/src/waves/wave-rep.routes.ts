@@ -1,4 +1,5 @@
 import { Request, Response } from 'express';
+import { optionalQueryString } from '@/api/query-values';
 import * as Joi from 'joi';
 import { REP_CATEGORY_PATTERN } from '@/entities/IAbusivenessDetectionResult';
 import { RateMatter } from '@/entities/IRating';
@@ -27,7 +28,10 @@ import { ApiWaveRepOverview } from '@/api/generated/models/ApiWaveRepOverview';
 import { ApiWaveRepRating } from '@/api/generated/models/ApiWaveRepRating';
 import { identityFetcher } from '@/api/identities/identity.fetcher';
 import { getValidatedByJoiOrThrow } from '@/api/validation';
-import { assertWaveAndParentVisibleOrThrow } from '@/api/waves/wave-access.helpers';
+import {
+  assertWaveAndParentVisibleOrThrow,
+  getGroupsUserIsEligibleForReadContext
+} from '@/api/waves/wave-access.helpers';
 import { waveRepOverviewApiService } from '@/api/waves/wave-rep-overview.api.service';
 import {
   waveScoreService,
@@ -228,7 +232,8 @@ router.get(
     const timer = Timer.getFromRequest(req);
     const authenticationContext = await getAuthenticationContext(req, timer);
     await assertWaveVisible(req.params.id, { authenticationContext, timer });
-    const fromIdentity = req.query.from_identity?.trim() || null;
+    const fromIdentity =
+      optionalQueryString(req.query, 'from_identity')?.trim() || null;
     const raterProfileId = fromIdentity
       ? await identityFetcher.getProfileIdByIdentityKey(
           { identityKey: fromIdentity },
@@ -243,21 +248,17 @@ router.get(
       rater_profile_id: raterProfileId,
       matter_target_id: req.params.id,
       matter: RateMatter.WAVE_REP,
-      category: req.query.category ?? null
+      category: optionalQueryString(req.query, 'category') ?? null
     });
     res.send({ rating });
   }
 );
 
 async function assertWaveVisible(waveId: string, ctx: RequestContext) {
-  const authenticatedProfileId =
-    ctx.authenticationContext?.getActingAsId() ?? null;
-  const eligibleGroups = authenticatedProfileId
-    ? await userGroupsService.getGroupsUserIsEligibleFor(
-        authenticatedProfileId,
-        ctx.timer
-      )
-    : [];
+  const eligibleGroups = await getGroupsUserIsEligibleForReadContext(
+    userGroupsService,
+    ctx
+  );
   const wave = await wavesApiDb.findWaveById(waveId, ctx.connection);
   if (!wave) {
     throw new NotFoundException(`Wave ${waveId} not found`);

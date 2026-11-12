@@ -4,6 +4,10 @@ import { WALLET_REGEX } from '@/constants';
 import { Time } from '../../../../time';
 import { ApiXTdhCreateGrant } from '../../generated/models/ApiXTdhCreateGrant';
 import { ApiXTdhGrantTargetChain } from '../../generated/models/ApiXTdhGrantTargetChain';
+import {
+  xTdhGrantLimits,
+  xTdhGrantTokensProblem
+} from '@/xtdh/xtdh-grant-limits';
 
 const targetTokensSchema = Joi.array()
   .items(
@@ -15,6 +19,11 @@ const targetTokensSchema = Joi.array()
   )
   .min(0)
   .custom((arr: any, helpers) => {
+    // Counted from the strings, before anything is parsed or expanded.
+    const limitProblem = xTdhGrantTokensProblem(arr, xTdhGrantLimits());
+    if (limitProblem) {
+      return helpers.message({ custom: limitProblem });
+    }
     const intervals = arr.map((tok: string) => {
       const parts = tok.split('-');
       const start = Number.parseInt(parts[0], 10);

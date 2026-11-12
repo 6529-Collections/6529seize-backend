@@ -4,7 +4,10 @@ import { Network } from '@/ethereum-rpc/ethereum-rpc-network';
 import { getEthereumRpcProvider } from '@/ethereum-rpc/ethereum-rpc-provider';
 import { Logger } from '@/logging';
 import { getRedisClient } from '@/redis';
-import { getWebAppSignatureDomains } from '../web-app-origins';
+import {
+  getWebAppSignatureDomains,
+  getWebAppSignatureDomainsForApiHost
+} from '../web-app-origins';
 
 const logger = Logger.get('STRUCTURED_WALLET_SIGNATURES');
 
@@ -99,6 +102,14 @@ interface VerifyStructuredWalletSignatureParams {
   expectedKind?: StructuredWalletSignatureKind;
   consumeNonce?: boolean;
   requireAllowedDomain?: boolean;
+  // With requireAllowedDomain: the request's API host, so only that API's
+  // first-party web domains are accepted (see isStructuredSignatureDomainAllowed).
+  domainScope?: StructuredSignatureDomainScope;
+}
+
+/** The API host whose first-party web domains a signature may name. */
+export interface StructuredSignatureDomainScope {
+  readonly apiHost: unknown;
 }
 
 interface VerifyWalletMessageSignatureParams {
@@ -302,7 +313,8 @@ export async function verifyStructuredWalletSignature({
   expectedPayloadHash,
   expectedKind,
   consumeNonce = true,
-  requireAllowedDomain = false
+  requireAllowedDomain = false,
+  domainScope
 }: VerifyStructuredWalletSignatureParams): Promise<string | null> {
   const parsed = parseStructuredWalletSignatureMessage(message);
   const expectedAddressLowerCase = expectedAddress.toLowerCase();
@@ -318,7 +330,8 @@ export async function verifyStructuredWalletSignature({
     (expectedKind && parsed.kind !== expectedKind) ||
     !isSignatureTimingValid(parsed) ||
     !isStructuredSignatureAudienceAllowed(parsed.audience) ||
-    (requireAllowedDomain && !isStructuredSignatureDomainAllowed(parsed.domain))
+    (requireAllowedDomain &&
+      !isStructuredSignatureDomainAllowed(parsed.domain, domainScope))
   ) {
     return null;
   }
@@ -508,7 +521,18 @@ export function isStructuredSignatureAudienceAllowed(
   ]).has(audience);
 }
 
-export function isStructuredSignatureDomainAllowed(domain: string): boolean {
+/**
+ * Whether a first-party web signature may name this domain. With a scope, the
+ * web-app domains are those of the request's API host only, so the
+ * production API refuses the staging web domain (and the reverse); without
+ * one, every built-in web-app domain. The built-in production domains and
+ * the AUTH_SIGNATURE_ALLOWED_DOMAINS / _SUFFIXES configuration apply either
+ * way.
+ */
+export function isStructuredSignatureDomainAllowed(
+  domain: string,
+  scope?: StructuredSignatureDomainScope
+): boolean {
   if (isLocalhostSignatureHostAllowed(domain)) {
     return true;
   }
@@ -517,10 +541,13 @@ export function isStructuredSignatureDomainAllowed(domain: string): boolean {
     process.env.NODE_ENV === 'production'
       ? []
       : LOCAL_SIGNATURE_ALLOWED_DOMAINS;
+  const webAppDomains = scope
+    ? getWebAppSignatureDomainsForApiHost(scope.apiHost)
+    : getWebAppSignatureDomains();
   if (
     new Set([
       ...DEFAULT_SIGNATURE_ALLOWED_DOMAINS,
-      ...getWebAppSignatureDomains(),
+      ...webAppDomains,
       ...localDomains,
       ...getConfiguredNormalizedDomains('AUTH_SIGNATURE_ALLOWED_DOMAINS')
     ]).has(domain)
@@ -635,10 +662,38 @@ function getProviderForChain(chainId: number): ethers.JsonRpcProvider | null {
 export async function consumeStructuredWalletSignatureNonce(
   parsed: ParsedStructuredWalletSignatureMessage
 ): Promise<boolean> {
-  const key = buildReplayKey(parsed);
-  const expiresAtMs = parsed.expirationTime.getTime();
+  return consumeReplayKey(
+    buildReplayKey(parsed),
+    parsed.expirationTime.getTime()
+  );
+}
+
+/**
+ * Marks a plain-text sign-in challenge (`GET /auth/nonce`) used. True the
+ * first time only; same store and fail-closed rule as structured nonces.
+ * `expiresAtMs` is when the challenge stops being accepted.
+ */
+export async function consumeLegacyTextChallengeNonce(
+  message: string,
+  expiresAtMs: number
+): Promise<boolean> {
+  const messageHash = createHash('sha256').update(message).digest('hex');
+  return consumeReplayKey(
+    ['wallet_signature_nonce_v2', 'legacy_text_login', messageHash].join(':'),
+    expiresAtMs
+  );
+}
+
+async function consumeReplayKey(
+  key: string,
+  expiresAtMs: number
+): Promise<boolean> {
   const remainingLifetimeMs = expiresAtMs - Date.now();
-  if (remainingLifetimeMs <= 0) {
+  // An expired (or unreadable, NaN) expiry is refused here, before anything
+  // is written. Past this check remainingLifetimeMs is a finite number above
+  // zero, so ttlSeconds below is a whole number of at least 1 and the Redis
+  // EX can never be zero or negative.
+  if (!Number.isFinite(remainingLifetimeMs) || remainingLifetimeMs <= 0) {
     return false;
   }
   const ttlSeconds = Math.ceil(remainingLifetimeMs / 1000);
@@ -666,7 +721,7 @@ export async function consumeStructuredWalletSignatureNonce(
   }
 }
 
-function canUseLocalNonceReplayFallback(): boolean {
+export function canUseLocalNonceReplayFallback(): boolean {
   return process.env.NODE_ENV === 'local' || process.env.NODE_ENV === 'test';
 }
 

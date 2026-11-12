@@ -1,4 +1,6 @@
+import { afterCommit } from '@/db/after-commit';
 import {
+  countsTowardDeviceLimit,
   E2eeServiceDeps,
   enforceE2eeRateLimit,
   filterByE2eeRateLimit,
@@ -29,6 +31,7 @@ import { ApiE2eeUploadKeyPackagesRequest } from '@/api/generated/models/ApiE2eeU
 import {
   E2EE_CIPHERSUITE,
   E2EE_DEVICE_LISTING_WINDOW_MS,
+  E2EE_DEVICE_LIMIT_IDLE_WINDOW_MS,
   E2EE_MAX_ACTIVE_DEVICES,
   E2EE_MAX_DEVICE_GROUPS,
   E2EE_MAX_KEY_PACKAGE_BYTES,
@@ -78,6 +81,11 @@ import {
   recoversToAppGrantWallet
 } from '@/api/device-signing/app-device-grant';
 import { computeDeviceGrantId } from '@/api/device-signing/device-grant-message';
+import {
+  checkGrantOrigin,
+  GrantRegistrationRequest,
+  toGrantRegistrationRecord
+} from '@/api/device-signing/grant-origins';
 import { parseSiweWebAuthMessage } from '@/api/wallet-signatures/siwe-wallet-auth';
 import { Logger } from '@/logging';
 import { ConnectionWrapper } from '@/sql-executor';
@@ -195,9 +203,13 @@ export class E2eeDevicesService {
     const statuses = await this.getKeyPackageStatuses(
       active.map((device) => device.device_key)
     );
+    const nowMs = this.deps.now();
     return {
       profile_id: callerProfileId,
-      devices: devices.map(toApiE2eeDevice),
+      devices: devices.map((device) => ({
+        ...toApiE2eeDevice(device),
+        counts_toward_limit: countsTowardDeviceLimit(device, nowMs)
+      })),
       key_packages: statuses,
       max_devices: E2EE_MAX_ACTIVE_DEVICES,
       attachments_enabled: this.deps.attachmentsEnabled()
@@ -223,6 +235,25 @@ export class E2eeDevicesService {
             ? null
             : Number(row.last_resort_expires_at)
       };
+    });
+  }
+
+  async acknowledgeDeviceNotice(
+    callerProfileId: string,
+    deviceKey: string
+  ): Promise<void> {
+    await this.db.executeNativeQueriesInTransaction(async (connection) => {
+      const device = await this.db.lockDevice(deviceKey, connection);
+      if (
+        device?.profile_id !== callerProfileId ||
+        !isActiveDevice(device, nowSeconds(this.deps)) ||
+        device.grant_message !== null
+      ) {
+        throw e2eeErrors.notYourDevice();
+      }
+      if (device.notice_pending) {
+        await this.db.acknowledgeDeviceNotice(deviceKey, connection);
+      }
     });
   }
 
@@ -303,7 +334,8 @@ export class E2eeDevicesService {
 
   private async verifyRegistration(
     callerProfileId: string,
-    request: ApiE2eeRegisterDeviceRequest
+    request: ApiE2eeRegisterDeviceRequest,
+    registration: GrantRegistrationRequest | null
   ) {
     const grant = normalizeE2eeDeviceGrant({
       ...request.grant
@@ -318,6 +350,13 @@ export class E2eeDevicesService {
     });
     if (!verification.ok) throw e2eeErrors.badGrant(verification.reason);
     await this.requireWalletOfCaller(callerProfileId, grant.wallet);
+    const originCheck = checkGrantOrigin({
+      route: 'e2ee_devices',
+      origin: grant.origin,
+      grantId: verification.grantId,
+      request: registration
+    });
+    if (originCheck.refused) throw e2eeErrors.badGrant('unrecognized_origin');
     return {
       grant,
       grantId: verification.grantId,
@@ -403,28 +442,38 @@ export class E2eeDevicesService {
 
   async registerDevice(
     callerProfileId: string,
-    request: ApiE2eeRegisterDeviceRequest
+    request: ApiE2eeRegisterDeviceRequest,
+    registration: GrantRegistrationRequest | null = null
   ): Promise<ApiE2eeDevice> {
-    const verified = await this.verifyRegistration(callerProfileId, request);
-    return this.storeDevice(callerProfileId, verified, request);
+    const verified = await this.verifyRegistration(
+      callerProfileId,
+      request,
+      registration
+    );
+    return this.storeDevice(callerProfileId, verified, request, registration);
   }
 
-  /** NC8: registration through a combined sign-in grant, no new signature. */
+  /**
+   * NC8: registration through a combined sign-in grant, no new signature.
+   * The stored grant's origin was checked when it was stored.
+   */
   async registerLoginGrantDevice(
     callerProfileId: string,
-    request: ApiE2eeRegisterLoginGrantDeviceRequest
+    request: ApiE2eeRegisterLoginGrantDeviceRequest,
+    registration: GrantRegistrationRequest | null = null
   ): Promise<ApiE2eeDevice> {
     const verified = await this.verifyLoginGrantRegistration(
       callerProfileId,
       request
     );
-    return this.storeDevice(callerProfileId, verified, request);
+    return this.storeDevice(callerProfileId, verified, request, registration);
   }
 
   private async storeDevice(
     callerProfileId: string,
     verified: VerifiedDeviceGrant,
-    request: { readonly label?: string; readonly platform: unknown }
+    request: { readonly label?: string; readonly platform: unknown },
+    registration: GrantRegistrationRequest | null
   ): Promise<ApiE2eeDevice> {
     const { grant } = verified;
     const now = this.deps.now();
@@ -448,7 +497,8 @@ export class E2eeDevicesService {
       grant_message: verified.grantMessage,
       label: sanitizeE2eeDeviceLabel(request.label),
       platform: String(request.platform),
-      updated_at: now
+      updated_at: now,
+      ...toGrantRegistrationRecord(registration)
     };
     const device = await this.db.executeNativeQueriesInTransaction(
       async (connection) => {
@@ -475,14 +525,17 @@ export class E2eeDevicesService {
           Number(existing.grant_version ?? 1) === grantVersion;
         // Counted per grant version: while v1 grants are honoured, a profile
         // at the limit can still enroll its devices on v2 before the old
-        // devices expire or are revoked.
+        // devices expire or are revoked. Only devices seen recently count, so
+        // devices that are no longer used (cleared browser data, a lost
+        // phone) do not keep a profile at the limit until they expire.
         if (
           !keepsSlot &&
           (await this.db.countActiveDevices(
             callerProfileId,
             atSeconds,
             connection,
-            grantVersion
+            grantVersion,
+            now - E2EE_DEVICE_LIMIT_IDLE_WINDOW_MS
           )) >= E2EE_MAX_ACTIVE_DEVICES
         ) {
           throw e2eeErrors.deviceLimit(E2EE_MAX_ACTIVE_DEVICES);
@@ -653,34 +706,46 @@ export class E2eeDevicesService {
    * members see an unverified revocation (D109 2.4) until the device's own
    * signed revocation or expiry. Idempotent.
    */
-  async revokeDeviceOfLoginGrant(grantId: string): Promise<void> {
-    const device = await this.db.getUnrevokedDeviceOfLoginGrant(grantId);
+  async revokeDeviceOfLoginGrant(
+    grantId: string,
+    connection?: ConnectionWrapper<unknown>
+  ): Promise<void> {
+    if (!connection) {
+      return this.db.executeNativeQueriesInTransaction((tx) =>
+        this.revokeDeviceOfLoginGrant(grantId, tx)
+      );
+    }
+    const device = await this.db.getUnrevokedDeviceOfLoginGrant(
+      grantId,
+      connection
+    );
     if (!device) return;
     const deviceKey = device.device_key;
+    const locked = await this.db.lockDevice(deviceKey, connection);
+    if (
+      locked?.revoked_at !== null ||
+      locked.grant_id !== grantId ||
+      locked.grant_message === null
+    ) {
+      return;
+    }
     const recipients = await this.db.getProfilesSharingRosters(
       { deviceKey },
-      E2EE_MAX_DEVICE_GROUPS
+      E2EE_MAX_DEVICE_GROUPS,
+      connection
     );
     const now = this.deps.now();
-    const revokedNow = await this.db.executeNativeQueriesInTransaction(
-      async (connection) => {
-        const locked = await this.db.lockDevice(deviceKey, connection);
-        if (locked?.revoked_at !== null || locked.grant_id !== grantId) {
-          return false;
-        }
-        await this.db.markDeviceRevokedByGrant(
-          { deviceKey, revokedAtMs: now },
-          connection
-        );
-        await this.stopDelivery(deviceKey, now, connection);
-        return true;
-      }
+    await this.db.markDeviceRevokedByGrant(
+      { deviceKey, revokedAtMs: now },
+      connection
     );
-    if (!revokedNow) return;
-    await this.deps.events.deviceRevoked([device.profile_id, ...recipients], {
-      profile_id: device.profile_id,
-      device_key: deviceKey
-    });
+    await this.stopDelivery(deviceKey, now, connection);
+    await afterCommit(connection, () =>
+      this.deps.events.deviceRevoked([locked.profile_id, ...recipients], {
+        profile_id: locked.profile_id,
+        device_key: deviceKey
+      })
+    );
   }
 
   /** The upload's rows, each with the suite its KeyPackage bytes name. */

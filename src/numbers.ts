@@ -48,9 +48,30 @@ export class Numbers {
     return result;
   }
 
-  public range(start: number, end: number): number[] {
-    return Array.from({ length: end - start + 1 }, (_, i) => i + start);
+  /**
+   * Integers from start to end inclusive. Throws a RangeError instead of
+   * expanding a range of more than `maxLength` values or one whose ends are
+   * not safe integers (which cannot be counted exactly).
+   */
+  public range(
+    start: number,
+    end: number,
+    maxLength: number = Numbers.MAX_RANGE_LENGTH
+  ): number[] {
+    if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end)) {
+      throw new RangeError('Range ends must be safe integers');
+    }
+    const length = end - start + 1;
+    if (length > maxLength) {
+      throw new RangeError(
+        `Range of ${length} values exceeds the limit of ${maxLength}`
+      );
+    }
+    return Array.from({ length: Math.max(0, length) }, (_, i) => i + start);
   }
+
+  /** The most values `range` expands unless a caller sets its own limit. */
+  public static readonly MAX_RANGE_LENGTH = 1_000_000;
 
   public parseNumberOrNull(value: any): number | null {
     if (typeof value === 'number') {

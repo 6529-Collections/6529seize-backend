@@ -46,6 +46,7 @@ export interface WsMessage<MESSAGE_DATA> {
 }
 
 export const DROP_UPDATE_REASON_POLL_RESPONSE = 'POLL_RESPONSE';
+export const DROP_UPDATE_REASON_REPLY_COLLAPSE = 'REPLY_COLLAPSE';
 export const DROP_UPDATE_REASON_MEDIA_STATUS = 'MEDIA_STATUS';
 
 /**
@@ -121,6 +122,9 @@ export interface DropUpdateRefMessageData {
   readonly author_id: string;
   readonly serial_no: number;
   readonly update_type: DropUpdateRefType;
+  readonly collapsed_reply_thread_id?: string;
+  readonly collapse_replies?: boolean;
+  readonly reply_placement_has_replies?: boolean;
   readonly reason?: string;
 }
 

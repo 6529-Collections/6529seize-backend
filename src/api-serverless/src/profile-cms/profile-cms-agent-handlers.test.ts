@@ -107,6 +107,41 @@ describe('CMS agent HTTP boundaries', () => {
     }
   );
 
+  it.each([
+    ['a token without session claims', {}],
+    [
+      'a token with session claims',
+      {
+        clientType: 'web',
+        binding: 'siwe',
+        sessionId: '7d0f5b5e-2c1c-4c2e-9d4b-0b3a1a2c3d4e'
+      }
+    ]
+  ])('lets an owner with %s issue a grant', async (_, claims) => {
+    mockService.issue.mockResolvedValue({ id: 'grant' });
+    const req = {
+      ...request(),
+      params: { id: 'draft' },
+      user: { wallet: `0x${'1'.repeat(40)}`, role: null, exp: 1, ...claims },
+      body: {
+        label: 'Agent',
+        expected_package_hash: `sha256:${'a'.repeat(64)}`,
+        expires_in_seconds: 3600
+      }
+    };
+
+    await handleCreateProfileCmsAgentGrant(
+      req as unknown as CreateProfileCmsAgentGrantRequest
+    );
+
+    expect(mockService.issue).toHaveBeenCalledWith(
+      'draft',
+      expect.anything(),
+      { wallet: `0x${'1'.repeat(40)}`, role: null },
+      expect.anything()
+    );
+  });
+
   it('classifies all private owner and agent routes without changing regular CMS routes', () => {
     [
       '/api/profile-cms/agent-session/draft',

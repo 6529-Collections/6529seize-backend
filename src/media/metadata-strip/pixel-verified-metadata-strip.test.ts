@@ -1,6 +1,10 @@
 import Sharp from 'sharp';
 import * as lossless from './lossless-metadata-strip';
-import { stripMetadataWithPixelCheck } from './pixel-verified-metadata-strip';
+import {
+  canVerifyDecodedPixels,
+  PIXEL_CHECK_LIMITS,
+  stripMetadataWithPixelCheck
+} from './pixel-verified-metadata-strip';
 import {
   identifyingGif,
   identifyingJpeg,
@@ -11,6 +15,72 @@ import {
 
 describe('stripMetadataWithPixelCheck', () => {
   afterEach(() => jest.restoreAllMocks());
+
+  it('admits a 76.5 MP JPEG at admission while bounding what the check decodes', () => {
+    const jpeg = {
+      format: 'jpeg' as const,
+      width: 8500,
+      height: 9000,
+      depth: 'uchar' as const,
+      isProgressive: false
+    };
+    expect(canVerifyDecodedPixels(jpeg)).toBe(true);
+    // The 268 MP (16384 x 16384) decoded-pixel ceiling.
+    expect(
+      canVerifyDecodedPixels({ ...jpeg, width: 16384, height: 16384 })
+    ).toBe(true);
+    expect(
+      canVerifyDecodedPixels({ ...jpeg, width: 17000, height: 18000 })
+    ).toBe(false);
+    // Whole-frame decoders stop at 64 MP; so does an unknown format.
+    expect(canVerifyDecodedPixels({ ...jpeg, isProgressive: true })).toBe(
+      false
+    );
+    expect(canVerifyDecodedPixels({ ...jpeg, format: undefined })).toBe(false);
+    // PNG keeps the upload limits: 100 MP at 8 bits, 64 MP at 16 bits.
+    expect(canVerifyDecodedPixels({ ...jpeg, format: 'png' })).toBe(true);
+    expect(
+      canVerifyDecodedPixels({ ...jpeg, format: 'png', depth: 'ushort' })
+    ).toBe(false);
+    expect(canVerifyDecodedPixels({ ...jpeg, width: 0 })).toBe(false);
+  });
+
+  it('counts every GIF or WebP page at admission, from either load', () => {
+    const frame = { format: 'gif' as const, width: 500, height: 500 };
+    // 1,000 frames (250 MP) fit the ceiling; 1,100 (275 MP) do not.
+    expect(canVerifyDecodedPixels({ ...frame, pages: 1000 })).toBe(true);
+    expect(canVerifyDecodedPixels({ ...frame, pages: 1100 })).toBe(false);
+    expect(
+      canVerifyDecodedPixels({
+        ...frame,
+        height: 500 * 1100,
+        pageHeight: 500,
+        pages: 1100
+      })
+    ).toBe(false);
+    expect(
+      canVerifyDecodedPixels({ ...frame, format: 'webp', pages: 1100 })
+    ).toBe(false);
+  });
+
+  it('rejects at admission what the check itself would not verify', async () => {
+    const limits = { maxWholeFramePixels: 400 };
+    const { jpeg } = await identifyingJpeg();
+    const metadata = await Sharp(jpeg).metadata();
+    expect(
+      canVerifyDecodedPixels(metadata, {
+        ...PIXEL_CHECK_LIMITS,
+        ...limits
+      })
+    ).toBe(false);
+    await expect(
+      stripMetadataWithPixelCheck(jpeg, 'jpeg', { limits })
+    ).resolves.toEqual({
+      kind: 'unverified',
+      reason: 'Image frame is too large to decode for the pixel check'
+    });
+    expect(canVerifyDecodedPixels(metadata)).toBe(true);
+  });
 
   it.each<[lossless.LosslessStripFormat, () => Promise<Buffer>]>([
     ['jpeg', async () => (await identifyingJpeg()).jpeg],

@@ -37,6 +37,22 @@ import {
 } from '@/sql-executor';
 
 export type E2eeDeviceRow = E2eeDeviceEntity;
+
+/** How a device was registered; written on every registration or renewal. */
+type E2eeDeviceRegistrationFields = Pick<
+  E2eeDeviceEntity,
+  | 'registered_client_type'
+  | 'registered_binding'
+  | 'registered_request_origin'
+  | 'registered_session_id'
+>;
+
+const NO_REGISTRATION_RECORD: Required<E2eeDeviceRegistrationFields> = {
+  registered_client_type: null,
+  registered_binding: null,
+  registered_request_origin: null,
+  registered_session_id: null
+};
 /** How many active devices of a profile share one suite description. */
 export type E2eeDeviceSuiteCountRow = Pick<
   E2eeDeviceEntity,
@@ -318,21 +334,29 @@ export class E2eeDb extends LazyDbAccessCompatibleService {
   /**
    * Active devices of a profile; with `grantVersion`, only devices whose
    * grant has that version (v1 and v2 devices are limited separately while
-   * both are honoured).
+   * both are honoured); with `seenSinceMs`, only devices last seen (or, for
+   * rows without a last-seen time, created) at or after it.
    */
   async countActiveDevices(
     profileId: string,
     nowSeconds: number,
     connection: Conn,
-    grantVersion?: number
+    grantVersion?: number,
+    seenSinceMs?: number
   ): Promise<number> {
     const row = await this.one<{ cnt: number }>(
       `select count(*) as cnt from ${E2EE_DEVICES_TABLE}
        where profile_id = :profileId
          and revoked_at is null
          and expires_at_seconds > :nowSeconds
-         ${grantVersion === undefined ? '' : 'and grant_version = :grantVersion'}`,
-      { profileId, nowSeconds, grantVersion: grantVersion ?? null },
+         ${grantVersion === undefined ? '' : 'and grant_version = :grantVersion'}
+         ${seenSinceMs === undefined ? '' : 'and coalesce(last_seen_at, created_at) >= :seenSinceMs'}`,
+      {
+        profileId,
+        nowSeconds,
+        grantVersion: grantVersion ?? null,
+        seenSinceMs: seenSinceMs ?? null
+      },
       connection
     );
     return Number(row?.cnt ?? 0);
@@ -355,17 +379,35 @@ export class E2eeDb extends LazyDbAccessCompatibleService {
         expires_at_seconds, origin, grant_id, wallet_signature, verified_via,
         label, platform, created_at, updated_at, last_seen_at, revoked_at,
         revoker_device_key, revocation_signed_at_seconds, revocation_signature,
-        grant_message
+        grant_message, registered_client_type, registered_binding,
+        registered_request_origin, registered_session_id, notice_pending
       ) values (
         :device_key, :profile_id, :wallet, :ciphersuite, :grant_version,
         :ciphersuites, :issued_at_seconds,
         :expires_at_seconds, :origin, :grant_id, :wallet_signature,
         :verified_via, :label, :platform, :created_at, :updated_at,
-        :last_seen_at, null, null, null, null, :grant_message
+        :last_seen_at, null, null, null, null, :grant_message,
+        :registered_client_type, :registered_binding,
+        :registered_request_origin, :registered_session_id, :grant_message is null
       )`,
-      { ...device },
+      { ...NO_REGISTRATION_RECORD, ...device },
       connection
     );
+  }
+
+  async acknowledgeDeviceNotice(
+    deviceKey: string,
+    connection: Conn
+  ): Promise<void> {
+    const affectedRows = await this.write(
+      `update ${E2EE_DEVICES_TABLE} set notice_pending = false
+       where device_key = :deviceKey`,
+      { deviceKey },
+      connection
+    );
+    if (affectedRows !== 1) {
+      throw new Error('Could not persist encrypted DM device acknowledgment');
+    }
   }
 
   async renewDevice(
@@ -385,7 +427,8 @@ export class E2eeDb extends LazyDbAccessCompatibleService {
       | 'platform'
       | 'updated_at'
       | 'grant_message'
-    >,
+    > &
+      E2eeDeviceRegistrationFields,
     connection: Conn
   ): Promise<void> {
     await this.write(
@@ -397,9 +440,13 @@ export class E2eeDb extends LazyDbAccessCompatibleService {
         grant_id = :grant_id, wallet_signature = :wallet_signature,
         grant_message = :grant_message,
         verified_via = :verified_via, platform = :platform,
-        updated_at = :updated_at, last_seen_at = :updated_at
+        updated_at = :updated_at, last_seen_at = :updated_at,
+        registered_client_type = :registered_client_type,
+        registered_binding = :registered_binding,
+        registered_request_origin = :registered_request_origin,
+        registered_session_id = :registered_session_id
        where device_key = :device_key and revoked_at is null`,
-      { ...device },
+      { ...NO_REGISTRATION_RECORD, ...device },
       connection
     );
   }

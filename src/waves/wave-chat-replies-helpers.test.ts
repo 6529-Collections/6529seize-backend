@@ -1,11 +1,16 @@
 import fc from 'fast-check';
 import {
   canDeleteRepliesInWave,
+  canProfileReplyInWaveChat,
   canReplyInWaveChat,
   isCollapsedWaveReply,
   isWaveChatGroupMember,
   isWaveMainFeedWithoutReplies
 } from './wave-chat-replies.helpers';
+import {
+  WAVE_CHAT_REPLY_GROUP_ID,
+  WAVE_CHAT_REPLY_TRUTH_TABLE
+} from './wave-chat-reply-truth-table.fixture';
 
 describe('wave chat replies helpers', () => {
   describe('canReplyInWaveChat', () => {
@@ -91,6 +96,41 @@ describe('wave chat replies helpers', () => {
         )
       );
     });
+  });
+
+  describe('wave chat reply truth table', () => {
+    it.each(WAVE_CHAT_REPLY_TRUTH_TABLE)(
+      'canReplyInWaveChat matches %o',
+      ({ inChatGroup, canReply, ...wave }) => {
+        expect(
+          canReplyInWaveChat({
+            wave,
+            groupIdsUserIsEligibleFor: inChatGroup
+              ? [WAVE_CHAT_REPLY_GROUP_ID]
+              : []
+          })
+        ).toBe(canReply);
+      }
+    );
+
+    it.each(WAVE_CHAT_REPLY_TRUTH_TABLE)(
+      'canProfileReplyInWaveChat matches %o',
+      async ({ inChatGroup, canReply, ...wave }) => {
+        const findEligibleGroupIds = jest.fn(async (groupIds: string[]) =>
+          inChatGroup ? groupIds : []
+        );
+        await expect(
+          canProfileReplyInWaveChat({ wave, findEligibleGroupIds })
+        ).resolves.toBe(canReply);
+        const membershipDecides =
+          wave.chat_enabled &&
+          !wave.chat_replies_open &&
+          wave.chat_group_id !== null;
+        expect(findEligibleGroupIds).toHaveBeenCalledTimes(
+          membershipDecides ? 1 : 0
+        );
+      }
+    );
   });
 
   describe('isWaveMainFeedWithoutReplies', () => {

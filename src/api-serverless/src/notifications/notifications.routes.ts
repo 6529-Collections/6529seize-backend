@@ -16,6 +16,7 @@ import { giveReadReplicaTimeToCatchUp } from '../api-helpers';
 import { IdentityNotificationCause } from '../../../entities/IIdentityNotification';
 import { Timer } from '../../../time';
 import { numbers } from '../../../numbers';
+import { rejectProxySession } from '@/api/proxy-session-guard';
 
 const router = asyncRouter();
 
@@ -73,9 +74,10 @@ router.get(
         `You need to create a profile before you can access notifications`
       );
     }
-    if (authenticationContext.isAuthenticatedAsProxy()) {
-      throw new ForbiddenException(`Proxies cannot access notifications`);
-    }
+    rejectProxySession(
+      authenticationContext,
+      `Proxies cannot access notifications`
+    );
     const request = getValidatedByJoiOrThrow(
       req.query,
       Joi.object<{
@@ -126,9 +128,10 @@ router.post(
         `You need to create a profile before you can access notifications`
       );
     }
-    if (authenticationContext.isAuthenticatedAsProxy()) {
-      throw new ForbiddenException(`Proxies cannot access notifications`);
-    }
+    rejectProxySession(
+      authenticationContext,
+      `Proxies cannot access notifications`
+    );
     await notificationsApiService.markAllNotificationsAsRead(
       authenticationContext.getActingAsId()!,
       { timer }
@@ -150,9 +153,10 @@ router.post(
         `You need to create a profile before you can access notifications`
       );
     }
-    if (authenticationContext.isAuthenticatedAsProxy()) {
-      throw new ForbiddenException(`Proxies cannot access notifications`);
-    }
+    rejectProxySession(
+      authenticationContext,
+      `Proxies cannot access notifications`
+    );
     const id = req.params.id;
     if (numbers.parseIntOrNull(id) !== null) {
       await notificationsApiService.markNotificationAsRead({
@@ -181,9 +185,10 @@ router.post(
         `You need to create a profile before you can access notifications`
       );
     }
-    if (authenticationContext.isAuthenticatedAsProxy()) {
-      throw new ForbiddenException(`Proxies cannot access notifications`);
-    }
+    rejectProxySession(
+      authenticationContext,
+      `Proxies cannot access notifications`
+    );
     const id = req.params.id;
     if (numbers.parseIntOrNull(id) !== null) {
       await notificationsApiService.markNotificationAsUnread({
@@ -211,9 +216,10 @@ router.post(
         `You need to create a profile before you can access notifications`
       );
     }
-    if (authenticationContext.isAuthenticatedAsProxy()) {
-      throw new ForbiddenException(`Proxies cannot access notifications`);
-    }
+    rejectProxySession(
+      authenticationContext,
+      `Proxies cannot access notifications`
+    );
     const waveId = req.params.wave_id;
     const request = getValidatedByJoiOrThrow(
       req.body ?? {},
@@ -244,6 +250,10 @@ router.get(
         `You need to create a profile before you can access notifications`
       );
     }
+    rejectProxySession(
+      authenticationContext,
+      `Proxies cannot manage wave notification subscriptions`
+    );
     const waveId = req.params.wave_id;
     if (!waveId) {
       throw new BadRequestException(`Wave ID is required`);
@@ -275,6 +285,10 @@ router.post(
         `You need to create a profile before you can access notifications`
       );
     }
+    rejectProxySession(
+      authenticationContext,
+      `Proxies cannot manage wave notification subscriptions`
+    );
     const waveId = req.params.wave_id;
     if (!waveId) {
       throw new BadRequestException(`Wave ID is required`);
@@ -306,6 +320,10 @@ router.delete(
         `You need to create a profile before you can access notifications`
       );
     }
+    rejectProxySession(
+      authenticationContext,
+      `Proxies cannot manage wave notification subscriptions`
+    );
     const waveId = req.params.wave_id;
     if (!waveId) {
       throw new BadRequestException(`Wave ID is required`);

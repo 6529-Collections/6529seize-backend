@@ -7,8 +7,12 @@ import {
   isMultiWalletRemovalQuestion,
   isMultiWalletReplacementQuestion,
   isMultiWalletSetupQuestion,
-  StaticHelpBotKnowledgeSource
+  StaticHelpBotKnowledgeSource,
+  fetchHelpIndexWithTimeout,
+  HelpBotIndexTooLargeError,
+  isAllowedHelpIndexPath
 } from './help-bot.knowledge';
+import { HELP_BOT_INDEX_MAX_BYTES } from './help-bot.config';
 
 function response(body: unknown, ok = true, status = 200) {
   return {
@@ -92,6 +96,58 @@ describe('FrontendHelpBotKnowledgeSource', () => {
     expect(match?.record.suppressSourceLinks).toBe(true);
     expect(match?.record.relatedPaths).toEqual(['/network/definitions']);
     expect(match?.record.sourceRefs).toEqual(['ops/help/help-index.json']);
+  });
+
+  it('keeps only 6529.io or root-relative help index paths', async () => {
+    const record = (id: string, canonicalPath: string) => ({
+      id,
+      title: `Topic ${id}`,
+      canonical_path: canonicalPath,
+      aliases: [`topic ${id}`],
+      facts: [`Fact ${id}.`],
+      related_paths: [
+        '/network/definitions',
+        'https://6529.io/network/tdh',
+        'https://example.com/elsewhere',
+        '//example.com/protocol-relative',
+        'javascript:alert(1)'
+      ]
+    });
+    const source = new FrontendHelpBotKnowledgeSource(async () =>
+      response({
+        records: [
+          record('a', '/network/tdh'),
+          record('b', 'https://6529.io/waves'),
+          record('c', 'https://example.com/elsewhere'),
+          record('d', '//example.com/protocol-relative'),
+          record('e', 'https://6529.io.example.com/x')
+        ]
+      })
+    );
+
+    const matchedIds = await Promise.all(
+      ['a', 'b', 'c', 'd', 'e'].map(
+        async (id) => (await source.findMatch(`topic ${id}`))?.record.id ?? null
+      )
+    );
+    expect(matchedIds).toEqual(['a', 'b', null, null, null]);
+    const recordA = (await source.findMatch('topic a'))?.record;
+    expect(recordA?.relatedPaths).toEqual([
+      '/network/definitions',
+      'https://6529.io/network/tdh'
+    ]);
+  });
+
+  it('rejects a help index body above the size cap', async () => {
+    const source = new FrontendHelpBotKnowledgeSource(async () => ({
+      ok: true,
+      status: 200,
+      text: async () => ' '.repeat(HELP_BOT_INDEX_MAX_BYTES + 1)
+    }));
+
+    await expect(source.findMatch('what is tdh?')).rejects.toBeInstanceOf(
+      HelpBotKnowledgeUnavailableError
+    );
   });
 
   it('returns bounded sorted matches from frontend help index records', async () => {
@@ -1099,4 +1155,151 @@ describe('StaticHelpBotKnowledgeSource', () => {
       );
     }
   );
+});
+
+describe('isAllowedHelpIndexPath', () => {
+  it.each([
+    ['/network/tdh', true],
+    ['https://6529.io/network/tdh', true],
+    ['https://staging.6529.io/x', false],
+    ['http://6529.io/network/tdh', false],
+    ['https://example.com/x', false],
+    ['https://6529.io.example.com/x', false],
+    ['https://user@6529.io/x', false],
+    ['//example.com/x', false],
+    [String.raw`/\example.com`, false],
+    ['network/tdh', false],
+    ['javascript:alert(1)', false]
+  ])('classifies %s as %s', (path, allowed) => {
+    expect(isAllowedHelpIndexPath(path)).toBe(allowed);
+  });
+});
+
+describe('fetchHelpIndexWithTimeout', () => {
+  function streamResponse(
+    chunks: readonly string[],
+    headers: Record<string, string> = {}
+  ): Response {
+    const encoder = new TextEncoder();
+    return new Response(
+      new ReadableStream<Uint8Array>({
+        start(controller) {
+          for (const chunk of chunks) {
+            controller.enqueue(encoder.encode(chunk));
+          }
+          controller.close();
+        }
+      }),
+      { status: 200, headers }
+    );
+  }
+
+  it('reads the body within the size cap', async () => {
+    const result = await fetchHelpIndexWithTimeout(
+      'https://6529.io/help-index.json',
+      1000,
+      100,
+      async () => streamResponse(['{"records":', '[]}'])
+    );
+    await expect(result.text()).resolves.toBe('{"records":[]}');
+  });
+
+  it('rejects a body that grows past the size cap', async () => {
+    await expect(
+      fetchHelpIndexWithTimeout(
+        'https://6529.io/help-index.json',
+        1000,
+        10,
+        async () => streamResponse(['0123456789', 'abc'])
+      )
+    ).rejects.toBeInstanceOf(HelpBotIndexTooLargeError);
+  });
+
+  it('rejects a declared content length above the size cap', async () => {
+    await expect(
+      fetchHelpIndexWithTimeout(
+        'https://6529.io/help-index.json',
+        1000,
+        10,
+        async () => streamResponse(['{}'], { 'content-length': '11' })
+      )
+    ).rejects.toBeInstanceOf(HelpBotIndexTooLargeError);
+  });
+
+  it('times out when the body never finishes', async () => {
+    const stalled = new Response(
+      new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode('{"records":'));
+        }
+      }),
+      { status: 200 }
+    );
+    await expect(
+      fetchHelpIndexWithTimeout(
+        'https://6529.io/help-index.json',
+        20,
+        100,
+        async () => stalled
+      )
+    ).rejects.toThrow('exceeded 20ms');
+  });
+
+  it('leaves no unhandled rejection when the fetch fails after the timeout', async () => {
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown) => unhandled.push(reason);
+    process.on('unhandledRejection', onUnhandled);
+    try {
+      let rejectLate: (reason: Error) => void = () => undefined;
+      const lateFetch = new Promise<Response>((_, reject) => {
+        rejectLate = reject;
+      });
+      await expect(
+        fetchHelpIndexWithTimeout(
+          'https://6529.io/help-index.json',
+          10,
+          100,
+          async () => lateFetch
+        )
+      ).rejects.toThrow('exceeded 10ms');
+      rejectLate(new Error('aborted'));
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(unhandled).toEqual([]);
+    } finally {
+      process.off('unhandledRejection', onUnhandled);
+    }
+  });
+
+  it('caps the body on the default fetch path of the frontend source', async () => {
+    // The body passes the cap and then never ends: only a cap applied while
+    // reading can end this request before the fetch timeout.
+    const oversizedAndStalled = new Response(
+      new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new Uint8Array(HELP_BOT_INDEX_MAX_BYTES + 1));
+        }
+      }),
+      { status: 200 }
+    );
+    const fetchSpy = jest
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(oversizedAndStalled);
+    try {
+      const source = new FrontendHelpBotKnowledgeSource();
+      const error = await source.findMatch('what is tdh?').then(
+        () => null,
+        (e: unknown) => e
+      );
+      expect(error).toBeInstanceOf(HelpBotKnowledgeUnavailableError);
+      expect(
+        (error as HelpBotKnowledgeUnavailableError).originalError
+      ).toBeInstanceOf(HelpBotIndexTooLargeError);
+      expect(fetchSpy).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.objectContaining({ signal: expect.any(AbortSignal) })
+      );
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
 });

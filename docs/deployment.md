@@ -1,5 +1,38 @@
 # Deployment
 
+## IPFS infrastructure
+
+IPFS has a separate explicit-dispatch workflow, `Manage IPFS infrastructure`, and
+an [operations/recovery runbook](../ops/ipfs/README.md). Its directly maintained
+CloudFormation YAML templates are in `ops/ipfs/cloudformation/`; the controller
+submits those files without generating templates. It provisions isolated
+candidate servers and persistent storage, builds the pinned Kubo/S3 runtime,
+and verifies backup/restore before publication. It is not a Lambda service in
+`Deploy a service`. No IPFS deployment runs on merge or push. The existing
+production server, data bucket, DNS, and shared media distribution remain unchanged;
+production changes are disabled in its checked-in policy.
+
+`Adopt existing IPFS resources` is a separate manual workflow for an import-only
+production baseline. It audits the existing bucket, server, exclusively used
+security group and entire shared CDN against reviewed native-model fingerprints,
+prepares an exact four-resource IMPORT change set, then requires a separate execute
+dispatch with its ARN. Ownership, template equality and per-resource drift must
+pass. Its dedicated service role permits only configuration reads and ownership tags; adoption
+adds termination protection and a deny-all update stack policy. Runtime deployment
+stays disabled throughout adoption. Its separate import switch is temporarily
+enabled only for the authorized operation and reset after verification.
+It shares candidate-management concurrency and creates no separate IPFS environment.
+
+IPFS has one shared deployment target, `prod`; there is no separate IPFS staging
+environment or staging release phase. The workflow runs only from `main` through
+`ipfs-prod`. Local/CI recovery fixtures create no AWS environment. A future
+authorized production rollout must validate an unpublished replacement candidate
+before traffic handover. No backend Lambda or frontend redeploy is needed.
+Active-host updates are rejected. Adoption records ownership without reinstalling
+Kubo or changing traffic; runtime replacement still requires a separately reviewed,
+validated writer/traffic handover. The runbook distinguishes imported resources
+from referenced network, IAM, DNS and host configuration that remain unmanaged.
+
 Agents and developers deploy with ordinary merges and the repository's GitHub
 Actions workflows. Use the phase authorized by the user; a staging request does
 not authorize production.

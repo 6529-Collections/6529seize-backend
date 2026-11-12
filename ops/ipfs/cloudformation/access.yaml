@@ -1,0 +1,424 @@
+# IPFS access stack. Edit this CloudFormation template directly.
+AWSTemplateFormatVersion: '2010-09-09'
+Description: '6529 IPFS: isolated persistent storage or replaceable candidate infrastructure'
+Parameters:
+  Environment:
+    Type: String
+    AllowedValues:
+      - prod
+  GitHubOidcProviderArn:
+    Type: String
+    Description: Existing GitHub OIDC provider ARN
+  GitHubRepositorySubject:
+    Type: String
+    Default: repo:6529-Collections/6529seize-backend
+    AllowedPattern: repo:6529-Collections(@[0-9]+)?/6529seize-backend(@[0-9]+)?
+    Description: Repository subject prefix; supply immutable IDs exactly when enabled
+  HostedZoneId:
+    Type: String
+  DnsSuffix:
+    Type: String
+    AllowedPattern: '[a-z0-9.-]+'
+    Description: Dedicated candidate DNS suffix, never a shared production apex
+Resources:
+  RuntimeBoundary:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      ManagedPolicyName:
+        Fn::Sub: seize-ipfs-${Environment}-runtime-boundary
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Action:
+              - s3:ListBucket
+            Resource:
+              Fn::Sub: arn:${AWS::Partition}:s3:::seize-ipfs-${Environment}-storage-*
+          - Effect: Allow
+            Action:
+              - s3:GetObject
+              - s3:GetObjectVersion
+              - s3:PutObject
+            Resource:
+              Fn::Sub: arn:${AWS::Partition}:s3:::seize-ipfs-${Environment}-storage-*/*
+          - Effect: Allow
+            Action:
+              - ssm:DescribeAssociation
+              - ssm:GetDeployablePatchSnapshotForInstance
+              - ssm:GetDocument
+              - ssm:DescribeDocument
+              - ssm:GetManifest
+              - ssm:ListAssociations
+              - ssm:ListInstanceAssociations
+              - ssm:PutInventory
+              - ssm:PutComplianceItems
+              - ssm:PutConfigurePackageResult
+              - ssm:UpdateAssociationStatus
+              - ssm:UpdateInstanceAssociationStatus
+              - ssm:UpdateInstanceInformation
+              - ssmmessages:CreateControlChannel
+              - ssmmessages:CreateDataChannel
+              - ssmmessages:OpenControlChannel
+              - ssmmessages:OpenDataChannel
+              - ec2messages:AcknowledgeMessage
+              - ec2messages:DeleteMessage
+              - ec2messages:FailMessage
+              - ec2messages:GetEndpoint
+              - ec2messages:GetMessages
+              - ec2messages:SendReply
+            # Matches AmazonSSMManagedInstanceCore's agent API scope. The boundary
+            # grants nothing by itself; the instance still needs that managed policy.
+            # https://docs.aws.amazon.com/aws-managed-policy/latest/reference/AmazonSSMManagedInstanceCore.html
+            Resource: '*' # NOSONAR
+            Condition:
+              StringEquals:
+                aws:RequestedRegion:
+                  Ref: AWS::Region
+          - Effect: Allow
+            Action:
+              - route53:ListHostedZones
+            Resource: '*'
+          - Effect: Allow
+            Action:
+              - route53:GetChange
+            Resource:
+              Fn::Sub: arn:${AWS::Partition}:route53:::change/*
+          - Effect: Allow
+            Action:
+              - route53:ChangeResourceRecordSets
+            Resource:
+              Fn::Sub: arn:${AWS::Partition}:route53:::hostedzone/${HostedZoneId}
+            Condition:
+              ForAllValues:StringLike:
+                route53:ChangeResourceRecordSetsNormalizedRecordNames:
+                  - Ref: DnsSuffix
+                  - Fn::Sub: '*.${DnsSuffix}'
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+  CloudFormationRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName:
+        Fn::Sub: seize-ipfs-${Environment}-cloudformation
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: cloudformation.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: ipfs-infrastructure
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ec2:Describe*
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - ec2:RunInstances
+                  - ec2:CreateSecurityGroup
+                  - ec2:AllocateAddress
+                Resource:
+                  - Fn::Sub: arn:${AWS::Partition}:ec2:${AWS::Region}::image/*
+                  - Fn::Sub: arn:${AWS::Partition}:ec2:${AWS::Region}::snapshot/*
+                  - Fn::Sub: arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:instance/*
+                  - Fn::Sub: arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:volume/*
+                  - Fn::Sub: arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:network-interface/*
+                  - Fn::Sub: arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:security-group/*
+                  - Fn::Sub: arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:subnet/*
+                  - Fn::Sub: arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:vpc/*
+                  - Fn::Sub: arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:elastic-ip/*
+                Condition:
+                  StringEquals:
+                    aws:RequestedRegion:
+                      Ref: AWS::Region
+              - Effect: Allow
+                Action:
+                  - ec2:CreateTags
+                  - ec2:DeleteTags
+                  - ec2:ModifyInstanceAttribute
+                  - ec2:TerminateInstances
+                  - ec2:AuthorizeSecurityGroupIngress
+                  - ec2:RevokeSecurityGroupIngress
+                  - ec2:DeleteSecurityGroup
+                  - ec2:AuthorizeSecurityGroupEgress
+                  - ec2:RevokeSecurityGroupEgress
+                  - ec2:ReleaseAddress
+                  - ec2:AssociateAddress
+                  - ec2:DisassociateAddress
+                Resource:
+                  - Fn::Sub: arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:instance/*
+                  - Fn::Sub: arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:security-group/*
+                  - Fn::Sub: arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:elastic-ip/*
+                  - Fn::Sub: arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:network-interface/*
+                  - Fn::Sub: arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:volume/*
+                Condition:
+                  StringEquals:
+                    ec2:ResourceTag/Environment:
+                      Ref: Environment
+                    ec2:ResourceTag/Service: 6529-ipfs
+              - Effect: Allow
+                Action:
+                  - ec2:CreateTags
+                Resource:
+                  - Fn::Sub: arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:instance/*
+                  - Fn::Sub: arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:volume/*
+                  - Fn::Sub: arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:network-interface/*
+                  - Fn::Sub: arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:security-group/*
+                  - Fn::Sub: arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:elastic-ip/*
+                Condition:
+                  StringEquals:
+                    ec2:CreateAction:
+                      - RunInstances
+                      - CreateSecurityGroup
+                      - AllocateAddress
+              - Effect: Allow
+                Action:
+                  - iam:CreateRole
+                Resource:
+                  Fn::Sub: arn:${AWS::Partition}:iam::${AWS::AccountId}:role/seize-ipfs-${Environment}-compute-*-runtime
+                Condition:
+                  StringEquals:
+                    iam:PermissionsBoundary:
+                      Ref: RuntimeBoundary
+              - Effect: Allow
+                Action:
+                  - iam:GetRole
+                  - iam:DeleteRole
+                  - iam:TagRole
+                  - iam:UntagRole
+                  - iam:PutRolePolicy
+                  - iam:DeleteRolePolicy
+                  - iam:GetRolePolicy
+                  - iam:AttachRolePolicy
+                  - iam:DetachRolePolicy
+                  - iam:CreateInstanceProfile
+                  - iam:GetInstanceProfile
+                  - iam:DeleteInstanceProfile
+                  - iam:ListInstanceProfilesForRole
+                  - iam:AddRoleToInstanceProfile
+                  - iam:RemoveRoleFromInstanceProfile
+                Resource:
+                  - Fn::Sub: arn:${AWS::Partition}:iam::${AWS::AccountId}:role/seize-ipfs-${Environment}-compute-*-runtime
+                  - Fn::Sub: arn:${AWS::Partition}:iam::${AWS::AccountId}:instance-profile/seize-ipfs-${Environment}-compute-*-runtime
+              - Effect: Allow
+                Action:
+                  - iam:PassRole
+                Resource:
+                  Fn::Sub: arn:${AWS::Partition}:iam::${AWS::AccountId}:role/seize-ipfs-${Environment}-compute-*-runtime
+                Condition:
+                  StringEquals:
+                    iam:PassedToService: ec2.amazonaws.com
+              - Effect: Allow
+                Action:
+                  - s3:CreateBucket
+                  - s3:DeleteBucket
+                  - s3:GetBucket*
+                  - s3:ListBucket
+                  - s3:PutBucket*
+                  - s3:DeleteBucketPolicy
+                  - s3:GetEncryptionConfiguration
+                  - s3:PutEncryptionConfiguration
+                  - s3:GetLifecycleConfiguration
+                  - s3:PutLifecycleConfiguration
+                Resource:
+                  Fn::Sub: arn:${AWS::Partition}:s3:::seize-ipfs-${Environment}-storage-*
+              - Effect: Allow
+                Action:
+                  - cloudwatch:PutMetricAlarm
+                  - cloudwatch:DeleteAlarms
+                  - cloudwatch:DescribeAlarms
+                  - cloudwatch:TagResource
+                  - cloudwatch:UntagResource
+                Resource:
+                  Fn::Sub: arn:${AWS::Partition}:cloudwatch:${AWS::Region}:${AWS::AccountId}:alarm:seize-ipfs-${Environment}-*
+              - Effect: Allow
+                Action:
+                  - cloudfront:CreateDistribution
+                # CreateDistribution has no resource-level authorization support.
+                # Its request must still carry both ownership tags below.
+                # https://docs.aws.amazon.com/service-authorization/latest/reference/list_cloudfront.html
+                Resource: '*' # NOSONAR
+                Condition:
+                  StringEquals:
+                    aws:RequestTag/Environment:
+                      Ref: Environment
+                    aws:RequestTag/Service: 6529-ipfs
+              - Effect: Allow
+                Action:
+                  - cloudfront:TagResource
+                Resource:
+                  Fn::Sub: arn:${AWS::Partition}:cloudfront::${AWS::AccountId}:distribution/*
+                Condition:
+                  StringEquals:
+                    aws:RequestTag/Environment:
+                      Ref: Environment
+                    aws:RequestTag/Service: 6529-ipfs
+                  StringEqualsIfExists:
+                    aws:ResourceTag/Environment:
+                      Ref: Environment
+                    aws:ResourceTag/Service: 6529-ipfs
+                  ForAllValues:StringEquals:
+                    aws:TagKeys:
+                      - Environment
+                      - Service
+              - Effect: Deny
+                Action:
+                  - cloudfront:UpdateDistribution
+                  - cloudfront:DeleteDistribution
+                  - cloudfront:TagResource
+                  - cloudfront:UntagResource
+                Resource:
+                  Fn::Sub: arn:${AWS::Partition}:cloudfront::${AWS::AccountId}:distribution/E1D6I3Z3M5F0H4
+              - Effect: Allow
+                Action:
+                  - cloudfront:GetDistribution
+                  - cloudfront:GetDistributionConfig
+                  - cloudfront:ListTagsForResource
+                Resource:
+                  Fn::Sub: arn:${AWS::Partition}:cloudfront::${AWS::AccountId}:distribution/*
+              - Effect: Allow
+                Action:
+                  - cloudfront:UpdateDistribution
+                  - cloudfront:DeleteDistribution
+                  - cloudfront:TagResource
+                  - cloudfront:UntagResource
+                Resource:
+                  Fn::Sub: arn:${AWS::Partition}:cloudfront::${AWS::AccountId}:distribution/*
+                Condition:
+                  StringEquals:
+                    aws:ResourceTag/Environment:
+                      Ref: Environment
+                    aws:ResourceTag/Service: 6529-ipfs
+              - Effect: Allow
+                Action:
+                  - route53:GetHostedZone
+                  - route53:ListResourceRecordSets
+                Resource:
+                  Fn::Sub: arn:${AWS::Partition}:route53:::hostedzone/${HostedZoneId}
+              - Effect: Allow
+                Action:
+                  - route53:ChangeResourceRecordSets
+                Resource:
+                  Fn::Sub: arn:${AWS::Partition}:route53:::hostedzone/${HostedZoneId}
+                Condition:
+                  ForAllValues:StringLike:
+                    route53:ChangeResourceRecordSetsNormalizedRecordNames:
+                      - Ref: DnsSuffix
+                      - Fn::Sub: '*.${DnsSuffix}'
+              - Effect: Allow
+                Action:
+                  - route53:GetChange
+                Resource:
+                  Fn::Sub: arn:${AWS::Partition}:route53:::change/*
+  DeploymentRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName:
+        Fn::Sub: seize-ipfs-${Environment}-deploy
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated:
+                Ref: GitHubOidcProviderArn
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals:
+                token.actions.githubusercontent.com:aud: sts.amazonaws.com
+                token.actions.githubusercontent.com:sub:
+                  Fn::Sub: ${GitHubRepositorySubject}:environment:ipfs-${Environment}
+      Policies:
+        - PolicyName: ipfs-controller
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - cloudformation:ListStacks
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - cloudformation:CreateChangeSet
+                  - cloudformation:DescribeChangeSet
+                  - cloudformation:ExecuteChangeSet
+                  - cloudformation:DescribeStacks
+                  - cloudformation:DescribeStackEvents
+                  - cloudformation:UpdateTerminationProtection
+                Resource:
+                  - Fn::Sub: arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/seize-ipfs-${Environment}-storage/*
+                  - Fn::Sub: arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/seize-ipfs-${Environment}-compute-*/*
+                  - Fn::Sub: arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/seize-ipfs-${Environment}-edge-*/*
+                  - Fn::Sub: arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:changeSet/seize-ipfs-${Environment}-*/*
+              - Effect: Allow
+                Action:
+                  - iam:PassRole
+                Resource:
+                  Fn::GetAtt:
+                    - CloudFormationRole
+                    - Arn
+                Condition:
+                  StringEquals:
+                    iam:PassedToService: cloudformation.amazonaws.com
+              - Effect: Allow
+                Action:
+                  - ec2:DescribeInstances
+                  - ssm:ListCommandInvocations
+                  - ssm:DescribeInstanceInformation
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - ec2:CreateTags
+                Resource:
+                  Fn::Sub: arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:instance/*
+                Condition:
+                  StringEquals:
+                    ec2:ResourceTag/Service: 6529-ipfs
+                    ec2:ResourceTag/Environment:
+                      Ref: Environment
+                  StringEqualsIfExists:
+                    aws:RequestTag/IpfsRole: active
+                  ForAllValues:StringEquals:
+                    aws:TagKeys:
+                      - IpfsRole
+              - Effect: Allow
+                Action:
+                  - ssm:SendCommand
+                Resource:
+                  Fn::Sub: arn:${AWS::Partition}:ssm:${AWS::Region}::document/AWS-RunShellScript
+              - Effect: Allow
+                Action:
+                  - ssm:SendCommand
+                Resource:
+                  Fn::Sub: arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:instance/*
+                Condition:
+                  StringEquals:
+                    ssm:resourceTag/Service: 6529-ipfs
+                    ssm:resourceTag/Environment:
+                      Ref: Environment
+                    ssm:resourceTag/IpfsRole:
+                      - candidate
+                      - active
+              - Effect: Allow
+                Action:
+                  - s3:PutObject
+                Resource:
+                  Fn::Sub: arn:${AWS::Partition}:s3:::seize-ipfs-${Environment}-storage-artifacts-*/${Environment}/*
+Outputs:
+  DeploymentRoleArn:
+    Value:
+      Fn::GetAtt:
+        - DeploymentRole
+        - Arn
+  CloudFormationRoleArn:
+    Value:
+      Fn::GetAtt:
+        - CloudFormationRole
+        - Arn
+  RuntimeBoundaryArn:
+    Value:
+      Ref: RuntimeBoundary

@@ -12,7 +12,7 @@ jest.mock('@/redis', () => ({
 
 import express, { Request, Response } from 'express';
 import { createHash } from 'node:crypto';
-import { Server } from 'node:http';
+import { get as httpGet, Server } from 'node:http';
 import { cacheRequest } from '@/api/request-cache';
 
 const AUTH_SEPARATOR = '__AUTH__';
@@ -224,5 +224,185 @@ describe('cacheRequest', () => {
         }
       );
     });
+  });
+});
+
+describe('cacheRequest stored responses', () => {
+  const originalMaxBytes = process.env.REQUEST_CACHE_MAX_BODY_BYTES;
+
+  beforeEach(() => {
+    mockCacheStore.clear();
+  });
+
+  afterEach(() => {
+    if (originalMaxBytes === undefined) {
+      delete process.env.REQUEST_CACHE_MAX_BODY_BYTES;
+    } else {
+      process.env.REQUEST_CACHE_MAX_BODY_BYTES = originalMaxBytes;
+    }
+  });
+
+  async function withRoute<T>(
+    respond: (req: Request, res: Response, calls: number) => void,
+    callback: (url: string, handlerCalls: () => number) => Promise<T>
+  ): Promise<T> {
+    let calls = 0;
+    const app = express();
+    app.get('/thing', cacheRequest(), (req: Request, res: Response) => {
+      calls++;
+      respond(req, res, calls);
+    });
+    const server = await new Promise<Server>((resolve) => {
+      const listening = app.listen(0, () => resolve(listening));
+    });
+    try {
+      const address = server.address();
+      if (!address || typeof address === 'string') {
+        throw new Error('Expected test server to listen on a TCP port');
+      }
+      return await callback(
+        `http://127.0.0.1:${address.port}/thing`,
+        () => calls
+      );
+    } finally {
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  }
+
+  const settle = () => new Promise((resolve) => setTimeout(resolve, 50));
+
+  // fetch() turns conditional requests into Cache-Control: no-cache ones,
+  // which Express never answers with 304, so use a plain HTTP request.
+  function conditionalGet(
+    url: string,
+    ifNoneMatch: string
+  ): Promise<{ status: number; cache: string | undefined; body: string }> {
+    return new Promise((resolve, reject) => {
+      httpGet(url, { headers: { 'if-none-match': ifNoneMatch } }, (res) => {
+        let body = '';
+        res.setEncoding('utf8');
+        res.on('data', (chunk: string) => (body += chunk));
+        res.on('end', () =>
+          resolve({
+            status: res.statusCode ?? 0,
+            cache: res.headers['x-cache'] as string | undefined,
+            body
+          })
+        );
+      }).on('error', reject);
+    });
+  }
+
+  it('does not store the 304 answering If-None-Match: * on a miss', async () => {
+    await withRoute(
+      (_req, res, calls) => res.json({ calls }),
+      async (url, handlerCalls) => {
+        const conditional = await conditionalGet(url, '*');
+        expect(conditional.status).toBe(304);
+        await settle();
+        expect(mockCacheStore.size).toBe(0);
+
+        const plain = await fetch(url);
+        expect(plain.status).toBe(200);
+        expect(plain.headers.get('x-cache')).toBe('MISS');
+        expect(await plain.json()).toEqual({ calls: 2 });
+        expect(handlerCalls()).toBe(2);
+      }
+    );
+  });
+
+  it('answers conditional requests from a cached 200', async () => {
+    await withRoute(
+      (_req, res, calls) => res.json({ calls }),
+      async (url, handlerCalls) => {
+        const first = await fetch(url);
+        const etag = first.headers.get('etag');
+        expect(etag).toBeTruthy();
+        await waitForCacheEntries(1);
+
+        const matching = await conditionalGet(url, etag!);
+        expect(matching.status).toBe(304);
+        expect(matching.cache).toBe('HIT');
+        expect(matching.body).toBe('');
+
+        const stale = await conditionalGet(url, '"something-else"');
+        expect(stale.status).toBe(200);
+        expect(JSON.parse(stale.body)).toEqual({ calls: 1 });
+
+        const plain = await fetch(url);
+        expect(plain.status).toBe(200);
+        expect(await plain.json()).toEqual({ calls: 1 });
+        expect(handlerCalls()).toBe(1);
+      }
+    );
+  });
+
+  it('stores only 200 responses by default', async () => {
+    for (const status of [201, 204, 206, 404, 500]) {
+      mockCacheStore.clear();
+      await withRoute(
+        (_req, res) => {
+          res.status(status).send(status === 204 ? undefined : 'body');
+        },
+        async (url) => {
+          await fetch(url);
+          await settle();
+          expect(mockCacheStore.size).toBe(0);
+        }
+      );
+    }
+  });
+
+  it('skips storing bodies above the configured size cap', async () => {
+    process.env.REQUEST_CACHE_MAX_BODY_BYTES = '100';
+    await withRoute(
+      (_req, res) => res.json({ payload: 'x'.repeat(200) }),
+      async (url, handlerCalls) => {
+        const first = await fetch(url);
+        expect(first.status).toBe(200);
+        const firstBody = (await first.json()) as { payload: string };
+        expect(firstBody.payload).toHaveLength(200);
+        await settle();
+        expect(mockCacheStore.size).toBe(0);
+        expect((await fetch(url)).headers.get('x-cache')).toBe('MISS');
+        expect(handlerCalls()).toBe(2);
+      }
+    );
+  });
+
+  it('stores bodies at or below the size cap', async () => {
+    process.env.REQUEST_CACHE_MAX_BODY_BYTES = '100';
+    await withRoute(
+      (_req, res) => res.json({ ok: true }),
+      async (url) => {
+        await fetch(url);
+        await waitForCacheEntries(1);
+        expect((await fetch(url)).headers.get('x-cache')).toBe('HIT');
+      }
+    );
+  });
+
+  it('treats a previously stored 304 entry as a miss', async () => {
+    await withRoute(
+      (_req, res, calls) => res.json({ calls }),
+      async (url, handlerCalls) => {
+        mockCacheStore.set(
+          `__SEIZE_CACHE_${process.env.NODE_ENV}__/thing`,
+          JSON.stringify({
+            __requestCache: true,
+            statusCode: 304,
+            headers: {},
+            body: ''
+          })
+        );
+        const response = await fetch(url);
+        expect(response.status).toBe(200);
+        expect(response.headers.get('x-cache')).toBe('MISS');
+        expect(await response.json()).toEqual({ calls: 1 });
+        expect(handlerCalls()).toBe(1);
+      }
+    );
   });
 });

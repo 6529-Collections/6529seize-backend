@@ -43,4 +43,12 @@ export class WalletConnectionShareEntity {
 
   @Column({ type: 'varchar', length: 36, nullable: true, default: null })
   readonly consumed_session_id!: string | null;
+
+  /**
+   * Coarse client family of the request that redeemed the share (for example
+   * `desktop` or `browser`); never the user agent itself. Null for shares
+   * retired by a newer share or redeemed before this column existed.
+   */
+  @Column({ type: 'varchar', length: 16, nullable: true, default: null })
+  readonly consumed_client_family?: string | null;
 }

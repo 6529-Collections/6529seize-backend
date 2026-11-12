@@ -468,7 +468,16 @@ describe('wallet auth device grants', () => {
           domain: '6529.io',
           chainId: 1,
           issuedAt: new Date(parsed.issuedAt!),
-          deviceLabel: 'Chrome on macOS'
+          deviceLabel: 'Chrome on macOS',
+          registration: {
+            apiHost: 'api.6529.io',
+            requestOrigin: 'https://6529.io',
+            session: {
+              clientType: 'web',
+              binding: 'siwe',
+              sessionId: undefined
+            }
+          }
         },
         expect.anything()
       );
@@ -495,7 +504,12 @@ describe('wallet auth device grants', () => {
       expect(storeLoginGrantMock).toHaveBeenCalledTimes(1);
       expect(storeLoginGrantMock.mock.calls[0][0]).toMatchObject({
         terms: { deviceKey: DEVICE_KEY },
-        message: nonce.signable_message
+        message: nonce.signable_message,
+        encryptedDmDeviceKey: MLS_DEVICE_KEY,
+        registration: {
+          requestOrigin: 'https://6529.io',
+          session: { clientType: 'web', binding: 'siwe' }
+        }
       });
       expect(nonce.signable_message).toContain(
         `- urn:6529:mls-device-grant:v1:${E2EE_CIPHERSUITE}:${MLS_DEVICE_KEY.slice(2)}:`

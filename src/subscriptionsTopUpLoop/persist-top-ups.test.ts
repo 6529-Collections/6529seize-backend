@@ -1,4 +1,6 @@
 import { updateSubscriptionMode } from '@/api/subscriptions/api.subscriptions.db';
+import { InsufficientSubscriptionBalanceException } from '@/api/subscriptions/insufficient-subscription-balance.exception';
+import { MEMES_MINT_PRICE } from '@/constants';
 import {
   SubscriptionBalance,
   SubscriptionTopUp
@@ -18,7 +20,9 @@ jest.mock('@/sql-executor', () => ({
   sqlExecutor: { executeNativeQueriesInTransaction: jest.fn() }
 }));
 jest.mock('@/logging', () => ({
-  Logger: { get: () => ({ warn: jest.fn(), error: jest.fn() }) }
+  Logger: {
+    get: () => ({ info: jest.fn(), warn: jest.fn(), error: jest.fn() })
+  }
 }));
 jest.mock('@/eth-tools', () => ({
   ethTools: { toEtherScanTransactionLink: jest.fn().mockReturnValue('tx-link') }
@@ -126,4 +130,70 @@ it('evicts and schedules coverage only after successful top-up and mode synchron
   );
   expect(sendDiscordUpdate).toHaveBeenCalledTimes(1);
   expect(sendSubscriptionTopUpWaveUpdate).toHaveBeenCalledTimes(1);
+});
+
+describe('first top-up for a consolidation without a balance', () => {
+  it('keeps the current mode and commits when the top-up is below the mint price', async () => {
+    const small = { ...topUp, amount: MEMES_MINT_PRICE / 2 };
+
+    await persistTopUps([small]);
+
+    expect(updateSubscriptionMode).not.toHaveBeenCalled();
+    expect(balancesRepo.save).toHaveBeenCalledWith({
+      consolidation_key: 'wallet',
+      balance: MEMES_MINT_PRICE / 2
+    });
+    expect(topUpsRepo.save).toHaveBeenCalledWith(small);
+    expect(events).toEqual(['commit', 'evict']);
+    expect(sendDiscordUpdate).toHaveBeenCalledTimes(1);
+  });
+
+  it('switches to automatic mode when the top-up equals the mint price', async () => {
+    const exact = { ...topUp, amount: MEMES_MINT_PRICE };
+
+    await persistTopUps([exact]);
+
+    expect(updateSubscriptionMode).toHaveBeenCalledWith(
+      'wallet',
+      true,
+      connection
+    );
+    expect(events).toEqual(['commit', 'evict']);
+  });
+
+  it('treats an insufficient balance answer as a skip, not a rollback', async () => {
+    jest
+      .mocked(updateSubscriptionMode)
+      .mockRejectedValueOnce(new InsufficientSubscriptionBalanceException());
+
+    await persistTopUps([{ ...topUp, amount: MEMES_MINT_PRICE }]);
+
+    expect(events).toEqual(['commit', 'evict']);
+    expect(sendDiscordUpdate).toHaveBeenCalledTimes(1);
+  });
+
+  it('still rolls back on a lock timeout for a top-up at the mint price', async () => {
+    const lockTimeout = Object.assign(new Error('Lock wait timeout exceeded'), {
+      code: 'ER_LOCK_WAIT_TIMEOUT'
+    });
+    jest.mocked(updateSubscriptionMode).mockRejectedValueOnce(lockTimeout);
+
+    await expect(
+      persistTopUps([{ ...topUp, amount: MEMES_MINT_PRICE }])
+    ).rejects.toBe(lockTimeout);
+    expect(events).toEqual(['rollback']);
+    expect(sendDiscordUpdate).not.toHaveBeenCalled();
+  });
+
+  it('does not attempt automatic mode for an existing balance', async () => {
+    balancesRepo.findOne.mockResolvedValueOnce({
+      consolidation_key: 'wallet',
+      balance: 0.01
+    });
+
+    await persistTopUps([{ ...topUp, amount: MEMES_MINT_PRICE }]);
+
+    expect(updateSubscriptionMode).not.toHaveBeenCalled();
+    expect(events).toEqual(['commit', 'evict']);
+  });
 });
