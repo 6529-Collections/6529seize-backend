@@ -345,6 +345,7 @@ export async function fetchWalletTdhData(
   ctx: RequestContext = {}
 ): Promise<Map<string, WalletTdhData>> {
   if (!wallets.length) return new Map();
+  // The legacy lookup normalized stored wallet addresses before matching.
   const tdhResult: {
     wallets: string;
     boosted_tdh: number;
@@ -352,7 +353,7 @@ export async function fetchWalletTdhData(
     unique_memes: number;
     gradients_balance: number;
   }[] = await sqlExecutor.execute(
-    `SELECT wallets, boosted_tdh, memes_balance, unique_memes, gradients_balance FROM ${CONSOLIDATED_WALLETS_TDH_TABLE} WHERE JSON_OVERLAPS(wallets, :wallets)`,
+    `SELECT wallets, boosted_tdh, memes_balance, unique_memes, gradients_balance FROM ${CONSOLIDATED_WALLETS_TDH_TABLE} WHERE JSON_OVERLAPS(LOWER(CAST(wallets AS CHAR)), :wallets)`,
     { wallets: JSON.stringify(wallets.map((wallet) => wallet.toLowerCase())) },
     { wrappedConnection: ctx.connection }
   );

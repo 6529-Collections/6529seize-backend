@@ -7,9 +7,9 @@ describe('wallet TDH consolidation overlap', () => {
   beforeEach(async () => {
     await sqlExecutor.execute(`DELETE FROM ${CONSOLIDATED_WALLETS_TDH_TABLE}`);
   });
-  it('matches an individual member of a multi-wallet JSON consolidation', async () => {
+  it('matches mixed-case addresses within a multi-wallet JSON consolidation', async () => {
     const consolidations = [
-      aTdhConsolidation(['0xaaa', '0xbbb'], {
+      aTdhConsolidation(['0xaaa', '0xBbB'], {
         boosted_tdh: 100,
         memes_balance: 4,
         gradients_balance: 1,
