@@ -1,5 +1,6 @@
 import { IdentityNotificationCause } from '@/entities/IIdentityNotification';
 import type { PushNotificationSettingsData } from '@/entities/IPushNotificationSettings';
+import { isIosPushPlatform } from './push-platform';
 
 const CAUSE_TO_SETTING_KEY: Partial<
   Record<IdentityNotificationCause, keyof PushNotificationSettingsData>
@@ -25,8 +26,16 @@ const CAUSE_TO_SETTING_KEY: Partial<
 export function isNotificationEnabledForDevice(
   cause: IdentityNotificationCause,
   settings: PushNotificationSettingsData,
-  includeCompetitions = false
+  includeCompetitions = false,
+  platform?: string | null
 ): boolean {
+  if (
+    cause === IdentityNotificationCause.SUBSCRIPTION_COVERAGE &&
+    isIosPushPlatform(platform)
+  ) {
+    return false;
+  }
+
   if (
     (cause === IdentityNotificationCause.ARTIST_ARTWORK_SUBMITTED ||
       cause === IdentityNotificationCause.COMPETITION_LIFECYCLE ||
