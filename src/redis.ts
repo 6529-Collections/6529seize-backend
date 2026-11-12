@@ -4,6 +4,13 @@ import { Logger } from './logging';
 import { numbers } from './numbers';
 import { Time } from './time';
 import { redisFailureCategory } from '@/redis-recovery';
+import {
+  DeadlineEvent,
+  DeadlineMiss,
+  LATE_TIMER_GRACE_MS,
+  recordDeadlineEvent,
+  withRedisDeadline
+} from '@/redis-command-deadline';
 
 let redis: Redis;
 let redisReadyEvents = 0;
@@ -30,9 +37,14 @@ export interface RedisFailFastOptions {
  * Raised by fail-fast helpers when Redis is not connected or a command
  * outlives its budget. A timed-out command may still reach Redis later, so
  * its outcome is unknown: never treat it as a completed write or a lock held.
+ * `reason` separates a client that is not connected, Redis being slow, and
+ * a command whose timer fired late (process suspended or event loop stalled).
  */
 export class RedisUnavailableError extends Error {
-  constructor(message: string) {
+  constructor(
+    message: string,
+    readonly reason: 'unavailable' | DeadlineMiss = 'unavailable'
+  ) {
     super(message);
     Object.setPrototypeOf(this, new.target.prototype);
     this.name = 'RedisUnavailableError';
@@ -41,8 +53,14 @@ export class RedisUnavailableError extends Error {
 
 const RECONNECT_BASE_DELAY_MS = 50;
 const UNAVAILABLE_WARNING_INTERVAL_MS = 10_000;
+const LATE_TIMER_INFO_INTERVAL_MS = 60_000;
 let failFastOptions: RedisFailFastOptions | null = null;
-let lastUnavailableWarningAt: number | null = null;
+/** Per reason, so late timers never hide a warning about real slowness. */
+const lastUnavailableWarningAt = new Map<
+  RedisUnavailableError['reason'],
+  number
+>();
+let lastLateTimerInfoAt: number | null = null;
 
 export function failFastReconnectDelayMs(
   retries: number,
@@ -64,21 +82,37 @@ async function runBoundedCommand<T>(
       `Redis ${operation} skipped: client is not connected`
     );
   }
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const timeout = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => {
-      reject(
-        new RedisUnavailableError(
-          `Redis ${operation} timed out after ${options.commandTimeoutMs}ms`
-        )
-      );
-    }, options.commandTimeoutMs);
+  return withRedisDeadline(command(redis), {
+    operation,
+    timeoutMs: options.commandTimeoutMs,
+    timeoutError: (miss, lateMs) =>
+      new RedisUnavailableError(
+        miss === 'slow'
+          ? `Redis ${operation} timed out after ${options.commandTimeoutMs}ms`
+          : `Redis ${operation} got no reply within a ${Math.min(LATE_TIMER_GRACE_MS, options.commandTimeoutMs)}ms grace after its timer fired ${lateMs}ms late (process suspended or event loop stalled)`,
+        miss
+      ),
+    report: reportDeadlineEvent
   });
-  try {
-    return await Promise.race([command(redis), timeout]);
-  } finally {
-    clearTimeout(timer);
-  }
+}
+
+/**
+ * Every deadline event is counted (EMF). A late timer whose reply arrived is
+ * not a Redis problem: it is logged at info, at most once a minute.
+ */
+function reportDeadlineEvent(event: DeadlineEvent): void {
+  recordDeadlineEvent(event);
+  if (event.outcome !== 'suspended_recovered') return;
+  const now = Date.now();
+  if (
+    lastLateTimerInfoAt !== null &&
+    now - lastLateTimerInfoAt < LATE_TIMER_INFO_INTERVAL_MS
+  )
+    return;
+  lastLateTimerInfoAt = now;
+  logger.info(
+    `Redis ${event.operation} timer fired ${event.overdueMs}ms late (process suspended or event loop stalled); the reply arrived`
+  );
 }
 
 /** Cache reads and writes treat an unavailable Redis as a miss / no-op. */
@@ -100,13 +134,11 @@ async function runFailOpenCommand<T>(
 
 function warnRedisUnavailable(error: RedisUnavailableError) {
   const now = Date.now();
-  if (
-    lastUnavailableWarningAt !== null &&
-    now - lastUnavailableWarningAt < UNAVAILABLE_WARNING_INTERVAL_MS
-  ) {
+  const last = lastUnavailableWarningAt.get(error.reason);
+  if (last !== undefined && now - last < UNAVAILABLE_WARNING_INTERVAL_MS) {
     return;
   }
-  lastUnavailableWarningAt = now;
+  lastUnavailableWarningAt.set(error.reason, now);
   logger.warn(`${error.message}; continuing without Redis`);
 }
 
