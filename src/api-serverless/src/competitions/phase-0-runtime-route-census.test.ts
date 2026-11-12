@@ -35,13 +35,7 @@ const HAND_WRITTEN_ROUTE_SOURCE_LINE_DRIFT = 250;
 // GET /api/waves/:id shares anonymous responses for 15 s (#2340).
 const ACCEPTED_ROUTE_CACHE_CHANGES = new Map<string, ManifestRoute['cache']>([
   ['/alchemy-proxy/collections', 'uncached'],
-  ['/api/waves/:id', 'cached'],
-  // Durable preparation results replace HTTP caching so access and reset/freeze
-  // checks still execute on every replay of a completed allowlist preparation.
-  [
-    '/api/subscriptions/allowlists/:contract/:token_id/:allowlist_id/:phase_id',
-    'uncached'
-  ]
+  ['/api/waves/:id', 'cached']
 ]);
 
 // Optional authentication keeps anonymous callers working; it lets members
