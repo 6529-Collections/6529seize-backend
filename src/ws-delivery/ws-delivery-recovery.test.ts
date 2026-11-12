@@ -13,6 +13,7 @@ jest.mock('./ws-delivery-store', () => ({
 
 import { recoverWebSocketDeliveries } from './ws-delivery-recovery';
 import { DeliverySnapshot } from './ws-delivery-store';
+import { WebSocketDelivery } from './ws-delivery';
 
 const healthy: DeliverySnapshot = {
   attempted: 100,
@@ -47,7 +48,8 @@ describe('scheduled WebSocket refresh recovery', () => {
     expect(mockSend).toHaveBeenCalledWith({
       connectionId: 'connection-a',
       message: '{"type":"RESYNC_REQUIRED","data":{}}',
-      recovery: true
+      recovery: true,
+      delivery: expect.any(WebSocketDelivery)
     });
     expect(mockForget).toHaveBeenCalledWith('connection-b');
     expect(JSON.parse(output.mock.calls[0][0])).toMatchObject({

@@ -1,6 +1,9 @@
 import { once } from 'node:events';
 import { AddressInfo, createServer } from 'node:net';
-import { WebSocketDeliveryStore } from '@/ws-delivery/ws-delivery-store';
+import {
+  deliveryScope,
+  WebSocketDeliveryStore
+} from '@/ws-delivery/ws-delivery-store';
 import { connectWebSocketRecoveryRedis } from './recovery-redis';
 
 type Command = { name: string; bytes: number };
@@ -80,17 +83,20 @@ it('follows a Redis MOVED to the same endpoint and loads a missing script by key
     | undefined;
   try {
     cluster = await connectWebSocketRecoveryRedis();
-    const store = new WebSocketDeliveryStore(
-      () => true,
-      () => cluster ?? null
-    );
-    await expect(store.due(Date.now())).resolves.toEqual([]);
+    await expect(
+      cluster.zRangeByScore(`${deliveryScope()}:pending`, 0, Date.now())
+    ).resolves.toEqual([]);
     expect(commands.filter((name) => name !== 'CLIENT')).toEqual([
       'CLUSTER',
       'ZRANGEBYSCORE',
       'CLUSTER',
       'ZRANGEBYSCORE'
     ]);
+    const store = new WebSocketDeliveryStore(
+      () => true,
+      () => cluster ?? null
+    );
+    await expect(store.due(Date.now())).resolves.toEqual([]);
     await expect(
       store.claim('connection', 'token', true, Date.now())
     ).resolves.toMatchObject({ acquired: true });

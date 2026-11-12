@@ -1,14 +1,14 @@
 import { appWebSockets } from '@/api/ws/ws';
 import { WsMessageType } from '@/api/ws/ws-message';
 import { webSocketDeliveryStore } from './ws-delivery-store';
-import type { WebSocketDelivery } from './ws-delivery';
+import { WebSocketDelivery } from './ws-delivery';
 import { deliveryHealth } from './ws-delivery-policy';
 
 /** Retry only a content-free refresh marker. Never replay competition effects. */
 export async function recoverWebSocketDeliveries(
-  store = webSocketDeliveryStore,
-  delivery?: Pick<WebSocketDelivery, 'deliver'>
+  store = webSocketDeliveryStore
 ): Promise<void> {
+  const delivery = new WebSocketDelivery(store);
   const startedAt = Date.now();
   let recovered = 0;
   let gone = 0;

@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { getRedisClient } from '@/redis';
-import type { createCluster, RedisClientType } from 'redis';
+import { defineScript, type createCluster, type RedisClientType } from 'redis';
 
 const WINDOW_MS = 5 * 60_000;
 // Keep connection capabilities beyond AWS's two-hour lifetime, including handshake margin.
@@ -216,6 +216,24 @@ return results
 
 type ScriptOptions = { keys: string[]; arguments: string[] };
 
+function defineDeliveryScript(script: string) {
+  return defineScript({
+    SCRIPT: script,
+    // The first key follows the key count in the arguments below.
+    FIRST_KEY_INDEX: 1,
+    transformArguments: ({ keys, arguments: args }: ScriptOptions) => [
+      String(keys.length),
+      ...keys,
+      ...args
+    ]
+  });
+}
+
+type DeliveryScript = ReturnType<typeof defineDeliveryScript>;
+const claimScript = defineDeliveryScript(claimLua);
+const finishScript = defineDeliveryScript(finishLua);
+const batchScript = defineDeliveryScript(batchLua);
+
 function isNoScript(error: unknown): boolean {
   return error instanceof Error && error.message.startsWith('NOSCRIPT');
 }
@@ -332,7 +350,7 @@ async function runBatch(
 export class WebSocketDeliveryStore {
   private readonly scriptHashes = new Map<string, Promise<string>>();
   private readonly batcher = new BookkeepingBatcher((options) =>
-    this.runScript(batchLua, options)
+    this.runScript(batchScript, options)
   );
 
   constructor(
@@ -362,34 +380,37 @@ export class WebSocketDeliveryStore {
     }
   }
 
-  /** SCRIPT LOAD has no key to route on a cluster. Compute the Redis protocol
-   * digest locally there and let the keyed EVAL fallback populate the cache. */
-  private scriptHash(client: DeliveryRedis, script: string): Promise<string> {
+  private scriptHash(client: RedisClientType, script: string): Promise<string> {
     let hash = this.scriptHashes.get(script);
     if (!hash) {
-      hash =
-        'scriptLoad' in client
-          ? client.scriptLoad(script)
-          : Promise.resolve(createHash('sha1').update(script).digest('hex'));
+      hash = client.scriptLoad(script);
       this.scriptHashes.set(script, hash);
       hash.catch(() => this.scriptHashes.delete(script));
     }
     return hash;
   }
 
-  /** A new primary may not have the script cached. EVAL routes by key and
-   * loads it on the node that owns the slot. */
-  private runScript(script: string, options: ScriptOptions): Promise<unknown> {
+  private runScript(
+    script: DeliveryScript,
+    options: ScriptOptions
+  ): Promise<unknown> {
     return this.bounded(async (client) => {
+      // The cluster client routes the script by key and handles NOSCRIPT
+      // on the selected primary. SCRIPT LOAD has no key for routing.
+      if (!('scriptLoad' in client)) {
+        return client.scriptsExecutor(script, [options]);
+      }
+
+      const source = script.SCRIPT;
       try {
         return await client.evalSha(
-          await this.scriptHash(client, script),
+          await this.scriptHash(client, source),
           options
         );
       } catch (error) {
         if (!isNoScript(error)) throw error;
-        this.scriptHashes.delete(script);
-        return client.eval(script, options);
+        this.scriptHashes.delete(source);
+        return client.eval(source, options);
       }
     });
   }
@@ -433,7 +454,7 @@ export class WebSocketDeliveryStore {
     const minuteKey = `${scope}:minute:${Math.floor(now / 60_000)}`;
     const args = [String(now), hash, connectionId, ...rest];
     if (!this.batched()) {
-      return this.runScript(kind === 'c' ? claimLua : finishLua, {
+      return this.runScript(kind === 'c' ? claimScript : finishScript, {
         keys: [
           connectionKey,
           `${scope}:pending`,

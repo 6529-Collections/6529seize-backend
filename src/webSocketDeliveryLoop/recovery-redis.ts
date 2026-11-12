@@ -2,7 +2,6 @@ import { createCluster } from 'redis';
 import { Logger } from '@/logging';
 import { numbers } from '@/numbers';
 import { initRedis } from '@/redis';
-import { WebSocketDelivery } from '@/ws-delivery/ws-delivery';
 import { recoverWebSocketDeliveries } from '@/ws-delivery/ws-delivery-recovery';
 import { WebSocketDeliveryStore } from '@/ws-delivery/ws-delivery-store';
 
@@ -20,7 +19,11 @@ export async function connectWebSocketRecoveryRedis() {
   const cluster = createCluster({
     rootNodes: [{ socket: { host, port } }],
     defaults: {
-      socket: { tls, connectTimeout: 1_500 },
+      socket: {
+        tls,
+        connectTimeout: 1_500,
+        reconnectStrategy: (retries) => (retries < 2 ? 50 * retries : false)
+      },
       password: process.env.REDIS_PASSWORD,
       disableOfflineQueue: true
     },
@@ -39,15 +42,28 @@ export async function connectWebSocketRecoveryRedis() {
 async function connectRecovery() {
   const cluster = await connectWebSocketRecoveryRedis();
   const store = new WebSocketDeliveryStore(undefined, () => cluster);
-  const delivery = new WebSocketDelivery(store);
-  return () => recoverWebSocketDeliveries(store, delivery);
+  return async () => {
+    try {
+      await recoverWebSocketDeliveries(store);
+    } catch (error) {
+      // Keep fast reconnects within a run. A failed run starts the next
+      // invocation with fresh sockets and discovery, without replaying sends.
+      recovery = undefined;
+      await cluster.disconnect().catch((cause: unknown) => {
+        logger.warn(
+          `Failed to close WebSocket recovery Redis: ${String(cause)}`
+        );
+      });
+      throw error;
+    }
+  };
 }
 
 export async function recoverWithWorkerRedis(): Promise<void> {
-  if (
-    process.env.WS_DELIVERY_REDIS_CLUSTER !== 'true' ||
-    process.env.FORCE_AVOID_REDIS === 'true'
-  ) {
+  if (process.env.FORCE_AVOID_REDIS === 'true') {
+    throw new Error('WebSocket recovery store unavailable');
+  }
+  if (process.env.WS_DELIVERY_REDIS_CLUSTER !== 'true') {
     await initRedis();
     await recoverWebSocketDeliveries();
     return;
