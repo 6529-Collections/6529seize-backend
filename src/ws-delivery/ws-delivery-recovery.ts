@@ -1,14 +1,18 @@
 import { appWebSockets } from '@/api/ws/ws';
 import { WsMessageType } from '@/api/ws/ws-message';
 import { webSocketDeliveryStore } from './ws-delivery-store';
+import type { WebSocketDelivery } from './ws-delivery';
 import { deliveryHealth } from './ws-delivery-policy';
 
 /** Retry only a content-free refresh marker. Never replay competition effects. */
-export async function recoverWebSocketDeliveries(): Promise<void> {
+export async function recoverWebSocketDeliveries(
+  store = webSocketDeliveryStore,
+  delivery?: Pick<WebSocketDelivery, 'deliver'>
+): Promise<void> {
   const startedAt = Date.now();
   let recovered = 0;
   let gone = 0;
-  const due = await webSocketDeliveryStore.due(Date.now(), 100);
+  const due = await store.due(Date.now(), 100);
   // One probe per listener per invocation. Newer coalesced work stays queued
   // for the next run instead of repeatedly probing the same socket in a burst.
   for (
@@ -24,17 +28,18 @@ export async function recoverWebSocketDeliveries(): Promise<void> {
             type: WsMessageType.RESYNC_REQUIRED,
             data: {}
           }),
-          recovery: true
+          recovery: true,
+          delivery
         });
         if (result.status === 'sent') recovered++;
         if (result.status === 'gone') {
-          await webSocketDeliveryStore.forget(connectionId);
+          await store.forget(connectionId);
           gone++;
         }
       })
     );
   }
-  const snapshot = await webSocketDeliveryStore.snapshot(Date.now());
+  const snapshot = await store.snapshot(Date.now());
   const health = deliveryHealth(snapshot, Date.now());
   const environment = (process.env.SENTRY_ENVIRONMENT ?? '').includes('staging')
     ? 'staging'

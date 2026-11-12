@@ -29,7 +29,10 @@ import {
   recordSocketLifecycle,
   socketPurposeLabel
 } from './ws-socket-lifecycle';
-import type { DeliveryBatch } from '@/ws-delivery/ws-delivery';
+import type {
+  DeliveryBatch,
+  WebSocketDelivery
+} from '@/ws-delivery/ws-delivery';
 import {
   isKnownExpiryFenceEnabled,
   wsGatewayAgentMaxSockets
@@ -63,6 +66,7 @@ abstract class ClientConnections {
     message: string;
     recovery?: boolean;
     batch?: DeliveryBatch;
+    delivery?: Pick<WebSocketDelivery, 'deliver'>;
   }): Promise<WebSocketDeliveryResult>;
   abstract closeClient(
     connectionId: string,
@@ -145,14 +149,16 @@ class ApiGatewayClientConnections extends ClientConnections {
     connectionId,
     message,
     recovery = false,
-    batch
+    batch,
+    delivery = webSocketDelivery
   }: {
     connectionId: string;
     message: string;
     recovery?: boolean;
     batch?: DeliveryBatch;
+    delivery?: Pick<WebSocketDelivery, 'deliver'>;
   }) {
-    return webSocketDelivery.deliver({
+    return delivery.deliver({
       connectionId,
       message,
       recovery,
@@ -237,6 +243,7 @@ export class AppWebSockets {
     recovery = false,
     jwtExpiry,
     batch,
+    delivery,
     onConnectionRead
   }: {
     connectionId: string;
@@ -245,6 +252,7 @@ export class AppWebSockets {
     recovery?: boolean;
     jwtExpiry?: number | string | null;
     batch?: DeliveryBatch;
+    delivery?: Pick<WebSocketDelivery, 'deliver'>;
     /** Measurement hook: called when the fence had to read MySQL. */
     onConnectionRead?: () => void;
   }) {
@@ -263,7 +271,8 @@ export class AppWebSockets {
         connectionId,
         message,
         recovery,
-        batch
+        batch,
+        delivery
       });
       if (result.status === 'gone')
         await this.wsConnectionRepository.deleteByConnectionId(
