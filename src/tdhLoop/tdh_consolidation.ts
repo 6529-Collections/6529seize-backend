@@ -314,11 +314,12 @@ export const consolidateAndPersistTDH = async (
     blockTimestamp
   );
   // The TDH rows and their tdh_blocks row are committed. A partial write
-  // (delegationsLoop) syncs identities now, within the invocation's budget;
-  // the sync then triggers xTDH. A full rewrite (tdhLoop) leaves the sync to
-  // the next delegationsLoop start, which also announces its completion, so
-  // tdhLoop stays well inside its timeout. Anything left pending resumes at
-  // the next delegationsLoop start.
+  // (delegationsLoop) syncs identities now when a scoped sync suffices,
+  // within the invocation's budget; the sync then triggers xTDH. A full
+  // rewrite (tdhLoop) leaves the sync to delegationsLoop's resume after its
+  // delegations work, which also announces its completion, so tdhLoop stays
+  // well inside its timeout. Anything left pending, a needed full walk
+  // included, resumes there.
   if (request.mode === 'PARTIAL') {
     await syncIdentitiesAfterTdhOrLeavePending('AFTER_TDH_WRITE');
   } else {

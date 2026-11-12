@@ -3,6 +3,7 @@ import {
   DEVICE_GRANTS_TABLE,
   DEVICE_SIGNED_EVENTS_TABLE,
   DROP_AUTHOR_SIGNATURES_TABLE,
+  E2EE_DEVICES_TABLE,
   IDENTITIES_TABLE
 } from '@/constants';
 import { DbPoolName } from '@/db-query.options';
@@ -11,8 +12,23 @@ import { DeviceSignedEventEntity } from '@/entities/IDeviceSignedEvent';
 import { Logger } from '@/logging';
 import { RequestContext } from '@/request.context';
 import { dbSupplier, LazyDbAccessCompatibleService } from '@/sql-executor';
+import { DeviceEventKind } from './device-event';
 
 export const DEVICE_GRANTS_LIST_LIMIT = 100;
+
+export interface DeviceSecurityNoticeRow {
+  readonly signing_grant_id: string | null;
+  readonly signing_device_key: string | null;
+  readonly encrypted_dm_device_key: string | null;
+  readonly device_label: string;
+}
+
+/** The events that decide a drop's content: post, edit and delete. */
+const DROP_CONTENT_EVENT_KINDS = [
+  DeviceEventKind.POST,
+  DeviceEventKind.EDIT,
+  DeviceEventKind.TOMBSTONE
+];
 
 export class DeviceSigningDb extends LazyDbAccessCompatibleService {
   private readonly logger = Logger.get(this.constructor.name);
@@ -27,13 +43,24 @@ export class DeviceSigningDb extends LazyDbAccessCompatibleService {
       `insert into ${DEVICE_GRANTS_TABLE} (
         id, wallet, key_type, device_key, scopes, device_label, domain,
         message, wallet_signature, chain_id, issued_at, expires_at,
-        created_at, revoked_at, last_used_at
+        created_at, revoked_at, last_used_at, registered_client_type,
+        registered_binding, registered_request_origin, registered_session_id,
+        notice_pending, notice_encrypted_dm_device_key
       ) values (
         :id, :wallet, :key_type, :device_key, :scopes, :device_label, :domain,
         :message, :wallet_signature, :chain_id, :issued_at, :expires_at,
-        :created_at, :revoked_at, :last_used_at
+        :created_at, :revoked_at, :last_used_at, :registered_client_type,
+        :registered_binding, :registered_request_origin, :registered_session_id,
+        true, :noticeMlsKey
       )`,
-      { ...grant },
+      {
+        registered_client_type: null,
+        registered_binding: null,
+        registered_request_origin: null,
+        registered_session_id: null,
+        ...grant,
+        noticeMlsKey: grant.notice_encrypted_dm_device_key ?? null
+      },
       ctx
     );
   }
@@ -105,6 +132,59 @@ export class DeviceSigningDb extends LazyDbAccessCompatibleService {
     );
   }
 
+  /** Reads both permissions together so one linked grant has one notice. */
+  async findPendingSecurityNotices(
+    profileId: string | null,
+    wallet: string,
+    now: number,
+    ctx: RequestContext,
+    encryptedDmsEnabled = true
+  ): Promise<DeviceSecurityNoticeRow[]> {
+    // Encrypted DM permissions belong to profiles, even when signing falls back to the wallet.
+    const showStandalone = encryptedDmsEnabled && profileId !== null;
+    const signingOwner = profileId
+      ? `g.wallet in (
+           select a.address from ${ADDRESS_CONSOLIDATION_KEY} a
+           join ${IDENTITIES_TABLE} i on i.consolidation_key = a.consolidation_key
+           where i.profile_id = :profileId
+         )`
+      : 'g.wallet = :wallet';
+    return this.timedExecute<DeviceSecurityNoticeRow>(
+      'findPendingSecurityNotices',
+      `select g.id as signing_grant_id, g.device_key as signing_device_key,
+              case when :profileId is not null then g.notice_encrypted_dm_device_key end
+                as encrypted_dm_device_key,
+              coalesce(e.label, g.device_label) as device_label,
+              g.created_at as created_at
+       from ${DEVICE_GRANTS_TABLE} g
+       left join ${E2EE_DEVICES_TABLE} e
+         on e.grant_id = g.id and e.profile_id = :profileId
+         and e.device_key = g.notice_encrypted_dm_device_key
+         and e.grant_message is not null and e.revoked_at is null
+         and e.expires_at_seconds > :nowSeconds
+       where ${signingOwner} and g.notice_pending = true
+         and g.notice_acknowledged = false
+         and g.revoked_at is null and g.expires_at > :now
+       union all
+       select null, null, e.device_key, e.label, e.created_at
+       from ${E2EE_DEVICES_TABLE} e
+       where :showStandalone and e.profile_id = :profileId and e.notice_pending = true
+         and e.grant_message is null and e.revoked_at is null
+         and e.expires_at_seconds > :nowSeconds
+       order by created_at desc, signing_grant_id desc, encrypted_dm_device_key desc
+       limit ${DEVICE_GRANTS_LIST_LIMIT}`,
+      {
+        profileId,
+        wallet,
+        now,
+        nowSeconds: Math.floor(now / 1000),
+        showStandalone
+      },
+      ctx,
+      DbPoolName.WRITE
+    );
+  }
+
   async lockGrant(
     id: string,
     ctx: RequestContext
@@ -139,7 +219,8 @@ export class DeviceSigningDb extends LazyDbAccessCompatibleService {
   async acknowledgeGrant(id: string, ctx: RequestContext): Promise<void> {
     const result = await this.timedExecute(
       'acknowledgeGrant',
-      `update ${DEVICE_GRANTS_TABLE} set notice_acknowledged = true where id = :id`,
+      `update ${DEVICE_GRANTS_TABLE}
+       set notice_acknowledged = true, notice_pending = false where id = :id`,
       { id },
       ctx,
       DbPoolName.WRITE
@@ -322,6 +403,88 @@ export class DeviceSigningDb extends LazyDbAccessCompatibleService {
       { dropId },
       ctx
     );
+  }
+
+  /** drop id to current_event_id, for the drops that have one. */
+  async findDropAuthorSignatureEventIds(
+    dropIds: readonly string[],
+    ctx: RequestContext
+  ): Promise<Map<string, string>> {
+    if (!dropIds.length) {
+      return new Map();
+    }
+    const rows = await this.timedExecute<{
+      drop_id: string;
+      event_id: string;
+    }>(
+      'findDropAuthorSignatureEventIds',
+      `select drop_id, event_id from ${DROP_AUTHOR_SIGNATURES_TABLE} where drop_id in (:dropIds)`,
+      { dropIds },
+      ctx
+    );
+    return new Map(rows.map((row) => [row.drop_id, row.event_id]));
+  }
+
+  /**
+   * Content events (post, edit, delete) of several drops, oldest first per
+   * drop. Per drop at most `newestPerDrop` newest events are returned, plus
+   * the first event and the drop's current event when those are older;
+   * `truncatedDropIds` names the drops that have more.
+   */
+  async findContentEventsByDropIds(
+    dropIds: readonly string[],
+    newestPerDrop: number,
+    ctx: RequestContext
+  ): Promise<{
+    events: DeviceSignedEventEntity[];
+    truncatedDropIds: Set<string>;
+  }> {
+    if (!dropIds.length) {
+      return { events: [], truncatedDropIds: new Set() };
+    }
+    const rows = await this.timedExecute<
+      DeviceSignedEventEntity & {
+        readonly newest_rank: number;
+        readonly oldest_rank: number;
+        readonly drop_event_count: number;
+      }
+    >(
+      'findContentEventsByDropIds',
+      `select ranked.* from (
+         select e.*,
+           row_number() over (partition by e.drop_id
+             order by e.created_at desc, e.seq desc, e.id desc) as newest_rank,
+           row_number() over (partition by e.drop_id
+             order by e.created_at asc, e.seq asc, e.id asc) as oldest_rank,
+           count(*) over (partition by e.drop_id) as drop_event_count
+         from ${DEVICE_SIGNED_EVENTS_TABLE} e
+         where e.drop_id in (:dropIds) and e.kind in (:kinds)
+       ) ranked
+       left join ${DROP_AUTHOR_SIGNATURES_TABLE} s
+         on s.drop_id = ranked.drop_id and s.event_id = ranked.id
+       where ranked.newest_rank <= :newestPerDrop
+          or ranked.oldest_rank = 1
+          or s.event_id is not null
+       order by ranked.drop_id asc, ranked.created_at asc, ranked.seq asc, ranked.id asc`,
+      { dropIds, kinds: DROP_CONTENT_EVENT_KINDS, newestPerDrop },
+      ctx
+    );
+    const returnedPerDrop = new Map<string, number>();
+    const totalPerDrop = new Map<string, number>();
+    const events = rows.map(
+      ({ newest_rank, oldest_rank, drop_event_count, ...event }) => {
+        const dropId = event.drop_id!;
+        returnedPerDrop.set(dropId, (returnedPerDrop.get(dropId) ?? 0) + 1);
+        totalPerDrop.set(dropId, Number(drop_event_count));
+        return event;
+      }
+    );
+    const truncatedDropIds = new Set(
+      Array.from(totalPerDrop.entries())
+        .filter(([dropId, total]) => total > (returnedPerDrop.get(dropId) ?? 0))
+        .map(([dropId]) => dropId)
+    );
+    return { events, truncatedDropIds };
   }
 
   private async insertIgnoringDuplicate(

@@ -177,7 +177,8 @@ export class IdentitySubscriptionsDb extends LazyDbAccessCompatibleService {
   }
 
   async findSubscriberIdsAndActionsForTarget(
-    params: IncomingIdentitySubscriptionsParams
+    params: IncomingIdentitySubscriptionsParams,
+    excludedSubscriberId: string | null = null
   ): Promise<Record<string, ActivityEventAction[]>> {
     return this.db
       .execute<{ id: string; actions: string }>(
@@ -186,6 +187,7 @@ export class IdentitySubscriptionsDb extends LazyDbAccessCompatibleService {
              from ${IDENTITY_SUBSCRIPTIONS_TABLE} s
              where s.target_id = :target_id
                and s.target_type = :target_type
+               ${excludedSubscriberId ? 'and s.subscriber_id <> :excludedSubscriberId' : ''}
              group by 1)
       select scr.*
       from scr
@@ -195,6 +197,7 @@ export class IdentitySubscriptionsDb extends LazyDbAccessCompatibleService {
     `,
         {
           ...params,
+          excludedSubscriberId,
           offset: (params.page - 1) * params.page_size,
           limit: params.page_size
         }
@@ -256,14 +259,15 @@ export class IdentitySubscriptionsDb extends LazyDbAccessCompatibleService {
   }
 
   async countDistinctSubscriberIdsForTarget(
-    params: Omit<IncomingIdentitySubscriptionsParams, 'page' | 'page_size'>
+    params: Omit<IncomingIdentitySubscriptionsParams, 'page' | 'page_size'>,
+    excludedSubscriberId: string | null = null
   ): Promise<number> {
     return this.db
       .oneOrNull<{
         cnt: number;
       }>(
-        `select count(distinct subscriber_id) as cnt from ${IDENTITY_SUBSCRIPTIONS_TABLE} where target_id = :target_id and target_type = :target_type`,
-        params
+        `select count(distinct subscriber_id) as cnt from ${IDENTITY_SUBSCRIPTIONS_TABLE} where target_id = :target_id and target_type = :target_type${excludedSubscriberId ? ' and subscriber_id <> :excludedSubscriberId' : ''}`,
+        { ...params, excludedSubscriberId }
       )
       .then((it) => it?.cnt ?? 0);
   }

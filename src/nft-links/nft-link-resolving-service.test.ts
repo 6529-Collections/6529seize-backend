@@ -6,10 +6,7 @@ import {
 } from '@/nft-links/nft-links.db';
 import { SQS } from '@/sqs';
 import { nftLinkMediaPreviewService } from '@/nft-links/nft-link-media-preview.service';
-import {
-  NftLinkResolutionDeadlineError,
-  withNftLinkResolutionBudget
-} from '@/nft-links/resolution-budget';
+import { withNftLinkResolutionBudget } from '@/nft-links/resolution-budget';
 import { validateLinkUrl } from '@/nft-links/nft-link-resolver.validator';
 import { NormalizedNftCard } from '@/nft-links/types';
 import {
@@ -171,7 +168,7 @@ describe('NFT link refresh retries and persistence', () => {
     expect(db.updateWithFailure).toHaveBeenCalledWith(
       {
         canonicalId: card.identifier.canonicalId,
-        message: new NftLinkResolutionDeadlineError().message,
+        message: 'TIMEOUT',
         lockStamp: 123,
         attemptedAt: expect.any(Number),
         retryState: null
@@ -203,7 +200,8 @@ describe('NFT link refresh retries and persistence', () => {
 
     expect(resolver.resolve).toHaveBeenCalledTimes(1);
     expect(db.updateWithFailure).toHaveBeenCalledWith(
-      expect.objectContaining({ message: 'rate limited' }),
+      // Only a fixed category is stored; upstream text stays in logs.
+      expect.objectContaining({ message: 'FETCH_FAILED' }),
       {}
     );
     expect((service as any).logger.errorWithDiagnostic).toHaveBeenCalledWith(

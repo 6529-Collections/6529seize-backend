@@ -1,4 +1,5 @@
 import * as Joi from 'joi';
+import { BadRequestException } from '@/exceptions';
 import { ApiRegisterDeviceGrantRequest } from '@/api/generated/models/ApiRegisterDeviceGrantRequest';
 import { E2EE_WALLET_SIGNATURE_PATTERN } from '@/e2ee/e2ee-encoding';
 import { APP_DEVICE_GRANT_ORIGIN_MAX_LENGTH } from './app-device-grant';
@@ -58,3 +59,40 @@ export const registerDeviceGrantSchema =
       .required(),
     device_label: Joi.string().allow('').max(200).optional()
   });
+
+/** Longest drop id accepted in a batch read (the drops.id column length). */
+const DROP_ID_MAX_LENGTH = 100;
+
+/**
+ * The `drop_ids` query of GET /drops/signed-events: comma separated, 1 to
+ * `maxDrops` non-empty ids (a repeated parameter is read as one list).
+ * Returns the distinct ids in request order.
+ */
+export function parseDropSignedEventsBatchIds(
+  value: unknown,
+  maxDrops: number
+): string[] {
+  const values = Array.isArray(value) ? value : [value];
+  if (
+    !values.length ||
+    values.some((it) => typeof it !== 'string' || !it.trim().length)
+  ) {
+    throw new BadRequestException(
+      `drop_ids is required: a comma separated list of 1 to ${maxDrops} drop ids`
+    );
+  }
+  const ids = values.flatMap((it: string) =>
+    it.split(',').map((id) => id.trim())
+  );
+  if (ids.some((id) => !id.length || id.length > DROP_ID_MAX_LENGTH)) {
+    throw new BadRequestException(
+      `drop_ids must not contain empty ids or ids longer than ${DROP_ID_MAX_LENGTH} characters`
+    );
+  }
+  if (ids.length > maxDrops) {
+    throw new BadRequestException(
+      `drop_ids lists ${ids.length} ids; at most ${maxDrops} are allowed`
+    );
+  }
+  return Array.from(new Set(ids));
+}

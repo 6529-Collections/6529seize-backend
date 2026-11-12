@@ -1,6 +1,21 @@
 import { AuthenticationContext } from '@/auth-context';
 import { NotFoundException } from '@/exceptions';
+import { ProfileProxyActionType } from '@/entities/IProfileProxyAction';
 import { WaveRepOverviewApiService } from './wave-rep-overview.api.service';
+
+function proxyContext(actions: ProfileProxyActionType[]) {
+  return new AuthenticationContext({
+    authenticatedWallet: '0xproxy',
+    authenticatedProfileId: 'proxy-profile',
+    roleProfileId: 'grantor-profile',
+    activeProxyActions: actions.map((type, index) => ({
+      id: `action-${index}`,
+      type,
+      credit_amount: null,
+      credit_spent: null
+    }))
+  });
+}
 
 function makeWave(overrides: Record<string, unknown> = {}) {
   return {
@@ -94,5 +109,56 @@ describe('WaveRepOverviewApiService', () => {
         data: []
       }
     });
+  });
+});
+
+describe('WaveRepOverviewApiService proxy read context', () => {
+  it('hides a private wave from a proxy without READ_WAVE even if the grantor is a member', async () => {
+    const { service, wavesApiDb, userGroupsService, waveRepOverviewDb } =
+      createService();
+    wavesApiDb.findWaveById.mockResolvedValue(
+      makeWave({ visibility_group_id: 'private-group' })
+    );
+    userGroupsService.getGroupsUserIsEligibleFor.mockResolvedValue([
+      'private-group'
+    ]);
+
+    await expect(
+      service.getOverview(
+        { waveId: 'wave-1', page: 1, page_size: 5 },
+        {
+          authenticationContext: proxyContext([
+            ProfileProxyActionType.CREATE_WAVE
+          ])
+        }
+      )
+    ).rejects.toThrow(NotFoundException);
+    expect(userGroupsService.getGroupsUserIsEligibleFor).not.toHaveBeenCalled();
+    expect(waveRepOverviewDb.getWaveRepOverviewStats).not.toHaveBeenCalled();
+  });
+
+  it('shows a private wave to a proxy with READ_WAVE for a member grantor', async () => {
+    const { service, wavesApiDb, userGroupsService } = createService();
+    wavesApiDb.findWaveById.mockResolvedValue(
+      makeWave({ visibility_group_id: 'private-group' })
+    );
+    userGroupsService.getGroupsUserIsEligibleFor.mockResolvedValue([
+      'private-group'
+    ]);
+
+    await expect(
+      service.getOverview(
+        { waveId: 'wave-1', page: 1, page_size: 5 },
+        {
+          authenticationContext: proxyContext([
+            ProfileProxyActionType.READ_WAVE
+          ])
+        }
+      )
+    ).resolves.toBeDefined();
+    expect(userGroupsService.getGroupsUserIsEligibleFor).toHaveBeenCalledWith(
+      'grantor-profile',
+      undefined
+    );
   });
 });

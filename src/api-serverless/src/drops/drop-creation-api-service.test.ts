@@ -3,6 +3,8 @@ jest.mock('@/competitions/competition-entry-drop-hooks');
 import { waveScoreService } from '@/api/waves/wave-score.service';
 import { invalidateWaveUnreadCacheForWave } from '@/api/waves/wave-unread-cache';
 import { DropType } from '@/entities/IDrop';
+import { AuthenticationContext } from '@/auth-context';
+import { ProfileProxyActionType } from '@/entities/IProfileProxyAction';
 import { waveDropMetricsRefreshService } from '@/drops/wave-drop-metrics-refresh.service';
 import { sendIdentityPushNotifications } from '@/api/push-notifications/push-notifications.service';
 import { DbPoolName } from '@/db-query.options';
@@ -96,6 +98,119 @@ function makeService({
   };
 }
 
+describe('DropCreationApiService.setDropReplyCollapse', () => {
+  function setup({
+    authorId = 'profile-1',
+    proxy = false,
+    replyTo = null as string | null,
+    waveCollapsed = false,
+    directMessage = false,
+    hasReplies = false
+  } = {}) {
+    const root = {
+      id: 'drop-1',
+      author_id: authorId,
+      wave_id: 'wave-1',
+      drop_type: DropType.CHAT,
+      reply_to_drop_id: replyTo
+    };
+    const writerConnection = {};
+    const dropsService = {
+      findViewableDropByIdOrThrow: jest.fn().mockResolvedValue(root),
+      findDropByIdOrThrow: jest.fn().mockResolvedValue({ id: root.id })
+    };
+    const dropsDb = {
+      executeNativeQueriesInTransaction: jest.fn(async (callback) =>
+        callback(writerConnection)
+      ),
+      findDropById: jest.fn().mockResolvedValue(root),
+      hasDropReplies: jest.fn().mockResolvedValue(hasReplies),
+      setDropReplyCollapse: jest.fn().mockResolvedValue(true)
+    };
+    const waves = {
+      findWaveByIdForUpdate: jest.fn().mockResolvedValue({
+        id: root.wave_id,
+        chat_replies_collapsed: waveCollapsed,
+        is_direct_message: directMessage
+      })
+    };
+    const notifier = { notifyAboutDropUpdate: jest.fn() };
+    const service = new DropCreationApiService(
+      dropsService as never,
+      dropsDb as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      notifier as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      waves as never
+    );
+    const ctx = {
+      authenticationContext: {
+        getActingAsId: () => 'profile-1',
+        isAuthenticatedAsProxy: () => proxy
+      }
+    };
+    return {
+      dropsDb,
+      notifier,
+      dropsService,
+      writerConnection,
+      save: (collapseReplies: boolean) =>
+        service.setDropReplyCollapse(
+          { dropId: root.id, collapseReplies },
+          ctx as never
+        )
+    };
+  }
+
+  it.each([true, false])(
+    'saves the author’s requested state %s',
+    async (collapsed) => {
+      const { dropsDb, dropsService, notifier, save, writerConnection } = setup(
+        { hasReplies: collapsed }
+      );
+      await expect(save(collapsed)).resolves.toMatchObject({
+        reply_placement_has_replies: collapsed
+      });
+      expect(dropsDb.setDropReplyCollapse).toHaveBeenCalledWith(
+        { dropId: 'drop-1', waveId: 'wave-1', collapseReplies: collapsed },
+        expect.objectContaining({ connection: expect.anything() })
+      );
+      expect(dropsService.findDropByIdOrThrow).toHaveBeenCalledWith(
+        { dropId: 'drop-1', skipEligibilityCheck: true },
+        expect.objectContaining({ connection: writerConnection })
+      );
+      expect(notifier.notifyAboutDropUpdate).toHaveBeenCalledWith(
+        { id: 'drop-1', reply_placement_has_replies: collapsed },
+        expect.anything(),
+        { reason: 'REPLY_COLLAPSE' }
+      );
+    }
+  );
+
+  it('does not send a live update for an unchanged placement', async () => {
+    const { dropsDb, notifier, save } = setup();
+    dropsDb.setDropReplyCollapse.mockResolvedValueOnce(false);
+    await save(false);
+    expect(notifier.notifyAboutDropUpdate).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [{ authorId: 'profile-2' }, 'Only the author'],
+    [{ proxy: true }, 'Only the author'],
+    [{ replyTo: 'another-drop' }, 'top-level chat drops'],
+    [{ waveCollapsed: true }, 'waves with inline replies'],
+    [{ directMessage: true }, 'waves with inline replies']
+  ])('rejects ineligible settings %j', async (overrides, message) => {
+    const { dropsDb, save } = setup(overrides);
+    await expect(save(true)).rejects.toThrow(message);
+    expect(dropsDb.setDropReplyCollapse).not.toHaveBeenCalled();
+  });
+});
+
 describe('DropCreationApiService.toggleHideLinkPreview', () => {
   it('keeps legacy toggle behavior when no final state is provided', async () => {
     const { ctx, dropsDb, service, wsListenersNotifier } = makeService({
@@ -177,6 +292,47 @@ describe('DropCreationApiService.toggleHideLinkPreview', () => {
 });
 
 describe('DropCreationApiService.updateDrop', () => {
+  it('requires the drop creation proxy action before loading the drop', async () => {
+    const dropsDb = { findDropById: jest.fn() };
+    const service = new DropCreationApiService(
+      {} as never,
+      dropsDb as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never
+    );
+    const proxyContext = new AuthenticationContext({
+      authenticatedWallet: '0xproxy',
+      authenticatedProfileId: 'proxy-profile',
+      roleProfileId: 'grantor-profile',
+      activeProxyActions: [
+        {
+          id: 'action-1',
+          type: ProfileProxyActionType.READ_WAVE,
+          credit_amount: null,
+          credit_spent: null
+        }
+      ]
+    });
+
+    await expect(
+      service.updateDrop(
+        {
+          dropId: 'drop-1',
+          request: {} as never,
+          authorId: 'grantor-profile',
+          representativeId: 'proxy-profile'
+        },
+        { authenticationContext: proxyContext } as never
+      )
+    ).rejects.toThrow(`Proxy doesn't have permission to edit drops`);
+    expect(dropsDb.findDropById).not.toHaveBeenCalled();
+  });
+
   it('rejects a non-author before preparing or moderating the update', async () => {
     const dropsDb = {
       findDropById: jest.fn().mockResolvedValue({

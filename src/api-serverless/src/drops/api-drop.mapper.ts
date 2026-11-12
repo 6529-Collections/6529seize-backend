@@ -132,6 +132,7 @@ const PRIORITY_METADATA_ADDITIONAL_MEDIA_KEY = 'additional_media';
 export interface ApiDropMapperOptions {
   readonly groupIdsUserIsEligibleFor?: string[];
   readonly includeLargestVote?: boolean;
+  readonly includeWaveWideReplyRoots?: boolean;
   /** Native competition readers supply their own scoped voting summary. */
   readonly includeSubmissionVoting?: boolean;
 }
@@ -291,6 +292,7 @@ export class ApiDropMapper {
         memeCardIdsByDropId,
         moderationPresentations,
         repliesCountByDropId,
+        collapsedReplyRoots,
         authorSignedDropIds
       ] = await Promise.all([
         this.identityFetcher.getApiIdentityOverviewsByIds(authorIds, ctx),
@@ -369,6 +371,13 @@ export class ApiDropMapper {
           : Promise.resolve({} as Record<string, number>),
         moderationPresentationsPromise,
         this.dropsDb.countCollapsedRepliesOfGivenDrops(dropIds, ctx),
+        this.dropsDb.findCollapsedReplyRoots(
+          entities
+            .filter((drop) => drop.reply_to_drop_id)
+            .map((drop) => drop.id),
+          ctx,
+          options.includeWaveWideReplyRoots
+        ),
         this.authorSignaturesDb.findAuthorSignedDropIds(dropIds, ctx)
       ]);
 
@@ -425,6 +434,7 @@ export class ApiDropMapper {
             reactions: reactionsByDropId.get(drop.id),
             boosts: boostsCount[drop.id] ?? 0,
             repliesCount: repliesCountByDropId[drop.id],
+            collapsedReplyThread: collapsedReplyRoots[drop.id],
             authorSigned: authorSignedDropIds.has(drop.id),
             boosted: boostedDropIds.has(drop.id),
             bookmarked: bookmarkedDropIds.has(drop.id),
@@ -562,6 +572,7 @@ export class ApiDropMapper {
     reactions,
     boosts,
     repliesCount,
+    collapsedReplyThread,
     authorSigned,
     boosted,
     bookmarked,
@@ -594,6 +605,7 @@ export class ApiDropMapper {
     reactions?: DropReactionCountersResult;
     boosts: number;
     repliesCount?: number;
+    collapsedReplyThread?: ApiDropV2['collapsed_reply_thread'];
     authorSigned: boolean;
     boosted: boolean;
     bookmarked: boolean;
@@ -616,6 +628,14 @@ export class ApiDropMapper {
       // Only content the viewer can see may be reported as author signed.
       is_author_signed:
         authorSigned && moderationPresentation.moderation.can_view,
+      ...(drop.drop_type === DropType.CHAT &&
+      !drop.reply_to_drop_id &&
+      drop.collapse_replies !== undefined
+        ? { collapse_replies: !!drop.collapse_replies }
+        : {}),
+      ...(collapsedReplyThread
+        ? { collapsed_reply_thread: collapsedReplyThread }
+        : {}),
       hide_link_preview: drop.hide_link_preview ?? false,
       parts_count: drop.parts_count,
       author,

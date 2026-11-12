@@ -132,7 +132,7 @@ describe('EULA consent handlers', () => {
     );
   });
 
-  it.each(['', 'x'.repeat(101), 123])(
+  it.each(['', 'x'.repeat(101), 123, 'device 1', 'device/1', '<script>'])(
     'rejects an invalid device id when retrieving consent',
     async (deviceId) => {
       await expect(
@@ -141,6 +141,18 @@ describe('EULA consent handlers', () => {
       expect(fetchEULAConsent).not.toHaveBeenCalled();
     }
   );
+
+  it.each([
+    'D2B1C6E4-1F3A-4B5C-9D8E-7F6A5B4C3D2E',
+    '0123456789abcdef',
+    '8f14e45f-ceea-467a-9575-1fa0b6d3c2a1'
+  ])('accepts the native device id %p', async (deviceId) => {
+    (fetchEULAConsent as jest.Mock).mockResolvedValue(null);
+    await expect(handleGetEulaConsent(getRequest(deviceId))).resolves.toEqual(
+      {}
+    );
+    expect(fetchEULAConsent).toHaveBeenCalledWith(deviceId);
+  });
 
   it('normalizes the device id before deleting consent', async () => {
     (deleteEULAConsent as jest.Mock).mockResolvedValue(undefined);
@@ -156,6 +168,7 @@ describe('EULA consent handlers', () => {
     { device_id: '' },
     { device_id: 123 },
     { device_id: 'x'.repeat(101) },
+    { device_id: 'device 1' },
     { device_id: 'device-1', unexpected: true }
   ])('rejects an invalid delete request', async (body) => {
     await expect(

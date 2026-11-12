@@ -14,7 +14,8 @@ const DropIdsQuerySchema = Joi.object({
   wave_id: Joi.string().required(),
   min_serial_no: Joi.number().integer().required(),
   max_serial_no: Joi.number().integer().optional(),
-  limit: Joi.number().integer().min(1).max(5000).default(100)
+  limit: Joi.number().integer().min(1).max(5000).default(100),
+  respect_drop_reply_collapse: Joi.boolean().default(false)
 });
 
 router.get(
@@ -30,6 +31,7 @@ router.get(
         min_serial_no: number;
         max_serial_no?: number;
         limit?: number;
+        respect_drop_reply_collapse?: boolean;
       },
       any
     >,
@@ -37,14 +39,20 @@ router.get(
   ) => {
     const timer = Timer.getFromRequest(req);
     const authenticationContext = await getAuthenticationContext(req, timer);
-    const { wave_id, min_serial_no, max_serial_no, limit } =
-      getValidatedByJoiOrThrow(req.query, DropIdsQuerySchema);
+    const {
+      wave_id,
+      min_serial_no,
+      max_serial_no,
+      limit,
+      respect_drop_reply_collapse
+    } = getValidatedByJoiOrThrow(req.query, DropIdsQuerySchema);
     const dropIds = await dropsService.findDropIdsInWaveRange(
       {
         wave_id,
         min_serial_no,
         max_serial_no: max_serial_no ?? null,
-        limit
+        limit,
+        respect_drop_reply_collapse
       },
       { timer, authenticationContext }
     );

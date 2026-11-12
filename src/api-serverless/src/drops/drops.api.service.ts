@@ -97,8 +97,20 @@ import {
 } from '@/content-moderation/content-moderation.db';
 import { ApiDropModerationStatus } from '@/api/generated/models/ApiDropModerationStatus';
 import { withWaveLogsTimeoutGuard } from './wave-logs-timeout';
+import { Logger } from '@/logging';
+
+/**
+ * Time after which the one-by-one mapping of a batch read (after the bulk
+ * mapping failed) starts no further drop. It is checked between drops: a
+ * mapping already running is not cut short, so the fallback can take this
+ * long plus one mapping. Drops not started in time are left out, like drops
+ * the mapper cannot handle.
+ */
+export const ONE_BY_ONE_DROP_MAPPING_BUDGET_MS = 3_000;
 
 export class DropsApiService {
+  private readonly logger = Logger.get(this.constructor.name);
+
   constructor(
     private readonly dropsMappers: DropsMappers,
     private readonly dropsDb: DropsDb,
@@ -135,6 +147,84 @@ export class DropsApiService {
         ctx.connection
       )
       .then((it) => it[0]);
+  }
+
+  /**
+   * The drops among `dropIds` that findDropByIdOrThrow would return to the
+   * caller, mapped the same way; unknown and unreadable ids are left out.
+   */
+  public async findReadableDropsByIds(
+    dropIds: string[],
+    ctx: RequestContext
+  ): Promise<ApiDrop[]> {
+    if (!dropIds.length) {
+      return [];
+    }
+    const contextProfileId = getWaveReadContextProfileId(
+      ctx.authenticationContext
+    );
+    const group_ids_user_is_eligible_for =
+      await this.userGroupsService.getGroupsUserIsEligibleFor(contextProfileId);
+    const dropEntities = await this.dropsDb.findDropsByIdsWithEligibilityCheck(
+      dropIds,
+      group_ids_user_is_eligible_for,
+      ctx.connection
+    );
+    if (!dropEntities.length) {
+      return [];
+    }
+    const map = (entities: DropEntity[]) =>
+      this.dropsMappers.convertToDropFulls(
+        {
+          dropEntities: entities,
+          authenticationContext: ctx.authenticationContext
+        },
+        ctx.connection
+      );
+    try {
+      return await map(dropEntities);
+    } catch (error) {
+      return this.mapReadableDropsOneByOne(dropEntities, map, error);
+    }
+  }
+
+  /**
+   * After a failed bulk mapping, maps each drop on its own so that one drop
+   * the mapper cannot handle is left out instead of failing the whole read.
+   * Drops are mapped in order, and none is started once
+   * ONE_BY_ONE_DROP_MAPPING_BUDGET_MS has passed; the rest are left out too.
+   * When no drop was mapped, the original error is thrown as before; that
+   * includes a first drop that fails after running past the budget, since
+   * no other drop is then tried.
+   */
+  private async mapReadableDropsOneByOne(
+    dropEntities: DropEntity[],
+    map: (entities: DropEntity[]) => Promise<ApiDrop[]>,
+    bulkError: unknown
+  ): Promise<ApiDrop[]> {
+    const deadlineMs = Date.now() + ONE_BY_ONE_DROP_MAPPING_BUDGET_MS;
+    const mapped: ApiDrop[] = [];
+    let failed = 0;
+    let notTried = 0;
+    for (const entity of dropEntities) {
+      if (Date.now() >= deadlineMs) {
+        notTried++;
+        continue;
+      }
+      try {
+        mapped.push(...(await map([entity])));
+      } catch {
+        failed++;
+      }
+    }
+    if (!mapped.length) {
+      throw bulkError;
+    }
+    this.logger.error(
+      `Mapped the ${dropEntities.length} drops of a batch read one by one after the bulk mapping failed; left out ${failed} that could not be mapped and ${notTried} not tried within ${ONE_BY_ONE_DROP_MAPPING_BUDGET_MS} ms`,
+      bulkError
+    );
+    return mapped;
   }
 
   public async findViewableDropByIdOrThrow(
@@ -237,6 +327,7 @@ export class DropsApiService {
         );
     const entities = await this.dropsDb.findLightDropsByIds(
       lightDropIds.map((it) => it.id),
+      group_ids_user_is_eligible_for,
       ctx
     );
     const hiddenDropIds = await competitionAnonymityService.hiddenDropIds(
@@ -375,12 +466,14 @@ export class DropsApiService {
       wave_id,
       min_serial_no,
       max_serial_no,
-      limit
+      limit,
+      respect_drop_reply_collapse
     }: {
       wave_id: string;
       min_serial_no: number;
       max_serial_no: number | null;
       limit: number;
+      respect_drop_reply_collapse?: boolean;
     },
     ctx: RequestContext
   ): Promise<ApiDropId[]> {
@@ -399,7 +492,8 @@ export class DropsApiService {
         min_serial_no,
         max_serial_no: maxSerialNo,
         limit,
-        group_ids_user_is_eligible_for
+        group_ids_user_is_eligible_for,
+        respect_drop_reply_collapse
       },
       ctx
     );

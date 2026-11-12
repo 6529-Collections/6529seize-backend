@@ -1,3 +1,5 @@
+import { DEVS_6529_MENTION_TOKEN } from '@/constants/mentions';
+
 export const RESERVED_HANDLES = [
   'all',
   'admin',
@@ -65,6 +67,7 @@ export const RESERVED_HANDLES = [
   'invitations',
   'verify',
   'verification',
+  'validator',
   'preferences',
   'content-moderation',
   'content_moderation',
@@ -455,5 +458,31 @@ export const RESERVED_HANDLES = [
   'community-activity',
   'open-data',
   'stream',
-  'drop-control'
+  'drop-control',
+  // Bot and group-mention tokens. Profiles that already hold one of these
+  // handles (such as the help bot's own profile) keep it; see
+  // isHandleReservedFor.
+  'help6529',
+  DEVS_6529_MENTION_TOKEN,
+  'admins',
+  'contributors'
 ];
+
+const RESERVED_HANDLES_LOWER_CASE = new Set(
+  RESERVED_HANDLES.map((handle) => handle.toLowerCase())
+);
+
+/**
+ * Whether `handle` is reserved for a caller whose profile currently has
+ * `currentHandle`. A profile keeps a reserved handle it already holds.
+ */
+export function isHandleReservedFor(
+  handle: string,
+  currentHandle: string | null | undefined
+): boolean {
+  const lowerCaseHandle = handle.toLowerCase();
+  return (
+    RESERVED_HANDLES_LOWER_CASE.has(lowerCaseHandle) &&
+    lowerCaseHandle !== currentHandle?.toLowerCase()
+  );
+}

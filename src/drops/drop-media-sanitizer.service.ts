@@ -7,10 +7,12 @@ import {
 } from '@/media/resize-input';
 import {
   assertDecodedWorkBudget,
+  inspectResizeInput,
   isUnprocessableResizeInput
 } from '@/mediaResizerLoop/resize-resource-safety';
 import { sanitizePngFile } from '@/media/png-preview';
 import {
+  canVerifyDecodedPixels,
   LOSSLESS_STRIP_MAX_SOURCE_BYTES as DEFAULT_LOSSLESS_STRIP_MAX_SOURCE_BYTES,
   stripMetadataWithPixelCheck
 } from '@/media/metadata-strip/pixel-verified-metadata-strip';
@@ -18,6 +20,7 @@ import { releaseBuffer } from '@/media/metadata-strip/release-buffer';
 import {
   prepareUploadImagePreviews,
   previewObjectKey,
+  STANDARD_PREVIEW_HEIGHTS,
   UploadImagePreview
 } from '@/media/upload-image-previews';
 import {
@@ -26,7 +29,7 @@ import {
   PutObjectCommand,
   S3Client
 } from '@aws-sdk/client-s3';
-import Sharp from 'sharp';
+import Sharp, { Metadata } from 'sharp';
 import { describeImage, MediaLayoutHints } from './media-placeholder';
 import { Readable } from 'node:stream';
 import { getS3 } from '@/s3.client';
@@ -95,12 +98,14 @@ export class DropMediaSanitizerService {
 
   async processUpload({
     mediaUploadId,
-    approximateReceiveCount
+    approximateReceiveCount,
+    retryFailed = false
   }: {
     mediaUploadId: string;
     approximateReceiveCount: number;
+    retryFailed?: boolean;
   }): Promise<void> {
-    const upload = await this.dropMediaUploadsDb.findById(mediaUploadId);
+    let upload = await this.dropMediaUploadsDb.findById(mediaUploadId);
     if (!upload) {
       throw new PermanentMediaSanitizationError(
         `Drop media upload ${mediaUploadId} not found`
@@ -111,7 +116,15 @@ export class DropMediaSanitizerService {
       return;
     }
     if (upload.status === DropMediaUploadStatus.FAILED) {
-      return;
+      if (!retryFailed) return;
+      const reset = await this.dropMediaUploadsDb.transitionStatus({
+        id: upload.id,
+        fromStatuses: [DropMediaUploadStatus.FAILED],
+        toStatus: DropMediaUploadStatus.PROCESSING,
+        patch: { error_reason: null, completed_at: null }
+      });
+      if (!reset) return;
+      upload = { ...upload, status: DropMediaUploadStatus.PROCESSING };
     }
     if (!(await this.claimUploadForSanitizing(upload))) {
       return;
@@ -583,6 +596,7 @@ async function preparePublishedImageFile(
     input,
     declaredMimeType
   );
+  await assertImageUploadFits(input, metadata, stripMetadata);
   if (!stripMetadata) return { path: input, contentType };
   if (await stripFileLosslessly(input, output, format, reportFallback)) {
     return { path: output, contentType };
@@ -593,6 +607,38 @@ async function preparePublishedImageFile(
     .timeout({ seconds: 30 })
     .toFile(output);
   return { path: output, contentType };
+}
+
+/** Reject known budget failures from metadata before stripping or decoding. */
+async function assertImageUploadFits(
+  input: string,
+  metadata: Metadata,
+  stripMetadata: boolean
+): Promise<void> {
+  try {
+    // The larger mandatory preview is the stricter JPEG shrink target.
+    await inspectResizeInput(input, metadata.format === 'gif', {
+      width: null,
+      height: Math.max(...STANDARD_PREVIEW_HEIGHTS)
+    });
+    if (
+      stripMetadata &&
+      ((await stat(input)).size > LOSSLESS_STRIP_MAX_SOURCE_BYTES ||
+        !canVerifyDecodedPixels(metadata))
+    ) {
+      assertDecodedWorkBudget(metadata, metadata.format === 'gif');
+    }
+  } catch (error) {
+    if (
+      error instanceof UnprocessableResizeInput &&
+      error.code === 'DECODED_IMAGE_TOO_LARGE'
+    ) {
+      throw new PermanentMediaSanitizationError(
+        `This image is too large to process (${metadata.width} x ${metadata.pageHeight ?? metadata.height} pixels). Reduce its dimensions or animation frame count and upload again.`
+      );
+    }
+    throw error;
+  }
 }
 
 /** Decode a bounded still AVIF and publish an oriented, metadata-free WebP. */
@@ -716,6 +762,8 @@ function imageProcessingErrorReason(error: unknown): string {
   if (error instanceof UnprocessableResizeInput) {
     if (error.code === 'SOURCE_TOO_LARGE')
       return 'Image uploads must be 256 MiB or smaller.';
+    if (error.code === 'DECODED_IMAGE_TOO_LARGE')
+      return 'This image is too large to process. Reduce its dimensions or animation frame count and upload again.';
     return 'This image cannot produce a usable preview. Reduce its dimensions or export a complete supported image and upload again.';
   }
   if (isUnprocessableResizeInput(error))

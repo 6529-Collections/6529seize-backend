@@ -1,5 +1,7 @@
 import type { Algorithm } from 'jsonwebtoken';
 import * as jwt from 'jsonwebtoken';
+import type { AccessTokenBinding, AccessTokenClientType } from '@/auth-context';
+import { readAccessTokenSessionClaims } from '@/api/auth/access-token-session';
 
 // issueAccessToken() signs with a string secret and jsonwebtoken defaults,
 // which is HS256. Verifiers pin it so no other algorithm is ever accepted.
@@ -17,6 +19,10 @@ export interface AccessTokenClaims {
   readonly wallet: string;
   readonly role: string | undefined;
   readonly exp: number;
+  // Session claims; present only when the token carries them.
+  readonly clientType?: AccessTokenClientType;
+  readonly binding?: AccessTokenBinding;
+  readonly sessionId?: string;
 }
 
 export function getBearerTokenOrNull(authorization: unknown): string | null {
@@ -39,6 +45,8 @@ function isOptionalString(value: unknown): value is string | undefined {
  * not have the shape issueAccessToken() produces: a JSON object whose subject
  * is a wallet address, with a numeric expiry, an optional string role and no
  * claims that only other token types carry. The wallet is lowercase.
+ * Session claims (`ct`, `sb`, `sid`) are optional: a token without them, or
+ * with a value this build does not know, is still an access token.
  */
 export function getAccessTokenClaimsOrNull(
   payload: unknown
@@ -59,7 +67,15 @@ export function getAccessTokenClaimsOrNull(
   if (NON_ACCESS_TOKEN_CLAIMS.some((claim) => payload[claim] !== undefined)) {
     return null;
   }
-  return { wallet: sub.toLowerCase(), role, exp };
+  const session = readAccessTokenSessionClaims(payload);
+  return {
+    wallet: sub.toLowerCase(),
+    role,
+    exp,
+    ...(session.clientType ? { clientType: session.clientType } : {}),
+    ...(session.binding ? { binding: session.binding } : {}),
+    ...(session.sessionId ? { sessionId: session.sessionId } : {})
+  };
 }
 
 /**

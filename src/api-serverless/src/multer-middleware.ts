@@ -1,5 +1,8 @@
 import type { NextFunction, Request, RequestHandler, Response } from 'express';
 import { CustomApiCompliantException } from '@/exceptions';
+import { Logger } from '@/logging';
+
+const logger = Logger.get('MULTER_MIDDLEWARE');
 
 // This must be require and not import because of how multer works
 const multerMiddleware = require('multer');
@@ -29,6 +32,9 @@ export function initMulterSingleMiddleware(
       if (
         (error as { code?: unknown } | undefined)?.code === 'LIMIT_FILE_SIZE'
       ) {
+        logger.warn(
+          `Rejected an upload larger than ${maxFileSizeBytes} bytes on ${req.method} ${req.route?.path ?? ''} field ${v}`
+        );
         next(new CustomApiCompliantException(413, 'File is too large'));
         return;
       }

@@ -1,4 +1,5 @@
 import { ApiDeviceGrant } from '@/api/generated/models/ApiDeviceGrant';
+import { ApiDeviceSecurityNotice } from '@/api/generated/models/ApiDeviceSecurityNotice';
 import { ApiRegisterDeviceGrantRequest } from '@/api/generated/models/ApiRegisterDeviceGrantRequest';
 import { mainnetContractWalletVerifier } from '@/api/e2ee/e2ee-context';
 import { AuthenticationContext } from '@/auth-context';
@@ -13,6 +14,7 @@ import {
 } from '@/exceptions';
 import { identitiesDb, IdentitiesDb } from '@/identities/identities.db';
 import { RequestContext } from '@/request.context';
+import type { ConnectionWrapper } from '@/sql-executor';
 import { e2eeDeviceSuites } from '@/e2ee/e2ee-suite-policy';
 
 /** What an app grant's encrypted-messages half says about suites. */
@@ -45,6 +47,11 @@ import {
   toApiDeviceGrant,
   toOwnedApiDeviceGrant
 } from './device-signing.mappers';
+import {
+  checkGrantOrigin,
+  GrantRegistrationRequest,
+  toGrantRegistrationRecord
+} from './grant-origins';
 
 const GRANT_ID_PATTERN = /^0x[0-9a-f]{64}$/;
 
@@ -58,10 +65,15 @@ export interface VerifiedLoginGrant {
   readonly chainId: number;
   readonly issuedAt: Date;
   readonly deviceLabel: string | null | undefined;
+  readonly encryptedDmDeviceKey?: string;
+  // The sign-in request and the session it created, recorded on the grant.
+  readonly registration?: GrantRegistrationRequest | null;
 }
 
 type GrantCallerContext = RequestContext & {
   readonly authenticationContext: AuthenticationContext;
+  // The registering request, recorded on a new app grant.
+  readonly registration?: GrantRegistrationRequest | null;
 };
 
 /**
@@ -131,7 +143,11 @@ export class DeviceGrantsService {
       expires_at: grant.terms.expiresAtSeconds * 1000,
       created_at: this.now(),
       revoked_at: null,
-      last_used_at: null
+      last_used_at: null,
+      ...(grant.encryptedDmDeviceKey
+        ? { notice_encrypted_dm_device_key: grant.encryptedDmDeviceKey }
+        : {}),
+      ...toGrantRegistrationRecord(grant.registration)
     };
     return this.storeGrant(entity, ctx);
   }
@@ -183,6 +199,18 @@ export class DeviceGrantsService {
         `Invalid device grant: ${verification.reason}`
       );
     }
+    const registration = ctx.registration ?? null;
+    const originCheck = checkGrantOrigin({
+      route: 'device_grants',
+      origin: grant.origin,
+      grantId: verification.grantId,
+      request: registration
+    });
+    if (originCheck.refused) {
+      throw new BadRequestException(
+        'Invalid device grant: unrecognized origin'
+      );
+    }
     return this.storeGrant(
       {
         id: verification.grantId,
@@ -199,7 +227,11 @@ export class DeviceGrantsService {
         expires_at: grant.expires_at * 1000,
         created_at: nowMs,
         revoked_at: null,
-        last_used_at: null
+        last_used_at: null,
+        ...(grant.mls_device_key
+          ? { notice_encrypted_dm_device_key: grant.mls_device_key }
+          : {}),
+        ...toGrantRegistrationRecord(registration)
       },
       ctx
     );
@@ -249,6 +281,32 @@ export class DeviceGrantsService {
       ? await this.db.findGrantsOfProfile(caller.profileId, ctx)
       : await this.db.findGrantsOfWallet(caller.wallet, ctx);
     return grants.map(toOwnedApiDeviceGrant);
+  }
+
+  async listCallerSecurityNotices(
+    ctx: GrantCallerContext
+  ): Promise<ApiDeviceSecurityNotice[]> {
+    const caller = this.resolveCaller(ctx.authenticationContext);
+    const notices = await this.db.findPendingSecurityNotices(
+      caller.profileId,
+      caller.wallet,
+      this.now(),
+      ctx,
+      this.appGrantDeps.e2eeEnabled()
+    );
+    return notices.map(
+      ({
+        signing_grant_id,
+        signing_device_key,
+        encrypted_dm_device_key,
+        device_label
+      }) => ({
+        signing_grant_id,
+        signing_device_key,
+        encrypted_dm_device_key,
+        device_label
+      })
+    );
   }
 
   async renameCallerGrant(
@@ -303,26 +361,32 @@ export class DeviceGrantsService {
 
   async revokeCallerGrant(
     grantId: string,
-    ctx: GrantCallerContext
+    ctx: GrantCallerContext,
+    revokeLinkedDevice: (
+      grantId: string,
+      connection: ConnectionWrapper<unknown>
+    ) => Promise<void>
   ): Promise<ApiDeviceGrant> {
     const caller = this.resolveCaller(ctx.authenticationContext);
     const notFound = new NotFoundException(`Device grant ${grantId} not found`);
     if (!GRANT_ID_PATTERN.test(grantId)) {
       throw notFound;
     }
-    const grant = await this.db.findGrantById(grantId, ctx);
-    if (!grant || !(await this.isCallerWallet(grant.wallet, caller))) {
-      throw notFound;
-    }
-    if (grant.revoked_at !== null) {
-      return toOwnedApiDeviceGrant(grant);
-    }
-    await this.db.revokeGrant(grantId, this.now(), ctx);
-    const revoked = await this.db.findGrantById(grantId, ctx);
-    if (!revoked) {
-      throw notFound;
-    }
-    return toOwnedApiDeviceGrant(revoked);
+    return this.db.executeNativeQueriesInTransaction(async (connection) => {
+      const txCtx = { ...ctx, connection };
+      const grant = await this.db.lockGrant(grantId, txCtx);
+      if (!grant || !(await this.isCallerWallet(grant.wallet, caller, txCtx))) {
+        throw notFound;
+      }
+      let revokedAt = grant.revoked_at;
+      if (revokedAt === null) {
+        revokedAt = this.now();
+        await this.db.revokeGrant(grantId, revokedAt, txCtx);
+      }
+      // Also completes any partial revocation left by an older deployment.
+      await revokeLinkedDevice(grantId, connection);
+      return toOwnedApiDeviceGrant({ ...grant, revoked_at: revokedAt });
+    });
   }
 
   private resolveCaller(authenticationContext: AuthenticationContext): {

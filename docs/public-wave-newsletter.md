@@ -83,13 +83,31 @@ coverage, and an optional brief final team section. There is one editorial pass
 for ordinary volumes. Large days first select stories from every input batch,
 then compose one edition; no second fact-check model or private-data tool exists.
 Oversized source sets or incomplete model responses fail instead of publishing
-truncated coverage. Editorial accuracy and exact link compliance remain model
-behavior, not a claim of guaranteed factual correctness.
+truncated coverage, except for the per-wave and per-author shares below.
+Editorial accuracy and exact link compliance remain model behavior, not a claim
+of guaranteed factual correctness.
+
+Before posting, the edition body is filtered: links stay clickable only when
+they are `https://6529.io` URLs (other Markdown links keep their label as plain
+text, other bare URLs and autolinks are removed, images become alt text), and
+group mention tokens (`@all`, `@contributors`, `@admins`, `@devs6529`) become
+plain words, so a quoted source message cannot turn the edition into a group
+notification.
 
 Collection checks a two-minute deadline between DB batches and caps the complete
-run at 25,000 drops, 10 MB of message/media URL text, and 100 context-expansion
-rounds. Crossing a limit throws `NewsletterCollectionLimitError`, reports a
-Lambda failure, and never calls the writer or publisher with a partial result.
+run at 25,000 drops and 10 MB of message/media URL text. Crossing one of these
+limits throws `NewsletterCollectionLimitError`, reports a Lambda failure, and
+never calls the writer or publisher with a partial result.
+
+So that one busy wave or one prolific author cannot use up those limits, each
+wave and each author has a share: at most 3,000 drops and 1.5 MB of message text
+per wave, and 1,000 drops and 750 KB of message text per author. Drops past a
+share are left out (a wave that used its share is not paged further) and text
+past a share is cut at a character boundary; Main Stage winners are always
+included. Reply and quote context is followed for at most 100 rounds; deeper
+background is left out rather than failing the run. Any capping is logged once
+per run (`Newsletter material was capped per wave or author`) with the dropped
+counts per wave and author.
 These checks bound public historical context as well as the current day's
 activity. The writer has a separate ten-minute total deadline (including research)
 and four-minute individual request timeouts. A slow individual DB query still

@@ -1,7 +1,6 @@
 import {
   clientDropFingerprint,
-  DropCreationApiService,
-  metricEnvironment
+  DropCreationApiService
 } from '@/api/drops/drop-creation.api.service';
 import { NewDropSchema } from '@/api/drops/drop.validator';
 jest.mock('@/competitions/competition-entry-drop-hooks');
@@ -391,23 +390,5 @@ describe('client_drop_id request contract', () => {
     ]) {
       expect(NewDropSchema.validate(body(bad)).error).toBeDefined();
     }
-  });
-});
-
-describe('metricEnvironment', () => {
-  it.each([
-    ['prod', 'prod'],
-    ['production', 'prod'],
-    ['api_prod', 'prod'],
-    ['staging', 'staging'],
-    ['api_staging', 'staging'],
-    ['development', 'dev'],
-    ['local', 'dev'],
-    ['test', 'dev'],
-    ['', 'unknown'],
-    ['preview', 'unknown'],
-    ['reproduction', 'unknown']
-  ])('maps %p to %p', (configured, expected) => {
-    expect(metricEnvironment(configured)).toBe(expected);
   });
 });

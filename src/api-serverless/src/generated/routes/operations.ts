@@ -2,6 +2,7 @@
 import { Request } from 'express';
 import { ApiResponse } from '@/api/api-response';
 import { ApiActiveWaveVotesPage } from '@/api/generated/models/ApiActiveWaveVotesPage';
+import { ApiAllWavesPage } from '@/api/generated/models/ApiAllWavesPage';
 import { ApiArchiveProfileCmsPackageRequest } from '@/api/generated/models/ApiArchiveProfileCmsPackageRequest';
 import { ApiArtistArtworkAlert } from '@/api/generated/models/ApiArtistArtworkAlert';
 import { ApiArtworkDocumentationAssetLinkRequest } from '@/api/generated/models/ApiArtworkDocumentationAssetLinkRequest';
@@ -106,8 +107,10 @@ import { ApiDeleteEulaConsentRequest } from '@/api/generated/models/ApiDeleteEul
 import { ApiDeleteEulaConsentResponse } from '@/api/generated/models/ApiDeleteEulaConsentResponse';
 import { ApiDeleteMyWaveChatHistoryResponse } from '@/api/generated/models/ApiDeleteMyWaveChatHistoryResponse';
 import { ApiDeviceGrant } from '@/api/generated/models/ApiDeviceGrant';
+import { ApiDeviceSecurityNotice } from '@/api/generated/models/ApiDeviceSecurityNotice';
 import { ApiDmDropsUnreadCount } from '@/api/generated/models/ApiDmDropsUnreadCount';
 import { ApiDmUnreadSnapshot } from '@/api/generated/models/ApiDmUnreadSnapshot';
+import { ApiDrop } from '@/api/generated/models/ApiDrop';
 import { ApiDropAndWave } from '@/api/generated/models/ApiDropAndWave';
 import { ApiDropBookmarksStatus } from '@/api/generated/models/ApiDropBookmarksStatus';
 import { ApiDropBoostV2 } from '@/api/generated/models/ApiDropBoostV2';
@@ -120,6 +123,7 @@ import { ApiDropPollVotersPage } from '@/api/generated/models/ApiDropPollVotersP
 import { ApiDropReactionV2 } from '@/api/generated/models/ApiDropReactionV2';
 import { ApiDropSearchPage } from '@/api/generated/models/ApiDropSearchPage';
 import { ApiDropSignedEvents } from '@/api/generated/models/ApiDropSignedEvents';
+import { ApiDropSignedEventsBatch } from '@/api/generated/models/ApiDropSignedEventsBatch';
 import { ApiDropsLeaderboardPageV2 } from '@/api/generated/models/ApiDropsLeaderboardPageV2';
 import { ApiDropV2 } from '@/api/generated/models/ApiDropV2';
 import { ApiDropV2Page } from '@/api/generated/models/ApiDropV2Page';
@@ -239,6 +243,7 @@ import { ApiSaveEulaConsentRequest } from '@/api/generated/models/ApiSaveEulaCon
 import { ApiSaveEulaConsentResponse } from '@/api/generated/models/ApiSaveEulaConsentResponse';
 import { ApiSaveProfileCmsPackageDraftRequest } from '@/api/generated/models/ApiSaveProfileCmsPackageDraftRequest';
 import { ApiSetCompetitionVoteRequest } from '@/api/generated/models/ApiSetCompetitionVoteRequest';
+import { ApiSetDropReplyCollapseRequest } from '@/api/generated/models/ApiSetDropReplyCollapseRequest';
 import { ApiSubmitProfileCmsAgentProposalRequest } from '@/api/generated/models/ApiSubmitProfileCmsAgentProposalRequest';
 import { ApiSubscriptionCoverage } from '@/api/generated/models/ApiSubscriptionCoverage';
 import { ApiTdhRules } from '@/api/generated/models/ApiTdhRules';
@@ -1497,6 +1502,20 @@ export type RevokeDeviceGrantRequest = Request<
   Record<string, never>
 >;
 
+export type GetDeviceSecurityNoticesPathParams = Record<string, never>;
+
+export type GetDeviceSecurityNoticesQuery = Record<string, never>;
+
+export type GetDeviceSecurityNoticesResponse = ApiDeviceSecurityNotice[];
+
+export type GetDeviceSecurityNoticesRequest = Request<
+  GetDeviceSecurityNoticesPathParams,
+  ApiResponse<GetDeviceSecurityNoticesResponse>,
+  never,
+  GetDeviceSecurityNoticesQuery,
+  Record<string, never>
+>;
+
 export interface GetWalletDistributionAllocationsPathParams {
   "contract": string;
   "card_id": number;
@@ -1636,6 +1655,38 @@ export type GetDropSignedEventsRequest = Request<
   ApiResponse<GetDropSignedEventsResponse>,
   never,
   GetDropSignedEventsQuery,
+  Record<string, never>
+>;
+
+export interface SetDropReplyCollapsePathParams {
+  "id": string;
+}
+
+export type SetDropReplyCollapseQuery = Record<string, never>;
+
+export type SetDropReplyCollapseResponse = ApiDrop;
+
+export type SetDropReplyCollapseRequest = Request<
+  SetDropReplyCollapsePathParams,
+  ApiResponse<SetDropReplyCollapseResponse>,
+  ApiSetDropReplyCollapseRequest,
+  SetDropReplyCollapseQuery,
+  Record<string, never>
+>;
+
+export type GetDropsSignedEventsPathParams = Record<string, never>;
+
+export interface GetDropsSignedEventsQuery {
+  "drop_ids": string;
+}
+
+export type GetDropsSignedEventsResponse = ApiDropSignedEventsBatch;
+
+export type GetDropsSignedEventsRequest = Request<
+  GetDropsSignedEventsPathParams,
+  ApiResponse<GetDropsSignedEventsResponse>,
+  never,
+  GetDropsSignedEventsQuery,
   Record<string, never>
 >;
 
@@ -1874,6 +1925,22 @@ export type E2eeGetDeviceRequest = Request<
   ApiResponse<E2eeGetDeviceResponse>,
   never,
   E2eeGetDeviceQuery,
+  Record<string, never>
+>;
+
+export interface E2eeAcknowledgeDeviceNoticePathParams {
+  "device_key": string;
+}
+
+export type E2eeAcknowledgeDeviceNoticeQuery = Record<string, never>;
+
+export type E2eeAcknowledgeDeviceNoticeResponse = ApiE2eeAck;
+
+export type E2eeAcknowledgeDeviceNoticeRequest = Request<
+  E2eeAcknowledgeDeviceNoticePathParams,
+  ApiResponse<E2eeAcknowledgeDeviceNoticeResponse>,
+  never,
+  E2eeAcknowledgeDeviceNoticeQuery,
   Record<string, never>
 >;
 
@@ -3770,6 +3837,7 @@ export interface GetWaveDropsV2Query {
   "serial_no_limit"?: number;
   "search_strategy"?: string;
   "drop_type"?: string;
+  "respect_drop_reply_collapse"?: boolean;
 }
 
 export type GetWaveDropsV2Response = ApiWaveDropsFeedV2;
@@ -3971,6 +4039,23 @@ export type GetActiveWaveVotesRequest = Request<
   ApiResponse<GetActiveWaveVotesResponse>,
   never,
   GetActiveWaveVotesQuery,
+  Record<string, never>
+>;
+
+export type GetAllWavesPathParams = Record<string, never>;
+
+export interface GetAllWavesQuery {
+  "page_size"?: number;
+  "cursor"?: string;
+}
+
+export type GetAllWavesResponse = ApiAllWavesPage;
+
+export type GetAllWavesRequest = Request<
+  GetAllWavesPathParams,
+  ApiResponse<GetAllWavesResponse>,
+  never,
+  GetAllWavesQuery,
   Record<string, never>
 >;
 

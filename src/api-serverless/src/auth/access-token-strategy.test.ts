@@ -28,6 +28,7 @@ jest.mock('@/api/proxies/proxy.api.service', () => ({
   isProxyActionActive: jest.fn()
 }));
 import {
+  getAccessTokenSessionOrNull,
   getAuthenticatedWalletOrNull,
   getWalletOrThrow,
   maybeAuthenticatedUser,
@@ -57,6 +58,9 @@ describe('access token strategy', () => {
     });
     app.get('/optional', maybeAuthenticatedUser(), (req, res) => {
       res.json({ wallet: getAuthenticatedWalletOrNull(req) });
+    });
+    app.get('/session', needsAuthenticatedUser(), (req, res) => {
+      res.json({ session: getAccessTokenSessionOrNull(req) });
     });
     app.use(
       (error: unknown, _req: Request, res: Response, _next: NextFunction) => {
@@ -140,6 +144,62 @@ describe('access token strategy', () => {
       expect(response.status).toBe(200);
       expect(await response.json()).toEqual({ wallet: WALLET.toLowerCase() });
     }
+  });
+
+  it('exposes the session claims of a session-v2 token', async () => {
+    const sessionId = randomUUID();
+    const { token } = issueAccessToken(WALLET, ROLE, {
+      clientType: 'desktop',
+      binding: 'structured',
+      sessionId
+    });
+
+    const response = await call('/session', token);
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      session: { clientType: 'desktop', binding: 'structured', sessionId }
+    });
+  });
+
+  it('marks tokens issued outside a session as legacy', async () => {
+    const response = await call('/session', issueAccessToken(WALLET).token);
+
+    expect(await response.json()).toEqual({
+      session: { clientType: 'legacy', binding: null, sessionId: null }
+    });
+  });
+
+  it('authenticates a token minted before the session claims existed', async () => {
+    const token = jwt.sign(
+      { id: randomUUID(), sub: WALLET.toLowerCase(), role: ROLE },
+      secret,
+      { expiresIn: 60 }
+    );
+
+    for (const path of ['/required', '/optional']) {
+      const response = await call(path, token);
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({ wallet: WALLET.toLowerCase() });
+    }
+    expect(await (await call('/session', token)).json()).toEqual({
+      session: null
+    });
+  });
+
+  it('authenticates a token with session claim values it does not know', async () => {
+    const token = jwt.sign(
+      { id: randomUUID(), sub: WALLET.toLowerCase(), ct: 'robot', sb: 7 },
+      secret,
+      { expiresIn: 60 }
+    );
+
+    const response = await call('/required', token);
+
+    expect(response.status).toBe(200);
+    expect(await (await call('/session', token)).json()).toEqual({
+      session: null
+    });
   });
 
   it.each(challengeTokens)(

@@ -3,7 +3,11 @@ import { DeviceGrantEntity } from '@/entities/IDeviceGrant';
 import { DeviceSignedEventEntity } from '@/entities/IDeviceSignedEvent';
 import { NotFoundException } from '@/exceptions';
 import { DeviceSigningDb } from './device-signing.db';
-import { DropSignedEventsService } from './drop-signed-events.service';
+import fc from 'fast-check';
+import {
+  DROP_SIGNED_EVENTS_BATCH_EVENTS_PER_DROP,
+  DropSignedEventsService
+} from './drop-signed-events.service';
 
 const GRANT_ID = `0x${'a'.repeat(64)}`;
 
@@ -54,7 +58,10 @@ const grant: DeviceGrantEntity = {
 
 describe('DropSignedEventsService', () => {
   let db: DeviceSigningDb;
-  const drops = { findDropByIdOrThrow: jest.fn() };
+  const drops = {
+    findDropByIdOrThrow: jest.fn(),
+    findReadableDropsByIds: jest.fn()
+  };
   const anonymity = { hiddenDropIds: jest.fn() };
   let service: DropSignedEventsService;
 
@@ -235,5 +242,280 @@ describe('DropSignedEventsService', () => {
       NotFoundException
     );
     expect(db.findEventsByDropId).not.toHaveBeenCalled();
+  });
+});
+
+describe('DropSignedEventsService batch read', () => {
+  type DropCase = 'readable' | 'unreadable' | 'hidden' | 'anonymous';
+
+  const GRANT_2 = `0x${'f'.repeat(64)}`;
+
+  function dropOf(id: string, kind: DropCase) {
+    return {
+      id,
+      moderation:
+        kind === 'hidden'
+          ? { status: 'HIDDEN', can_view: false }
+          : { status: 'VISIBLE', can_view: true },
+      author:
+        kind === 'anonymous'
+          ? { id: 'anonymous-id', handle: 'Anonymous', is_anonymous: true }
+          : { id: 'profile-1' }
+    };
+  }
+
+  /**
+   * One in-memory world behind both the single and the batch read, so each
+   * drop's batch answer can be compared with its single-drop answer.
+   */
+  function world(
+    cases: Record<string, DropCase>,
+    events: DeviceSignedEventEntity[],
+    current: Record<string, string>,
+    anonymousIds: string[] = []
+  ) {
+    const db = mock(DeviceSigningDb);
+    const readable = (id: string) =>
+      cases[id] !== undefined && cases[id] !== 'unreadable';
+    const drops = {
+      findDropByIdOrThrow: jest.fn(async ({ dropId }: { dropId: string }) => {
+        if (!readable(dropId)) {
+          throw new NotFoundException(`Drop ${dropId} not found`);
+        }
+        return dropOf(dropId, cases[dropId]);
+      }),
+      findReadableDropsByIds: jest.fn(async (ids: string[]) =>
+        ids.filter(readable).map((id) => dropOf(id, cases[id]))
+      )
+    };
+    const anonymity = {
+      hiddenDropIds: jest.fn(
+        async (ids: string[]) =>
+          new Set(ids.filter((id) => anonymousIds.includes(id)))
+      )
+    };
+    jest
+      .mocked(db.findEventsByDropId)
+      .mockImplementation(async (dropId) =>
+        events.filter((it) => it.drop_id === dropId)
+      );
+    jest
+      .mocked(db.findDropAuthorSignatureEventId)
+      .mockImplementation(async (dropId) => current[dropId] ?? null);
+    jest
+      .mocked(db.findContentEventsByDropIds)
+      .mockImplementation(async (dropIds) => ({
+        events: events.filter(
+          (it) => dropIds.includes(it.drop_id!) && Number(it.kind) !== 4
+        ),
+        truncatedDropIds: new Set<string>()
+      }));
+    jest
+      .mocked(db.findDropAuthorSignatureEventIds)
+      .mockImplementation(
+        async (dropIds) =>
+          new Map(
+            dropIds
+              .filter((id) => current[id] !== undefined)
+              .map((id): [string, string] => [id, current[id]])
+          )
+      );
+    jest
+      .mocked(db.findGrantsByIds)
+      .mockImplementation(async (ids) =>
+        [grant, { ...grant, id: GRANT_2 }].filter((it) => ids.includes(it.id))
+      );
+    return {
+      db,
+      drops,
+      anonymity,
+      service: new DropSignedEventsService(db, drops as any, anonymity)
+    };
+  }
+
+  const post = (dropId: string, n: number, grantId = GRANT_ID) =>
+    anEvent({
+      id: `0x${n.toString(16).padStart(64, '0')}`,
+      drop_id: dropId,
+      seq: n,
+      grant_id: grantId
+    });
+
+  it('answers readable drops in request order and lists the rest as unavailable', async () => {
+    const events = [
+      post('d1', 1),
+      post('d2', 2, GRANT_2),
+      { ...post('d1', 3), kind: 2 },
+      post('hidden', 4),
+      post('anon', 5),
+      post('anon-by-rule', 6),
+      post('unreadable', 7)
+    ];
+    const { service, db } = world(
+      {
+        d1: 'readable',
+        d2: 'readable',
+        unsigned: 'readable',
+        hidden: 'hidden',
+        anon: 'anonymous',
+        'anon-by-rule': 'readable',
+        unreadable: 'unreadable'
+      },
+      events,
+      { d1: events[2].id, d2: events[1].id, hidden: events[3].id },
+      ['anon-by-rule']
+    );
+    const ids = [
+      'missing',
+      'd2',
+      'unreadable',
+      'hidden',
+      'd1',
+      'anon',
+      'unsigned',
+      'anon-by-rule'
+    ];
+
+    const result = await service.findForDrops(ids, { timer: undefined });
+
+    expect(result.drops.map((it) => it.drop_id)).toEqual([
+      'd2',
+      'hidden',
+      'd1',
+      'anon',
+      'unsigned',
+      'anon-by-rule'
+    ]);
+    expect(result.unavailable).toEqual(['missing', 'unreadable']);
+    expect(result.truncated_drop_ids).toEqual([]);
+    const byId = new Map(result.drops.map((it) => [it.drop_id, it]));
+    expect(byId.get('d1')).toEqual({
+      drop_id: 'd1',
+      current_event_id: events[2].id,
+      events: [
+        expect.objectContaining({ id: events[0].id }),
+        expect.objectContaining({ id: events[2].id })
+      ],
+      grants: []
+    });
+    for (const id of ['hidden', 'anon', 'anon-by-rule', 'unsigned']) {
+      expect(byId.get(id)).toEqual({
+        drop_id: id,
+        current_event_id: null,
+        events: [],
+        grants: []
+      });
+    }
+    expect(result.grants.map((it) => it.id)).toEqual(
+      expect.arrayContaining([GRANT_2, GRANT_ID])
+    );
+    expect(result.grants).toHaveLength(2);
+    // Hidden, anonymous and unreadable drops are never read for events.
+    const read = jest.mocked(db.findContentEventsByDropIds).mock.calls[0][0];
+    expect(new Set(read)).toEqual(new Set(['d2', 'd1', 'unsigned']));
+  });
+
+  it('lists each grant once and caps events per drop below the batch maximum', async () => {
+    const { service, db } = world(
+      { d1: 'readable', d2: 'readable' },
+      [post('d1', 1), post('d2', 2)],
+      {}
+    );
+
+    const result = await service.findForDrops(['d1', 'd2'], {});
+
+    expect(result.grants.map((it) => it.id)).toEqual([GRANT_ID]);
+    expect(db.findGrantsByIds).toHaveBeenCalledWith([GRANT_ID], {});
+    expect(jest.mocked(db.findContentEventsByDropIds).mock.calls[0][1]).toBe(
+      DROP_SIGNED_EVENTS_BATCH_EVENTS_PER_DROP - 2
+    );
+  });
+
+  it('names drops whose history was cut', async () => {
+    const { service, db } = world({ d1: 'readable' }, [post('d1', 1)], {});
+    jest.mocked(db.findContentEventsByDropIds).mockResolvedValue({
+      events: [post('d1', 1)],
+      truncatedDropIds: new Set(['d1'])
+    });
+
+    const result = await service.findForDrops(['d1'], {});
+
+    expect(result.truncated_drop_ids).toEqual(['d1']);
+  });
+
+  it('reads no events when no requested drop is readable', async () => {
+    const { service, anonymity } = world({ x: 'unreadable' }, [], {});
+
+    await expect(service.findForDrops(['x', 'y'], {})).resolves.toEqual({
+      drops: [],
+      grants: [],
+      unavailable: ['x', 'y'],
+      truncated_drop_ids: []
+    });
+    expect(anonymity.hiddenDropIds).not.toHaveBeenCalled();
+  });
+
+  it('gives every drop the answer of the single drop route, minus reactions and per-drop grants', async () => {
+    const dropIdArb = fc.constantFrom('a', 'b', 'c', 'd', 'e');
+    const dropCase = fc.constantFrom<DropCase>(
+      'readable',
+      'unreadable',
+      'hidden',
+      'anonymous'
+    );
+    await fc.assert(
+      fc.asyncProperty(
+        fc.dictionary(dropIdArb, dropCase),
+        fc.array(
+          fc.record({
+            drop: dropIdArb,
+            kind: fc.constantFrom(1, 2, 3, 4),
+            grant: fc.constantFrom(GRANT_ID, GRANT_2)
+          }),
+          { maxLength: 12 }
+        ),
+        fc.subarray(['a', 'b', 'c', 'd', 'e', 'f']),
+        async (cases, rawEvents, requested) => {
+          const events = rawEvents.map((it, index) => ({
+            ...post(it.drop, index + 1, it.grant),
+            kind: it.kind
+          }));
+          const current: Record<string, string> = {};
+          for (const event of events) {
+            if (event.kind === 1 || event.kind === 2) {
+              current[event.drop_id!] = event.id;
+            }
+          }
+          const { service } = world(cases, events, current);
+
+          const batch = await service.findForDrops(requested, {});
+
+          const batchGrantIds = new Set(batch.grants.map((it) => it.id));
+          for (const dropId of requested) {
+            const single = await service
+              .findForDrop(dropId, {})
+              .catch((error: unknown) => error);
+            if (single instanceof NotFoundException) {
+              expect(batch.unavailable).toContain(dropId);
+              expect(batch.drops.map((it) => it.drop_id)).not.toContain(dropId);
+              continue;
+            }
+            const answer = single as Awaited<
+              ReturnType<DropSignedEventsService['findForDrop']>
+            >;
+            const item = batch.drops.find((it) => it.drop_id === dropId);
+            expect(item).toEqual({
+              ...answer,
+              events: answer.events.filter((it) => it.kind !== 4),
+              grants: []
+            });
+            for (const event of item!.events) {
+              expect(batchGrantIds.has(event.auth_ref)).toBe(true);
+            }
+          }
+        }
+      ),
+      { numRuns: 200 }
+    );
   });
 });

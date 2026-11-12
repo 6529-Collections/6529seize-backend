@@ -100,7 +100,11 @@ export async function refreshInstallationBadge(
       .findOneBy({ device_id: deviceId });
     if (!installation?.token || !isIosPushPlatform(installation.platform))
       return;
-    const target = { device_id: deviceId, token: installation.token };
+    const target = {
+      device_id: deviceId,
+      token: installation.token,
+      platform: installation.platform
+    };
     if (await isPushTargetQuarantined(target)) return;
     const state = await getDeviceBadgeState(target);
     try {

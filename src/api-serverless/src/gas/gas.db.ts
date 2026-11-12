@@ -11,6 +11,7 @@ import {
 } from '@/constants';
 import { Time } from '../../../time';
 import { sqlExecutor } from '../../../sql-executor';
+import { artistListRegExp } from '@/api/collection-report-query';
 
 export interface GasResponse {
   token_id: number;
@@ -82,7 +83,7 @@ function getGasSql(
       nftFilters,
       `${nftsTable}.artist REGEXP :artist`
     );
-    params.artist = `(^|,| and )${artist}($|,| and )`;
+    params.artist = artistListRegExp(artist);
   }
 
   const specialCasePrimary =

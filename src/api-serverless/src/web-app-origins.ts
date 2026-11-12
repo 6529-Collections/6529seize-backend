@@ -79,6 +79,22 @@ export function getWebAppSignatureDomains(): string[] {
   );
 }
 
+/**
+ * Hosts of the first-party web origins of one API host: its built-in default
+ * origin plus the configured ones, the same origins credentialed web sign-in
+ * accepts there. The production API therefore leaves out the staging web
+ * host, and the staging API the production one.
+ */
+export function getWebAppSignatureDomainsForApiHost(
+  apiHostHeader: unknown
+): string[] {
+  return uniqueStrings(
+    getAllowedWebAuthCredentialOrigins(apiHostHeader)
+      .map(getOriginHost)
+      .filter((domain): domain is string => domain !== null)
+  );
+}
+
 function getDefaultWebAppOrigins(): string[] {
   return [PRODUCTION_WEB_APP_ORIGIN, STAGING_WEB_APP_ORIGIN];
 }
@@ -144,4 +160,30 @@ function getOriginHost(origin: string): string | null {
 
 function uniqueStrings(values: string[]): string[] {
   return Array.from(new Set(values));
+}
+
+const MAX_RECORDED_ORIGIN_LENGTH = 255;
+// scheme://authority with no credentials, path, query, fragment or backslash.
+const SCHEME_AUTHORITY_ORIGIN = /^[a-z][a-z0-9+.-]*:\/\/[^\s/?#\\@]+$/;
+
+/**
+ * A request Origin header as evidence to store: a normalized http(s) origin,
+ * another scheme's origin (such as an app web view's) lowercased, "null" for
+ * an opaque origin, or null when the header is missing or not an origin.
+ */
+export function toRecordedRequestOrigin(value: unknown): string | null {
+  const raw = Array.isArray(value)
+    ? value.find((it) => typeof it === 'string' && it.trim().length > 0)
+    : value;
+  if (typeof raw !== 'string' || !raw.trim()) {
+    return null;
+  }
+  const trimmed = raw.trim().toLowerCase();
+  if (trimmed === 'null') {
+    return 'null';
+  }
+  const origin =
+    normalizeWebAppOrigin(trimmed) ??
+    (SCHEME_AUTHORITY_ORIGIN.test(trimmed) ? trimmed : null);
+  return origin && origin.length <= MAX_RECORDED_ORIGIN_LENGTH ? origin : null;
 }

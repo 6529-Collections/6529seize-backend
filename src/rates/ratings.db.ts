@@ -1,6 +1,7 @@
 import { Page } from '../api-serverless/src/page-request';
 import {
   IDENTITIES_TABLE,
+  RATING_CREDIT_LOCKS_TABLE,
   RATINGS_SNAPSHOTS_TABLE,
   RATINGS_TABLE
 } from '@/constants';
@@ -40,6 +41,11 @@ function helpBotCreditOverRateExclusion(ratingAlias: string): string {
         )
     )
   `;
+}
+
+function compareStrings(a: string, b: string): number {
+  if (a < b) return -1;
+  return a > b ? 1 : 0;
 }
 
 export interface IdentityUpdate {
@@ -161,6 +167,34 @@ from general_stats
         matter,
         ...HELP_BOT_CREDIT_OVERRATE_PARAMS
       },
+      { wrappedConnection: connection }
+    );
+  }
+
+  /**
+   * Serialises the credit-checked rating writes of one rater on one matter.
+   * Take it as the transaction's first lock, before reading the credit spent:
+   * a second writer waits here until the first commits, then reads its result.
+   *
+   * A row of its own: no other transaction locks this table and a writer
+   * waiting here holds no other lock, so it cannot close a deadlock cycle with
+   * the ratings-then-identities order (identity-metrics-sync.ts). Locking the
+   * rater's ratings rows would need gap locks (no rows yet, range ends) that
+   * other raters' inserts need too; the rater's identities row would come
+   * before ratings; a GET_LOCK outlives COMMIT on a pooled RDS Proxy session.
+   */
+  async lockRaterCreditOnMatter(
+    {
+      rater_profile_id,
+      matter
+    }: { rater_profile_id: string; matter: RateMatter },
+    connection: ConnectionWrapper<any>
+  ): Promise<void> {
+    await this.db.execute(
+      `insert into ${RATING_CREDIT_LOCKS_TABLE} (rater_profile_id, matter)
+       values (:rater_profile_id, :matter)
+       on duplicate key update matter = matter`,
+      { rater_profile_id, matter },
       { wrappedConnection: connection }
     );
   }
@@ -351,6 +385,10 @@ from general_stats
     }
   }
 
+  /**
+   * Raters whose ratings on a matter exceed their credit. A rater without an
+   * identity (one merged away) has no credit, so its ratings are revoked.
+   */
   public async getOverRateMatters(): Promise<OverRateMatter[]> {
     return this.db.execute<OverRateMatter>(
       `
@@ -361,10 +399,10 @@ from general_stats
                                 where r.matter in ('REP', 'CIC', 'WAVE_REP')
                                   and not (${helpBotCreditOverRateExclusion('r')})
                                 group by 1, 2)
-          select rt.rater_profile_id, rt.matter, rt.tally , i.tdh + i.xtdh as rater_credit
+          select rt.rater_profile_id, rt.matter, rt.tally, coalesce(i.tdh + i.xtdh, 0) as rater_credit
           from rate_tallies rt
                    left join ${IDENTITIES_TABLE} i on rt.rater_profile_id = i.profile_id
-          where floor(i.tdh + i.xtdh) < abs(rt.tally)
+          where floor(coalesce(i.tdh + i.xtdh, 0)) < abs(rt.tally)
       `,
       HELP_BOT_CREDIT_OVERRATE_PARAMS
     );
@@ -821,28 +859,61 @@ from grouped_rates r
     ctx?.timer?.stop('ratingsDb->deleteRatingsForMatter');
   }
 
-  async getAllRepRatingsForTargetsAndCategories(
-    param: {
-      categories: string[];
-      targets: string[];
+  /**
+   * The rater's REP ratings on the given (target, category) pairs, locked
+   * until the transaction ends. Missing pairs are first inserted at 0, as
+   * getRating does for a single rating, so every pair is a row lock and
+   * none is a gap lock.
+   */
+  async getRaterRepRatingsForUpdate(
+    {
+      rater_profile_id,
+      pairs
+    }: {
+      rater_profile_id: string;
+      pairs: { matter_target_id: string; matter_category: string }[];
     },
     ctx: RequestContext
   ): Promise<Rating[]> {
-    if (!param.categories.length || !param.targets.length) {
+    if (!pairs.length) {
       return [];
     }
-    ctx?.timer?.start(
-      `${this.constructor.name}->getAllRepRatingsForTargetsAndCategories`
-    );
-    const results = await this.db.execute(
-      `select * from ${RATINGS_TABLE} where matter = 'REP' and matter_target_id in (:targets) and matter_category in (:categories)`,
-      param,
-      ctx.connection ? { wrappedConnection: ctx.connection } : undefined
-    );
-    ctx?.timer?.stop(
-      `${this.constructor.name}->getAllRepRatingsForTargetsAndCategories`
-    );
-    return results;
+    const timerLabel = `${this.constructor.name}->getRaterRepRatingsForUpdate`;
+    ctx.timer?.start(timerLabel);
+    try {
+      // Primary-key order, so concurrent writers take these locks in one order.
+      const sortedPairs = [...pairs].sort(
+        (a, b) =>
+          compareStrings(a.matter_target_id, b.matter_target_id) ||
+          compareStrings(a.matter_category, b.matter_category)
+      );
+      const params: Record<string, string> = {
+        rater_profile_id,
+        matter: RateMatter.REP
+      };
+      const keys = sortedPairs.map((pair, i) => {
+        params[`target${i}`] = pair.matter_target_id;
+        params[`category${i}`] = pair.matter_category;
+        return `:rater_profile_id, :target${i}, :matter, :category${i}`;
+      });
+      await this.db.execute(
+        `insert into ${RATINGS_TABLE} (rater_profile_id, matter_target_id, matter, matter_category, rating, last_modified)
+         values ${keys.map((key) => `(${key}, 0, current_timestamp)`).join(', ')}
+         on duplicate key update rater_profile_id = rater_profile_id`,
+        params,
+        { wrappedConnection: ctx.connection }
+      );
+      return await this.db.execute<Rating>(
+        `select * from ${RATINGS_TABLE}
+         where (rater_profile_id, matter_target_id, matter, matter_category)
+           in (${keys.map((key) => `(${key})`).join(', ')})
+         for update`,
+        params,
+        { wrappedConnection: ctx.connection }
+      );
+    } finally {
+      ctx.timer?.stop(timerLabel);
+    }
   }
 
   async getTopAbsoluteRepCategoriesByTargetIds(
@@ -906,6 +977,12 @@ from grouped_rates r
     }
   }
 
+  /**
+   * Inserts or updates the ratings. `last_modified` is the database clock on
+   * insert and on update, as in every ratings writer: the identities sync
+   * finds changed ratings by it (identity-tdh-sync.ts), so a writer must not
+   * keep an old value or stamp another clock.
+   */
   async bulkUpsertRatings(ratings: Rating[], ctx: RequestContext) {
     if (!ratings.length) {
       return;
@@ -927,14 +1004,14 @@ from grouped_rates r
                 rating.matter_target_id,
                 rating.matter,
                 rating.matter_category,
-                rating.rating,
-                rating.last_modified
+                rating.rating
               ]
                 .map((it) => mysql.escape(it))
-                .join(', ')})`
+                .join(', ')}, current_timestamp)`
           )
           .join(', ')} ON DUPLICATE KEY UPDATE
-            rating = VALUES(rating);
+            rating = VALUES(rating),
+            last_modified = current_timestamp;
     `;
     await this.db.execute(sql, undefined, {
       wrappedConnection: ctx.connection

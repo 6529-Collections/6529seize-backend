@@ -1,3 +1,5 @@
+import { findCommittedDropOnWriter } from '@/api/drops/drop-writer-read';
+import { metricEnvironment } from '@/metric-environment';
 import {
   readCommitted,
   runWriteTransaction
@@ -73,6 +75,7 @@ import {
 } from '@/help-bot/help-bot-daily-activity-credit-queue.service';
 
 import { BadRequestException, CustomApiCompliantException } from '@/exceptions';
+import { assertProxyMayEditDrops } from '@/api/drops/drop-proxy-rights';
 import {
   dropClientIdsDb,
   DropClientIdsDb,
@@ -80,6 +83,7 @@ import {
 } from '@/drops/drop-client-ids.db';
 import { DropClientIdEntity } from '@/entities/IDropClientId';
 import { DropType } from '@/entities/IDrop';
+import { DROP_UPDATE_REASON_REPLY_COLLAPSE } from '@/api/ws/ws-message';
 import {
   chatHistoryPurgeDb,
   ChatHistoryPurgeDb,
@@ -164,24 +168,6 @@ function clientDropFor(request: ApiCreateDropRequest): ClientDrop | null {
     waveId: request.wave_id,
     contentFingerprint: clientDropFingerprint(request)
   };
-}
-
-/**
- * Metric environment from the deployment's own settings. Only explicit
- * production, staging and development names map to those buckets; anything
- * else is reported as `unknown` rather than counted as production.
- */
-export function metricEnvironment(
-  configured: string | undefined = process.env.SENTRY_ENVIRONMENT ??
-    process.env.OPS_ENVIRONMENT ??
-    process.env.NODE_ENV
-): 'prod' | 'staging' | 'dev' | 'unknown' {
-  const value = (configured ?? '').toLowerCase();
-  if (value.includes('staging')) return 'staging';
-  if (/(^|[^a-z])(prod|production)([^a-z]|$)/.test(value)) return 'prod';
-  if (/(^|[^a-z])(dev|development|local|test)([^a-z]|$)/.test(value))
-    return 'dev';
-  return 'unknown';
 }
 
 /**
@@ -324,9 +310,15 @@ export class DropCreationApiService {
       await this.createOrUpdateDrop.preResolveIdentityNomination(createModel, {
         timer: ctx.timer
       });
+    // Wave and eligibility checks run before the pre-publication model
+    // evaluator, and only for content that needs it.
     const prePublication = await this.createOrUpdateDrop.preparePrePublication(
       createModel,
-      ctx
+      ctx,
+      {
+        beforeModelEvaluation: () =>
+          this.createOrUpdateDrop.assertCanCreateDropInWave(createModel, ctx)
+      }
     );
     hops.set('drop_pre_commit_ms', hops.elapsed());
     let created: Awaited<
@@ -958,6 +950,71 @@ export class DropCreationApiService {
     }
   }
 
+  async setDropReplyCollapse(
+    { dropId, collapseReplies }: { dropId: string; collapseReplies: boolean },
+    ctx: RequestContext
+  ): Promise<ApiDrop> {
+    const authorId = ctx.authenticationContext?.getActingAsId();
+    if (!authorId || ctx.authenticationContext?.isAuthenticatedAsProxy()) {
+      throw new ForbiddenException(
+        'Only the author can change reply placement'
+      );
+    }
+
+    const placement = await this.dropsDb.executeNativeQueriesInTransaction(
+      async (connection) => {
+        const tx = { ...ctx, connection };
+        const visibleDrop = await this.dropsService.findViewableDropByIdOrThrow(
+          { dropId, unavailableMessage: 'Drop is unavailable' },
+          tx
+        );
+        if (visibleDrop.author_id !== authorId) {
+          throw new ForbiddenException(
+            'Only the author can change reply placement'
+          );
+        }
+        const wave = await this.wavesApiDb.findWaveByIdForUpdate(
+          visibleDrop.wave_id,
+          tx
+        );
+        const drop = await this.dropsDb.findDropById(dropId, connection, true);
+        if (!wave || !drop)
+          throw new NotFoundException(`Drop ${dropId} not found`);
+        if (
+          wave.is_direct_message ||
+          wave.chat_replies_collapsed ||
+          drop.drop_type !== DropType.CHAT ||
+          drop.reply_to_drop_id !== null
+        ) {
+          throw new BadRequestException(
+            'Reply placement can only be changed on top-level chat drops in waves with inline replies'
+          );
+        }
+        const changed = await this.dropsDb.setDropReplyCollapse(
+          { dropId, waveId: wave.id, collapseReplies },
+          tx
+        );
+        return {
+          changed,
+          hasReplies: await this.dropsDb.hasDropReplies(dropId, tx)
+        };
+      },
+      { isolationLevel: 'READ COMMITTED' }
+    );
+
+    const drop = await findCommittedDropOnWriter(
+      { dropId, db: this.dropsDb, dropsService: this.dropsService },
+      ctx
+    );
+    drop.reply_placement_has_replies = placement.hasReplies;
+    if (placement.changed) {
+      await this.wsListenersNotifier.notifyAboutDropUpdate(drop, ctx, {
+        reason: DROP_UPDATE_REASON_REPLY_COLLAPSE
+      });
+    }
+    return drop;
+  }
+
   async toggleHideLinkPreview(
     { dropId, hideLinkPreview }: { dropId: string; hideLinkPreview?: boolean },
     ctx: RequestContext
@@ -1031,6 +1088,7 @@ export class DropCreationApiService {
     },
     ctx: RequestContext
   ): Promise<{ drop: ApiDrop; changed: boolean }> {
+    assertProxyMayEditDrops(ctx.authenticationContext);
     const drop = await this.dropsDb.findDropById(dropId);
     if (!drop) {
       throw new NotFoundException(`Drop ${dropId} not found`);

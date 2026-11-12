@@ -139,7 +139,7 @@ describe('github webhook event parsing', () => {
     ).toBeNull();
   });
 
-  it('uses delivery id for dedupe keys when present', () => {
+  it('ignores the delivery id when building dedupe keys', () => {
     const event = parseGitHubWebhookEvent(
       {
         action: 'opened',
@@ -155,12 +155,12 @@ describe('github webhook event parsing', () => {
       throw new Error('Expected GitHub webhook event');
     }
 
-    expect(buildGitHubWebhookDedupeKey(event, ' delivery-123 ')).toBe(
-      'gh-webhook:delivery:delivery-123'
+    expect(buildGitHubWebhookDedupeKey(event)).toBe(
+      `gh-webhook:issue:opened:${ISSUE_URL}`
     );
   });
 
-  it('falls back to type action and url for dedupe keys', () => {
+  it('builds dedupe keys from type, action and url', () => {
     const event = parseGitHubWebhookEvent(
       {
         action: 'reopened',
@@ -176,7 +176,7 @@ describe('github webhook event parsing', () => {
       throw new Error('Expected GitHub webhook event');
     }
 
-    expect(buildGitHubWebhookDedupeKey(event, undefined)).toBe(
+    expect(buildGitHubWebhookDedupeKey(event)).toBe(
       `gh-webhook:pull_request:reopened:${PR_URL}`
     );
   });

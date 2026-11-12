@@ -91,11 +91,15 @@ limit with it. Measured with two libvips threads on a current Xeon, whole
 verifications took 5-15 s for a 144 MP baseline JPEG (depending on content),
 17 s for a 1,070-frame 268 MP GIF, 26 s for a 64 MP WebP, 38 s for a 64 MP
 progressive 4:4:4 JPEG and 20 s for an 81 MP interlaced RGBA PNG; the 240 s
-budget leaves room for slower Lambda CPUs. Before this change the check gave up
-above 128 MiB of decoded pixels (about 33.5 MP over all frames; 16.7 MP for
-PNG). The re-encoding fallback's own decoded-work budget then rejected JPEG,
-still WebP and GIF chat uploads of that size, an animated WebP was re-encoded
-as its first frame, and a PNG was re-encoded by the isolated PNG worker.
+budget leaves room for slower Lambda CPUs. The check previously decoded each
+image into one buffer, capped first at 128 MiB and then at 384 MiB of decoded
+pixels, with a 30-second timeout that large images could exceed.
+
+Before stripping, the sanitizer admits each non-PNG upload from its metadata
+(`assertImageUploadFits`): the preview budget must hold it, and when it is to
+be stripped but is beyond the source limit or these bounds
+(`canVerifyDecodedPixels`), the re-encoding budget must hold it too. Otherwise
+it fails at once with its dimensions and asks for a smaller image.
 
 HDR gain maps in JPEG are kept, because they are not identifying. Ultra HDR
 (Adobe/Google gain map v1 XMP, ISO 21496-1) and Apple HDR JPEGs are recognised

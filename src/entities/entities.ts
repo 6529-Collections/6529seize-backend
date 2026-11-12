@@ -64,6 +64,7 @@ export {
   DropReferencedNftEntity
 } from './IDrop';
 export { DropMediaUploadEntity } from './IDropMediaUpload';
+export { MediaUploadBudgetEntryEntity } from './IMediaUploadBudget';
 export { DropNftLinkEntity } from './IDropNftLink';
 export { DropBookmarkEntity } from './IDropBookmark';
 export { DropQuickVoteSkipEntity } from './IDropQuickVoteSkip';
@@ -169,6 +170,7 @@ export { ProfileCmsUploadEntity } from './IProfileCmsUpload';
 export { PushNotificationDevice } from './IPushNotification';
 export { PushNotificationSettingsEntity } from './IPushNotificationSettings';
 export { Rating } from './IRating';
+export { RatingCreditLockEntity } from './IRatingCreditLock';
 export { RefreshToken } from './IRefreshToken';
 export {
   ReleaseDigestEntity,
@@ -283,6 +285,7 @@ export { PushDeviceLogoutFenceEntity } from './IPushDeviceLogoutFence';
 export { PushNotificationCancellationEntity } from './IPushNotificationCancellation';
 
 export * from './ICompetitionRuntime';
+export { CompetitionWorkerCursorEntity } from './ICompetitionWorkerCursor';
 
 export * from './ICompetitionCommand';
 export * from './ICompetitionEntryContentVersion';
@@ -312,5 +315,6 @@ export {
   ViewerGroupSetMemberEntity
 } from './IViewerGroupSet';
 export { IdentityTdhSyncStateEntity } from './IIdentityTdhSyncState';
+export { IdentityTdhSyncScopeEntity } from './IIdentityTdhSyncScope';
 
 export * from './ICompetitionScoreReset';

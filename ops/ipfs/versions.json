@@ -1,0 +1,10 @@
+{
+  "kuboVersion": "0.43.1",
+  "kuboCommit": "acc53c093810a8fe9a4bc2f023f0b1e0c1d629b5",
+  "s3Commit": "e4823540f59b71ce7969213faed4608c237a7296",
+  "goVersion": "1.26.10",
+  "goLinuxAmd64Sha256": "ccfe7ae822d2c2f41f4fe7c956199967a4dac22d0ee0d2b2bfdb440aab3b20c5",
+  "repositoryVersion": 18,
+  "nginxVersion": "1.30.6-1~noble",
+  "nginxDebSha256": "86f0f503139203e8d75f1832b309ec084b0de5dfb6b72e11d0327790d3ffb90b"
+}
