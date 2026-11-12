@@ -26,7 +26,7 @@ functions:
       subnetIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):subnets}
     environment:
       SENTRY_DSN: ${env:SENTRY_DSN}
-      SENTRY_ENVIRONMENT: "dbMigrationsLoop_{opt:stage, self:provider.stage}"
+      SENTRY_ENVIRONMENT: "dbMigrationsLoop_${opt:stage, self:provider.stage}"
     events:
       - schedule:
           rate: rate(1 day)
