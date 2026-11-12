@@ -9,6 +9,7 @@ import {
   PROFILE_WAVES_TABLE,
   WAVE_CURATIONS_TABLE
 } from '@/constants';
+import { withLegacyCompetitionGetFacade } from '@/competitions/legacy-competition-get-facade';
 import { DropType } from '@/entities/IDrop';
 import { RequestContext } from '@/request.context';
 import { sqlExecutor } from '@/sql-executor';
@@ -122,13 +123,23 @@ describeWithSeed(
           wave_id: directMessageProfileWave.id,
           serial_no: 207
         }
-      ].map((drop) =>
-        aDropRow({
-          ...drop,
-          author_id: authorAlice.profile_id!,
-          created_at: drop.serial_no
-        })
-      )
+      ]
+        .map((drop) =>
+          aDropRow({
+            ...drop,
+            author_id: authorAlice.profile_id!,
+            created_at: drop.serial_no
+          })
+        )
+        .concat(
+          aDropRow({
+            id: 'public-no-identity',
+            wave_id: publicWaveA.id,
+            serial_no: 208,
+            author_id: 'profile-without-identity',
+            created_at: 208
+          })
+        )
     }
   ],
   () => {
@@ -194,6 +205,79 @@ describeWithSeed(
         ).resolves.toEqual([]);
       }
     );
+
+    const seededDropIds = [
+      'public-root-old',
+      'public-root-reply',
+      'public-child',
+      'private-root',
+      'private-parent',
+      'private-child',
+      'direct-message',
+      'public-no-identity'
+    ];
+    const unfilteredCases = [false, true].flatMap((public_only) =>
+      [false, true].flatMap((include_replies) =>
+        [[], ['group-1']].flatMap((group_ids_user_is_eligible_for) =>
+          [null, 206].flatMap((serial_no_less_than) =>
+            [false, true].flatMap((inGetScope) => [
+              {
+                public_only,
+                include_replies,
+                group_ids_user_is_eligible_for,
+                serial_no_less_than,
+                inGetScope
+              }
+            ])
+          )
+        )
+      )
+    );
+
+    it.each(unfilteredCases)(
+      'returns the same rows without filters as the single query (%o)',
+      async ({ inGetScope, ...variant }) => {
+        const run = <T>(action: () => Promise<T>) =>
+          inGetScope ? withLegacyCompetitionGetFacade(action) : action();
+        const unfiltered = {
+          ...query,
+          ...variant,
+          author_id: null,
+          amount: 3
+        };
+        const twoStep = await run(() => repo.findLatestDrops(unfiltered, ctx));
+        // An id filter that covers every seeded drop keeps the single query
+        // without changing which rows match.
+        const singleQuery = await run(() =>
+          repo.findLatestDrops({ ...unfiltered, ids: seededDropIds }, ctx)
+        );
+        expect(twoStep).toEqual(singleQuery);
+        expect(twoStep.map((drop) => drop.id)).not.toContain(
+          'public-no-identity'
+        );
+      }
+    );
+
+    it('returns the newest visible root drops without filters', async () => {
+      const drops = await repo.findLatestDrops(
+        {
+          ...query,
+          author_id: null,
+          amount: 10,
+          include_replies: false,
+          group_ids_user_is_eligible_for: ['group-1']
+        },
+        ctx
+      );
+      expect(drops.map((drop) => drop.id)).toEqual([
+        'direct-message',
+        'private-child',
+        'private-parent',
+        'private-root',
+        'public-child',
+        'public-root-old'
+      ]);
+    });
   }
 );
 
