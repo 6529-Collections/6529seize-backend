@@ -501,13 +501,20 @@ export const SCHEMA_SYNC_DESTRUCTIVE_GUARD_ENV =
 export type SchemaSyncDestructiveGuardMode = 'report' | 'block';
 
 /**
+ * Reads a SCHEMA_SYNC_DESTRUCTIVE_GUARD value (trimmed, case-insensitive).
  * `block` holds back a plan with destructive statements unless it is
- * acknowledged; anything else (the default) only reports such plans.
+ * acknowledged; `report`, or no value, only reports such plans. Any other
+ * value is a configuration error: it throws, so the sync does not start.
  */
 export function schemaSyncDestructiveGuardMode(
-  value: string | undefined = process.env[SCHEMA_SYNC_DESTRUCTIVE_GUARD_ENV]
+  value: string | undefined
 ): SchemaSyncDestructiveGuardMode {
-  return value?.trim().toLowerCase() === 'block' ? 'block' : 'report';
+  const normalized = value?.trim().toLowerCase() ?? '';
+  if (normalized === '' || normalized === 'report') return 'report';
+  if (normalized === 'block') return 'block';
+  throw new Error(
+    `${SCHEMA_SYNC_DESTRUCTIVE_GUARD_ENV} must be "report" or "block" (or unset for "report"), got ${JSON.stringify(value)}`
+  );
 }
 
 const SHA256_HEX = /^[a-f0-9]{64}$/;
