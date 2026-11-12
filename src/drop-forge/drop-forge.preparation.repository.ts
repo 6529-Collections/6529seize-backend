@@ -1,3 +1,5 @@
+import { findDropForgePolicy } from '@/drop-forge/drop-forge.policy';
+import { readForgeSettings } from '@/drop-forge/drop-forge.settings';
 import {
   DROP_FORGE_LAUNCHES_TABLE,
   DROP_FORGE_JOBS_TABLE,
@@ -104,17 +106,19 @@ export class DropForgePreparationRepository {
         throw new LaunchSafetyError(
           'Distribution is frozen for an armed or terminal launch'
         );
-      const pending = await sqlExecutor.execute<{ id: string }>(
-        `SELECT id FROM ${DROP_FORGE_JOBS_TABLE} WHERE contract = :contract AND claim_id = :claim AND kind = 'PROCESS_ALL' AND status IN ('PENDING', 'AWAITING_AUTH') ${allowPending ? '' : 'FOR SHARE NOWAIT'}`,
-        { contract: contract.toLowerCase(), claim },
-        { wrappedConnection: ctx.connection }
-      );
-      const ownJob = (ctx as RequestContext & { dropForgeJobId?: string })
-        .dropForgeJobId;
-      if (!allowPending && pending.some((job) => job.id !== ownJob))
-        throw new LaunchSafetyError(
-          'Distribution processing is in progress; wait for completion before changing inputs'
+      if (!allowPending) {
+        const pending = await sqlExecutor.execute<{ id: string }>(
+          `SELECT id FROM ${DROP_FORGE_JOBS_TABLE} WHERE contract = :contract AND claim_id = :claim AND kind = 'PROCESS_ALL' AND status IN ('PENDING', 'AWAITING_AUTH') FOR SHARE NOWAIT`,
+          { contract: contract.toLowerCase(), claim },
+          { wrappedConnection: ctx.connection }
         );
+        const ownJob = (ctx as RequestContext & { dropForgeJobId?: string })
+          .dropForgeJobId;
+        if (pending.some((job) => job.id !== ownJob))
+          throw new LaunchSafetyError(
+            'Distribution processing is in progress; wait for completion before changing inputs'
+          );
+      }
       const results =
         typeof stored.results === 'string'
           ? (JSON.parse(stored.results) as PreparationResults)
@@ -139,10 +143,36 @@ export async function resetDistributionPreparation(
   reset: (ctx: RequestContext) => Promise<void>,
   ctx: RequestContext = {}
 ): Promise<void> {
+  const policy = findDropForgePolicy();
+  const canResetPaused =
+    policy !== null &&
+    !(await readForgeSettings(policy, ctx)).preparation_enabled;
   await dropForgePreparationRepository.run(
     contract,
     claim,
     async (results, txCtx) => {
+      if (canResetPaused) {
+        // The worker takes the job lock before the preparation lock. Fail fast
+        // if it is finishing a step; an idle job can be reset atomically.
+        try {
+          await sqlExecutor.execute(
+            `SELECT id FROM ${DROP_FORGE_JOBS_TABLE} WHERE contract = :contract AND claim_id = :claim AND kind = 'PROCESS_ALL' AND status IN ('PENDING', 'AWAITING_AUTH') FOR UPDATE NOWAIT`,
+            { contract: contract.toLowerCase(), claim },
+            { wrappedConnection: txCtx.connection }
+          );
+        } catch (error) {
+          if (
+            error &&
+            typeof error === 'object' &&
+            (('errno' in error && error.errno === 3572) ||
+              ('code' in error && error.code === 'ER_LOCK_NOWAIT'))
+          )
+            throw new LaunchSafetyError(
+              'Distribution processing is finishing a step; retry the reset shortly'
+            );
+          throw error;
+        }
+      }
       await reset(txCtx);
       for (const key of Object.keys(results)) delete results[key];
       await sqlExecutor.execute(
@@ -161,6 +191,7 @@ export async function resetDistributionPreparation(
         Promise.resolve()
       );
     },
-    ctx
+    ctx,
+    canResetPaused
   );
 }

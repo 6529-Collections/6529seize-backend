@@ -131,14 +131,19 @@ export async function processStep(
   if (step === 0 && !result.inputs) {
     const captured = await Promise.all(
       ids.slice(0, 3).map(async (id, index) => {
-        const valid = await validateDistribution(auth, job.plan_id!, id);
+        const valid = await validateDistribution(
+          auth,
+          job.plan_id!,
+          id,
+          'background'
+        );
         if (!valid.valid)
           throw new LaunchSafetyError(
             valid.statusText ?? 'EMMA phases are not ready'
           );
         const [name, rows] = await Promise.all([
-          fetchPhaseName(auth, job.plan_id!, id),
-          fetchPhaseResults(auth, job.plan_id!, id)
+          fetchPhaseName(auth, job.plan_id!, id, 'background'),
+          fetchPhaseResults(auth, job.plan_id!, id, 'background')
         ]);
         if (name.toLowerCase().replace(/\s/g, '') !== `phase${index}`)
           throw new LaunchSafetyError(
@@ -189,7 +194,7 @@ export async function processStep(
     distribution_hash: await distributionHash(job.contract, job.claim_id, ctx)
   };
 }
-export async function assertProcessComplete(
+export async function assertCompletedProcessUnchanged(
   contract: string,
   claim: number,
   ctx: RequestContext
@@ -201,11 +206,11 @@ export async function assertProcessComplete(
     ctx
   );
   if (
-    job?.status !== 'COMPLETED' ||
+    job?.status === 'COMPLETED' &&
     decodeProcessResult(job)?.distribution_hash !==
       (await distributionHash(contract, claim, ctx))
   )
     throw new LaunchSafetyError(
-      'Complete Process and Finalize for the current distribution before launching'
+      'Distribution changed after processing; reset and finalize again before launching'
     );
 }

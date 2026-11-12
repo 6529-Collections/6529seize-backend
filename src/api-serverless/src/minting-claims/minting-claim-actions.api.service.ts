@@ -1,3 +1,8 @@
+import { findDropForgePolicy } from '@/drop-forge/drop-forge.policy';
+import {
+  dropForgeRepository,
+  launchId
+} from '@/drop-forge/drop-forge.repository';
 import type { ApiMintingClaimAction } from '@/api/generated/models/ApiMintingClaimAction';
 import type { ApiMintingClaimActionTypesResponse } from '@/api/generated/models/ApiMintingClaimActionTypesResponse';
 import type { ApiMintingClaimActionsResponse } from '@/api/generated/models/ApiMintingClaimActionsResponse';
@@ -103,7 +108,18 @@ export async function getMintingClaimActionsResponse(
     claimId,
     ctx
   );
-  return buildMintingClaimActionsResponse(normalizedContract, claimId, rows);
+  const response = buildMintingClaimActionsResponse(
+    normalizedContract,
+    claimId,
+    rows
+  );
+  const policy = findDropForgePolicy();
+  if (policy?.creator.toLowerCase() === normalizedContract)
+    response.drop_forge_launch_exists = await dropForgeRepository.exists(
+      launchId(policy.chainId, normalizedContract, claimId),
+      ctx
+    );
+  return response;
 }
 
 export async function upsertMintingClaimActionAndGetResponse(

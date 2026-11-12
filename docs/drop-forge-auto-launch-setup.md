@@ -358,14 +358,17 @@ On a DLQ alarm, inspect the exact message and ledger, fix authorization/network/
 configuration, then use SQS **Start DLQ redrive** to its original queue. Redrive does
 not authorize repeating airdrops or releasing a nonce. Inspect both handler DLQs,
 Lambda errors and Scheduler delivery metrics; never delete an uncertain transaction
-record. When EMMA preparation is Off, jobs remain saved at their checkpoints.
-Turning it back On sends fresh deliveries for pending jobs.
+record. When EMMA preparation is Off, EMMA shows the original subscription
+downloads and Finalize Distribution. Jobs remain saved at their checkpoints.
+Turn the setting back On to resume a pending job, or use Reset Subscriptions
+after the current step ends to restart that claim manually.
 
 For the observation rollout:
 
 1. Configure and verify all IDs, IAM permissions, KMS binding and limits.
-2. Turn on **EMMA preparation** in Launch Automation when ready to use Process
-   and Finalize. Complete EMMA, then publish Craft.
+2. Finalize the distribution in EMMA, then publish Craft. With **EMMA
+   preparation** Off, use the three phase downloads, Public Subscriptions,
+   and Finalize Distribution. With it On, use Process and Finalize.
 3. Turn on **Automatic launch** while **withholding on-chain creator-admin permission
    from the KMS wallet**, then click **Launch** before the mint window. Backend
    operator authorization is a separate requirement.

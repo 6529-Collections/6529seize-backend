@@ -5,20 +5,27 @@ import {
   requestMetadataUpdate,
   coordinateManual
 } from '@/drop-forge/drop-forge.operations';
-import { DROP_FORGE_EVIDENCE_TABLE } from '@/constants';
+import {
+  DISTRIBUTION_NORMALIZED_TABLE,
+  DISTRIBUTION_TABLE,
+  DROP_FORGE_EVIDENCE_TABLE,
+  MINTING_MERKLE_ROOTS_TABLE
+} from '@/constants';
+import { populateDistributionNormalized } from '@/api/distributions/api.distributions.service';
+import { insertMintingMerkleRoot } from '@/api/minting-claims/api.minting-claims.db';
 import { sqlExecutor } from '@/sql-executor';
 import { storeEvidence } from '@/drop-forge/drop-forge.evidence';
 import { dropForgeRepository } from '@/drop-forge/drop-forge.repository';
 import * as config from '@/drop-forge/drop-forge.config';
 import * as schedule from '@/drop-forge/drop-forge.schedule';
-import * as workflow from '@/drop-forge/drop-forge.workflow';
 import * as reporting from '@/drop-forge/drop-forge.reporting-access';
 import * as wake from '@/drop-forge/drop-forge.wake';
 import { EthereumLaunchChain } from '@/drop-forge/drop-forge.chain';
 import {
   testConfig,
   testSource,
-  testPlan
+  testPlan,
+  testLaunchData
 } from '@/drop-forge/drop-forge.test-fixtures';
 import * as settings from '@/drop-forge/drop-forge.settings';
 import { clearDropForgeTestTables } from '@/drop-forge/drop-forge.db-test-fixtures';
@@ -36,17 +43,17 @@ beforeEach(async () => {
   jest
     .spyOn(schedule, 'standardLaunchPlan')
     .mockReturnValue({ ...testPlan, initialize_at: 1100 });
-  jest.spyOn(workflow, 'assertProcessComplete').mockResolvedValue();
   jest.spyOn(reporting, 'validateForgeReporting').mockResolvedValue('bot');
   jest.spyOn(wake, 'wakeDropForge').mockResolvedValue();
 });
 afterEach(() => {
   jest.restoreAllMocks();
 });
-it('rejects a new Ready request when Automatic launch is off', async () => {
+it('rejects a new Ready request when only EMMA preparation is enabled', async () => {
   await settings.updateForgeSettings(testConfig, testConfig.signer, {
     revision: 0,
-    automation_enabled: false
+    automation_enabled: false,
+    preparation_enabled: true
   });
   await expect(readyLaunch(1, {})).rejects.toThrow('Automatic launch is off');
   expect(wake.wakeDropForge).not.toHaveBeenCalled();
@@ -59,6 +66,68 @@ it('accepts concurrent Ready clicks as one immediately due launch', async () => 
   expect(a.data.actions[0].due).toBe(1100);
   expect(a.data.managed).toBe(true);
 });
+it('accepts a legacy finalized distribution with EMMA preparation off and rejects stale allocations', async () => {
+  jest.mocked(dropForgeRepository.assertPrepared).mockRestore();
+  const claim = 91;
+  const contract = testConfig.creator;
+  const distribution = testSource.rows[0];
+  const { phase, wallet, count, count_airdrop, count_allowlist } = distribution;
+  const params = {
+    claim,
+    contract,
+    phase,
+    wallet,
+    count,
+    count_airdrop,
+    count_allowlist
+  };
+
+  try {
+    await sqlExecutor.execute(
+      `INSERT INTO ${DISTRIBUTION_TABLE} (card_id, contract, phase, wallet, count, count_airdrop, count_allowlist) VALUES (:claim, :contract, :phase, :wallet, :count, :count_airdrop, :count_allowlist)`,
+      params
+    );
+    await insertMintingMerkleRoot(
+      contract,
+      claim,
+      phase,
+      testLaunchData().phases[0].root
+    );
+    await populateDistributionNormalized(contract, claim);
+
+    const changed = {
+      ...distribution,
+      count: count + 1,
+      count_airdrop: count_airdrop + 1
+    };
+    jest
+      .mocked(dropForgeRepository.source)
+      .mockResolvedValue({ ...testSource, rows: [changed] });
+    await expect(readyLaunch(claim, {})).rejects.toThrow(
+      'Finalize the current distribution'
+    );
+    expect(wake.wakeDropForge).not.toHaveBeenCalled();
+
+    jest.mocked(dropForgeRepository.source).mockResolvedValue(testSource);
+    expect(
+      (await settings.readForgeSettings(testConfig)).preparation_enabled
+    ).toBe(false);
+    await expect(readyLaunch(claim, {})).resolves.toMatchObject({
+      state: 'ARMED'
+    });
+  } finally {
+    for (const table of [
+      DISTRIBUTION_NORMALIZED_TABLE,
+      DISTRIBUTION_TABLE,
+      MINTING_MERKLE_ROOTS_TABLE
+    ])
+      await sqlExecutor.execute(
+        `DELETE FROM ${table} WHERE contract = :contract AND card_id = :claim`,
+        params
+      );
+  }
+});
+
 it('queues one published metadata update without replaying initialized or airdrop actions', async () => {
   const ready = await readyLaunch(1, {});
   await dropForgeRepository.change(

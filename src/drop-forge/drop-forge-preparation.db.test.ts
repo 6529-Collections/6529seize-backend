@@ -1,3 +1,4 @@
+import * as policy from '@/drop-forge/drop-forge.policy';
 import { randomUUID } from 'crypto';
 import { DROP_FORGE_PREPARATIONS_TABLE } from '@/constants';
 import {
@@ -136,4 +137,37 @@ describe('Drop Forge preparation durability', () => {
       resetDistributionPreparation(contract, 1, async () => {})
     ).rejects.toThrow('frozen');
   });
+});
+
+it('lets an operator explicitly reset a paused preparation while the setting is off', async () => {
+  await clearDropForgeTestTables();
+  jest
+    .spyOn(policy, 'findDropForgePolicy')
+    .mockReturnValue(
+      testConfig as ReturnType<typeof policy.findDropForgePolicy>
+    );
+  const job = await dropForgeJobsRepository.create(
+    Object.assign(new DropForgeJobEntity(), {
+      id: randomUUID(),
+      contract: testConfig.creator.toLowerCase(),
+      claim_id: 1,
+      kind: 'PROCESS_ALL',
+      plan_id: 'plan',
+      phase_id: null,
+      phase_ids: ['phase0', 'phase1', 'phase2'],
+      step: 0,
+      updated_at: Date.now()
+    }),
+    {}
+  );
+  const reset = jest.fn().mockResolvedValue(undefined);
+  await resetDistributionPreparation(job.contract, job.claim_id, reset);
+  expect(reset).toHaveBeenCalledTimes(1);
+  await expect(dropForgeJobsRepository.find(job.id, {})).resolves.toMatchObject(
+    {
+      status: 'FAILED',
+      encrypted_auth: null,
+      error: 'Distribution reset; process again'
+    }
+  );
 });

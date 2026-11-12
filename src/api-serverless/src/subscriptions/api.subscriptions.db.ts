@@ -721,6 +721,21 @@ export function fetchRankedFinalSubscriptions(
   );
 }
 
+export async function hasUnassignedFinalSubscriptions(
+  contract: string,
+  tokenId: number,
+  ctx: RequestContext
+): Promise<boolean> {
+  const row = await sqlExecutor.oneOrNull<{ id: number }>(
+    `SELECT id FROM ${SUBSCRIPTIONS_NFTS_FINAL_TABLE}
+     WHERE contract = :contract AND token_id = :tokenId AND phase IS NULL
+     LIMIT 1`,
+    { contract, tokenId },
+    { wrappedConnection: ctx.connection, forcePool: DbPoolName.WRITE }
+  );
+  return row !== null;
+}
+
 export async function fetchAllNftFinalSubscriptionsForContractAndToken(
   contract: string,
   token_id: number,

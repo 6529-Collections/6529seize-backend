@@ -1,3 +1,5 @@
+import { normalizeDistributionAllocations } from '@/api/distributions/api.distributions.service';
+import type { AllowlistNormalizedEntry } from '@/entities/IDistribution';
 import {
   DROP_FORGE_LAUNCHES_TABLE,
   DROP_FORGE_SIGNERS_TABLE,
@@ -83,6 +85,15 @@ export class DropForgeRepository {
       ctx.timer?.stop(timer);
     }
   }
+  async exists(id: string, ctx: RequestContext): Promise<boolean> {
+    const row = await sqlExecutor.oneOrNull<{ id: string }>(
+      `SELECT id FROM ${DROP_FORGE_LAUNCHES_TABLE} WHERE id = :id`,
+      { id },
+      { wrappedConnection: ctx.connection, forcePool: DbPoolName.WRITE }
+    );
+    return row !== null;
+  }
+
   async find(id: string, ctx: RequestContext): Promise<LaunchRecord | null> {
     const timer = 'DropForgeRepository->find';
     ctx.timer?.start(timer);
@@ -259,7 +270,11 @@ export class DropForgeRepository {
       ctx.timer?.stop(timer);
     }
   }
-  async assertPrepared(data: LaunchData, ctx: RequestContext): Promise<void> {
+  async assertPrepared(
+    data: LaunchData,
+    rows: DistributionRow[],
+    ctx: RequestContext
+  ): Promise<void> {
     const timer = 'DropForgeRepository->assertPrepared';
     ctx.timer?.start(timer);
     try {
@@ -268,28 +283,34 @@ export class DropForgeRepository {
         claim: data.claim_id
       };
       const normalized = await sqlExecutor.execute<{
-        phases: string | string[];
+        wallet: string;
+        airdrops: number;
+        allowlist: string | AllowlistNormalizedEntry[] | null;
       }>(
-        `SELECT phases FROM ${DISTRIBUTION_NORMALIZED_TABLE} WHERE contract = :contract AND card_id = :claim`,
+        `SELECT wallet, airdrops, allowlist FROM ${DISTRIBUTION_NORMALIZED_TABLE} WHERE contract = :contract AND card_id = :claim`,
         parameters,
         { wrappedConnection: ctx.connection, forcePool: DbPoolName.WRITE }
       );
-      const names = new Set(
-        normalized.flatMap((row) =>
-          typeof row.phases === 'string'
-            ? (JSON.parse(row.phases) as string[])
-            : row.phases
-        )
-      );
+      const expected = normalizeDistributionAllocations(rows);
       if (
         !normalized.length ||
-        data.phases.some(
-          (phase) =>
-            phase.root !== '0x' + '0'.repeat(64) && !names.has(phase.name)
-        )
+        normalized.length !== expected.size ||
+        normalized.some(({ wallet, airdrops, allowlist }) => {
+          const allocation = expected.get(wallet.toLowerCase());
+          const entries =
+            typeof allowlist === 'string'
+              ? (JSON.parse(allowlist) as AllowlistNormalizedEntry[] | null)
+              : allowlist;
+          return (
+            !allocation ||
+            Number(airdrops) !== allocation.airdrops ||
+            !entries ||
+            !sameAllowlist(entries, allocation.allowlist)
+          );
+        })
       )
         throw new LaunchSafetyError(
-          'Finalize the prepared distribution before arming'
+          'Finalize the current distribution before arming'
         );
       const roots = await sqlExecutor.execute<{
         phase: string;
@@ -360,6 +381,24 @@ export class DropForgeRepository {
     }
   }
 }
+function sameAllowlist(
+  stored: AllowlistNormalizedEntry[],
+  expected: AllowlistNormalizedEntry[]
+): boolean {
+  const byPhase = new Map(stored.map((entry) => [entry.phase, entry]));
+  return (
+    stored.length === expected.length &&
+    expected.every((entry) => {
+      const saved = byPhase.get(entry.phase);
+      return (
+        saved?.spots === entry.spots &&
+        saved.spots_airdrop === entry.spots_airdrop &&
+        saved.spots_allowlist === entry.spots_allowlist
+      );
+    })
+  );
+}
+
 export const dropForgeRepository = new DropForgeRepository();
 export function addLaunchEvent(
   record: LaunchRecord,

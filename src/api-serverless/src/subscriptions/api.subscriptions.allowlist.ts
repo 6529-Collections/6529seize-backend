@@ -1,7 +1,7 @@
 import { RequestContext } from '@/request.context';
 import { resetDistributionPreparation } from '@/drop-forge/drop-forge.preparation.repository';
 import { Request } from 'express';
-import fetch, { Response } from 'node-fetch';
+import fetch from 'node-fetch';
 import { DISTRIBUTION_AUTOMATIC_AIRDROP_PHASES } from '@/airdrop-phases';
 import {
   DISTRIBUTION_NORMALIZED_TABLE,
@@ -63,12 +63,15 @@ export function authenticateSubscriptionsAdmin(
   return isAdmin;
 }
 
+type EmmaRequestMode = 'manual' | 'background';
+
 export async function validateDistribution(
   auth: string,
   allowlistId: string,
-  phaseId?: string
+  phaseId?: string,
+  mode: EmmaRequestMode = 'manual'
 ): Promise<AllowlistResponse> {
-  const operations = await fetchDistributionOperations(auth, allowlistId);
+  const operations = await fetchDistributionOperations(auth, allowlistId, mode);
   const hasRanDelegationMapping = operations.some(
     (o) => o.code === 'MAP_RESULTS_TO_DELEGATED_WALLETS'
   );
@@ -82,59 +85,59 @@ export async function validateDistribution(
   };
 }
 
-export async function fetchDistributionOperations(
+export function fetchDistributionOperations(
   auth: string,
-  allowlistId: string
+  allowlistId: string,
+  mode: EmmaRequestMode = 'manual'
 ): Promise<ALOperationsResponse[]> {
-  const url = `${process.env.ALLOWLIST_API_ENDPOINT}/allowlists/${encodeURIComponent(allowlistId)}/operations`;
-  const response = await fetch(url, {
-    timeout: 20000,
-    size: 32 * 1024 * 1024,
-    headers: {
-      accept: 'application/json',
-      Authorization: auth
-    }
-  });
-  return readEmmaResponse<ALOperationsResponse[]>(response);
+  return fetchEmma(
+    `/allowlists/${encodeURIComponent(allowlistId)}/operations`,
+    auth,
+    mode
+  );
 }
 
 export async function fetchPhaseName(
   auth: string,
   allowlistId: string,
-  phaseId: string
+  phaseId: string,
+  mode: EmmaRequestMode = 'manual'
 ): Promise<string> {
-  const url = `${process.env.ALLOWLIST_API_ENDPOINT}/allowlists/${encodeURIComponent(allowlistId)}/phases/${encodeURIComponent(phaseId)}`;
-  const response = await fetch(url, {
-    timeout: 20000,
-    size: 32 * 1024 * 1024,
-    headers: {
-      accept: 'application/json',
-      Authorization: auth
-    }
-  });
-  const json = await readEmmaResponse<{ name: string }>(response);
-  return json.name;
+  const phase = await fetchEmma<{ name: string }>(
+    `/allowlists/${encodeURIComponent(allowlistId)}/phases/${encodeURIComponent(phaseId)}`,
+    auth,
+    mode
+  );
+  return phase.name;
 }
 
-export async function fetchPhaseResults(
+export function fetchPhaseResults(
   auth: string,
   allowlistId: string,
-  phaseId: string
+  phaseId: string,
+  mode: EmmaRequestMode = 'manual'
 ): Promise<ALResultsResponse[]> {
-  const url = `${process.env.ALLOWLIST_API_ENDPOINT}/allowlists/${encodeURIComponent(allowlistId)}/results/phases/${encodeURIComponent(phaseId)}`;
-  const response = await fetch(url, {
-    timeout: 20000,
-    size: 32 * 1024 * 1024,
+  return fetchEmma(
+    `/allowlists/${encodeURIComponent(allowlistId)}/results/phases/${encodeURIComponent(phaseId)}`,
+    auth,
+    mode
+  );
+}
+
+async function fetchEmma<T>(
+  path: string,
+  auth: string,
+  mode: EmmaRequestMode
+): Promise<T> {
+  const background = mode === 'background';
+  const response = await fetch(`${process.env.ALLOWLIST_API_ENDPOINT}${path}`, {
+    ...(background && { timeout: 20000, size: 32 * 1024 * 1024 }),
     headers: {
       accept: 'application/json',
       Authorization: auth
     }
   });
-  return readEmmaResponse<ALResultsResponse[]>(response);
-}
-
-async function readEmmaResponse<T>(response: Response): Promise<T> {
-  if (response.status === 401 || response.status === 403)
+  if (background && (response.status === 401 || response.status === 403))
     throw new CustomApiCompliantException(
       response.status,
       'EMMA access expired or was denied'

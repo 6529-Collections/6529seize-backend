@@ -21,9 +21,10 @@ it.each([401, 403])(
         ReturnType<typeof fetch>
       >);
     const operations: Array<() => Promise<unknown>> = [
-      () => fetchDistributionOperations('Bearer operator', 'plan'),
-      () => fetchPhaseName('Bearer operator', 'plan', 'phase'),
-      () => fetchPhaseResults('Bearer operator', 'plan', 'phase')
+      () =>
+        fetchDistributionOperations('Bearer operator', 'plan', 'background'),
+      () => fetchPhaseName('Bearer operator', 'plan', 'phase', 'background'),
+      () => fetchPhaseResults('Bearer operator', 'plan', 'phase', 'background')
     ];
     for (const operation of operations)
       await expect(withPreparationAuth(operation)).rejects.toThrow(

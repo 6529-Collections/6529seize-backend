@@ -13,12 +13,9 @@ const policies = {
     creator: '0xb84170c1073c7292ed108c3f0d1d2a1f304caa2c'
   }
 } as const;
-export function getDropForgePolicy() {
+export function findDropForgePolicy() {
   const stage = process.env.DROP_FORGE_STAGE;
-  if (stage !== 'prod' && stage !== 'staging')
-    throw new LaunchSafetyError(
-      'Drop Forge deployment stage is missing or unsupported'
-    );
+  if (stage !== 'prod' && stage !== 'staging') return null;
   return {
     ...policies[stage],
     proxy: MANIFOLD_LAZY_CLAIM_CONTRACT,
@@ -28,4 +25,12 @@ export function getDropForgePolicy() {
     maxGas: BigInt('5000000'),
     maxCost: BigInt('100000000000000000')
   };
+}
+export function getDropForgePolicy() {
+  const policy = findDropForgePolicy();
+  if (!policy)
+    throw new LaunchSafetyError(
+      'Drop Forge deployment stage is missing or unsupported'
+    );
+  return policy;
 }

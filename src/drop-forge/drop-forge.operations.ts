@@ -1,3 +1,4 @@
+import { hasUnassignedFinalSubscriptions } from '@/api/subscriptions/api.subscriptions.db';
 import { randomUUID, createHash } from 'node:crypto';
 import {
   launchConfigured,
@@ -14,7 +15,7 @@ import {
   sourceMatchesLaunch
 } from '@/drop-forge/drop-forge.plan';
 import { standardLaunchPlan } from '@/drop-forge/drop-forge.schedule';
-import { assertProcessComplete } from '@/drop-forge/drop-forge.workflow';
+import { assertCompletedProcessUnchanged } from '@/drop-forge/drop-forge.workflow';
 import { EthereumLaunchChain } from '@/drop-forge/drop-forge.chain';
 import { dropForgePreparationRepository } from '@/drop-forge/drop-forge.preparation.repository';
 import { validateForgeReporting } from '@/drop-forge/drop-forge.reporting-access';
@@ -55,17 +56,21 @@ export async function readyLaunch(
       if (current && current.state !== 'DRAFT') return current;
       if (!(await readForgeSettings(config, txCtx)).automation_enabled)
         throw new LaunchSafetyError('Automatic launch is off');
-      if (
-        !sourceMatchesLaunch(
-          await dropForgeRepository.source(config.creator, claim, txCtx),
-          data
-        )
-      )
+      const currentSource = await dropForgeRepository.source(
+        config.creator,
+        claim,
+        txCtx
+      );
+      if (!sourceMatchesLaunch(currentSource, data))
         throw new LaunchSafetyError(
           'Distribution changed while preparing launch; retry'
         );
-      await assertProcessComplete(config.creator, claim, txCtx);
-      await dropForgeRepository.assertPrepared(data, txCtx);
+      await assertCompletedProcessUnchanged(config.creator, claim, txCtx);
+      await dropForgeRepository.assertPrepared(data, currentSource.rows, txCtx);
+      if (await hasUnassignedFinalSubscriptions(config.creator, claim, txCtx))
+        throw new LaunchSafetyError(
+          'Process Public subscriptions before launching'
+        );
       data.manual_transactions = (
         await evidenceForClaim(config, claim, txCtx)
       ).map((proof) => ({ ...proof, state: 'PENDING' as const }));

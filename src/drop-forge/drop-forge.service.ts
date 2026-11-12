@@ -263,7 +263,11 @@ export async function controlLaunch(
           throw new LaunchSafetyError(
             'Distribution or metadata changed; recreate the draft before arming'
           );
-        await dropForgeRepository.assertPrepared(record.data, txCtx);
+        await dropForgeRepository.assertPrepared(
+          record.data,
+          source.rows,
+          txCtx
+        );
         if (record.data.actions.every(isLaunchActionSettled))
           throw new LaunchSafetyError('No remaining launch action');
         if (arming) {

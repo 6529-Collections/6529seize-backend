@@ -51,15 +51,15 @@ export async function prepareDistributionPhase(
   if (!cachedResult && !frozenInput) {
     // Network work must not hold the claim's preparation lock. Recheck the
     // cache and freeze state under the lock before publishing any DB writes.
-    const valid = await validateDistribution(auth, plan, phase);
+    const valid = await validateDistribution(auth, plan, phase, 'background');
     if (!valid.valid)
       throw new LaunchSafetyError(
         valid.statusText ?? 'EMMA distribution is not valid'
       );
     if (phase !== 'public') {
       const [name, rows] = await Promise.all([
-        fetchPhaseName(auth, plan, phase),
-        fetchPhaseResults(auth, plan, phase)
+        fetchPhaseName(auth, plan, phase, 'background'),
+        fetchPhaseResults(auth, plan, phase, 'background')
       ]);
       phaseInput = { name, rows };
     }

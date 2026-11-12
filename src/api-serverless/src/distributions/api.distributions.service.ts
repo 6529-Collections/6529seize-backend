@@ -308,6 +308,62 @@ export async function upsertAutomaticAirdropsForPhase(
   await insertDistributions(distributionInserts, wrappedConnection);
 }
 
+export function normalizeDistributionAllocations(
+  distributions: ReadonlyArray<
+    Pick<
+      Distribution,
+      'wallet' | 'phase' | 'count' | 'count_airdrop' | 'count_allowlist'
+    >
+  >
+) {
+  const distributionsNormalized = new Map<
+    string,
+    {
+      airdrops: number;
+      total_spots: number;
+      total_count: number;
+      allowlist: AllowlistNormalizedEntry[];
+      phases: string[];
+    }
+  >();
+
+  for (const d of distributions) {
+    const wallet = d.wallet.toLowerCase();
+    let dn = distributionsNormalized.get(wallet);
+    if (!dn) {
+      dn = {
+        airdrops: 0,
+        total_spots: 0,
+        total_count: 0,
+        allowlist: [],
+        phases: []
+      };
+      distributionsNormalized.set(wallet, dn);
+    }
+
+    if (automaticAirdropPhaseSet.has(d.phase)) {
+      dn.airdrops += d.count;
+      dn.total_count += d.count;
+    } else {
+      const dPhase: AllowlistNormalizedEntry = {
+        phase: d.phase,
+        spots: d.count,
+        spots_airdrop: d.count_airdrop || 0,
+        spots_allowlist: d.count_allowlist || 0
+      };
+      dn.allowlist.push(dPhase);
+      dn.total_spots += d.count;
+    }
+
+    const normalizedPhase = normalizeDistributionPhase(d.phase);
+    if (!dn.phases.includes(normalizedPhase)) {
+      dn.phases.push(normalizedPhase);
+    }
+  }
+
+  return distributionsNormalized;
+}
+
 export async function populateDistributionNormalized(
   contract: string,
   cardId: number,
@@ -368,67 +424,8 @@ export async function populateDistributionNormalized(
   const cardName = nft?.name ?? null;
   const mintDate = nft?.mint_date ?? null;
 
-  const distributionsNormalized = new Map<
-    string,
-    {
-      card_id: number;
-      contract: string;
-      wallet: string;
-      wallet_display: string;
-      card_name: string | null;
-      mint_date: Date | null;
-      airdrops: number;
-      total_spots: number;
-      total_count: number;
-      minted: number;
-      allowlist: AllowlistNormalizedEntry[];
-      phases: string[];
-    }
-  >();
-
-  for (const d of distributions) {
-    const wallet = d.wallet.toLowerCase();
-    const walletDisplay = ensMap.get(wallet) || wallet;
-
-    let dn = distributionsNormalized.get(wallet);
-
-    if (!dn) {
-      dn = {
-        card_id: cardId,
-        contract: contract.toLowerCase(),
-        wallet,
-        wallet_display: walletDisplay,
-        card_name: cardName,
-        mint_date: mintDate,
-        airdrops: 0,
-        total_spots: 0,
-        total_count: 0,
-        minted: 0,
-        allowlist: [],
-        phases: []
-      };
-      distributionsNormalized.set(wallet, dn);
-    }
-
-    if (automaticAirdropPhaseSet.has(d.phase)) {
-      dn.airdrops += d.count;
-      dn.total_count += d.count;
-    } else {
-      const dPhase: AllowlistNormalizedEntry = {
-        phase: d.phase,
-        spots: d.count,
-        spots_airdrop: d.count_airdrop || 0,
-        spots_allowlist: d.count_allowlist || 0
-      };
-      dn.allowlist.push(dPhase);
-      dn.total_spots += d.count;
-    }
-
-    const normalizedPhase = normalizeDistributionPhase(d.phase);
-    if (!dn.phases.includes(normalizedPhase)) {
-      dn.phases.push(normalizedPhase);
-    }
-  }
+  const distributionsNormalized =
+    normalizeDistributionAllocations(distributions);
 
   validateNormalization(
     distributions,
@@ -442,8 +439,15 @@ export async function populateDistributionNormalized(
     { cardId, contract: contract.toLowerCase() },
     { wrappedConnection: ctx.connection }
   );
-  const rows = Array.from(distributionsNormalized.values()).map((row) => ({
+  const rows = Array.from(distributionsNormalized, ([wallet, row]) => ({
     ...row,
+    card_id: cardId,
+    contract: contract.toLowerCase(),
+    wallet,
+    wallet_display: ensMap.get(wallet) || wallet,
+    card_name: cardName,
+    mint_date: mintDate,
+    minted: 0,
     allowlist: JSON.stringify(row.allowlist),
     phases: JSON.stringify(row.phases)
   }));
