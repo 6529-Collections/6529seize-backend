@@ -30,6 +30,7 @@ functions:
       subnetIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):subnets}
     environment:
       SENTRY_DSN: ${env:SENTRY_DSN}
+      WS_DELIVERY_REDIS_CLUSTER: 'true'
       SENTRY_ENVIRONMENT: 'webSocketDeliveryLoop_${opt:stage, self:provider.stage}'
 
 resources:

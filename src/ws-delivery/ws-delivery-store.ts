@@ -1,5 +1,11 @@
 import { createHash } from 'node:crypto';
 import { getRedisClient } from '@/redis';
+import {
+  createCluster,
+  defineScript,
+  type RedisClientType,
+  type RedisClusterOptions
+} from 'redis';
 
 const WINDOW_MS = 5 * 60_000;
 // Keep connection capabilities beyond AWS's two-hour lifetime, including handshake margin.
@@ -215,60 +221,42 @@ return results
 
 type ScriptOptions = { keys: string[]; arguments: string[] };
 
+function defineDeliveryScript(script: string) {
+  return defineScript({
+    SCRIPT: script,
+    // The first key follows the key count in the arguments below.
+    FIRST_KEY_INDEX: 1,
+    transformArguments: ({ keys, arguments: args }: ScriptOptions) => [
+      String(keys.length),
+      ...keys,
+      ...args
+    ]
+  });
+}
+
+const deliveryScripts = {
+  claimDelivery: defineDeliveryScript(claimLua),
+  finishDelivery: defineDeliveryScript(finishLua),
+  batchDelivery: defineDeliveryScript(batchLua)
+};
+
+type DeliveryScript = keyof typeof deliveryScripts;
+
+export function createWebSocketDeliveryCluster(options: RedisClusterOptions) {
+  return createCluster({ ...options, scripts: deliveryScripts });
+}
+
 function isNoScript(error: unknown): boolean {
   return error instanceof Error && error.message.startsWith('NOSCRIPT');
 }
 
-const scriptHashes = new Map<string, Promise<string>>();
+type DeliveryRedis =
+  | RedisClientType
+  | ReturnType<typeof createWebSocketDeliveryCluster>;
 
-/** The script's hash as Redis reports it (SCRIPT LOAD), cached per process. */
-function scriptHash(script: string): Promise<string> {
-  let hash = scriptHashes.get(script);
-  if (!hash) {
-    hash = getRedisClient()!.scriptLoad(script);
-    scriptHashes.set(script, hash);
-    hash.catch(() => scriptHashes.delete(script));
-  }
-  return hash;
-}
-
-/**
- * Sends the 40-byte script hash instead of the ~2 KB script on every call.
- * A Redis that lost its script cache (restart, failover) answers NOSCRIPT;
- * EVAL then runs the script once and the hash is loaded again next time.
- */
-async function runScript(
-  script: string,
-  options: ScriptOptions
-): Promise<unknown> {
-  const client = getRedisClient()!;
-  try {
-    return await client.evalSha(await scriptHash(script), options);
-  } catch (error) {
-    if (!isNoScript(error)) throw error;
-    scriptHashes.delete(script);
-    return client.eval(script, options);
-  }
-}
-
-/** Fails fast when Redis is down and bounds each call to 250 ms. */
-async function bounded<T>(action: () => Promise<T>): Promise<T> {
+function getReadySharedRedis(): DeliveryRedis | null {
   const client = getRedisClient();
-  if (!client?.isReady) throw new Error('WebSocket recovery store unavailable');
-  let timeout: ReturnType<typeof setTimeout> | undefined;
-  try {
-    return await Promise.race([
-      action(),
-      new Promise<never>((_resolve, reject) => {
-        timeout = setTimeout(
-          () => reject(new Error('WebSocket recovery store timeout')),
-          250
-        );
-      })
-    ]);
-  } finally {
-    clearTimeout(timeout);
-  }
+  return client?.isReady ? client : null;
 }
 
 /**
@@ -306,6 +294,10 @@ class BookkeepingBatcher {
   private queueScope = '';
   private scheduled = false;
 
+  constructor(
+    private readonly execute: (options: ScriptOptions) => Promise<unknown>
+  ) {}
+
   enqueue(scope: string, operation: QueuedOperation): void {
     if (this.queue.length && scope !== this.queueScope) this.flush();
     this.queueScope = scope;
@@ -325,13 +317,14 @@ class BookkeepingBatcher {
     const operations = this.queue;
     if (!operations.length) return;
     this.queue = [];
-    void runBatch(this.queueScope, operations);
+    void runBatch(this.queueScope, operations, this.execute);
   }
 }
 
 async function runBatch(
   scope: string,
-  operations: QueuedOperation[]
+  operations: QueuedOperation[],
+  execute: (options: ScriptOptions) => Promise<unknown>
 ): Promise<void> {
   const keys = [
     `${scope}:pending`,
@@ -348,9 +341,7 @@ async function runBatch(
   }
   let results: unknown;
   try {
-    results = await bounded(() =>
-      runScript(batchLua, { keys, arguments: args })
-    );
+    results = await execute({ keys, arguments: args });
   } catch (error) {
     for (const operation of operations) operation.reject(error);
     return;
@@ -371,14 +362,77 @@ async function runBatch(
 }
 
 export class WebSocketDeliveryStore {
-  private readonly batcher = new BookkeepingBatcher();
+  private readonly scriptHashes = new Map<string, Promise<string>>();
+  private readonly batcher = new BookkeepingBatcher((options) =>
+    this.runScript('batchDelivery', options)
+  );
 
-  constructor(private readonly batched: () => boolean = batchedBookkeeping) {}
+  constructor(
+    private readonly batched: () => boolean = batchedBookkeeping,
+    private readonly getClient: () => DeliveryRedis | null = getReadySharedRedis
+  ) {}
+
+  /** Fails fast when Redis is down and bounds each call to 250 ms. */
+  private async bounded<T>(
+    action: (client: DeliveryRedis) => Promise<T>
+  ): Promise<T> {
+    const client = this.getClient();
+    if (!client) throw new Error('WebSocket recovery store unavailable');
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    try {
+      return await Promise.race([
+        action(client),
+        new Promise<never>((_resolve, reject) => {
+          timeout = setTimeout(
+            () => reject(new Error('WebSocket recovery store timeout')),
+            250
+          );
+        })
+      ]);
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
+  private scriptHash(client: RedisClientType, script: string): Promise<string> {
+    let hash = this.scriptHashes.get(script);
+    if (!hash) {
+      hash = client.scriptLoad(script);
+      this.scriptHashes.set(script, hash);
+      hash.catch(() => this.scriptHashes.delete(script));
+    }
+    return hash;
+  }
+
+  private runScript(
+    script: DeliveryScript,
+    options: ScriptOptions
+  ): Promise<unknown> {
+    return this.bounded(async (client) => {
+      // The cluster client routes the script by key and handles NOSCRIPT
+      // on the selected primary. SCRIPT LOAD has no key for routing.
+      if (!('scriptLoad' in client)) {
+        return client[script](options);
+      }
+
+      const source = deliveryScripts[script].SCRIPT;
+      try {
+        return await client.evalSha(
+          await this.scriptHash(client, source),
+          options
+        );
+      } catch (error) {
+        if (!isNoScript(error)) throw error;
+        this.scriptHashes.delete(source);
+        return client.eval(source, options);
+      }
+    });
+  }
 
   async enableReconnect(connectionId: string): Promise<void> {
-    await bounded(async () => {
+    await this.bounded(async (client) => {
       const key = `${deliveryScope()}:connection:${connectionHash(connectionId)}`;
-      await getRedisClient()!
+      await client
         .multi()
         .hSet(key, 'canReconnect', '1')
         .expire(key, STATE_TTL_SECONDS)
@@ -387,9 +441,9 @@ export class WebSocketDeliveryStore {
   }
 
   async forget(connectionId: string): Promise<void> {
-    await bounded(async () => {
+    await this.bounded(async (client) => {
       const base = deliveryScope();
-      await getRedisClient()!
+      await client
         .multi()
         .del(`${base}:connection:${connectionHash(connectionId)}`)
         .zRem(`${base}:pending`, connectionHash(connectionId))
@@ -414,23 +468,21 @@ export class WebSocketDeliveryStore {
     const minuteKey = `${scope}:minute:${Math.floor(now / 60_000)}`;
     const args = [String(now), hash, connectionId, ...rest];
     if (!this.batched()) {
-      return bounded(() =>
-        runScript(kind === 'c' ? claimLua : finishLua, {
-          keys: [
-            connectionKey,
-            `${scope}:pending`,
-            minuteKey,
-            `${scope}:attempted`,
-            `${scope}:sent`,
-            `${scope}:throttled`,
-            `${scope}:pause`,
-            `${scope}:pendingSince`
-          ],
-          arguments: args
-        })
-      );
+      return this.runScript(kind === 'c' ? 'claimDelivery' : 'finishDelivery', {
+        keys: [
+          connectionKey,
+          `${scope}:pending`,
+          minuteKey,
+          `${scope}:attempted`,
+          `${scope}:sent`,
+          `${scope}:throttled`,
+          `${scope}:pause`,
+          `${scope}:pendingSince`
+        ],
+        arguments: args
+      });
     }
-    if (!getRedisClient()?.isReady) {
+    if (!this.getClient()) {
       return Promise.reject(new Error('WebSocket recovery store unavailable'));
     }
     return new Promise((resolve, reject) => {
@@ -488,8 +540,7 @@ export class WebSocketDeliveryStore {
   }
 
   async due(now: number, limit = 100): Promise<string[]> {
-    return bounded(async () => {
-      const client = getRedisClient()!;
+    return this.bounded(async (client) => {
       const base = deliveryScope();
       const ids = await client.zRangeByScore(`${base}:pending`, 0, now, {
         LIMIT: { offset: 0, count: limit }
@@ -517,8 +568,7 @@ export class WebSocketDeliveryStore {
     now: number,
     excludeConnectionId?: string
   ): Promise<DeliverySnapshot> {
-    return bounded(async () => {
-      const client = getRedisClient()!;
+    return this.bounded(async (client) => {
       const base = deliveryScope();
       const minute = Math.floor(now / 60_000);
       const [
