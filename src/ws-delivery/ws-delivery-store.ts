@@ -1,6 +1,11 @@
 import { createHash } from 'node:crypto';
 import { getRedisClient } from '@/redis';
-import { defineScript, type createCluster, type RedisClientType } from 'redis';
+import {
+  createCluster,
+  defineScript,
+  type RedisClientType,
+  type RedisClusterOptions
+} from 'redis';
 
 const WINDOW_MS = 5 * 60_000;
 // Keep connection capabilities beyond AWS's two-hour lifetime, including handshake margin.
@@ -229,16 +234,25 @@ function defineDeliveryScript(script: string) {
   });
 }
 
-type DeliveryScript = ReturnType<typeof defineDeliveryScript>;
-const claimScript = defineDeliveryScript(claimLua);
-const finishScript = defineDeliveryScript(finishLua);
-const batchScript = defineDeliveryScript(batchLua);
+const deliveryScripts = {
+  claimDelivery: defineDeliveryScript(claimLua),
+  finishDelivery: defineDeliveryScript(finishLua),
+  batchDelivery: defineDeliveryScript(batchLua)
+};
+
+type DeliveryScript = keyof typeof deliveryScripts;
+
+export function createWebSocketDeliveryCluster(options: RedisClusterOptions) {
+  return createCluster({ ...options, scripts: deliveryScripts });
+}
 
 function isNoScript(error: unknown): boolean {
   return error instanceof Error && error.message.startsWith('NOSCRIPT');
 }
 
-type DeliveryRedis = RedisClientType | ReturnType<typeof createCluster>;
+type DeliveryRedis =
+  | RedisClientType
+  | ReturnType<typeof createWebSocketDeliveryCluster>;
 
 function getReadySharedRedis(): DeliveryRedis | null {
   const client = getRedisClient();
@@ -350,7 +364,7 @@ async function runBatch(
 export class WebSocketDeliveryStore {
   private readonly scriptHashes = new Map<string, Promise<string>>();
   private readonly batcher = new BookkeepingBatcher((options) =>
-    this.runScript(batchScript, options)
+    this.runScript('batchDelivery', options)
   );
 
   constructor(
@@ -398,10 +412,10 @@ export class WebSocketDeliveryStore {
       // The cluster client routes the script by key and handles NOSCRIPT
       // on the selected primary. SCRIPT LOAD has no key for routing.
       if (!('scriptLoad' in client)) {
-        return client.scriptsExecutor(script, [options]);
+        return client[script](options);
       }
 
-      const source = script.SCRIPT;
+      const source = deliveryScripts[script].SCRIPT;
       try {
         return await client.evalSha(
           await this.scriptHash(client, source),
@@ -454,7 +468,7 @@ export class WebSocketDeliveryStore {
     const minuteKey = `${scope}:minute:${Math.floor(now / 60_000)}`;
     const args = [String(now), hash, connectionId, ...rest];
     if (!this.batched()) {
-      return this.runScript(kind === 'c' ? claimScript : finishScript, {
+      return this.runScript(kind === 'c' ? 'claimDelivery' : 'finishDelivery', {
         keys: [
           connectionKey,
           `${scope}:pending`,

@@ -1,9 +1,11 @@
-import { createCluster } from 'redis';
 import { Logger } from '@/logging';
 import { numbers } from '@/numbers';
 import { initRedis } from '@/redis';
 import { recoverWebSocketDeliveries } from '@/ws-delivery/ws-delivery-recovery';
-import { WebSocketDeliveryStore } from '@/ws-delivery/ws-delivery-store';
+import {
+  createWebSocketDeliveryCluster,
+  WebSocketDeliveryStore
+} from '@/ws-delivery/ws-delivery-store';
 
 const logger = Logger.get('WS_RECOVERY_REDIS');
 let recovery: Promise<() => Promise<void>> | undefined;
@@ -16,7 +18,7 @@ export async function connectWebSocketRecoveryRedis() {
   }
 
   const tls = process.env.REDIS_TLS === 'true';
-  const cluster = createCluster({
+  const cluster = createWebSocketDeliveryCluster({
     rootNodes: [{ socket: { host, port } }],
     defaults: {
       socket: {
@@ -60,6 +62,7 @@ async function connectRecovery() {
 }
 
 export async function recoverWithWorkerRedis(): Promise<void> {
+  // Without Redis the worker cannot inspect pending refreshes or report health.
   if (process.env.FORCE_AVOID_REDIS === 'true') {
     throw new Error('WebSocket recovery store unavailable');
   }
