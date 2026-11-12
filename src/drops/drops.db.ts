@@ -960,6 +960,30 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     },
     ctx: RequestContext
   ): Promise<DropEntity[]> {
+    const serialNoLessThan = serial_no_less_than ?? Number.MAX_SAFE_INTEGER;
+    // Public-only scope must ignore viewer membership for both wave and parent visibility.
+    const includeEligibleGroups =
+      !public_only && group_ids_user_is_eligible_for.length > 0;
+    if (
+      group_id === null &&
+      !wave_id &&
+      !curation_id &&
+      !curation_name &&
+      !author_id &&
+      !drop_type &&
+      !ids?.length &&
+      !serial_nos?.length
+    ) {
+      return this.findUnfilteredLatestDrops({
+        amount,
+        serialNoLessThan,
+        includeEligibleGroups,
+        group_ids_user_is_eligible_for,
+        include_replies,
+        contains_media,
+        public_only
+      });
+    }
     const sqlAndParams = await userGroupsService.getSqlAndParamsByGroupId(
       group_id,
       ctx
@@ -977,10 +1001,6 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       ? `join ${DROP_CURATIONS_TABLE} dc on dc.drop_id = d.id and dc.wave_id = d.wave_id
          join ${WAVE_CURATIONS_TABLE} wc on wc.id = dc.curation_id and wc.name = :curation_name`
       : '';
-    const serialNoLessThan = serial_no_less_than ?? Number.MAX_SAFE_INTEGER;
-    // Public-only scope must ignore viewer membership for both wave and parent visibility.
-    const includeEligibleGroups =
-      !public_only && group_ids_user_is_eligible_for.length > 0;
     const sql = `${sqlAndParams.sql} select d.* from ${DROPS_TABLE} d
          ${curationJoin}
          join ${
@@ -1015,6 +1035,83 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       serial_nos
     };
     return this.db.execute<DropEntity>(sql, params);
+  }
+
+  /**
+   * findLatestDrops without a wave, group, author, type, curation, id or
+   * serial filter. It returns the same rows as the single query, in two steps:
+   * the serial numbers are read from the base tables in primary key order
+   * (outside the legacy GET facade, whose views are one row per base row for
+   * every column read here, so the index hint is kept), then the rows are read
+   * by serial number in the caller's scope, as the single query reads them.
+   * The identities check is the null group's membership join (every identity).
+   */
+  private async findUnfilteredLatestDrops({
+    amount,
+    serialNoLessThan,
+    includeEligibleGroups,
+    group_ids_user_is_eligible_for,
+    include_replies,
+    contains_media,
+    public_only
+  }: {
+    amount: number;
+    serialNoLessThan: number;
+    includeEligibleGroups: boolean;
+    group_ids_user_is_eligible_for: string[];
+    include_replies: boolean;
+    contains_media: boolean;
+    public_only: boolean;
+  }): Promise<DropEntity[]> {
+    const rows = await withoutLegacyCompetitionGetFacade(() =>
+      this.db.execute<{ serial_no: number }>(
+        `select d.serial_no
+         from ${DROPS_TABLE} d force index (PRIMARY)
+         where d.serial_no < :serialNoLessThan
+           ${include_replies ? '' : 'and d.reply_to_drop_id is null'}
+           ${
+             contains_media
+               ? `and exists (select 1 from ${DROP_MEDIA_TABLE} dm where dm.drop_id = d.id)`
+               : ''
+           }
+           and exists (
+             select 1 from ${IDENTITIES_TABLE} i where i.profile_id = d.author_id
+           )
+           and exists (
+             select 1 from ${WAVES_TABLE} w
+             where w.id = d.wave_id
+               and ${waveReadAccessSql('w', includeEligibleGroups, 'groupsUserIsEligibleFor')}
+               ${public_only ? 'and coalesce(w.is_direct_message, false) = false' : ''}
+           )
+         order by d.serial_no desc
+         limit :amount`,
+        {
+          serialNoLessThan,
+          amount,
+          groupsUserIsEligibleFor: group_ids_user_is_eligible_for
+        }
+      )
+    );
+    return this.findDropsBySerialNosNewestFirst(
+      rows.map((row) => row.serial_no)
+    );
+  }
+
+  /** Full rows by serial number, newest first, in the caller's GET scope. */
+  private async findDropsBySerialNosNewestFirst(
+    serialNos: number[],
+    connection?: ConnectionWrapper<any>
+  ): Promise<DropEntity[]> {
+    if (!serialNos.length) {
+      return [];
+    }
+    return this.db.execute<DropEntity>(
+      `select d.* from ${DROPS_TABLE} d
+       where d.serial_no in (:serialNos)
+       order by d.serial_no desc`,
+      { serialNos },
+      connection ? { wrappedConnection: connection } : undefined
+    );
   }
 
   async findLightDropIdsByWave(
@@ -1096,25 +1193,29 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       group_ids_user_is_eligible_for
     );
     try {
-      return await this.db.execute<LightDropIdRow>(
-        `select d.id, d.serial_no
+      // Base tables, outside the legacy GET facade: its views would drop the
+      // index hint, and they are one row per base row for the columns read.
+      return await withoutLegacyCompetitionGetFacade(() =>
+        this.db.execute<LightDropIdRow>(
+          `select d.id, d.serial_no
          from ${DROPS_TABLE} d FORCE INDEX (PRIMARY)
          where d.serial_no <= :maxSerialNo and d.serial_no >= :minSerialNo
            and exists (
              select 1
-             from ${legacyGetView(WAVES_TABLE)} w
+             from ${WAVES_TABLE} w
              where w.id = d.wave_id
                and (${visibleWaveFilter})
            )
          order by d.serial_no ${older_first ? 'asc' : 'desc'}
          limit :limit`,
-        {
-          limit,
-          minSerialNo,
-          maxSerialNo,
-          groupsUserIsEligibleFor: group_ids_user_is_eligible_for
-        },
-        { wrappedConnection: ctx.connection }
+          {
+            limit,
+            minSerialNo,
+            maxSerialNo,
+            groupsUserIsEligibleFor: group_ids_user_is_eligible_for
+          },
+          { wrappedConnection: ctx.connection }
+        )
       );
     } finally {
       ctx.timer?.stop(timerLabel);

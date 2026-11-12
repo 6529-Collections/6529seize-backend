@@ -113,7 +113,7 @@ Run the database-independent real-image and upload checks with:
 
 ```bash
 ./bin/6529 exec jest --config scripts/media-jest.config.cjs
-./bin/6529 exec node scripts/verify-media-runtime.cjs .
+node scripts/verify-media-runtime.cjs .
 ```
 
 For diagnostics, `6529 npm:version` prints the npm version that Corepack

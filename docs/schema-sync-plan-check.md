@@ -38,14 +38,16 @@ precision, or fewer `ENUM` values) is not detected; it is reported as
 ## Report and block modes
 
 The SHA-256 of the destructive statements, in plan order, with their
-parameters (`destructivePlanSha256`) identifies a destructive plan. It stays
-the same for as long as the schema and entities that produce the plan do not
-change, and it differs between environments when their plans differ.
+parameters (`destructivePlanSha256`) identifies a destructive plan. Only the
+destructive statements are hashed: the hash changes when any of them changes
+(its SQL text, its parameters, their order, or one is added or removed), and
+not when only the additive or in-place statements of the plan change. It
+differs between environments when their destructive statements differ.
 
 `SCHEMA_SYNC_DESTRUCTIVE_GUARD` selects the mode (in the Lambda's environment
 or its secret):
 
-- unset or any value other than `block` (the default): a plan with destructive
+- unset, empty or `report` (the default): a plan with destructive
   statements is logged as `[SCHEMA_SYNC_DESTRUCTIVE_PLAN]` (every statement
   with its group and reason, plus `destructivePlanSha256`), counted in the
   `6529/SchemaSync` `SchemaSyncDestructivePlan` metric with `Outcome=reported`,
@@ -53,6 +55,9 @@ or its secret):
 - `block`: such a plan is logged and counted the same way
   (`Outcome=refused`), none of it is applied, and the invocation fails with
   `SchemaSyncDestructivePlanRefusedError`, whose message names the SHA-256.
+- any other value: the invocation fails before schema synchronisation starts,
+  with an error naming the accepted values. Values are trimmed and compared
+  case-insensitively.
 
 Report mode is the default because the classification has not yet been
 checked against the production schema: the first deployments with this check
@@ -76,8 +81,10 @@ In `block` mode, after reviewing the logged plan:
    ```
 
 The plan is applied only if its destructive statements still hash to that
-value; if the schema or entities changed in between, it is refused again with
-the new hash. The field is accepted on explicit invocations of any scope that
+value; if a schema or entity change in between altered those statements, it
+is refused again with the new hash. A change that only alters the plan's
+other statements keeps the hash, and the acknowledged run applies the whole
+current plan. The field is accepted on explicit invocations of any scope that
 synchronizes entities, must be a lowercase SHA-256 hex digest, and is rejected
 on scheduled invocations. The `Deploy a service` workflow does not send it, so
 a refused plan is applied only through a direct invocation.
