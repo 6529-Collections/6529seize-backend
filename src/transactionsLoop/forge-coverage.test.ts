@@ -1,7 +1,10 @@
 import { handler } from './index';
 import { captureException } from '@/sentry.context';
 import { transactionsDiscoveryService } from '@/transactions/transactions-discovery.service';
-import { checkpointTransactionScan } from '@/transactions/transaction-scan-checkpoint';
+import {
+  checkpointTransactionScan,
+  needsDropForgeCoverage
+} from '@/transactions/transaction-scan-checkpoint';
 import { MEMES_CONTRACT } from '@/constants';
 jest.mock('@/sentry.context', () => ({
   wrapLambdaHandler: (fn: unknown) => fn,
@@ -17,7 +20,8 @@ jest.mock('@/transactions/transactions-discovery.service', () => ({
   transactionsDiscoveryService: { getAndSaveTransactionsForContract: jest.fn() }
 }));
 jest.mock('@/transactions/transaction-scan-checkpoint', () => ({
-  checkpointTransactionScan: jest.fn()
+  checkpointTransactionScan: jest.fn(),
+  needsDropForgeCoverage: jest.fn()
 }));
 const old = { ...process.env };
 beforeEach(() => {
@@ -26,11 +30,20 @@ beforeEach(() => {
   delete process.env.TRANSACTIONS_LOOP_START_BLOCK;
   delete process.env.TRANSACTIONS_LOOP_END_BLOCK;
   jest.clearAllMocks();
+  jest.mocked(needsDropForgeCoverage).mockResolvedValue(false);
 });
 afterEach(() => {
   process.env = { ...old };
 });
-it('maintains mainnet coverage for signed-intent reconciliation with execution Off', async () => {
+it('leaves a fresh disabled rollout on ordinary discovery only', async () => {
+  await handler({}, {} as never, jest.fn());
+  expect(
+    transactionsDiscoveryService.getAndSaveTransactionsForContract
+  ).toHaveBeenCalledTimes(1);
+  expect(checkpointTransactionScan).not.toHaveBeenCalled();
+});
+it('scans when Automatic launch or existing work requires coverage', async () => {
+  jest.mocked(needsDropForgeCoverage).mockResolvedValueOnce(true);
   await handler({}, {} as never, jest.fn());
   expect(checkpointTransactionScan).toHaveBeenCalledWith(
     1,
@@ -43,6 +56,7 @@ it('reports an unsuccessful Drop Forge scan and retries it on the next successfu
   const error = new Error('Finalized coverage unavailable');
   const scan = jest.mocked(checkpointTransactionScan);
   scan.mockRejectedValueOnce(error);
+  jest.mocked(needsDropForgeCoverage).mockResolvedValue(true);
 
   await expect(handler({}, {} as never, jest.fn())).resolves.toBeUndefined();
   expect(

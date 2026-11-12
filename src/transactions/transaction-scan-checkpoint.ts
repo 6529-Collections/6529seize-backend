@@ -1,5 +1,9 @@
 import { JsonRpcProvider } from 'ethers';
-import { TRANSACTION_SCAN_CHECKPOINTS_TABLE } from '@/constants';
+import {
+  DROP_FORGE_LAUNCHES_TABLE,
+  DROP_FORGE_SETTINGS_TABLE,
+  TRANSACTION_SCAN_CHECKPOINTS_TABLE
+} from '@/constants';
 import { DbPoolName } from '@/db-query.options';
 import { sqlExecutor } from '@/sql-executor';
 import { transactionsDb } from './transactions.discovery.db';
@@ -7,6 +11,29 @@ import { transactionsDb } from './transactions.discovery.db';
 export interface ScanCheckpoint {
   block: number;
   block_hash: string;
+}
+
+export async function needsDropForgeCoverage(
+  chain: number,
+  contract: string
+): Promise<boolean> {
+  const scope = `${chain}:${contract.toLowerCase()}`;
+  const row = await sqlExecutor.oneOrNull<{ needed: number }>(
+    `SELECT (
+       EXISTS (SELECT 1 FROM ${DROP_FORGE_SETTINGS_TABLE}
+               WHERE id = :scope AND automation_enabled = 1)
+       OR EXISTS (SELECT 1 FROM ${DROP_FORGE_LAUNCHES_TABLE}
+                  WHERE id LIKE :launchScope AND (
+                    state IN ('ARMED', 'RUNNING', 'PAUSED', 'BLOCKED')
+                    OR JSON_SEARCH(data, 'one', 'SIGNED', NULL, '$.actions[*].state') IS NOT NULL
+                    OR JSON_SEARCH(data, 'one', 'RESERVED', NULL, '$.actions[*].state') IS NOT NULL
+                    OR JSON_SEARCH(data, 'one', 'PENDING', NULL, '$.manual_transactions[*].state') IS NOT NULL
+                  ))
+     ) AS needed`,
+    { scope, launchScope: `${scope}:%` },
+    { forcePool: DbPoolName.WRITE }
+  );
+  return Number(row?.needed) === 1;
 }
 
 export async function readScanCheckpoint(

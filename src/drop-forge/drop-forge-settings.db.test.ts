@@ -1,7 +1,15 @@
+import { needsDropForgeCoverage } from '@/transactions/transaction-scan-checkpoint';
 import { sqlExecutor } from '@/sql-executor';
 import { DROP_FORGE_JOBS_TABLE, DROP_FORGE_SETTINGS_TABLE } from '@/constants';
 import { clearDropForgeTestTables } from '@/drop-forge/drop-forge.db-test-fixtures';
-import { testConfig } from '@/drop-forge/drop-forge.test-fixtures';
+import {
+  dropForgeRepository,
+  launchId
+} from '@/drop-forge/drop-forge.repository';
+import {
+  testConfig,
+  testLaunchData
+} from '@/drop-forge/drop-forge.test-fixtures';
 import {
   readForgeSettings,
   updateForgeSettings
@@ -22,6 +30,48 @@ it('defaults all switches off and leaves the cap unset for an unconfigured envir
     max_artist_payment_wei: null,
     updated_by: null
   });
+});
+
+it('keeps coverage only for accepted launches or unsettled transactions in the selected scope', async () => {
+  const { chainId, creator } = testConfig;
+  const id = launchId(chainId, creator, 1);
+  const check = () => needsDropForgeCoverage(chainId, creator);
+  await expect(check()).resolves.toBe(true);
+  await updateForgeSettings(testConfig, testConfig.signer, {
+    revision: 0,
+    automation_enabled: false
+  });
+
+  await expect(check()).resolves.toBe(false);
+  await dropForgeRepository.putDraft(id, 0, testLaunchData(), {});
+  await expect(check()).resolves.toBe(false);
+  await dropForgeRepository.change(
+    id,
+    async (record) => {
+      record.state = 'ARMED';
+    },
+    {}
+  );
+  await expect(check()).resolves.toBe(true);
+  await expect(needsDropForgeCoverage(1, creator)).resolves.toBe(false);
+
+  await dropForgeRepository.change(
+    id,
+    async (record) => {
+      record.state = 'CANCELLED';
+      record.data.actions[0].state = 'SIGNED';
+    },
+    {}
+  );
+  await expect(check()).resolves.toBe(true);
+  await dropForgeRepository.change(
+    id,
+    async (record) => {
+      record.data.actions[0].state = 'CONFIRMED';
+    },
+    {}
+  );
+  await expect(check()).resolves.toBe(false);
 });
 
 it('persists revisioned settings and isolates creator scope', async () => {

@@ -275,7 +275,10 @@ the mainnet Memes creator for coverage tracking.
 Explicit start/end backfills do not advance normal coverage. The ordinary contract
 history must already be complete; the marker does not certify or repair old data.
 The existing transaction discovery service indexes mainnet. It publishes coverage
-only for the versioned production mainnet policy, never under a Sepolia chain ID. Coverage indexing continues when launch execution is Off so already-signed post-mint transactions can settle. Full post-mint
+for the versioned production mainnet policy. The extra scan starts when Automatic
+launch is On and continues for accepted launches or unsettled transactions while
+execution is Off. A fresh disabled rollout runs ordinary discovery alone. A
+failed extra scan is reported and keeps the previous coverage checkpoint. Full post-mint
 Sepolia exercises require an isolated, correctly populated Sepolia transaction
 index/database and its coverage checkpoint; the production indexer is not switched
 to a test chain by the launch settings. Without that evidence, test-chain post-mint
@@ -307,7 +310,7 @@ AWS role/key provisioning and runtime configuration first, then deploy sequentia
 | Order | Deployment unit | What must be available before continuing |
 | ----- | ------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 1 | Existing `dbMigrationsLoop` | Run with `db_schema_scope=full`; synchronize launch, signer, evidence, preparation/jobs, settings, funding, readiness and `transaction_scan_checkpoints` tables |
-| 2 | Existing `transactionsLoop` service | The configured creator consumer completes normal discovery and bounded finalized scans, including empty blocks; inspect its durable coverage before enabling post-mint execution |
+| 2 | Existing `transactionsLoop` service | The configured creator consumer completes normal discovery. After enabling Automatic launch, inspect the bounded finalized scan coverage before post-mint execution |
 | 3 | New `dropForgeLaunchHandler` | Launch Lambda, queue/DLQ, alarms and shared Scheduler group |
 | 4 | New `memesDistributionHandler` | Distribution Lambda, queue/DLQ and alarms; watchdogs use the group from step 3 |
 | 5 | Existing `api` | Endpoints, targeted dispatch, mint-accounting evidence and mention resolution |
