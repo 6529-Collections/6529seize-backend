@@ -9,6 +9,7 @@ import {
 } from '@/drop-forge/drop-forge.repository';
 import {
   LaunchAction,
+  clearAirdropCap,
   LaunchRecord,
   LaunchRpcUnavailableError,
   LaunchRevisionConflict,
@@ -336,6 +337,7 @@ export class DropForgeRecovery {
     delete action.block_hash;
     delete action.block_number;
     action.state = 'PENDING';
+    clearAirdropCap(action);
     delete action.attempt_error;
     delete action.retry_at;
     delete action.window_reported;

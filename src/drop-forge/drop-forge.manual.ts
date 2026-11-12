@@ -7,7 +7,8 @@ import {
 import {
   LaunchRecord,
   LaunchSafetyError,
-  LaunchAction
+  LaunchAction,
+  clearAirdropCap
 } from '@/drop-forge/drop-forge.types';
 import { reportActionSkip } from '@/drop-forge/drop-forge.groups';
 import { addLaunchEvent } from '@/drop-forge/drop-forge.repository';
@@ -184,6 +185,7 @@ function creditAction(
     delete action.signed_tx;
   }
   action.state = 'CONFIRMED';
+  clearAirdropCap(action);
   action.hash = proof.hash;
   action.block_number = receipt.blockNumber;
   action.block_hash = receipt.blockHash;

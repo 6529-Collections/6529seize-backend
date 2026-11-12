@@ -13,7 +13,8 @@ export type ActionState =
   | 'SIGNED'
   | 'CONFIRMED'
   | 'FAILED'
-  | 'CANCELLED';
+  | 'CANCELLED'
+  | 'SKIPPED';
 export interface LaunchPhase {
   name: string;
   start: number;
@@ -68,6 +69,8 @@ export interface LaunchAction {
     transaction_hash?: string;
   }>;
   late_delivery?: boolean;
+  ranked_subscription?: true;
+  unfilled_tokens?: number;
   id: string;
   kind: 'INITIALIZE' | 'AIRDROP' | 'UPDATE' | 'METADATA' | 'PAY_ARTIST';
   label?: string;
@@ -81,7 +84,8 @@ export interface LaunchAction {
   state: ActionState;
   expected_supply?: number;
   airdrop_baseline?: number;
-  remaining_recipients?: Array<{ address: string; amount: number }>;
+  remaining_recipients?: LaunchAction['recipients'];
+  capped_recipients?: LaunchAction['recipients'];
   credited_tokens?: number;
   unsigned_tx?: string;
   signed_tx?: string;
@@ -89,6 +93,31 @@ export interface LaunchAction {
   block_number?: number;
   block_hash?: string;
 }
+export const isLaunchActionSettled = (action: Pick<LaunchAction, 'state'>) =>
+  action.state === 'CONFIRMED' || action.state === 'SKIPPED';
+
+export function transactionAirdropRecipients(
+  action: Pick<
+    LaunchAction,
+    'recipients' | 'remaining_recipients' | 'capped_recipients'
+  >
+): LaunchAction['recipients'] {
+  return (
+    action.capped_recipients ?? action.remaining_recipients ?? action.recipients
+  );
+}
+
+export function clearAirdropCap(action: LaunchAction): void {
+  delete action.capped_recipients;
+  delete action.unfilled_tokens;
+}
+
+export interface RankedSubscription {
+  phase: string;
+  wallet: string;
+  amount: number;
+}
+
 export interface LaunchEvent {
   formatted?: boolean;
   fee_wei?: string;
@@ -108,6 +137,7 @@ export interface LaunchData {
   };
   plan_version?: number;
   separate_public_airdrops?: true;
+  ranked_subscription_airdrops?: true;
   managed?: boolean;
   completion_flags?: string[];
   manual_transactions?: Array<{

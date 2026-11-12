@@ -1,7 +1,8 @@
 import {
   LaunchAction,
   LaunchRecord,
-  SupplyEvidenceError
+  SupplyEvidenceError,
+  isLaunchActionSettled
 } from '@/drop-forge/drop-forge.types';
 import { isResearchAirdrop } from '@/drop-forge/drop-forge.research';
 import { addLaunchEvent } from '@/drop-forge/drop-forge.repository';
@@ -63,10 +64,53 @@ export function reportActionSkip(
   );
 }
 
+export function capRankedAirdrop(
+  action: LaunchAction,
+  remaining: number
+): LaunchAction {
+  const outstanding = action.remaining_recipients ?? action.recipients;
+  const recipients: LaunchAction['recipients'] = [];
+  let available = remaining;
+  let unfilled = 0;
+  for (const row of outstanding) {
+    const amount = Math.min(row.amount, available);
+    if (amount > 0) recipients.push({ address: row.address, amount });
+    available -= amount;
+    unfilled += row.amount - amount;
+  }
+  return {
+    ...action,
+    capped_recipients: unfilled ? recipients : undefined,
+    unfilled_tokens: unfilled || undefined
+  };
+}
+
+export function skipSoldOutAction(
+  record: LaunchRecord,
+  action: LaunchAction
+): void {
+  action.state = 'SKIPPED';
+  delete action.attempt_error;
+  delete action.retry_at;
+  delete action.disabled_reason;
+  if (action.ranked_subscription) {
+    const capped = capRankedAirdrop(action, 0);
+    action.capped_recipients = capped.capped_recipients;
+    action.unfilled_tokens = capped.unfilled_tokens;
+  }
+  const shortage = action.unfilled_tokens
+    ? ` ${action.unfilled_tokens} requested cards went unfilled.`
+    : '';
+  addLaunchEvent(
+    record,
+    `Claim #${record.data.claim_id}: Skipped ${actionDescription(record, action)} (${action.id}): Sold out.${shortage}`
+  );
+}
+
 // Array order is the order within each phase group. Expired or unsuccessful
 // actions remain outstanding without owning the next group's schedule.
 export function dueActions(record: LaunchRecord, now: number): LaunchAction[] {
   return record.data.actions.filter(
-    (action) => action.state !== 'CONFIRMED' && action.due <= now
+    (action) => !isLaunchActionSettled(action) && action.due <= now
   );
 }

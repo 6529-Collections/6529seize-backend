@@ -24,6 +24,7 @@ import { DROP_FORGE_LAUNCHES_TABLE } from '@/constants';
 import { sqlExecutor } from '@/sql-executor';
 import { buildLaunchPlan } from '@/drop-forge/drop-forge.plan';
 import { updateForgeSettings } from '@/drop-forge/drop-forge.settings';
+import { formatLaunchReport } from '@/drop-forge/drop-forge.reports';
 
 describe('Drop Forge durable worker', () => {
   beforeEach(clearDropForgeTestTables);
@@ -87,6 +88,166 @@ describe('Drop Forge durable worker', () => {
     await acknowledgeReports();
     await worker.tick();
   };
+  it.each([
+    { capacity: 0, phase2: [], publicDrop: [], unfilled: [8, 3] },
+    { capacity: 4, phase2: [3, 1], publicDrop: [], unfilled: [4, 3] },
+    { capacity: 10, phase2: [3, 3, 2], publicDrop: [2], unfilled: [0, 1] }
+  ])(
+    'reserves distinct ranked Phase 2 and Public transactions with $capacity cards left',
+    async ({ capacity, phase2, publicDrop, unfilled }) => {
+      const wallets = ['99', '77', '55'].map((hex) => '0x' + hex.repeat(20));
+      const [first, second, third] = wallets;
+      const phase = 'Phase 2';
+      const source = {
+        ...testSource,
+        rows: [testSource.rows[0], { ...testSource.rows[0], phase }],
+        subscriptions: [
+          { phase: 'Phase 0', wallet: third, amount: 1 },
+          { phase, wallet: first, amount: 2 },
+          { phase, wallet: second, amount: 3 },
+          { phase, wallet: first, amount: 1 },
+          { phase, wallet: third, amount: 2 },
+          { phase: 'Public', wallet: first, amount: 3 }
+        ]
+      };
+      const data = buildLaunchPlan(
+        testConfig,
+        1,
+        {
+          ...testPlan,
+          phases: [
+            testPlan.phases[0],
+            { ...testPlan.phases[0], name: phase, start: 6000, end: 7000 },
+            { ...testPlan.phases[1], start: 7000, end: 9000 }
+          ]
+        },
+        source,
+        0
+      );
+      for (const action of data.actions.filter((action) => action.phase === 0))
+        action.state = 'CONFIRMED';
+      jest.mocked(repository.source).mockResolvedValue(source);
+      await repository.change(
+        id,
+        (record) => {
+          record.data = data;
+        },
+        {}
+      );
+
+      let remaining = capacity;
+      let nonce = 0;
+      chain.remainingEditions = jest.fn(async () => remaining);
+      chain.now.mockResolvedValue(5100);
+      const writes: Array<{
+        action: string;
+        amounts: number[];
+        wallets: string[];
+      }> = [];
+      const mined = new Set<string>();
+      chain.prepare.mockImplementation(async (launch, action) => {
+        const calldata = encodeLaunchAction(launch, action);
+        const decoded = claimAbi.parseTransaction({ data: calldata })!;
+        writes.push({
+          action: action.label ?? action.id,
+          amounts:
+            decoded.name === 'airdrop'
+              ? Array.from(decoded.args[3], Number)
+              : [],
+          wallets:
+            decoded.name === 'airdrop'
+              ? Array.from(decoded.args[2], String)
+              : []
+        });
+        return Transaction.from({
+          type: 2,
+          chainId: testConfig.chainId,
+          nonce,
+          to: testConfig.proxy,
+          data: calldata,
+          gasLimit: 50000,
+          maxFeePerGas: 100,
+          maxPriorityFeePerGas: 1
+        }).unsignedSerialized;
+      });
+      chain.broadcast.mockImplementation(async (raw) => {
+        const tx = Transaction.from(raw);
+        if (mined.has(tx.hash!)) throw new Error('Already broadcast');
+        const decoded = claimAbi.parseTransaction({ data: tx.data })!;
+        if (decoded.name === 'airdrop')
+          remaining -= Array.from(decoded.args[3], Number).reduce(
+            (sum, amount) => sum + amount,
+            0
+          );
+        mined.add(tx.hash!);
+        nonce++;
+        chain.nonce.mockResolvedValue(nonce);
+      });
+      chain.receipt.mockImplementation(async (hash) =>
+        mined.has(hash)
+          ? {
+              status: 1,
+              blockNumber: 100,
+              blockHash: 'canonical',
+              confirmations: testConfig.confirmations
+            }
+          : null
+      );
+      for (let iteration = 0; iteration < 6; iteration++) {
+        await start();
+        await acknowledgeReports();
+      }
+      chain.now.mockResolvedValue(7001);
+      await worker.tick(id);
+      const record = (await read())!;
+      const batches = record.data.actions.filter(
+        (action) => action.phase === 1 && action.ranked_subscription
+      );
+      expect(batches.map((action) => action.unfilled_tokens ?? 0)).toEqual(
+        unfilled
+      );
+      expect(batches.map((action) => action.state)).toEqual([
+        phase2.length ? 'CONFIRMED' : 'SKIPPED',
+        publicDrop.length ? 'CONFIRMED' : 'SKIPPED'
+      ]);
+      expect(writes).toEqual([
+        ...(capacity ? [{ action: 'phase-1', amounts: [], wallets: [] }] : []),
+        ...(phase2.length
+          ? [
+              {
+                action: 'Phase 2 Subscription Airdrops',
+                amounts: phase2,
+                wallets: wallets.slice(0, phase2.length)
+              }
+            ]
+          : []),
+        ...(publicDrop.length
+          ? [
+              {
+                action: 'Public Subscription Airdrops',
+                amounts: publicDrop,
+                wallets: [first]
+              }
+            ]
+          : [])
+      ]);
+      const skips = record.data.events.filter((event) =>
+        event.content.includes('Sold out.')
+      );
+      expect(skips).toHaveLength(capacity === 0 ? 4 : capacity === 4 ? 2 : 1);
+      expect(
+        record.data.actions.find((action) => action.id === 'phase-2')?.state
+      ).toBe('SKIPPED');
+      if (capacity === 4) {
+        const confirmed = record.data.events.find((event) =>
+          event.content.startsWith('Confirmed ' + batches[0].id)
+        )!;
+        expect(formatLaunchReport(record.data, confirmed)).toContain(
+          '4 of 8 requested cards delivered'
+        );
+      }
+    }
+  );
   it('reports disabled due actions once without signing or completing them, then resumes within the window', async () => {
     await updateForgeSettings(testConfig, testConfig.signer, {
       revision: 0,

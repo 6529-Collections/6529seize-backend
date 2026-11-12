@@ -26,7 +26,12 @@ const publicDelivery = 'readiness:3:2026-11-13T17:22:00Z';
 const phase2Delivery = 'readiness:2:2026-11-13T16:58:00Z';
 const root = '0x' + '12'.repeat(32);
 
-function stubConfiguration(id: string, merkleRoot: string) {
+function stubConfiguration(
+  id: string,
+  merkleRoot: string,
+  total = 0,
+  earlierWindow = false
+) {
   const { phase, claimId, scheduledAt } = resolveReadinessCheckpoint(id)!;
   jest.spyOn(Date, 'now').mockReturnValue(+scheduledAt + 20_000);
   jest.spyOn(rpc, 'getEthereumRpcProvider').mockReturnValue({
@@ -35,7 +40,7 @@ function stubConfiguration(id: string, merkleRoot: string) {
       .mockResolvedValue({ number: 123, timestamp: +scheduledAt / 1000 + 12 })
   } as unknown as JsonRpcProvider);
   return jest.spyOn(chain, 'readDropForgeClaim').mockResolvedValue({
-    startDate: BigInt(+phase.start / 1000),
+    startDate: earlierWindow ? BigInt(1) : BigInt(+phase.start / 1000),
     endDate: BigInt(+phase.end / 1000),
     merkleRoot,
     cost: BigInt(STANDARD_MINT_PRICE_WEI),
@@ -43,7 +48,8 @@ function stubConfiguration(id: string, merkleRoot: string) {
     erc20: ZeroAddress,
     signingAddress: ZeroAddress,
     tokenId: BigInt(claimId),
-    totalMax: BigInt(100)
+    totalMax: BigInt(100),
+    total: BigInt(total)
   } as unknown as Result);
 }
 
@@ -110,6 +116,30 @@ it('reports a missing scheduled claim without needing a plan or signing configur
     {}
   );
 });
+
+it.each([100, 99])(
+  'recognizes a skipped Public window only when the claim is sold out (%i mints)',
+  async (total) => {
+    const onChain = stubConfiguration(publicDelivery, root, total, true);
+
+    await runReadinessDelivery(publicDelivery);
+    if (total === 100) {
+      expect(onChain).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.anything(),
+        112
+      );
+      expect(notifier.postForgeReport).not.toHaveBeenCalled();
+    } else {
+      expect(notifier.postForgeReport).toHaveBeenCalledWith(
+        testConfig,
+        expect.stringContaining('wrong on-chain mint window'),
+        true,
+        {}
+      );
+    }
+  }
+);
 
 it('checks Phase 2 and Public allocations separately on a manual launch', async () => {
   stubConfiguration(phase2Delivery, root);

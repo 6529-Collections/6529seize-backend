@@ -11,7 +11,8 @@ import {
   LaunchData,
   LaunchRpcUnavailableError,
   LaunchSafetyError,
-  RecoveryAttempt
+  RecoveryAttempt,
+  transactionAirdropRecipients
 } from '@/drop-forge/drop-forge.types';
 import { ChainReceipt, claimAbi } from '@/drop-forge/drop-forge.chain';
 
@@ -111,7 +112,10 @@ function recoveryMintAllocations(
 
 export function verifyRecoveryMints(
   data: Pick<LaunchData, 'contract' | 'claim_id'>,
-  action: Pick<LaunchAction, 'recipients' | 'remaining_recipients'>,
+  action: Pick<
+    LaunchAction,
+    'recipients' | 'remaining_recipients' | 'capped_recipients'
+  >,
   logs: ReadonlyArray<{
     address: string;
     topics: ReadonlyArray<string>;
@@ -119,9 +123,7 @@ export function verifyRecoveryMints(
   }>
 ): void {
   const actual = recoveryMintAllocations(data, logs);
-  const expected = allocationMap(
-    action.remaining_recipients ?? action.recipients
-  );
+  const expected = allocationMap(transactionAirdropRecipients(action));
   if (
     actual.size !== expected.size ||
     Array.from(expected).some(

@@ -44,6 +44,11 @@ it('mirrors only complete airdrop groups and does not duplicate shared completio
     await mirrorCompletion(record, {});
     expect(upsert).not.toHaveBeenCalled();
     record.data.actions[1].state = 'CONFIRMED';
+    record.data.actions[1].unfilled_tokens = 1;
+    record.data.actions[2].state = 'SKIPPED';
+    await mirrorCompletion(record, {});
+    expect(upsert).not.toHaveBeenCalled();
+    delete record.data.actions[1].unfilled_tokens;
     await mirrorCompletion(record, {});
     expect(upsert.mock.calls.map(([row]) => row.action)).toEqual([
       'PHASE2_AIRDROP'

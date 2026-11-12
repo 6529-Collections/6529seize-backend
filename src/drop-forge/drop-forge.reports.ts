@@ -2,7 +2,8 @@ import { formatEther } from 'ethers';
 import {
   LaunchAction,
   LaunchData,
-  LaunchEvent
+  LaunchEvent,
+  transactionAirdropRecipients
 } from '@/drop-forge/drop-forge.types';
 
 export function launchCardLink(chainId: number, claimId: number): string {
@@ -55,7 +56,11 @@ function confirmedWording(data: LaunchData, action: LaunchAction): string {
       const lastBatch =
         group.at(-1)?.id === action.id &&
         group.every((batch) => batch.state === 'CONFIRMED');
-      return `${actionLabel(action)} ${lastBatch ? 'completed' : 'confirmed'}`;
+      const status =
+        lastBatch && group.every((batch) => !batch.unfilled_tokens)
+          ? 'completed'
+          : 'confirmed';
+      return `${actionLabel(action)} ${status}`;
     }
   }
 }
@@ -88,7 +93,7 @@ function actionDetails(data: LaunchData, action: LaunchAction): string {
       ? `Artist payment · ${formatEther(action.payment.amount_wei)} ETH`
       : 'Artist payment uses the recorded payee and final mint/subscription accounting.';
   if (action.kind === 'AIRDROP') {
-    const recipients = action.remaining_recipients ?? action.recipients;
+    const recipients = transactionAirdropRecipients(action);
     const tokens = recipients.reduce((sum, row) => sum + row.amount, 0);
     const group = airdropGroup(data, action);
     const counts = airdropCounts(recipients.length, tokens);
@@ -129,7 +134,23 @@ export function formatLaunchReport(
     `${emoji} **${card}** · [Contract](${explorer}/address/${data.contract})`,
     action ? reportContent(data, event, action, content) : content
   ];
-  const details = action ? [actionDetails(data, action)] : [];
+  const details =
+    action && !event.content.includes(': Sold out.')
+      ? [actionDetails(data, action)]
+      : [];
+  if (
+    action?.unfilled_tokens &&
+    (event.content.startsWith('Confirmed ') ||
+      event.content.includes('Recovery EXECUTED for '))
+  ) {
+    const requested = action.recipients.reduce(
+      (total, row) => total + row.amount,
+      0
+    );
+    details.push(
+      `${requested - action.unfilled_tokens} of ${requested} requested cards delivered`
+    );
+  }
   if (event.airdrop_counts) {
     const { wallets, tokens } = event.airdrop_counts;
     details.push(airdropCounts(wallets, tokens));

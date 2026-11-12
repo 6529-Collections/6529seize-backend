@@ -133,9 +133,10 @@ per transaction, at most 20,000 phase-recipient entries per plan):
   before Phase 1 opens (18:20–18:30 in the standard schedule).
 - After Phase 1 closes: update to Phase 2, then send Phase 2 subscriber
   batches followed by separate Public subscriber batches before Phase 2 opens
-  (18:50–19:00). Each group has its own Completed flag, written when all of
-  its batches confirm. Existing saved plans keep their original allocation
-  batches and completion mapping.
+  (18:50–19:00). Public batches use the supply left after Phase 2 batches
+  confirm. Each group has its own Completed flag, written when the whole
+  group has been delivered. Existing saved plans retain their original
+  allocation batches and completion mapping.
 - After Phase 2 closes: update to public. Because the standard schedule has no
   gap at 19:20, public activation necessarily waits for that transaction's
   inclusion; confirmation/reporting can follow later. It never replaces a live
@@ -349,6 +350,15 @@ Subsequent phase groups contain their claim update and subscriber batches; Publi
 and Research retain the existing schedule. Group identity is returned with each
 action, along with attempt count, readiness error, retry eligibility and observed
 completion. Each group may span worker invocations while transactions confirm.
+
+New plans use the same subscription rank as manual Launch. Entries for the
+same wallet are combined at its earliest rank. The worker fills each ranked
+batch from the current on-chain edition supply and can partially fill the last
+wallet. Confirmed partial batches report the number of cards delivered.
+Confirmed sellouts skip each due phase configuration and remaining ranked
+airdrop batch. Drop Forge Ops receives the reason and the unfilled count for
+each skipped batch. Independent readiness checks verify the sellout on-chain
+for manual and automated launches before suppressing phase readiness alerts.
 
 Each due action checks its own completed state and readiness. An initialization
 or funding/admin failure stays on that action and does not suspend later groups.

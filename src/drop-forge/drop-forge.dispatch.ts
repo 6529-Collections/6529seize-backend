@@ -10,7 +10,11 @@ import {
   forgeQueueUrl,
   wakeDropForge
 } from '@/drop-forge/drop-forge.wake';
-import { LaunchRecord, LaunchSafetyError } from '@/drop-forge/drop-forge.types';
+import {
+  LaunchRecord,
+  LaunchSafetyError,
+  isLaunchActionSettled
+} from '@/drop-forge/drop-forge.types';
 import { launchGroup } from '@/drop-forge/drop-forge.groups';
 import { disabledActionReason } from '@/drop-forge/drop-forge.settings';
 import { DropForgeSettingsEntity } from '@/entities/IDropForgeSettings';
@@ -87,7 +91,7 @@ export async function scheduleLaunchGroups(
   if (!record.data.post_mint_preview && previewDue > now)
     groups.set('post-mint-preview', previewDue);
   for (const action of record.data.actions) {
-    if (action.state !== 'CONFIRMED' && action.due > now)
+    if (!isLaunchActionSettled(action) && action.due > now)
       groups.set(
         launchGroup(action),
         Math.min(groups.get(launchGroup(action)) ?? Infinity, action.due)
@@ -145,10 +149,10 @@ export function launchNeedsContinuation(
   return (
     scheduled &&
     ['ARMED', 'RUNNING'].includes(record.state) &&
-    (record.data.actions.every((action) => action.state === 'CONFIRMED') ||
+    (record.data.actions.every(isLaunchActionSettled) ||
       record.data.actions.some(
         (action) =>
-          action.state !== 'CONFIRMED' &&
+          !isLaunchActionSettled(action) &&
           action.due <= now &&
           (!action.window_reported || action.late_delivery)
       ))
@@ -168,8 +172,8 @@ export async function continueLaunch(
   );
   const enabled = { ...record, data: { ...record.data, actions } };
   const canContinue =
-    actions.some((action) => action.state !== 'CONFIRMED') ||
-    record.data.actions.every((action) => action.state === 'CONFIRMED');
+    actions.some((action) => !isLaunchActionSettled(action)) ||
+    record.data.actions.every(isLaunchActionSettled);
   if (
     launchNeedsContinuation(
       enabled,
@@ -194,7 +198,7 @@ function continuationDelay(
   const due = signed.length
     ? signed
     : actions.filter(
-        (action) => action.state !== 'CONFIRMED' && action.due <= now
+        (action) => !isLaunchActionSettled(action) && action.due <= now
       );
   if (
     !due.length ||

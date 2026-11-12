@@ -5,6 +5,7 @@ import { DISTRIBUTION_AUTOMATIC_AIRDROP_PHASES } from '@/airdrop-phases';
 import { DropForgeConfig } from '@/drop-forge/drop-forge.config';
 import {
   DistributionRow,
+  RankedSubscription,
   LaunchAction,
   LaunchData,
   LaunchPhase,
@@ -32,6 +33,7 @@ export interface LaunchSource {
   metadata: string;
   edition: number;
   rows: DistributionRow[];
+  subscriptions?: RankedSubscription[];
 }
 export const hashLaunchSource = (source: LaunchSource) =>
   createHash('sha256').update(JSON.stringify(source)).digest('hex');
@@ -137,6 +139,7 @@ export const PUBLIC_SUBSCRIPTION_AIRDROP_LABEL = 'Public Subscription Airdrops';
 
 type AirdropGroup = {
   label: string;
+  ranked?: true;
   recipients: LaunchAction['recipients'];
 };
 
@@ -153,6 +156,7 @@ function airdropActions(
         id: `phase-${phase}-group-${groupIndex}-airdrop-${offset / 100}`,
         label: group.label,
         kind: 'AIRDROP',
+        ...(group.ranked && { ranked_subscription: true }),
         phase,
         due,
         deadline,
@@ -168,7 +172,8 @@ function buildPhaseActions(
   input: LaunchPlanInput,
   phases: LaunchPhase[],
   phaseGroups: AirdropGroup[][],
-  categoryRecipients: AirdropGroup[]
+  categoryRecipients: AirdropGroup[],
+  edition: number
 ): LaunchAction[] {
   const actions: LaunchAction[] = [];
   for (let phase = 0; phase < phases.length; phase++) {
@@ -177,10 +182,12 @@ function buildPhaseActions(
       ...(phase === 0 ? categoryRecipients : []),
       ...phaseGroups[phase]
     ];
-    const batches = groups.reduce(
-      (n, group) => n + Math.ceil(group.recipients.length / 100),
-      0
-    );
+    const batches = groups.reduce((n, group) => {
+      const wallets = group.ranked
+        ? Math.min(edition, group.recipients.length)
+        : group.recipients.length;
+      return n + Math.ceil(wallets / 100);
+    }, 0);
     const minimumLead = launchPreparationSeconds(config, batches + 1);
     const gaplessPublic =
       input.phases[phase].is_public &&
@@ -229,15 +236,17 @@ export function buildLaunchPlan(
   );
   // A gapless Public phase shares the preceding transition's time window.
   // Keep its allocations in their own batches, even for overlapping wallets.
+  const ranked = source.subscriptions !== undefined;
   const phaseGroups = phases.map((phase, index): AirdropGroup[] => {
     if (input.phases[index].is_public && phases[index - 1]?.end === phase.start)
       return [];
     const next = input.phases[index + 1];
-    const group = (name: string, isPublic: boolean) => ({
+    const group = (name: string, isPublic: boolean): AirdropGroup => ({
       label: isPublic
         ? PUBLIC_SUBSCRIPTION_AIRDROP_LABEL
         : `${name} Subscription Airdrops`,
-      recipients: deriveAirdropRecipients(source.rows, [name])
+      ...(ranked && { ranked: true }),
+      recipients: subscriptionRecipients(source, name)
     });
     const current = group(phase.name, input.phases[index].is_public);
     return next?.is_public && next.start === phase.end
@@ -252,7 +261,12 @@ export function buildLaunchPlan(
     ...phaseGroups.flatMap((groups) => groups.flatMap((it) => it.recipients)),
     ...categoryRecipients.flatMap((it) => it.recipients)
   ];
-  if (allRecipients.reduce((sum, row) => sum + row.amount, 0) > source.edition)
+  const fixedRecipients = ranked
+    ? categoryRecipients.flatMap((group) => group.recipients)
+    : allRecipients;
+  if (
+    fixedRecipients.reduce((sum, row) => sum + row.amount, 0) > source.edition
+  )
     throw new LaunchSafetyError('Airdrops exceed edition size');
   if (allRecipients.length > 20000)
     throw new LaunchSafetyError(
@@ -263,7 +277,8 @@ export function buildLaunchPlan(
     input,
     phases,
     phaseGroups,
-    categoryRecipients
+    categoryRecipients,
+    source.edition
   );
   const finalPhase = phases.length - 1;
   const researchDue = phases[finalPhase].end + RESEARCH_DELAY_SECONDS;
@@ -292,6 +307,7 @@ export function buildLaunchPlan(
   return {
     plan_version: DROP_FORGE_PLAN_VERSION,
     separate_public_airdrops: true,
+    ...(ranked && { ranked_subscription_airdrops: true }),
     ...(input.calendar ? { calendar: { ...input.calendar } } : {}),
     chain_id: config.chainId,
     contract: config.creator,
@@ -307,6 +323,34 @@ export function buildLaunchPlan(
     actions,
     events: []
   };
+}
+
+function subscriptionRecipients(
+  source: LaunchSource,
+  name: string
+): LaunchAction['recipients'] {
+  if (!source.subscriptions)
+    return deriveAirdropRecipients(source.rows, [name]);
+  const key = (phase: string) => phase.toLowerCase().replace(/\s/g, '');
+  const phase = key(name);
+  const wallets = new Map<string, number>();
+  for (const row of source.subscriptions) {
+    if (key(row.phase) !== phase) continue;
+    const amount = Number(row.amount);
+    if (!Number.isSafeInteger(amount) || amount < 0)
+      throw new LaunchSafetyError('Invalid ranked subscription amount');
+    if (amount === 0) continue;
+    const address = getAddress(row.wallet);
+    wallets.set(address, (wallets.get(address) ?? 0) + amount);
+  }
+  if (
+    !wallets.size &&
+    source.rows.some(
+      (row) => key(row.phase) === phase && Number(row.count_airdrop) > 0
+    )
+  )
+    throw new LaunchSafetyError(`Ranked subscriptions are missing for ${name}`);
+  return Array.from(wallets, ([address, amount]) => ({ address, amount }));
 }
 
 function deriveAirdropRecipients(
@@ -351,6 +395,17 @@ export function launchPreparationSeconds(
 
 export const hashLaunchDistribution = (source: LaunchSource) =>
   hashLaunchSource({ ...source, metadata: '' });
-export const sourceMatchesLaunch = (source: LaunchSource, data: LaunchData) =>
-  (data.managed ? hashLaunchDistribution(source) : hashLaunchSource(source)) ===
-  data.distribution_hash;
+export function sourceMatchesLaunch(
+  source: LaunchSource,
+  data: LaunchData
+): boolean {
+  const { subscriptions, ...legacySource } = source;
+  const frozenSource = data.ranked_subscription_airdrops
+    ? { ...legacySource, subscriptions }
+    : legacySource;
+  return (
+    (data.managed
+      ? hashLaunchDistribution(frozenSource)
+      : hashLaunchSource(frozenSource)) === data.distribution_hash
+  );
+}

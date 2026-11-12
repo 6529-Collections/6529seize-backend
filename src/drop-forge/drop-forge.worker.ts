@@ -1,7 +1,9 @@
 import {
   dueActions,
   reportActionFailure,
-  reportActionSkip
+  reportActionSkip,
+  capRankedAirdrop,
+  skipSoldOutAction
 } from '@/drop-forge/drop-forge.groups';
 import {
   DropForgeRecovery,
@@ -24,12 +26,14 @@ import {
 } from '@/drop-forge/drop-forge.repository';
 import {
   LaunchAction,
+  clearAirdropCap,
   LaunchRecord,
   LaunchRpcUnavailableError,
   SupplyEvidenceError,
   LaunchSafetyError,
   DROP_FORGE_PLAN_VERSION,
-  assertPhaseScopedPlan
+  assertPhaseScopedPlan,
+  isLaunchActionSettled
 } from '@/drop-forge/drop-forge.types';
 import { RequestContext } from '@/request.context';
 import { isResearchAirdrop } from '@/drop-forge/drop-forge.research';
@@ -50,13 +54,23 @@ export function waitingForPhaseAirdrops(
   record: LaunchRecord,
   action: LaunchAction
 ): boolean {
+  if (action.ranked_subscription) {
+    const preceding = record.data.actions.slice(
+      0,
+      record.data.actions.indexOf(action)
+    );
+    return preceding.some(
+      (earlier) =>
+        earlier.phase === action.phase && !isLaunchActionSettled(earlier)
+    );
+  }
   return (
     action.label === PUBLIC_SUBSCRIPTION_AIRDROP_LABEL &&
     !!record.data.separate_public_airdrops &&
     record.data.actions.some(
       (earlier) =>
         earlier.phase === action.phase &&
-        earlier.state !== 'CONFIRMED' &&
+        !isLaunchActionSettled(earlier) &&
         (earlier.kind === 'UPDATE' ||
           (earlier.kind === 'AIRDROP' &&
             earlier.label !== action.label &&
@@ -270,6 +284,7 @@ export class DropForgeWorker {
         action.window_reported = true;
       }
       action.state = 'PENDING';
+      clearAirdropCap(action);
       recordDisabledAction(record, action, settings);
       delete action.unsigned_tx;
       pending.launch_id = null;
@@ -347,7 +362,7 @@ export class DropForgeWorker {
       await this.repository.save(record, ctx);
       return null;
     }
-    if (record.data.actions.every((action) => action.state === 'CONFIRMED')) {
+    if (record.data.actions.every(isLaunchActionSettled)) {
       setLaunchState(
         record,
         'COMPLETED',
@@ -390,15 +405,28 @@ export class DropForgeWorker {
     try {
       if ((action.retry_at ?? 0) > now) return null;
       if (await this.observe(record, action)) return null;
+      const remaining = await this.rankedAirdropCapacity(record, action);
+      if (remaining === 0) {
+        skipSoldOutAction(record, action);
+        return null;
+      }
       if (this.deferAction(record, action, now)) return null;
       if (waitingForPhaseAirdrops(record, action)) return null;
+      const prepared =
+        action.ranked_subscription && remaining !== undefined
+          ? capRankedAirdrop(action, remaining)
+          : action;
       work = await this.prepareAction(
         record,
-        action,
+        prepared,
         pending,
         ctx,
         artistPaymentLimit(settings)
       );
+      if (prepared !== action) {
+        Object.assign(action, prepared);
+        work.action = action;
+      }
     } catch (error) {
       if (
         now < action.deadline - SUBMISSION_CUTOFF_SECONDS ||
@@ -418,6 +446,21 @@ export class DropForgeWorker {
       }
     }
     return work;
+  }
+
+  private async rankedAirdropCapacity(
+    record: LaunchRecord,
+    action: LaunchAction
+  ): Promise<number | undefined> {
+    if (
+      !record.data.ranked_subscription_airdrops ||
+      action.state !== 'PENDING' ||
+      (action.kind !== 'UPDATE' && !action.ranked_subscription)
+    )
+      return undefined;
+    if (!this.chain.remainingEditions)
+      throw new LaunchSafetyError('On-chain remaining supply is unavailable');
+    return this.chain.remainingEditions(record.data);
   }
 
   private async observe(
@@ -626,6 +669,7 @@ export class DropForgeWorker {
         const settings = await readForgeSettings(this.config, ctx, true);
         if (recordDisabledAction(record, action, settings)) {
           action.state = 'PENDING';
+          clearAirdropCap(action);
           delete action.unsigned_tx;
           pending.launch_id = null;
           pending.action_id = null;
@@ -637,6 +681,7 @@ export class DropForgeWorker {
           action.deadline - SUBMISSION_CUTOFF_SECONDS
         ) {
           action.state = 'PENDING';
+          clearAirdropCap(action);
           delete action.unsigned_tx;
           pending.launch_id = null;
           pending.action_id = null;
@@ -679,6 +724,7 @@ export class DropForgeWorker {
         )!;
         if (action.state !== 'RESERVED' || action.signed_tx) return;
         action.state = 'PENDING';
+        clearAirdropCap(action);
         delete action.unsigned_tx;
         pending.launch_id = null;
         pending.action_id = null;

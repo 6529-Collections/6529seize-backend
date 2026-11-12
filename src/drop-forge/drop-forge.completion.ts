@@ -33,7 +33,9 @@ function completedFlags(record: LaunchRecord): string[] {
     if (action.kind !== 'AIRDROP' || !action.label) continue;
     groups.set(
       action.label,
-      (groups.get(action.label) ?? true) && action.state === 'CONFIRMED'
+      (groups.get(action.label) ?? true) &&
+        action.state === 'CONFIRMED' &&
+        !action.unfilled_tokens
     );
   }
   return Array.from(groups)

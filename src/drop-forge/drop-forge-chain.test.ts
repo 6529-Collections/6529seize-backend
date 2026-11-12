@@ -45,6 +45,33 @@ describe('Drop Forge transaction boundary', () => {
     ).toBe(ZeroAddress);
     expect(provider.estimateGas.mock.calls[0][0].from).toBe(testConfig.signer);
   });
+  it('returns live capacity and requires a confirmation-depth supply check before declaring a sellout', async () => {
+    const { chain } = setup();
+    const data = testLaunchData();
+    const claim = {
+      tokenId: BigInt(data.claim_id),
+      totalMax: BigInt(data.edition_size)
+    };
+    const readClaim = jest.spyOn(chain, 'readClaim').mockResolvedValue({
+      ...claim,
+      total: BigInt(data.edition_size - 4)
+    } as unknown as NonNullable<Awaited<ReturnType<typeof chain.readClaim>>>);
+    await expect(chain.remainingEditions(data)).resolves.toBe(4);
+    expect(readClaim).toHaveBeenLastCalledWith(data, 100);
+
+    const soldOut = {
+      ...claim,
+      total: claim.totalMax
+    } as unknown as NonNullable<Awaited<ReturnType<typeof chain.readClaim>>>;
+    readClaim.mockResolvedValueOnce(soldOut);
+    await expect(chain.remainingEditions(data)).rejects.toThrow(
+      'Waiting for sold-out supply to confirm'
+    );
+    expect(readClaim).toHaveBeenLastCalledWith(data, 89);
+
+    readClaim.mockResolvedValue(soldOut);
+    await expect(chain.remainingEditions(data)).resolves.toBe(0);
+  });
   it('refuses untracked pending nonces, unaffordable gas, and fee caps before signing', async () => {
     const { chain, provider } = setup();
     const data = testLaunchData();

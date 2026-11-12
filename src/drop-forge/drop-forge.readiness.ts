@@ -156,30 +156,63 @@ function checkConfiguration(
   return issues;
 }
 
+function isSoldOutClaim(
+  claim: Result,
+  claimId: number,
+  edition: number | null
+): boolean {
+  const maximum = Number(claim.totalMax);
+  return (
+    Number(claim.tokenId) === claimId &&
+    Number.isSafeInteger(maximum) &&
+    maximum > 0 &&
+    (edition === null || maximum === edition) &&
+    Number(claim.total) === maximum
+  );
+}
+
 async function checkOnChain(
   policy: Policy,
   checkpoint: Checkpoint,
   expected: Parameters<typeof checkConfiguration>[3]
-): Promise<string[]> {
+): Promise<{ soldOut: boolean; issues: string[] }> {
   try {
     const provider = getEthereumRpcProvider(policy.chainId);
     const block = await rpcWithDeadline(provider.getBlock('latest'));
     if (!block || Math.abs(Date.now() / 1000 - block.timestamp) > 120)
-      return ['The latest Ethereum block is unavailable or stale.'];
-    const claim = await readDropForgeClaim(
-      provider,
-      {
-        contract: policy.creator,
-        claim_id: checkpoint.claimId,
-        proxy: policy.proxy
-      },
-      block.number
-    );
-    return claim
-      ? checkConfiguration(checkpoint, claim, block.timestamp, expected)
-      : ['The claim is missing on-chain.'];
+      return {
+        soldOut: false,
+        issues: ['The latest Ethereum block is unavailable or stale.']
+      };
+    const target = {
+      contract: policy.creator,
+      claim_id: checkpoint.claimId,
+      proxy: policy.proxy
+    };
+    const claim = await readDropForgeClaim(provider, target, block.number);
+    if (!claim)
+      return { soldOut: false, issues: ['The claim is missing on-chain.'] };
+    if (isSoldOutClaim(claim, checkpoint.claimId, expected.edition)) {
+      const settledBlock = Math.max(0, block.number - policy.confirmations + 1);
+      const settled =
+        settledBlock === block.number
+          ? claim
+          : await readDropForgeClaim(provider, target, settledBlock);
+      if (
+        settled &&
+        isSoldOutClaim(settled, checkpoint.claimId, expected.edition)
+      )
+        return { soldOut: true, issues: [] };
+    }
+    return {
+      soldOut: false,
+      issues: checkConfiguration(checkpoint, claim, block.timestamp, expected)
+    };
   } catch {
-    return ['Could not verify the claim on Ethereum.'];
+    return {
+      soldOut: false,
+      issues: ['Could not verify the claim on Ethereum.']
+    };
   }
 }
 
@@ -224,6 +257,8 @@ function expectedAllocations(
 ): ExpectedAllocations {
   const [distribution, publicSubscriptions] = rows;
   const key = phaseKey(group.phase);
+  if (batches.some((batch) => batch.ranked_subscription))
+    return allocationsFromPlan(batches, key === 'public');
   const totals = new Map<string, number>();
   for (const row of distribution) {
     if (
@@ -310,7 +345,9 @@ async function checkAirdrops(
     if (!expected.size) return [];
     if (
       batches.length &&
-      batches.every((action) => action.state === 'CONFIRMED')
+      batches.every(
+        (action) => action.state === 'CONFIRMED' && !action.unfilled_tokens
+      )
     )
       return [];
     if (
@@ -379,20 +416,20 @@ async function collectReadiness(
       : (await readinessMerkleRoots(policy.creator, claimId)).find(
           (row) => phaseKey(row.phase) === phaseKey(phase.name)
         )?.merkle_root;
-  const [configuration, airdrops] = await Promise.all([
-    checkOnChain(policy, checkpoint, {
-      root: phase.isPublic ? ZeroHash : (matchingPlan?.root ?? storedRoot),
-      price: matchingPlan?.price_wei ?? STANDARD_MINT_PRICE_WEI,
-      edition,
-      receiver: policy.receiver
-    }),
-    checkAirdrops(policy, checkpoint, plan)
-  ]);
+  const configuration = await checkOnChain(policy, checkpoint, {
+    root: phase.isPublic ? ZeroHash : (matchingPlan?.root ?? storedRoot),
+    price: matchingPlan?.price_wei ?? STANDARD_MINT_PRICE_WEI,
+    edition,
+    receiver: policy.receiver
+  });
+  const airdrops = configuration.soldOut
+    ? []
+    : await checkAirdrops(policy, checkpoint, plan);
   return [
     ...(hasCard
       ? []
       : ['No Drop Forge card was found for this scheduled claim.']),
-    ...configuration,
+    ...configuration.issues,
     ...airdrops
   ];
 }

@@ -42,6 +42,10 @@ export class ApiDropForgeAction {
     * Recipient count; transaction bytes are never returned
     */
     'recipients': number;
+    /**
+    * Requested subscription cards unavailable due to edition supply
+    */
+    'unfilled_tokens'?: number;
     'hash'?: string | null;
     'block_number'?: number | null;
 
@@ -159,6 +163,12 @@ export class ApiDropForgeAction {
             "format": ""
         },
         {
+            "name": "unfilled_tokens",
+            "baseName": "unfilled_tokens",
+            "type": "number",
+            "format": ""
+        },
+        {
             "name": "hash",
             "baseName": "hash",
             "type": "string",
@@ -191,6 +201,7 @@ export enum ApiDropForgeActionStateEnum {
     Reserved = 'RESERVED',
     Signed = 'SIGNED',
     Confirmed = 'CONFIRMED',
+    Skipped = 'SKIPPED',
     Failed = 'FAILED',
     Cancelled = 'CANCELLED'
 }

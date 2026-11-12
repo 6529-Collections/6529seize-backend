@@ -29,6 +29,7 @@ import {
   SUBSCRIPTIONS_TOP_UP_TABLE
 } from '@/constants';
 import { fetchPaginated } from '@/db-api';
+import { DbPoolName } from '@/db-query.options';
 import {
   SubscriptionBalance,
   SubscriptionMode
@@ -691,14 +692,32 @@ export async function fetchFinalSubscriptionsByPhase(
   tokenId: number,
   phaseName: string
 ): Promise<PhaseAirdrop[]> {
-  return sqlExecutor.execute<PhaseAirdrop>(
-    `SELECT airdrop_address as wallet, subscribed_count as amount
+  const rows = await fetchRankedFinalSubscriptions(
+    contract,
+    tokenId,
+    {},
+    phaseName
+  );
+  return rows.map(({ wallet, amount }) => ({ wallet, amount }));
+}
+
+export function fetchRankedFinalSubscriptions(
+  contract: string,
+  tokenId: number,
+  ctx: RequestContext,
+  phaseName?: string
+): Promise<Array<PhaseAirdrop & { phase: string }>> {
+  return sqlExecutor.execute<PhaseAirdrop & { phase: string }>(
+    `SELECT phase, airdrop_address as wallet, subscribed_count as amount
      FROM ${SUBSCRIPTIONS_NFTS_FINAL_TABLE}
      WHERE contract = :contract
        AND token_id = :tokenId
-       AND phase = :phaseName
-     ORDER BY phase_position ASC`,
-    { contract, tokenId, phaseName }
+       AND ${phaseName === undefined ? 'phase IS NOT NULL' : 'phase = :phaseName'}
+     ORDER BY phase, phase_position ASC, id ASC`,
+    { contract, tokenId, phaseName },
+    phaseName === undefined
+      ? { wrappedConnection: ctx.connection, forcePool: DbPoolName.WRITE }
+      : { wrappedConnection: ctx.connection }
   );
 }
 

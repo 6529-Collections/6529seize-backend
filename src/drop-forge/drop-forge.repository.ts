@@ -6,6 +6,7 @@ import {
   DISTRIBUTION_NORMALIZED_TABLE,
   MINTING_MERKLE_ROOTS_TABLE
 } from '@/constants';
+import { fetchRankedFinalSubscriptions } from '@/api/subscriptions/api.subscriptions.db';
 import { DbPoolName } from '@/db-query.options';
 import {
   LaunchRecord,
@@ -13,6 +14,7 @@ import {
   LaunchData,
   LaunchState,
   DistributionRow,
+  RankedSubscription,
   LaunchSafetyError,
   LaunchRevisionConflict
 } from '@/drop-forge/drop-forge.types';
@@ -168,7 +170,7 @@ export class DropForgeRepository {
                 action_due BIGINT PATH '$.due',
                 window_reported INT PATH '$.window_reported' NULL ON EMPTY
               )) actions
-              WHERE actions.action_state <> 'CONFIRMED' AND COALESCE(actions.window_reported, 0) = 0
+              WHERE actions.action_state NOT IN ('CONFIRMED', 'SKIPPED') AND COALESCE(actions.window_reported, 0) = 0
               ORDER BY actions.action_due LIMIT 1) AS next_due
            FROM ${DROP_FORGE_LAUNCHES_TABLE} launches
            WHERE (launches.state IN ('ARMED','RUNNING') OR JSON_SEARCH(launches.data, 'one', 'PENDING', NULL, '$.manual_transactions[*].state') IS NOT NULL) AND launches.report_pending = 0
@@ -176,7 +178,7 @@ export class DropForgeRepository {
          WHERE (eligible.next_due IS NULL AND NOT EXISTS (
            SELECT 1 FROM JSON_TABLE(eligible.data, '$.actions[*]' COLUMNS (
              action_state VARCHAR(16) PATH '$.state'
-           )) unfinished WHERE unfinished.action_state <> 'CONFIRMED'
+           )) unfinished WHERE unfinished.action_state NOT IN ('CONFIRMED', 'SKIPPED')
          )) OR eligible.next_due <= :now OR JSON_SEARCH(eligible.data, 'one', 'PENDING', NULL, '$.manual_transactions[*].state') IS NOT NULL
          ORDER BY eligible.next_due ASC, eligible.id ASC LIMIT 20`,
         { now },
@@ -315,7 +317,12 @@ export class DropForgeRepository {
     contract: string,
     claim: number,
     ctx: RequestContext
-  ): Promise<{ metadata: string; edition: number; rows: DistributionRow[] }> {
+  ): Promise<{
+    metadata: string;
+    edition: number;
+    rows: DistributionRow[];
+    subscriptions?: RankedSubscription[];
+  }> {
     const timer = 'DropForgeRepository->source';
     ctx.timer?.start(timer);
     try {
@@ -337,10 +344,16 @@ export class DropForgeRepository {
         parameters,
         { wrappedConnection: ctx.connection, forcePool: DbPoolName.WRITE }
       );
+      const subscriptions = await fetchRankedFinalSubscriptions(
+        contract,
+        claim,
+        ctx
+      );
       return {
         metadata: metadata.metadata_location ?? '',
         edition: Number(metadata.edition_size),
-        rows
+        rows,
+        subscriptions
       };
     } finally {
       ctx.timer?.stop(timer);

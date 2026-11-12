@@ -20,7 +20,9 @@ import {
   RecoveryAttempt,
   SupplyEvidence,
   SupplyEvidenceError,
-  assertPhaseScopedPlan
+  assertPhaseScopedPlan,
+  isLaunchActionSettled,
+  transactionAirdropRecipients
 } from '@/drop-forge/drop-forge.types';
 import { getEthereumRpcProvider } from '@/ethereum-rpc/ethereum-rpc-provider';
 import {
@@ -85,6 +87,7 @@ export interface LaunchChain {
     hash: string
   ): Promise<ChainReceipt | null>;
   now(): Promise<number>;
+  remainingEditions?(data: LaunchData): Promise<number>;
   nonce(address: string, pending: boolean): Promise<number>;
   prepare(
     data: LaunchData,
@@ -126,17 +129,15 @@ export function encodeLaunchAction(
   data: LaunchData,
   action: LaunchAction
 ): string {
-  if (action.kind === 'AIRDROP')
+  if (action.kind === 'AIRDROP') {
+    const recipients = transactionAirdropRecipients(action);
     return claimAbi.encodeFunctionData('airdrop', [
       data.contract,
       data.claim_id,
-      (action.remaining_recipients ?? action.recipients).map(
-        (row) => row.address
-      ),
-      (action.remaining_recipients ?? action.recipients).map(
-        (row) => row.amount
-      )
+      recipients.map((row) => row.address),
+      recipients.map((row) => row.amount)
     ]);
+  }
   const phase = data.phases[action.phase];
   return claimAbi.encodeFunctionData(
     action.kind === 'INITIALIZE' ? 'initializeClaim' : 'updateClaim',
@@ -291,6 +292,39 @@ export class EthereumLaunchChain implements LaunchChain {
       throw new LaunchSafetyError('RPC latest block is stale');
     return block.timestamp;
   }
+  async remainingEditions(data: LaunchData): Promise<number> {
+    this.assertBinding(data);
+    const head = await rpcWithDeadline(this.provider.getBlockNumber());
+    const current = await this.readClaim(data, head);
+    const remaining = this.claimRemaining(data, current);
+    if (remaining > 0) return remaining;
+
+    // A temporary chain tip must not irreversibly skip the rest of a launch.
+    const confirmed = await this.readClaim(
+      data,
+      Math.max(0, head - this.config.confirmations + 1)
+    );
+    if (this.claimRemaining(data, confirmed) !== 0)
+      throw new LaunchSafetyError('Waiting for sold-out supply to confirm');
+    return 0;
+  }
+
+  private claimRemaining(data: LaunchData, claim: Result | null): number {
+    const total = Number(claim?.total);
+    if (
+      !claim ||
+      Number(claim.tokenId) !== data.claim_id ||
+      Number(claim.totalMax) !== data.edition_size ||
+      !Number.isSafeInteger(total) ||
+      total < 0 ||
+      total > data.edition_size
+    )
+      throw new LaunchSafetyError(
+        'On-chain supply does not match the frozen claim'
+      );
+    return data.edition_size - total;
+  }
+
   async nonce(address: string, pending: boolean): Promise<number> {
     return rpcWithDeadline(
       this.provider.getTransactionCount(address, pending ? 'pending' : 'latest')
@@ -510,7 +544,7 @@ export class EthereumLaunchChain implements LaunchChain {
       verifyResearchSupply(data, action, total, await this.now(), capture);
       return;
     }
-    const remaining = (action.remaining_recipients ?? action.recipients).reduce(
+    const remaining = transactionAirdropRecipients(action).reduce(
       (sum, row) => sum + row.amount,
       0
     );
@@ -543,7 +577,9 @@ export class EthereumLaunchChain implements LaunchChain {
         .filter((it) => it.kind === 'AIRDROP' && it.state === 'CONFIRMED')
         .reduce(
           (sum, it) =>
-            sum + it.recipients.reduce((n, row) => n + row.amount, 0),
+            sum +
+            it.recipients.reduce((n, row) => n + row.amount, 0) -
+            (it.unfilled_tokens ?? 0),
           0
         ) +
       phaseActions
@@ -571,17 +607,21 @@ export class EthereumLaunchChain implements LaunchChain {
       throw new LaunchSafetyError(
         'Claim supply changed before the planned transaction'
       );
-    const remaining = phaseActions
-      .filter((it) => it.kind === 'AIRDROP' && it.state !== 'CONFIRMED')
-      .reduce(
-        (sum, it) =>
-          sum +
-          (it.remaining_recipients ?? it.recipients).reduce(
-            (n, row) => n + row.amount,
-            0
-          ),
-        0
-      );
+    const fixed = phaseActions.filter(
+      (it) =>
+        it.kind === 'AIRDROP' &&
+        !it.ranked_subscription &&
+        !isLaunchActionSettled(it)
+    );
+    const deliveries = action.ranked_subscription ? [...fixed, action] : fixed;
+    const remaining = deliveries.reduce(
+      (sum, it) =>
+        transactionAirdropRecipients(it).reduce(
+          (count, row) => count + row.amount,
+          sum
+        ),
+      0
+    );
     if (total + remaining > data.edition_size)
       throw new LaunchSafetyError(
         'Remaining phase airdrops exceed available edition supply'
@@ -807,7 +847,7 @@ export class EthereumLaunchChain implements LaunchChain {
       verifyRecoveryMints(data, action, mined.logs);
       const expected =
         action.expected_supply! +
-        (action.remaining_recipients ?? action.recipients).reduce(
+        transactionAirdropRecipients(action).reduce(
           (sum, row) => sum + row.amount,
           0
         );
@@ -854,7 +894,7 @@ export class EthereumLaunchChain implements LaunchChain {
         (it) =>
           it.kind === 'AIRDROP' &&
           !isResearchAirdrop(it) &&
-          it.state !== 'CONFIRMED'
+          !isLaunchActionSettled(it)
       )
     )
       throw new LaunchSafetyError(

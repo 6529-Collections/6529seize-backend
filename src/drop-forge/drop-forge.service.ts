@@ -27,7 +27,8 @@ import {
   LaunchRecord,
   LaunchSafetyError,
   LaunchRevisionConflict,
-  assertPhaseScopedPlan
+  assertPhaseScopedPlan,
+  isLaunchActionSettled
 } from '@/drop-forge/drop-forge.types';
 import { ForbiddenException, NotFoundException } from '@/exceptions';
 import { RequestContext } from '@/request.context';
@@ -65,10 +66,12 @@ export function mapLaunch(record: LaunchRecord): ApiDropForgeLaunch {
         block_number,
         recovery,
         remaining_recipients,
+        capped_recipients,
         attempt_count,
         attempt_error,
         retry_at,
         disabled_reason,
+        unfilled_tokens,
         payment,
         observed,
         supply_evidence
@@ -100,7 +103,8 @@ export function mapLaunch(record: LaunchRecord): ApiDropForgeLaunch {
                     hash: hash ?? null
                   })
                 ),
-                allocations: remaining_recipients ?? recipients
+                allocations:
+                  capped_recipients ?? remaining_recipients ?? recipients
               }
             : undefined,
           id,
@@ -112,6 +116,9 @@ export function mapLaunch(record: LaunchRecord): ApiDropForgeLaunch {
               }
             : undefined,
           disabled_reason: disabled_reason ?? null,
+          unfilled_tokens: ['CONFIRMED', 'SKIPPED'].includes(state)
+            ? unfilled_tokens
+            : undefined,
           payment_recipient: payment?.recipient ?? null,
           payment_amount_wei: payment?.amount_wei ?? null,
           group: launchGroup(
@@ -127,7 +134,7 @@ export function mapLaunch(record: LaunchRecord): ApiDropForgeLaunch {
           phase,
           due,
           deadline,
-          recipients: recipients.length,
+          recipients: (capped_recipients ?? recipients).length,
           hash: hash ?? null,
           block_number: block_number ?? null
         };
@@ -257,7 +264,7 @@ export async function controlLaunch(
             'Distribution or metadata changed; recreate the draft before arming'
           );
         await dropForgeRepository.assertPrepared(record.data, txCtx);
-        if (!record.data.actions.some((action) => action.state !== 'CONFIRMED'))
+        if (record.data.actions.every(isLaunchActionSettled))
           throw new LaunchSafetyError('No remaining launch action');
         if (arming) {
           const next = record.data.actions[0];
