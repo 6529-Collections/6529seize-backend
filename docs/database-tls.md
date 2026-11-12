@@ -9,14 +9,19 @@ existing environments keep their current behaviour until it is enabled.
 | `DB_SSL`         | `true` enables TLS with server certificate chain verification (`rejectUnauthorized: true`; no host name check, see below). Any other value, or unset, keeps TLS off. |
 | `DB_SSL_CA_FILE` | Optional path to a PEM bundle used as the trusted CA list when `DB_SSL=true`. Unset uses Node's default trust store. Read at connect time.                           |
 
-Certificate verification with the current `mysql` driver checks the server's
-certificate chain against the trusted CA list but does not check that the
-certificate was issued for the host being connected to: the driver starts TLS
-without passing the host name to Node's TLS layer, so host name verification
-does not run. `DB_SSL=true` therefore protects against passive interception
-and against certificates from untrusted authorities, but must not be relied on
-to verify the database host's identity. Treat host verification as missing
-until the driver is replaced with one that verifies the host name (for example
+Both paths use the `mysql` driver (2.18.x; TypeORM's default
+`connectorPackage`). Its only verification setting is `ssl.rejectUnauthorized`
+(on unless set to `false`): after the handshake the driver fails the
+connection if Node reports a certificate chain error (`verifyError()`), which
+checks the chain against the trusted CA list. The driver has no option for the
+server's identity: it upgrades the open socket with `new tls.TLSSocket(...)`
+and passes only `ca`, `cert`, `key`, `passphrase` and `ciphers` to the secure
+context, never `servername` or `checkServerIdentity`, so Node does not check
+that the certificate was issued for the host being connected to.
+`DB_SSL=true` therefore protects against passive interception and against
+certificates from untrusted authorities, but must not be relied on to verify
+the database host's identity. Treat host verification as missing until the
+driver is replaced with one that verifies the host name (for example
 `mysql2`).
 
 Which trust source fits depends on the endpoint:

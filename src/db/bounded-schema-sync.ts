@@ -7,6 +7,7 @@ import {
   informationSchemaCatalog,
   PlannedSchemaStatement,
   SchemaCatalog,
+  SCHEMA_SYNC_DESTRUCTIVE_GUARD_ENV,
   SchemaPlanCheck,
   schemaSyncDestructiveGuardMode,
   SchemaSyncDestructiveGuardMode
@@ -75,6 +76,8 @@ export class SchemaSyncLockedError extends Error {
   constructor(message: string) {
     super(message);
     this.name = 'SchemaSyncLockedError';
+    // Keeps instanceof working for the ES5 build target.
+    Object.setPrototypeOf(this, SchemaSyncLockedError.prototype);
   }
 }
 
@@ -173,6 +176,12 @@ export async function synchronizeSchemaBounded(
   dataSource: DataSource,
   options: SchemaSyncOptions = {}
 ): Promise<SchemaSyncResult> {
+  // Resolved first: an unrecognised guard setting fails before any work.
+  const mode =
+    options.destructiveGuardMode ??
+    schemaSyncDestructiveGuardMode(
+      process.env[SCHEMA_SYNC_DESTRUCTIVE_GUARD_ENV]
+    );
   const sleep =
     options.sleep ??
     ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
@@ -206,7 +215,8 @@ export async function synchronizeSchemaBounded(
             informationSchemaCatalog((sql, parameters) =>
               queryRunner.query(sql, parameters)
             ),
-          options
+          mode,
+          options.acknowledgedDestructivePlanSha256
         );
       }
       for (const statement of planned) {
@@ -253,9 +263,9 @@ export async function synchronizeSchemaBounded(
 async function guardDestructivePlan(
   planned: readonly PlannedSchemaStatement[],
   catalog: SchemaCatalog,
-  options: SchemaSyncOptions
+  mode: SchemaSyncDestructiveGuardMode,
+  acknowledgedSha256: string | null | undefined
 ): Promise<string | null> {
-  const mode = options.destructiveGuardMode ?? schemaSyncDestructiveGuardMode();
   let check: SchemaPlanCheck;
   try {
     check = await checkSchemaPlan(planned, catalog);
@@ -269,7 +279,7 @@ async function guardDestructivePlan(
   }
   const decision = destructivePlanDecision(check, {
     mode,
-    acknowledgedSha256: options.acknowledgedDestructivePlanSha256
+    acknowledgedSha256
   });
   if (decision === 'none') return null;
   const sha256 = check.destructivePlanSha256!;

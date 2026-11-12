@@ -445,6 +445,11 @@ jobs:
               echo "::error::Could not read the current seizeAPI environment; refusing to replace it" >&2
               exit 1
             fi
+            # jq accepts empty input without error, so check for a value first.
+            if ! grep -q '[^[:space:]]' "$current_env"; then
+              echo "::error::The current seizeAPI environment read back empty; refusing to replace it" >&2
+              exit 1
+            fi
             if ! missing_keys="$(jq -r --argjson required "$REQUIRED_API_ENV_KEYS" 'if type == "object" then ($required - keys) else $required end | join(",")' "$current_env" 2>/dev/null)"; then
               echo "::error::The current seizeAPI environment is not valid JSON; refusing to replace it" >&2
               exit 1

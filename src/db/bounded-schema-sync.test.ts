@@ -182,6 +182,16 @@ describe('synchronizeSchemaBounded', () => {
         ALTER,
         ...Array(SCHEMA_SYNC_ATTEMPTS).fill(INDEX)
       ]);
+      // instanceof also selects the 'locked' metric outcome.
+      expect(
+        await synchronizeSchemaBounded(
+          fakeDataSource({
+            plan: [{ query: INDEX }],
+            lockedTimes: new Map([[INDEX, 99]])
+          }).dataSource,
+          { sleep: noSleep }
+        ).catch((e: unknown) => e)
+      ).toBeInstanceOf(SchemaSyncLockedError);
       expect(error).toHaveBeenCalledWith('[SCHEMA_SYNC_FAILED]', {
         applied: [ALTER],
         remaining: [INDEX, METADATA],
@@ -366,6 +376,19 @@ describe('synchronizeSchemaBounded', () => {
         })
       ).rejects.toBeInstanceOf(SchemaSyncDestructivePlanRefusedError);
       expect(fake.ddl()).toEqual([]);
+    });
+
+    it('fails on an unrecognised guard setting before connecting', async () => {
+      process.env[SCHEMA_SYNC_DESTRUCTIVE_GUARD_ENV] = 'blocking';
+      const fake = fakeDataSource({ plan: destructivePlan });
+      await expect(
+        synchronizeSchemaBounded(fake.dataSource, {
+          sleep: noSleep,
+          catalog: plainColumnCatalog
+        })
+      ).rejects.toThrow(/must be "report" or "block"/);
+      expect(fake.dataSource.createQueryRunner).not.toHaveBeenCalled();
+      expect(fake.statements).toEqual([]);
     });
 
     it('applies a plan without destructive statements in block mode', async () => {
