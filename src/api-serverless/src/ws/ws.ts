@@ -25,6 +25,7 @@ import {
   WebSocketDeliveryResult,
   WebSocketDeliveryDeferredError
 } from '@/ws-delivery/ws-delivery';
+import type { WebSocketDelivery } from '@/ws-delivery/ws-delivery';
 import {
   enqueueWebSocketFrame,
   QueuedWebSocketFrame
@@ -71,6 +72,7 @@ abstract class ClientConnections {
     abortSignal?: AbortSignal;
     recovery?: boolean;
     batch?: DeliveryBatch;
+    delivery?: Pick<WebSocketDelivery, 'deliver'>;
   }): Promise<WebSocketDeliveryResult>;
   abstract closeClient(
     connectionId: string,
@@ -157,16 +159,18 @@ class ApiGatewayClientConnections extends ClientConnections {
     message,
     abortSignal,
     recovery,
-    batch
+    batch,
+    delivery = webSocketDelivery
   }: {
     connectionId: string;
     message: string;
     abortSignal?: AbortSignal;
     recovery?: boolean;
     batch?: DeliveryBatch;
+    delivery?: Pick<WebSocketDelivery, 'deliver'>;
   }): Promise<WebSocketDeliveryResult> {
     let terminalError: unknown;
-    const result = await webSocketDelivery.deliver({
+    const result = await delivery.deliver({
       connectionId,
       message,
       recovery,
@@ -267,6 +271,7 @@ export class AppWebSockets {
     deliveryCapability?: typeof DURABLE_UPDATES_CAPABILITY;
     recovery?: boolean;
     batch?: DeliveryBatch;
+    delivery?: Pick<WebSocketDelivery, 'deliver'>;
   }): Promise<WebSocketDeliveryResult> {
     input.abortSignal?.throwIfAborted();
     // Authentication acknowledgements must follow the control operation inline,
@@ -409,7 +414,8 @@ export class AppWebSockets {
     skipStaleConnectionCheck = false,
     abortSignal,
     recovery,
-    batch
+    batch,
+    delivery
   }: {
     connectionId: string;
     message: string;
@@ -417,6 +423,7 @@ export class AppWebSockets {
     abortSignal?: AbortSignal;
     recovery?: boolean;
     batch?: DeliveryBatch;
+    delivery?: Pick<WebSocketDelivery, 'deliver'>;
   }): Promise<WebSocketDeliveryResult> {
     // An expired invocation goes directly to the sender's reported deadline
     // failure; do not spend the remaining budget looking up unsendable work.
@@ -441,7 +448,8 @@ export class AppWebSockets {
         message,
         abortSignal,
         recovery,
-        batch
+        batch,
+        delivery
       });
       if (result.status === 'gone')
         await this.wsConnectionRepository.deleteByConnectionId(

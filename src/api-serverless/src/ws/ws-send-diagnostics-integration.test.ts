@@ -74,6 +74,7 @@ import { HttpResponse } from '@smithy/protocol-http';
 import { NftLinkRefreshNotifier } from '@/nftLinkRefresherLoop/nft-link-refresh-notifier';
 import { ApiNftLinkData } from '@/api/generated/models/ApiNftLinkData';
 import { AppWebSockets, appWebSockets } from '@/api/ws/ws';
+import { WebSocketDelivery } from '@/ws-delivery/ws-delivery';
 import { WsConnectionRepository } from '@/api/ws/ws-connection.repository';
 import { withLambdaRemainingTime } from '@/lambda-deadline';
 import { webSocketDeliveryStore } from '@/ws-delivery/ws-delivery-store';
@@ -145,6 +146,39 @@ describe('WebSocket terminal diagnostics with real SDK middleware and synthetic 
     expect(repository.getByConnectionId).toHaveBeenCalledWith('synthetic', {});
     expect(mockHandle).toHaveBeenCalledTimes(1);
     expect(enqueueWebSocketFrame).not.toHaveBeenCalled();
+  });
+
+  it('uses the worker store for a recovery send and its bookkeeping', async () => {
+    mockHandle.mockResolvedValue(response(204));
+    const store = {
+      claim: jest.fn().mockResolvedValue({
+        acquired: true,
+        revision: 7,
+        failures: 0,
+        firstFailureAt: 0
+      }),
+      finish: jest.fn().mockResolvedValue(true),
+      snapshot: jest.fn(),
+      forget: jest.fn(),
+      enableReconnect: jest.fn()
+    };
+    await expect(
+      sockets.send({
+        connectionId: 'synthetic',
+        message: '{"type":"RESYNC_REQUIRED","data":{}}',
+        recovery: true,
+        delivery: new WebSocketDelivery(store)
+      })
+    ).resolves.toEqual({ status: 'sent' });
+    expect(store.claim).toHaveBeenCalledTimes(1);
+    expect(store.finish).toHaveBeenCalledWith(
+      expect.objectContaining({
+        connectionId: 'synthetic',
+        outcome: 'sent',
+        recovery: true,
+        revision: 7
+      })
+    );
   });
 
   it('returns a failed legacy control acknowledgement without turning a 429 into an error alert', async () => {
