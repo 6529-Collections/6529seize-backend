@@ -5,12 +5,21 @@ import { sendIdentityNotificationsBatch } from './identityPushNotifications';
 import { getDataSource } from '@/db';
 import { pushNotificationCancellationsDb } from '@/notifications/push-notification-cancellations.db';
 import { identityMutesDb } from '@/api/identity-mutes/identity-mutes.db';
+import { identityFetcher } from '@/api/identities/identity.fetcher';
+import type { ApiIdentity } from '@/api/generated/models/ApiIdentity';
 import { sendIdentityPushGroups } from './identity-push-delivery';
 import { contentModerationDb } from '@/content-moderation/content-moderation.db';
 import { competitionAnonymityService } from '@/competitions/competition-anonymity';
-import { IdentityNotificationCause } from '@/entities/IIdentityNotification';
+import {
+  IdentityNotificationCause,
+  IdentityNotificationEntity
+} from '@/entities/IIdentityNotification';
+import { PushNotificationDevice } from '@/entities/IPushNotification';
 
 jest.mock('@/db', () => ({ getDataSource: jest.fn() }));
+jest.mock('@/api/identities/identity.fetcher', () => ({
+  identityFetcher: { getIdentityAndConsolidationsByIdentityKey: jest.fn() }
+}));
 jest.mock('@/notifications/push-notification-cancellations.db', () => ({
   pushNotificationCancellationsDb: { findCancelledIds: jest.fn() }
 }));
@@ -73,6 +82,83 @@ it('does not acknowledge missing IDs when visibility filtering fails first', asy
   expect(
     pushNotificationCancellationsDb.findCancelledIds
   ).not.toHaveBeenCalled();
+});
+
+it('only delivers subscription top-ups to Android when an identity uses both platforms', async () => {
+  const notifications = [
+    {
+      id: 1,
+      identity_id: 'recipient',
+      cause: IdentityNotificationCause.SUBSCRIPTION_COVERAGE,
+      additional_data: {
+        status: 'ACTION_REQUIRED',
+        minimum_top_up_eth: '0.06529'
+      }
+    },
+    {
+      id: 2,
+      identity_id: 'recipient',
+      cause: IdentityNotificationCause.IDENTITY_SUBSCRIBED,
+      additional_identity_id: 'follower'
+    }
+  ];
+  const devices = ['ios', 'android'].map((platform) => ({
+    profile_id: 'recipient',
+    device_id: platform,
+    token: platform,
+    platform
+  }));
+  const registrationsQuery = {
+    select: jest.fn().mockReturnThis(),
+    addSelect: jest.fn().mockReturnThis(),
+    where: jest.fn().mockReturnThis(),
+    getRawMany: jest.fn().mockResolvedValue(devices)
+  };
+  jest.mocked(getDataSource).mockReturnValue({
+    getRepository: (entity: unknown) => {
+      if (entity === IdentityNotificationEntity) {
+        return { find: async () => notifications };
+      }
+      if (entity === PushNotificationDevice) {
+        return {
+          findBy: async () => devices,
+          createQueryBuilder: () => registrationsQuery
+        };
+      }
+      return { findOneBy: async () => null };
+    }
+  } as unknown as ReturnType<typeof getDataSource>);
+  jest
+    .mocked(identityFetcher.getIdentityAndConsolidationsByIdentityKey)
+    .mockImplementation(
+      async ({ identityKey }) =>
+        ({
+          id: identityKey,
+          handle: identityKey,
+          normalised_handle: identityKey
+        }) as ApiIdentity
+    );
+  jest
+    .mocked(identityMutesDb.filterMutedNotificationRows)
+    .mockImplementation(async (rows) => rows);
+  jest
+    .mocked(contentModerationDb.filterBlockedNotificationRows)
+    .mockImplementation(async (rows) => rows);
+  jest
+    .mocked(contentModerationDb.filterUnavailableDropNotificationRows)
+    .mockImplementation(async (rows) => rows);
+  jest.mocked(sendIdentityPushGroups).mockResolvedValue([]);
+
+  expect(await sendIdentityNotificationsBatch([1, 2])).toEqual([]);
+  expect(sendIdentityPushGroups).toHaveBeenCalledTimes(1);
+  const [messages] = jest.mocked(sendIdentityPushGroups).mock.calls[0];
+  expect(
+    messages.map(({ input }) => [input.notification_id, input.token])
+  ).toEqual([
+    [1, 'android'],
+    [2, 'ios'],
+    [2, 'android']
+  ]);
 });
 
 it('preloads each anonymous entry once for a batch of many recipients', async () => {
