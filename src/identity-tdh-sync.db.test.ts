@@ -211,7 +211,9 @@ describeWithSeed(
           deferFullWalk: false
         })
       ).resolves.toBe('FAILED');
-      await expect(resumePendingIdentityTdhSync()).resolves.toBeUndefined();
+      // It resumed the pending sync (so the invocation collects garbage
+      // after), and its failure does not fail the loop.
+      await expect(resumePendingIdentityTdhSync()).resolves.toBe(true);
 
       expect(capture).toHaveBeenCalledTimes(2);
       expect(capture).toHaveBeenCalledWith(failure);
