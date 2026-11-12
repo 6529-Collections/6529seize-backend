@@ -399,7 +399,6 @@ export class DropForgeWorker {
     now: number,
     settings: DropForgeSettingsEntity
   ): Promise<Work | null> {
-    let work: Work | null = null;
     if (recordDisabledAction(record, action, settings)) return null;
     delete action.disabled_reason;
     try {
@@ -416,7 +415,7 @@ export class DropForgeWorker {
         action.ranked_subscription && remaining !== undefined
           ? capRankedAirdrop(action, remaining)
           : action;
-      work = await this.prepareAction(
+      const work = await this.prepareAction(
         record,
         prepared,
         pending,
@@ -427,25 +426,31 @@ export class DropForgeWorker {
         Object.assign(action, prepared);
         work.action = action;
       }
+      return work;
     } catch (error) {
-      if (
-        now < action.deadline - SUBMISSION_CUTOFF_SECONDS ||
-        !action.window_reported
-      ) {
-        reportActionFailure(
-          record,
-          action,
-          now,
-          error instanceof LaunchSafetyError
-            ? error.message
-            : 'RPC or readiness check failed',
-          error
-        );
-        if (now >= action.deadline - SUBMISSION_CUTOFF_SECONDS)
-          action.window_reported = true;
-      }
+      this.reportPreparationFailure(record, action, now, error);
+      return null;
     }
-    return work;
+  }
+
+  private reportPreparationFailure(
+    record: LaunchRecord,
+    action: LaunchAction,
+    now: number,
+    error: unknown
+  ): void {
+    const outsideWindow = now >= action.deadline - SUBMISSION_CUTOFF_SECONDS;
+    if (outsideWindow && action.window_reported) return;
+    reportActionFailure(
+      record,
+      action,
+      now,
+      error instanceof LaunchSafetyError
+        ? error.message
+        : 'RPC or readiness check failed',
+      error
+    );
+    if (outsideWindow) action.window_reported = true;
   }
 
   private async rankedAirdropCapacity(
