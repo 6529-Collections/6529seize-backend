@@ -494,7 +494,8 @@ async function buildIdentityNotificationMessages(
             !isNotificationEnabledForDevice(
               notification.cause,
               recipientSettings,
-              device.include_competitions === true
+              device.include_competitions === true,
+              device.platform
             )
           ) {
             logger.info(

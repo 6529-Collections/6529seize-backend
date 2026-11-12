@@ -139,6 +139,20 @@ it('preserves device notification preferences', async () => {
   expect(options.enabledCauses).toContain(IdentityNotificationCause.ALL_DROPS);
 });
 
+it('excludes subscription coverage from the iOS badge for every connected profile', async () => {
+  await getDeviceBadgeState({ ...device, platform: ' iOS ' });
+
+  expect(countUnread).toHaveBeenCalledTimes(2);
+  for (const call of countUnread.mock.calls) {
+    expect(call[3].enabledCauses).not.toContain(
+      IdentityNotificationCause.SUBSCRIPTION_COVERAGE
+    );
+    expect(call[3].enabledCauses).toContain(
+      IdentityNotificationCause.IDENTITY_MENTIONED
+    );
+  }
+});
+
 it('skips counts for a device whose registrations were removed', async () => {
   findDevices.mockResolvedValue([]);
   expect((await getDeviceBadgeState(device)).profileIds.size).toBe(0);

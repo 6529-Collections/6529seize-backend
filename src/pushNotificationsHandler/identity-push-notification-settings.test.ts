@@ -33,15 +33,44 @@ describe('identity push notification settings', () => {
       ).toBe(false);
     }
   );
-  it('enables subscription coverage pushes by default', () => {
-    expect(DEFAULT_PUSH_NOTIFICATION_SETTINGS.subscription_coverage).toBe(true);
-    expect(
-      isNotificationEnabledForDevice(
-        IdentityNotificationCause.SUBSCRIPTION_COVERAGE,
-        DEFAULT_PUSH_NOTIFICATION_SETTINGS
-      )
-    ).toBe(true);
-  });
+  it.each(['android', null, undefined])(
+    'enables subscription coverage by default for platform %s',
+    (platform) => {
+      expect(DEFAULT_PUSH_NOTIFICATION_SETTINGS.subscription_coverage).toBe(
+        true
+      );
+      expect(
+        isNotificationEnabledForDevice(
+          IdentityNotificationCause.SUBSCRIPTION_COVERAGE,
+          DEFAULT_PUSH_NOTIFICATION_SETTINGS,
+          false,
+          platform
+        )
+      ).toBe(true);
+    }
+  );
+
+  it.each(['ios', ' iOS '])(
+    'suppresses subscription coverage on %s while allowing other pushes',
+    (platform) => {
+      expect(
+        isNotificationEnabledForDevice(
+          IdentityNotificationCause.SUBSCRIPTION_COVERAGE,
+          DEFAULT_PUSH_NOTIFICATION_SETTINGS,
+          false,
+          platform
+        )
+      ).toBe(false);
+      expect(
+        isNotificationEnabledForDevice(
+          IdentityNotificationCause.IDENTITY_MENTIONED,
+          DEFAULT_PUSH_NOTIFICATION_SETTINGS,
+          false,
+          platform
+        )
+      ).toBe(true);
+    }
+  );
 
   it('excludes subscription coverage from enabled causes when disabled', () => {
     const settings = {
