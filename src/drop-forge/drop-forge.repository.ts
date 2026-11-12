@@ -302,8 +302,7 @@ export class DropForgeRepository {
               ? (JSON.parse(allowlist) as AllowlistNormalizedEntry[] | null)
               : allowlist;
           return (
-            !allocation ||
-            Number(airdrops) !== allocation.airdrops ||
+            Number(airdrops) !== allocation?.airdrops ||
             !entries ||
             !sameAllowlist(entries, allocation.allowlist)
           );
