@@ -17,8 +17,14 @@ import {
   stripMetadataLosslessly
 } from './lossless-metadata-strip';
 
-export { PIXEL_CHECK_LIMITS } from './decoded-pixel-digest';
-export type { PixelCheckLimits } from './decoded-pixel-digest';
+export {
+  canVerifyDecodedPixels,
+  PIXEL_CHECK_LIMITS
+} from './decoded-pixel-digest';
+export type {
+  PixelCheckLimits,
+  PixelCheckMetadata
+} from './decoded-pixel-digest';
 
 /**
  * Default source ceiling for the in-memory lossless strip: the upload limit.

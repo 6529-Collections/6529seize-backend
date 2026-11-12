@@ -12,8 +12,8 @@ import {
 } from '@/mediaResizerLoop/resize-resource-safety';
 import { sanitizePngFile } from '@/media/png-preview';
 import {
+  canVerifyDecodedPixels,
   LOSSLESS_STRIP_MAX_SOURCE_BYTES as DEFAULT_LOSSLESS_STRIP_MAX_SOURCE_BYTES,
-  PIXEL_CHECK_LIMITS,
   stripMetadataWithPixelCheck
 } from '@/media/metadata-strip/pixel-verified-metadata-strip';
 import { releaseBuffer } from '@/media/metadata-strip/release-buffer';
@@ -624,8 +624,7 @@ async function assertImageUploadFits(
     if (
       stripMetadata &&
       ((await stat(input)).size > LOSSLESS_STRIP_MAX_SOURCE_BYTES ||
-        (metadata.width ?? 0) * (metadata.height ?? 0) >
-          PIXEL_CHECK_LIMITS.maxPixels)
+        !canVerifyDecodedPixels(metadata))
     ) {
       assertDecodedWorkBudget(metadata, metadata.format === 'gif');
     }
