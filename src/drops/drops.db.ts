@@ -1246,7 +1246,8 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       // The wave and its parent each check the groups: shared once that and
       // the inlined id lists would reach the pinning size. Only lookups by
       // ids or serials share: those are driven by the drops' keys. Without
-      // them (the latest root drops) the groups stay inlined.
+      // them the scan is driven by the index range the inlined list builds
+      // on visibility_group_id, which a shared table would lose.
       const groups =
         ids?.length || serial_nos?.length
           ? await this.sharedViewerGroups(
@@ -1261,36 +1262,6 @@ export class DropsDb extends LazyDbAccessCompatibleService {
         'groupsUserIsEligibleFor',
         groups?.setSql
       );
-      if (!parent_drop_id && !serial_nos?.length && !ids?.length) {
-        // The latest root drops: serial numbers from the base tables in
-        // primary key order, outside the legacy GET facade (one view row per
-        // base row for the columns read), then the rows in the caller's scope.
-        const rows = await withoutLegacyCompetitionGetFacade(() =>
-          this.db.execute<{ serial_no: number }>(
-            `select d.serial_no
-             from ${DROPS_TABLE} d force index (PRIMARY)
-             where d.reply_to_drop_id is null
-               and exists (
-                 select 1
-                 from ${WAVES_TABLE} w
-                 where w.id = d.wave_id
-                   and (${visibleWaveFilter})
-               )
-             order by d.serial_no desc
-             limit :limit offset :offset`,
-            {
-              limit,
-              offset,
-              groupsUserIsEligibleFor: group_ids_user_is_eligible_for
-            },
-            { wrappedConnection: ctx.connection }
-          )
-        );
-        return await this.findDropsBySerialNosNewestFirst(
-          rows.map((row) => row.serial_no),
-          ctx.connection
-        );
-      }
       return await this.db.execute<DropEntity>(
         `${groups ? `with ${groups.cteSql} ` : ''}select d.*
          from ${DROPS_TABLE} d
@@ -1299,7 +1270,11 @@ export class DropsDb extends LazyDbAccessCompatibleService {
              ? `join ${DROP_RELATIONS_TABLE} dr on dr.child_id = d.id and dr.parent_id = :parent_drop_id`
              : ``
          }
-         where
+         where ${
+           parent_drop_id || serial_nos?.length || ids?.length
+             ? ``
+             : `d.reply_to_drop_id is null and`
+         }
           ${serial_nos?.length ? `d.serial_no in (:serial_nos) and` : ``}
           ${ids?.length ? `d.id in (:ids) and` : ``}
            exists (
