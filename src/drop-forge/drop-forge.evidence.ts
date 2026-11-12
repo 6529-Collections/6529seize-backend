@@ -5,7 +5,7 @@ import { RequestContext } from '@/request.context';
 import { LaunchSafetyError } from '@/drop-forge/drop-forge.types';
 import { DropForgeConfig } from '@/drop-forge/drop-forge.config';
 export async function evidenceForClaim(
-  config: DropForgeConfig,
+  config: Pick<DropForgeConfig, 'creator' | 'chainId'>,
   claim: number,
   ctx: RequestContext
 ): Promise<Array<{ hash: string; action?: string }>> {

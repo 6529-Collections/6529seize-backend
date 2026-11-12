@@ -46,11 +46,20 @@ it('reports a partial airdrop batch before reporting the group as completed', ()
     content: 'Confirmed batch-1: no hash'
   };
   expect(formatLaunchReport(data, event)).toContain(
-    'Artist airdrops batch 1/2 confirmed.'
+    'Artist airdrops confirmed.'
   );
+  expect(formatLaunchReport(data, event)).toContain('Batch 1 of 2');
   second.state = 'CONFIRMED';
-  expect(formatLaunchReport(data, event)).toContain(
-    'Artist airdrops completed.'
+  const last = formatLaunchReport(data, {
+    ...event,
+    content: 'Confirmed batch-2: no hash',
+    fee_wei: '2100000000000000'
+  });
+  expect(last).toContain('Artist airdrops completed.');
+  expect(last).toContain('Batch 2 of 2');
+  expect(last).toContain('Gas 0.0021 ETH');
+  expect(last).toContain(
+    '[Claim #1](https://staging.6529.io/drop-forge/launch/1)'
   );
 });
 

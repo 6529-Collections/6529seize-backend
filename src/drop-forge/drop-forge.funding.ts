@@ -154,7 +154,10 @@ export async function processForgeFunding(
       const report = await postForgeReport(
         config,
         fundingReport(row, attempt, receipt.status) +
-          ` [Transaction](${explorer}/tx/${attempt.hash})`,
+          ` [Transaction](${explorer}/tx/${attempt.hash})` +
+          (receipt.fee_wei === undefined
+            ? ''
+            : ` · Gas ${formatEther(receipt.fee_wei)} ETH`),
         receipt.status !== 1,
         { connection }
       );

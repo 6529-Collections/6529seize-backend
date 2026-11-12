@@ -143,8 +143,9 @@ Required runtime permissions, scoped to this account and region:
 - Launch alone: `kms:GetPublicKey` and `kms:Sign` on the exact operational key.
 - Both handlers: `kms:Sign` on the dedicated Ed25519 report signing key.
 - Deployment role: existing scoped CloudFormation/SQS/alarms/event-source-mapping
-  permissions, Scheduler schedule-group creation, and `iam:PassRole` on the two
-  exact Lambda execution roles, restricted to `lambda.amazonaws.com`.
+  permissions, Scheduler group and readiness schedule management, and
+  `iam:PassRole` for the two exact Lambda execution roles and the regional
+  Scheduler delivery role, each restricted to its service.
 
 The API and handlers do not require `lambda:InvokeFunction` for this feature.
 Review/apply the proposed `DropForgeHandlersDeployment.json` and
@@ -155,7 +156,11 @@ No permissions to edit arbitrary IAM policies are added to deployment. Ensure VP
 endpoints or outbound networking allow SQS and Scheduler as well as RPC/KMS/EMMA.
 
 The handler Serverless stacks own their encrypted standard SQS queue, a 14-day DLQ,
-and a CloudWatch DLQ alarm. Launch owns the `drop-forge-{stage}` Scheduler group.
+and a CloudWatch DLQ alarm. Launch owns the `drop-forge-{stage}` Scheduler group
+and four recurring readiness schedules that use the existing queue, DLQ and
+Scheduler role. The shared mint calendar filters out days without a scheduled
+drop. Readiness alerts require working RPC and signed Ops wave reporting even
+when Automatic launch is off.
 Queues deliver one job/claim per invocation, with SQS maximum concurrency and
 Lambda reserved concurrency both set to two. The SQL signer lock still serializes
 transactions; a concurrently owned preparation checkpoint backs off instead of
@@ -301,7 +306,7 @@ AWS role/key provisioning and runtime configuration first, then deploy sequentia
 
 | Order | Deployment unit | What must be available before continuing |
 | ----- | ------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1 | Existing `dbMigrationsLoop` | Run with `db_schema_scope=full`; synchronize launch, signer, evidence, preparation/jobs, settings, funding and `transaction_scan_checkpoints` tables |
+| 1 | Existing `dbMigrationsLoop` | Run with `db_schema_scope=full`; synchronize launch, signer, evidence, preparation/jobs, settings, funding, readiness and `transaction_scan_checkpoints` tables |
 | 2 | Existing `transactionsLoop` service | The configured creator consumer completes normal discovery and bounded finalized scans, including empty blocks; inspect its durable coverage before enabling post-mint execution |
 | 3 | New `dropForgeLaunchHandler` | Launch Lambda, queue/DLQ, alarms and shared Scheduler group |
 | 4 | New `memesDistributionHandler` | Distribution Lambda, queue/DLQ and alarms; watchdogs use the group from step 3 |

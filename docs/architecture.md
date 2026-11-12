@@ -2412,6 +2412,11 @@ IAM/KMS provisioning, deployment order and rollout, and the
 | Existing `transactionsLoop` | Complete creator transaction discovery, then record bounded finalized scan coverage, including empty blocks, for post-mint accounting |
 | AWS KMS | Hold the operational private key and sign digests only for the dedicated launch role |
 
+Four Athens-time readiness schedules feed the Launch queue independently of any
+launch plan. The consumer resolves the claim through the shared mint calendar,
+reads Ethereum and completion evidence, and records the checkpoint together with
+any signed Ops alert. The delivery ledger deduplicates queue retries.
+
 `dropForgeLaunchHandler` and `memesDistributionHandler` consume dedicated SQS
 queues and have default-disabled flags, with no recurring schedules. API mutations
 publish under their SQL lock before committing a dispatch revision; consumers retry

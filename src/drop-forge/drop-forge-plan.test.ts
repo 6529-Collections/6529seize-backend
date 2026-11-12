@@ -1,3 +1,4 @@
+import { waitingForPhaseAirdrops } from '@/drop-forge/drop-forge.worker';
 import { formatLaunchReport } from '@/drop-forge/drop-forge.reports';
 import {
   buildLaunchPlan,
@@ -147,6 +148,7 @@ describe('Drop Forge launch planning', () => {
       ['AIRDROP', 1],
       ['UPDATE', 2],
       ['AIRDROP', 2],
+      ['AIRDROP', 2],
       ['UPDATE', 3],
       ['AIRDROP', 3],
       ['PAY_ARTIST', 3]
@@ -154,17 +156,37 @@ describe('Drop Forge launch planning', () => {
     const batches = plan.actions.filter(
       (it) => it.kind === 'AIRDROP' && it.id !== 'research-airdrop'
     );
-    expect(batches.map((it) => it.recipients[0].amount)).toEqual([1, 2, 7]);
+    expect(batches.map((it) => it.recipients[0].amount)).toEqual([1, 2, 3, 4]);
+    expect(batches.slice(-2).map((it) => it.label)).toEqual([
+      'Phase 2 Subscription Airdrops',
+      'Public Subscription Airdrops'
+    ]);
+    const record = {
+      id: 'launch',
+      data: plan,
+      revision: 1,
+      state: 'RUNNING' as const,
+      error: null,
+      updated_at: 0
+    };
+    expect(waitingForPhaseAirdrops(record, batches[3])).toBe(true);
+    plan.actions[4].state = 'CONFIRMED';
+    expect(waitingForPhaseAirdrops(record, batches[3])).toBe(true);
+    batches[2].state = 'CONFIRMED';
+    expect(waitingForPhaseAirdrops(record, batches[3])).toBe(false);
     expect(batches.map((it) => [it.due, it.deadline])).toEqual([
       [1000, 4000],
       [6401, 7000],
+      [8201, 8800],
       [8201, 8800]
     ]);
-    const publicUpdate = plan.actions[6];
+    const publicUpdate = plan.actions[7];
     expect(publicUpdate.due).toBe(10001);
     expect(publicUpdate.deadline).toBeGreaterThan(publicUpdate.due);
     expect(publicUpdate.deadline).toBeLessThan(input.phases[3].end);
-    const research = plan.actions[7];
+    const research = plan.actions.find(
+      (action) => action.id === 'research-airdrop'
+    )!;
     expect(research.due).toBe(input.phases[3].end + 3600);
     expect(research.recipients).toEqual([]);
   });
@@ -186,7 +208,7 @@ describe('Drop Forge launch planning', () => {
     ).toThrow('Every prepared');
   });
   it('budgets each transition independently for its batch count', () => {
-    const rows = Array.from({ length: 101 }, (_, index) => ({
+    const rows = Array.from({ length: 201 }, (_, index) => ({
       phase: 'Public',
       wallet: '0x' + (index + 100).toString(16).padStart(40, '0'),
       count: 1,
@@ -204,7 +226,7 @@ describe('Drop Forge launch planning', () => {
         { ...testSource, edition: 1000, rows: [...testSource.rows, ...rows] },
         0
       )
-    ).toThrow('2 airdrop batches');
+    ).toThrow('3 airdrop batches');
   });
   it('reports batch quantities and descriptive links on the correct chain', () => {
     const data = buildLaunchPlan(testConfig, 1, testPlan, testSource, 0);
@@ -219,7 +241,8 @@ describe('Drop Forge launch planning', () => {
     expect(sepolia).toContain(
       '[Transaction](https://sepolia.etherscan.io/tx/' + hash + ')'
     );
-    expect(sepolia).toContain('recipient wallets: 1; tokens: 1');
+    expect(sepolia).toContain('1 wallet · 1 token');
+    expect(sepolia).not.toContain('Batch 1 of 1');
     expect(formatLaunchReport({ ...data, chain_id: 1 }, event)).toContain(
       '[Transaction](https://etherscan.io/tx/'
     );

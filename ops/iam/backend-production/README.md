@@ -116,8 +116,8 @@ References:
 
 `DropForgeHandlersDeployment.json` and `DropForgeDispatchDeployment.json` supplement the existing deploy role for
 `dropForgeLaunchHandler` and `memesDistributionHandler`: their stacks, artifact
-buckets, functions, logs/alarms, queues, schedule group and dedicated execution-role
-PassRole. It grants no KMS signing or IAM-policy-editing permission. An AWS
+buckets, functions, logs/alarms, queues, schedule group, four readiness schedules
+and dedicated execution- and delivery-role PassRole. It grants no KMS signing or IAM-policy-editing permission. An AWS
 administrator must review/apply this addition before rollout; the existing
 `manifest.json` and `verification.json` describe the earlier applied policies and
 do not claim this addition was deployed or AWS-validated. Check managed-policy

@@ -2,6 +2,8 @@ import { getMintSchedule } from '@/memes-calendar';
 import { LaunchPlanInput, LaunchSource } from '@/drop-forge/drop-forge.plan';
 import { LaunchSafetyError } from '@/drop-forge/drop-forge.types';
 
+export const STANDARD_MINT_PRICE_WEI = '65290000000000000';
+
 export function standardLaunchPlan(
   claim: number,
   source: LaunchSource,
@@ -29,7 +31,7 @@ export function standardLaunchPlan(
       name: phase.isPublic ? 'Public' : phaseName(index),
       start: phase.start.getTime() / 1000,
       end: phase.end.getTime() / 1000,
-      price_wei: '65290000000000000',
+      price_wei: STANDARD_MINT_PRICE_WEI,
       is_public: phase.isPublic
     }))
   };

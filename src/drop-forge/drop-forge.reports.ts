@@ -5,6 +5,20 @@ import {
   LaunchEvent
 } from '@/drop-forge/drop-forge.types';
 
+export function launchCardLink(chainId: number, claimId: number): string {
+  const site = chainId === 1 ? 'https://6529.io' : 'https://staging.6529.io';
+  return `[Claim #${claimId}](${site}/drop-forge/launch/${claimId})`;
+}
+
+function airdropGroup(data: LaunchData, action: LaunchAction): LaunchAction[] {
+  return data.actions.filter(
+    (it) =>
+      it.kind === 'AIRDROP' &&
+      it.phase === action.phase &&
+      it.label === action.label
+  );
+}
+
 function actionLabel(action: LaunchAction): string {
   return (action.label ?? 'Airdrops')
     .replace('Airdrop - Artist', 'Artist airdrops')
@@ -37,16 +51,11 @@ function confirmedWording(data: LaunchData, action: LaunchAction): string {
     case 'UPDATE':
       return `${data.phases[action.phase].name} configured`;
     default: {
-      const group = data.actions.filter(
-        (it) =>
-          it.kind === 'AIRDROP' &&
-          it.phase === action.phase &&
-          it.label === action.label
-      );
-      const progress = group.every((it) => it.state === 'CONFIRMED')
-        ? 'completed'
-        : `batch ${group.indexOf(action) + 1}/${group.length} confirmed`;
-      return `${actionLabel(action)} ${progress}`;
+      const group = airdropGroup(data, action);
+      const lastBatch =
+        group.at(-1)?.id === action.id &&
+        group.every((batch) => batch.state === 'CONFIRMED');
+      return `${actionLabel(action)} ${lastBatch ? 'completed' : 'confirmed'}`;
     }
   }
 }
@@ -69,17 +78,23 @@ function reportContent(
   return content;
 }
 
+function airdropCounts(wallets: number, tokens: number): string {
+  return `${wallets} ${wallets === 1 ? 'wallet' : 'wallets'} · ${tokens} ${tokens === 1 ? 'token' : 'tokens'}`;
+}
+
 function actionDetails(data: LaunchData, action: LaunchAction): string {
   if (action.kind === 'PAY_ARTIST')
     return action.payment
-      ? `Artist payment: ${formatEther(action.payment.amount_wei)} ETH to ${action.payment.recipient}.`
+      ? `Artist payment · ${formatEther(action.payment.amount_wei)} ETH`
       : 'Artist payment uses the recorded payee and final mint/subscription accounting.';
   if (action.kind === 'AIRDROP') {
-    const tokens = action.recipients.reduce(
-      (sum, recipient) => sum + recipient.amount,
-      0
-    );
-    return `Claim #${data.claim_id} — ${action.label ?? 'Subscription airdrops'}: recipient wallets: ${action.recipients.length}; tokens: ${tokens}.`;
+    const recipients = action.remaining_recipients ?? action.recipients;
+    const tokens = recipients.reduce((sum, row) => sum + row.amount, 0);
+    const group = airdropGroup(data, action);
+    const counts = airdropCounts(recipients.length, tokens);
+    return group.length > 1
+      ? `Batch ${group.indexOf(action) + 1} of ${group.length} · ${counts}`
+      : counts;
   }
   const phase = data.phases[action.phase];
   return `Phase ${phase.name}: mint window ${new Date(phase.start * 1000).toISOString()} to ${new Date(phase.end * 1000).toISOString()}.`;
@@ -89,7 +104,8 @@ export function formatLaunchReport(
   data: LaunchData,
   event: LaunchEvent
 ): string {
-  if (event.formatted) return event.content;
+  const card = launchCardLink(data.chain_id, data.claim_id);
+  if (event.formatted) return `${event.content}\n\n${card}`;
   const explorer =
     data.chain_id === 1
       ? 'https://etherscan.io'
@@ -100,15 +116,27 @@ export function formatLaunchReport(
   );
   const action = data.actions.find(
     (candidate) =>
-      event.content.includes(candidate.id + ':') ||
-      event.content.endsWith('for ' + candidate.id)
+      event.content.startsWith(`Confirmed ${candidate.id}:`) ||
+      event.content.startsWith(`Signed ${candidate.id}:`) ||
+      event.content.startsWith(`Reserved ${candidate.id}:`) ||
+      event.content.includes(`(${candidate.id})`) ||
+      event.content.includes(`for ${candidate.id}:`) ||
+      event.content.includes(`for ${candidate.id};`) ||
+      event.content.includes(`: ${candidate.id} confirmed after`)
   );
   const emoji = event.error ? '⚠️' : reportEmoji(event.content);
   const lines = [
-    `${emoji} **Claim #${data.claim_id}** · [Contract](${explorer}/address/${data.contract})`,
+    `${emoji} **${card}** · [Contract](${explorer}/address/${data.contract})`,
     action ? reportContent(data, event, action, content) : content
   ];
-  if (action) lines.push(actionDetails(data, action));
+  const details = action ? [actionDetails(data, action)] : [];
+  if (event.airdrop_counts) {
+    const { wallets, tokens } = event.airdrop_counts;
+    details.push(airdropCounts(wallets, tokens));
+  }
+  if (event.fee_wei !== undefined)
+    details.push(`Gas ${formatEther(event.fee_wei)} ETH`);
+  if (details.length) lines.push(details.join(' · '));
   return lines.join('\n');
 }
 

@@ -14,6 +14,7 @@ import { LaunchRecord, LaunchSafetyError } from '@/drop-forge/drop-forge.types';
 import { launchGroup } from '@/drop-forge/drop-forge.groups';
 import { disabledActionReason } from '@/drop-forge/drop-forge.settings';
 import { DropForgeSettingsEntity } from '@/entities/IDropForgeSettings';
+import { RECEIPT_POLL_SECONDS } from '@/drop-forge/drop-forge.plan';
 import { POST_MINT_PREVIEW_DELAY } from '@/drop-forge/drop-forge.preview';
 
 const scheduler = new SchedulerClient({});
@@ -199,7 +200,7 @@ function continuationDelay(
     !due.length ||
     due.some((action) => !action.retry_at || action.retry_at <= now)
   )
-    return 60;
+    return RECEIPT_POLL_SECONDS;
   return Math.min(
     900,
     Math.max(1, Math.min(...due.map((action) => action.retry_at!)) - now)

@@ -3,7 +3,7 @@ import { RequestContext } from '@/request.context';
 import { mintingClaimActionsDb } from '@/api/minting-claims/minting-claim-actions.db';
 import { isSupportedMintingClaimActionType } from '@/minting-claims/minting-claim-actions';
 
-function flagsForLabel(label: string): string[] {
+function flagsForLabel(label: string, separatePublic: boolean): string[] {
   switch (label) {
     case 'Pay Artist':
       return ['PAY_ARTIST'];
@@ -19,7 +19,7 @@ function flagsForLabel(label: string): string[] {
       const phase = /phase\s*(\d)/i.exec(label)?.[1];
       if (!phase) return [];
       const flags = [`PHASE${phase}_AIRDROP`];
-      if (phase === '2') flags.push('PUBLIC_PHASE_AIRDROP');
+      if (phase === '2' && !separatePublic) flags.push('PUBLIC_PHASE_AIRDROP');
       return flags;
     }
   }
@@ -38,7 +38,9 @@ function completedFlags(record: LaunchRecord): string[] {
   }
   return Array.from(groups)
     .filter(([, completed]) => completed)
-    .flatMap(([label]) => flagsForLabel(label));
+    .flatMap(([label]) =>
+      flagsForLabel(label, !!record.data.separate_public_airdrops)
+    );
 }
 
 async function mirrorFlags(

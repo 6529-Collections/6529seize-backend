@@ -203,6 +203,30 @@ it('credits a confirmed manual artist payment once without crediting airdrop all
   await reconcileManual(record, chain, testConfig);
   expect(inspect).toHaveBeenCalledTimes(1);
 });
+it('reports mined gas for a reverted manual artist payment without crediting it', async () => {
+  const { record, chain, receipt } = setup();
+  record.data.manual_transactions![0].action = 'PAY_ARTIST';
+  chain.inspectPayment = jest.fn().mockResolvedValue({
+    ...receipt,
+    status: 0,
+    fee_wei: '2100000000000000'
+  });
+
+  await expect(reconcileManual(record, chain, testConfig)).rejects.toThrow(
+    'artist payment reverted'
+  );
+  expect(record.data.manual_transactions![0].state).toBe('FAILED');
+  expect(
+    record.data.actions.find((action) => action.kind === 'PAY_ARTIST')?.state
+  ).toBe('PENDING');
+  expect(record.data.events).toEqual([
+    expect.objectContaining({
+      content: expect.stringContaining('manual-hash'),
+      error: true,
+      fee_wei: '2100000000000000'
+    })
+  ]);
+});
 it('defers unconfirmed artist payment evidence and does not release a signed intent', async () => {
   const { record, chain, receipt } = setup();
   record.data.manual_transactions![0].action = 'PAY_ARTIST';

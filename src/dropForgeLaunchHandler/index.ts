@@ -20,12 +20,17 @@ import { readForgeSettings } from '@/drop-forge/drop-forge.settings';
 import { processForgeFunding } from '@/drop-forge/drop-forge.funding';
 import { doInDbContext } from '@/secrets';
 import { wrapLambdaHandler } from '@/sentry.context';
+import { runReadinessDelivery } from '@/drop-forge/drop-forge.readiness';
 import { recordPostMintPreview } from '@/drop-forge/drop-forge.preview';
 
 const logger = Logger.get('DROP_FORGE_LAUNCH_HANDLER');
 export async function runLaunchDelivery(
   delivery: ForgeDelivery
 ): Promise<void> {
+  if (delivery.id.startsWith('readiness:')) {
+    await runReadinessDelivery(delivery.id);
+    return;
+  }
   if (delivery.id.startsWith('funding:')) {
     await processForgeFunding(getDropForgeConfig(), delivery);
     return;

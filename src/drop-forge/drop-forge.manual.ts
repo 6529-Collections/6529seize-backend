@@ -20,17 +20,20 @@ import {
 function matchesManualAction(
   label: string | undefined,
   phase: number,
-  hint: string | undefined
+  hint: string | undefined,
+  separatePublic: boolean
 ): boolean {
   if (!hint) return true;
   if (hint === 'ARTIST_AIRDROP') return label === 'Airdrop - Artist';
   if (hint === 'TEAM_AIRDROP') return label === 'Airdrop - Team';
+  const isPublic = label?.toLowerCase().includes('public') === true;
   if (hint === 'PUBLIC_PHASE_AIRDROP')
-    return phase === 2 || label?.toLowerCase().includes('public') === true;
+    return isPublic || (!separatePublic && phase === 2);
   const index = /^PHASE([012])_AIRDROP$/.exec(hint)?.[1];
   return (
     index !== undefined &&
     phase === Number(index) &&
+    !isPublic &&
     label?.includes('Subscription') === true
   );
 }
@@ -201,7 +204,12 @@ function creditPlannedAirdrops(
   const available = availableAirdrops(record);
   if (!proof.action) assertUnambiguousAllocations(available, allocations);
   const selected = available.filter((it) =>
-    matchesManualAction(it.label, it.phase, proof.action)
+    matchesManualAction(
+      it.label,
+      it.phase,
+      proof.action,
+      !!record.data.separate_public_airdrops
+    )
   );
   assertAvailableAllocations(selected, allocations);
   for (const action of selected)
@@ -271,8 +279,38 @@ function recordManualProof(
   proof.block_hash = receipt.blockHash;
   addLaunchEvent(
     record,
-    `Claim #${record.data.claim_id}: Manual ${decoded.name} confirmed: ${proof.hash}`
+    `Claim #${record.data.claim_id}: Manual ${decoded.name} confirmed: ${proof.hash}`,
+    false,
+    {
+      fee_wei: receipt.fee_wei,
+      airdrop_counts:
+        decoded.name === 'airdrop'
+          ? {
+              wallets: new Set(decoded.args[2] as string[]).size,
+              tokens: (decoded.args[3] as bigint[]).reduce(
+                (total, count) => total + Number(count),
+                0
+              )
+            }
+          : undefined
+    }
   );
+}
+
+function recordManualRevert(
+  record: LaunchRecord,
+  proof: ManualProof,
+  receipt: ChainReceipt,
+  operation: string,
+  actionId?: string
+): never {
+  proof.state = 'FAILED';
+  proof.block_number = receipt.blockNumber;
+  proof.block_hash = receipt.blockHash;
+  const action = actionId ? ` (${actionId})` : '';
+  const message = `Manual ${operation} reverted${action}: ${proof.hash}`;
+  addLaunchEvent(record, message, true, { fee_wei: receipt.fee_wei });
+  throw new LaunchSafetyError(message);
 }
 
 async function reconcileArtistPayment(
@@ -289,7 +327,7 @@ async function reconcileArtistPayment(
   const receipt = await chain.inspectPayment(record.data, action, proof.hash);
   if (!receipt || receipt.confirmations < config.confirmations) return false;
   if (receipt.status !== 1)
-    throw new LaunchSafetyError('Manual artist payment reverted');
+    recordManualRevert(record, proof, receipt, 'artist payment', action.id);
   action.state = 'CONFIRMED';
   action.hash = proof.hash;
   action.block_number = receipt.blockNumber;
@@ -299,7 +337,12 @@ async function reconcileArtistPayment(
   proof.method = 'PAY_ARTIST';
   proof.block_number = receipt.blockNumber;
   proof.block_hash = receipt.blockHash;
-  reportActionSkip(record, action);
+  addLaunchEvent(
+    record,
+    `Claim #${record.data.claim_id}: Manual artist payment confirmed (${action.id}): ${proof.hash}`,
+    false,
+    { fee_wei: receipt.fee_wei }
+  );
   return true;
 }
 
@@ -330,12 +373,8 @@ export async function reconcileManual(
     );
     const receipt = evidence.receipt;
     if (!receipt || receipt.confirmations < config.confirmations) return false;
-    if (receipt.status !== 1) {
-      proof.state = 'FAILED';
-      proof.block_number = receipt.blockNumber;
-      proof.block_hash = receipt.blockHash;
-      throw new LaunchSafetyError(`Manual transaction reverted: ${proof.hash}`);
-    }
+    if (receipt.status !== 1)
+      recordManualRevert(record, proof, receipt, 'transaction');
     const decoded = claimAbi.parseTransaction({ data: evidence.calldata })!;
     applyManualTransaction(record, decoded, proof, receipt, publishedMetadata);
   }

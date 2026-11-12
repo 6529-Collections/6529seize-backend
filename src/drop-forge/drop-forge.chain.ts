@@ -70,6 +70,7 @@ export interface ChainReceipt {
   blockNumber: number;
   blockHash: string;
   confirmations: number;
+  fee_wei?: string;
 }
 export interface LaunchChain {
   verifySettlement?(
@@ -173,6 +174,110 @@ export async function creatorAdmin(
   return adminAbi.decodeFunctionResult('isAdmin', result)[0] === true;
 }
 
+export async function readDropForgeClaim(
+  provider: JsonRpcProvider,
+  data: Pick<LaunchData, 'contract' | 'claim_id' | 'proxy'>,
+  blockTag?: number
+): Promise<Result | null> {
+  try {
+    const result = await rpcWithDeadline(
+      provider.call({
+        to: data.proxy,
+        blockTag,
+        data: claimAbi.encodeFunctionData('getClaim', [
+          data.contract,
+          data.claim_id
+        ])
+      })
+    );
+    return claimAbi.decodeFunctionResult('getClaim', result)[0] as Result;
+  } catch (error) {
+    if (
+      isError(error, 'CALL_EXCEPTION') &&
+      (error.data === claimAbi.getError('ClaimNotInitialized')?.selector ||
+        error.reason === 'Claim not initialized')
+    )
+      return null;
+    throw error;
+  }
+}
+
+export async function readDropForgeReceipt(
+  provider: JsonRpcProvider,
+  hash: string
+): Promise<ChainReceipt | null> {
+  const receipt = await rpcWithDeadline(provider.getTransactionReceipt(hash));
+  if (!receipt) return null;
+  const block = await rpcWithDeadline(provider.getBlock(receipt.blockNumber));
+  if (!block?.hash)
+    throw new LaunchRpcUnavailableError(
+      'Receipt block is unavailable; transaction evidence and wallet reservation retained for retry'
+    );
+  if (block.hash !== receipt.blockHash) return null;
+  return {
+    status: receipt.status,
+    blockNumber: receipt.blockNumber,
+    blockHash: receipt.blockHash,
+    confirmations: await rpcWithDeadline(receipt.confirmations()),
+    fee_wei: (receipt.gasUsed * receipt.gasPrice).toString()
+  };
+}
+
+export async function inspectDropForgeTransaction(
+  config: Pick<DropForgeConfig, 'chainId' | 'proxy' | 'confirmations'>,
+  provider: JsonRpcProvider,
+  contract: string,
+  claim: number,
+  hash: string,
+  sender?: string,
+  readReceipt = (hash: string) => readDropForgeReceipt(provider, hash)
+): Promise<{ calldata: string; receipt: ChainReceipt | null }> {
+  const tx = await rpcWithDeadline(provider.getTransaction(hash));
+  if (!tx)
+    throw new LaunchSafetyError(
+      'Manual transaction is not yet available; retain its hash and retry'
+    );
+  const decoded = claimAbi.parseTransaction({
+    data: tx.data,
+    value: tx.value
+  });
+  if (
+    tx.chainId !== BigInt(config.chainId) ||
+    tx.to?.toLowerCase() !== config.proxy.toLowerCase() ||
+    tx.value !== BigInt(0) ||
+    !decoded ||
+    !['initializeClaim', 'updateClaim', 'airdrop'].includes(decoded.name) ||
+    decoded.args[0].toLowerCase() !== contract.toLowerCase() ||
+    Number(decoded.args[1]) !== claim ||
+    (sender && tx.from.toLowerCase() !== sender.toLowerCase())
+  )
+    throw new LaunchSafetyError(
+      'Manual transaction does not match this wallet, chain, proxy and claim'
+    );
+  const receipt = await readReceipt(hash);
+  if (
+    decoded.name === 'airdrop' &&
+    receipt?.status === 1 &&
+    receipt.confirmations >= config.confirmations
+  ) {
+    const mined = await rpcWithDeadline(provider.getTransactionReceipt(hash));
+    if (mined?.blockHash !== receipt.blockHash)
+      throw new LaunchSafetyError(
+        'Manual airdrop receipt changed during verification'
+      );
+    const recipients = (decoded.args[2] as string[]).map((address, index) => ({
+      address,
+      amount: Number(decoded.args[3][index])
+    }));
+    verifyRecoveryMints(
+      { contract, claim_id: claim },
+      { recipients },
+      mined.logs
+    );
+  }
+  return { calldata: tx.data, receipt };
+}
+
 export class EthereumLaunchChain implements LaunchChain {
   constructor(
     private readonly config: DropForgeConfig,
@@ -191,25 +296,8 @@ export class EthereumLaunchChain implements LaunchChain {
       this.provider.getTransactionCount(address, pending ? 'pending' : 'latest')
     );
   }
-  async receipt(hash: string): Promise<ChainReceipt | null> {
-    const receipt = await rpcWithDeadline(
-      this.provider.getTransactionReceipt(hash)
-    );
-    if (!receipt) return null;
-    const block = await rpcWithDeadline(
-      this.provider.getBlock(receipt.blockNumber)
-    );
-    if (!block?.hash)
-      throw new LaunchRpcUnavailableError(
-        'Receipt block is unavailable; transaction evidence and wallet reservation retained for retry'
-      );
-    if (block.hash !== receipt.blockHash) return null;
-    return {
-      status: receipt.status,
-      blockNumber: receipt.blockNumber,
-      blockHash: receipt.blockHash,
-      confirmations: await rpcWithDeadline(receipt.confirmations())
-    };
+  receipt(hash: string): Promise<ChainReceipt | null> {
+    return readDropForgeReceipt(this.provider, hash);
   }
   async inspectRecovery(hash: string): Promise<string> {
     const tx = await rpcWithDeadline(this.provider.getTransaction(hash));
@@ -543,86 +631,27 @@ export class EthereumLaunchChain implements LaunchChain {
         'Runtime configuration differs from the frozen launch'
       );
   }
-  async readClaim(
+  readClaim(
     data: Pick<LaunchData, 'contract' | 'claim_id' | 'proxy'>,
     blockTag?: number
   ): Promise<Result | null> {
-    try {
-      const result = await rpcWithDeadline(
-        this.provider.call({
-          to: data.proxy,
-          blockTag,
-          data: claimAbi.encodeFunctionData('getClaim', [
-            data.contract,
-            data.claim_id
-          ])
-        })
-      );
-      return claimAbi.decodeFunctionResult('getClaim', result)[0] as Result;
-    } catch (error) {
-      if (
-        isError(error, 'CALL_EXCEPTION') &&
-        (error.data === claimAbi.getError('ClaimNotInitialized')?.selector ||
-          error.reason === 'Claim not initialized')
-      )
-        return null;
-      throw error;
-    }
+    return readDropForgeClaim(this.provider, data, blockTag);
   }
-  async inspectTransaction(
+  inspectTransaction(
     contract: string,
     claim: number,
     hash: string,
     sender?: string
   ): Promise<{ calldata: string; receipt: ChainReceipt | null }> {
-    const tx = await rpcWithDeadline(this.provider.getTransaction(hash));
-    if (!tx)
-      throw new LaunchSafetyError(
-        'Manual transaction is not yet available; retain its hash and retry'
-      );
-    const decoded = claimAbi.parseTransaction({
-      data: tx.data,
-      value: tx.value
-    });
-    if (
-      tx.chainId !== BigInt(this.config.chainId) ||
-      tx.to?.toLowerCase() !== this.config.proxy.toLowerCase() ||
-      tx.value !== BigInt(0) ||
-      !decoded ||
-      !['initializeClaim', 'updateClaim', 'airdrop'].includes(decoded.name) ||
-      decoded.args[0].toLowerCase() !== contract.toLowerCase() ||
-      Number(decoded.args[1]) !== claim ||
-      (sender && tx.from.toLowerCase() !== sender.toLowerCase())
-    )
-      throw new LaunchSafetyError(
-        'Manual transaction does not match this wallet, chain, proxy and claim'
-      );
-    const receipt = await this.receipt(hash);
-    if (
-      decoded.name === 'airdrop' &&
-      receipt?.status === 1 &&
-      receipt.confirmations >= this.config.confirmations
-    ) {
-      const mined = await rpcWithDeadline(
-        this.provider.getTransactionReceipt(hash)
-      );
-      if (mined?.blockHash !== receipt.blockHash)
-        throw new LaunchSafetyError(
-          'Manual airdrop receipt changed during verification'
-        );
-      const recipients = (decoded.args[2] as string[]).map(
-        (address, index) => ({
-          address,
-          amount: Number(decoded.args[3][index])
-        })
-      );
-      verifyRecoveryMints(
-        { contract, claim_id: claim },
-        { recipients },
-        mined.logs
-      );
-    }
-    return { calldata: tx.data, receipt };
+    return inspectDropForgeTransaction(
+      this.config,
+      this.provider,
+      contract,
+      claim,
+      hash,
+      sender,
+      (txHash) => this.receipt(txHash)
+    );
   }
   private async verifyArtistPayment(
     data: LaunchData,

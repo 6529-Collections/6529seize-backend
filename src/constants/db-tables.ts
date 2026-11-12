@@ -326,6 +326,7 @@ export const DROP_FORGE_JOBS_TABLE = 'drop_forge_jobs';
 export const DROP_FORGE_EVIDENCE_TABLE = 'drop_forge_evidence';
 export const DROP_FORGE_SETTINGS_TABLE = 'drop_forge_settings';
 export const DROP_FORGE_FUNDING_TABLE = 'drop_forge_funding';
+export const DROP_FORGE_READINESS_TABLE = 'drop_forge_readiness_checks';
 export const TRANSACTION_SCAN_CHECKPOINTS_TABLE =
   'transaction_scan_checkpoints';
 // End-to-end encrypted DMs and groups (D109). The server stores ciphertext

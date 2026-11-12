@@ -523,7 +523,8 @@ export class DropForgeRecovery {
     addLaunchEvent(
       record,
       `Claim #${record.data.claim_id}: Recovery ${recovery.outcome} for ${action.id}; winning transaction ${attempt.hash}; ${evidence.total} total minted.`,
-      recovery.outcome !== 'EXECUTED'
+      recovery.outcome !== 'EXECUTED',
+      { fee_wei: evidence.receipt.fee_wei }
     );
     await this.repository.save(record, ctx);
   }

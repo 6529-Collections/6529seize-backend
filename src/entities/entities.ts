@@ -297,6 +297,7 @@ export { SubscriptionCacheInvalidationEntity } from './ISubscriptionCacheInvalid
 export * from './IDropForgeLaunch';
 export * from './IDropForgeEvidence';
 export * from './IDropForgeSettings';
+export * from './IDropForgeReadinessCheck';
 export { DeviceGrantEntity } from './IDeviceGrant';
 export { DeviceSignedEventEntity } from './IDeviceSignedEvent';
 export { DropAuthorSignatureEntity } from './IDropAuthorSignature';

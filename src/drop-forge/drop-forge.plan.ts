@@ -133,8 +133,15 @@ function buildPhases(
   return phases;
 }
 
+export const PUBLIC_SUBSCRIPTION_AIRDROP_LABEL = 'Public Subscription Airdrops';
+
+type AirdropGroup = {
+  label: string;
+  recipients: LaunchAction['recipients'];
+};
+
 function airdropActions(
-  groups: Array<{ label: string; recipients: LaunchAction['recipients'] }>,
+  groups: AirdropGroup[],
   phase: number,
   due: number,
   deadline: number
@@ -160,21 +167,15 @@ function buildPhaseActions(
   config: DropForgeConfig,
   input: LaunchPlanInput,
   phases: LaunchPhase[],
-  recipients: LaunchAction['recipients'][],
-  categoryRecipients: Array<{
-    label: string;
-    recipients: LaunchAction['recipients'];
-  }>
+  phaseGroups: AirdropGroup[][],
+  categoryRecipients: AirdropGroup[]
 ): LaunchAction[] {
   const actions: LaunchAction[] = [];
   for (let phase = 0; phase < phases.length; phase++) {
     const due = phase === 0 ? input.initialize_at : phases[phase - 1].end + 1;
     const groups = [
       ...(phase === 0 ? categoryRecipients : []),
-      {
-        label: `${phases[phase].name} Subscription Airdrops`,
-        recipients: recipients[phase]
-      }
+      ...phaseGroups[phase]
     ];
     const batches = groups.reduce(
       (n, group) => n + Math.ceil(group.recipients.length / 100),
@@ -226,25 +227,29 @@ export function buildLaunchPlan(
       (name === 'Airdrop - Artist' && input.include_artist_airdrops) ||
       (name === 'Airdrop - Team' && input.include_team_airdrops)
   );
-  // Public subscriptions belong to the preceding allowlist transition when
-  // public minting starts immediately after that window (the existing UI flow).
-  const recipients = phases.map((phase, index) => {
-    const selectedNames = [phase.name];
-
-    const next = input.phases[index + 1];
-    if (next?.is_public && next.start === phase.end)
-      selectedNames.push(next.name);
-    const previous = phases[index - 1];
-    if (input.phases[index].is_public && previous?.end === phase.start)
+  // A gapless Public phase shares the preceding transition's time window.
+  // Keep its allocations in their own batches, even for overlapping wallets.
+  const phaseGroups = phases.map((phase, index): AirdropGroup[] => {
+    if (input.phases[index].is_public && phases[index - 1]?.end === phase.start)
       return [];
-    return deriveAirdropRecipients(source.rows, selectedNames);
+    const next = input.phases[index + 1];
+    const group = (name: string, isPublic: boolean) => ({
+      label: isPublic
+        ? PUBLIC_SUBSCRIPTION_AIRDROP_LABEL
+        : `${name} Subscription Airdrops`,
+      recipients: deriveAirdropRecipients(source.rows, [name])
+    });
+    const current = group(phase.name, input.phases[index].is_public);
+    return next?.is_public && next.start === phase.end
+      ? [current, group(next.name, true)]
+      : [current];
   });
   const categoryRecipients = categories.map((category) => ({
     label: category,
     recipients: deriveAirdropRecipients(source.rows, [category])
   }));
   const allRecipients = [
-    ...recipients.flat(),
+    ...phaseGroups.flatMap((groups) => groups.flatMap((it) => it.recipients)),
     ...categoryRecipients.flatMap((it) => it.recipients)
   ];
   if (allRecipients.reduce((sum, row) => sum + row.amount, 0) > source.edition)
@@ -257,7 +262,7 @@ export function buildLaunchPlan(
     config,
     input,
     phases,
-    recipients,
+    phaseGroups,
     categoryRecipients
   );
   const finalPhase = phases.length - 1;
@@ -286,6 +291,7 @@ export function buildLaunchPlan(
   );
   return {
     plan_version: DROP_FORGE_PLAN_VERSION,
+    separate_public_airdrops: true,
     ...(input.calendar ? { calendar: { ...input.calendar } } : {}),
     chain_id: config.chainId,
     contract: config.creator,
@@ -324,14 +330,23 @@ function deriveAirdropRecipients(
   })).sort((a, b) => a.address.localeCompare(b.address));
 }
 
-// Ethereum slots plus one scheduler interval per serial transaction and the
-// existing two-minute no-new-submission cutoff. This is admission budgeting,
-// not a guarantee that a network or reporting outage will fit the window.
+export const RECEIPT_POLL_SECONDS = 15;
+export const SUBMISSION_CUTOFF_SECONDS = 120;
+
+// Budget the scheduler's delivery window once. Every transaction must have
+// time to confirm, and the last transaction must start before the cutoff.
 export function launchPreparationSeconds(
   config: DropForgeConfig,
   transactions: number
 ): number {
-  return transactions * (config.confirmations * 12 + 60) + 120;
+  const confirmation = config.confirmations * 12 + RECEIPT_POLL_SECONDS;
+  return (
+    60 +
+    Math.max(
+      transactions * confirmation,
+      (transactions - 1) * confirmation + SUBMISSION_CUTOFF_SECONDS
+    )
+  );
 }
 
 export const hashLaunchDistribution = (source: LaunchSource) =>

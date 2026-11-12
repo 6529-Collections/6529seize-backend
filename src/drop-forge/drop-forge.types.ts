@@ -91,6 +91,8 @@ export interface LaunchAction {
 }
 export interface LaunchEvent {
   formatted?: boolean;
+  fee_wei?: string;
+  airdrop_counts?: { wallets: number; tokens: number };
   id: string;
   content: string;
   error: boolean;
@@ -105,6 +107,7 @@ export interface LaunchData {
     evidence?: SupplyEvidence;
   };
   plan_version?: number;
+  separate_public_airdrops?: true;
   managed?: boolean;
   completion_flags?: string[];
   manual_transactions?: Array<{

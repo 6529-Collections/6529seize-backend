@@ -24,6 +24,7 @@ import {
 } from '@/drop-forge/drop-forge.evidence';
 import { LaunchRecord, LaunchSafetyError } from '@/drop-forge/drop-forge.types';
 import { RequestContext } from '@/request.context';
+import { readForgeSettings } from '@/drop-forge/drop-forge.settings';
 
 export async function readyLaunch(
   claim: number,
@@ -33,6 +34,8 @@ export async function readyLaunch(
   const id = launchId(config.chainId, config.creator, claim);
   const existing = await dropForgeRepository.find(id, ctx);
   if (existing && existing.state !== 'DRAFT') return existing;
+  if (!(await readForgeSettings(config, ctx)).automation_enabled)
+    throw new LaunchSafetyError('Automatic launch is off');
   const source = await dropForgeRepository.source(config.creator, claim, ctx);
   if (!source.metadata)
     throw new LaunchSafetyError('Publish Craft changes before launching');
@@ -50,6 +53,8 @@ export async function readyLaunch(
       // The preparation lock serializes duplicate Ready clicks with publication.
       const current = await dropForgeRepository.find(id, txCtx);
       if (current && current.state !== 'DRAFT') return current;
+      if (!(await readForgeSettings(config, txCtx)).automation_enabled)
+        throw new LaunchSafetyError('Automatic launch is off');
       if (
         !sourceMatchesLaunch(
           await dropForgeRepository.source(config.creator, claim, txCtx),

@@ -20,6 +20,7 @@ import {
   testSource,
   testPlan
 } from '@/drop-forge/drop-forge.test-fixtures';
+import * as settings from '@/drop-forge/drop-forge.settings';
 import { clearDropForgeTestTables } from '@/drop-forge/drop-forge.db-test-fixtures';
 beforeEach(async () => {
   await clearDropForgeTestTables();
@@ -41,6 +42,14 @@ beforeEach(async () => {
 });
 afterEach(() => {
   jest.restoreAllMocks();
+});
+it('rejects a new Ready request when Automatic launch is off', async () => {
+  await settings.updateForgeSettings(testConfig, testConfig.signer, {
+    revision: 0,
+    automation_enabled: false
+  });
+  await expect(readyLaunch(1, {})).rejects.toThrow('Automatic launch is off');
+  expect(wake.wakeDropForge).not.toHaveBeenCalled();
 });
 it('accepts concurrent Ready clicks as one immediately due launch', async () => {
   const [a, b] = await Promise.all([readyLaunch(1, {}), readyLaunch(1, {})]);

@@ -12,7 +12,11 @@ import { DropForgeConfig } from '@/drop-forge/drop-forge.config';
 import { LaunchChain, ChainReceipt } from '@/drop-forge/drop-forge.chain';
 import { mirrorCompletion } from '@/drop-forge/drop-forge.completion';
 import { reconcileManual } from '@/drop-forge/drop-forge.manual';
-import { sourceMatchesLaunch } from '@/drop-forge/drop-forge.plan';
+import {
+  PUBLIC_SUBSCRIPTION_AIRDROP_LABEL,
+  sourceMatchesLaunch,
+  SUBMISSION_CUTOFF_SECONDS
+} from '@/drop-forge/drop-forge.plan';
 import {
   addLaunchEvent,
   DropForgeRepository,
@@ -41,6 +45,25 @@ type Work = { record: LaunchRecord; action: LaunchAction };
 type PendingSigner = { launch_id: string | null; action_id: string | null };
 const runnable = (record: LaunchRecord) =>
   ['ARMED', 'RUNNING'].includes(record.state);
+
+export function waitingForPhaseAirdrops(
+  record: LaunchRecord,
+  action: LaunchAction
+): boolean {
+  return (
+    action.label === PUBLIC_SUBSCRIPTION_AIRDROP_LABEL &&
+    !!record.data.separate_public_airdrops &&
+    record.data.actions.some(
+      (earlier) =>
+        earlier.phase === action.phase &&
+        earlier.state !== 'CONFIRMED' &&
+        (earlier.kind === 'UPDATE' ||
+          (earlier.kind === 'AIRDROP' &&
+            earlier.label !== action.label &&
+            earlier.label?.endsWith(' Subscription Airdrops')))
+    )
+  );
+}
 
 function matchesObservedProof(
   record: LaunchRecord,
@@ -230,7 +253,7 @@ export class DropForgeWorker {
     const expiredUnsigned =
       action.state === 'RESERVED' &&
       runnable(record) &&
-      (await this.chain.now()) >= action.deadline - 120;
+      (await this.chain.now()) >= action.deadline - SUBMISSION_CUTOFF_SECONDS;
     if (
       action.state === 'RESERVED' &&
       (!runnable(record) ||
@@ -368,6 +391,7 @@ export class DropForgeWorker {
       if ((action.retry_at ?? 0) > now) return null;
       if (await this.observe(record, action)) return null;
       if (this.deferAction(record, action, now)) return null;
+      if (waitingForPhaseAirdrops(record, action)) return null;
       work = await this.prepareAction(
         record,
         action,
@@ -376,7 +400,10 @@ export class DropForgeWorker {
         artistPaymentLimit(settings)
       );
     } catch (error) {
-      if (now < action.deadline - 120 || !action.window_reported) {
+      if (
+        now < action.deadline - SUBMISSION_CUTOFF_SECONDS ||
+        !action.window_reported
+      ) {
         reportActionFailure(
           record,
           action,
@@ -386,7 +413,8 @@ export class DropForgeWorker {
             : 'RPC or readiness check failed',
           error
         );
-        if (now >= action.deadline - 120) action.window_reported = true;
+        if (now >= action.deadline - SUBMISSION_CUTOFF_SECONDS)
+          action.window_reported = true;
       }
     }
     return work;
@@ -442,7 +470,10 @@ export class DropForgeWorker {
     action: LaunchAction,
     now: number
   ): boolean {
-    if (now >= action.deadline - 120 && !action.late_delivery) {
+    if (
+      now >= action.deadline - SUBMISSION_CUTOFF_SECONDS &&
+      !action.late_delivery
+    ) {
       if (!action.window_reported) {
         reportActionFailure(
           record,
@@ -517,7 +548,10 @@ export class DropForgeWorker {
     let signed: Transaction;
     let raw: string;
     try {
-      if ((await this.chain.now()) >= work.action.deadline - 120)
+      if (
+        (await this.chain.now()) >=
+        work.action.deadline - SUBMISSION_CUTOFF_SECONDS
+      )
         throw new LaunchSafetyError('Signing deadline passed');
       const settings = await readForgeSettings(this.config);
       if (disabledActionReason(settings, work.action)) {
@@ -598,7 +632,10 @@ export class DropForgeWorker {
           await this.repository.save(record, ctx);
           return;
         }
-        if ((await this.chain.now()) >= action.deadline - 120) {
+        if (
+          (await this.chain.now()) >=
+          action.deadline - SUBMISSION_CUTOFF_SECONDS
+        ) {
           action.state = 'PENDING';
           delete action.unsigned_tx;
           pending.launch_id = null;
@@ -723,7 +760,10 @@ export class DropForgeWorker {
           await this.repository.save(record, ctx);
           return;
         }
-        if ((await this.chain.now()) >= action.deadline - 120) {
+        if (
+          (await this.chain.now()) >=
+          action.deadline - SUBMISSION_CUTOFF_SECONDS
+        ) {
           setLaunchState(
             record,
             'BLOCKED',
@@ -806,7 +846,8 @@ export class DropForgeWorker {
           error instanceof Error
             ? error.message
             : 'Settlement verification failed',
-          error
+          error,
+          receipt.fee_wei
         );
         action.settlement_retry_at = action.retry_at;
         if (!(error instanceof SupplyEvidenceError)) {
@@ -841,14 +882,18 @@ export class DropForgeWorker {
         record.data.metadata = action.target_metadata!;
       addLaunchEvent(
         record,
-        `Confirmed ${action.id}: ${action.hash} (${receipt.confirmations} confirmations)`
+        `Confirmed ${action.id}: ${action.hash} (${receipt.confirmations} confirmations)`,
+        false,
+        { fee_wei: receipt.fee_wei }
       );
       delete action.attempt_error;
       delete action.retry_at;
       if (confirmedAt >= action.deadline)
         addLaunchEvent(
           record,
-          `Claim #${record.data.claim_id}: ${action.id} confirmed after its deadline; completed work will not be repeated. ${action.hash}`
+          `Claim #${record.data.claim_id}: ${action.id} confirmed after its deadline; completed work will not be repeated. ${action.hash}`,
+          false,
+          { fee_wei: receipt.fee_wei }
         );
     } else {
       action.recovery = {
@@ -862,7 +907,9 @@ export class DropForgeWorker {
         record,
         action,
         confirmedAt,
-        `Transaction reverted: ${action.hash}; manual recovery required`
+        `Transaction reverted: ${action.hash}; manual recovery required`,
+        undefined,
+        receipt.fee_wei
       );
     }
   }

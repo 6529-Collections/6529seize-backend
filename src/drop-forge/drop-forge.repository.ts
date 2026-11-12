@@ -9,6 +9,7 @@ import {
 import { DbPoolName } from '@/db-query.options';
 import {
   LaunchRecord,
+  LaunchEvent,
   LaunchData,
   LaunchState,
   DistributionRow,
@@ -350,9 +351,11 @@ export const dropForgeRepository = new DropForgeRepository();
 export function addLaunchEvent(
   record: LaunchRecord,
   content: string,
-  error = false
+  error = false,
+  details?: Pick<LaunchEvent, 'fee_wei' | 'airdrop_counts'>
 ): void {
   record.data.events.push({
+    ...details,
     id: `${record.id}:${record.data.events.length}`,
     content,
     error,

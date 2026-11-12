@@ -36,6 +36,57 @@ resources:
       Type: AWS::Scheduler::ScheduleGroup
       Properties:
         Name: drop-forge-${sls:stage}
+    ReadinessPhase0:
+      Type: AWS::Scheduler::Schedule
+      Properties:
+        Name: readiness-phase-0
+        GroupName: !Ref LaunchScheduleGroup
+        ScheduleExpression: cron(30 17 * * ? *)
+        ScheduleExpressionTimezone: Europe/Athens
+        FlexibleTimeWindow: { Mode: 'OFF' }
+        Target:
+          <<: &readinessTarget
+            Arn: !GetAtt WorkQueue.Arn
+            RoleArn: ${file(../../serverless-config/${sls:stage}/drop-forge.js):schedulerRole}
+            DeadLetterConfig:
+              Arn: !GetAtt WorkDLQ.Arn
+            RetryPolicy:
+              MaximumEventAgeInSeconds: 300
+              MaximumRetryAttempts: 2
+          Input: '{"id":"readiness:0:<aws.scheduler.scheduled-time>","revision":0}'
+    ReadinessPhase1:
+      Type: AWS::Scheduler::Schedule
+      Properties:
+        Name: readiness-phase-1
+        GroupName: !Ref LaunchScheduleGroup
+        ScheduleExpression: cron(28 18 * * ? *)
+        ScheduleExpressionTimezone: Europe/Athens
+        FlexibleTimeWindow: { Mode: 'OFF' }
+        Target:
+          <<: *readinessTarget
+          Input: '{"id":"readiness:1:<aws.scheduler.scheduled-time>","revision":0}'
+    ReadinessPhase2:
+      Type: AWS::Scheduler::Schedule
+      Properties:
+        Name: readiness-phase-2
+        GroupName: !Ref LaunchScheduleGroup
+        ScheduleExpression: cron(58 18 * * ? *)
+        ScheduleExpressionTimezone: Europe/Athens
+        FlexibleTimeWindow: { Mode: 'OFF' }
+        Target:
+          <<: *readinessTarget
+          Input: '{"id":"readiness:2:<aws.scheduler.scheduled-time>","revision":0}'
+    ReadinessPhase3:
+      Type: AWS::Scheduler::Schedule
+      Properties:
+        Name: readiness-phase-3
+        GroupName: !Ref LaunchScheduleGroup
+        ScheduleExpression: cron(22 19 * * ? *)
+        ScheduleExpressionTimezone: Europe/Athens
+        FlexibleTimeWindow: { Mode: 'OFF' }
+        Target:
+          <<: *readinessTarget
+          Input: '{"id":"readiness:3:<aws.scheduler.scheduled-time>","revision":0}'
     WorkQueue:
       Type: AWS::SQS::Queue
       Properties:

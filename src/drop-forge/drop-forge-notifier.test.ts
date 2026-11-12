@@ -85,7 +85,7 @@ it('posts new preview output only in the operations wave and tags only failures'
       testConfig.waveId
     ]);
     expect(messages[0].parts[0].content).toBe(
-      '🔔 **Public mint closed**\n\nResearch: 18 editions'
+      '🔔 **Public mint closed**\n\nResearch: 18 editions\n\n[Claim #1](https://staging.6529.io/drop-forge/launch/1)'
     );
     expect(messages[1].parts[0].content).toContain(DROP_FORGE_ALERT_MENTION);
     expect(signForgeReport).toHaveBeenCalledWith(

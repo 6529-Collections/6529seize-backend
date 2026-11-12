@@ -123,6 +123,40 @@
           "aws:RequestedRegion": "eu-west-1"
         }
       }
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "scheduler:CreateSchedule",
+        "scheduler:DeleteSchedule",
+        "scheduler:GetSchedule",
+        "scheduler:UpdateSchedule"
+      ],
+      "Resource": [
+        "arn:aws:scheduler:eu-west-1:987989283142:schedule/drop-forge-staging/readiness-phase-0",
+        "arn:aws:scheduler:eu-west-1:987989283142:schedule/drop-forge-staging/readiness-phase-1",
+        "arn:aws:scheduler:eu-west-1:987989283142:schedule/drop-forge-staging/readiness-phase-2",
+        "arn:aws:scheduler:eu-west-1:987989283142:schedule/drop-forge-staging/readiness-phase-3"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestedRegion": "eu-west-1"
+        }
+      }
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "iam:PassRole"
+      ],
+      "Resource": [
+        "arn:aws:iam::987989283142:role/drop-forge-staging-scheduler"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "iam:PassedToService": "scheduler.amazonaws.com"
+        }
+      }
     }
   ]
 }

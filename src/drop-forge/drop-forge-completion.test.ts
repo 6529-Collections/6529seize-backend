@@ -31,7 +31,7 @@ it('mirrors only complete airdrop groups and does not duplicate shared completio
       ...original,
       id: 'public',
       label: 'Public Subscription Airdrops',
-      state: 'CONFIRMED'
+      state: 'PENDING'
     }
   ];
   jest
@@ -42,15 +42,18 @@ it('mirrors only complete airdrop groups and does not duplicate shared completio
     .mockResolvedValue();
   try {
     await mirrorCompletion(record, {});
-    expect(upsert.mock.calls.map(([row]) => row.action)).toEqual([
-      'PUBLIC_PHASE_AIRDROP'
-    ]);
+    expect(upsert).not.toHaveBeenCalled();
     record.data.actions[1].state = 'CONFIRMED';
     await mirrorCompletion(record, {});
+    expect(upsert.mock.calls.map(([row]) => row.action)).toEqual([
+      'PHASE2_AIRDROP'
+    ]);
+    record.data.actions[2].state = 'CONFIRMED';
+    await mirrorCompletion(record, {});
     await mirrorCompletion(record, {});
     expect(upsert.mock.calls.map(([row]) => row.action)).toEqual([
-      'PUBLIC_PHASE_AIRDROP',
-      'PHASE2_AIRDROP'
+      'PHASE2_AIRDROP',
+      'PUBLIC_PHASE_AIRDROP'
     ]);
   } finally {
     jest.restoreAllMocks();

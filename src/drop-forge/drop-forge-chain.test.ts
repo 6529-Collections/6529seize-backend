@@ -111,6 +111,8 @@ describe('Drop Forge transaction boundary', () => {
       status: 1,
       blockNumber: 100,
       blockHash: 'old-block',
+      gasUsed: BigInt(42_000),
+      gasPrice: BigInt(50_000_000_000),
       confirmations
     });
     provider.getBlock.mockResolvedValue({
@@ -127,7 +129,8 @@ describe('Drop Forge transaction boundary', () => {
       status: 1,
       blockNumber: 100,
       blockHash: 'old-block',
-      confirmations: 12
+      confirmations: 12,
+      fee_wei: '2100000000000000'
     });
   });
   it.each([null, { hash: null }])(

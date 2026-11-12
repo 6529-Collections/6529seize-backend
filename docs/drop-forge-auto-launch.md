@@ -131,9 +131,11 @@ per transaction, at most 20,000 phase-recipient entries per plan):
   general/artist/team allocations.
 - After Phase 0 closes: update to Phase 1, then airdrop only Phase 1 subscribers
   before Phase 1 opens (18:20–18:30 in the standard schedule).
-- After Phase 1 closes: update to Phase 2, then airdrop Phase 2 and public
-  subscribers before Phase 2 opens (18:50–19:00). This follows the existing
-  UI's grouping when public starts immediately at Phase 2's end.
+- After Phase 1 closes: update to Phase 2, then send Phase 2 subscriber
+  batches followed by separate Public subscriber batches before Phase 2 opens
+  (18:50–19:00). Each group has its own Completed flag, written when all of
+  its batches confirm. Existing saved plans keep their original allocation
+  batches and completion mapping.
 - After Phase 2 closes: update to public. Because the standard schedule has no
   gap at 19:20, public activation necessarily waits for that transaction's
   inclusion; confirmation/reporting can follow later. It never replaces a live
@@ -155,15 +157,20 @@ per transaction, at most 20,000 phase-recipient entries per plan):
   transaction links; failures use the existing `@dropforgeops` alert path.
   Optional Pay Artist is a separate action in the same post-mint group; an ordinary Research failure does not cancel its eligibility.
 
-For each initialization/transition, admission requires
-`transaction_count * (confirmations * 12 + 60) + 120` seconds: Ethereum slot
-budget, targeted continuation/confirmation time per serial transaction, and the two-minute
-no-new-submission cutoff. Ten-minute gaps are accepted when their own batch
-count fits; a large later batch cannot borrow time before Phase 0. This allowance
-is not a guarantee of inclusion/finality; reporting, RPC or network delays can
-still block a launch. The worker starts no fresh transaction or rebroadcast in
-the last two minutes, records receipts even when late, and leaves outstanding work
-only for that action when its submission window expires. Confirmed late work is credited and never repeated; later groups retain their own eligibility.
+The plan reserves one minute for scheduler delivery and budgets Ethereum
+confirmations plus a 15-second receipt poll for each serial transaction. It
+checks that the last transaction can start before the two-minute cutoff and
+still confirm by the phase opening. A later group has its own time window.
+The worker records receipts even when they arrive after the deadline and
+retains outstanding work for operator reconciliation.
+
+On scheduled mint days, four independent checks verify the next mint window
+and required airdrops at 17:30, 18:28 and 18:58, then check that public minting is
+live at 19:22 (Europe/Athens). They use the calendar's claim ID for automated
+and manual launches. The checks read Ethereum and completion evidence and post
+one signed Drop Forge Ops alert per failing checkpoint, with the card link
+when available. Passing checks are quiet. The schedules and check results do
+not depend on the Automatic launch setting or on a saved plan.
 
 Phase updates snapshot the actual minted supply once the preceding window has
 closed. Subsequent batches validate that persisted baseline plus only the

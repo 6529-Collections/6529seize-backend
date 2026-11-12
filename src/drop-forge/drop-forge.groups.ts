@@ -31,7 +31,8 @@ export function reportActionFailure(
   action: LaunchAction,
   now: number,
   message: string,
-  error?: unknown
+  error?: unknown,
+  feeWei?: string
 ): void {
   action.attempt_count = (action.attempt_count ?? 0) + 1;
   action.attempt_error = message;
@@ -45,7 +46,8 @@ export function reportActionFailure(
   addLaunchEvent(
     record,
     `Claim #${record.data.claim_id}: ${actionDescription(record, action)} attempt ${action.attempt_count} failed (${action.id}): ${message}`,
-    true
+    true,
+    { fee_wei: feeWei }
   );
 }
 
