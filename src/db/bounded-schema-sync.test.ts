@@ -4,9 +4,15 @@ import {
   SCHEMA_SYNC_ATTEMPTS,
   SCHEMA_SYNC_LOCK_WAIT_SECONDS,
   SCHEMA_SYNC_RETRY_DELAYS_MS,
+  SchemaSyncDestructivePlanRefusedError,
   SchemaSyncLockedError,
   synchronizeSchemaBounded
 } from './bounded-schema-sync';
+import {
+  destructivePlanSha256,
+  SCHEMA_SYNC_DESTRUCTIVE_GUARD_ENV,
+  SchemaCatalog
+} from './schema-sync-plan-check';
 
 const lockTimeout = () =>
   Object.assign(new Error('Lock wait timeout exceeded'), {
@@ -222,4 +228,198 @@ describe('synchronizeSchemaBounded', () => {
       expectSessionRestoredAndReleased(fake);
     }
   );
+  describe('destructive plan guard', () => {
+    const DROP_COLUMN = 'ALTER TABLE `ws_connections` DROP COLUMN `legacy`';
+    const DROP_UNIQUE = 'DROP INDEX `uq_ws` ON `ws_connections`';
+    const plainColumnCatalog: SchemaCatalog = {
+      column: async () => ({ generated: false }),
+      index: async () => ({ unique: true, columns: ['legacy'] })
+    };
+    const destructivePlan = [
+      { query: ALTER },
+      { query: DROP_UNIQUE },
+      { query: DROP_COLUMN },
+      { query: INDEX }
+    ];
+    const destructiveSha = destructivePlanSha256([
+      { query: DROP_UNIQUE },
+      { query: DROP_COLUMN }
+    ])!;
+    const originalMode = process.env[SCHEMA_SYNC_DESTRUCTIVE_GUARD_ENV];
+
+    afterEach(() => {
+      if (originalMode === undefined) {
+        delete process.env[SCHEMA_SYNC_DESTRUCTIVE_GUARD_ENV];
+      } else {
+        process.env[SCHEMA_SYNC_DESTRUCTIVE_GUARD_ENV] = originalMode;
+      }
+    });
+
+    it('in block mode applies none of a destructive plan and reports its hash', async () => {
+      const warn = jest.spyOn(Logger.get('SCHEMA_SYNC'), 'warn');
+      const fake = fakeDataSource({ plan: destructivePlan });
+      try {
+        const error = await synchronizeSchemaBounded(fake.dataSource, {
+          sleep: noSleep,
+          destructiveGuardMode: 'block',
+          catalog: plainColumnCatalog
+        }).catch((e: unknown) => e);
+
+        expect(error).toBeInstanceOf(SchemaSyncDestructivePlanRefusedError);
+        expect(error).toMatchObject({
+          destructivePlanSha256: destructiveSha,
+          destructiveStatements: [DROP_UNIQUE, DROP_COLUMN]
+        });
+        expect((error as Error).message).toContain(destructiveSha);
+        expect(fake.ddl()).toEqual([]);
+        expect(warn).toHaveBeenCalledWith(
+          '[SCHEMA_SYNC_DESTRUCTIVE_PLAN]',
+          expect.objectContaining({
+            mode: 'block',
+            decision: 'refused',
+            destructivePlanSha256: destructiveSha,
+            destructive: 2,
+            plan: [
+              expect.objectContaining({ kind: 'additive', sql: ALTER }),
+              expect.objectContaining({
+                kind: 'destructive',
+                sql: DROP_UNIQUE
+              }),
+              expect.objectContaining({
+                kind: 'destructive',
+                sql: DROP_COLUMN
+              }),
+              expect.objectContaining({ kind: 'additive', sql: INDEX })
+            ]
+          })
+        );
+        expectSessionRestoredAndReleased(fake);
+      } finally {
+        warn.mockRestore();
+      }
+    });
+
+    it('in block mode applies a destructive plan whose hash was acknowledged', async () => {
+      const fake = fakeDataSource({ plan: destructivePlan });
+      await expect(
+        synchronizeSchemaBounded(fake.dataSource, {
+          sleep: noSleep,
+          destructiveGuardMode: 'block',
+          acknowledgedDestructivePlanSha256: destructiveSha,
+          catalog: plainColumnCatalog
+        })
+      ).resolves.toEqual({
+        planned: 4,
+        applied: 4,
+        destructivePlanSha256: destructiveSha
+      });
+      expect(fake.ddl()).toEqual([ALTER, DROP_UNIQUE, DROP_COLUMN, INDEX]);
+    });
+
+    it('in block mode refuses an acknowledgement for a different plan', async () => {
+      const fake = fakeDataSource({ plan: destructivePlan });
+      await expect(
+        synchronizeSchemaBounded(fake.dataSource, {
+          sleep: noSleep,
+          destructiveGuardMode: 'block',
+          acknowledgedDestructivePlanSha256: destructivePlanSha256([
+            { query: DROP_COLUMN }
+          ]),
+          catalog: plainColumnCatalog
+        })
+      ).rejects.toBeInstanceOf(SchemaSyncDestructivePlanRefusedError);
+      expect(fake.ddl()).toEqual([]);
+    });
+
+    it('by default reports a destructive plan and applies it as before', async () => {
+      delete process.env[SCHEMA_SYNC_DESTRUCTIVE_GUARD_ENV];
+      const warn = jest.spyOn(Logger.get('SCHEMA_SYNC'), 'warn');
+      const fake = fakeDataSource({ plan: destructivePlan });
+      try {
+        await expect(
+          synchronizeSchemaBounded(fake.dataSource, {
+            sleep: noSleep,
+            catalog: plainColumnCatalog
+          })
+        ).resolves.toEqual({
+          planned: 4,
+          applied: 4,
+          destructivePlanSha256: destructiveSha
+        });
+        expect(fake.ddl()).toEqual([ALTER, DROP_UNIQUE, DROP_COLUMN, INDEX]);
+        expect(warn).toHaveBeenCalledWith(
+          '[SCHEMA_SYNC_DESTRUCTIVE_PLAN]',
+          expect.objectContaining({ mode: 'report', decision: 'reported' })
+        );
+      } finally {
+        warn.mockRestore();
+      }
+    });
+
+    it('turns blocking on from the environment', async () => {
+      process.env[SCHEMA_SYNC_DESTRUCTIVE_GUARD_ENV] = 'block';
+      const fake = fakeDataSource({ plan: destructivePlan });
+      await expect(
+        synchronizeSchemaBounded(fake.dataSource, {
+          sleep: noSleep,
+          catalog: plainColumnCatalog
+        })
+      ).rejects.toBeInstanceOf(SchemaSyncDestructivePlanRefusedError);
+      expect(fake.ddl()).toEqual([]);
+    });
+
+    it('applies a plan without destructive statements in block mode', async () => {
+      const fake = fakeDataSource({
+        plan: [
+          { query: ALTER },
+          { query: METADATA, parameters: ['expr', 'GENERATED_COLUMN', 'x'] },
+          { query: INDEX }
+        ]
+      });
+      await expect(
+        synchronizeSchemaBounded(fake.dataSource, {
+          sleep: noSleep,
+          destructiveGuardMode: 'block'
+        })
+      ).resolves.toEqual({ planned: 3, applied: 3 });
+    });
+
+    it('reads catalog facts on the sync connection when none is given', async () => {
+      const fake = fakeDataSource({ plan: [{ query: DROP_COLUMN }] });
+      const query = fake.queryRunner.query.getMockImplementation()!;
+      fake.queryRunner.query.mockImplementation(async (sql, parameters) =>
+        sql.includes('information_schema.COLUMNS')
+          ? [{ generation_expression: 'a + 1' }]
+          : query(sql, parameters)
+      );
+      // A generated column is derived, so dropping it is not destructive.
+      await expect(
+        synchronizeSchemaBounded(fake.dataSource, {
+          sleep: noSleep,
+          destructiveGuardMode: 'block'
+        })
+      ).resolves.toEqual({ planned: 1, applied: 1 });
+      expect(fake.ddl()).toEqual([DROP_COLUMN]);
+      expect(fake.queryRunner.query).toHaveBeenCalledWith(
+        expect.stringContaining('information_schema.COLUMNS'),
+        [null, 'ws_connections', 'legacy']
+      );
+    });
+
+    it('in report mode applies the plan even when the check itself fails', async () => {
+      const fake = fakeDataSource({ plan: [{ query: DROP_COLUMN }] });
+      await expect(
+        synchronizeSchemaBounded(fake.dataSource, {
+          sleep: noSleep,
+          destructiveGuardMode: 'report',
+          catalog: {
+            column: async () => {
+              throw new Error('catalog unavailable');
+            },
+            index: async () => null
+          }
+        })
+      ).resolves.toEqual({ planned: 1, applied: 1 });
+    });
+  });
 });

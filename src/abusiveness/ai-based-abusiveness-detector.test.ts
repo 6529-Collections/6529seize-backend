@@ -67,4 +67,39 @@ describe('AiBasedAbusivenessDetector', () => {
       })
     );
   });
+
+  it('keeps any rep phrase intact as a single input value', async () => {
+    await fc.assert(
+      fc.asyncProperty(fc.string(), async (text) => {
+        const { detector, promptAndGetReply } = createDetector();
+        await detector.checkRepPhraseText(text);
+        const prompt = promptAndGetReply.mock.calls[0][0] as string;
+        expect(JSON.parse(lastInputLine(prompt))).toBe(text);
+      })
+    );
+  });
+
+  it('keeps any about text and profile fields intact as one input value', async () => {
+    await fc.assert(
+      fc.asyncProperty(
+        fc.string(),
+        fc.string(),
+        fc.string(),
+        async (text, handle, profileType) => {
+          const { detector, promptAndGetReply } = createDetector();
+          await detector.checkBioText({
+            text,
+            handle,
+            profile_type: profileType
+          });
+          const prompt = promptAndGetReply.mock.calls[0][0] as string;
+          expect(JSON.parse(lastInputLine(prompt))).toEqual({
+            username: handle,
+            usertype: profileType,
+            about_text: text
+          });
+        }
+      )
+    );
+  });
 });

@@ -604,9 +604,10 @@ function isMissingTable(error: unknown): boolean {
  * At the end of each delegationsLoop invocation, after its delegations work:
  * finishes an identities sync left pending by a tdhLoop full write (which
  * leaves it to delegationsLoop), a deferred full walk, a spent budget, or an
- * invocation that stopped after its TDH write.
+ * invocation that stopped after its TDH write. Resolves whether a pending
+ * sync was resumed.
  */
-export async function resumePendingIdentityTdhSync(): Promise<void> {
+export async function resumePendingIdentityTdhSync(): Promise<boolean> {
   let progress: IdentityTdhSyncProgress;
   try {
     progress = await identityTdhSyncStateDb.readProgress();
@@ -615,11 +616,12 @@ export async function resumePendingIdentityTdhSync(): Promise<void> {
     // the loop's other work goes on; its TDH writes fail until then.
     if (!isMissingTable(error)) throw error;
     logger.error(`[IDENTITY TDH SYNC STATE TABLE MISSING] ${error}`);
-    return;
+    return false;
   }
-  if (progress.pendingGeneration <= progress.syncedGeneration) return;
+  if (progress.pendingGeneration <= progress.syncedGeneration) return false;
   logger.warn(
     `[RESUMING PENDING IDENTITIES SYNC] [GENERATION ${progress.pendingGeneration}] [SYNCED ${progress.syncedGeneration}]`
   );
   await syncIdentitiesAfterTdhOrLeavePending('LOOP_RESUME');
+  return true;
 }

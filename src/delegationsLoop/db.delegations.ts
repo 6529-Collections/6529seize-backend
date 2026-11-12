@@ -48,17 +48,21 @@ export async function fetchAirdropAddressForConsolidationKey(
  *
  * Without a token, only delegations for all tokens apply. With a token, a
  * delegation for that exact token in the given collection applies as well.
+ * The returned params cover every placeholder in the returned SQL.
  */
-export function delegationTokenScopeCondition(tokenId?: number | null): {
+export function delegationTokenScopeCondition(
+  collection: string,
+  tokenId?: number | null
+): {
   sql: string;
-  params: Record<string, number>;
+  params: Record<string, string | number>;
 } {
   if (tokenId === undefined || tokenId === null) {
     return { sql: 'all_tokens = 1', params: {} };
   }
   return {
-    sql: '(all_tokens = 1 OR (collection = :collection AND token_id = :scopeTokenId))',
-    params: { scopeTokenId: tokenId }
+    sql: '(all_tokens = 1 OR (collection = :scopeCollection AND token_id = :scopeTokenId))',
+    params: { scopeCollection: collection, scopeTokenId: tokenId }
   };
 }
 
@@ -75,7 +79,7 @@ export async function fetchProcessedDelegations(
   tokenId?: number | null,
   ctx: RequestContext = {}
 ): Promise<Delegation[]> {
-  const tokenScope = delegationTokenScopeCondition(tokenId);
+  const tokenScope = delegationTokenScopeCondition(collection, tokenId);
   const results = await sqlExecutor.execute(
     `
     SELECT * FROM (

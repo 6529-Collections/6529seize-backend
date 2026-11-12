@@ -1,467 +1,210 @@
-# IPFS infrastructure and recovery
+# Production IPFS infrastructure and deployment
 
-This directory owns a reproducible **new IPFS candidate**, its pinned runtime,
-logical backups, restoration, and a dedicated gateway. It also provides a separate,
-**import-only adoption path** for the currently serving resources.
-Stage 1 ownership adoption completed on November 11, 2026. Both runtime deployment
-and the one-time adoption switch are disabled in `environments/prod.json`.
-There is one shared IPFS deployment target,
-`prod`; the application staging environment does not get a separate IPFS service.
-No workflow runs a deployment on push or PR.
+IPFS has one environment: production. `ipfs-prod` is the protected GitHub Actions
+environment for deployment authority; it does not create another IPFS environment.
+A replacement server is an unpublished production candidate until it has restored
+and verified the existing content and metadata.
 
-## Ownership and layout
+Stage 1 completed on November 11, 2026. CloudFormation owns the original bucket,
+EC2 instance, security group and shared CloudFront distribution. The exact import,
+source, checks and workflows are in [adoption-record.json](adoption-record.json).
+The import stack is retained, termination protected and frozen against resource
+updates. Its temporary CloudFront provider permission window is closed.
 
-| File                                        | Responsibility                                                                                    |
-| ------------------------------------------- | ------------------------------------------------------------------------------------------------- |
-| `cloudformation/access.yaml`                | OIDC deployment/service roles and runtime permissions boundary                                    |
-| `cloudformation/storage.yaml`               | Retained private data buckets and separate S3/CloudFront access-log buckets                       |
-| `cloudformation/compute.yaml`               | Immutable EC2 replacement candidate, security group, role, EIP and alarm                          |
-| `cloudformation/edge.yaml`                  | Dedicated gateway CloudFront distribution and DNS                                                 |
-| `cloudformation/adoption.yaml`              | Observed production bucket, instance, security group and complete shared CDN baseline             |
-| `cloudformation/adoption-access.yaml`       | Separate OIDC/import roles with configuration-read and ownership-tag access                       |
-| `adoption.py`, `environments/adoption.json` | Exact import identities, native-model fingerprints, import preparation/execution and drift checks |
-| `adoption-record.json`                      | Completed Stage 1 ownership, verification, protections and GitHub Actions evidence                |
-| `versions.json`, `build-kubo.sh`            | Pinned Kubo/S3/Go/nginx versions, build and artifact checksums                                    |
-| `common.py`, `control.py`                   | Source/account/target guards, YAML loading, offline plans and explicit AWS/SSM operations         |
-| `requirements-control.txt`                  | Pinned PyYAML dependency for the GitHub runner/local controller only                              |
-| `bootstrap.sh`, `host.py`, `templates/`     | EC2 installation, systemd/nginx/TLS configuration, verification, backup and restore               |
-| `safety.test.ts`, `rehearse.py`             | Safety contracts and real-binary loopback S3/HTTPS/recovery rehearsal                             |
-| `environments/prod.json`                    | Existing-resource inventory and disabled production-change policy                                 |
+Stage 2 adds runtime replacement through the explicit **Manage production IPFS**
+workflow. A merge starts no deployment. The checked-in runtime switch permits
+reviewed main-branch dispatches; the one-time ownership import remains disabled.
+The first live migration must finish before runtime ownership can be reported as
+active. Its result and retained rollback host must be recorded after verification.
 
-Edit the CloudFormation YAML files directly. They are the infrastructure
-source of truth; there is no template generator. The controller reads their
-parameter definitions and submits the selected YAML file unchanged to AWS
-CloudFormation. The long-form `Ref`/`Fn::Sub`/`Fn::GetAtt` mappings are standard
-CloudFormation syntax.
+## What describes what
 
-The JSON files are inputs: `versions.json` pins software, and
-`environments/prod.json` records policy/inventory. Actual deployment settings
-come from `IPFS_CONFIG` and explicit workflow parameters described below. The
-EC2 runtime does not need PyYAML or the infrastructure templates.
+These are ordinary CloudFormation YAML templates, passed directly to AWS. Python
+reads them; it does not generate infrastructure descriptors.
 
-There are no Lambda, API-contract, database, or frontend changes. Existing app
-endpoints remain unchanged. IPFS is an independent deployment unit, not a Lambda
-choice in `src/config/deploy-services.json`.
+| File                                      | Owns/describes                                                                                                                                    |
+| ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `cloudformation/adoption.yaml`            | The unchanged original bucket, server, security group and entire shared CDN                                                                       |
+| `cloudformation/adoption-access.yaml`     | The separate, closed import authority                                                                                                             |
+| `cloudformation/recovery.yaml`            | Private encrypted, versioned recovery/artifact buckets and access logs                                                                            |
+| `cloudformation/runtime-access.yaml`      | GitHub OIDC deployment role, CloudFormation service role, runtime permission boundary and recovery access restricted to the original EC2 instance |
+| `cloudformation/frontdoor.yaml`           | Stable HTTPS ALB, two writer/gateway slots, existing wildcard certificate reference and active-writer health alarm                                |
+| `cloudformation/runtime.yaml`             | A new immutable server, encrypted retained disk, restricted HTTPS security group, IAM role and EC2 status-check alarm                             |
+| `environments/production-deployment.json` | Reviewed account, VPC/subnets, AMI, original resource IDs and certificate references                                                              |
+| `versions.json`                           | Pinned Kubo, Go, S3 plugin and nginx versions/checksums                                                                                           |
 
-## State and recovery guarantees
+`production.py` orchestrates CloudFormation change sets, versioned artifacts, SSM,
+state transfer, checks and the two canonical DNS changes. `production_host.py`
+installs or verifies a candidate, backs up private recovery material, and performs
+logical pin/MFS transfers on the explicitly identified host. `common.py` supplies
+validation, source guards, checksums, private file writes and safe archive handling.
+`handover_state.py` unions pins and replaces mutable file state only while its
+public writes are fenced. These scripts do not create CloudFormation templates.
 
-The server runs Kubo with S3 blocks and local LevelDB metadata. Kubo's RPC and
-gateway listeners are loopback-only. nginx exposes only the upload RPC and
-health route on the API hostname; other RPCs return 403. Gateway traffic uses
-a separate hostname. Certbot renews origin/API certificates with DNS challenges;
-the runtime role can change only their ACME TXT records. The CloudFront viewer
-certificate is an existing ACM certificate in `us-east-1`.
+`control.py` and `access/storage/compute/edge.yaml` are the earlier isolated
+candidate tooling retained for offline recovery contracts. The production workflow
+uses `production.py` and the production templates above. The isolated path still
+rejects the live bucket, original server and canonical DNS names.
 
-The block, backup, and artifact buckets are private, encrypted, versioned, and
-retained on stack deletion/replacement. The runtime role explicitly denies block
-deletion. Automatic garbage collection is never enabled. Retention protects data;
-it is not a substitute for recovery drills or an independent disaster-recovery
-copy of the S3 block store.
+## Production request path
 
-The data buckets and dedicated CloudFront log bucket send S3 request logs to a
-separate encrypted, private S3 audit sink. The sink is not itself logged, avoiding
-recursive delivery; its write policy accepts only the S3 logging service, this
-account, and the storage stack's generated bucket namespace. CloudFront standard
-logging uses its own private bucket with ACLs enabled as required by that API;
-ACLs remain disabled on content, backup, artifact and S3 audit buckets. CloudFront
-cookies are not logged. Both log buckets have 90-day current/noncurrent-version
-expiration rules. Pass the storage stack's `CloudFrontLogsBucket` output as the
-edge template's `LogsBucket` parameter. Validate actual delivery during rollout.
-
-Backups flush MFS, collect a stable pin inventory and MFS root through RPC, pin that root,
-and upload a checksummed private archive with node identity to versioned backup
-storage. They never copy an open LevelDB or publish private configuration as a
-GitHub artifact. Node identity is sensitive; only the host role and authorized
-recovery operators should be able to read backup objects. The role cannot delete
-backups or object versions. The archive includes the retained root pin and pin
-names; restoration checks the exact recorded direct/recursive pin set. Retention
-and backup-MFS pins deliberately grow until a separately reviewed retention/GC
-policy is introduced. Root-private `backup-attempts/` records are written before
-pinning and updated after upload. A pending record after failure/termination
-identifies the root and attempted object key for reconciliation. Do not blindly
-unpin it: another writer may have independently pinned the same immutable root.
-
-These are observed reference snapshots, not a write-fenced transaction across
-concurrent pin and MFS changes. Uploads continue during capture. Included immutable
-roots are independently recoverable from retained storage, but a backup is not a
-cutover boundary for all writes completed afterward. Production migration still
-requires the separately validated writer fence and final state-transfer protocol
-described below.
-
-A logical backup **references content in its recorded block bucket**; it does not
-duplicate the content. Restore re-pins the recorded direct/recursive pins and
-reconstructs MFS, then checks the exact root and pin types. Re-pinning can read
-every descendant and take substantial time on the production-sized datastore.
-It is not a constant-time metadata restore. Modified UnixFS root attributes or
-missing blocks cause verification to fail instead of claiming successful recovery.
-The saved identity is retained for disaster recovery but not installed by the
-candidate workflow, avoiding two live nodes with one identity.
-
-Restoration starts on an empty isolated candidate and matching content storage
-and pinned runtime. Kubo's bootstrap empty-directory pin is allowed, and its
-content is materialized in S3 before use. A durable root-private restore journal
-binds retries to one backup key, object version, checksum, and candidate identity.
-Retries skip verified existing pins and MFS entries and resume incomplete copies;
-conflicting entries, foreign pins, or a different backup/identity are rejected.
-An incomplete restore cannot pass verification or be published. A successful
-restore can be repeated against the same unchanged candidate. If conflicting
-state needs to be replaced, create a fresh candidate; no restore path erases it.
-The original server and backups remain available throughout.
-Rollback of a published replacement means returning traffic to the prior server
-after reconciling writes; it does not mean downgrading a migrated repository with
-an older executable.
-
-## Local and PR validation
-
-Use Python 3.10 or newer for the CloudFormation validator (CI uses Ubuntu 24.04).
-
-```bash
-python3 -m venv /tmp/ipfs-control-tools
-source /tmp/ipfs-control-tools/bin/activate
-python3 -m pip install -r ops/ipfs/requirements-control.txt cfn-lint==1.60.0
-./bin/6529 ci
-./bin/6529 exec jest --config ops/ipfs/jest.config.cjs
-python3 ops/ipfs/control.py validate
-python3 ops/ipfs/adoption.py plan
-cfn-lint ops/ipfs/cloudformation/*.yaml
-bash -n ops/ipfs/build-kubo.sh
-bash -n ops/ipfs/bootstrap.sh
+```mermaid
+flowchart LR
+    API[api-ipfs.6529.io] --> ALB[Stable HTTPS load balancer]
+    CDN[Existing shared CloudFront] --> Origin[ipfs-origin.6529.io]
+    Origin --> ALB
+    ALB --> Nginx[Active server nginx]
+    Nginx --> Router[Loopback upload router]
+    Router --> Kubo[Kubo API]
+    Nginx --> Gateway[Loopback IPFS gateway]
+    Kubo --> S3[Existing 6529ipfs blocks]
+    Gateway --> S3
+    Cached[Clients using cached old DNS] --> Bridge[Original nginx bridge]
+    Bridge --> ALB
 ```
 
-`ipfs-ci.yml` builds on Ubuntu 24.04 amd64 and rehearses the **exact resulting
-binary** against an in-memory loopback S3 fixture. It exercises multi-chunk data,
-direct/recursive pins, MFS, restart persistence, a fresh independent identity,
-restoration and its restart, nginx TLS, upload, range/HEAD, and restricted routes.
-It never assumes AWS credentials or contacts live gateways. The fixture is not a
-substitute for AWS IAM, EC2 reboot, Certbot, CloudFront, production-load, or online
-P2P testing. Those require explicitly authorized validation of an unpublished
-replacement candidate before production traffic handover. Local/CI fixtures
-create no AWS environment.
+The shared CDN configuration, media/Arweave/S3 behaviors and public IPFS hostnames
+stay the same. The ALB/nginx routes preserve forwarded viewer Host headers for
+all existing IPFS and media aliases. Only `api-ipfs.6529.io` and `ipfs-origin.6529.io` A records are
+UPSERTed to ALB aliases. Route53 record sets cannot use the Stage 1 import path;
+these two transitions are controller-managed, with exact names/types/actions
+restricted in IAM. All other new AWS resources are native CloudFormation resources.
+There is no DNS delete/recreate gap.
 
-The rehearsal also injects an interruption after one MFS subtree has been copied,
-then retries and repeats the completed restore. Every explicit fixture pin's root
-block is retrieved, including the bootstrap directory and retained backup root.
+ALB terminates public TLS using the existing issued wildcard certificate. Targets
+use HTTPS on port 443. ALB supports private/self-signed target certificates; the
+upload router independently validates the pinned certificate and canonical peer
+hostname when forwarding directly between servers. The replacement exposes no
+public SSH, API port 5001 or gateway port 8080. Its public IPv4 supplies outbound
+access in the existing public subnet; inbound HTTPS is restricted to the ALB and
+previous writer security groups. Public TCP port 4001 preserves the original IPFS
+peer service; UDP swarm ports, SSH, raw RPC and the raw gateway stay closed.
+Every managed runtime also joins a stable private peer security group. Its only
+ingress is HTTPS from that same group, allowing both directions of later handovers
+and rollbacks. The original server's security group remains unchanged. Before DNS
+or traffic changes, both writers must verify the other's private HTTPS path and
+certificate; the peer addresses must be inside the reviewed production subnets.
 
-## One-time production access bootstrap (future authorized rollout)
+The original nginx bridge distinguishes ALB/local traffic by the original socket
+peer. Cached-DNS requests go to the ALB; requests arriving from the ALB stay local,
+preventing loops. Forwarded client addresses and router hop headers are trusted
+only from configured network peers. Public uploads retain the 50MB size limit and
+6/minute rate limit, applied once at the serving path.
 
-The initial access roles and mandatory runtime permissions boundary are also
-defined in `cloudformation/access.yaml`. An existing authorized bootstrap operator
-submits that file directly to CloudFormation to create `seize-ipfs-prod-access` with `CAPABILITY_NAMED_IAM`, passing
-`Environment=prod`, the existing `GitHubOidcProviderArn`, a dedicated
-`HostedZoneId`/`DnsSuffix`, and the exact `GitHubRepositorySubject` prefix if the
-repository uses immutable OIDC IDs. The subject always appends
-`:environment:ipfs-prod`; it cannot select another repository or environment.
-The stack returns the deployment/service role ARNs and `RuntimeBoundaryArn`.
-Neither Actions nor any other IPFS stack can modify this access stack or boundary.
-This bootstrap requires separate explicit authorization; it has not been executed.
-Review the policies and validate their AWS authorization paths before serving
-traffic; schema validation alone does not establish that they work.
+## How a migration works
 
-1. Create GitHub environment `ipfs-prod`, restricted to `main`. Reuse
-   the existing GitHub OIDC provider; do not configure long-lived AWS access keys.
-2. Review and create the access stack above with existing bootstrap authority.
-   Its controller policy scopes stack mutations, SSM targets, artifact writes,
-   and passing the CloudFormation service role. Its service role cannot create
-   an unbounded runtime role or modify the access stack. Global describe/list
-   permissions are read-only. The shared production distribution is explicitly
-   denied mutation, even through a tag change.
-3. Verify the dedicated DNS suffix, runtime permissions boundary, and generated
-   bucket namespace against the actual account. The service role can create
-   new EC2 and CloudFront resources; validate those AWS authorization paths and
-   the replacement instance's SSM/S3/ACME access before any traffic handover.
-4. Set environment variables `IPFS_DEPLOY_ROLE_ARN`,
-   `IPFS_CLOUDFORMATION_ROLE_ARN`, `IPFS_REGION`, `IPFS_ACCOUNT_ID`, and
-   `IPFS_CONFIG` (JSON, **no credentials**). Their account/region must agree.
+Dispatch `.github/workflows/ipfs-manage.yml` on `main` with its exact reviewed full
+SHA, `operation=migrate` and a new deployment ID of 3-12 lowercase letters/digits/
+dashes. There are no arbitrary template parameters, instance selectors or DNS
+names in the workflow inputs.
 
-Configuration shape (replace all example values):
+1. Build the pinned binary/plugin/router/nginx release on the runner. Rehearse
+   recovery, restricted HTTPS, cached-DNS bridging, upload forwarding, draining,
+   mutable-write waiting and bidirectional pin/MFS reconciliation without AWS data.
+2. Verify the full shared CDN configuration against the adopted baseline. Back up
+   the current logical state and private identity/configuration before host edits.
+3. Create an unpublished ALB if needed, then a new retained runtime from YAML.
+   Its role initially has only Get/List access to the live S3 blocks. Bootstrap
+   installs current OS security updates and the pinned, checksum-verified AWS
+   CLI installer. The workflow waits for the candidate to register with Systems
+   Manager before requesting installation. Public TCP peering remains closed
+   until the reboot gate passes. Give it an
+   independent peer identity; never copy the serving peer's private identity.
+4. Restore every explicit recursive/direct pin and name. Recursive restoration
+   traverses the actual DAG, and the immutable MFS root must be readable. The
+   pinned plugin's reviewed `s3-read-only.patch` accepts repeated initialization
+   writes only when existing bytes match; it performs no S3 Put/Delete. IAM
+   separately withholds block writes throughout this validation.
+5. Change only the candidate role to permit block Put, restart only that candidate,
+   restore its initial MFS while mutable uploads remain fenced, and verify actual
+   upload/pin/read, restricted RPC, HTTPS and ranges. Reboot it and verify persisted
+   data, version and writer fence before production traffic reaches it.
+6. Install the source upload router and nginx bridge after the private backup.
+   Wait for pre-reload nginx workers to finish: their accepted uploads bypass the
+   router and must finish before the final source snapshot. Verify all four target
+   groups and perform an upload/read through the inactive ALB validation rule.
+7. Move the two canonical DNS records to the stable ALB while it still serves the
+   current writer. The old nginx bridge continues serving cached-DNS clients.
+8. Fence the source writer: already accepted local uploads finish there; subsequent
+   uploads forward synchronously to the replacement. Ordinary immutable uploads
+   continue. Uploads using `to-files` wait at the replacement until the source's
+   final MFS directory is copied. Union the final pins without removing any new
+   destination pins, then open mutable writes and switch only ALB rule weights.
+9. Verify real public uploads through the API and all IPFS/CDN gateway aliases.
+   Perform a real reverse handover to prove rollback preserves new uploads, then
+   promote the replacement again with the same protocol. Verify both health alarms.
 
-```json
-{
-  "environment": "prod",
-  "accountId": "111111111111",
-  "region": "us-east-1",
-  "blocksBucket": "new-prod-blocks-bucket",
-  "backupsBucket": "new-prod-backups-bucket",
-  "artifactsBucket": "new-prod-artifacts-bucket",
-  "originHost": "ipfs-origin-candidate.example.com",
-  "apiHost": "ipfs-api-candidate.example.com",
-  "gatewayHost": "ipfs-candidate.example.com",
-  "hostedZoneId": "Z123456789",
-  "acmeEmail": "operations@example.com",
-  "instanceId": "i-11111111111111111"
-}
-```
+The old EC2 instance, daemon, disk and private recovery archive remain available
+for rollback. The old nginx also serves the cached-DNS bridge. Migration does not
+terminate it, delete blocks, run garbage collection or alter the frozen import
+stack. Later retirement is a separate explicit operation.
 
-For the initial storage stack, bucket names in config can be proposed placeholders;
-the template generates new globally unique names. After its successful creation,
-copy `BlocksBucket`, `BackupsBucket`, and `ArtifactsBucket` into `IPFS_CONFIG`
-before provisioning compute. Record `CloudFrontLogsBucket` for the edge
-`LogsBucket` parameter; log buckets are not part of the host configuration.
-The instance ID is required only for host operations or edge publication. Use an
-explicit pinned Canonical Ubuntu 24.04 amd64 AMI with the standard SSM snap service.
-The subnet needs outbound HTTPS and DNS access and a route to the internet;
-automatic public IPv4 assignment is disabled, and an explicit EIP is assigned.
-Only HTTPS is exposed; SSH, RPC and the raw gateway have no inbound rules.
+## Operations and recovery
 
-## Explicit Actions operations
+| Operation  | Effect                                                                          |
+| ---------- | ------------------------------------------------------------------------------- |
+| `plan`     | Offline reviewed-source plan; no AWS authentication or changes                  |
+| `migrate`  | Complete validated replacement and real rollback/promotion rehearsal            |
+| `verify`   | Verify the currently active writer, public upload/read and unchanged shared CDN |
+| `backup`   | Private recovery archive plus checksummed/versioned logical transfer            |
+| `rollback` | Reconcile new writes back to the retained previous writer, then switch weights  |
+| `promote`  | Reconcile writes to the replacement again, then switch weights                  |
 
-After an explicitly authorized merge into `main`, dispatch
-`.github/workflows/ipfs-manage.yml` with the exact reviewed `expected_source_sha`.
-There is no deployment-environment selector: the workflow uses only `ipfs-prod`,
-and the controller and all templates accept only `prod`. Mutations remain disabled
-by the checked-in policy before AWS authentication. Enabling them and adopting the
-existing resources require a separately reviewed rollout; changing the policy
-alone does not remove the existing-resource fences below.
-One concurrency group serializes all IPFS operations; runs never cancel each other.
-Inputs are passed as arguments or environment data, never interpolated into shell
-source.
+Use the existing deployment ID for verification/backup/rollback/promotion. Those
+operations can run from a newer reviewed main commit while continuing to reference
+the original exact release artifact. A new migration requires a new ID/source.
+To resume an interrupted migration, rerun its original Actions run so its reviewed
+source SHA remains identical. A repeated rollback to an already active writer only
+verifies it; it never copies stale state over that writer.
 
-| Operation               | Effect                                                                                                                   |
-| ----------------------- | ------------------------------------------------------------------------------------------------------------------------ |
-| `plan`                  | Read the checked-in YAML and show parameters; no AWS authentication or changes                                           |
-| `apply`, kind `storage` | New retained/versioned storage stack; updates reject resource removal/replacement                                        |
-| `apply`, kind `compute` | New immutable candidate slot; refuses an existing slot                                                                   |
-| `deploy`                | Build/rehearse/package/upload a release, fetch its exact S3 version and verify checksums, install on an unused candidate |
-| `backup`                | Logical metadata/identity archive to private versioned storage; returns only key/version/count                           |
-| `restore`               | Explicit `backup_key` and recorded `backup_version` into an empty candidate pointing to the recorded block bucket        |
-| `verify`                | Artifact/runtime/datastore checks and real loopback upload/pin/read verification                                         |
-| `apply`, kind `edge`    | Verify and seal the candidate before publishing **new dedicated** DNS/CloudFront; requires its exact public IP           |
+Versioned journals live in `prod/deployments/<id>.json`. They record change-set
+ARNs and command IDs before waiting. An Actions timeout does not cancel AWS/SSM.
+Inspect the recorded operation and resume it; never delete retained data or a
+partially initialized repository to make a retry work. An incomplete installation
+requires inspection or a fresh candidate. Pin/MFS transfer has a durable journal
+and can resume with the same source snapshot and writer epoch.
 
-Compute parameters are `VpcId`, `SubnetId`, `ImageId`, `IngressCidr`,
-`RuntimeBoundaryArn` from the access stack, and optional `InstanceType`.
-Data settings and ACME hostnames come from config and cannot be
-overridden by workflow parameters. Edge parameters are `PublicIp` and
-`CertificateArn`, plus `LogsBucket` from the storage stack. All template parameters
-are checked before AWS calls.
+Router state persists on disk and its control socket is root-only. Epoch checks
+reject stale controllers. Before final metadata transfer, source accepted uploads
+must have drained and destination mutable writes must remain fenced. Both old and
+new immutable roots/pins survive reconciliation. Garbage collection and block
+Delete permissions are excluded from the managed runtime.
 
-For a future authorized production rollout, provision access/storage as needed,
-create an unpublished replacement compute slot, deploy, restore the recorded state,
-and verify it before any traffic handover. A temporary replacement server is part
-of the production deployment procedure, not a separate staging IPFS environment.
-Check HTTPS/CORS, public restricted routes, byte ranges, CloudFront behavior, reboot
-persistence, alarms/notifications, and rollback. Existing data adoption and the
-writer/traffic handover still require the implementation described below. Do not
-publish an isolated empty bucket as a replacement for production content. Attach
-validation evidence to the rollout PR. No Lambda redeploy is required.
+Private archives include source config, keys, nginx/systemd and TLS recovery
+material. They remain in encrypted private S3 prefixes, separate from the transfer
+objects a candidate can read. GitHub receives only public identifiers, versioned
+object references, counts and verification results. Host failures write restricted
+local diagnostics; never publish raw config, identity or command output.
 
-Published hosts are sealed locally and tagged active before DNS can point to
-them. Deployment and restore refuse active hosts; backups and verification can
-continue. Runtime changes use new candidates, not a restart of the serving node.
-Re-running installation on a partially initialized candidate is intentionally
-rejected; replace the candidate rather than guessing which state is safe to erase.
+## Authority and bootstrap
 
-SSM success must include a valid versioned operation receipt. A missing backup
-key/version, incomplete verification result, or malformed receipt fails the run
-even when SSM reports Success. Trailing log messages do not hide the receipt;
-only the operation's approved public fields are returned to GitHub.
+Bootstrap the recovery and runtime-access stacks from the reviewed YAML using an
+authorized operator, inspecting their native change sets first. Enable termination
+protection. Do not broaden or reopen the Stage 1 import roles. Recovery creates
+only new private buckets; the original EC2 role gets recovery access conditioned
+on the original instance ARN.
 
-### Interrupted controllers and certificate issuance
+The existing `ipfs-prod` GitHub environment must remain restricted to `main` and
+provide `IPFS_RUNTIME_ROLE_ARN` and `IPFS_RUNTIME_SERVICE_ROLE_ARN` from the access
+stack outputs. Authentication uses OIDC, never stored AWS access keys. The IAM
+subject prefix must match the repository's actual GitHub OIDC subject format.
 
-A controller timeout does not mean AWS or an SSM command rolled back. Inspect the
-recorded command ID and CloudFormation stack events/status before retrying. Wait
-for any in-progress stack operation to reach a terminal state; do not cancel
-another operator's work or delete a retained volume/bucket to unblock it. Use the
-stack outputs and read-only diagnostics to reconcile completed work. A failed
-restore can resume with the same key/version and journal; a different backup
-requires a fresh candidate. Failed infrastructure creation or installation uses
-a new immutable slot, with retained resources inventoried before later cleanup.
+CloudFormation updates reject resource removal/replacement. Runtime write access
+changes only the candidate role. Registering a candidate can change only the
+inactive target groups; switching traffic can change only listener weights and
+the active-writer alarm. Network/certificate changes require another review.
+Termination protection and retained disks/buckets complement those restrictions.
 
-The native rehearsal uses self-signed loopback TLS and consumes no ACME quota.
-For repeated DNS/ACME troubleshooting, first use the certificate authority's test
-endpoint (`certbot --staging`) on disposable dedicated hostnames. This is a TLS
-issuance test, not a separate IPFS deployment environment. Those certificates
-are not publicly trusted and must not be published behind CloudFront. Normal
-installation requests a publicly trusted certificate and stops on issuance
-failure; it does not repeatedly retry ACME. Recreating candidates can hit both
-duplicate-identifier and registered-domain limits. Inspect the restricted Certbot
-diagnostics and honor the CA's retry time before another real issuance attempt.
-See [Let's Encrypt rate limits](https://letsencrypt.org/docs/rate-limits/).
+ALB and recovery-bucket access logs go to a separate private log destination;
+recursive logging on that destination is disabled per AWS guidance. CloudWatch
+alarms track active-writer and EC2 health. They are visible in AWS; no SNS/email
+notification destination is introduced by this deployment.
 
-## Import the existing production resources (future authorized operation)
+No Lambda, backend API or frontend deployment is needed.
 
-`adoption.yaml` describes the configuration observed in AWS on November 11, 2026.
-It retains the existing `6529ipfs` bucket, EC2 instance, its exclusively used
-security group, and the **entire shared CloudFront distribution**. The CDN baseline
-includes all three origins/aliases, ordered cache behaviors, media function and
-policy references, certificate, WAF and logging configuration. The dedicated
-`edge.yaml` is never substituted for that shared distribution.
-
-An import records CloudFormation ownership; it does not reinstall the daemon,
-move content, enable bucket versioning, tighten the security group, or switch
-traffic. The baseline deliberately preserves current settings, including the
-unversioned bucket, legacy SSH/swarm rules and unencrypted root volume. New
-candidate templates retain their stricter defaults. Hardening the live resources
-requires a separately reviewed change after adoption.
-
-The import manifest is evidence: exact resource IDs and hashes of the full native
-Cloud Control read models after excluding the provider's read-only properties.
-It does not generate YAML. The audit also checks every property declared in YAML,
-so editing a descriptor cannot silently import a different desired configuration.
-EC2 duplicate representations (`NetworkInterfaces`, `Volumes`, `SecurityGroups`)
-remain covered by the native-model hash while the YAML uses the equivalent
-top-level instance properties. Custom tags and cache-behavior order are checked;
-AWS-owned stack tags and irrelevant SG-rule ordering are normalized.
-
-CloudFormation's post-import tagging invokes CloudFront's configuration UPDATE
-handler, including when `Tags` is omitted. Two import attempts established this
-and rolled back because the original explicit deny blocked the provider call;
-resource configurations stayed unchanged. The template preserves the existing
-Name tag. The manifest additionally fingerprints the **entire CloudFront API
-DistributionConfig**, including fields outside the CloudFormation read model,
-and checks it immediately before execution and again during verification.
-Only the response's `ETag` is excluded; `CallerReference` remains covered because
-[AWS prohibits changing it on an existing distribution](https://docs.aws.amazon.com/cloudfront/latest/APIReference/API_UpdateDistribution.html).
-
-`CloudFrontImportUpdateExpiresAt` defaults to the Unix epoch, explicitly denying
-`UpdateDistribution`. Only during an authorized import may bootstrap authority set
-a short future UTC deadline. Before that deadline, only the CloudFormation service
-role may reapply configuration to this one existing distribution; the GitHub
-controller remains explicitly denied. IAM cannot compare an update request's
-configuration with the baseline: the exact reviewed IMPORT template, preflight
-fingerprint and post-import verification provide that check. Restore the parameter
-to the epoch immediately after import completes or rolls back, then verify the
-explicit deny is effective again. This temporary allowance does not enable runtime
-deployment, server modification, S3 content writes or DNS changes.
-
-The import does **not** take ownership of the block bucket's separate bucket policy,
-the shared `EC2SSMRole`, its policies,
-VPC/subnets, volume as a separate resource, AMI, DNS records, edge functions,
-referenced cache/response policies, certificates, WAF, or host files. Their
-references are preserved. Cloud Control does not return write-only properties
-such as some launch inputs; the fingerprint is not a backup of disk contents,
-nginx/systemd/Kubo settings, credentials, or node identity. Capture those privately
-and verify the logical recovery backup before a runtime migration.
-
-`changesEnabled` remains false throughout adoption. The independently controlled
-`adoptionEnabled` switch is temporarily true for the authorized import, then reset
-to false after ownership and drift verification. Adoption refuses to run while
-runtime deployment is unlocked. Merging the PR starts no deployment or import.
-The existing `control.py` candidate path continues rejecting the live bucket,
-server and production hostnames; adoption never lifts those runtime/traffic fences.
-
-For a future explicitly authorized import:
-
-1. With bootstrap authority, create `seize-ipfs-prod-adoption-access` from
-   `adoption-access.yaml` with `CAPABILITY_NAMED_IAM`, the existing GitHub OIDC
-   provider ARN and correct repository subject prefix. Do not broaden the normal
-   deployment role. The new service role can read configuration and attach
-   CloudFormation ownership tags. Leave `CloudFrontImportUpdateExpiresAt` at its
-   epoch default. Neither role has SSM command, DNS change, S3 object write, EC2
-   modification, or CloudFront deletion permissions. CloudFront configuration
-   updates are explicitly denied outside the bounded service-role window described
-   above. The original shared-CDN deny remains intact in `access.yaml`.
-2. Configure `IPFS_ADOPTION_ROLE_ARN` and `IPFS_ADOPTION_SERVICE_ROLE_ARN` from its
-   outputs in the existing `ipfs-prod` GitHub environment restricted to `main`.
-   No `IPFS_CONFIG`, AWS keys, new IPFS environment, or new block bucket is needed.
-3. Run **Adopt existing IPFS resources / audit** at the exact reviewed main SHA.
-   AWS first confirms each template resource's import identifier (the security
-   group uses `Id`, even though the EC2 API calls it `GroupId`). The audit fails if
-   configuration or identities differ from the reviewed
-   baseline, or another live instance uses the source security group. This audit
-   is available while mutation switches are disabled. It prints only public
-   identifiers/check results, never raw resource models or credentials.
-4. If the baseline has drifted, stop. Inspect the changed AWS configuration in
-   restricted tooling, edit the YAML directly to the intended unchanged baseline,
-   and review the new native-model, full CloudFront API and template hashes in
-   `adoption.json`. Do not
-   merely replace a failed hash to bypass review. The offline `plan` command does
-   not fetch AWS or regenerate descriptors.
-5. For the authorized operation, enable only `adoptionEnabled`, leaving
-   `changesEnabled=false`, then run **prepare**.
-   It creates an `IMPORT` change set for exactly four retained resources and
-   verifies its full action list, source/baseline binding and original template.
-   It never executes it. Review the returned exact change-set ARN and AWS changes.
-6. With bootstrap authority, set a short `CloudFrontImportUpdateExpiresAt` deadline
-   on the access stack. Check that only the service role may update the one CDN
-   before expiry, and all other write restrictions remain effective.
-   Run **execute** with the same source SHA and exact prepared ARN. It repeats the
-   live audit immediately before execution, imports, enables stack termination
-   protection, installs a deny-all resource-update stack policy, and requires exact
-   ownership plus `IN_SYNC` drift for every imported resource. These are stack
-   metadata protections; live resource properties remain unchanged.
-7. Immediately after a terminal import outcome, restore the access-stack deadline
-   to the epoch and confirm `UpdateDistribution` is explicitly denied again.
-   Keep the adoption stack's import-only service role and update prohibition. Disable
-   the adoption switch again after the one-time import. Run **verify** for later
-   ownership/template/baseline/drift checks. Drift detection updates CloudFormation
-   diagnostic metadata but cannot alter resource configuration.
-
-Adoption shares `ipfs-manage-prod` concurrency with candidate management. An
-interrupted **prepare** reconciles its deterministic source/baseline-bound change
-set rather than creating another. An interrupted **execute** resumes the same ARN,
-waits for completion, then reapplies protections and verification. A timeout is
-not rollback. Failed/rolled-back imports, foreign pending changes, deleted stacks,
-wrong roles and changed templates require operator investigation; the controller
-never falls back to CREATE/UPDATE, deletion, or an automatically selected latest
-change set. Import failure may leave stack metadata or partial ownership: inspect
-restricted stack events before a new reviewed attempt. Do not delete retained data
-or restart the serving host to resolve it.
-
-Stage 1 completed on November 11, 2026: `seize-ipfs-prod-adopted` owns the existing
-four physical resources, all verified `IN_SYNC`. The stack has termination
-protection, retained resources and a deny-all resource-update policy. The provider
-deadline was reset to the epoch immediately after import; both roles again
-explicitly deny CloudFront configuration updates. Native fingerprints and the full
-CloudFront API configuration match the pre-import baseline, and the existing IPFS
-runtime remains healthy. No software installation, server restart, content
-migration, DNS change or traffic handover was performed.
-
-[`adoption-record.json`](adoption-record.json) records the source SHA, exact import
-change set, resource identities and successful workflow runs, including independent
-verification after the permission window closed. Both mutation switches are now
-disabled. Local contracts, the native recovery rehearsal and real AWS OIDC/import,
-rollback, ownership and drift checks have been exercised. Runtime deployment and
-traffic handover remain a separate authorized stage.
-
-## Runtime and traffic handover remains a separate migration
-
-Stage 2 is authorized and under development. The production front door,
-immutable replacement and recovery/access resources are described directly in
-`cloudformation/frontdoor.yaml`, `runtime.yaml`, `recovery.yaml` and
-`runtime-access.yaml`. These templates do not run on merge. Existing production
-traffic remains on the legacy server until the reviewed handover controller
-validates and explicitly switches it.
-
-The upload router tracks accepted requests through a durable writer fence. After
-the fence, new requests are forwarded synchronously to the verified replacement;
-old accepted requests finish on the source. Ordinary immutable uploads continue.
-Uploads using `to-files` wait behind a separate mutable-state fence until the
-source's final MFS root is installed. Pin transfer is a union, preserving uploads
-already accepted by the replacement. The same protocol applies in reverse for
-rollback. The root-only Unix control socket uses persistent epochs so a stale
-controller cannot undo a newer fence.
-
-Read-only validation uses a reviewed patch to the pinned S3 plugin. Kubo repeats
-an initialization Put even when its root block already exists. In validation mode
-the plugin accepts that call only when a Get returns exactly the same bytes; it
-never sends a Put or Delete to S3. IAM separately withholds block-write permission
-until validation succeeds. The release carries the patch and its checksum.
-Native rehearsals exercise this behavior and real synchronous upload forwarding,
-draining, mutable-write waiting and stale-controller rejection without AWS data.
-
-Importing infrastructure does not yet make a runtime deployment safe. Production
-traffic remains fenced. The planned stable front door is an AWS Application Load
-Balancer with separate writer/gateway target groups. Before exposing that path,
-implement and rehearse the legacy nginx bridge (including clients with cached
-DNS), target health and request draining, and a final monotonic pin/MFS transfer
-that preserves uploads accepted by the replacement. API upload calls include
-synchronous requests; simply returning 503 while capturing metadata is insufficient.
-
-Validate a production-size restoration with an independent identity and tightly
-scoped read-only block access first. The initial backup can become stale while
-uploads continue. After switching the writer and draining the old requests, the
-final source snapshot must be merged without erasing the replacement's new pins;
-rollback must reconcile those new writes in the reverse direction. Keep the old
-host and versioned backups until recovery and rollback evidence is complete.
-Canonical DNS records need a separately guarded migration: Route53 record sets
-are not supported by this import path. No ALB, bridge, canonical DNS update,
-live-bucket candidate write access, or writer switch is provisioned by adoption.
-
-This separation lets CloudFormation first record today's deployment without
-changing its behavior. A later reviewed handover controller can manage runtime
-replacements after the writer/draining protocol has been validated.
-
-References: [CloudFormation resource import](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/import-resources-manually.html),
-[Systems Manager Run Command](https://docs.aws.amazon.com/systems-manager/latest/userguide/run-command.html),
-[GitHub OIDC for AWS](https://docs.github.com/en/actions/how-tos/secure-your-work/security-harden-deployments/oidc-in-aws),
-[pinned S3 plugin configuration](https://github.com/ipfs/go-ds-s3/blob/e4823540f59b71ce7969213faed4608c237a7296/plugin/s3ds.go).
+References: [CloudFormation import](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/import-resources-manually.html),
+[ALB rule edits and in-flight requests](https://docs.aws.amazon.com/elasticloadbalancing/latest/application/edit-rule.html),
+[ALB target TLS](https://docs.aws.amazon.com/elasticloadbalancing/latest/application/load-balancer-target-groups.html),
+[ALB logging](https://docs.aws.amazon.com/elasticloadbalancing/latest/application/enable-access-logging.html),
+[S3 logging](https://docs.aws.amazon.com/AmazonS3/latest/userguide/enable-server-access-logging.html),
+[GitHub OIDC](https://docs.github.com/en/actions/how-tos/secure-your-work/security-harden-deployments/oidc-in-aws).

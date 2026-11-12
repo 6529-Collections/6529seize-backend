@@ -58,6 +58,45 @@ aws() {
 }
 `;
 
+/**
+ * The current environment document the fake `aws` returns. An explicit
+ * `environment: undefined` has no JSON form, and an unset variable would make
+ * the fake read fail for an unrelated reason, so it is refused here.
+ */
+function currentEnvironmentDocument(overrides: {
+  environment?: unknown;
+  rawEnvironment?: string;
+}): string {
+  if (overrides.rawEnvironment !== undefined) {
+    return overrides.rawEnvironment;
+  }
+  if (!('environment' in overrides)) {
+    return JSON.stringify(currentEnvironment);
+  }
+  const document = JSON.stringify(overrides.environment);
+  if (document === undefined) {
+    throw new Error(
+      'environment override has no JSON form; use rawEnvironment instead'
+    );
+  }
+  return document;
+}
+
+/**
+ * Only what the step and its shell utilities need; nothing from the test
+ * runner's own environment (credentials, AWS profile, CI settings) leaks in.
+ */
+function minimalProcessEnvironment(): Record<string, string> {
+  const inherited: Record<string, string> = {};
+  for (const key of ['PATH', 'Path', 'SYSTEMROOT', 'SystemRoot']) {
+    const value = process.env[key];
+    if (value !== undefined) {
+      inherited[key] = value;
+    }
+  }
+  return inherited;
+}
+
 function runDeployApi(
   overrides: {
     environment?: unknown;
@@ -71,6 +110,7 @@ function runDeployApi(
   const runnerTemp = path.join(directory, 'runner-temp');
   const capture = path.join(directory, 'env_config.json');
   const calls = path.join(directory, 'calls.txt');
+  const mockEnvironment = currentEnvironmentDocument(overrides);
   try {
     spawnSync('bash', ['-c', `mkdir -p "${posixDirectory}/runner-temp"`]);
     const result = spawnSync(
@@ -81,19 +121,14 @@ function runDeployApi(
         encoding: 'utf8',
         timeout: 10_000,
         env: {
-          ...process.env,
+          ...minimalProcessEnvironment(),
+          HOME: posixDirectory,
           RUNNER_TEMP: `${posixDirectory}/runner-temp`,
           MOCK_CALLS: `${posixDirectory}/calls.txt`,
           MOCK_READ_COUNT: `${posixDirectory}/read-count.txt`,
           MOCK_CAPTURE: `${posixDirectory}/env_config.json`,
           MOCK_FAILING_READ: String(overrides.failingRead ?? 0),
-          MOCK_ENVIRONMENT:
-            overrides.rawEnvironment ??
-            JSON.stringify(
-              'environment' in overrides
-                ? overrides.environment
-                : currentEnvironment
-            ),
+          MOCK_ENVIRONMENT: mockEnvironment,
           UNMANAGED_VALUE: valueNotForLogs,
           INPUT_ENVIRONMENT: overrides.inputEnvironment ?? 'prod',
           ATTACHMENTS_INGEST_S3_BUCKET: 'attachments-bucket',
@@ -214,6 +249,12 @@ describe('API environment deployment', () => {
       expect(`${result.stdout}${result.stderr}`).not.toContain(valueNotForLogs);
     }
   );
+
+  it('refuses an environment override without a JSON form', () => {
+    expect(() => runDeployApi({ environment: undefined })).toThrow(
+      'environment override has no JSON form'
+    );
+  });
 
   it('rejects an unreadable configuration document', () => {
     const result = runDeployApi({

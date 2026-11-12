@@ -104,7 +104,7 @@ Linux x64/glibc optional packages, ignores global libvips for deployment, and
 extracts the final ZIP to verify codecs and handler loading. PR CI repeats this
 verification in the official Lambda Node 22 image without network access.
 
-Developer installs may use custom libvips; Sharp 0.35.4 requires libvips >=8.18.6
+Developer installs may use custom libvips; Sharp 0.35.5 requires libvips >=8.18.7
 and such builds are developer-managed. Set `SHARP_IGNORE_GLOBAL_LIBVIPS=1` to
 use the tested bundled binaries. Windows ARM64 optional packages remain in the
 lockfiles but that developer runtime is not covered by this workflow.

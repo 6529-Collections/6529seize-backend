@@ -277,6 +277,117 @@ describe('delegations loop on-demand reconsolidation', () => {
     expect(db.persistNftDelegationBlock).toHaveBeenCalledWith(26_000_001, 1);
   });
 
+  describe('the garbage collection that ends a reconsolidation', () => {
+    const gc = jest.fn();
+    const noChainEvents = {
+      latestBlock: 26_000_001,
+      latestBlockTimestamp: 1,
+      consolidations: [],
+      registrations: [],
+      revocation: []
+    };
+
+    beforeEach(() => {
+      (globalThis as { gc?: () => void }).gc = gc;
+    });
+
+    afterEach(() => {
+      delete (globalThis as { gc?: () => void }).gc;
+    });
+
+    it('runs once, last, after a requested reconsolidation', async () => {
+      await invoke({ action: 'reconsolidate', wallets: [COLD] });
+      expect(gc).toHaveBeenCalledTimes(1);
+      expect(gc.mock.invocationCallOrder[0]).toBeGreaterThan(
+        jest.mocked(identitiesService.updatePrimaryAddresses).mock
+          .invocationCallOrder[0]
+      );
+    });
+
+    it('runs once, after the pending sync, when chain events reconsolidated', async () => {
+      jest.mocked(delegations.findDelegationTransactions).mockResolvedValue({
+        ...noChainEvents,
+        consolidations: [
+          {
+            block: 26_000_001,
+            type: EventType.REGISTER,
+            wallet1: COLD,
+            wallet2: HOT
+          }
+        ]
+      });
+      await invoke({ source: 'aws.events' });
+      expect(gc).toHaveBeenCalledTimes(1);
+      expect(gc.mock.invocationCallOrder[0]).toBeGreaterThan(
+        jest.mocked(resumePendingIdentityTdhSync).mock.invocationCallOrder[0]
+      );
+    });
+
+    it('still runs when a reconsolidation stage fails', async () => {
+      jest
+        .mocked(consolidateOwnerBalances)
+        .mockRejectedValue(new Error('balance failure'));
+      await expect(
+        invoke({ action: 'reconsolidate', wallets: [COLD] })
+      ).rejects.toThrow('balance failure');
+      expect(gc).toHaveBeenCalledTimes(1);
+    });
+
+    it('runs once after a minute that resumed an identities sync', async () => {
+      jest
+        .mocked(delegations.findDelegationTransactions)
+        .mockResolvedValue(noChainEvents);
+      jest.mocked(resumePendingIdentityTdhSync).mockResolvedValue(true);
+      await invoke({ source: 'aws.events' });
+      expect(gc).toHaveBeenCalledTimes(1);
+      expect(gc.mock.invocationCallOrder[0]).toBeGreaterThan(
+        jest.mocked(resumePendingIdentityTdhSync).mock.invocationCallOrder[0]
+      );
+    });
+
+    it('leaves the invocation result and error as they are when it fails', async () => {
+      const memory = jest
+        .spyOn(process, 'memoryUsage')
+        .mockImplementation(() => {
+          throw new Error('memory read failure');
+        });
+      try {
+        await expect(
+          invoke({ action: 'reconsolidate', wallets: [COLD] })
+        ).resolves.toEqual({
+          action: 'reconsolidate',
+          status: 'completed',
+          requested_wallets: [COLD],
+          affected_wallets: [COLD, HOT],
+          block: 26_000_000
+        });
+        jest
+          .mocked(db.fetchAllConsolidatedTdh)
+          .mockResolvedValueOnce(originalSnapshot)
+          .mockResolvedValueOnce(replacementSnapshot);
+        jest
+          .mocked(consolidateOwnerBalances)
+          .mockRejectedValue(new Error('balance failure'));
+        await expect(
+          invoke({ action: 'reconsolidate', wallets: [COLD] })
+        ).rejects.toThrow('balance failure');
+      } finally {
+        memory.mockRestore();
+      }
+    });
+
+    it('does not run on a minute that reconsolidates nothing', async () => {
+      jest
+        .mocked(delegations.findDelegationTransactions)
+        .mockResolvedValue(noChainEvents);
+      await invoke({ source: 'aws.events' });
+      jest.mocked(getAffectedWalletsForAddresses).mockResolvedValue(new Set());
+      await invoke({ action: 'reconsolidate', wallets: [COLD] });
+      expect(updateTDH).not.toHaveBeenCalled();
+      expect(gc).not.toHaveBeenCalled();
+    });
+  });
+
   it('stops the pipeline and rejects the invocation when a stage fails', async () => {
     jest
       .mocked(consolidateOwnerBalances)

@@ -100,4 +100,49 @@ describeWithSeed('Encrypted connection-share consumption', [], () => {
       id: 'plain-other'
     });
   });
+
+  it('keeps the previous share live when the replacing share cannot be stored', async () => {
+    const repo = new AuthDb(() => sqlExecutor);
+    const now = new Date();
+    const wallet = '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+    const shareParams = (id: string, codeHash: string) => ({
+      id,
+      connectionShareCodeHash: codeHash,
+      encryptedDeviceSetup: null,
+      address: wallet,
+      role: null,
+      targetClientType: 'native' as const,
+      expiresAt: new Date(now.getTime() + 60_000)
+    });
+    await repo.createWalletConnectionShare(
+      shareParams('previous-share', 'b'.repeat(64))
+    );
+
+    // Same id as the live share: the insert fails after the retire ran.
+    await expect(
+      repo.executeNativeQueriesInTransaction(async (connection) => {
+        await repo.retireLiveWalletConnectionShares(
+          {
+            address: wallet,
+            targetClientType: 'native',
+            withDeviceSetup: false,
+            now
+          },
+          connection
+        );
+        return repo.createWalletConnectionShare(
+          shareParams('previous-share', 'c'.repeat(64)),
+          connection
+        );
+      })
+    ).rejects.toThrow();
+
+    await expect(
+      repo.consumeWalletConnectionShare({
+        connectionShareCodeHash: 'b'.repeat(64),
+        targetClientType: 'native',
+        now
+      })
+    ).resolves.toMatchObject({ id: 'previous-share' });
+  });
 });

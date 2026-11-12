@@ -11,10 +11,10 @@ it('does not depend on GitHub role variables or an execution-role export step', 
   );
 });
 it.each(['dropForgeLaunchHandler', 'memesDistributionHandler'])(
-  '%s consumes durable work without an idle schedule',
+  '%s consumes durable queue work without a polling timer',
   (name) => {
     const source = read(`src/${name}/serverless.yaml`);
-    expect(source).not.toMatch(/rate\(|cron\(|env:DROP_FORGE.*ROLE/);
+    expect(source).not.toMatch(/rate\(|env:DROP_FORGE.*ROLE/);
     expect(source).toContain('drop-forge.js)');
     expect(source).toContain('batchSize: 1');
     expect(source).toContain('maximumConcurrency: 2');
@@ -24,6 +24,36 @@ it.each(['dropForgeLaunchHandler', 'memesDistributionHandler'])(
     expect(source).toContain('ApproximateNumberOfMessagesVisible');
   }
 );
+it('schedules only the four Athens readiness checks on the Launch queue', () => {
+  const launch = read('src/dropForgeLaunchHandler/serverless.yaml');
+  const distribution = read('src/memesDistributionHandler/serverless.yaml');
+  expect(distribution).not.toMatch(/cron\(/);
+  const times = ['30 17', '28 18', '58 18', '22 19'];
+  expect(launch.match(/cron\(/g)).toHaveLength(times.length);
+  const { Resources } = parse(launch, {
+    merge: true,
+    logLevel: 'silent'
+  }).resources;
+  times.forEach((time, index) => {
+    expect(Resources[`ReadinessPhase${index}`]).toMatchObject({
+      Type: 'AWS::Scheduler::Schedule',
+      Properties: {
+        GroupName: 'LaunchScheduleGroup',
+        ScheduleExpression: `cron(${time} * * ? *)`,
+        ScheduleExpressionTimezone: 'Europe/Athens',
+        Target: {
+          Arn: 'WorkQueue.Arn',
+          DeadLetterConfig: { Arn: 'WorkDLQ.Arn' },
+          Input: JSON.stringify({
+            id: `readiness:${index}:<aws.scheduler.scheduled-time>`,
+            revision: 0
+          })
+        }
+      }
+    });
+  });
+});
+
 it.each(['staging', 'prod'])(
   'uses separate versioned %s role references',
   (stage) => {

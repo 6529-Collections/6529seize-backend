@@ -71,6 +71,7 @@ export const RESERVED_HANDLES = [
   'invitations',
   'verify',
   'verification',
+  'validator',
   'preferences',
   'content-moderation',
   'content_moderation',

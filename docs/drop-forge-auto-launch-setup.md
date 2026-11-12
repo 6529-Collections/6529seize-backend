@@ -324,10 +324,11 @@ Apply the generated monitoring stack updates before enabling either workflow.
 No additional existing reporting-consumer redeploy is required for the new
 automation mentions; existing `@devs6529` subscription alerts are unchanged.
 Apply monitoring artifacts generated from the same reviewed revision. Both handlers
-must appear in the production/staging policy inventory without a recurring interval;
+must appear in the production/staging policy inventory without an idle polling interval;
 keep their handler DLQ alarms enabled when applying the shared monitoring updates.
-Initially keep preparation and automation disabled. Both handlers have **no recurring
-schedule**. Process and Finalize and Launch/Update Claim enqueue work immediately;
+Initially keep preparation and automation disabled. The four recurring readiness
+checks operate independently. Process and Finalize and Launch/Update Claim enqueue
+work immediately;
 Launch establishes per-drop one-time phase/Research schedules. Short continuations
 exist only while checkpoints, reports or receipts are outstanding. The
 [scheduled groups](architecture.md#drop-forge-scheduled-groups) run in the gaps

@@ -8,9 +8,16 @@ import type { LegacyLoginFormat } from '@/api/auth/legacy-text-challenge';
 // `/auth/redeem-refresh-token` and the legacy desktop connection link, each
 // by coarse client family and outcome. EMF lines on stdout (no CloudWatch API
 // call or IAM change). Never records addresses, signatures, nonces or tokens.
+//
+// `Refusal` says why a call was refused, as its own dimension set so the
+// Format and Client series stay as they were: `form_closed` for an old-form
+// `/auth/login` challenge presented after its transition or last accepted
+// day (an alarm can watch `Route=login, Refusal=form_closed`), `other` for
+// any other refusal, `none` for an accepted call.
 
 const NAMESPACE = '6529/Auth';
 const FORMAT_LOCAL = 'legacyAuthFormat';
+const REFUSAL_LOCAL = 'legacyAuthRefusal';
 const logger = Logger.get('LEGACY_AUTH_METRICS');
 
 export type LegacyAuthRoute =
@@ -22,11 +29,14 @@ export type LegacyAuthFormat = LegacyLoginFormat | 'refresh_token';
 
 export type LegacyAuthOutcome = 'ok' | 'refused';
 
+export type LegacyAuthRefusal = 'none' | 'form_closed' | 'other';
+
 export function recordLegacyAuthUse(record: {
   readonly route: LegacyAuthRoute;
   readonly format: LegacyAuthFormat;
   readonly userAgent: string | null | undefined;
   readonly outcome: LegacyAuthOutcome;
+  readonly refusal?: LegacyAuthRefusal;
 }): void {
   try {
     process.stdout.write(
@@ -39,7 +49,8 @@ export function recordLegacyAuthUse(record: {
               Namespace: NAMESPACE,
               Dimensions: [
                 ['Route', 'Format', 'Outcome'],
-                ['Route', 'Client', 'Outcome']
+                ['Route', 'Client', 'Outcome'],
+                ['Route', 'Refusal']
               ],
               Metrics: [{ Name: 'LegacyAuthCalls', Unit: 'Count' }]
             }
@@ -49,6 +60,7 @@ export function recordLegacyAuthUse(record: {
         Format: record.format,
         Client: clientFamilyOf(record.userAgent),
         Outcome: record.outcome,
+        Refusal: record.refusal ?? (record.outcome === 'ok' ? 'none' : 'other'),
         LegacyAuthCalls: 1
       })}\n`
     );
@@ -72,6 +84,15 @@ export function setLegacyLoginFormat(
 }
 
 /**
+ * Marks a `/auth/login` refusal caused by an old-form challenge whose
+ * transition or last accepted day has passed. Only read when the response
+ * is a refusal.
+ */
+export function setLegacyLoginFormClosed(res: Response<any>): void {
+  res.locals[REFUSAL_LOCAL] = 'form_closed';
+}
+
+/**
  * Middleware recording one use of `route` when its response finishes: `ok`
  * for a 2xx/3xx status, `refused` otherwise.
  */
@@ -83,13 +104,15 @@ export function recordLegacyAuthUseOnFinish(route: LegacyAuthRoute) {
   ) => {
     const userAgent = req.headers['user-agent'];
     res.once('finish', () => {
+      const refused = res.statusCode >= 400;
       recordLegacyAuthUse({
         route,
         format:
           res.locals[FORMAT_LOCAL] ??
           (route === 'login' ? 'unverified' : 'refresh_token'),
         userAgent,
-        outcome: res.statusCode < 400 ? 'ok' : 'refused'
+        outcome: refused ? 'refused' : 'ok',
+        refusal: refused ? (res.locals[REFUSAL_LOCAL] ?? 'other') : 'none'
       });
     });
     next();

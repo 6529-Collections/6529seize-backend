@@ -99,6 +99,15 @@ import { ApiDropModerationStatus } from '@/api/generated/models/ApiDropModeratio
 import { withWaveLogsTimeoutGuard } from './wave-logs-timeout';
 import { Logger } from '@/logging';
 
+/**
+ * Time after which the one-by-one mapping of a batch read (after the bulk
+ * mapping failed) starts no further drop. It is checked between drops: a
+ * mapping already running is not cut short, so the fallback can take this
+ * long plus one mapping. Drops not started in time are left out, like drops
+ * the mapper cannot handle.
+ */
+export const ONE_BY_ONE_DROP_MAPPING_BUDGET_MS = 3_000;
+
 export class DropsApiService {
   private readonly logger = Logger.get(this.constructor.name);
 
@@ -182,16 +191,26 @@ export class DropsApiService {
   /**
    * After a failed bulk mapping, maps each drop on its own so that one drop
    * the mapper cannot handle is left out instead of failing the whole read.
-   * When no drop can be mapped, the original error is thrown as before.
+   * Drops are mapped in order, and none is started once
+   * ONE_BY_ONE_DROP_MAPPING_BUDGET_MS has passed; the rest are left out too.
+   * When no drop was mapped, the original error is thrown as before; that
+   * includes a first drop that fails after running past the budget, since
+   * no other drop is then tried.
    */
   private async mapReadableDropsOneByOne(
     dropEntities: DropEntity[],
     map: (entities: DropEntity[]) => Promise<ApiDrop[]>,
     bulkError: unknown
   ): Promise<ApiDrop[]> {
+    const deadlineMs = Date.now() + ONE_BY_ONE_DROP_MAPPING_BUDGET_MS;
     const mapped: ApiDrop[] = [];
     let failed = 0;
+    let notTried = 0;
     for (const entity of dropEntities) {
+      if (Date.now() >= deadlineMs) {
+        notTried++;
+        continue;
+      }
       try {
         mapped.push(...(await map([entity])));
       } catch {
@@ -202,7 +221,7 @@ export class DropsApiService {
       throw bulkError;
     }
     this.logger.error(
-      `Mapped the ${dropEntities.length} drops of a batch read one by one after the bulk mapping failed; left out ${failed} that could not be mapped`,
+      `Mapped the ${dropEntities.length} drops of a batch read one by one after the bulk mapping failed; left out ${failed} that could not be mapped and ${notTried} not tried within ${ONE_BY_ONE_DROP_MAPPING_BUDGET_MS} ms`,
       bulkError
     );
     return mapped;

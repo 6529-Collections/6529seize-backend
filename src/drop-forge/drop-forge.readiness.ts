@@ -201,6 +201,22 @@ function plannedBatches(
   );
 }
 
+function allocationsFromPlan(
+  batches: LaunchAction[],
+  publicPhase: boolean
+): ExpectedAllocations {
+  const totals = new Map<string, number>();
+  for (const batch of batches) {
+    // An old combined Phase 2 batch alone cannot establish any Public recipients.
+    if (publicPhase && !batch.label?.toLowerCase().includes('public')) continue;
+    for (const { address, amount } of batch.recipients) {
+      const wallet = address.toLowerCase();
+      totals.set(wallet, (totals.get(wallet) ?? 0) + amount);
+    }
+  }
+  return totals;
+}
+
 function expectedAllocations(
   group: AllocationGroup,
   rows: Awaited<ReturnType<typeof readinessAllocations>>,
@@ -224,18 +240,7 @@ function expectedAllocations(
         Math.max(totals.get(row.wallet) ?? 0, Number(row.total))
       );
   }
-  if (totals.size === 0) {
-    for (const batch of batches) {
-      // An old combined Phase 2 batch alone cannot establish any Public recipients.
-      if (key === 'public' && !batch.label?.toLowerCase().includes('public'))
-        continue;
-      for (const { address, amount } of batch.recipients) {
-        const wallet = address.toLowerCase();
-        totals.set(wallet, (totals.get(wallet) ?? 0) + amount);
-      }
-    }
-  }
-  return totals;
+  return totals.size ? totals : allocationsFromPlan(batches, key === 'public');
 }
 
 async function inspectManualAirdrops(
@@ -409,11 +414,12 @@ export async function runReadinessDelivery(id: string): Promise<void> {
   const label = card
     ? launchCardLink(policy.chainId, claimId)
     : `Claim #${claimId}`;
+  const details = issues.map((issue) => '- ' + issue).join('\n');
   const pushes = await recordReadinessCheck(`${policy.chainId}:${id}`, (ctx) =>
     issues.length
       ? postForgeReport(
           getDropForgeReportingConfig(),
-          `**${label} · ${phase.name} readiness · ${time} Athens**\n\n${issues.map((issue) => `- ${issue}`).join('\n')}`,
+          `**${label} · ${phase.name} readiness · ${time} Athens**\n\n${details}`,
           true,
           ctx
         )
