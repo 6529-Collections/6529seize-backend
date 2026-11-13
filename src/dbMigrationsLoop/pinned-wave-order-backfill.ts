@@ -1,5 +1,3 @@
-import { userGroupsService } from '@/api/community-members/user-groups.service';
-import { wavesApiDb } from '@/api/waves/waves.api.db';
 import { Logger } from '@/logging';
 import { Timer } from '@/time';
 
@@ -11,7 +9,11 @@ const PROFILE_BATCH_SIZE = 20;
 const PROFILE_CONCURRENCY = 4;
 const BACKFILL_DEADLINE_MS = 12 * 60_000;
 
-async function seedProfile(profileId: string): Promise<void> {
+async function seedProfile(
+  profileId: string,
+  wavesApiDb: typeof import('@/api/waves/waves.api.db').wavesApiDb,
+  userGroupsService: typeof import('@/api/community-members/user-groups.service').userGroupsService
+): Promise<void> {
   const timer = new Timer('seedPinnedWaveOrder');
   const eligibleGroups = await userGroupsService.getGroupsUserIsEligibleFor(
     profileId,
@@ -33,6 +35,11 @@ async function seedProfile(profileId: string): Promise<void> {
 }
 
 export async function backfillPinnedWaveOrder() {
+  // Load API services only for the explicit backfill invocation.
+  const [{ wavesApiDb }, { userGroupsService }] = await Promise.all([
+    import('@/api/waves/waves.api.db'),
+    import('@/api/community-members/user-groups.service')
+  ]);
   const deadline = Date.now() + BACKFILL_DEADLINE_MS;
   let processed = 0;
   while (Date.now() < deadline) {
@@ -48,7 +55,11 @@ export async function backfillPinnedWaveOrder() {
       offset += PROFILE_CONCURRENCY
     ) {
       const batch = profileIds.slice(offset, offset + PROFILE_CONCURRENCY);
-      await Promise.all(batch.map(seedProfile));
+      await Promise.all(
+        batch.map((profileId) =>
+          seedProfile(profileId, wavesApiDb, userGroupsService)
+        )
+      );
       processed += batch.length;
     }
   }
