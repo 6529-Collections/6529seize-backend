@@ -125,6 +125,8 @@ ${indent(yamlList(serviceNames))}
           - nft-history-replay
           - competition-lifecycle-events
           - competition-score-resets
+          - pinned-wave-order-schema
+          - pinned-wave-order-backfill
       release_pull_request:
         type: string
         description: 'Merged PR represented by this production release'
@@ -199,7 +201,7 @@ jobs:
           set -euo pipefail
           [[ "$INPUT_ENVIRONMENT" =~ ^(staging|prod)$ ]] || exit 1
           [[ "$INPUT_SERVICE" =~ ^(${serviceCasePattern})$ ]] || exit 1
-          [[ "$DB_SCHEMA_SCOPE" =~ ^(full|maintenance|wallet-transfer-analysis|claims-media-upload|nft-link-page-retry|market-depth-publication-lock|voting-credit-returns|wave-score-input-index|profile-groups-collation|profile-groups-collation-revert|profile-activity-log-wave-index|nft-history-events|nft-history-replay|competition-lifecycle-events|competition-score-resets)$ ]] || exit 1
+          [[ "$DB_SCHEMA_SCOPE" =~ ^(full|maintenance|wallet-transfer-analysis|claims-media-upload|nft-link-page-retry|market-depth-publication-lock|voting-credit-returns|wave-score-input-index|profile-groups-collation|profile-groups-collation-revert|profile-activity-log-wave-index|nft-history-events|nft-history-replay|competition-lifecycle-events|competition-score-resets|pinned-wave-order-schema|pinned-wave-order-backfill)$ ]] || exit 1
           if [ "$DB_SCHEMA_SCOPE" != full ] && [ "$INPUT_SERVICE" != dbMigrationsLoop ]; then
             echo "db_schema_scope is only supported for dbMigrationsLoop" >&2
             exit 1
@@ -461,6 +463,11 @@ jobs:
               echo "::error::Could not read the current seizeAPI environment; refusing to replace it" >&2
               exit 1
             fi
+            # jq accepts empty input without error, so check for a value first.
+            if ! grep -q '[^[:space:]]' "$current_env"; then
+              echo "::error::The current seizeAPI environment read back empty; refusing to replace it" >&2
+              exit 1
+            fi
             if ! missing_keys="$(jq -r --argjson required "$REQUIRED_API_ENV_KEYS" 'if type == "object" then ($required - keys) else $required end | join(",")' "$current_env" 2>/dev/null)"; then
               echo "::error::The current seizeAPI environment is not valid JSON; refusing to replace it" >&2
               exit 1
@@ -558,6 +565,10 @@ jobs:
           fi
           if [ "$DB_SCHEMA_SCOPE" != full ] && ! jq -e --arg scope "$DB_SCHEMA_SCOPE" '.schema_scope == $scope' response.json > /dev/null; then
             echo "Lambda did not acknowledge the requested schema scope"
+            exit 1
+          fi
+          if [ "$DB_SCHEMA_SCOPE" = pinned-wave-order-backfill ] && ! jq -e '.completed == true' response.json > /dev/null; then
+            echo "Pinned wave backfill paused. Rerun this scope before deploying the frontend."
             exit 1
           fi
       - name: Verify resources-only CloudFormation stack

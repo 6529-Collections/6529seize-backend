@@ -44,9 +44,62 @@ comments and application extensions other than looping (NETSCAPE2.0,
 ANIMEXTS1.0) and the GIF ICC extension. The result must re-parse with the same
 size, orientation and byte-identical render stream and none of the removed
 blocks, and must decode with sharp to the same oriented size, frames, timing and
-pixel hash as the input. The lossless path reads sources of up to 64 MiB into
-memory and its pixel check holds up to 128 MiB of decoded pixels; larger images
-use the file-based re-encoding fallback.
+pixel hash as the input.
+
+### Pixel check bounds
+
+The pixel check (`decoded-pixel-digest.ts`) compares what sharp reports for
+input and output (EXIF orientation as sharp applies it, stored size, frame
+count and height, channels, sample depth, loop count and per-frame delays) and
+then a SHA-256 of the decoded pixels of every frame (GIF and WebP load all
+pages). It hashes the stored, unrotated pixels: equal orientation and equal
+stored pixels mean equal oriented pixels, while auto-rotating would make
+libvips copy the whole image into memory. Pixels are decoded with sequential
+reads and hashed in bands of at most 64 MiB (whole frames, or row ranges of one
+frame), contiguous so the hash equals that of the full raw image. Each band is
+freed as soon as it is hashed, and libvips's operation cache is off so earlier
+bands' decoders do not linger. Memory is therefore one band plus the
+decoder's working set, whatever the image size. Each band restarts the decoder
+from the top, so time grows with the number of bands, which the limits bound.
+
+There is no decoded-size cap any more. Instead, an image is reported unverified
+(and the sanitizer re-encodes it, or the backfill skips it) when it exceeds:
+
+- the source limit: 256 MiB, the upload limit, by default
+  (`LOSSLESS_STRIP_MAX_SOURCE_BYTES`); callers can pass their own;
+- 268,435,456 decoded pixels (16,384 x 16,384) in all frames together, enforced
+  by sharp's `limitInputPixels` before any pixel is decoded;
+- 64 MP per frame for decoders that hold a whole frame (progressive or
+  multi-scan JPEG, WebP, GIF), the AVIF and 16-bit PNG cap; single-scan
+  baseline JPEG decodes row by row and is bound only by the pixel ceiling;
+- for PNG, the upload pipeline's PNG limits (100 MP at 8 bits, 64 MP at 16
+  bits, 100,000 pixels a side), read from IHDR before any native parser runs;
+- 240 seconds for one verification (input, output and any gain maps).
+
+These fit the 2 GiB, two-vCPU `dropMediaSanitizer` Lambda (900-second
+timeout). Worst case: about 250 MiB for the runtime (180 MiB measured after
+loading the bundle), up to 768 MiB of source and output buffers (256 MiB each,
+plus one more output when a gain map fails to verify and is dropped), one
+64 MiB band, and the decoder state. Row-by-row decoders (baseline JPEG,
+non-interlaced PNG) use tens of MiB with two libvips threads; whole-frame
+decoders at the 64 MP cap measured 370 MiB (progressive 4:4:4 JPEG) to about
+400 MiB (WebP), and an interlaced 100 MP 8-bit PNG holds its 400 MB image. That
+is about 1.6 GiB, leaving more than 20% headroom; ordinary uploads use far
+less. The sanitizer frees the source and output buffers before it renders
+previews, because the PNG preview worker shares a 1 GiB parent-plus-child RSS
+limit with it. Measured with two libvips threads on a current Xeon, whole
+verifications took 5-15 s for a 144 MP baseline JPEG (depending on content),
+17 s for a 1,070-frame 268 MP GIF, 26 s for a 64 MP WebP, 38 s for a 64 MP
+progressive 4:4:4 JPEG and 20 s for an 81 MP interlaced RGBA PNG; the 240 s
+budget leaves room for slower Lambda CPUs. The check previously decoded each
+image into one buffer, capped first at 128 MiB and then at 384 MiB of decoded
+pixels, with a 30-second timeout that large images could exceed.
+
+Before stripping, the sanitizer admits each non-PNG upload from its metadata
+(`assertImageUploadFits`): the preview budget must hold it, and when it is to
+be stripped but is beyond the source limit or these bounds
+(`canVerifyDecodedPixels`), the re-encoding budget must hold it too. Otherwise
+it fails at once with its dimensions and asks for a smaller image.
 
 HDR gain maps in JPEG are kept, because they are not identifying. Ultra HDR
 (Adobe/Google gain map v1 XMP, ISO 21496-1) and Apple HDR JPEGs are recognised

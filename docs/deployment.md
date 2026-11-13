@@ -145,6 +145,24 @@ The workflow still defaults to `full`, which synchronizes registered entities an
 runs enabled historical migrations; it ignores the unregistered retired tables.
 Select `maintenance` explicitly for this rollout to avoid unrelated schema work.
 
+### Global TDH history widening
+
+Deploy `dbMigrationsLoop` with the full schema scope before `api`. The width
+change rebuilds the two global history tables with MySQL's COPY algorithm and
+blocks writes to each table during its copy. The migration limits metadata-lock
+waits and retries lock timeouts. If it still fails, inspect the Lambda logs and
+retry after the blocking work clears. A retry skips an already widened table.
+The migration is one-way because narrowing can lose values above the old limit.
+
+### Pinned wave order
+
+Deploy `dbMigrationsLoop` with `db_schema_scope=pinned-wave-order-schema` to add
+the nullable position column. Deploy `api` next, then run
+`dbMigrationsLoop` with `db_schema_scope=pinned-wave-order-backfill`. Rerun
+the backfill if it reaches its time limit. The job updates only null positions
+and takes the same per-profile lock as the API. Release the frontend after the
+backfill succeeds. Retain the position column and values during a rollback.
+
 ### Operational failures
 
 #### TDH export uploads

@@ -560,17 +560,22 @@ describe('HelpBotPublicDataService', () => {
         metric: 'total_tdh',
         filters: {}
       }),
-      renderPublicDataAnswer: jest.fn().mockResolvedValue('Total TDH is 123.')
+      renderPublicDataAnswer: jest
+        .fn()
+        .mockResolvedValue('Total TDH is 2,150,585,022.')
     };
     const db = new TestSqlExecutor();
-    db.execute.mockResolvedValue([{ total_tdh: 123 }]);
+    db.execute.mockResolvedValue([{ total_tdh: 2_150_585_022 }]);
     const service = new HelpBotPublicDataService(llm, () => db);
 
     await expect(service.answer({ question: 'total tdh?' })).resolves.toEqual({
       answer:
-        'Total TDH is 123.\n\nMore info: [Total TDH](https://6529.io/network/tdh)',
+        'Total TDH is 2,150,585,022.\n\nMore info: [Total TDH](https://6529.io/network/tdh)',
       queryId: 'tdh_global.latest.total_tdh'
     });
+    expect(llm.renderPublicDataAnswer).toHaveBeenCalledWith(
+      expect.objectContaining({ rows: [{ total_tdh: 2_150_585_022 }] })
+    );
     expect(db.execute).toHaveBeenCalledWith(
       withStatementTimeoutHint(
         'SELECT total_boosted_tdh AS total_tdh, date, block FROM latest_tdh_global_history LIMIT 1'

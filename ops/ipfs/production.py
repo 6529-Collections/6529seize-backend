@@ -58,6 +58,16 @@ def stack(name):
     return result[0]
 
 
+def wait_ssm_online(instance_id):
+    filters = json.dumps([{'Key': 'InstanceIds', 'Values': [instance_id]}])
+    for _ in range(120):
+        rows = call('ssm', 'describe-instance-information', '--filters', filters)['InstanceInformationList']
+        if any(row['InstanceId'] == instance_id and row['PingStatus'] == 'Online' for row in rows):
+            return
+        time.sleep(5)
+    raise TimeoutError('Replacement did not register with Systems Manager')
+
+
 def outputs(value):
     return {item['OutputKey']: item['OutputValue'] for item in value.get('Outputs', [])}
 
@@ -324,6 +334,8 @@ os.execv('/usr/bin/python3',['python3',str(release/'production_host.py'),%r])
                 print(json.dumps({'retryingFailedCommand': command_id, 'operation': operation}), flush=True)
                 saved = None
         if not saved:
+            if operation == 'install':
+                wait_ssm_online(node['instanceId'])
             result = call('ssm', 'send-command', '--instance-ids', node['instanceId'], '--document-name', 'AWS-RunShellScript',
                           '--parameters', json.dumps({'commands': [script], 'executionTimeout': ['7200']}),
                           '--comment', '6529 IPFS ' + self.id + ' ' + operation)
