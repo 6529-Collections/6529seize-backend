@@ -27,6 +27,7 @@ import {
   NormalizedMarketDepthOrder,
   PublishMarketDepthSnapshotInput
 } from './market-depth.types';
+import { MarketDepthEventPurgeKey } from './market-depth-retention';
 
 const CONTRACT = '0x1234567890abcdef1234567890abcdef12345678';
 const UINT256 =
@@ -1060,5 +1061,150 @@ describeWithSeed('MarketDepthDb', [] as never[], () => {
         new Date('2026-09-10T03:00:00.000Z')
       )
     ).toEqual([]);
+  });
+
+  it('purges expired history but keeps the live book and its order history', async () => {
+    const cutoff = new Date('2026-09-20T00:00:00.000Z');
+    const expired = snapshot('00000000-0000-4000-8000-000000000021');
+    const latest = snapshot('00000000-0000-4000-8000-000000000022', {
+      started_at: new Date('2026-09-10T01:00:00.000Z'),
+      completed_at: new Date('2026-09-10T01:01:00.000Z'),
+      orders: [
+        order({ order_key: 'order-key-2', order_id: 'provider-order-2' })
+      ]
+    });
+    await marketDepthDb.publishCompletedSnapshot(expired);
+    await marketDepthDb.publishCompletedSnapshot(latest);
+
+    // Both snapshots are older than the cutoff; only the superseded one goes.
+    expect(
+      await marketDepthDb.purgeSnapshotsCompletedBefore({
+        contract: CONTRACT.toUpperCase().replace('0X', '0x'),
+        cutoff,
+        limit: 20
+      })
+    ).toBe(1);
+    expect(await marketDepthDb.getSnapshotArchive(expired.id)).toBeNull();
+    expect(await marketDepthDb.getSnapshotArchive(latest.id)).not.toBeNull();
+
+    const oldAt = new Date('2026-09-10T00:00:00.000Z');
+    const recentAt = new Date('2026-09-21T00:00:00.000Z');
+    const appendBase = {
+      source: 'opensea-stream',
+      collection_slug: 'project-a',
+      expected_cursor: null,
+      expected_watermark: null,
+      next_cursor: null,
+      provider_watermark: null,
+      provider_at: null,
+      observed_at: recentAt
+    };
+    await marketDepthDb.appendEvents({
+      ...appendBase,
+      contract: CONTRACT,
+      events: [
+        event({ event_id: 'expired-gone-order', observed_at: oldAt }),
+        event({
+          event_id: 'expired-live-order',
+          order_id: 'provider-order-2',
+          observed_at: oldAt
+        }),
+        event({
+          event_id: 'expired-without-order',
+          order_id: null,
+          observed_at: oldAt
+        }),
+        event({ event_id: 'recent-gone-order', observed_at: recentAt })
+      ]
+    });
+    const otherContract = '0xabcdefabcdefabcdefabcdefabcdefabcdefabcd';
+    await marketDepthDb.appendEvents({
+      ...appendBase,
+      contract: otherContract,
+      events: [
+        event({
+          event_id: 'expired-other-contract',
+          contract: otherContract,
+          observed_at: oldAt
+        })
+      ]
+    });
+
+    // A one-row batch walks past the kept live-order event via its key.
+    let after: MarketDepthEventPurgeKey | null = null;
+    let deleted = 0;
+    for (let batch = 0; batch < 10; batch++) {
+      const result = await marketDepthDb.purgeEventsObservedBefore({
+        contract: CONTRACT,
+        cutoff,
+        after,
+        limit: 1
+      });
+      deleted += result.deleted;
+      after = result.last;
+      if (result.scanned < 1) break;
+    }
+    expect(deleted).toBe(2);
+    const remaining = await sqlExecutor.execute<{ event_id: string }>(
+      'SELECT event_id FROM market_depth_events ORDER BY event_id ASC'
+    );
+    expect(remaining.map((row) => row.event_id)).toEqual([
+      'expired-live-order',
+      'expired-other-contract',
+      'recent-gone-order'
+    ]);
+
+    const missing = {
+      prior_snapshot_id: latest.id,
+      source: latest.source,
+      contract: CONTRACT,
+      collection_slug: 'project-a'
+    };
+    await marketDepthDb.enqueueReconciliations([
+      { ...missing, missing_at: oldAt, order: order() },
+      {
+        ...missing,
+        missing_at: oldAt,
+        order: order({ order_key: 'resolved-key', order_id: 'resolved-order' })
+      },
+      {
+        ...missing,
+        missing_at: recentAt,
+        order: order({ order_key: 'recent-key', order_id: 'recent-order' })
+      }
+    ]);
+    const [resolved] = (
+      await marketDepthDb.getDueReconciliations(
+        missing.source,
+        CONTRACT,
+        missing.collection_slug,
+        oldAt
+      )
+    ).filter((item) => item.order_id === 'resolved-order');
+    expect(
+      await marketDepthDb.resolveReconciliation({
+        id: resolved.id,
+        expected_attempt_count: 0,
+        resolved_at: oldAt
+      })
+    ).toBe(true);
+    expect(
+      await marketDepthDb.purgeReconciliationsDueBefore({
+        contract: CONTRACT,
+        cutoff,
+        limit: 1
+      })
+    ).toBe(1);
+    expect(
+      await marketDepthDb.purgeReconciliationsDueBefore({
+        contract: CONTRACT,
+        cutoff,
+        limit: 100
+      })
+    ).toBe(1);
+    const queue = await sqlExecutor.execute<{ order_id: string }>(
+      'SELECT order_id FROM market_depth_reconciliation_queue'
+    );
+    expect(queue.map((row) => row.order_id)).toEqual(['recent-order']);
   });
 });
