@@ -1,5 +1,5 @@
 import 'reflect-metadata';
-import { DataSource } from 'typeorm';
+import { DataSource, QueryFailedError } from 'typeorm';
 import { fetchTDHGlobalHistory } from '@/db-api';
 import {
   GlobalTDHHistory,
@@ -24,7 +24,7 @@ const sumColumns = [
 );
 
 describe('Global TDH history widening', () => {
-  it('preserves both tables and returns large totals as JSON numbers after a retry', async () => {
+  it('retries a real metadata lock timeout, preserves both tables and returns large totals as JSON numbers', async () => {
     const source = await new DataSource({
       type: 'mysql',
       host: process.env.DB_HOST,
@@ -70,7 +70,52 @@ describe('Global TDH history widening', () => {
         );
         await source.getRepository(entity).insert(existingRow);
       }
-      await widenGlobalTdhHistoryBeforeSchemaSync(source);
+      const blocker = source.createQueryRunner();
+      const migrationRunner = source.createQueryRunner();
+      try {
+        await blocker.startTransaction();
+        await blocker.query('SELECT block FROM tdh_global_history');
+        const { widenGlobalTdhHistory } =
+          require('../../migrations/20261113065624-widen-global-tdh-history-values.js') as {
+            widenGlobalTdhHistory: (
+              db: {
+                runSql: (
+                  sql: string,
+                  parameters?: unknown[]
+                ) => Promise<unknown>;
+              },
+              sleep: (delay: number) => Promise<void>
+            ) => Promise<void>;
+          };
+        const releaseForRetry = jest.fn(async () => {
+          await blocker.rollbackTransaction();
+        });
+        const errors: unknown[] = [];
+        await widenGlobalTdhHistory(
+          {
+            runSql: async (sql, parameters) => {
+              try {
+                return await migrationRunner.query(sql, parameters);
+              } catch (error) {
+                errors.push(error);
+                throw error;
+              }
+            }
+          },
+          releaseForRetry
+        );
+        expect(errors).toHaveLength(1);
+        expect(errors[0]).toBeInstanceOf(QueryFailedError);
+        expect(errors[0]).toMatchObject({
+          driverError: { code: 'ER_LOCK_WAIT_TIMEOUT' }
+        });
+        expect(releaseForRetry).toHaveBeenCalledTimes(1);
+        expect(releaseForRetry).toHaveBeenCalledWith(2000);
+      } finally {
+        if (blocker.isTransactionActive) await blocker.rollbackTransaction();
+        await blocker.release();
+        await migrationRunner.release();
+      }
       for (const entity of globalTables) {
         const row = await source.getRepository(entity).findOneByOrFail({
           date: existingRow.date,

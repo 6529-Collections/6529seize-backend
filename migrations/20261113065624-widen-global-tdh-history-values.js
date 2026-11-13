@@ -34,6 +34,7 @@ async function widenTable(db, table, clauses, sleep) {
       await sleep(delay);
     }
   }
+  // The final attempt propagates its error to the schema runner.
   await db.runSql(statement);
 }
 
