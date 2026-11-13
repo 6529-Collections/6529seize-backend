@@ -1377,7 +1377,7 @@ import { ApiDropBoostsPage } from '../models/ApiDropBoostsPage';
 import { ApiDropCompetitionContext } from '../models/ApiDropCompetitionContext';
 import { ApiDropContextProfileContext } from '../models/ApiDropContextProfileContext';
 import { ApiDropCuration } from '../models/ApiDropCuration';
-import { ApiDropCurationRequest } from '../models/ApiDropCurationRequest';
+import { ApiDropCurationRequest  , ApiDropCurationRequestPlacementEnum    } from '../models/ApiDropCurationRequest';
 import { ApiDropGroupMention } from '../models/ApiDropGroupMention';
 import { ApiDropHiddenState } from '../models/ApiDropHiddenState';
 import { ApiDropId } from '../models/ApiDropId';
@@ -2110,6 +2110,7 @@ let enumsMap: Set<string> = new Set<string>([
     "ApiCreateConnectionShareResponseTargetClientTypeEnum",
     "ApiCreateLegacyDesktopConnectionShareRequestClientTypeEnum",
     "ApiDecentralizedMediaProtocol",
+    "ApiDropCurationRequestPlacementEnum",
     "ApiDropGroupMention",
     "ApiDropMainType",
     "ApiDropMediaStatus",
