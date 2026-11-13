@@ -1,6 +1,11 @@
 import 'reflect-metadata';
 import fc from 'fast-check';
-import { fetchMemelabLite, fetchMemesLite, fetchPaginated } from '@/db-api';
+import {
+  fetchMemelabLite,
+  fetchMemesLite,
+  fetchPaginated,
+  fetchTDHGlobalHistory
+} from '@/db-api';
 import { ALL_ROWS_PAGE_SIZE, MAX_PAGE } from '@/api/page-request';
 import { setSqlExecutor, SqlExecutor } from '@/sql-executor';
 
@@ -194,4 +199,69 @@ describe('fetchPaginated pagination inputs', () => {
       { numRuns: 50 }
     );
   });
+});
+
+describe('fetchTDHGlobalHistory', () => {
+  const row = {
+    date: '2026-11-13',
+    block: 26402309,
+    created_tdh: '11',
+    destroyed_tdh: '12',
+    net_tdh: '-1',
+    created_boosted_tdh: '31',
+    destroyed_boosted_tdh: '33',
+    net_boosted_tdh: '-2',
+    created_tdh__raw: '19',
+    destroyed_tdh__raw: '22',
+    net_tdh__raw: '-3',
+    total_boosted_tdh: '2153576000',
+    total_tdh: '1551572003',
+    total_tdh__raw: '185013460',
+    gradients_boosted_tdh: '7284356',
+    gradients_tdh: '7284355',
+    gradients_tdh__raw: '7284354',
+    memes_boosted_tdh: '2147483648',
+    memes_tdh: '1541572003',
+    memes_tdh__raw: '175013460',
+    memes_balance: 5
+  };
+
+  function useHistoryRow(totalBoostedTdh: number | string | bigint) {
+    useExecutor(1);
+    executeMock
+      .mockResolvedValueOnce([{ count: 1 }])
+      .mockResolvedValueOnce([{ ...row, total_boosted_tdh: totalBoostedTdh }]);
+  }
+
+  it('preserves the paginated JSON response with numeric TDH fields', async () => {
+    useHistoryRow(row.total_boosted_tdh);
+
+    const result = await fetchTDHGlobalHistory(5, 1);
+    expect(JSON.parse(JSON.stringify(result))).toEqual({
+      count: 1,
+      page: 1,
+      next: null,
+      data: [
+        {
+          ...Object.fromEntries(
+            Object.entries(row).map(([name, value]) => [
+              name,
+              name === 'date' ? value : Number(value)
+            ])
+          )
+        }
+      ]
+    });
+  });
+
+  it.each(['9007199254740993', BigInt('9007199254740993')])(
+    'rejects a TDH total outside the safe integer range (%p)',
+    async (value) => {
+      useHistoryRow(value);
+
+      await expect(fetchTDHGlobalHistory(5, 1)).rejects.toThrow(
+        'Invalid or unsafe TDH history value in total_boosted_tdh'
+      );
+    }
+  );
 });
