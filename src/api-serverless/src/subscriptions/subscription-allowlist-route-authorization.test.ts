@@ -1,3 +1,16 @@
+import type { RequestContext } from '@/request.context';
+
+jest.mock('@/drop-forge/drop-forge.preparation.repository', () => ({
+  dropForgePreparationRepository: {
+    run: (
+      _contract: string,
+      _claim: number,
+      prepare: (results: object, ctx: RequestContext) => unknown,
+      ctx: RequestContext
+    ) => prepare({}, ctx)
+  }
+}));
+
 const mockCacheStore = new Map<string, string>();
 const mockGetPublicSubscriptions = jest.fn();
 const mockValidateDistribution = jest.fn();
@@ -96,6 +109,7 @@ jest.mock('@/subscriptionsDaily/subscription-cache', () => ({
 import express, { NextFunction, Request, Response } from 'express';
 import { Server } from 'node:http';
 import { cacheKey } from '@/api/api-helpers';
+import { populateDistribution } from '@/api/distributions/api.distributions.service';
 import { ApiCompliantException } from '@/exceptions';
 import { redisGet } from '@/redis';
 import router from '@/api/subscriptions/api.subscriptions.routes';
@@ -200,6 +214,17 @@ describe('GET /subscriptions/allowlists/:contract/:token_id/:allowlist_id/:phase
         body: ADMIN_ALLOWLIST
       });
       expect(mockGetPublicSubscriptions).toHaveBeenCalledTimes(1);
+      expect(populateDistribution).not.toHaveBeenCalled();
+    });
+  });
+
+  it('returns the original upstream validation details before preparing anything', async () => {
+    const validation = { valid: false, statusText: 'EMMA is unavailable' };
+    mockValidateDistribution.mockResolvedValueOnce(validation);
+    await withServer(async (baseUrl) => {
+      const response = await getAllowlist(baseUrl, ADMIN_WALLET);
+      expect(response).toMatchObject({ status: 400, body: validation });
+      expect(mockGetPublicSubscriptions).not.toHaveBeenCalled();
     });
   });
 

@@ -230,6 +230,34 @@ export class DeviceSignedWritesService {
     return this.runReserved(reservation, write, (created) => created.id, ctx);
   }
 
+  /** Attach a signed post inside the transaction that created the drop. */
+  async recordCreatedDropSignature(
+    {
+      dropId,
+      waveId,
+      body,
+      envelope
+    }: {
+      readonly dropId: string;
+      readonly waveId: string;
+      readonly body: unknown;
+      readonly envelope: DeviceSignatureEnvelope;
+    },
+    ctx: SignedWriteContext
+  ): Promise<void> {
+    if (!ctx.connection) {
+      throw new Error(
+        'Recording a created drop signature requires its transaction'
+      );
+    }
+    const reservation = await this.verifyAndReserve(
+      envelope,
+      { kind: DeviceEventKind.POST, waveId, refs: [], body },
+      ctx
+    );
+    await this.finalizeInTransaction(reservation, dropId, ctx);
+  }
+
   /**
    * Edit, delete and reaction writes on an existing drop. The wave is the
    * drop's stored wave; pass it when the caller already loaded it.
@@ -300,10 +328,7 @@ export class DeviceSignedWritesService {
       now,
       ctx
     );
-    const profileId = await this.assertGrantWalletIsActingProfile(
-      grant,
-      authenticationContext
-    );
+    const profileId = await this.assertGrantWalletIsActingProfile(grant, ctx);
     if (
       Math.abs(envelope.claimed_time - now) > DEVICE_SIGNATURE_MAX_CLOCK_SKEW_MS
     ) {
@@ -375,7 +400,9 @@ export class DeviceSignedWritesService {
     now: number,
     ctx: RequestContext
   ): Promise<DeviceGrantEntity> {
-    const grant = await this.db.findGrantById(grantId, { timer: ctx.timer });
+    const grant = ctx.connection
+      ? await this.db.lockGrant(grantId, ctx)
+      : await this.db.findGrantById(grantId, { timer: ctx.timer });
     if (!grant) {
       throw new InvalidDeviceSignatureException('unknown grant');
     }
@@ -402,13 +429,23 @@ export class DeviceSignedWritesService {
    */
   private async assertGrantWalletIsActingProfile(
     grant: DeviceGrantEntity,
-    authenticationContext: AuthenticationContext
+    ctx: SignedWriteContext
   ): Promise<string> {
-    const actingProfileId = authenticationContext.getActingAsId();
-    const grantProfileId = actingProfileId
-      ? await this.identities.getProfileIdByWallet(grant.wallet)
-      : null;
-    if (!actingProfileId || grantProfileId !== actingProfileId) {
+    const actingProfileId = ctx.authenticationContext.getActingAsId();
+    if (!actingProfileId) {
+      throw new InvalidDeviceSignatureException(
+        'grant wallet does not belong to the acting profile'
+      );
+    }
+    const grantProfileId = ctx.connection
+      ? (
+          await this.identities.getIdentityByWallet(
+            grant.wallet,
+            ctx.connection
+          )
+        )?.profile_id
+      : await this.identities.getProfileIdByWallet(grant.wallet);
+    if (grantProfileId !== actingProfileId) {
       throw new InvalidDeviceSignatureException(
         'grant wallet does not belong to the acting profile'
       );
@@ -480,35 +517,44 @@ export class DeviceSignedWritesService {
     dropId: string,
     ctx: RequestContext
   ): Promise<void> {
-    const effect = SIGNED_AUTHOR_SIGNATURE_EFFECT[reservation.kind];
-    const now = this.now();
     try {
-      await this.db.executeNativeQueriesInTransaction(async (connection) => {
-        const txCtx: RequestContext = { timer: ctx.timer, connection };
-        await this.db.attachEventToDrop(
-          { eventId: reservation.eventId, dropId },
-          txCtx
-        );
-        if (effect === 'set') {
-          await this.db.upsertDropAuthorSignature(
-            {
-              dropId,
-              eventId: reservation.eventId,
-              signedAt: reservation.receivedAt
-            },
-            txCtx
-          );
-        } else if (effect === 'clear') {
-          await this.db.deleteDropAuthorSignature(dropId, txCtx);
-        }
-        await this.db.touchGrantLastUsed(reservation.grantId, now, txCtx);
-      });
+      await this.db.executeNativeQueriesInTransaction((connection) =>
+        this.finalizeInTransaction(reservation, dropId, {
+          timer: ctx.timer,
+          connection
+        })
+      );
     } catch (error) {
       this.logger.error(
         `Failed to finalize device signed event ${reservation.eventId} for drop ${dropId}`,
         error
       );
     }
+  }
+
+  private async finalizeInTransaction(
+    reservation: ReservedDeviceEvent,
+    dropId: string,
+    ctx: RequestContext
+  ): Promise<void> {
+    const effect = SIGNED_AUTHOR_SIGNATURE_EFFECT[reservation.kind];
+    await this.db.attachEventToDrop(
+      { eventId: reservation.eventId, dropId },
+      ctx
+    );
+    if (effect === 'set') {
+      await this.db.upsertDropAuthorSignature(
+        {
+          dropId,
+          eventId: reservation.eventId,
+          signedAt: reservation.receivedAt
+        },
+        ctx
+      );
+    } else if (effect === 'clear') {
+      await this.db.deleteDropAuthorSignature(dropId, ctx);
+    }
+    await this.db.touchGrantLastUsed(reservation.grantId, this.now(), ctx);
   }
 
   /**

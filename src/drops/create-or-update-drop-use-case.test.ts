@@ -1976,6 +1976,56 @@ describe('CreateOrUpdateDropUseCase', () => {
     ).not.toThrow();
   });
 
+  it('keeps the Drop Forge posting profile out of group mentions', () => {
+    expect(
+      normalizeDropGroupMentions({ parts: [{ content: 'Hello @drops6529' }] })
+    ).toEqual([]);
+  });
+
+  it('resolves @dropforgeops to configured profiles with wave visibility filtering', async () => {
+    jest
+      .spyOn(env, 'getStringArray')
+      .mockImplementation((name) =>
+        name === 'DROP_FORGE_ALERT_PROFILE_IDS'
+          ? ['visible-forger', 'hidden-forger']
+          : []
+      );
+    jest
+      .spyOn(identitiesDb, 'getIdentitiesByIds')
+      .mockResolvedValue([
+        { profile_id: 'visible-forger' },
+        { profile_id: 'hidden-forger' }
+      ] as never);
+    const userGroupsService = {
+      findIdentityGroupMemberships: jest
+        .fn()
+        .mockResolvedValue([
+          { profileId: 'visible-forger', groupId: 'visible' }
+        ])
+    };
+    const useCase = createUseCaseWithMocks({ userGroupsService });
+    expect(
+      normalizeDropGroupMentions({
+        parts: [{ content: 'failure @dropforgeops' }]
+      })
+    ).toEqual([DropGroupMention.DROPS_6529]);
+    await expect(
+      (useCase as any).resolvePermissionGroupMentionRecipients(
+        {
+          model: { mentioned_groups: [DropGroupMention.DROPS_6529] },
+          wave: {
+            created_by: 'creator',
+            chat_group_id: null,
+            admin_group_id: null,
+            visibility_group_id: 'visible'
+          },
+          followerIdentityIds: []
+        },
+        { connection: {} }
+      )
+    ).resolves.toEqual(['visible-forger']);
+  });
+
   it('allows chat participants to invoke @devs6529 like direct developer mentions', () => {
     const useCase = createUseCase({ existingNominations: [] });
 

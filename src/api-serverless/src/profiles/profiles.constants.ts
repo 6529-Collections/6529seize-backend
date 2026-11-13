@@ -1,6 +1,10 @@
-import { DEVS_6529_MENTION_TOKEN } from '@/constants/mentions';
+import {
+  DEVS_6529_MENTION_TOKEN,
+  DROP_FORGE_ALERT_MENTION_TOKEN
+} from '@/constants/mentions';
 
 export const RESERVED_HANDLES = [
+  DROP_FORGE_ALERT_MENTION_TOKEN,
   'all',
   'admin',
   'administrator',

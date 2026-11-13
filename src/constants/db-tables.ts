@@ -323,6 +323,17 @@ export const COMPETITION_LEGACY_EXECUTION_EFFECTS_TABLE =
 export const SUBSCRIPTION_CACHE_INVALIDATIONS_TABLE =
   'subscription_cache_invalidations';
 
+export const DROP_FORGE_LAUNCHES_TABLE = 'drop_forge_launches';
+export const DROP_FORGE_SIGNERS_TABLE = 'drop_forge_signers';
+export const DROP_FORGE_PREPARATIONS_TABLE = 'drop_forge_preparations';
+export const DROP_FORGE_JOBS_TABLE = 'drop_forge_jobs';
+export const DROP_FORGE_EVIDENCE_TABLE = 'drop_forge_evidence';
+export const DROP_FORGE_SETTINGS_TABLE = 'drop_forge_settings';
+export const DROP_FORGE_FUNDING_TABLE = 'drop_forge_funding';
+export const DROP_FORGE_READINESS_TABLE = 'drop_forge_readiness_checks';
+export const TRANSACTION_SCAN_CHECKPOINTS_TABLE =
+  'transaction_scan_checkpoints';
+
 // End-to-end encrypted DMs and groups (D109). The server stores ciphertext
 // and delivery metadata only; see docs/e2ee-messaging.md.
 export const E2EE_DEVICES_TABLE = 'e2ee_devices';
