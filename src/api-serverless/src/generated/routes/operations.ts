@@ -225,6 +225,7 @@ import { ApiNftActivityPage } from '@/api/generated/models/ApiNftActivityPage';
 import { ApiNotificationsResponseV2 } from '@/api/generated/models/ApiNotificationsResponseV2';
 import { ApiNotificationsUnreadCountV2 } from '@/api/generated/models/ApiNotificationsUnreadCountV2';
 import { ApiOgMetadata } from '@/api/generated/models/ApiOgMetadata';
+import { ApiPinnedWaveOrder } from '@/api/generated/models/ApiPinnedWaveOrder';
 import { ApiProfileCmsAgentCandidateValidation } from '@/api/generated/models/ApiProfileCmsAgentCandidateValidation';
 import { ApiProfileCmsAgentDraft } from '@/api/generated/models/ApiProfileCmsAgentDraft';
 import { ApiProfileCmsAgentGrant } from '@/api/generated/models/ApiProfileCmsAgentGrant';
@@ -265,6 +266,7 @@ import { ApiTelemetryDiagnosticsPage } from '@/api/generated/models/ApiTelemetry
 import { ApiUndiscoveredDrops } from '@/api/generated/models/ApiUndiscoveredDrops';
 import { ApiUnpublishProfileCmsPackageRequest } from '@/api/generated/models/ApiUnpublishProfileCmsPackageRequest';
 import { ApiUpdateCompetitionRequest } from '@/api/generated/models/ApiUpdateCompetitionRequest';
+import { ApiUpdatePinnedWaveOrder } from '@/api/generated/models/ApiUpdatePinnedWaveOrder';
 import { ApiUpdateProfilePreferences } from '@/api/generated/models/ApiUpdateProfilePreferences';
 import { ApiUpdateWaveHubRequest } from '@/api/generated/models/ApiUpdateWaveHubRequest';
 import { ApiValidateProfileCmsAgentCandidateRequest } from '@/api/generated/models/ApiValidateProfileCmsAgentCandidateRequest';
@@ -4371,6 +4373,34 @@ export type SearchDraftWaveMentionsRequest = Request<
   ApiResponse<SearchDraftWaveMentionsResponse>,
   never,
   SearchDraftWaveMentionsQuery,
+  Record<string, never>
+>;
+
+export type GetPinnedWavesPathParams = Record<string, never>;
+
+export type GetPinnedWavesQuery = Record<string, never>;
+
+export type GetPinnedWavesResponse = ApiWaveOverview[];
+
+export type GetPinnedWavesRequest = Request<
+  GetPinnedWavesPathParams,
+  ApiResponse<GetPinnedWavesResponse>,
+  never,
+  GetPinnedWavesQuery,
+  Record<string, never>
+>;
+
+export type UpdatePinnedWaveOrderPathParams = Record<string, never>;
+
+export type UpdatePinnedWaveOrderQuery = Record<string, never>;
+
+export type UpdatePinnedWaveOrderResponse = ApiPinnedWaveOrder;
+
+export type UpdatePinnedWaveOrderRequest = Request<
+  UpdatePinnedWaveOrderPathParams,
+  ApiResponse<UpdatePinnedWaveOrderResponse>,
+  ApiUpdatePinnedWaveOrder,
+  UpdatePinnedWaveOrderQuery,
   Record<string, never>
 >;
 

@@ -3349,6 +3349,13 @@ accessible through their parents. The API returns 410 for expired snapshots and
 503 when shared storage is unavailable rather than silently truncating the list.
 Deploy the `api` service before the frontend that consumes this additive endpoint.
 
+Pinned wave order lives in `pinned_waves.position` per profile. The dedicated
+`/v2/waves/pinned` endpoint returns readable root pins in saved order. Pin,
+unpin, reorder and backfill serialize on the profile row. Reorder compares the
+submitted prior list with the current readable list and reuses its positions,
+so an inaccessible wave keeps its position. The All and Joined feeds retain
+their own activity order.
+
 ## IPFS infrastructure management
 
 IPFS has one production environment. `ops/ipfs/cloudformation/` contains plain

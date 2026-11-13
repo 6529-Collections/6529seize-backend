@@ -2758,25 +2758,33 @@ export class WaveApiService {
   }
 
   async pinWave({ waveId }: { waveId: string }, ctx: RequestContext) {
+    const profileId = ctx.authenticationContext?.getActingAsId();
+    if (!profileId) {
+      throw new ForbiddenException('User must be authenticated');
+    }
+    const eligibleGroups =
+      await this.userGroupsService.getGroupsUserIsEligibleFor(
+        profileId,
+        ctx.timer
+      );
     await this.wavesApiDb.executeNativeQueriesInTransaction(
       async (connection) => {
         const ctxWithConnection = { ...ctx, connection };
         await this.assertWaveExistsForAuthenticatedUser(
           waveId,
-          ctxWithConnection
+          ctxWithConnection,
+          eligibleGroups
         );
-        const actingAsId = ctx.authenticationContext?.getActingAsId();
         await this.wavesApiDb.insertPin(
-          { waveId, profileId: actingAsId! },
+          { waveId, profileId, eligibleGroups },
           ctxWithConnection
         );
-        if (actingAsId) {
-          await this.metricsRecorder.recordActiveIdentity(
-            { identityId: actingAsId },
-            ctxWithConnection
-          );
-        }
-      }
+        await this.metricsRecorder.recordActiveIdentity(
+          { identityId: profileId },
+          ctxWithConnection
+        );
+      },
+      { isolationLevel: 'READ COMMITTED' }
     );
   }
 
@@ -2939,7 +2947,8 @@ export class WaveApiService {
 
   private async assertWaveExistsForAuthenticatedUser(
     waveId: string,
-    ctx: RequestContext
+    ctx: RequestContext,
+    eligibleGroups?: string[]
   ): Promise<WaveEntity> {
     const waveEntity = await this.wavesApiDb.findWaveById(
       waveId,
@@ -2953,10 +2962,11 @@ export class WaveApiService {
       throw new ForbiddenException(`User must be authenticated`);
     }
     const groupsUserIsEligibleFor =
-      await this.userGroupsService.getGroupsUserIsEligibleFor(
+      eligibleGroups ??
+      (await this.userGroupsService.getGroupsUserIsEligibleFor(
         actingAsId,
         ctx.timer
-      );
+      ));
     await assertWaveAndParentVisibleOrThrow({
       wave: waveEntity,
       groupsUserIsEligibleFor,

@@ -26,6 +26,7 @@ import {
   OFFICIAL_WAVES_TABLE,
   PINNED_WAVES_TABLE,
   PROFILE_GROUPS_TABLE,
+  PROFILES_TABLE,
   USER_GROUPS_TABLE,
   WAVE_DROPPER_METRICS_TABLE,
   WAVE_CHAT_DROP_COOLDOWNS_TABLE,
@@ -40,6 +41,7 @@ import {
   WAVES_TABLE
 } from '@/constants';
 import { Logger } from '@/logging';
+import { ForbiddenException } from '@/exceptions';
 import {
   querySqlInListChunks,
   SQL_IN_LIST_CHUNK_BYTES,
@@ -359,6 +361,11 @@ function toReadWatermark(
  */
 function profileGroupsIdComparand(utf8mb4Expression: string): string {
   return `convert(${utf8mb4Expression} using utf8mb3)`;
+}
+
+interface PinnedWavePosition {
+  readonly wave_id: string;
+  readonly position: number | null;
 }
 
 export class WavesApiDb extends LazyDbAccessCompatibleService {
@@ -3855,13 +3862,150 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     return new Set<string>(results.map((it) => it.wave_id));
   }
 
-  async insertPin(
-    { waveId, profileId }: { waveId: string; profileId: string },
+  async lockPinnedWaveProfile(profileId: string, ctx: RequestContext) {
+    return this.db.oneOrNull<{ external_id: string }>(
+      `select external_id from ${PROFILES_TABLE} where external_id = :profileId for update`,
+      { profileId },
+      { wrappedConnection: ctx.connection }
+    );
+  }
+
+  async findPinnedWavePositions(profileId: string, ctx: RequestContext) {
+    const timerKey = `${this.constructor.name}->findPinnedWavePositions`;
+    ctx.timer?.start(timerKey);
+    try {
+      return await this.db.execute<PinnedWavePosition>(
+        `select wave_id, position from ${PINNED_WAVES_TABLE}
+         where profile_id = :profileId
+         order by position is null, position, wave_id`,
+        { profileId },
+        { forcePool: DbPoolName.WRITE, wrappedConnection: ctx.connection }
+      );
+    } finally {
+      ctx.timer?.stop(timerKey);
+    }
+  }
+
+  async findProfilesWithUnorderedPins(limit: number) {
+    const rows = await this.db.execute<{ profile_id: string }>(
+      `select distinct pins.profile_id from ${PINNED_WAVES_TABLE} pins
+       join ${PROFILES_TABLE} p on p.external_id = pins.profile_id
+       where pins.position is null
+       order by pins.profile_id limit :limit`,
+      { limit },
+      { forcePool: DbPoolName.WRITE }
+    );
+    return rows.map((row) => row.profile_id);
+  }
+
+  // The caller holds the profile lock. Only pins without a saved position are seeded.
+  async initializePinnedWavePositions(
+    profileId: string,
+    eligibleGroups: string[],
     ctx: RequestContext
   ) {
+    const pins = await this.findPinnedWavePositions(profileId, ctx);
+    const unorderedIds = pins
+      .filter((pin) => pin.position === null)
+      .map((pin) => pin.wave_id);
+    if (!unorderedIds.length) {
+      return pins;
+    }
+
+    const groups = await this.sharedViewerGroups(
+      'pin_seed_viewer_groups',
+      eligibleGroups
+    );
+    const activity = await this.db.execute<{ wave_id: string }>(
+      `with ${groups ? `${groups.cteSql}, ` : ''} followed_subwave_activity as (
+         ${this.getFollowedSubwaveActivitySelect({
+           groupIds: eligibleGroups,
+           identityParamName: 'profileId',
+           eligibleGroupsParamName: 'eligibleGroups',
+           parentWaveIdsParamName: 'unorderedIds',
+           groupSetSql: groups?.setSql
+         })}
+       )
+       select pins.wave_id
+       from ${PINNED_WAVES_TABLE} pins
+       left join ${WAVE_METRICS_TABLE} wm on wm.wave_id = pins.wave_id
+       left join ${WAVE_READER_METRICS_TABLE} reader
+         on reader.wave_id = pins.wave_id and reader.reader_id = pins.profile_id
+       left join followed_subwave_activity child on child.parent_wave_id = pins.wave_id
+       where pins.profile_id = :profileId and pins.wave_id in (:unorderedIds)
+       order by coalesce(reader.muted, false),
+         greatest(coalesce(wm.latest_drop_timestamp, 0),
+                  coalesce(child.latest_followed_subwave_activity_timestamp, 0)) desc,
+         pins.wave_id desc`,
+      {
+        profileId,
+        unorderedIds,
+        eligibleGroups,
+        wave_target_type: ActivityEventTargetType.WAVE,
+        drop_created_action: ActivityEventAction.DROP_CREATED,
+        ...groups?.params
+      },
+      { wrappedConnection: ctx.connection }
+    );
+    // The pin is the driving row, so missing waves or metrics still get a position.
+    if (activity.length !== unorderedIds.length) {
+      throw new Error(
+        'Pinned wave position seed did not cover every unordered pin'
+      );
+    }
+    const positioned = pins.filter((pin) => pin.position !== null);
+    const lastPosition = positioned.at(-1)?.position ?? 0;
+    const seeded = activity.map(({ wave_id }, index) => ({
+      wave_id,
+      position: lastPosition + index + 1
+    }));
+    await this.updatePinnedWavePositions(profileId, seeded, ctx);
+    return [...positioned, ...seeded];
+  }
+
+  async updatePinnedWavePositions(
+    profileId: string,
+    positions: readonly PinnedWavePosition[],
+    ctx: RequestContext
+  ) {
+    if (!positions.length) {
+      return;
+    }
+    await this.db.bulkUpsert(
+      PINNED_WAVES_TABLE,
+      positions.map((pin) => ({ profile_id: profileId, ...pin })),
+      ['profile_id', 'wave_id', 'position'],
+      ['position'],
+      ctx
+    );
+  }
+
+  async insertPin(
+    {
+      waveId,
+      profileId,
+      eligibleGroups
+    }: {
+      waveId: string;
+      profileId: string;
+      eligibleGroups: string[];
+    },
+    ctx: RequestContext
+  ) {
+    if (!(await this.lockPinnedWaveProfile(profileId, ctx))) {
+      throw new ForbiddenException('Please create a profile first');
+    }
+    const pins = await this.initializePinnedWavePositions(
+      profileId,
+      eligibleGroups,
+      ctx
+    );
+    const position = (pins.at(-1)?.position ?? 0) + 1;
     await this.db.execute(
-      `insert into ${PINNED_WAVES_TABLE} (wave_id, profile_id) values (:waveId, :profileId) on duplicate key update wave_id = :waveId`,
-      { waveId, profileId },
+      `insert into ${PINNED_WAVES_TABLE} (wave_id, profile_id, position)
+       values (:waveId, :profileId, :position)
+       on duplicate key update wave_id = :waveId`,
+      { waveId, profileId, position },
       { wrappedConnection: ctx.connection }
     );
   }
@@ -3870,6 +4014,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     { waveId, profileId }: { waveId: string; profileId: string },
     ctx: RequestContext
   ) {
+    await this.lockPinnedWaveProfile(profileId, ctx);
     await this.db.execute(
       `delete from ${PINNED_WAVES_TABLE} where wave_id = :waveId and profile_id = :profileId`,
       { waveId, profileId },
