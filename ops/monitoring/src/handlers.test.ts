@@ -192,7 +192,7 @@ test('authenticated source routing protects the critical lane and suppresses ini
             {
               metricStat: {
                 metric: {
-                  name: 'Throttles',
+                  name: 'Errors',
                   namespace: 'AWS/Lambda',
                   dimensions: { FunctionName: 'waveScoreRefreshLoop' }
                 },
@@ -209,7 +209,7 @@ test('authenticated source routing protects the critical lane and suppresses ini
       (queued[1] as { MessageBody: string }).MessageBody
     ).alert;
     assert.equal(accepted.service, 'waveScoreRefreshLoop');
-    assert.equal(accepted.alarm.metric, 'Throttles');
+    assert.equal(accepted.alarm.metric, 'Errors');
     assert.equal(accepted.alarm.threshold, 1);
     await assert.rejects(
       () => collect({ ...alarm, region: 'eu-west-1' }),

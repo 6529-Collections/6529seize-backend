@@ -16,5 +16,6 @@ export enum ApiContentModerationReportStatus {
     Open = 'OPEN',
     ResolvedAllowed = 'RESOLVED_ALLOWED',
     ResolvedRemoved = 'RESOLVED_REMOVED',
+    ResolvedDeleted = 'RESOLVED_DELETED',
     Withdrawn = 'WITHDRAWN'
 }

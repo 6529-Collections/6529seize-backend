@@ -7,6 +7,12 @@ import {
   CHAT_HISTORY_PURGE_BATCH_SIZE
 } from './chat-history-purge.db';
 import * as tables from '@/constants';
+import { WaveType } from '@/entities/IWave';
+import { seedNativeOriginalPrimaryFixture } from '@/tests/fixtures/native-competition.fixture';
+import {
+  legacyCompetitionEntryId,
+  legacyCompetitionId
+} from '@/competitions/competition-id';
 
 const wave = aWave(
   { description_drop_id: 'pin' },
@@ -94,6 +100,85 @@ describeWithSeed(
       expect(
         await sqlExecutor.execute(`select id from ${tables.DROPS_TABLE}`)
       ).toEqual([{ id: 'drop-1' }]);
+    });
+
+    it('purges shared CHAT content while retaining independent native-original orphan history and published snapshots', async () => {
+      await seedNativeOriginalPrimaryFixture({ ...wave, type: WaveType.RANK });
+      const competitionId = legacyCompetitionId(wave.id);
+      const orphanEntryId = legacyCompetitionEntryId(competitionId, 'drop-1');
+      await insertDrops(2);
+      await insert(tables.DROPS_PARTS_TABLE, {
+        drop_id: 'drop-1',
+        drop_part_id: 1,
+        content: 'shared chat',
+        wave_id: wave.id
+      });
+      for (const observation of [
+        {
+          kind: 'AGGREGATE',
+          sequence: 21,
+          voter_profile_id: '',
+          value: 40,
+          occurred_at: 10
+        },
+        {
+          kind: 'VOTER',
+          sequence: 37,
+          voter_profile_id: 'historical-voter',
+          value: 17,
+          occurred_at: 20
+        }
+      ])
+        await insert(tables.COMPETITION_SCORE_HISTORY_TABLE, {
+          competition_id: competitionId,
+          entry_id: null,
+          drop_id: 'drop-1',
+          ...observation
+        });
+      await insert(tables.COMPETITION_LEADERBOARD_ENTRIES_TABLE, {
+        competition_id: competitionId,
+        entry_id: orphanEntryId,
+        drop_id: 'drop-1',
+        rating: 40,
+        decision_rating: 90,
+        real_time_rating: 40,
+        submitted_at: 30,
+        updated_at: 30,
+        published_at: 30
+      });
+      const retainedTables = [
+        tables.COMPETITION_SCORE_HISTORY_TABLE,
+        tables.COMPETITION_LEADERBOARD_ENTRIES_TABLE
+      ];
+      const before = await Promise.all(
+        retainedTables.map((table) =>
+          sqlExecutor.execute(`SELECT * FROM ${table}`)
+        )
+      );
+      await expect(purge(2)).resolves.toEqual({
+        ids: ['drop-1', 'drop-2'],
+        hasMore: false
+      });
+      expect(
+        await sqlExecutor.execute(`SELECT id FROM ${tables.DROPS_TABLE}`)
+      ).toEqual([]);
+      expect(
+        await sqlExecutor.execute(
+          `SELECT drop_id FROM ${tables.DROPS_PARTS_TABLE}`
+        )
+      ).toEqual([]);
+      expect(
+        await sqlExecutor.execute(
+          `SELECT id FROM ${tables.COMPETITION_ENTRIES_TABLE}`
+        )
+      ).toEqual([]);
+      expect(
+        await Promise.all(
+          retainedTables.map((table) =>
+            sqlExecutor.execute(`SELECT * FROM ${table}`)
+          )
+        )
+      ).toEqual(before);
     });
 
     it('records cancellation for both references when purging chat history', async () => {
@@ -365,35 +450,6 @@ describeWithSeed(
             voter_id: 'reader',
             vote_time: 1
           }
-        ],
-        [
-          tables.DROP_VOTER_STATE_TABLE,
-          { voter_id: 'reader', wave_id: 'wave', votes: 1 }
-        ],
-        [
-          tables.DROPS_VOTES_CREDIT_SPENDINGS_TABLE,
-          {
-            voter_id: 'reader',
-            wave_id: 'wave',
-            credit_spent: 1,
-            created_at: 1
-          }
-        ],
-        [
-          tables.DROP_RANK_TABLE,
-          { wave_id: 'wave', last_increased: 1, vote: 1 }
-        ],
-        [
-          tables.DROP_REAL_VOTE_IN_TIME_TABLE,
-          { wave_id: 'wave', timestamp: 1, vote: 1 }
-        ],
-        [
-          tables.DROP_REAL_VOTER_VOTE_IN_TIME_TABLE,
-          { voter_id: 'reader', wave_id: 'wave', timestamp: 1, vote: 1 }
-        ],
-        [
-          tables.WAVE_LEADERBOARD_ENTRIES_TABLE,
-          { wave_id: 'wave', timestamp: 1, vote: 1 }
         ],
         [
           tables.DROP_BOOKMARKS_TABLE,

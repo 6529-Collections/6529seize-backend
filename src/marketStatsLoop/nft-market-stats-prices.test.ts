@@ -64,7 +64,13 @@ describe('OpenSea price pagination and persistence', () => {
     jest.clearAllMocks();
     jest.mocked(getRedisClient).mockReturnValue(null);
     fetchMock = jest.spyOn(global, 'fetch');
-    jest.spyOn(Time.prototype, 'sleep').mockResolvedValue();
+    let now = Date.now();
+    jest.spyOn(Date, 'now').mockImplementation(() => now);
+    jest.spyOn(Time.prototype, 'sleep').mockImplementation(async function (
+      this: Time
+    ) {
+      now += this.toMillis();
+    });
     nft = Object.assign(new NFT(), {
       id: 1,
       contract: MEMES_CONTRACT,

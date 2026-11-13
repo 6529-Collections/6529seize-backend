@@ -15,6 +15,20 @@ export async function getAffectedWallets(
     directlyAffectedWallets.add(event.wallet2.toLowerCase());
   }
 
+  return getAffectedWalletsForAddresses(
+    Array.from(directlyAffectedWallets),
+    currentConsolidations
+  );
+}
+
+export async function getAffectedWalletsForAddresses(
+  wallets: readonly string[],
+  currentConsolidations: ConsolidatedTDH[]
+): Promise<Set<string>> {
+  const directlyAffectedWallets = new Set(
+    wallets.map((wallet) => wallet.toLowerCase())
+  );
+
   const affectedWallets = new Set(directlyAffectedWallets);
   for (const consolidation of currentConsolidations) {
     const wallets = getConsolidationWallets(consolidation).map((wallet) =>

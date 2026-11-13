@@ -1,6 +1,16 @@
 import { describe, expect, it, beforeEach, jest } from '@jest/globals';
 import { createHash } from 'node:crypto';
 import { validGlb } from '@/tests/fixtures/glb';
+import { memeCollaborationsDb } from '@/meme-collaborations/meme-collaborations.db';
+import { withCollaborationCredit } from '@/meme-collaborations/meme-collaboration-credit';
+
+jest.mock('@/meme-collaborations/meme-collaborations.db', () => ({
+  memeCollaborationsDb: {
+    context: jest
+      .fn<typeof memeCollaborationsDb.context>()
+      .mockResolvedValue(null)
+  }
+}));
 import { BadRequestException } from '@/exceptions';
 import type { MintingClaimRow } from '@/api/minting-claims/api.minting-claims.db';
 import { arweaveFileUploader } from '@/arweave';
@@ -527,6 +537,79 @@ describe('uploadMintingClaimToArweave', () => {
       });
   });
 
+  it.each([false, true])(
+    'publishes saved admin credits and artwork independently of the initial collaboration roster (collab=%s)',
+    async (collab) => {
+      const initial = baseClaim();
+      const context = jest.mocked(memeCollaborationsDb.context);
+      context.mockResolvedValue({
+        drop_id: initial.drop_id,
+        author_id: 'A',
+        author_handle: 'userA',
+        wave_id: 'wave',
+        artwork_hash: 'a'.repeat(64),
+        terms_version: 'b'.repeat(64),
+        base_artist: 'A',
+        terms: null,
+        closed_at: 1,
+        credit: {
+          artist: collab ? 'A, B' : 'A',
+          artist_profiles: collab ? 'userA, userB' : 'userA',
+          collab
+        },
+        artwork: {
+          name: initial.name,
+          description: initial.description,
+          image_url: initial.image_url,
+          animation_url: initial.animation_url
+        }
+      });
+      const adminCredit = {
+        artist: 'A, unaccepted',
+        artist_profiles: 'userA, unaccepted',
+        collab: true
+      };
+      const adminImageUrl = 'https://cdn.example.com/admin.png';
+      const claim = baseClaim({
+        name: 'Admin title',
+        description: 'Admin description',
+        image_url: adminImageUrl,
+        attributes: JSON.stringify(
+          withCollaborationCredit(buildMemesRawAttributes(), adminCredit)
+        )
+      });
+
+      await uploadMintingClaimToArweave(MEMES_CONTRACT, claim);
+
+      const metadataBuffer = uploadFileMock.mock.calls[1]?.[0] as Buffer;
+      const metadata = JSON.parse(metadataBuffer.toString('utf8'));
+      expect(metadata).toMatchObject({
+        name: claim.name,
+        description: claim.description
+      });
+      expect(metadata.attributes).toEqual(
+        expect.arrayContaining([
+          {
+            trait_type: 'Artist',
+            value: adminCredit.artist,
+            display_type: 'text'
+          },
+          {
+            trait_type: 'SEIZE Artist Profile',
+            value: adminCredit.artist_profiles
+          },
+          { trait_type: 'Collab', value: 'Yes' }
+        ])
+      );
+      expect(fetchPublicUrlToBufferMock).toHaveBeenCalledWith(
+        adminImageUrl,
+        expect.any(Object)
+      );
+      expect(context).not.toHaveBeenCalled();
+      context.mockResolvedValue(null);
+    }
+  );
+
   it('uploads only the known MEMES metadata keys', async () => {
     await uploadMintingClaimToArweave(
       MEMES_CONTRACT,
@@ -964,6 +1047,54 @@ describe('uploadMintingClaimToArweave', () => {
     );
     expect(uploadedMetadata.animation_details).toEqual({ format: 'HTML' });
   });
+
+  it.each([
+    [
+      'https://media.6529usercontent.com/ipfs/bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi',
+      'ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi'
+    ],
+    [
+      'https://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi.ipfs.6529usercontent.com/index.html',
+      'ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi/index.html'
+    ],
+    [
+      'https://media.6529usercontent.com/arweave/OI6-rpJ2C3Ab4HiZRWt5A1SumhjnYigmSPBPX0ICBj8',
+      'https://arweave.net/OI6-rpJ2C3Ab4HiZRWt5A1SumhjnYigmSPBPX0ICBj8'
+    ],
+    [
+      'https://ipfs.6529.io/ipfs/bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi',
+      'https://ipfs.6529.io/ipfs/bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi'
+    ]
+  ])(
+    'stores html animation_url %s as %s',
+    async (animationUrl, expectedLocation) => {
+      uploadFileMock.mockReset();
+      uploadFileMock
+        .mockResolvedValueOnce({
+          url: 'https://arweave.net/OI6-rpJ2C3Ab4HiZRWt5A1SumhjnYigmSPBPX0ICBj8'
+        })
+        .mockResolvedValueOnce({
+          url: 'https://arweave.net/_MSzxiISR3AgFJqhzBoAbCtFGMglSqRmZi5NTgZLfL4'
+        });
+
+      const result = await uploadMintingClaimToArweave(
+        MEMES_CONTRACT,
+        baseClaim({
+          animation_url: animationUrl,
+          animation_details: JSON.stringify({
+            format: 'HTML'
+          })
+        })
+      );
+
+      expect(result.animationLocationUrl).toBe(expectedLocation);
+      const metadataUploadBuffer = uploadFileMock.mock.calls[1]?.[0] as Buffer;
+      const uploadedMetadata = JSON.parse(
+        metadataUploadBuffer.toString('utf8')
+      );
+      expect(uploadedMetadata.animation_url).toBe(expectedLocation);
+    }
+  );
 
   it('copies html arweave animation_url to animation_location as an Arweave URL', async () => {
     uploadFileMock.mockReset();

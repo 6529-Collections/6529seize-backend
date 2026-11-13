@@ -2,6 +2,10 @@ import { dbSupplier, LazyDbAccessCompatibleService } from '../sql-executor';
 import { TRANSACTIONS_TABLE } from '@/constants';
 import { refreshTransactionUsdAtWrite } from '@/eth-prices/transaction-usd';
 import { Transaction } from '../entities/ITransaction';
+import {
+  transferReconciliationDb,
+  transferWallets
+} from './transfer-reconciliation.db';
 
 export class TransactionsDiscoveryDb extends LazyDbAccessCompatibleService {
   async getLatestTransactionsBlockForContract(
@@ -88,6 +92,11 @@ export class TransactionsDiscoveryDb extends LazyDbAccessCompatibleService {
             { wrappedConnection: connection }
           );
         }
+        await transferReconciliationDb.enqueue(
+          transferWallets(transactions),
+          ['owners', 'activity'],
+          { connection }
+        );
       },
       { isolationLevel: 'REPEATABLE READ' }
     );

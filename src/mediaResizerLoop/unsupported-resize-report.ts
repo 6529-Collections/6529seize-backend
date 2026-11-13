@@ -47,7 +47,7 @@ export async function reportUnsupportedResizeOnce(
   }
 }
 
-async function claimReport(
+export async function claimReport(
   s3: S3Client,
   command: PutObjectCommand
 ): Promise<boolean> {

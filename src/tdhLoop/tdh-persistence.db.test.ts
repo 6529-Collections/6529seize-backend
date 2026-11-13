@@ -3,6 +3,7 @@ import {
   CONSOLIDATED_WALLETS_TDH_MEMES_TABLE,
   CONSOLIDATED_WALLETS_TDH_TABLE,
   HISTORIC_CONSOLIDATED_WALLETS_TDH_TABLE,
+  IDENTITY_TDH_SYNC_SCOPE_TABLE,
   TDH_NFT_TABLE
 } from '@/constants';
 import { persistConsolidatedTDH } from '@/db';
@@ -11,8 +12,10 @@ import {
   ConsolidatedTDHEditions,
   ConsolidatedTDHMemes,
   HistoricConsolidatedTDH,
-  NftTDH
+  NftTDH,
+  TDHBlock
 } from '@/entities/ITDH';
+import { computeMerkleRoot } from './tdh_merkle';
 import { identityConsolidationEffects } from '@/identity';
 import {
   ConnectionWrapper,
@@ -23,11 +26,15 @@ import {
 import { describeWithSeed, Seed } from '@/tests/_setup/seed';
 import { aTdhConsolidation } from '@/tests/fixtures/tdh_consolidation.fixture';
 import { DbQueryOptions } from '@/db-query.options';
-import * as waveUnreadCache from '@/api/waves/wave-unread-cache';
+import { insertWithoutUpdate } from '@/orm_helpers';
+import { TDH_SAVE_BATCH_SIZE } from './tdh-persistence-batches';
+import { identityTdhSyncStateDb } from '@/identity-tdh-sync-state.db';
+import { identityTdhSyncScopeDb } from '@/identity-tdh-sync-scope.db';
 import * as mysql from 'mysql';
 import { DataSource, QueryRunner } from 'typeorm';
 
 const BLOCK = 99;
+const BLOCK_TIMESTAMP = new Date('2026-11-09T00:00:00Z');
 const A_C = 'a-c';
 const B = 'b';
 const A_B = 'a-b';
@@ -195,6 +202,18 @@ async function expectPersistedKeys(expectedKeys: string[]) {
   await expect(fetchKeys(TDH_NFT_TABLE)).resolves.toEqual(expectedKeys);
 }
 
+async function scopeRows() {
+  const rows = await sqlExecutor.execute<{
+    generation: number | string;
+    kind: string;
+    value: string;
+  }>(
+    `SELECT generation, kind, value FROM ${IDENTITY_TDH_SYNC_SCOPE_TABLE}
+     ORDER BY generation, kind, value`
+  );
+  return rows.map((row) => ({ ...row, generation: Number(row.generation) }));
+}
+
 async function persistReplacement(replacementKeys: string[]) {
   return persistConsolidatedTDH(
     BLOCK,
@@ -206,7 +225,8 @@ async function persistReplacement(replacementKeys: string[]) {
       mode: 'PARTIAL',
       wallets: ['a', 'b', 'c'],
       consolidationKeysToReplace: replacementKeys
-    }
+    },
+    BLOCK_TIMESTAMP
   );
 }
 
@@ -223,7 +243,8 @@ describeWithSeed('atomic TDH consolidation persistence', seeds, () => {
       HistoricConsolidatedTDH,
       ConsolidatedTDHMemes,
       ConsolidatedTDHEditions,
-      NftTDH
+      NftTDH,
+      TDHBlock
     ],
     synchronize: false,
     logging: false,
@@ -237,18 +258,10 @@ describeWithSeed('atomic TDH consolidation persistence', seeds, () => {
 
   beforeEach(() => {
     setSqlExecutor(new TypeOrmTestSqlExecutor(dataSource));
-    jest
-      .spyOn(
-        identityConsolidationEffects,
-        'syncIdentitiesWithTdhConsolidations'
-      )
-      .mockResolvedValue({ waveIds: [], readerWaves: [] });
-    jest
-      .spyOn(identityConsolidationEffects, 'syncIdentitiesMetrics')
-      .mockResolvedValue();
-    jest
-      .spyOn(waveUnreadCache, 'invalidateWaveUnreadCache')
-      .mockResolvedValue();
+    jest.spyOn(
+      identityConsolidationEffects,
+      'syncIdentitiesWithTdhConsolidations'
+    );
   });
 
   afterEach(() => {
@@ -259,9 +272,9 @@ describeWithSeed('atomic TDH consolidation persistence', seeds, () => {
     await dataSource.destroy();
   });
 
-  it('rolls back every TDH store when the unified transaction fails', async () => {
+  it('rolls back every TDH store and the marker when the TDH transaction fails', async () => {
     jest
-      .mocked(identityConsolidationEffects.syncIdentitiesMetrics)
+      .spyOn(identityTdhSyncStateDb, 'markPending')
       .mockRejectedValueOnce(new Error('injected transaction failure'));
 
     await expect(persistReplacement([A_C, B])).rejects.toThrow(
@@ -273,17 +286,167 @@ describeWithSeed('atomic TDH consolidation persistence', seeds, () => {
       `SELECT SUM(boosted_tdh) AS total FROM ${TDH_NFT_TABLE}`
     );
     expect(Number(total)).toBe(50);
+    expect(await identityTdhSyncStateDb.readProgress()).toEqual({
+      pendingGeneration: 0,
+      pendingBlock: 0,
+      syncedGeneration: 0
+    });
+    // The block row rolls back with the TDH rows.
+    await expect(
+      dataSource.getRepository(TDHBlock).findOneBy({ block_number: BLOCK })
+    ).resolves.toBeNull();
   });
 
-  it('is idempotent when retrying after commit but before checkpoint completion', async () => {
+  it('leaves tdh_blocks matching the TDH rows when the run is killed right after the TDH commit', async () => {
+    // A run killed after step A, mid identities sync: nothing after A ran.
+    await persistReplacement([A_C, B]);
+
+    await expectPersistedKeys([A_B, C]);
+    const [latest] = await sqlExecutor.execute<{ block_number: number }>(
+      `SELECT MAX(block_number) AS block_number FROM tdh_blocks`
+    );
+    expect(Number(latest.block_number)).toBe(BLOCK);
+    const blockRow = await dataSource
+      .getRepository(TDHBlock)
+      .findOneByOrFail({ block_number: BLOCK });
+    // The merkle root is the committed rows' root, not an earlier state's.
+    expect(blockRow.merkle_root).toBe(
+      await computeMerkleRoot(BLOCK, dataSource.manager)
+    );
+    expect(new Date(blockRow.timestamp).toISOString()).toBe(
+      BLOCK_TIMESTAMP.toISOString()
+    );
+    // The identities sync is left pending for the next loop start.
+    const progress = await identityTdhSyncStateDb.readProgress();
+    expect(progress.pendingGeneration).toBeGreaterThan(
+      progress.syncedGeneration
+    );
+  });
+
+  it('commits the TDH tables with a pending identities sync marker, without syncing identities', async () => {
+    await persistReplacement([A_C, B]);
+
+    // Visible from another connection: the transaction has committed.
+    await expectPersistedKeys([A_B, C]);
+    expect(await identityTdhSyncStateDb.readProgress()).toEqual({
+      pendingGeneration: 1,
+      pendingBlock: BLOCK,
+      syncedGeneration: 0
+    });
+    expect(
+      identityConsolidationEffects.syncIdentitiesWithTdhConsolidations
+    ).not.toHaveBeenCalled();
+  });
+
+  it('records the keys a partial write replaced or wrote with the write, and nothing for a full rewrite', async () => {
+    await persistReplacement([A_C, B]);
+
+    // The replaced keys and the written ones, and the mark that this
+    // generation's scope is complete.
+    await expect(scopeRows()).resolves.toEqual([
+      { generation: 1, kind: 'CONSOLIDATION_KEY', value: A_B },
+      { generation: 1, kind: 'CONSOLIDATION_KEY', value: A_C },
+      { generation: 1, kind: 'CONSOLIDATION_KEY', value: B },
+      { generation: 1, kind: 'CONSOLIDATION_KEY', value: C },
+      { generation: 1, kind: 'SCOPE_RECORDED', value: '' }
+    ]);
+
+    await persistConsolidatedTDH(
+      BLOCK,
+      newConsolidated,
+      newMemes,
+      newEditions,
+      newNft,
+      { mode: 'FULL' },
+      BLOCK_TIMESTAMP
+    );
+
+    // The full rewrite's generation records nothing: its sync walks all.
+    expect((await scopeRows()).map((row) => row.generation)).toEqual([
+      1, 1, 1, 1, 1
+    ]);
+    expect(
+      (await identityTdhSyncStateDb.readProgress()).pendingGeneration
+    ).toBe(2);
+  });
+
+  it('does not record keys a partial write only rewrote with the same boosted TDH and rate', async () => {
+    // Untouched groups: a partial write rewrites them with new ranks only.
+    const unchanged = { ...consolidatedRow(['z'], 70), boosted_tdh_rate: 0 };
+    const changedBefore = {
+      ...consolidatedRow(['y'], 79),
+      boosted_tdh_rate: 0
+    };
+    await insertWithoutUpdate(dataSource.getRepository(ConsolidatedTDH), [
+      unchanged,
+      changedBefore
+    ]);
+
+    await persistConsolidatedTDH(
+      BLOCK,
+      [
+        ...newConsolidated,
+        { ...unchanged, tdh_rank: 7 },
+        { ...changedBefore, boosted_tdh: 80, tdh_rank: 8 }
+      ],
+      newMemes,
+      newEditions,
+      newNft,
+      {
+        mode: 'PARTIAL',
+        wallets: ['a', 'b', 'c'],
+        consolidationKeysToReplace: [A_C, B]
+      },
+      BLOCK_TIMESTAMP
+    );
+
+    expect(
+      (await scopeRows())
+        .filter((row) => row.kind === 'CONSOLIDATION_KEY')
+        .map((row) => row.value)
+    ).toEqual([A_B, A_C, B, C, 'y']);
+  });
+
+  it('rolls the TDH rows and the marker back when recording the scope fails', async () => {
     jest
-      .mocked(waveUnreadCache.invalidateWaveUnreadCache)
-      .mockRejectedValueOnce(new Error('injected post-commit failure'))
-      .mockResolvedValueOnce();
+      .spyOn(identityTdhSyncScopeDb, 'recordTdhWrite')
+      .mockRejectedValueOnce(new Error('injected scope failure'));
 
     await expect(persistReplacement([A_C, B])).rejects.toThrow(
-      'injected post-commit failure'
+      'injected scope failure'
     );
+
+    await expectPersistedKeys([A_C, B]);
+    expect(
+      (await identityTdhSyncStateDb.readProgress()).pendingGeneration
+    ).toBe(0);
+    await expect(scopeRows()).resolves.toEqual([]);
+  });
+
+  it('arms the completion announcement only for a full TDH rewrite', async () => {
+    await persistReplacement([A_C, B]);
+    expect(await identityTdhSyncStateDb.hasPendingFullAnnouncement()).toBe(
+      false
+    );
+
+    await persistConsolidatedTDH(
+      BLOCK,
+      newConsolidated,
+      newMemes,
+      newEditions,
+      newNft,
+      { mode: 'FULL' },
+      BLOCK_TIMESTAMP
+    );
+
+    await expectPersistedKeys([A_B, C]);
+    expect(await identityTdhSyncStateDb.hasPendingFullAnnouncement()).toBe(
+      true
+    );
+  });
+
+  it('is idempotent when retried after the TDH commit', async () => {
+    await persistReplacement([A_C, B]);
     await expectPersistedKeys([A_B, C]);
 
     await persistReplacement([A_B, C]);
@@ -297,5 +460,171 @@ describeWithSeed('atomic TDH consolidation persistence', seeds, () => {
     );
     expect(Number(total)).toBe(60);
     expect(Number(row_count)).toBe(2);
+    // Each committed write leaves its own pending generation.
+    expect(
+      (await identityTdhSyncStateDb.readProgress()).pendingGeneration
+    ).toBe(2);
+  });
+
+  it('preserves key-score associations in history when input rank order differs from primary-key order', async () => {
+    const rows = [consolidatedRow(['z'], 123), consolidatedRow(['a'], 456)];
+    for (const row of rows) {
+      delete (row as Partial<ConsolidatedTDH>).boosted_tdh_rate;
+    }
+    const before = structuredClone(rows);
+
+    await persistConsolidatedTDH(
+      BLOCK,
+      rows,
+      [],
+      [],
+      [],
+      {
+        mode: 'PARTIAL',
+        wallets: ['a', 'b', 'c', 'z'],
+        consolidationKeysToReplace: [A_C, B]
+      },
+      BLOCK_TIMESTAMP
+    );
+
+    expect(rows).toEqual(before);
+    for (const entity of [ConsolidatedTDH, HistoricConsolidatedTDH]) {
+      for (const expected of before) {
+        const stored = await dataSource.getRepository(entity).findOneByOrFail({
+          block: BLOCK,
+          consolidation_key: expected.consolidation_key
+        });
+        expect(stored).toEqual(
+          expect.objectContaining({
+            block: BLOCK,
+            consolidation_key: expected.consolidation_key,
+            tdh: expected.tdh,
+            tdh__raw: expected.tdh__raw,
+            boosted_tdh: expected.boosted_tdh,
+            tdh_rank: expected.tdh_rank
+          })
+        );
+      }
+    }
+  });
+
+  async function seedUnaffectedGroups() {
+    const rows = Array.from({ length: TDH_SAVE_BATCH_SIZE + 1 }, (_, i) =>
+      consolidatedRow([`unaffected${i}`], 1)
+    );
+    await insertWithoutUpdate(dataSource.getRepository(ConsolidatedTDH), rows);
+    await insertWithoutUpdate(
+      dataSource.getRepository(HistoricConsolidatedTDH),
+      rows
+    );
+    await insertWithoutUpdate(
+      dataSource.getRepository(ConsolidatedTDHMemes),
+      rows.map((row) => memesRow(row.consolidation_key, 1))
+    );
+    await insertWithoutUpdate(
+      dataSource.getRepository(ConsolidatedTDHEditions),
+      rows.map((row) => editionRow(row.consolidation_key))
+    );
+    await insertWithoutUpdate(
+      dataSource.getRepository(NftTDH),
+      rows.map((row) => nftRow(row.consolidation_key, 1))
+    );
+    return rows;
+  }
+
+  it('preserves unaffected scores and persists global ranks beyond an upsert batch', async () => {
+    const unaffected = await seedUnaffectedGroups();
+    const ranked = unaffected.map((row, i) => ({ ...row, tdh_rank: i + 3 }));
+    await persistConsolidatedTDH(
+      BLOCK,
+      [...newConsolidated, ...ranked],
+      [
+        ...newMemes,
+        ...ranked.map((row) => ({
+          ...memesRow(row.consolidation_key, 1),
+          tdh_rank: row.tdh_rank
+        }))
+      ],
+      [
+        ...newEditions,
+        ...ranked.map((row) => ({
+          ...editionRow(row.consolidation_key),
+          days_held: 7
+        }))
+      ],
+      [
+        ...newNft,
+        ...ranked.map((row) => ({
+          ...nftRow(row.consolidation_key, 1),
+          tdh_rank: row.tdh_rank
+        }))
+      ],
+      {
+        mode: 'PARTIAL',
+        wallets: ['a', 'b', 'c'],
+        consolidationKeysToReplace: [A_C, B]
+      },
+      BLOCK_TIMESTAMP
+    );
+
+    await expectPersistedKeys(
+      [A_B, C, ...ranked.map((row) => row.consolidation_key)].sort((a, b) =>
+        a.localeCompare(b)
+      )
+    );
+    const last = ranked[ranked.length - 1];
+    for (const entity of [
+      ConsolidatedTDH,
+      HistoricConsolidatedTDH,
+      ConsolidatedTDHMemes,
+      NftTDH
+    ]) {
+      const row = await dataSource.getRepository(entity).findOneByOrFail({
+        consolidation_key: last.consolidation_key
+      });
+      expect(row.boosted_tdh).toBe(1);
+      expect(row.tdh_rank).toBe(last.tdh_rank);
+    }
+    const edition = await dataSource
+      .getRepository(ConsolidatedTDHEditions)
+      .findOneByOrFail({ consolidation_key: last.consolidation_key });
+    expect(edition.days_held).toBe(7);
+  });
+
+  it('rolls back earlier batches and scoped deletes when a later batch fails', async () => {
+    const unaffected = await seedUnaffectedGroups();
+    const ranked = unaffected.map((row, i) => ({ ...row, tdh_rank: i + 3 }));
+    // A non-nullable field fails in the second upsert call, after the first
+    // batch has inserted replacements and updated unaffected rank rows.
+    ranked[ranked.length - 1].block = null as unknown as number;
+
+    await expect(
+      persistConsolidatedTDH(
+        BLOCK,
+        [...newConsolidated, ...ranked],
+        newMemes,
+        newEditions,
+        newNft,
+        {
+          mode: 'PARTIAL',
+          wallets: ['a', 'b', 'c'],
+          consolidationKeysToReplace: [A_C, B]
+        },
+        BLOCK_TIMESTAMP
+      )
+    ).rejects.toThrow();
+
+    await expectPersistedKeys(
+      [A_C, B, ...unaffected.map((row) => row.consolidation_key)].sort((a, b) =>
+        a.localeCompare(b)
+      )
+    );
+    const first = await dataSource
+      .getRepository(ConsolidatedTDH)
+      .findOneByOrFail({
+        consolidation_key: unaffected[0].consolidation_key
+      });
+    expect(first.tdh_rank).toBe(unaffected[0].tdh_rank);
+    expect(first.boosted_tdh).toBe(1);
   });
 });

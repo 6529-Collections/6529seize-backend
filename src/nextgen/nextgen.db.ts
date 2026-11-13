@@ -1,3 +1,4 @@
+import { enqueueTransfersWithManager } from '@/transactions/transfer-reconciliation.db';
 import { refreshTransactionUsdAtWrite } from '@/eth-prices/transaction-usd';
 import {
   NextGenBlock,
@@ -119,6 +120,7 @@ export async function persistNextgenTransaction(
     'to_address',
     'token_id'
   ]);
+  await enqueueTransfersWithManager(manager, [transaction]);
 }
 
 export async function fetchNextGenCollections(

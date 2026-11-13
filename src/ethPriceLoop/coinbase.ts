@@ -12,7 +12,8 @@ const client = axios.create({
   baseURL: 'https://api.exchange.coinbase.com/products/ETH-USD',
   timeout: 10_000
 });
-axiosRetry(client, {
+// axios-retry's CommonJS typings resolve axios's .d.cts declarations.
+axiosRetry(client as Parameters<typeof axiosRetry>[0], {
   retries: 3,
   // Each attempt has its own timeout, with a bounded backoff between attempts.
   shouldResetTimeout: true,

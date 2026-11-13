@@ -117,7 +117,11 @@ describe('shared OpenSea request pacing', () => {
     expect(sleep).toHaveBeenCalledWith(1000);
     expect(acquire).toHaveBeenCalledTimes(3);
     for (const call of acquire.mock.calls) {
-      expect(call[1].keys).toEqual(['opensea:market-depth:requests']);
+      expect(call[1].keys).toEqual([
+        'opensea:market-depth:requests',
+        '{opensea:market-depth:requests}:next-request',
+        '{opensea:market-depth:requests}:cooldown'
+      ]);
       expect(call[1].arguments[2]).toBe('60');
     }
   });
@@ -147,8 +151,57 @@ describe('shared OpenSea request pacing', () => {
       )
     ).resolves.toEqual({ offers: [] });
 
-    expect(acquire).toHaveBeenCalledTimes(2);
+    expect(acquire).toHaveBeenCalledTimes(3);
+    expect(acquire.mock.calls[1][1].keys).toEqual([
+      '{opensea:market-depth:requests}:cooldown'
+    ]);
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(sleep.mock.contexts[0].toMillis()).toBe(7000);
   });
+
+  it('rechecks a locally extended cooldown after waking without Redis', async () => {
+    let now = 1000;
+    const sleep = jest.fn(async (milliseconds: number) => {
+      now += milliseconds;
+      if (sleep.mock.calls.length === 1) await limiter.recordCooldown(2000);
+    });
+    const limiter = new OpenSeaRateLimiter({ now: () => now, sleep });
+    await limiter.recordCooldown(1000);
+    await limiter.acquire(10000);
+    expect(sleep.mock.calls).toEqual([[1000], [2000]]);
+  });
+
+  it.each(['legacy', 'market-depth'] as const)(
+    'preserves a Redis outage following a %s throttle failure',
+    async (path) => {
+      const failure = new Error('Redis became unavailable');
+      const acquire = jest
+        .fn()
+        .mockResolvedValueOnce(0)
+        .mockResolvedValueOnce(0)
+        .mockRejectedValue(failure);
+      jest
+        .mocked(getRedisClient)
+        .mockReturnValue({ eval: acquire } as unknown as ReturnType<
+          typeof getRedisClient
+        >);
+      jest.spyOn(Time.prototype, 'sleep').mockResolvedValue();
+      const fetchMock = jest
+        .spyOn(global, 'fetch')
+        .mockResolvedValueOnce(new Response('', { status: 429 }));
+      const deadline = Date.now() + 60000;
+      const pending =
+        path === 'legacy'
+          ? fetchOpenSeaPricePage(
+              'https://api.opensea.io/api/v2/offers/collection/fixture/all',
+              deadline
+            )
+          : new OpenSeaClient({
+              apiKey: 'fixture-key',
+              sleep: async () => undefined
+            }).getAllOffers('fixture', deadline);
+      await expect(pending).rejects.toBe(failure);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    }
+  );
 });

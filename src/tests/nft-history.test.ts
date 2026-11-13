@@ -1,14 +1,11 @@
 import { jest } from '@jest/globals';
 import * as nftHistory from '../nft_history';
 import * as db from '../db'; // helpers that nft_history imports
-import * as strings from '../strings';
+import { describeHistoryEdit } from '@/nft-history/metadata';
+import { getEthereumRpcClient } from '@/ethereum-rpc/ethereum-rpc-client';
+import * as ingest from '@/nft-history/source-replay';
 
-const {
-  getAttributeChanges,
-  getEditDescription,
-  findDeployerTransactions,
-  findNFTHistory
-} = nftHistory;
+const { getAttributeChanges, findNFTHistory } = nftHistory;
 
 afterEach(() => {
   jest.restoreAllMocks();
@@ -34,20 +31,11 @@ describe('nft_history helpers', () => {
     ]);
   });
 
-  test('getEditDescription builds edit description from metadata differences', async () => {
+  test('describeHistoryEdit builds edit description from metadata differences', async () => {
     /* ─── mock dependencies that live outside nft_history ─── */
-    jest.spyOn(db, 'fetchLatestNftUri').mockResolvedValue('old');
-
-    jest
-      .spyOn(strings, 'equalIgnoreCase')
-      .mockImplementation((a: string, b: string) => a === b);
 
     /* ─── stub fetch returning old & new metadata ─── */
-    type FakeResponse = { json: () => Promise<any> };
-
-    const fetchMock = jest.fn() as jest.MockedFunction<
-      () => Promise<FakeResponse>
-    >;
+    const fetchMock = jest.spyOn(globalThis, 'fetch');
 
     const oldMeta = {
       name: 'Old',
@@ -62,20 +50,20 @@ describe('nft_history helpers', () => {
     };
 
     fetchMock
-      .mockResolvedValueOnce({ json: async () => oldMeta })
-      .mockResolvedValueOnce({ json: async () => newMeta });
+      .mockResolvedValueOnce(new Response(JSON.stringify(oldMeta)))
+      .mockResolvedValueOnce(new Response(JSON.stringify(newMeta)));
 
-    (globalThis as any).fetch = fetchMock;
-
-    /* ─── call unit under test ─── */
-    const desc = await getEditDescription(1, '0xABC', 'new', 123);
+    const desc = await describeHistoryEdit(
+      'https://arweave.net/IFosq_ZN9_PrDSQmq65JTjeB2GnnfPSFoHxRazxC4PY',
+      'https://arweave.net/yEEVNbUIvVuF1Yb_rRUEmdrrGg3Lj7ZZa-4KBYqJsmg'
+    );
 
     expect(desc).toEqual({
       event: 'Edit',
       changes: [
-        { key: 'name', from: 'Old', to: 'New' },
         { key: 'attributes::Color', from: 'Red', to: 'Blue' },
-        { key: 'attributes::Power (Added)', from: '', to: 'High' }
+        { key: 'attributes::Power (Added)', from: '', to: 'High' },
+        { key: 'name', from: 'Old', to: 'New' }
       ]
     });
     expect(fetchMock).toHaveBeenCalledTimes(2);
@@ -83,33 +71,65 @@ describe('nft_history helpers', () => {
 });
 
 describe('nft_history high level functions', () => {
-  test('findDeployerTransactions resolves paginated calls', async () => {
-    const mockGet = jest.spyOn(nftHistory as any, 'getDeployerTransactions');
-    mockGet
-      .mockResolvedValueOnce({ latestBlock: 10, pageKey: 'key' })
-      .mockResolvedValueOnce({ latestBlock: 15, pageKey: undefined });
-
-    const result = await findDeployerTransactions(1);
-
-    expect(result).toBe(15);
-    expect(mockGet).toHaveBeenCalledTimes(2);
+  test('resumes after the last fully completed block when an invocation stops mid-window', async () => {
+    let stored = 5;
+    jest
+      .spyOn(db, 'fetchLatestNftHistoryBlockNumber')
+      .mockImplementation(() => Promise.resolve(stored));
+    const checkpoint = jest
+      .spyOn(db, 'persistNftHistoryBlock')
+      .mockImplementation((block) => {
+        stored = block;
+        return Promise.resolve();
+      });
+    jest
+      .spyOn(getEthereumRpcClient().constructor.prototype, 'getBlock')
+      .mockResolvedValue({ number: 20 });
+    const ingestMock = jest
+      .spyOn(ingest, 'ingestHistorySources')
+      .mockImplementationOnce(async (_from, _to, _budget, complete) => {
+        await complete(8);
+        throw new Error('History time budget exhausted');
+      })
+      .mockImplementationOnce(async (_from, to, _budget, complete) => {
+        await complete(to);
+      });
+    await expect(findNFTHistory(false)).rejects.toThrow(
+      'History time budget exhausted'
+    );
+    expect(stored).toBe(8);
+    await findNFTHistory(false);
+    expect(ingestMock.mock.calls.map(([from, to]) => [from, to])).toEqual([
+      [6, 20],
+      [9, 20]
+    ]);
+    expect(checkpoint.mock.calls).toEqual([[8], [20]]);
   });
 
-  test('findNFTHistory persists history block even after transient error', async () => {
+  test('does not checkpoint a window when claim ingestion fails', async () => {
     jest.spyOn(db, 'fetchLatestNftHistoryBlockNumber').mockResolvedValue(5);
-
-    const persistMock = jest
+    const checkpoint = jest
       .spyOn(db, 'persistNftHistoryBlock')
       .mockResolvedValue(undefined);
-
-    const findDeployMock = jest
-      .spyOn(nftHistory as any, 'findDeployerTransactions')
-      .mockRejectedValueOnce(new Error('timeout')) // first call fails
-      .mockResolvedValueOnce(20); // retry succeeds
-
-    await findNFTHistory(false);
-
-    expect(findDeployMock).toHaveBeenCalledTimes(2); // retry happened
-    expect(persistMock).toHaveBeenCalledWith(20); // block persisted
+    jest
+      .spyOn(getEthereumRpcClient().constructor.prototype, 'getBlock')
+      .mockResolvedValue({ number: 20 });
+    jest
+      .spyOn(ingest, 'ingestHistorySources')
+      .mockRejectedValue(new Error('metadata unavailable'));
+    await expect(findNFTHistory(false)).rejects.toThrow('metadata unavailable');
+    expect(checkpoint).not.toHaveBeenCalled();
   });
+});
+
+it('rejects legacy forced resets before reading or changing any checkpoint', async () => {
+  const read = jest.spyOn(db, 'fetchLatestNftHistoryBlockNumber');
+  const write = jest.spyOn(db, 'persistNftHistoryBlock');
+  const discover = jest.spyOn(ingest, 'ingestHistorySources');
+  await expect(findNFTHistory(true)).rejects.toThrow(
+    'NFT_HISTORY_RESET is unsupported'
+  );
+  expect(read).not.toHaveBeenCalled();
+  expect(write).not.toHaveBeenCalled();
+  expect(discover).not.toHaveBeenCalled();
 });

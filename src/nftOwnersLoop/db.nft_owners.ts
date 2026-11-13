@@ -108,7 +108,7 @@ export async function persistNftOwners(
           addresses: addressesList
         })
         .execute();
-      await insertWithoutUpdate(repo, ownersDelta);
+      if (ownersDelta.length) await insertWithoutUpdate(repo, ownersDelta);
       logger.info(
         `[INSERTED ${ownersDelta.length} NFT OWNERS] : [DELETED ${deleted.affected} NFT OWNERS]`
       );

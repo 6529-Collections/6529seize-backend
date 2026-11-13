@@ -6,10 +6,11 @@ import {
 import { validateMainStageMediaSize } from '@/drops/main-stage-media-validator';
 import { CreateOrUpdateDropModel } from '@/drops/create-or-update-drop.model';
 import { DropType } from '@/entities/IDrop';
-import { BadRequestException } from '@/exceptions';
+import { BadRequestException, CustomApiCompliantException } from '@/exceptions';
 import { numbers } from '@/numbers';
 import { ConnectionWrapper } from '@/sql-executor';
 import { WaveIdentitySubmissionDuplicates } from '@/entities/IWave';
+import { CLOUDFRONT_LINK } from '@/constants';
 
 const nativeContentPermits = new WeakSet<object>();
 export type NativeEntryContentPermit = Readonly<{
@@ -51,9 +52,20 @@ export function assertCompetitionEntryContent(
   competition: Competition,
   model: CreateOrUpdateDropModel
 ): void {
+  if (competition.participation.anonymous_submissions) {
+    for (const media of model.parts.flatMap((part) => part.media)) {
+      if (isOwnerIdentifyingPlatformMedia(media.url)) {
+        throw new CustomApiCompliantException(
+          400,
+          'Reupload this media before submitting anonymously; its older media URL identifies the uploader',
+          'ANONYMOUS_SUBMISSION_MEDIA_REUPLOAD_REQUIRED'
+        );
+      }
+    }
+  }
   if (model.reply_to || model.parts.some((part) => part.quoted_drop))
     throw new BadRequestException(
-      'Competition entries cannot be replies or quote drops'
+      'Decision entries cannot be replies or quote drops'
     );
   for (const required of competition.participation.required_metadata) {
     const values = model.metadata.filter(
@@ -61,14 +73,14 @@ export function assertCompetitionEntryContent(
     );
     if (!values.length)
       throw new BadRequestException(
-        `Competition requires metadata ${String(required.name)}`
+        `Decision requires metadata ${String(required.name)}`
       );
     if (
       required.type === 'NUMBER' &&
       !values.some((item) => numbers.parseIntOrNull(item.data_value) !== null)
     ) {
       throw new BadRequestException(
-        `Competition requires metadata ${String(required.name)} to be a number`
+        `Decision requires metadata ${String(required.name)} to be a number`
       );
     }
   }
@@ -82,8 +94,22 @@ export function assertCompetitionEntryContent(
     const prefix = prefixes[required];
     if (!prefix || !media.some((item) => item.mime_type.startsWith(prefix)))
       throw new BadRequestException(
-        `Competition requires media of type ${required}`
+        `Decision requires media of type ${required}`
       );
+  }
+}
+
+function isOwnerIdentifyingPlatformMedia(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return (
+      url.origin === CLOUDFRONT_LINK &&
+      /^\/(?:drops|renditions\/drops)\/author_[^/]+\//i.test(
+        decodeURIComponent(url.pathname)
+      )
+    );
+  } catch {
+    return false;
   }
 }
 
@@ -110,14 +136,14 @@ export function assertCompetitionNominationDuplicates(
   );
   if (policy === WaveIdentitySubmissionDuplicates.NEVER_ALLOW && current.length)
     throw new BadRequestException(
-      'This identity has already been nominated in this competition'
+      'This identity has already been nominated in this decision'
     );
   if (
     policy === WaveIdentitySubmissionDuplicates.ALLOW_AFTER_WIN &&
     current.includes(CompetitionEntryStatus.ACTIVE)
   )
     throw new BadRequestException(
-      'This identity already has an active nomination in this competition'
+      'This identity already has an active nomination in this decision'
     );
   if (
     ![
@@ -126,6 +152,6 @@ export function assertCompetitionNominationDuplicates(
     ].includes(policy as WaveIdentitySubmissionDuplicates)
   )
     throw new BadRequestException(
-      'Competition identity duplicate policy is misconfigured'
+      'Decision identity duplicate policy is misconfigured'
     );
 }

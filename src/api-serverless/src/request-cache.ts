@@ -58,11 +58,13 @@ export function cacheRequest(
 
     try {
       const cached = await redisGet<CachedResponsePayload>(key);
-      if (isRequestCacheEntry(cached)) {
+      if (isReplayableCacheEntry(cached)) {
         applyCachedHeaders(res, cached.headers);
         res.setHeader('X-Cache', 'HIT');
         res.status(cached.statusCode);
         const body = Buffer.from(cached.body, 'base64');
+        // res.send compares the stored ETag with the request's conditional
+        // headers and answers 304 itself when they match.
         res.send(body);
         return;
       }
@@ -75,9 +77,25 @@ export function cacheRequest(
       logger.warn('Failed to read request cache entry', error);
     }
 
+    const maxBodyBytes = getMaxCachedBodyBytes();
     const chunks: Buffer[] = [];
+    let capturedBytes = 0;
+    let bodyTooLarge = false;
     const originalWrite = res.write;
     const originalEnd = res.end;
+
+    const keepChunk = (chunk: Buffer) => {
+      if (bodyTooLarge) {
+        return;
+      }
+      capturedBytes += chunk.byteLength;
+      if (capturedBytes > maxBodyBytes) {
+        bodyTooLarge = true;
+        chunks.length = 0;
+        return;
+      }
+      chunks.push(chunk);
+    };
 
     const captureChunk = (chunk?: any, encodingArg?: any) => {
       if (chunk === undefined || chunk === null) {
@@ -88,15 +106,15 @@ export function cacheRequest(
           ? (encodingArg as BufferEncoding)
           : undefined;
       if (Buffer.isBuffer(chunk)) {
-        chunks.push(chunk);
+        keepChunk(chunk);
         return;
       }
       if (chunk instanceof Uint8Array) {
-        chunks.push(Buffer.from(chunk));
+        keepChunk(Buffer.from(chunk));
         return;
       }
       if (typeof chunk === 'string') {
-        chunks.push(Buffer.from(chunk, encoding));
+        keepChunk(Buffer.from(chunk, encoding));
       }
     };
 
@@ -124,9 +142,17 @@ export function cacheRequest(
     res.on('finish', async () => {
       restoreOriginalStreamMethods();
       const shouldCache =
-        options?.shouldCacheResponse?.(req, res) ??
-        isDefaultCacheableStatus(res.statusCode);
+        res.statusCode !== 304 &&
+        (options?.shouldCacheResponse?.(req, res) ??
+          isDefaultCacheableStatus(res.statusCode));
       if (!shouldCache) {
+        return;
+      }
+      if (bodyTooLarge) {
+        logger.info('Skipping request cache store for an oversized body', {
+          path: req.path,
+          bytes: capturedBytes
+        });
         return;
       }
       try {
@@ -173,12 +199,22 @@ export function isRequestCacheEntry(
   );
 }
 
+// Per-response headers that must never be stored or replayed: the request
+// id belongs to the request being answered, not to the one that filled the
+// cache (it would point at another request's server logs).
+const PER_RESPONSE_HEADERS = new Set([
+  'content-length',
+  'content-encoding',
+  'x-request-id'
+]);
+
 function applyCachedHeaders(
   res: Response,
   headers: Record<string, string | number | string[]>
 ) {
   Object.entries(headers).forEach(([header, value]) => {
-    if (header.toLowerCase() === 'content-length') {
+    const headerName = header.toLowerCase();
+    if (headerName === 'content-length' || headerName === 'x-request-id') {
       return;
     }
     res.setHeader(header, value as any);
@@ -194,8 +230,7 @@ function sanitizeHeaders(
     if (value === undefined) {
       return accumulator;
     }
-    const headerName = header.toLowerCase();
-    if (headerName === 'content-length' || headerName === 'content-encoding') {
+    if (PER_RESPONSE_HEADERS.has(header.toLowerCase())) {
       return accumulator;
     }
     accumulator[header] = value as string | number | string[];
@@ -217,6 +252,28 @@ function withAuthCacheDependency(baseKey: string, req: Request): string {
   return `${baseKey}${AUTH_CACHE_KEY_SEPARATOR}${authKeyPart}`;
 }
 
+/**
+ * Only full 200 responses are stored by default. A 304 carries no body (it
+ * answers one caller's conditional request) and other 2xx codes are not
+ * shareable representations.
+ */
 function isDefaultCacheableStatus(statusCode: number) {
-  return (statusCode >= 200 && statusCode < 300) || statusCode === 304;
+  return statusCode === 200;
+}
+
+/** Entries written before 304s stopped being stored are treated as a miss. */
+function isReplayableCacheEntry(
+  value: unknown
+): value is CachedResponsePayload {
+  return isRequestCacheEntry(value) && value.statusCode !== 304;
+}
+
+export const DEFAULT_MAX_CACHED_BODY_BYTES = 1024 * 1024;
+
+/** `REQUEST_CACHE_MAX_BODY_BYTES` overrides the 1 MiB default. */
+function getMaxCachedBodyBytes(): number {
+  const configured = Number(process.env.REQUEST_CACHE_MAX_BODY_BYTES);
+  return Number.isSafeInteger(configured) && configured > 0
+    ? configured
+    : DEFAULT_MAX_CACHED_BODY_BYTES;
 }

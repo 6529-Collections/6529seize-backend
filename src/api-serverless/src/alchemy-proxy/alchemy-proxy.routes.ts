@@ -1,12 +1,28 @@
 import { Network } from '@/ethereum-rpc/ethereum-rpc-network';
 import { CustomApiCompliantException } from '@/exceptions';
 import { ethers } from 'ethers';
-import { Request, Response, Router } from 'express';
+import { NextFunction, Request, Response } from 'express';
 import { getAlchemyInstance } from '../../../alchemy';
 import { Time } from '../../../time';
 import { cacheRequest } from '../request-cache';
+import { handleContractMetadataBatch } from '@/api/alchemy-proxy/contract-metadata-batch.handler';
+import { asyncRouter } from '@/api/async.router';
+import {
+  contractQuerySchema,
+  MAX_TOKENS_PER_REQUEST,
+  ownerNftsQuerySchema,
+  TokenMetadataRequest,
+  tokenMetadataCacheKey,
+  tokenMetadataRequestSchema
+} from '@/api/alchemy-proxy/alchemy-proxy.validation';
 
-const router = Router();
+const router = asyncRouter();
+const VALIDATED_TOKEN_METADATA = 'validatedTokenMetadataRequest';
+
+// Legacy proxy routes live outside /api; the generated router mounts inside it.
+router.post('/contracts', (req, res, next) => {
+  void handleContractMetadataBatch(req, res).catch(next);
+});
 
 function isValidEthAddress(address: string): boolean {
   return /^0x[0-9a-fA-F]{40}$/.test(address);
@@ -47,10 +63,13 @@ router.get(
   '/contract',
   cacheRequest({ ttl: Time.minutes(5) }),
   async (req: Request, res: Response) => {
-    const address = req.query.address as string;
-    if (!address || !isValidEthAddress(address)) {
+    const { error: invalid, value: query } = contractQuerySchema.validate(
+      req.query
+    );
+    if (invalid) {
       return res.status(400).json({ error: 'address is required' });
     }
+    const address = query.address;
 
     const checksum = checksumAddress(address);
     if (!checksum) {
@@ -58,8 +77,7 @@ router.get(
     }
 
     try {
-      const chain = (req.query.chain as string) ?? 'ethereum';
-      const network = resolveNetwork(chain);
+      const network = resolveNetwork(query.chain);
       const alchemy = getAlchemyInstance(network);
 
       const result = await alchemy.nft.getContractMetadata(checksum);
@@ -81,18 +99,20 @@ router.get(
   '/owner-nfts',
   cacheRequest({ ttl: Time.minutes(1) }),
   async (req: Request, res: Response) => {
-    const chainIdRaw = req.query.chainId as string;
-    const contract = req.query.contract as string;
-    const owner = req.query.owner as string;
-    const pageKey = req.query.pageKey as string | undefined;
-
-    const chainId = Number(chainIdRaw);
+    const chainId = Number(req.query.chainId);
     if (!Number.isFinite(chainId)) {
       return res.status(400).json({ error: 'chainId is required' });
     }
-    if (!contract || !owner) {
+    if (!req.query.contract || !req.query.owner) {
       return res.status(400).json({ error: 'contract and owner are required' });
     }
+    const { error: invalid, value: query } = ownerNftsQuerySchema.validate(
+      req.query
+    );
+    if (invalid) {
+      return res.status(400).json({ error: invalid.message });
+    }
+    const { contract, owner, pageKey } = query;
 
     try {
       const network = resolveNetworkByChainId(chainId);
@@ -113,37 +133,60 @@ router.get(
   }
 );
 
+function validateTokenMetadataRequest(
+  req: Request,
+  res: Response,
+  next: NextFunction
+) {
+  const body = req.body ?? {};
+  const oversized = [body.tokens, body.tokenIds].some(
+    (list) => Array.isArray(list) && list.length > MAX_TOKENS_PER_REQUEST
+  );
+  if (oversized) {
+    throw new CustomApiCompliantException(
+      413,
+      `Maximum ${MAX_TOKENS_PER_REQUEST} tokens per request`
+    );
+  }
+  const { error, value } = tokenMetadataRequestSchema.validate(body);
+  if (error) {
+    res.status(400).json({ error: error.message });
+    return;
+  }
+  res.locals[VALIDATED_TOKEN_METADATA] = value;
+  next();
+}
+
+function validatedTokenMetadataRequest(res: Response): TokenMetadataRequest {
+  return res.locals[VALIDATED_TOKEN_METADATA] as TokenMetadataRequest;
+}
+
 router.post(
   '/token-metadata',
+  validateTokenMetadataRequest,
   cacheRequest({
     ttl: Time.minutes(5),
     methods: ['POST'],
-    key: (req) => {
-      const { address, tokenIds, tokens, chain } = req.body ?? {};
-      return `alchemy-token-metadata:${chain ?? 'ethereum'}:${JSON.stringify(tokens ?? [])}:${address ?? ''}:${JSON.stringify(tokenIds ?? [])}`;
-    }
+    key: (req) =>
+      tokenMetadataCacheKey(req.res?.locals[VALIDATED_TOKEN_METADATA])
   }),
   async (req: Request, res: Response) => {
-    const { address, tokenIds, tokens, chain = 'ethereum' } = req.body ?? {};
+    const { address, tokenIds, tokens, chain } =
+      validatedTokenMetadataRequest(res);
 
     let tokensToFetch: { contractAddress: string; tokenId: string }[] = [];
 
     if (tokens && tokens.length > 0) {
-      tokensToFetch = tokens.map(
-        (t: { contract: string; tokenId: string }) => ({
-          contractAddress: t.contract,
-          tokenId: t.tokenId
-        })
-      );
-    } else if (address && Array.isArray(tokenIds) && tokenIds.length > 0) {
-      if (!isValidEthAddress(address)) {
-        return res.status(400).json({ error: 'Invalid contract address' });
-      }
+      tokensToFetch = tokens.map((t) => ({
+        contractAddress: t.contract,
+        tokenId: t.tokenId
+      }));
+    } else if (address && tokenIds && tokenIds.length > 0) {
       const checksum = checksumAddress(address);
       if (!checksum) {
         return res.json({ tokens: [] });
       }
-      tokensToFetch = tokenIds.map((tokenId: string) => ({
+      tokensToFetch = tokenIds.map((tokenId) => ({
         contractAddress: checksum,
         tokenId
       }));
@@ -158,16 +201,8 @@ router.post(
     try {
       const network = resolveNetwork(chain);
       const alchemy = getAlchemyInstance(network);
-      const allTokens: unknown[] = [];
-      const MAX_BATCH_SIZE = 100;
-
-      for (let i = 0; i < tokensToFetch.length; i += MAX_BATCH_SIZE) {
-        const slice = tokensToFetch.slice(i, i + MAX_BATCH_SIZE);
-        const batchResult = await alchemy.nft.getNftMetadataBatch(slice);
-        allTokens.push(...batchResult.nfts);
-      }
-
-      return res.json({ tokens: allTokens });
+      const batchResult = await alchemy.nft.getNftMetadataBatch(tokensToFetch);
+      return res.json({ tokens: batchResult.nfts });
     } catch (error) {
       const message =
         error instanceof Error

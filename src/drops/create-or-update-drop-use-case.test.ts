@@ -13,10 +13,14 @@ jest.mock('@/ethereum-rpc/ethereum-rpc-client', () => ({
 }));
 
 import fc from 'fast-check';
+import { ForbiddenException } from '@/exceptions';
 import { identitiesDb } from '@/identities/identities.db';
 import { AuthenticationContext } from '@/auth-context';
 import { DropType } from '@/entities/IDrop';
-import { DropMediaUploadStatus } from '@/entities/IDropMediaUpload';
+import {
+  DropMediaUploadPurpose,
+  DropMediaUploadStatus
+} from '@/entities/IDropMediaUpload';
 import { AttachmentStatus } from '@/entities/IAttachment';
 import { DropGroupMention } from '@/entities/IWaveGroupNotificationSubscription';
 import { WaveIdentitySubmissionDuplicates, WaveType } from '@/entities/IWave';
@@ -48,6 +52,10 @@ import { withLegacyPrimaryMutation } from '@/competitions/legacy-competition-mut
 import { competitionEntryDropHooks } from '@/competitions/competition-entry-drop-hooks';
 import { profileActivityLogsDb } from '@/profileActivityLogs/profile-activity-logs.db';
 import { waveScoreService } from '@/api/waves/wave-score.service';
+import {
+  WAVE_CHAT_REPLY_GROUP_ID,
+  WAVE_CHAT_REPLY_TRUTH_TABLE
+} from '@/waves/wave-chat-reply-truth-table.fixture';
 
 type ModerationServiceMock = jest.Mocked<
   Pick<PrePublicationModerationService, 'evaluate' | 'assertPostingAllowed'>
@@ -134,6 +142,139 @@ describe('CreateOrUpdateDropUseCase', () => {
     );
   }
 
+  describe('all mention audience preview', () => {
+    function previewSetup(overrides: Record<string, unknown> = {}) {
+      const wave = {
+        id: 'wave-1',
+        created_by: 'author',
+        admin_group_id: 'admins',
+        visibility_group_id: 'visible',
+        parent_wave_id: 'parent',
+        ...overrides
+      };
+      const findWaveById = jest.fn(async (id: string) =>
+        id === 'parent'
+          ? {
+              id: 'parent',
+              parent_wave_id: null,
+              visibility_group_id: 'parent-visible'
+            }
+          : wave
+      );
+      const getGroupsUserIsEligibleFor = jest
+        .fn()
+        .mockResolvedValue(['visible', 'parent-visible']);
+      const findIdentitiesInGroups = jest.fn(async (groups: string[]) =>
+        groups[0] === 'visible'
+          ? ['both', 'child-only']
+          : ['both', 'parent-only']
+      );
+      const findWaveFollowersEligibleForDropNotifications = jest
+        .fn()
+        .mockResolvedValue([
+          { identity_id: 'both', has_group_mention: true },
+          { identity_id: 'both', has_group_mention: true },
+          { identity_id: 'child-only', has_group_mention: true },
+          { identity_id: 'parent-only', has_group_mention: true },
+          { identity_id: 'opted-out', has_group_mention: false }
+        ]);
+      const countMentionRecipients = jest.fn(
+        async (ids: string[]) => ids.length
+      );
+      const useCase = createUseCaseWithMocks({
+        wavesApiDb: { findWaveById },
+        userGroupsService: {
+          getGroupsUserIsEligibleFor,
+          findIdentitiesInGroups
+        },
+        identitySubscriptionsDb: {
+          findWaveFollowersEligibleForDropNotifications
+        },
+        userNotifier: { countMentionRecipients }
+      });
+      return {
+        useCase,
+        findWaveById,
+        getGroupsUserIsEligibleFor,
+        findWaveFollowersEligibleForDropNotifications,
+        countMentionRecipients
+      };
+    }
+
+    it('counts distinct broadcast subscribers visible in both wave and parent', async () => {
+      const setup = previewSetup();
+      const ctx = {
+        authenticationContext: AuthenticationContext.fromProfileId('author')
+      };
+      await expect(
+        setup.useCase.countAllMentionRecipients('wave-1', ctx)
+      ).resolves.toBe(1);
+      expect(
+        setup.findWaveFollowersEligibleForDropNotifications
+      ).toHaveBeenCalledWith(
+        {
+          waveId: 'wave-1',
+          authorId: 'author',
+          mentionedGroups: [DropGroupMention.ALL]
+        },
+        undefined
+      );
+      expect(setup.countMentionRecipients).toHaveBeenCalledWith(
+        ['both'],
+        'author',
+        ctx
+      );
+    });
+
+    it('allows an eligible admin and returns the final notification preference count', async () => {
+      const setup = previewSetup({ created_by: 'other' });
+      setup.getGroupsUserIsEligibleFor.mockResolvedValue([
+        'admins',
+        'visible',
+        'parent-visible'
+      ]);
+      setup.countMentionRecipients.mockResolvedValue(0);
+      await expect(
+        setup.useCase.countAllMentionRecipients('wave-1', {
+          authenticationContext: AuthenticationContext.fromProfileId('author')
+        })
+      ).resolves.toBe(0);
+    });
+
+    it('rejects ordinary members before reading audience data', async () => {
+      const setup = previewSetup({ created_by: 'other' });
+      await expect(
+        setup.useCase.countAllMentionRecipients('wave-1', {
+          authenticationContext: AuthenticationContext.fromProfileId('author')
+        })
+      ).rejects.toThrow('Only wave creators or admins');
+      expect(
+        setup.findWaveFollowersEligibleForDropNotifications
+      ).not.toHaveBeenCalled();
+    });
+
+    it('does not reveal a private parent audience', async () => {
+      const setup = previewSetup();
+      setup.getGroupsUserIsEligibleFor.mockResolvedValue(['visible']);
+      await expect(
+        setup.useCase.countAllMentionRecipients('wave-1', {
+          authenticationContext: AuthenticationContext.fromProfileId('author')
+        })
+      ).rejects.toThrow('Wave not found');
+      expect(
+        setup.findWaveFollowersEligibleForDropNotifications
+      ).not.toHaveBeenCalled();
+    });
+
+    it('requires a fully authenticated posting identity', async () => {
+      const setup = previewSetup();
+      await expect(
+        setup.useCase.countAllMentionRecipients('wave-1', {})
+      ).rejects.toThrow('Posting rights');
+      expect(setup.findWaveById).not.toHaveBeenCalled();
+    });
+  });
+
   it('requires the published MIME type and uploader for an AVIF media reference', async () => {
     const useCase = createUseCaseWithMocks({
       dropMediaUploadsDb: {
@@ -153,7 +294,7 @@ describe('CreateOrUpdateDropUseCase', () => {
     };
     await expect(
       (useCase as any).verifyDropMediaUploadReference(reference)
-    ).resolves.toBeUndefined();
+    ).resolves.toMatchObject({ declared_mime_type: 'image/avif' });
     await expect(
       (useCase as any).verifyDropMediaUploadReference({
         ...reference,
@@ -193,9 +334,158 @@ describe('CreateOrUpdateDropUseCase', () => {
           mimeType: submitted,
           authorId: 'author-profile'
         })
-      ).resolves.toBeUndefined();
+      ).resolves.toMatchObject({ declared_mime_type: declared });
     }
   );
+
+  describe('decision entry media purpose', () => {
+    const uploadId = '0b7b3a9e-2f4c-4d6a-9c1e-5a8f3b2d1e4f';
+    const key = `drops/${uploadId}/Final-Artwork.png`;
+    const url = `${CLOUDFRONT_LINK}/${key}`;
+
+    function uploadsDb(purpose: DropMediaUploadPurpose | null) {
+      return {
+        findById: jest.fn(async (id: string) =>
+          id === uploadId
+            ? {
+                id,
+                purpose,
+                public_key: key,
+                public_url: url,
+                declared_mime_type: 'image/png',
+                status: DropMediaUploadStatus.READY,
+                profile_id: 'author-profile'
+              }
+            : null
+        )
+      };
+    }
+
+    function verify(
+      db: ReturnType<typeof uploadsDb>,
+      {
+        dropType,
+        replyTo = null,
+        mediaUrl = url,
+        mediaUploadId
+      }: {
+        dropType: DropType;
+        replyTo?: { drop_id: string; drop_part_id: number } | null;
+        mediaUrl?: string;
+        mediaUploadId?: string;
+      }
+    ) {
+      const useCase = createUseCaseWithMocks({ dropMediaUploadsDb: db });
+      return (useCase as any).verifyMedia(
+        {
+          wave: { id: 'wave-1', participation_required_media: [] },
+          model: {
+            author_id: 'author-profile',
+            drop_type: dropType,
+            reply_to: replyTo,
+            parts: [
+              {
+                media: [
+                  {
+                    url: mediaUrl,
+                    mime_type: 'image/png',
+                    media_upload_id: mediaUploadId ?? null
+                  }
+                ],
+                attachments: []
+              }
+            ]
+          }
+        },
+        { connection: {} }
+      );
+    }
+
+    it.each([
+      ['a chat drop', DropType.CHAT, null],
+      ['a reply', DropType.CHAT, { drop_id: 'parent', drop_part_id: 1 }],
+      [
+        'a participatory reply',
+        DropType.PARTICIPATORY,
+        { drop_id: 'parent', drop_part_id: 1 }
+      ]
+    ])(
+      'rejects decision entry media attached to %s with a clear 400',
+      async (_, dropType, replyTo) => {
+        const db = uploadsDb(DropMediaUploadPurpose.DECISION_ENTRY);
+        const verification = verify(db, { dropType, replyTo });
+        await expect(verification).rejects.toThrow(
+          'can only be attached to a decision entry'
+        );
+        await expect(verification).rejects.toMatchObject({
+          getStatusCode: expect.any(Function)
+        });
+        await expect(
+          verification.catch((error: any) => error.getStatusCode())
+        ).resolves.toBe(400);
+      }
+    );
+
+    it('finds the upload by media_upload_id as well as by URL', async () => {
+      const db = uploadsDb(DropMediaUploadPurpose.DECISION_ENTRY);
+      await expect(
+        verify(db, { dropType: DropType.CHAT, mediaUploadId: uploadId })
+      ).rejects.toThrow('can only be attached to a decision entry');
+      // The verified tracked upload is reused; no second lookup by URL.
+      expect(db.findById).toHaveBeenCalledTimes(1);
+    });
+
+    it.each([
+      ['query string', `${url}?download=1`],
+      ['percent-encoded', url.replace('Final-Artwork', 'Final%2DArtwork')]
+    ])(
+      'resolves a %s variant of the media URL to the same upload',
+      async (_, variant) => {
+        const db = uploadsDb(DropMediaUploadPurpose.DECISION_ENTRY);
+        await expect(
+          verify(db, { dropType: DropType.CHAT, mediaUrl: variant })
+        ).rejects.toThrow('can only be attached to a decision entry');
+      }
+    );
+
+    it('allows decision entry media on a decision entry without a lookup', async () => {
+      const db = uploadsDb(DropMediaUploadPurpose.DECISION_ENTRY);
+      await expect(
+        verify(db, { dropType: DropType.PARTICIPATORY })
+      ).resolves.toBeUndefined();
+      expect(db.findById).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      [
+        'chat media on a decision entry',
+        DropMediaUploadPurpose.CHAT,
+        DropType.PARTICIPATORY
+      ],
+      ['chat media on a chat drop', DropMediaUploadPurpose.CHAT, DropType.CHAT],
+      ['media uploaded before purposes on a chat drop', null, DropType.CHAT]
+    ])('allows %s', async (_, purpose, dropType) => {
+      await expect(
+        verify(uploadsDb(purpose), { dropType })
+      ).resolves.toBeUndefined();
+    });
+
+    it('ignores URLs that no upload record serves', async () => {
+      const db = uploadsDb(DropMediaUploadPurpose.DECISION_ENTRY);
+      await expect(
+        verify(db, {
+          dropType: DropType.CHAT,
+          mediaUrl: `${CLOUDFRONT_LINK}/drops/${uploadId}/other-file.png`
+        })
+      ).resolves.toBeUndefined();
+      await expect(
+        verify(db, {
+          dropType: DropType.CHAT,
+          mediaUrl: `${CLOUDFRONT_LINK}/drops/author_author-profile/legacy.png`
+        })
+      ).resolves.toBeUndefined();
+    });
+  });
 
   function createIdentitySubmissionModel(identity: string) {
     return {
@@ -307,7 +597,8 @@ describe('CreateOrUpdateDropUseCase', () => {
       const ownerLock = jest.mocked(withLegacyPrimaryMutation);
       ownerLock.mockClear();
       jest.mocked(competitionEntryDropHooks.prepareUpdate).mockResolvedValue({
-        entries: []
+        entries: [],
+        reset_votes: true
       });
       jest
         .spyOn(useCase as any, 'createOrUpdateDrop')
@@ -391,8 +682,7 @@ describe('CreateOrUpdateDropUseCase', () => {
         },
         deleteDropUseCase,
         metricsRecorder: {
-          recordDrop: jest.fn(),
-          recordActiveIdentity: jest.fn()
+          recordCreatedDropAfterCommit: jest.fn()
         },
         artCurationTokenWatchService: { registerDrop: jest.fn() }
       });
@@ -400,7 +690,7 @@ describe('CreateOrUpdateDropUseCase', () => {
       ownerLock.mockClear();
       const memberships = jest.mocked(competitionEntryDropHooks.prepareUpdate);
       memberships.mockClear();
-      memberships.mockResolvedValue({ entries: [] });
+      memberships.mockResolvedValue({ entries: [], reset_votes: true });
       jest.spyOn(useCase as any, 'validateReferences').mockResolvedValue({
         validatedModel: model,
         groupIdsUserIsEligibleFor: []
@@ -437,7 +727,7 @@ describe('CreateOrUpdateDropUseCase', () => {
     ownerLock.mockClear();
     jest
       .mocked(competitionEntryDropHooks.prepareUpdate)
-      .mockResolvedValue({ entries: [] });
+      .mockResolvedValue({ entries: [], reset_votes: true });
     jest
       .spyOn(useCase as any, 'createOrUpdateDrop')
       .mockRejectedValue(new Error("Can't change type of a drop"));
@@ -452,7 +742,7 @@ describe('CreateOrUpdateDropUseCase', () => {
   });
 
   it.each([DropType.CHAT, DropType.PARTICIPATORY])(
-    'only initializes legacy voting state for competition content (%s)',
+    'inserts shared content without initializing retired voting storage (%s)',
     async (dropType) => {
       const dropsDb = {
         insertDrop: jest.fn(),
@@ -514,9 +804,8 @@ describe('CreateOrUpdateDropUseCase', () => {
         expect.any(Object),
         expect.any(Object)
       );
-      const calls = dropType === DropType.CHAT ? 0 : 1;
-      expect(votingDb.upsertWaveLeaderboardEntry).toHaveBeenCalledTimes(calls);
-      expect(votingDb.saveDropRealVoteInTime).toHaveBeenCalledTimes(calls);
+      expect(votingDb.upsertWaveLeaderboardEntry).not.toHaveBeenCalled();
+      expect(votingDb.saveDropRealVoteInTime).not.toHaveBeenCalled();
     }
   );
 
@@ -796,6 +1085,82 @@ describe('CreateOrUpdateDropUseCase', () => {
     });
   });
 
+  describe('wave checks before pre-publication evaluation', () => {
+    function setup(
+      wave: Record<string, unknown> | null,
+      groups: string[] = []
+    ) {
+      const findById = jest.fn().mockResolvedValue(
+        wave && {
+          id: 'wave-1',
+          type: WaveType.CHAT,
+          chat_enabled: true,
+          chat_group_id: null,
+          participation_group_id: null,
+          chat_replies_open: false,
+          ...wave
+        }
+      );
+      const getGroupsUserIsEligibleFor = jest.fn().mockResolvedValue(groups);
+      const useCase = createUseCaseWithMocks({
+        wavesApiDb: { findById },
+        userGroupsService: { getGroupsUserIsEligibleFor }
+      });
+      return { useCase, findById };
+    }
+
+    const model = () =>
+      createChatDropModel({ author_id: 'author-1', wave_id: 'wave-1' });
+
+    it('accepts a chat drop the author may post', async () => {
+      const { useCase } = setup({});
+      await expect(
+        useCase.assertCanCreateDropInWave(model(), {})
+      ).resolves.toBeUndefined();
+    });
+
+    it('rejects a missing wave', async () => {
+      const { useCase } = setup(null);
+      await expect(
+        useCase.assertCanCreateDropInWave(model(), {})
+      ).rejects.toThrow('Wave wave-1 not found');
+    });
+
+    it('rejects a chat drop when chat is disabled', async () => {
+      const { useCase } = setup({ chat_enabled: false });
+      await expect(
+        useCase.assertCanCreateDropInWave(model(), {})
+      ).rejects.toThrow('Chat drops are not allowed in this wave');
+    });
+
+    it('rejects an author outside the chat group', async () => {
+      const { useCase } = setup({ chat_group_id: 'chat-group' }, ['other']);
+      await expect(
+        useCase.assertCanCreateDropInWave(model(), {})
+      ).rejects.toThrow('User is not eligible for this wave');
+    });
+
+    it('accepts an author inside the chat group', async () => {
+      const { useCase } = setup({ chat_group_id: 'chat-group' }, [
+        'chat-group'
+      ]);
+      await expect(
+        useCase.assertCanCreateDropInWave(model(), {})
+      ).resolves.toBeUndefined();
+    });
+
+    it('leaves edits to the transactional validation', async () => {
+      const { useCase, findById } = setup(null);
+      await expect(
+        useCase.assertCanCreateDropInWave(
+          createChatDropModel({ author_id: 'author-1', drop_id: 'drop-1' }),
+          {}
+        )
+      ).resolves.toBeUndefined();
+      expect(findById).not.toHaveBeenCalled();
+    });
+  });
+
   it('prepares moderation before the caller opens the write transaction', async () => {
     const moderationService = {
       evaluate: jest
@@ -830,7 +1195,8 @@ describe('CreateOrUpdateDropUseCase', () => {
     });
     expect(moderationService.evaluate).toHaveBeenCalledWith(
       expect.objectContaining({ authorProfileId: 'author-1' }),
-      expect.objectContaining({ connection: undefined })
+      expect.objectContaining({ connection: undefined }),
+      {}
     );
   });
 
@@ -890,6 +1256,117 @@ describe('CreateOrUpdateDropUseCase', () => {
       ).rejects.toThrow(
         'Pre-publication preparation does not match drop write'
       );
+    }
+  );
+
+  it.each([
+    { label: 'old unedited description', pinned: true, updatedAt: null },
+    { label: 'old edited description', pinned: true, updatedAt: 1 },
+    {
+      label: 'old chat',
+      pinned: false,
+      updatedAt: null,
+      error: "can't be edited after"
+    },
+    {
+      label: 'old edited chat',
+      pinned: false,
+      updatedAt: 1,
+      error: "can't be edited after"
+    },
+    { label: 'recently edited chat', pinned: false, updatedAt: 'recent' },
+    {
+      label: 'another author description',
+      pinned: true,
+      updatedAt: null,
+      authorId: 'other-author',
+      error: 'Only author'
+    },
+    {
+      label: 'description moved to another wave',
+      pinned: true,
+      updatedAt: null,
+      waveId: 'other-wave',
+      error: "Can't change wave"
+    },
+    {
+      label: 'description changed to another type',
+      pinned: true,
+      updatedAt: null,
+      dropType: DropType.PARTICIPATORY,
+      error: "Can't change type"
+    }
+  ])(
+    'enforces edit rules for $label',
+    async ({ pinned, updatedAt, authorId, waveId, dropType, error }) => {
+      const model = createChatDropModel({ drop_id: 'drop-1' });
+      const storedDrop = {
+        id: 'drop-1',
+        wave_id: waveId ?? 'wave-1',
+        author_id: authorId ?? 'author-profile',
+        drop_type: dropType ?? DropType.CHAT,
+        created_at: 1,
+        updated_at: updatedAt === 'recent' ? Date.now() : updatedAt,
+        serial_no: 7
+      };
+      const deleteDropUseCase = {
+        execute: jest.fn().mockResolvedValue(undefined)
+      };
+      const useCase = createUseCaseWithMocks({
+        dropsDb: { findDropById: jest.fn().mockResolvedValue(storedDrop) },
+        wavesApiDb: {
+          findById: jest.fn().mockResolvedValue({
+            ...createSlowModeWave(),
+            type: WaveType.CHAT,
+            description_drop_id: pinned ? 'drop-1' : 'different-drop'
+          })
+        },
+        deleteDropUseCase,
+        artCurationTokenWatchService: {
+          registerDrop: jest.fn().mockResolvedValue(undefined)
+        }
+      });
+      jest.spyOn(useCase as any, 'validateReferences').mockResolvedValue({
+        validatedModel: model,
+        groupIdsUserIsEligibleFor: []
+      });
+      jest
+        .spyOn(useCase as any, 'verifyChatLinksAreAllowed')
+        .mockReturnValue(undefined);
+      const insert = jest
+        .spyOn(useCase as any, 'insertAllDropComponents')
+        .mockResolvedValue([]);
+      jest.spyOn(env, 'getIntOrNull').mockReturnValue(300_000);
+
+      // API updates pass false even for the description; exemption uses the stored wave.
+      const result = (useCase as any).createOrUpdateDrop(model, false, {
+        connection: {},
+        prePublication: { trustedSystem: true }
+      });
+      if (error) {
+        await expect(result).rejects.toThrow(error);
+        expect(deleteDropUseCase.execute).not.toHaveBeenCalled();
+        expect(insert).not.toHaveBeenCalled();
+      } else {
+        await expect(result).resolves.toEqual(
+          expect.objectContaining({ drop_id: 'drop-1' })
+        );
+        expect(deleteDropUseCase.execute).toHaveBeenCalledWith(
+          expect.objectContaining({
+            drop_id: 'drop-1',
+            deletion_purpose: 'UPDATE'
+          }),
+          expect.any(Object)
+        );
+        expect(insert).toHaveBeenCalledWith(
+          expect.objectContaining({
+            createdAt: 1,
+            serialNo: 7,
+            updatedAt: expect.any(Number)
+          }),
+          expect.any(Object)
+        );
+      }
     }
   );
 
@@ -992,8 +1469,7 @@ describe('CreateOrUpdateDropUseCase', () => {
       })
     };
     const metricsRecorder = {
-      recordDrop: jest.fn().mockResolvedValue(undefined),
-      recordActiveIdentity: jest.fn().mockResolvedValue(undefined)
+      recordCreatedDropAfterCommit: jest.fn().mockResolvedValue(undefined)
     };
     const artCurationTokenWatchService = {
       registerDrop: jest.fn().mockResolvedValue(undefined)
@@ -1019,6 +1495,16 @@ describe('CreateOrUpdateDropUseCase', () => {
     });
 
     expect(dropsDb.findDropById).not.toHaveBeenCalled();
+    // Rollups are handed to after-commit (run at once here: the mock
+    // connection has no tracked transaction).
+    expect(metricsRecorder.recordCreatedDropAfterCommit).toHaveBeenCalledWith(
+      {
+        identityId: model.author_id,
+        waveId: model.wave_id,
+        dropType: model.drop_type
+      },
+      { timer: undefined }
+    );
   });
 
   it('sanitizes structured drop fields without touching part content', () => {
@@ -3106,6 +3592,42 @@ describe('CreateOrUpdateDropUseCase', () => {
       ).rejects.toThrow('User is not eligible for this wave');
     });
 
+    it.each(WAVE_CHAT_REPLY_TRUTH_TABLE)(
+      'accepts a reply to a visible drop exactly per the chat reply table: %o',
+      async ({ inChatGroup, canReply, ...chat }) => {
+        const dropsDb = {
+          findDropByIdWithEligibilityCheck: jest
+            .fn()
+            .mockResolvedValue({ id: 'announcement-1', wave_id: 'wave-1' })
+        };
+        const wavesApiDb = {
+          findById: jest
+            .fn()
+            .mockResolvedValue(createRestrictedChatWave({ ...chat }))
+        };
+        const userGroupsService = {
+          getGroupsUserIsEligibleFor: jest
+            .fn()
+            .mockResolvedValue(inChatGroup ? [WAVE_CHAT_REPLY_GROUP_ID] : [])
+        };
+        const useCase = createUseCaseWithMocks({
+          dropsDb,
+          wavesApiDb,
+          userGroupsService
+        });
+
+        const outcome = useCase.assertCanCreateDropInWave(
+          createChatDropModel({ reply_to: replyTo }) as any,
+          { connection: {} } as any
+        );
+        if (canReply) {
+          await expect(outcome).resolves.toBeUndefined();
+        } else {
+          await expect(outcome).rejects.toThrow(ForbiddenException);
+        }
+      }
+    );
+
     it('rejects outsider replies when chat is disabled', async () => {
       const { useCase, dropsDb } = createGateUseCase({
         wave: createRestrictedChatWave({ chat_enabled: false }),
@@ -3116,6 +3638,46 @@ describe('CreateOrUpdateDropUseCase', () => {
         verifyGate(useCase, createChatDropModel({ reply_to: replyTo }))
       ).rejects.toThrow('User is not eligible for this wave');
       expect(dropsDb.findDropByIdWithEligibilityCheck).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('unencrypted DM cutoff (D146)', () => {
+    const verify = (wave: Record<string, unknown>) =>
+      (createUseCaseWithMocks() as any).verifyParticipatoryLimitations(
+        {
+          isDescriptionDrop: false,
+          wave: { ...createSlowModeWave(), type: WaveType.CHAT, ...wave },
+          model: createChatDropModel()
+        },
+        { connection: {} }
+      );
+
+    afterEach(() => {
+      delete process.env.LEGACY_DM_DELETION_CUTOFF;
+    });
+
+    it('accepts DM messages before the cutoff', async () => {
+      process.env.LEGACY_DM_DELETION_CUTOFF = '2999-01-01T00:00:00Z';
+      await expect(
+        verify({ is_direct_message: true })
+      ).resolves.toBeUndefined();
+    });
+
+    it('refuses DM messages from the cutoff on', async () => {
+      process.env.LEGACY_DM_DELETION_CUTOFF = '2000-01-01T00:00:00Z';
+      await expect(verify({ is_direct_message: true })).rejects.toMatchObject({
+        code: 'LEGACY_DM_CLOSED'
+      });
+    });
+
+    it('leaves other waves alone after the cutoff', async () => {
+      process.env.LEGACY_DM_DELETION_CUTOFF = '2000-01-01T00:00:00Z';
+      await expect(
+        verify({ is_direct_message: false })
+      ).resolves.toBeUndefined();
+      await expect(
+        verify({ is_direct_message: null })
+      ).resolves.toBeUndefined();
     });
   });
 
@@ -3332,6 +3894,36 @@ describe('CreateOrUpdateDropUseCase', () => {
         dropType: DropType.CHAT
       })
     ).not.toThrow();
+  });
+
+  it.each([
+    'https://media.6529usercontent.com/ipfs/bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi/file.html',
+    'https://media.6529usercontent.com/ipns/k51qzi5uqu5dl/file.html',
+    'https://media.6529usercontent.com/arweave/OI6-rpJ2C3Ab4HiZRWt5A1SumhjnYigmSPBPX0ICBj8/file.html',
+    'https://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi.ipfs.6529usercontent.com/file.html'
+  ])('accepts html uploads from the content-domain media hosts: %s', (url) => {
+    expect(() =>
+      validateDropMediaAttachment({
+        mimeType: 'text/html',
+        url,
+        dropType: DropType.CHAT
+      })
+    ).not.toThrow();
+  });
+
+  it.each([
+    'https://evil.6529usercontent.com/ipfs/bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi/file.html',
+    'https://a.b.ipfs.6529usercontent.com/file.html',
+    'https://media.6529usercontent.com.evil.example/ipfs/bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi/file.html',
+    'http://media.6529usercontent.com/ipfs/bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi/file.html'
+  ])('rejects html uploads from look-alike content-domain hosts: %s', (url) => {
+    expect(() =>
+      validateDropMediaAttachment({
+        mimeType: 'text/html',
+        url,
+        dropType: DropType.CHAT
+      })
+    ).toThrow('text/html needs to be served from IPFS, IPNS, or Arweave');
   });
 
   it('accepts html uploads from recognized IPFS gateway URLs', () => {

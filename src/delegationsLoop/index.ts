@@ -8,7 +8,10 @@ import {
   persistDelegations,
   persistNftDelegationBlock
 } from '../db';
-import { findDelegationTransactions } from '../delegations';
+import {
+  fetchBlockTimestamp,
+  findDelegationTransactions
+} from '../delegations';
 import { discoverEnsConsolidations, discoverEnsDelegations } from '../ens';
 import {
   AggregatedActivity,
@@ -52,71 +55,188 @@ import { consolidateSubscriptions } from '../subscriptionsDaily/subscriptions';
 import { updateTDH } from '../tdhLoop/tdh';
 import { consolidateAndPersistTDH } from '../tdhLoop/tdh_consolidation';
 import { Time } from '../time';
-import { getAffectedWallets } from './reconsolidation';
+import { createScopeBackfillDeps } from './delegation-scope-backfill.deps';
+import {
+  readScopeBackfillConfig,
+  runDelegationScopeBackfill
+} from './delegation-scope-backfill';
+import {
+  getAffectedWallets,
+  getAffectedWalletsForAddresses
+} from './reconsolidation';
+import { readReconsolidationAction } from './reconsolidation-action';
+import { DelegationsLoopHealth } from './delegations-loop-health';
+import { collectGarbageAfter } from './heap-release';
+import {
+  resumePendingIdentityTdhSync,
+  startIdentitySyncBudget
+} from '../identity-tdh-sync';
 
 const logger = Logger.get('DELEGATIONS_LOOP');
 
-export const handler = sentryContext.wrapLambdaHandler(async () => {
-  await doInDbContext(
-    async () => {
-      const startBlockEnv = process.env.DELEGATIONS_RESET_BLOCK;
-      const startBlock =
-        startBlockEnv && Number.isInteger(Number(startBlockEnv))
-          ? parseInt(startBlockEnv, 10)
-          : undefined;
+/**
+ * Whether this invocation reconsolidated wallets, or resumed an identities
+ * sync (the nightly full walk among them), so its end collects the run's
+ * garbage (a sandbox runs one invocation at a time).
+ */
+let reconsolidated = false;
+let identitiesSynced = false;
 
-      logger.info(`[START_BLOCK ${startBlock}]`);
-      const delegationsResponse = await handleDelegations(startBlock);
-      await persistNftDelegationBlock(
-        delegationsResponse.block,
-        delegationsResponse.blockTimestamp
+export const handler = sentryContext.wrapLambdaHandler(
+  async (event: unknown) => {
+    const requestedWallets = readReconsolidationAction(event);
+    reconsolidated = false;
+    identitiesSynced = false;
+    try {
+      return await doInDbContext(
+        async () => {
+          // Every identities sync in this invocation shares one time budget.
+          startIdentitySyncBudget();
+          const scopeBackfill = readScopeBackfillConfig();
+          if (requestedWallets) {
+            if (scopeBackfill) {
+              throw new Error(
+                'Remove the scope backfill flag before reconsolidating'
+              );
+            }
+            const health = await DelegationsLoopHealth.start(true);
+            try {
+              const result = await reconsolidateRequestedWallets(
+                requestedWallets,
+                health
+              );
+              health.completed();
+              return result;
+            } catch (error) {
+              health.failed();
+              throw error;
+            }
+          }
+          if (scopeBackfill) {
+            // One-off delegations re-index: it runs instead of the loop, writes
+            // only non-consolidation delegation rows and leaves the checkpoint
+            // alone. Remove the flag after one run.
+            await runDelegationScopeBackfill(
+              scopeBackfill,
+              createScopeBackfillDeps()
+            );
+            return;
+          }
+
+          const startBlockEnv = process.env.DELEGATIONS_RESET_BLOCK;
+          const startBlock =
+            startBlockEnv && Number.isInteger(Number(startBlockEnv))
+              ? parseInt(startBlockEnv, 10)
+              : undefined;
+
+          logger.info(`[START_BLOCK ${startBlock}]`);
+          // Delegations first; then finish any identities sync left pending (a
+          // tdhLoop full write, a deferred full walk, a spent budget), within
+          // what is left of the invocation's sync budget.
+          await thenResumePendingIdentitySync(async () => {
+            const health = await DelegationsLoopHealth.start(false);
+            const delegationsResponse = await handleDelegations(
+              startBlock,
+              health
+            );
+            await persistNftDelegationBlock(
+              delegationsResponse.block,
+              delegationsResponse.blockTimestamp
+            );
+            health.completed(delegationsResponse.blockTimestamp);
+          });
+        },
+        {
+          logger,
+          entities: [
+            Delegation,
+            Consolidation,
+            NFTDelegationBlock,
+            TDH,
+            ConsolidatedTDH,
+            HistoricConsolidatedTDH,
+            NextGenTokenTDH,
+            TDHMemes,
+            ConsolidatedTDHMemes,
+            MemesSeason,
+            NFTOwner,
+            ConsolidatedNFTOwner,
+            OwnerBalances,
+            OwnerBalancesMemes,
+            ConsolidatedOwnerBalances,
+            ConsolidatedOwnerBalancesMemes,
+            AggregatedActivity,
+            ConsolidatedAggregatedActivity,
+            AggregatedActivityMemes,
+            ConsolidatedAggregatedActivityMemes,
+            NftTDH,
+            TDHBlock,
+            TDHEditions,
+            ConsolidatedTDHEditions
+          ]
+        }
       );
-    },
-    {
-      logger,
-      entities: [
-        Delegation,
-        Consolidation,
-        NFTDelegationBlock,
-        TDH,
-        ConsolidatedTDH,
-        HistoricConsolidatedTDH,
-        NextGenTokenTDH,
-        TDHMemes,
-        ConsolidatedTDHMemes,
-        MemesSeason,
-        NFTOwner,
-        ConsolidatedNFTOwner,
-        OwnerBalances,
-        OwnerBalancesMemes,
-        ConsolidatedOwnerBalances,
-        ConsolidatedOwnerBalancesMemes,
-        AggregatedActivity,
-        ConsolidatedAggregatedActivity,
-        AggregatedActivityMemes,
-        ConsolidatedAggregatedActivityMemes,
-        NftTDH,
-        TDHBlock,
-        TDHEditions,
-        ConsolidatedTDHEditions
-      ]
+    } finally {
+      if (reconsolidated) collectGarbageAfter('RECONSOLIDATION');
+      else if (identitiesSynced) collectGarbageAfter('IDENTITIES SYNC');
     }
-  );
-});
+  }
+);
 
-async function handleDelegations(startBlock: number | undefined) {
+/**
+ * Runs the delegations work, then the pending identities sync, also when the
+ * work fails. The work's error wins: a resume failure after it is only
+ * logged.
+ */
+async function thenResumePendingIdentitySync(
+  work: () => Promise<void>
+): Promise<void> {
+  try {
+    await work();
+  } catch (error) {
+    try {
+      identitiesSynced = await resumePendingIdentityTdhSync();
+    } catch (resumeError) {
+      logger.error(
+        `[IDENTITIES SYNC RESUME FAILED AFTER A FAILED RUN] ${resumeError}`
+      );
+    }
+    throw error;
+  }
+  identitiesSynced = await resumePendingIdentityTdhSync();
+}
+
+async function handleDelegations(
+  startBlock: number | undefined,
+  health: DelegationsLoopHealth
+) {
+  // Read the reset block's time before scanning, so a failed lookup ends the
+  // run before the scan rather than after it.
+  const resetBlockTimestamp = startBlock
+    ? await fetchBlockTimestamp(startBlock)
+    : undefined;
   const delegationsResponse = await findNewDelegations(startBlock);
-  await persistConsolidations(startBlock, delegationsResponse.consolidations);
+  await persistConsolidations(
+    startBlock,
+    delegationsResponse.consolidations,
+    resetBlockTimestamp
+  );
   await persistDelegations(
     startBlock,
     delegationsResponse.registrations,
     delegationsResponse.revocation
   );
+  if (
+    delegationsResponse.consolidations.length ||
+    delegationsResponse.registrations.length ||
+    delegationsResponse.revocation.length
+  )
+    health.committedStage();
 
   await handleENS();
 
   if (delegationsResponse.consolidations.length > 0) {
-    await reconsolidateWallets(delegationsResponse.consolidations);
+    await reconsolidateWallets(delegationsResponse.consolidations, health);
   }
 
   const primaryAddressEvents = [
@@ -168,14 +288,53 @@ async function findNewDelegations(
   }
 }
 
-async function reconsolidateWallets(events: ConsolidationEvent[]) {
+async function reconsolidateWallets(
+  events: ConsolidationEvent[],
+  health: DelegationsLoopHealth
+) {
   const currentConsolidations = await fetchAllConsolidatedTdh();
   const affectedWallets = await getAffectedWallets(
     events,
     currentConsolidations
   );
 
+  await reconsolidateAffectedWallets(affectedWallets, health);
+}
+
+async function reconsolidateRequestedWallets(
+  wallets: string[],
+  health: DelegationsLoopHealth
+) {
+  const currentConsolidations = await fetchAllConsolidatedTdh();
+  const affectedWallets = await getAffectedWalletsForAddresses(
+    wallets,
+    currentConsolidations
+  );
+  logger.info({
+    action: 'reconsolidate',
+    phase: 'START',
+    requested_wallets: wallets,
+    affected_wallets: Array.from(affectedWallets)
+  });
+  const block = await reconsolidateAffectedWallets(affectedWallets, health);
+  await identitiesService.updatePrimaryAddresses(affectedWallets);
+  const result = {
+    action: 'reconsolidate',
+    status: 'completed',
+    requested_wallets: wallets,
+    affected_wallets: Array.from(affectedWallets),
+    block
+  };
+  logger.info(result);
+  return result;
+}
+
+async function reconsolidateAffectedWallets(
+  affectedWallets: Set<string>,
+  health: DelegationsLoopHealth
+) {
   if (affectedWallets.size > 0) {
+    reconsolidated = true;
     logger.info(
       `[RECONSOLIDATING FOR ${affectedWallets.size} DISTINCT WALLETS]`
     );
@@ -187,6 +346,7 @@ async function reconsolidateWallets(events: ConsolidationEvent[]) {
       lastTDHCalc,
       walletsArray
     );
+    health.committedStage();
     // Keep the pre-update snapshot for old-membership discovery, but use a
     // fresh snapshot to choose the exact rows replaced during persistence.
     const replacementConsolidations = await fetchAllConsolidatedTdh();
@@ -195,10 +355,16 @@ async function reconsolidateWallets(events: ConsolidationEvent[]) {
       wallets: walletsArray,
       currentConsolidatedTdh: replacementConsolidations
     });
+    health.committedStage();
     await consolidateNftOwners(affectedWallets);
+    health.committedStage();
     await consolidateOwnerBalances(affectedWallets);
+    health.committedStage();
     await consolidateActivity(affectedWallets);
+    health.committedStage();
     await consolidateSubscriptions(affectedWallets);
+    health.committedStage();
+    return block;
   } else {
     logger.info(`[NO WALLETS TO RECONSOLIDATE]`);
   }

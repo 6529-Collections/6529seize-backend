@@ -1,64 +1,21 @@
 # Native Competition Runtime
 
-Native competitions share a wave's chat, visibility and administration. Each
-competition owns its entries, credits, votes, schedule, decisions, awards and
-history. Existing competitions retain their immutable primary mapping. The original
-runtime release did not migrate them; the separate [legacy migration runbook](./legacy-competition-migration-runbook.md)
-defines guarded one-at-a-time engine transfers and their pending acceptance gates.
+A wave owns chat, visibility and administration; each native competition owns
+configuration, entries, votes/credits, schedule, decisions, awards and history.
+Original-primary identity remains immutable for permanent old public GETs.
 
-## Deployment order
+## Deployment and operation
 
-This is an implementation runbook, not authorization to deploy or enable flags.
-Keep all competition flags false during deployment. Deploy and verify each unit
-before proceeding to its dependents:
+Follow the [final cleanup procedure](competition-storage-cleanup.md) for the
+compatible schema/consumer rollout and intentional physical deletion. The old
+global rollout/shadow flags, storage selector and migration tools are removed.
+Publication, ACTIVE/DISABLED execution, pauses, capabilities and authorization
+remain runtime controls.
 
-1. `dbMigrationsLoop`: additive competition command/nonce, content-version,
-   capability-audit, vote-history, runtime-state, decision voter-snapshot,
-   outcome-award, outbox, effect-receipt and claim-provenance tables; nullable
-   competition presentation column and default-false device notification
-   capability. Rerunning the existing legacy backfill
-   must not change primary IDs.
-2. `claimsBuilder`, then `pushNotificationsHandler`: consume optional native
-   claim context and competition winner notifications while retaining old
-   messages. Old producers continue to work.
-3. `waveLeaderboardSnapshotterLoop`, then `tdhLoop`, then `newsletterLoop` (production only),
-   then `waveDecisionExecutionLoop`: reconcile native credits, refresh native
-   standings, process decisions and dispatch durable events. Legacy routing
-   stays active regardless of native flags.
-4. `api`: deploy commands, content protection, scoped reads and native event
-   production after their schema and consumers exist.
-5. Frontend: merge/deploy only after every backend dependency is healthy.
-   Frontend discovery and creation remain disabled by default.
-
-No new Lambda, queue, schedule or public message channel is required. The
-decision worker drains the competition outbox. Do not deploy a native producer
-ahead of its consumers. Confirm actual workflow service names against the
-service catalog before an authorized release.
-
-## Activation and rollback
-
-- `FEATURE_UNIFIED_COMPETITION_READS` enables scoped resources.
-- `FEATURE_NATIVE_COMPETITION_WRITES` enables native administration and commands.
-- `FEATURE_NATIVE_COMPETITION_EXECUTION` gates publication, entry/vote acceptance
-  and native worker execution. Commands also require a published competition
-  whose execution mode is `ACTIVE`.
-- `FEATURE_NATIVE_COMPETITION_HUB_CREATION` enables hub-only creation.
-- Frontend `NEXT_PUBLIC_FEATURE_MULTI_COMPETITION` enables discovery/creation
-  controls.
-
-Enable unified reads before writes, and enable execution consistently in API
-and both native runtime workers only after their dependencies are ready. Draft
-creation can be piloted with execution disabled. Publication, entry creation
-and voting cannot. Never manually set a legacy adapter to native ownership. Use only the separately
-authorized migration CLI after its complete production acceptance gates pass.
-
-Disable native writes and execution to stop new native activity while retaining
-history and old clients. Disable hub creation separately. Hiding frontend
-discovery alone is not a write kill switch. Leave schema, immutable mappings,
-entries, votes, signature receipts, awards and outbox history intact; do not
-drop tables or rewrite DropType as rollback. Inspect already committed outbox
-effects and queue messages before deciding whether to drain or suspend the
-producer. A rollback does not undo a committed external claim or announcement.
+Rollback must preserve native ownership, accepted outbox events, effect/delivery
+receipts, command receipts, signatures and history. After physical deletion use
+compatible native code or the verified isolated recovery snapshot. A committed
+external claim or announcement cannot be undone by a code rollback.
 
 ## Command and signing contract
 
@@ -69,6 +26,14 @@ the same key return 409. Receipt, domain writes, nonce consumption and outbox
 events commit together. Moderation preparation runs before the entry/hub
 transaction; publication authorization and constraints are checked inside it.
 
+Publishing a draft fails with 409 `PUBLISHED_COMPETITION_LIMIT` when its wave
+already has `COMPETITION_MAX_PUBLISHED_PER_WAVE` (default 25) published
+competitions, or the profile that created the draft already has
+`COMPETITION_MAX_PUBLISHED_PER_CREATOR` (default 50) across waves. Paused
+competitions count; ended, cancelled and archived ones do not. `0` turns a cap
+off. Concurrent publications of different drafts are not serialized, so a cap
+can be exceeded by the number of simultaneous publish requests.
+
 Every update/action supplies `config_version`. Stale versions return 409.
 Published types cannot change. After the first accepted entry, credits,
 signing, timing, decisions and outcomes are immutable. Participation and voting
@@ -76,6 +41,17 @@ access, title, description, guidelines and presentation can change with a new
 audited version. Terminal
 competitions cannot reopen; cloning creates a separate draft. Publishing a
 clone requires valid future dates.
+
+Immutable original primaries retain their established administrator edit policy
+through native commands. Server permissions expose `edit_rules_after_activity`
+and `edit_credit_rules`; neither default navigation nor sibling identity can
+grant them. Type, identity strategy and outcome definitions stay fixed. Voting
+credit sources and negative-vote rules lock after the first accepted vote,
+including reset/deleted history. Entry vote limits may only increase; changed
+schedules must start in the future, overdue decisions must resolve first, and
+approval winner limits cannot fall below completed decisions. Newer competitions
+keep the published-rule lock after activity. Unrelated settings edits preserve
+shared appearance inheritance and the progressed native decision cursor.
 
 Before enabling signed native participation, configure backend `API_BASE_URL`
 for that deployment and frontend `API_ENDPOINT` to the same API host (including
@@ -95,10 +71,47 @@ cannot be attached as entries. Vote payloads bind the
 signed value, including zero/removal and negatives. Signing is separate from
 the legacy drop signature. Raw signatures and original signed payloads stay in
 restricted content-version/command tables; public content is an allowlisted
-projection with signature null. Do not log these rows or add them to shadow
-observations.
+projection with signature null. Do not log these rows.
 
 ## Execution and content invariants
+
+Maintenance keeps the existing competition row lock and transaction. WAVE
+budgets use bounded source pages; voters within their available credit need no
+individual vote reconciliation. REP and NFT credit sources retain their existing
+budget formulas and DROP scope still checks each entry. Leaderboard upserts and
+runtime threshold updates batch 100 entries at a time on the same connection.
+All batches, stale-entry cleanup and the outbox event commit or roll back together.
+A failed pass leaves all of these unchanged. The next scheduled pass recomputes
+current state; existing decision IDs and semantic outbox keys retain retry safety.
+
+Successful scheduled passes emit `native_competition_execution_completed` with
+`competition_id`, `operation` (`leaderboard` or `decisions`) and `duration_ms`.
+This elapsed duration includes lock acquisition and commit, so it is an upper
+bound on lock hold time, not a separate lock-duration measurement. Use it instead
+of relying on large detailed timer reports that may be truncated. Ordinary
+refreshes and decision catch-up can have different costs; credit reductions and
+winner processing still run under the lock.
+Acquisition wait can inflate this duration under contention. Compare baselines
+and choose alert thresholds separately for leaderboard refreshes and decision
+passes, accounting for decision catch-up. Failed passes log the same operation
+and elapsed duration with `native_competition_execution_failed`.
+
+The decision worker resumes after the competition its previous pass last
+started (`competition_worker_cursors`, worker `native_decisions`) and wraps
+around, so a pass that stops early is continued instead of restarted. It stops
+starting competitions after `WAVE_DECISION_LOOP_DECISIONS_BUDGET_MS` (5 min)
+or with less than 5 minutes of the invocation left, and logs
+`native_competition_execution_deadline_passed` for a competition still running
+after `WAVE_DECISION_LOOP_COMPETITION_DEADLINE_MS` (2 min) while it moves on.
+That run still commits or rolls back as usual; the pass waits for it before
+returning and keeps at most two such runs in flight. A pass that stopped early
+or overran logs `native_competition_decision_pass_bounded`. Outbox delivery
+runs before (up to `WAVE_DECISION_LOOP_DISPATCH_FIRST_MS`, 60 s) and after the
+pass, claiming decision results first and then alternating batches with the
+other events; while those wait, decision results get at most half of each
+delivery's batches and time. The final delivery gets only the time left before
+a 30 s safety margin and is skipped when none is left. Scoring still replays
+each competition's full history; making it incremental is separate work.
 
 - Competition row locks serialize entry/vote/lifecycle/execution changes.
   Drop locks additionally prevent concurrent association, editing and deletion
@@ -109,6 +122,23 @@ observations.
   remaining values. Winning or deleting an entry releases spend while
   preserving vote history. Native negative credit reductions truncate toward
   zero, avoiding legacy negative-floor overspend.
+- Native vote commands and migrated legacy rating requests reconcile the
+  acting voter's credit before validating the requested replacement, under the
+  existing competition lock. Vote state, current aggregate, history, metrics,
+  notifications and durable vote events commit together. Saves do not reconcile
+  other voters or refresh the full leaderboard. The existing snapshotter and
+  decision workers perform competition-wide reconciliation and standings
+  refreshes; a confirmed vote's rank/time-weighted score can update on the next
+  worker pass. Verify both workers are active and healthy before deploying this
+  API and worker versions must share the native history contract during rollout.
+  Reversal tooling is retired; preserve all accepted native events.
+- Each voter may change votes in one competition at most
+  `COMPETITION_VOTE_CHANGES_PER_MINUTE` times per minute (default 120, `0`
+  turns it off), counted in Redis per voter, competition and minute for native
+  vote commands and legacy rating requests alike. Only changes count; resending
+  the current value does not. A change past the budget returns 429
+  `VOTE_CHANGE_LIMIT` with `retry_after_seconds` before anything is written.
+  While Redis is unavailable changes are admitted.
 - Pause decisions leaves otherwise eligible entries/votes available. Rank
   occurrences inside an inclusive pause are skipped without shifting future
   occurrences. Approve evaluates accepted votes on resume, including a hold
@@ -116,15 +146,43 @@ observations.
   Pausing requires a nonblank reason; the Configuration view exposes the
   competition's historic pauses, reasons and start/end times.
 - Rank and Approve store immutable winner/voter snapshots and award
-  descriptors; winning changes an entry, never its dedicated COMPETITION drop. Existing
+  descriptors. Outcomes are optional: a scheduled Rank decision without outcomes
+  selects one winner, and Approve still uses its threshold and winner limit;
+  neither creates placeholder awards. Configured Rank distributions retain their
+  existing winner counts. The frontend presents configured outcomes in Settings.
+  Winning changes an entry, never its dedicated COMPETITION drop. Existing
   automatic REP/CIC outcome behavior creates descriptors, not new rating grants.
-  For a migrated original primary, a fenced transaction may mirror its legacy
-  PARTI/WINNER state for retained compatibility data; native records remain authoritative.
-- Administrators may archive competitions; filters retain access to history.
+  Original-primary PARTI/WINNER wire classifications derive from native entries;
+  no physical drop lifecycle mirror is written.
+- Administrators may archive drafts, published and completed competitions;
+  filters retain access to history. Published archival disables execution and
+  rejects new entries/votes under the same competition-row lock used by
+  submissions, voting and decisions. A decision holding that lock finishes first;
+  later attempts observe the archived lifecycle and do nothing. Existing
+  entries, votes, winners and awards are retained without manufacturing an end
+  time. Archive does not require or retain a reason. Pause reasons remain in
+  the separate public pause history. Lifecycle audit events retain lifecycle,
+  actor and timestamp only.
+  Existing Main Stage winners remain eligible for delayed claim delivery after
+  archival. Deploy `claimsBuilder` first so queued claims accept archived winners,
+  then `waveDecisionExecutionLoop` so delayed decisions still enqueue those claims.
+  After the decision worker deployment succeeds, allow 900 seconds for old in-flight
+  claims/decision invocations to drain before deploying `api`, then the dependent
+  frontend controls. Both workers have a 900-second maximum runtime; the new
+  consumers remain compatible with the existing API during this window.
+  Removing the lifecycle audit reason column requires updating all writers first:
+  deploy `waveDecisionExecutionLoop`, then `api`. Allow 900 seconds after the
+  worker update and 30 seconds after the API update for old invocations to drain.
+  Then deploy `dbMigrationsLoop` with `db_schema_scope=competition-lifecycle-events`
+  to synchronize only that entity and drop `competition_lifecycle_events.reason`,
+  including its stored values. Deploy the dependent frontend last. Other lifecycle
+  fields and `competition_pauses.reason` remain intact. Do not roll back
+  to a reason-writing API or worker after the column has been dropped; first
+  restore the nullable column, whose old contents cannot be recovered by sync.
   Manual end/cancel and entry withdrawal/disqualification are not exposed.
 - Dedicated native submission content is immutable, including unsigned entries.
   A migrated original legacy submission retains its original pre-winner edit
-  behavior through storage-aware commands; it is not a dedicated native submission.
+  behavior through entry-owned commands; it is not a dedicated native submission.
   Deletion uses existing drop permissions and preserves competition history. Public historical
   content observes current moderation/deletion access, so snapshots cannot
   resurrect removed content. Ordinary chat-history purge excludes competition
@@ -165,6 +223,16 @@ provider payloads and signatures.
 
 Only winner notifications are emitted for native competition lifecycle events;
 entry, vote, publication and other lifecycle events do not create these alerts.
+Individual vote changes separately use the existing `DROP_VOTED` notification,
+just like legacy voting. The submission author receives the voter's new vote,
+the signed change from their previous vote, and the submission's current total.
+Vote increases, reductions, removals, and negative votes follow the same rule.
+Self-votes, unchanged replacement votes, and retried commands do not create
+additional notifications. The notification and its durable push-outbox record
+commit with the vote, using the wave's visibility group and the existing
+notification preferences, mute, and moderation filters. This applies to all
+native competitions, including migrated Main Stage submissions.
+
 Existing notification clients keep their original causes and unread counts.
 Native clients opt into `COMPETITION_LIFECYCLE` using
 `include_competitions=true` on `GET /v2/notifications`. V1 and default V2
@@ -173,18 +241,20 @@ separately records the same explicit capability per device; older devices do
 not receive native competition pushes or count them in their badge. Registering
 without the capability clears it, including after an app downgrade.
 
+The paragraphs about individual vote notifications above are backend-owned
+help knowledge. This backend-only fix does not publish a frontend help-index
+update; the live help bot corpus needs a separate update to describe native
+competition vote notifications explicitly.
+
 ## Verification gates
 
-Before any pilot, verify schema sync twice, unchanged legacy GET projections,
-independent budget shadow categories, private/parent access, revoked proxy/group
-access, concurrent votes and entry association, command retries, signature
-tampering/replay, delayed decisions, pause/hold boundaries and duplicate queue
-delivery. Exercise Rank and Approve concurrently in one hub and a legacy
-competition beside a native one. Verify native Main Stage effects separately
-from an ordinary competition in the same wave.
+Verify additive schema synchronization, permanent GET projections, independent
+history parity, private/parent access, proxy/group revocation, concurrent votes,
+command/signature retries, delayed decisions, pause/hold boundaries and duplicate
+delivery. Exercise original primaries and native siblings, including special
+capabilities independently from ordinary competitions in the same hub.
 
-Inspect outbox backlog, oldest pending time, retry attempts, lease expiry,
-decision lag and receipt/claim counts. A passing local test is not staging or
-production parity evidence. Record deployed revisions and related E2E results
-before enabling a wider cohort. See the [read boundary runbook](competition-read-boundary-runbook.md)
-for bounded independent legacy shadow sampling.
+Inspect outbox backlog, oldest pending event, retries/leases, decision lag and
+receipt/claim counts. Record deployed versions, health and relevant E2E evidence.
+A passing disposable test is not environment parity evidence. Follow the
+[cleanup procedure](competition-storage-cleanup.md) for physical deletion and recovery.

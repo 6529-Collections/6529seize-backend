@@ -1,8 +1,5 @@
-import {
-  fetchConsolidationGroupsForAddresses,
-  fetchMaxTransactionsBlockNumber,
-  fetchTransactionsAfterBlock
-} from '@/db';
+import { transferReconciliationDb } from '@/transactions/transfer-reconciliation.db';
+import { fetchConsolidationGroupsForAddresses } from '@/db';
 import { NFTOwner } from '@/entities/INFTOwner';
 import {
   fetchAllNftOwners,
@@ -15,9 +12,21 @@ import {
 import { consolidateNftOwners, updateNftOwners } from './nft_owners';
 
 jest.mock('@/db', () => ({
-  fetchConsolidationGroupsForAddresses: jest.fn(),
-  fetchMaxTransactionsBlockNumber: jest.fn(),
-  fetchTransactionsAfterBlock: jest.fn()
+  fetchConsolidationGroupsForAddresses: jest.fn()
+}));
+
+jest.mock('@/transactions/transfer-reconciliation.db', () => ({
+  transferWallets: (
+    transactions: { from_address: string; to_address: string }[]
+  ) => transactions.flatMap((tx) => [tx.from_address, tx.to_address]),
+  transferReconciliationDb: {
+    pending: jest.fn(),
+    maxBlock: jest.fn(),
+    changes: jest.fn(),
+    history: jest.fn(),
+    publishBalances: jest.fn(),
+    acknowledge: jest.fn()
+  }
 }));
 
 jest.mock('./db.nft_owners', () => ({
@@ -102,11 +111,18 @@ describe('consolidateNftOwners', () => {
 describe('updateNftOwners authoritative writes', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    jest.mocked(transferReconciliationDb.pending).mockResolvedValue([]);
+    jest
+      .mocked(transferReconciliationDb.publishBalances)
+      .mockResolvedValue(undefined);
+    jest
+      .mocked(transferReconciliationDb.acknowledge)
+      .mockResolvedValue(undefined);
     jest.mocked(getMaxNftOwnersBlockReference).mockResolvedValue(10);
     jest.mocked(getNftOwnersSyncBlock).mockResolvedValue(10);
-    jest.mocked(fetchMaxTransactionsBlockNumber).mockResolvedValue(20);
+    jest.mocked(transferReconciliationDb.maxBlock).mockResolvedValue(20);
     mockedFetchConsolidationGroupsForAddresses.mockResolvedValue(new Map());
-    jest.mocked(fetchTransactionsAfterBlock).mockResolvedValue([
+    jest.mocked(transferReconciliationDb.changes).mockResolvedValue([
       {
         transaction: '0xmint',
         from_address: '0x0000000000000000000000000000000000000000',
@@ -115,18 +131,18 @@ describe('updateNftOwners authoritative writes', () => {
         token_id: 1,
         token_count: 1
       }
-    ] as Awaited<ReturnType<typeof fetchTransactionsAfterBlock>>);
+    ] as Awaited<ReturnType<typeof transferReconciliationDb.changes>>);
   });
 
   it('persists a full replay and advances its sync marker after ownership writes', async () => {
     await updateNftOwners(true);
-    expect(fetchTransactionsAfterBlock).toHaveBeenCalledWith(
+    expect(transferReconciliationDb.changes).toHaveBeenCalledWith(
       expect.any(Array),
       0,
       20
     );
     expect(persistNftOwners).toHaveBeenCalledWith(
-      new Set(['0xalice']),
+      new Set(['0xalice', '0x0000000000000000000000000000000000000000']),
       expect.arrayContaining([
         expect.objectContaining({ wallet: '0xalice', balance: 1 })
       ]),

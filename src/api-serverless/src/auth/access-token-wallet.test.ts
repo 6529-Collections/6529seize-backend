@@ -1,6 +1,7 @@
 import * as fc from 'fast-check';
 import * as jwt from 'jsonwebtoken';
 import {
+  getAccessTokenClaimsOrNull,
   getBearerTokenOrNull,
   getVerifiedAccessTokenWalletOrNull
 } from './access-token-wallet';
@@ -83,7 +84,9 @@ describe('getVerifiedAccessTokenWalletOrNull', () => {
     ['a string payload', 'plain signed message'],
     ['a non-wallet subject', { sub: 'wallet-auth-session-challenge' }],
     ['no subject', { id: 'id' }],
-    ['a numeric subject', { sub: 123 }]
+    ['a numeric subject', { sub: 123 }],
+    ['a challenge type', { sub: WALLET, challenge_type: 'wallet_auth' }],
+    ['an issuer', { sub: WALLET, iss: 'issuer' }]
   ])('returns null for a signed token with %s', (_, payload) => {
     const options: jwt.SignOptions =
       typeof payload === 'string' ? {} : { expiresIn: 60 };
@@ -125,5 +128,116 @@ describe('getVerifiedAccessTokenWalletOrNull', () => {
         ).toBeNull();
       })
     );
+  });
+});
+
+describe('getAccessTokenClaimsOrNull', () => {
+  const exp = Math.floor(Date.now() / 1000) + 60;
+
+  it('returns the claims of an access token payload', () => {
+    expect(
+      getAccessTokenClaimsOrNull({ id: 'id', sub: WALLET, role: 'r', exp })
+    ).toEqual({ wallet: WALLET.toLowerCase(), role: 'r', exp });
+    expect(getAccessTokenClaimsOrNull({ sub: WALLET, exp })).toEqual({
+      wallet: WALLET.toLowerCase(),
+      role: undefined,
+      exp
+    });
+  });
+
+  it.each([
+    ['a string', 'signed message'],
+    ['null', null],
+    ['an array', [WALLET]],
+    ['a non-wallet subject', { sub: 'not-a-wallet', exp }],
+    ['a subject with a suffix', { sub: `${WALLET}0`, exp }],
+    ['no expiry', { sub: WALLET }],
+    ['a non-numeric expiry', { sub: WALLET, exp: String(exp) }],
+    ['a non-string role', { sub: WALLET, role: 1, exp }],
+    ['a challenge type', { sub: WALLET, exp, challenge_type: 'wallet_auth' }],
+    ['an issuer', { sub: WALLET, exp, iss: 'issuer' }],
+    ['an audience', { sub: WALLET, exp, aud: 'api.6529.io' }]
+  ])('returns null for %s', (_, payload) => {
+    expect(getAccessTokenClaimsOrNull(payload)).toBeNull();
+  });
+
+  it('never accepts a subject that is not a wallet address', () => {
+    fc.assert(
+      fc.property(
+        fc.string().filter((sub) => !/^0x[0-9a-f]{40}$/i.test(sub)),
+        fc.option(fc.string(), { nil: undefined }),
+        (sub, role) => {
+          expect(getAccessTokenClaimsOrNull({ sub, role, exp })).toBeNull();
+        }
+      )
+    );
+  });
+});
+
+describe('access token session claims', () => {
+  const exp = Math.floor(Date.now() / 1000) + 60;
+  const sessionId = '7d0f5b5e-2c1c-4c2e-9d4b-0b3a1a2c3d4e';
+
+  it('returns the session claims of a current token', () => {
+    expect(
+      getAccessTokenClaimsOrNull({
+        id: 'id',
+        sub: WALLET,
+        exp,
+        ct: 'native',
+        sb: 'share',
+        sid: sessionId
+      })
+    ).toEqual({
+      wallet: WALLET.toLowerCase(),
+      role: undefined,
+      exp,
+      clientType: 'native',
+      binding: 'share',
+      sessionId
+    });
+  });
+
+  it('keeps accepting a token minted before the session claims, unchanged', () => {
+    const claims = getAccessTokenClaimsOrNull({ id: 'id', sub: WALLET, exp });
+    expect(claims).toEqual({
+      wallet: WALLET.toLowerCase(),
+      role: undefined,
+      exp
+    });
+    expect(
+      Object.keys(claims ?? {}).sort((a, b) => a.localeCompare(b))
+    ).toEqual(['exp', 'role', 'wallet']);
+  });
+
+  it('accepts a token whose session claims this build does not know', () => {
+    fc.assert(
+      fc.property(
+        fc.jsonValue(),
+        fc.jsonValue(),
+        fc.jsonValue(),
+        (ct, sb, sid) => {
+          expect(
+            getAccessTokenClaimsOrNull({ sub: WALLET, exp, ct, sb, sid })
+              ?.wallet
+          ).toBe(WALLET.toLowerCase());
+        }
+      )
+    );
+  });
+
+  it('verifies a signed token with and without session claims', () => {
+    for (const payload of [
+      { id: 'id', sub: WALLET },
+      { id: 'id', sub: WALLET, ct: 'web', sb: 'siwe', sid: sessionId },
+      { id: 'id', sub: WALLET, ct: 'legacy', sb: 'legacy_text' }
+    ]) {
+      expect(
+        getVerifiedAccessTokenWalletOrNull(
+          `Bearer ${sign(payload)}`,
+          resolveSecret
+        )
+      ).toBe(WALLET.toLowerCase());
+    }
   });
 });

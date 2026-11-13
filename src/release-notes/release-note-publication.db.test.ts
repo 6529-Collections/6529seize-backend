@@ -1,4 +1,7 @@
 import {
+  DROP_METADATA_TABLE,
+  DROPS_PARTS_TABLE,
+  DROPS_TABLE,
   RELEASE_NOTE_PUBLICATIONS_TABLE,
   RELEASE_NOTE_STREAM_STATES_TABLE
 } from '@/constants';
@@ -30,6 +33,106 @@ describeWithSeed(
   { table: RELEASE_NOTE_PUBLICATIONS_TABLE, rows: [] },
   () => {
     const repository = new ReleaseNotePublicationDb(() => sqlExecutor);
+
+    it('orders completed ranges by deployment time and verifies the drop identity', async () => {
+      const waveId = 'deploy-wave';
+      const authorId = 'bot-profile';
+      const deployedAt = '2026-11-10T15:20:15.890Z';
+      const nextRun = {
+        id: '32472000000',
+        number: 1661,
+        sha: 'cccccccccccccccccccccccccccccccccccccccc'
+      };
+
+      async function recordRange(run: typeof currentRun, timestamp: string) {
+        const publicationId = `publication-${run.number}`;
+        const dropId = `frontend-drop-${run.number}`;
+        await repository.preparePublication(
+          {
+            publicationId,
+            stream,
+            currentRun: run,
+            bootstrapPreviousRun: previousRun
+          },
+          {}
+        );
+        await sqlExecutor.execute(
+          `insert into ${DROPS_TABLE} (id, serial_no, wave_id, author_id, created_at, parts_count)
+           values (:dropId, :serialNo, :waveId, :authorId, 1, 1)`,
+          { dropId, serialNo: run.number, waveId, authorId }
+        );
+        await sqlExecutor.execute(
+          `insert into ${DROPS_PARTS_TABLE} (drop_id, drop_part_id, content)
+           values (:dropId, 1, :content)`,
+          { dropId, content: 'Frontend heading\nBody' }
+        );
+        await sqlExecutor.execute(
+          `insert into ${DROP_METADATA_TABLE} (drop_id, wave_id, data_key, data_value)
+           values (:dropId, :waveId, 'release_note_deployed_at', :timestamp),
+                  (:dropId, :waveId, 'release_note_repository', :repo),
+                  (:dropId, :waveId, 'release_note_sha', :sha)`,
+          { dropId, waveId, timestamp, repo: stream.repository, sha: run.sha }
+        );
+        await repository.recordPlan(publicationId, 1, {});
+        await repository.recordPart(
+          { publicationId, partNumber: 1, totalParts: 1, dropId },
+          {}
+        );
+        return { publicationId, dropId };
+      }
+
+      const filter = {
+        repository: stream.repository,
+        waveIds: [waveId, 'legacy-wave'],
+        authorId
+      };
+      const first = await recordRange(currentRun, deployedAt);
+      await expect(
+        repository.findPublishedFrontendReleaseRanges(filter, {})
+      ).resolves.toEqual([]);
+
+      await repository.completePublication(first.publicationId, {});
+      const second = await recordRange(
+        nextRun,
+        '2026-11-10T17:00:00.000+02:00'
+      );
+      await repository.completePublication(second.publicationId, {});
+
+      await expect(
+        repository.findPublishedFrontendReleaseRanges(filter, {})
+      ).resolves.toEqual([
+        expect.objectContaining({
+          id: second.dropId,
+          serial_no: nextRun.number,
+          previous_sha: currentRun.sha,
+          current_sha: nextRun.sha
+        }),
+        expect.objectContaining({
+          id: first.dropId,
+          serial_no: currentRun.number,
+          wave_id: waveId,
+          run_number: String(currentRun.number),
+          previous_sha: previousRun.sha,
+          current_sha: currentRun.sha,
+          deployed_at: deployedAt,
+          content: 'Frontend heading'
+        })
+      ]);
+      await sqlExecutor.execute(
+        `update ${DROP_METADATA_TABLE} set data_value = '6529-Collections/6529seize-backend'
+         where drop_id = :dropId and data_key = 'release_note_repository'`,
+        { dropId: second.dropId }
+      );
+      await expect(
+        repository.findPublishedFrontendReleaseRanges(filter, {})
+      ).resolves.toEqual([expect.objectContaining({ id: first.dropId })]);
+      await expect(
+        repository.findPublishedFrontendReleaseRanges(
+          { ...filter, authorId: 'other-profile' },
+          {}
+        )
+      ).resolves.toEqual([]);
+    });
 
     it('freezes the baseline, records progress, and advances the cursor atomically', async () => {
       const prepared = await repository.preparePublication(
@@ -264,7 +367,7 @@ describeWithSeed(
           },
           {}
         )
-      ).rejects.toThrow('run 1660 must complete before run 1661');
+      ).resolves.toEqual({ blockedByRunNumber: 1660 });
     });
   }
 );

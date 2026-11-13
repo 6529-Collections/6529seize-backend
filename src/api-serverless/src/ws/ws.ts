@@ -17,7 +17,26 @@ import {
 import { RequestContext } from '../../../request.context';
 import { identityFetcher } from '../identities/identity.fetcher';
 import { isLegacyWsQueryTokenEnabled } from '../auth/auth-session-v2';
+import { NodeHttpHandler } from '@smithy/node-http-handler';
+import {
+  webSocketDelivery,
+  WebSocketDeliveryResult
+} from '@/ws-delivery/ws-delivery';
 import { describeWebSocketSendFailure } from './ws-send-diagnostics';
+import { recordWebSocketAcknowledgement } from '@/api/ws/ws-operation-diagnostics';
+import { WsConnectionPurpose } from '@/entities/IWSConnection';
+import {
+  recordSocketLifecycle,
+  socketPurposeLabel
+} from './ws-socket-lifecycle';
+import type {
+  DeliveryBatch,
+  WebSocketDelivery
+} from '@/ws-delivery/ws-delivery';
+import {
+  isKnownExpiryFenceEnabled,
+  wsGatewayAgentMaxSockets
+} from './ws-fanout-settings';
 
 export class SocketNotAvailableException extends Error {
   constructor() {
@@ -45,7 +64,10 @@ abstract class ClientConnections {
   }: {
     connectionId: string;
     message: string;
-  }): Promise<void>;
+    recovery?: boolean;
+    batch?: DeliveryBatch;
+    delivery?: Pick<WebSocketDelivery, 'deliver'>;
+  }): Promise<WebSocketDeliveryResult>;
   abstract closeClient(
     connectionId: string,
     propagateFailure?: boolean
@@ -65,11 +87,16 @@ class WebsocketClientConnections extends ClientConnections {
   }) {
     const socket = this.sockets[connectionId];
     if (!socket) {
+      recordWebSocketAcknowledgement(connectionId, message, 'unavailable');
       throw new SocketNotAvailableException();
     }
     try {
       socket.send(message);
-    } catch (err: any) {
+      recordWebSocketAcknowledgement(connectionId, message, 'accepted');
+      return { status: 'sent' as const };
+    } catch {
+      // Preserve the unavailable-socket result without exposing transport errors.
+      recordWebSocketAcknowledgement(connectionId, message, 'unavailable');
       throw new SocketNotAvailableException();
     }
   }
@@ -99,45 +126,65 @@ class WebsocketClientConnections extends ClientConnections {
 }
 
 class ApiGatewayClientConnections extends ClientConnections {
-  private readonly logger = Logger.get(ApiGatewayManagementApiClient.name);
-
   private readonly client: ApiGatewayManagementApiClient;
 
   constructor() {
     super();
     this.client = new ApiGatewayManagementApiClient({
-      endpoint: process.env.API_GATEWAY_WS_ENDPOINT
+      endpoint: process.env.API_GATEWAY_WS_ENDPOINT,
+      retryMode: 'standard',
+      maxAttempts: 3,
+      requestHandler: new NodeHttpHandler({
+        connectionTimeout: 2000,
+        requestTimeout: 5000,
+        throwOnRequestTimeout: true,
+        // The SDK's agent already keeps connections alive; it only needs
+        // enough sockets that the fan-out pool, not the agent, bounds sends.
+        httpsAgent: { maxSockets: wsGatewayAgentMaxSockets() }
+      })
     });
   }
 
   override async sendMessage({
     connectionId,
-    message
+    message,
+    recovery = false,
+    batch,
+    delivery = webSocketDelivery
   }: {
     connectionId: string;
     message: string;
+    recovery?: boolean;
+    batch?: DeliveryBatch;
+    delivery?: Pick<WebSocketDelivery, 'deliver'>;
   }) {
-    try {
-      await this.client.send(
-        new PostToConnectionCommand({
-          ConnectionId: connectionId,
-          Data: Buffer.from(message)
-        })
-      );
-    } catch (error: unknown) {
-      const failure = describeWebSocketSendFailure(message, error);
-      if (failure.unavailable) {
-        throw new SocketNotAvailableException();
-      } else {
+    return delivery.deliver({
+      connectionId,
+      message,
+      recovery,
+      batch,
+      close: () => this.closeClient(connectionId, true),
+      send: async () => {
         try {
-          // Replace the existing error event; do not report again or turn a
-          // diagnostic failure into deletion of an otherwise live connection.
-          this.logger.error(failure.diagnostic);
-        } catch {
-          // Outbound delivery remains best effort when reporting is unavailable.
+          const response = await this.client.send(
+            new PostToConnectionCommand({
+              ConnectionId: connectionId,
+              Data: Buffer.from(message)
+            })
+          );
+          recordWebSocketAcknowledgement(connectionId, message, 'accepted');
+          return response;
+        } catch (error) {
+          const failure = describeWebSocketSendFailure(message, error);
+          recordWebSocketAcknowledgement(
+            connectionId,
+            message,
+            failure.unavailable ? 'unavailable' : 'failed'
+          );
+          throw error;
         }
       }
-    }
+    });
   }
 
   override async closeClient(
@@ -179,50 +226,113 @@ export class AppWebSockets {
     private readonly wsConnectionRepository: WsConnectionRepository
   ) {}
 
+  /**
+   * Sends one frame. The JWT fence holds on every path: a connection whose
+   * stored JWT has expired is closed instead of sent to.
+   *
+   * Fan-outs pass the `jwtExpiry` their recipient query already returned, so
+   * the fence needs no MySQL read per recipient. Only an expiry that looks
+   * past is re-read, because a reauthentication may have extended it since.
+   * `WS_KNOWN_EXPIRY_FENCE=off` ignores the known expiry and re-reads the row
+   * before every send.
+   */
   async send({
     connectionId,
     message,
-    skipStaleConnectionCheck = false
+    skipStaleConnectionCheck = false,
+    recovery = false,
+    jwtExpiry,
+    batch,
+    delivery,
+    onConnectionRead
   }: {
     connectionId: string;
     message: string;
     skipStaleConnectionCheck?: boolean;
+    recovery?: boolean;
+    jwtExpiry?: number | string | null;
+    batch?: DeliveryBatch;
+    delivery?: Pick<WebSocketDelivery, 'deliver'>;
+    /** Measurement hook: called when the fence had to read MySQL. */
+    onConnectionRead?: () => void;
   }) {
-    if (!skipStaleConnectionCheck) {
-      const entity = await this.wsConnectionRepository.getByConnectionId(
-        connectionId,
-        {}
+    if (
+      !skipStaleConnectionCheck &&
+      !(await this.hasActiveJwt(connectionId, jwtExpiry, onConnectionRead))
+    ) {
+      this.logger.info(
+        `Discovered a stale websocket ${connectionId}. Can't send messages to it. Will close it.`
       );
-      const jwtExpiry = getActiveJwtExpiry(entity?.jwt_expiry);
-      if (!entity || jwtExpiry === null) {
-        this.logger.info(
-          `Discovered a stale websocket ${connectionId}. Can't send messages to it. Will close it.`
-        );
-        await this.deregister({ connectionId });
-        return;
-      }
+      await this.deregister({ connectionId });
+      return { status: 'gone' as const };
     }
     try {
-      await ClientConnections.Get().sendMessage({ connectionId, message });
-    } catch (err) {
+      const result = await ClientConnections.Get().sendMessage({
+        connectionId,
+        message,
+        recovery,
+        batch,
+        delivery
+      });
+      if (result.status === 'gone')
+        await this.wsConnectionRepository.deleteByConnectionId(
+          connectionId,
+          {}
+        );
+      return result;
+    } catch {
+      // The local adapter throws for a missing/closed socket; remove its subscription.
       await this.deregister({ connectionId });
+      return { status: 'gone' as const };
     }
+  }
+
+  private async hasActiveJwt(
+    connectionId: string,
+    knownJwtExpiry: number | string | null | undefined,
+    onConnectionRead?: () => void
+  ): Promise<boolean> {
+    if (
+      knownJwtExpiry !== undefined &&
+      getActiveJwtExpiry(knownJwtExpiry) !== null &&
+      isKnownExpiryFenceEnabled()
+    ) {
+      return true;
+    }
+    onConnectionRead?.();
+    const entity = await this.wsConnectionRepository.getByConnectionId(
+      connectionId,
+      {}
+    );
+    return !!entity && getActiveJwtExpiry(entity.jwt_expiry) !== null;
   }
 
   async register({
     identityId,
     connectionId,
     jwtExpiry,
-    ws
+    ws,
+    recoveryCapable = false,
+    purpose = null,
+    clientVersion = null
   }: {
     identityId: string;
     connectionId: string;
     jwtExpiry: number;
     ws?: WebSocket;
+    recoveryCapable?: boolean;
+    purpose?: WsConnectionPurpose | null;
+    /** The client's declared frontend build (validated git SHA). */
+    clientVersion?: string | null;
   }) {
+    const lifecycle = {
+      purpose: socketPurposeLabel(purpose),
+      authenticated: identityId !== ANON_USER_ID
+    };
     this.logger.info(
-      `Registering socket for client ${identityId} (connectionId: ${connectionId})`
+      `Registering socket (connectionId: ${connectionId}) [purpose ${lifecycle.purpose}] [authenticated ${lifecycle.authenticated}]`
     );
+    recordSocketLifecycle({ event: 'Registered', ...lifecycle });
     if (isDevEnv()) {
       if (!ws) {
         throw new Error('Websocket is required in dec env');
@@ -237,16 +347,48 @@ export class AppWebSockets {
         identity_id: identityId,
         jwt_expiry: jwtExpiry,
         connection_id: connectionId,
-        wave_id: null
+        wave_id: null,
+        purpose,
+        // Only sockets that declare a build carry one; others are unchanged.
+        ...(clientVersion ? { client_version: clientVersion } : {})
       },
       getAuthenticatedNotificationSubscriptions([{ identityId, jwtExpiry }]),
       {}
     );
     await this.wsConnectionRepository.maybeCleanupStaleNotificationSubscriptions();
+    if (recoveryCapable) await webSocketDelivery.enableReconnect(connectionId);
   }
 
-  async deregister({ connectionId }: { connectionId: string }) {
-    this.logger.info(`Deregistering socket for connection ${connectionId}`);
+  async deregister({
+    connectionId,
+    disconnect
+  }: {
+    connectionId: string;
+    /** Set on the gateway's `$disconnect` only: logs and counts the churn. */
+    disconnect?: {
+      readonly purpose: WsConnectionPurpose | null;
+      readonly authenticated: boolean;
+      readonly connectedAt?: number;
+    };
+  }) {
+    if (disconnect) {
+      const purpose = socketPurposeLabel(disconnect.purpose);
+      const lifetimeMs =
+        typeof disconnect.connectedAt === 'number'
+          ? Date.now() - disconnect.connectedAt
+          : null;
+      this.logger.info(
+        `Deregistering socket for connection ${connectionId} [purpose ${purpose}] [authenticated ${disconnect.authenticated}] [lifetime_ms ${lifetimeMs ?? 'n/a'}]`
+      );
+      recordSocketLifecycle({
+        event: 'Deregistered',
+        purpose,
+        authenticated: disconnect.authenticated,
+        lifetimeMs
+      });
+    } else {
+      this.logger.info(`Deregistering socket for connection ${connectionId}`);
+    }
     await ClientConnections.Get().closeClient(connectionId);
     await this.wsConnectionRepository.deleteByConnectionId(connectionId, {});
   }
@@ -256,6 +398,20 @@ export class AppWebSockets {
   async closeUnavailableConnection(connectionId: string): Promise<void> {
     await ClientConnections.Get().closeClient(connectionId, true);
     await this.wsConnectionRepository.deleteByConnectionId(connectionId, {});
+  }
+
+  /** The app socket's open wave (SET_OPEN_WAVE, waves 1.3). */
+  async updateOpenWaveForConnection(
+    {
+      connectionId,
+      openWaveId
+    }: { connectionId: string; openWaveId: string | null },
+    ctx: RequestContext
+  ) {
+    await this.wsConnectionRepository.updateOpenWaveId(
+      { connectionId, waveId: openWaveId },
+      ctx
+    );
   }
 
   async updateActiveWaveForConnection(
@@ -319,6 +475,19 @@ export class AppWebSockets {
 }
 
 export const ANON_USER_ID = '$ANONONYMOUS_USER$';
+
+/**
+ * Reads the socket purpose a client declares on `$connect` (`?purpose=`).
+ * Unknown or missing values keep the legacy audience rules.
+ */
+export function connectionPurposeFromQuery(
+  query: Record<string, string | undefined> | null | undefined
+): WsConnectionPurpose | null {
+  const value = query?.purpose;
+  return typeof value === 'string' && value.trim().toLowerCase() === 'typing'
+    ? WsConnectionPurpose.TYPING
+    : null;
+}
 export const MAX_NOTIFICATION_IDENTITY_SUBSCRIPTIONS = 5;
 
 export interface AuthenticatedWebSocketIdentity {
@@ -371,7 +540,12 @@ function getAuthenticatedNotificationSubscriptions(
 
 export async function authenticateWebSocketJwtOrGetByConnectionId(
   event: APIGatewayEvent
-): Promise<{ identityId: string; jwtExpiry: number }> {
+): Promise<{
+  identityId: string;
+  jwtExpiry: number;
+  /** The stored socket's purpose, when the connection row was read. */
+  purpose?: WsConnectionPurpose | null;
+}> {
   const authorizationHeader =
     event.headers?.Authorization || event.headers?.authorization;
   if (!authorizationHeader) {
@@ -385,7 +559,8 @@ export async function authenticateWebSocketJwtOrGetByConnectionId(
       if (connection?.identity_id && jwtExpiry !== null) {
         return {
           identityId: connection.identity_id,
-          jwtExpiry
+          jwtExpiry,
+          purpose: connection.purpose ?? null
         };
       }
       if (connection?.identity_id) {

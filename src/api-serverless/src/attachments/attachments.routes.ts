@@ -12,6 +12,7 @@ import {
   ForbiddenException,
   NotFoundException
 } from '@/exceptions';
+import { multipartCompletionClientError } from '@/api/media/multipart-completion-errors';
 import {
   ApiCompleteMultipartUploadRequestPartSchema,
   ApiUploadPartOfMultipartUploadRequestSchema,
@@ -41,6 +42,8 @@ import { mapAttachmentToApiAttachment } from '@/api/attachments/attachments.mapp
 import { attachmentsStatusNotifier } from '@/attachments/attachments-status-notifier';
 import { randomUUID } from 'node:crypto';
 import { Time, Timer } from '@/time';
+import { mediaUploadBudgetService } from '@/api/media/media-upload-budget.service';
+import { MediaUploadBudgetSource } from '@/entities/IMediaUploadBudget';
 
 const router = asyncRouter();
 
@@ -84,26 +87,9 @@ function mapMultipartCompletionError(error: unknown): ApiCompliantException {
   if (error instanceof ApiCompliantException) {
     return error;
   }
-  const errorName =
-    typeof (error as { name?: unknown }).name === 'string'
-      ? (error as { name: string }).name
-      : '';
-  const errorCode =
-    typeof (error as { Code?: unknown }).Code === 'string'
-      ? (error as { Code: string }).Code
-      : '';
-  const code = errorName || errorCode;
-  if (
-    [
-      'NoSuchUpload',
-      'InvalidPart',
-      'InvalidPartOrder',
-      'EntityTooSmall'
-    ].includes(code)
-  ) {
-    return new BadRequestException(
-      error instanceof Error ? error.message : 'Invalid multipart upload'
-    );
+  const clientError = multipartCompletionClientError(error);
+  if (clientError) {
+    return clientError;
   }
   return new CustomApiCompliantException(
     500,
@@ -134,42 +120,86 @@ router.post(
 
     const attachmentId = randomUUID();
     const now = Time.currentMillis();
-    const { key, upload_id } =
-      await uploadAttachmentsService.createMultipartUpload({
-        attachmentId,
-        authorId: authenticatedProfileId,
-        contentType: validated.content_type,
-        fileName: validated.file_name
-      });
-    const attachment: AttachmentEntity = {
-      id: attachmentId,
-      owner_profile_id: authenticatedProfileId,
-      original_file_name: validated.file_name,
-      kind: getAttachmentKind(validated.content_type),
-      declared_mime: validated.content_type,
-      detected_mime: null,
-      status: AttachmentStatus.UPLOADING,
-      original_bucket: process.env.ATTACHMENTS_INGEST_S3_BUCKET ?? null,
-      original_key: key,
-      size_bytes: null,
-      sha256: null,
-      guardduty_status: null,
-      verdict: null,
-      ipfs_cid: null,
-      ipfs_url: null,
-      error_reason: null,
-      created_at: now,
-      updated_at: now
+    const keyInput = {
+      attachmentId,
+      authorId: authenticatedProfileId,
+      fileName: validated.file_name
     };
-    await attachmentsDb.createAttachment(attachment, { timer });
+    // Counted like drop media: pending at its key until its size is known,
+    // so the size is still read if the completion call never arrives.
+    await mediaUploadBudgetService.reserve({
+      id: attachmentId,
+      profileId: authenticatedProfileId,
+      source: MediaUploadBudgetSource.ATTACHMENT,
+      objectKey: uploadAttachmentsService.attachmentKey(keyInput),
+      contentType: validated.content_type
+    });
+    let started: { key: string; upload_id: string };
+    try {
+      started = await uploadAttachmentsService.createMultipartUpload({
+        ...keyInput,
+        contentType: validated.content_type
+      });
+      await attachmentsDb.createAttachment(
+        newAttachment({
+          attachmentId,
+          authenticatedProfileId,
+          validated,
+          key: started.key,
+          now
+        }),
+        { timer }
+      );
+    } catch (error) {
+      await mediaUploadBudgetService.release(
+        attachmentId,
+        authenticatedProfileId
+      );
+      throw error;
+    }
     res.status(201).send({
       attachment_id: attachmentId,
-      upload_id,
-      key,
+      upload_id: started.upload_id,
+      key: started.key,
       status: ApiAttachmentStatus.Uploading
     });
   }
 );
+
+function newAttachment({
+  attachmentId,
+  authenticatedProfileId,
+  validated,
+  key,
+  now
+}: {
+  attachmentId: string;
+  authenticatedProfileId: string;
+  validated: { content_type: string; file_name: string };
+  key: string;
+  now: number;
+}): AttachmentEntity {
+  return {
+    id: attachmentId,
+    owner_profile_id: authenticatedProfileId,
+    original_file_name: validated.file_name,
+    kind: getAttachmentKind(validated.content_type),
+    declared_mime: validated.content_type,
+    detected_mime: null,
+    status: AttachmentStatus.UPLOADING,
+    original_bucket: process.env.ATTACHMENTS_INGEST_S3_BUCKET ?? null,
+    original_key: key,
+    size_bytes: null,
+    sha256: null,
+    guardduty_status: null,
+    verdict: null,
+    ipfs_cid: null,
+    ipfs_url: null,
+    error_reason: null,
+    created_at: now,
+    updated_at: now
+  };
+}
 
 router.post(
   '/multipart-upload/part',
@@ -240,6 +270,24 @@ router.post(
       await uploadAttachmentsService.completeMultipartUpload(validatedRequest);
     } catch (error) {
       throw mapMultipartCompletionError(error);
+    }
+    // The key matched the request's above. Counts the stored bytes against
+    // the uploader's rolling upload budget; never fails the completion. If
+    // completion failed above, or the size cannot be read here, the budget
+    // entry stays pending and a later preparation reads the size.
+    try {
+      const read = await uploadAttachmentsService.readObjectSize(
+        validatedRequest.key
+      );
+      if (read.exists) {
+        await mediaUploadBudgetService.recordSize(
+          attachment.id,
+          authenticatedProfileId,
+          read.bytes
+        );
+      }
+    } catch {
+      // Inconclusive read: left pending.
     }
     const completedAt = Time.currentMillis();
     await attachmentsDb.updateAttachment(

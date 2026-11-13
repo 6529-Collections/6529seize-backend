@@ -6,7 +6,7 @@ guarantee. Institutional retention and publication decisions remain separate.
 
 ## Deployment and enablement
 
-Use the existing `Deploy a service` pipeline and coordinator release record.
+Use the existing `Deploy a service` pipeline and deployment verification.
 Deploy this release's exact commit in this dependency order in each environment:
 
 1. `artworkDocumentationStorage` creates the regional private, encrypted, versioned

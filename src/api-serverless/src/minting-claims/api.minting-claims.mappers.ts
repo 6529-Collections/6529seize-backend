@@ -20,6 +20,13 @@ export function rowToMintingClaim(row: MintingClaimRow): MintingClaim {
     row.edition_size == null ? undefined : Number(row.edition_size);
 
   return {
+    collaboration_credit: row.collaboration_credit
+      ? safeParseJson(
+          row.collaboration_credit,
+          undefined,
+          'collaboration_credit'
+        )
+      : undefined,
     drop_id: row.drop_id,
     contract: row.contract,
     claim_id: row.claim_id,

@@ -108,6 +108,16 @@ function isRetryableProviderError(error: unknown): boolean {
   ].some((snippet) => message.includes(snippet));
 }
 
+export const ENS_RESOLVE_NAME_TIMEOUT_MS = 10_000;
+export const ENS_RESOLVE_DEADLINE_CODE = 'ENS_RESOLVE_DEADLINE';
+
+function ensResolveDeadlineError(): Error {
+  // Deliberately not matched by isRetryableProviderError.
+  return Object.assign(new Error('ENS name resolution deadline exceeded'), {
+    code: ENS_RESOLVE_DEADLINE_CODE
+  });
+}
+
 async function sleep(delayMs: number): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, delayMs));
 }
@@ -181,7 +191,7 @@ export class EthereumRpcClient {
   }
 
   async getLogs(filter: {
-    address?: string;
+    address?: string | string[];
     fromBlock?: string;
     toBlock?: string;
     topics?: (string | string[] | null)[];
@@ -202,10 +212,46 @@ export class EthereumRpcClient {
     }));
   }
 
-  async resolveName(name: string): Promise<string | null> {
+  /**
+   * Read-only `eth_call`. A block number `blockTag` reads historical state,
+   * which needs an archive-capable endpoint.
+   */
+  async call(
+    transaction: { to: string; data: string },
+    blockTag: BlockTag = 'latest'
+  ): Promise<string> {
     return await this.withProviderRetries(() =>
-      this.provider.resolveName(name)
+      this.provider.call({ ...transaction, blockTag })
     );
+  }
+
+  /**
+   * Bounded so a request path cannot wait on slow resolvers or retries for
+   * longer than ENS_RESOLVE_NAME_TIMEOUT_MS.
+   */
+  async resolveName(
+    name: string,
+    timeoutMs = ENS_RESOLVE_NAME_TIMEOUT_MS
+  ): Promise<string | null> {
+    const deadlineAt = Date.now() + timeoutMs;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const deadline = new Promise<never>((_resolve, reject) => {
+      timer = setTimeout(() => reject(ensResolveDeadlineError()), timeoutMs);
+    });
+    const lookup = this.withProviderRetries(() => {
+      // Stops further retries once the caller has been answered.
+      if (Date.now() >= deadlineAt) throw ensResolveDeadlineError();
+      return this.provider.resolveName(name);
+    });
+    // When the deadline wins, the lookup may still settle later; its outcome
+    // is no longer observed, so it must not surface as an unhandled rejection.
+    lookup.catch(() => undefined);
+    try {
+      return await Promise.race([lookup, deadline]);
+    } finally {
+      // When the lookup wins, the deadline never fires and never rejects.
+      clearTimeout(timer);
+    }
   }
 }
 export function getEthereumRpcClient(

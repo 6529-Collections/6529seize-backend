@@ -1,7 +1,10 @@
 import { retrieveConsolidationsForWallets } from '@/db';
 import { ConsolidationEvent, EventType } from '@/entities/IDelegation';
 import { ConsolidatedTDH } from '@/entities/ITDH';
-import { getAffectedWallets } from './reconsolidation';
+import {
+  getAffectedWallets,
+  getAffectedWalletsForAddresses
+} from './reconsolidation';
 
 jest.mock('@/db', () => ({
   retrieveConsolidationsForWallets: jest.fn()
@@ -26,6 +29,20 @@ function currentTdhRow(wallets: string[]): ConsolidatedTDH {
 describe('getAffectedWallets', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+  });
+
+  it('expands an explicit seed through its old group and the new groups', async () => {
+    const D = '0x000000000000000000000000000000000000000d';
+    mockedRetrieveConsolidationsForWallets.mockResolvedValue({
+      [A]: `${A}-${C}`,
+      [B]: `${B}-${D}`
+    });
+    const affected = await getAffectedWalletsForAddresses(
+      [A.toUpperCase(), A],
+      [currentTdhRow([A, B]), currentTdhRow([C, D])]
+    );
+    expect(affected).toEqual(new Set([A, B, C, D]));
+    expect(mockedRetrieveConsolidationsForWallets).toHaveBeenCalledWith([A, B]);
   });
 
   it('includes a restored cluster member missing from the old derived row', async () => {

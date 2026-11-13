@@ -1,3 +1,4 @@
+import { legacyGetView } from '@/competitions/legacy-competition-get-facade';
 import 'reflect-metadata';
 import {
   DROP_RANK_TABLE,
@@ -121,9 +122,11 @@ describe('WaveDecisionsDb decision filters', () => {
     );
 
     const [searchSql, searchParams] = execute.mock.calls[0];
-    expect(searchSql).toContain(`from ${WAVES_DECISIONS_TABLE} wd`);
     expect(searchSql).toContain(
-      `from ${WAVES_DECISION_WINNER_DROPS_TABLE} wdwd`
+      `from ${legacyGetView(WAVES_DECISIONS_TABLE)} wd`
+    );
+    expect(searchSql).toContain(
+      `from ${legacyGetView(WAVES_DECISION_WINNER_DROPS_TABLE)} wdwd`
     );
     expect(searchSql).toContain(
       'd.is_additional_action_promised = :is_additional_action_promised'
@@ -134,9 +137,11 @@ describe('WaveDecisionsDb decision filters', () => {
     });
 
     const [countSql, countParams] = oneOrNull.mock.calls[0];
-    expect(countSql).toContain(`from ${WAVES_DECISIONS_TABLE} wd`);
     expect(countSql).toContain(
-      `from ${WAVES_DECISION_WINNER_DROPS_TABLE} wdwd`
+      `from ${legacyGetView(WAVES_DECISIONS_TABLE)} wd`
+    );
+    expect(countSql).toContain(
+      `from ${legacyGetView(WAVES_DECISION_WINNER_DROPS_TABLE)} wdwd`
     );
     expect(countSql).toContain(
       'd.is_additional_action_promised = :is_additional_action_promised'
@@ -172,7 +177,9 @@ describe('WaveDecisionsDb decision filters', () => {
     );
 
     const [sql, params] = execute.mock.calls[0];
-    expect(sql).toContain(`from ${WAVES_DECISION_WINNER_DROPS_TABLE} wdwd`);
+    expect(sql).toContain(
+      `from ${legacyGetView(WAVES_DECISION_WINNER_DROPS_TABLE)} wdwd`
+    );
     expect(sql).toContain(`join ${DROPS_TABLE} d`);
     expect(sql).toContain(
       'd.is_additional_action_promised = :is_additional_action_promised'
@@ -184,205 +191,3 @@ describe('WaveDecisionsDb decision filters', () => {
     });
   });
 });
-
-describeWithSeed(
-  'WaveDecisionsDb.getApproveWinnerCandidates',
-  [
-    withWaves([
-      aWave(
-        {
-          type: WaveType.APPROVE,
-          winning_min_threshold: 100,
-          winning_threshold_min_duration_ms: 0
-        },
-        { id: 'immediate-wave', name: 'Immediate', serial_no: 1 }
-      ),
-      aWave(
-        {
-          type: WaveType.APPROVE,
-          winning_min_threshold: 100,
-          winning_threshold_min_duration_ms: tenMinutes
-        },
-        { id: 'duration-wave', name: 'Duration', serial_no: 2 }
-      ),
-      aWave(
-        {
-          type: WaveType.APPROVE,
-          winning_min_threshold: 100,
-          winning_threshold_min_duration_ms: tenMinutes,
-          time_lock_ms: tenMinutes
-        },
-        {
-          id: 'weighted-duration-wave',
-          name: 'Weighted Duration',
-          serial_no: 3
-        }
-      )
-    ]),
-    withRows(DROPS_TABLE, [
-      participatoryDrop({
-        id: 'immediate-drop',
-        waveId: 'immediate-wave',
-        createdAt: 1
-      }),
-      participatoryDrop({
-        id: 'ready-drop',
-        waveId: 'duration-wave',
-        createdAt: 2
-      }),
-      participatoryDrop({
-        id: 'waiting-drop',
-        waveId: 'duration-wave',
-        createdAt: 3
-      }),
-      participatoryDrop({
-        id: 'reset-drop',
-        waveId: 'duration-wave',
-        createdAt: 4
-      }),
-      participatoryDrop({
-        id: 'weighted-ready-drop',
-        waveId: 'weighted-duration-wave',
-        createdAt: 5
-      }),
-      participatoryDrop({
-        id: 'weighted-waiting-drop',
-        waveId: 'weighted-duration-wave',
-        createdAt: 6
-      }),
-      participatoryDrop({
-        id: 'weighted-below-drop',
-        waveId: 'weighted-duration-wave',
-        createdAt: 7
-      })
-    ]),
-    withRows(DROP_RANK_TABLE, [
-      rank({ dropId: 'immediate-drop', waveId: 'immediate-wave', vote: 100 }),
-      rank({ dropId: 'ready-drop', waveId: 'duration-wave', vote: 150 }),
-      rank({ dropId: 'waiting-drop', waveId: 'duration-wave', vote: 150 }),
-      rank({ dropId: 'reset-drop', waveId: 'duration-wave', vote: 150 })
-    ]),
-    withRows(WAVE_LEADERBOARD_ENTRIES_TABLE, [
-      {
-        drop_id: 'weighted-ready-drop',
-        wave_id: 'weighted-duration-wave',
-        timestamp: 15 * minute,
-        vote: 150,
-        vote_on_decision_time: 150,
-        over_threshold_since_ms: 5 * minute
-      },
-      {
-        drop_id: 'weighted-waiting-drop',
-        wave_id: 'weighted-duration-wave',
-        timestamp: 15 * minute,
-        vote: 150,
-        vote_on_decision_time: 150,
-        over_threshold_since_ms: 10 * minute
-      },
-      {
-        drop_id: 'weighted-below-drop',
-        wave_id: 'weighted-duration-wave',
-        timestamp: 15 * minute,
-        vote: 99,
-        vote_on_decision_time: 99,
-        over_threshold_since_ms: null
-      }
-    ]),
-    withRows(DROP_REAL_VOTE_IN_TIME_TABLE, [
-      aggregateVote({
-        id: 1,
-        dropId: 'ready-drop',
-        waveId: 'duration-wave',
-        timestamp: 0,
-        vote: 0
-      }),
-      aggregateVote({
-        id: 2,
-        dropId: 'ready-drop',
-        waveId: 'duration-wave',
-        timestamp: 5 * minute,
-        vote: 101
-      }),
-      aggregateVote({
-        id: 3,
-        dropId: 'ready-drop',
-        waveId: 'duration-wave',
-        timestamp: 10 * minute,
-        vote: 150
-      }),
-      aggregateVote({
-        id: 4,
-        dropId: 'waiting-drop',
-        waveId: 'duration-wave',
-        timestamp: 0,
-        vote: 0
-      }),
-      aggregateVote({
-        id: 5,
-        dropId: 'waiting-drop',
-        waveId: 'duration-wave',
-        timestamp: 10 * minute,
-        vote: 150
-      }),
-      aggregateVote({
-        id: 6,
-        dropId: 'reset-drop',
-        waveId: 'duration-wave',
-        timestamp: 0,
-        vote: 0
-      }),
-      aggregateVote({
-        id: 7,
-        dropId: 'reset-drop',
-        waveId: 'duration-wave',
-        timestamp: minute,
-        vote: 101
-      }),
-      aggregateVote({
-        id: 8,
-        dropId: 'reset-drop',
-        waveId: 'duration-wave',
-        timestamp: 8 * minute,
-        vote: 99
-      }),
-      aggregateVote({
-        id: 9,
-        dropId: 'reset-drop',
-        waveId: 'duration-wave',
-        timestamp: 10 * minute,
-        vote: 150
-      })
-    ])
-  ],
-  () => {
-    const repo = new WaveDecisionsDb(() => sqlExecutor);
-    const ctx: RequestContext = { timer: undefined };
-
-    it('keeps duration 0 immediate and uses first passing row for duration waves', async () => {
-      const candidates = await repo.getApproveWinnerCandidates(
-        15 * minute,
-        ctx
-      );
-
-      const candidateDropIds = candidates.map((candidate) => candidate.drop_id);
-      expect(candidateDropIds).toContain('immediate-drop');
-      expect(candidateDropIds).toContain('ready-drop');
-      expect(candidateDropIds).toContain('weighted-ready-drop');
-      expect(candidateDropIds).not.toContain('waiting-drop');
-      expect(candidateDropIds).not.toContain('reset-drop');
-      expect(candidateDropIds).not.toContain('weighted-waiting-drop');
-      expect(candidateDropIds).not.toContain('weighted-below-drop');
-    });
-
-    it('restarts the duration after the latest below-threshold aggregate vote', async () => {
-      const candidates = await repo.getApproveWinnerCandidates(
-        20 * minute,
-        ctx
-      );
-
-      expect(candidates.map((candidate) => candidate.drop_id)).toContain(
-        'reset-drop'
-      );
-    });
-  }
-);

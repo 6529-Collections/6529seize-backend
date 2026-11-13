@@ -119,6 +119,9 @@ export const fetchAggregatedActivity = async (
       ...searchParams
     };
   }
+  if (query.season) {
+    params.season = query.season;
+  }
 
   let primaryPurchasesCount = 'primary_purchases_count';
   let primaryPurchasesValue = 'primary_purchases_value';
@@ -220,7 +223,7 @@ export const fetchAggregatedActivity = async (
   if (query.collector) {
     joins += ` LEFT JOIN ${CONSOLIDATED_OWNERS_BALANCES_TABLE} ON ${CONSOLIDATED_AGGREGATED_ACTIVITY_TABLE}.consolidation_key = ${CONSOLIDATED_OWNERS_BALANCES_TABLE}.consolidation_key`;
     if (query.season) {
-      joins += ` LEFT JOIN ${CONSOLIDATED_OWNERS_BALANCES_MEMES_TABLE} ON ${CONSOLIDATED_AGGREGATED_ACTIVITY_TABLE}.consolidation_key = ${CONSOLIDATED_OWNERS_BALANCES_MEMES_TABLE}.consolidation_key and ${CONSOLIDATED_OWNERS_BALANCES_MEMES_TABLE}.season = ${query.season}`;
+      joins += ` LEFT JOIN ${CONSOLIDATED_OWNERS_BALANCES_MEMES_TABLE} ON ${CONSOLIDATED_AGGREGATED_ACTIVITY_TABLE}.consolidation_key = ${CONSOLIDATED_OWNERS_BALANCES_MEMES_TABLE}.consolidation_key and ${CONSOLIDATED_OWNERS_BALANCES_MEMES_TABLE}.season = :season`;
     }
   }
   if (
@@ -229,7 +232,7 @@ export const fetchAggregatedActivity = async (
       query.collector == MetricsCollector.MEMES_SETS) &&
     query.season
   ) {
-    joins += ` LEFT JOIN ${CONSOLIDATED_AGGREGATED_ACTIVITY_MEMES_TABLE} ON ${CONSOLIDATED_AGGREGATED_ACTIVITY_TABLE}.consolidation_key = ${CONSOLIDATED_AGGREGATED_ACTIVITY_MEMES_TABLE}.consolidation_key and ${CONSOLIDATED_AGGREGATED_ACTIVITY_MEMES_TABLE}.season = ${query.season}`;
+    joins += ` LEFT JOIN ${CONSOLIDATED_AGGREGATED_ACTIVITY_MEMES_TABLE} ON ${CONSOLIDATED_AGGREGATED_ACTIVITY_TABLE}.consolidation_key = ${CONSOLIDATED_AGGREGATED_ACTIVITY_MEMES_TABLE}.consolidation_key and ${CONSOLIDATED_AGGREGATED_ACTIVITY_MEMES_TABLE}.season = :season`;
   }
 
   const results = await fetchPaginated<ApiAggregatedActivity>(

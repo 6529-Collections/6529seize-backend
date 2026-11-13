@@ -4,11 +4,9 @@ import {
   GRADIENT_CONTRACT,
   MEMES_CONTRACT,
   MEMES_EXTENDED_DATA_TABLE,
-  PRENODES_TABLE,
   TDH_BLOCKS_TABLE,
   TDH_NFT_TABLE
 } from '@/constants';
-import { fetchPaginated } from '@/db-api';
 import { MemesExtendedData } from '@/entities/INFT';
 import { NftTDH } from '@/entities/ITDH';
 import {
@@ -16,7 +14,9 @@ import {
   NEXTGEN_CORE_CONTRACT
 } from '@/nextgen/nextgen_constants';
 import { sqlExecutor } from '@/sql-executor';
-import { getIpInfo } from '@/api/policies/policies';
+import { Logger } from '@/logging';
+
+const logger = Logger.get('API_ORACLE_DB');
 
 const formatNumber = (num: number) => {
   return parseFloat(num.toFixed(0));
@@ -259,33 +259,69 @@ export const fetchSingleAddressTDHMemesSeasons = async (address: string) => {
   };
 };
 
+/** Lowercased wallet addresses from a JSON array column, or null if malformed. */
+function parseWalletAddresses(wallets: unknown): string[] | null {
+  if (typeof wallets !== 'string') {
+    return null;
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(wallets);
+  } catch {
+    return null;
+  }
+  if (
+    !Array.isArray(parsed) ||
+    !parsed.every((wallet) => typeof wallet === 'string')
+  ) {
+    return null;
+  }
+  return parsed.map((wallet: string) => wallet.toLowerCase());
+}
+
 export async function fetchTDHAbove(value: number, includeEntries: boolean) {
   const block = await getBlock();
   const merkleRoot = await getMerkleRoot(block);
+  if (!includeEntries) {
+    const countRows = await sqlExecutor.execute<{ count: number | string }>(
+      `SELECT COUNT(*) AS count from ${CONSOLIDATED_WALLETS_TDH_TABLE} WHERE boosted_tdh >= :value`,
+      { value }
+    );
+    return {
+      count: Number(countRows[0]?.count ?? 0),
+      block,
+      merkle_root: merkleRoot
+    };
+  }
   const sql = `
-    SELECT * from ${CONSOLIDATED_WALLETS_TDH_TABLE} 
+    SELECT consolidation_key, boosted_tdh, wallets from ${CONSOLIDATED_WALLETS_TDH_TABLE}
     WHERE boosted_tdh >= :value
     ORDER BY boosted_tdh DESC
   `;
   const tdh = await sqlExecutor.execute(sql, { value });
-  const response: any = {
+  return {
     count: tdh.length,
     block,
-    merkle_root: merkleRoot
+    merkle_root: merkleRoot,
+    entries: tdh.flatMap((t: any) => {
+      const addresses = parseWalletAddresses(t.wallets);
+      if (addresses === null) {
+        logger.warn(
+          `Skipping TDH entry with malformed wallets: consolidation_key=${t.consolidation_key}`
+        );
+        return [];
+      }
+      return [
+        {
+          consolidation_key: t.consolidation_key,
+          tdh: t.boosted_tdh,
+          addresses,
+          block,
+          merkle_root: merkleRoot
+        }
+      ];
+    })
   };
-  if (includeEntries) {
-    response.entries = tdh.map((t: any) => {
-      return {
-        consolidation_key: t.consolidation_key,
-        tdh: t.boosted_tdh,
-        addresses: JSON.parse(t.wallets).map((w: string) => w.toLowerCase()),
-        block,
-        merkle_root: merkleRoot
-      };
-    });
-  }
-
-  return response;
 }
 
 export async function fetchTDHPercentile(percentile: number) {
@@ -380,86 +416,4 @@ export async function fetchSeasonsTDH(season?: string) {
     block,
     merkle_root: merkleRoot
   };
-}
-
-export async function validatePrenode(
-  ip: string,
-  domain: string,
-  prenodeTdh: number,
-  prenodeBlock: number
-) {
-  const block = await getBlock();
-  const tdh =
-    (
-      await sqlExecutor.execute(`
-        SELECT SUM(boosted_tdh) as boosted_tdh FROM ${CONSOLIDATED_WALLETS_TDH_TABLE}
-      `)
-    )[0]?.boosted_tdh ?? 0;
-
-  const tdh_sync = prenodeTdh === tdh;
-  const block_sync = prenodeBlock === block;
-
-  const ipInfo = await getIpInfo(ip);
-
-  await sqlExecutor.execute(
-    `
-    INSERT INTO ${PRENODES_TABLE} (ip, domain, city, country, tdh_sync, block_sync)
-    VALUES (:ip, :domain, :city, :country, :tdh_sync, :block_sync)
-    ON DUPLICATE KEY UPDATE 
-      domain = VALUES(domain), 
-      city = VALUES(city),
-      country = VALUES(country),
-      tdh_sync = VALUES(tdh_sync), 
-      block_sync = VALUES(block_sync),
-      updated_at = UTC_TIMESTAMP(6)
-  `,
-    {
-      ip,
-      domain,
-      city: ipInfo?.city_name,
-      country: ipInfo?.country_name,
-      tdh_sync,
-      block_sync
-    }
-  );
-
-  return {
-    tdh_sync,
-    block_sync
-  };
-}
-
-export async function fetchPrenodes(pageSize: number, page: number) {
-  return fetchPaginated(
-    PRENODES_TABLE,
-    {},
-    `(tdh_sync AND block_sync) DESC,
-    (tdh_sync OR block_sync) DESC,
-    CASE 
-        WHEN ping_status = 'green' THEN 1
-        WHEN ping_status = 'orange' THEN 2
-        ELSE 3
-    END ASC,
-    CASE 
-        WHEN tdh_sync AND block_sync AND ping_status = 'green' THEN created_at
-        ELSE NULL
-    END ASC,
-    updated_at DESC`,
-    pageSize,
-    page,
-    '',
-    `ip, 
-    domain, 
-    tdh_sync, 
-    block_sync, 
-    created_at, 
-    updated_at, 
-    city, 
-    country,
-    CASE 
-        WHEN updated_at >= UTC_TIMESTAMP() - INTERVAL 1 HOUR THEN 'green'
-        WHEN updated_at >= UTC_TIMESTAMP() - INTERVAL 24 HOUR THEN 'orange'
-        ELSE 'red'
-    END AS 'ping_status'`
-  );
 }

@@ -491,3 +491,5 @@ Currently 6529.io uses an Admin Panel to manage:
 The admin panel repo is located [here](https://github.com/6529-Collections/6529seize-admin).
 
 \* Note: Please bear in mind that in the near future the admin panel will be deprecated and all functionality will be moved to the 6529SEIZE-BACKEND repo.
+
+Shared Memes calendar maintenance: [guide](docs/shared-memes-calendar.md).

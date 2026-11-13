@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { ReleaseNotePublicationStatus } from '@/entities/IReleaseNotePublication';
 import { RequestContext } from '@/request.context';
+import { DeferredReleaseNoteError } from '@/release-notes/release-note-errors';
 import { ReleaseNoteGenerationRequest } from './release-note-generation-queue';
 import {
   GitHubReleaseRun,
@@ -100,6 +101,12 @@ export class ReleaseNotePublicationService {
     );
     if (!publication) {
       return null;
+    }
+    if ('blockedByRunNumber' in publication) {
+      throw new DeferredReleaseNoteError(
+        'PUBLICATION_BLOCKED',
+        `Release-note run ${publication.blockedByRunNumber} must complete before run ${currentRun.run_number}`
+      );
     }
     if (
       publication.current_run_id !== currentRun.id ||

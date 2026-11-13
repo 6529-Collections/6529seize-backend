@@ -1,4 +1,9 @@
 import {
+  nicActivityContext,
+  decodeNicActivityCursor,
+  encodeNicActivityCursor
+} from './profile-nic-activity.cursor';
+import {
   profileActivityLogsDb,
   ProfileActivityLogsDb,
   ProfileLogSearchParams
@@ -8,7 +13,9 @@ import {
   ProfileActivityLog,
   ProfileActivityLogType
 } from '../../../entities/IProfileActivityLog';
-import { CountlessPage, PageRequest } from '../page-request';
+import { PageRequest } from '../page-request';
+import { ApiProfileActivityLog } from '@/api/generated/models/ApiProfileActivityLog';
+import { ApiProfileActivityLogPage } from '@/api/generated/models/ApiProfileActivityLogPage';
 import { profilesDb, ProfilesDb } from '../../../profiles/profiles.db';
 import { RateMatter } from '../../../entities/IRating';
 import { RequestContext } from '../../../request.context';
@@ -20,6 +27,8 @@ import {
 import { getGroupsUserIsEligibleForReadContext } from '@/api/waves/wave-access.helpers';
 
 export interface ProfileActivityLogsSearchRequest {
+  activityScope?: string;
+  cursor?: string;
   profileId?: string;
   targetId?: string;
   logType?: ProfileActivityLogType[];
@@ -38,8 +47,53 @@ export class ProfileActivityLogsApiService {
     private readonly userGroupsService: UserGroupsService
   ) {}
 
+  private async searchActivityLogs(
+    request: ProfileActivityLogsSearchRequest,
+    params: ProfileLogSearchParams,
+    ctx: RequestContext
+  ) {
+    if (request.activityScope !== 'NIC') {
+      return {
+        logs: await this.profileActivityLogsDb.searchLogs(params, ctx),
+        nextCursor: null
+      };
+    }
+    const context = nicActivityContext(request, ctx);
+    let direction: 'incoming' | 'all' | 'outgoing' = 'outgoing';
+    if (request.targetId) direction = 'incoming';
+    else if (request.includeProfileIdToIncoming) direction = 'all';
+    const result = await this.profileActivityLogsDb.searchNicLogs(
+      {
+        profileId: request.profileId ?? request.targetId!,
+        direction,
+        types: request.logType ?? [],
+        size: request.pageRequest.page_size,
+        after: decodeNicActivityCursor(
+          request.cursor,
+          context,
+          request.pageRequest.page
+        )
+      },
+      params.viewer_eligible_group_ids,
+      ctx
+    );
+    return {
+      logs: result.logs,
+      nextCursor: result.nextPosition
+        ? encodeNicActivityCursor(
+            result.nextPosition,
+            context,
+            request.pageRequest.page + 1
+          )
+        : null
+    };
+  }
+
   async getProfileActivityLogsFiltered(
-    {
+    request: ProfileActivityLogsSearchRequest,
+    ctx: RequestContext
+  ): Promise<ApiProfileActivityLogPage> {
+    const {
       profileId,
       order,
       pageRequest,
@@ -49,9 +103,8 @@ export class ProfileActivityLogsApiService {
       logType,
       category,
       group_id
-    }: ProfileActivityLogsSearchRequest,
-    ctx: RequestContext
-  ): Promise<CountlessPage<ApiProfileActivityLog>> {
+    } = request;
+    let nextCursor: string | null = null;
     ctx.timer?.start(
       `${this.constructor.name}->getProfileActivityLogsFiltered`
     );
@@ -89,7 +142,9 @@ export class ProfileActivityLogsApiService {
     let foundLogs: ProfileActivityLog[];
     ctx.timer?.start(searchLogsTimerKey);
     try {
-      foundLogs = await this.profileActivityLogsDb.searchLogs(params, ctx);
+      const result = await this.searchActivityLogs(request, params, ctx);
+      foundLogs = result.logs;
+      nextCursor = result.nextCursor;
     } finally {
       ctx.timer?.stop(searchLogsTimerKey);
     }
@@ -123,43 +178,40 @@ export class ProfileActivityLogsApiService {
     let convertedData: ApiProfileActivityLog[];
     ctx.timer?.start(convertLogsTimerKey);
     try {
-      convertedData = foundLogs.map((log) => {
-        const logContents = JSON.parse(log.contents);
-        return {
-          ...log,
-          contents: logContents,
-          profile_handle: profilesHandlesByIds[log.profile_id],
-          target_profile_handle: !isTargetOfTypeDrop(log.type)
-            ? profilesHandlesByIds[log.target_id!]
-            : null,
-          is_target_of_type_drop: isTargetOfTypeDrop(log.type),
-          proxy_handle: log.proxy_id
-            ? (profilesHandlesByIds[log.proxy_id] ?? null)
-            : null
-        };
-      });
+      convertedData = foundLogs.map(
+        ({ competition_id: _competitionId, ...log }) => {
+          const logContents = JSON.parse(log.contents);
+          return {
+            ...log,
+            contents: logContents,
+            profile_handle: profilesHandlesByIds[log.profile_id],
+            target_profile_handle: !isTargetOfTypeDrop(log.type)
+              ? profilesHandlesByIds[log.target_id!]
+              : null,
+            is_target_of_type_drop: isTargetOfTypeDrop(log.type),
+            proxy_handle: log.proxy_id
+              ? (profilesHandlesByIds[log.proxy_id] ?? null)
+              : null
+          };
+        }
+      );
     } finally {
       ctx.timer?.stop(convertLogsTimerKey);
     }
     ctx.timer?.stop(`${this.constructor.name}->getProfileActivityLogsFiltered`);
     return {
       page: pageRequest.page,
-      next: pageRequest.page_size < convertedData.length,
-      data: convertedData.slice(0, pageRequest.page_size)
+      next:
+        request.activityScope === 'NIC'
+          ? nextCursor !== null
+          : pageRequest.page_size < convertedData.length,
+      data: convertedData.slice(0, pageRequest.page_size),
+      ...(request.activityScope === 'NIC' ? { next_cursor: nextCursor } : {})
     };
   }
 }
 
-export interface ApiProfileActivityLog extends Omit<
-  ProfileActivityLog,
-  'contents'
-> {
-  readonly contents: object;
-  readonly profile_handle: string;
-  readonly proxy_handle: string | null;
-  readonly target_profile_handle: string | null;
-  readonly is_target_of_type_drop: boolean;
-}
+export type { ApiProfileActivityLog } from '@/api/generated/models/ApiProfileActivityLog';
 
 export const profileActivityLogsApiService = new ProfileActivityLogsApiService(
   profileActivityLogsDb,

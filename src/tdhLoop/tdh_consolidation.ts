@@ -7,7 +7,6 @@ import {
   fetchConsolidationDisplays,
   fetchLatestTDHBlockNumber,
   persistConsolidatedTDH,
-  persistTDHBlock,
   retrieveConsolidationsForWallets,
   retrieveWalletConsolidations
 } from '../db';
@@ -21,9 +20,7 @@ import {
 } from '../entities/ITDH';
 import { Logger } from '../logging';
 import { fetchNextgenTokens } from '../nextgen/nextgen.db';
-import { sqs } from '../sqs';
 import { equalIgnoreCase } from '../strings';
-import { XTDH_LOOP_PHASE } from '../xtdh/xtdh-loop-phase';
 import {
   calculateBoosts,
   calculateRanks,
@@ -35,9 +32,9 @@ import { calculateTdhEditions } from './tdh_editions';
 import { getConsolidationWallets } from './consolidation-wallets';
 import { calculateMemesTdh } from './tdh_memes';
 import { calculateNftTDH } from './tdh_nft';
+import { syncIdentitiesAfterTdhOrLeavePending } from '../identity-tdh-sync';
 
 const logger = Logger.get('TDH_CONSOLIDATION');
-const XTDH_LOOP_QUEUE_NAME = 'xtdh-start.fifo';
 
 export type TdhConsolidationRequest =
   | { readonly mode: 'FULL' }
@@ -313,25 +310,24 @@ export const consolidateAndPersistTDH = async (
     memesTdh,
     tdhEditions,
     nftTdh,
-    persistenceScope
+    persistenceScope,
+    blockTimestamp
   );
-  await persistTDHBlock(block, blockTimestamp, consolidatedTdh);
+  // The TDH rows and their tdh_blocks row are committed. A partial write
+  // (delegationsLoop) syncs identities now when a scoped sync suffices,
+  // within the invocation's budget; the sync then triggers xTDH. A full
+  // rewrite (tdhLoop) leaves the sync to delegationsLoop's resume after its
+  // delegations work, which also announces its completion, so tdhLoop stays
+  // well inside its timeout. Anything left pending, a needed full walk
+  // included, resumes there.
   if (request.mode === 'PARTIAL') {
-    await enqueuePartialTdhUniverseRecalculation();
+    await syncIdentitiesAfterTdhOrLeavePending('AFTER_TDH_WRITE');
+  } else {
+    logger.info(`[IDENTITIES SYNC LEFT TO DELEGATIONS LOOP] [BLOCK ${block}]`);
   }
 
   return consolidatedTdh;
 };
-
-async function enqueuePartialTdhUniverseRecalculation(): Promise<void> {
-  await sqs.sendToQueueName({
-    queueName: XTDH_LOOP_QUEUE_NAME,
-    message: {
-      phase: XTDH_LOOP_PHASE.UNIVERSE,
-      queued_at_ms: Date.now()
-    }
-  });
-}
 
 export const consolidateTDH = async (
   block: number,
@@ -397,15 +393,13 @@ export const consolidateTDH = async (
       .filter((t: ConsolidatedTDH) => !containsStartingWallet(t))
       .concat(consolidatedBoostedTdh);
     assertNoOverlappingConsolidationWallets(allTdh);
-    const allRankedTdh = await calculateRanks(
-      allGradientsTDH,
-      allNextgenTDH,
+    // Persist rank shifts for unchanged groups alongside replacement groups.
+    rankedTdh = await calculateRanks(
+      allTdh.flatMap((t) => t.gradients),
+      allTdh.flatMap((t) => t.nextgen),
       allTdh,
       ADJUSTED_NFTS,
       NEXTGEN_NFTS
-    );
-    rankedTdh = allRankedTdh.filter((t: ConsolidatedTDH) =>
-      containsStartingWallet(t)
     );
   } else {
     rankedTdh = await calculateRanks(

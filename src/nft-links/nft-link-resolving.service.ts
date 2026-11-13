@@ -22,6 +22,10 @@ import { NftLinkEntity } from '@/entities/INftLink';
 import { giveReadReplicaTimeToCatchUp } from '@/api/api-helpers';
 import { ApiNftLinkData } from '@/api/generated/models/ApiNftLinkData';
 import { mapNftLinkEntityToApiLink } from '@/nft-links/nft-link-api.mapper';
+import {
+  mediaLinkUpdateDecision,
+  recordMediaLinkUpdateDecision
+} from '@/nft-links/nft-link-update-change';
 import { nftLinkMediaPreviewService } from '@/nft-links/nft-link-media-preview.service';
 import {
   getNftLinkResolutionBudget,
@@ -36,6 +40,8 @@ import {
   RequiredNftPageNotFoundError
 } from './nft-link-page-retry';
 import { HttpError } from './lib/http';
+import { categorizeNftLinkError } from '@/nft-links/nft-link-error-category';
+import type { NftRefreshObserver } from '@/nft-links/nft-refresh-observer';
 import type { OperationalDiagnostic } from '@/operational-errors';
 
 function nftResource(canonical: CanonicalLink): string | undefined {
@@ -110,7 +116,8 @@ export class NftLinkResolvingService {
       WsListenersNotifier,
       'notifyAboutNftLinkUpdate'
     >,
-    private readonly sqs: SQS
+    private readonly sqs: SQS,
+    private readonly refreshObserver?: NftRefreshObserver
   ) {}
 
   public async getLinkData(
@@ -246,15 +253,23 @@ export class NftLinkResolvingService {
           )
       );
       if (dataAfterUpdate) {
+        const data = this.entityToApiLink(dataAfterUpdate);
+        // Every socket gets this frame, so send it only when what clients
+        // see changed since the row this refresh locked.
+        const decision = mediaLinkUpdateDecision(
+          this.entityToApiLink(entity),
+          data,
+          Time.currentMillis(),
+          Number(entity.is_locked_since)
+        );
+        recordMediaLinkUpdateDecision(decision);
+        if (decision === 'unchanged') return;
         // The worker reads the primary and sends the complete cached payload.
         if (!getNftLinkResolutionBudget()) {
           await giveReadReplicaTimeToCatchUp();
         }
         await nftLinkResolutionStage('notify', () =>
-          this.wsListenersNotifier.notifyAboutNftLinkUpdate(
-            this.entityToApiLink(dataAfterUpdate),
-            ctx
-          )
+          this.wsListenersNotifier.notifyAboutNftLinkUpdate(data, ctx)
         );
       }
     } catch (notifyErr) {
@@ -288,6 +303,7 @@ export class NftLinkResolvingService {
         await nftLinkResolutionStage('persist_success', () =>
           this.nftLinksDb.updateWithSuccess(card, lockStamp, ctx)
         );
+        this.refreshObserver?.completed(canonical, entity, { success: true });
         return card;
       } catch (error) {
         if (error instanceof NftLinkResolutionLockLostError) throw error;
@@ -301,7 +317,10 @@ export class NftLinkResolvingService {
             ? budget.waitToRetry(retryDelay.toMillis())
             : retryDelay.sleep()
         );
-        this.logger.errorWithDiagnostic(
+        const reportRetry = this.refreshObserver
+          ? this.logger.warn.bind(this.logger)
+          : this.logger.errorWithDiagnostic.bind(this.logger);
+        reportRetry(
           {
             ...refreshDiagnostic(canonical, lastError),
             recovery: { state: 'pending', attempt, maxAttempts }
@@ -330,16 +349,25 @@ export class NftLinkResolvingService {
           lockStamp,
           attemptedAt,
           retryState,
-          message:
-            lastError instanceof Error
-              ? lastError.message
-              : 'NFT link resolution failed'
+          // A fixed category only; the upstream error text stays in logs.
+          message: categorizeNftLinkError(lastError)
         },
         ctx
       )
     );
     // A required-page 404 records a demand-driven eligibility time, not a
     // scheduled retry. Other failures have exhausted this worker's attempts.
+    this.refreshObserver?.completed(canonical, entity, {
+      success: false,
+      error: lastError
+    });
+    if (this.refreshObserver?.isExpectedFailure(lastError, canonical)) {
+      this.logger.warn({
+        event: 'nft_refresh_failed',
+        ...refreshDiagnostic(canonical, lastError)
+      });
+      return null;
+    }
     this.logger.errorWithDiagnostic(
       {
         ...refreshDiagnostic(canonical, lastError),

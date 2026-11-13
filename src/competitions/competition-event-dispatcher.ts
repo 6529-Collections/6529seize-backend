@@ -1,7 +1,12 @@
 import {
+  artistArtworkNotifications,
+  ArtistArtworkNotifications
+} from '@/notifications/artist-artwork-notifications';
+import {
   nativeCompetitionRuntimeRepository,
   NativeCompetitionRuntimeRepository,
-  NativeCompetitionEvent
+  NativeCompetitionEvent,
+  NativeCompetitionOutboxRecord
 } from './native-competition-runtime.repository';
 import {
   competitionEventRepository,
@@ -14,7 +19,14 @@ import {
   WsListenersNotifier
 } from '@/api/ws/ws-listeners-notifier';
 import { userNotifier, UserNotifier } from '@/notifications/user.notifier';
-import { sendIdentityPushNotificationsStrict } from '@/api/push-notifications/push-notifications.service';
+import {
+  isActivated,
+  sendIdentityPushNotificationsStrict
+} from '@/api/push-notifications/push-notifications.service';
+import {
+  pushNotificationOutboxDb,
+  PushNotificationOutboxDb
+} from '@/notifications/push-notification-outbox.db';
 import { deployerDropper, DeployerDropper } from '@/deployer-dropper';
 import { enqueueClaimBuild } from '@/waves/claims-builder-publisher';
 import { env } from '@/env';
@@ -22,12 +34,22 @@ import { RequestContext } from '@/request.context';
 import { Logger } from '@/logging';
 import { competitionDeliveryErrorCode } from '@/competitions/competition-delivery-diagnostics';
 
+/** The most one dispatch pass spends delivering events. */
+export const DISPATCH_BUDGET_MS = 240_000;
+const DISPATCH_MAX_BATCHES = 10;
+/** Time share decision results get while other events are waiting. */
+const PRIORITY_SHARE = 0.5;
+
 export class CompetitionEventDispatcher {
   private readonly logger = Logger.get(this.constructor.name);
   public constructor(
     private readonly outbox: Pick<
       NativeCompetitionRuntimeRepository,
-      'claimOutbox' | 'acknowledgeOutbox' | 'retryOutbox'
+      | 'claimOutbox'
+      | 'claimPriorityOutbox'
+      | 'acknowledgeOutbox'
+      | 'retryOutbox'
+      | 'deferOutbox'
     >,
     private readonly repository: Pick<
       CompetitionEventRepository,
@@ -51,56 +73,115 @@ export class CompetitionEventDispatcher {
       context?: NativeClaimContext
     ) => Promise<void>,
     private readonly push: typeof sendIdentityPushNotificationsStrict,
-    private readonly announcementWaves: () => string[]
+    private readonly announcementWaves: () => string[],
+    private readonly artworkAlerts: Pick<
+      ArtistArtworkNotifications,
+      'deliver'
+    > = artistArtworkNotifications,
+    private readonly pushOutbox: Pick<
+      PushNotificationOutboxDb,
+      'enqueueMany'
+    > = pushNotificationOutboxDb
   ) {}
 
+  /**
+   * Delivers pending outbox events for up to `budgetMs` (at most four
+   * minutes) and ten batches of 100. Decision results are claimed first and
+   * batches then alternate with the rest of the outbox, oldest first, so
+   * neither starves the other: while both have events, decision results get
+   * at most every other batch and, until the rest is drained, half of the
+   * time. Claimed events left when their time runs out are released for the
+   * next pass.
+   */
   public async dispatchPending(
     ctx: RequestContext = {},
-    now = Date.now()
+    now = Date.now(),
+    { budgetMs = DISPATCH_BUDGET_MS }: { budgetMs?: number } = {}
   ): Promise<void> {
     const startedAt = Date.now();
+    const budget = Math.min(DISPATCH_BUDGET_MS, budgetMs);
+    const deadline = startedAt + budget;
+    const priorityDeadline = startedAt + Math.ceil(budget * PRIORITY_SHARE);
+    const drained: { priority: boolean; ordinary: boolean } = {
+      priority: false,
+      ordinary: false
+    };
+    let priorityTurn = true;
     for (
       let batch = 0;
-      batch < 10 && Date.now() - startedAt < 240_000;
+      batch < DISPATCH_MAX_BATCHES &&
+      Date.now() < deadline &&
+      !(drained.priority && drained.ordinary);
       batch++
     ) {
-      const records = await this.outbox.claimOutbox(
-        { now, limit: 100, leaseMs: 10 * 60_000 },
-        ctx
+      // Decision results keep their full share only once the rest is drained.
+      const priorityOpen =
+        !drained.priority &&
+        (drained.ordinary || Date.now() < priorityDeadline);
+      const priority: boolean =
+        priorityOpen && (priorityTurn || drained.ordinary);
+      const params = { now, limit: 100, leaseMs: 10 * 60_000 };
+      const records = priority
+        ? await this.outbox.claimPriorityOutbox(params, ctx)
+        : await this.outbox.claimOutbox(params, ctx);
+      await this.deliverClaimed(
+        records,
+        ctx,
+        priority && !drained.ordinary ? priorityDeadline : deadline
       );
-      if (!records.length) return;
-      for (const record of records) {
-        try {
-          await this.dispatch(record.event, ctx);
-          await this.outbox.acknowledgeOutbox(
+      if (records.length < 100)
+        drained[priority ? 'priority' : 'ordinary'] = true;
+      priorityTurn = !priority;
+    }
+  }
+
+  private async deliverClaimed(
+    records: readonly NativeCompetitionOutboxRecord[],
+    ctx: RequestContext,
+    deadline: number
+  ): Promise<void> {
+    for (const record of records) {
+      try {
+        if (
+          Date.now() >= deadline ||
+          !(await this.dispatch(record.event, ctx, deadline))
+        ) {
+          await this.outbox.deferOutbox(
             record.id,
             record.lease_token,
             Date.now(),
             ctx
           );
-        } catch (error) {
-          await this.outbox.retryOutbox(
-            record.id,
-            record.lease_token,
-            Date.now(),
-            ctx
-          );
-          this.logger.error('competition_event_delivery_failed', {
-            event_id: record.id,
-            competition_id: record.event.competition_id,
-            attempts: record.attempts,
-            error_code: competitionDeliveryErrorCode(error)
-          });
+          continue;
         }
+        await this.outbox.acknowledgeOutbox(
+          record.id,
+          record.lease_token,
+          Date.now(),
+          ctx
+        );
+      } catch (error) {
+        await this.outbox.retryOutbox(
+          record.id,
+          record.lease_token,
+          Date.now(),
+          ctx
+        );
+        this.logger.error('competition_event_delivery_failed', {
+          event_id: record.id,
+          competition_id: record.event.competition_id,
+          attempts: record.attempts,
+          error_code: competitionDeliveryErrorCode(error)
+        });
       }
-      if (records.length < 100) return;
     }
   }
 
   public async dispatch(
     event: NativeCompetitionEvent,
-    ctx: RequestContext
-  ): Promise<void> {
+    ctx: RequestContext,
+    deadline = Date.now() + DISPATCH_BUDGET_MS
+  ): Promise<boolean> {
     const context = await this.repository.getContext(event, ctx);
     // Draft IDs/configuration never leak to wave-wide subscriptions. Deleted
     // hubs are no longer deliverable; their outbox history remains for audit.
@@ -110,27 +191,60 @@ export class CompetitionEventDispatcher {
       context.lifecycle === 'DRAFT' ||
       event.event_type === 'COMPETITION_CREATED'
     )
-      return;
+      return true;
     await this.sockets.notifyAboutCompetitionUpdate(
       event,
       context.visibility_group_id,
       ctx
     );
+    // The shared transport owns delayed refresh repair. A throttled listener
+    // must never replay this event's durable notifications or winner effects.
     if (event.event_type === 'COMPETITION_ENTRY_CREATED') {
-      const ids = event.data.pending_push_notification_ids;
-      if (Array.isArray(ids)) {
-        if (
-          !ids.every(
-            (id) => typeof id === 'number' && Number.isSafeInteger(id) && id > 0
-          )
-        )
-          throw new Error('Invalid entry push handoff identifiers');
-        await this.push(ids);
-      }
+      await this.handoffEntryPush(event, ctx);
     }
+    if (
+      !(await this.artworkAlerts.deliver(
+        event,
+        ctx,
+        Math.min(deadline, Date.now() + 20_000)
+      ))
+    )
+      return false;
     await this.notifyFollowers(event, context, ctx);
     if (event.event_type === 'COMPETITION_DECISION_COMPLETED')
       await this.deliverPrivilegedWinnerEffects(event, ctx);
+    return true;
+  }
+
+  private async handoffEntryPush(
+    event: NativeCompetitionEvent,
+    ctx: RequestContext
+  ): Promise<void> {
+    const ids = event.data.pending_push_notification_ids;
+    if (Array.isArray(ids)) {
+      if (
+        !ids.every(
+          (id) => typeof id === 'number' && Number.isSafeInteger(id) && id > 0
+        )
+      )
+        throw new Error('Invalid entry push handoff identifiers');
+      if (event.data.artwork_alert_eligible === true) {
+        // Artwork fan-out may span several passes. Persist this existing
+        // entry handoff once as well, instead of sending it on every pass.
+        await this.repository.applyEffect(
+          event.event_id,
+          'entry-push',
+          async (tx) => {
+            if (isActivated())
+              await this.pushOutbox.enqueueMany(Array.from(new Set(ids)), tx);
+            return ids;
+          },
+          ctx
+        );
+      } else {
+        await this.push(ids);
+      }
+    }
   }
 
   private async notifyFollowers(

@@ -8,6 +8,11 @@ import {
 } from './ws/ws';
 import { wsListenersNotifier } from './ws/ws-listeners-notifier';
 import { NotFoundException, UnauthorisedException } from '../../exceptions';
+import type { PoolConnection } from 'mysql';
+import {
+  markProxySessionPinned,
+  releaseOrRetireProxySession
+} from '@/db/proxy-session-pinning';
 
 const mockHttpHandler = jest.fn();
 
@@ -34,6 +39,7 @@ jest.mock('./app', () => ({
 }));
 
 jest.mock('./ws/ws', () => ({
+  ANON_USER_ID: jest.requireActual('./ws/ws').ANON_USER_ID,
   SocketNotAvailableException:
     jest.requireActual('./ws/ws').SocketNotAvailableException,
   appWebSockets: {
@@ -43,11 +49,14 @@ jest.mock('./ws/ws', () => ({
     send: jest.fn(),
     register: jest.fn(),
     deregister: jest.fn(),
-    updateActiveWaveForConnection: jest.fn()
+    updateActiveWaveForConnection: jest.fn(),
+    updateOpenWaveForConnection: jest.fn()
   },
   authenticateWebSocketJwtOrGetByConnectionId: jest.fn(),
   authenticateNotificationIdentityTokens: jest.fn(),
-  authenticateWebSocketToken: jest.fn()
+  authenticateWebSocketToken: jest.fn(),
+  connectionPurposeFromQuery:
+    jest.requireActual('./ws/ws').connectionPurposeFromQuery
 }));
 
 jest.mock('./ws/ws-listeners-notifier', () => ({
@@ -56,11 +65,23 @@ jest.mock('./ws/ws-listeners-notifier', () => ({
   }
 }));
 
-jest.mock('./ws/ws-log-redaction', () => ({
-  redactWebSocketMessageForLog: jest.fn((message) => message)
+jest.mock('./ws/ws-frame-budget', () => ({
+  wsFrameBudget: { take: jest.fn(async () => 'allowed') }
+}));
+
+jest.mock('./ws/ws-typing-coalescer', () => ({
+  wsTypingCoalescer: {
+    claim: jest.fn(async () => true),
+    release: jest.fn(async () => undefined)
+  }
 }));
 
 const { handler } = require('./handler') as typeof import('./handler');
+const { wsFrameBudget } =
+  require('./ws/ws-frame-budget') as typeof import('./ws/ws-frame-budget');
+const { wsTypingCoalescer } =
+  require('./ws/ws-typing-coalescer') as typeof import('./ws/ws-typing-coalescer');
+const { Logger } = require('../../logging') as typeof import('../../logging');
 const appWebSocketsMock = appWebSockets as jest.Mocked<typeof appWebSockets>;
 const authenticateWebSocketJwtOrGetByConnectionIdMock =
   authenticateWebSocketJwtOrGetByConnectionId as jest.MockedFunction<
@@ -89,6 +110,133 @@ describe('handler websocket auth', () => {
       jwtExpiry: 100
     });
   });
+
+  it.each([undefined, 'unknown', 'resync_v1'])(
+    'enables recovery reconnects only for an explicit supported capability (%s)',
+    async (capability) => {
+      const response = await handler(
+        {
+          httpMethod: 'GET',
+          requestContext: {
+            routeKey: '$connect',
+            connectionId: 'connection-1'
+          },
+          queryStringParameters: { recovery_capability: capability }
+        } as unknown as APIGatewayEvent,
+        {} as Context,
+        jest.fn()
+      );
+      expect(response).toMatchObject({ statusCode: 200 });
+      expect(appWebSocketsMock.register).toHaveBeenCalledWith({
+        identityId: 'stale-identity',
+        connectionId: 'connection-1',
+        jwtExpiry: 100,
+        purpose: null,
+        ...(capability === 'resync_v1' ? { recoveryCapable: true } : {})
+      });
+    }
+  );
+
+  it.each([
+    ['a uuid', '7d3a1b52-1c86-4f0e-9a51-3f6a1d0c2b9e', 200, true],
+    ['null (no wave open)', null, 200, true],
+    ['an invalid id', 'not-a-uuid', 400, false]
+  ])(
+    'records the app socket open wave from SET_OPEN_WAVE with %s',
+    async (_label, waveId, statusCode, recorded) => {
+      appWebSocketsMock.updateOpenWaveForConnection.mockClear();
+      const response = await handler(
+        {
+          httpMethod: 'POST',
+          requestContext: {
+            routeKey: '$default',
+            connectionId: 'connection-1',
+            requestId: 'request-1'
+          },
+          body: JSON.stringify({ type: 'SET_OPEN_WAVE', wave_id: waveId })
+        } as unknown as APIGatewayEvent,
+        { awsRequestId: 'lambda-request-1' } as Context,
+        jest.fn()
+      );
+      expect(response).toMatchObject({ statusCode });
+      if (recorded) {
+        expect(
+          appWebSocketsMock.updateOpenWaveForConnection
+        ).toHaveBeenCalledWith(
+          { connectionId: 'connection-1', openWaveId: waveId },
+          {}
+        );
+      } else {
+        expect(
+          appWebSocketsMock.updateOpenWaveForConnection
+        ).not.toHaveBeenCalled();
+      }
+      // It never changes what the socket is subscribed to.
+      expect(
+        appWebSocketsMock.updateActiveWaveForConnection
+      ).not.toHaveBeenCalled();
+    }
+  );
+
+  it.each([
+    ['abc1234', { clientVersion: 'abc1234' }],
+    ['ABCDEF0123', { clientVersion: 'abcdef0123' }],
+    ['not-a-sha', {}],
+    [undefined, {}]
+  ])(
+    'registers the declared client_version %p only when it is a hex SHA',
+    async (clientVersion, expected) => {
+      await handler(
+        {
+          httpMethod: 'GET',
+          requestContext: {
+            routeKey: '$connect',
+            connectionId: 'connection-1'
+          },
+          queryStringParameters:
+            clientVersion === undefined ? {} : { client_version: clientVersion }
+        } as unknown as APIGatewayEvent,
+        {} as Context,
+        jest.fn()
+      );
+      const registered = appWebSocketsMock.register.mock.calls.at(-1)![0];
+      expect(registered.clientVersion).toEqual(
+        (expected as { clientVersion?: string }).clientVersion
+      );
+      if (!('clientVersion' in expected)) {
+        expect(registered).not.toHaveProperty('clientVersion');
+      }
+    }
+  );
+
+  it.each([
+    ['typing', 'TYPING'],
+    ['app', null],
+    [undefined, null]
+  ])(
+    'registers the declared socket purpose %p as %p',
+    async (purpose, expected) => {
+      const response = await handler(
+        {
+          httpMethod: 'GET',
+          requestContext: {
+            routeKey: '$connect',
+            connectionId: 'connection-1'
+          },
+          queryStringParameters: {
+            recovery_capability: 'resync_v1',
+            ...(purpose === undefined ? {} : { purpose })
+          }
+        } as unknown as APIGatewayEvent,
+        {} as Context,
+        jest.fn()
+      );
+      expect(response).toMatchObject({ statusCode: 200 });
+      expect(appWebSocketsMock.register).toHaveBeenLastCalledWith(
+        expect.objectContaining({ purpose: expected, recoveryCapable: true })
+      );
+    }
+  );
 
   it.each([
     WsMessageType.AUTHENTICATE,
@@ -312,7 +460,7 @@ describe('handler websocket typing', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
-    typing.mockReset().mockResolvedValue(undefined);
+    typing.mockReset().mockResolvedValue(true);
     authenticateWebSocketJwtOrGetByConnectionIdMock.mockResolvedValue({
       identityId: 'authenticated-profile',
       jwtExpiry: 4102444800
@@ -359,6 +507,159 @@ describe('handler websocket typing', () => {
       body: JSON.stringify({ message: 'Failed to process message' })
     });
   });
+
+  it('acknowledges a typing frame covered by a recent notification without a fan-out', async () => {
+    jest.mocked(wsTypingCoalescer.claim).mockResolvedValueOnce(false);
+
+    await expect(handler(event(), {} as Context, jest.fn())).resolves.toEqual({
+      statusCode: 200,
+      body: JSON.stringify({ message: 'OK' })
+    });
+    expect(wsTypingCoalescer.claim).toHaveBeenCalledWith(
+      'authenticated-profile',
+      waveId
+    );
+    expect(typing).not.toHaveBeenCalled();
+  });
+
+  it('frees the coalescing window when the notification fails', async () => {
+    typing.mockRejectedValue(new NotFoundException('private wave'));
+
+    await handler(event(), {} as Context, jest.fn());
+
+    expect(wsTypingCoalescer.release).toHaveBeenCalledWith(
+      'authenticated-profile',
+      waveId
+    );
+  });
+
+  it('frees the coalescing window when nothing was delivered', async () => {
+    typing.mockResolvedValue(false);
+
+    await expect(handler(event(), {} as Context, jest.fn())).resolves.toEqual({
+      statusCode: 200,
+      body: JSON.stringify({ message: 'OK' })
+    });
+
+    expect(wsTypingCoalescer.claim).toHaveBeenCalledTimes(1);
+    expect(wsTypingCoalescer.release).toHaveBeenCalledWith(
+      'authenticated-profile',
+      waveId
+    );
+  });
+
+  it('keeps the coalescing window claimed after a delivered notification', async () => {
+    typing.mockResolvedValue(true);
+
+    await handler(event(), {} as Context, jest.fn());
+
+    expect(wsTypingCoalescer.claim).toHaveBeenCalledTimes(1);
+    expect(wsTypingCoalescer.release).not.toHaveBeenCalled();
+  });
+
+  it('never coalesces anonymous typing frames', async () => {
+    authenticateWebSocketJwtOrGetByConnectionIdMock.mockResolvedValue({
+      identityId: jest.requireActual('./ws/ws').ANON_USER_ID,
+      jwtExpiry: 0
+    });
+    typing.mockRejectedValue(new UnauthorisedException('anonymous'));
+
+    const response = await handler(event(), {} as Context, jest.fn());
+
+    expect(response).toMatchObject({ statusCode: 401 });
+    expect(wsTypingCoalescer.claim).not.toHaveBeenCalled();
+  });
+});
+
+describe('handler websocket frame budget', () => {
+  const frame = (body: unknown) =>
+    ({
+      requestContext: { routeKey: '$default', connectionId: 'connection-9' },
+      body: JSON.stringify(body)
+    }) as unknown as APIGatewayEvent;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    authenticateWebSocketJwtOrGetByConnectionIdMock.mockResolvedValue({
+      identityId: 'authenticated-profile',
+      jwtExpiry: 4102444800
+    });
+  });
+
+  it('answers an over-budget frame with 429 before any connection lookup', async () => {
+    jest.mocked(wsFrameBudget.take).mockResolvedValueOnce('rejected');
+
+    const response = await handler(
+      frame({ type: WsMessageType.SET_OPEN_WAVE, wave_id: null }),
+      {} as Context,
+      jest.fn()
+    );
+
+    expect(response).toEqual({
+      statusCode: 429,
+      body: JSON.stringify({ message: 'Too many messages' })
+    });
+    expect(wsFrameBudget.take).toHaveBeenCalledWith(
+      'connection-9',
+      WsMessageType.SET_OPEN_WAVE
+    );
+    expect(
+      authenticateWebSocketJwtOrGetByConnectionIdMock
+    ).not.toHaveBeenCalled();
+    expect(
+      appWebSocketsMock.updateOpenWaveForConnection
+    ).not.toHaveBeenCalled();
+  });
+
+  it('passes the typing frame type so the stricter budget applies', async () => {
+    await handler(
+      frame({
+        type: WsMessageType.USER_IS_TYPING,
+        wave_id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
+      }),
+      {} as Context,
+      jest.fn()
+    );
+
+    expect(wsFrameBudget.take).toHaveBeenCalledWith(
+      'connection-9',
+      WsMessageType.USER_IS_TYPING
+    );
+  });
+
+  it.each([
+    ['an unknown type', { type: 'SOMETHING_ELSE' }],
+    ['a frame without a type', { wave_id: 'x' }],
+    ['a non-object frame', 42]
+  ])('charges %s to the frame budget as an unknown type', async (_, body) => {
+    await handler(frame(body), {} as Context, jest.fn());
+
+    expect(wsFrameBudget.take).toHaveBeenCalledWith('connection-9', null);
+  });
+
+  it('logs the frame type and size but not its body', async () => {
+    const token = 'secret-access-token-value';
+    appWebSocketsMock.send.mockResolvedValue(undefined as never);
+    authenticateWebSocketTokenMock.mockResolvedValue(null);
+    const body = { type: WsMessageType.AUTHENTICATE, access_token: token };
+
+    await handler(frame(body), {} as Context, jest.fn());
+
+    const logged = jest
+      .mocked(Logger.get)
+      .mock.results.flatMap((result) =>
+        (result.value.info as jest.Mock).mock.calls.map((call) =>
+          String(call[0])
+        )
+      )
+      .filter((line) => line.startsWith('WS $default.'));
+    expect(logged).toEqual([
+      `WS $default. Identity: authenticated-profile. Type: AUTHENTICATE. Bytes: ${
+        JSON.stringify(body).length
+      }`
+    ]);
+    expect(logged.join('\n')).not.toContain(token);
+  });
 });
 
 describe('handler http responses', () => {
@@ -393,6 +694,40 @@ describe('handler http responses', () => {
     );
 
     expect(result).toBe(httpResponse);
+  });
+
+  it('retires RDS Proxy sessions pinned during the invocation when it ends', async () => {
+    const pool = { _freeConnections: [] as unknown[] };
+    const connection = {
+      _pool: pool,
+      release: jest.fn((): void => {
+        pool._freeConnections.push(connection);
+      }),
+      destroy: jest.fn()
+    };
+    mockHttpHandler.mockImplementation(async () => {
+      markProxySessionPinned(connection, { reason: 'oversized_statement' });
+      releaseOrRetireProxySession(
+        connection as unknown as PoolConnection,
+        'READ'
+      );
+      // Still reusable by later statements of the same invocation.
+      expect(connection.destroy).not.toHaveBeenCalled();
+      return { statusCode: 200, headers: {}, body: '{}' };
+    });
+
+    await handler(
+      {
+        httpMethod: 'GET',
+        path: '/api/waves',
+        requestContext: { requestId: 'request-pin' }
+      } as unknown as APIGatewayEvent,
+      { awsRequestId: 'lambda-request-pin' } as Context,
+      jest.fn()
+    );
+
+    expect(connection.release).toHaveBeenCalledTimes(1);
+    expect(connection.destroy).toHaveBeenCalledTimes(1);
   });
 
   it('normalizes a single Set-Cookie header into repeated-cookie fields', async () => {
@@ -577,4 +912,96 @@ describe('handler http responses', () => {
     });
     expect(result.cookies).toBeUndefined();
   });
+});
+
+describe('handler websocket PING and disconnect', () => {
+  const ping = (body: string) =>
+    ({
+      requestContext: { routeKey: '$default', connectionId: 'connection-7' },
+      body
+    }) as unknown as APIGatewayEvent;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    authenticateWebSocketJwtOrGetByConnectionIdMock.mockResolvedValue({
+      identityId: 'profile-1',
+      jwtExpiry: 4102444800,
+      purpose: null
+    });
+  });
+
+  it('answers PING with PONG on the same connection before authentication', async () => {
+    await expect(
+      handler(
+        ping(JSON.stringify({ type: 'PING', id: 'resume-01' })),
+        {} as Context,
+        jest.fn()
+      )
+    ).resolves.toEqual({
+      statusCode: 200,
+      body: JSON.stringify({ message: 'OK' })
+    });
+    expect(appWebSocketsMock.send).toHaveBeenCalledWith({
+      connectionId: 'connection-7',
+      message: JSON.stringify({ type: 'PONG', id: 'resume-01' }),
+      skipStaleConnectionCheck: true
+    });
+    expect(
+      authenticateWebSocketJwtOrGetByConnectionIdMock
+    ).not.toHaveBeenCalled();
+    expect(wsFrameBudget.take).not.toHaveBeenCalled();
+  });
+
+  it('rejects an invalid PING without a reply or authentication', async () => {
+    const response = await handler(
+      ping(JSON.stringify({ type: 'PING', id: 'x'.repeat(33) })),
+      {} as Context,
+      jest.fn()
+    );
+    expect(response).toMatchObject({ statusCode: 400 });
+    expect(appWebSocketsMock.send).not.toHaveBeenCalled();
+    expect(
+      authenticateWebSocketJwtOrGetByConnectionIdMock
+    ).not.toHaveBeenCalled();
+  });
+
+  it('keeps other frames on the authenticated path', async () => {
+    const response = await handler(
+      ping(JSON.stringify({ type: 'PONG', id: 'resume-01' })),
+      {} as Context,
+      jest.fn()
+    );
+    expect(response).toMatchObject({ statusCode: 400 });
+    expect(authenticateWebSocketJwtOrGetByConnectionIdMock).toHaveBeenCalled();
+    expect(appWebSocketsMock.send).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['profile-1', 'TYPING', true],
+    ['$ANONONYMOUS_USER$', null, false]
+  ])(
+    'deregisters %s with its purpose, authentication and connection time',
+    async (identityId, purpose, authenticated) => {
+      authenticateWebSocketJwtOrGetByConnectionIdMock.mockResolvedValue({
+        identityId,
+        jwtExpiry: 4102444800,
+        purpose: purpose as never
+      });
+      await handler(
+        {
+          requestContext: {
+            routeKey: '$disconnect',
+            connectionId: 'connection-7',
+            connectedAt: 1700000000000
+          }
+        } as unknown as APIGatewayEvent,
+        {} as Context,
+        jest.fn()
+      );
+      expect(appWebSocketsMock.deregister).toHaveBeenCalledWith({
+        connectionId: 'connection-7',
+        disconnect: { purpose, authenticated, connectedAt: 1700000000000 }
+      });
+    }
+  );
 });

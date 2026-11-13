@@ -133,6 +133,19 @@ API, frontend or native-app dependency to the original feature rollout below.
   may omit FCM custom data. Native removal must retain both the returned ID and
   tag. Distinct profiles/notifications have distinct tags; a retry of the same
   notification replaces that entry. No Android numeric badge guarantee is made.
+- Visible pushes carry an APNs `thread-id` so iOS groups them per recipient
+  profile and wave, or per profile topic (followers, REP/NIC ratings,
+  subscriptions) outside a wave. Grouping never hides a notification. Only
+  updates that restate the current state of one item carry an
+  `apns-collapse-id` and replace the earlier push about it: a vote, reaction or
+  boost from the same profile on the same drop, a REP rating from the same
+  rater in the same category, a NIC rating or follow from the same profile, and
+  the latest subscription coverage status. Mentions, replies, quotes, poll
+  votes, wave drops, priority alerts, wave creation and competition updates are
+  never collapsed. Keys are SHA-256 digests that include the recipient profile,
+  so profiles sharing a device never group or collapse together. Android is
+  unchanged: FCM ignores `collapseKey` for notification messages, and the tag
+  above stays unique per notification for tray reconciliation.
 - Badge-only pushes do not implement selective removal of already delivered
   notifications. Pair this change with
   [frontend profile-scoped cleanup](https://github.com/6529-Collections/6529seize-frontend/pull/3948).

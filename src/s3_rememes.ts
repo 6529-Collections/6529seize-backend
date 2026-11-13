@@ -3,7 +3,6 @@ import {
   PutObjectCommand,
   S3Client
 } from '@aws-sdk/client-s3';
-import { RequestInfo, RequestInit, Response } from 'node-fetch';
 import {
   REMEME_S3_MAX_PROCESSING_ATTEMPTS,
   Rememe,
@@ -11,7 +10,14 @@ import {
 } from './entities/IRememe';
 import { CLOUDFRONT_LINK } from '@/constants';
 import { resizeImageBufferToHeight } from '@/media/image-resize';
+import { IMMUTABLE_MEDIA_CACHE_CONTROL } from '@/media/media-cache-control';
 import { withArweaveFallback } from '@/arweave-gateway-fallback';
+import { publicFetch } from '@/http/public-fetch';
+import { detectRasterImageFormat } from '@/media/raster-image-format';
+import {
+  detectStorableVideoContentType,
+  videoExtensionForContentType
+} from '@/media/video-container';
 import { persistRememes } from './db';
 import { Logger } from './logging';
 import { mediaChecker } from './media-checker';
@@ -20,14 +26,13 @@ import pLimit from 'p-limit';
 
 const logger = Logger.get('S3_REMEMES');
 
-const fetch = (url: RequestInfo, init?: RequestInit) =>
-  import('node-fetch').then(({ default: fetch }) => fetch(url, init));
-
 const ICON_HEIGHT = 60;
 const THUMBNAIL_HEIGHT = 450;
 const SCALED_HEIGHT = 1000;
 const REMEME_CONCURRENCY = 5;
 const FETCH_TIMEOUT_MS = 30_000;
+const FETCH_DEADLINE_MS = 5 * 60_000;
+const FETCH_MAX_REDIRECTS = 5;
 const LIST_OBJECTS_MAX_KEYS = 25;
 const MAX_REMEME_MEDIA_BYTES = 100 * 1024 * 1024;
 const PROCESSING_ERROR_MAX_LENGTH = 1000;
@@ -167,13 +172,21 @@ async function persistUnsupportedOriginal(
       return;
     }
 
-    const desiredOriginalKey = getOriginalKey(r, originalFormat);
     const media = await fetchRememeMedia(imageUrl, originalFormat);
-    await handleObjectUpload(
-      desiredOriginalKey,
-      contentTypeForFormat(originalFormat),
-      media
+    // Store only containers recognised from the bytes, typed from the bytes.
+    const videoContentType = detectStorableVideoContentType(media);
+    if (!videoContentType) {
+      await persistRememeS3Result(r, assets, {
+        status: RememeS3ProcessingStatus.UNSUPPORTED,
+        error: `Unsupported rememe media format: ${originalFormat}`
+      });
+      return;
+    }
+    const desiredOriginalKey = getOriginalKey(
+      r,
+      videoExtensionForContentType(videoContentType)
     );
+    await handleObjectUpload(desiredOriginalKey, videoContentType, media);
     assets.original = desiredOriginalKey;
   }
 
@@ -189,8 +202,8 @@ async function persistRasterRememe(
   originalFormat: string,
   existingAssets: RememeAssetKeys
 ) {
-  const derivativeFormat = originalFormat === 'gif' ? 'gif' : 'webp';
-  const desiredKeys = getRememeDesiredKeys(r, originalFormat, derivativeFormat);
+  let derivativeFormat = derivativeFormatFor(originalFormat);
+  let desiredKeys = getRememeDesiredKeys(r, originalFormat, derivativeFormat);
   const assets = { ...existingAssets };
 
   if (!hasCompleteRasterAssetSet(assets)) {
@@ -205,9 +218,17 @@ async function persistRasterRememe(
     try {
       const media = await fetchRememeMedia(imageUrl, originalFormat);
       if (!assets.original) {
+        // The original is served as-is, so its type comes from the decoded
+        // bytes rather than from the remote server's headers.
+        const detectedFormat = await detectRasterImageFormat(media);
+        if (!detectedFormat) {
+          throw new Error('Rememe media is not a supported image');
+        }
+        derivativeFormat = derivativeFormatFor(detectedFormat);
+        desiredKeys = getRememeDesiredKeys(r, detectedFormat, derivativeFormat);
         await handleObjectUpload(
           desiredKeys.original,
-          contentTypeForFormat(originalFormat),
+          contentTypeForFormat(detectedFormat),
           media
         );
         assets.original = desiredKeys.original;
@@ -307,6 +328,10 @@ async function uploadMissingRememeDerivatives(
   }
 }
 
+function derivativeFormatFor(format: string): string {
+  return format === 'gif' ? 'gif' : 'webp';
+}
+
 function getRememeDesiredKeys(
   r: Rememe,
   originalFormat: string,
@@ -392,75 +417,21 @@ async function fetchRememeMedia(
   imageUrl: string,
   expectedFormat: string
 ): Promise<Buffer> {
-  const response: Response = await withArweaveFallback(imageUrl, (u) =>
-    fetch(u, { timeout: FETCH_TIMEOUT_MS })
+  const response = await withArweaveFallback(imageUrl, (u) =>
+    publicFetch(u, {
+      method: 'GET',
+      maxBytes: MAX_REMEME_MEDIA_BYTES,
+      maxRedirects: FETCH_MAX_REDIRECTS,
+      requestTimeoutMs: FETCH_TIMEOUT_MS,
+      timeoutMs: FETCH_DEADLINE_MS
+    })
   );
   if (!response.ok) {
     throw new Error(
-      `Failed to fetch rememe media: ${response.status} ${response.statusText}`
+      `Failed to fetch rememe ${expectedFormat} media: ${response.status}`
     );
   }
-
-  return await readResponseBufferWithLimit(response, expectedFormat);
-}
-
-async function readResponseBufferWithLimit(
-  response: Response,
-  expectedFormat: string
-): Promise<Buffer> {
-  const contentLength = response.headers.get('content-length');
-  if (contentLength) {
-    const parsed = Number(contentLength);
-    if (Number.isFinite(parsed) && parsed > MAX_REMEME_MEDIA_BYTES) {
-      throw new Error(
-        `Rememe ${expectedFormat} media too large (${parsed} bytes > ${MAX_REMEME_MEDIA_BYTES})`
-      );
-    }
-  }
-
-  if (!response.body) {
-    const blob = await response.arrayBuffer();
-    if (blob.byteLength > MAX_REMEME_MEDIA_BYTES) {
-      throw new Error(
-        `Rememe ${expectedFormat} media exceeded max size of ${MAX_REMEME_MEDIA_BYTES} bytes`
-      );
-    }
-    return Buffer.from(blob);
-  }
-
-  // node-fetch v2 response.body is a Node Readable: async-iterable and destroyable.
-  const stream = response.body as unknown as AsyncIterable<unknown>;
-  const destroyableStream = response.body as unknown as {
-    destroy?: () => void;
-  };
-  const chunks: Buffer[] = [];
-  let total = 0;
-  for await (const chunk of stream) {
-    const buffer = chunkToBuffer(chunk);
-    total += buffer.byteLength;
-    if (total > MAX_REMEME_MEDIA_BYTES) {
-      destroyableStream.destroy?.();
-      throw new Error(
-        `Rememe ${expectedFormat} media exceeded max size of ${MAX_REMEME_MEDIA_BYTES} bytes`
-      );
-    }
-    chunks.push(buffer);
-  }
-
-  return Buffer.concat(chunks, total);
-}
-
-function chunkToBuffer(chunk: unknown): Buffer {
-  if (Buffer.isBuffer(chunk)) {
-    return chunk;
-  }
-  if (chunk instanceof Uint8Array) {
-    return Buffer.from(chunk);
-  }
-  if (chunk instanceof ArrayBuffer) {
-    return Buffer.from(chunk);
-  }
-  return Buffer.from(String(chunk), 'utf8');
+  return response.body;
 }
 
 async function persistRememeS3Result(
@@ -540,7 +511,9 @@ async function handleObjectUpload(
       Bucket: myBucket,
       Key: key,
       Body: blob,
-      ContentType: contentType
+      ContentType: contentType,
+      // Rememe keys are only ever created when missing, never rewritten.
+      CacheControl: IMMUTABLE_MEDIA_CACHE_CONTROL
     })
   );
 

@@ -1,3 +1,9 @@
+import {
+  moderationCaseIdSql,
+  moderationCaseWorkSql,
+  moderationNonAdministrativeSql,
+  ModerationReviewCase
+} from './moderation-review-cases';
 import { randomUUID } from 'node:crypto';
 import { dbSupplier, LazyDbAccessCompatibleService } from '@/sql-executor';
 import { RequestContext } from '@/request.context';
@@ -315,6 +321,43 @@ export class ModerationReviewDb extends LazyDbAccessCompatibleService {
       );
     });
   }
+  async openReportCount(dropId: string, ctx: RequestContext): Promise<number> {
+    return this.timed('openReportCount', ctx, async () => {
+      const row = await this.db.oneOrNull<{ count: number }>(
+        `select count(*) as count from ${CONTENT_MODERATION_REPORTS_TABLE} where drop_id=:dropId and status='OPEN'`,
+        { dropId },
+        this.options(ctx)
+      );
+      return Number(row?.count ?? 0);
+    });
+  }
+  async resolveDeletedReports(
+    dropId: string,
+    actor: string,
+    reason: string,
+    ctx: RequestContext
+  ): Promise<void> {
+    return this.timed('resolveDeletedReports', ctx, async () => {
+      const now = Date.now();
+      const result = await this.db.execute(
+        `update ${CONTENT_MODERATION_REPORTS_TABLE} r set
+          r.status='RESOLVED_DELETED', r.resolved_by_profile_id=:actor,
+          r.resolution_reason=:reason, r.resolved_at=:now
+        where r.drop_id=:dropId and r.status='OPEN'
+          and not exists(select 1 from ${DROPS_TABLE} d where d.id=:dropId)`,
+        { dropId, actor, reason, now },
+        this.options(ctx)
+      );
+      if (this.db.getAffectedRows(result) === 0) moderationConflict();
+      await this.db.execute(
+        `update ${ITEMS} i set i.review_status='REVIEWED', i.evidence_expires_at=coalesce(i.evidence_expires_at,:expiry)
+        where i.subject_type='DROP' and i.operation='REPORT' and i.published_subject_id=:dropId
+          and not exists(select 1 from ${CONTENT_MODERATION_REPORTS_TABLE} r where r.item_id=i.id and r.status='OPEN')`,
+        { dropId, expiry: now + 90 * 86400000 },
+        this.options(ctx)
+      );
+    });
+  }
   private options(ctx: RequestContext) {
     return {
       wrappedConnection: ctx.connection,
@@ -446,7 +489,7 @@ export class ModerationReviewDb extends LazyDbAccessCompatibleService {
       );
       await this.db.execute(
         `update ${ITEMS} i join ${EVALUATIONS} e on e.item_id=i.id set i.outcome=e.outcome, i.\`trigger\`=e.\`trigger\`, i.updated_at=:now, i.policy_version=e.policy_version,
-        i.review_status=if(i.override is not null or exists(select 1 from ${AUDIT} a where a.item_id=i.id and a.actor_profile_id is not null and a.action not in ('CONTENT_SAVED','REEVALUATE') and a.created_at>=e.started_at),i.review_status,if(e.outcome='ALLOW' and i.operation<>'REPORT' and e.fallback is null,'REVIEWED','NEEDS_REVIEW')),
+        i.review_status=if(i.operation='REPORT' and exists(select 1 from ${CONTENT_MODERATION_REPORTS_TABLE} r where r.item_id=i.id) and not exists(select 1 from ${CONTENT_MODERATION_REPORTS_TABLE} r where r.item_id=i.id and r.status='OPEN'),'REVIEWED',if(i.override is not null or exists(select 1 from ${AUDIT} a where a.item_id=i.id and a.actor_profile_id is not null and a.action not in ('CONTENT_SAVED','REEVALUATE') and a.created_at>=e.started_at),i.review_status,if(e.outcome='ALLOW' and i.operation<>'REPORT' and e.fallback is null,'REVIEWED','NEEDS_REVIEW'))),
         i.evidence_expires_at=if(e.outcome='ALLOW' and i.operation<>'REPORT' and i.override is null,:expiry,if(i.review_status='NEEDS_REVIEW',null,i.evidence_expires_at)), i.version=i.version+1
         where e.id=:id and not exists (select 1 from ${EVALUATIONS} newer where newer.item_id=i.id and (newer.started_at>e.started_at or (newer.started_at=e.started_at and newer.id>e.id)) and newer.completed_at is not null)`,
         { id, now: Date.now(), expiry: Date.now() + 30 * 86400000 },
@@ -539,9 +582,7 @@ export class ModerationReviewDb extends LazyDbAccessCompatibleService {
   }
   async list(filter: ModerationFilter, ctx: RequestContext = {}) {
     return this.timed('list', ctx, async () => {
-      const clauses = [
-        "coalesce(json_extract(scope,'$.administrative'),false)=false"
-      ];
+      const clauses = [moderationNonAdministrativeSql()];
       const params: Record<string, unknown> = { limit: filter.limit + 1 };
       for (const key of [
         'subject_type',
@@ -554,6 +595,12 @@ export class ModerationReviewDb extends LazyDbAccessCompatibleService {
           clauses.push(`\`${key}\`=:${key}`);
           params[key] = filter[key];
         }
+      }
+      if (filter.case_id) {
+        clauses.push(`${moderationCaseIdSql()}=:case_id`);
+        params.case_id = filter.case_id;
+        if (filter.review_status === 'NEEDS_REVIEW')
+          clauses.push("outcome<>'PENDING'");
       }
       if (filter.subject_id) {
         clauses.push(
@@ -604,6 +651,77 @@ export class ModerationReviewDb extends LazyDbAccessCompatibleService {
       };
     });
   }
+  async countReviewCases(ctx: RequestContext = {}): Promise<number> {
+    return this.timed('countReviewCases', ctx, async () => {
+      const row = await this.db.oneOrNull<{ count: number }>(
+        `select count(distinct case_id) count from (${moderationCaseWorkSql()}) pending_work`,
+        {},
+        this.options(ctx)
+      );
+      return Number(row?.count ?? 0);
+    });
+  }
+  async listReviewCases(
+    filter: { limit: number; before?: string },
+    ctx: RequestContext = {}
+  ) {
+    return this.timed('listReviewCases', ctx, async () => {
+      const params: Record<string, unknown> = {
+        limit: filter.limit + 1,
+        now: Date.now()
+      };
+      let cursor = '';
+      if (filter.before) {
+        const match = /^(\d{1,16})\.([a-f0-9]{64})$/.exec(filter.before);
+        if (!match || !Number.isSafeInteger(Number(match[1])))
+          throw new BadRequestException('Invalid review case cursor');
+        params.beforeTime = Number(match[1]);
+        params.beforeId = match[2];
+        cursor =
+          'where c.created_at<:beforeTime or (c.created_at=:beforeTime and c.id<:beforeId)';
+      }
+      const rows = await this.db.execute<ModerationReviewCase>(
+        `with pending_work as (${moderationCaseWorkSql()}), cases as (
+          select case_id id, max(subject_type) subject_type, min(check_id) check_id, min(report_id) report_id,
+            count(report_id) open_report_count, count(check_id) pending_check_count, max(created_at) created_at
+          from pending_work group by case_id
+        ), page as (select c.* from cases c ${cursor} order by c.created_at desc,c.id desc limit :limit)
+        select p.*, i.outcome check_outcome, r.reason report_reason, coalesce(i.published_subject_id,r.drop_id) drop_id,
+          coalesce(nullif(json_unquote(json_extract(i.scope,'$.wave_id')),'null'),nullif(json_unquote(json_extract(r.content_snapshot,'$.wave_id')),'null')) wave_id,
+          (p.subject_type='DROP' and coalesce(i.published_subject_id,r.drop_id) is not null and d.id is null) drop_deleted,
+          left(coalesce(
+            case when (i.evidence_expires_at is null or i.evidence_expires_at>:now) and coalesce(json_extract(i.evidence,'$.evidence_expired'),false)=false then
+              coalesce(nullif(json_unquote(json_extract(i.evidence,'$.text')),'null'),nullif(json_unquote(json_extract(i.evidence,'$.title')),'null'),nullif(json_unquote(json_extract(i.evidence,'$.parts[0].content')),'null')) end,
+            nullif(json_unquote(json_extract(r.content_snapshot,'$.title')),'null'),nullif(json_unquote(json_extract(r.content_snapshot,'$.parts[0].content')),'null')
+          ),160) preview
+        from page p
+        left join ${ITEMS} i on i.id=p.check_id
+        left join ${CONTENT_MODERATION_REPORTS_TABLE} r on r.id=p.report_id
+        left join ${DROPS_TABLE} d on p.subject_type='DROP' and d.id=coalesce(i.published_subject_id,r.drop_id)
+        order by p.created_at desc,p.id desc`,
+        params,
+        this.options(ctx)
+      );
+      const items = rows.slice(0, filter.limit).map((row) => ({
+        ...row,
+        drop_id: row.subject_type === 'DROP' ? row.drop_id : null,
+        wave_id: row.subject_type === 'DROP' ? row.wave_id : null,
+        open_report_count: Number(row.open_report_count),
+        pending_check_count: Number(row.pending_check_count),
+        created_at: Number(row.created_at),
+        drop_deleted:
+          row.drop_deleted === true || Number(row.drop_deleted) === 1
+      }));
+      const last = items.at(-1);
+      return {
+        items,
+        next_cursor:
+          rows.length > filter.limit && last
+            ? `${last.created_at}.${last.id}`
+            : null
+      };
+    });
+  }
   async counts(ctx: RequestContext = {}) {
     return this.timed('counts', ctx, async () => {
       return await this.db.oneOrNull<{
@@ -613,7 +731,7 @@ export class ModerationReviewDb extends LazyDbAccessCompatibleService {
         evaluator_failures_today: number;
       }>(
         `select
-      coalesce(sum(review_status='NEEDS_REVIEW' and coalesce(json_extract(scope,'$.administrative'),false)=false),0) needs_review,
+      (select count(distinct case_id) from (${moderationCaseWorkSql()}) pending_work) needs_review,
       (select count(*) from ${CONTENT_MODERATION_DROP_STATES_TABLE} where status='AI_QUARANTINED') quarantined,
       coalesce(sum(outcome='REJECT' and updated_at>=:today),0) rejected_today,
       (select count(*) from ${EVALUATIONS} where fallback is not null and started_at>=:today) evaluator_failures_today
@@ -709,7 +827,10 @@ export class ModerationReviewDb extends LazyDbAccessCompatibleService {
           reset: action === 'ALLOW' || action === 'REVOKE_OVERRIDE',
           suppressed: nextSuppression(item, action),
           now: Date.now(),
-          evidenceExpiry: Date.now() + 90 * 86400000
+          evidenceExpiry:
+            action === 'RESOLVE_DELETED_REPORT'
+              ? (item.evidence_expires_at ?? Date.now() + 90 * 86400000)
+              : Date.now() + 90 * 86400000
         },
         this.options(ctx)
       );
@@ -1009,7 +1130,7 @@ export class ModerationReviewDb extends LazyDbAccessCompatibleService {
         );
       });
       await this.db.execute(
-        `update ${ITEMS} i set i.review_status='REVIEWED',i.evidence_expires_at=(select coalesce(max(r.resolved_at),:now)+:retention from ${CONTENT_MODERATION_REPORTS_TABLE} r where r.item_id=i.id)
+        `update ${ITEMS} i set i.review_status='REVIEWED',i.evidence_expires_at=if(i.evidence_expires_at<=:now,i.evidence_expires_at,(select coalesce(max(r.resolved_at),:now)+:retention from ${CONTENT_MODERATION_REPORTS_TABLE} r where r.item_id=i.id))
       where i.operation='REPORT' and exists(select 1 from ${CONTENT_MODERATION_REPORTS_TABLE} r where r.item_id=i.id)
         and not exists(select 1 from ${CONTENT_MODERATION_REPORTS_TABLE} r where r.item_id=i.id and r.status='OPEN')`,
         { now: Date.now(), retention: 90 * 86400000 },

@@ -116,6 +116,76 @@ describe('ReleaseNoteGitHubService', () => {
     }
   });
 
+  it.each([
+    ['ahead', true],
+    ['identical', true],
+    ['behind', false],
+    ['diverged', false]
+  ])(
+    'interprets GitHub comparison status %s for ancestry',
+    async (status, expected) => {
+      const mockFetch = fetch as unknown as jest.Mock;
+      mockFetch.mockResolvedValueOnce(response({ status }));
+      const repository = '6529-Collections/6529seize-frontend';
+      const pin = 'a'.repeat(40);
+      const head = 'b'.repeat(40);
+
+      await expect(
+        new ReleaseNoteGitHubService().isCommitAncestor(repository, pin, head)
+      ).resolves.toBe(expected);
+      expect(mockFetch).toHaveBeenCalledWith(
+        `https://api.github.com/repos/${repository}/compare/${pin}...${head}?per_page=1`,
+        expect.anything()
+      );
+    }
+  );
+
+  it('treats a release baseline equal to the pin as containing it without an API call', async () => {
+    const pin = 'a'.repeat(40);
+    await expect(
+      new ReleaseNoteGitHubService().isCommitAncestor(
+        '6529-Collections/6529seize-frontend',
+        pin,
+        pin
+      )
+    ).resolves.toBe(true);
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it('rejects an invalid stored SHA before calling GitHub', async () => {
+    await expect(
+      new ReleaseNoteGitHubService().isCommitAncestor(
+        '6529-Collections/6529seize-frontend',
+        'a'.repeat(40),
+        'main'
+      )
+    ).rejects.toThrow('requires two full lowercase commit SHAs');
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it('rejects a repository outside the release-note allowlist for ancestry comparisons', async () => {
+    const pin = 'a'.repeat(40);
+    await expect(
+      new ReleaseNoteGitHubService().isCommitAncestor(
+        'another-owner/6529seize-frontend',
+        pin,
+        pin
+      )
+    ).rejects.toThrow('Unsupported release notes repository');
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it('treats a missing GitHub ancestry status as a dependency error', async () => {
+    (fetch as unknown as jest.Mock).mockResolvedValueOnce(response({}));
+    await expect(
+      new ReleaseNoteGitHubService().isCommitAncestor(
+        '6529-Collections/6529seize-frontend',
+        'a'.repeat(40),
+        'b'.repeat(40)
+      )
+    ).rejects.toThrow('GitHub did not return an ancestry status');
+  });
+
   it('loads the allowlisted prompt from the exact deployed SHA', async () => {
     (fetch as unknown as jest.Mock).mockResolvedValue({
       ok: true,
@@ -144,6 +214,86 @@ describe('ReleaseNoteGitHubService', () => {
     );
   });
 
+  it.each([500, 502, 503, 504])(
+    'retries a transient GitHub HTTP %i before giving up the publication attempt',
+    async (status) => {
+      (fetch as unknown as jest.Mock)
+        .mockReset()
+        .mockResolvedValueOnce({
+          ...response(null),
+          ok: false,
+          status,
+          statusText: 'Server Error'
+        })
+        .mockResolvedValueOnce(response(currentRun));
+      await expect(
+        new ReleaseNoteGitHubService().getValidatedReleaseRun(request)
+      ).resolves.toEqual(
+        expect.objectContaining({ id: request.run_id, run_number: 45 })
+      );
+      expect(fetch).toHaveBeenCalledTimes(2);
+    }
+  );
+
+  it('retries a connection reset and stops after three failed HTTP requests with endpoint diagnostics', async () => {
+    (fetch as unknown as jest.Mock)
+      .mockReset()
+      .mockRejectedValueOnce(new Error('ECONNRESET'))
+      .mockResolvedValue({
+        ...response(null),
+        ok: false,
+        status: 500,
+        statusText: 'Internal Server Error'
+      });
+    await expect(
+      new ReleaseNoteGitHubService().getValidatedReleaseRun(request)
+    ).rejects.toThrow(
+      '500 Internal Server Error; path=/repos/6529-Collections/6529seize-frontend/actions/runs/123; request_id=unknown'
+    );
+    expect(fetch).toHaveBeenCalledTimes(3);
+  });
+
+  it('does not retry authorization failures within the same attempt', async () => {
+    (fetch as unknown as jest.Mock).mockReset().mockResolvedValue({
+      ...response(null),
+      ok: false,
+      status: 401,
+      statusText: 'Unauthorized'
+    });
+    await expect(
+      new ReleaseNoteGitHubService().getValidatedReleaseRun(request)
+    ).rejects.toThrow('401 Unauthorized');
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('passes long Retry-After values to durable recovery instead of sleeping in the invocation', async () => {
+    (fetch as unknown as jest.Mock).mockReset().mockResolvedValue({
+      ...response(null),
+      ok: false,
+      status: 429,
+      statusText: 'Too Many Requests',
+      headers: {
+        get: jest.fn((key) => (key === 'retry-after' ? '3600' : null))
+      }
+    });
+    await expect(
+      new ReleaseNoteGitHubService().getValidatedReleaseRun(request)
+    ).rejects.toEqual(expect.objectContaining({ retryAfterMs: 3_600_000 }));
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects a forged run number before trusting it for recovery ordering', async () => {
+    (fetch as unknown as jest.Mock)
+      .mockReset()
+      .mockResolvedValue(response(currentRun));
+    await expect(
+      new ReleaseNoteGitHubService().getValidatedReleaseRun({
+        ...request,
+        run_number: '44'
+      })
+    ).rejects.toBeInstanceOf(UntrustedReleaseNoteMetadataError);
+  });
+
   it('rejects an unreviewed prompt path before calling GitHub', async () => {
     await expect(
       new ReleaseNoteGitHubService().getReleasePrompt({
@@ -153,6 +303,19 @@ describe('ReleaseNoteGitHubService', () => {
     ).rejects.toThrow('Unsupported release notes prompt');
     expect(fetch).not.toHaveBeenCalled();
   });
+
+  it.each(['other/6529seize-frontend', 'unknown-repo'])(
+    'rejects the repository %s before calling GitHub',
+    async (repo) => {
+      await expect(
+        new ReleaseNoteGitHubService().getValidatedReleaseRun({
+          ...request,
+          repo
+        })
+      ).rejects.toThrow(`Unsupported release notes repository ${repo}`);
+      expect(fetch).not.toHaveBeenCalled();
+    }
+  );
 
   it('builds a backend release context from exactly the declared PR', async () => {
     (fetch as unknown as jest.Mock)

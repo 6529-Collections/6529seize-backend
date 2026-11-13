@@ -1,3 +1,4 @@
+import { votingCreditReturnsDb } from '@/notifications/voting-credit-returns.db';
 import { Competition } from '@/competitions/competition.types';
 import {
   competitionEntryRepository,
@@ -17,6 +18,7 @@ import { nativeCompetitionRuntimeRepository } from '@/competitions/native-compet
 
 export type NativeEntryEdit = {
   readonly entries: readonly NativeDropEntry[];
+  readonly reset_votes: boolean;
   readonly permit?: NativeEntryContentPermit;
   readonly metadata?: CreateOrUpdateDropModel['metadata'];
 };
@@ -47,8 +49,8 @@ export class CompetitionEntryDropHooks {
           !entry.legacy_origin || entry.status === CompetitionEntryStatus.WINNER
       )
     )
-      throw new ForbiddenException('Competition submissions cannot be edited');
-    return { entries };
+      throw new ForbiddenException('Decision submissions cannot be edited');
+    return { entries, reset_votes: true };
   }
 
   public async preparePresentationUpdate(
@@ -62,8 +64,8 @@ export class CompetitionEntryDropHooks {
           !entry.legacy_origin || entry.status === CompetitionEntryStatus.WINNER
       )
     )
-      throw new ForbiddenException('Competition submissions cannot be edited');
-    return { entries };
+      throw new ForbiddenException('Decision submissions cannot be edited');
+    return { entries, reset_votes: false };
   }
 
   public async recordUpdate(
@@ -82,6 +84,13 @@ export class CompetitionEntryDropHooks {
         undefined,
         ctx
       );
+      const voteHistoryReset = edit.reset_votes
+        ? await competitionEntryRepository.voteHistoryReset(
+            entry.competition_id,
+            entry.id,
+            ctx
+          )
+        : {};
       await nativeCompetitionRuntimeRepository.enqueueEvent(
         {
           key: `entry-content:${entry.id}:${revision}`,
@@ -91,7 +100,10 @@ export class CompetitionEntryDropHooks {
           competition_id: entry.competition_id,
           competition_entry_id: entry.id,
           drop_id: entry.drop_id,
-          data: { content_revision: revision }
+          data: {
+            content_revision: revision,
+            ...voteHistoryReset
+          }
         },
         ctx
       );
@@ -112,6 +124,20 @@ export class CompetitionEntryDropHooks {
     ctx: RequestContext
   ): Promise<void> {
     for (const entry of entries) {
+      if (
+        entry.status === CompetitionEntryStatus.ACTIVE &&
+        actorId === entry.submitter_id
+      )
+        await votingCreditReturnsDb.capture(
+          {
+            competitionId: entry.competition_id,
+            entryId: entry.id,
+            reason: 'AUTHOR_DELETED',
+            actorId,
+            occurredAt: Date.now()
+          },
+          ctx
+        );
       await competitionEntryRepository.deleteEntry(entry.id, ctx);
       await nativeCompetitionRuntimeService.refreshCompetition(
         entry.competition_id,

@@ -8,8 +8,10 @@ import {
   PDFParser,
   PDFStream
 } from 'pdf-lib';
+import { MAX_PDF_BYTES } from './attachment-limits';
 
-export const MAX_PDF_BYTES = 25 * 1024 * 1024;
+export { MAX_PDF_BYTES };
+
 const MAX_PDF_PAGES = 100;
 const BLOCKED_MARKERS = [
   '/JS',

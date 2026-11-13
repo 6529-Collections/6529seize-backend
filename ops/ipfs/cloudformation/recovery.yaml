@@ -1,0 +1,149 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Private versioned IPFS recovery state and reviewed runtime releases
+Resources:
+  Logs:
+    Type: AWS::S3::Bucket # NOSONAR: log destination intentionally has no recursive access logging, per AWS guidance.
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketName: seize-ipfs-prod-recovery-logs-987989283142
+      VersioningConfiguration: { Status: Enabled }
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault: { SSEAlgorithm: AES256 }
+      OwnershipControls:
+        Rules: [{ ObjectOwnership: BucketOwnerEnforced }]
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+  LogsPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: { Ref: Logs }
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: { Service: logging.s3.amazonaws.com }
+            Action: s3:PutObject
+            Resource: { Fn::Sub: '${Logs.Arn}/s3/*' }
+            Condition:
+              StringEquals: { aws:SourceAccount: '987989283142' }
+              ArnLike:
+                aws:SourceArn:
+                  - arn:aws:s3:::seize-ipfs-prod-recovery-backups-987989283142
+                  - arn:aws:s3:::seize-ipfs-prod-recovery-artifacts-987989283142
+          - Effect: Allow
+            Principal:
+              { Service: logdelivery.elasticloadbalancing.amazonaws.com }
+            Action: s3:PutObject
+            Resource: { Fn::Sub: '${Logs.Arn}/alb/AWSLogs/987989283142/*' }
+          - Effect: Deny
+            Principal: '*'
+            Action: s3:*
+            Resource:
+              - { Fn::GetAtt: [Logs, Arn] }
+              - { Fn::Sub: '${Logs.Arn}/*' }
+            Condition:
+              Bool: { aws:SecureTransport: 'false' }
+  Backups:
+    Type: AWS::S3::Bucket
+    DependsOn: LogsPolicy
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketName: seize-ipfs-prod-recovery-backups-987989283142
+      LoggingConfiguration:
+        DestinationBucketName: { Ref: Logs }
+        LogFilePrefix: s3/backups/
+      VersioningConfiguration:
+        Status: Enabled
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerEnforced
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      Tags:
+        - Key: Service
+          Value: 6529-ipfs
+        - Key: Environment
+          Value: prod
+  Artifacts:
+    Type: AWS::S3::Bucket
+    DependsOn: LogsPolicy
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketName: seize-ipfs-prod-recovery-artifacts-987989283142
+      LoggingConfiguration:
+        DestinationBucketName: { Ref: Logs }
+        LogFilePrefix: s3/artifacts/
+      VersioningConfiguration:
+        Status: Enabled
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerEnforced
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      Tags:
+        - Key: Service
+          Value: 6529-ipfs
+        - Key: Environment
+          Value: prod
+  BackupsPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket:
+        Ref: Backups
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Deny
+            Principal: '*'
+            Action: s3:*
+            Resource:
+              - Fn::GetAtt: [Backups, Arn]
+              - Fn::Sub: ${Backups.Arn}/*
+            Condition:
+              Bool:
+                aws:SecureTransport: 'false'
+  ArtifactsPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket:
+        Ref: Artifacts
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Deny
+            Principal: '*'
+            Action: s3:*
+            Resource:
+              - Fn::GetAtt: [Artifacts, Arn]
+              - Fn::Sub: ${Artifacts.Arn}/*
+            Condition:
+              Bool:
+                aws:SecureTransport: 'false'
+Outputs:
+  BackupsBucket:
+    Value:
+      Ref: Backups
+  ArtifactsBucket:
+    Value:
+      Ref: Artifacts

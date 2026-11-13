@@ -6,6 +6,17 @@ export enum DropMediaUploadSource {
   WAVE = 'wave'
 }
 
+/**
+ * Why media was uploaded, chosen when the upload starts. Chat media is
+ * privacy-stripped and gets a neutral public file name; a decision entry
+ * keeps the artist's original bytes and file name and may only be attached
+ * to a decision entry.
+ */
+export enum DropMediaUploadPurpose {
+  CHAT = 'chat',
+  DECISION_ENTRY = 'decision_entry'
+}
+
 export enum DropMediaUploadStatus {
   UPLOADING = 'uploading',
   COMPLETING = 'completing',
@@ -69,4 +80,27 @@ export class DropMediaUploadEntity {
 
   @Column({ type: 'bigint', nullable: true, default: null })
   readonly completed_at!: number | null;
+
+  /** Published pixel width after EXIF orientation; null when unknown. */
+  @Column({ type: 'int', nullable: true, default: null })
+  readonly width?: number | null;
+
+  /** Published pixel height after EXIF orientation; null when unknown. */
+  @Column({ type: 'int', nullable: true, default: null })
+  readonly height?: number | null;
+
+  /** Base64 ThumbHash placeholder; null when unknown. */
+  @Column({ type: 'varchar', length: 64, nullable: true, default: null })
+  readonly thumbhash?: string | null;
+
+  /** Null for uploads started before purposes were recorded. */
+  @Column({ type: 'varchar', length: 20, nullable: true, default: null })
+  readonly purpose?: DropMediaUploadPurpose | null;
+
+  /**
+   * When multipart completion sent this upload's one sanitizer message;
+   * null until then (and for uploads that never go to the sanitizer).
+   */
+  @Column({ type: 'bigint', nullable: true, default: null })
+  readonly sanitizer_enqueued_at?: number | null;
 }

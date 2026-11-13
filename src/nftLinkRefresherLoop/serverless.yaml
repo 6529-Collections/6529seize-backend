@@ -31,6 +31,7 @@ functions:
       securityGroupIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):security}
       subnetIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):subnets}
     environment:
+      OPS_ENVIRONMENT: '${opt:stage, self:provider.stage}'
       SENTRY_DSN: ${env:SENTRY_DSN}
       SENTRY_ENVIRONMENT: 'nftLinkRefresherLoop_${opt:stage, self:provider.stage}'
 

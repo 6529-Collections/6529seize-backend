@@ -1,3 +1,16 @@
+import { aWave, withWaves } from '@/tests/fixtures/wave.fixture';
+import { nativeOriginalPrimaryFixture } from '@/tests/fixtures/native-competition.fixture';
+import {
+  legacyCompetitionId,
+  legacyCompetitionEntryId,
+  legacyCompetitionDecisionId
+} from '@/competitions/competition-id';
+import {
+  COMPETITIONS_TABLE,
+  COMPETITION_ENTRIES_TABLE,
+  COMPETITION_CAPABILITIES_TABLE,
+  COMPETITION_DECISION_WINNERS_TABLE
+} from '@/constants';
 import {
   DROPS_TABLE,
   MEME_CARD_DROP_MAPPINGS_TABLE,
@@ -36,10 +49,8 @@ describe('MemeCardDropMappingsDb', () => {
     expect(result).toEqual({ 'drop-1': 520, 'drop-2': 521 });
     const [sql, params] = execute.mock.calls[0];
     expect(sql).toContain(`from ${MEME_CARD_DROP_MAPPINGS_TABLE} mapping`);
-    expect(sql).toContain(
-      `from ${WAVES_DECISION_WINNER_DROPS_TABLE} where wave_id = :mainStageWaveId`
-    );
-    expect(sql).toContain('wave_id = :mainStageWaveId');
+    expect(sql).toContain(`from ${COMPETITION_ENTRIES_TABLE} entry`);
+    expect(sql).toContain('primary_competition.wave_id=:mainStageWaveId');
     expect(params).toEqual({
       dropIds: ['drop-1', 'drop-2'],
       mainStageWaveId: 'main-stage-wave'
@@ -95,7 +106,7 @@ describe('MemeCardDropMappingsDb', () => {
       repo.isMainStageWinnerDrop('drop-1', 'main-stage-wave', transactionalCtx)
     ).resolves.toBe(true);
     expect(execute).toHaveBeenCalledWith(
-      expect.stringContaining('wave_id = :mainStageWaveId'),
+      expect.stringContaining('primary_competition.wave_id=:mainStageWaveId'),
       { dropId: 'drop-1', mainStageWaveId: 'main-stage-wave' },
       { wrappedConnection: transactionalCtx.connection }
     );
@@ -142,10 +153,8 @@ describe('MemeCardDropMappingsDb', () => {
 
     const [insertSql, insertParams] = execute.mock.calls[0];
     expect(insertSql).toContain(`insert into ${MEME_CARD_DROP_MAPPINGS_TABLE}`);
-    expect(insertSql).toContain(
-      `from ${WAVES_DECISION_WINNER_DROPS_TABLE} where wave_id = :mainStageWaveId`
-    );
-    expect(insertSql).toContain('wave_id = :mainStageWaveId');
+    expect(insertSql).toContain(`from ${COMPETITION_ENTRIES_TABLE} entry`);
+    expect(insertSql).toContain('primary_competition.wave_id=:mainStageWaveId');
     expect(insertParams).toEqual({
       dropId: 'drop-1',
       memeCardId: 521,
@@ -246,37 +255,71 @@ describe('MemeCardDropMappingsDb', () => {
   });
 });
 
+const mappingWaves = [
+  aWave({}, { id: 'main-stage-wave', name: 'Main Stage', serial_no: 1 }),
+  aWave({}, { id: 'other-wave', name: 'Other Wave', serial_no: 2 })
+];
+const mappingWinners = [
+  { drop_id: 'main-stage-drop', wave_id: 'main-stage-wave', time: 1 },
+  { drop_id: 'other-main-stage-drop', wave_id: 'main-stage-wave', time: 2 },
+  { drop_id: 'other-wave-drop', wave_id: 'other-wave', time: 3 }
+];
 describeWithSeed(
   'MemeCardDropMappingsDb integration',
   [
+    withWaves(mappingWaves),
     {
-      table: WAVES_DECISION_WINNER_DROPS_TABLE,
+      table: COMPETITIONS_TABLE,
+      rows: mappingWaves.map(nativeOriginalPrimaryFixture)
+    },
+    {
+      table: COMPETITION_CAPABILITIES_TABLE,
       rows: [
         {
-          decision_time: 1,
-          drop_id: 'main-stage-drop',
-          ranking: 1,
-          final_vote: 1,
-          prizes: [],
-          wave_id: 'main-stage-wave'
-        },
-        {
-          decision_time: 2,
-          drop_id: 'other-main-stage-drop',
-          ranking: 1,
-          final_vote: 1,
-          prizes: [],
-          wave_id: 'main-stage-wave'
-        },
-        {
-          decision_time: 3,
-          drop_id: 'other-wave-drop',
-          ranking: 1,
-          final_vote: 1,
-          prizes: [],
-          wave_id: 'other-wave'
+          competition_id: legacyCompetitionId('main-stage-wave'),
+          wave_id: 'main-stage-wave',
+          capability: 'MAIN_STAGE',
+          assigned_at: 1
         }
       ]
+    },
+    {
+      table: COMPETITION_ENTRIES_TABLE,
+      rows: mappingWinners.map((winner) => ({
+        id: legacyCompetitionEntryId(
+          legacyCompetitionId(winner.wave_id),
+          winner.drop_id
+        ),
+        competition_id: legacyCompetitionId(winner.wave_id),
+        wave_id: winner.wave_id,
+        drop_id: winner.drop_id,
+        submitter_id: 'author',
+        status: 'WINNER',
+        config_version: 1,
+        submitted_at: 1,
+        won_at: winner.time,
+        decision_id: legacyCompetitionDecisionId(
+          legacyCompetitionId(winner.wave_id),
+          winner.time
+        )
+      }))
+    },
+    {
+      table: COMPETITION_DECISION_WINNERS_TABLE,
+      rows: mappingWinners.map((winner) => ({
+        competition_id: legacyCompetitionId(winner.wave_id),
+        entry_id: legacyCompetitionEntryId(
+          legacyCompetitionId(winner.wave_id),
+          winner.drop_id
+        ),
+        decision_id: legacyCompetitionDecisionId(
+          legacyCompetitionId(winner.wave_id),
+          winner.time
+        ),
+        rank: 1,
+        final_rating: 1,
+        created_at: winner.time
+      }))
     },
     {
       table: DROPS_TABLE,

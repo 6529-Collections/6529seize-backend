@@ -184,6 +184,8 @@ export function nextNativeDecision(
 }
 
 export function nativeWinnerCount(outcomes: readonly NativeOutcome[]): number {
+  // A scheduled decision can name a winner without promising a reward.
+  if (!outcomes.length) return 1;
   return outcomes.reduce(
     (count, outcome) => Math.max(count, outcome.distribution?.length ?? 1),
     0

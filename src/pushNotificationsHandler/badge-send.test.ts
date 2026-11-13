@@ -141,3 +141,56 @@ it.each([false, true])(
     );
   }
 );
+
+it('adds APNs thread and collapse keys without touching routing data or the Android tag', async () => {
+  await sendMessages([
+    {
+      title: 'Hello',
+      body: 'World',
+      token: 'token',
+      notification_id: 42,
+      extra_data: {
+        redirect: 'waves',
+        wave_id: 'wave/1',
+        drop_id: 7,
+        target_profile_id: 'profile:A'
+      },
+      badge: 2,
+      threadId: 'wave:thread',
+      collapseId: 'vote:collapse'
+    }
+  ]);
+  const message = sendEach.mock.calls[0][0][0];
+  expect(message.apns).toEqual({
+    headers: { 'apns-collapse-id': 'vote:collapse' },
+    payload: { aps: { badge: 2, sound: 'default', threadId: 'wave:thread' } }
+  });
+  expect(message.data).toEqual({
+    notification_id: '42',
+    redirect: 'waves',
+    wave_id: 'wave/1',
+    drop_id: '7',
+    target_profile_id: 'profile:A'
+  });
+  expect(message.android).toEqual({
+    notification: { sound: 'default', tag: '6529:v1:profile%3AA:42:wave%2F1' }
+  });
+});
+
+it('threads without collapsing when no collapse key is given', async () => {
+  await sendMessages([
+    {
+      title: 'Hello',
+      body: 'World',
+      token: 'token',
+      notification_id: 43,
+      extra_data: {},
+      omitBadge: true,
+      threadId: 'wave:thread'
+    }
+  ]);
+  const message = sendEach.mock.calls[0][0][0];
+  expect(message.apns).toEqual({
+    payload: { aps: { sound: 'default', threadId: 'wave:thread' } }
+  });
+});

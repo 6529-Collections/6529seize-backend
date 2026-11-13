@@ -3,7 +3,8 @@ import { setSqlExecutor, SqlExecutor } from '@/sql-executor';
 import {
   fetchNfts,
   fetchSingleAddressTDH,
-  fetchTDHAbove
+  fetchTDHAbove,
+  fetchTotalTDH
 } from '@/api/oracle/api.oracle.db';
 
 class MockSqlExecutor extends SqlExecutor {
@@ -62,6 +63,39 @@ describe('api.oracle.db', () => {
     return execute;
   }
 
+  it('retains totals, season aggregation, block and merkle metadata', async () => {
+    const execute = installSqlExecutor();
+    execute.mockImplementation(async (sql: string) => {
+      if (sql.includes('MAX(block)')) return [{ block: 123 }];
+      if (sql.includes('merkle_root')) return [{ merkle_root: 'root' }];
+      if (sql.includes('SUM(boosted_memes_tdh)')) {
+        return [
+          {
+            boosted_tdh: 100,
+            memes_tdh: 60,
+            gradients_tdh: 30,
+            nextgen_tdh: 10
+          }
+        ];
+      }
+      if (sql.includes('GROUP BY season')) return [{ season: 1, tdh: 60 }];
+      return [];
+    });
+
+    expect(await fetchTotalTDH()).toEqual({
+      tdh: 100,
+      memes_tdh: 60,
+      gradients_tdh: 30,
+      nextgen_tdh: 10,
+      memes_tdh_szn1: 60,
+      block: 123,
+      merkle_root: 'root'
+    });
+    expect(
+      execute.mock.calls.every(([sql]) => !/INSERT|UPDATE|DELETE/i.test(sql))
+    ).toBe(true);
+  });
+
   it('binds address search input as a query parameter', async () => {
     const execute = installSqlExecutor();
 
@@ -114,5 +148,118 @@ describe('api.oracle.db', () => {
 
     expect(tdhAboveQueryCall).toBeDefined();
     expect(tdhAboveQueryCall?.[1]).toEqual({ value: 100 });
+  });
+
+  it('counts TDH holders above a value in SQL without loading rows', async () => {
+    const execute = installSqlExecutor();
+    execute.mockImplementation(async (sql: string) => {
+      if (sql.includes('MAX(block)')) return [{ block: 123 }];
+      if (sql.includes('merkle_root')) return [{ merkle_root: 'root' }];
+      if (sql.includes('COUNT(*)')) return [{ count: '42' }];
+      throw new Error(`unexpected query: ${sql}`);
+    });
+
+    expect(await fetchTDHAbove(100, false)).toEqual({
+      count: 42,
+      block: 123,
+      merkle_root: 'root'
+    });
+    expect(
+      execute.mock.calls.some(([sql]) => sql.toUpperCase().includes('SELECT *'))
+    ).toBe(false);
+  });
+
+  it('returns entries with only the columns it needs', async () => {
+    const execute = installSqlExecutor();
+    execute.mockImplementation(async (sql: string) => {
+      if (sql.includes('MAX(block)')) return [{ block: 123 }];
+      if (sql.includes('merkle_root')) return [{ merkle_root: 'root' }];
+      if (sql.includes('boosted_tdh >= :value')) {
+        return [
+          {
+            consolidation_key: 'key',
+            boosted_tdh: 200,
+            wallets: JSON.stringify(['0xABC'])
+          }
+        ];
+      }
+      return [];
+    });
+
+    expect(await fetchTDHAbove(100, true)).toEqual({
+      count: 1,
+      block: 123,
+      merkle_root: 'root',
+      entries: [
+        {
+          consolidation_key: 'key',
+          tdh: 200,
+          addresses: ['0xabc'],
+          block: 123,
+          merkle_root: 'root'
+        }
+      ]
+    });
+    const entriesQuery = execute.mock.calls.find(([sql]) =>
+      sql.includes('boosted_tdh >= :value')
+    );
+    expect(entriesQuery?.[0]).toContain(
+      'SELECT consolidation_key, boosted_tdh, wallets'
+    );
+  });
+
+  it('skips TDH entries with malformed wallets instead of failing', async () => {
+    const execute = installSqlExecutor();
+    execute.mockImplementation(async (sql: string) => {
+      if (sql.includes('MAX(block)')) return [{ block: 123 }];
+      if (sql.includes('merkle_root')) return [{ merkle_root: 'root' }];
+      if (sql.includes('boosted_tdh >= :value')) {
+        return [
+          {
+            consolidation_key: 'good',
+            boosted_tdh: 300,
+            wallets: JSON.stringify(['0xABC', '0xDef'])
+          },
+          { consolidation_key: 'not-json', boosted_tdh: 200, wallets: '[0x' },
+          {
+            consolidation_key: 'not-array',
+            boosted_tdh: 150,
+            wallets: JSON.stringify({ a: 1 })
+          },
+          {
+            consolidation_key: 'not-strings',
+            boosted_tdh: 120,
+            wallets: JSON.stringify([1])
+          },
+          { consolidation_key: 'missing', boosted_tdh: 110, wallets: null },
+          {
+            consolidation_key: 'also-good',
+            boosted_tdh: 100,
+            wallets: JSON.stringify(['0x1'])
+          }
+        ];
+      }
+      return [];
+    });
+
+    const result = await fetchTDHAbove(100, true);
+
+    expect(result.count).toBe(6);
+    expect(result.entries).toEqual([
+      {
+        consolidation_key: 'good',
+        tdh: 300,
+        addresses: ['0xabc', '0xdef'],
+        block: 123,
+        merkle_root: 'root'
+      },
+      {
+        consolidation_key: 'also-good',
+        tdh: 100,
+        addresses: ['0x1'],
+        block: 123,
+        merkle_root: 'root'
+      }
+    ]);
   });
 });

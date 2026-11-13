@@ -13,6 +13,7 @@ export const MODERATION_ACTIONS = [
   'BLOCK',
   'REVOKE_OVERRIDE',
   'MARK_REVIEWED',
+  'RESOLVE_DELETED_REPORT',
   'SUPPRESS',
   'RESTORE',
   'QUARANTINE',
@@ -77,6 +78,7 @@ export interface ModerationEvaluation {
   completed_at: number | null;
 }
 export interface ModerationFilter {
+  case_id?: string;
   subject_type?: ModerationSubject;
   outcome?: ModerationOutcome;
   policy_family?: ModerationPolicyFamily;

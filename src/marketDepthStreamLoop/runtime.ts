@@ -5,6 +5,11 @@ import {
   type BaseStreamMessage
 } from '@opensea/sdk/stream';
 import { Logger } from '@/logging';
+import { performance } from 'node:perf_hooks';
+import {
+  SqlExecutionBudgetExceededError,
+  type SqlExecutionBudget
+} from '@/db/sql-execution-budget';
 import { marketDepthDb } from '@/market-depth/market-depth.db';
 import type {
   AppendMarketDepthEventsInput,
@@ -23,6 +28,7 @@ const DEFAULT_RUN_MS = 650_000;
 const RESERVED_FLUSH_MS = 15_000;
 const LAMBDA_TEARDOWN_MS = 5000;
 const OPERATION_TIMEOUT_MS = 5000;
+const SQL_FINALIZATION_MS = 1000;
 const DISCONNECT_TIMEOUT_MS = 2000;
 const PERSIST_ATTEMPTS = 3;
 const logger = Logger.get('OPENSEA_MARKET_DEPTH_STREAM');
@@ -33,7 +39,15 @@ export interface StreamCollection {
 }
 
 export interface StreamDatabase {
-  appendEvents(input: AppendMarketDepthEventsInput): Promise<void>;
+  /**
+   * Settle only after finalization or connection disposal. Uncertain commits must
+   * reject with SqlExecutionBudgetExceededError/UNKNOWN; acknowledged commits
+   * resolve even when cleanup requires disposal. Other failures did not commit.
+   */
+  appendEvents(
+    input: AppendMarketDepthEventsInput,
+    executionBudget: SqlExecutionBudget
+  ): Promise<void>;
 }
 
 export interface StreamClient {
@@ -128,30 +142,19 @@ export function streamEventInput(
   };
 }
 
-class StreamTimeoutError extends Error {
-  constructor(message: string) {
-    super(message);
-    // The ES5 test target otherwise loses Error subclass identity.
-    Object.setPrototypeOf(this, StreamTimeoutError.prototype);
-  }
-}
-
-/** A timeout does not cancel a SQL write; callers must not retry it concurrently. */
+/** Only transport shutdown uses a promise timeout; SQL owns its cancellation. */
 async function bounded<T>(
   operation: () => Promise<T>,
   timeoutMs: number,
   message: string
 ): Promise<T> {
-  if (timeoutMs <= 0) throw new StreamTimeoutError(message);
+  if (timeoutMs <= 0) throw new Error(message);
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     return await Promise.race([
       Promise.resolve().then(operation),
       new Promise<never>((_resolve, reject) => {
-        timer = setTimeout(
-          () => reject(new StreamTimeoutError(message)),
-          timeoutMs
-        );
+        timer = setTimeout(() => reject(new Error(message)), timeoutMs);
       })
     ]);
   } finally {
@@ -162,6 +165,58 @@ async function bounded<T>(
 interface BufferedEvent {
   readonly event: MarketDepthEventInput;
   readonly bytes: number;
+}
+
+type StreamBufferFailureReason =
+  | 'normalization_failed'
+  | 'serialization_failed'
+  | 'event_count_limit'
+  | 'byte_limit';
+
+class StreamBufferError extends Error {
+  constructor(
+    readonly reason: StreamBufferFailureReason,
+    readonly incomingEventBytes: number | null = null
+  ) {
+    super('OpenSea Stream event could not be buffered');
+    Object.setPrototypeOf(this, StreamBufferError.prototype);
+  }
+}
+
+function diagnosticEventType(event: BaseStreamMessage<unknown>): string {
+  try {
+    const type = event?.event_type;
+    return EVENT_TYPES.find((allowed) => allowed === type) ?? 'unknown';
+  } catch {
+    return 'unknown';
+  }
+}
+
+class StreamPersistenceError extends Error {
+  constructor(
+    message: string,
+    readonly outcomeUnknown = false
+  ) {
+    super(message);
+    Object.setPrototypeOf(this, StreamPersistenceError.prototype);
+  }
+}
+
+function persistenceBudget(remainingMs: number): SqlExecutionBudget {
+  // remainingMs is a duration sampled from the run/Lambda clocks, not an absolute
+  // wall-clock deadline. Start the SQL owner's deadline on its monotonic clock.
+  const totalMs = Math.min(OPERATION_TIMEOUT_MS, remainingMs);
+  if (totalMs <= SQL_FINALIZATION_MS) {
+    throw new StreamPersistenceError(
+      'OpenSea Stream persistence budget exhausted'
+    );
+  }
+  return {
+    deadlineMonotonicMillis: performance.now() + totalMs,
+    maxStatementMillis: totalMs - SQL_FINALIZATION_MS,
+    finalizationReserveMillis: SQL_FINALIZATION_MS,
+    lockWaitSeconds: 3
+  };
 }
 
 class EventBuffer {
@@ -176,22 +231,48 @@ class EventBuffer {
     return this.pending.length;
   }
 
+  rejectionDiagnostic(error: unknown, event: BaseStreamMessage<unknown>) {
+    // Only static categories, an allowlisted event type, and numeric counters.
+    // Never inspect/log the original exception, payload, or collection metadata.
+    return {
+      reason:
+        error instanceof StreamBufferError ? error.reason : 'enqueue_failed',
+      event_type: diagnosticEventType(event),
+      buffered_events: this.pending.length,
+      buffered_bytes: this.bytes,
+      incoming_event_bytes:
+        error instanceof StreamBufferError ? error.incomingEventBytes : null,
+      max_buffered_events: MAX_BUFFERED_EVENTS,
+      max_buffered_bytes: MAX_BUFFERED_BYTES
+    };
+  }
+
   enqueue(
     event: BaseStreamMessage<unknown>,
     collection: StreamCollection,
     now: Date
   ) {
-    const input = streamEventInput(event, collection, now);
+    let input: MarketDepthEventInput;
+    try {
+      input = streamEventInput(event, collection, now);
+    } catch {
+      throw new StreamBufferError('normalization_failed');
+    }
     if (this.recentIds.has(input.event_id)) {
       this.duplicates++;
       return;
     }
-    const bytes = Buffer.byteLength(JSON.stringify(input));
-    if (
-      this.pending.length >= MAX_BUFFERED_EVENTS ||
-      this.bytes + bytes > MAX_BUFFERED_BYTES
-    ) {
-      throw new Error('OpenSea Stream buffer capacity exceeded');
+    let bytes: number;
+    try {
+      bytes = Buffer.byteLength(JSON.stringify(input));
+    } catch {
+      throw new StreamBufferError('serialization_failed');
+    }
+    if (this.pending.length >= MAX_BUFFERED_EVENTS) {
+      throw new StreamBufferError('event_count_limit', bytes);
+    }
+    if (this.bytes + bytes > MAX_BUFFERED_BYTES) {
+      throw new StreamBufferError('byte_limit', bytes);
     }
     this.pending.push({ event: input, bytes });
     this.bytes += bytes;
@@ -230,7 +311,8 @@ class EventBuffer {
 async function persistBatch(
   db: StreamDatabase,
   batch: BufferedEvent[],
-  observedAt: Date
+  observedAt: Date,
+  executionBudget: SqlExecutionBudget
 ): Promise<void> {
   const events = batch.map(({ event }) => event);
   const first = events[0];
@@ -241,21 +323,24 @@ async function persistBatch(
         : latest,
     null
   );
-  await db.appendEvents({
-    source: SOURCE,
-    contract: first.contract,
-    collection_slug: first.collection_slug,
-    // Stream delivery has no replay cursor or completeness watermark. Keeping
-    // these null lets overlapping workers append under the same transaction lock;
-    // the shared lifecycle event ID makes replays idempotent in the database.
-    expected_cursor: null,
-    expected_watermark: null,
-    next_cursor: null,
-    provider_watermark: null,
-    provider_at: newest,
-    observed_at: observedAt,
-    events
-  });
+  await db.appendEvents(
+    {
+      source: SOURCE,
+      contract: first.contract,
+      collection_slug: first.collection_slug,
+      // Stream delivery has no replay cursor or completeness watermark. Keeping
+      // these null lets overlapping workers append under the same transaction lock;
+      // the shared lifecycle event ID makes replays idempotent in the database.
+      expected_cursor: null,
+      expected_watermark: null,
+      next_cursor: null,
+      provider_watermark: null,
+      provider_at: newest,
+      observed_at: observedAt,
+      events
+    },
+    executionBudget
+  );
 }
 
 async function flushBatch(
@@ -268,20 +353,30 @@ async function flushBatch(
   const batch = buffer.batch();
   if (!batch.length) return;
   for (let attempt = 1; attempt <= PERSIST_ATTEMPTS; attempt++) {
+    const executionBudget = persistenceBudget(budgetMs());
     try {
-      await bounded(
-        () => persistBatch(db, batch, now()),
-        Math.min(OPERATION_TIMEOUT_MS, budgetMs()),
-        'OpenSea Stream persistence timed out'
-      );
+      // Await the SQL owner's cleanup; a promise race can abandon a live transaction.
+      await persistBatch(db, batch, now(), executionBudget);
       buffer.acknowledge(batch);
       return;
     } catch (error) {
-      if (error instanceof StreamTimeoutError) throw error;
-      if (attempt === PERSIST_ATTEMPTS) {
-        throw new Error('OpenSea Stream persistence failed after 3 attempts');
+      if (
+        error instanceof SqlExecutionBudgetExceededError &&
+        error.commitOutcome === 'UNKNOWN'
+      ) {
+        throw new StreamPersistenceError(
+          'OpenSea Stream persistence commit outcome unknown',
+          true
+        );
       }
-      await sleep(Math.max(0, Math.min(attempt * 100, budgetMs())));
+      if (attempt === PERSIST_ATTEMPTS) {
+        throw new StreamPersistenceError(
+          'OpenSea Stream persistence failed after 3 attempts'
+        );
+      }
+      const remainingWorkMs = Math.max(0, budgetMs() - SQL_FINALIZATION_MS);
+      // Preserve finalization time and at least half the sampled work duration.
+      await sleep(Math.min(attempt * 100, Math.floor(remainingWorkMs / 2)));
     }
   }
 }
@@ -322,11 +417,11 @@ async function stopSubscriptions(
 async function drainAcceptedEvents(
   buffer: EventBuffer,
   flush: () => Promise<void>,
-  persistenceTimedOut: boolean
+  persistenceUncertain: boolean
 ): Promise<Error | null> {
   // Even subscription/callback/shutdown failures must drain accepted events.
-  // A timed-out write is the exception: its outcome is still unknown.
-  if (persistenceTimedOut) return null;
+  // An unacknowledged COMMIT is the exception: its outcome is still unknown.
+  if (persistenceUncertain) return null;
   try {
     while (buffer.length) await flush();
     return null;
@@ -366,14 +461,15 @@ export async function runMarketDepthStream(
   const unsubscribe: Array<() => void> = [];
   let client: StreamClient | undefined;
   let failure: Error | null = null;
-  let persistenceTimedOut = false;
+  let persistenceUncertain = false;
   let accepting = true;
   let transportErrors = 0;
   const flush = async () => {
     try {
       await flushBatch(buffer, db, now, budgetMs, sleep);
     } catch (error) {
-      persistenceTimedOut = error instanceof StreamTimeoutError;
+      persistenceUncertain =
+        error instanceof StreamPersistenceError && error.outcomeUnknown;
       throw error;
     }
   };
@@ -397,8 +493,12 @@ export async function runMarketDepthStream(
           if (!accepting || failure) return;
           try {
             buffer.enqueue(event, collection, now());
-          } catch {
+          } catch (error) {
             failure = new Error('OpenSea Stream event could not be buffered');
+            log.warn(
+              'OpenSea Stream buffer rejection',
+              buffer.rejectionDiagnostic(error, event)
+            );
           }
         })
       );
@@ -416,7 +516,7 @@ export async function runMarketDepthStream(
     }
   } catch (error) {
     failure =
-      error instanceof StreamTimeoutError
+      error instanceof StreamPersistenceError
         ? error
         : new Error('OpenSea Stream capture or persistence failed');
   } finally {
@@ -429,7 +529,7 @@ export async function runMarketDepthStream(
     const drainFailure = await drainAcceptedEvents(
       buffer,
       flush,
-      persistenceTimedOut
+      persistenceUncertain
     );
     failure ??= shutdownFailure ?? drainFailure;
     log.info(

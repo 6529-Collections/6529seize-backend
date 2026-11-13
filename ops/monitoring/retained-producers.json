@@ -1,0 +1,5 @@
+{
+  "schemaVersion": 1,
+  "description": "Inert retained application functions whose existing structured logs and platform alarms remain monitored independently of ordinary code deployment.",
+  "services": []
+}

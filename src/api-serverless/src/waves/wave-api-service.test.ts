@@ -1,4 +1,5 @@
 import { AuthenticationContext } from '@/auth-context';
+import { competitionRepository } from '@/competitions/competition.repository';
 import {
   ActivityEventAction,
   ActivityEventTargetType
@@ -21,9 +22,9 @@ import {
   WaveSubmissionType,
   WaveType
 } from '@/entities/IWave';
-import { Time } from '@/time';
+import { Time, Timer } from '@/time';
 import { DbPoolName } from '@/db-query.options';
-import { ForbiddenException } from '@/exceptions';
+import { BadRequestException, ForbiddenException } from '@/exceptions';
 
 jest.mock('@/profiles/profile-waves.db', () => ({
   profileWavesDb: {
@@ -31,6 +32,56 @@ jest.mock('@/profiles/profile-waves.db', () => ({
     findSelectedWaveIdsByWaveIds: jest.fn().mockResolvedValue(new Set())
   }
 }));
+
+describe('WaveApiService findWaveByIdOrThrow timing', () => {
+  it('times the wave load, the visibility check and the mapping', async () => {
+    const wave = {
+      id: 'wave-1',
+      visibility_group_id: null,
+      parent_wave_id: null
+    };
+    const wavesApiDb = { findWaveById: jest.fn().mockResolvedValue(wave) };
+    const waveMappers = {
+      waveEntityToApiWave: jest.fn().mockResolvedValue({ id: 'wave-1' })
+    };
+    const service = new WaveApiService(
+      wavesApiDb as any,
+      {} as any,
+      waveMappers as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any
+    );
+    const timer = new Timer('GET /api/waves/wave-1');
+
+    await expect(
+      service.findWaveByIdOrThrow('wave-1', [], {
+        authenticationContext: AuthenticationContext.notAuthenticated(),
+        timer
+      })
+    ).resolves.toEqual({ id: 'wave-1' });
+
+    const report = JSON.parse(timer.getReport()) as {
+      times: { key: string }[];
+      ongoingTimers: string[];
+    };
+    expect(report.times.map(({ key }) => key)).toEqual([
+      'WaveApiService->findWaveByIdOrThrow.loadWave',
+      'WaveApiService->findWaveByIdOrThrow.assertVisible',
+      'WaveApiService->findWaveByIdOrThrow.mapWave'
+    ]);
+    expect(report.ongoingTimers).toEqual([]);
+  });
+});
 
 describe('WaveApiService updateWave immutability', () => {
   function createService({
@@ -50,6 +101,7 @@ describe('WaveApiService updateWave immutability', () => {
         .mockResolvedValueOnce(waveBeforeUpdate)
         .mockResolvedValue(updatedWave ?? waveBeforeUpdate),
       findWaveByIdForUpdate: jest.fn().mockResolvedValue(waveBeforeUpdate),
+      findWaveHubById: jest.fn().mockResolvedValue(waveBeforeUpdate),
       findSubwaveIdsByParentWaveId: jest.fn().mockResolvedValue([]),
       countWaveDecisionsByWaveIds: jest.fn().mockResolvedValue({}),
       deleteWave: jest.fn().mockResolvedValue(undefined),
@@ -176,6 +228,32 @@ describe('WaveApiService updateWave immutability', () => {
       }
     };
   }
+
+  it.each(['stranger', 'proxy', 'visibility-only'])(
+    'rejects shared-wave edits from a %s',
+    async (caller) => {
+      const before = aWave({
+        created_by: 'owner',
+        admin_group_id: caller === 'visibility-only' ? 'admins' : null,
+        visibility_group_id: caller === 'visibility-only' ? 'viewers' : null
+      });
+      const { service, wavesApiDb, ctx } = createService({
+        waveBeforeUpdate: before,
+        eligibleGroups: ['viewers']
+      });
+      if (caller !== 'proxy')
+        ctx.authenticationContext =
+          AuthenticationContext.fromProfileId('stranger');
+      else
+        jest
+          .spyOn(ctx.authenticationContext, 'isAuthenticatedAsProxy')
+          .mockReturnValue(true);
+      await expect(
+        service.updateWaveHub(before.id, { name: 'Unwanted rename' }, ctx)
+      ).rejects.toThrow('administrator');
+      expect(wavesApiDb.deleteWave).not.toHaveBeenCalled();
+    }
+  );
 
   it('rejects changing wave type during update', async () => {
     const waveBeforeUpdate = aWave(
@@ -590,7 +668,7 @@ describe('WaveApiService updateWave immutability', () => {
     expect(waveMappers.createWaveToNewWaveEntity).toHaveBeenCalled();
   });
 
-  it('clears approve threshold state when threshold config changes', async () => {
+  it('keeps shared settings updates independent of retired approval storage', async () => {
     const waveBeforeUpdate = aWave(
       {
         type: WaveType.APPROVE,
@@ -605,7 +683,7 @@ describe('WaveApiService updateWave immutability', () => {
         serial_no: 1
       }
     );
-    const { service, dropVotingService, connection, ctx } = createService({
+    const { service, dropVotingService, ctx } = createService({
       waveBeforeUpdate
     });
 
@@ -628,7 +706,7 @@ describe('WaveApiService updateWave immutability', () => {
 
     expect(
       dropVotingService.clearWaveLeaderboardEntriesOverThresholdSinceByWaveId
-    ).toHaveBeenCalledWith('wave-1', expect.objectContaining({ connection }));
+    ).not.toHaveBeenCalled();
   });
 
   it.each([null, 'different-group'])(
@@ -1159,6 +1237,34 @@ describe('WaveApiService subwave creation authorization', () => {
     }
   } as ApiCreateNewWave;
 
+  it.each([ApiWaveType.Rank, ApiWaveType.Approve])(
+    'rejects creating a %s wave before any lookup or description preparation',
+    async (type) => {
+      const { service, wavesApiDb, userGroupsService, createOrUpdateDrop } =
+        createService({ parentWave: null, eligibleGroups: [] });
+      const timer = { start: jest.fn(), stop: jest.fn() };
+      const result = service.createWave(
+        { ...request, wave: { type } } as ApiCreateNewWave,
+        false,
+        {
+          authenticationContext:
+            AuthenticationContext.fromProfileId('creator-profile'),
+          timer
+        } as any
+      );
+
+      await expect(result).rejects.toBeInstanceOf(BadRequestException);
+      await expect(result).rejects.toThrow('Only CHAT waves can be created');
+      expect(timer.start).not.toHaveBeenCalled();
+      expect(wavesApiDb.findWaveById).not.toHaveBeenCalled();
+      expect(wavesApiDb.findWaveByIdForUpdate).not.toHaveBeenCalled();
+      expect(
+        userGroupsService.getGroupsUserIsEligibleFor
+      ).not.toHaveBeenCalled();
+      expect(createOrUpdateDrop.preparePrePublication).not.toHaveBeenCalled();
+    }
+  );
+
   it('allows parent wave admins to create subwaves', async () => {
     const parentWave = aWave(
       {
@@ -1384,6 +1490,34 @@ describe('WaveApiService subwave creation authorization', () => {
       })
     ).rejects.toThrow(`Subwaves cannot be parent waves`);
   });
+
+  it('rejects direct message waves as parent waves', async () => {
+    const parentWave = aWave(
+      {
+        created_by: 'creator-profile',
+        admin_group_id: 'dm-group',
+        visibility_group_id: 'dm-group',
+        is_direct_message: true
+      },
+      {
+        id: 'parent-wave',
+        name: 'DM',
+        serial_no: 1
+      }
+    );
+    const { service } = createService({
+      parentWave,
+      eligibleGroups: ['dm-group']
+    });
+
+    await expect(
+      (service as any).validateSubwaveCreationParent({
+        request,
+        actingAsId: 'creator-profile',
+        ctx: { timer: undefined }
+      })
+    ).rejects.toThrow(`Direct message waves cannot be parent waves`);
+  });
 });
 
 describe('WaveApiService authenticated wave actions', () => {
@@ -1443,115 +1577,161 @@ describe('WaveApiService authenticated wave actions', () => {
 });
 
 describe('WaveApiService wave pause authorization', () => {
-  it.each([false, true])(
-    'rechecks pause authority under the owner lock (revoked=%s)',
-    async (revoked) => {
-      const replicaCatchupDelay = process.env.REPLICA_CATCHUP_DELAY_AFTER_WRITE;
-      process.env.REPLICA_CATCHUP_DELAY_AFTER_WRITE = '0';
-      const nextDecisionTime = Time.currentMillis() + 60_000;
-      const wave = aWave(
-        {
-          type: WaveType.RANK,
-          created_by: 'creator-profile',
-          admin_group_id: 'admin-group',
-          decisions_strategy: {
-            first_decision_time: nextDecisionTime,
-            subsequent_decisions: [],
-            is_rolling: false
+  describe.each(['create', 'update', 'delete'] as const)('%s', (operation) => {
+    it.each([false, true])(
+      'rechecks pause authority under the owner lock (revoked=%s)',
+      async (revoked) => {
+        const replicaCatchupDelay =
+          process.env.REPLICA_CATCHUP_DELAY_AFTER_WRITE;
+        process.env.REPLICA_CATCHUP_DELAY_AFTER_WRITE = '0';
+        const nextDecisionTime = Time.currentMillis() + 60_000;
+        const wave = aWave(
+          {
+            type: WaveType.RANK,
+            created_by: 'creator-profile',
+            admin_group_id: 'admin-group',
+            decisions_strategy: {
+              first_decision_time: nextDecisionTime,
+              subsequent_decisions: [],
+              is_rolling: false
+            },
+            next_decision_time: nextDecisionTime
           },
-          next_decision_time: nextDecisionTime
-        },
-        {
-          id: 'wave-1',
-          name: 'wave-1',
-          serial_no: 1
-        }
-      );
-      const connection = {} as any;
-      const wavesApiDb = {
-        findById: jest.fn().mockResolvedValue(wave),
-        findWaveById: jest.fn().mockResolvedValue(wave),
-        getWavePauses: jest.fn().mockResolvedValue([]),
-        executeNativeQueriesInTransaction: jest.fn(async (fn) =>
-          fn(connection)
-        ),
-        insertPause: jest.fn().mockResolvedValue(undefined),
-        deletePause: jest.fn().mockResolvedValue(undefined)
-      };
-      const userGroupsService = {
-        getGroupsUserIsEligibleFor: jest
-          .fn()
-          .mockResolvedValueOnce(['admin-group'])
-          .mockResolvedValue(revoked ? [] : ['admin-group'])
-      };
-      const service = new WaveApiService(
-        wavesApiDb as any,
-        userGroupsService as any,
-        {} as any,
-        {} as any,
-        {} as any,
-        {} as any,
-        {} as any,
-        {} as any,
-        {} as any,
-        {} as any,
-        {} as any,
-        {} as any,
-        {} as any,
-        {} as any,
-        {} as any
-      );
-      jest
-        .spyOn(service, 'findWaveByIdOrThrow')
-        .mockResolvedValue({ id: 'wave-1' } as any);
+          {
+            id: 'wave-1',
+            name: 'wave-1',
+            serial_no: 1
+          }
+        );
+        const connection = {} as any;
+        const wavesApiDb = {
+          findById: jest.fn().mockResolvedValue(wave),
+          findWaveById: jest.fn().mockResolvedValue(wave),
+          getWavePauses: jest.fn().mockResolvedValue(
+            operation === 'create'
+              ? []
+              : [
+                  {
+                    id: 7,
+                    wave_id: 'wave-1',
+                    start_time: nextDecisionTime + 1_000,
+                    end_time: nextDecisionTime + 2_000
+                  }
+                ]
+          ),
+          executeNativeQueriesInTransaction: jest.fn(async (fn) =>
+            fn(connection)
+          ),
+          insertPause: jest.fn().mockResolvedValue(undefined),
+          deletePause: jest.fn().mockResolvedValue(undefined)
+        };
+        let ownerLocked = false;
+        const ownerLock = jest
+          .spyOn(competitionRepository, 'lockOriginalPrimary')
+          .mockImplementation(async (_waveId, lockCtx) => {
+            expect(lockCtx.connection).toBe(connection);
+            ownerLocked = true;
+            return null;
+          });
+        const authorizationLockStates: boolean[] = [];
+        const userGroupsService = {
+          getGroupsUserIsEligibleFor: jest.fn().mockImplementation(async () => {
+            authorizationLockStates.push(ownerLocked);
+            return ownerLocked && revoked ? [] : ['admin-group'];
+          })
+        };
+        const service = new WaveApiService(
+          wavesApiDb as any,
+          userGroupsService as any,
+          {} as any,
+          {} as any,
+          {} as any,
+          {} as any,
+          {} as any,
+          {} as any,
+          {} as any,
+          {} as any,
+          {} as any,
+          {} as any,
+          {} as any,
+          {} as any,
+          {} as any
+        );
+        jest
+          .spyOn(service, 'findWaveByIdOrThrow')
+          .mockResolvedValue({ id: 'wave-1' } as any);
 
-      try {
-        const command = service.createOrUpdateWavePause(
-          'wave-1',
-          {
-            id: null,
-            start_time: nextDecisionTime + 1_000,
-            end_time: nextDecisionTime + 2_000
-          },
-          {
+        try {
+          const ctx = {
             authenticationContext:
               AuthenticationContext.fromProfileId('admin-profile')
-          } as any
-        );
-        if (revoked) {
-          await expect(command).rejects.toThrow(
-            'Wave modification not allowed for authenticated user'
+          };
+          const command =
+            operation === 'delete'
+              ? service.deleteWavePause('wave-1', 7, ctx)
+              : service.createOrUpdateWavePause(
+                  'wave-1',
+                  {
+                    id: operation === 'update' ? 7 : null,
+                    start_time: nextDecisionTime + 1_000,
+                    end_time: nextDecisionTime + 2_000
+                  },
+                  ctx
+                );
+          if (revoked) {
+            await expect(command).rejects.toThrow(
+              'Wave modification not allowed for authenticated user'
+            );
+            const failure = await command.catch((error: unknown) => error);
+            expect(failure).toBeInstanceOf(ForbiddenException);
+            if (!(failure instanceof ForbiddenException)) throw failure;
+            expect(failure.getStatusCode()).toBe(403);
+            expect(wavesApiDb.insertPause).not.toHaveBeenCalled();
+            expect(wavesApiDb.deletePause).not.toHaveBeenCalled();
+          } else {
+            await expect(command).resolves.toEqual({ id: 'wave-1' });
+            if (operation === 'delete') {
+              expect(wavesApiDb.insertPause).not.toHaveBeenCalled();
+            } else {
+              expect(wavesApiDb.insertPause).toHaveBeenCalledWith(
+                {
+                  startTime: nextDecisionTime + 1_000,
+                  endTime: nextDecisionTime + 2_000,
+                  waveId: 'wave-1'
+                },
+                connection
+              );
+            }
+            if (operation === 'create') {
+              expect(wavesApiDb.deletePause).not.toHaveBeenCalled();
+            } else {
+              expect(wavesApiDb.deletePause).toHaveBeenCalledWith(
+                'wave-1',
+                7,
+                connection
+              );
+            }
+          }
+          expect(ownerLock).toHaveBeenCalledWith(
+            'wave-1',
+            expect.objectContaining({ connection })
           );
-          const failure = await command.catch((error: unknown) => error);
-          expect(failure).toBeInstanceOf(ForbiddenException);
-          if (!(failure instanceof ForbiddenException)) throw failure;
-          expect(failure.getStatusCode()).toBe(403);
-          expect(wavesApiDb.insertPause).not.toHaveBeenCalled();
-          return;
-        }
-        await expect(command).resolves.toEqual({ id: 'wave-1' });
-
-        expect(wavesApiDb.findWaveById).toHaveBeenCalledWith(
-          'wave-1',
-          connection
-        );
-        expect(wavesApiDb.insertPause).toHaveBeenCalledWith(
-          {
-            startTime: nextDecisionTime + 1_000,
-            endTime: nextDecisionTime + 2_000,
-            waveId: 'wave-1'
-          },
-          connection
-        );
-      } finally {
-        if (replicaCatchupDelay === undefined) {
-          delete process.env.REPLICA_CATCHUP_DELAY_AFTER_WRITE;
-        } else {
-          process.env.REPLICA_CATCHUP_DELAY_AFTER_WRITE = replicaCatchupDelay;
+          expect(authorizationLockStates).toContain(true);
+          expect(wavesApiDb.findWaveById).toHaveBeenCalledWith(
+            'wave-1',
+            connection
+          );
+        } finally {
+          ownerLock.mockRestore();
+          if (replicaCatchupDelay === undefined) {
+            delete process.env.REPLICA_CATCHUP_DELAY_AFTER_WRITE;
+          } else {
+            process.env.REPLICA_CATCHUP_DELAY_AFTER_WRITE = replicaCatchupDelay;
+          }
         }
       }
-    }
-  );
+    );
+  });
 });
 
 describe('WaveApiService wave subscription group defaults', () => {
@@ -1788,4 +1968,81 @@ describe('WaveApiService direct-message mute synchronization', () => {
       );
     }
   );
+});
+
+describe('WaveApiService.findOrCreateDirectMessageWave for an existing DM', () => {
+  function createService() {
+    const wavesApiDb = {
+      findWaveByGroupId: jest.fn().mockResolvedValue({ id: 'dm-wave' })
+    };
+    const service = new WaveApiService(
+      wavesApiDb as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any
+    );
+    const findWaveByIdOrThrow = jest
+      .spyOn(service, 'findWaveByIdOrThrow')
+      .mockResolvedValue({ id: 'dm-wave' } as any);
+    return { service, findWaveByIdOrThrow };
+  }
+
+  function proxyContext(actions: string[]) {
+    return new AuthenticationContext({
+      authenticatedWallet: '0xproxy',
+      authenticatedProfileId: 'proxy-profile',
+      roleProfileId: 'grantor-profile',
+      activeProxyActions: actions.map((type, index) => ({
+        id: `action-${index}`,
+        type: type as any,
+        credit_amount: null,
+        credit_spent: null
+      }))
+    });
+  }
+
+  it('does not return an existing DM to a proxy without READ_WAVE', async () => {
+    const { service, findWaveByIdOrThrow } = createService();
+
+    await expect(
+      service.findOrCreateDirectMessageWave({ id: 'dm-group' } as any, {
+        authenticationContext: proxyContext(['CREATE_WAVE'])
+      })
+    ).rejects.toThrow(
+      new ForbiddenException('Proxy is not allowed to read waves')
+    );
+    expect(findWaveByIdOrThrow).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [
+      'a proxy with READ_WAVE',
+      () => proxyContext(['CREATE_WAVE', 'READ_WAVE'])
+    ],
+    ['a direct session', () => AuthenticationContext.fromProfileId('creator')]
+  ])('returns the existing DM to %s', async (_label, context) => {
+    const { service, findWaveByIdOrThrow } = createService();
+
+    await expect(
+      service.findOrCreateDirectMessageWave({ id: 'dm-group' } as any, {
+        authenticationContext: context()
+      })
+    ).resolves.toEqual({ id: 'dm-wave' });
+    expect(findWaveByIdOrThrow).toHaveBeenCalledWith(
+      'dm-wave',
+      ['dm-group'],
+      expect.anything()
+    );
+  });
 });

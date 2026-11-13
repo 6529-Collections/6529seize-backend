@@ -1,10 +1,7 @@
 import {
   COMPETITION_ENTRIES_TABLE,
-  COMPETITION_VOTES_TABLE,
-  DROPS_TABLE,
-  DROP_VOTER_STATE_TABLE
+  COMPETITION_VOTES_TABLE
 } from '@/constants';
-import { CompetitionStorageMode } from '@/entities/ICompetition';
 import { RequestContext } from '@/request.context';
 import { dbSupplier, LazyDbAccessCompatibleService } from '@/sql-executor';
 import {
@@ -12,10 +9,7 @@ import {
   CompetitionEntry
 } from '@/competitions/competition.types';
 
-export type CompetitionCreditNamespace = Pick<
-  Competition,
-  'id' | 'wave_id' | 'storage_mode'
->;
+export type CompetitionCreditNamespace = Pick<Competition, 'id' | 'wave_id'>;
 
 export type CompetitionCreditSpending = {
   readonly namespace_spent: number;
@@ -25,6 +19,33 @@ export type CompetitionCreditSpending = {
 
 /** Reads current encumbrances, not historical credit-spending deltas. */
 export class CompetitionCreditRepository extends LazyDbAccessCompatibleService {
+  public async getNamespaceSpendings(
+    competition: CompetitionCreditNamespace,
+    profileIds: readonly string[],
+    ctx: RequestContext
+  ): Promise<Map<string, number>> {
+    const timerName = `${this.constructor.name}->getNamespaceSpendings`;
+    ctx.timer?.start(timerName);
+    try {
+      if (!profileIds.length) return new Map();
+      const sql = `select v.voter_profile_id as profile_id,coalesce(sum(case when e.status='ACTIVE' then abs(v.value) else 0 end),0) as spent
+           from ${COMPETITION_VOTES_TABLE} v join ${COMPETITION_ENTRIES_TABLE} e on e.id=v.entry_id and e.competition_id=v.competition_id
+           where v.competition_id=:competitionId and v.voter_profile_id in (:profileIds) group by v.voter_profile_id`;
+      const rows = await this.db.execute<{ profile_id: string; spent: number }>(
+        sql,
+        {
+          competitionId: competition.id,
+          waveId: competition.wave_id,
+          profileIds
+        },
+        { wrappedConnection: ctx.connection }
+      );
+      return new Map(rows.map((row) => [row.profile_id, Number(row.spent)]));
+    } finally {
+      ctx.timer?.stop(timerName);
+    }
+  }
+
   public async getSpending(
     competition: CompetitionCreditNamespace,
     profileId: string,
@@ -34,24 +55,14 @@ export class CompetitionCreditRepository extends LazyDbAccessCompatibleService {
     const timerName = `${this.constructor.name}->getSpending`;
     ctx.timer?.start(timerName);
     try {
-      // Storage mode is the only routing discriminator. In particular, a native
-      // competition never consumes votes from its shared wave's legacy primary.
-      const sql =
-        competition.storage_mode === CompetitionStorageMode.NATIVE
-          ? `select
+      // Credits are scoped to this competition, including native siblings.
+      const sql = `select
              coalesce(sum(case when e.status = 'ACTIVE' then abs(v.value) else 0 end), 0) as namespace_spent,
              coalesce(sum(case when e.id = :entryId and e.status = 'ACTIVE' then abs(v.value) else 0 end), 0) as entry_spent,
              coalesce(max(case when e.id = :entryId then v.value end), 0) as current_vote
            from ${COMPETITION_VOTES_TABLE} v
            join ${COMPETITION_ENTRIES_TABLE} e on e.id = v.entry_id and e.competition_id = v.competition_id
-           where v.competition_id = :competitionId and v.voter_profile_id = :profileId`
-          : `select
-             coalesce(sum(case when d.drop_type = 'PARTICIPATORY' then abs(v.votes) else 0 end), 0) as namespace_spent,
-             coalesce(sum(case when d.id = :dropId and d.drop_type = 'PARTICIPATORY' then abs(v.votes) else 0 end), 0) as entry_spent,
-             coalesce(max(case when d.id = :dropId then v.votes end), 0) as current_vote
-           from ${DROP_VOTER_STATE_TABLE} v
-           join ${DROPS_TABLE} d on d.id = v.drop_id and d.wave_id = v.wave_id
-           where v.wave_id = :waveId and v.voter_id = :profileId`;
+           where v.competition_id = :competitionId and v.voter_profile_id = :profileId`;
       const result = await this.db.oneOrNull<CompetitionCreditSpending>(
         sql,
         {

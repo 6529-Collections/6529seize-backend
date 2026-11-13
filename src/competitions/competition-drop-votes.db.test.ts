@@ -1,7 +1,10 @@
 import 'reflect-metadata';
 import {
   COMPETITION_VOTES_TABLE,
-  COMPETITION_WINNER_VOTES_TABLE
+  COMPETITION_WINNER_VOTES_TABLE,
+  COMPETITION_ENTRIES_TABLE,
+  COMPETITION_LEADERBOARD_ENTRIES_TABLE,
+  COMPETITION_ENTRY_RUNTIME_TABLE
 } from '@/constants';
 import { sqlExecutor } from '@/sql-executor';
 import { describeWithSeed } from '@/tests/_setup/seed';
@@ -72,3 +75,174 @@ describeWithSeed('CompetitionDropVotesDb voter availability', [], () => {
     });
   });
 });
+
+const active: CompetitionEntry = {
+  ...winner,
+  status: CompetitionEntryStatus.ACTIVE,
+  rank: null,
+  won_at: null,
+  decision_id: null
+};
+const retainedSnapshot = {
+  ...active,
+  id: 'retained-orphan',
+  drop_id: 'retained-orphan-drop'
+};
+const foreignEntry = {
+  ...active,
+  id: 'foreign-entry',
+  drop_id: 'foreign-drop'
+};
+
+describeWithSeed(
+  'CompetitionDropVotesDb native score membership',
+  [
+    {
+      table: COMPETITION_ENTRIES_TABLE,
+      rows: [
+        active,
+        { ...foreignEntry, competition_id: 'different-competition' }
+      ]
+    },
+    {
+      table: COMPETITION_LEADERBOARD_ENTRIES_TABLE,
+      rows: [active, retainedSnapshot, foreignEntry].map((entry, index) => ({
+        competition_id: entry.competition_id,
+        entry_id: entry.id,
+        drop_id: entry.drop_id,
+        rating: [42, 999, 888][index],
+        real_time_rating: [50, 1_000, 900][index],
+        rank: index + 1,
+        published_at: 2,
+        submitted_at: 1,
+        updated_at: 2
+      }))
+    },
+    {
+      table: COMPETITION_ENTRY_RUNTIME_TABLE,
+      rows: [active, retainedSnapshot].map((entry) => ({
+        competition_id: entry.competition_id,
+        entry_id: entry.id,
+        real_time_rating: 50,
+        last_increased_at: 1,
+        over_threshold_since: 1_234,
+        updated_at: 2
+      }))
+    }
+  ],
+  () => {
+    const db = new CompetitionDropVotesDb(() => sqlExecutor);
+
+    it.each([
+      ['no entry exists', retainedSnapshot],
+      ['the entry belongs to a different competition', foreignEntry]
+    ] as const)(
+      'ignores a published leaderboard snapshot when %s',
+      async (_description, entry) => {
+        expect(await db.score(entry, {})).toBeNull();
+      }
+    );
+
+    it('preserves a real native entry score and its runtime threshold', async () => {
+      expect(await db.score(active, {})).toEqual({
+        rating: 42,
+        decision_rating: 42,
+        rank: 1,
+        over_threshold_since: 1_234
+      });
+    });
+  }
+);
+
+describeWithSeed(
+  'CompetitionDropVotesDb distribution and export',
+  [
+    {
+      table: COMPETITION_VOTES_TABLE,
+      rows: [12, 12, 5, 3, -10, -10, -3, -1, 0]
+        .map((value, index) => ({
+          id: `distribution-${index}`,
+          competition_id: active.competition_id,
+          entry_id: active.id,
+          voter_profile_id: `voter-${index}`,
+          value,
+          credit_spent: Math.abs(value),
+          created_at: 1,
+          updated_at: 1
+        }))
+        .concat([
+          {
+            id: 'other-entry-vote',
+            competition_id: active.competition_id,
+            entry_id: 'other-entry',
+            voter_profile_id: 'other-voter',
+            value: 999,
+            credit_spent: 999,
+            created_at: 1,
+            updated_at: 1
+          }
+        ])
+    },
+    {
+      table: COMPETITION_WINNER_VOTES_TABLE,
+      rows: [
+        {
+          decision_id: 'decision',
+          entry_id: winner.id,
+          competition_id: winner.competition_id,
+          voter_profile_id: 'winner-voter',
+          value: -7
+        },
+        {
+          decision_id: 'other-decision',
+          entry_id: winner.id,
+          competition_id: winner.competition_id,
+          voter_profile_id: 'winner-voter',
+          value: 999
+        }
+      ]
+    }
+  ],
+  () => {
+    const db = new CompetitionDropVotesDb(() => sqlExecutor);
+    it('totals every allocation while selecting three stable highlights per direction', async () => {
+      const rows = await db.distribution(active, {});
+      expect(rows.map(({ voter_id, vote }) => ({ voter_id, vote }))).toEqual([
+        { voter_id: 'voter-0', vote: 12 },
+        { voter_id: 'voter-1', vote: 12 },
+        { voter_id: 'voter-4', vote: -10 },
+        { voter_id: 'voter-5', vote: -10 },
+        { voter_id: 'voter-2', vote: 5 },
+        { voter_id: 'voter-6', vote: -3 }
+      ]);
+      for (const row of rows)
+        expect(row).toMatchObject({
+          positive_total: 32,
+          negative_total: -24,
+          drop_id: active.drop_id
+        });
+    });
+    it('exports all nonzero allocations by signed vote with stable ties', async () => {
+      expect(
+        (await db.allVoters(active, {})).map(({ voter_id, vote }) => ({
+          voter_id,
+          vote: Number(vote)
+        }))
+      ).toEqual([
+        { voter_id: 'voter-0', vote: 12 },
+        { voter_id: 'voter-1', vote: 12 },
+        { voter_id: 'voter-2', vote: 5 },
+        { voter_id: 'voter-3', vote: 3 },
+        { voter_id: 'voter-7', vote: -1 },
+        { voter_id: 'voter-6', vote: -3 },
+        { voter_id: 'voter-4', vote: -10 },
+        { voter_id: 'voter-5', vote: -10 }
+      ]);
+    });
+    it('exports only the winner snapshot for the selected decision', async () => {
+      expect(
+        (await db.allVoters(winner, {})).map(({ vote }) => Number(vote))
+      ).toEqual([-7]);
+    });
+  }
+);

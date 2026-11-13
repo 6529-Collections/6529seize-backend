@@ -1,0 +1,1423 @@
+{
+  "prod": [
+    {
+      "service": "aggregatedActivityLoop",
+      "intervalSeconds": 60,
+      "reservedConcurrency": 1,
+      "expectedOverlap": true,
+      "delaySeconds": 600,
+      "stallSeconds": 1200,
+      "freshSeconds": 1020,
+      "operations": [
+        "processing"
+      ]
+    },
+    {
+      "service": "artCurationNftWatchLoop",
+      "intervalSeconds": 60,
+      "reservedConcurrency": 1,
+      "expectedOverlap": true,
+      "delaySeconds": 600,
+      "stallSeconds": 1200,
+      "freshSeconds": 1020,
+      "operations": [
+        "processing"
+      ]
+    },
+    {
+      "service": "artworkDocumentationProcessor",
+      "intervalSeconds": 60,
+      "reservedConcurrency": 1,
+      "expectedOverlap": true,
+      "delaySeconds": 600,
+      "stallSeconds": 1200,
+      "freshSeconds": 1020,
+      "operations": [
+        "processing"
+      ]
+    },
+    {
+      "service": "attachmentsOrchestrator",
+      "reservedConcurrency": 2,
+      "expectedOverlap": false,
+      "delaySeconds": 600,
+      "stallSeconds": 1200,
+      "freshSeconds": 1020,
+      "operations": [
+        "processing"
+      ]
+    },
+    {
+      "service": "attachmentsProcessor",
+      "reservedConcurrency": 2,
+      "expectedOverlap": false,
+      "delaySeconds": 600,
+      "stallSeconds": 1200,
+      "freshSeconds": 1020,
+      "operations": [
+        "processing"
+      ]
+    },
+    {
+      "service": "claimsBuilder",
+      "reservedConcurrency": 1,
+      "expectedOverlap": false,
+      "delaySeconds": 600,
+      "stallSeconds": 1200,
+      "freshSeconds": 1020,
+      "operations": [
+        "processing"
+      ]
+    },
+    {
+      "service": "claimsMediaArweaveUploader",
+      "reservedConcurrency": 2,
+      "expectedOverlap": false,
+      "delaySeconds": 600,
+      "stallSeconds": 1200,
+      "freshSeconds": 1020,
+      "operations": [
+        "processing"
+      ]
+    },
+    {
+      "service": "dbDumpsDaily",
+      "reservedConcurrency": 1,
+      "expectedOverlap": false,
+      "delaySeconds": 600,
+      "stallSeconds": 1200,
+      "freshSeconds": 1020,
+      "operations": [
+        "processing"
+      ]
+    },
+    {
+      "service": "dbMigrationsLoop",
+      "intervalSeconds": 86400,
+      "reservedConcurrency": 1,
+      "expectedOverlap": false,
+      "delaySeconds": 172800,
+      "stallSeconds": 259200,
+      "freshSeconds": 172800,
+      "operations": [
+        "processing"
+      ]
+    },
+    {
+      "service": "delegationsLoop",
+      "intervalSeconds": 60,
+      "reservedConcurrency": 1,
+      "expectedOverlap": true,
+      "delaySeconds": 600,
+      "stallSeconds": 1200,
+      "freshSeconds": 1020,
+      "operations": [
+        "indexing",
+        "recalculation"
+      ],
+      "optionalOperations": [
+        "recalculation"
+      ]
+    },
+    {
+      "service": "discoverEnsLoop",
+      "intervalSeconds": 21600,
+      "reservedConcurrency": 1,
+      "expectedOverlap": false,
+      "delaySeconds": 43200,
+      "stallSeconds": 64800,
+      "freshSeconds": 43200,
+      "operations": [
+        "processing"
+      ]
+    },
+    {
+      "service": "dropMediaSanitizer",
+      "reservedConcurrency": 2,
+      "expectedOverlap": false,
+      "delaySeconds": 600,
+      "stallSeconds": 1200,
+      "freshSeconds": 1020,
+      "operations": [
+        "processing"
+      ]
+    },
+    {
+      "service": "ethPriceLoop",
+      "intervalSeconds": 300,
+      "reservedConcurrency": 1,
+      "expectedOverlap": true,
+      "delaySeconds": 600,
+      "stallSeconds": 1200,
+      "freshSeconds": 1020,
+      "operations": [
+        "processing"
+      ]
+    },
+    {
+      "service": "externalCollectionLiveTailingLoop",
+      "intervalSeconds": 60,
+      "reservedConcurrency": 1,
+      "expectedOverlap": true,
+      "delaySeconds": 600,
+      "stallSeconds": 1200,
+      "freshSeconds": 1020,
+      "operations": [
+        "processing"
+      ]
+    },
+    {
+      "service": "externalCollectionSnapshottingLoop",
+      "intervalSeconds": 60,
+      "expectedOverlap": false,
+      "delaySeconds": 600,
+      "stallSeconds": 1200,
+      "freshSeconds": 1020,
+      "operations": [
+        "processing"
+      ]
+    },
+    {
+      "service": "gradientsTransactionsLoop",
+      "intervalSeconds": 60,
+      "reservedConcurrency": 1,
+      "expectedOverlap": true,
+      "delaySeconds": 600,
+      "stallSeconds": 1200,
+      "freshSeconds": 1020,
+      "operations": [
+        "processing"
+      ]
+    },
+    {
+      "service": "helpBotDailyActivityCreditLoop",
+      "intervalSeconds": 60,
+      "reservedConcurrency": 1,
+      "expectedOverlap": true,
+      "delaySeconds": 600,
+      "stallSeconds": 420,
+      "freshSeconds": 240,
+      "operations": [
+        "processing"
+      ]
+    },
+    {
+      "service": "helpBotReplyLoop",
+      "reservedConcurrency": 2,
+      "expectedOverlap": false,
+      "delaySeconds": 600,
+      "stallSeconds": 420,
+      "freshSeconds": 240,
+      "operations": [
+        "processing"
+      ]
+    },
+    {
+      "service": "marketDepthStreamLoop",
+      "intervalSeconds": 600,
+      "reservedConcurrency": 2,
+      "expectedOverlap": false,
+      "delaySeconds": 1200,
+      "stallSeconds": 1800,
+      "freshSeconds": 1200,
+      "operations": [
+        "processing"
+      ]
+    },
+    {
+      "service": "marketStatsGRADIENT",
+      "intervalSeconds": 1800,
+      "reservedConcurrency": 1,
+      "expectedOverlap": false,
+      "delaySeconds": 3600,
+      "stallSeconds": 5400,
+      "freshSeconds": 3600,
+      "operations": [
+        "processing"
+      ]
+    },
+    {
+      "service": "marketStatsLAB",
+      "intervalSeconds": 900,
+      "reservedConcurrency": 1,
+      "expectedOverlap": false,
+      "delaySeconds": 1800,
+      "stallSeconds": 2700,
+      "freshSeconds": 1800,
+      "operations": [
+        "processing"
+      ]
+    },
+    {
+      "service": "marketStatsMEMES",
+      "intervalSeconds": 600,
+      "reservedConcurrency": 1,
+      "expectedOverlap": false,
+      "delaySeconds": 1200,
+      "stallSeconds": 1800,
+      "freshSeconds": 1200,
+      "operations": [
+        "processing"
+      ]
+    },
+    {
+      "service": "marketStatsNEXTGEN",
+      "intervalSeconds": 1800,
+      "reservedConcurrency": 1,
+      "expectedOverlap": false,
+      "delaySeconds": 3600,
+      "stallSeconds": 5400,
+      "freshSeconds": 3600,
+      "operations": [
+        "processing"
+      ]
+    },
+    {
+      "service": "memeLabTransactionsLoop",
+      "intervalSeconds": 60,
+      "reservedConcurrency": 1,
+      "expectedOverlap": true,
+      "delaySeconds": 600,
+      "stallSeconds": 1200,
+      "freshSeconds": 1020,
+      "operations": [
+        "processing"
+      ]
+    },
+    {
+      "service": "memesTransactionsLoop",
+      "intervalSeconds": 60,
+      "reservedConcurrency": 1,
+      "expectedOverlap": true,
+      "delaySeconds": 600,
+      "stallSeconds": 1200,
+      "freshSeconds": 1020,
+      "operations": [
+        "processing"
+      ]
+    },
+    {
+      "service": "mintAnnouncementsLoop",
+      "reservedConcurrency": 1,
+      "expectedOverlap": false,
+      "delaySeconds": 600,
+      "stallSeconds": 420,
+      "freshSeconds": 240,
+      "operations": [
+        "processing"
+      ]
+    },
+    {
+      "service": "newsletterLoop",
+      "reservedConcurrency": 1,
+      "expectedOverlap": false,
+      "delaySeconds": 600,
+      "stallSeconds": 1200,
+      "freshSeconds": 1020,
+      "operations": [
+        "processing"
+      ]
+    },
+    {
+      "service": "nextgenContractLoop",
+      "intervalSeconds": 60,
+      "reservedConcurrency": 1,
+      "expectedOverlap": true,
+      "delaySeconds": 600,
+      "stallSeconds": 1200,
+      "freshSeconds": 1020,
+      "operations": [
+        "indexing",
+        "recalculation"
+      ],
+      "optionalOperations": [
+        "recalculation"
+      ]
+    },
+    {
+      "service": "nextgenMediaImageResolutions",
+      "intervalSeconds": 60,
+      "reservedConcurrency": 1,
+      "expectedOverlap": true,
+      "delaySeconds": 600,
+      "stallSeconds": 1200,
+      "freshSeconds": 1020,
+      "operations": [
+        "processing"
+      ]
+    },
+    {
+      "service": "nextgenMediaUploader",
+      "intervalSeconds": 60,
+      "reservedConcurrency": 1,
+      "expectedOverlap": true,
+      "delaySeconds": 600,
+      "stallSeconds": 1200,
+      "freshSeconds": 1020,
+      "operations": [
+        "processing"
+      ]
+    },
+    {
+      "service": "nextgenMetadataLoop",
+      "intervalSeconds": 3600,
+      "reservedConcurrency": 1,
+      "expectedOverlap": false,
+      "delaySeconds": 7200,
+      "stallSeconds": 10800,
+      "freshSeconds": 7200,
+      "operations": [
+        "processing"
+      ]
+    },
+    {
+      "service": "nftHistoryLoop",
+      "intervalSeconds": 1800,
+      "reservedConcurrency": 1,
+      "expectedOverlap": false,
+      "delaySeconds": 3600,
+      "stallSeconds": 5400,
+      "freshSeconds": 3600,
+      "operations": [
+        "processing"
+      ]
+    },
+    {
+      "service": "nftLinkMediaPreviewLoop",
+      "reservedConcurrency": 5,
+      "expectedOverlap": false,
+      "delaySeconds": 600,
+      "stallSeconds": 420,
+      "freshSeconds": 240,
+      "operations": [
+        "processing"
+      ],
+      "idleOperations": [
+        "processing"
+      ],
+      "oldestAdvanceIsProgress": false
+    },
+    {
+      "service": "nftLinkRefresherLoop",
+      "reservedConcurrency": 20,
+      "expectedOverlap": false,
+      "delaySeconds": 600,
+      "stallSeconds": 1200,
+      "freshSeconds": 1020,
+      "operations": [
+        "processing"
+      ]
+    },
+    {
+      "service": "nftOwnersLoop",
+      "intervalSeconds": 60,
+      "reservedConcurrency": 1,
+      "expectedOverlap": true,
+      "delaySeconds": 600,
+      "stallSeconds": 1200,
+      "freshSeconds": 1020,
+      "operations": [
+        "processing"
+      ]
+    },
+    {
+      "service": "nftsLoop",
+      "intervalSeconds": 60,
+      "reservedConcurrency": 1,
+      "expectedOverlap": true,
+      "delaySeconds": 600,
+      "stallSeconds": 1200,
+      "freshSeconds": 1020,
+      "operations": [
+        "discovery",
+        "refresh",
+        "audit",
+        "publication"
+      ],
+      "operationBudgets": {
+        "refresh": {
+          "freshSeconds": 1620
+        },
+        "audit": {
+          "freshSeconds": 4620
+        }
+      }
+    },
+    {
+      "service": "overRatesRevocationLoop",
+      "reservedConcurrency": 1,
+      "expectedOverlap": false,
+      "delaySeconds": 600,
+      "stallSeconds": 1200,
+      "freshSeconds": 1020,
+      "operations": [
+        "processing"
+      ]
+    },
+    {
+      "service": "ownersBalancesLoop",
+      "intervalSeconds": 60,
+      "reservedConcurrency": 1,
+      "expectedOverlap": true,
+      "delaySeconds": 600,
+      "stallSeconds": 1200,
+      "freshSeconds": 1020,
+      "operations": [
+        "processing"
+      ]
+    },
+    {
+      "service": "pushNotificationsHandler",
+      "intervalSeconds": 60,
+      "reservedConcurrency": 20,
+      "expectedOverlap": false,
+      "delaySeconds": 600,
+      "stallSeconds": 360,
+      "freshSeconds": 180,
+      "operations": [
+        "processing"
+      ]
+    },
+    {
+      "service": "rateEventProcessingLoop",
+      "intervalSeconds": 60,
+      "reservedConcurrency": 1,
+      "expectedOverlap": true,
+      "delaySeconds": 600,
+      "stallSeconds": 1200,
+      "freshSeconds": 1020,
+      "operations": [
+        "processing"
+      ]
+    },
+    {
+      "service": "refreshENS",
+      "intervalSeconds": 900,
+      "reservedConcurrency": 1,
+      "expectedOverlap": false,
+      "delaySeconds": 1800,
+      "stallSeconds": 2700,
+      "freshSeconds": 1800,
+      "operations": [
+        "processing"
+      ]
+    },
+    {
+      "service": "releaseDigestLoop",
+      "reservedConcurrency": 1,
+      "expectedOverlap": false,
+      "delaySeconds": 600,
+      "stallSeconds": 900,
+      "freshSeconds": 720,
+      "operations": [
+        "processing"
+      ]
+    },
+    {
+      "service": "releaseNotesGenerationLoop",
+      "reservedConcurrency": 1,
+      "expectedOverlap": false,
+      "delaySeconds": 600,
+      "stallSeconds": 480,
+      "freshSeconds": 300,
+      "operations": [
+        "processing"
+      ]
+    },
+    {
+      "service": "rememesRefreshMetadataLoop",
+      "reservedConcurrency": 1,
+      "expectedOverlap": false,
+      "delaySeconds": 600,
+      "stallSeconds": 1200,
+      "freshSeconds": 1020,
+      "operations": [
+        "processing"
+      ]
+    },
+    {
+      "service": "rememesS3Loop",
+      "intervalSeconds": 21600,
+      "reservedConcurrency": 1,
+      "expectedOverlap": false,
+      "delaySeconds": 43200,
+      "stallSeconds": 64800,
+      "freshSeconds": 43200,
+      "operations": [
+        "processing"
+      ]
+    },
+    {
+      "service": "royaltiesLoop",
+      "reservedConcurrency": 1,
+      "expectedOverlap": false,
+      "delaySeconds": 600,
+      "stallSeconds": 1200,
+      "freshSeconds": 1020,
+      "operations": [
+        "processing"
+      ]
+    },
+    {
+      "service": "s3Uploader",
+      "reservedConcurrency": 2,
+      "expectedOverlap": false,
+      "delaySeconds": 600,
+      "stallSeconds": 1200,
+      "freshSeconds": 1020,
+      "operations": [
+        "processing"
+      ]
+    },
+    {
+      "service": "subscriptionCoverageReconciliationLoop",
+      "intervalSeconds": 60,
+      "reservedConcurrency": 1,
+      "expectedOverlap": true,
+      "delaySeconds": 600,
+      "stallSeconds": 1200,
+      "freshSeconds": 1020,
+      "operations": [
+        "processing"
+      ]
+    },
+    {
+      "service": "subscriptionsDaily",
+      "reservedConcurrency": 1,
+      "expectedOverlap": false,
+      "delaySeconds": 600,
+      "stallSeconds": 1200,
+      "freshSeconds": 1020,
+      "operations": [
+        "processing"
+      ]
+    },
+    {
+      "service": "subscriptionsTopUpLoop",
+      "intervalSeconds": 60,
+      "reservedConcurrency": 1,
+      "expectedOverlap": true,
+      "delaySeconds": 600,
+      "stallSeconds": 1200,
+      "freshSeconds": 1020,
+      "operations": [
+        "processing"
+      ]
+    },
+    {
+      "service": "tdhHistoryLoop",
+      "reservedConcurrency": 1,
+      "expectedOverlap": false,
+      "delaySeconds": 600,
+      "stallSeconds": 1200,
+      "freshSeconds": 1020,
+      "operations": [
+        "processing"
+      ]
+    },
+    {
+      "service": "tdhLoop",
+      "reservedConcurrency": 1,
+      "expectedOverlap": false,
+      "delaySeconds": 600,
+      "stallSeconds": 1200,
+      "freshSeconds": 1020,
+      "operations": [
+        "processing"
+      ]
+    },
+    {
+      "service": "transactionsProcessingLoop",
+      "intervalSeconds": 60,
+      "reservedConcurrency": 1,
+      "expectedOverlap": true,
+      "delaySeconds": 600,
+      "stallSeconds": 1200,
+      "freshSeconds": 1020,
+      "operations": [
+        "processing"
+      ]
+    },
+    {
+      "service": "waveDecisionExecutionLoop",
+      "intervalSeconds": 60,
+      "reservedConcurrency": 1,
+      "expectedOverlap": true,
+      "delaySeconds": 600,
+      "stallSeconds": 1200,
+      "freshSeconds": 1020,
+      "operations": [
+        "decisions",
+        "native_execution",
+        "publication"
+      ],
+      "operationBudgets": {
+        "decisions": {
+          "delaySeconds": 120,
+          "freshSeconds": 120
+        },
+        "publication": {
+          "delaySeconds": 600,
+          "stallSeconds": 3900
+        }
+      }
+    },
+    {
+      "service": "waveDropMetricsRefreshLoop",
+      "intervalSeconds": 60,
+      "reservedConcurrency": 1,
+      "expectedOverlap": true,
+      "delaySeconds": 600,
+      "stallSeconds": 1200,
+      "freshSeconds": 1020,
+      "operations": [
+        "processing"
+      ]
+    },
+    {
+      "service": "waveLeaderboardSnapshotterLoop",
+      "intervalSeconds": 300,
+      "reservedConcurrency": 1,
+      "expectedOverlap": true,
+      "delaySeconds": 600,
+      "stallSeconds": 1200,
+      "freshSeconds": 1020,
+      "operations": [
+        "processing"
+      ]
+    },
+    {
+      "service": "waveScoreRefreshLoop",
+      "intervalSeconds": 60,
+      "reservedConcurrency": 1,
+      "expectedOverlap": true,
+      "delaySeconds": 600,
+      "stallSeconds": 1200,
+      "freshSeconds": 1020,
+      "operations": [
+        "dirty_refresh",
+        "full_refresh"
+      ],
+      "optionalOperations": [
+        "full_refresh"
+      ]
+    },
+    {
+      "service": "webSocketDeliveryLoop",
+      "intervalSeconds": 60,
+      "reservedConcurrency": 1,
+      "expectedOverlap": true,
+      "delaySeconds": 600,
+      "stallSeconds": 390,
+      "freshSeconds": 210,
+      "operations": [
+        "processing"
+      ]
+    },
+    {
+      "service": "xTdhGrantsReviewerLoop",
+      "intervalSeconds": 60,
+      "reservedConcurrency": 1,
+      "expectedOverlap": true,
+      "delaySeconds": 600,
+      "stallSeconds": 1200,
+      "freshSeconds": 1020,
+      "operations": [
+        "processing"
+      ]
+    },
+    {
+      "service": "xTdhLoop",
+      "reservedConcurrency": 1,
+      "expectedOverlap": false,
+      "delaySeconds": 600,
+      "stallSeconds": 1200,
+      "freshSeconds": 1020,
+      "operations": [
+        "processing"
+      ]
+    }
+  ],
+  "staging": [
+    {
+      "service": "aggregatedActivityLoop",
+      "intervalSeconds": 60,
+      "reservedConcurrency": 1,
+      "expectedOverlap": true,
+      "delaySeconds": 600,
+      "stallSeconds": 1200,
+      "freshSeconds": 1020,
+      "operations": [
+        "processing"
+      ]
+    },
+    {
+      "service": "artCurationNftWatchLoop",
+      "intervalSeconds": 60,
+      "reservedConcurrency": 1,
+      "expectedOverlap": true,
+      "delaySeconds": 600,
+      "stallSeconds": 1200,
+      "freshSeconds": 1020,
+      "operations": [
+        "processing"
+      ]
+    },
+    {
+      "service": "artworkDocumentationProcessor",
+      "intervalSeconds": 60,
+      "reservedConcurrency": 1,
+      "expectedOverlap": true,
+      "delaySeconds": 600,
+      "stallSeconds": 1200,
+      "freshSeconds": 1020,
+      "operations": [
+        "processing"
+      ]
+    },
+    {
+      "service": "attachmentsOrchestrator",
+      "reservedConcurrency": 2,
+      "expectedOverlap": false,
+      "delaySeconds": 600,
+      "stallSeconds": 1200,
+      "freshSeconds": 1020,
+      "operations": [
+        "processing"
+      ]
+    },
+    {
+      "service": "attachmentsProcessor",
+      "reservedConcurrency": 2,
+      "expectedOverlap": false,
+      "delaySeconds": 600,
+      "stallSeconds": 1200,
+      "freshSeconds": 1020,
+      "operations": [
+        "processing"
+      ]
+    },
+    {
+      "service": "claimsBuilder",
+      "reservedConcurrency": 1,
+      "expectedOverlap": false,
+      "delaySeconds": 600,
+      "stallSeconds": 1200,
+      "freshSeconds": 1020,
+      "operations": [
+        "processing"
+      ]
+    },
+    {
+      "service": "claimsMediaArweaveUploader",
+      "reservedConcurrency": 2,
+      "expectedOverlap": false,
+      "delaySeconds": 600,
+      "stallSeconds": 1200,
+      "freshSeconds": 1020,
+      "operations": [
+        "processing"
+      ]
+    },
+    {
+      "service": "dbDumpsDaily",
+      "reservedConcurrency": 1,
+      "expectedOverlap": false,
+      "delaySeconds": 600,
+      "stallSeconds": 1200,
+      "freshSeconds": 1020,
+      "operations": [
+        "processing"
+      ]
+    },
+    {
+      "service": "dbMigrationsLoop",
+      "intervalSeconds": 86400,
+      "reservedConcurrency": 1,
+      "expectedOverlap": false,
+      "delaySeconds": 172800,
+      "stallSeconds": 259200,
+      "freshSeconds": 172800,
+      "operations": [
+        "processing"
+      ]
+    },
+    {
+      "service": "delegationsLoop",
+      "intervalSeconds": 60,
+      "reservedConcurrency": 1,
+      "expectedOverlap": true,
+      "delaySeconds": 600,
+      "stallSeconds": 1200,
+      "freshSeconds": 1020,
+      "operations": [
+        "indexing",
+        "recalculation"
+      ],
+      "optionalOperations": [
+        "recalculation"
+      ]
+    },
+    {
+      "service": "discoverEnsLoop",
+      "intervalSeconds": 21600,
+      "reservedConcurrency": 1,
+      "expectedOverlap": false,
+      "delaySeconds": 43200,
+      "stallSeconds": 64800,
+      "freshSeconds": 43200,
+      "operations": [
+        "processing"
+      ]
+    },
+    {
+      "service": "dropMediaSanitizer",
+      "reservedConcurrency": 2,
+      "expectedOverlap": false,
+      "delaySeconds": 600,
+      "stallSeconds": 1200,
+      "freshSeconds": 1020,
+      "operations": [
+        "processing"
+      ]
+    },
+    {
+      "service": "ethPriceLoop",
+      "intervalSeconds": 300,
+      "reservedConcurrency": 1,
+      "expectedOverlap": true,
+      "delaySeconds": 600,
+      "stallSeconds": 1200,
+      "freshSeconds": 1020,
+      "operations": [
+        "processing"
+      ]
+    },
+    {
+      "service": "externalCollectionLiveTailingLoop",
+      "intervalSeconds": 60,
+      "reservedConcurrency": 1,
+      "expectedOverlap": true,
+      "delaySeconds": 600,
+      "stallSeconds": 1200,
+      "freshSeconds": 1020,
+      "operations": [
+        "processing"
+      ]
+    },
+    {
+      "service": "externalCollectionSnapshottingLoop",
+      "intervalSeconds": 60,
+      "expectedOverlap": false,
+      "delaySeconds": 600,
+      "stallSeconds": 1200,
+      "freshSeconds": 1020,
+      "operations": [
+        "processing"
+      ]
+    },
+    {
+      "service": "gradientsTransactionsLoop",
+      "intervalSeconds": 60,
+      "reservedConcurrency": 1,
+      "expectedOverlap": true,
+      "delaySeconds": 600,
+      "stallSeconds": 1200,
+      "freshSeconds": 1020,
+      "operations": [
+        "processing"
+      ]
+    },
+    {
+      "service": "helpBotDailyActivityCreditLoop",
+      "intervalSeconds": 60,
+      "reservedConcurrency": 1,
+      "expectedOverlap": true,
+      "delaySeconds": 600,
+      "stallSeconds": 420,
+      "freshSeconds": 240,
+      "operations": [
+        "processing"
+      ]
+    },
+    {
+      "service": "helpBotReplyLoop",
+      "reservedConcurrency": 2,
+      "expectedOverlap": false,
+      "delaySeconds": 600,
+      "stallSeconds": 420,
+      "freshSeconds": 240,
+      "operations": [
+        "processing"
+      ]
+    },
+    {
+      "service": "marketDepthStreamLoop",
+      "intervalSeconds": 600,
+      "reservedConcurrency": 2,
+      "expectedOverlap": false,
+      "delaySeconds": 1200,
+      "stallSeconds": 1800,
+      "freshSeconds": 1200,
+      "operations": [
+        "processing"
+      ]
+    },
+    {
+      "service": "marketStatsGRADIENT",
+      "intervalSeconds": 1800,
+      "reservedConcurrency": 1,
+      "expectedOverlap": false,
+      "delaySeconds": 3600,
+      "stallSeconds": 5400,
+      "freshSeconds": 3600,
+      "operations": [
+        "processing"
+      ]
+    },
+    {
+      "service": "marketStatsLAB",
+      "intervalSeconds": 900,
+      "reservedConcurrency": 1,
+      "expectedOverlap": false,
+      "delaySeconds": 1800,
+      "stallSeconds": 2700,
+      "freshSeconds": 1800,
+      "operations": [
+        "processing"
+      ]
+    },
+    {
+      "service": "marketStatsMEMES",
+      "intervalSeconds": 600,
+      "reservedConcurrency": 1,
+      "expectedOverlap": false,
+      "delaySeconds": 1200,
+      "stallSeconds": 1800,
+      "freshSeconds": 1200,
+      "operations": [
+        "processing"
+      ]
+    },
+    {
+      "service": "marketStatsNEXTGEN",
+      "intervalSeconds": 1800,
+      "reservedConcurrency": 1,
+      "expectedOverlap": false,
+      "delaySeconds": 3600,
+      "stallSeconds": 5400,
+      "freshSeconds": 3600,
+      "operations": [
+        "processing"
+      ]
+    },
+    {
+      "service": "memeLabTransactionsLoop",
+      "intervalSeconds": 60,
+      "reservedConcurrency": 1,
+      "expectedOverlap": true,
+      "delaySeconds": 600,
+      "stallSeconds": 1200,
+      "freshSeconds": 1020,
+      "operations": [
+        "processing"
+      ]
+    },
+    {
+      "service": "memesTransactionsLoop",
+      "intervalSeconds": 60,
+      "reservedConcurrency": 1,
+      "expectedOverlap": true,
+      "delaySeconds": 600,
+      "stallSeconds": 1200,
+      "freshSeconds": 1020,
+      "operations": [
+        "processing"
+      ]
+    },
+    {
+      "service": "mintAnnouncementsLoop",
+      "reservedConcurrency": 1,
+      "expectedOverlap": false,
+      "delaySeconds": 600,
+      "stallSeconds": 420,
+      "freshSeconds": 240,
+      "operations": [
+        "processing"
+      ]
+    },
+    {
+      "service": "nextgenContractLoop",
+      "intervalSeconds": 60,
+      "reservedConcurrency": 1,
+      "expectedOverlap": true,
+      "delaySeconds": 600,
+      "stallSeconds": 1200,
+      "freshSeconds": 1020,
+      "operations": [
+        "indexing",
+        "recalculation"
+      ],
+      "optionalOperations": [
+        "recalculation"
+      ]
+    },
+    {
+      "service": "nextgenMetadataLoop",
+      "intervalSeconds": 3600,
+      "reservedConcurrency": 1,
+      "expectedOverlap": false,
+      "delaySeconds": 7200,
+      "stallSeconds": 10800,
+      "freshSeconds": 7200,
+      "operations": [
+        "processing"
+      ]
+    },
+    {
+      "service": "nftHistoryLoop",
+      "intervalSeconds": 1800,
+      "reservedConcurrency": 1,
+      "expectedOverlap": false,
+      "delaySeconds": 3600,
+      "stallSeconds": 5400,
+      "freshSeconds": 3600,
+      "operations": [
+        "processing"
+      ]
+    },
+    {
+      "service": "nftLinkMediaPreviewLoop",
+      "reservedConcurrency": 5,
+      "expectedOverlap": false,
+      "delaySeconds": 600,
+      "stallSeconds": 420,
+      "freshSeconds": 240,
+      "operations": [
+        "processing"
+      ],
+      "idleOperations": [
+        "processing"
+      ],
+      "oldestAdvanceIsProgress": false
+    },
+    {
+      "service": "nftLinkRefresherLoop",
+      "reservedConcurrency": 20,
+      "expectedOverlap": false,
+      "delaySeconds": 600,
+      "stallSeconds": 1200,
+      "freshSeconds": 1020,
+      "operations": [
+        "processing"
+      ]
+    },
+    {
+      "service": "nftOwnersLoop",
+      "intervalSeconds": 60,
+      "reservedConcurrency": 1,
+      "expectedOverlap": true,
+      "delaySeconds": 600,
+      "stallSeconds": 1200,
+      "freshSeconds": 1020,
+      "operations": [
+        "processing"
+      ]
+    },
+    {
+      "service": "nftsLoop",
+      "intervalSeconds": 60,
+      "reservedConcurrency": 1,
+      "expectedOverlap": true,
+      "delaySeconds": 600,
+      "stallSeconds": 1200,
+      "freshSeconds": 1020,
+      "operations": [
+        "discovery",
+        "refresh",
+        "audit",
+        "publication"
+      ],
+      "operationBudgets": {
+        "refresh": {
+          "freshSeconds": 1620
+        },
+        "audit": {
+          "freshSeconds": 4620
+        }
+      }
+    },
+    {
+      "service": "overRatesRevocationLoop",
+      "reservedConcurrency": 1,
+      "expectedOverlap": false,
+      "delaySeconds": 600,
+      "stallSeconds": 1200,
+      "freshSeconds": 1020,
+      "operations": [
+        "processing"
+      ]
+    },
+    {
+      "service": "ownersBalancesLoop",
+      "intervalSeconds": 60,
+      "reservedConcurrency": 1,
+      "expectedOverlap": true,
+      "delaySeconds": 600,
+      "stallSeconds": 1200,
+      "freshSeconds": 1020,
+      "operations": [
+        "processing"
+      ]
+    },
+    {
+      "service": "pushNotificationsHandler",
+      "intervalSeconds": 60,
+      "reservedConcurrency": 20,
+      "expectedOverlap": false,
+      "delaySeconds": 600,
+      "stallSeconds": 360,
+      "freshSeconds": 180,
+      "operations": [
+        "processing"
+      ]
+    },
+    {
+      "service": "rateEventProcessingLoop",
+      "intervalSeconds": 60,
+      "reservedConcurrency": 1,
+      "expectedOverlap": true,
+      "delaySeconds": 600,
+      "stallSeconds": 1200,
+      "freshSeconds": 1020,
+      "operations": [
+        "processing"
+      ]
+    },
+    {
+      "service": "refreshENS",
+      "intervalSeconds": 900,
+      "reservedConcurrency": 1,
+      "expectedOverlap": false,
+      "delaySeconds": 1800,
+      "stallSeconds": 2700,
+      "freshSeconds": 1800,
+      "operations": [
+        "processing"
+      ]
+    },
+    {
+      "service": "rememesRefreshMetadataLoop",
+      "reservedConcurrency": 1,
+      "expectedOverlap": false,
+      "delaySeconds": 600,
+      "stallSeconds": 1200,
+      "freshSeconds": 1020,
+      "operations": [
+        "processing"
+      ]
+    },
+    {
+      "service": "rememesS3Loop",
+      "intervalSeconds": 21600,
+      "reservedConcurrency": 1,
+      "expectedOverlap": false,
+      "delaySeconds": 43200,
+      "stallSeconds": 64800,
+      "freshSeconds": 43200,
+      "operations": [
+        "processing"
+      ]
+    },
+    {
+      "service": "royaltiesLoop",
+      "reservedConcurrency": 1,
+      "expectedOverlap": false,
+      "delaySeconds": 600,
+      "stallSeconds": 1200,
+      "freshSeconds": 1020,
+      "operations": [
+        "processing"
+      ]
+    },
+    {
+      "service": "s3Uploader",
+      "reservedConcurrency": 2,
+      "expectedOverlap": false,
+      "delaySeconds": 600,
+      "stallSeconds": 1200,
+      "freshSeconds": 1020,
+      "operations": [
+        "processing"
+      ]
+    },
+    {
+      "service": "subscriptionCoverageReconciliationLoop",
+      "intervalSeconds": 60,
+      "reservedConcurrency": 1,
+      "expectedOverlap": true,
+      "delaySeconds": 600,
+      "stallSeconds": 1200,
+      "freshSeconds": 1020,
+      "operations": [
+        "processing"
+      ]
+    },
+    {
+      "service": "subscriptionsDaily",
+      "reservedConcurrency": 1,
+      "expectedOverlap": false,
+      "delaySeconds": 600,
+      "stallSeconds": 1200,
+      "freshSeconds": 1020,
+      "operations": [
+        "processing"
+      ]
+    },
+    {
+      "service": "subscriptionsTopUpLoop",
+      "intervalSeconds": 60,
+      "reservedConcurrency": 1,
+      "expectedOverlap": true,
+      "delaySeconds": 600,
+      "stallSeconds": 1200,
+      "freshSeconds": 1020,
+      "operations": [
+        "processing"
+      ]
+    },
+    {
+      "service": "tdhHistoryLoop",
+      "reservedConcurrency": 1,
+      "expectedOverlap": false,
+      "delaySeconds": 600,
+      "stallSeconds": 1200,
+      "freshSeconds": 1020,
+      "operations": [
+        "processing"
+      ]
+    },
+    {
+      "service": "tdhLoop",
+      "reservedConcurrency": 1,
+      "expectedOverlap": false,
+      "delaySeconds": 600,
+      "stallSeconds": 1200,
+      "freshSeconds": 1020,
+      "operations": [
+        "processing"
+      ]
+    },
+    {
+      "service": "transactionsProcessingLoop",
+      "intervalSeconds": 60,
+      "reservedConcurrency": 1,
+      "expectedOverlap": true,
+      "delaySeconds": 600,
+      "stallSeconds": 1200,
+      "freshSeconds": 1020,
+      "operations": [
+        "processing"
+      ]
+    },
+    {
+      "service": "waveDecisionExecutionLoop",
+      "intervalSeconds": 60,
+      "reservedConcurrency": 1,
+      "expectedOverlap": true,
+      "delaySeconds": 600,
+      "stallSeconds": 1200,
+      "freshSeconds": 1020,
+      "operations": [
+        "decisions",
+        "native_execution",
+        "publication"
+      ],
+      "operationBudgets": {
+        "decisions": {
+          "delaySeconds": 120,
+          "freshSeconds": 120
+        },
+        "publication": {
+          "delaySeconds": 600,
+          "stallSeconds": 3900
+        }
+      }
+    },
+    {
+      "service": "waveDropMetricsRefreshLoop",
+      "intervalSeconds": 60,
+      "reservedConcurrency": 1,
+      "expectedOverlap": true,
+      "delaySeconds": 600,
+      "stallSeconds": 1200,
+      "freshSeconds": 1020,
+      "operations": [
+        "processing"
+      ]
+    },
+    {
+      "service": "waveLeaderboardSnapshotterLoop",
+      "intervalSeconds": 300,
+      "reservedConcurrency": 1,
+      "expectedOverlap": true,
+      "delaySeconds": 600,
+      "stallSeconds": 1200,
+      "freshSeconds": 1020,
+      "operations": [
+        "processing"
+      ]
+    },
+    {
+      "service": "waveScoreRefreshLoop",
+      "intervalSeconds": 60,
+      "reservedConcurrency": 1,
+      "expectedOverlap": true,
+      "delaySeconds": 600,
+      "stallSeconds": 1200,
+      "freshSeconds": 1020,
+      "operations": [
+        "dirty_refresh",
+        "full_refresh"
+      ],
+      "optionalOperations": [
+        "full_refresh"
+      ]
+    },
+    {
+      "service": "webSocketDeliveryLoop",
+      "intervalSeconds": 60,
+      "reservedConcurrency": 1,
+      "expectedOverlap": true,
+      "delaySeconds": 600,
+      "stallSeconds": 390,
+      "freshSeconds": 210,
+      "operations": [
+        "processing"
+      ]
+    },
+    {
+      "service": "xTdhGrantsReviewerLoop",
+      "intervalSeconds": 60,
+      "reservedConcurrency": 1,
+      "expectedOverlap": true,
+      "delaySeconds": 600,
+      "stallSeconds": 1200,
+      "freshSeconds": 1020,
+      "operations": [
+        "processing"
+      ]
+    },
+    {
+      "service": "xTdhLoop",
+      "reservedConcurrency": 1,
+      "expectedOverlap": false,
+      "delaySeconds": 600,
+      "stallSeconds": 1200,
+      "freshSeconds": 1020,
+      "operations": [
+        "processing"
+      ]
+    }
+  ]
+}

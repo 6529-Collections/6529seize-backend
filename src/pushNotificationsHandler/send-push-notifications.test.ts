@@ -139,7 +139,7 @@ describe('sending budgeted push messages', () => {
     const results = await sendMessages([
       input(1, {
         body: '👋'.repeat(5000),
-        imageUrl: 'https://example.com/image.jpg',
+        imageUrl: 'https://d3lqz0a4bldqgf.cloudfront.net/pfp/image.jpg',
         badge: 3
       })
     ]);

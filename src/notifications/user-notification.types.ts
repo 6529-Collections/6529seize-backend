@@ -1,3 +1,4 @@
+import { ApiArtistArtworkNotificationContext } from '@/api/generated/models/ApiArtistArtworkNotificationContext';
 import { IdentityNotificationCause } from '../entities/IIdentityNotification';
 
 export interface IdentitySubscriptionNotificationData {
@@ -227,7 +228,46 @@ export interface SubscriptionCoverageNotification extends UserNotificationBase {
   data: SubscriptionCoverageNotificationData;
 }
 
+export interface VotingCreditsReturnedNotificationData {
+  event_id: string;
+  reason: 'WIN' | 'AUTHOR_DELETED';
+  wave_id: string;
+  competition_id: string;
+  competition_title: string;
+  entry_id: string;
+  drop_id: string;
+  submission_title: string;
+  credit_type: string;
+  amount: number;
+  released_at: number;
+}
+
+export interface VotingCreditsReturnedNotification extends UserNotificationBase {
+  cause: IdentityNotificationCause.VOTING_CREDITS_RETURNED;
+  data: VotingCreditsReturnedNotificationData;
+}
+
+export interface EncryptedMessageNotification extends UserNotificationBase {
+  cause: IdentityNotificationCause.E2EE_MESSAGE;
+  data: {
+    encrypted_group: string;
+    encrypted_message_seq?: number;
+    sender_id?: string;
+  };
+}
+
+export type ArtistArtworkNotificationData = ApiArtistArtworkNotificationContext;
+
+export interface ArtistArtworkNotification extends UserNotificationBase {
+  cause: IdentityNotificationCause.ARTIST_ARTWORK_SUBMITTED;
+  data: ArtistArtworkNotificationData;
+}
+
 export type UserNotification =
+  | EncryptedMessageNotification
+  | ArtistArtworkNotification
+  | VotingCreditsReturnedNotification
+  | MemeCollaborationNotification
   | CompetitionLifecycleNotification
   | IdentitySubscriptionNotification
   | IdentityMentionNotification
@@ -247,4 +287,17 @@ export type UserNotification =
 export interface UserNotificationsResponse {
   readonly notifications: UserNotification[];
   readonly total_unread: number;
+}
+
+export interface MemeCollaborationNotificationData {
+  artwork_name?: string;
+  event_type: 'INVITED' | 'ACCEPTED' | 'CANCELLED';
+  drop_id: string;
+  wave_id: string;
+  actor_id: string;
+  invitation_id: string;
+}
+export interface MemeCollaborationNotification extends UserNotificationBase {
+  cause: IdentityNotificationCause.MEME_COLLABORATION;
+  data: MemeCollaborationNotificationData;
 }

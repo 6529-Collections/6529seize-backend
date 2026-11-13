@@ -41,6 +41,17 @@ test('low-control audit grants only the existing archive prefix and preserves co
 });
 
 test('catalog log subscriptions form one deterministic acyclic chain without changing their resource contract', () => {
+  const retainedFunctions = new Set<string>(
+    JSON.parse(
+      readFileSync(
+        new URL('../retained-producers.json', import.meta.url),
+        'utf8'
+      )
+    ).services.flatMap(
+      (service: { verification_targets: string[] }) =>
+        service.verification_targets
+    )
+  );
   for (const env of ['prod', 'staging']) {
     const resources = JSON.parse(
       readFileSync(new URL(`../source-${env}.json`, import.meta.url), 'utf8')
@@ -78,7 +89,9 @@ test('catalog log subscriptions form one deterministic acyclic chain without cha
           Properties: {
             DestinationArn: { 'Fn::GetAtt': ['LogRelay', 'Arn'] },
             LogGroupName: `/aws/lambda/${name}`,
-            FilterPattern: '"6529.ops.error.v1"'
+            FilterPattern: retainedFunctions.has(name)
+              ? '"6529.ops.error.v1"'
+              : '?"6529.ops.error.v1" ?"6529.ops.loop-health.v1"'
           }
         },
         `${env}: ${id}`
@@ -106,14 +119,14 @@ test('NFT refresher throttling requires three breaching minutes out of five whil
     assert.equal(throttles.Threshold, 1);
     assert.equal(throttles.ComparisonOperator, 'GreaterThanOrEqualToThreshold');
     assert.equal(throttles.TreatMissingData, 'notBreaching');
-    assert.deepEqual(throttles.AlarmActions, {
-      'Fn::If': ['HasAlarmTopic', [{ Ref: 'ExistingAlarmTopicArn' }], []]
-    });
+    assert.deepEqual(throttles.AlarmActions, []);
     assert.equal(errors.MetricName, 'Errors');
     assert.equal(errors.Period, 60);
     assert.equal(errors.EvaluationPeriods, 1);
     assert.equal(errors.Threshold, 1);
-    assert.deepEqual(errors.AlarmActions, throttles.AlarmActions);
+    assert.deepEqual(errors.AlarmActions, {
+      'Fn::If': ['HasAlarmTopic', [{ Ref: 'ExistingAlarmTopicArn' }], []]
+    });
 
     // This exception must not weaken other services or monitoring itself.
     for (const [id, resource] of Object.entries(resources) as [
@@ -126,7 +139,8 @@ test('NFT refresher throttling requires three breaching minutes out of five whil
           'waveScoreRefreshLoopThrottles',
           'subscriptionCoverageReconciliationLoopThrottles',
           'nftsLoopThrottles',
-          'releaseNotesGenerationLoopThrottles'
+          'releaseNotesGenerationLoopThrottles',
+          'transactionsProcessingLoopThrottles'
         ].includes(id) &&
         resource.Type === 'AWS::CloudWatch::Alarm' &&
         resource.Properties.Namespace === 'AWS/Lambda'
@@ -138,7 +152,57 @@ test('NFT refresher throttling requires three breaching minutes out of five whil
   }
 });
 
-test('overlapping scheduled workers qualify sustained throttles without delaying invocation failures or changing notification actions', () => {
+test('transaction processing retains five-minute raw contention qualification and independent error actions', () => {
+  for (const env of ['prod', 'staging']) {
+    const resources = JSON.parse(
+      readFileSync(new URL(`../source-${env}.json`, import.meta.url), 'utf8')
+    ).Resources;
+    const throttles = resources.transactionsProcessingLoopThrottles.Properties;
+    const errors = resources.transactionsProcessingLoopErrors.Properties;
+    assert.deepEqual(throttles, {
+      AlarmName: {
+        'Fn::Sub':
+          'seize-monitoring-${Environment}-transactionsProcessingLoop-Throttles'
+      },
+      Namespace: 'AWS/Lambda',
+      MetricName: 'Throttles',
+      Dimensions: [
+        { Name: 'FunctionName', Value: 'transactionsProcessingLoop' }
+      ],
+      Statistic: 'Sum',
+      Period: 60,
+      EvaluationPeriods: 5,
+      DatapointsToAlarm: 5,
+      Threshold: 1,
+      ComparisonOperator: 'GreaterThanOrEqualToThreshold',
+      TreatMissingData: 'notBreaching',
+      AlarmActions: []
+    });
+    // Replay the observed three-minute burst, plus shorter and sustained cases.
+    for (const { counts, expected } of [
+      { counts: [0, 0, 5, 5, 7], expected: false },
+      { counts: [0, 0, 0, 0, 100], expected: false },
+      { counts: [0, 1, 1, 1, 1], expected: false },
+      { counts: [1, 1, 0, 1, 1], expected: false },
+      { counts: [1, 1, 1, 1, 1], expected: true }
+    ]) {
+      const breachingMinutes: number = counts.filter(
+        (count) => count >= throttles.Threshold
+      ).length;
+      assert.equal(breachingMinutes >= throttles.DatapointsToAlarm, expected);
+    }
+    assert.equal(errors.MetricName, 'Errors');
+    assert.equal(errors.Period, 60);
+    assert.equal(errors.EvaluationPeriods, 1);
+    assert.equal(errors.DatapointsToAlarm, undefined);
+    assert.equal(errors.Threshold, 1);
+    assert.deepEqual(errors.AlarmActions, {
+      'Fn::If': ['HasAlarmTopic', [{ Ref: 'ExistingAlarmTopicArn' }], []]
+    });
+  }
+});
+
+test('overlapping workers retain raw throttle qualification while processing-health monitoring owns notifications', () => {
   for (const env of ['prod', 'staging']) {
     const resources = JSON.parse(
       readFileSync(new URL(`../source-${env}.json`, import.meta.url), 'utf8')
@@ -160,15 +224,15 @@ test('overlapping scheduled workers qualify sustained throttles without delaying
         Threshold: 1,
         ComparisonOperator: 'GreaterThanOrEqualToThreshold',
         TreatMissingData: 'notBreaching',
-        AlarmActions: {
-          'Fn::If': ['HasAlarmTopic', [{ Ref: 'ExistingAlarmTopicArn' }], []]
-        }
+        AlarmActions: []
       });
       assert.equal(errors.MetricName, 'Errors');
       assert.equal(errors.EvaluationPeriods, 1);
       assert.equal(errors.DatapointsToAlarm, undefined);
       assert.equal(errors.Threshold, 1);
-      assert.deepEqual(errors.AlarmActions, throttles.AlarmActions);
+      assert.deepEqual(errors.AlarmActions, {
+        'Fn::If': ['HasAlarmTopic', [{ Ref: 'ExistingAlarmTopicArn' }], []]
+      });
     }
     assert.equal(resources.LogRelayErrors.Properties.EvaluationPeriods, 1);
     assert.equal(
@@ -178,7 +242,7 @@ test('overlapping scheduled workers qualify sustained throttles without delaying
   }
 });
 
-test('release-note throttles require sustained contention while errors stay immediate and direct email actions remain', () => {
+test('release-note contention uses processing-health routing while errors retain immediate email actions', () => {
   const prod = JSON.parse(
     readFileSync(new URL('../source-prod.json', import.meta.url), 'utf8')
   ).Resources;
@@ -202,9 +266,7 @@ test('release-note throttles require sustained contention while errors stay imme
     Threshold: 1,
     ComparisonOperator: 'GreaterThanOrEqualToThreshold',
     TreatMissingData: 'notBreaching',
-    AlarmActions: {
-      'Fn::If': ['HasAlarmTopic', [{ Ref: 'ExistingAlarmTopicArn' }], []]
-    }
+    AlarmActions: []
   });
   const error = prod.releaseNotesGenerationLoopErrors.Properties;
   assert.equal(error.MetricName, 'Errors');
@@ -212,7 +274,9 @@ test('release-note throttles require sustained contention while errors stay imme
   assert.equal(error.EvaluationPeriods, 1);
   assert.equal(error.DatapointsToAlarm, undefined);
   assert.equal(error.Threshold, 1);
-  assert.deepEqual(error.AlarmActions, throttle.AlarmActions);
+  assert.deepEqual(error.AlarmActions, {
+    'Fn::If': ['HasAlarmTopic', [{ Ref: 'ExistingAlarmTopicArn' }], []]
+  });
   assert.equal(prod.LogRelayErrors.Properties.EvaluationPeriods, 1);
   assert.equal(prod.RelayDeadLettersAlarm.Properties.EvaluationPeriods, 1);
 });
@@ -254,7 +318,9 @@ test('wave throttling is sustained while queue backlog and dead letters have ind
       assert.equal(alarm.EvaluationPeriods, deadLetters ? 1 : 5);
       assert.equal(alarm.DatapointsToAlarm, deadLetters ? undefined : 3);
       assert.equal(alarm.TreatMissingData, 'notBreaching');
-      assert.deepEqual(alarm.AlarmActions, throttles.AlarmActions);
+      assert.deepEqual(alarm.AlarmActions, {
+        'Fn::If': ['HasAlarmTopic', [{ Ref: 'ExistingAlarmTopicArn' }], []]
+      });
     }
     const worker = readFileSync(
       new URL(
@@ -361,7 +427,13 @@ test('source catalog coverage is complete and monitoring delivery has no applica
     const coverage = JSON.parse(
       readFileSync(new URL(`../coverage-${env}.json`, import.meta.url), 'utf8')
     );
-    const targets: string[] = catalog.services
+    const retained = JSON.parse(
+      readFileSync(
+        new URL('../retained-producers.json', import.meta.url),
+        'utf8'
+      )
+    );
+    const targets: string[] = [...catalog.services, ...retained.services]
       .filter((s: { allowed_environments: string[] }) =>
         s.allowed_environments.includes(env)
       )
@@ -369,8 +441,10 @@ test('source catalog coverage is complete and monitoring delivery has no applica
         (s: { verification_targets: string[] }) => s.verification_targets
       );
     assert.deepEqual(
-      coverage.services.flatMap((s: { functions: string[] }) => s.functions),
-      targets
+      coverage.services
+        .flatMap((s: { functions: string[] }) => s.functions)
+        .sort((left: string, right: string) => left.localeCompare(right)),
+      targets.sort((left, right) => left.localeCompare(right))
     );
     const filters = Object.values(source.Resources).filter(
       (r: unknown) =>
@@ -500,5 +574,90 @@ test('archive logging and encrypted fallback preserve narrowly scoped delivery p
       JSON.stringify(write.Condition.ArnEquals).includes('*'),
       false
     );
+  }
+});
+
+test('NFT incidents use completed outcomes, sample gates, sustained failures and observed-success recovery', () => {
+  for (const environment of ['prod', 'staging']) {
+    const resources = JSON.parse(
+      readFileSync(
+        new URL(`../source-${environment}.json`, import.meta.url),
+        'utf8'
+      )
+    ).Resources;
+    for (const provider of [
+      'SUPERRARE',
+      'OPENSEA',
+      'FOUNDATION',
+      'MANIFOLD',
+      'TRANSIENT',
+      'GAMMAIO'
+    ]) {
+      for (const kind of ['FailureRate', 'NewUnavailableSurge']) {
+        const alarm = resources[`NftRefresh${provider}${kind}`].Properties;
+        assert.equal(alarm.TreatMissingData, 'ignore');
+        assert.equal(alarm.EvaluationPeriods, kind === 'FailureRate' ? 3 : 1);
+        assert.deepEqual(alarm.OKActions, alarm.AlarmActions);
+        const inputs = alarm.Metrics.filter(
+          (metric: { MetricStat?: unknown }) => metric.MetricStat
+        );
+        for (const input of inputs) {
+          assert.equal(
+            input.MetricStat.Period,
+            kind === 'FailureRate' ? 300 : 900
+          );
+          assert.equal(
+            input.MetricStat.Metric.Namespace,
+            '6529/NftLinkRefresher'
+          );
+          assert.deepEqual(input.MetricStat.Metric.Dimensions, [
+            { Name: 'Environment', Value: { Ref: 'Environment' } },
+            { Name: 'Provider', Value: provider }
+          ]);
+        }
+        const expression = alarm.Metrics.at(-1).Expression;
+        assert.equal(
+          expression,
+          kind === 'FailureRate'
+            ? 'IF((s+f)>=20,IF(100*f/(s+f)>=5,1,0))'
+            : 'IF((c>=20) AND (((n>=5 AND 100*n/c>=10) OR p>=5) OR s>0),IF((n>=5 AND 100*n/c>=10) OR p>=5,1,0))'
+        );
+      }
+    }
+    const body = JSON.parse(
+      resources.NftRefreshDashboard.Properties.DashboardBody['Fn::Sub']
+    );
+    assert.equal(body.widgets.length, 12);
+    for (const widget of body.widgets) {
+      assert.equal(widget.properties.region, '${AWS::Region}');
+      assert.equal(widget.properties.accountId, '${AWS::AccountId}');
+      for (const metric of widget.properties.metrics) {
+        assert.equal(metric.length, 6);
+        assert.equal(metric[0], '6529/NftLinkRefresher');
+        assert.equal(metric[4], 'Provider');
+      }
+    }
+    assert.equal(resources.NftRefreshAge.Properties.Threshold, 1800);
+    assert.equal(resources.NftRefreshDeadLetters.Properties.Threshold, 1);
+    assert.equal(
+      resources.nftLinkRefresherLoopErrors.Properties.EvaluationPeriods,
+      1
+    );
+  }
+});
+
+test('retired competition migrator has no deployment or monitoring registration', () => {
+  const name = 'competitionMigrationLoop';
+  const catalog = JSON.parse(readFileSync(new URL('../../../src/config/deploy-services.json', import.meta.url), 'utf8'));
+  const retained = JSON.parse(readFileSync(new URL('../retained-producers.json', import.meta.url), 'utf8'));
+  assert.equal(catalog.services.some((service: { name: string }) => service.name === name), false);
+  assert.equal(retained.services.some((service: { name: string }) => service.name === name), false);
+  for (const env of ['prod', 'staging']) {
+    const source = JSON.parse(readFileSync(new URL(`../source-${env}.json`, import.meta.url), 'utf8'));
+    const monitor = JSON.parse(readFileSync(new URL(`../monitoring-${env}.json`, import.meta.url), 'utf8'));
+    const coverage = JSON.parse(readFileSync(new URL(`../coverage-${env}.json`, import.meta.url), 'utf8'));
+    assert.equal(coverage.services.some((service: { service: string }) => service.service === name), false);
+    assert.equal(JSON.stringify(source).includes(name), false);
+    assert.equal(JSON.stringify(monitor).includes(name), false);
   }
 });

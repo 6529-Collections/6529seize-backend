@@ -23,37 +23,18 @@ export class AppFeatures {
     return this.isFeatureEnabled('XTDH');
   }
 
+  /**
+   * Large viewer group lists are read from viewer_group_set_members by their
+   * hash instead of travelling in each statement (waves/viewer-group-sets).
+   */
+  public isViewerGroupSetTableEnabled(): boolean {
+    return this.isFeatureEnabled('VIEWER_GROUP_SET_TABLE');
+  }
+
   public isProfileCmsWalletGalleryEnabled(): boolean {
     return (
       (process.env.FEATURE_PROFILE_CMS_WALLET_GALLERY ?? 'true') === 'true'
     );
-  }
-
-  public isUnifiedCompetitionReadsEnabled(): boolean {
-    return this.isFeatureEnabled('UNIFIED_COMPETITION_READS');
-  }
-
-  public isNativeCompetitionWritesEnabled(): boolean {
-    return this.isFeatureEnabled('NATIVE_COMPETITION_WRITES');
-  }
-
-  public isNativeCompetitionExecutionEnabled(): boolean {
-    return this.isFeatureEnabled('NATIVE_COMPETITION_EXECUTION');
-  }
-
-  public isNativeCompetitionHubCreationEnabled(): boolean {
-    return this.isFeatureEnabled('NATIVE_COMPETITION_HUB_CREATION');
-  }
-
-  public isLegacyCompetitionShadowCompareEnabled(): boolean {
-    return this.isFeatureEnabled('LEGACY_COMPETITION_SHADOW_COMPARE');
-  }
-
-  public getLegacyCompetitionShadowSampleRate(): number {
-    const value = Number(
-      process.env.COMPETITION_LEGACY_SHADOW_SAMPLE_RATE ?? '0'
-    );
-    return Number.isFinite(value) && value >= 0 && value <= 1 ? value : 0;
   }
 }
 

@@ -1,11 +1,22 @@
+import {
+  CompetitionScoreResetEntity,
+  CompetitionScoreResetStateEntity
+} from '@/entities/ICompetitionScoreReset';
+import {
+  VotingCreditReleaseEntity,
+  VotingCreditReleaseRecipientEntity
+} from '@/entities/IVotingCreditRelease';
 import { pushNotificationCancellationsDb } from '@/notifications/push-notification-cancellations.db';
 jest.mock('@/notifications/push-notification-cancellations.db', () => ({
   pushNotificationCancellationsDb: {
     deleteExpired: jest.fn().mockResolvedValue(undefined)
   }
 }));
+jest.mock('@/waves/viewer-group-sets', () => ({
+  deleteUnusedViewerGroupSets: jest.fn().mockResolvedValue(0)
+}));
 import { doInDbContext } from '@/secrets';
-import { competitionRepository } from '@/competitions/competition.repository';
+import { deleteUnusedViewerGroupSets } from '@/waves/viewer-group-sets';
 import { contentModerationDb } from '@/content-moderation/content-moderation.db';
 import { moderationReviewDb } from '@/content-moderation/moderation-review.db';
 import * as Entities from '@/entities/entities';
@@ -15,8 +26,28 @@ import {
   WalletTransferPairDailyEntity,
   WalletTransferWalletDailyEntity
 } from '@/entities/IWalletTransferAnalysis';
+import { MarketDepthPublicationLockEntity } from '@/entities/IMarketDepthPublicationLock';
+import * as compatibilityFacade from '@/competitions/legacy-competition-get-facade';
+jest.mock('@/competitions/legacy-competition-get-facade', () => ({
+  installLegacyCompetitionGetFacade: jest.fn()
+}));
+import { assertCompetitionSchemaSyncSafe } from '@/competitions/retired-competition-storage';
+jest.mock('@/competitions/retired-competition-storage', () => ({
+  assertCompetitionSchemaSyncSafe: jest.fn()
+}));
 import { handler } from './index';
+import { synchronizeSchemaBounded } from '@/db/bounded-schema-sync';
+import { widenGlobalTdhHistoryBeforeSchemaSync } from './global-tdh-history-schema';
+jest.mock('./global-tdh-history-schema', () => ({
+  widenGlobalTdhHistoryBeforeSchemaSync: jest.fn().mockResolvedValue(undefined)
+}));
+import { DropEntity } from '@/entities/IDrop';
+import { applyWaveScoreInputIndexSchema } from './wave-score-input-index-schema';
+jest.mock('./wave-score-input-index-schema', () => ({
+  applyWaveScoreInputIndexSchema: jest.fn().mockResolvedValue(1)
+}));
 import { getDataSource } from '@/db';
+import { CompetitionLifecycleEventEntity } from '@/entities/ICompetition';
 import { moderationRetentionSchemaDb } from './moderation-retention-schema.db';
 import { applyClaimsMediaUploadSchema } from './claims-media-schema';
 import { NftLinkEntity } from '@/entities/INftLink';
@@ -25,9 +56,26 @@ jest.mock('@/db', () => {
   const synchronize = jest.fn().mockResolvedValue(undefined);
   return { getDataSource: () => ({ synchronize }) };
 });
+// The bounded sync has its own tests; here it stands for synchronize().
+jest.mock('@/db/bounded-schema-sync', () => ({
+  synchronizeSchemaBounded: jest.fn(
+    (dataSource: { synchronize: () => Promise<void> }) =>
+      dataSource.synchronize()
+  )
+}));
 
 jest.mock('./nft-link-page-retry-schema', () => ({
   applyNftLinkPageRetrySchema: jest.fn().mockResolvedValue(1)
+}));
+
+import { runE2eeBlobMigrationScope } from './e2ee-blob-migration-scope';
+import { E2eeBlobChunkEntity, E2eeBlobEntity } from '@/entities/IE2ee';
+jest.mock('./e2ee-blob-migration-scope', () => ({
+  ...jest.requireActual('./e2ee-blob-migration-scope'),
+  runE2eeBlobMigrationScope: jest.fn().mockResolvedValue({
+    mode: 'dry-run',
+    examined: 0
+  })
 }));
 
 jest.mock('./claims-media-schema', () => ({
@@ -46,11 +94,6 @@ jest.mock('@/secrets', () => ({
 }));
 jest.mock('@/app-features', () => ({
   appFeatures: { isDbMigrateDisabled: () => false }
-}));
-jest.mock('@/competitions/competition.repository', () => ({
-  competitionRepository: {
-    backfillLegacyMappings: jest.fn().mockResolvedValue(0)
-  }
 }));
 jest.mock('@/content-moderation/content-moderation.db', () => ({
   contentModerationDb: {
@@ -90,6 +133,11 @@ describe('dbMigrationsLoop explicit schema scope', () => {
   });
 
   it.each([
+    'competition-history-preparation',
+    'competition-runtime-schema',
+    'competition-runtime-retirement',
+    'wave-hub-configuration-preparation',
+    'wave-hub-configuration-finalize',
     'membership-refresh',
     'membership-evaluator-index',
     'membership-runtime-control'
@@ -98,6 +146,60 @@ describe('dbMigrationsLoop explicit schema scope', () => {
       'Unsupported database schema scope'
     );
     expect(doInDbContext).not.toHaveBeenCalled();
+  });
+
+  it('runs the operator-only E2EE blob migration without synchronization or maintenance', async () => {
+    const event = { schema_scope: 'e2ee-blobs-to-s3', live: true };
+    await expect(invoke(event)).resolves.toEqual({
+      schema_scope: 'e2ee-blobs-to-s3',
+      mode: 'dry-run',
+      examined: 0
+    });
+    expect(doInDbContext).toHaveBeenCalledWith(expect.any(Function), {
+      logger: expect.anything(),
+      entities: [E2eeBlobEntity, E2eeBlobChunkEntity],
+      syncEntities: false,
+      skipRedis: true
+    });
+    expect(runE2eeBlobMigrationScope).toHaveBeenCalledWith(event);
+    expect(getDataSource().synchronize).not.toHaveBeenCalled();
+    expect(migrations.getInstance).not.toHaveBeenCalled();
+    expect(moderationReviewDb.retain).not.toHaveBeenCalled();
+  });
+
+  it('never runs the E2EE blob migration from the schedule', async () => {
+    await expect(
+      invoke({ ...scheduledEvent, schema_scope: 'e2ee-blobs-to-s3' })
+    ).rejects.toThrow('Unsupported database schema scope');
+    expect(runE2eeBlobMigrationScope).not.toHaveBeenCalled();
+  });
+
+  it('adds only the online wave score index without synchronization or maintenance', async () => {
+    await expect(
+      invoke({ schema_scope: 'wave-score-input-index' })
+    ).resolves.toEqual({
+      schema_scope: 'wave-score-input-index'
+    });
+    expect(doInDbContext).toHaveBeenCalledWith(expect.any(Function), {
+      logger: expect.anything(),
+      entities: [DropEntity],
+      syncEntities: false,
+      skipRedis: true
+    });
+    expect(applyWaveScoreInputIndexSchema).toHaveBeenCalledTimes(1);
+    expect(getDataSource().synchronize).not.toHaveBeenCalled();
+    expect(migrations.getInstance).not.toHaveBeenCalled();
+    expect(moderationReviewDb.retain).not.toHaveBeenCalled();
+  });
+
+  it('propagates an online index failure without acknowledging the schema scope', async () => {
+    jest
+      .mocked(applyWaveScoreInputIndexSchema)
+      .mockRejectedValueOnce(new Error('index busy'));
+    await expect(
+      invoke({ schema_scope: 'wave-score-input-index' })
+    ).rejects.toThrow('index busy');
+    expect(getDataSource().synchronize).not.toHaveBeenCalled();
   });
 
   it('executes only the inspected NFT retry schema and skips all unrelated work', async () => {
@@ -113,7 +215,6 @@ describe('dbMigrationsLoop explicit schema scope', () => {
     expect(applyNftLinkPageRetrySchema).toHaveBeenCalledTimes(1);
     expect(applyClaimsMediaUploadSchema).not.toHaveBeenCalled();
     expect(migrations.getInstance).not.toHaveBeenCalled();
-    expect(competitionRepository.backfillLegacyMappings).not.toHaveBeenCalled();
     expect(
       contentModerationDb.deleteExpiredPrePublicationChecks
     ).not.toHaveBeenCalled();
@@ -129,7 +230,6 @@ describe('dbMigrationsLoop explicit schema scope', () => {
       invoke({ schema_scope: 'nft-link-page-retry' })
     ).rejects.toThrow('synthetic drift');
     expect(migrations.getInstance).not.toHaveBeenCalled();
-    expect(competitionRepository.backfillLegacyMappings).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -141,7 +241,23 @@ describe('dbMigrationsLoop explicit schema scope', () => {
         WalletTransferWalletDailyEntity
       ]
     },
-    { scope: 'claims-media-upload', entities: [MintingClaimEntity] }
+    { scope: 'claims-media-upload', entities: [MintingClaimEntity] },
+    {
+      scope: 'competition-score-resets',
+      entities: [CompetitionScoreResetEntity, CompetitionScoreResetStateEntity]
+    },
+    {
+      scope: 'competition-lifecycle-events',
+      entities: [CompetitionLifecycleEventEntity]
+    },
+    {
+      scope: 'voting-credit-returns',
+      entities: [VotingCreditReleaseEntity, VotingCreditReleaseRecipientEntity]
+    },
+    {
+      scope: 'market-depth-publication-lock',
+      entities: [MarketDepthPublicationLockEntity]
+    }
   ])(
     'synchronizes only the $scope entities and skips all unrelated work',
     async ({ scope, entities }) => {
@@ -161,15 +277,38 @@ describe('dbMigrationsLoop explicit schema scope', () => {
       expect(applyNftLinkPageRetrySchema).not.toHaveBeenCalled();
       expect(migrations.getInstance).not.toHaveBeenCalled();
       expect(
-        competitionRepository.backfillLegacyMappings
-      ).not.toHaveBeenCalled();
-      expect(
         contentModerationDb.deleteExpiredPrePublicationChecks
       ).not.toHaveBeenCalled();
       expect(moderationReviewDb.retain).not.toHaveBeenCalled();
       expect(moderationRetentionSchemaDb.missingColumns).not.toHaveBeenCalled();
     }
   );
+
+  it('stops full sync before destructive column removal when operator cleanup is pending', async () => {
+    jest
+      .mocked(assertCompetitionSchemaSyncSafe)
+      .mockRejectedValueOnce(new Error('operator cleanup required'));
+    await expect(invoke({ schema_scope: 'full' })).rejects.toThrow(
+      'operator cleanup required'
+    );
+    expect(getDataSource().synchronize).not.toHaveBeenCalled();
+    expect(
+      compatibilityFacade.installLegacyCompetitionGetFacade
+    ).not.toHaveBeenCalled();
+    expect(migrations.getInstance).not.toHaveBeenCalled();
+  });
+
+  it('stops before TypeORM sync if widening global TDH history fails', async () => {
+    jest
+      .mocked(widenGlobalTdhHistoryBeforeSchemaSync)
+      .mockRejectedValueOnce(new Error('TDH history table busy'));
+
+    await expect(invoke({ schema_scope: 'full' })).rejects.toThrow(
+      'TDH history table busy'
+    );
+    expect(synchronizeSchemaBounded).not.toHaveBeenCalled();
+    expect(migrations.getInstance).not.toHaveBeenCalled();
+  });
 
   it.each([undefined, {}, { schema_scope: 'full' }])(
     'preserves full manual migration behavior for %j',
@@ -180,15 +319,34 @@ describe('dbMigrationsLoop explicit schema scope', () => {
         entities: Object.values(Entities),
         syncEntities: false
       });
+      expect(assertCompetitionSchemaSyncSafe).toHaveBeenCalledTimes(1);
+      expect(widenGlobalTdhHistoryBeforeSchemaSync).toHaveBeenCalledTimes(1);
+      expect(
+        jest.mocked(widenGlobalTdhHistoryBeforeSchemaSync).mock
+          .invocationCallOrder[0]
+      ).toBeLessThan(
+        jest.mocked(getDataSource().synchronize).mock.invocationCallOrder[0]
+      );
       expect(getDataSource().synchronize).toHaveBeenCalledTimes(1);
+      expect(applyWaveScoreInputIndexSchema).toHaveBeenCalledTimes(1);
+      expect(
+        compatibilityFacade.installLegacyCompetitionGetFacade
+      ).toHaveBeenCalledTimes(1);
       expect(migrations.getInstance).toHaveBeenCalledWith(true, {
         config: './database.json',
         env: 'main'
       });
       expect(migrations.up).toHaveBeenCalledTimes(1);
       expect(
-        competitionRepository.backfillLegacyMappings
-      ).toHaveBeenCalledTimes(1);
+        jest.mocked(getDataSource().synchronize).mock.invocationCallOrder[0]
+      ).toBeLessThan(
+        jest.mocked(compatibilityFacade.installLegacyCompetitionGetFacade).mock
+          .invocationCallOrder[0]
+      );
+      expect(
+        jest.mocked(compatibilityFacade.installLegacyCompetitionGetFacade).mock
+          .invocationCallOrder[0]
+      ).toBeLessThan(migrations.up.mock.invocationCallOrder[0]);
       expect(
         contentModerationDb.deleteExpiredPrePublicationChecks
       ).toHaveBeenCalledTimes(1);
@@ -213,11 +371,10 @@ describe('dbMigrationsLoop explicit schema scope', () => {
       expect(
         pushNotificationCancellationsDb.deleteExpired
       ).toHaveBeenCalledTimes(1);
+      // Scheduled maintenance also cleans up unused viewer group sets.
+      expect(deleteUnusedViewerGroupSets).toHaveBeenCalledTimes(1);
       expect(getDataSource().synchronize).not.toHaveBeenCalled();
       expect(migrations.getInstance).not.toHaveBeenCalled();
-      expect(
-        competitionRepository.backfillLegacyMappings
-      ).toHaveBeenCalledTimes(1);
       expect(
         contentModerationDb.deleteExpiredPrePublicationChecks
       ).toHaveBeenCalledTimes(1);
@@ -236,9 +393,6 @@ describe('dbMigrationsLoop explicit schema scope', () => {
         'content_moderation_audit_log.item_id'
       ]);
     await expect(invoke(scheduledEvent)).resolves.toBeUndefined();
-    expect(competitionRepository.backfillLegacyMappings).toHaveBeenCalledTimes(
-      1
-    );
     expect(
       contentModerationDb.deleteExpiredPrePublicationChecks
     ).toHaveBeenCalledTimes(1);
@@ -262,6 +416,71 @@ describe('dbMigrationsLoop explicit schema scope', () => {
     );
   });
 
+  describe('destructive schema plan acknowledgement', () => {
+    const approved = 'c'.repeat(64);
+
+    it('passes an approved plan hash to the full schema sync', async () => {
+      await expect(
+        invoke({
+          schema_scope: 'full',
+          approved_destructive_plan_sha256: approved
+        })
+      ).resolves.toBeUndefined();
+      expect(synchronizeSchemaBounded).toHaveBeenCalledWith(getDataSource(), {
+        acknowledgedDestructivePlanSha256: approved
+      });
+    });
+
+    it('passes no acknowledgement when the payload has none', async () => {
+      await invoke({ schema_scope: 'full' });
+      expect(synchronizeSchemaBounded).toHaveBeenCalledWith(getDataSource(), {
+        acknowledgedDestructivePlanSha256: null
+      });
+    });
+
+    it('passes an approved plan hash to an entity-scoped sync', async () => {
+      await expect(
+        invoke({
+          schema_scope: 'voting-credit-returns',
+          approved_destructive_plan_sha256: approved
+        })
+      ).resolves.toEqual({ schema_scope: 'voting-credit-returns' });
+      expect(doInDbContext).toHaveBeenCalledWith(expect.any(Function), {
+        logger: expect.anything(),
+        entities: [
+          VotingCreditReleaseEntity,
+          VotingCreditReleaseRecipientEntity
+        ],
+        syncEntities: true,
+        skipRedis: true,
+        schemaSync: { acknowledgedDestructivePlanSha256: approved }
+      });
+    });
+
+    it.each(['', 'C'.repeat(64), 'c'.repeat(63), null, 42, {}])(
+      'rejects acknowledgement %j before opening a database context',
+      async (value) => {
+        await expect(
+          invoke({
+            schema_scope: 'full',
+            approved_destructive_plan_sha256: value
+          })
+        ).rejects.toThrow('approved_destructive_plan_sha256 must be');
+        expect(doInDbContext).not.toHaveBeenCalled();
+      }
+    );
+
+    it('rejects an acknowledgement on a scheduled event', async () => {
+      await expect(
+        invoke({
+          ...scheduledEvent,
+          approved_destructive_plan_sha256: approved
+        })
+      ).rejects.toThrow('approved_destructive_plan_sha256 must be');
+      expect(doInDbContext).not.toHaveBeenCalled();
+    });
+  });
+
   it.each(['', 'unknown', null, undefined, {}, 42])(
     'rejects unknown explicit scope %j before opening a database context',
     async (scope) => {
@@ -275,9 +494,17 @@ describe('dbMigrationsLoop explicit schema scope', () => {
   it.each([
     'full',
     'maintenance',
+    'nft-history-events',
+    'nft-history-replay',
+    'competition-score-resets',
+    'competition-score-resets-backfill',
     'wallet-transfer-analysis',
     'claims-media-upload',
     'nft-link-page-retry',
+    'market-depth-publication-lock',
+    'voting-credit-returns',
+    'wave-hub-configuration-preparation',
+    'wave-hub-configuration-finalize',
     'membership-refresh',
     'membership-evaluator-index',
     'membership-runtime-control'
@@ -288,16 +515,46 @@ describe('dbMigrationsLoop explicit schema scope', () => {
     expect(doInDbContext).not.toHaveBeenCalled();
   });
 
-  it.each(['wallet-transfer-analysis', 'claims-media-upload'])(
+  it.each([
+    'wallet-transfer-analysis',
+    'claims-media-upload',
+    'market-depth-publication-lock',
+    'voting-credit-returns'
+  ])(
     'propagates %s schema synchronization failure without starting maintenance',
     async (scope) => {
       const failure = new Error('Synthetic schema failure');
       jest.mocked(doInDbContext).mockRejectedValueOnce(failure);
       await expect(invoke({ schema_scope: scope })).rejects.toBe(failure);
       expect(migrations.getInstance).not.toHaveBeenCalled();
-      expect(
-        competitionRepository.backfillLegacyMappings
-      ).not.toHaveBeenCalled();
     }
   );
+});
+
+it('syncs only the additive NFT history event table in its explicit scope', async () => {
+  jest.clearAllMocks();
+  await invoke({ schema_scope: 'nft-history-events' });
+  expect(doInDbContext).toHaveBeenCalledWith(
+    expect.any(Function),
+    expect.objectContaining({
+      entities: [Entities.NFTHistoryEventEntity],
+      syncEntities: true,
+      skipRedis: true
+    })
+  );
+  expect(getDataSource().synchronize).not.toHaveBeenCalled();
+});
+
+it('syncs only the replay job table in the explicit NFT history replay scope', async () => {
+  jest.clearAllMocks();
+  await invoke({ schema_scope: 'nft-history-replay' });
+  expect(doInDbContext).toHaveBeenCalledWith(
+    expect.any(Function),
+    expect.objectContaining({
+      entities: [Entities.NFTHistoryReplayJobEntity],
+      syncEntities: true,
+      skipRedis: true
+    })
+  );
+  expect(getDataSource().synchronize).not.toHaveBeenCalled();
 });

@@ -2,7 +2,9 @@
 import { Request } from 'express';
 import { ApiResponse } from '@/api/api-response';
 import { ApiActiveWaveVotesPage } from '@/api/generated/models/ApiActiveWaveVotesPage';
+import { ApiAllWavesPage } from '@/api/generated/models/ApiAllWavesPage';
 import { ApiArchiveProfileCmsPackageRequest } from '@/api/generated/models/ApiArchiveProfileCmsPackageRequest';
+import { ApiArtistArtworkAlert } from '@/api/generated/models/ApiArtistArtworkAlert';
 import { ApiArtworkDocumentationAssetLinkRequest } from '@/api/generated/models/ApiArtworkDocumentationAssetLinkRequest';
 import { ApiArtworkDocumentationAssetResponse } from '@/api/generated/models/ApiArtworkDocumentationAssetResponse';
 import { ApiArtworkDocumentationAvailableArtistRecord } from '@/api/generated/models/ApiArtworkDocumentationAvailableArtistRecord';
@@ -81,6 +83,7 @@ import { ApiCompetitionDecisionPage } from '@/api/generated/models/ApiCompetitio
 import { ApiCompetitionDistributionItemPage } from '@/api/generated/models/ApiCompetitionDistributionItemPage';
 import { ApiCompetitionDraftInput } from '@/api/generated/models/ApiCompetitionDraftInput';
 import { ApiCompetitionEntry } from '@/api/generated/models/ApiCompetitionEntry';
+import { ApiCompetitionEntryContextPage } from '@/api/generated/models/ApiCompetitionEntryContextPage';
 import { ApiCompetitionEntryPage } from '@/api/generated/models/ApiCompetitionEntryPage';
 import { ApiCompetitionEntryVotePage } from '@/api/generated/models/ApiCompetitionEntryVotePage';
 import { ApiCompetitionLeaderboardPage } from '@/api/generated/models/ApiCompetitionLeaderboardPage';
@@ -103,9 +106,13 @@ import { ApiDefaultCompetition } from '@/api/generated/models/ApiDefaultCompetit
 import { ApiDeleteEulaConsentRequest } from '@/api/generated/models/ApiDeleteEulaConsentRequest';
 import { ApiDeleteEulaConsentResponse } from '@/api/generated/models/ApiDeleteEulaConsentResponse';
 import { ApiDeleteMyWaveChatHistoryResponse } from '@/api/generated/models/ApiDeleteMyWaveChatHistoryResponse';
+import { ApiDeviceGrant } from '@/api/generated/models/ApiDeviceGrant';
+import { ApiDeviceSecurityNotice } from '@/api/generated/models/ApiDeviceSecurityNotice';
 import { ApiDmDropsUnreadCount } from '@/api/generated/models/ApiDmDropsUnreadCount';
 import { ApiDmUnreadSnapshot } from '@/api/generated/models/ApiDmUnreadSnapshot';
+import { ApiDrop } from '@/api/generated/models/ApiDrop';
 import { ApiDropAndWave } from '@/api/generated/models/ApiDropAndWave';
+import { ApiDropBookmarksStatus } from '@/api/generated/models/ApiDropBookmarksStatus';
 import { ApiDropBoostV2 } from '@/api/generated/models/ApiDropBoostV2';
 import { ApiDropCompetitionContext } from '@/api/generated/models/ApiDropCompetitionContext';
 import { ApiDropMetadataV2 } from '@/api/generated/models/ApiDropMetadataV2';
@@ -114,6 +121,9 @@ import { ApiDropPollsPage } from '@/api/generated/models/ApiDropPollsPage';
 import { ApiDropPollVoteRequest } from '@/api/generated/models/ApiDropPollVoteRequest';
 import { ApiDropPollVotersPage } from '@/api/generated/models/ApiDropPollVotersPage';
 import { ApiDropReactionV2 } from '@/api/generated/models/ApiDropReactionV2';
+import { ApiDropSearchPage } from '@/api/generated/models/ApiDropSearchPage';
+import { ApiDropSignedEvents } from '@/api/generated/models/ApiDropSignedEvents';
+import { ApiDropSignedEventsBatch } from '@/api/generated/models/ApiDropSignedEventsBatch';
 import { ApiDropsLeaderboardPageV2 } from '@/api/generated/models/ApiDropsLeaderboardPageV2';
 import { ApiDropV2 } from '@/api/generated/models/ApiDropV2';
 import { ApiDropV2Page } from '@/api/generated/models/ApiDropV2Page';
@@ -121,6 +131,47 @@ import { ApiDropV2PageWithoutCount } from '@/api/generated/models/ApiDropV2PageW
 import { ApiDropVoteEditLog } from '@/api/generated/models/ApiDropVoteEditLog';
 import { ApiDropVotersPage } from '@/api/generated/models/ApiDropVotersPage';
 import { ApiDropVoteSummary } from '@/api/generated/models/ApiDropVoteSummary';
+import { ApiE2eeAck } from '@/api/generated/models/ApiE2eeAck';
+import { ApiE2eeBackup } from '@/api/generated/models/ApiE2eeBackup';
+import { ApiE2eeBackupChunk } from '@/api/generated/models/ApiE2eeBackupChunk';
+import { ApiE2eeBackupChunkData } from '@/api/generated/models/ApiE2eeBackupChunkData';
+import { ApiE2eeBackupChunkPage } from '@/api/generated/models/ApiE2eeBackupChunkPage';
+import { ApiE2eeBackupChunkUpload } from '@/api/generated/models/ApiE2eeBackupChunkUpload';
+import { ApiE2eeBackupDeviceRequest } from '@/api/generated/models/ApiE2eeBackupDeviceRequest';
+import { ApiE2eeBackupStatus } from '@/api/generated/models/ApiE2eeBackupStatus';
+import { ApiE2eeBlob } from '@/api/generated/models/ApiE2eeBlob';
+import { ApiE2eeBlobChunk } from '@/api/generated/models/ApiE2eeBlobChunk';
+import { ApiE2eeClaimKeyPackagesRequest } from '@/api/generated/models/ApiE2eeClaimKeyPackagesRequest';
+import { ApiE2eeClaimKeyPackagesResponse } from '@/api/generated/models/ApiE2eeClaimKeyPackagesResponse';
+import { ApiE2eeCompactBackupRequest } from '@/api/generated/models/ApiE2eeCompactBackupRequest';
+import { ApiE2eeCreateBackupRequest } from '@/api/generated/models/ApiE2eeCreateBackupRequest';
+import { ApiE2eeCreateBlobRequest } from '@/api/generated/models/ApiE2eeCreateBlobRequest';
+import { ApiE2eeCreateGroupRequest } from '@/api/generated/models/ApiE2eeCreateGroupRequest';
+import { ApiE2eeDevice } from '@/api/generated/models/ApiE2eeDevice';
+import { ApiE2eeDeviceGroup } from '@/api/generated/models/ApiE2eeDeviceGroup';
+import { ApiE2eeDeviceLookupRequest } from '@/api/generated/models/ApiE2eeDeviceLookupRequest';
+import { ApiE2eeDeviceLookupResponse } from '@/api/generated/models/ApiE2eeDeviceLookupResponse';
+import { ApiE2eeEligibilityRequest } from '@/api/generated/models/ApiE2eeEligibilityRequest';
+import { ApiE2eeEligibilityResponse } from '@/api/generated/models/ApiE2eeEligibilityResponse';
+import { ApiE2eeGroup } from '@/api/generated/models/ApiE2eeGroup';
+import { ApiE2eeKeyPackageStatus } from '@/api/generated/models/ApiE2eeKeyPackageStatus';
+import { ApiE2eeLogItem } from '@/api/generated/models/ApiE2eeLogItem';
+import { ApiE2eeLogPage } from '@/api/generated/models/ApiE2eeLogPage';
+import { ApiE2eeMe } from '@/api/generated/models/ApiE2eeMe';
+import { ApiE2eeRegisterDeviceRequest } from '@/api/generated/models/ApiE2eeRegisterDeviceRequest';
+import { ApiE2eeRegisterLoginGrantDeviceRequest } from '@/api/generated/models/ApiE2eeRegisterLoginGrantDeviceRequest';
+import { ApiE2eeReport } from '@/api/generated/models/ApiE2eeReport';
+import { ApiE2eeReportHoldRequest } from '@/api/generated/models/ApiE2eeReportHoldRequest';
+import { ApiE2eeReportRequest } from '@/api/generated/models/ApiE2eeReportRequest';
+import { ApiE2eeRevokeDeviceRequest } from '@/api/generated/models/ApiE2eeRevokeDeviceRequest';
+import { ApiE2eeRosterRepairRequest } from '@/api/generated/models/ApiE2eeRosterRepairRequest';
+import { ApiE2eeSendMessageRequest } from '@/api/generated/models/ApiE2eeSendMessageRequest';
+import { ApiE2eeSendMessageResponse } from '@/api/generated/models/ApiE2eeSendMessageResponse';
+import { ApiE2eeSubmitEntryRequest } from '@/api/generated/models/ApiE2eeSubmitEntryRequest';
+import { ApiE2eeTrustAndSafetyReport } from '@/api/generated/models/ApiE2eeTrustAndSafetyReport';
+import { ApiE2eeTrustAndSafetyReportPage } from '@/api/generated/models/ApiE2eeTrustAndSafetyReportPage';
+import { ApiE2eeUploadKeyPackagesRequest } from '@/api/generated/models/ApiE2eeUploadKeyPackagesRequest';
+import { ApiE2eeWelcome } from '@/api/generated/models/ApiE2eeWelcome';
 import { ApiEulaConsent } from '@/api/generated/models/ApiEulaConsent';
 import { ApiGlobalRepCategoryGiversPage } from '@/api/generated/models/ApiGlobalRepCategoryGiversPage';
 import { ApiGlobalRepCategoryOverview } from '@/api/generated/models/ApiGlobalRepCategoryOverview';
@@ -130,6 +181,7 @@ import { ApiGlobalRepCategoryWaveContributorsPage } from '@/api/generated/models
 import { ApiGlobalRepCategoryWaveOverview } from '@/api/generated/models/ApiGlobalRepCategoryWaveOverview';
 import { ApiGlobalRepCategoryWavesPage } from '@/api/generated/models/ApiGlobalRepCategoryWavesPage';
 import { ApiGroupMembersPreviewRequest } from '@/api/generated/models/ApiGroupMembersPreviewRequest';
+import { ApiJoinedWavesPage } from '@/api/generated/models/ApiJoinedWavesPage';
 import { ApiMarketBatchCapabilities } from '@/api/generated/models/ApiMarketBatchCapabilities';
 import { ApiMarketBatchPreflight } from '@/api/generated/models/ApiMarketBatchPreflight';
 import { ApiMarketBatchPreflightRequest } from '@/api/generated/models/ApiMarketBatchPreflightRequest';
@@ -147,14 +199,20 @@ import { ApiMarketTradeOrder } from '@/api/generated/models/ApiMarketTradeOrder'
 import { ApiMediaResolveRequest } from '@/api/generated/models/ApiMediaResolveRequest';
 import { ApiMediaResolveResponse } from '@/api/generated/models/ApiMediaResolveResponse';
 import { ApiMemeCardDropMapping } from '@/api/generated/models/ApiMemeCardDropMapping';
+import { ApiMemeCollaborationInviteRequest } from '@/api/generated/models/ApiMemeCollaborationInviteRequest';
+import { ApiMemeCollaborationResponseRequest } from '@/api/generated/models/ApiMemeCollaborationResponseRequest';
+import { ApiMemeCollaborationState } from '@/api/generated/models/ApiMemeCollaborationState';
 import { ApiModerationAccess } from '@/api/generated/models/ApiModerationAccess';
 import { ApiModerationActionRequest } from '@/api/generated/models/ApiModerationActionRequest';
 import { ApiModerationCheckDetail } from '@/api/generated/models/ApiModerationCheckDetail';
 import { ApiModerationCheckPage } from '@/api/generated/models/ApiModerationCheckPage';
 import { ApiModerationCounts } from '@/api/generated/models/ApiModerationCounts';
+import { ApiModerationReviewCasePage } from '@/api/generated/models/ApiModerationReviewCasePage';
 import { ApiNftActivityPage } from '@/api/generated/models/ApiNftActivityPage';
 import { ApiNotificationsResponseV2 } from '@/api/generated/models/ApiNotificationsResponseV2';
+import { ApiNotificationsUnreadCountV2 } from '@/api/generated/models/ApiNotificationsUnreadCountV2';
 import { ApiOgMetadata } from '@/api/generated/models/ApiOgMetadata';
+import { ApiPinnedWaveOrder } from '@/api/generated/models/ApiPinnedWaveOrder';
 import { ApiProfileCmsAgentCandidateValidation } from '@/api/generated/models/ApiProfileCmsAgentCandidateValidation';
 import { ApiProfileCmsAgentDraft } from '@/api/generated/models/ApiProfileCmsAgentDraft';
 import { ApiProfileCmsAgentGrant } from '@/api/generated/models/ApiProfileCmsAgentGrant';
@@ -176,6 +234,8 @@ import { ApiProposalFrameResponse } from '@/api/generated/models/ApiProposalFram
 import { ApiPublishProfileCmsPackageRequest } from '@/api/generated/models/ApiPublishProfileCmsPackageRequest';
 import { ApiRefreshPushInstallationBadgeRequest } from '@/api/generated/models/ApiRefreshPushInstallationBadgeRequest';
 import { ApiRefreshPushInstallationBadgeResponse } from '@/api/generated/models/ApiRefreshPushInstallationBadgeResponse';
+import { ApiRegisterDeviceGrantRequest } from '@/api/generated/models/ApiRegisterDeviceGrantRequest';
+import { ApiRenameDeviceRequest } from '@/api/generated/models/ApiRenameDeviceRequest';
 import { ApiReviewProfileCmsAgentProposalRequest } from '@/api/generated/models/ApiReviewProfileCmsAgentProposalRequest';
 import { ApiRevokePushInstallationRequest } from '@/api/generated/models/ApiRevokePushInstallationRequest';
 import { ApiRevokePushInstallationResponse } from '@/api/generated/models/ApiRevokePushInstallationResponse';
@@ -184,16 +244,21 @@ import { ApiSaveEulaConsentRequest } from '@/api/generated/models/ApiSaveEulaCon
 import { ApiSaveEulaConsentResponse } from '@/api/generated/models/ApiSaveEulaConsentResponse';
 import { ApiSaveProfileCmsPackageDraftRequest } from '@/api/generated/models/ApiSaveProfileCmsPackageDraftRequest';
 import { ApiSetCompetitionVoteRequest } from '@/api/generated/models/ApiSetCompetitionVoteRequest';
+import { ApiSetDropReplyCollapseRequest } from '@/api/generated/models/ApiSetDropReplyCollapseRequest';
 import { ApiSubmitProfileCmsAgentProposalRequest } from '@/api/generated/models/ApiSubmitProfileCmsAgentProposalRequest';
 import { ApiSubscriptionCoverage } from '@/api/generated/models/ApiSubscriptionCoverage';
 import { ApiTdhRules } from '@/api/generated/models/ApiTdhRules';
+import { ApiUndiscoveredDrops } from '@/api/generated/models/ApiUndiscoveredDrops';
 import { ApiUnpublishProfileCmsPackageRequest } from '@/api/generated/models/ApiUnpublishProfileCmsPackageRequest';
 import { ApiUpdateCompetitionRequest } from '@/api/generated/models/ApiUpdateCompetitionRequest';
+import { ApiUpdatePinnedWaveOrder } from '@/api/generated/models/ApiUpdatePinnedWaveOrder';
 import { ApiUpdateProfilePreferences } from '@/api/generated/models/ApiUpdateProfilePreferences';
+import { ApiUpdateWaveHubRequest } from '@/api/generated/models/ApiUpdateWaveHubRequest';
 import { ApiValidateProfileCmsAgentCandidateRequest } from '@/api/generated/models/ApiValidateProfileCmsAgentCandidateRequest';
 import { ApiValidateProfileCmsAgentPatchRequest } from '@/api/generated/models/ApiValidateProfileCmsAgentPatchRequest';
 import { ApiValidateProfileCmsPackageRequest } from '@/api/generated/models/ApiValidateProfileCmsPackageRequest';
 import { ApiWalletDistributionAllocations } from '@/api/generated/models/ApiWalletDistributionAllocations';
+import { ApiWaveAllMentionCount } from '@/api/generated/models/ApiWaveAllMentionCount';
 import { ApiWaveChatHistoryPurgePlan } from '@/api/generated/models/ApiWaveChatHistoryPurgePlan';
 import { ApiWaveDecisionsPageV2 } from '@/api/generated/models/ApiWaveDecisionsPageV2';
 import { ApiWaveDropsFeedV2 } from '@/api/generated/models/ApiWaveDropsFeedV2';
@@ -1214,6 +1279,7 @@ export type GetContentModerationBlockActivityRequest = Request<
 export type GetModerationChecksPathParams = Record<string, never>;
 
 export interface GetModerationChecksQuery {
+  "case_id"?: string;
   "subject_type"?: "REP_CATEGORY" | "PROFILE_BIO" | "GROUP_NAME" | "DROP";
   "outcome"?: "ALLOW" | "REJECT" | "ERROR" | "PENDING";
   "policy_family"?: "PUBLIC_FIELDS" | "WAVE_CONTENT";
@@ -1283,6 +1349,23 @@ export type GetModerationAccessRequest = Request<
   Record<string, never>
 >;
 
+export type GetModerationReviewCasesPathParams = Record<string, never>;
+
+export interface GetModerationReviewCasesQuery {
+  "before"?: string;
+  "limit"?: number;
+}
+
+export type GetModerationReviewCasesResponse = ApiModerationReviewCasePage;
+
+export type GetModerationReviewCasesRequest = Request<
+  GetModerationReviewCasesPathParams,
+  ApiResponse<GetModerationReviewCasesResponse>,
+  never,
+  GetModerationReviewCasesQuery,
+  Record<string, never>
+>;
+
 export type GetModerationCountsPathParams = Record<string, never>;
 
 export type GetModerationCountsQuery = Record<string, never>;
@@ -1342,6 +1425,96 @@ export type GetPublicContentModerationProfileStatusRequest = Request<
   ApiResponse<GetPublicContentModerationProfileStatusResponse>,
   never,
   GetPublicContentModerationProfileStatusQuery,
+  Record<string, never>
+>;
+
+export type GetDeviceGrantsPathParams = Record<string, never>;
+
+export type GetDeviceGrantsQuery = Record<string, never>;
+
+export type GetDeviceGrantsResponse = ApiDeviceGrant[];
+
+export type GetDeviceGrantsRequest = Request<
+  GetDeviceGrantsPathParams,
+  ApiResponse<GetDeviceGrantsResponse>,
+  never,
+  GetDeviceGrantsQuery,
+  Record<string, never>
+>;
+
+export type RegisterDeviceGrantPathParams = Record<string, never>;
+
+export type RegisterDeviceGrantQuery = Record<string, never>;
+
+export type RegisterDeviceGrantResponse = ApiDeviceGrant;
+
+export type RegisterDeviceGrantRequest = Request<
+  RegisterDeviceGrantPathParams,
+  ApiResponse<RegisterDeviceGrantResponse>,
+  ApiRegisterDeviceGrantRequest,
+  RegisterDeviceGrantQuery,
+  Record<string, never>
+>;
+
+export interface AcknowledgeDeviceGrantPathParams {
+  "grantId": string;
+}
+
+export type AcknowledgeDeviceGrantQuery = Record<string, never>;
+
+export type AcknowledgeDeviceGrantResponse = ApiDeviceGrant;
+
+export type AcknowledgeDeviceGrantRequest = Request<
+  AcknowledgeDeviceGrantPathParams,
+  ApiResponse<AcknowledgeDeviceGrantResponse>,
+  never,
+  AcknowledgeDeviceGrantQuery,
+  Record<string, never>
+>;
+
+export interface RenameDeviceGrantPathParams {
+  "grantId": string;
+}
+
+export type RenameDeviceGrantQuery = Record<string, never>;
+
+export type RenameDeviceGrantResponse = ApiDeviceGrant;
+
+export type RenameDeviceGrantRequest = Request<
+  RenameDeviceGrantPathParams,
+  ApiResponse<RenameDeviceGrantResponse>,
+  ApiRenameDeviceRequest,
+  RenameDeviceGrantQuery,
+  Record<string, never>
+>;
+
+export interface RevokeDeviceGrantPathParams {
+  "grantId": string;
+}
+
+export type RevokeDeviceGrantQuery = Record<string, never>;
+
+export type RevokeDeviceGrantResponse = ApiDeviceGrant;
+
+export type RevokeDeviceGrantRequest = Request<
+  RevokeDeviceGrantPathParams,
+  ApiResponse<RevokeDeviceGrantResponse>,
+  never,
+  RevokeDeviceGrantQuery,
+  Record<string, never>
+>;
+
+export type GetDeviceSecurityNoticesPathParams = Record<string, never>;
+
+export type GetDeviceSecurityNoticesQuery = Record<string, never>;
+
+export type GetDeviceSecurityNoticesResponse = ApiDeviceSecurityNotice[];
+
+export type GetDeviceSecurityNoticesRequest = Request<
+  GetDeviceSecurityNoticesPathParams,
+  ApiResponse<GetDeviceSecurityNoticesResponse>,
+  never,
+  GetDeviceSecurityNoticesQuery,
   Record<string, never>
 >;
 
@@ -1406,6 +1579,722 @@ export type CreateProposalFrameRequest = Request<
   Record<string, never>
 >;
 
+export type GetDropBookmarksStatusPathParams = Record<string, never>;
+
+export interface GetDropBookmarksStatusQuery {
+  "drop_id"?: string;
+}
+
+export type GetDropBookmarksStatusResponse = ApiDropBookmarksStatus;
+
+export type GetDropBookmarksStatusRequest = Request<
+  GetDropBookmarksStatusPathParams,
+  ApiResponse<GetDropBookmarksStatusResponse>,
+  never,
+  GetDropBookmarksStatusQuery,
+  Record<string, never>
+>;
+
+export interface GetMemeCollaborationStatePathParams {
+  "drop_id": string;
+}
+
+export type GetMemeCollaborationStateQuery = Record<string, never>;
+
+export type GetMemeCollaborationStateResponse = ApiMemeCollaborationState;
+
+export type GetMemeCollaborationStateRequest = Request<
+  GetMemeCollaborationStatePathParams,
+  ApiResponse<GetMemeCollaborationStateResponse>,
+  never,
+  GetMemeCollaborationStateQuery,
+  Record<string, never>
+>;
+
+export interface InviteMemeCollaboratorsPathParams {
+  "drop_id": string;
+}
+
+export type InviteMemeCollaboratorsQuery = Record<string, never>;
+
+export type InviteMemeCollaboratorsResponse = ApiMemeCollaborationState;
+
+export type InviteMemeCollaboratorsRequest = Request<
+  InviteMemeCollaboratorsPathParams,
+  ApiResponse<InviteMemeCollaboratorsResponse>,
+  ApiMemeCollaborationInviteRequest,
+  InviteMemeCollaboratorsQuery,
+  Record<string, never>
+>;
+
+export interface RespondToMemeCollaborationPathParams {
+  "drop_id": string;
+  "invitation_id": string;
+}
+
+export type RespondToMemeCollaborationQuery = Record<string, never>;
+
+export type RespondToMemeCollaborationResponse = ApiMemeCollaborationState;
+
+export type RespondToMemeCollaborationRequest = Request<
+  RespondToMemeCollaborationPathParams,
+  ApiResponse<RespondToMemeCollaborationResponse>,
+  ApiMemeCollaborationResponseRequest,
+  RespondToMemeCollaborationQuery,
+  Record<string, never>
+>;
+
+export interface GetDropSignedEventsPathParams {
+  "dropId": string;
+}
+
+export type GetDropSignedEventsQuery = Record<string, never>;
+
+export type GetDropSignedEventsResponse = ApiDropSignedEvents;
+
+export type GetDropSignedEventsRequest = Request<
+  GetDropSignedEventsPathParams,
+  ApiResponse<GetDropSignedEventsResponse>,
+  never,
+  GetDropSignedEventsQuery,
+  Record<string, never>
+>;
+
+export interface SetDropReplyCollapsePathParams {
+  "id": string;
+}
+
+export type SetDropReplyCollapseQuery = Record<string, never>;
+
+export type SetDropReplyCollapseResponse = ApiDrop;
+
+export type SetDropReplyCollapseRequest = Request<
+  SetDropReplyCollapsePathParams,
+  ApiResponse<SetDropReplyCollapseResponse>,
+  ApiSetDropReplyCollapseRequest,
+  SetDropReplyCollapseQuery,
+  Record<string, never>
+>;
+
+export type GetDropsSignedEventsPathParams = Record<string, never>;
+
+export interface GetDropsSignedEventsQuery {
+  "drop_ids": string;
+}
+
+export type GetDropsSignedEventsResponse = ApiDropSignedEventsBatch;
+
+export type GetDropsSignedEventsRequest = Request<
+  GetDropsSignedEventsPathParams,
+  ApiResponse<GetDropsSignedEventsResponse>,
+  never,
+  GetDropsSignedEventsQuery,
+  Record<string, never>
+>;
+
+export type E2eeDeleteBackupsPathParams = Record<string, never>;
+
+export type E2eeDeleteBackupsQuery = Record<string, never>;
+
+export type E2eeDeleteBackupsResponse = ApiE2eeAck;
+
+export type E2eeDeleteBackupsRequest = Request<
+  E2eeDeleteBackupsPathParams,
+  ApiResponse<E2eeDeleteBackupsResponse>,
+  never,
+  E2eeDeleteBackupsQuery,
+  Record<string, never>
+>;
+
+export type E2eeGetBackupStatusPathParams = Record<string, never>;
+
+export type E2eeGetBackupStatusQuery = Record<string, never>;
+
+export type E2eeGetBackupStatusResponse = ApiE2eeBackupStatus;
+
+export type E2eeGetBackupStatusRequest = Request<
+  E2eeGetBackupStatusPathParams,
+  ApiResponse<E2eeGetBackupStatusResponse>,
+  never,
+  E2eeGetBackupStatusQuery,
+  Record<string, never>
+>;
+
+export type E2eeCreateBackupPathParams = Record<string, never>;
+
+export type E2eeCreateBackupQuery = Record<string, never>;
+
+export type E2eeCreateBackupResponse = ApiE2eeBackup;
+
+export type E2eeCreateBackupRequest = Request<
+  E2eeCreateBackupPathParams,
+  ApiResponse<E2eeCreateBackupResponse>,
+  ApiE2eeCreateBackupRequest,
+  E2eeCreateBackupQuery,
+  Record<string, never>
+>;
+
+export interface E2eeGetBackupPathParams {
+  "backup_id": string;
+}
+
+export type E2eeGetBackupQuery = Record<string, never>;
+
+export type E2eeGetBackupResponse = ApiE2eeBackup;
+
+export type E2eeGetBackupRequest = Request<
+  E2eeGetBackupPathParams,
+  ApiResponse<E2eeGetBackupResponse>,
+  never,
+  E2eeGetBackupQuery,
+  Record<string, never>
+>;
+
+export interface E2eeActivateBackupPathParams {
+  "backup_id": string;
+}
+
+export type E2eeActivateBackupQuery = Record<string, never>;
+
+export type E2eeActivateBackupResponse = ApiE2eeBackup;
+
+export type E2eeActivateBackupRequest = Request<
+  E2eeActivateBackupPathParams,
+  ApiResponse<E2eeActivateBackupResponse>,
+  ApiE2eeBackupDeviceRequest,
+  E2eeActivateBackupQuery,
+  Record<string, never>
+>;
+
+export interface E2eeListBackupChunksPathParams {
+  "backup_id": string;
+}
+
+export interface E2eeListBackupChunksQuery {
+  "after_seq"?: number;
+  "limit"?: number;
+}
+
+export type E2eeListBackupChunksResponse = ApiE2eeBackupChunkPage;
+
+export type E2eeListBackupChunksRequest = Request<
+  E2eeListBackupChunksPathParams,
+  ApiResponse<E2eeListBackupChunksResponse>,
+  never,
+  E2eeListBackupChunksQuery,
+  Record<string, never>
+>;
+
+export interface E2eeAppendBackupChunkPathParams {
+  "backup_id": string;
+}
+
+export type E2eeAppendBackupChunkQuery = Record<string, never>;
+
+export type E2eeAppendBackupChunkResponse = ApiE2eeBackupChunk;
+
+export type E2eeAppendBackupChunkRequest = Request<
+  E2eeAppendBackupChunkPathParams,
+  ApiResponse<E2eeAppendBackupChunkResponse>,
+  ApiE2eeBackupChunkUpload,
+  E2eeAppendBackupChunkQuery,
+  Record<string, never>
+>;
+
+export interface E2eeGetBackupChunkPathParams {
+  "backup_id": string;
+  "seq": number;
+}
+
+export type E2eeGetBackupChunkQuery = Record<string, never>;
+
+export type E2eeGetBackupChunkResponse = ApiE2eeBackupChunkData;
+
+export type E2eeGetBackupChunkRequest = Request<
+  E2eeGetBackupChunkPathParams,
+  ApiResponse<E2eeGetBackupChunkResponse>,
+  never,
+  E2eeGetBackupChunkQuery,
+  Record<string, never>
+>;
+
+export interface E2eeCompactBackupPathParams {
+  "backup_id": string;
+}
+
+export type E2eeCompactBackupQuery = Record<string, never>;
+
+export type E2eeCompactBackupResponse = ApiE2eeBackup;
+
+export type E2eeCompactBackupRequest = Request<
+  E2eeCompactBackupPathParams,
+  ApiResponse<E2eeCompactBackupResponse>,
+  ApiE2eeCompactBackupRequest,
+  E2eeCompactBackupQuery,
+  Record<string, never>
+>;
+
+export type E2eeCreateBlobPathParams = Record<string, never>;
+
+export type E2eeCreateBlobQuery = Record<string, never>;
+
+export type E2eeCreateBlobResponse = ApiE2eeBlob;
+
+export type E2eeCreateBlobRequest = Request<
+  E2eeCreateBlobPathParams,
+  ApiResponse<E2eeCreateBlobResponse>,
+  ApiE2eeCreateBlobRequest,
+  E2eeCreateBlobQuery,
+  Record<string, never>
+>;
+
+export interface E2eeGetBlobChunkPathParams {
+  "blob_id": string;
+  "index": number;
+}
+
+export interface E2eeGetBlobChunkQuery {
+  "device_key": string;
+}
+
+export type E2eeGetBlobChunkResponse = ApiE2eeBlobChunk;
+
+export type E2eeGetBlobChunkRequest = Request<
+  E2eeGetBlobChunkPathParams,
+  ApiResponse<E2eeGetBlobChunkResponse>,
+  never,
+  E2eeGetBlobChunkQuery,
+  Record<string, never>
+>;
+
+export interface E2eePutBlobChunkPathParams {
+  "blob_id": string;
+  "index": number;
+}
+
+export type E2eePutBlobChunkQuery = Record<string, never>;
+
+export type E2eePutBlobChunkResponse = ApiE2eeBlob;
+
+export type E2eePutBlobChunkRequest = Request<
+  E2eePutBlobChunkPathParams,
+  ApiResponse<E2eePutBlobChunkResponse>,
+  ApiE2eeBlobChunk,
+  E2eePutBlobChunkQuery,
+  Record<string, never>
+>;
+
+export interface E2eeCompleteBlobPathParams {
+  "blob_id": string;
+}
+
+export type E2eeCompleteBlobQuery = Record<string, never>;
+
+export type E2eeCompleteBlobResponse = ApiE2eeBlob;
+
+export type E2eeCompleteBlobRequest = Request<
+  E2eeCompleteBlobPathParams,
+  ApiResponse<E2eeCompleteBlobResponse>,
+  never,
+  E2eeCompleteBlobQuery,
+  Record<string, never>
+>;
+
+export type E2eeRegisterDevicePathParams = Record<string, never>;
+
+export type E2eeRegisterDeviceQuery = Record<string, never>;
+
+export type E2eeRegisterDeviceResponse = ApiE2eeDevice;
+
+export type E2eeRegisterDeviceRequest = Request<
+  E2eeRegisterDevicePathParams,
+  ApiResponse<E2eeRegisterDeviceResponse>,
+  ApiE2eeRegisterDeviceRequest,
+  E2eeRegisterDeviceQuery,
+  Record<string, never>
+>;
+
+export interface E2eeGetDevicePathParams {
+  "device_key": string;
+}
+
+export type E2eeGetDeviceQuery = Record<string, never>;
+
+export type E2eeGetDeviceResponse = ApiE2eeDevice;
+
+export type E2eeGetDeviceRequest = Request<
+  E2eeGetDevicePathParams,
+  ApiResponse<E2eeGetDeviceResponse>,
+  never,
+  E2eeGetDeviceQuery,
+  Record<string, never>
+>;
+
+export interface E2eeAcknowledgeDeviceNoticePathParams {
+  "device_key": string;
+}
+
+export type E2eeAcknowledgeDeviceNoticeQuery = Record<string, never>;
+
+export type E2eeAcknowledgeDeviceNoticeResponse = ApiE2eeAck;
+
+export type E2eeAcknowledgeDeviceNoticeRequest = Request<
+  E2eeAcknowledgeDeviceNoticePathParams,
+  ApiResponse<E2eeAcknowledgeDeviceNoticeResponse>,
+  never,
+  E2eeAcknowledgeDeviceNoticeQuery,
+  Record<string, never>
+>;
+
+export interface E2eeGetDeviceGroupsPathParams {
+  "device_key": string;
+}
+
+export type E2eeGetDeviceGroupsQuery = Record<string, never>;
+
+export type E2eeGetDeviceGroupsResponse = ApiE2eeDeviceGroup[];
+
+export type E2eeGetDeviceGroupsRequest = Request<
+  E2eeGetDeviceGroupsPathParams,
+  ApiResponse<E2eeGetDeviceGroupsResponse>,
+  never,
+  E2eeGetDeviceGroupsQuery,
+  Record<string, never>
+>;
+
+export interface E2eeUploadKeyPackagesPathParams {
+  "device_key": string;
+}
+
+export type E2eeUploadKeyPackagesQuery = Record<string, never>;
+
+export type E2eeUploadKeyPackagesResponse = ApiE2eeKeyPackageStatus;
+
+export type E2eeUploadKeyPackagesRequest = Request<
+  E2eeUploadKeyPackagesPathParams,
+  ApiResponse<E2eeUploadKeyPackagesResponse>,
+  ApiE2eeUploadKeyPackagesRequest,
+  E2eeUploadKeyPackagesQuery,
+  Record<string, never>
+>;
+
+export interface E2eeRenameDevicePathParams {
+  "device_key": string;
+}
+
+export type E2eeRenameDeviceQuery = Record<string, never>;
+
+export type E2eeRenameDeviceResponse = ApiE2eeDevice;
+
+export type E2eeRenameDeviceRequest = Request<
+  E2eeRenameDevicePathParams,
+  ApiResponse<E2eeRenameDeviceResponse>,
+  ApiRenameDeviceRequest,
+  E2eeRenameDeviceQuery,
+  Record<string, never>
+>;
+
+export interface E2eeRevokeDevicePathParams {
+  "device_key": string;
+}
+
+export type E2eeRevokeDeviceQuery = Record<string, never>;
+
+export type E2eeRevokeDeviceResponse = ApiE2eeDevice;
+
+export type E2eeRevokeDeviceRequest = Request<
+  E2eeRevokeDevicePathParams,
+  ApiResponse<E2eeRevokeDeviceResponse>,
+  ApiE2eeRevokeDeviceRequest,
+  E2eeRevokeDeviceQuery,
+  Record<string, never>
+>;
+
+export interface E2eeGetWelcomesPathParams {
+  "device_key": string;
+}
+
+export type E2eeGetWelcomesQuery = Record<string, never>;
+
+export type E2eeGetWelcomesResponse = ApiE2eeWelcome[];
+
+export type E2eeGetWelcomesRequest = Request<
+  E2eeGetWelcomesPathParams,
+  ApiResponse<E2eeGetWelcomesResponse>,
+  never,
+  E2eeGetWelcomesQuery,
+  Record<string, never>
+>;
+
+export interface E2eeAckWelcomePathParams {
+  "device_key": string;
+  "welcome_id": string;
+}
+
+export type E2eeAckWelcomeQuery = Record<string, never>;
+
+export type E2eeAckWelcomeResponse = ApiE2eeAck;
+
+export type E2eeAckWelcomeRequest = Request<
+  E2eeAckWelcomePathParams,
+  ApiResponse<E2eeAckWelcomeResponse>,
+  never,
+  E2eeAckWelcomeQuery,
+  Record<string, never>
+>;
+
+export type E2eeRegisterLoginGrantDevicePathParams = Record<string, never>;
+
+export type E2eeRegisterLoginGrantDeviceQuery = Record<string, never>;
+
+export type E2eeRegisterLoginGrantDeviceResponse = ApiE2eeDevice;
+
+export type E2eeRegisterLoginGrantDeviceRequest = Request<
+  E2eeRegisterLoginGrantDevicePathParams,
+  ApiResponse<E2eeRegisterLoginGrantDeviceResponse>,
+  ApiE2eeRegisterLoginGrantDeviceRequest,
+  E2eeRegisterLoginGrantDeviceQuery,
+  Record<string, never>
+>;
+
+export type E2eeLookupDevicesPathParams = Record<string, never>;
+
+export type E2eeLookupDevicesQuery = Record<string, never>;
+
+export type E2eeLookupDevicesResponse = ApiE2eeDeviceLookupResponse;
+
+export type E2eeLookupDevicesRequest = Request<
+  E2eeLookupDevicesPathParams,
+  ApiResponse<E2eeLookupDevicesResponse>,
+  ApiE2eeDeviceLookupRequest,
+  E2eeLookupDevicesQuery,
+  Record<string, never>
+>;
+
+export type E2eeCheckEligibilityPathParams = Record<string, never>;
+
+export type E2eeCheckEligibilityQuery = Record<string, never>;
+
+export type E2eeCheckEligibilityResponse = ApiE2eeEligibilityResponse;
+
+export type E2eeCheckEligibilityRequest = Request<
+  E2eeCheckEligibilityPathParams,
+  ApiResponse<E2eeCheckEligibilityResponse>,
+  ApiE2eeEligibilityRequest,
+  E2eeCheckEligibilityQuery,
+  Record<string, never>
+>;
+
+export type E2eeCreateGroupPathParams = Record<string, never>;
+
+export type E2eeCreateGroupQuery = Record<string, never>;
+
+export type E2eeCreateGroupResponse = ApiE2eeGroup;
+
+export type E2eeCreateGroupRequest = Request<
+  E2eeCreateGroupPathParams,
+  ApiResponse<E2eeCreateGroupResponse>,
+  ApiE2eeCreateGroupRequest,
+  E2eeCreateGroupQuery,
+  Record<string, never>
+>;
+
+export interface E2eeGetGroupPathParams {
+  "group": string;
+}
+
+export interface E2eeGetGroupQuery {
+  "device_key": string;
+}
+
+export type E2eeGetGroupResponse = ApiE2eeGroup;
+
+export type E2eeGetGroupRequest = Request<
+  E2eeGetGroupPathParams,
+  ApiResponse<E2eeGetGroupResponse>,
+  never,
+  E2eeGetGroupQuery,
+  Record<string, never>
+>;
+
+export interface E2eeSubmitEntryPathParams {
+  "group": string;
+}
+
+export type E2eeSubmitEntryQuery = Record<string, never>;
+
+export type E2eeSubmitEntryResponse = ApiE2eeLogItem;
+
+export type E2eeSubmitEntryRequest = Request<
+  E2eeSubmitEntryPathParams,
+  ApiResponse<E2eeSubmitEntryResponse>,
+  ApiE2eeSubmitEntryRequest,
+  E2eeSubmitEntryQuery,
+  Record<string, never>
+>;
+
+export interface E2eeGetGroupLogPathParams {
+  "group": string;
+}
+
+export interface E2eeGetGroupLogQuery {
+  "device_key": string;
+  "after_seq"?: number;
+  "limit"?: number;
+}
+
+export type E2eeGetGroupLogResponse = ApiE2eeLogPage;
+
+export type E2eeGetGroupLogRequest = Request<
+  E2eeGetGroupLogPathParams,
+  ApiResponse<E2eeGetGroupLogResponse>,
+  never,
+  E2eeGetGroupLogQuery,
+  Record<string, never>
+>;
+
+export interface E2eeSendMessagePathParams {
+  "group": string;
+}
+
+export type E2eeSendMessageQuery = Record<string, never>;
+
+export type E2eeSendMessageResponse = ApiE2eeSendMessageResponse;
+
+export type E2eeSendMessageRequest = Request<
+  E2eeSendMessagePathParams,
+  ApiResponse<E2eeSendMessageResponse>,
+  ApiE2eeSendMessageRequest,
+  E2eeSendMessageQuery,
+  Record<string, never>
+>;
+
+export interface E2eeRepairRosterPathParams {
+  "group": string;
+}
+
+export type E2eeRepairRosterQuery = Record<string, never>;
+
+export type E2eeRepairRosterResponse = ApiE2eeGroup;
+
+export type E2eeRepairRosterRequest = Request<
+  E2eeRepairRosterPathParams,
+  ApiResponse<E2eeRepairRosterResponse>,
+  ApiE2eeRosterRepairRequest,
+  E2eeRepairRosterQuery,
+  Record<string, never>
+>;
+
+export type E2eeClaimKeyPackagesPathParams = Record<string, never>;
+
+export type E2eeClaimKeyPackagesQuery = Record<string, never>;
+
+export type E2eeClaimKeyPackagesResponse = ApiE2eeClaimKeyPackagesResponse;
+
+export type E2eeClaimKeyPackagesRequest = Request<
+  E2eeClaimKeyPackagesPathParams,
+  ApiResponse<E2eeClaimKeyPackagesResponse>,
+  ApiE2eeClaimKeyPackagesRequest,
+  E2eeClaimKeyPackagesQuery,
+  Record<string, never>
+>;
+
+export type E2eeGetMePathParams = Record<string, never>;
+
+export type E2eeGetMeQuery = Record<string, never>;
+
+export type E2eeGetMeResponse = ApiE2eeMe;
+
+export type E2eeGetMeRequest = Request<
+  E2eeGetMePathParams,
+  ApiResponse<E2eeGetMeResponse>,
+  never,
+  E2eeGetMeQuery,
+  Record<string, never>
+>;
+
+export interface E2eeGetProfileDevicesPathParams {
+  "profile_id": string;
+}
+
+export interface E2eeGetProfileDevicesQuery {
+  "ciphersuite"?: number;
+}
+
+export type E2eeGetProfileDevicesResponse = ApiE2eeDevice[];
+
+export type E2eeGetProfileDevicesRequest = Request<
+  E2eeGetProfileDevicesPathParams,
+  ApiResponse<E2eeGetProfileDevicesResponse>,
+  never,
+  E2eeGetProfileDevicesQuery,
+  Record<string, never>
+>;
+
+export type E2eeReportMessagePathParams = Record<string, never>;
+
+export type E2eeReportMessageQuery = Record<string, never>;
+
+export type E2eeReportMessageResponse = ApiE2eeReport;
+
+export type E2eeReportMessageRequest = Request<
+  E2eeReportMessagePathParams,
+  ApiResponse<E2eeReportMessageResponse>,
+  ApiE2eeReportRequest,
+  E2eeReportMessageQuery,
+  Record<string, never>
+>;
+
+export type E2eeListTrustAndSafetyReportsPathParams = Record<string, never>;
+
+export interface E2eeListTrustAndSafetyReportsQuery {
+  "before"?: number;
+  "before_id"?: string;
+  "limit"?: number;
+}
+
+export type E2eeListTrustAndSafetyReportsResponse = ApiE2eeTrustAndSafetyReportPage;
+
+export type E2eeListTrustAndSafetyReportsRequest = Request<
+  E2eeListTrustAndSafetyReportsPathParams,
+  ApiResponse<E2eeListTrustAndSafetyReportsResponse>,
+  never,
+  E2eeListTrustAndSafetyReportsQuery,
+  Record<string, never>
+>;
+
+export interface E2eeGetTrustAndSafetyReportPathParams {
+  "report_id": string;
+}
+
+export type E2eeGetTrustAndSafetyReportQuery = Record<string, never>;
+
+export type E2eeGetTrustAndSafetyReportResponse = ApiE2eeTrustAndSafetyReport;
+
+export type E2eeGetTrustAndSafetyReportRequest = Request<
+  E2eeGetTrustAndSafetyReportPathParams,
+  ApiResponse<E2eeGetTrustAndSafetyReportResponse>,
+  never,
+  E2eeGetTrustAndSafetyReportQuery,
+  Record<string, never>
+>;
+
+export interface E2eeSetTrustAndSafetyReportHoldPathParams {
+  "report_id": string;
+}
+
+export type E2eeSetTrustAndSafetyReportHoldQuery = Record<string, never>;
+
+export type E2eeSetTrustAndSafetyReportHoldResponse = ApiE2eeTrustAndSafetyReport;
+
+export type E2eeSetTrustAndSafetyReportHoldRequest = Request<
+  E2eeSetTrustAndSafetyReportHoldPathParams,
+  ApiResponse<E2eeSetTrustAndSafetyReportHoldResponse>,
+  ApiE2eeReportHoldRequest,
+  E2eeSetTrustAndSafetyReportHoldQuery,
+  Record<string, never>
+>;
+
 export type PreviewGroupMembersPathParams = Record<string, never>;
 
 export interface PreviewGroupMembersQuery {
@@ -1423,6 +2312,54 @@ export type PreviewGroupMembersRequest = Request<
   ApiResponse<PreviewGroupMembersResponse>,
   ApiGroupMembersPreviewRequest,
   PreviewGroupMembersQuery,
+  Record<string, never>
+>;
+
+export interface DisableArtistArtworkAlertPathParams {
+  "id": string;
+}
+
+export type DisableArtistArtworkAlertQuery = Record<string, never>;
+
+export type DisableArtistArtworkAlertResponse = ApiArtistArtworkAlert;
+
+export type DisableArtistArtworkAlertRequest = Request<
+  DisableArtistArtworkAlertPathParams,
+  ApiResponse<DisableArtistArtworkAlertResponse>,
+  never,
+  DisableArtistArtworkAlertQuery,
+  Record<string, never>
+>;
+
+export interface GetArtistArtworkAlertPathParams {
+  "id": string;
+}
+
+export type GetArtistArtworkAlertQuery = Record<string, never>;
+
+export type GetArtistArtworkAlertResponse = ApiArtistArtworkAlert;
+
+export type GetArtistArtworkAlertRequest = Request<
+  GetArtistArtworkAlertPathParams,
+  ApiResponse<GetArtistArtworkAlertResponse>,
+  never,
+  GetArtistArtworkAlertQuery,
+  Record<string, never>
+>;
+
+export interface EnableArtistArtworkAlertPathParams {
+  "id": string;
+}
+
+export type EnableArtistArtworkAlertQuery = Record<string, never>;
+
+export type EnableArtistArtworkAlertResponse = ApiArtistArtworkAlert;
+
+export type EnableArtistArtworkAlertRequest = Request<
+  EnableArtistArtworkAlertPathParams,
+  ApiResponse<EnableArtistArtworkAlertResponse>,
+  never,
+  EnableArtistArtworkAlertQuery,
   Record<string, never>
 >;
 
@@ -2725,6 +3662,26 @@ export type GetDropV2VoteEditLogsByIdRequest = Request<
   Record<string, never>
 >;
 
+export type SearchDropsV2PathParams = Record<string, never>;
+
+export interface SearchDropsV2Query {
+  "term"?: string;
+  "author_id"?: string;
+  "cursor"?: string;
+  "page"?: number;
+  "size"?: number;
+}
+
+export type SearchDropsV2Response = ApiDropSearchPage;
+
+export type SearchDropsV2Request = Request<
+  SearchDropsV2PathParams,
+  ApiResponse<SearchDropsV2Response>,
+  never,
+  SearchDropsV2Query,
+  Record<string, never>
+>;
+
 export type GetNotificationsV2PathParams = Record<string, never>;
 
 export interface GetNotificationsV2Query {
@@ -2743,6 +3700,22 @@ export type GetNotificationsV2Request = Request<
   ApiResponse<GetNotificationsV2Response>,
   never,
   GetNotificationsV2Query,
+  Record<string, never>
+>;
+
+export type GetNotificationsUnreadCountV2PathParams = Record<string, never>;
+
+export interface GetNotificationsUnreadCountV2Query {
+  "include_competitions"?: boolean;
+}
+
+export type GetNotificationsUnreadCountV2Response = ApiNotificationsUnreadCountV2;
+
+export type GetNotificationsUnreadCountV2Request = Request<
+  GetNotificationsUnreadCountV2PathParams,
+  ApiResponse<GetNotificationsUnreadCountV2Response>,
+  never,
+  GetNotificationsUnreadCountV2Query,
   Record<string, never>
 >;
 
@@ -2866,6 +3839,7 @@ export interface GetWaveDropsV2Query {
   "serial_no_limit"?: number;
   "search_strategy"?: string;
   "drop_type"?: string;
+  "respect_drop_reply_collapse"?: boolean;
 }
 
 export type GetWaveDropsV2Response = ApiWaveDropsFeedV2;
@@ -2976,6 +3950,22 @@ export type GetWavePollsV2Request = Request<
   Record<string, never>
 >;
 
+export interface GetWaveAllMentionCountPathParams {
+  "waveId": string;
+}
+
+export type GetWaveAllMentionCountQuery = Record<string, never>;
+
+export type GetWaveAllMentionCountResponse = ApiWaveAllMentionCount;
+
+export type GetWaveAllMentionCountRequest = Request<
+  GetWaveAllMentionCountPathParams,
+  ApiResponse<GetWaveAllMentionCountResponse>,
+  never,
+  GetWaveAllMentionCountQuery,
+  Record<string, never>
+>;
+
 export interface SearchWaveMentionsPathParams {
   "waveId": string;
 }
@@ -3054,6 +4044,40 @@ export type GetActiveWaveVotesRequest = Request<
   Record<string, never>
 >;
 
+export type GetAllWavesPathParams = Record<string, never>;
+
+export interface GetAllWavesQuery {
+  "page_size"?: number;
+  "cursor"?: string;
+}
+
+export type GetAllWavesResponse = ApiAllWavesPage;
+
+export type GetAllWavesRequest = Request<
+  GetAllWavesPathParams,
+  ApiResponse<GetAllWavesResponse>,
+  never,
+  GetAllWavesQuery,
+  Record<string, never>
+>;
+
+export type GetJoinedWavesPathParams = Record<string, never>;
+
+export interface GetJoinedWavesQuery {
+  "page_size"?: number;
+  "cursor"?: string;
+}
+
+export type GetJoinedWavesResponse = ApiJoinedWavesPage;
+
+export type GetJoinedWavesRequest = Request<
+  GetJoinedWavesPathParams,
+  ApiResponse<GetJoinedWavesResponse>,
+  never,
+  GetJoinedWavesQuery,
+  Record<string, never>
+>;
+
 export type SearchDraftWaveMentionsPathParams = Record<string, never>;
 
 export interface SearchDraftWaveMentionsQuery {
@@ -3069,6 +4093,34 @@ export type SearchDraftWaveMentionsRequest = Request<
   ApiResponse<SearchDraftWaveMentionsResponse>,
   never,
   SearchDraftWaveMentionsQuery,
+  Record<string, never>
+>;
+
+export type GetPinnedWavesPathParams = Record<string, never>;
+
+export type GetPinnedWavesQuery = Record<string, never>;
+
+export type GetPinnedWavesResponse = ApiWaveOverview[];
+
+export type GetPinnedWavesRequest = Request<
+  GetPinnedWavesPathParams,
+  ApiResponse<GetPinnedWavesResponse>,
+  never,
+  GetPinnedWavesQuery,
+  Record<string, never>
+>;
+
+export type UpdatePinnedWaveOrderPathParams = Record<string, never>;
+
+export type UpdatePinnedWaveOrderQuery = Record<string, never>;
+
+export type UpdatePinnedWaveOrderResponse = ApiPinnedWaveOrder;
+
+export type UpdatePinnedWaveOrderRequest = Request<
+  UpdatePinnedWaveOrderPathParams,
+  ApiResponse<UpdatePinnedWaveOrderResponse>,
+  ApiUpdatePinnedWaveOrder,
+  UpdatePinnedWaveOrderQuery,
   Record<string, never>
 >;
 
@@ -3119,6 +4171,22 @@ export type GetWaveHubV3Request = Request<
   ApiResponse<GetWaveHubV3Response>,
   never,
   GetWaveHubV3Query,
+  Record<string, never>
+>;
+
+export interface UpdateWaveHubV3PathParams {
+  "wave_id": string;
+}
+
+export type UpdateWaveHubV3Query = Record<string, never>;
+
+export type UpdateWaveHubV3Response = ApiWaveV3;
+
+export type UpdateWaveHubV3Request = Request<
+  UpdateWaveHubV3PathParams,
+  ApiResponse<UpdateWaveHubV3Response>,
+  ApiUpdateWaveHubRequest,
+  UpdateWaveHubV3Query,
   Record<string, never>
 >;
 
@@ -3427,16 +4495,41 @@ export type SetCompetitionVoteV3Request = Request<
   Record<string, never>
 >;
 
+export interface GetCompetitionEntryContextsV3PathParams {
+  "wave_id": string;
+  "competition_id": string;
+}
+
+export interface GetCompetitionEntryContextsV3Query {
+  "entry_ids": string;
+  "include"?: "cards";
+}
+
+export type GetCompetitionEntryContextsV3Response = ApiCompetitionEntryContextPage;
+
+export type GetCompetitionEntryContextsV3Request = Request<
+  GetCompetitionEntryContextsV3PathParams,
+  ApiResponse<GetCompetitionEntryContextsV3Response>,
+  never,
+  GetCompetitionEntryContextsV3Query,
+  Record<string, never>
+>;
+
 export interface ListCompetitionLeaderboardV3PathParams {
   "wave_id": string;
   "competition_id": string;
 }
 
 export interface ListCompetitionLeaderboardV3Query {
-  "sort"?: "rating" | "real_time_rating" | "submitted_at" | "trend";
+  "is_additional_action_promised"?: boolean;
+  "sort"?: "rating" | "real_time_rating" | "decision_rating" | "submitted_at" | "trend" | "price";
+  "price_currency"?: string;
+  "min_price"?: number;
+  "max_price"?: number;
   "direction"?: string;
   "cursor"?: string;
   "limit"?: number;
+  "include"?: "cards";
 }
 
 export type ListCompetitionLeaderboardV3Response = ApiCompetitionLeaderboardPage;
@@ -3563,6 +4656,8 @@ export interface ListCompetitionMyVotesV3PathParams {
 
 export interface ListCompetitionMyVotesV3Query {
   "cursor"?: string;
+  "include"?: "cards";
+  "sort"?: string;
   "limit"?: number;
 }
 
@@ -3585,6 +4680,7 @@ export interface ListCompetitionWinnersV3Query {
   "direction"?: string;
   "cursor"?: string;
   "limit"?: number;
+  "include"?: "cards";
 }
 
 export type ListCompetitionWinnersV3Response = ApiCompetitionEntryPage;
@@ -3695,5 +4791,24 @@ export type ListWaveSubwavesRequest = Request<
   ApiResponse<ListWaveSubwavesResponse>,
   never,
   ListWaveSubwavesQuery,
+  Record<string, never>
+>;
+
+export interface GetWaveUndiscoveredDropsPathParams {
+  "id": string;
+}
+
+export interface GetWaveUndiscoveredDropsQuery {
+  "limit"?: number;
+  "skip"?: number;
+}
+
+export type GetWaveUndiscoveredDropsResponse = ApiUndiscoveredDrops;
+
+export type GetWaveUndiscoveredDropsRequest = Request<
+  GetWaveUndiscoveredDropsPathParams,
+  ApiResponse<GetWaveUndiscoveredDropsResponse>,
+  never,
+  GetWaveUndiscoveredDropsQuery,
   Record<string, never>
 >;

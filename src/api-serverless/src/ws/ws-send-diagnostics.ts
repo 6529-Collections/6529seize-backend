@@ -1,6 +1,8 @@
 import { WsMessageType } from './ws-message';
 
 const outboundTypes = new Set<string>([
+  WsMessageType.RESYNC_REQUIRED,
+  WsMessageType.COMPETITION_UPDATE,
   WsMessageType.DROP_UPDATE,
   WsMessageType.DROP_UPDATE_REF,
   WsMessageType.DROP_DELETE,
@@ -12,6 +14,7 @@ const outboundTypes = new Set<string>([
   WsMessageType.NOTIFICATION_IDENTITIES_SYNCED,
   WsMessageType.IDENTITY_NOTIFICATIONS_CHANGED,
   WsMessageType.DM_UNREAD_STATE_CHANGED,
+  WsMessageType.WAVES_CHANGED,
   WsMessageType.MEDIA_LINK_UPDATED,
   WsMessageType.ATTACHMENT_STATUS_UPDATE
 ]);

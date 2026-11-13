@@ -43,4 +43,46 @@ describe('Timer', () => {
 
     expect(report.ongoingTimers).toEqual(['step', 'step#2']);
   });
+
+  it('times async work under its key and returns its result', async () => {
+    const timer = new Timer('request');
+
+    const result = await Timer.timed(timer, 'step', async () => {
+      jest.advanceTimersByTime(15);
+      return 'done';
+    });
+
+    const report = JSON.parse(timer.getReport()) as {
+      times: { key: string; time: string }[];
+      ongoingTimers: string[];
+    };
+    expect(result).toBe('done');
+    expect(report.times).toEqual([{ key: 'step', time: '15ms' }]);
+    expect(report.ongoingTimers).toEqual([]);
+  });
+
+  it('stops the timer when timed work fails and rethrows the failure', async () => {
+    const timer = new Timer('request');
+    const failure = new Error('failed step');
+
+    await expect(
+      Timer.timed(timer, 'step', async () => {
+        jest.advanceTimersByTime(5);
+        throw failure;
+      })
+    ).rejects.toBe(failure);
+
+    const report = JSON.parse(timer.getReport()) as {
+      times: { key: string; time: string }[];
+      ongoingTimers: string[];
+    };
+    expect(report.times).toEqual([{ key: 'step', time: '5ms' }]);
+    expect(report.ongoingTimers).toEqual([]);
+  });
+
+  it('runs timed work without a timer', async () => {
+    await expect(Timer.timed(undefined, 'step', async () => 7)).resolves.toBe(
+      7
+    );
+  });
 });

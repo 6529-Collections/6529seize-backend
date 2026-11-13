@@ -12,6 +12,8 @@ import {
   DROPS_TABLE,
   CONTENT_MODERATION_PROFILE_BLOCKS_TABLE,
   COMPETITIONS_TABLE,
+  COMPETITION_ENTRIES_TABLE,
+  COMPETITION_PAUSES_TABLE,
   IDENTITY_MUTES_TABLE,
   IDENTITY_NOTIFICATIONS_TABLE,
   IDENTITY_SUBSCRIPTIONS_TABLE,
@@ -19,6 +21,7 @@ import {
   OFFICIAL_WAVES_TABLE,
   PINNED_WAVES_TABLE,
   PROFILE_GROUPS_TABLE,
+  PROFILES_TABLE,
   USER_GROUPS_TABLE,
   WAVE_DROPPER_METRICS_TABLE,
   WAVE_CHAT_DROP_COOLDOWNS_TABLE,
@@ -26,7 +29,6 @@ import {
   WAVE_OUTCOME_DISTRIBUTION_ITEMS_TABLE,
   WAVE_OUTCOMES_TABLE,
   WAVE_READER_METRICS_TABLE,
-  WAVE_VOTING_CREDIT_NFTS_ARCHIVE_TABLE,
   WAVE_VOTING_CREDIT_NFTS_TABLE,
   WAVES_ARCHIVE_TABLE,
   WAVES_DECISION_PAUSES_TABLE,
@@ -34,9 +36,14 @@ import {
   WAVES_TABLE
 } from '@/constants';
 import { Logger } from '@/logging';
+import { ForbiddenException } from '@/exceptions';
+import {
+  querySqlInListChunks,
+  SQL_IN_LIST_CHUNK_BYTES,
+  sqlInListBytes
+} from '@/db/sql-in-list-chunks';
 import {
   groupWaveVotingCreditNftsByContract,
-  normalizeWaveVotingCreditNfts,
   waveVotingCreditNftKey,
   WaveVotingCreditNft
 } from '@/waves/wave-voting-credit-nfts';
@@ -71,6 +78,8 @@ import { ApiDmUnreadConversationState } from '../generated/models/ApiDmUnreadCon
 import { ApiWaveScoreSort } from '../generated/models/ApiWaveScoreSort';
 import { ApiWaveVisibilityTier } from '../generated/models/ApiWaveVisibilityTier';
 import {
+  invalidateWaveUnreadCacheForReaderWaveAfterCommit,
+  invalidateWaveUnreadCacheForWaveAfterCommit,
   readWaveUnreadSummaryCache,
   WaveUnreadSummary,
   withInFlightWaveUnreadSummaryCacheMiss,
@@ -85,10 +94,46 @@ import {
   withWaveOverviewCandidateCache
 } from './wave-overview-candidate-cache';
 import { compareCacheStrings } from './wave-cache-key';
+import { buildWaveNameSearchSql } from '@/api/waves/wave-name-search';
 import { competitionRepository } from '@/competitions/competition.repository';
+import { competitionCommandRepository } from '@/competitions/competition-command.repository';
 import { DbPoolName } from '@/db-query.options';
+import {
+  anonymousCompetitionEntrySql,
+  competitionAnonymityViewerId,
+  publicCompetitionDropSql
+} from '@/competitions/competition-anonymity';
+
+import { serializeWaveHubConfiguration } from '@/waves/wave-hub-configuration';
+import {
+  withoutLegacyCompetitionGetFacade,
+  legacyGetView,
+  waveHubSelectColumns
+} from '@/competitions/legacy-competition-get-facade';
+import {
+  ViewerGroupsCte,
+  viewerGroupsCteBytes,
+  viewerGroupsCteSupported,
+  viewerGroupsWorthSharing
+} from '@/waves/viewer-groups-cte';
+import { viewerGroupSets } from '@/waves/viewer-group-sets';
 
 const logger = Logger.get('WAVES_API_DB');
+
+/**
+ * Smallest inlined candidate list per copy in a follow-candidate chunk, so a
+ * request runs at most twice the groupless number of chunks.
+ */
+const FOLLOW_CANDIDATE_MIN_LIST_BYTES = SQL_IN_LIST_CHUNK_BYTES / 4;
+
+type WaveHubConfiguration = Pick<
+  WaveEntity,
+  'hub_participation_config' | 'hub_voting_config'
+>;
+
+type RawWaveHubConfiguration = {
+  [Field in keyof WaveHubConfiguration]: WaveHubConfiguration[Field] | string;
+};
 
 type RawWaveEntity = Omit<
   WaveEntity,
@@ -245,6 +290,37 @@ export interface WaveMentionOverview {
   is_direct_message: boolean | null;
 }
 
+function profileWaveActivityTimestampSql(): string {
+  return `(case when exists (
+    select 1 from ${COMPETITION_ENTRIES_TABLE} private_activity_entry
+    join ${COMPETITIONS_TABLE} private_activity_competition
+      on private_activity_competition.id = private_activity_entry.competition_id
+    where private_activity_entry.wave_id = w.id
+      and private_activity_entry.submitter_id = :profileId
+      and private_activity_entry.submitter_id <> coalesce(:anonymityViewerId, '')
+      and ${anonymousCompetitionEntrySql('private_activity_entry', 'private_activity_competition')}
+  ) then coalesce((
+    select max(public_activity_drop.created_at) from ${DROPS_TABLE} public_activity_drop
+    where public_activity_drop.wave_id = w.id
+      and public_activity_drop.author_id = :profileId
+      and ${publicCompetitionDropSql('public_activity_drop', 'anonymityViewerId')}
+  ), 0) else coalesce(wdm.latest_drop_timestamp, 0) end)`;
+}
+
+/**
+ * A community_groups profile_group_id (utf8mb4) compared with a
+ * profile_groups id (utf8mb3_bin until #2355). See
+ * getBlockedOneToOneDirectMessageExpression.
+ */
+function profileGroupsIdComparand(utf8mb4Expression: string): string {
+  return `convert(${utf8mb4Expression} using utf8mb3)`;
+}
+
+interface PinnedWavePosition {
+  readonly wave_id: string;
+  readonly position: number | null;
+}
+
 export class WavesApiDb extends LazyDbAccessCompatibleService {
   private getWaveScoreSortColumn(sort: ApiWaveScoreSort): string {
     switch (sort) {
@@ -319,30 +395,90 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
   private getWaveVisibilityFilter(
     alias: string,
     groupIds: readonly string[],
-    groupIdsParamName: string
+    groupIdsParamName: string,
+    // A subquery over the same group ids, used instead of the inlined list.
+    groupSetSql?: string
   ): string {
     return `(${alias}.visibility_group_id is null ${
       groupIds.length
-        ? `or ${alias}.visibility_group_id in (:${groupIdsParamName})`
+        ? `or ${alias}.visibility_group_id in (${groupSetSql ?? `:${groupIdsParamName}`})`
         : ``
     })`;
+  }
+
+  /**
+   * The viewer's groups as one shared table (see viewerGroupsCte), so a
+   * statement inlines them once instead of once per visibility check.
+   * Undefined to inline them: without groups, while the compared columns'
+   * collation differs, or when `gate` says inlining `copies` lists (plus the
+   * statement's other inlined lists) stays below the pinning size (see
+   * viewerGroupsWorthSharing). Without `gate`, any groups are shared.
+   */
+  private async sharedViewerGroups(
+    name: string,
+    groupIds: readonly string[],
+    gate?: { readonly copies: number; readonly otherInlinedBytes?: number }
+  ): Promise<ViewerGroupsCte | undefined> {
+    if (!groupIds.length) return undefined;
+    if (
+      gate &&
+      !viewerGroupsWorthSharing(groupIds, gate.copies, gate.otherInlinedBytes)
+    )
+      return undefined;
+    const supported = await viewerGroupsCteSupported(this.db, [
+      WAVES_TABLE,
+      legacyGetView(WAVES_TABLE)
+    ]);
+    return supported
+      ? viewerGroupSets.source(this.db, name, groupIds)
+      : undefined;
+  }
+
+  /**
+   * The viewer's stored group set (viewerGroupSets.stored) for a statement
+   * that inlines one copy of the groups. Undefined keeps the inlined list,
+   * the better plan, unless that list (plus the statement's other inlined
+   * lists) would pass the pinning size and the set is readable.
+   */
+  private async storedViewerGroups(
+    name: string,
+    groupIds: readonly string[],
+    otherInlinedBytes: number
+  ): Promise<ViewerGroupsCte | undefined> {
+    if (!viewerGroupsWorthSharing(groupIds, 1, otherInlinedBytes))
+      return undefined;
+    const supported = await viewerGroupsCteSupported(this.db, [
+      WAVES_TABLE,
+      legacyGetView(WAVES_TABLE)
+    ]);
+    return supported
+      ? viewerGroupSets.stored(this.db, name, groupIds)
+      : undefined;
   }
 
   private getWaveAndParentVisibilityFilter(
     waveAlias: string,
     parentAlias: string,
     groupIds: readonly string[],
-    groupIdsParamName: string
+    groupIdsParamName: string,
+    groupSetSql?: string
   ): string {
     return `${this.getWaveVisibilityFilter(
       waveAlias,
       groupIds,
-      groupIdsParamName
+      groupIdsParamName,
+      groupSetSql
     )} and (${waveAlias}.parent_wave_id is null or (${parentAlias}.id is not null and ${parentAlias}.parent_wave_id is null and ${this.getWaveVisibilityFilter(
       parentAlias,
       groupIds,
-      groupIdsParamName
+      groupIdsParamName,
+      groupSetSql
     )}))`;
+  }
+
+  /** `with <shared groups> ` for a statement, or nothing. */
+  private withViewerGroups(groups: ViewerGroupsCte | undefined): string {
+    return groups ? `with ${groups.cteSql} ` : '';
   }
 
   private getSortedEligibleGroups(eligibleGroups: readonly string[]): string[] {
@@ -402,14 +538,17 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     if (!authenticated_user_id || !waveIds.length) {
       return new Set();
     }
-    const rows = await this.db.execute<WaveIdRow>(
-      `
-        select wave_id
-        from ${PINNED_WAVES_TABLE}
-        where profile_id = :authenticated_user_id
-          and wave_id in (:waveIds)
-      `,
-      { authenticated_user_id, waveIds }
+    // Candidate windows hold up to 1,000 wave ids; keep each statement small.
+    const rows = await querySqlInListChunks(waveIds, (chunk) =>
+      this.db.execute<WaveIdRow>(
+        `
+          select wave_id
+          from ${PINNED_WAVES_TABLE}
+          where profile_id = :authenticated_user_id
+            and wave_id in (:waveIds)
+        `,
+        { authenticated_user_id, waveIds: chunk }
+      )
     );
     return new Set(rows.map((row) => row.wave_id));
   }
@@ -426,10 +565,9 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     if (!authenticated_user_id || !waveIds.length) {
       return new Set();
     }
-    const rows = await this.db.execute<WaveIdRow>(
-      `
+    const sql = `
         select w.id as wave_id
-        from ${WAVES_TABLE} w
+        from ${legacyGetView(WAVES_TABLE)} w
         left join ${WAVE_READER_METRICS_TABLE} wrm
           on wrm.wave_id = w.id
          and wrm.reader_id = :authenticated_user_id
@@ -441,9 +579,17 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
               'authenticated_user_id'
             )}
           )
-      `,
-      { authenticated_user_id, waveIds },
-      connection ? { wrappedConnection: connection } : undefined
+      `;
+    const options = connection ? { wrappedConnection: connection } : undefined;
+    const rows = await querySqlInListChunks(
+      waveIds,
+      (chunk) =>
+        this.db.execute<WaveIdRow>(
+          sql,
+          { authenticated_user_id, waveIds: chunk },
+          options
+        ),
+      { sequential: !!connection }
     );
     return new Set(rows.map((row) => row.wave_id));
   }
@@ -452,6 +598,17 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     waveAlias: string,
     readerIdParam: string
   ): string {
+    // STOPGAP until profile_groups moves to the schema collation (#2355):
+    // its ids are utf8mb3_bin and community_groups' are utf8mb4, so a plain
+    // column comparison converts the profile_groups side and scans the whole
+    // table per DM wave (5 s for a reader with blocks and 50 DMs). Converting
+    // the community_groups side keeps the profile_groups index lookup. The ids
+    // are ASCII, so the conversion is lossless. No explicit COLLATE: this form
+    // also uses the index after the migration (utf8mb3 is then converted up),
+    // so it is correct and fast in both states; remove it after #2355 runs.
+    const dmProfileGroupId = profileGroupsIdComparand(
+      'dm_group.profile_group_id'
+    );
     return `(
       ${waveAlias}.is_direct_message = true
       and ${waveAlias}.chat_group_id is not null
@@ -459,7 +616,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
         select 1
         from ${USER_GROUPS_TABLE} dm_group
         join ${PROFILE_GROUPS_TABLE} blocked_member
-          on blocked_member.profile_group_id = dm_group.profile_group_id
+          on blocked_member.profile_group_id = ${dmProfileGroupId}
         join ${CONTENT_MODERATION_PROFILE_BLOCKS_TABLE} profile_block
           on profile_block.blocker_profile_id = :${readerIdParam}
          and profile_block.blocked_profile_id = blocked_member.profile_id
@@ -467,13 +624,13 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
           and exists (
             select 1
             from ${PROFILE_GROUPS_TABLE} reader_member
-            where reader_member.profile_group_id = dm_group.profile_group_id
+            where reader_member.profile_group_id = ${dmProfileGroupId}
               and reader_member.profile_id = :${readerIdParam}
           )
           and 2 = (
             select count(distinct dm_member.profile_id)
             from ${PROFILE_GROUPS_TABLE} dm_member
-            where dm_member.profile_group_id = dm_group.profile_group_id
+            where dm_member.profile_group_id = ${dmProfileGroupId}
           )
       )
     )`;
@@ -491,8 +648,15 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     if (!authenticated_user_id || !waveIds.length) {
       return new Set();
     }
-    const rows = await this.db.execute<WaveIdRow>(
-      `
+    // Each chunk also inlines the candidate list twice, at least
+    // FOLLOW_CANDIDATE_MIN_LIST_BYTES per copy.
+    const groups = await this.sharedViewerGroups(
+      'fc_viewer_groups',
+      eligibleGroups,
+      { copies: 2, otherInlinedBytes: 2 * FOLLOW_CANDIDATE_MIN_LIST_BYTES }
+    );
+    const sql = `
+        ${this.withViewerGroups(groups)}
         select target_id as wave_id
         from ${IDENTITY_SUBSCRIPTIONS_TABLE}
         where subscriber_id = :authenticated_user_id
@@ -501,8 +665,8 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
           and target_action = :drop_created_action
         union
         select distinct child.parent_wave_id as wave_id
-        from ${WAVES_TABLE} child
-          join ${WAVES_TABLE} parent
+        from ${legacyGetView(WAVES_TABLE)} child
+          join ${legacyGetView(WAVES_TABLE)} parent
             on parent.id = child.parent_wave_id
            and parent.parent_wave_id is null
           join ${IDENTITY_SUBSCRIPTIONS_TABLE} child_follow
@@ -514,21 +678,40 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
           and ${this.getWaveVisibilityFilter(
             'child',
             eligibleGroups,
-            'eligibleGroups'
+            'eligibleGroups',
+            groups?.setSql
           )}
           and ${this.getWaveVisibilityFilter(
             'parent',
             eligibleGroups,
-            'eligibleGroups'
+            'eligibleGroups',
+            groups?.setSql
           )}
-      `,
-      {
-        authenticated_user_id,
-        waveIds,
-        eligibleGroups,
-        wave_target_type: ActivityEventTargetType.WAVE,
-        drop_created_action: ActivityEventAction.DROP_CREATED
-      }
+      `;
+    // Each row depends on one candidate id, so per-chunk results union
+    // exactly. Every chunk inlines the candidate list twice and also carries
+    // the groups (two checks), so the groups take their bytes out of the
+    // list budget first. The floor caps the chunk count at twice the
+    // groupless one; above it, very large group sets still pin.
+    const groupBytes = groups
+      ? viewerGroupsCteBytes(groups, 2)
+      : 2 * sqlInListBytes(eligibleGroups);
+    const maxBytes = Math.max(
+      FOLLOW_CANDIDATE_MIN_LIST_BYTES,
+      (SQL_IN_LIST_CHUNK_BYTES - groupBytes) / 2
+    );
+    const rows = await querySqlInListChunks(
+      waveIds,
+      (chunk) =>
+        this.db.execute<WaveIdRow>(sql, {
+          authenticated_user_id,
+          waveIds: chunk,
+          eligibleGroups,
+          wave_target_type: ActivityEventTargetType.WAVE,
+          drop_created_action: ActivityEventAction.DROP_CREATED,
+          ...groups?.params
+        }),
+      { maxBytes }
     );
     return new Set(rows.map((row) => row.wave_id));
   }
@@ -582,7 +765,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
               0 as tier_rank,
               coalesce(wm.latest_drop_timestamp, 0) as sort_val,
               coalesce(wm.latest_drop_timestamp, 0) as latest_drop_timestamp
-            from ${WAVES_TABLE} w
+            from ${legacyGetView(WAVES_TABLE)} w
               join ${WAVE_METRICS_TABLE} wm on wm.wave_id = w.id
             where w.parent_wave_id is null
               ${
@@ -660,7 +843,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
               wm.wave_visibility_rank as tier_rank,
               ${scoreColumn} as sort_val,
               coalesce(wm.latest_drop_timestamp, 0) as latest_drop_timestamp
-            from ${WAVES_TABLE} w
+            from ${legacyGetView(WAVES_TABLE)} w
               join ${WAVE_METRICS_TABLE} wm on wm.wave_id = w.id
             where w.parent_wave_id is null
               ${
@@ -880,12 +1063,14 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     groupIds,
     identityParamName,
     eligibleGroupsParamName,
-    parentWaveIdsParamName
+    parentWaveIdsParamName,
+    groupSetSql
   }: {
     groupIds: readonly string[];
     identityParamName: string;
     eligibleGroupsParamName: string;
     parentWaveIdsParamName?: string;
+    groupSetSql?: string;
   }): string {
     return `
       select
@@ -898,8 +1083,8 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
             else coalesce(child_wm.latest_drop_timestamp, 0)
           end
         ) as latest_followed_subwave_activity_timestamp
-      from ${WAVES_TABLE} child
-      join ${WAVES_TABLE} parent
+      from ${legacyGetView(WAVES_TABLE)} child
+      join ${legacyGetView(WAVES_TABLE)} parent
         on parent.id = child.parent_wave_id
        and parent.parent_wave_id is null
       join ${IDENTITY_SUBSCRIPTIONS_TABLE} child_follow
@@ -918,12 +1103,14 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
       where ${this.getWaveVisibilityFilter(
         'child',
         groupIds,
-        eligibleGroupsParamName
+        eligibleGroupsParamName,
+        groupSetSql
       )}
         and ${this.getWaveVisibilityFilter(
           'parent',
           groupIds,
-          eligibleGroupsParamName
+          eligibleGroupsParamName,
+          groupSetSql
         )}
         ${
           parentWaveIdsParamName
@@ -937,18 +1124,21 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
   private getFollowedSubwaveActivityCte({
     groupIds,
     identityParamName,
-    eligibleGroupsParamName
+    eligibleGroupsParamName,
+    groupSetSql
   }: {
     groupIds: readonly string[];
     identityParamName: string;
     eligibleGroupsParamName: string;
+    groupSetSql?: string;
   }): string {
     return `
       followed_subwave_activity as (
         ${this.getFollowedSubwaveActivitySelect({
           groupIds,
           identityParamName,
-          eligibleGroupsParamName
+          eligibleGroupsParamName,
+          groupSetSql
         })}
       )
     `;
@@ -978,6 +1168,11 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
   private parseWaveEntity(entity: RawWaveEntity): WaveEntity {
     return {
       ...entity,
+      participation_signature_required: Boolean(
+        entity.participation_signature_required
+      ),
+      voting_signature_required: Boolean(entity.voting_signature_required),
+      forbid_negative_votes: Boolean(entity.forbid_negative_votes),
       participation_required_media: JSON.parse(
         entity.participation_required_media
       ),
@@ -1013,6 +1208,33 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     };
   }
 
+  public async findWaveHubById(
+    id: string,
+    forUpdate: boolean,
+    ctx: RequestContext
+  ): Promise<WaveEntityWithLastDropTime | null> {
+    const timerName = `${this.constructor.name}->findWaveHubById`;
+    ctx.timer?.start(timerName);
+    try {
+      if (forUpdate && !ctx.connection) {
+        throw new Error('Locking a wave requires a transaction');
+      }
+      const row = await withoutLegacyCompetitionGetFacade(() =>
+        this.db.oneOrNull<RawWaveEntityWithLastDropTime>(
+          `select ${waveHubSelectColumns()}, coalesce(wm.latest_drop_timestamp,0) as last_drop_time
+         from ${WAVES_TABLE} w
+         left join ${WAVE_METRICS_TABLE} wm on wm.wave_id=w.id
+         where w.id=:id ${forUpdate ? 'for update' : ''}`,
+          { id },
+          ctx.connection ? { wrappedConnection: ctx.connection } : undefined
+        )
+      );
+      return row ? this.parseWaveEntityWithLastDropTime(row) : null;
+    } finally {
+      ctx.timer?.stop(timerName);
+    }
+  }
+
   public async findWaveById(
     id: string,
     connection?: ConnectionWrapper<any>
@@ -1020,7 +1242,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     return this.db
       .oneOrNull<RawWaveEntityWithLastDropTime>(
         `SELECT w.*, COALESCE(wm.latest_drop_timestamp, 0) as last_drop_time
-         FROM ${WAVES_TABLE} w
+         FROM ${legacyGetView(WAVES_TABLE)} w
          LEFT JOIN ${WAVE_METRICS_TABLE} wm ON wm.wave_id = w.id
          WHERE w.id = :id`,
         { id },
@@ -1043,7 +1265,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
       return await this.db
         .oneOrNull<RawWaveEntity>(
           `SELECT w.*
-           FROM ${WAVES_TABLE} w
+           FROM ${legacyGetView(WAVES_TABLE)} w
            WHERE w.id = :id
            FOR UPDATE`,
           { id },
@@ -1063,20 +1285,26 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     if (!ids.length) {
       return [];
     }
+    const groups = await this.sharedViewerGroups(
+      'wi_viewer_groups',
+      groupIdsUserIsEligibleFor,
+      { copies: 2, otherInlinedBytes: sqlInListBytes(ids) }
+    );
     const visibilityFilter = this.getWaveAndParentVisibilityFilter(
       'w',
       'pw',
       groupIdsUserIsEligibleFor,
-      'groupIdsUserIsEligibleFor'
+      'groupIdsUserIsEligibleFor',
+      groups?.setSql
     );
     return this.db
       .execute<RawWaveEntity>(
-        `SELECT w.*
-         FROM ${WAVES_TABLE} w
-         LEFT JOIN ${WAVES_TABLE} pw ON pw.id = w.parent_wave_id
+        `${this.withViewerGroups(groups)}SELECT w.*
+         FROM ${legacyGetView(WAVES_TABLE)} w
+         LEFT JOIN ${legacyGetView(WAVES_TABLE)} pw ON pw.id = w.parent_wave_id
          WHERE w.id in (:ids)
            and ${visibilityFilter}`,
-        { ids, groupIdsUserIsEligibleFor },
+        { ids, groupIdsUserIsEligibleFor, ...groups?.params },
         connection ? { wrappedConnection: connection } : undefined
       )
       .then((res) => res.map((it) => this.parseWaveEntity(it)));
@@ -1090,21 +1318,27 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     if (!ids.length) {
       return [];
     }
+    const groups = await this.sharedViewerGroups(
+      'wr_viewer_groups',
+      groupIdsUserIsEligibleFor,
+      { copies: 2, otherInlinedBytes: sqlInListBytes(ids) }
+    );
     const visibilityFilter = this.getWaveAndParentVisibilityFilter(
       'w',
       'pw',
       groupIdsUserIsEligibleFor,
-      'groupIdsUserIsEligibleFor'
+      'groupIdsUserIsEligibleFor',
+      groups?.setSql
     );
     return this.db
       .execute<RawWaveEntityWithLastDropTime>(
-        `SELECT w.*, COALESCE(wm.latest_drop_timestamp, 0) as last_drop_time
-         FROM ${WAVES_TABLE} w
-         LEFT JOIN ${WAVES_TABLE} pw ON pw.id = w.parent_wave_id
+        `${this.withViewerGroups(groups)}SELECT w.*, COALESCE(wm.latest_drop_timestamp, 0) as last_drop_time
+         FROM ${legacyGetView(WAVES_TABLE)} w
+         LEFT JOIN ${legacyGetView(WAVES_TABLE)} pw ON pw.id = w.parent_wave_id
          LEFT JOIN ${WAVE_METRICS_TABLE} wm ON wm.wave_id = w.id
          WHERE w.id in (:ids)
            and ${visibilityFilter}`,
-        { ids, groupIdsUserIsEligibleFor },
+        { ids, groupIdsUserIsEligibleFor, ...groups?.params },
         connection ? { wrappedConnection: connection } : undefined
       )
       .then((res) => res.map((it) => this.parseWaveEntityWithLastDropTime(it)));
@@ -1132,8 +1366,8 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
           w.admin_group_id,
           w.voting_group_id,
           w.is_direct_message
-        from ${WAVES_TABLE} w
-        left join ${WAVES_TABLE} pw on pw.id = w.parent_wave_id
+        from ${legacyGetView(WAVES_TABLE)} w
+        left join ${legacyGetView(WAVES_TABLE)} pw on pw.id = w.parent_wave_id
         where w.id in (:ids)
           and ${this.getWaveAndParentVisibilityFilter(
             'w',
@@ -1170,8 +1404,8 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
         `
           select w.*
           from ${OFFICIAL_WAVES_TABLE} ow
-            join ${WAVES_TABLE} w on w.id = ow.wave_id
-            left join ${WAVES_TABLE} parent on parent.id = w.parent_wave_id
+            join ${legacyGetView(WAVES_TABLE)} w on w.id = ow.wave_id
+            left join ${legacyGetView(WAVES_TABLE)} parent on parent.id = w.parent_wave_id
           where ${this.getWaveAndParentVisibilityFilter(
             'w',
             'parent',
@@ -1189,318 +1423,112 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     }
   }
 
-  public async insertWave(wave: InsertWaveEntity, ctx: RequestContext) {
+  public async findWaveHubConfigurationForUpdate(
+    waveId: string,
+    ctx: RequestContext
+  ): Promise<WaveHubConfiguration> {
+    if (!ctx.connection)
+      throw new Error(
+        'findWaveHubConfigurationForUpdate requires a connection'
+      );
+    const timerKey = `${this.constructor.name}->findWaveHubConfigurationForUpdate`;
+    ctx.timer?.start(timerKey);
+    try {
+      const configuration = await withoutLegacyCompetitionGetFacade(() =>
+        this.db.oneOrNull<RawWaveHubConfiguration>(
+          `select hub_participation_config,hub_voting_config from ${WAVES_TABLE} where id=:waveId for update`,
+          { waveId },
+          { wrappedConnection: ctx.connection }
+        )
+      );
+      if (!configuration) throw new Error(`Wave ${waveId} no longer exists`);
+      return {
+        hub_participation_config:
+          typeof configuration.hub_participation_config === 'string'
+            ? JSON.parse(configuration.hub_participation_config)
+            : configuration.hub_participation_config,
+        hub_voting_config:
+          typeof configuration.hub_voting_config === 'string'
+            ? JSON.parse(configuration.hub_voting_config)
+            : configuration.hub_voting_config
+      };
+    } finally {
+      ctx.timer?.stop(timerKey);
+    }
+  }
+
+  public async insertWave(
+    wave: InsertWaveEntity,
+    ctx: RequestContext,
+    options?: { preserveHubConfigurationFrom: WaveHubConfiguration }
+  ) {
     const connection = ctx.connection;
     if (!connection) {
       throw new Error('insertWave requires a connection');
     }
     ctx.timer?.start('waveApiDb->insertWave');
-    const params = {
+    const columns = [
+      'id',
+      'name',
+      'parent_wave_id',
+      'picture',
+      'description_drop_id',
+      'created_at',
+      'updated_at',
+      'created_by',
+      'admin_group_id',
+      'visibility_group_id',
+      'chat_group_id',
+      'chat_enabled',
+      'chat_slow_mode_cooldown_ms',
+      'chat_links_disabled',
+      'chat_replies_open',
+      'chat_replies_collapsed',
+      'admin_drop_deletion_enabled',
+      'is_direct_message',
+      'hub_participation_config',
+      'hub_voting_config'
+    ];
+    const preserved = options?.preserveHubConfigurationFrom;
+    const parameters = {
       ...wave,
-      participation_required_media: JSON.stringify(
-        wave.participation_required_media
-      ),
-      participation_required_metadata: JSON.stringify(
-        wave.participation_required_metadata
-      ),
-      decisions_strategy: wave.decisions_strategy
-        ? JSON.stringify(wave.decisions_strategy)
-        : null
+      ...(preserved
+        ? {
+            hub_participation_config:
+              preserved.hub_participation_config == null
+                ? null
+                : JSON.stringify(preserved.hub_participation_config),
+            hub_voting_config:
+              preserved.hub_voting_config == null
+                ? null
+                : JSON.stringify(preserved.hub_voting_config)
+          }
+        : serializeWaveHubConfiguration(wave))
     };
-    const serial = await this.db
-      .execute(
-        `
-          insert into ${WAVES_TABLE}
-          (id,
-           name,
-           parent_wave_id,
-           picture,
-           description_drop_id,
-           created_at,
-           updated_at,
-           created_by,
-           voting_group_id,
-           admin_group_id,
-           voting_credit_type,
-           voting_credit_scope,
-           voting_credit_category,
-           voting_credit_creditor,
-           voting_signature_required,
-           voting_period_start,
-           voting_period_end,
-           visibility_group_id,
-           chat_group_id,
-           chat_enabled,
-           chat_slow_mode_cooldown_ms,
-           chat_links_disabled,
-           chat_replies_open,
-           chat_replies_collapsed,
-           participation_group_id,
-           participation_max_applications_per_participant,
-           participation_required_metadata,
-           participation_required_media,
-           submission_type,
-           identity_submission_strategy,
-           identity_submission_duplicates,
-           participation_period_start,
-           participation_period_end,
-           participation_signature_required,
-           participation_terms,
-           admin_drop_deletion_enabled,
-           type,
-           winning_min_threshold,
-           winning_max_threshold,
-           winning_threshold_min_duration_ms,
-           max_winners,
-           max_votes_per_identity_to_drop,
-           time_lock_ms,
-           decisions_strategy,
-           next_decision_time,
-           forbid_negative_votes,
-           is_direct_message${wave.serial_no !== null ? ', serial_no' : ''})
-          values (:id,
-                  :name,
-                  :parent_wave_id,
-                  :picture,
-                  :description_drop_id,
-                  :created_at,
-                  :updated_at,
-                  :created_by,
-                  :voting_group_id,
-                  :admin_group_id,
-                  :voting_credit_type,
-                  :voting_credit_scope,
-                  :voting_credit_category,
-                  :voting_credit_creditor,
-                  :voting_signature_required,
-                  :voting_period_start,
-                  :voting_period_end,
-                  :visibility_group_id,
-                  :chat_group_id,
-                  :chat_enabled,
-                  :chat_slow_mode_cooldown_ms,
-                  :chat_links_disabled,
-                  :chat_replies_open,
-                  :chat_replies_collapsed,
-                  :participation_group_id,
-                  :participation_max_applications_per_participant,
-                  :participation_required_metadata,
-                  :participation_required_media,
-                  :submission_type,
-                  :identity_submission_strategy,
-                  :identity_submission_duplicates,
-                  :participation_period_start,
-                  :participation_period_end,
-                  :participation_signature_required,
-                  :participation_terms,
-                  :admin_drop_deletion_enabled,
-                  :type,
-                  :winning_min_threshold,
-                  :winning_max_threshold,
-                  :winning_threshold_min_duration_ms,
-                  :max_winners,
-                  :max_votes_per_identity_to_drop,
-                  :time_lock_ms,
-                  :decisions_strategy,
-                  :next_decision_time,
-                  :forbid_negative_votes,
-                  :is_direct_message${wave.serial_no !== null ? ', :serial_no' : ''})`,
-        params,
-        { wrappedConnection: connection }
-      )
-      .then(
-        async () => wave.serial_no ?? (await this.getLastInsertId(connection))
-      );
+    if (wave.serial_no !== null) columns.push('serial_no');
     await this.db.execute(
-      `insert into ${WAVES_ARCHIVE_TABLE}
-                           (
-                            archival_entry_created_at,
-                            id,
-                            name,
-                            parent_wave_id,
-                            picture,
-                            description_drop_id,
-                            created_at,
-                            updated_at,
-                            created_by,
-                            voting_group_id,
-                            admin_group_id,
-                            voting_credit_type,
-                            voting_credit_scope,
-                            voting_credit_category,
-                            voting_credit_creditor,
-                            voting_signature_required,
-                            voting_period_start,
-                            voting_period_end,
-                            visibility_group_id,
-                            chat_group_id,
-                            chat_enabled,
-                            chat_slow_mode_cooldown_ms,
-                            chat_links_disabled,
-                            chat_replies_open,
-                            chat_replies_collapsed,
-                            participation_group_id,
-                            participation_max_applications_per_participant,
-                            participation_required_metadata,
-                            participation_required_media,
-                            submission_type,
-                            identity_submission_strategy,
-                            identity_submission_duplicates,
-                            participation_period_start,
-                            participation_period_end,
-                            participation_terms,
-                            admin_drop_deletion_enabled,
-                            participation_signature_required,
-                            type,
-                            winning_min_threshold,
-                            winning_max_threshold,
-                            winning_threshold_min_duration_ms,
-                            max_winners,
-                            max_votes_per_identity_to_drop,
-                            time_lock_ms,
-                            decisions_strategy,
-                            serial_no,
-                            forbid_negative_votes,
-                            is_direct_message
-                           )
-                           values (
-                                   :now,
-                                   :id,
-                                   :name,
-                                   :parent_wave_id,
-                                   :picture,
-                                   :description_drop_id,
-                                   :created_at,
-                                   :updated_at,
-                                   :created_by,
-                                   :voting_group_id,
-                                   :admin_group_id,
-                                   :voting_credit_type,
-                                   :voting_credit_scope,
-                                   :voting_credit_category,
-                                   :voting_credit_creditor,
-                                   :voting_signature_required,
-                                   :voting_period_start,
-                                   :voting_period_end,
-                                   :visibility_group_id,
-                                   :chat_group_id,
-                                   :chat_enabled,
-                                   :chat_slow_mode_cooldown_ms,
-                                   :chat_links_disabled,
-                                   :chat_replies_open,
-                                   :chat_replies_collapsed,
-                                   :participation_group_id,
-                                   :participation_max_applications_per_participant,
-                                   :participation_required_metadata,
-                                   :participation_required_media,
-                                   :submission_type,
-                                   :identity_submission_strategy,
-                                   :identity_submission_duplicates,
-                                   :participation_period_start,
-                                   :participation_period_end,
-                                   :participation_terms,
-                                   :admin_drop_deletion_enabled,
-                                   :participation_signature_required,
-                                   :type,
-                                   :winning_min_threshold,
-                                   :winning_max_threshold,
-                                   :winning_threshold_min_duration_ms,
-                                   :max_winners,
-                                   :max_votes_per_identity_to_drop,
-                                   :time_lock_ms,
-                                   :decisions_strategy,
-                                   :serial_no,
-                                   :forbid_negative_votes,
-                           :is_direct_message
-                           )`,
-      { ...params, serial_no: serial, now: Time.currentMillis() },
+      `insert into ${WAVES_TABLE} (${columns.join(',')}) values (${columns.map((column) => `:${column}`).join(',')})`,
+      parameters,
       { wrappedConnection: connection }
     );
-    const waveArchiveId = await this.getLastInsertId(connection);
-    await this.insertWaveVotingCreditNfts(
+    const serial = wave.serial_no ?? (await this.getLastInsertId(connection));
+    const archiveColumns = [
+      'archival_entry_created_at',
+      ...columns.filter((column) => column !== 'serial_no'),
+      'serial_no'
+    ];
+    await this.db.execute(
+      `insert into ${WAVES_ARCHIVE_TABLE} (${archiveColumns.join(',')}) values (${archiveColumns.map((column) => `:${column}`).join(',')})`,
       {
-        waveId: wave.id,
-        creditNfts: wave.voting_credit_nfts
+        ...parameters,
+        serial_no: serial,
+        archival_entry_created_at: Time.currentMillis()
       },
-      ctx
+      { wrappedConnection: connection }
     );
-    await this.insertWaveVotingCreditNftArchives(
-      {
-        waveId: wave.id,
-        waveArchiveId,
-        creditNfts: wave.voting_credit_nfts
-      },
-      ctx
-    );
-    await competitionRepository.ensureLegacyMappingForWave(wave, ctx);
+    // Edits replace the row: chat_replies_collapsed feeds unread summaries.
+    await this.invalidateUnreadForWaveAfterCommit(wave.id, ctx);
     ctx.timer?.stop('waveApiDb->insertWave');
-  }
-
-  private async insertWaveVotingCreditNfts(
-    {
-      waveId,
-      creditNfts
-    }: {
-      waveId: string;
-      creditNfts: readonly WaveVotingCreditNft[];
-    },
-    ctx: RequestContext
-  ): Promise<void> {
-    const timerKey = `${this.constructor.name}->insertWaveVotingCreditNfts`;
-    ctx.timer?.start(timerKey);
-    try {
-      const normalizedCreditNfts = normalizeWaveVotingCreditNfts(creditNfts);
-      if (!normalizedCreditNfts.length) {
-        return;
-      }
-      await this.db.bulkInsert(
-        WAVE_VOTING_CREDIT_NFTS_TABLE,
-        normalizedCreditNfts.map((creditNft) => ({
-          wave_id: waveId,
-          contract: creditNft.contract,
-          token_id: creditNft.tokenId
-        })),
-        ['wave_id', 'contract', 'token_id'],
-        ctx
-      );
-    } finally {
-      ctx.timer?.stop(timerKey);
-    }
-  }
-
-  private async insertWaveVotingCreditNftArchives(
-    {
-      waveId,
-      waveArchiveId,
-      creditNfts
-    }: {
-      waveId: string;
-      waveArchiveId: number;
-      creditNfts: readonly WaveVotingCreditNft[];
-    },
-    ctx: RequestContext
-  ): Promise<void> {
-    const timerKey = `${this.constructor.name}->insertWaveVotingCreditNftArchives`;
-    ctx.timer?.start(timerKey);
-    try {
-      const normalizedCreditNfts = normalizeWaveVotingCreditNfts(creditNfts);
-      if (!normalizedCreditNfts.length) {
-        return;
-      }
-      await this.db.bulkInsert(
-        WAVE_VOTING_CREDIT_NFTS_ARCHIVE_TABLE,
-        normalizedCreditNfts.map((creditNft) => ({
-          wave_archive_id: waveArchiveId,
-          wave_id: waveId,
-          contract: creditNft.contract,
-          token_id: creditNft.tokenId
-        })),
-        ['wave_archive_id', 'wave_id', 'contract', 'token_id'],
-        ctx
-      );
-    } finally {
-      ctx.timer?.stop(timerKey);
-    }
   }
 
   public async findWaveVotingCreditNftsByWaveIds(
@@ -1514,7 +1542,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
       .execute<WaveVotingCreditNftRow>(
         `
           SELECT wave_id, contract, token_id
-          FROM ${WAVE_VOTING_CREDIT_NFTS_TABLE}
+          FROM ${legacyGetView(WAVE_VOTING_CREDIT_NFTS_TABLE)}
           WHERE wave_id IN (:waveIds)
           ORDER BY contract, token_id
         `,
@@ -1595,8 +1623,11 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     const timerName = `${this.constructor.name}->findActiveTdhVotingWaves`;
     ctx.timer?.start(timerName);
     try {
-      const fromAndWhere = `from ${WAVES_TABLE} w
-        left join ${WAVES_TABLE} parent on parent.id = w.parent_wave_id
+      // Always the inlined group list: this scan is driven by the index
+      // range it builds on visibility_group_id. A shared table would turn it
+      // into a full scan of waves, which costs more than a pinned session.
+      const fromAndWhere = `from ${legacyGetView(WAVES_TABLE)} w
+        left join ${legacyGetView(WAVES_TABLE)} parent on parent.id = w.parent_wave_id
         where coalesce(w.is_direct_message, false) = false
           and coalesce(parent.is_direct_message, false) = false
           and w.type in ('RANK', 'APPROVE')
@@ -1606,7 +1637,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
           and (w.next_decision_time is null or w.next_decision_time > :now)
           and (w.type <> 'RANK' or w.decisions_strategy is null or w.next_decision_time is not null)
           and (w.type <> 'APPROVE' or w.max_winners is null or
-            (select count(*) from ${WAVES_DECISIONS_TABLE} d where d.wave_id = w.id) < w.max_winners)
+            (select count(*) from ${legacyGetView(WAVES_DECISIONS_TABLE)} d where d.wave_id = w.id) < w.max_winners)
           and ${this.getWaveAndParentVisibilityFilter('w', 'parent', params.eligibleGroups, 'eligibleGroups')}`;
       const options = { wrappedConnection: ctx.connection };
       // Preserve null for open-ended votes instead of using a numeric sentinel.
@@ -1637,6 +1668,10 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     groupsUserIsEligibleFor: string[],
     ctx: RequestContext
   ): Promise<WaveEntity[]> {
+    const nameSearch = searchParams.name
+      ? buildWaveNameSearchSql(searchParams.name)
+      : undefined;
+    if (nameSearch === null) return [];
     if (
       searchParams.group_id &&
       !groupsUserIsEligibleFor.includes(searchParams.group_id)
@@ -1653,14 +1688,13 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     const serialNoLessThan =
       searchParams.serial_no_less_than ?? Number.MAX_SAFE_INTEGER;
     const offset = searchParams.offset ?? 0;
-    const sql = `${sqlAndParams.sql} select w.* from ${WAVES_TABLE} w
-           left join ${WAVES_TABLE} parent on parent.id = w.parent_wave_id
+    const fromAndWhere = `from ${legacyGetView(WAVES_TABLE)} w
+           left join ${legacyGetView(WAVES_TABLE)} parent on parent.id = w.parent_wave_id
 	         join ${
              UserGroupsService.GENERATED_VIEW
            } cm on cm.profile_id = w.created_by
-         where ${searchParams.author ? ` w.created_by = :author and ` : ``} ${
-           searchParams.name ? ` w.name like :name and ` : ``
-         } ${
+         where ${searchParams.author ? ` w.created_by = :author and ` : ``}
+         ${nameSearch ? `${nameSearch.candidateFilter} and ` : ''} ${
            searchParams.direct_message !== undefined
              ? ` w.is_direct_message = :direct_message and `
              : ``
@@ -1669,15 +1703,35 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
            'parent',
            groupsUserIsEligibleFor,
            'groupsUserIsEligibleFor'
-         )} and w.serial_no < :serialNoLessThan order by w.serial_no desc limit ${
-           searchParams.limit
-         } offset :offset`;
-    const params: Record<string, any> = {
+         )} and w.serial_no < :serialNoLessThan`;
+    // Keep the materialized candidate rows small and normalize each name once.
+    // MySQL's unlimited LIMIT prevents merging/condition pushdown from repeating
+    // REGEXP_REPLACE. Fetch full wave details only after ranking and pagination.
+    const selection = nameSearch
+      ? `select w.* from (
+          select id, serial_no, ${nameSearch.rank} as name_rank,
+            CHAR_LENGTH(normalized_name) as name_length
+          from (
+            select w.id, w.name, w.serial_no,
+              REGEXP_REPLACE(w.name, :searchPunctuation, '') as normalized_name
+            ${fromAndWhere}
+            limit 18446744073709551615
+          ) candidates
+          where ${nameSearch.filter}
+          order by name_rank, name_length, serial_no desc
+          limit :limit offset :offset
+        ) search_matches
+        join ${legacyGetView(WAVES_TABLE)} w on w.id = search_matches.id
+        order by search_matches.name_rank, search_matches.name_length, w.serial_no desc`
+      : `select w.* ${fromAndWhere} order by w.serial_no desc limit :limit offset :offset`;
+    const sql = `${sqlAndParams.sql} ${selection}`;
+    const params: Record<string, unknown> = {
       ...sqlAndParams.params,
+      ...nameSearch?.params,
       groupsUserIsEligibleFor,
       serialNoLessThan,
       offset,
-      name: searchParams.name ? `%${searchParams.name}%` : undefined,
+      limit: searchParams.limit,
       author: searchParams.author,
       direct_message: searchParams.direct_message
     };
@@ -1729,7 +1783,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
           w.*,
           COALESCE(wm.latest_drop_timestamp, 0) as last_drop_time
         from ${DROPS_TABLE} d
-        join ${WAVES_TABLE} w on w.id = d.wave_id
+        join ${legacyGetView(WAVES_TABLE)} w on w.id = d.wave_id
         left join ${WAVE_METRICS_TABLE} wm on wm.wave_id = w.id
         where d.id in (:dropIds)
         `,
@@ -1761,22 +1815,28 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     const timerKey = `${this.constructor.name}->findVisibleParentWavesByChildWaveIds`;
     ctx.timer?.start(timerKey);
     try {
+      const groups = await this.storedViewerGroups(
+        'vp_viewer_groups',
+        groupIdsUserIsEligibleFor,
+        sqlInListBytes(childWaveIds)
+      );
       const rows = await this.db.execute<
         RawWaveEntity & { child_wave_id: string }
       >(
-        `
+        `${this.withViewerGroups(groups)}
           select child.id as child_wave_id, parent.*
-          from ${WAVES_TABLE} child
-          join ${WAVES_TABLE} parent on parent.id = child.parent_wave_id
+          from ${legacyGetView(WAVES_TABLE)} child
+          join ${legacyGetView(WAVES_TABLE)} parent on parent.id = child.parent_wave_id
           where child.id in (:childWaveIds)
             and parent.parent_wave_id is null
             and ${this.getWaveVisibilityFilter(
               'parent',
               groupIdsUserIsEligibleFor,
-              'groupIdsUserIsEligibleFor'
+              'groupIdsUserIsEligibleFor',
+              groups?.setSql
             )}
         `,
-        { childWaveIds, groupIdsUserIsEligibleFor },
+        { childWaveIds, groupIdsUserIsEligibleFor, ...groups?.params },
         { wrappedConnection: ctx.connection }
       );
       return rows.reduce(
@@ -1825,21 +1885,27 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     const timerKey = `${this.constructor.name}->findWaveIdsWithVisibleSubwaves`;
     ctx.timer?.start(timerKey);
     try {
+      const groups = await this.storedViewerGroups(
+        'vs_viewer_groups',
+        groupIdsUserIsEligibleFor,
+        sqlInListBytes(waveIds)
+      );
       const rows = await this.db.execute<{ wave_id: string }>(
-        `
+        `${this.withViewerGroups(groups)}
           select distinct w.parent_wave_id as wave_id
-          from ${WAVES_TABLE} w
-          join ${WAVES_TABLE} parent
+          from ${legacyGetView(WAVES_TABLE)} w
+          join ${legacyGetView(WAVES_TABLE)} parent
             on parent.id = w.parent_wave_id
            and parent.parent_wave_id is null
           where w.parent_wave_id in (:waveIds)
             and ${this.getWaveVisibilityFilter(
               'w',
               groupIdsUserIsEligibleFor,
-              'groupIdsUserIsEligibleFor'
+              'groupIdsUserIsEligibleFor',
+              groups?.setSql
             )}
         `,
-        { waveIds, groupIdsUserIsEligibleFor },
+        { waveIds, groupIdsUserIsEligibleFor, ...groups?.params },
         { wrappedConnection: ctx.connection }
       );
       return new Set(rows.map((row) => row.wave_id));
@@ -1866,6 +1932,13 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     const timerKey = `${this.constructor.name}->findFollowedSubwaveOverviewContextsByParentWaveId`;
     ctx.timer?.start(timerKey);
     try {
+      // Both statements check child and parent visibility: two copies of the
+      // group list each, or one shared table.
+      const groups = await this.sharedViewerGroups(
+        'fs_viewer_groups',
+        eligibleGroups
+      );
+      const withGroups = groups ? `with ${groups.cteSql}` : '';
       const followedSubwaveActivityByParentWaveId =
         await withFollowedSubwaveOverviewContextCache({
           identityId,
@@ -1873,14 +1946,17 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
           eligibleGroups,
           cacheable: ctx.connection === undefined,
           getValue: async () => {
-            const activityRows =
-              await this.db.execute<FollowedSubwaveActivityRow>(
+            // Activity and unread aggregates use only unchanged wave/drop fields.
+            const activityRows = await withoutLegacyCompetitionGetFacade(() =>
+              this.db.execute<FollowedSubwaveActivityRow>(
                 `
+                  ${withGroups}
                   ${this.getFollowedSubwaveActivitySelect({
                     groupIds: eligibleGroups,
                     identityParamName: 'identityId',
                     eligibleGroupsParamName: 'eligibleGroups',
-                    parentWaveIdsParamName: 'parentWaveIds'
+                    parentWaveIdsParamName: 'parentWaveIds',
+                    groupSetSql: groups?.setSql
                   })}
                 `,
                 {
@@ -1888,10 +1964,12 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
                   parentWaveIds,
                   eligibleGroups,
                   wave_target_type: ActivityEventTargetType.WAVE,
-                  drop_created_action: ActivityEventAction.DROP_CREATED
+                  drop_created_action: ActivityEventAction.DROP_CREATED,
+                  ...groups?.params
                 },
                 { wrappedConnection: ctx.connection }
-              );
+              )
+            );
 
             return activityRows.reduce(
               (acc, row) => {
@@ -1930,14 +2008,16 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
           // The follow join uses the unique (subscriber_id, target_id,
           // target_type, target_action) index, so it also prunes drop scans
           // for unfollowed subwaves.
-          return this.db.execute<FollowedSubwaveUnreadRow>(
-            `
+          return withoutLegacyCompetitionGetFacade(() =>
+            this.db.execute<FollowedSubwaveUnreadRow>(
+              `
+              ${withGroups}
               select
                 child.parent_wave_id,
                 count(d.id) as followed_subwave_unread_drops,
                 min(d.serial_no) as first_followed_subwave_unread_drop_serial_no
-              from ${WAVES_TABLE} child
-              join ${WAVES_TABLE} parent
+              from ${legacyGetView(WAVES_TABLE)} child
+              join ${legacyGetView(WAVES_TABLE)} parent
                 on parent.id = child.parent_wave_id
                and parent.parent_wave_id is null
               left join ${WAVE_READER_METRICS_TABLE} parent_reader
@@ -1970,23 +2050,27 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
                 and ${this.getWaveVisibilityFilter(
                   'child',
                   eligibleGroups,
-                  'eligibleGroups'
+                  'eligibleGroups',
+                  groups?.setSql
                 )}
                 and ${this.getWaveVisibilityFilter(
                   'parent',
                   eligibleGroups,
-                  'eligibleGroups'
+                  'eligibleGroups',
+                  groups?.setSql
                 )}
               group by child.parent_wave_id
             `,
-            {
-              identityId,
-              parentWaveIds,
-              eligibleGroups,
-              waveTargetType: ActivityEventTargetType.WAVE,
-              dropCreatedAction: ActivityEventAction.DROP_CREATED
-            },
-            { wrappedConnection: ctx.connection }
+              {
+                identityId,
+                parentWaveIds,
+                eligibleGroups,
+                waveTargetType: ActivityEventTargetType.WAVE,
+                dropCreatedAction: ActivityEventAction.DROP_CREATED,
+                ...groups?.params
+              },
+              { wrappedConnection: ctx.connection }
+            )
           );
         }
       });
@@ -2062,8 +2146,8 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
       const rows = await this.db.execute<RawWaveEntity>(
         `
           select w.*
-          from ${WAVES_TABLE} w
-          left join ${WAVES_TABLE} parent on parent.id = w.parent_wave_id
+          from ${legacyGetView(WAVES_TABLE)} w
+          left join ${legacyGetView(WAVES_TABLE)} parent on parent.id = w.parent_wave_id
           where w.parent_wave_id = :parentWaveId
             and ${this.getWaveAndParentVisibilityFilter(
               'w',
@@ -2093,7 +2177,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
       const rows = await this.db.execute<{ id: string }>(
         `
           select id
-          from ${WAVES_TABLE}
+          from ${legacyGetView(WAVES_TABLE)}
           where parent_wave_id = :parentWaveId
           order by id asc
         `,
@@ -2116,8 +2200,12 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
       return {};
     }
     timer?.start('wavesApiDb->getWavesContributorsOverviews');
-    const result = await this.db
-      .execute<{
+    // Reads only wave_id and author_id, which the legacy GET facade's drops
+    // view leaves unchanged, so it reads the base table: through the view's
+    // competition joins this took 832 ms on the main stage wave, against
+    // 29 ms here.
+    const result = await withoutLegacyCompetitionGetFacade(() =>
+      this.db.execute<{
         wave_id: string;
         contributor_identity: string;
         contributor_pfp: string;
@@ -2155,29 +2243,29 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
         },
         connection ? { wrappedConnection: connection } : undefined
       )
-      .then((it) =>
-        it.reduce<
-          Record<
-            string,
-            { contributor_identity: string; contributor_pfp: string }[]
-          >
-        >(
-          (acc, wave) => {
-            if (!acc[wave.wave_id]) {
-              acc[wave.wave_id] = [];
-            }
-            acc[wave.wave_id].push({
-              contributor_identity: wave.contributor_identity,
-              contributor_pfp: wave.contributor_pfp
-            });
-            return acc;
-          },
-          {} as Record<
-            string,
-            { contributor_identity: string; contributor_pfp: string }[]
-          >
-        )
-      );
+    ).then((it) =>
+      it.reduce<
+        Record<
+          string,
+          { contributor_identity: string; contributor_pfp: string }[]
+        >
+      >(
+        (acc, wave) => {
+          if (!acc[wave.wave_id]) {
+            acc[wave.wave_id] = [];
+          }
+          acc[wave.wave_id].push({
+            contributor_identity: wave.contributor_identity,
+            contributor_pfp: wave.contributor_pfp
+          });
+          return acc;
+        },
+        {} as Record<
+          string,
+          { contributor_identity: string; contributor_pfp: string }[]
+        >
+      )
+    );
     timer?.stop('wavesApiDb->getWavesContributorsOverviews');
     return result;
   }
@@ -2225,7 +2313,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
       sorted as (
         select w.id as wave_id, sc.subscribers_count
         from subscription_counts sc
-          join ${WAVES_TABLE} w on w.id = sc.wave_id
+          join ${legacyGetView(WAVES_TABLE)} w on w.id = sc.wave_id
           ${
             pinned === ApiWavesPinFilter.Pinned && authenticated_user_id
               ? ` join ${PINNED_WAVES_TABLE} pw on pw.wave_id = w.id and pw.profile_id = :authenticated_user_id `
@@ -2259,7 +2347,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
       ), wids as (
       select w.id
       from sorted s
-        join ${WAVES_TABLE} w on w.id = s.wave_id
+        join ${legacyGetView(WAVES_TABLE)} w on w.id = s.wave_id
         ${
           pinned === ApiWavesPinFilter.Pinned && authenticated_user_id
             ? ` join ${PINNED_WAVES_TABLE} pw on pw.wave_id = w.id and pw.profile_id = :authenticated_user_id `
@@ -2289,7 +2377,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
           : ``
       })
       order by s.subscribers_count desc, s.wave_id desc
-      limit :limit offset :offset) select w.* from wids join ${WAVES_TABLE} w on w.id = wids.id
+      limit :limit offset :offset) select w.* from wids join ${legacyGetView(WAVES_TABLE)} w on w.id = wids.id
         `,
         {
           limit,
@@ -2338,7 +2426,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
           `
             select w.*
             from ${WAVE_DROPPER_METRICS_TABLE} wdm
-              join ${WAVES_TABLE} w on w.id = wdm.wave_id
+              join ${legacyGetView(WAVES_TABLE)} w on w.id = wdm.wave_id
             where wdm.dropper_id = :identityId
               and wdm.drops_count > 0
               and w.is_direct_message = false
@@ -2388,7 +2476,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     const timerKey = `${this.constructor.name}->findCreatedProfileWaveActivity`;
     ctx.timer?.start(timerKey);
     try {
-      const latestPostTimestamp = 'coalesce(wdm.latest_drop_timestamp, 0)';
+      const latestPostTimestamp = profileWaveActivityTimestampSql();
       const hasQualifyingPost = `case when ${latestPostTimestamp} > 0 then 1 else 0 end`;
       const cursorFilter = cursor
         ? `and (
@@ -2425,12 +2513,12 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
             ${latestPostTimestamp} as target_latest_post_timestamp,
             ${hasQualifyingPost} as has_qualifying_post,
             w.serial_no as wave_serial_no
-          from ${WAVES_TABLE} w
+          from ${legacyGetView(WAVES_TABLE)} w
           left join ${WAVE_DROPPER_METRICS_TABLE} wdm
             on wdm.wave_id = w.id
             and wdm.dropper_id = :profileId
           left join ${WAVE_METRICS_TABLE} wm on wm.wave_id = w.id
-          left join ${WAVES_TABLE} parent on parent.id = w.parent_wave_id
+          left join ${legacyGetView(WAVES_TABLE)} parent on parent.id = w.parent_wave_id
           where w.created_by = :profileId
             and (w.is_direct_message = false or w.is_direct_message is null)
             and (
@@ -2454,6 +2542,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
         `,
         {
           profileId,
+          anonymityViewerId: competitionAnonymityViewerId(ctx),
           eligibleGroups,
           limit,
           cursorHasQualifyingPost: cursor?.hasQualifyingPost,
@@ -2490,11 +2579,12 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     const timerKey = `${this.constructor.name}->findRecentProfileWaveActivity`;
     ctx.timer?.start(timerKey);
     try {
+      const latestPostTimestamp = profileWaveActivityTimestampSql();
       const cursorFilter = cursor
         ? `and (
-            wdm.latest_drop_timestamp < :cursorLatestPostTimestamp
+            ${latestPostTimestamp} < :cursorLatestPostTimestamp
             or (
-              wdm.latest_drop_timestamp = :cursorLatestPostTimestamp
+              ${latestPostTimestamp} = :cursorLatestPostTimestamp
               and wdm.wave_id < :cursorWaveId
             )
           )`
@@ -2511,13 +2601,13 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
               then 1 else 0
             end as is_private,
             coalesce(wm.drops_count, 0) as total_drops_count,
-            wdm.latest_drop_timestamp as target_latest_post_timestamp
+            ${latestPostTimestamp} as target_latest_post_timestamp
           from ${WAVE_DROPPER_METRICS_TABLE} wdm
-          join ${WAVES_TABLE} w on w.id = wdm.wave_id
+          join ${legacyGetView(WAVES_TABLE)} w on w.id = wdm.wave_id
           left join ${WAVE_METRICS_TABLE} wm on wm.wave_id = w.id
-          left join ${WAVES_TABLE} parent on parent.id = w.parent_wave_id
+          left join ${legacyGetView(WAVES_TABLE)} parent on parent.id = w.parent_wave_id
           where wdm.dropper_id = :profileId
-            and wdm.latest_drop_timestamp > 0
+            and ${latestPostTimestamp} > 0
             and (w.is_direct_message = false or w.is_direct_message is null)
             and (
               w.parent_wave_id is null
@@ -2531,11 +2621,12 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
               'eligibleGroups'
             )}
             ${cursorFilter}
-          order by wdm.latest_drop_timestamp desc, wdm.wave_id desc
+          order by target_latest_post_timestamp desc, wdm.wave_id desc
           limit :limit
         `,
         {
           profileId,
+          anonymityViewerId: competitionAnonymityViewerId(ctx),
           eligibleGroups,
           limit,
           cursorLatestPostTimestamp: cursor?.latestPostTimestamp,
@@ -2678,7 +2769,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
                 c.next_drop_timestamp as stored_next_drop_timestamp,
                 c.created_at as stored_created_at,
                 c.updated_at as stored_updated_at
-         from ${WAVES_TABLE} w
+         from ${legacyGetView(WAVES_TABLE)} w
          left join ${DROPS_TABLE} d
            on d.wave_id = w.id
           and d.author_id = :profileId
@@ -2789,7 +2880,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
         chat_slow_mode_cooldown_ms: number | null;
       }>(
         `select chat_slow_mode_cooldown_ms
-         from ${WAVES_TABLE}
+         from ${legacyGetView(WAVES_TABLE)}
          where id = :waveId
          for update`,
         params,
@@ -2851,112 +2942,23 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     forcePool?: DbPoolName
   ): Promise<WaveEntity | null> {
     return this.db
-      .oneOrNull<WaveEntity>(
+      .oneOrNull<RawWaveEntity>(
         `
-        select * from ${WAVES_TABLE} where id = :wave_id`,
+        select * from ${legacyGetView(WAVES_TABLE)} where id = :wave_id`,
         { wave_id },
         { wrappedConnection: connection, forcePool }
       )
-      .then((it) =>
-        it
-          ? {
-              ...it,
-              participation_required_media: JSON.parse(
-                it.participation_required_media as any
-              ),
-              participation_required_metadata: JSON.parse(
-                it.participation_required_metadata as any
-              ),
-              decisions_strategy: it.decisions_strategy
-                ? JSON.parse(it.decisions_strategy as any)
-                : null
-            }
-          : null
-      );
+      .then((it) => (it ? this.parseWaveEntity(it) : null));
   }
 
   async deleteWave(waveId: string, ctx: RequestContext) {
     ctx.timer?.start('wavesApiDb->deleteWave');
-    await this.deleteWaveVotingCreditNfts(waveId, ctx);
     await this.db.execute(
       `delete from ${WAVES_TABLE} where id = :waveId`,
       { waveId },
       { wrappedConnection: ctx.connection }
     );
     ctx.timer?.stop('wavesApiDb->deleteWave');
-  }
-
-  async deleteWaveVotingCreditNfts(waveId: string, ctx: RequestContext) {
-    ctx.timer?.start('wavesApiDb->deleteWaveVotingCreditNfts');
-    await this.db.execute(
-      `delete from ${WAVE_VOTING_CREDIT_NFTS_TABLE} where wave_id = :waveId`,
-      { waveId },
-      { wrappedConnection: ctx.connection }
-    );
-    ctx.timer?.stop('wavesApiDb->deleteWaveVotingCreditNfts');
-  }
-
-  async insertOutcomes(entities: WaveOutcomeEntity[], ctx: RequestContext) {
-    ctx.timer?.start('wavesApiDb->insertOutcomes');
-    await this.db.bulkInsert(
-      WAVE_OUTCOMES_TABLE,
-      entities,
-      [
-        'wave_id',
-        'wave_outcome_position',
-        'type',
-        'subtype',
-        'description',
-        'credit',
-        'rep_category',
-        'amount'
-      ],
-      ctx
-    );
-    ctx.timer?.stop('wavesApiDb->insertOutcomes');
-  }
-
-  async insertOutcomeDistributionItems(
-    entities: WaveOutcomeDistributionItemEntity[],
-    ctx: RequestContext
-  ) {
-    ctx.timer?.start('wavesApiDb->insertOutcomeDistributionItems');
-    await this.db.bulkInsert(
-      WAVE_OUTCOME_DISTRIBUTION_ITEMS_TABLE,
-      entities,
-      [
-        'wave_id',
-        'wave_outcome_position',
-        'wave_outcome_distribution_item_position',
-        'amount',
-        'description'
-      ],
-      ctx
-    );
-    ctx.timer?.stop('wavesApiDb->insertOutcomeDistributionItems');
-  }
-
-  async deleteWaveOutcomes(waveId: string, ctx: RequestContext) {
-    ctx.timer?.start('wavesApiDb->deleteWaveOutcomes');
-    await this.db.execute(
-      `delete from ${WAVE_OUTCOMES_TABLE} where wave_id = :waveId`,
-      { waveId },
-      { wrappedConnection: ctx.connection }
-    );
-    ctx.timer?.stop('wavesApiDb->deleteWaveOutcomes');
-  }
-
-  async deleteWaveOutcomeDistributionItems(
-    waveId: string,
-    ctx: RequestContext
-  ) {
-    ctx.timer?.start('wavesApiDb->deleteWaveOutcomeDistributionItems');
-    await this.db.execute(
-      `delete from ${WAVE_OUTCOME_DISTRIBUTION_ITEMS_TABLE} where wave_id = :waveId`,
-      { waveId },
-      { wrappedConnection: ctx.connection }
-    );
-    ctx.timer?.stop('wavesApiDb->deleteWaveOutcomeDistributionItems');
   }
 
   async deleteWaveMetrics(waveId: string, ctx: RequestContext) {
@@ -3157,7 +3159,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
       .execute<RawWaveEntity>(
         `with hot_waves as (
           select w.id, count(*) as drop_count
-          from ${WAVES_TABLE} w
+          from ${legacyGetView(WAVES_TABLE)} w
           join ${DROPS_TABLE} d on d.wave_id = w.id
           ${
             exclude_followed
@@ -3178,7 +3180,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
 	          order by drop_count desc, w.id
 	          limit :limit offset :offset
 	        )
-	        select w.* from ${WAVES_TABLE} w
+	        select w.* from ${legacyGetView(WAVES_TABLE)} w
 	        join hot_waves hw on hw.id = w.id
         order by hw.drop_count desc, w.id`,
         {
@@ -3191,6 +3193,109 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
         }
       )
       .then((res) => res.map((it) => this.parseWaveEntity(it)));
+  }
+
+  public async findAllRootWaveIds(
+    {
+      identityId,
+      eligibleGroups
+    }: {
+      readonly identityId: string | null;
+      readonly eligibleGroups: string[];
+    },
+    ctx: RequestContext
+  ): Promise<string[]> {
+    // Include quiet waves without metrics and pinned waves. Capture every ID in
+    // one query so activity cannot move a wave across a pagination boundary.
+    const rows = await withoutLegacyCompetitionGetFacade(() =>
+      this.db.execute<{ id: string }>(
+        `select w.id from ${legacyGetView(WAVES_TABLE)} w
+         left join ${WAVE_METRICS_TABLE} wm on wm.wave_id = w.id
+         left join ${WAVE_READER_METRICS_TABLE} wrm
+           on wrm.wave_id = w.id and wrm.reader_id = :identityId
+         where w.parent_wave_id is null and w.is_direct_message = false
+           and ${this.getWaveVisibilityFilter('w', eligibleGroups, 'eligibleGroups')}
+         order by case when coalesce(wrm.muted, false) then 0
+           else coalesce(wm.latest_drop_timestamp, 0) end desc, w.id desc`,
+        { identityId, eligibleGroups },
+        ctx.connection ? { wrappedConnection: ctx.connection } : undefined
+      )
+    );
+    return rows.map((row) => row.id);
+  }
+
+  public async findJoinedRootWaveIds(
+    {
+      identityId,
+      eligibleGroups,
+      waveIds
+    }: {
+      readonly identityId: string;
+      readonly eligibleGroups: string[];
+      readonly waveIds?: string[];
+    },
+    ctx: RequestContext
+  ): Promise<string[]> {
+    if (waveIds?.length === 0) return [];
+    const timerKey = `${this.constructor.name}->findJoinedRootWaveIds`;
+    ctx.timer?.start(timerKey);
+    try {
+      // The root visibility check keeps the inlined list (its index range
+      // drives the scan); the followed-subwave activity's two checks share
+      // the groups once three inlined copies would reach the pinning size.
+      const groups = await this.sharedViewerGroups(
+        'jr_viewer_groups',
+        eligibleGroups,
+        { copies: 3, otherInlinedBytes: sqlInListBytes(waveIds ?? []) }
+      );
+      // Membership and activity use base wave data, not competition projections.
+      const rows = await withoutLegacyCompetitionGetFacade(() =>
+        this.db.execute<{ id: string }>(
+          `with ${groups ? `${groups.cteSql},` : ''} ${this.getFollowedSubwaveActivityCte(
+            {
+              groupIds: eligibleGroups,
+              identityParamName: 'identityId',
+              eligibleGroupsParamName: 'eligibleGroups',
+              groupSetSql: groups?.setSql
+            }
+          )}
+          select w.id
+          from ${legacyGetView(WAVES_TABLE)} w
+          left join ${WAVE_METRICS_TABLE} wm on wm.wave_id = w.id
+          left join ${WAVE_READER_METRICS_TABLE} wrm
+            on wrm.wave_id = w.id and wrm.reader_id = :identityId
+          left join followed_subwave_activity fsa on fsa.parent_wave_id = w.id
+          where w.parent_wave_id is null and w.is_direct_message = false
+            and ${this.getWaveVisibilityFilter('w', eligibleGroups, 'eligibleGroups')}
+            ${waveIds ? 'and w.id in (:waveIds)' : ''}
+            and (
+              exists (
+                select 1 from ${IDENTITY_SUBSCRIPTIONS_TABLE} f
+                where f.subscriber_id = :identityId and f.target_id = w.id
+                  and f.target_type = :wave_target_type
+                  and f.target_action = :drop_created_action
+              ) or fsa.parent_wave_id is not null
+            )
+          order by greatest(
+            case when coalesce(wrm.muted, false) then 0
+              else coalesce(wm.latest_drop_timestamp, 0) end,
+            coalesce(fsa.latest_followed_subwave_activity_timestamp, 0)
+          ) desc, w.id desc`,
+          {
+            identityId,
+            eligibleGroups,
+            waveIds,
+            wave_target_type: ActivityEventTargetType.WAVE,
+            drop_created_action: ActivityEventAction.DROP_CREATED,
+            ...groups?.params
+          },
+          ctx.connection ? { wrappedConnection: ctx.connection } : undefined
+        )
+      );
+      return rows.map((row) => row.id);
+    } finally {
+      ctx.timer?.stop(timerKey);
+    }
   }
 
   async findRecentlyDroppedToWaves(param: {
@@ -3228,14 +3333,28 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     const sortExpr = useFollowedSubwaveActivity
       ? `GREATEST(${rootSortExpr}, COALESCE(fsa.latest_followed_subwave_activity_timestamp, 0))`
       : rootSortExpr;
+    // The root visibility check keeps the inlined list (its index range
+    // drives the scan); the followed-subwave activity's two checks share the
+    // groups once three inlined copies would reach the pinning size.
+    const groups = useFollowedSubwaveActivity
+      ? await this.sharedViewerGroups(
+          'ov_viewer_groups',
+          param.eligibleGroups,
+          {
+            copies: 3
+          }
+        )
+      : undefined;
+    const viewerGroupsCteSql = groups ? `${groups.cteSql},` : ``;
     const followedSubwaveActivityCte = useFollowedSubwaveActivity
       ? `${this.getFollowedSubwaveActivityCte({
           groupIds: param.eligibleGroups,
           identityParamName: 'authenticated_user_id',
-          eligibleGroupsParamName: 'eligibleGroups'
+          eligibleGroupsParamName: 'eligibleGroups',
+          groupSetSql: groups?.setSql
         })},`
       : ``;
-    const sql = `with ${followedSubwaveActivityCte} wids as (select w.id, ${sortExpr} as sort_val from ${WAVES_TABLE} w
+    const sql = `with ${viewerGroupsCteSql} ${followedSubwaveActivityCte} wids as (select w.id, ${sortExpr} as sort_val from ${legacyGetView(WAVES_TABLE)} w
     ${
       param.pinned === ApiWavesPinFilter.Pinned && param.authenticated_user_id
         ? ` join ${PINNED_WAVES_TABLE} pw on pw.wave_id = w.id and pw.profile_id = :authenticated_user_id `
@@ -3283,7 +3402,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
        param.eligibleGroups.length
          ? `or w.visibility_group_id in (:eligibleGroups)`
          : ``
-     }) order by sort_val desc, w.id desc limit :limit offset :offset) select w.* from ${WAVES_TABLE} w join wids on w.id = wids.id order by wids.sort_val desc, w.id desc`;
+     }) order by sort_val desc, w.id desc limit :limit offset :offset) select w.* from ${legacyGetView(WAVES_TABLE)} w join wids on w.id = wids.id order by wids.sort_val desc, w.id desc`;
     return this.db
       .execute<
         Omit<
@@ -3299,7 +3418,8 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
       >(sql, {
         ...param,
         wave_target_type: ActivityEventTargetType.WAVE,
-        drop_created_action: ActivityEventAction.DROP_CREATED
+        drop_created_action: ActivityEventAction.DROP_CREATED,
+        ...groups?.params
       })
       .then((res) =>
         res.map((it) => ({
@@ -3405,20 +3525,37 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
       .filter((it): it is string => !!it)
       .join(' and ');
     const scoreFilters = filters ? `and ${filters}` : ``;
+    // The root visibility check keeps the inlined list (its index range
+    // drives the scan); the followed-subwave activity's two checks share the
+    // groups once three inlined copies would reach the pinning size.
+    const groups = useFollowedSubwaveActivity
+      ? await this.sharedViewerGroups(
+          'ov_viewer_groups',
+          param.eligibleGroups,
+          {
+            copies: 3,
+            // This statement's own text runs about 2 KB past the 4 KB the
+            // in-list budget leaves for it; keep a margin for optional filters.
+            otherInlinedBytes: 3_000
+          }
+        )
+      : undefined;
+    const viewerGroupsCteSql = groups ? `${groups.cteSql},` : ``;
     const followedSubwaveActivityCte = useFollowedSubwaveActivity
       ? `${this.getFollowedSubwaveActivityCte({
           groupIds: param.eligibleGroups,
           identityParamName: 'authenticated_user_id',
-          eligibleGroupsParamName: 'eligibleGroups'
+          eligibleGroupsParamName: 'eligibleGroups',
+          groupSetSql: groups?.setSql
         })},`
       : ``;
-    const sql = `with ${followedSubwaveActivityCte} wids as (
+    const sql = `with ${viewerGroupsCteSql} ${followedSubwaveActivityCte} wids as (
       select
         w.id,
         ${tierRankExpr} as tier_rank,
         ${scoreExpr} as sort_val,
         ${latestActivityExpr} as latest_drop_timestamp
-      from ${WAVES_TABLE} w
+      from ${legacyGetView(WAVES_TABLE)} w
       ${
         param.pinned === ApiWavesPinFilter.Pinned && param.authenticated_user_id
           ? ` join ${PINNED_WAVES_TABLE} pw on pw.wave_id = w.id and pw.profile_id = :authenticated_user_id `
@@ -3479,14 +3616,15 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
       limit :limit offset :offset
     )
     select w.*
-    from ${WAVES_TABLE} w
+    from ${legacyGetView(WAVES_TABLE)} w
       join wids on w.id = wids.id
     order by wids.tier_rank asc, wids.sort_val desc, wids.latest_drop_timestamp desc, w.id desc`;
     return this.db
       .execute<RawWaveEntity>(sql, {
         ...param,
         wave_target_type: ActivityEventTargetType.WAVE,
-        drop_created_action: ActivityEventAction.DROP_CREATED
+        drop_created_action: ActivityEventAction.DROP_CREATED,
+        ...groups?.params
       })
       .then((res) => res.map((it) => this.parseWaveEntity(it)));
   }
@@ -3521,7 +3659,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
 
   public async findWaveByGroupId(groupId: string, ctx: RequestContext) {
     const result = await this.db.execute<WaveEntity>(
-      `SELECT * FROM ${WAVES_TABLE} WHERE admin_group_id = :groupId OR chat_group_id = :groupId OR voting_group_id = :groupId OR participation_group_id = :groupId ORDER BY created_at DESC LIMIT 1`,
+      `SELECT * FROM ${legacyGetView(WAVES_TABLE)} WHERE admin_group_id = :groupId OR chat_group_id = :groupId OR voting_group_id = :groupId OR participation_group_id = :groupId ORDER BY created_at DESC LIMIT 1`,
       { groupId },
       { wrappedConnection: ctx.connection }
     );
@@ -3544,17 +3682,17 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
       // only read group rows, so there is no reverse group-row lock dependency.
       return await this.db.execute<WaveEntity>(
         `select waves.*
-           from ${WAVES_TABLE} waves
+           from ${legacyGetView(WAVES_TABLE)} waves
            join (
-             select id from ${WAVES_TABLE} where visibility_group_id = :groupId
+             select id from ${legacyGetView(WAVES_TABLE)} where visibility_group_id = :groupId
              union
-             select id from ${WAVES_TABLE} where participation_group_id = :groupId
+             select id from ${legacyGetView(WAVES_TABLE)} where participation_group_id = :groupId
              union
-             select id from ${WAVES_TABLE} where chat_group_id = :groupId
+             select id from ${legacyGetView(WAVES_TABLE)} where chat_group_id = :groupId
              union
-             select id from ${WAVES_TABLE} where admin_group_id = :groupId
+             select id from ${legacyGetView(WAVES_TABLE)} where admin_group_id = :groupId
              union
-             select id from ${WAVES_TABLE} where voting_group_id = :groupId
+             select id from ${legacyGetView(WAVES_TABLE)} where voting_group_id = :groupId
            ) referenced on referenced.id = waves.id
           order by waves.id
           for update`,
@@ -3574,7 +3712,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
       return {};
     }
     const entities = await this.db.execute<WaveDecisionPauseEntity>(
-      `select * from ${WAVES_DECISION_PAUSES_TABLE} where wave_id in (:waveIds)`,
+      `select * from ${legacyGetView(WAVES_DECISION_PAUSES_TABLE)} where wave_id in (:waveIds)`,
       { waveIds },
       { wrappedConnection: ctx.connection }
     );
@@ -3595,7 +3733,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     ctx: RequestContext
   ): Promise<WaveDecisionPauseEntity[]> {
     return await this.db.execute<WaveDecisionPauseEntity>(
-      `select * from ${WAVES_DECISION_PAUSES_TABLE} where wave_id = :waveId`,
+      `select * from ${legacyGetView(WAVES_DECISION_PAUSES_TABLE)} where wave_id = :waveId`,
       { waveId },
       { wrappedConnection: ctx.connection }
     );
@@ -3611,7 +3749,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     const timerLabel = `${this.constructor.name}->countWaveDecisionsByWaveIds`;
     ctx.timer?.start(timerLabel);
     const rows = await this.db.execute<{ wave_id: string; cnt: number }>(
-      `select wave_id, count(*) as cnt from ${WAVES_DECISIONS_TABLE} where wave_id in (:waveIds) group by 1`,
+      `select wave_id, count(*) as cnt from ${legacyGetView(WAVES_DECISIONS_TABLE)} where wave_id in (:waveIds) group by 1`,
       { waveIds },
       { wrappedConnection: ctx.connection }
     );
@@ -3623,10 +3761,14 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     return result;
   }
 
-  async deletePause(id: number, connection: ConnectionWrapper<any>) {
+  async deletePause(
+    waveId: string,
+    id: number,
+    connection: ConnectionWrapper<any>
+  ) {
     await this.db.execute(
-      `delete from ${WAVES_DECISION_PAUSES_TABLE} where id = :id`,
-      { id },
+      `delete p from ${COMPETITION_PAUSES_TABLE} p join ${COMPETITIONS_TABLE} c on c.id=p.competition_id where c.legacy_wave_id=:waveId and p.legacy_source_id=:id`,
+      { waveId, id },
       { wrappedConnection: connection }
     );
   }
@@ -3640,13 +3782,18 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     },
     connection: ConnectionWrapper<any>
   ) {
-    await this.db.execute(
-      `
-      insert into ${WAVES_DECISION_PAUSES_TABLE} (start_time, end_time, wave_id, reason)
-      values (:startTime, :endTime, :waveId, :reason)
-        `,
-      { ...param, reason: param.reason ?? null },
-      { wrappedConnection: connection }
+    const ctx = { connection };
+    const owner = await competitionRepository.lockOriginalPrimary(
+      param.waveId,
+      ctx
+    );
+    if (!owner) throw new Error('Native primary competition not found');
+    await competitionCommandRepository.pause(
+      owner.id,
+      param.startTime,
+      param.endTime,
+      param.reason ?? null,
+      ctx
     );
   }
 
@@ -3668,13 +3815,150 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     return new Set<string>(results.map((it) => it.wave_id));
   }
 
-  async insertPin(
-    { waveId, profileId }: { waveId: string; profileId: string },
+  async lockPinnedWaveProfile(profileId: string, ctx: RequestContext) {
+    return this.db.oneOrNull<{ external_id: string }>(
+      `select external_id from ${PROFILES_TABLE} where external_id = :profileId for update`,
+      { profileId },
+      { wrappedConnection: ctx.connection }
+    );
+  }
+
+  async findPinnedWavePositions(profileId: string, ctx: RequestContext) {
+    const timerKey = `${this.constructor.name}->findPinnedWavePositions`;
+    ctx.timer?.start(timerKey);
+    try {
+      return await this.db.execute<PinnedWavePosition>(
+        `select wave_id, position from ${PINNED_WAVES_TABLE}
+         where profile_id = :profileId
+         order by position is null, position, wave_id`,
+        { profileId },
+        { forcePool: DbPoolName.WRITE, wrappedConnection: ctx.connection }
+      );
+    } finally {
+      ctx.timer?.stop(timerKey);
+    }
+  }
+
+  async findProfilesWithUnorderedPins(limit: number) {
+    const rows = await this.db.execute<{ profile_id: string }>(
+      `select distinct pins.profile_id from ${PINNED_WAVES_TABLE} pins
+       join ${PROFILES_TABLE} p on p.external_id = pins.profile_id
+       where pins.position is null
+       order by pins.profile_id limit :limit`,
+      { limit },
+      { forcePool: DbPoolName.WRITE }
+    );
+    return rows.map((row) => row.profile_id);
+  }
+
+  // The caller holds the profile lock. Only pins without a saved position are seeded.
+  async initializePinnedWavePositions(
+    profileId: string,
+    eligibleGroups: string[],
     ctx: RequestContext
   ) {
+    const pins = await this.findPinnedWavePositions(profileId, ctx);
+    const unorderedIds = pins
+      .filter((pin) => pin.position === null)
+      .map((pin) => pin.wave_id);
+    if (!unorderedIds.length) {
+      return pins;
+    }
+
+    const groups = await this.sharedViewerGroups(
+      'pin_seed_viewer_groups',
+      eligibleGroups
+    );
+    const activity = await this.db.execute<{ wave_id: string }>(
+      `with ${groups ? `${groups.cteSql}, ` : ''} followed_subwave_activity as (
+         ${this.getFollowedSubwaveActivitySelect({
+           groupIds: eligibleGroups,
+           identityParamName: 'profileId',
+           eligibleGroupsParamName: 'eligibleGroups',
+           parentWaveIdsParamName: 'unorderedIds',
+           groupSetSql: groups?.setSql
+         })}
+       )
+       select pins.wave_id
+       from ${PINNED_WAVES_TABLE} pins
+       left join ${WAVE_METRICS_TABLE} wm on wm.wave_id = pins.wave_id
+       left join ${WAVE_READER_METRICS_TABLE} reader
+         on reader.wave_id = pins.wave_id and reader.reader_id = pins.profile_id
+       left join followed_subwave_activity child on child.parent_wave_id = pins.wave_id
+       where pins.profile_id = :profileId and pins.wave_id in (:unorderedIds)
+       order by coalesce(reader.muted, false),
+         greatest(coalesce(wm.latest_drop_timestamp, 0),
+                  coalesce(child.latest_followed_subwave_activity_timestamp, 0)) desc,
+         pins.wave_id desc`,
+      {
+        profileId,
+        unorderedIds,
+        eligibleGroups,
+        wave_target_type: ActivityEventTargetType.WAVE,
+        drop_created_action: ActivityEventAction.DROP_CREATED,
+        ...groups?.params
+      },
+      { wrappedConnection: ctx.connection }
+    );
+    // The pin is the driving row, so missing waves or metrics still get a position.
+    if (activity.length !== unorderedIds.length) {
+      throw new Error(
+        'Pinned wave position seed did not cover every unordered pin'
+      );
+    }
+    const positioned = pins.filter((pin) => pin.position !== null);
+    const lastPosition = positioned.at(-1)?.position ?? 0;
+    const seeded = activity.map(({ wave_id }, index) => ({
+      wave_id,
+      position: lastPosition + index + 1
+    }));
+    await this.updatePinnedWavePositions(profileId, seeded, ctx);
+    return [...positioned, ...seeded];
+  }
+
+  async updatePinnedWavePositions(
+    profileId: string,
+    positions: readonly PinnedWavePosition[],
+    ctx: RequestContext
+  ) {
+    if (!positions.length) {
+      return;
+    }
+    await this.db.bulkUpsert(
+      PINNED_WAVES_TABLE,
+      positions.map((pin) => ({ profile_id: profileId, ...pin })),
+      ['profile_id', 'wave_id', 'position'],
+      ['position'],
+      ctx
+    );
+  }
+
+  async insertPin(
+    {
+      waveId,
+      profileId,
+      eligibleGroups
+    }: {
+      waveId: string;
+      profileId: string;
+      eligibleGroups: string[];
+    },
+    ctx: RequestContext
+  ) {
+    if (!(await this.lockPinnedWaveProfile(profileId, ctx))) {
+      throw new ForbiddenException('Please create a profile first');
+    }
+    const pins = await this.initializePinnedWavePositions(
+      profileId,
+      eligibleGroups,
+      ctx
+    );
+    const position = (pins.at(-1)?.position ?? 0) + 1;
     await this.db.execute(
-      `insert into ${PINNED_WAVES_TABLE} (wave_id, profile_id) values (:waveId, :profileId) on duplicate key update wave_id = :waveId`,
-      { waveId, profileId },
+      `insert into ${PINNED_WAVES_TABLE} (wave_id, profile_id, position)
+       values (:waveId, :profileId, :position)
+       on duplicate key update wave_id = :waveId`,
+      { waveId, profileId, position },
       { wrappedConnection: ctx.connection }
     );
   }
@@ -3683,6 +3967,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     { waveId, profileId }: { waveId: string; profileId: string },
     ctx: RequestContext
   ) {
+    await this.lockPinnedWaveProfile(profileId, ctx);
     await this.db.execute(
       `delete from ${PINNED_WAVES_TABLE} where wave_id = :waveId and profile_id = :profileId`,
       { waveId, profileId },
@@ -3700,7 +3985,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
         return {};
       }
       const dbResult = await this.db.execute<WaveOutcomeEntity>(
-        `select * from ${WAVE_OUTCOMES_TABLE} where wave_id in (:waveIds)`,
+        `select * from ${legacyGetView(WAVE_OUTCOMES_TABLE)} where wave_id in (:waveIds)`,
         { waveIds },
         { wrappedConnection: ctx.connection }
       );
@@ -3731,7 +4016,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
         return {};
       }
       const dbResult = await this.db.execute<WaveOutcomeDistributionItemEntity>(
-        `select * from ${WAVE_OUTCOME_DISTRIBUTION_ITEMS_TABLE} where wave_id in (:waveIds)`,
+        `select * from ${legacyGetView(WAVE_OUTCOME_DISTRIBUTION_ITEMS_TABLE)} where wave_id in (:waveIds)`,
         { waveIds },
         { wrappedConnection: ctx.connection }
       );
@@ -3765,7 +4050,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
       ctx.timer?.start(`${this.constructor.name}->findOutcomes`);
       return this.db.execute<WaveOutcomeEntity>(
         `
-        select * from ${WAVE_OUTCOMES_TABLE} where wave_id = :wave_id order by wave_outcome_position ${param.order} limit :limit offset :offset
+        select * from ${legacyGetView(WAVE_OUTCOMES_TABLE)} where wave_id = :wave_id order by wave_outcome_position ${param.order} limit :limit offset :offset
       `,
         param,
         {
@@ -3788,7 +4073,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
       return this.db
         .oneOrNull<{ cnt: number }>(
           `
-        select count(*) as cnt from ${WAVE_OUTCOMES_TABLE} where wave_id = :wave_id
+        select count(*) as cnt from ${legacyGetView(WAVE_OUTCOMES_TABLE)} where wave_id = :wave_id
       `,
           param,
           {
@@ -3817,7 +4102,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
       );
       return this.db.execute<WaveOutcomeDistributionItemEntity>(
         `
-        select * from ${WAVE_OUTCOME_DISTRIBUTION_ITEMS_TABLE} where wave_id = :wave_id and wave_outcome_position = :wave_outcome_position order by wave_outcome_distribution_item_position ${param.order} limit :limit offset :offset
+        select * from ${legacyGetView(WAVE_OUTCOME_DISTRIBUTION_ITEMS_TABLE)} where wave_id = :wave_id and wave_outcome_position = :wave_outcome_position order by wave_outcome_distribution_item_position ${param.order} limit :limit offset :offset
       `,
         param,
         {
@@ -3843,7 +4128,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
       return this.db
         .oneOrNull<{ cnt: number }>(
           `
-        select count(*) as cnt from ${WAVE_OUTCOME_DISTRIBUTION_ITEMS_TABLE} where wave_id = :wave_id and wave_outcome_position = :wave_outcome_position
+        select count(*) as cnt from ${legacyGetView(WAVE_OUTCOME_DISTRIBUTION_ITEMS_TABLE)} where wave_id = :wave_id and wave_outcome_position = :wave_outcome_position
       `,
           param,
           {
@@ -3924,6 +4209,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
       { waveId, readerId, now },
       { wrappedConnection: ctx.connection }
     );
+    await this.invalidateUnreadForReaderWaveAfterCommit(readerId, waveId, ctx);
     ctx.timer?.stop(
       `${this.constructor.name}->updateWaveReaderMetricLatestReadTimestamp`
     );
@@ -4011,6 +4297,11 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
           forcePool: DbPoolName.WRITE
         }
       );
+      await this.invalidateUnreadForReaderWaveAfterCommit(
+        param.readerId,
+        param.waveId,
+        ctx
+      );
     } finally {
       ctx.timer?.stop(timerLabel);
     }
@@ -4052,6 +4343,8 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
         params,
         { wrappedConnection: ctx.connection }
       );
+      // New reader rows change who has a summary at all: one wave-wide bump.
+      await this.invalidateUnreadForWaveAfterCommit(param.waveId, ctx);
     } finally {
       ctx.timer?.stop(timerLabel);
     }
@@ -4073,6 +4366,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
       { waveId, readerId, timestamp },
       { wrappedConnection: ctx.connection }
     );
+    await this.invalidateUnreadForReaderWaveAfterCommit(readerId, waveId, ctx);
     ctx.timer?.stop(
       `${this.constructor.name}->setWaveReaderMetricLatestReadTimestamp`
     );
@@ -4114,6 +4408,11 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
           forcePool: DbPoolName.WRITE
         }
       );
+      await this.invalidateUnreadForReaderWaveAfterCommit(
+        param.readerId,
+        param.waveId,
+        ctx
+      );
     } finally {
       ctx.timer?.stop(timerLabel);
     }
@@ -4133,7 +4432,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
       const readers = await this.db.execute<{ reader_id: string }>(
         `select r.reader_id
          from ${WAVE_READER_METRICS_TABLE} r
-         join ${WAVES_TABLE} w
+         join ${legacyGetView(WAVES_TABLE)} w
            on w.id = r.wave_id
           and w.is_direct_message = true
          where r.wave_id = :waveId
@@ -4177,10 +4476,10 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     const rows = await this.db.execute<{ wave_id: string }>(
       `select r.wave_id
        from ${WAVE_READER_METRICS_TABLE} r
-       join ${WAVES_TABLE} w
+       join ${legacyGetView(WAVES_TABLE)} w
          on w.id = r.wave_id
         and w.is_direct_message = true
-       left join ${WAVES_TABLE} parent
+       left join ${legacyGetView(WAVES_TABLE)} parent
          on parent.id = w.parent_wave_id
        where r.reader_id = :readerId
          and r.wave_id > :afterWaveId
@@ -4257,6 +4556,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
         ignoreDuplicates: true
       }
     );
+    await this.invalidateUnreadForWaveAfterCommit(param.waveId, ctx);
     ctx.timer?.stop(`${this.constructor.name}->insertMissingWaveReaderMetrics`);
   }
 
@@ -4307,7 +4607,34 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
       param,
       { wrappedConnection: ctx.connection }
     );
+    await this.invalidateUnreadForReaderWaveAfterCommit(
+      param.readerId,
+      param.waveId,
+      ctx
+    );
     ctx.timer?.stop(`${this.constructor.name}->setWaveMuted`);
+  }
+
+  /**
+   * Unread summaries are cached per reader and wave (wave-unread-cache.ts).
+   * Writes to their inputs bump a version once the transaction commits.
+   */
+  private async invalidateUnreadForReaderWaveAfterCommit(
+    readerId: string,
+    waveId: string,
+    ctx: RequestContext
+  ): Promise<void> {
+    await invalidateWaveUnreadCacheForReaderWaveAfterCommit(
+      { identityId: readerId, waveId },
+      ctx.connection
+    );
+  }
+
+  private async invalidateUnreadForWaveAfterCommit(
+    waveId: string,
+    ctx: RequestContext
+  ): Promise<void> {
+    await invalidateWaveUnreadCacheForWaveAfterCommit(waveId, ctx.connection);
   }
 
   async findIdentityUnreadDropsSummaryByWaveId(
@@ -4324,8 +4651,21 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     const timerLabel = `${this.constructor.name}->findIdentityUnreadDropsSummaryByWaveId`;
     ctx.timer?.start(timerLabel);
     try {
-      const { cachedByWaveId, uncachedWaveIds, cacheKeysByWaveId } =
-        await readWaveUnreadSummaryCache(param.identityId, param.waveIds);
+      if (ctx.connection) {
+        // Inside a transaction the result can include uncommitted writes:
+        // never read or fill the shared cache from it.
+        return await this.queryIdentityUnreadDropsSummaries(
+          param.identityId,
+          param.waveIds,
+          ctx.connection
+        );
+      }
+      const {
+        cachedByWaveId,
+        uncachedWaveIds,
+        cacheKeysByWaveId,
+        versionedKeysByWaveId
+      } = await readWaveUnreadSummaryCache(param.identityId, param.waveIds);
       if (!uncachedWaveIds.length) {
         return cachedByWaveId;
       }
@@ -4333,60 +4673,14 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
       const dbSummariesByWaveId = await withInFlightWaveUnreadSummaryCacheMiss({
         identityId: param.identityId,
         waveIds: uncachedWaveIds,
-        cacheKeysByWaveId,
+        versionedKeysByWaveId,
         getValue: async () => {
-          // Reader metrics are the unread baseline source of truth. Without
-          // a reader row we do not infer unread drops from old wave history.
-          const dbresult = await this.db.execute<WaveUnreadSummaryRow>(
-            `
-                SELECT d.wave_id AS wave_id,
-                       COUNT(d.id) AS unread_drops_count,
-                       MIN(d.serial_no) AS first_unread_drop_serial_no
-                FROM ${DROPS_TABLE} d USE INDEX (idx_drop_wave_created_at)
-                JOIN ${WAVE_READER_METRICS_TABLE} r
-                  ON r.wave_id = d.wave_id
-                  AND r.reader_id = :identityId
-                JOIN ${WAVES_TABLE} w
-                  ON w.id = d.wave_id
-                LEFT JOIN ${IDENTITY_MUTES_TABLE} im
-                  ON im.muter_id = :identityId
-                  AND im.muted_identity_id = d.author_id
-                LEFT JOIN ${CONTENT_MODERATION_PROFILE_BLOCKS_TABLE} profile_block
-                  ON profile_block.blocker_profile_id = :identityId
-                  AND profile_block.blocked_profile_id = d.author_id
-                WHERE d.wave_id IN (:waveIds)
-                  AND d.author_id != :identityId
-                  AND im.id IS NULL
-                  AND profile_block.id IS NULL
-                  AND d.created_at > r.latest_read_timestamp
-                  AND r.muted = false
-                  -- Collapsed replies live in threads, not the main feed.
-                  AND (d.reply_to_drop_id IS NULL OR w.chat_replies_collapsed = false)
-                GROUP BY d.wave_id
-              `,
-            { identityId: param.identityId, waveIds: uncachedWaveIds },
-            { wrappedConnection: ctx.connection }
-          );
-
-          const uncachedSummariesByWaveId = uncachedWaveIds.reduce(
-            (acc, waveId) => {
-              acc[waveId] = {
-                unread_drops_count: 0,
-                first_unread_drop_serial_no: null
-              };
-              return acc;
-            },
-            {} as Record<string, WaveUnreadSummary>
-          );
-          const summariesByWaveId = dbresult.reduce((acc, row) => {
-            acc[row.wave_id] = {
-              unread_drops_count: Number(row.unread_drops_count),
-              first_unread_drop_serial_no: this.toNullableNumber(
-                row.first_unread_drop_serial_no
-              )
-            };
-            return acc;
-          }, uncachedSummariesByWaveId);
+          const summariesByWaveId =
+            await this.queryIdentityUnreadDropsSummaries(
+              param.identityId,
+              uncachedWaveIds,
+              undefined
+            );
           await writeWaveUnreadSummaryCache({
             summariesByWaveId,
             cacheKeysByWaveId
@@ -4399,6 +4693,72 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     } finally {
       ctx.timer?.stop(timerLabel);
     }
+  }
+
+  private async queryIdentityUnreadDropsSummaries(
+    identityId: string,
+    waveIds: string[],
+    connection: ConnectionWrapper<any> | undefined
+  ): Promise<Record<string, WaveUnreadSummary>> {
+    // Reader metrics are the unread baseline source of truth. Without a
+    // reader row we do not infer unread drops from old wave history. All
+    // consumed drop/wave fields pass through the compatibility views.
+    // Every input below has a cache invalidation (see wave-unread-cache.ts):
+    // drops (insert/delete), reader metrics, identity mutes, profile blocks
+    // and the wave's chat_replies_collapsed.
+    const dbresult = await withoutLegacyCompetitionGetFacade(() =>
+      this.db.execute<WaveUnreadSummaryRow>(
+        `
+            SELECT d.wave_id AS wave_id,
+                   COUNT(d.id) AS unread_drops_count,
+                   MIN(d.serial_no) AS first_unread_drop_serial_no
+            FROM ${DROPS_TABLE} d
+            JOIN ${WAVE_READER_METRICS_TABLE} r
+              ON r.wave_id = d.wave_id
+              AND r.reader_id = :identityId
+            JOIN ${legacyGetView(WAVES_TABLE)} w
+              ON w.id = d.wave_id
+            LEFT JOIN ${IDENTITY_MUTES_TABLE} im
+              ON im.muter_id = :identityId
+              AND im.muted_identity_id = d.author_id
+            LEFT JOIN ${CONTENT_MODERATION_PROFILE_BLOCKS_TABLE} profile_block
+              ON profile_block.blocker_profile_id = :identityId
+              AND profile_block.blocked_profile_id = d.author_id
+            WHERE d.wave_id IN (:waveIds)
+              AND d.author_id != :identityId
+              AND im.id IS NULL
+              AND profile_block.id IS NULL
+              AND d.created_at > r.latest_read_timestamp
+              AND r.muted = false
+              -- Collapsed replies live in threads, not the main feed.
+              AND (d.reply_to_drop_id IS NULL OR w.chat_replies_collapsed = false)
+            GROUP BY d.wave_id
+          `,
+        { identityId, waveIds },
+        { wrappedConnection: connection }
+      )
+    );
+
+    const emptySummariesByWaveId = waveIds.reduce(
+      (acc, waveId) => {
+        acc[waveId] = {
+          unread_drops_count: 0,
+          first_unread_drop_serial_no: null
+        };
+        return acc;
+      },
+      {} as Record<string, WaveUnreadSummary>
+    );
+    const summariesByWaveId = dbresult.reduce((acc, row) => {
+      acc[row.wave_id] = {
+        unread_drops_count: Number(row.unread_drops_count),
+        first_unread_drop_serial_no: this.toNullableNumber(
+          row.first_unread_drop_serial_no
+        )
+      };
+      return acc;
+    }, emptySummariesByWaveId);
+    return summariesByWaveId;
   }
 
   async findIdentityUnreadDropsCountByWaveId(
@@ -4501,16 +4861,28 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     ctx.timer?.start(timerLabel);
     try {
       const waveFilter = waveIds ? 'and w.id in (:waveIds)' : '';
+      const groups = await this.sharedViewerGroups(
+        'dm_viewer_groups',
+        param.eligibleGroups ?? [],
+        {
+          copies: 2,
+          otherInlinedBytes:
+            sqlInListBytes(identityIds) + sqlInListBytes(waveIds ?? [])
+        }
+      );
       const visibilityFilter = param.eligibleGroups
         ? `and ${this.getWaveAndParentVisibilityFilter(
             'w',
             'parent',
             param.eligibleGroups,
-            'eligibleGroups'
+            'eligibleGroups',
+            groups?.setSql
           )}`
         : '';
-      const rows = await this.db.execute<DmUnreadConversationStateRow>(
-        `with dm_reader_state as (
+      // Reader state, visibility and drop ordering use only base-table fields.
+      const rows = await withoutLegacyCompetitionGetFacade(() =>
+        this.db.execute<DmUnreadConversationStateRow>(
+          `with ${groups ? `${groups.cteSql},` : ''} dm_reader_state as (
            select r.wave_id,
                   r.reader_id,
                   r.muted,
@@ -4526,10 +4898,10 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
                     0
                   ) as latest_read_serial_no
            from ${WAVE_READER_METRICS_TABLE} r
-           join ${WAVES_TABLE} w
+           join ${legacyGetView(WAVES_TABLE)} w
              on w.id = r.wave_id
             and w.is_direct_message = true
-           left join ${WAVES_TABLE} parent
+           left join ${legacyGetView(WAVES_TABLE)} parent
              on parent.id = w.parent_wave_id
            where r.reader_id in (:identityIds)
              ${waveFilter}
@@ -4584,15 +4956,17 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
                   state.muted,
                   state.latest_read_serial_no,
                   state.unread_state_version`,
-        {
-          identityIds,
-          eligibleGroups: param.eligibleGroups ?? [],
-          waveIds: waveIds ?? []
-        },
-        {
-          wrappedConnection: ctx.connection,
-          forcePool
-        }
+          {
+            identityIds,
+            eligibleGroups: param.eligibleGroups ?? [],
+            waveIds: waveIds ?? [],
+            ...groups?.params
+          },
+          {
+            wrappedConnection: ctx.connection,
+            forcePool
+          }
+        )
       );
       return rows.map((row) => ({
         profile_id: row.reader_id,
@@ -4627,7 +5001,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
           JOIN ${WAVE_READER_METRICS_TABLE} r
             ON r.wave_id = d.wave_id
            AND r.reader_id = :identityId
-          JOIN ${WAVES_TABLE} w
+          JOIN ${legacyGetView(WAVES_TABLE)} w
             ON w.id = d.wave_id
            AND w.is_direct_message = true
           LEFT JOIN ${IDENTITY_MUTES_TABLE} im
@@ -4636,7 +5010,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
           LEFT JOIN ${CONTENT_MODERATION_PROFILE_BLOCKS_TABLE} profile_block
             ON profile_block.blocker_profile_id = :identityId
            AND profile_block.blocked_profile_id = d.author_id
-          LEFT JOIN ${WAVES_TABLE} parent
+          LEFT JOIN ${legacyGetView(WAVES_TABLE)} parent
             ON parent.id = w.parent_wave_id
           WHERE d.author_id != :identityId
             AND im.id IS NULL

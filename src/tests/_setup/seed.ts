@@ -65,12 +65,17 @@ async function executeNativeQuery(
 export function describeWithSeed(
   title: string,
   seeds: Seed | Seed[],
-  body: () => void
+  body: () => void,
+  lifecycle?: {
+    beforeSeed: () => Promise<void>;
+    afterSeed: () => Promise<void>;
+  }
 ) {
   const seedArr = Array.isArray(seeds) ? seeds : [seeds];
 
   describe(title, () => {
     beforeEach(async () => {
+      await lifecycle?.beforeSeed();
       await resetTestDatabase();
       await sqlExecutor.executeNativeQueriesInTransaction(async (tx) => {
         for (const { table, rows } of seedArr) {
@@ -85,6 +90,7 @@ export function describeWithSeed(
 
     afterEach(async () => {
       await resetTestDatabase();
+      await lifecycle?.afterSeed();
     });
   });
 }

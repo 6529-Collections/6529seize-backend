@@ -1,10 +1,6 @@
 import { computeCompetitionPhase } from '@/competitions/competition-phase';
 import { CompetitionComputedPhase } from '@/competitions/competition.types';
-import {
-  CompetitionLifecycle,
-  CompetitionStorageMode,
-  CompetitionType
-} from '@/entities/ICompetition';
+import { CompetitionLifecycle, CompetitionType } from '@/entities/ICompetition';
 
 function input(overrides: Record<string, unknown> = {}) {
   return {
@@ -19,7 +15,6 @@ function input(overrides: Record<string, unknown> = {}) {
 describe('computeCompetitionPhase', () => {
   it('keeps native Approve deciding after voting closes until explicitly ended', () => {
     const native = input({
-      storage_mode: CompetitionStorageMode.NATIVE,
       type: CompetitionType.APPROVE,
       decisions: { next_decision_time: null }
     });

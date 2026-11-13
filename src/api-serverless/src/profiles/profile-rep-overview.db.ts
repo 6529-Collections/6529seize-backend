@@ -246,7 +246,7 @@ export class ProfileRepOverviewDb extends LazyDbAccessCompatibleService {
         and r.${contextColumn} = :contextProfileId
         and r.rating <> 0
       group by 1
-      order by total_rep desc, category asc
+      order by abs(total_rep) desc, category asc
       limit :limitPlusOne offset :offset
       `,
       params

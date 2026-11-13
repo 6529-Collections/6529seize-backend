@@ -1,9 +1,18 @@
+import { runWriteTransaction } from '@/api/write-transaction-budget';
+import { inSequence } from '@/db/in-sequence';
 import { RequestContext } from '../../../request.context';
 import {
   BadRequestException,
+  CustomApiCompliantException,
   ForbiddenException,
   NotFoundException
 } from '../../../exceptions';
+import {
+  isLegacyDmClosed,
+  LEGACY_DM_CLOSED_CODE,
+  legacyDmClosedMessage
+} from '@/legacy-dm/legacy-dm-retention';
+import { Time } from '@/time';
 import { wavesApiDb, WavesApiDb } from '../waves/waves.api.db';
 import {
   userGroupsService,
@@ -25,7 +34,6 @@ import {
   wsListenersNotifier,
   WsListenersNotifier
 } from '../ws/ws-listeners-notifier';
-import { giveReadReplicaTimeToCatchUp } from '../api-helpers';
 import { ApiDrop } from '../generated/models/ApiDrop';
 import { DropEntity } from '../../../entities/IDrop';
 import { WaveEntity } from '../../../entities/IWave';
@@ -34,6 +42,11 @@ import {
   MetricsRecorder
 } from '../../../metrics/MetricsRecorder';
 import { Logger } from '../../../logging';
+import {
+  dropBroadcastCoalescer,
+  DropBroadcastCoalescer
+} from '@/api/drops/drop-broadcast-coalescer';
+import { findCommittedDropOnWriter } from '@/api/drops/drop-writer-read';
 
 type ReactionMutationResult = {
   readonly dropEntity: DropEntity;
@@ -58,7 +71,8 @@ export class ReactionsService {
     private readonly userNotifier: UserNotifier,
     private readonly wsListenersNotifier: WsListenersNotifier,
     private readonly dropsService: DropsApiService,
-    private readonly metricsRecorder: MetricsRecorder
+    private readonly metricsRecorder: MetricsRecorder,
+    private readonly broadcastCoalescer: DropBroadcastCoalescer = dropBroadcastCoalescer
   ) {}
 
   // Caller-owned transactions keep the legacy all-in-transaction behavior.
@@ -91,10 +105,8 @@ export class ReactionsService {
       groupIdsUserIsEligibleFor
     );
 
-    if (reactionChanged) {
-      await giveReadReplicaTimeToCatchUp();
-    }
-
+    // The caller's transaction connection already sees this write, so there
+    // is no replica to wait for. Sleeping here only held the caller's locks.
     const drop = await this.dropsService.findDropByIdOrThrow(
       {
         dropId: dropId,
@@ -145,29 +157,52 @@ export class ReactionsService {
     postCommitSideEffects: PostCommitSideEffect[],
     ctx: RequestContext
   ): Promise<ApiDrop> {
-    if (mutationResult.reactionChanged) {
-      await giveReadReplicaTimeToCatchUp();
+    if (!mutationResult.reactionChanged) {
+      return await this.dropsService.findDropByIdOrThrow(
+        {
+          dropId: dropId,
+          skipEligibilityCheck: true
+        },
+        ctx
+      );
     }
 
-    const drop = await this.dropsService.findDropByIdOrThrow(
+    // The mutation's transaction has ended; nothing after this point may use
+    // its connection.
+    const postCommitCtx: RequestContext = { ...ctx, connection: undefined };
+    // Read the committed state from the writer instead of sleeping for the
+    // read replica to catch up (waves plan 1.6).
+    const drop = await this.findCommittedDrop(dropId, postCommitCtx);
+    await this.runPostCommitSideEffects([
+      ...postCommitSideEffects,
       {
-        dropId: dropId,
-        skipEligibilityCheck: true
-      },
+        name: 'notify-drop-reaction-update',
+        run: async () => {
+          await this.broadcastCoalescer.broadcast({
+            kind: 'REACTION',
+            dropId,
+            send: async (phase) =>
+              this.wsListenersNotifier.notifyAboutDropReactionUpdate(
+                phase === 'trailing'
+                  ? await this.findCommittedDrop(dropId, postCommitCtx)
+                  : drop,
+                postCommitCtx
+              )
+          });
+        }
+      }
+    ]);
+    return drop;
+  }
+
+  private findCommittedDrop(
+    dropId: string,
+    ctx: RequestContext
+  ): Promise<ApiDrop> {
+    return findCommittedDropOnWriter(
+      { dropId, db: this.reactionsDb, dropsService: this.dropsService },
       ctx
     );
-
-    if (mutationResult.reactionChanged) {
-      await this.runPostCommitSideEffects([
-        ...postCommitSideEffects,
-        {
-          name: 'notify-drop-reaction-update',
-          run: () =>
-            this.wsListenersNotifier.notifyAboutDropReactionUpdate(drop, ctx)
-        }
-      ]);
-    }
-    return drop;
   }
 
   private async runPostCommitSideEffects(
@@ -243,8 +278,8 @@ export class ReactionsService {
       );
     }
 
-    const mutationResult =
-      await this.reactionsDb.executeNativeQueriesInTransaction(
+    const mutationResult = await runWriteTransaction((options) =>
+      this.reactionsDb.executeNativeQueriesInTransaction(
         async (connection) =>
           await this.handleReactionMutation(
             dropId,
@@ -286,8 +321,10 @@ export class ReactionsService {
               ...ctx,
               connection
             }
-          )
-      );
+          ),
+        options
+      )
+    );
 
     const postCommitSideEffects: PostCommitSideEffect[] = [
       {
@@ -363,21 +400,23 @@ export class ReactionsService {
           return false;
         }
 
-        await Promise.all([
-          this.metricsRecorder.recordActiveIdentity(
-            { identityId: profileId },
-            ctx
-          ),
-          profileActivityLogsDb.insert(
-            this.buildReactionActivityLog({
-              dropEntity,
-              profileId,
-              reaction
-            }),
-            connection,
-            ctx.timer
-          ),
-          (() =>
+        await inSequence([
+          () =>
+            this.metricsRecorder.recordActiveIdentity(
+              { identityId: profileId },
+              ctx
+            ),
+          () =>
+            profileActivityLogsDb.insert(
+              this.buildReactionActivityLog({
+                dropEntity,
+                profileId,
+                reaction
+              }),
+              connection,
+              ctx.timer
+            ),
+          () =>
             dropEntity.author_id === profileId
               ? Promise.resolve()
               : this.userNotifier.notifyOfDropReaction(
@@ -390,7 +429,7 @@ export class ReactionsService {
                   },
                   wave.visibility_group_id,
                   connection
-                ))()
+                )
         ]);
         return true;
       },
@@ -411,8 +450,8 @@ export class ReactionsService {
       );
     }
 
-    const mutationResult =
-      await this.reactionsDb.executeNativeQueriesInTransaction(
+    const mutationResult = await runWriteTransaction((options) =>
+      this.reactionsDb.executeNativeQueriesInTransaction(
         async (connection) =>
           await this.handleReactionMutation(
             dropId,
@@ -453,8 +492,10 @@ export class ReactionsService {
               ...ctx,
               connection
             }
-          )
-      );
+          ),
+        options
+      )
+    );
 
     return await this.completeReaction(
       dropId,
@@ -532,6 +573,13 @@ export class ReactionsService {
     if (!wave.chat_enabled) {
       throw new ForbiddenException(
         'Chatting and reacting is not enabled in this wave'
+      );
+    }
+    if (wave.is_direct_message && isLegacyDmClosed(Time.currentMillis())) {
+      throw new CustomApiCompliantException(
+        403,
+        legacyDmClosedMessage(),
+        LEGACY_DM_CLOSED_CODE
       );
     }
     ctx.timer?.stop(`${this.constructor.name}->validateDrop`);

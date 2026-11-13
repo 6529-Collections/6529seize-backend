@@ -40,7 +40,10 @@ import {
 import { CreateOrUpdateDropModel } from '@/drops/create-or-update-drop.model';
 import { dropsDb } from '@/drops/drops.db';
 import { DropEntity, DropType } from '@/entities/IDrop';
-import { CompetitionEntryStatus } from '@/entities/ICompetition';
+import {
+  CompetitionCapability,
+  CompetitionEntryStatus
+} from '@/entities/ICompetition';
 import { ProfileProxyActionType } from '@/entities/IProfileProxyAction';
 import { RequestContext } from '@/request.context';
 import {
@@ -59,7 +62,6 @@ import {
   assertCompetitionOpen,
   competitionActor,
   lockNativeCompetition,
-  requireNativeWrites,
   visibleCompetitionWave
 } from './competition-command-access';
 import { verifyCompetitionSignature } from './competition-signature';
@@ -131,12 +133,11 @@ export class CompetitionEntryService {
     request: EntryRequest,
     ctx: RequestContext
   ): Promise<CompetitionEntry> {
-    requireNativeWrites();
     const actor = competitionActor(ctx);
     await visibleCompetitionWave(waveId, ctx);
     if (!request.drop || 'drop_id' in request || 'drop_content_hash' in request)
       throw new BadRequestException(
-        'Competition entries require a new dedicated submission; existing drops cannot be entered'
+        'Decision entries require a new dedicated submission; existing drops cannot be entered'
       );
     const command = { action: 'ENTRY_CREATE', waveId, competitionId, request };
     const saved =
@@ -209,7 +210,7 @@ export class CompetitionEntryService {
       limit !== null &&
       (await this.entries.countActive(competitionId, actor, tx)) >= limit
     )
-      throw new ForbiddenException('Competition entry limit reached');
+      throw new ForbiddenException('Decision entry limit reached');
     const model = prepared.model;
     await moderationReviewDb.lockProfile(actor, tx);
     await prePublicationModerationService.assertPostingAllowed(actor, tx);
@@ -265,7 +266,7 @@ export class CompetitionEntryService {
       drop.drop_type !== DropType.COMPETITION
     )
       throw new BadRequestException(
-        'Entry content must be your dedicated competition drop in this wave'
+        'Entry content must be your dedicated decision drop in this wave'
       );
     const entry: CompetitionEntry = {
       id: record.legacy_wave_id
@@ -307,14 +308,14 @@ export class CompetitionEntryService {
       Date.now(),
       tx
     );
-    await this.event(
+    await this.enqueueCreatedEvent(
       entry,
-      'COMPETITION_ENTRY_CREATED',
       request.idempotency_key,
       actor,
-      null,
       tx,
-      pendingPushIds
+      pendingPushIds,
+      competition.capabilities.includes(CompetitionCapability.MAIN_STAGE) &&
+        !competition.participation.anonymous_submissions
     );
     return { entry, pendingPushIds, createdDropId };
   }
@@ -347,7 +348,7 @@ export class CompetitionEntryService {
         ))
     )
       throw new BadRequestException(
-        'Entry content must be a new competition submission in this wave'
+        'Entry content must be a new decision submission in this wave'
       );
     if (
       input.signature ||
@@ -357,7 +358,7 @@ export class CompetitionEntryService {
       input.poll
     )
       throw new BadRequestException(
-        'Use the competition signature; entry content cannot include a legacy signature or poll'
+        'Use the decision signature; entry content cannot include a legacy signature or poll'
       );
     const drop = getValidatedByJoiOrThrow(input, NewDropSchema);
     if (
@@ -409,7 +410,7 @@ export class CompetitionEntryService {
     if (!memberships.length && drop.drop_type !== DropType.COMPETITION)
       return { competition: null, entry: null };
     if (memberships.length !== 1 || memberships[0].wave_id !== waveId)
-      throw new NotFoundException('Competition entry not found');
+      throw new NotFoundException('Decision entry not found');
     const membership = memberships[0];
     const entry = await competitionService.getEntry(
       waveId,
@@ -468,30 +469,30 @@ export class CompetitionEntryService {
       throw new NotFoundException('Entry content is unavailable');
   }
 
-  private async event(
+  private async enqueueCreatedEvent(
     entry: CompetitionEntry,
-    eventType: string,
     key: string,
     actor: string,
-    reason: string | null,
     ctx: RequestContext,
-    pendingPushIds?: number[]
+    pendingPushIds: number[],
+    artworkAlertEligible: boolean
   ): Promise<void> {
     await nativeCompetitionRuntimeRepository.enqueueEvent(
       {
         key: `entry:${key}`,
-        event_type: eventType,
+        event_type: 'COMPETITION_ENTRY_CREATED',
         wave_id: entry.wave_id,
         competition_id: entry.competition_id,
         competition_entry_id: entry.id,
         drop_id: entry.drop_id,
         occurred_at: Date.now(),
         data: {
+          artwork_alert_eligible: artworkAlertEligible,
           submitter_id: entry.submitter_id,
           actor_id: actor,
           status: entry.status,
-          reason,
-          ...(pendingPushIds?.length
+          reason: null,
+          ...(pendingPushIds.length
             ? { pending_push_notification_ids: pendingPushIds }
             : {})
         }

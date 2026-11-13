@@ -1,209 +1,144 @@
 import { HelpBotCalendarService } from './help-bot-calendar.service';
 
 const BASE_URL = 'https://6529.io';
-
-function mintResponse(overrides: Record<string, unknown> = {}) {
-  return {
-    mint_number: 500,
-    mint_date: '2026-10-19',
-    mint_start: '2026-10-19T14:40:00.000Z',
-    mint_end: '2026-10-20T14:00:00.000Z',
-    status: 'upcoming',
-    season: 17,
-    year: 4,
-    epoch: 1,
-    period: 1,
-    era: 1,
-    eon: 1,
-    calendar_path: '/meme-calendar',
-    mint_path: '/the-memes/500',
-    ...overrides
-  };
-}
-
-function fetchResponse(body: unknown): Response {
-  return {
-    ok: true,
-    status: 200,
-    json: jest.fn().mockResolvedValue(body)
-  } as unknown as Response;
-}
+const at = (iso: string) => new HelpBotCalendarService(() => new Date(iso));
 
 describe('HelpBotCalendarService', () => {
-  it('declines non-calendar questions', async () => {
-    const fetchImpl = jest.fn() as unknown as typeof fetch;
-    const service = new HelpBotCalendarService(fetchImpl);
-
-    await expect(
-      service.answer({ question: 'what is TDH?', baseUrl: BASE_URL })
-    ).resolves.toBeNull();
-    expect(fetchImpl).not.toHaveBeenCalled();
-  });
-
-  it('answers next-drop questions from the frontend calendar API', async () => {
-    const fetchImpl = jest
-      .fn()
-      .mockResolvedValue(
-        fetchResponse(mintResponse())
-      ) as unknown as typeof fetch;
-    const service = new HelpBotCalendarService(fetchImpl);
-
-    await expect(
-      service.answer({ question: 'when is the next drop?', baseUrl: BASE_URL })
-    ).resolves.toEqual({
-      answer:
-        'The next Meme Card drop is Meme #500. It opens 2026-10-19 14:40 UTC and closes 2026-10-20 14:00 UTC. It is in SZN 17, Year 4.\n\nLinks: [Meme #500](https://6529.io/the-memes/500) | [Memes Calendar](https://6529.io/meme-calendar)',
-      queryId: 'meme_calendar.next'
+  const originalFetch = Object.getOwnPropertyDescriptor(globalThis, 'fetch');
+  const fetchSpy = jest
+    .fn()
+    .mockRejectedValue(new Error('Network unavailable'));
+  beforeEach(() => {
+    fetchSpy.mockClear();
+    Object.defineProperty(globalThis, 'fetch', {
+      configurable: true,
+      value: fetchSpy
     });
-    expect(fetchImpl).toHaveBeenCalledWith(
-      'https://6529.io/api/meme-calendar/next',
-      expect.objectContaining({ signal: expect.any(AbortSignal) })
-    );
+  });
+  afterEach(() => {
+    expect(fetchSpy).not.toHaveBeenCalled();
+    if (originalFetch)
+      Object.defineProperty(globalThis, 'fetch', originalFetch);
+    else Reflect.deleteProperty(globalThis, 'fetch');
   });
 
-  it('answers explicit Meme Card timing questions', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(
-      fetchResponse(
-        mintResponse({
-          mint_number: 100,
-          mint_date: '2023-05-01',
-          mint_start: '2023-05-01T14:40:00.000Z',
-          mint_end: '2023-05-02T14:00:00.000Z',
-          status: 'past',
-          season: 3,
-          year: 1,
-          mint_path: '/the-memes/100'
-        })
-      )
-    ) as unknown as typeof fetch;
-    const service = new HelpBotCalendarService(fetchImpl);
+  it('declines non-calendar questions without reading the clock', async () => {
+    const now = jest.fn();
+    await expect(
+      new HelpBotCalendarService(now).answer({
+        question: 'what is TDH?',
+        baseUrl: BASE_URL
+      })
+    ).resolves.toBeNull();
+    expect(now).not.toHaveBeenCalled();
+  });
 
-    const answer = await service.answer({
-      question: 'when was Meme #100?',
+  it.each([
+    ['2026-01-02T10:00:00Z', '2026-01-02 15:40 UTC', '2026-01-03 15:00 UTC'],
+    ['2026-07-01T10:00:00Z', '2026-07-01 14:40 UTC', '2026-07-02 14:00 UTC'],
+    ['2026-03-29T10:00:00Z', '2026-03-30 14:40 UTC', '2026-03-31 14:00 UTC'],
+    ['2026-10-25T10:00:00Z', '2026-10-26 15:40 UTC', '2026-10-27 15:00 UTC'],
+    ['2026-12-31T10:00:00Z', '2027-01-01 15:40 UTC', '2027-01-02 15:00 UTC']
+  ])('answers next-drop timing locally at %s', async (clock, start, end) => {
+    const answer = await at(clock).answer({
+      question: 'when is the next drop?',
       baseUrl: BASE_URL
     });
-
-    expect(answer?.queryId).toBe('meme_calendar.mint.100');
-    expect(answer?.answer).toContain('Meme Card #100 minted on 2023-05-01.');
-    expect(answer?.answer).toContain(
-      'It opened 2023-05-01 14:40 UTC and closed 2023-05-02 14:00 UTC.'
+    expect(answer?.queryId).toBe('meme_calendar.next');
+    expect(answer?.answer).toContain(`It opens ${start} and closes ${end}.`);
+    expect(answer?.answer).toMatch(
+      /Links: \[Meme #\d+\]\(https:\/\/6529.io\/the-memes\/\d+\)/
     );
     expect(answer?.answer).toContain(
-      'Links: [Meme #100](https://6529.io/the-memes/100) | [Memes Calendar](https://6529.io/meme-calendar)'
-    );
-    expect(answer?.answer).not.toContain('overall');
-    expect(fetchImpl).toHaveBeenCalledWith(
-      'https://6529.io/api/meme-calendar/100',
-      expect.any(Object)
+      '[Memes Calendar](https://6529.io/meme-calendar)'
     );
   });
 
-  it('answers explicit drop-number timing questions', async () => {
-    const fetchImpl = jest
-      .fn()
-      .mockResolvedValue(
-        fetchResponse(mintResponse())
-      ) as unknown as typeof fetch;
-    const service = new HelpBotCalendarService(fetchImpl);
+  it('answers historical mint questions using the rescheduled date', async () => {
+    const answer = await at('2026-01-02T10:00:00Z').answer({
+      question: 'when was Meme #415?',
+      baseUrl: BASE_URL
+    });
+    expect(answer?.queryId).toBe('meme_calendar.mint.415');
+    expect(answer?.answer).toContain('Meme Card #415 minted on 2025-10-21.');
+    expect(answer?.answer).toContain(
+      'It opened 2025-10-21 14:40 UTC and closed 2025-10-22 14:00 UTC.'
+    );
+    expect(answer?.answer).toContain(
+      'Links: [Meme #415](https://6529.io/the-memes/415)'
+    );
+    expect(answer?.answer).not.toContain('overall');
+  });
 
-    const answer = await service.answer({
-      question: 'when does drop #500 open?',
+  it.each([
+    ['when does drop #500 open?', 500],
+    ['when will card number 6529 drop', 6529],
+    ['when is card 1234 dropping', 1234]
+  ])('keeps specific-mint question parsing for %s', async (question, id) => {
+    const answer = await at('2026-01-02T10:00:00Z').answer({
+      question,
       baseUrl: `${BASE_URL}/`
     });
-
-    expect(answer?.queryId).toBe('meme_calendar.mint.500');
+    expect(answer?.queryId).toBe(`meme_calendar.mint.${id}`);
+    expect(answer?.answer).toContain(`Meme Card #${id} opens `);
     expect(answer?.answer).toContain(
-      'Meme Card #500 opens 2026-10-19 14:40 UTC and closes 2026-10-20 14:00 UTC.'
+      `[Meme #${id}](https://6529.io/the-memes/${id})`
     );
     expect(answer?.answer).not.toContain('overall');
-    expect(fetchImpl).toHaveBeenCalledWith(
-      'https://6529.io/api/meme-calendar/500',
-      expect.any(Object)
+  });
+
+  it('answers current-drop questions after midnight during the previous day mint', async () => {
+    const answer = await at('2026-10-20T10:00:00Z').answer({
+      question: 'what is minting now?',
+      baseUrl: BASE_URL
+    });
+    expect(answer?.queryId).toBe('meme_calendar.current');
+    expect(answer?.answer).toContain(
+      'is minting now. It opened 2026-10-19 14:40 UTC and closes 2026-10-20 14:00 UTC.'
     );
   });
 
-  it('answers card-number phrasing as a specific Meme Card request', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(
-      fetchResponse(
-        mintResponse({
-          mint_number: 6529,
-          mint_date: '2064-11-28',
-          mint_start: '2064-11-28T15:40:00.000Z',
-          mint_end: '2064-11-29T15:00:00.000Z',
-          status: 'upcoming',
-          season: 169,
-          year: 42,
-          mint_path: '/the-memes/6529'
-        })
-      )
-    ) as unknown as typeof fetch;
-    const service = new HelpBotCalendarService(fetchImpl);
+  it('shows no live mint at the exact closing instant', async () => {
+    const answer = await at('2026-10-20T14:00:00Z').answer({
+      question: 'what is minting now?',
+      baseUrl: BASE_URL
+    });
+    expect(answer?.answer).toContain('Nothing is minting right now.');
+    expect(answer?.answer).toContain('opens 2026-10-21 14:40 UTC');
+  });
 
+  it('shows a live mint at the exact opening instant', async () => {
+    const answer = await at('2026-10-26T15:40:00Z').answer({
+      question: 'what is minting now?',
+      baseUrl: 'https://staging.6529.io'
+    });
+    expect(answer?.answer).toContain(
+      'is minting now. It opened 2026-10-26 15:40 UTC'
+    );
+    expect(answer?.answer).toContain('https://staging.6529.io/the-memes/');
+  });
+
+  it('retains prior-answer context for follow-up timing questions', async () => {
+    const answer = await at('2026-07-01T10:00:00Z').answer({
+      question: 'what time?',
+      previousBotAnswer: 'The next Meme Card drop is coming.',
+      baseUrl: BASE_URL
+    });
+    expect(answer?.queryId).toBe('meme_calendar.next');
+  });
+
+  it('fails closed for out-of-range mint numbers and invalid clocks', async () => {
     await expect(
-      service.answer({
-        question: 'when will card number 6529 drop',
+      at('2026-07-01T10:00:00Z').answer({
+        question: 'when is Meme #100001?',
         baseUrl: BASE_URL
       })
-    ).resolves.toEqual({
-      answer:
-        'Meme Card #6529 opens 2064-11-28 15:40 UTC and closes 2064-11-29 15:00 UTC. It is in SZN 169, Year 42.\n\nLinks: [Meme #6529](https://6529.io/the-memes/6529) | [Memes Calendar](https://6529.io/meme-calendar)',
-      queryId: 'meme_calendar.mint.6529'
-    });
-    expect(fetchImpl).toHaveBeenCalledWith(
-      'https://6529.io/api/meme-calendar/6529',
-      expect.any(Object)
-    );
-  });
-
-  it('answers bare card dropping phrasing as a Meme Card request', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(
-      fetchResponse(
-        mintResponse({
-          mint_number: 1234,
-          mint_date: '2031-01-31',
-          mint_start: '2031-01-31T15:40:00.000Z',
-          mint_end: '2031-02-01T15:00:00.000Z',
-          status: 'upcoming',
-          season: 34,
-          year: 9,
-          mint_path: '/the-memes/1234'
-        })
-      )
-    ) as unknown as typeof fetch;
-    const service = new HelpBotCalendarService(fetchImpl);
-
+    ).rejects.toThrow('Mint number must');
     await expect(
-      service.answer({
-        question: 'when is card 1234 dropping',
+      at('invalid').answer({
+        question: 'when is the next mint?',
         baseUrl: BASE_URL
       })
-    ).resolves.toEqual({
-      answer:
-        'Meme Card #1234 opens 2031-01-31 15:40 UTC and closes 2031-02-01 15:00 UTC. It is in SZN 34, Year 9.\n\nLinks: [Meme #1234](https://6529.io/the-memes/1234) | [Memes Calendar](https://6529.io/meme-calendar)',
-      queryId: 'meme_calendar.mint.1234'
-    });
-    expect(fetchImpl).toHaveBeenCalledWith(
-      'https://6529.io/api/meme-calendar/1234',
-      expect.any(Object)
-    );
-  });
-
-  it('answers current-drop questions with the next mint when none is live', async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(
-      fetchResponse({
-        status: 'none',
-        current: null,
-        next: mintResponse()
-      })
-    ) as unknown as typeof fetch;
-    const service = new HelpBotCalendarService(fetchImpl);
-
-    await expect(
-      service.answer({ question: 'what is minting now?', baseUrl: BASE_URL })
-    ).resolves.toEqual({
-      answer:
-        'Nothing is minting right now. The next Meme Card drop is Meme #500, which opens 2026-10-19 14:40 UTC and closes 2026-10-20 14:00 UTC.\n\nLinks: [Meme #500](https://6529.io/the-memes/500) | [Memes Calendar](https://6529.io/meme-calendar)',
-      queryId: 'meme_calendar.current'
-    });
+    ).rejects.toThrow('Invalid calendar time');
   });
 });

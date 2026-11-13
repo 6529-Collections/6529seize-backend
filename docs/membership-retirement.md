@@ -82,9 +82,9 @@ substitute for fresh prerequisites.
 ## Staging execution order
 
 Follow [deployment](deployment.md) and the [deployment skill](../ops/skills/deploy-6529/SKILL.md).
-Complete PR/bot review and relevant CI. Create this change's Coordinator staging
-record with `database_change=yes`, required backend units, and operational
-`monitoring`. Preserve concurrent branch changes with an ordinary staging merge.
+Complete PR/bot review and relevant CI. Confirm the database changes, required
+backend units, and operational `monitoring` rollout. Preserve concurrent branch
+changes with an ordinary staging merge.
 
 1. Deploy `dbMigrationsLoop` using the reviewed staging source through the normal
    workflow with `db_schema_scope=maintenance` and verify its artifact, live
@@ -162,9 +162,9 @@ A future authorized Phase 4 must re-fetch and merge current main, re-inventory
 production independently (including its database), take and rehearse production
 backups, confirm production rollback prerequisites, and prepare a new production
 operator plan using `RETIRE_ENVIRONMENT=prod` and the exact
-`prod:DATABASE:retire-membership` confirmation. Reuse this release's Coordinator identity on promotion; supply
-this PR's canonical service grouping and the final publication signal for the
-autonomous release-note bot. Repeat dependency-aware service rollout, monitoring,
+`prod:DATABASE:retire-membership` confirmation. Supply this PR's canonical
+service grouping and the final publication signal for the autonomous release-note
+bot. Repeat dependency-aware service rollout, monitoring,
 dispatcher, worker, then database ordering and fresh health checks. Never use the
 staging manifest or recovery files against production. This task authorizes no
 production database connection, deployment, or resource deletion.

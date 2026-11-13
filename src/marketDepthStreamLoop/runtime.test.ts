@@ -2,6 +2,10 @@ import { EventType, type BaseStreamMessage } from '@opensea/sdk/stream';
 import { normalizeOpenSeaEvent } from '@/market-depth/opensea-normalizer';
 import type { AppendMarketDepthEventsInput } from '@/market-depth/market-depth.types';
 import {
+  SqlExecutionBudgetExceededError,
+  type SqlExecutionBudget
+} from '@/db/sql-execution-budget';
+import {
   runMarketDepthStream,
   streamEventInput,
   type StreamClient,
@@ -49,7 +53,10 @@ function fixture() {
     disconnect
   };
   const appendEvents = jest.fn(
-    async (_input: AppendMarketDepthEventsInput) => undefined
+    async (
+      _input: AppendMarketDepthEventsInput,
+      _budget: SqlExecutionBudget
+    ): Promise<void> => undefined
   );
   const log = { info: jest.fn(), warn: jest.fn() };
   const options: StreamRuntimeOptions = {
@@ -251,6 +258,7 @@ describe('market depth stream runtime', () => {
       f.emit(makeEvent());
       const circular: Record<string, unknown> = {};
       circular.self = circular;
+      circular.secret = 'secret-api-key';
       expect(() =>
         f.emit({ ...makeEvent('bad'), payload: circular })
       ).not.toThrow();
@@ -259,6 +267,136 @@ describe('market depth stream runtime', () => {
       'event could not be buffered'
     );
     expect(f.appendEvents.mock.calls[0][0].events).toHaveLength(1);
+    expect(f.log.warn).toHaveBeenCalledTimes(1);
+    expect(f.log.warn).toHaveBeenCalledWith('OpenSea Stream buffer rejection', {
+      reason: 'serialization_failed',
+      event_type: EventType.ITEM_LISTED,
+      buffered_events: 1,
+      buffered_bytes: expect.any(Number),
+      incoming_event_bytes: null,
+      max_buffered_events: 1000,
+      max_buffered_bytes: 16 * 1024 * 1024
+    });
+    expect(JSON.stringify(f.log.warn.mock.calls)).not.toContain('secret');
+  });
+
+  it.each(['unknown', 'throwing_getter'])(
+    'reports normalization failures without exposing %s event types or error text',
+    async (type) => {
+      const f = fixture();
+      const secret = 'wss://example/socket?api_key=secret-api-key';
+      const event = makeEvent('bad');
+      if (type === 'unknown') {
+        event.event_type = secret as EventType;
+      } else {
+        Object.defineProperty(event, 'event_type', {
+          get: () => {
+            throw new Error(secret);
+          }
+        });
+      }
+      Object.defineProperty(event, 'payload', {
+        get: () => {
+          const error = new Error(secret);
+          error.name = secret;
+          throw error;
+        }
+      });
+      f.subscribe(() => {
+        f.emit(makeEvent());
+        f.emit(event);
+        f.emit(makeEvent('ignored-after-failure'));
+      });
+      await expect(runMarketDepthStream(f.options)).rejects.toThrow(
+        'event could not be buffered; 0 events remain unconfirmed'
+      );
+      expect(f.log.warn).toHaveBeenCalledTimes(1);
+      expect(f.log.warn).toHaveBeenCalledWith(
+        'OpenSea Stream buffer rejection',
+        {
+          reason: 'normalization_failed',
+          event_type: 'unknown',
+          buffered_events: 1,
+          buffered_bytes: expect.any(Number),
+          incoming_event_bytes: null,
+          max_buffered_events: 1000,
+          max_buffered_bytes: 16 * 1024 * 1024
+        }
+      );
+      expect(JSON.stringify(f.log.warn.mock.calls)).not.toContain(secret);
+      expect(f.appendEvents.mock.calls[0][0].events).toHaveLength(1);
+      expect(f.disconnect).toHaveBeenCalledTimes(1);
+    }
+  );
+
+  it('safely diagnoses unexpected callback failures and still drains accepted events', async () => {
+    const f = fixture();
+    const now = f.options.now!;
+    let clockFails = false;
+    f.subscribe(() => {
+      f.emit(makeEvent());
+      clockFails = true;
+      f.emit(makeEvent('rejected'));
+      clockFails = false;
+    });
+    await expect(
+      runMarketDepthStream({
+        ...f.options,
+        now: () => {
+          if (clockFails) throw new Error('secret-api-key');
+          return now();
+        }
+      })
+    ).rejects.toThrow(
+      'event could not be buffered; 0 events remain unconfirmed'
+    );
+    expect(f.log.warn).toHaveBeenCalledTimes(1);
+    expect(f.log.warn).toHaveBeenCalledWith('OpenSea Stream buffer rejection', {
+      reason: 'enqueue_failed',
+      event_type: EventType.ITEM_LISTED,
+      buffered_events: 1,
+      buffered_bytes: expect.any(Number),
+      incoming_event_bytes: null,
+      max_buffered_events: 1000,
+      max_buffered_bytes: 16 * 1024 * 1024
+    });
+    expect(JSON.stringify(f.log.warn.mock.calls)).not.toContain('secret');
+    expect(f.appendEvents.mock.calls[0][0].events).toHaveLength(1);
+  });
+
+  it('reports the byte limit separately and captures buffer sizes before draining', async () => {
+    const f = fixture();
+    const event = makeEvent('large');
+    const payload = {
+      ...(event.payload as Record<string, unknown>),
+      padding: '秘密'.repeat(1_400_000)
+    };
+    event.payload = payload;
+    const eventBytes = Buffer.byteLength(
+      JSON.stringify(streamEventInput(event, collection, new Date(timestamp)))
+    );
+    f.subscribe(() => {
+      f.emit(event);
+      f.emit({ ...event, payload: { ...payload, order_hash: 'other' } });
+    });
+    await expect(runMarketDepthStream(f.options)).rejects.toThrow(
+      'event could not be buffered; 0 events remain unconfirmed'
+    );
+    expect(f.log.warn).toHaveBeenCalledTimes(1);
+    expect(f.log.warn).toHaveBeenCalledWith('OpenSea Stream buffer rejection', {
+      reason: 'byte_limit',
+      event_type: EventType.ITEM_LISTED,
+      buffered_events: 1,
+      buffered_bytes: eventBytes,
+      incoming_event_bytes: eventBytes,
+      max_buffered_events: 1000,
+      max_buffered_bytes: 16 * 1024 * 1024
+    });
+    expect(f.appendEvents.mock.calls[0][0].events).toHaveLength(1);
+    expect(f.log.info).toHaveBeenCalledWith(
+      expect.stringContaining('persisted=1 duplicates=0 pending=0')
+    );
+    expect(JSON.stringify(f.log.warn.mock.calls)).not.toContain('秘密');
   });
 
   it('bounds backpressure and flushes the accepted queue before failing visibly', async () => {
@@ -272,6 +410,19 @@ describe('market depth stream runtime', () => {
     expect(
       f.appendEvents.mock.calls.flatMap(([input]) => input.events)
     ).toHaveLength(1000);
+    expect(f.log.warn).toHaveBeenCalledTimes(1);
+    expect(f.log.warn).toHaveBeenCalledWith('OpenSea Stream buffer rejection', {
+      reason: 'event_count_limit',
+      event_type: EventType.ITEM_LISTED,
+      buffered_events: 1000,
+      buffered_bytes: expect.any(Number),
+      incoming_event_bytes: expect.any(Number),
+      max_buffered_events: 1000,
+      max_buffered_bytes: 16 * 1024 * 1024
+    });
+    expect(f.log.info).toHaveBeenCalledWith(
+      expect.stringContaining('persisted=1000 duplicates=0 pending=0')
+    );
   });
 
   it('overlapping workers keep cursor preconditions null and submit identical lifecycle IDs', async () => {
@@ -318,18 +469,132 @@ describe('market depth stream runtime', () => {
     expect(f.appendEvents).toHaveBeenCalledTimes(1);
   });
 
-  it('bounds a stalled write without starting a concurrent uncertain retry', async () => {
+  it('awaits a slow successful save before disconnecting and acknowledges it once', async () => {
     jest.useFakeTimers();
     const f = fixture();
     f.subscribe(() => f.emit(makeEvent()));
-    f.appendEvents.mockImplementation(() => new Promise(() => undefined));
-    const checked = expect(runMarketDepthStream(f.options)).rejects.toThrow(
-      'persistence timed out; 1 events remain unconfirmed'
+    let complete!: () => void;
+    f.appendEvents.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          complete = resolve;
+        })
     );
-    await jest.advanceTimersByTimeAsync(5000);
+    const running = runMarketDepthStream(f.options);
+    // An injected DB can finalize late; the runtime must never abandon its promise.
+    await jest.advanceTimersByTimeAsync(6000);
+    expect(f.disconnect).not.toHaveBeenCalled();
+    expect(f.appendEvents).toHaveBeenCalledTimes(1);
+    complete();
+    await running;
+    expect(f.disconnect).toHaveBeenCalledTimes(1);
+    expect(f.appendEvents).toHaveBeenCalledTimes(1);
+    expect(f.log.info).toHaveBeenCalledWith(
+      expect.stringContaining('persisted=1')
+    );
+  });
+
+  it.each(['WORK', 'COMMIT'] as const)(
+    'retries a NOT_SENT save in phase %s only after its cleanup has settled',
+    async (phase) => {
+      jest.useFakeTimers();
+      const f = fixture();
+      f.subscribe(() => f.emit(makeEvent()));
+      let finishCleanup!: () => void;
+      const cleanup = new Promise<void>((resolve) => {
+        finishCleanup = resolve;
+      });
+      const failure = new SqlExecutionBudgetExceededError(
+        'SQL_BUDGET_EXCEEDED',
+        phase,
+        'NOT_SENT'
+      );
+      failure.connectionDestroyed = true;
+      f.appendEvents.mockImplementationOnce(async () => {
+        await cleanup;
+        throw failure;
+      });
+      const running = runMarketDepthStream(f.options);
+      await jest.advanceTimersByTimeAsync(6000);
+      expect(f.appendEvents).toHaveBeenCalledTimes(1);
+      expect(f.disconnect).not.toHaveBeenCalled();
+      finishCleanup();
+      await running;
+      expect(f.appendEvents).toHaveBeenCalledTimes(2);
+      expect(f.appendEvents.mock.calls[1][0].events).toEqual(
+        f.appendEvents.mock.calls[0][0].events
+      );
+      expect(f.log.info).toHaveBeenCalledWith(
+        expect.stringContaining('pending=0')
+      );
+    }
+  );
+
+  it('leaves work and finalization time for a retry near shutdown', async () => {
+    const f = fixture();
+    f.subscribe(() => f.emit(makeEvent()));
+    f.appendEvents.mockRejectedValueOnce(new Error('pre-commit failure'));
+    await runMarketDepthStream({ ...f.options, runMs: 1100 });
+    expect(f.appendEvents).toHaveBeenCalledTimes(2);
+    expect(f.appendEvents.mock.calls[1][1]).toMatchObject({
+      maxStatementMillis: 50,
+      finalizationReserveMillis: 1000
+    });
+    expect(f.log.info).toHaveBeenCalledWith(
+      expect.stringContaining('pending=0')
+    );
+  });
+
+  it('keeps an uncertain commit unconfirmed without retrying or disconnecting ahead of cleanup', async () => {
+    jest.useFakeTimers();
+    const f = fixture();
+    f.subscribe(() => f.emit(makeEvent()));
+    let finishCleanup!: () => void;
+    const cleanup = new Promise<void>((resolve) => {
+      finishCleanup = resolve;
+    });
+    f.appendEvents.mockImplementationOnce(async () => {
+      await cleanup;
+      throw new SqlExecutionBudgetExceededError(
+        'SQL_BUDGET_EXCEEDED',
+        'COMMIT',
+        'UNKNOWN'
+      );
+    });
+    const checked = expect(runMarketDepthStream(f.options)).rejects.toThrow(
+      'commit outcome unknown; 1 events remain unconfirmed'
+    );
+    await jest.advanceTimersByTimeAsync(6000);
+    expect(f.disconnect).not.toHaveBeenCalled();
+    finishCleanup();
     await checked;
     expect(f.appendEvents).toHaveBeenCalledTimes(1);
     expect(f.disconnect).toHaveBeenCalledTimes(1);
+    expect(f.log.info).toHaveBeenCalledWith(
+      expect.stringContaining('persisted=0')
+    );
+  });
+
+  it('reserves SQL finalization time within the remaining stream budget', async () => {
+    const f = fixture();
+    f.subscribe(() => f.emit(makeEvent()));
+    await runMarketDepthStream({ ...f.options, runMs: 1500 });
+    expect(f.appendEvents.mock.calls[0][1]).toMatchObject({
+      maxStatementMillis: 500,
+      finalizationReserveMillis: 1000,
+      lockWaitSeconds: 3
+    });
+  });
+
+  it('does not start SQL when only finalization time remains', async () => {
+    const f = fixture();
+    f.subscribe(() => f.emit(makeEvent()));
+    await expect(
+      runMarketDepthStream({ ...f.options, runMs: 1000 })
+    ).rejects.toThrow(
+      'persistence budget exhausted; 1 events remain unconfirmed'
+    );
+    expect(f.appendEvents).not.toHaveBeenCalled();
   });
 
   it('rejects insufficient Lambda time before opening a socket', async () => {

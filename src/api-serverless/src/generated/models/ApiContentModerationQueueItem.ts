@@ -21,6 +21,10 @@ import { HttpFile } from '../http/http';
 export class ApiContentModerationQueueItem {
     'id': string;
     'drop_id': string;
+    /**
+    * Whether the original reported post no longer exists. Saved evidence remains available.
+    */
+    'drop_deleted': boolean;
     'reporter_profile_id': string;
     'reporter_handle': string | null;
     'reporter_pfp': string | null;
@@ -66,6 +70,12 @@ export class ApiContentModerationQueueItem {
             "name": "drop_id",
             "baseName": "drop_id",
             "type": "string",
+            "format": ""
+        },
+        {
+            "name": "drop_deleted",
+            "baseName": "drop_deleted",
+            "type": "boolean",
             "format": ""
         },
         {

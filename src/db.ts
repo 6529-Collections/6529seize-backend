@@ -1,10 +1,19 @@
 import { refreshTransactionUsdAtWrite } from '@/eth-prices/transaction-usd';
 import 'reflect-metadata';
 import {
+  SchemaSyncOptions,
+  synchronizeSchemaBounded
+} from '@/db/bounded-schema-sync';
+import {
+  closeAfterCommitScope,
+  openAfterCommitScope,
+  runAfterCommitCallbacks
+} from '@/db/after-commit';
+import { enqueueTransfersWithManager } from './transactions/transfer-reconciliation.db';
+import {
   DataSource,
   EntityManager,
   IsNull,
-  LessThan,
   MoreThanOrEqual,
   Brackets,
   QueryRunner,
@@ -12,6 +21,12 @@ import {
   ObjectLiteral
 } from 'typeorm';
 import { consolidationTools } from './consolidation-tools';
+import { formatConsolidationDisplay } from './consolidation-display';
+import {
+  ConsolidationRowPlan,
+  planConsolidationEvent,
+  planConsolidationRewind
+} from './consolidation-row-plan';
 import {
   ADDRESS_CONSOLIDATION_KEY,
   ARTISTS_TABLE,
@@ -34,14 +49,14 @@ import {
   WALLETS_TDH_TABLE
 } from '@/constants';
 import { DbQueryOptions } from './db-query.options';
-import { revokeTdhBasedDropWavesOverVotes } from './drops/participation-drops-over-vote-revocation';
+import { mysqlSslConnectionOptions } from './db-ssl';
+import { writeDelegations } from '@/delegation-row';
 import { Artist } from './entities/IArtist';
 import {
   Consolidation,
   ConsolidationEvent,
   Delegation,
   DelegationEvent,
-  EventType,
   NFTDelegationBlock,
   WalletConsolidationKey
 } from './entities/IDelegation';
@@ -89,11 +104,27 @@ import { Team } from './entities/ITeam';
 import { BaseTransaction, Transaction } from './entities/ITransaction';
 import { env } from './env';
 import { ethTools } from './eth-tools';
-import { identityConsolidationEffects } from './identity';
+import { identityTdhSyncStateDb } from './identity-tdh-sync-state.db';
+import { identityTdhSyncScopeDb } from './identity-tdh-sync-scope.db';
 import { Logger } from './logging';
 import { metricsRecorder } from './metrics/MetricsRecorder';
 import { deleteAll, insertWithoutUpdate, resetRepository } from './orm_helpers';
 import {
+  deleteTdhRowsInBatches,
+  refreshTdhColumnInBatches,
+  upsertTdhInBatches
+} from '@/tdhLoop/tdh-persistence-batches';
+import {
+  PartialTableWrite,
+  readStoredRows,
+  releaseStoredRows,
+  RowDiffColumns,
+  rowsToWrite,
+  StoredRows,
+  withScopeRows
+} from '@/tdhLoop/tdh-row-diff';
+import {
+  budgetOf,
   ConnectionWrapper,
   dbSupplier,
   setSqlExecutor,
@@ -105,14 +136,6 @@ import { getConsolidationsSql, parseTdhDataFromDB } from './sql_helpers';
 import { equalIgnoreCase } from './strings';
 import { computeMerkleRoot } from './tdhLoop/tdh_merkle';
 import { Time } from './time';
-import {
-  invalidateWaveUnreadCache,
-  type WaveUnreadCacheInvalidations
-} from '@/api/waves/wave-unread-cache';
-import {
-  waveScoreService,
-  WaveScoreDirtyRefreshReason
-} from '@/api/waves/wave-score.service';
 
 const mysql = require('mysql');
 import {
@@ -120,6 +143,7 @@ import {
   withSqlBudgetQueryOptions
 } from '@/db/sql-execution-budget';
 import type { PoolConnection } from 'mysql';
+import { formatNamedParameters } from '@/db/sql-named-parameters';
 
 const logger = Logger.get('DB');
 
@@ -152,7 +176,8 @@ function validateDbConnectionSelection(
 export async function connect(
   entities: any[] = [],
   syncEntities = false,
-  selection?: DbConnectionSelection
+  selection?: DbConnectionSelection,
+  schemaSync?: Pick<SchemaSyncOptions, 'acknowledgedDestructivePlanSha256'>
 ) {
   validateDbConnectionSelection(syncEntities, selection);
   logger.info(
@@ -169,10 +194,12 @@ export async function connect(
       ? (selection.database ?? undefined)
       : process.env.DB_NAME,
     entities: entities,
-    synchronize: syncEntities,
+    // Synchronized below with bounded metadata-lock waits, never here.
+    synchronize: false,
     logging: false,
     charset: 'utf8mb4',
-    timezone: 'Etc/UTC'
+    timezone: 'Etc/UTC',
+    ...mysqlSslConnectionOptions()
   });
 
   try {
@@ -190,6 +217,18 @@ export async function connect(
       throw error;
     }
     logger.error(`DB INIT ERROR: ${error}`);
+  }
+  if (syncEntities) {
+    if (!AppDataSource.isInitialized)
+      throw new Error('Schema sync needs an initialized data source');
+    try {
+      await synchronizeSchemaBounded(AppDataSource, schemaSync);
+    } catch (error) {
+      // Fail the run rather than continue on a partly synchronized schema;
+      // the next run plans again from the live schema.
+      await AppDataSource.destroy().catch(() => undefined);
+      throw error;
+    }
   }
   class DbImpl extends SqlExecutor {
     async execute(
@@ -242,44 +281,69 @@ export function consolidateTransactions(
   return consolidatedTransactions;
 }
 
+/**
+ * Loop transactions track `afterCommit` callbacks like the api's
+ * (my-sql.helpers): they run once COMMIT is acknowledged and never after a
+ * rollback, instead of immediately while the transaction is still open.
+ */
 async function execNativeTransactionally<T>(
   executable: (connectionHolder: ConnectionWrapper<QueryRunner>) => Promise<T>,
   options?: SqlTransactionOptions
 ): Promise<T> {
-  if (options?.executionBudget) {
-    return executeBudgetedSqlTransaction(
-      async () => {
-        const runner = AppDataSource.createQueryRunner('master');
-        try {
-          const physical = (await runner.connect()) as PoolConnection;
-          return {
-            handle: runner,
-            physical,
-            release: () => runner.release(),
-            transaction: {
-              begin: () => runner.startTransaction('REPEATABLE READ'),
-              commit: () => runner.commitTransaction(),
-              rollback: () => runner.rollbackTransaction()
-            }
-          };
-        } catch (error) {
-          await runner.release();
-          throw error;
+  const budget = budgetOf(options);
+  if (budget) {
+    const isolationLevel = budget.isolationLevel ?? 'REPEATABLE READ';
+    let scoped: object | undefined;
+    let result: T;
+    try {
+      result = await executeBudgetedSqlTransaction(
+        async () => {
+          const runner = AppDataSource.createQueryRunner('master');
+          try {
+            const physical = (await runner.connect()) as PoolConnection;
+            return {
+              handle: runner,
+              physical,
+              release: () => runner.release(),
+              transaction: {
+                isolationLevel,
+                begin: () => runner.startTransaction(isolationLevel),
+                commit: () => runner.commitTransaction(),
+                rollback: () => runner.rollbackTransaction()
+              }
+            };
+          } catch (error) {
+            await runner.release();
+            throw error;
+          }
+        },
+        budget,
+        (handle) => {
+          scoped = handle;
+          openAfterCommitScope(handle);
+          return executable({ connection: handle as QueryRunner });
         }
-      },
-      options.executionBudget,
-      (handle) => executable({ connection: handle as QueryRunner })
-    );
+      );
+    } catch (error) {
+      if (scoped) closeAfterCommitScope(scoped);
+      throw error;
+    }
+    // Resolving means the COMMIT was acknowledged (see the budget executor).
+    await runAfterCommitCallbacks(scoped ? closeAfterCommitScope(scoped) : []);
+    return result;
   }
   const queryRunner = AppDataSource.createQueryRunner();
   await queryRunner.connect();
   await queryRunner.startTransaction(options?.isolationLevel);
+  openAfterCommitScope(queryRunner);
 
+  let committed: { result: T; afterCommit: (() => unknown)[] };
   try {
     const result = await executable({ connection: queryRunner });
     await queryRunner.commitTransaction();
-    return result;
+    committed = { result, afterCommit: closeAfterCommitScope(queryRunner) };
   } catch (err: any) {
+    closeAfterCommitScope(queryRunner);
     logger.error(`Database transaction failed [${err}]`);
     if (queryRunner.isTransactionActive) {
       await queryRunner.rollbackTransaction();
@@ -288,22 +352,15 @@ async function execNativeTransactionally<T>(
   } finally {
     queryRunner.release();
   }
+  await runAfterCommitCallbacks(committed.afterCommit);
+  return committed.result;
 }
 
 function prepareStatement(
   sql: string,
   params: { [p: string]: any } | Record<string, any> | undefined
 ) {
-  return sql.replace(/:(\w+)/g, function (txt: string, key: string) {
-    if (params?.hasOwnProperty(key)) {
-      const val = params[key];
-      if (Array.isArray(val)) {
-        return val.map((v) => mysql.escape(v)).join(', ');
-      }
-      return mysql.escape(val);
-    }
-    return txt;
-  });
+  return formatNamedParameters(sql, params);
 }
 
 function serializeQueryRows(result: unknown): unknown[] {
@@ -438,7 +495,9 @@ export async function retrieveConsolidationsForWallets(
     SELECT DISTINCT
       LOWER(wallet1) AS wallet1,
       LOWER(wallet2) AS wallet2,
-      block
+      block,
+      wallet1_registered_at,
+      wallet2_registered_at
     FROM ${CONSOLIDATIONS_TABLE}
     WHERE confirmed = true
       AND (
@@ -454,7 +513,7 @@ export async function retrieveConsolidationsForWallets(
           SELECT wallet2 FROM wallet_cluster
         )
       )
-    ORDER BY block DESC;
+    ORDER BY block DESC, LOWER(wallet1), LOWER(wallet2);
   `;
 
   const consolidations = await sqlExecutor.execute<Consolidation>(
@@ -652,15 +711,6 @@ export async function fetchAllTDH(block: number, wallets?: string[]) {
   return results.map(parseTdhDataFromDB);
 }
 
-function shortFormatIfAddress(address: string): string {
-  if (!address || !ethTools.isEthAddress(address)) {
-    return address;
-  }
-  return `${address.substring(0, 5)}...${address.substring(
-    address.length - 3
-  )}`;
-}
-
 export async function fetchConsolidationDisplay(
   myWallets: string[]
 ): Promise<string> {
@@ -678,10 +728,12 @@ export async function fetchConsolidationDisplay(
     }
   });
 
-  if (displayArray.length == 1) {
-    return displayArray[0];
-  }
-  return displayArray.map((d) => shortFormatIfAddress(d)).join(' - ');
+  return formatConsolidationDisplay(
+    myWallets.map((wallet, index) => ({
+      wallet,
+      display: displayArray[index]
+    }))
+  );
 }
 
 export async function fetchConsolidationDisplays(
@@ -715,14 +767,12 @@ export async function fetchConsolidationDisplays(
   }
   return consolidationKeys.reduce(
     (acc, key) => {
-      const displays = key
-        .split('-')
-        .map((wallet) => allRelatedDisplays[wallet.toLowerCase()]!);
-      if (displays.length === 1) {
-        acc[key] = displays[0];
-      } else {
-        acc[key] = displays.map((it) => shortFormatIfAddress(it)).join(' - ');
-      }
+      acc[key] = formatConsolidationDisplay(
+        key.split('-').map((wallet) => ({
+          wallet,
+          display: allRelatedDisplays[wallet.toLowerCase()]!
+        }))
+      );
       return acc;
     },
     {} as Record<string, string>
@@ -817,7 +867,8 @@ export async function fetchAllConsolidationAddresses() {
 export async function fetchWalletTransactions(
   contracts: string[],
   wallet: string,
-  block?: number
+  block?: number,
+  options?: DbQueryOptions
 ) {
   const sql = `SELECT * FROM ${TRANSACTIONS_TABLE}`;
   const params: any = {
@@ -846,13 +897,19 @@ export async function fetchWalletTransactions(
 
   const fullSql = `${sql} ${filters}`;
 
-  return await sqlExecutor.execute(fullSql, params);
+  return await sqlExecutor.execute(fullSql, params, options);
 }
 
-export async function fetchEnsRefresh() {
+export async function fetchEnsRefresh(excludedWallets: string[] = []) {
   const batchSize = env.getIntOrNull('ENS_LOOP_MAX_BATCH_SIZE') ?? 100;
-  const sql = `SELECT * FROM ${ENS_TABLE} WHERE created_at < DATE_SUB(NOW(), INTERVAL 24 HOUR) ORDER BY created_at ASC LIMIT :batchSize`;
-  return sqlExecutor.execute<ENS>(sql, { batchSize });
+  const exclusion = excludedWallets.length
+    ? ' AND wallet NOT IN (:excludedWallets)'
+    : '';
+  const sql = `SELECT * FROM ${ENS_TABLE} WHERE created_at < DATE_SUB(NOW(), INTERVAL 24 HOUR)${exclusion} ORDER BY created_at ASC LIMIT :batchSize`;
+  return sqlExecutor.execute<ENS>(
+    sql,
+    excludedWallets.length ? { batchSize, excludedWallets } : { batchSize }
+  );
 }
 
 export async function fetchMissingEns(datetime?: Date) {
@@ -933,6 +990,7 @@ export async function persistTransactions(transactions: BaseTransaction[]) {
           'to_address',
           'token_id'
         ]);
+      await enqueueTransfersWithManager(manager, consolidatedTransactions);
     });
 
     logger.info(
@@ -1079,12 +1137,100 @@ async function persistTdhUploadByTable(
   logger.info(`[TDH UPLOAD IN ${table} PERSISTED]`);
 }
 
+/** Partial TDH writes: what is already stored, and the reference path. */
+export type PartialTdhWriteOptions = {
+  /**
+   * The wallets TDH rows at this block as stored when the write was
+   * computed (`fetchTDHForBlock`, digested before ranking, `snapshotRows`),
+   * so the table, whose rows for one block are scattered over every block's,
+   * is not read again. Released once compared.
+   */
+  readonly storedTdh?: StoredRows;
+  /** Write every computed row, as before (the equivalence tests' reference). */
+  readonly writeAllRows?: boolean;
+};
+
+/**
+ * One table of a partial TDH write. The reference path (`writeAllRows`)
+ * deletes the write's scope and upserts every computed row, as before.
+ * Otherwise only what differs is sent (`rowsToWrite`): stored scope rows
+ * that changed or are gone are deleted, new and changed rows are upserted,
+ * and rows that differ only in `write.columns.refreshed` get that column
+ * alone. The table ends as the reference path leaves it.
+ *
+ * Sending fewer rows changes which rows share an upsert batch, and a batch
+ * updates the columns its rows set (`upsertTdhInBatches`). That stays
+ * equivalent while every computed row of a table sets the same columns, as
+ * the TDH row builders do.
+ */
+async function writePartialTdhTable<Entity extends ObjectLiteral>(
+  label: string,
+  repository: Repository<Entity>,
+  rows: Entity[],
+  {
+    write,
+    stored,
+    deleteScope,
+    writeAllRows
+  }: {
+    write: PartialTableWrite;
+    stored: (write: PartialTableWrite) => Promise<StoredRows>;
+    deleteScope: () => Promise<void>;
+    writeAllRows?: boolean;
+  }
+): Promise<void> {
+  if (writeAllRows) {
+    await deleteScope();
+    await upsertTdhInBatches(repository, rows);
+    logger.info(`[${label}] [WROTE ${rows.length} OF ${rows.length} ROWS]`);
+    return;
+  }
+  const storedRows = await stored(write);
+  const { upserts, refreshes, deletes } = rowsToWrite(
+    repository.metadata,
+    rows,
+    storedRows,
+    write
+  );
+  releaseStoredRows(storedRows); // free it before the next table is read
+  await deleteTdhRowsInBatches(repository, deletes);
+  await upsertTdhInBatches(repository, upserts);
+  const refreshed = write.columns?.refreshed;
+  if (refreshed !== undefined && refreshes.length > 0) {
+    await refreshTdhColumnInBatches(repository, refreshes, refreshed);
+  }
+  logger.info(
+    `[${label}] [WROTE ${upserts.length} OF ${rows.length} ROWS] [DELETED ${deletes.length}]` +
+      (refreshed === undefined
+        ? ''
+        : ` [REFRESHED ${refreshed} ON ${refreshes.length}]`)
+  );
+}
+
+/** A write whose scope is the given consolidation keys. */
+function replacedKeysWrite(
+  keys: readonly string[],
+  columns?: RowDiffColumns
+): PartialTableWrite {
+  const isReplaced = inLowercased(keys);
+  return {
+    columns,
+    inScope: (key) => isReplaced(String(key('consolidation_key')))
+  };
+}
+
+function inLowercased(values: readonly string[]): (value: string) => boolean {
+  const set = new Set(values.map((value) => value.toLowerCase()));
+  return (value) => set.has(value.toLowerCase());
+}
+
 export async function persistTDH(
   block: number,
   tdh: TDH[],
   memesTdh: TDHMemes[],
   tdhEditions: TDHEditions[],
-  wallets?: string[]
+  wallets?: string[],
+  options: PartialTdhWriteOptions = {}
 ) {
   logger.info(
     `[TDH] [PERSISTING WALLETS TDH ${tdh.length}] : [MEMES TDH ${memesTdh.length}]`
@@ -1095,36 +1241,77 @@ export async function persistTDH(
     const tdhMemesRepo = manager.getRepository(TDHMemes);
     const tdhEditionsRepo = manager.getRepository(TDHEditions);
     if (wallets) {
-      logger.info(`[TDH] [DELETING ${wallets.length} WALLETS]`);
-      await Promise.all(
-        wallets.map(async (wallet) => {
-          await tdhRepo
-            .createQueryBuilder()
-            .delete()
-            .where('LOWER(wallet) = :wallet AND block = :block ', {
-              wallet: wallet.toLowerCase(),
-              block: block
-            })
-            .execute();
-          await tdhMemesRepo
-            .createQueryBuilder()
-            .delete()
-            .where('LOWER(wallet) = :wallet ', {
-              wallet: wallet.toLowerCase()
-            })
-            .execute();
-          await tdhEditionsRepo
-            .createQueryBuilder()
-            .delete()
-            .where('wallet = :wallet ', {
-              wallet: wallet.toLowerCase()
-            })
-            .execute();
-        })
+      logger.info(`[TDH] [PARTIAL WRITE FOR ${wallets.length} WALLETS]`);
+      const isAffected = inLowercased(wallets);
+      const write: PartialTableWrite = {
+        inScope: (key) => isAffected(String(key('wallet')))
+      };
+      const deleteWallets =
+        (repository: Repository<ObjectLiteral>, where: string) => async () => {
+          for (const wallet of wallets) {
+            await repository
+              .createQueryBuilder()
+              .delete()
+              .where(where, { wallet: wallet.toLowerCase(), block })
+              .execute();
+          }
+        };
+      await writePartialTdhTable('TDH WALLET ROWS', tdhRepo, tdh, {
+        write,
+        writeAllRows: options.writeAllRows,
+        // Rows outside the scope come from the snapshot, read before this
+        // transaction: a same-block rewrite committed in between is not seen
+        // there. Only delegationsLoop (reserved concurrency 1) writes
+        // partially. The affected wallets' rows are read again here, locked,
+        // so the scope is compared with, and deletes, what is stored now.
+        stored: async () => {
+          const atBlock = { column: 'block', values: [block] };
+          if (!options.storedTdh) {
+            return readStoredRows(manager, tdhRepo.metadata, {
+              filter: [atBlock],
+              write
+            });
+          }
+          const scope = await readStoredRows(manager, tdhRepo.metadata, {
+            filter: [
+              atBlock,
+              {
+                column: 'wallet',
+                values: wallets.map((wallet) => wallet.toLowerCase())
+              }
+            ],
+            write
+          });
+          return withScopeRows(
+            options.storedTdh,
+            scope,
+            tdhRepo.metadata,
+            write
+          );
+        },
+        deleteScope: deleteWallets(
+          tdhRepo,
+          'LOWER(wallet) = :wallet AND block = :block '
+        )
+      });
+      await writePartialTdhTable('TDH MEMES ROWS', tdhMemesRepo, memesTdh, {
+        write,
+        writeAllRows: options.writeAllRows,
+        stored: () => readStoredRows(manager, tdhMemesRepo.metadata, { write }),
+        deleteScope: deleteWallets(tdhMemesRepo, 'LOWER(wallet) = :wallet ')
+      });
+      await writePartialTdhTable(
+        'TDH EDITION ROWS',
+        tdhEditionsRepo,
+        tdhEditions,
+        {
+          write,
+          writeAllRows: options.writeAllRows,
+          stored: () =>
+            readStoredRows(manager, tdhEditionsRepo.metadata, { write }),
+          deleteScope: deleteWallets(tdhEditionsRepo, 'wallet = :wallet ')
+        }
       );
-      await tdhRepo.save(tdh);
-      await tdhMemesRepo.save(memesTdh);
-      await tdhEditionsRepo.save(tdhEditions);
     } else {
       logger.info(`[TDH] [DELETING ALL WALLETS FOR BLOCK ${block}]`);
       await tdhRepo.delete({ block: block });
@@ -1140,18 +1327,20 @@ export async function persistTDH(
   logger.info(`[TDH] PERSISTED ALL WALLETS TDH [${tdh.length}]`);
 }
 
+/** With a transaction's manager, the block row commits with its TDH rows. */
 export async function persistTDHBlock(
   block: number,
   timestamp: Date,
-  tdh: ConsolidatedTDH[]
+  tdh: ConsolidatedTDH[],
+  manager: EntityManager = AppDataSource.manager
 ) {
   logger.info(`[TDH BLOCK] PERSISTING BLOCK [${block}]`);
 
-  const merkleRoot = await computeMerkleRoot(block);
+  const merkleRoot = await computeMerkleRoot(block, manager);
 
   logger.info(`[TDH BLOCK] MERKLE ROOT [${merkleRoot}]`);
 
-  const repo = AppDataSource.getRepository(TDHBlock);
+  const repo = manager.getRepository(TDHBlock);
 
   await repo.delete({ block_number: block });
   await repo.insert({
@@ -1169,19 +1358,38 @@ export type ConsolidatedTdhPersistenceScope =
       readonly consolidationKeysToReplace: string[];
     };
 
+/**
+ * Consolidated rows: a recomputed group's `date` is the time it was computed
+ * (`new Date()`), so an otherwise unchanged row gets just that column.
+ * `boosted_tdh_rate` is computed as 0 and set again for every row by
+ * `updateBoostedTdhRates` in the same transaction.
+ */
+const CONSOLIDATED_TDH_DIFF_COLUMNS: RowDiffColumns = {
+  recomputed: ['boosted_tdh_rate'],
+  refreshed: 'date'
+};
+
+/**
+ * Step A of a consolidated-TDH run: the TDH tables, their `tdh_blocks` row and
+ * the pending identities sync marker, in one short transaction, so the block
+ * record always matches the TDH rows. Identities, merges, metrics and overvote
+ * revocation follow in their own transactions (`syncIdentitiesAfterTdh`); the
+ * committed marker lets the next loop invocation finish them if this one
+ * stops after A, even if it is killed.
+ */
 export async function persistConsolidatedTDH(
   block: number,
   tdh: ConsolidatedTDH[],
   memesTdh: ConsolidatedTDHMemes[],
   tdhEditions: ConsolidatedTDHEditions[],
   nftTdh: NftTDH[],
-  scope: ConsolidatedTdhPersistenceScope
+  scope: ConsolidatedTdhPersistenceScope,
+  blockTimestamp: Date,
+  { writeAllRows }: Pick<PartialTdhWriteOptions, 'writeAllRows'> = {}
 ) {
   logger.info(`[CONSOLIDATED TDH] PERSISTING WALLETS TDH [${tdh.length}]`);
-  let unreadCacheInvalidations: WaveUnreadCacheInvalidations = {
-    waveIds: [],
-    readerWaves: []
-  };
+  // Fails before any TDH write if the marker table is missing.
+  await identityTdhSyncStateDb.ensureRows();
   await sqlExecutor.executeNativeQueriesInTransaction(async (qrHolder) => {
     const queryRunner = qrHolder.connection as QueryRunner;
     const manager = queryRunner.manager;
@@ -1189,26 +1397,45 @@ export async function persistConsolidatedTDH(
     const tdhMemesRepo = manager.getRepository(ConsolidatedTDHMemes);
     const tdhEditionsRepo = manager.getRepository(ConsolidatedTDHEditions);
 
+    // What identities read from these rows, before this write: the sync
+    // recomputes only the identities whose values change.
+    const identityInputsBefore =
+      scope.mode === 'PARTIAL' ? await readTdhIdentityInputs(qrHolder) : null;
     if (scope.mode === 'PARTIAL') {
       logger.info(
-        `[CONSOLIDATED TDH] [DELETING ${scope.wallets.length} WALLETS]`
+        `[CONSOLIDATED TDH] [PARTIAL WRITE FOR ${scope.wallets.length} WALLETS]`
       );
-      await deleteConsolidationsByKeys(
-        tdhRepo,
-        scope.consolidationKeysToReplace
-      );
-      await deleteConsolidationsByKeys(
+      const keys = scope.consolidationKeysToReplace;
+      await writePartialTdhTable('CONSOLIDATED TDH GROUP ROWS', tdhRepo, tdh, {
+        write: replacedKeysWrite(keys, CONSOLIDATED_TDH_DIFF_COLUMNS),
+        writeAllRows,
+        stored: (write) => readStoredRows(manager, tdhRepo.metadata, { write }),
+        deleteScope: () => deleteConsolidationsByKeys(tdhRepo, keys)
+      });
+      await writePartialTdhTable(
+        'CONSOLIDATED TDH MEMES ROWS',
         tdhMemesRepo,
-        scope.consolidationKeysToReplace
+        memesTdh,
+        {
+          write: replacedKeysWrite(keys),
+          writeAllRows,
+          stored: (write) =>
+            readStoredRows(manager, tdhMemesRepo.metadata, { write }),
+          deleteScope: () => deleteConsolidationsByKeys(tdhMemesRepo, keys)
+        }
       );
-      await deleteConsolidationsByKeys(
+      await writePartialTdhTable(
+        'CONSOLIDATED TDH EDITION ROWS',
         tdhEditionsRepo,
-        scope.consolidationKeysToReplace
+        tdhEditions,
+        {
+          write: replacedKeysWrite(keys),
+          writeAllRows,
+          stored: (write) =>
+            readStoredRows(manager, tdhEditionsRepo.metadata, { write }),
+          deleteScope: () => deleteConsolidationsByKeys(tdhEditionsRepo, keys)
+        }
       );
-      await tdhRepo.save(tdh);
-
-      await tdhMemesRepo.save(memesTdh);
-      await tdhEditionsRepo.save(tdhEditions);
     } else {
       logger.info(`[CONSOLIDATED TDH] [DELETING ALL WALLETS]`);
       await deleteAll(tdhRepo);
@@ -1229,31 +1456,76 @@ export async function persistConsolidatedTDH(
       block,
       tdh,
       scope.mode === 'PARTIAL' ? scope.wallets : undefined,
-      scope.mode === 'PARTIAL' ? scope.consolidationKeysToReplace : undefined
+      scope.mode === 'PARTIAL' ? scope.consolidationKeysToReplace : undefined,
+      { writeAllRows }
     );
     await persistNftTdhWithManager(
       manager,
       nftTdh,
       scope.mode === 'PARTIAL' ? scope.wallets : undefined,
-      scope.mode === 'PARTIAL' ? scope.consolidationKeysToReplace : undefined
+      scope.mode === 'PARTIAL' ? scope.consolidationKeysToReplace : undefined,
+      { writeAllRows }
     );
-
-    unreadCacheInvalidations =
-      await identityConsolidationEffects.syncIdentitiesWithTdhConsolidations(
+    await persistTDHBlock(block, blockTimestamp, tdh, manager);
+    // A full rewrite (tdhLoop) leaves the sync to delegationsLoop and has its
+    // completion announced once the sync is done.
+    const generation = await identityTdhSyncStateDb.markPending(
+      block,
+      qrHolder,
+      { announceFull: scope.mode === 'FULL' }
+    );
+    // A partial write records the keys it replaced and the keys whose
+    // boosted TDH or rate it changed (it rewrites every row, re-ranked), so
+    // the sync recomputes only their identities. A full rewrite records
+    // nothing: its sync walks every identity.
+    if (identityInputsBefore) {
+      const identityInputsAfter = await readTdhIdentityInputs(qrHolder);
+      await identityTdhSyncScopeDb.recordTdhWrite(
+        generation,
+        [
+          ...(scope.mode === 'PARTIAL' ? scope.consolidationKeysToReplace : []),
+          ...changedTdhIdentityInputs(identityInputsBefore, identityInputsAfter)
+        ],
         qrHolder
       );
-    await identityConsolidationEffects.syncIdentitiesMetrics(qrHolder);
-    await revokeTdhBasedDropWavesOverVotes(qrHolder);
+    }
   });
 
-  await invalidateWaveUnreadCache(unreadCacheInvalidations);
-  if (unreadCacheInvalidations.waveIds.length) {
-    await waveScoreService.requestWaveScoreRefreshBestEffort(
-      unreadCacheInvalidations.waveIds,
-      WaveScoreDirtyRefreshReason.IDENTITY_CONSOLIDATION
-    );
-  }
   logger.info(`[CONSOLIDATED TDH] PERSISTED ALL WALLETS TDH [${tdh.length}]`);
+}
+
+/** Per key, the consolidated TDH values identities copy (step C). */
+async function readTdhIdentityInputs(
+  connection: ConnectionWrapper<any>
+): Promise<Map<string, string>> {
+  const rows = await dbSupplier().execute<{
+    consolidation_key: string;
+    boosted_tdh: number | string | null;
+    boosted_tdh_rate: number | string | null;
+  }>(
+    `select consolidation_key, boosted_tdh, boosted_tdh_rate
+     from ${CONSOLIDATED_WALLETS_TDH_TABLE}`,
+    undefined,
+    { wrappedConnection: connection }
+  );
+  return new Map(
+    rows.map((row) => [
+      row.consolidation_key,
+      `${row.boosted_tdh}|${row.boosted_tdh_rate}`
+    ])
+  );
+}
+
+/** Keys added, removed, or with different values. */
+function changedTdhIdentityInputs(
+  before: Map<string, string>,
+  after: Map<string, string>
+): string[] {
+  const keys = new Set([
+    ...Array.from(before.keys()),
+    ...Array.from(after.keys())
+  ]);
+  return Array.from(keys).filter((key) => before.get(key) !== after.get(key));
 }
 
 const CONSOLIDATION_DELETE_BATCH_SIZE = 100;
@@ -1283,6 +1555,11 @@ async function deleteConsolidationsByKeys<Entity extends ObjectLiteral>(
   }
 }
 
+/**
+ * Sets every consolidated row's boosted TDH rate. It must keep updating every
+ * row: partial writes do not compare `boosted_tdh_rate`
+ * (`CONSOLIDATED_TDH_DIFF_COLUMNS`), and rely on this to correct it.
+ */
 async function updateBoostedTdhRates(connection: ConnectionWrapper<any>) {
   const sql = `
       UPDATE ${CONSOLIDATED_WALLETS_TDH_TABLE} cw
@@ -1308,7 +1585,8 @@ export async function persistHistoricConsolidatedTDH(
   block: number,
   tdh: ConsolidatedTDH[],
   wallets?: string[],
-  consolidationKeysToReplace?: string[]
+  consolidationKeysToReplace?: string[],
+  { writeAllRows }: Pick<PartialTdhWriteOptions, 'writeAllRows'> = {}
 ) {
   logger.info(`[HISTORIC CONSOLIDATED TDH] PERSISTING BLOCK [${block}]`);
   const historicTdhRepo = entityManager.getRepository(HistoricConsolidatedTDH);
@@ -1318,12 +1596,24 @@ export async function persistHistoricConsolidatedTDH(
         'Partial historic TDH persistence requires exact keys to replace'
       );
     }
-    await deleteConsolidationsByKeys(
+    const keys = consolidationKeysToReplace;
+    await writePartialTdhTable(
+      'HISTORIC CONSOLIDATED TDH ROWS',
       historicTdhRepo,
-      consolidationKeysToReplace,
-      block
+      tdh as HistoricConsolidatedTDH[],
+      {
+        // Recomputed groups carry a new date, as the consolidated rows.
+        write: replacedKeysWrite(keys, { refreshed: 'date' }),
+        writeAllRows,
+        stored: (write) =>
+          readStoredRows(entityManager, historicTdhRepo.metadata, {
+            filter: [{ column: 'block', values: [block] }],
+            write
+          }),
+        deleteScope: () =>
+          deleteConsolidationsByKeys(historicTdhRepo, keys, block)
+      }
     );
-    await historicTdhRepo.save(tdh);
   } else {
     await historicTdhRepo.delete({ block: block });
     await insertWithoutUpdate(historicTdhRepo, tdh);
@@ -1359,13 +1649,20 @@ async function persistNftTdhWithManager(
   manager: EntityManager,
   nftTdh: NftTDH[],
   wallets?: string[],
-  consolidationKeysToReplace?: string[]
+  consolidationKeysToReplace?: string[],
+  { writeAllRows }: Pick<PartialTdhWriteOptions, 'writeAllRows'> = {}
 ) {
   const nftTdhRepo = manager.getRepository(NftTDH);
   if (wallets) {
-    logger.info(`[NFT TDH] [DELETING ${wallets.length} WALLETS]`);
-    await deleteConsolidationsByKeys(nftTdhRepo, consolidationKeysToReplace!);
-    await nftTdhRepo.save(nftTdh);
+    logger.info(`[NFT TDH] [PARTIAL WRITE FOR ${wallets.length} WALLETS]`);
+    const keys = consolidationKeysToReplace!;
+    await writePartialTdhTable('NFT TDH ROWS', nftTdhRepo, nftTdh, {
+      write: replacedKeysWrite(keys),
+      writeAllRows,
+      stored: (write) =>
+        readStoredRows(manager, nftTdhRepo.metadata, { write }),
+      deleteScope: () => deleteConsolidationsByKeys(nftTdhRepo, keys)
+    });
   } else {
     logger.info(`[NFT TDH] [DELETING ALL WALLETS]`);
     await deleteAll(nftTdhRepo);
@@ -1515,95 +1812,87 @@ export async function fetchRoyalties(startDate: Date, endDate: Date) {
 
 export async function persistConsolidations(
   startBlock: number | undefined,
-  consolidations: ConsolidationEvent[]
+  consolidations: ConsolidationEvent[],
+  resetBlockTimestamp?: number
 ) {
   logger.info(
     `[CONSOLIDATIONS] [START_BLOCK ${startBlock}] [PERSISTING ${consolidations.length} RESULTS]`
   );
 
-  const repo = AppDataSource.getRepository(Consolidation);
+  // One transaction, so a failure part-way through a batch cannot leave a
+  // pair with its old row removed and its new row unsaved.
+  await AppDataSource.transaction(async (manager) => {
+    const repo = manager.getRepository(Consolidation);
 
-  if (startBlock) {
-    //delete all with block >= startBlock
-    await repo.delete({
-      block: MoreThanOrEqual(startBlock)
-    });
-  }
-
-  for (const consolidation of consolidations) {
-    if (consolidation.type == EventType.REGISTER) {
-      const r = await repo.findOne({
-        where: {
-          wallet1: consolidation.wallet1,
-          wallet2: consolidation.wallet2
-        }
-      });
-      if (r) {
-        // do nothing
-      } else {
-        const r2 = await repo.findOne({
-          where: {
-            wallet1: consolidation.wallet2,
-            wallet2: consolidation.wallet1
-          }
-        });
-        if (r2) {
-          await repo.remove(r2);
-          const updatedConsolidation = new Consolidation();
-          updatedConsolidation.block = consolidation.block;
-          updatedConsolidation.wallet1 = consolidation.wallet2;
-          updatedConsolidation.wallet2 = consolidation.wallet1;
-          updatedConsolidation.confirmed = true;
-          await repo.save(updatedConsolidation);
-        } else {
-          const newConsolidation = new Consolidation();
-          newConsolidation.block = consolidation.block;
-          newConsolidation.wallet1 = consolidation.wallet1;
-          newConsolidation.wallet2 = consolidation.wallet2;
-          await repo.save(newConsolidation);
-        }
-      }
-    } else if (consolidation.type == EventType.REVOKE) {
-      const r = await repo.findOne({
-        where: {
-          wallet1: consolidation.wallet1,
-          wallet2: consolidation.wallet2
-        }
-      });
-      if (r) {
-        if (r.confirmed) {
-          await repo.remove(r);
-          const newConsolidation = new Consolidation();
-          newConsolidation.block = consolidation.block;
-          newConsolidation.wallet1 = consolidation.wallet2;
-          newConsolidation.wallet2 = consolidation.wallet1;
-          await repo.save(newConsolidation);
-        } else {
-          await repo.remove(r);
-        }
-      } else {
-        const r2 = await repo.findOne({
-          where: {
-            wallet1: consolidation.wallet2,
-            wallet2: consolidation.wallet1
-          }
-        });
-        if (r2) {
-          await repo.remove(r2);
-          const updatedConsolidation = new Consolidation();
-          updatedConsolidation.block = consolidation.block;
-          updatedConsolidation.wallet1 = consolidation.wallet2;
-          updatedConsolidation.wallet2 = consolidation.wallet1;
-          updatedConsolidation.confirmed = false;
-          await repo.save(updatedConsolidation);
-        }
-      }
+    if (startBlock) {
+      await rewindConsolidationsForReplay(
+        repo,
+        startBlock,
+        resetBlockTimestamp
+      );
     }
-  }
+
+    for (const consolidation of consolidations) {
+      const sameDirection = await repo.findOne({
+        where: {
+          wallet1: consolidation.wallet1,
+          wallet2: consolidation.wallet2
+        }
+      });
+      const reverseDirection = sameDirection
+        ? null
+        : await repo.findOne({
+            where: {
+              wallet1: consolidation.wallet2,
+              wallet2: consolidation.wallet1
+            }
+          });
+      await applyConsolidationRowPlan(
+        repo,
+        planConsolidationEvent(consolidation, sameDirection, reverseDirection)
+      );
+    }
+  });
 
   logger.info(
     `[CONSOLIDATIONS] [ALL ${consolidations.length} RESULTS PERSISTED]`
   );
+}
+
+async function applyConsolidationRowPlan(
+  repo: Repository<Consolidation>,
+  plan: ConsolidationRowPlan
+) {
+  if (plan.remove.length) {
+    await repo.remove(plan.remove);
+  }
+  if (plan.save.length) {
+    await repo.save(plan.save);
+  }
+}
+
+// Before replaying from a reset block, drop only the directions registered at
+// or after that block's time instead of whole rows, so directions registered
+// earlier (and their times) survive the replay. Without the block's time, rows
+// changed at or after the reset block are deleted as before.
+async function rewindConsolidationsForReplay(
+  repo: Repository<Consolidation>,
+  startBlock: number,
+  resetBlockTimestamp: number | undefined
+) {
+  if (resetBlockTimestamp === undefined) {
+    await repo.delete({ block: MoreThanOrEqual(startBlock) });
+    return;
+  }
+  const rows = await repo.find({
+    where: { block: MoreThanOrEqual(startBlock) }
+  });
+  for (const row of rows) {
+    await applyConsolidationRowPlan(
+      repo,
+      planConsolidationRewind(row, resetBlockTimestamp)
+    );
+  }
 }
 
 export async function persistDelegations(
@@ -1615,49 +1904,17 @@ export async function persistDelegations(
     `[DELEGATIONS] [START_BLOCK ${startBlock}] [PERSISTING ${registrations.length} REGISTRATIONS] [PERSISTING ${revocations.length} REVOCATIONS]`
   );
 
-  const repo = AppDataSource.getRepository(Delegation);
-
-  if (startBlock) {
-    //delete all with block >= startBlock
-    await repo.delete({
-      block: MoreThanOrEqual(startBlock)
-    });
-  }
-
-  for (const registration of registrations) {
-    const newDelegation = new Delegation();
-    newDelegation.block = registration.block;
-    newDelegation.from_address = registration.wallet1;
-    newDelegation.to_address = registration.wallet2;
-    newDelegation.collection = registration.collection;
-    newDelegation.use_case = registration.use_case;
-    if (registration.expiry) {
-      newDelegation.expiry = registration.expiry;
-    }
-    if (registration.all_tokens) {
-      newDelegation.all_tokens = registration.all_tokens;
-    }
-    if (registration.token_id) {
-      newDelegation.token_id = registration.token_id;
-    }
-    await repo.save(newDelegation);
-  }
-
-  for (const revocation of revocations) {
-    const r = await repo.find({
-      where: {
-        from_address: revocation.wallet1,
-        to_address: revocation.wallet2,
-        use_case: revocation.use_case,
-        collection: revocation.collection,
-        block: LessThan(revocation.block)
-      }
-    });
-
-    if (r) {
-      await repo.remove(r);
-    }
-  }
+  // One transaction, so a failure part-way through cannot leave the replay
+  // delete or some registrations applied without the rest, and readers never
+  // see a replay half-written.
+  await AppDataSource.transaction((manager) =>
+    writeDelegations(
+      manager.getRepository(Delegation),
+      startBlock,
+      registrations,
+      revocations
+    )
+  );
 
   logger.info(
     `[DELEGATIONS] [${registrations.length} REGISTRATIONS PERSISTED] [${revocations.length} REVOCATIONS PERSISTED]`
@@ -1680,7 +1937,11 @@ export async function persistNftClaims(claims: NFTHistoryClaim[]) {
   ]);
 }
 
-export async function findClaim(claimIndex: number, nftId?: number) {
+export async function findClaim(
+  claimIndex: number,
+  nftId?: number,
+  contract?: string
+) {
   let condition;
   if (nftId != undefined) {
     condition = { claimIndex: claimIndex, nft_id: nftId };
@@ -1688,7 +1949,7 @@ export async function findClaim(claimIndex: number, nftId?: number) {
     condition = { claimIndex: claimIndex };
   }
   const claims = await AppDataSource.getRepository(NFTHistoryClaim).find({
-    where: condition,
+    where: { ...condition, ...(contract ? { contract } : {}) },
     order: { created_at: 'desc' }
   });
   return claims;
@@ -1701,22 +1962,6 @@ export async function persistNftHistoryBlock(block: number) {
     },
     ['block']
   );
-}
-
-export async function fetchLatestNftUri(
-  tokenId: number,
-  contract: string,
-  block: number
-) {
-  const latestHistory = await AppDataSource.getRepository(NFTHistory).findOne({
-    where: {
-      nft_id: tokenId,
-      contract: contract,
-      block: LessThan(block)
-    },
-    order: { block: 'DESC' }
-  });
-  return latestHistory ? latestHistory.uri : null;
 }
 
 export async function fetchHasEns(wallets: string[]) {

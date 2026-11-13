@@ -511,9 +511,19 @@ describe('ci pipeline alert routes', () => {
         }),
         makeResponse()
       )
-    ).rejects.toThrow(
-      'web_e2e alerts are supported only for the frontend web service'
-    );
+    ).rejects.toThrow('repo must be one of');
+  });
+
+  it.each([
+    'other/6529seize-backend',
+    '6529-Collections/unknown-repo',
+    'unknown-repo'
+  ])('rejects alerts for the repository %s', async (repo) => {
+    (getRedisClient as jest.Mock).mockReturnValue(null);
+
+    await expect(
+      ciPipelineAlertHandler(makeAlertRequest({ repo }), makeResponse())
+    ).rejects.toThrow('repo must be one of');
   });
 
   it('rejects E2E parent identity on ordinary workflow alerts', async () => {

@@ -14,33 +14,6 @@ abstract class BaseTDHHistory {
   @PrimaryColumn({ type: 'int' })
   block!: number;
 
-  @Column({ type: 'int' })
-  created_tdh!: number;
-
-  @Column({ type: 'int' })
-  destroyed_tdh!: number;
-
-  @Column({ type: 'int' })
-  net_tdh!: number;
-
-  @Column({ type: 'int', nullable: false })
-  created_boosted_tdh!: number;
-
-  @Column({ type: 'int', nullable: false })
-  destroyed_boosted_tdh!: number;
-
-  @Column({ type: 'int', nullable: false })
-  net_boosted_tdh!: number;
-
-  @Column({ type: 'int', nullable: false })
-  created_tdh__raw!: number;
-
-  @Column({ type: 'int', nullable: false })
-  destroyed_tdh__raw!: number;
-
-  @Column({ type: 'int', nullable: false })
-  net_tdh__raw!: number;
-
   @Column({ type: 'int', nullable: false })
   created_balance!: number;
 
@@ -51,7 +24,40 @@ abstract class BaseTDHHistory {
   net_balance!: number;
 }
 
-abstract class BaseGlobalTDHHistory extends BaseTDHHistory {
+// Deltas share their shape, while only network-wide sums need wider storage.
+function tdhHistoryWithDeltas(type: 'int' | 'bigint') {
+  class TDHHistoryWithDeltas extends BaseTDHHistory {
+    @Column({ type, nullable: false })
+    created_tdh!: number;
+
+    @Column({ type, nullable: false })
+    destroyed_tdh!: number;
+
+    @Column({ type, nullable: false })
+    net_tdh!: number;
+
+    @Column({ type, nullable: false })
+    created_boosted_tdh!: number;
+
+    @Column({ type, nullable: false })
+    destroyed_boosted_tdh!: number;
+
+    @Column({ type, nullable: false })
+    net_boosted_tdh!: number;
+
+    @Column({ type, nullable: false })
+    created_tdh__raw!: number;
+
+    @Column({ type, nullable: false })
+    destroyed_tdh__raw!: number;
+
+    @Column({ type, nullable: false })
+    net_tdh__raw!: number;
+  }
+  return TDHHistoryWithDeltas;
+}
+
+abstract class BaseGlobalTDHHistory extends tdhHistoryWithDeltas('bigint') {
   @Column({ type: 'int', nullable: false })
   memes_balance!: number;
 
@@ -61,31 +67,31 @@ abstract class BaseGlobalTDHHistory extends BaseTDHHistory {
   @Column({ type: 'int', nullable: false })
   nextgen_balance!: number;
 
-  @Column({ type: 'int', nullable: false })
+  @Column({ type: 'bigint', nullable: false })
   total_boosted_tdh!: number;
 
-  @Column({ type: 'int', nullable: false })
+  @Column({ type: 'bigint', nullable: false })
   total_tdh!: number;
 
-  @Column({ type: 'int', nullable: false })
+  @Column({ type: 'bigint', nullable: false })
   total_tdh__raw!: number;
 
-  @Column({ type: 'int', nullable: false })
+  @Column({ type: 'bigint', nullable: false })
   gradients_boosted_tdh!: number;
 
-  @Column({ type: 'int', nullable: false })
+  @Column({ type: 'bigint', nullable: false })
   gradients_tdh!: number;
 
-  @Column({ type: 'int', nullable: false })
+  @Column({ type: 'bigint', nullable: false })
   gradients_tdh__raw!: number;
 
-  @Column({ type: 'int', nullable: false })
+  @Column({ type: 'bigint', nullable: false })
   memes_boosted_tdh!: number;
 
-  @Column({ type: 'int', nullable: false })
+  @Column({ type: 'bigint', nullable: false })
   memes_tdh!: number;
 
-  @Column({ type: 'int', nullable: false })
+  @Column({ type: 'bigint', nullable: false })
   memes_tdh__raw!: number;
 
   @Column({ type: 'int', nullable: false })
@@ -95,7 +101,9 @@ abstract class BaseGlobalTDHHistory extends BaseTDHHistory {
   total_wallets!: number;
 }
 
-abstract class BaseTDHHistoryWithConsolidation extends BaseTDHHistory {
+abstract class BaseTDHHistoryWithConsolidation extends tdhHistoryWithDeltas(
+  'int'
+) {
   @Index()
   @Column({ type: 'varchar', length: 500 })
   consolidation_display!: string;

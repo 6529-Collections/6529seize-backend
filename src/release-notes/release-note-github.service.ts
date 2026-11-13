@@ -1,13 +1,20 @@
-import fetch from 'node-fetch';
+import fetch, { Response } from 'node-fetch';
+import { randomInt } from 'node:crypto';
 import deployConfig from '@/config/deploy-services.json';
 import { env } from '@/env';
 import { Logger } from '@/logging';
 import { ReleaseNoteGenerationRequest } from './release-note-generation-queue';
 import {
+  DeferredReleaseNoteError,
   NonRetryableReleaseNoteError,
+  ReleaseNoteDependencyError,
   UntrustedReleaseNoteMetadataError
 } from './release-note-errors';
-import { isAllowedReleaseNotesPrompt } from './release-note-prompts.config';
+import {
+  CI_REPOSITORY_OWNER,
+  getAllowedCiRepositoryName,
+  isAllowedReleaseNotesPrompt
+} from './release-note-prompts.config';
 
 interface GitHubWorkflowRun {
   readonly id: number;
@@ -138,7 +145,7 @@ const CORE_PRODUCTION_WORKFLOWS = new Set(['Publish', 'Build All']);
 const MAX_PROMPT_LENGTH = 20000;
 const MAX_GITHUB_RESPONSE_BYTES = 5 * 1024 * 1024;
 const GITHUB_REQUEST_TIMEOUT_MS = 15000;
-const MAX_GITHUB_ATTEMPTS = 2;
+const MAX_GITHUB_ATTEMPTS = 3;
 const MAX_GITHUB_CONCURRENCY = 5;
 const MAX_LOGGED_PULL_REQUEST_NUMBERS = 100;
 const NON_HUMAN_GITHUB_LOGINS = new Set([
@@ -148,8 +155,18 @@ const NON_HUMAN_GITHUB_LOGINS = new Set([
   'web-flow'
 ]);
 
+/**
+ * The URL path of an allowlisted repository (`owner/name`, each segment
+ * URL-encoded). Any other repository is rejected.
+ */
 function normalizeRepository(repo: string): string {
-  return repo.includes('/') ? repo : `6529-Collections/${repo}`;
+  const name = getAllowedCiRepositoryName(repo);
+  if (!name) {
+    throw new NonRetryableReleaseNoteError(
+      `Unsupported release notes repository ${repo}`
+    );
+  }
+  return `${encodeURIComponent(CI_REPOSITORY_OWNER)}/${encodeURIComponent(name)}`;
 }
 
 function getRepoName(repo: string): string {
@@ -388,6 +405,38 @@ function collectCandidateServices(
   return normalizedDeployedServices;
 }
 
+function gitHubRetryAfterMs(response: Response): number {
+  const value = response.headers.get('retry-after');
+  if (value === null) return 0;
+  const seconds = Number(value);
+  return Math.max(
+    0,
+    Number.isFinite(seconds)
+      ? seconds * 1000
+      : (Date.parse(value) || 0) - Date.now()
+  );
+}
+
+function isTransientGitHubResponse(response: Response): boolean {
+  return (
+    [429, 500, 502, 503, 504].includes(response.status) ||
+    (response.status === 403 &&
+      response.headers.get('x-ratelimit-remaining') === '0')
+  );
+}
+
+async function waitForGitHubRetry(
+  attempt: number,
+  retryAfterMs = 0
+): Promise<void> {
+  await new Promise((resolve) =>
+    setTimeout(
+      resolve,
+      Math.max(retryAfterMs, 250 * 2 ** (attempt - 1) + randomInt(100))
+    )
+  );
+}
+
 export class ReleaseNoteGitHubService {
   private readonly apiBaseUrl = 'https://api.github.com';
   private readonly logger = Logger.get(this.constructor.name);
@@ -412,34 +461,67 @@ export class ReleaseNoteGitHubService {
           size: MAX_GITHUB_RESPONSE_BYTES,
           signal: controller.signal
         });
-        const retryAfter = Number(response.headers.get('retry-after'));
-        const isRateLimited =
-          response.status === 429 ||
-          (response.status === 403 &&
-            response.headers.get('x-ratelimit-remaining') === '0');
-        if (
-          isRateLimited &&
-          attempt < MAX_GITHUB_ATTEMPTS &&
-          Number.isFinite(retryAfter) &&
-          retryAfter > 0 &&
-          retryAfter <= 5
-        ) {
-          await new Promise((resolve) =>
-            setTimeout(resolve, retryAfter * 1000)
-          );
-          continue;
-        }
         if (!response.ok) {
-          throw new Error(
-            `GitHub release context request failed: ${response.status} ${response.statusText}`
+          const retryAfterMs = gitHubRetryAfterMs(response);
+          if (
+            isTransientGitHubResponse(response) &&
+            attempt < MAX_GITHUB_ATTEMPTS &&
+            retryAfterMs <= 5000
+          ) {
+            await waitForGitHubRetry(attempt, retryAfterMs);
+            continue;
+          }
+          throw new ReleaseNoteDependencyError(
+            `GitHub release context request failed: ${response.status} ${response.statusText}; path=${path}; request_id=${response.headers.get('x-github-request-id') ?? 'unknown'}`,
+            retryAfterMs
           );
         }
         return (await response.json()) as T;
+      } catch (error) {
+        if (
+          error instanceof ReleaseNoteDependencyError ||
+          attempt === MAX_GITHUB_ATTEMPTS
+        )
+          throw error;
+        // Connection resets, timeouts and truncated JSON responses can be transient.
+        await waitForGitHubRetry(attempt);
       } finally {
         clearTimeout(timeoutId);
       }
     }
     throw new Error('GitHub release context request exhausted retries');
+  }
+
+  public async isCommitAncestor(
+    repo: string,
+    ancestorSha: string,
+    descendantSha: string
+  ): Promise<boolean> {
+    const repository = normalizeRepository(repo);
+    const fullSha = /^[a-f0-9]{40}$/;
+    if (!fullSha.test(ancestorSha) || !fullSha.test(descendantSha)) {
+      throw new NonRetryableReleaseNoteError(
+        'Release-note ancestry requires two full lowercase commit SHAs'
+      );
+    }
+    if (ancestorSha === descendantSha) {
+      return true;
+    }
+    const comparison = await this.api<GitHubCompareResponse>(
+      `/repos/${repository}/compare/${encodeURIComponent(ancestorSha)}...${encodeURIComponent(descendantSha)}?per_page=1`
+    );
+    switch (comparison.status) {
+      case 'ahead':
+      case 'identical':
+        return true;
+      case 'behind':
+      case 'diverged':
+        return false;
+      default:
+        throw new ReleaseNoteDependencyError(
+          `GitHub did not return an ancestry status for ${repository} ${ancestorSha}...${descendantSha}`
+        );
+    }
   }
 
   public async getReleasePrompt(
@@ -580,7 +662,7 @@ export class ReleaseNoteGitHubService {
     await this.getValidatedCurrentRun(repository, request);
     const pullRequestNumber = request.pull_request_number!;
     const pullRequest = await this.api<GitHubPullRequest>(
-      `/repos/${repository}/pulls/${pullRequestNumber}`
+      `/repos/${repository}/pulls/${encodeURIComponent(pullRequestNumber)}`
     );
     const branch = normalizeBranch(request.branch);
     const mergeCommitSha = pullRequest.merge_commit_sha?.trim();
@@ -661,6 +743,8 @@ export class ReleaseNoteGitHubService {
       currentRun.head_sha !== request.sha ||
       !Number.isSafeInteger(currentRun.workflow_id) ||
       !Number.isSafeInteger(currentRun.run_number) ||
+      (request.run_number != null &&
+        Number(request.run_number) !== currentRun.run_number) ||
       (mustMatchProductionRun &&
         !isMatchingCurrentProductionRun(currentRun, request))
     ) {
@@ -670,7 +754,8 @@ export class ReleaseNoteGitHubService {
     }
     if (repoName !== CORE_REPO) {
       if (currentRun.status !== 'completed') {
-        throw new Error(
+        throw new DeferredReleaseNoteError(
+          'WORKFLOW_NOT_SETTLED',
           `GitHub release run ${request.run_id} is still ${currentRun.status ?? 'not completed'}`
         );
       }
@@ -733,7 +818,7 @@ export class ReleaseNoteGitHubService {
       query.set('per_page', String(WORKFLOW_RUN_PAGE_SIZE));
       query.set('page', String(page));
       const payload = await this.api<GitHubWorkflowRunsResponse>(
-        `/repos/${repository}/actions/workflows/${currentRun.workflow_id}/runs?${query.toString()}`
+        `/repos/${repository}/actions/workflows/${encodeURIComponent(currentRun.workflow_id)}/runs?${query.toString()}`
       );
       const runs = payload.workflow_runs ?? [];
       const previousRun = runs
@@ -978,7 +1063,7 @@ export class ReleaseNoteGitHubService {
     const commits: GitHubCommit[] = [];
     for (let page = 1; page <= MAX_PULL_REQUEST_COMMIT_PAGES; page++) {
       const pageCommits = await this.api<GitHubCommit[]>(
-        `/repos/${repository}/pulls/${pullRequestNumber}/commits?per_page=${PAGE_SIZE}&page=${page}`
+        `/repos/${repository}/pulls/${encodeURIComponent(pullRequestNumber)}/commits?per_page=${PAGE_SIZE}&page=${page}`
       );
       commits.push(...pageCommits);
       if (pageCommits.length < PAGE_SIZE) {
@@ -1018,7 +1103,7 @@ export class ReleaseNoteGitHubService {
     const files: GitHubPullRequestFile[] = [];
     for (let page = 1; page <= MAX_FILE_PAGES; page++) {
       const pageFiles = await this.api<GitHubPullRequestFile[]>(
-        `/repos/${repository}/pulls/${pullRequestNumber}/files?per_page=${PAGE_SIZE}&page=${page}`
+        `/repos/${repository}/pulls/${encodeURIComponent(pullRequestNumber)}/files?per_page=${PAGE_SIZE}&page=${page}`
       );
       files.push(
         ...pageFiles.map(({ filename, additions, deletions, changes }) => ({

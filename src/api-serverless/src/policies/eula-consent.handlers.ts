@@ -17,7 +17,15 @@ import {
   saveEULAConsent
 } from './policies.db';
 
-const DeviceIdSchema = Joi.string().trim().min(1).max(100).required();
+// Native device identifiers (vendor UUIDs, hex ids) use only these characters.
+const DEVICE_ID_PATTERN = /^[A-Za-z0-9._:-]+$/;
+
+const DeviceIdSchema = Joi.string()
+  .trim()
+  .min(1)
+  .max(100)
+  .pattern(DEVICE_ID_PATTERN)
+  .required();
 
 const EulaConsentPathSchema = Joi.object<{ deviceId: string }>({
   deviceId: DeviceIdSchema

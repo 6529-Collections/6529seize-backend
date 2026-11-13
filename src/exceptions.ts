@@ -51,9 +51,19 @@ export class UnauthorisedException extends ApiCompliantException {
   }
 }
 
+/** Extra scalar fields an error response may carry next to `error` and `code`. */
+export type ApiErrorDetails = Readonly<
+  Record<string, string | number | boolean | null>
+>;
+
 export class CustomApiCompliantException extends ApiCompliantException {
   private status: number;
-  constructor(status: number, message: string, code?: string) {
+  constructor(
+    status: number,
+    message: string,
+    code?: string,
+    readonly details?: ApiErrorDetails
+  ) {
     super(message, code);
     this.status = status;
   }
@@ -61,4 +71,20 @@ export class CustomApiCompliantException extends ApiCompliantException {
   getStatusCode(): number {
     return this.status;
   }
+}
+
+/**
+ * The JSON body for an API-compliant error: `{ error, code? }` plus any
+ * details. Details never override `error` or `code`.
+ */
+export function apiCompliantErrorBody(
+  err: ApiCompliantException
+): Record<string, string | number | boolean | null> {
+  const details =
+    err instanceof CustomApiCompliantException ? (err.details ?? {}) : {};
+  return {
+    ...details,
+    error: err.message,
+    ...(err.code ? { code: err.code } : {})
+  };
 }

@@ -1,3 +1,6 @@
+import { competitionAnonymityService } from '@/competitions/competition-anonymity';
+import { anonymousNotificationProfiles } from '@/api/notifications/notifications-competition-anonymity';
+import { ApiVotingCreditReleaseReason } from '@/api/generated/models/ApiVotingCreditReleaseReason';
 import { requestDeviceBadgeRefresh } from '@/api/push-notifications/push-notifications.service';
 import { assertUnreachable } from '../../../assertions';
 import { AuthenticationContext } from '../../../auth-context';
@@ -8,7 +11,10 @@ import {
   identityNotificationsDb,
   IdentityNotificationsDb
 } from '../../../notifications/identity-notifications.db';
-import { UserNotification } from '../../../notifications/user-notification.types';
+import {
+  VotingCreditsReturnedNotificationData,
+  UserNotification
+} from '../../../notifications/user-notification.types';
 import {
   userNotificationReader,
   UserNotificationsReader
@@ -20,6 +26,7 @@ import { ApiIdentityOverview } from '@/api/generated/models/ApiIdentityOverview'
 import { ApiNotificationAdditionalContextV2 } from '@/api/generated/models/ApiNotificationAdditionalContextV2';
 import { ApiNotificationV2 } from '@/api/generated/models/ApiNotificationV2';
 import { ApiNotificationsResponseV2 } from '@/api/generated/models/ApiNotificationsResponseV2';
+import { ApiNotificationsUnreadCountV2 } from '@/api/generated/models/ApiNotificationsUnreadCountV2';
 import { ApiSubscriptionCoverageStatus } from '@/api/generated/models/ApiSubscriptionCoverageStatus';
 import { ApiWaveOverview } from '@/api/generated/models/ApiWaveOverview';
 import {
@@ -65,7 +72,7 @@ import {
   WsListenersNotifier
 } from '@/api/ws/ws-listeners-notifier';
 import { DbPoolName } from '@/db-query.options';
-import { assertWaveAndParentVisibleOrThrow } from '@/api/waves/wave-access.helpers';
+import { assertWaveAndParentVisibleToProfileOrThrow } from '@/api/waves/wave-access.helpers';
 
 interface DropReactedNotificationAdditionalContextV2 {
   reaction: string;
@@ -160,31 +167,25 @@ export class NotificationsApiService {
     requestDmUnreadState = false
   ): Promise<ApiDmUnreadConversationState | null> {
     ctx.timer?.start(`${this.constructor.name}->markWaveNotificationsAsRead`);
-    const wave = await this.wavesApiDb.findById(
-      waveId,
-      ctx.connection,
-      DbPoolName.WRITE
-    );
-    let groupsUserIsEligibleFor: string[] | undefined;
-    if (wave?.is_direct_message) {
-      groupsUserIsEligibleFor =
-        await this.userGroupsService.getGroupsUserIsEligibleFor(
-          identityId,
-          ctx.timer
-        );
-      await assertWaveAndParentVisibleOrThrow({
-        wave,
-        groupsUserIsEligibleFor,
+    const { wave, groupsUserIsEligibleFor } =
+      await assertWaveAndParentVisibleToProfileOrThrow({
+        wave: await this.wavesApiDb.findById(
+          waveId,
+          ctx.connection,
+          DbPoolName.WRITE
+        ),
+        profileId: identityId,
+        userGroupsService: this.userGroupsService,
         message: `Wave ${waveId} not found.`,
         wavesApiDb: this.wavesApiDb,
         ctx
       });
-    }
-    await this.identityNotificationsDb.markWaveNotificationsAsRead(
-      waveId,
-      identityId,
-      ctx
-    );
+    const markedNotifications =
+      await this.identityNotificationsDb.markWaveNotificationsAsRead(
+        waveId,
+        identityId,
+        ctx
+      );
     if (wave?.is_direct_message) {
       await this.wavesApiDb.markDirectMessageReadThroughSerial(
         { waveId, readerId: identityId, readThroughSerialNo },
@@ -229,9 +230,14 @@ export class NotificationsApiService {
         dmRecipients
       );
     }
-    await this.wsListenersNotifier.notifyAboutIdentityNotificationsChanged([
-      identityId
-    ]);
+    // Every socket of the profile (and its connected-account subscribers)
+    // refetches the notification count on this frame. Most open-wave reads
+    // mark nothing, so only send it when a notification actually changed.
+    if (markedNotifications > 0) {
+      await this.wsListenersNotifier.notifyAboutIdentityNotificationsChanged([
+        identityId
+      ]);
+    }
     ctx.timer?.stop(`${this.constructor.name}->markWaveNotificationsAsRead`);
     return requestDmUnreadState ? dmUnreadState : null;
   }
@@ -302,6 +308,26 @@ export class NotificationsApiService {
     };
   }
 
+  public async getUnreadNotificationsCountV2(
+    param: { include_competitions?: boolean },
+    authenticationContext: AuthenticationContext,
+    ctx: RequestContext
+  ): Promise<ApiNotificationsUnreadCountV2> {
+    const identityId = authenticationContext.getActingAsId()!;
+    const eligible_group_ids =
+      await this.userGroupsService.getGroupsUserIsEligibleFor(
+        identityId,
+        ctx.timer
+      );
+    return {
+      unread_count: await this.notificationsReader.countUnreadForIdentity({
+        identity_id: identityId,
+        eligible_group_ids,
+        include_competitions: param.include_competitions
+      })
+    };
+  }
+
   private async mapToApiNotificationsV2(
     notifications: UserNotification[],
     eligibleGroupIds: string[],
@@ -315,13 +341,14 @@ export class NotificationsApiService {
     );
     const reactorProfileIds =
       this.getAllReactorProfileIds(reactionRowsByDropId);
-    const [drops, profiles, waves] = await Promise.all([
+    const [drops, profiles, waves, hiddenDropIds] = await Promise.all([
       this.dropsService.findDropsV2ByIds(dropIds, ctx),
       this.identityFetcher.getApiIdentityOverviewsByIds(
         collections.distinct([...profileIds, ...reactorProfileIds]),
         ctx
       ),
-      this.findRelatedWaveOverviews(waveIds, eligibleGroupIds, ctx)
+      this.findRelatedWaveOverviews(waveIds, eligibleGroupIds, ctx),
+      competitionAnonymityService.hiddenDropIds(dropIds, ctx)
     ]);
     return notifications
       .filter((notification) => this.hasAllRelatedDropsV2(notification, drops))
@@ -329,7 +356,11 @@ export class NotificationsApiService {
         this.mapToApiNotificationV2({
           notification,
           drops,
-          profiles,
+          profiles: anonymousNotificationProfiles(
+            notification,
+            profiles,
+            hiddenDropIds
+          ),
           waves,
           reactionRowsByDropId
         })
@@ -393,9 +424,12 @@ export class NotificationsApiService {
     authenticationContext: AuthenticationContext
   ): Promise<ApiNotification[]> {
     const { profileIds, dropIds } = this.getAllRelatedIds(notifications);
-    const [drops, profiles] = await Promise.all([
+    const [drops, profiles, hiddenDropIds] = await Promise.all([
       this.dropsService.findDropsByIds(dropIds, authenticationContext),
       this.identityFetcher.getOverviewsByIds(profileIds, {
+        authenticationContext
+      }),
+      competitionAnonymityService.hiddenDropIds(dropIds, {
         authenticationContext
       })
     ]);
@@ -404,7 +438,15 @@ export class NotificationsApiService {
         this.hasAllRelatedDropsV1({ notification, drops })
       )
       .map((notification) =>
-        this.mapToApiNotification({ notification, drops, profiles })
+        this.mapToApiNotification({
+          notification,
+          drops,
+          profiles: anonymousNotificationProfiles(
+            notification,
+            profiles,
+            hiddenDropIds
+          )
+        })
       );
   }
 
@@ -418,6 +460,15 @@ export class NotificationsApiService {
     return this.getAllRelatedIds([notification]).dropIds.every(
       (dropId) => !!drops[dropId]
     );
+  }
+
+  private getVotingCreditsReturnedContext(
+    data: VotingCreditsReturnedNotificationData
+  ): ApiNotificationAdditionalContextV2 {
+    return {
+      ...data,
+      reason: enums.resolveOrThrow(ApiVotingCreditReleaseReason, data.reason)
+    };
   }
 
   private getAllRelatedIds(notifications: UserNotification[]): {
@@ -496,6 +547,22 @@ export class NotificationsApiService {
           dropIds.push(data.drop_id);
           break;
         }
+        case IdentityNotificationCause.ARTIST_ARTWORK_SUBMITTED: {
+          profileIds.push(notification.data.artist_id);
+          dropIds.push(notification.data.drop_id);
+          break;
+        }
+        case IdentityNotificationCause.MEME_COLLABORATION: {
+          if (notification.data.actor_id)
+            profileIds.push(notification.data.actor_id);
+          break;
+        }
+        case IdentityNotificationCause.E2EE_MESSAGE: {
+          if (notification.data.sender_id)
+            profileIds.push(notification.data.sender_id);
+          break;
+        }
+        case IdentityNotificationCause.VOTING_CREDITS_RETURNED:
         case IdentityNotificationCause.COMPETITION_LIFECYCLE:
         case IdentityNotificationCause.SUBSCRIPTION_COVERAGE: {
           break;
@@ -535,6 +602,7 @@ export class NotificationsApiService {
       case IdentityNotificationCause.IDENTITY_SUBSCRIBED:
       case IdentityNotificationCause.IDENTITY_REP:
       case IdentityNotificationCause.IDENTITY_NIC:
+      case IdentityNotificationCause.E2EE_MESSAGE:
       case IdentityNotificationCause.SUBSCRIPTION_COVERAGE: {
         return null;
       }
@@ -545,8 +613,11 @@ export class NotificationsApiService {
       case IdentityNotificationCause.DROP_BOOSTED:
       case IdentityNotificationCause.DROP_QUOTED:
       case IdentityNotificationCause.DROP_REPLIED:
+      case IdentityNotificationCause.MEME_COLLABORATION:
+      case IdentityNotificationCause.VOTING_CREDITS_RETURNED:
       case IdentityNotificationCause.COMPETITION_LIFECYCLE:
       case IdentityNotificationCause.WAVE_CREATED:
+      case IdentityNotificationCause.ARTIST_ARTWORK_SUBMITTED:
       case IdentityNotificationCause.ALL_DROPS:
       case IdentityNotificationCause.PRIORITY_ALERT: {
         return notification.data.wave_id;
@@ -563,8 +634,11 @@ export class NotificationsApiService {
       case IdentityNotificationCause.IDENTITY_SUBSCRIBED:
       case IdentityNotificationCause.IDENTITY_REP:
       case IdentityNotificationCause.IDENTITY_NIC:
+      case IdentityNotificationCause.MEME_COLLABORATION:
+      case IdentityNotificationCause.VOTING_CREDITS_RETURNED:
       case IdentityNotificationCause.COMPETITION_LIFECYCLE:
       case IdentityNotificationCause.WAVE_CREATED:
+      case IdentityNotificationCause.E2EE_MESSAGE:
       case IdentityNotificationCause.SUBSCRIPTION_COVERAGE: {
         return [];
       }
@@ -573,6 +647,7 @@ export class NotificationsApiService {
       case IdentityNotificationCause.DROP_POLL_VOTED:
       case IdentityNotificationCause.DROP_REACTED:
       case IdentityNotificationCause.DROP_BOOSTED:
+      case IdentityNotificationCause.ARTIST_ARTWORK_SUBMITTED:
       case IdentityNotificationCause.ALL_DROPS:
       case IdentityNotificationCause.PRIORITY_ALERT: {
         return [notification.data.drop_id];
@@ -788,6 +863,12 @@ export class NotificationsApiService {
           }
         };
       }
+      case IdentityNotificationCause.ARTIST_ARTWORK_SUBMITTED:
+        return this.mapArtistArtworkNotification(
+          notification,
+          profiles[notification.data.artist_id],
+          drops[notification.data.drop_id]
+        );
       case IdentityNotificationCause.ALL_DROPS: {
         const data = notification.data;
         return {
@@ -814,7 +895,7 @@ export class NotificationsApiService {
           additional_context: {}
         };
       }
-      case IdentityNotificationCause.COMPETITION_LIFECYCLE: {
+      case IdentityNotificationCause.VOTING_CREDITS_RETURNED:
         return {
           id: notification.id,
           created_at: notification.created_at,
@@ -822,8 +903,30 @@ export class NotificationsApiService {
           cause: enums.resolveOrThrow(ApiNotificationCause, notificationCause),
           related_identity: null,
           related_drops: [],
+          additional_context: this.getVotingCreditsReturnedContext(
+            notification.data
+          )
+        };
+      case IdentityNotificationCause.MEME_COLLABORATION:
+      case IdentityNotificationCause.COMPETITION_LIFECYCLE: {
+        return {
+          id: notification.id,
+          created_at: notification.created_at,
+          read_at: notification.read_at,
+          cause: enums.resolveOrThrow(ApiNotificationCause, notificationCause),
+          related_identity:
+            notification.cause === IdentityNotificationCause.MEME_COLLABORATION
+              ? (profiles[notification.data.actor_id] ?? null)
+              : null,
+          related_drops: [],
           additional_context: { ...notification.data }
         };
+      }
+      case IdentityNotificationCause.E2EE_MESSAGE: {
+        return this.mapEncryptedMessage(
+          notification,
+          profiles[notification.data.sender_id ?? ''] ?? null
+        );
       }
       case IdentityNotificationCause.SUBSCRIPTION_COVERAGE: {
         return {
@@ -869,6 +972,28 @@ export class NotificationsApiService {
       rater_rating: data.rater_rating ?? undefined,
       total: data.total,
       category: data.category
+    };
+  }
+
+  private mapArtistArtworkNotification<
+    Profile extends ApiProfileMin | ApiIdentityOverview,
+    Drop extends ApiDrop | ApiDropV2
+  >(
+    notification: Extract<
+      UserNotification,
+      { cause: IdentityNotificationCause.ARTIST_ARTWORK_SUBMITTED }
+    >,
+    artist: Profile,
+    drop: Drop
+  ) {
+    return {
+      id: notification.id,
+      created_at: notification.created_at,
+      read_at: notification.read_at,
+      cause: ApiNotificationCause.ArtistArtworkSubmitted,
+      related_identity: artist,
+      related_drops: [drop],
+      additional_context: { ...notification.data }
     };
   }
 
@@ -922,6 +1047,29 @@ export class NotificationsApiService {
     return {
       reaction,
       reactors
+    };
+  }
+
+  private mapEncryptedMessage<T extends ApiProfileMin | ApiIdentityOverview>(
+    notification: Extract<
+      UserNotification,
+      { cause: IdentityNotificationCause.E2EE_MESSAGE }
+    >,
+    sender: T | null
+  ) {
+    return {
+      id: notification.id,
+      created_at: notification.created_at,
+      read_at: notification.read_at,
+      cause: ApiNotificationCause.E2EeMessage,
+      related_identity: sender,
+      related_drops: [],
+      additional_context: {
+        encrypted_group: notification.data.encrypted_group,
+        ...(notification.data.encrypted_message_seq === undefined
+          ? {}
+          : { encrypted_message_seq: notification.data.encrypted_message_seq })
+      }
     };
   }
 
@@ -1087,6 +1235,12 @@ export class NotificationsApiService {
           }
         };
       }
+      case IdentityNotificationCause.ARTIST_ARTWORK_SUBMITTED:
+        return this.mapArtistArtworkNotification(
+          notification,
+          profiles[notification.data.artist_id],
+          drops[notification.data.drop_id]
+        );
       case IdentityNotificationCause.ALL_DROPS: {
         const data = notification.data;
         return {
@@ -1113,7 +1267,7 @@ export class NotificationsApiService {
           additional_context: {}
         };
       }
-      case IdentityNotificationCause.COMPETITION_LIFECYCLE: {
+      case IdentityNotificationCause.VOTING_CREDITS_RETURNED:
         return {
           id: notification.id,
           created_at: notification.created_at,
@@ -1121,8 +1275,30 @@ export class NotificationsApiService {
           cause: enums.resolveOrThrow(ApiNotificationCause, notificationCause),
           related_identity: null,
           related_drops: [],
+          additional_context: this.getVotingCreditsReturnedContext(
+            notification.data
+          )
+        };
+      case IdentityNotificationCause.MEME_COLLABORATION:
+      case IdentityNotificationCause.COMPETITION_LIFECYCLE: {
+        return {
+          id: notification.id,
+          created_at: notification.created_at,
+          read_at: notification.read_at,
+          cause: enums.resolveOrThrow(ApiNotificationCause, notificationCause),
+          related_identity:
+            notification.cause === IdentityNotificationCause.MEME_COLLABORATION
+              ? (profiles[notification.data.actor_id] ?? null)
+              : null,
+          related_drops: [],
           additional_context: { ...notification.data }
         };
+      }
+      case IdentityNotificationCause.E2EE_MESSAGE: {
+        return this.mapEncryptedMessage(
+          notification,
+          profiles[notification.data.sender_id ?? ''] ?? null
+        );
       }
       case IdentityNotificationCause.SUBSCRIPTION_COVERAGE: {
         return {

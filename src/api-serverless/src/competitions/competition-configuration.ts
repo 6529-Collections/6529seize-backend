@@ -26,7 +26,9 @@ export const CompetitionDraftSchema = Joi.object<ApiCompetitionDraftInput>({
   description: Joi.string().max(50000).allow(null, '').required(),
   participation: WaveParticipationSchema.fork(['period'], (schema) =>
     schema.optional().default({ min: null, max: null })
-  ).required(),
+  )
+    .keys({ anonymous_submissions: Joi.boolean().strict().default(false) })
+    .required(),
   voting: WaveVotingSchema.fork(['period'], (schema) =>
     schema.optional().default({ min: null, max: null })
   ).required(),
@@ -100,6 +102,7 @@ export function configurationToRecord(
     type: input.rules.type as unknown as CompetitionType,
     presentation_config: input.presentation,
     participation_config: {
+      anonymous_submissions: input.participation.anonymous_submissions ?? false,
       group_id: input.participation.scope.group_id,
       signature_required: input.participation.signature_required,
       max_entries_per_participant:
@@ -135,7 +138,8 @@ export function configurationToRecord(
       next_decision_time:
         input.rules.decisions_strategy?.first_decision_time ?? null,
       winning_min_threshold: input.rules.winning_threshold,
-      winning_max_threshold: null,
+      winning_max_threshold:
+        previous.decision_config.winning_max_threshold ?? null,
       winning_threshold_min_duration_ms:
         input.rules.winning_threshold_min_duration_ms ?? 0,
       max_winners: input.rules.max_winners,
@@ -144,7 +148,8 @@ export function configurationToRecord(
     winner_config: {
       max_winners: input.rules.max_winners,
       winning_min_threshold: input.rules.winning_threshold,
-      winning_max_threshold: null,
+      winning_max_threshold:
+        previous.winner_config?.winning_max_threshold ?? null,
       winning_threshold_min_duration_ms:
         input.rules.winning_threshold_min_duration_ms ?? 0
     },

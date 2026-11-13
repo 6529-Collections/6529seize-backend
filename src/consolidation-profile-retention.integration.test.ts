@@ -8,6 +8,7 @@ import {
   IDENTITIES_TABLE,
   NEVER_DATE,
   NFTDELEGATION_BLOCKS_TABLE,
+  PROFILES_TABLE,
   USE_CASE_PRIMARY_ADDRESS
 } from '@/constants';
 import { IdentityEntity } from '@/entities/IIdentity';
@@ -193,6 +194,78 @@ describeWithSeed(
           matureOnly: true
         })
       ).resolves.toBeNull();
+    });
+  }
+);
+
+describeWithSeed(
+  'Simultaneous split and merge retains profiles owned by other resulting groups',
+  [
+    withAddressConsolidationKeys([
+      ...anAddressConsolidationKeys(['0x1', '0x2']),
+      ...anAddressConsolidationKeys(['0x3', '0x4'])
+    ]),
+    withIdentities([
+      anIdentity(
+        { tdh: 10, cic: 1 },
+        {
+          consolidation_key: '0x1-0x2',
+          profile_id: 'alicePID',
+          primary_address: '0x1',
+          handle: 'alice'
+        }
+      ),
+      anIdentity(
+        { tdh: 20, cic: 2 },
+        {
+          consolidation_key: '0x3-0x4',
+          profile_id: 'bobPID',
+          primary_address: '0x4',
+          handle: 'bob'
+        }
+      )
+    ]),
+    withProfiles([
+      aProfile({
+        external_id: 'alicePID',
+        primary_wallet: '0x1',
+        handle: 'alice'
+      }),
+      aProfile({ external_id: 'bobPID', primary_wallet: '0x4', handle: 'bob' })
+    ]),
+    withTdhConsolidations([
+      aTdhConsolidation(['0x1', '0x2', '0x3'], { boosted_tdh: 25 }),
+      aTdhConsolidation(['0x4'], { boosted_tdh: 5 })
+    ])
+  ],
+  () => {
+    it('keeps both profiles and their own handles and primary wallets', async () => {
+      const byKey = await identitiesByKey();
+      expect(byKey['0x1-0x2-0x3']).toEqual(
+        expect.objectContaining({
+          profile_id: 'alicePID',
+          handle: 'alice',
+          primary_address: '0x1'
+        })
+      );
+      expect(byKey['0x4']).toEqual(
+        expect.objectContaining({
+          profile_id: 'bobPID',
+          handle: 'bob',
+          primary_address: '0x4'
+        })
+      );
+      const profiles = await sqlExecutor.execute<{
+        external_id: string;
+        handle: string;
+        primary_wallet: string;
+      }>(
+        `select external_id, handle, primary_wallet from ${PROFILES_TABLE} order by external_id`
+      );
+      expect(profiles).toEqual([
+        { external_id: 'alicePID', handle: 'alice', primary_wallet: '0x1' },
+        { external_id: 'bobPID', handle: 'bob', primary_wallet: '0x4' }
+      ]);
     });
   }
 );

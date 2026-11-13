@@ -52,6 +52,10 @@ import {
   HELP_BOT_SIGNUP_CREDIT_GRANT
 } from './help-bot.config';
 import {
+  defaultHelpBotAllowedOrigins,
+  filterHelpBotReplyText
+} from './help-bot-output-filter';
+import {
   frontendStreamKnowledgeSource,
   HelpBotStreamKnowledgeSource
 } from './help-bot-stream-knowledge';
@@ -87,6 +91,16 @@ export interface HelpBotLlmRenderer {
     readonly record: HelpBotKnowledgeRecord;
     readonly canonicalUrl: string;
   }): Promise<string>;
+}
+
+function knowledgeRecordText(record: HelpBotKnowledgeRecord): string {
+  return [
+    record.title,
+    record.linkLabel,
+    record.briefAnswer ?? '',
+    ...record.facts,
+    ...(record.answerLinks ?? []).map((link) => link.label)
+  ].join('\n');
 }
 
 function toCanonicalUrl(baseUrl: string, path: string): string {
@@ -722,10 +736,12 @@ function buildCalendarRecord(): HelpBotKnowledgeRecord {
     canonicalPath: '/meme-calendar',
     aliases: ['meme calendar', 'next drop', 'next mint'],
     keywords: ['memes', 'calendar', 'mint', 'drop', 'schedule'],
-    facts: ['This answer was generated from the public Memes calendar API.'],
+    facts: [
+      'This answer was calculated from the bundled shared Memes calendar.'
+    ],
     relatedPaths: ['/the-memes/mint'],
     tags: ['memes', 'calendar'],
-    sourceRefs: ['frontend meme calendar API']
+    sourceRefs: ['versioned shared Memes calendar']
   };
 }
 
@@ -1542,7 +1558,24 @@ export class HelpBotAnswerer {
     private readonly streamKnowledgeSource: HelpBotStreamKnowledgeSource = frontendStreamKnowledgeSource
   ) {}
 
+  /** Every answer path leaves through the shared reply text rules. */
   public async answer(
+    request: HelpBotAnswerRequest
+  ): Promise<HelpBotAnswerResult> {
+    const result = await this.answerFromSources(request);
+    if (result.type !== 'ANSWER') {
+      return result;
+    }
+    return {
+      ...result,
+      answer: filterHelpBotReplyText(result.answer, {
+        allowedOrigins: defaultHelpBotAllowedOrigins(request.baseUrl),
+        sourceText: knowledgeRecordText(result.record)
+      })
+    };
+  }
+
+  private async answerFromSources(
     request: HelpBotAnswerRequest
   ): Promise<HelpBotAnswerResult> {
     const boundaryAnswer = buildBoundaryAnswer(request.question);

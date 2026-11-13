@@ -1,4 +1,5 @@
 import * as os from 'node:os';
+import { DB_TEXT_COLLATION } from '@/db/db-collation';
 import * as mysql from 'mysql';
 import { sqlExecutor } from '@/sql-executor';
 
@@ -74,7 +75,7 @@ export async function provisionWorkerDatabases({
     await executeRootQuery(
       `CREATE DATABASE IF NOT EXISTS ${mysql.escapeId(
         databaseName
-      )} CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`
+      )} CHARACTER SET utf8mb4 COLLATE ${DB_TEXT_COLLATION}`
     );
     await executeRootQuery(
       `GRANT ALL PRIVILEGES ON ${mysql.escapeId(
@@ -82,6 +83,11 @@ export async function provisionWorkerDatabases({
       )}.* TO ${mysql.escape(appUser)}@'%'`
     );
   }
+  // Concurrency tests wait on information_schema.innodb_trx (LOCK WAIT) as a
+  // deterministic barrier instead of sleeping; reading it needs PROCESS.
+  await executeRootQuery(
+    `GRANT PROCESS ON *.* TO ${mysql.escape(appUser)}@'%'`
+  );
   await executeRootQuery('FLUSH PRIVILEGES');
 }
 

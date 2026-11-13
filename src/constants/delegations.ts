@@ -12,6 +12,10 @@ export const DELEGATION_CONTRACT: {
   chain_id: 1,
   contract: '0x2202CB9c00487e7e8EF21e6d8E914B32e709f43d'
 };
+// Block of the mainnet contract's creation transaction
+// (0x5c5e8d06ed3de487a2f4c1b994b00e099a4c4ce1efb0521856dc571a66953f75).
+// It has no logs before this block.
+export const DELEGATION_CONTRACT_DEPLOYMENT_BLOCK = 17_114_433;
 export const DELEGATION_ALL_ADDRESS =
   '0x8888888888888888888888888888888888888888';
 

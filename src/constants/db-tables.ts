@@ -45,6 +45,9 @@ export const PROFILE_LATEST_LOG_TABLE = 'profile_latest_logs';
 export const PROFILES_ARCHIVE_TABLE = 'profiles_archive';
 export const REFRESH_TOKENS_TABLE = 'refresh_tokens';
 export const WALLET_AUTH_SESSIONS_TABLE = 'wallet_auth_sessions';
+export const DEVICE_GRANTS_TABLE = 'device_grants';
+export const DEVICE_SIGNED_EVENTS_TABLE = 'device_signed_events';
+export const DROP_AUTHOR_SIGNATURES_TABLE = 'drop_author_signatures';
 export const WALLET_CONNECTION_SHARES_TABLE = 'wallet_connection_shares';
 export const IDENTITIES_TABLE = 'identities';
 export const ADDRESS_CONSOLIDATION_KEY = 'address_consolidation_keys';
@@ -64,11 +67,14 @@ export const CONSOLIDATIONS_TABLE = 'consolidations';
 export const DELEGATIONS_TABLE = 'delegations';
 export const DROP_RELATIONS_TABLE = 'drop_relations';
 export const NFTS_HISTORY_TABLE = 'nfts_history';
+export const NFTS_HISTORY_EVENTS_TABLE = 'nfts_history_events';
+export const NFTS_HISTORY_REPLAY_JOBS_TABLE = 'nfts_history_replay_jobs';
 export const NFTS_HISTORY_BLOCKS_TABLE = 'nfts_history_blocks';
 export const NFTS_HISTORY_CLAIMS_TABLE = 'nfts_history_claims';
 export const REMEMES_TABLE = 'rememes';
 export const REMEMES_UPLOADS = 'uploads_rememes';
 export const RATINGS_TABLE = 'ratings';
+export const RATING_CREDIT_LOCKS_TABLE = 'rating_credit_locks';
 export const DROPS_VOTES_CREDIT_SPENDINGS_TABLE =
   'drops_votes_credit_spendings';
 export const DROP_VOTER_STATE_TABLE = 'drop_voter_states';
@@ -180,6 +186,7 @@ export const DROP_REFERENCED_NFTS_TABLE = 'drops_referenced_nfts';
 export const DROP_METADATA_TABLE = 'drops_metadatas';
 export const DROP_MEDIA_TABLE = 'drop_medias';
 export const DROP_MEDIA_UPLOADS_TABLE = 'drop_media_uploads';
+export const MEDIA_UPLOAD_BUDGET_ENTRIES_TABLE = 'media_upload_budget_entries';
 export const DROP_BOOSTS_TABLE = 'drop_boosts';
 export const DROP_CURATIONS_TABLE = 'drop_curations';
 export const DROP_BOOKMARKS_TABLE = 'drop_bookmarks';
@@ -189,6 +196,7 @@ export const DROP_MENTIONED_GROUPS_TABLE = 'drop_mentioned_groups';
 export const DROP_POLLS_TABLE = 'drop_polls';
 export const DROP_POLL_OPTIONS_TABLE = 'drop_poll_options';
 export const DROP_POLL_VOTES_TABLE = 'drop_poll_votes';
+export const DROP_CLIENT_IDS_TABLE = 'drop_client_ids';
 export const PINNED_WAVES_TABLE = 'pinned_waves';
 export const PROFILE_WAVES_TABLE = 'profile_waves';
 export const COOKIES_CONSENT_TABLE = 'cookies_consent';
@@ -249,8 +257,11 @@ export const WS_NOTIFICATION_SUBSCRIPTIONS_TABLE =
   'ws_notification_subscriptions';
 export const RELEASE_NOTE_STREAM_STATES_TABLE = 'release_note_stream_states';
 export const RELEASE_NOTE_PUBLICATIONS_TABLE = 'release_note_publications';
+export const RELEASE_NOTE_RECOVERY_JOBS_TABLE = 'release_note_recovery_jobs';
 export const RELEASE_DIGEST_ENTRIES_TABLE = 'release_digest_entries';
 export const RELEASE_DIGESTS_TABLE = 'release_digests';
+export const MARKET_DEPTH_PUBLICATION_LOCKS_TABLE =
+  'market_depth_publication_locks';
 export const MARKET_DEPTH_SNAPSHOTS_TABLE = 'market_depth_snapshots';
 export const MARKET_DEPTH_COLLECTION_STATE_TABLE =
   'market_depth_collection_state';
@@ -276,12 +287,14 @@ export const PUSH_NOTIFICATION_CANCELLATIONS_TABLE =
   'push_notification_cancellations';
 
 export const COMPETITION_VOTE_HISTORY_TABLE = 'competition_vote_history';
+export const COMPETITION_SCORE_HISTORY_TABLE = 'competition_score_history';
 export const COMPETITION_ENTRY_RUNTIME_TABLE = 'competition_entry_runtime';
 export const COMPETITION_WINNER_VOTES_TABLE = 'competition_winner_votes';
 export const COMPETITION_OUTCOME_AWARDS_TABLE = 'competition_outcome_awards';
 export const COMPETITION_OUTBOX_TABLE = 'competition_outbox';
 export const COMPETITION_EVENT_EFFECTS_TABLE = 'competition_event_effects';
 export const COMPETITION_CLAIMS_TABLE = 'competition_claims';
+export const COMPETITION_WORKER_CURSORS_TABLE = 'competition_worker_cursors';
 
 export const COMPETITION_COMMANDS_TABLE = 'competition_commands';
 export const COMPETITION_SIGNATURE_NONCES_TABLE =
@@ -305,3 +318,50 @@ export const COMPETITION_LEGACY_MIRROR_PERMITS_TABLE =
   'competition_legacy_mirror_permits';
 export const COMPETITION_LEGACY_EXECUTION_EFFECTS_TABLE =
   'competition_legacy_execution_effects';
+
+// End-to-end encrypted DMs and groups (D109). The server stores ciphertext
+// and delivery metadata only; see docs/e2ee-messaging.md.
+export const E2EE_DEVICES_TABLE = 'e2ee_devices';
+export const E2EE_KEY_PACKAGES_TABLE = 'e2ee_key_packages';
+export const E2EE_GROUPS_TABLE = 'e2ee_groups';
+export const E2EE_GROUP_EPOCHS_TABLE = 'e2ee_group_epochs';
+export const E2EE_GROUP_ROSTER_TABLE = 'e2ee_group_roster';
+export const E2EE_LOG_TABLE = 'e2ee_log';
+export const E2EE_WELCOMES_TABLE = 'e2ee_welcomes';
+export const E2EE_WELCOME_DELIVERIES_TABLE = 'e2ee_welcome_deliveries';
+export const E2EE_BLOBS_TABLE = 'e2ee_blobs';
+export const E2EE_BLOB_CHUNKS_TABLE = 'e2ee_blob_chunks';
+export const E2EE_REPORTS_TABLE = 'e2ee_reports';
+export const E2EE_PUSH_THROTTLE_TABLE = 'e2ee_push_throttle';
+export const E2EE_RATE_COUNTERS_TABLE = 'e2ee_rate_counters';
+// Encrypted message-history backups: generation and chunk metadata, plus the
+// MySQL implementation of the E2EE ciphertext object store.
+export const E2EE_BACKUPS_TABLE = 'e2ee_backups';
+export const E2EE_BACKUP_CHUNKS_TABLE = 'e2ee_backup_chunks';
+export const E2EE_CIPHERTEXT_OBJECTS_TABLE = 'e2ee_ciphertext_objects';
+
+export const MEME_COLLABORATIONS_TABLE = 'meme_collaborations';
+export const MEME_COLLABORATION_INVITATIONS_TABLE =
+  'meme_collaboration_invitations';
+export const TRANSFER_RECONCILIATIONS_TABLE = 'transfer_reconciliations';
+
+export const VOTING_CREDIT_RELEASES_TABLE = 'voting_credit_releases';
+export const VOTING_CREDIT_RELEASE_RECIPIENTS_TABLE =
+  'voting_credit_release_recipients';
+
+export const ARTIST_ARTWORK_ALERTS_TABLE = 'artist_artwork_alerts';
+
+// Who read or changed reported encrypted messages (trust and safety audit,
+// D109). Kept apart from the E2EE block above.
+export const E2EE_REPORT_ACCESS_LOG_TABLE = 'e2ee_report_access_log';
+/** Content-addressed viewer group sets (see waves/viewer-group-sets.ts). */
+export const VIEWER_GROUP_SETS_TABLE = 'viewer_group_sets';
+export const VIEWER_GROUP_SET_MEMBERS_TABLE = 'viewer_group_set_members';
+/** Consolidated-TDH to identities sync progress (see identity-tdh-sync.ts). */
+export const IDENTITY_TDH_SYNC_STATE_TABLE = 'identity_tdh_sync_state';
+/** What each consolidated-TDH write changed, for the scoped metrics sync. */
+export const IDENTITY_TDH_SYNC_SCOPE_TABLE = 'identity_tdh_sync_scope';
+
+export const COMPETITION_SCORE_RESETS_TABLE = 'competition_score_resets';
+export const COMPETITION_SCORE_RESET_STATE_TABLE =
+  'competition_score_reset_state';

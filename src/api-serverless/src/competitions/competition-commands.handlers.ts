@@ -1,3 +1,4 @@
+import { WaveHubPictureSchema } from '@/api/waves/wave-hub.schemas';
 import { competitionDropVoteSummary } from './competition-drop-votes.service';
 import * as Joi from 'joi';
 import { ApiDropCompetitionContext } from '@/api/generated/models/ApiDropCompetitionContext';
@@ -56,6 +57,9 @@ import { waveHubCreationService } from './wave-hub-creation.service';
 import { competitionActor } from './competition-command-access';
 import { toApiCompetition, toApiEntry } from './competitions-v3.handlers';
 import { enums } from '@/enums';
+import { toApiCompetitionAward } from './competition-award.mapper';
+import { readCompetitionEntryContexts } from '@/api/competitions/competition-entry-context.reader';
+import { ApiCompetitionMyVotesSort } from '@/api/generated/models/ApiCompetitionMyVotesSort';
 
 const pathFields = {
   wave_id: Joi.string().min(1).max(100).required(),
@@ -117,16 +121,14 @@ export async function handleCreateWaveHubV3(
     Joi.object<ApiCreateWaveHubRequest>({
       idempotency_key: commandFields.idempotency_key,
       name: Joi.string().min(1).max(250).required(),
-      picture: Joi.string()
-        .uri({ scheme: ['https'] })
-        .allow(null)
-        .required(),
+      picture: WaveHubPictureSchema.required(),
       description_drop: NewWaveDropSchema.required(),
       visibility: WaveVisibilitySchema.required(),
       chat: WaveChatSchema.required(),
       admin_group: WaveScopeSchema.required(),
+      admin_drop_deletion_enabled: Joi.boolean().default(false),
       parent_wave_id: Joi.string().min(1).max(100).allow(null)
-    }).unknown(false)
+    }).options({ stripUnknown: true })
   );
   return waveHubCreationService.create(request, await context(req));
 }
@@ -297,7 +299,20 @@ export async function handleListCompetitionMyVotesV3(
   req: ListCompetitionMyVotesV3Request
 ): Promise<ApiCompetitionMyVotePage> {
   const { wave_id, competition_id } = path(req.params);
-  const query = getValidatedByJoiOrThrow(req.query, pageSchema);
+  const query = getValidatedByJoiOrThrow(
+    req.query,
+    pageSchema.append<{
+      cursor?: string;
+      limit: number;
+      include?: 'cards';
+      sort: ApiCompetitionMyVotesSort;
+    }>({
+      include: Joi.string().valid('cards').optional(),
+      sort: Joi.string()
+        .valid(...Object.values(ApiCompetitionMyVotesSort))
+        .default(ApiCompetitionMyVotesSort.VoteAmount)
+    })
+  );
   const ctx = await context(req);
   const actor = competitionActor(ctx);
   await competitionService.getCompetition(wave_id, competition_id, ctx);
@@ -305,28 +320,48 @@ export async function handleListCompetitionMyVotesV3(
     competition_id,
     ctx
   );
-  if (!record) throw new NotFoundException('Competition not found');
+  if (!record) throw new NotFoundException('Decision not found');
   const scope = `competition:${competition_id}:my-votes:${actor}`;
-  const offset = competitionCursorCodec.decode(query.cursor, scope, {});
+  // Preserve existing default cursors while rejecting reuse between orders.
+  const filters =
+    query.sort === ApiCompetitionMyVotesSort.VoteAmount
+      ? {}
+      : { sort: query.sort };
+  const offset = competitionCursorCodec.decode(query.cursor, scope, filters);
   const rows = await competitionInteractionRepository.myVotes(
     record,
     actor,
     offset,
     query.limit + 1,
-    ctx
+    ctx,
+    query.sort
   );
+  const data = rows.slice(0, query.limit).map((row) => ({
+    ...row,
+    entry_status: enums.resolveOrThrow(
+      ApiCompetitionEntryStatus,
+      row.entry_status
+    )
+  }));
+  const cards =
+    query.include === 'cards' && data.length
+      ? (
+          await readCompetitionEntryContexts(
+            wave_id,
+            competition_id,
+            data.map((row) => row.entry_id),
+            ctx,
+            true
+          )
+        ).data
+      : [];
   return {
-    data: rows.slice(0, query.limit).map((row) => ({
-      ...row,
-      entry_status: enums.resolveOrThrow(
-        ApiCompetitionEntryStatus,
-        row.entry_status
-      )
-    })),
+    data,
+    ...(query.include === 'cards' ? { cards } : {}),
     has_more: rows.length > query.limit,
     next_cursor:
       rows.length > query.limit
-        ? competitionCursorCodec.encode(scope, {}, offset + query.limit)
+        ? competitionCursorCodec.encode(scope, filters, offset + query.limit)
         : null
   };
 }
@@ -342,7 +377,7 @@ export async function handleListCompetitionAwardsV3(
     competition_id,
     ctx
   );
-  if (!record) throw new NotFoundException('Competition not found');
+  if (!record) throw new NotFoundException('Decision not found');
   const scope = `competition:${competition_id}:awards`;
   const offset = competitionCursorCodec.decode(query.cursor, scope, {});
   const rows = await competitionInteractionRepository.awards(
@@ -352,7 +387,7 @@ export async function handleListCompetitionAwardsV3(
     ctx
   );
   return {
-    data: rows.slice(0, query.limit),
+    data: rows.slice(0, query.limit).map(toApiCompetitionAward),
     has_more: rows.length > query.limit,
     next_cursor:
       rows.length > query.limit

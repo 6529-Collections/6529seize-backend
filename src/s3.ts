@@ -23,11 +23,13 @@ import { resizeImageBufferToHeight } from '@/media/image-resize';
 import { withArweaveFallback } from '@/arweave-gateway-fallback';
 import { downloadImageBuffer } from '@/media/image-download';
 import { assertUnreachable } from '@/assertions';
+import { REWRITABLE_MEDIA_CACHE_CONTROL } from '@/media/media-cache-control';
 
 const logger = Logger.get('S3');
 const limit = pLimit(3);
 
-axiosRetry(axios, {
+// axios-retry's CommonJS typings resolve axios's .d.cts declarations.
+axiosRetry(axios as Parameters<typeof axiosRetry>[0], {
   retries: 3,
   retryDelay: axiosRetry.exponentialDelay,
   retryCondition: (error) => {
@@ -439,7 +441,8 @@ async function processNftVideos(
         key: videoKey,
         body: buffer,
         contentType: `video/${videoFormat.toLowerCase()}`,
-        txId: videoTxId
+        txId: videoTxId,
+        cacheControl: REWRITABLE_MEDIA_CACHE_CONTROL
       });
 
       logger.info(`[KEY UPLOADED ${videoKey}] [ETAG ${uploadedVideo.ETag}]`);
@@ -552,7 +555,8 @@ async function handleImage({
     key: s3Key,
     body: buffer,
     contentType,
-    txId: imageTxId
+    txId: imageTxId,
+    cacheControl: REWRITABLE_MEDIA_CACHE_CONTROL
   });
 
   logger.info(`[KEY UPLOADED ${s3Key}] [ETAG ${result.ETag}]`);
@@ -615,7 +619,8 @@ async function handleVideoScaling(
       key: scaledVideoKey,
       body: countingStream,
       contentType: `video/${videoFormat.toLowerCase()}`,
-      txId
+      txId,
+      cacheControl: REWRITABLE_MEDIA_CACHE_CONTROL
     });
 
     logger.info(

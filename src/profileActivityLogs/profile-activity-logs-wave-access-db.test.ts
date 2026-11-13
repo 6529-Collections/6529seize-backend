@@ -8,7 +8,8 @@ import { describeWithSeed } from '@/tests/_setup/seed';
 import { aWave, withWaves } from '@/tests/fixtures/wave.fixture';
 import {
   ProfileActivityLogsDb,
-  ProfileLogSearchParams
+  ProfileLogSearchParams,
+  resetViewerGroupsCteSupport
 } from './profile-activity-logs.db';
 
 const MEMBER_GROUP = 'member-group';
@@ -121,6 +122,10 @@ describeWithSeed(
   ],
   () => {
     const repo = new ProfileActivityLogsDb(() => sqlExecutor, {} as any);
+    // The repository keeps the executor it first saw, while each test installs
+    // a new one; spy on the repository's own.
+    const repoDb = () =>
+      (repo as unknown as { readonly db: typeof sqlExecutor }).db;
     const ctx: RequestContext = { timer: undefined };
 
     async function searchIds(
@@ -162,6 +167,32 @@ describeWithSeed(
         'member-drop',
         'public-drop'
       ]);
+    });
+
+    it('preserves read access in the NIC cursor query with cleared type filters', async () => {
+      for (const groups of [[], [MEMBER_GROUP]]) {
+        const result = await repo.searchNicLogs(
+          {
+            profileId: 'profile-1',
+            direction: 'all',
+            types: [],
+            size: 50,
+            after: null
+          },
+          groups,
+          ctx
+        );
+        expect(result.logs.map((log) => log.id)).toEqual(
+          groups.length
+            ? [
+                'handle',
+                'member-subwave-reaction',
+                'member-drop',
+                'public-drop'
+              ]
+            : ['handle', 'public-drop']
+        );
+      }
     });
 
     it('applies the same rules to per-type branches', async () => {
@@ -220,6 +251,121 @@ describeWithSeed(
           pageRequest: { page: 2, page_size: 1 }
         })
       ).resolves.toEqual([]);
+    });
+
+    describe('shared viewer-group table', () => {
+      afterEach(() => resetViewerGroupsCteSupport());
+
+      it('is used against the production collation', async () => {
+        resetViewerGroupsCteSupport();
+        const execute = jest.spyOn(repoDb(), 'execute');
+        try {
+          await searchIds({
+            profile_id: 'profile-1',
+            viewer_eligible_group_ids: [MEMBER_GROUP]
+          });
+          expect(
+            execute.mock.calls.some(([sql]) =>
+              sql.includes('pa_viewer_groups as (')
+            )
+          ).toBe(true);
+        } finally {
+          execute.mockRestore();
+        }
+      });
+
+      it('reads the groups once per statement, not once per wave row', async () => {
+        resetViewerGroupsCteSupport();
+        const execute = jest.spyOn(repoDb(), 'execute');
+        let statement: [string, Record<string, any>] | undefined;
+        try {
+          await searchIds({
+            profile_id: 'profile-1',
+            includeProfileIdToIncoming: true,
+            viewer_eligible_group_ids: [MEMBER_GROUP, 'other-group']
+          });
+          const call = execute.mock.calls.find(([sql]) =>
+            sql.includes('pa_viewer_groups as (')
+          );
+          statement = call && [call[0], call[1] ?? {}];
+        } finally {
+          execute.mockRestore();
+        }
+        expect(statement).toBeDefined();
+        const [row] = await sqlExecutor.execute<Record<string, string>>(
+          `explain format=tree ${statement![0]}`,
+          statement![1]
+        );
+        const plan = Object.values(row)[0];
+        // One shared materialization of the JSON, reused by every reference.
+        expect(plan.match(/Materialize table function/g)).toHaveLength(1);
+        expect(plan).toContain('Materialize CTE pa_viewer_groups');
+        // No reference turns into a correlated EXISTS over the groups.
+        expect(plan).not.toMatch(/visibility_group_id,\s*<exists>/);
+      });
+
+      const viewerGroupSets = [
+        [MEMBER_GROUP],
+        ['other-group'],
+        [MEMBER_GROUP, 'other-group'],
+        ['unrelated-group'],
+        // Matching follows the column collation (case-insensitive), as the
+        // inlined literal list did.
+        [MEMBER_GROUP.toUpperCase()]
+      ];
+      const searches: Partial<ProfileLogSearchParams>[] = [
+        { profile_id: 'profile-1' },
+        { profile_id: 'profile-1', includeProfileIdToIncoming: true },
+        {
+          profile_id: 'profile-1',
+          type: [
+            ProfileActivityLogType.DROP_CREATED,
+            ProfileActivityLogType.DROP_REACTED,
+            ProfileActivityLogType.DROP_VOTE_EDIT,
+            ProfileActivityLogType.RATING_EDIT,
+            ProfileActivityLogType.HANDLE_EDIT
+          ]
+        },
+        {
+          profile_id: 'profile-1',
+          type: [ProfileActivityLogType.DROP_CREATED]
+        },
+        {},
+        {
+          type: [
+            ProfileActivityLogType.DROP_CREATED,
+            ProfileActivityLogType.DROP_REACTED
+          ]
+        }
+      ];
+
+      it('returns exactly the rows of the inlined list for eligible, non-eligible and public waves', async () => {
+        for (const viewer_eligible_group_ids of viewerGroupSets)
+          for (const search of searches) {
+            const request = { ...search, viewer_eligible_group_ids };
+            resetViewerGroupsCteSupport(false);
+            const inline = await searchIds(request);
+            resetViewerGroupsCteSupport(true);
+            const shared = await searchIds(request);
+            expect({ request, ids: shared }).toEqual({ request, ids: inline });
+          }
+      });
+
+      it('still shows member-wave rows only to members', async () => {
+        resetViewerGroupsCteSupport(true);
+        await expect(
+          searchIds({
+            profile_id: 'profile-1',
+            viewer_eligible_group_ids: ['other-group']
+          })
+        ).resolves.toEqual([
+          'handle',
+          'profile-rep',
+          // The viewer is in other-group, so its wave's rows stay visible.
+          'other-vote',
+          'public-drop'
+        ]);
+      });
     });
   }
 );

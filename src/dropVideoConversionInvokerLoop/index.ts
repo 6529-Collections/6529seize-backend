@@ -12,6 +12,10 @@ import { createHash } from 'node:crypto';
 import { S3Client } from '@aws-sdk/client-s3';
 import { hasDeviceVideoPoster } from './has-device-poster';
 import { getDeviceVideoPosterKey } from '../media/chat-video-poster';
+import {
+  admitVideoConversion,
+  videoConversionLimitsFrom
+} from './video-conversion-admission';
 
 const logger = Logger.get('DROP_VIDEO_CONVERSION_INVOKER_LOOP');
 // Capture once, before shared secrets can overwrite these values, including
@@ -19,14 +23,27 @@ const logger = Logger.get('DROP_VIDEO_CONVERSION_INVOKER_LOOP');
 const configuredTemplate = env.getStringOrNull('MC_DROPS_VIDEO_TEMPLATE_NAME');
 const configuredBucket = env.getStringOrNull('S3_BUCKET');
 const configuredRegion = env.getStringOrNull('BUCKET_REGION');
-// The bucket region is stable for this Lambda process, so one client serves warm runs.
-let devicePosterS3: S3Client | undefined;
+const conversionLimits = videoConversionLimitsFrom(process.env);
 
-function getDevicePosterS3(region: string): S3Client {
-  if (!devicePosterS3) {
-    devicePosterS3 = new S3Client({ region });
+function stringOrNull(value: unknown): string | null {
+  return typeof value === 'string' && value ? value : null;
+}
+
+function sizeOrNull(value: unknown): number | null {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0
+    ? value
+    : null;
+}
+
+// The bucket region is stable for this Lambda process, so one client serves
+// warm runs (admission checks and device posters).
+let bucketS3: S3Client | undefined;
+
+function getBucketS3(region: string): S3Client {
+  if (!bucketS3) {
+    bucketS3 = new S3Client({ region });
   }
-  return devicePosterS3;
+  return bucketS3;
 }
 
 export const handler = sentryContext.wrapLambdaHandler(async (event) => {
@@ -53,9 +70,29 @@ export const handler = sentryContext.wrapLambdaHandler(async (event) => {
     const ext = key.split('.').pop()!.toLowerCase();
     if (!exts.includes(ext)) return; // ignore pictures, etc.
 
+    const admission = await admitVideoConversion({
+      s3: getBucketS3(bucketRegion),
+      bucket,
+      key,
+      eventEtag: stringOrNull(event.detail.object.etag),
+      eventSize: sizeOrNull(event.detail.object.size),
+      eventId: stringOrNull(event.id),
+      limits: conversionLimits,
+      now: Date.now()
+    });
+    if (!admission.convert) {
+      logger.warn(
+        `[VIDEO_CONVERSION_SKIPPED] ${admission.reason} ${JSON.stringify({
+          key,
+          ...admission.detail
+        })}`
+      );
+      return;
+    }
+
     const mc = new MediaConvertClient({ region: bucketRegion, endpoint });
     const fileInput = `s3://${bucket}/${key}`;
-    // UploadMediaService generates the author/upload UUID path and slugged name.
+    // UploadMediaService generates a random upload UUID path and slugged name.
     // S3 keys are opaque; do not normalize or decode them into a different key.
     const clientRequestToken =
       typeof event.id === 'string'
@@ -74,11 +111,7 @@ export const handler = sentryContext.wrapLambdaHandler(async (event) => {
     logger.info(`Invoking video conversion for ${fileInput}`);
     const hasDevicePoster =
       getDeviceVideoPosterKey(key) !== undefined &&
-      (await hasDeviceVideoPoster(
-        getDevicePosterS3(bucketRegion),
-        bucket,
-        key
-      ));
+      (await hasDeviceVideoPoster(getBucketS3(bucketRegion), bucket, key));
     await mc.send(
       new CreateJobCommand({
         ClientRequestToken: clientRequestToken,

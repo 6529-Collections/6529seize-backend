@@ -1,7 +1,9 @@
-import fetch, { Response } from 'node-fetch';
-import type { AbortSignal as NodeFetchAbortSignal } from 'node-fetch/externals';
-import { numbers } from '@/numbers';
 import { env } from '@/env';
+import {
+  openPublicResponse,
+  OpenedPublicResponse,
+  readPublicResponseBody
+} from '@/http/public-fetch';
 import { getNftLinkResolutionBudget } from '@/nft-links/resolution-budget';
 import { Logger } from '@/logging';
 
@@ -35,7 +37,16 @@ export interface FetchOptions {
   diagnosticPurpose?: 'superrare_metadata';
 }
 
+export class NftLinkHttpTimeoutError extends Error {
+  constructor() {
+    super('NFT link HTTP request timed out');
+    Object.setPrototypeOf(this, NftLinkHttpTimeoutError.prototype);
+    this.name = 'NftLinkHttpTimeoutError';
+  }
+}
+
 const DEFAULT_USER_AGENT = '6529-link-resolver/0.7';
+const MAX_REDIRECTS = 5;
 const logger = Logger.get('NFT_LINK_HTTP');
 
 function diagnosticHostname(url: string): string | null {
@@ -49,27 +60,6 @@ function diagnosticHostname(url: string): string | null {
 function getMaxBytes(opts: FetchOptions): number {
   const envMax = env.getIntOrNull('LINK_RESOLVER_HTTP_MAX_BYTES');
   return opts.maxBytes ?? ((envMax ?? 0) > 0 ? envMax! : 2_000_000);
-}
-
-async function readTextWithLimit(
-  res: Response,
-  url: string,
-  maxBytes: number
-): Promise<string> {
-  const contentLength = res.headers.get('content-length');
-  if (contentLength) {
-    const n = numbers.parseIntOrNull(contentLength) ?? 0;
-    if (Number.isFinite(n) && n > maxBytes) {
-      throw new Error(`Response too large (${n} bytes) for ${url}`);
-    }
-  }
-
-  const ab = await res.arrayBuffer();
-  const buf = Buffer.from(ab);
-  if (buf.length > maxBytes) {
-    throw new Error(`Response too large (${buf.length} bytes) for ${url}`);
-  }
-  return buf.toString('utf8');
 }
 
 export async function fetchTextWithTimeout(
@@ -90,31 +80,45 @@ export async function fetchTextWithTimeout(
   const abort = () => cancel('resolution_budget');
   budget?.signal.addEventListener('abort', abort, { once: true });
   const t = setTimeout(() => cancel('request_timeout'), opts.timeoutMs);
+  let opened: OpenedPublicResponse | undefined;
   try {
-    const res = await fetch(url, {
+    // Public HTTPS only; every redirect hop is re-validated and pinned.
+    opened = await openPublicResponse(url, {
       method: 'GET',
       headers: {
         'user-agent': DEFAULT_USER_AGENT,
         ...opts.headers
       },
-      // node-fetch v2 uses its own AbortSignal type definition.
-      signal: controller.signal as unknown as NodeFetchAbortSignal
+      maxRedirects: MAX_REDIRECTS,
+      httpsOnly: true,
+      signal: controller.signal
     });
+    const res = opened.response;
     status = res.status;
     if (!res.ok) {
       throw new HttpError(
         res.status,
         url,
         `HTTP ${res.status} for ${url}`,
-        res.url
+        opened.finalUrl
       );
     }
 
-    const text = await readTextWithLimit(res, url, getMaxBytes(opts));
+    const body = await readPublicResponseBody(res, {
+      maxBytes: getMaxBytes(opts),
+      signal: controller.signal
+    });
     outcome = 'success';
-    return text;
+    return body.toString('utf8');
+  } catch (error) {
+    // Only the bounded refresher opts in. Preserve other HTTP callers' errors.
+    if (budget && cancellation === 'request_timeout')
+      throw new NftLinkHttpTimeoutError();
+    if (budget && cancellation === 'resolution_budget') budget.check();
+    throw error;
   } finally {
     clearTimeout(t);
+    opened?.cancel();
     if (budget) controller.abort();
     budget?.signal.removeEventListener('abort', abort);
     if (opts.diagnosticPurpose) {

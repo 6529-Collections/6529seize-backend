@@ -1,3 +1,5 @@
+import { inSequence } from '@/db/in-sequence';
+import { competitionAnonymityService } from '@/competitions/competition-anonymity';
 import {
   ConnectionWrapper,
   dbSupplier,
@@ -21,7 +23,8 @@ import {
   WALLET_REGEX,
   WALLETS_TDH_TABLE,
   WAVES_TABLE,
-  X_TDH_COEFFICIENT
+  X_TDH_COEFFICIENT,
+  MEME_COLLABORATION_INVITATIONS_TABLE
 } from '@/constants';
 import { Profile, ProfileClassification } from '../entities/IProfile';
 import { AddressConsolidationKey } from '../entities/IAddressConsolidationKey';
@@ -34,6 +37,19 @@ import { env } from '../env';
 import { DropType } from '../entities/IDrop';
 import { appFeatures } from '../app-features';
 import { nativeMainStageEntriesSource } from '@/competitions/competition-main-stage.repository';
+import { legacyTypedDropsSql } from '@/competitions/legacy-typed-drops';
+import { DbPoolName } from '@/db-query.options';
+import {
+  chunkSqlInListValues,
+  querySqlInListChunks,
+  SQL_IN_LIST_CHUNK_BYTES,
+  SQL_IN_LIST_PAGE_VALUES
+} from '@/db/sql-in-list-chunks';
+import {
+  isLegacyCompetitionGetFacadeScope,
+  legacyGetView,
+  withoutLegacyCompetitionGetFacade
+} from '@/competitions/legacy-competition-get-facade';
 import {
   groupWaveVotingCreditNftsByContract,
   normalizeWaveVotingCreditNfts,
@@ -47,6 +63,45 @@ export interface WaveMentionSearchCandidate {
   readonly handle: string;
   readonly display: string | null;
   readonly pfp: string | null;
+  readonly level_raw: number;
+}
+
+/**
+ * The main stage wave's drops of one type by the profiles in :profileIds.
+ * Only drop_type needs the legacy compatibility projection: inside the
+ * legacy GET facade it comes from base tables with the view's rows (see
+ * legacyTypedDropsSql), because reading the view defeats the index.
+ * Call it before entering withoutLegacyCompetitionGetFacade (it reads the
+ * caller's scope), and run the SQL inside it so the base tables are not
+ * rewritten.
+ */
+function mainStageTypedDropsSql(
+  dropType: DropType.PARTICIPATORY | DropType.WINNER,
+  legacyFacade: boolean
+): string {
+  return legacyFacade
+    ? legacyTypedDropsSql(dropType, {
+        profileIds: ':profileIds',
+        waveId: ':mainStageWaveId'
+      })
+    : `select author_id as profile_id, id as drop_id from ${DROPS_TABLE}
+      where author_id in (:profileIds) and wave_id = :mainStageWaveId
+        and drop_type = '${dropType}'`;
+}
+
+function groupDropIdsByProfile(
+  rows: { profile_id: string; drop_id: string }[]
+): Record<string, string[]> {
+  return rows.reduce(
+    (acc, it) => {
+      if (!acc[it.profile_id]) {
+        acc[it.profile_id] = [];
+      }
+      acc[it.profile_id].push(it.drop_id);
+      return acc;
+    },
+    {} as Record<string, string[]>
+  );
 }
 
 export class IdentitiesDb extends LazyDbAccessCompatibleService {
@@ -460,16 +515,97 @@ export class IdentitiesDb extends LazyDbAccessCompatibleService {
     );
   }
 
+  /**
+   * Copies identities.primary_address to profiles.primary_wallet for the given
+   * profiles where they differ. Callers pass every profile whose identity or
+   * profile row they changed (consolidation step B: the identities it wrote
+   * and the merged profiles); no other profile is read or locked.
+   */
   async syncProfileAddressesFromIdentitiesToProfiles(
+    profileIds: string[],
     connection: ConnectionWrapper<any>
   ) {
-    await this.db.execute(
-      `update ${PROFILES_TABLE} join ${IDENTITIES_TABLE} on ${IDENTITIES_TABLE}.profile_id = ${PROFILES_TABLE}.external_id
-                           set ${PROFILES_TABLE}.primary_wallet = ${IDENTITIES_TABLE}.primary_address
-                           where ${PROFILES_TABLE}.primary_wallet != ${IDENTITIES_TABLE}.primary_address`,
-      undefined,
-      { wrappedConnection: connection }
-    );
+    // A broad UPDATE locks unchanged profiles until the consolidation's
+    // transaction commits, blocking posting's moderation lock. Discover
+    // differences without locks, then force indexed writes only for those
+    // stable profile IDs. Callers finish identity consolidation writes on this
+    // connection first. Concurrent primary-address writers update profiles and
+    // identities together in updatePrimaryAddress; this snapshot need not
+    // chase their later commits.
+    const sortedIds = collections
+      .distinct(profileIds)
+      .sort((a, b) => a.localeCompare(b));
+    for (const ids of chunkSqlInListValues(
+      sortedIds,
+      SQL_IN_LIST_CHUNK_BYTES,
+      SQL_IN_LIST_PAGE_VALUES
+    )) {
+      // external_id is a nonunique index here; the profile PK is its handle.
+      const changedProfiles: { external_id: string }[] = await this.db.execute(
+        `select distinct p.external_id
+         from ${PROFILES_TABLE} p force index (idx_profile_external_id)
+         join ${IDENTITIES_TABLE} i on i.profile_id = p.external_id
+         where p.external_id in (:profileIds)
+           and p.primary_wallet != i.primary_address
+         order by p.external_id asc`,
+        { profileIds: ids },
+        { wrappedConnection: connection }
+      );
+      // An IN batch can still choose a full index scan and lock unchanged
+      // rows. Point lookups keep that lock scope narrow. The connection is
+      // shared, so writes must execute sequentially.
+      for (const profile of changedProfiles) {
+        await this.db.execute(
+          `update ${PROFILES_TABLE} p force index (idx_profile_external_id)
+           join ${IDENTITIES_TABLE} i on i.profile_id = p.external_id
+           set p.primary_wallet = i.primary_address
+           where p.external_id = :profileId
+             and p.primary_wallet != i.primary_address`,
+          { profileId: profile.external_id },
+          { wrappedConnection: connection }
+        );
+      }
+    }
+  }
+
+  /**
+   * The all-profiles check, for any writer that leaves profiles.primary_wallet
+   * behind identities.primary_address. Run outside any transaction, so it
+   * holds no locks: discovery is a plain read in keyset pages on the reader
+   * (a repair: replica lag only defers a fix to the next run), and each
+   * correction is its own indexed point update on the writer, which re-checks
+   * the difference. Returns the profiles fixed.
+   */
+  async syncAllProfileAddresses(): Promise<number> {
+    let fixed = 0;
+    let afterProfileId: string | null = null;
+    for (;;) {
+      // external_id is a nonunique index here; the profile PK is its handle.
+      const changedProfiles: { external_id: string }[] = await this.db.execute(
+        `select distinct p.external_id
+         from ${PROFILES_TABLE} p
+         join ${IDENTITIES_TABLE} i on i.profile_id = p.external_id
+         where p.primary_wallet != i.primary_address
+           and (:afterProfileId is null or p.external_id > :afterProfileId)
+         order by p.external_id asc
+         limit 100`,
+        { afterProfileId },
+        { forcePool: DbPoolName.READ }
+      );
+      if (!changedProfiles.length) return fixed;
+      for (const profile of changedProfiles) {
+        const result = await this.db.execute(
+          `update ${PROFILES_TABLE} p force index (idx_profile_external_id)
+           join ${IDENTITIES_TABLE} i on i.profile_id = p.external_id
+           set p.primary_wallet = i.primary_address
+           where p.external_id = :profileId
+             and p.primary_wallet != i.primary_address`,
+          { profileId: profile.external_id }
+        );
+        if (this.db.getAffectedRows(result) > 0) fixed++;
+      }
+      afterProfileId = changedProfiles[changedProfiles.length - 1].external_id;
+    }
   }
 
   async updateIdentityProfilesOfIds(profileIds: string[], ctx: RequestContext) {
@@ -514,13 +650,14 @@ export class IdentitiesDb extends LazyDbAccessCompatibleService {
 
       await this.db.execute(sql, params, { wrappedConnection: ctx.connection });
     } else {
-      await Promise.all(
-        repBulkUpdates.map((update) =>
-          this.db.execute(
-            `update ${IDENTITIES_TABLE} set rep = rep + :newRep, level_raw = level_raw + :newRep where profile_id = :profileId`,
-            update,
-            { wrappedConnection: ctx.connection }
-          )
+      await inSequence(
+        repBulkUpdates.map(
+          (update) => () =>
+            this.db.execute(
+              `update ${IDENTITIES_TABLE} set rep = rep + :newRep, level_raw = level_raw + :newRep where profile_id = :profileId`,
+              update,
+              { wrappedConnection: ctx.connection }
+            )
         )
       );
     }
@@ -630,7 +767,8 @@ export class IdentitiesDb extends LazyDbAccessCompatibleService {
             i.profile_id as id,
             i.handle,
             cwt.consolidation_display as display,
-            i.pfp
+            i.pfp,
+            i.level_raw
           from ${IDENTITIES_TABLE} i force index (identity_normalised_handle_idx)
           ${eligibilityJoin}
           left join ${CONSOLIDATED_WALLETS_TDH_TABLE} cwt
@@ -729,6 +867,11 @@ export class IdentitiesDb extends LazyDbAccessCompatibleService {
           .then((it) => it?.profile_id ?? null);
       }
       if (key.endsWith('.eth')) {
+        // Resolves a name through the cached reverse record (ens.display),
+        // not a forward resolution. New reverse records are stored only in
+        // ENS normalised form (see ens-lookup.ts); rows cached earlier may
+        // still hold other spellings until the ENS refresh loop revisits
+        // them, and lower() keeps those reachable.
         return await this.db
           .oneOrNull<{ profile_id: string }>(
             `
@@ -1146,17 +1289,19 @@ export class IdentitiesDb extends LazyDbAccessCompatibleService {
     },
     connection: ConnectionWrapper<any>
   ) {
-    await Promise.all([
-      this.db.execute(
-        `update ${PROFILES_TABLE} set primary_wallet = :primaryAddress where external_id = :profileId`,
-        param,
-        { wrappedConnection: connection }
-      ),
-      this.db.execute(
-        `update ${IDENTITIES_TABLE} set primary_address = :primaryAddress where profile_id = :profileId`,
-        param,
-        { wrappedConnection: connection }
-      )
+    await inSequence([
+      () =>
+        this.db.execute(
+          `update ${PROFILES_TABLE} set primary_wallet = :primaryAddress where external_id = :profileId`,
+          param,
+          { wrappedConnection: connection }
+        ),
+      () =>
+        this.db.execute(
+          `update ${IDENTITIES_TABLE} set primary_address = :primaryAddress where profile_id = :profileId`,
+          param,
+          { wrappedConnection: connection }
+        )
     ]);
   }
 
@@ -1284,12 +1429,16 @@ export class IdentitiesDb extends LazyDbAccessCompatibleService {
       .then((result) => result?.tdh ?? 0);
   }
 
-  async getTdhAndXTdhCombinedAndFloored(profileId: string): Promise<number> {
+  async getTdhAndXTdhCombinedAndFloored(
+    profileId: string,
+    connection?: ConnectionWrapper<any>
+  ): Promise<number> {
     return this.db
       .oneOrNull<{ res: number }>(
         `
         select floor(tdh + xtdh) as res from ${IDENTITIES_TABLE} where profile_id = :profileId`,
-        { profileId }
+        { profileId },
+        connection ? { wrappedConnection: connection } : undefined
       )
       .then((result) => result?.res ?? 0);
   }
@@ -1327,39 +1476,71 @@ export class IdentitiesDb extends LazyDbAccessCompatibleService {
     return result;
   }
 
+  /**
+   * The main stage's drops of one type by these profiles: legacy typed
+   * drops, native entries and accepted collaborations. The statement inlines
+   * the profile list once per source, so the list is chunked to keep each
+   * statement under the RDS Proxy pinning size. Every row belongs to one
+   * listed profile, so the chunks' rows together are exactly the full query's.
+   */
+  private async findMainStageDropRows(
+    profileIds: string[],
+    dropType: DropType.PARTICIPATORY | DropType.WINNER,
+    ctx: RequestContext
+  ): Promise<{ profile_id: string; drop_id: string }[]> {
+    const mainStageWaveId = env.getStringOrNull(`MAIN_STAGE_WAVE_ID`);
+    const status = dropType === DropType.WINNER ? 'WINNER' : 'ACTIVE';
+    // Decided in the caller's scope, before the facade is switched off.
+    const typedDrops = mainStageTypedDropsSql(
+      dropType,
+      isLegacyCompetitionGetFacadeScope()
+    );
+    const sql = `
+      ${typedDrops}
+      union select submitter_id as profile_id, drop_id from (${nativeMainStageEntriesSource(status)}) native_entry
+      where submitter_id in (:profileIds)
+      union select invitation.profile_id, invitation.drop_id
+      from ${MEME_COLLABORATION_INVITATIONS_TABLE} invitation
+      join (${nativeMainStageEntriesSource(status)}) collaboration_entry on collaboration_entry.drop_id=invitation.drop_id
+      where invitation.profile_id in (:profileIds) and invitation.status='ACCEPTED'
+      `;
+    const listCopies = sql.split(':profileIds').length - 1;
+    return withoutLegacyCompetitionGetFacade(() =>
+      querySqlInListChunks(
+        profileIds,
+        (chunk) =>
+          this.db.execute<{ profile_id: string; drop_id: string }>(
+            sql,
+            { profileIds: chunk, mainStageWaveId },
+            { wrappedConnection: ctx.connection }
+          ),
+        {
+          maxBytes: Math.floor(SQL_IN_LIST_CHUNK_BYTES / listCopies),
+          // One caller-owned connection runs one statement at a time.
+          sequential: !!ctx.connection
+        }
+      )
+    );
+  }
+
   async getActiveMainStageDropIds(
     profileIds: string[],
     ctx: RequestContext
   ): Promise<Record<string, string[]>> {
-    const mainStageWaveId = env.getStringOrNull(`MAIN_STAGE_WAVE_ID`);
     if (!profileIds.length) {
       return {};
     }
-    const results = await this.db.execute<{
-      profile_id: string;
-      drop_id: string;
-    }>(
-      `
-      select author_id as profile_id, id as drop_id from ${DROPS_TABLE} where author_id in (:profileIds) and wave_id = :mainStageWaveId
-      and drop_type = '${DropType.PARTICIPATORY}'
-      union select submitter_id as profile_id, drop_id from (${nativeMainStageEntriesSource('ACTIVE')}) native_entry
-      where submitter_id in (:profileIds)
-      `,
-      {
-        profileIds,
-        mainStageWaveId
-      },
-      { wrappedConnection: ctx.connection }
+    const results = await this.findMainStageDropRows(
+      profileIds,
+      DropType.PARTICIPATORY,
+      ctx
     );
-    return results.reduce(
-      (acc, it) => {
-        if (!acc[it.profile_id]) {
-          acc[it.profile_id] = [];
-        }
-        acc[it.profile_id].push(it.drop_id);
-        return acc;
-      },
-      {} as Record<string, string[]>
+    const hiddenDropIds = await competitionAnonymityService.hiddenDropIds(
+      results.map((row) => row.drop_id),
+      ctx
+    );
+    return groupDropIdsByProfile(
+      results.filter((row) => !hiddenDropIds.has(row.drop_id))
     );
   }
 
@@ -1367,35 +1548,11 @@ export class IdentitiesDb extends LazyDbAccessCompatibleService {
     profileIds: string[],
     ctx: RequestContext
   ): Promise<Record<string, string[]>> {
-    const mainStageWaveId = env.getStringOrNull(`MAIN_STAGE_WAVE_ID`);
     if (!profileIds.length) {
       return {};
     }
-    const results = await this.db.execute<{
-      profile_id: string;
-      drop_id: string;
-    }>(
-      `
-      select author_id as profile_id, id as drop_id from ${DROPS_TABLE} where author_id in (:profileIds) and wave_id = :mainStageWaveId
-      and drop_type = '${DropType.WINNER}'
-      union select submitter_id as profile_id, drop_id from (${nativeMainStageEntriesSource('WINNER')}) native_entry
-      where submitter_id in (:profileIds)
-      `,
-      {
-        profileIds,
-        mainStageWaveId
-      },
-      { wrappedConnection: ctx.connection }
-    );
-    return results.reduce(
-      (acc, it) => {
-        if (!acc[it.profile_id]) {
-          acc[it.profile_id] = [];
-        }
-        acc[it.profile_id].push(it.drop_id);
-        return acc;
-      },
-      {} as Record<string, string[]>
+    return groupDropIdsByProfile(
+      await this.findMainStageDropRows(profileIds, DropType.WINNER, ctx)
     );
   }
 

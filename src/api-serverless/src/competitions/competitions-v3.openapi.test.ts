@@ -9,6 +9,7 @@ const yaml = require('js-yaml') as {
 type OpenApiOperation = Record<string, any>;
 type OpenApiDocument = {
   readonly paths: Record<string, { readonly get?: OpenApiOperation }>;
+  readonly components: { readonly schemas: Record<string, OpenApiOperation> };
 };
 
 const openapi = yaml.load(
@@ -26,7 +27,7 @@ describe('competition v3 OpenAPI contract', () => {
     // Default navigation and vote activity add two foundation reads.
     // Write-only paths are deliberately excluded, while every GET retains the
     // validation and masked-not-found response guarantees.
-    expect(operations).toHaveLength(22);
+    expect(operations).toHaveLength(23);
     for (const { route, operation } of operations) {
       expect({ route, responses: operation.responses }).toMatchObject({
         route,
@@ -65,10 +66,19 @@ describe('competition v3 OpenAPI contract', () => {
     }
   });
 
+  it('adds the voter profile as an optional field so older clients keep working', () => {
+    const voter = openapi.components.schemas.ApiCompetitionVoter;
+    expect(voter.required).toEqual(['profile_id', 'votes', 'credit_spent']);
+    expect(voter.properties.voter.allOf).toEqual([
+      { $ref: '#/components/schemas/ApiProfileMin' }
+    ]);
+  });
+
   it('uses one direction type with operation-specific defaults', () => {
     const descOperations = new Set([
       'listCompetitionLeaderboardV3',
-      'listCompetitionVotersV3'
+      'listCompetitionVotersV3',
+      'listCompetitionWinnersV3'
     ]);
     const operationsWithDirection = operations.filter(({ operation }) =>
       operation.parameters?.some(

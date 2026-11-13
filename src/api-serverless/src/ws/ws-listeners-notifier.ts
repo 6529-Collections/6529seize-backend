@@ -1,5 +1,8 @@
 import { ApiDrop } from '../generated/models/ApiDrop';
 import { ANON_USER_ID, appWebSockets, AppWebSockets } from './ws';
+import { wsFanoutConcurrency } from './ws-fanout-settings';
+import { forEachConcurrent } from '@/for-each-concurrent';
+import { DeliveryBatch, DeliveryMetricsBatch } from '@/ws-delivery/ws-delivery';
 import {
   wsConnectionRepository,
   WsConnectionRepository
@@ -13,13 +16,22 @@ import {
   dropUpdateMessage,
   dmUnreadStateChangedMessage,
   dropUpdateRefMessage,
+  DELIVERY_TIMESTAMPS_RESERVED_BYTES,
   DROP_UPDATE_MAX_UTF8_BYTES,
+  DROP_UPDATE_REASON_REPLY_COLLAPSE,
   DropUpdateRefType,
+  DropUpdateRefMessageData,
   WsMessageType,
   nftLinkUpdatedMessage,
   identityNotificationsChangedMessage,
-  userIsTypingMessage
+  userIsTypingMessage,
+  withDeliveryTimestamps
 } from './ws-message';
+import {
+  FanoutMeasurement,
+  FanoutSendOutcome,
+  serverReceivedAtFromTimer
+} from '@/ws-delivery/wave-delivery-metrics';
 import { ApiDropWithoutWave } from '../generated/models/ApiDropWithoutWave';
 import { ApiQuotedDropResponse } from '@/api/generated/models/ApiQuotedDropResponse';
 import { ApiDropType } from '../generated/models/ApiDropType';
@@ -44,6 +56,12 @@ import { AuthenticationContext } from '@/auth-context';
 import { NotFoundException, UnauthorisedException } from '@/exceptions';
 import { isExpectedClientError } from '@/operational-errors';
 import { typingFailureDetails } from './ws-typing-failure';
+import { competitionAnonymityService } from '@/competitions/competition-anonymity';
+import {
+  anonymizeDropBroadcast,
+  getEmbeddedDropIds
+} from '@/api/ws/ws-competition-anonymity';
+import { dropsDb } from '@/drops/drops.db';
 
 const scalarForLog = (value: unknown): string =>
   typeof value === 'string' ||
@@ -57,11 +75,36 @@ const dropNotificationIdentityForLog = (drop: ApiDrop): string =>
     drop.wave?.id
   )} serial_no=${scalarForLog(drop.serial_no)}`;
 
-const DROP_DELETE_NOTIFICATION_BATCH_SIZE = 100;
+const SEND_OUTCOMES: ReadonlySet<string> = new Set([
+  'sent',
+  'resync_pending',
+  'gone',
+  'failed'
+]);
+
+/** Older transport adapters and test doubles resolve without a status. */
+function sendOutcome(result: unknown): FanoutSendOutcome {
+  const status =
+    result && typeof result === 'object'
+      ? Reflect.get(result, 'status')
+      : undefined;
+  return typeof status === 'string' && SEND_OUTCOMES.has(status)
+    ? (status as FanoutSendOutcome)
+    : 'sent';
+}
 
 export interface NotificationConnectionRecipient {
   readonly connectionId: string;
   readonly identityId: string;
+  /** Stored JWT expiry when the lookup returned it; skips a fence read. */
+  readonly jwtExpiry?: number;
+}
+
+interface FanoutSend {
+  readonly connectionId: string;
+  readonly jwtExpiry?: number;
+  /** Resolved when the pool reaches this send, so payloads stay lazy. */
+  readonly message: () => string;
 }
 
 const normalizedErrorForLog = (error: unknown): string => {
@@ -107,7 +150,8 @@ const logDropNotificationFailure = (
 
 function applyGlobalModerationForRecipient(
   inputDrop: ApiDrop,
-  profileId: string | null
+  profileId: string | null,
+  authorIdsByDropId: ReadonlyMap<string, string>
 ): ApiDrop {
   const recipientDrop = structuredClone(inputDrop);
   const apply = (
@@ -117,7 +161,8 @@ function applyGlobalModerationForRecipient(
     const status = drop.moderation?.status ?? ApiDropModerationStatus.Visible;
     const canView =
       status === ApiDropModerationStatus.Visible ||
-      (profileId !== null && drop.author.id === profileId);
+      (profileId !== null &&
+        (authorIdsByDropId.get(drop.id) ?? drop.author.id) === profileId);
     drop.moderation = { status, can_view: canView };
     const shouldRecurse = !visited.has(drop.id);
     const nextVisited = shouldRecurse ? new Set(visited).add(drop.id) : visited;
@@ -222,26 +267,129 @@ export function redactQuotedDropsOutsideAudience(
   return audienceDrop;
 }
 
+function collectMentionedWaveIdsWithDetails(
+  drop: ApiDrop | ApiDropWithoutWave,
+  waveIds: Set<string>
+): Set<string> {
+  for (const mentionedWave of drop.mentioned_waves ?? []) {
+    if (mentionedWave.wave) {
+      waveIds.add(mentionedWave.wave_id);
+    }
+  }
+  for (const part of drop.parts) {
+    if (part.quoted_drop?.drop) {
+      collectMentionedWaveIdsWithDetails(part.quoted_drop.drop, waveIds);
+    }
+  }
+  if (drop.reply_to?.drop) {
+    collectMentionedWaveIdsWithDetails(drop.reply_to.drop, waveIds);
+  }
+  return waveIds;
+}
+
+/** Ids of mentioned waves (root and embedded drops) that carry wave details. */
+export function getMentionedWaveIdsWithDetails(drop: ApiDrop): string[] {
+  return Array.from(collectMentionedWaveIdsWithDetails(drop, new Set()));
+}
+
+function redactMentionedWavesInPlace(
+  drop: ApiDrop | ApiDropWithoutWave,
+  showableWaveIds: ReadonlySet<string>
+): void {
+  for (const mentionedWave of drop.mentioned_waves ?? []) {
+    if (mentionedWave.wave && !showableWaveIds.has(mentionedWave.wave_id)) {
+      delete mentionedWave.wave;
+    }
+  }
+  for (const part of drop.parts) {
+    if (part.quoted_drop?.drop) {
+      redactMentionedWavesInPlace(part.quoted_drop.drop, showableWaveIds);
+    }
+  }
+  if (drop.reply_to?.drop) {
+    redactMentionedWavesInPlace(drop.reply_to.drop, showableWaveIds);
+  }
+}
+
+/**
+ * The wave summary on a mention does not say whether the wave is a subwave, so
+ * the broadcast keeps mentioned wave details only for ids the server confirmed
+ * as showable to any audience (public wave, and public parent for subwaves).
+ * Other mentions keep their wave_id and clients resolve them with their access.
+ */
+export function redactMentionedWavesOutsideShowableSet(
+  inputDrop: ApiDrop,
+  showableWaveIds: ReadonlySet<string>
+): ApiDrop {
+  if (
+    getMentionedWaveIdsWithDetails(inputDrop).every((waveId) =>
+      showableWaveIds.has(waveId)
+    )
+  ) {
+    return inputDrop;
+  }
+  const audienceDrop = structuredClone(inputDrop);
+  redactMentionedWavesInPlace(audienceDrop, showableWaveIds);
+  return audienceDrop;
+}
+
+function removeWaveAuthRequestContext(wave: object): void {
+  const viewerScopedWave = wave as Record<string, unknown>;
+  viewerScopedWave.authenticated_user_eligible_to_vote = undefined;
+  viewerScopedWave.authenticated_user_eligible_to_participate = undefined;
+  viewerScopedWave.authenticated_user_eligible_to_chat = undefined;
+  viewerScopedWave.authenticated_user_eligible_to_reply = undefined;
+  viewerScopedWave.authenticated_user_can_delete_replies = undefined;
+  viewerScopedWave.authenticated_user_admin = undefined;
+}
+
+/**
+ * Broadcast payloads reach the whole wave audience, so a mentioned wave keeps
+ * its details only when it is public. Clients resolve the others by wave_id
+ * with their own access.
+ */
+function removeMentionedWaveDetailsOutsidePublicWaves(
+  drop: ApiDrop | ApiDropWithoutWave
+): void {
+  for (const mentionedWave of drop.mentioned_waves ?? []) {
+    const wave = mentionedWave.wave;
+    if (!wave) {
+      continue;
+    }
+    if (wave.visibility_group_id !== null || wave.is_direct_message === true) {
+      delete mentionedWave.wave;
+    } else {
+      removeWaveAuthRequestContext(wave);
+    }
+  }
+}
+
 function removeDropsAuthRequestContext(
   drop: ApiDrop | ApiDropWithoutWave,
-  creditLeft: number
+  creditLeft: number,
+  isRoot = true
 ): ApiDrop {
   const modifiedDrop: ApiDrop = JSON.parse(JSON.stringify(drop));
   const maybeWave = (drop as ApiDrop).wave;
   const modifiedWave = maybeWave ? { ...maybeWave } : undefined;
   if (modifiedWave) {
-    (modifiedWave as any).authenticated_user_eligible_to_vote = undefined;
-    (modifiedWave as any).authenticated_user_eligible_to_participate =
-      undefined;
-    (modifiedWave as any).authenticated_user_eligible_to_chat = undefined;
-    (modifiedWave as any).authenticated_user_eligible_to_reply = undefined;
-    (modifiedWave as any).authenticated_user_can_delete_replies = undefined;
-    (modifiedWave as any).authenticated_user_admin = undefined;
+    removeWaveAuthRequestContext(modifiedWave);
     (modifiedWave as any).credit_left = creditLeft;
     (modifiedDrop.wave as any) = modifiedWave;
     (modifiedDrop.author as any).subscribed_actions = undefined;
     (modifiedDrop as any).context_profile_context = undefined;
   }
+  if (!isRoot) {
+    // Embedded (quoted or replied-to) drops carry the request maker's view.
+    // The recipient's viewer_context is only injected for the root drop.
+    modifiedDrop.context_profile_context = null;
+    modifiedDrop.subscribed_actions = [];
+    if (modifiedDrop.author) {
+      modifiedDrop.author.subscribed_actions = [];
+    }
+    delete modifiedDrop.viewer_context;
+  }
+  removeMentionedWaveDetailsOutsidePublicWaves(modifiedDrop);
   if (modifiedDrop.poll?.anonymous) {
     modifiedDrop.poll.voted = [];
   }
@@ -249,14 +397,16 @@ function removeDropsAuthRequestContext(
     if (part.quoted_drop?.drop) {
       part.quoted_drop.drop = removeDropsAuthRequestContext(
         part.quoted_drop.drop,
-        creditLeft
+        creditLeft,
+        false
       );
     }
   }
   if (modifiedDrop.reply_to?.drop) {
     modifiedDrop.reply_to.drop = removeDropsAuthRequestContext(
       modifiedDrop.reply_to.drop,
-      creditLeft
+      creditLeft,
+      false
     );
   }
   return modifiedDrop;
@@ -286,26 +436,32 @@ export function serializeDropMessageForRecipient(
     fullMessage = JSON.stringify(dropReactionUpdateMessage(recipientDrop));
   }
 
-  if (Buffer.byteLength(fullMessage, 'utf8') <= DROP_UPDATE_MAX_UTF8_BYTES) {
+  if (
+    Buffer.byteLength(fullMessage, 'utf8') +
+      DELIVERY_TIMESTAMPS_RESERVED_BYTES <=
+    DROP_UPDATE_MAX_UTF8_BYTES
+  ) {
     return fullMessage;
   }
 
-  const refData = {
+  const refData: DropUpdateRefMessageData = {
     drop_id: inputDrop.id,
     wave_id: inputDrop.wave.id,
     author_id: inputDrop.author.id,
     serial_no: inputDrop.serial_no,
     update_type: updateType,
+    ...(inputDrop.collapsed_reply_thread
+      ? { collapsed_reply_thread_id: inputDrop.collapsed_reply_thread.id }
+      : {}),
+    ...(reason === DROP_UPDATE_REASON_REPLY_COLLAPSE
+      ? {
+          collapse_replies: inputDrop.collapse_replies,
+          reply_placement_has_replies: inputDrop.reply_placement_has_replies
+        }
+      : {}),
     ...(reason !== undefined && updateType === WsMessageType.DROP_UPDATE
       ? { reason }
       : {})
-  } satisfies {
-    drop_id: string;
-    wave_id: string;
-    author_id: string;
-    serial_no: number;
-    update_type: DropUpdateRefType;
-    reason?: string;
   };
 
   return JSON.stringify(dropUpdateRefMessage(refData));
@@ -344,6 +500,105 @@ export function serializeDropReactionUpdateForRecipient(
     creditLeft,
     WsMessageType.DROP_REACTION_UPDATE
   );
+}
+
+const DEFAULT_VIEWER_CONTEXT = { author_blocked: false, drop_hidden: false };
+
+/**
+ * Authors whose identity changes what a recipient sees: those of drops in the
+ * tree (root, quotes, reply targets) that are not publicly visible. Mirrors
+ * the traversal and owner lookup in `applyGlobalModerationForRecipient`.
+ */
+function moderationRelevantAuthorIds(
+  drop: ApiDrop,
+  authorIdsByDropId: ReadonlyMap<string, string>
+): Set<string> {
+  const authors = new Set<string>();
+  // Same path-scoped cycle guard as applyGlobalModerationForRecipient, so
+  // both reach exactly the same nodes even when one id appears twice.
+  const visit = (
+    current: ApiDrop | ApiDropWithoutWave,
+    path: ReadonlySet<string>
+  ): void => {
+    const status =
+      current.moderation?.status ?? ApiDropModerationStatus.Visible;
+    if (status !== ApiDropModerationStatus.Visible) {
+      authors.add(authorIdsByDropId.get(current.id) ?? current.author.id);
+    }
+    if (path.has(current.id)) return;
+    const nextPath = new Set(path).add(current.id);
+    for (const part of current.parts) {
+      if (part.quoted_drop?.drop) visit(part.quoted_drop.drop, nextPath);
+    }
+    if (current.reply_to?.drop) visit(current.reply_to.drop, nextPath);
+  };
+  visit(drop, new Set<string>());
+  return authors;
+}
+
+/**
+ * Returns the serialized frame for a recipient, building it once per
+ * audience class. Everything recipient-specific in a drop frame is:
+ * - whether the recipient authored a drop in the tree that is not publicly
+ *   visible (moderation `can_view`),
+ * - their `viewer_context`,
+ * - their `credit_left` (participatory drops only).
+ * Recipients that agree on all three get the identical string, so a chat
+ * message to 1,000 sockets is usually serialized once.
+ */
+export function createDropPayloadSerializer({
+  audienceDrop,
+  hiddenDropIds,
+  authorIdsByDropId,
+  viewerContexts,
+  creditLefts,
+  updateType,
+  reason,
+  onSerialized
+}: {
+  audienceDrop: ApiDrop;
+  hiddenDropIds: ReadonlySet<string>;
+  authorIdsByDropId: ReadonlyMap<string, string>;
+  viewerContexts: Readonly<Record<string, ApiDrop['viewer_context']>>;
+  creditLefts: Readonly<Record<string, number>>;
+  updateType: DropMessageType;
+  reason?: string;
+  onSerialized?: () => void;
+}): (profileId: string | null) => string {
+  const moderationAuthors = moderationRelevantAuthorIds(
+    audienceDrop,
+    authorIdsByDropId
+  );
+  const payloads = new Map<string, string>();
+  return (profileId) => {
+    const viewerContext =
+      profileId === null
+        ? DEFAULT_VIEWER_CONTEXT
+        : (viewerContexts[profileId] ?? DEFAULT_VIEWER_CONTEXT);
+    const creditLeft = profileId === null ? 0 : (creditLefts[profileId] ?? 0);
+    const key = JSON.stringify([
+      profileId !== null && moderationAuthors.has(profileId) ? profileId : null,
+      viewerContext,
+      creditLeft
+    ]);
+    const cached = payloads.get(key);
+    if (cached !== undefined) return cached;
+    const recipientDrop = applyGlobalModerationForRecipient(
+      audienceDrop,
+      profileId,
+      authorIdsByDropId
+    );
+    recipientDrop.viewer_context = viewerContext;
+    const payload = serializeDropMessageForRecipient(
+      anonymizeDropBroadcast(recipientDrop, hiddenDropIds),
+      creditLeft,
+      updateType,
+      reason
+    );
+    onSerialized?.();
+    payloads.set(key, payload);
+    return payload;
+  };
 }
 
 export class WsListenersNotifier {
@@ -392,15 +647,13 @@ export class WsListenersNotifier {
         drop_id: event.drop_id
       }
     });
-    for (let offset = 0; offset < recipients.length; offset += 100) {
-      await Promise.all(
-        recipients
-          .slice(offset, offset + 100)
-          .map(({ connectionId }) =>
-            this.appWebSockets.send({ connectionId, message })
-          )
-      );
-    }
+    await forEachConcurrent(
+      recipients,
+      async ({ connectionId, jwtExpiry }) => {
+        await this.appWebSockets.send({ connectionId, jwtExpiry, message });
+      },
+      { concurrency: wsFanoutConcurrency() }
+    );
   }
 
   async notifyAboutIdentityNotificationsChanged(
@@ -417,15 +670,18 @@ export class WsListenersNotifier {
         await this.wsConnectionRepository.findNotificationConnectionIdsByIdentityIds(
           profileIds
         );
-      await Promise.all(
-        recipients.map(({ connectionId, identityId }) =>
-          this.appWebSockets.send({
+      await forEachConcurrent(
+        recipients,
+        async ({ connectionId, identityId, jwtExpiry }) => {
+          await this.appWebSockets.send({
             connectionId,
+            jwtExpiry,
             message: JSON.stringify(
               identityNotificationsChangedMessage(identityId)
             )
-          })
-        )
+          });
+        },
+        { concurrency: wsFanoutConcurrency() }
       );
     } catch (error) {
       this.logger.error(
@@ -455,15 +711,22 @@ export class WsListenersNotifier {
         (await this.wsConnectionRepository.findNotificationConnectionIdsByIdentityIds(
           profileIds
         ));
-      await Promise.all(
-        recipients.flatMap(({ connectionId, identityId }) =>
-          (statesByProfileId.get(identityId) ?? []).map((state) =>
-            this.appWebSockets.send({
-              connectionId,
-              message: JSON.stringify(dmUnreadStateChangedMessage(state))
-            })
-          )
-        )
+      await forEachConcurrent(
+        recipients.flatMap(({ connectionId, identityId, jwtExpiry }) =>
+          (statesByProfileId.get(identityId) ?? []).map((state) => ({
+            connectionId,
+            jwtExpiry,
+            state
+          }))
+        ),
+        async ({ connectionId, jwtExpiry, state }) => {
+          await this.appWebSockets.send({
+            connectionId,
+            jwtExpiry,
+            message: JSON.stringify(dmUnreadStateChangedMessage(state))
+          });
+        },
+        { concurrency: wsFanoutConcurrency() }
       );
     } catch (error) {
       this.logger.error(
@@ -498,12 +761,52 @@ export class WsListenersNotifier {
   async notifyAboutDropUpdate(
     inputDrop: ApiDrop,
     ctx: RequestContext,
+    options: { reason?: string; useSystemBroadcastAudience?: boolean } = {}
+  ): Promise<void> {
+    await this.notifyDropMessage(
+      inputDrop,
+      ctx,
+      WsMessageType.DROP_UPDATE,
+      options
+    );
+  }
+
+  async notifyAboutDropRatingUpdate(
+    drop: ApiDrop,
+    ctx: RequestContext
+  ): Promise<void> {
+    await this.notifyDropMessage(drop, ctx, WsMessageType.DROP_RATING_UPDATE);
+  }
+
+  async notifyAboutDropReactionUpdate(
+    drop: ApiDrop,
+    ctx: RequestContext
+  ): Promise<void> {
+    await this.notifyDropMessage(drop, ctx, WsMessageType.DROP_REACTION_UPDATE);
+  }
+
+  private async notifyDropMessage(
+    inputDrop: ApiDrop,
+    ctx: RequestContext,
+    updateType: DropMessageType,
     {
       reason,
       useSystemBroadcastAudience = false
-    }: { reason?: string; useSystemBroadcastAudience?: boolean } = {}
+    }: {
+      reason?: string;
+      useSystemBroadcastAudience?: boolean;
+    } = {}
   ): Promise<void> {
-    ctx.timer?.start(`${this.constructor.name}->notifyAboutDrop`);
+    const timerName = `${this.constructor.name}->${
+      {
+        [WsMessageType.DROP_UPDATE]: 'notifyAboutDrop',
+        [WsMessageType.DROP_RATING_UPDATE]: 'notifyAboutDropRatingUpdate',
+        [WsMessageType.DROP_REACTION_UPDATE]: 'notifyAboutDropReactionUpdate'
+      }[updateType]
+    }`;
+    ctx.timer?.start(timerName);
+    const serverReceivedAt = serverReceivedAtFromTimer(ctx.timer);
+    const measurement = new FanoutMeasurement(updateType, serverReceivedAt);
     try {
       const onlineProfiles = useSystemBroadcastAudience
         ? await this.wsConnectionRepository.getCurrentlyOnlineCommunityMemberConnectionIdsForSystemBroadcast(
@@ -520,11 +823,14 @@ export class WsListenersNotifier {
             },
             ctx
           );
-      const audienceDrop = await this.restrictQuotesToWaveAudience(
-        inputDrop,
+      measurement.queryDone(onlineProfiles.length);
+      if (!onlineProfiles.length) return;
+      const audienceDrop = await this.restrictMentionedWavesToShowable(
+        await this.restrictQuotesToWaveAudience(inputDrop, ctx),
         ctx
       );
-
+      const { hiddenDropIds, authorIdsByDropId } =
+        await this.getBroadcastAnonymity(audienceDrop, ctx);
       const creditLefts = await this.getCreditLeftsForOnlineProfiles(
         onlineProfiles,
         inputDrop
@@ -532,164 +838,133 @@ export class WsListenersNotifier {
       const viewerContexts = await this.moderationDb.getViewerContextsForDrop(
         {
           dropId: inputDrop.id,
-          authorProfileId: inputDrop.author.id,
+          authorProfileId:
+            authorIdsByDropId.get(inputDrop.id) ?? inputDrop.author.id,
           viewerProfileIds: onlineProfiles
             .map(({ profileId }) => profileId)
             .filter((profileId): profileId is string => profileId !== null)
         },
         ctx.connection
       );
-      await Promise.all(
-        onlineProfiles.map(({ connectionId, profileId }) => {
-          const recipientDrop = applyGlobalModerationForRecipient(
-            audienceDrop,
-            profileId
-          );
-          recipientDrop.viewer_context =
-            profileId === null
-              ? { author_blocked: false, drop_hidden: false }
-              : (viewerContexts[profileId] ?? {
-                  author_blocked: false,
-                  drop_hidden: false
-                });
-          return this.appWebSockets.send({
-            connectionId,
-            message: serializeDropUpdateForRecipient(
-              recipientDrop,
-              profileId === null ? 0 : (creditLefts[profileId] ?? 0),
-              reason
-            )
-          });
-        })
+      const payloadFor = createDropPayloadSerializer({
+        audienceDrop,
+        hiddenDropIds,
+        authorIdsByDropId,
+        viewerContexts,
+        creditLefts,
+        updateType,
+        reason,
+        onSerialized: () => measurement.serialized()
+      });
+      measurement.prepareDone();
+      await this.sendToAll(
+        onlineProfiles.map(({ connectionId, profileId, jwtExpiry }) => ({
+          connectionId,
+          jwtExpiry,
+          message: () => payloadFor(profileId)
+        })),
+        serverReceivedAt,
+        measurement
       );
     } catch (e) {
-      logDropNotificationFailure(this.logger, 'DROP_UPDATE', inputDrop, e);
+      logDropNotificationFailure(this.logger, updateType, inputDrop, e);
+    } finally {
+      ctx.timer?.stop(timerName);
+      measurement.emit({
+        drop_id: inputDrop.id,
+        wave_id: inputDrop.wave?.id ?? null
+      });
     }
-
-    ctx.timer?.stop(`${this.constructor.name}->notifyAboutDrop`);
   }
 
-  async notifyAboutDropRatingUpdate(
-    drop: ApiDrop,
-    ctx: RequestContext
+  /**
+   * Sends one frame per recipient through a capped pool. Post-send
+   * bookkeeping and delivery metrics are batched for the whole fan-out and
+   * awaited before this returns: nothing is left running after a response.
+   */
+  private async sendToAll(
+    sends: Iterable<FanoutSend>,
+    serverReceivedAt: number | null,
+    measurement: FanoutMeasurement
   ): Promise<void> {
-    ctx.timer?.start(`${this.constructor.name}->notifyAboutDropRatingUpdate`);
+    const settlements: Promise<unknown>[] = [];
+    const batch: DeliveryBatch = {
+      defer: (settlement) => settlements.push(settlement),
+      metrics: new DeliveryMetricsBatch(),
+      claimTimed: (milliseconds) => measurement.claimTimed(milliseconds),
+      // One frame type per fan-out: delivery need not parse each frame.
+      frameType: measurement.frameType
+    };
     try {
-      const onlineProfiles =
-        await this.wsConnectionRepository.getCurrentlyOnlineCommunityMemberConnectionIds(
-          {
-            groupId: drop.wave.visibility_group_id,
-            waveId: drop.wave.id
-          },
-          ctx
-        );
-      const audienceDrop = await this.restrictQuotesToWaveAudience(drop, ctx);
-      const creditLefts = await this.getCreditLeftsForOnlineProfiles(
-        onlineProfiles,
-        drop
-      );
-      const viewerContexts = await this.moderationDb.getViewerContextsForDrop(
-        {
-          dropId: drop.id,
-          authorProfileId: drop.author.id,
-          viewerProfileIds: onlineProfiles
-            .map(({ profileId }) => profileId)
-            .filter((profileId): profileId is string => profileId !== null)
-        },
-        ctx.connection
-      );
-      await Promise.all(
-        onlineProfiles.map(({ connectionId, profileId }) => {
-          const recipientDrop = applyGlobalModerationForRecipient(
-            audienceDrop,
-            profileId
+      await forEachConcurrent(
+        sends,
+        async (send) => {
+          await this.sendMeasured(
+            send.connectionId,
+            send.message(),
+            serverReceivedAt,
+            measurement,
+            send.jwtExpiry,
+            batch
           );
-          recipientDrop.viewer_context =
-            profileId === null
-              ? { author_blocked: false, drop_hidden: false }
-              : (viewerContexts[profileId] ?? {
-                  author_blocked: false,
-                  drop_hidden: false
-                });
-          return this.appWebSockets.send({
-            connectionId,
-            message: serializeDropRatingUpdateForRecipient(
-              recipientDrop,
-              profileId === null ? 0 : (creditLefts[profileId] ?? 0)
-            )
-          });
-        })
-      );
-    } catch (e) {
-      logDropNotificationFailure(this.logger, 'DROP_RATING_UPDATE', drop, e);
-    }
-
-    ctx.timer?.stop(`${this.constructor.name}->notifyAboutDropRatingUpdate`);
-  }
-
-  async notifyAboutDropReactionUpdate(
-    drop: ApiDrop,
-    ctx: RequestContext
-  ): Promise<void> {
-    ctx.timer?.start(`${this.constructor.name}->notifyAboutDropReactionUpdate`);
-    try {
-      const onlineProfiles =
-        await this.wsConnectionRepository.getCurrentlyOnlineCommunityMemberConnectionIds(
-          {
-            groupId: drop.wave.visibility_group_id,
-            waveId: drop.wave.id
-          },
-          ctx
-        );
-      const audienceDrop = await this.restrictQuotesToWaveAudience(drop, ctx);
-      const creditLefts = await this.getCreditLeftsForOnlineProfiles(
-        onlineProfiles,
-        drop
-      );
-      const viewerContexts = await this.moderationDb.getViewerContextsForDrop(
-        {
-          dropId: drop.id,
-          authorProfileId: drop.author.id,
-          viewerProfileIds: onlineProfiles
-            .map(({ profileId }) => profileId)
-            .filter((profileId): profileId is string => profileId !== null)
         },
-        ctx.connection
+        { concurrency: wsFanoutConcurrency() }
       );
-      await Promise.all(
-        onlineProfiles.map(({ connectionId, profileId }) => {
-          const recipientDrop = applyGlobalModerationForRecipient(
-            audienceDrop,
-            profileId
-          );
-          recipientDrop.viewer_context =
-            profileId === null
-              ? { author_blocked: false, drop_hidden: false }
-              : (viewerContexts[profileId] ?? {
-                  author_blocked: false,
-                  drop_hidden: false
-                });
-          return this.appWebSockets.send({
-            connectionId,
-            message: serializeDropReactionUpdateForRecipient(
-              recipientDrop,
-              profileId === null ? 0 : (creditLefts[profileId] ?? 0)
-            )
-          });
-        })
-      );
-    } catch (e) {
-      logDropNotificationFailure(this.logger, 'DROP_REACTION_UPDATE', drop, e);
+    } finally {
+      const settled = await Promise.allSettled(settlements);
+      const failed = settled.filter(
+        (result) => result.status === 'rejected'
+      ).length;
+      if (failed) {
+        this.logger.warn({
+          code: 'WS_DELIVERY_BOOKKEEPING_FAILED',
+          failed,
+          total: settled.length
+        });
+      }
+      batch.metrics.flush();
     }
   }
 
+  /** Stamps delivery times on the frame and records the send's outcome. */
+  private async sendMeasured(
+    connectionId: string,
+    message: string,
+    serverReceivedAt: number | null,
+    measurement: FanoutMeasurement,
+    jwtExpiry?: number,
+    batch?: DeliveryBatch
+  ): Promise<unknown> {
+    const sentAt = Date.now();
+    try {
+      const result = await this.appWebSockets.send({
+        connectionId,
+        message: withDeliveryTimestamps(message, { serverReceivedAt, sentAt }),
+        jwtExpiry,
+        batch,
+        onConnectionRead: () => measurement.connectionRead()
+      });
+      measurement.sendSettled(sentAt, sendOutcome(result));
+      return result;
+    } catch (error) {
+      measurement.sendSettled(sentAt, 'error');
+      throw error;
+    }
+  }
+
+  /**
+   * Sends the sender's typing frame to the wave's typing audience. Resolves
+   * true when at least one recipient socket accepted it, false when nothing
+   * was delivered (no recipient socket, or every send was refused); access
+   * failures reject as before.
+   */
   async notifyAboutUserIsTyping({
     identityId,
     waveId
   }: {
     identityId: string;
     waveId: string;
-  }) {
+  }): Promise<boolean> {
     let stage = 'identity';
     try {
       if (identityId === ANON_USER_ID) {
@@ -707,7 +982,10 @@ export class WsListenersNotifier {
           {
             authenticationContext:
               AuthenticationContext.fromProfileId(identityId)
-          }
+          },
+          // Typing rides on sockets subscribed to this wave, including the
+          // typing-purpose socket that is left out of every other frame.
+          { includeTypingSockets: true }
         )
         .then((res) => res.filter((it) => it.wave_id === waveId));
       // Group metadata visibility alone is insufficient: the sender must also
@@ -716,6 +994,7 @@ export class WsListenersNotifier {
         throw new NotFoundException('Wave not found');
       }
       const connectionIds = recipients.map((it) => it.connectionId);
+      if (!connectionIds.length) return false;
       stage = 'profile_enrichment';
       const [
         mainStageSubscriptions,
@@ -759,22 +1038,29 @@ export class WsListenersNotifier {
         artist_of_prevote_cards: artistOfPrevoteCards[identityId] ?? [],
         is_wave_creator: waveCreatorIds.has(identityId)
       };
-      const now = Time.currentMillis();
-      stage = 'delivery';
-      await Promise.all(
-        connectionIds.map((connectionId: string) =>
-          this.appWebSockets.send({
-            connectionId,
-            message: JSON.stringify(
-              userIsTypingMessage({
-                wave_id: waveId,
-                timestamp: now,
-                profile: profile
-              })
-            )
-          })
-        )
+      const message = JSON.stringify(
+        userIsTypingMessage({
+          wave_id: waveId,
+          timestamp: Time.currentMillis(),
+          profile: profile
+        })
       );
+      stage = 'delivery';
+      let delivered = false;
+      // The same capped pool as every other fan-out, so a busy wave's
+      // typing frames cannot open an unbounded number of sends at once.
+      await forEachConcurrent(
+        connectionIds,
+        async (connectionId: string) => {
+          const result = await this.appWebSockets.send({
+            connectionId,
+            message
+          });
+          if (sendOutcome(result) === 'sent') delivered = true;
+        },
+        { concurrency: wsFanoutConcurrency() }
+      );
+      return delivered;
     } catch (error) {
       if (!isExpectedClientError(error)) {
         try {
@@ -791,6 +1077,25 @@ export class WsListenersNotifier {
     }
   }
 
+  private async getBroadcastAnonymity(drop: ApiDrop, ctx: RequestContext) {
+    const hiddenDropIds = await competitionAnonymityService.hiddenDropIds(
+      getEmbeddedDropIds(drop),
+      ctx,
+      { includeOwner: true }
+    );
+    // API mappers may already have hidden an author's public projection. Keep
+    // real ownership in a separate map used only for moderation decisions.
+    const hiddenDrops = hiddenDropIds.size
+      ? await dropsDb.getDropsByIds(Array.from(hiddenDropIds), ctx.connection)
+      : [];
+    return {
+      hiddenDropIds,
+      authorIdsByDropId: new Map(
+        hiddenDrops.map((entity) => [entity.id, entity.author_id])
+      )
+    };
+  }
+
   private async restrictQuotesToWaveAudience(
     inputDrop: ApiDrop,
     ctx: RequestContext
@@ -805,6 +1110,23 @@ export class WsListenersNotifier {
         ctx
       );
     return redactQuotedDropsOutsideAudience(inputDrop, visibleQuotedDropIds);
+  }
+
+  /** Resolves mentioned wave visibility once per broadcast frame. */
+  private async restrictMentionedWavesToShowable(
+    inputDrop: ApiDrop,
+    ctx: RequestContext
+  ): Promise<ApiDrop> {
+    const mentionedWaveIds = getMentionedWaveIdsWithDetails(inputDrop);
+    if (!mentionedWaveIds.length) {
+      return inputDrop;
+    }
+    const showableWaveIds =
+      await this.wsConnectionRepository.findWaveIdsShowableToAnyAudience(
+        mentionedWaveIds,
+        ctx
+      );
+    return redactMentionedWavesOutsideShowableSet(inputDrop, showableWaveIds);
   }
 
   private async getCreditLeftsForOnlineProfiles(
@@ -857,44 +1179,48 @@ export class WsListenersNotifier {
     if (!dropInfos.length) {
       return;
     }
+    const firstDrop = dropInfos[0];
     const timerName = `${this.constructor.name}->notifyAboutDropDeletes`;
     ctx.timer?.start(timerName);
+    const serverReceivedAt = serverReceivedAtFromTimer(ctx.timer);
+    const measurement = new FanoutMeasurement(
+      WsMessageType.DROP_DELETE,
+      serverReceivedAt
+    );
     try {
       const onlineClients =
         await this.wsConnectionRepository.getCurrentlyOnlineCommunityMemberConnectionIds(
           {
             groupId: visibility_group_id,
-            waveId: dropInfos[0]!.wave_id
+            waveId: firstDrop.wave_id
           },
           ctx
         );
-      const connectionIds = onlineClients.map((it) => it.connectionId);
-      let pendingSends: Promise<void>[] = [];
-      const sendFailures: unknown[] = [];
-      const flushPendingSends = async (): Promise<void> => {
-        const results = await Promise.allSettled(pendingSends);
-        sendFailures.push(
-          ...results.flatMap((result) =>
-            result.status === 'rejected' ? [result.reason] : []
-          )
-        );
-        pendingSends = [];
-      };
-      for (const dropInfo of dropInfos) {
-        const message = JSON.stringify(dropDeleteMessage(dropInfo));
-        for (const connectionId of connectionIds) {
-          pendingSends.push(this.appWebSockets.send({ connectionId, message }));
-          if (pendingSends.length === DROP_DELETE_NOTIFICATION_BATCH_SIZE) {
-            await flushPendingSends();
-          }
-        }
-      }
-      await flushPendingSends();
-      if (sendFailures.length) {
-        throw sendFailures[0];
-      }
+      measurement.queryDone(onlineClients.length * dropInfos.length);
+      measurement.prepareDone();
+      const messages = dropInfos.map((dropInfo) => {
+        measurement.serialized();
+        return JSON.stringify(dropDeleteMessage(dropInfo));
+      });
+      // Deletions go out in order, each to every listener; a failed send
+      // does not stop later ones, and the first failure is rethrown.
+      await this.sendToAll(
+        messages.flatMap((message) =>
+          onlineClients.map(({ connectionId, jwtExpiry }) => ({
+            connectionId,
+            jwtExpiry,
+            message: () => message
+          }))
+        ),
+        serverReceivedAt,
+        measurement
+      );
     } finally {
       ctx.timer?.stop(timerName);
+      measurement.emit({
+        drop_id: dropInfos.length === 1 ? firstDrop.drop_id : null,
+        wave_id: firstDrop.wave_id
+      });
     }
   }
 

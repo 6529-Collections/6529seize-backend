@@ -24,6 +24,13 @@ import {
   OutgoingIdentitySubscriptionsParams
 } from './identity-subscriptions.routes';
 import { Timer } from '../../../time';
+import {
+  chunkSqlInListValues,
+  querySqlInListChunks,
+  SQL_IN_LIST_CHUNK_BYTES
+} from '@/db/sql-in-list-chunks';
+
+const WAVE_SUBSCRIPTIONS_RESYNC_CHUNK = 200;
 
 function coerceDbBoolean(value: boolean | number | string | null): boolean {
   if (typeof value === 'boolean') {
@@ -170,7 +177,8 @@ export class IdentitySubscriptionsDb extends LazyDbAccessCompatibleService {
   }
 
   async findSubscriberIdsAndActionsForTarget(
-    params: IncomingIdentitySubscriptionsParams
+    params: IncomingIdentitySubscriptionsParams,
+    excludedSubscriberId: string | null = null
   ): Promise<Record<string, ActivityEventAction[]>> {
     return this.db
       .execute<{ id: string; actions: string }>(
@@ -179,6 +187,7 @@ export class IdentitySubscriptionsDb extends LazyDbAccessCompatibleService {
              from ${IDENTITY_SUBSCRIPTIONS_TABLE} s
              where s.target_id = :target_id
                and s.target_type = :target_type
+               ${excludedSubscriberId ? 'and s.subscriber_id <> :excludedSubscriberId' : ''}
              group by 1)
       select scr.*
       from scr
@@ -188,6 +197,7 @@ export class IdentitySubscriptionsDb extends LazyDbAccessCompatibleService {
     `,
         {
           ...params,
+          excludedSubscriberId,
           offset: (params.page - 1) * params.page_size,
           limit: params.page_size
         }
@@ -249,14 +259,15 @@ export class IdentitySubscriptionsDb extends LazyDbAccessCompatibleService {
   }
 
   async countDistinctSubscriberIdsForTarget(
-    params: Omit<IncomingIdentitySubscriptionsParams, 'page' | 'page_size'>
+    params: Omit<IncomingIdentitySubscriptionsParams, 'page' | 'page_size'>,
+    excludedSubscriberId: string | null = null
   ): Promise<number> {
     return this.db
       .oneOrNull<{
         cnt: number;
       }>(
-        `select count(distinct subscriber_id) as cnt from ${IDENTITY_SUBSCRIPTIONS_TABLE} where target_id = :target_id and target_type = :target_type`,
-        params
+        `select count(distinct subscriber_id) as cnt from ${IDENTITY_SUBSCRIPTIONS_TABLE} where target_id = :target_id and target_type = :target_type${excludedSubscriberId ? ' and subscriber_id <> :excludedSubscriberId' : ''}`,
+        { ...params, excludedSubscriberId }
       )
       .then((it) => it?.cnt ?? 0);
   }
@@ -323,7 +334,7 @@ export class IdentitySubscriptionsDb extends LazyDbAccessCompatibleService {
       authorId: string;
       mentionedGroups: DropGroupMention[];
     },
-    connection: ConnectionWrapper<any>
+    connection?: ConnectionWrapper<any>
   ): Promise<
     {
       identity_id: string;
@@ -465,19 +476,60 @@ export class IdentitySubscriptionsDb extends LazyDbAccessCompatibleService {
     );
   }
 
-  async resyncWaveSubscriptionsMetrics(connection?: ConnectionWrapper<any>) {
-    await this.db.execute(
-      `
-        update ${WAVE_METRICS_TABLE}
-        inner join (select target_id as wave_id, count(distinct subscriber_id) as followers_count
-                    from ${IDENTITY_SUBSCRIPTIONS_TABLE}
-                    where target_type = 'WAVE' and target_action = 'DROP_CREATED' group by 1) x on x.wave_id = ${WAVE_METRICS_TABLE}.wave_id
-        set ${WAVE_METRICS_TABLE}.subscribers_count = x.followers_count
-        where ${WAVE_METRICS_TABLE}.subscribers_count <> x.followers_count
-    `,
-      undefined,
-      { wrappedConnection: connection }
+  /** Waves any of these identities follows for new drops. */
+  async findFollowedWaveIds(
+    subscriberIds: string[],
+    connection: ConnectionWrapper<any>
+  ): Promise<string[]> {
+    const rows = await querySqlInListChunks(
+      subscriberIds,
+      (ids) =>
+        this.db.execute<{ wave_id: string }>(
+          `
+            select distinct target_id as wave_id
+            from ${IDENTITY_SUBSCRIPTIONS_TABLE}
+            where target_type = 'WAVE' and target_action = 'DROP_CREATED'
+              and subscriber_id in (:ids)
+          `,
+          { ids },
+          { wrappedConnection: connection }
+        ),
+      { sequential: true }
     );
+    return Array.from(new Set(rows.map((row) => row.wave_id)));
+  }
+
+  /**
+   * Recounts the subscribers of these waves only, so a profile merge locks
+   * the merged profiles' waves rather than every wave_metrics row.
+   */
+  async resyncWaveSubscriptionsMetrics(
+    waveIds: string[],
+    connection?: ConnectionWrapper<any>
+  ) {
+    // The list appears twice in each statement.
+    const chunks = chunkSqlInListValues(
+      waveIds,
+      SQL_IN_LIST_CHUNK_BYTES / 2,
+      WAVE_SUBSCRIPTIONS_RESYNC_CHUNK
+    );
+    for (const ids of chunks) {
+      await this.db.execute(
+        `
+          update ${WAVE_METRICS_TABLE}
+          inner join (select target_id as wave_id, count(distinct subscriber_id) as followers_count
+                      from ${IDENTITY_SUBSCRIPTIONS_TABLE}
+                      where target_type = 'WAVE' and target_action = 'DROP_CREATED'
+                        and target_id in (:ids)
+                      group by 1) x on x.wave_id = ${WAVE_METRICS_TABLE}.wave_id
+          set ${WAVE_METRICS_TABLE}.subscribers_count = x.followers_count
+          where ${WAVE_METRICS_TABLE}.wave_id in (:ids)
+            and ${WAVE_METRICS_TABLE}.subscribers_count <> x.followers_count
+        `,
+        { ids },
+        { wrappedConnection: connection }
+      );
+    }
   }
 
   async getWaveSubscription(

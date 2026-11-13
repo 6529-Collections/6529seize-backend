@@ -11,16 +11,78 @@ import { REMEMES_SORT } from '../api-filters';
 import { getPage, getPageSize, returnPaginatedResult } from '../api-helpers';
 import { asyncRouter } from '../async.router';
 import { validateRememe, validateRememeAdd } from './rememes_validation';
+import * as Joi from 'joi';
+import { getValidatedByJoiOrThrow } from '@/api/validation';
+import {
+  canonicalRememeMemeId,
+  MAX_REMEME_MEME_ID_DIGITS
+} from '@/rememe-meme-id';
 
 const router = asyncRouter();
 
+export const MAX_REMEMES_MEME_IDS = 50;
+
+interface RememesQuery {
+  meme_id?: string;
+  contract?: string;
+  id?: string;
+  token_type?: string;
+}
+
+const ALPHANUMERIC = /^[A-Za-z0-9]+$/;
+// One non-negative integer with at most MAX_REMEME_MEME_ID_DIGITS significant
+// digits. Leading zeros are allowed and removed by canonicalRememeMemeId; the
+// two alternatives never match the same input.
+const MEME_ID_PATTERN = `(?:0*[1-9]\\d{0,${MAX_REMEME_MEME_ID_DIGITS - 1}}|0+)`;
+// Up to MAX_REMEMES_MEME_IDS comma-separated meme ids.
+const MEME_IDS_PATTERN = new RegExp(
+  `^${MEME_ID_PATTERN}(?:,${MEME_ID_PATTERN}){0,${MAX_REMEMES_MEME_IDS - 1}}$`
+);
+
+/** Rewrites each meme id to its canonical integer form ("007" -> "7"). */
+function toCanonicalMemeIds(value: string, helpers: Joi.CustomHelpers) {
+  const canonical: string[] = [];
+  for (const piece of value.split(',')) {
+    const id = canonicalRememeMemeId(piece);
+    if (id === null) {
+      return helpers.error('any.invalid');
+    }
+    canonical.push(id);
+  }
+  return canonical.join(',');
+}
+
+export const RememesQuerySchema: Joi.ObjectSchema<RememesQuery> =
+  Joi.object<RememesQuery>({
+    meme_id: Joi.string()
+      .pattern(MEME_IDS_PATTERN, 'comma-separated meme ids')
+      .custom(toCanonicalMemeIds, 'canonical meme ids')
+      .allow(''),
+    contract: Joi.string().pattern(ALPHANUMERIC).max(50).allow(''),
+    id: Joi.string().pattern(ALPHANUMERIC).max(100).allow(''),
+    token_type: Joi.string().pattern(ALPHANUMERIC).max(50).allow('')
+  }).unknown(true);
+
+/** Parses JSON columns in place and drops internal processing fields. */
+export function toPublicRememeRow(row: any): any {
+  row.metadata = JSON.parse(row.metadata);
+  row.media = JSON.parse(row.media);
+  row.contract_opensea_data = JSON.parse(row.contract_opensea_data);
+  row.meme_references = JSON.parse(row.meme_references);
+  row.replicas = row.replicas.split(',');
+  // Media-processing diagnostics are internal; they are not part of the API.
+  delete row.s3_image_processing_error;
+  return row;
+}
+
 router.get(``, async function (req: any, res: any) {
-  const memeIds = req.query.meme_id;
+  const query = getValidatedByJoiOrThrow(req.query, RememesQuerySchema);
+  const memeIds = query.meme_id;
   const pageSize = getPageSize(req, DISTRIBUTION_PAGE_SIZE);
   const page = getPage(req);
-  const contract = req.query.contract;
-  const id = req.query.id;
-  const tokenType = req.query.token_type;
+  const contract = query.contract;
+  const id = query.id;
+  const tokenType = query.token_type;
 
   const sort =
     req.query.sort && REMEMES_SORT.includes(req.query.sort)
@@ -44,13 +106,7 @@ router.get(``, async function (req: any, res: any) {
       sortDir
     )
     .then((result) => {
-      result.data.map((a: any) => {
-        a.metadata = JSON.parse(a.metadata);
-        a.media = JSON.parse(a.media);
-        a.contract_opensea_data = JSON.parse(a.contract_opensea_data);
-        a.meme_references = JSON.parse(a.meme_references);
-        a.replicas = a.replicas.split(',');
-      });
+      result.data.forEach(toPublicRememeRow);
       return returnPaginatedResult(result, req, res);
     });
 });

@@ -1,3 +1,10 @@
+jest.mock('./competition-command-configuration', () => ({
+  loadNativeCommandConfiguration: jest.fn().mockResolvedValue({})
+}));
+jest.mock('@/competitions/native-competition-runtime.service', () => ({
+  nativeCompetitionRuntimeService: { enqueueDueTransitions: jest.fn() }
+}));
+import { nativeCompetitionRuntimeService } from '@/competitions/native-competition-runtime.service';
 import { competitionRepository } from '@/competitions/competition.repository';
 import { competitionLifecycleService } from './competition-lifecycle.service';
 import { ApiCompetitionDraftInput } from '@/api/generated/models/ApiCompetitionDraftInput';
@@ -51,7 +58,10 @@ jest.mock('@/competitions/competition-command.repository', () => ({
   }
 }));
 
-const action = (command: 'pause' | 'resume', reason?: string | null) =>
+const action = (
+  command: 'pause' | 'resume' | 'archive',
+  reason?: string | null
+) =>
   competitionLifecycleService.action(
     'wave',
     'competition',
@@ -67,16 +77,19 @@ const action = (command: 'pause' | 'resume', reason?: string | null) =>
 beforeEach(() => {
   jest.clearAllMocks();
   jest
+    .mocked(competitionCommandRepository.hasActivity)
+    .mockResolvedValue(false);
+  jest
     .mocked(competitionRepository.findCompetitionRecordById)
     .mockResolvedValue({
       id: 'competition',
-      wave_id: 'wave',
-      storage_mode: 'NATIVE'
+      wave_id: 'wave'
     } as never);
   jest
     .mocked(administerCompetitionWave)
     .mockResolvedValue({ wave: { id: 'wave' } } as never);
   jest.mocked(lockNativeCompetition).mockResolvedValue({
+    competition: { id: 'competition' },
     record: {
       id: 'competition',
       wave_id: 'wave',
@@ -100,7 +113,7 @@ it.each([undefined, null, '', '   ', '\n\t'])(
   }
 );
 
-it('persists the trimmed reason in pause and lifecycle history', async () => {
+it('persists the trimmed reason in pause history', async () => {
   await action('pause', '  Checking eligibility\nwith the team.  ');
   expect(competitionCommandRepository.pause).toHaveBeenCalledWith(
     'competition',
@@ -113,10 +126,12 @@ it('persists the trimmed reason in pause and lifecycle history', async () => {
     expect.anything(),
     'PUBLISHED',
     'admin',
-    'Checking eligibility\nwith the team.',
     expect.anything()
   );
   expect(nativeCompetitionRuntimeRepository.enqueueEvent).toHaveBeenCalled();
+  expect(
+    nativeCompetitionRuntimeService.enqueueDueTransitions
+  ).toHaveBeenCalledWith({ id: 'competition' }, expect.any(Number), {});
 });
 
 it('allows resuming without another reason and keeps the original pause record', async () => {
@@ -144,3 +159,32 @@ it('keeps the version guard for a pause with a reason', async () => {
   await expect(action('pause', 'Review')).rejects.toThrow('Version conflict');
   expect(competitionCommandRepository.pause).not.toHaveBeenCalled();
 });
+
+it.each([undefined, null, '', '   ', '\n\t', 'Old client reason'])(
+  'archives a published competition with activity without retaining a reason (%p)',
+  async (reason) => {
+    jest
+      .mocked(competitionCommandRepository.hasActivity)
+      .mockResolvedValue(true);
+    await action('archive', reason);
+    expect(competitionCommandRepository.hasActivity).not.toHaveBeenCalled();
+    expect(competitionCommandRepository.saveCompetition).toHaveBeenCalledWith(
+      expect.objectContaining({
+        lifecycle: 'ARCHIVED',
+        execution_mode: 'DISABLED'
+      }),
+      'admin',
+      expect.anything(),
+      {}
+    );
+    expect(competitionCommandRepository.recordLifecycle).toHaveBeenCalledWith(
+      expect.objectContaining({
+        lifecycle: 'ARCHIVED',
+        execution_mode: 'DISABLED'
+      }),
+      'PUBLISHED',
+      'admin',
+      {}
+    );
+  }
+);

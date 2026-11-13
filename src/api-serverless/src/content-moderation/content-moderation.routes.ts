@@ -254,7 +254,7 @@ router.get(
       Record<string, string>,
       unknown,
       unknown,
-      { limit?: string; before?: string; view?: string }
+      { limit?: string; before?: string; view?: string; case_id?: string }
     >,
     res: Response<ApiContentModerationQueueItem[]>
   ) => {
@@ -269,9 +269,12 @@ router.get(
     if (view !== 'OPEN' && view !== 'RESOLVED') {
       throw new BadRequestException('View must be OPEN or RESOLVED');
     }
+    const caseId = req.query.case_id?.trim();
+    if (caseId !== undefined && !/^[a-f0-9]{64}$/.test(caseId))
+      throw new BadRequestException('Invalid review case');
     const result = await contentModerationService.getQueue(
       profileId,
-      { limit, before, view },
+      { limit, before, view, ...(caseId ? { case_id: caseId } : {}) },
       { timer, authenticationContext }
     );
     res.send(result as unknown as ApiContentModerationQueueItem[]);

@@ -1,5 +1,7 @@
 import { AuthenticationContext } from '@/auth-context';
 import { PageSortDirection } from '@/api/page-request';
+import { NotFoundException } from '@/exceptions';
+import { ProfileProxyActionType } from '@/entities/IProfileProxyAction';
 import {
   WaveDecisionsApiService,
   WaveDecisionsQuerySort
@@ -12,6 +14,20 @@ import {
   WaveOutcomeSubType,
   WaveOutcomeType
 } from '@/entities/IWave';
+
+function proxyContext(actions: ProfileProxyActionType[]) {
+  return new AuthenticationContext({
+    authenticatedWallet: '0xproxy',
+    authenticatedProfileId: 'proxy-profile',
+    roleProfileId: 'grantor-profile',
+    activeProxyActions: actions.map((type, index) => ({
+      id: `action-${index}`,
+      type,
+      credit_amount: null,
+      credit_spent: null
+    }))
+  });
+}
 
 describe('WaveDecisionsApiService', () => {
   it('maps V2 decisions with ApiDropV2 drops and omits null award fields', async () => {
@@ -134,4 +150,117 @@ describe('WaveDecisionsApiService', () => {
       }
     ]);
   });
+});
+
+describe('WaveDecisionsApiService proxy read context', () => {
+  function createService() {
+    const waveDecisionsDb = {
+      searchForDecisions: jest.fn().mockResolvedValue([]),
+      countDecisions: jest.fn().mockResolvedValue(0),
+      findAllDecisionWinners: jest.fn().mockResolvedValue([])
+    };
+    const userGroupsService = {
+      getGroupsUserIsEligibleFor: jest.fn().mockResolvedValue(['private-group'])
+    };
+    const wavesApiDb = {
+      findWaveById: jest.fn().mockResolvedValue({
+        id: 'wave-1',
+        visibility_group_id: 'private-group',
+        parent_wave_id: null
+      }),
+      findOutcomes: jest.fn().mockResolvedValue([]),
+      countOutcomes: jest.fn().mockResolvedValue(0),
+      findOutcomeDistributionItems: jest.fn().mockResolvedValue([]),
+      countOutcomeDistributionItems: jest.fn().mockResolvedValue(0)
+    };
+    const service = new WaveDecisionsApiService(
+      waveDecisionsDb as any,
+      userGroupsService as any,
+      wavesApiDb as any,
+      {} as any,
+      { getDropsByIds: jest.fn().mockResolvedValue([]) } as any,
+      { mapDrops: jest.fn().mockResolvedValue({}) } as any
+    );
+    return { service, waveDecisionsDb, userGroupsService, wavesApiDb };
+  }
+
+  const calls: [
+    string,
+    (service: WaveDecisionsApiService, ctx: any) => Promise<unknown>
+  ][] = [
+    [
+      'searchConcludedWaveDecisionsV2',
+      (service, ctx) =>
+        service.searchConcludedWaveDecisionsV2(
+          {
+            wave_id: 'wave-1',
+            page: 1,
+            page_size: 10,
+            sort_direction: PageSortDirection.DESC,
+            sort: WaveDecisionsQuerySort.decision_time
+          } as any,
+          ctx
+        )
+    ],
+    [
+      'getOutcomes',
+      (service, ctx) =>
+        service.getOutcomes(
+          {
+            wave_id: 'wave-1',
+            page: 1,
+            page_size: 10,
+            sort_direction: PageSortDirection.DESC
+          } as any,
+          ctx
+        )
+    ],
+    [
+      'getOutcomeDistribution',
+      (service, ctx) =>
+        service.getOutcomeDistribution(
+          {
+            wave_id: 'wave-1',
+            outcome_index: 1,
+            page: 1,
+            page_size: 10,
+            sort_direction: PageSortDirection.DESC
+          } as any,
+          ctx
+        )
+    ]
+  ];
+
+  it.each(calls)(
+    '%s hides a private wave from a proxy without READ_WAVE',
+    async (_label, call) => {
+      const { service, userGroupsService } = createService();
+
+      await expect(
+        call(service, {
+          authenticationContext: proxyContext([
+            ProfileProxyActionType.CREATE_WAVE
+          ])
+        })
+      ).rejects.toThrow(NotFoundException);
+      expect(
+        userGroupsService.getGroupsUserIsEligibleFor
+      ).not.toHaveBeenCalled();
+    }
+  );
+
+  it.each(calls)(
+    '%s serves a private wave to a proxy with READ_WAVE for a member grantor',
+    async (_label, call) => {
+      const { service } = createService();
+
+      await expect(
+        call(service, {
+          authenticationContext: proxyContext([
+            ProfileProxyActionType.READ_WAVE
+          ])
+        })
+      ).resolves.toBeDefined();
+    }
+  );
 });

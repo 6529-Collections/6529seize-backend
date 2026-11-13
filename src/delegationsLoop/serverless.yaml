@@ -9,7 +9,7 @@ plugins:
 provider:
   name: aws
   runtime: nodejs22.x
-  memorySize: 2048
+  memorySize: 3072
   timeout: 900
   architecture: arm64
   logRetentionInDays: 60
@@ -29,6 +29,9 @@ functions:
     environment:
       SENTRY_DSN: ${env:SENTRY_DSN}
       SENTRY_ENVIRONMENT: "delegationsLoop_${opt:stage, self:provider.stage}"
+      # Exposes gc() for the collection after each reconsolidation run
+      # (heap-release.ts).
+      NODE_OPTIONS: --expose-gc
 
 resources:
   Resources:

@@ -23,7 +23,10 @@ const PATCHABLE_COLUMNS = [
   'drop_id',
   'wave_id',
   'updated_at',
-  'completed_at'
+  'completed_at',
+  'width',
+  'height',
+  'thumbhash'
 ] as const;
 
 type PatchableColumn = (typeof PATCHABLE_COLUMNS)[number];
@@ -49,12 +52,12 @@ export class DropMediaUploadsDb extends LazyDbAccessCompatibleService {
         `insert into ${DROP_MEDIA_UPLOADS_TABLE}
           (id, profile_id, source, public_key, public_url, ingest_bucket, ingest_key,
            s3_upload_id, declared_mime_type, status, error_reason, drop_id, wave_id,
-           created_at, updated_at, completed_at)
+           created_at, updated_at, completed_at, purpose)
          values
           (:id, :profile_id, :source, :public_key, :public_url, :ingest_bucket, :ingest_key,
            :s3_upload_id, :declared_mime_type, :status, :error_reason, :drop_id, :wave_id,
-           :created_at, :updated_at, :completed_at)`,
-        upload,
+           :created_at, :updated_at, :completed_at, :purpose)`,
+        { ...upload, purpose: upload.purpose ?? null },
         connection ? { wrappedConnection: connection } : undefined
       );
     } finally {
@@ -182,6 +185,54 @@ export class DropMediaUploadsDb extends LazyDbAccessCompatibleService {
       ctx.connection ? { wrappedConnection: ctx.connection } : undefined
     );
     return this.db.getAffectedRows(result) === 1;
+  }
+
+  /**
+   * Claims the sanitizer message of a processing upload: the first claim,
+   * or again once the previous claim is older than `reclaimBefore` while the
+   * sanitizer has still not taken the upload (it stays processing until the
+   * sanitizer starts). False when it is not processing or a recent claim
+   * exists.
+   */
+  async claimSanitizerEnqueue({
+    id,
+    claimedAt,
+    reclaimBefore
+  }: {
+    id: string;
+    claimedAt: number;
+    reclaimBefore: number;
+  }): Promise<boolean> {
+    const result = await this.db.execute(
+      `update ${DROP_MEDIA_UPLOADS_TABLE}
+       set sanitizer_enqueued_at = :claimedAt
+       where id = :id
+         and status = :processing
+         and (sanitizer_enqueued_at is null or sanitizer_enqueued_at < :reclaimBefore)`,
+      {
+        id,
+        claimedAt,
+        reclaimBefore,
+        processing: DropMediaUploadStatus.PROCESSING
+      }
+    );
+    return this.db.getAffectedRows(result) === 1;
+  }
+
+  /** Gives back a claim whose message could not be sent. */
+  async releaseSanitizerEnqueue({
+    id,
+    claimedAt
+  }: {
+    id: string;
+    claimedAt: number;
+  }): Promise<void> {
+    await this.db.execute(
+      `update ${DROP_MEDIA_UPLOADS_TABLE}
+       set sanitizer_enqueued_at = null
+       where id = :id and sanitizer_enqueued_at = :claimedAt`,
+      { id, claimedAt }
+    );
   }
 
   async attachUploadsToDrop({

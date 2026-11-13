@@ -43,7 +43,8 @@ describe('HelpBotDropWriterService', () => {
           replyToDropId: 'source-drop',
           interactionId: 'interaction-1',
           message:
-            "I don't have enough knowledge to help you here. I'm flagging this so the tech team can double-check: @devs6529"
+            "I don't have enough knowledge to help you here. I'm flagging this so the tech team can double-check: @devs6529",
+          allowedGroupMentions: ['devs6529']
         },
         {}
       )
@@ -109,6 +110,48 @@ describe('HelpBotDropWriterService', () => {
       ['wave-1'],
       'DROP_CHANGED',
       {}
+    );
+  });
+
+  it('posts replies with off-site links and unapproved group mentions as plain text', async () => {
+    const createOrUpdateDrop = {
+      execute: jest.fn().mockResolvedValue({
+        drop_id: 'reply-drop',
+        pending_push_notification_ids: []
+      })
+    };
+    const dropsDb = {
+      executeNativeQueriesInTransaction: jest.fn(async (callback) =>
+        callback({})
+      ),
+      updateHideLinkPreview: jest.fn().mockResolvedValue(true)
+    };
+    jest
+      .spyOn(waveScoreService, 'requestWaveScoreRefreshBestEffort')
+      .mockResolvedValue(undefined);
+    const service = new HelpBotDropWriterService(
+      createOrUpdateDrop as never,
+      dropsDb as never,
+      {
+        findDropByIdOrThrow: jest.fn().mockResolvedValue({ id: 'reply-drop' })
+      } as never,
+      { notifyAboutDropUpdate: jest.fn() } as never
+    );
+
+    await service.reply(
+      {
+        botProfileId: 'bot-profile',
+        waveId: 'wave-1',
+        replyToDropId: 'source-drop',
+        interactionId: 'interaction-1',
+        message:
+          'Ask @all or @devs6529. See [TDH](https://6529.io/network/tdh) and [claim](https://example.com/claim).'
+      },
+      {}
+    );
+
+    expect(createOrUpdateDrop.execute.mock.calls[0][0].parts[0].content).toBe(
+      'Ask all or devs6529. See [TDH](https://6529.io/network/tdh) and claim.'
     );
   });
 });

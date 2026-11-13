@@ -1,23 +1,25 @@
 import crypto from 'crypto';
-import { MoreThan } from 'typeorm';
+import { EntityManager, MoreThan } from 'typeorm';
 import { getDataSource } from '../db';
 import { HistoricConsolidatedTDH } from '../entities/ITDH';
 
-export async function computeMerkleRoot(block: number) {
+/** Pass a transaction's manager to include its uncommitted historic rows. */
+export async function computeMerkleRoot(
+  block: number,
+  manager: EntityManager = getDataSource().manager
+) {
   type PartialConsolidatedTDH = Pick<
     HistoricConsolidatedTDH,
     'consolidation_key' | 'boosted_tdh'
   >;
-  const data = (await getDataSource()
-    .getRepository(HistoricConsolidatedTDH)
-    .find({
-      select: ['consolidation_key', 'boosted_tdh'],
-      where: { boosted_tdh: MoreThan(0), block },
-      order: {
-        boosted_tdh: 'DESC',
-        consolidation_key: 'ASC'
-      }
-    })) as PartialConsolidatedTDH[];
+  const data = (await manager.getRepository(HistoricConsolidatedTDH).find({
+    select: ['consolidation_key', 'boosted_tdh'],
+    where: { boosted_tdh: MoreThan(0), block },
+    order: {
+      boosted_tdh: 'DESC',
+      consolidation_key: 'ASC'
+    }
+  })) as PartialConsolidatedTDH[];
 
   const merkleRoot = getMerkleRoot(
     data.map((item) => ({

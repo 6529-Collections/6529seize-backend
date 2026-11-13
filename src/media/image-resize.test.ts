@@ -70,16 +70,66 @@ describe('resizeImageBufferToHeight', () => {
 
     expect(result).toEqual(Buffer.from('sharp-webp'));
     expect(Sharp).toHaveBeenCalledWith(buffer);
-    expect(resize).toHaveBeenCalledWith({ height: 1000 });
+    expect(resize).toHaveBeenCalledWith({
+      height: 1000,
+      withoutEnlargement: true
+    });
     expect(webp).toHaveBeenCalledTimes(1);
     expect(imagescript.GIF.decode).not.toHaveBeenCalled();
+  });
+
+  it('returns the original GIF instead of enlarging it', async () => {
+    const resize = jest.fn();
+    const encode = jest.fn();
+    imagescript.GIF.decode.mockResolvedValue({
+      width: 320,
+      height: 208,
+      resize,
+      encode
+    });
+
+    const result = await resizeImageBufferToHeight({
+      buffer,
+      height: 1000,
+      toWebp: false
+    });
+
+    expect(result).toBe(buffer);
+    expect(resize).not.toHaveBeenCalled();
+    expect(encode).not.toHaveBeenCalled();
+    expect(Sharp).not.toHaveBeenCalled();
+  });
+
+  it('returns the original GIF when the Sharp fallback finds it already fits', async () => {
+    const resize = jest.fn();
+    const metadata = jest
+      .fn()
+      .mockResolvedValue({ format: 'gif', height: 208 * 12, pageHeight: 208 });
+    jest
+      .mocked(Sharp)
+      .mockReturnValue({ metadata, resize } as unknown as SharpInstance);
+    imagescript.GIF.decode.mockRejectedValue(new Error('unreachable'));
+
+    const result = await resizeImageBufferToHeight({
+      buffer,
+      height: 450,
+      toWebp: false
+    });
+
+    expect(result).toBe(buffer);
+    expect(resize).not.toHaveBeenCalled();
   });
 
   it('falls back to animated Sharp when ImageScript fails', async () => {
     const toBuffer = jest.fn().mockResolvedValue(Buffer.from('sharp-gif'));
     const gif = jest.fn().mockReturnValue({ toBuffer });
     const resize = jest.fn().mockReturnValue({ gif });
-    jest.mocked(Sharp).mockReturnValue({ resize } as unknown as SharpInstance);
+    const metadata = jest
+      .fn()
+      .mockResolvedValue({ height: 1200 * 3, pageHeight: 1200 });
+    jest
+      .mocked(Sharp)
+      .mockReturnValue({ metadata, resize } as unknown as SharpInstance);
     imagescript.GIF.decode.mockRejectedValue(new Error('unreachable'));
 
     const result = await resizeImageBufferToHeight({
@@ -90,7 +140,10 @@ describe('resizeImageBufferToHeight', () => {
 
     expect(result).toEqual(Buffer.from('sharp-gif'));
     expect(Sharp).toHaveBeenCalledWith(buffer, { animated: true });
-    expect(resize).toHaveBeenCalledWith({ height: 450 });
+    expect(resize).toHaveBeenCalledWith({
+      height: 450,
+      withoutEnlargement: true
+    });
     expect(gif).toHaveBeenCalledTimes(1);
     expect(Logger.get('IMAGE_RESIZE').warn).toHaveBeenCalledWith(
       '[GIF RESIZE FALLBACK] ImageScript failed; retrying with Sharp [height=450]',
@@ -103,7 +156,10 @@ describe('resizeImageBufferToHeight', () => {
     const toBuffer = jest.fn().mockRejectedValue(sharpError);
     const gif = jest.fn().mockReturnValue({ toBuffer });
     const resize = jest.fn().mockReturnValue({ gif });
-    jest.mocked(Sharp).mockReturnValue({ resize } as unknown as SharpInstance);
+    const metadata = jest.fn().mockResolvedValue({ height: 400 });
+    jest
+      .mocked(Sharp)
+      .mockReturnValue({ metadata, resize } as unknown as SharpInstance);
     imagescript.GIF.decode.mockRejectedValue(new Error('unreachable'));
 
     await expect(

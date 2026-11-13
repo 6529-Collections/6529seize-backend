@@ -21,7 +21,11 @@ jest.mock('yauzl', () => {
     require.resolve('yauzl', { paths: [dirname(sdk)] })
   );
 });
-const { install, selectAsset } = require('../vendor/c2pa-node/postinstall.cjs');
+const {
+  install,
+  selectAsset,
+  localArchiveDirectories
+} = require('../vendor/c2pa-node/postinstall.cjs');
 
 const BINARY = Buffer.from('synthetic native bytes for installer tests');
 const URL =
@@ -110,6 +114,7 @@ describe('pinned C2PA native installer', () => {
         platform: 'linux',
         arch: 'x64',
         fetchImpl,
+        localArchiveDirs: [],
         ...options
       });
     const destination = path.join(packageRoot, 'dist', 'index.node');
@@ -379,5 +384,93 @@ describe('pinned C2PA native installer', () => {
       if (oldLibrary === undefined) delete process.env.C2PA_LIBRARY_PATH;
       else process.env.C2PA_LIBRARY_PATH = oldLibrary;
     }
+  });
+
+  describe('checked-in release archive', () => {
+    function withLocal(bytes: Buffer, archiveBytes = archive()) {
+      const f = fixture(archiveBytes);
+      const local = path.join(f.packageRoot, 'local-archives');
+      mkdirSync(local);
+      writeFileSync(path.join(local, 'c2pa-node_test-v0.9.5.zip'), bytes);
+      return { ...f, local };
+    }
+
+    it('installs from a matching checked-in archive without the network', async () => {
+      const f = withLocal(archive());
+      await expect(
+        f.run({ localArchiveDirs: [path.join(f.packageRoot, 'none'), f.local] })
+      ).resolves.toEqual({ cached: false });
+      expect(f.fetchImpl).not.toHaveBeenCalled();
+      expect(readFileSync(f.destination)).toEqual(BINARY);
+      expect(readdirSync(path.dirname(f.destination))).toEqual(['index.node']);
+    });
+
+    it('fails closed on a corrupt checked-in archive: never used, no network fallback', async () => {
+      const good = archive();
+      const corrupt = Buffer.from(good);
+      corrupt[corrupt.length - 1] ^= 0xff;
+      const f = withLocal(corrupt, good);
+      seedExisting(f);
+      await expect(f.run({ localArchiveDirs: [f.local] })).rejects.toThrow(
+        'Local C2PA archive rejected: C2PA size or SHA256 mismatch'
+      );
+      expect(f.fetchImpl).not.toHaveBeenCalled();
+      expectClean(f);
+    });
+
+    it('fails closed on a checked-in archive of the wrong size', async () => {
+      const good = archive();
+      const f = withLocal(Buffer.concat([good, Buffer.from('x')]), good);
+      seedExisting(f);
+      await expect(f.run({ localArchiveDirs: [f.local] })).rejects.toThrow(
+        'Local C2PA archive rejected'
+      );
+      expect(f.fetchImpl).not.toHaveBeenCalled();
+      expectClean(f);
+    });
+
+    it('downloads the pinned archive when there is no checked-in copy', async () => {
+      const f = fixture();
+      const empty = path.join(f.packageRoot, 'empty');
+      mkdirSync(empty);
+      await expect(f.run({ localArchiveDirs: [empty] })).resolves.toEqual({
+        cached: false
+      });
+      expect(f.fetchImpl).toHaveBeenCalledTimes(1);
+      expect(readFileSync(f.destination)).toEqual(BINARY);
+    });
+
+    it('finds the repository copy from the root and from a service install', () => {
+      const repository = path.resolve('/repo');
+      const native = path.join(repository, 'vendor', 'c2pa-node', 'native');
+      for (const packageRoot of [
+        path.join(repository, 'node_modules', '@contentauth', 'c2pa-node'),
+        path.join(
+          repository,
+          'src',
+          'artworkDocumentationProcessor',
+          'node_modules',
+          '@contentauth',
+          'c2pa-node'
+        )
+      ])
+        expect(localArchiveDirectories(packageRoot)).toContain(native);
+    });
+
+    it('commits the pinned Linux x64 archive byte for byte', () => {
+      const manifest = JSON.parse(
+        readFileSync(
+          path.join(__dirname, '../vendor/c2pa-node/native-assets.json'),
+          'utf8'
+        )
+      );
+      const asset = manifest.assets['linux-x64'];
+      const name = asset.url.slice(asset.url.lastIndexOf('/') + 1);
+      const bytes = readFileSync(
+        path.join(__dirname, '../vendor/c2pa-node/native', name)
+      );
+      expect(bytes.length).toBe(asset.archive_size);
+      expect(hash(bytes)).toBe(asset.archive_sha256);
+    });
   });
 });

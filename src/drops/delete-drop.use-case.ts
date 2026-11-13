@@ -1,3 +1,5 @@
+import { inSequence } from '@/db/in-sequence';
+import { memeCollaborationsService } from '@/meme-collaborations/meme-collaborations.service';
 import {
   withLegacyPrimaryMutation,
   readLegacyMutationSource
@@ -63,11 +65,13 @@ import {
   ChatHistoryPurgeScope
 } from '@/drops/chat-history-purge.db';
 import { canDeleteRepliesInWave } from '@/waves/wave-chat-replies.helpers';
+import { invalidateWaveUnreadCacheForWaveAfterCommit } from '@/api/waves/wave-unread-cache';
+import { invalidateWaveOverviewStaticCacheForDropsAfterCommit } from '@/api/waves/wave-overview-static-cache';
 
 export class DeleteDropUseCase {
   public constructor(
     private readonly reactionsService: ReactionsService,
-    private readonly dropVotingService: DropVotingService,
+    _dropVotingService: DropVotingService,
     private readonly dropsDb: DropsDb,
     private readonly dropBookmarksDb: DropBookmarksDb,
     private readonly curationsDb: CurationsDb,
@@ -171,6 +175,8 @@ export class DeleteDropUseCase {
       drops.map((drop) => drop.id),
       ctx
     );
+    // The description drop is never in a purge batch, so only unread moves.
+    await invalidateWaveUnreadCacheForWaveAfterCommit(wave.id, ctx.connection);
     await waveDropMetricsRefreshService.markWaveDropMetricsDirtyBestEffort(
       [wave.id],
       WaveDropMetricsDirtyRefreshReason.DROP_DELETED,
@@ -228,13 +234,29 @@ export class DeleteDropUseCase {
     return withDropOwnershipMutation(
       ownershipDrop.wave_id,
       { timer, connection },
-      async () => {
+      async (originalPrimary) => {
         const dropId = model.drop_id;
         const nativeEntries = isPermanentDelete
           ? await this.entryHooks.lockForDelete(dropId, { timer, connection })
           : [];
-        const drop = await this.dropsDb.findDropById(dropId, connection);
-        if (drop === null) return null;
+        const current = await this.dropsDb.findDropById(dropId, connection);
+        if (current === null) return null;
+        const primaryEntry = nativeEntries.find(
+          (entry) => entry.competition_id === originalPrimary?.id
+        );
+        const drop = !isPermanentDelete
+          ? current
+          : {
+              ...current,
+              drop_type:
+                primaryEntry?.status === 'WINNER'
+                  ? DropType.WINNER
+                  : primaryEntry?.status === 'ACTIVE'
+                    ? DropType.PARTICIPATORY
+                    : nativeEntries.length
+                      ? DropType.COMPETITION
+                      : ownershipDrop.drop_type
+            };
         const waveId = drop.wave_id;
         const wave = await this.dropsDb.findWaveByIdOrNull(waveId, connection);
         if (!isBackendDelete) {
@@ -256,52 +278,63 @@ export class DeleteDropUseCase {
           await this.entryHooks.beforeDelete(
             drop,
             nativeEntries,
-            resolvedDeleterId,
+            isBackendDelete ? null : resolvedDeleterId,
             { timer, connection }
           );
-        await Promise.all([
-          this.dropsDb.deleteDropParts(dropId, { timer, connection }),
-          this.dropsDb.deleteDropMentions(dropId, { timer, connection }),
-          this.dropsDb.deleteDropMentionedWaves(dropId, {
-            timer,
-            connection
-          }),
-          this.dropsDb.deleteDropGroupMentions(dropId, { timer, connection }),
-          this.dropsDb.deleteDropMedia(dropId, { timer, connection }),
-          this.attachmentsDb.deleteDropAttachments(dropId, {
-            timer,
-            connection
-          }),
-          this.dropsDb.deleteDropReferencedNfts(dropId, {
-            timer,
-            connection
-          }),
-          this.dropsDb.deleteDropMetadata(dropId, { timer, connection }),
-          this.dropsDb.deleteDropEntity(dropId, { timer, connection }),
-          this.reactionsService.deleteReactionsByDrop(dropId, {
-            timer,
-            connection
-          }),
-          this.dropPollsDb.deleteByDropId(dropId, { timer, connection }),
-          !isPermanentDelete && ownershipDrop.drop_type === DropType.CHAT
-            ? undefined
-            : this.dropVotingService.deleteVotes(dropId, { timer, connection }),
-          this.curationsDb.deleteDropCurationsByDropId(dropId, {
-            timer,
-            connection
-          }),
+        await inSequence([
+          () =>
+            memeCollaborationsService.closeDeleted(dropId, {
+              timer,
+              connection
+            }),
+          () => this.dropsDb.deleteDropParts(dropId, { timer, connection }),
+          () => this.dropsDb.deleteDropMentions(dropId, { timer, connection }),
+          () =>
+            this.dropsDb.deleteDropMentionedWaves(dropId, {
+              timer,
+              connection
+            }),
+          () =>
+            this.dropsDb.deleteDropGroupMentions(dropId, { timer, connection }),
+          () => this.dropsDb.deleteDropMedia(dropId, { timer, connection }),
+          () =>
+            this.attachmentsDb.deleteDropAttachments(dropId, {
+              timer,
+              connection
+            }),
+          () =>
+            this.dropsDb.deleteDropReferencedNfts(dropId, {
+              timer,
+              connection
+            }),
+          () => this.dropsDb.deleteDropMetadata(dropId, { timer, connection }),
+          () => this.dropsDb.deleteDropEntity(dropId, { timer, connection }),
+          () =>
+            this.reactionsService.deleteReactionsByDrop(dropId, {
+              timer,
+              connection
+            }),
+          () => this.dropPollsDb.deleteByDropId(dropId, { timer, connection }),
+          () =>
+            this.curationsDb.deleteDropCurationsByDropId(dropId, {
+              timer,
+              connection
+            }),
           ...(isPermanentDelete
             ? [
-                this.artCurationTokenWatchService.unregisterDrop(dropId, {
-                  timer,
-                  connection
-                })
+                () =>
+                  this.artCurationTokenWatchService.unregisterDrop(dropId, {
+                    timer,
+                    connection
+                  })
               ]
             : []),
-          this.dropsDb.deleteDropFeedItems(dropId, { timer, connection }),
-          this.dropsDb.deleteDropNotifications(dropId, { timer, connection }),
-          this.dropsDb.deleteDropSubscriptions(dropId, { timer, connection }),
-          this.dropBookmarksDb.deleteBookmarksByDropId(dropId, connection)
+          () => this.dropsDb.deleteDropFeedItems(dropId, { timer, connection }),
+          () =>
+            this.dropsDb.deleteDropNotifications(dropId, { timer, connection }),
+          () =>
+            this.dropsDb.deleteDropSubscriptions(dropId, { timer, connection }),
+          () => this.dropBookmarksDb.deleteBookmarksByDropId(dropId, connection)
         ]);
         if (isPermanentDelete) {
           await this.dropsDb.applyDeletedDropMetricsDelta(drop, {
@@ -329,6 +362,15 @@ export class DeleteDropUseCase {
             { timer, connection }
           );
         }
+        // Edits also delete (then re-insert): both cached unread summaries and
+        // overviews built on this drop's content move once this commits.
+        await Promise.all([
+          invalidateWaveUnreadCacheForWaveAfterCommit(waveId, connection),
+          invalidateWaveOverviewStaticCacheForDropsAfterCommit(
+            [dropId],
+            connection
+          )
+        ]);
         let dmUnreadRecipientIds: string[] = [];
         if (isPermanentDelete && wave?.is_direct_message === true) {
           const currentReaderIds = await this.findCurrentDmReaderIds(wave, {

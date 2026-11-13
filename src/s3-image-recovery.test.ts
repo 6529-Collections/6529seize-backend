@@ -84,6 +84,10 @@ it('replaces a zero-byte original and creates all variants using one validated d
     Key: originalKey,
     Body: Buffer.from('validated-image')
   });
+  // Token keys are rewritten in place when source media changes.
+  expect(uploads.map((command) => command.input.CacheControl)).toEqual(
+    Array(4).fill('public, max-age=86400')
+  );
   expect(downloadMock).toHaveBeenCalledTimes(1);
   expect(resizeMock).toHaveBeenCalledTimes(3);
 });

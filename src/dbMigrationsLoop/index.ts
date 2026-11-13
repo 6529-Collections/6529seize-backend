@@ -1,10 +1,21 @@
+import {
+  CompetitionScoreResetEntity,
+  CompetitionScoreResetStateEntity
+} from '@/entities/ICompetitionScoreReset';
+import {
+  COMPETITION_SCORE_RESETS_SCOPE,
+  runCompetitionScoreResetsScope
+} from './competition-score-resets-scope';
+import {
+  VotingCreditReleaseEntity,
+  VotingCreditReleaseRecipientEntity
+} from '@/entities/IVotingCreditRelease';
 import { pushNotificationCancellationsDb } from '@/notifications/push-notification-cancellations.db';
 import * as sentryContext from '../sentry.context';
 import { Logger } from '../logging';
 import * as Entities from '../entities/entities';
 import { doInDbContext } from '../secrets';
 import { appFeatures } from '../app-features';
-import { competitionRepository } from '../competitions/competition.repository';
 import { contentModerationDb } from '../content-moderation/content-moderation.db';
 import { Time } from '../time';
 import { moderationReviewDb } from '@/content-moderation/moderation-review.db';
@@ -19,10 +30,30 @@ import { applyClaimsMediaUploadSchema } from './claims-media-schema';
 import { NftLinkEntity } from '@/entities/INftLink';
 import { applyNftLinkPageRetrySchema } from './nft-link-page-retry-schema';
 import { getDataSource } from '@/db';
+import { synchronizeSchemaBounded } from '@/db/bounded-schema-sync';
+import { isDestructivePlanAcknowledgement } from '@/db/schema-sync-plan-check';
+import { CompetitionLifecycleEventEntity } from '@/entities/ICompetition';
 import { installLegacyCompetitionGetFacade } from '@/competitions/legacy-competition-get-facade';
-import { installMigrationCapture } from '@/competitions/competition-migration-capture';
 import { dbSupplier } from '@/sql-executor';
-
+import { deleteUnusedViewerGroupSets } from '@/waves/viewer-group-sets';
+import { assertCompetitionSchemaSyncSafe } from '@/competitions/retired-competition-storage';
+import { MarketDepthPublicationLockEntity } from '@/entities/IMarketDepthPublicationLock';
+import { NFTHistoryReplayJobEntity } from '@/entities/INFTHistoryReplayJob';
+import { NFTHistoryEventEntity } from '@/entities/INFTHistoryEvent';
+import { DropEntity } from '@/entities/IDrop';
+import { applyWaveScoreInputIndexSchema } from './wave-score-input-index-schema';
+import { widenGlobalTdhHistoryBeforeSchemaSync } from './global-tdh-history-schema';
+import { E2eeBlobChunkEntity, E2eeBlobEntity } from '@/entities/IE2ee';
+import {
+  E2EE_BLOB_MIGRATION_SCOPE,
+  runE2eeBlobMigrationScope
+} from './e2ee-blob-migration-scope';
+import { PinnedWaveEntity } from '@/entities/IPinnedWaveEntity';
+import {
+  backfillPinnedWaveOrder,
+  PINNED_WAVE_ORDER_BACKFILL_SCOPE,
+  PINNED_WAVE_ORDER_SCHEMA_SCOPE
+} from './pinned-wave-order-backfill';
 const DBMigrate = require('db-migrate');
 
 const logger = Logger.get('DB_MIGRATIONS_LOOP');
@@ -80,19 +111,186 @@ function schemaScope(event: unknown, scheduledInvocation: boolean) {
     scheduledInvocation ||
     (scope !== 'full' &&
       scope !== 'maintenance' &&
+      scope !== 'competition-lifecycle-events' &&
+      scope !== 'competition-score-resets' &&
+      scope !== COMPETITION_SCORE_RESETS_SCOPE &&
       scope !== 'wallet-transfer-analysis' &&
       scope !== 'claims-media-upload' &&
-      scope !== 'nft-link-page-retry')
+      scope !== 'nft-link-page-retry' &&
+      scope !== 'market-depth-publication-lock' &&
+      scope !== 'voting-credit-returns' &&
+      scope !== 'nft-history-events' &&
+      scope !== 'nft-history-replay' &&
+      scope !== 'wave-score-input-index' &&
+      scope !== E2EE_BLOB_MIGRATION_SCOPE &&
+      scope !== PINNED_WAVE_ORDER_SCHEMA_SCOPE &&
+      scope !== PINNED_WAVE_ORDER_BACKFILL_SCOPE)
   ) {
     throw new Error('Unsupported database schema scope for this invocation');
   }
   return scope;
 }
 
+export const DESTRUCTIVE_PLAN_ACKNOWLEDGEMENT_FIELD =
+  'approved_destructive_plan_sha256';
+
+/**
+ * The SHA-256 of a destructive schema sync plan an operator approved, from
+ * the invocation payload. Only explicit invocations may carry one, and it
+ * must be a lowercase SHA-256 hex digest.
+ */
+export function destructivePlanAcknowledgement(
+  event: unknown,
+  scheduledInvocation: boolean
+): string | null {
+  if (
+    !event ||
+    typeof event !== 'object' ||
+    !Object.prototype.hasOwnProperty.call(
+      event,
+      DESTRUCTIVE_PLAN_ACKNOWLEDGEMENT_FIELD
+    )
+  ) {
+    return null;
+  }
+  const value = (event as Record<string, unknown>)[
+    DESTRUCTIVE_PLAN_ACKNOWLEDGEMENT_FIELD
+  ];
+  if (scheduledInvocation || !isDestructivePlanAcknowledgement(value)) {
+    throw new Error(
+      `${DESTRUCTIVE_PLAN_ACKNOWLEDGEMENT_FIELD} must be the SHA-256 reported for the plan, on an explicit invocation`
+    );
+  }
+  return value as string;
+}
+
 export const handler = sentryContext.wrapLambdaHandler(async (event) => {
   const scheduledInvocation = isScheduledInvocation(event);
   const scope = schemaScope(event, scheduledInvocation);
+  const acknowledgedDestructivePlanSha256 = destructivePlanAcknowledgement(
+    event,
+    scheduledInvocation
+  );
+  // Only added when present, so ordinary invocations keep their options.
+  const schemaSync = acknowledgedDestructivePlanSha256
+    ? { schemaSync: { acknowledgedDestructivePlanSha256 } }
+    : {};
   logger.info(`[RUNNING]`);
+  if (scope === 'competition-score-resets') {
+    await doInDbContext(() => Promise.resolve(), {
+      logger,
+      entities: [CompetitionScoreResetEntity, CompetitionScoreResetStateEntity],
+      syncEntities: true,
+      skipRedis: true,
+      ...schemaSync
+    });
+    return { schema_scope: scope };
+  }
+  if (scope === COMPETITION_SCORE_RESETS_SCOPE) {
+    const report = await doInDbContext(
+      () => runCompetitionScoreResetsScope(event as Record<string, unknown>),
+      { logger, syncEntities: false, skipRedis: true }
+    );
+    return { schema_scope: scope, ...report };
+  }
+  if (scope === PINNED_WAVE_ORDER_SCHEMA_SCOPE) {
+    await doInDbContext(() => Promise.resolve(), {
+      logger,
+      entities: [PinnedWaveEntity],
+      syncEntities: true,
+      skipRedis: true,
+      ...schemaSync
+    });
+    return { schema_scope: scope };
+  }
+  if (scope === PINNED_WAVE_ORDER_BACKFILL_SCOPE) {
+    const report = await doInDbContext(backfillPinnedWaveOrder, {
+      logger,
+      syncEntities: false
+    });
+    return { schema_scope: scope, ...report };
+  }
+  if (scope === 'competition-lifecycle-events') {
+    await doInDbContext(() => Promise.resolve(), {
+      logger,
+      entities: [CompetitionLifecycleEventEntity],
+      syncEntities: true,
+      skipRedis: true,
+      ...schemaSync
+    });
+    return { schema_scope: scope };
+  }
+
+  if (scope === 'nft-history-replay') {
+    await doInDbContext(() => Promise.resolve(), {
+      logger,
+      entities: [NFTHistoryReplayJobEntity],
+      syncEntities: true,
+      skipRedis: true,
+      ...schemaSync
+    });
+    return { schema_scope: scope };
+  }
+
+  if (scope === 'nft-history-events') {
+    await doInDbContext(() => Promise.resolve(), {
+      logger,
+      entities: [NFTHistoryEventEntity],
+      syncEntities: true,
+      skipRedis: true,
+      ...schemaSync
+    });
+    return { schema_scope: scope };
+  }
+
+  if (scope === E2EE_BLOB_MIGRATION_SCOPE) {
+    // Operator-only data job; the deploy workflow never sends this scope.
+    const report = await doInDbContext(
+      () => runE2eeBlobMigrationScope(event as Record<string, unknown>),
+      {
+        logger,
+        entities: [E2eeBlobEntity, E2eeBlobChunkEntity],
+        syncEntities: false,
+        skipRedis: true
+      }
+    );
+    logger.info(`[FINISHED E2EE BLOB MIGRATION] ${JSON.stringify(report)}`);
+    return { schema_scope: scope, ...report };
+  }
+  if (scope === 'wave-score-input-index') {
+    const addedIndexes = await doInDbContext(applyWaveScoreInputIndexSchema, {
+      logger,
+      entities: [DropEntity],
+      syncEntities: false,
+      skipRedis: true
+    });
+    logger.info(
+      `[FINISHED WAVE SCORE INPUT INDEX] added_indexes=${addedIndexes}`
+    );
+    return { schema_scope: scope };
+  }
+  if (scope === 'voting-credit-returns') {
+    await doInDbContext(() => Promise.resolve(), {
+      logger,
+      entities: [VotingCreditReleaseEntity, VotingCreditReleaseRecipientEntity],
+      syncEntities: true,
+      skipRedis: true,
+      ...schemaSync
+    });
+    return { schema_scope: scope };
+  }
+
+  if (scope === 'market-depth-publication-lock') {
+    await doInDbContext(() => Promise.resolve(undefined), {
+      logger,
+      entities: [MarketDepthPublicationLockEntity],
+      syncEntities: true,
+      skipRedis: true,
+      ...schemaSync
+    });
+    logger.info('[FINISHED MARKET DEPTH PUBLICATION LOCK SCHEMA]');
+    return { schema_scope: scope };
+  }
   if (scope === 'nft-link-page-retry') {
     await doInDbContext(
       async () => {
@@ -129,7 +327,8 @@ export const handler = sentryContext.wrapLambdaHandler(async (event) => {
         WalletTransferWalletDailyEntity
       ],
       syncEntities: true,
-      skipRedis: true
+      skipRedis: true,
+      ...schemaSync
     });
     logger.info('[FINISHED WALLET TRANSFER ANALYSIS SCHEMA]');
     return { schema_scope: scope };
@@ -137,12 +336,20 @@ export const handler = sentryContext.wrapLambdaHandler(async (event) => {
   await doInDbContext(
     async () => {
       // Synchronization ignores tables outside the current entity registry; retirement is operator-only.
-      if (!scheduledInvocation && scope === 'full')
-        await getDataSource().synchronize();
       if (!scheduledInvocation && scope === 'full') {
+        await assertCompetitionSchemaSyncSafe(dbSupplier());
+        // TypeORM would drop and re-add the TDH columns to change their types.
+        await widenGlobalTdhHistoryBeforeSchemaSync();
+        await synchronizeSchemaBounded(getDataSource(), {
+          acknowledgedDestructivePlanSha256
+        });
+        await applyWaveScoreInputIndexSchema();
+      }
+      if (
+        !scheduledInvocation &&
+        (scope === 'full' || scope === 'maintenance')
+      ) {
         await installLegacyCompetitionGetFacade(dbSupplier());
-        if (process.env.COMPETITION_MIGRATION_CAPTURE_ENABLED === 'true')
-          await installMigrationCapture(dbSupplier());
       }
       if (
         !scheduledInvocation &&
@@ -156,11 +363,12 @@ export const handler = sentryContext.wrapLambdaHandler(async (event) => {
         await dbmigrate.up();
       }
       await pushNotificationCancellationsDb.deleteExpired();
-      const insertedLegacyCompetitions =
-        await competitionRepository.backfillLegacyMappings({});
-      logger.info(
-        `Ensured immutable legacy competition mappings; inserted ${insertedLegacyCompetitions}`
-      );
+      const deletedViewerGroupSets =
+        await deleteUnusedViewerGroupSets(dbSupplier());
+      if (deletedViewerGroupSets)
+        logger.info(
+          `Deleted ${deletedViewerGroupSets} unused viewer group sets`
+        );
       const deletedModerationChecks =
         await deleteExpiredContentModerationChecksInBatches(
           Time.currentMillis() - Time.days(30).toMillis()

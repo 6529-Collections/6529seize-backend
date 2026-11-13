@@ -1,3 +1,5 @@
+import { CompetitionEntrySummaryDb } from '@/competitions/competition-entry-summary.db';
+import { CompetitionDropVotesDb } from '@/competitions/competition-drop-votes.db';
 import { randomUUID } from 'node:crypto';
 import { NewsletterDb } from '@/newsletter/newsletter.db';
 import { aWave, withWaves } from '@/tests/fixtures/wave.fixture';
@@ -15,24 +17,50 @@ import {
   COMPETITION_PAUSES_TABLE,
   COMPETITION_CAPABILITIES_TABLE,
   COMPETITION_LIFECYCLE_EVENTS_TABLE,
+  COMPETITION_LEADERBOARD_ENTRIES_TABLE,
   DROPS_TABLE,
   METRIC_ROLLUP_HOUR_TABLE,
-  WAVES_TABLE
+  WAVES_TABLE,
+  IDENTITIES_TABLE
 } from '@/constants';
+import {
+  MEME_COLLABORATIONS_TABLE,
+  MEME_COLLABORATION_INVITATIONS_TABLE
+} from '@/constants';
+import { memeCollaborationsDb } from '@/meme-collaborations/meme-collaborations.db';
 import { sqlExecutor } from '@/sql-executor';
 import { describeWithSeed } from '@/tests/_setup/seed';
-import { NativeCompetitionRuntimeRepository } from './native-competition-runtime.repository';
+import {
+  NativeCompetitionRuntimeRepository,
+  nativeCompetitionRuntimeRepository
+} from './native-competition-runtime.repository';
 import { NativeCompetitionRuntimeService } from './native-competition-runtime.service';
 import { competitionRepository } from './competition.repository';
 import { CompetitionExecutionRouter } from './competition-execution.router';
-import { appFeatures } from '@/app-features';
-import { CompetitionCreditService } from './competition-credit.service';
+import {
+  CompetitionCreditBudget,
+  competitionCreditService,
+  CompetitionCreditService
+} from './competition-credit.service';
+import { competitionCreditRepository } from './competition-credit.repository';
+import { anIdentity } from '@/tests/fixtures/identity.fixture';
 import { RequestContext } from '@/request.context';
 import { competitionEventRepository } from './competition-event.repository';
 import { competitionMainStageRepository } from './competition-main-stage.repository';
 import { identitiesDb } from '@/identities/identities.db';
+import {
+  revokeRepBasedDropOverVotes,
+  revokeTdhBasedDropWavesOverVotes
+} from '@/drops/participation-drops-over-vote-revocation';
+import { appFeatures } from '@/app-features';
+import { nativeCompetitionRuntimeService } from './native-competition-runtime.service';
+import { userNotifier } from '@/notifications/user.notifier';
 import { metricsRecorder } from '@/metrics/MetricsRecorder';
 import { memeCardDropMappingsDb } from '@/minting-claims/meme-card-drop-mappings.db';
+import {
+  withLegacyCompetitionGetFacade,
+  withoutLegacyCompetitionGetFacade
+} from './legacy-competition-get-facade';
 
 const rankId = '10000000-0000-4000-8000-000000000001';
 const approveId = '10000000-0000-4000-8000-000000000002';
@@ -45,7 +73,6 @@ function competition(id: string, type: 'RANK' | 'APPROVE') {
     id,
     wave_id: 'shared-hub',
     legacy_wave_id: null,
-    storage_mode: 'NATIVE',
     execution_mode: 'ACTIVE',
     type,
     lifecycle: 'PUBLISHED',
@@ -178,16 +205,26 @@ describeWithSeed(
     const getBudget = jest.fn() as jest.MockedFunction<
       CompetitionCreditService['getBudget']
     >;
+    const getWaveBudgets = jest.fn() as jest.MockedFunction<
+      CompetitionCreditService['getWaveBudgets']
+    >;
+    // DROP budgets have no shared spending: each is the single-profile budget.
+    const getDropBudgets = jest.fn(async (resource, profiles, ctx) => {
+      const budgets = new Map<string, CompetitionCreditBudget>();
+      for (const profile of profiles)
+        budgets.set(
+          profile,
+          await getBudget(resource, profile, undefined, ctx)
+        );
+      return budgets;
+    }) as jest.MockedFunction<CompetitionCreditService['getDropBudgets']>;
     const service = new NativeCompetitionRuntimeService(
       repository,
-      { getBudget },
-      new CompetitionExecutionRouter(competitionRepository, appFeatures),
-      appFeatures
+      { getBudget, getWaveBudgets, getDropBudgets },
+      new CompetitionExecutionRouter()
     );
-    const originalFeature = process.env.FEATURE_NATIVE_COMPETITION_EXECUTION;
 
     beforeEach(() => {
-      process.env.FEATURE_NATIVE_COMPETITION_EXECUTION = 'true';
       getBudget.mockReset();
       getBudget.mockImplementation(async (resource, profileId) => ({
         competition_id: resource.id,
@@ -202,11 +239,25 @@ describeWithSeed(
         min_vote: null,
         max_vote: null
       }));
-    });
-    afterEach(() => {
-      if (originalFeature === undefined)
-        delete process.env.FEATURE_NATIVE_COMPETITION_EXECUTION;
-      else process.env.FEATURE_NATIVE_COMPETITION_EXECUTION = originalFeature;
+      getWaveBudgets.mockReset();
+      getWaveBudgets.mockImplementation(async (resource, profiles, ctx) => {
+        const budgets = new Map<string, CompetitionCreditBudget>();
+        for (const profile of profiles) {
+          const budget = await getBudget(resource, profile, undefined, ctx);
+          const spending = await competitionCreditRepository.getSpending(
+            resource,
+            profile,
+            undefined,
+            ctx
+          );
+          budgets.set(profile, {
+            ...budget,
+            spent: spending.namespace_spent,
+            remaining: budget.available - spending.namespace_spent
+          });
+        }
+        return budgets;
+      });
     });
 
     async function vote(
@@ -254,6 +305,692 @@ describeWithSeed(
         );
       });
     }
+
+    async function largeLeaderboard() {
+      await sqlExecutor.bulkInsert(
+        COMPETITION_ENTRIES_TABLE,
+        Array.from({ length: 473 }, (_, index) => ({
+          ...entries[0],
+          id: `batch-entry-${index}`,
+          drop_id: `batch-drop-${index}`,
+          submitted_at: index + 3
+        })),
+        Object.keys(entries[0])
+      );
+      const active = await repository.listActiveEntries(rankId, {});
+      await sqlExecutor.bulkInsert(
+        COMPETITION_ENTRY_RUNTIME_TABLE,
+        active.map((entry, index) => ({
+          competition_id: rankId,
+          entry_id: entry.id,
+          real_time_rating: index - 200,
+          last_increased_at: 90,
+          over_threshold_since: 5,
+          updated_at: 10
+        })),
+        [
+          'competition_id',
+          'entry_id',
+          'real_time_rating',
+          'last_increased_at',
+          'over_threshold_since',
+          'updated_at'
+        ]
+      );
+      return (await repository.listActiveEntries(rankId, {})).map(
+        (entry, index) => ({
+          entry,
+          rating: index - 250,
+          rank: index + 1,
+          overThresholdSince: index % 2 === 0 ? null : 20,
+          orderingTime: index % 2 === 0 ? undefined : 30,
+          decisionRating: index % 2 === 0 ? undefined : index + 50
+        })
+      );
+    }
+
+    it('bulk TDH revocation changes only over-limit voters, retains history and refreshes once on retry', async () => {
+      const identities = ['first', 'second', 'funded'].map(
+        (profile_id, index) =>
+          anIdentity(
+            { tdh: [10, 20, 100][index] },
+            {
+              profile_id,
+              consolidation_key: `bulk-${profile_id}`,
+              primary_address: `0x${String(index + 1).repeat(40)}`,
+              handle: profile_id
+            }
+          )
+      );
+      await sqlExecutor.bulkInsert(
+        IDENTITIES_TABLE,
+        identities,
+        Object.keys(identities[0])
+      );
+      for (const [entryId, voterProfileId, value] of [
+        [rankEntry, 'first', 100],
+        [secondRankEntry, 'first', -20],
+        [rankEntry, 'second', 40],
+        [rankEntry, 'funded', 100]
+      ] as const) {
+        await sqlExecutor.execute(
+          `insert into ${COMPETITION_VOTES_TABLE} (id,competition_id,entry_id,voter_profile_id,value,credit_spent,created_at,updated_at) values (:id,:competitionId,:entryId,:voterProfileId,:value,abs(:value),1,1)`,
+          {
+            id: randomUUID(),
+            competitionId: rankId,
+            entryId,
+            voterProfileId,
+            value
+          }
+        );
+      }
+      const notifications = jest
+        .spyOn(userNotifier, 'notifyOfDropVote')
+        .mockResolvedValue(undefined);
+      const refreshed = jest.spyOn(
+        nativeCompetitionRuntimeService,
+        'refreshLeaderboardAfterCreditReconciliation'
+      );
+      const full = jest.spyOn(
+        nativeCompetitionRuntimeService,
+        'refreshCompetition'
+      );
+      const budget = jest.spyOn(competitionCreditService, 'getBudget');
+      try {
+        const run = () =>
+          sqlExecutor.executeNativeQueriesInTransaction((connection) =>
+            revokeTdhBasedDropWavesOverVotes(connection)
+          );
+        await run();
+        expect(
+          await sqlExecutor.execute(
+            `select voter_profile_id,value from ${COMPETITION_VOTES_TABLE} where competition_id=:rankId order by voter_profile_id,entry_id`,
+            { rankId }
+          )
+        ).toEqual([
+          { voter_profile_id: 'first', value: 8 },
+          { voter_profile_id: 'first', value: -1 },
+          { voter_profile_id: 'funded', value: 100 },
+          { voter_profile_id: 'second', value: 20 }
+        ]);
+        expect(budget).toHaveBeenCalledTimes(2);
+        expect(notifications).toHaveBeenCalledTimes(3);
+        expect(refreshed).toHaveBeenCalledTimes(1);
+        expect(full).not.toHaveBeenCalled();
+        expect(
+          await sqlExecutor.oneOrNull(
+            `select count(*) as count from ${COMPETITION_VOTE_HISTORY_TABLE} where competition_id=:rankId`,
+            { rankId }
+          )
+        ).toEqual({ count: 3 });
+        expect(
+          await sqlExecutor.oneOrNull(
+            `select count(*) as count from ${COMPETITION_OUTBOX_TABLE} where competition_id=:rankId and json_unquote(json_extract(event,'$.event_type'))='COMPETITION_LEADERBOARD_UPDATED'`,
+            { rankId }
+          )
+        ).toEqual({ count: 1 });
+        await run();
+        expect(budget).toHaveBeenCalledTimes(2);
+        expect(notifications).toHaveBeenCalledTimes(3);
+        expect(refreshed).toHaveBeenCalledTimes(1);
+        expect(
+          await sqlExecutor.oneOrNull(
+            `select count(*) as count from ${COMPETITION_VOTE_HISTORY_TABLE} where competition_id=:rankId`,
+            { rankId }
+          )
+        ).toEqual({ count: 3 });
+      } finally {
+        notifications.mockRestore();
+        refreshed.mockRestore();
+        full.mockRestore();
+        budget.mockRestore();
+      }
+    });
+
+    it('locks only competitions holding votes a revocation could reduce, re-checking each under its lock', async () => {
+      const repId = '10000000-0000-4000-8000-000000000003';
+      const repEntry = '20000000-0000-4000-8000-000000000004';
+      const rep = competition(repId, 'RANK');
+      const repRow = {
+        ...rep,
+        voting_config: { ...rep.voting_config, credit_type: 'REP' }
+      };
+      await sqlExecutor.execute(
+        `insert into ${COMPETITIONS_TABLE} (${Object.keys(repRow).join(',')}) values (${Object.keys(
+          repRow
+        )
+          .map((column) => `:${column}`)
+          .join(',')})`,
+        Object.fromEntries(
+          Object.entries(repRow).map(([column, value]) => [
+            column,
+            value !== null && typeof value === 'object'
+              ? JSON.stringify(value)
+              : value
+          ])
+        )
+      );
+      await sqlExecutor.execute(
+        `insert into ${COMPETITION_ENTRIES_TABLE} (id,competition_id,drop_id,wave_id,submitter_id,status,config_version,submitted_at)
+         values (:repEntry,:repId,'rep-drop','shared-hub','artist','ACTIVE',1,1)`,
+        { repEntry, repId }
+      );
+      const funded = anIdentity(
+        { tdh: 100 },
+        {
+          profile_id: 'funded',
+          consolidation_key: 'lock-funded',
+          primary_address: `0x${'f'.repeat(40)}`,
+          handle: 'funded'
+        }
+      );
+      await sqlExecutor.bulkInsert(
+        IDENTITIES_TABLE,
+        [funded],
+        Object.keys(funded)
+      );
+      // A funded vote in the TDH Rank competition and in the REP one; none
+      // in the Approve competition.
+      for (const [competitionId, entryId, value] of [
+        [rankId, rankEntry, 50],
+        [repId, repEntry, 10]
+      ] as const) {
+        await sqlExecutor.execute(
+          `insert into ${COMPETITION_VOTES_TABLE} (id,competition_id,entry_id,voter_profile_id,value,credit_spent,created_at,updated_at) values (:id,:competitionId,:entryId,'funded',:value,abs(:value),1,1)`,
+          { id: randomUUID(), competitionId, entryId, value }
+        );
+      }
+      const lock = jest.spyOn(
+        nativeCompetitionRuntimeRepository,
+        'lockCompetition'
+      );
+      const lockedIds = () => lock.mock.calls.map(([id]) => id);
+      const tryLock = (id: string) =>
+        sqlExecutor.execute(
+          `select id from ${COMPETITIONS_TABLE} where id = :id for update nowait`,
+          { id }
+        );
+      const votes = () =>
+        sqlExecutor.execute(
+          `select competition_id, value from ${COMPETITION_VOTES_TABLE} order by competition_id`
+        );
+      const before = await votes();
+      try {
+        await sqlExecutor.executeNativeQueriesInTransaction(
+          async (connection) => {
+            await revokeTdhBasedDropWavesOverVotes(connection);
+            // Still inside the revocation transaction: only the TDH
+            // candidate is locked.
+            await expect(tryLock(approveId)).resolves.toHaveLength(1);
+            await expect(tryLock(repId)).resolves.toHaveLength(1);
+            await expect(tryLock(rankId)).rejects.toMatchObject({
+              errno: 3572 // ER_LOCK_NOWAIT
+            });
+          }
+        );
+        expect(lockedIds()).toEqual([rankId]);
+        expect(await votes()).toEqual(before);
+
+        // The REP path, if enabled, locks only the REP competitions the
+        // rating recipient has votes in.
+        lock.mockClear();
+        jest
+          .spyOn(appFeatures, 'isDropOvervoteRevocationEnabled')
+          .mockReturnValue(true);
+        jest
+          .spyOn(competitionCreditService, 'getBudget')
+          .mockResolvedValue({ available: 10 } as never);
+        const refresh = jest
+          .spyOn(nativeCompetitionRuntimeService, 'refreshCompetition')
+          .mockResolvedValue(undefined as never);
+        await sqlExecutor.executeNativeQueriesInTransaction(
+          async (connection) => {
+            await revokeRepBasedDropOverVotes(
+              {
+                rep_recipient_id: 'funded',
+                rep_giver_id: 'giver',
+                credit_category: 'art'
+              },
+              connection
+            );
+            await expect(tryLock(rankId)).resolves.toHaveLength(1);
+            await expect(tryLock(approveId)).resolves.toHaveLength(1);
+            await expect(tryLock(repId)).rejects.toMatchObject({
+              errno: 3572 // ER_LOCK_NOWAIT
+            });
+          }
+        );
+        expect(lockedIds()).toEqual([repId]);
+        expect(refresh).toHaveBeenCalledTimes(1);
+        expect(await votes()).toEqual(before);
+      } finally {
+        jest.restoreAllMocks();
+      }
+    });
+
+    it('batches WAVE budgets and only reconciles voters over their shared credit', async () => {
+      await vote(rankId, rankEntry, -60, 10, 'overspent');
+      await vote(rankId, secondRankEntry, 60, 10, 'overspent');
+      await vote(rankId, rankEntry, 100, 20, 'within-budget');
+      const votes = jest.spyOn(repository, 'getVoterActiveVotes');
+      try {
+        await service.refreshCompetition(rankId, 500);
+        expect(getWaveBudgets).toHaveBeenCalledTimes(1);
+        expect(getWaveBudgets).toHaveBeenCalledWith(
+          expect.objectContaining({ id: rankId }),
+          ['overspent', 'within-budget'],
+          expect.objectContaining({ connection: expect.anything() })
+        );
+        expect(votes.mock.calls.map((call) => call[1])).toEqual(['overspent']);
+        expect(
+          await repository.getVoterActiveVotes(rankId, 'overspent', {})
+        ).toEqual([
+          { entryId: rankEntry, value: -50 },
+          { entryId: secondRankEntry, value: 50 }
+        ]);
+        expect(
+          await repository.getVoterActiveVotes(rankId, 'within-budget', {})
+        ).toEqual([{ entryId: rankEntry, value: 100 }]);
+      } finally {
+        votes.mockRestore();
+      }
+    });
+
+    it('uses real batched credits to reconcile overspending and missing identities while preserving an exactly funded voter', async () => {
+      const identities = ['overspent', 'within-budget'].map((profile, index) =>
+        anIdentity(
+          { tdh: 100 },
+          {
+            profile_id: profile,
+            consolidation_key: profile,
+            primary_address: `0x${(index + 1).toString(16).padStart(40, '0')}`,
+            handle: profile
+          }
+        )
+      );
+      await sqlExecutor.bulkInsert(
+        IDENTITIES_TABLE,
+        identities,
+        Object.keys(identities[0])
+      );
+      await vote(rankId, rankEntry, -60, 10, 'overspent');
+      await vote(rankId, secondRankEntry, 60, 10, 'overspent');
+      await vote(approveId, approveEntry, 90, 10, 'overspent');
+      await vote(rankId, rankEntry, 100, 20, 'within-budget');
+      await vote(rankId, rankEntry, 25, 30, 'missing-credit');
+      const realRepository = new NativeCompetitionRuntimeRepository(
+        () => sqlExecutor
+      );
+      const realService = new NativeCompetitionRuntimeService(
+        realRepository,
+        competitionCreditService,
+        new CompetitionExecutionRouter()
+      );
+      const reads = jest.spyOn(realRepository, 'getVoterActiveVotes');
+      try {
+        await realService.refreshCompetition(rankId, 500);
+        expect(reads.mock.calls.map((call) => call[1])).toEqual([
+          'missing-credit',
+          'overspent'
+        ]);
+      } finally {
+        reads.mockRestore();
+      }
+      expect(
+        await realRepository.getVoterActiveVotes(rankId, 'overspent', {})
+      ).toEqual([
+        { entryId: rankEntry, value: -50 },
+        { entryId: secondRankEntry, value: 50 }
+      ]);
+      expect(
+        await realRepository.getVoterActiveVotes(rankId, 'within-budget', {})
+      ).toEqual([{ entryId: rankEntry, value: 100 }]);
+      expect(
+        await realRepository.getVoterActiveVotes(rankId, 'missing-credit', {})
+      ).toEqual([{ entryId: rankEntry, value: 0 }]);
+      expect(
+        await realRepository.getVoterActiveVotes(approveId, 'overspent', {})
+      ).toEqual([{ entryId: approveEntry, value: 90 }]);
+      expect(
+        await sqlExecutor.execute(
+          `select count(*) as n from ${COMPETITION_VOTE_HISTORY_TABLE} where occurred_at = 500 and competition_id = :rankId`,
+          { rankId }
+        )
+      ).toEqual([{ n: 3 }]);
+    });
+
+    it('reads many voters active votes exactly as one voter at a time', async () => {
+      await vote(rankId, rankEntry, -120, 10, 'voter-a');
+      await vote(rankId, secondRankEntry, 80, 11, 'voter-a');
+      await vote(rankId, secondRankEntry, 5, 12, 'voter-b');
+      await vote(rankId, rankEntry, 7, 13, 'voter-b');
+      await sqlExecutor.execute(
+        `update ${COMPETITION_ENTRIES_TABLE} set status='WITHDRAWN' where id=:id`,
+        { id: secondRankEntry }
+      );
+      const voters = ['voter-a', 'voter-b', 'voter-without-votes'];
+      const batched = await repository.getVotersActiveVotes(rankId, voters, {});
+      for (const voter of voters)
+        expect(batched.get(voter)).toEqual(
+          await repository.getVoterActiveVotes(rankId, voter, {})
+        );
+      expect(batched.get('voter-a')).toEqual([
+        { entryId: rankEntry, value: -120 }
+      ]);
+    });
+
+    it('makes the same DROP reconciliation writes, in the same order, as one voter at a time', async () => {
+      await sqlExecutor.execute(
+        `update ${COMPETITIONS_TABLE} set voting_config = json_set(voting_config, '$.credit_scope', 'DROP') where id = :rankId`,
+        { rankId }
+      );
+      // voter-a: one vote over budget; voter-b: no credit at all; voter-c fits.
+      await vote(rankId, rankEntry, -120, 10, 'voter-a');
+      await vote(rankId, secondRankEntry, 80, 11, 'voter-a');
+      await vote(rankId, rankEntry, 30, 12, 'voter-b');
+      await vote(rankId, secondRankEntry, -40, 13, 'voter-b');
+      await vote(rankId, rankEntry, 90, 14, 'voter-c');
+      getBudget.mockImplementation(async (resource, profileId) => ({
+        competition_id: resource.id,
+        profile_id: profileId,
+        entry_id: null,
+        credit_type: 'TDH',
+        credit_scope: 'DROP',
+        available: profileId === 'voter-b' ? 0 : 100,
+        spent: null,
+        remaining: null,
+        current_vote: null,
+        min_vote: null,
+        max_vote: null
+      }));
+      type Outcome = { votes: unknown[]; history: unknown[] };
+      const rolledBack = new Error('rolled back on purpose');
+      /** Reconciles under the competition lock and reads what it wrote. */
+      const reconcile = async (
+        target: NativeCompetitionRuntimeService,
+        rollback: boolean
+      ): Promise<Outcome> => {
+        let outcome: Outcome | undefined;
+        await repository
+          .executeNativeQueriesInTransaction(async (connection) => {
+            const ctx = { connection };
+            const competition = await repository.lockCompetition(rankId, ctx);
+            await (
+              target as unknown as {
+                reconcileCompetitionCredit(
+                  competition: unknown,
+                  now: number,
+                  ctx: unknown
+                ): Promise<void>;
+              }
+            ).reconcileCompetitionCredit(competition, 500, ctx);
+            const read = (sql: string) =>
+              sqlExecutor.execute(
+                sql,
+                { rankId },
+                { wrappedConnection: connection }
+              );
+            outcome = {
+              votes: await read(
+                `select entry_id, voter_profile_id, value, credit_spent from ${COMPETITION_VOTES_TABLE}
+                 where competition_id = :rankId order by voter_profile_id, entry_id`
+              ),
+              history: await read(
+                `select entry_id, voter_profile_id, value, previous_value, aggregate_value, credit_delta, occurred_at
+                 from ${COMPETITION_VOTE_HISTORY_TABLE}
+                 where competition_id = :rankId and occurred_at = 500 order by sequence`
+              )
+            };
+            if (rollback) throw rolledBack;
+          })
+          .catch((error) => {
+            if (error !== rolledBack) throw error;
+          });
+        return outcome!;
+      };
+      // One voter at a time, as before: no batched budgets or votes.
+      const sequential = new NativeCompetitionRuntimeService(
+        Object.assign(Object.create(repository), {
+          getVotersActiveVotes: async () => new Map()
+        }),
+        {
+          getBudget,
+          getWaveBudgets,
+          getDropBudgets: async () => new Map()
+        },
+        new CompetitionExecutionRouter()
+      );
+      const perVoterReads = jest.spyOn(repository, 'getVoterActiveVotes');
+      const before = await reconcile(sequential, true);
+      expect(perVoterReads).toHaveBeenCalledTimes(3);
+      expect(before.history.length).toBeGreaterThan(0);
+
+      perVoterReads.mockClear();
+      const after = await reconcile(service, false);
+      expect(perVoterReads).not.toHaveBeenCalled();
+      expect(after).toEqual(before);
+      perVoterReads.mockRestore();
+    });
+
+    it('still reconciles independent DROP budgets without a shared-spending shortcut', async () => {
+      await sqlExecutor.execute(
+        `update ${COMPETITIONS_TABLE} set voting_config = json_set(voting_config, '$.credit_scope', 'DROP') where id = :rankId`,
+        { rankId }
+      );
+      await vote(rankId, rankEntry, -120, 10);
+      await vote(rankId, secondRankEntry, 80, 10);
+      await service.refreshCompetition(rankId, 500);
+      expect(getWaveBudgets).not.toHaveBeenCalled();
+      expect(await repository.getVoterActiveVotes(rankId, 'voter', {})).toEqual(
+        [
+          { entryId: secondRankEntry, value: 80 },
+          { entryId: rankEntry, value: -100 }
+        ]
+      );
+    });
+
+    it('orders a pass reconciliation after a vote written since the pass started', async () => {
+      await vote(rankId, rankEntry, -60, 10, 'overspent');
+      // Written after the pass running at 500 started, before it took the lock.
+      await vote(rankId, secondRankEntry, 60, 700, 'overspent');
+
+      await service.refreshCompetition(rankId, 500);
+
+      expect(
+        await repository.getVoterActiveVotes(rankId, 'overspent', {})
+      ).toEqual([
+        { entryId: rankEntry, value: -50 },
+        { entryId: secondRankEntry, value: 50 }
+      ]);
+      const aggregates = async (entryId: string) =>
+        (await repository.listHistory(rankId, {}))
+          .filter((row) => row.entry_id === entryId && row.kind === 'AGGREGATE')
+          .map((row) => [row.occurred_at, row.aggregate_value]);
+      // The reconciled aggregate sorts last; the older history keeps the pass time.
+      expect(await aggregates(secondRankEntry)).toEqual([
+        [700, 60],
+        [700, 50]
+      ]);
+      expect(await aggregates(rankEntry)).toEqual([
+        [10, -60],
+        [500, -50]
+      ]);
+
+      await service.refreshCompetition(rankId, 800);
+      expect(
+        await sqlExecutor.execute(
+          `select entry_id, rating from ${COMPETITION_LEADERBOARD_ENTRIES_TABLE}
+           where competition_id = :rankId order by entry_id`,
+          { rankId }
+        )
+      ).toEqual([
+        { entry_id: rankEntry, rating: -50 },
+        { entry_id: secondRankEntry, rating: 50 }
+      ]);
+    });
+
+    it('retains published missing-entry snapshots while removing unpublished and inactive standings', async () => {
+      await sqlExecutor.execute(
+        `update ${COMPETITION_ENTRIES_TABLE} set status='WITHDRAWN' where id=:id`,
+        { id: secondRankEntry }
+      );
+      const snapshots = [
+        {
+          entry_id: randomUUID(),
+          drop_id: 'retained-orphan',
+          published_at: 12
+        },
+        {
+          entry_id: randomUUID(),
+          drop_id: 'unpublished-orphan',
+          published_at: null
+        },
+        { entry_id: secondRankEntry, drop_id: 'rank-drop-2', published_at: 12 }
+      ].map((row) => ({
+        ...row,
+        competition_id: rankId,
+        rating: 40,
+        real_time_rating: 40,
+        rank: null,
+        submitted_at: 12,
+        updated_at: 12,
+        ordering_time: 12,
+        decision_rating: 90,
+        over_threshold_since: null
+      }));
+      await sqlExecutor.bulkInsert(
+        COMPETITION_LEADERBOARD_ENTRIES_TABLE,
+        snapshots,
+        Object.keys(snapshots[0])
+      );
+      await repository.executeNativeQueriesInTransaction(async (connection) => {
+        const ctx = { connection };
+        await repository.lockCompetition(rankId, ctx);
+        await repository.saveLeaderboard(rankId, [], 500, ctx);
+      });
+      expect(
+        await sqlExecutor.execute(
+          `select * from ${COMPETITION_LEADERBOARD_ENTRIES_TABLE} where competition_id=:rankId`,
+          { rankId }
+        )
+      ).toEqual([snapshots[0]]);
+    });
+
+    it('persists 475 leaderboard entries in bounded batches without replacing vote runtime fields', async () => {
+      const rows = await largeLeaderboard();
+      const batchRepository = new NativeCompetitionRuntimeRepository(
+        () => sqlExecutor
+      );
+      const upsert = jest.spyOn(sqlExecutor, 'bulkUpsert');
+      try {
+        await batchRepository.executeNativeQueriesInTransaction(
+          async (connection) => {
+            const ctx = { connection };
+            await batchRepository.lockCompetition(rankId, ctx);
+            await batchRepository.saveLeaderboard(rankId, rows, 500, ctx);
+            // Exercise duplicate-key updates as well as initial insertion.
+            await batchRepository.saveLeaderboard(
+              rankId,
+              rows.map((row) => ({ ...row, rating: row.rating + 1 })),
+              600,
+              ctx
+            );
+          }
+        );
+        expect(upsert).toHaveBeenCalledTimes(10);
+        expect(upsert.mock.calls.map((call) => call[1].length)).toEqual([
+          100, 100, 100, 100, 75, 100, 100, 100, 100, 75
+        ]);
+        const saved = await sqlExecutor.execute(
+          `select * from ${COMPETITION_LEADERBOARD_ENTRIES_TABLE} where competition_id = :rankId order by \`rank\``,
+          { rankId }
+        );
+        expect(saved).toEqual(
+          rows.map((row) => ({
+            competition_id: rankId,
+            entry_id: row.entry.id,
+            drop_id: row.entry.drop_id,
+            rating: row.rating + 1,
+            real_time_rating: row.entry.real_time_rating,
+            rank: row.rank,
+            submitted_at: row.entry.submitted_at,
+            updated_at: 600,
+            ordering_time: row.orderingTime ?? 600,
+            decision_rating: row.decisionRating ?? row.rating + 1,
+            published_at: null,
+            over_threshold_since: row.overThresholdSince
+          }))
+        );
+        const runtime = await sqlExecutor.execute<{
+          entry_id: string;
+          over_threshold_since: number | null;
+          updated_at: number;
+          last_increased_at: number;
+          real_time_rating: number;
+        }>(
+          `select * from ${COMPETITION_ENTRY_RUNTIME_TABLE} where competition_id = :rankId`,
+          { rankId }
+        );
+        for (const row of rows) {
+          expect(
+            runtime.find((item) => item.entry_id === row.entry.id)
+          ).toMatchObject({
+            real_time_rating: row.entry.real_time_rating,
+            over_threshold_since: row.overThresholdSince,
+            last_increased_at: 90,
+            updated_at: 10
+          });
+        }
+      } finally {
+        upsert.mockRestore();
+      }
+    });
+
+    it('rolls back earlier leaderboard batches, thresholds and outbox events when a later batch fails', async () => {
+      await largeLeaderboard();
+      const batchRepository = new NativeCompetitionRuntimeRepository(
+        () => sqlExecutor
+      );
+      const batchService = new NativeCompetitionRuntimeService(
+        batchRepository,
+        competitionCreditService,
+        new CompetitionExecutionRouter()
+      );
+      const execute = sqlExecutor.execute.bind(sqlExecutor);
+      let thresholdWrites = 0;
+      const failure = jest
+        .spyOn(sqlExecutor, 'execute')
+        .mockImplementation(async (...args) => {
+          if (
+            args[0].includes('set over_threshold_since = case') &&
+            ++thresholdWrites === 2
+          )
+            throw new Error('Injected later batch failure');
+          return execute(...args);
+        });
+      try {
+        await expect(
+          batchService.refreshCompetition(rankId, 500)
+        ).rejects.toThrow('Injected later batch failure');
+      } finally {
+        failure.mockRestore();
+      }
+      expect(
+        await sqlExecutor.execute(
+          `select count(*) as n from ${COMPETITION_LEADERBOARD_ENTRIES_TABLE}`
+        )
+      ).toEqual([{ n: 0 }]);
+      expect(
+        await sqlExecutor.execute(
+          `select distinct over_threshold_since, updated_at from ${COMPETITION_ENTRY_RUNTIME_TABLE}`
+        )
+      ).toEqual([{ over_threshold_since: 5, updated_at: 10 }]);
+      expect(
+        await sqlExecutor.execute(
+          `select count(*) as n from ${COMPETITION_OUTBOX_TABLE}`
+        )
+      ).toEqual([{ n: 0 }]);
+    });
 
     it.each([1, -1])(
       'rolls back a cross-voter aggregate outside the safe integer range with sign %s',
@@ -372,6 +1109,84 @@ describeWithSeed(
       ]);
     });
 
+    it.each([
+      ['nothing is due', 5],
+      ['an entry reaches the threshold', 80]
+    ])(
+      'gives an Approve run off the lock the same result as the locked run when %s',
+      async (_case, rating) => {
+        await vote(approveId, approveEntry, rating, 100);
+        type Outcome = Record<string, unknown[]>;
+        const rolledBack = new Error('rolled back on purpose');
+        const read = async (connection?: unknown): Promise<Outcome> => {
+          const q = (sql: string) =>
+            sqlExecutor.execute(
+              sql,
+              { approveId },
+              connection
+                ? { wrappedConnection: connection as never }
+                : undefined
+            );
+          return {
+            leaderboard: await q(
+              `select entry_id, \`rank\`, rating from ${COMPETITION_LEADERBOARD_ENTRIES_TABLE}
+               where competition_id = :approveId order by \`rank\``
+            ),
+            winners: await q(
+              `select entry_id, final_rating from ${COMPETITION_DECISION_WINNERS_TABLE}
+               where competition_id = :approveId order by entry_id`
+            ),
+            events: await q(
+              `select json_unquote(json_extract(event, '$.event_type')) as type
+               from ${COMPETITION_OUTBOX_TABLE} where competition_id = :approveId
+               order by type`
+            )
+          };
+        };
+        // The locked run, as before this path: inside a caller transaction.
+        let locked: Outcome | undefined;
+        await repository
+          .executeNativeQueriesInTransaction(async (connection) => {
+            await service.processCompetition(approveId, 1001, { connection });
+            locked = await read(connection);
+            throw rolledBack;
+          })
+          .catch((error) => {
+            if (error !== rolledBack) throw error;
+          });
+        // The decision loop's run, off the lock when nothing is due.
+        await service.processCompetition(approveId, 1001);
+        expect(await read()).toEqual(locked);
+        expect(locked!.winners).toHaveLength(rating >= 10 ? 1 : 0);
+      }
+    );
+
+    it('finalizes Rank and Approve without outcomes and never creates placeholder awards', async () => {
+      await sqlExecutor.execute(
+        `update ${COMPETITIONS_TABLE} set outcome_config = json_array() where id in (:ids)`,
+        { ids: [rankId, approveId] }
+      );
+      await vote(rankId, rankEntry, 80, 100);
+      await vote(rankId, secondRankEntry, 20, 100);
+      await vote(approveId, approveEntry, 80, 100);
+      await service.processCompetition(rankId, 1001);
+      await service.processCompetition(approveId, 1001);
+      await service.processDueCompetitions({ now: 1100 });
+      expect(
+        await sqlExecutor.execute(
+          `select competition_id, entry_id from ${COMPETITION_DECISION_WINNERS_TABLE} order by competition_id`
+        )
+      ).toEqual([
+        { competition_id: rankId, entry_id: rankEntry },
+        { competition_id: approveId, entry_id: approveEntry }
+      ]);
+      expect(
+        await sqlExecutor.execute(
+          `select count(*) as n from ${COMPETITION_OUTCOME_AWARDS_TABLE}`
+        )
+      ).toEqual([{ n: 0 }]);
+    });
+
     it('finishes parallel Rank and Approve independently, preserves chat drops and emits immutable awards once', async () => {
       await vote(rankId, rankEntry, 80, 100);
       await vote(approveId, approveEntry, 80, 100);
@@ -478,6 +1293,423 @@ describeWithSeed(
       expect(
         await sqlExecutor.execute(
           `select count(*) as n from ${COMPETITION_DECISIONS_TABLE}`
+        )
+      ).toEqual([{ n: 1 }]);
+    });
+
+    it('projects late votes at the next checkpoint and sorts before pagination', async () => {
+      await sqlExecutor.execute(
+        `update ${COMPETITIONS_TABLE} set decision_config = json_set(decision_config, '$.time_lock_ms', 1000) where id = :rankId`,
+        { rankId }
+      );
+      await vote(rankId, rankEntry, 100, 500);
+      await vote(rankId, secondRankEntry, 70, 1, 'other');
+      await service.refreshCompetition(rankId, 600);
+      const page = { offset: 0, limit: 1, direction: 'DESC' as const };
+      const raw = await competitionRepository.listNativeLeaderboard(
+        rankId,
+        { ...page, sort: 'real_time_rating' },
+        {}
+      );
+      const projected = await competitionRepository.listNativeLeaderboard(
+        rankId,
+        { ...page, sort: 'decision_rating' },
+        {}
+      );
+      const second = await competitionRepository.listNativeLeaderboard(
+        rankId,
+        { ...page, offset: 1, sort: 'decision_rating' },
+        {}
+      );
+      const ascending = await competitionRepository.listNativeLeaderboard(
+        rankId,
+        { ...page, direction: 'ASC', sort: 'decision_rating' },
+        {}
+      );
+      expect(raw.data[0].entry_id).toBe(rankEntry);
+      expect(projected.data[0].entry_id).toBe(secondRankEntry);
+      expect(projected.has_more).toBe(true);
+      expect(second.data[0].entry_id).toBe(rankEntry);
+      expect(ascending.data[0].entry_id).toBe(rankEntry);
+      const batch = await new CompetitionEntrySummaryDb(() => sqlExecutor).read(
+        rankId,
+        [rankEntry, secondRankEntry],
+        null,
+        {}
+      );
+      const single = new CompetitionDropVotesDb(() => sqlExecutor);
+      for (const [entryId, prediction, current] of [
+        [rankEntry, 50, 10],
+        [secondRankEntry, 69, 41]
+      ] as const) {
+        const entry = await competitionRepository.findNativeEntry(
+          rankId,
+          entryId,
+          {}
+        );
+        const score = await single.score(entry!, {});
+        expect(score).toMatchObject({
+          rating: current,
+          decision_rating: prediction
+        });
+        expect(batch.scores.get(entryId)).toMatchObject({
+          rating: current,
+          decision_rating: prediction
+        });
+      }
+    });
+
+    async function leaderboardEvents(): Promise<number> {
+      const row = await sqlExecutor.oneOrNull<{ count: number }>(
+        `select count(*) as count from ${COMPETITION_OUTBOX_TABLE} where competition_id=:rankId and json_unquote(json_extract(event,'$.event_type'))='COMPETITION_LEADERBOARD_UPDATED'`,
+        { rankId }
+      );
+      return Number(row?.count ?? 0);
+    }
+
+    it('queues a leaderboard update only when the saved leaderboard changes', async () => {
+      const before = await leaderboardEvents();
+      await vote(rankId, rankEntry, 10, 500);
+      await service.refreshCompetition(rankId, 600);
+      expect(await leaderboardEvents()).toBe(before + 1);
+
+      // The timer loops refresh every minute: unchanged sends nothing.
+      await service.refreshCompetition(rankId, 660);
+      await service.refreshCompetition(rankId, 720);
+      expect(await leaderboardEvents()).toBe(before + 1);
+
+      // A vote that changes the standings sends exactly one more.
+      await vote(rankId, secondRankEntry, 20, 730, 'other');
+      await service.refreshCompetition(rankId, 780);
+      await service.refreshCompetition(rankId, 840);
+      expect(await leaderboardEvents()).toBe(before + 2);
+    });
+
+    it('counts time-locked rating drift as a change but not the restamped snapshot time', async () => {
+      await sqlExecutor.execute(
+        `update ${COMPETITIONS_TABLE} set decision_config = json_set(decision_config, '$.time_lock_ms', 1000) where id = :rankId`,
+        { rankId }
+      );
+      const before = await leaderboardEvents();
+      await vote(rankId, rankEntry, 100, 500);
+      await service.refreshCompetition(rankId, 600);
+      // The weighted rating keeps rising until the lock has passed.
+      await service.refreshCompetition(rankId, 700);
+      expect(await leaderboardEvents()).toBe(before + 2);
+
+      await service.refreshCompetition(rankId, 2000);
+      const settled = await leaderboardEvents();
+      // Fully weighted: later refreshes only restamp ordering and publish
+      // times, which clients do not see as a change.
+      await service.refreshCompetition(rankId, 2100);
+      await service.refreshCompetition(rankId, 2200);
+      expect(await leaderboardEvents()).toBe(settled);
+      const saved = await sqlExecutor.execute<{ published_at: number }>(
+        `select published_at from ${COMPETITION_LEADERBOARD_ENTRIES_TABLE} where competition_id=:rankId and entry_id=:rankEntry`,
+        { rankId, rankEntry }
+      );
+      expect(saved.map((row) => Number(row.published_at))).toEqual([2200]);
+    });
+
+    async function timeLock(): Promise<void> {
+      await sqlExecutor.execute(
+        `update ${COMPETITIONS_TABLE} set decision_config = json_set(decision_config, '$.time_lock_ms', 1000) where id = :rankId`,
+        { rankId }
+      );
+    }
+
+    /** The visible leaderboard, as clients read it. */
+    async function savedLeaderboard() {
+      return sqlExecutor.execute<{
+        entry_id: string;
+        rating: number;
+        rank: number;
+        decision_rating: number;
+        ordering_time: number;
+      }>(
+        `select entry_id, rating, \`rank\`, decision_rating, ordering_time from ${COMPETITION_LEADERBOARD_ENTRIES_TABLE}
+         where competition_id = :rankId order by entry_id`,
+        { rankId }
+      );
+    }
+
+    it('refreshes a time-locked leaderboard off the lock to the rows the locked refresh writes', async () => {
+      await timeLock();
+      await vote(rankId, rankEntry, 100, 500);
+      await vote(rankId, secondRankEntry, 70, 1, 'other');
+
+      await expect(
+        service.refreshLeaderboardOffLock(rankId, 600)
+      ).resolves.toBe('written');
+      const offLock = await savedLeaderboard();
+      await service.refreshCompetition(rankId, 600);
+      expect(await savedLeaderboard()).toEqual(offLock);
+      expect(offLock).toHaveLength(2);
+    });
+
+    it('writes nothing when a vote lands during the computation, keeping the newer leaderboard', async () => {
+      await timeLock();
+      await vote(rankId, rankEntry, 100, 500);
+      await service.refreshCompetition(rankId, 600);
+
+      const outcome = await service.refreshLeaderboardOffLock(
+        rankId,
+        700,
+        {},
+        {
+          afterCompute: async () => {
+            // The vote path refreshes the leaderboard itself, newer than the
+            // computation that is about to be written.
+            await vote(rankId, secondRankEntry, 50, 650, 'other');
+            await service.refreshCompetition(rankId, 690);
+          }
+        }
+      );
+      expect(outcome).toBe('changed');
+      const newer = await savedLeaderboard();
+      expect(
+        Number(newer.find((row) => row.entry_id === secondRankEntry)?.rating)
+      ).toBeGreaterThan(0);
+
+      // The next run computes from the new inputs and writes.
+      await expect(
+        service.refreshLeaderboardOffLock(rankId, 700)
+      ).resolves.toBe('written');
+      expect(
+        Number(
+          (await savedLeaderboard()).find(
+            (row) => row.entry_id === secondRankEntry
+          )?.rating
+        )
+      ).toBeGreaterThan(0);
+    });
+
+    it('retries off the lock after a vote lands mid-computation and writes what the locked refresh writes', async () => {
+      await timeLock();
+      await vote(rankId, rankEntry, 100, 500);
+      await service.refreshCompetition(rankId, 600);
+      let attempt = 0;
+      const lockedFallback = jest.spyOn(service, 'refreshCompetition');
+      try {
+        await service.refreshLeaderboardForSnapshot(
+          rankId,
+          700,
+          {},
+          {
+            afterCompute: async () => {
+              // A vote during the first computation only.
+              if (++attempt === 1)
+                await vote(rankId, secondRankEntry, 50, 650, 'other');
+            }
+          }
+        );
+        expect(attempt).toBe(2);
+        expect(lockedFallback).not.toHaveBeenCalled();
+      } finally {
+        lockedFallback.mockRestore();
+      }
+      // The retry computed from the new vote (time-locked, so it counts
+      // only for the 50 ms it has been held at 700).
+      const retried = await savedLeaderboard();
+      expect(
+        Number(retried.find((row) => row.entry_id === secondRankEntry)?.rating)
+      ).toBeGreaterThan(0);
+      // The locked refresh of the same inputs at the same time writes the
+      // same rows.
+      await service.refreshCompetition(rankId, 700);
+      expect(await savedLeaderboard()).toEqual(retried);
+    });
+
+    it('writes nothing when an entry is submitted during the computation', async () => {
+      await timeLock();
+      await vote(rankId, rankEntry, 100, 500);
+      await service.refreshCompetition(rankId, 600);
+      const before = await savedLeaderboard();
+
+      const outcome = await service.refreshLeaderboardOffLock(
+        rankId,
+        700,
+        {},
+        {
+          afterCompute: async () => {
+            await sqlExecutor.execute(
+              `insert into ${COMPETITION_ENTRIES_TABLE}
+                 (id, competition_id, wave_id, drop_id, submitter_id, status, config_version, submitted_at)
+               values (:id, :rankId, 'shared-hub', 'late-drop', 'artist', 'ACTIVE', 1, 650)`,
+              { id: randomUUID(), rankId }
+            );
+          }
+        }
+      );
+
+      expect(outcome).toBe('changed');
+      expect(await savedLeaderboard()).toEqual(before);
+    });
+
+    it('writes nothing when a pause is added during the computation', async () => {
+      await timeLock();
+      await vote(rankId, rankEntry, 100, 500);
+      await service.refreshCompetition(rankId, 600);
+      const before = await savedLeaderboard();
+
+      const outcome = await service.refreshLeaderboardOffLock(
+        rankId,
+        700,
+        {},
+        {
+          afterCompute: async () => {
+            await sqlExecutor.execute(
+              `insert into ${COMPETITION_PAUSES_TABLE} (id, competition_id, start_time, end_time) values (:id, :rankId, 650, null)`,
+              { id: randomUUID(), rankId }
+            );
+          }
+        }
+      );
+
+      expect(outcome).toBe('changed');
+      expect(await savedLeaderboard()).toEqual(before);
+    });
+
+    it('falls back to the locked refresh in the snapshotter when inputs change during the computation', async () => {
+      await timeLock();
+      await vote(rankId, rankEntry, 100, 500);
+      await service.refreshCompetition(rankId, 600);
+
+      await service.refreshLeaderboardForSnapshot(
+        rankId,
+        700,
+        {},
+        {
+          afterCompute: async () => {
+            await vote(rankId, secondRankEntry, 50, 650, 'other');
+          }
+        }
+      );
+
+      // The locked fallback ran, so the snapshot includes the late vote.
+      expect(
+        Number(
+          (await savedLeaderboard()).find(
+            (row) => row.entry_id === secondRankEntry
+          )?.rating
+        )
+      ).toBeGreaterThan(0);
+    });
+
+    it('writes nothing when an entry revision resets scores during the computation', async () => {
+      await timeLock();
+      await vote(rankId, rankEntry, 100, 500);
+      await service.refreshCompetition(rankId, 600);
+      const before = await savedLeaderboard();
+
+      const outcome = await service.refreshLeaderboardOffLock(
+        rankId,
+        700,
+        {},
+        {
+          afterCompute: async () => {
+            // A revision reset reaches the leaderboard only through the outbox.
+            await repository.executeNativeQueriesInTransaction(
+              async (connection) => {
+                const ctx = { connection };
+                await repository.lockCompetition(rankId, ctx);
+                await repository.enqueueEvent(
+                  {
+                    key: `entry-content:${rankEntry}:2`,
+                    event_type: 'COMPETITION_ENTRY_UPDATED',
+                    occurred_at: Date.now(),
+                    wave_id: 'shared-hub',
+                    competition_id: rankId,
+                    competition_entry_id: rankEntry,
+                    drop_id: 'rank-drop',
+                    data: { content_revision: 2 }
+                  },
+                  ctx
+                );
+              }
+            );
+          }
+        }
+      );
+
+      expect(outcome).toBe('changed');
+      expect(await savedLeaderboard()).toEqual(before);
+    });
+
+    it('falls back to the locked decision run when inputs change during its off-lock computation', async () => {
+      await timeLock();
+      await sqlExecutor.execute(
+        `update ${COMPETITIONS_TABLE} set decision_config = json_set(decision_config, '$.next_decision_time', 1000) where id = :rankId`,
+        { rankId }
+      );
+      await vote(rankId, rankEntry, 100, 500);
+      await service.processCompetition(rankId, 600);
+      const refreshOffLock = service.refreshLeaderboardOffLock.bind(service);
+      const outcomes: string[] = [];
+      const spy = jest
+        .spyOn(service, 'refreshLeaderboardOffLock')
+        .mockImplementationOnce(async (id, now, ctx, _hooks, report) => {
+          const outcome = await refreshOffLock(
+            id,
+            now,
+            ctx,
+            {
+              afterCompute: () =>
+                vote(rankId, secondRankEntry, 50, 650, 'other')
+            },
+            report
+          );
+          outcomes.push(outcome);
+          return outcome;
+        });
+      try {
+        await service.processCompetition(rankId, 700);
+      } finally {
+        spy.mockRestore();
+      }
+
+      expect(outcomes).toEqual(['changed']);
+      // The locked run followed, so the leaderboard includes the late vote...
+      expect(
+        Number(
+          (await savedLeaderboard()).find(
+            (row) => row.entry_id === secondRankEntry
+          )?.rating
+        )
+      ).toBeGreaterThan(0);
+      // ...and nothing was due, so nothing was decided.
+      expect(
+        await sqlExecutor.execute(
+          `select count(*) as n from ${COMPETITION_DECISIONS_TABLE} where competition_id = :rankId`,
+          { rankId }
+        )
+      ).toEqual([{ n: 0 }]);
+    });
+
+    it('refreshes an undue time-locked Rank off the lock from the decision run and still decides when due', async () => {
+      await timeLock();
+      await sqlExecutor.execute(
+        `update ${COMPETITIONS_TABLE} set decision_config = json_set(decision_config, '$.next_decision_time', 1000) where id = :rankId`,
+        { rankId }
+      );
+      await vote(rankId, rankEntry, 100, 500);
+
+      // Not due (next decision 1000): leaderboard written, no decision.
+      await service.processCompetition(rankId, 900);
+      expect(await savedLeaderboard()).toHaveLength(2);
+      expect(
+        await sqlExecutor.execute(
+          `select count(*) as n from ${COMPETITION_DECISIONS_TABLE} where competition_id = :rankId`,
+          { rankId }
+        )
+      ).toEqual([{ n: 0 }]);
+
+      // Due: the full locked run decides as before.
+      await service.processCompetition(rankId, 3000);
+      expect(
+        await sqlExecutor.execute(
+          `select count(*) as n from ${COMPETITION_DECISIONS_TABLE} where competition_id = :rankId`,
+          { rankId }
         )
       ).toEqual([{ n: 1 }]);
     });
@@ -622,7 +1854,7 @@ describeWithSeed(
       ).toEqual([{ n: 5 }]);
     });
 
-    it('leaves cancelled, shadow and feature-disabled competitions untouched', async () => {
+    it('leaves cancelled, shadow, disabled and draft competitions untouched', async () => {
       await vote(rankId, rankEntry, 20, 100);
       await sqlExecutor.execute(
         `update ${COMPETITIONS_TABLE} set lifecycle = 'CANCELLED' where id = :rankId`,
@@ -635,10 +1867,14 @@ describeWithSeed(
       );
       await service.processCompetition(rankId, 1001);
       await sqlExecutor.execute(
-        `update ${COMPETITIONS_TABLE} set execution_mode = 'ACTIVE' where id = :rankId`,
+        `update ${COMPETITIONS_TABLE} set execution_mode = 'DISABLED' where id = :rankId`,
         { rankId }
       );
-      process.env.FEATURE_NATIVE_COMPETITION_EXECUTION = 'false';
+      await service.processCompetition(rankId, 1001);
+      await sqlExecutor.execute(
+        `update ${COMPETITIONS_TABLE} set execution_mode='ACTIVE',lifecycle='DRAFT' where id=:rankId`,
+        { rankId }
+      );
       await service.processCompetition(rankId, 1001);
       expect(
         await sqlExecutor.execute(
@@ -731,193 +1967,346 @@ describeWithSeed(
       ).toEqual([{ n: 1 }]);
     });
 
-    it('gates claims, badges, metrics and active TDH by explicit capability within the same wave', async () => {
+    it('freezes collaboration credits when the designated native Main Stage chooses its next mint', async () => {
       await sqlExecutor.execute(
         `insert into ${COMPETITION_CAPABILITIES_TABLE} (capability, competition_id, wave_id, assigned_at) values ('MAIN_STAGE', :rankId, 'shared-hub', 0)`,
         { rankId }
       );
+      await sqlExecutor.execute(
+        `insert into ${MEME_COLLABORATIONS_TABLE} (drop_id,author_id,author_handle,wave_id,artwork_hash,artwork,base_artist,terms,terms_version) values ('rank-drop','artist','artist','shared-hub',:hash,:artwork,'Artist',null,:hash)`,
+        {
+          hash: 'a'.repeat(64),
+          artwork: JSON.stringify({
+            name: 'Artwork',
+            description: 'Description',
+            image_url: 'https://example.com/art.png',
+            animation_url: null
+          })
+        }
+      );
+      await sqlExecutor.execute(
+        `insert into ${MEME_COLLABORATION_INVITATIONS_TABLE} (id,drop_id,profile_id,profile_handle,status,created_at) values ('accepted','rank-drop','B','artistB','ACCEPTED',1),('pending','rank-drop','C','artistC','PENDING',2)`
+      );
       await vote(rankId, rankEntry, 80, 100);
-      await vote(approveId, approveEntry, 90, 100);
-      expect(
-        await competitionMainStageRepository.totalActiveVotes(null, {})
-      ).toBe(80);
-      expect(
-        await identitiesDb.getActiveMainStageDropIds(['artist'], {})
-      ).toEqual({ artist: ['rank-drop', 'rank-drop-2'] });
-      await repository.executeNativeQueriesInTransaction(async (connection) => {
-        const ctx = { connection };
-        await metricsRecorder.recordNativeCompetitionSubmission(
-          { competitionId: rankId },
-          ctx
-        );
-        await metricsRecorder.recordNativeCompetitionSubmission(
-          { competitionId: approveId },
-          ctx
-        );
-        await metricsRecorder.recordNativeCompetitionVote(
-          { competitionId: rankId, voterId: 'voter', voteChange: 80 },
-          ctx
-        );
-        await metricsRecorder.recordNativeCompetitionVote(
-          { competitionId: approveId, voterId: 'voter', voteChange: 90 },
-          ctx
-        );
+      await service.processCompetition(rankId, 1001);
+      const collaboration = await memeCollaborationsDb.context('rank-drop', {});
+      expect(collaboration?.closed_at).not.toBeNull();
+      expect(collaboration?.credit).toEqual({
+        artist: 'Artist & artistB',
+        artist_profiles: 'artist, artistB',
+        collab: true
       });
       expect(
+        (await memeCollaborationsDb.invitations('rank-drop', {})).map(
+          (invitation) => invitation.status
+        )
+      ).toEqual(['ACCEPTED', 'CLOSED']);
+    });
+
+    it.each([false, true])(
+      'gates claims, badges, metrics and active TDH by explicit capability within the same wave (GET facade: %s)',
+      async (useFacade) => {
+        const readBadges = useFacade
+          ? withLegacyCompetitionGetFacade
+          : withoutLegacyCompetitionGetFacade;
         await sqlExecutor.execute(
-          `select metric, event_count, value_sum from ${METRIC_ROLLUP_HOUR_TABLE} order by metric`
-        )
-      ).toEqual([
-        { metric: 'MAIN_STAGE_SUBMISSION', event_count: 1, value_sum: 1 },
-        { metric: 'MAIN_STAGE_VOTE', event_count: 1, value_sum: 80 }
-      ]);
-      await service.processCompetition(rankId, 1001);
-      await service.processCompetition(approveId, 1001);
-      expect(
-        await competitionMainStageRepository.totalActiveVotes(null, {})
-      ).toBe(0);
-      expect(
-        await identitiesDb.getMainStageWinnerDropIds(['artist'], {})
-      ).toEqual({ artist: ['rank-drop'] });
-      const newsletter = new NewsletterDb(() => sqlExecutor);
-      const newsletterWindow = { start: 0, end: 2000, scheduled: false };
-      expect(
-        (await newsletter.winners(newsletterWindow, {})).map((winner) => [
-          winner.competition_id,
-          winner.entry_id
-        ])
-      ).toEqual([[rankId, rankEntry]]);
-      const decisions = await sqlExecutor.execute<{
-        id: string;
-        competition_id: string;
-      }>(`select id, competition_id from ${COMPETITION_DECISIONS_TABLE}`);
-      const decisionId = decisions.find(
-        (row) => row.competition_id === rankId
-      )!.id;
-      const wrongDecisionId = decisions.find(
-        (row) => row.competition_id === approveId
-      )!.id;
-      expect(
-        await competitionEventRepository.getPrivilegedWinners(
-          approveId,
-          wrongDecisionId,
-          {}
-        )
-      ).toEqual([]);
-      await repository.executeNativeQueriesInTransaction(async (connection) => {
-        const ctx = { connection };
-        const context = {
-          competition_id: rankId,
-          competition_entry_id: rankEntry,
-          decision_id: decisionId
-        };
-        await competitionEventRepository.assertNativeClaim(
-          context,
-          'rank-drop',
-          ctx
+          `insert into ${COMPETITION_CAPABILITIES_TABLE} (capability, competition_id, wave_id, assigned_at) values ('MAIN_STAGE', :rankId, 'shared-hub', 0)`,
+          { rankId }
         );
-        await competitionEventRepository.recordNativeClaim(
-          context,
-          'rank-drop',
-          ctx
-        );
-        await competitionEventRepository.recordNativeClaim(
-          context,
-          'rank-drop',
-          ctx
-        );
-        await memeCardDropMappingsDb.setMemeCardIdForDrop(
-          'rank-drop',
-          800,
-          'unrelated-legacy-wave',
-          ctx
+        await vote(rankId, rankEntry, 80, 100);
+        await vote(approveId, approveEntry, 90, 100);
+        expect(
+          await competitionMainStageRepository.totalActiveVotes(null, {})
+        ).toBe(80);
+        expect(
+          await readBadges(() =>
+            identitiesDb.getActiveMainStageDropIds(['artist'], {})
+          )
+        ).toEqual({ artist: ['rank-drop', 'rank-drop-2'] });
+        await repository.executeNativeQueriesInTransaction(
+          async (connection) => {
+            const ctx = { connection };
+            await metricsRecorder.recordNativeCompetitionSubmission(
+              { competitionId: rankId },
+              ctx
+            );
+            await metricsRecorder.recordNativeCompetitionSubmission(
+              { competitionId: approveId },
+              ctx
+            );
+            await metricsRecorder.recordNativeCompetitionVote(
+              { competitionId: rankId, voterId: 'voter', voteChange: 80 },
+              ctx
+            );
+            await metricsRecorder.recordNativeCompetitionVote(
+              { competitionId: approveId, voterId: 'voter', voteChange: 90 },
+              ctx
+            );
+          }
         );
         expect(
-          await memeCardDropMappingsDb.isMainStageWinnerDrop(
-            'approve-drop',
+          await sqlExecutor.execute(
+            `select metric, event_count, value_sum from ${METRIC_ROLLUP_HOUR_TABLE} order by metric`
+          )
+        ).toEqual([
+          { metric: 'MAIN_STAGE_SUBMISSION', event_count: 1, value_sum: 1 },
+          { metric: 'MAIN_STAGE_VOTE', event_count: 1, value_sum: 80 }
+        ]);
+        await service.processCompetition(rankId, 1001);
+        await service.processCompetition(approveId, 1001);
+        expect(
+          await competitionMainStageRepository.totalActiveVotes(null, {})
+        ).toBe(0);
+        expect(
+          await readBadges(() =>
+            identitiesDb.getMainStageWinnerDropIds(['artist'], {})
+          )
+        ).toEqual({ artist: ['rank-drop'] });
+        const newsletter = new NewsletterDb(() => sqlExecutor);
+        const newsletterWindow = { start: 0, end: 2000, scheduled: false };
+        expect(
+          (await newsletter.winners(newsletterWindow, {})).map((winner) => [
+            winner.competition_id,
+            winner.entry_id
+          ])
+        ).toEqual([[rankId, rankEntry]]);
+        const decisions = await sqlExecutor.execute<{
+          id: string;
+          competition_id: string;
+        }>(`select id, competition_id from ${COMPETITION_DECISIONS_TABLE}`);
+        const decisionId = decisions.find(
+          (row) => row.competition_id === rankId
+        )!.id;
+        const wrongDecisionId = decisions.find(
+          (row) => row.competition_id === approveId
+        )!.id;
+        expect(
+          await competitionEventRepository.getPrivilegedWinners(
+            approveId,
+            wrongDecisionId,
+            {}
+          )
+        ).toEqual([]);
+        await repository.executeNativeQueriesInTransaction(
+          async (connection) => {
+            const ctx = { connection };
+            const context = {
+              competition_id: rankId,
+              competition_entry_id: rankEntry,
+              decision_id: decisionId
+            };
+            await competitionEventRepository.assertNativeClaim(
+              context,
+              'rank-drop',
+              ctx
+            );
+            await competitionEventRepository.recordNativeClaim(
+              context,
+              'rank-drop',
+              ctx
+            );
+            await competitionEventRepository.recordNativeClaim(
+              context,
+              'rank-drop',
+              ctx
+            );
+            await memeCardDropMappingsDb.setMemeCardIdForDrop(
+              'rank-drop',
+              800,
+              'unrelated-legacy-wave',
+              ctx
+            );
+            expect(
+              await memeCardDropMappingsDb.isMainStageWinnerDrop(
+                'approve-drop',
+                'unrelated-legacy-wave',
+                ctx
+              )
+            ).toBe(false);
+          }
+        );
+        expect(
+          await memeCardDropMappingsDb.findByMemeCardId(
+            800,
             'unrelated-legacy-wave',
-            ctx
+            {}
           )
-        ).toBe(false);
-      });
-      expect(
-        await memeCardDropMappingsDb.findByMemeCardId(
-          800,
-          'unrelated-legacy-wave',
-          {}
-        )
-      ).toEqual({ drop_id: 'rank-drop', meme_card_id: 800 });
-      expect(
-        await memeCardDropMappingsDb.findMemeCardIdsByEntryIds(
-          rankId,
-          [rankEntry, secondRankEntry],
-          {}
-        )
-      ).toEqual({ [rankEntry]: 800 });
-      expect(
-        await memeCardDropMappingsDb.findMemeCardIdsByEntryIds(
-          approveId,
-          [rankEntry, approveEntry],
-          {}
-        )
-      ).toEqual({});
-      await expect(
-        repository.executeNativeQueriesInTransaction((connection) =>
-          competitionEventRepository.assertNativeClaim(
-            {
-              competition_id: approveId,
-              competition_entry_id: approveEntry,
-              decision_id: wrongDecisionId
-            },
-            'approve-drop',
-            { connection }
+        ).toEqual({ drop_id: 'rank-drop', meme_card_id: 800 });
+        expect(
+          await memeCardDropMappingsDb.findMemeCardIdsByEntryIds(
+            rankId,
+            [rankEntry, secondRankEntry],
+            {}
           )
-        )
-      ).rejects.toThrow('explicitly designated');
+        ).toEqual({ [rankEntry]: 800 });
+        expect(
+          await memeCardDropMappingsDb.findMemeCardIdsByEntryIds(
+            approveId,
+            [rankEntry, approveEntry],
+            {}
+          )
+        ).toEqual({});
+        await expect(
+          repository.executeNativeQueriesInTransaction((connection) =>
+            competitionEventRepository.assertNativeClaim(
+              {
+                competition_id: approveId,
+                competition_entry_id: approveEntry,
+                decision_id: wrongDecisionId
+              },
+              'approve-drop',
+              { connection }
+            )
+          )
+        ).rejects.toThrow('explicitly designated');
+        await sqlExecutor.execute(
+          `update ${WAVES_TABLE} set parent_wave_id = 'parent-hub' where id = 'shared-hub'`
+        );
+        await sqlExecutor.execute(
+          `update ${WAVES_TABLE} set visibility_group_id = 'private' where id = 'parent-hub'`
+        );
+        expect(
+          await competitionEventRepository.getPrivilegedWinners(
+            rankId,
+            decisionId,
+            {}
+          )
+        ).toEqual([]);
+        expect(
+          await memeCardDropMappingsDb.findByMemeCardId(800, null, {})
+        ).toBeNull();
+        expect(
+          await memeCardDropMappingsDb.findMemeCardIdsByEntryIds(
+            rankId,
+            [rankEntry],
+            {}
+          )
+        ).toEqual({});
+        expect(
+          await readBadges(() =>
+            identitiesDb.getMainStageWinnerDropIds(['artist'], {})
+          )
+        ).toEqual({});
+        expect(await newsletter.winners(newsletterWindow, {})).toEqual([]);
+        await sqlExecutor.execute(
+          `update ${WAVES_TABLE} set visibility_group_id = null where id = 'parent-hub'`
+        );
+        await sqlExecutor.execute(
+          `delete from ${COMPETITION_CAPABILITIES_TABLE} where competition_id = :rankId`,
+          { rankId }
+        );
+        expect(
+          await readBadges(() =>
+            identitiesDb.getMainStageWinnerDropIds(['artist'], {})
+          )
+        ).toEqual({});
+        expect(
+          await memeCardDropMappingsDb.findByMemeCardId(
+            800,
+            'unrelated-legacy-wave',
+            {}
+          )
+        ).toBeNull();
+      }
+    );
+
+    it('attributes native badges to the submitter and excludes inactive or hidden submissions', async () => {
       await sqlExecutor.execute(
-        `update ${WAVES_TABLE} set parent_wave_id = 'parent-hub' where id = 'shared-hub'`
+        `insert into ${COMPETITION_CAPABILITIES_TABLE} (capability, competition_id, wave_id, assigned_at) values ('MAIN_STAGE', :rankId, 'shared-hub', 0)`,
+        { rankId }
       );
       await sqlExecutor.execute(
-        `update ${WAVES_TABLE} set visibility_group_id = 'private' where id = 'parent-hub'`
+        `update ${DROPS_TABLE} set author_id = 'different-author'`
+      );
+      for (const read of [
+        withoutLegacyCompetitionGetFacade,
+        withLegacyCompetitionGetFacade
+      ]) {
+        expect(
+          await read(() =>
+            identitiesDb.getActiveMainStageDropIds(['artist'], {})
+          )
+        ).toEqual({ artist: ['rank-drop', 'rank-drop-2'] });
+        expect(
+          await read(() =>
+            identitiesDb.getActiveMainStageDropIds(['different-author'], {})
+          )
+        ).toEqual({});
+      }
+      await sqlExecutor.execute(
+        `update ${COMPETITION_ENTRIES_TABLE} set status = 'WITHDRAWN' where id = :rankEntry`,
+        { rankEntry }
       );
       expect(
-        await competitionEventRepository.getPrivilegedWinners(
-          rankId,
-          decisionId,
-          {}
+        await withLegacyCompetitionGetFacade(() =>
+          identitiesDb.getActiveMainStageDropIds(['artist'], {})
         )
-      ).toEqual([]);
-      expect(
-        await memeCardDropMappingsDb.findByMemeCardId(800, null, {})
-      ).toBeNull();
-      expect(
-        await memeCardDropMappingsDb.findMemeCardIdsByEntryIds(
-          rankId,
-          [rankEntry],
-          {}
-        )
-      ).toEqual({});
-      expect(
-        await identitiesDb.getMainStageWinnerDropIds(['artist'], {})
-      ).toEqual({});
-      expect(await newsletter.winners(newsletterWindow, {})).toEqual([]);
+      ).toEqual({ artist: ['rank-drop-2'] });
       await sqlExecutor.execute(
-        `update ${WAVES_TABLE} set visibility_group_id = null where id = 'parent-hub'`
-      );
-      await sqlExecutor.execute(
-        `delete from ${COMPETITION_CAPABILITIES_TABLE} where competition_id = :rankId`,
+        `update ${COMPETITIONS_TABLE} set lifecycle = 'ENDED' where id = :rankId`,
         { rankId }
       );
       expect(
-        await identitiesDb.getMainStageWinnerDropIds(['artist'], {})
-      ).toEqual({});
-      expect(
-        await memeCardDropMappingsDb.findByMemeCardId(
-          800,
-          'unrelated-legacy-wave',
-          {}
+        await withLegacyCompetitionGetFacade(() =>
+          identitiesDb.getActiveMainStageDropIds(['artist'], {})
         )
-      ).toBeNull();
+      ).toEqual({});
+      await sqlExecutor.execute(
+        `update ${COMPETITIONS_TABLE} set lifecycle = 'PUBLISHED' where id = :rankId`,
+        { rankId }
+      );
+      await sqlExecutor.execute(
+        `update ${WAVES_TABLE} set visibility_group_id = 'private' where id = 'shared-hub'`
+      );
+      expect(
+        await withLegacyCompetitionGetFacade(() =>
+          identitiesDb.getActiveMainStageDropIds(['artist'], {})
+        )
+      ).toEqual({});
+    });
+
+    it('preserves derived legacy badge types after native ownership without changing non-GET reads', async () => {
+      const previousMainStageWave = process.env.MAIN_STAGE_WAVE_ID;
+      process.env.MAIN_STAGE_WAVE_ID = 'shared-hub';
+      try {
+        await sqlExecutor.execute(
+          `update ${COMPETITIONS_TABLE} set legacy_wave_id = wave_id where id = :rankId`,
+          { rankId }
+        );
+        await sqlExecutor.execute(
+          `update ${COMPETITION_ENTRIES_TABLE} set status = 'WINNER' where id = :rankEntry`,
+          { rankEntry }
+        );
+        expect(
+          await identitiesDb.getActiveMainStageDropIds(['artist'], {})
+        ).toEqual({});
+        expect(
+          await identitiesDb.getMainStageWinnerDropIds(['artist'], {})
+        ).toEqual({});
+        expect(
+          await withLegacyCompetitionGetFacade(() =>
+            identitiesDb.getActiveMainStageDropIds(['artist'], {})
+          )
+        ).toEqual({ artist: ['rank-drop-2'] });
+        expect(
+          await withLegacyCompetitionGetFacade(() =>
+            identitiesDb.getMainStageWinnerDropIds(['artist'], {})
+          )
+        ).toEqual({ artist: ['rank-drop'] });
+        await sqlExecutor.execute(
+          `update ${COMPETITION_ENTRIES_TABLE} set status = 'WITHDRAWN' where id = :secondRankEntry`,
+          { secondRankEntry }
+        );
+        expect(
+          await withLegacyCompetitionGetFacade(() =>
+            identitiesDb.getActiveMainStageDropIds(['artist'], {})
+          )
+        ).toEqual({});
+      } finally {
+        if (previousMainStageWave === undefined)
+          delete process.env.MAIN_STAGE_WAVE_ID;
+        else process.env.MAIN_STAGE_WAVE_ID = previousMainStageWave;
+      }
     });
 
     it('commits durable effect receipts once and rolls failed effects back', async () => {
@@ -948,6 +2337,43 @@ describeWithSeed(
       ).resolves.toBe(42);
     });
 
+    it('does not count successful delivery deferrals toward failure backoff', async () => {
+      await vote(rankId, rankEntry, 20, 100);
+      for (const now of [100, 1100, 2100]) {
+        const [record] = await repository.claimOutbox({ now, limit: 1 });
+        expect(record.attempts).toBe(1);
+        await repository.deferOutbox(record.id, record.lease_token, now);
+      }
+
+      const [firstFailure] = await repository.claimOutbox({
+        now: 3100,
+        limit: 1
+      });
+      expect(firstFailure.attempts).toBe(1);
+      await repository.retryOutbox(
+        firstFailure.id,
+        firstFailure.lease_token,
+        3100
+      );
+      expect(await repository.claimOutbox({ now: 5099, limit: 1 })).toEqual([]);
+
+      const [secondFailure] = await repository.claimOutbox({
+        now: 5100,
+        limit: 1
+      });
+      expect(secondFailure.id).toBe(firstFailure.id);
+      expect(secondFailure.attempts).toBe(2);
+      await repository.retryOutbox(
+        secondFailure.id,
+        secondFailure.lease_token,
+        5100
+      );
+      expect(await repository.claimOutbox({ now: 9099, limit: 1 })).toEqual([]);
+      const [retry] = await repository.claimOutbox({ now: 9100, limit: 1 });
+      expect(retry.id).toBe(firstFailure.id);
+      expect(retry.attempts).toBe(3);
+    });
+
     it('leases durable delivery exclusively and recovers expiry without accepting a stale acknowledgement', async () => {
       await vote(rankId, rankEntry, 20, 100);
       const [first] = await repository.claimOutbox({
@@ -959,17 +2385,28 @@ describeWithSeed(
       const [second] = await repository.claimOutbox({ now: 110, limit: 1 });
       expect(second.id).toBe(first.id);
       expect(second.lease_token).not.toBe(first.lease_token);
+      await repository.deferOutbox(first.id, first.lease_token, 110);
+      expect(await repository.claimOutbox({ now: 111, limit: 1 })).toEqual([]);
       await repository.acknowledgeOutbox(first.id, first.lease_token, 111);
       await repository.retryOutbox(second.id, second.lease_token, 111);
       expect(await repository.claimOutbox({ now: 112, limit: 1 })).toEqual([]);
       const [third] = await repository.claimOutbox({ now: 10_000, limit: 1 });
-      await repository.acknowledgeOutbox(third.id, third.lease_token, 10_001);
+      expect(third.attempts).toBe(3);
+      await repository.deferOutbox(third.id, third.lease_token, 10_001);
+      expect(await repository.claimOutbox({ now: 11_000, limit: 1 })).toEqual(
+        []
+      );
+      const [fourth] = await repository.claimOutbox({ now: 11_001, limit: 1 });
+      expect(fourth.id).toBe(third.id);
+      expect(fourth.attempts).toBe(3);
+      expect(fourth.lease_token).not.toBe(third.lease_token);
+      await repository.acknowledgeOutbox(fourth.id, fourth.lease_token, 11_002);
       expect(
         await sqlExecutor.execute(
           `select delivered_at from ${COMPETITION_OUTBOX_TABLE} where id = :id`,
           { id: third.id }
         )
-      ).toEqual([{ delivered_at: 10_001 }]);
+      ).toEqual([{ delivered_at: 11_002 }]);
     });
   }
 );

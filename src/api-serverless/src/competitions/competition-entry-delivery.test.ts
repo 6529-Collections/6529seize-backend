@@ -8,6 +8,20 @@ import { RequestContext } from '@/request.context';
 import { competitionDeliveryErrorCode } from '@/competitions/competition-delivery-diagnostics';
 
 jest.mock('@/api/waves/wave-unread-cache', () => ({
+  // After-commit bumps from the DB chokepoints (drop insert/delete, reader
+  // metrics, wave insert, blocks and mutes).
+  invalidateWaveUnreadCacheForWaveAfterCommit: jest
+    .fn()
+    .mockResolvedValue(undefined),
+  invalidateWaveUnreadCacheForWavesAfterCommit: jest
+    .fn()
+    .mockResolvedValue(undefined),
+  invalidateWaveUnreadCacheForReaderWaveAfterCommit: jest
+    .fn()
+    .mockResolvedValue(undefined),
+  invalidateWaveUnreadCacheForReaderAfterCommit: jest
+    .fn()
+    .mockResolvedValue(undefined),
   invalidateWaveUnreadCacheForWave: jest.fn()
 }));
 jest.mock('@/api/push-notifications/push-notifications.service', () => ({

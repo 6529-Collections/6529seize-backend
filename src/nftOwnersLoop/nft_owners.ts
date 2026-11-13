@@ -1,4 +1,8 @@
 import {
+  transferReconciliationDb,
+  transferWallets
+} from '@/transactions/transfer-reconciliation.db';
+import {
   fetchAllNftOwners,
   getMaxNftOwnersBlockReference,
   getNftOwnersSyncBlock,
@@ -19,11 +23,7 @@ import {
   MEMES_CONTRACT,
   NULL_ADDRESS
 } from '@/constants';
-import {
-  fetchConsolidationGroupsForAddresses,
-  fetchMaxTransactionsBlockNumber,
-  fetchTransactionsAfterBlock
-} from '../db';
+import { fetchConsolidationGroupsForAddresses } from '../db';
 
 function normalizeAddress(addr: string): string {
   return addr.toLowerCase();
@@ -59,15 +59,6 @@ function dedupeTransactionsByTransfer(
   });
 }
 
-function ownersToBalanceMap(owners: NFTOwner[]): Map<string, number> {
-  const map = new Map<string, number>();
-  for (const o of owners) {
-    const key = deltaKey(o.wallet, o.contract, o.token_id);
-    map.set(key, (map.get(key) ?? 0) + o.balance);
-  }
-  return map;
-}
-
 function buildBalanceMapFromTransactions(
   transactions: Transaction[]
 ): Map<string, number> {
@@ -88,45 +79,6 @@ function buildBalanceMapFromTransactions(
     balance.set(toKey, (balance.get(toKey) ?? 0) + count);
   }
   return balance;
-}
-
-function buildOwnersDeltaFromTransactions(
-  blockReference: number,
-  addresses: Set<string>,
-  newTransactions: Transaction[],
-  baseBalanceFromReplay: Map<string, number>
-): NFTOwner[] {
-  const delta = buildBalanceMapFromTransactions(newTransactions);
-  const ownersDelta: NFTOwner[] = [];
-  const processedKeys = new Set<string>();
-  for (const [key, baseBal] of Array.from(baseBalanceFromReplay)) {
-    const parsed = parseDeltaKey(key);
-    if (!parsed || !addresses.has(parsed.wallet)) continue;
-    processedKeys.add(key);
-    const newBalance = baseBal + (delta.get(key) ?? 0);
-    if (newBalance > 0) {
-      ownersDelta.push({
-        wallet: parsed.wallet,
-        contract: parsed.contract,
-        token_id: parsed.token_id,
-        balance: newBalance,
-        block_reference: blockReference
-      });
-    }
-  }
-  for (const [key, change] of Array.from(delta)) {
-    if (processedKeys.has(key) || change <= 0) continue;
-    const parsed = parseDeltaKey(key);
-    if (!parsed || !addresses.has(parsed.wallet)) continue;
-    ownersDelta.push({
-      wallet: parsed.wallet,
-      contract: parsed.contract,
-      token_id: parsed.token_id,
-      balance: change,
-      block_reference: blockReference
-    });
-  }
-  return ownersDelta;
 }
 
 function buildFullOwnersFromTransactions(
@@ -171,7 +123,8 @@ export const updateNftOwners = async (reset?: boolean) => {
     lastOwnersBlock > 0 && syncBlock !== lastOwnersBlock;
   reset = reset || lastOwnersBlock === 0 || resetReasonSyncMismatch;
 
-  const blockReference = await fetchMaxTransactionsBlockNumber();
+  const pending = await transferReconciliationDb.pending('owners');
+  const blockReference = await transferReconciliationDb.maxBlock();
   if (resetReasonSyncMismatch) {
     logger.info(
       `[RESET: sync block mismatch (sync=${syncBlock} vs max_ref=${lastOwnersBlock}) - full replay]`
@@ -185,7 +138,7 @@ export const updateNftOwners = async (reset?: boolean) => {
     logger.info(
       `[lastOwnersBlock ${lastOwnersBlock}] : [blockReference ${blockReference}] : [RESET] : [FETCHING ALL TRANSACTIONS...]`
     );
-    const transactions = await fetchTransactionsAfterBlock(
+    const transactions = await transferReconciliationDb.changes(
       allContracts,
       0,
       blockReference
@@ -196,7 +149,8 @@ export const updateNftOwners = async (reset?: boolean) => {
       transactions
     );
     ownersDelta = result.ownersDelta;
-    addresses = result.addresses;
+    addresses = new Set(transferWallets(transactions).map(normalizeAddress));
+    pending.forEach((row) => addresses.add(row.wallet));
     logger.info({
       ownersDelta: ownersDelta.length.toLocaleString(),
       addresses: addresses.size.toLocaleString()
@@ -206,34 +160,27 @@ export const updateNftOwners = async (reset?: boolean) => {
     logger.info(
       `[lastOwnersBlock ${lastOwnersBlock}] : [blockReference ${blockReference}] : [FETCHING TRANSACTIONS...]`
     );
-    const transactions = await fetchTransactionsAfterBlock(
+    const transactions = await transferReconciliationDb.changes(
       allContracts,
       lastOwnersBlock,
       blockReference
     );
-    for (const tx of transactions) {
-      addresses.add(normalizeAddress(tx.from_address));
-      addresses.add(normalizeAddress(tx.to_address));
-    }
-    logger.info({
-      transactions: transactions.length.toLocaleString(),
-      addresses: addresses.size.toLocaleString()
-    });
+    for (const wallet of transferWallets(transactions))
+      addresses.add(normalizeAddress(wallet));
+    pending.forEach((row) => addresses.add(row.wallet));
     if (addresses.size === 0) {
       logger.info(`[NO CHANGES]`);
       return;
     }
-    const existingOwners = await fetchAllNftOwners(
-      undefined,
-      Array.from(addresses)
+    const history = await transferReconciliationDb.history(
+      allContracts,
+      Array.from(addresses),
+      blockReference
     );
-    const baseBalance = ownersToBalanceMap(existingOwners);
-    ownersDelta = buildOwnersDeltaFromTransactions(
+    ownersDelta = buildFullOwnersFromTransactions(
       blockReference,
-      addresses,
-      transactions,
-      baseBalance
-    );
+      history
+    ).ownersDelta.filter((owner) => addresses.has(owner.wallet));
     logger.info({ ownersDelta: ownersDelta.length.toLocaleString() });
   }
 
@@ -244,6 +191,8 @@ export const updateNftOwners = async (reset?: boolean) => {
     await persistNftOwners(addresses, ownersDelta, reset);
     await consolidateNftOwners(addresses, reset);
     await setNftOwnersSyncBlock(blockReference);
+    await transferReconciliationDb.publishBalances(Array.from(addresses));
+    await transferReconciliationDb.acknowledge(pending);
   }
 };
 

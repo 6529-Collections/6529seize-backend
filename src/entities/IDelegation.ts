@@ -31,6 +31,16 @@ export class Consolidation {
 
   @Column({ type: 'boolean', default: false })
   confirmed!: boolean;
+
+  // Unix seconds of the block in which wallet1 last registered its link to
+  // wallet2 (and wallet2 to wallet1). NULL for links indexed before these
+  // columns existed, which the fourth-wallet gate treats as pre-activation.
+  // Raw SQL reads may return these bigints as strings; compare via Number().
+  @Column({ type: 'bigint', nullable: true, default: null })
+  wallet1_registered_at!: number | null;
+
+  @Column({ type: 'bigint', nullable: true, default: null })
+  wallet2_registered_at!: number | null;
 }
 
 @Entity(DELEGATIONS_TABLE)
@@ -73,6 +83,8 @@ export interface Event {
   type: EventType;
   wallet1: string;
   wallet2: string;
+  // Block timestamp in Unix seconds. Populated for consolidation events.
+  timestamp?: number;
 }
 
 export type ConsolidationEvent = Event;

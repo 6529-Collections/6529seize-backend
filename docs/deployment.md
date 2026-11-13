@@ -1,8 +1,45 @@
 # Deployment
 
+## IPFS infrastructure
+
+IPFS has a separate explicit-dispatch workflow, `Manage IPFS infrastructure`, and
+an [operations/recovery runbook](../ops/ipfs/README.md). Its directly maintained
+CloudFormation YAML templates are in `ops/ipfs/cloudformation/`; the controller
+submits those files without generating templates. It provisions isolated
+candidate servers and persistent storage, builds the pinned Kubo/S3 runtime,
+and verifies backup/restore before publication. It is not a Lambda service in
+`Deploy a service`. No IPFS deployment runs on merge or push. The existing
+production server, data bucket, DNS, and shared media distribution remain unchanged;
+production changes are disabled in its checked-in policy.
+
+`Adopt existing IPFS resources` is a separate manual workflow for an import-only
+production baseline. It audits the existing bucket, server, exclusively used
+security group and entire shared CDN against reviewed native-model fingerprints,
+prepares an exact four-resource IMPORT change set, then requires a separate execute
+dispatch with its ARN. Ownership, template equality and per-resource drift must
+pass. Its dedicated service role permits only configuration reads and ownership tags; adoption
+adds termination protection and a deny-all update stack policy. Runtime deployment
+stays disabled throughout adoption. Its separate import switch is temporarily
+enabled only for the authorized operation and reset after verification.
+It shares candidate-management concurrency and creates no separate IPFS environment.
+
+IPFS has one shared deployment target, `prod`; there is no separate IPFS staging
+environment or staging release phase. The workflow runs only from `main` through
+`ipfs-prod`. Local/CI recovery fixtures create no AWS environment. A future
+authorized production rollout must validate an unpublished replacement candidate
+before traffic handover. No backend Lambda or frontend redeploy is needed.
+Active-host updates are rejected. Adoption records ownership without reinstalling
+Kubo or changing traffic; runtime replacement still requires a separately reviewed,
+validated writer/traffic handover. The runbook distinguishes imported resources
+from referenced network, IAM, DNS and host configuration that remain unmanaged.
+
 Agents and developers deploy with ordinary merges and the repository's GitHub
 Actions workflows. Use the phase authorized by the user; a staging request does
 not authorize production.
+
+Frontend-only, backend-only, and coupled releases use the direct workflows below
+without submitting a Coordinator request or waiting for its recording workflow.
+Keep existing `.release-coordinator/` run and outbox records as historical evidence.
 
 | Target     | Frontend                                                                       | Backend                                                                                                         |
 | ---------- | ------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------- |
@@ -76,6 +113,25 @@ run IDs to correlate E2E replies.
 
 ## Failure and rollback
 
+### Wave score input index
+
+For the author-first Wave Score aggregation, deploy `dbMigrationsLoop` with
+`db_schema_scope=wave-score-input-index` before the updated scoring consumers.
+This scope adds only `drops(wave_id, author_id, created_at)` as
+`idx_drop_wave_author_created`. It requires `ALGORITHM=INPLACE, LOCK=NONE`,
+limits metadata-lock waits to two seconds, checks the resulting full-column
+visible index, and skips unrelated synchronization, migrations, and maintenance.
+If the table is busy or online DDL is unsupported, the deployment fails without
+trying a blocking algorithm. Retry after investigating the failure.
+
+The history aggregation uses a MySQL index optimizer hint to select the covering
+index when available. MySQL ignores the hint before index installation, so the
+old scoring query and the new aggregation both work before and after creation.
+Roll back scoring consumers while keeping `dbMigrationsLoop` at an
+index-aware revision and retaining the additive index. Full manual schema
+synchronization also ensures this index through the same online helper; the
+entity marks it `synchronize: false` so TypeORM does not create or drop it itself.
+
 ### Retired membership materialisation
 
 The dedicated worker and dispatcher are no longer ordinary deployment choices.
@@ -89,7 +145,55 @@ The workflow still defaults to `full`, which synchronizes registered entities an
 runs enabled historical migrations; it ignores the unregistered retired tables.
 Select `maintenance` explicitly for this rollout to avoid unrelated schema work.
 
+### Global TDH history widening
+
+Deploy `dbMigrationsLoop` with the full schema scope before `api`. The width
+change rebuilds the two global history tables with MySQL's COPY algorithm and
+blocks writes to each table during its copy. The migration limits metadata-lock
+waits and retries lock timeouts. If it still fails, inspect the Lambda logs and
+retry after the blocking work clears. A retry skips an already widened table.
+The migration is one-way because narrowing can lose values above the old limit.
+
+### Pinned wave order
+
+Deploy `dbMigrationsLoop` with `db_schema_scope=pinned-wave-order-schema` to add
+the nullable position column. Deploy `api` next, then run
+`dbMigrationsLoop` with `db_schema_scope=pinned-wave-order-backfill`. Rerun
+the backfill if it reaches its time limit. The job updates only null positions
+and takes the same per-profile lock as the API. Release the frontend after the
+backfill succeeds. Retain the position column and values during a rollback.
+
 ### Operational failures
+
+#### TDH export uploads
+
+`tdhLoop` uploads each wallet and consolidated CSV using `ardrive.net`, then
+`turbo-gateway.com` and `arweave.net` on failure. A successful gateway remains
+preferred for subsequent chunks. Uploads retain one signed transaction across
+failover, use at most eight concurrent chunks, limit each HTTP request to ten
+seconds, and stop each export after two minutes. Each request has at most two
+attempts per gateway. Permanent validation errors stop immediately. Failure
+logs include the transaction, gateway, operation, chunk, attempt, status and a
+short provider error code; they exclude keys, CSV bodies and provider stacks.
+Unknown HTTP 400 responses also fail over: broadcasters can aggregate temporary
+peer rejections under that status without returning a protocol error code.
+Those logs summarize peer success/failure counts and statuses. Between complete
+chunk retry rounds, allow thirty seconds for fresh headers to propagate; this
+backoff is canceled when the same two-minute export deadline expires.
+
+Deploy only `tdhLoop` for upload-only changes; unchanged schema and xTDH
+dependencies do not need redeployment. Verify both `/api/uploads` and
+`/api/consolidated_uploads` have the target snapshot date/block after invoking
+the loop. Also verify both Arweave uploads and their S3 mirrors in the run logs.
+New export links use the primary public gateway (`ardrive.net`) so readers do
+not depend on `arweave.net` returning complete files after a successful upload.
+The immutable Arweave transaction IDs, CSV schema and S3 mirror keys remain
+unchanged. Existing links retain their stored gateway URLs.
+
+The synchronous `dbMigrationsLoop` invocation waits up to 960 seconds for its
+900-second Lambda and disables AWS CLI retries for that invocation. If its response
+is lost, inspect the Lambda invocation logs and completion before retrying the
+workflow; a failed CLI response does not prove the migration stopped.
 
 Inspect the failing job and logs. Fix attributable failures on the development
 branch, merge the fix into the authorized target, and repeat only the required

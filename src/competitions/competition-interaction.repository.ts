@@ -3,24 +3,23 @@ import { randomUUID } from 'node:crypto';
 import {
   COMPETITION_ENTRIES_TABLE,
   COMPETITION_VOTES_TABLE,
+  COMPETITION_LEADERBOARD_ENTRIES_TABLE,
+  COMPETITION_VOTE_HISTORY_TABLE,
+  PROFILES_ACTIVITY_LOGS_TABLE,
   COMPETITION_OUTCOME_AWARDS_TABLE,
-  DROPS_TABLE,
-  DROP_VOTER_STATE_TABLE,
-  WAVES_DECISION_WINNER_DROPS_TABLE
+  COMPETITION_DECISIONS_TABLE,
+  COMPETITION_DECISION_WINNERS_TABLE
 } from '@/constants';
-import {
-  CompetitionEntryStatus,
-  CompetitionStorageMode
-} from '@/entities/ICompetition';
+import { CompetitionEntryStatus } from '@/entities/ICompetition';
 import { dbSupplier, LazyDbAccessCompatibleService } from '@/sql-executor';
 import { RequestContext } from '@/request.context';
 import { CompetitionRoutingRecord } from './competition.types';
-import {
-  legacyCompetitionEntryId,
-  legacyCompetitionDecisionId,
-  stableUuid
-} from './competition-id';
 import { NativeDecisionAward } from './native-competition-runtime.repository';
+
+export type CompetitionMyVotesSort =
+  | 'vote_amount'
+  | 'leaderboard'
+  | 'last_voted';
 
 export type CompetitionMyVote = {
   entry_id: string;
@@ -74,40 +73,53 @@ export class CompetitionInteractionRepository extends LazyDbAccessCompatibleServ
     profileId: string,
     offset: number,
     limit: number,
-    ctx: RequestContext
+    ctx: RequestContext,
+    sort: CompetitionMyVotesSort = 'vote_amount'
   ): Promise<CompetitionMyVote[]> {
-    if (record.storage_mode === CompetitionStorageMode.LEGACY_ADAPTER) {
-      const rows = await this.query<{
-        drop_id: string;
-        value: number;
-        drop_type: string;
-      }>(
-        'myVotes',
-        `SELECT v.drop_id,v.votes AS value,d.drop_type FROM ${DROP_VOTER_STATE_TABLE} v
-         JOIN ${DROPS_TABLE} d ON d.id=v.drop_id AND d.wave_id=v.wave_id
-         WHERE v.wave_id=:waveId AND v.voter_id=:profileId AND v.votes<>0 AND d.drop_type IN ('PARTICIPATORY','WINNER')
-         ORDER BY d.serial_no DESC LIMIT :offset,:limit`,
-        { waveId: record.wave_id, profileId, offset, limit },
-        ctx
-      );
-      return rows.map((row) => ({
-        entry_id: legacyCompetitionEntryId(record.id, row.drop_id),
-        drop_id: row.drop_id,
-        value: Number(row.value),
-        credit_spent: Math.abs(Number(row.value)),
-        entry_status:
-          row.drop_type === 'WINNER'
-            ? CompetitionEntryStatus.WINNER
-            : CompetitionEntryStatus.ACTIVE
-      }));
+    let joins = '';
+    let order = 'v.value DESC,v.updated_at ASC,e.drop_id ASC';
+    if (sort === 'leaderboard') {
+      joins = `LEFT JOIN ${COMPETITION_LEADERBOARD_ENTRIES_TABLE} lb
+        ON lb.competition_id=v.competition_id AND lb.entry_id=v.entry_id`;
+      order = `lb.\`rank\` IS NULL ASC,lb.\`rank\` ASC,${record.legacy_wave_id === null ? 'COALESCE(lb.entry_id,e.id)' : 'COALESCE(lb.drop_id,e.drop_id)'} ASC`;
+    } else if (sort === 'last_voted') {
+      // Allocation updated_at also changes on automatic credit reconciliation and
+      // no-op commands. Only confirmed user changes establish voting recency.
+      // Retained primary logs supply pre-migration history. Exclude linked
+      // native projections: their DATETIME rounding must not replace exact
+      // native milliseconds. Unknown timestamps remain null, last.
+      joins = `LEFT JOIN (
+        SELECT activity.drop_id,MAX(activity.occurred_at) AS last_voted_at FROM (
+          SELECT entry.drop_id,h.occurred_at FROM ${COMPETITION_VOTE_HISTORY_TABLE} h
+          JOIN ${COMPETITION_ENTRIES_TABLE} entry ON entry.id=h.entry_id AND entry.competition_id=h.competition_id
+          WHERE h.competition_id=:competitionId AND h.voter_profile_id=:profileId
+            AND h.value<>h.previous_value AND JSON_EXTRACT(h.contents,'$.reason') IS NULL
+          UNION ALL
+          SELECT log.target_id,TIMESTAMPDIFF(MICROSECOND,'1970-01-01',log.created_at) DIV 1000
+          FROM ${PROFILES_ACTIVITY_LOGS_TABLE} log
+          WHERE log.competition_id=:competitionId AND log.profile_id=:profileId AND log.type='DROP_VOTE_EDIT'
+            AND NOT EXISTS (
+              SELECT 1 FROM ${COMPETITION_VOTE_HISTORY_TABLE} linked
+              WHERE linked.competition_id=:competitionId
+                AND linked.voter_profile_id=:profileId
+                AND log.id=CONCAT(linked.competition_id,':',linked.sequence)
+            )
+            AND JSON_EXTRACT(log.contents,'$.reason') IS NULL
+            AND CAST(JSON_UNQUOTE(JSON_EXTRACT(log.contents,'$.oldVote')) AS SIGNED)
+              <>CAST(JSON_UNQUOTE(JSON_EXTRACT(log.contents,'$.newVote')) AS SIGNED)
+        ) activity GROUP BY activity.drop_id
+      ) recent ON recent.drop_id=e.drop_id`;
+      order =
+        'recent.last_voted_at IS NULL ASC,recent.last_voted_at DESC,e.drop_id ASC';
     }
     const rows = await this.query<CompetitionMyVote>(
       'myVotes',
       `SELECT v.entry_id,e.drop_id,v.value,v.credit_spent,e.status AS entry_status FROM ${COMPETITION_VOTES_TABLE} v
        JOIN ${COMPETITION_ENTRIES_TABLE} e ON e.id=v.entry_id AND e.competition_id=v.competition_id
-       WHERE v.competition_id=:competitionId AND v.voter_profile_id=:profileId AND v.value<>0
+       ${joins}
+       WHERE v.competition_id=:competitionId AND v.voter_profile_id=:profileId AND v.value<>0 AND e.status='ACTIVE'
          AND ${competitionEntryVisibleSql('e')}
-       ORDER BY e.submitted_at DESC,e.id DESC LIMIT :offset,:limit`,
+       ORDER BY ${order} LIMIT :offset,:limit`,
       { competitionId: record.id, profileId, offset, limit },
       ctx
     );
@@ -119,13 +131,12 @@ export class CompetitionInteractionRepository extends LazyDbAccessCompatibleServ
   }
 
   public async awards(
-    record: CompetitionRoutingRecord,
+    record: Pick<CompetitionRoutingRecord, 'id'>,
     offset: number,
     limit: number,
-    ctx: RequestContext
+    ctx: RequestContext,
+    entryIds?: readonly string[]
   ): Promise<NativeDecisionAward[]> {
-    if (record.storage_mode === CompetitionStorageMode.LEGACY_ADAPTER)
-      return this.legacyAwards(record, offset, limit, ctx);
     const rows = await this.query<{
       id: string;
       competition_id: string;
@@ -137,9 +148,12 @@ export class CompetitionInteractionRepository extends LazyDbAccessCompatibleServ
       'awards',
       `SELECT award.* FROM ${COMPETITION_OUTCOME_AWARDS_TABLE} award
        JOIN ${COMPETITION_ENTRIES_TABLE} e ON e.id=award.entry_id AND e.competition_id=award.competition_id
+       left join ${COMPETITION_DECISIONS_TABLE} decision on decision.id=award.decision_id and decision.competition_id=award.competition_id
+       left join ${COMPETITION_DECISION_WINNERS_TABLE} winner on winner.decision_id=award.decision_id and winner.competition_id=award.competition_id and winner.entry_id=award.entry_id
        WHERE award.competition_id=:competitionId AND ${competitionEntryVisibleSql('e')}
-       ORDER BY award.decision_id,award.id LIMIT :offset,:limit`,
-      { competitionId: record.id, offset, limit },
+       ${entryIds ? "AND award.entry_id in (:entryIds) AND (e.status='ACTIVE' OR award.decision_id=e.decision_id)" : ''}
+       ORDER BY coalesce(decision.scheduled_at,award.created_at),winner.\`rank\`,e.drop_id,award.outcome_position,award.id ${entryIds ? '' : 'LIMIT :offset,:limit'}`,
+      { competitionId: record.id, offset, limit, entryIds },
       ctx
     );
     return rows.map(
@@ -153,58 +167,6 @@ export class CompetitionInteractionRepository extends LazyDbAccessCompatibleServ
           ...(typeof row.award === 'string' ? JSON.parse(row.award) : row.award)
         }) as NativeDecisionAward
     );
-  }
-
-  private async legacyAwards(
-    record: CompetitionRoutingRecord,
-    offset: number,
-    limit: number,
-    ctx: RequestContext
-  ): Promise<NativeDecisionAward[]> {
-    const rows = await this.query<{
-      drop_id: string;
-      decision_time: number | string;
-      outcome_position: number;
-      award:
-        | string
-        | Omit<
-            NativeDecisionAward,
-            | 'id'
-            | 'competition_id'
-            | 'decision_id'
-            | 'entry_id'
-            | 'outcome_position'
-          >;
-    }>(
-      'legacyAwards',
-      `select winner.drop_id, winner.decision_time, prize.position - 1 as outcome_position,
-         json_extract(winner.prizes, concat('$[', prize.position - 1, ']')) as award
-       from ${WAVES_DECISION_WINNER_DROPS_TABLE} winner
-       join json_table(winner.prizes, '$[*]' columns (position for ordinality)) prize
-       where winner.wave_id = :waveId
-       order by winner.decision_time asc, winner.ranking asc, winner.drop_id asc, prize.position asc
-       limit :offset,:limit`,
-      { waveId: record.wave_id, offset, limit },
-      ctx
-    );
-    return rows.map((row) => {
-      const entryId = legacyCompetitionEntryId(record.id, row.drop_id);
-      const decisionId = legacyCompetitionDecisionId(
-        record.id,
-        Number(row.decision_time)
-      );
-      const position = Number(row.outcome_position);
-      const award =
-        typeof row.award === 'string' ? JSON.parse(row.award) : row.award;
-      return {
-        ...award,
-        id: stableUuid(decisionId, `award:${entryId}:${position}`),
-        competition_id: record.id,
-        decision_id: decisionId,
-        entry_id: entryId,
-        outcome_position: position
-      };
-    });
   }
 }
 

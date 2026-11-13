@@ -42,6 +42,9 @@ function deployMediaResizer(overrides: Record<string, string> = {}) {
       printf '%s\\n' "$*" >&2
       if [ "$2" = "$MOCK_FAILURE" ] || [ "$*" = "$MOCK_FAILURE" ]; then return 42; fi
       if [ "$2" = "get-function-configuration" ]; then printf '%s' "$MOCK_MEMORY"; fi
+      if [ "$2" = "update-function-code" ] || [ "$2" = "update-function-configuration" ]; then
+        printf '%s' "$MOCK_UPDATE_OUTPUT"
+      fi
     }
     ${deploy.run}
   `
@@ -53,6 +56,7 @@ function deployMediaResizer(overrides: Record<string, string> = {}) {
         ...process.env,
         MOCK_MEMORY: '2048',
         MOCK_FAILURE: '',
+        MOCK_UPDATE_OUTPUT: '',
         ...overrides
       }
     }
@@ -77,6 +81,17 @@ it('waits for both code and configuration updates and verifies GIF-worker memory
   expect(calls[4]).toContain(
     'get-function-configuration --function-name mediaResizerLoop --query MemorySize --output text'
   );
+});
+
+it('keeps the returned function configuration out of the log', () => {
+  const result = deployMediaResizer({
+    MOCK_UPDATE_OUTPUT: JSON.stringify({
+      Environment: { Variables: { SETTING: 'value-not-for-logs' } }
+    })
+  });
+  expect(result.status).toBe(0);
+  expect(result.stdout).not.toContain('value-not-for-logs');
+  expect(result.stderr).not.toContain('value-not-for-logs');
 });
 
 it('reports the actual and expected memory when verification fails', () => {
@@ -166,10 +181,15 @@ function validateDispatch(
 function invokeMigrationScope(
   scope: string,
   metadata: unknown = { StatusCode: 200 },
-  response: unknown = scope !== 'full' ? { schema_scope: scope } : null
+  response: unknown = scope !== 'full'
+    ? { schema_scope: scope, completed: true }
+    : null,
+  invocationExitCode = 0
 ) {
   const directory = mkdtempSync(path.join(tmpdir(), '6529-schema-scope-'));
   const argumentsPath = path.join(directory, 'arguments.txt');
+  const attemptsPath = path.join(directory, 'attempts.txt');
+  const remainingAttemptsPath = path.join(directory, 'remaining-attempts.txt');
   const invokeStep = steps.find(
     (step) => step.name === 'Run lambda and validate result'
   )!;
@@ -177,14 +197,19 @@ function invokeMigrationScope(
 sleep() { :; }
 aws() {
   printf '%s\\n' "$@" > "$MOCK_SCHEMA_INVOCATION_PATH"
+  printf '%s\\n' "$AWS_MAX_ATTEMPTS" >> "$MOCK_SCHEMA_ATTEMPTS_PATH"
   printf '%s' "$MOCK_SCHEMA_RESPONSE" > response.json
   printf '%s' "$MOCK_SCHEMA_METADATA"
+  return "$MOCK_SCHEMA_EXIT_CODE"
 }
 `;
   try {
     const result = spawnSync(
       'bash',
-      ['-c', `${fakeCommands}\n${guard.run}\n${invokeStep.run}`],
+      [
+        '-c',
+        `${fakeCommands}\n${guard.run}\n${invokeStep.run}\nprintf '%s' "$AWS_MAX_ATTEMPTS" > "$MOCK_SCHEMA_REMAINING_ATTEMPTS_PATH"`
+      ],
       {
         cwd: directory,
         encoding: 'utf8',
@@ -198,13 +223,23 @@ aws() {
           GITHUB_SHA: sourceSha,
           GITHUB_REF: 'refs/heads/main',
           MOCK_SCHEMA_INVOCATION_PATH: argumentsPath,
+          AWS_MAX_ATTEMPTS: '7',
+          MOCK_SCHEMA_ATTEMPTS_PATH: attemptsPath,
+          MOCK_SCHEMA_REMAINING_ATTEMPTS_PATH: remainingAttemptsPath,
+          MOCK_SCHEMA_EXIT_CODE: String(invocationExitCode),
           MOCK_SCHEMA_RESPONSE: JSON.stringify(response),
           MOCK_SCHEMA_METADATA: JSON.stringify(metadata)
         }
       }
     );
     const args = readFileSync(argumentsPath, 'utf8').trimEnd().split(/\r?\n/);
-    return { ...result, args };
+    const attempts = readFileSync(attemptsPath, 'utf8')
+      .trimEnd()
+      .split(/\r?\n/);
+    const remainingAttempts = existsSync(remainingAttemptsPath)
+      ? readFileSync(remainingAttemptsPath, 'utf8')
+      : null;
+    return { ...result, args, attempts, remainingAttempts };
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
@@ -296,7 +331,19 @@ describe('generated deployment source guard', () => {
         'maintenance',
         'wallet-transfer-analysis',
         'claims-media-upload',
-        'nft-link-page-retry'
+        'nft-link-page-retry',
+        'market-depth-publication-lock',
+        'voting-credit-returns',
+        'wave-score-input-index',
+        'profile-groups-collation',
+        'profile-groups-collation-revert',
+        'profile-activity-log-wave-index',
+        'nft-history-events',
+        'nft-history-replay',
+        'competition-lifecycle-events',
+        'competition-score-resets',
+        'pinned-wave-order-schema',
+        'pinned-wave-order-backfill'
       ]
     });
     expect(job.env.DB_SCHEMA_SCOPE).toBe(
@@ -315,12 +362,40 @@ describe('generated deployment source guard', () => {
     ).toBe(1);
   });
 
-  it.each(['unknown', '$(exit 73)', 'full\nwallet-transfer-analysis', ''])(
-    'rejects unsupported schema scope %j as data',
+  it.each([
+    'competition-history-preparation',
+    'competition-runtime-schema',
+    'competition-runtime-retirement',
+    'wave-hub-configuration-preparation',
+    'wave-hub-configuration-finalize',
+    'unknown',
+    '$(exit 73)',
+    'full\nwallet-transfer-analysis',
+    ''
+  ])('rejects unsupported schema scope %j as data', (scope) => {
+    expect(
+      validateDispatch('', 'prod', {
+        INPUT_SERVICE: 'dbMigrationsLoop',
+        DB_SCHEMA_SCOPE: scope
+      }).status
+    ).toBe(1);
+  });
+
+  it.each([
+    'wave-hub-configuration-preparation',
+    'wave-hub-configuration-finalize'
+  ])(
+    'rejects retired %s even in explicit schema service dispatches',
     (scope) => {
       expect(
-        validateDispatch('', 'prod', {
+        validateDispatch(sourceSha, 'staging', {
           INPUT_SERVICE: 'dbMigrationsLoop',
+          DB_SCHEMA_SCOPE: scope
+        }).status
+      ).toBe(1);
+      expect(
+        validateDispatch(sourceSha, 'staging', {
+          INPUT_SERVICE: 'api',
           DB_SCHEMA_SCOPE: scope
         }).status
       ).toBe(1);
@@ -379,12 +454,36 @@ describe('generated deployment source guard', () => {
     );
   });
 
+  it('blocks deployment when the pinned wave backfill is incomplete', () => {
+    const scope = 'pinned-wave-order-backfill';
+    const result = invokeMigrationScope(
+      scope,
+      { StatusCode: 200 },
+      {
+        schema_scope: scope,
+        completed: false
+      }
+    );
+    expect(result.status).toBe(1);
+    expect(result.stdout).toContain('Pinned wave backfill paused');
+  });
+
   it.each([
     'full',
     'maintenance',
     'wallet-transfer-analysis',
     'claims-media-upload',
-    'nft-link-page-retry'
+    'nft-link-page-retry',
+    'wave-score-input-index',
+    'profile-groups-collation',
+    'profile-groups-collation-revert',
+    'profile-activity-log-wave-index',
+    'nft-history-events',
+    'nft-history-replay',
+    'competition-lifecycle-events',
+    'competition-score-resets',
+    'pinned-wave-order-schema',
+    'pinned-wave-order-backfill'
   ])('forwards validated %s as one JSON invocation payload', (scope) => {
     const result = invokeMigrationScope(scope);
     expect(result.error).toBeUndefined();
@@ -394,12 +493,34 @@ describe('generated deployment source guard', () => {
       'invoke',
       '--function-name',
       'dbMigrationsLoop',
+      '--cli-read-timeout',
+      '960',
       '--cli-binary-format',
       'raw-in-base64-out',
       '--payload',
       JSON.stringify({ schema_scope: scope }),
       'response.json'
     ]);
+  });
+
+  it('waits beyond the Lambda timeout without retrying or changing other AWS commands', () => {
+    const result = invokeMigrationScope('maintenance');
+    expect(result.status).toBe(0);
+    expect(result.attempts).toEqual(['1']);
+    expect(result.remainingAttempts).toBe('7');
+    expect(job.env.AWS_MAX_ATTEMPTS).toBeUndefined();
+  });
+
+  it('propagates a lost invocation response without another attempt', () => {
+    const result = invokeMigrationScope(
+      'maintenance',
+      { StatusCode: 200 },
+      { schema_scope: 'maintenance' },
+      255
+    );
+    expect(result.status).toBe(255);
+    expect(result.attempts).toEqual(['1']);
+    expect(result.remainingAttempts).toBeNull();
   });
 
   it.each(['Handled', 'Unhandled', 'Unexpected', '', false, 0])(
@@ -424,6 +545,44 @@ describe('generated deployment source guard', () => {
       );
       expect(result.status).toBe(1);
       expect(result.stdout).toContain('did not acknowledge');
+    }
+  );
+
+  it('prints only invocation status fields, never the raw error payload', () => {
+    const result = invokeMigrationScope(
+      'maintenance',
+      {
+        StatusCode: 200,
+        FunctionError: 'Unhandled',
+        ExecutedVersion: '$LATEST'
+      },
+      {
+        errorType: 'QueryFailedError',
+        errorMessage: 'value-not-for-logs',
+        stackTrace: ['value-not-for-logs']
+      }
+    );
+    expect(result.status).toBe(1);
+    expect(result.stdout).toContain(
+      'Invocation metadata: {"StatusCode":200,"FunctionError":"Unhandled","ExecutedVersion":"$LATEST"}'
+    );
+    expect(result.stdout).toContain(
+      'Invocation response: {"schema_scope":null,"errorType":"QueryFailedError"}'
+    );
+    expect(result.stdout).not.toContain('value-not-for-logs');
+    expect(result.stderr).not.toContain('value-not-for-logs');
+  });
+
+  it.each([null, 'not json'])(
+    'summarizes an unexpected invocation response %j without failing early',
+    (response) => {
+      const result = invokeMigrationScope(
+        'full',
+        { StatusCode: 200 },
+        response
+      );
+      expect(result.status).toBe(0);
+      expect(result.stdout).toContain('Invocation response: {"type":');
     }
   );
 

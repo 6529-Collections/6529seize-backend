@@ -1,0 +1,373 @@
+const mockWarn = jest.fn();
+const mockError = jest.fn();
+jest.mock('@/logging', () => ({
+  Logger: {
+    get: () => ({
+      warn: mockWarn,
+      error: mockError,
+      errorWithDiagnostic: mockError
+    })
+  }
+}));
+
+import { DeliveryMetricsBatch, WebSocketDelivery } from './ws-delivery';
+import { DeliveryClaim, DeliverySnapshot } from './ws-delivery-store';
+
+const acquired: DeliveryClaim = {
+  acquired: true,
+  revision: 0,
+  failures: 0,
+  firstFailureAt: 0,
+  canReconnect: true
+};
+const error429 = {
+  name: 'LimitExceededException',
+  $metadata: { httpStatusCode: 429, attempts: 3 }
+};
+
+describe('shared WebSocket delivery', () => {
+  const store = {
+    claim: jest.fn(),
+    finish: jest.fn(),
+    snapshot: jest.fn(),
+    forget: jest.fn(),
+    enableReconnect: jest.fn()
+  };
+  const delivery = new WebSocketDelivery(store);
+  const send = jest.fn();
+  const close = jest.fn();
+  const input = {
+    connectionId: 'private-connection',
+    message: '{"type":"COMPETITION_UPDATE","data":{"private":"never-log"}}',
+    send,
+    close
+  };
+
+  beforeEach(() => {
+    jest.resetAllMocks();
+    store.claim.mockResolvedValue(acquired);
+    store.finish.mockResolvedValue(true);
+    store.forget.mockResolvedValue(undefined);
+    send.mockResolvedValue({});
+    close.mockResolvedValue(undefined);
+  });
+  it('returns an explicit successful outcome', async () => {
+    await expect(delivery.deliver(input)).resolves.toEqual({ status: 'sent' });
+    expect(store.finish).toHaveBeenCalledWith(
+      expect.objectContaining({ outcome: 'sent' })
+    );
+  });
+  it('queues exhausted 429s with one warning and no error alert', async () => {
+    send.mockRejectedValue(error429);
+    await expect(delivery.deliver(input)).resolves.toEqual({
+      status: 'resync_pending'
+    });
+    expect(mockError).not.toHaveBeenCalled();
+    expect(mockWarn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        frame_type: 'COMPETITION_UPDATE',
+        http_status: 429
+      })
+    );
+    expect(JSON.stringify(mockWarn.mock.calls)).not.toMatch(
+      /private-connection|never-log/
+    );
+    expect(close).not.toHaveBeenCalled();
+    store.finish.mockResolvedValue(false);
+    await delivery.deliver(input);
+    expect(mockWarn).toHaveBeenCalledTimes(1);
+  });
+  it('does not contact AWS for a connection in cooldown', async () => {
+    store.claim.mockResolvedValue({ ...acquired, acquired: false });
+    await expect(delivery.deliver(input)).resolves.toEqual({
+      status: 'resync_pending'
+    });
+    expect(send).not.toHaveBeenCalled();
+  });
+  it('does not promise a scheduled retry if saving the pending work failed', async () => {
+    send.mockRejectedValue(error429);
+    store.finish.mockRejectedValue(new Error('store down'));
+    await expect(delivery.deliver(input)).resolves.toEqual({
+      status: 'failed'
+    });
+  });
+  it('can still send while the recovery store is unavailable', async () => {
+    store.claim.mockRejectedValue(new Error('Redis down'));
+    await expect(delivery.deliver(input)).resolves.toEqual({ status: 'sent' });
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+  it('preserves alerts for AWS permission failures without deleting a live listener', async () => {
+    send.mockRejectedValue({ $metadata: { httpStatusCode: 403 } });
+    await expect(delivery.deliver(input)).resolves.toEqual({
+      status: 'failed'
+    });
+    expect(mockError).toHaveBeenCalledWith(
+      expect.objectContaining({ http_status: 403 })
+    );
+    expect(close).not.toHaveBeenCalled();
+  });
+  it('marks an already-disconnected listener as gone', async () => {
+    send.mockRejectedValue({
+      name: 'GoneException',
+      $metadata: { httpStatusCode: 410 }
+    });
+    await expect(delivery.deliver(input)).resolves.toEqual({ status: 'gone' });
+    expect(mockError).not.toHaveBeenCalled();
+  });
+  it('closes an isolated blocked listener only after AWS confirms closure', async () => {
+    store.claim.mockResolvedValue({
+      ...acquired,
+      failures: 3,
+      firstFailureAt: Date.now() - 180_000
+    });
+    store.snapshot.mockResolvedValue({
+      healthyConnections: 10,
+      recentlyHealthyConnections: 10,
+      throttledConnections: 1,
+      pending: 1
+    } satisfies Partial<DeliverySnapshot>);
+    await expect(
+      delivery.deliver({ ...input, recovery: true })
+    ).resolves.toEqual({ status: 'gone' });
+    expect(close).toHaveBeenCalledTimes(1);
+    expect(send).not.toHaveBeenCalled();
+  });
+  it.each([
+    'AUTHENTICATED',
+    'AUTHENTICATION_FAILED',
+    'NOTIFICATION_IDENTITIES_SYNCED'
+  ])(
+    'returns explicit failed control delivery for legacy %s without closing or scheduling a refresh',
+    async (type) => {
+      store.claim.mockResolvedValue({
+        ...acquired,
+        canReconnect: false,
+        failures: 3,
+        firstFailureAt: Date.now() - 180_000
+      });
+      await expect(
+        delivery.deliver({ ...input, recovery: true })
+      ).resolves.toEqual({ status: 'sent' });
+      send.mockRejectedValue(error429);
+      await expect(
+        delivery.deliver({ ...input, message: JSON.stringify({ type }) })
+      ).resolves.toEqual({ status: 'failed' });
+      expect(store.finish).toHaveBeenLastCalledWith(
+        expect.objectContaining({ coalesce: false })
+      );
+      expect(close).not.toHaveBeenCalled();
+      expect(store.forget).not.toHaveBeenCalled();
+      expect(mockError).not.toHaveBeenCalled();
+    }
+  );
+  it('keeps the subscription and tries recovery if closing a listener fails', async () => {
+    store.claim.mockResolvedValue({
+      ...acquired,
+      failures: 3,
+      firstFailureAt: Date.now() - 180_000
+    });
+    store.snapshot.mockResolvedValue({
+      healthyConnections: 10,
+      recentlyHealthyConnections: 10,
+      throttledConnections: 1,
+      pending: 1
+    });
+    close.mockRejectedValue(new Error('AWS refused closure'));
+    await expect(
+      delivery.deliver({ ...input, recovery: true })
+    ).resolves.toEqual({ status: 'sent' });
+    expect(store.finish).not.toHaveBeenCalledWith(
+      expect.objectContaining({ outcome: 'gone' })
+    );
+  });
+  it('prioritizes authentication acknowledgements and closes only an unacknowledged transport', async () => {
+    send.mockRejectedValue(error429);
+    const authInput = {
+      ...input,
+      message: '{"type":"AUTHENTICATED","data":{}}'
+    };
+    await expect(delivery.deliver(authInput)).resolves.toEqual({
+      status: 'gone'
+    });
+    expect(store.claim).toHaveBeenCalledWith(
+      input.connectionId,
+      expect.any(String),
+      false,
+      expect.any(Number),
+      true
+    );
+    expect(close).toHaveBeenCalledTimes(1);
+    expect(store.forget).toHaveBeenCalledWith(input.connectionId);
+    expect(mockError).not.toHaveBeenCalled();
+  });
+  it('reads a fan-out batch frame type instead of parsing each frame', async () => {
+    const parse = jest.spyOn(JSON, 'parse');
+    try {
+      await expect(
+        delivery.deliver({
+          ...input,
+          batch: {
+            defer: () => undefined,
+            metrics: new DeliveryMetricsBatch(),
+            frameType: 'DROP_UPDATE'
+          }
+        })
+      ).resolves.toEqual({ status: 'sent' });
+      expect(parse).not.toHaveBeenCalled();
+    } finally {
+      parse.mockRestore();
+    }
+    expect(store.claim).toHaveBeenCalledWith(
+      input.connectionId,
+      expect.any(String),
+      false,
+      expect.any(Number),
+      false
+    );
+  });
+
+  it('still recognizes a control acknowledgement a batch names', async () => {
+    send.mockRejectedValue(error429);
+    await delivery.deliver({
+      ...input,
+      message: '{"type":"AUTHENTICATED","data":{}}',
+      batch: {
+        defer: () => undefined,
+        metrics: new DeliveryMetricsBatch(),
+        frameType: 'AUTHENTICATED'
+      }
+    });
+    expect(store.claim).toHaveBeenCalledWith(
+      input.connectionId,
+      expect.any(String),
+      false,
+      expect.any(Number),
+      true
+    );
+  });
+
+  it('parses an unbatched frame once for claim and finish', async () => {
+    const parse = jest.spyOn(JSON, 'parse');
+    try {
+      // A fresh send: each send is decided once (a new input per send).
+      await expect(delivery.deliver({ ...input })).resolves.toEqual({
+        status: 'sent'
+      });
+      expect(parse).toHaveBeenCalledTimes(1);
+    } finally {
+      parse.mockRestore();
+    }
+    expect(store.finish).toHaveBeenCalledWith(
+      expect.objectContaining({ coalesce: true })
+    );
+  });
+
+  it('does not report an intentional deadline cancellation as an application error', async () => {
+    const controller = new AbortController();
+    send.mockImplementation(async () => {
+      controller.abort();
+      throw new Error('deadline');
+    });
+    await expect(
+      delivery.deliver({ ...input, signal: controller.signal })
+    ).resolves.toEqual({ status: 'failed' });
+    expect(mockError).not.toHaveBeenCalled();
+  });
+  it('lets a fan-out defer post-send bookkeeping and batch its metrics (1.2)', async () => {
+    let releaseFinish!: () => void;
+    store.finish.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          releaseFinish = () => resolve(false);
+        })
+    );
+    const deferred: Promise<unknown>[] = [];
+    const metrics = new DeliveryMetricsBatch();
+    const record = jest.spyOn(metrics, 'record');
+
+    // The send result does not wait for the bookkeeping write...
+    await expect(
+      delivery.deliver({
+        ...input,
+        batch: { defer: (settlement) => deferred.push(settlement), metrics }
+      })
+    ).resolves.toEqual({ status: 'sent' });
+    expect(deferred).toHaveLength(1);
+    expect(record).toHaveBeenCalledWith('Sent', 0);
+
+    // ...but it is handed to the fan-out, which awaits it.
+    let settled = false;
+    void deferred[0].then(() => {
+      settled = true;
+    });
+    await Promise.resolve();
+    expect(settled).toBe(false);
+    releaseFinish();
+    await deferred[0];
+    expect(settled).toBe(true);
+  });
+
+  it('reports each send claim wall time to the batch, before the send', async () => {
+    const events: string[] = [];
+    const claimTimes: number[] = [];
+    await expect(
+      delivery.deliver({
+        ...input,
+        send: async () => {
+          events.push('send');
+          return {};
+        },
+        batch: {
+          defer: () => undefined,
+          metrics: new DeliveryMetricsBatch(),
+          claimTimed: (milliseconds: number) => {
+            events.push('claim');
+            claimTimes.push(milliseconds);
+          }
+        }
+      })
+    ).resolves.toEqual({ status: 'sent' });
+
+    expect(events).toEqual(['claim', 'send']);
+    expect(claimTimes).toHaveLength(1);
+    expect(claimTimes[0]).toBeGreaterThanOrEqual(0);
+  });
+
+  it('writes one aggregated EMF record per metrics batch (1.2)', () => {
+    const lambda = process.env.AWS_LAMBDA_FUNCTION_NAME;
+    process.env.AWS_LAMBDA_FUNCTION_NAME = 'api';
+    const stdout = jest
+      .spyOn(process.stdout, 'write')
+      .mockImplementation(() => true);
+    try {
+      const metrics = new DeliveryMetricsBatch();
+      metrics.record('Sent', 1);
+      metrics.record('Sent', 3);
+      metrics.record('Gone', 1);
+      metrics.record('Deferred');
+      metrics.flush();
+      metrics.flush();
+      expect(stdout).toHaveBeenCalledTimes(1);
+      const record = JSON.parse(String(stdout.mock.calls[0][0]));
+      expect(record).toMatchObject({
+        Sent: 2,
+        Gone: 1,
+        Deferred: 1,
+        Attempted: 3,
+        SdkAttempts: 5,
+        SdkRetries: 2
+      });
+      expect(
+        record._aws.CloudWatchMetrics[0].Metrics.map(
+          (metric: { Name: string }) => metric.Name
+        )
+      ).toEqual(
+        expect.arrayContaining(['Sent', 'Gone', 'Deferred', 'Attempted'])
+      );
+    } finally {
+      stdout.mockRestore();
+      if (lambda === undefined) delete process.env.AWS_LAMBDA_FUNCTION_NAME;
+      else process.env.AWS_LAMBDA_FUNCTION_NAME = lambda;
+    }
+  });
+});

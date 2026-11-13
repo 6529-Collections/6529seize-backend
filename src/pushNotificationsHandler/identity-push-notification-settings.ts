@@ -1,5 +1,6 @@
 import { IdentityNotificationCause } from '@/entities/IIdentityNotification';
 import type { PushNotificationSettingsData } from '@/entities/IPushNotificationSettings';
+import { isIosPushPlatform } from './push-platform';
 
 const CAUSE_TO_SETTING_KEY: Partial<
   Record<IdentityNotificationCause, keyof PushNotificationSettingsData>
@@ -10,11 +11,14 @@ const CAUSE_TO_SETTING_KEY: Partial<
   [IdentityNotificationCause.IDENTITY_NIC]: 'identity_nic',
   [IdentityNotificationCause.DROP_QUOTED]: 'drop_quoted',
   [IdentityNotificationCause.DROP_REPLIED]: 'drop_replied',
+  [IdentityNotificationCause.VOTING_CREDITS_RETURNED]: 'drop_voted',
   [IdentityNotificationCause.DROP_VOTED]: 'drop_voted',
   [IdentityNotificationCause.DROP_POLL_VOTED]: 'drop_voted',
   [IdentityNotificationCause.DROP_REACTED]: 'drop_reacted',
   [IdentityNotificationCause.DROP_BOOSTED]: 'drop_boosted',
   [IdentityNotificationCause.WAVE_CREATED]: 'wave_created',
+  [IdentityNotificationCause.MEME_COLLABORATION]: 'identity_mentioned',
+  [IdentityNotificationCause.ARTIST_ARTWORK_SUBMITTED]: 'wave_created',
   [IdentityNotificationCause.COMPETITION_LIFECYCLE]: 'wave_created',
   [IdentityNotificationCause.SUBSCRIPTION_COVERAGE]: 'subscription_coverage'
 };
@@ -22,10 +26,20 @@ const CAUSE_TO_SETTING_KEY: Partial<
 export function isNotificationEnabledForDevice(
   cause: IdentityNotificationCause,
   settings: PushNotificationSettingsData,
-  includeCompetitions = false
+  includeCompetitions = false,
+  platform?: string | null
 ): boolean {
   if (
-    cause === IdentityNotificationCause.COMPETITION_LIFECYCLE &&
+    cause === IdentityNotificationCause.SUBSCRIPTION_COVERAGE &&
+    isIosPushPlatform(platform)
+  ) {
+    return false;
+  }
+
+  if (
+    (cause === IdentityNotificationCause.ARTIST_ARTWORK_SUBMITTED ||
+      cause === IdentityNotificationCause.COMPETITION_LIFECYCLE ||
+      cause === IdentityNotificationCause.VOTING_CREDITS_RETURNED) &&
     !includeCompetitions
   )
     return false;
@@ -35,11 +49,17 @@ export function isNotificationEnabledForDevice(
 
 export function getEnabledCauses(
   settings: PushNotificationSettingsData,
-  includeCompetitions = false
+  includeCompetitions = false,
+  platform?: string | null
 ): IdentityNotificationCause[] {
   return (
     Object.values(IdentityNotificationCause) as IdentityNotificationCause[]
   ).filter((cause) =>
-    isNotificationEnabledForDevice(cause, settings, includeCompetitions)
+    isNotificationEnabledForDevice(
+      cause,
+      settings,
+      includeCompetitions,
+      platform
+    )
   );
 }
