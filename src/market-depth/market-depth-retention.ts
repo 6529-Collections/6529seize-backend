@@ -33,7 +33,7 @@ export interface MarketDepthEventPurgeKey {
 }
 
 export interface MarketDepthEventPurgeBatch {
-  // Rows examined, including events kept because their order is still live.
+  // Expired candidates returned; fewer than the limit means none remain.
   scanned: number;
   deleted: number;
   last: MarketDepthEventPurgeKey | null;
@@ -71,6 +71,8 @@ interface PurgeLoopOptions {
   readonly pause: (ms: number) => Promise<void>;
 }
 
+// The deadline is checked between batches, so a batch already started may
+// finish shortly after it; one batch is a few bounded queries.
 async function purgeInBatches(
   batch: () => Promise<{ deleted: number; exhausted: boolean }>,
   options: PurgeLoopOptions

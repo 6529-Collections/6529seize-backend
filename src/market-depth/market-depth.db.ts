@@ -50,10 +50,15 @@ const logger = Logger.get('MARKET_DEPTH_DB');
 // Deliberately global: different collections can contend on shared PRIMARY pages.
 const PUBLICATION_LOCK_ID = 'b78ed622-53d7-4d24-bcb8-4ff57edac806';
 
-const RECONCILIATION_STATUSES: readonly MarketDepthReconciliationStatus[] = [
-  'RESOLVED',
-  'PENDING'
-];
+// Keyed by every status, so adding one fails to compile until retention
+// covers it as well.
+const RECONCILIATION_STATUSES = Object.keys({
+  RESOLVED: true,
+  PENDING: true
+} satisfies Record<
+  MarketDepthReconciliationStatus,
+  true
+>) as MarketDepthReconciliationStatus[];
 
 interface PurgePartition {
   source: string;
@@ -1047,19 +1052,13 @@ export class MarketDepthDb extends LazyDbAccessCompatibleService {
       ids.push(...rows.map((row) => row.id));
     }
     if (!ids.length) return 0;
-    // Re-check at deletion time so a concurrent publish cannot lose the
-    // snapshot it just made current.
+    // Only PK predicates here: subqueries on collection state or current orders
+    // would take shared locks under REPEATABLE READ and could deadlock with
+    // serialized publication. Publication only points at newly created
+    // snapshots, so an expired, unreferenced snapshot cannot become live.
     const result = await this.query<unknown>(
       `DELETE FROM ${MARKET_DEPTH_SNAPSHOTS_TABLE}
-       WHERE id IN (:ids) AND completed_at<:cutoff
-         AND NOT EXISTS (
-           SELECT 1 FROM ${MARKET_DEPTH_COLLECTION_STATE_TABLE} state
-           WHERE state.latest_snapshot_id=${MARKET_DEPTH_SNAPSHOTS_TABLE}.id
-         )
-         AND NOT EXISTS (
-           SELECT 1 FROM ${MARKET_DEPTH_CURRENT_ORDERS_TABLE} c
-           WHERE c.snapshot_id=${MARKET_DEPTH_SNAPSHOTS_TABLE}.id
-         )`,
+       WHERE id IN (:ids) AND completed_at<:cutoff`,
       { ids, cutoff: input.cutoff }
     );
     return this.db.getAffectedRows(result);
@@ -1120,18 +1119,28 @@ export class MarketDepthDb extends LazyDbAccessCompatibleService {
       cutoff: input.cutoff
     };
     const afterClause = input.after
-      ? 'AND (observed_at>:afterAt OR (observed_at=:afterAt AND event_id>:afterId))'
+      ? 'AND (e.observed_at>:afterAt OR (e.observed_at=:afterAt AND e.event_id>:afterId))'
       : '';
+    // Orders still in the live book keep their whole history: the depth API
+    // applies their latest terminal event even when it predates the window.
+    // Excluding them in this non-locking read keeps them from filling batches;
+    // MySQL runs it as an anti-join against the materialized live book. A NULL
+    // order_id never matches, so those events are always eligible.
     const candidates = await this.query<{
       event_id: string;
-      order_id: string | null;
       observed_at: Date;
     }>(
-      `SELECT event_id, order_id, observed_at FROM ${MARKET_DEPTH_EVENTS_TABLE}
+      `SELECT e.event_id, e.observed_at FROM ${MARKET_DEPTH_EVENTS_TABLE} e
        FORCE INDEX (idx_market_depth_events_contract_observed)
-       WHERE chain_id=:chainId AND contract=:contract AND observed_at<:cutoff
+       WHERE e.chain_id=:chainId AND e.contract=:contract
+         AND e.observed_at<:cutoff
          ${afterClause}
-       ORDER BY observed_at ASC, event_id ASC LIMIT :limit`,
+         AND NOT EXISTS (
+           SELECT 1 FROM ${MARKET_DEPTH_CURRENT_ORDERS_TABLE} c
+           WHERE c.chain_id=e.chain_id AND c.contract=e.contract
+             AND c.order_id=e.order_id
+         )
+       ORDER BY e.observed_at ASC, e.event_id ASC LIMIT :limit`,
       {
         ...params,
         afterAt: input.after?.observed_at,
@@ -1141,46 +1150,15 @@ export class MarketDepthDb extends LazyDbAccessCompatibleService {
     );
     const last = candidates.at(-1);
     if (!last) return { scanned: 0, deleted: 0, last: input.after };
-
-    // Orders still in the live book keep their whole history: the depth API
-    // applies their latest terminal event even when it predates the window.
-    const orderIds = Array.from(
-      new Set(
-        candidates.flatMap((event) => (event.order_id ? [event.order_id] : []))
-      )
+    const result = await this.query<unknown>(
+      `DELETE FROM ${MARKET_DEPTH_EVENTS_TABLE}
+       WHERE event_id IN (:ids) AND chain_id=:chainId AND contract=:contract
+         AND observed_at<:cutoff`,
+      { ...params, ids: candidates.map((event) => event.event_id) }
     );
-    const liveOrderIds = new Set(
-      orderIds.length
-        ? (
-            await this.query<{ order_id: string }>(
-              `SELECT DISTINCT order_id FROM ${MARKET_DEPTH_CURRENT_ORDERS_TABLE}
-               WHERE chain_id=:chainId AND contract=:contract
-                 AND order_id IN (:orderIds)`,
-              { ...params, orderIds }
-            )
-          ).map((row) => row.order_id.toLowerCase())
-        : []
-    );
-    const ids = candidates
-      .filter(
-        (event) =>
-          event.order_id === null ||
-          !liveOrderIds.has(event.order_id.toLowerCase())
-      )
-      .map((event) => event.event_id);
-    let deleted = 0;
-    if (ids.length) {
-      const result = await this.query<unknown>(
-        `DELETE FROM ${MARKET_DEPTH_EVENTS_TABLE}
-         WHERE event_id IN (:ids) AND chain_id=:chainId AND contract=:contract
-           AND observed_at<:cutoff`,
-        { ...params, ids }
-      );
-      deleted = this.db.getAffectedRows(result);
-    }
     return {
       scanned: candidates.length,
-      deleted,
+      deleted: this.db.getAffectedRows(result),
       last: { observed_at: new Date(last.observed_at), event_id: last.event_id }
     };
   }

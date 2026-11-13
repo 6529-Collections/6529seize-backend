@@ -65,7 +65,7 @@ describe('market-depth retention', () => {
     );
   });
 
-  it('continues past kept live-order events until a short scan', async () => {
+  it('pages with the last candidate key until a batch comes back short', async () => {
     const first = {
       observed_at: new Date('2026-09-01T00:00:00.000Z'),
       event_id: 'a'
@@ -77,7 +77,7 @@ describe('market-depth retention', () => {
     const db = database({
       purgeEventsObservedBefore: jest
         .fn()
-        // A full batch of live-order events deletes nothing but is not the end.
+        // A full batch is not the end even if rows vanished before deletion.
         .mockResolvedValueOnce({
           scanned: MARKET_DEPTH_EVENT_PURGE_BATCH_SIZE,
           deleted: 0,
