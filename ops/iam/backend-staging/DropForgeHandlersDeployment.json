@@ -119,7 +119,7 @@
         "s3:PutEncryptionConfiguration"
       ],
       "Resource": [
-        "arn:aws:s3:::dropforgelaunchhandler-sta*-serverlessdeploy*",
+        "arn:aws:s3:::dropforgelaunchhandler-st*-serverlessdeploy*",
         "arn:aws:s3:::memesdistributionhandler-*-serverlessdeploy*"
       ],
       "Condition": {
@@ -142,7 +142,7 @@
         "s3:PutObjectTagging"
       ],
       "Resource": [
-        "arn:aws:s3:::dropforgelaunchhandler-sta*-serverlessdeploy*/*",
+        "arn:aws:s3:::dropforgelaunchhandler-st*-serverlessdeploy*/*",
         "arn:aws:s3:::memesdistributionhandler-*-serverlessdeploy*/*"
       ],
       "Condition": {
