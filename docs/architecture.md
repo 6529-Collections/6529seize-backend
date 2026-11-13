@@ -138,6 +138,17 @@ Prenode entity/table remains intact; no schema sync, migration or data deletion
 is needed. `/oracle/docs` continues to describe the preserved TDH API.
 Only `api` needs redeployment for this retirement.
 
+## Global TDH history
+
+`tdhHistoryLoop` stores network TDH sums in `tdh_global_history` and
+`latest_tdh_global_history`. The full `dbMigrationsLoop` invocation widens
+existing TDH sum columns with SQL before TypeORM plans schema synchronization.
+TypeORM creates those columns as signed `BIGINT` on new databases. The
+`/api/tdh_global_history` response serializes the totals and deltas as safe
+JSON integers within JavaScript's safe integer range. The width migration
+preserves stored values. Deploy `dbMigrationsLoop` with the full schema scope,
+then deploy `api`.
+
 ## Active TDH voting discovery
 
 `GET /v2/waves/active-votes` is an optional-auth read in the existing API Lambda.

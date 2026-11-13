@@ -37,6 +37,10 @@ jest.mock('@/competitions/retired-competition-storage', () => ({
 }));
 import { handler } from './index';
 import { synchronizeSchemaBounded } from '@/db/bounded-schema-sync';
+import { widenGlobalTdhHistoryBeforeSchemaSync } from './global-tdh-history-schema';
+jest.mock('./global-tdh-history-schema', () => ({
+  widenGlobalTdhHistoryBeforeSchemaSync: jest.fn().mockResolvedValue(undefined)
+}));
 import { DropEntity } from '@/entities/IDrop';
 import { applyWaveScoreInputIndexSchema } from './wave-score-input-index-schema';
 jest.mock('./wave-score-input-index-schema', () => ({
@@ -294,6 +298,18 @@ describe('dbMigrationsLoop explicit schema scope', () => {
     expect(migrations.getInstance).not.toHaveBeenCalled();
   });
 
+  it('stops before TypeORM sync if widening global TDH history fails', async () => {
+    jest
+      .mocked(widenGlobalTdhHistoryBeforeSchemaSync)
+      .mockRejectedValueOnce(new Error('TDH history table busy'));
+
+    await expect(invoke({ schema_scope: 'full' })).rejects.toThrow(
+      'TDH history table busy'
+    );
+    expect(synchronizeSchemaBounded).not.toHaveBeenCalled();
+    expect(migrations.getInstance).not.toHaveBeenCalled();
+  });
+
   it.each([undefined, {}, { schema_scope: 'full' }])(
     'preserves full manual migration behavior for %j',
     async (event) => {
@@ -304,6 +320,13 @@ describe('dbMigrationsLoop explicit schema scope', () => {
         syncEntities: false
       });
       expect(assertCompetitionSchemaSyncSafe).toHaveBeenCalledTimes(1);
+      expect(widenGlobalTdhHistoryBeforeSchemaSync).toHaveBeenCalledTimes(1);
+      expect(
+        jest.mocked(widenGlobalTdhHistoryBeforeSchemaSync).mock
+          .invocationCallOrder[0]
+      ).toBeLessThan(
+        jest.mocked(getDataSource().synchronize).mock.invocationCallOrder[0]
+      );
       expect(getDataSource().synchronize).toHaveBeenCalledTimes(1);
       expect(applyWaveScoreInputIndexSchema).toHaveBeenCalledTimes(1);
       expect(

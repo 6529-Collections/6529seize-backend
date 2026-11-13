@@ -83,7 +83,7 @@ import {
 } from './db/my-sql.helpers';
 import { NFT } from './entities/INFT';
 import { TDHBlock } from './entities/ITDH';
-import { TDHHistory } from './entities/ITDHHistory';
+import type { GlobalTDHHistory, TDHHistory } from './entities/ITDHHistory';
 import { Upload } from './entities/IUpload';
 import { Logger } from './logging';
 import { NEXTGEN_TOKENS_TABLE } from './nextgen/nextgen_constants';
@@ -1736,8 +1736,33 @@ export async function getTdhForAddress(address: string) {
   return result?.tdh ?? 0;
 }
 
+const GLOBAL_TDH_VALUE_COLUMNS = [
+  'created_tdh',
+  'destroyed_tdh',
+  'net_tdh',
+  'created_boosted_tdh',
+  'destroyed_boosted_tdh',
+  'net_boosted_tdh',
+  'created_tdh__raw',
+  'destroyed_tdh__raw',
+  'net_tdh__raw',
+  'total_boosted_tdh',
+  'total_tdh',
+  'total_tdh__raw',
+  'gradients_boosted_tdh',
+  'gradients_tdh',
+  'gradients_tdh__raw',
+  'memes_boosted_tdh',
+  'memes_tdh',
+  'memes_tdh__raw'
+] as const satisfies ReadonlyArray<keyof GlobalTDHHistory>;
+
+type GlobalTdhValueColumn = (typeof GLOBAL_TDH_VALUE_COLUMNS)[number];
+type GlobalTdhHistoryRow = Omit<GlobalTDHHistory, GlobalTdhValueColumn> &
+  Record<GlobalTdhValueColumn, number | string | bigint>;
+
 export async function fetchTDHGlobalHistory(pageSize: number, page: number) {
-  return fetchPaginated(
+  const result = await fetchPaginated<GlobalTdhHistoryRow>(
     TDH_GLOBAL_HISTORY_TABLE,
     {},
     ` date desc `,
@@ -1745,6 +1770,22 @@ export async function fetchTDHGlobalHistory(pageSize: number, page: number) {
     page,
     ''
   );
+
+  const data = result.data.map((row) => {
+    const values = { ...row };
+    for (const column of GLOBAL_TDH_VALUE_COLUMNS) {
+      const value = numbers.parseIntOrNull(row[column]);
+      if (value === null || !Number.isSafeInteger(value)) {
+        throw new RangeError(
+          `Invalid or unsafe TDH history value in ${column}`
+        );
+      }
+      values[column] = value;
+    }
+    return values as GlobalTDHHistory;
+  });
+
+  return { ...result, data };
 }
 
 export async function fetchRecentTDHHistory(
