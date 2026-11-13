@@ -154,6 +154,15 @@ waits and retries lock timeouts. If it still fails, inspect the Lambda logs and
 retry after the blocking work clears. A retry skips an already widened table.
 The migration is one-way because narrowing can lose values above the old limit.
 
+### Pinned wave order
+
+Deploy `dbMigrationsLoop` with `db_schema_scope=pinned-wave-order-schema` to add
+the nullable position column. Deploy `api` next, then run
+`dbMigrationsLoop` with `db_schema_scope=pinned-wave-order-backfill`. Rerun
+the backfill if it reaches its time limit. The job updates only null positions
+and takes the same per-profile lock as the API. Release the frontend after the
+backfill succeeds. Retain the position column and values during a rollback.
+
 ### Operational failures
 
 #### TDH export uploads
