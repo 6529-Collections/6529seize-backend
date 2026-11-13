@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs';
 import path from 'node:path';
 import type { DataSource } from 'typeorm';
 import { getDataSource } from '@/db';
@@ -7,10 +8,13 @@ type MigrationQuery = (sql: string, parameters?: unknown[]) => Promise<unknown>;
 export async function widenGlobalTdhHistoryBeforeSchemaSync(
   source: DataSource = getDataSource()
 ): Promise<void> {
-  // The Lambda package copies migrations alongside the bundled entry point.
-  const migration = require(
-    path.resolve('migrations/20261113065624-widen-global-tdh-history-values.js')
-  ) as {
+  const filename = '20261113065624-widen-global-tdh-history-values.js';
+  // The Lambda ZIP places migrations beside index.js. Source runs use the repo root.
+  const packaged = path.join(__dirname, 'migrations', filename);
+  const migrationPath = existsSync(packaged)
+    ? packaged
+    : path.resolve(__dirname, '../../migrations', filename);
+  const migration = require(migrationPath) as {
     up: (db: { runSql: MigrationQuery }) => Promise<void>;
   };
   const runner = source.createQueryRunner('master');

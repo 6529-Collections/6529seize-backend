@@ -138,7 +138,9 @@ Only `api` needs redeployment for this retirement.
 existing TDH sum columns with SQL before TypeORM plans schema synchronization.
 TypeORM creates those columns as signed `BIGINT` on new databases. The
 `/api/tdh_global_history` response serializes the totals and deltas as safe
-JSON integers. The width migration preserves the values already stored.
+JSON integers within JavaScript's safe integer range. The width migration
+preserves stored values. Deploy `dbMigrationsLoop` with the full schema scope,
+then deploy `api`.
 
 ## Active TDH voting discovery
 

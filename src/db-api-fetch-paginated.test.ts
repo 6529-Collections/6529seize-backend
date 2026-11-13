@@ -254,7 +254,11 @@ describe('fetchTDHGlobalHistory', () => {
     });
   });
 
-  it.each(['9007199254740993', BigInt('9007199254740993')])(
+  it.each([
+    '9007199254740993',
+    '-9007199254740993',
+    BigInt('9007199254740993')
+  ])(
     'rejects a TDH total outside the safe integer range (%p)',
     async (value) => {
       useHistoryRow(value);
