@@ -71,15 +71,23 @@ interface PurgeLoopOptions {
   readonly pause: (ms: number) => Promise<void>;
 }
 
+// Each table gets an equal share of the time left, so a backlog in one table
+// cannot starve the others; time a table leaves unused passes to the next.
 // The deadline is checked between batches, so a batch already started may
 // finish shortly after it; one batch is a few bounded queries.
 async function purgeInBatches(
   batch: () => Promise<{ deleted: number; exhausted: boolean }>,
-  options: PurgeLoopOptions
+  options: PurgeLoopOptions,
+  tablesRemaining: number
 ): Promise<{ deleted: number; complete: boolean }> {
+  const startMs = options.now().getTime();
+  const deadlineMs = Math.min(
+    options.deadlineMs,
+    startMs + Math.max(0, options.deadlineMs - startMs) / tablesRemaining
+  );
   let deleted = 0;
   while (
-    options.now().getTime() < options.deadlineMs &&
+    options.now().getTime() < deadlineMs &&
     deleted < MAX_ROWS_PER_TABLE_PER_RUN
   ) {
     const result = await batch();
@@ -110,49 +118,61 @@ export async function purgeMarketDepthHistory(input: {
     startedAt.getTime() -
       Time.days(MARKET_DEPTH_SNAPSHOT_RETENTION_DAYS).toMillis()
   );
-  const snapshots = await purgeInBatches(async () => {
-    const deleted = await input.db.purgeSnapshotsCompletedBefore({
-      contract,
-      cutoff: snapshotCutoff,
-      limit: MARKET_DEPTH_SNAPSHOT_PURGE_BATCH_SIZE
-    });
-    return {
-      deleted,
-      exhausted: deleted < MARKET_DEPTH_SNAPSHOT_PURGE_BATCH_SIZE
-    };
-  }, options);
+  const snapshots = await purgeInBatches(
+    async () => {
+      const deleted = await input.db.purgeSnapshotsCompletedBefore({
+        contract,
+        cutoff: snapshotCutoff,
+        limit: MARKET_DEPTH_SNAPSHOT_PURGE_BATCH_SIZE
+      });
+      return {
+        deleted,
+        exhausted: deleted < MARKET_DEPTH_SNAPSHOT_PURGE_BATCH_SIZE
+      };
+    },
+    options,
+    3
+  );
 
   const reconciliationCutoff = new Date(
     startedAt.getTime() -
       Time.days(MARKET_DEPTH_RECONCILIATION_RETENTION_DAYS).toMillis()
   );
-  const reconciliations = await purgeInBatches(async () => {
-    const deleted = await input.db.purgeReconciliationsDueBefore({
-      contract,
-      cutoff: reconciliationCutoff,
-      limit: MARKET_DEPTH_RECONCILIATION_PURGE_BATCH_SIZE
-    });
-    return {
-      deleted,
-      exhausted: deleted < MARKET_DEPTH_RECONCILIATION_PURGE_BATCH_SIZE
-    };
-  }, options);
+  const reconciliations = await purgeInBatches(
+    async () => {
+      const deleted = await input.db.purgeReconciliationsDueBefore({
+        contract,
+        cutoff: reconciliationCutoff,
+        limit: MARKET_DEPTH_RECONCILIATION_PURGE_BATCH_SIZE
+      });
+      return {
+        deleted,
+        exhausted: deleted < MARKET_DEPTH_RECONCILIATION_PURGE_BATCH_SIZE
+      };
+    },
+    options,
+    2
+  );
 
   const eventCutoff = marketDepthEventRetentionCutoff(startedAt);
   let after: MarketDepthEventPurgeKey | null = null;
-  const events = await purgeInBatches(async () => {
-    const batch = await input.db.purgeEventsObservedBefore({
-      contract,
-      cutoff: eventCutoff,
-      after,
-      limit: MARKET_DEPTH_EVENT_PURGE_BATCH_SIZE
-    });
-    after = batch.last;
-    return {
-      deleted: batch.deleted,
-      exhausted: batch.scanned < MARKET_DEPTH_EVENT_PURGE_BATCH_SIZE
-    };
-  }, options);
+  const events = await purgeInBatches(
+    async () => {
+      const batch = await input.db.purgeEventsObservedBefore({
+        contract,
+        cutoff: eventCutoff,
+        after,
+        limit: MARKET_DEPTH_EVENT_PURGE_BATCH_SIZE
+      });
+      after = batch.last;
+      return {
+        deleted: batch.deleted,
+        exhausted: batch.scanned < MARKET_DEPTH_EVENT_PURGE_BATCH_SIZE
+      };
+    },
+    options,
+    1
+  );
 
   const result: MarketDepthRetentionResult = {
     snapshots: snapshots.deleted,
