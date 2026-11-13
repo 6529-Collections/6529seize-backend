@@ -250,6 +250,20 @@ describe('API environment deployment', () => {
     }
   );
 
+  it.each(['', '\n  \n'])(
+    'rejects an empty configuration read %j before changing code',
+    (rawEnvironment) => {
+      const result = runDeployApi({ rawEnvironment });
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain(
+        'The current seizeAPI environment read back empty'
+      );
+      expect(subcommands(result.calls)).toEqual(['get-function-configuration']);
+      expect(result.written).toBeNull();
+      expect(result.leftovers).toEqual([]);
+    }
+  );
+
   it('refuses an environment override without a JSON form', () => {
     expect(() => runDeployApi({ environment: undefined })).toThrow(
       'environment override has no JSON form'

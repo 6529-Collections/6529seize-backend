@@ -22,6 +22,12 @@ import {
   identifyingJpeg,
   identifyingWebp
 } from '@/media/metadata-strip/fixtures/identifying-image-fixtures';
+import {
+  largeGif,
+  largeJpeg
+} from '@/media/metadata-strip/fixtures/large-image-fixtures';
+import { stripMetadataLosslessly } from '@/media/metadata-strip/lossless-metadata-strip';
+import * as uploadImagePreviews from '@/media/upload-image-previews';
 import * as mediaPlaceholder from './media-placeholder';
 
 const ORIENTATION_6_EXIF = Buffer.concat([
@@ -555,6 +561,59 @@ describe('image format validation before publication', () => {
     }
   );
 
+  it.each([
+    // 36 MP: the old pixel check gave up, and the re-encode fallback's own
+    // decoded-work budget then rejected the upload.
+    ['jpeg', () => largeJpeg(6_000)],
+    ['gif', () => largeGif(400)]
+  ] as const)(
+    'publishes a large chat %s stripped losslessly instead of failing it',
+    async (format, make) => {
+      const input = await make();
+      const p = pipeline(
+        input,
+        `image/${format}`,
+        'true',
+        DropMediaUploadPurpose.CHAT
+      );
+      await p.process();
+      expect(p.uploadsDb.transitionStatus).toHaveBeenLastCalledWith(
+        expect.objectContaining({ toStatus: DropMediaUploadStatus.READY })
+      );
+      const body = p.publicSend.mock.calls[0][0].input.Body as Buffer;
+      expect(body).toEqual(stripMetadataLosslessly(input, format).output);
+      expectNoIdentifyingStrings(body);
+    },
+    120_000
+  );
+
+  it('frees the source and stripped buffers before rendering previews', async () => {
+    const { jpeg } = await identifyingJpeg();
+    const output = stripMetadataLosslessly(jpeg, 'jpeg').output;
+    // Unpooled, like the large buffers this protects against.
+    const stripped = Buffer.alloc(output.length);
+    output.copy(stripped);
+    let source: Buffer | undefined;
+    jest
+      .spyOn(pixelVerifiedStrip, 'stripMetadataWithPixelCheck')
+      .mockImplementation(async (input) => {
+        source = input;
+        return { kind: 'lossless', buffer: stripped, removed: [] };
+      });
+    const render = uploadImagePreviews.prepareUploadImagePreviews;
+    const lengthsAtPreview: number[] = [];
+    jest
+      .spyOn(uploadImagePreviews, 'prepareUploadImagePreviews')
+      .mockImplementation(async (...args) => {
+        lengthsAtPreview.push(source!.length, stripped.length);
+        return render(...args);
+      });
+    const p = pipeline(jpeg, 'image/jpeg', 'true', DropMediaUploadPurpose.CHAT);
+    await p.process();
+    expect(p.publicSend.mock.calls[0][0].input.Body).toEqual(output);
+    expect(lengthsAtPreview).toEqual([0, 0]);
+  });
+
   it.each(['true', 'false'])(
     'publishes decision entry bytes unchanged with policy %s',
     async (policy) => {
@@ -626,16 +685,64 @@ describe('image format validation before publication', () => {
     );
   });
 
-  it('rejects excessive dimensions before stripping and reports how to recover', async () => {
+  it.each([
+    // Beyond the pixel check's 268 MP ceiling.
+    [20000, 20000, false],
+    // A progressive JPEG beyond the 64 MP whole-frame cap.
+    [9000, 9000, true]
+  ])(
+    'rejects %i x %i (progressive %s) before stripping and reports how to recover',
+    async (width, height, isProgressive) => {
+      const input = fixture('jpeg');
+      const metadata = await Sharp(input).metadata();
+      jest.spyOn(Sharp.prototype, 'metadata').mockResolvedValue({
+        ...metadata,
+        width,
+        height,
+        isProgressive
+      });
+      const strip = jest.spyOn(
+        pixelVerifiedStrip,
+        'stripMetadataWithPixelCheck'
+      );
+      const p = pipeline(
+        input,
+        'image/jpeg',
+        'true',
+        DropMediaUploadPurpose.CHAT
+      );
+      await p.process();
+      expect(strip).not.toHaveBeenCalled();
+      expect(p.publicSend).not.toHaveBeenCalled();
+      expect(p.uploadsDb.transitionStatus).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          toStatus: DropMediaUploadStatus.FAILED,
+          patch: expect.objectContaining({
+            error_reason: expect.stringMatching(
+              new RegExp(`${width} x ${height}.*Reduce its dimensions`)
+            )
+          })
+        })
+      );
+    }
+  );
+
+  it('sends a 120 MP baseline JPEG to the lossless strip instead of rejecting it', async () => {
     const input = fixture('jpeg');
     const metadata = await Sharp(input).metadata();
     jest.spyOn(Sharp.prototype, 'metadata').mockResolvedValue({
       ...metadata,
-      width: 20000,
-      height: 20000,
+      width: 12000,
+      height: 10000,
       isProgressive: false
     });
-    const strip = jest.spyOn(pixelVerifiedStrip, 'stripMetadataWithPixelCheck');
+    const strip = jest
+      .spyOn(pixelVerifiedStrip, 'stripMetadataWithPixelCheck')
+      .mockResolvedValue({
+        kind: 'lossless',
+        buffer: Buffer.from(input),
+        removed: []
+      });
     const p = pipeline(
       input,
       'image/jpeg',
@@ -643,17 +750,9 @@ describe('image format validation before publication', () => {
       DropMediaUploadPurpose.CHAT
     );
     await p.process();
-    expect(strip).not.toHaveBeenCalled();
-    expect(p.publicSend).not.toHaveBeenCalled();
+    expect(strip).toHaveBeenCalled();
     expect(p.uploadsDb.transitionStatus).toHaveBeenLastCalledWith(
-      expect.objectContaining({
-        toStatus: DropMediaUploadStatus.FAILED,
-        patch: expect.objectContaining({
-          error_reason: expect.stringMatching(
-            /20000 x 20000.*Reduce its dimensions/
-          )
-        })
-      })
+      expect.objectContaining({ toStatus: DropMediaUploadStatus.READY })
     );
   });
 

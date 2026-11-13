@@ -6,6 +6,7 @@ import {
   informationSchemaCatalog,
   isDestructivePlanAcknowledgement,
   parseSchemaStatement,
+  SCHEMA_SYNC_DESTRUCTIVE_GUARD_ENV,
   SchemaCatalog,
   schemaSyncDestructiveGuardMode
 } from './schema-sync-plan-check';
@@ -363,9 +364,33 @@ describe('destructive plan decision', () => {
   it('reads the guard mode, defaulting to report', () => {
     expect(schemaSyncDestructiveGuardMode(undefined)).toBe('report');
     expect(schemaSyncDestructiveGuardMode('')).toBe('report');
-    expect(schemaSyncDestructiveGuardMode('true')).toBe('report');
+    expect(schemaSyncDestructiveGuardMode('  ')).toBe('report');
+    expect(schemaSyncDestructiveGuardMode(' Report ')).toBe('report');
     expect(schemaSyncDestructiveGuardMode(' Block ')).toBe('block');
   });
+
+  it('does not read the process environment for the default', () => {
+    const original = process.env[SCHEMA_SYNC_DESTRUCTIVE_GUARD_ENV];
+    process.env[SCHEMA_SYNC_DESTRUCTIVE_GUARD_ENV] = 'block';
+    try {
+      expect(schemaSyncDestructiveGuardMode(undefined)).toBe('report');
+    } finally {
+      if (original === undefined) {
+        delete process.env[SCHEMA_SYNC_DESTRUCTIVE_GUARD_ENV];
+      } else {
+        process.env[SCHEMA_SYNC_DESTRUCTIVE_GUARD_ENV] = original;
+      }
+    }
+  });
+
+  it.each(['true', 'blocking', 'off', '1'])(
+    'rejects the unrecognised guard mode %s, naming the accepted values',
+    (value) => {
+      expect(() => schemaSyncDestructiveGuardMode(value)).toThrow(
+        /SCHEMA_SYNC_DESTRUCTIVE_GUARD must be "report" or "block"/
+      );
+    }
+  );
 
   it('accepts only a lowercase SHA-256 as an acknowledgement', () => {
     expect(isDestructivePlanAcknowledgement(sha)).toBe(true);

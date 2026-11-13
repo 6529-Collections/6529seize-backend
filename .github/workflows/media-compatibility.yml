@@ -54,7 +54,7 @@ jobs:
           "$RUNNER_TEMP/museum-validator/bin/pip" install --disable-pip-version-check --index-url https://pypi.org/simple --require-hashes --only-binary=:all: -r scripts/museum-validator-requirements.txt
       - name: Validate portable artwork records independently
         run: |
-          ./bin/6529 exec node scripts/build-artwork-schema-bundle.cjs --check
+          node scripts/build-artwork-schema-bundle.cjs --check
           "$RUNNER_TEMP/museum-validator/bin/python" scripts/test_museum_iiif_validation.py
           "$RUNNER_TEMP/museum-validator/bin/python" scripts/test_artwork_validators.py
           "$RUNNER_TEMP/museum-validator/bin/python" -O scripts/test_artwork_validators.py
@@ -88,14 +88,14 @@ jobs:
           (cd src/api-serverless && ../../bin/6529 ci)
       - name: Verify lockfile platforms and real media/upload behavior
         run: |
-          ./bin/6529 exec node scripts/check-package-lock.mjs
-          ./bin/6529 exec node scripts/verify-media-runtime.cjs .
+          node scripts/check-package-lock.mjs
+          node scripts/verify-media-runtime.cjs .
           NODE_OPTIONS=--max-old-space-size=3072 ./bin/6529 exec jest --config scripts/media-jest.config.cjs
       - name: Verify each media package installs and loads natively
         run: |
           for service in artworkDocumentationProcessor dropMediaSanitizer mediaResizerLoop nftLinkMediaPreviewLoop rememesLoop s3Uploader; do
             (cd "src/$service" && ../../bin/6529 ci)
-            ./bin/6529 exec node scripts/verify-media-runtime.cjs "src/$service"
+            node scripts/verify-media-runtime.cjs "src/$service"
           done
 
   artifacts:
