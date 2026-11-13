@@ -339,7 +339,9 @@ describe('generated deployment source guard', () => {
         'nft-history-events',
         'nft-history-replay',
         'competition-lifecycle-events',
-        'competition-score-resets'
+        'competition-score-resets',
+        'pinned-wave-order-schema',
+        'pinned-wave-order-backfill'
       ]
     });
     expect(job.env.DB_SCHEMA_SCOPE).toBe(
@@ -463,7 +465,9 @@ describe('generated deployment source guard', () => {
     'nft-history-events',
     'nft-history-replay',
     'competition-lifecycle-events',
-    'competition-score-resets'
+    'competition-score-resets',
+    'pinned-wave-order-schema',
+    'pinned-wave-order-backfill'
   ])('forwards validated %s as one JSON invocation payload', (scope) => {
     const result = invokeMigrationScope(scope);
     expect(result.error).toBeUndefined();
