@@ -150,4 +150,61 @@ describe('market-depth retention', () => {
     expect(db.purgeReconciliationsDueBefore).not.toHaveBeenCalled();
     expect(db.purgeEventsObservedBefore).not.toHaveBeenCalled();
   });
+
+  it('splits the time budget so a backlog in one table cannot starve the rest', async () => {
+    let clock = NOW.getTime();
+    const tick = <T>(value: T) =>
+      jest.fn().mockImplementation(async () => {
+        clock += 10_000;
+        return value;
+      });
+    const db = database({
+      purgeSnapshotsCompletedBefore: tick(
+        MARKET_DEPTH_SNAPSHOT_PURGE_BATCH_SIZE
+      ),
+      purgeReconciliationsDueBefore: tick(
+        MARKET_DEPTH_RECONCILIATION_PURGE_BATCH_SIZE
+      ),
+      purgeEventsObservedBefore: tick({
+        scanned: MARKET_DEPTH_EVENT_PURGE_BATCH_SIZE,
+        deleted: MARKET_DEPTH_EVENT_PURGE_BATCH_SIZE,
+        last: null
+      })
+    });
+    await expect(
+      purgeMarketDepthHistory({
+        contract: CONTRACT,
+        db,
+        deadlineMs: NOW.getTime() + 90_000,
+        now: () => new Date(clock),
+        pause: jest.fn().mockResolvedValue(undefined)
+      })
+    ).resolves.toMatchObject({ complete: false });
+    expect(db.purgeSnapshotsCompletedBefore).toHaveBeenCalledTimes(3);
+    expect(db.purgeReconciliationsDueBefore).toHaveBeenCalledTimes(3);
+    expect(db.purgeEventsObservedBefore).toHaveBeenCalledTimes(3);
+  });
+
+  it('passes time a finished table leaves unused to the tables after it', async () => {
+    let clock = NOW.getTime();
+    const db = database({
+      purgeEventsObservedBefore: jest.fn().mockImplementation(async () => {
+        clock += 10_000;
+        return {
+          scanned: MARKET_DEPTH_EVENT_PURGE_BATCH_SIZE,
+          deleted: MARKET_DEPTH_EVENT_PURGE_BATCH_SIZE,
+          last: null
+        };
+      })
+    });
+    await purgeMarketDepthHistory({
+      contract: CONTRACT,
+      db,
+      deadlineMs: NOW.getTime() + 90_000,
+      now: () => new Date(clock),
+      pause: jest.fn().mockResolvedValue(undefined)
+    });
+    // Snapshots and reconciliations finish instantly; events get all 90s.
+    expect(db.purgeEventsObservedBefore).toHaveBeenCalledTimes(9);
+  });
 });
