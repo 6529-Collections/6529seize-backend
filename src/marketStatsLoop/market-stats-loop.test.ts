@@ -18,12 +18,18 @@ jest.mock('./nft_market_stats_nextgen', () => ({
 jest.mock('@/market-depth/opensea-poller', () => ({
   pollOpenSeaMarketDepthForContract: jest.fn()
 }));
+jest.mock('@/market-depth/market-depth.db', () => ({ marketDepthDb: {} }));
+jest.mock('@/market-depth/market-depth-retention', () => ({
+  purgeMarketDepthHistory: jest.fn()
+}));
 
 import { MEMES_CONTRACT } from '@/constants';
 import { handler } from './index';
 import { findNftMarketStats } from './nft_market_stats';
 import { findNextgenMarketStats } from './nft_market_stats_nextgen';
 import { pollOpenSeaMarketDepthForContract } from '@/market-depth/opensea-poller';
+import { purgeMarketDepthHistory } from '@/market-depth/market-depth-retention';
+import { marketDepthDb } from '@/market-depth/market-depth.db';
 
 // The Sentry wrapper is mocked to expose the original async handler.
 const invoke = handler as unknown as (
@@ -39,6 +45,12 @@ describe('market refresh scheduling', () => {
     jest.mocked(findNftMarketStats).mockResolvedValue(undefined);
     jest.mocked(findNextgenMarketStats).mockResolvedValue(undefined);
     jest.mocked(pollOpenSeaMarketDepthForContract).mockResolvedValue([]);
+    jest.mocked(purgeMarketDepthHistory).mockResolvedValue({
+      snapshots: 0,
+      reconciliations: 0,
+      events: 0,
+      complete: true
+    });
   });
   afterEach(() => {
     jest.useRealTimers();
@@ -117,6 +129,73 @@ describe('market refresh scheduling', () => {
     expect(mockCleanup).not.toHaveBeenCalled();
     finishDepth();
     await outcome;
+    expect(mockCleanup).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    [MEMES_CONTRACT, MEMES_CONTRACT.toLowerCase()],
+    ['nextgen', '0x45882f9bc325e14fbb298a1df930c43a874b83ae']
+  ])(
+    'purges %s market-depth history after the refresh within its own budget',
+    async (contract, purgedContract) => {
+      process.env.MARKET_STATS_CONTRACT = contract;
+      const started = Date.now();
+      await expect(
+        invoke({}, { getRemainingTimeInMillis: () => 900_000 })
+      ).resolves.toBeUndefined();
+      expect(purgeMarketDepthHistory).toHaveBeenCalledTimes(1);
+      expect(purgeMarketDepthHistory).toHaveBeenCalledWith({
+        contract: purgedContract,
+        db: marketDepthDb,
+        deadlineMs: started + 240_000
+      });
+      expect(
+        jest.mocked(purgeMarketDepthHistory).mock.invocationCallOrder[0]
+      ).toBeGreaterThan(
+        jest.mocked(pollOpenSeaMarketDepthForContract).mock
+          .invocationCallOrder[0]
+      );
+      expect(mockCleanup).toHaveBeenCalledTimes(1);
+    }
+  );
+
+  it('never extends the purge past the invocation deadline', async () => {
+    process.env.MARKET_STATS_CONTRACT = MEMES_CONTRACT;
+    const started = Date.now();
+    jest.mocked(findNftMarketStats).mockImplementation(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 11 * 60_000));
+    });
+    const running = invoke({}, { getRemainingTimeInMillis: () => 900_000 });
+    await jest.advanceTimersByTimeAsync(11 * 60_000);
+    await expect(running).resolves.toBeUndefined();
+    expect(purgeMarketDepthHistory).toHaveBeenCalledWith(
+      expect.objectContaining({ deadlineMs: started + 780_000 })
+    );
+  });
+
+  it('still purges when the refresh fails and reports the refresh failure', async () => {
+    process.env.MARKET_STATS_CONTRACT = MEMES_CONTRACT;
+    jest
+      .mocked(pollOpenSeaMarketDepthForContract)
+      .mockRejectedValue(new Error('fixture depth failure'));
+    jest
+      .mocked(purgeMarketDepthHistory)
+      .mockRejectedValue(new Error('fixture retention failure'));
+    await expect(
+      invoke({}, { getRemainingTimeInMillis: () => 900_000 })
+    ).rejects.toThrow('fixture depth failure');
+    expect(purgeMarketDepthHistory).toHaveBeenCalledTimes(1);
+    expect(mockCleanup).toHaveBeenCalledTimes(1);
+  });
+
+  it('fails the invocation when retention fails after a successful refresh', async () => {
+    process.env.MARKET_STATS_CONTRACT = MEMES_CONTRACT;
+    jest
+      .mocked(purgeMarketDepthHistory)
+      .mockRejectedValue(new Error('fixture retention failure'));
+    await expect(
+      invoke({}, { getRemainingTimeInMillis: () => 900_000 })
+    ).rejects.toThrow('fixture retention failure');
     expect(mockCleanup).toHaveBeenCalledTimes(1);
   });
 });
