@@ -204,11 +204,11 @@ export const handler = sentryContext.wrapLambdaHandler(async (event) => {
     return { schema_scope: scope };
   }
   if (scope === PINNED_WAVE_ORDER_BACKFILL_SCOPE) {
-    const profiles = await doInDbContext(backfillPinnedWaveOrder, {
+    const report = await doInDbContext(backfillPinnedWaveOrder, {
       logger,
       syncEntities: false
     });
-    return { schema_scope: scope, profiles };
+    return { schema_scope: scope, ...report };
   }
   if (scope === 'competition-lifecycle-events') {
     await doInDbContext(() => Promise.resolve(), {

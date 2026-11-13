@@ -567,6 +567,10 @@ jobs:
             echo "Lambda did not acknowledge the requested schema scope"
             exit 1
           fi
+          if [ "$DB_SCHEMA_SCOPE" = pinned-wave-order-backfill ] && ! jq -e '.completed == true' response.json > /dev/null; then
+            echo "Pinned wave backfill paused. Rerun this scope before deploying the frontend."
+            exit 1
+          fi
       - name: Verify resources-only CloudFormation stack
         if: (${cloudFormationStackCondition})
         shell: bash

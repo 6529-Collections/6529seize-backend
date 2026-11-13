@@ -3839,13 +3839,13 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     }
   }
 
-  async findProfilesWithUnorderedPins(after: string, limit: number) {
+  async findProfilesWithUnorderedPins(limit: number) {
     const rows = await this.db.execute<{ profile_id: string }>(
       `select distinct pins.profile_id from ${PINNED_WAVES_TABLE} pins
        join ${PROFILES_TABLE} p on p.external_id = pins.profile_id
-       where pins.profile_id > :after and pins.position is null
+       where pins.position is null
        order by pins.profile_id limit :limit`,
-      { after, limit },
+      { limit },
       { forcePool: DbPoolName.WRITE }
     );
     return rows.map((row) => row.profile_id);
@@ -3900,6 +3900,12 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
       },
       { wrappedConnection: ctx.connection }
     );
+    // The pin is the driving row, so missing waves or metrics still get a position.
+    if (activity.length !== unorderedIds.length) {
+      throw new Error(
+        'Pinned wave position seed did not cover every unordered pin'
+      );
+    }
     const positioned = pins.filter((pin) => pin.position !== null);
     const lastPosition = positioned.at(-1)?.position ?? 0;
     const seeded = activity.map(({ wave_id }, index) => ({

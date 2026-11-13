@@ -133,6 +133,32 @@ describeWithSeed(
       ]);
     });
 
+    it('reuses noncontiguous positions without changing an omitted pin', async () => {
+      await pin(firstNew);
+      await transaction((connection) =>
+        repo.deletePin({ waveId: active, profileId }, { connection })
+      );
+      await transaction(async (connection) => {
+        const ctx = { connection };
+        await repo.lockPinnedWaveProfile(profileId, ctx);
+        await repo.updatePinnedWavePositions(
+          profileId,
+          [
+            { wave_id: firstNew, position: 1 },
+            { wave_id: parent, position: 4 },
+            { wave_id: muted, position: 5 }
+          ],
+          ctx
+        );
+      });
+      expect(await list()).toEqual([
+        { wave_id: firstNew, position: 1 },
+        { wave_id: quiet, position: 3 },
+        { wave_id: parent, position: 4 },
+        { wave_id: muted, position: 5 }
+      ]);
+    });
+
     it('assigns distinct positions to concurrent new pins', async () => {
       await Promise.all([pin(firstNew), pin(secondNew)]);
       const saved = await list();
