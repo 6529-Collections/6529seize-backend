@@ -50,7 +50,7 @@ Entities:
     - latest: latest global aggregate value.
     - value: same as latest for "current" wording.
   Metrics:
-    - total_tdh: latest total boosted TDH.
+    - total_tdh: latest total boosted TDH, which can exceed 2,147,483,647.
   Filters: none.
   Examples:
     - "total tdh"

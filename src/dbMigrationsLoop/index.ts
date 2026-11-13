@@ -42,6 +42,7 @@ import { NFTHistoryReplayJobEntity } from '@/entities/INFTHistoryReplayJob';
 import { NFTHistoryEventEntity } from '@/entities/INFTHistoryEvent';
 import { DropEntity } from '@/entities/IDrop';
 import { applyWaveScoreInputIndexSchema } from './wave-score-input-index-schema';
+import { widenGlobalTdhHistoryBeforeSchemaSync } from './global-tdh-history-schema';
 import { E2eeBlobChunkEntity, E2eeBlobEntity } from '@/entities/IE2ee';
 import {
   E2EE_BLOB_MIGRATION_SCOPE,
@@ -312,6 +313,8 @@ export const handler = sentryContext.wrapLambdaHandler(async (event) => {
       // Synchronization ignores tables outside the current entity registry; retirement is operator-only.
       if (!scheduledInvocation && scope === 'full') {
         await assertCompetitionSchemaSyncSafe(dbSupplier());
+        // TypeORM would drop and re-add the TDH columns to change their types.
+        await widenGlobalTdhHistoryBeforeSchemaSync();
         await synchronizeSchemaBounded(getDataSource(), {
           acknowledgedDestructivePlanSha256
         });
