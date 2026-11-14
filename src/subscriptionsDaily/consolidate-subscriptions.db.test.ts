@@ -707,3 +707,103 @@ for (const manualKey of [A, B, AB]) {
     }
   );
 }
+
+async function modeTimes() {
+  return sqlExecutor.execute<{
+    consolidation_key: string;
+    created: string;
+    priority: string;
+  }>(
+    `SELECT consolidation_key,
+      DATE_FORMAT(created_at, '%Y-%m-%d %H:%i:%s') AS created,
+      DATE_FORMAT(updated_at, '%Y-%m-%d %H:%i:%s') AS priority
+     FROM ${SUBSCRIPTIONS_MODE_TABLE} ORDER BY consolidation_key`
+  );
+}
+
+describeWithSeed(
+  'Real MySQL: a group whose consolidation did not change',
+  [
+    {
+      table: ADDRESS_CONSOLIDATION_KEY,
+      rows: [{ address: C, consolidation_key: C }]
+    },
+    {
+      table: SUBSCRIPTIONS_BALANCES_TABLE,
+      rows: [
+        {
+          consolidation_key: C,
+          balance: 4,
+          created_at: EARLY,
+          updated_at: EARLY
+        }
+      ]
+    },
+    {
+      table: SUBSCRIPTIONS_MODE_TABLE,
+      rows: [
+        {
+          consolidation_key: C,
+          automatic: true,
+          subscribe_all_editions: true,
+          created_at: EARLY,
+          updated_at: EARLY
+        }
+      ]
+    },
+    { table: SUBSCRIPTIONS_NFTS_TABLE, rows: [upcoming(C, 600, 1, true)] }
+  ],
+  () => {
+    // D registered a consolidation to C that C never confirmed, so C's key
+    // is unchanged while both wallets are reconsolidated.
+    it('leaves its balance, mode and priority untouched', async () => {
+      const before = {
+        rows: await savedUpcoming(),
+        balances: await balances(),
+        modes: await modes(),
+        times: await modeTimes()
+      };
+      await consolidateSubscriptions(new Set([C, D]));
+      expect(await savedUpcoming()).toEqual(before.rows);
+      expect(await balances()).toEqual(before.balances);
+      expect(await modes()).toEqual(before.modes);
+      expect(await modeTimes()).toEqual(before.times);
+      expect(before.times).toEqual([
+        { consolidation_key: C, created: EARLY, priority: EARLY }
+      ]);
+    });
+  }
+);
+
+for (const scenario of [
+  { name: 'both automatic', bAutomatic: true, expected: EARLY },
+  { name: 'only the later one automatic', bAutomatic: false, expected: LATE }
+]) {
+  const seeds = mergeSeeds([]);
+  seeds.find((seed) => seed.table === SUBSCRIPTIONS_MODE_TABLE)!.rows = [
+    {
+      consolidation_key: A,
+      automatic: true,
+      created_at: LATE,
+      updated_at: LATE
+    },
+    {
+      consolidation_key: B,
+      automatic: scenario.bAutomatic,
+      created_at: EARLY,
+      updated_at: EARLY
+    }
+  ];
+  describeWithSeed(
+    `Real MySQL: automatic priority when merging, ${scenario.name}`,
+    seeds,
+    () => {
+      it('keeps the earliest automatic position instead of the merge time', async () => {
+        await consolidateSubscriptions(new Set([A, B]));
+        expect(await modeTimes()).toEqual([
+          { consolidation_key: AB, created: EARLY, priority: scenario.expected }
+        ]);
+      });
+    }
+  );
+}
