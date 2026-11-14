@@ -1120,10 +1120,12 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     );
   }
 
-  /** Full rows by serial number, newest first, in the caller's GET scope. */
+  /**
+   * Full rows by serial number, newest first, in the caller's GET scope.
+   * The serial-number query in findUnfilteredLatestDrops is the only visibility gate; this read must not be used on its own.
+   */
   private async findDropsBySerialNosNewestFirst(
-    serialNos: number[],
-    connection?: ConnectionWrapper<any>
+    serialNos: number[]
   ): Promise<DropEntity[]> {
     if (!serialNos.length) {
       return [];
@@ -1132,8 +1134,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       `select d.* from ${DROPS_TABLE} d
        where d.serial_no in (:serialNos)
        order by d.serial_no desc`,
-      { serialNos },
-      connection ? { wrappedConnection: connection } : undefined
+      { serialNos }
     );
   }
 

@@ -1,4 +1,5 @@
 import { CustomApiCompliantException } from '@/exceptions';
+import { findExceededJsonStructureLimit } from '@/profile-cms/profile-cms-json-bounds';
 import {
   canonicalizeJson,
   CmsPackageV1,
@@ -11,27 +12,23 @@ export const CMS_AGENT_MAX_BYTES = 1024 * 1024;
 export const CMS_AGENT_MAX_DEPTH = 32;
 export const CMS_AGENT_MAX_NODES = 50000;
 
+const UNSUPPORTED_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+
 export function assertCmsAgentJsonBounded(input: unknown): void {
-  const queue: Array<{ value: unknown; depth: number }> = [
-    { value: input, depth: 0 }
-  ];
-  let nodes = 0;
-  while (queue.length) {
-    const item = queue.pop()!;
-    if (++nodes > CMS_AGENT_MAX_NODES || item.depth > CMS_AGENT_MAX_DEPTH)
-      oversized();
-    if (!item.value || typeof item.value !== 'object') continue;
-    for (const [key, value] of Object.entries(item.value)) {
-      if (['__proto__', 'constructor', 'prototype'].includes(key)) {
+  const exceeded = findExceededJsonStructureLimit(
+    input,
+    { maxNodes: CMS_AGENT_MAX_NODES, maxDepth: CMS_AGENT_MAX_DEPTH },
+    (key) => {
+      if (UNSUPPORTED_KEYS.has(key)) {
         throw new CustomApiCompliantException(
           400,
           'Unsupported candidate property',
           'cms_agent_invalid_candidate'
         );
       }
-      queue.push({ value, depth: item.depth + 1 });
     }
-  }
+  );
+  if (exceeded) oversized();
   if (
     Buffer.byteLength(JSON.stringify(input) ?? '', 'utf8') > CMS_AGENT_MAX_BYTES
   )

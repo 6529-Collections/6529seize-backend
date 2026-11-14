@@ -44,7 +44,11 @@ aws() {
         printf 'read failure %s\\n' "$UNMANAGED_VALUE" >&2
         return 254
       fi
-      printf '%s' "$MOCK_ENVIRONMENT"
+      if [ "$read_count" = 2 ] && [ -n "$MOCK_SECOND_ENVIRONMENT" ]; then
+        printf '%s' "$MOCK_SECOND_ENVIRONMENT"
+      else
+        printf '%s' "$MOCK_ENVIRONMENT"
+      fi
       ;;
     update-function-configuration)
       previous=''
@@ -103,6 +107,7 @@ function runDeployApi(
     rawEnvironment?: string;
     failingRead?: number;
     inputEnvironment?: string;
+    secondReadEnvironment?: unknown;
   } = {}
 ) {
   const directory = mkdtempSync(path.join(tmpdir(), 'deploy-api-env-'));
@@ -129,6 +134,10 @@ function runDeployApi(
           MOCK_CAPTURE: `${posixDirectory}/env_config.json`,
           MOCK_FAILING_READ: String(overrides.failingRead ?? 0),
           MOCK_ENVIRONMENT: mockEnvironment,
+          MOCK_SECOND_ENVIRONMENT:
+            'secondReadEnvironment' in overrides
+              ? JSON.stringify(overrides.secondReadEnvironment)
+              : '',
           UNMANAGED_VALUE: valueNotForLogs,
           INPUT_ENVIRONMENT: overrides.inputEnvironment ?? 'prod',
           ATTACHMENTS_INGEST_S3_BUCKET: 'attachments-bucket',
@@ -247,6 +256,24 @@ describe('API environment deployment', () => {
       expect(result.stderr).toContain(message);
       expect(subcommands(result.calls)).toEqual(['get-function-configuration']);
       expect(`${result.stdout}${result.stderr}`).not.toContain(valueNotForLogs);
+    }
+  );
+
+  it.each([{}, null])(
+    'never replaces the environment when the post-update read returns %j',
+    (secondReadEnvironment) => {
+      const result = runDeployApi({ secondReadEnvironment });
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain(
+        'missing required keys (GIT_COMMIT,CLAIMS_MEDIA_ARWEAVE_UPLOAD_SQS_URL'
+      );
+      expect(subcommands(result.calls)).toEqual([
+        'get-function-configuration',
+        'update-function-code',
+        'get-function-configuration'
+      ]);
+      expect(result.written).toBeNull();
+      expect(result.leftovers).toEqual([]);
     }
   );
 
