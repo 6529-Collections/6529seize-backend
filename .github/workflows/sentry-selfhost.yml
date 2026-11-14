@@ -1,0 +1,28 @@
+name: Self-hosted Sentry checks
+on:
+  pull_request:
+    paths:
+      - 'ops/sentry-selfhost/**'
+      - '.github/workflows/sentry-selfhost.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  templates-and-scripts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+      - name: Validate CloudFormation templates
+        working-directory: ops/sentry-selfhost
+        run: pipx run --spec cfn-lint==1.40.4 cfn-lint core.json edge.json
+      - name: Check shell scripts
+        working-directory: ops/sentry-selfhost
+        run: shellcheck -S warning host/*.sh scripts/*.sh
+      - name: Check Python scripts
+        working-directory: ops/sentry-selfhost
+        run: python3 -m py_compile scripts/rotate-ses-smtp-credentials.py scripts/check-domain-list.py
+      - name: Check the no-phone-home domain list and evidence pattern agree
+        working-directory: ops/sentry-selfhost
+        run: python3 scripts/check-domain-list.py
