@@ -72,7 +72,8 @@ export class InMemoryObjectStore implements MediaObjectStore {
     const object: StoredObject = {
       body: Buffer.from(body),
       headers: { ...headers, metadata: { ...headers.metadata } },
-      etag: `"${createHash('md5').update(body).digest('hex')}"`, // NOSONAR: test fixture imitating S3 ETag (MD5 by S3 definition); not security-sensitive.
+      // Opaque content tag in S3's quoted 32-hex-digit ETag format.
+      etag: `"${createHash('sha256').update(body).digest('hex').slice(0, 32)}"`,
       versionId: `v${++this.versionCounter}`,
       lastModified: this.now()
     };
