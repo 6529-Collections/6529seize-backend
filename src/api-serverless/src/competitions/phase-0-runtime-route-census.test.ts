@@ -25,6 +25,7 @@ const RETIRED_OPERATIONAL_ROUTES = new Set([
   '/deploy/ui/branch-head',
   '/deploy/ui/bus',
   '/deploy/ui/bus/app.js',
+  '/oracle/prenodes',
   '/rpc/test'
 ]);
 
@@ -182,7 +183,7 @@ describe('Phase 0 permanent mounted GET route census', () => {
       manifest.routes.filter(
         (route) => !RETIRED_OPERATIONAL_ROUTES.has(route.path)
       )
-    ).toHaveLength(288);
+    ).toHaveLength(287);
   });
 
   it('keeps every non-retired route declaration mounted in its owning source', () => {

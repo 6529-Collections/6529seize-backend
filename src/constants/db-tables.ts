@@ -206,7 +206,6 @@ export const EULA_CONSENT_TABLE = 'eula_consent';
 export const CMS_SITES_TABLE = 'cms_sites';
 export const CMS_PUBLISHED_PACKAGES_TABLE = 'cms_published_packages';
 export const ETH_PRICE_TABLE = 'eth_price';
-export const PRENODES_TABLE = 'prenodes';
 export const PUSH_NOTIFICATION_DEVICES_TABLE = 'push_notification_devices';
 export const PUSH_NOTIFICATION_SETTINGS_TABLE = 'push_notification_settings';
 export const IDENTITY_SUBSCRIPTIONS_TABLE = 'identity_subscriptions';

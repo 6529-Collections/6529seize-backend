@@ -127,16 +127,18 @@ verified native content permit target or the locked original-primary target of
 a new participatory command. New contexts snapshot terms from that competition
 bound to the submission wave; saved consent and frozen credits remain unchanged.
 
-## Oracle TDH API and retired Prenode registry
+## Oracle TDH API and removed Prenode registry
 
 The existing `api` service retains Oracle TDH totals, thresholds, percentile,
 cutoff, address breakdowns, season aggregations and NFT reads under `/oracle`.
-`POST /oracle/register-prenode` and `GET /oracle/prenodes` return uncached
-`410 Gone` responses with a 6529 Desktop deprecation notice. These terminal
-routes do not access the registry or geolocation service. The historical
-Prenode entity/table remains intact; no schema sync, migration or data deletion
-is needed. `/oracle/docs` continues to describe the preserved TDH API.
-Only `api` needs redeployment for this retirement.
+`/oracle/docs` continues to describe the preserved TDH API.
+
+Prenodes are retired and their servers are shut down. The former
+`POST /oracle/register-prenode` and `GET /oracle/prenodes` routes are no longer
+mounted and return 404. The `Prenode` entity and `PRENODES_TABLE` constant are
+removed. Schema sync ignores tables outside the entity registry, so the
+`prenodes` table (operator IP addresses, domains and locations) is dropped by
+an operator after the `api` rollout, not by a deployment or migration.
 
 ## Global TDH history
 
