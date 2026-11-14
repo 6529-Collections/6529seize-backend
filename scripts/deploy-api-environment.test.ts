@@ -174,6 +174,7 @@ describe('API environment deployment', () => {
       'update-function-configuration'
     ]);
     expect(result.written.Variables).toEqual({
+      DROP_FORGE_STAGE: 'prod',
       GIT_COMMIT: 'fixture',
       CLAIMS_MEDIA_ARWEAVE_UPLOAD_SQS_URL:
         'https://sqs.us-east-1.amazonaws.com/987989283142/claims-media-arweave-upload',
@@ -198,6 +199,7 @@ describe('API environment deployment', () => {
   it('uses the staging region outside production', () => {
     const result = runDeployApi({ inputEnvironment: 'staging' });
     expect(result.status).toBe(0);
+    expect(result.written.Variables.DROP_FORGE_STAGE).toBe('staging');
     expect(result.written.Variables.ARTWORK_DOCUMENTATION_S3_REGION).toBe(
       'eu-west-1'
     );

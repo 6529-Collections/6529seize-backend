@@ -1,3 +1,4 @@
+import { finalizeDistribution } from '@/drop-forge/drop-forge.preparation';
 import { ethers } from 'ethers';
 import { Request, Response } from 'express';
 import * as Joi from 'joi';
@@ -30,10 +31,7 @@ import {
   fetchDistributionPhases,
   fetchDistributions
 } from '@/api/distributions/api.distributions.db';
-import {
-  insertAutomaticAirdropsForPhase,
-  populateDistributionNormalized
-} from '@/api/distributions/api.distributions.service';
+import { insertAutomaticAirdropsForPhase } from '@/api/distributions/api.distributions.service';
 import { githubDistributionService } from '@/api/distributions/github-distribution.service';
 
 interface AirdropEntry {
@@ -365,7 +363,7 @@ router.post(
     }
     const { contract, cardId } = params;
 
-    await populateDistributionNormalized(contract, cardId);
+    await finalizeDistribution(contract, cardId);
 
     await invalidateDistributionOverviewCache(contract, cardId);
 

@@ -1,4 +1,5 @@
 import { MEMES_CONTRACT } from '@/constants';
+import { getDropForgePolicy } from '@/drop-forge/drop-forge.policy';
 import { isMemesContract } from '@/minting-claims/external-url';
 
 export const MEMES_MINTING_CLAIM_ACTION_TYPES = [
@@ -12,13 +13,21 @@ export const MEMES_MINTING_CLAIM_ACTION_TYPES = [
   'PAY_ARTIST'
 ] as const;
 
+export function mintingClaimActionsChainId(contract: string): number | null {
+  if (isMemesContract(contract)) return 1;
+  if (process.env.DROP_FORGE_STAGE !== 'staging') return null;
+  const policy = getDropForgePolicy();
+  return contract.toLowerCase() === policy.creator.toLowerCase()
+    ? policy.chainId
+    : null;
+}
+
 export function getSupportedMintingClaimActionTypes(
   contract: string
 ): readonly string[] {
-  if (isMemesContract(contract)) {
-    return MEMES_MINTING_CLAIM_ACTION_TYPES;
-  }
-  return [];
+  return mintingClaimActionsChainId(contract)
+    ? MEMES_MINTING_CLAIM_ACTION_TYPES
+    : [];
 }
 
 export function isSupportedMintingClaimActionType(
