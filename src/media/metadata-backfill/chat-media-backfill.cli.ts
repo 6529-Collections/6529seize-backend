@@ -28,6 +28,8 @@ import {
 } from './chat-media-backfill.options';
 import { chatMediaBackfillDb } from './chat-media-backfill.db';
 import { ChatMediaObjectProcessor } from './chat-media-object-processor';
+import { ChatMediaVideoProcessor } from './chat-media-video-processor';
+import { ReplacementWriter } from './backfill-replacement';
 import { ChatMediaScan } from './chat-media-scan';
 import { DecisionEntryExclusions } from './decision-entry-exclusions';
 import { skippedKeysFromReport } from './skipped-keys';
@@ -113,6 +115,9 @@ async function runScan(options: ScanCliOptions): Promise<void> {
   const runId = options.runId ?? newRunId(new Date());
   logger.info(`[RUN ID ${runId}]`);
   const keyFilter = readKeyFilter(options);
+  // Videos are inspected in full when included, so the probe is not needed.
+  const probeVideos =
+    options.probeVideos && !keyFilter && !options.includeVideos;
   const report = new BackfillReport(
     runId,
     'scan',
@@ -124,10 +129,12 @@ async function runScan(options: ScanCliOptions): Promise<void> {
       concurrency: options.concurrency,
       page_size: options.pageSize,
       resume_after: options.resumeAfter,
-      probe_videos: options.probeVideos && !keyFilter,
+      probe_videos: probeVideos,
       max_source_bytes: options.maxSourceBytes,
       keys_from_report: options.keysFromReport,
-      skip_reasons: options.skipReasons
+      skip_reasons: options.skipReasons,
+      include_videos: options.includeVideos,
+      max_video_bytes: options.includeVideos ? options.maxVideoBytes : null
     },
     new Date()
   );
@@ -137,9 +144,7 @@ async function runScan(options: ScanCliOptions): Promise<void> {
     versioning: await publicStore.versioningStatus()
   };
   let invalidations: InvalidationQueue | null = null;
-  let writer: ConstructorParameters<
-    typeof ChatMediaObjectProcessor
-  >[0]['writer'] = null;
+  let writer: ReplacementWriter | null = null;
   if (options.execute) {
     const safety = safetyStore();
     const layout = new SafetyCopyLayout(stage, runId);
@@ -169,6 +174,15 @@ async function runScan(options: ScanCliOptions): Promise<void> {
         now: () => new Date(),
         maxImageBytes: options.maxSourceBytes
       }),
+      videoProcessor: options.includeVideos
+        ? new ChatMediaVideoProcessor({
+            publicStore,
+            writer,
+            runId,
+            now: () => new Date(),
+            maxVideoBytes: options.maxVideoBytes
+          })
+        : null,
       publicStore,
       invalidations,
       report,
@@ -180,7 +194,7 @@ async function runScan(options: ScanCliOptions): Promise<void> {
     },
     {
       ...options,
-      probeVideos: options.probeVideos && !keyFilter,
+      probeVideos,
       exclusionRefreshMillis: EXCLUSION_REFRESH_MILLIS,
       onlyKeys: keyFilter?.keys ?? null
     }

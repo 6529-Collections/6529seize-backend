@@ -1,8 +1,4 @@
 import {
-  DROP_MEDIA_SANITIZED_METADATA_KEY,
-  DROP_MEDIA_SANITIZED_METADATA_VALUE
-} from '@/drops/drop-media-upload.config';
-import {
   ContainerDescription,
   describeImageContainer,
   LosslessStripFormat
@@ -17,12 +13,13 @@ import {
   MediaObjectStore,
   ObjectChangedError,
   ObjectHead,
-  ObjectTooLargeError,
-  SafetyCopyLayout,
-  SafetyCopyManifest,
-  sha256Base64,
-  sha256Hex
+  ObjectTooLargeError
 } from './backfill-storage';
+import {
+  bufferBody,
+  replaceInPlace,
+  ReplacementWriter
+} from './backfill-replacement';
 import { ChatMediaTarget } from './chat-media-candidates';
 import { findIdentifyingMetadata } from './identifying-metadata';
 import {
@@ -31,10 +28,8 @@ import {
   sniffImageContainer
 } from './image-container';
 import { CleanState, MetadataCategory } from './metadata-category';
-import { invalidationPathsFor } from './media-references';
 
-/** Marks objects this tool rewrote, so restore only touches its own writes. */
-export const BACKFILL_RUN_METADATA_KEY = 'metadata-backfill-run';
+export { BACKFILL_RUN_METADATA_KEY } from './backfill-markers';
 /**
  * Default `--max-source-bytes`: the upload limit, which the upload sanitizer
  * also strips losslessly. Each object in flight holds its source and output
@@ -54,7 +49,12 @@ export enum ObjectSkipReason {
   VERIFICATION_FAILED = 'verification_failed',
   /** The strip would keep the SDR image but drop its HDR gain map. */
   GAIN_MAP_NOT_KEPT = 'gain_map_not_kept',
-  CHANGED_DURING_RUN = 'changed_during_run'
+  CHANGED_DURING_RUN = 'changed_during_run',
+  /**
+   * A video whose structure the lossless rewriter does not support
+   * (fragmented, external data, compact sample tables, ...).
+   */
+  UNSUPPORTED_VIDEO_STRUCTURE = 'unsupported_video_structure'
 }
 
 /**
@@ -100,26 +100,12 @@ export type StripFunction = (
 export interface ObjectProcessorDeps {
   readonly publicStore: MediaObjectStore;
   /** Null in a dry run: nothing is ever written then. */
-  readonly writer: {
-    readonly safetyStore: MediaObjectStore;
-    readonly layout: SafetyCopyLayout;
-    readonly onRewritten: (paths: string[]) => void;
-  } | null;
+  readonly writer: ReplacementWriter | null;
   readonly runId: string;
   readonly now: () => Date;
   readonly strip?: StripFunction;
   /** Larger objects are skipped as too large; see BACKFILL_MAX_IMAGE_BYTES. */
   readonly maxImageBytes?: number;
-}
-
-class SafetyCopyUnverifiedError extends Error {
-  constructor(key: string) {
-    super(
-      `Safety copy of ${key} did not verify; the original was not replaced`
-    );
-    Object.setPrototypeOf(this, new.target.prototype);
-    this.name = 'SafetyCopyUnverifiedError';
-  }
 }
 
 function skipped(
@@ -136,7 +122,7 @@ function cleanState(description: ContainerDescription): CleanState {
     : CleanState.ORIENTATION_ONLY;
 }
 
-function isEncoded(head: ObjectHead): boolean {
+export function isEncoded(head: ObjectHead): boolean {
   const encoding = head.headers.contentEncoding?.trim().toLowerCase();
   return !!encoding && encoding !== 'identity';
 }
@@ -300,66 +286,15 @@ export class ChatMediaObjectProcessor {
     original: Buffer,
     stripped: Buffer
   ): Promise<void> {
-    const writer = this.deps.writer!;
-    const paths = invalidationPathsFor(target.key, target.urls);
-    await this.writeSafetyCopy(target.key, head, original, stripped, paths);
-    await this.deps.publicStore.put(
-      target.key,
-      stripped,
-      {
-        ...head.headers,
-        metadata: {
-          ...head.headers.metadata,
-          [DROP_MEDIA_SANITIZED_METADATA_KEY]:
-            DROP_MEDIA_SANITIZED_METADATA_VALUE,
-          [BACKFILL_RUN_METADATA_KEY]: this.deps.runId
-        }
-      },
-      { ifMatch: head.etag }
-    );
-    writer.onRewritten(paths);
-  }
-
-  /** The original and its manifest are stored and verified before any overwrite. */
-  private async writeSafetyCopy(
-    key: string,
-    head: ObjectHead,
-    original: Buffer,
-    stripped: Buffer,
-    paths: string[]
-  ): Promise<void> {
-    const { safetyStore, layout } = this.deps.writer!;
-    const copyKey = layout.objectKey(key);
-    await safetyStore.put(copyKey, original, head.headers);
-    const copy = await safetyStore.head(copyKey);
-    if (
-      copy?.size !== original.length ||
-      (copy.checksumSha256 !== undefined &&
-        copy.checksumSha256 !== sha256Base64(original))
-    ) {
-      throw new SafetyCopyUnverifiedError(key);
-    }
-    const manifest: SafetyCopyManifest = {
-      version: 1,
-      run_id: this.deps.runId,
-      public_bucket: this.deps.publicStore.bucket,
-      public_key: key,
-      safety_copy_key: copyKey,
-      original: {
-        etag: head.etag,
-        version_id: head.versionId ?? null,
-        size: original.length,
-        sha256: sha256Hex(original)
-      },
-      stripped: { size: stripped.length, sha256: sha256Hex(stripped) },
-      headers: head.headers,
-      invalidation_paths: paths,
-      backed_up_at: this.deps.now().toISOString()
-    };
-    await safetyStore.put(
-      layout.manifestKey(key),
-      Buffer.from(JSON.stringify(manifest, null, 2)),
-      { contentType: 'application/json', metadata: {} }
-    );
+    await replaceInPlace(target, {
+      writer: this.deps.writer!,
+      publicStore: this.deps.publicStore,
+      runId: this.deps.runId,
+      now: this.deps.now,
+      key: target.key,
+      head,
+      original: bufferBody(original),
+      stripped: bufferBody(stripped)
+    });
   }
 }

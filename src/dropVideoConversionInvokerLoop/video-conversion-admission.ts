@@ -5,6 +5,7 @@ import {
   S3Client
 } from '@aws-sdk/client-s3';
 import { createHash } from 'node:crypto';
+import { BACKFILL_RUN_METADATA_KEY } from '../media/metadata-backfill/backfill-markers';
 
 const GIB = 1024 * 1024 * 1024;
 const HOUR_MS = 60 * 60 * 1000;
@@ -63,7 +64,8 @@ export type VideoConversionDecision =
         | 'too_large'
         | 'unknown_size'
         | 'duplicate'
-        | 'job_cap';
+        | 'job_cap'
+        | 'backfill_rewrite';
       readonly detail?: Record<string, unknown>;
     };
 
@@ -133,6 +135,8 @@ function parseJobs(body: string): LedgerJob[] {
  * Bounds MediaConvert work per uploaded object before a job is created:
  * - the current object (HEAD) must exist, still be the version this event
  *   announced, and be no larger than `maxBytes`;
+ * - an object the chat media metadata backfill rewrote in place is not
+ *   converted again: it holds the same frames, and its renditions stay;
  * - one job per object version (key + ETag): a repeated PUT of identical
  *   bytes, or another event for it, starts nothing (a redelivery of the same
  *   event may retry its own job);
@@ -159,7 +163,11 @@ export async function admitVideoConversion({
   limits: VideoConversionLimits;
   now: number;
 }): Promise<VideoConversionDecision> {
-  let current: { etag: string | null; size: number | null } | null = null;
+  let current: {
+    etag: string | null;
+    size: number | null;
+    backfilled: boolean;
+  } | null = null;
   try {
     const head = await s3.send(
       new HeadObjectCommand({ Bucket: bucket, Key: key }),
@@ -167,7 +175,8 @@ export async function admitVideoConversion({
     );
     current = {
       etag: unquote(head.ETag),
-      size: typeof head.ContentLength === 'number' ? head.ContentLength : null
+      size: typeof head.ContentLength === 'number' ? head.ContentLength : null,
+      backfilled: !!head.Metadata?.[BACKFILL_RUN_METADATA_KEY]
     };
   } catch (error) {
     if (isNotFound(error)) return { convert: false, reason: 'missing' };
@@ -179,6 +188,8 @@ export async function admitVideoConversion({
     // A later write replaced this version; its own event converts it.
     return { convert: false, reason: 'superseded' };
   }
+  if (current?.backfilled)
+    return { convert: false, reason: 'backfill_rewrite' };
   const size = current?.size ?? eventSize;
   if (size === null) return { convert: false, reason: 'unknown_size' };
   if (size > limits.maxBytes) {

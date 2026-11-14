@@ -3,8 +3,8 @@
 New chat uploads have identifying metadata stripped when they are published
 (see [image upload format validation](image-upload-format-validation.md)).
 This operator tool applies the same lossless strip to chat images that were
-already published before that. Decision entries keep the artist's original
-bytes and are never touched.
+already published before that, and, with `--include-videos`, to chat videos.
+Decision entries keep the artist's original bytes and are never touched.
 
 It replaces `src/dropMediaSanitizer/backfill-existing-drop-media.ts`, which
 selected every drop and wave image including decision entries, overwrote in
@@ -18,7 +18,7 @@ with the owner's approval; deploying this code changes nothing.
 The selection is computed from the database the run is configured for:
 
 1. **Candidates.** Rows of `drop_medias` with an `image/*` (rewritten) or
-   `video/*` (counted only) MIME type whose URL is on the media CDN under
+   `video/*` (counted, or rewritten with `--include-videos`) MIME type whose URL is on the media CDN under
    `drops/` or `waves/`, joined to their drop; plus wave pictures
    (`waves.picture` and `waves_archive.picture`) under `waves/`. Other hosts
    (IPFS, Arweave) and prefixes are counted as out of scope.
@@ -100,10 +100,48 @@ A rewrite then:
 
 Derived previews were generated without metadata and are not rewritten.
 
-Videos are not changed (phase 2 has no video stripper). A dry run counts chat
+Without `--include-videos`, videos are not changed. A dry run counts chat
 videos and, by default, reads at most 512 KiB from each end of each video to
 count those likely to carry location (`©xyz`, Apple's ISO 6709 key, GoPro
 GPMF).
+
+### Videos (`--include-videos`)
+
+Chat videos then go through the same selection, exclusions, safety copy,
+manifest, conditional overwrite, restore and purge as images, and count
+towards `--limit` and `--sample`. Each is downloaded to a temporary file
+(never into memory) and stripped with the lossless MP4/QuickTime rewriter the
+upload sanitizer uses (`src/media/video-metadata-strip/`): only audio and
+video tracks stay, with their samples byte for byte; user data, Apple
+`mdta` keys, `©xyz`/`loci`, XMP, chapters, times, handler names, and
+timecode, telemetry (GoPro GPMF) and text tracks are removed. The written
+file must pass the same independent verification (kept-box policy, zero
+times, media data holding only the kept samples, unchanged headers, sample
+descriptions and tables, per-track SHA-256 of the samples) before it can
+replace anything.
+
+- No identifying data: left alone (`video_no_metadata`).
+- Skipped and listed: missing, `Content-Encoding`, larger than
+  `--max-video-bytes` (default `500MiB`, the upload limit), not MP4 or
+  QuickTime (`unsupported_format`), unreadable (`unparseable_container`),
+  structures the rewriter does not support (`unsupported_video_structure`:
+  fragmented MP4, external data, compact or byte-counted sample tables,
+  encryption; counted by kind under `videos.unsupported_structures`),
+  strips that do not verify (`verification_failed`) and objects changed
+  during the run.
+
+The report's `videos` section counts inspected, unchanged, to-rewrite,
+rewritten and skipped videos and the kinds of data found (`location`,
+`capture_time`, `device`, `telemetry_track`, `other_track`,
+`user_data`, `unreferenced_data`); videos are also counted in `objects`,
+`bytes` and the key lists next to images, so `--keys-from-report` retries
+skipped videos too (with `--include-videos`). Each video in flight needs about
+twice its size in temporary disk space. A rewrite starts no new video
+conversion: the conversion worker skips objects carrying this tool's run
+marker, because their existing renditions were made from the same frames;
+deploy `dropVideoConversionInvokerLoop` with that check before an execute run
+with `--include-videos`. Restore streams originals larger than 256 MiB
+through a temporary file.
 
 ## Safety copies
 
@@ -158,6 +196,9 @@ NODE_ENV=production ./bin/6529 run drop-media:backfill -- scan --environment pro
 # Read-only: 50 random chat images with their categories, for hand checks
 NODE_ENV=production ./bin/6529 run drop-media:backfill -- scan --environment prod --dry-run --sample 50
 
+# Read-only: what rewriting chat videos would do (downloads every chat video)
+NODE_ENV=production ./bin/6529 run drop-media:backfill -- scan --environment prod --dry-run --include-videos --report scan-videos-dry-run.json
+
 # Rewrite a random sample, or the first N, then hand check; note the run id
 NODE_ENV=production ./bin/6529 run drop-media:backfill -- scan --environment prod --execute --sample 20
 NODE_ENV=production ./bin/6529 run drop-media:backfill -- scan --environment prod --execute --limit 500 --run-id <run id>
@@ -173,7 +214,8 @@ NODE_ENV=production ./bin/6529 run drop-media:backfill -- purge-originals --envi
 ```
 
 Other options: `--concurrency` (1-8, default 2), `--page-size` (default 500),
-`--no-video-probe`, `--report <path>` and `--max-source-bytes` (bytes, or with
+`--no-video-probe`, `--include-videos` with `--max-video-bytes` (as above),
+`--report <path>` and `--max-source-bytes` (bytes, or with
 a `KiB`, `MiB` or `GiB` suffix; 1 MiB to 1 GiB, default `256MiB`). Each object
 in flight holds its source and stripped output, briefly a second output, one
 64 MiB pixel band and the decoder's state (up to about 520 MiB for the largest
@@ -227,5 +269,8 @@ downloaded and to rewrite, video counts, CDN invalidations, samples and
 - CDN invalidation does not clear copies already cached by browsers or other
   caches under the immutable cache policy, and IPFS or Arweave pins cannot be
   changed.
-- Videos, E2EE message attachments (client-encrypted) and profile pictures
-  are outside this tool.
+- Videos are only rewritten with `--include-videos`. Identifying data inside
+  the video or audio samples themselves (for example a GPS overlay burned into
+  the picture or encoder SEI messages) is not changed.
+- E2EE message attachments (client-encrypted) and profile pictures are
+  outside this tool.

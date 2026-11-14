@@ -1,8 +1,8 @@
 import { CandidateDecision, ChatMediaTarget } from './chat-media-candidates';
 import { ImageOutcome } from './chat-media-object-processor';
+import { VideoOutcome } from './chat-media-video-processor';
 import { ExclusionStats } from './decision-entry-exclusions';
 import { isAmbiguityReason, SkipReason } from './media-exclusion-index';
-import { MetadataCategory } from './metadata-category';
 
 /** Each key list stops growing here; the counts stay exact. */
 export const REPORT_KEY_LIST_LIMIT = 10_000;
@@ -71,7 +71,8 @@ export interface SampleEntry {
   readonly key: string;
   readonly source: string;
   readonly outcome: string;
-  readonly categories: MetadataCategory[];
+  /** Image metadata categories, or video findings. */
+  readonly categories: string[];
 }
 
 /**
@@ -125,7 +126,18 @@ export class BackfillReport {
     likely_location: 0,
     missing: 0,
     failed: 0,
-    likely_location_keys: new KeyList()
+    likely_location_keys: new KeyList(),
+    /**
+     * With --include-videos: video outcomes. They are also counted in
+     * `objects`, `bytes` and the key lists, next to images.
+     */
+    inspected: 0,
+    unchanged: 0,
+    to_rewrite: 0,
+    rewritten: 0,
+    skipped: {} as Counts,
+    unsupported_structures: {} as Counts,
+    findings: {} as Counts
   };
   readonly invalidation = { paths_submitted: 0, batches: 0, pending_paths: 0 };
   readonly samples: SampleEntry[] = [];
@@ -201,6 +213,40 @@ export class BackfillReport {
     }
   }
 
+  recordVideoOutcome(target: ChatMediaTarget, outcome: VideoOutcome): void {
+    this.objects.inspected++;
+    this.videos.inspected++;
+    if (outcome.kind === 'clean') {
+      this.videos.unchanged++;
+      increment(this.objects.unchanged, 'video_no_metadata');
+      this.bytes.downloaded += outcome.size;
+      return;
+    }
+    outcome.findings.forEach((finding) =>
+      increment(this.videos.findings, finding)
+    );
+    if (outcome.kind === 'skipped') {
+      this.skipped.add(outcome.reason, target.key);
+      increment(this.videos.skipped, outcome.reason);
+      if (outcome.problem) {
+        increment(this.videos.unsupported_structures, outcome.problem);
+      }
+      this.bytes.downloaded += outcome.size;
+      return;
+    }
+    this.bytes.downloaded += outcome.originalSize;
+    this.objects.to_rewrite++;
+    this.videos.to_rewrite++;
+    this.toRewriteKeys.add(target.key);
+    this.bytes.to_rewrite_original += outcome.originalSize;
+    this.bytes.to_rewrite_stripped += outcome.strippedSize;
+    if (outcome.written) {
+      this.objects.rewritten++;
+      this.videos.rewritten++;
+      this.rewrittenKeys.add(target.key);
+    }
+  }
+
   recordFailure(key: string, error: unknown): void {
     this.objects.failed++;
     if (this.failedKeys.length < REPORT_KEY_LIST_LIMIT) {
@@ -208,16 +254,20 @@ export class BackfillReport {
     }
   }
 
-  recordSample(target: ChatMediaTarget, outcome: ImageOutcome | null): void {
+  recordSample(
+    target: ChatMediaTarget,
+    outcome: ImageOutcome | VideoOutcome | null
+  ): void {
     let outcomeName = 'failed';
-    let categories: MetadataCategory[] = [];
-    if (outcome?.kind === 'clean') outcomeName = outcome.state;
-    else if (outcome?.kind === 'skipped') {
+    let categories: string[] = [];
+    if (outcome?.kind === 'clean') {
+      outcomeName = 'state' in outcome ? outcome.state : 'video_no_metadata';
+    } else if (outcome?.kind === 'skipped') {
       outcomeName = outcome.reason;
-      categories = outcome.categories;
+      categories = sampleCategories(outcome);
     } else if (outcome) {
       outcomeName = outcome.written ? 'rewritten' : 'would_rewrite';
-      categories = outcome.categories;
+      categories = sampleCategories(outcome);
     }
     this.samples.push({
       key: target.key,
@@ -275,6 +325,13 @@ export class BackfillReport {
       samples: this.samples
     };
   }
+}
+
+/** Image categories or video findings of a non-clean outcome. */
+function sampleCategories(
+  outcome: Exclude<ImageOutcome | VideoOutcome, { kind: 'clean' }>
+): string[] {
+  return 'findings' in outcome ? outcome.findings : outcome.categories;
 }
 
 /** Error class and a short message; storage and parser errors carry no metadata values. */
