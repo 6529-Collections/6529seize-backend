@@ -136,7 +136,9 @@ rewritten and skipped videos and the kinds of data found (`location`,
 `user_data`, `unreferenced_data`); videos are also counted in `objects`,
 `bytes` and the key lists next to images, so `--keys-from-report` retries
 skipped videos too (with `--include-videos`). Each video in flight needs about
-twice its size in temporary disk space. A rewrite starts no new video
+twice its size in temporary disk space, so plan for `--concurrency` x 2 x
+`--max-video-bytes` free (about 2 GiB at the defaults, 8 GiB at
+`--concurrency 8`). A rewrite starts no new video
 conversion: the conversion worker skips objects carrying this tool's run
 marker, because their existing renditions were made from the same frames;
 deploy `dropVideoConversionInvokerLoop` with that check before an execute run

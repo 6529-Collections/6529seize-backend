@@ -262,4 +262,38 @@ describe('chat video metadata sanitization routing', () => {
     expect(enqueue).toHaveBeenCalledWith({ mediaUploadId: record()!.id });
     expect(record()!.status).toBe(DropMediaUploadStatus.PROCESSING);
   });
+
+  it.each([
+    ['the pending-upload check fails', devicePoster(), true],
+    ['the poster is malformed', 'not-a-jpeg', false]
+  ])(
+    'still completes and queues a chat video when %s',
+    async (_, poster, failListParts) => {
+      const { service, publicS3, ingestS3, enqueue, record } = setUp();
+      const started = await service.getDropMediaMultipartUploadKeyAndUploadId({
+        content_type: 'video/mp4',
+        file_name: 'clip.mp4',
+        author_id: 'author'
+      });
+      const send = ingestS3.send.getMockImplementation()!;
+      ingestS3.send.mockImplementation(async (command: unknown) => {
+        if (failListParts && command instanceof ListPartsCommand) {
+          throw Object.assign(new Error('SlowDown'), { name: 'SlowDown' });
+        }
+        return send(command);
+      });
+
+      await expect(
+        service.completeMultipartUpload({
+          ...started,
+          parts: [{ etag: '"etag"', part_no: 1 }],
+          authenticatedProfileId: 'author',
+          video_poster_base64: poster
+        })
+      ).resolves.toMatchObject({ media_status: ApiDropMediaStatus.Processing });
+      expect(inputs(publicS3, PutObjectCommand)).toEqual([]);
+      expect(inputs(ingestS3, CompleteMultipartUploadCommand)).toHaveLength(1);
+      expect(enqueue).toHaveBeenCalledWith({ mediaUploadId: record()!.id });
+    }
+  );
 });

@@ -785,7 +785,8 @@ export class UploadMediaService {
   /**
    * A chat video's device poster is stored, like a direct video's, while its
    * (private) multipart upload is still pending, so it exists before the
-   * sanitizer publishes the video and conversion looks for it.
+   * sanitizer publishes the video and conversion looks for it. Storing it is
+   * best effort and never throws, so it cannot block completion.
    */
   private async storeIngestVideoPoster(
     upload: DropMediaUploadEntity,
