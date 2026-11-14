@@ -539,30 +539,28 @@ describe('ReactionsService', () => {
       ).resolves.toBe(drop);
     });
 
-    it('neither sleeps nor coalesces inside a caller-owned transaction', async () => {
-      (reactionsDb.addReaction as jest.Mock).mockResolvedValue(true);
-      jest.spyOn(profileActivityLogsDb, 'insert').mockResolvedValue(undefined);
+    it('refuses to join a caller-owned transaction, writing and sending nothing', async () => {
+      // Joining one read the drop back with overlapping statements on the
+      // caller's connection (which the write budget rejects) and broadcast
+      // before the caller committed. Callers react after they commit.
       const { coalescer, service: coalescing } = withCoalescer(
         async () => 'coalesced'
       );
       const callerCtx = { connection } as any;
 
-      await coalescing.addReaction(
-        dropEntity.id,
-        'profile-1',
-        ':+1:',
-        callerCtx
-      );
+      await expect(
+        coalescing.addReaction(dropEntity.id, 'profile-1', ':+1:', callerCtx)
+      ).rejects.toThrow('Reactions run their own transaction');
+      await expect(
+        coalescing.removeReaction(dropEntity.id, 'profile-1', callerCtx)
+      ).rejects.toThrow('Reactions run their own transaction');
 
-      expect(giveReadReplicaTimeToCatchUp).not.toHaveBeenCalled();
+      expect(reactionsDb.addReaction).not.toHaveBeenCalled();
+      expect(reactionsDb.removeReaction).not.toHaveBeenCalled();
       expect(coalescer.broadcast).not.toHaveBeenCalled();
-      expect(dropsService.findDropByIdOrThrow).toHaveBeenCalledWith(
-        { dropId: dropEntity.id, skipEligibilityCheck: true },
-        callerCtx
-      );
       expect(
         wsListenersNotifier.notifyAboutDropReactionUpdate
-      ).toHaveBeenCalledWith(drop, callerCtx);
+      ).not.toHaveBeenCalled();
     });
   });
 
