@@ -496,7 +496,14 @@ jobs:
           fi
           API_MEMORY_SIZE=2048
           API_TIMEOUT=30
-          CLAIMS_MEDIA_ARWEAVE_UPLOAD_SQS_URL="https://sqs.\${DEPLOY_REGION}.amazonaws.com/987989283142/claims-media-arweave-upload"
+          # Resources are named after the account being deployed to, so the
+          # same workflow works in any account the deploy role belongs to.
+          DEPLOY_ACCOUNT_ID="$(aws sts get-caller-identity --query Account --output text --no-cli-pager)"
+          if ! printf '%s' "$DEPLOY_ACCOUNT_ID" | grep -Eq '^[0-9]{12}$'; then
+            echo "::error::Could not determine the AWS account being deployed to" >&2
+            exit 1
+          fi
+          CLAIMS_MEDIA_ARWEAVE_UPLOAD_SQS_URL="https://sqs.\${DEPLOY_REGION}.amazonaws.com/$DEPLOY_ACCOUNT_ID/claims-media-arweave-upload"
           # Check the environment before changing any code.
           read_current_api_env
           aws lambda update-function-code --function-name seizeAPI --zip-file fileb://src/api-serverless/dist/index.zip --no-cli-pager > /dev/null 2>&1
@@ -504,7 +511,7 @@ jobs:
           # Re-read after the code update so the merge uses the latest values.
           read_current_api_env
           jq --arg dropForgeStage "$INPUT_ENVIRONMENT" --arg commit "$GIT_COMMIT" --arg claimsMediaArweaveUploadSqsUrl "$CLAIMS_MEDIA_ARWEAVE_UPLOAD_SQS_URL" --arg attachmentsIngestS3Bucket "$ATTACHMENTS_INGEST_S3_BUCKET" --arg dropMediaSanitizeImages "$DROP_MEDIA_SANITIZE_IMAGES" --arg dropMediaSanitizeVideos "$DROP_MEDIA_SANITIZE_VIDEOS" --arg dropMediaIngestS3Bucket "$DROP_MEDIA_INGEST_S3_BUCKET" --arg dropMediaIngestS3Region "$DROP_MEDIA_INGEST_S3_REGION" --arg dropMediaIngestStage "$DROP_MEDIA_INGEST_STAGE" --arg dropMediaSanitizerSqsQueueName "$DROP_MEDIA_SANITIZER_SQS_QUEUE_NAME" --arg apiGatewayWsEndpoint "$API_GATEWAY_WS_ENDPOINT" 'del(.MEMBERSHIP_SOURCE_TRACKING_MODE, .MEMBERSHIP_SOURCE_TRACKING_STAGE, .MEMBERSHIP_READ_MODE, .MEMBERSHIP_SHADOW_MODE, .MEMBERSHIP_READER_PROFILE_IDS, .MEMBERSHIP_READER_COVERAGE_REVISION, .MEMBERSHIP_READER_STAGE) + {DROP_FORGE_STAGE: $dropForgeStage, GIT_COMMIT: $commit, CLAIMS_MEDIA_ARWEAVE_UPLOAD_SQS_URL: $claimsMediaArweaveUploadSqsUrl, ATTACHMENTS_INGEST_S3_BUCKET: $attachmentsIngestS3Bucket, DROP_MEDIA_SANITIZE_IMAGES: $dropMediaSanitizeImages, DROP_MEDIA_SANITIZE_VIDEOS: $dropMediaSanitizeVideos, DROP_MEDIA_INGEST_S3_BUCKET: $dropMediaIngestS3Bucket, DROP_MEDIA_INGEST_S3_REGION: $dropMediaIngestS3Region, DROP_MEDIA_INGEST_STAGE: $dropMediaIngestStage, DROP_MEDIA_SANITIZER_SQS_QUEUE_NAME: $dropMediaSanitizerSqsQueueName, API_GATEWAY_WS_ENDPOINT: $apiGatewayWsEndpoint}' "$current_env" > "$app_env"
-          jq --arg enabled "$ARTWORK_DOCUMENTATION_ENABLED_VALUE" --arg selfService "$ARTWORK_DOCUMENTATION_SELF_SERVICE_ENABLED_VALUE" --arg archiveRegion "$DEPLOY_REGION" --arg archiveBucket "6529-artwork-documentation-987989283142-$DEPLOY_REGION" '. + {ARTWORK_DOCUMENTATION_ENABLED: (if $enabled == "" then (.ARTWORK_DOCUMENTATION_ENABLED // "false") else $enabled end), ARTWORK_DOCUMENTATION_SELF_SERVICE_ENABLED: (if $selfService == "" then (.ARTWORK_DOCUMENTATION_SELF_SERVICE_ENABLED // "false") else $selfService end), ARTWORK_DOCUMENTATION_S3_REGION: $archiveRegion, ARTWORK_DOCUMENTATION_S3_BUCKET: $archiveBucket}' "$app_env" > "$artwork_env"
+          jq --arg enabled "$ARTWORK_DOCUMENTATION_ENABLED_VALUE" --arg selfService "$ARTWORK_DOCUMENTATION_SELF_SERVICE_ENABLED_VALUE" --arg archiveRegion "$DEPLOY_REGION" --arg archiveBucket "6529-artwork-documentation-$DEPLOY_ACCOUNT_ID-$DEPLOY_REGION" '. + {ARTWORK_DOCUMENTATION_ENABLED: (if $enabled == "" then (.ARTWORK_DOCUMENTATION_ENABLED // "false") else $enabled end), ARTWORK_DOCUMENTATION_SELF_SERVICE_ENABLED: (if $selfService == "" then (.ARTWORK_DOCUMENTATION_SELF_SERVICE_ENABLED // "false") else $selfService end), ARTWORK_DOCUMENTATION_S3_REGION: $archiveRegion, ARTWORK_DOCUMENTATION_S3_BUCKET: $archiveBucket}' "$app_env" > "$artwork_env"
           jq '{Variables: .}' "$artwork_env" > "$env_config"
           aws lambda update-function-configuration --function-name seizeAPI --description "$VERSION_DESCRIPTION" --environment "file://$env_config" --memory-size "$API_MEMORY_SIZE" --timeout "$API_TIMEOUT" --no-cli-pager > /dev/null 2>&1
       - name: Deploy mediaResizerLoop

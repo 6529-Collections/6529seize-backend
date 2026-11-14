@@ -19,7 +19,7 @@ functions:
     handler: index.handler
     name: marketStatsMEMES
     description: ${env:VERSION_DESCRIPTION}
-    role: arn:aws:iam::987989283142:role/lambda-vpc-role
+    role: arn:aws:iam::${aws:accountId}:role/lambda-vpc-role
     reservedConcurrency: 1
     events:
       - schedule: rate(10 minutes)
@@ -34,7 +34,7 @@ functions:
     handler: index.handler
     name: marketStatsLAB
     description: ${env:VERSION_DESCRIPTION}
-    role: arn:aws:iam::987989283142:role/lambda-vpc-role
+    role: arn:aws:iam::${aws:accountId}:role/lambda-vpc-role
     reservedConcurrency: 1
     events:
       - schedule: rate(15 minutes)
@@ -49,7 +49,7 @@ functions:
     handler: index.handler
     name: marketStatsGRADIENT
     description: ${env:VERSION_DESCRIPTION}
-    role: arn:aws:iam::987989283142:role/lambda-vpc-role
+    role: arn:aws:iam::${aws:accountId}:role/lambda-vpc-role
     reservedConcurrency: 1
     events:
       - schedule: rate(30 minutes)
@@ -64,7 +64,7 @@ functions:
     handler: index.handler
     name: marketStatsNEXTGEN
     description: ${env:VERSION_DESCRIPTION}
-    role: arn:aws:iam::987989283142:role/lambda-vpc-role
+    role: arn:aws:iam::${aws:accountId}:role/lambda-vpc-role
     reservedConcurrency: 1
     events:
       - schedule: rate(30 minutes)
