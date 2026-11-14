@@ -1,7 +1,10 @@
 jest.mock('./policies.db', () => ({
-  deleteEULAConsent: jest.fn(),
+  deleteOwnedEULAConsent: jest.fn(),
   fetchEULAConsent: jest.fn(),
   saveEULAConsent: jest.fn()
+}));
+jest.mock('@/api/auth/auth', () => ({
+  getAuthenticationContext: jest.fn()
 }));
 
 import {
@@ -9,6 +12,8 @@ import {
   GetEulaConsentRequest,
   SaveEulaConsentRequest
 } from '@/api/generated/routes/operations';
+import { getAuthenticationContext } from '@/api/auth/auth';
+import { AuthenticationContext } from '@/auth-context';
 import { BadRequestException } from '@/exceptions';
 import {
   handleDeleteEulaConsent,
@@ -17,7 +22,7 @@ import {
 } from './eula-consent.handlers';
 import { CURRENT_EULA_VERSION } from './eula-policy';
 import {
-  deleteEULAConsent,
+  deleteOwnedEULAConsent,
   fetchEULAConsent,
   saveEULAConsent
 } from './policies.db';
@@ -27,9 +32,35 @@ const deleteRequest = (body: unknown) => ({ body }) as DeleteEulaConsentRequest;
 const getRequest = (deviceId: unknown) =>
   ({ params: { deviceId } }) as GetEulaConsentRequest;
 
+const anonymous = () => AuthenticationContext.notAuthenticated();
+const signedIn = (profileId: string | null) =>
+  new AuthenticationContext({
+    authenticatedWallet: '0x0000000000000000000000000000000000000001',
+    authenticatedProfileId: profileId,
+    roleProfileId: null,
+    activeProxyActions: []
+  });
+const proxy = () =>
+  new AuthenticationContext({
+    authenticatedWallet: '0x0000000000000000000000000000000000000001',
+    authenticatedProfileId: 'proxy-profile',
+    roleProfileId: 'granting-profile',
+    activeProxyActions: []
+  });
+
+function signedInWithOwnRole() {
+  return new AuthenticationContext({
+    authenticatedWallet: '0x0000000000000000000000000000000000000001',
+    authenticatedProfileId: 'profile-1',
+    roleProfileId: 'profile-1',
+    activeProxyActions: []
+  });
+}
+
 describe('EULA consent handlers', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    jest.mocked(getAuthenticationContext).mockResolvedValue(anonymous());
   });
 
   it('persists a normalized current-version acceptance', async () => {
@@ -50,7 +81,33 @@ describe('EULA consent handlers', () => {
     expect(saveEULAConsent).toHaveBeenCalledWith(
       'device-1',
       'ios',
-      CURRENT_EULA_VERSION
+      CURRENT_EULA_VERSION,
+      null
+    );
+  });
+
+  it.each([
+    ['a signed-in profile', signedIn('profile-1'), 'profile-1'],
+    ['a role token for the same profile', signedInWithOwnRole(), 'profile-1'],
+    ['a wallet without a profile', signedIn(null), null],
+    ['a proxy token', proxy(), null]
+  ])('passes the owner for %s', async (_, context, owner) => {
+    jest.mocked(getAuthenticationContext).mockResolvedValue(context);
+    (saveEULAConsent as jest.Mock).mockResolvedValue(undefined);
+
+    await handleSaveEulaConsent(
+      saveRequest({
+        device_id: 'device-1',
+        platform: 'ios',
+        eula_version: CURRENT_EULA_VERSION
+      })
+    );
+
+    expect(saveEULAConsent).toHaveBeenCalledWith(
+      'device-1',
+      'ios',
+      CURRENT_EULA_VERSION,
+      owner
     );
   });
 
@@ -68,7 +125,8 @@ describe('EULA consent handlers', () => {
     expect(saveEULAConsent).toHaveBeenCalledWith(
       'device-1',
       'android',
-      CURRENT_EULA_VERSION
+      CURRENT_EULA_VERSION,
+      null
     );
   });
 
@@ -124,6 +182,20 @@ describe('EULA consent handlers', () => {
     expect(fetchEULAConsent).toHaveBeenCalledWith('device-1');
   });
 
+  it('does not expose the owner of a stored acceptance', async () => {
+    (fetchEULAConsent as jest.Mock).mockResolvedValue({
+      device_id: 'device-1',
+      platform: 'ios',
+      accepted_at: 1_777_000_000_000,
+      eula_version: CURRENT_EULA_VERSION,
+      profile_id: 'profile-1'
+    });
+
+    const result = await handleGetEulaConsent(getRequest('device-1'));
+
+    expect(result).not.toHaveProperty('profile_id');
+  });
+
   it('returns an empty object for missing, stale, or expired acceptance', async () => {
     (fetchEULAConsent as jest.Mock).mockResolvedValue(null);
 
@@ -154,14 +226,35 @@ describe('EULA consent handlers', () => {
     expect(fetchEULAConsent).toHaveBeenCalledWith(deviceId);
   });
 
-  it('normalizes the device id before deleting consent', async () => {
-    (deleteEULAConsent as jest.Mock).mockResolvedValue(undefined);
+  it('deletes only consent owned by the caller, after normalizing the device id', async () => {
+    jest
+      .mocked(getAuthenticationContext)
+      .mockResolvedValue(signedIn('profile-1'));
+    (deleteOwnedEULAConsent as jest.Mock).mockResolvedValue(undefined);
 
     await expect(
       handleDeleteEulaConsent(deleteRequest({ device_id: ' device-1 ' }))
     ).resolves.toEqual({ message: 'EULA consent deleted' });
-    expect(deleteEULAConsent).toHaveBeenCalledWith('device-1');
+    expect(deleteOwnedEULAConsent).toHaveBeenCalledWith(
+      'device-1',
+      'profile-1'
+    );
   });
+
+  it.each([
+    ['a wallet without a profile', signedIn(null)],
+    ['a proxy token', proxy()]
+  ])(
+    'deletes nothing for %s and answers like any other caller',
+    async (_, context) => {
+      jest.mocked(getAuthenticationContext).mockResolvedValue(context);
+
+      await expect(
+        handleDeleteEulaConsent(deleteRequest({ device_id: 'device-1' }))
+      ).resolves.toEqual({ message: 'EULA consent deleted' });
+      expect(deleteOwnedEULAConsent).not.toHaveBeenCalled();
+    }
+  );
 
   it.each([
     {},
@@ -174,6 +267,6 @@ describe('EULA consent handlers', () => {
     await expect(
       handleDeleteEulaConsent(deleteRequest(body))
     ).rejects.toBeInstanceOf(BadRequestException);
-    expect(deleteEULAConsent).not.toHaveBeenCalled();
+    expect(deleteOwnedEULAConsent).not.toHaveBeenCalled();
   });
 });

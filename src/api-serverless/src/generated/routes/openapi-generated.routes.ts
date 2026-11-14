@@ -1726,6 +1726,7 @@ router.delete(
 
 router.post(
   '/policies/eula-consent',
+  maybeAuthenticatedUser(),
   async (
     req: SaveEulaConsentRequest,
     res: Response<ApiResponse<SaveEulaConsentResponse>>
