@@ -39,6 +39,7 @@ functions:
 resources:
   Resources:
     OwnersBalancesLoopOOMFilter:
+      DependsOn: OwnersBalancesLoopLogGroup
       Type: AWS::Logs::MetricFilter
       Properties:
         LogGroupName: /aws/lambda/ownersBalancesLoop

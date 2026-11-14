@@ -33,6 +33,7 @@ functions:
 resources:
   Resources:
     EthPriceLoopOOMFilter:
+      DependsOn: EthPriceLoopLogGroup
       Type: AWS::Logs::MetricFilter
       Properties:
         LogGroupName: /aws/lambda/ethPriceLoop

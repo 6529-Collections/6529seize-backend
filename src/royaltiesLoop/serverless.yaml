@@ -34,6 +34,7 @@ functions:
 resources:
   Resources:
     RoyaltiesLoopOOMFilter:
+      DependsOn: RoyaltiesLoopLogGroup
       Type: AWS::Logs::MetricFilter
       Properties:
         LogGroupName: /aws/lambda/royaltiesLoop

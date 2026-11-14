@@ -15,7 +15,7 @@ functions:
     handler: index.handler
     name: websocketOutboundHandler
     description: ${env:VERSION_DESCRIPTION, ''}
-    role: arn:aws:iam::987989283142:role/lambda-vpc-role
+    role: arn:aws:iam::${aws:accountId}:role/lambda-vpc-role
     reservedConcurrency: 20
     events:
       - schedule: rate(1 minute)
@@ -63,7 +63,7 @@ resources:
           Statement:
             - Effect: Allow
               Principal:
-                AWS: arn:aws:iam::987989283142:role/lambda-vpc-role
+                AWS: arn:aws:iam::${aws:accountId}:role/lambda-vpc-role
               Action:
                 - sqs:SendMessage
                 - sqs:GetQueueUrl

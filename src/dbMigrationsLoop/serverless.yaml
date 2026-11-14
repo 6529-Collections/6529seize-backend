@@ -35,6 +35,7 @@ functions:
 resources:
   Resources:
     DbMigrationsLoopOOMFilter:
+      DependsOn: DbMigrationsLoopLogGroup
       Type: AWS::Logs::MetricFilter
       Properties:
         LogGroupName: /aws/lambda/dbMigrationsLoop
