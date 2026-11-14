@@ -34,6 +34,7 @@ functions:
 resources:
   Resources:
     TdhHistoryLoopOOMFilter:
+      DependsOn: TdhHistoryLoopLogGroup
       Type: AWS::Logs::MetricFilter
       Properties:
         LogGroupName: /aws/lambda/tdhHistoryLoop

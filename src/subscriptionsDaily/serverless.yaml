@@ -68,6 +68,7 @@ functions:
 resources:
   Resources:
     SubscriptionsDailyOOMFilter:
+      DependsOn: SubscriptionsDailyLogGroup
       Type: AWS::Logs::MetricFilter
       Properties:
         LogGroupName: /aws/lambda/subscriptionsDaily
