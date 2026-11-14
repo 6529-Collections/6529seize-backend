@@ -32,7 +32,9 @@ functions:
     environment:
       SENTRY_DSN:         ${env:SENTRY_DSN}
       SENTRY_ENVIRONMENT: "dropVideoConversionInvokerLoop_${opt:stage, self:provider.stage}"
-      S3_BUCKET:          6529bucket
+      # Media bucket of the deploying account, published in eu-west-1 (the
+      # bucket's region, see BUCKET_REGION) as /6529/workload/media/bucket.
+      S3_BUCKET:          ${ssm(eu-west-1):/6529/workload/media/bucket}
       BUCKET_REGION:      eu-west-1
       MC_DROPS_VIDEO_TEMPLATE_NAME: Drops_HLS_MP4_360_720
       # Conversion bounds (see video-conversion-admission.ts): 2 GiB per
@@ -81,7 +83,7 @@ resources:
           detail:
             bucket:
               name:
-                - 6529bucket
+                - ${self:functions.dropVideoConversionInvokerLoop.environment.S3_BUCKET}
             object:
               key:
                 - prefix: drops/
