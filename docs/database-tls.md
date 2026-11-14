@@ -22,7 +22,9 @@ that the certificate was issued for the host being connected to.
 certificates from untrusted authorities, but must not be relied on to verify
 the database host's identity. Treat host verification as missing until the
 driver is replaced with one that verifies the host name (for example
-`mysql2`).
+`mysql2`). With `mysql2`, host name verification is only on when
+`ssl.verifyIdentity` is set to `true`; it is off by default, so a switch must
+set it explicitly. `rejectUnauthorized` stays as it is today.
 
 Which trust source fits depends on the endpoint:
 

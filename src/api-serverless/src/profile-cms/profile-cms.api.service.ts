@@ -69,6 +69,7 @@ import {
 import { ArweaveFileUploader, arweaveFileUploader } from '@/arweave';
 import { ProfileCmsPublicationStorage } from '@/profile-cms/profile-cms-publication-storage';
 import { buildProfileCmsPublicationManifest } from '@/profile-cms/profile-cms-publication';
+import { assertCmsOwnerJsonBounded } from '@/profile-cms/profile-cms-json-bounds';
 
 export interface SaveProfileCmsPackageDraftRequest {
   readonly profile_id: string;
@@ -203,6 +204,7 @@ export class ProfileCmsApiService {
     ctx: RequestContext
   ): Promise<ProfileCmsPackageResponse> {
     this.assertCanManageProfile(request.profile_id, ctx.authenticationContext);
+    assertCmsOwnerJsonBounded(request.cms_package, 'cms_package');
     const inputPackage = this.parsePackageOrThrow(request.cms_package);
     const cmsPackage = this.toDraftPackage(inputPackage);
     const profile = await this.getProfileIdentityOrThrow(
@@ -270,6 +272,7 @@ export class ProfileCmsApiService {
   validatePackage(
     request: ValidateProfileCmsPackageRequest
   ): CmsValidationResultV1 {
+    assertCmsOwnerJsonBounded(request.cms_package, 'cms_package');
     return validateCmsPackageV1(request.cms_package, {
       allowFixtureSignatures: request.allow_fixture_signatures,
       allowFixtureStorage: request.allow_fixture_storage,
@@ -313,6 +316,7 @@ export class ProfileCmsApiService {
   ): Promise<ProfileCmsAgentPatchValidationResult> {
     const entity = await this.getPackageEntityOrThrow(id, ctx);
     this.assertCanManageProfile(entity.profile_id, ctx.authenticationContext);
+    assertCmsOwnerJsonBounded(request.agent_patch, 'agent_patch');
     return validateProfileCmsAgentPatch({
       cmsPackage: this.parsePackageOrThrow(entity.cms_package),
       packageDbId: entity.id,
