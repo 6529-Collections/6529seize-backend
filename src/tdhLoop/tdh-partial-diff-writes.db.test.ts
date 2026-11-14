@@ -34,6 +34,7 @@ import { setSqlExecutor, SqlExecutor, sqlExecutor } from '@/sql-executor';
 import * as batches from '@/tdhLoop/tdh-persistence-batches';
 import { snapshotRows } from '@/tdhLoop/tdh-row-diff';
 import { resetTestDatabase } from '@/tests/_setup/testDatabase';
+import { MysqlQueryRunner } from 'typeorm/driver/mysql/MysqlQueryRunner';
 
 import {
   BLOCK,
@@ -224,7 +225,12 @@ describe('partial TDH writes send only the rows that change', () => {
   /**
    * Starts a write to an unchanged row of `table` on another connection once
    * the partial write has read that table, and returns the order in which
-   * the partial write committed and the other write went through.
+   * the partial write sent its COMMIT and the other write went through.
+   *
+   * The commit is recorded as it is sent, not once `partialWrite` resolves:
+   * MySQL releases the locks before it acknowledges the COMMIT, and the
+   * other write's acknowledgement comes on another connection, so the client
+   * can see it first although that write did wait for the commit.
    */
   async function concurrentWriteOrder(
     table: string,
@@ -250,12 +256,21 @@ describe('partial TDH writes send only the rows that change', () => {
         }
         return upsert(repository, rows);
       });
+    const commit = MysqlQueryRunner.prototype.commitTransaction;
+    const commitSpy = jest
+      .spyOn(MysqlQueryRunner.prototype, 'commitTransaction')
+      .mockImplementation(function (this: MysqlQueryRunner) {
+        if (other) {
+          events.push('partial write commits');
+        }
+        return commit.call(this);
+      });
     try {
       await partialWrite();
     } finally {
       spy.mockRestore();
+      commitSpy.mockRestore();
     }
-    events.push('partial write committed');
     await other;
     return events;
   }
@@ -265,7 +280,7 @@ describe('partial TDH writes send only the rows that change', () => {
     const groups = groupsBefore();
     const order = [
       'partial write still open',
-      'partial write committed',
+      'partial write commits',
       'other write'
     ];
 
