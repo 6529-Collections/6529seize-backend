@@ -1883,7 +1883,7 @@ describeWithSeed(
       ).toEqual([{ n: 0 }]);
     });
 
-    it('keeps visible ranks consistent with earlier increases while decision ties prefer latest changes', async () => {
+    it('decides a rating tie for the entry the leaderboard shows first (earlier increase)', async () => {
       await vote(rankId, secondRankEntry, 20, 100, 'second');
       await vote(rankId, rankEntry, 20, 200);
       await service.refreshCompetition(rankId, 500);
@@ -1914,7 +1914,7 @@ describeWithSeed(
         await sqlExecutor.execute(
           `select entry_id from ${COMPETITION_DECISION_WINNERS_TABLE}`
         )
-      ).toEqual([{ entry_id: rankEntry }]);
+      ).toEqual([{ entry_id: secondRankEntry }]);
     });
 
     it('uses latest reconciled balance for delayed Rank without a time lock', async () => {

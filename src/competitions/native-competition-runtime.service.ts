@@ -31,8 +31,11 @@ import {
 import {
   NativeAward,
   NativeOutcome,
+  NativeRankStanding,
   NativeVotePoint,
+  compareNativeRankStandings,
   nativeAwardsForRank,
+  nativeRankTieTime,
   nativeThresholdSince,
   nativeWinnerCount,
   nextNativeDecision,
@@ -133,10 +136,46 @@ function isTimeLocked(competition: Competition): boolean {
 type ScoredEntry = {
   entry: NativeRuntimeEntry;
   rating: number;
-  lastChangedAt: number;
   lastIncreasedAt: number | null;
   overThresholdSince: number | null;
 };
+
+/** `score`'s keys in the Rank order of `competition` evaluated at `time`. */
+function rankStanding(
+  competition: Competition,
+  score: ScoredEntry,
+  time: number
+): NativeRankStanding {
+  return {
+    rating: score.rating,
+    tieTime: nativeRankTieTime(
+      {
+        lastIncreasedAt: score.lastIncreasedAt,
+        submittedAt: score.entry.submitted_at
+      },
+      isTimeLocked(competition),
+      time
+    ),
+    identity: competition.legacy_origin ? score.entry.drop_id : score.entry.id
+  };
+}
+
+/**
+ * `scores` in the Rank order of `competition` at `time`, paired with their
+ * keys. The leaderboard and decisions both sort through here.
+ */
+function inRankOrder(
+  competition: Competition,
+  scores: readonly ScoredEntry[],
+  time: number
+): { score: ScoredEntry; standing: NativeRankStanding }[] {
+  return scores
+    .map((score) => ({
+      score,
+      standing: rankStanding(competition, score, time)
+    }))
+    .sort((a, b) => compareNativeRankStandings(a.standing, b.standing));
+}
 
 function isPaused(pauses: readonly CompetitionPause[], time: number): boolean {
   return pauses.some(
@@ -1133,7 +1172,6 @@ export class NativeCompetitionRuntimeService {
       .filter((entry) => entry.submitted_at <= time)
       .map((entry) => {
         const points = aggregatePoints(state.history, entry.id);
-        const latest = points.filter((point) => point.timestamp <= time).at(-1);
         let previousVote = 0;
         let lastIncreasedAt: number | null = null;
         for (const point of points) {
@@ -1144,7 +1182,6 @@ export class NativeCompetitionRuntimeService {
         return {
           entry,
           rating: flooredWeightedNativeVote(points, time, timeLock),
-          lastChangedAt: latest?.timestamp ?? entry.submitted_at,
           lastIncreasedAt,
           overThresholdSince:
             threshold === null
@@ -1177,18 +1214,10 @@ export class NativeCompetitionRuntimeService {
     time: number
   ): { rows: NativeLeaderboardRow[]; timeLocked: boolean } {
     const timeLocked = isTimeLocked(competition);
-    const tieTime = (score: ScoredEntry): number =>
-      timeLocked ? time : (score.lastIncreasedAt ?? score.entry.submitted_at);
-    const scores = this.scores(competition, state, time).sort(
-      (a, b) =>
-        b.rating - a.rating ||
-        tieTime(a) - tieTime(b) ||
-        (competition.legacy_origin
-          ? a.entry.drop_id
-          : a.entry.id
-        ).localeCompare(
-          competition.legacy_origin ? b.entry.drop_id : b.entry.id
-        )
+    const ordered = inRankOrder(
+      competition,
+      this.scores(competition, state, time),
+      time
     );
     let rank = 0;
     const decisionRatings = new Map(
@@ -1198,18 +1227,18 @@ export class NativeCompetitionRuntimeService {
         competition.decisions.next_decision_time ?? time
       ).map((score) => [score.entry.id, score.rating])
     );
-    const rows = scores.map((score, index) => {
-      const previous = scores[index - 1];
+    const rows = ordered.map(({ score, standing }, index) => {
+      const previous = ordered[index - 1]?.standing;
       if (
         !previous ||
-        previous.rating !== score.rating ||
-        tieTime(previous) !== tieTime(score)
+        previous.rating !== standing.rating ||
+        previous.tieTime !== standing.tieTime
       )
         rank = index + 1;
       return {
         ...score,
         rank,
-        orderingTime: tieTime(score),
+        orderingTime: standing.tieTime,
         decisionRating: decisionRatings.get(score.entry.id) ?? score.rating
       };
     });
@@ -1265,27 +1294,17 @@ export class NativeCompetitionRuntimeService {
       const skipped = isPaused(state.pauses, next);
       const timeLocked = (competition.decisions.time_lock_ms ?? 0) > 0;
       const evaluationTime = timeLocked ? next : now;
-      const scores = skipped
+      // Winners are the head of the leaderboard's own order, ties included.
+      const ordered = skipped
         ? []
-        : this.scores(competition, state, evaluationTime);
-      // Preserve the legacy DECISION tie order (latest increase/change first),
-      // distinct from the visible leaderboard's earlier-increase ordering.
-      scores.sort(
-        (a, b) =>
-          b.rating - a.rating ||
-          (timeLocked
-            ? (b.lastIncreasedAt ?? 0) - (a.lastIncreasedAt ?? 0)
-            : b.lastChangedAt - a.lastChangedAt) ||
-          (competition.legacy_origin
-            ? a.entry.drop_id
-            : a.entry.id
-          ).localeCompare(
-            competition.legacy_origin ? b.entry.drop_id : b.entry.id
-          )
-      );
-      const winners = scores
+        : inRankOrder(
+            competition,
+            this.scores(competition, state, evaluationTime),
+            evaluationTime
+          );
+      const winners = ordered
         .slice(0, nativeWinnerCount(outcomes))
-        .map((score, index) => this.winner(score, index + 1));
+        .map(({ score }, index) => this.winner(score, index + 1));
       await this.finalize(
         competition,
         state,

@@ -183,6 +183,44 @@ export function nextNativeDecision(
   return null;
 }
 
+/** An entry's position keys in a Rank competition's order. */
+export type NativeRankStanding = {
+  readonly rating: number;
+  /** Earlier wins a rating tie. */
+  readonly tieTime: number;
+  /** Unique within a competition, so the order is total. */
+  readonly identity: string;
+};
+
+/**
+ * The tie time of an entry: when its rating last increased, else when it was
+ * submitted. A time-locked competition has no tie time: every entry gets the
+ * same instant, so equal ratings fall through to the identity.
+ */
+export function nativeRankTieTime(
+  score: { readonly lastIncreasedAt: number | null; submittedAt: number },
+  timeLocked: boolean,
+  time: number
+): number {
+  return timeLocked ? time : (score.lastIncreasedAt ?? score.submittedAt);
+}
+
+/**
+ * The single order of a Rank competition, shared by the published leaderboard
+ * and by decisions: rating descending, then the earlier tie time, then the
+ * identity (legacy drop ID, native entry ID) ascending.
+ */
+export function compareNativeRankStandings(
+  a: NativeRankStanding,
+  b: NativeRankStanding
+): number {
+  return (
+    b.rating - a.rating ||
+    a.tieTime - b.tieTime ||
+    a.identity.localeCompare(b.identity)
+  );
+}
+
 export function nativeWinnerCount(outcomes: readonly NativeOutcome[]): number {
   // A scheduled decision can name a winner without promising a reward.
   if (!outcomes.length) return 1;

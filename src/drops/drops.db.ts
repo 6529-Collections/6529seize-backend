@@ -2765,7 +2765,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
           ${additionalActionPromiseFilter}
           ${unvotedByMeSql.filterClause}
           ${priceSql.filterClause}
-        order by r.vote_on_decision_time ${params.sort_direction} limit :page_size offset :offset
+        order by r.vote_on_decision_time ${params.sort_direction}, r.drop_id asc limit :page_size offset :offset
     `;
     const sqlParams = {
       wave_id: params.wave_id,
@@ -2819,7 +2819,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
           ${additionalActionPromiseFilter}
           ${unvotedByMeSql.filterClause}
           ${priceSql.filterClause}
-        order by (r.vote_on_decision_time - r.vote) ${params.sort_direction} limit :page_size offset :offset
+        order by (r.vote_on_decision_time - r.vote) ${params.sort_direction}, r.drop_id asc limit :page_size offset :offset
     `;
     const sqlParams = {
       wave_id: params.wave_id,
