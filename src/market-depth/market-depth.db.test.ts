@@ -1234,6 +1234,17 @@ describeWithSeed('MarketDepthDb', [] as never[], () => {
       now,
       2
     );
+    expect(first).toHaveLength(2);
+    // All three rows share next_attempt_at, so paging relies on the id
+    // tiebreak; deferring a row from the first page must not make the next
+    // page skip or repeat anything.
+    const later = new Date('2026-09-10T09:00:00.000Z');
+    expect(
+      await marketDepthDb.deferReconciliations({
+        items: [{ id: first[1].id, expected_attempt_count: 0 }],
+        next_attempt_at: later
+      })
+    ).toBe(1);
     const rest = await marketDepthDb.getDueReconciliations(
       base.source,
       CONTRACT,
@@ -1242,17 +1253,8 @@ describeWithSeed('MarketDepthDb', [] as never[], () => {
       2,
       { next_attempt_at: first[1].next_attempt_at, id: first[1].id }
     );
-    expect(first).toHaveLength(2);
     expect(rest).toHaveLength(1);
     expect(new Set([...first, ...rest].map((item) => item.id)).size).toBe(3);
-
-    const later = new Date('2026-09-10T09:00:00.000Z');
-    expect(
-      await marketDepthDb.deferReconciliations({
-        items: [{ id: first[0].id, expected_attempt_count: 0 }],
-        next_attempt_at: later
-      })
-    ).toBe(1);
     const afterDeferral = await marketDepthDb.getDueReconciliations(
       base.source,
       CONTRACT,
@@ -1260,7 +1262,7 @@ describeWithSeed('MarketDepthDb', [] as never[], () => {
       later
     );
     expect(afterDeferral.at(-1)).toMatchObject({
-      id: first[0].id,
+      id: first[1].id,
       attempt_count: 0
     });
     expect(afterDeferral.at(-1)?.next_attempt_at).toEqual(later);

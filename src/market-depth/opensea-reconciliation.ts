@@ -313,7 +313,8 @@ async function lookUpProviderStatus(
 async function persistResolutions(
   input: ReconciliationInput,
   resolutions: readonly Resolution[],
-  now: () => Date
+  now: () => Date,
+  readCursor: () => Promise<MarketDepthCursor | null>
 ): Promise<number> {
   if (resolutions.length === 0) return 0;
   const observedAt = now();
@@ -323,11 +324,7 @@ async function persistResolutions(
   // Record lifecycle events before resolving, so a failed append leaves the
   // rows due; event IDs make the retry idempotent.
   if (events.length > 0) {
-    const cursor = await input.db.getCursor(
-      OPENSEA_SOURCE,
-      input.target.contract,
-      input.target.collection_slug
-    );
+    const cursor = await readCursor();
     await input.db.appendEvents({
       source: OPENSEA_SOURCE,
       contract: input.target.contract,
@@ -378,6 +375,14 @@ export async function reconcileOpenSeaOrders(
   };
   let resolved = 0;
   let after: MarketDepthReconciliationKey | null = null;
+  // Reconciliation appends never move the REST cursor, so one read suffices.
+  let cursor: Promise<MarketDepthCursor | null> | null = null;
+  const readCursor = () =>
+    (cursor ??= input.db.getCursor(
+      OPENSEA_SOURCE,
+      input.target.contract,
+      input.target.collection_slug
+    ));
   while (
     stats.examined < MAX_RECONCILIATIONS_PER_RUN &&
     now().getTime() < workDeadlineMs
@@ -422,10 +427,12 @@ export async function reconcileOpenSeaOrders(
         const event = await lookUpProviderStatus(input, item, attemptedAt);
         if (event) resolutions.push({ item, event });
       } else {
+        // Deferral keeps next_attempt_at current, so retention cannot drop the
+        // row; later runs serve deferred rows oldest-first from their budget.
         deferred.push(item);
       }
     }
-    resolved += await persistResolutions(input, resolutions, now);
+    resolved += await persistResolutions(input, resolutions, now, readCursor);
     if (deferred.length > 0) {
       stats.deferred += await input.db.deferReconciliations({
         items: deferred.map((item) => ({

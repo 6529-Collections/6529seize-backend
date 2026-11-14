@@ -373,6 +373,37 @@ describe('OpenSea order reconciliation', () => {
       );
     });
 
+    it('keeps resolving locally on later pages after the provider budget is spent', async () => {
+      const page = (prefix: string, order: NormalizedMarketDepthOrder) =>
+        Array.from({ length: 500 }, (_, index) => ({
+          ...reconciliation({
+            ...order,
+            order_id: `${prefix}-${index}`,
+            order_key: `${prefix}-${index}`
+          }),
+          id: `${prefix}-queue-${index}`
+        }));
+      const db = database([]);
+      db.getDueReconciliations
+        .mockResolvedValueOnce(page('future', FUTURE_ORDER))
+        .mockResolvedValueOnce(page('expired', ORDER))
+        .mockResolvedValueOnce([]);
+      const client = {
+        getOrder: jest
+          .fn()
+          .mockRejectedValue(new OpenSeaHttpError(404, 0, 'not found'))
+      } as unknown as OpenSeaClient;
+
+      await expect(run(db, client)).resolves.toBe(500);
+      expect(client.getOrder).toHaveBeenCalledTimes(25);
+      expect(db.deferReconciliations.mock.calls[0][0].items).toHaveLength(475);
+      expect(db.resolveReconciliations).toHaveBeenCalledTimes(1);
+      expect(db.resolveReconciliations.mock.calls[0][0].items).toHaveLength(
+        500
+      );
+      expect(db.getCursor).toHaveBeenCalledTimes(1);
+    });
+
     it('stops paging at the per-run limit', async () => {
       const page = Array.from({ length: 500 }, (_, index) => ({
         ...reconciliation(),
@@ -382,6 +413,8 @@ describe('OpenSea order reconciliation', () => {
       await run(db);
       expect(db.getDueReconciliations).toHaveBeenCalledTimes(10);
       expect(db.resolveReconciliations).toHaveBeenCalledTimes(10);
+      expect(db.appendEvents).toHaveBeenCalledTimes(10);
+      expect(db.getCursor).toHaveBeenCalledTimes(1);
     });
 
     it('stops paging when the work budget is spent', async () => {
