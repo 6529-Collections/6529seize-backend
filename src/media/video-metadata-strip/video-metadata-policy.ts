@@ -125,7 +125,11 @@ const FORBIDDEN_IN_SAMPLE_DESCRIPTION: readonly Buffer[] = [
   'meta',
   'ilst',
   'keys',
-  '©xyz'
+  '©xyz',
+  // Vendor extensions are opaque: one could hold a serial, so a sample
+  // description carrying one is refused rather than published.
+  'uuid',
+  'XMP_'
 ].map((text) => Buffer.from(text, 'latin1'));
 
 /** Findings in a box that is removed whole: marker hits, else `fallback`. */
@@ -194,13 +198,18 @@ function checkHandlerName(moov: Buffer, box: Box, findings: Findings): void {
   }
 }
 
+/** True when an `stsd` holds metadata or an opaque vendor extension. */
+export function sampleDescriptionHoldsMetadata(moov: Buffer, stsd: Box) {
+  const payload = payloadOf(moov, stsd);
+  return FORBIDDEN_IN_SAMPLE_DESCRIPTION.some((marker) =>
+    payload.includes(marker)
+  );
+}
+
 function checkSampleDescription(moov: Buffer, box: Box, findings: Findings) {
-  const payload = payloadOf(moov, box);
-  FORBIDDEN_IN_SAMPLE_DESCRIPTION.forEach((marker) => {
-    if (payload.includes(marker)) {
-      findings.add(VideoMetadataFinding.USER_DATA, 'stsd holds metadata');
-    }
-  });
+  if (sampleDescriptionHoldsMetadata(moov, box)) {
+    findings.add(VideoMetadataFinding.USER_DATA, 'stsd holds metadata');
+  }
 }
 
 function checkLeaf(moov: Buffer, box: Box, findings: Findings): void {

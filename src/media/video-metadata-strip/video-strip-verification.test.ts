@@ -97,6 +97,24 @@ describe('verifyVideoStrip', () => {
     expect(!verification.ok && verification.reason).toContain('unreferenced');
   });
 
+  it('rejects an output that lost a sample table of the input', async () => {
+    const { inputPath } = await stripped(iphoneVideo(), 'synced');
+    // Same samples, but no sync-sample table.
+    const { output: unsynced } = await stripped(
+      iphoneVideo({
+        tracks: [
+          videoTrack({ codec: 'hvc1', rotate90: true, noSyncTable: true }),
+          audioTrack()
+        ]
+      }),
+      'unsynced'
+    );
+    expect(await verifyAgainst(inputPath, unsynced)).toEqual({
+      ok: false,
+      reason: 'track 1 stss changed'
+    });
+  });
+
   it('rejects remaining creation times', async () => {
     const { inputPath, output } = await stripped(iphoneVideo(), 'timed');
     const at = output.indexOf(Buffer.from('mvhd', 'latin1'));

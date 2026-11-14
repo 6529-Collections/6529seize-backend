@@ -248,6 +248,48 @@ describe('stripVideoMetadataVerified', () => {
     expect(zeroPadded.result).toEqual({ kind: 'clean', size: zeros.length });
   });
 
+  it('finds samples behind thousands of empty media data boxes', async () => {
+    // Thousands of empty mdat boxes before the real one.
+    const empty = Buffer.alloc(4000 * 8);
+    for (let at = 0; at < empty.length; at += 8) {
+      empty.writeUInt32BE(8, at);
+      empty.write('mdat', at + 4, 'latin1');
+    }
+    const shifted = buildVideo({
+      brand: 'mp42',
+      moovFirst: true,
+      tracks: [videoTrack({ handlerName: '' }), audioTrack({ handlerName: '' })]
+    });
+    const [moov] = find(shifted, ['moov']);
+    const [shiftedMdat] = find(shifted, ['mdat']);
+    // Chunk offsets point past the empty boxes once they are inserted.
+    const withEmpty = Buffer.concat([
+      shifted.subarray(0, shiftedMdat.start),
+      empty,
+      shifted.subarray(shiftedMdat.start)
+    ]);
+    const moovBytes = withEmpty.subarray(moov.start, moov.end);
+    for (const stco of find(moovBytes, [
+      'moov',
+      'trak',
+      'mdia',
+      'minf',
+      'stbl',
+      'stco'
+    ])) {
+      const count = moovBytes.readUInt32BE(stco.payloadStart + 4);
+      for (let index = 0; index < count; index++) {
+        const at = stco.payloadStart + 8 + index * 4;
+        moovBytes.writeUInt32BE(moovBytes.readUInt32BE(at) + empty.length, at);
+      }
+    }
+    const { result } = await strip(withEmpty, 'many-mdat');
+    expect(result).toMatchObject({
+      kind: 'stripped',
+      findings: [VideoMetadataFinding.CAPTURE_TIME]
+    });
+  });
+
   it('drops vendor data appended after the last box', async () => {
     const trailer = Buffer.concat([Buffer.from('SEFH'), noise('trailer', 99)]);
     const input = Buffer.concat([androidVideo(), trailer]);
@@ -316,6 +358,15 @@ describe('stripVideoMetadataVerified', () => {
       'a truncated file',
       iphoneVideo().subarray(0, 300),
       VideoStructureProblem.MALFORMED
+    ],
+    [
+      'a sample description with an opaque vendor box',
+      // The pixel-aspect box becomes a vendor `uuid` box inside avc1.
+      Buffer.from(
+        androidVideo().toString('latin1').replace('pasp', 'uuid'),
+        'latin1'
+      ),
+      VideoStructureProblem.SAMPLE_DESCRIPTION_METADATA
     ]
   ])('refuses %s without writing anything', async (_, input, problem) => {
     const { result, output } = await strip(input);

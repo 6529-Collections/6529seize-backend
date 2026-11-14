@@ -16,6 +16,7 @@ import { readDataReferences, TrackStructure } from './movie-structure';
 import {
   findIdentifyingMetadata,
   KEPT_CHILDREN,
+  sampleDescriptionHoldsMetadata,
   VideoMetadataFinding
 } from './video-metadata-policy';
 import { VideoLayout, readVideoLayout } from './video-layout';
@@ -280,6 +281,23 @@ async function writeStrippedFile(
   }
 }
 
+/**
+ * Sample descriptions are copied byte for byte, so one that holds metadata
+ * or an opaque vendor extension cannot be stripped: the file is refused.
+ */
+function assertSampleDescriptionsCanBeKept(layout: VideoLayout): void {
+  const { moov } = layout.movie;
+  for (const { track } of layout.kept) {
+    const stsd = track.stblChildren.find((box) => box.type === 'stsd');
+    if (stsd && sampleDescriptionHoldsMetadata(moov, stsd)) {
+      throw new UnsupportedVideoStructure(
+        VideoStructureProblem.SAMPLE_DESCRIPTION_METADATA,
+        `track ${track.trackId} sample description holds metadata`
+      );
+    }
+  }
+}
+
 /** Removed top-level boxes small enough to name what they hold. */
 async function readSmallTopLevelBoxes(
   input: FileHandle,
@@ -318,6 +336,7 @@ export async function stripVideoMetadataFile(
       await readSmallTopLevelBoxes(input, layout)
     );
     if (!findings.length) return { kind: 'clean', size };
+    assertSampleDescriptionsCanBeKept(layout);
     const outputBytes = await writeStrippedFile(input, layout, outputPath);
     return {
       kind: 'stripped',

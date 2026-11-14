@@ -18,7 +18,12 @@ export enum VideoStructureProblem {
   EXTERNAL_DATA_REFERENCE = 'external_data_reference',
   /** Sample tables whose byte layout cannot be proven from sizes alone. */
   UNSUPPORTED_SAMPLE_TABLE = 'unsupported_sample_table',
-  ENCRYPTED = 'encrypted'
+  ENCRYPTED = 'encrypted',
+  /**
+   * A kept sample description (codec configuration) holds metadata or an
+   * opaque vendor box; it is copied as is, so the file is refused.
+   */
+  SAMPLE_DESCRIPTION_METADATA = 'sample_description_metadata'
 }
 
 export class UnsupportedVideoStructure extends Error {

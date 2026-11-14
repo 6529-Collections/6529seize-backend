@@ -126,7 +126,7 @@ replace anything.
   QuickTime (`unsupported_format`), unreadable (`unparseable_container`),
   structures the rewriter does not support (`unsupported_video_structure`:
   fragmented MP4, external data, compact or byte-counted sample tables,
-  encryption; counted by kind under `videos.unsupported_structures`),
+  encryption, metadata or vendor boxes inside a sample description; counted by kind under `videos.unsupported_structures`),
   strips that do not verify (`verification_failed`) and objects changed
   during the run.
 

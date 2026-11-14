@@ -76,6 +76,8 @@ export interface TrackSpec {
   readonly references?: { readonly type: string; readonly ids: number[] };
   /** Constant size in stsz instead of a table (all sampleSizes equal). */
   readonly constantSampleSize?: boolean;
+  /** Leave out the video sync-sample table (all samples are sync). */
+  readonly noSyncTable?: boolean;
 }
 
 export interface VideoSpec {
@@ -253,7 +255,9 @@ function sampleTable(
     'stbl',
     fullBox('stsd', 0, 0, u32(1), sampleEntry(track.codec)),
     fullBox('stts', 0, 0, u32(1, count, 1000)),
-    ...(track.handler === 'vide' ? [fullBox('stss', 0, 0, u32(1, 1))] : []),
+    ...(track.handler === 'vide' && !track.noSyncTable
+      ? [fullBox('stss', 0, 0, u32(1, 1))]
+      : []),
     sampleToChunk(count, track.samplesPerChunk),
     stsz,
     chunkOffsets

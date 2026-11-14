@@ -8,7 +8,10 @@ import {
 } from './iso-boxes';
 import { hashRanges } from './media-ranges';
 import { sampleEntryTypes } from './movie-structure';
-import { findIdentifyingMetadata } from './video-metadata-policy';
+import {
+  findIdentifyingMetadata,
+  KEPT_CHILDREN
+} from './video-metadata-policy';
 import { KeptTrack, readVideoLayout, VideoLayout } from './video-layout';
 
 export interface VerifiedTrack {
@@ -106,16 +109,22 @@ function checkTrackHeaders(
     sameBytes(editList(moovA, a), editList(moovB, b)),
     `${label} edit list changed`
   );
-  for (const table of b.track.stblChildren) {
-    if (table.type === 'stco' || table.type === 'co64') continue;
-    const original = a.track.stblChildren.find(
-      (box) => box.type === table.type
-    );
+  // Both ways: every kept table of the input is in the output, unchanged,
+  // and the output has no table the input did not.
+  const tables = new Set(
+    [...a.track.stblChildren, ...b.track.stblChildren]
+      .map((box) => box.type)
+      .filter((type) => KEPT_CHILDREN.stbl.has(type))
+  );
+  tables.forEach((type) => {
+    if (type === 'stco' || type === 'co64') return;
+    const original = a.track.stblChildren.find((box) => box.type === type);
+    const stripped = b.track.stblChildren.find((box) => box.type === type);
     check(
-      sameBytes(boxBytes(moovA, original), boxBytes(moovB, table)),
-      `${label} ${table.type} changed`
+      sameBytes(boxBytes(moovA, original), boxBytes(moovB, stripped)),
+      `${label} ${type} changed`
     );
-  }
+  });
   check(
     b.track.stblChildren.some((box) => box.type === 'stsd'),
     `${label} lost its sample description`

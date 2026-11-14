@@ -85,12 +85,31 @@ function single(boxes: Box[], type: string): Box | null {
   return found[0] ?? null;
 }
 
-function insideMediaData(chunk: ChunkRange, mediaData: ChunkRange[]) {
-  return mediaData.some(
-    (range) =>
-      chunk.offset >= range.offset &&
-      chunk.offset + chunk.size <= range.offset + range.size
-  );
+/**
+ * Every chunk lies inside one media data range. Both lists are sorted by
+ * offset (top-level boxes are in file order), so one sweep checks them all.
+ */
+function assertInsideMediaData(
+  sortedChunks: ChunkRange[],
+  mediaData: ChunkRange[]
+): void {
+  let index = 0;
+  for (const chunk of sortedChunks) {
+    while (
+      index < mediaData.length &&
+      mediaData[index].offset + mediaData[index].size <= chunk.offset
+    ) {
+      index++;
+    }
+    const range = mediaData[index];
+    if (
+      !range ||
+      chunk.offset < range.offset ||
+      chunk.offset + chunk.size > range.offset + range.size
+    ) {
+      throw malformed('a sample lies outside the media data');
+    }
+  }
 }
 
 function compareOffsets(a: ChunkRange, b: ChunkRange): number {
@@ -112,10 +131,8 @@ function assertChunksAreDisjoint(
     .flatMap((track) => track.chunks)
     .filter((chunk) => chunk.size > 0)
     .sort(compareOffsets);
+  assertInsideMediaData(chunks, mediaData);
   chunks.forEach((chunk, index) => {
-    if (!insideMediaData(chunk, mediaData)) {
-      throw malformed('a sample lies outside the media data');
-    }
     const next = chunks[index + 1];
     if (next && next.offset < chunk.offset + chunk.size) {
       throw new UnsupportedVideoStructure(
