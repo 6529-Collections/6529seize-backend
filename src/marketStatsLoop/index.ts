@@ -24,11 +24,14 @@ import * as sentryContext from '../sentry.context';
 import { findNftMarketStats } from './nft_market_stats';
 import { findNextgenMarketStats } from './nft_market_stats_nextgen';
 import { pollOpenSeaMarketDepthForContract } from '../market-depth/opensea-poller';
+import { marketDepthDb } from '../market-depth/market-depth.db';
+import { purgeMarketDepthHistory } from '../market-depth/market-depth-retention';
 
 const logger = Logger.get('MARKET_STATS_LOOP');
 const RESERVED_COMPLETION_MS = 60_000;
 const MAX_INVOCATION_WORK_MS = 13 * 60_000;
 const LEGACY_BUDGET_MS = 10 * 60_000;
+const RETENTION_BUDGET_MS = 4 * 60_000;
 
 const batchContracts = new Set(
   [MEMES_CONTRACT, MEMELAB_CONTRACT, GRADIENT_CONTRACT].map((c) =>
@@ -49,20 +52,52 @@ async function refreshStaticContract(
   deadlineMs: number
 ): Promise<void> {
   const legacyDeadline = Math.min(deadlineMs, Date.now() + LEGACY_BUDGET_MS);
-  await refreshTogether(`CONTRACT ${contract}`, [
-    findNftMarketStats(contract, legacyDeadline),
-    pollOpenSeaMarketDepthForContract(contract, { deadlineMs })
-  ]);
+  await refreshThenPurge(`CONTRACT ${contract}`, contract, deadlineMs, () =>
+    refreshTogether(`CONTRACT ${contract}`, [
+      findNftMarketStats(contract, legacyDeadline),
+      pollOpenSeaMarketDepthForContract(contract, { deadlineMs })
+    ])
+  );
 }
 
 async function refreshNextgen(deadlineMs: number): Promise<void> {
-  await refreshTogether('NEXTGEN', [
-    findNextgenMarketStats(
-      NEXTGEN_CORE[mainnet.id].toLowerCase(),
-      Math.min(deadlineMs, Date.now() + LEGACY_BUDGET_MS)
-    ),
-    pollOpenSeaMarketDepthForContract('nextgen', { deadlineMs })
-  ]);
+  const contract = NEXTGEN_CORE[mainnet.id].toLowerCase();
+  await refreshThenPurge('NEXTGEN', contract, deadlineMs, () =>
+    refreshTogether('NEXTGEN', [
+      findNextgenMarketStats(
+        contract,
+        Math.min(deadlineMs, Date.now() + LEGACY_BUDGET_MS)
+      ),
+      pollOpenSeaMarketDepthForContract('nextgen', { deadlineMs })
+    ])
+  );
+}
+
+// Retention runs after the refresh, even a failed one, so a persistently
+// failing provider cannot let market-depth history grow without bound.
+async function refreshThenPurge(
+  label: string,
+  contract: string,
+  deadlineMs: number,
+  refresh: () => Promise<void>
+): Promise<void> {
+  let refreshError: unknown = null;
+  try {
+    await refresh();
+  } catch (error) {
+    refreshError = error;
+  }
+  try {
+    await purgeMarketDepthHistory({
+      contract,
+      db: marketDepthDb,
+      deadlineMs: Math.min(deadlineMs, Date.now() + RETENTION_BUDGET_MS)
+    });
+  } catch (error) {
+    logger.error(`[${label}] Market-depth retention failed`, error);
+    refreshError ??= error;
+  }
+  if (refreshError !== null) throw refreshError;
 }
 
 async function refreshTogether(

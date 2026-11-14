@@ -16,12 +16,9 @@ import {
 } from './moderation-review.service';
 import { ModerationInput } from './moderation-review.types';
 import {
-  DEFAULT_CLAUDE_SONNET_4_5_BEDROCK_MODEL_ID,
-  getConfiguredBedrockAnthropicModelId
-} from '@/bedrock.config';
-import {
   contentModerationAiService,
   ContentModerationAiService,
+  getContentModerationBedrockModelId,
   PRE_PUBLICATION_EVALUATOR_VERSION
 } from './content-moderation-ai.service';
 import {
@@ -304,10 +301,7 @@ export class PrePublicationModerationService {
     const signal = screen.signal;
     const verdictKey = prePublicationVerdictCacheKey({
       policyVersion: PRE_PUBLICATION_EVALUATOR_VERSION,
-      modelId: getConfiguredBedrockAnthropicModelId(
-        'CONTENT_MODERATION_BEDROCK_MODEL_ID',
-        DEFAULT_CLAUDE_SONNET_4_5_BEDROCK_MODEL_ID
-      ),
+      modelId: getContentModerationBedrockModelId(),
       signal,
       content
     });
@@ -658,12 +652,7 @@ export class PrePublicationModerationService {
       await this.reviews.finish(input.reviewEvaluationId, {
         outcome: result.outcome,
         result: result.evaluatorResult ?? {},
-        model: result.aiInvoked
-          ? getConfiguredBedrockAnthropicModelId(
-              'CONTENT_MODERATION_BEDROCK_MODEL_ID',
-              DEFAULT_CLAUDE_SONNET_4_5_BEDROCK_MODEL_ID
-            )
-          : null,
+        model: result.aiInvoked ? getContentModerationBedrockModelId() : null,
         fallback: result.evaluatorResult?.evaluator_error ? 'ALLOW' : null
       });
     }

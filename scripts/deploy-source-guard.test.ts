@@ -181,7 +181,9 @@ function validateDispatch(
 function invokeMigrationScope(
   scope: string,
   metadata: unknown = { StatusCode: 200 },
-  response: unknown = scope !== 'full' ? { schema_scope: scope } : null,
+  response: unknown = scope !== 'full'
+    ? { schema_scope: scope, completed: true }
+    : null,
   invocationExitCode = 0
 ) {
   const directory = mkdtempSync(path.join(tmpdir(), '6529-schema-scope-'));
@@ -339,7 +341,9 @@ describe('generated deployment source guard', () => {
         'nft-history-events',
         'nft-history-replay',
         'competition-lifecycle-events',
-        'competition-score-resets'
+        'competition-score-resets',
+        'pinned-wave-order-schema',
+        'pinned-wave-order-backfill'
       ]
     });
     expect(job.env.DB_SCHEMA_SCOPE).toBe(
@@ -450,6 +454,20 @@ describe('generated deployment source guard', () => {
     );
   });
 
+  it('blocks deployment when the pinned wave backfill is incomplete', () => {
+    const scope = 'pinned-wave-order-backfill';
+    const result = invokeMigrationScope(
+      scope,
+      { StatusCode: 200 },
+      {
+        schema_scope: scope,
+        completed: false
+      }
+    );
+    expect(result.status).toBe(1);
+    expect(result.stdout).toContain('Pinned wave backfill paused');
+  });
+
   it.each([
     'full',
     'maintenance',
@@ -463,7 +481,9 @@ describe('generated deployment source guard', () => {
     'nft-history-events',
     'nft-history-replay',
     'competition-lifecycle-events',
-    'competition-score-resets'
+    'competition-score-resets',
+    'pinned-wave-order-schema',
+    'pinned-wave-order-backfill'
   ])('forwards validated %s as one JSON invocation payload', (scope) => {
     const result = invokeMigrationScope(scope);
     expect(result.error).toBeUndefined();

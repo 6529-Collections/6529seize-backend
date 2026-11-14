@@ -21,11 +21,11 @@ describe('bedrock config', () => {
     restoreEnv(POSITIVE_INT_ENV, previousEnv.positiveInt);
   });
 
-  it('defaults help bot to the Claude Sonnet 4.5 Bedrock inference profile', () => {
+  it('defaults help bot to the Claude Sonnet 5.5 Bedrock inference profile', () => {
     delete process.env[SERVICE_MODEL_ENV];
 
     expect(DEFAULT_HELP_BOT_BEDROCK_MODEL_ID).toBe(
-      'us.anthropic.claude-sonnet-4-5-20250929-v1:0'
+      'us.anthropic.claude-sonnet-5-5'
     );
     expect(
       getConfiguredBedrockAnthropicModelId(

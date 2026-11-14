@@ -131,6 +131,17 @@ Prenode entity/table remains intact; no schema sync, migration or data deletion
 is needed. `/oracle/docs` continues to describe the preserved TDH API.
 Only `api` needs redeployment for this retirement.
 
+## Global TDH history
+
+`tdhHistoryLoop` stores network TDH sums in `tdh_global_history` and
+`latest_tdh_global_history`. The full `dbMigrationsLoop` invocation widens
+existing TDH sum columns with SQL before TypeORM plans schema synchronization.
+TypeORM creates those columns as signed `BIGINT` on new databases. The
+`/api/tdh_global_history` response serializes the totals and deltas as safe
+JSON integers within JavaScript's safe integer range. The width migration
+preserves stored values. Deploy `dbMigrationsLoop` with the full schema scope,
+then deploy `api`.
+
 ## Active TDH voting discovery
 
 `GET /v2/waves/active-votes` is an optional-auth read in the existing API Lambda.
@@ -1130,6 +1141,10 @@ Seven `market_depth_*` tables coordinate publication and retain immutable
 compressed archives, current orders, collection state, events, cursors and retry
 work. All amounts and quantities
 needed for normalization preserve exact integer strings.
+After each refresh, a bounded retention pass removes the collection's events
+older than 30 days, snapshots older than 14 days and reconciliation rows older
+than 7 days. It keeps the latest snapshot and the history of orders in the live
+book; the activity feed applies the same 30-day event window.
 
 The API exposes currency-specific quoted depth for an individual token and a
 merged feed of canonical transactions and market actions. Quoted quantities can
@@ -2277,7 +2292,7 @@ Important details:
 - Bedrock selects a semantic public-data plan from a hardcoded catalog; Bedrock output never contains executable SQL, table names, columns, joins, or expressions.
 - The backend public-data compiler validates the selected entity, operation, metric, numeric filters, and limit, then emits parameterized SQL through the shared `SqlExecutor` with the read pool forced, hard row limits, and a MySQL execution-time hint injected by backend code.
 - Help index fetches use a short timeout; a cold load failure produces the technical-failure reply instead of a no-reliable-source answer.
-- Bedrock rendering uses `HELP_BOT_BEDROCK_TIMEOUT_MS`, defaulting to 10 seconds, and the shared Claude Sonnet 4.5 US geo inference profile default `us.anthropic.claude-sonnet-4-5-20250929-v1:0`, with per-service env overrides loaded at Lambda startup; if rendering fails or times out, the worker falls back to deterministic wording when a reliable frontend record or public DB row exists.
+- Bedrock rendering uses `HELP_BOT_BEDROCK_TIMEOUT_MS`, defaulting to 10 seconds, and the shared Claude Sonnet 5.5 US geo inference profile default `us.anthropic.claude-sonnet-5-5` at low effort, with per-service env overrides loaded at Lambda startup; if rendering fails or times out, the worker falls back to deterministic wording when a reliable frontend record or public DB row exists.
 - If no reliable record exists for an in-scope product question, the worker posts `I don't have enough knowledge to help you here.`, appends the global `@devs6529` mention, and changes the bot reaction to warning. The global audience is resolved from `DEVS_6529_MENTION_PROFILE_IDS` and filtered by Wave visibility.
 - Obvious impossible grants, prompt-injection attempts, and private-data pokes return a short bounded no-tech-team reply instead of escalating to the no-reliable-source path.
 - If a technical failure prevents answering, the worker posts the technical-failure reply and changes the bot reaction to warning.
@@ -3262,6 +3277,13 @@ and recheck visibility; activity cannot move IDs between pages. Subwaves remain
 accessible through their parents. The API returns 410 for expired snapshots and
 503 when shared storage is unavailable rather than silently truncating the list.
 Deploy the `api` service before the frontend that consumes this additive endpoint.
+
+Pinned wave order lives in `pinned_waves.position` per profile. The dedicated
+`/v2/waves/pinned` endpoint returns readable root pins in saved order. Pin,
+unpin, reorder and backfill serialize on the profile row. Reorder compares the
+submitted prior list with the current readable list and reuses its positions,
+so an inaccessible wave keeps its position. The All and Joined feeds retain
+their own activity order.
 
 ## IPFS infrastructure management
 
