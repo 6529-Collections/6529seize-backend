@@ -39,6 +39,7 @@ functions:
 resources:
   Resources:
     NextgenMediaImageResolutionsOOMFilter:
+      DependsOn: NextgenMediaImageResolutionsLogGroup
       Type: AWS::Logs::MetricFilter
       Properties:
         LogGroupName: /aws/lambda/nextgenMediaImageResolutions
