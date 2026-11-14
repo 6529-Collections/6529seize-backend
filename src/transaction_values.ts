@@ -15,6 +15,11 @@ import { Transaction } from '@/entities/ITransaction';
 import { getClosestEthUsdPrice } from '@/ethPriceLoop/db.eth_price';
 import { Logger } from '@/logging';
 import {
+  extractNftTransferEdgesFromLog,
+  getNftTransferKey,
+  NftTransferEdge
+} from '@/nft-transfer-edges';
+import {
   getNextgenNetwork,
   NEXTGEN_CORE_CONTRACT,
   NEXTGEN_ROYALTIES_ADDRESS
@@ -1183,97 +1188,12 @@ const IFACE = new ethers.Interface([
   'event TransferBatch(address indexed operator,address indexed from,address indexed to,uint256[] ids,uint256[] values)'
 ]);
 
-type NftTransferEdge = {
-  from: string;
-  to: string;
-  contract: string;
-  tokenId: string;
-  amount: bigint;
-};
-
-function extractNftTransferEdgesFromLog(log: ReceiptLog): NftTransferEdge[] {
-  try {
-    if (
-      log.topics.length === 4 &&
-      log.topics[0] === IFACE.getEvent('Transfer')!.topicHash
-    ) {
-      return [
-        {
-          from: ethers.getAddress(`0x${log.topics[1].slice(26)}`),
-          to: ethers.getAddress(`0x${log.topics[2].slice(26)}`),
-          contract: log.address,
-          tokenId: BigInt(log.topics[3]).toString(),
-          amount: BigInt(1)
-        }
-      ];
-    }
-
-    if (log.topics[0] === IFACE.getEvent('TransferSingle')!.topicHash) {
-      const decoded = IFACE.decodeEventLog(
-        'TransferSingle',
-        log.data,
-        log.topics
-      );
-      return [
-        {
-          from: decoded.from as string,
-          to: decoded.to as string,
-          contract: log.address,
-          tokenId: BigInt(decoded.id).toString(),
-          amount: BigInt(decoded.value)
-        }
-      ];
-    }
-
-    if (log.topics[0] === IFACE.getEvent('TransferBatch')!.topicHash) {
-      const decoded = IFACE.decodeEventLog(
-        'TransferBatch',
-        log.data,
-        log.topics
-      );
-      const ids = decoded.ids as bigint[];
-      // Ethers Result.values is an iterator method, so use the event's
-      // positional values argument rather than decoded.values.
-      const batchAmounts = decoded[4] as bigint[];
-      return ids.map((id, index) => ({
-        from: decoded.from as string,
-        to: decoded.to as string,
-        contract: log.address,
-        tokenId: BigInt(id).toString(),
-        amount: BigInt(batchAmounts[index] ?? 0)
-      }));
-    }
-  } catch (error) {
-    const message =
-      error instanceof Error ? error.message : 'Unknown decoding error';
-    logger.debug(
-      `[NFT_TRANSFER_LOG_PARSE_FAILED] [CONTRACT=${log.address}] [ERROR=${message}]`
-    );
-  }
-
-  return [];
-}
-
 function extractNftTransferEdges(receipt: ReceiptLike): NftTransferEdge[] {
   const nftEdges: NftTransferEdge[] = [];
   for (const log of receipt.logs) {
     nftEdges.push(...extractNftTransferEdgesFromLog(log));
   }
   return nftEdges;
-}
-
-function getNftTransferKey(
-  from: string,
-  to: string,
-  contract: string,
-  tokenId: string | number
-): string {
-  return [
-    from.toLowerCase(),
-    to.toLowerCase(),
-    contract.toLowerCase(),
-    BigInt(tokenId).toString()
-  ].join(':');
 }
 
 export function reconcileTransactionTokenCounts(

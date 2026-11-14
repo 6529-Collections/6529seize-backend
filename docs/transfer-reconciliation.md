@@ -48,10 +48,20 @@ waiting for a new block or periodic balance refresh after repairing old transfer
 3. Deploy `transactionsLoop` (Memes, Meme Lab and Gradients functions) and
    `nextgenContractLoop`. Producers must not run this code before schema sync.
 4. Audit stored ownership against the transfer ledger and chain for the affected
-   collection. Queue both endpoints of confirmed stale transfers in batches
-   of at most 100 using the maintenance request below. Wait for each wallet's
-   `owners`, `activity` and `balances` requests to drain, and validate its raw
-   and consolidated values. No global TDH recalculation is implied.
+   collection with the read-only [state audit](state-audit.md) command
+   (`6529 run state-audit -- --contract <memes|gradients|memelab> --from-block N --to-block M`);
+   treat only a `clean` manifest as proof of agreement and act on
+   `differences_found` manifests. For ledger discrepancies, apply the reviewed
+   manifest with the gated
+   [`state-audit apply`](state-audit.md#applying-a-manifest) step: it corrects
+   the `transactions` rows and enqueues both endpoints of every corrected
+   transfer for `owners` and `activity` in the same transaction, one
+   transaction hash at a time, with an idempotent job record. Where the
+   ledger is already right and only derived values are stale, queue the
+   wallets in batches of at most 100 using the maintenance request below.
+   Either way, wait for each wallet's `owners`, `activity` and `balances`
+   requests to drain, and validate its raw and consolidated values. No global
+   TDH recalculation is implied by either route.
 
 Deployment protects future writes; it does not retroactively create requests for
 transfers that were already missed. An explicit bounded repair is required.
@@ -63,7 +73,10 @@ Invoke `nftOwnersLoop` directly using existing AWS IAM invocation access in the
 intended environment/region:
 
 ```json
-{"action":"repair-wallets","wallets":["<affected wallet address>","<other endpoint>"]}
+{
+  "action": "repair-wallets",
+  "wallets": ["<affected wallet address>", "<other endpoint>"]
+}
 ```
 
 This custom-only action validates 1–100 nonzero Ethereum addresses, deduplicates
@@ -91,8 +104,10 @@ block catch-up/reset work or the length of an individual wallet's history.
 Replaying active wallets (especially mint/burn endpoints) reads more history than
 incremental balance deltas, so monitor duration/memory before broad rollout.
 The repair is based on stored transfer history; missing or incorrect source
-transfers must first be corrected by their indexer. Direct SQL edits to transfers
-must also enqueue both endpoints in the same transaction.
+transfers must first be corrected by their indexer or by the audited
+[`state-audit apply`](state-audit.md#applying-a-manifest) step, which enqueues
+both endpoints in the same transaction as each ledger correction. Direct SQL
+edits to transfers must do the same.
 
 For rollback, retain the additive queue table and pending requests. Reverting
 consumers/producers removes protection until the fixed versions return; it does
