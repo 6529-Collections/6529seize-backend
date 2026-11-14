@@ -3,11 +3,13 @@ jest.mock('@/redis', () => ({ getRedisClient: () => null }));
 import { OpenSeaClient, OpenSeaHttpError } from './opensea-client';
 import * as normalizer from './opensea-normalizer';
 import {
+  explainedByRecordedEvent,
   missingOrders,
   OpenSeaReconciliationDb,
   reconcileOpenSeaOrders
 } from './opensea-reconciliation';
 import {
+  MarketDepthOrderStatusEvidence,
   MarketDepthReconciliation,
   NormalizedMarketDepthOrder
 } from './market-depth.types';
@@ -69,15 +71,32 @@ function reconciliation(order = ORDER): MarketDepthReconciliation {
   };
 }
 
-function database(due: MarketDepthReconciliation[]): OpenSeaReconciliationDb {
+function database(
+  due: MarketDepthReconciliation[],
+  evidence: MarketDepthOrderStatusEvidence[] = []
+): jest.Mocked<OpenSeaReconciliationDb> {
   return {
     enqueueReconciliations: jest.fn().mockResolvedValue(undefined),
     getDueReconciliations: jest.fn().mockResolvedValue(due),
+    getOrderStatusEvidence: jest.fn().mockResolvedValue(evidence),
     markReconciliationRetry: jest.fn().mockResolvedValue(true),
-    resolveReconciliation: jest.fn().mockResolvedValue(true),
+    resolveReconciliations: jest
+      .fn()
+      .mockImplementation(async ({ items }) => items.length),
+    deferReconciliations: jest
+      .fn()
+      .mockImplementation(async ({ items }) => items.length),
     getCursor: jest.fn().mockResolvedValue(null),
     appendEvents: jest.fn().mockResolvedValue(undefined)
   };
+}
+
+function evidence(
+  kind: string,
+  occurredAt: string,
+  orderId = ORDER.order_id
+): MarketDepthOrderStatusEvidence {
+  return { order_id: orderId, kind, occurred_at: new Date(occurredAt) };
 }
 
 describe('OpenSea order reconciliation', () => {
@@ -105,6 +124,9 @@ describe('OpenSea order reconciliation', () => {
       expect(client.getOrder).toHaveBeenCalledTimes(shouldRequest ? 1 : 0);
       expect(db.markReconciliationRetry).toHaveBeenCalledTimes(
         shouldRequest ? 1 : 0
+      );
+      expect(db.deferReconciliations).toHaveBeenCalledTimes(
+        shouldRequest ? 0 : 1
       );
     }
   );
@@ -138,7 +160,11 @@ describe('OpenSea order reconciliation', () => {
         ]
       })
     );
-    expect(db.resolveReconciliation).toHaveBeenCalled();
+    expect(db.resolveReconciliations).toHaveBeenCalledWith(
+      expect.objectContaining({
+        items: [{ id: 'queue-id', expected_attempt_count: 0 }]
+      })
+    );
   });
 
   it('treats a provider 404 as unknown and leaves durable retry work', async () => {
@@ -166,7 +192,7 @@ describe('OpenSea order reconciliation', () => {
       expect.objectContaining({ last_error: 'provider_order_404_unknown' })
     );
     expect(db.appendEvents).not.toHaveBeenCalled();
-    expect(db.resolveReconciliation).not.toHaveBeenCalled();
+    expect(db.resolveReconciliations).not.toHaveBeenCalled();
   });
 
   it('keeps inactive retries idempotent but records each new absence episode', async () => {
@@ -218,5 +244,199 @@ describe('OpenSea order reconciliation', () => {
     expect(events[2].provider_at?.toISOString()).toBe(
       '2026-09-10T12:03:00.000Z'
     );
+  });
+
+  describe('local resolution', () => {
+    const NOW = new Date('2026-09-10T12:00:00.000Z');
+    const FUTURE_ORDER = {
+      ...ORDER,
+      end_at: new Date('2026-09-11T12:00:00.000Z')
+    };
+
+    function run(db: OpenSeaReconciliationDb, client?: OpenSeaClient) {
+      return reconcileOpenSeaOrders({
+        target: { contract: ORDER.contract, collection_slug: 'fixture' },
+        client: client ?? ({ getOrder: jest.fn() } as unknown as OpenSeaClient),
+        db,
+        deadlineMs: NOW.getTime() + 60_000,
+        now: () => NOW
+      });
+    }
+
+    it('resolves an order closed by a recorded cancellation without a request or a new event', async () => {
+      const db = database(
+        [reconciliation(FUTURE_ORDER)],
+        [evidence('cancel', '2026-09-10T09:00:00.000Z')]
+      );
+      const client = { getOrder: jest.fn() } as unknown as OpenSeaClient;
+      await expect(run(db, client)).resolves.toBe(1);
+      expect(client.getOrder).not.toHaveBeenCalled();
+      expect(db.appendEvents).not.toHaveBeenCalled();
+      expect(db.getOrderStatusEvidence).toHaveBeenCalledWith(
+        expect.objectContaining({
+          contract: ORDER.contract,
+          sources: ['opensea', 'opensea_stream'],
+          orderIds: [ORDER.order_id]
+        })
+      );
+    });
+
+    it('prefers a recorded cancellation over a later elapsed expiry', async () => {
+      const db = database(
+        [reconciliation()],
+        [evidence('cancel', '2026-09-10T10:40:00.000Z')]
+      );
+      await expect(run(db)).resolves.toBe(1);
+      expect(db.appendEvents).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      {
+        name: 'counts an invalidation after the order was last seen active',
+        events: [evidence('invalidate', '2026-09-10T10:40:00.000Z')],
+        explained: true
+      },
+      {
+        name: 'ignores an invalidation from before the order was last seen active',
+        events: [evidence('invalidate', '2026-09-10T10:00:00.000Z')],
+        explained: false
+      },
+      {
+        name: 'ignores an invalidation that was later revalidated',
+        events: [
+          evidence('invalidate', '2026-09-10T10:40:00.000Z'),
+          evidence('revalidate', '2026-09-10T10:41:00.000Z')
+        ],
+        explained: false
+      },
+      {
+        name: 'does not treat a sale as proof the order closed',
+        events: [evidence('sale', '2026-09-10T10:40:00.000Z')],
+        explained: false
+      }
+    ])('$name', ({ events, explained }) => {
+      expect(
+        explainedByRecordedEvent(reconciliation(FUTURE_ORDER), events)
+      ).toBe(explained);
+    });
+
+    it('caps provider requests per run while still resolving expired orders', async () => {
+      const due = Array.from({ length: 500 }, (_, index) =>
+        reconciliation(
+          index % 2 === 0
+            ? {
+                ...FUTURE_ORDER,
+                order_id: `future-${index}`,
+                order_key: `future-${index}`
+              }
+            : {
+                ...ORDER,
+                order_id: `expired-${index}`,
+                order_key: `expired-${index}`
+              }
+        )
+      ).map((item, index) => ({ ...item, id: `queue-${index}` }));
+      const db = database([]);
+      db.getDueReconciliations
+        .mockResolvedValueOnce(due)
+        .mockResolvedValueOnce([]);
+      const client = {
+        getOrder: jest
+          .fn()
+          .mockRejectedValue(new OpenSeaHttpError(404, 0, 'not found'))
+      } as unknown as OpenSeaClient;
+
+      await expect(run(db, client)).resolves.toBe(250);
+      expect(client.getOrder).toHaveBeenCalledTimes(25);
+      expect(db.markReconciliationRetry).toHaveBeenCalledTimes(25);
+      // The other 225 move behind newer work without counting an attempt.
+      expect(db.deferReconciliations).toHaveBeenCalledTimes(1);
+      const deferral = db.deferReconciliations.mock.calls[0][0];
+      expect(deferral.items).toHaveLength(225);
+      expect(deferral.items[0]).toEqual({
+        id: 'queue-50',
+        expected_attempt_count: 0
+      });
+      expect(deferral.next_attempt_at).toEqual(
+        new Date(NOW.getTime() + 6 * 60 * 60_000)
+      );
+      expect(db.appendEvents.mock.calls[0][0].events).toHaveLength(250);
+      // A full page continues after its last key.
+      expect(db.getDueReconciliations).toHaveBeenNthCalledWith(
+        2,
+        'opensea',
+        ORDER.contract,
+        'fixture',
+        NOW,
+        500,
+        { next_attempt_at: due[499].next_attempt_at, id: 'queue-499' }
+      );
+    });
+
+    it('keeps resolving locally on later pages after the provider budget is spent', async () => {
+      const page = (prefix: string, order: NormalizedMarketDepthOrder) =>
+        Array.from({ length: 500 }, (_, index) => ({
+          ...reconciliation({
+            ...order,
+            order_id: `${prefix}-${index}`,
+            order_key: `${prefix}-${index}`
+          }),
+          id: `${prefix}-queue-${index}`
+        }));
+      const db = database([]);
+      db.getDueReconciliations
+        .mockResolvedValueOnce(page('future', FUTURE_ORDER))
+        .mockResolvedValueOnce(page('expired', ORDER))
+        .mockResolvedValueOnce([]);
+      const client = {
+        getOrder: jest
+          .fn()
+          .mockRejectedValue(new OpenSeaHttpError(404, 0, 'not found'))
+      } as unknown as OpenSeaClient;
+
+      await expect(run(db, client)).resolves.toBe(500);
+      expect(client.getOrder).toHaveBeenCalledTimes(25);
+      expect(db.deferReconciliations.mock.calls[0][0].items).toHaveLength(475);
+      expect(db.resolveReconciliations).toHaveBeenCalledTimes(1);
+      expect(db.resolveReconciliations.mock.calls[0][0].items).toHaveLength(
+        500
+      );
+      expect(db.getCursor).toHaveBeenCalledTimes(1);
+    });
+
+    it('stops paging at the per-run limit', async () => {
+      const page = Array.from({ length: 500 }, (_, index) => ({
+        ...reconciliation(),
+        id: `queue-${index}`
+      }));
+      const db = database(page);
+      await run(db);
+      expect(db.getDueReconciliations).toHaveBeenCalledTimes(10);
+      expect(db.resolveReconciliations).toHaveBeenCalledTimes(10);
+      expect(db.appendEvents).toHaveBeenCalledTimes(10);
+      expect(db.getCursor).toHaveBeenCalledTimes(1);
+    });
+
+    it('stops paging when the work budget is spent', async () => {
+      let clock = NOW.getTime();
+      const page = Array.from({ length: 500 }, (_, index) => ({
+        ...reconciliation(),
+        id: `queue-${index}`
+      }));
+      const db = database(page);
+      db.resolveReconciliations.mockImplementation(async ({ items }) => {
+        clock += 25_000;
+        return items.length;
+      });
+      await reconcileOpenSeaOrders({
+        target: { contract: ORDER.contract, collection_slug: 'fixture' },
+        client: { getOrder: jest.fn() } as unknown as OpenSeaClient,
+        db,
+        deadlineMs: NOW.getTime() + 600_000,
+        now: () => new Date(clock)
+      });
+      // 60 seconds of work: pages at 0s, 25s and 50s.
+      expect(db.getDueReconciliations).toHaveBeenCalledTimes(3);
+    });
   });
 });
