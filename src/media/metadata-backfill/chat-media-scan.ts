@@ -73,9 +73,9 @@ interface Page {
  * wave pictures) in id order, classifies it against the decision-entry
  * exclusions and processes chat images (and, with `includeVideos`, chat
  * videos) with bounded concurrency. `--limit` stops after that many objects;
- * `--sample` picks a uniform random sample of them and processes only those. `onlyKeys` processes only
- * listed keys that are still selected as chat media; the others are
- * reported as not selected once the scan completes.
+ * `--sample` picks a uniform random sample of them and processes only those.
+ * `onlyKeys` processes only listed keys that are still selected as chat
+ * media; the others are reported as not selected once the scan completes.
  */
 export class ChatMediaScan {
   private readonly logger = Logger.get('CHAT_MEDIA_BACKFILL');
