@@ -39,15 +39,15 @@ export const KEPT_CHILDREN: Readonly<Record<string, ReadonlySet<string>>> = {
   ])
 };
 
-/** Top-level boxes that hold no data about the recording. */
-const HARMLESS_TOP_LEVEL = new Set([
-  'ftyp',
-  'moov',
-  'mdat',
-  'free',
-  'skip',
-  'wide'
-]);
+/** Top-level boxes the strip keeps or rebuilds. */
+const MOVIE_BOXES = new Set(['ftyp', 'moov', 'mdat']);
+
+/**
+ * Padding boxes. Editors that rewrite a movie header in place leave the old
+ * atoms (location included) behind as padding, so padding only counts as
+ * harmless when it is empty or all zeros.
+ */
+const PADDING_BOXES = new Set(['free', 'skip', 'wide']);
 
 /** Kinds of identifying data a video can carry; values are never recorded. */
 export enum VideoMetadataFinding {
@@ -128,12 +128,36 @@ const FORBIDDEN_IN_SAMPLE_DESCRIPTION: readonly Buffer[] = [
   '©xyz'
 ].map((text) => Buffer.from(text, 'latin1'));
 
-/** Findings in a box that is removed whole: marker hits, else user data. */
-function classifyRemovedBytes(bytes: Buffer): VideoMetadataFinding[] {
+/** Findings in a box that is removed whole: marker hits, else `fallback`. */
+function classifyRemovedBytes(
+  bytes: Buffer,
+  fallback = VideoMetadataFinding.USER_DATA
+): VideoMetadataFinding[] {
   const hits = MARKERS.filter((marker) => bytes.includes(marker.bytes)).map(
     (marker) => marker.finding
   );
-  return hits.length ? hits : [VideoMetadataFinding.USER_DATA];
+  return hits.length ? hits : [fallback];
+}
+
+/**
+ * Findings for one top-level box; `bytes` holds the whole box when it was
+ * small enough to read. Unread padding is assumed to hold old data.
+ */
+function topLevelFindings(
+  box: Box,
+  bytes: Buffer | undefined
+): VideoMetadataFinding[] {
+  if (MOVIE_BOXES.has(box.type)) return [];
+  if (!PADDING_BOXES.has(box.type)) {
+    return bytes
+      ? classifyRemovedBytes(bytes)
+      : [VideoMetadataFinding.USER_DATA];
+  }
+  if (box.payloadStart === box.end) return [];
+  if (!bytes) return [VideoMetadataFinding.UNREFERENCED_DATA];
+  const payload = bytes.subarray(box.payloadStart - box.start);
+  if (payload.every((byte) => byte === 0)) return [];
+  return classifyRemovedBytes(payload, VideoMetadataFinding.UNREFERENCED_DATA);
 }
 
 /** True when a box's version 0/1 creation and modification times are zero. */
@@ -269,12 +293,7 @@ export function findIdentifyingMetadata(
 ): { readonly findings: VideoMetadataFinding[]; readonly problems: string[] } {
   const findings = new Findings();
   for (const box of layout.topLevel) {
-    if (HARMLESS_TOP_LEVEL.has(box.type)) continue;
-    const bytes = topLevelBytes.get(box.start);
-    (bytes
-      ? classifyRemovedBytes(bytes)
-      : [VideoMetadataFinding.USER_DATA]
-    ).forEach((finding) =>
+    topLevelFindings(box, topLevelBytes.get(box.start)).forEach((finding) =>
       findings.add(finding, `top-level ${JSON.stringify(box.type)}`)
     );
   }

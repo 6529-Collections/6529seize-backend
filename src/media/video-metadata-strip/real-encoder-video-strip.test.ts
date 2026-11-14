@@ -19,8 +19,9 @@ function bundledFfmpeg(): string | null {
 
 const ffmpeg = bundledFfmpeg();
 // The root install provides ffmpeg on CI and developer machines alike; only
-// a platform without an @ffmpeg-installer build skips these real files.
-const describeWithFfmpeg = ffmpeg ? describe : describe.skip;
+// a local platform without an @ffmpeg-installer build skips these real
+// files. On CI a missing binary fails the suite instead of skipping it.
+const describeWithFfmpeg = ffmpeg || process.env.CI ? describe : describe.skip;
 
 let directory: string;
 

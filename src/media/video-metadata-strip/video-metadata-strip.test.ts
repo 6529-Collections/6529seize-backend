@@ -222,6 +222,32 @@ describe('stripVideoMetadataVerified', () => {
     expect(output!.includes(leftover)).toBe(false);
   });
 
+  it('drops old atoms an editor left behind as padding, but not zero padding', async () => {
+    const cleanSpec: VideoSpec = {
+      brand: 'isom',
+      creationTime: 0,
+      moovFirst: true,
+      tracks: [videoTrack({ handlerName: '' }), audioTrack({ handlerName: '' })]
+    };
+    const leftover = box('©xyz', Buffer.from('+37.4219-122.0840/'));
+    const padded = await strip(
+      buildVideo({ ...cleanSpec, topLevelExtras: [box('free', leftover)] }),
+      'padded'
+    );
+    expect(padded.result).toMatchObject({
+      kind: 'stripped',
+      findings: [VideoMetadataFinding.LOCATION]
+    });
+    expectNoIdentifyingStrings(padded.output!);
+
+    const zeros = buildVideo({
+      ...cleanSpec,
+      topLevelExtras: [box('free', Buffer.alloc(64)), box('skip')]
+    });
+    const zeroPadded = await strip(zeros, 'zeros');
+    expect(zeroPadded.result).toEqual({ kind: 'clean', size: zeros.length });
+  });
+
   it('drops vendor data appended after the last box', async () => {
     const trailer = Buffer.concat([Buffer.from('SEFH'), noise('trailer', 99)]);
     const input = Buffer.concat([androidVideo(), trailer]);
