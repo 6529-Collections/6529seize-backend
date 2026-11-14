@@ -47,10 +47,10 @@
     "swagger-jsdoc": "^6.2.8",
     "swagger-ui-express": "^5.0.0",
     "ws": "^8.18.1",
-    "yamljs": "^0.3.0",
     "zod": "^3.25.76"
   },
   "devDependencies": {
+    "@apidevtools/swagger-parser": "^10.1.1",
     "@serverless/typescript": "^4.30.0",
     "@types/aws-serverless-express": "^3.3.10",
     "@types/js-yaml": "^4.0.9",
@@ -70,7 +70,8 @@
     "swagger-autogen": "^2.23.0",
     "ts-node": "^10.4.0",
     "tsconfig-paths": "^3.9.0",
-    "typescript": "^5.0.4"
+    "typescript": "^5.0.4",
+    "yaml": "^2.9.1"
   },
   "author": "The serverless webpack authors (https://github.com/elastic-coders/serverless-webpack)",
   "license": "MIT",

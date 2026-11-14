@@ -2,7 +2,6 @@ import * as db from '../../db-api';
 import { clientVersionFromQuery } from '@/ws-client-versions/ws-client-versions';
 import { ids } from '@/ids';
 
-import * as fs from 'node:fs';
 import * as http from 'node:http';
 import WebSocket, { WebSocketServer } from 'ws';
 import aggregatedActivityRoutes from './aggregated-activity/api.aggregated-activity.routes';
@@ -177,9 +176,9 @@ import {
   WsMessageType,
   WS_RECOVERY_CAPABILITY
 } from './ws/ws-message';
+import { loadOpenApiSpec } from './openapi-spec-loader';
 import { registerOpenApiSpecRoutes } from './openapi-spec-routes';
 
-const YAML = require('yamljs');
 const compression = require('compression');
 const express = require('express');
 const cors = require('cors');
@@ -1446,11 +1445,12 @@ function wireApp() {
   });
   app.use(rootRouter);
 
-  const swaggerDocument = YAML.load('openapi.yaml');
   // Publish the raw, machine-readable spec at predictable URLs next to /docs so
   // agents and tooling can fetch the contract directly instead of scraping the
-  // Swagger UI. llms.txt on 6529.io points here.
-  const openApiYamlRaw = fs.readFileSync('openapi.yaml', 'utf8');
+  // Swagger UI. llms.txt on 6529.io points here. The same parsed document
+  // feeds Swagger UI, so both views come from one YAML 1.2 compliant parse.
+  const { raw: openApiYamlRaw, document: swaggerDocument } =
+    loadOpenApiSpec('openapi.yaml');
   registerOpenApiSpecRoutes(app, openApiYamlRaw, swaggerDocument);
   app.use(
     '/docs',
