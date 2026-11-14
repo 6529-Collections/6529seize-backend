@@ -30,7 +30,11 @@ import {
   MarketDepthCursor,
   MarketDepthJsonValue,
   MarketDepthReconciliation,
+  MarketDepthBulkDeferInput,
+  MarketDepthBulkResolveInput,
+  MarketDepthOrderStatusEvidence,
   MarketDepthReconciliationInput,
+  MarketDepthReconciliationKey,
   MarketDepthReconciliationResolveInput,
   MarketDepthReconciliationRetryInput,
   MarketDepthReconciliationStatus,
@@ -926,11 +930,15 @@ export class MarketDepthDb extends LazyDbAccessCompatibleService {
     contractValue: string,
     collectionSlugValue: string,
     now: Date,
-    limit = 100
+    limit = 100,
+    after: MarketDepthReconciliationKey | null = null
   ): Promise<MarketDepthReconciliation[]> {
     if (!Number.isSafeInteger(limit) || limit < 1 || limit > 500) {
       throw new Error('Reconciliation limit must be between 1 and 500');
     }
+    const afterClause = after
+      ? 'AND (next_attempt_at>:afterAt OR (next_attempt_at=:afterAt AND id>:afterId))'
+      : '';
     const rows = await this.query<ReconciliationRow>(
       `SELECT id, prior_snapshot_id, source, chain, chain_id, contract,
               collection_slug, protocol, order_id, order_key, token_id, side,
@@ -939,7 +947,7 @@ export class MarketDepthDb extends LazyDbAccessCompatibleService {
        FROM ${MARKET_DEPTH_RECONCILIATION_QUEUE_TABLE}
        WHERE source=:source AND chain_id=:chainId AND contract=:contract
          AND collection_slug=:collectionSlug AND status='PENDING'
-         AND next_attempt_at<=:now
+         AND next_attempt_at<=:now ${afterClause}
        ORDER BY next_attempt_at ASC, id ASC LIMIT :limit`,
       {
         source: normalizePartition(sourceValue),
@@ -947,7 +955,9 @@ export class MarketDepthDb extends LazyDbAccessCompatibleService {
         contract: normalizeContract(contractValue),
         collectionSlug: normalizePartition(collectionSlugValue),
         now,
-        limit
+        limit,
+        afterAt: after?.next_attempt_at,
+        afterId: after?.id
       }
     );
     return rows.map((row) => ({
@@ -983,6 +993,85 @@ export class MarketDepthDb extends LazyDbAccessCompatibleService {
       }
     );
     return this.db.getAffectedRows(result) === 1;
+  }
+
+  // One statement per expected attempt count keeps the per-row CAS.
+  private async updatePendingByAttempt(
+    items: ReadonlyArray<{ id: string; expected_attempt_count: number }>,
+    assignments: string,
+    params: Record<string, unknown>
+  ): Promise<number> {
+    const idsByAttempt = new Map<number, string[]>();
+    for (const item of items) {
+      assertNonNegativeInteger(item.expected_attempt_count, 'attempt_count');
+      const ids = idsByAttempt.get(item.expected_attempt_count) ?? [];
+      ids.push(item.id);
+      idsByAttempt.set(item.expected_attempt_count, ids);
+    }
+    let updated = 0;
+    for (const [expectedAttemptCount, ids] of Array.from(idsByAttempt)) {
+      const result = await this.query<unknown>(
+        `UPDATE ${MARKET_DEPTH_RECONCILIATION_QUEUE_TABLE}
+         SET ${assignments}
+         WHERE id IN (:ids) AND status='PENDING'
+           AND attempt_count=:expectedAttemptCount`,
+        { ...params, ids, expectedAttemptCount }
+      );
+      updated += this.db.getAffectedRows(result);
+    }
+    return updated;
+  }
+
+  async resolveReconciliations(
+    input: MarketDepthBulkResolveInput
+  ): Promise<number> {
+    return this.updatePendingByAttempt(
+      input.items,
+      `status='RESOLVED', attempt_count=attempt_count+1,
+       last_attempt_at=:resolvedAt, resolved_at=:resolvedAt, last_error=NULL`,
+      { resolvedAt: input.resolved_at }
+    );
+  }
+
+  // Postpones rows without counting an attempt, so rows waiting for provider
+  // capacity do not hold the front of the due queue.
+  async deferReconciliations(
+    input: MarketDepthBulkDeferInput
+  ): Promise<number> {
+    return this.updatePendingByAttempt(
+      input.items,
+      'next_attempt_at=:nextAttemptAt',
+      { nextAttemptAt: input.next_attempt_at }
+    );
+  }
+
+  async getOrderStatusEvidence(input: {
+    contract: string;
+    sources: readonly string[];
+    orderIds: readonly string[];
+    kinds: readonly string[];
+  }): Promise<MarketDepthOrderStatusEvidence[]> {
+    if (!input.orderIds.length || !input.sources.length || !input.kinds.length)
+      return [];
+    // Constant source and order lists give point ranges on the full
+    // (source, order_id) key; joining against a source list does not.
+    const rows = await this.query<MarketDepthOrderStatusEvidence>(
+      `SELECT order_id, kind, occurred_at FROM ${MARKET_DEPTH_EVENTS_TABLE}
+       FORCE INDEX (idx_market_depth_events_order)
+       WHERE source IN (:sources) AND order_id IN (:orderIds)
+         AND chain_id=:chainId AND contract=:contract AND kind IN (:kinds)`,
+      {
+        sources: [...input.sources],
+        orderIds: [...input.orderIds],
+        chainId: MARKET_DEPTH_CHAIN_ID,
+        contract: normalizeContract(input.contract),
+        kinds: [...input.kinds]
+      }
+    );
+    return rows.map((row) => ({
+      ...row,
+      occurred_at: new Date(row.occurred_at)
+    }));
   }
 
   async resolveReconciliation(

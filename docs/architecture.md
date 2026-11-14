@@ -1126,7 +1126,10 @@ orders come from one consistent view.
 Existing price statistics run concurrently with an independent deadline; both
 tasks finish before the database context closes. Collection books are attempted
 before lifecycle maintenance, which prioritizes status reconciliation and
-checkpoints bounded REST catch-up batches.
+checkpoints bounded REST catch-up batches. Reconciliation resolves disappeared
+orders from recorded stream cancellations/invalidations or elapsed expiry in
+bulk, and spends at most 25 provider status requests per collection per run on
+the remainder.
 `marketDepthStreamLoop` records live order lifecycle events, while REST event
 catch-up and per-order status checks recover supported missed observations.
 Stream appends opt into the shared SQL execution budget, with a five-second

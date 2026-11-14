@@ -1207,4 +1207,125 @@ describeWithSeed('MarketDepthDb', [] as never[], () => {
     );
     expect(queue.map((row) => row.order_id)).toEqual(['recent-order']);
   });
+
+  it('pages due reconciliations, resolves them in bulk with attempt CAS and reads status evidence', async () => {
+    const now = new Date('2026-09-10T03:00:00.000Z');
+    const base = {
+      prior_snapshot_id: '00000000-0000-4000-8000-000000000031',
+      source: 'opensea-rest',
+      contract: CONTRACT,
+      collection_slug: 'project-a',
+      missing_at: new Date('2026-09-10T02:00:00.000Z')
+    };
+    await marketDepthDb.enqueueReconciliations(
+      ['a', 'b', 'c'].map((suffix) => ({
+        ...base,
+        order: order({
+          order_key: `key-${suffix}`,
+          order_id: `order-${suffix}`
+        })
+      }))
+    );
+
+    const first = await marketDepthDb.getDueReconciliations(
+      base.source,
+      CONTRACT,
+      base.collection_slug,
+      now,
+      2
+    );
+    const rest = await marketDepthDb.getDueReconciliations(
+      base.source,
+      CONTRACT,
+      base.collection_slug,
+      now,
+      2,
+      { next_attempt_at: first[1].next_attempt_at, id: first[1].id }
+    );
+    expect(first).toHaveLength(2);
+    expect(rest).toHaveLength(1);
+    expect(new Set([...first, ...rest].map((item) => item.id)).size).toBe(3);
+
+    const later = new Date('2026-09-10T09:00:00.000Z');
+    expect(
+      await marketDepthDb.deferReconciliations({
+        items: [{ id: first[0].id, expected_attempt_count: 0 }],
+        next_attempt_at: later
+      })
+    ).toBe(1);
+    const afterDeferral = await marketDepthDb.getDueReconciliations(
+      base.source,
+      CONTRACT,
+      base.collection_slug,
+      later
+    );
+    expect(afterDeferral.at(-1)).toMatchObject({
+      id: first[0].id,
+      attempt_count: 0
+    });
+    expect(afterDeferral.at(-1)?.next_attempt_at).toEqual(later);
+    expect(
+      await marketDepthDb.markReconciliationRetry({
+        id: rest[0].id,
+        expected_attempt_count: 0,
+        attempted_at: now,
+        next_attempt_at: now,
+        last_error: 'provider timeout'
+      })
+    ).toBe(true);
+    // The retried row no longer matches its stale attempt count.
+    expect(
+      await marketDepthDb.resolveReconciliations({
+        items: [...first, ...rest].map((item) => ({
+          id: item.id,
+          expected_attempt_count: 0
+        })),
+        resolved_at: now
+      })
+    ).toBe(2);
+    expect(
+      await marketDepthDb.resolveReconciliations({
+        items: [{ id: rest[0].id, expected_attempt_count: 1 }],
+        resolved_at: now
+      })
+    ).toBe(1);
+    expect(
+      await marketDepthDb.getDueReconciliations(
+        base.source,
+        CONTRACT,
+        base.collection_slug,
+        new Date('2026-09-11T00:00:00.000Z')
+      )
+    ).toEqual([]);
+
+    await marketDepthDb.appendEvents({
+      source: 'opensea_stream',
+      contract: CONTRACT,
+      collection_slug: base.collection_slug,
+      expected_cursor: null,
+      expected_watermark: null,
+      next_cursor: null,
+      provider_watermark: null,
+      provider_at: null,
+      observed_at: now,
+      events: [
+        event({ event_id: 'cancel-a', kind: 'cancel', order_id: 'order-a' }),
+        event({ event_id: 'listing-b', kind: 'listing', order_id: 'order-b' }),
+        event({ event_id: 'cancel-z', kind: 'cancel', order_id: 'order-z' })
+      ]
+    });
+    const evidence = await marketDepthDb.getOrderStatusEvidence({
+      contract: CONTRACT.toUpperCase().replace('0X', '0x'),
+      sources: ['opensea', 'opensea_stream'],
+      orderIds: ['order-a', 'order-b'],
+      kinds: ['cancel']
+    });
+    expect(evidence).toEqual([
+      {
+        order_id: 'order-a',
+        kind: 'cancel',
+        occurred_at: event().provider_at
+      }
+    ]);
+  });
 });
