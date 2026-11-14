@@ -39,6 +39,7 @@ functions:
 resources:
   Resources:
     TransactionsProcessingLoopOOMFilter:
+      DependsOn: TransactionsProcessingLoopLogGroup
       Type: AWS::Logs::MetricFilter
       Properties:
         LogGroupName: /aws/lambda/transactionsProcessingLoop

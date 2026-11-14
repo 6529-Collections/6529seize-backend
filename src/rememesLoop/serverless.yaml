@@ -65,6 +65,7 @@ functions:
 resources:
   Resources:
     RememesS3LoopOOMFilter:
+      DependsOn: RememesS3LoopLogGroup
       Type: AWS::Logs::MetricFilter
       Properties:
         LogGroupName: /aws/lambda/rememesS3Loop
@@ -95,6 +96,7 @@ resources:
           - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}
 
     RememesRefreshMetadataLoopOOMFilter:
+      DependsOn: RememesRefreshMetadataLoopLogGroup
       Type: AWS::Logs::MetricFilter
       Properties:
         LogGroupName: /aws/lambda/rememesRefreshMetadataLoop
@@ -125,6 +127,7 @@ resources:
           - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}
 
     RememesFileLoopOOMFilter:
+      DependsOn: RememesFileLoopLogGroup
       Type: AWS::Logs::MetricFilter
       Properties:
         LogGroupName: /aws/lambda/rememesFileLoop

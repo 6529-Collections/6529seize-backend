@@ -79,6 +79,7 @@ functions:
 resources:
   Resources:
     MarketStatsMEMESOOMFilter:
+      DependsOn: MarketStatsMEMESLogGroup
       Type: AWS::Logs::MetricFilter
       Properties:
         LogGroupName: /aws/lambda/marketStatsMEMES
@@ -109,6 +110,7 @@ resources:
           - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}
 
     MarketStatsLABOOMFilter:
+      DependsOn: MarketStatsLABLogGroup
       Type: AWS::Logs::MetricFilter
       Properties:
         LogGroupName: /aws/lambda/marketStatsLAB
@@ -139,6 +141,7 @@ resources:
           - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}
 
     MarketStatsGRADIENTOOMFilter:
+      DependsOn: MarketStatsGRADIENTLogGroup
       Type: AWS::Logs::MetricFilter
       Properties:
         LogGroupName: /aws/lambda/marketStatsGRADIENT
@@ -169,6 +172,7 @@ resources:
           - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}
 
     MarketStatsNEXTGENOOMFilter:
+      DependsOn: MarketStatsNEXTGENLogGroup
       Type: AWS::Logs::MetricFilter
       Properties:
         LogGroupName: /aws/lambda/marketStatsNEXTGEN

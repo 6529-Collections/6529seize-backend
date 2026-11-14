@@ -41,6 +41,7 @@ functions:
 resources:
   Resources:
     SubscriptionsTopUpLoopOOMFilter:
+      DependsOn: SubscriptionsTopUpLoopLogGroup
       Type: AWS::Logs::MetricFilter
       Properties:
         LogGroupName: /aws/lambda/subscriptionsTopUpLoop

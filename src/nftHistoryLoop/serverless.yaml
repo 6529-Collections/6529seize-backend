@@ -35,6 +35,7 @@ functions:
 resources:
   Resources:
     NftHistoryLoopOOMFilter:
+      DependsOn: NftHistoryLoopLogGroup
       Type: AWS::Logs::MetricFilter
       Properties:
         LogGroupName: /aws/lambda/nftHistoryLoop
