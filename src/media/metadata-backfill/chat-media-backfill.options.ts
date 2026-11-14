@@ -3,6 +3,7 @@ import {
   BACKFILL_MAX_IMAGE_BYTES,
   ObjectSkipReason
 } from './chat-media-object-processor';
+import { BACKFILL_MAX_VIDEO_BYTES } from './chat-media-video-processor';
 import { parseCursor, ScanCursor } from './scan-cursor';
 import { DEFAULT_RETRY_SKIP_REASONS, parseSkipReasons } from './skipped-keys';
 
@@ -12,6 +13,7 @@ export const BACKFILL_USAGE = `Usage (dry run unless --execute):
                    [--run-id ID] [--no-video-probe] [--report PATH]
                    [--max-source-bytes N[KiB|MiB|GiB]] (default 256MiB)
                    [--keys-from-report PATH [--skip-reasons R1,R2]]
+                   [--include-videos [--max-video-bytes N[KiB|MiB|GiB]]] (default 500MiB)
   restore          --environment <env> --run-id ID [--key PUBLIC_KEY] [--execute] [--report PATH]
   invalidate       --environment <env> --run-id ID [--execute] [--report PATH]
   purge-originals  --environment <env> --run-id ID --older-than 7d
@@ -49,6 +51,10 @@ export interface ScanCliOptions extends CommonOptions {
   readonly keysFromReport: string | null;
   /** Which of that report's skip reasons to take keys from. */
   readonly skipReasons: readonly ObjectSkipReason[] | null;
+  /** Rewrite chat videos too (lossless MP4/QuickTime strip). */
+  readonly includeVideos: boolean;
+  /** Larger videos are skipped as too_large. */
+  readonly maxVideoBytes: number;
 }
 
 export interface RestoreCliOptions extends CommonOptions {
@@ -79,6 +85,7 @@ const FLAGS = new Set([
   '--execute',
   '--dry-run',
   '--no-video-probe',
+  '--include-videos',
   '--delete-noncurrent-public-versions'
 ]);
 const VALUED = new Set([
@@ -94,7 +101,8 @@ const VALUED = new Set([
   '--older-than',
   '--max-source-bytes',
   '--keys-from-report',
-  '--skip-reasons'
+  '--skip-reasons',
+  '--max-video-bytes'
 ]);
 
 type ParsedArgs = { flags: Set<string>; values: Map<string, string> };
@@ -154,14 +162,35 @@ export function parseByteSize(value: string): number {
   return Number(match[1]) * unit;
 }
 
-function maxSourceBytes(values: Map<string, string>): number {
-  const raw = values.get('--max-source-bytes');
-  if (raw === undefined) return BACKFILL_MAX_IMAGE_BYTES;
+function byteLimit(
+  values: Map<string, string>,
+  name: string,
+  fallback: number
+): number {
+  const raw = values.get(name);
+  if (raw === undefined) return fallback;
   const bytes = parseByteSize(raw);
   if (bytes < MIN_SOURCE_BYTES || bytes > MAX_SOURCE_BYTES) {
-    throw new Error('--max-source-bytes must be between 1MiB and 1GiB');
+    throw new Error(`${name} must be between 1MiB and 1GiB`);
   }
   return bytes;
+}
+
+function videoOptions(
+  parsed: ParsedArgs
+): Pick<ScanCliOptions, 'includeVideos' | 'maxVideoBytes'> {
+  const includeVideos = parsed.flags.has('--include-videos');
+  if (!includeVideos && parsed.values.has('--max-video-bytes')) {
+    throw new Error('--max-video-bytes needs --include-videos');
+  }
+  return {
+    includeVideos,
+    maxVideoBytes: byteLimit(
+      parsed.values,
+      '--max-video-bytes',
+      BACKFILL_MAX_VIDEO_BYTES
+    )
+  };
 }
 
 function keyFilter(
@@ -243,8 +272,13 @@ function scanOptions(parsed: ParsedArgs, base: CommonOptions): ScanCliOptions {
       positiveInt(values, '--page-size', MAX_PAGE_SIZE) ?? DEFAULT_PAGE_SIZE,
     resumeAfter: resume === undefined ? null : parseCursor(resume),
     probeVideos: !flags.has('--no-video-probe') && !base.execute,
-    maxSourceBytes: maxSourceBytes(values),
-    ...keyFilter(values, sample)
+    maxSourceBytes: byteLimit(
+      values,
+      '--max-source-bytes',
+      BACKFILL_MAX_IMAGE_BYTES
+    ),
+    ...keyFilter(values, sample),
+    ...videoOptions(parsed)
   };
 }
 
@@ -257,7 +291,8 @@ function rejectScanOnly(values: Map<string, string>, command: string) {
     '--resume-after',
     '--max-source-bytes',
     '--keys-from-report',
-    '--skip-reasons'
+    '--skip-reasons',
+    '--max-video-bytes'
   ]) {
     if (values.has(name))
       throw new Error(`${name} does not apply to ${command}`);

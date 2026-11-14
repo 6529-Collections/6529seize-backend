@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { readFile, writeFile } from 'node:fs/promises';
 import {
   LifecycleExpiration,
   ListedObject,
@@ -71,7 +72,8 @@ export class InMemoryObjectStore implements MediaObjectStore {
     const object: StoredObject = {
       body: Buffer.from(body),
       headers: { ...headers, metadata: { ...headers.metadata } },
-      etag: `"${createHash('md5').update(body).digest('hex')}"`, // NOSONAR: test fixture imitating S3 ETag (MD5 by S3 definition); not security-sensitive.
+      // Opaque content tag in S3's quoted 32-hex-digit ETag format.
+      etag: `"${createHash('sha256').update(body).digest('hex').slice(0, 32)}"`,
       versionId: `v${++this.versionCounter}`,
       lastModified: this.now()
     };
@@ -108,6 +110,25 @@ export class InMemoryObjectStore implements MediaObjectStore {
     }
     if (object.body.length > maxBytes) throw new ObjectTooLargeError(key);
     return Buffer.from(object.body);
+  }
+
+  async downloadToFile(
+    key: string,
+    path: string,
+    options: { ifMatch?: string; maxBytes: number }
+  ): Promise<number> {
+    const body = await this.getBytes(key, options);
+    await writeFile(path, body, { flag: 'wx' });
+    return body.length;
+  }
+
+  async putFile(
+    key: string,
+    path: string,
+    headers: ObjectHeaders,
+    options?: { ifMatch?: string }
+  ): Promise<void> {
+    await this.put(key, await readFile(path), headers, options);
   }
 
   async getRange(key: string, start: number, endInclusive: number) {

@@ -13,6 +13,7 @@ import {
 } from './chat-media-candidates';
 import { ChatMediaBackfillDb } from './chat-media-backfill.db';
 import { ChatMediaObjectProcessor } from './chat-media-object-processor';
+import { ChatMediaVideoProcessor } from './chat-media-video-processor';
 import { DecisionEntryExclusions } from './decision-entry-exclusions';
 import { probeVideoLocation } from './video-location-probe';
 import { formatCursor, SCAN_PHASES, ScanCursor } from './scan-cursor';
@@ -26,6 +27,11 @@ export interface ScanOptions {
   readonly concurrency: number;
   readonly resumeAfter: ScanCursor | null;
   readonly probeVideos: boolean;
+  /**
+   * Chat videos are rewritten like images (and counted by --limit and
+   * --sample) instead of only being counted and probed.
+   */
+  readonly includeVideos?: boolean;
   readonly pageSize: number;
   /** Execute runs re-read new decision entries this often. */
   readonly exclusionRefreshMillis: number;
@@ -40,6 +46,8 @@ export interface ScanDeps {
   readonly db: ChatMediaBackfillDb;
   readonly exclusions: DecisionEntryExclusions;
   readonly processor: ChatMediaObjectProcessor;
+  /** Required with `includeVideos`. */
+  readonly videoProcessor?: ChatMediaVideoProcessor | null;
   readonly publicStore: MediaObjectStore;
   readonly invalidations: InvalidationQueue | null;
   readonly report: BackfillReport;
@@ -63,18 +71,18 @@ interface Page {
 /**
  * Walks every candidate row (drop media, then wave pictures, then archived
  * wave pictures) in id order, classifies it against the decision-entry
- * exclusions and processes chat images with bounded concurrency. `--limit`
- * stops after that many images; `--sample` picks a uniform random sample
- * of all chat images and processes only those. `onlyKeys` processes only
- * listed keys that are still selected as chat media; the others are
- * reported as not selected once the scan completes.
+ * exclusions and processes chat images (and, with `includeVideos`, chat
+ * videos) with bounded concurrency. `--limit` stops after that many objects;
+ * `--sample` picks a uniform random sample of them and processes only those.
+ * `onlyKeys` processes only listed keys that are still selected as chat
+ * media; the others are reported as not selected once the scan completes.
  */
 export class ChatMediaScan {
   private readonly logger = Logger.get('CHAT_MEDIA_BACKFILL');
   private readonly seenKeys = new Set<string>();
   private readonly reservoir: ChatMediaTarget[] = [];
-  private imagesSeen = 0;
-  private imagesTaken = 0;
+  private objectsSeen = 0;
+  private objectsTaken = 0;
   private lastRefresh = 0;
   private consecutiveFailures = 0;
 
@@ -96,7 +104,7 @@ export class ChatMediaScan {
     for await (const page of this.pages()) {
       await this.refreshExclusionsIfDue();
       const { targets, videos, last, stopped } = this.takePage(page);
-      await this.processImages(targets);
+      await this.processTargets(targets);
       await this.probeVideos(videos);
       await this.flushInvalidations();
       if (last !== null && this.options.sample === null) {
@@ -112,7 +120,7 @@ export class ChatMediaScan {
       }
     }
     if (this.options.sample !== null) {
-      await this.processImages(this.reservoir, true);
+      await this.processTargets(this.reservoir, true);
       await this.flushInvalidations();
       return false;
     }
@@ -167,41 +175,62 @@ export class ChatMediaScan {
       this.seenKeys.add(target.key);
       this.deps.report.recordTarget(target);
       if (!this.isRequested(target)) continue;
-      if (target.kind === 'video') videos.push(target);
-      else this.takeImage(target, targets);
+      if (target.kind === 'video') this.deps.report.videos.chat_videos++;
+      if (target.kind === 'video' && !this.options.includeVideos) {
+        videos.push(target);
+      } else {
+        this.takeObject(target, targets);
+      }
     }
     return { targets, videos, last, stopped: false };
   }
 
   private limitReached(): boolean {
     return (
-      this.options.limit !== null && this.imagesTaken >= this.options.limit
+      this.options.limit !== null && this.objectsTaken >= this.options.limit
     );
   }
 
-  private takeImage(target: ChatMediaTarget, targets: ChatMediaTarget[]): void {
-    this.imagesSeen++;
+  private takeObject(
+    target: ChatMediaTarget,
+    targets: ChatMediaTarget[]
+  ): void {
+    this.objectsSeen++;
     const sample = this.options.sample;
     if (sample === null) {
-      this.imagesTaken++;
+      this.objectsTaken++;
       targets.push(target);
     } else if (this.reservoir.length < sample) {
       this.reservoir.push(target);
     } else {
-      const slot = Math.floor(this.deps.random() * this.imagesSeen);
+      const slot = Math.floor(this.deps.random() * this.objectsSeen);
       if (slot < sample) this.reservoir[slot] = target;
     }
   }
 
-  private async processImages(targets: ChatMediaTarget[], sample = false) {
+  /** Processes one object and records its outcome; returns it for samples. */
+  private async processTarget(target: ChatMediaTarget) {
+    const { report } = this.deps;
+    if (target.kind === 'video') {
+      const videoProcessor = this.deps.videoProcessor;
+      if (!videoProcessor) throw new Error('No video processor configured');
+      const outcome = await videoProcessor.processVideo(target);
+      report.recordVideoOutcome(target, outcome);
+      return outcome;
+    }
+    const outcome = await this.deps.processor.processImage(target);
+    report.recordImageOutcome(target, outcome);
+    return outcome;
+  }
+
+  private async processTargets(targets: ChatMediaTarget[], sample = false) {
     const stop = new AbortController();
     await forEachConcurrent(
       targets,
       async (target) => {
         try {
-          const outcome = await this.deps.processor.processImage(target);
+          const outcome = await this.processTarget(target);
           this.consecutiveFailures = 0;
-          this.deps.report.recordImageOutcome(target, outcome);
           if (sample) this.deps.report.recordSample(target, outcome);
         } catch (error) {
           this.logger.warn(`Failed to process ${target.key}: ${String(error)}`);
@@ -223,8 +252,7 @@ export class ChatMediaScan {
 
   private async probeVideos(videos: ChatMediaTarget[]): Promise<void> {
     const report = this.deps.report.videos;
-    report.chat_videos += videos.length;
-    if (!this.options.probeVideos) return;
+    if (!this.options.probeVideos || this.options.includeVideos) return;
     await forEachConcurrent(
       videos,
       async (video) => {

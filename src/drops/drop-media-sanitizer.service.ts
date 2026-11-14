@@ -36,12 +36,20 @@ import { getS3 } from '@/s3.client';
 import {
   DROP_MEDIA_CACHE_CONTROL,
   DROP_MEDIA_MAX_IMAGE_BYTES,
+  DROP_MEDIA_MAX_VIDEO_BYTES,
   DROP_MEDIA_FORMAT_VALIDATED_METADATA_KEY,
   DROP_MEDIA_SANITIZE_UPLOAD_METADATA_KEY,
   DROP_MEDIA_SANITIZED_METADATA_KEY,
   DROP_MEDIA_SANITIZED_METADATA_VALUE,
-  getDropMediaIngestS3
+  getDropMediaIngestS3,
+  getPublishedDropMediaMimeType,
+  isStrippableVideoMimeType
 } from '@/drops/drop-media-upload.config';
+import {
+  prepareChatVideoFile,
+  VIDEO_METADATA_NOT_REMOVED_MESSAGE,
+  VIDEO_TOO_LARGE_MESSAGE
+} from '@/drops/drop-media-video-sanitizer';
 import {
   dropMediaUploadsDb,
   DropMediaUploadsDb
@@ -259,6 +267,10 @@ export class DropMediaSanitizerService {
       upload,
       rawObject.Metadata?.[DROP_MEDIA_SANITIZE_UPLOAD_METADATA_KEY]
     );
+    if (isStrippableVideoMimeType(upload.declared_mime_type)) {
+      await this.publishVideo(upload, source, contentLength!, stripMetadata);
+      return null;
+    }
     let hints: MediaLayoutHints | null = null;
     await withResizeSourceFile(source, contentLength, async (path) => {
       const published = await preparePublishedImageFile(
@@ -283,6 +295,64 @@ export class DropMediaSanitizerService {
       hints = await this.describePublishedImage(upload.id, published.path);
     });
     return hints;
+  }
+
+  /**
+   * Chat videos are stripped losslessly and verified on disk, then published
+   * at their public key; publishing starts the existing video conversion,
+   * which reads the stripped file. A video that cannot be stripped fails the
+   * upload with a clear message instead of publishing its metadata.
+   */
+  private async publishVideo(
+    upload: DropMediaUploadEntity,
+    source: Readable,
+    contentLength: number,
+    stripMetadata: boolean
+  ): Promise<void> {
+    if (contentLength > DROP_MEDIA_MAX_VIDEO_BYTES) {
+      source.destroy();
+      throw new PermanentMediaSanitizationError(VIDEO_TOO_LARGE_MESSAGE);
+    }
+    await withResizeSourceFile(
+      source,
+      contentLength,
+      async (path) => {
+        const published = stripMetadata
+          ? await this.stripVideo(upload, path)
+          : path;
+        await this.putImageFile(
+          upload.public_key,
+          published,
+          getPublishedDropMediaMimeType(upload.declared_mime_type),
+          stripMetadata
+            ? {
+                [DROP_MEDIA_SANITIZED_METADATA_KEY]:
+                  DROP_MEDIA_SANITIZED_METADATA_VALUE
+              }
+            : undefined
+        );
+      },
+      DROP_MEDIA_MAX_VIDEO_BYTES
+    );
+  }
+
+  private async stripVideo(
+    upload: DropMediaUploadEntity,
+    path: string
+  ): Promise<string> {
+    const prepared = await prepareChatVideoFile(path);
+    if (prepared.kind === 'publish') {
+      this.logger.info(
+        `Video metadata strip for drop media upload ${upload.id}: ${prepared.summary}`
+      );
+      return prepared.path;
+    }
+    const message = `Video metadata strip for drop media upload ${upload.id} rejected: ${prepared.reason}`;
+    if (prepared.verificationFailed) this.logger.error(message);
+    else this.logger.warn(message);
+    throw new PermanentMediaSanitizationError(
+      VIDEO_METADATA_NOT_REMOVED_MESSAGE
+    );
   }
 
   /**
@@ -434,7 +504,8 @@ export class DropMediaSanitizerService {
  * AVIF always converts (and so loses metadata). Otherwise a decision entry
  * keeps the artist's original bytes; chat and older uploads follow the policy
  * the API recorded on the ingest object at upload start, where a missing
- * policy (older queued uploads) keeps stripping.
+ * policy (older queued uploads) keeps stripping. Chat videos use the same
+ * policy: the API only sends them here to be stripped.
  */
 export function shouldStripImageMetadata(
   upload: Pick<DropMediaUploadEntity, 'declared_mime_type' | 'purpose'>,

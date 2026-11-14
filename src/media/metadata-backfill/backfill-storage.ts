@@ -1,4 +1,7 @@
 import { createHash, randomBytes } from 'node:crypto';
+import { createReadStream, createWriteStream } from 'node:fs';
+import { Readable, Transform } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
 import {
   DeleteObjectCommand,
   GetBucketLifecycleConfigurationCommand,
@@ -79,9 +82,22 @@ export interface MediaObjectStore {
     options: { readonly ifMatch?: string; readonly maxBytes: number }
   ): Promise<Buffer>;
   getRange(key: string, start: number, endInclusive: number): Promise<Buffer>;
+  /** Streams the object into a new file at `path`; returns its size. */
+  downloadToFile(
+    key: string,
+    path: string,
+    options: { readonly ifMatch?: string; readonly maxBytes: number }
+  ): Promise<number>;
   put(
     key: string,
     body: Buffer,
+    headers: ObjectHeaders,
+    options?: { readonly ifMatch?: string }
+  ): Promise<void>;
+  /** Like `put`, streaming the body from a file (large videos). */
+  putFile(
+    key: string,
+    path: string,
     headers: ObjectHeaders,
     options?: { readonly ifMatch?: string }
   ): Promise<void>;
@@ -102,6 +118,25 @@ export function sha256Base64(bytes: Buffer): string {
 
 export function sha256Hex(bytes: Buffer): string {
   return createHash('sha256').update(bytes).digest('hex');
+}
+
+/** Size and SHA-256 of a file, read as a stream. */
+export async function fileDigest(
+  path: string
+): Promise<{ size: number; sha256Hex: string; sha256Base64: string }> {
+  const hash = createHash('sha256');
+  let size = 0;
+  for await (const chunk of createReadStream(path)) {
+    const bytes = chunk as Buffer;
+    size += bytes.length;
+    hash.update(bytes);
+  }
+  const digest = hash.digest();
+  return {
+    size,
+    sha256Hex: digest.toString('hex'),
+    sha256Base64: digest.toString('base64')
+  };
 }
 
 function statusOf(error: unknown): number | undefined {
@@ -212,6 +247,51 @@ export class S3MediaObjectStore implements MediaObjectStore {
     }
   }
 
+  async downloadToFile(
+    key: string,
+    path: string,
+    { ifMatch, maxBytes }: { ifMatch?: string; maxBytes: number }
+  ): Promise<number> {
+    let object;
+    try {
+      object = await this.s3.send(
+        new GetObjectCommand({
+          Bucket: this.bucket,
+          Key: key,
+          IfMatch: ifMatch
+        })
+      );
+    } catch (error) {
+      if (isPreconditionFailed(error)) throw new ObjectChangedError(key);
+      throw error;
+    }
+    const body = object.Body;
+    if (!(body instanceof Readable))
+      throw new Error(`Missing object body for ${key}`);
+    if ((object.ContentLength ?? 0) > maxBytes) {
+      body.destroy();
+      throw new ObjectTooLargeError(key);
+    }
+    let received = 0;
+    const limit = new Transform({
+      transform(chunk: Buffer, _encoding, callback) {
+        received += chunk.length;
+        callback(
+          received > maxBytes ? new ObjectTooLargeError(key) : null,
+          chunk
+        );
+      }
+    });
+    await pipeline(body, limit, createWriteStream(path, { flags: 'wx' }));
+    if (
+      object.ContentLength !== undefined &&
+      received !== object.ContentLength
+    ) {
+      throw new Error(`Short read of ${key}`);
+    }
+    return received;
+  }
+
   async getRange(key: string, start: number, endInclusive: number) {
     const object = await this.s3.send(
       new GetObjectCommand({
@@ -244,6 +324,36 @@ export class S3MediaObjectStore implements MediaObjectStore {
     } catch (error) {
       if (isPreconditionFailed(error)) throw new ObjectChangedError(key);
       throw error;
+    }
+  }
+
+  async putFile(
+    key: string,
+    path: string,
+    headers: ObjectHeaders,
+    options?: { ifMatch?: string }
+  ): Promise<void> {
+    const { size, sha256Base64 } = await fileDigest(path);
+    const body = createReadStream(path);
+    // A rejected request must not leave an unhandled stream error behind.
+    body.on('error', () => undefined);
+    try {
+      await this.s3.send(
+        new PutObjectCommand({
+          Bucket: this.bucket,
+          Key: key,
+          Body: body,
+          ContentLength: size,
+          ChecksumSHA256: sha256Base64,
+          IfMatch: options?.ifMatch,
+          ...definedHeaders(headers)
+        })
+      );
+    } catch (error) {
+      if (isPreconditionFailed(error)) throw new ObjectChangedError(key);
+      throw error;
+    } finally {
+      body.destroy();
     }
   }
 
