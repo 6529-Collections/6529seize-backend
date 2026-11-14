@@ -49,6 +49,8 @@ import { ApiArtworkDossierExportRequest } from '@/api/generated/models/ApiArtwor
 import { ApiArtworkMuseumRecord } from '@/api/generated/models/ApiArtworkMuseumRecord';
 import { ApiArtworkMuseumRecordInput } from '@/api/generated/models/ApiArtworkMuseumRecordInput';
 import { ApiArtworkMuseumRecords } from '@/api/generated/models/ApiArtworkMuseumRecords';
+import { ApiArtworkPublication } from '@/api/generated/models/ApiArtworkPublication';
+import { ApiArtworkPublicationRequest } from '@/api/generated/models/ApiArtworkPublicationRequest';
 import { ApiCollectAnalysis } from '@/api/generated/models/ApiCollectAnalysis';
 import { ApiCollectAnalysisRequest } from '@/api/generated/models/ApiCollectAnalysisRequest';
 import { ApiCollectAssetsPage } from '@/api/generated/models/ApiCollectAssetsPage';
@@ -208,6 +210,7 @@ import { ApiModerationCheckDetail } from '@/api/generated/models/ApiModerationCh
 import { ApiModerationCheckPage } from '@/api/generated/models/ApiModerationCheckPage';
 import { ApiModerationCounts } from '@/api/generated/models/ApiModerationCounts';
 import { ApiModerationReviewCasePage } from '@/api/generated/models/ApiModerationReviewCasePage';
+import { ApiMuseumIiifManifest } from '@/api/generated/models/ApiMuseumIiifManifest';
 import { ApiNftActivityPage } from '@/api/generated/models/ApiNftActivityPage';
 import { ApiNotificationsResponseV2 } from '@/api/generated/models/ApiNotificationsResponseV2';
 import { ApiNotificationsUnreadCountV2 } from '@/api/generated/models/ApiNotificationsUnreadCountV2';
@@ -698,6 +701,55 @@ export type ArtworkDocumentationGetDocumentationPublicPreviewRequest = Request<
   ApiResponse<ArtworkDocumentationGetDocumentationPublicPreviewResponse>,
   never,
   ArtworkDocumentationGetDocumentationPublicPreviewQuery,
+  Record<string, never>
+>;
+
+export interface ArtworkDocumentationListArtworkPublicationsPathParams {
+  "id": string;
+}
+
+export type ArtworkDocumentationListArtworkPublicationsQuery = Record<string, never>;
+
+export type ArtworkDocumentationListArtworkPublicationsResponse = ApiArtworkPublication[];
+
+export type ArtworkDocumentationListArtworkPublicationsRequest = Request<
+  ArtworkDocumentationListArtworkPublicationsPathParams,
+  ApiResponse<ArtworkDocumentationListArtworkPublicationsResponse>,
+  never,
+  ArtworkDocumentationListArtworkPublicationsQuery,
+  Record<string, never>
+>;
+
+export interface ArtworkDocumentationCreateArtworkPublicationPathParams {
+  "id": string;
+}
+
+export type ArtworkDocumentationCreateArtworkPublicationQuery = Record<string, never>;
+
+export type ArtworkDocumentationCreateArtworkPublicationResponse = ApiArtworkPublication;
+
+export type ArtworkDocumentationCreateArtworkPublicationRequest = Request<
+  ArtworkDocumentationCreateArtworkPublicationPathParams,
+  ApiResponse<ArtworkDocumentationCreateArtworkPublicationResponse>,
+  ApiArtworkPublicationRequest,
+  ArtworkDocumentationCreateArtworkPublicationQuery,
+  Record<string, never>
+>;
+
+export interface ArtworkDocumentationWithdrawArtworkPublicationPathParams {
+  "id": string;
+  "publicationId": string;
+}
+
+export type ArtworkDocumentationWithdrawArtworkPublicationQuery = Record<string, never>;
+
+export type ArtworkDocumentationWithdrawArtworkPublicationResponse = ApiArtworkPublication;
+
+export type ArtworkDocumentationWithdrawArtworkPublicationRequest = Request<
+  ArtworkDocumentationWithdrawArtworkPublicationPathParams,
+  ApiResponse<ArtworkDocumentationWithdrawArtworkPublicationResponse>,
+  never,
+  ArtworkDocumentationWithdrawArtworkPublicationQuery,
   Record<string, never>
 >;
 
@@ -2623,6 +2675,22 @@ export type GetMemeCardDropMappingRequest = Request<
   ApiResponse<GetMemeCardDropMappingResponse>,
   never,
   GetMemeCardDropMappingQuery,
+  Record<string, never>
+>;
+
+export interface GetMuseumIiifManifestPathParams {
+  "publicationId": string;
+}
+
+export type GetMuseumIiifManifestQuery = Record<string, never>;
+
+export type GetMuseumIiifManifestResponse = ApiMuseumIiifManifest;
+
+export type GetMuseumIiifManifestRequest = Request<
+  GetMuseumIiifManifestPathParams,
+  ApiResponse<GetMuseumIiifManifestResponse>,
+  never,
+  GetMuseumIiifManifestQuery,
   Record<string, never>
 >;
 

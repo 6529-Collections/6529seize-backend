@@ -2,7 +2,8 @@
 
 Usage: python scripts/validate-museum-corpus.py /path/to/corpus
 Requires lxml and jsonschema. Does not execute artwork, access the database or use the network.
-Fixture-only golden check: thirteen capture cases, each with LIDO, PREMIS and IIIF.
+Fixture-only golden check: thirteen capture cases, each with LIDO, PREMIS and IIIF,
+plus four bound publication manifests compiled by the museum publication adapter.
 Use validate-artwork-dossier.py for a portable artwork dossier, not this corpus checker.
 """
 from pathlib import Path
@@ -34,6 +35,36 @@ class LockedResolver(etree.Resolver):
         return self.resolve_string(data, context, base_url=url)
 
 
+# The IIIF Presentation 3 schema mandates the http form of these vocabulary URIs.
+# They are compared as identifiers only; nothing is fetched.
+RIGHTS_PREFIXES = (  # NOSONAR: normative IIIF rights vocabulary identifiers, never requested over the network.
+    'http://creativecommons.org/licenses/',  # NOSONAR
+    'http://creativecommons.org/publicdomain/',  # NOSONAR
+    'http://rightsstatements.org/vocab/',  # NOSONAR
+)
+
+
+def corpus_file(directory, item):
+    path_name = item['path']
+    check(isinstance(path_name, str) and path_name not in ('.', '..') and '/' not in path_name and '\\' not in path_name and Path(path_name).name == path_name, 'Invalid corpus filename')
+    path = directory/path_name
+    check(not path.is_symlink() and path.resolve().parent == directory.resolve(), 'Invalid corpus filename')
+    data = path.read_bytes()
+    check(hashlib.sha256(data).hexdigest() == item['sha256'], 'Corpus file digest mismatch')
+    return data
+
+
+def validate_publication(data, iiif_validator):
+    manifest = json.loads(data)
+    verify_selector_types(manifest)
+    iiif_validator.validate(manifest)
+    check(next(iter(manifest)) == '@context', 'Publication manifest must start with @context')
+    check(isinstance(manifest.get('rights'), str) and manifest['rights'].startswith(RIGHTS_PREFIXES), 'Publication rights must be a Creative Commons or RightsStatements.org http URI')
+    check(isinstance(manifest.get('requiredStatement'), dict), 'Publication manifest needs a required statement')
+    check(isinstance(manifest.get('items'), list) and len(manifest['items']) > 0, 'Publication manifest needs at least one canvas')
+    check('example.invalid' not in data.decode('utf-8'), 'Publication manifest still carries the unserved draft base')
+
+
 def validate(directory):
     schemas = Path(__file__).resolve().parent.parent/'src/artwork-documentation/museum/export/schemas'
     lock = json.loads((schemas/'schema-lock.json').read_bytes())
@@ -59,11 +90,7 @@ def validate(directory):
     iiif_count = 0
     for case in manifest['cases']:
         for item in case['files']:
-            check(isinstance(item['path'], str) and item['path'] not in ('.', '..') and '/' not in item['path'] and '\\' not in item['path'] and Path(item['path']).name == item['path'], 'Invalid corpus filename')
-            path = directory/item['path']
-            check(not path.is_symlink() and path.resolve().parent == directory.resolve(), 'Invalid corpus filename')
-            data = path.read_bytes()
-            check(hashlib.sha256(data).hexdigest() == item['sha256'], 'Corpus file digest mismatch')
+            data = corpus_file(directory, item)
             if item['path'].endswith('-iiif.json'):
                 iiif_manifest = json.loads(data)
                 verify_selector_types(iiif_manifest)
@@ -75,7 +102,12 @@ def validate(directory):
                     count += 1
     check(count == 26, 'Expected twenty-six XML projections')
     check(iiif_count == 13, 'Expected thirteen IIIF manifests')
-    print('Validated 13 capture cases, 26 official XSD projections, 13 IIIF manifests and all generated file digests.')
+    publications = manifest.get('publications', [])
+    check(len(publications) == 4, 'Expected four publication manifests')
+    for item in publications:
+        check(item['path'].startswith('publication-') and item['path'].endswith('.json'), 'Invalid publication filename')
+        validate_publication(corpus_file(directory, item), iiif_validator)
+    print('Validated 13 capture cases, 26 official XSD projections, 13 IIIF manifests, 4 bound publication manifests and all generated file digests.')
 
 
 if __name__ == '__main__':

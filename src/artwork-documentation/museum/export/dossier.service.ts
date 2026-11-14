@@ -25,7 +25,7 @@ import {
   requireDossierBytes
 } from './dossier-capacity';
 
-function requireExportAccess(access: ContextAccess): void {
+export function requireExportAccess(access: ContextAccess): void {
   if (
     !access.isArtist &&
     (!access.capabilities.read_archival_files ||
@@ -57,7 +57,7 @@ export class ArtworkDossierService {
     private readonly core: ArtworkDocumentationService = artworkDocumentationService
   ) {}
 
-  private async snapshot(
+  async snapshot(
     access: ContextAccess,
     ctx: RequestContext
   ): Promise<DossierSnapshot> {

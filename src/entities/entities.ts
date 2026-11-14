@@ -265,6 +265,7 @@ export { XTdhTokenStatsA, XTdhTokenStatsB } from './IXTdhTokenStats';
 export * from './IArtworkDocumentation';
 export * from './IArtworkMuseumRecord';
 export * from './IArtworkDossierExport';
+export * from './IArtworkPublication';
 export { ProfileCmsAgentGrantEntity } from './IProfileCmsAgentGrant';
 export { ProfileCmsAgentProposalEntity } from './IProfileCmsAgentProposal';
 export { ProfileCmsAgentEventEntity } from './IProfileCmsAgentEvent';

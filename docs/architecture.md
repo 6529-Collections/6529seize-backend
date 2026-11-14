@@ -2600,6 +2600,22 @@ Detailed technical reports and artist-record comparisons load separately from
 bounded context lists. See [reusable museum records](artwork-museum-record.md)
 for the model, permissions, standards and deployment dependencies.
 
+The museum publication bridge turns that draft IIIF projection into served
+manifests. Authorized `POST`/`GET`/withdraw operations under
+`/artwork-documentation/contexts/{id}/publications` reuse the dossier export
+gate plus a current confirmed revision, compile a deterministic IIIF
+Presentation 3 manifest bound to caller-supplied permanent URLs, rights and
+resource roles, and store each result as an immutable version in
+`artwork_documentation_publications`. A separate public API boundary,
+`GET /museum/iiif/{publicationId}/manifest` (`auth: none`, cached), serves the
+stored JSON-LD from the database row outside the credential-restricted
+`/api/artwork-documentation` CORS prefix so IIIF viewers on any origin can
+load it; withdrawn versions answer 410. An optional immutable S3 copy under
+`museum/publications/` is written only when `ARTWORK_PUBLICATION_BUCKET` is
+configured; no bucket, CloudFront or media hosting is provisioned. See
+[the publication bridge](artwork-publication-bridge.md). Deploy
+`dbMigrationsLoop` for the additive table before `api`.
+
 The strongest part of the architecture is its operational decomposition. Expensive, slow, and retryable work is mostly outside the request path, and the loop structure makes individual jobs independently deployable.
 
 Operational error delivery is a separate account-owned runtime under
