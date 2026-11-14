@@ -120,16 +120,18 @@ wave GET compatibility projection supplies terms for older callers without an
 explicit competition ID. The retired wave decision service is not restored;
 `waveDecisionExecutionLoop` freezes credits through its native decision path.
 
-## Oracle TDH API and retired Prenode registry
+## Oracle TDH API and removed Prenode registry
 
 The existing `api` service retains Oracle TDH totals, thresholds, percentile,
 cutoff, address breakdowns, season aggregations and NFT reads under `/oracle`.
-`POST /oracle/register-prenode` and `GET /oracle/prenodes` return uncached
-`410 Gone` responses with a 6529 Desktop deprecation notice. These terminal
-routes do not access the registry or geolocation service. The historical
-Prenode entity/table remains intact; no schema sync, migration or data deletion
-is needed. `/oracle/docs` continues to describe the preserved TDH API.
-Only `api` needs redeployment for this retirement.
+`/oracle/docs` continues to describe the preserved TDH API.
+
+Prenodes are retired and their servers are shut down. The former
+`POST /oracle/register-prenode` and `GET /oracle/prenodes` routes are no longer
+mounted and return 404. The `Prenode` entity and `PRENODES_TABLE` constant are
+removed. Schema sync ignores tables outside the entity registry, so the
+`prenodes` table (operator IP addresses, domains and locations) is dropped by
+an operator after the `api` rollout, not by a deployment or migration.
 
 ## Global TDH history
 
