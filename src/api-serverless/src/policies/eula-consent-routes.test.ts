@@ -40,7 +40,7 @@ const PROFILE_BY_WALLET: Record<string, string> = {
 };
 
 describe('/policies/eula-consent', () => {
-  let server: Server;
+  let server: Server | undefined;
   let origin: string;
 
   beforeEach(async () => {
@@ -79,16 +79,26 @@ describe('/policies/eula-consent', () => {
         )
         .json({ error: error.message });
     app.use(errors);
-    server = await new Promise<Server>((resolve) => {
-      const started = app.listen(0, '127.0.0.1', () => resolve(started));
+    const started = app.listen(0, '127.0.0.1');
+    server = started;
+    await new Promise<void>((resolve, reject) => {
+      started.once('listening', resolve);
+      started.once('error', reject);
     });
-    origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    origin = `http://127.0.0.1:${(started.address() as AddressInfo).port}`;
   });
 
+  // Runs even when setup failed part-way: there may be no server, or one
+  // that never started listening.
   afterEach(async () => {
     jest.restoreAllMocks();
+    const started = server;
+    server = undefined;
+    if (!started?.listening) {
+      return;
+    }
     await new Promise<void>((resolve, reject) =>
-      server.close((error) => (error ? reject(error) : resolve()))
+      started.close((error) => (error ? reject(error) : resolve()))
     );
   });
 
