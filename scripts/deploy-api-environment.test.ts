@@ -22,6 +22,8 @@ const steps: WorkflowStep[] = workflow.jobs['build-and-deploy'].steps;
 const deployApi = steps.find((step) => step.name === 'Deploy API')!;
 
 const valueNotForLogs = 'value-not-for-logs';
+// Fixture account returned by the fake `aws sts get-caller-identity`.
+const DEPLOY_ACCOUNT_ID = '111122223333';
 const currentEnvironment = {
   GIT_COMMIT: 'previous',
   CLAIMS_MEDIA_ARWEAVE_UPLOAD_SQS_URL: 'https://sqs.example/queue',
@@ -37,6 +39,10 @@ sleep() { :; }
 aws() {
   printf '%s\\n' "$*" >> "$MOCK_CALLS"
   case "$2" in
+    get-caller-identity)
+      if [ "$MOCK_ACCOUNT_ID" = fail ]; then return 254; fi
+      printf '%s\\n' "$MOCK_ACCOUNT_ID"
+      ;;
     get-function-configuration)
       read_count=$(( $(cat "$MOCK_READ_COUNT" 2>/dev/null || printf 0) + 1 ))
       printf '%s' "$read_count" > "$MOCK_READ_COUNT"
@@ -108,6 +114,7 @@ function runDeployApi(
     failingRead?: number;
     inputEnvironment?: string;
     secondReadEnvironment?: unknown;
+    accountId?: string;
   } = {}
 ) {
   const directory = mkdtempSync(path.join(tmpdir(), 'deploy-api-env-'));
@@ -133,6 +140,7 @@ function runDeployApi(
           MOCK_READ_COUNT: `${posixDirectory}/read-count.txt`,
           MOCK_CAPTURE: `${posixDirectory}/env_config.json`,
           MOCK_FAILING_READ: String(overrides.failingRead ?? 0),
+          MOCK_ACCOUNT_ID: overrides.accountId ?? DEPLOY_ACCOUNT_ID,
           MOCK_ENVIRONMENT: mockEnvironment,
           MOCK_SECOND_ENVIRONMENT:
             'secondReadEnvironment' in overrides
@@ -177,6 +185,7 @@ describe('API environment deployment', () => {
     expect(result.error).toBeUndefined();
     expect(result.status).toBe(0);
     expect(subcommands(result.calls)).toEqual([
+      'get-caller-identity',
       'get-function-configuration',
       'update-function-code',
       'get-function-configuration',
@@ -184,8 +193,7 @@ describe('API environment deployment', () => {
     ]);
     expect(result.written.Variables).toEqual({
       GIT_COMMIT: 'fixture',
-      CLAIMS_MEDIA_ARWEAVE_UPLOAD_SQS_URL:
-        'https://sqs.us-east-1.amazonaws.com/987989283142/claims-media-arweave-upload',
+      CLAIMS_MEDIA_ARWEAVE_UPLOAD_SQS_URL: `https://sqs.us-east-1.amazonaws.com/${DEPLOY_ACCOUNT_ID}/claims-media-arweave-upload`,
       ATTACHMENTS_INGEST_S3_BUCKET: 'attachments-bucket',
       API_GATEWAY_WS_ENDPOINT: 'https://ws.6529.io',
       UNMANAGED_SETTING: valueNotForLogs,
@@ -197,8 +205,7 @@ describe('API environment deployment', () => {
       ARTWORK_DOCUMENTATION_ENABLED: 'false',
       ARTWORK_DOCUMENTATION_SELF_SERVICE_ENABLED: 'false',
       ARTWORK_DOCUMENTATION_S3_REGION: 'us-east-1',
-      ARTWORK_DOCUMENTATION_S3_BUCKET:
-        '6529-artwork-documentation-987989283142-us-east-1'
+      ARTWORK_DOCUMENTATION_S3_BUCKET: `6529-artwork-documentation-${DEPLOY_ACCOUNT_ID}-us-east-1`
     });
     expect(`${result.stdout}${result.stderr}`).not.toContain(valueNotForLogs);
     expect(result.leftovers).toEqual([]);
@@ -211,9 +218,20 @@ describe('API environment deployment', () => {
       'eu-west-1'
     );
     expect(result.written.Variables.CLAIMS_MEDIA_ARWEAVE_UPLOAD_SQS_URL).toBe(
-      'https://sqs.eu-west-1.amazonaws.com/987989283142/claims-media-arweave-upload'
+      `https://sqs.eu-west-1.amazonaws.com/${DEPLOY_ACCOUNT_ID}/claims-media-arweave-upload`
     );
   });
+
+  it.each(['fail', '', 'not-an-account'])(
+    'fails before reading or changing anything when the account lookup returns %j',
+    (accountId) => {
+      const result = runDeployApi({ accountId });
+      expect(result.status).not.toBe(0);
+      expect(subcommands(result.calls)).toEqual(['get-caller-identity']);
+      expect(result.written).toBeNull();
+      expect(result.leftovers).toEqual([]);
+    }
+  );
 
   it('fails before changing code when the configuration read fails', () => {
     const result = runDeployApi({ failingRead: 1 });
@@ -221,7 +239,10 @@ describe('API environment deployment', () => {
     expect(result.stderr).toContain(
       'Could not read the current seizeAPI environment'
     );
-    expect(subcommands(result.calls)).toEqual(['get-function-configuration']);
+    expect(subcommands(result.calls)).toEqual([
+      'get-caller-identity',
+      'get-function-configuration'
+    ]);
     expect(`${result.stdout}${result.stderr}`).not.toContain(valueNotForLogs);
     expect(result.leftovers).toEqual([]);
   });
@@ -230,6 +251,7 @@ describe('API environment deployment', () => {
     const result = runDeployApi({ failingRead: 2 });
     expect(result.status).toBe(1);
     expect(subcommands(result.calls)).toEqual([
+      'get-caller-identity',
       'get-function-configuration',
       'update-function-code',
       'get-function-configuration'
@@ -252,7 +274,10 @@ describe('API environment deployment', () => {
       const result = runDeployApi({ environment });
       expect(result.status).toBe(1);
       expect(result.stderr).toContain(message);
-      expect(subcommands(result.calls)).toEqual(['get-function-configuration']);
+      expect(subcommands(result.calls)).toEqual([
+        'get-caller-identity',
+        'get-function-configuration'
+      ]);
       expect(`${result.stdout}${result.stderr}`).not.toContain(valueNotForLogs);
     }
   );
@@ -266,6 +291,7 @@ describe('API environment deployment', () => {
         'missing required keys (GIT_COMMIT,CLAIMS_MEDIA_ARWEAVE_UPLOAD_SQS_URL'
       );
       expect(subcommands(result.calls)).toEqual([
+        'get-caller-identity',
         'get-function-configuration',
         'update-function-code',
         'get-function-configuration'
@@ -283,7 +309,10 @@ describe('API environment deployment', () => {
       expect(result.stderr).toContain(
         'The current seizeAPI environment read back empty'
       );
-      expect(subcommands(result.calls)).toEqual(['get-function-configuration']);
+      expect(subcommands(result.calls)).toEqual([
+        'get-caller-identity',
+        'get-function-configuration'
+      ]);
       expect(result.written).toBeNull();
       expect(result.leftovers).toEqual([]);
     }

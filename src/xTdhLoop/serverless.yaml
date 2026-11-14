@@ -27,7 +27,7 @@ functions:
               - XTdhStartQueue
               - Arn
           batchSize: 10
-    role: arn:aws:iam::987989283142:role/lambda-vpc-role
+    role: arn:aws:iam::${aws:accountId}:role/lambda-vpc-role
     vpc:
       securityGroupIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):security}
       subnetIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):subnets}
@@ -83,7 +83,7 @@ resources:
     XTdhSubscription:
       Type: AWS::SNS::Subscription
       Properties:
-        TopicArn: arn:aws:sns:${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):region}:987989283142:tdh-calculation-done.fifo
+        TopicArn: arn:aws:sns:${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):region}:${aws:accountId}:tdh-calculation-done.fifo
         Protocol: sqs
         Endpoint: !GetAtt
           - XTdhStartQueue
@@ -106,7 +106,7 @@ resources:
                 - !GetAtt XTdhStartQueue.Arn
               Condition:
                 ArnEquals:
-                  aws:SourceArn: arn:aws:sns:${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):region}:987989283142:tdh-calculation-done.fifo
+                  aws:SourceArn: arn:aws:sns:${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):region}:${aws:accountId}:tdh-calculation-done.fifo
     XTdhLoopOOMFilter:
       Type: AWS::Logs::MetricFilter
       DependsOn:

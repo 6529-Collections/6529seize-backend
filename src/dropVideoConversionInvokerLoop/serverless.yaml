@@ -13,7 +13,7 @@ provider:
   runtime: nodejs22.x
   memorySize: 1024
   timeout: 900
-  role: arn:aws:iam::987989283142:role/lambda-vpc-role
+  role: arn:aws:iam::${aws:accountId}:role/lambda-vpc-role
   architecture: arm64
   logRetentionInDays: 60
 
