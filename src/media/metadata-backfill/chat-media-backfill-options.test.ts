@@ -24,8 +24,53 @@ describe('parseBackfillArgs', () => {
       probeVideos: true,
       maxSourceBytes: 256 * 1024 * 1024,
       keysFromReport: null,
-      skipReasons: null
+      skipReasons: null,
+      includeVideos: false,
+      maxVideoBytes: 500 * 1024 * 1024
     });
+  });
+
+  it('rewrites chat videos only when asked to, up to the video limit', () => {
+    expect(
+      parseBackfillArgs([
+        'scan',
+        '--environment',
+        'prod',
+        '--include-videos',
+        '--max-video-bytes',
+        '200MiB'
+      ])
+    ).toMatchObject({ includeVideos: true, maxVideoBytes: 200 * 1024 * 1024 });
+    expect(() =>
+      parseBackfillArgs([
+        'scan',
+        '--environment',
+        'prod',
+        '--max-video-bytes',
+        '200MiB'
+      ])
+    ).toThrow('--max-video-bytes needs --include-videos');
+    expect(() =>
+      parseBackfillArgs([
+        'scan',
+        '--environment',
+        'prod',
+        '--include-videos',
+        '--max-video-bytes',
+        '2GiB'
+      ])
+    ).toThrow('--max-video-bytes must be between 1MiB and 1GiB');
+    expect(() =>
+      parseBackfillArgs([
+        'restore',
+        '--environment',
+        'prod',
+        '--run-id',
+        RUN_ID,
+        '--max-video-bytes',
+        '200MiB'
+      ])
+    ).toThrow('--max-video-bytes does not apply to restore');
   });
 
   it('reads the source limit and a report of keys to retry', () => {

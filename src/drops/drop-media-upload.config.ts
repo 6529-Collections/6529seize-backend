@@ -1,6 +1,10 @@
 import { S3Client } from '@aws-sdk/client-s3';
 import { NodeHttpHandler } from '@smithy/node-http-handler';
 import { IMMUTABLE_MEDIA_CACHE_CONTROL } from '@/media/media-cache-control';
+import {
+  DropMediaUploadPurpose,
+  DropMediaUploadSource
+} from '@/entities/IDropMediaUpload';
 
 export const DROP_MEDIA_SANITIZER_QUEUE_NAME = 'drop-media-sanitizer';
 export const DROP_MEDIA_INGEST_DEFAULT_REGION = 'eu-west-1';
@@ -11,7 +15,15 @@ export const DROP_MEDIA_FORMAT_VALIDATED_METADATA_KEY = 'format-validated';
 export const DROP_MEDIA_SANITIZE_UPLOAD_METADATA_KEY =
   'sanitize-image-metadata';
 export { MAX_SOURCE_BYTES as DROP_MEDIA_MAX_IMAGE_BYTES } from '@/media/resize-input';
+/** The documented 500 MiB transport limit also bounds sanitized videos. */
+export { MAX_DIRECT_MULTIPART_MEDIA_BYTES as DROP_MEDIA_MAX_VIDEO_BYTES } from '@/api/media/media-upload-limits';
 export const DROP_MEDIA_CACHE_CONTROL = IMMUTABLE_MEDIA_CACHE_CONTROL;
+
+/** Declared video types whose MP4/QuickTime container the sanitizer rewrites. */
+const STRIPPABLE_VIDEO_MIME_TYPES: ReadonlySet<string> = new Set([
+  'video/mp4',
+  'video/quicktime'
+]);
 
 let ingestS3: S3Client | undefined;
 
@@ -19,8 +31,40 @@ export function isDropMediaSanitizationEnabled(): boolean {
   return process.env.DROP_MEDIA_SANITIZE_IMAGES === 'true';
 }
 
+/** Deploy-time switch for routing chat videos through the sanitizer. */
+export function isDropMediaVideoSanitizationEnabled(): boolean {
+  return process.env.DROP_MEDIA_SANITIZE_VIDEOS === 'true';
+}
+
 export function isImageMimeType(contentType: string): boolean {
   return contentType.toLowerCase().startsWith('image/');
+}
+
+export function isStrippableVideoMimeType(contentType: string): boolean {
+  return STRIPPABLE_VIDEO_MIME_TYPES.has(contentType.toLowerCase());
+}
+
+/**
+ * Chat videos (MP4 and QuickTime drop uploads for chat) complete into
+ * private ingest so the sanitizer can strip their metadata before they are
+ * published, when the switch is on. Decision entries, wave pictures and
+ * other media keep the direct path and their exact bytes.
+ */
+export function shouldSanitizeVideoUpload({
+  contentType,
+  source,
+  purpose
+}: {
+  contentType: string;
+  source: DropMediaUploadSource;
+  purpose: DropMediaUploadPurpose;
+}): boolean {
+  return (
+    isDropMediaVideoSanitizationEnabled() &&
+    source === DropMediaUploadSource.DROP &&
+    purpose === DropMediaUploadPurpose.CHAT &&
+    isStrippableVideoMimeType(contentType)
+  );
 }
 
 /** Map the declared upload type to the format served after sanitization. */

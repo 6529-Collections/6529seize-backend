@@ -1,18 +1,23 @@
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { BACKFILL_RUN_METADATA_KEY } from './backfill-markers';
+import { bufferBody, fileBody, ReplacementBody } from './backfill-replacement';
 import { describeError, KeyList } from './backfill-report';
 import {
   ListedObject,
   MediaObjectStore,
   ObjectChangedError,
   SafetyCopyLayout,
-  SafetyCopyManifest,
-  sha256Hex
+  SafetyCopyManifest
 } from './backfill-storage';
 import { InvalidationQueue } from './cdn-invalidation';
-import { BACKFILL_RUN_METADATA_KEY } from './chat-media-object-processor';
 
 /** Originals stay restorable at least this long; purging sooner is refused. */
 export const MIN_SAFETY_PERIOD_MILLIS = 7 * 24 * 60 * 60 * 1000;
 const MAX_MANIFEST_BYTES = 1024 * 1024;
+/** Larger originals (videos) are restored through a temporary file. */
+const MAX_BUFFERED_ORIGINAL_BYTES = 256 * 1024 * 1024;
 
 export interface OriginalsDeps {
   readonly publicStore: MediaObjectStore;
@@ -23,6 +28,8 @@ export interface OriginalsDeps {
   /** Null in a dry run. */
   readonly invalidations: InvalidationQueue | null;
   readonly now: () => Date;
+  /** Originals larger than this are restored through a temporary file. */
+  readonly maxBufferedOriginalBytes?: number;
 }
 
 /** Counts and keys of one restore, purge or invalidate command. */
@@ -145,31 +152,48 @@ export class BackfillOriginals {
         ? 'already_original'
         : 'changed_since_run';
     }
-    const original = await this.deps.safetyStore.getBytes(
-      manifest.safety_copy_key,
-      {
-        maxBytes: manifest.original.size
+    return this.withOriginal(manifest, async (original) => {
+      if (original.sha256Hex !== manifest.original.sha256) {
+        throw new Error('Safety copy does not match its manifest checksum');
       }
-    );
-    if (sha256Hex(original) !== manifest.original.sha256) {
-      throw new Error('Safety copy does not match its manifest checksum');
+      if (!this.execute) return 'would_restore';
+      try {
+        await original.put(
+          this.deps.publicStore,
+          manifest.public_key,
+          manifest.headers,
+          { ifMatch: current.etag }
+        );
+      } catch (error) {
+        if (error instanceof ObjectChangedError) return 'changed_since_run';
+        throw error;
+      }
+      this.deps.invalidations!.add(manifest.invalidation_paths);
+      return 'restored';
+    });
+  }
+
+  /** Reads a safety copy into memory, or into a temporary file when large. */
+  private async withOriginal<T>(
+    manifest: SafetyCopyManifest,
+    use: (original: ReplacementBody) => Promise<T>
+  ): Promise<T> {
+    const { safetyStore } = this.deps;
+    const key = manifest.safety_copy_key;
+    const maxBytes = manifest.original.size;
+    const buffered =
+      this.deps.maxBufferedOriginalBytes ?? MAX_BUFFERED_ORIGINAL_BYTES;
+    if (maxBytes <= buffered) {
+      return use(bufferBody(await safetyStore.getBytes(key, { maxBytes })));
     }
-    if (!this.execute) return 'would_restore';
+    const directory = await mkdtemp(join(tmpdir(), '6529-backfill-restore-'));
     try {
-      await this.deps.publicStore.put(
-        manifest.public_key,
-        original,
-        manifest.headers,
-        {
-          ifMatch: current.etag
-        }
-      );
-    } catch (error) {
-      if (error instanceof ObjectChangedError) return 'changed_since_run';
-      throw error;
+      const path = join(directory, 'original');
+      await safetyStore.downloadToFile(key, path, { maxBytes });
+      return await use(await fileBody(path));
+    } finally {
+      await rm(directory, { recursive: true, force: true });
     }
-    this.deps.invalidations!.add(manifest.invalidation_paths);
-    return 'restored';
   }
 
   /** Re-submits CDN invalidations for keys still holding this run's output. */

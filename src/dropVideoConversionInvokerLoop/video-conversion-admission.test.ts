@@ -27,8 +27,14 @@ function s3Error(name: string, status: number): Error {
 function fakeS3({
   videoEtag = 'v1',
   videoSize = 1000,
+  videoMetadata = {},
   headError
-}: { videoEtag?: string; videoSize?: number; headError?: Error } = {}) {
+}: {
+  videoEtag?: string;
+  videoSize?: number;
+  videoMetadata?: Record<string, string>;
+  headError?: Error;
+} = {}) {
   const objects = new Map<string, { body: string; etag: string }>();
   let version = 0;
   const puts: PutObjectCommand['input'][] = [];
@@ -36,7 +42,11 @@ function fakeS3({
   const send = jest.fn(async (command: unknown) => {
     if (command instanceof HeadObjectCommand) {
       if (headError) throw headError;
-      return { ETag: `"${videoEtag}"`, ContentLength: videoSize };
+      return {
+        ETag: `"${videoEtag}"`,
+        ContentLength: videoSize,
+        Metadata: videoMetadata
+      };
     }
     if (command instanceof GetObjectCommand) {
       const stored = objects.get(command.input.Key!);
@@ -130,6 +140,30 @@ describe('admitVideoConversion', () => {
       reason: 'missing'
     });
     expect(bucket.send).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not convert a video the metadata backfill rewrote again', async () => {
+    const bucket = fakeS3({
+      videoMetadata: {
+        'privacy-sanitized': 'true',
+        'metadata-backfill-run': '20261116T120000Z-1a2b3c4d'
+      }
+    });
+
+    await expect(admit(bucket.s3)).resolves.toEqual({
+      convert: false,
+      reason: 'backfill_rewrite'
+    });
+    expect(bucket.puts).toHaveLength(0);
+  });
+
+  it('converts a chat video the upload sanitizer published', async () => {
+    const bucket = fakeS3({ videoMetadata: { 'privacy-sanitized': 'true' } });
+
+    await expect(admit(bucket.s3)).resolves.toEqual({
+      convert: true,
+      etag: 'v1'
+    });
   });
 
   it('skips a version replaced by a later write', async () => {

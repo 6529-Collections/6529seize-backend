@@ -23,11 +23,15 @@ export class UnprocessableResizeInput extends Error {
   }
 }
 
-/** Own the source and generated files for the entire resize/upload operation. */
+/**
+ * Own the source and generated files for the entire resize/upload operation.
+ * Sources over `maxBytes` (the image ceiling by default) are refused.
+ */
 export async function withResizeSourceFile<T>(
   source: Readable,
   contentLength: number | undefined,
-  useFile: (path: string) => Promise<T>
+  useFile: (path: string) => Promise<T>,
+  maxBytes: number = MAX_SOURCE_BYTES
 ): Promise<T> {
   // S3 can fail before pipeline attaches its listeners, including while mkdtemp
   // is pending or after an early destroy. Keep the original failure until close.
@@ -39,7 +43,7 @@ export async function withResizeSourceFile<T>(
   source.once('close', () =>
     source.removeListener('error', captureSourceError)
   );
-  if (contentLength !== undefined && contentLength > MAX_SOURCE_BYTES) {
+  if (contentLength !== undefined && contentLength > maxBytes) {
     source.destroy();
     throw new UnprocessableResizeInput('SOURCE_TOO_LARGE');
   }
@@ -54,7 +58,7 @@ export async function withResizeSourceFile<T>(
   const limit = new Transform({
     transform(chunk: Buffer, _encoding, callback) {
       receivedBytes += chunk.length;
-      if (receivedBytes > MAX_SOURCE_BYTES) {
+      if (receivedBytes > maxBytes) {
         callback(new UnprocessableResizeInput('SOURCE_TOO_LARGE'));
         return;
       }

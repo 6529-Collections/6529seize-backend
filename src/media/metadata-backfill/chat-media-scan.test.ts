@@ -2,6 +2,7 @@ import Sharp from 'sharp';
 import { CLOUDFRONT_LINK } from '@/constants';
 import { DropType } from '@/entities/IDrop';
 import { identifyingJpeg } from '@/media/metadata-strip/fixtures/identifying-image-fixtures';
+import { iphoneVideo } from '@/media/video-metadata-strip/fixtures/synthetic-video-fixtures';
 import { InMemoryObjectStore } from '@/tests/fixtures/media-object-store.fixture';
 import { BackfillReport, KeyFilterReport } from './backfill-report';
 import { SafetyCopyLayout } from './backfill-storage';
@@ -15,6 +16,7 @@ import {
 import { ChatMediaSource } from './chat-media-candidates';
 import { ChatMediaObjectProcessor } from './chat-media-object-processor';
 import { ChatMediaScan, ScanOptions } from './chat-media-scan';
+import { ChatMediaVideoProcessor } from './chat-media-video-processor';
 import { DecisionEntryExclusions } from './decision-entry-exclusions';
 
 const RUN_ID = '20261116T120000Z-0a1b2c3d';
@@ -162,14 +164,11 @@ async function scenario({
     contentType: 'image/jpeg',
     metadata: {}
   });
-  publicStore.seed(
-    'drops/c/clip.mp4',
-    Buffer.concat([
-      Buffer.alloc(100),
-      Buffer.from('com.apple.quicktime.location.ISO6709')
-    ]),
-    { contentType: 'video/mp4', metadata: {} }
-  );
+  const video = iphoneVideo();
+  publicStore.seed('drops/c/clip.mp4', video, {
+    contentType: 'video/mp4',
+    metadata: {}
+  });
   const exclusions = new DecisionEntryExclusions(
     db as unknown as ChatMediaBackfillDb
   );
@@ -184,15 +183,22 @@ async function scenario({
     {},
     new Date()
   );
+  const writer = execute
+    ? {
+        safetyStore,
+        layout: new SafetyCopyLayout('prod', RUN_ID),
+        onRewritten: (paths: string[]) => invalidations!.add(paths)
+      }
+    : null;
   const processor = new ChatMediaObjectProcessor({
     publicStore,
-    writer: execute
-      ? {
-          safetyStore,
-          layout: new SafetyCopyLayout('prod', RUN_ID),
-          onRewritten: (paths) => invalidations!.add(paths)
-        }
-      : null,
+    writer,
+    runId: RUN_ID,
+    now: () => new Date()
+  });
+  const videoProcessor = new ChatMediaVideoProcessor({
+    publicStore,
+    writer,
     runId: RUN_ID,
     now: () => new Date()
   });
@@ -202,6 +208,7 @@ async function scenario({
       db: db as unknown as ChatMediaBackfillDb,
       exclusions,
       processor,
+      videoProcessor,
       publicStore,
       invalidations,
       report,
@@ -219,10 +226,66 @@ async function scenario({
       ...options
     }
   );
-  return { scan, report, publicStore, safetyStore, invalidator, jpeg };
+  return { scan, report, publicStore, safetyStore, invalidator, jpeg, video };
 }
 
 describe('ChatMediaScan', () => {
+  it('rewrites chat videos with --include-videos, keeping a safety copy', async () => {
+    const { scan, report, publicStore, safetyStore, invalidator, video } =
+      await scenario({ execute: true, options: { includeVideos: true } });
+
+    expect(await scan.run()).toBe(true);
+    const json = report.toJSON();
+
+    expect(json.videos).toMatchObject({
+      chat_videos: 1,
+      probed: 0,
+      inspected: 1,
+      to_rewrite: 1,
+      rewritten: 1,
+      findings: expect.objectContaining({ location: 1, capture_time: 1 })
+    });
+    expect(json.objects).toMatchObject({ inspected: 5, rewritten: 4 });
+    expect(json.keys.rewritten.keys).toContain('drops/c/clip.mp4');
+    const stripped = publicStore.bodyOf('drops/c/clip.mp4')!;
+    expect(stripped.includes(Buffer.from('com.apple.quicktime'))).toBe(false);
+    expect(publicStore.headersOf('drops/c/clip.mp4')).toMatchObject({
+      contentType: 'video/mp4',
+      metadata: {
+        'privacy-sanitized': 'true',
+        'metadata-backfill-run': RUN_ID
+      }
+    });
+    const layout = new SafetyCopyLayout('prod', RUN_ID);
+    expect(
+      safetyStore.bodyOf(layout.objectKey('drops/c/clip.mp4'))!.equals(video)
+    ).toBe(true);
+    expect(
+      safetyStore.bodyOf(layout.manifestKey('drops/c/clip.mp4'))
+    ).toBeDefined();
+    expect(invalidator.paths).toContain('/drops/c/clip.mp4');
+  });
+
+  it('counts chat videos in --limit and leaves them alone in a dry run', async () => {
+    const { scan, report, publicStore } = await scenario({
+      execute: false,
+      options: { includeVideos: true, limit: 10 }
+    });
+
+    expect(await scan.run()).toBe(true);
+    const json = report.toJSON();
+
+    expect(json.videos).toMatchObject({
+      inspected: 1,
+      to_rewrite: 1,
+      rewritten: 0
+    });
+    expect(json.keys.to_rewrite.keys).toContain('drops/c/clip.mp4');
+    expect(publicStore.operations.some((op) => op.startsWith('put'))).toBe(
+      false
+    );
+  });
+
   it('a dry run counts everything and writes nothing', async () => {
     const { scan, report, publicStore, safetyStore, jpeg } = await scenario({
       execute: false
