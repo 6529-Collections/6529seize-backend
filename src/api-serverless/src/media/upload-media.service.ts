@@ -37,7 +37,8 @@ import {
   getDropMediaIngestS3Bucket,
   getPublishedDropMediaMimeType,
   isDropMediaSanitizationEnabled,
-  isImageMimeType
+  isImageMimeType,
+  shouldSanitizeVideoUpload
 } from '@/drops/drop-media-upload.config';
 import {
   DropMediaUploadsDb,
@@ -98,6 +99,7 @@ export class UploadMediaService {
     purpose?: DropMediaUploadPurpose;
   }): Promise<{ upload_url: string; media_url: string; content_type: string }> {
     this.assertSinglePutImageUploadAllowed(content_type);
+    this.assertSinglePutVideoUploadAllowed(content_type, purpose);
     const { key, uploadId } = this.createDropMediaKey({ file_name, purpose });
     return await this.withBudgetedUpload(
       {
@@ -243,7 +245,7 @@ export class UploadMediaService {
     const bucket = upload?.ingest_bucket ?? this.getS3Bucket();
     const objectKey = upload?.ingest_key ?? key;
     const s3 =
-      upload && this.isPrivateImageUpload(upload)
+      upload && this.isPrivateIngestUpload(upload)
         ? this.getIngestS3()
         : this.getS3();
     const command = new UploadPartCommand({
@@ -281,10 +283,11 @@ export class UploadMediaService {
       distributionPhoto
     });
     this.assertImageUploadIsTracked(key, upload);
-    if (upload && this.isPrivateImageUpload(upload)) {
-      return await this.completeSanitizedImageMultipartUpload({
+    if (upload && this.isPrivateIngestUpload(upload)) {
+      return await this.completePrivateIngestMultipartUpload({
         upload,
-        parts
+        parts,
+        video_poster_base64
       });
     }
 
@@ -546,7 +549,11 @@ export class UploadMediaService {
     source: MediaUploadSource;
     purpose: DropMediaUploadPurpose;
   }): Promise<ApiStartMultipartMediaUploadResponse> {
-    if (!isImageMimeType(content_type)) {
+    const isImage = isImageMimeType(content_type);
+    if (
+      !isImage &&
+      !shouldSanitizeVideoUpload({ contentType: content_type, source, purpose })
+    ) {
       const uploadId = await this.createMultipartUploadId({
         key,
         content_type,
@@ -582,9 +589,9 @@ export class UploadMediaService {
       s3: this.getIngestS3(),
       metadata: {
         // Decision entries are never stripped, even by a sanitizer that
-        // predates the purpose column.
+        // predates the purpose column. Videos only come here to be stripped.
         [DROP_MEDIA_SANITIZE_UPLOAD_METADATA_KEY]: String(
-          isDropMediaSanitizationEnabled() &&
+          (!isImage || isDropMediaSanitizationEnabled()) &&
             purpose !== DropMediaUploadPurpose.DECISION_ENTRY
         )
       }
@@ -660,19 +667,30 @@ export class UploadMediaService {
     });
   }
 
-  private isPrivateImageUpload(upload: DropMediaUploadEntity): boolean {
-    return (
-      !upload.declared_mime_type || isImageMimeType(upload.declared_mime_type)
-    );
+  /**
+   * Images, and chat videos started while video sanitization was on, upload
+   * to private ingest: their ingest key differs from the public key. How an
+   * upload started decides how it completes, whatever the switch says now.
+   */
+  private isPrivateIngestUpload(upload: DropMediaUploadEntity): boolean {
+    if (
+      !upload.declared_mime_type ||
+      isImageMimeType(upload.declared_mime_type)
+    ) {
+      return true;
+    }
+    return !!upload.ingest_key && upload.ingest_key !== upload.public_key;
   }
 
   /** Complete private ingest once and report the eventual public media type. */
-  private async completeSanitizedImageMultipartUpload({
+  private async completePrivateIngestMultipartUpload({
     upload,
-    parts
+    parts,
+    video_poster_base64
   }: {
     upload: DropMediaUploadEntity;
     parts: { etag: string; part_no: number }[];
+    video_poster_base64?: string;
   }): Promise<ApiCompleteMultipartUploadResponse> {
     if (upload.status === DropMediaUploadStatus.READY) {
       return {
@@ -696,6 +714,7 @@ export class UploadMediaService {
       if (!claimedForCompletion) {
         return this.processingResponse(upload);
       }
+      await this.storeIngestVideoPoster(upload, video_poster_base64);
 
       const completeCmd = new CompleteMultipartUploadCommand({
         Bucket: upload.ingest_bucket,
@@ -763,7 +782,32 @@ export class UploadMediaService {
     };
   }
 
-  /** Counts a completed private image upload's bytes; never fails completion. */
+  /**
+   * A chat video's device poster is stored, like a direct video's, while its
+   * (private) multipart upload is still pending, so it exists before the
+   * sanitizer publishes the video and conversion looks for it.
+   */
+  private async storeIngestVideoPoster(
+    upload: DropMediaUploadEntity,
+    base64: string | undefined
+  ): Promise<void> {
+    const type = upload.declared_mime_type;
+    if (!type || isImageMimeType(type)) return;
+    await storeDeviceVideoPoster({
+      s3: this.getS3(),
+      bucket: this.getS3Bucket(),
+      key: upload.public_key,
+      uploadId: upload.s3_upload_id,
+      base64,
+      pendingUpload: {
+        s3: this.getIngestS3(),
+        bucket: upload.ingest_bucket,
+        key: upload.ingest_key
+      }
+    });
+  }
+
+  /** Counts a completed private upload's bytes; never fails completion. */
   private async recordIngestUploadSize(
     upload: DropMediaUploadEntity
   ): Promise<void> {
@@ -996,6 +1040,24 @@ export class UploadMediaService {
     if (isImageMimeType(contentType)) {
       throw new BadRequestException(
         'Image uploads must use multipart upload so the file format can be validated'
+      );
+    }
+  }
+
+  /** Chat videos that will be stripped need the multipart (ingest) path. */
+  private assertSinglePutVideoUploadAllowed(
+    contentType: string,
+    purpose: DropMediaUploadPurpose
+  ): void {
+    if (
+      shouldSanitizeVideoUpload({
+        contentType,
+        source: DropMediaUploadSource.DROP,
+        purpose
+      })
+    ) {
+      throw new BadRequestException(
+        'Chat videos must use multipart upload so identifying metadata can be removed'
       );
     }
   }

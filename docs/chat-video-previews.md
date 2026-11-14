@@ -135,6 +135,17 @@ event may retry its own submission. At most
 `drops/nftlinkvideos/` are converted like uploads: clients play their
 renditions through the same `/drops/` rendition convention.
 
+Chat videos uploaded while `DROP_MEDIA_SANITIZE_VIDEOS=true` complete into the
+private drop-media ingest bucket and are published later by `dropMediaSanitizer`
+after their metadata is stripped. Their device poster is still stored at
+completion, before the video exists at its public key: the pending-upload check
+lists the parts of the private multipart upload instead of the public one, and
+the poster is written next to the public key as before. Conversion therefore
+finds the device poster when the sanitizer publishes the video. Objects the chat
+media backfill rewrites in place carry `metadata-backfill-run` user metadata and
+are skipped (`backfill_rewrite`): they hold the same frames, so their existing
+renditions and posters stay.
+
 Before enabling this frontend, deploy the converter and its policy, then the
 API completion handler. The converter's existing shared `lambda-vpc-role`
 policy gains `s3:GetObject` and `s3:PutObject` for device-poster keys and

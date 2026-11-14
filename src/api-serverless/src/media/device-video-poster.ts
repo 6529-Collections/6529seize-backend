@@ -106,19 +106,26 @@ export function sanitizeDeviceVideoPoster(base64: string): Buffer {
   return output;
 }
 
-/** Called only after upload ownership is checked, before completing the video. */
+/**
+ * Called only after upload ownership is checked, before completing the video.
+ * The poster goes next to the public key; `pendingUpload` names where the
+ * multipart upload itself is (private ingest for sanitized chat videos) and
+ * defaults to the public key.
+ */
 export async function storeDeviceVideoPoster({
   s3,
   bucket,
   key,
   uploadId,
-  base64
+  base64,
+  pendingUpload = { s3, bucket, key }
 }: {
   s3: S3Client;
   bucket: string;
   key: string;
   uploadId: string;
   base64: string | undefined;
+  pendingUpload?: { s3: S3Client; bucket: string; key: string };
 }): Promise<void> {
   const posterKey = getDeviceVideoPosterKey(key);
   // Only generated per-upload drop keys are eligible, never wave/distribution media.
@@ -131,8 +138,12 @@ export async function storeDeviceVideoPoster({
     const abortSignal = AbortSignal.timeout(3000);
     stage = 'pending-upload';
     // A forged/stale upload ID must not let a client replace an existing poster.
-    await s3.send(
-      new ListPartsCommand({ Bucket: bucket, Key: key, UploadId: uploadId }),
+    await pendingUpload.s3.send(
+      new ListPartsCommand({
+        Bucket: pendingUpload.bucket,
+        Key: pendingUpload.key,
+        UploadId: uploadId
+      }),
       { abortSignal }
     );
     stage = 'storage';
