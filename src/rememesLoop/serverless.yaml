@@ -20,7 +20,7 @@ functions:
     name: rememesS3Loop
     architecture: x86_64
     description: ${env:VERSION_DESCRIPTION}
-    role: arn:aws:iam::987989283142:role/lambda-vpc-role
+    role: arn:aws:iam::${aws:accountId}:role/lambda-vpc-role
     reservedConcurrency: 1
     events:
       - schedule: rate(6 hours)
@@ -36,7 +36,7 @@ functions:
     name: rememesRefreshMetadataLoop
     architecture: x86_64
     description: ${env:VERSION_DESCRIPTION}
-    role: arn:aws:iam::987989283142:role/lambda-vpc-role
+    role: arn:aws:iam::${aws:accountId}:role/lambda-vpc-role
     reservedConcurrency: 1
     events:
       - schedule: cron(1 2 * * ? *)
@@ -52,7 +52,7 @@ functions:
     name: rememesFileLoop
     architecture: x86_64
     description: ${env:VERSION_DESCRIPTION}
-    role: arn:aws:iam::987989283142:role/lambda-vpc-role
+    role: arn:aws:iam::${aws:accountId}:role/lambda-vpc-role
     reservedConcurrency: 1
     vpc:
       securityGroupIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):security}

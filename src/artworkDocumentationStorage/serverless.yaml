@@ -89,13 +89,13 @@ resources:
             - Sid: ArchiveRuntimeBucketOperations
               Effect: Allow
               Principal:
-                AWS: arn:aws:iam::987989283142:role/lambda-vpc-role
+                AWS: arn:aws:iam::${aws:accountId}:role/lambda-vpc-role
               Action: [s3:GetBucketLocation, s3:ListBucket, s3:ListBucketMultipartUploads]
               Resource: !GetAtt ArtworkArchiveBucket.Arn
             - Sid: ArchiveRuntimeObjectOperations
               Effect: Allow
               Principal:
-                AWS: arn:aws:iam::987989283142:role/lambda-vpc-role
+                AWS: arn:aws:iam::${aws:accountId}:role/lambda-vpc-role
               Action: [s3:AbortMultipartUpload, s3:ListMultipartUploadParts, s3:PutObject, s3:GetObject, s3:GetObjectVersion, s3:GetObjectTagging, s3:GetObjectVersionTagging, s3:DeleteObject, s3:DeleteObjectVersion]
               Resource:
                 - !Sub '${ArtworkArchiveBucket.Arn}/originals/*'
