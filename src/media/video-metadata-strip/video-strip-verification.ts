@@ -118,10 +118,17 @@ function checkTrackHeaders(
   );
   tables.forEach((type) => {
     if (type === 'stco' || type === 'co64') return;
-    const original = a.track.stblChildren.find((box) => box.type === type);
-    const stripped = b.track.stblChildren.find((box) => box.type === type);
+    // Every occurrence, in order: a type may repeat (sample groups do).
+    const occurrences = (moov: Buffer, boxes: Box[]) =>
+      Buffer.concat(
+        boxes
+          .filter((box) => box.type === type)
+          .map((box) => boxBytes(moov, box)!)
+      );
     check(
-      sameBytes(boxBytes(moovA, original), boxBytes(moovB, stripped)),
+      occurrences(moovA, a.track.stblChildren).equals(
+        occurrences(moovB, b.track.stblChildren)
+      ),
       `${label} ${type} changed`
     );
   });
