@@ -1,6 +1,6 @@
 import { Logger } from '../logging';
 import * as sentryContext from '../sentry.context';
-import { env, prepEnvironment } from '../env';
+import { env } from '../env';
 import { Time } from '../time';
 import {
   CreateJobCommand,
@@ -18,11 +18,9 @@ import {
 } from './video-conversion-admission';
 
 const logger = Logger.get('DROP_VIDEO_CONVERSION_INVOKER_LOOP');
-// Capture once, before shared secrets can overwrite these values, including
-// subsequent invocations in the same warm Lambda process.
-const configuredTemplate = env.getStringOrNull('MC_DROPS_VIDEO_TEMPLATE_NAME');
-const configuredBucket = env.getStringOrNull('S3_BUCKET');
-const configuredRegion = env.getStringOrNull('BUCKET_REGION');
+// All configuration comes from the function's own environment (see
+// serverless.yaml). This Lambda loads no shared secret, so it carries no
+// dependency on any environment's prod/lambdas secret.
 const conversionLimits = videoConversionLimitsFrom(process.env);
 
 function stringOrNull(value: unknown): string | null {
@@ -50,15 +48,11 @@ export const handler = sentryContext.wrapLambdaHandler(async (event) => {
   const start = Time.now();
   logger.info(`[RUNNING]`);
   try {
-    await prepEnvironment();
     const endpoint = env.getStringOrThrow('MC_ENDPOINT');
     const roleArn = env.getStringOrThrow('MC_ROLE_ARN');
-    const template =
-      configuredTemplate ??
-      env.getStringOrThrow('MC_DROPS_VIDEO_TEMPLATE_NAME');
-    const bucket = configuredBucket ?? env.getStringOrThrow('S3_BUCKET');
-    const bucketRegion =
-      configuredRegion ?? env.getStringOrThrow('BUCKET_REGION');
+    const template = env.getStringOrThrow('MC_DROPS_VIDEO_TEMPLATE_NAME');
+    const bucket = env.getStringOrThrow('S3_BUCKET');
+    const bucketRegion = env.getStringOrThrow('BUCKET_REGION');
     const exts = ['mp4', 'mov', 'avi', 'webm'];
     const key = event.detail.object.key;
     if (

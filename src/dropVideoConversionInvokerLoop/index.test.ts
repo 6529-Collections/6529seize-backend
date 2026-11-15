@@ -83,7 +83,6 @@ describe('dropVideoConversionInvokerLoop', () => {
     mockAdmitVideoConversion
       .mockReset()
       .mockResolvedValue({ convert: true, etag: 'etag' });
-    mockPrepEnvironment.mockResolvedValue(undefined);
     mockSend.mockResolvedValue(undefined).mockResolvedValueOnce({
       JobTemplate: {
         Settings: {
@@ -107,7 +106,7 @@ describe('dropVideoConversionInvokerLoop', () => {
     });
   });
 
-  it('invokes MediaConvert without opening a DB context', async () => {
+  it('invokes MediaConvert without loading shared secrets or opening a DB context', async () => {
     await handler(
       {
         detail: {
@@ -120,7 +119,7 @@ describe('dropVideoConversionInvokerLoop', () => {
       jest.fn()
     );
 
-    expect(mockPrepEnvironment).toHaveBeenCalledTimes(1);
+    expect(mockPrepEnvironment).not.toHaveBeenCalled();
     expect(mockDoInDbContext).not.toHaveBeenCalled();
     expect(MediaConvertClient).toHaveBeenCalledWith({
       region: 'eu-west-1',
@@ -232,7 +231,7 @@ describe('dropVideoConversionInvokerLoop', () => {
       jest.fn()
     );
 
-    expect(mockPrepEnvironment).toHaveBeenCalledTimes(1);
+    expect(mockPrepEnvironment).not.toHaveBeenCalled();
     expect(mockDoInDbContext).not.toHaveBeenCalled();
     expect(mockAdmitVideoConversion).not.toHaveBeenCalled();
     expect(MediaConvertClient).not.toHaveBeenCalled();
@@ -295,60 +294,6 @@ describe('dropVideoConversionInvokerLoop', () => {
       expect.objectContaining({ key })
     );
     expect(CreateJobCommand).toHaveBeenCalledTimes(1);
-  });
-
-  it('preserves deployed config through secret loading and warm invocations', async () => {
-    const originalGetString = mockGetStringOrThrow.getMockImplementation()!;
-    mockPrepEnvironment.mockImplementation(async () => {
-      mockGetStringOrThrow.mockImplementation((name) => `overridden-${name}`);
-    });
-    try {
-      await handler(
-        { detail: { object: { key: 'drops/video.mp4' } } },
-        {} as any,
-        jest.fn()
-      );
-      expect(GetJobTemplateCommand).toHaveBeenCalledWith({
-        Name: 'drop-video-template'
-      });
-      expect(MediaConvertClient).toHaveBeenCalledWith(
-        expect.objectContaining({ region: 'eu-west-1' })
-      );
-      expect(
-        jest.mocked(CreateJobCommand).mock.calls[0][0].Settings?.Inputs?.[0]
-          .FileInput
-      ).toBe('s3://6529-test-bucket/drops/video.mp4');
-      mockSend.mockResolvedValueOnce({
-        JobTemplate: {
-          Settings: {
-            OutputGroups: [
-              {
-                OutputGroupSettings: { Type: 'HLS_GROUP_SETTINGS' },
-                Outputs: [{}]
-              },
-              {
-                OutputGroupSettings: { Type: 'FILE_GROUP_SETTINGS' },
-                Outputs: [{ ContainerSettings: { Container: 'MP4' } }]
-              }
-            ]
-          }
-        }
-      });
-      await handler(
-        { detail: { object: { key: 'drops/another.mp4' } } },
-        {} as any,
-        jest.fn()
-      );
-      expect(jest.mocked(GetJobTemplateCommand).mock.calls[1][0]).toEqual({
-        Name: 'drop-video-template'
-      });
-      expect(
-        jest.mocked(CreateJobCommand).mock.calls[1][0].Settings?.Inputs?.[0]
-          .FileInput
-      ).toBe('s3://6529-test-bucket/drops/another.mp4');
-    } finally {
-      mockGetStringOrThrow.mockImplementation(originalGetString);
-    }
   });
 
   it('reuses the submission token for redelivery and changes it for a new event', async () => {

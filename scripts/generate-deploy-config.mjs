@@ -37,6 +37,9 @@ function buildWorkflowYaml(config) {
       service.verification_targets
     ])
   );
+  const awsRegionsByService = Object.fromEntries(
+    config.services.map((service) => [service.name, service.aws_region])
+  );
   const prodOnlyServices = config.services
     .filter(
       (service) =>
@@ -408,7 +411,8 @@ jobs:
           fi
 
           # AVIF conversion always uses private ingest, even when general image
-          # sanitization is disabled. The shared bucket is owned by staging.
+          # sanitization is disabled. The shared ingest bucket is owned by the
+          # production CDK stack Prod-MediaShared in 6529-infra.
           if [ -z "$DROP_MEDIA_INGEST_BUCKET" ]; then
             DROP_MEDIA_ACCOUNT_ID="$(aws sts get-caller-identity --query Account --output text)"
             DROP_MEDIA_INGEST_BUCKET="6529-drop-media-ingest-$DROP_MEDIA_ACCOUNT_ID"
@@ -540,9 +544,15 @@ jobs:
         shell: bash
         env:
           VERIFICATION_TARGETS_BY_SERVICE: '${JSON.stringify(verificationTargetsByService)}'
+          AWS_REGIONS_BY_SERVICE: '${JSON.stringify(awsRegionsByService)}'
         run: |
           set -euo pipefail
           [[ "$INPUT_SERVICE" =~ ^(${serviceCasePattern})$ ]]
+          # A service may deploy outside the credential default region (for
+          # example dropVideoConversionInvokerLoop next to the eu-west-1 media
+          # bucket), so read its functions in its catalog region.
+          service_region="$(jq -r --arg service "$INPUT_SERVICE" --arg environment "$INPUT_ENVIRONMENT" '.[$service][$environment] // empty' <<< "$AWS_REGIONS_BY_SERVICE")"
+          [[ "$service_region" =~ ^[a-z]{2}(-[a-z]+)+-[0-9]$ ]]
           if [ "$INPUT_SERVICE" = api ]; then
             package_path=src/api-serverless/dist/index.zip
           else
@@ -552,6 +562,7 @@ jobs:
           targets="$(jq -cr --arg service "$INPUT_SERVICE" '.[$service]' <<< "$VERIFICATION_TARGETS_BY_SERVICE")"
           while IFS= read -r function_name; do
             actual_code_sha="$(aws lambda get-function-configuration \
+              --region "$service_region" \
               --function-name "$function_name" \
               --query CodeSha256 \
               --output text)"
