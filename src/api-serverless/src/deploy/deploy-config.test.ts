@@ -45,6 +45,9 @@ describe('deploy.config', () => {
     ).toBe(true);
     expect(
       canDeployServiceToEnvironment('dropVideoConversionInvokerLoop', 'prod')
+    ).toBe(true);
+    expect(
+      canDeployServiceToEnvironment('dropMediaIngestStorage', 'prod')
     ).toBe(false);
     expect(canDeployServiceToEnvironment('api', 'staging')).toBe(true);
     expect(canDeployServiceToEnvironment('api', 'prod')).toBe(true);

@@ -248,12 +248,13 @@
     {
       "name": "dropVideoConversionInvokerLoop",
       "allowed_environments": [
-        "staging"
+        "staging",
+        "prod"
       ],
       "deploy_adapter": "serverless",
       "aws_region": {
         "staging": "eu-west-1",
-        "prod": "us-east-1"
+        "prod": "eu-west-1"
       },
       "verification_targets": [
         "dropVideoConversionInvokerLoop"

@@ -433,13 +433,47 @@ test('source catalog coverage is complete and monitoring delivery has no applica
         'utf8'
       )
     );
-    const targets: string[] = [...catalog.services, ...retained.services]
-      .filter((s: { allowed_environments: string[] }) =>
-        s.allowed_environments.includes(env)
-      )
-      .flatMap(
-        (s: { verification_targets: string[] }) => s.verification_targets
+    type CatalogService = {
+      name: string;
+      allowed_environments: string[];
+      aws_region: Record<string, string>;
+      verification_targets: string[];
+    };
+    const sourceRegion = catalog.services.find(
+      (s: CatalogService) => s.name === 'api'
+    ).aws_region[env];
+    const deployed: CatalogService[] = [
+      ...catalog.services,
+      ...retained.services
+    ].filter((s: CatalogService) => s.allowed_environments.includes(env));
+    const targets: string[] = deployed
+      .filter((s) => s.aws_region[env] === sourceRegion)
+      .flatMap((s) => s.verification_targets);
+    // A service deployed outside the single source region is listed apart and
+    // gets no relay subscription in the regional source stack.
+    const otherRegionTargets: string[] = deployed
+      .filter((s) => s.aws_region[env] !== sourceRegion)
+      .flatMap((s) => s.verification_targets);
+    assert.deepEqual(
+      coverage.otherRegionServices
+        .flatMap((s: { functions: string[] }) => s.functions)
+        .sort((left: string, right: string) => left.localeCompare(right)),
+      otherRegionTargets.sort((left, right) => left.localeCompare(right))
+    );
+    assert.deepEqual(
+      [
+        ...new Set(
+          coverage.services.map((s: { region: string }) => s.region)
+        )
+      ],
+      [sourceRegion]
+    );
+    for (const name of otherRegionTargets) {
+      assert.equal(
+        source.Resources[`${name.replace(/[^a-zA-Z0-9]/g, '')}ErrorLogs`],
+        undefined
       );
+    }
     assert.deepEqual(
       coverage.services
         .flatMap((s: { functions: string[] }) => s.functions)

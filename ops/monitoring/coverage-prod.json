@@ -729,6 +729,18 @@
       ]
     }
   ],
+  "otherRegionServices": [
+    {
+      "service": "dropVideoConversionInvokerLoop",
+      "region": "eu-west-1",
+      "functions": [
+        "dropVideoConversionInvokerLoop"
+      ],
+      "coverage": [
+        "outside-source-region-service-stack-alarms-only"
+      ]
+    }
+  ],
   "supplementalSource": "ops/monitoring/platform-functions.json",
   "platformOnly": [
     {
