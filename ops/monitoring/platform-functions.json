@@ -19,23 +19,18 @@
     },
     {
       "name": "tdhConsolidationsLoop",
-      "environments": ["prod", "staging"],
+      "environments": ["prod"],
       "owner": "legacy"
     },
     {
       "name": "transactionsReplayLoop",
-      "environments": ["prod", "staging"],
+      "environments": ["prod"],
       "owner": "legacy"
     },
     {
       "name": "rpcProxy",
       "environments": ["prod"],
       "owner": "external-or-legacy"
-    },
-    {
-      "name": "dropVideoRenditionsCompletionLoop",
-      "environments": ["staging"],
-      "owner": "legacy"
     }
   ]
 }
