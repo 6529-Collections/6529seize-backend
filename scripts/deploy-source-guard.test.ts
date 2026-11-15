@@ -14,9 +14,11 @@ import { parse } from 'yaml';
 
 type WorkflowStep = {
   name: string;
+  if?: string;
   run?: string;
   uses?: string;
   with?: Record<string, unknown>;
+  env?: Record<string, string>;
 };
 
 const workflow = parse(
@@ -650,4 +652,59 @@ describe('generated deployment source guard', () => {
       ).not.toContain(service);
     }
   );
+
+  function verifyLambdaCode(service: string, environment: 'staging' | 'prod') {
+    const step = steps.find(
+      (candidate) => candidate.name === 'Verify immutable Lambda code'
+    )!;
+    return spawnSync(
+      'bash',
+      [
+        '-c',
+        `
+    openssl() { printf 'artifact'; }
+    aws() {
+      printf '%s\\n' "$*" >&2
+      printf '%s' "$EXPECTED_SHA"
+    }
+    ${step.run}
+  `
+      ],
+      {
+        encoding: 'utf8',
+        timeout: 10000,
+        env: {
+          ...process.env,
+          ...step.env,
+          EXPECTED_SHA: Buffer.from('artifact').toString('base64'),
+          INPUT_SERVICE: service,
+          INPUT_ENVIRONMENT: environment
+        }
+      }
+    );
+  }
+
+  it.each([
+    ['dropVideoConversionInvokerLoop', 'prod', 'eu-west-1'],
+    ['dropVideoConversionInvokerLoop', 'staging', 'eu-west-1'],
+    ['ethPriceLoop', 'prod', 'us-east-1'],
+    ['ethPriceLoop', 'staging', 'eu-west-1']
+  ] as const)(
+    'verifies %s %s code in its catalog region %s',
+    (service, environment, region) => {
+      const result = verifyLambdaCode(service, environment);
+      expect(result.stderr).toContain(
+        `lambda get-function-configuration --region ${region} --function-name ${service}`
+      );
+      expect(result.status).toBe(0);
+    }
+  );
+
+  it('lets the drop video worker deploy to production while ingest storage stays staging-only', () => {
+    const stagingOnly = steps.find(
+      (step) => step.name === 'Check staging preconditions'
+    )!;
+    expect(stagingOnly.if).toContain("'dropMediaIngestStorage'");
+    expect(stagingOnly.if).not.toContain('dropVideoConversionInvokerLoop');
+  });
 });

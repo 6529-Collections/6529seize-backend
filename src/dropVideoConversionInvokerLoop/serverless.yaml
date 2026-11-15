@@ -25,9 +25,8 @@ functions:
     dependsOn:
       - DropVideoTemplateReadPolicy
 
-    vpc:
-      securityGroupIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):security}
-      subnetIds:        ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):subnets}
+    # No VPC: the function only calls S3 and MediaConvert and never opens a
+    # database connection.
 
     environment:
       SENTRY_DSN:         ${env:SENTRY_DSN}
@@ -36,6 +35,11 @@ functions:
       # bucket's region, see BUCKET_REGION) as /6529/workload/media/bucket.
       S3_BUCKET:          ${ssm(eu-west-1):/6529/workload/media/bucket}
       BUCKET_REGION:      eu-west-1
+      # Regional MediaConvert endpoint and the deploying account's MediaConvert
+      # service role. Set here rather than loaded from a shared secret so the
+      # function has no dependency on any environment's prod/lambdas secret.
+      MC_ENDPOINT:        https://mediaconvert.eu-west-1.amazonaws.com
+      MC_ROLE_ARN:        arn:aws:iam::${aws:accountId}:role/MediaConvertDropsRole
       MC_DROPS_VIDEO_TEMPLATE_NAME: Drops_HLS_MP4_360_720
       # Conversion bounds (see video-conversion-admission.ts): 2 GiB per
       # object, at most 3 jobs per object key in 24 hours.
@@ -127,7 +131,9 @@ resources:
         Threshold: 1
         ComparisonOperator: GreaterThanOrEqualToThreshold
         TreatMissingData: notBreaching
+        # Account alarm topic published in this stack's region (eu-west-1) in
+        # every account, so the alarm never targets a topic in another region.
         AlarmActions:
-          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}
+          - ${ssm:/6529/workload/alarms-topic-arn}
         OKActions:
-          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}
+          - ${ssm:/6529/workload/alarms-topic-arn}

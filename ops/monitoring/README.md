@@ -16,7 +16,11 @@ monitoring resources. See [the cleanup procedure](../../docs/competition-storage
 
 The infrastructure source is `scripts/templates.mjs`. `monitoring-{env}.json`,
 `source-{env}.json` and `coverage-{env}.json` are generated from the backend service
-catalog; CI fails when their inventory is stale. This separate operational package
+catalog; CI fails when their inventory is stale. Each environment has one
+regional source stack in the API's region. A catalog service deployed to another
+region (production `dropVideoConversionInvokerLoop` in `eu-west-1`) is listed
+under `otherRegionServices` in coverage, has no relay subscription or platform
+alarms here, and relies on its own stack's alarms until regional relays exist. This separate operational package
 also reads `platform-functions.json`: observed external/legacy Lambdas receive
 Errors/Throttles alarms only. They are not application deploy units, and their
 handled errors require their owning service's telemetry integration. The active

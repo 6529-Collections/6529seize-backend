@@ -41,7 +41,8 @@ IAM's managed-policy size and default role attachment limits.
   subscriptions require the approved SQS endpoints and protocol.
 - The API preflight may describe only the existing `prod/lambdas` secret. It
   cannot read secret values, describe other secrets, or alter secrets.
-- The shared private ingest bucket is owned by staging in `eu-west-1`.
+- The shared private ingest bucket in `eu-west-1` is owned by the production
+  CDK stack `Prod-MediaShared` in 6529-infra.
   Production has only `ListBucket`/`GetBucketLocation` preflight access to this
   exact bucket in Ireland or Virginia. Object access and policy mutation are
   excluded. Other regional deployment operations remain in `us-east-1`.
@@ -53,7 +54,7 @@ IAM's managed-policy size and default role attachment limits.
 ## Infrastructure boundaries
 
 IAM changes in `artworkDocumentationProcessor`,
-and `artworkDocumentationStorage` require a separate administrative step.
+`artworkDocumentationStorage` and `dropVideoConversionInvokerLoop` require a separate administrative step.
 Application storage, backup, malware-protection, and IAM provisioning also
 remain administrative. An unchanged infrastructure definition can accompany a
 normal function update; provision and verify infrastructure changes first.
@@ -127,3 +128,29 @@ environment's required AWS region. It grants no application-bucket access.
 Keep the aggregate role inline-policy size below 10,240 characters. Verify the
 remote document and unrelated-resource/other-environment denials, then deploy
 through GitHub Actions and verify the disabled schedule before activation.
+
+## Drop video conversion worker
+
+`dropVideoConversionInvokerLoop` deploys to production in `eu-west-1`, next to
+the production media bucket whose `drops/` uploads it converts. It has no VPC
+and loads no shared secret. `DropVideoConversionDeployment.json` permits only
+its function/versions, the `dropVideoConversionInvokerLoop-prod` stack, the
+`dropvideoconversioninvoke*-serverlessdeploy*` deployment-bucket prefix, its
+log group, the `DropsVideoCreated-prod` rule, its OOM alarm, the two
+`/6529/workload/*` parameters its definition resolves, and the regional
+template-validation, log-group and alarm description APIs, all in `eu-west-1`.
+The deployment-bucket prefix also matches the retired main-account staging
+stack's bucket until that stack is removed; it grants no application-data
+access.
+
+The document is 5,044 compact characters, which exceeds the remaining
+10,240-character inline budget of this role, so install it as an eleventh
+customer-managed policy (the account's managed-policies-per-role quota is 20)
+through the administrative identity after Access Analyzer validation and
+positive/negative simulation.
+
+The stack also owns the `drop-video-template-read-prod` inline policy on
+`lambda-vpc-role`. As with the other IAM-owning stacks above, this role cannot
+write role policies, so the stack's first creation (or any change to that
+policy) is an administrative deployment. Later code and configuration updates
+use the ordinary `Deploy a service` workflow.
