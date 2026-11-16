@@ -67,6 +67,7 @@ import { identityPushNotificationAccess } from '@/pushNotificationsHandler/ident
 import { isNotificationEnabledForDevice } from '@/pushNotificationsHandler/identity-push-notification-settings';
 import { buildSubscriptionCoveragePushNotificationData } from '@/pushNotificationsHandler/subscription-coverage-push-notification';
 import { getPushNotificationGrouping } from '@/pushNotificationsHandler/push-notification-grouping';
+import { buildMultiProfileTitlePrefix } from './multi-profile-push-title';
 import {
   appendWavePushNotificationContext,
   buildAllDropsPushNotificationTitle,
@@ -229,13 +230,6 @@ async function getDeviceSettings(
 
 function getDeviceTokenKey(deviceId: string, token: string): string {
   return JSON.stringify([deviceId, token]);
-}
-
-function buildMultiProfileTitlePrefix(profileHandle: string): string {
-  const normalizedHandle = profileHandle.startsWith('@')
-    ? profileHandle.slice(1)
-    : profileHandle;
-  return `[${normalizedHandle}]`;
 }
 
 async function getSharedDeviceTokenKeysForOtherProfiles(

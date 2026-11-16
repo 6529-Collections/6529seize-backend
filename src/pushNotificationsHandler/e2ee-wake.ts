@@ -14,6 +14,7 @@ import {
   sendMessages
 } from '@/pushNotificationsHandler/sendPushNotifications';
 import { dbSupplier } from '@/sql-executor';
+import { buildMultiProfileTitlePrefix } from './multi-profile-push-title';
 
 // Content-free wakes for end-to-end encrypted messaging (D109 contract v1,
 // section 7.3). A wake says only that something encrypted arrived for the
@@ -37,6 +38,7 @@ export interface E2eeWakeDevice {
   readonly device_id: string;
   readonly profile_id: string;
   readonly token: string;
+  readonly is_multi_profile: number;
 }
 
 export interface E2eeWakeDeps {
@@ -73,25 +75,32 @@ export function buildE2eeWakeInput({
   token,
   profileId,
   handle,
-  reason
+  reason,
+  showRecipient = false
 }: {
   readonly token: string;
   readonly profileId: string;
-  readonly handle: string;
+  readonly handle?: string;
   readonly reason: E2eeWakeReason;
+  readonly showRecipient?: boolean;
 }): PushNotificationMessageInput {
+  const { title, body } = E2EE_WAKE_COPY[reason];
   return {
-    ...E2EE_WAKE_COPY[reason],
-    ...(reason === 'message' && process.env.NODE_ENV === 'development'
-      ? { body: 'Open 6529 Staging to view' }
-      : {}),
+    title:
+      reason === 'message' && showRecipient && handle
+        ? `${buildMultiProfileTitlePrefix(handle)} ${title}`
+        : title,
+    body:
+      reason === 'message' && process.env.NODE_ENV === 'development'
+        ? 'Open 6529 Staging to view'
+        : body,
     token,
     notification_id: 0,
     omitBadge: true,
     extra_data: {
       redirect: 'e2ee',
       target_profile_id: profileId,
-      target_profile_handle: handle,
+      target_profile_handle: handle ?? profileId,
       notification_id: 'e2ee'
     }
   };
@@ -122,8 +131,16 @@ export const defaultE2eeWakeDeps: E2eeWakeDeps = {
   async loadDevices(profileIds) {
     if (!profileIds.length) return [];
     return dbSupplier().execute<E2eeWakeDevice>(
-      `select device_id, profile_id, token from ${PUSH_NOTIFICATION_DEVICES_TABLE}
-       where profile_id in (:profileIds)`,
+      `select device.device_id, device.profile_id, device.token,
+              exists (
+                select 1
+                from ${PUSH_NOTIFICATION_DEVICES_TABLE} other
+                where other.device_id = device.device_id
+                  and cast(other.token as binary) = cast(device.token as binary)
+                  and other.profile_id <> device.profile_id
+              ) as is_multi_profile
+       from ${PUSH_NOTIFICATION_DEVICES_TABLE} device
+       where device.profile_id in (:profileIds)`,
       { profileIds }
     );
   },
@@ -138,12 +155,12 @@ export const defaultE2eeWakeDeps: E2eeWakeDeps = {
        where profile_id in (:profileIds)`,
       { profileIds }
     );
-    return new Map(
-      rows.map((row) => [
-        row.profile_id,
-        row.normalised_handle ?? row.handle ?? row.profile_id
-      ])
-    );
+    const handles = new Map<string, string>();
+    for (const row of rows) {
+      const handle = row.normalised_handle || row.handle;
+      if (handle) handles.set(row.profile_id, handle);
+    }
+    return handles;
   },
   loadPreferences: (profileIds) => profilePreferencesDb.getMany(profileIds),
   send: (inputs) => sendMessages(inputs),
@@ -195,8 +212,9 @@ export async function sendE2eeWakes(
         buildE2eeWakeInput({
           token: device.token,
           profileId: device.profile_id,
-          handle: handles.get(device.profile_id) ?? device.profile_id,
-          reason: reasonByProfile.get(device.profile_id)!
+          handle: handles.get(device.profile_id),
+          reason: reasonByProfile.get(device.profile_id)!,
+          showRecipient: device.is_multi_profile === 1
         })
       )
     );
