@@ -1,4 +1,5 @@
 import { CreateOrUpdateDropModel } from '@/drops/create-or-update-drop.model';
+import { matchDropMediaUploadUrl } from '@/drops/drop-media-public-url';
 import { getPublishedDropMediaMimeType } from '@/drops/drop-media-upload.config';
 import {
   dropMediaUploadsDb,
@@ -36,7 +37,7 @@ function attachable(
   const mimeType =
     media.mime_type === 'image/jpg' ? 'image/jpeg' : media.mime_type;
   const sameMedia =
-    upload.public_url === media.url &&
+    matchDropMediaUploadUrl(upload.public_url, media.url) &&
     upload.profile_id === model.author_id &&
     getPublishedDropMediaMimeType(upload.declared_mime_type) === mimeType;
   if (publishedDropId !== null) {

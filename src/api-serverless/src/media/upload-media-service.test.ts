@@ -561,6 +561,23 @@ describe('UploadMediaService', () => {
     expect(enqueue).not.toHaveBeenCalled();
   });
 
+  it('publishes a new staging drop upload through the staging CDN', async () => {
+    process.env.DROP_MEDIA_INGEST_STAGE = 'staging';
+    process.env.FILE_SERVER_URL = 'https://media.staging.6529.io/';
+    const { service, record } = makePublicUploadService();
+
+    const result = await service.createSingedDropMediaUploadUrl({
+      content_type: 'audio/mpeg',
+      file_name: 'sound.mp3',
+      author_id: 'owner'
+    });
+
+    expect(result.media_url).toBe(
+      `https://media.staging.6529.io/${record()?.public_key}`
+    );
+    expect(record()?.public_url).toBe(result.media_url);
+  });
+
   it('keeps single PUT drop media paths unlinkable while recording their owner privately', async () => {
     const { service, uploadsDb, publicS3, record } = makePublicUploadService();
     const result = await service.createSingedDropMediaUploadUrl({

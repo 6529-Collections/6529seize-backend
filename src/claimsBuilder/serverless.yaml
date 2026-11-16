@@ -32,6 +32,7 @@ functions:
     environment:
       SENTRY_DSN: ${env:SENTRY_DSN}
       SENTRY_ENVIRONMENT: 'claimsBuilder_${opt:stage, self:provider.stage}'
+      DROP_MEDIA_INGEST_STAGE: ${opt:stage, self:provider.stage}
 
 resources:
   Resources:

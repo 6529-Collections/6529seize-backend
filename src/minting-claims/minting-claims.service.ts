@@ -11,6 +11,7 @@ import {
   DISTRIBUTION_PHASE_AIRDROP_ARTIST
 } from '@/airdrop-phases';
 import { MEMES_CONTRACT, TEAM_TABLE } from '@/constants';
+import { resolveDropMediaDeliveryUrl } from '@/drops/drop-media-public-url';
 import { dropsDb, DropsDb } from '@/drops/drops.db';
 import type { DropMetadataEntity } from '@/entities/IDrop';
 import { buildMintingClaimRowFromDrop } from '@/minting-claims/minting-claim-from-drop.builder';
@@ -328,15 +329,21 @@ export class MintingClaimsService {
   private async enrichRowWithComputedDetails(
     row: MintingClaimRowInput
   ): Promise<MintingClaimRowInput> {
+    const imageUrl = row.image_url
+      ? resolveDropMediaDeliveryUrl(row.image_url)
+      : row.image_url;
+    const animationUrl = row.animation_url
+      ? resolveDropMediaDeliveryUrl(row.animation_url)
+      : row.animation_url;
     let image_details = row.image_details;
-    if (row.image_url) {
-      image_details = await computeImageDetails(row.image_url);
+    if (imageUrl) {
+      image_details = await computeImageDetails(imageUrl);
       assertValidComputedMediaDetails(getImageDetailIssues(image_details));
     }
     let animation_details = row.animation_details;
-    if (row.animation_url) {
+    if (animationUrl) {
       animation_details = await resolveAnimationDetails(
-        row.animation_url,
+        animationUrl,
         row.animation_kind
       );
       assertValidComputedMediaDetails(
@@ -345,6 +352,8 @@ export class MintingClaimsService {
     }
     return {
       ...row,
+      image_url: imageUrl,
+      animation_url: animationUrl,
       image_details,
       animation_details
     };

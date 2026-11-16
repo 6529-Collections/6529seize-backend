@@ -1,4 +1,5 @@
 import { getPublishedDropMediaMimeType } from '@/drops/drop-media-upload.config';
+import { resolveDropMediaDeliveryUrl } from '@/drops/drop-media-public-url';
 import { asyncRouter } from '../async.router';
 import { Request, Response } from 'express';
 import * as Joi from 'joi';
@@ -61,7 +62,7 @@ router.get(
       throw new ForbiddenException('Cannot read this media upload');
     }
     res.send({
-      media_url: upload.public_url,
+      media_url: resolveDropMediaDeliveryUrl(upload.public_url),
       mime_type: getPublishedDropMediaMimeType(upload.declared_mime_type),
       media_upload_id: upload.id,
       media_status: mapDropMediaStatus(upload.status),

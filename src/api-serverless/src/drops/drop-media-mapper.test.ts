@@ -12,6 +12,27 @@ const media: DropMediaEntity = {
   media_upload_id: 'upload'
 };
 
+it('renders an existing staging drop through the staging CDN', () => {
+  const env = jest.replaceProperty(process, 'env', {
+    ...process.env,
+    DROP_MEDIA_INGEST_STAGE: 'staging',
+    FILE_SERVER_URL: 'https://media.staging.6529.io/'
+  });
+  try {
+    expect(
+      mapDropMedia({
+        ...media,
+        url: 'https://d3lqz0a4bldqgf.cloudfront.net/drops/upload/art.png'
+      })
+    ).toMatchObject({
+      url: 'https://media.staging.6529.io/drops/upload/art.png',
+      media_upload_id: 'upload'
+    });
+  } finally {
+    env.restore();
+  }
+});
+
 it.each([
   [DropMediaUploadStatus.UPLOADING, 'uploading'],
   [DropMediaUploadStatus.COMPLETING, 'processing'],

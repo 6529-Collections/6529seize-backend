@@ -1,5 +1,5 @@
-import { CLOUDFRONT_LINK } from '@/constants';
 import { CreateOrUpdateDropModel } from '@/drops/create-or-update-drop.model';
+import { isDropMediaPublicUrl } from '@/drops/drop-media-public-url';
 import { DropMediaUploadsDb } from '@/drops/drop-media-uploads.db';
 import { DropType } from '@/entities/IDrop';
 import {
@@ -11,9 +11,6 @@ import { BadRequestException } from '@/exceptions';
 /** Upload keys since purposes exist: `drops/<upload record id>/<file>`. */
 const DROP_MEDIA_KEY =
   /^drops\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\/[^/]+$/;
-
-/** Compared as an origin, so a path or trailing slash on the link cannot fail open. */
-const MEDIA_ORIGIN = new URL(CLOUDFRONT_LINK).origin;
 
 export const DECISION_ENTRY_MEDIA_MISUSE_MESSAGE =
   'This media was uploaded for a decision entry and can only be attached to a decision entry. Upload it again to post it in chat.';
@@ -36,7 +33,7 @@ export function publicMediaKey(url: string): string | null {
   } catch {
     return null;
   }
-  if (parsed.origin !== MEDIA_ORIGIN) return null;
+  if (!isDropMediaPublicUrl(parsed)) return null;
   try {
     return decodeURIComponent(parsed.pathname).replace(/^\/+/, '');
   } catch {

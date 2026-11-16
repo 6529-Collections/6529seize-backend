@@ -117,6 +117,7 @@ import {
   ContentModerationPresentation
 } from '@/content-moderation/content-moderation.db';
 import { DropModerationStatus } from '@/entities/IContentModeration';
+import { resolveAdditionalMediaPreview } from '@/drops/drop-media-public-url';
 import {
   deviceSigningDb,
   DeviceSigningDb
@@ -1090,7 +1091,7 @@ export class ApiDropMapper {
         const items = acc[item.drop_id] ?? [];
         items.push({
           data_key: item.data_key,
-          data_value: item.data_value
+          data_value: resolveAdditionalMediaPreview(item.data_value)
         });
         acc[item.drop_id] = items;
         return acc;

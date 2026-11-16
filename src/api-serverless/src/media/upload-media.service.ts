@@ -16,7 +16,10 @@ import { ApiCompleteMultipartUploadResponse } from '../generated/models/ApiCompl
 import { ApiDropMediaStatus } from '../generated/models/ApiDropMediaStatus';
 import { ApiStartMultipartMediaUploadResponse } from '../generated/models/ApiStartMultipartMediaUploadResponse';
 import { getFileExtension, slugifyBaseName } from './sanitize-file-name';
-import { CLOUDFRONT_LINK } from '@/constants';
+import {
+  publicUploadMediaUrl,
+  resolveDropMediaDeliveryUrl
+} from '@/drops/drop-media-public-url';
 import {
   BadRequestException,
   CustomApiCompliantException,
@@ -290,7 +293,7 @@ export class UploadMediaService {
 
     if (upload?.status === DropMediaUploadStatus.READY) {
       return {
-        media_url: upload.public_url,
+        media_url: resolveDropMediaDeliveryUrl(upload.public_url),
         media_status: ApiDropMediaStatus.Ready
       };
     }
@@ -334,7 +337,7 @@ export class UploadMediaService {
       });
     }
     return {
-      media_url: `${CLOUDFRONT_LINK}/${completeResp.Key}`,
+      media_url: publicUploadMediaUrl(completeResp.Key ?? key),
       media_status: ApiDropMediaStatus.Ready
     };
   }
@@ -595,7 +598,7 @@ export class UploadMediaService {
       profile_id: author_id,
       source,
       public_key: key,
-      public_url: `${CLOUDFRONT_LINK}/${key}`,
+      public_url: publicUploadMediaUrl(key),
       ingest_bucket: ingestBucket,
       ingest_key: ingestKey,
       s3_upload_id: uploadId,
@@ -642,7 +645,7 @@ export class UploadMediaService {
       profile_id: authorId,
       source: DropMediaUploadSource.DROP,
       public_key: key,
-      public_url: `${CLOUDFRONT_LINK}/${key}`,
+      public_url: publicUploadMediaUrl(key),
       ingest_bucket: this.getS3Bucket(),
       ingest_key: key,
       s3_upload_id: s3UploadId,
@@ -676,7 +679,7 @@ export class UploadMediaService {
   }): Promise<ApiCompleteMultipartUploadResponse> {
     if (upload.status === DropMediaUploadStatus.READY) {
       return {
-        media_url: upload.public_url,
+        media_url: resolveDropMediaDeliveryUrl(upload.public_url),
         mime_type: getPublishedDropMediaMimeType(upload.declared_mime_type),
         media_upload_id: upload.id,
         media_status: ApiDropMediaStatus.Ready
@@ -742,7 +745,7 @@ export class UploadMediaService {
       upload.status === DropMediaUploadStatus.SANITIZING
     ) {
       return {
-        media_url: upload.public_url,
+        media_url: resolveDropMediaDeliveryUrl(upload.public_url),
         mime_type: getPublishedDropMediaMimeType(upload.declared_mime_type),
         media_upload_id: upload.id,
         media_status: ApiDropMediaStatus.Processing
@@ -756,7 +759,7 @@ export class UploadMediaService {
     await this.enqueueSanitizationOnce(upload);
 
     return {
-      media_url: upload.public_url,
+      media_url: resolveDropMediaDeliveryUrl(upload.public_url),
       mime_type: getPublishedDropMediaMimeType(upload.declared_mime_type),
       media_upload_id: upload.id,
       media_status: ApiDropMediaStatus.Processing
@@ -834,7 +837,7 @@ export class UploadMediaService {
     upload: DropMediaUploadEntity
   ): ApiCompleteMultipartUploadResponse {
     return {
-      media_url: upload.public_url,
+      media_url: resolveDropMediaDeliveryUrl(upload.public_url),
       mime_type: getPublishedDropMediaMimeType(upload.declared_mime_type),
       media_upload_id: upload.id,
       media_status: ApiDropMediaStatus.Processing
@@ -864,7 +867,7 @@ export class UploadMediaService {
     return {
       upload_url: signedUrl,
       content_type,
-      media_url: `${CLOUDFRONT_LINK}/${key}`
+      media_url: publicUploadMediaUrl(key)
     };
   }
 

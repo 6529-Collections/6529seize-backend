@@ -321,6 +321,32 @@ describe('MintingClaimsService media enrichment', () => {
     });
   });
 
+  it('builds staging claims from drop images attached with the legacy URL', async () => {
+    const env = jest.replaceProperty(process, 'env', {
+      ...process.env,
+      DROP_MEDIA_INGEST_STAGE: 'staging',
+      FILE_SERVER_URL: 'https://media.staging.6529.io/'
+    });
+    const imageUrl = 'https://media.staging.6529.io/drops/upload/art.png';
+    jest.mocked(computeImageDetails).mockResolvedValue(imageDetails);
+    try {
+      await expect(
+        service.enrichRowWithComputedDetails(
+          claimRowInput({
+            image_url:
+              'https://d3lqz0a4bldqgf.cloudfront.net/drops/upload/art.png'
+          })
+        )
+      ).resolves.toMatchObject({
+        image_url: imageUrl,
+        image_details: imageDetails
+      });
+      expect(computeImageDetails).toHaveBeenCalledWith(imageUrl);
+    } finally {
+      env.restore();
+    }
+  });
+
   it('accepts GLB details without video-only properties', async () => {
     const details = {
       bytes: 100,

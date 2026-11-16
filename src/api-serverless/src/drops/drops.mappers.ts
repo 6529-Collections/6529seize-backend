@@ -1,4 +1,5 @@
 import { mapDropMedia } from '@/api/drops/drop-media.mapper';
+import { resolveAdditionalMediaPreview } from '@/drops/drop-media-public-url';
 import { memeCollaborationsDb } from '@/meme-collaborations/meme-collaborations.db';
 import {
   anonymousCompetitionAuthor,
@@ -1586,7 +1587,10 @@ export class DropsMappers {
         .filter((it) => it.drop_id === dropEntity.id)
         .map<ApiDropMetadataResponse>((it) => ({
           data_key: it.data_key,
-          data_value: it.data_value,
+          data_value:
+            it.data_key === 'additional_media'
+              ? resolveAdditionalMediaPreview(it.data_value)
+              : it.data_value,
           resolved_profile:
             it.data_key === 'identity'
               ? (resolvedProfilesByIds[it.data_value] ?? null)

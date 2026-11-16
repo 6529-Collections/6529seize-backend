@@ -132,7 +132,11 @@ import { extractUrlCandidatesFromText } from '@/nft-links/nft-link-candidates';
 import { validateLinkUrl } from '@/nft-links/nft-link-resolver.validator';
 import { env } from '@/env';
 import {
-  CLOUDFRONT_LINK,
+  getDropMediaPublicOrigin,
+  isDropMediaPublicUrl,
+  matchDropMediaUploadUrl
+} from '@/drops/drop-media-public-url';
+import {
   DEVS_6529_MENTION,
   DEVS_6529_MENTION_TOKEN,
   UUID_REGEX,
@@ -300,9 +304,9 @@ export function validateDropMediaAttachment({
     mimeType.startsWith('audio/') ||
     mimeType === 'model/gltf-binary'
   ) {
-    if (parsedUrl.origin !== CLOUDFRONT_LINK) {
+    if (!isDropMediaPublicUrl(parsedUrl)) {
       throw new BadRequestException(
-        `Media needs to come from ${CLOUDFRONT_LINK}`
+        `Media needs to come from ${getDropMediaPublicOrigin()}`
       );
     }
     return;
@@ -1682,7 +1686,7 @@ export class CreateOrUpdateDropUseCase {
   private isAllowedChatLink(candidate: string): boolean {
     try {
       const url = new URL(this.normalizeChatLinkCandidate(candidate));
-      if (url.origin === CLOUDFRONT_LINK) {
+      if (isDropMediaPublicUrl(url)) {
         return true;
       }
       return this.isAllowedGifProviderChatLink(url);
@@ -1999,7 +2003,7 @@ export class CreateOrUpdateDropUseCase {
     if (!upload) {
       throw new BadRequestException(`Invalid media_upload_id ${mediaUploadId}`);
     }
-    if (upload.public_url !== mediaUrl) {
+    if (!matchDropMediaUploadUrl(upload.public_url, mediaUrl)) {
       throw new BadRequestException(`media_upload_id does not match media url`);
     }
     // Older clients can still send the supported JPEG alias after sanitization.
