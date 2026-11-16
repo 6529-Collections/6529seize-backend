@@ -19,11 +19,12 @@ import { evidenceForClaim } from '@/drop-forge/drop-forge.evidence';
 import { postForgeReport } from '@/drop-forge/drop-forge.notifier';
 import { getDropForgePolicy } from '@/drop-forge/drop-forge.policy';
 import {
+  hasPublishedMemePage,
   readinessAllocations,
   readinessMerkleRoots,
   recordReadinessCheck
 } from '@/drop-forge/drop-forge.readiness.repository';
-import { launchCardLink } from '@/drop-forge/drop-forge.reports';
+import { memePageLink } from '@/drop-forge/drop-forge.reports';
 import {
   dropForgeRepository,
   launchId
@@ -33,6 +34,7 @@ import { LaunchAction, LaunchData } from '@/drop-forge/drop-forge.types';
 import { getEthereumRpcProvider } from '@/ethereum-rpc/ethereum-rpc-provider';
 import { Logger } from '@/logging';
 import {
+  getCanonicalNextMintNumber,
   getMintNumberForMintDate,
   getMintSchedule,
   isMintEligibleUtcDay
@@ -434,11 +436,28 @@ async function collectReadiness(
   ];
 }
 
+async function readinessClaimLabel(
+  chainId: number,
+  claimId: number
+): Promise<string> {
+  // The public site also serves the next mint's page before it is indexed.
+  if (claimId === getCanonicalNextMintNumber(new Date(Date.now())))
+    return memePageLink(chainId, claimId);
+
+  try {
+    if (await hasPublishedMemePage(claimId))
+      return memePageLink(chainId, claimId);
+  } catch {
+    logger.warn('Could not verify the public Meme page for a readiness alert');
+  }
+  return `Claim #${claimId}`;
+}
+
 export async function runReadinessDelivery(id: string): Promise<void> {
   const checkpoint = resolveReadinessCheckpoint(id);
   if (!checkpoint) return;
   const policy = getDropForgePolicy();
-  const { claimId, phase, time } = checkpoint;
+  const { claimId, phase } = checkpoint;
   const card = await fetchMintingClaimByClaimId(policy.creator, claimId, {
     forcePool: DbPoolName.WRITE
   });
@@ -448,18 +467,13 @@ export async function runReadinessDelivery(id: string): Promise<void> {
     !!card,
     card?.edition_size ? Number(card.edition_size) : null
   );
-  const label = card
-    ? launchCardLink(policy.chainId, claimId)
-    : `Claim #${claimId}`;
   const details = issues.map((issue) => '- ' + issue).join('\n');
+  const report = issues.length
+    ? `**${await readinessClaimLabel(policy.chainId, claimId)} · ${phase.name} readiness**\n\n${details}`
+    : null;
   const pushes = await recordReadinessCheck(`${policy.chainId}:${id}`, (ctx) =>
-    issues.length
-      ? postForgeReport(
-          getDropForgeReportingConfig(),
-          `**${label} · ${phase.name} readiness · ${time} Athens**\n\n${details}`,
-          true,
-          ctx
-        )
+    report
+      ? postForgeReport(getDropForgeReportingConfig(), report, true, ctx)
       : Promise.resolve(null)
   );
   if (!pushes.length) return;

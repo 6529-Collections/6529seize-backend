@@ -169,9 +169,10 @@ On scheduled mint days, four independent checks verify the next mint window
 and required airdrops at 17:20, 18:28 and 18:58, then check that public minting is
 live at 19:22 (Europe/Athens). They use the calendar's claim ID for automated
 and manual launches. The checks read Ethereum and completion evidence and post
-one signed Drop Forge Ops alert per failing checkpoint, with the card link
-when available. Passing checks are quiet. The schedules and check results do
-not depend on the Automatic launch setting or on a saved plan.
+one signed Drop Forge Ops alert per failing checkpoint. The heading links the
+claim number to its public Meme page when available. Passing checks are quiet.
+The schedules and check results do not depend on the Automatic launch setting
+or on a saved plan.
 
 Phase updates snapshot the actual minted supply once the preceding window has
 closed. Subsequent batches validate that persisted baseline plus only the

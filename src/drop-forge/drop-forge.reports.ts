@@ -6,9 +6,15 @@ import {
   transactionAirdropRecipients
 } from '@/drop-forge/drop-forge.types';
 
+const siteForChain = (chainId: number) =>
+  chainId === 1 ? 'https://6529.io' : 'https://staging.6529.io';
+
 export function launchCardLink(chainId: number, claimId: number): string {
-  const site = chainId === 1 ? 'https://6529.io' : 'https://staging.6529.io';
-  return `[Claim #${claimId}](${site}/drop-forge/launch/${claimId})`;
+  return `[Claim #${claimId}](${siteForChain(chainId)}/drop-forge/launch/${claimId})`;
+}
+
+export function memePageLink(chainId: number, claimId: number): string {
+  return `[Claim #${claimId}](${siteForChain(chainId)}/the-memes/${claimId})`;
 }
 
 function airdropGroup(data: LaunchData, action: LaunchAction): LaunchAction[] {
