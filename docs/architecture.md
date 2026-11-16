@@ -82,6 +82,23 @@ Lambda or environment variable. Deploy affected backend delivery workers and
 the video conversion invoker's compatible media-path reader before the API
 accepts the new setting, then deploy the frontend creation control.
 
+## Main Stage artwork trait validation
+
+Enabled Main Stage decisions publish their artwork trait rules on the competition
+resource. The API uses the same validator for the read-only trait preflight and
+the signed entry command. Artist, title, description, meme name, palette, and
+card points require a valid value. Optional card text fields default to `No` and
+omitted yes/no traits default to `false`. API clients omit skipped keys; supplied
+metadata strings still follow the shared nonblank and length rules. The entry
+command authenticates the original signed request and records both that payload
+and the effective stored metadata.
+
+Development and staging enable the policy by default. The production API uses
+the existing behavior until `MAIN_STAGE_TRAIT_VALIDATION_ENABLED=true` is
+explicitly set. Setting it to `false` disables both rule publication and
+validation. The policy applies to new entries. Existing entry content and mint
+claims retain their prior metadata.
+
 ## Meme collaborator invitations
 
 Artwork submissions retain one author, voting result and minting claim. The API

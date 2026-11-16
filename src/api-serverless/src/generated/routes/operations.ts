@@ -182,6 +182,7 @@ import { ApiGlobalRepCategoryWaveOverview } from '@/api/generated/models/ApiGlob
 import { ApiGlobalRepCategoryWavesPage } from '@/api/generated/models/ApiGlobalRepCategoryWavesPage';
 import { ApiGroupMembersPreviewRequest } from '@/api/generated/models/ApiGroupMembersPreviewRequest';
 import { ApiJoinedWavesPage } from '@/api/generated/models/ApiJoinedWavesPage';
+import { ApiMainStageTraitValidation } from '@/api/generated/models/ApiMainStageTraitValidation';
 import { ApiMarketBatchCapabilities } from '@/api/generated/models/ApiMarketBatchCapabilities';
 import { ApiMarketBatchPreflight } from '@/api/generated/models/ApiMarketBatchPreflight';
 import { ApiMarketBatchPreflightRequest } from '@/api/generated/models/ApiMarketBatchPreflightRequest';
@@ -254,6 +255,7 @@ import { ApiUpdateCompetitionRequest } from '@/api/generated/models/ApiUpdateCom
 import { ApiUpdatePinnedWaveOrder } from '@/api/generated/models/ApiUpdatePinnedWaveOrder';
 import { ApiUpdateProfilePreferences } from '@/api/generated/models/ApiUpdateProfilePreferences';
 import { ApiUpdateWaveHubRequest } from '@/api/generated/models/ApiUpdateWaveHubRequest';
+import { ApiValidateMainStageTraitsRequest } from '@/api/generated/models/ApiValidateMainStageTraitsRequest';
 import { ApiValidateProfileCmsAgentCandidateRequest } from '@/api/generated/models/ApiValidateProfileCmsAgentCandidateRequest';
 import { ApiValidateProfileCmsAgentPatchRequest } from '@/api/generated/models/ApiValidateProfileCmsAgentPatchRequest';
 import { ApiValidateProfileCmsPackageRequest } from '@/api/generated/models/ApiValidateProfileCmsPackageRequest';
@@ -4539,6 +4541,23 @@ export type ListCompetitionLeaderboardV3Request = Request<
   ApiResponse<ListCompetitionLeaderboardV3Response>,
   never,
   ListCompetitionLeaderboardV3Query,
+  Record<string, never>
+>;
+
+export interface ValidateMainStageTraitsV3PathParams {
+  "wave_id": string;
+  "competition_id": string;
+}
+
+export type ValidateMainStageTraitsV3Query = Record<string, never>;
+
+export type ValidateMainStageTraitsV3Response = ApiMainStageTraitValidation;
+
+export type ValidateMainStageTraitsV3Request = Request<
+  ValidateMainStageTraitsV3PathParams,
+  ApiResponse<ValidateMainStageTraitsV3Response>,
+  ApiValidateMainStageTraitsRequest,
+  ValidateMainStageTraitsV3Query,
   Record<string, never>
 >;
 
