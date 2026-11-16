@@ -757,7 +757,7 @@ reset behavior, and the required writer-before-collector deployment order.
 | `xTdhLoop`                       | SNS `tdh-calculation-done.fifo` or a direct post-persistence partial-TDH enqueue via SQS `xtdh-start.fifo`; self-queued stats phase | Recalculate the xTDH universe after TDH finishes, then rebuild and publish xTDH stats in a follow-up queue message.                                                                                                                                  |
 | `overRatesRevocationLoop`        | SNS `tdh-calculation-done.fifo` via SQS `over-rates-revocation-start.fifo`                                                          | Revoke over-rates after TDH changes.                                                                                                                                                                                                                 |
 | `waveScoreRefreshLoop`           | SNS `tdh-calculation-done.fifo` via SQS `wave-score-refresh-start.fifo`; SQS `wave-score-refresh-dirty.fifo`; EventBridge fallback  | Refresh materialized wave REP and Wave Score discovery fields after TDH changes or wave/drop/rating/subscription mutations.                                                                                                                          |
-| `mediaResizerLoop`               | CloudFront/request path                                                                                                             | Resize images on demand.                                                                                                                                                                                                                             |
+| `mediaResizerLoop`               | Prod: S3 website 404 routing → HTTP API. Staging: media CDN failover origin (function URL) for size paths                           | Resize images on demand.                                                                                                                                                                                                                             |
 | `nextgenMediaProxyInterceptor`   | Lambda@Edge / CloudFront request                                                                                                    | Provide NextGen metadata fallback.                                                                                                                                                                                                                   |
 | `dropVideoConversionInvokerLoop` | S3 object-created event for `drops/`                                                                                                | Invoke MediaConvert for uploaded drop videos.                                                                                                                                                                                                        |
 
@@ -2525,15 +2525,15 @@ the maintained [setup guide](drop-forge-auto-launch-setup.md) for environment va
 IAM/KMS provisioning, deployment order and rollout, and the
 [operations guide](drop-forge-auto-launch.md) for manual evidence and recovery.
 
-| Component | Responsibility |
-| -------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
-| `api` | Authorize operator requests, persist revisioned jobs/launches and publish targeted SQS messages under the SQL lock |
-| `memesDistributionHandler` | Consume `memes-distribution`; snapshot the clicking operator's EMMA inputs, process checkpoints and finalize persisted download lists |
-| `dropForgeLaunchHandler` | Consume `drop-forge-launch`; reconcile manual/automatic work, execute due actions, track signed transactions and recover exceptional failures |
-| EventBridge Scheduler | Deliver one-time future group and crash-watchdog messages to SQS; it does not sign or invoke the handlers directly |
-| MySQL | Authoritative job checkpoints, exact allocation evidence, signed-intent/nonce reservations and reporting acknowledgements |
-| Existing `transactionsLoop` | Complete creator transaction discovery, then record bounded finalized scan coverage, including empty blocks, for post-mint accounting |
-| AWS KMS | Hold the operational private key and sign digests only for the dedicated launch role |
+| Component                   | Responsibility                                                                                                                                |
+| --------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| `api`                       | Authorize operator requests, persist revisioned jobs/launches and publish targeted SQS messages under the SQL lock                            |
+| `memesDistributionHandler`  | Consume `memes-distribution`; snapshot the clicking operator's EMMA inputs, process checkpoints and finalize persisted download lists         |
+| `dropForgeLaunchHandler`    | Consume `drop-forge-launch`; reconcile manual/automatic work, execute due actions, track signed transactions and recover exceptional failures |
+| EventBridge Scheduler       | Deliver one-time future group and crash-watchdog messages to SQS; it does not sign or invoke the handlers directly                            |
+| MySQL                       | Authoritative job checkpoints, exact allocation evidence, signed-intent/nonce reservations and reporting acknowledgements                     |
+| Existing `transactionsLoop` | Complete creator transaction discovery, then record bounded finalized scan coverage, including empty blocks, for post-mint accounting         |
+| AWS KMS                     | Hold the operational private key and sign digests only for the dedicated launch role                                                          |
 
 Four Athens-time readiness schedules feed the Launch queue independently of any
 launch plan. The consumer resolves the claim through the shared mint calendar,
@@ -2631,14 +2631,14 @@ times, including DST. Later transitions become eligible one second after the pri
 phase closes, as encoded by `buildPhaseActions` in
 [`drop-forge.plan.ts`](../src/drop-forge/drop-forge.plan.ts).
 
-| Group | Eligible time | Actions |
+| Group                            | Eligible time                                                    | Actions                                                                                                                                  |
 | -------------------------------- | ---------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| Opening | Immediately after accepted Launch, before Phase 0 opens at 17:40 | Initialize, then general/artist/team and Phase 0 subscriber batches |
-| Phase 1 | 18:20:01; Phase 1 opens at 18:30 | Update claim, then Phase 1 subscriber batches |
-| Phase 2 | 18:50:01; Phase 2 opens at 19:00 | Update claim, then Phase 2 and Public subscriber batches |
-| Public | 19:20:01; public is scheduled from 19:20 | Update claim after Phase 2 closes; actual public availability follows transaction inclusion |
+| Opening                          | Immediately after accepted Launch, before Phase 0 opens at 17:40 | Initialize, then general/artist/team and Phase 0 subscriber batches                                                                      |
+| Phase 1                          | 18:20:01; Phase 1 opens at 18:30                                 | Update claim, then Phase 1 subscriber batches                                                                                            |
+| Phase 2                          | 18:50:01; Phase 2 opens at 19:00                                 | Update claim, then Phase 2 and Public subscriber batches                                                                                 |
+| Public                           | 19:20:01; public is scheduled from 19:20                         | Update claim after Phase 2 closes; actual public availability follows transaction inclusion                                              |
 | Research and optional Pay Artist | 18:00 the next day, after public closes at 17:00                 | Research tops up toward `min(310, frozen Craft edition)`; artist payment independently sends the final 50% share to the designated payee |
-| Metadata | Immediately after an accepted Craft Update Claim request | Synchronize republished metadata while preserving active phase configuration and completed allocations |
+| Metadata                         | Immediately after an accepted Craft Update Claim request         | Synchronize republished metadata while preserving active phase configuration and completed allocations                                   |
 
 Eligibility is not guaranteed block inclusion or finality. Admission budgets serial
 transactions and confirmations; new submissions stop two minutes before the action's
@@ -3314,6 +3314,7 @@ confirmations and gas ceilings. Deployment supplies the stage to API/handlers/in
 wallet/reporting identities remain in regional secrets. Launch and preparation keep
 independent environment switches and default-Off UI controls. Signed-intent recovery
 continues with launch execution Off. A receiver mismatch still blocks execution.
+
 ### NFT metadata history
 
 `nftHistoryLoop` discovers history by creator contract and verified extension events, independently of transaction sender. Claim initialization, zero-address ERC1155 mint logs (including public paid mints), URI logs, and claim updates share one ordered decoder/planner. Direct zero-value calls to the creator contracts cover eventless top-level `setTokenURI` writes. Creator-scoped claim mappings come from verified initialization receipts and historical claim state, never from an assumption that claim ID equals token ID. Scheduled ingestion starts at the verified metadata initialization. Existing baselines are preserved until a reviewed repair. Finalized blocks are processed in up to five 200-block windows per invocation, with discovery split into 20-block chunks. The checkpoint advances only after every source transaction in a block commits; retries begin at the next block and repeat all transactions of an interrupted block idempotently. Completed block prefixes survive time-budget exhaustion or later failures. A failed decode, missing earlier baseline, or metadata fetch prevents advancement past its block. Unlisted claim logs incidentally present in a mint receipt are ignored; audit-explicit unlisted logs remain failures for review. Mapping and history writes for one scheduled source transaction are atomic and insert-only for baselines.
