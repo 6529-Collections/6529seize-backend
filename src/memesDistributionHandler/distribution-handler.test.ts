@@ -1,9 +1,5 @@
 import { runPreparationJob } from './index';
 import { dropForgeJobsRepository } from '@/drop-forge/drop-forge.jobs.repository';
-import { getDropForgePolicy } from '@/drop-forge/drop-forge.policy';
-import { readForgeSettings } from '@/drop-forge/drop-forge.settings';
-import { MEMES_CONTRACT } from '@/constants';
-import { testConfig } from '@/drop-forge/drop-forge.test-fixtures';
 import * as workflow from '@/drop-forge/drop-forge.workflow';
 import * as preparation from '@/drop-forge/drop-forge.preparation';
 import { DropForgeJobEntity } from '@/entities/IDropForgeLaunch';
@@ -34,25 +30,9 @@ jest.mock('@/drop-forge/drop-forge.wake', () => ({
 jest.mock('@/redis', () => ({ evictRedisCacheForPathWithTimeout: jest.fn() }));
 
 let current: DropForgeJobEntity;
-jest.mock('@/drop-forge/drop-forge.policy');
-jest.mock('@/drop-forge/drop-forge.settings');
-const settings = {
-  id: 'settings',
-  revision: 1,
-  automation_enabled: false,
-  preparation_enabled: true,
-  pay_artist_enabled: false,
-  max_artist_payment_wei: null,
-  updated_by: null,
-  updated_at: 0
-};
 const oldSecret = process.env.JWT_SECRET;
 beforeEach(() => {
   jest.clearAllMocks();
-  jest
-    .mocked(getDropForgePolicy)
-    .mockReturnValue({ ...testConfig, chainId: 1, creator: MEMES_CONTRACT });
-  jest.mocked(readForgeSettings).mockResolvedValue(settings);
   process.env.JWT_SECRET = 'worker-preparation-test-secret';
   current = Object.assign(new DropForgeJobEntity(), {
     id: 'job',
@@ -76,8 +56,8 @@ beforeEach(() => {
   );
   jest
     .spyOn(dropForgeJobsRepository, 'processOne')
-    .mockImplementation(async (operation, _ctx, _id, shouldProcess) => {
-      if (shouldProcess && !(await shouldProcess({}))) return false;
+    .mockImplementation(async (operation) => {
+      if (current.status !== 'PENDING') return false;
       const result = (await operation(current, {})) as { continue?: boolean };
       current.result = result;
       current.status = result.continue ? 'PENDING' : 'COMPLETED';
@@ -136,6 +116,7 @@ it('does not require EMMA authentication for finalization or public subscription
   await runPreparationJob({ id: current.id, revision: 1 });
   expect(finalize).toHaveBeenCalledTimes(1);
   current.kind = 'PHASE';
+  current.status = 'PENDING';
   current.phase_id = 'public';
   const prepare = jest
     .spyOn(preparation, 'prepareDistributionPhase')
@@ -155,32 +136,12 @@ it('does not require EMMA authentication for finalization or public subscription
     expect.anything()
   );
 });
-it('does no processing while the preparation switch is disabled', async () => {
-  jest.mocked(readForgeSettings).mockResolvedValue({
-    ...settings,
-    preparation_enabled: false
-  });
-  await expect(
-    runPreparationJob({ id: current.id, revision: 1 })
-  ).resolves.toBeUndefined();
-  expect(dropForgeJobsRepository.processOne).not.toHaveBeenCalled();
-});
-it('finishes the current step and stops publishing continuations after preparation is turned Off', async () => {
-  jest
-    .mocked(readForgeSettings)
-    .mockResolvedValueOnce(settings)
-    .mockResolvedValueOnce(settings)
-    .mockResolvedValue({ ...settings, preparation_enabled: false });
+it('ignores a queued delivery after subscriptions are reset', async () => {
+  current.status = 'FAILED';
+  current.error = 'Distribution reset; process again';
   await runPreparationJob({ id: current.id, revision: 1 });
-  expect(workflow.processStep).toHaveBeenCalledTimes(1);
-  expect(current.status).toBe('PENDING');
+  expect(workflow.processStep).not.toHaveBeenCalled();
   expect(wakeDropForge).not.toHaveBeenCalled();
-});
-it('retries a resume delivery that arrived before the enabling settings committed', async () => {
-  await expect(
-    runPreparationJob({ id: current.id, revision: 1, preparation_revision: 2 })
-  ).rejects.toThrow('settings have not committed');
-  expect(dropForgeJobsRepository.processOne).not.toHaveBeenCalled();
 });
 it('ignores a stale checkpoint watchdog and rejects delivery before the dispatch commit', async () => {
   current.step = 2;

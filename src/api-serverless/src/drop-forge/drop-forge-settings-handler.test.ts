@@ -24,9 +24,8 @@ jest.mock('@/drop-forge/drop-forge.settings', () => ({
 jest.mock('@/ethereum-rpc/ethereum-rpc-provider');
 
 const request = (body: object) => ({ body }) as Request;
-const preparationOnly = {
+const readOnlyAccess = {
   can_edit: false,
-  can_edit_preparation: true,
   can_top_up: true
 };
 
@@ -34,12 +33,11 @@ beforeEach(() => {
   jest.clearAllMocks();
   jest.mocked(getAuthenticatedWalletOrNull).mockReturnValue(testConfig.signer);
   jest.mocked(getDropForgeConfig).mockReturnValue(testConfig);
-  jest.mocked(forgeSettingsAccess).mockResolvedValue(preparationOnly);
+  jest.mocked(forgeSettingsAccess).mockResolvedValue(readOnlyAccess);
   jest.mocked(readForgeSettings).mockResolvedValue({
     id: 'settings',
     revision: 1,
     automation_enabled: false,
-    preparation_enabled: true,
     pay_artist_enabled: false,
     max_artist_payment_wei: null,
     updated_by: testConfig.signer,
@@ -57,31 +55,17 @@ it('returns the configured operations wave in the automation settings', async ()
   });
 });
 
-it('permits a distribution administrator to update preparation independently', async () => {
-  const body = { revision: 0, preparation_enabled: true };
-  expect(await putDropForgeSettings(request(body))).toMatchObject({
-    preparation_enabled: true,
-    ...preparationOnly
-  });
-  expect(updateForgeSettings).toHaveBeenCalledWith(
-    testConfig,
-    testConfig.signer,
-    body
-  );
-});
-
 it.each([
   { automation_enabled: false },
   { pay_artist_enabled: false },
   { max_artist_payment_eth: null }
 ])(
-  'rejects a preparation edit combined with a restricted field (%j)',
+  'rejects a settings edit from a read-only administrator (%j)',
   async (restricted) => {
     await expect(
       putDropForgeSettings(
         request({
           revision: 0,
-          preparation_enabled: true,
           ...restricted
         })
       )
@@ -90,13 +74,16 @@ it.each([
   }
 );
 
-it('rejects a preparation edit from a read-only on-chain admin', async () => {
+it('lets a claims administrator update launch settings', async () => {
   jest.mocked(forgeSettingsAccess).mockResolvedValue({
-    ...preparationOnly,
-    can_edit_preparation: false
+    ...readOnlyAccess,
+    can_edit: true
   });
-  await expect(
-    putDropForgeSettings(request({ revision: 0, preparation_enabled: true }))
-  ).rejects.toThrow('preparation settings access');
-  expect(updateForgeSettings).not.toHaveBeenCalled();
+  const body = { revision: 0, automation_enabled: true };
+  await putDropForgeSettings(request(body));
+  expect(updateForgeSettings).toHaveBeenCalledWith(
+    testConfig,
+    testConfig.signer,
+    body
+  );
 });

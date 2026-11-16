@@ -248,11 +248,10 @@ the clicking administrator's authorization, encrypted for the durable job. **No
 EMMA service-account token or new encryption secret needs prepopulation.** Existing
 EMMA endpoint configuration and the operator's upstream permissions still apply.
 
-Initially set both execution flags to `false`; the two persisted UI toggles
-also default Off. The preparation switch is independent of launch. Turning launch
-execution Off prevents new scheduled transactions, while queued signed intents
-continue receipt/replacement/cancellation reconciliation without a separate recovery
-flag. Reviewed fresh-nonce retries still require launch execution to be enabled.
+Automatic launch and automatic artist payment default Off. Turning automatic
+launch Off prevents new scheduled transactions while queued signed intents
+continue receipt, replacement and cancellation reconciliation. Reviewed
+fresh-nonce retries still require Automatic launch to be enabled.
 
 ## 6. Deploy disabled, then observe without contract-admin permission
 
@@ -329,8 +328,8 @@ automation mentions; existing `@devs6529` subscription alerts are unchanged.
 Apply monitoring artifacts generated from the same reviewed revision. Both handlers
 must appear in the production/staging policy inventory without an idle polling interval;
 keep their handler DLQ alarms enabled when applying the shared monitoring updates.
-Initially keep preparation and automation disabled. The four recurring readiness
-checks operate independently. Process and Finalize and Launch/Update Claim enqueue
+Initially keep Automatic launch and automatic artist payment disabled. The four
+recurring readiness checks operate independently. Process and Finalize and Launch/Update Claim enqueue
 work immediately;
 Launch establishes per-drop one-time phase/Research schedules. Short continuations
 exist only while checkpoints, reports or receipts are outstanding. The
@@ -361,19 +360,16 @@ On a DLQ alarm, inspect the exact message and ledger, fix authorization/network/
 configuration, then use SQS **Start DLQ redrive** to its original queue. Redrive does
 not authorize repeating airdrops or releasing a nonce. Inspect both handler DLQs,
 Lambda errors and Scheduler delivery metrics; never delete an uncertain transaction
-record. For distributions with no preparation yet, Off shows the original
-subscription downloads and Finalize Distribution. Jobs remain saved at their
-checkpoints.
-Turn the setting back On to resume a pending job, or use Reset Subscriptions
-after the current step ends to restart that claim manually.
+record. Background jobs remain saved at their checkpoints. Use Reset
+Subscriptions after the current step ends to restart preparation for that claim.
 
 For the observation rollout:
 
 1. Configure and verify all IDs, IAM permissions, KMS binding and limits.
-2. Finalize the distribution in EMMA, then publish Craft. With **EMMA
-   preparation** Off, new distributions use the three phase downloads, Public
-   Subscriptions, and Finalize Distribution. With it On, new distributions use
-   Process and Finalize. Continue existing distributions in their saved mode.
+2. In EMMA, confirm the token ID, then choose **Prepare manually** to use the
+   three phase downloads, Public Subscriptions and Finalize Distribution, or
+   **Process and Finalize** for background preparation. Continue started
+   distributions in their saved mode. Publish Craft once preparation is finalized.
 3. Turn on **Automatic launch** while **withholding on-chain creator-admin permission
    from the KMS wallet**, then click **Launch** before the mint window. Backend
    operator authorization is a separate requirement.
@@ -417,17 +413,15 @@ mean that the transaction disappeared or should be sent again with a fresh nonce
 
 ## 8. Configure the Launch Automation panel
 
-The three switches start Off and the payout limit starts empty for each
-environment's chain and creator. The creator owner and `CLAIMS_ADMIN_WALLETS`
-can edit all four controls. `DISTRIBUTION_ADMIN_WALLETS` can also edit EMMA
-preparation. All Drop Forge administrators can view the settings and use Top
-Up ETH. The creator owner manages contract administrators on chain.
+Automatic launch and automatic artist payment start Off, with an empty payout
+limit for each environment's chain and creator. The creator owner and
+`CLAIMS_ADMIN_WALLETS` can edit these settings. All Drop Forge administrators
+can view the settings and use Top Up ETH. The creator owner manages contract
+administrators on chain.
 
 Automatic launch Off keeps accepted plans, scheduled reports and transaction
-reconciliation active. Due actions report why they were skipped. EMMA preparation
-Off blocks new requests and pauses pending jobs at the next checkpoint. On
-resumes pending jobs. These settings are stored in SQL and can be changed from
-the hub.
+reconciliation active. Due actions report why they were skipped. Distribution
+administrators choose preparation in EMMA for each plan.
 
 Set a positive **Maximum ETH per payout** before turning on **Automatic artist
 payment**. Turn payments Off before clearing the limit. Cap changes apply to

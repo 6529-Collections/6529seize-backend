@@ -1,11 +1,15 @@
 import * as emma from '@/api/subscriptions/api.subscriptions.allowlist';
 import { randomUUID } from 'node:crypto';
+import { DROP_FORGE_JOBS_TABLE } from '@/constants';
 import { DropForgeJobEntity } from '@/entities/IDropForgeLaunch';
 import { createProcess, processStep } from '@/drop-forge/drop-forge.workflow';
 import { dropForgeJobsRepository } from '@/drop-forge/drop-forge.jobs.repository';
 import * as preparation from '@/drop-forge/drop-forge.preparation';
 import { clearDropForgeTestTables } from '@/drop-forge/drop-forge.db-test-fixtures';
-import { resetDistributionPreparation } from '@/drop-forge/drop-forge.preparation.repository';
+import {
+  dropForgePreparationRepository,
+  resetDistributionPreparation
+} from '@/drop-forge/drop-forge.preparation.repository';
 import { testConfig } from '@/drop-forge/drop-forge.test-fixtures';
 import { sqlExecutor } from '@/sql-executor';
 import {
@@ -130,9 +134,6 @@ it('pauses for expired operator access and resumes the same job without replayin
   expect(waiting.status).toBe('AWAITING_AUTH');
   expect(waiting.encrypted_auth).toBeNull();
   expect(waiting.step).toBe(0);
-  await expect(
-    resetDistributionPreparation(testConfig.creator, 1, async () => {}, {})
-  ).rejects.toThrow('in progress');
   const resumed = await createProcess(job(), {}, 'Bearer fresh-token');
   expect(resumed.id).toBe(first.id);
   expect(resumed.status).toBe('PENDING');
@@ -160,11 +161,12 @@ it('pauses for expired operator access and resumes the same job without replayin
     checkpoint
   );
 });
-it('rejects resetting inputs while processing and exposes a failed outcome without completing', async () => {
+it('exposes a failed outcome without completing', async () => {
   const first = await createProcess(job(), {}, 'Bearer operator-token');
-  await expect(
-    resetDistributionPreparation(testConfig.creator, 1, async () => {}, {})
-  ).rejects.toThrow('in progress');
+  await dropForgeJobsRepository.processOne(
+    (next, ctx) => processStep(next, 'auth', ctx),
+    {}
+  );
   jest
     .spyOn(preparation, 'prepareDistributionPhase')
     .mockRejectedValue(new Error('EMMA unavailable'));
@@ -178,4 +180,36 @@ it('rejects resetting inputs while processing and exposes a failed outcome witho
   expect(
     (await dropForgeJobsRepository.find(first.id, {})).encrypted_auth
   ).toBeNull();
+});
+
+it('rejects a reset during a worker step and accepts it after the job lock is released', async () => {
+  const input = job();
+  const first = await createProcess(input, {}, 'Bearer operator-token');
+  const reset = jest.fn().mockResolvedValue(undefined);
+  await sqlExecutor.executeNativeQueriesInTransaction(async (connection) => {
+    await sqlExecutor.execute(
+      `SELECT id FROM ${DROP_FORGE_JOBS_TABLE} WHERE id = :id FOR UPDATE`,
+      { id: first.id },
+      { wrappedConnection: connection }
+    );
+    await expect(
+      resetDistributionPreparation(testConfig.creator, 1, reset)
+    ).rejects.toMatchObject({
+      message:
+        'Distribution processing is finishing a step; retry the reset shortly'
+    });
+  });
+  expect(reset).not.toHaveBeenCalled();
+
+  await resetDistributionPreparation(testConfig.creator, 1, reset);
+  expect(reset).toHaveBeenCalledTimes(1);
+  await expect(
+    createProcess(input, {}, 'Bearer operator-token')
+  ).rejects.toThrow('Distribution was reset');
+  await expect(
+    dropForgePreparationRepository.readMode(first.contract, first.claim_id)
+  ).resolves.toBe('UNSTARTED');
+  const next = await createProcess(job(), {}, 'Bearer operator-token');
+  expect(next.id).not.toBe(first.id);
+  expect(next.status).toBe('PENDING');
 });

@@ -12,7 +12,6 @@ export interface ForgeDelivery {
   id: string;
   revision: number;
   step?: number;
-  preparation_revision?: number;
 }
 export const forgeQueueName = (preparation = false) =>
   preparation ? 'memes-distribution' : 'drop-forge-launch';
@@ -82,18 +81,9 @@ export function parseForgeDelivery(body: string): ForgeDelivery {
     (!Number.isSafeInteger(value.step) || value.step < 0)
   )
     throw new LaunchSafetyError('Invalid preparation checkpoint');
-  if (
-    value.preparation_revision !== undefined &&
-    (!Number.isSafeInteger(value.preparation_revision) ||
-      value.preparation_revision < 1)
-  )
-    throw new LaunchSafetyError('Invalid preparation settings revision');
   return {
     id: value.id,
     revision: value.revision,
-    ...(value.step === undefined ? {} : { step: value.step }),
-    ...(value.preparation_revision === undefined
-      ? {}
-      : { preparation_revision: value.preparation_revision })
+    ...(value.step === undefined ? {} : { step: value.step })
   };
 }

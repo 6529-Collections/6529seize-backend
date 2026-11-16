@@ -1,6 +1,6 @@
 import { needsDropForgeCoverage } from '@/transactions/transaction-scan-checkpoint';
 import { sqlExecutor } from '@/sql-executor';
-import { DROP_FORGE_JOBS_TABLE, DROP_FORGE_SETTINGS_TABLE } from '@/constants';
+import { DROP_FORGE_SETTINGS_TABLE } from '@/constants';
 import { clearDropForgeTestTables } from '@/drop-forge/drop-forge.db-test-fixtures';
 import {
   dropForgeRepository,
@@ -14,8 +14,6 @@ import {
   readForgeSettings,
   updateForgeSettings
 } from '@/drop-forge/drop-forge.settings';
-import { wakeDropForge } from '@/drop-forge/drop-forge.wake';
-import { dropForgeJobsRepository } from '@/drop-forge/drop-forge.jobs.repository';
 import { LaunchRevisionConflict } from '@/drop-forge/drop-forge.types';
 
 beforeEach(clearDropForgeTestTables);
@@ -26,7 +24,6 @@ it('defaults all switches off and leaves the cap unset for an unconfigured envir
     revision: 0,
     automation_enabled: false,
     pay_artist_enabled: false,
-    preparation_enabled: false,
     max_artist_payment_wei: null,
     updated_by: null
   });
@@ -128,25 +125,4 @@ it('requires a positive payment cap before enabling payments', async () => {
     })
   ).rejects.toThrow('payment limit');
   expect((await readForgeSettings(testConfig)).revision).toBe(0);
-});
-
-it('wakes pending EMMA jobs at their saved checkpoint when preparation is re-enabled', async () => {
-  const id = '11111111-1111-4111-8111-111111111111';
-  await sqlExecutor.execute(
-    `INSERT INTO ${DROP_FORGE_JOBS_TABLE} (id, dispatch_revision, contract, claim_id, kind, status, step, updated_at) VALUES (:id, 1, :contract, 1, 'PROCESS_ALL', 'PENDING', 2, 0)`,
-    { id, contract: testConfig.creator }
-  );
-  await updateForgeSettings(testConfig, testConfig.signer, {
-    revision: 0,
-    preparation_enabled: true
-  });
-  expect(wakeDropForge).toHaveBeenCalledWith(
-    { id, revision: 1, preparation_revision: 1 },
-    true
-  );
-  expect(await dropForgeJobsRepository.find(id, {})).toMatchObject({
-    dispatch_revision: 1,
-    step: 2,
-    status: 'PENDING'
-  });
 });

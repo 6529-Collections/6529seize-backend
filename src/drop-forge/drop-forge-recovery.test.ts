@@ -26,7 +26,6 @@ jest.mock('@/drop-forge/drop-forge.settings', () => ({
     revision: 1,
     automation_enabled: true,
     pay_artist_enabled: true,
-    preparation_enabled: false,
     max_artist_payment_wei: '1000000000000000000',
     updated_by: null,
     updated_at: 0
