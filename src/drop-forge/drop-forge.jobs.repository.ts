@@ -1,4 +1,7 @@
-import { DROP_FORGE_JOBS_TABLE } from '@/constants';
+import {
+  DROP_FORGE_JOBS_TABLE,
+  DROP_FORGE_PREPARATIONS_TABLE
+} from '@/constants';
 import { DropForgeJobEntity } from '@/entities/IDropForgeLaunch';
 import { LaunchSafetyError } from '@/drop-forge/drop-forge.types';
 import { RequestContext } from '@/request.context';
@@ -21,6 +24,8 @@ function retainedAuthorization(
     return null;
   return job.encrypted_auth ?? null;
 }
+
+export const resetJobError = 'Distribution reset; process again';
 
 export class DropForgeJobsRepository {
   async reportOne(
@@ -80,8 +85,22 @@ export class DropForgeJobsRepository {
     ctx.timer?.start(timer);
     try {
       return await sqlExecutor.oneOrNull<DropForgeJobEntity>(
-        `SELECT * FROM ${DROP_FORGE_JOBS_TABLE} WHERE contract = :contract AND claim_id = :claim AND kind = 'PROCESS_ALL' ${plan ? 'AND plan_id = :plan' : ''} ORDER BY updated_at DESC, id DESC LIMIT 1`,
-        { contract: contract.toLowerCase(), claim, plan: plan ?? null },
+        `SELECT * FROM ${DROP_FORGE_JOBS_TABLE}
+         WHERE contract = :contract AND claim_id = :claim AND kind = 'PROCESS_ALL'
+           AND (error IS NULL OR error <> :resetJobError)
+           AND NOT EXISTS (
+             SELECT 1 FROM ${DROP_FORGE_PREPARATIONS_TABLE}
+             WHERE id = :preparationId AND mode IN ('UNSTARTED', 'MANUAL')
+           )
+           ${plan ? 'AND plan_id = :plan' : ''}
+         ORDER BY updated_at DESC, id DESC LIMIT 1`,
+        {
+          contract: contract.toLowerCase(),
+          claim,
+          plan: plan ?? null,
+          preparationId: `${contract.toLowerCase()}:${claim}`,
+          resetJobError
+        },
         { wrappedConnection: ctx.connection, forcePool: DbPoolName.WRITE }
       );
     } finally {

@@ -126,12 +126,16 @@ export async function prepareDistributionPhase(
 export async function finalizeDistribution(
   contract: string,
   claim: number,
-  ctx: RequestContext = {}
+  ctx: RequestContext = {},
+  manual = false
 ): Promise<void> {
   await dropForgePreparationRepository.run(
     contract,
     claim,
     async (_, txCtx) => populateDistributionNormalized(contract, claim, txCtx),
-    ctx
+    ctx,
+    false,
+    false,
+    manual ? 'MANUAL' : undefined
   );
 }

@@ -110,7 +110,9 @@ export async function createProcess(
       return dropForgeJobsRepository.create(job, txCtx);
     },
     ctx,
-    true
+    true,
+    false,
+    'BACKGROUND'
   );
 }
 export async function processStep(

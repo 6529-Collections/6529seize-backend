@@ -394,13 +394,17 @@ receipt reconciliation active. The handler reports due disabled actions once
 per settings revision without marking the action completed. Turning it on wakes
 active claims, and actions still within their windows can execute.
 
-EMMA preparation controls Process and Finalize independently. Off restores
-the original subscription downloads and Finalize Distribution. A running step
-can finish before the job pauses at its saved checkpoint. Turning the setting
-back On wakes pending jobs. A job waiting for EMMA authentication still needs
-the operator to sign in and resume it. Reset Subscriptions can clear a paused
-job when switching that claim to manual preparation. Craft Launch validates
-the finalized allocations and minting proofs in either preparation mode.
+EMMA preparation selects the controls for distributions that have not started.
+A distribution keeps its mode once a manual phase or finalization succeeds, or
+when its background job is created. Saved phase work and existing jobs also
+establish the mode for older distributions. Artist and team uploads can happen
+in either mode. Started manual distributions keep their original subscription
+downloads and Finalize Distribution. Started background jobs stay visible.
+Off pauses them after the current step, and On wakes pending jobs. A job waiting
+for authentication needs an operator to sign in and resume. Reset Subscriptions
+clears preparation and lets the distribution use the current setting. Turn
+preparation Off before resetting a pending background job. Craft Launch
+validates the finalized allocations and minting proofs in either mode.
 
 Automatic artist payment defaults Off. At 18:00 Europe/Athens the following day,
 its independent action checks the current settings, exact manual payment evidence,

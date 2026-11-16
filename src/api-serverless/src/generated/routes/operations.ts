@@ -125,6 +125,7 @@ import { ApiDropForgeListPage } from '@/api/generated/models/ApiDropForgeListPag
 import { ApiDropForgeManualRequest } from '@/api/generated/models/ApiDropForgeManualRequest';
 import { ApiDropForgeManualResponse } from '@/api/generated/models/ApiDropForgeManualResponse';
 import { ApiDropForgePlanRequest } from '@/api/generated/models/ApiDropForgePlanRequest';
+import { ApiDropForgePreparation } from '@/api/generated/models/ApiDropForgePreparation';
 import { ApiDropForgeRecoveryRequest } from '@/api/generated/models/ApiDropForgeRecoveryRequest';
 import { ApiDropForgeSettings } from '@/api/generated/models/ApiDropForgeSettings';
 import { ApiDropForgeSettingsRequest } from '@/api/generated/models/ApiDropForgeSettingsRequest';
@@ -1675,6 +1676,23 @@ export type GetDropForgeCompletedListRequest = Request<
   ApiResponse<GetDropForgeCompletedListResponse>,
   never,
   GetDropForgeCompletedListQuery,
+  Record<string, never>
+>;
+
+export interface GetDropForgePreparationPathParams {
+  "contract": string;
+  "claim_id": number;
+}
+
+export type GetDropForgePreparationQuery = Record<string, never>;
+
+export type GetDropForgePreparationResponse = ApiDropForgePreparation;
+
+export type GetDropForgePreparationRequest = Request<
+  GetDropForgePreparationPathParams,
+  ApiResponse<GetDropForgePreparationResponse>,
+  never,
+  GetDropForgePreparationQuery,
   Record<string, never>
 >;
 

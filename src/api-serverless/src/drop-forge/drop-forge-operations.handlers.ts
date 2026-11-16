@@ -12,6 +12,7 @@ import {
   getDropForgeConfig,
   launchConfigured
 } from '@/drop-forge/drop-forge.config';
+import { dropForgePreparationRepository } from '@/drop-forge/drop-forge.preparation.repository';
 import { dropForgeJobsRepository } from '@/drop-forge/drop-forge.jobs.repository';
 import { decodeProcessResult } from '@/drop-forge/drop-forge.workflow';
 import { mapJob } from '@/api/drop-forge/drop-forge.handlers';
@@ -28,9 +29,11 @@ import {
   UpdateDropForgeMetadataRequest,
   CoordinateDropForgeManualActionRequest,
   GetLatestDropForgeProcessRequest,
+  GetDropForgePreparationRequest,
   GetDropForgeCompletedListRequest
 } from '@/api/generated/routes/operations';
 import { ApiDropForgeLaunch } from '@/api/generated/models/ApiDropForgeLaunch';
+import { ApiDropForgePreparation } from '@/api/generated/models/ApiDropForgePreparation';
 import { ApiDropForgeJob } from '@/api/generated/models/ApiDropForgeJob';
 import { ApiDropForgeManualRequest } from '@/api/generated/models/ApiDropForgeManualRequest';
 import { ApiDropForgeManualResponse } from '@/api/generated/models/ApiDropForgeManualResponse';
@@ -135,6 +138,18 @@ export async function coordinateDropForgeManualAction(
       )
     };
   });
+}
+export async function getDropForgePreparation(
+  req: GetDropForgePreparationRequest
+): Promise<ApiDropForgePreparation> {
+  if (!authenticateSubscriptionsAdmin(req))
+    throw new ForbiddenException('Distribution administrator access required');
+  const { contract, claim_id } = getValidatedByJoiOrThrow(req.params, params);
+  const mode = await dropForgePreparationRepository.readMode(
+    contract,
+    claim_id
+  );
+  return { mode: mode as ApiDropForgePreparation['mode'] };
 }
 export async function getLatestDropForgeProcess(
   req: GetLatestDropForgeProcessRequest
