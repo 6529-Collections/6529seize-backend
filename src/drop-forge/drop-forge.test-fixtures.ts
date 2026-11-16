@@ -1,4 +1,4 @@
-import { Wallet } from 'ethers';
+import { parseUnits, Wallet } from 'ethers';
 import { DropForgeConfig } from '@/drop-forge/drop-forge.config';
 import {
   LaunchSource,
@@ -19,7 +19,7 @@ export const testConfig: DropForgeConfig = {
   botId: 'test-bot',
   recipientIds: ['test-admin'],
   confirmations: 12,
-  maxFee: BigInt(100000000000),
+  maxFee: parseUnits('100', 'gwei'),
   maxGas: BigInt(10000000),
   maxCost: BigInt(1000000000000000000)
 };

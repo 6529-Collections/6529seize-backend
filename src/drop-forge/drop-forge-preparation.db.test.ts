@@ -1,6 +1,6 @@
 import * as policy from '@/drop-forge/drop-forge.policy';
 import { randomUUID } from 'crypto';
-import { DROP_FORGE_PREPARATIONS_TABLE } from '@/constants';
+import { DISTRIBUTION_TABLE, DROP_FORGE_PREPARATIONS_TABLE } from '@/constants';
 import {
   dropForgePreparationRepository,
   resetDistributionPreparation
@@ -53,6 +53,74 @@ describe('Drop Forge preparation durability', () => {
     expect(writes).toBe(1);
     expect(await prepared()).toEqual({ phase: result });
   });
+  it('keeps a preparation mode across competing requests until reset', async () => {
+    const start = (mode: 'MANUAL' | 'BACKGROUND', operation = async () => {}) =>
+      dropForgePreparationRepository.run(
+        contract,
+        1,
+        operation,
+        {},
+        false,
+        false,
+        mode
+      );
+    let entered!: () => void;
+    let release!: () => void;
+    const waiting = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const locked = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const manual = start('MANUAL', async () => {
+      entered();
+      await locked;
+    });
+    await Promise.race([waiting, manual]);
+    const refused = expect(start('BACKGROUND')).rejects.toThrow(
+      'using manual preparation'
+    );
+    release();
+    await manual;
+    await refused;
+    await expect(
+      dropForgePreparationRepository.readMode(contract, 1)
+    ).resolves.toBe('MANUAL');
+    await resetDistributionPreparation(contract, 1, async () => {});
+    await expect(
+      dropForgePreparationRepository.readMode(contract, 1)
+    ).resolves.toBe('UNSTARTED');
+    await start('BACKGROUND');
+    await expect(start('MANUAL')).rejects.toThrow(
+      'using background preparation'
+    );
+  });
+
+  it('recognizes legacy phase writes and treats an artist upload as unstarted', async () => {
+    const insert = (phase: string) =>
+      sqlExecutor.execute(
+        `INSERT INTO ${DISTRIBUTION_TABLE}
+        (contract, card_id, phase, wallet, wallet_tdh, wallet_balance, wallet_unique_balance, count, count_airdrop, count_allowlist)
+        VALUES (:contract, 1, :phase, :wallet, 0, 0, 0, 1, 1, 0)`,
+        { contract, phase, wallet: testConfig.signer }
+      );
+    try {
+      await insert('Airdrop - Artist');
+      await expect(
+        dropForgePreparationRepository.readMode(contract, 1)
+      ).resolves.toBe('UNSTARTED');
+      await insert('Phase 0');
+      await expect(
+        dropForgePreparationRepository.readMode(contract, 1)
+      ).resolves.toBe('MANUAL');
+    } finally {
+      await sqlExecutor.execute(
+        `DELETE FROM ${DISTRIBUTION_TABLE} WHERE contract = :contract AND card_id = 1 AND wallet = :wallet`,
+        { contract, wallet: testConfig.signer }
+      );
+    }
+  });
+
   it('rolls back a job’s partial writes while recording a durable failure', async () => {
     const id = randomUUID();
     const job = Object.assign(new DropForgeJobEntity(), {
@@ -160,9 +228,18 @@ it('lets an operator explicitly reset a paused preparation while the setting is 
     }),
     {}
   );
+  await expect(
+    dropForgePreparationRepository.readMode(job.contract, job.claim_id)
+  ).resolves.toBe('BACKGROUND');
   const reset = jest.fn().mockResolvedValue(undefined);
   await resetDistributionPreparation(job.contract, job.claim_id, reset);
   expect(reset).toHaveBeenCalledTimes(1);
+  await expect(
+    dropForgePreparationRepository.readMode(job.contract, job.claim_id)
+  ).resolves.toBe('UNSTARTED');
+  await expect(
+    dropForgeJobsRepository.latest(job.contract, job.claim_id, 'plan', {})
+  ).resolves.toBeNull();
   await expect(dropForgeJobsRepository.find(job.id, {})).resolves.toMatchObject(
     {
       status: 'FAILED',

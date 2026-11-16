@@ -1,3 +1,4 @@
+import { parseUnits } from 'ethers';
 import {
   MANIFOLD_LAZY_CLAIM_CONTRACT,
   MEMES_CONTRACT,
@@ -21,7 +22,7 @@ export function findDropForgePolicy() {
     proxy: MANIFOLD_LAZY_CLAIM_CONTRACT,
     receiver: MEMES_DEPLOYER,
     confirmations: 12,
-    maxFee: BigInt('100000000000'),
+    maxFee: parseUnits('100', 'gwei'),
     maxGas: BigInt('5000000'),
     maxCost: BigInt('100000000000000000')
   };

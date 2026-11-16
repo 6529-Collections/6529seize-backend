@@ -30,14 +30,19 @@ export class DropForgeSignerEntity {
     | null;
 }
 
+export type DropForgePreparationMode = 'UNSTARTED' | 'MANUAL' | 'BACKGROUND';
+
 @Entity(DROP_FORGE_PREPARATIONS_TABLE)
 export class DropForgePreparationEntity {
   @PrimaryColumn({ type: 'varchar', length: 64 }) id!: string;
   @Column({ type: 'json' }) results!: object;
+  @Column({ type: 'varchar', length: 16, nullable: true })
+  mode!: DropForgePreparationMode | null;
 }
 
 @Entity(DROP_FORGE_JOBS_TABLE)
 @Index('drop_forge_job_status_idx', ['status', 'updated_at'])
+@Index('drop_forge_job_claim_status_idx', ['contract', 'claim_id', 'status'])
 export class DropForgeJobEntity {
   @PrimaryColumn({ type: 'varchar', length: 36 }) id!: string;
   @Column({ type: 'int', default: 0 }) dispatch_revision!: number;

@@ -1,3 +1,4 @@
+import { dropForgePreparationRepository } from '@/drop-forge/drop-forge.preparation.repository';
 import * as Joi from 'joi';
 import { getAuthenticatedWalletOrNull } from '@/api/auth/auth';
 import { ApiDropForgeLaunch } from '@/api/generated/models/ApiDropForgeLaunch';
@@ -246,16 +247,26 @@ async function createLegacyPreparationJob(
   authorization: string,
   timer: Timer
 ): Promise<DropForgeJobEntity> {
-  if (job.kind === 'PHASE' && job.phase_id !== 'public')
-    job.encrypted_auth = encryptPreparationAuth(job, authorization);
-  const saved = await dropForgeJobsRepository.create(job, { timer });
-  if (saved.status === 'AWAITING_AUTH')
-    return dropForgeJobsRepository.resumeAuthentication(
-      saved,
-      encryptPreparationAuth(saved, authorization),
-      { timer }
-    );
-  return saved;
+  return dropForgePreparationRepository.run(
+    job.contract,
+    job.claim_id,
+    async (_, ctx) => {
+      if (job.kind === 'PHASE' && job.phase_id !== 'public')
+        job.encrypted_auth = encryptPreparationAuth(job, authorization);
+      const saved = await dropForgeJobsRepository.create(job, ctx);
+      if (saved.status === 'AWAITING_AUTH')
+        return dropForgeJobsRepository.resumeAuthentication(
+          saved,
+          encryptPreparationAuth(saved, authorization),
+          ctx
+        );
+      return saved;
+    },
+    { timer },
+    false,
+    false,
+    'BACKGROUND'
+  );
 }
 export async function getDropForgeDistributionJob(
   req: GetDropForgeDistributionJobRequest

@@ -363,7 +363,7 @@ router.post(
     }
     const { contract, cardId } = params;
 
-    await finalizeDistribution(contract, cardId);
+    await finalizeDistribution(contract, cardId, {}, true);
 
     await invalidateDistributionOverviewCache(contract, cardId);
 

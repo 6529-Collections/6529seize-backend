@@ -839,7 +839,10 @@ router.get(
         contract,
         tokenId,
         (_, ctx) => getPublicSubscriptions(contract, tokenId, ctx),
-        { timer: allowlistTimer }
+        { timer: allowlistTimer },
+        false,
+        false,
+        'MANUAL'
       );
       allowlistTimer.stop('getPublicSubscriptions');
       allowlistLogger.info(
@@ -879,7 +882,10 @@ router.get(
           );
           return allocations;
         },
-        { timer: allowlistTimer }
+        { timer: allowlistTimer },
+        false,
+        false,
+        'MANUAL'
       );
 
       allowlistTimer.start('invalidateMintingClaimsPhaseCache');
@@ -948,6 +954,13 @@ router.post(
 
     resetTimer.start('resetAllowlist');
     await resetAllowlist(contract, tokenId);
+    await evictCacheWithContextLogging(
+      `[contract ${contract}] [token_id ${tokenId}]`,
+      {
+        label: 'subscription-lists',
+        path: `/api/subscriptions/allowlists/${contract}/${tokenId}/`
+      }
+    );
     resetTimer.stop('resetAllowlist');
     allowlistLogger.info(
       `[RESET_ALLOWLIST_DONE] [contract ${contract}] [token_id ${tokenId}] [allowlist_id ${allowlistId}] [${resetTimer.getReport()}]`
