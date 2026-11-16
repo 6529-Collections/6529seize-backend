@@ -25,6 +25,10 @@ export class ApiDropForgeSettings {
     'can_top_up': boolean;
     'chain_id': number;
     'contract': string;
+    /**
+    * Wave where Drop Forge posts operational updates.
+    */
+    'operations_wave_id'?: string;
     'signer_address': string;
     'ens_name': string | null;
     'balance_wei': string | null;
@@ -105,6 +109,12 @@ export class ApiDropForgeSettings {
             "baseName": "contract",
             "type": "string",
             "format": ""
+        },
+        {
+            "name": "operations_wave_id",
+            "baseName": "operations_wave_id",
+            "type": "string",
+            "format": "uuid"
         },
         {
             "name": "signer_address",

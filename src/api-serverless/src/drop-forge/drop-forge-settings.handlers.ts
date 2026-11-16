@@ -64,6 +64,7 @@ export async function getDropForgeSettings(
       ...access,
       chain_id: config.chainId,
       contract: config.creator,
+      operations_wave_id: config.waveId,
       signer_address: config.signer,
       ens_name: ens,
       balance_wei: typeof balance === 'bigint' ? balance.toString() : null

@@ -1,5 +1,8 @@
 import { Request } from 'express';
-import { putDropForgeSettings } from '@/api/drop-forge/drop-forge-settings.handlers';
+import {
+  getDropForgeSettings,
+  putDropForgeSettings
+} from '@/api/drop-forge/drop-forge-settings.handlers';
 import { getAuthenticatedWalletOrNull } from '@/api/auth/auth';
 import { getDropForgeConfig } from '@/drop-forge/drop-forge.config';
 import { forgeSettingsAccess } from '@/drop-forge/drop-forge.access';
@@ -46,6 +49,12 @@ beforeEach(() => {
     getBalance: jest.fn().mockResolvedValue(BigInt(0)),
     lookupAddress: jest.fn().mockResolvedValue(null)
   } as unknown as ReturnType<typeof getEthereumRpcProvider>);
+});
+
+it('returns the configured operations wave in the automation settings', async () => {
+  await expect(getDropForgeSettings(request({}))).resolves.toMatchObject({
+    operations_wave_id: testConfig.waveId
+  });
 });
 
 it('permits a distribution administrator to update preparation independently', async () => {
