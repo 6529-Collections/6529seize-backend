@@ -61,6 +61,7 @@ beforeEach(() => {
     );
   jest.spyOn(config, 'getDropForgeReportingConfig').mockReturnValue(testConfig);
   jest.spyOn(dropForgeRepository, 'find').mockResolvedValue(null);
+  jest.spyOn(storage, 'hasPublishedMemePage').mockResolvedValue(false);
   jest
     .spyOn(claims, 'fetchMintingClaimByClaimId')
     .mockResolvedValue({ edition_size: 100 } as claims.MintingClaimRow);
@@ -113,10 +114,26 @@ it('reports a missing scheduled claim without needing a plan or signing configur
   stubConfiguration(publicDelivery, ZeroHash).mockResolvedValue(null);
   jest.mocked(claims.fetchMintingClaimByClaimId).mockResolvedValue(null);
   await runReadinessDelivery(publicDelivery);
+  const { claimId } = resolveReadinessCheckpoint(publicDelivery)!;
   expect(notifier.postForgeReport).toHaveBeenCalledWith(
     testConfig,
-    expect.stringMatching(
-      /19:22 Athens[\s\S]*No Drop Forge card[\s\S]*missing on-chain/
+    `**Claim #${claimId} · Public readiness**\n\n- No Drop Forge card was found for this scheduled claim.\n- The claim is missing on-chain.`,
+    true,
+    {}
+  );
+});
+
+it('links the upcoming public Meme page before it is indexed', async () => {
+  const delivery = 'readiness:0:2026-11-13T15:20:00Z';
+  const { claimId, scheduledAt } = resolveReadinessCheckpoint(delivery)!;
+  jest.spyOn(Date, 'now').mockReturnValue(+scheduledAt + 5 * 60_000);
+  await runReadinessDelivery(delivery);
+
+  expect(storage.hasPublishedMemePage).not.toHaveBeenCalled();
+  expect(notifier.postForgeReport).toHaveBeenCalledWith(
+    testConfig,
+    expect.stringContaining(
+      `**[Claim #${claimId}](https://staging.6529.io/the-memes/${claimId}) · Phase 0 readiness**`
     ),
     true,
     {}
@@ -149,6 +166,7 @@ it.each([100, 99])(
 
 it('checks Phase 2 and Public allocations separately on a manual launch', async () => {
   stubConfiguration(phase2Delivery, root);
+  jest.mocked(storage.hasPublishedMemePage).mockResolvedValue(true);
   jest
     .spyOn(storage, 'readinessMerkleRoots')
     .mockResolvedValue([{ phase: 'Phase 2', merkle_root: root }]);
@@ -172,6 +190,10 @@ it('checks Phase 2 and Public allocations separately on a manual launch', async 
 
   expect(notifier.postForgeReport).toHaveBeenCalledTimes(1);
   const content = jest.mocked(notifier.postForgeReport).mock.calls[0][1];
+  const { claimId } = resolveReadinessCheckpoint(phase2Delivery)!;
+  expect(content.split('\n')[0]).toBe(
+    `**[Claim #${claimId}](https://staging.6529.io/the-memes/${claimId}) · Phase 2 readiness**`
+  );
   expect(content).toContain('Public subscription airdrops are incomplete');
   expect(content).not.toContain('Phase 2 subscription airdrops');
 });

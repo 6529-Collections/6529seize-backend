@@ -1,7 +1,10 @@
 import {
   DISTRIBUTION_TABLE,
   DROP_FORGE_READINESS_TABLE,
+  MEMES_CONTRACT,
+  MEMES_EXTENDED_DATA_TABLE,
   MINTING_MERKLE_ROOTS_TABLE,
+  NFTS_TABLE,
   SUBSCRIPTIONS_NFTS_FINAL_TABLE
 } from '@/constants';
 import { DbPoolName } from '@/db-query.options';
@@ -15,6 +18,20 @@ interface ReadinessAllocation {
 }
 
 const primary = { forcePool: DbPoolName.WRITE };
+
+export async function hasPublishedMemePage(claimId: number): Promise<boolean> {
+  // The public card page needs both the indexed NFT and its Memes metadata.
+  const card = await sqlExecutor.oneOrNull<{ id: number }>(
+    `SELECT nft.id
+     FROM ${NFTS_TABLE} nft
+     INNER JOIN ${MEMES_EXTENDED_DATA_TABLE} metadata ON metadata.id = nft.id
+     WHERE nft.contract = :contract AND nft.id = :claimId
+     LIMIT 1`,
+    { contract: MEMES_CONTRACT, claimId },
+    primary
+  );
+  return card !== null;
+}
 
 export function readinessMerkleRoots(contract: string, claim: number) {
   return sqlExecutor.execute<{ phase: string; merkle_root: string }>(
