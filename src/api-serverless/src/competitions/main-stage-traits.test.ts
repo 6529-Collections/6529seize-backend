@@ -83,11 +83,53 @@ it('identifies missing, invalid and duplicate traits before a signed write', () 
 it('preserves existing requests for other decisions and when enforcement is disabled', () => {
   const supplied = metadata({ pointsSpeed: '0' });
   expect(normalizeMainStageTraits(supplied, [])).toBe(supplied);
-  delete process.env.MAIN_STAGE_TRAIT_VALIDATION_ENABLED;
-  process.env.NODE_ENV = 'production';
+  jest.replaceProperty(process, 'env', {
+    ...process.env,
+    MAIN_STAGE_TRAIT_VALIDATION_ENABLED: undefined,
+    NODE_ENV: 'production',
+    API_BASE_URL: 'https://api.6529.io'
+  });
   expect(normalizeMainStageTraits(supplied, capabilities)).toBe(supplied);
-  process.env.NODE_ENV = 'development';
+  jest.replaceProperty(process, 'env', {
+    ...process.env,
+    NODE_ENV: 'development'
+  });
+  expect(normalizeMainStageTraits(supplied, capabilities)).toBe(supplied);
+  jest.replaceProperty(process, 'env', {
+    ...process.env,
+    API_BASE_URL: 'https://api.staging.6529.io/api'
+  });
   expect(mainStageTraitRules(capabilities)).toBeDefined();
-  process.env.MAIN_STAGE_TRAIT_VALIDATION_ENABLED = 'false';
+  jest.replaceProperty(process, 'env', {
+    ...process.env,
+    MAIN_STAGE_TRAIT_VALIDATION_ENABLED: 'false'
+  });
   expect(normalizeMainStageTraits(supplied, capabilities)).toBe(supplied);
+});
+
+it('uses inclusive decimal point bounds and rejects nondecimal representations', () => {
+  const rules = mainStageTraitRules(capabilities)!;
+  expect(
+    checkMainStageTraits(
+      metadata({ ...validTraits, pointsSpeed: '-1e10' }),
+      rules
+    ).issues
+  ).toEqual([]);
+  expect(
+    checkMainStageTraits(
+      metadata({ ...validTraits, pointsSpeed: '1e10' }),
+      rules
+    ).issues
+  ).toEqual([]);
+  for (const pointsSpeed of [
+    '10000000001',
+    '-10000000001',
+    '0x10',
+    'Infinity'
+  ]) {
+    expect(
+      checkMainStageTraits(metadata({ ...validTraits, pointsSpeed }), rules)
+        .issues
+    ).toEqual([{ key: 'pointsSpeed', code: 'INVALID_POINTS' }]);
+  }
 });

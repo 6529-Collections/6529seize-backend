@@ -105,11 +105,21 @@ const rules: ApiMainStageTraitRule[] = [
   }))
 ];
 
+function isStagingApi(): boolean {
+  if (process.env.NODE_ENV !== 'development') return false;
+  const apiUrl = process.env.API_BASE_URL;
+  return (
+    !!apiUrl &&
+    URL.canParse(apiUrl) &&
+    new URL(apiUrl).hostname === 'api.staging.6529.io'
+  );
+}
+
 export function mainStageTraitRules(capabilities: readonly string[]) {
   const explicitlyEnabled = process.env.MAIN_STAGE_TRAIT_VALIDATION_ENABLED;
   const enabled =
     explicitlyEnabled === undefined
-      ? process.env.NODE_ENV === 'development'
+      ? isStagingApi()
       : explicitlyEnabled === 'true';
   return enabled && capabilities.includes(CompetitionCapability.MAIN_STAGE)
     ? rules
@@ -162,6 +172,14 @@ export function checkMainStageTraits(
       if (code) issues.push({ key, code });
     }
   }
+  if (
+    !issues.length &&
+    metadata.length + defaults.length > DROP_MAX_METADATA_ENTRIES
+  ) {
+    throw new BadRequestException(
+      'Too many metadata fields after applying Main Stage trait defaults'
+    );
+  }
   return { issues, defaults };
 }
 
@@ -175,11 +193,6 @@ export function normalizeMainStageTraits(
   if (issues.length) {
     throw new BadRequestException(
       `Invalid Main Stage traits: ${issues.map(({ key, code }) => `${key} (${code})`).join(', ')}`
-    );
-  }
-  if (metadata.length + defaults.length > DROP_MAX_METADATA_ENTRIES) {
-    throw new BadRequestException(
-      'Too many metadata fields after applying Main Stage trait defaults'
     );
   }
   return [...metadata, ...defaults];

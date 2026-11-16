@@ -212,6 +212,8 @@ export class CompetitionEntryService {
       (await this.entries.countActive(competitionId, actor, tx)) >= limit
     )
       throw new ForbiddenException('Decision entry limit reached');
+    // Both paths start with DropMetadataListSchema. The structured-field
+    // sanitizer repeats its trim and empty checks without changing valid pairs.
     const model = {
       ...prepared.model,
       metadata: normalizeMainStageTraits(

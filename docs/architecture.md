@@ -93,8 +93,9 @@ metadata strings still follow the shared nonblank and length rules. The entry
 command authenticates the original signed request and records both that payload
 and the effective stored metadata.
 
-Development and staging enable the policy by default. The production API uses
-the existing behavior until `MAIN_STAGE_TRAIT_VALIDATION_ENABLED=true` is
+The staging API enables the policy by default when the configured API URL is
+`api.staging.6529.io` and the runtime is in development mode. The production API
+uses the existing behavior until `MAIN_STAGE_TRAIT_VALIDATION_ENABLED=true` is
 explicitly set. Setting it to `false` disables both rule publication and
 validation. The policy applies to new entries. Existing entry content and mint
 claims retain their prior metadata.
