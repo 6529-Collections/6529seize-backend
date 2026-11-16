@@ -1,4 +1,3 @@
-import * as policy from '@/drop-forge/drop-forge.policy';
 import { randomUUID } from 'crypto';
 import { DISTRIBUTION_TABLE, DROP_FORGE_PREPARATIONS_TABLE } from '@/constants';
 import {
@@ -207,13 +206,8 @@ describe('Drop Forge preparation durability', () => {
   });
 });
 
-it('lets an operator explicitly reset a paused preparation while the setting is off', async () => {
+it('lets an operator reset an idle background job and start manual preparation', async () => {
   await clearDropForgeTestTables();
-  jest
-    .spyOn(policy, 'findDropForgePolicy')
-    .mockReturnValue(
-      testConfig as ReturnType<typeof policy.findDropForgePolicy>
-    );
   const job = await dropForgeJobsRepository.create(
     Object.assign(new DropForgeJobEntity(), {
       id: randomUUID(),
@@ -247,4 +241,16 @@ it('lets an operator explicitly reset a paused preparation while the setting is 
       error: 'Distribution reset; process again'
     }
   );
+  await dropForgePreparationRepository.run(
+    job.contract,
+    job.claim_id,
+    async () => {},
+    {},
+    false,
+    false,
+    'MANUAL'
+  );
+  await expect(
+    dropForgePreparationRepository.readMode(job.contract, job.claim_id)
+  ).resolves.toBe('MANUAL');
 });

@@ -9,7 +9,8 @@ export class DropForgeSettingsEntity {
   @PrimaryColumn({ type: 'varchar', length: 60 }) id!: string;
   @Column({ type: 'int', default: 0 }) revision!: number;
   @Column({ type: 'boolean', default: false }) automation_enabled!: boolean;
-  @Column({ type: 'boolean', default: false }) preparation_enabled!: boolean;
+  // Retained in the schema; preparation mode is stored per claim.
+  @Column({ type: 'boolean', default: false }) preparation_enabled?: boolean;
   @Column({ type: 'boolean', default: false }) pay_artist_enabled!: boolean;
   @Column({ type: 'varchar', length: 80, nullable: true })
   max_artist_payment_wei!: string | null;

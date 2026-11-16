@@ -2702,16 +2702,20 @@ proven prior nonce settlement; unknown evidence blocks further wallet use.
 
 ### Launch settings and funding boundary
 
-The `drop_forge_settings` row is scoped by chain and creator. The three switches
-default Off and the per-payout cap is nullable and stored in wei. API changes
-use an optimistic revision and row lock. The creator owner and configured claims
-admins can edit all fields. Distribution admins can also edit EMMA preparation.
-The launch worker checks the same row while reserving, committing a signature
-and submitting the transaction. Turning Automatic launch Off retains scheduled
-skip reporting and signed-receipt tracking. Re-enabling wakes eligible active
-claims. The distribution handler checks preparation at each step boundary.
-Re-enabling preparation publishes wakes with the enabling settings revision so
-an early delivery waits for the settings transaction to commit.
+The `drop_forge_settings` row is scoped by chain and creator. Automatic launch
+and automatic artist payment default Off. The per-payout cap is nullable and
+stored in wei. API changes use an optimistic revision and row lock. The creator
+owner and configured claims admins can edit these settings. The launch worker
+checks the same row while reserving, committing a signature and submitting the
+transaction. Turning Automatic launch Off retains scheduled skip reporting and
+signed-receipt tracking. Re-enabling wakes eligible active claims.
+
+Distribution administrators choose manual or background preparation in EMMA.
+The claim preparation lock records the first successful manual phase write or
+finalization, or saves background mode with job creation. The distribution
+handler runs queued checkpoints from the durable job. Reset Subscriptions clears
+subscriber results and retires previous jobs under the same preparation lock.
+A reset encountering an active worker step can be retried once that step exits.
 
 The `PAY_ARTIST` action stores the exact wei amount and designated payee in the
 existing launch ledger. Fresh paid-mint/subscription accounting must match confirmed

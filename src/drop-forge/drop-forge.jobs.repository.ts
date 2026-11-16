@@ -143,6 +143,10 @@ export class DropForgeJobsRepository {
         throw new LaunchSafetyError(
           'Request ID already belongs to a different preparation job'
         );
+      if (saved.error === resetJobError)
+        throw new LaunchSafetyError(
+          'Distribution was reset; start a new preparation request'
+        );
       if (saved.status === 'PENDING') await this.dispatch(saved, ctx);
       return this.find(job.id, ctx);
     } finally {
@@ -169,8 +173,7 @@ export class DropForgeJobsRepository {
   async processOne(
     process: (job: DropForgeJobEntity, ctx: RequestContext) => Promise<object>,
     ctx: RequestContext,
-    id?: string,
-    shouldProcess?: (ctx: RequestContext) => Promise<boolean>
+    id?: string
   ): Promise<boolean> {
     const timer = 'DropForgeJobsRepository->processOne';
     ctx.timer?.start(timer);
@@ -183,8 +186,7 @@ export class DropForgeJobsRepository {
             { id: id ?? null },
             { wrappedConnection: connection }
           );
-          if (!job || (shouldProcess && !(await shouldProcess(txCtx))))
-            return false;
+          if (!job) return false;
           await sqlExecutor.execute('SAVEPOINT drop_forge_job', undefined, {
             wrappedConnection: connection
           });
@@ -239,34 +241,6 @@ export class DropForgeJobsRepository {
       ctx.timer?.stop(timer);
     }
   }
-  async wakePending(
-    preparationRevision: number,
-    ctx: RequestContext
-  ): Promise<void> {
-    const jobs = await sqlExecutor.execute<{
-      id: string;
-      dispatch_revision: number;
-    }>(
-      `SELECT id, dispatch_revision FROM ${DROP_FORGE_JOBS_TABLE} WHERE status = 'PENDING' ORDER BY id`,
-      undefined,
-      { wrappedConnection: ctx.connection }
-    );
-    await jobs.reduce(
-      (pending, job) =>
-        pending.then(() =>
-          wakeDropForge(
-            {
-              id: job.id,
-              revision: Number(job.dispatch_revision),
-              preparation_revision: preparationRevision
-            },
-            true
-          )
-        ),
-      Promise.resolve()
-    );
-  }
-
   async dispatch(job: DropForgeJobEntity, ctx: RequestContext): Promise<void> {
     const current = await sqlExecutor.oneOrNull<DropForgeJobEntity>(
       `SELECT * FROM ${DROP_FORGE_JOBS_TABLE} WHERE id = :id FOR UPDATE`,

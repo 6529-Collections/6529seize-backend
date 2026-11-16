@@ -49,11 +49,10 @@ beforeEach(async () => {
 afterEach(() => {
   jest.restoreAllMocks();
 });
-it('rejects a new Ready request when only EMMA preparation is enabled', async () => {
+it('rejects a new Ready request when Automatic launch is off', async () => {
   await settings.updateForgeSettings(testConfig, testConfig.signer, {
     revision: 0,
-    automation_enabled: false,
-    preparation_enabled: true
+    automation_enabled: false
   });
   await expect(readyLaunch(1, {})).rejects.toThrow('Automatic launch is off');
   expect(wake.wakeDropForge).not.toHaveBeenCalled();
@@ -66,7 +65,7 @@ it('accepts concurrent Ready clicks as one immediately due launch', async () => 
   expect(a.data.actions[0].due).toBe(1100);
   expect(a.data.managed).toBe(true);
 });
-it('accepts a legacy finalized distribution with EMMA preparation off and rejects stale allocations', async () => {
+it('accepts a legacy finalized distribution and rejects stale allocations', async () => {
   jest.mocked(dropForgeRepository.assertPrepared).mockRestore();
   const claim = 91;
   const contract = testConfig.creator;
@@ -109,9 +108,6 @@ it('accepts a legacy finalized distribution with EMMA preparation off and reject
     expect(wake.wakeDropForge).not.toHaveBeenCalled();
 
     jest.mocked(dropForgeRepository.source).mockResolvedValue(testSource);
-    expect(
-      (await settings.readForgeSettings(testConfig)).preparation_enabled
-    ).toBe(false);
     await expect(readyLaunch(claim, {})).resolves.toMatchObject({
       state: 'ARMED'
     });

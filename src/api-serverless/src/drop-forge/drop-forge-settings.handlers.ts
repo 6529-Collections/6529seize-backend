@@ -54,7 +54,6 @@ export async function getDropForgeSettings(
     return {
       revision: settings.revision,
       automation_enabled: settings.automation_enabled,
-      preparation_enabled: settings.preparation_enabled,
       pay_artist_enabled: settings.pay_artist_enabled,
       max_artist_payment_eth: settings.max_artist_payment_wei
         ? formatEther(settings.max_artist_payment_wei)
@@ -84,26 +83,17 @@ export async function putDropForgeSettings(
       Joi.object<ApiDropForgeSettingsRequest>({
         revision: Joi.number().integer().min(0).required(),
         automation_enabled: Joi.boolean().strict(),
-        preparation_enabled: Joi.boolean().strict(),
         pay_artist_enabled: Joi.boolean().strict(),
         max_artist_payment_eth: Joi.string()
           .pattern(artistPaymentLimitPattern)
           .allow(null)
       }).or(
         'automation_enabled',
-        'preparation_enabled',
         'pay_artist_enabled',
         'max_artist_payment_eth'
       )
     );
-    if (input.preparation_enabled !== undefined && !access.can_edit_preparation)
-      throw new ForbiddenException('EMMA preparation settings access required');
-    if (
-      !access.can_edit &&
-      (input.automation_enabled !== undefined ||
-        input.pay_artist_enabled !== undefined ||
-        input.max_artist_payment_eth !== undefined)
-    )
+    if (!access.can_edit)
       throw new ForbiddenException(
         'Only the creator owner or configured claims administrators may change launch or payment settings'
       );

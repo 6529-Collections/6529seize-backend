@@ -383,28 +383,26 @@ dynamic top-up cannot consume the edition supply still owed to them.
 ## Launch Automation settings and artist payment
 
 The Drop Forge hub shows Launch Automation to every authorized Drop Forge user.
-The three switches default Off and the payment cap starts unset. Settings are
-stored per chain and creator in the environment database. The creator owner
-and `CLAIMS_ADMIN_WALLETS` can change all four controls. Wallets in
-`DISTRIBUTION_ADMIN_WALLETS` can also change EMMA preparation. The API enforces
-these permissions. The panel displays all values to authorized users.
+Automatic launch and automatic artist payment default Off, and the payment cap
+starts unset. Settings are stored per chain and creator in the environment
+database. The creator owner and `CLAIMS_ADMIN_WALLETS` can change those settings.
+The panel displays all values to authorized Drop Forge users.
 
 Automatic launch controls new submissions. Off keeps scheduled reports and
 receipt reconciliation active. The handler reports due disabled actions once
 per settings revision without marking the action completed. Turning it on wakes
 active claims, and actions still within their windows can execute.
 
-EMMA preparation selects the controls for distributions that have not started.
-A distribution keeps its mode once a manual phase or finalization succeeds, or
-when its background job is created. Saved phase work and existing jobs also
-establish the mode for older distributions. Artist and team uploads can happen
-in either mode. Started manual distributions keep their original subscription
-downloads and Finalize Distribution. Started background jobs stay visible.
-Off pauses them after the current step, and On wakes pending jobs. A job waiting
-for authentication needs an operator to sign in and resume. Reset Subscriptions
-clears preparation and lets the distribution use the current setting. Turn
-preparation Off before resetting a pending background job. Craft Launch
-validates the finalized allocations and minting proofs in either mode.
+In EMMA, `DISTRIBUTION_ADMIN_WALLETS` can choose **Prepare manually** or
+**Process and Finalize** after confirming the token ID. Opening the manual
+controls leaves both choices available. The first successful manual phase
+write or finalization, or creation of a background job, saves the mode.
+Artist and team uploads work in either mode. Background jobs that need
+authentication stay visible and can be resumed by an operator. **Reset
+Subscriptions** clears subscription work, retires the previous job and restores
+both choices while keeping the artist and team uploads. If a worker is finishing
+a step, retry the reset after that step. Craft Launch validates the finalized
+allocations and minting proofs in either mode.
 
 Automatic artist payment defaults Off. At 18:00 Europe/Athens the following day,
 its independent action checks the current settings, exact manual payment evidence,

@@ -21,7 +21,6 @@ beforeEach(() => {
     automation_enabled: true,
     pay_artist_enabled: true,
     max_artist_payment_wei: null,
-    preparation_enabled: false,
     updated_by: null,
     updated_at: 0
   });

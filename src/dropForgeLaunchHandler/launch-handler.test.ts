@@ -132,7 +132,6 @@ it('does not acknowledge a reporting failure or silently discard disabled queued
     id: 'settings',
     revision: 2,
     automation_enabled: false,
-    preparation_enabled: false,
     pay_artist_enabled: false,
     max_artist_payment_wei: null,
     updated_by: null,

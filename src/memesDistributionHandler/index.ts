@@ -1,7 +1,5 @@
 import type { SQSHandler } from 'aws-lambda';
 import { getDropForgeReportingConfig } from '@/drop-forge/drop-forge.config';
-import { getDropForgePolicy } from '@/drop-forge/drop-forge.policy';
-import { readForgeSettings } from '@/drop-forge/drop-forge.settings';
 import { dropForgeJobsRepository } from '@/drop-forge/drop-forge.jobs.repository';
 import {
   prepareDistributionPhase,
@@ -71,14 +69,6 @@ export async function runPreparationJob(
     throw new Error('Distribution request has not committed');
   if (delivery.step !== undefined && Number(current.step) > delivery.step)
     return;
-  const policy = getDropForgePolicy();
-  const isEnabled = async (ctx: RequestContext = {}) => {
-    const settings = await readForgeSettings(policy, ctx);
-    if (settings.revision < (delivery.preparation_revision ?? 0))
-      throw new Error('Preparation settings have not committed');
-    return settings.preparation_enabled;
-  };
-  if (current.status === 'PENDING' && !(await isEnabled())) return;
   const reporting = getDropForgeReportingConfig();
   const watchdog =
     current.status === 'PENDING'
@@ -92,11 +82,10 @@ export async function runPreparationJob(
     const processed = await dropForgeJobsRepository.processOne(
       processPreparationJob,
       {},
-      delivery.id,
-      isEnabled
+      delivery.id
     );
     const updated = await dropForgeJobsRepository.find(delivery.id, {});
-    if (updated.status === 'PENDING' && (await isEnabled()))
+    if (updated.status === 'PENDING')
       await wakeDropForge(
         { id: updated.id, revision: Number(updated.dispatch_revision) },
         true,

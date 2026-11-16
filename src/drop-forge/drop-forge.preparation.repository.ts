@@ -1,19 +1,16 @@
-import { findDropForgePolicy } from '@/drop-forge/drop-forge.policy';
-import { readForgeSettings } from '@/drop-forge/drop-forge.settings';
 import {
   DROP_FORGE_LAUNCHES_TABLE,
   DROP_FORGE_JOBS_TABLE,
   DROP_FORGE_PREPARATIONS_TABLE,
   DISTRIBUTION_NORMALIZED_TABLE,
   DISTRIBUTION_TABLE,
-  MEMES_CONTRACT,
   MINTING_MERKLE_ROOTS_TABLE,
   SUBSCRIPTIONS_NFTS_FINAL_TABLE
 } from '@/constants';
 import { LaunchSafetyError } from '@/drop-forge/drop-forge.types';
 import { RequestContext } from '@/request.context';
 import { sqlExecutor } from '@/sql-executor';
-import { BadRequestException } from '@/exceptions';
+import { BadRequestException, CustomApiCompliantException } from '@/exceptions';
 import {
   dropForgeJobsRepository,
   resetJobError
@@ -93,19 +90,6 @@ export class DropForgePreparationRepository {
         current === 'MANUAL'
           ? 'This distribution is using manual preparation. Reset Subscriptions before starting background preparation.'
           : 'This distribution is using background preparation. Reset Subscriptions before starting manual preparation.'
-      );
-    const policy = findDropForgePolicy();
-    if (
-      current === 'UNSTARTED' &&
-      mode === 'MANUAL' &&
-      policy &&
-      [MEMES_CONTRACT.toLowerCase(), policy.creator.toLowerCase()].includes(
-        contract.toLowerCase()
-      ) &&
-      (await readForgeSettings(policy, ctx)).preparation_enabled
-    )
-      throw new BadRequestException(
-        'EMMA preparation is On. Refresh this plan and use Process and Finalize.'
       );
     await sqlExecutor.execute(
       `UPDATE ${DROP_FORGE_PREPARATIONS_TABLE} SET mode = :mode WHERE id = :id AND (mode IS NULL OR mode = 'UNSTARTED')`,
@@ -237,21 +221,16 @@ export async function resetDistributionPreparation(
   reset: (ctx: RequestContext) => Promise<void>,
   ctx: RequestContext = {}
 ): Promise<void> {
-  const policy = findDropForgePolicy();
-  const canResetPaused =
-    policy !== null &&
-    !(await readForgeSettings(policy, ctx)).preparation_enabled;
   await dropForgePreparationRepository.run(
     contract,
     claim,
     async (results, txCtx) => {
       // The worker takes the job lock before the preparation lock. Fail fast
       // if it is finishing a step; an idle job can be reset atomically.
-      let pending: { id: string }[];
       try {
-        pending = await sqlExecutor.execute<{ id: string }>(
-          `SELECT id FROM ${DROP_FORGE_JOBS_TABLE} WHERE contract = :contract AND claim_id = :claim AND status IN ('PENDING', 'AWAITING_AUTH') FOR UPDATE NOWAIT`,
-          { contract: contract.toLowerCase(), claim },
+        await sqlExecutor.execute(
+          `SELECT id FROM ${DROP_FORGE_JOBS_TABLE} WHERE contract = :contract AND claim_id = :claim AND (error IS NULL OR error <> :resetJobError) FOR UPDATE NOWAIT`,
+          { contract: contract.toLowerCase(), claim, resetJobError },
           { wrappedConnection: txCtx.connection }
         );
       } catch (error) {
@@ -261,19 +240,16 @@ export async function resetDistributionPreparation(
           (('errno' in error && error.errno === 3572) ||
             ('code' in error && error.code === 'ER_LOCK_NOWAIT'))
         )
-          throw new LaunchSafetyError(
+          throw new CustomApiCompliantException(
+            409,
             'Distribution processing is finishing a step; retry the reset shortly'
           );
         throw error;
       }
-      if (!canResetPaused && pending.length)
-        throw new LaunchSafetyError(
-          'Distribution processing is in progress; wait for completion before resetting'
-        );
       await reset(txCtx);
       for (const key of Object.keys(results)) delete results[key];
       await sqlExecutor.execute(
-        `UPDATE ${DROP_FORGE_JOBS_TABLE} SET status = 'FAILED', error = :resetJobError, encrypted_auth = NULL, drop_id = NULL WHERE contract = :contract AND claim_id = :claim AND status <> 'FAILED'`,
+        `UPDATE ${DROP_FORGE_JOBS_TABLE} SET drop_id = IF(status = 'FAILED', drop_id, NULL), status = 'FAILED', error = :resetJobError, encrypted_auth = NULL WHERE contract = :contract AND claim_id = :claim AND (error IS NULL OR error <> :resetJobError)`,
         { contract: contract.toLowerCase(), claim, resetJobError },
         { wrappedConnection: txCtx.connection }
       );

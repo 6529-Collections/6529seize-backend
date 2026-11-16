@@ -34143,13 +34143,11 @@ components:
       required:
         - revision
         - automation_enabled
-        - preparation_enabled
         - max_artist_payment_eth
         - pay_artist_enabled
         - updated_by
         - updated_at
         - can_edit
-        - can_edit_preparation
         - can_top_up
         - chain_id
         - contract
@@ -34160,8 +34158,6 @@ components:
         revision:
           type: integer
         automation_enabled:
-          type: boolean
-        preparation_enabled:
           type: boolean
         max_artist_payment_eth:
           type: string
@@ -34175,8 +34171,6 @@ components:
         updated_at:
           type: integer
         can_edit:
-          type: boolean
-        can_edit_preparation:
           type: boolean
         can_top_up:
           type: boolean
@@ -34204,8 +34198,6 @@ components:
         revision:
           type: integer
         automation_enabled:
-          type: boolean
-        preparation_enabled:
           type: boolean
         max_artist_payment_eth:
           type: string
