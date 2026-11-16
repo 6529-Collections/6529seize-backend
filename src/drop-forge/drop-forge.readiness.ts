@@ -40,7 +40,7 @@ import {
 
 const logger = Logger.get('DROP_FORGE_READINESS');
 const checkpoints = [
-  { time: '17:30', offsetMinutes: -10 },
+  { time: '17:20', offsetMinutes: -20 },
   { time: '18:28', offsetMinutes: -2 },
   { time: '18:58', offsetMinutes: -2 },
   { time: '19:22', offsetMinutes: 2 }

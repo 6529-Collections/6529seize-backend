@@ -28,7 +28,7 @@ it('schedules only the four Athens readiness checks on the Launch queue', () => 
   const launch = read('src/dropForgeLaunchHandler/serverless.yaml');
   const distribution = read('src/memesDistributionHandler/serverless.yaml');
   expect(distribution).not.toMatch(/cron\(/);
-  const times = ['30 17', '28 18', '58 18', '22 19'];
+  const times = ['20 17', '28 18', '58 18', '22 19'];
   expect(launch.match(/cron\(/g)).toHaveLength(times.length);
   const { Resources } = parse(launch, {
     merge: true,

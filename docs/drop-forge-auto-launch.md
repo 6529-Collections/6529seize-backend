@@ -166,7 +166,7 @@ The worker records receipts even when they arrive after the deadline and
 retains outstanding work for operator reconciliation.
 
 On scheduled mint days, four independent checks verify the next mint window
-and required airdrops at 17:30, 18:28 and 18:58, then check that public minting is
+and required airdrops at 17:20, 18:28 and 18:58, then check that public minting is
 live at 19:22 (Europe/Athens). They use the calendar's claim ID for automated
 and manual launches. The checks read Ethereum and completion evidence and post
 one signed Drop Forge Ops alert per failing checkpoint, with the card link

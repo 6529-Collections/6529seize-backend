@@ -41,7 +41,7 @@ resources:
       Properties:
         Name: readiness-phase-0
         GroupName: !Ref LaunchScheduleGroup
-        ScheduleExpression: cron(30 17 * * ? *)
+        ScheduleExpression: cron(20 17 * * ? *)
         ScheduleExpressionTimezone: Europe/Athens
         FlexibleTimeWindow: { Mode: 'OFF' }
         Target:
