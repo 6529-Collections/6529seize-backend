@@ -129,7 +129,8 @@ import { extractUrlCandidatesFromText } from '@/nft-links/nft-link-candidates';
 import { validateLinkUrl } from '@/nft-links/nft-link-resolver.validator';
 import { env } from '@/env';
 import {
-  CLOUDFRONT_LINK,
+  getUserMediaOrigin,
+  isAcceptedMediaOrigin,
   DEVS_6529_MENTION,
   DEVS_6529_MENTION_TOKEN,
   DROP_FORGE_ALERT_MENTION_TOKEN,
@@ -317,9 +318,9 @@ export function validateDropMediaAttachment({
     mimeType.startsWith('audio/') ||
     mimeType === 'model/gltf-binary'
   ) {
-    if (parsedUrl.origin !== CLOUDFRONT_LINK) {
+    if (!isAcceptedMediaOrigin(parsedUrl.origin)) {
       throw new BadRequestException(
-        `Media needs to come from ${CLOUDFRONT_LINK}`
+        `Media needs to come from ${getUserMediaOrigin()}`
       );
     }
     return;
@@ -1833,7 +1834,7 @@ export class CreateOrUpdateDropUseCase {
   private isAllowedChatLink(candidate: string): boolean {
     try {
       const url = new URL(this.normalizeChatLinkCandidate(candidate));
-      if (url.origin === CLOUDFRONT_LINK) {
+      if (isAcceptedMediaOrigin(url.origin)) {
         return true;
       }
       return this.isAllowedGifProviderChatLink(url);
