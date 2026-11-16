@@ -206,6 +206,32 @@ describe('ProposalFrameService', () => {
     expect(uploadDirectory).toHaveBeenCalledTimes(1);
   });
 
+  it('finds an owned legacy upload when a staging frame uses its new URL', async () => {
+    const env = jest.replaceProperty(process, 'env', {
+      ...process.env,
+      DROP_MEDIA_INGEST_STAGE: 'staging',
+      FILE_SERVER_URL: 'https://media.staging.6529.io'
+    });
+    const path = '/drops/0b4b5183-8c7f-480d-9e22-060911901c79/art%20work.png';
+    const media_url = `https://media.staging.6529.io${path}`;
+    findByPublicUrl.mockResolvedValueOnce(null).mockResolvedValueOnce({
+      profile_id: PROFILE,
+      status: DropMediaUploadStatus.READY,
+      declared_mime_type: Mime.ImagePng
+    });
+    try {
+      await service.publish(request({ media_url }), PROFILE);
+      expect(findByPublicUrl).toHaveBeenNthCalledWith(1, media_url);
+      expect(findByPublicUrl).toHaveBeenNthCalledWith(
+        2,
+        `${CLOUDFRONT_LINK}${path}`
+      );
+      expect(publishedHtml()).toContain(`<img src="${media_url}"`);
+    } finally {
+      env.restore();
+    }
+  });
+
   it('accepts random drop media paths only when the private upload belongs to the caller', async () => {
     const media_url = `${CLOUDFRONT_LINK}/drops/0b4b5183-8c7f-480d-9e22-060911901c79/art.png`;
     await expect(

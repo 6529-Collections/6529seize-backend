@@ -15,6 +15,10 @@ import {
 } from '@/attachments/ipfs-file-uploader';
 import { CLOUDFRONT_LINK } from '@/constants';
 import {
+  isDropMediaPublicUrl,
+  resolveDropMediaDeliveryUrl
+} from '@/drops/drop-media-public-url';
+import {
   parseDecentralizedMediaRef,
   to6529ResolverUrl
 } from '@/decentralized-media/decentralized-media';
@@ -90,7 +94,7 @@ export class ProposalFrameService {
       );
     }
     if (
-      url.origin !== CLOUDFRONT_LINK ||
+      !isDropMediaPublicUrl(url) ||
       url.search ||
       url.hash ||
       !url.pathname.startsWith('/drops/')
@@ -98,7 +102,12 @@ export class ProposalFrameService {
       throw new ForbiddenException('Use artwork uploaded by your profile');
     }
     assertMediaExtension(url, body.mime_type);
-    const upload = await this.uploads.findByPublicUrl(url.href);
+    const mediaUrl = resolveDropMediaDeliveryUrl(url.href);
+    const legacyUrl = `${CLOUDFRONT_LINK}${url.pathname}`;
+    const alias = url.href === legacyUrl ? mediaUrl : legacyUrl;
+    const upload =
+      (await this.uploads.findByPublicUrl(url.href)) ??
+      (alias === url.href ? null : await this.uploads.findByPublicUrl(alias));
     if (!upload && !url.pathname.startsWith(`/drops/author_${profileId}/`)) {
       throw new ForbiddenException('Use artwork uploaded by your profile');
     }
@@ -115,7 +124,7 @@ export class ProposalFrameService {
         );
       }
     }
-    return url.href;
+    return mediaUrl;
   }
 }
 

@@ -254,6 +254,8 @@ Staging drop uploads use the configured staging media CDN. Drop responses and
 claim building resolve older drop media URLs through that CDN, whose origin
 group reads the staging bucket first and falls back to legacy media. Stored
 drop content and signed event payloads retain their original URLs.
+The staging API and claim builder load `FILE_SERVER_URL` from the runtime
+secret. An absent or invalid origin logs a warning and uses the legacy host.
 
 Authenticated `POST /drop-media/proposal-frame` builds a bounded, fixed HTML
 document around the submitter's uploaded image/video or recognized decentralized

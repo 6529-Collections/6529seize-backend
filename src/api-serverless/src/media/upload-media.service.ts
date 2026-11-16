@@ -337,7 +337,9 @@ export class UploadMediaService {
       });
     }
     return {
-      media_url: publicUploadMediaUrl(completeResp.Key ?? key),
+      media_url: upload
+        ? resolveDropMediaDeliveryUrl(upload.public_url)
+        : publicUploadMediaUrl(completeResp.Key ?? key),
       media_status: ApiDropMediaStatus.Ready
     };
   }

@@ -1,6 +1,7 @@
 import { CLOUDFRONT_LINK } from '@/constants/media';
 import {
   isDropMediaPublicUrl,
+  getDropMediaPublicOrigin,
   matchDropMediaUploadUrl,
   publicUploadMediaUrl,
   resolveAdditionalMediaPreview,
@@ -29,7 +30,13 @@ it('uses staging for new and stored drop uploads while preserving URL suffixes',
   expect(
     isDropMediaPublicUrl(new URL(`${STAGING_ORIGIN}/waves/avatar.png`))
   ).toBe(false);
+  expect(
+    isDropMediaPublicUrl(new URL(`${CLOUDFRONT_LINK}/waves/avatar.png`))
+  ).toBe(true);
   expect(matchDropMediaUploadUrl(legacy, staging)).toBe(true);
+  expect(
+    matchDropMediaUploadUrl(legacy, `https://external.example/${key}`)
+  ).toBe(false);
   expect(matchDropMediaUploadUrl(legacy, `${staging}?x=1`)).toBe(false);
   expect(matchDropMediaUploadUrl(legacy, `${staging}.other`)).toBe(false);
   expect(publicUploadMediaUrl('waves/avatar.png')).toBe(
@@ -45,6 +52,23 @@ it('uses staging for new and stored drop uploads while preserving URL suffixes',
   ).toEqual({ preview_image: staging, extra: 'kept' });
   expect(resolveAdditionalMediaPreview(`{${legacy}`)).toBe(`{${legacy}`);
 });
+
+it.each([
+  'not a URL',
+  'http://media.staging.6529.io',
+  'https://media.staging.6529.io/drops'
+])(
+  'falls back to the legacy host for an invalid staging origin (%s)',
+  (origin) => {
+    jest.replaceProperty(process, 'env', {
+      ...process.env,
+      DROP_MEDIA_INGEST_STAGE: 'staging',
+      FILE_SERVER_URL: origin
+    });
+    expect(getDropMediaPublicOrigin()).toBe(CLOUDFRONT_LINK);
+    expect(resolveDropMediaDeliveryUrl(legacy)).toBe(legacy);
+  }
+);
 
 it('preserves production URL generation and identity checks', () => {
   jest.replaceProperty(process, 'env', {

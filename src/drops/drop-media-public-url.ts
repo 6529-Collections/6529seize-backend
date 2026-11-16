@@ -1,24 +1,39 @@
 import { CLOUDFRONT_LINK } from '@/constants/media';
+import { Logger } from '@/logging';
 
 const DROP_PATH = '/drops/';
+const logger = Logger.get('DROP_MEDIA_PUBLIC_URL');
+let warnedAboutStagingOrigin = false;
 
 export function getDropMediaPublicOrigin(): string {
-  const configured = process.env.FILE_SERVER_URL;
-  if (process.env.DROP_MEDIA_INGEST_STAGE !== 'staging' || !configured) {
-    return CLOUDFRONT_LINK;
+  if (process.env.DROP_MEDIA_INGEST_STAGE !== 'staging') return CLOUDFRONT_LINK;
+
+  const origin = parseMediaOrigin(process.env.FILE_SERVER_URL);
+  if (origin) return origin;
+  if (!warnedAboutStagingOrigin) {
+    logger.warn(
+      'Staging FILE_SERVER_URL is invalid or missing. Using the legacy media origin.'
+    );
+    warnedAboutStagingOrigin = true;
   }
-  const url = new URL(configured);
-  if (
-    url.protocol !== 'https:' ||
-    url.username ||
-    url.password ||
-    url.pathname !== '/' ||
-    url.search ||
-    url.hash
-  ) {
-    throw new Error('FILE_SERVER_URL must be an HTTPS media origin');
+  return CLOUDFRONT_LINK;
+}
+
+function parseMediaOrigin(value: string | undefined): string | null {
+  if (!value) return null;
+  try {
+    const url = new URL(value);
+    return url.protocol === 'https:' &&
+      !url.username &&
+      !url.password &&
+      url.pathname === '/' &&
+      !url.search &&
+      !url.hash
+      ? url.origin
+      : null;
+  } catch {
+    return null;
   }
-  return url.origin;
 }
 
 export function publicUploadMediaUrl(key: string): string {
@@ -29,6 +44,7 @@ export function publicUploadMediaUrl(key: string): string {
 }
 
 export function isDropMediaPublicUrl(url: URL): boolean {
+  // Preserve the shared CDN's existing paths. Staging switches only drop uploads.
   return (
     url.origin === CLOUDFRONT_LINK ||
     (url.pathname.startsWith(DROP_PATH) &&
