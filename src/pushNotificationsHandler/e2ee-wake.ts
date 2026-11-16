@@ -38,7 +38,7 @@ export interface E2eeWakeDevice {
   readonly device_id: string;
   readonly profile_id: string;
   readonly token: string;
-  readonly is_multi_profile: number;
+  readonly is_multi_profile: number | string;
 }
 
 export interface E2eeWakeDeps {
@@ -214,7 +214,7 @@ export async function sendE2eeWakes(
           profileId: device.profile_id,
           handle: handles.get(device.profile_id),
           reason: reasonByProfile.get(device.profile_id)!,
-          showRecipient: device.is_multi_profile === 1
+          showRecipient: Number(device.is_multi_profile) === 1
         })
       )
     );
