@@ -13,7 +13,8 @@ import {
 } from '@/pushNotificationsHandler/e2ee-wake';
 import { PushNotificationMessageInput } from '@/pushNotificationsHandler/sendPushNotifications';
 import { PUSH_NOTIFICATION_DEVICES_TABLE } from '@/constants/db-tables';
-import { sqlExecutor } from '@/sql-executor';
+import { doInDbContext } from '@/secrets';
+import { setSqlExecutor, sqlExecutor } from '@/sql-executor';
 
 jest.mock('@/pushNotificationsHandler/sendPushNotifications', () => ({
   sendMessages: jest.fn()
@@ -137,7 +138,7 @@ describe('content-free E2EE wakes', () => {
     ).toBe(false);
   });
 
-  it('only marks a registration as shared when another profile has the same device and token', async () => {
+  it('prefixes only genuinely shared registrations through the Lambda database adapter', async () => {
     const profileId = 'e2ee-wake-recipient';
     const otherProfileId = 'e2ee-wake-other-profile';
     const registrations = [
@@ -163,25 +164,38 @@ describe('content-free E2EE wakes', () => {
         token: 'wake-shared'
       }
     ];
-    await sqlExecutor.bulkInsert(
-      PUSH_NOTIFICATION_DEVICES_TABLE,
-      registrations,
-      ['device_id', 'profile_id', 'token']
-    );
+    const fixtureDb = sqlExecutor;
+    await fixtureDb.bulkInsert(PUSH_NOTIFICATION_DEVICES_TABLE, registrations, [
+      'device_id',
+      'profile_id',
+      'token'
+    ]);
     try {
-      const devices = await defaultE2eeWakeDeps.loadDevices([profileId]);
-      expect(devices).toHaveLength(3);
-      expect(
-        Object.fromEntries(
-          devices.map((device) => [device.device_id, device.is_multi_profile])
-        )
-      ).toEqual({
-        'wake-shared': 1,
-        'wake-changed-token': 0,
-        'wake-other-device': 0
-      });
+      const sent: PushNotificationMessageInput[] = [];
+      await doInDbContext(
+        () =>
+          sendE2eeWakes([{ profileIds: [profileId], reason: 'message' }], {
+            ...defaultE2eeWakeDeps,
+            loadHandles: async () => new Map([[profileId, 'alice']]),
+            loadPreferences: async () => new Map(),
+            send: async (inputs) => {
+              sent.push(...inputs);
+              return [];
+            }
+          }),
+        { skipRedis: true }
+      );
+      expect(sent).toHaveLength(3);
+      expect(sent.map(({ token, title }) => [token, title])).toEqual(
+        expect.arrayContaining([
+          ['wake-shared', '[alice] New encrypted message'],
+          ['wake-new', 'New encrypted message'],
+          ['wake-shared', 'New encrypted message']
+        ])
+      );
     } finally {
-      await sqlExecutor.execute(
+      setSqlExecutor(fixtureDb);
+      await fixtureDb.execute(
         `delete from ${PUSH_NOTIFICATION_DEVICES_TABLE} where profile_id in (:profileIds)`,
         { profileIds: [profileId, otherProfileId] }
       );
