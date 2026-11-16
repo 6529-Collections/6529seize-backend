@@ -26,6 +26,26 @@ const retained = JSON.parse(
 const retainedFunctions = new Set(
   retained.services.flatMap((service) => service.verification_targets)
 );
+// Each environment has one regional source stack, in the API's region;
+// deploy-source.mjs refuses multi-region coverage. A catalog service deployed
+// to another region (dropVideoConversionInvokerLoop in prod, next to the
+// eu-west-1 media bucket) is listed in coverage as outside the source region
+// and relies on its own stack's alarms until regional relays exist.
+function sourceRegion(environment) {
+  const region = catalog.services.find((service) => service.name === 'api')
+    ?.aws_region[environment];
+  if (!region) throw new Error(`No API region for ${environment}`);
+  return region;
+}
+function deployedTo(service, environment) {
+  return service.allowed_environments.includes(environment);
+}
+function inSourceRegion(service, environment) {
+  return (
+    deployedTo(service, environment) &&
+    service.aws_region[environment] === sourceRegion(environment)
+  );
+}
 const observedServices = [...catalog.services];
 for (const producer of retained.services) {
   // Preserve the catalog's established order and existing generated resources.
@@ -386,7 +406,7 @@ function processingLane(r, lane, common, collectorEnv, permissions) {
 
 function monitoringTemplate(environment) {
   const functions = observedServices
-    .filter((s) => s.allowed_environments.includes(environment))
+    .filter((s) => inSourceRegion(s, environment))
     .flatMap((s) => s.verification_targets);
   const doc = document(
     'Independent operational error delivery; deploy in the monitoring account.'
@@ -1025,7 +1045,11 @@ function platformAlarm(name, metric, environment) {
 
 function sourceTemplate(environment) {
   const services = observedServices.filter((service) =>
-    service.allowed_environments.includes(environment)
+    inSourceRegion(service, environment)
+  );
+  const otherRegions = observedServices.filter(
+    (service) =>
+      deployedTo(service, environment) && !inSourceRegion(service, environment)
   );
   const functions = services.flatMap((service) => service.verification_targets);
   const platformOnly = supplemental.functions.filter((item) =>
@@ -1268,6 +1292,12 @@ function sourceTemplate(environment) {
       coverage: service.verification_targets.length
         ? ['structured-error-logs', 'lambda-errors', 'lambda-throttles']
         : ['infrastructure-only-no-lambda']
+    })),
+    otherRegions: otherRegions.map((service) => ({
+      service: service.name,
+      region: service.aws_region[environment],
+      functions: service.verification_targets,
+      coverage: ['outside-source-region-service-stack-alarms-only']
     }))
   };
 }
@@ -1282,6 +1312,7 @@ for (const environment of ['prod', 'staging']) {
     source: 'src/config/deploy-services.json',
     retainedSource: 'ops/monitoring/retained-producers.json',
     services: source.coverage,
+    otherRegionServices: source.otherRegions,
     supplementalSource: 'ops/monitoring/platform-functions.json',
     platformOnly: source.platformOnly
   };

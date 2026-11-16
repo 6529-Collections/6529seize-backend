@@ -48,41 +48,19 @@ afterAll(async () => {
 
 beforeEach(() => jest.resetAllMocks());
 
-describe('retired Prenode registry', () => {
+describe('removed Prenode registry', () => {
   it.each([
-    { method: 'POST', path: '/register-prenode', body: {} },
-    {
-      method: 'POST',
-      path: '/register-prenode',
-      body: { domain: 'node.example', tdh: 42, block: 123 }
-    },
-    { method: 'GET', path: '/prenodes?page=1&page_size=20' },
-    { method: 'GET', path: '/prenodes?page=invalid' }
-  ])(
-    'returns a non-cacheable 410 for $method $path without data access',
-    async ({ method, path, body }) => {
-      const response = await fetch(`${baseUrl}/oracle${path}`, {
-        method,
-        ...(body
-          ? {
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify(body)
-            }
-          : {})
-      });
-      expect(response.status).toBe(410);
-      expect(response.headers.get('cache-control')).toBe('no-store');
-      expect(await response.json()).toEqual({
-        error:
-          '6529 Prenodes have been deprecated. Use the 6529 Desktop app to calculate TDH.'
-      });
-      for (const mock of Object.values(db).filter(
-        (value) => typeof value === 'function'
-      )) {
-        expect(mock).not.toHaveBeenCalled();
-      }
+    { method: 'POST', path: '/register-prenode' },
+    { method: 'GET', path: '/prenodes?page=1&page_size=20' }
+  ])('no longer mounts $method $path', async ({ method, path }) => {
+    const response = await fetch(`${baseUrl}/oracle${path}`, { method });
+    expect(response.status).toBe(404);
+    for (const mock of Object.values(db).filter(
+      (value) => typeof value === 'function'
+    )) {
+      expect(mock).not.toHaveBeenCalled();
     }
-  );
+  });
 });
 
 const totals = {

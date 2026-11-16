@@ -384,6 +384,7 @@ The API (`src/api-serverless/src/`) is an Express application with:
 - Serverless Framework configuration in `serverless-config/`
 - Most loops have their own serverless.yaml files in their roots. Those are used to set up lambdas (via Github Actions). All new lambdas should also use serverless.yaml and make sure they are wired in build scripts and `.github/workflows/deploy.yaml`
 - API deployable as single Lambda with API Gateway
+- **Account-neutral config:** never hardcode an AWS account ID in `serverless.yaml`, `serverless-config/`, the deploy workflow, or runtime code. Use `${aws:accountId}` (Serverless), `${AWS::AccountId}` (CloudFormation), `aws sts get-caller-identity` (workflows), or env/SDK lookups at runtime. Staging network IDs and the alarm topic come from SSM `/6529/workload/*` in the deploy account. `scripts/aws-account-id-guard.test.ts` enforces this; tests and fixtures may use literal IDs.
 - **memorySize:** Use a multiple of 512 (MB), e.g. 512, 1024, 1536, 2048, 3072, 4096, 5120
 
 ### Code Patterns

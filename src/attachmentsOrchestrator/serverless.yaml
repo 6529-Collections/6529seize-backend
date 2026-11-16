@@ -28,7 +28,7 @@ functions:
     handler: index.handler
     name: attachmentsOrchestrator
     description: ${env:VERSION_DESCRIPTION}
-    role: arn:aws:iam::987989283142:role/lambda-vpc-role
+    role: arn:aws:iam::${aws:accountId}:role/lambda-vpc-role
     reservedConcurrency: 2
     events:
       - sqs:
@@ -88,7 +88,7 @@ resources:
           Statement:
             - Effect: Allow
               Principal:
-                AWS: arn:aws:iam::987989283142:role/lambda-vpc-role
+                AWS: arn:aws:iam::${aws:accountId}:role/lambda-vpc-role
               Action:
                 - sqs:SendMessage
               Resource:

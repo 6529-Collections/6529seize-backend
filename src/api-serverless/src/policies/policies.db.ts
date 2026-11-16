@@ -22,28 +22,43 @@ export const deleteCookiesConsent = async (ip: string) => {
   );
 };
 
+/**
+ * Records a device's EULA acceptance. `profileId` is stored as the owner only
+ * when the row is created; re-saving an existing device keeps its owner
+ * (including none) and refreshes only the acceptance fields.
+ */
 export const saveEULAConsent = async (
   deviceId: string,
   platform: string,
-  eulaVersion: string
+  eulaVersion: string,
+  profileId: string | null = null
 ) => {
   const acceptedAt = Time.now().toMillis();
   await sqlExecutor.execute(
-    `INSERT INTO ${EULA_CONSENT_TABLE} (device_id, platform, accepted_at, eula_version)
-      VALUES (:deviceId, :platform, :acceptedAt, :eulaVersion)
+    `INSERT INTO ${EULA_CONSENT_TABLE} (device_id, platform, accepted_at, eula_version, profile_id)
+      VALUES (:deviceId, :platform, :acceptedAt, :eulaVersion, :profileId)
       ON DUPLICATE KEY UPDATE
         platform = :platform,
         accepted_at = :acceptedAt,
         eula_version = :eulaVersion
     `,
-    { deviceId, platform, acceptedAt, eulaVersion }
+    { deviceId, platform, acceptedAt, eulaVersion, profileId }
   );
 };
 
-export const deleteEULAConsent = async (deviceId: string) => {
+/**
+ * Removes a device's EULA acceptance only when it is owned by `profileId`.
+ * Rows with another owner or no owner are left in place.
+ */
+export const deleteOwnedEULAConsent = async (
+  deviceId: string,
+  profileId: string
+) => {
   await sqlExecutor.execute(
-    `DELETE FROM ${EULA_CONSENT_TABLE} WHERE device_id = :deviceId`,
-    { deviceId }
+    `DELETE FROM ${EULA_CONSENT_TABLE}
+      WHERE device_id = :deviceId
+        AND profile_id = :profileId`,
+    { deviceId, profileId }
   );
 };
 

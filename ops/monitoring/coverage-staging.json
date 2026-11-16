@@ -689,6 +689,7 @@
       ]
     }
   ],
+  "otherRegionServices": [],
   "supplementalSource": "ops/monitoring/platform-functions.json",
   "platformOnly": [
     {

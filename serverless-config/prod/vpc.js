@@ -10,6 +10,9 @@ module.exports.region = () => {
   return 'us-east-1';
 };
 
-module.exports.cwtopic = () => {
-  return 'arn:aws:sns:us-east-1:987989283142:cloudwatch-alarms';
+// Production still uses literal network IDs; only the account is derived so
+// no AWS account ID is hardcoded in deploy configuration.
+module.exports.cwtopic = async ({ resolveVariable }) => {
+  const accountId = await resolveVariable('aws:accountId');
+  return `arn:aws:sns:us-east-1:${accountId}:cloudwatch-alarms`;
 };

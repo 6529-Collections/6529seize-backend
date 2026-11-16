@@ -37,7 +37,7 @@ functions:
           rate: rate(1 minute)
           input:
             mode: 'DIRTY'
-    role: arn:aws:iam::987989283142:role/lambda-vpc-role
+    role: arn:aws:iam::${aws:accountId}:role/lambda-vpc-role
     vpc:
       securityGroupIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):security}
       subnetIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):subnets}
@@ -80,7 +80,7 @@ resources:
     WaveScoreRefreshTDHCalculatedSubscription:
       Type: AWS::SNS::Subscription
       Properties:
-        TopicArn: arn:aws:sns:${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):region}:987989283142:tdh-calculation-done.fifo
+        TopicArn: arn:aws:sns:${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):region}:${aws:accountId}:tdh-calculation-done.fifo
         Protocol: sqs
         Endpoint: !GetAtt
           - WaveScoreRefreshStartQueue
@@ -103,7 +103,7 @@ resources:
                 - !GetAtt WaveScoreRefreshStartQueue.Arn
               Condition:
                 ArnEquals:
-                  aws:SourceArn: arn:aws:sns:${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):region}:987989283142:tdh-calculation-done.fifo
+                  aws:SourceArn: arn:aws:sns:${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):region}:${aws:accountId}:tdh-calculation-done.fifo
     WaveScoreDirtyRefreshQueuePolicy:
       Type: 'AWS::SQS::QueuePolicy'
       Properties:
@@ -113,7 +113,7 @@ resources:
           Statement:
             - Effect: 'Allow'
               Principal:
-                AWS: arn:aws:iam::987989283142:role/lambda-vpc-role
+                AWS: arn:aws:iam::${aws:accountId}:role/lambda-vpc-role
               Action:
                 - sqs:GetQueueUrl
                 - sqs:SendMessage
@@ -132,7 +132,7 @@ resources:
           Statement:
             - Effect: 'Allow'
               Principal:
-                AWS: arn:aws:iam::987989283142:role/lambda-vpc-role
+                AWS: arn:aws:iam::${aws:accountId}:role/lambda-vpc-role
               Action:
                 - sqs:SendMessage
               Resource:

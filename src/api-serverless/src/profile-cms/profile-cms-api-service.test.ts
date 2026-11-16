@@ -17,6 +17,10 @@ import {
   ForbiddenException,
   NotFoundException
 } from '@/exceptions';
+import {
+  CMS_OWNER_MAX_JSON_DEPTH,
+  CMS_OWNER_MAX_JSON_NODES
+} from '@/profile-cms/profile-cms-json-bounds';
 import { ProfileCmsPackagesDb } from '@/profile-cms/profile-cms-packages.db';
 import { ProfileCmsPointerEventsDb } from '@/profile-cms/profile-cms-pointer-events.db';
 import { ProfileCmsPublishSignaturesDb } from '@/profile-cms/profile-cms-publish-signatures.db';
@@ -344,6 +348,100 @@ describe('ProfileCmsApiService', () => {
       )
     ).rejects.toBeInstanceOf(ForbiddenException);
     expect(packagesDb.insert).not.toHaveBeenCalled();
+  });
+
+  describe('owner request structure limits', () => {
+    it('rejects a draft over the node limit before schema parsing', async () => {
+      const cmsPackage = createValidProfileCmsPackage();
+      const oversized = {
+        ...cmsPackage,
+        payload: {
+          ...cmsPackage.payload,
+          assets: new Array(CMS_OWNER_MAX_JSON_NODES).fill(0)
+        }
+      };
+
+      await expect(
+        service.saveDraft(
+          {
+            profile_id: PROFILE_CMS_FIXTURE_PROFILE_ID,
+            cms_package: oversized
+          },
+          ownerContext()
+        )
+      ).rejects.toThrow(
+        new BadRequestException(
+          `cms_package exceeds the maximum of ${CMS_OWNER_MAX_JSON_NODES} JSON values`
+        )
+      );
+      expect(packagesDb.insert).not.toHaveBeenCalled();
+    });
+
+    it('rejects a draft over the depth limit', async () => {
+      await expect(
+        service.saveDraft(
+          {
+            profile_id: PROFILE_CMS_FIXTURE_PROFILE_ID,
+            cms_package: createDeepBlockPackage()
+          },
+          ownerContext()
+        )
+      ).rejects.toThrow(
+        new BadRequestException(
+          `cms_package exceeds the maximum nesting depth of ${CMS_OWNER_MAX_JSON_DEPTH}`
+        )
+      );
+      expect(packagesDb.insert).not.toHaveBeenCalled();
+    });
+
+    it('rejects package validation requests over the depth limit', () => {
+      expect(() =>
+        service.validatePackage({ cms_package: createDeepBlockPackage() })
+      ).toThrow(BadRequestException);
+    });
+
+    it('rejects agent patches over the depth limit', async () => {
+      const draft = createEntity();
+      packagesDb.findById.mockResolvedValue(draft);
+
+      await expect(
+        service.validateAgentPatch(
+          draft.id,
+          {
+            agent_patch: createAgentPatch(draft, {
+              operations: [
+                {
+                  op: 'update_page_metadata',
+                  path: '/payload/pages/0/metadata',
+                  value: deepArray(CMS_OWNER_MAX_JSON_DEPTH + 1)
+                }
+              ]
+            })
+          },
+          ownerContext()
+        )
+      ).rejects.toThrow(
+        new BadRequestException(
+          `agent_patch exceeds the maximum nesting depth of ${CMS_OWNER_MAX_JSON_DEPTH}`
+        )
+      );
+    });
+
+    it('does not apply the request limits to stored drafts', async () => {
+      const draft = createEntity({ cms_package: createDeepBlockPackage() });
+      packagesDb.findById.mockResolvedValue(draft);
+
+      await expect(
+        service.getAgentSourcePacket(draft.id, ownerContext())
+      ).resolves.toMatchObject({ package_db_id: draft.id });
+      await expect(
+        service.validateAgentPatch(
+          draft.id,
+          { agent_patch: createAgentPatch(draft) },
+          ownerContext()
+        )
+      ).resolves.toMatchObject({ valid: true, target: { draft_id: draft.id } });
+    });
   });
 
   it('returns the profile CMS agent schema bundle with safety metadata', () => {
@@ -2021,6 +2119,34 @@ function createAgentSourcePacketPackage(): CmsPackageV1 {
             captured_at: '2026-06-17T00:00:00.000Z'
           }
         }
+      ]
+    }
+  };
+}
+
+function deepArray(depth: number): unknown {
+  let value: unknown = [];
+  for (let index = 0; index < depth; index++) value = [value];
+  return value;
+}
+
+function createDeepBlockPackage(): CmsPackageV1 {
+  const cmsPackage = createValidProfileCmsPackage();
+  const [page, ...pages] = cmsPackage.payload.pages;
+  const [block, ...blocks] = page.blocks;
+  return {
+    ...cmsPackage,
+    payload: {
+      ...cmsPackage.payload,
+      pages: [
+        {
+          ...page,
+          blocks: [
+            { ...block, nested: deepArray(CMS_OWNER_MAX_JSON_DEPTH) },
+            ...blocks
+          ] as typeof page.blocks
+        },
+        ...pages
       ]
     }
   };

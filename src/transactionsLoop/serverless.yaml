@@ -19,7 +19,7 @@ functions:
     handler: index.handler
     name: memesTransactionsLoop
     description: ${env:VERSION_DESCRIPTION}
-    role: arn:aws:iam::987989283142:role/lambda-vpc-role
+    role: arn:aws:iam::${aws:accountId}:role/lambda-vpc-role
     reservedConcurrency: 1
     events:
       - schedule: rate(1 minute)
@@ -35,7 +35,7 @@ functions:
     handler: index.handler
     name: gradientsTransactionsLoop
     description: ${env:VERSION_DESCRIPTION}
-    role: arn:aws:iam::987989283142:role/lambda-vpc-role
+    role: arn:aws:iam::${aws:accountId}:role/lambda-vpc-role
     reservedConcurrency: 1
     events:
       - schedule: rate(1 minute)
@@ -50,7 +50,7 @@ functions:
     handler: index.handler
     name: memeLabTransactionsLoop
     description: ${env:VERSION_DESCRIPTION}
-    role: arn:aws:iam::987989283142:role/lambda-vpc-role
+    role: arn:aws:iam::${aws:accountId}:role/lambda-vpc-role
     reservedConcurrency: 1
     events:
       - schedule: rate(1 minute)

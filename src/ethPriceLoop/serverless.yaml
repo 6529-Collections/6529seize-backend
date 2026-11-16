@@ -18,7 +18,7 @@ functions:
   ethPriceLoop:
     handler: index.handler
     name: ethPriceLoop
-    role: arn:aws:iam::987989283142:role/lambda-vpc-role
+    role: arn:aws:iam::${aws:accountId}:role/lambda-vpc-role
     reservedConcurrency: 1
     events:
       - schedule: rate(5 minutes)

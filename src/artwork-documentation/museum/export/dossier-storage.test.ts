@@ -31,6 +31,15 @@ function fixture() {
   return { storage: new DossierStorage(() => client), send, client, calls };
 }
 
+const savedArchiveBucket = process.env.ARTWORK_DOCUMENTATION_S3_BUCKET;
+beforeAll(() => {
+  process.env.ARTWORK_DOCUMENTATION_S3_BUCKET = 'artwork-archive-fixture';
+});
+afterAll(() => {
+  if (savedArchiveBucket === undefined)
+    delete process.env.ARTWORK_DOCUMENTATION_S3_BUCKET;
+  else process.env.ARTWORK_DOCUMENTATION_S3_BUCKET = savedArchiveBucket;
+});
 afterEach(() => jest.clearAllMocks());
 
 it('streams exact source bytes into bounded multipart parts and records the immutable completed version', async () => {

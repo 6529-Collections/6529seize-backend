@@ -7,6 +7,12 @@ jest.mock('@aws-sdk/client-sqs', () => ({
   SendMessageBatchCommand: jest.fn().mockImplementation((params) => params)
 }));
 
+jest.mock('./push-notifications-queue', () => ({
+  getPushNotificationsQueueUrl: jest
+    .fn()
+    .mockResolvedValue('https://sqs.example/push-queue')
+}));
+
 jest.mock('../../../logging', () => ({
   Logger: {
     get: () => ({

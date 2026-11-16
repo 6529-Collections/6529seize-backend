@@ -5,6 +5,7 @@ import {
 } from '@aws-sdk/client-sqs';
 import { Logger } from '../../../logging';
 import { collections } from '@/collections';
+import { getPushNotificationsQueueUrl } from './push-notifications-queue';
 
 const logger = Logger.get('PUSH_NOTIFICATIONS');
 const region = process.env.AWS_REGION;
@@ -138,7 +139,7 @@ export const sendBatchMessagesToSQS = async (
   entries: NonNullable<SendMessageBatchCommandInput['Entries']>
 ) => {
   const params: SendMessageBatchCommandInput = {
-    QueueUrl: `https://sqs.${region}.amazonaws.com/987989283142/firebase-push-notifications`,
+    QueueUrl: await getPushNotificationsQueueUrl(sqs),
     Entries: entries
   };
 

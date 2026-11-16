@@ -147,7 +147,6 @@ export {
 } from './IOwnerBalances';
 export { OfficialWaveEntity } from './IOfficialWave';
 export { PinnedWaveEntity } from './IPinnedWaveEntity';
-export { Prenode } from './IPrenode';
 export { Profile, ProfileArchived } from './IProfile';
 export { ProfileActivityLog } from './IProfileActivityLog';
 export { ProfileWaveEntity } from './IProfileWave';

@@ -1,10 +1,9 @@
-import { Request, Response } from 'express';
+import { Request } from 'express';
 import * as Joi from 'joi';
 import * as db from '@/api/oracle/api.oracle.db';
 import { asyncRouter } from '@/api/async.router';
 import * as SwaggerUI from 'swagger-ui-express';
 import { numbers } from '@/numbers';
-import { CustomApiCompliantException } from '@/exceptions';
 import { getValidatedByJoiOrThrow } from '@/api/validation';
 
 const YAML = require('yamljs');
@@ -305,15 +304,3 @@ router.get(
     return res.json(result);
   }
 );
-
-// Keep terminal responses for legacy registry clients without reading or writing data.
-function retiredPrenodeRegistry(_req: Request, res: Response) {
-  res.setHeader('Cache-Control', 'no-store');
-  throw new CustomApiCompliantException(
-    410,
-    '6529 Prenodes have been deprecated. Use the 6529 Desktop app to calculate TDH.'
-  );
-}
-
-router.post('/register-prenode', retiredPrenodeRegistry);
-router.get('/prenodes', retiredPrenodeRegistry);
