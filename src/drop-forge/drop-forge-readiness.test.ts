@@ -79,8 +79,14 @@ afterEach(() => jest.restoreAllMocks());
 
 it('resolves Athens checkpoints in winter and summer and skips non-mint days', () => {
   expect(
-    resolveReadinessCheckpoint('readiness:0:2026-11-13T15:30:00Z')?.time
-  ).toBe('17:30');
+    resolveReadinessCheckpoint('readiness:0:2026-11-13T15:20:00Z')?.time
+  ).toBe('17:20');
+  expect(
+    resolveReadinessCheckpoint('readiness:0:2026-07-20T14:20:00Z')?.time
+  ).toBe('17:20');
+  expect(
+    resolveReadinessCheckpoint('readiness:0:2026-11-13T15:30:00Z')
+  ).toBeNull();
   expect(
     resolveReadinessCheckpoint('readiness:1:2026-07-20T15:28:00Z')?.time
   ).toBe('18:28');
