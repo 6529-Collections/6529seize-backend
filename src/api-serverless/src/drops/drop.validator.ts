@@ -157,6 +157,10 @@ const MetadataSchema: Joi.ObjectSchema<DropMetadataEntity> = Joi.object({
       'metadata value for "{{#dataKey}}" must be less than or equal to {{#maxLength}} characters long'
   });
 
+export const DropMetadataListSchema = Joi.array()
+  .max(DROP_MAX_METADATA_ENTRIES)
+  .items(MetadataSchema);
+
 const QuotedDropSchema: Joi.ObjectSchema<ApiQuotedDrop> = Joi.object({
   drop_id: Joi.string().required(),
   drop_part_id: Joi.number().integer().min(1).required()
@@ -289,11 +293,7 @@ const baseDropFieldsValidators = {
     .max(DROP_MAX_MENTIONED_WAVES)
     .items(MentionedWaveSchema)
     .default([]),
-  metadata: Joi.array()
-    .optional()
-    .max(DROP_MAX_METADATA_ENTRIES)
-    .items(MetadataSchema)
-    .default([]),
+  metadata: DropMetadataListSchema.optional().default([]),
   signature: Joi.string().optional().allow(null).default(null),
   signature_message: Joi.string().optional().allow(null).default(null),
   is_safe_signature: Joi.boolean().optional(),

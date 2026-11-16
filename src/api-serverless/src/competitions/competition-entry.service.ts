@@ -65,6 +65,7 @@ import {
   visibleCompetitionWave
 } from './competition-command-access';
 import { verifyCompetitionSignature } from './competition-signature';
+import { normalizeMainStageTraits } from './main-stage-traits';
 
 type EntryRequest = ApiCreateCompetitionEntryRequest;
 type PreparedEntry = {
@@ -211,7 +212,15 @@ export class CompetitionEntryService {
       (await this.entries.countActive(competitionId, actor, tx)) >= limit
     )
       throw new ForbiddenException('Decision entry limit reached');
-    const model = prepared.model;
+    // Both paths start with DropMetadataListSchema. The structured-field
+    // sanitizer repeats its trim and empty checks without changing valid pairs.
+    const model = {
+      ...prepared.model,
+      metadata: normalizeMainStageTraits(
+        prepared.model.metadata,
+        competition.capabilities
+      )
+    };
     await moderationReviewDb.lockProfile(actor, tx);
     await prePublicationModerationService.assertPostingAllowed(actor, tx);
     assertCompetitionEntryContent(competition, model);

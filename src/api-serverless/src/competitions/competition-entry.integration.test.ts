@@ -371,6 +371,58 @@ describeWithSeed(
       }
     );
 
+    it('enforces Main Stage traits and stores omitted defaults separately from the signed payload', async () => {
+      jest.replaceProperty(process, 'env', {
+        ...process.env,
+        MAIN_STAGE_TRAIT_VALIDATION_ENABLED: 'true'
+      });
+      await sqlExecutor.execute(
+        `insert into ${tables.COMPETITION_CAPABILITIES_TABLE} (capability,competition_id,wave_id,assigned_at) values ('MAIN_STAGE',:competitionId,:waveId,1)`,
+        { competitionId, waveId: wave.id }
+      );
+      await updateParticipation({ signature_required: true });
+      requestMetadata = Object.entries({
+        title: 'Artwork',
+        description: 'Artwork description',
+        artist: 'Artist',
+        memeName: 'Freestyle',
+        palette: 'Color',
+        pointsPower: '1',
+        pointsWisdom: '2',
+        pointsLoki: '-2',
+        pointsSpeed: '0',
+        food: 'Pie'
+      }).map(([data_key, data_value]) => ({ data_key, data_value }));
+      await expect(
+        service.create(wave.id, competitionId, await signedRequest(), ctx)
+      ).rejects.toThrow('pointsSpeed (INVALID_POINTS)');
+
+      requestMetadata = requestMetadata.map((item) =>
+        item.data_key === 'pointsSpeed' ? { ...item, data_value: '1.5' } : item
+      );
+      const input = await signedRequest();
+      const entry = await service.create(wave.id, competitionId, input, ctx);
+      const metadata = (
+        await service.getContent(wave.id, competitionId, entry.id, ctx)
+      ).metadata;
+      expect(metadata).toEqual(
+        expect.arrayContaining([
+          { data_key: 'bonus', data_value: 'No' },
+          { data_key: 'pepe', data_value: 'false' },
+          { data_key: 'food', data_value: 'Pie' },
+          { data_key: 'pointsSpeed', data_value: '1.5' }
+        ])
+      );
+      const stored = await sqlExecutor.oneOrNull<{ signed_content: string }>(
+        `select signed_content from ${tables.COMPETITION_ENTRY_CONTENT_VERSIONS_TABLE} where entry_id=:id`,
+        { id: entry.id }
+      );
+      expect(JSON.parse(stored!.signed_content)).toEqual(input.drop);
+      await expect(
+        service.create(wave.id, competitionId, input, ctx)
+      ).resolves.toEqual(entry);
+    });
+
     it('creates native submissions with obsolete vote tables physically absent', async () => {
       await sqlExecutor.execute(
         `update ${tables.COMPETITIONS_TABLE} set legacy_wave_id=:waveId where id=:id`,
