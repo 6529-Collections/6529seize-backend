@@ -1025,14 +1025,14 @@ export class ApiWaveV2Service {
           )
         : {};
     for (const drop of Object.values(dropsById)) {
-      const acting = actingPresentations[drop.id];
+      const { moderation, viewer } = actingPresentations[drop.id] ?? {};
       const canView =
         drop.moderation?.can_view !== false &&
         !drop.viewer_context?.author_blocked &&
         !drop.viewer_context?.drop_hidden &&
-        acting?.moderation.can_view !== false &&
-        !acting?.viewer.author_blocked &&
-        !acting?.viewer.drop_hidden;
+        moderation?.can_view !== false &&
+        !viewer?.author_blocked &&
+        !viewer?.drop_hidden;
       drop.competition_entry = canView ? (byId.get(drop.id) ?? null) : null;
     }
     return dropsById;
