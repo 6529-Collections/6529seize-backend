@@ -7,6 +7,7 @@ import { getValidatedByJoiOrThrow } from '@/api/validation';
 import { apiWaveOverviewMapper } from '@/api/waves/api-wave-overview.mapper';
 import { getGroupsUserIsEligibleForReadContext } from '@/api/waves/wave-access.helpers';
 import { wavesApiDb } from '@/api/waves/waves.api.db';
+import { env } from '@/env';
 import { Timer, Time } from '@/time';
 
 export async function handleGetActiveWaveVotes(
@@ -29,6 +30,7 @@ export async function handleGetActiveWaveVotes(
   const { waves, count } = await wavesApiDb.findActiveTdhVotingWaves(
     {
       eligibleGroups,
+      mainStageWaveId: env.getStringOrNull('MAIN_STAGE_WAVE_ID'),
       now: Time.currentMillis(),
       limit: page_size,
       offset: (page - 1) * page_size
@@ -41,6 +43,9 @@ export async function handleGetActiveWaveVotes(
   return {
     data: waves.map((wave) => ({
       wave: mapped[wave.id],
+      ...(wave.activeSubmissionCount === undefined
+        ? {}
+        : { active_submission_count: wave.activeSubmissionCount }),
       voting_ends_at:
         wave.voting_period_end === null ? null : Number(wave.voting_period_end),
       next_decision_at:
