@@ -2,13 +2,17 @@ import {
   COMPETITIONS_TABLE,
   COMPETITION_CAPABILITIES_TABLE
 } from '@/constants';
-import { CompetitionCapability } from '@/entities/ICompetition';
+import {
+  CompetitionCapability,
+  CompetitionEntryStatus
+} from '@/entities/ICompetition';
 import { WaveType } from '@/entities/IWave';
 import { sqlExecutor } from '@/sql-executor';
 import { describeWithSeed } from '@/tests/_setup/seed';
 import { aWave, withWaves } from '@/tests/fixtures/wave.fixture';
 import { seedNativeOriginalPrimaryFixture } from '@/tests/fixtures/native-competition.fixture';
 import { CompetitionRepository } from './competition.repository';
+import { competitionEntryRepository } from './competition-entry.repository';
 import { legacyGetView } from './legacy-competition-get-facade';
 import {
   normalizeDefaultCompetition,
@@ -28,6 +32,94 @@ describeWithSeed(
   withWaves([wave]),
   () => {
     const repository = new CompetitionRepository(() => sqlExecutor);
+    it('only returns unambiguous active or winning feed memberships visible in the wave', async () => {
+      const primary = await seedNativeOriginalPrimaryFixture(wave);
+      const draft = '10000000-0000-4000-8000-000000000002';
+      await sqlExecutor.execute(
+        `insert into ${COMPETITIONS_TABLE}
+         (id, wave_id, type, lifecycle, execution_mode, title, participation_config,
+          voting_config, decision_config, winner_config, outcome_config, config_version,
+          created_at, updated_at)
+         select :draft, wave_id, type, 'DRAFT', execution_mode, title, participation_config,
+          voting_config, decision_config, winner_config, outcome_config, config_version,
+          created_at, updated_at from ${COMPETITIONS_TABLE} where id = :primary`,
+        { draft, primary: primary.id }
+      );
+      const memberships = [
+        { id: 'active', drop_id: 'active-drop' },
+        {
+          id: 'winner',
+          drop_id: 'winner-drop',
+          status: CompetitionEntryStatus.WINNER
+        },
+        {
+          id: 'withdrawn',
+          drop_id: 'withdrawn-drop',
+          status: CompetitionEntryStatus.WITHDRAWN
+        },
+        { id: 'draft', drop_id: 'draft-drop', competition_id: draft },
+        { id: 'ambiguous-one', drop_id: 'ambiguous-drop' },
+        {
+          id: 'ambiguous-two',
+          drop_id: 'ambiguous-drop',
+          competition_id: draft
+        },
+        { id: 'wrong-wave', drop_id: 'wrong-wave-drop', wave_id: 'other-wave' }
+      ];
+      for (const membership of memberships) {
+        await competitionEntryRepository.insert(
+          {
+            wave_id: wave.id,
+            competition_id: primary.id,
+            submitter_id: 'artist',
+            status: CompetitionEntryStatus.ACTIVE,
+            config_version: 1,
+            submitted_at: 100,
+            rank: null,
+            won_at: null,
+            decision_id: null,
+            ...membership
+          },
+          {}
+        );
+      }
+      const dropIds = memberships.map(({ drop_id }) => drop_id);
+      const publicEntries = await repository.findFeedEntryReferences(
+        wave.id,
+        dropIds,
+        false,
+        {}
+      );
+      expect(publicEntries).toHaveLength(2);
+      expect(publicEntries).toEqual(
+        expect.arrayContaining([
+          {
+            drop_id: 'active-drop',
+            competition_id: primary.id,
+            entry_id: 'active'
+          },
+          {
+            drop_id: 'winner-drop',
+            competition_id: primary.id,
+            entry_id: 'winner'
+          }
+        ])
+      );
+      const adminEntries = await repository.findFeedEntryReferences(
+        wave.id,
+        dropIds,
+        true,
+        {}
+      );
+      expect(adminEntries).toHaveLength(3);
+      expect(adminEntries).toEqual(
+        expect.arrayContaining([
+          ...publicEntries,
+          { drop_id: 'draft-drop', competition_id: draft, entry_id: 'draft' }
+        ])
+      );
+    });
+
     it('keeps old GET ownership fixed when another native competition becomes default', async () => {
       const primary = await seedNativeOriginalPrimaryFixture(wave);
       const sibling = '10000000-0000-4000-8000-000000000001';
