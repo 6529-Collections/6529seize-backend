@@ -11,7 +11,7 @@ import { WaveEntity } from '@/entities/IWave';
 import { enums } from '@/enums';
 import { BadRequestException, NotFoundException } from '@/exceptions';
 import { RequestContext } from '@/request.context';
-import { Time } from '@/time';
+import { Time, Timer } from '@/time';
 import { dropsDb, DropsDb, WaveSearchAuthor } from '@/drops/drops.db';
 import { curationsDb, CurationsDb } from '@/api/curations/curations.db';
 import {
@@ -1013,10 +1013,15 @@ export class ApiWaveV2Service {
     // the feed uses the anonymous read context for a restricted proxy.
     const actingPresentations =
       actingAsId !== getWaveReadContextProfileId(ctx.authenticationContext)
-        ? await contentModerationDb.getPresentations(
-            entities.filter((drop) => byId.has(drop.id)),
-            actingAsId,
-            ctx.connection
+        ? await Timer.timed(
+            ctx.timer,
+            `${this.constructor.name}->feedEntryProxyModeration`,
+            () =>
+              contentModerationDb.getPresentations(
+                entities.filter((drop) => byId.has(drop.id)),
+                actingAsId,
+                ctx.connection
+              )
           )
         : {};
     for (const drop of Object.values(dropsById)) {

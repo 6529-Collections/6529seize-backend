@@ -29,7 +29,6 @@ import {
   CompetitionType
 } from '@/entities/ICompetition';
 import { RequestContext } from '@/request.context';
-import { DbPoolName } from '@/db-query.options';
 import {
   dbSupplier,
   LazyDbAccessCompatibleService,
@@ -345,11 +344,7 @@ export class CompetitionRepository extends LazyDbAccessCompatibleService {
              where other.drop_id = e.drop_id and other.id <> e.id
            )`,
         { waveId, dropIds, mayReadDrafts },
-        {
-          wrappedConnection: ctx.connection,
-          // A negative result suppresses later reads for this feed row.
-          forcePool: DbPoolName.WRITE
-        }
+        dbOptions(ctx)
       );
     } finally {
       ctx.timer?.stop(timerKey);

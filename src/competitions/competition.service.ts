@@ -161,7 +161,7 @@ export class CompetitionService {
     };
   }
 
-  /** The timeline caller has already authorized this Wave and its parent. */
+  /** The caller supplies the same Wave read groups used by getVisibleWave. */
   public findFeedEntryReferences(
     wave: WaveEntity,
     dropIds: readonly string[],
