@@ -1,0 +1,183 @@
+{
+  "@context": "http://iiif.io/api/presentation/3/context.json",
+  "id": "https://6529.io/iiif/objects/stream-timed-media/manifest",
+  "type": "Manifest",
+  "label": {
+    "none": [
+      "Synthetic media capture vector"
+    ]
+  },
+  "summary": {
+    "en": [
+      "A synthetic artwork record for checking capture and archival interchange."
+    ]
+  },
+  "metadata": [
+    {
+      "label": {
+        "en": [
+          "Record status"
+        ]
+      },
+      "value": {
+        "en": [
+          "Published presentation compiled from the artist-confirmed dossier snapshot."
+        ]
+      }
+    },
+    {
+      "label": {
+        "en": [
+          "Source record digest"
+        ]
+      },
+      "value": {
+        "en": [
+          "sha256:6bd74b16f67883bbfc723d8903ee799590740715c2461b924a8201f19a09b4d7"
+        ]
+      }
+    },
+    {
+      "label": {
+        "en": [
+          "Publication compiler"
+        ]
+      },
+      "value": {
+        "en": [
+          "museum-publication-1.0.0"
+        ]
+      }
+    },
+    {
+      "label": {
+        "en": [
+          "Resource role"
+        ]
+      },
+      "value": {
+        "en": [
+          "synthetic-blue.mp4 — Authorized manifestation"
+        ]
+      }
+    }
+  ],
+  "requiredStatement": {
+    "label": {
+      "en": [
+        "Credit"
+      ]
+    },
+    "value": {
+      "en": [
+        "Synthetic Test Artist, Test Work, 2026. CC0 1.0."
+      ]
+    }
+  },
+  "rights": "http://creativecommons.org/publicdomain/zero/1.0/",
+  "provider": [
+    {
+      "id": "https://6529.io/museum",
+      "type": "Agent",
+      "label": {
+        "en": [
+          "6529 Museum"
+        ]
+      }
+    }
+  ],
+  "homepage": [
+    {
+      "id": "https://6529.io/iiif/objects/stream-timed-media",
+      "type": "Text",
+      "label": {
+        "en": [
+          "Museum object page"
+        ]
+      },
+      "format": "text/html"
+    }
+  ],
+  "seeAlso": [
+    {
+      "id": "https://6529.io/iiif/objects/stream-timed-media/source",
+      "type": "Dataset",
+      "label": {
+        "en": [
+          "Source dossier record"
+        ]
+      },
+      "format": "application/json"
+    }
+  ],
+  "rendering": [
+    {
+      "id": "https://media.example/publication/timed-media/30000000-0000-4000-8000-000000000100.mp4",
+      "type": "Video",
+      "format": "video/mp4",
+      "label": {
+        "none": [
+          "synthetic-blue.mp4 — Authorized manifestation"
+        ]
+      },
+      "width": 64,
+      "height": 64,
+      "duration": 1
+    }
+  ],
+  "items": [
+    {
+      "id": "https://6529.io/iiif/objects/stream-timed-media/canvas/30000000-0000-4000-8000-000000000501",
+      "type": "Canvas",
+      "label": {
+        "none": [
+          "synthetic-blue.mp4"
+        ]
+      },
+      "width": 64,
+      "height": 64,
+      "duration": 1,
+      "items": [
+        {
+          "id": "https://6529.io/iiif/objects/stream-timed-media/page/30000000-0000-4000-8000-000000000501/painting",
+          "type": "AnnotationPage",
+          "items": [
+            {
+              "id": "https://6529.io/iiif/objects/stream-timed-media/annotation/30000000-0000-4000-8000-000000000501/resource-0",
+              "type": "Annotation",
+              "motivation": "painting",
+              "body": {
+                "id": "https://media.example/publication/timed-media/30000000-0000-4000-8000-000000000100.mp4",
+                "type": "Video",
+                "format": "video/mp4",
+                "label": {
+                  "none": [
+                    "synthetic-blue.mp4"
+                  ]
+                },
+                "width": 64,
+                "height": 64,
+                "duration": 1
+              },
+              "target": "https://6529.io/iiif/objects/stream-timed-media/canvas/30000000-0000-4000-8000-000000000501#xywh=0,0,64,64"
+            }
+          ]
+        }
+      ],
+      "metadata": [
+        {
+          "label": {
+            "en": [
+              "Resource role"
+            ]
+          },
+          "value": {
+            "en": [
+              "synthetic-blue.mp4 — Authorized manifestation"
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,349 @@
+{
+  "@context": "http://iiif.io/api/presentation/3/context.json",
+  "id": "https://6529.io/iiif/objects/stream-multipart/manifest",
+  "type": "Manifest",
+  "label": {
+    "none": [
+      "Synthetic media capture vector"
+    ]
+  },
+  "summary": {
+    "en": [
+      "A synthetic artwork record for checking capture and archival interchange."
+    ]
+  },
+  "metadata": [
+    {
+      "label": {
+        "en": [
+          "Record status"
+        ]
+      },
+      "value": {
+        "en": [
+          "Published presentation compiled from the artist-confirmed dossier snapshot."
+        ]
+      }
+    },
+    {
+      "label": {
+        "en": [
+          "Source record digest"
+        ]
+      },
+      "value": {
+        "en": [
+          "sha256:cef51a0a1d65f7e1731afd73a68d01e0aa19e2aab2f1262858be335ee66f6783"
+        ]
+      }
+    },
+    {
+      "label": {
+        "en": [
+          "Publication compiler"
+        ]
+      },
+      "value": {
+        "en": [
+          "museum-publication-1.0.0"
+        ]
+      }
+    },
+    {
+      "label": {
+        "en": [
+          "Resource role"
+        ]
+      },
+      "value": {
+        "en": [
+          "synthetic-installation.zip — Preservation master"
+        ]
+      }
+    },
+    {
+      "label": {
+        "en": [
+          "Resource role"
+        ]
+      },
+      "value": {
+        "en": [
+          "synthetic-pixel.png — Documentation surrogate (not the complete work)"
+        ]
+      }
+    },
+    {
+      "label": {
+        "en": [
+          "Resource role"
+        ]
+      },
+      "value": {
+        "en": [
+          "synthetic-silence.wav — Authorized manifestation"
+        ]
+      }
+    },
+    {
+      "label": {
+        "en": [
+          "Resource role"
+        ]
+      },
+      "value": {
+        "en": [
+          "synthetic-scene.gltf — Technical model"
+        ]
+      }
+    },
+    {
+      "label": {
+        "en": [
+          "Documentation surrogate"
+        ]
+      },
+      "value": {
+        "en": [
+          "One or more presented resources are documentation surrogates. They record a viewing of the work and are not the complete work."
+        ]
+      }
+    }
+  ],
+  "requiredStatement": {
+    "label": {
+      "en": [
+        "Credit"
+      ]
+    },
+    "value": {
+      "en": [
+        "Synthetic Test Artist, Test Work, 2026. CC0 1.0."
+      ]
+    }
+  },
+  "rights": "http://creativecommons.org/publicdomain/zero/1.0/",
+  "provider": [
+    {
+      "id": "https://6529.io/museum",
+      "type": "Agent",
+      "label": {
+        "en": [
+          "6529 Museum"
+        ]
+      }
+    }
+  ],
+  "homepage": [
+    {
+      "id": "https://6529.io/iiif/objects/stream-multipart",
+      "type": "Text",
+      "label": {
+        "en": [
+          "Museum object page"
+        ]
+      },
+      "format": "text/html"
+    }
+  ],
+  "seeAlso": [
+    {
+      "id": "https://6529.io/iiif/objects/stream-multipart/source",
+      "type": "Dataset",
+      "label": {
+        "en": [
+          "Source dossier record"
+        ]
+      },
+      "format": "application/json"
+    }
+  ],
+  "thumbnail": [
+    {
+      "id": "https://media.example/publication/multipart/30000000-0000-4000-8000-000000000101.png",
+      "type": "Image",
+      "format": "image/png",
+      "width": 1,
+      "height": 1
+    }
+  ],
+  "rendering": [
+    {
+      "id": "https://media.example/publication/multipart/30000000-0000-4000-8000-000000000100.zip",
+      "type": "Dataset",
+      "format": "application/zip",
+      "label": {
+        "none": [
+          "synthetic-installation.zip — Preservation master"
+        ]
+      }
+    },
+    {
+      "id": "https://media.example/publication/multipart/30000000-0000-4000-8000-000000000101.png",
+      "type": "Image",
+      "format": "image/png",
+      "label": {
+        "none": [
+          "synthetic-pixel.png — Documentation surrogate (not the complete work)"
+        ]
+      },
+      "width": 1,
+      "height": 1
+    },
+    {
+      "id": "https://media.example/publication/multipart/30000000-0000-4000-8000-000000000102.wav",
+      "type": "Sound",
+      "format": "audio/wav",
+      "label": {
+        "none": [
+          "synthetic-silence.wav — Authorized manifestation"
+        ]
+      },
+      "duration": 1
+    },
+    {
+      "id": "https://media.example/publication/multipart/30000000-0000-4000-8000-000000000103.gltf",
+      "type": "Dataset",
+      "format": "model/gltf+json",
+      "label": {
+        "none": [
+          "synthetic-scene.gltf — Technical model"
+        ]
+      }
+    }
+  ],
+  "items": [
+    {
+      "id": "https://6529.io/iiif/objects/stream-multipart/canvas/30000000-0000-4000-8000-000000000700",
+      "type": "Canvas",
+      "label": {
+        "en": [
+          "Installation view — documentation surrogate"
+        ]
+      },
+      "width": 1,
+      "height": 1,
+      "items": [
+        {
+          "id": "https://6529.io/iiif/objects/stream-multipart/page/30000000-0000-4000-8000-000000000700/painting",
+          "type": "AnnotationPage",
+          "items": [
+            {
+              "id": "https://6529.io/iiif/objects/stream-multipart/annotation/30000000-0000-4000-8000-000000000700/resource-0",
+              "type": "Annotation",
+              "motivation": "painting",
+              "body": {
+                "id": "https://media.example/publication/multipart/30000000-0000-4000-8000-000000000101.png",
+                "type": "Image",
+                "format": "image/png",
+                "label": {
+                  "none": [
+                    "synthetic-pixel.png"
+                  ]
+                },
+                "width": 1,
+                "height": 1
+              },
+              "target": "https://6529.io/iiif/objects/stream-multipart/canvas/30000000-0000-4000-8000-000000000700#xywh=0,0,1,1"
+            }
+          ]
+        }
+      ],
+      "annotations": [
+        {
+          "id": "https://6529.io/iiif/objects/stream-multipart/page/30000000-0000-4000-8000-000000000700/annotations",
+          "type": "AnnotationPage",
+          "items": [
+            {
+              "id": "https://6529.io/iiif/objects/stream-multipart/annotation/30000000-0000-4000-8000-000000000700/30000000-0000-4000-8000-000000000701/text",
+              "type": "Annotation",
+              "motivation": "commenting",
+              "body": {
+                "type": "TextualBody",
+                "value": "Documentation photograph of the installed components.",
+                "format": "text/plain",
+                "language": "en"
+              },
+              "target": "https://6529.io/iiif/objects/stream-multipart/canvas/30000000-0000-4000-8000-000000000700"
+            }
+          ]
+        }
+      ],
+      "metadata": [
+        {
+          "label": {
+            "en": [
+              "Resource role"
+            ]
+          },
+          "value": {
+            "en": [
+              "synthetic-pixel.png — Documentation surrogate (not the complete work)"
+            ]
+          }
+        },
+        {
+          "label": {
+            "en": [
+              "Documentation surrogate"
+            ]
+          },
+          "value": {
+            "en": [
+              "This canvas presents a documentation surrogate: a recorded viewing of the work, not the complete work."
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "https://6529.io/iiif/objects/stream-multipart/canvas/30000000-0000-4000-8000-000000000702",
+      "type": "Canvas",
+      "label": {
+        "none": [
+          "Sound component"
+        ]
+      },
+      "duration": 1,
+      "items": [
+        {
+          "id": "https://6529.io/iiif/objects/stream-multipart/page/30000000-0000-4000-8000-000000000702/painting",
+          "type": "AnnotationPage",
+          "items": [
+            {
+              "id": "https://6529.io/iiif/objects/stream-multipart/annotation/30000000-0000-4000-8000-000000000702/resource-0",
+              "type": "Annotation",
+              "motivation": "painting",
+              "body": {
+                "id": "https://media.example/publication/multipart/30000000-0000-4000-8000-000000000102.wav",
+                "type": "Sound",
+                "format": "audio/wav",
+                "label": {
+                  "none": [
+                    "synthetic-silence.wav"
+                  ]
+                },
+                "duration": 1
+              },
+              "target": "https://6529.io/iiif/objects/stream-multipart/canvas/30000000-0000-4000-8000-000000000702"
+            }
+          ]
+        }
+      ],
+      "metadata": [
+        {
+          "label": {
+            "en": [
+              "Resource role"
+            ]
+          },
+          "value": {
+            "en": [
+              "synthetic-silence.wav — Authorized manifestation"
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

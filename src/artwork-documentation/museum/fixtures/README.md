@@ -76,3 +76,17 @@ and PREMIS XSD closure for all 26 XML projections, the 13 IIIF manifests against
 the pinned official schema, and all output digests.
 This is supported-subset export evidence, not certification by the standards
 owners, a deployed scanning test, or a claim of complete external API conformance.
+
+## Publication fixtures
+
+`publication-fixtures.ts` builds four publication inputs on this corpus for the
+IIIF publication bridge: a still image (`digital_art`, dimensions declared),
+timed media (`video`, duration declared), a multipart installation with
+declared presentation scenes, and a generative work documented by a dated
+still that is published as a documentation surrogate next to a live upstream
+URL. Media bindings use the placeholder host `media.example`; the manifests are
+structural fixtures, not served publications. The compiled goldens live in
+`publication/` with their digests; regenerate them only after an intentional
+compiler change with `scripts/write-museum-publication-goldens.ts`.
+`scripts/write-museum-corpus.ts` also writes the same four manifests for the
+independent Python validator.

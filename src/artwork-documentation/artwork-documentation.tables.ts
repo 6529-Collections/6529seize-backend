@@ -13,3 +13,4 @@ export const AD_EVENTS = 'artwork_documentation_events';
 export const AD_IDEMPOTENCY = 'artwork_documentation_idempotency';
 export const AD_MUSEUM_RECORDS = 'artwork_documentation_museum_records';
 export const AD_DOSSIER_EXPORTS = 'artwork_documentation_dossier_exports';
+export const AD_PUBLICATIONS = 'artwork_documentation_publications';

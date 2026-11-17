@@ -1,0 +1,269 @@
+{
+  "@context": "http://iiif.io/api/presentation/3/context.json",
+  "id": "https://6529.io/iiif/objects/stream-generative-surrogate/manifest",
+  "type": "Manifest",
+  "label": {
+    "none": [
+      "Synthetic media capture vector"
+    ]
+  },
+  "summary": {
+    "en": [
+      "A synthetic artwork record for checking capture and archival interchange."
+    ]
+  },
+  "metadata": [
+    {
+      "label": {
+        "en": [
+          "Record status"
+        ]
+      },
+      "value": {
+        "en": [
+          "Published presentation compiled from the artist-confirmed dossier snapshot."
+        ]
+      }
+    },
+    {
+      "label": {
+        "en": [
+          "Source record digest"
+        ]
+      },
+      "value": {
+        "en": [
+          "sha256:174e097cd0788b8b39ea878175b1a15c07b71f9195b3a937166aac0adb2fae55"
+        ]
+      }
+    },
+    {
+      "label": {
+        "en": [
+          "Publication compiler"
+        ]
+      },
+      "value": {
+        "en": [
+          "museum-publication-1.0.0"
+        ]
+      }
+    },
+    {
+      "label": {
+        "en": [
+          "Resource role"
+        ]
+      },
+      "value": {
+        "en": [
+          "index.html — Preservation master"
+        ]
+      }
+    },
+    {
+      "label": {
+        "en": [
+          "Resource role"
+        ]
+      },
+      "value": {
+        "en": [
+          "reference-capture.png — Documentation surrogate (not the complete work)"
+        ]
+      }
+    },
+    {
+      "label": {
+        "en": [
+          "Documentation surrogate"
+        ]
+      },
+      "value": {
+        "en": [
+          "One or more presented resources are documentation surrogates. They record a viewing of the work and are not the complete work."
+        ]
+      }
+    },
+    {
+      "label": {
+        "en": [
+          "Live work"
+        ]
+      },
+      "value": {
+        "en": [
+          "This work is generative, interactive or browser-based. A still or capture presented here is never the complete work."
+        ]
+      }
+    }
+  ],
+  "requiredStatement": {
+    "label": {
+      "en": [
+        "Credit"
+      ]
+    },
+    "value": {
+      "en": [
+        "Synthetic Test Artist, Test Work, 2026. CC0 1.0."
+      ]
+    }
+  },
+  "rights": "http://creativecommons.org/publicdomain/zero/1.0/",
+  "provider": [
+    {
+      "id": "https://6529.io/museum",
+      "type": "Agent",
+      "label": {
+        "en": [
+          "6529 Museum"
+        ]
+      }
+    }
+  ],
+  "homepage": [
+    {
+      "id": "https://6529.io/iiif/objects/stream-generative-surrogate",
+      "type": "Text",
+      "label": {
+        "en": [
+          "Museum object page"
+        ]
+      },
+      "format": "text/html"
+    }
+  ],
+  "seeAlso": [
+    {
+      "id": "https://6529.io/iiif/objects/stream-generative-surrogate/source",
+      "type": "Dataset",
+      "label": {
+        "en": [
+          "Source dossier record"
+        ]
+      },
+      "format": "application/json"
+    }
+  ],
+  "thumbnail": [
+    {
+      "id": "https://media.example/publication/generative-surrogate/30000000-0000-4000-8000-000000000110.png",
+      "type": "Image",
+      "format": "image/png",
+      "width": 1,
+      "height": 1
+    }
+  ],
+  "rendering": [
+    {
+      "id": "https://media.example/publication/generative-surrogate/30000000-0000-4000-8000-000000000100.html",
+      "type": "Text",
+      "format": "text/html",
+      "label": {
+        "none": [
+          "index.html — Preservation master"
+        ]
+      }
+    },
+    {
+      "id": "https://media.example/publication/generative-surrogate/30000000-0000-4000-8000-000000000110.png",
+      "type": "Image",
+      "format": "image/png",
+      "label": {
+        "none": [
+          "reference-capture.png — Documentation surrogate (not the complete work)"
+        ]
+      },
+      "width": 1,
+      "height": 1
+    },
+    {
+      "id": "https://generator.example/works/synthetic-seed-1",
+      "type": "Text",
+      "label": {
+        "en": [
+          "Live upstream realization (mutable URL, not byte-stable)"
+        ]
+      },
+      "format": "text/html"
+    }
+  ],
+  "items": [
+    {
+      "id": "https://6529.io/iiif/objects/stream-generative-surrogate/canvas/30000000-0000-4000-8000-000000000502",
+      "type": "Canvas",
+      "label": {
+        "en": [
+          "reference-capture.png — documentation surrogate (captured 2026-09-12)"
+        ]
+      },
+      "width": 1,
+      "height": 1,
+      "items": [
+        {
+          "id": "https://6529.io/iiif/objects/stream-generative-surrogate/page/30000000-0000-4000-8000-000000000502/painting",
+          "type": "AnnotationPage",
+          "items": [
+            {
+              "id": "https://6529.io/iiif/objects/stream-generative-surrogate/annotation/30000000-0000-4000-8000-000000000502/resource-0",
+              "type": "Annotation",
+              "motivation": "painting",
+              "body": {
+                "id": "https://media.example/publication/generative-surrogate/30000000-0000-4000-8000-000000000110.png",
+                "type": "Image",
+                "format": "image/png",
+                "label": {
+                  "none": [
+                    "reference-capture.png"
+                  ]
+                },
+                "width": 1,
+                "height": 1
+              },
+              "target": "https://6529.io/iiif/objects/stream-generative-surrogate/canvas/30000000-0000-4000-8000-000000000502#xywh=0,0,1,1"
+            }
+          ]
+        }
+      ],
+      "metadata": [
+        {
+          "label": {
+            "en": [
+              "Resource role"
+            ]
+          },
+          "value": {
+            "en": [
+              "reference-capture.png — Documentation surrogate (not the complete work)"
+            ]
+          }
+        },
+        {
+          "label": {
+            "en": [
+              "Documentation surrogate"
+            ]
+          },
+          "value": {
+            "en": [
+              "This canvas presents a documentation surrogate: a recorded viewing of the work, not the complete work."
+            ]
+          }
+        }
+      ],
+      "rendering": [
+        {
+          "id": "https://generator.example/works/synthetic-seed-1",
+          "type": "Text",
+          "label": {
+            "en": [
+              "Live upstream realization (mutable URL, not byte-stable)"
+            ]
+          },
+          "format": "text/html"
+        }
+      ]
+    }
+  ]
+}

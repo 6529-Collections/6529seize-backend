@@ -83,7 +83,7 @@ function blank(): Corpus {
     originals: new Map()
   };
 }
-function attach(
+export function attach(
   corpus: Corpus,
   id: string,
   filename: string,

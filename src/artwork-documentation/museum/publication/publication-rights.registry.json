@@ -1,0 +1,90 @@
+{
+  "source": "6529-museum docs/rights/registry.json",
+  "registry_version": "1.1.0",
+  "published_at": "2026-08-05T21:30:00Z",
+  "source_commit": "3926d78",
+  "source_sha256": "fd627ff3bb544fce3be247f222a5c2d8c98656b1753542654869965a8485c591",
+  "note": "Expressions with a canonical URI only. in-copyright-no-public-license and custom-license have none and cannot be an IIIF rights value.",
+  "expressions": [
+    {
+      "id": "cc0-1.0",
+      "canonical_uri": "https://creativecommons.org/publicdomain/zero/1.0/"
+    },
+    {
+      "id": "cc-by-4.0",
+      "canonical_uri": "https://creativecommons.org/licenses/by/4.0/"
+    },
+    {
+      "id": "cc-by-sa-4.0",
+      "canonical_uri": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    {
+      "id": "cc-by-nd-4.0",
+      "canonical_uri": "https://creativecommons.org/licenses/by-nd/4.0/"
+    },
+    {
+      "id": "cc-by-nc-4.0",
+      "canonical_uri": "https://creativecommons.org/licenses/by-nc/4.0/"
+    },
+    {
+      "id": "cc-by-nc-sa-4.0",
+      "canonical_uri": "https://creativecommons.org/licenses/by-nc-sa/4.0/"
+    },
+    {
+      "id": "cc-by-nc-nd-4.0",
+      "canonical_uri": "https://creativecommons.org/licenses/by-nc-nd/4.0/"
+    },
+    {
+      "id": "public-domain-mark-1.0",
+      "canonical_uri": "https://creativecommons.org/publicdomain/mark/1.0/"
+    },
+    {
+      "id": "rightsstatements-inc",
+      "canonical_uri": "https://rightsstatements.org/vocab/InC/1.0/"
+    },
+    {
+      "id": "rightsstatements-inc-ow-eu",
+      "canonical_uri": "https://rightsstatements.org/vocab/InC-OW-EU/1.0/"
+    },
+    {
+      "id": "rightsstatements-inc-edu",
+      "canonical_uri": "https://rightsstatements.org/vocab/InC-EDU/1.0/"
+    },
+    {
+      "id": "rightsstatements-inc-nc",
+      "canonical_uri": "https://rightsstatements.org/vocab/InC-NC/1.0/"
+    },
+    {
+      "id": "rightsstatements-inc-ruu",
+      "canonical_uri": "https://rightsstatements.org/vocab/InC-RUU/1.0/"
+    },
+    {
+      "id": "rightsstatements-noc-cr",
+      "canonical_uri": "https://rightsstatements.org/vocab/NoC-CR/1.0/"
+    },
+    {
+      "id": "rightsstatements-noc-nc",
+      "canonical_uri": "https://rightsstatements.org/vocab/NoC-NC/1.0/"
+    },
+    {
+      "id": "rightsstatements-noc-oklr",
+      "canonical_uri": "https://rightsstatements.org/vocab/NoC-OKLR/1.0/"
+    },
+    {
+      "id": "rightsstatements-noc-us",
+      "canonical_uri": "https://rightsstatements.org/vocab/NoC-US/1.0/"
+    },
+    {
+      "id": "rightsstatements-cne",
+      "canonical_uri": "https://rightsstatements.org/vocab/CNE/1.0/"
+    },
+    {
+      "id": "rightsstatements-und",
+      "canonical_uri": "https://rightsstatements.org/vocab/UND/1.0/"
+    },
+    {
+      "id": "rightsstatements-nkc",
+      "canonical_uri": "https://rightsstatements.org/vocab/NKC/1.0/"
+    }
+  ]
+}

@@ -110,8 +110,10 @@ Mappings include:
   as renderings. Ambiguous timing is retained without invented alignment.
 
 IIIF uses an explicitly unserved `example.invalid` publication base plus an exact
-local binding map. A later publication adapter supplies permanent URLs. This is
-not a deployed IIIF service. No export operation registers a Stream subject,
+local binding map. The [publication bridge](artwork-publication-bridge.md)
+is that adapter: it binds an approved selection to permanent URLs, rights and
+resource roles and serves the result from `/museum/iiif/{publicationId}/manifest`.
+The dossier export itself is still not a deployed IIIF service. No export operation registers a Stream subject,
 publishes to IPFS/Arweave, signs a wallet message or mints a token.
 
 `reconstructDossier` verifies the complete OCFL physical manifest, inventory
