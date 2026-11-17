@@ -18,16 +18,6 @@
       "owner": "external"
     },
     {
-      "name": "tdhConsolidationsLoop",
-      "environments": ["prod"],
-      "owner": "legacy"
-    },
-    {
-      "name": "transactionsReplayLoop",
-      "environments": ["prod"],
-      "owner": "legacy"
-    },
-    {
       "name": "rpcProxy",
       "environments": ["prod"],
       "owner": "external-or-legacy"

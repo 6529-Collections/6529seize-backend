@@ -4,16 +4,18 @@ import { ApiCreateDropRequest } from '@/api/generated/models/ApiCreateDropReques
 import { ApiDropType } from '@/api/generated/models/ApiDropType';
 import { ApiDrop } from '@/api/generated/models/ApiDrop';
 import { ApiIdentity } from '@/api/generated/models/ApiIdentity';
-import { ApiNonceResponse } from '@/api/generated/models/ApiNonceResponse';
+import { ApiSessionNonceResponse } from '@/api/generated/models/ApiSessionNonceResponse';
 import { ApiLoginResponse } from '@/api/generated/models/ApiLoginResponse';
 import { ApiLoginRequest } from '@/api/generated/models/ApiLoginRequest';
 import { NewsletterWindow } from './newsletter.config';
 import { filterModelOutputText } from '@/model-output-filter';
+import { parseStructuredWalletSignatureMessage } from '@/api/wallet-signatures/structured-wallet-signatures';
 
 const API = 'https://api.6529.io/api';
 const markdown = new MarkdownIt({ html: false, linkify: false });
 const READING_WORDS_PER_MINUTE = 250;
 const NEWSLETTER_LINK_ORIGINS = ['https://6529.io'];
+const NEWSLETTER_AUTH_CLIENT_TYPE = 'native';
 
 /**
  * The edition is model-written from public messages, so before posting it
@@ -54,6 +56,31 @@ export function newsletterMarkdown(
   return text;
 }
 
+/**
+ * Signs only the structured sign-in message this wallet asked for: a
+ * well-formed login for this address, for a native session, that has not
+ * expired.
+ */
+function assertNewsletterSignInChallenge(
+  message: unknown,
+  address: string
+): void {
+  const parsed =
+    typeof message === 'string'
+      ? parseStructuredWalletSignatureMessage(message)
+      : null;
+  if (
+    parsed?.kind !== 'authentication' ||
+    parsed.action !== 'login' ||
+    parsed.domain !== NEWSLETTER_AUTH_CLIENT_TYPE ||
+    parsed.sessionType !== NEWSLETTER_AUTH_CLIENT_TYPE ||
+    parsed.wallet !== address ||
+    parsed.expirationTime.getTime() <= Date.now()
+  ) {
+    throw new Error('Unexpected newsletter authentication challenge');
+  }
+}
+
 export class NewsletterPublisher {
   private token: string | undefined;
 
@@ -92,19 +119,15 @@ export class NewsletterPublisher {
 
   private async login(): Promise<void> {
     const address = this.wallet.address.toLowerCase();
-    const challenge = await this.api<ApiNonceResponse>(
-      `/auth/nonce?signer_address=${address}&short_nonce=true`
+    const challenge = await this.api<ApiSessionNonceResponse>(
+      `/auth/session-nonce?signer_address=${address}&client_type=${NEWSLETTER_AUTH_CLIENT_TYPE}`
     );
-    if (
-      !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
-        challenge.nonce
-      )
-    ) {
-      throw new Error('Unexpected newsletter authentication challenge');
-    }
+    assertNewsletterSignInChallenge(challenge.signable_message, address);
     const loginRequest: ApiLoginRequest = {
       client_address: address,
-      client_signature: await this.wallet.signMessage(challenge.nonce),
+      client_signature: await this.wallet.signMessage(
+        challenge.signable_message
+      ),
       server_signature: challenge.server_signature,
       is_safe_wallet: false
     };

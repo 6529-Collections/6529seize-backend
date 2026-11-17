@@ -831,24 +831,6 @@
       "deployCode": false
     },
     {
-      "name": "tdhConsolidationsLoop",
-      "owner": "legacy",
-      "coverage": [
-        "lambda-errors",
-        "lambda-throttles"
-      ],
-      "deployCode": false
-    },
-    {
-      "name": "transactionsReplayLoop",
-      "owner": "legacy",
-      "coverage": [
-        "lambda-errors",
-        "lambda-throttles"
-      ],
-      "deployCode": false
-    },
-    {
       "name": "rpcProxy",
       "owner": "external-or-legacy",
       "coverage": [
