@@ -1,6 +1,7 @@
 import { verifyMessage, Wallet } from 'ethers';
 import { NewDropSchema } from '@/api/drops/drop.validator';
 import { ApiLoginRequest } from '@/api/generated/models/ApiLoginRequest';
+import { buildStructuredWalletSignatureMessage } from '@/api/wallet-signatures/structured-wallet-signatures';
 import {
   filterNewsletterEdition,
   NewsletterPublisher,
@@ -9,15 +10,29 @@ import {
 
 const wallet = new Wallet('0x' + '12'.repeat(32));
 const window = { start: 0, end: 86_400_000, scheduled: true };
-const nonce = '51d45986-ffb8-4baf-bc8c-a0f0650a3f24';
+const signInMessage = (overrides: { wallet?: string; domain?: string } = {}) =>
+  buildStructuredWalletSignatureMessage({
+    kind: 'authentication',
+    audience: 'api.6529.io',
+    domain: overrides.domain ?? 'native',
+    sessionType: 'native',
+    wallet: overrides.wallet ?? wallet.address.toLowerCase(),
+    nonce: '51d45986-ffb8-4baf-bc8c-a0f0650a3f24',
+    action: 'login',
+    purpose: 'Sign in to 6529'
+  });
 
 describe('newsletter publisher', () => {
-  it('signs a short challenge and publishes the body and deduplication metadata together', async () => {
+  it('signs the structured sign-in message and publishes the body and deduplication metadata together', async () => {
+    const nonce = signInMessage();
     const request = jest
       .fn()
       .mockResolvedValueOnce({
         ok: true,
-        json: async () => ({ nonce, server_signature: 'server-sig' })
+        json: async () => ({
+          signable_message: nonce,
+          server_signature: 'server-sig'
+        })
       })
       .mockResolvedValueOnce({
         ok: true,
@@ -31,6 +46,12 @@ describe('newsletter publisher', () => {
     expect(
       await publisher.publish('wave', 'daily:1970-01-01', 'edition', window)
     ).toBe('published');
+    expect(request.mock.calls[0][0]).toBe(
+      `https://api.6529.io/api/auth/session-nonce?signer_address=${wallet.address.toLowerCase()}&client_type=native`
+    );
+    expect(request.mock.calls[1][0]).toBe(
+      `https://api.6529.io/api/auth/login?signer_address=${wallet.address.toLowerCase()}`
+    );
     const login = JSON.parse(request.mock.calls[1][1].body);
     expect(verifyMessage(nonce, login.client_signature)).toBe(wallet.address);
     expect(login.client_address).toBe(wallet.address.toLowerCase());
@@ -57,11 +78,16 @@ describe('newsletter publisher', () => {
     expect(JSON.stringify(request.mock.calls)).not.toContain(wallet.privateKey);
   });
 
-  it('refuses to sign arbitrary server-provided text', async () => {
+  it.each([
+    ['arbitrary text', 'transfer my funds'],
+    ['a plain nonce', '51d45986-ffb8-4baf-bc8c-a0f0650a3f24'],
+    ['another wallet', signInMessage({ wallet: '0x' + 'ab'.repeat(20) })],
+    ['a web sign-in', signInMessage({ domain: '6529.io' })]
+  ])('refuses to sign %s', async (_name, signableMessage) => {
     const request = jest.fn().mockResolvedValue({
       ok: true,
       json: async () => ({
-        nonce: 'transfer my funds',
+        signable_message: signableMessage,
         server_signature: 'sig'
       })
     });
