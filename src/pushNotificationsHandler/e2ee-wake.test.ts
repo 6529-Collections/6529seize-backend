@@ -5,12 +5,16 @@ import {
 } from '@/entities/IProfilePreferences';
 import {
   buildE2eeWakeInput,
+  defaultE2eeWakeDeps,
   E2eeWakeDeps,
   isE2eeWakeEnabled,
   parseE2eeWakeMessage,
   sendE2eeWakes
 } from '@/pushNotificationsHandler/e2ee-wake';
 import { PushNotificationMessageInput } from '@/pushNotificationsHandler/sendPushNotifications';
+import { PUSH_NOTIFICATION_DEVICES_TABLE } from '@/constants/db-tables';
+import { doInDbContext } from '@/secrets';
+import { setSqlExecutor, sqlExecutor } from '@/sql-executor';
 
 jest.mock('@/pushNotificationsHandler/sendPushNotifications', () => ({
   sendMessages: jest.fn()
@@ -134,6 +138,81 @@ describe('content-free E2EE wakes', () => {
     ).toBe(false);
   });
 
+  it('prefixes only genuinely shared registrations through the Lambda database adapter', async () => {
+    const profileId = 'e2ee-wake-recipient';
+    const otherProfileId = 'e2ee-wake-other-profile';
+    const registrations = [
+      { device_id: 'wake-shared', profile_id: profileId, token: 'wake-shared' },
+      {
+        device_id: 'wake-shared',
+        profile_id: otherProfileId,
+        token: 'wake-shared'
+      },
+      {
+        device_id: 'wake-changed-token',
+        profile_id: profileId,
+        token: 'wake-new'
+      },
+      {
+        device_id: 'wake-changed-token',
+        profile_id: otherProfileId,
+        token: 'wake-NEW'
+      },
+      {
+        device_id: 'wake-other-device',
+        profile_id: profileId,
+        token: 'wake-shared'
+      }
+    ];
+    const fixtureDb = sqlExecutor;
+    await fixtureDb.bulkInsert(PUSH_NOTIFICATION_DEVICES_TABLE, registrations, [
+      'device_id',
+      'profile_id',
+      'token'
+    ]);
+    try {
+      const sent: PushNotificationMessageInput[] = [];
+      await doInDbContext(
+        () =>
+          sendE2eeWakes([{ profileIds: [profileId], reason: 'message' }], {
+            ...defaultE2eeWakeDeps,
+            loadHandles: async () => new Map([[profileId, 'alice']]),
+            loadPreferences: async () => new Map(),
+            send: async (inputs) => {
+              sent.push(...inputs);
+              return [];
+            }
+          }),
+        { skipRedis: true }
+      );
+      expect(sent).toHaveLength(3);
+      expect(sent.map(({ token, title }) => [token, title])).toEqual(
+        expect.arrayContaining([
+          ['wake-shared', '[alice] New encrypted message'],
+          ['wake-new', 'New encrypted message'],
+          ['wake-shared', 'New encrypted message']
+        ])
+      );
+    } finally {
+      setSqlExecutor(fixtureDb);
+      await fixtureDb.execute(
+        `delete from ${PUSH_NOTIFICATION_DEVICES_TABLE} where profile_id in (:profileIds)`,
+        { profileIds: [profileId, otherProfileId] }
+      );
+    }
+  });
+
+  it('keeps a generic title when the recipient has no handle', () => {
+    const input = buildE2eeWakeInput({
+      token: 'token',
+      profileId: 'profile-id',
+      reason: 'message',
+      showRecipient: true
+    });
+    expect(input.title).toBe('New encrypted message');
+    expect(input.extra_data.target_profile_handle).toBe('profile-id');
+  });
+
   it('wakes every device of enabled profiles and removes unregistered tokens', async () => {
     const sent: PushNotificationMessageInput[] = [];
     const deleted: string[] = [];
@@ -146,12 +225,36 @@ describe('content-free E2EE wakes', () => {
     };
     const deps: E2eeWakeDeps = {
       loadDevices: async () => [
-        { device_id: 'd1', profile_id: 'alice', token: 't1' },
-        { device_id: 'd2', profile_id: 'alice', token: 't2' },
-        { device_id: 'd3', profile_id: 'bob', token: 't3' },
-        { device_id: 'd4', profile_id: 'carol', token: 't4' }
+        {
+          device_id: 'd1',
+          profile_id: 'alice',
+          token: 't1',
+          is_multi_profile: 1
+        },
+        {
+          device_id: 'd2',
+          profile_id: 'alice',
+          token: 't2',
+          is_multi_profile: 0
+        },
+        {
+          device_id: 'd3',
+          profile_id: 'bob',
+          token: 't3',
+          is_multi_profile: 1
+        },
+        {
+          device_id: 'd4',
+          profile_id: 'carol',
+          token: 't4',
+          is_multi_profile: 0
+        }
       ],
-      loadHandles: async () => new Map([['alice', 'alice-handle']]),
+      loadHandles: async () =>
+        new Map([
+          ['alice', '@alice-handle'],
+          ['bob', 'bob']
+        ]),
       loadPreferences: async () => new Map([['carol', muted]]),
       send: async (inputs) => {
         sent.push(...inputs);
@@ -179,12 +282,18 @@ describe('content-free E2EE wakes', () => {
       ],
       deps
     );
-    expect(sent.map((input) => [input.token, input.body])).toEqual([
-      ['t1', 'Open 6529 Mobile to view'],
-      ['t2', 'Open 6529 Mobile to view'],
-      ['t3', 'You were added to an encrypted chat']
-    ]);
-    expect(sent[0].extra_data.target_profile_handle).toBe('alice-handle');
+    expect(sent.map((input) => [input.token, input.title, input.body])).toEqual(
+      [
+        [
+          't1',
+          '[alice-handle] New encrypted message',
+          'Open 6529 Mobile to view'
+        ],
+        ['t2', 'New encrypted message', 'Open 6529 Mobile to view'],
+        ['t3', '6529', 'You were added to an encrypted chat']
+      ]
+    );
+    expect(sent[0].extra_data.target_profile_handle).toBe('@alice-handle');
     expect(sent[2].extra_data.target_profile_handle).toBe('bob');
     expect(deleted).toEqual(['d2']);
     for (const input of sent) {
@@ -200,7 +309,12 @@ describe('content-free E2EE wakes', () => {
   it('does not rethrow when the send fails part-way, so SQS does not redeliver', async () => {
     const deps: E2eeWakeDeps = {
       loadDevices: async () => [
-        { device_id: 'd1', profile_id: 'alice', token: 't1' }
+        {
+          device_id: 'd1',
+          profile_id: 'alice',
+          token: 't1',
+          is_multi_profile: 0
+        }
       ],
       loadHandles: async () => new Map(),
       loadPreferences: async () => new Map(),
