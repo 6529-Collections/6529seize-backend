@@ -2,10 +2,21 @@ import 'reflect-metadata';
 import {
   COMPETITIONS_TABLE,
   COMPETITION_DECISIONS_TABLE,
+  COMPETITION_ENTRIES_TABLE,
+  DROPS_TABLE,
   WAVES_TABLE
 } from '@/constants';
-import { legacyCompetitionId } from '@/competitions/competition-id';
+import {
+  legacyCompetitionEntryId,
+  legacyCompetitionId
+} from '@/competitions/competition-id';
+import {
+  withLegacyCompetitionGetFacade,
+  withoutLegacyCompetitionGetFacade
+} from '@/competitions/legacy-competition-get-facade';
 import { seedNativeOriginalPrimaryFixture } from '@/tests/fixtures/native-competition.fixture';
+import { CompetitionEntryStatus } from '@/entities/ICompetition';
+import { DropType } from '@/entities/IDrop';
 import { WaveCreditType, WaveType } from '@/entities/IWave';
 import { sqlExecutor } from '@/sql-executor';
 import { describeWithSeed } from '@/tests/_setup/seed';
@@ -50,6 +61,35 @@ const waves = [
   vote('restricted-dm-child', { parent_wave_id: 'restricted-dm' }),
   vote('orphan', { parent_wave_id: 'missing' })
 ];
+
+async function seedDrop(
+  id: string,
+  waveId: string,
+  dropType: DropType,
+  status?: CompetitionEntryStatus
+) {
+  await sqlExecutor.execute(
+    `insert into ${DROPS_TABLE} (id,wave_id,author_id,drop_type,created_at,parts_count)
+     values (:id,:waveId,'author',:dropType,:now,1)`,
+    { id, waveId, dropType, now }
+  );
+  if (status) {
+    const competitionId = legacyCompetitionId(waveId);
+    await sqlExecutor.execute(
+      `insert into ${COMPETITION_ENTRIES_TABLE}
+         (id,competition_id,wave_id,drop_id,submitter_id,status,config_version,submitted_at)
+       values (:entryId,:competitionId,:waveId,:id,'author',:status,1,:now)`,
+      {
+        entryId: legacyCompetitionEntryId(competitionId, id),
+        competitionId,
+        waveId,
+        id,
+        status,
+        now
+      }
+    );
+  }
+}
 
 describeWithSeed('active TDH voting discovery', withWaves(waves), () => {
   beforeEach(async () => {
@@ -146,6 +186,75 @@ describeWithSeed('active TDH voting discovery', withWaves(waves), () => {
       'a-open'
     ]);
   });
+
+  it.each([
+    { facade: 'enabled', run: withLegacyCompetitionGetFacade },
+    { facade: 'disabled', run: withoutLegacyCompetitionGetFacade }
+  ])(
+    'puts waves with open proposals first across pages (facade $facade)',
+    async ({ run }) => {
+      await seedDrop(
+        'closed-winner',
+        'closing',
+        DropType.PARTICIPATORY,
+        CompetitionEntryStatus.WINNER
+      );
+      await seedDrop('chat-only', 'closing', DropType.CHAT);
+      await seedDrop(
+        'native-proposal',
+        'recurring',
+        DropType.COMPETITION,
+        CompetitionEntryStatus.ACTIVE
+      );
+      await seedDrop('stored-proposal', 'a-open', DropType.PARTICIPATORY);
+      await seedDrop(
+        'withdrawn-proposal',
+        'b-combined',
+        DropType.PARTICIPATORY,
+        CompetitionEntryStatus.WITHDRAWN
+      );
+      await seedDrop(
+        'disqualified-proposal',
+        'c-card',
+        DropType.COMPETITION,
+        CompetitionEntryStatus.DISQUALIFIED
+      );
+
+      const page = (offset: number) =>
+        run(() =>
+          repo.findActiveTdhVotingWaves(
+            { eligibleGroups: [], now, limit: 2, offset },
+            {}
+          )
+        );
+      const [first, second, third] = await Promise.all([
+        page(0),
+        page(2),
+        page(4)
+      ]);
+      expect([first.count, second.count, third.count]).toEqual([5, 5, 5]);
+      expect(first.waves.map((wave) => wave.id)).toEqual([
+        'recurring',
+        'a-open'
+      ]);
+      expect(second.waves.map((wave) => wave.id)).toEqual([
+        'closing',
+        'b-combined'
+      ]);
+      expect(third.waves.map((wave) => wave.id)).toEqual(['c-card']);
+
+      await seedDrop(
+        'new-proposal',
+        'closing',
+        DropType.COMPETITION,
+        CompetitionEntryStatus.ACTIVE
+      );
+      expect((await page(0)).waves.map((wave) => wave.id)).toEqual([
+        'closing',
+        'recurring'
+      ]);
+    }
+  );
 
   it('removes approval voting when its final winner is recorded', async () => {
     await sqlExecutor.execute(
