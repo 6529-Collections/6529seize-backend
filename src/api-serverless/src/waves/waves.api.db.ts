@@ -110,7 +110,7 @@ import {
   legacyGetView,
   waveHubSelectColumns
 } from '@/competitions/legacy-competition-get-facade';
-import { legacyParticipatoryDropExistsSql } from '@/competitions/legacy-typed-drops';
+import { legacyParticipatoryDropCountSql } from '@/competitions/legacy-typed-drops';
 import {
   ViewerGroupsCte,
   viewerGroupsCteBytes,
@@ -1615,21 +1615,25 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
   public async findActiveTdhVotingWaves(
     params: {
       readonly eligibleGroups: string[];
+      readonly mainStageWaveId: string | null;
       readonly now: number;
       readonly limit: number;
       readonly offset: number;
     },
     ctx: RequestContext
-  ): Promise<{ waves: WaveEntity[]; count: number }> {
+  ): Promise<{
+    waves: (WaveEntity & { activeSubmissionCount?: number })[];
+    count: number;
+  }> {
     const timerName = `${this.constructor.name}->findActiveTdhVotingWaves`;
     ctx.timer?.start(timerName);
     try {
       // Always the inlined group list: this scan is driven by the index
       // range it builds on visibility_group_id. A shared table would turn it
       // into a full scan of waves, which costs more than a pinned session.
-      const fromAndWhere = `from ${legacyGetView(WAVES_TABLE)} w
-        left join ${legacyGetView(WAVES_TABLE)} parent on parent.id = w.parent_wave_id
-        where coalesce(w.is_direct_message, false) = false
+      const from = `from ${legacyGetView(WAVES_TABLE)} w
+        left join ${legacyGetView(WAVES_TABLE)} parent on parent.id = w.parent_wave_id`;
+      const where = `where coalesce(w.is_direct_message, false) = false
           and coalesce(parent.is_direct_message, false) = false
           and w.type in ('RANK', 'APPROVE')
           and w.voting_credit_type in ('TDH', 'TDH_PLUS_XTDH', 'CARD_SET_TDH')
@@ -1641,27 +1645,43 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
             (select count(*) from ${legacyGetView(WAVES_DECISIONS_TABLE)} d where d.wave_id = w.id) < w.max_winners)
           and ${this.getWaveAndParentVisibilityFilter('w', 'parent', params.eligibleGroups, 'eligibleGroups')}`;
       const options = { wrappedConnection: ctx.connection };
-      // Preserve null for open-ended votes instead of using a numeric sentinel.
-      const deadline = `coalesce(least(w.voting_period_end, w.next_decision_time), w.voting_period_end, w.next_decision_time)`;
       return await withoutLegacyCompetitionGetFacade(async () => {
         const counts = await this.db.execute<{ count: number }>(
-          `select count(*) as count ${fromAndWhere}`,
+          `select count(*) as count ${from} ${where}`,
           params,
           options
         );
         const count = Number(counts[0]?.count ?? 0);
         // Avoid a deep-offset sort when the requested page is already past the end.
         if (params.offset >= count) return { waves: [], count };
-        const waves = await this.db.execute<RawWaveEntity>(
-          `select w.* ${fromAndWhere}
-           order by not ${legacyParticipatoryDropExistsSql('w.id')},
-             (${deadline}) is null asc, ${deadline} asc, w.id asc
-           limit :limit offset :offset`,
+        // LIMIT materializes the page before counting submissions for its
+        // approval waves. Counts are not needed to sort or page the waves.
+        const waves = await this.db.execute<
+          RawWaveEntity & { active_submission_count: number | string | null }
+        >(
+          `select votes.*,
+             case when votes.type = 'APPROVE' then ${legacyParticipatoryDropCountSql('votes.id')}
+             end as active_submission_count
+           from (
+             select w.*, (w.id <=> :mainStageWaveId) as is_main_stage,
+               coalesce(wm.wave_rep_total, 0) as total_wave_rep
+             ${from}
+             left join ${WAVE_METRICS_TABLE} wm on wm.wave_id = w.id
+             ${where}
+             order by is_main_stage desc, total_wave_rep desc, w.id asc
+             limit :limit offset :offset
+           ) votes
+           order by votes.is_main_stage desc, votes.total_wave_rep desc, votes.id asc`,
           params,
           options
         );
         return {
-          waves: waves.map((wave) => this.parseWaveEntity(wave)),
+          waves: waves.map(({ active_submission_count, ...wave }) => ({
+            ...this.parseWaveEntity(wave),
+            ...(active_submission_count === null
+              ? {}
+              : { activeSubmissionCount: Number(active_submission_count) })
+          })),
           count
         };
       });

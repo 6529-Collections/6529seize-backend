@@ -4,6 +4,7 @@ import {
   COMPETITION_DECISIONS_TABLE,
   COMPETITION_ENTRIES_TABLE,
   DROPS_TABLE,
+  WAVE_METRICS_TABLE,
   WAVES_TABLE
 } from '@/constants';
 import {
@@ -24,6 +25,7 @@ import { aWave, withWaves } from '@/tests/fixtures/wave.fixture';
 import { WavesApiDb } from '@/api/waves/waves.api.db';
 
 const now = 10000;
+const publicRead = { eligibleGroups: [], mainStageWaveId: null, now };
 const repo = new WavesApiDb(() => sqlExecutor);
 const vote = (id: string, props: Parameters<typeof aWave>[0] = {}) =>
   aWave({ type: WaveType.APPROVE, ...props }, { id, name: id });
@@ -111,33 +113,30 @@ describeWithSeed('active TDH voting discovery', withWaves(waves), () => {
     ).toEqual([]);
   });
 
-  it('uses voting lifecycle and deadline order, not recent chat or reputation', async () => {
+  it('applies active voting eligibility and treats missing REP as zero', async () => {
     const result = await repo.findActiveTdhVotingWaves(
-      { eligibleGroups: [], now, limit: 50, offset: 0 },
+      { ...publicRead, limit: 50, offset: 0 },
       {}
     );
     expect(result.waves.map((wave) => wave.id)).toEqual([
-      'closing',
-      'recurring',
       'a-open',
       'b-combined',
-      'c-card'
+      'c-card',
+      'closing',
+      'recurring'
     ]);
     expect(result.count).toBe(5);
   });
 
   it('applies parent visibility to both count and pagination', async () => {
     const result = await repo.findActiveTdhVotingWaves(
-      { eligibleGroups: ['members'], now, limit: 2, offset: 2 },
+      { ...publicRead, eligibleGroups: ['members'], limit: 2, offset: 2 },
       {}
     );
-    expect(result.waves.map((wave) => wave.id)).toEqual([
-      'a-open',
-      'b-combined'
-    ]);
+    expect(result.waves.map((wave) => wave.id)).toEqual(['c-card', 'child']);
     expect(result.count).toBe(7);
     const empty = await repo.findActiveTdhVotingWaves(
-      { eligibleGroups: [], now, limit: 2, offset: 20 },
+      { ...publicRead, limit: 2, offset: 20 },
       {}
     );
     expect(empty.waves).toEqual([]);
@@ -148,7 +147,7 @@ describeWithSeed('active TDH voting discovery', withWaves(waves), () => {
     'returns every counted non-DM wave for visibility groups %j',
     async ({ eligibleGroups }) => {
       const result = await repo.findActiveTdhVotingWaves(
-        { eligibleGroups, now, limit: 50, offset: 0 },
+        { ...publicRead, eligibleGroups, limit: 50, offset: 0 },
         {}
       );
       expect(result.waves).toHaveLength(result.count);
@@ -169,21 +168,30 @@ describeWithSeed('active TDH voting discovery', withWaves(waves), () => {
     }
   );
 
-  it('breaks equal deadlines by id and places open-ended votes last', async () => {
+  it('pins Main Stage before paging, then uses raw REP with a stable ID tie-break', async () => {
     await sqlExecutor.execute(
-      `update ${COMPETITIONS_TABLE} set voting_ends_at=:deadline,voting_config=json_set(voting_config,'$.ends_at',:deadline) where legacy_wave_id in (:ids)`,
-      { deadline: 11000, ids: ['b-combined', 'c-card'] }
+      `insert into ${WAVE_METRICS_TABLE} (wave_id, wave_rep_total, wave_rep_sort_score)
+       values ('recurring', -100, 10), ('a-open', 300, 1), ('b-combined', 300, 100),
+         ('closing', -7, 90), ('private', 900, 99)`
     );
-    const result = await repo.findActiveTdhVotingWaves(
-      { eligibleGroups: [], now, limit: 50, offset: 0 },
+    const params = { ...publicRead, mainStageWaveId: 'recurring', limit: 2 };
+    const read = (offset: number) =>
+      repo.findActiveTdhVotingWaves({ ...params, offset }, {});
+    const pages = await Promise.all([read(0), read(2), read(4)]);
+    expect(pages.map((page) => page.count)).toEqual([5, 5, 5]);
+    expect(pages.map((page) => page.waves.map((wave) => wave.id))).toEqual([
+      ['recurring', 'a-open'],
+      ['b-combined', 'c-card'],
+      ['closing']
+    ]);
+
+    const publicOnly = await repo.findActiveTdhVotingWaves(
+      { ...params, mainStageWaveId: 'private', offset: 0 },
       {}
     );
-    expect(result.waves.map((wave) => wave.id)).toEqual([
-      'b-combined',
-      'c-card',
-      'closing',
-      'recurring',
-      'a-open'
+    expect(publicOnly.waves.map((wave) => wave.id)).toEqual([
+      'a-open',
+      'b-combined'
     ]);
   });
 
@@ -191,7 +199,7 @@ describeWithSeed('active TDH voting discovery', withWaves(waves), () => {
     { facade: 'enabled', run: withLegacyCompetitionGetFacade },
     { facade: 'disabled', run: withoutLegacyCompetitionGetFacade }
   ])(
-    'puts waves with open proposals first across pages (facade $facade)',
+    'counts active approval submissions on paged results (facade $facade)',
     async ({ run }) => {
       await seedDrop(
         'closed-winner',
@@ -202,11 +210,23 @@ describeWithSeed('active TDH voting discovery', withWaves(waves), () => {
       await seedDrop('chat-only', 'closing', DropType.CHAT);
       await seedDrop(
         'native-proposal',
-        'recurring',
+        'a-open',
         DropType.COMPETITION,
         CompetitionEntryStatus.ACTIVE
       );
       await seedDrop('stored-proposal', 'a-open', DropType.PARTICIPATORY);
+      await seedDrop(
+        'mapped-stored-proposal',
+        'a-open',
+        DropType.PARTICIPATORY,
+        CompetitionEntryStatus.ACTIVE
+      );
+      await seedDrop(
+        'rank-proposal',
+        'recurring',
+        DropType.COMPETITION,
+        CompetitionEntryStatus.ACTIVE
+      );
       await seedDrop(
         'withdrawn-proposal',
         'b-combined',
@@ -222,10 +242,7 @@ describeWithSeed('active TDH voting discovery', withWaves(waves), () => {
 
       const page = (offset: number) =>
         run(() =>
-          repo.findActiveTdhVotingWaves(
-            { eligibleGroups: [], now, limit: 2, offset },
-            {}
-          )
+          repo.findActiveTdhVotingWaves({ ...publicRead, limit: 2, offset }, {})
         );
       const [first, second, third] = await Promise.all([
         page(0),
@@ -233,25 +250,16 @@ describeWithSeed('active TDH voting discovery', withWaves(waves), () => {
         page(4)
       ]);
       expect([first.count, second.count, third.count]).toEqual([5, 5, 5]);
-      expect(first.waves.map((wave) => wave.id)).toEqual([
-        'recurring',
-        'a-open'
-      ]);
-      expect(second.waves.map((wave) => wave.id)).toEqual([
-        'closing',
-        'b-combined'
-      ]);
-      expect(third.waves.map((wave) => wave.id)).toEqual(['c-card']);
-
-      await seedDrop(
-        'new-proposal',
-        'closing',
-        DropType.COMPETITION,
-        CompetitionEntryStatus.ACTIVE
-      );
-      expect((await page(0)).waves.map((wave) => wave.id)).toEqual([
-        'closing',
-        'recurring'
+      expect(
+        [first, second, third].flatMap((result) =>
+          result.waves.map((wave) => [wave.id, wave.activeSubmissionCount])
+        )
+      ).toEqual([
+        ['a-open', 3],
+        ['b-combined', 0],
+        ['c-card', 0],
+        ['closing', 0],
+        ['recurring', undefined]
       ]);
     }
   );
@@ -261,7 +269,7 @@ describeWithSeed('active TDH voting discovery', withWaves(waves), () => {
       `update ${COMPETITIONS_TABLE} set decision_config=json_set(decision_config,'$.max_winners',1),winner_config=json_set(winner_config,'$.max_winners',1) where legacy_wave_id=:id`,
       { id: 'a-open' }
     );
-    const params = { eligibleGroups: [], now, limit: 50, offset: 0 };
+    const params = { ...publicRead, limit: 50, offset: 0 };
     expect(
       (await repo.findActiveTdhVotingWaves(params, {})).waves.map(
         (wave) => wave.id
@@ -278,12 +286,12 @@ describeWithSeed('active TDH voting discovery', withWaves(waves), () => {
 
   it('includes a vote exactly at its start and removes it at its end', async () => {
     const before = await repo.findActiveTdhVotingWaves(
-      { eligibleGroups: [], now: now + 1, limit: 50, offset: 0 },
+      { ...publicRead, now: now + 1, limit: 50, offset: 0 },
       {}
     );
     expect(before.waves.map((wave) => wave.id)).toContain('future');
     const after = await repo.findActiveTdhVotingWaves(
-      { eligibleGroups: [], now: 12000, limit: 50, offset: 0 },
+      { ...publicRead, now: 12000, limit: 50, offset: 0 },
       {}
     );
     expect(after.waves.map((wave) => wave.id)).not.toContain('closing');
