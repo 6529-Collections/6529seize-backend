@@ -53,6 +53,9 @@ import {
 } from '@/api/waves/waves.api.db';
 import { withWaveOverviewResponseCache } from './wave-overview-response-cache';
 import { isWaveMainFeedWithoutReplies } from '@/waves/wave-chat-replies.helpers';
+import { competitionService } from '@/competitions/competition.service';
+import { ApiDropV2 } from '@/api/generated/models/ApiDropV2';
+import { contentModerationDb } from '@/content-moderation/content-moderation.db';
 
 export interface FindWaveDropsFeedV2Request {
   readonly drop_id: string | null;
@@ -891,9 +894,13 @@ export class ApiWaveV2Service {
         groupIdsUserIsEligibleFor
       })
     ]);
-    const apiDropById = await this.apiDropMapper.mapDrops(dropEntities, ctx, {
-      groupIdsUserIsEligibleFor
-    });
+    const apiDropById = await this.mapFeedDrops(
+      dropEntities,
+      wave,
+      apiWaveById[wave.id],
+      groupIdsUserIsEligibleFor,
+      ctx
+    );
     return {
       drops: dropEntities.map((drop) => apiDropById[drop.id]),
       wave: apiWaveById[wave.id]
@@ -956,10 +963,12 @@ export class ApiWaveV2Service {
       [rootDrop, ...dropEntities],
       (drop) => drop.id
     );
-    const apiDropById = await this.apiDropMapper.mapDrops(
+    const apiDropById = await this.mapFeedDrops(
       dropEntitiesToMap,
-      ctx,
-      { groupIdsUserIsEligibleFor }
+      wave,
+      apiWaveById[wave.id],
+      groupIdsUserIsEligibleFor,
+      ctx
     );
 
     return {
@@ -971,6 +980,57 @@ export class ApiWaveV2Service {
       })),
       root_drop: apiDropById[rootDrop.id]
     };
+  }
+
+  private async mapFeedDrops(
+    entities: DropEntity[],
+    wave: WaveEntity,
+    overview: ApiWaveOverview,
+    groupIdsUserIsEligibleFor: string[],
+    ctx: RequestContext
+  ): Promise<Record<string, ApiDropV2>> {
+    const mapped = this.apiDropMapper.mapDrops(entities, ctx, {
+      groupIdsUserIsEligibleFor
+    });
+    if (!overview.has_competition) return mapped;
+    const [dropsById, references] = await Promise.all([
+      mapped,
+      competitionService.findFeedEntryReferences(
+        wave,
+        entities.map((drop) => drop.id),
+        groupIdsUserIsEligibleFor,
+        ctx
+      )
+    ]);
+    const byId = new Map(
+      references.map(({ drop_id, competition_id, entry_id }) => [
+        drop_id,
+        { competition_id, entry_id }
+      ])
+    );
+    const actingAsId = ctx.authenticationContext?.getActingAsId() ?? null;
+    // Entry detail checks the acting profile's blocks and hides even when
+    // the feed uses the anonymous read context for a restricted proxy.
+    const actingPresentations =
+      actingAsId !== getWaveReadContextProfileId(ctx.authenticationContext)
+        ? await contentModerationDb.getPresentations(
+            entities.filter((drop) => byId.has(drop.id)),
+            actingAsId,
+            ctx.connection
+          )
+        : {};
+    for (const drop of Object.values(dropsById)) {
+      const acting = actingPresentations[drop.id];
+      const canView =
+        drop.moderation?.can_view !== false &&
+        !drop.viewer_context?.author_blocked &&
+        !drop.viewer_context?.drop_hidden &&
+        acting?.moderation.can_view !== false &&
+        !acting?.viewer.author_blocked &&
+        !acting?.viewer.drop_hidden;
+      drop.competition_entry = canView ? (byId.get(drop.id) ?? null) : null;
+    }
+    return dropsById;
   }
 
   private mapSubwavesSort(sort: ApiSubwavesSort): WaveSubwavesSort {

@@ -161,6 +161,21 @@ export class CompetitionService {
     };
   }
 
+  /** The timeline caller has already authorized this Wave and its parent. */
+  public findFeedEntryReferences(
+    wave: WaveEntity,
+    dropIds: readonly string[],
+    eligibleGroups: readonly string[],
+    ctx: RequestContext
+  ) {
+    return this.repository.findFeedEntryReferences(
+      wave.id,
+      dropIds,
+      this.canAdminister(wave, eligibleGroups, ctx),
+      ctx
+    );
+  }
+
   public async getDefaultCompetition(
     waveId: string,
     ctx: RequestContext

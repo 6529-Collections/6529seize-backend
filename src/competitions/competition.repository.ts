@@ -29,6 +29,7 @@ import {
   CompetitionType
 } from '@/entities/ICompetition';
 import { RequestContext } from '@/request.context';
+import { DbPoolName } from '@/db-query.options';
 import {
   dbSupplier,
   LazyDbAccessCompatibleService,
@@ -316,6 +317,43 @@ export class CompetitionRepository extends LazyDbAccessCompatibleService {
       const entry = byId.get(id);
       return entry ? [entry] : [];
     });
+  }
+
+  public async findFeedEntryReferences(
+    waveId: string,
+    dropIds: readonly string[],
+    mayReadDrafts: boolean,
+    ctx: RequestContext
+  ): Promise<{ drop_id: string; competition_id: string; entry_id: string }[]> {
+    if (dropIds.length === 0) return [];
+    const timerKey = `${this.constructor.name}->findFeedEntryReferences`;
+    ctx.timer?.start(timerKey);
+    try {
+      return await this.db.execute<{
+        drop_id: string;
+        competition_id: string;
+        entry_id: string;
+      }>(
+        `select e.drop_id, e.competition_id, e.id as entry_id
+         from ${COMPETITION_ENTRIES_TABLE} e
+         join ${COMPETITIONS_TABLE} c on c.id = e.competition_id and c.wave_id = e.wave_id
+         where e.drop_id in (:dropIds) and e.wave_id = :waveId
+           and (c.published_at is not null or :mayReadDrafts)
+           and ${competitionEntryVisibleSql('e')}
+           and not exists (
+             select 1 from ${COMPETITION_ENTRIES_TABLE} other
+             where other.drop_id = e.drop_id and other.id <> e.id
+           )`,
+        { waveId, dropIds, mayReadDrafts },
+        {
+          wrappedConnection: ctx.connection,
+          // A negative result suppresses later reads for this feed row.
+          forcePool: DbPoolName.WRITE
+        }
+      );
+    } finally {
+      ctx.timer?.stop(timerKey);
+    }
   }
 
   public async listNativeEntries(
