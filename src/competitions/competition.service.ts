@@ -161,6 +161,21 @@ export class CompetitionService {
     };
   }
 
+  /** The caller supplies the same Wave read groups used by getVisibleWave. */
+  public findFeedEntryReferences(
+    wave: WaveEntity,
+    dropIds: readonly string[],
+    eligibleGroups: readonly string[],
+    ctx: RequestContext
+  ) {
+    return this.repository.findFeedEntryReferences(
+      wave.id,
+      dropIds,
+      this.canAdminister(wave, eligibleGroups, ctx),
+      ctx
+    );
+  }
+
   public async getDefaultCompetition(
     waveId: string,
     ctx: RequestContext
