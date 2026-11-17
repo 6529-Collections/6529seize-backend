@@ -63,6 +63,24 @@ export function legacyTypedDropsSql(
 }
 
 /**
+ * Whether the wave has a drop the legacy view classifies as PARTICIPATORY.
+ * Run outside the GET facade so the existence checks can use base indexes.
+ */
+export function legacyParticipatoryDropExistsSql(waveId: string): string {
+  return `(
+    exists (
+      select 1 from ${nativeEntryDropsFrom("'ACTIVE'")}
+      where c.legacy_wave_id = ${waveId} and ${LEGACY_NATIVE_PRIMARY_SQL}
+    )
+    or exists (
+      select 1 from ${DROPS_TABLE} d
+      where d.wave_id = ${waveId} and d.drop_type = '${DropType.PARTICIPATORY}'
+        and ${NO_VIEW_MAPPED_ENTRY}
+    )
+  )`;
+}
+
+/**
  * CTE `participant_candidates` (column `id`, distinct): a superset of the
  * drops `legacy_get_drops` calls PARTICIPATORY in the waves matched by
  * `wave_id <waveFilter>` (for example `= :wave_id`, or
