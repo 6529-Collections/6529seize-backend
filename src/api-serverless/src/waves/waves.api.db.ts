@@ -1643,27 +1643,28 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
       const options = { wrappedConnection: ctx.connection };
       // Preserve null for open-ended votes instead of using a numeric sentinel.
       const deadline = `coalesce(least(w.voting_period_end, w.next_decision_time), w.voting_period_end, w.next_decision_time)`;
-      const counts = await this.db.execute<{ count: number }>(
-        `select count(*) as count ${fromAndWhere}`,
-        params,
-        options
-      );
-      const count = Number(counts[0]?.count ?? 0);
-      // Avoid a deep-offset sort when the requested page is already past the end.
-      if (params.offset >= count) return { waves: [], count };
-      // Match findWavesByIds: w.* is the complete projection, and parseWaveEntity
-      // below performs the same JSON normalization; no enrichment is lost.
-      const waves = await withoutLegacyCompetitionGetFacade(() =>
-        this.db.execute<RawWaveEntity>(
+      return await withoutLegacyCompetitionGetFacade(async () => {
+        const counts = await this.db.execute<{ count: number }>(
+          `select count(*) as count ${fromAndWhere}`,
+          params,
+          options
+        );
+        const count = Number(counts[0]?.count ?? 0);
+        // Avoid a deep-offset sort when the requested page is already past the end.
+        if (params.offset >= count) return { waves: [], count };
+        const waves = await this.db.execute<RawWaveEntity>(
           `select w.* ${fromAndWhere}
            order by not ${legacyParticipatoryDropExistsSql('w.id')},
              (${deadline}) is null asc, ${deadline} asc, w.id asc
            limit :limit offset :offset`,
           params,
           options
-        )
-      );
-      return { waves: waves.map((wave) => this.parseWaveEntity(wave)), count };
+        );
+        return {
+          waves: waves.map((wave) => this.parseWaveEntity(wave)),
+          count
+        };
+      });
     } finally {
       ctx.timer?.stop(timerName);
     }

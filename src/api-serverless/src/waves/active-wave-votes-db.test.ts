@@ -10,7 +10,10 @@ import {
   legacyCompetitionEntryId,
   legacyCompetitionId
 } from '@/competitions/competition-id';
-import { withLegacyCompetitionGetFacade } from '@/competitions/legacy-competition-get-facade';
+import {
+  withLegacyCompetitionGetFacade,
+  withoutLegacyCompetitionGetFacade
+} from '@/competitions/legacy-competition-get-facade';
 import { seedNativeOriginalPrimaryFixture } from '@/tests/fixtures/native-competition.fixture';
 import { CompetitionEntryStatus } from '@/entities/ICompetition';
 import { DropType } from '@/entities/IDrop';
@@ -184,61 +187,74 @@ describeWithSeed('active TDH voting discovery', withWaves(waves), () => {
     ]);
   });
 
-  it('puts waves with proposals open for voting first across pages', async () => {
-    await seedDrop(
-      'closed-winner',
-      'closing',
-      DropType.PARTICIPATORY,
-      CompetitionEntryStatus.WINNER
-    );
-    await seedDrop('chat-only', 'closing', DropType.CHAT);
-    await seedDrop(
-      'native-proposal',
-      'recurring',
-      DropType.COMPETITION,
-      CompetitionEntryStatus.ACTIVE
-    );
-    await seedDrop('stored-proposal', 'a-open', DropType.PARTICIPATORY);
-    await seedDrop(
-      'withdrawn-proposal',
-      'b-combined',
-      DropType.PARTICIPATORY,
-      CompetitionEntryStatus.WITHDRAWN
-    );
-    await seedDrop(
-      'disqualified-proposal',
-      'c-card',
-      DropType.COMPETITION,
-      CompetitionEntryStatus.DISQUALIFIED
-    );
-
-    const page = (offset: number) =>
-      withLegacyCompetitionGetFacade(() =>
-        repo.findActiveTdhVotingWaves(
-          { eligibleGroups: [], now, limit: 2, offset },
-          {}
-        )
+  it.each([
+    { facade: 'enabled', run: withLegacyCompetitionGetFacade },
+    { facade: 'disabled', run: withoutLegacyCompetitionGetFacade }
+  ])(
+    'puts waves with open proposals first across pages (facade $facade)',
+    async ({ run }) => {
+      await seedDrop(
+        'closed-winner',
+        'closing',
+        DropType.PARTICIPATORY,
+        CompetitionEntryStatus.WINNER
       );
-    const first = await page(0);
-    expect(first.count).toBe(5);
-    expect(first.waves.map((wave) => wave.id)).toEqual(['recurring', 'a-open']);
-    expect((await page(2)).waves.map((wave) => wave.id)).toEqual([
-      'closing',
-      'b-combined'
-    ]);
-    expect((await page(4)).waves.map((wave) => wave.id)).toEqual(['c-card']);
+      await seedDrop('chat-only', 'closing', DropType.CHAT);
+      await seedDrop(
+        'native-proposal',
+        'recurring',
+        DropType.COMPETITION,
+        CompetitionEntryStatus.ACTIVE
+      );
+      await seedDrop('stored-proposal', 'a-open', DropType.PARTICIPATORY);
+      await seedDrop(
+        'withdrawn-proposal',
+        'b-combined',
+        DropType.PARTICIPATORY,
+        CompetitionEntryStatus.WITHDRAWN
+      );
+      await seedDrop(
+        'disqualified-proposal',
+        'c-card',
+        DropType.COMPETITION,
+        CompetitionEntryStatus.DISQUALIFIED
+      );
 
-    await seedDrop(
-      'new-proposal',
-      'closing',
-      DropType.COMPETITION,
-      CompetitionEntryStatus.ACTIVE
-    );
-    expect((await page(0)).waves.map((wave) => wave.id)).toEqual([
-      'closing',
-      'recurring'
-    ]);
-  });
+      const page = (offset: number) =>
+        run(() =>
+          repo.findActiveTdhVotingWaves(
+            { eligibleGroups: [], now, limit: 2, offset },
+            {}
+          )
+        );
+      const [first, second, third] = await Promise.all([
+        page(0),
+        page(2),
+        page(4)
+      ]);
+      expect([first.count, second.count, third.count]).toEqual([5, 5, 5]);
+      expect(first.waves.map((wave) => wave.id)).toEqual([
+        'recurring',
+        'a-open'
+      ]);
+      expect(second.waves.map((wave) => wave.id)).toEqual([
+        'closing',
+        'b-combined'
+      ]);
+      expect(third.waves.map((wave) => wave.id)).toEqual(['c-card']);
+
+      await seedDrop(
+        'new-proposal',
+        'closing',
+        DropType.COMPETITION,
+        CompetitionEntryStatus.ACTIVE
+      );
+      expect((await page(0)).waves.map((wave) => wave.id)).toEqual([
+        'closing',
+        'recurring'
+      ]);
+    }
+  );
 
   it('removes approval voting when its final winner is recorded', async () => {
     await sqlExecutor.execute(

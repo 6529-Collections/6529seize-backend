@@ -17,10 +17,11 @@ export const VIEW_MAPPED_ENTRY_STATUSES = `'ACTIVE','WINNER','WITHDRAWN','DISQUA
  * Drops `d` shown by an entry of their wave's native primary competition
  * with `statuses`, through competitions `c` and entries `e`.
  */
-function nativeEntryDropsFrom(statuses: string): string {
+function nativeEntryDropsFrom(statuses: string, waveFilter: string): string {
   return `${COMPETITIONS_TABLE} c
       join ${COMPETITION_ENTRIES_TABLE} e on e.competition_id = c.id and e.status in (${statuses})
-      join ${DROPS_TABLE} d on d.id = e.drop_id and d.wave_id = c.legacy_wave_id`;
+      join ${DROPS_TABLE} d on d.id = e.drop_id and d.wave_id = c.legacy_wave_id
+      where c.legacy_wave_id ${waveFilter} and ${LEGACY_NATIVE_PRIMARY_SQL}`;
 }
 
 /** `d` has no native entry the view maps to a type of its own. */
@@ -29,6 +30,15 @@ const NO_VIEW_MAPPED_ENTRY = `not exists (
           join ${COMPETITION_ENTRIES_TABLE} e on e.competition_id = c.id
           where c.legacy_wave_id = d.wave_id and ${LEGACY_NATIVE_PRIMARY_SQL}
             and e.drop_id = d.id and e.status in (${VIEW_MAPPED_ENTRY_STATUSES}))`;
+
+function storedTypedDropsFrom(
+  dropType: DropType.PARTICIPATORY | DropType.WINNER,
+  waveId: string
+): string {
+  return `${DROPS_TABLE} d
+      where d.wave_id = ${waveId} and d.drop_type = '${dropType}'
+        and ${NO_VIEW_MAPPED_ENTRY}`;
+}
 
 /**
  * The rows `legacy_get_drops` returns for
@@ -51,15 +61,12 @@ export function legacyTypedDropsSql(
   params: { profileIds: string; waveId: string }
 ): string {
   const status = dropType === DropType.WINNER ? 'WINNER' : 'ACTIVE';
+  const nativeDrops = nativeEntryDropsFrom(`'${status}'`, `= ${params.waveId}`);
   return `select d.author_id as profile_id, d.id as drop_id
-      from ${nativeEntryDropsFrom(`'${status}'`)}
-      where c.legacy_wave_id = ${params.waveId} and ${LEGACY_NATIVE_PRIMARY_SQL}
-        and d.author_id in (${params.profileIds})
+      from ${nativeDrops} and d.author_id in (${params.profileIds})
     union select d.author_id as profile_id, d.id as drop_id
-      from ${DROPS_TABLE} d
-      where d.author_id in (${params.profileIds}) and d.wave_id = ${params.waveId}
-        and d.drop_type = '${dropType}'
-        and ${NO_VIEW_MAPPED_ENTRY}`;
+      from ${storedTypedDropsFrom(dropType, params.waveId)}
+        and d.author_id in (${params.profileIds})`;
 }
 
 /**
@@ -67,16 +74,10 @@ export function legacyTypedDropsSql(
  * Run outside the GET facade so the existence checks can use base indexes.
  */
 export function legacyParticipatoryDropExistsSql(waveId: string): string {
+  const nativeDrops = nativeEntryDropsFrom("'ACTIVE'", `= ${waveId}`);
   return `(
-    exists (
-      select 1 from ${nativeEntryDropsFrom("'ACTIVE'")}
-      where c.legacy_wave_id = ${waveId} and ${LEGACY_NATIVE_PRIMARY_SQL}
-    )
-    or exists (
-      select 1 from ${DROPS_TABLE} d
-      where d.wave_id = ${waveId} and d.drop_type = '${DropType.PARTICIPATORY}'
-        and ${NO_VIEW_MAPPED_ENTRY}
-    )
+    exists (select 1 from ${nativeDrops})
+    or exists (select 1 from ${storedTypedDropsFrom(DropType.PARTICIPATORY, waveId)})
   )`;
 }
 
@@ -141,8 +142,7 @@ export function legacyAuthorWaveParticipationSql(params: {
     from (
       select d.wave_id, d.author_id,
              case when e.status = 'WINNER' then '${DropType.WINNER}' else '${DropType.PARTICIPATORY}' end as drop_type
-        from ${nativeEntryDropsFrom(`'ACTIVE','WINNER'`)}
-        where c.legacy_wave_id in (${params.waveIds}) and ${LEGACY_NATIVE_PRIMARY_SQL}
+        from ${nativeEntryDropsFrom(`'ACTIVE','WINNER'`, `in (${params.waveIds})`)}
           and d.author_id in (${params.authorIds})
       union all
       select d.wave_id, d.author_id, d.drop_type
