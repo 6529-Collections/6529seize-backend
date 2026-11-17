@@ -611,7 +611,9 @@ Content-free wakes use the existing `firebase-push-notifications` queue with
 the message `{ "type": "e2ee_wake", "profile_ids": [...], "reason":
 "message" | "added" }`. For a message, `pushNotificationsHandler` sends
 title `New encrypted message` and body `Open 6529 Mobile to view` in production
-or `Open 6529 Staging to view` on staging. The handler uses the loaded
+or `Open 6529 Staging to view` on staging. If another profile shares the same
+device and push token, the title is prefixed with the recipient's handle, for
+example `[alice] New encrypted message`. The handler uses the loaded
 `NODE_ENV` (`development` for staging, `production` for production), independently
 of Sentry monitoring configuration. For an invitation
 it sends title `6529` and body `You were added to an encrypted chat`. Both
