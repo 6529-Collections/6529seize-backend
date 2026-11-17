@@ -9,6 +9,7 @@ import { ApiLoginResponse } from '@/api/generated/models/ApiLoginResponse';
 import { ApiLoginRequest } from '@/api/generated/models/ApiLoginRequest';
 import { NewsletterWindow } from './newsletter.config';
 import { filterModelOutputText } from '@/model-output-filter';
+import { parseStructuredWalletSignatureMessage } from '@/api/wallet-signatures/structured-wallet-signatures';
 
 const API = 'https://api.6529.io/api';
 const markdown = new MarkdownIt({ html: false, linkify: false });
@@ -55,48 +56,29 @@ export function newsletterMarkdown(
   return text;
 }
 
-/** The `Key: value` lines of a structured sign-in message. */
-function signInMessageFields(message: string): Map<string, string> {
-  const fields = new Map<string, string>();
-  for (const line of message.split(/\r?\n/).slice(1)) {
-    const separator = line.indexOf(': ');
-    if (separator > 0) {
-      fields.set(line.slice(0, separator), line.slice(separator + 2));
-    }
-  }
-  return fields;
-}
-
 /**
- * Signs only the structured sign-in message this wallet asked for: a login
- * for this address, for a native session, that has not expired.
+ * Signs only the structured sign-in message this wallet asked for: a
+ * well-formed login for this address, for a native session, that has not
+ * expired.
  */
 function assertNewsletterSignInChallenge(
   message: unknown,
   address: string
 ): void {
-  const valid =
-    typeof message === 'string' &&
-    message.startsWith('6529 Authentication\n') &&
-    isExpectedSignIn(signInMessageFields(message), address);
-  if (!valid) {
+  const parsed =
+    typeof message === 'string'
+      ? parseStructuredWalletSignatureMessage(message)
+      : null;
+  if (
+    parsed?.kind !== 'authentication' ||
+    parsed.action !== 'login' ||
+    parsed.domain !== NEWSLETTER_AUTH_CLIENT_TYPE ||
+    parsed.sessionType !== NEWSLETTER_AUTH_CLIENT_TYPE ||
+    parsed.wallet !== address ||
+    parsed.expirationTime.getTime() <= Date.now()
+  ) {
     throw new Error('Unexpected newsletter authentication challenge');
   }
-}
-
-function isExpectedSignIn(
-  fields: Map<string, string>,
-  address: string
-): boolean {
-  const expiresAt = Date.parse(fields.get('Expiration Time') ?? '');
-  return (
-    fields.get('Action') === 'login' &&
-    fields.get('Domain') === NEWSLETTER_AUTH_CLIENT_TYPE &&
-    fields.get('Session Type') === NEWSLETTER_AUTH_CLIENT_TYPE &&
-    fields.get('Wallet')?.toLowerCase() === address &&
-    Number.isFinite(expiresAt) &&
-    expiresAt > Date.now()
-  );
 }
 
 export class NewsletterPublisher {

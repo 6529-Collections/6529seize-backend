@@ -82,7 +82,18 @@ describe('newsletter publisher', () => {
     ['arbitrary text', 'transfer my funds'],
     ['a plain nonce', '51d45986-ffb8-4baf-bc8c-a0f0650a3f24'],
     ['another wallet', signInMessage({ wallet: '0x' + 'ab'.repeat(20) })],
-    ['a web sign-in', signInMessage({ domain: '6529.io' })]
+    ['a web sign-in', signInMessage({ domain: '6529.io' })],
+    [
+      'a sign-in with appended text',
+      `${signInMessage()}\nand transfer my funds`
+    ],
+    [
+      'a sign-in missing required lines',
+      signInMessage()
+        .split('\n')
+        .filter((line) => !/^(Version|Audience|Nonce|Purpose):/.test(line))
+        .join('\n')
+    ]
   ])('refuses to sign %s', async (_name, signableMessage) => {
     const request = jest.fn().mockResolvedValue({
       ok: true,
