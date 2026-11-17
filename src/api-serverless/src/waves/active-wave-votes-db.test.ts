@@ -174,9 +174,11 @@ describeWithSeed('active TDH voting discovery', withWaves(waves), () => {
        values ('recurring', -100, 10), ('a-open', 300, 1), ('b-combined', 300, 100),
          ('closing', -7, 90), ('private', 900, 99)`
     );
-    const params = { ...publicRead, mainStageWaveId: 'recurring', limit: 2 };
-    const read = (offset: number) =>
-      repo.findActiveTdhVotingWaves({ ...params, offset }, {});
+    const read = (offset: number, mainStageWaveId = 'recurring') =>
+      repo.findActiveTdhVotingWaves(
+        { ...publicRead, mainStageWaveId, limit: 2, offset },
+        {}
+      );
     const pages = await Promise.all([read(0), read(2), read(4)]);
     expect(pages.map((page) => page.count)).toEqual([5, 5, 5]);
     expect(pages.map((page) => page.waves.map((wave) => wave.id))).toEqual([
@@ -185,14 +187,21 @@ describeWithSeed('active TDH voting discovery', withWaves(waves), () => {
       ['closing']
     ]);
 
-    const publicOnly = await repo.findActiveTdhVotingWaves(
-      { ...params, mainStageWaveId: 'private', offset: 0 },
-      {}
+    const highRepPin = await Promise.all(
+      [0, 2, 4].map((offset) => read(offset, 'b-combined'))
     );
-    expect(publicOnly.waves.map((wave) => wave.id)).toEqual([
-      'a-open',
-      'b-combined'
-    ]);
+    expect(
+      highRepPin.flatMap(({ waves }) => waves.map((wave) => wave.id))
+    ).toEqual(['b-combined', 'a-open', 'c-card', 'closing', 'recurring']);
+
+    for (const excludedWaveId of ['private', 'dm']) {
+      const publicOnly = await read(0, excludedWaveId);
+      expect(publicOnly.count).toBe(5);
+      expect(publicOnly.waves.map((wave) => wave.id)).toEqual([
+        'a-open',
+        'b-combined'
+      ]);
+    }
   });
 
   it.each([

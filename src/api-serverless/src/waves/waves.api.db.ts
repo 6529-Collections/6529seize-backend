@@ -1656,6 +1656,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
         if (params.offset >= count) return { waves: [], count };
         // LIMIT materializes the page before counting submissions for its
         // approval waves. Counts are not needed to sort or page the waves.
+        // Null-safe equality gives every wave the same priority without a configured Main Stage.
         const waves = await this.db.execute<
           RawWaveEntity & { active_submission_count: number | string | null }
         >(
