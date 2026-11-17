@@ -15,6 +15,9 @@ import { ApiWavesPinFilter } from '@/api/generated/models/ApiWavesPinFilter';
 import { ApiWavesV2ListType } from '@/api/generated/models/ApiWavesV2ListType';
 import { ApiWaveScoreSort } from '@/api/generated/models/ApiWaveScoreSort';
 import { ApiWaveV2Service } from '@/api/waves/api-wave-v2.service';
+import { competitionService } from '@/competitions/competition.service';
+import { contentModerationDb } from '@/content-moderation/content-moderation.db';
+import { DropModerationStatus } from '@/entities/IContentModeration';
 
 function makeDrop(overrides: Partial<DropEntity> = {}): DropEntity {
   return {
@@ -483,6 +486,104 @@ describe('ApiWaveV2Service', () => {
       { groupIdsUserIsEligibleFor: ['group-1'] }
     );
   });
+
+  it.each([false, true])(
+    'adds only visible feed references (restricted proxy: %s)',
+    async (restrictedProxy) => {
+      const { service, deps } = createService();
+      const dropIds = [
+        'entry-drop',
+        'ordinary-drop',
+        'hidden-drop',
+        'blocked-drop'
+      ];
+      deps.dropsDb.findLatestDropsSimple.mockResolvedValue(
+        dropIds.map((id) => makeDrop({ id }))
+      );
+      deps.apiWaveOverviewMapper.mapWaves.mockResolvedValue({
+        'wave-1': { id: 'wave-1', has_competition: true }
+      });
+      deps.apiDropMapper.mapDrops.mockResolvedValue({
+        'entry-drop': { id: 'entry-drop', drop_type: 'CHAT' },
+        'ordinary-drop': { id: 'ordinary-drop', drop_type: 'CHAT' },
+        'hidden-drop': {
+          id: 'hidden-drop',
+          moderation: { can_view: false }
+        },
+        'blocked-drop': {
+          id: 'blocked-drop',
+          viewer_context: { author_blocked: true }
+        }
+      });
+      const findReferences = jest
+        .spyOn(competitionService, 'findFeedEntryReferences')
+        .mockResolvedValue(
+          ['entry-drop', 'hidden-drop', 'blocked-drop'].map((drop_id) => ({
+            drop_id,
+            competition_id: 'competition-1',
+            entry_id: 'entry-1'
+          }))
+        );
+      const proxyPresentation = jest
+        .spyOn(contentModerationDb, 'getPresentations')
+        .mockResolvedValue({
+          'entry-drop': {
+            viewer: { author_blocked: false, drop_hidden: true },
+            moderation: { can_view: true, status: DropModerationStatus.VISIBLE }
+          }
+        });
+      const ctx = restrictedProxy
+        ? {
+            authenticationContext: new AuthenticationContext({
+              authenticatedWallet: null,
+              authenticatedProfileId: 'delegate',
+              roleProfileId: 'viewer',
+              activeProxyActions: []
+            })
+          }
+        : {};
+      try {
+        const result = await service.findDropsFeed(
+          {
+            wave_id: 'wave-1',
+            drop_id: null,
+            amount: 10,
+            serial_no_limit: null,
+            search_strategy: ApiDropSearchStrategy.Older,
+            drop_type: null,
+            curation_id: null
+          },
+          ctx
+        );
+        expect(findReferences).toHaveBeenCalledTimes(1);
+        expect(findReferences.mock.calls[0][1]).toEqual(dropIds);
+        if (restrictedProxy) {
+          expect(proxyPresentation).toHaveBeenCalledWith(
+            [
+              makeDrop({ id: 'entry-drop' }),
+              makeDrop({ id: 'hidden-drop' }),
+              makeDrop({ id: 'blocked-drop' })
+            ],
+            'viewer',
+            undefined
+          );
+        } else {
+          expect(proxyPresentation).not.toHaveBeenCalled();
+        }
+        expect(result.drops.map((drop) => drop.competition_entry)).toEqual([
+          restrictedProxy
+            ? null
+            : { competition_id: 'competition-1', entry_id: 'entry-1' },
+          null,
+          null,
+          null
+        ]);
+      } finally {
+        findReferences.mockRestore();
+        proxyPresentation.mockRestore();
+      }
+    }
+  );
 
   it('leaves replies out of the main feed of collapsed-reply waves', async () => {
     const { service, deps } = createService();

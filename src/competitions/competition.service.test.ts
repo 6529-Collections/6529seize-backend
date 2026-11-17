@@ -1,4 +1,5 @@
 import { CompetitionCursorCodec } from '@/competitions/competition-cursor';
+import { AuthenticationContext } from '@/auth-context';
 import { CompetitionService } from '@/competitions/competition.service';
 import {
   CompetitionExecutionMode,
@@ -6,6 +7,7 @@ import {
   CompetitionType
 } from '@/entities/ICompetition';
 import { WaveType } from '@/entities/IWave';
+import { ProfileProxyActionType } from '@/entities/IProfileProxyAction';
 import { BadRequestException, NotFoundException } from '@/exceptions';
 import { aWave } from '@/tests/fixtures/wave.fixture';
 import { assertCompetitionOpen } from '@/api/competitions/competition-command-access';
@@ -102,6 +104,7 @@ describe('CompetitionService', () => {
       .fn()
       .mockResolvedValue({ last_decision_time: null, decisions_done: 0 }),
     findCompetitionRecordById: jest.fn(),
+    findFeedEntryReferences: jest.fn().mockResolvedValue([]),
     parseCompetitionRecord: jest.fn((record) => record),
     findCapabilities: jest.fn().mockResolvedValue([]),
     findNativeEntry: jest.fn(),
@@ -121,6 +124,34 @@ describe('CompetitionService', () => {
     wavesDb as never,
     groupsService as never,
     new CompetitionCursorCodec()
+  );
+
+  it.each([false, true])(
+    'allows viewing draft feed entries only with delegated Wave read access (%s)',
+    async (canRead) => {
+      const types = [ProfileProxyActionType.CREATE_WAVE];
+      if (canRead) types.push(ProfileProxyActionType.READ_WAVE);
+      const ctx = {
+        authenticationContext: new AuthenticationContext({
+          authenticatedWallet: null,
+          authenticatedProfileId: 'delegate',
+          roleProfileId: wave.created_by,
+          activeProxyActions: types.map((type) => ({
+            id: type,
+            type,
+            credit_amount: null,
+            credit_spent: null
+          }))
+        })
+      };
+      await service.findFeedEntryReferences(wave, ['drop'], [], ctx);
+      expect(repository.findFeedEntryReferences).toHaveBeenCalledWith(
+        wave.id,
+        ['drop'],
+        canRead,
+        ctx
+      );
+    }
   );
 
   beforeEach(() => {
