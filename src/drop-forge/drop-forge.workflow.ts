@@ -119,6 +119,48 @@ export async function createProcess(
     'BACKGROUND'
   );
 }
+async function captureProcessInputs(
+  auth: string,
+  plan: string,
+  ids: readonly string[]
+): Promise<NonNullable<ProcessResult['inputs']>> {
+  const [valid, phases] = await Promise.all([
+    validateDistribution(auth, plan, undefined, 'background'),
+    fetchDistributionPhases(auth, plan, 'background')
+  ]);
+  if (!valid.valid)
+    throw new LaunchSafetyError(
+      valid.statusText ?? 'EMMA phases are not ready'
+    );
+  const selected = MEME_EMMA_PHASES.map((expected, index) => {
+    const matches = phases.filter(
+      ({ name }) => canonicalMemePhaseName(name) === expected
+    );
+    if (matches.length === 0)
+      throw new LaunchSafetyError(`Missing ${expected} in this EMMA plan`);
+    if (matches.length > 1)
+      throw new LaunchSafetyError(
+        `Multiple phases match ${expected}. Rename the duplicates in EMMA`
+      );
+    if (matches[0].id !== ids[index])
+      throw new LaunchSafetyError(
+        `${expected} no longer matches the selected phase. Refresh the EMMA plan and try again`
+      );
+    return matches[0];
+  });
+  const captured = await Promise.all(
+    selected.map(async ({ id, name }) => {
+      const rows = await fetchPhaseResults(auth, plan, id, 'background');
+      return [id, { name, rows }] as const;
+    })
+  );
+  const inputs = Object.fromEntries(captured);
+  if (Buffer.byteLength(JSON.stringify(inputs)) > 16 * 1024 * 1024)
+    throw new LaunchSafetyError(
+      'EMMA input snapshot exceeds the 16 MiB processing limit'
+    );
+  return inputs;
+}
 export async function processStep(
   job: DropForgeJobEntity,
   auth: string,
@@ -135,43 +177,8 @@ export async function processStep(
     continue: true,
     lists: {}
   };
-  if (step === 0 && !result.inputs) {
-    const [valid, phases] = await Promise.all([
-      validateDistribution(auth, plan, undefined, 'background'),
-      fetchDistributionPhases(auth, plan, 'background')
-    ]);
-    if (!valid.valid)
-      throw new LaunchSafetyError(
-        valid.statusText ?? 'EMMA phases are not ready'
-      );
-    const selected = MEME_EMMA_PHASES.map((expected, index) => {
-      const matches = phases.filter(
-        ({ name }) => canonicalMemePhaseName(name) === expected
-      );
-      if (matches.length === 0)
-        throw new LaunchSafetyError(`Missing ${expected} in this EMMA plan`);
-      if (matches.length > 1)
-        throw new LaunchSafetyError(
-          `Multiple phases match ${expected}. Rename the duplicates in EMMA`
-        );
-      if (matches[0].id !== ids[index])
-        throw new LaunchSafetyError(
-          `${expected} no longer matches the selected phase. Refresh the EMMA plan and try again`
-        );
-      return matches[0];
-    });
-    const captured = await Promise.all(
-      selected.map(async ({ id, name }) => {
-        const rows = await fetchPhaseResults(auth, plan, id, 'background');
-        return [id, { name, rows }] as const;
-      })
-    );
-    result.inputs = Object.fromEntries(captured);
-    if (Buffer.byteLength(JSON.stringify(result.inputs)) > 16 * 1024 * 1024)
-      throw new LaunchSafetyError(
-        'EMMA input snapshot exceeds the 16 MiB processing limit'
-      );
-  }
+  if (step === 0 && !result.inputs)
+    result.inputs = await captureProcessInputs(auth, plan, ids);
   if (step > 0 && !result.inputs)
     throw new LaunchSafetyError(
       'Processing snapshot is missing; restart the operation'
