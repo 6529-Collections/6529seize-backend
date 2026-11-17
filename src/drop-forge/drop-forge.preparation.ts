@@ -15,6 +15,7 @@ import {
   dropForgePreparationRepository,
   PhasePreparationResult
 } from '@/drop-forge/drop-forge.preparation.repository';
+import { canonicalMemePhaseName } from '@/drop-forge/drop-forge.emma-phases';
 import { LaunchSafetyError } from '@/drop-forge/drop-forge.types';
 import { RequestContext } from '@/request.context';
 
@@ -95,14 +96,24 @@ export async function prepareDistributionPhase(
       } else {
         if (!phaseInput)
           throw new LaunchSafetyError('EMMA phase input missing');
-        const { name, rows } = phaseInput;
-        if (Object.values(cached).some((it) => it.phase === name))
+        const name = canonicalMemePhaseName(phaseInput.name) ?? phaseInput.name;
+        if (
+          Object.values(cached).some(
+            (it) => (canonicalMemePhaseName(it.phase) ?? it.phase) === name
+          )
+        )
           throw new LaunchSafetyError(
             'A different preparation already used this phase name; reset explicitly before replacing it'
           );
         result = {
           phase: name,
-          ...(await splitAllowlistResults(contract, claim, name, rows, txCtx))
+          ...(await splitAllowlistResults(
+            contract,
+            claim,
+            name,
+            phaseInput.rows,
+            txCtx
+          ))
         };
       }
       if (sourceHash) result.source_hash = sourceHash;

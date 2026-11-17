@@ -22,11 +22,11 @@ beforeEach(async () => {
   jest
     .spyOn(emma, 'validateDistribution')
     .mockResolvedValue({ valid: true, statusText: 'OK', allowlist_id: 'plan' });
-  jest
-    .spyOn(emma, 'fetchPhaseName')
-    .mockImplementation(
-      async (_auth, _plan, id) => `Phase ${['zero', 'one', 'two'].indexOf(id)}`
-    );
+  jest.spyOn(emma, 'fetchDistributionPhases').mockResolvedValue([
+    { id: 'two', name: 'Phase2' },
+    { id: 'zero', name: 'P0' },
+    { id: 'one', name: 'p 1' }
+  ]);
   jest.spyOn(emma, 'fetchPhaseResults').mockResolvedValue([]);
 });
 afterEach(() => {
