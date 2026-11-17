@@ -72,6 +72,36 @@ describe('Drop Forge phase network and replay boundary', () => {
     ).toEqual(result);
     expect(distributions.populateDistribution).toHaveBeenCalledTimes(1);
   });
+  it('stores an empty phase named with an alias under its canonical name', async () => {
+    await expect(
+      prepareDistributionPhase(
+        'contract',
+        1,
+        'plan',
+        'phase',
+        'auth',
+        {},
+        {
+          name: 'p 0',
+          rows: []
+        }
+      )
+    ).resolves.toMatchObject(result);
+    expect(emma.splitAllowlistResults).toHaveBeenCalledWith(
+      'contract',
+      1,
+      'Phase 0',
+      [],
+      {}
+    );
+    expect(distributions.populateDistribution).toHaveBeenCalledWith(
+      'contract',
+      1,
+      'Phase 0',
+      expect.objectContaining(result),
+      {}
+    );
+  });
   it('recovers a committed result without requiring EMMA to be available', async () => {
     cache[JSON.stringify(['plan', 'phase'])] = result;
     jest

@@ -97,6 +97,18 @@ export function fetchDistributionOperations(
   );
 }
 
+export function fetchDistributionPhases(
+  auth: string,
+  allowlistId: string,
+  mode: EmmaRequestMode = 'manual'
+): Promise<{ id: string; name: string }[]> {
+  return fetchEmma(
+    `/allowlists/${encodeURIComponent(allowlistId)}/phases`,
+    auth,
+    mode
+  );
+}
+
 export async function fetchPhaseName(
   auth: string,
   allowlistId: string,

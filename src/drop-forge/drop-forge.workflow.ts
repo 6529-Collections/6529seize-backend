@@ -1,8 +1,12 @@
 import {
-  fetchPhaseName,
+  fetchDistributionPhases,
   fetchPhaseResults,
   validateDistribution
 } from '@/api/subscriptions/api.subscriptions.allowlist';
+import {
+  canonicalMemePhaseName,
+  MEME_EMMA_PHASES
+} from '@/drop-forge/drop-forge.emma-phases';
 import { createHash } from 'node:crypto';
 import { DropForgeJobEntity } from '@/entities/IDropForgeLaunch';
 import { dropForgeJobsRepository } from '@/drop-forge/drop-forge.jobs.repository';
@@ -115,13 +119,56 @@ export async function createProcess(
     'BACKGROUND'
   );
 }
+async function captureProcessInputs(
+  auth: string,
+  plan: string,
+  ids: readonly string[]
+): Promise<NonNullable<ProcessResult['inputs']>> {
+  const [valid, phases] = await Promise.all([
+    validateDistribution(auth, plan, undefined, 'background'),
+    fetchDistributionPhases(auth, plan, 'background')
+  ]);
+  if (!valid.valid)
+    throw new LaunchSafetyError(
+      valid.statusText ?? 'EMMA phases are not ready'
+    );
+  const selected = MEME_EMMA_PHASES.map((expected, index) => {
+    const matches = phases.filter(
+      ({ name }) => canonicalMemePhaseName(name) === expected
+    );
+    if (matches.length === 0)
+      throw new LaunchSafetyError(`Missing ${expected} in this EMMA plan`);
+    if (matches.length > 1)
+      throw new LaunchSafetyError(
+        `Multiple phases match ${expected}. Rename the duplicates in EMMA`
+      );
+    if (matches[0].id !== ids[index])
+      throw new LaunchSafetyError(
+        `${expected} no longer matches the selected phase. Refresh the EMMA plan and try again`
+      );
+    return matches[0];
+  });
+  const captured = await Promise.all(
+    selected.map(async ({ id, name }) => {
+      const rows = await fetchPhaseResults(auth, plan, id, 'background');
+      return [id, { name, rows }] as const;
+    })
+  );
+  const inputs = Object.fromEntries(captured);
+  if (Buffer.byteLength(JSON.stringify(inputs)) > 16 * 1024 * 1024)
+    throw new LaunchSafetyError(
+      'EMMA input snapshot exceeds the 16 MiB processing limit'
+    );
+  return inputs;
+}
 export async function processStep(
   job: DropForgeJobEntity,
   auth: string,
   ctx: RequestContext
 ): Promise<ProcessResult> {
   const ids = [...phaseIds(job), 'public'];
-  if (!job.plan_id || ids.length !== 4)
+  const plan = job.plan_id;
+  if (!plan || ids.length !== 4)
     throw new LaunchSafetyError(
       'Processing requires the three ordered EMMA phase IDs'
     );
@@ -130,36 +177,8 @@ export async function processStep(
     continue: true,
     lists: {}
   };
-  if (step === 0 && !result.inputs) {
-    const captured = await Promise.all(
-      ids.slice(0, 3).map(async (id, index) => {
-        const valid = await validateDistribution(
-          auth,
-          job.plan_id!,
-          id,
-          'background'
-        );
-        if (!valid.valid)
-          throw new LaunchSafetyError(
-            valid.statusText ?? 'EMMA phases are not ready'
-          );
-        const [name, rows] = await Promise.all([
-          fetchPhaseName(auth, job.plan_id!, id, 'background'),
-          fetchPhaseResults(auth, job.plan_id!, id, 'background')
-        ]);
-        if (name.toLowerCase().replace(/\s/g, '') !== `phase${index}`)
-          throw new LaunchSafetyError(
-            'Expected ordered Phase 0, Phase 1 and Phase 2 inputs'
-          );
-        return [id, { name, rows }] as const;
-      })
-    );
-    result.inputs = Object.fromEntries(captured);
-    if (Buffer.byteLength(JSON.stringify(result.inputs)) > 16 * 1024 * 1024)
-      throw new LaunchSafetyError(
-        'EMMA input snapshot exceeds the 16 MiB processing limit'
-      );
-  }
+  if (step === 0 && !result.inputs)
+    result.inputs = await captureProcessInputs(auth, plan, ids);
   if (step > 0 && !result.inputs)
     throw new LaunchSafetyError(
       'Processing snapshot is missing; restart the operation'
@@ -168,7 +187,7 @@ export async function processStep(
     const prepared = await prepareDistributionPhase(
       job.contract,
       job.claim_id,
-      job.plan_id,
+      plan,
       ids[step],
       auth,
       ctx,
@@ -176,8 +195,8 @@ export async function processStep(
         ? { name: 'Public', rows: [] }
         : result.inputs?.[ids[step]]
     );
-    const expected = step === 3 ? 'public' : `phase${step}`;
-    if (prepared.phase.toLowerCase().replace(/\s/g, '') !== expected)
+    const expected = step === 3 ? 'Public' : MEME_EMMA_PHASES[step];
+    if ((canonicalMemePhaseName(prepared.phase) ?? prepared.phase) !== expected)
       throw new LaunchSafetyError(
         `Expected ${expected}; EMMA phases must be processed in Phase 0, Phase 1, Phase 2 order`
       );

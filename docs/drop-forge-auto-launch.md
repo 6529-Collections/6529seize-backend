@@ -193,6 +193,12 @@ phase update.
 
 ## Timeouts and retries
 
+Background preparation checks the EMMA plan for exactly one phase for each of
+0, 1, and 2. It accepts `Phase 1`, `Phase1`, `P 1`, `P1`, and `1`
+case-insensitively and stores the prepared results under the canonical phase
+name. A phase with no wallets is valid for preparation. Public is generated
+automatically.
+
 An HTTP timeout does not prove preparation failed. The single job makes request
 completion independent of the write workload and refresh discovers its status.
 Each phase's writes and checkpoint commit together. Lambda termination rolls
