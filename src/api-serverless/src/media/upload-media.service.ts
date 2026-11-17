@@ -337,6 +337,7 @@ export class UploadMediaService {
       });
     }
     return {
+      // Keep the registered upload URL consistent across completion and retries.
       media_url: upload
         ? resolveDropMediaDeliveryUrl(upload.public_url)
         : publicUploadMediaUrl(completeResp.Key ?? key),
