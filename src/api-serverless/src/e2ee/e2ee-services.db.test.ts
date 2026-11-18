@@ -1441,6 +1441,117 @@ describeWithSeed('E2EE delivery service', [], () => {
         key_packages: []
       });
     });
+
+    describe('replacing the one-time pool (replace_one_time)', () => {
+      const fresh = (device: E2eeTestKey, count: number) =>
+        Array.from({ length: count }, (_, index) => ({
+          data: keyPackageBytes(`new-${device.publicKey}-${index}`),
+          last_resort: false,
+          expires_at: nowSeconds() + 30 * 86400
+        }));
+
+      it("replaces only the device's own unclaimed one-time KeyPackages", async () => {
+        const alice = aProfile();
+        const bob = aProfile();
+        const aliceDevice = await registerDevice(alice);
+        const bobPhone = await registerDevice(bob);
+        const bobLaptop = await registerDevice(bob);
+        await uploadKeyPackages(bob, bobPhone, 3, true);
+        await uploadKeyPackages(bob, bobLaptop, 2);
+        const claimPhone = async () =>
+          (
+            await services.devices.claimKeyPackages(alice.id, {
+              targets: [
+                { profile_id: bob.id, device_keys: [bobPhone.publicKey] }
+              ],
+              claimer_device_key: aliceDevice.publicKey
+            })
+          ).results[0].key_packages[0];
+        // One older KeyPackage is claimed before the pool is replaced.
+        const claimed = await claimPhone();
+        expect(keyPackageLabel(claimed.key_package)).toBe(
+          `kp-${bobPhone.publicKey}-0`
+        );
+
+        const status = await services.devices.uploadKeyPackages(
+          bob.id,
+          bobPhone.publicKey,
+          { key_packages: fresh(bobPhone, 2), replace_one_time: true }
+        );
+        expect(status.one_time_available).toBe(2);
+        // The last-resort KeyPackage is kept.
+        expect(status.last_resort_expires_at).toBe(nowSeconds() + 90 * 86400);
+        // Claims now get the new ones, then the kept last-resort one.
+        expect(keyPackageLabel((await claimPhone()).key_package)).toBe(
+          `new-${bobPhone.publicKey}-0`
+        );
+        expect(keyPackageLabel((await claimPhone()).key_package)).toBe(
+          `new-${bobPhone.publicKey}-1`
+        );
+        const last = await claimPhone();
+        expect(last.last_resort).toBe(true);
+        expect(keyPackageLabel(last.key_package)).toBe(
+          `last-resort-${bobPhone.publicKey}`
+        );
+        // The other device's pool is untouched.
+        expect(
+          await db.countOneTimeKeyPackages(bobLaptop.publicKey, nowSeconds())
+        ).toBe(2);
+      });
+
+      it('keeps the pool as it was when the upload fails', async () => {
+        const bob = aProfile();
+        const bobPhone = await registerDevice(bob);
+        await uploadKeyPackages(bob, bobPhone, 3, true);
+        const insert = jest
+          .spyOn(db, 'insertKeyPackages')
+          .mockRejectedValueOnce(new Error('insert failed'));
+        try {
+          await expect(
+            services.devices.uploadKeyPackages(bob.id, bobPhone.publicKey, {
+              key_packages: fresh(bobPhone, 2),
+              replace_one_time: true
+            })
+          ).rejects.toThrow('insert failed');
+        } finally {
+          insert.mockRestore();
+        }
+        // The delete was rolled back with the failed insert.
+        expect(
+          await db.countOneTimeKeyPackages(bobPhone.publicKey, nowSeconds())
+        ).toBe(3);
+      });
+
+      it("refuses to replace another profile's device's KeyPackages", async () => {
+        const alice = aProfile();
+        const bob = aProfile();
+        await registerDevice(alice);
+        const bobPhone = await registerDevice(bob);
+        await uploadKeyPackages(bob, bobPhone, 3);
+        await expectE2eeError(
+          services.devices.uploadKeyPackages(alice.id, bobPhone.publicKey, {
+            key_packages: fresh(bobPhone, 1),
+            replace_one_time: true
+          }),
+          'E2EE_NOT_YOUR_DEVICE'
+        );
+        expect(
+          await db.countOneTimeKeyPackages(bobPhone.publicKey, nowSeconds())
+        ).toBe(3);
+      });
+
+      it('appends as before without the flag', async () => {
+        const bob = aProfile();
+        const bobPhone = await registerDevice(bob);
+        await uploadKeyPackages(bob, bobPhone, 3);
+        const status = await services.devices.uploadKeyPackages(
+          bob.id,
+          bobPhone.publicKey,
+          { key_packages: fresh(bobPhone, 2) }
+        );
+        expect(status.one_time_available).toBe(5);
+      });
+    });
   });
 
   describe('ciphersuites (0x004F and 0x004E)', () => {
