@@ -1499,6 +1499,31 @@ describeWithSeed('E2EE delivery service', [], () => {
         ).toBe(2);
       });
 
+      it("replaces only the uploaded suites' one-time KeyPackages", async () => {
+        const bob = aProfile();
+        const AES128 = E2EE_CIPHERSUITE;
+        const AES256 = E2EE_CIPHERSUITE_AES256;
+        const bobBoth = await registerV2Device(bob, [AES256, AES128]);
+        await uploadKeyPackages(bob, bobBoth, 2, false, AES128);
+        await uploadKeyPackages(bob, bobBoth, 3, false, AES256);
+        const upload = (suites: number[]) =>
+          services.devices.uploadKeyPackages(bob.id, bobBoth.publicKey, {
+            key_packages: suites.map((suite, index) => ({
+              data: keyPackageBytes(
+                `new-${bobBoth.publicKey}-${suite}-${index}`,
+                suite
+              ),
+              last_resort: false,
+              expires_at: nowSeconds() + 30 * 86400
+            })),
+            replace_one_time: true
+          });
+        // 0x004E's three are replaced by one; 0x004F's two stay.
+        expect((await upload([AES256])).one_time_available).toBe(3);
+        // Both suites uploaded: both pools are replaced.
+        expect((await upload([AES128, AES256])).one_time_available).toBe(2);
+      });
+
       it('keeps the pool as it was when the upload fails', async () => {
         const bob = aProfile();
         const bobPhone = await registerDevice(bob);
