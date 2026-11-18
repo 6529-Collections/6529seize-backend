@@ -65,7 +65,6 @@ import { ApiE2eeDevice } from '@/api/generated/models/ApiE2eeDevice';
 import { ApiE2eeDeviceLookupRequest } from '@/api/generated/models/ApiE2eeDeviceLookupRequest';
 import { ApiE2eeDeviceLookupResponse } from '@/api/generated/models/ApiE2eeDeviceLookupResponse';
 import { ApiE2eeDeviceGroup } from '@/api/generated/models/ApiE2eeDeviceGroup';
-import { ApiE2eeDeviceInboxStatus } from '@/api/generated/models/ApiE2eeDeviceInboxStatus';
 import { ApiE2eeEligibilityRequest } from '@/api/generated/models/ApiE2eeEligibilityRequest';
 import { ApiE2eeEligibilityResponse } from '@/api/generated/models/ApiE2eeEligibilityResponse';
 import { ApiE2eeGroup } from '@/api/generated/models/ApiE2eeGroup';
@@ -101,7 +100,6 @@ import {
   E2eeCreateGroupRequest,
   E2eeGetBlobChunkRequest,
   E2eeGetDeviceGroupsRequest,
-  E2eeGetDeviceInboxStatusRequest,
   E2eeGetDeviceRequest,
   E2eeAcknowledgeDeviceNoticeRequest,
   E2eeRenameDeviceRequest,
@@ -407,13 +405,6 @@ export async function handleE2eeGetDeviceGroups(
 ): Promise<ApiE2eeDeviceGroup[]> {
   const caller = await e2eeCaller(req);
   return services.groups.getDeviceGroups(caller, deviceKeyOf(req));
-}
-
-export async function handleE2eeGetDeviceInboxStatus(
-  req: E2eeGetDeviceInboxStatusRequest
-): Promise<ApiE2eeDeviceInboxStatus> {
-  const caller = await e2eeCaller(req);
-  return services.groups.getDeviceInboxStatus(caller, deviceKeyOf(req));
 }
 
 export async function handleE2eeCreateBlob(
