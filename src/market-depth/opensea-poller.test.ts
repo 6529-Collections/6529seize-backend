@@ -177,8 +177,14 @@ function database(
     appendEvents: jest.fn().mockResolvedValue(undefined),
     enqueueReconciliations: jest.fn().mockResolvedValue(undefined),
     getDueReconciliations: jest.fn().mockResolvedValue([]),
+    getOrderStatusEvidence: jest.fn().mockResolvedValue([]),
     markReconciliationRetry: jest.fn().mockResolvedValue(true),
-    resolveReconciliation: jest.fn().mockResolvedValue(true),
+    resolveReconciliations: jest
+      .fn()
+      .mockImplementation(async ({ items }) => items.length),
+    deferReconciliations: jest
+      .fn()
+      .mockImplementation(async ({ items }) => items.length),
     publishCompletedSnapshot: jest
       .fn()
       .mockImplementation(async (input: PublishMarketDepthSnapshotInput) => ({
