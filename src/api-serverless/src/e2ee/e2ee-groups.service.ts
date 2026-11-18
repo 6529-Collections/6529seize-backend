@@ -12,6 +12,7 @@ import { E2eeWelcomeEventData } from '@/api/e2ee/e2ee-events';
 import { toApiE2eeGroup, toApiE2eeLogItem } from '@/api/e2ee/e2ee.mappers';
 import { ApiE2eeCreateGroupRequest } from '@/api/generated/models/ApiE2eeCreateGroupRequest';
 import { ApiE2eeDeviceGroup } from '@/api/generated/models/ApiE2eeDeviceGroup';
+import { ApiE2eeDeviceInboxStatus } from '@/api/generated/models/ApiE2eeDeviceInboxStatus';
 import { ApiE2eeGroup } from '@/api/generated/models/ApiE2eeGroup';
 import { ApiE2eeLogItem } from '@/api/generated/models/ApiE2eeLogItem';
 import { ApiE2eeLogPage } from '@/api/generated/models/ApiE2eeLogPage';
@@ -318,6 +319,19 @@ export class E2eeGroupsService {
       joined_epoch: Number(row.joined_epoch),
       updated_at: Number(row.updated_at)
     }));
+  }
+
+  async getDeviceInboxStatus(
+    callerProfileId: string,
+    deviceKey: string
+  ): Promise<ApiE2eeDeviceInboxStatus> {
+    await requireOwnActiveDevice(this.deps, callerProfileId, deviceKey);
+    return {
+      has_pending_chats: await this.db.hasPendingInboxChats(
+        callerProfileId,
+        deviceKey
+      )
+    };
   }
 
   // ------------------------------------------------------------- entries

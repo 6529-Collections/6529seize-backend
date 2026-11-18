@@ -1108,6 +1108,44 @@ describeWithSeed('E2EE delivery service', [], () => {
   });
 
   describe('roster windows', () => {
+    it('reports pending chats until the own device joins and acknowledges its Welcome', async () => {
+      const alice = aProfile();
+      const desktop = await registerDevice(alice);
+      const phone = await registerDevice(alice);
+      const bob = aProfile();
+      const bobDevice = await registerDevice(bob);
+      const phoneInbox = () =>
+        services.groups.getDeviceInboxStatus(alice.id, phone.publicKey);
+
+      await expect(phoneInbox()).resolves.toEqual({ has_pending_chats: false });
+      const group = await createGroup(alice, desktop);
+      await expect(phoneInbox()).resolves.toEqual({ has_pending_chats: true });
+      await expect(
+        services.groups.getDeviceInboxStatus(bob.id, bobDevice.publicKey)
+      ).resolves.toEqual({ has_pending_chats: false });
+      await expectE2eeError(
+        services.groups.getDeviceInboxStatus(bob.id, phone.publicKey),
+        'E2EE_NOT_YOUR_DEVICE'
+      );
+
+      await commit(alice, group, desktop, {
+        rosterAdd: [phone.publicKey],
+        welcomeTargets: [phone.publicKey]
+      });
+      await expect(phoneInbox()).resolves.toEqual({ has_pending_chats: true });
+      const [welcome] = await services.groups.getWelcomes(
+        alice.id,
+        phone.publicKey
+      );
+      await services.groups.ackWelcome(alice.id, phone.publicKey, welcome.id);
+      await expect(phoneInbox()).resolves.toEqual({ has_pending_chats: false });
+      const tablet = await registerDevice(alice);
+      await expect(
+        services.groups.getDeviceInboxStatus(alice.id, tablet.publicKey)
+      ).resolves.toEqual({ has_pending_chats: true });
+      await expect(phoneInbox()).resolves.toEqual({ has_pending_chats: false });
+    });
+
     it('hides later items from removed devices and earlier items from new ones', async () => {
       const alice = aProfile();
       const bob = aProfile();
@@ -1182,6 +1220,10 @@ describeWithSeed('E2EE delivery service', [], () => {
           last_seq: 6
         })
       ]);
+      const newBobDevice = await registerDevice(bob);
+      await expect(
+        services.groups.getDeviceInboxStatus(bob.id, newBobDevice.publicKey)
+      ).resolves.toEqual({ has_pending_chats: false });
     });
 
     it('notifies roster profiles before and after, and wakes only hinted members', async () => {
