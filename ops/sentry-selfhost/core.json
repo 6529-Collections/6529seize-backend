@@ -1,0 +1,1427 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "Self-hosted Sentry host for 6529: private VPC, one EC2 instance, encrypted data volume, daily snapshots, DNS egress controls, alarms and SES sending identity.",
+  "Parameters": {
+    "AmiId": {
+      "Type": "AWS::EC2::Image::Id",
+      "Description": "Pinned Canonical Ubuntu 24.04 LTS amd64 AMI. Resolve it once and record it; changing it replaces the instance."
+    },
+    "InstanceType": {
+      "Type": "String",
+      "Default": "r7i.xlarge",
+      "AllowedValues": [
+        "r7i.xlarge",
+        "r6a.xlarge",
+        "r7i.2xlarge",
+        "m7i.2xlarge"
+      ],
+      "Description": "4 vCPU and 32 GiB matches the documented self-hosted recommendation."
+    },
+    "AvailabilityZone": {
+      "Type": "AWS::EC2::AvailabilityZone::Name",
+      "Default": "us-east-1a"
+    },
+    "VpcCidr": {
+      "Type": "String",
+      "Default": "10.70.0.0/24",
+      "AllowedPattern": "^[0-9./]+$"
+    },
+    "CloudFrontOriginFacingPrefixListId": {
+      "Type": "String",
+      "Default": "pl-3b927c52",
+      "AllowedPattern": "^pl-[0-9a-f]+$",
+      "Description": "Managed prefix list com.amazonaws.global.cloudfront.origin-facing in this region (pl-3b927c52 in us-east-1)."
+    },
+    "PublicSubnetCidr": {
+      "Type": "String",
+      "Default": "10.70.0.0/26",
+      "AllowedPattern": "^[0-9./]+$"
+    },
+    "PrivateSubnetCidr": {
+      "Type": "String",
+      "Default": "10.70.0.64/26",
+      "AllowedPattern": "^[0-9./]+$"
+    },
+    "RootVolumeSizeGiB": {
+      "Type": "Number",
+      "Default": 30,
+      "MinValue": 20,
+      "MaxValue": 200
+    },
+    "DataVolumeSizeGiB": {
+      "Type": "Number",
+      "Default": 200,
+      "MinValue": 100,
+      "MaxValue": 4000
+    },
+    "SnapshotRetainCount": {
+      "Type": "Number",
+      "Default": 14,
+      "MinValue": 1,
+      "MaxValue": 60
+    },
+    "AlarmEmail": {
+      "Type": "String",
+      "Default": "",
+      "AllowedPattern": "^$|^[^@\\s]+@[^@\\s]+$",
+      "Description": "Optional email subscription for the alarm topic. The recipient must confirm it."
+    },
+    "MailDomain": {
+      "Type": "String",
+      "Default": "sentry.6529.io",
+      "Description": "SES domain identity used as the From domain. DKIM records go in the parent zone."
+    },
+    "MailFromAddress": {
+      "Type": "String",
+      "Default": "sentry@sentry.6529.io"
+    },
+    "SandboxRecipientEmail": {
+      "Type": "String",
+      "Default": "",
+      "AllowedPattern": "^$|^[^@\\s]+@[^@\\s]+$",
+      "Description": "Optional recipient to verify while SES is in the sandbox. SES emails it a verification link."
+    }
+  },
+  "Conditions": {
+    "HasAlarmEmail": {
+      "Fn::Not": [
+        {
+          "Fn::Equals": [
+            {
+              "Ref": "AlarmEmail"
+            },
+            ""
+          ]
+        }
+      ]
+    },
+    "HasSandboxRecipient": {
+      "Fn::Not": [
+        {
+          "Fn::Equals": [
+            {
+              "Ref": "SandboxRecipientEmail"
+            },
+            ""
+          ]
+        }
+      ]
+    }
+  },
+  "Resources": {
+    "Vpc": {
+      "Type": "AWS::EC2::VPC",
+      "Properties": {
+        "CidrBlock": {
+          "Ref": "VpcCidr"
+        },
+        "EnableDnsSupport": true,
+        "EnableDnsHostnames": true,
+        "Tags": [
+          {
+            "Key": "Name",
+            "Value": "sentry-selfhost"
+          },
+          {
+            "Key": "Project",
+            "Value": "sentry-selfhost"
+          },
+          {
+            "Key": "Owner",
+            "Value": "6529"
+          }
+        ]
+      }
+    },
+    "InternetGateway": {
+      "Type": "AWS::EC2::InternetGateway",
+      "Properties": {
+        "Tags": [
+          {
+            "Key": "Name",
+            "Value": "sentry-selfhost"
+          },
+          {
+            "Key": "Project",
+            "Value": "sentry-selfhost"
+          },
+          {
+            "Key": "Owner",
+            "Value": "6529"
+          }
+        ]
+      }
+    },
+    "InternetGatewayAttachment": {
+      "Type": "AWS::EC2::VPCGatewayAttachment",
+      "Properties": {
+        "VpcId": {
+          "Ref": "Vpc"
+        },
+        "InternetGatewayId": {
+          "Ref": "InternetGateway"
+        }
+      }
+    },
+    "PublicSubnet": {
+      "Type": "AWS::EC2::Subnet",
+      "Properties": {
+        "VpcId": {
+          "Ref": "Vpc"
+        },
+        "AvailabilityZone": {
+          "Ref": "AvailabilityZone"
+        },
+        "CidrBlock": {
+          "Ref": "PublicSubnetCidr"
+        },
+        "MapPublicIpOnLaunch": false,
+        "Tags": [
+          {
+            "Key": "Name",
+            "Value": "sentry-selfhost-public"
+          },
+          {
+            "Key": "Project",
+            "Value": "sentry-selfhost"
+          },
+          {
+            "Key": "Owner",
+            "Value": "6529"
+          }
+        ]
+      }
+    },
+    "PrivateSubnet": {
+      "Type": "AWS::EC2::Subnet",
+      "Properties": {
+        "VpcId": {
+          "Ref": "Vpc"
+        },
+        "AvailabilityZone": {
+          "Ref": "AvailabilityZone"
+        },
+        "CidrBlock": {
+          "Ref": "PrivateSubnetCidr"
+        },
+        "MapPublicIpOnLaunch": false,
+        "Tags": [
+          {
+            "Key": "Name",
+            "Value": "sentry-selfhost-private"
+          },
+          {
+            "Key": "Project",
+            "Value": "sentry-selfhost"
+          },
+          {
+            "Key": "Owner",
+            "Value": "6529"
+          }
+        ]
+      }
+    },
+    "PublicRouteTable": {
+      "Type": "AWS::EC2::RouteTable",
+      "Properties": {
+        "VpcId": {
+          "Ref": "Vpc"
+        },
+        "Tags": [
+          {
+            "Key": "Name",
+            "Value": "sentry-selfhost-public"
+          },
+          {
+            "Key": "Project",
+            "Value": "sentry-selfhost"
+          },
+          {
+            "Key": "Owner",
+            "Value": "6529"
+          }
+        ]
+      }
+    },
+    "PublicDefaultRoute": {
+      "Type": "AWS::EC2::Route",
+      "DependsOn": "InternetGatewayAttachment",
+      "Properties": {
+        "RouteTableId": {
+          "Ref": "PublicRouteTable"
+        },
+        "DestinationCidrBlock": "0.0.0.0/0",
+        "GatewayId": {
+          "Ref": "InternetGateway"
+        }
+      }
+    },
+    "PublicSubnetRouteTableAssociation": {
+      "Type": "AWS::EC2::SubnetRouteTableAssociation",
+      "Properties": {
+        "SubnetId": {
+          "Ref": "PublicSubnet"
+        },
+        "RouteTableId": {
+          "Ref": "PublicRouteTable"
+        }
+      }
+    },
+    "NatEip": {
+      "Type": "AWS::EC2::EIP",
+      "DependsOn": "InternetGatewayAttachment",
+      "Properties": {
+        "Domain": "vpc",
+        "Tags": [
+          {
+            "Key": "Name",
+            "Value": "sentry-selfhost-nat"
+          },
+          {
+            "Key": "Project",
+            "Value": "sentry-selfhost"
+          },
+          {
+            "Key": "Owner",
+            "Value": "6529"
+          }
+        ]
+      }
+    },
+    "NatGateway": {
+      "Type": "AWS::EC2::NatGateway",
+      "Properties": {
+        "SubnetId": {
+          "Ref": "PublicSubnet"
+        },
+        "AllocationId": {
+          "Fn::GetAtt": [
+            "NatEip",
+            "AllocationId"
+          ]
+        },
+        "Tags": [
+          {
+            "Key": "Name",
+            "Value": "sentry-selfhost"
+          },
+          {
+            "Key": "Project",
+            "Value": "sentry-selfhost"
+          },
+          {
+            "Key": "Owner",
+            "Value": "6529"
+          }
+        ]
+      }
+    },
+    "PrivateRouteTable": {
+      "Type": "AWS::EC2::RouteTable",
+      "Properties": {
+        "VpcId": {
+          "Ref": "Vpc"
+        },
+        "Tags": [
+          {
+            "Key": "Name",
+            "Value": "sentry-selfhost-private"
+          },
+          {
+            "Key": "Project",
+            "Value": "sentry-selfhost"
+          },
+          {
+            "Key": "Owner",
+            "Value": "6529"
+          }
+        ]
+      }
+    },
+    "PrivateDefaultRoute": {
+      "Type": "AWS::EC2::Route",
+      "Properties": {
+        "RouteTableId": {
+          "Ref": "PrivateRouteTable"
+        },
+        "DestinationCidrBlock": "0.0.0.0/0",
+        "NatGatewayId": {
+          "Ref": "NatGateway"
+        }
+      }
+    },
+    "PrivateSubnetRouteTableAssociation": {
+      "Type": "AWS::EC2::SubnetRouteTableAssociation",
+      "Properties": {
+        "SubnetId": {
+          "Ref": "PrivateSubnet"
+        },
+        "RouteTableId": {
+          "Ref": "PrivateRouteTable"
+        }
+      }
+    },
+    "S3GatewayEndpoint": {
+      "Type": "AWS::EC2::VPCEndpoint",
+      "Properties": {
+        "VpcId": {
+          "Ref": "Vpc"
+        },
+        "ServiceName": {
+          "Fn::Sub": "com.amazonaws.${AWS::Region}.s3"
+        },
+        "VpcEndpointType": "Gateway",
+        "RouteTableIds": [
+          {
+            "Ref": "PrivateRouteTable"
+          }
+        ]
+      }
+    },
+    "SentryCompanyDomainList": {
+      "Type": "AWS::Route53Resolver::FirewallDomainList",
+      "Properties": {
+        "Name": "sentry-selfhost-sentry-company-domains",
+        "Domains": [
+          "sentry.io",
+          "*.sentry.io",
+          "getsentry.net",
+          "*.getsentry.net",
+          "sentry-cdn.com",
+          "*.sentry-cdn.com",
+          "sentry.dev",
+          "*.sentry.dev"
+        ],
+        "Tags": [
+          {
+            "Key": "Project",
+            "Value": "sentry-selfhost"
+          },
+          {
+            "Key": "Owner",
+            "Value": "6529"
+          }
+        ]
+      }
+    },
+    "DnsFirewallRuleGroup": {
+      "Type": "AWS::Route53Resolver::FirewallRuleGroup",
+      "Properties": {
+        "Name": "sentry-selfhost-no-phone-home",
+        "FirewallRules": [
+          {
+            "FirewallDomainListId": {
+              "Ref": "SentryCompanyDomainList"
+            },
+            "Priority": 100,
+            "Action": "BLOCK",
+            "BlockResponse": "NXDOMAIN"
+          }
+        ],
+        "Tags": [
+          {
+            "Key": "Project",
+            "Value": "sentry-selfhost"
+          },
+          {
+            "Key": "Owner",
+            "Value": "6529"
+          }
+        ]
+      }
+    },
+    "DnsFirewallRuleGroupAssociation": {
+      "Type": "AWS::Route53Resolver::FirewallRuleGroupAssociation",
+      "Properties": {
+        "Name": "sentry-selfhost-no-phone-home",
+        "FirewallRuleGroupId": {
+          "Ref": "DnsFirewallRuleGroup"
+        },
+        "VpcId": {
+          "Ref": "Vpc"
+        },
+        "Priority": 101,
+        "MutationProtection": "DISABLED",
+        "Tags": [
+          {
+            "Key": "Project",
+            "Value": "sentry-selfhost"
+          },
+          {
+            "Key": "Owner",
+            "Value": "6529"
+          }
+        ]
+      }
+    },
+    "DnsQueryLogGroup": {
+      "Type": "AWS::Logs::LogGroup",
+      "DeletionPolicy": "Retain",
+      "UpdateReplacePolicy": "Retain",
+      "Properties": {
+        "LogGroupName": "/sentry-selfhost/dns-queries",
+        "RetentionInDays": 90,
+        "Tags": [
+          {
+            "Key": "Project",
+            "Value": "sentry-selfhost"
+          },
+          {
+            "Key": "Owner",
+            "Value": "6529"
+          }
+        ]
+      }
+    },
+    "DnsQueryLogResourcePolicy": {
+      "Type": "AWS::Logs::ResourcePolicy",
+      "Properties": {
+        "PolicyName": "sentry-selfhost-resolver-query-logs",
+        "PolicyDocument": {
+          "Fn::Sub": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Sid\":\"ResolverQueryLogDelivery\",\"Effect\":\"Allow\",\"Principal\":{\"Service\":\"delivery.logs.amazonaws.com\"},\"Action\":[\"logs:CreateLogStream\",\"logs:PutLogEvents\"],\"Resource\":\"${DnsQueryLogGroup.Arn}\",\"Condition\":{\"StringEquals\":{\"aws:SourceAccount\":\"${AWS::AccountId}\"},\"ArnLike\":{\"aws:SourceArn\":\"arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:*\"}}}]}"
+        }
+      }
+    },
+    "DnsQueryLogConfig": {
+      "Type": "AWS::Route53Resolver::ResolverQueryLoggingConfig",
+      "DependsOn": "DnsQueryLogResourcePolicy",
+      "Properties": {
+        "Name": "sentry-selfhost-dns-queries",
+        "DestinationArn": {
+          "Fn::GetAtt": [
+            "DnsQueryLogGroup",
+            "Arn"
+          ]
+        }
+      }
+    },
+    "DnsQueryLogConfigAssociation": {
+      "Type": "AWS::Route53Resolver::ResolverQueryLoggingConfigAssociation",
+      "Properties": {
+        "ResolverQueryLogConfigId": {
+          "Ref": "DnsQueryLogConfig"
+        },
+        "ResourceId": {
+          "Ref": "Vpc"
+        }
+      }
+    },
+    "BlockedDnsQueryMetricFilter": {
+      "Type": "AWS::Logs::MetricFilter",
+      "Properties": {
+        "LogGroupName": {
+          "Ref": "DnsQueryLogGroup"
+        },
+        "FilterPattern": "{ $.firewall_rule_action = \"BLOCK\" }",
+        "MetricTransformations": [
+          {
+            "MetricNamespace": "SentrySelfhost",
+            "MetricName": "BlockedDnsQueries",
+            "MetricValue": "1",
+            "DefaultValue": 0
+          }
+        ]
+      }
+    },
+    "SsmCommandLogGroup": {
+      "Type": "AWS::Logs::LogGroup",
+      "Properties": {
+        "LogGroupName": "/sentry-selfhost/ssm-commands",
+        "RetentionInDays": 90,
+        "Tags": [
+          {
+            "Key": "Project",
+            "Value": "sentry-selfhost"
+          },
+          {
+            "Key": "Owner",
+            "Value": "6529"
+          }
+        ]
+      }
+    },
+    "AlarmTopicKey": {
+      "Type": "AWS::KMS::Key",
+      "Properties": {
+        "Description": "sentry-selfhost alarm topic encryption",
+        "EnableKeyRotation": true,
+        "KeyPolicy": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Sid": "AccountAdministration",
+              "Effect": "Allow",
+              "Principal": {
+                "AWS": {
+                  "Fn::Sub": "arn:${AWS::Partition}:iam::${AWS::AccountId}:root"
+                }
+              },
+              "Action": "kms:*",
+              "Resource": "*"
+            },
+            {
+              "Sid": "CloudWatchAlarmsPublish",
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "cloudwatch.amazonaws.com"
+              },
+              "Action": [
+                "kms:Decrypt",
+                "kms:GenerateDataKey*"
+              ],
+              "Resource": "*",
+              "Condition": {
+                "StringEquals": {
+                  "aws:SourceAccount": {
+                    "Ref": "AWS::AccountId"
+                  }
+                }
+              }
+            }
+          ]
+        },
+        "Tags": [
+          {
+            "Key": "Project",
+            "Value": "sentry-selfhost"
+          },
+          {
+            "Key": "Owner",
+            "Value": "6529"
+          }
+        ]
+      }
+    },
+    "AlarmTopicKeyAlias": {
+      "Type": "AWS::KMS::Alias",
+      "Properties": {
+        "AliasName": "alias/sentry-selfhost-alarms",
+        "TargetKeyId": {
+          "Ref": "AlarmTopicKey"
+        }
+      }
+    },
+    "AlarmTopic": {
+      "Type": "AWS::SNS::Topic",
+      "Properties": {
+        "TopicName": "sentry-selfhost-alarms",
+        "KmsMasterKeyId": {
+          "Ref": "AlarmTopicKey"
+        },
+        "Tags": [
+          {
+            "Key": "Project",
+            "Value": "sentry-selfhost"
+          },
+          {
+            "Key": "Owner",
+            "Value": "6529"
+          }
+        ]
+      }
+    },
+    "AlarmEmailSubscription": {
+      "Type": "AWS::SNS::Subscription",
+      "Condition": "HasAlarmEmail",
+      "Properties": {
+        "TopicArn": {
+          "Ref": "AlarmTopic"
+        },
+        "Protocol": "email",
+        "Endpoint": {
+          "Ref": "AlarmEmail"
+        }
+      }
+    },
+    "InstanceSecurityGroup": {
+      "Type": "AWS::EC2::SecurityGroup",
+      "Properties": {
+        "GroupDescription": "Sentry host: HTTP from the CloudFront VPC origin inside this VPC only; HTTPS, HTTP and SMTP submission out.",
+        "VpcId": {
+          "Ref": "Vpc"
+        },
+        "SecurityGroupIngress": [
+          {
+            "IpProtocol": "tcp",
+            "FromPort": 9000,
+            "ToPort": 9000,
+            "SourcePrefixListId": {
+              "Ref": "CloudFrontOriginFacingPrefixListId"
+            },
+            "Description": "Sentry nginx from CloudFront (VPC origin traffic arrives from the origin-facing ranges)"
+          }
+        ],
+        "SecurityGroupEgress": [
+          {
+            "IpProtocol": "tcp",
+            "FromPort": 443,
+            "ToPort": 443,
+            "CidrIp": "0.0.0.0/0",
+            "Description": "Container registries, SSM, CloudWatch, OS packages"
+          },
+          {
+            "IpProtocol": "tcp",
+            "FromPort": 80,
+            "ToPort": 80,
+            "CidrIp": "0.0.0.0/0",
+            "Description": "Ubuntu package mirrors"
+          },
+          {
+            "IpProtocol": "tcp",
+            "FromPort": 587,
+            "ToPort": 587,
+            "CidrIp": "0.0.0.0/0",
+            "Description": "SES SMTP submission"
+          }
+        ],
+        "Tags": [
+          {
+            "Key": "Name",
+            "Value": "sentry-selfhost"
+          },
+          {
+            "Key": "Project",
+            "Value": "sentry-selfhost"
+          },
+          {
+            "Key": "Owner",
+            "Value": "6529"
+          }
+        ]
+      }
+    },
+    "InstanceRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "Description": "Sentry host: SSM Session Manager, CloudWatch agent and its own /sentry-selfhost parameters.",
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "ec2.amazonaws.com"
+              },
+              "Action": "sts:AssumeRole"
+            }
+          ]
+        },
+        "ManagedPolicyArns": [
+          {
+            "Fn::Sub": "arn:${AWS::Partition}:iam::aws:policy/AmazonSSMManagedInstanceCore"
+          },
+          {
+            "Fn::Sub": "arn:${AWS::Partition}:iam::aws:policy/CloudWatchAgentServerPolicy"
+          }
+        ],
+        "Policies": [
+          {
+            "PolicyName": "sentry-selfhost-parameters",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Sid": "ReadOwnParameters",
+                  "Effect": "Allow",
+                  "Action": [
+                    "ssm:GetParameter",
+                    "ssm:GetParameters"
+                  ],
+                  "Resource": {
+                    "Fn::Sub": "arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/sentry-selfhost/*"
+                  }
+                },
+                {
+                  "Sid": "WriteAdminPasswordOnly",
+                  "Effect": "Allow",
+                  "Action": [
+                    "ssm:PutParameter",
+                    "ssm:AddTagsToResource"
+                  ],
+                  "Resource": {
+                    "Fn::Sub": "arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/sentry-selfhost/admin/*"
+                  }
+                }
+              ]
+            }
+          }
+        ],
+        "Tags": [
+          {
+            "Key": "Project",
+            "Value": "sentry-selfhost"
+          },
+          {
+            "Key": "Owner",
+            "Value": "6529"
+          }
+        ]
+      }
+    },
+    "InstanceProfile": {
+      "Type": "AWS::IAM::InstanceProfile",
+      "Properties": {
+        "Roles": [
+          {
+            "Ref": "InstanceRole"
+          }
+        ]
+      }
+    },
+    "Instance": {
+      "Type": "AWS::EC2::Instance",
+      "Properties": {
+        "ImageId": {
+          "Ref": "AmiId"
+        },
+        "InstanceType": {
+          "Ref": "InstanceType"
+        },
+        "SubnetId": {
+          "Ref": "PrivateSubnet"
+        },
+        "SecurityGroupIds": [
+          {
+            "Ref": "InstanceSecurityGroup"
+          }
+        ],
+        "IamInstanceProfile": {
+          "Ref": "InstanceProfile"
+        },
+        "DisableApiTermination": true,
+        "EbsOptimized": true,
+        "MetadataOptions": {
+          "HttpEndpoint": "enabled",
+          "HttpTokens": "required",
+          "HttpPutResponseHopLimit": 1,
+          "InstanceMetadataTags": "disabled"
+        },
+        "BlockDeviceMappings": [
+          {
+            "DeviceName": "/dev/sda1",
+            "Ebs": {
+              "VolumeSize": {
+                "Ref": "RootVolumeSizeGiB"
+              },
+              "VolumeType": "gp3",
+              "Encrypted": true,
+              "DeleteOnTermination": true
+            }
+          }
+        ],
+        "PropagateTagsToVolumeOnCreation": true,
+        "Tags": [
+          {
+            "Key": "Name",
+            "Value": "sentry-selfhost"
+          },
+          {
+            "Key": "Project",
+            "Value": "sentry-selfhost"
+          },
+          {
+            "Key": "Owner",
+            "Value": "6529"
+          },
+          {
+            "Key": "sentry-selfhost-backup",
+            "Value": "daily"
+          }
+        ]
+      }
+    },
+    "DataVolume": {
+      "Type": "AWS::EC2::Volume",
+      "DeletionPolicy": "Snapshot",
+      "UpdateReplacePolicy": "Snapshot",
+      "Properties": {
+        "AvailabilityZone": {
+          "Fn::GetAtt": [
+            "Instance",
+            "AvailabilityZone"
+          ]
+        },
+        "Size": {
+          "Ref": "DataVolumeSizeGiB"
+        },
+        "VolumeType": "gp3",
+        "Iops": 3000,
+        "Throughput": 125,
+        "Encrypted": true,
+        "Tags": [
+          {
+            "Key": "Name",
+            "Value": "sentry-selfhost-data"
+          },
+          {
+            "Key": "Project",
+            "Value": "sentry-selfhost"
+          },
+          {
+            "Key": "Owner",
+            "Value": "6529"
+          }
+        ]
+      }
+    },
+    "DataVolumeAttachment": {
+      "Type": "AWS::EC2::VolumeAttachment",
+      "Properties": {
+        "InstanceId": {
+          "Ref": "Instance"
+        },
+        "VolumeId": {
+          "Ref": "DataVolume"
+        },
+        "Device": "/dev/sdf"
+      }
+    },
+    "SnapshotLifecycleRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "Description": "Data Lifecycle Manager role for sentry-selfhost snapshots.",
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "dlm.amazonaws.com"
+              },
+              "Action": "sts:AssumeRole"
+            }
+          ]
+        },
+        "ManagedPolicyArns": [
+          {
+            "Fn::Sub": "arn:${AWS::Partition}:iam::aws:policy/service-role/AWSDataLifecycleManagerServiceRole"
+          }
+        ],
+        "Tags": [
+          {
+            "Key": "Project",
+            "Value": "sentry-selfhost"
+          },
+          {
+            "Key": "Owner",
+            "Value": "6529"
+          }
+        ]
+      }
+    },
+    "SnapshotLifecyclePolicy": {
+      "Type": "AWS::DLM::LifecyclePolicy",
+      "Properties": {
+        "Description": "sentry-selfhost daily snapshots",
+        "State": "ENABLED",
+        "ExecutionRoleArn": {
+          "Fn::GetAtt": [
+            "SnapshotLifecycleRole",
+            "Arn"
+          ]
+        },
+        "PolicyDetails": {
+          "PolicyType": "EBS_SNAPSHOT_MANAGEMENT",
+          "ResourceTypes": [
+            "INSTANCE"
+          ],
+          "TargetTags": [
+            {
+              "Key": "sentry-selfhost-backup",
+              "Value": "daily"
+            }
+          ],
+          "Parameters": {
+            "ExcludeBootVolume": false
+          },
+          "Schedules": [
+            {
+              "Name": "daily",
+              "CopyTags": true,
+              "TagsToAdd": [
+                {
+                  "Key": "Project",
+                  "Value": "sentry-selfhost"
+                },
+                {
+                  "Key": "Owner",
+                  "Value": "6529"
+                }
+              ],
+              "CreateRule": {
+                "Interval": 24,
+                "IntervalUnit": "HOURS",
+                "Times": [
+                  "05:00"
+                ]
+              },
+              "RetainRule": {
+                "Count": {
+                  "Ref": "SnapshotRetainCount"
+                }
+              }
+            }
+          ]
+        },
+        "Tags": [
+          {
+            "Key": "Project",
+            "Value": "sentry-selfhost"
+          },
+          {
+            "Key": "Owner",
+            "Value": "6529"
+          }
+        ]
+      }
+    },
+    "SystemStatusCheckAlarm": {
+      "Type": "AWS::CloudWatch::Alarm",
+      "Properties": {
+        "AlarmDescription": "sentry-selfhost: EC2 system status check failed; recovering the instance.",
+        "Namespace": "AWS/EC2",
+        "MetricName": "StatusCheckFailed_System",
+        "Dimensions": [
+          {
+            "Name": "InstanceId",
+            "Value": {
+              "Ref": "Instance"
+            }
+          }
+        ],
+        "Statistic": "Maximum",
+        "Period": 60,
+        "EvaluationPeriods": 2,
+        "DatapointsToAlarm": 2,
+        "Threshold": 1,
+        "ComparisonOperator": "GreaterThanOrEqualToThreshold",
+        "TreatMissingData": "missing",
+        "AlarmActions": [
+          {
+            "Fn::Sub": "arn:${AWS::Partition}:automate:${AWS::Region}:ec2:recover"
+          },
+          {
+            "Ref": "AlarmTopic"
+          }
+        ],
+        "OKActions": [
+          {
+            "Ref": "AlarmTopic"
+          }
+        ]
+      }
+    },
+    "InstanceStatusCheckAlarm": {
+      "Type": "AWS::CloudWatch::Alarm",
+      "Properties": {
+        "AlarmDescription": "sentry-selfhost: EC2 instance status check failed.",
+        "Namespace": "AWS/EC2",
+        "MetricName": "StatusCheckFailed_Instance",
+        "Dimensions": [
+          {
+            "Name": "InstanceId",
+            "Value": {
+              "Ref": "Instance"
+            }
+          }
+        ],
+        "Statistic": "Maximum",
+        "Period": 60,
+        "EvaluationPeriods": 3,
+        "DatapointsToAlarm": 3,
+        "Threshold": 1,
+        "ComparisonOperator": "GreaterThanOrEqualToThreshold",
+        "TreatMissingData": "missing",
+        "AlarmActions": [
+          {
+            "Ref": "AlarmTopic"
+          }
+        ],
+        "OKActions": [
+          {
+            "Ref": "AlarmTopic"
+          }
+        ]
+      }
+    },
+    "AttachedEbsStatusCheckAlarm": {
+      "Type": "AWS::CloudWatch::Alarm",
+      "Properties": {
+        "AlarmDescription": "sentry-selfhost: attached EBS status check failed.",
+        "Namespace": "AWS/EC2",
+        "MetricName": "StatusCheckFailed_AttachedEBS",
+        "Dimensions": [
+          {
+            "Name": "InstanceId",
+            "Value": {
+              "Ref": "Instance"
+            }
+          }
+        ],
+        "Statistic": "Maximum",
+        "Period": 60,
+        "EvaluationPeriods": 3,
+        "DatapointsToAlarm": 3,
+        "Threshold": 1,
+        "ComparisonOperator": "GreaterThanOrEqualToThreshold",
+        "TreatMissingData": "missing",
+        "AlarmActions": [
+          {
+            "Ref": "AlarmTopic"
+          }
+        ],
+        "OKActions": [
+          {
+            "Ref": "AlarmTopic"
+          }
+        ]
+      }
+    },
+    "MemoryAlarm": {
+      "Type": "AWS::CloudWatch::Alarm",
+      "Properties": {
+        "AlarmDescription": "sentry-selfhost: memory above 90% for 15 minutes (CloudWatch agent).",
+        "Namespace": "CWAgent",
+        "MetricName": "mem_used_percent",
+        "Dimensions": [
+          {
+            "Name": "InstanceId",
+            "Value": {
+              "Ref": "Instance"
+            }
+          }
+        ],
+        "Statistic": "Average",
+        "Period": 300,
+        "EvaluationPeriods": 3,
+        "DatapointsToAlarm": 3,
+        "Threshold": 90,
+        "ComparisonOperator": "GreaterThanThreshold",
+        "TreatMissingData": "missing",
+        "AlarmActions": [
+          {
+            "Ref": "AlarmTopic"
+          }
+        ],
+        "OKActions": [
+          {
+            "Ref": "AlarmTopic"
+          }
+        ]
+      }
+    },
+    "RootDiskAlarm": {
+      "Type": "AWS::CloudWatch::Alarm",
+      "Properties": {
+        "AlarmDescription": "sentry-selfhost: root filesystem above 85% (CloudWatch agent).",
+        "Namespace": "CWAgent",
+        "MetricName": "disk_used_percent",
+        "Dimensions": [
+          {
+            "Name": "InstanceId",
+            "Value": {
+              "Ref": "Instance"
+            }
+          },
+          {
+            "Name": "path",
+            "Value": "/"
+          },
+          {
+            "Name": "fstype",
+            "Value": "ext4"
+          }
+        ],
+        "Statistic": "Maximum",
+        "Period": 300,
+        "EvaluationPeriods": 2,
+        "DatapointsToAlarm": 2,
+        "Threshold": 85,
+        "ComparisonOperator": "GreaterThanThreshold",
+        "TreatMissingData": "missing",
+        "AlarmActions": [
+          {
+            "Ref": "AlarmTopic"
+          }
+        ],
+        "OKActions": [
+          {
+            "Ref": "AlarmTopic"
+          }
+        ]
+      }
+    },
+    "DataDiskAlarm": {
+      "Type": "AWS::CloudWatch::Alarm",
+      "Properties": {
+        "AlarmDescription": "sentry-selfhost: data filesystem /srv above 80% (CloudWatch agent).",
+        "Namespace": "CWAgent",
+        "MetricName": "disk_used_percent",
+        "Dimensions": [
+          {
+            "Name": "InstanceId",
+            "Value": {
+              "Ref": "Instance"
+            }
+          },
+          {
+            "Name": "path",
+            "Value": "/srv"
+          },
+          {
+            "Name": "fstype",
+            "Value": "ext4"
+          }
+        ],
+        "Statistic": "Maximum",
+        "Period": 300,
+        "EvaluationPeriods": 2,
+        "DatapointsToAlarm": 2,
+        "Threshold": 80,
+        "ComparisonOperator": "GreaterThanThreshold",
+        "TreatMissingData": "missing",
+        "AlarmActions": [
+          {
+            "Ref": "AlarmTopic"
+          }
+        ],
+        "OKActions": [
+          {
+            "Ref": "AlarmTopic"
+          }
+        ]
+      }
+    },
+    "BlockedDnsQueryAlarm": {
+      "Type": "AWS::CloudWatch::Alarm",
+      "Properties": {
+        "AlarmDescription": "sentry-selfhost: the host tried to resolve a Sentry-company domain (blocked by DNS Firewall).",
+        "Namespace": "SentrySelfhost",
+        "MetricName": "BlockedDnsQueries",
+        "Statistic": "Sum",
+        "Period": 300,
+        "EvaluationPeriods": 1,
+        "DatapointsToAlarm": 1,
+        "Threshold": 1,
+        "ComparisonOperator": "GreaterThanOrEqualToThreshold",
+        "TreatMissingData": "notBreaching",
+        "AlarmActions": [
+          {
+            "Ref": "AlarmTopic"
+          }
+        ],
+        "OKActions": [
+          {
+            "Ref": "AlarmTopic"
+          }
+        ]
+      }
+    },
+    "MailDomainIdentity": {
+      "Type": "AWS::SES::EmailIdentity",
+      "Properties": {
+        "EmailIdentity": {
+          "Ref": "MailDomain"
+        },
+        "DkimAttributes": {
+          "SigningEnabled": true
+        },
+        "DkimSigningAttributes": {
+          "NextSigningKeyLength": "RSA_2048_BIT"
+        },
+        "FeedbackAttributes": {
+          "EmailForwardingEnabled": true
+        }
+      }
+    },
+    "SandboxRecipientIdentity": {
+      "Type": "AWS::SES::EmailIdentity",
+      "Condition": "HasSandboxRecipient",
+      "Properties": {
+        "EmailIdentity": {
+          "Ref": "SandboxRecipientEmail"
+        }
+      }
+    },
+    "SmtpUser": {
+      "Type": "AWS::IAM::User",
+      "Properties": {
+        "Policies": [
+          {
+            "PolicyName": "ses-smtp-send-as-sentry",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": "ses:SendRawEmail",
+                  "Resource": {
+                    "Fn::Sub": "arn:${AWS::Partition}:ses:${AWS::Region}:${AWS::AccountId}:identity/${MailDomain}"
+                  },
+                  "Condition": {
+                    "StringEquals": {
+                      "ses:FromAddress": {
+                        "Ref": "MailFromAddress"
+                      }
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        ],
+        "Tags": [
+          {
+            "Key": "Project",
+            "Value": "sentry-selfhost"
+          },
+          {
+            "Key": "Owner",
+            "Value": "6529"
+          }
+        ]
+      }
+    }
+  },
+  "Outputs": {
+    "VpcId": {
+      "Value": {
+        "Ref": "Vpc"
+      }
+    },
+    "PrivateSubnetId": {
+      "Value": {
+        "Ref": "PrivateSubnet"
+      }
+    },
+    "InstanceId": {
+      "Value": {
+        "Ref": "Instance"
+      },
+      "Export": {
+        "Name": {
+          "Fn::Sub": "${AWS::StackName}-InstanceId"
+        }
+      }
+    },
+    "InstanceArn": {
+      "Value": {
+        "Fn::Sub": "arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:instance/${Instance}"
+      },
+      "Export": {
+        "Name": {
+          "Fn::Sub": "${AWS::StackName}-InstanceArn"
+        }
+      }
+    },
+    "InstancePrivateDnsName": {
+      "Value": {
+        "Fn::GetAtt": [
+          "Instance",
+          "PrivateDnsName"
+        ]
+      },
+      "Export": {
+        "Name": {
+          "Fn::Sub": "${AWS::StackName}-InstancePrivateDnsName"
+        }
+      }
+    },
+    "DataVolumeId": {
+      "Value": {
+        "Ref": "DataVolume"
+      }
+    },
+    "AlarmTopicArn": {
+      "Value": {
+        "Ref": "AlarmTopic"
+      },
+      "Export": {
+        "Name": {
+          "Fn::Sub": "${AWS::StackName}-AlarmTopicArn"
+        }
+      }
+    },
+    "NatPublicIp": {
+      "Value": {
+        "Ref": "NatEip"
+      }
+    },
+    "DnsQueryLogGroupName": {
+      "Value": {
+        "Ref": "DnsQueryLogGroup"
+      }
+    },
+    "SmtpUserName": {
+      "Value": {
+        "Ref": "SmtpUser"
+      }
+    },
+    "DkimRecord1": {
+      "Description": "CNAME to add in the parent zone",
+      "Value": {
+        "Fn::Join": [
+          " CNAME ",
+          [
+            {
+              "Fn::GetAtt": [
+                "MailDomainIdentity",
+                "DkimDNSTokenName1"
+              ]
+            },
+            {
+              "Fn::GetAtt": [
+                "MailDomainIdentity",
+                "DkimDNSTokenValue1"
+              ]
+            }
+          ]
+        ]
+      }
+    },
+    "DkimRecord2": {
+      "Description": "CNAME to add in the parent zone",
+      "Value": {
+        "Fn::Join": [
+          " CNAME ",
+          [
+            {
+              "Fn::GetAtt": [
+                "MailDomainIdentity",
+                "DkimDNSTokenName2"
+              ]
+            },
+            {
+              "Fn::GetAtt": [
+                "MailDomainIdentity",
+                "DkimDNSTokenValue2"
+              ]
+            }
+          ]
+        ]
+      }
+    },
+    "DkimRecord3": {
+      "Description": "CNAME to add in the parent zone",
+      "Value": {
+        "Fn::Join": [
+          " CNAME ",
+          [
+            {
+              "Fn::GetAtt": [
+                "MailDomainIdentity",
+                "DkimDNSTokenName3"
+              ]
+            },
+            {
+              "Fn::GetAtt": [
+                "MailDomainIdentity",
+                "DkimDNSTokenValue3"
+              ]
+            }
+          ]
+        ]
+      }
+    }
+  }
+}

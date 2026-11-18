@@ -1,0 +1,555 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "Public edge for self-hosted Sentry: ACM certificate, WAF, CloudFront with a VPC origin to the private host, and an end-to-end health check.",
+  "Parameters": {
+    "CoreStackName": {
+      "Type": "String",
+      "Default": "sentry-selfhost-core"
+    },
+    "DomainName": {
+      "Type": "String",
+      "Default": "sentry.6529.io"
+    },
+    "OriginHttpPort": {
+      "Type": "Number",
+      "Default": 9000
+    },
+    "LoginRateLimit": {
+      "Type": "Number",
+      "Default": 100,
+      "MinValue": 10,
+      "Description": "Requests per IP per 5 minutes to /auth/ and /api/0/auth/."
+    },
+    "IngestRateLimit": {
+      "Type": "Number",
+      "Default": 30000,
+      "MinValue": 1000,
+      "Description": "Requests per IP per 5 minutes to event ingestion. Generous: the 6529.io tunnel aggregates many browsers behind few IPs."
+    },
+    "WebRateLimit": {
+      "Type": "Number",
+      "Default": 3000,
+      "MinValue": 100,
+      "Description": "Requests per IP per 5 minutes to everything else (UI, API, source map uploads)."
+    }
+  },
+  "Resources": {
+    "Certificate": {
+      "Type": "AWS::CertificateManager::Certificate",
+      "Properties": {
+        "DomainName": {
+          "Ref": "DomainName"
+        },
+        "ValidationMethod": "DNS",
+        "Tags": [
+          {
+            "Key": "Project",
+            "Value": "sentry-selfhost"
+          },
+          {
+            "Key": "Owner",
+            "Value": "6529"
+          }
+        ]
+      }
+    },
+    "VpcOrigin": {
+      "Type": "AWS::CloudFront::VpcOrigin",
+      "Properties": {
+        "VpcOriginEndpointConfig": {
+          "Name": "sentry-selfhost",
+          "Arn": {
+            "Fn::ImportValue": {
+              "Fn::Sub": "${CoreStackName}-InstanceArn"
+            }
+          },
+          "HTTPPort": {
+            "Ref": "OriginHttpPort"
+          },
+          "HTTPSPort": 443,
+          "OriginProtocolPolicy": "http-only"
+        },
+        "Tags": [
+          {
+            "Key": "Project",
+            "Value": "sentry-selfhost"
+          },
+          {
+            "Key": "Owner",
+            "Value": "6529"
+          }
+        ]
+      }
+    },
+    "OriginRequestPolicy": {
+      "Type": "AWS::CloudFront::OriginRequestPolicy",
+      "Properties": {
+        "OriginRequestPolicyConfig": {
+          "Name": "sentry-selfhost-all-viewer-and-proto",
+          "Comment": "Forward everything Sentry needs, plus the viewer protocol for Django's secure-proxy check.",
+          "HeadersConfig": {
+            "HeaderBehavior": "allViewerAndWhitelistCloudFront",
+            "Headers": [
+              "CloudFront-Forwarded-Proto"
+            ]
+          },
+          "CookiesConfig": {
+            "CookieBehavior": "all"
+          },
+          "QueryStringsConfig": {
+            "QueryStringBehavior": "all"
+          }
+        }
+      }
+    },
+    "WebAcl": {
+      "Type": "AWS::WAFv2::WebACL",
+      "Properties": {
+        "Name": "sentry-selfhost",
+        "Scope": "CLOUDFRONT",
+        "DefaultAction": {
+          "Allow": {}
+        },
+        "VisibilityConfig": {
+          "SampledRequestsEnabled": true,
+          "CloudWatchMetricsEnabled": true,
+          "MetricName": "sentry-selfhost"
+        },
+        "Rules": [
+          {
+            "Name": "aws-ip-reputation",
+            "Priority": 0,
+            "OverrideAction": {
+              "None": {}
+            },
+            "Statement": {
+              "ManagedRuleGroupStatement": {
+                "VendorName": "AWS",
+                "Name": "AWSManagedRulesAmazonIpReputationList"
+              }
+            },
+            "VisibilityConfig": {
+              "SampledRequestsEnabled": true,
+              "CloudWatchMetricsEnabled": true,
+              "MetricName": "sentry-selfhost-aws-ip-reputation"
+            }
+          },
+          {
+            "Name": "login-rate-limit",
+            "Priority": 1,
+            "Action": {
+              "Block": {}
+            },
+            "Statement": {
+              "RateBasedStatement": {
+                "Limit": {
+                  "Ref": "LoginRateLimit"
+                },
+                "AggregateKeyType": "IP",
+                "EvaluationWindowSec": 300,
+                "ScopeDownStatement": {
+                  "OrStatement": {
+                    "Statements": [
+                      {
+                        "ByteMatchStatement": {
+                          "SearchString": "/auth/",
+                          "FieldToMatch": {
+                            "UriPath": {}
+                          },
+                          "PositionalConstraint": "STARTS_WITH",
+                          "TextTransformations": [
+                            {
+                              "Priority": 0,
+                              "Type": "LOWERCASE"
+                            }
+                          ]
+                        }
+                      },
+                      {
+                        "ByteMatchStatement": {
+                          "SearchString": "/api/0/auth/",
+                          "FieldToMatch": {
+                            "UriPath": {}
+                          },
+                          "PositionalConstraint": "STARTS_WITH",
+                          "TextTransformations": [
+                            {
+                              "Priority": 0,
+                              "Type": "LOWERCASE"
+                            }
+                          ]
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            },
+            "VisibilityConfig": {
+              "SampledRequestsEnabled": true,
+              "CloudWatchMetricsEnabled": true,
+              "MetricName": "sentry-selfhost-login-rate-limit"
+            }
+          },
+          {
+            "Name": "ingest-rate-limit",
+            "Priority": 2,
+            "Action": {
+              "Block": {}
+            },
+            "Statement": {
+              "RateBasedStatement": {
+                "Limit": {
+                  "Ref": "IngestRateLimit"
+                },
+                "AggregateKeyType": "IP",
+                "EvaluationWindowSec": 300,
+                "ScopeDownStatement": {
+                  "RegexMatchStatement": {
+                    "RegexString": "^/api/[0-9]+/(envelope|store|security|minidump|unreal|nel|otlp)/",
+                    "FieldToMatch": {
+                      "UriPath": {}
+                    },
+                    "TextTransformations": [
+                      {
+                        "Priority": 0,
+                        "Type": "NONE"
+                      }
+                    ]
+                  }
+                }
+              }
+            },
+            "VisibilityConfig": {
+              "SampledRequestsEnabled": true,
+              "CloudWatchMetricsEnabled": true,
+              "MetricName": "sentry-selfhost-ingest-rate-limit"
+            }
+          },
+          {
+            "Name": "web-rate-limit",
+            "Priority": 3,
+            "Action": {
+              "Block": {}
+            },
+            "Statement": {
+              "RateBasedStatement": {
+                "Limit": {
+                  "Ref": "WebRateLimit"
+                },
+                "AggregateKeyType": "IP",
+                "EvaluationWindowSec": 300,
+                "ScopeDownStatement": {
+                  "NotStatement": {
+                    "Statement": {
+                      "RegexMatchStatement": {
+                        "RegexString": "^/api/[0-9]+/(envelope|store|security|minidump|unreal|nel|otlp)/",
+                        "FieldToMatch": {
+                          "UriPath": {}
+                        },
+                        "TextTransformations": [
+                          {
+                            "Priority": 0,
+                            "Type": "NONE"
+                          }
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "VisibilityConfig": {
+              "SampledRequestsEnabled": true,
+              "CloudWatchMetricsEnabled": true,
+              "MetricName": "sentry-selfhost-web-rate-limit"
+            }
+          },
+          {
+            "Name": "aws-known-bad-inputs",
+            "Priority": 4,
+            "OverrideAction": {
+              "None": {}
+            },
+            "Statement": {
+              "ManagedRuleGroupStatement": {
+                "VendorName": "AWS",
+                "Name": "AWSManagedRulesKnownBadInputsRuleSet",
+                "ScopeDownStatement": {
+                  "NotStatement": {
+                    "Statement": {
+                      "RegexMatchStatement": {
+                        "RegexString": "^/api/[0-9]+/(envelope|store|security|minidump|unreal|nel|otlp)/",
+                        "FieldToMatch": {
+                          "UriPath": {}
+                        },
+                        "TextTransformations": [
+                          {
+                            "Priority": 0,
+                            "Type": "NONE"
+                          }
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "VisibilityConfig": {
+              "SampledRequestsEnabled": true,
+              "CloudWatchMetricsEnabled": true,
+              "MetricName": "sentry-selfhost-aws-known-bad-inputs"
+            }
+          }
+        ],
+        "Tags": [
+          {
+            "Key": "Project",
+            "Value": "sentry-selfhost"
+          },
+          {
+            "Key": "Owner",
+            "Value": "6529"
+          }
+        ]
+      }
+    },
+    "Distribution": {
+      "Type": "AWS::CloudFront::Distribution",
+      "Properties": {
+        "DistributionConfig": {
+          "Enabled": true,
+          "Comment": "sentry-selfhost",
+          "Aliases": [
+            {
+              "Ref": "DomainName"
+            }
+          ],
+          "HttpVersion": "http2and3",
+          "IPV6Enabled": true,
+          "PriceClass": "PriceClass_100",
+          "WebACLId": {
+            "Fn::GetAtt": [
+              "WebAcl",
+              "Arn"
+            ]
+          },
+          "ViewerCertificate": {
+            "AcmCertificateArn": {
+              "Ref": "Certificate"
+            },
+            "SslSupportMethod": "sni-only",
+            "MinimumProtocolVersion": "TLSv1.2_2021"
+          },
+          "Origins": [
+            {
+              "Id": "sentry-host",
+              "DomainName": {
+                "Fn::ImportValue": {
+                  "Fn::Sub": "${CoreStackName}-InstancePrivateDnsName"
+                }
+              },
+              "VpcOriginConfig": {
+                "VpcOriginId": {
+                  "Ref": "VpcOrigin"
+                },
+                "OriginReadTimeout": 60,
+                "OriginKeepaliveTimeout": 5
+              }
+            }
+          ],
+          "DefaultCacheBehavior": {
+            "TargetOriginId": "sentry-host",
+            "ViewerProtocolPolicy": "redirect-to-https",
+            "AllowedMethods": [
+              "GET",
+              "HEAD",
+              "OPTIONS",
+              "PUT",
+              "POST",
+              "PATCH",
+              "DELETE"
+            ],
+            "CachedMethods": [
+              "GET",
+              "HEAD"
+            ],
+            "CachePolicyId": "4135ea2d-6df8-44a3-9df3-4b5a84be39ad",
+            "OriginRequestPolicyId": {
+              "Ref": "OriginRequestPolicy"
+            },
+            "Compress": false
+          },
+          "CacheBehaviors": [
+            {
+              "PathPattern": "/_static/*",
+              "TargetOriginId": "sentry-host",
+              "ViewerProtocolPolicy": "redirect-to-https",
+              "AllowedMethods": [
+                "GET",
+                "HEAD"
+              ],
+              "CachedMethods": [
+                "GET",
+                "HEAD"
+              ],
+              "CachePolicyId": "658327ea-f89d-4fab-a63d-7e88639e58f6",
+              "Compress": true
+            }
+          ]
+        },
+        "Tags": [
+          {
+            "Key": "Project",
+            "Value": "sentry-selfhost"
+          },
+          {
+            "Key": "Owner",
+            "Value": "6529"
+          }
+        ]
+      }
+    },
+    "HealthCheck": {
+      "Type": "AWS::Route53::HealthCheck",
+      "Properties": {
+        "HealthCheckConfig": {
+          "Type": "HTTPS",
+          "FullyQualifiedDomainName": {
+            "Ref": "DomainName"
+          },
+          "Port": 443,
+          "ResourcePath": "/_health/",
+          "RequestInterval": 30,
+          "FailureThreshold": 3,
+          "EnableSNI": true
+        },
+        "HealthCheckTags": [
+          {
+            "Key": "Name",
+            "Value": "sentry-selfhost"
+          },
+          {
+            "Key": "Project",
+            "Value": "sentry-selfhost"
+          },
+          {
+            "Key": "Owner",
+            "Value": "6529"
+          }
+        ]
+      }
+    },
+    "HealthCheckAlarm": {
+      "Type": "AWS::CloudWatch::Alarm",
+      "Properties": {
+        "AlarmDescription": "sentry-selfhost: https://<domain>/_health/ is failing from Route 53 health checkers.",
+        "Namespace": "AWS/Route53",
+        "MetricName": "HealthCheckStatus",
+        "Dimensions": [
+          {
+            "Name": "HealthCheckId",
+            "Value": {
+              "Ref": "HealthCheck"
+            }
+          }
+        ],
+        "Statistic": "Minimum",
+        "Period": 60,
+        "EvaluationPeriods": 3,
+        "DatapointsToAlarm": 3,
+        "Threshold": 1,
+        "ComparisonOperator": "LessThanThreshold",
+        "TreatMissingData": "breaching",
+        "AlarmActions": [
+          {
+            "Fn::ImportValue": {
+              "Fn::Sub": "${CoreStackName}-AlarmTopicArn"
+            }
+          }
+        ],
+        "OKActions": [
+          {
+            "Fn::ImportValue": {
+              "Fn::Sub": "${CoreStackName}-AlarmTopicArn"
+            }
+          }
+        ]
+      }
+    },
+    "Edge5xxAlarm": {
+      "Type": "AWS::CloudWatch::Alarm",
+      "Properties": {
+        "AlarmDescription": "sentry-selfhost: CloudFront 5xx error rate above 10% for 15 minutes.",
+        "Namespace": "AWS/CloudFront",
+        "MetricName": "5xxErrorRate",
+        "Dimensions": [
+          {
+            "Name": "DistributionId",
+            "Value": {
+              "Ref": "Distribution"
+            }
+          },
+          {
+            "Name": "Region",
+            "Value": "Global"
+          }
+        ],
+        "Statistic": "Average",
+        "Period": 300,
+        "EvaluationPeriods": 3,
+        "DatapointsToAlarm": 3,
+        "Threshold": 10,
+        "ComparisonOperator": "GreaterThanThreshold",
+        "TreatMissingData": "notBreaching",
+        "AlarmActions": [
+          {
+            "Fn::ImportValue": {
+              "Fn::Sub": "${CoreStackName}-AlarmTopicArn"
+            }
+          }
+        ],
+        "OKActions": [
+          {
+            "Fn::ImportValue": {
+              "Fn::Sub": "${CoreStackName}-AlarmTopicArn"
+            }
+          }
+        ]
+      }
+    }
+  },
+  "Outputs": {
+    "DistributionId": {
+      "Value": {
+        "Ref": "Distribution"
+      }
+    },
+    "DistributionDomainName": {
+      "Value": {
+        "Fn::GetAtt": [
+          "Distribution",
+          "DomainName"
+        ]
+      }
+    },
+    "CertificateArn": {
+      "Value": {
+        "Ref": "Certificate"
+      }
+    },
+    "WebAclArn": {
+      "Value": {
+        "Fn::GetAtt": [
+          "WebAcl",
+          "Arn"
+        ]
+      }
+    },
+    "HealthCheckId": {
+      "Value": {
+        "Ref": "HealthCheck"
+      }
+    }
+  }
+}

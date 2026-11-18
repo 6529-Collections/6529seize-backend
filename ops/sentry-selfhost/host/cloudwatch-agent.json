@@ -1,0 +1,25 @@
+{
+  "agent": {
+    "metrics_collection_interval": 60,
+    "run_as_user": "root"
+  },
+  "metrics": {
+    "namespace": "CWAgent",
+    "append_dimensions": {
+      "InstanceId": "${aws:InstanceId}"
+    },
+    "metrics_collected": {
+      "mem": {
+        "measurement": ["mem_used_percent"]
+      },
+      "swap": {
+        "measurement": ["swap_used_percent"]
+      },
+      "disk": {
+        "measurement": ["used_percent"],
+        "resources": ["/", "/srv"],
+        "drop_device": true
+      }
+    }
+  }
+}
