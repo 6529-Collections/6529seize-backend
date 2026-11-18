@@ -204,6 +204,42 @@ describeWithSeed('active TDH voting discovery', withWaves(waves), () => {
     }
   });
 
+  it('sorts empty leaderboards after active entries across pages, with Main Stage first', async () => {
+    await sqlExecutor.execute(
+      `insert into ${WAVE_METRICS_TABLE} (wave_id, wave_rep_total, wave_rep_sort_score)
+       values ('closing', 1000, 1), ('b-combined', 100, 1),
+         ('recurring', 20, 1), ('c-card', 500, 1), ('a-open', -20, 1)`
+    );
+    await seedDrop('stored-entry', 'b-combined', DropType.PARTICIPATORY);
+    await seedDrop(
+      'native-entry',
+      'recurring',
+      DropType.COMPETITION,
+      CompetitionEntryStatus.ACTIVE
+    );
+    await seedDrop(
+      'winner',
+      'closing',
+      DropType.PARTICIPATORY,
+      CompetitionEntryStatus.WINNER
+    );
+
+    const pages = await Promise.all(
+      [0, 2, 4].map((offset) =>
+        repo.findActiveTdhVotingWaves(
+          { ...publicRead, mainStageWaveId: 'a-open', limit: 2, offset },
+          {}
+        )
+      )
+    );
+    expect(pages.map((page) => page.count)).toEqual([5, 5, 5]);
+    expect(pages.map((page) => page.waves.map((wave) => wave.id))).toEqual([
+      ['a-open', 'b-combined'],
+      ['recurring', 'closing'],
+      ['c-card']
+    ]);
+  });
+
   it.each([
     { facade: 'enabled', run: withLegacyCompetitionGetFacade },
     { facade: 'disabled', run: withoutLegacyCompetitionGetFacade }
@@ -265,10 +301,10 @@ describeWithSeed('active TDH voting discovery', withWaves(waves), () => {
         )
       ).toEqual([
         ['a-open', 3],
+        ['recurring', undefined],
         ['b-combined', 0],
         ['c-card', 0],
-        ['closing', 0],
-        ['recurring', undefined]
+        ['closing', 0]
       ]);
     }
   );

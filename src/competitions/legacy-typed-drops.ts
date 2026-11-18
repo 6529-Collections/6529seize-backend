@@ -70,6 +70,18 @@ export function legacyTypedDropsSql(
 }
 
 /**
+ * Checks whether the legacy view has a PARTICIPATORY drop for the wave.
+ * Run outside the GET facade so both branches can use base indexes.
+ */
+export function legacyParticipatoryDropExistsSql(waveId: string): string {
+  const nativeDrops = nativeEntryDropsFrom("'ACTIVE'", `= ${waveId}`);
+  return `(
+    exists (select 1 from ${nativeDrops})
+    or exists (select 1 from ${storedTypedDropsFrom(DropType.PARTICIPATORY, waveId)})
+  )`;
+}
+
+/**
  * Counts the drops the legacy view classifies as PARTICIPATORY.
  * Run outside the GET facade so both branches can use base indexes.
  */
