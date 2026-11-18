@@ -185,6 +185,24 @@ Ordinary orientation, alpha, no-upscale and fit behavior is preserved; oversized
 results are reduced to fit the bounded output. See
 [PNG preview resource policy](png-preview-resource-policy.md).
 
+Other formats are previewed in the sanitizer process after the same decoded-work
+admission (512 MiB estimate, every GIF frame counted, first-frame fallback for
+GIFs beyond it). Each of the two previews has a 120-second native timeout: both
+together, the pixel check's 240-second budget and the S3 transfers stay well
+inside the Lambda's 900-second timeout. GIF previews encode at libimagequant
+effort 1, as `mediaResizerLoop` GIF previews do. Resizing a dithered animation
+whose frames each carry their own palette, as video-to-GIF converters write
+them, blends the dither into thousands of new colours per frame. With no shared
+palette to reuse, the encoder builds a palette for every frame, and Sharp's
+default effort 7 took about 70 seconds for one 450-pixel preview of a 128-frame
+400 x 560 GIF. Under the previous 30-second timeout such uploads failed in
+production with `timeout: 0% complete`; at effort 1 the same preview takes
+9-12 seconds. Originals are never re-encoded for previews. A preview that still
+times out stays an operational failure, so it is retried; once retries run out
+the upload fails with "This image took too long to process. Reduce its
+dimensions or animation frame count and upload again." Each preview logs its
+format, dimensions, frame count and duration, never pixels.
+
 All image sources are streamed to a task-owned directory. Non-PNG sanitization and AVIF conversion also use files instead of retaining full source/output buffers in Node; original re-encoding must fit its full-decode budget. Privacy-disabled originals
 retain their exact bytes; privacy-enabled PNG stripping also runs in isolation.
 A 30-second deadline and sampled combined-RSS guard protect each child; native

@@ -2,7 +2,11 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import Sharp from 'sharp';
-import { prepareUploadImagePreviews } from '@/media/upload-image-previews';
+import {
+  prepareUploadImagePreviews,
+  PREVIEW_TIMEOUT_MESSAGE,
+  UploadPreviewTimeoutError
+} from '@/media/upload-image-previews';
 import * as resizeSafety from '@/mediaResizerLoop/resize-resource-safety';
 
 // Different frame colours, transparency, timing and a finite loop exercise more
@@ -31,22 +35,23 @@ async function animatedGif(frameHeight: number): Promise<Buffer> {
     .toBuffer();
 }
 
-// The previous encoder path is the compatibility contract: reusing a preview
-// must produce exactly the bytes each independent encode would have produced.
+// The independent encoder path is the compatibility contract: reusing a
+// preview must produce exactly the bytes each independent encode would have
+// produced. GIF previews use libimagequant's fastest effort (see
+// upload-image-previews-large-images.test.ts for why).
 function independentPreview(source: string, height: number, animated = true) {
   return Sharp(source, {
     failOn: 'error',
     animated,
     limitInputPixels: 1_000_000_000
   })
-    .timeout({ seconds: 30 })
     .resize(null, height, {
       withoutEnlargement: true,
       fit: 'cover',
       fastShrinkOnLoad: true
     })
     .rotate()
-    .gif()
+    .gif({ effort: 1 })
     .toBuffer();
 }
 
@@ -135,6 +140,35 @@ describe('upload image previews', () => {
         await independentPreview(source, height, false)
       );
     }
+  });
+
+  it('reports a native timeout as a retryable, readable preview failure', async () => {
+    await writeFile(source, await animatedGif(451));
+    const native =
+      'timeout: 0% complete\nVipsImage: killed for image "temp-408"\nwbuffer_write: write failed';
+    jest
+      .spyOn(Sharp.prototype, 'toFile')
+      .mockRejectedValueOnce(new Error(native));
+    const failure = await prepareUploadImagePreviews(source, 'image/gif').then(
+      () => null,
+      (error: unknown) => error
+    );
+    expect(failure).toBeInstanceOf(UploadPreviewTimeoutError);
+    expect(failure).toMatchObject({
+      message: PREVIEW_TIMEOUT_MESSAGE,
+      nativeMessage: native
+    });
+    // Timeouts stay operational: the sanitizer retries them before failing.
+    expect(resizeSafety.isUnprocessableResizeInput(failure)).toBe(false);
+  });
+
+  it('propagates other native failures unchanged', async () => {
+    await writeFile(source, await animatedGif(451));
+    const native = new Error('gifsave: write failed');
+    jest.spyOn(Sharp.prototype, 'toFile').mockRejectedValueOnce(native);
+    await expect(prepareUploadImagePreviews(source, 'image/gif')).rejects.toBe(
+      native
+    );
   });
 
   it('rejects truncated GIF pixels even when the small-image metadata can be read', async () => {
