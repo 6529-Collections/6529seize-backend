@@ -1025,7 +1025,7 @@ export class E2eeDb extends LazyDbAccessCompatibleService {
       `select (
          exists (
            select 1 from ${E2EE_WELCOME_DELIVERIES_TABLE} d
-           where d.device_key = :deviceKey
+           where d.device_key = :deviceKey and d.profile_id = :profileId
          ) or exists (
            select 1 from ${E2EE_GROUP_ROSTER_TABLE} mine
            where mine.profile_id = :profileId and mine.removed_epoch is null
@@ -1039,7 +1039,7 @@ export class E2eeDb extends LazyDbAccessCompatibleService {
        ) as pending`,
       { profileId, deviceKey }
     );
-    return Number(row?.pending) === 1;
+    return Number(row?.pending ?? 0) === 1;
   }
 
   async hasRosterHistory(

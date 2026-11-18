@@ -11316,6 +11316,8 @@ paths:
           description: Forbidden (E2EE_FORBIDDEN, E2EE_NOT_YOUR_DEVICE)
         "404":
           description: Encrypted Messages disabled (E2EE_DISABLED)
+        "429":
+          description: Rate limited
   /e2ee/profiles/{profile_id}/devices:
     get:
       tags:
