@@ -38,6 +38,7 @@ functions:
 resources:
   Resources:
     WaveLeaderboardSnapshotterLoopOOMFilter:
+      DependsOn: WaveLeaderboardSnapshotterLoopLogGroup
       Type: AWS::Logs::MetricFilter
       Properties:
         LogGroupName: /aws/lambda/waveLeaderboardSnapshotterLoop
