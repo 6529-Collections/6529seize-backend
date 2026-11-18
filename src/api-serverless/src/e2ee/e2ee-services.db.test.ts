@@ -1108,6 +1108,39 @@ describeWithSeed('E2EE delivery service', [], () => {
   });
 
   describe('roster windows', () => {
+    it('only clears inbox readiness once the own device joins and receives its Welcome', async () => {
+      const alice = aProfile();
+      const desktop = await registerDevice(alice);
+      const phone = await registerDevice(alice);
+      const bob = aProfile();
+      const bobDevice = await registerDevice(bob);
+      const phoneInbox = () =>
+        services.groups.getDeviceInboxStatus(alice.id, phone.publicKey);
+
+      await expect(phoneInbox()).resolves.toEqual({ has_pending_chats: false });
+      const group = await createGroup(alice, desktop);
+      await expect(phoneInbox()).resolves.toEqual({ has_pending_chats: true });
+      await expect(
+        services.groups.getDeviceInboxStatus(bob.id, bobDevice.publicKey)
+      ).resolves.toEqual({ has_pending_chats: false });
+      await expectE2eeError(
+        services.groups.getDeviceInboxStatus(bob.id, phone.publicKey),
+        'E2EE_NOT_YOUR_DEVICE'
+      );
+
+      await commit(alice, group, desktop, {
+        rosterAdd: [phone.publicKey],
+        welcomeTargets: [phone.publicKey]
+      });
+      await expect(phoneInbox()).resolves.toEqual({ has_pending_chats: true });
+      const [welcome] = await services.groups.getWelcomes(
+        alice.id,
+        phone.publicKey
+      );
+      await services.groups.ackWelcome(alice.id, phone.publicKey, welcome.id);
+      await expect(phoneInbox()).resolves.toEqual({ has_pending_chats: false });
+    });
+
     it('hides later items from removed devices and earlier items from new ones', async () => {
       const alice = aProfile();
       const bob = aProfile();

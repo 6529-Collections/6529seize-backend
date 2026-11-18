@@ -1016,6 +1016,32 @@ export class E2eeDb extends LazyDbAccessCompatibleService {
     );
   }
 
+  /** A delivery, or a current chat the profile's device has yet to join. */
+  async hasPendingInboxChats(
+    profileId: string,
+    deviceKey: string
+  ): Promise<boolean> {
+    const row = await this.one<{ pending: number }>(
+      `select (
+         exists (
+           select 1 from ${E2EE_WELCOME_DELIVERIES_TABLE} d
+           where d.device_key = :deviceKey
+         ) or exists (
+           select 1 from ${E2EE_GROUP_ROSTER_TABLE} mine
+           where mine.profile_id = :profileId and mine.removed_epoch is null
+             and not exists (
+               select 1 from ${E2EE_GROUP_ROSTER_TABLE} joined
+               where joined.device_key = :deviceKey
+                 and joined.removed_epoch is null
+                 and joined.group_handle = mine.group_handle
+             )
+         )
+       ) as pending`,
+      { profileId, deviceKey }
+    );
+    return Number(row?.pending) === 1;
+  }
+
   async hasRosterHistory(
     group: string,
     deviceKey: string,
