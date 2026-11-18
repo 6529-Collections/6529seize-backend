@@ -110,7 +110,10 @@ import {
   legacyGetView,
   waveHubSelectColumns
 } from '@/competitions/legacy-competition-get-facade';
-import { legacyParticipatoryDropCountSql } from '@/competitions/legacy-typed-drops';
+import {
+  legacyParticipatoryDropCountSql,
+  legacyParticipatoryDropExistsSql
+} from '@/competitions/legacy-typed-drops';
 import {
   ViewerGroupsCte,
   viewerGroupsCteBytes,
@@ -1654,8 +1657,8 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
         const count = Number(counts[0]?.count ?? 0);
         // Avoid a deep-offset sort when the requested page is already past the end.
         if (params.offset >= count) return { waves: [], count };
-        // LIMIT materializes the page before counting submissions for its
-        // approval waves. Counts are not needed to sort or page the waves.
+        // Sort on entry existence, then count submissions for the approval
+        // waves on the materialized page.
         // Null-safe equality gives every wave the same priority without a configured Main Stage.
         const waves = await this.db.execute<
           RawWaveEntity & { active_submission_count: number | string | null }
@@ -1665,14 +1668,16 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
              end as active_submission_count
            from (
              select w.*, (w.id <=> :mainStageWaveId) as is_main_stage,
+               ${legacyParticipatoryDropExistsSql('w.id')} as has_active_entries,
                coalesce(wm.wave_rep_total, 0) as total_wave_rep
              ${from}
              left join ${WAVE_METRICS_TABLE} wm on wm.wave_id = w.id
              ${where}
-             order by is_main_stage desc, total_wave_rep desc, w.id asc
+             order by is_main_stage desc, has_active_entries desc, total_wave_rep desc, w.id asc
              limit :limit offset :offset
            ) votes
-           order by votes.is_main_stage desc, votes.total_wave_rep desc, votes.id asc`,
+           order by votes.is_main_stage desc, votes.has_active_entries desc,
+                    votes.total_wave_rep desc, votes.id asc`,
           params,
           options
         );
