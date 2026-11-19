@@ -163,6 +163,7 @@ import { ApiE2eeCreateBlobRequest } from '@/api/generated/models/ApiE2eeCreateBl
 import { ApiE2eeCreateGroupRequest } from '@/api/generated/models/ApiE2eeCreateGroupRequest';
 import { ApiE2eeDevice } from '@/api/generated/models/ApiE2eeDevice';
 import { ApiE2eeDeviceGroup } from '@/api/generated/models/ApiE2eeDeviceGroup';
+import { ApiE2eeDeviceInboxStatus } from '@/api/generated/models/ApiE2eeDeviceInboxStatus';
 import { ApiE2eeDeviceLookupRequest } from '@/api/generated/models/ApiE2eeDeviceLookupRequest';
 import { ApiE2eeDeviceLookupResponse } from '@/api/generated/models/ApiE2eeDeviceLookupResponse';
 import { ApiE2eeEligibilityRequest } from '@/api/generated/models/ApiE2eeEligibilityRequest';
@@ -2227,6 +2228,22 @@ export type E2eeGetDeviceGroupsRequest = Request<
   ApiResponse<E2eeGetDeviceGroupsResponse>,
   never,
   E2eeGetDeviceGroupsQuery,
+  Record<string, never>
+>;
+
+export interface E2eeGetDeviceInboxStatusPathParams {
+  "device_key": string;
+}
+
+export type E2eeGetDeviceInboxStatusQuery = Record<string, never>;
+
+export type E2eeGetDeviceInboxStatusResponse = ApiE2eeDeviceInboxStatus;
+
+export type E2eeGetDeviceInboxStatusRequest = Request<
+  E2eeGetDeviceInboxStatusPathParams,
+  ApiResponse<E2eeGetDeviceInboxStatusResponse>,
+  never,
+  E2eeGetDeviceInboxStatusQuery,
   Record<string, never>
 >;
 
