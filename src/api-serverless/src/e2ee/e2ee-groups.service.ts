@@ -326,11 +326,11 @@ export class E2eeGroupsService {
     deviceKey: string
   ): Promise<ApiE2eeDeviceInboxStatus> {
     await requireOwnActiveDevice(this.deps, callerProfileId, deviceKey);
+    const { hasQueuedWelcomes, hasUnjoinedChats } =
+      await this.db.getDeviceInboxState(callerProfileId, deviceKey);
     return {
-      has_pending_chats: await this.db.hasPendingInboxChats(
-        callerProfileId,
-        deviceKey
-      )
+      has_pending_chats: hasQueuedWelcomes || hasUnjoinedChats,
+      has_queued_welcomes: hasQueuedWelcomes
     };
   }
 
