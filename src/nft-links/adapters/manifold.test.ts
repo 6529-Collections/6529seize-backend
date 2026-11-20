@@ -1,4 +1,6 @@
 import fetch, { Response } from 'node-fetch';
+import { Interface, JsonRpcProvider } from 'ethers';
+import { getProvider } from '@/nft-links/lib/onchain';
 import { ManifoldAdapter } from './manifold';
 import { getAdapterFor } from './registry';
 import { NftLinkResolver } from '../nft-link-resolver';
@@ -11,6 +13,10 @@ jest.mock('node-fetch', () => ({
   default: jest.fn()
 }));
 jest.mock('./registry', () => ({ getAdapterFor: jest.fn() }));
+jest.mock('@/nft-links/lib/onchain', () => ({
+  ...jest.requireActual('@/nft-links/lib/onchain'),
+  getProvider: jest.fn()
+}));
 
 const viewUrl = 'https://app.manifold.xyz/?id=1234567';
 const canonical = validateLinkUrl(viewUrl);
@@ -22,6 +28,15 @@ const token = {
   description: 'Synthetic description',
   image: imageUrl
 };
+const tokenIdentity = {
+  contractAddress: '0x81a167d3217e566191d8bffb6df0dbaf1c48639c',
+  tokenId: '11',
+  spec: 'ERC721'
+};
+const tokenUriInterface = new Interface([
+  'function tokenURI(uint256 tokenId) view returns (string)'
+]);
+const call = jest.fn();
 
 function serveInstance(data: unknown) {
   jest
@@ -47,6 +62,11 @@ describe('Manifold instance metadata through the real adapter and resolver', () 
   beforeEach(() => {
     jest.mocked(fetch).mockReset();
     jest.mocked(getAdapterFor).mockReturnValue(new ManifoldAdapter());
+    call.mockReset();
+    jest
+      .mocked(getProvider)
+      .mockClear()
+      .mockReturnValue({ call } as unknown as JsonRpcProvider);
   });
 
   it('resolves the Alien tokenAsset response without a claim CTA or webpage fallback', async () => {
@@ -258,7 +278,8 @@ describe('Manifold instance metadata through the real adapter and resolver', () 
       name: 'Unverified root title must not replace the selected token',
       image: 'https://example.com/wrong-product.png',
       publicData: {
-        selectedToken: token,
+        network: 1,
+        selectedToken: { ...token, ...tokenIdentity },
         listingType: 'synthetic-auction',
         mintPrice: {
           value: '1000000000000000000',
@@ -279,6 +300,116 @@ describe('Manifold instance metadata through the real adapter and resolver', () 
     });
     expect(fetch).toHaveBeenCalledTimes(1);
     expect(jest.mocked(fetch).mock.calls[0][0]).toBe(apiUrl);
+    expect(getProvider).not.toHaveBeenCalled();
+  });
+
+  it.each([token.name, ''])(
+    'recovers missing selected-token media from tokenURI with listing title %j',
+    async (name) => {
+      const arweaveId = 'o7Tj5RqgFEwpt4cQ33Rm_huvCssDAhI5DXjQjYQcNMw';
+      const metadataUrl = `https://media.6529.io/arweave/${arweaveId}`;
+      const animationUrl = 'https://example.com/token-animation.mp4';
+      call.mockResolvedValue(
+        tokenUriInterface.encodeFunctionResult('tokenURI', [
+          `https://arweave.net/${arweaveId}`
+        ])
+      );
+      jest
+        .mocked(fetch)
+        .mockResolvedValueOnce(
+          new Response(
+            JSON.stringify({
+              id: 1234567,
+              publicData: {
+                network: 1,
+                listingType: 'auction',
+                selectedToken: { ...tokenIdentity, name, image: '' }
+              }
+            }),
+            { status: 200, url: apiUrl }
+          )
+        )
+        .mockResolvedValueOnce(
+          new Response(
+            JSON.stringify({
+              image_url: imageUrl,
+              animation_url: animationUrl
+            }),
+            { status: 200, url: metadataUrl }
+          )
+        );
+
+      const card = await new NftLinkResolver().resolve(viewUrl, {});
+
+      expect(card.asset.title).toBe(name || undefined);
+      expect(card.asset.media).toEqual({
+        kind: 'animation',
+        imageUrl,
+        animationUrl
+      });
+      expect(card.market.saleType).toBe('UNKNOWN');
+      expect(getProvider).toHaveBeenCalledWith('eth');
+      expect(call).toHaveBeenCalledWith({
+        to: tokenIdentity.contractAddress,
+        data: tokenUriInterface.encodeFunctionData('tokenURI', [BigInt(11)])
+      });
+      expect(jest.mocked(fetch).mock.calls.map(([url]) => url)).toEqual([
+        apiUrl,
+        metadataUrl
+      ]);
+    }
+  );
+
+  it.each([
+    { network: 137, selectedToken: tokenIdentity },
+    { network: 1, selectedToken: { ...tokenIdentity, spec: 'ERC1155' } },
+    { network: 1, selectedToken: { ...tokenIdentity, contractAddress: 'eth' } },
+    {
+      network: 1,
+      selectedToken: { ...tokenIdentity, tokenId: '9'.repeat(78) }
+    },
+    { network: 1, selectedToken: { ...tokenIdentity, tokenId: -1 } }
+  ])(
+    'skips RPC for an unsupported selected-token identity %j',
+    async (data) => {
+      const result = await resolveInstance({ id: 1234567, publicData: data });
+      expect(result?.patch.asset?.media).toBeUndefined();
+      expect(getProvider).not.toHaveBeenCalled();
+      expect(fetch).toHaveBeenCalledTimes(1);
+    }
+  );
+
+  it('keeps Open Graph eligible when the selected-token RPC read fails', async () => {
+    call.mockRejectedValue(new Error('tokenURI reverted'));
+    jest
+      .mocked(fetch)
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            id: 1234567,
+            publicData: {
+              network: 1,
+              selectedToken: { ...tokenIdentity, name: token.name }
+            }
+          }),
+          { status: 200, url: apiUrl }
+        )
+      )
+      .mockResolvedValueOnce(
+        new Response(`<meta property="og:image" content="${imageUrl}">`, {
+          status: 200,
+          url: canonical.viewUrl
+        })
+      );
+
+    const card = await new NftLinkResolver().resolve(viewUrl, {});
+
+    expect(card.asset.media?.imageUrl).toBe(imageUrl);
+    expect(call).toHaveBeenCalledTimes(1);
+    expect(jest.mocked(fetch).mock.calls.map(([url]) => url)).toEqual([
+      apiUrl,
+      canonical.viewUrl
+    ]);
   });
 
   it.each([1234567, '1234567'])(
