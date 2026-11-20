@@ -1,14 +1,24 @@
 import type { AdapterResult, PlatformAdapter } from './types';
+import { Contract, MaxUint256 } from 'ethers';
 import { fetchJsonWithTimeout, fetchTextWithTimeout } from '../lib/http';
 import { buildPrimaryAction } from '../lib/market';
 import { numbers } from '@/numbers';
-import { formatTokenAmount } from '@/nft-links/lib/onchain';
+import { formatTokenAmount, getProvider } from '@/nft-links/lib/onchain';
+import {
+  getNftLinkResolutionBudget,
+  NFT_LINK_RPC_TIMEOUT_MS,
+  withNftLinkResolutionBudget
+} from '@/nft-links/resolution-budget';
 import { CanonicalLink, NormalizedNftCard } from '@/nft-links/types';
 import { env } from '@/env';
 import { requiredNftPage404 } from '../nft-link-page-retry';
 import { normalizeMetadataUri } from '../lib/uri';
 
 type AnyObj = Record<string, any>;
+
+const ERC721_METADATA_ABI = [
+  'function tokenURI(uint256 tokenId) view returns (string)'
+];
 
 function pick<T>(...vals: Array<T | undefined | null>): T | undefined {
   for (const v of vals) if (v !== undefined && v !== null) return v;
@@ -46,7 +56,7 @@ function metadataText(value: unknown): string | undefined {
   return typeof value === 'string' ? value.trim() || undefined : undefined;
 }
 
-function metadataMediaUrl(value: unknown): string | undefined {
+function normalizeMetadataHttpUrl(value: unknown): string | undefined {
   const text = metadataText(value);
   if (!text) return undefined;
   try {
@@ -54,29 +64,105 @@ function metadataMediaUrl(value: unknown): string | undefined {
     if (!normalized || !/^https?:\/\//i.test(normalized)) return undefined;
     const url = new URL(normalized);
     if (url.username || url.password) return undefined;
-    // Download-time DNS/IP, redirect and size checks remain in the preview pipeline.
+    // Known decentralized URLs use the same resolver for JSON and artwork.
     return url.toString();
   } catch {
     return undefined;
   }
 }
 
-function resolveSelectedToken(
+function uint256TokenId(value: unknown): bigint | undefined {
+  const digits = Number.isSafeInteger(value) ? String(value) : value;
+  if (typeof digits !== 'string' || !/^\d{1,78}$/.test(digits))
+    return undefined;
+  const tokenId = BigInt(digits);
+  return tokenId <= MaxUint256 ? tokenId : undefined;
+}
+
+function tokenMedia(
+  token: Record<string, unknown>
+): NormalizedNftCard['asset']['media'] {
+  const imageUrl =
+    normalizeMetadataHttpUrl(token.image) ??
+    normalizeMetadataHttpUrl(token.image_url);
+  const animationUrl =
+    normalizeMetadataHttpUrl(token.animation_url) ??
+    normalizeMetadataHttpUrl(token.animation);
+  if (animationUrl) return { kind: 'animation', imageUrl, animationUrl };
+  if (imageUrl) return { kind: 'image', imageUrl };
+  return undefined;
+}
+
+async function readSelectedTokenMetadata(
+  token: Record<string, unknown>,
+  network: unknown,
+  timeoutMs: number
+): Promise<Record<string, unknown> | undefined> {
+  const { contractAddress, spec } = token;
+  if (
+    (network !== 1 && network !== '1') ||
+    spec !== 'ERC721' ||
+    typeof contractAddress !== 'string' ||
+    !/^0x[0-9a-f]{40}$/i.test(contractAddress)
+  ) {
+    return undefined;
+  }
+  const tokenId = uint256TokenId(token.tokenId);
+  if (tokenId === undefined) return undefined;
+
+  const read = async () => {
+    const activeBudget = getNftLinkResolutionBudget();
+    const nft = new Contract(
+      contractAddress.toLowerCase(),
+      ERC721_METADATA_ABI,
+      getProvider('eth')
+    );
+    const tokenUri: unknown = await nft.tokenURI(tokenId);
+    activeBudget?.check();
+    const url = normalizeMetadataHttpUrl(tokenUri);
+    if (!url?.startsWith('https://')) return undefined;
+    const metadata = await fetchJsonWithTimeout<unknown>(url, { timeoutMs });
+    activeBudget?.check();
+    return isRecord(metadata) ? metadata : undefined;
+  };
+  const budget = getNftLinkResolutionBudget();
+  try {
+    return await (budget
+      ? read()
+      : withNftLinkResolutionBudget(NFT_LINK_RPC_TIMEOUT_MS + timeoutMs, read));
+  } catch {
+    budget?.check();
+    return undefined;
+  }
+}
+
+async function resolveSelectedToken(
   token: unknown,
-  canonical: CanonicalLink
-): AdapterResult {
+  network: unknown,
+  canonical: CanonicalLink,
+  timeoutMs: number
+): Promise<AdapterResult> {
   if (!isRecord(token)) {
     throw new Error('Invalid Manifold selected token');
   }
-  const imageUrl = metadataMediaUrl(token.image);
-  return withUnknownSale(
+  const inlineMedia = tokenMedia(token);
+  const metadata = inlineMedia
+    ? undefined
+    : await readSelectedTokenMetadata(token, network, timeoutMs);
+  const recoveredMedia = metadata && tokenMedia(metadata);
+  const result = withUnknownSale(
     {
-      title: metadataText(token.name),
-      description: metadataText(token.description),
-      media: imageUrl ? { kind: 'image', imageUrl } : undefined
+      title:
+        metadataText(token.name) ??
+        metadataText(metadata?.name) ??
+        metadataText(metadata?.title),
+      description:
+        metadataText(token.description) ?? metadataText(metadata?.description),
+      media: inlineMedia ?? recoveredMedia
     },
     canonical
   );
+  return recoveredMedia ? { ...result, skipOpenGraph: true } : result;
 }
 
 function resolveTokenAsset(
@@ -86,23 +172,11 @@ function resolveTokenAsset(
   if (!isRecord(tokenAsset)) {
     throw new Error('Invalid Manifold token asset');
   }
-  const imageUrl =
-    metadataMediaUrl(tokenAsset.image) ??
-    metadataMediaUrl(tokenAsset.image_url);
-  const animationUrl =
-    metadataMediaUrl(tokenAsset.animation_url) ??
-    metadataMediaUrl(tokenAsset.animation);
-  let media: NormalizedNftCard['asset']['media'];
-  if (animationUrl) {
-    media = { kind: 'animation', imageUrl, animationUrl };
-  } else if (imageUrl) {
-    media = { kind: 'image', imageUrl };
-  }
   return withUnknownSale(
     {
       title: metadataText(tokenAsset.name),
       description: metadataText(tokenAsset.description),
-      media
+      media: tokenMedia(tokenAsset)
     },
     canonical
   );
@@ -158,11 +232,12 @@ function isSafeManifoldHost(viewUrl: string): boolean {
   }
 }
 
-function resolveInstanceMetadata(
+async function resolveInstanceMetadata(
   data: AnyObj | undefined,
   instanceId: string,
-  canonical: CanonicalLink
-): AdapterResult {
+  canonical: CanonicalLink,
+  timeoutMs: number
+): Promise<AdapterResult> {
   const publicData: unknown = data?.publicData;
   const hasSelectedToken =
     isRecord(publicData) && 'selectedToken' in publicData;
@@ -179,7 +254,12 @@ function resolveInstanceMetadata(
     hasSelectedToken || hasTokenAsset || !!claimAsset
   );
   if (isRecord(publicData) && 'selectedToken' in publicData) {
-    return resolveSelectedToken(publicData.selectedToken, canonical);
+    return resolveSelectedToken(
+      publicData.selectedToken,
+      publicData.network,
+      canonical,
+      timeoutMs
+    );
   }
   if (isRecord(publicData) && 'tokenAsset' in publicData) {
     return resolveTokenAsset(publicData.tokenAsset, canonical);
@@ -201,8 +281,8 @@ function resolveInstanceMetadata(
     data?.imageUrl,
     data?.data?.image,
     data?.data?.imageUrl,
-    metadataMediaUrl(claimAsset?.image),
-    metadataMediaUrl(claimAsset?.image_url)
+    normalizeMetadataHttpUrl(claimAsset?.image),
+    normalizeMetadataHttpUrl(claimAsset?.image_url)
   );
 
   const description = pick<string>(
@@ -211,8 +291,8 @@ function resolveInstanceMetadata(
     metadataText(claimAsset?.description)
   );
   const animationUrl = pick<string>(
-    metadataMediaUrl(claimAsset?.animation_url),
-    metadataMediaUrl(claimAsset?.animation)
+    normalizeMetadataHttpUrl(claimAsset?.animation_url),
+    normalizeMetadataHttpUrl(claimAsset?.animation)
   );
   let media: NormalizedNftCard['asset']['media'];
   if (animationUrl) {
@@ -350,6 +430,6 @@ export class ManifoldAdapter implements PlatformAdapter {
       }
     }
 
-    return resolveInstanceMetadata(data, instanceId, canonical);
+    return resolveInstanceMetadata(data, instanceId, canonical, timeoutMs);
   }
 }
