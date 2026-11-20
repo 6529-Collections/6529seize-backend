@@ -135,6 +135,7 @@ import {
   CLOUDFRONT_LINK,
   DEVS_6529_MENTION,
   DEVS_6529_MENTION_TOKEN,
+  DROP_FORGE_ALERT_MENTION_TOKEN,
   UUID_REGEX,
   WALLET_REGEX
 } from '@/constants';
@@ -217,7 +218,8 @@ const GROUP_MENTION_TOKENS: Readonly<Record<DropGroupMention, string>> = {
   [DropGroupMention.ALL]: 'all',
   [DropGroupMention.CONTRIBUTORS]: 'contributors',
   [DropGroupMention.ADMINS]: 'admins',
-  [DropGroupMention.DEVS_6529]: DEVS_6529_MENTION_TOKEN
+  [DropGroupMention.DEVS_6529]: DEVS_6529_MENTION_TOKEN,
+  [DropGroupMention.DROPS_6529]: DROP_FORGE_ALERT_MENTION_TOKEN
 };
 const ADMIN_ONLY_GROUP_MENTIONS = [
   DropGroupMention.ALL,
@@ -225,7 +227,8 @@ const ADMIN_ONLY_GROUP_MENTIONS = [
 ] as const;
 const ESCALATION_GROUP_MENTIONS = new Set<DropGroupMention>([
   DropGroupMention.ADMINS,
-  DropGroupMention.DEVS_6529
+  DropGroupMention.DEVS_6529,
+  DropGroupMention.DROPS_6529
 ]);
 
 function createGroupMentionPattern(token: string): RegExp {
@@ -233,6 +236,9 @@ function createGroupMentionPattern(token: string): RegExp {
 }
 
 const GROUP_MENTION_PATTERNS: Readonly<Record<DropGroupMention, RegExp>> = {
+  [DropGroupMention.DROPS_6529]: createGroupMentionPattern(
+    DROP_FORGE_ALERT_MENTION_TOKEN
+  ),
   [DropGroupMention.ALL]: createGroupMentionPattern(
     GROUP_MENTION_TOKENS[DropGroupMention.ALL]
   ),
@@ -2885,7 +2891,8 @@ export class CreateOrUpdateDropUseCase {
     const permissionMentionGroups = [
       DropGroupMention.CONTRIBUTORS,
       DropGroupMention.ADMINS,
-      DropGroupMention.DEVS_6529
+      DropGroupMention.DEVS_6529,
+      DropGroupMention.DROPS_6529
     ];
     if (
       !permissionMentionGroups.some((group) =>
@@ -2898,16 +2905,18 @@ export class CreateOrUpdateDropUseCase {
       model,
       wave
     });
-    const configuredDeveloperIds = model.mentioned_groups.includes(
-      DropGroupMention.DEVS_6529
-    )
-      ? collections.distinct(
-          env
-            .getStringArray('DEVS_6529_MENTION_PROFILE_IDS', ',')
-            .map((id) => id.trim())
-            .filter(Boolean)
-        )
-      : [];
+    const configuredDeveloperIds = collections.distinct(
+      [
+        ...(model.mentioned_groups.includes(DropGroupMention.DEVS_6529)
+          ? env.getStringArray('DEVS_6529_MENTION_PROFILE_IDS', ',')
+          : []),
+        ...(model.mentioned_groups.includes(DropGroupMention.DROPS_6529)
+          ? env.getStringArray('DROP_FORGE_ALERT_PROFILE_IDS', ',')
+          : [])
+      ]
+        .map((id) => id.trim())
+        .filter(Boolean)
+    );
     this.warnIfDeveloperMentionHasNoRecipients({
       model,
       configuredDeveloperIds

@@ -22,6 +22,8 @@ const ACCEPTED_ADDITIVE_ENUM_EXTENSIONS: Readonly<Record<string, string[]>> = {
   ],
   'schema ApiProfileCmsPointerEvent.properties.event_type.enum': ['unpublish'],
   'schema ApiPushNotificationSettings.required': ['subscription_coverage'],
+  // The explicitly configured Drop Forge alert shortcut extends existing groups.
+  'schema ApiDropGroupMention.enum': ['DROPS_6529'],
   // Mention suggestions include the requested display level; existing response
   // fields and older clients remain compatible with this additive field.
   'schema ApiWaveMentionSearchResult.required': ['level'],

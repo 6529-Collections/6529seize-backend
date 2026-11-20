@@ -653,6 +653,30 @@
       ]
     },
     {
+      "service": "dropForgeLaunchHandler",
+      "region": "eu-west-1",
+      "functions": [
+        "dropForgeLaunchHandler"
+      ],
+      "coverage": [
+        "structured-error-logs",
+        "lambda-errors",
+        "lambda-throttles"
+      ]
+    },
+    {
+      "service": "memesDistributionHandler",
+      "region": "eu-west-1",
+      "functions": [
+        "memesDistributionHandler"
+      ],
+      "coverage": [
+        "structured-error-logs",
+        "lambda-errors",
+        "lambda-throttles"
+      ]
+    },
+    {
       "service": "webSocketDeliveryLoop",
       "region": "eu-west-1",
       "functions": [
