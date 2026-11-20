@@ -1009,6 +1009,8 @@ function addNftRefreshAlarms(resources) {
 }
 
 function platformAlarm(name, metric, environment) {
+  const mediaResizerErrors =
+    environment === 'prod' && name === 'mediaResizerLoop' && metric === 'Errors';
   const sustainedThrottling =
     [
       'nftLinkRefresherLoop',
@@ -1027,11 +1029,11 @@ function platformAlarm(name, metric, environment) {
       MetricName: metric,
       Dimensions: [{ Name: 'FunctionName', Value: name }],
       Statistic: 'Sum',
-      Period: 60,
+      Period: mediaResizerErrors ? 300 : 60,
       // These queue/scheduled workers can briefly contend for reserved concurrency.
       EvaluationPeriods: sustainedThrottling ? 5 : 1,
       ...(sustainedThrottling ? { DatapointsToAlarm: breachingMinutes } : {}),
-      Threshold: 1,
+      Threshold: mediaResizerErrors ? 2 : 1,
       ComparisonOperator: 'GreaterThanOrEqualToThreshold',
       TreatMissingData: 'notBreaching',
       AlarmActions:

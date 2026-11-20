@@ -281,6 +281,35 @@ test('release-note contention uses processing-health routing while errors retain
   assert.equal(prod.RelayDeadLettersAlarm.Properties.EvaluationPeriods, 1);
 });
 
+test('the production media resizer error alarm requires two failures in five minutes', () => {
+  const prod = JSON.parse(
+    readFileSync(new URL('../source-prod.json', import.meta.url), 'utf8')
+  ).Resources;
+  const stage = JSON.parse(
+    readFileSync(new URL('../source-staging.json', import.meta.url), 'utf8')
+  ).Resources;
+  assert.deepEqual(prod.mediaResizerLoopErrors.Properties, {
+    AlarmName: {
+      'Fn::Sub': 'seize-monitoring-${Environment}-mediaResizerLoop-Errors'
+    },
+    Namespace: 'AWS/Lambda',
+    MetricName: 'Errors',
+    Dimensions: [{ Name: 'FunctionName', Value: 'mediaResizerLoop' }],
+    Statistic: 'Sum',
+    Period: 300,
+    EvaluationPeriods: 1,
+    Threshold: 2,
+    ComparisonOperator: 'GreaterThanOrEqualToThreshold',
+    TreatMissingData: 'notBreaching',
+    AlarmActions: {
+      'Fn::If': ['HasAlarmTopic', [{ Ref: 'ExistingAlarmTopicArn' }], []]
+    }
+  });
+  assert.equal(prod.mediaResizerLoopThrottles.Properties.Period, 60);
+  assert.equal(prod.mediaResizerLoopThrottles.Properties.Threshold, 1);
+  assert.equal(stage.mediaResizerLoopErrors, undefined);
+});
+
 test('wave throttling is sustained while queue backlog and dead letters have independent alarms', () => {
   for (const env of ['prod', 'staging']) {
     const resources = JSON.parse(
