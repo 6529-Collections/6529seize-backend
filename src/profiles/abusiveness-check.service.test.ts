@@ -147,20 +147,41 @@ describe('AbusivenessCheckService durable moderation', () => {
     );
     expect(reviews.finish).toHaveBeenCalledTimes(1);
   });
-  it('records known safe group names without requesting AI', async () => {
+  it.each(['Only Me', 'Can message me'])(
+    'records the built-in group name %s without requesting AI',
+    async (text) => {
+      await expect(
+        service.checkFilterName({
+          text,
+          handle: 'alice',
+          profile_id: 'profile-alice',
+          group_id: 'group'
+        })
+      ).resolves.toMatchObject({ status: 'ALLOWED' });
+      expect(detector.checkUserGroupName).not.toHaveBeenCalled();
+      expect(reviews.finish).toHaveBeenCalledWith(
+        'evaluation',
+        expect.objectContaining({ outcome: 'ALLOW', model: null })
+      );
+    }
+  );
+  it('requires moderation for a user-supplied variation of the built-in title', async () => {
+    jest
+      .mocked(detector.checkUserGroupName)
+      .mockRejectedValue(new Error('evaluator unavailable'));
+    const text = 'Can message me whenever';
     await expect(
       service.checkFilterName({
-        text: 'Only Me',
+        text,
         handle: 'alice',
         profile_id: 'profile-alice',
         group_id: 'group'
       })
-    ).resolves.toMatchObject({ status: 'ALLOWED' });
-    expect(detector.checkUserGroupName).not.toHaveBeenCalled();
-    expect(reviews.finish).toHaveBeenCalledWith(
-      'evaluation',
-      expect.objectContaining({ model: null })
-    );
+    ).rejects.toThrow('temporarily unavailable');
+    expect(detector.checkUserGroupName).toHaveBeenCalledWith({
+      text,
+      handle: 'alice'
+    });
   });
   it('keeps BIO evaluator errors blocking and distinct from rejection', async () => {
     jest

@@ -222,6 +222,7 @@ export class AbusivenessCheckService {
     const safe =
       query.previously_reviewed ||
       text === 'Only Me' ||
+      text === 'Can message me' ||
       (!!query.handle && text === `Only ${query.handle}`);
     return this.evaluate(
       {
