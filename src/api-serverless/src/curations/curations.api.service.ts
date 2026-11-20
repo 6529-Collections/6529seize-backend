@@ -566,6 +566,8 @@ export class CurationsApiService {
     ctx: RequestContext & { connection: ConnectionWrapper<unknown> }
   ): Promise<{ id: string; afterCommit?: () => Promise<void> }> {
     if (request.criteria) {
+      // Each edit gets its own group ID. Other resources may still reference
+      // the prior group, so the curation write only replaces its reference.
       const input = await toNewUserGroupInput({
         ...request.criteria,
         name: 'Curation criteria'
@@ -574,17 +576,22 @@ export class CurationsApiService {
         input,
         scope.profileId,
         ctx,
+        // Active membership evaluation is independent of private read access.
         true
       );
+      const refresh = () =>
+        this.userGroupsService.refreshNewGroupEligibility(
+          input,
+          scope.profileId
+        );
       return {
         id,
         afterCommit: async () => {
           try {
-            await this.userGroupsService.refreshNewGroupEligibility(
-              input,
-              scope.profileId
-            );
+            await refresh().catch(refresh);
           } catch (error) {
+            // Until the cache refreshes, a stale list lacks the new group ID
+            // and cannot grant access through the previous group.
             logger.warn('Failed to refresh curator eligibility after save', {
               groupId: id,
               error

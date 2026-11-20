@@ -18,7 +18,7 @@ export class ApiWaveCurationCriteria {
     /**
     * Restrict access to the criteria and member list.
     */
-    'is_private'?: boolean;
+    'is_private': boolean;
 
     static readonly discriminator: string | undefined = undefined;
 

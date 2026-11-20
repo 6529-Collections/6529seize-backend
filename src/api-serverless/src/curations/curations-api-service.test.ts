@@ -566,6 +566,24 @@ describe('CurationsApiService', () => {
     expect(userGroupsService.refreshNewGroupEligibility).not.toHaveBeenCalled();
   });
 
+  it('retries eligibility refresh after committing the criteria', async () => {
+    const { service, curationsDb, userGroupsService, ctx } = createService();
+    userGroupsService.refreshNewGroupEligibility.mockRejectedValueOnce(
+      new Error('Cache temporarily unavailable')
+    );
+    await expect(
+      service.createWaveCuration(
+        'wave-1',
+        { name: 'New picks', criteria: curatorCriteria },
+        ctx
+      )
+    ).resolves.toMatchObject({ group_id: 'new-curator-group' });
+    expect(curationsDb.insertWaveCuration).toHaveBeenCalledTimes(1);
+    expect(userGroupsService.refreshNewGroupEligibility).toHaveBeenCalledTimes(
+      2
+    );
+  });
+
   it('lets the curation retain its private group on later saves', async () => {
     const { service, ctx } = createService({
       communityGroup: { id: 'community-group-1', is_private: true }
@@ -606,6 +624,20 @@ describe('CurationsApiService', () => {
         connection: expect.anything()
       })
     );
+  });
+
+  it('rejects changing a curation to a different private group', async () => {
+    const { service, ctx } = createService({
+      communityGroup: { id: 'other-private-group', is_private: true }
+    });
+    await expect(
+      service.updateWaveCuration(
+        'wave-1',
+        'curation-1',
+        { name: 'Renamed', group_id: 'other-private-group' },
+        ctx
+      )
+    ).rejects.toThrow('Group other-private-group is private');
   });
 
   it('removes drops from an explicitly selected curation', async () => {

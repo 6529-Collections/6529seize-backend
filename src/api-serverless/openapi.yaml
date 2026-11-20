@@ -44389,12 +44389,12 @@ components:
       type: object
       required:
         - group
+        - is_private
       properties:
         group:
           $ref: "#/components/schemas/ApiCreateGroupDescription"
         is_private:
           type: boolean
-          default: false
           description: Restrict access to the criteria and member list.
     ApiWaveCurationRequest:
       type: object
