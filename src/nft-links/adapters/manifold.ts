@@ -56,7 +56,7 @@ function metadataText(value: unknown): string | undefined {
   return typeof value === 'string' ? value.trim() || undefined : undefined;
 }
 
-function metadataMediaUrl(value: unknown): string | undefined {
+function normalizeMetadataHttpUrl(value: unknown): string | undefined {
   const text = metadataText(value);
   if (!text) return undefined;
   try {
@@ -64,7 +64,7 @@ function metadataMediaUrl(value: unknown): string | undefined {
     if (!normalized || !/^https?:\/\//i.test(normalized)) return undefined;
     const url = new URL(normalized);
     if (url.username || url.password) return undefined;
-    // Download-time DNS/IP, redirect and size checks remain in the preview pipeline.
+    // Known decentralized URLs use the same resolver for JSON and artwork.
     return url.toString();
   } catch {
     return undefined;
@@ -83,9 +83,11 @@ function tokenMedia(
   token: Record<string, unknown>
 ): NormalizedNftCard['asset']['media'] {
   const imageUrl =
-    metadataMediaUrl(token.image) ?? metadataMediaUrl(token.image_url);
+    normalizeMetadataHttpUrl(token.image) ??
+    normalizeMetadataHttpUrl(token.image_url);
   const animationUrl =
-    metadataMediaUrl(token.animation_url) ?? metadataMediaUrl(token.animation);
+    normalizeMetadataHttpUrl(token.animation_url) ??
+    normalizeMetadataHttpUrl(token.animation);
   if (animationUrl) return { kind: 'animation', imageUrl, animationUrl };
   if (imageUrl) return { kind: 'image', imageUrl };
   return undefined;
@@ -109,14 +111,18 @@ async function readSelectedTokenMetadata(
   if (tokenId === undefined) return undefined;
 
   const read = async () => {
+    const activeBudget = getNftLinkResolutionBudget();
     const nft = new Contract(
       contractAddress.toLowerCase(),
       ERC721_METADATA_ABI,
       getProvider('eth')
     );
-    const url = metadataMediaUrl(await nft.tokenURI(tokenId));
+    const tokenUri: unknown = await nft.tokenURI(tokenId);
+    activeBudget?.check();
+    const url = normalizeMetadataHttpUrl(tokenUri);
     if (!url?.startsWith('https://')) return undefined;
     const metadata = await fetchJsonWithTimeout<unknown>(url, { timeoutMs });
+    activeBudget?.check();
     return isRecord(metadata) ? metadata : undefined;
   };
   const budget = getNftLinkResolutionBudget();
@@ -275,8 +281,8 @@ async function resolveInstanceMetadata(
     data?.imageUrl,
     data?.data?.image,
     data?.data?.imageUrl,
-    metadataMediaUrl(claimAsset?.image),
-    metadataMediaUrl(claimAsset?.image_url)
+    normalizeMetadataHttpUrl(claimAsset?.image),
+    normalizeMetadataHttpUrl(claimAsset?.image_url)
   );
 
   const description = pick<string>(
@@ -285,8 +291,8 @@ async function resolveInstanceMetadata(
     metadataText(claimAsset?.description)
   );
   const animationUrl = pick<string>(
-    metadataMediaUrl(claimAsset?.animation_url),
-    metadataMediaUrl(claimAsset?.animation)
+    normalizeMetadataHttpUrl(claimAsset?.animation_url),
+    normalizeMetadataHttpUrl(claimAsset?.animation)
   );
   let media: NormalizedNftCard['asset']['media'];
   if (animationUrl) {

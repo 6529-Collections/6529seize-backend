@@ -1,6 +1,10 @@
 import fetch, { Response } from 'node-fetch';
 import { Interface, JsonRpcProvider } from 'ethers';
 import { getProvider } from '@/nft-links/lib/onchain';
+import {
+  NftLinkResolutionDeadlineError,
+  withNftLinkResolutionBudget
+} from '@/nft-links/resolution-budget';
 import { ManifoldAdapter } from './manifold';
 import { getAdapterFor } from './registry';
 import { NftLinkResolver } from '../nft-link-resolver';
@@ -368,7 +372,8 @@ describe('Manifold instance metadata through the real adapter and resolver', () 
       network: 1,
       selectedToken: { ...tokenIdentity, tokenId: '9'.repeat(78) }
     },
-    { network: 1, selectedToken: { ...tokenIdentity, tokenId: -1 } }
+    { network: 1, selectedToken: { ...tokenIdentity, tokenId: -1 } },
+    { network: 1, selectedToken: { ...tokenIdentity, tokenId: 11.5 } }
   ])(
     'skips RPC for an unsupported selected-token identity %j',
     async (data) => {
@@ -411,6 +416,43 @@ describe('Manifold instance metadata through the real adapter and resolver', () 
       canonical.viewUrl
     ]);
   });
+
+  it.each(['rejects', 'succeeds'])(
+    'propagates budget expiry when tokenURI %s after the deadline',
+    async (result) => {
+      const timeoutMs = 5_000;
+      let now = Date.now();
+      const clock = jest.spyOn(Date, 'now').mockImplementation(() => now);
+      serveInstance({
+        id: 1234567,
+        publicData: {
+          network: 1,
+          selectedToken: { ...tokenIdentity, name: token.name }
+        }
+      });
+      call.mockImplementation(async () => {
+        now += timeoutMs;
+        if (result === 'rejects') throw new Error('RPC read timed out');
+        return tokenUriInterface.encodeFunctionResult('tokenURI', [
+          'https://example.com/metadata.json'
+        ]);
+      });
+
+      try {
+        await expect(
+          withNftLinkResolutionBudget(timeoutMs, () =>
+            new ManifoldAdapter().resolveFast(canonical)
+          )
+        ).rejects.toBeInstanceOf(NftLinkResolutionDeadlineError);
+        expect(call).toHaveBeenCalledTimes(1);
+        expect(jest.mocked(fetch).mock.calls.map(([url]) => url)).toEqual([
+          apiUrl
+        ]);
+      } finally {
+        clock.mockRestore();
+      }
+    }
+  );
 
   it.each([1234567, '1234567'])(
     'accepts an exactly matching primitive instance ID %s',
