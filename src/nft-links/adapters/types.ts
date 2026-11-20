@@ -2,6 +2,7 @@ import type { CanonicalLink, NormalizedNftCard } from '../types';
 
 export interface AdapterResult {
   patch: Partial<NormalizedNftCard>;
+  skipOpenGraph?: boolean;
 }
 
 export interface PlatformAdapter {
