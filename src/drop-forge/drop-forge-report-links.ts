@@ -48,9 +48,7 @@ export async function reportRecipientEns(
         const name = await lookupPrimaryEnsName(address);
         const resolved =
           name && (await getEthereumRpcProvider(1).resolveName(name));
-        return resolved && resolved.toLowerCase() === address.toLowerCase()
-          ? name
-          : null;
+        return resolved?.toLowerCase() === address.toLowerCase() ? name : null;
       })(),
       new Promise<null>((resolve) => {
         timer = setTimeout(() => resolve(null), 1200);

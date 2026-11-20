@@ -420,6 +420,20 @@ export class EthereumLaunchChain implements LaunchChain {
     return creatorAdmin(this.provider, this.config.creator, wallet);
   }
 
+  private async verifyOperationalWallet(
+    signer: string,
+    unsignedTransaction?: string
+  ): Promise<void> {
+    if (!(await this.assertAdmin(signer)))
+      throw new LaunchWalletBlockError('ADMIN_REQUIRED');
+    if (!unsignedTransaction) return;
+    const tx = Transaction.from(unsignedTransaction);
+    const fee = tx.maxFeePerGas ?? tx.gasPrice ?? BigInt(0);
+    const balance = await rpcWithDeadline(this.provider.getBalance(signer));
+    if (balance < tx.value + tx.gasLimit * fee)
+      throw new LaunchWalletBlockError('INSUFFICIENT_ETH');
+  }
+
   async verify(
     data: LaunchData,
     action: LaunchAction,
@@ -428,17 +442,10 @@ export class EthereumLaunchChain implements LaunchChain {
   ): Promise<void> {
     assertPhaseScopedPlan(data);
     this.assertBinding(data);
-    if (!(await this.assertAdmin(data.signer)))
-      throw new LaunchWalletBlockError('ADMIN_REQUIRED');
-    if (!captureSupply && action.unsigned_tx) {
-      const tx = Transaction.from(action.unsigned_tx);
-      const fee = tx.maxFeePerGas ?? tx.gasPrice ?? BigInt(0);
-      if (
-        (await rpcWithDeadline(this.provider.getBalance(data.signer))) <
-        tx.value + tx.gasLimit * fee
-      )
-        throw new LaunchWalletBlockError('INSUFFICIENT_ETH');
-    }
+    await this.verifyOperationalWallet(
+      data.signer,
+      captureSupply ? undefined : action.unsigned_tx
+    );
     if (action.kind === 'PAY_ARTIST') {
       await this.verifyArtistPayment(
         data,

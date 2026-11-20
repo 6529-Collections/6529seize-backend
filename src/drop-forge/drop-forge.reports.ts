@@ -196,6 +196,29 @@ export function formatLaunchReport(
       event.content.includes(`: ${candidate.id} confirmed after`)
   );
   const emoji = event.error ? '⚠️' : reportEmoji(event.content);
+  const details = reportDetails(
+    data,
+    event,
+    action,
+    explorer,
+    options?.recipientEns
+  );
+  const lines = [
+    `${emoji} ${claimLabels} · [Contract](${explorer}/address/${data.contract})`,
+    reportBody(data, event, action, content)
+  ];
+  if (details.length) lines.push(details.join(' · '));
+  const retry = walletRetryDetail(event, action);
+  if (retry) lines.push(retry);
+  return lines.join('\n');
+}
+
+function reportBody(
+  data: LaunchData,
+  event: LaunchEvent,
+  action: LaunchAction | undefined,
+  content: string
+): string {
   const message = action
     ? reportContent(data, event, action, content)
     : content;
@@ -203,55 +226,75 @@ export function formatLaunchReport(
   const body = message.startsWith(prefix)
     ? message.slice(prefix.length)
     : message;
-  const lines = [
-    `${emoji} ${claimLabels} · [Contract](${explorer}/address/${data.contract})`
-  ];
-  if (action && event.next_wallet_retry !== undefined) {
-    const reason = body.endsWith('insufficient gas funds')
-      ? 'The operational wallet has insufficient ETH.'
-      : 'The operational wallet needs contract admin permission.';
-    lines.push(
-      `${action.kind === 'INITIALIZE' ? 'Initialization' : operationName(data, action)} blocked. ${reason}`
-    );
-  } else {
-    lines.push(body);
+  if (!action || event.next_wallet_retry === undefined) return body;
+  const name =
+    action.kind === 'INITIALIZE'
+      ? 'Initialization'
+      : operationName(data, action);
+  const reason = body.endsWith('insufficient gas funds')
+    ? 'The operational wallet has insufficient ETH.'
+    : 'The operational wallet needs contract admin permission.';
+  return `${name} blocked. ${reason}`;
+}
+
+function plannedAirdropDetail(
+  { tokens, wallets, recipient }: NonNullable<LaunchEvent['planned_airdrop']>,
+  action: LaunchAction,
+  explorer: string,
+  ens: string | null | undefined
+): string {
+  const cards = `${tokens} ${tokens === 1 ? 'card' : 'cards'}`;
+  let destination = `across ${wallets} ${wallets === 1 ? 'wallet' : 'wallets'}`;
+  if (recipient) {
+    const address = `[${recipient.slice(0, 6)}…${recipient.slice(-4)}](${explorer}/address/${recipient})`;
+    destination = ens ? `to ${ens} (${address})` : `to ${address}`;
   }
-  const details =
-    action && !event.planned_airdrop && !event.content.includes(': Sold out.')
-      ? [actionDetails(data, action)]
-      : [];
-  if (event.planned_airdrop && action) {
-    const { tokens, wallets, recipient } = event.planned_airdrop;
-    const cards = `${tokens} ${tokens === 1 ? 'card' : 'cards'}`;
-    let destination = `across ${wallets} ${wallets === 1 ? 'wallet' : 'wallets'}`;
-    if (recipient) {
-      const address = `[${recipient.slice(0, 6)}…${recipient.slice(-4)}](${explorer}/address/${recipient})`;
-      destination = options?.recipientEns
-        ? `to ${options.recipientEns} (${address})`
-        : `to ${address}`;
-    }
-    const name = actionLabel(action)
-      .replace(/^Artist airdrops$/, 'artist airdrop')
-      .replace(/^Team airdrops$/, 'team airdrop')
-      .replace(' Subscription Airdrops', ' subscriber airdrop');
-    details.push(`Planned ${name} · ${cards} ${destination}`);
+  const name = actionLabel(action)
+    .replace(/^Artist airdrops$/, 'artist airdrop')
+    .replace(/^Team airdrops$/, 'team airdrop')
+    .replace(' Subscription Airdrops', ' subscriber airdrop');
+  return `Planned ${name} · ${cards} ${destination}`;
+}
+
+function dependentAirdropDetail(
+  data: LaunchData,
+  action: LaunchAction
+): string | undefined {
+  if (action.kind !== 'INITIALIZE' && action.kind !== 'UPDATE') return;
+  const waiting = data.actions.some(
+    (candidate) =>
+      candidate.kind === 'AIRDROP' &&
+      candidate.phase === action.phase &&
+      candidate.state !== 'CONFIRMED' &&
+      candidate.state !== 'SKIPPED' &&
+      candidate.id !== 'research-airdrop'
+  );
+  if (!waiting) return;
+  const setup =
+    action.kind === 'INITIALIZE' ? 'initialization' : 'the phase update';
+  return `${data.phases[action.phase].name} airdrops are waiting for ${setup}.`;
+}
+
+function reportDetails(
+  data: LaunchData,
+  event: LaunchEvent,
+  action: LaunchAction | undefined,
+  explorer: string,
+  ens: string | null | undefined
+): string[] {
+  const details: string[] = [];
+  if (action) {
+    if (event.planned_airdrop)
+      details.push(
+        plannedAirdropDetail(event.planned_airdrop, action, explorer, ens)
+      );
+    else if (!event.content.includes(': Sold out.'))
+      details.push(actionDetails(data, action));
+    const waiting = event.error
+      ? dependentAirdropDetail(data, action)
+      : undefined;
+    if (waiting) details.push(waiting);
   }
-  if (
-    event.error &&
-    action &&
-    ['INITIALIZE', 'UPDATE'].includes(action.kind) &&
-    data.actions.some(
-      (candidate) =>
-        candidate.kind === 'AIRDROP' &&
-        candidate.phase === action.phase &&
-        candidate.state !== 'CONFIRMED' &&
-        candidate.state !== 'SKIPPED' &&
-        candidate.id !== 'research-airdrop'
-    )
-  )
-    details.push(
-      `${data.phases[action.phase].name} airdrops are waiting for ${action.kind === 'INITIALIZE' ? 'initialization' : 'the phase update'}.`
-    );
   if (
     action?.unfilled_tokens &&
     (event.content.startsWith('Confirmed ') ||
@@ -271,16 +314,19 @@ export function formatLaunchReport(
   }
   if (event.fee_wei !== undefined)
     details.push(`Gas ${formatEther(event.fee_wei)} ETH`);
-  if (details.length) lines.push(details.join(' · '));
+  return details;
+}
+
+function walletRetryDetail(
+  event: LaunchEvent,
+  action: LaunchAction | undefined
+): string | undefined {
   if (typeof event.next_wallet_retry === 'number')
-    lines.push(`Next attempt · ${utcTimestamp(event.next_wallet_retry)}`);
-  else if (event.next_wallet_retry === null)
-    lines.push(
-      action?.state === 'SIGNED' && action.broadcast_possible !== false
-        ? 'Reconcile the signed transaction in Drop Forge Launch before continuing manually.'
-        : 'Complete the remaining work manually in Drop Forge Launch.'
-    );
-  return lines.join('\n');
+    return `Next attempt · ${utcTimestamp(event.next_wallet_retry)}`;
+  if (event.next_wallet_retry !== null) return;
+  return action?.state === 'SIGNED' && action.broadcast_possible !== false
+    ? 'Reconcile the signed transaction in Drop Forge Launch before continuing manually.'
+    : 'Complete the remaining work manually in Drop Forge Launch.';
 }
 
 function reportEmoji(content: string): string {
