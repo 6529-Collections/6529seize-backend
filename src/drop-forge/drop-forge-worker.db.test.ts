@@ -500,7 +500,8 @@ describe('Drop Forge durable worker', () => {
               ])
             : '0x' + '0'.repeat(63) + '1'
         )
-      )
+      ),
+      getBalance: jest.fn().mockResolvedValue(testConfig.maxCost)
     };
     const boundary = new EthereumLaunchChain(
       testConfig,
@@ -522,6 +523,7 @@ describe('Drop Forge durable worker', () => {
         }).unsignedSerialized
     );
     await start();
+    expect(provider.getBalance).toHaveBeenCalledWith(data.signer);
     const first = (await read())!.data.actions[1];
     expect((await read())!.error).toBeNull();
     expect(first.attempt_error).toBeUndefined();
