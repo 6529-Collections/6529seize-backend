@@ -8,7 +8,11 @@ import {
   needsAuthenticatedUser
 } from '../auth/auth';
 import * as Joi from 'joi';
-import { PROFILE_HANDLE_REGEX } from '@/constants';
+import {
+  getAcceptedMediaOrigins,
+  getUserMediaOrigin,
+  PROFILE_HANDLE_REGEX
+} from '@/constants';
 import { getValidatedByJoiOrThrow } from '../validation';
 import { BadRequestException, NotFoundException } from '../../../exceptions';
 import { initMulterSingleMiddleware } from '../multer-middleware';
@@ -335,7 +339,6 @@ router.delete(
 );
 
 const HEX_COLOR_REGEX = /^#[0-9a-fA-F]{6}$/;
-const ALLOWED_BANNER_URL_PREFIX = 'https://d3lqz0a4bldqgf.cloudfront.net/';
 const BANNER_IMAGE_EXTENSION_REGEX = /\.(png|jpeg|jpg|gif|webp)$/i;
 
 const ApiCreateOrUpdateProfileRequestSchema: Joi.ObjectSchema<ApiCreateOrUpdateProfileRequest> =
@@ -358,7 +361,11 @@ const ApiCreateOrUpdateProfileRequestSchema: Joi.ObjectSchema<ApiCreateOrUpdateP
         if (HEX_COLOR_REGEX.test(value)) {
           return value;
         }
-        if (value.startsWith(ALLOWED_BANNER_URL_PREFIX)) {
+        if (
+          getAcceptedMediaOrigins().some((origin) =>
+            value.startsWith(`${origin}/`)
+          )
+        ) {
           if (!BANNER_IMAGE_EXTENSION_REGEX.test(value)) {
             return helpers.message({
               custom: `Banner URL must end with .png, .jpeg, .jpg, webp, or .gif`
@@ -367,7 +374,7 @@ const ApiCreateOrUpdateProfileRequestSchema: Joi.ObjectSchema<ApiCreateOrUpdateP
           return value;
         }
         return helpers.message({
-          custom: `Banner must be either a hex color code (e.g., #0f3BAc) or an image URL starting with ${ALLOWED_BANNER_URL_PREFIX}`
+          custom: `Banner must be either a hex color code (e.g., #0f3BAc) or an image URL starting with ${getUserMediaOrigin()}/`
         });
       }),
     banner_2: Joi.string().optional().allow(null),
