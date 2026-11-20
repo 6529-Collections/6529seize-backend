@@ -15,6 +15,7 @@ export type ActionState =
   | 'FAILED'
   | 'CANCELLED'
   | 'SKIPPED';
+export type WalletBlockReason = 'ADMIN_REQUIRED' | 'INSUFFICIENT_ETH';
 export interface LaunchPhase {
   name: string;
   start: number;
@@ -89,6 +90,8 @@ export interface LaunchAction {
   credited_tokens?: number;
   unsigned_tx?: string;
   signed_tx?: string;
+  // An older signed action without this field may already have been submitted.
+  broadcast_possible?: boolean;
   hash?: string;
   block_number?: number;
   block_hash?: string;
@@ -122,6 +125,8 @@ export interface LaunchEvent {
   formatted?: boolean;
   fee_wei?: string;
   airdrop_counts?: { wallets: number; tokens: number };
+  planned_airdrop?: { wallets: number; tokens: number; recipient?: string };
+  next_wallet_retry?: number | null;
   id: string;
   content: string;
   error: boolean;
@@ -129,6 +134,10 @@ export interface LaunchEvent {
   drop_id?: string;
 }
 export interface LaunchData {
+  wallet_blocks?: Record<
+    string,
+    { reason: WalletBlockReason; attempts: number; retry_at: number | null }
+  >;
   calendar?: { version: string; time_zone: string };
   post_mint_preview?: {
     checked_at: number;
@@ -195,6 +204,16 @@ export class LaunchSafetyError extends Error {
 }
 
 export class LaunchRevisionConflict extends LaunchSafetyError {}
+
+export class LaunchWalletBlockError extends LaunchSafetyError {
+  constructor(readonly reason: WalletBlockReason) {
+    super(
+      reason === 'ADMIN_REQUIRED'
+        ? 'Operational signer lacks creator-admin permission'
+        : 'Operational signer has insufficient gas funds'
+    );
+  }
+}
 
 export class LaunchRpcUnavailableError extends LaunchSafetyError {}
 

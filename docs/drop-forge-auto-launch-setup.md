@@ -379,9 +379,10 @@ For the observation rollout:
    supplied; total supply alone cannot prove recipient delivery.
 5. Inspect Launch and the operations wave. Due actions report missing permission;
    already-completed work is skipped after confirmed evidence. Earlier ordinary
-   readiness failures do not block later groups. Unsigned failed actions retry at
-   most once per minute within their execution window and each actual failed attempt
-   reports and tags `@dropforgeops`, so repeated alerts during observation are expected.
+   readiness failures do not block later groups. Missing permission and insufficient
+   ETH report once when detected and again at the final safe retry if it is still
+   needed. Each failed attempt tags `@dropforgeops`. Other retryable unsigned
+   failures can retry once per minute inside their execution window.
 
 The permission check rejects new transaction preparation before signing or
 broadcasting, so those permission failures do not spend gas. This validates timing,

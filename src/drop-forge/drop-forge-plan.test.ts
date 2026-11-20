@@ -176,9 +176,9 @@ describe('Drop Forge launch planning', () => {
     expect(waitingForPhaseAirdrops(record, batches[3])).toBe(false);
     expect(batches.map((it) => [it.due, it.deadline])).toEqual([
       [1000, 4000],
-      [6401, 7000],
-      [8201, 8800],
-      [8201, 8800]
+      [6460, 7000],
+      [8260, 8800],
+      [8260, 8800]
     ]);
     const publicUpdate = plan.actions[7];
     expect(publicUpdate.due).toBe(10001);

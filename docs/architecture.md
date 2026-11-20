@@ -2558,8 +2558,8 @@ phase closes, as encoded by `buildPhaseActions` in
 | Group | Eligible time | Actions |
 | -------------------------------- | ---------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
 | Opening | Immediately after accepted Launch, before Phase 0 opens at 17:40 | Initialize, then general/artist/team and Phase 0 subscriber batches |
-| Phase 1 | 18:20:01; Phase 1 opens at 18:30 | Update claim, then Phase 1 subscriber batches |
-| Phase 2 | 18:50:01; Phase 2 opens at 19:00 | Update claim, then Phase 2 and Public subscriber batches |
+| Phase 1 | 18:21; Phase 1 opens at 18:30 | Update claim, then Phase 1 subscriber batches |
+| Phase 2 | 18:51; Phase 2 opens at 19:00 | Update claim, then Phase 2 and Public subscriber batches |
 | Public | 19:20:01; public is scheduled from 19:20 | Update claim after Phase 2 closes; actual public availability follows transaction inclusion |
 | Research and optional Pay Artist | 18:00 the next day, after public closes at 17:00                 | Research tops up toward `min(310, frozen Craft edition)`; artist payment independently sends the final 50% share to the designated payee |
 | Metadata | Immediately after an accepted Craft Update Claim request | Synchronize republished metadata while preserving active phase configuration and completed allocations |

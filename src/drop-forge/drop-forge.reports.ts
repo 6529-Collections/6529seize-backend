@@ -27,12 +27,12 @@ export function memePageLink(chainId: number, claimId: number): string {
 }
 
 export function formatMintWatchReport(
-  memeLabel: string,
+  claimLabels: string,
   phase: string,
   outcome: MintWatchOutcome,
   issues: string[]
 ): string {
-  const headline = `${MINT_WATCH_PREFIX} **${memeLabel}** · ${phase} ${mintWatchEndings[outcome]}`;
+  const headline = `${MINT_WATCH_PREFIX} ${claimLabels} · ${phase} ${mintWatchEndings[outcome]}`;
   if (!issues.length) return headline;
   return `${headline}\n\n${issues.map((issue) => '- ' + issue).join('\n')}`;
 }
@@ -106,11 +106,45 @@ function reportContent(
     return `Claim #${data.claim_id}: ${operationName(data, action)} signed; awaiting broadcast. ${transaction}`;
   if (event.content.startsWith('Reserved '))
     return `Claim #${data.claim_id}: Preparing ${operationName(data, action)}.`;
+  const failureMarker = ` failed (${action.id}): `;
+  const failureStart = content.indexOf(failureMarker);
+  if (event.error && failureStart !== -1) {
+    const operation = operationName(data, action);
+    const label = operation.charAt(0).toUpperCase() + operation.slice(1);
+    return `${label} failed. ${content.slice(failureStart + failureMarker.length)}`;
+  }
   return content;
 }
 
 function airdropCounts(wallets: number, tokens: number): string {
   return `${wallets} ${wallets === 1 ? 'wallet' : 'wallets'} · ${tokens} ${tokens === 1 ? 'token' : 'tokens'}`;
+}
+
+const utcDate = new Intl.DateTimeFormat('en-GB', {
+  day: 'numeric',
+  month: 'short',
+  year: 'numeric',
+  timeZone: 'UTC'
+});
+const utcTime = new Intl.DateTimeFormat('en-GB', {
+  hour: '2-digit',
+  minute: '2-digit',
+  timeZone: 'UTC'
+});
+
+function utcTimestamp(timestamp: number): string {
+  const date = new Date(timestamp * 1000);
+  return `${utcDate.format(date)}, ${utcTime.format(date)} UTC`;
+}
+
+function mintWindow(phase: LaunchData['phases'][number]): string {
+  const start = new Date(phase.start * 1000);
+  const end = new Date(phase.end * 1000);
+  const day = utcDate.format(start);
+  const endDay = utcDate.format(end);
+  const endLabel =
+    day === endDay ? utcTime.format(end) : `${endDay}, ${utcTime.format(end)}`;
+  return `${phase.name} mint window · ${day}, ${utcTime.format(start)}–${endLabel} UTC`;
 }
 
 function actionDetails(data: LaunchData, action: LaunchAction): string {
@@ -128,15 +162,21 @@ function actionDetails(data: LaunchData, action: LaunchAction): string {
       : counts;
   }
   const phase = data.phases[action.phase];
-  return `Phase ${phase.name}: mint window ${new Date(phase.start * 1000).toISOString()} to ${new Date(phase.end * 1000).toISOString()}.`;
+  return mintWindow(phase);
 }
 
 export function formatLaunchReport(
   data: LaunchData,
-  event: LaunchEvent
+  event: LaunchEvent,
+  options?: { claimLabels: string; recipientEns?: string | null }
 ): string {
-  const card = launchCardLink(data.chain_id, data.claim_id);
-  if (event.formatted) return `${event.content}\n\n${card}`;
+  const claimLabels =
+    options?.claimLabels ??
+    `**${launchCardLink(data.chain_id, data.claim_id)}** · **${memePageLink(data.chain_id, data.claim_id)}**`;
+  if (event.formatted) {
+    const leading = /^(🔔|⚠️|✅) /.exec(event.content);
+    return `${leading?.[0] ?? ''}${claimLabels}\n\n${event.content.slice(leading?.[0].length ?? 0)}`;
+  }
   const explorer =
     data.chain_id === 1
       ? 'https://etherscan.io'
@@ -156,14 +196,62 @@ export function formatLaunchReport(
       event.content.includes(`: ${candidate.id} confirmed after`)
   );
   const emoji = event.error ? '⚠️' : reportEmoji(event.content);
+  const message = action
+    ? reportContent(data, event, action, content)
+    : content;
+  const prefix = `Claim #${data.claim_id}: `;
+  const body = message.startsWith(prefix)
+    ? message.slice(prefix.length)
+    : message;
   const lines = [
-    `${emoji} **${card}** · [Contract](${explorer}/address/${data.contract})`,
-    action ? reportContent(data, event, action, content) : content
+    `${emoji} ${claimLabels} · [Contract](${explorer}/address/${data.contract})`
   ];
+  if (action && event.next_wallet_retry !== undefined) {
+    const reason = body.endsWith('insufficient gas funds')
+      ? 'The operational wallet has insufficient ETH.'
+      : 'The operational wallet needs contract admin permission.';
+    lines.push(
+      `${action.kind === 'INITIALIZE' ? 'Initialization' : operationName(data, action)} blocked. ${reason}`
+    );
+  } else {
+    lines.push(body);
+  }
   const details =
-    action && !event.content.includes(': Sold out.')
+    action && !event.planned_airdrop && !event.content.includes(': Sold out.')
       ? [actionDetails(data, action)]
       : [];
+  if (event.planned_airdrop && action) {
+    const { tokens, wallets, recipient } = event.planned_airdrop;
+    const cards = `${tokens} ${tokens === 1 ? 'card' : 'cards'}`;
+    let destination = `across ${wallets} ${wallets === 1 ? 'wallet' : 'wallets'}`;
+    if (recipient) {
+      const address = `[${recipient.slice(0, 6)}…${recipient.slice(-4)}](${explorer}/address/${recipient})`;
+      destination = options?.recipientEns
+        ? `to ${options.recipientEns} (${address})`
+        : `to ${address}`;
+    }
+    const name = actionLabel(action)
+      .replace(/^Artist airdrops$/, 'artist airdrop')
+      .replace(/^Team airdrops$/, 'team airdrop')
+      .replace(' Subscription Airdrops', ' subscriber airdrop');
+    details.push(`Planned ${name} · ${cards} ${destination}`);
+  }
+  if (
+    event.error &&
+    action &&
+    ['INITIALIZE', 'UPDATE'].includes(action.kind) &&
+    data.actions.some(
+      (candidate) =>
+        candidate.kind === 'AIRDROP' &&
+        candidate.phase === action.phase &&
+        candidate.state !== 'CONFIRMED' &&
+        candidate.state !== 'SKIPPED' &&
+        candidate.id !== 'research-airdrop'
+    )
+  )
+    details.push(
+      `${data.phases[action.phase].name} airdrops are waiting for ${action.kind === 'INITIALIZE' ? 'initialization' : 'the phase update'}.`
+    );
   if (
     action?.unfilled_tokens &&
     (event.content.startsWith('Confirmed ') ||
@@ -184,6 +272,14 @@ export function formatLaunchReport(
   if (event.fee_wei !== undefined)
     details.push(`Gas ${formatEther(event.fee_wei)} ETH`);
   if (details.length) lines.push(details.join(' · '));
+  if (typeof event.next_wallet_retry === 'number')
+    lines.push(`Next attempt · ${utcTimestamp(event.next_wallet_retry)}`);
+  else if (event.next_wallet_retry === null)
+    lines.push(
+      action?.state === 'SIGNED' && action.broadcast_possible !== false
+        ? 'Reconcile the signed transaction in Drop Forge Launch before continuing manually.'
+        : 'Complete the remaining work manually in Drop Forge Launch.'
+    );
   return lines.join('\n');
 }
 

@@ -164,12 +164,20 @@ export async function continueLaunch(
   scheduled: boolean,
   settings?: DropForgeSettingsEntity
 ): Promise<void> {
-  const actions = record.data.actions.filter(
-    (action) =>
-      !settings ||
-      !disabledActionReason(settings, action) ||
-      ['SIGNED', 'RESERVED'].includes(action.state)
-  );
+  const actions = record.data.actions.flatMap((action) => {
+    if (['SIGNED', 'RESERVED'].includes(action.state)) return [action];
+    if (settings && disabledActionReason(settings, action)) return [];
+    const block = record.data.wallet_blocks?.[launchGroup(action)];
+    if (!block || isLaunchActionSettled(action)) return [action];
+    return block.retry_at === null
+      ? []
+      : [
+          {
+            ...action,
+            retry_at: Math.max(block.retry_at, action.retry_at ?? 0)
+          }
+        ];
+  });
   const enabled = { ...record, data: { ...record.data, actions } };
   const canContinue =
     actions.some((action) => !isLaunchActionSettled(action)) ||

@@ -17,6 +17,11 @@ import {
   formatOperationsPost
 } from '@/drop-forge/drop-forge.reports';
 import { validateForgeReporting } from '@/drop-forge/drop-forge.reporting-access';
+import {
+  claimReportLinks,
+  reportRecipientEns
+} from '@/drop-forge/drop-forge-report-links';
+import { getDropForgePolicy } from '@/drop-forge/drop-forge.policy';
 
 const logger = Logger.get('DROP_FORGE_REPORTING');
 export async function reportLaunchEvents(
@@ -54,12 +59,24 @@ async function reportLaunchCandidate(
         const events = record.data.events
           .filter((event) => !event.drop_id)
           .slice(0, 5);
+        if (!events.length) return notifications;
+        const claimLabels = await claimReportLinks(
+          record.data.chain_id,
+          record.data.contract,
+          record.data.claim_id,
+          ctx
+        );
         await events.reduce(
           (pending, event) =>
             pending.then(async () => {
               const report = await postForgeReport(
                 config,
-                formatLaunchReport(record.data, event),
+                formatLaunchReport(record.data, event, {
+                  claimLabels,
+                  recipientEns: event.planned_airdrop?.recipient
+                    ? await reportRecipientEns(event.planned_airdrop.recipient)
+                    : null
+                }),
                 event.error,
                 ctx
               );
@@ -155,7 +172,7 @@ export async function reportPreparationJob(
 ): Promise<boolean> {
   try {
     const pushes = await dropForgeJobsRepository.reportOne(
-      (job, ctx) => {
+      async (job, ctx) => {
         const reset = job.error === 'Distribution reset; process again';
         const detail = job.error ? '\n' + job.error : '';
         const operation = preparationOperation(job.kind);
@@ -165,10 +182,18 @@ export async function reportPreparationJob(
           outcome = 'paused. Sign in to resume EMMA input retrieval.';
         else if (job.status === 'COMPLETED')
           outcome = 'completed. Read-only results are ready.';
+        const claimLabels = await claimReportLinks(
+          getDropForgePolicy().chainId,
+          job.contract,
+          job.claim_id,
+          ctx
+        );
+        const alert =
+          ['FAILED', 'AWAITING_AUTH'].includes(job.status) && !reset;
         return postForgeReport(
           config,
-          `Claim #${job.claim_id}: ${operation} ${outcome}${detail}`,
-          ['FAILED', 'AWAITING_AUTH'].includes(job.status) && !reset,
+          `${alert ? '⚠️' : '🧾'} ${claimLabels}\n${operation} ${outcome}${detail}`,
+          alert,
           ctx
         );
       },

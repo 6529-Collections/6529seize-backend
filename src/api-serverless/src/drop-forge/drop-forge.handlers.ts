@@ -68,7 +68,9 @@ const planSchema = Joi.object<ApiDropForgePlanRequest>({
 });
 const controlSchema = Joi.object<ApiDropForgeControlRequest>({
   revision: Joi.number().integer().min(1).required(),
-  operation: Joi.string().valid('ARM', 'PAUSE', 'RESUME', 'CANCEL').required()
+  operation: Joi.string()
+    .valid('ARM', 'PAUSE', 'RESUME', 'CANCEL', 'RETRY')
+    .required()
 });
 const jobSchema = Joi.object<ApiDropForgeJobRequest>({
   phase_ids: Joi.array()

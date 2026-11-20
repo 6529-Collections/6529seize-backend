@@ -19,16 +19,15 @@ import { evidenceForClaim } from '@/drop-forge/drop-forge.evidence';
 import { postForgeReport } from '@/drop-forge/drop-forge.notifier';
 import { getDropForgePolicy } from '@/drop-forge/drop-forge.policy';
 import {
-  hasPublishedMemePage,
   readinessAllocations,
   readinessMerkleRoots,
   recordReadinessCheck
 } from '@/drop-forge/drop-forge.readiness.repository';
 import {
   formatMintWatchReport,
-  memePageLink,
   MintWatchOutcome
 } from '@/drop-forge/drop-forge.reports';
+import { claimReportLinks } from '@/drop-forge/drop-forge-report-links';
 import {
   dropForgeRepository,
   launchId
@@ -38,7 +37,6 @@ import { LaunchAction, LaunchData } from '@/drop-forge/drop-forge.types';
 import { getEthereumRpcProvider } from '@/ethereum-rpc/ethereum-rpc-provider';
 import { Logger } from '@/logging';
 import {
-  getCanonicalNextMintNumber,
   getMintNumberForMintDate,
   getMintSchedule,
   isMintEligibleUtcDay
@@ -446,23 +444,6 @@ async function collectReadiness(
   return { issues, outcome: configuration.soldOut ? 'soldOut' : 'ready' };
 }
 
-async function readinessMemeLabel(
-  chainId: number,
-  claimId: number
-): Promise<string> {
-  // The public site also serves the next mint's page before it is indexed.
-  if (claimId === getCanonicalNextMintNumber(new Date(Date.now())))
-    return memePageLink(chainId, claimId);
-
-  try {
-    if (await hasPublishedMemePage(claimId))
-      return memePageLink(chainId, claimId);
-  } catch {
-    logger.warn('Could not verify the public Meme page for a readiness report');
-  }
-  return `Meme #${claimId}`;
-}
-
 export async function runReadinessDelivery(id: string): Promise<void> {
   const checkpoint = resolveReadinessCheckpoint(id);
   if (!checkpoint) return;
@@ -478,7 +459,7 @@ export async function runReadinessDelivery(id: string): Promise<void> {
     card?.edition_size ? Number(card.edition_size) : null
   );
   const report = formatMintWatchReport(
-    await readinessMemeLabel(policy.chainId, claimId),
+    await claimReportLinks(policy.chainId, policy.creator, claimId, {}, !!card),
     phase.isPublic ? 'Public Phase' : phase.name,
     outcome,
     issues

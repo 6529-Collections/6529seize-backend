@@ -11,7 +11,10 @@ import {
   EthereumLaunchChain,
   LaunchChain
 } from '@/drop-forge/drop-forge.chain';
-import { LaunchRpcUnavailableError } from '@/drop-forge/drop-forge.types';
+import {
+  LaunchWalletBlockError,
+  LaunchRpcUnavailableError
+} from '@/drop-forge/drop-forge.types';
 import {
   testConfig,
   testLaunchData,
@@ -88,6 +91,44 @@ describe('Drop Forge durable worker', () => {
     await acknowledgeReports();
     await worker.tick();
   };
+  it('releases an unsubmitted signed airdrop when a manual hash is registered before broadcast', async () => {
+    const walletId = `${testConfig.chainId}:${testConfig.signer.toLowerCase()}`;
+    const raw = await signer.sign(
+      await chain.prepare(testLaunchData(), testLaunchData().actions[1])
+    );
+    await repository.wallet(
+      walletId,
+      async (pending, ctx) => {
+        await repository.change(
+          id,
+          async (record) => {
+            const action = record.data.actions[1];
+            action.state = 'SIGNED';
+            action.hash = Transaction.from(raw).hash!;
+            action.signed_tx = raw;
+            action.broadcast_possible = false;
+            record.data.manual_transactions = [
+              {
+                hash: 'manual-hash',
+                action: 'PHASE0_AIRDROP',
+                state: 'PENDING'
+              }
+            ];
+            pending.action_id = action.id;
+            pending.launch_id = id;
+          },
+          ctx
+        );
+      },
+      {}
+    );
+    await worker.tick();
+    const saved = (await read())!;
+    expect(chain.broadcast).not.toHaveBeenCalled();
+    expect(saved.data.actions[1].state).toBe('PENDING');
+    expect(saved.data.actions[1].hash).toBeUndefined();
+    expect(saved.data.manual_transactions?.[0].state).toBe('PENDING');
+  });
   it.each([
     { capacity: 0, phase2: [], publicDrop: [], unfilled: [8, 3] },
     { capacity: 4, phase2: [3, 1], publicDrop: [], unfilled: [4, 3] },
@@ -1131,15 +1172,14 @@ describe('scheduled groups and manual takeover', () => {
       read: () => repository.find(id, {})
     };
   }
-  it('reports each failed readiness check, then skips manual init and Phase 0 delivery and runs the next group without Resume', async () => {
+  it('reports the setup failure, then skips manual init and Phase 0 delivery and runs the next group without Resume', async () => {
     const f = await setup();
     await f.worker.tick();
     let saved = (await f.read())!;
     expect(saved.state).toBe('RUNNING');
-    expect(
-      saved.data.actions.slice(0, 2).every((action) => !!action.attempt_error)
-    ).toBe(true);
-    expect(saved.data.events.filter((event) => event.error)).toHaveLength(2);
+    expect(saved.data.actions[0].attempt_error).toBeDefined();
+    expect(saved.data.actions[1].attempt_error).toBeUndefined();
+    expect(saved.data.events.filter((event) => event.error)).toHaveLength(1);
     await f.acknowledge();
     const receipt = {
       status: 1,
@@ -1193,7 +1233,7 @@ describe('scheduled groups and manual takeover', () => {
     expect(f.signer.sign).toHaveBeenCalledTimes(1);
     expect(
       f.chain.prepare.mock.calls.filter((call) => call[1].kind === 'AIRDROP')
-    ).toHaveLength(1); // only the original failed readiness attempt
+    ).toHaveLength(0);
   });
   it('does not let an expired uncompleted group prevent the next scheduled readiness attempt', async () => {
     const f = await setup();
@@ -1210,12 +1250,37 @@ describe('scheduled groups and manual takeover', () => {
     });
     expect(saved.data.actions[2].attempt_count).toBe(1);
   });
-  it('retries unfunded actions after the retry interval and preserves the wave report boundary', async () => {
+  it.each(['ADMIN_REQUIRED', 'INSUFFICIENT_ETH'] as const)(
+    'keeps %s to two attempts for a phase and leaves dependent airdrops waiting',
+    async (reason) => {
+      const f = await setup();
+      f.chain.prepare.mockRejectedValue(new LaunchWalletBlockError(reason));
+      await f.worker.tick();
+      let saved = (await f.read())!;
+      const final = saved.data.wallet_blocks?.['phase-0']?.retry_at;
+      expect(final).toEqual(expect.any(Number));
+      await f.acknowledge();
+      f.chain.now.mockResolvedValue(final! - 1);
+      await f.worker.tick();
+      expect(f.chain.prepare).toHaveBeenCalledTimes(1);
+      f.chain.now.mockResolvedValue(final!);
+      await f.worker.tick();
+      await f.acknowledge();
+      f.chain.now.mockResolvedValue(final! + 60);
+      await f.worker.tick();
+      saved = (await f.read())!;
+      expect(f.chain.prepare).toHaveBeenCalledTimes(2);
+      expect(f.signer.sign).not.toHaveBeenCalled();
+      expect(saved.data.events.filter((event) => event.error)).toHaveLength(2);
+      expect(saved.data.wallet_blocks?.['phase-0']?.retry_at).toBeNull();
+    }
+  );
+  it('retries transient errors after the retry interval and preserves the wave report boundary', async () => {
     const f = await setup();
     await f.worker.tick();
     await f.acknowledge();
     await f.worker.tick();
-    expect(f.chain.prepare).toHaveBeenCalledTimes(2);
+    expect(f.chain.prepare).toHaveBeenCalledTimes(1);
     f.chain.now.mockResolvedValue(1160);
     f.chain.prepare.mockResolvedValue(f.unsigned);
     await f.worker.tick();

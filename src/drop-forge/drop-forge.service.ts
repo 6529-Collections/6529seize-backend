@@ -34,8 +34,14 @@ import { ForbiddenException, NotFoundException } from '@/exceptions';
 import { RequestContext } from '@/request.context';
 import { dropForgePreparationRepository } from '@/drop-forge/drop-forge.preparation.repository';
 import { validateForgeReporting } from '@/drop-forge/drop-forge.reporting-access';
+import { readForgeSettings } from '@/drop-forge/drop-forge.settings';
+import { canRetryWalletBlock } from '@/drop-forge/drop-forge.wallet-retry';
 
 export function mapLaunch(record: LaunchRecord): ApiDropForgeLaunch {
+  const policy = Object.keys(record.data.wallet_blocks ?? {}).length
+    ? getDropForgePolicy()
+    : undefined;
+  const now = Math.floor(Date.now() / 1000);
   return {
     metadata_location: record.data.metadata,
     manual_pending:
@@ -83,6 +89,13 @@ export function mapLaunch(record: LaunchRecord): ApiDropForgeLaunch {
                 record.data.actions.find((action) => action.id === id)!
               )
             : undefined);
+        const original = record.data.actions.find(
+          (action) => action.id === id
+        )!;
+        const group = launchGroup(original);
+        const walletBlock = ['PENDING', 'SIGNED'].includes(state)
+          ? record.data.wallet_blocks?.[group]
+          : undefined;
         return {
           recovery: inspection
             ? {
@@ -121,12 +134,14 @@ export function mapLaunch(record: LaunchRecord): ApiDropForgeLaunch {
             : undefined,
           payment_recipient: payment?.recipient ?? null,
           payment_amount_wei: payment?.amount_wei ?? null,
-          group: launchGroup(
-            record.data.actions.find((action) => action.id === id)!
-          ),
+          group,
+          wallet_blocked: walletBlock !== undefined,
+          wallet_retry_available: policy
+            ? canRetryWalletBlock(record, original, policy, now)
+            : false,
           attempt_count: attempt_count ?? 0,
           attempt_error: attempt_error ?? null,
-          retry_at: retry_at ?? null,
+          retry_at: walletBlock ? walletBlock.retry_at : (retry_at ?? null),
           observed: observed ?? false,
           label,
           kind: kind as ApiDropForgeLaunch['actions'][number]['kind'],
@@ -222,6 +237,61 @@ export async function controlLaunch(
 ): Promise<LaunchRecord> {
   const config = getDropForgeConfig();
   const id = launchId(config.chainId, contract, claim);
+  if (request.operation === 'RETRY') {
+    await dropForgeRepository.wallet(
+      `${config.chainId}:${config.signer.toLowerCase()}`,
+      async (pending, walletCtx) => {
+        const settings = await readForgeSettings(config, walletCtx, true);
+        if (!settings.automation_enabled)
+          throw new LaunchSafetyError('Automatic launch is off');
+        await dropForgeRepository.change(
+          id,
+          async (record) => {
+            if (record.revision !== request.revision)
+              throw new LaunchRevisionConflict(
+                'Launch revision changed; reload before retrying'
+              );
+            if (
+              !['ARMED', 'RUNNING'].includes(record.state) ||
+              record.data.manual_lease ||
+              record.data.manual_transactions?.some(
+                (proof) => proof.state === 'PENDING'
+              )
+            )
+              throw new LaunchSafetyError(
+                'Wait for existing launch work to reconcile before retrying'
+              );
+            const now = await new EthereumLaunchChain(config).now();
+            const retryable = record.data.actions.find(
+              (action) =>
+                canRetryWalletBlock(record, action, config, now) &&
+                (!pending.launch_id ||
+                  (pending.launch_id === id &&
+                    pending.action_id === action.id &&
+                    action.state === 'SIGNED' &&
+                    !action.recovery))
+            );
+            if (!retryable)
+              throw new LaunchSafetyError(
+                'No blocked action can still be retried in its execution window'
+              );
+            const group = launchGroup(retryable);
+            record.data.wallet_blocks![group].retry_at = now;
+            for (const action of record.data.actions)
+              if (
+                launchGroup(action) === group &&
+                ['PENDING', 'SIGNED'].includes(action.state)
+              )
+                delete action.retry_at;
+          },
+          walletCtx,
+          true
+        );
+      },
+      ctx
+    );
+    return getLaunch(contract, claim, ctx);
+  }
   const applyControl = (controlCtx: RequestContext) =>
     dropForgeRepository.change(
       id,

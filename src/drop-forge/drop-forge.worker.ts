@@ -3,7 +3,8 @@ import {
   reportActionFailure,
   reportActionSkip,
   capRankedAirdrop,
-  skipSoldOutAction
+  skipSoldOutAction,
+  launchGroup
 } from '@/drop-forge/drop-forge.groups';
 import {
   DropForgeRecovery,
@@ -14,6 +15,7 @@ import { DropForgeConfig } from '@/drop-forge/drop-forge.config';
 import { LaunchChain, ChainReceipt } from '@/drop-forge/drop-forge.chain';
 import { mirrorCompletion } from '@/drop-forge/drop-forge.completion';
 import { reconcileManual } from '@/drop-forge/drop-forge.manual';
+import { recordWalletBlock } from '@/drop-forge/drop-forge.wallet-retry';
 import {
   PUBLIC_SUBSCRIPTION_AIRDROP_LABEL,
   sourceMatchesLaunch,
@@ -31,6 +33,7 @@ import {
   LaunchRpcUnavailableError,
   SupplyEvidenceError,
   LaunchSafetyError,
+  LaunchWalletBlockError,
   DROP_FORGE_PLAN_VERSION,
   assertPhaseScopedPlan,
   isLaunchActionSettled
@@ -54,6 +57,17 @@ export function waitingForPhaseAirdrops(
   record: LaunchRecord,
   action: LaunchAction
 ): boolean {
+  if (
+    action.kind === 'AIRDROP' &&
+    (action.phase === 0 || action.label?.endsWith(' Subscription Airdrops')) &&
+    record.data.actions.some(
+      (setup) =>
+        setup.phase === action.phase &&
+        (setup.kind === 'INITIALIZE' || setup.kind === 'UPDATE') &&
+        setup.state !== 'CONFIRMED'
+    )
+  )
+    return true;
   if (action.ranked_subscription) {
     const preceding = record.data.actions.slice(
       0,
@@ -94,6 +108,29 @@ function matchesObservedProof(
     proof.method === method &&
     proof.metadata === (action.target_metadata ?? record.data.metadata)
   );
+}
+
+function hasPendingManualWork(record: LaunchRecord): boolean {
+  return (
+    !!record.data.manual_lease ||
+    !!record.data.manual_transactions?.some(
+      (proof) => proof.state === 'PENDING'
+    )
+  );
+}
+
+function clearUnsubmittedAction(
+  action: LaunchAction,
+  pending: PendingSigner
+): void {
+  action.state = 'PENDING';
+  clearAirdropCap(action);
+  delete action.unsigned_tx;
+  delete action.signed_tx;
+  delete action.hash;
+  delete action.broadcast_possible;
+  pending.launch_id = null;
+  pending.action_id = null;
 }
 
 export class DropForgeWorker {
@@ -272,6 +309,7 @@ export class DropForgeWorker {
       action.state === 'RESERVED' &&
       (!runnable(record) ||
         !!disabledActionReason(settings, action) ||
+        hasPendingManualWork(record) ||
         expiredUnsigned)
     ) {
       if (expiredUnsigned) {
@@ -401,17 +439,34 @@ export class DropForgeWorker {
   ): Promise<Work | null> {
     if (recordDisabledAction(record, action, settings)) return null;
     delete action.disabled_reason;
+    const group = launchGroup(action);
+    const walletBlock = record.data.wallet_blocks?.[group];
+    const waitingForWallet =
+      walletBlock &&
+      (walletBlock.retry_at === null || walletBlock.retry_at > now);
+    if (!waitingForWallet && (action.retry_at ?? 0) > now) return null;
+    let prepared = action;
     try {
-      if ((action.retry_at ?? 0) > now) return null;
       if (await this.observe(record, action)) return null;
-      const remaining = await this.rankedAirdropCapacity(record, action);
+      if (waitingForWallet) return null;
+      const waitingForPhase = waitingForPhaseAirdrops(record, action);
+      // Supply is unavailable before initialization. For later phases it can
+      // still prove a sellout while the phase update is outstanding.
+      const remaining =
+        action.phase === 0 && waitingForPhase
+          ? undefined
+          : await this.rankedAirdropCapacity(record, action);
       if (remaining === 0) {
         skipSoldOutAction(record, action);
         return null;
       }
+      if (waitingForPhase) {
+        if (now >= action.deadline - SUBMISSION_CUTOFF_SECONDS)
+          action.window_reported = true;
+        return null;
+      }
       if (this.deferAction(record, action, now)) return null;
-      if (waitingForPhaseAirdrops(record, action)) return null;
-      const prepared =
+      prepared =
         action.ranked_subscription && remaining !== undefined
           ? capRankedAirdrop(action, remaining)
           : action;
@@ -422,13 +477,15 @@ export class DropForgeWorker {
         ctx,
         artistPaymentLimit(settings)
       );
+      if (record.data.wallet_blocks) delete record.data.wallet_blocks[group];
       if (prepared !== action) {
         Object.assign(action, prepared);
         work.action = action;
       }
       return work;
     } catch (error) {
-      this.reportPreparationFailure(record, action, now, error);
+      if (!waitingForWallet)
+        this.reportPreparationFailure(record, action, now, error, prepared);
       return null;
     }
   }
@@ -437,10 +494,15 @@ export class DropForgeWorker {
     record: LaunchRecord,
     action: LaunchAction,
     now: number,
-    error: unknown
+    error: unknown,
+    attempted: LaunchAction
   ): void {
     const outsideWindow = now >= action.deadline - SUBMISSION_CUTOFF_SECONDS;
     if (outsideWindow && action.window_reported) return;
+    const walletRetry =
+      error instanceof LaunchWalletBlockError
+        ? recordWalletBlock(record, action, this.config, error.reason, now)
+        : undefined;
     reportActionFailure(
       record,
       action,
@@ -448,7 +510,9 @@ export class DropForgeWorker {
       error instanceof LaunchSafetyError
         ? error.message
         : 'RPC or readiness check failed',
-      error
+      error,
+      undefined,
+      { attempted, walletRetry }
     );
     if (outsideWindow) action.window_reported = true;
   }
@@ -672,7 +736,10 @@ export class DropForgeWorker {
         )
           return;
         const settings = await readForgeSettings(this.config, ctx, true);
-        if (recordDisabledAction(record, action, settings)) {
+        if (
+          recordDisabledAction(record, action, settings) ||
+          hasPendingManualWork(record)
+        ) {
           action.state = 'PENDING';
           clearAirdropCap(action);
           delete action.unsigned_tx;
@@ -701,6 +768,7 @@ export class DropForgeWorker {
         }
         action.signed_tx = raw;
         action.hash = signed.hash!;
+        action.broadcast_possible = false;
         action.state = 'SIGNED';
         addLaunchEvent(record, `Signed ${action.id}: ${action.hash}`);
         await this.repository.save(record, ctx);
@@ -728,6 +796,13 @@ export class DropForgeWorker {
           (it) => it.id === work.action.id
         )!;
         if (action.state !== 'RESERVED' || action.signed_tx) return;
+        const attempted = { ...action };
+        if (error instanceof LaunchWalletBlockError) {
+          clearUnsubmittedAction(action, pending);
+          this.reportPreparationFailure(record, action, now, error, attempted);
+          await this.repository.save(record, ctx);
+          return;
+        }
         action.state = 'PENDING';
         clearAirdropCap(action);
         delete action.unsigned_tx;
@@ -751,7 +826,7 @@ export class DropForgeWorker {
   private async reconcile(walletId: string, launch: string): Promise<void> {
     // Receipt reads are safe to repeat. Broadcast happens only after the raw
     // transaction and its hash have committed to the durable ledger.
-    await this.repository.wallet(
+    const proceed = await this.repository.wallet(
       walletId,
       async (pending, ctx) => {
         if (pending.launch_id !== launch) return;
@@ -771,6 +846,22 @@ export class DropForgeWorker {
           );
           await mirrorCompletion(record, ctx);
           await this.repository.save(record, ctx);
+          return;
+        }
+        if (hasPendingManualWork(record)) {
+          if (action.broadcast_possible === false) {
+            // This transaction cannot have reached the chain. Let normal manual
+            // reconciliation credit any deliveries before rebuilding it.
+            clearUnsubmittedAction(action, pending);
+            await this.repository.save(record, ctx);
+          } else if (runnable(record)) {
+            setLaunchState(
+              record,
+              'BLOCKED',
+              'Manual transaction reported while a signed transaction is unresolved. Reconcile the signed transaction before continuing.'
+            );
+            await this.repository.save(record, ctx);
+          }
           return;
         }
         if (record.data.plan_version !== DROP_FORGE_PLAN_VERSION) {
@@ -823,51 +914,77 @@ export class DropForgeWorker {
           await this.repository.save(record, ctx);
           return;
         }
-        await this.broadcastAction(
+        return this.broadcastAction(
           record,
-          action,
+          { action, pending },
           ctx,
           artistPaymentLimit(settings)
         );
       },
       {}
     );
+    if (proceed) await this.reconcile(walletId, launch);
   }
 
   private async broadcastAction(
     record: LaunchRecord,
-    action: LaunchAction,
+    { action, pending }: { action: LaunchAction; pending: PendingSigner },
     ctx: RequestContext,
     artistPaymentCap: bigint
-  ): Promise<void> {
+  ): Promise<true | void> {
     const now = await this.chain.now();
+    const group = launchGroup(action);
+    const walletBlock = record.data.wallet_blocks?.[group];
+    if (
+      walletBlock &&
+      (walletBlock.retry_at === null || walletBlock.retry_at > now)
+    )
+      return;
     if ((action.retry_at ?? 0) > now) return;
     try {
       await this.chain.verify(record.data, action, false, artistPaymentCap);
     } catch (error) {
-      reportActionFailure(
-        record,
-        action,
-        now,
-        error instanceof Error
-          ? error.message
-          : 'Readiness changed before broadcast',
-        error
-      );
+      if (error instanceof LaunchWalletBlockError) {
+        const attempted = { ...action };
+        if (action.broadcast_possible === false)
+          clearUnsubmittedAction(action, pending);
+        this.reportPreparationFailure(record, action, now, error, attempted);
+      } else {
+        reportActionFailure(
+          record,
+          action,
+          now,
+          error instanceof Error
+            ? error.message
+            : 'Readiness changed before broadcast',
+          error
+        );
+      }
       await this.repository.save(record, ctx);
       return;
+    }
+    if (action.broadcast_possible === false) {
+      // Persist the possibility of submission before handing the intent to RPC.
+      action.broadcast_possible = true;
+      await this.repository.save(record, ctx);
+      return true;
     }
     action.retry_at = now + 60;
     // Keep the settings lock until submission returns so Off and cap reductions
     // take effect before any later broadcast. Always retain the original hash.
     try {
       await this.chain.broadcast(action.signed_tx!);
-    } catch {
-      addLaunchEvent(
-        record,
-        `Claim #${record.data.claim_id}: Broadcast attempt failed for ${action.id}: ${action.hash}; exact signed transaction retained pending receipt reconciliation.`,
-        true
-      );
+      if (record.data.wallet_blocks) delete record.data.wallet_blocks[group];
+    } catch (error) {
+      if (error instanceof LaunchWalletBlockError) {
+        this.reportPreparationFailure(record, action, now, error, action);
+      } else {
+        addLaunchEvent(
+          record,
+          `Claim #${record.data.claim_id}: Broadcast attempt failed for ${action.id}: ${action.hash}; exact signed transaction retained pending receipt reconciliation.`,
+          true
+        );
+      }
     }
     await this.repository.save(record, ctx);
   }

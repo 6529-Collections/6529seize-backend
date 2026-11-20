@@ -17,6 +17,7 @@ import {
   LaunchData,
   LaunchRpcUnavailableError,
   LaunchSafetyError,
+  LaunchWalletBlockError,
   RecoveryAttempt,
   SupplyEvidence,
   SupplyEvidenceError,
@@ -407,7 +408,13 @@ export class EthereumLaunchChain implements LaunchChain {
     return evidence;
   }
   async broadcast(raw: string): Promise<void> {
-    await rpcWithDeadline(this.provider.broadcastTransaction(raw));
+    try {
+      await rpcWithDeadline(this.provider.broadcastTransaction(raw));
+    } catch (error) {
+      if (isError(error, 'INSUFFICIENT_FUNDS'))
+        throw new LaunchWalletBlockError('INSUFFICIENT_ETH');
+      throw error;
+    }
   }
   async assertAdmin(wallet: string): Promise<boolean> {
     return creatorAdmin(this.provider, this.config.creator, wallet);
@@ -422,9 +429,16 @@ export class EthereumLaunchChain implements LaunchChain {
     assertPhaseScopedPlan(data);
     this.assertBinding(data);
     if (!(await this.assertAdmin(data.signer)))
-      throw new LaunchSafetyError(
-        'Operational signer lacks creator-admin permission'
-      );
+      throw new LaunchWalletBlockError('ADMIN_REQUIRED');
+    if (!captureSupply && action.unsigned_tx) {
+      const tx = Transaction.from(action.unsigned_tx);
+      const fee = tx.maxFeePerGas ?? tx.gasPrice ?? BigInt(0);
+      if (
+        (await rpcWithDeadline(this.provider.getBalance(data.signer))) <
+        tx.value + tx.gasLimit * fee
+      )
+        throw new LaunchWalletBlockError('INSUFFICIENT_ETH');
+    }
     if (action.kind === 'PAY_ARTIST') {
       await this.verifyArtistPayment(
         data,
@@ -1076,9 +1090,7 @@ export class EthereumLaunchChain implements LaunchChain {
     const estimate = await rpcWithDeadline(
       this.provider.estimateGas(request).catch((error: unknown) => {
         if (isError(error, 'INSUFFICIENT_FUNDS'))
-          throw new LaunchSafetyError(
-            'Operational signer has insufficient gas funds'
-          );
+          throw new LaunchWalletBlockError('INSUFFICIENT_ETH');
         throw error;
       })
     );
@@ -1092,9 +1104,7 @@ export class EthereumLaunchChain implements LaunchChain {
       (await rpcWithDeadline(this.provider.getBalance(data.signer))) <
       request.value + gasLimit * fee.maxFeePerGas
     )
-      throw new LaunchSafetyError(
-        'Operational signer has insufficient gas funds'
-      );
+      throw new LaunchWalletBlockError('INSUFFICIENT_ETH');
     return Transaction.from({ ...request, from: undefined, gasLimit })
       .unsignedSerialized;
   }

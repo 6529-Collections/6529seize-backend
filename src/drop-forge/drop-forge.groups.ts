@@ -2,7 +2,8 @@ import {
   LaunchAction,
   LaunchRecord,
   SupplyEvidenceError,
-  isLaunchActionSettled
+  isLaunchActionSettled,
+  transactionAirdropRecipients
 } from '@/drop-forge/drop-forge.types';
 import { isResearchAirdrop } from '@/drop-forge/drop-forge.research';
 import { addLaunchEvent } from '@/drop-forge/drop-forge.repository';
@@ -33,7 +34,8 @@ export function reportActionFailure(
   now: number,
   message: string,
   error?: unknown,
-  feeWei?: string
+  feeWei?: string,
+  options?: { attempted?: LaunchAction; walletRetry?: number | null }
 ): void {
   action.attempt_count = (action.attempt_count ?? 0) + 1;
   action.attempt_error = message;
@@ -43,12 +45,30 @@ export function reportActionFailure(
     action.supply_retry_count = (action.supply_retry_count ?? 0) + 1;
     delay = [60, 300, 900][Math.min(action.supply_retry_count - 1, 2)];
   }
-  action.retry_at = now + delay;
+  action.retry_at = options?.walletRetry ?? now + delay;
+  if (options?.walletRetry === null) delete action.retry_at;
+  const attempted = options?.attempted ?? action;
+  const recipients =
+    attempted.kind === 'AIRDROP' ? transactionAirdropRecipients(attempted) : [];
+  const wallets = new Set(
+    recipients.map(({ address }) => address.toLowerCase())
+  );
   addLaunchEvent(
     record,
     `Claim #${record.data.claim_id}: ${actionDescription(record, action)} attempt ${action.attempt_count} failed (${action.id}): ${message}`,
     true,
-    { fee_wei: feeWei }
+    {
+      fee_wei: feeWei,
+      next_wallet_retry: options?.walletRetry,
+      planned_airdrop:
+        wallets.size > 0
+          ? {
+              wallets: wallets.size,
+              tokens: recipients.reduce((total, row) => total + row.amount, 0),
+              recipient: wallets.size === 1 ? recipients[0].address : undefined
+            }
+          : undefined
+    }
   );
 }
 

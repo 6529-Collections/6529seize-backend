@@ -177,7 +177,10 @@ function buildPhaseActions(
 ): LaunchAction[] {
   const actions: LaunchAction[] = [];
   for (let phase = 0; phase < phases.length; phase++) {
-    const due = phase === 0 ? input.initialize_at : phases[phase - 1].end + 1;
+    const due =
+      phase === 0
+        ? input.initialize_at
+        : phases[phase - 1].end + (input.phases[phase].is_public ? 1 : 60);
     const groups = [
       ...(phase === 0 ? categoryRecipients : []),
       ...phaseGroups[phase]
@@ -380,7 +383,7 @@ export const SUBMISSION_CUTOFF_SECONDS = 120;
 // Budget the scheduler's delivery window once. Every transaction must have
 // time to confirm, and the last transaction must start before the cutoff.
 export function launchPreparationSeconds(
-  config: DropForgeConfig,
+  config: Pick<DropForgeConfig, 'confirmations'>,
   transactions: number
 ): number {
   const confirmation = config.confirmations * 12 + RECEIPT_POLL_SECONDS;

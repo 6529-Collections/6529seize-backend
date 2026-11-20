@@ -111,7 +111,7 @@ it('posts an untagged Ready report for a manual public launch without a saved pl
   const { claimId } = resolveReadinessCheckpoint(publicDelivery)!;
   expect(notifier.postForgeReport).toHaveBeenCalledWith(
     testConfig,
-    `[👀 MINT WATCH] **[Meme #${claimId}](https://staging.6529.io/the-memes/${claimId})** · Public Phase is Ready ✅`,
+    `[👀 MINT WATCH] **[Claim #${claimId}](https://staging.6529.io/drop-forge/launch/${claimId})** · **[Meme #${claimId}](https://staging.6529.io/the-memes/${claimId})** · Public Phase is Ready ✅`,
     false,
     {}
   );
@@ -125,7 +125,7 @@ it('warns when only the Drop Forge card is missing', async () => {
   const { claimId } = resolveReadinessCheckpoint(publicDelivery)!;
   expect(notifier.postForgeReport).toHaveBeenCalledWith(
     testConfig,
-    `[👀 MINT WATCH] **Meme #${claimId}** · Public Phase needs attention ⚠️\n\n- No Drop Forge card was found for this scheduled claim.`,
+    `[👀 MINT WATCH] **Claim #${claimId}** · **Meme #${claimId}** · Public Phase needs attention ⚠️\n\n- No Drop Forge card was found for this scheduled claim.`,
     true,
     {}
   );
@@ -138,7 +138,7 @@ it('reports a missing scheduled claim without needing a plan or signing configur
   const { claimId } = resolveReadinessCheckpoint(publicDelivery)!;
   expect(notifier.postForgeReport).toHaveBeenCalledWith(
     testConfig,
-    `[👀 MINT WATCH] **Meme #${claimId}** · Public Phase needs attention 🚨\n\n- No Drop Forge card was found for this scheduled claim.\n- The claim is missing on-chain.`,
+    `[👀 MINT WATCH] **Claim #${claimId}** · **Meme #${claimId}** · Public Phase needs attention 🚨\n\n- No Drop Forge card was found for this scheduled claim.\n- The claim is missing on-chain.`,
     true,
     {}
   );
@@ -154,7 +154,7 @@ it('links the upcoming public Meme page before it is indexed', async () => {
   expect(notifier.postForgeReport).toHaveBeenCalledWith(
     testConfig,
     expect.stringContaining(
-      `[👀 MINT WATCH] **[Meme #${claimId}](https://staging.6529.io/the-memes/${claimId})** · Phase 0 needs attention 🚨`
+      `[👀 MINT WATCH] **[Claim #${claimId}](https://staging.6529.io/drop-forge/launch/${claimId})** · **[Meme #${claimId}](https://staging.6529.io/the-memes/${claimId})** · Phase 0 needs attention 🚨`
     ),
     true,
     {}
@@ -218,7 +218,7 @@ it('checks Phase 2 and Public allocations separately on a manual launch', async 
   const content = jest.mocked(notifier.postForgeReport).mock.calls[0][1];
   const { claimId } = resolveReadinessCheckpoint(phase2Delivery)!;
   expect(content.split('\n')[0]).toBe(
-    `[👀 MINT WATCH] **[Meme #${claimId}](https://staging.6529.io/the-memes/${claimId})** · Phase 2 needs attention 🚨`
+    `[👀 MINT WATCH] **[Claim #${claimId}](https://staging.6529.io/drop-forge/launch/${claimId})** · **[Meme #${claimId}](https://staging.6529.io/the-memes/${claimId})** · Phase 2 needs attention 🚨`
   );
   expect(content).toContain('Public subscription airdrops are incomplete');
   expect(content).not.toContain('Phase 2 subscription airdrops');
