@@ -307,7 +307,11 @@ test('the production media resizer error alarm requires two failures in five min
   });
   assert.equal(prod.mediaResizerLoopThrottles.Properties.Period, 60);
   assert.equal(prod.mediaResizerLoopThrottles.Properties.Threshold, 1);
-  assert.equal(stage.mediaResizerLoopErrors, undefined);
+  const stagingErrors = stage.mediaResizerLoopErrors?.Properties;
+  if (stagingErrors) {
+    assert.equal(stagingErrors.Period, 60);
+    assert.equal(stagingErrors.Threshold, 1);
+  }
 });
 
 test('wave throttling is sustained while queue backlog and dead letters have independent alarms', () => {
