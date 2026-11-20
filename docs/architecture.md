@@ -2555,10 +2555,10 @@ flowchart LR
 
 ### Drop Forge scheduled groups
 
-Craft Launch accepts the standard plan derived from the configured Memes calendar;
-there is no per-drop manual time handoff. These are the standard `Europe/Athens`
-times, including DST. Later transitions become eligible one second after the prior
-phase closes, as encoded by `buildPhaseActions` in
+Craft Launch derives the standard plan from the configured Memes calendar.
+The times below use `Europe/Athens`, including daylight saving time. Phase 1
+and Phase 2 become eligible one minute after the preceding phase closes.
+Public becomes eligible one second after Phase 2 closes. See `buildPhaseActions` in
 [`drop-forge.plan.ts`](../src/drop-forge/drop-forge.plan.ts).
 
 | Group | Eligible time | Actions |
