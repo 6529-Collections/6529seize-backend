@@ -2,6 +2,7 @@ import { AuthenticationContext } from '@/auth-context';
 import { DropType } from '@/entities/IDrop';
 import { ProfileProxyActionType } from '@/entities/IProfileProxyAction';
 import { WaveType } from '@/entities/IWave';
+import { ApiDropCurationRequestPlacementEnum as Placement } from '@/api/generated/models/ApiDropCurationRequest';
 import { CurationsApiService } from './curations.api.service';
 
 describe('CurationsApiService', () => {
@@ -661,6 +662,111 @@ describe('CurationsApiService', () => {
         expect.objectContaining({ drop_id: 'drop-3', priority_order: 2 })
       ])
     );
+  });
+
+  it.each([
+    {
+      placement: Placement.Top,
+      anchor_drop_id: undefined,
+      expected: ['drop-1', 'drop-4', 'drop-3', 'drop-2']
+    },
+    {
+      placement: Placement.Bottom,
+      anchor_drop_id: undefined,
+      expected: ['drop-4', 'drop-3', 'drop-2', 'drop-1']
+    },
+    {
+      placement: Placement.Before,
+      anchor_drop_id: 'drop-3',
+      expected: ['drop-4', 'drop-1', 'drop-3', 'drop-2']
+    },
+    {
+      placement: Placement.After,
+      anchor_drop_id: 'drop-3',
+      expected: ['drop-4', 'drop-3', 'drop-1', 'drop-2']
+    }
+  ])(
+    'places a drop with $placement against the saved order',
+    async ({ placement, anchor_drop_id, expected }) => {
+      const { service, storedDropCurations, ctx } = createService({
+        dropCurations: [1, 2, 3, 4].map((priority_order) => ({
+          drop_id: `drop-${priority_order}`,
+          curation_id: 'curation-1',
+          curated_by: 'profile-1',
+          created_at: priority_order,
+          updated_at: priority_order,
+          wave_id: 'wave-1',
+          priority_order
+        }))
+      });
+
+      await service.addDropCuration(
+        'drop-1',
+        { curation_id: 'curation-1', placement, anchor_drop_id },
+        ctx
+      );
+
+      expect(
+        [...storedDropCurations]
+          .sort((a, b) => Number(b.priority_order) - Number(a.priority_order))
+          .map((item) => item.drop_id)
+      ).toEqual(expected);
+    }
+  );
+
+  it('rejects a placement with an anchor outside the curation', async () => {
+    const { service, storedDropCurations, ctx } = createService({
+      dropCurations: [1, 2].map((priority_order) => ({
+        drop_id: `drop-${priority_order}`,
+        curation_id: 'curation-1',
+        curated_by: 'profile-1',
+        created_at: priority_order,
+        updated_at: priority_order,
+        wave_id: 'wave-1',
+        priority_order
+      }))
+    });
+    await expect(
+      service.addDropCuration(
+        'drop-1',
+        {
+          curation_id: 'curation-1',
+          placement: Placement.Before,
+          anchor_drop_id: 'drop-not-here'
+        },
+        ctx
+      )
+    ).rejects.toThrow('no longer in this curation');
+    expect(storedDropCurations.map((item) => item.priority_order)).toEqual([
+      1, 2
+    ]);
+  });
+
+  it('rejects placement when adding a new drop or combining it with a numeric position', async () => {
+    const existing = createService({ curatedCurationIds: ['curation-1'] });
+    await expect(
+      existing.service.addDropCuration(
+        'drop-1',
+        {
+          curation_id: 'curation-1',
+          priority_order: 1,
+          placement: Placement.Top
+        },
+        existing.ctx
+      )
+    ).rejects.toThrow('cannot be combined with priority_order');
+
+    const newMembership = createService();
+    await expect(
+      newMembership.service.addDropCuration(
+        'drop-1',
+        {
+          curation_id: 'curation-1',
+          placement: Placement.Top
+        },
+        newMembership.ctx
+      )
+    ).rejects.toThrow('already in the curation');
   });
 
   it('rejects moving an existing drop past the current max priority_order', async () => {
