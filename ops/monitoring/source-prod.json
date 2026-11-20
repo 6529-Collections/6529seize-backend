@@ -2851,9 +2851,9 @@
           }
         ],
         "Statistic": "Sum",
-        "Period": 60,
+        "Period": 300,
         "EvaluationPeriods": 1,
-        "Threshold": 1,
+        "Threshold": 2,
         "ComparisonOperator": "GreaterThanOrEqualToThreshold",
         "TreatMissingData": "notBreaching",
         "AlarmActions": {
