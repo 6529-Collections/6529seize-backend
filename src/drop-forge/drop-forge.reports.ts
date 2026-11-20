@@ -8,13 +8,33 @@ import {
 
 const siteForChain = (chainId: number) =>
   chainId === 1 ? 'https://6529.io' : 'https://staging.6529.io';
+const MINT_WATCH_PREFIX = '[👀 MINT WATCH]';
+const mintWatchEndings = {
+  ready: 'is Ready ✅',
+  soldOut: 'skipped (sold out) ✅',
+  warning: 'needs attention ⚠️',
+  urgent: 'needs attention 🚨'
+};
+
+export type MintWatchOutcome = keyof typeof mintWatchEndings;
 
 export function launchCardLink(chainId: number, claimId: number): string {
   return `[Claim #${claimId}](${siteForChain(chainId)}/drop-forge/launch/${claimId})`;
 }
 
 export function memePageLink(chainId: number, claimId: number): string {
-  return `[Claim #${claimId}](${siteForChain(chainId)}/the-memes/${claimId})`;
+  return `[Meme #${claimId}](${siteForChain(chainId)}/the-memes/${claimId})`;
+}
+
+export function formatMintWatchReport(
+  memeLabel: string,
+  phase: string,
+  outcome: MintWatchOutcome,
+  issues: string[]
+): string {
+  const headline = `${MINT_WATCH_PREFIX} **${memeLabel}** · ${phase} ${mintWatchEndings[outcome]}`;
+  if (!issues.length) return headline;
+  return `${headline}\n\n${issues.map((issue) => '- ' + issue).join('\n')}`;
 }
 
 function airdropGroup(data: LaunchData, action: LaunchAction): LaunchAction[] {
@@ -176,6 +196,7 @@ function reportEmoji(content: string): string {
 }
 
 export function formatOperationsPost(message: string, error: boolean): string {
+  if (message.startsWith(MINT_WATCH_PREFIX + ' ')) return message;
   if (
     ['⚠️', '🔔', '✅', '✍️', '⏳', '⏭️', 'ℹ️', '💰', '🧾'].some((emoji) =>
       message.startsWith(emoji + ' ')

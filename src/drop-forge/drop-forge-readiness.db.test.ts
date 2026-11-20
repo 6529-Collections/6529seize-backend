@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { recordReadinessCheck } from '@/drop-forge/drop-forge.readiness.repository';
 
-it('commits a single readiness alert when a checkpoint is delivered twice', async () => {
+it('commits a single Mint Watch post when a checkpoint is delivered twice', async () => {
   const id = randomUUID();
   const post = jest.fn().mockResolvedValue({
     drop_id: randomUUID(),

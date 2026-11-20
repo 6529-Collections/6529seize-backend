@@ -159,7 +159,7 @@ The handler Serverless stacks own their encrypted standard SQS queue, a 14-day D
 and a CloudWatch DLQ alarm. Launch owns the `drop-forge-{stage}` Scheduler group
 and four recurring readiness schedules that use the existing queue, DLQ and
 Scheduler role. The shared mint calendar filters out days without a scheduled
-drop. Readiness alerts require working RPC and signed Ops wave reporting even
+drop. Mint Watch reports require working RPC and signed Ops wave reporting even
 when Automatic launch is off.
 Queues deliver one job/claim per invocation, with SQS maximum concurrency and
 Lambda reserved concurrency both set to two. The SQL signer lock still serializes
@@ -329,7 +329,8 @@ Apply monitoring artifacts generated from the same reviewed revision. Both handl
 must appear in the production/staging policy inventory without an idle polling interval;
 keep their handler DLQ alarms enabled when applying the shared monitoring updates.
 Initially keep Automatic launch and automatic artist payment disabled. The four
-recurring readiness checks operate independently. Process and Finalize and Launch/Update Claim enqueue
+recurring readiness checks operate independently and post their results as Mint
+Watch in the Ops wave. Process and Finalize and Launch/Update Claim enqueue
 work immediately;
 Launch establishes per-drop one-time phase/Research schedules. Short continuations
 exist only while checkpoints, reports or receipts are outstanding. The

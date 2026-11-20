@@ -2461,8 +2461,8 @@ IAM/KMS provisioning, deployment order and rollout, and the
 Four readiness schedules feed the Launch queue at 17:20, 18:28, 18:58 and
 19:22 Athens time, independently of any launch plan. The consumer resolves the
 claim through the shared mint calendar, reads Ethereum and completion evidence,
-and records the checkpoint together with any signed Ops alert. The delivery
-ledger deduplicates queue retries.
+and records the checkpoint together with its signed Mint Watch post in the Ops
+wave. The delivery ledger deduplicates queue retries.
 
 `dropForgeLaunchHandler` and `memesDistributionHandler` consume dedicated SQS
 queues and have default-disabled execution flags. API mutations

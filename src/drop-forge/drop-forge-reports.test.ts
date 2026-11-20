@@ -80,3 +80,12 @@ it.each([
   expect(message).not.toMatch(/^#/m);
   expect(formatOperationsPost(message, error)).toBe(message);
 });
+
+it.each([
+  ['is Ready ✅', false],
+  ['needs attention ⚠️', true],
+  ['needs attention 🚨', true]
+])('keeps the Mint Watch prefix first when a phase %s', (ending, error) => {
+  const message = `[👀 MINT WATCH] **Meme #1** · Phase 0 ${ending}`;
+  expect(formatOperationsPost(message, error)).toBe(message);
+});

@@ -334,6 +334,12 @@ part of this PR implementation request.
 
 ## Grouped readiness and wave reporting
 
+Each scheduled readiness checkpoint posts a signed `[👀 MINT WATCH]` result in
+the Ops wave. Ready and verified sellout posts are one line and untagged.
+Reports with issues list the findings and tag `@dropforgeops`. A missing Drop
+Forge record on its own uses ⚠️. A mint problem or a check that cannot verify
+readiness in time uses 🚨.
+
 Post-mint Research and Pay Artist now require matching configured-RPC/database
 accounting at the same finalized post-close block, including completed indexing
 coverage. The covered comparison block may be up to five minutes behind the

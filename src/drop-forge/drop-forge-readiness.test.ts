@@ -68,7 +68,7 @@ beforeEach(() => {
   jest
     .spyOn(storage, 'recordReadinessCheck')
     .mockImplementation(
-      async (_, post) => (await post({}))?.pending_push_notification_ids ?? []
+      async (_, post) => (await post({})).pending_push_notification_ids
     );
   jest
     .spyOn(notifier, 'postForgeReport')
@@ -96,8 +96,9 @@ it('resolves Athens checkpoints in winter and summer and skips non-mint days', (
   ).toBeNull();
 });
 
-it('checks a manual public launch without a saved plan and stays quiet when public is live', async () => {
+it('posts an untagged Ready report for a manual public launch without a saved plan', async () => {
   const onChain = stubConfiguration(publicDelivery, ZeroHash);
+  jest.mocked(storage.hasPublishedMemePage).mockResolvedValue(true);
   await runReadinessDelivery(publicDelivery);
   expect(onChain).toHaveBeenCalledWith(
     expect.anything(),
@@ -107,7 +108,27 @@ it('checks a manual public launch without a saved plan and stays quiet when publ
     123
   );
   expect(storage.recordReadinessCheck).toHaveBeenCalledTimes(1);
-  expect(notifier.postForgeReport).not.toHaveBeenCalled();
+  const { claimId } = resolveReadinessCheckpoint(publicDelivery)!;
+  expect(notifier.postForgeReport).toHaveBeenCalledWith(
+    testConfig,
+    `[👀 MINT WATCH] **[Meme #${claimId}](https://staging.6529.io/the-memes/${claimId})** · Public Phase is Ready ✅`,
+    false,
+    {}
+  );
+});
+
+it('warns when only the Drop Forge card is missing', async () => {
+  stubConfiguration(publicDelivery, ZeroHash);
+  jest.mocked(claims.fetchMintingClaimByClaimId).mockResolvedValue(null);
+  await runReadinessDelivery(publicDelivery);
+
+  const { claimId } = resolveReadinessCheckpoint(publicDelivery)!;
+  expect(notifier.postForgeReport).toHaveBeenCalledWith(
+    testConfig,
+    `[👀 MINT WATCH] **Meme #${claimId}** · Public Phase needs attention ⚠️\n\n- No Drop Forge card was found for this scheduled claim.`,
+    true,
+    {}
+  );
 });
 
 it('reports a missing scheduled claim without needing a plan or signing configuration', async () => {
@@ -117,7 +138,7 @@ it('reports a missing scheduled claim without needing a plan or signing configur
   const { claimId } = resolveReadinessCheckpoint(publicDelivery)!;
   expect(notifier.postForgeReport).toHaveBeenCalledWith(
     testConfig,
-    `**Claim #${claimId} · Public readiness**\n\n- No Drop Forge card was found for this scheduled claim.\n- The claim is missing on-chain.`,
+    `[👀 MINT WATCH] **Meme #${claimId}** · Public Phase needs attention 🚨\n\n- No Drop Forge card was found for this scheduled claim.\n- The claim is missing on-chain.`,
     true,
     {}
   );
@@ -133,7 +154,7 @@ it('links the upcoming public Meme page before it is indexed', async () => {
   expect(notifier.postForgeReport).toHaveBeenCalledWith(
     testConfig,
     expect.stringContaining(
-      `**[Claim #${claimId}](https://staging.6529.io/the-memes/${claimId}) · Phase 0 readiness**`
+      `[👀 MINT WATCH] **[Meme #${claimId}](https://staging.6529.io/the-memes/${claimId})** · Phase 0 needs attention 🚨`
     ),
     true,
     {}
@@ -152,7 +173,12 @@ it.each([100, 99])(
         expect.anything(),
         112
       );
-      expect(notifier.postForgeReport).not.toHaveBeenCalled();
+      expect(notifier.postForgeReport).toHaveBeenCalledWith(
+        testConfig,
+        expect.stringContaining('Public Phase skipped (sold out) ✅'),
+        false,
+        {}
+      );
     } else {
       expect(notifier.postForgeReport).toHaveBeenCalledWith(
         testConfig,
@@ -192,7 +218,7 @@ it('checks Phase 2 and Public allocations separately on a manual launch', async 
   const content = jest.mocked(notifier.postForgeReport).mock.calls[0][1];
   const { claimId } = resolveReadinessCheckpoint(phase2Delivery)!;
   expect(content.split('\n')[0]).toBe(
-    `**[Claim #${claimId}](https://staging.6529.io/the-memes/${claimId}) · Phase 2 readiness**`
+    `[👀 MINT WATCH] **[Meme #${claimId}](https://staging.6529.io/the-memes/${claimId})** · Phase 2 needs attention 🚨`
   );
   expect(content).toContain('Public subscription airdrops are incomplete');
   expect(content).not.toContain('Phase 2 subscription airdrops');
