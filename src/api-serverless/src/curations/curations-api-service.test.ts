@@ -2,9 +2,34 @@ import { AuthenticationContext } from '@/auth-context';
 import { DropType } from '@/entities/IDrop';
 import { ProfileProxyActionType } from '@/entities/IProfileProxyAction';
 import { WaveType } from '@/entities/IWave';
+import { ApiGroupTdhInclusionStrategy } from '@/api/generated/models/ApiGroupTdhInclusionStrategy';
+import { ApiWaveCurationCriteria } from '@/api/generated/models/ApiWaveCurationCriteria';
 import { CurationsApiService } from './curations.api.service';
 
 describe('CurationsApiService', () => {
+  const curatorCriteria: ApiWaveCurationCriteria = {
+    is_private: true,
+    group: {
+      tdh: {
+        min: 100,
+        max: null,
+        inclusion_strategy: ApiGroupTdhInclusionStrategy.Tdh
+      },
+      rep: {
+        min: null,
+        max: null,
+        direction: null,
+        user_identity: null,
+        category: null
+      },
+      cic: { min: null, max: null, direction: null, user_identity: null },
+      level: { min: null, max: null },
+      owns_nfts: [],
+      identity_addresses: null,
+      excluded_identity_addresses: null
+    }
+  };
+
   function createService({
     wave = {
       id: 'wave-1',
@@ -265,7 +290,9 @@ describe('CurationsApiService', () => {
       findDropById: jest.fn().mockResolvedValue(drop)
     };
     const userGroupsService = {
-      getGroupsUserIsEligibleFor: jest.fn().mockResolvedValue(eligibleGroupIds)
+      getGroupsUserIsEligibleFor: jest.fn().mockResolvedValue(eligibleGroupIds),
+      insertNewGroup: jest.fn().mockResolvedValue('new-curator-group'),
+      refreshNewGroupEligibility: jest.fn().mockResolvedValue(undefined)
     };
     const profileWavesDb = {
       clearProfileCurationByCurationId: jest.fn().mockResolvedValue(undefined)
@@ -280,6 +307,8 @@ describe('CurationsApiService', () => {
         profileWavesDb as any
       ),
       curationsDb,
+      connection,
+      userGroupsService,
       profileWavesDb,
       storedWaveCurations,
       storedDropCurations,
@@ -456,6 +485,102 @@ describe('CurationsApiService', () => {
     ).rejects.toThrow(`Group private-group is private`);
 
     expect(curationsDb.insertWaveCuration).not.toHaveBeenCalled();
+  });
+
+  it('creates the curator rules and curation in the same transaction', async () => {
+    const { service, curationsDb, connection, userGroupsService, ctx } =
+      createService();
+    await expect(
+      service.createWaveCuration(
+        'wave-1',
+        { name: 'New picks', criteria: curatorCriteria },
+        ctx
+      )
+    ).resolves.toMatchObject({
+      group_id: 'new-curator-group',
+      name: 'New picks'
+    });
+    expect(userGroupsService.insertNewGroup).toHaveBeenCalledWith(
+      expect.objectContaining({ is_private: true, tdh_min: 100 }),
+      'profile-1',
+      expect.objectContaining({ connection }),
+      true
+    );
+    expect(curationsDb.insertWaveCuration).toHaveBeenCalledWith(
+      expect.objectContaining({ community_group_id: 'new-curator-group' }),
+      expect.objectContaining({ connection })
+    );
+    expect(userGroupsService.refreshNewGroupEligibility).toHaveBeenCalledTimes(
+      1
+    );
+  });
+
+  it('replaces the rules for only the edited curation', async () => {
+    const existing = {
+      wave_id: 'wave-1',
+      community_group_id: 'community-group-1',
+      created_at: 1,
+      updated_at: 1
+    };
+    const { service, storedWaveCurations, ctx } = createService({
+      waveCurations: [
+        { ...existing, id: 'curation-1', name: 'Featured', priority_order: 1 },
+        {
+          ...existing,
+          id: 'curation-2',
+          name: 'Other picks',
+          priority_order: 2
+        }
+      ]
+    });
+    await service.updateWaveCuration(
+      'wave-1',
+      'curation-1',
+      { name: 'Featured', criteria: curatorCriteria },
+      ctx
+    );
+    expect(storedWaveCurations).toEqual([
+      expect.objectContaining({
+        id: 'curation-1',
+        community_group_id: 'new-curator-group'
+      }),
+      expect.objectContaining({
+        id: 'curation-2',
+        community_group_id: 'community-group-1'
+      })
+    ]);
+  });
+
+  it('does not refresh an assignment that fails to commit', async () => {
+    const { service, curationsDb, userGroupsService, ctx } = createService();
+    curationsDb.insertWaveCuration.mockRejectedValueOnce(
+      new Error('Write failed')
+    );
+    await expect(
+      service.createWaveCuration(
+        'wave-1',
+        { name: 'New picks', criteria: curatorCriteria },
+        ctx
+      )
+    ).rejects.toThrow('Write failed');
+    expect(userGroupsService.refreshNewGroupEligibility).not.toHaveBeenCalled();
+  });
+
+  it('lets the curation retain its private group on later saves', async () => {
+    const { service, ctx } = createService({
+      communityGroup: { id: 'community-group-1', is_private: true }
+    });
+    await expect(
+      service.updateWaveCuration(
+        'wave-1',
+        'curation-1',
+        { name: 'Renamed', group_id: 'community-group-1' },
+        ctx
+      )
+    ).resolves.toMatchObject({
+      group_id: 'community-group-1',
+      name: 'Renamed'
+    });
   });
 
   it('allows chat drops in chat waves to be curated', async () => {
