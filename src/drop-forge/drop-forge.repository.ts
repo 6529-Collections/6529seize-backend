@@ -403,7 +403,10 @@ export function addLaunchEvent(
   record: LaunchRecord,
   content: string,
   error = false,
-  details?: Pick<LaunchEvent, 'fee_wei' | 'airdrop_counts'>
+  details?: Pick<
+    LaunchEvent,
+    'fee_wei' | 'airdrop_counts' | 'planned_airdrop' | 'next_wallet_retry'
+  >
 ): void {
   record.data.events.push({
     ...details,

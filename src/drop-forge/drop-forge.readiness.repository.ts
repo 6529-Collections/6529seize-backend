@@ -19,7 +19,10 @@ interface ReadinessAllocation {
 
 const primary = { forcePool: DbPoolName.WRITE };
 
-export async function hasPublishedMemePage(claimId: number): Promise<boolean> {
+export async function hasPublishedMemePage(
+  claimId: number,
+  ctx?: RequestContext
+): Promise<boolean> {
   // The public card page needs both the indexed NFT and its Memes metadata.
   const card = await sqlExecutor.oneOrNull<{ id: number }>(
     `SELECT nft.id
@@ -28,7 +31,7 @@ export async function hasPublishedMemePage(claimId: number): Promise<boolean> {
      WHERE nft.contract = :contract AND nft.id = :claimId
      LIMIT 1`,
     { contract: MEMES_CONTRACT, claimId },
-    primary
+    ctx?.connection ? { wrappedConnection: ctx.connection } : primary
   );
   return card !== null;
 }
@@ -70,7 +73,7 @@ export async function recordReadinessCheck(
   post: (ctx: RequestContext) => Promise<{
     drop_id: string;
     pending_push_notification_ids: number[];
-  } | null>
+  }>
 ): Promise<number[]> {
   return sqlExecutor.executeNativeQueriesInTransaction(async (connection) => {
     const options = { wrappedConnection: connection };
@@ -90,9 +93,9 @@ export async function recordReadinessCheck(
     await sqlExecutor.execute(
       `UPDATE ${DROP_FORGE_READINESS_TABLE}
        SET checked_at = :checkedAt, drop_id = :dropId WHERE id = :id`,
-      { id, checkedAt: Date.now(), dropId: report?.drop_id ?? null },
+      { id, checkedAt: Date.now(), dropId: report.drop_id },
       options
     );
-    return report?.pending_push_notification_ids ?? [];
+    return report.pending_push_notification_ids;
   });
 }

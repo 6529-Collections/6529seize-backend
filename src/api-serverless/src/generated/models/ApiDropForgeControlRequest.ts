@@ -46,6 +46,7 @@ export enum ApiDropForgeControlRequestOperationEnum {
     Arm = 'ARM',
     Pause = 'PAUSE',
     Resume = 'RESUME',
-    Cancel = 'CANCEL'
+    Cancel = 'CANCEL',
+    Retry = 'RETRY'
 }
 

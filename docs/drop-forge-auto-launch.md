@@ -130,10 +130,10 @@ per transaction, at most 20,000 phase-recipient entries per plan):
 - Before Phase 0: initialize and airdrop Phase 0 subscribers plus selected
   general/artist/team allocations.
 - After Phase 0 closes: update to Phase 1, then airdrop only Phase 1 subscribers
-  before Phase 1 opens (18:20–18:30 in the standard schedule).
+  before Phase 1 opens (18:21–18:30 in the standard schedule).
 - After Phase 1 closes: update to Phase 2, then send Phase 2 subscriber
   batches followed by separate Public subscriber batches before Phase 2 opens
-  (18:50–19:00). Public batches use the supply left after Phase 2 batches
+  (18:51–19:00). Public batches use the supply left after Phase 2 batches
   confirm. Each group has its own Completed flag, written when the whole
   group has been delivered. Existing saved plans retain their original
   allocation batches and completion mapping.
@@ -334,6 +334,12 @@ part of this PR implementation request.
 
 ## Grouped readiness and wave reporting
 
+Each scheduled readiness checkpoint posts a signed `[👀 MINT WATCH]` result in
+the Ops wave. Ready and verified sellout posts are one line and untagged.
+Reports with issues list the findings and tag `@dropforgeops`. A missing Drop
+Forge record on its own uses ⚠️. A mint problem or a check that cannot verify
+readiness in time uses 🚨.
+
 Post-mint Research and Pay Artist now require matching configured-RPC/database
 accounting at the same finalized post-close block, including completed indexing
 coverage. The covered comparison block may be up to five minutes behind the
@@ -369,20 +375,30 @@ for manual and automated launches before suppressing phase readiness alerts.
 
 Each due action checks its own completed state and readiness. An initialization
 or funding/admin failure stays on that action and does not suspend later groups.
-Unsigned failures retry no more than once per minute while their submission window
-is open. Expired work remains outstanding and is not sent late automatically.
+Missing creator-admin permission and insufficient operational ETH share a retry
+budget per phase group. The worker reports the initial failure and schedules one
+final attempt if the remaining work can safely fit before cutoff. Authorized
+operators can use **Retry now** after fixing the wallet while the window allows.
+Other unsigned failures retry no more than once per minute within their submission
+window. Expired work remains outstanding and is not sent late automatically.
 Current matching configuration is read at the configured confirmation depth;
 manual airdrops require confirmed exact ERC-1155 mint events and category-aware
 remaining-allocation credits. A manual initialization and Phase 0 deliveries can
 therefore be skipped while the next scheduled group proceeds without Resume.
 A later update may advance any compatible earlier configuration once its own
 scheduled gap opens. Missing initialization or incompatible state fails readiness.
+Phase 0 airdrops wait for verified initialization. Subscriber batches also wait
+for their phase update to be verified, including a matching manual update. The
+worker checks for pending manual evidence again immediately before broadcast.
+It releases a signed intent only when the ledger proves it could not have been
+submitted, then reconciles the manual work before rebuilding the allocation.
 
 The wave receives completion and transaction links, every actual failed attempt
 with its error and alert mention, and a skip when already-completed work is first
 recognized. Durable acknowledgements prevent repeated skip/completion posts.
-An expired window is reported once, rather than producing a fake attempt every
-minute. Reporting must commit before signing. Outstanding signed/unknown nonces,
+Claim-specific reports identify both the Launch card and the Meme page when
+available. They show mint windows in UTC and summarize the intended delivery on
+airdrop failures. An expired window is reported once. Reporting must commit before signing. Outstanding signed/unknown nonces,
 manual leases and noncanonical evidence continue to stop conflicting sends.
 Research waits for outstanding fixed airdrop allocations to be reconciled so its
 dynamic top-up cannot consume the edition supply still owed to them.

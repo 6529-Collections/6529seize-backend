@@ -33801,6 +33801,14 @@ components:
         attempt_error:
           type: string
           nullable: true
+        wallet_retry_available:
+          type: boolean
+          description: The operator can request a retry within the execution window
+        wallet_blocked:
+          type: boolean
+          description: >-
+            This pending action is waiting on operational wallet permission or
+            funding
         retry_at:
           type: integer
           format: int64
@@ -33872,6 +33880,7 @@ components:
             - PAUSE
             - RESUME
             - CANCEL
+            - RETRY
     ApiDropForgeFundingRequest:
       type: object
       required:

@@ -4,6 +4,13 @@ import {
 } from '@/drop-forge/drop-forge.reports';
 import { testLaunchData } from '@/drop-forge/drop-forge.test-fixtures';
 import { LaunchAction } from '@/drop-forge/drop-forge.types';
+import {
+  LaunchRecord,
+  LaunchWalletBlockError
+} from '@/drop-forge/drop-forge.types';
+import { reportActionFailure } from '@/drop-forge/drop-forge.groups';
+import { recordWalletBlock } from '@/drop-forge/drop-forge.wallet-retry';
+import { testConfig } from '@/drop-forge/drop-forge.test-fixtures';
 
 it.each<[LaunchAction['kind'], string]>([
   ['INITIALIZE', 'initialized'],
@@ -21,7 +28,7 @@ it.each<[LaunchAction['kind'], string]>([
     content: `Confirmed ${action.id}: ${hash}`
   });
   expect(report).toContain(
-    `Claim #1: ${wording}. [Transaction](https://sepolia.etherscan.io/tx/${hash})`
+    `${wording}. [Transaction](https://sepolia.etherscan.io/tx/${hash})`
   );
 });
 
@@ -79,4 +86,70 @@ it.each([
   expect(message.startsWith(emoji)).toBe(true);
   expect(message).not.toMatch(/^#/m);
   expect(formatOperationsPost(message, error)).toBe(message);
+});
+
+it.each([
+  ['is Ready ✅', false],
+  ['needs attention ⚠️', true],
+  ['needs attention 🚨', true]
+])('keeps the Mint Watch prefix first when a phase %s', (ending, error) => {
+  const message = `[👀 MINT WATCH] **Meme #1** · Phase 0 ${ending}`;
+  expect(formatOperationsPost(message, error)).toBe(message);
+});
+
+it('prints the exact capped artist allocation with a verified ENS label', () => {
+  const data = testLaunchData();
+  const action = data.actions[1];
+  action.label = 'Airdrop - Artist';
+  const address = action.recipients[0].address;
+  const attempted = { ...action, capped_recipients: [{ address, amount: 20 }] };
+  const record: LaunchRecord = {
+    id: 'launch',
+    data,
+    state: 'ARMED',
+    revision: 1,
+    error: null,
+    updated_at: 0
+  };
+  const error = new LaunchWalletBlockError('ADMIN_REQUIRED');
+  reportActionFailure(record, action, 1000, error.message, error, undefined, {
+    attempted,
+    walletRetry: 3600
+  });
+  const post = formatLaunchReport(data, data.events[0], {
+    claimLabels: '**Claim #1** · **Meme #1**',
+    recipientEns: 'artist.eth'
+  });
+  expect(post).toContain('Planned artist airdrop · 20 cards to artist.eth');
+  expect(post).toContain('/address/' + address);
+  expect(post).toContain('Next attempt · 1 Jan 1970, 01:00 UTC');
+});
+
+it('gives a phase wallet block one scheduled retry, then waits for the operator', () => {
+  const data = testLaunchData();
+  const record: LaunchRecord = {
+    id: 'launch',
+    data,
+    state: 'ARMED',
+    revision: 1,
+    error: null,
+    updated_at: 0
+  };
+  const init = data.actions[0];
+  const retry = recordWalletBlock(
+    record,
+    init,
+    testConfig,
+    'INSUFFICIENT_ETH',
+    1100
+  );
+  expect(retry).toBeGreaterThan(1160);
+  expect(
+    recordWalletBlock(record, init, testConfig, 'ADMIN_REQUIRED', retry!)
+  ).toBeNull();
+  expect(record.data.wallet_blocks?.['phase-0']).toEqual({
+    reason: 'ADMIN_REQUIRED',
+    attempts: 2,
+    retry_at: null
+  });
 });

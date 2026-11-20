@@ -12,6 +12,10 @@ import {
 import { LaunchRecord } from '@/drop-forge/drop-forge.types';
 import { DROP_FORGE_ALERT_MENTION } from '@/constants/mentions';
 import { signForgeReport } from '@/drop-forge/drop-forge.report-signing';
+jest.mock('@/drop-forge/drop-forge-report-links', () => ({
+  claimReportLinks: jest.fn().mockResolvedValue('**Claim #1** · **Meme #1**'),
+  reportRecipientEns: jest.fn().mockResolvedValue(null)
+}));
 jest.mock('@/drops/create-or-update-drop.use-case', () => ({
   createOrUpdateDrop: { execute: jest.fn() }
 }));
@@ -85,7 +89,7 @@ it('posts new preview output only in the operations wave and tags only failures'
       testConfig.waveId
     ]);
     expect(messages[0].parts[0].content).toBe(
-      '🔔 **Public mint closed**\n\nResearch: 18 editions\n\n[Claim #1](https://staging.6529.io/drop-forge/launch/1)'
+      '🔔 **Claim #1** · **Meme #1**\n\n**Public mint closed**\n\nResearch: 18 editions'
     );
     expect(messages[1].parts[0].content).toContain(DROP_FORGE_ALERT_MENTION);
     expect(signForgeReport).toHaveBeenCalledWith(

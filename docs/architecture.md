@@ -2544,8 +2544,8 @@ IAM/KMS provisioning, deployment order and rollout, and the
 Four readiness schedules feed the Launch queue at 17:20, 18:28, 18:58 and
 19:22 Athens time, independently of any launch plan. The consumer resolves the
 claim through the shared mint calendar, reads Ethereum and completion evidence,
-and records the checkpoint together with any signed Ops alert. The delivery
-ledger deduplicates queue retries.
+and records the checkpoint together with its signed Mint Watch post in the Ops
+wave. The delivery ledger deduplicates queue retries.
 
 `dropForgeLaunchHandler` and `memesDistributionHandler` consume dedicated SQS
 queues and have default-disabled execution flags. API mutations
@@ -2632,17 +2632,17 @@ flowchart LR
 
 ### Drop Forge scheduled groups
 
-Craft Launch accepts the standard plan derived from the configured Memes calendar;
-there is no per-drop manual time handoff. These are the standard `Europe/Athens`
-times, including DST. Later transitions become eligible one second after the prior
-phase closes, as encoded by `buildPhaseActions` in
+Craft Launch derives the standard plan from the configured Memes calendar.
+The times below use `Europe/Athens`, including daylight saving time. Phase 1
+and Phase 2 become eligible one minute after the preceding phase closes.
+Public becomes eligible one second after Phase 2 closes. See `buildPhaseActions` in
 [`drop-forge.plan.ts`](../src/drop-forge/drop-forge.plan.ts).
 
 | Group                            | Eligible time                                                    | Actions                                                                                                                                  |
 | -------------------------------- | ---------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
 | Opening                          | Immediately after accepted Launch, before Phase 0 opens at 17:40 | Initialize, then general/artist/team and Phase 0 subscriber batches                                                                      |
-| Phase 1                          | 18:20:01; Phase 1 opens at 18:30                                 | Update claim, then Phase 1 subscriber batches                                                                                            |
-| Phase 2                          | 18:50:01; Phase 2 opens at 19:00                                 | Update claim, then Phase 2 and Public subscriber batches                                                                                 |
+| Phase 1                          | 18:21; Phase 1 opens at 18:30                                    | Update claim, then Phase 1 subscriber batches                                                                                            |
+| Phase 2                          | 18:51; Phase 2 opens at 19:00                                    | Update claim, then Phase 2 and Public subscriber batches                                                                                 |
 | Public                           | 19:20:01; public is scheduled from 19:20                         | Update claim after Phase 2 closes; actual public availability follows transaction inclusion                                              |
 | Research and optional Pay Artist | 18:00 the next day, after public closes at 17:00                 | Research tops up toward `min(310, frozen Craft edition)`; artist payment independently sends the final 50% share to the designated payee |
 | Metadata                         | Immediately after an accepted Craft Update Claim request         | Synchronize republished metadata while preserving active phase configuration and completed allocations                                   |

@@ -167,6 +167,24 @@ function airdropActions(
   return actions;
 }
 
+function phaseActionWindow(
+  phase: LaunchPhase,
+  previous: LaunchPhase | undefined,
+  isPublic: boolean | undefined,
+  initializeAt: number,
+  minimumLead: number
+): { due: number; deadline: number } {
+  if (!previous) return { due: initializeAt, deadline: phase.start };
+  const due = previous.end + (isPublic ? 1 : 60);
+  // A gapless public cutover becomes eligible only after Phase 2 closes.
+  // It can therefore open late while its update obtains confirmations.
+  const deadline =
+    isPublic && phase.start === previous.end
+      ? Math.min(phase.end, due + minimumLead)
+      : phase.start;
+  return { due, deadline };
+}
+
 function buildPhaseActions(
   config: DropForgeConfig,
   input: LaunchPlanInput,
@@ -177,7 +195,6 @@ function buildPhaseActions(
 ): LaunchAction[] {
   const actions: LaunchAction[] = [];
   for (let phase = 0; phase < phases.length; phase++) {
-    const due = phase === 0 ? input.initialize_at : phases[phase - 1].end + 1;
     const groups = [
       ...(phase === 0 ? categoryRecipients : []),
       ...phaseGroups[phase]
@@ -189,15 +206,13 @@ function buildPhaseActions(
       return n + Math.ceil(wallets / 100);
     }, 0);
     const minimumLead = launchPreparationSeconds(config, batches + 1);
-    const gaplessPublic =
-      input.phases[phase].is_public &&
-      phase > 0 &&
-      phases[phase].start === phases[phase - 1].end;
-    // A gapless public cutover becomes eligible only after Phase 2 closes.
-    // It can therefore open late while its update obtains confirmations.
-    const deadline = gaplessPublic
-      ? Math.min(phases[phase].end, due + minimumLead)
-      : phases[phase].start;
+    const { due, deadline } = phaseActionWindow(
+      phases[phase],
+      phases[phase - 1],
+      input.phases[phase].is_public,
+      input.initialize_at,
+      minimumLead
+    );
     if (deadline - due < minimumLead)
       throw new LaunchSafetyError(
         `Phase ${phases[phase].name} needs at least ${minimumLead} seconds for its update/initialization and ${batches} airdrop batches`
@@ -380,7 +395,7 @@ export const SUBMISSION_CUTOFF_SECONDS = 120;
 // Budget the scheduler's delivery window once. Every transaction must have
 // time to confirm, and the last transaction must start before the cutoff.
 export function launchPreparationSeconds(
-  config: DropForgeConfig,
+  config: Pick<DropForgeConfig, 'confirmations'>,
   transactions: number
 ): number {
   const confirmation = config.confirmations * 12 + RECEIPT_POLL_SECONDS;
