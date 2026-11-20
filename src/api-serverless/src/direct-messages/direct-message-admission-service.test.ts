@@ -105,7 +105,7 @@ describe('DirectMessageAdmissionService', () => {
     expect(deps.groupNames).not.toHaveBeenCalled();
   });
 
-  it('refuses a non-member and names only a public group', async () => {
+  it('returns public group details for a refused non-member', async () => {
     const { service } = createService();
 
     const error = await refusalOf(
