@@ -1040,6 +1040,12 @@ HTTP requests also observe the overall budget. Retries stop when the remaining
 budget cannot cover their backoff and another RPC. Failed resolution preserves
 cached metadata and releases the existing processing lock.
 
+For a verified Manifold listing whose selected token has no media, the resolver
+can read an Ethereum mainnet ERC-721 token's `tokenURI` through `NFT_INDEXER_RPC`.
+It retrieves the metadata through the bounded public HTTP client and sends the
+resulting image or animation through the existing preview pipeline. Successful
+media recovery skips the listing page's Open Graph fetch.
+
 An exact HTTP 404 from a required Transient or Manifold canonical page ends
 further attempts in that eligible run. The internal nullable
 `nft_links.refresh_retry_state` JSON records a versioned, page-scoped delay:

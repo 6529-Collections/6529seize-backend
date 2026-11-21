@@ -1037,6 +1037,37 @@ export class E2eeDb extends LazyDbAccessCompatibleService {
     );
   }
 
+  /** Read both signals in one snapshot as the roster and Welcome change. */
+  async getDeviceInboxState(
+    profileId: string,
+    deviceKey: string
+  ): Promise<{ hasQueuedWelcomes: boolean; hasUnjoinedChats: boolean }> {
+    const row = await this.one<{
+      queued_welcomes: number;
+      unjoined_chats: number;
+    }>(
+      `select exists (
+           select 1 from ${E2EE_WELCOME_DELIVERIES_TABLE} d
+           where d.device_key = :deviceKey and d.profile_id = :profileId
+         ) as queued_welcomes,
+         exists (
+           select 1 from ${E2EE_GROUP_ROSTER_TABLE} mine
+           where mine.profile_id = :profileId and mine.removed_epoch is null
+             and not exists (
+               select 1 from ${E2EE_GROUP_ROSTER_TABLE} joined
+               where joined.device_key = :deviceKey
+                 and joined.removed_epoch is null
+                 and joined.group_handle = mine.group_handle
+             )
+         ) as unjoined_chats`,
+      { profileId, deviceKey }
+    );
+    return {
+      hasQueuedWelcomes: Number(row?.queued_welcomes ?? 0) === 1,
+      hasUnjoinedChats: Number(row?.unjoined_chats ?? 0) === 1
+    };
+  }
+
   async hasRosterHistory(
     group: string,
     deviceKey: string,

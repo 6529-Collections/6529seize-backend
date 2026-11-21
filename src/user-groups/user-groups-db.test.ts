@@ -45,6 +45,31 @@ const unrelatedGroup = aUserGroup(
   }
 );
 
+const privateCuratorGroup = aUserGroup(
+  { is_private: true, visible: true, created_by: 'curation-owner' },
+  { id: 'private-curation-criteria', name: 'Curation criteria' }
+);
+
+describeWithSeed(
+  'UserGroupsDb private criteria reads',
+  withUserGroups([privateCuratorGroup]),
+  () => {
+    const repo = new UserGroupsDb(() => sqlExecutor);
+
+    it('limits access to active private criteria to the creator or an eligible member', async () => {
+      const { id, created_by } = privateCuratorGroup;
+      await expect(repo.getById(id, null, [])).resolves.toBeNull();
+      await expect(repo.getById(id, 'another-profile', [])).resolves.toBeNull();
+      await expect(repo.getById(id, created_by, [])).resolves.toMatchObject({
+        id
+      });
+      await expect(repo.getById(id, 'curator', [id])).resolves.toMatchObject({
+        id
+      });
+    });
+  }
+);
+
 describeWithSeed(
   'UserGroupsDb searchByNameOrAuthor',
   withUserGroups([pureProfileGroup, criteriaGroup, unrelatedGroup]),

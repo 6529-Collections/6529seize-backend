@@ -132,6 +132,14 @@ export type NewUserGroupEntity = Omit<
   'id' | 'created_at' | 'created_by' | 'is_pure_profile_group'
 >;
 
+export type NewUserGroupInput = Omit<
+  NewUserGroupEntity,
+  'profile_group_id' | 'excluded_profile_group_id'
+> & {
+  addresses: string[];
+  excluded_addresses: string[];
+};
+
 type GClean = Omit<
   ApiGroupDescription,
   | 'identity_group_identities_count'
@@ -323,13 +331,7 @@ export class UserGroupsService {
   }
 
   async save(
-    group: Omit<
-      NewUserGroupEntity,
-      'profile_group_id' | 'excluded_profile_group_id'
-    > & {
-      addresses: string[];
-      excluded_addresses: string[];
-    },
+    group: NewUserGroupInput,
     createdBy: string,
     ctx: RequestContext,
     isVisible = false,
@@ -342,58 +344,75 @@ export class UserGroupsService {
         async (connection) => {
           const ctxWithConnection = { ...ctx, connection };
           const preparedName = await prepareNameBeforeSave?.(connection);
-          const groupName = preparedName ?? group.name;
-          const id =
-            slugify(groupName, {
-              replacement: '-',
-              lower: true,
-              strict: true
-            }).slice(0, 50) +
-            '-' +
-            ids.uniqueShortId();
-          const beneficiaryOfGrantId = group.is_beneficiary_of_grant_id;
-          const beneficiaryGrantMatchMode =
-            group.is_beneficiary_of_grant_match_mode ??
-            DEFAULT_BENEFICIARY_GRANT_MATCH_MODE;
-          await this.validateBeneficiaryGrantCriteria(
-            beneficiaryOfGrantId,
-            beneficiaryGrantMatchMode,
-            ctxWithConnection
-          );
-
-          const inclusionGroups = group.addresses.length
-            ? await this.userGroupsDb.insertGroupEntriesAndGetGroupIds(
-                group.addresses,
-                connection
-              )
-            : null;
-          const exclusionGroups = group.excluded_addresses.length
-            ? await this.userGroupsDb.insertGroupEntriesAndGetGroupIds(
-                group.excluded_addresses,
-                connection
-              )
-            : null;
-          await this.userGroupsDb.save(
-            {
-              ...group,
-              id,
-              created_at: new Date(),
-              created_by: createdBy,
-              visible: isVisible,
-              name: groupName,
-              profile_group_id: inclusionGroups?.profile_group_id ?? null,
-              excluded_profile_group_id:
-                exclusionGroups?.profile_group_id ?? null
-            },
-            connection
-          );
-          await this.metricsRecorder.recordActiveIdentity(
-            { identityId: createdBy },
-            ctxWithConnection
+          const id = await this.insertNewGroup(
+            { ...group, name: preparedName ?? group.name },
+            createdBy,
+            ctxWithConnection,
+            isVisible
           );
           return await this.getByIdOrThrow(id, ctxWithConnection);
         }
       );
+    await this.refreshNewGroupEligibility(group, createdBy);
+    return savedEntity;
+  }
+
+  /** Insert a group as part of the transaction that assigns it to a resource. */
+  public async insertNewGroup(
+    group: NewUserGroupInput,
+    createdBy: string,
+    ctx: RequestContext & { connection: ConnectionWrapper<unknown> },
+    isVisible: boolean
+  ): Promise<string> {
+    const id =
+      slugify(group.name, {
+        replacement: '-',
+        lower: true,
+        strict: true
+      }).slice(0, 50) +
+      '-' +
+      ids.uniqueShortId();
+    await this.validateBeneficiaryGrantCriteria(
+      group.is_beneficiary_of_grant_id,
+      group.is_beneficiary_of_grant_match_mode ??
+        DEFAULT_BENEFICIARY_GRANT_MATCH_MODE,
+      ctx
+    );
+    const inclusionGroups = group.addresses.length
+      ? await this.userGroupsDb.insertGroupEntriesAndGetGroupIds(
+          group.addresses,
+          ctx.connection
+        )
+      : null;
+    const exclusionGroups = group.excluded_addresses.length
+      ? await this.userGroupsDb.insertGroupEntriesAndGetGroupIds(
+          group.excluded_addresses,
+          ctx.connection
+        )
+      : null;
+    await this.userGroupsDb.save(
+      {
+        ...group,
+        id,
+        created_at: new Date(),
+        created_by: createdBy,
+        visible: isVisible,
+        profile_group_id: inclusionGroups?.profile_group_id ?? null,
+        excluded_profile_group_id: exclusionGroups?.profile_group_id ?? null
+      },
+      ctx.connection
+    );
+    await this.metricsRecorder.recordActiveIdentity(
+      { identityId: createdBy },
+      ctx
+    );
+    return id;
+  }
+
+  public async refreshNewGroupEligibility(
+    group: NewUserGroupInput,
+    createdBy: string
+  ): Promise<void> {
     await giveReadReplicaTimeToCatchUp();
     if (this.isNewGroupEligibilityScopedToItsMembers(group)) {
       // Inclusion-list-only group: every listed (and excluded) member already
@@ -405,7 +424,6 @@ export class UserGroupsService {
       await clearWaveGroupsCache();
     }
     await this.invalidateGroupsUserIsEligibleFor(createdBy);
-    return savedEntity;
   }
 
   /**

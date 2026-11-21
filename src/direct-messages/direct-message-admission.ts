@@ -174,9 +174,7 @@ export function getDirectMessageRefusalMessage(
     case DirectMessageRefusalReason.PEOPLE_I_FOLLOW_ONLY:
       return `${prefix} they only accept messages from people they follow.`;
     case DirectMessageRefusalReason.GROUP_MEMBERS_ONLY:
-      return refusal.publicGroup
-        ? `${prefix} they only accept messages from members of the group "${refusal.publicGroup.name}".`
-        : `${prefix} they only accept messages from members of a group they chose.`;
+      return `${prefix} they only accept messages from members of a group they chose.`;
     case DirectMessageRefusalReason.SENDER_BLOCKED_RECIPIENT:
       return `${prefix} you have blocked them. Unblock them to start a conversation.`;
     case DirectMessageRefusalReason.NOT_ACCEPTING:
@@ -186,9 +184,9 @@ export function getDirectMessageRefusalMessage(
 }
 
 /**
- * The 403 API error for a refusal. Details carry only what the client needs
- * to render localized copy: the handle and, for a public group, its id and
- * name. A recipient's block is never part of the response.
+ * The 403 API error for a refusal. The code and handle support localization.
+ * Public groups also carry their id and name as structured details.
+ * A recipient's block is never part of the response.
  */
 export function directMessageAdmissionError(
   refusal: Extract<DirectMessageAdmission, { allowed: false }>
