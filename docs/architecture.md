@@ -871,7 +871,10 @@ chain gateway's service access (`CHAIN_GATEWAY_URL`, bearer
 `POST /v1/submit`), and fetches profile documents from the gateway's document
 store by CID, checking each against its CID. Reads are pinned to the latest
 finalized height it knows (refreshed every two seconds) and cached in memory
-by height; network errors, 429 and 5xx are retried. Settings are read at first
+by network and height; network errors, 429 and 5xx are retried. Every answer
+must name the chain the gateway's status names (`wrong_network` otherwise),
+and answers that can't be read, such as feed pages that don't hold together,
+throw `bad_answer` rather than reading as empty. Settings are read at first
 use, so loops that never call it need none. Loops and API code that read
 identity data from the chain add calls to this client, not their own.
 

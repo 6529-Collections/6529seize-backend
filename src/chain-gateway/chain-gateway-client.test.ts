@@ -128,6 +128,34 @@ function setup(
 }
 
 const path = (call: Call) => new URL(call.url).pathname;
+const OTHER_NETWORK = '0x' + '99'.repeat(32);
+
+/** A route that answers the status at `finalized`, and `rest` otherwise. */
+function withStatus(rest: (call: Call) => Reply, finalized = 1000) {
+  return (call: Call): Reply =>
+    path(call) === '/v1/status' ? status(finalized) : rest(call);
+}
+
+function withoutNetwork<T extends { network?: string }>(value: T): T {
+  const copy = { ...value };
+  delete copy.network;
+  return copy;
+}
+
+const reads = (calls: Call[]) => calls.filter((c) => path(c) !== '/v1/status');
+
+/** A feed block as the node writes it. */
+function feedBlock(height: number, complete = true, recordsFrom = 0) {
+  return {
+    height,
+    slot: 0,
+    root: '0x',
+    time: 1,
+    complete,
+    recordsFrom,
+    records: []
+  };
+}
 const param = (call: Call, name: string) =>
   new URL(call.url).searchParams.get(name);
 
@@ -204,28 +232,81 @@ describe('ChainGatewayClient reads', () => {
     expect(calls.filter((c) => path(c) !== '/v1/status')).toHaveLength(2);
   });
 
-  it('reads at a given height without asking for the head', async () => {
-    const { client, calls } = setup((call) => ({
-      status: 200,
-      json: { read: stamp(900), data: { level: 8 }, next: null }
-    }));
+  it('reads at a given height, asking for the head once for its network', async () => {
+    const { client, calls } = setup(
+      withStatus(() => ({
+        status: 200,
+        json: { read: stamp(900), data: { level: 8 }, next: null }
+      }))
+    );
     await client.getLevel('0xAB', { height: 900 });
     await client.getLevel('0xab', { height: 900 });
-    expect(calls).toHaveLength(1);
-    expect(path(calls[0])).toBe('/v1/levels/0xab');
-    expect(param(calls[0], 'height')).toBe('900');
+    expect(calls.filter((c) => path(c) === '/v1/status')).toHaveLength(1);
+    expect(reads(calls)).toHaveLength(1);
+    expect(path(reads(calls)[0])).toBe('/v1/levels/0xab');
+    expect(param(reads(calls)[0], 'height')).toBe('900');
   });
 
   it('reads the head unpinned and uncached', async () => {
-    const { client, calls } = setup(() => ({
-      status: 200,
-      json: { read: stamp(5, 'head'), data: { status: 'pending' }, next: null }
-    }));
+    const { client, calls } = setup(
+      withStatus(() => ({
+        status: 200,
+        json: {
+          read: stamp(5, 'head'),
+          data: { status: 'pending' },
+          next: null
+        }
+      }))
+    );
     await client.getTx('0xAA');
     await client.getTx('0xaa');
-    expect(calls).toHaveLength(2);
-    expect(param(calls[0], 'at')).toBe('head');
-    expect(param(calls[0], 'height')).toBeNull();
+    expect(reads(calls)).toHaveLength(2);
+    expect(param(reads(calls)[0], 'at')).toBe('head');
+    expect(param(reads(calls)[0], 'height')).toBeNull();
+  });
+
+  it('keeps a pinned answer only when read finalized at that height', async () => {
+    let at: 'finalized' | 'head' = 'head';
+    let height = 900;
+    const { client, calls } = setup(
+      withStatus(() => ({
+        status: 200,
+        json: { read: stamp(height, at), data: { level: 8 }, next: null }
+      }))
+    );
+    await client.getLevel('0x01', { height: 900 });
+    await client.getLevel('0x01', { height: 900 });
+    expect(reads(calls)).toHaveLength(2);
+    at = 'finalized';
+    height = 899;
+    await client.getLevel('0x01', { height: 900 });
+    await client.getLevel('0x01', { height: 900 });
+    expect(reads(calls)).toHaveLength(4);
+    height = 900;
+    await client.getLevel('0x01', { height: 900 });
+    await client.getLevel('0x01', { height: 900 });
+    expect(reads(calls)).toHaveLength(5);
+  });
+
+  it('serves a cached answer as a copy the caller can change', async () => {
+    const { client } = setup(
+      withStatus(() => ({
+        status: 200,
+        json: {
+          read: stamp(1000),
+          data: { ...IDENTITY, wallets: ['0x02', '0x01'] },
+          next: null
+        }
+      }))
+    );
+    const first = await client.getIdentityByHandle('alice');
+    first!.wallets.sort();
+    const second = await client.getIdentityByHandle('alice');
+    second!.wallets.push('0x03');
+    expect((await client.getIdentityByHandle('alice'))?.wallets).toEqual([
+      '0x02',
+      '0x01'
+    ]);
   });
 
   it('answers null for 404 and caches it at that height', async () => {
@@ -243,6 +324,177 @@ describe('ChainGatewayClient reads', () => {
     expect(await client.getIdentityByWallet('0x' + '02'.repeat(20))).toBeNull();
     expect(await client.getIdentityByWallet('0x' + '02'.repeat(20))).toBeNull();
     expect(calls.filter((c) => path(c) !== '/v1/status')).toHaveLength(1);
+  });
+
+  it.each([
+    ['without a body', undefined],
+    ['without the node envelope', { message: 'no route' }],
+    [
+      'with another code',
+      { read: stamp(10), error: { code: 'no_route', message: 'x' } }
+    ]
+  ])('refuses a 404 %s', async (_name, json) => {
+    const { client } = setup(withStatus(() => ({ status: 404, json }), 10));
+    await expect(
+      client.getIdentityByWallet('0x' + '02'.repeat(20))
+    ).rejects.toMatchObject({ code: 'bad_answer', status: 404 });
+  });
+
+  it('refuses an answer without data or without its read stamp', async () => {
+    let json: unknown = { read: stamp(10), next: null };
+    const { client } = setup(withStatus(() => ({ status: 200, json }), 10));
+    await expect(client.getLevel('0x01', { height: 10 })).rejects.toMatchObject(
+      { code: 'bad_answer' }
+    );
+    json = { data: { level: 1 }, next: null };
+    await expect(client.getLevel('0x01', { height: 10 })).rejects.toMatchObject(
+      { code: 'bad_answer' }
+    );
+    // A null level is an answer: the node lacks that day's lists.
+    json = { read: stamp(10), data: null, next: null };
+    expect(await client.getLevel('0x01', { height: 10 })).toBeNull();
+  });
+
+  it('refuses a list that is not one, and a wallet left out', async () => {
+    let data: unknown = { items: [] };
+    const { client } = setup(
+      withStatus(
+        () => ({ status: 200, json: { read: stamp(10), data, next: null } }),
+        10
+      )
+    );
+    await expect(client.listIdentities()).rejects.toMatchObject({
+      code: 'bad_answer'
+    });
+    data = { record: { day: 26 } };
+    await expect(client.listMembershipDayWallets(26)).rejects.toMatchObject({
+      code: 'bad_answer'
+    });
+    const left = '0x' + '01'.repeat(20);
+    const asked = '0x' + '02'.repeat(20);
+    data = { [asked]: null };
+    await expect(client.getIdentitiesByWallets([left])).rejects.toMatchObject({
+      code: 'bad_answer'
+    });
+    expect(await client.getIdentitiesByWallets([asked])).toEqual({
+      [asked]: null
+    });
+  });
+
+  it('refuses a 404 of another chain and keeps nothing of it', async () => {
+    let network = OTHER_NETWORK;
+    const { client } = setup(
+      withStatus(
+        () => ({
+          status: network === OTHER_NETWORK ? 404 : 200,
+          json:
+            network === OTHER_NETWORK
+              ? {
+                  read: { ...stamp(10), network },
+                  error: { code: 'not_found', message: 'none' }
+                }
+              : { read: stamp(10), data: IDENTITY, next: null }
+        }),
+        10
+      )
+    );
+    await expect(client.getIdentityByPrincipal('0xab')).rejects.toMatchObject({
+      code: 'wrong_network',
+      status: 404
+    });
+    network = stamp(10).network;
+    expect(await client.getIdentityByPrincipal('0xab')).toEqual(IDENTITY);
+  });
+
+  it('refuses another chain on the unpinned read after height_gone, and on the feed', async () => {
+    const { client } = setup(
+      withStatus((call) => {
+        if (path(call) === '/v1/feed') {
+          return {
+            status: 200,
+            json: {
+              read: { ...stamp(50), network: OTHER_NETWORK },
+              data: { through: 49, blocks: [] },
+              next: '50'
+            }
+          };
+        }
+        if (param(call, 'height') !== null) {
+          return {
+            status: 409,
+            json: {
+              read: stamp(48),
+              error: { code: 'height_gone', message: 'holds 1..48' }
+            }
+          };
+        }
+        return {
+          status: 200,
+          json: {
+            read: { ...stamp(48), network: OTHER_NETWORK },
+            data: IDENTITY,
+            next: null
+          }
+        };
+      }, 50)
+    );
+    await expect(client.getIdentityByPrincipal('0xab')).rejects.toMatchObject({
+      code: 'wrong_network'
+    });
+    await expect(client.getChanges(50)).rejects.toMatchObject({
+      code: 'wrong_network'
+    });
+  });
+
+  it('refuses a status or an answer without its network id', async () => {
+    let missing: 'status' | 'answer' = 'status';
+    const { client } = setup((call) => {
+      if (path(call) === '/v1/status') {
+        const answer = status(10);
+        if (missing === 'status') {
+          answer.json.data.finalized = withoutNetwork(
+            answer.json.data.finalized
+          );
+        }
+        return answer;
+      }
+      const read = withoutNetwork(stamp(10));
+      return { status: 200, json: { read, data: { level: 1 }, next: null } };
+    });
+    await expect(client.getHead()).rejects.toMatchObject({
+      code: 'bad_answer'
+    });
+    missing = 'answer';
+    await expect(client.getLevel('0x01', { height: 10 })).rejects.toMatchObject(
+      { code: 'bad_answer' }
+    );
+  });
+
+  it('reads the head again after an answer of another chain', async () => {
+    let network = stamp(1).network;
+    const { client, calls } = setup((call) => {
+      if (path(call) === '/v1/status') {
+        const answer = status(10);
+        answer.json.data.finalized = { ...answer.json.data.finalized, network };
+        return answer;
+      }
+      return {
+        status: 200,
+        json: {
+          read: { ...stamp(10), network: OTHER_NETWORK },
+          data: { level: 1 },
+          next: null
+        }
+      };
+    });
+    await client.getHead();
+    network = OTHER_NETWORK;
+    await expect(client.getLevel('0x01', { height: 10 })).rejects.toMatchObject(
+      { code: 'wrong_network' }
+    );
+    // The relaunch is seen at once: the next read is of the new chain.
+    expect(calls.filter((c) => path(c) === '/v1/status')).toHaveLength(2);
+    expect(await client.getLevel('0x01', { height: 10 })).toEqual({ level: 1 });
   });
 
   it('re-pins once on height_gone, then reads unpinned', async () => {
@@ -381,14 +633,16 @@ describe('ChainGatewayClient reads', () => {
   });
 
   it('follows the change feed by finalized height', async () => {
-    const { client, calls } = setup(() => ({
-      status: 200,
-      json: {
-        read: stamp(120),
-        data: { from: 100, through: 119, blocks: [] },
-        next: 120
-      }
-    }));
+    const { client, calls: all } = setup(
+      withStatus(() => ({
+        status: 200,
+        json: {
+          read: stamp(120),
+          data: { from: 100, through: 119, blocks: [] },
+          next: 120
+        }
+      }))
+    );
     expect(
       await client.getChanges(100, {
         limit: 20,
@@ -403,21 +657,15 @@ describe('ChainGatewayClient reads', () => {
       atHead: false,
       network: '0x' + '22'.repeat(32)
     });
+    const calls = reads(all);
     expect(path(calls[0])).toBe('/v1/feed');
     expect(param(calls[0], 'families')).toBe('0x0102,0x0120');
     expect(param(calls[0], 'height')).toBeNull();
   });
 
   it('passes a cursor inside a block back as given, and keeps the whole height', async () => {
-    const block = (complete: boolean) => ({
-      height: 120,
-      slot: 0,
-      root: '0x',
-      time: 1,
-      complete,
-      recordsFrom: complete ? 4096 : 0,
-      records: []
-    });
+    const block = (complete: boolean) =>
+      feedBlock(120, complete, complete ? 4096 : 0);
     const answers = [
       {
         status: 200,
@@ -444,7 +692,7 @@ describe('ChainGatewayClient reads', () => {
         }
       }
     ];
-    const { client, calls } = setup(() => answers.shift()!);
+    const { client, calls: all } = setup(withStatus(() => answers.shift()!));
     const first = await client.getChanges(120);
     expect(first).toEqual(
       expect.objectContaining({
@@ -454,7 +702,7 @@ describe('ChainGatewayClient reads', () => {
       })
     );
     const second = await client.getChanges(first.next);
-    expect(param(calls[1], 'from')).toBe('120:4096');
+    expect(param(reads(all)[1], 'from')).toBe('120:4096');
     expect(second).toEqual(
       expect.objectContaining({ next: '121', nextHeight: 121, atHead: false })
     );
@@ -462,166 +710,185 @@ describe('ChainGatewayClient reads', () => {
   });
 
   it.each([
-    ['blocks that are not a list', { through: 120, blocks: 'none' }, null],
+    ['blocks that are not a list', 120, { through: 120, blocks: 'none' }, null],
     [
       'blocks out of order',
-      {
-        through: 121,
-        blocks: [
-          {
-            height: 121,
-            slot: 0,
-            root: '0x',
-            time: 1,
-            complete: true,
-            records: []
-          },
-          {
-            height: 120,
-            slot: 0,
-            root: '0x',
-            time: 1,
-            complete: true,
-            records: []
-          }
-        ]
-      },
-      null
+      120,
+      { through: 121, blocks: [feedBlock(121), feedBlock(120)] },
+      '122'
     ],
     [
       'a next inside a block the page does not end in',
-      {
-        through: 120,
-        blocks: [
-          {
-            height: 120,
-            slot: 0,
-            root: '0x',
-            time: 1,
-            complete: true,
-            records: []
-          }
-        ]
-      },
+      120,
+      { through: 120, blocks: [feedBlock(120)] },
       '121:4096'
     ],
     [
       'a whole block past through',
-      {
-        through: 119,
-        blocks: [
-          {
-            height: 120,
-            slot: 0,
-            root: '0x',
-            time: 1,
-            complete: true,
-            records: []
-          }
-        ]
-      },
+      120,
+      { through: 119, blocks: [feedBlock(120)] },
       '120'
     ],
     [
       'two blocks at one height',
-      {
-        through: 120,
-        blocks: [
-          {
-            height: 120,
-            slot: 0,
-            root: '0x',
-            time: 1,
-            complete: true,
-            records: []
-          },
-          {
-            height: 120,
-            slot: 0,
-            root: '0x',
-            time: 1,
-            complete: true,
-            records: []
-          }
-        ]
-      },
+      120,
+      { through: 120, blocks: [feedBlock(120), feedBlock(120)] },
       '121'
     ],
     [
       'a cut block before the last',
-      {
-        through: 121,
-        blocks: [
-          {
-            height: 120,
-            slot: 0,
-            root: '0x',
-            time: 1,
-            complete: false,
-            records: []
-          },
-          {
-            height: 121,
-            slot: 0,
-            root: '0x',
-            time: 1,
-            complete: true,
-            records: []
-          }
-        ]
-      },
+      120,
+      { through: 121, blocks: [feedBlock(120, false), feedBlock(121)] },
       '122'
     ],
     [
+      'a cut block inside the heights given whole',
+      120,
+      { through: 121, blocks: [feedBlock(120), feedBlock(121, false)] },
+      '121:3'
+    ],
+    [
       'a cut block named by a cursor in another block',
-      {
-        through: 119,
-        blocks: [
-          {
-            height: 120,
-            slot: 0,
-            root: '0x',
-            time: 1,
-            complete: false,
-            records: []
-          }
-        ]
-      },
+      120,
+      { through: 119, blocks: [feedBlock(120, false)] },
       '125:3'
     ],
-    ['a whole next that skips heights', { through: 119, blocks: [] }, '125'],
+    [
+      'a whole next that skips heights',
+      120,
+      { through: 119, blocks: [] },
+      '125'
+    ],
+    [
+      'a next behind the height asked from',
+      136,
+      { through: 130, blocks: [] },
+      '131'
+    ],
     [
       'a cut block with a whole next',
-      {
-        through: 119,
-        blocks: [
-          {
-            height: 120,
-            slot: 0,
-            root: '0x',
-            time: 1,
-            complete: false,
-            records: []
-          }
-        ]
-      },
+      120,
+      { through: 119, blocks: [feedBlock(120, false)] },
       '120'
+    ],
+    [
+      'a block below the height asked from',
+      120,
+      { through: 121, blocks: [feedBlock(100), feedBlock(121)] },
+      '122'
+    ],
+    [
+      'a block asked from whole that starts inside',
+      120,
+      { through: 120, blocks: [feedBlock(120, true, 4096)] },
+      '121'
+    ],
+    [
+      'the block asked from inside, from its start',
+      '120:4096',
+      { through: 120, blocks: [feedBlock(120)] },
+      '121'
+    ],
+    [
+      'another block where the one asked from inside should be',
+      '120:4096',
+      { through: 121, blocks: [feedBlock(121)] },
+      '122'
+    ],
+    [
+      'a cut block whose next does not move on',
+      '120:5',
+      { through: 119, blocks: [feedBlock(120, false, 5)] },
+      '120:5'
+    ],
+    [
+      'a cursor that is not one',
+      120,
+      { through: 119, blocks: [feedBlock(120, false)] },
+      '120:abc'
+    ],
+    [
+      'a height that is not a number',
+      120,
+      { through: 120, blocks: [{ ...feedBlock(120), height: '120' }] },
+      '121'
+    ],
+    [
+      'no height',
+      120,
+      { through: 120, blocks: [{ ...feedBlock(120), height: null }] },
+      '121'
+    ],
+    [
+      'records that are not a list',
+      120,
+      { through: 120, blocks: [{ ...feedBlock(120), records: null }] },
+      '121'
+    ],
+    [
+      'a block that does not say whether it is whole',
+      120,
+      { through: 120, blocks: [{ ...feedBlock(120), complete: undefined }] },
+      '121'
     ]
-  ])('refuses a feed page with %s', async (_name, data, next) => {
-    const { client } = setup(() => ({
-      status: 200,
-      json: { read: stamp(130), data, next }
-    }));
-    await expect(client.getChanges(120)).rejects.toMatchObject({
+  ])('refuses a feed page with %s', async (_name, from, data, next) => {
+    const { client } = setup(
+      withStatus(() => ({
+        status: 200,
+        json: { read: stamp(130), data, next }
+      }))
+    );
+    await expect(client.getChanges(from)).rejects.toMatchObject({
       code: 'bad_answer'
     });
   });
 
+  it('takes a page from a node behind the height asked from, without moving back', async () => {
+    const answers = [
+      { through: 130, next: '136' },
+      { through: 130, next: '136' }
+    ];
+    const { client } = setup(
+      withStatus(() => {
+        const answer = answers.shift()!;
+        return {
+          status: 200,
+          json: {
+            read: stamp(130),
+            data: { through: answer.through, blocks: [] },
+            next: answer.next
+          }
+        };
+      })
+    );
+    expect(await client.getChanges(136)).toEqual(
+      expect.objectContaining({ nextHeight: 136, atHead: true, next: '136' })
+    );
+    // Asked from inside a block it doesn't have yet: the height stays.
+    expect(await client.getChanges('136:40')).toEqual(
+      expect.objectContaining({ nextHeight: 136, atHead: true })
+    );
+  });
+
+  it('refuses a cursor that is not one before asking', async () => {
+    const { client, calls } = setup(withStatus(() => new Error('not asked')));
+    await expect(client.getChanges('12:x')).rejects.toMatchObject({
+      code: 'bad_request'
+    });
+    expect(calls).toHaveLength(0);
+  });
+
   it('says the head is reached on an empty page through its start', async () => {
-    const { client } = setup(() => ({
-      status: 200,
-      json: { read: stamp(130), data: { through: 120, blocks: [] }, next: 121 }
-    }));
+    const { client } = setup(
+      withStatus(() => ({
+        status: 200,
+        json: {
+          read: stamp(130),
+          data: { through: 120, blocks: [] },
+          next: 121
+        }
+      }))
+    );
     // Nothing past 120 yet, read from 120: 120 itself was given (empty).
     expect((await client.getChanges(120)).atHead).toBe(false);
     expect((await client.getChanges(121)).atHead).toBe(true);
@@ -650,20 +917,24 @@ describe('ChainGatewayClient reads', () => {
   });
 
   it('refuses a feed page without a whole-height through', async () => {
-    const { client } = setup(() => ({
-      status: 200,
-      json: { read: stamp(130), data: { blocks: [] }, next: null }
-    }));
+    const { client } = setup(
+      withStatus(() => ({
+        status: 200,
+        json: { read: stamp(130), data: { blocks: [] }, next: null }
+      }))
+    );
     await expect(client.getChanges(120)).rejects.toMatchObject({
       code: 'bad_answer'
     });
   });
 
   it('throws gone when the feed no longer holds the height', async () => {
-    const { client } = setup(() => ({
-      status: 410,
-      json: { read: stamp(1), error: { code: 'gone', message: 'from 50' } }
-    }));
+    const { client } = setup(
+      withStatus(() => ({
+        status: 410,
+        json: { read: stamp(1), error: { code: 'gone', message: 'from 50' } }
+      }))
+    );
     await expect(client.getChanges(1)).rejects.toMatchObject({ code: 'gone' });
   });
 });
@@ -671,42 +942,46 @@ describe('ChainGatewayClient reads', () => {
 describe('ChainGatewayClient retries and errors', () => {
   it('retries 503 and network errors, honouring Retry-After', async () => {
     let n = 0;
-    const { client, calls, sleeps } = setup(() => {
-      n++;
-      if (n === 1)
+    const { client, calls, sleeps } = setup(
+      withStatus(() => {
+        n++;
+        if (n === 1)
+          return {
+            status: 503,
+            json: { error: { code: 'busy', message: 'busy' } },
+            headers: { 'retry-after': '1' }
+          };
+        if (n === 2) return new Error('socket hang up');
         return {
-          status: 503,
-          json: { error: { code: 'busy', message: 'busy' } },
-          headers: { 'retry-after': '1' }
+          status: 200,
+          json: { read: stamp(3), data: { level: 1 }, next: null }
         };
-      if (n === 2) return new Error('socket hang up');
-      return {
-        status: 200,
-        json: { read: stamp(3), data: { level: 1 }, next: null }
-      };
-    });
+      })
+    );
     expect(await client.getLevel('0x01', { height: 3 })).toEqual({ level: 1 });
-    expect(calls).toHaveLength(3);
+    expect(reads(calls)).toHaveLength(3);
     expect(sleeps[0]).toBe(1_000);
     expect(sleeps[1]).toBeGreaterThanOrEqual(400);
   });
 
   it('reads the proxy rate limit answer and retries it', async () => {
     let n = 0;
-    const { client, calls } = setup(() =>
-      ++n === 1
-        ? {
-            status: 429,
-            json: { error: 'rate_limited', message: 'slow down' },
-            headers: { 'retry-after': '2' }
-          }
-        : {
-            status: 200,
-            json: { read: stamp(3), data: { level: 2 }, next: null }
-          }
+    const { client, calls } = setup(
+      withStatus(() =>
+        ++n === 1
+          ? {
+              status: 429,
+              json: { error: 'rate_limited', message: 'slow down' },
+              headers: { 'retry-after': '2' }
+            }
+          : {
+              status: 200,
+              json: { read: stamp(3), data: { level: 2 }, next: null }
+            }
+      )
     );
     expect(await client.getLevel('0x01', { height: 3 })).toEqual({ level: 2 });
-    expect(calls).toHaveLength(2);
+    expect(reads(calls)).toHaveLength(2);
   });
 
   it('gives up after its retries with the last error', async () => {
@@ -902,6 +1177,65 @@ describe('profile documents', () => {
     const huge = Buffer.alloc(2 * 1024 * 1024 + 1);
     const { client } = setup(() => ({ status: 200, bytes: huge }));
     await expect(client.getDocument(rawCidHexOf(huge))).rejects.toMatchObject({
+      code: 'bad_answer'
+    });
+  });
+
+  it('refuses a document by its length before reading it', async () => {
+    const { client } = setup(() => ({
+      status: 200,
+      bytes: Buffer.from('never read'),
+      headers: { 'content-length': String(2 * 1024 * 1024 + 1) }
+    }));
+    await expect(
+      client.getDocument(rawCidHexOf(Buffer.from('x')))
+    ).rejects.toMatchObject({ code: 'bad_answer' });
+  });
+
+  it('stops reading a streamed document past the cap', async () => {
+    const chunk = new Uint8Array(1024 * 1024);
+    let given = 0;
+    let cancelled = false;
+    const client = new ChainGatewayClient(() => ({
+      baseUrl: BASE,
+      serviceKey: null,
+      timeoutMs: 1_000,
+      retries: 0,
+      headTtlMs: 2_000,
+      cacheEntries: 10,
+      fetchImpl: async () => ({
+        status: 200,
+        headers: { get: () => null },
+        arrayBuffer: async () => {
+          throw new Error('read whole');
+        },
+        body: {
+          getReader: () => ({
+            read: async () =>
+              given++ < 5
+                ? { done: false, value: chunk }
+                : { done: true, value: undefined },
+            cancel: async () => {
+              cancelled = true;
+            }
+          })
+        }
+      })
+    }));
+    await expect(
+      client.getDocument(rawCidHexOf(Buffer.from('x')))
+    ).rejects.toMatchObject({ code: 'bad_answer' });
+    expect(given).toBe(3);
+    expect(cancelled).toBe(true);
+  });
+
+  it('refuses an answer over its byte cap', async () => {
+    const { client } = setup(() => ({
+      status: 200,
+      json: status(10).json,
+      headers: { 'content-length': String(17 * 1024 * 1024) }
+    }));
+    await expect(client.getHead()).rejects.toMatchObject({
       code: 'bad_answer'
     });
   });

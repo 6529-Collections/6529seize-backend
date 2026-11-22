@@ -257,7 +257,31 @@ export interface ChainFeedRecord {
    * ask `/v1/identities/{p}/imported`).
    */
   readonly byImport?: boolean | null;
+  /**
+   * The record's last writer in its block: a transaction, or system work
+   * (the import, the rating scan, the binding step, ...); null for a block
+   * the node recorded before it kept writers.
+   */
+  readonly writer?: ChainFeedWriter | null;
 }
+
+export type ChainFeedWriter =
+  | {
+      readonly kind: 'tx';
+      readonly txId: string;
+      readonly opType: number | string;
+      readonly opName: string;
+    }
+  | {
+      readonly kind: 'system';
+      readonly step:
+        | 'IMPORT'
+        | 'RATING_SCAN'
+        | 'BINDING'
+        | 'MEMBERSHIP_DAY'
+        | 'QUEUE'
+        | 'SYSTEM';
+    };
 
 export interface ChainFeedBlock {
   readonly height: number;
@@ -274,10 +298,15 @@ export interface ChainFeedBlock {
   } | null;
   /**
    * False when the page ends inside this block: the next page gives the
-   * block again with the rest of its records (from `recordsFrom`).
+   * block again with the rest of its records (from `recordsFrom`). Always
+   * set in a page the client returns (it refuses a page without it);
+   * optional for callers' own blocks.
    */
   readonly complete?: boolean;
-  /** The position in the block's writes its records here start at. */
+  /**
+   * The position in the block's writes its records here start at: the
+   * cursor's index for the block a page was asked from inside, else 0.
+   */
   readonly recordsFrom?: number;
   readonly records: ChainFeedRecord[];
 }
@@ -297,12 +326,15 @@ export interface ChainFeedPage {
    */
   readonly next: ChainFeedCursor;
   /**
-   * The next height to read whole (`through + 1`): what a caller keeps
-   * between runs. Reading from it again repeats at most the block a page
-   * ended inside.
+   * The next height to read whole (`through + 1`, never below the height
+   * asked from): what a caller keeps between runs. Reading from it again
+   * repeats at most the block a page ended inside.
    */
   readonly nextHeight: number;
-  /** Nothing past the start: the finalized head is reached. */
+  /**
+   * Nothing at or past the height asked from: the node's finalized head is
+   * reached (a node behind another gives `through` below it).
+   */
   readonly atHead: boolean;
   /** The network id of the chain the page was read from. */
   readonly network?: string | null;
@@ -380,6 +412,6 @@ export interface ChainTx {
 export interface ChainTdhQuery {
   readonly day?: number;
   readonly wallet?: string;
-  /** With `day`: `wallets` or `identities` lists that day's rows. */
-  readonly list?: 'wallets' | 'identities';
+  /** With `day`: `wallets`, `identities` or `tokens` lists that day's rows. */
+  readonly list?: 'wallets' | 'identities' | 'tokens';
 }
