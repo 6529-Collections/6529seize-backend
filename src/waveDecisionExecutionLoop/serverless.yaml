@@ -39,6 +39,7 @@ functions:
 resources:
   Resources:
     WaveDecisionExecutionLoopOOMFilter:
+      DependsOn: WaveDecisionExecutionLoopLogGroup
       Type: AWS::Logs::MetricFilter
       Properties:
         LogGroupName: /aws/lambda/waveDecisionExecutionLoop
