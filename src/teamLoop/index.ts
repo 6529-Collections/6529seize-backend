@@ -29,9 +29,7 @@ export const handler = sentryContext.wrapLambdaHandler(async () => {
       // the run loudly without holding up the team list.
       if (appFeatures.isMintHandListsEnabled()) {
         const loaded = await loadHandListFiles();
-        logger.info(
-          `[HAND LISTS] [MEME LAB SPLITS ${loaded.splits}] [PRE-VOTE ARTISTS ${loaded.artists}]`
-        );
+        logger.info(`[HAND LISTS] [PRE-VOTE ARTISTS ${loaded.artists}]`);
       }
     },
     { logger, entities: [Team] }

@@ -87,9 +87,9 @@ export class AppFeatures {
   }
 
   /**
-   * The team loop also loads the Meme Lab royalty splits and the pre-vote
-   * artist badges from the files beside team.csv. Rollback: set it to false;
-   * the tables keep their rows.
+   * The team loop also loads the pre-vote artist badges from
+   * prevote-artists.csv beside team.csv. Rollback: set it to false; the
+   * table keeps its rows.
    */
   public isMintHandListsEnabled(): boolean {
     return this.isFeatureEnabled('MINT_HAND_LISTS');
