@@ -1242,20 +1242,45 @@ describeWithSeed('identity writers after the switch', [], () => {
       .map((r) => JSON.parse(r.entry).body)
       .filter((body) => body?.kind === 'phase');
     expect(lastParts[0].parts).toBeGreaterThan(1);
-    await loseIdentityTables();
+    const [counter] = await sqlExecutor.execute<{ block: number }>(
+      `SELECT block FROM ${SUBSCRIPTIONS_ID_CURSORS_TABLE} WHERE id = 'journal'`
+    );
     // The segment ended after the write's first part.
-    const result = await rebuildIdentityTables({
-      source: {
-        async *walk() {
-          for (const row of rows.slice(0, rows.length - lastParts.length + 1)) {
-            yield { entry: JSON.parse(row.entry) };
-          }
+    const postedInPart = {
+      async *walk() {
+        for (const row of rows.slice(0, rows.length - lastParts.length + 1)) {
+          yield { entry: JSON.parse(row.entry) };
         }
-      },
+      }
+    };
+    const alert = jest.spyOn(Logger.prototype, 'errorWithCode');
+    const tailAlerts = () =>
+      alert.mock.calls.filter(
+        (call) => call[0] === 'SUBSCRIPTIONS_JOURNAL_TAIL_MISSING'
+      ).length;
+    // With the database lost, the rest of the write is gone: it alerts.
+    await loseIdentityTables();
+    const result = await rebuildIdentityTables({
+      source: postedInPart,
       fetch: fetchPublished
     });
     expect(result.missing).toContain('ends inside write');
     expect(await subscriptionsIdentitySwitch.writeModeOrFail()).toBe('OFF');
+    expect(tailAlerts()).toBe(1);
+    // With the live database there (its counter), the closer posts the
+    // rest: reported, not alerted.
+    await loseIdentityTables();
+    await execute(
+      `INSERT INTO ${SUBSCRIPTIONS_ID_CURSORS_TABLE} (id, block, updated_at) VALUES ('journal', :n, 0)`,
+      { n: counter.block }
+    );
+    const again = await rebuildIdentityTables({
+      source: postedInPart,
+      fetch: fetchPublished
+    });
+    expect(again.missing).toContain('ends inside write');
+    expect(tailAlerts()).toBe(1);
+    alert.mockRestore();
   });
 
   it('alerts on a difference after the switch only when no known cause explains it', async () => {

@@ -666,7 +666,14 @@ export async function rebuildIdentityTables(params: {
         ? `The posted journal ends at n=${lastSeen}; live's counter is at n=${live}. Close and post the open segment, then rebuild again.`
         : null;
     if (missing) {
-      logger.errorWithCode('SUBSCRIPTIONS_JOURNAL_TAIL_MISSING', missing);
+      // A write posted in part while the live database is there is a
+      // segment still being posted: the closer posts the rest. Without the
+      // live database the rest is gone, which alerts.
+      if (partial && live !== null) {
+        logger.warn(`[JOURNAL TAIL STILL POSTING] ${missing}`);
+      } else {
+        logger.errorWithCode('SUBSCRIPTIONS_JOURNAL_TAIL_MISSING', missing);
+      }
       return {
         openingSha256: opening.openingSha256,
         entries: writes.length,
