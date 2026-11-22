@@ -128,28 +128,27 @@ export function parsePrevoteArtists(
 }
 
 /**
- * Makes the splits table hold the file: each listed token gets its splits,
- * and any other token goes back to 0 and 0, the value the NFT loop gives a
- * new Meme Lab card. Rows are never deleted; the NFT loop adds them.
+ * Makes the splits table hold the file: each listed token gets its splits.
+ * Rows exist only for listed tokens or were made by hand; one that is not in
+ * the file goes to 0 and 0 (no split) rather than being deleted.
  */
 export async function loadMemeLabSplits(
   splits: readonly MemeLabSplit[],
   db: SqlExecutor = sqlExecutor
 ): Promise<void> {
   if (!splits.length) throw new HandListFileError('No Meme Lab splits');
+  // Made by hand in production, so no entity creates it on a fresh database;
+  // this leaves an existing table as it is. Outside the transaction: MySQL
+  // commits a transaction implicitly on DDL.
+  await db.execute(
+    `create table if not exists ${MEME_LAB_ROYALTIES_TABLE} (
+       token_id int not null primary key,
+       primary_royalty_split double not null default 0,
+       secondary_royalty_split double not null default 0
+     )`
+  );
   await db.executeNativeQueriesInTransaction(async (connection) => {
     const options = { wrappedConnection: connection };
-    // Made by hand in production, so no entity creates it on a fresh
-    // database; this leaves an existing table as it is.
-    await db.execute(
-      `create table if not exists ${MEME_LAB_ROYALTIES_TABLE} (
-         token_id int not null primary key,
-         primary_royalty_split double not null default 0,
-         secondary_royalty_split double not null default 0
-       )`,
-      undefined,
-      options
-    );
     await db.execute(
       `update ${MEME_LAB_ROYALTIES_TABLE}
        set primary_royalty_split = 0, secondary_royalty_split = 0
@@ -198,14 +197,15 @@ export async function loadPrevoteArtists(
 }
 
 /**
- * Loads both files from this folder (the loop's bundle holds them beside
- * team.csv). Both files are read and checked before either table changes.
+ * Loads both files from a folder, by default this one (the loop's bundle
+ * holds them beside team.csv). Both files are read and checked before either
+ * table changes.
  * The team loop runs it daily behind MINT_HAND_LISTS; a rebuild runs it as
  * a step, which ignores the step context it is called with.
  */
 export async function loadHandListFiles(
-  db: SqlExecutor = sqlExecutor,
-  dir: string = __dirname
+  dir: string = __dirname,
+  db: SqlExecutor = sqlExecutor
 ): Promise<{ splits: number; artists: number }> {
   const read = (name: string) => readFileSync(`${dir}/${name}`, 'utf8');
   const splits = parseMemeLabSplits(

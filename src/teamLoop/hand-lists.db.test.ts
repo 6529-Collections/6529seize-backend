@@ -47,7 +47,7 @@ describeWithSeed(
           'token_id,primary_royalty_split,secondary_royalty_split\n1,0.5,0.5\n2,0.25,0.1\n'
         )
       );
-      // The NFT loop adds a new card at 0 and 0; one is edited by hand.
+      // Rows added by hand, outside the file: one at 0 and 0, one with splits.
       await sqlExecutor.execute(
         `insert into ${MEME_LAB_ROYALTIES_TABLE} values (3, 0, 0), (4, 0.9, 0.9)`
       );
@@ -105,9 +105,7 @@ describeWithSeed(
         'token_id,primary_royalty_split,secondary_royalty_split\n7,0.5,0.5\n';
       const bad = filesDir(splits, 'card_no,profile_id\n');
       try {
-        await expect(loadHandListFiles(sqlExecutor, bad)).rejects.toThrow(
-          'no rows'
-        );
+        await expect(loadHandListFiles(bad)).rejects.toThrow('no rows');
       } finally {
         rmSync(bad, { recursive: true, force: true });
       }
@@ -120,7 +118,7 @@ describeWithSeed(
       ).toEqual([{ n: 0 }]);
       const good = filesDir(splits, 'card_no,profile_id\n9,profile-9\n');
       try {
-        await expect(loadHandListFiles(sqlExecutor, good)).resolves.toEqual({
+        await expect(loadHandListFiles(good)).resolves.toEqual({
           splits: 1,
           artists: 1
         });

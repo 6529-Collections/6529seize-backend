@@ -1,5 +1,5 @@
 import 'reflect-metadata';
-import {
+import nextgenRoutes, {
   nextgenWriteSpec,
   persistAllowlist,
   persistCollectionBurn
@@ -13,6 +13,7 @@ import {
 } from '@/nextgen/nextgen_constants';
 import { sqlExecutor } from '@/sql-executor';
 import { describeWithSeed } from '@/tests/_setup/seed';
+import { allOk, apiAnswers } from './mint-log-api-answers.test-utils';
 import { mintStateReader } from './mint-log-capture';
 import { differingParts } from './mint-log-diff';
 import { MintContentPort, runMintGenesis } from './mint-log-genesis';
@@ -48,7 +49,13 @@ function allowlistUpload(root: string, wallets: number[], phase = 'Phase 1') {
     signed,
     merkle: {
       merkle_root: root,
-      merkle_tree: { leaves: wallets.map((n) => W(n)) },
+      // As merkletreejs serializes its leaves: Buffers of each keccak.
+      merkle_tree: {
+        leaves: wallets.map((n) => ({
+          type: 'Buffer',
+          data: Array.from(Buffer.from(n.toString(16).padStart(64, '0'), 'hex'))
+        }))
+      },
       allowlist: wallets.map((n) => ({
         address: W(n),
         spots: n,
@@ -164,6 +171,25 @@ describeWithSeed('mint log on MySQL: NextGen', [], () => {
     const live = await capture();
     expect(live.nextgen_allowlists).toHaveLength(1);
     expect(live.nextgen_burn_collection).toHaveLength(1);
+    // The public allowlist and proof endpoints, through the real router.
+    const endpoints = () =>
+      apiAnswers(
+        [['/nextgen', nextgenRoutes]],
+        [
+          `/nextgen/merkle_roots/${ROOT('2')}`,
+          `/nextgen/${COLLECTION}/allowlist_merkle/${ROOT('2')}`,
+          `/nextgen/${COLLECTION}/allowlist_merkle`,
+          `/nextgen/proofs/${ROOT('2')}/${W(3)}`,
+          `/nextgen/proofs?address=${W(4)}`,
+          `/nextgen/allowlist_phases`,
+          `/nextgen/allowlist_phases/${COLLECTION}`
+        ]
+      );
+    const answers = await endpoints();
+    expect(allOk(answers)).toEqual([]);
+    expect(answers[`/nextgen/proofs/${ROOT('2')}/${W(3)}`].body).not.toEqual(
+      []
+    );
 
     for (const table of [
       NEXTGEN_ALLOWLIST_COLLECTIONS_TABLE,
@@ -176,5 +202,6 @@ describeWithSeed('mint log on MySQL: NextGen', [], () => {
     }
     await new MintLogRebuilder(content).rebuild(entries);
     expect(differingParts(await capture(), live)).toEqual([]);
+    expect(await endpoints()).toEqual(answers);
   });
 });

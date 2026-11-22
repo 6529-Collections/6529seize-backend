@@ -1,8 +1,7 @@
 // The routers build their auth middleware on import; the endpoints this
 // test reads are public, so authentication passes through.
 jest.mock('@/api/auth/auth', () => {
-  const pass = () => (_req: unknown, _res: unknown, next: () => void) =>
-    next();
+  const pass = () => (_req: unknown, _res: unknown, next: () => void) => next();
   return {
     ...jest.requireActual('@/api/auth/auth'),
     needsAuthenticatedUser: pass,
@@ -11,9 +10,6 @@ jest.mock('@/api/auth/auth', () => {
 });
 
 import 'reflect-metadata';
-import express from 'express';
-import type { AddressInfo } from 'node:net';
-import type { Server } from 'node:http';
 import distributionPhotosRoutes from '@/api/distribution-photos/api.distribution_photos.routes';
 import distributionsRoutes from '@/api/distributions/api.distributions.routes';
 import mintingClaimsRoutes from '@/api/minting-claims/api.minting-claims.routes';
@@ -51,6 +47,7 @@ import {
 } from '@/constants';
 import { sqlExecutor } from '@/sql-executor';
 import { describeWithSeed } from '@/tests/_setup/seed';
+import { allOk, apiAnswers } from './mint-log-api-answers.test-utils';
 import { mintStateReader } from './mint-log-capture';
 import { differingParts } from './mint-log-diff';
 import { MintContentPort, runMintGenesis } from './mint-log-genesis';
@@ -186,40 +183,29 @@ async function capture() {
 
 /**
  * The public endpoints that read the minting tables, answered by the real
- * routers. Minted counts come from the distribution loop, which this test
- * does not run; the minted-count test below checks them.
+ * routers: distributions, photos, claim roots, airdrops and allowlists, and
+ * the merkle proof of one allowlisted wallet. Minted counts come from the
+ * distribution loop, which this test does not run; the minted-count test
+ * below checks them.
  */
-async function endpointJson(): Promise<Record<string, unknown>> {
-  const app = express();
-  app.use('/api/distribution_photos', distributionPhotosRoutes);
-  app.use('/api/minting-claims', mintingClaimsRoutes);
-  app.use('/api', distributionsRoutes);
-  const server = await new Promise<Server>((resolve) => {
-    const listening = app.listen(0, '127.0.0.1', () => resolve(listening));
-  });
-  try {
-    const { port } = server.address() as AddressInfo;
-    const answers: Record<string, unknown> = {};
-    for (const path of [
+function endpointJson(merkleRoot: string) {
+  return apiAnswers(
+    [
+      ['/distribution_photos', distributionPhotosRoutes],
+      ['/minting-claims', mintingClaimsRoutes],
+      ['', distributionsRoutes]
+    ],
+    [
       `/distribution_phases/${CONTRACT}/${CARD_ID}`,
       `/distributions?card_id=${CARD_ID}&contract=${CONTRACT}`,
       `/distribution_photos/${CONTRACT}/${CARD_ID}`,
       `/minting-claims/${CONTRACT}/${CARD_ID}/roots`,
       `/minting-claims/${CONTRACT}/${CARD_ID}/airdrops`,
-      `/minting-claims/${CONTRACT}/${CARD_ID}/allowlists`
-    ]) {
-      const response = await fetch(`http://127.0.0.1:${port}/api${path}`);
-      const body = JSON.parse(await response.text(), (key, value) =>
-        key === 'minted' || key === 'total_count' ? undefined : value
-      );
-      answers[path] = { status: response.status, body };
-    }
-    return answers;
-  } finally {
-    await new Promise<void>((resolve, reject) =>
-      server.close((error) => (error ? reject(error) : resolve()))
-    );
-  }
+      `/minting-claims/${CONTRACT}/${CARD_ID}/allowlists`,
+      `/minting-claims/${CONTRACT}/${CARD_ID}/${merkleRoot}/proofs/${W(1)}`
+    ],
+    ['minted', 'total_count']
+  );
 }
 
 async function cursor() {
@@ -429,10 +415,9 @@ describeWithSeed(
 
       const live = await capture();
       expect(live.merkle.map((root) => root.row.phase)).toEqual(['Phase 2']);
-      const answers = await endpointJson();
-      for (const answer of Object.values(answers)) {
-        expect(answer).toMatchObject({ status: 200 });
-      }
+      const merkleRoot = String(live.merkle[0].row.merkle_root);
+      const answers = await endpointJson(merkleRoot);
+      expect(allOk(answers)).toEqual([]);
 
       // Drop the rows, then rebuild from the genesis files and the logged
       // entries as the record log holds them (beside other modules' entries),
@@ -459,7 +444,7 @@ describeWithSeed(
       expect(result.entries).toBe(10);
       expect(differingParts(await capture(), live)).toEqual([]);
       expect(await cursor()).toBe(140);
-      expect(await endpointJson()).toEqual(answers);
+      expect(await endpointJson(merkleRoot)).toEqual(answers);
       // A second rebuild over the rebuilt rows is refused.
       await expect(
         rebuildMintLogFromRecordLog({

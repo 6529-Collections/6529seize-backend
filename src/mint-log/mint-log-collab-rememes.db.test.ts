@@ -21,6 +21,11 @@ import { RememeSource } from '@/entities/IRememe';
 import { WaveType } from '@/entities/IWave';
 import { env } from '@/env';
 import { rememeAddSpec } from '@/api/rememes/rememe-add-log';
+import rememesRoutes from '@/api/rememes/rememes.routes';
+import royaltiesRoutes from '@/api/royalties/royalties.routes';
+import { getMemeCollaborationState } from '@/api/meme-collaborations/meme-collaborations.handlers';
+import { fetchRememesUploads } from '@/db-api';
+import { Router } from 'express';
 import { MemeCollaborationsDb } from '@/meme-collaborations/meme-collaborations.db';
 import {
   collaborationArtworkDetails,
@@ -33,6 +38,7 @@ import { nativeOriginalPrimaryFixture } from '@/tests/fixtures/native-competitio
 import { aProfile, withProfiles } from '@/tests/fixtures/profile.fixture';
 import { aWave, withWaves } from '@/tests/fixtures/wave.fixture';
 import { describeWithSeed } from '@/tests/_setup/seed';
+import { allOk, apiAnswers } from './mint-log-api-answers.test-utils';
 import { mintStateReader } from './mint-log-capture';
 import { differingParts } from './mint-log-diff';
 import { MintContentPort, runMintGenesis } from './mint-log-genesis';
@@ -169,6 +175,40 @@ async function empty(tables: readonly string[]): Promise<void> {
     await sqlExecutor.execute(`delete from ${table}`);
   }
 }
+
+/**
+ * GET /drops/:drop_id/collaborations through its handler, as anyone or as a
+ * signed-in wallet (?viewer=), since the state shows invitations only to the
+ * author and the invitees.
+ */
+const collaborationState = Router().get(
+  '/drops/:drop_id/collaborations',
+  async (req, res) => {
+    if (typeof req.query.viewer === 'string') {
+      (req as { user?: unknown }).user = { wallet: req.query.viewer };
+    }
+    try {
+      res.json(await getMemeCollaborationState(req as any));
+    } catch (error) {
+      res
+        .status((error as { status?: number }).status ?? 500)
+        .json({ error: String(error) });
+    }
+  }
+);
+
+/**
+ * GET /rememes_uploads, which app.ts serves inline: the same reader and the
+ * same shaping.
+ */
+const rememesUploads = Router().get('/rememes_uploads', async (_req, res) => {
+  const result = await fetchRememesUploads(50, 1);
+  result.data.forEach((row: any) => {
+    row.date = row.created_at;
+    delete row.created_at;
+  });
+  res.json(result);
+});
 
 const MATCH = {
   undeclared: [],
@@ -379,6 +419,17 @@ describeWithSeed(
 
       const cards = ['drop', 'drop2'].map((key) => mintCard('collab', 0, key));
       const live = await Promise.all(cards.map(capture));
+      const endpoints = () =>
+        apiAnswers(
+          [['', collaborationState]],
+          [
+            '/drops/drop/collaborations',
+            `/drops/drop/collaborations?viewer=${W(1)}`,
+            `/drops/drop/collaborations?viewer=${W(5)}`
+          ]
+        );
+      const answers = await endpoints();
+      expect(allOk(answers)).toEqual([]);
       expect(live[0].collaboration[0]).toMatchObject({ drop_id: 'drop' });
       expect(live[1].collaboration_invitations).toHaveLength(1);
       expect(
@@ -403,6 +454,7 @@ describeWithSeed(
       const rebuilt = await Promise.all(cards.map(capture));
       expect(differingParts(rebuilt[0], live[0])).toEqual([]);
       expect(differingParts(rebuilt[1], live[1])).toEqual([]);
+      expect(await endpoints()).toEqual(answers);
       expect(
         await sqlExecutor.execute(
           `select card_key, seq from ${MINT_LOG_CARD_HEADS_TABLE} order by card_key`
@@ -514,6 +566,25 @@ describeWithSeed(
       ];
       const live = await Promise.all(cards.map(capture));
       expect(live[0].rememes.map((row) => row.id)).toEqual(['1', '2']);
+      const endpoints = () =>
+        apiAnswers(
+          [
+            ['/rememes', rememesRoutes],
+            ['/royalties', royaltiesRoutes],
+            ['', rememesUploads]
+          ],
+          [
+            // Without a sort the list comes in random order.
+            '/rememes?sort=created_at&sort_direction=asc',
+            `/rememes?contract=${ADDED_CONTRACT}&sort=created_at&sort_direction=asc`,
+            '/rememes_uploads',
+            '/royalties/uploads'
+          ],
+          // Set by the database when the rebuild inserts the row.
+          ['updated_at']
+        );
+      const answers = await endpoints();
+      expect(allOk(answers)).toEqual([]);
 
       await empty([
         REMEMES_TABLE,
@@ -532,6 +603,7 @@ describeWithSeed(
           parts: differingParts(rebuilt[index], live[index])
         }).toEqual({ card: card.key, parts: [] })
       );
+      expect(await endpoints()).toEqual(answers);
     });
   }
 );
