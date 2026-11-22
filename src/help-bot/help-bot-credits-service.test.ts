@@ -61,12 +61,14 @@ function createService({
   executeResults,
   executeQueryResults,
   oneOrNullResults,
-  botProfileId = 'bot-profile'
+  botProfileId = 'bot-profile',
+  creditsEnabled = true
 }: {
   readonly executeResults?: unknown[];
   readonly executeQueryResults?: unknown[][];
   readonly oneOrNullResults?: unknown[];
   readonly botProfileId?: string | null;
+  readonly creditsEnabled?: boolean;
 }) {
   const { executor, connection } = createSqlExecutor({
     executeResults,
@@ -79,7 +81,8 @@ function createService({
   return {
     service: new HelpBotCreditsService(
       () => executor as never,
-      profileResolver as never
+      profileResolver as never,
+      () => creditsEnabled
     ),
     executor,
     connection,
@@ -354,5 +357,76 @@ describe('HelpBotCreditsService', () => {
       }),
       expect.anything()
     );
+  });
+  describe('while the credit meter is off', () => {
+    it('is off unless FEATURE_HELP_BOT_CREDITS is true', () => {
+      const original = process.env.FEATURE_HELP_BOT_CREDITS;
+      try {
+        delete process.env.FEATURE_HELP_BOT_CREDITS;
+        const service = new HelpBotCreditsService(() => ({}) as never, {
+          resolveBotProfileId: jest.fn()
+        } as never);
+        expect(service.isEnabled()).toBe(false);
+        process.env.FEATURE_HELP_BOT_CREDITS = 'true';
+        expect(service.isEnabled()).toBe(true);
+      } finally {
+        if (original === undefined) delete process.env.FEATURE_HELP_BOT_CREDITS;
+        else process.env.FEATURE_HELP_BOT_CREDITS = original;
+      }
+    });
+
+    it.each([
+      ['signup', 'grantSignupCredits'],
+      ['profile setup', 'grantProfileSetupCredits'],
+      ['daily activity', 'grantDailyActivityCredits']
+    ] as const)('grants no %s credits and writes nothing', async (_, grant) => {
+      const { service, executor, profileResolver } = createService({
+        creditsEnabled: false
+      });
+
+      await expect(
+        service[grant]({ profileId: 'profile-1' }, ctx)
+      ).resolves.toEqual({
+        amountGranted: 0,
+        balance: null,
+        alreadyGranted: false,
+        botProfileMissing: false
+      });
+
+      expect(profileResolver.resolveBotProfileId).not.toHaveBeenCalled();
+      expect(executor.execute).not.toHaveBeenCalled();
+      expect(executor.executeNativeQueriesInTransaction).not.toHaveBeenCalled();
+      expect(profileActivityLogsDb.insert).not.toHaveBeenCalled();
+    });
+
+    it('refunds nothing, even for a question charged while it was on', async () => {
+      const { service, executor } = createService({
+        creditsEnabled: false,
+        oneOrNullResults: [{ amount: -1 }, { rating: -1 }]
+      });
+
+      await expect(
+        service.refundQuestionCredit(
+          { profileId: 'profile-1', interactionId: 'interaction-1' },
+          ctx
+        )
+      ).resolves.toBe(false);
+
+      expect(executor.oneOrNull).not.toHaveBeenCalled();
+      expect(executor.execute).not.toHaveBeenCalled();
+    });
+
+    it('refuses to charge instead of declining the question', async () => {
+      const { service, executor } = createService({ creditsEnabled: false });
+
+      await expect(
+        service.chargeQuestionCredit(
+          { profileId: 'profile-1', interactionId: 'interaction-1' },
+          ctx
+        )
+      ).rejects.toThrow('Help6529 Credits are off');
+
+      expect(executor.execute).not.toHaveBeenCalled();
+    });
   });
 });

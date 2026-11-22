@@ -209,6 +209,7 @@ export {
 } from './ISubscription';
 export { SubscriptionCoverageAlertStateEntity } from './ISubscriptionCoverageAlertState';
 export { SubscriptionCoverageRefreshRequestEntity } from './ISubscriptionCoverageRefreshRequest';
+export { SubscriptionDeferredWriteEntity } from './ISubscriptionDeferredWrite';
 export {
   ConsolidatedTDH,
   ConsolidatedTDHEditions,
@@ -297,6 +298,11 @@ export { SubscriptionCacheInvalidationEntity } from './ISubscriptionCacheInvalid
 export { DeviceGrantEntity } from './IDeviceGrant';
 export { DeviceSignedEventEntity } from './IDeviceSignedEvent';
 export { DropAuthorSignatureEntity } from './IDropAuthorSignature';
+export { SignedRecordHeadEntity } from './ISignedRecordHead';
+export {
+  SignedRecordLogEntryEntity,
+  SignedRecordLogSegmentEntity
+} from './ISignedRecordLog';
 export * from './IE2ee';
 export {
   MemeCollaborationEntity,
