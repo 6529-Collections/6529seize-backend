@@ -8,7 +8,6 @@ import {
   IDENTITY_NOTIFICATIONS_TABLE,
   NOTIFICATION_VIEW_TABLE,
   PUSH_NOTIFICATION_CANCELLATIONS_TABLE,
-  SIGNED_RECORD_LOG_ENTRIES_TABLE,
   WAVE_DROPPER_METRICS_TABLE,
   WAVE_METRICS_TABLE,
   WAVES_TABLE
@@ -32,7 +31,9 @@ import {
   notifyDeleteEntries
 } from '@/notifications/view/notification-archive';
 import { notifyViewMode } from '@/notifications/view/notify-view-flags';
+import { RecordLogDb } from '@/signed-records/record-log/record-log.db';
 import { RecordLogWriter } from '@/signed-records/record-log/record-log.service';
+import type { SqlExecutor } from '@/sql-executor';
 
 /**
  * The D146 deletion of unencrypted DM content. Two modes:
@@ -458,25 +459,31 @@ async function logViewDelete(
   tx: LegacyDmSql,
   deleted: { reference: NotificationReference; values: readonly string[] }
 ): Promise<void> {
-  const writer = new RecordLogWriter(
-    {
-      insertEntries: async (rows) => {
-        for (const row of rows) {
-          await tx.execute(
-            `insert into ${SIGNED_RECORD_LOG_ENTRIES_TABLE}
-               (chain, lane, entry, created_at, segment_seq)
-             values (?, ?, ?, ?, null)`,
-            [row.chain, row.lane, row.entry, row.created_at]
-          );
-        }
-      }
-    },
-    { findGrantProofs: async () => [] }
-  );
+  const writer = new RecordLogWriter(recordLogStoreIn(tx), {
+    findGrantProofs: async () => []
+  });
   await writer.append(
     notifyDeleteEntries(deleted.reference, deleted.values),
     {}
   );
+}
+
+/**
+ * The record log's own store over the purge's transaction, which takes
+ * positional parameters: the store's statements name theirs, so each name
+ * becomes a `?` with its value, in order.
+ */
+function recordLogStoreIn(tx: LegacyDmSql): RecordLogDb {
+  const execute = (sql: string, params: Record<string, unknown> = {}) => {
+    const values: unknown[] = [];
+    const positional = sql.replace(/:(\w+)/g, (_, name: string) => {
+      if (!(name in params)) throw new Error(`No value for :${name}`);
+      values.push(params[name]);
+      return '?';
+    });
+    return tx.execute(positional, values);
+  };
+  return new RecordLogDb(() => ({ execute }) as unknown as SqlExecutor);
 }
 
 async function cancelNotifications(
