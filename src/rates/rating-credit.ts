@@ -57,9 +57,9 @@ export function allCategoryRepRule(): (
 export function withoutHelpBotCreditsSql(alias?: string): string {
   if (!isIdentityOnChain()) return '';
   const column = alias ? `${alias}.` : '';
-  // utf8mb4_bin: compare as the in-memory rule does, without the column's
-  // accent-blind collation.
-  return ` and not (${column}matter = 'REP' and lower(trim(${column}matter_category)) collate utf8mb4_bin = ${mysql.escape(
+  // matter_category is utf8_bin (bytes), so lower(trim()) compares as the
+  // in-memory rule does.
+  return ` and not (${column}matter = 'REP' and lower(trim(${column}matter_category)) = ${mysql.escape(
     normalised(HELP_BOT_CREDIT_CATEGORY)
   )})`;
 }
