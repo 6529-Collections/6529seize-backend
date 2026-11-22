@@ -761,11 +761,11 @@ Settings: `E2EE_RELAY_URLS` (comma-separated `wss://`), `E2EE_RELAY_NET`,
 `E2EE_ORDERER_GRANT` (its grant proof), and for rebuilds the site-reader's
 `E2EE_SITE_READER_KEY` and `E2EE_SITE_READER_GRANT` with
 `E2EE_ORDERER_PUBLIC_KEY`. The relays pin the orderer's public key; the
-team holds the key. With records on,
+team holds the orderer key. With records on,
 `E2EE_MODERATION_PUBLIC_KEY` (`{"id", "public_key"}`, the moderation
 service's X25519 key) is required; `E2EE_MODERATION_KEYS` (secret,
 `[{"id", "private_key"}]`) is set only where reports are rebuilt or
-checked. The owner holds the moderation key too.
+checked. The team holds the moderation key too.
 
 **Size limits.** The relays cap a RECORD body at 16 KiB and a SEALED or
 LOG body at 64 KiB. Content goes inline only when the whole body fits, and
