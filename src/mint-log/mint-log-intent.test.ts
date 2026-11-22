@@ -48,6 +48,37 @@ describe('mint admin records', () => {
     );
   });
 
+  it('hashes requests to the vectors the frontend pins too', () => {
+    expect(
+      intentSha256({
+        route: 'POST /distributions/:contract/:id/artist-airdrops',
+        params: {
+          contract: '0x33FD426905F149f8376e227d0C9D3340AaD17aF1',
+          id: '100'
+        },
+        body: {
+          csv: [
+            '0x0000000000000000000000000000000000000001,2',
+            '0x0000000000000000000000000000000000000002,1'
+          ].join('\n')
+        }
+      })
+    ).toBe('1688590332587dd1cf75b623b6c34daa64d50a83dfaf3ac21535a0ba57bbdb86');
+    expect(
+      intentSha256({
+        route:
+          'GET /subscriptions/allowlists/:contract/:token_id/:allowlist_id/:phase_id',
+        params: {
+          allowlist_id: 'a1',
+          contract: '0xabc',
+          phase_id: 'p1',
+          token_id: '100'
+        },
+        body: null
+      })
+    ).toBe('8d59f391969e2a2756b6b8e9117a3331615d065f03b736618b49833549e72e89');
+  });
+
   it('accepts the record for this request by the signed-in wallet', () => {
     expect(
       recordMismatch(record(), 'dist.airdrops', intent, WALLET)
