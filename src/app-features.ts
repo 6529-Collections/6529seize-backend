@@ -41,6 +41,15 @@ export class AppFeatures {
     return this.isFeatureEnabled('HOLDINGS_MEMBERSHIP_QUEUE');
   }
 
+  /**
+   * dbDumpsDaily writes manifest.json beside its CSVs (row counts, SHA-256
+   * and each file's source) and skips delegations and consolidations while
+   * the identity mirror isn't caught up.
+   */
+  public isDbDumpsManifestEnabled(): boolean {
+    return this.isFeatureEnabled('DB_DUMPS_MANIFEST');
+  }
+
   public isProfileCmsWalletGalleryEnabled(): boolean {
     return (
       (process.env.FEATURE_PROFILE_CMS_WALLET_GALLERY ?? 'true') === 'true'
