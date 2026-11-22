@@ -3098,7 +3098,8 @@ loaded), each legacy loop also writes them:
   upcoming cards subscribed again, all-editions counts set to the
   eligibility), at the top-up's transaction time;
 - the daily loop builds the card's list from the identity tables with the
-  legacy rules (the engine's `buildFinalList`);
+  legacy rules (the engine's `buildFinalList`), reading modes, choices and
+  balances from one snapshot;
 - the transactions loop matches airdrop mints against the identity final
   rows from its own cursor: in shadow up to the block the legacy loop has
   processed, so both sides match the same airdrops; after the switch up to
@@ -3353,7 +3354,8 @@ for a group of people does. go-live prints the counts and the refusals by
 reason, and `--accept-report-diffs` overrides these as it does the other
 comparisons. go-live, a rebuild and the CLI's `load` each take the pause
 marker atomically and refuse while another run holds one younger than the
-switch window. go-live then pauses the write routes (503), waits 10 s so a
+switch window; each lifts only its own, so a run that outlived the window
+can't lift the pause of the run that took over. go-live then pauses the write routes (503), waits 10 s so a
 write that read its path just before the pause commits, cuts, verifies, loads, compares, publishes the files,
 sets the switch time with the journal's opening entry and reopens the
 routes, which then answer 409 to unsigned writes. The load keeps the pause

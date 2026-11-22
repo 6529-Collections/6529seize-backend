@@ -102,31 +102,48 @@ export async function buildIdentityList(params: {
   const buildText = msToDbText(buildAtMs);
   const dateStr = new Date(buildAtMs).toISOString().slice(0, 10);
 
-  const modes = await sqlExecutor.execute<{
-    identity_key: string;
-    automatic: number;
-    subscribe_all_editions: number;
-    updated_at: string;
-  }>(
-    `SELECT identity_key, automatic, subscribe_all_editions, ${AS_TEXT('updated_at')} AS updated_at
-       FROM ${SUBSCRIPTIONS_ID_MODE_TABLE}`
-  );
-  const choices = await sqlExecutor.execute<{
-    identity_key: string;
-    subscribed: number;
-    subscribed_count: number;
-    automatic_subscription: number;
-    updated_at: string;
-  }>(
-    `SELECT identity_key, subscribed, subscribed_count, automatic_subscription,
-            ${AS_TEXT('updated_at')} AS updated_at
-       FROM ${SUBSCRIPTIONS_ID_NFTS_TABLE} WHERE contract = :contract AND token_id = :tokenId`,
-    { contract: MEMES_CONTRACT, tokenId }
-  );
-  const balances = await sqlExecutor.execute<{
-    identity_key: string;
-    balance: number;
-  }>(`SELECT identity_key, balance FROM ${SUBSCRIPTIONS_ID_BALANCES_TABLE}`);
+  // Modes, choices and balances from one snapshot, so a top-up or fold
+  // committing meanwhile is seen whole or not at all.
+  const { modes, choices, balances } =
+    await sqlExecutor.executeNativeQueriesInTransaction(
+      async (connection) => {
+        const options = { wrappedConnection: connection };
+        const modes = await sqlExecutor.execute<{
+          identity_key: string;
+          automatic: number;
+          subscribe_all_editions: number;
+          updated_at: string;
+        }>(
+          `SELECT identity_key, automatic, subscribe_all_editions, ${AS_TEXT('updated_at')} AS updated_at
+             FROM ${SUBSCRIPTIONS_ID_MODE_TABLE}`,
+          {},
+          options
+        );
+        const choices = await sqlExecutor.execute<{
+          identity_key: string;
+          subscribed: number;
+          subscribed_count: number;
+          automatic_subscription: number;
+          updated_at: string;
+        }>(
+          `SELECT identity_key, subscribed, subscribed_count, automatic_subscription,
+                  ${AS_TEXT('updated_at')} AS updated_at
+             FROM ${SUBSCRIPTIONS_ID_NFTS_TABLE} WHERE contract = :contract AND token_id = :tokenId`,
+          { contract: MEMES_CONTRACT, tokenId },
+          options
+        );
+        const balances = await sqlExecutor.execute<{
+          identity_key: string;
+          balance: number;
+        }>(
+          `SELECT identity_key, balance FROM ${SUBSCRIPTIONS_ID_BALANCES_TABLE}`,
+          {},
+          options
+        );
+        return { modes, choices, balances };
+      },
+      { isolationLevel: 'REPEATABLE READ' }
+    );
 
   const modeOf = new Map(modes.map((m) => [m.identity_key, m]));
   const choiceOf = new Map(choices.map((c) => [c.identity_key, c]));
