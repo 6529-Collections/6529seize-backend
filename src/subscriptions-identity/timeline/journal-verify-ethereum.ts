@@ -82,13 +82,36 @@ function mintedIn(
  * internal), so its value is the same double the loop recorded.
  */
 export function ethereumFactsOf(reads: EthereumReads): EthereumFacts {
+  // A block's top-ups and a transaction's logs are read once: a mint's
+  // charges ask for one receipt per airdrop wallet.
+  const topUpsByBlock = new Map<number, Promise<SubscriptionTopUp[]>>();
+  const logsByHash = new Map<
+    string,
+    Promise<readonly TransactionLog[] | null>
+  >();
+  const once = <K, V>(
+    cache: Map<K, Promise<V>>,
+    key: K,
+    read: () => Promise<V>
+  ) => {
+    const known = cache.get(key);
+    if (known) {
+      return known;
+    }
+    const reading = read();
+    cache.set(key, reading);
+    return reading;
+  };
   return {
     async topUp(hash) {
       const block = await reads.blockOf(hash);
       if (block === null) {
         return null;
       }
-      const transfer = (await reads.topUpsIn(block)).find(
+      const inBlock = await once(topUpsByBlock, block, () =>
+        reads.topUpsIn(block)
+      );
+      const transfer = inBlock.find(
         (t) => t.hash.toLowerCase() === hash.toLowerCase()
       );
       return transfer
@@ -101,7 +124,9 @@ export function ethereumFactsOf(reads: EthereumReads): EthereumFacts {
         : null;
     },
     async mintedTo(hash, contract, tokenId, to) {
-      const logs = await reads.logsOf(hash);
+      const logs = await once(logsByHash, hash.toLowerCase(), () =>
+        reads.logsOf(hash)
+      );
       return logs ? mintedIn(logs, contract, tokenId, to) : 0;
     }
   };

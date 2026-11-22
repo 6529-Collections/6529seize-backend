@@ -640,14 +640,51 @@ function writeRow(
 }
 
 /**
+ * Why a change's rows are not the row its key names, or null. A rebuild
+ * checks the keyed row and writes the after row, so the key must be the
+ * table's natural key and both rows must carry it.
+ */
+export function journalKeyMismatch(change: JournalChange): string | null {
+  const spec = JOURNAL_TABLES[change.table] as TableSpec | undefined;
+  if (!spec) {
+    return `${String(change.table)} is not a journal table`;
+  }
+  const columns = Object.keys(change.key);
+  if (
+    columns.length !== spec.key.length ||
+    spec.key.some((k) => !columns.includes(k))
+  ) {
+    return `keyed by ${columns.join(', ')}, not ${spec.key.join(', ')}`;
+  }
+  for (const [side, row] of [
+    ['before', change.before],
+    ['after', change.after]
+  ] as const) {
+    if (row && spec.key.some((k) => String(row[k]) !== String(change.key[k]))) {
+      return `its ${side} row is another row`;
+    }
+  }
+  return null;
+}
+
+/**
  * Writes a body back (a rebuild), in the caller's transaction: a fold's
- * rekeys, then each change. A change's captured `before` must equal the
- * rebuilt row, or the rebuild stops there.
+ * rekeys, then each change. A change whose rows are not the row its key
+ * names stops the rebuild before anything is written, and so does a
+ * captured `before` that differs from the rebuilt row.
  */
 export async function applyJournalBody(
   body: JournalBody,
   options: DbQueryOptions
 ): Promise<void> {
+  for (const change of body.changes) {
+    const mismatch = journalKeyMismatch(change);
+    if (mismatch) {
+      throw new Error(
+        `Row ${change.table} ${canonicalJson(change.key)} of journal n=${body.n} (${body.kind}): ${mismatch}`
+      );
+    }
+  }
   for (const { from, to } of body.rekeys) {
     for (const table of [
       SUBSCRIPTIONS_ID_NFTS_FINAL_TABLE,

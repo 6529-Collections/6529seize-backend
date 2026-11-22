@@ -5,24 +5,26 @@ import type { RecordVerifyResult } from '@/signed-records/record-verify';
 import { roundSubscriptionBalance } from '../engine/parity-money';
 import { canonicalJson } from '../opening/opening-file';
 import type { OpeningFile } from '../opening/opening-file';
-import type {
-  JournalBody,
-  JournalChange,
-  JournalKind,
-  JournalTable
+import {
+  journalKeyMismatch,
+  type JournalBody,
+  type JournalChange,
+  type JournalKind,
+  type JournalTable
 } from './journal';
 
 /*
- * The journal verifier, which checks the journal's money rules.
- * A rebuild proves that it repeats what live wrote; this checks that what
- * live wrote follows the money rules:
+ * The journal verifier. A rebuild proves that it repeats what live wrote;
+ * this checks that what live wrote follows the money rules:
  *
- * - each entry, from its own before and after: a top-up moves the balance
- *   by its amount, a redemption by the mint price per charge, a fold sums,
- *   and no other kind changes a balance;
- * - across the journal of one opening: a top-up hash is credited once, no
- *   mint is charged more tokens than it delivered, `n` only increases and
- *   every write has all its parts;
+ * - each entry, from its own rows: a change's before and after are the
+ *   row its key names; a top-up moves the balance by its amount, a
+ *   redemption by the mint price per charge, a fold sums; no other kind
+ *   changes a balance;
+ * - across the journal of one opening: each balance's before is what the
+ *   opening file or the previous entry left; a top-up hash is credited
+ *   once; no mint is charged more tokens than it delivered; a signed event
+ *   makes one choice; `n` only increases and every write has all its parts;
  * - against Ethereum and the signed events, through the two ports below,
  *   when they are given. Without them it makes no call at all.
  */
@@ -57,6 +59,12 @@ export interface SignedEventLookup {
   } | null>;
 }
 
+/**
+ * An identity's balance before an entry, as the journal and the opening
+ * file left it: a number, null for no row, undefined when not known.
+ */
+export type BalanceBefore = (identity: string) => number | null | undefined;
+
 type Row = Record<string, unknown>;
 
 /** The tables each kind may change. */
@@ -84,8 +92,21 @@ function lower(value: unknown): string {
   return String(value ?? '').toLowerCase();
 }
 
+/** The identity a change is about: its key's, else its rows'. */
 function identityOf(change: JournalChange): string {
-  return String(change.key.identity_key);
+  return String(
+    change.key.identity_key ??
+      change.after?.identity_key ??
+      change.before?.identity_key
+  );
+}
+
+/** A change's key must be its table's natural key, and its rows the row that key names. */
+function keyFailure(label: string, change: JournalChange): string | null {
+  const mismatch = journalKeyMismatch(change);
+  return mismatch
+    ? `${label}: the ${change.table} change ${canonicalJson(change.key)}: ${mismatch}`
+    : null;
 }
 
 /** One token of one airdrop, charged to one identity (a redemption's input). */
@@ -148,10 +169,20 @@ function balancesByIdentity(
   return byIdentity;
 }
 
-function topUpMoney(label: string, inputs: Row, changes: JournalChange[]) {
+function topUpMoney(
+  label: string,
+  inputs: Row,
+  changes: JournalChange[],
+  balanceBefore: BalanceBefore
+) {
   const failures: string[] = [];
   const identity = String(inputs.identity_key);
   const amount = Number(inputs.amount);
+  if (!Number.isFinite(amount) || amount <= 0) {
+    failures.push(
+      `${label}: a top-up of ${String(inputs.amount)} ETH; only a positive amount is credited`
+    );
+  }
   const balances = balancesByIdentity(label, changes, failures);
   const others = Array.from(balances.keys()).filter((k) => k !== identity);
   if (others.length > 0) {
@@ -161,9 +192,14 @@ function topUpMoney(label: string, inputs: Row, changes: JournalChange[]) {
   }
   const change = balances.get(identity);
   if (!change) {
-    // Unchanged is right only for an amount that rounds away (a 0 ETH
-    // transfer) on an existing balance.
-    if (roundSubscriptionBalance(amount) !== 0) {
+    // Right only when the amount rounds away on the balance the journal
+    // knows (dust on an existing balance).
+    const current = balanceBefore(identity);
+    if (
+      current === undefined ||
+      current === null ||
+      roundSubscriptionBalance(current + amount) !== current
+    ) {
       failures.push(
         `${label}: the top-up leaves the balance of ${identity} as it was`
       );
@@ -218,19 +254,19 @@ function redemptionMoney(label: string, inputs: Row, changes: JournalChange[]) {
   if (!charges) {
     return [`${label}: inputs.charges is not a list of charges`];
   }
-  const byIdentity = new Map<string, Charge[]>();
+  const chargedTimes = new Map<string, number>();
   for (const charge of charges) {
-    byIdentity.set(charge.identity_key, [
-      ...(byIdentity.get(charge.identity_key) ?? []),
-      charge
-    ]);
+    chargedTimes.set(
+      charge.identity_key,
+      (chargedTimes.get(charge.identity_key) ?? 0) + 1
+    );
   }
   const balances = balancesByIdentity(label, changes, failures);
-  for (const [identity, own] of Array.from(byIdentity.entries())) {
+  for (const [identity, times] of Array.from(chargedTimes.entries())) {
     const change = balances.get(identity);
     if (!change) {
       failures.push(
-        `${label}: ${identity} is charged ${own.length} times and its balance does not change`
+        `${label}: ${identity} is charged ${times} times and its balance does not change`
       );
       continue;
     }
@@ -244,18 +280,18 @@ function redemptionMoney(label: string, inputs: Row, changes: JournalChange[]) {
       continue;
     }
     let expected = balanceOf(change.before) ?? 0;
-    for (let i = 0; i < own.length; i++) {
+    for (let i = 0; i < times; i++) {
       expected = roundSubscriptionBalance(expected - MEMES_MINT_PRICE);
     }
     const after = balanceOf(change.after);
     if (after !== expected) {
       failures.push(
-        `${label}: the balance of ${identity} is ${after} after ${own.length} charges from ${balanceOf(change.before) ?? 'no balance'}; expected ${expected}`
+        `${label}: the balance of ${identity} is ${after} after ${times} charges from ${balanceOf(change.before) ?? 'no balance'}; expected ${expected}`
       );
     }
   }
   for (const identity of Array.from(balances.keys())) {
-    if (!byIdentity.has(identity)) {
+    if (!chargedTimes.has(identity)) {
       failures.push(
         `${label}: the balance of ${identity} changes with no charge`
       );
@@ -297,10 +333,25 @@ function redemptionMoney(label: string, inputs: Row, changes: JournalChange[]) {
   return failures;
 }
 
-function foldMoney(label: string, inputs: Row, changes: JournalChange[]) {
+function foldMoney(
+  label: string,
+  inputs: Row,
+  changes: JournalChange[],
+  rekeys: JournalBody['rekeys'],
+  balanceBefore: BalanceBefore
+) {
   const failures: string[] = [];
   const identity = String(inputs.identity_key);
   const wallet = String(inputs.wallet);
+  if (
+    rekeys.length !== 1 ||
+    rekeys[0].from !== wallet ||
+    rekeys[0].to !== identity
+  ) {
+    failures.push(
+      `${label}: a fold of ${wallet} into ${identity} moves history ${canonicalJson(rekeys)}`
+    );
+  }
   const balances = balancesByIdentity(label, changes, failures);
   const others = Array.from(balances.keys()).filter(
     (k) => k !== identity && k !== wallet
@@ -318,8 +369,16 @@ function foldMoney(label: string, inputs: Row, changes: JournalChange[]) {
   if (ofWallet && ofWallet.after !== null) {
     failures.push(`${label}: the fold leaves a balance on ${wallet}`);
   }
-  // An absent wallet change means it had no balance: its after is always null.
-  const walletBalance = balanceOf(ofWallet?.before);
+  // With no change of its own, the wallet keeps the balance it had.
+  const walletBalance = ofWallet
+    ? balanceOf(ofWallet.before)
+    : (balanceBefore(wallet) ?? null);
+  if (!ofWallet && walletBalance !== null) {
+    failures.push(
+      `${label}: the fold leaves the balance of ${walletBalance} on ${wallet}`
+    );
+    return failures;
+  }
   if (!ofIdentity) {
     if (walletBalance !== null && walletBalance !== 0) {
       failures.push(
@@ -350,33 +409,106 @@ function foldMoney(label: string, inputs: Row, changes: JournalChange[]) {
 }
 
 /**
- * The money rules of one write, from its own entries (all its parts, in
- * part order): pure, so a writer can run it on the bodies it is about to
- * append. Returns the failures; none means the write passes.
+ * The rules of one write that its own entries show (all its parts, in part
+ * order): each change's rows are the row its key names, and the money
+ * rules of its kind. `balanceBefore` gives the balances the journal knows
+ * before the write, for an identity a top-up or fold leaves unchanged.
+ * Pure. Returns the failures; none means the write passes.
  */
-export function verifyEntryMoney(bodies: readonly JournalBody[]): string[] {
+export function verifyEntryMoney(
+  bodies: readonly JournalBody[],
+  balanceBefore: BalanceBefore = () => undefined
+): string[] {
   if (bodies.length === 0) {
     return [];
   }
   const [head] = bodies;
   const label = labelOf(head);
   const changes = bodies.flatMap((b) => b.changes);
+  const failures = changes
+    .map((change) => keyFailure(label, change))
+    .filter((f): f is string => f !== null);
   switch (head.kind) {
     case 'top-up':
-      return topUpMoney(label, head.inputs, changes);
+      return [
+        ...failures,
+        ...topUpMoney(label, head.inputs, changes, balanceBefore)
+      ];
     case 'redemption':
-      return redemptionMoney(label, head.inputs, changes);
+      return [...failures, ...redemptionMoney(label, head.inputs, changes)];
     case 'fold':
-      return foldMoney(label, head.inputs, changes);
+      return [
+        ...failures,
+        ...foldMoney(
+          label,
+          head.inputs,
+          changes,
+          bodies.flatMap((b) => b.rekeys),
+          balanceBefore
+        )
+      ];
     default: {
       const touched = changes
         .filter((c) => c.table === 'balances')
         .map(identityOf);
       return touched.length === 0
-        ? []
+        ? failures
         : [
+            ...failures,
             `${label}: a ${head.kind} entry changes the balance of ${touched.join(', ')}`
           ];
+    }
+  }
+}
+
+/**
+ * Each identity's balance as the opening file and the journal so far left
+ * it. Every captured before must equal it.
+ */
+class BalanceChain {
+  private readonly known = new Map<string, number | null>();
+  /** Identities whose balance a journal entry has set. */
+  private readonly journaled = new Set<string>();
+
+  /** With the opening's balances, an identity it lacks has none. */
+  constructor(
+    private readonly opening?: ReadonlyArray<{
+      readonly identityKey: string;
+      readonly balance: number;
+    }>
+  ) {
+    for (const row of opening ?? []) {
+      this.known.set(row.identityKey, Number(row.balance));
+    }
+  }
+
+  get(identity: string): number | null | undefined {
+    if (this.known.has(identity)) {
+      return this.known.get(identity);
+    }
+    return this.opening ? null : undefined;
+  }
+
+  check(label: string, changes: readonly JournalChange[], failures: string[]) {
+    for (const change of changes.filter((c) => c.table === 'balances')) {
+      if (change.before === undefined) {
+        continue;
+      }
+      const identity = identityOf(change);
+      const known = this.get(identity);
+      const before = balanceOf(change.before);
+      if (known !== undefined && known !== before) {
+        failures.push(
+          `${label}: the balance of ${identity} is ${before ?? 'no balance'} before this entry; the ${this.journaled.has(identity) ? 'journal' : 'opening file'} left ${known ?? 'no balance'}`
+        );
+      }
+    }
+  }
+
+  apply(changes: readonly JournalChange[]) {
+    for (const change of changes.filter((c) => c.table === 'balances')) {
+      this.known.set(identityOf(change), balanceOf(change.after));
+      this.journaled.add(identityOf(change));
     }
   }
 }
@@ -415,6 +547,7 @@ function partsInOrder(
   return sorted;
 }
 
+/** Rules of a write's shape: the tables its kind may change, and a choice's identity. */
 function checkShape(write: readonly JournalBody[], failures: string[]) {
   const [head] = write;
   const label = labelOf(head);
@@ -423,13 +556,9 @@ function checkShape(write: readonly JournalBody[], failures: string[]) {
     failures.push(`${label}: unknown kind`);
     return;
   }
+  const changes = write.flatMap((b) => b.changes);
   const outside = Array.from(
-    new Set(
-      write
-        .flatMap((b) => b.changes)
-        .map((c) => c.table)
-        .filter((t) => !allowed.includes(t))
-    )
+    new Set(changes.map((c) => c.table).filter((t) => !allowed.includes(t)))
   );
   if (outside.length > 0) {
     failures.push(
@@ -441,6 +570,18 @@ function checkShape(write: readonly JournalBody[], failures: string[]) {
   }
   if (head.kind !== 'fold' && head.rekeys.length > 0) {
     failures.push(`${label}: only a fold entry carries rekeys`);
+  }
+  if (head.kind === 'choice') {
+    // A signed choice changes only its owner's rows.
+    const owner = lower(head.inputs.owner);
+    const strangers = Array.from(
+      new Set(changes.map(identityOf).filter((id) => lower(id) !== owner))
+    );
+    if (strangers.length > 0) {
+      failures.push(
+        `${label}: a choice of ${owner} changes rows of ${strangers.join(', ')}`
+      );
+    }
   }
 }
 
@@ -472,8 +613,11 @@ function writesInOrder(
 export interface JournalVerifyOptions {
   /** The opening whose writes are checked (bodies of others are skipped). */
   readonly openingSha256: string;
-  /** The opening file: no journaled top-up or charge may repeat one it holds. */
-  readonly opening?: Pick<OpeningFile, 'topUps' | 'redeemed'>;
+  /**
+   * The opening file: the balances the journal starts from, and the
+   * top-ups and charges no journal entry may repeat.
+   */
+  readonly opening?: Pick<OpeningFile, 'balances' | 'topUps' | 'redeemed'>;
   readonly ethereum?: EthereumFacts;
   readonly events?: SignedEventLookup;
 }
@@ -487,8 +631,12 @@ export interface JournalVerifyReport {
     readonly mints: number;
     readonly choices: number;
   };
-  /** Whether the top-ups and mints were checked against Ethereum, and the choices against their signed events. */
-  readonly checked: { readonly ethereum: boolean; readonly events: boolean };
+  /** What was checked beyond the journal itself: the opening file, Ethereum, the signed events. */
+  readonly checked: {
+    readonly opening: boolean;
+    readonly ethereum: boolean;
+    readonly events: boolean;
+  };
   readonly failures: string[];
 }
 
@@ -514,6 +662,7 @@ function crossJournal(
 } {
   const inOpening = new Set((opening?.topUps ?? []).map((t) => lower(t.hash)));
   const credited = new Map<string, number>();
+  const chosen = new Map<string, number>();
   const mints = new Map<string, Mint>();
   const topUps: JournalBody[] = [];
   const choices: JournalBody[] = [];
@@ -537,6 +686,15 @@ function crossJournal(
       }
     } else if (head.kind === 'choice') {
       choices.push(head);
+      const eventId = lower(head.inputs.event_id);
+      const earlier = chosen.get(eventId);
+      if (earlier !== undefined) {
+        failures.push(
+          `${labelOf(head)}: event ${eventId} makes a choice again (first at n=${earlier})`
+        );
+      } else {
+        chosen.set(eventId, head.n);
+      }
     } else if (head.kind === 'redemption') {
       for (const charge of chargesOf(head.inputs) ?? []) {
         const key = mintKeyOf(
@@ -664,7 +822,8 @@ async function checkChoices(
 /**
  * Verifies the journal of one opening. `bodies` are every journal body in
  * log order (both lanes; other openings are skipped). Ethereum and the
- * signed events are checked only through the ports given.
+ * signed events are checked only through the ports given; a port's error
+ * rejects, as nothing could be checked.
  */
 export async function verifyJournal(
   bodies: readonly JournalBody[],
@@ -682,9 +841,14 @@ export async function verifyJournal(
       complete.push(parts);
     }
   }
+  const chain = new BalanceChain(options.opening?.balances);
   for (const write of complete) {
+    const label = labelOf(write[0]);
+    const changes = write.flatMap((b) => b.changes);
     checkShape(write, failures);
-    failures.push(...verifyEntryMoney(write));
+    chain.check(label, changes, failures);
+    failures.push(...verifyEntryMoney(write, (id) => chain.get(id)));
+    chain.apply(changes);
   }
   const { topUps, mints, charges, choices } = crossJournal(
     complete,
@@ -706,7 +870,11 @@ export async function verifyJournal(
       mints: mints.length,
       choices: choices.length
     },
-    checked: { ethereum: !!options.ethereum, events: !!options.events },
+    checked: {
+      opening: !!options.opening,
+      ethereum: !!options.ethereum,
+      events: !!options.events
+    },
     failures
   };
 }

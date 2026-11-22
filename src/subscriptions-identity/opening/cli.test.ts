@@ -104,13 +104,15 @@ describe('subscriptions:opening verify-journal', () => {
     const dir = mkdtempSync(join(tmpdir(), 'subs-verify-'));
     const { code, out } = await run([
       'verify-journal',
+      '--no-ethereum',
       '--out',
       join(dir, 'report.json')
     ]);
     expect(code).toBe(0);
     expect(out.split('\n')).toEqual([
       `opening ${OPENING}: 2 writes, 2 top-ups, 0 charges over 0 mints, 0 choices`,
-      'Ethereum: not checked (pass --ethereum)',
+      'opening file: not checked (the journal names no published file for it; pass --opening --history)',
+      'Ethereum: not checked (--no-ethereum)',
       'signed records: not checked (the bound source does not verify records)',
       'PASS',
       ''
@@ -125,7 +127,7 @@ describe('subscriptions:opening verify-journal', () => {
       .spyOn(Logger.prototype, 'errorWithCode')
       .mockImplementation(() => undefined);
     try {
-      const { code, out } = await run(['verify-journal']);
+      const { code, out } = await run(['verify-journal', '--no-ethereum']);
       expect(code).toBe(2);
       expect(out).toContain(
         `FAIL n=2 top-up: the balance of ${P1} is 0.25 after a top-up of 0.1 to 0.1; expected 0.2`
@@ -143,11 +145,26 @@ describe('subscriptions:opening verify-journal', () => {
     bind([{ ...topUp(1, null, 0.5), opening: 'b'.repeat(64) }]);
     const { code, out } = await run([
       'verify-journal',
+      '--no-ethereum',
       '--opening-sha256',
       OPENING
     ]);
     expect(code).toBe(0);
     expect(out).toContain(`opening ${OPENING}: 0 writes`);
+  });
+
+  it('refuses to go live with a rebuild that skips Ethereum', async () => {
+    const write = jest
+      .spyOn(process.stderr, 'write')
+      .mockImplementation(() => true);
+    try {
+      expect(await main(['rebuild', '--go-live', '--no-ethereum'])).toBe(2);
+      expect(write).toHaveBeenCalledWith(
+        'Refusing: a rebuild goes live only with its journal checked against Ethereum.\n'
+      );
+    } finally {
+      write.mockRestore();
+    }
   });
 
   it('refuses while no record log source is bound', async () => {

@@ -368,7 +368,11 @@ describe('verifyJournal', () => {
   it('makes no call without ports, and says what it left unchecked', async () => {
     const report = await verify(goodJournal());
     expect(report.failures).toEqual([]);
-    expect(report.checked).toEqual({ ethereum: false, events: false });
+    expect(report.checked).toEqual({
+      opening: false,
+      ethereum: false,
+      events: false
+    });
   });
 
   describe('a top-up', () => {
@@ -392,14 +396,41 @@ describe('verifyJournal', () => {
       ]);
     });
 
-    it('passes a 0 ETH top-up that leaves a balance as it was, and fails any other', async () => {
-      const zero = topUp(3, 0, 0.1);
-      zero.changes.splice(0, 1);
-      expect(verifyEntryMoney([zero])).toEqual([]);
+    it('passes a dust top-up that rounds away on the balance the journal knows, and fails any other', async () => {
+      const dust = topUp(3, 0.000001, 1);
+      dust.changes.splice(0, 1);
+      expect(verifyEntryMoney([dust], () => 1)).toEqual([]);
+      // Unknown, or a balance it would move: the change is missing.
+      const unchanged = `n=3 top-up: the top-up leaves the balance of ${P1} as it was`;
+      expect(verifyEntryMoney([dust])).toEqual([unchanged]);
+      expect(verifyEntryMoney([dust], () => 0.0000049)).toEqual([unchanged]);
       const lost = topUp(3, 0.2, 0.1);
       lost.changes.splice(0, 1);
-      expect(verifyEntryMoney([lost])).toEqual([
-        `n=3 top-up: the top-up leaves the balance of ${P1} as it was`
+      expect(verifyEntryMoney([lost], () => 0.1)).toEqual([unchanged]);
+    });
+
+    it('fails a top-up of 0 or less', async () => {
+      const negative = topUp(2, -0.9, 1);
+      expect(verifyEntryMoney([negative])).toEqual([
+        'n=2 top-up: a top-up of -0.9 ETH; only a positive amount is credited'
+      ]);
+    });
+
+    it("fails when a change's after row is another identity's", async () => {
+      // The key names P1, so the verifier and the rebuild check P1's row,
+      // but the rebuild would write P2's.
+      const moved = topUp(2, 0.5, 1);
+      moved.changes[0] = {
+        ...moved.changes[0],
+        after: { ...(moved.changes[0].after as Row), identity_key: P2 }
+      };
+      expect(verifyEntryMoney([moved])).toEqual([
+        `n=2 top-up: the balances change {"identity_key":"${P1}"}: its after row is another row`
+      ]);
+      const wrongKey = topUp(2, 0.5, 1);
+      wrongKey.changes[1] = { ...wrongKey.changes[1], key: { id: 1 } };
+      expect(verifyEntryMoney([wrongKey])).toEqual([
+        'n=2 top-up: the top_up change {"id":1}: keyed by id, not hash'
       ]);
     });
 
@@ -408,6 +439,7 @@ describe('verifyJournal', () => {
       const inputs = again.inputs as { hash: string };
       inputs.hash = hash(0xab).toUpperCase().replace('0X', '0x');
       (again.changes[1].after as Row).hash = inputs.hash;
+      again.changes[1] = { ...again.changes[1], key: { hash: inputs.hash } };
       const report = await verify([topUp(0xab, 0.1, null), again]);
       expect(report.failures).toEqual([
         `n=172 top-up: top-up ${hash(0xab)} is credited again (first at n=171)`
@@ -417,6 +449,7 @@ describe('verifyJournal', () => {
     it('fails when the opening file already holds the hash', async () => {
       const report = await verify([topUp(1, 0.1, null)], {
         opening: {
+          balances: [],
           topUps: [{ hash: hash(1) } as never],
           redeemed: []
         }
@@ -530,6 +563,7 @@ describe('verifyJournal', () => {
         { [P1]: 1 }
       );
       const opening = {
+        balances: [{ identityKey: P1, balance: 1 } as never],
         topUps: [],
         redeemed: [
           {
@@ -577,6 +611,27 @@ describe('verifyJournal', () => {
       ]);
     });
 
+    it('fails when it moves the history of another key', async () => {
+      const entry = { ...fold(4, 1, 2), rekeys: [{ from: W1, to: P1 }] };
+      expect(verifyEntryMoney([entry])).toEqual([
+        `n=4 fold: a fold of ${W2} into ${P1} moves history [{"from":"${W1}","to":"${P1}"}]`
+      ]);
+    });
+
+    it('fails when it leaves out a wallet balance the opening file shows', async () => {
+      const entry = fold(4, null, null);
+      const report = await verify([entry], {
+        opening: {
+          balances: [{ identityKey: W2, balance: 2 } as never],
+          topUps: [],
+          redeemed: []
+        }
+      });
+      expect(report.failures).toEqual([
+        `n=4 fold: the fold leaves the balance of 2 on ${W2}`
+      ]);
+    });
+
     it("fails when the wallet's balance leaves and the identity's stays", async () => {
       const entry = fold(4, 0.1, 0.2);
       entry.changes.splice(0, 1);
@@ -606,6 +661,23 @@ describe('verifyJournal', () => {
       });
       expect(report.failures).toEqual([
         `n=8 choice: event ${'f'.repeat(32)} is not a verified record in lane subs`
+      ]);
+    });
+
+    it('fails when one event makes two choices, or a choice changes another identity', async () => {
+      const stranger = choice(9);
+      stranger.changes[0] = {
+        table: 'mode',
+        key: { identity_key: P2 },
+        before: null,
+        after: { identity_key: P2, automatic: 1, subscribe_all_editions: 0 }
+      };
+      const report = await verify([choice(8), stranger], {
+        events: eventsFixture({ [EVENT]: GOOD_EVENT })
+      });
+      expect(report.failures).toEqual([
+        `n=9 choice: a choice of ${P1} changes rows of ${P2}`,
+        `n=9 choice: event ${EVENT} makes a choice again (first at n=8)`
       ]);
     });
 
@@ -662,6 +734,59 @@ describe('verifyJournal', () => {
     });
   });
 
+  describe('the balances, entry to entry', () => {
+    it('fails a before that is not what the previous entry left', async () => {
+      // P1 had 1; the second entry claims 5, so it credits 4.5 more than 0.5.
+      const forged = topUp(2, 0.5, 5);
+      const report = await verify([topUp(1, 1, null), forged]);
+      expect(report.failures).toEqual([
+        `n=2 top-up: the balance of ${P1} is 5 before this entry; the journal left 1`
+      ]);
+    });
+
+    it('starts from the opening file, where an identity it lacks has no balance', async () => {
+      const opening = {
+        balances: [{ identityKey: P1, balance: 2 } as never],
+        topUps: [],
+        redeemed: []
+      };
+      expect(
+        (await verify([topUp(1, 0.5, 2), topUp(2, 0.5, null, P2)], { opening }))
+          .failures
+      ).toEqual([]);
+      const report = await verify([topUp(1, 0.5, 3), topUp(2, 0.5, 1, P2)], {
+        opening
+      });
+      expect(report.failures).toEqual([
+        `n=1 top-up: the balance of ${P1} is 3 before this entry; the opening file left 2`,
+        `n=2 top-up: the balance of ${P2} is 1 before this entry; the opening file left no balance`
+      ]);
+      expect(report.checked.opening).toBe(true);
+    });
+
+    it('fails a top-up that leaves out a change the arithmetic needs', async () => {
+      // P1 opened at 0.0000049; 0.000004 more rounds to 0.00001.
+      const missing = topUp(2, 0.000004, 0.0000049);
+      missing.changes.splice(0, 1);
+      const report = await verify([topUp(1, 0.0000049, null), missing]);
+      expect(report.failures).toEqual([
+        `n=2 top-up: the top-up leaves the balance of ${P1} as it was`
+      ]);
+    });
+  });
+
+  it('rejects when a port fails, as nothing could be checked', async () => {
+    const ethereum: EthereumFacts = {
+      topUp: async () => {
+        throw new Error('provider unavailable');
+      },
+      mintedTo: async () => 0
+    };
+    await expect(verify([topUp(1, 0.1, null)], { ethereum })).rejects.toThrow(
+      'provider unavailable'
+    );
+  });
+
   it('passes any run of top-ups and charges made with the legacy arithmetic, and fails it when one balance is off', async () => {
     await fc.assert(
       fc.asyncProperty(
@@ -706,7 +831,12 @@ describe('verifyJournal', () => {
           const change = target.changes[0];
           (change.after as Row).balance =
             Number((change.after as Row).balance) + 0.00001;
-          expect((await verify(bodies)).failures).toHaveLength(1);
+          // That entry fails, and the next one's before no longer chains.
+          const { failures } = await verify(bodies);
+          expect(failures[0]).toMatch(new RegExp(`^n=${target.n} `));
+          expect(failures.length).toBe(
+            target === bodies[bodies.length - 1] ? 1 : 2
+          );
         }
       ),
       { numRuns: 200 }

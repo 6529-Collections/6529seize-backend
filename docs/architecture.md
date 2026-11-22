@@ -3169,9 +3169,10 @@ does.
 
 `subscriptions:opening -- rebuild` rebuilds the identity tables from the
 opening and the journal alone, read through a bound record log source (the
-records wave reader). It pauses the write routes (renewed by time), takes
+records wave reader). It pauses the write routes (the marker renewed every
+minute while it reads, verifies and writes back), takes
 the last `opening` entry, fetches and checks both files, verifies that
-opening's journal (below; `--ethereum` as there), loads the files
+opening's journal (below), loads the files
 suspended (no writer writes meanwhile), and writes back every write of that
 opening in `n` order, each with all its parts. A change's captured `before`
 must equal the rebuilt row, and each checkpoint must match once the writes
@@ -3194,25 +3195,34 @@ live wrote the right money. `timeline/journal-verify.ts` checks that, and
 `subscriptions:opening -- verify-journal` runs it on its own (exit 2 on a
 failure). For one opening:
 
-- each entry, from its own `before` and `after`: a top-up moves the
-  balance by its amount, rounded to five decimals, or opens it at the
-  amount; a redemption moves it by the mint price per charge, and the
-  redeemed counts by the charges; a fold sums the two balances; no other
-  kind changes a balance, and no kind changes a table it may not;
-- across the journal: each top-up hash is credited once, and not again
-  after the opening file; no mint is charged more tokens than it delivered,
-  counting the opening's charges of that mint; `n` increases in log order
-  and every write has all its parts;
-- with `--ethereum`, each top-up against its transfer (sender, recipient,
-  block, value) and each mint against its receipt, through the backend's
-  Ethereum client and config;
-- when the record log source verifies signed records (`replayRecordLog`),
-  each choice against its record in lane `subs`: type, key and owner, and a
-  body.
+- each entry, from its own rows: a change's `before` and `after` are the
+  row its key names (`applyJournalBody` refuses any other); a top-up of a
+  positive amount moves the balance by it, rounded to five decimals, or
+  opens it at the amount; a redemption moves it by the mint price per
+  charge, and the redeemed counts by the charges; a fold sums the two
+  balances and moves only the wallet's history; no other kind changes a
+  balance, and no kind changes a table it may not; a choice changes only
+  its owner's rows;
+- across the journal: each balance's `before` is what the opening file or
+  the previous entry left; each top-up hash is credited once, and not
+  again after the opening file; no mint is charged more tokens than it
+  delivered, counting the opening's charges of that mint; a signed event
+  makes one choice; `n` increases in log order and every write has all its
+  parts;
+- each top-up against its transfer (sender, recipient, block, value) and
+  each mint against its receipt, through the backend's Ethereum client and
+  config, reading each block's top-ups and each receipt once;
+- when the record log source verifies signed records (`replayRecordLog`,
+  `replayedJournalSource`), each choice against its record in lane `subs`:
+  type, key and owner, and a body.
 
-A failure alerts (`SUBSCRIPTIONS_JOURNAL_VERIFY_FAILED`) and stops the
-rebuild before it loads anything. `verifyEntryMoney` is the per-entry part
-alone, pure, for a writer to run on the entries it is about to append.
+`--no-ethereum` leaves Ethereum out, for rehearsals, and the output says
+what was not checked. A rebuild with `--go-live` refuses it. Without
+`--opening --history`, `verify-journal` fetches the opening file the
+journal names, as a rebuild does. A failure alerts
+(`SUBSCRIPTIONS_JOURNAL_VERIFY_FAILED`) and stops the rebuild before it
+loads anything; so does a provider error. `verifyEntryMoney` is the
+per-entry part alone, and pure.
 
 **Switch.** The switch is one row, `subscriptions_id_state`, so one write
 moves every service. `subscriptions:opening -- go-live --signed-writes-live`

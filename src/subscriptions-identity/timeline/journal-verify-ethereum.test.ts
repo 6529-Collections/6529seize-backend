@@ -106,4 +106,16 @@ describe('ethereumFactsOf', () => {
     expect(await facts.mintedTo(MINT, MEMES_CONTRACT, 8, AIRDROP)).toBe(5);
     expect(await facts.mintedTo(TOP_UP, MEMES_CONTRACT, 7, AIRDROP)).toBe(0);
   });
+
+  it("reads each block's top-ups and each receipt once", async () => {
+    const topUpsIn = jest.fn(reads().topUpsIn);
+    const logsOf = jest.fn(async () => []);
+    const facts = ethereumFactsOf(reads({ topUpsIn, logsOf }));
+    await facts.topUp(TOP_UP);
+    await facts.topUp(TOP_UP.toUpperCase().replace('0X', '0x'));
+    await facts.mintedTo(MINT, MEMES_CONTRACT, 7, AIRDROP);
+    await facts.mintedTo(MINT, MEMES_CONTRACT, 7, SENDER);
+    expect(topUpsIn).toHaveBeenCalledTimes(1);
+    expect(logsOf).toHaveBeenCalledTimes(1);
+  });
 });

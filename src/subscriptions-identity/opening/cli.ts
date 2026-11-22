@@ -14,6 +14,8 @@ import {
 import { goLive } from './go-live';
 import {
   boundJournalSource,
+  fetchNamedOpening,
+  publicFetcher,
   readJournal,
   rebuildIdentityTables
 } from './rebuild';
@@ -51,9 +53,10 @@ import {
  *            went live and the journal in the record log (or, rehearsing,
  *            from given files); --go-live switches if the checkpoints match
  *   verify-journal  check the journal of an opening against the money
- *            rules: each entry from its own before and after, then across
- *            the journal; with --ethereum, top-ups and mints against
- *            Ethereum too (rebuild runs the same check first)
+ *            rules, from the opening file's balances on, and its top-ups
+ *            and mints against Ethereum (rebuild runs the same check
+ *            first). --no-ethereum leaves Ethereum out, for rehearsals; a
+ *            rebuild with --go-live refuses it
  *   status   whether the identity tables are the truth, and why
  *   suspend  rollback: every reader is on the legacy tables within 60 s
  *            (API answers can be cached a minute more)
@@ -69,8 +72,8 @@ const USAGE = `usage:
   load    --opening <json> --history <json>
   compare --opening <json> --history <json> [--identities <json>] --out <json>
   go-live --out-dir <dir> --signed-writes-live [--accept-report-diffs]
-  rebuild [--opening <json> --history <json>] [--go-live] [--ethereum]
-  verify-journal [--opening-sha256 <sha256> | --opening <json> --history <json>] [--ethereum] [--out <json>]
+  rebuild [--opening <json> --history <json>] [--go-live | --no-ethereum]
+  verify-journal [--opening-sha256 <sha256> | --opening <json> --history <json>] [--no-ethereum] [--out <json>]
   status
   suspend
   open-writes`;
@@ -221,6 +224,12 @@ async function rebuildCommand(args: Args): Promise<number> {
   }
   const rehearsal = optional(args, 'opening') ? parsedFrom(args) : undefined;
   const goLive = args['go-live'] === true;
+  if (goLive && args['no-ethereum'] === true) {
+    process.stderr.write(
+      'Refusing: a rebuild goes live only with its journal checked against Ethereum.\n'
+    );
+    return 2;
+  }
   const result = await rebuildIdentityTables({
     source: boundJournalSource(),
     opening: rehearsal,
@@ -231,9 +240,9 @@ async function rebuildCommand(args: Args): Promise<number> {
   return goLive && !result.switched ? 2 : 0;
 }
 
-/** The backend's own Ethereum reads, only when --ethereum is given. */
+/** The backend's own Ethereum reads, unless --no-ethereum is given. */
 async function ethereumFrom(args: Args): Promise<EthereumFacts | undefined> {
-  if (args.ethereum !== true) {
+  if (args['no-ethereum'] === true) {
     return undefined;
   }
   const { backendEthereumFacts } =
@@ -268,9 +277,18 @@ async function verifyJournalCommand(args: Args): Promise<number> {
     );
     return 2;
   }
+  // Without files, the opening the journal names, fetched as a rebuild does.
+  const named = bodies
+    .filter(
+      (b) => b.kind === 'opening' && b.inputs.opening_sha256 === openingSha256
+    )
+    .pop();
+  const opening =
+    files ??
+    (named ? (await fetchNamedOpening(named, publicFetcher)).parsed : null);
   const report = await verifyJournal(bodies, {
     openingSha256,
-    opening: files?.opening,
+    opening: opening?.opening,
     ethereum: await ethereumFrom(args),
     events: events ?? undefined
   });
@@ -281,9 +299,12 @@ async function verifyJournalCommand(args: Args): Promise<number> {
   const c = report.counts;
   const lines = [
     `opening ${openingSha256}: ${report.writes} writes, ${c.topUps} top-ups, ${c.charges} charges over ${c.mints} mints, ${c.choices} choices`,
+    report.checked.opening
+      ? 'opening file: checked'
+      : 'opening file: not checked (the journal names no published file for it; pass --opening --history)',
     report.checked.ethereum
       ? 'Ethereum: checked'
-      : 'Ethereum: not checked (pass --ethereum)',
+      : 'Ethereum: not checked (--no-ethereum)',
     report.checked.events
       ? 'signed records: checked'
       : 'signed records: not checked (the bound source does not verify records)',

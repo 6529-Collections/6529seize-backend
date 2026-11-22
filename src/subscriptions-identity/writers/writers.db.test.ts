@@ -4,6 +4,7 @@ import {
   IDENTITIES_TABLE,
   MEMES_CONTRACT,
   NULL_ADDRESS,
+  SUBSCRIPTIONS_ADDRESS,
   SUBSCRIPTIONS_BALANCES_TABLE,
   SUBSCRIPTIONS_ID_BALANCES_TABLE,
   SUBSCRIPTIONS_ID_LOGS_TABLE,
@@ -49,6 +50,7 @@ import {
   parseOpeningFiles
 } from '../opening/opening-load';
 import { JournalSource, rebuildIdentityTables } from '../opening/rebuild';
+import type { EthereumFacts } from '../timeline/journal-verify';
 import {
   identityTablesHash,
   journal,
@@ -208,6 +210,53 @@ const journalSource: JournalSource = {
     }
   }
 };
+
+/** Ethereum as the legacy loops recorded it: their top-up and airdrop rows, read now. */
+async function ethereumAsRecorded(): Promise<EthereumFacts> {
+  const topUps = await sqlExecutor.execute<{
+    hash: string;
+    block: number;
+    from_wallet: string;
+    amount: number;
+  }>(
+    `SELECT hash, block, from_wallet, amount FROM ${SUBSCRIPTIONS_TOP_UP_TABLE}`
+  );
+  const mints = await sqlExecutor.execute<{
+    transaction: string;
+    contract: string;
+    token_id: number;
+    to_address: string;
+    token_count: number;
+  }>(
+    `SELECT \`transaction\`, contract, token_id, to_address, token_count
+       FROM ${TRANSACTIONS_TABLE} WHERE from_address = :nullAddress`,
+    { nullAddress: NULL_ADDRESS }
+  );
+  const same = (a: string, b: string) => a.toLowerCase() === b.toLowerCase();
+  return {
+    topUp: async (hash) => {
+      const row = topUps.find((t) => same(t.hash, hash));
+      return row
+        ? {
+            from: row.from_wallet,
+            to: SUBSCRIPTIONS_ADDRESS,
+            valueEth: Number(row.amount),
+            block: Number(row.block)
+          }
+        : null;
+    },
+    mintedTo: async (hash, contract, tokenId, to) =>
+      mints
+        .filter(
+          (m) =>
+            same(m.transaction, hash) &&
+            same(m.contract, contract) &&
+            Number(m.token_id) === tokenId &&
+            same(m.to_address, to)
+        )
+        .reduce((sum, m) => sum + Number(m.token_count), 0)
+  };
+}
 
 async function fetchPublished(uri: string): Promise<string> {
   const bytes = published.get(uri);
@@ -510,6 +559,7 @@ describeWithSeed('identity writers after the switch', [], () => {
     };
     const before = await answers();
     const tablesBefore = await identityTablesHash({});
+    const ethereum = await ethereumAsRecorded();
 
     // Lose every identity table and the MySQL sources the live writers read
     // (top-ups, transactions, the legacy loop's block), then rebuild.
@@ -524,7 +574,8 @@ describeWithSeed('identity writers after the switch', [], () => {
     const result = await rebuildIdentityTables({
       source: journalSource,
       fetch: fetchPublished,
-      goLive: true
+      goLive: true,
+      ethereum
     });
     expect(result).toEqual(
       expect.objectContaining({ checkpoints: 1, switched: true })
@@ -616,13 +667,23 @@ describeWithSeed('identity writers after the switch', [], () => {
       { lone: LONE }
     );
     await updateSubscriptions();
+    const ethereum = await ethereumAsRecorded();
 
     await loseIdentityTables();
+    // Going live needs the journal checked against Ethereum.
     await expect(
       rebuildIdentityTables({
         source: journalSource,
         fetch: fetchPublished,
         goLive: true
+      })
+    ).rejects.toThrow('checked against Ethereum');
+    await expect(
+      rebuildIdentityTables({
+        source: journalSource,
+        fetch: fetchPublished,
+        goLive: true,
+        ethereum
       })
     ).rejects.toThrow(/differ/);
     // Left suspended and not the truth; the write routes are open again.
@@ -686,39 +747,55 @@ describeWithSeed('identity writers after the switch', [], () => {
       { lone: LONE }
     );
     expect(await creditIdentityTopUps()).toBe(1);
-    const entries = (
+    const posted = (
       await sqlExecutor.execute<{ entry: string }>(
         `SELECT entry FROM ${SIGNED_RECORD_LOG_ENTRIES_TABLE} WHERE chain = 'public' ORDER BY id`
       )
     ).map((row) => JSON.parse(row.entry));
-    // As posted, the journal passes; then the top-up's entry is made to
-    // credit 0.01 more than the transfer brought.
-    const topUp = entries.find((e) => e.body?.kind === 'top-up');
-    const credited = topUp.body.changes.find(
-      (c: { table: string }) => c.table === 'balances'
-    );
-    expect(Number(credited.after.balance)).toBe(0.5);
-    credited.after.balance = 0.51;
+    const n = posted.find((e) => e.body?.kind === 'top-up').body.n;
     await loseIdentityTables();
+    /** Rebuilds from the posted journal with its top-up's balance row changed. */
+    const rebuildWith = (change: (row: Record<string, unknown>) => void) => {
+      const entries = JSON.parse(JSON.stringify(posted));
+      const credited = entries
+        .find((e: { body?: { kind?: string } }) => e.body?.kind === 'top-up')
+        .body.changes.find((c: { table: string }) => c.table === 'balances');
+      expect(Number(credited.after.balance)).toBe(0.5);
+      change(credited.after);
+      return rebuildIdentityTables({
+        source: {
+          async *walk() {
+            for (const entry of entries) {
+              yield { entry };
+            }
+          }
+        },
+        fetch: fetchPublished
+      });
+    };
     const alert = jest.spyOn(Logger.prototype, 'errorWithCode');
     try {
+      // 0.01 more than the transfer brought.
       await expect(
-        rebuildIdentityTables({
-          source: {
-            async *walk() {
-              for (const entry of entries) {
-                yield { entry };
-              }
-            }
-          },
-          fetch: fetchPublished
+        rebuildWith((row) => {
+          row.balance = 0.51;
         })
       ).rejects.toThrow(
-        `n=${topUp.body.n} top-up: the balance of ${LONE} is 0.51 after a top-up of 0.3 to 0.2; expected 0.5`
+        `n=${n} top-up: the balance of ${LONE} is 0.51 after a top-up of 0.3 to 0.2; expected 0.5`
       );
       expect(alert).toHaveBeenCalledWith(
         'SUBSCRIPTIONS_JOURNAL_VERIFY_FAILED',
         expect.stringContaining('is 0.51 after a top-up of 0.3')
+      );
+      // The right amount, written to another identity's row under LONE's
+      // key: the rebuild would check LONE's row and write the other's.
+      const other = `0x${'ee'.padStart(64, '0')}`;
+      await expect(
+        rebuildWith((row) => {
+          row.identity_key = other;
+        })
+      ).rejects.toThrow(
+        `n=${n} top-up: the balances change {"identity_key":"${LONE}"}: its after row is another row`
       );
     } finally {
       alert.mockRestore();

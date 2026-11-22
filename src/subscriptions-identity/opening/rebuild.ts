@@ -163,7 +163,7 @@ export async function readJournal(source: JournalSource): Promise<{
   return { bodies, events: verifying ? events : null };
 }
 
-interface PublishedOpening {
+export interface PublishedOpening {
   readonly parsed: ParsedOpening;
   readonly openingUri: string;
   readonly historyUri: string;
@@ -178,7 +178,15 @@ async function lastSwitchedOpening(
   if (!switched) {
     throw new Error('The journal names no opening that went live');
   }
-  const inputs = switched.inputs as {
+  return fetchNamedOpening(switched, fetch);
+}
+
+/** The two files an `opening` entry names, fetched and checked against their sha256. */
+export async function fetchNamedOpening(
+  entry: JournalBody,
+  fetch: Fetcher
+): Promise<PublishedOpening> {
+  const inputs = entry.inputs as {
     opening_uri: string;
     opening_sha256: string;
     history_uri: string;
@@ -203,8 +211,29 @@ async function lastSwitchedOpening(
   };
 }
 
-/** Writes stay paused through a rebuild; the marker is renewed this often. */
+/**
+ * Writes stay paused through a rebuild: the marker lapses after
+ * SWITCH_CUT_WINDOW_MS, so it is renewed this often while the rebuild
+ * reads, verifies and writes back.
+ */
 const MARKER_RENEW_MS = 60 * 1000;
+
+/** The port, renewing the pause before each call (each is a network read). */
+function renewingEthereum(
+  ethereum: EthereumFacts,
+  renew: () => Promise<void>
+): EthereumFacts {
+  return {
+    topUp: async (hash) => {
+      await renew();
+      return ethereum.topUp(hash);
+    },
+    mintedTo: async (hash, contract, tokenId, to) => {
+      await renew();
+      return ethereum.mintedTo(hash, contract, tokenId, to);
+    }
+  };
+}
 
 /** One journaled write: its parts, in order, all present. */
 interface JournalWriteRecord {
@@ -258,17 +287,19 @@ async function liveCounter(): Promise<number | null> {
 /**
  * Rebuilds the identity tables from the opening file and the journal alone:
  *
- * 1. pause the unsigned write routes (go-live's marker, renewed by time
- *    while the rebuild runs);
+ * 1. pause the unsigned write routes with go-live's marker, renewed
+ *    every minute while the rebuild reads the journal, checks it against
+ *    Ethereum and writes it back, and after the files are fetched and
+ *    loaded;
  * 2. read the journal (lanes `subs` and `subs-shadow` of the record log's
  *    public chain);
  * 3. take the opening of the last `opening` entry (go-live writes it with
  *    the switch), fetch its two files and check their sha256; or take the
  *    files given (a rehearsal);
- * 4. verify that opening's journal (journal-verify.ts): the money rules,
- *    the order and parts of its writes, and, through the ports given,
- *    Ethereum and the signed records; a failure alerts and stops the
- *    rebuild before anything is loaded;
+ * 4. verify that opening's journal (journal-verify.ts): the money rules
+ *    from the opening's balances on, the order and parts of its writes,
+ *    and, through the ports given, Ethereum and the signed records; a
+ *    failure alerts and stops the rebuild before anything is loaded;
  * 5. load them into tables that are not the truth, and hold them suspended,
  *    so no identity writer writes while the journal is written back;
  * 6. write back every write made against that opening, in `n` order: each
@@ -281,9 +312,10 @@ async function liveCounter(): Promise<number | null> {
  *
  * Otherwise the rebuilt tables end verified and in shadow, not the truth.
  * With `goLive` they become the truth through go-live's own switch, in the
- * same pause, only if at least one checkpoint matched and the opening came
- * from the journal (so its entry can name the files again). On any failure
- * the routes reopen and the tables are left suspended.
+ * same pause, only if at least one checkpoint matched, the opening came
+ * from the journal (so its entry can name the files again) and the journal
+ * was checked against Ethereum. On any failure the routes reopen and the
+ * tables are left suspended.
  */
 export async function rebuildIdentityTables(params: {
   readonly source: JournalSource;
@@ -296,6 +328,11 @@ export async function rebuildIdentityTables(params: {
   readonly now?: () => number;
 }): Promise<RebuildResult> {
   const now = params.now ?? (() => Date.now());
+  if (params.goLive && !params.ethereum) {
+    throw new Error(
+      'A rebuild goes live only with its journal checked against Ethereum'
+    );
+  }
   await closeSubscriptionWrites(now());
   let renewedAt = now();
   const renewPause = async () => {
@@ -304,8 +341,16 @@ export async function rebuildIdentityTables(params: {
       renewedAt = now();
     }
   };
+  const source = params.source;
   try {
-    const { bodies, events } = await readJournal(params.source);
+    const { bodies, events } = await readJournal({
+      async *walk(chain) {
+        for await (const item of source.walk(chain)) {
+          await renewPause();
+          yield item;
+        }
+      }
+    });
     const published = params.opening
       ? null
       : await lastSwitchedOpening(bodies, params.fetch ?? publicFetcher);
@@ -315,11 +360,13 @@ export async function rebuildIdentityTables(params: {
         'Only a rebuild from the journal goes live: rehearsal files name no published opening'
       );
     }
+    await renewPause();
     // Nothing is loaded from a journal that breaks the money rules.
     const verify = await verifyJournal(bodies, {
       openingSha256: opening.openingSha256,
       opening: opening.opening,
-      ethereum: params.ethereum,
+      ethereum:
+        params.ethereum && renewingEthereum(params.ethereum, renewPause),
       events: events ?? undefined
     });
     if (!alertOnJournalFailures(verify)) {
@@ -332,6 +379,7 @@ export async function rebuildIdentityTables(params: {
     const live = await liveCounter();
     await loadOpeningFiles(opening, now());
     await setSuspended(now());
+    await renewPause();
     const checkpoints = writes
       .flatMap((w) => w.bodies)
       .filter((b) => b.checkpoint !== null)
