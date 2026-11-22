@@ -120,4 +120,12 @@ export class ProfileCmsPackageEntity {
 
   @Column({ type: 'boolean', nullable: true, default: null })
   readonly storage_canonical!: boolean | null;
+
+  /**
+   * The CID of this package's signed publication record, set once the package
+   * was published. A ProfileDoc's `cms.primary.publication` names it.
+   */
+  @Column({ type: 'varchar', length: 100, nullable: true, default: null })
+  @Index('idx_profile_cms_packages_publication_cid')
+  readonly publication_cid?: string | null;
 }

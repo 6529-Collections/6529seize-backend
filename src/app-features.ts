@@ -41,6 +41,15 @@ export class AppFeatures {
   }
 
   /**
+   * Profile sites follow the person's ProfileDoc on the 6529 chain: the
+   * primary pointer moves by PROFILE_REPLACE, and 6529.io's tables become an
+   * index of it. Rollback: set FEATURE_PROFILE_CMS_CHAIN_POINTER=false.
+   */
+  public isProfileCmsChainPointerEnabled(): boolean {
+    return this.isFeatureEnabled('PROFILE_CMS_CHAIN_POINTER');
+  }
+
+  /**
    * The interim record log: signed records batched into hash-chained
    * segment files whose heads are posted in the records wave.
    */
