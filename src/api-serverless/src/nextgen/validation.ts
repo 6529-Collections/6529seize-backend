@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import csv from 'csv-parser';
 import { ethers, keccak256 } from 'ethers';
 import * as Joi from 'joi';
@@ -14,6 +15,7 @@ import { Logger } from '../../../logging';
 import { numbers } from '../../../numbers';
 import { getEthereumRpcProvider } from '@/ethereum-rpc/ethereum-rpc-provider';
 import { getNextgenRpcErrorCode } from '@/api/nextgen/nextgen-rpc-error';
+import { appFeatures } from '@/app-features';
 import {
   hashStructuredWalletSignaturePayload,
   verifyStructuredWalletSignature
@@ -38,7 +40,11 @@ const nextgenSchema = Joi.object({
   mint_price: Joi.number().required(),
   al_type: Joi.string()
     .valid(...Object.values(NextGenAllowlistType))
-    .required()
+    .required(),
+  // sha256 (hex) of the uploaded CSV, signed with the rest of the payload.
+  allowlist_sha256: Joi.string()
+    .pattern(/^[0-9a-f]{64}$/)
+    .optional()
 });
 
 const nextgenCollectionBurnSchema = Joi.object({
@@ -74,6 +80,7 @@ interface NextgenAllowlistSignaturePayload {
   start_time: number;
   end_time: number;
   mint_price: number;
+  allowlist_sha256?: string;
 }
 
 interface NextgenBurnSignaturePayload {
@@ -109,6 +116,29 @@ export async function validateNextgen(req: any, res: any, next: any) {
 
     if (fileExtension !== '.csv') {
       return handleValidationFailure(req, false, 'Invalid file', next);
+    }
+
+    const fileSha256 = createHash('sha256')
+      .update(allowlistFile.buffer)
+      .digest('hex');
+    if (value.allowlist_sha256 && value.allowlist_sha256 !== fileSha256) {
+      return handleValidationFailure(
+        req,
+        false,
+        'The allowlist file is not the file that was signed',
+        next
+      );
+    }
+    if (
+      !value.allowlist_sha256 &&
+      appFeatures.isNextgenAllowlistSignedFileRequired()
+    ) {
+      return handleValidationFailure(
+        req,
+        false,
+        'Sign the allowlist file: the signed payload needs its sha256',
+        next
+      );
     }
 
     const signatureValidation = await validateSignature(
@@ -162,7 +192,15 @@ export async function validateNextgen(req: any, res: any, next: any) {
       phase: value.phase,
       start_time: value.start_time,
       end_time: value.end_time,
-      mint_price: value.mint_price
+      mint_price: value.mint_price,
+      allowlist_sha256: fileSha256,
+      // The admin's signed request, kept with the mint log's entry.
+      signed: {
+        wallet: value.wallet,
+        signature: value.signature,
+        signature_message: value.signature_message,
+        payload: getNextgenAllowlistSignaturePayload(value)
+      }
     };
 
     return next();
@@ -216,7 +254,14 @@ export async function validateNextgenBurn(req: any, res: any, next: any) {
       min_token_index: value.min_token_index,
       max_token_index: value.max_token_index,
       burn_address: value.burn_address,
-      status: value.status
+      status: value.status,
+      // The admin's signed request, kept with the mint log's entry.
+      signed: {
+        wallet: value.wallet,
+        signature: value.signature,
+        signature_message: value.signature_message,
+        payload: getNextgenBurnSignaturePayload(value)
+      }
     };
 
     return next();
@@ -270,7 +315,11 @@ function getNextgenAllowlistSignaturePayload(
     phase: value.phase,
     start_time: value.start_time,
     end_time: value.end_time,
-    mint_price: value.mint_price
+    mint_price: value.mint_price,
+    // Only in payloads that carry it, so earlier signatures still verify.
+    ...(value.allowlist_sha256
+      ? { allowlist_sha256: value.allowlist_sha256 }
+      : {})
   };
 }
 

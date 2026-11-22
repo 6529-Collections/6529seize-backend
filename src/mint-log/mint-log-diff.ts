@@ -28,6 +28,10 @@ export function emptyCardState(): MintCardState {
     claim_actions: [],
     card_mapping: [],
     subscription_phases: [],
+    nextgen_allowlists: [],
+    nextgen_allowlist_rows: [],
+    nextgen_allowlist_burn_rows: [],
+    nextgen_burn_collection: [],
     merkle: []
   };
 }

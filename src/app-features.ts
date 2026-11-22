@@ -57,6 +57,14 @@ export class AppFeatures {
   }
 
   /**
+   * NextGen allowlist uploads must sign the CSV's sha256 with the rest of the
+   * payload. Off: a signed hash is checked when present. Rollback: false.
+   */
+  public isNextgenAllowlistSignedFileRequired(): boolean {
+    return this.isFeatureEnabled('NEXTGEN_ALLOWLIST_SIGNED_FILE');
+  }
+
+  /**
    * The interim record log: signed records batched into hash-chained
    * segment files whose heads are posted in the records wave.
    */

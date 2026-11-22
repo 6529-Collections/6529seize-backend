@@ -18,6 +18,7 @@ import {
   MintIntent,
   recordMismatch
 } from './mint-log-intent';
+import { emptyCardState } from './mint-log-diff';
 import { MintLogRecorder } from './mint-log-recorder';
 import { signedRecordsPort } from './mint-log-signed-records';
 import { MINT_LOG_LANE } from './mint-log.types';
@@ -117,16 +118,7 @@ describe('mint admin records through the shared module', () => {
           execute: async () => []
         }) as any,
       {
-        capture: async () => ({
-          distribution: [],
-          normalized: [],
-          photos: [],
-          claim: [],
-          claim_actions: [],
-          card_mapping: [],
-          subscription_phases: [],
-          merkle: []
-        })
+        capture: async () => emptyCardState()
       } as any,
       { apply: async () => undefined } as any,
       {

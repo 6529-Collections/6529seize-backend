@@ -10,6 +10,12 @@ import {
   MINTING_CLAIMS_TABLE,
   MINTING_MERKLE_ROOTS_TABLE
 } from '@/constants';
+import {
+  NEXTGEN_ALLOWLIST_BURN_TABLE,
+  NEXTGEN_ALLOWLIST_COLLECTIONS_TABLE,
+  NEXTGEN_ALLOWLIST_TABLE,
+  NEXTGEN_BURN_COLLECTIONS_TABLE
+} from '@/nextgen/nextgen_constants';
 import { canonicalizeJson } from '@/profile-cms/protocol/v1/canonical-json';
 import { ConnectionWrapper, dbSupplier, SqlExecutor } from '@/sql-executor';
 import {
@@ -29,7 +35,8 @@ import {
   MintCardRef,
   MintCardState,
   MintLogEntryBody,
-  MintRow
+  MintRow,
+  NEXTGEN_CARD_CONTRACT
 } from './mint-log.types';
 import { Time } from '@/time';
 
@@ -122,8 +129,12 @@ export class MintGenesisReader {
        union select distinct lower(contract), card_id from ${MINTING_MERKLE_ROOTS_TABLE}
        union select distinct lower(contract), claim_id from ${MINTING_CLAIMS_TABLE}
        union select distinct lower(contract), claim_id from ${MINTING_CLAIM_ACTIONS_TABLE}
-       union select lower(:memes), meme_card_id from ${MEME_CARD_DROP_MAPPINGS_TABLE}`,
-      { memes: MEMES_CONTRACT },
+       union select lower(:memes), meme_card_id from ${MEME_CARD_DROP_MAPPINGS_TABLE}
+       union select :nextgen, collection_id from ${NEXTGEN_ALLOWLIST_COLLECTIONS_TABLE}
+       union select :nextgen, collection_id from ${NEXTGEN_ALLOWLIST_TABLE}
+       union select :nextgen, collection_id from ${NEXTGEN_ALLOWLIST_BURN_TABLE}
+       union select :nextgen, collection_id from ${NEXTGEN_BURN_COLLECTIONS_TABLE}`,
+      { memes: MEMES_CONTRACT, nextgen: NEXTGEN_CARD_CONTRACT },
       { wrappedConnection: connection }
     );
     return rows

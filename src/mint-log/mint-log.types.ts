@@ -22,9 +22,14 @@ export type MintLogKind =
   | 'dist.airdrops'
   | 'dist.normalize'
   | 'dist.photos'
-  | 'card.published';
+  | 'card.published'
+  | 'nextgen.allowlist'
+  | 'nextgen.burn';
 
-/** One card's slice of a table. */
+/**
+ * One card's slice of a table. A NextGen collection is a card too, with the
+ * contract `nextgen` and its collection id; only the nextgen parts apply to it.
+ */
 export type MintRowPart =
   | 'distribution'
   | 'normalized'
@@ -32,7 +37,11 @@ export type MintRowPart =
   | 'claim'
   | 'claim_actions'
   | 'card_mapping'
-  | 'subscription_phases';
+  | 'subscription_phases'
+  | 'nextgen_allowlists'
+  | 'nextgen_allowlist_rows'
+  | 'nextgen_allowlist_burn_rows'
+  | 'nextgen_burn_collection';
 
 export type MintPart = MintRowPart | 'merkle';
 
@@ -43,13 +52,20 @@ export const MINT_ROW_PARTS: readonly MintRowPart[] = [
   'claim',
   'claim_actions',
   'card_mapping',
-  'subscription_phases'
+  'subscription_phases',
+  'nextgen_allowlists',
+  'nextgen_allowlist_rows',
+  'nextgen_allowlist_burn_rows',
+  'nextgen_burn_collection'
 ];
+
+/** The card ref contract of a NextGen collection. */
+export const NEXTGEN_CARD_CONTRACT = 'nextgen';
 
 export const MINT_PARTS: readonly MintPart[] = [...MINT_ROW_PARTS, 'merkle'];
 
 export interface MintCardRef {
-  /** Lowercase contract address. */
+  /** Lowercase contract address, or `nextgen` for a NextGen collection. */
   readonly contract: string;
   readonly card_id: number;
 }
@@ -162,5 +178,11 @@ export const MINT_KIND_PARTS: Readonly<
   'dist.airdrops': ['distribution'],
   'dist.normalize': ['normalized'],
   'dist.photos': ['photos'],
-  'card.published': []
+  'card.published': [],
+  'nextgen.allowlist': [
+    'nextgen_allowlists',
+    'nextgen_allowlist_rows',
+    'nextgen_allowlist_burn_rows'
+  ],
+  'nextgen.burn': ['nextgen_burn_collection']
 };

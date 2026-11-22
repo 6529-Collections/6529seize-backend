@@ -8,7 +8,18 @@ import {
   MINTING_CLAIMS_TABLE,
   SUBSCRIPTIONS_NFTS_FINAL_TABLE
 } from '@/constants';
-import type { MintCardRef, MintRow, MintRowPart } from './mint-log.types';
+import {
+  NEXTGEN_ALLOWLIST_BURN_TABLE,
+  NEXTGEN_ALLOWLIST_COLLECTIONS_TABLE,
+  NEXTGEN_ALLOWLIST_TABLE,
+  NEXTGEN_BURN_COLLECTIONS_TABLE
+} from '@/nextgen/nextgen_constants';
+import {
+  MintCardRef,
+  MintRow,
+  MintRowPart,
+  NEXTGEN_CARD_CONTRACT
+} from './mint-log.types';
 
 /**
  * How one card's slice of a table is read, compared and written back.
@@ -42,12 +53,18 @@ export interface MintRowPartSpec {
 
 const CARD_SCOPE = 'contract = :contract and card_id = :card_id';
 const CLAIM_SCOPE = 'contract = :contract and claim_id = :card_id';
+const COLLECTION_SCOPE = 'collection_id = :card_id';
+
+const isNextgen = (card: MintCardRef) =>
+  card.contract === NEXTGEN_CARD_CONTRACT;
+const isToken = (card: MintCardRef) => !isNextgen(card);
 
 export const MINT_ROW_PART_SPECS: Readonly<
   Record<MintRowPart, MintRowPartSpec>
 > = {
   distribution: {
     part: 'distribution',
+    appliesTo: isToken,
     table: DISTRIBUTION_TABLE,
     scope: CARD_SCOPE,
     key: ['id'],
@@ -56,6 +73,7 @@ export const MINT_ROW_PART_SPECS: Readonly<
   },
   normalized: {
     part: 'normalized',
+    appliesTo: isToken,
     table: DISTRIBUTION_NORMALIZED_TABLE,
     scope: CARD_SCOPE,
     key: ['card_id', 'contract', 'wallet'],
@@ -72,6 +90,7 @@ export const MINT_ROW_PART_SPECS: Readonly<
   },
   photos: {
     part: 'photos',
+    appliesTo: isToken,
     table: DISTRIBUTION_PHOTO_TABLE,
     scope: CARD_SCOPE,
     key: ['id'],
@@ -80,6 +99,7 @@ export const MINT_ROW_PART_SPECS: Readonly<
   },
   claim: {
     part: 'claim',
+    appliesTo: isToken,
     table: MINTING_CLAIMS_TABLE,
     scope: CLAIM_SCOPE,
     key: ['drop_id'],
@@ -93,6 +113,7 @@ export const MINT_ROW_PART_SPECS: Readonly<
   },
   claim_actions: {
     part: 'claim_actions',
+    appliesTo: isToken,
     table: MINTING_CLAIM_ACTIONS_TABLE,
     scope: CLAIM_SCOPE,
     key: ['id'],
@@ -110,6 +131,7 @@ export const MINT_ROW_PART_SPECS: Readonly<
   },
   subscription_phases: {
     part: 'subscription_phases',
+    appliesTo: isToken,
     table: SUBSCRIPTIONS_NFTS_FINAL_TABLE,
     scope: 'contract = :contract and token_id = :card_id',
     key: ['consolidation_key'],
@@ -121,6 +143,42 @@ export const MINT_ROW_PART_SPECS: Readonly<
       'phase_position'
     ],
     mode: 'update-only'
+  },
+  nextgen_allowlists: {
+    part: 'nextgen_allowlists',
+    appliesTo: isNextgen,
+    table: NEXTGEN_ALLOWLIST_COLLECTIONS_TABLE,
+    scope: COLLECTION_SCOPE,
+    key: ['merkle_root', 'collection_id'],
+    excluded: [],
+    mode: 'upsert'
+  },
+  nextgen_allowlist_rows: {
+    part: 'nextgen_allowlist_rows',
+    appliesTo: isNextgen,
+    table: NEXTGEN_ALLOWLIST_TABLE,
+    scope: COLLECTION_SCOPE,
+    key: ['collection_id', 'merkle_root', 'address', 'info'],
+    excluded: [],
+    mode: 'upsert'
+  },
+  nextgen_allowlist_burn_rows: {
+    part: 'nextgen_allowlist_burn_rows',
+    appliesTo: isNextgen,
+    table: NEXTGEN_ALLOWLIST_BURN_TABLE,
+    scope: COLLECTION_SCOPE,
+    key: ['collection_id', 'merkle_root', 'token_id', 'info'],
+    excluded: [],
+    mode: 'upsert'
+  },
+  nextgen_burn_collection: {
+    part: 'nextgen_burn_collection',
+    appliesTo: isNextgen,
+    table: NEXTGEN_BURN_COLLECTIONS_TABLE,
+    scope: COLLECTION_SCOPE,
+    key: ['collection_id'],
+    excluded: [],
+    mode: 'upsert'
   }
 };
 

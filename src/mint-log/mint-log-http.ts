@@ -32,7 +32,8 @@ export const SIGNED_RECORDS_HEADER = 'x-6529-signed-records';
 export const MINT_AUTHORITY = {
   distributionAdmins: 'env:DISTRIBUTION_ADMIN_WALLETS',
   claimsAdmins: 'env:CLAIMS_ADMIN_WALLETS',
-  memesContractAdmin: 'ethereum:memes-contract-isAdmin'
+  memesContractAdmin: 'ethereum:memes-contract-isAdmin',
+  nextgenAdmin: 'ethereum:nextgen-admin'
 } as const;
 
 /** The route's path parameters as sent, by the names in its pattern. */

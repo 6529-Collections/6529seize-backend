@@ -46,6 +46,12 @@ export interface MintWriteSpec<T = unknown> {
   readonly intent: MintIntent;
   /** The `x-6529-signed-records` header, as received. */
   readonly signedRecords?: string | null;
+  /**
+   * The route already verified the admin's wallet signature over this request
+   * (NextGen uploads), and the intent carries it, so no device record is
+   * needed.
+   */
+  readonly walletSigned?: boolean;
   /** Read under the log lock, before the writer runs. */
   readonly inputs?: (
     connection: ConnectionWrapper<any>
@@ -191,7 +197,7 @@ export class MintLogRecorder {
     mode: MintLogMode,
     ports: MintLogPorts
   ): Promise<MintVerifiedRecord | null> {
-    if (spec.actor.type === 'service') return null;
+    if (spec.actor.type === 'service' || spec.walletSigned) return null;
     const problem = (reason: string, detail: string) => {
       if (mode === 'primary') {
         throw new InvalidSignedRecordException(reason, detail);
