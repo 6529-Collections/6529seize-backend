@@ -101,6 +101,8 @@ async function nextGenTables() {
 describe('NextGen rebuilt from empty', () => {
   const env = process.env;
   let cassette: RunningCassette;
+  // When set, the NextGen token's metadata answers 404.
+  let unreadable = false;
 
   beforeAll(async () => {
     cassette = await startCassetteNode();
@@ -116,7 +118,10 @@ describe('NextGen rebuilt from empty', () => {
       .mockImplementation(async (input, init?: RequestInit) => {
         const url = String(input instanceof Request ? input.url : input);
         if (!url.includes('arweave.net')) return fetch(input, init);
-        const data = metadataFor(url);
+        const data =
+          unreadable && url.startsWith(NEXTGEN_BASE_URI)
+            ? undefined
+            : metadataFor(url);
         return new Response(data ? JSON.stringify(data) : 'not found', {
           status: data ? 200 : 404,
           headers: { 'content-type': 'application/json' }
@@ -219,5 +224,65 @@ describe('NextGen rebuilt from empty', () => {
     expect(rebuilt[NEXTGEN_BLOCKS_TABLE].map((b) => Number(b.block))).toEqual([
       MARK_BLOCK
     ]);
+  }, 300_000);
+
+  it("restores the chain's data in a rebuild when the metadata can't be read, with the token pending", async () => {
+    await emptyTables();
+    unreadable = true;
+    try {
+      await rebuildNextGen({ mark: { ethBlock: MARK_BLOCK } });
+    } finally {
+      unreadable = false;
+    }
+    const rebuilt = await nextGenTables();
+
+    expect(rebuilt[NEXTGEN_COLLECTIONS_TABLE]).toHaveLength(1);
+    expect(rebuilt[NEXTGEN_LOGS_TABLE]).toHaveLength(5);
+    expect(rebuilt[TRANSACTIONS_TABLE]).toHaveLength(2);
+    expect(
+      rebuilt[NEXTGEN_TOKENS_TABLE].map((t) => [
+        Number(t.id),
+        t.name,
+        t.pending,
+        t.owner,
+        t.mint_price,
+        t.mint_data
+      ])
+    ).toEqual([
+      [NEXTGEN_TOKEN, 'Pending #0', 1, WALLET_2, 0.0069, '{"Phase":"Public"}']
+    ]);
+    // The mint data's trait comes from the chain; the metadata's don't.
+    expect(
+      rebuilt[NEXTGEN_TOKEN_TRAITS_TABLE].map((t) => [t.trait, t.value])
+    ).toEqual([['Mint Type - Phase', 'Public']]);
+
+    // A later live run reads the metadata and fills the token in.
+    await findNextGenTransactions(undefined, { toBlock: MARK_BLOCK });
+    const filled = await nextGenTables();
+    expect(
+      filled[NEXTGEN_TOKENS_TABLE].map((t) => [t.name, t.pending])
+    ).toEqual([[`Cassette Pebble #${NEXTGEN_TOKEN}`, 0]]);
+    expect(
+      filled[NEXTGEN_TOKEN_TRAITS_TABLE].map((t) => [t.trait, t.value])
+    ).toEqual([
+      ['Mint Type - Phase', 'Public'],
+      ['Palette', 'Blue'],
+      ['Shape', 'Round']
+    ]);
+  }, 300_000);
+
+  it("rolls a live run back when the metadata can't be read, as it always has", async () => {
+    await emptyTables();
+    unreadable = true;
+    try {
+      await expect(
+        findNextGenTransactions(undefined, { toBlock: MARK_BLOCK })
+      ).rejects.toThrow('status 404');
+    } finally {
+      unreadable = false;
+    }
+    const after = await nextGenTables();
+    for (const [table] of NEXTGEN_TABLES) expect(after[table]).toEqual([]);
+    expect(after[TRANSACTIONS_TABLE]).toEqual([]);
   }, 300_000);
 });

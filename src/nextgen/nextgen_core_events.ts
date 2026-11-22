@@ -18,6 +18,7 @@ import {
   getRequiredMetadataName
 } from '@/nextgen/nextgen-metadata';
 import { equalIgnoreCase } from '@/strings';
+import { isRebuildingEthereumIndexes } from '@/holdings/rebuild-mode';
 import { findTransactionValues } from '@/transaction_values';
 import { LogDescription } from 'ethers';
 import {
@@ -279,7 +280,11 @@ export async function upsertToken(
   hodlRate: number,
   mintData: string | undefined
 ) {
-  const metadata = await fetchNextGenTokenMetadata(collection, tokenId);
+  const metadata = await tokenMetadataOrPending(
+    collection,
+    tokenId,
+    normalisedTokenId
+  );
   await persistTokenWithMetadata(
     entityManager,
     collection,
@@ -293,6 +298,36 @@ export async function upsertToken(
     mintData,
     metadata
   );
+}
+
+/**
+ * The token's metadata for a Transfer. Live, a read that fails ends the run
+ * as it always has: the run rolls back and the next one starts again from
+ * the same block, so no token is stored without its metadata because the
+ * service that serves it was briefly unreachable. In a rebuild the token is
+ * stored as pending without metadata instead, so the rest of what the chain
+ * says is restored; the pending path fills it in on a later live run, once
+ * the metadata can be read.
+ */
+async function tokenMetadataOrPending(
+  collection: NextGenCollection,
+  tokenId: number,
+  normalisedTokenId: number
+): Promise<NextGenTokenMetadata> {
+  try {
+    return await fetchNextGenTokenMetadata(collection, tokenId);
+  } catch (error) {
+    if (!isRebuildingEthereumIndexes()) throw error;
+    logger.warn(
+      `[TOKEN ID ${tokenId}] : [METADATA UNREADABLE IN A REBUILD] : [STORED AS PENDING] : [${error}]`
+    );
+    return {
+      metadataLink: `${collection.base_uri}${tokenId}`,
+      metadataResponse: { image: '' },
+      name: `Pending #${normalisedTokenId}`,
+      pending: true
+    };
+  }
 }
 
 export async function fetchNextGenTokenMetadata(
