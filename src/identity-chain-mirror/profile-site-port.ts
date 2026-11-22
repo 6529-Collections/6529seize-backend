@@ -221,7 +221,12 @@ export class GatewayProfileSitePort implements ProfileSiteChainPort {
         '/v1/feed'
       );
     }
-    if (read.atHead) return { changes: [], next_height: null };
+    // At the head, or a block the gateway cut that can't be completed now:
+    // nothing more this pass (a next height of `from` would be asked again
+    // at once).
+    if (read.atHead || read.nextHeight <= from) {
+      return { changes: [], next_height: null };
+    }
     const changes: ProfileSiteChange[] = [];
     for (const block of read.blocks) {
       await this.collect(block, changes);

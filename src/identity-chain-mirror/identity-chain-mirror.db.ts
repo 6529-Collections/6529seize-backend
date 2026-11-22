@@ -816,7 +816,9 @@ export class IdentityChainMirrorDb extends LazyDbAccessCompatibleService {
     wanted: RatingRowWrite[],
     now: number,
     events: RatingEventContext,
-    conn: Conn
+    conn: Conn,
+    /** Rows not in `wanted` stay (some raters could not be read yet). */
+    { keepUnlisted = false }: { keepUnlisted?: boolean } = {}
   ): Promise<{ inserted: number; updated: number; deleted: number }> {
     const opts = { wrappedConnection: conn };
     const existing = await this.db.execute<RatingRowWrite>(
@@ -831,9 +833,20 @@ export class IdentityChainMirrorDb extends LazyDbAccessCompatibleService {
     const want = new Map(wanted.map((it) => [ratingKey(it), it]));
     const have = new Map(existing.map((it) => [ratingKey(it), it]));
     const log: RatingEvent[] = [];
-    const removed = Array.from(have.entries())
-      .filter(([k]) => !want.has(k))
-      .map(([, row]) => row);
+    const removed = keepUnlisted
+      ? []
+      : Array.from(have.entries())
+          .filter(([k]) => !want.has(k))
+          .map(([, row]) => row);
+    // The target's rows once this is written: the totals of the event log.
+    const after = keepUnlisted
+      ? [
+          ...existing
+            .filter((it) => !want.has(ratingKey(it)))
+            .map((it) => ({ ...it, rating: Number(it.rating) })),
+          ...wanted
+        ]
+      : wanted;
     const removedPrincipals = await this.principalsOfProfiles(
       removed.map((it) => it.rater_profile_id),
       conn
@@ -894,7 +907,7 @@ export class IdentityChainMirrorDb extends LazyDbAccessCompatibleService {
       else inserted++;
     }
     await this.insertRatingEvents(
-      { targetProfileId, wanted, log, now, events },
+      { targetProfileId, wanted: after, log, now, events },
       conn
     );
     return { inserted, updated, deleted: removed.length };

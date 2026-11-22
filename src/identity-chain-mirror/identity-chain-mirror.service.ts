@@ -1,6 +1,7 @@
 import {
   ChainGatewayClient,
-  chainGatewayClient
+  chainGatewayClient,
+  ChainGatewayError
 } from '@/chain-gateway/chain-gateway.client';
 import {
   ChainDelegation,
@@ -49,7 +50,7 @@ import {
   realSleep,
   Sleep
 } from './chain-feed-pages';
-import { messageOf } from './mirror-errors';
+import { ChainReadRetryLater, messageOf } from './mirror-errors';
 import { covers, isInactive, ProfileIds } from './profile-ids';
 
 export { covers, isInactive };
@@ -72,6 +73,11 @@ const FULL_SYNC_EVERY_MS = 6 * 60 * 60 * 1000;
 const FEED_PAGE_BLOCKS = 200;
 /** Past this many keys to try again, a full sync is quicker. */
 const RETRY_LIMIT = 10_000;
+/** At most this many keys are tried again in one run. */
+const RETRY_BATCH = 500;
+/** A new network id is read this many more times before anything is wiped. */
+const NETWORK_CONFIRMATIONS = 2;
+const NETWORK_CONFIRM_WAIT_MS = 1_000;
 const IDENTITY_PAGE = 200;
 const LAST_USE_CASE = 998;
 /** ratings.rating is a signed 32-bit int. */
@@ -114,7 +120,9 @@ type Gateway = Pick<
 >;
 
 export interface MirrorRunReport {
-  skipped?: 'import_not_complete';
+  skipped?: 'import_not_complete' | 'network_unsettled';
+  /** Why the run stopped early; what it did before is in the report. */
+  error?: string;
   mode: 'full_sync' | 'feed' | 'idle';
   identities: number;
   ratingTargets: number;
@@ -167,7 +175,12 @@ function collectHex(
   }
 }
 
-type RetryKind = keyof MirrorRetry;
+/** The gateway no longer (or not yet) holds a pinned height. */
+function isHeightGone(error: unknown): boolean {
+  return error instanceof ChainGatewayError && error.code === 'height_gone';
+}
+
+export type RetryKind = keyof MirrorRetry;
 type RetrySets = { [kind in RetryKind]: Set<string> };
 
 function emptyRetrySets(): RetrySets {
@@ -252,6 +265,11 @@ export class IdentityChainMirror {
   private retry: RetrySets = emptyRetrySets();
   /** The keys earlier runs left, tried again once by this run. */
   private leftByEarlierRuns: MirrorRetry = NO_RETRY;
+  /**
+   * The finalized height the current page's reads are pinned to, at or past
+   * what the page needs (undefined between pages: the client's own).
+   */
+  private readAt: number | undefined = undefined;
   private readonly ids: ProfileIds;
   private readonly bindings: WalletBindingsFollower;
 
@@ -314,20 +332,42 @@ export class IdentityChainMirror {
     };
   }
 
+  /**
+   * One run. A failure part way is returned in `error` with what the run
+   * did before it (wallets it regrouped are re-keyed by the caller either
+   * way), not thrown.
+   */
   async run({ budgetMs }: { budgetMs: number }): Promise<MirrorRunReport> {
-    const deadline = this.now() + budgetMs;
     const report = this.report();
+    try {
+      await this.runInto(report, budgetMs);
+    } catch (error) {
+      report.error = messageOf(error);
+      logger.error(`[RUN STOPPED] ${report.error}`);
+    } finally {
+      this.readAt = undefined;
+    }
+    return report;
+  }
+
+  private async runInto(report: MirrorRunReport, budgetMs: number) {
+    const deadline = this.now() + budgetMs;
     this.identities.clear();
-    // Before the import gate: a relaunched chain is seen while its import runs.
-    let state = await this.onThisChain(
-      (await this.db.getState()) ?? this.emptyState()
-    );
-    this.leftByEarlierRuns = state.retry;
+    this.readAt = undefined;
+    const loaded = (await this.db.getState()) ?? this.emptyState();
+    this.leftByEarlierRuns = loaded.retry;
     this.retry = {
-      principals: new Set(state.retry.principals),
-      targets: new Set(state.retry.targets),
-      wallets: new Set(state.retry.wallets)
+      principals: new Set(loaded.retry.principals),
+      targets: new Set(loaded.retry.targets),
+      wallets: new Set(loaded.retry.wallets)
     };
+    // Before the import gate: a relaunched chain is seen while its import runs.
+    const onChain = await this.onThisChain(loaded);
+    if (!onChain) {
+      report.skipped = 'network_unsettled';
+      return;
+    }
+    let state = onChain;
     const membership = await this.gateway.getMembership();
     const importState = membership?.import as
       | {
@@ -338,7 +378,7 @@ export class IdentityChainMirror {
       | undefined;
     if (!importState?.completed) {
       report.skipped = 'import_not_complete';
-      return report;
+      return;
     }
     this.ids.setImportHeights(
       numberOrNull(importState.startHeight),
@@ -357,7 +397,6 @@ export class IdentityChainMirror {
     state = await this.syncIdentities(state, deadline, report);
     report.nextHeight = state.next_height;
     report.retryLeft = retrySize(state.retry);
-    return report;
   }
 
   /** The identity tables: a full sync when due, else the change feed. */
@@ -436,14 +475,25 @@ export class IdentityChainMirror {
    * mappings of identities made on the old chain removed, and a full sync
    * once the new chain's import completes; rows of identities only the old
    * chain had are not deleted. A gateway that gives no network id changes
-   * nothing.
+   * nothing. A new id is read again before anything is wiped, so one answer
+   * from a node of another chain doesn't wipe: null (no run) while the
+   * answers differ.
    */
-  private async onThisChain(state: MirrorState): Promise<MirrorState> {
-    const network =
-      (await this.gateway.getHead(true)).network?.toLowerCase() ?? null;
+  private async onThisChain(state: MirrorState): Promise<MirrorState | null> {
+    const network = await this.networkNow();
     if (network === null || state.chain_id === network) return state;
     if (state.chain_id === null) {
       return await this.save({ ...state, chain_id: network });
+    }
+    for (let i = 0; i < NETWORK_CONFIRMATIONS; i++) {
+      await this.sleep(NETWORK_CONFIRM_WAIT_MS);
+      const again = await this.networkNow();
+      if (again !== network) {
+        logger.warn(
+          `[NETWORK UNSETTLED] [${state.chain_id}] [${network}] [${again}] [NEXT RUN]`
+        );
+        return null;
+      }
     }
     logger.warn(
       `[ANOTHER CHAIN] [${state.chain_id}] [NOW ${network}] [STARTING AGAIN]`
@@ -459,7 +509,13 @@ export class IdentityChainMirror {
       await this.db.clearChainMadeMappings(conn);
       await this.db.saveState(fresh, this.now(), conn);
     });
+    this.retry = emptyRetrySets();
+    this.leftByEarlierRuns = NO_RETRY;
     return fresh;
+  }
+
+  private async networkNow(): Promise<string | null> {
+    return (await this.gateway.getHead(true)).network?.toLowerCase() ?? null;
   }
 
   /**
@@ -482,38 +538,46 @@ export class IdentityChainMirror {
     report: MirrorRunReport
   ): Promise<MirrorState> {
     let state = initial;
+    const from = Number(state.sync_from_height);
+    // Each page reads at one height at or past the sync's own; a height the
+    // node no longer holds ends the run, to go on from the page next time.
+    const pinned = async (work: () => Promise<void>): Promise<boolean> =>
+      (await this.pinReads(from)) && (await this.unlessHeightGone(work));
     while (state.sync_phase === 'IDENTITIES' && this.now() < deadline) {
-      const page = await this.gateway.listIdentities({
-        after: state.sync_after,
-        limit: IDENTITY_PAGE
+      const at: MirrorAt = { height: from, source: 'FULL_SYNC' };
+      const read: { next: string | null } = { next: null };
+      const done = await pinned(async () => {
+        const page = await this.gateway.listIdentities({
+          after: state.sync_after,
+          limit: IDENTITY_PAGE,
+          ...this.pin()
+        });
+        for (const identity of page?.items ?? []) {
+          await this.isolated(
+            ['principals', 'targets'],
+            identity.principalId,
+            report,
+            async () => {
+              await this.applyIdentity(identity, report, at);
+              return await this.syncTargetRatings(identity, report, at);
+            }
+          );
+        }
+        read.next = page?.next ?? null;
       });
-      const at: MirrorAt = {
-        height: Number(state.sync_from_height),
-        source: 'FULL_SYNC'
-      };
-      for (const identity of page?.items ?? []) {
-        await this.isolated(
-          ['principals', 'targets'],
-          identity.principalId,
-          report,
-          async () => {
-            await this.applyIdentity(identity, report, at);
-            await this.syncTargetRatings(identity, report, at);
-          }
-        );
-      }
+      if (!done) return state;
       state = await this.save(
-        page?.next
-          ? { ...state, sync_after: page.next }
+        read.next
+          ? { ...state, sync_after: read.next }
           : { ...state, sync_phase: 'DELEGATIONS', sync_after: null }
       );
     }
     if (state.sync_phase === 'DELEGATIONS' && this.now() < deadline) {
-      await this.fullSyncDelegations(report);
+      if (!(await this.fullSyncDelegations(report, from))) return state;
       state = await this.save({ ...state, sync_phase: 'CONSOLIDATIONS' });
     }
     if (state.sync_phase === 'CONSOLIDATIONS' && this.now() < deadline) {
-      await this.fullSyncPairs(state);
+      if (!(await pinned(() => this.fullSyncPairs(state)))) return state;
       state = await this.save({
         ...state,
         next_height: Number(state.sync_from_height) + 1,
@@ -563,7 +627,7 @@ export class IdentityChainMirror {
 
   private async allIdentities(): Promise<ChainIdentity[]> {
     return await allPages((after) =>
-      this.gateway.listIdentities({ after, limit: 500 })
+      this.gateway.listIdentities({ after, limit: 500, ...this.pin() })
     );
   }
 
@@ -592,7 +656,14 @@ export class IdentityChainMirror {
     );
   }
 
-  private async fullSyncDelegations(report: MirrorRunReport) {
+  /**
+   * Every delegation, each use case read at one height at or past `from`;
+   * false when the node can't serve such a height now (nothing written).
+   */
+  private async fullSyncDelegations(
+    report: MirrorRunReport,
+    from: number
+  ): Promise<boolean> {
     const wanted = new Map<string, DelegationRowWrite[]>();
     const add = (wallet: string, record: ChainDelegation) => {
       const row = toDelegationRow(wallet, record);
@@ -602,17 +673,21 @@ export class IdentityChainMirror {
       wanted.set(row.from_address, list);
     };
     for (let useCase = 1; useCase <= LAST_USE_CASE; useCase++) {
-      const records = await allPages((after) =>
-        this.gateway.getDelegations(
-          { byUseCase: useCase },
-          { after, limit: 1000 }
-        )
-      );
-      for (const record of records) {
-        for (const wallet of await this.walletsOfHolder(record)) {
-          add(wallet, record);
+      if (!(await this.pinReads(from))) return false;
+      const read = await this.unlessHeightGone(async () => {
+        const records = await allPages((after) =>
+          this.gateway.getDelegations(
+            { byUseCase: useCase },
+            { after, limit: 1000, ...this.pin() }
+          )
+        );
+        for (const record of records) {
+          for (const wallet of await this.walletsOfHolder(record)) {
+            add(wallet, record);
+          }
         }
-      }
+      });
+      if (!read) return false;
     }
     const wallets = new Set<string>([
       ...Array.from(wanted.keys()),
@@ -624,6 +699,7 @@ export class IdentityChainMirror {
       );
       report.delegationWallets++;
     }
+    return true;
   }
 
   private async walletsOfHolder(record: ChainDelegation): Promise<string[]> {
@@ -641,7 +717,12 @@ export class IdentityChainMirror {
     deadline: number,
     report: MirrorRunReport
   ): Promise<MirrorState> {
-    let state = await this.retryFailed(initial, report);
+    let state = initial;
+    if (retrySize(state.retry) > RETRY_LIMIT) {
+      logger.warn(`[OVER ${RETRY_LIMIT} TO RETRY] [STARTING A FULL SYNC]`);
+      return await this.startFullSync(state);
+    }
+    state = await this.retryFailed(state, report);
     while (this.now() < deadline) {
       const from = Number(state.next_height);
       const read = await readWholeBlocks(this.gateway, from, {
@@ -656,14 +737,16 @@ export class IdentityChainMirror {
         return state;
       }
       if (!(await this.readsReach(state, read))) return state;
-      // The identities a page touches are read again for each page, at a
-      // height that includes it.
-      this.identities.clear();
+      // The identities a page touches are read again for each page, all at
+      // one height that includes it.
       const records = read.blocks.flatMap((block) => block.records);
-      await this.applyEffects(feedEffects(records), report, {
-        height: read.nextHeight - 1,
-        source: 'FEED'
-      });
+      const applied = await this.unlessHeightGone(() =>
+        this.applyEffects(feedEffects(records), report, {
+          height: read.nextHeight - 1,
+          source: 'FEED'
+        })
+      );
+      if (!applied) return state;
       report.feedBlocks += read.blocks.length;
       state = await this.save({ ...state, next_height: read.nextHeight });
       if (retrySize(state.retry) > RETRY_LIMIT) {
@@ -675,42 +758,48 @@ export class IdentityChainMirror {
   }
 
   /**
-   * Tries again, once a run, what earlier runs could not write and is still
-   * left, read at the gateway's finalized height (past the last page read).
-   * What fails again stays for the next run.
+   * Tries again, once a run and at most RETRY_BATCH keys, what earlier runs
+   * could not write and is still left, read at one finalized height past
+   * the last page read. What fails again, or isn't reached, stays.
    */
   private async retryFailed(
     state: MirrorState,
     report: MirrorRunReport
   ): Promise<MirrorState> {
-    const left = (kind: RetryKind) =>
-      new Set(
-        this.leftByEarlierRuns[kind].filter((it) => this.retry[kind].has(it))
-      );
+    let room = RETRY_BATCH;
+    const left = (kind: RetryKind) => {
+      const keys = this.leftByEarlierRuns[kind]
+        .filter((it) => this.retry[kind].has(it))
+        .slice(0, room);
+      room -= keys.length;
+      return new Set(keys);
+    };
     const principals = left('principals');
     const targets = left('targets');
     const wallets = left('wallets');
     this.leftByEarlierRuns = NO_RETRY;
     if (!principals.size && !targets.size && !wallets.size) return state;
-    this.identities.clear();
-    await this.applyEffects(
-      {
-        principals,
-        wallets: new Set<string>(),
-        ratingTargets: targets,
-        delegationHolders: wallets
-      },
-      report,
-      { height: Number(state.next_height) - 1, source: 'FEED' }
+    const last = Number(state.next_height) - 1;
+    if (!(await this.pinReads(last))) return state;
+    const applied = await this.unlessHeightGone(() =>
+      this.applyEffects(
+        {
+          principals,
+          wallets: new Set<string>(),
+          ratingTargets: targets,
+          delegationHolders: wallets
+        },
+        report,
+        { height: last, source: 'FEED' }
+      )
     );
-    return await this.save(state);
+    return applied ? await this.save(state) : state;
   }
 
   /**
    * Whether the identity reads that follow a feed page see it: the page is
-   * of the mirror's chain, and the finalized height the gateway client pins
-   * its reads to has reached the page's last height (a node behind is
-   * waited for until the next run).
+   * of the mirror's chain, and they are pinned to a finalized height at or
+   * past the page's last height.
    */
   private async readsReach(
     state: MirrorState,
@@ -720,31 +809,72 @@ export class IdentityChainMirror {
       logger.warn(`[FEED PAGE OF ANOTHER CHAIN] [${read.network}] [NEXT RUN]`);
       return false;
     }
-    const needed = read.nextHeight - 1;
+    return await this.pinReads(read.nextHeight - 1);
+  }
+
+  /**
+   * Pins the reads that follow to the gateway's finalized height, read
+   * again when it is below `least`; false while it is (a node behind,
+   * waited for until the next run). The gateway serves a pinned height for
+   * about 13 minutes, a page's reads take seconds, and a height already
+   * past is never read again, so the head going back (another node) can't
+   * make a page read older state.
+   */
+  private async pinReads(least: number): Promise<boolean> {
     let head = await this.gateway.getHead();
-    if (head.finalizedHeight < needed) head = await this.gateway.getHead(true);
-    if (head.finalizedHeight < needed) {
-      logger.warn(`[READS BEHIND THE FEED AT ${needed}] [NEXT RUN]`);
+    if (head.finalizedHeight < least) head = await this.gateway.getHead(true);
+    if (head.finalizedHeight < least) {
+      logger.warn(`[READS BEHIND AT ${least}] [NEXT RUN]`);
       return false;
     }
+    this.readAt = head.finalizedHeight;
+    this.identities.clear();
     return true;
+  }
+
+  /** The pinned height for a read, when one is set. */
+  private pin(): { height?: number } {
+    return this.readAt === undefined ? {} : { height: this.readAt };
+  }
+
+  /**
+   * Runs work whose reads are pinned; false when the gateway no longer (or
+   * not yet) holds the pinned height: the run stops there, to go on from the
+   * same place next time.
+   */
+  private async unlessHeightGone(work: () => Promise<void>): Promise<boolean> {
+    try {
+      await work();
+      return true;
+    } catch (error) {
+      if (!isHeightGone(error)) throw error;
+      logger.warn(`[PINNED HEIGHT ${this.readAt} GONE] [NEXT RUN]`);
+      return false;
+    }
   }
 
   /**
    * Runs one key's work. A failure is logged and reported, not thrown, and
-   * the key is kept to try again; a success takes it off.
+   * the key is kept to try again; a success takes it off, but for the kinds
+   * the work says are left (written in part). A pinned height the gateway
+   * no longer holds is thrown: the whole page is read again.
    */
   private async isolated(
     kinds: RetryKind[],
     key: string,
     report: MirrorRunReport,
-    work: () => Promise<void>
+    work: () => Promise<RetryKind[] | void>
   ) {
     const id = key.toLowerCase();
     try {
-      await work();
-      kinds.forEach((kind) => this.retry[kind].delete(id));
+      const left = (await work()) ?? [];
+      kinds.forEach((kind) =>
+        left.includes(kind)
+          ? this.retry[kind].add(id)
+          : this.retry[kind].delete(id)
+      );
     } catch (error) {
+      if (isHeightGone(error)) throw error;
       const message = messageOf(error);
       logger.error(`[${id} NOT MIRRORED] ${message}`);
       report.failed.push(`${id}: ${message}`);
@@ -759,7 +889,7 @@ export class IdentityChainMirror {
       return principals;
     }
     const wallets = Array.from(effects.wallets);
-    const now = await this.gateway.getIdentitiesByWallets(wallets);
+    const now = await this.gateway.getIdentitiesByWallets(wallets, this.pin());
     Object.values(now).forEach((it) => {
       if (it) principals.add(it.principalId.toLowerCase());
     });
@@ -818,7 +948,10 @@ export class IdentityChainMirror {
   private async identity(principalId: string): Promise<ChainIdentity | null> {
     const key = principalId.toLowerCase();
     if (!this.identities.has(key)) {
-      this.identities.set(key, await this.gateway.getIdentityByPrincipal(key));
+      this.identities.set(
+        key,
+        await this.gateway.getIdentityByPrincipal(key, this.pin())
+      );
     }
     return this.identities.get(key) ?? null;
   }
@@ -961,14 +1094,17 @@ export class IdentityChainMirror {
 
   /**
    * A target's REP and CIC rows become the chain's ratings of it; each
-   * change goes to the rating event log in the same transaction.
+   * change goes to the rating event log in the same transaction. A rater
+   * whose profile id can't be settled yet is left as it is (it has no rows
+   * until it is mapped, or keeps the ones it has), the others are written,
+   * and the target is left to try again (['targets']).
    */
   async syncTargetRatings(
     identity: ChainIdentity,
     report: MirrorRunReport,
     at: MirrorAt
-  ) {
-    if (isInactive(identity)) return;
+  ): Promise<RetryKind[]> {
+    if (isInactive(identity)) return [];
     const targetProfileId = await this.profileIdOf(identity);
     const ratings: ChainRating[] = [];
     if ((identity.rep?.raters ?? 0) + (identity.nic?.raters ?? 0) > 0) {
@@ -976,7 +1112,7 @@ export class IdentityChainMirror {
       for (;;) {
         const page = await this.gateway.getRatings(
           { target: identity.principalId },
-          { after, limit: 1000 }
+          { after, limit: 1000, ...this.pin() }
         );
         ratings.push(...(page?.items ?? []));
         if (!page?.next) break;
@@ -984,15 +1120,28 @@ export class IdentityChainMirror {
       }
     }
     const rows: RatingRowWrite[] = [];
+    const unsettled: string[] = [];
     for (const rating of ratings) {
       const rater = await this.identity(rating.rater);
       if (!rater) continue;
-      // A merged or closed rater is named without storing a mapping for it.
-      const raterProfileId = isInactive(rater)
-        ? (await this.profileIdForSites(rater)).profileId
-        : await this.profileIdOf(rater);
+      let raterProfileId: string;
+      try {
+        // A merged or closed rater is named without storing a mapping for it.
+        raterProfileId = isInactive(rater)
+          ? (await this.profileIdForSites(rater)).profileId
+          : await this.profileIdOf(rater);
+      } catch (error) {
+        if (!(error instanceof ChainReadRetryLater)) throw error;
+        unsettled.push(rater.principalId);
+        continue;
+      }
       const row = this.ratingRow(rating, raterProfileId);
       if (row) rows.push(row);
+    }
+    if (unsettled.length) {
+      logger.warn(
+        `[RATERS NOT SETTLED] [${identity.principalId}] [${unsettled.join(', ')}] [TRIED AGAIN]`
+      );
     }
     const events: RatingEventContext = {
       targetPrincipal: identity.principalId.toLowerCase(),
@@ -1005,15 +1154,18 @@ export class IdentityChainMirror {
         rows,
         this.now(),
         events,
-        conn
+        conn,
+        { keepUnlisted: unsettled.length > 0 }
       )
     );
     report.ratingTargets++;
+    return unsettled.length ? ['targets'] : [];
   }
 
   /** A wallet's delegation rows become its own and its identity's records. */
   async syncWalletDelegations(wallet: string, report: MirrorRunReport) {
-    const groups = (await this.gateway.getDelegationsOfWallet(wallet)) ?? [];
+    const groups =
+      (await this.gateway.getDelegationsOfWallet(wallet, this.pin())) ?? [];
     const rows: DelegationRowWrite[] = [];
     for (const group of groups) {
       let records = group.records;
@@ -1023,7 +1175,7 @@ export class IdentityChainMirror {
         for (;;) {
           const page = await this.gateway.getDelegations(
             { holder: group.holder },
-            { after, limit: 1000 }
+            { after, limit: 1000, ...this.pin() }
           );
           records.push(...(page?.items ?? []));
           if (!page?.next) break;

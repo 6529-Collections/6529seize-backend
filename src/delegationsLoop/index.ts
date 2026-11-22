@@ -288,6 +288,10 @@ async function mirrorChainIdentities() {
       throw error;
     }
   }
+  if (report.error) {
+    // Re-keyed what it regrouped before it stopped; the run still fails.
+    throw new Error(`Identity chain mirror: ${report.error}`);
+  }
   // Last, after the re-keying: the profile site index follows the chain,
   // when the run has time left for it.
   const problems = await identityChainMirror.followProfileSites(

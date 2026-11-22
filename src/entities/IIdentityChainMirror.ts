@@ -124,7 +124,7 @@ export class IdentityChainMirrorStateEntity {
    * What the mirror could not write, tried again by the next run (JSON:
    * principals, rating targets and wallets). A full sync starts it again.
    */
-  @Column({ type: 'text', nullable: true, default: null })
+  @Column({ type: 'mediumtext', nullable: true, default: null })
   readonly retry_json!: string | null;
 
   @Column({ type: 'bigint', nullable: false })

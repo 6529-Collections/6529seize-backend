@@ -71,8 +71,9 @@ export class ProfileIds {
    * The profile id the profile site index files an identity under, and
    * whether the import made it: the mirror's own id (mapped now if needed)
    * for an identity the mirror writes; for a merged or closed one, its
-   * mapping if it has one, else its legacy id, else the id derived from its
-   * principal, with nothing stored.
+   * mapping if it has one, else the id the same rule gives (legacy id,
+   * founding wallet's placeholder, derived id), with nothing stored, so a
+   * rebuild from the chain files it the same way.
    */
   async profileIdForSites(
     identity: ChainIdentity
@@ -88,8 +89,7 @@ export class ProfileIds {
     return {
       profileId:
         (await this.db.profileIdOfPrincipal(principal)) ??
-        legacy ??
-        principalProfileId(principal),
+        (await this.chooseProfileId(identity)).profileId,
       imported: legacy !== null
     };
   }

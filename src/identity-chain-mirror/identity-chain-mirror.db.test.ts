@@ -306,6 +306,17 @@ describeWithSeed(
           retry: { principals: [P], targets: [], wallets: [B] }
         })
       );
+      // The retry list holds the 10,000 keys past which a full sync starts.
+      const many = Array.from(
+        { length: 10_001 },
+        (_, i) => '0x' + i.toString(16).padStart(64, '0')
+      );
+      const before = (await db.getState())!;
+      await db.saveState(
+        { ...before, retry: { principals: many, targets: many, wallets: [] } },
+        2
+      );
+      expect((await db.getState())?.retry.targets).toEqual(many);
       expect(await db.walletBindingAt(B)).toEqual({
         binding: row(B, 7),
         nextHeight: 12,
@@ -478,6 +489,49 @@ describeWithSeed(
           rating: 4
         }
       ]);
+    });
+
+    it('keeps the rows it is not given when told to, counting them in totals', async () => {
+      const result = await inTx((conn) =>
+        db.replaceTargetRatings(
+          ALICE,
+          [
+            {
+              rater_profile_id: BOB,
+              matter: 'REP',
+              matter_category: 'Old',
+              rating: 2,
+              rater_principal: P,
+              height: 91
+            }
+          ],
+          1_700_000_000_000,
+          { targetPrincipal: Q, height: 92, source: 'FEED' },
+          conn,
+          { keepUnlisted: true }
+        )
+      );
+      expect(result).toEqual({ inserted: 1, updated: 0, deleted: 0 });
+      const rows = await sqlExecutor.execute<any>(
+        `select rater_profile_id, matter_category, rating from ${RATINGS_TABLE}
+         where matter_target_id = :id and matter = 'REP' order by matter_category, rater_profile_id`,
+        { id: ALICE }
+      );
+      expect(rows.map((it: any) => [it.matter_category, it.rating])).toEqual(
+        expect.arrayContaining([
+          [HELP_BOT_CREDIT_CATEGORY, 10],
+          ['Kind', 3],
+          ['Old', 1],
+          ['Old', 2]
+        ])
+      );
+      expect(rows).toHaveLength(4);
+      const events = await sqlExecutor.execute<any>(
+        `select new_rating, total_after from ${IDENTITY_CHAIN_RATING_EVENTS_TABLE}`
+      );
+      expect(
+        events.map((it: any) => [Number(it.new_rating), Number(it.total_after)])
+      ).toEqual([[2, 3]]);
     });
 
     it('replaces a wallet delegations and all pairs', async () => {

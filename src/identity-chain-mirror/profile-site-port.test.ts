@@ -410,6 +410,61 @@ describe('GatewayProfileSitePort', () => {
     expect(identity?.imported).toBe(false);
   });
 
+  it('ends the pass at a cut block it cannot complete now', async () => {
+    const { gateway, port } = setup();
+    gateway.getMembership.mockResolvedValue({
+      import: { completed: true, startHeight: 5, doneHeight: 9 }
+    });
+    gateway.getChanges
+      .mockResolvedValueOnce(
+        feedPage({
+          from: 10,
+          through: 9,
+          next: '10:3',
+          blocks: [
+            {
+              height: 10,
+              slot: 0,
+              root: '0x',
+              time: 1,
+              complete: false,
+              records: [profileRecord({ version: 1, docCid: DOC }, false)]
+            }
+          ]
+        })
+      )
+      .mockRejectedValue(
+        new ChainGatewayError('busy', 503, 'busy', '/v1/feed')
+      );
+    await expect(port.getChanges(10)).rejects.toMatchObject({ code: 'busy' });
+    gateway.getChanges.mockReset();
+    gateway.getChanges
+      .mockResolvedValueOnce(
+        feedPage({
+          from: 10,
+          through: 9,
+          next: '10:3',
+          blocks: [
+            {
+              height: 10,
+              slot: 0,
+              root: '0x',
+              time: 1,
+              complete: false,
+              records: [profileRecord({ version: 1, docCid: DOC }, false)]
+            }
+          ]
+        })
+      )
+      .mockResolvedValueOnce(
+        feedPage({ from: '10:3', through: 9, next: '10:3', blocks: [] })
+      );
+    expect(await port.getChanges(10)).toEqual({
+      changes: [],
+      next_height: null
+    });
+  });
+
   it('throws gone when the feed no longer holds the height asked for', async () => {
     const { gateway, port } = setup();
     gateway.getMembership.mockResolvedValue({

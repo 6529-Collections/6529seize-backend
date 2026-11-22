@@ -141,6 +141,23 @@ describe('delegations loop and the identity mirror', () => {
     expect(updateTDH).not.toHaveBeenCalled();
   });
 
+  it('re-keys what a stopped mirror run regrouped, then fails the run', async () => {
+    process.env.FEATURE_IDENTITY_CHAIN_MIRROR = 'true';
+    jest.mocked(identityChainMirror.run).mockResolvedValue({
+      ...report([A]),
+      error: 'lost connection'
+    } as never);
+    jest
+      .mocked(getAffectedWalletsForAddresses)
+      .mockResolvedValue(new Set([A]) as never);
+    await expect(invoke()).rejects.toThrow('lost connection');
+    expect(getAffectedWalletsForAddresses).toHaveBeenCalledWith(
+      [A],
+      expect.anything()
+    );
+    expect(identityChainMirror.followProfileSites).not.toHaveBeenCalled();
+  });
+
   it('re-keys the consolidated tables for regrouped wallets', async () => {
     process.env.FEATURE_IDENTITY_CHAIN_MIRROR = 'true';
     jest
