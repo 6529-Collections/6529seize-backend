@@ -306,6 +306,8 @@ export interface ChainFeedPage {
   readonly nextHeight: number;
   /** Nothing past the start: the finalized head is reached. */
   readonly atHead: boolean;
+  /** The network id of the chain the page was read from. */
+  readonly network?: string | null;
 }
 
 export interface ChainDraftRequest {
