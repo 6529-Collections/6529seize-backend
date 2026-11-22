@@ -3,6 +3,7 @@ import * as Joi from 'joi';
 import { asyncRouter } from '../async.router';
 import { getWalletOrThrow, needsAuthenticatedUser } from '../auth/auth';
 import { getValidatedByJoiOrThrow } from '../validation';
+import { getIp } from '../policies/policies';
 import {
   chainRelayService,
   RelaySubmitRequest
@@ -14,7 +15,8 @@ import { PendingOperation } from '@/chain-relay/chain-pending-operations.db';
  * the chain, or, for an identity join, held until both its wallets (the
  * identity's and the joining one) have signed. Drafts come from the chain
  * gateway (POST /v1/draft); the wallet signs its typed data; the signatures
- * come here.
+ * come here. POST /submit also takes what a session key may sign (profile
+ * edits, votes, poll ballots, ratings) for the signed-in wallet's identity.
  */
 const router = asyncRouter();
 
@@ -40,6 +42,21 @@ interface SubmitBody {
 }
 
 /**
+ * A wallet's or a secp256k1 session key's signature (key_type 1, 65 bytes),
+ * or an Ed25519 session key's (key_type 2, 64 bytes).
+ */
+const SubmitSignatureSchema = Joi.object<SignatureBody>({
+  role: Joi.number().integer().min(0).max(255).required(),
+  key_type: Joi.number().integer().valid(1, 2).required(),
+  sig: Joi.string()
+    .pattern(/^0x(?:[0-9a-fA-F]{128}|[0-9a-fA-F]{130})$/)
+    .required()
+});
+
+/** Hex characters of the largest operation taken: 144 KiB as bytes. */
+const MAX_OPERATION_HEX = 2 + 2 * 144 * 1024;
+
+/**
  * Either the whole signed operation, or its unsigned bytes and signatures,
  * with its draft's txId (what every signer signed) in both forms.
  */
@@ -47,9 +64,13 @@ const SubmitSchema = Joi.object<SubmitBody>({
   tx_id: Joi.string()
     .pattern(/^0x[0-9a-fA-F]{64}$/)
     .required(),
-  signed: Joi.string().pattern(/^0x[0-9a-fA-F]+$/),
-  unsigned: Joi.string().pattern(/^0x[0-9a-fA-F]+$/),
-  signatures: Joi.array().items(SignatureSchema).min(1).max(8)
+  signed: Joi.string()
+    .max(MAX_OPERATION_HEX)
+    .pattern(/^0x[0-9a-fA-F]+$/),
+  unsigned: Joi.string()
+    .max(MAX_OPERATION_HEX)
+    .pattern(/^0x[0-9a-fA-F]+$/),
+  signatures: Joi.array().items(SubmitSignatureSchema).min(1).max(8)
 })
   .xor('signed', 'unsigned')
   .with('unsigned', 'signatures')
@@ -173,7 +194,7 @@ router.post(
   '/submit',
   needsAuthenticatedUser(),
   async (req: Request<any, any, SubmitBody>, res: Response) => {
-    getWalletOrThrow(req);
+    const wallet = getWalletOrThrow(req);
     const body = getValidatedByJoiOrThrow(req.body, SubmitSchema);
     const request: RelaySubmitRequest = body.signed
       ? { signed: body.signed, txId: body.tx_id }
@@ -182,7 +203,7 @@ router.post(
           signatures: body.signatures!.map(toSignature),
           txId: body.tx_id
         };
-    res.send(await chainRelayService.submit(request));
+    res.send(await chainRelayService.submit(request, wallet, getIp(req)));
   }
 );
 
@@ -213,7 +234,8 @@ router.post(
         })),
         signatures: body.signatures.map(toSignature)
       },
-      wallet
+      wallet,
+      getIp(req)
     );
     res.status(201).send(toApiPendingOperation(op));
   }
@@ -242,7 +264,8 @@ router.post(
     const op = await chainRelayService.addSignature(
       req.params.tx_id,
       toSignature(body),
-      wallet
+      wallet,
+      getIp(req)
     );
     res.send(toApiPendingOperation(op));
   }
@@ -255,7 +278,7 @@ router.post(
     const wallet = getWalletOrThrow(req);
     res.send(
       toApiPendingOperation(
-        await chainRelayService.retry(req.params.tx_id, wallet)
+        await chainRelayService.retry(req.params.tx_id, wallet, getIp(req))
       )
     );
   }
