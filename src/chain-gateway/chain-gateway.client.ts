@@ -34,7 +34,7 @@ import {
 
 /**
  * The one client 6529.io's backend uses to read the 6529 chain and to relay
- * signed operations to it, through 6529's chain gateway (service lane).
+ * signed operations to it, through 6529's chain gateway (service access).
  *
  * - Reads are pinned to a height. Without `opts.height` the client pins the
  *   latest finalized height it knows (refreshed every `headTtlMs`), so the
@@ -44,11 +44,12 @@ import {
  * - Retries network errors, timeouts, 429 and 5xx with backoff (honouring
  *   Retry-After). 404 is `null`. Other refusals throw ChainGatewayError
  *   carrying the API's code (`height_gone`, `inadmissible`, ...).
- * - Profile documents are fetched by CID from the gateway's document store,
- *   checked against their CID, and cached for good.
+ * - Documents are fetched by CID from the gateway's document store and
+ *   checked against their CID; those up to a profile document's size are
+ *   cached.
  *
  * Settings (environment or the shared secret): CHAIN_GATEWAY_URL (required at
- * first use), CHAIN_GATEWAY_SERVICE_KEY (the service lane's bearer key),
+ * first use), CHAIN_GATEWAY_SERVICE_KEY (the service bearer key),
  * CHAIN_GATEWAY_TIMEOUT_MS, CHAIN_GATEWAY_RETRIES, CHAIN_GATEWAY_HEAD_TTL_MS,
  * CHAIN_GATEWAY_CACHE_ENTRIES.
  */
@@ -212,8 +213,8 @@ function hexToBytes(hex: string): Uint8Array {
 }
 
 /** A CID as the document store names it: multibase base32 (`b...`). */
-export function cidPath(cidHex: string): string {
-  return `b${base32(hexToBytes(cidHex))}`;
+export function cidPath(cid: string): string {
+  return `b${base32(hexToBytes(cid))}`;
 }
 
 /**
@@ -223,7 +224,11 @@ export function cidPath(cidHex: string): string {
 export function cidHex(cid: string): string {
   const text = cid.trim();
   if (/^0x/i.test(text)) {
-    return '0x' + Buffer.from(hexToBytes(text)).toString('hex');
+    const bytes = hexToBytes(text);
+    if (bytes.length < 4) {
+      throw new ChainGatewayError(`Not a CID: ${cid}`, null, 'bad_request', '');
+    }
+    return '0x' + Buffer.from(bytes).toString('hex');
   }
   const bytes: number[] = [];
   let bits = 0;
@@ -239,7 +244,7 @@ export function cidHex(cid: string): string {
     }
   }
   const hex = '0x' + Buffer.from(bytes).toString('hex');
-  if (!bytes.length || cidPath(hex) !== text) {
+  if (bytes.length < 4 || cidPath(hex) !== text) {
     throw new ChainGatewayError(`Not a CID: ${cid}`, null, 'bad_request', '');
   }
   return hex;
@@ -258,17 +263,39 @@ export function rawCidHexOf(bytes: Uint8Array): string {
 
 const RAW_SHA256_CID_PREFIX = [0x01, 0x55, 0x12, 0x20];
 
-/** For a CIDv1 raw sha2-256 CID: whether the bytes are its content. */
-export function bytesMatchCid(cidHex: string, bytes: Uint8Array): boolean {
-  const cid = hexToBytes(cidHex);
-  const isRawSha256 =
-    cid.length === 36 &&
-    RAW_SHA256_CID_PREFIX.every((byte, i) => cid[i] === byte);
-  if (!isRawSha256) {
-    return true;
-  }
-  const digest = createHash('sha256').update(bytes).digest();
-  return Buffer.from(cid.slice(4)).equals(digest);
+/** The sha2-256 digest a CIDv1 names (any codec), or null for another CID. */
+function sha256DigestOf(cid: Uint8Array): Buffer | null {
+  if (cid[0] !== 0x01) return null;
+  // The codec is an unsigned varint.
+  let i = 1;
+  while (i < cid.length && (cid[i] & 0x80) !== 0) i++;
+  i++; // past the codec's last byte
+  const isSha256 =
+    cid.length === i + 34 && cid[i] === 0x12 && cid[i + 1] === 0x20;
+  return isSha256 ? Buffer.from(cid.slice(i + 2)) : null;
+}
+
+/**
+ * Whether the bytes are the content a sha2-256 CIDv1 names (raw, dag-json,
+ * json or dag-cbor). False for any other CID: its content can't be checked.
+ */
+export function bytesMatchCid(cid: string, bytes: Uint8Array): boolean {
+  const digest = sha256DigestOf(hexToBytes(cid));
+  return (
+    digest !== null &&
+    createHash('sha256').update(bytes).digest().equals(digest)
+  );
+}
+
+/** The feed's held height ranges, `[[from, to], ...]`; anything else is none. */
+function heightRanges(value: unknown): [number, number][] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter(
+      (it): it is [unknown, unknown] => Array.isArray(it) && it.length === 2
+    )
+    .map(([from, to]) => [Number(from), Number(to)] as [number, number])
+    .filter(([from, to]) => Number.isSafeInteger(from) && to >= from);
 }
 
 function lower(address: string): string {
@@ -352,7 +379,7 @@ export class ChainGatewayClient {
     if (key) {
       headers.authorization = `Bearer ${key}`;
     }
-    if (Buffer.isBuffer(body)) {
+    if (body instanceof Uint8Array) {
       headers['content-type'] = 'application/octet-stream';
     } else if (body !== undefined) {
       headers['content-type'] = 'application/json';
@@ -361,8 +388,8 @@ export class ChainGatewayClient {
   }
 
   /** Bytes go as they are (document uploads); anything else as JSON. */
-  private encodeBody(body: unknown): string | Buffer | undefined {
-    if (body === undefined || Buffer.isBuffer(body)) {
+  private encodeBody(body: unknown): string | Uint8Array | undefined {
+    if (body === undefined || body instanceof Uint8Array) {
       return body;
     }
     return JSON.stringify(body);
@@ -694,7 +721,6 @@ export class ChainGatewayClient {
     );
   }
 
-  /** The identity a 6529.io profile id (UUID) was imported to. */
   /**
    * The import file's entry the identity was created from (its legacy id
    * and the ProfileDoc the import wrote), or null when the import didn't
@@ -708,6 +734,7 @@ export class ChainGatewayClient {
     );
   }
 
+  /** The identity a 6529.io profile id (UUID) was imported to. */
   getIdentityByLegacyProfileId(profileId: string, opts?: ChainReadOptions) {
     return this.data<ChainIdentity>(
       `/v1/identities/by-legacy/${segment(lower(profileId))}`,
@@ -776,13 +803,29 @@ export class ChainGatewayClient {
     );
   }
 
-  /** Every binding change of a wallet the feed holds (principal at a height). */
-  getMembershipWalletHistory(wallet: string, opts?: ChainReadOptions) {
-    return this.data<ChainWalletHistory>(
-      `/v1/membership/wallets/${segment(lower(wallet))}/history`,
-      {},
-      opts
-    );
+  /**
+   * Every binding change of a wallet the gateway's feed holds, the height
+   * ranges it is exact within, and the height of the read.
+   */
+  async getMembershipWalletHistory(
+    wallet: string,
+    opts?: ChainReadOptions
+  ): Promise<ChainWalletHistory | null> {
+    const answer = await this.read<{
+      wallet: string;
+      changes?: { height: number; principalId: string | null }[];
+      ranges?: unknown;
+    }>(`/v1/membership/wallets/${segment(lower(wallet))}/history`, {}, opts);
+    if (!answer) return null;
+    return {
+      wallet: lower(answer.data.wallet ?? wallet),
+      changes: (answer.data.changes ?? []).map((it) => ({
+        height: Number(it.height),
+        principalId: it.principalId ? lower(it.principalId) : null
+      })),
+      ranges: heightRanges(answer.data.ranges),
+      readHeight: Number(answer.read?.height ?? 0)
+    };
   }
 
   listMembershipWallets(opts: ChainPageOptions = {}) {
@@ -865,7 +908,7 @@ export class ChainGatewayClient {
     );
   }
 
-  // TDH (shapes in GATEWAY-API.md; the sweep lead's loop types them)
+  // TDH (the TDH loop types the answers)
 
   getTdh<T = Record<string, unknown>>(
     query: ChainTdhQuery = {},
@@ -978,18 +1021,26 @@ export class ChainGatewayClient {
    * The bytes of the profile document with this CID (hex, as identities
    * carry it), or null when the store has none. Checked against the CID.
    */
-  async getProfileDoc(cidHex: string): Promise<Buffer | null> {
-    return await this.getDocument(cidHex);
+  async getProfileDoc(cid: string): Promise<Buffer | null> {
+    return await this.getDocument(cid);
   }
 
   /**
-   * The bytes of any raw sha2-256 document in the store (profile documents,
+   * The bytes of a sha2-256 document in the store (profile documents,
    * profile site files), by CID in hex or base32 text, or null when the
-   * store has none. Checked against the CID. Documents up to a profile
-   * document's size are cached.
+   * store has none. Checked against the CID; a CID that names another hash
+   * is refused. Documents up to a profile document's size are cached.
    */
   async getDocument(cid: string): Promise<Buffer | null> {
     const key = cidHex(cid);
+    if (!sha256DigestOf(hexToBytes(key))) {
+      throw new ChainGatewayError(
+        `Not a sha2-256 CID: ${cid}`,
+        null,
+        'bad_request',
+        '/v1/docs'
+      );
+    }
     const cached = this.docs.get(key);
     if (cached) {
       return cached;
@@ -1040,7 +1091,7 @@ export class ChainGatewayClient {
     if ((status !== 200 && status !== 201) || !stored?.cid) {
       throw this.errorOf(path, status, json);
     }
-    if (lower(stored.cid_hex ?? cidHex(stored.cid)) !== expected) {
+    if (cidHex(stored.cid) !== expected) {
       throw new ChainGatewayError(
         `${path}: the store named the document ${stored.cid}, not ${cidPath(expected)}`,
         status,

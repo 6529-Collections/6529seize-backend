@@ -518,6 +518,26 @@ describe('profile documents', () => {
     expect(bytesMatchCid(cid, Buffer.from('another'))).toBe(false);
   });
 
+  it('checks a sha2-256 CID of any codec, and no other hash', () => {
+    const digest = createHash('sha256').update(doc).digest('hex');
+    // dag-json (0x0129, a two-byte varint) and dag-cbor (0x71).
+    expect(bytesMatchCid('0x01a9021220' + digest, doc)).toBe(true);
+    expect(bytesMatchCid('0x01711220' + digest, doc)).toBe(true);
+    expect(bytesMatchCid('0x01711220' + digest, Buffer.from('x'))).toBe(false);
+    // sha2-512 (0x13), a short digest, CIDv0-like.
+    expect(bytesMatchCid('0x01551340' + digest + digest, doc)).toBe(false);
+    expect(bytesMatchCid('0x015512' + '1f' + digest.slice(2), doc)).toBe(false);
+    expect(bytesMatchCid('0x1220' + digest, doc)).toBe(false);
+  });
+
+  it('refuses to fetch a document whose CID names another hash', async () => {
+    const { client, calls } = setup(() => ({ status: 200, bytes: doc }));
+    await expect(
+      client.getDocument('0x01551340' + '00'.repeat(64))
+    ).rejects.toMatchObject({ code: 'bad_request' });
+    expect(calls).toHaveLength(0);
+  });
+
   it('fetches a document once and checks it', async () => {
     const { client, calls } = setup(() => ({ status: 200, bytes: doc }));
     expect(
@@ -547,7 +567,15 @@ describe('profile documents', () => {
     expect(cidHex(cidPath(cid))).toBe(cid);
     expect(cidHex(cid.toUpperCase().replace('0X', '0x'))).toBe(cid);
     expect(rawCidHexOf(doc)).toBe(cid);
-    for (const bad of ['', 'b', cidPath(cid).toUpperCase(), 'zabc', 'b1']) {
+    for (const bad of [
+      '',
+      'b',
+      '0x',
+      '0x0155',
+      cidPath(cid).toUpperCase(),
+      'zabc',
+      'b1'
+    ]) {
       expect(() => cidHex(bad)).toThrow(ChainGatewayError);
     }
   });
@@ -579,6 +607,37 @@ describe('profile documents', () => {
     expect(param(calls[0], 'cid')).toBe(cidPath(cid));
     expect(calls[0].headers['content-type']).toBe('application/octet-stream');
     expect(Buffer.from(calls[0].body as Uint8Array)).toEqual(doc);
+  });
+
+  it('reads the CID the store names in base32 alone', async () => {
+    const { client } = setup(() => ({
+      status: 200,
+      json: { cid: cidPath(cid), cid_hex: cid.slice(2), codec: 'raw', size: 1 }
+    }));
+    expect(await client.putDocument(doc)).toBe(cidPath(cid));
+  });
+
+  it('throws the store refusal and an answer without a CID', async () => {
+    const tooBig = setup(() => ({
+      status: 413,
+      json: { error: 'too_large', message: 'over 2 MiB' }
+    }));
+    await expect(tooBig.client.putDocument(doc)).rejects.toBeInstanceOf(
+      ChainGatewayError
+    );
+    const empty = setup(() => ({ status: 201, json: { size: 1 } }));
+    await expect(empty.client.putDocument(doc)).rejects.toBeInstanceOf(
+      ChainGatewayError
+    );
+  });
+
+  it('sends any byte array as bytes', async () => {
+    const { client, calls } = setup(() => ({
+      status: 201,
+      json: { cid: cidPath(cid), cid_hex: cid, codec: 'raw', size: 1 }
+    }));
+    await client.putDocument(Buffer.from(new Uint8Array(doc)));
+    expect(calls[0].headers['content-type']).toBe('application/octet-stream');
   });
 
   it('refuses an upload the store names differently', async () => {
@@ -626,21 +685,37 @@ describe('import and membership history', () => {
     expect(calls.some((it) => param(it, 'height') === '50')).toBe(true);
   });
 
-  it("reads a wallet's binding history", async () => {
+  it("reads a wallet's binding history with its ranges and read height", async () => {
     const history = {
       wallet: W,
       changes: [
-        { height: 3, principalId: P },
+        { height: 3, principalId: P.toUpperCase().replace('0X', '0x') },
         { height: 9, principalId: null }
       ],
-      ranges: [{ from: 1, to: 50 }]
+      ranges: [
+        [1, 20],
+        [30, 50],
+        ['x', 2],
+        [9, 4]
+      ]
     };
     const { client } = setup((call) =>
       path(call) === '/v1/status'
         ? status(50)
         : { status: 200, json: { read: stamp(50), data: history, next: null } }
     );
-    expect(await client.getMembershipWalletHistory(W)).toEqual(history);
+    expect(await client.getMembershipWalletHistory(W)).toEqual({
+      wallet: W,
+      changes: [
+        { height: 3, principalId: P },
+        { height: 9, principalId: null }
+      ],
+      ranges: [
+        [1, 20],
+        [30, 50]
+      ],
+      readHeight: 50
+    });
   });
 });
 

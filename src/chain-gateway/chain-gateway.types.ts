@@ -136,8 +136,13 @@ export interface ChainWalletHistory {
     readonly height: number;
     readonly principalId: string | null;
   }[];
-  /** The heights the history is exact within. */
-  readonly ranges?: unknown;
+  /**
+   * The height ranges the feed holds, `[from, to]` inclusive: the history
+   * is exact only within them.
+   */
+  readonly ranges: [number, number][];
+  /** The height the gateway read at. */
+  readonly readHeight: number;
 }
 
 /** The import file's entry an identity was created from. */
