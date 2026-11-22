@@ -12,7 +12,10 @@ import {
   notificationViewId
 } from '@/notifications/view/notification-view-ids';
 import { CARRIED_FAMILY } from '@/notifications/view/notification-view.db';
-import { derivedCauseCuts } from '@/notifications/view/notify-view-flags';
+import {
+  derivedCauseWindows,
+  loggedWindows
+} from '@/notifications/view/notify-view-flags';
 
 /** The notification view's entries in the private record log. */
 export const NOTIFY_LOG_LANE = 'notify';
@@ -69,7 +72,8 @@ export type NotifyLogBody =
   | {
       readonly type: 'notify-cuts';
       readonly v: 1;
-      readonly cuts: Record<string, number>;
+      /** Each derived cause's windows, [start, end or null], oldest first. */
+      readonly windows: Record<string, [number, number | null][]>;
     }
   | ({ readonly type: 'notify-read'; readonly v: 1 } & NotificationReadReceipt)
   | {
@@ -300,14 +304,17 @@ export class NotificationArchive {
     );
   }
 
-  /** Records the cuts in force (NOTIFY_DERIVED_CAUSES); a rebuild checks them. */
+  /**
+   * Records each derived cause's windows (NOTIFY_DERIVED_CAUSES); run after
+   * every change to them. A rebuild checks the flags against every entry.
+   */
   async recordCuts(ctx: RequestContext): Promise<void> {
     await this.log.append(
       [
         entry({
           type: 'notify-cuts',
           v: 1,
-          cuts: Object.fromEntries(derivedCauseCuts())
+          windows: loggedWindows(derivedCauseWindows())
         })
       ],
       ctx

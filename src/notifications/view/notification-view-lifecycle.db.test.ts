@@ -521,6 +521,6 @@ describe('notification view lifecycle', () => {
     });
     await expect(
       notificationViewRebuild.rebuild({ entries: loggedEntries, feeds: [] })
-    ).rejects.toThrow('cuts');
+    ).rejects.toThrow('differ from NOTIFY_DERIVED_CAUSES');
   });
 });

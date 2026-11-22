@@ -22,7 +22,12 @@ import { NotificationFeed } from './notification-feed-runner';
 import { notificationViewRebuild } from './notification-view-rebuild';
 import { notificationViewSwitch } from './notification-view-switch';
 import { deriveRating } from './rules/chain-rules';
-import type { RatingChangedEvent } from './notification-sources';
+import { deriveFollow } from './rules/relay-rules';
+import type { DerivedGroup } from './derived-notification';
+import type {
+  FollowChangedEvent,
+  RatingChangedEvent
+} from './notification-sources';
 
 // The rebuild against what changes rows after they were archived: deletes,
 // edits, merges and visibility changes, rows added after the switch's
@@ -118,11 +123,13 @@ const rating = (): RatingChangedEvent => ({
   totalAfter: 7
 });
 
-/** A feed over a fixed list of rating events. */
-const ratingsFeed = (
-  events: RatingChangedEvent[]
-): NotificationFeed<RatingChangedEvent> => ({
-  name: 'fixture:ratings',
+/** A feed over a fixed list of events. */
+const fixtureFeed = <E>(
+  name: string,
+  events: E[],
+  derive: (event: E) => DerivedGroup
+): NotificationFeed<E> => ({
+  name,
   read: async (after, limit) => {
     const start = after === null ? 0 : Number(after);
     const batch = events.slice(start, start + limit);
@@ -131,8 +138,11 @@ const ratingsFeed = (
       next: batch.length ? String(start + batch.length) : null
     };
   },
-  derive: async (event) => deriveRating(event)
+  derive: async (event) => derive(event)
 });
+
+const ratingsFeed = (events: RatingChangedEvent[]) =>
+  fixtureFeed('fixture:ratings', events, deriveRating);
 
 describe('notification view rebuild', () => {
   const saved = Object.fromEntries(FLAGS.map((key) => [key, process.env[key]]));
@@ -291,6 +301,86 @@ describe('notification view rebuild', () => {
     on({ NOTIFY_DERIVED_CAUSES: 'IDENTITY_REP@0,DROP_VOTED@6' });
     await expect(rebuild()).rejects.toThrow('DROP_VOTED@5');
     expect(await viewRows()).toHaveLength(1);
+  });
+
+  it('rebuilds a cause handed back to its old writer and derived again later', async () => {
+    const now = Date.now();
+    const opened = now - 7_200_000;
+    const closed = now - 3_600_000;
+    const reopened = now + 3_600_000;
+    const follow = (
+      eventId: string,
+      subscriberId: string,
+      timeMs: number
+    ): FollowChangedEvent => ({
+      eventId,
+      timeMs,
+      subscriberId,
+      targetId,
+      following: true,
+      wasFollowing: false,
+      imported: false
+    });
+    const first = follow('0xfirst', actorId, opened + 1);
+    const between = follow('0xbetween', otherId, closed + 1);
+    const again = follow('0xagain', actorId, reopened + 1);
+    const derive = (event: FollowChangedEvent) =>
+      notificationDeriver.apply(
+        [deriveFollow(event)],
+        { mode: 'live', now },
+        {}
+      );
+    const windows = [`IDENTITY_SUBSCRIBED@${opened}`];
+    const setWindows = async () => {
+      on({ NOTIFY_DERIVED_CAUSES: windows.join(',') });
+      await notificationArchive.recordCuts({});
+    };
+
+    await setWindows();
+    await derive(first);
+    // Handed back: the window closes, and the old writer writes the follow.
+    windows[0] = `IDENTITY_SUBSCRIBED@${opened}..${closed}`;
+    await setWindows();
+    await derive(between);
+    await userNotifier.notifyOfIdentitySubscription({
+      subscriber_id: otherId,
+      subscribed_to: targetId
+    });
+    // Derived again from a later start.
+    windows.push(`IDENTITY_SUBSCRIBED@${reopened}`);
+    await setWindows();
+    await derive(again);
+
+    const live = await viewRows();
+    expect(
+      live
+        .map((row) => [row.origin, row.cause])
+        .sort((a, b) => a.join().localeCompare(b.join()))
+    ).toEqual([
+      ['CARRIED', 'IDENTITY_SUBSCRIBED'],
+      ['DERIVED', 'IDENTITY_SUBSCRIBED'],
+      ['DERIVED', 'IDENTITY_SUBSCRIBED']
+    ]);
+    const feed = fixtureFeed(
+      'fixture:follows',
+      [first, between, again],
+      deriveFollow
+    );
+    await rebuild([feed]);
+    expect(await viewRows()).toEqual(live);
+
+    // A cause that leaves the flags, or a window that moved, is refused.
+    on({ NOTIFY_DERIVED_CAUSES: '' });
+    await expect(rebuild([feed])).rejects.toThrow(
+      `IDENTITY_SUBSCRIBED@${opened}`
+    );
+    on({
+      NOTIFY_DERIVED_CAUSES: `IDENTITY_SUBSCRIBED@${opened}..${closed + 1},IDENTITY_SUBSCRIBED@${reopened}`
+    });
+    await expect(rebuild([feed])).rejects.toThrow(
+      'differ from NOTIFY_DERIVED_CAUSES'
+    );
+    expect(await viewRows()).toEqual(live);
   });
 
   it('names again the identity_notifications copy of a rebuilt derived row', async () => {

@@ -30,8 +30,9 @@ import {
   NotificationViewDb
 } from '@/notifications/view/notification-view.db';
 import {
-  derivedCauseCuts,
+  derivedCauseWindows,
   legacyOutputEnabled,
+  loggedWindows,
   notifyViewMode
 } from '@/notifications/view/notify-view-flags';
 
@@ -62,20 +63,47 @@ const notifyBodies = async function* (
   }
 };
 
+type LoggedWindow = readonly [number, number | null];
+
+const windowsText = (cause: string, windows: readonly LoggedWindow[]) =>
+  windows
+    .map(([start, end]) => `${cause}@${start}${end === null ? '' : `..${end}`}`)
+    .join(',');
+
 /**
- * A cause's cut never changes once set, and causes may join later, so each
- * logged cuts entry must agree with the flags on every cause it names.
+ * Whether the flags' windows for a cause grew from the logged ones: the
+ * same windows, then possibly the last one closed, then possibly more.
  */
-function checkCuts(recorded: Record<string, number>): void {
-  const current = derivedCauseCuts();
+function grewFrom(
+  logged: readonly LoggedWindow[],
+  current: readonly LoggedWindow[]
+): boolean {
+  if (current.length < logged.length) return false;
+  return logged.every(([start, end], index) => {
+    const [currentStart, currentEnd] = current[index];
+    if (currentStart !== start) return false;
+    if (end === currentEnd) return true;
+    return end === null && index === logged.length - 1;
+  });
+}
+
+/**
+ * A cause's windows only grow: one closes, another opens later. Causes may
+ * join later. So every logged cuts entry must be an earlier state of the
+ * flags on every cause it names.
+ */
+function checkCuts(recorded: Record<string, LoggedWindow[]>): void {
+  const current = loggedWindows(derivedCauseWindows());
   const changed = Object.entries(recorded).filter(
-    ([cause, cut]) => current.get(cause as never) !== cut
+    ([cause, windows]) => !grewFrom(windows, current[cause] ?? [])
   );
   if (changed.length) {
     throw new Error(
-      `The log's cuts ${changed
-        .map(([cause, cut]) => `${cause}@${cut}`)
-        .join(', ')} differ from NOTIFY_DERIVED_CAUSES`
+      `The log's windows ${changed
+        .map(([cause, windows]) => windowsText(cause, windows))
+        .join(
+          ', '
+        )} differ from NOTIFY_DERIVED_CAUSES, where a cause's windows may only close or be added to`
     );
   }
 }
@@ -206,7 +234,7 @@ export class NotificationViewRebuild {
       );
     }
     for await (const body of notifyBodies(entries())) {
-      if (body.type === 'notify-cuts') checkCuts(body.cuts);
+      if (body.type === 'notify-cuts') checkCuts(body.windows);
     }
   }
 

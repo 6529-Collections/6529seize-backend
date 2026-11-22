@@ -11,7 +11,7 @@ import {
 import { NOTIFICATION_SOURCE_KEY_DOMAIN } from '@/notifications/view/notification-view-ids';
 import { CARRIED_FAMILY } from '@/notifications/view/notification-view.db';
 import {
-  derivedCauseCuts,
+  derivedCauseWindows,
   notifyViewMode
 } from '@/notifications/view/notify-view-flags';
 
@@ -31,8 +31,8 @@ export interface SwitchStepResult {
  *
  * 1. `pruneUnownedDerivedRows`: drops the rows the deriver wrote in
  *    `shadow` for comparison but does not own: causes not derived, or
- *    events before their cause's cut. Their identity_notifications rows
- *    stand instead.
+ *    events outside their cause's windows. Their identity_notifications
+ *    rows stand instead.
  * 2. `copyOldRows`: copies every identity_notifications row the view has no
  *    row for into it as CARRIED, keeping its id and read state. Rows the
  *    deriver wrote (their view row holds the id) are skipped. Run it before
@@ -52,12 +52,18 @@ export class NotificationViewSwitch {
       origin: NotificationViewOrigin.DERIVED,
       batchSize
     };
-    const owned = Array.from(derivedCauseCuts().entries()).map(
-      ([cause, cut], index) => {
-        params[`cause_${index}`] = cause;
-        params[`cut_${index}`] = cut;
-        return `(cause = :cause_${index} and created_at >= :cut_${index})`;
-      }
+    const owned = Array.from(derivedCauseWindows().entries()).flatMap(
+      ([cause, windows], causeIndex) =>
+        windows.map((window, index) => {
+          const key = `${causeIndex}_${index}`;
+          params[`cause_${key}`] = cause;
+          params[`start_${key}`] = window.start;
+          if (window.end === null) {
+            return `(cause = :cause_${key} and created_at >= :start_${key})`;
+          }
+          params[`end_${key}`] = window.end;
+          return `(cause = :cause_${key} and created_at >= :start_${key} and created_at < :end_${key})`;
+        })
     );
     const keep = owned.length ? ` and not (${owned.join(' or ')})` : '';
     const result = await this.db().execute(

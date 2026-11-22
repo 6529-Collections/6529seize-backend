@@ -1,10 +1,11 @@
 import { IdentityNotificationCause } from '@/entities/IIdentityNotification';
 import { Logger } from '@/logging';
 import {
-  derivedCauseCuts,
+  derivedCauseWindows,
   derivedCauses,
   isDerivedCause,
   legacyOutputEnabled,
+  loggedWindows,
   notificationsReadTable,
   notifyViewMode,
   writesLegacyCopy,
@@ -59,9 +60,9 @@ describe('notification view flags', () => {
   it('takes CAUSE@cutMs and ignores items without a valid cut, so their old writers keep writing', () => {
     process.env.NOTIFY_VIEW_MODE = 'shadow';
     process.env.NOTIFY_DERIVED_CAUSES = ` identity_rep@0, DROP_VOTED@${CUT} ,NOPE@1,IDENTITY_NIC,DROP_BOOSTED@x,DROP_REACTED@1@2,WAVE_CREATED@-5,ALL_DROPS@`;
-    expect(Object.fromEntries(derivedCauseCuts())).toEqual({
-      IDENTITY_REP: 0,
-      DROP_VOTED: CUT
+    expect(loggedWindows(derivedCauseWindows())).toEqual({
+      IDENTITY_REP: [[0, null]],
+      DROP_VOTED: [[CUT, null]]
     });
     expect(isDerivedCause(IdentityNotificationCause.IDENTITY_NIC)).toBe(false);
   });
@@ -73,8 +74,8 @@ describe('notification view flags', () => {
     try {
       process.env.NOTIFY_VIEW_MODE = 'shadow';
       process.env.NOTIFY_DERIVED_CAUSES = `DROP_VOTED@${CUT + 7}`;
-      derivedCauseCuts();
-      derivedCauseCuts();
+      derivedCauseWindows();
+      derivedCauseWindows();
       expect(error).toHaveBeenCalledTimes(1);
       expect(error.mock.calls[0][0]).toContain(
         'NOTIFY_DERIVED_CAUSE_WITHOUT_FEED'
@@ -91,8 +92,8 @@ describe('notification view flags', () => {
     try {
       process.env.NOTIFY_VIEW_MODE = 'shadow';
       process.env.NOTIFY_DERIVED_CAUSES = `DROP_VOTED@${CUT + 11},IDENTITY_REP@${Date.now() + 3_600_000}`;
-      derivedCauseCuts();
-      derivedCauseCuts();
+      derivedCauseWindows();
+      derivedCauseWindows();
       expect(warn).toHaveBeenCalledTimes(1);
       expect(warn.mock.calls[0][0]).toContain(
         'NOTIFY_DERIVED_CAUSE_CUT_BEFORE_START'
@@ -101,6 +102,71 @@ describe('notification view flags', () => {
       expect(warn.mock.calls[0][0]).not.toContain('IDENTITY_REP');
     } finally {
       warn.mockRestore();
+    }
+  });
+
+  it('hands a cause back and forth at the ends of its windows, in any order', () => {
+    process.env.NOTIFY_VIEW_MODE = 'on';
+    process.env.NOTIFY_DERIVED_CAUSES = `DROP_VOTED@${CUT + 20},DROP_VOTED@${CUT}..${CUT + 10}`;
+    expect(loggedWindows(derivedCauseWindows())).toEqual({
+      DROP_VOTED: [
+        [CUT, CUT + 10],
+        [CUT + 20, null]
+      ]
+    });
+    for (const [at, derived] of [
+      [CUT - 1, false],
+      [CUT, true],
+      [CUT + 9, true],
+      [CUT + 10, false],
+      [CUT + 19, false],
+      [CUT + 20, true]
+    ] as const) {
+      expect([at, isDerivedCause(VOTED, at)]).toEqual([at, derived]);
+      expect([at, writesViewRow(VOTED, at)]).toEqual([at, derived]);
+    }
+  });
+
+  it('ignores a window that overlaps an earlier one of its cause, or ends before it starts', () => {
+    const error = jest
+      .spyOn(Logger.prototype, 'error')
+      .mockImplementation(() => undefined);
+    try {
+      process.env.NOTIFY_VIEW_MODE = 'on';
+      process.env.NOTIFY_DERIVED_CAUSES = [
+        `DROP_VOTED@${CUT}..${CUT + 10}`,
+        `DROP_VOTED@${CUT + 5}..${CUT + 30}`,
+        `IDENTITY_REP@${CUT}`,
+        `IDENTITY_REP@${CUT + 50}`,
+        `IDENTITY_NIC@${CUT + 9}..${CUT + 9}`,
+        `IDENTITY_NIC@${CUT}..${CUT}..${CUT + 1}`
+      ].join(',');
+      expect(loggedWindows(derivedCauseWindows())).toEqual({
+        DROP_VOTED: [[CUT, CUT + 10]],
+        IDENTITY_REP: [[CUT, null]]
+      });
+      const ignored = error.mock.calls
+        .map(([message]) => String(message))
+        .find((message) => message.includes('NOTIFY_DERIVED_CAUSES_IGNORED'));
+      expect(ignored).toContain(`DROP_VOTED@${CUT + 5}..${CUT + 30}`);
+      expect(ignored).toContain(`IDENTITY_REP@${CUT + 50}`);
+      expect(ignored).toContain(`IDENTITY_NIC@${CUT + 9}..${CUT + 9}`);
+    } finally {
+      error.mockRestore();
+    }
+  });
+
+  it('reports no missing feed for a cause whose windows have all closed', () => {
+    const error = jest
+      .spyOn(Logger.prototype, 'error')
+      .mockImplementation(() => undefined);
+    try {
+      process.env.NOTIFY_VIEW_MODE = 'on';
+      process.env.NOTIFY_DERIVED_CAUSES = `DROP_VOTED@${CUT + 1}..${CUT + 2}`;
+      derivedCauseWindows();
+      expect(error).not.toHaveBeenCalled();
+    } finally {
+      error.mockRestore();
     }
   });
 
