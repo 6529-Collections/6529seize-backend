@@ -1,4 +1,5 @@
 import 'reflect-metadata';
+import { fetchBlocks } from '@/db-api';
 import { sqlExecutor } from '@/sql-executor';
 import { describeWithSeed } from '@/tests/_setup/seed';
 import { chainDayFixture } from '@/tests/fixtures/tdh-chain-day.fixture';
@@ -10,11 +11,22 @@ describeWithSeed(
     {
       table: 'tdh_blocks',
       rows: [
-        { block_number: 500, timestamp: '2026-10-10 23:59:59', merkle_root: null },
-        { block_number: 700, timestamp: '2026-10-11 23:59:59', merkle_root: null }
+        {
+          block_number: 500,
+          timestamp: '2026-10-10 23:59:59',
+          merkle_root: null
+        },
+        {
+          block_number: 700,
+          timestamp: '2026-10-11 23:59:59',
+          merkle_root: null
+        }
       ]
     },
-    { table: 'uploads', rows: [{ date: '20261011', block: 500, tdh: 'u', timestamp: 0 }] }
+    {
+      table: 'uploads',
+      rows: [{ date: '20261011', block: 500, tdh: 'u', timestamp: 0 }]
+    }
   ],
   () => {
     const db = new TdhChainDaysDb(() => sqlExecutor);
@@ -62,7 +74,10 @@ describeWithSeed(
     it('marks steps done and ends the day INGESTED with the last one', async () => {
       await save(20737, 'CHAIN', 'WRITTEN');
       expect(await db.markStepDone(20737, 'history', 1)).toEqual(['history']);
-      expect(await db.markStepDone(20737, 'nfts', 2)).toEqual(['nfts', 'history']);
+      expect(await db.markStepDone(20737, 'nfts', 2)).toEqual([
+        'nfts',
+        'history'
+      ]);
       for (const step of CHAIN_DAY_STEPS) await db.markStepDone(20737, step, 3);
       expect(await db.latest()).toMatchObject({
         status: 'INGESTED',
@@ -90,6 +105,43 @@ describeWithSeed(
       expect(await db.uploadExists(true, '20261011', 500)).toBe(false);
       expect(await db.uploadExists(false, '20261012', 700)).toBe(false);
       expect(await db.consolidationKeyWidth()).toBe(200);
+    });
+
+    it('gives the blocks the chain wrote their day and root, and no other', async () => {
+      const at = (cycleDay: number, cutoffNumber: number) => ({
+        ...day,
+        header: { ...day.header, cycleDay, cutoffNumber }
+      });
+      const record = {
+        verdict: 'MATCH' as const,
+        summary: {},
+        deferredKeys: [],
+        now: 1
+      };
+      await db.save({
+        ...record,
+        day: at(20737, 700),
+        mode: 'CHAIN',
+        status: 'INGESTED'
+      });
+      await db.save({
+        ...record,
+        day: at(20736, 500),
+        mode: 'SHADOW',
+        status: 'INGESTED'
+      });
+      const page = await fetchBlocks(10, 1);
+      expect(page.count).toBe(2);
+      expect(
+        page.data.map((b) => [
+          b.block_number,
+          b.chain_cycle_day === null ? null : Number(b.chain_cycle_day),
+          b.chain_wallet_root
+        ])
+      ).toEqual([
+        [700, 20737, day.header.walletRoot],
+        [500, null, null]
+      ]);
     });
   }
 );

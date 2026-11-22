@@ -28,6 +28,7 @@ import {
   REMEMES_UPLOADS,
   ROYALTIES_UPLOADS_TABLE,
   TDH_BLOCKS_TABLE,
+  TDH_CHAIN_DAYS_TABLE,
   TDH_GLOBAL_HISTORY_TABLE,
   TRANSACTIONS_TABLE,
   UPLOADS_TABLE,
@@ -399,18 +400,27 @@ export async function fetchRandomImage() {
   });
 }
 
+/** A TDH block, with its 6529 chain day when the chain wrote it. */
+export type TDHBlockWithChainDay = TDHBlock & {
+  readonly chain_cycle_day: number | null;
+  readonly chain_wallet_root: string | null;
+};
+
 export async function fetchBlocks(
   pageSize: number,
   page: number
-): Promise<PaginatedResponse<TDHBlock>> {
-  return fetchPaginated<TDHBlock>(
+): Promise<PaginatedResponse<TDHBlockWithChainDay>> {
+  return fetchPaginated<TDHBlockWithChainDay>(
     TDH_BLOCKS_TABLE,
     {},
     'block_number desc',
     pageSize,
     page,
     '',
-    ''
+    `${TDH_BLOCKS_TABLE}.*, c.cycle_day as chain_cycle_day, c.wallet_root as chain_wallet_root`,
+    `left join ${TDH_CHAIN_DAYS_TABLE} c on c.block = ${TDH_BLOCKS_TABLE}.block_number and c.mode = 'CHAIN' and c.status in ('WRITTEN', 'INGESTED')`,
+    '',
+    { skipJoinsOnCountQuery: true }
   );
 }
 
