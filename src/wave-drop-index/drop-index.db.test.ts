@@ -302,6 +302,39 @@ describeWithSeed(
       expect(await db.pendingRelayEvents(5, NOW)).toHaveLength(5);
     });
 
+    it('keeps half of each batch for events never tried, behind their drop', async () => {
+      const b = `0x${'b'.repeat(40)}`;
+      await db.ingest(
+        [
+          aRow(1),
+          aRow(2),
+          aRow(3),
+          aRow(4, { author: b }),
+          // b's reaction to drop-2, an earlier event still pending.
+          aRow(5, { author: b, kind: 4, drop_id: 'drop-2' })
+        ],
+        [],
+        'r-1',
+        [],
+        1
+      );
+      const tried = await db.pendingRelayEvents(3, NOW);
+      for (const event of tried) {
+        await db.markApplied(event.ingest_seq, 'logged', 'down', null);
+      }
+      // Without the kept half, a's tried events would fill the batch.
+      expect(
+        (await db.pendingRelayEvents(2, NOW)).map((e) => e.event_id)
+      ).toEqual([eventId(1), eventId(4)]);
+      // A never-tried event never jumps an earlier pending one of its drop.
+      expect(
+        (await db.pendingRelayEvents(4, NOW)).map((e) => e.event_id)
+      ).toEqual([eventId(1), eventId(2), eventId(3), eventId(4)]);
+      expect(
+        (await db.pendingRelayEvents(10, NOW)).map((e) => e.event_id)
+      ).toEqual([eventId(1), eventId(2), eventId(3), eventId(4), eventId(5)]);
+    });
+
     it('releases a reservation only once it is stale and unfinished', async () => {
       await sqlExecutor.execute(
         `update ${DEVICE_SIGNED_EVENTS_TABLE} set drop_id = null, created_at = 1 where id = :id`,

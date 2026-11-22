@@ -250,27 +250,50 @@ export class DropIndexDb extends LazyDbAccessCompatibleService {
     limit: number,
     now: number
   ): Promise<IngestedEvent[]> {
-    // Due events only, at most PENDING_PER_AUTHOR of one author's, and
-    // none of a drop that has an earlier event still waiting: one wallet's
-    // waiting events can't fill the batch, and a drop's events stay in order.
-    const rows = await this.db.execute<StoredRow>(
+    // Due events only, at most PENDING_PER_AUTHOR of one author's, and none
+    // of a drop that has an earlier event still waiting. Half the batch is
+    // kept for events never tried, so wallets whose events keep waiting
+    // can't fill it together. A drop's events stay in order: a never-tried
+    // event comes only when no earlier event of its drop is pending.
+    const fresh = await this.duePending(Math.ceil(limit / 2), now, true);
+    const rows = new Map(fresh.map((row) => [Number(row.ingest_seq), row]));
+    for (const row of await this.duePending(limit, now, false)) {
+      if (rows.size >= limit) break;
+      rows.set(Number(row.ingest_seq), row);
+    }
+    return Array.from(rows.values())
+      .sort((a, b) => Number(a.ingest_seq) - Number(b.ingest_seq))
+      .map(toIngested);
+  }
+
+  private async duePending(
+    limit: number,
+    now: number,
+    neverTried: boolean
+  ): Promise<StoredRow[]> {
+    return this.db.execute<StoredRow>(
       `select * from (
           select e.*, row_number() over (
                    partition by e.author order by e.ingest_seq) as author_rank
             from ${WAVE_RELAY_EVENTS_TABLE} e
            where e.origin = 'relay' and e.status = 'logged'
              and (e.next_try_at is null or e.next_try_at <= :now)
+             ${
+               neverTried
+                 ? `and e.status_reason is null and e.apply_attempts = 0
+                    and e.next_try_at is null`
+                 : ''
+             }
              and not exists (
                select 1 from ${WAVE_RELAY_EVENTS_TABLE} w
                 where w.drop_id = e.drop_id and w.ingest_seq < e.ingest_seq
                   and w.origin = 'relay' and w.status = 'logged'
-                  and w.next_try_at > :now)
+                  and ${neverTried ? 'true' : 'w.next_try_at > :now'})
         ) due
         where author_rank <= :perAuthor
         order by ingest_seq limit :limit`,
       { limit, now, perAuthor: PENDING_PER_AUTHOR }
     );
-    return rows.map(toIngested);
   }
 
   /**
