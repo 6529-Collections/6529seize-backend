@@ -387,6 +387,12 @@ describe('HelpBotCreditsService', () => {
         expect.objectContaining({ delta: -1 }),
         expect.anything()
       );
+      // Before switch-on the credit still moves identities' REP and level.
+      expect(executor.execute).toHaveBeenCalledWith(
+        expect.stringContaining('UPDATE identities'),
+        expect.objectContaining({ delta: -1 }),
+        expect.anything()
+      );
     });
 
     it('grants daily credits', async () => {
