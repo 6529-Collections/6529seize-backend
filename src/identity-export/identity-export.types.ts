@@ -43,8 +43,8 @@ export interface IdentityExportIdentity {
   readonly cic: number;
   /** The chain's level: from level_raw. */
   readonly level: number;
-  /** REP + TDH, without xTDH or help-bot credits; null when 6529.io has none. */
-  readonly level_raw: number | null;
+  /** REP + TDH, without xTDH or help-bot credits. */
+  readonly level_raw: number;
   readonly scope: IdentityExportScope[];
   /**
    * The ProfileDoc `cms` value (the profile site), from the profile site

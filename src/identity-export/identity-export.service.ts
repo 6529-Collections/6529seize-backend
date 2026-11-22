@@ -1,11 +1,15 @@
 import { RESERVED_HANDLES } from '@/api/profiles/profiles.constants';
-import { isHelpBotCreditCategory } from '@/help-bot/help-bot.config';
+import {
+  HELP_BOT_CREDIT_CATEGORY,
+  isHelpBotCreditCategory
+} from '@/help-bot/help-bot.config';
 import { getLevelFromScore } from '@/profiles/profile-level';
 import { ProfileClassification } from '@/entities/IProfile';
 import { enums } from '@/enums';
 import {
   IdentityExportSource,
   IdentityRow,
+  IdentitySyncProgress,
   StatementRow,
   toMillis
 } from './identity-export.db';
@@ -61,6 +65,8 @@ export interface IdentityExportDocument extends IdentityExportHeader {
     contributor_count: number;
   }[];
   readonly stats: Record<string, number>;
+  /** The identities sync's state read with everything else (null: unread). */
+  readonly identity_sync: IdentitySyncProgress | null;
 }
 
 /**
@@ -100,6 +106,77 @@ export interface HelpBotCredits {
   /** Target profile id -> the sum of its help-bot credits. */
   readonly byTarget: Map<string, number>;
   readonly ratings: number;
+  /** Ratings in the category whose rater isn't the help bot's profile. */
+  readonly fromOthers?: number;
+}
+
+/**
+ * The whole rule, written in every export so the public-API exporter can
+ * apply the same one.
+ */
+export const HELP_BOT_CREDIT_RULE_NOTE = `help-bot credits: every REP rating in the category "${HELP_BOT_CREDIT_CATEGORY}" (any case, surrounding spaces ignored), from any rater, is dropped before the bulk rule and left out of ratings, bulk_rep, rep, level_raw and level; the public-API exporter must apply the same rule`;
+
+export const TDH_NOTE =
+  "tdh is 6529.io's boosted TDH (identities.tdh, the consolidated boosted_tdh); the builder and the validator must count the same TDH";
+
+/**
+ * Why the export is not of a finished TDH day, or null: the identities
+ * sync must have caught up with the last consolidated-TDH write, and that
+ * write must be of the TDH block the export reports.
+ */
+export function identitySyncProblem(
+  tdhBlock: number | null,
+  progress: IdentitySyncProgress | null
+): string | null {
+  if (!progress) {
+    return "the identities sync's state (identity_tdh_sync_state) could not be read";
+  }
+  if (progress.syncedGeneration < progress.pendingGeneration) {
+    return `the identities sync is behind: generation ${progress.syncedGeneration} synced, ${progress.pendingGeneration} pending`;
+  }
+  if (progress.pendingBlock !== tdhBlock) {
+    return `the last TDH write is of block ${progress.pendingBlock}, not the TDH block ${tdhBlock}`;
+  }
+  return null;
+}
+
+/**
+ * Whether the export is the freeze day's, for --expect-tdh-block: the TDH
+ * block is the one expected and the identities are synced to it.
+ */
+export function freezeDayProblem(
+  document: Pick<IdentityExportDocument, 'tdh_block' | 'identity_sync'>,
+  expectTdhBlock: number
+): string | null {
+  if (document.tdh_block !== expectTdhBlock) {
+    return `6529.io's latest TDH block is ${document.tdh_block}, not ${expectTdhBlock}`;
+  }
+  return identitySyncProblem(document.tdh_block, document.identity_sync);
+}
+
+/**
+ * For each exported identity, whether its stored rep is the sum of the REP
+ * ratings read for it (credits included): the number that differ.
+ */
+export function repMismatches(
+  identities: readonly IdentityExportIdentity[],
+  edges: readonly {
+    matter: string;
+    target_profile_id: string;
+    rating: number;
+  }[]
+): number {
+  const sums = new Map<string, number>();
+  for (const edge of edges) {
+    if (edge.matter !== 'REP') continue;
+    sums.set(
+      edge.target_profile_id,
+      (sums.get(edge.target_profile_id) ?? 0) + edge.rating
+    );
+  }
+  return identities.filter(
+    (it) => it.profile_id !== null && it.rep !== (sums.get(it.profile_id) ?? 0)
+  ).length;
 }
 
 /**
@@ -111,14 +188,19 @@ export interface HelpBotCredits {
  */
 export function leaveOutHelpBotCredits<
   T extends {
+    rater_profile_id: string;
     matter: string;
     category: string;
     target_profile_id: string;
     rating: number;
   }
->(edges: T[]): { edges: T[]; credits: HelpBotCredits } {
+>(
+  edges: T[],
+  helpBotProfileId: string | null = null
+): { edges: T[]; credits: HelpBotCredits } {
   const byTarget = new Map<string, number>();
   let ratings = 0;
+  let fromOthers = 0;
   const kept = edges.filter((edge) => {
     if (edge.matter !== 'REP' || !isHelpBotCreditCategory(edge.category)) {
       return true;
@@ -128,9 +210,10 @@ export function leaveOutHelpBotCredits<
       (byTarget.get(edge.target_profile_id) ?? 0) + edge.rating
     );
     ratings++;
+    if (edge.rater_profile_id.toLowerCase() !== helpBotProfileId) fromOthers++;
     return false;
   });
-  return { edges: kept, credits: { byTarget, ratings } };
+  return { edges: kept, credits: { byTarget, ratings, fromOthers } };
 }
 
 /**
@@ -149,12 +232,12 @@ export function withoutCredits(
       ? (credits.byTarget.get(it.profile_id) ?? 0)
       : 0;
     if (!credit) return it;
-    const levelRaw = it.level_raw === null ? null : it.level_raw - credit;
+    const levelRaw = it.level_raw - credit;
     return {
       ...it,
       rep: it.rep - credit,
       level_raw: levelRaw,
-      level: getLevelFromScore(levelRaw ?? 0)
+      level: getLevelFromScore(levelRaw)
     };
   });
 }
@@ -199,8 +282,7 @@ export function toExportIdentity(
   const tdh = numberOr(row.tdh, 0);
   // The chain's level: REP + TDH. 6529.io's level_raw also adds xTDH, which
   // is not on the chain (xtdh is still written as stored).
-  const levelRaw =
-    row.level_raw === null || row.level_raw === undefined ? null : rep + tdh;
+  const levelRaw = rep + tdh;
   return {
     profile_id: hasProfile ? row.p_external_id!.toLowerCase() : null,
     handle: hasProfile ? row.p_handle : null,
@@ -219,7 +301,7 @@ export function toExportIdentity(
     xtdh: numberOr(row.xtdh, 0),
     rep,
     cic: Math.trunc(numberOr(row.cic, 0)),
-    level: getLevelFromScore(levelRaw ?? 0),
+    level: getLevelFromScore(levelRaw),
     level_raw: levelRaw,
     scope
   };
@@ -498,7 +580,8 @@ export async function buildIdentityExport(
     rater_profile_id: edge.rater_profile_id.toLowerCase(),
     target_profile_id: edge.target_profile_id.toLowerCase()
   }));
-  const { edges, credits } = leaveOutHelpBotCredits(read);
+  const helpBotProfileId = await source.helpBotProfileId();
+  const { edges, credits } = leaveOutHelpBotCredits(read, helpBotProfileId);
   const bulkCategories = findBulkCategories(edges, options.bulkThreshold);
   const bulk = bulkKeys(bulkCategories);
   log(
@@ -506,6 +589,7 @@ export async function buildIdentityExport(
   );
   const { scope, excluded } = await resolveScope(index, core, edges, bulk);
   const built = await buildIdentities(source, index, core, scope);
+  const repMismatch = repMismatches(built.identities, read);
   const cms = withCmsFields(
     withoutCredits(built.identities, credits),
     options.cmsFields
@@ -519,9 +603,21 @@ export async function buildIdentityExport(
       : []),
     ...scopeNotes(core, excluded, bulkCategories, options.bulkThreshold, scope),
     `level and level_raw are the chain's: REP + TDH, without xTDH (xtdh is written as stored) and without help-bot credits; the public-API exporter must write them the same way`,
+    TDH_NOTE,
+    HELP_BOT_CREDIT_RULE_NOTE,
     ...(credits.ratings
       ? [
           `help-bot credits left out: ${credits.ratings} REP ratings in the help bot's category to ${credits.byTarget.size} profiles; each identity's rep and level_raw exclude them (a 6529.io site feature the chain doesn't import)`
+        ]
+      : []),
+    ...(credits.fromOthers
+      ? [
+          `help-bot credits: ${credits.fromOthers} ratings in the help bot's category come from a rater that is not the help bot's profile${helpBotProfileId ? '' : ' (no help bot profile was found)'}; left out like the rest`
+        ]
+      : []),
+    ...(repMismatch
+      ? [
+          `${repMismatch} exported profiles have a stored rep that is not the sum of their REP ratings read (credits included): the builder should trust the ratings, from which the chain counts REP`
         ]
       : []),
     ...built.notes,
@@ -550,6 +646,13 @@ export async function buildIdentityExport(
   }
 
   const tdhBlock = await source.latestTdhBlock();
+  const identitySync = await source.identitySyncProgress();
+  const syncProblem = identitySyncProblem(tdhBlock, identitySync);
+  if (syncProblem) {
+    notes.push(
+      `not a finished TDH day: ${syncProblem} (--expect-tdh-block refuses such an export)`
+    );
+  }
   const delegations = options.includeDelegations
     ? await source.delegations()
     : [];
@@ -568,6 +671,7 @@ export async function buildIdentityExport(
     ratings,
     delegations,
     notes,
+    identity_sync: identitySync,
     bulk_rep: bulkCategories.map((it) => ({
       profile_id: it.rater_profile_id,
       direction: 'outgoing' as const,
@@ -585,6 +689,11 @@ export async function buildIdentityExport(
       ratings_read: read.length,
       help_bot_credits_left_out: credits.ratings,
       help_bot_credit_profiles: credits.byTarget.size,
+      help_bot_credits_from_others: credits.fromOthers ?? 0,
+      rep_mismatch: repMismatch,
+      identity_sync_pending_generation: identitySync?.pendingGeneration ?? -1,
+      identity_sync_synced_generation: identitySync?.syncedGeneration ?? -1,
+      identity_sync_pending_block: identitySync?.pendingBlock ?? -1,
       bulk_categories: bulkCategories.length,
       bulk_ratings_left_out: scope.bulkLeftOut,
       profiles_left_out: excluded.size,

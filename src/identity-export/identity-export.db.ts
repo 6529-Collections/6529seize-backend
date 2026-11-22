@@ -3,10 +3,12 @@ import {
   CIC_STATEMENTS_TABLE,
   DELEGATIONS_TABLE,
   IDENTITIES_TABLE,
+  IDENTITY_TDH_SYNC_STATE_TABLE,
   PROFILES_TABLE,
   RATINGS_TABLE,
   TDH_BLOCKS_TABLE
 } from '@/constants';
+import { HELP_BOT_HANDLE } from '@/help-bot/help-bot.config';
 import {
   IdentityExportDelegation,
   IdentityExportRating
@@ -52,6 +54,17 @@ export interface StatementRow {
   readonly crated_at: Date | string | number;
 }
 
+/**
+ * How far the identities sync has got (identity_tdh_sync_state): every
+ * consolidated-TDH write bumps the pending generation and records its block;
+ * the synced generation is the last whose identities sync finished.
+ */
+export interface IdentitySyncProgress {
+  readonly pendingGeneration: number;
+  readonly pendingBlock: number;
+  readonly syncedGeneration: number;
+}
+
 /** Everything the export reads. Implemented over SQL below, faked in tests. */
 export interface IdentityExportSource {
   realHandleProfileIds(): Promise<string[]>;
@@ -62,6 +75,10 @@ export interface IdentityExportSource {
   walletsByConsolidationKeys(keys: string[]): Promise<Map<string, string[]>>;
   statementsByProfileIds(profileIds: string[]): Promise<StatementRow[]>;
   latestTdhBlock(): Promise<number | null>;
+  /** Null when the state rows are missing. */
+  identitySyncProgress(): Promise<IdentitySyncProgress | null>;
+  /** The help bot's profile id, by its handle; null when it has none. */
+  helpBotProfileId(): Promise<string | null>;
   delegations(): Promise<IdentityExportDelegation[]>;
 }
 
@@ -240,6 +257,34 @@ export class SqlIdentityExportSource implements IdentityExportSource {
     );
     const block = rows[0]?.block;
     return block === null || block === undefined ? null : Number(block);
+  }
+
+  async identitySyncProgress(): Promise<IdentitySyncProgress | null> {
+    const rows = await this.query<{
+      id: string;
+      generation: number | string;
+      block: number | string;
+    }>(
+      `select id, generation, block from ${IDENTITY_TDH_SYNC_STATE_TABLE}
+       where id in ('pending', 'synced')`
+    );
+    const pending = rows.find((it) => it.id === 'pending');
+    const synced = rows.find((it) => it.id === 'synced');
+    if (!pending || !synced) return null;
+    return {
+      pendingGeneration: Number(pending.generation),
+      pendingBlock: Number(pending.block),
+      syncedGeneration: Number(synced.generation)
+    };
+  }
+
+  async helpBotProfileId(): Promise<string | null> {
+    const rows = await this.query<{ profile_id: string }>(
+      `select external_id as profile_id from ${PROFILES_TABLE}
+       where normalised_handle = :handle`,
+      { handle: HELP_BOT_HANDLE }
+    );
+    return rows[0]?.profile_id?.toLowerCase() ?? null;
   }
 
   async delegations(): Promise<IdentityExportDelegation[]> {

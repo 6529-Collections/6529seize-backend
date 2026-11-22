@@ -15,6 +15,7 @@ import {
 import {
   CIC_STATEMENTS_TABLE,
   DELEGATIONS_TABLE,
+  IDENTITY_TDH_SYNC_STATE_TABLE,
   TDH_BLOCKS_TABLE
 } from '@/constants';
 import { SqlIdentityExportSource } from './identity-export.db';
@@ -26,6 +27,7 @@ const BOB = '00000000-0000-4000-8000-000000000b0b';
 const PLACE = '00000000-0000-4000-8000-000000000001';
 const LONELY = '00000000-0000-4000-8000-000000000002';
 const PAIR_KEY = `${W(6)}-${W(7)}`;
+const HELP_BOT = '00000000-0000-4000-8000-0000000000b0';
 
 const identities = [
   anIdentity(
@@ -87,7 +89,8 @@ const profiles = [
   ),
   aProfile({ external_id: BOB, handle: 'bob', primary_wallet: W(2) }),
   aProfile({ external_id: PLACE, handle: `id-${W(3)}`, primary_wallet: W(3) }),
-  aProfile({ external_id: LONELY, handle: `id-${W(4)}`, primary_wallet: W(4) })
+  aProfile({ external_id: LONELY, handle: `id-${W(4)}`, primary_wallet: W(4) }),
+  aProfile({ external_id: HELP_BOT, handle: 'help6529', primary_wallet: W(11) })
 ];
 
 const ratings = [
@@ -158,6 +161,13 @@ describeWithSeed(
       ]
     },
     {
+      table: IDENTITY_TDH_SYNC_STATE_TABLE,
+      rows: [
+        { id: 'pending', generation: 3, block: 24_000_000 },
+        { id: 'synced', generation: 3, block: 24_000_000 }
+      ]
+    },
+    {
       table: DELEGATIONS_TABLE,
       rows: [
         {
@@ -216,6 +226,12 @@ describeWithSeed(
       const statements = await source.statementsByProfileIds([ALICE, BOB]);
       expect(statements.map((it) => it.id)).toEqual(['statement-1']);
       expect(await source.latestTdhBlock()).toBe(24_000_000);
+      expect(await source.identitySyncProgress()).toEqual({
+        pendingGeneration: 3,
+        pendingBlock: 24_000_000,
+        syncedGeneration: 3
+      });
+      expect(await source.helpBotProfileId()).toBe(HELP_BOT);
       expect(await source.delegations()).toEqual([
         {
           from_address: W(1),
@@ -253,6 +269,13 @@ describeWithSeed(
       expect(alice.level).toBe(3);
       expect(doc.ratings).toHaveLength(3);
       expect(doc.tdh_block).toBe(24_000_000);
+      expect(doc.stats).toEqual(
+        expect.objectContaining({
+          identity_sync_pending_generation: 3,
+          identity_sync_synced_generation: 3,
+          identity_sync_pending_block: 24_000_000
+        })
+      );
     });
   }
 );

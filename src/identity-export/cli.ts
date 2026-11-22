@@ -27,7 +27,8 @@ async function runExport(command: IdentityExportCommand) {
     const { withReadOnlySnapshot } = await import('@/db-api');
     const { sqlExecutor } = await import('@/sql-executor');
     const { SqlIdentityExportSource } = await import('./identity-export.db');
-    const { buildIdentityExport } = await import('./identity-export.service');
+    const { buildIdentityExport, freezeDayProblem } =
+      await import('./identity-export.service');
     const { writeJsonDocument } = await import('./identity-export.writer');
     return await doInDbContext(
       () =>
@@ -49,15 +50,18 @@ async function runExport(command: IdentityExportCommand) {
             log: (message) =>
               process.stderr.write(`[identity-export] ${message}\n`)
           });
-          if (
-            command.expectTdhBlock !== null &&
-            document.tdh_block !== command.expectTdhBlock
-          ) {
+          const problem =
+            command.expectTdhBlock === null
+              ? null
+              : freezeDayProblem(document, command.expectTdhBlock);
+          if (problem) {
             throw new IdentityExportUsageError(
-              `6529.io's latest TDH block is ${document.tdh_block}, not ${command.expectTdhBlock}: wait for the freeze day's TDH run and its identity sync, then export again`
+              `${problem}: wait for the freeze day's TDH run and its identity sync, then export again`
             );
           }
-          await writeJsonDocument(command.out, { ...document });
+          // The sync's state is checked above; the file carries it in stats.
+          const { identity_sync: _sync, ...file } = document;
+          await writeJsonDocument(command.out, file);
           return {
             out: command.out,
             format: document.format,

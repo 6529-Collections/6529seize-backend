@@ -5,9 +5,14 @@ import {
 } from './identity-export.db';
 import {
   buildIdentityExport,
+  freezeDayProblem,
+  HELP_BOT_CREDIT_RULE_NOTE,
+  identitySyncProblem,
   leaveOutHelpBotCredits,
+  repMismatches,
   reservedHandles,
   shownClassification,
+  TDH_NOTE,
   toExportIdentity,
   withoutCredits
 } from './identity-export.service';
@@ -67,6 +72,7 @@ const P2 = P('2');
 const P3 = P('3');
 const WAVER = P('4');
 const GHOST = P('dead');
+const BOT = P('b07');
 
 /** A small world: every kind of identity the scope rules decide on. */
 function world(): {
@@ -154,6 +160,12 @@ function world(): {
     statementsByProfileIds: async (ids) =>
       statements.filter((it) => ids.includes(it.profile_id)),
     latestTdhBlock: async () => 24_000_000,
+    identitySyncProgress: async () => ({
+      pendingGeneration: 5,
+      pendingBlock: 24_000_000,
+      syncedGeneration: 5
+    }),
+    helpBotProfileId: async () => BOT,
     delegations: async () => [
       {
         from_address: W(1),
@@ -398,9 +410,8 @@ describe('buildIdentityExport', () => {
   it('makes no bulk category of the credits and brings no one in by them', async () => {
     const { source } = world();
     const edges = await source.ratingEdges();
-    const bot = P('b07');
     const credit = (target: string) => ({
-      rater_profile_id: bot,
+      rater_profile_id: BOT,
       target_profile_id: target,
       matter: 'REP' as const,
       category: 'Help6529 Credits',
@@ -418,8 +429,9 @@ describe('buildIdentityExport', () => {
     const ids = doc.identities.map((it) => it.profile_id);
     expect(ids).not.toContain(P1);
     expect(ids).not.toContain(P2);
-    expect(ids).not.toContain(bot);
+    expect(ids).not.toContain(BOT);
     expect(doc.stats.help_bot_credits_left_out).toBe(4);
+    expect(doc.stats.help_bot_credits_from_others).toBe(0);
   });
 
   it('takes nothing from anyone for credits given to a profile not exported', async () => {
@@ -446,6 +458,111 @@ describe('buildIdentityExport', () => {
     expect(doc.identities).toEqual(plain.identities);
     expect(doc.ratings).toEqual(plain.ratings);
     expect(doc.stats.help_bot_credit_profiles).toBe(1);
+  });
+
+  it('always states the credit rule and the TDH it writes', async () => {
+    const doc = await buildIdentityExport(world().source, options);
+    expect(doc.stats.help_bot_credits_left_out).toBe(0);
+    expect(doc.notes).toEqual(
+      expect.arrayContaining([HELP_BOT_CREDIT_RULE_NOTE, TDH_NOTE])
+    );
+    expect(HELP_BOT_CREDIT_RULE_NOTE).toContain(
+      'left out of ratings, bulk_rep, rep, level_raw and level'
+    );
+  });
+
+  it("counts credits from a rater that isn't the help bot", async () => {
+    const { source } = world();
+    const edges = await source.ratingEdges();
+    const credit = (rater: string) => ({
+      rater_profile_id: rater,
+      target_profile_id: ALICE,
+      matter: 'REP' as const,
+      category: 'Help6529 Credits',
+      rating: 1,
+      last_modified_ms: 1
+    });
+    const doc = await buildIdentityExport(
+      {
+        ...source,
+        ratingEdges: async () => [
+          ...edges,
+          credit(BOT.toUpperCase()),
+          credit(TAGGER)
+        ]
+      },
+      options
+    );
+    expect(doc.stats.help_bot_credits_left_out).toBe(2);
+    expect(doc.stats.help_bot_credits_from_others).toBe(1);
+    expect(doc.notes).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining(
+          "1 ratings in the help bot's category come from a rater that is not the help bot's profile"
+        )
+      ])
+    );
+  });
+
+  it('counts stored reps that are not the sum of the REP ratings read, without failing', async () => {
+    // Alice: 30 stored, 1 rated; P3: 0 stored, -5 rated.
+    const doc = await buildIdentityExport(world().source, options);
+    expect(doc.stats.rep_mismatch).toBe(2);
+    expect(doc.notes).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining(
+          '2 exported profiles have a stored rep that is not the sum of their REP ratings read'
+        )
+      ])
+    );
+    const alice = toExportIdentity(
+      identity(W(1), { id: ALICE, handle: 'Alice' }, { rep: 8 }),
+      [W(1)],
+      [],
+      ['handle']
+    );
+    const edges = [
+      rating(TAGGER, ALICE, 'REP', 'Holder', 3),
+      rating(BOT, ALICE, 'REP', 'Help6529 Credits', 5),
+      rating(TAGGER, ALICE, 'CIC', '', 100)
+    ];
+    // Credits count: 6529.io's rep includes them.
+    expect(repMismatches([alice], edges)).toBe(0);
+    expect(repMismatches([{ ...alice, rep: 3 }], edges)).toBe(1);
+  });
+
+  it("writes the identities sync's state into stats, and notes a sync behind", async () => {
+    const synced = await buildIdentityExport(world().source, options);
+    expect(synced.stats).toEqual(
+      expect.objectContaining({
+        identity_sync_pending_generation: 5,
+        identity_sync_synced_generation: 5,
+        identity_sync_pending_block: 24_000_000
+      })
+    );
+    expect(synced.notes.some((it) => it.startsWith('not a finished'))).toBe(
+      false
+    );
+    const { source } = world();
+    const behind = await buildIdentityExport(
+      {
+        ...source,
+        identitySyncProgress: async () => ({
+          pendingGeneration: 6,
+          pendingBlock: 24_000_000,
+          syncedGeneration: 5
+        })
+      },
+      options
+    );
+    expect(behind.notes).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining(
+          'not a finished TDH day: the identities sync is behind'
+        )
+      ])
+    );
+    expect(freezeDayProblem(behind, 24_000_000)).toContain('behind');
   });
 
   it('leaves the delegations out when asked', async () => {
@@ -534,15 +651,41 @@ describe("the chain's level", () => {
     });
     expect([atBoundary.level_raw, atBoundary.level]).toEqual([1000, 6]);
   });
+});
 
-  it('keeps a missing level_raw missing', () => {
-    const it = toExportIdentity(
-      identity(W(1), null, { rep: 5, tdh: 100, level_raw: null }),
-      [W(1)],
-      [],
-      ['wallets']
+describe('the freeze day check', () => {
+  const caughtUp = {
+    pendingGeneration: 5,
+    pendingBlock: 100,
+    syncedGeneration: 5
+  };
+
+  it('passes only a TDH block whose identities sync has finished', () => {
+    expect(identitySyncProblem(100, caughtUp)).toBeNull();
+    expect(identitySyncProblem(100, { ...caughtUp, syncedGeneration: 4 })).toBe(
+      'the identities sync is behind: generation 4 synced, 5 pending'
     );
-    expect(it.level_raw).toBeNull();
-    expect(it.level).toBe(0);
+    expect(identitySyncProblem(101, caughtUp)).toBe(
+      'the last TDH write is of block 100, not the TDH block 101'
+    );
+    expect(identitySyncProblem(100, null)).toContain('could not be read');
+  });
+
+  it('refuses another TDH block, or one not synced yet', () => {
+    expect(
+      freezeDayProblem({ tdh_block: 100, identity_sync: caughtUp }, 100)
+    ).toBeNull();
+    expect(
+      freezeDayProblem({ tdh_block: 100, identity_sync: caughtUp }, 99)
+    ).toBe("6529.io's latest TDH block is 100, not 99");
+    expect(
+      freezeDayProblem(
+        {
+          tdh_block: 100,
+          identity_sync: { ...caughtUp, pendingGeneration: 6 }
+        },
+        100
+      )
+    ).toContain('behind');
   });
 });
