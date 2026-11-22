@@ -40,7 +40,7 @@ export interface IdentityRedemptionRun {
     readonly tokenId: number;
     /** At or below the legacy loop's block: compared with its charges. */
     readonly transactions: string[];
-    /** Above it (only after the switch): not yet compared. */
+    /** Above it (only after the switch): not compared; legacy had not charged them. */
     readonly pending: string[];
   }>;
   /** The legacy loop's processed block when the run started. */
@@ -285,9 +285,11 @@ function inTransactionReads(options: DbQueryOptions): EntityManager {
  * final rows, by the legacy redemption rules (validateNonSubscriptionAirdrop,
  * then one charge per token to the row for the airdrop address in phase and
  * position order), in one transaction with the cursor and the run's journal
- * entry. It goes only as far as the legacy loop has processed, so both
- * sides match the same airdrops. Returns null before an opening is loaded
- * (no cursor).
+ * entry. In shadow it goes only as far as the legacy loop has processed,
+ * so both sides match the same airdrops. After the switch it goes as far
+ * as the highest memes block in the transactions table, read once at the
+ * start of the run, so the truth does not wait on the legacy loop. Returns
+ * null before an opening is loaded (no cursor).
  */
 export async function redeemIdentityAirdrops(
   mode: IdentityWriteMode
@@ -467,8 +469,9 @@ export async function redeemIdentityAirdrops(
  * identity whose legacy charges went to one legacy key; any other is named
  * in the notes, which makes the report DIFF. Only airdrops the legacy loop
  * has processed are compared; the rest (after the switch, when the legacy
- * loop is behind) are named in the notes as not yet compared, and so are
- * the balances of the identities they charged.
+ * loop is behind) are named in the notes as not compared, since the legacy
+ * loop had not charged them, and so are the balances of the identities
+ * they charged. A later run does not come back to them.
  */
 export async function reportRedemptionComparison(
   mode: IdentityWriteMode,
@@ -505,7 +508,7 @@ async function reportCard(
   const notes: string[] = [];
   if (card.pending.length > 0) {
     notes.push(
-      `${card.pending.length} airdrop transaction(s) after the legacy loop's block ${legacyThrough ?? 'none'}: not yet compared`
+      `${card.pending.length} airdrop transaction(s) after the legacy loop's block ${legacyThrough ?? 'none'}: not compared; the legacy loop had not charged them`
     );
   }
   const uncompared = await pendingIdentities(card);
@@ -613,7 +616,7 @@ async function reportCard(
     if (uncompared.has(identityKey)) {
       // The legacy loop has not charged its later airdrops yet.
       notes.push(
-        `balance of ${identityKey} not yet compared: charged after the legacy loop's block`
+        `balance of ${identityKey} not compared: charged after the legacy loop's block too`
       );
       continue;
     }

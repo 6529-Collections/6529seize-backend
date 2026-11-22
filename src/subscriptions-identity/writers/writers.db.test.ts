@@ -2295,7 +2295,65 @@ describeWithSeed('identity writers after the switch', [], () => {
     expect(report.diffs).toEqual([]);
     expect(report.unexplained).toBe(0);
     expect(report.notes).toEqual([
-      "1 airdrop transaction(s) after the legacy loop's block 1: not yet compared"
+      "1 airdrop transaction(s) after the legacy loop's block 1: not compared; the legacy loop had not charged them"
+    ]);
+  });
+
+  it('after the switch, compares the airdrop the legacy loop charged and names the later one, for one identity in one run', async () => {
+    await seed();
+    await updateSubscriptions();
+    // Two editions for LONE on both lists, so both airdrops find one.
+    for (const [table, column] of [
+      [SUBSCRIPTIONS_NFTS_FINAL_TABLE, 'consolidation_key'],
+      [SUBSCRIPTIONS_ID_NFTS_FINAL_TABLE, 'identity_key']
+    ]) {
+      await execute(
+        `UPDATE ${table} SET subscribed_count = 2 WHERE ${column} = :lone AND token_id = :card`,
+        { lone: LONE, card: CARD }
+      );
+    }
+    const airdrop = (hash: string, block: number) =>
+      execute(
+        `INSERT INTO ${TRANSACTIONS_TABLE}
+          (created_at, transaction, block, transaction_date, from_address, to_address,
+           contract, token_id, token_count, value, primary_proceeds, royalties,
+           gas_gwei, gas_price, gas_price_gwei, gas)
+          VALUES (NOW(), :hash, :block, '2026-11-26 15:00:00', :null, :lone, :c, :card,
+           1, 0, 0, 0, 0, 0, 0, 0)`,
+        {
+          hash,
+          block,
+          null: NULL_ADDRESS,
+          lone: LONE,
+          c: MEMES_CONTRACT.toLowerCase(),
+          card: CARD
+        }
+      );
+    // The legacy loop charges the airdrop at block 40, and stops there.
+    await airdrop('0xlow', 40);
+    await redeemSubscriptions();
+    await airdrop('0xhigh', 50);
+    await runIdentityRedemptionWriters();
+
+    // The identity side charged both; legacy only the first.
+    expect(
+      await balance(SUBSCRIPTIONS_ID_BALANCES_TABLE, 'identity_key', LONE)
+    ).toBe(0.06942);
+    expect(
+      await balance(SUBSCRIPTIONS_BALANCES_TABLE, 'consolidation_key', LONE)
+    ).toBe(0.13471);
+    const reports = await sqlExecutor.execute<{ report: string }>(
+      `SELECT report FROM ${SUBSCRIPTIONS_ID_REPORTS_TABLE} WHERE kind = 'REDEMPTIONS'`
+    );
+    expect(reports).toHaveLength(1);
+    const report = JSON.parse(reports[0].report);
+    // The airdrop at block 40 is compared and matches; the one at 50 and
+    // LONE's balance are named as not compared.
+    expect(report.diffs).toEqual([]);
+    expect(report.unexplained).toBe(0);
+    expect(report.notes).toEqual([
+      "1 airdrop transaction(s) after the legacy loop's block 40: not compared; the legacy loop had not charged them",
+      `balance of ${LONE} not compared: charged after the legacy loop's block too`
     ]);
   });
 

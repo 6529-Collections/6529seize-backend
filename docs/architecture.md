@@ -3100,7 +3100,11 @@ loaded), each legacy loop also writes them:
 - the daily loop builds the card's list from the identity tables with the
   legacy rules (the engine's `buildFinalList`);
 - the transactions loop matches airdrop mints against the identity final
-  rows from its own cursor, up to the block the legacy loop has processed;
+  rows from its own cursor: in shadow up to the block the legacy loop has
+  processed, so both sides match the same airdrops; after the switch up to
+  the highest memes block in the transactions table, read once at the start
+  of the run, with the airdrops above the legacy loop's block named in the
+  comparison as not compared;
 - a phase pull splits the identity rows.
 
 After the switch the identity list is the one published (with an identity
