@@ -11,6 +11,7 @@ import { connect, disconnect, getDataSource } from '@/db';
 import * as Entities from '@/entities/entities';
 import { Transaction } from '@/entities/ITransaction';
 import { buildTransaction } from '@/tests/test.transactions.helpers';
+import { MAX_BATCHES } from './types';
 import { walletTransferAnalysisService } from './wallet-transfer-analysis.service';
 import { rebuildWalletTransferAnalysis } from './wallet-transfer-rebuild';
 
@@ -121,5 +122,40 @@ describe('the wallet transfer analysis rebuilt from empty', () => {
     const before = await analysis();
     await rebuildWalletTransferAnalysis();
     expect(await analysis()).toEqual(before);
+  });
+
+  it('keeps calling the analysis when there are more buckets than one call takes', async () => {
+    // One transfer in each of MAX_BATCHES + 1 buckets: the first call
+    // summarises MAX_BATCHES, the second the last one.
+    const buckets = MAX_BATCHES + 1;
+    const many = Array.from({ length: buckets }, (_, i) => ({
+      ...buildTransaction(
+        wallet(1 + (i % 2)),
+        wallet(2 - (i % 2)),
+        MEMES_CONTRACT.toLowerCase(),
+        1
+      ),
+      block: 20_000 + i * 1_000,
+      transaction_date: new Date(Date.UTC(2026, 1, 1) + i * 86_400_000)
+    }));
+    await getDataSource().query(`DELETE FROM ${TRANSACTIONS_TABLE}`);
+    await getDataSource().getRepository(Transaction).save(many);
+    await emptyAnalysis();
+
+    await rebuildWalletTransferAnalysis();
+
+    const rebuilt = await analysis();
+    expect(
+      new Set(
+        rebuilt.pairs.map((p: Record<string, unknown>) =>
+          Number(p.bucket_start)
+        )
+      ).size
+    ).toBe(buckets);
+    expect(rebuilt.states).toEqual([
+      expect.objectContaining({
+        last_block: 20_000 + (buckets - 1) * 1_000 + 999
+      })
+    ]);
   });
 });
