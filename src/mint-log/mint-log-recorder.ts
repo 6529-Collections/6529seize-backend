@@ -1,0 +1,565 @@
+import { createHash } from 'node:crypto';
+import { appFeatures, AppFeatures } from '@/app-features';
+import { CustomApiCompliantException } from '@/exceptions';
+import { Logger } from '@/logging';
+import { sendPriorityAlertIfConfigured } from '@/priority-alerts.context';
+import { canonicalizeJson } from '@/profile-cms/protocol/v1/canonical-json';
+import { ConnectionWrapper, dbSupplier, SqlExecutor } from '@/sql-executor';
+import { Time } from '@/time';
+import { MintStateWriter, mintStateWriter } from './mint-log-apply';
+import { MintStateReader, mintStateReader } from './mint-log-capture';
+import { changedParts, diffCardState, differingParts } from './mint-log-diff';
+import { MintLogHead, MintLogHeadDb, mintLogHeadDb } from './mint-log-head.db';
+import { MintIntent, recordMismatch } from './mint-log-intent';
+import {
+  getMintLogPorts,
+  MintLogPorts,
+  MintRecordLogEntry,
+  MintVerifiedRecord
+} from './mint-log-ports';
+import {
+  MINT_KIND_PARTS,
+  MINT_LOG_ENTRY_VERSION,
+  MINT_LOG_LANE,
+  MintCardEffects,
+  MintCardRef,
+  MintCardState,
+  MintLogActor,
+  MintLogChecks,
+  MintLogEntryBody,
+  MintLogKind
+} from './mint-log.types';
+
+const logger = Logger.get('MINT_LOG');
+const REPLAY_SAVEPOINT = 'mint_log_replay';
+
+export type MintLogMode = 'off' | 'shadow' | 'primary';
+
+export interface MintWriteSpec<T = unknown> {
+  readonly kind: MintLogKind;
+  /** The card, or how to find it once the log lock is held. */
+  readonly card:
+    | MintCardRef
+    | ((connection: ConnectionWrapper<any>) => Promise<MintCardRef>);
+  readonly actor: MintLogActor;
+  /** Admin and user writes: the request. Service writes: what triggered them. */
+  readonly intent: MintIntent;
+  /** The `x-6529-signed-records` header, as received. */
+  readonly signedRecords?: string | null;
+  /** Read under the log lock, before the writer runs. */
+  readonly inputs?: (
+    connection: ConnectionWrapper<any>
+  ) => Promise<Record<string, unknown>>;
+  /** For a write whose result lives outside the tables (a GitHub commit). */
+  readonly outputs?: (value: T) => Record<string, unknown>;
+  /**
+   * 'write' (default): the log lock is held while the writer runs.
+   * 'capture': for a long writer (the Arweave upload) the lock is held only to
+   * capture and log afterwards; the entry keeps only the kind's declared parts,
+   * since other writes in between log their own changes.
+   */
+  readonly lockScope?: 'write' | 'capture';
+}
+
+export class InvalidSignedRecordException extends CustomApiCompliantException {
+  constructor(reason: string, detail: string) {
+    super(400, `Invalid signed record: ${detail}`, 'INVALID_SIGNED_RECORD', {
+      reason
+    });
+  }
+}
+
+export class MintLogUnavailableException extends CustomApiCompliantException {
+  constructor(detail: string) {
+    super(
+      503,
+      `The mint log is unavailable: ${detail}`,
+      'MINT_LOG_UNAVAILABLE'
+    );
+  }
+}
+
+/** The log's own failure after the writer committed: report, don't hide. */
+class MintLogTransactionLost extends Error {}
+
+type Outcome<T> =
+  | { readonly ok: true; readonly value: T }
+  | { readonly ok: false; readonly error: unknown };
+
+async function settle<T>(run: () => Promise<T>): Promise<Outcome<T>> {
+  try {
+    return { ok: true, value: await run() };
+  } catch (error) {
+    return { ok: false, error };
+  }
+}
+
+interface Captured {
+  readonly card: MintCardRef;
+  readonly before: MintCardState;
+  readonly inputs: Record<string, unknown>;
+}
+
+/**
+ * A failed write that changed nothing needs no entry, and neither does a
+ * service write that found nothing to do (a claim that already exists).
+ */
+function needsEntry(
+  actor: MintLogActor,
+  outcome: Outcome<unknown>,
+  effects: MintCardEffects
+): boolean {
+  if (changedParts(effects).length) return true;
+  return outcome.ok && actor.type !== 'service';
+}
+
+function declaredOnly(
+  kind: MintLogKind,
+  effects: MintCardEffects
+): MintCardEffects {
+  const declared = MINT_KIND_PARTS[kind];
+  const kept: Record<string, unknown> = {};
+  for (const part of changedParts(effects)) {
+    if (declared.includes(part)) kept[part] = effects[part];
+  }
+  return kept as MintCardEffects;
+}
+
+export function entrySha256(entry: MintLogEntryBody): string {
+  return createHash('sha256').update(canonicalizeJson(entry)).digest('hex');
+}
+
+function errorText(error: unknown): string {
+  if (error instanceof Error) return `${error.name}: ${error.message}`;
+  return String(error);
+}
+
+/**
+ * Wraps a write to the minting tables. Under the log lock it captures the
+ * card's rows, runs the writer, captures again, and queues one entry with the
+ * row changes in the same transaction as the lock. The writers themselves are
+ * unchanged: with both flags off this runs the writer and nothing else.
+ */
+export class MintLogRecorder {
+  constructor(
+    private readonly features: Pick<
+      AppFeatures,
+      | 'isMintLogShadowEnabled'
+      | 'isMintLogPrimaryEnabled'
+      | 'isMintLogReplayCheckEnabled'
+    > = appFeatures,
+    private readonly ports: () => MintLogPorts = getMintLogPorts,
+    private readonly db: () => SqlExecutor = dbSupplier,
+    private readonly reader: MintStateReader = mintStateReader,
+    private readonly writer: MintStateWriter = mintStateWriter,
+    private readonly head: MintLogHeadDb = mintLogHeadDb
+  ) {}
+
+  mode(): MintLogMode {
+    if (this.features.isMintLogPrimaryEnabled()) return 'primary';
+    if (this.features.isMintLogShadowEnabled()) return 'shadow';
+    return 'off';
+  }
+
+  async write<T>(spec: MintWriteSpec<T>, run: () => Promise<T>): Promise<T> {
+    const mode = this.mode();
+    if (mode === 'off') return run();
+    const ports = this.ports();
+    if (!ports.log) {
+      if (mode === 'primary') {
+        throw new MintLogUnavailableException('no record log is bound');
+      }
+      logger.warn(
+        `[MINT_LOG_SHADOW_IDLE] [${spec.kind}] no record log is bound`
+      );
+      return run();
+    }
+    const record = await this.authorize(spec, mode, ports);
+    if (spec.lockScope === 'capture') {
+      return this.loggedAfter(spec, record, run);
+    }
+    return this.logged(spec, mode, record, run);
+  }
+
+  /**
+   * Primary: an admin or user write needs a verified `mint.admin` record for
+   * this request by the signed-in wallet. Shadow: the record is checked and
+   * kept when present, and a problem is logged, never thrown.
+   */
+  private async authorize<T>(
+    spec: MintWriteSpec<T>,
+    mode: MintLogMode,
+    ports: MintLogPorts
+  ): Promise<MintVerifiedRecord | null> {
+    if (spec.actor.type === 'service') return null;
+    const problem = (reason: string, detail: string) => {
+      if (mode === 'primary') {
+        throw new InvalidSignedRecordException(reason, detail);
+      }
+      logger.warn(
+        `[MINT_LOG_SHADOW_RECORD] [${spec.kind}] [${reason}] ${detail}`
+      );
+      return null;
+    };
+    if (!spec.signedRecords) {
+      return problem('missing', 'this write needs a signed mint.admin record');
+    }
+    if (!ports.records) {
+      if (mode === 'primary') {
+        throw new MintLogUnavailableException('no record verifier is bound');
+      }
+      return null;
+    }
+    let events: unknown[];
+    try {
+      events = ports.records.decodeHeader(spec.signedRecords);
+    } catch (error) {
+      return problem('shape', errorText(error));
+    }
+    if (events.length !== 1) {
+      return problem('shape', 'send exactly one record');
+    }
+    const verified = await ports.records.verify(events[0]);
+    if (!verified.ok) {
+      return problem(verified.reason, verified.detail);
+    }
+    const mismatch = recordMismatch(
+      verified.record,
+      spec.kind,
+      spec.intent,
+      spec.actor.wallet
+    );
+    if (mismatch) return problem('intent', mismatch);
+    return verified.record;
+  }
+
+  private async logged<T>(
+    spec: MintWriteSpec<T>,
+    mode: MintLogMode,
+    record: MintVerifiedRecord | null,
+    run: () => Promise<T>
+  ): Promise<T> {
+    // Set inside the transaction callback; a holder keeps TypeScript from
+    // narrowing them to their initial null after the call.
+    const state: { outcome: Outcome<T> | null; captured: Captured | null } = {
+      outcome: null,
+      captured: null
+    };
+    let entry: MintLogEntryBody | null;
+    try {
+      entry = await this.db().executeNativeQueriesInTransaction(
+        async (connection) => {
+          const head = await this.head.lock(connection);
+          const card =
+            typeof spec.card === 'function'
+              ? await spec.card(connection)
+              : spec.card;
+          const inputs = spec.inputs ? await spec.inputs(connection) : {};
+          const before = await this.reader.capture(card, connection);
+          const captured: Captured = { card, before, inputs };
+          state.captured = captured;
+          const outcome = await settle(run);
+          state.outcome = outcome;
+          return this.finish(spec, record, captured, outcome, head, connection);
+        },
+        { isolationLevel: 'READ COMMITTED' }
+      );
+    } catch (error) {
+      if (!state.outcome || !state.captured) throw error;
+      entry = await this.afterLostTransaction(
+        spec,
+        mode,
+        record,
+        state.captured,
+        state.outcome,
+        error
+      );
+    }
+    if (entry) await this.report(entry);
+    const finished = state.outcome;
+    if (!finished) throw new Error('Mint write finished without an outcome');
+    if (!finished.ok) throw finished.error;
+    return finished.value;
+  }
+
+  /**
+   * The writer committed its own changes, but the log transaction died after
+   * it. Log what the tables now hold in a fresh transaction. If that fails
+   * too: in primary mode the change is undone, since nothing may change the
+   * tables without an entry; in shadow mode the tables stay as the old path
+   * left them and the gap is alerted.
+   */
+  private async afterLostTransaction<T>(
+    spec: MintWriteSpec<T>,
+    mode: MintLogMode,
+    record: MintVerifiedRecord | null,
+    captured: Captured,
+    outcome: Outcome<T>,
+    cause: unknown
+  ): Promise<MintLogEntryBody | null> {
+    logger.error(
+      `[MINT_LOG_TRANSACTION_LOST] [${spec.kind}] ${errorText(cause)}`
+    );
+    try {
+      return await this.recover(spec, record, captured, outcome);
+    } catch (error) {
+      const message = `[MINT_LOG_ENTRY_LOST] [${spec.kind}] [card ${captured.card.contract}#${captured.card.card_id}] ${errorText(error)}`;
+      logger.error(message);
+      await sendPriorityAlertIfConfigured('Mint log', new Error(message)).catch(
+        (alertError) =>
+          logger.warn(`[MINT_LOG_ALERT_FAILED] ${errorText(alertError)}`)
+      );
+      if (mode === 'primary') {
+        await this.revert(captured);
+        throw new MintLogUnavailableException(
+          'the change was undone because its log entry could not be written'
+        );
+      }
+      return null;
+    }
+  }
+
+  private async revert(captured: Captured): Promise<void> {
+    await this.db().executeNativeQueriesInTransaction(
+      async (connection) => {
+        await this.head.lock(connection);
+        const current = await this.reader.capture(captured.card, connection);
+        await this.writer.apply(
+          captured.card,
+          diffCardState(current, captured.before),
+          connection
+        );
+      },
+      { isolationLevel: 'READ COMMITTED' }
+    );
+  }
+
+  private async finish<T>(
+    spec: MintWriteSpec<T>,
+    record: MintVerifiedRecord | null,
+    captured: Captured,
+    outcome: Outcome<T>,
+    head: MintLogHead,
+    connection: ConnectionWrapper<any>
+  ): Promise<MintLogEntryBody | null> {
+    const after = await this.reader.capture(captured.card, connection);
+    const effects = diffCardState(captured.before, after);
+    if (!needsEntry(spec.actor, outcome, effects)) return null;
+    const replay = this.features.isMintLogReplayCheckEnabled()
+      ? await this.replay(captured, effects, after, connection)
+      : { replay: 'skipped' as const, replay_mismatches: [] };
+    const entry = this.entry(
+      spec,
+      record,
+      captured,
+      effects,
+      head,
+      outcome,
+      replay
+    );
+    await this.append(entry, record, connection);
+    return entry;
+  }
+
+  /**
+   * Logs a write whose writer ran outside the log transaction: after a lost
+   * transaction, or for a write whose lock scope is 'capture'.
+   */
+  private async recover<T>(
+    spec: MintWriteSpec<T>,
+    record: MintVerifiedRecord | null,
+    captured: Captured,
+    outcome: Outcome<T>,
+    replay: 'aborted' | 'skipped' = 'aborted'
+  ): Promise<MintLogEntryBody | null> {
+    return this.db().executeNativeQueriesInTransaction(
+      async (connection) => {
+        const head = await this.head.lock(connection);
+        const after = await this.reader.capture(captured.card, connection);
+        const diff = diffCardState(captured.before, after);
+        const effects =
+          spec.lockScope === 'capture' ? declaredOnly(spec.kind, diff) : diff;
+        if (!needsEntry(spec.actor, outcome, effects)) return null;
+        const entry = this.entry(
+          spec,
+          record,
+          captured,
+          effects,
+          head,
+          outcome,
+          {
+            replay,
+            replay_mismatches: []
+          }
+        );
+        await this.append(entry, record, connection);
+        return entry;
+      },
+      { isolationLevel: 'READ COMMITTED' }
+    );
+  }
+
+  /** The 'capture' lock scope: capture, run unlocked, then log. */
+  private async loggedAfter<T>(
+    spec: MintWriteSpec<T>,
+    record: MintVerifiedRecord | null,
+    run: () => Promise<T>
+  ): Promise<T> {
+    const captured = await this.db().executeNativeQueriesInTransaction(
+      async (connection): Promise<Captured> => {
+        const card =
+          typeof spec.card === 'function'
+            ? await spec.card(connection)
+            : spec.card;
+        const inputs = spec.inputs ? await spec.inputs(connection) : {};
+        const before = await this.reader.capture(card, connection);
+        return { card, before, inputs };
+      },
+      { isolationLevel: 'READ COMMITTED' }
+    );
+    const outcome = await settle(run);
+    const entry = await this.recover(
+      spec,
+      record,
+      captured,
+      outcome,
+      'skipped'
+    );
+    if (entry) await this.report(entry);
+    if (!outcome.ok) throw outcome.error;
+    return outcome.value;
+  }
+
+  /**
+   * Inside a savepoint that is always rolled back: undo the write with the
+   * reducer and compare with the captured state before it, then redo it and
+   * compare with the state after it. This runs the rebuild's code on every
+   * logged write without changing a row.
+   */
+  private async replay(
+    captured: Captured,
+    effects: MintCardEffects,
+    after: MintCardState,
+    connection: ConnectionWrapper<any>
+  ): Promise<Pick<MintLogChecks, 'replay' | 'replay_mismatches'>> {
+    const execute = (sql: string) =>
+      this.db().execute(sql, undefined, { wrappedConnection: connection });
+    await execute(`SAVEPOINT ${REPLAY_SAVEPOINT}`);
+    try {
+      const mismatches: string[] = [];
+      const undo = diffCardState(after, captured.before);
+      await this.writer.apply(captured.card, undo, connection);
+      const undone = await this.reader.capture(captured.card, connection);
+      mismatches.push(
+        ...differingParts(undone, captured.before).map((part) => `undo:${part}`)
+      );
+      await this.writer.apply(captured.card, effects, connection);
+      const redone = await this.reader.capture(captured.card, connection);
+      mismatches.push(
+        ...differingParts(redone, after).map((part) => `redo:${part}`)
+      );
+      return {
+        replay: mismatches.length ? 'mismatch' : 'match',
+        replay_mismatches: mismatches
+      };
+    } catch (error) {
+      logger.error(`[MINT_LOG_REPLAY_FAILED] ${errorText(error)}`);
+      return { replay: 'mismatch', replay_mismatches: [errorText(error)] };
+    } finally {
+      try {
+        await execute(`ROLLBACK TO SAVEPOINT ${REPLAY_SAVEPOINT}`);
+      } catch (error) {
+        // The transaction itself is gone (a deadlock rolls it back whole).
+        // eslint-disable-next-line no-unsafe-finally
+        throw new MintLogTransactionLost(errorText(error));
+      }
+    }
+  }
+
+  private entry<T>(
+    spec: MintWriteSpec<T>,
+    record: MintVerifiedRecord | null,
+    captured: Captured,
+    effects: MintCardEffects,
+    head: MintLogHead,
+    outcome: Outcome<T>,
+    checks: Pick<MintLogChecks, 'replay' | 'replay_mismatches'>
+  ): MintLogEntryBody {
+    const declared = MINT_KIND_PARTS[spec.kind];
+    return {
+      v: MINT_LOG_ENTRY_VERSION,
+      kind: spec.kind,
+      seq: head.seq + 1,
+      prev: head.hash,
+      at: Time.currentMillis(),
+      card: captured.card,
+      actor: spec.actor,
+      record_id: record?.eventId ?? null,
+      intent: {
+        route: spec.intent.route,
+        params: spec.intent.params,
+        body: spec.intent.body ?? null
+      },
+      inputs: captured.inputs,
+      outputs: outcome.ok && spec.outputs ? spec.outputs(outcome.value) : null,
+      effects,
+      checks: {
+        undeclared: changedParts(effects).filter(
+          (part) => !declared.includes(part)
+        ),
+        merkle_raw: (effects.merkle?.upsert ?? [])
+          .filter((root) => root.raw_proofs !== null)
+          .map((root) => String(root.row.phase)),
+        replay: checks.replay,
+        replay_mismatches: checks.replay_mismatches
+      },
+      writer_error: outcome.ok ? null : errorText(outcome.error)
+    };
+  }
+
+  private async append(
+    entry: MintLogEntryBody,
+    record: MintVerifiedRecord | null,
+    connection: ConnectionWrapper<any>
+  ): Promise<void> {
+    const ports = this.ports();
+    if (!ports.log) {
+      throw new MintLogUnavailableException('no record log is bound');
+    }
+    const entries: MintRecordLogEntry[] = [];
+    if (record && ports.records) {
+      entries.push({
+        t: 'event',
+        lane: MINT_LOG_LANE,
+        event: record.event,
+        grant: await ports.records.grantProof(record)
+      });
+    }
+    entries.push({
+      t: 'entry',
+      lane: MINT_LOG_LANE,
+      body: entry as unknown as Record<string, unknown>
+    });
+    await ports.log.append(entries, { connection });
+    await this.head.advance(
+      { seq: entry.seq, hash: entrySha256(entry) },
+      connection
+    );
+  }
+
+  private async report(entry: MintLogEntryBody): Promise<void> {
+    const problems = [
+      ...entry.checks.undeclared.map((part) => `undeclared part ${part}`),
+      ...entry.checks.merkle_raw.map((phase) => `raw proofs kept for ${phase}`),
+      ...entry.checks.replay_mismatches.map((part) => `replay ${part}`)
+    ];
+    if (!problems.length) return;
+    const message = `[MINT_LOG_MISMATCH] [seq ${entry.seq}] [${entry.kind}] [card ${entry.card?.contract}#${entry.card?.card_id}] ${problems.join('; ')}`;
+    logger.error(message);
+    await sendPriorityAlertIfConfigured('Mint log', new Error(message)).catch(
+      (error) => logger.warn(`[MINT_LOG_ALERT_FAILED] ${errorText(error)}`)
+    );
+  }
+}
+
+export const mintLogRecorder = new MintLogRecorder();

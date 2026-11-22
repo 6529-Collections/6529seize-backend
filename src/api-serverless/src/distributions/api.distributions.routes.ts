@@ -35,6 +35,14 @@ import {
   populateDistributionNormalized
 } from '@/api/distributions/api.distributions.service';
 import { githubDistributionService } from '@/api/distributions/github-distribution.service';
+import {
+  adminWriteSpec,
+  MINT_ADMIN_ROUTES,
+  MINT_AUTHORITY,
+  mintCard
+} from '@/mint-log/mint-log-http';
+import { distributionCursorBlock } from '@/mint-log/mint-log-inputs';
+import { mintLogRecorder } from '@/mint-log/mint-log-recorder';
 
 interface AirdropEntry {
   address: string;
@@ -241,7 +249,20 @@ async function uploadAutomaticAirdropsForPhase(
     throw e;
   }
 
-  await insertAutomaticAirdropsForPhase(contract, cardId, phase, airdrops);
+  await mintLogRecorder.write(
+    adminWriteSpec({
+      req,
+      kind: 'dist.airdrops',
+      route:
+        phase === DISTRIBUTION_PHASE_AIRDROP_ARTIST
+          ? MINT_ADMIN_ROUTES.distArtistAirdrops
+          : MINT_ADMIN_ROUTES.distTeamAirdrops,
+      card: mintCard(contract, cardId),
+      authority: MINT_AUTHORITY.distributionAdmins,
+      body: req.body
+    }),
+    () => insertAutomaticAirdropsForPhase(contract, cardId, phase, airdrops)
+  );
 
   await invalidateDistributionOverviewCache(contract, cardId);
 
@@ -365,7 +386,21 @@ router.post(
     }
     const { contract, cardId } = params;
 
-    await populateDistributionNormalized(contract, cardId);
+    await mintLogRecorder.write(
+      adminWriteSpec({
+        req,
+        kind: 'dist.normalize',
+        route: MINT_ADMIN_ROUTES.distNormalize,
+        card: mintCard(contract, cardId),
+        authority: MINT_AUTHORITY.distributionAdmins,
+        body: req.body,
+        // Minted counts restart from zero; mints after this block add to them.
+        inputs: async (connection) => ({
+          distribution_cursor_block: await distributionCursorBlock(connection)
+        })
+      }),
+      () => populateDistributionNormalized(contract, cardId)
+    );
 
     await invalidateDistributionOverviewCache(contract, cardId);
 
@@ -437,9 +472,26 @@ router.post(
       return;
     }
     const { contract, cardId } = params;
-    const result = await githubDistributionService.uploadDistributionForCard(
-      contract,
-      cardId
+    // The upload changes no table; its entry records the published files.
+    type GithubUpload = Awaited<
+      ReturnType<typeof githubDistributionService.uploadDistributionForCard>
+    >;
+    const result = await mintLogRecorder.write(
+      adminWriteSpec<GithubUpload>({
+        req,
+        kind: 'card.published',
+        route: MINT_ADMIN_ROUTES.distGithubUpload,
+        card: mintCard(contract, cardId),
+        authority: MINT_AUTHORITY.distributionAdmins,
+        body: req.body,
+        outputs: (upload) => ({
+          github_folder: upload.github_folder,
+          uploaded_files: upload.uploaded_files,
+          deleted_files: upload.deleted_files
+        })
+      }),
+      () =>
+        githubDistributionService.uploadDistributionForCard(contract, cardId)
     );
     res.json(result);
   }

@@ -32,6 +32,31 @@ export class AppFeatures {
   }
 
   /**
+   * Mint log, shadow: each write to the minting tables is also logged, while
+   * the tables stay the source of truth. Rollback: set it to false.
+   */
+  public isMintLogShadowEnabled(): boolean {
+    return this.isFeatureEnabled('MINT_LOG_SHADOW');
+  }
+
+  /**
+   * Mint log, primary (the switch): admin writes need a signed `mint.admin`
+   * record, and a write fails unless its log entry is queued. Rollback: set it
+   * to false; the shadow log keeps running if MINT_LOG_SHADOW is on.
+   */
+  public isMintLogPrimaryEnabled(): boolean {
+    return this.isFeatureEnabled('MINT_LOG_PRIMARY');
+  }
+
+  /**
+   * After each logged write, replays the entry over the captured state in a
+   * savepoint that is rolled back, and compares the rows. Rollback: false.
+   */
+  public isMintLogReplayCheckEnabled(): boolean {
+    return this.isFeatureEnabled('MINT_LOG_REPLAY_CHECK');
+  }
+
+  /**
    * The interim record log: signed records batched into hash-chained
    * segment files whose heads are posted in the records wave.
    */

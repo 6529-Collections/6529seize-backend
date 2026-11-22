@@ -166,6 +166,7 @@ export const WAVES_DECISION_WINNER_DROPS_TABLE = 'wave_decision_winner_drops';
 export const MEME_CARD_DROP_MAPPINGS_TABLE = 'meme_card_drop_mappings';
 export const MINTING_CLAIMS_TABLE = 'minting_claims';
 export const MINTING_CLAIM_ACTIONS_TABLE = 'minting_claim_actions';
+export const MINT_LOG_HEAD_TABLE = 'mint_log_head';
 export const WAVE_METRICS_TABLE = 'wave_metrics';
 export const WAVE_SCORE_REFRESH_REQUESTS_TABLE = 'wave_score_refresh_requests';
 export const WAVE_DROP_METRICS_REFRESH_REQUESTS_TABLE =

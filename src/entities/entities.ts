@@ -52,6 +52,7 @@ export { MintingMerkleProof } from './IMintingMerkleProof';
 export { MintingMerkleRoot } from './IMintingMerkleRoot';
 export { MintingClaimActionEntity } from './IMintingClaimAction';
 export { MemeCardDropMappingEntity } from './IMemeCardDropMapping';
+export { MintLogHeadEntity } from './IMintLogHead';
 export {
   DropGroupMentionEntity,
   DropBoostEntity,
