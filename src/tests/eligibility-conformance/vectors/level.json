@@ -187,6 +187,43 @@
     }
   },
   {
+    "name": "level-at-the-highest-safe-level",
+    "dimension": "level",
+    "description": "level_raw 9007199254740991 (2^53 - 1) is level 602, the highest level a JS number reaches. level_min 602 and level_max 602 or more admit it; level_max 601 and level_min 603 do not, on both engines.",
+    "identities": [
+      {
+        "id": "subject",
+        "level_raw": 9007199254740991
+      }
+    ],
+    "subject": "subject",
+    "groups": [
+      {
+        "id": "g-min-602",
+        "level_min": 602
+      },
+      {
+        "id": "g-min-603",
+        "level_min": 603
+      },
+      {
+        "id": "g-max-601",
+        "level_max": 601
+      },
+      {
+        "id": "g-max-602",
+        "level_max": 602
+      },
+      {
+        "id": "g-max-1000",
+        "level_max": 1000
+      }
+    ],
+    "expected": {
+      "eligible_group_ids": ["g-min-602", "g-max-602", "g-max-1000"]
+    }
+  },
+  {
     "name": "level-min-zero-noop",
     "dimension": "level",
     "description": "level_min 0 is vacuous because every profile is at least level 0.",

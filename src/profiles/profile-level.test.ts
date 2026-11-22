@@ -4,7 +4,8 @@ import path from 'node:path';
 import {
   calculateLevel,
   getLevelComponentsBorderByLevel,
-  getLevelFromScore
+  getLevelFromScore,
+  LAST_SAFE_LEVEL
 } from './profile-level';
 
 type GoldenLevels = {
@@ -20,7 +21,6 @@ const golden: GoldenLevels = JSON.parse(
   readFileSync(path.join(__dirname, 'profile-level-golden.json'), 'utf8')
 );
 
-const LAST_SAFE_LEVEL = 602;
 const LAST_SAFE_BORDER = 8885382734061690;
 
 describe('Profile Level', () => {
@@ -156,6 +156,7 @@ describe('getLevelComponentsBorderByLevel', () => {
   );
 
   it('ends at level 602, the last border that is a safe integer', () => {
+    expect(LAST_SAFE_LEVEL).toBe(602);
     expect(getLevelComponentsBorderByLevel(LAST_SAFE_LEVEL)).toBe(
       LAST_SAFE_BORDER
     );

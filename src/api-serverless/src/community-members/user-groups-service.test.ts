@@ -1265,27 +1265,50 @@ describe('UserGroupsService draft membership SQL', () => {
 
   it('bounds levels above 100 by their raw score borders', async () => {
     const service = buildService();
-    const paramsFor = async (level: {
-      min: number | null;
-      max: number | null;
-    }) =>
+    const sqlFor = async (level: { min: number | null; max: number | null }) =>
       (await service.getSqlAndParamsForPreview(
         buildPreviewGroup({ level }),
         {}
-      ))!.params;
+      ))!;
 
     // Level 101 starts at 26,000,000, so level_max 100 ends just below it.
-    expect(await paramsFor({ min: null, max: 100 })).toEqual({
+    expect((await sqlFor({ min: null, max: 100 })).params).toEqual({
       level_max: 26000000
     });
-    expect(await paramsFor({ min: 101, max: null })).toEqual({
+    expect((await sqlFor({ min: 101, max: null })).params).toEqual({
       level_min: 26000000
     });
-    // Level 1001 has no safe integer border, so that bound admits every score.
-    expect(await paramsFor({ min: 150, max: 1000 })).toEqual({
-      level_min: 177667015,
-      level_max: Number.MAX_SAFE_INTEGER
+    // Level 601 ends just below level 602's border, the last safe integer one.
+    expect((await sqlFor({ min: null, max: 601 })).params).toEqual({
+      level_max: 8885382734061690
     });
+    expect((await sqlFor({ min: 602, max: null })).params).toEqual({
+      level_min: 8885382734061690
+    });
+  });
+
+  it('matches the in-memory check at the highest level a JS number reaches', async () => {
+    const service = buildService();
+    const sqlFor = async (level: { min: number | null; max: number | null }) =>
+      (await service.getSqlAndParamsForPreview(
+        buildPreviewGroup({ level }),
+        {}
+      ))!;
+
+    // No level is above 602, so a level_max of 602 or more admits every
+    // level and adds no SQL bound.
+    for (const max of [602, 1000, Number.MAX_SAFE_INTEGER]) {
+      const result = await sqlFor({ min: 150, max });
+      expect(result.params).toEqual({ level_min: 177667015 });
+      expect(result.sql).not.toContain(':level_max');
+    }
+    // A level_min above 602 admits nobody by criteria.
+    for (const min of [603, 1000]) {
+      const result = await sqlFor({ min, max: null });
+      expect(result.params).toEqual({});
+      expect(result.sql).toContain('and false');
+      expect(result.sql).not.toContain(':level_min');
+    }
   });
 
   it('separates NFT and beneficiary grant CTEs with valid delimiters', async () => {

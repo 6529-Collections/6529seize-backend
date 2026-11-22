@@ -176,8 +176,8 @@ influence eligibility.
 ## 4. Level bounds
 
 `level_min` / `level_max` store **LEVEL NUMBERS**, not raw scores. The API
-accepts bounds of -100 or more, with no upper limit; derived profile levels
-start at 0 and have no upper limit either.
+accepts bounds from -100 up to 2^53 - 1; derived profile levels start at 0
+and have no cap at 100.
 Levels are derived from `identities.level_raw` in
 `src/profiles/profile-level.ts`. Up to level 100 they follow a fixed table.
 Above it, each level's border is the previous border plus a 25th of it,
@@ -204,9 +204,12 @@ The two engines approach the same rule differently:
   numbers**.
 - **SQL** (`getSqlAndParams` → `getGeneralPart`): compares the raw score to
   `i.level_raw >= border(level_min)` only when `level_min > 0`, and
-  `i.level_raw < border(level_max + 1)` whenever `level_max` is set and not
-  negative. A minimum of zero needs no raw-score predicate: negative raw
-  scores are level zero too.
+  `i.level_raw < border(level_max + 1)` when `0 ≤ level_max < 602`. A
+  minimum of zero needs no raw-score predicate: negative raw scores are
+  level zero too. No level is above 602 (`LAST_SAFE_LEVEL`), so a
+  `level_max` of 602 or more needs no predicate either, and a `level_min`
+  above 602 makes the criteria branch empty. The two engines then agree for
+  every bound and every score, including scores past 2^53 - 1.
 
 While levels ended at 100, a `level_max` of 100 or more admitted everyone at
 the top and a `level_min` above 100 admitted nobody. Before levels went above
@@ -591,7 +594,7 @@ Received`), ignoring `cic_direction = 'SENT'`. The in-memory engine honors
 
 ## 13. Current-consumer conformance and rollout
 
-The 75 shared vectors (334 group definitions) exercise direct evaluation, real-MySQL membership SQL,
+The 76 shared vectors (339 group definitions) exercise direct evaluation, real-MySQL membership SQL,
 member lists and counts with wallet search, unsaved previews, and trusted online
 broadcast SQL. A legacy-invalid `ALL_TOKENS` rule over an `ALL` grant remains an
 empty saved member set; preview validation rejects it. Existing consumer suites

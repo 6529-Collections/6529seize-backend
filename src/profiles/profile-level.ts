@@ -431,6 +431,12 @@ for (
   BORDERS_FROM_100.push(next);
 }
 
+/**
+ * The highest level a JS number reaches: 602, the last level whose border is
+ * a safe integer. getLevelFromScore never returns more.
+ */
+export const LAST_SAFE_LEVEL = TABLE_TOP_LEVEL + BORDERS_FROM_100.length - 1;
+
 export function calculateLevel({
   tdh,
   rep

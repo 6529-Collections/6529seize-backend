@@ -13,7 +13,8 @@ import {
 } from '@/constants';
 import {
   getLevelComponentsBorderByLevel,
-  getLevelFromScore
+  getLevelFromScore,
+  LAST_SAFE_LEVEL
 } from '@/profiles/profile-level';
 import {
   GroupBeneficiaryGrantMatchMode,
@@ -2825,24 +2826,24 @@ export class UserGroupsService {
     params: Record<string, any>
   ): string {
     const { min, max } = group.level;
-    // Every raw score maps to a level of 0 or more, with no upper limit. A
-    // negative upper bound is impossible, while a nonpositive lower bound is
-    // vacuous.
-    if (max !== null && max < 0) {
+    // Every raw score maps to a level from 0 to LAST_SAFE_LEVEL (602), the
+    // highest level a JS number reaches. A negative upper bound or a lower
+    // bound above 602 admits nobody, while a nonpositive lower bound or an
+    // upper bound of 602 or more admits every level. Leaving those last two
+    // out of the SQL keeps it equal to the in-memory check for every score,
+    // even one past 2^53 - 1.
+    if ((max !== null && max < 0) || (min !== null && min > LAST_SAFE_LEVEL)) {
       return 'and false ';
     }
-    // Borders never decrease (from level 603 up they all equal
-    // Number.MAX_SAFE_INTEGER), so reversed ranges stay empty:
+    // Borders increase up to level 602, so reversed ranges stay empty:
     // min > max implies border(min) >= border(max + 1).
     let sql = '';
     if (min !== null && min > 0) {
       sql += 'and i.level_raw >= :level_min ';
       params.level_min = getLevelComponentsBorderByLevel(min);
     }
-    if (max !== null) {
-      // Level max ends just below the next level's border. Past level 602
-      // the border is not a safe integer (above 2^53 - 1), so it reads as
-      // Number.MAX_SAFE_INTEGER, which no score reaches.
+    if (max !== null && max < LAST_SAFE_LEVEL) {
+      // Level max ends just below the next level's border.
       sql += 'and i.level_raw < :level_max ';
       params.level_max = getLevelComponentsBorderByLevel(max + 1);
     }
