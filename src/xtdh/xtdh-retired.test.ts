@@ -1,11 +1,11 @@
 import { IdentityFrozenException } from '@/identity-freeze/identity-freeze';
 import {
-  assertXTdhNotFrozen,
-  isXTdhFrozen,
-  XTDH_FROZEN_MESSAGE
-} from './xtdh-freeze';
+  assertXTdhNotRetired,
+  isXTdhRetired,
+  XTDH_RETIRED_MESSAGE
+} from './xtdh-retired';
 
-describe('xTDH freeze', () => {
+describe('xTDH retirement', () => {
   const env = process.env;
 
   beforeEach(() => {
@@ -18,26 +18,26 @@ describe('xTDH freeze', () => {
     process.env = env;
   });
 
-  it('is off without the identity freeze', () => {
-    expect(isXTdhFrozen()).toBe(false);
-    expect(() => assertXTdhNotFrozen()).not.toThrow();
+  it('is off while identities are on 6529.io', () => {
+    expect(isXTdhRetired()).toBe(false);
+    expect(() => assertXTdhNotRetired()).not.toThrow();
   });
 
   it('follows the identity freeze flag', () => {
     process.env.FEATURE_IDENTITY_FROZEN = 'true';
-    expect(isXTdhFrozen()).toBe(true);
+    expect(isXTdhRetired()).toBe(true);
     try {
-      assertXTdhNotFrozen();
+      assertXTdhNotRetired();
       throw new Error('expected a refusal');
     } catch (e) {
       expect(e).toBeInstanceOf(IdentityFrozenException);
-      expect((e as Error).message).toBe(XTDH_FROZEN_MESSAGE);
+      expect((e as Error).message).toBe(XTDH_RETIRED_MESSAGE);
     }
   });
 
   it('starts at the identity freeze time', () => {
     process.env.IDENTITY_FREEZE_AT = '2026-11-24T00:00:00Z';
-    expect(isXTdhFrozen(Date.UTC(2026, 10, 23, 23, 59))).toBe(false);
-    expect(isXTdhFrozen(Date.UTC(2026, 10, 24, 0, 0))).toBe(true);
+    expect(isXTdhRetired(Date.UTC(2026, 10, 23, 23, 59))).toBe(false);
+    expect(isXTdhRetired(Date.UTC(2026, 10, 24, 0, 0))).toBe(true);
   });
 });

@@ -1,4 +1,4 @@
-import { isXTdhFrozen } from '@/xtdh/xtdh-freeze';
+import { isXTdhRetired } from '@/xtdh/xtdh-retired';
 import { RequestContext } from '../request.context';
 import { Time, Timer } from '../time';
 import {
@@ -38,8 +38,8 @@ export class ReviewXTdhGrantsInQueueUseCase {
         this.logger.warn(`XTDH is disabled`);
         return;
       }
-      if (isXTdhFrozen()) {
-        this.logger.info(`xTDH is frozen with identities: no grant review`);
+      if (isXTdhRetired()) {
+        this.logger.info(`xTDH is retired: no grant review`);
         return;
       }
       this.logger.info(

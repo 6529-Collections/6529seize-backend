@@ -288,7 +288,7 @@ describe('RecalculateXTdhUseCase phase handling', () => {
     expect(repository.publishIdentitySnapshot).toHaveBeenCalled();
   });
 
-  it('leaves xTDH as it stood during the identity freeze', async () => {
+  it('recalculates nothing once xTDH is retired', async () => {
     mockIsIdentityFrozen.mockReturnValue(true);
     const { repository, useCase } = makeUseCase();
     await useCase.handleUniversePhase({});

@@ -36,7 +36,7 @@ jest.mock('./xtdh-grant.api-converter', () => ({
 }));
 
 import { IdentityFrozenException } from '@/identity-freeze/identity-freeze';
-import { XTDH_FROZEN_MESSAGE } from '@/xtdh/xtdh-freeze';
+import { XTDH_RETIRED_MESSAGE } from '@/xtdh/xtdh-retired';
 import './xtdh-grants.routes';
 
 const postHandlers = new Map<string, any>(
@@ -59,7 +59,7 @@ const request = (params: Record<string, string> = {}) =>
 
 const response = () => ({ send: jest.fn(), status: jest.fn() }) as any;
 
-describe('xTDH grant routes during the identity freeze', () => {
+describe('xTDH grant routes once xTDH is retired', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     delete process.env.IDENTITY_FREEZE_AT;
@@ -70,14 +70,14 @@ describe('xTDH grant routes during the identity freeze', () => {
     });
   });
 
-  it('refuses a new grant with the xTDH message', async () => {
+  it('refuses a new grant, saying xTDH is retired', async () => {
     mockIsIdentityFrozen.mockReturnValue(true);
     const res = response();
     const error = await postHandler('/')(request(), res).catch(
       (e: unknown) => e
     );
     expect(error).toBeInstanceOf(IdentityFrozenException);
-    expect((error as Error).message).toBe(XTDH_FROZEN_MESSAGE);
+    expect((error as Error).message).toBe(XTDH_RETIRED_MESSAGE);
     expect(mockCreateXTdhGrant).not.toHaveBeenCalled();
     expect(res.send).not.toHaveBeenCalled();
   });
@@ -92,7 +92,7 @@ describe('xTDH grant routes during the identity freeze', () => {
     expect(mockUpdateXTdhGrant).not.toHaveBeenCalled();
   });
 
-  it('passes a change to a grant through while not frozen', async () => {
+  it('passes a change to a grant through before the retirement', async () => {
     mockIsIdentityFrozen.mockReturnValue(false);
     mockUpdateXTdhGrant.mockRejectedValue(new Error('reached the finder'));
     await expect(

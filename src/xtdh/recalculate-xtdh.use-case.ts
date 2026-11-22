@@ -1,4 +1,4 @@
-import { isXTdhFrozen } from '@/xtdh/xtdh-freeze';
+import { isXTdhRetired } from '@/xtdh/xtdh-retired';
 import { RequestContext } from '../request.context';
 import { xTdhRepository, XTdhRepository } from './xtdh.repository';
 import { Logger } from '../logging';
@@ -50,10 +50,10 @@ export class RecalculateXTdhUseCase {
         `handleUniversePhase must own the transaction before enqueueing xTDH stats phase`
       );
     }
-    if (isXTdhFrozen()) {
-      // The 6529 chain imports each identity's xTDH as it stands at the
-      // identity freeze, so xTDH stops moving here from then on.
-      this.logger.info(`xTDH is frozen with identities: no recalculation`);
+    if (isXTdhRetired()) {
+      // xTDH is retired when identities move to the 6529 Network: nothing
+      // is recalculated from then on.
+      this.logger.info(`xTDH is retired: no recalculation`);
       return;
     }
     this.getRequiredXTdhLoopQueueUrl();

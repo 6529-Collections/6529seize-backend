@@ -9,7 +9,7 @@ import { ApiResponse } from '../../api-response';
 import { getValidatedByJoiOrThrow } from '../../validation';
 import { ApiXTdhCreateGrantSchema } from './xtdh-grants.validator';
 import { ForbiddenException } from '../../../../exceptions';
-import { assertXTdhNotFrozen } from '../../../../xtdh/xtdh-freeze';
+import { assertXTdhNotRetired } from '../../../../xtdh/xtdh-retired';
 import { Time, Timer } from '../../../../time';
 import { createXTdhGrantUseCase } from '../../../../xtdh/create-xtdh-grant.use-case';
 import { xTdhGrantApiConverter } from './xtdh-grant.api-converter';
@@ -95,7 +95,7 @@ router.post(
     const authenticationContext = await getAuthenticationContext(req, timer);
     const ctx: RequestContext = { timer, authenticationContext };
     const grantId = req.params.id;
-    assertXTdhNotFrozen();
+    assertXTdhNotRetired();
     const { valid_to } = getValidatedByJoiOrThrow(
       req.body,
       ApiXTdhGrantUpdateRequestSchema
@@ -150,7 +150,7 @@ router.post(
     req: Request<any, any, ApiXTdhCreateGrant, any, any>,
     res: Response<ApiResponse<ApiXTdhGrant>>
   ) => {
-    assertXTdhNotFrozen();
+    assertXTdhNotRetired();
     if (!appFeatures.isXTdhEnabled()) {
       throw new ForbiddenException(
         `This endpoint is part of an ongoing development and is not yet enabled`

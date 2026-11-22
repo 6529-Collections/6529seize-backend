@@ -2945,6 +2945,16 @@ larger requests get 400. An identity may have at most `XTDH_MAX_PENDING_GRANTS`
 grants waiting for review (default 50); the next one gets 409
 `PENDING_GRANT_LIMIT`.
 
+### xTDH retired with identities
+
+xTDH is retired when identities move to the 6529 Network; the chain takes no
+xTDH and no grants over. `src/xtdh/xtdh-retired.ts` follows the identity
+freeze's settings (`FEATURE_IDENTITY_FROZEN`, `IDENTITY_FREEZE_AT`), which stay
+on for good from the switch-on. From then on the grant POSTs answer 423 with
+the retirement message, `xTdhLoop`'s universe phase returns at once, and
+`xTdhGrantsReviewerLoop` reviews nothing. The xTDH columns keep their last
+values for reads; nothing recalculates them.
+
 ### Transfer reconciliation after late indexing
 
 Independent contract indexers atomically queue per-wallet `owners` and `activity`
