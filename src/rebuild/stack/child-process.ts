@@ -59,8 +59,11 @@ function guardNodeOptions(repoRoot: string): string {
 /** Ends a process this run started, with its children on Windows. */
 export function endProcess(pid: number): void {
   if (process.platform === 'win32') {
+    // taskkill can hang on a busy server; it gets a minute, then the
+    // caller's fallback ends the process itself.
     spawnSync('taskkill', ['/PID', String(pid), '/T', '/F'], {
-      windowsHide: true
+      windowsHide: true,
+      timeout: 60_000
     });
   } else {
     try {
@@ -77,6 +80,9 @@ export interface StartedChild {
   /** Ends the process by its PID and waits for it. */
   stop(): Promise<number | null>;
 }
+
+/** How long stop() waits for a child to exit after each attempt to end it. */
+const STOP_WAIT_MS = 30_000;
 
 /**
  * Starts a child: a TypeScript entry under ts-node with the source guard, or
@@ -117,8 +123,19 @@ export function startChild(spec: ChildSpec): StartedChild {
     pid: child.pid ?? null,
     exited,
     async stop() {
+      const ended = (ms: number) =>
+        Promise.race([
+          exited.then(() => true),
+          new Promise<boolean>((resolve) =>
+            setTimeout(() => resolve(false), ms)
+          )
+        ]);
       if (child.exitCode === null && child.pid !== undefined) {
         endProcess(child.pid);
+        // If the tree kill didn't take, end the process itself, so a run
+        // never waits on a child that won't exit.
+        if (!(await ended(STOP_WAIT_MS))) child.kill('SIGKILL');
+        if (!(await ended(STOP_WAIT_MS))) return null;
       }
       return exited;
     }
