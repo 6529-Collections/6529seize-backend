@@ -16,6 +16,7 @@ import {
 import { consolidateSubscriptions } from './subscriptions';
 import {
   REKEY_FALLBACK_INTERVAL_MS,
+  rekeyFallbackLimits,
   rekeyHaltReason,
   rekeyStaleSubscriptions
 } from './subscription-rekey-fallback';
@@ -31,7 +32,7 @@ const AB = `${A}-${B}`;
 const T0 = Date.parse('2026-11-25T01:00:00Z');
 const MINUTE = 60 * 1000;
 /** Limits that let three keys with two stale through. */
-const OPEN = { maxStale: 50, maxShare: 1 };
+const OPEN = { maxStale: 50, maxStalePct: 100 };
 
 async function balances() {
   return (
@@ -104,7 +105,8 @@ describeWithSeed(
         rekeyed: 0,
         wallets: 0,
         stuck: 0,
-        halted: null
+        halted: null,
+        limits: OPEN
       });
       expect(calls).toEqual([]);
       // The next run, once due, finds them stale again and re-keys them.
@@ -167,14 +169,16 @@ describeWithSeed(
           rekeyed: 0,
           halted: '2 of 3 keys stale, above 5%'
         });
-        expect(alert).toHaveBeenCalledWith(
-          'SUBSCRIPTIONS_REKEY_HALTED',
-          `[REKEY FALLBACK HALTED] 2 of 3 keys stale, above 5%; nothing re-keyed. Stale keys: ${A}, ${B}`
-        );
+        const [, line] = alert.mock.calls.find(
+          ([code]) => code === 'SUBSCRIPTIONS_REKEY_HALTED'
+        )!;
+        expect(line).toContain('"halted":"2 of 3 keys stale, above 5%"');
+        expect(line).toContain('"limits":{"maxStale":50,"maxStalePct":5}');
+        expect(line).toContain(`nothing re-keyed. Stale keys: ${A}, ${B}`);
         expect(
           await rekeyStaleSubscriptions(rekey, T0 + 5 * MINUTE, {
             maxStale: 1,
-            maxShare: 1
+            maxStalePct: 100
           })
         ).toMatchObject({ halted: '2 stale keys, above the limit of 1' });
         expect(rekey).not.toHaveBeenCalled();
@@ -190,6 +194,38 @@ describeWithSeed(
         expect(rekey).not.toHaveBeenCalled();
       } finally {
         alert.mockRestore();
+      }
+    });
+
+    it('takes raised limits from the environment for a planned regrouping, still re-keying on the second run', async () => {
+      process.env.SUBSCRIPTIONS_REKEY_MAX_STALE = '5000';
+      process.env.SUBSCRIPTIONS_REKEY_MAX_STALE_PCT = '100';
+      const info = jest.spyOn(Logger.prototype, 'info');
+      const rekey = jest.fn();
+      try {
+        // Two of three keys stale would stop a run at the defaults.
+        expect(await rekeyStaleSubscriptions(rekey, T0)).toMatchObject({
+          stale: 2,
+          firstSeen: 2,
+          rekeyed: 0,
+          halted: null,
+          limits: { maxStale: 5000, maxStalePct: 100 }
+        });
+        expect(rekey).not.toHaveBeenCalled();
+        expect(
+          await rekeyStaleSubscriptions(rekey, T0 + 5 * MINUTE)
+        ).toMatchObject({ rekeyed: 2, halted: null });
+        expect(rekey).toHaveBeenCalledWith(new Set([A, B]));
+        // Every run's line says the limits in force.
+        expect(info).toHaveBeenCalledWith(
+          expect.stringContaining(
+            '"limits":{"maxStale":5000,"maxStalePct":100}'
+          )
+        );
+      } finally {
+        info.mockRestore();
+        delete process.env.SUBSCRIPTIONS_REKEY_MAX_STALE;
+        delete process.env.SUBSCRIPTIONS_REKEY_MAX_STALE_PCT;
       }
     });
 
@@ -251,8 +287,26 @@ describeWithSeed(
   }
 );
 
+describe('rekeyFallbackLimits', () => {
+  it('takes numbers of 0 or more from the environment, else the defaults', () => {
+    expect(rekeyFallbackLimits({})).toEqual({ maxStale: 50, maxStalePct: 5 });
+    expect(
+      rekeyFallbackLimits({
+        SUBSCRIPTIONS_REKEY_MAX_STALE: '2000',
+        SUBSCRIPTIONS_REKEY_MAX_STALE_PCT: '40.5'
+      })
+    ).toEqual({ maxStale: 2000, maxStalePct: 40.5 });
+    expect(
+      rekeyFallbackLimits({
+        SUBSCRIPTIONS_REKEY_MAX_STALE: 'many',
+        SUBSCRIPTIONS_REKEY_MAX_STALE_PCT: '-1'
+      })
+    ).toEqual({ maxStale: 50, maxStalePct: 5 });
+  });
+});
+
 describe('rekeyHaltReason', () => {
-  const limits = { maxStale: 50, maxShare: 0.05 };
+  const limits = { maxStale: 50, maxStalePct: 5 };
 
   it('stops above 50 stale keys, or above 5% of the keys', () => {
     expect(rekeyHaltReason(50, 10_000, limits)).toBeNull();

@@ -3015,6 +3015,14 @@ balances, so:
 - a key is re-keyed only when it was stale on the run before too, so each
   is logged a run before anything changes it.
 
+`SUBSCRIPTIONS_REKEY_MAX_STALE` (a count) and
+`SUBSCRIPTIONS_REKEY_MAX_STALE_PCT` (a percentage of the keys) replace the
+two limits; each run's log line shows the limits in force. Raise them for
+a planned regrouping: when a run halts after the mirror first fills the
+table at the identity switch-on, set them above the stale count its alert
+line gives. Unset them once a run logs `"stale":0`. The two-run rule and
+the alerts hold at any limits.
+
 A key whose re-key the key-width guard already holds back is left to the
 guard's replay. A key still stale after three re-keys alerts
 (`SUBSCRIPTIONS_REKEY_STUCK`), and again about hourly. A failure is logged

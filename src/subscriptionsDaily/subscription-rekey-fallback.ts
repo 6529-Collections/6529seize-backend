@@ -19,15 +19,49 @@ const STATE_ID = 'fallback';
  */
 export const REKEY_FALLBACK_INTERVAL_MS = 4.5 * 60 * 1000;
 
+/** Stale keys above which a run stops: a count, and a percentage of the keys. */
+export interface RekeyFallbackLimits {
+  readonly maxStale: number;
+  readonly maxStalePct: number;
+}
+
 /**
  * Above either limit a run changes nothing and alerts: that many stale keys
  * at once more likely means the mirror's table is partial than that people
- * regrouped their wallets.
+ * regrouped their wallets. A planned regrouping (the identity switch-on)
+ * raises them for a while through SUBSCRIPTIONS_REKEY_MAX_STALE and
+ * SUBSCRIPTIONS_REKEY_MAX_STALE_PCT.
  */
-export const REKEY_FALLBACK_LIMITS = {
+export const REKEY_FALLBACK_LIMITS: RekeyFallbackLimits = {
   maxStale: 50,
-  maxShare: 0.05
-} as const;
+  maxStalePct: 5
+};
+
+function limitFrom(value: string | undefined): number | null {
+  if (value === undefined || value.trim() === '') {
+    return null;
+  }
+  const limit = Number(value);
+  return Number.isFinite(limit) && limit >= 0 ? limit : null;
+}
+
+/**
+ * The limits in force: SUBSCRIPTIONS_REKEY_MAX_STALE and
+ * SUBSCRIPTIONS_REKEY_MAX_STALE_PCT where set to a number of 0 or more,
+ * else REKEY_FALLBACK_LIMITS.
+ */
+export function rekeyFallbackLimits(
+  env: Readonly<Record<string, string | undefined>> = process.env
+): RekeyFallbackLimits {
+  return {
+    maxStale:
+      limitFrom(env.SUBSCRIPTIONS_REKEY_MAX_STALE) ??
+      REKEY_FALLBACK_LIMITS.maxStale,
+    maxStalePct:
+      limitFrom(env.SUBSCRIPTIONS_REKEY_MAX_STALE_PCT) ??
+      REKEY_FALLBACK_LIMITS.maxStalePct
+  };
+}
 
 /** A key still stale after this many re-keys alerts, and then about hourly. */
 export const REKEY_FALLBACK_STUCK_AFTER = 3;
@@ -52,6 +86,8 @@ export interface RekeyFallbackRun {
   readonly stuck: number;
   /** Why the run stopped at a limit, changing nothing; null otherwise. */
   readonly halted: string | null;
+  /** The limits in force for this run. */
+  readonly limits: RekeyFallbackLimits;
 }
 
 /**
@@ -119,13 +155,13 @@ async function heldBackKeys(): Promise<Set<string>> {
 export function rekeyHaltReason(
   stale: number,
   keys: number,
-  limits: { readonly maxStale: number; readonly maxShare: number }
+  limits: RekeyFallbackLimits
 ): string | null {
   if (stale > limits.maxStale) {
     return `${stale} stale keys, above the limit of ${limits.maxStale}`;
   }
-  if (stale > keys * limits.maxShare) {
-    return `${stale} of ${keys} keys stale, above ${limits.maxShare * 100}%`;
+  if (stale * 100 > keys * limits.maxStalePct) {
+    return `${stale} of ${keys} keys stale, above ${limits.maxStalePct}%`;
   }
   return null;
 }
@@ -216,10 +252,11 @@ function alertStuck(stuck: string[], runs: Record<string, number>): void {
  *
  * Guards against a partial mirror table:
  * - a wallet with no row is skipped, not taken as its own key;
- * - above REKEY_FALLBACK_LIMITS stale keys the run logs them, alerts
- *   (SUBSCRIPTIONS_REKEY_HALTED) and changes nothing;
- * - a key is re-keyed only when it was stale on the run before too, so
- *   every key is logged a run before anything changes it.
+ * - above the limits in force (rekeyFallbackLimits) the run logs the stale
+ *   keys, alerts (SUBSCRIPTIONS_REKEY_HALTED) and changes nothing;
+ * - whatever the limits, a key is re-keyed only when it was stale on the
+ *   run before too, so every key is logged a run before anything changes
+ *   it.
  *
  * A key whose re-key the key-width guard already holds back is left to the
  * guard's replay. A key still stale after REKEY_FALLBACK_STUCK_AFTER
@@ -229,10 +266,7 @@ function alertStuck(stuck: string[], runs: Record<string, number>): void {
 export async function rekeyStaleSubscriptions(
   rekey: (wallets: Set<string>) => Promise<unknown>,
   nowMs: number = Date.now(),
-  limits: {
-    readonly maxStale: number;
-    readonly maxShare: number;
-  } = REKEY_FALLBACK_LIMITS
+  limits: RekeyFallbackLimits = rekeyFallbackLimits()
 ): Promise<RekeyFallbackRun | null> {
   const previous = await claimRun(nowMs);
   if (previous === null) {
@@ -248,11 +282,7 @@ export async function rekeyStaleSubscriptions(
       stale.length > HALT_LOG_MAX_KEYS
         ? ` and ${stale.length - HALT_LOG_MAX_KEYS} more`
         : '';
-    logger.errorWithCode(
-      'SUBSCRIPTIONS_REKEY_HALTED',
-      `[REKEY FALLBACK HALTED] ${halted}; nothing re-keyed. Stale keys: ${listed}${more}`
-    );
-    return {
+    const run: RekeyFallbackRun = {
       keys,
       stale: stale.length,
       waiting: 0,
@@ -260,8 +290,14 @@ export async function rekeyStaleSubscriptions(
       rekeyed: 0,
       wallets: 0,
       stuck: 0,
-      halted
+      halted,
+      limits
     };
+    logger.errorWithCode(
+      'SUBSCRIPTIONS_REKEY_HALTED',
+      `[REKEY FALLBACK HALTED] ${JSON.stringify(run)} nothing re-keyed. Stale keys: ${listed}${more}`
+    );
+    return run;
   }
   const held = stale.length > 0 ? await heldBackKeys() : new Set<string>();
   const runs: Record<string, number> = {};
@@ -284,11 +320,9 @@ export async function rekeyStaleSubscriptions(
     rekeyed: ready.length,
     wallets: wallets.size,
     stuck: stuck.length,
-    halted: null
+    halted: null,
+    limits
   };
-  if (run.stale === 0) {
-    return run;
-  }
   logger.info(
     `[REKEY FALLBACK] ${JSON.stringify(run)}${
       firstSeen.length > 0
