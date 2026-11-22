@@ -16,9 +16,9 @@ export class AppFeatures {
   }
 
   /**
-   * Replays subscription writes queued because their consolidation key was
-   * longer than a table's key column (subscription-key-width), once the key
-   * fits. Rollback: unset it; the queue keeps the writes.
+   * Replays subscription writes held back by the key-width guard
+   * (subscription-key-width) once their key fits every subscription table,
+   * in order per key. Rollback: unset it; the queue keeps the writes.
    */
   public isSubscriptionDeferredReplayEnabled(): boolean {
     return this.isFeatureEnabled('SUBSCRIPTION_DEFERRED_REPLAY');

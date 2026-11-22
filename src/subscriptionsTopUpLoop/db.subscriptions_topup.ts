@@ -19,9 +19,10 @@ import {
 } from '../subscription-wave-notifier';
 import { sqlExecutor } from '../sql-executor';
 import {
+  claimDeferredWrite,
+  deferralReason,
   deferSubscriptionWrites,
-  executorSink,
-  narrowColumnsFor
+  executorSink
 } from '@/subscription-key-width/subscription-deferred-writes';
 import { markSubscriptionCoverageDirty } from '../subscription-coverage/subscription-coverage-dirty';
 import { invalidateUpcomingSubscriptionCaches } from '@/subscriptionsDaily/subscription-cache';
@@ -34,15 +35,31 @@ const logger = Logger.get('SUBSCRIPTIONS_TOP_UP_DB');
 
 const SUBSCRIPTIONS_TOP_UP_LATEST_BLOCK_ID = 'subscription_top_up_latest_block';
 
-export async function persistTopUps(topUps: SubscriptionTopUp[]) {
+/**
+ * Credits top-ups to their consolidation keys. With `replaySequence` it
+ * replays one queued top-up: the queue entry is claimed in the same
+ * transaction, and false is returned when another run had claimed it.
+ */
+export async function persistTopUps(
+  topUps: SubscriptionTopUp[],
+  options: { readonly replaySequence?: number } = {}
+): Promise<boolean> {
   const processedTopUps: SubscriptionTopUp[] = [];
   const alreadyProcessedTopUpHashes: string[] = [];
   const dirtyConsolidationKeys = new Set<string>();
+  let claimed = true;
   await sqlExecutor.executeNativeQueriesInTransaction(async (qrHolder) => {
     const queryRunner = qrHolder.connection as QueryRunner;
     const manager = queryRunner.manager;
     const balancesRepo = manager.getRepository(SubscriptionBalance);
     const topUpsRepo = manager.getRepository(SubscriptionTopUp);
+    const sink = executorSink({ wrappedConnection: qrHolder });
+    if (options.replaySequence !== undefined) {
+      claimed = await claimDeferredWrite(options.replaySequence, 'DONE', sink);
+      if (!claimed) {
+        return;
+      }
+    }
 
     for (const topUp of topUps) {
       const isProcessed = await isTopUpProcessed(topUp.hash, manager);
@@ -64,20 +81,26 @@ export async function persistTopUps(topUps: SubscriptionTopUp[]) {
         consolidationKey = topUp.from_wallet;
       }
 
-      // A key the balance, mode or log tables can't hold is queued whole
-      // (no balance, no top-up row), so the top-up is applied once it fits.
-      const narrow = await narrowColumnsFor('TOP_UP', consolidationKey);
-      if (narrow.length) {
+      // A key that must wait (too long for a subscription table, or with
+      // earlier writes waiting) has the whole top-up queued: no balance and
+      // no top-up row, so the top-up is applied, once, when it is replayed.
+      const reason = await deferralReason(
+        consolidationKey,
+        sink,
+        options.replaySequence
+      );
+      if (reason) {
         await deferSubscriptionWrites(
           [
             {
               kind: 'TOP_UP',
               consolidationKey,
+              dedupe: topUp.hash,
               payload: { topUp },
-              narrow
+              reason
             }
           ],
-          executorSink({ wrappedConnection: qrHolder })
+          sink
         );
         continue;
       }
@@ -145,6 +168,7 @@ export async function persistTopUps(topUps: SubscriptionTopUp[]) {
       etherscanLink: link
     });
   }
+  return claimed;
 }
 
 /**

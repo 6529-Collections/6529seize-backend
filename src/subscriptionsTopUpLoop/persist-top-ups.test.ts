@@ -206,23 +206,100 @@ describe('first top-up for a consolidation without a balance', () => {
   });
 });
 
-it('queues a top-up whose key the balance table cannot hold and applies none of it', async () => {
+describe('keys that must wait', () => {
   const longKey = [1, 2, 3, 4, 5]
     .map((n) => `0x${String(n).padStart(40, '0')}`)
     .join('-');
-  manager.query.mockResolvedValue([{ consolidation_key: longKey }]);
+  let claimRows: unknown[];
+  let pendingRows: unknown[];
 
-  await persistTopUps([topUp]);
+  beforeEach(() => {
+    claimRows = [{ replayed_at: null }];
+    pendingRows = [];
+    jest.mocked(sqlExecutor.execute).mockImplementation((async (
+      sql: string
+    ) => {
+      if (sql.includes('FOR UPDATE')) {
+        return claimRows;
+      }
+      if (sql.includes('replayed_at IS NULL')) {
+        return pendingRows;
+      }
+      // The column widths can't be read here, so every key column counts
+      // as the pre-migration 200 characters.
+      return undefined;
+    }) as never);
+  });
 
-  expect(balancesRepo.save).not.toHaveBeenCalled();
-  expect(topUpsRepo.save).not.toHaveBeenCalled();
-  expect(updateSubscriptionMode).not.toHaveBeenCalled();
-  expect(sqlExecutor.execute).toHaveBeenCalledWith(
-    expect.stringContaining('INSERT INTO subscription_deferred_writes'),
-    expect.objectContaining({ p1: 'TOP_UP', p2: longKey, p3: longKey.length }),
-    { wrappedConnection: connection }
-  );
-  expect(events).toEqual(['commit', 'evict']);
-  expect(sendDiscordUpdate).not.toHaveBeenCalled();
-  expect(sendSubscriptionTopUpWaveUpdate).not.toHaveBeenCalled();
+  const queued = () =>
+    jest
+      .mocked(sqlExecutor.execute)
+      .mock.calls.filter(([sql]) =>
+        sql.includes('INSERT INTO subscription_deferred_writes')
+      );
+
+  it('queues a top-up whose key a subscription table cannot hold and applies none of it', async () => {
+    manager.query.mockResolvedValue([{ consolidation_key: longKey }]);
+
+    await expect(persistTopUps([topUp])).resolves.toBe(true);
+
+    expect(balancesRepo.save).not.toHaveBeenCalled();
+    expect(topUpsRepo.save).not.toHaveBeenCalled();
+    expect(updateSubscriptionMode).not.toHaveBeenCalled();
+    expect(queued()).toHaveLength(1);
+    expect(queued()[0][1]).toEqual(
+      expect.objectContaining({
+        p0: 'TOP_UP',
+        p1: longKey,
+        p3: longKey.length
+      })
+    );
+    expect(queued()[0][2]).toEqual({ wrappedConnection: connection });
+    expect(events).toEqual(['commit', 'evict']);
+    expect(sendDiscordUpdate).not.toHaveBeenCalled();
+    expect(sendSubscriptionTopUpWaveUpdate).not.toHaveBeenCalled();
+  });
+
+  it('queues a top-up for a key that fits while the key has earlier writes waiting', async () => {
+    pendingRows = [{ sequence: 1 }];
+
+    await persistTopUps([topUp]);
+
+    expect(balancesRepo.save).not.toHaveBeenCalled();
+    expect(topUpsRepo.save).not.toHaveBeenCalled();
+    expect(queued()).toHaveLength(1);
+    expect(queued()[0][1]).toEqual(
+      expect.objectContaining({ p0: 'TOP_UP', p1: 'wallet' })
+    );
+  });
+
+  it('replays a queued top-up once: claimed and credited in one transaction', async () => {
+    await expect(persistTopUps([topUp], { replaySequence: 7 })).resolves.toBe(
+      true
+    );
+
+    const calls = jest.mocked(sqlExecutor.execute).mock.calls;
+    const claim = calls.findIndex(([sql]) => sql.includes('FOR UPDATE'));
+    expect(calls[claim][1]).toEqual({ p0: 7 });
+    expect(calls[claim + 1][0]).toContain('SET replayed_at');
+    // Only entries queued before this one hold it back.
+    const pending = calls.find(([sql]) => sql.includes('replayed_at IS NULL'));
+    expect(pending?.[0]).toContain('sequence < ');
+    expect(balancesRepo.save).toHaveBeenCalledTimes(1);
+    expect(topUpsRepo.save).toHaveBeenCalledWith(topUp);
+    expect(events).toEqual(['commit', 'evict']);
+  });
+
+  it('makes no write for an entry another run already claimed', async () => {
+    claimRows = [{ replayed_at: 5 }];
+
+    await expect(persistTopUps([topUp], { replaySequence: 7 })).resolves.toBe(
+      false
+    );
+
+    expect(manager.query).not.toHaveBeenCalled();
+    expect(balancesRepo.save).not.toHaveBeenCalled();
+    expect(topUpsRepo.save).not.toHaveBeenCalled();
+    expect(sendDiscordUpdate).not.toHaveBeenCalled();
+  });
 });

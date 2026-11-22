@@ -33,9 +33,12 @@ import {
 } from './db.transactions_processing';
 import { markSubscriptionCoverageDirty } from '../subscription-coverage/subscription-coverage-dirty';
 import {
+  claimDeferredWrite,
+  deferralReason,
   deferSubscriptionWrites,
-  narrowColumnsFor
+  replayDeferredSubscriptionWrites
 } from '@/subscription-key-width/subscription-deferred-writes';
+import { appFeatures } from '@/app-features';
 
 const logger = Logger.get('TRANSACTIONS_PROCESSING_SUBSCRIPTIONS');
 
@@ -57,6 +60,9 @@ type SubscriptionWaveNotification =
     };
 
 export const redeemSubscriptions = async (reset?: boolean) => {
+  if (appFeatures.isSubscriptionDeferredReplayEnabled()) {
+    await replayDeferredRedemptions();
+  }
   const blockRepo = getDataSource().getRepository(
     TransactionsProcessedSubscriptionsBlock
   );
@@ -141,7 +147,8 @@ export async function processAirdrop(
       transaction,
       entityManager,
       waveNotifications,
-      dirtyConsolidationKeys
+      dirtyConsolidationKeys,
+      { tokenIndex: i }
     );
   }
 }
@@ -235,11 +242,19 @@ export async function validateNonSubscriptionAirdrop(
   };
 }
 
+interface RedemptionOptions {
+  /** Which token of the transaction this is, from 0. */
+  readonly tokenIndex: number;
+  /** For a replayed token: only writes queued before it hold it back. */
+  readonly beforeSequence?: number;
+}
+
 async function processSubscription(
   transaction: Transaction,
   entityManager: EntityManager,
   waveNotifications: SubscriptionWaveNotification[],
-  dirtyConsolidationKeys?: Set<string>
+  dirtyConsolidationKeys: Set<string> | undefined,
+  options: RedemptionOptions
 ) {
   const finalSubscription: NFTFinalSubscription | undefined = (
     await entityManager.query(
@@ -255,10 +270,11 @@ async function processSubscription(
 
   if (
     finalSubscription &&
-    (await deferRedemptionForKeyWidth(
+    (await deferRedemption(
       transaction,
       finalSubscription,
-      entityManager
+      entityManager,
+      options
     ))
   ) {
     return;
@@ -355,20 +371,23 @@ async function processSubscription(
 }
 
 /**
- * A redemption whose key a balance, redeemed or final table can't hold is
- * queued whole, one token per entry: no balance change, no redeemed row and
- * no redeemed count until it is replayed.
+ * A redemption whose key must wait (too long for a subscription table, or
+ * with earlier writes waiting) is queued whole, one token per entry: no
+ * balance change, no redeemed row and no redeemed count until it is
+ * replayed.
  */
-async function deferRedemptionForKeyWidth(
+async function deferRedemption(
   transaction: Transaction,
   finalSubscription: NFTFinalSubscription,
-  entityManager: EntityManager
+  entityManager: EntityManager,
+  options: RedemptionOptions
 ): Promise<boolean> {
-  const narrow = await narrowColumnsFor(
-    'REDEMPTION',
-    finalSubscription.consolidation_key
+  const reason = await deferralReason(
+    finalSubscription.consolidation_key,
+    entityManager,
+    options.beforeSequence
   );
-  if (narrow.length === 0) {
+  if (!reason) {
     return false;
   }
   await deferSubscriptionWrites(
@@ -376,32 +395,62 @@ async function deferRedemptionForKeyWidth(
       {
         kind: 'REDEMPTION',
         consolidationKey: finalSubscription.consolidation_key,
-        payload: { transaction },
-        narrow
+        dedupe: [
+          transaction.transaction,
+          transaction.to_address,
+          transaction.contract,
+          transaction.token_id,
+          options.tokenIndex
+        ]
+          .join('|')
+          .toLowerCase(),
+        payload: { transaction, tokenIndex: options.tokenIndex },
+        reason
       }
     ],
-    { query: (sql, values) => entityManager.query(sql, values) }
+    entityManager
   );
   return true;
 }
 
 /**
- * Replays one deferred redemption token through the normal matching, in its
- * own transaction. Notices go to the wave as in the loop.
+ * Replays queued redemption tokens whose key now fits, in queue order. Each
+ * token is matched and charged by the normal path and its queue entry is
+ * claimed in the same transaction, so a token is charged once.
  */
-export async function redeemDeferredToken(
-  transaction: Transaction
-): Promise<void> {
+async function replayDeferredRedemptions(): Promise<void> {
   const waveNotifications: SubscriptionWaveNotification[] = [];
   const dirtyConsolidationKeys = new Set<string>();
-  await getDataSource().transaction(async (entityManager) => {
-    await processSubscription(
-      transaction,
-      entityManager,
-      waveNotifications,
-      dirtyConsolidationKeys
-    );
-  });
+  try {
+    const summary = await replayDeferredSubscriptionWrites({
+      REDEMPTION: async (write) => {
+        const { transaction, tokenIndex } = write.payload as {
+          transaction: Transaction;
+          tokenIndex: number;
+        };
+        return getDataSource().transaction(async (entityManager) => {
+          if (
+            !(await claimDeferredWrite(write.sequence, 'DONE', entityManager))
+          ) {
+            return null;
+          }
+          await processSubscription(
+            transaction,
+            entityManager,
+            waveNotifications,
+            dirtyConsolidationKeys,
+            { tokenIndex, beforeSequence: write.sequence }
+          );
+          return 'DONE';
+        });
+      }
+    });
+    if (summary.done || summary.failed) {
+      logger.info(`[DEFERRED REDEMPTIONS REPLAYED] ${JSON.stringify(summary)}`);
+    }
+  } catch (error) {
+    logger.error('[DEFERRED REDEMPTIONS REPLAY FAILED]', error);
+  }
   await markSubscriptionCoverageDirty(
     Array.from(dirtyConsolidationKeys),
     'SUBSCRIPTION_REDEEMED'

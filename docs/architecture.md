@@ -2940,24 +2940,58 @@ adds no persisted case table, queue, service or background reconciliation.
 ## Subscription key width guard
 
 Subscription tables key rows by the consolidation key, the identity's wallets
-joined by `-`. Until the key-width migration widens those columns, and for
-identities whose key is still longer than a widened column (`subscriptions_nfts`
-and `subscriptions_nfts_final` hold 666 characters, `subscriptions_redeemed`
-567: 14 to 16 wallets), a subscription write is never truncated and never fails
-its batch. Each writer reads the actual column widths from
-`information_schema` (cached for five minutes, 200 when the read fails) and,
-for a key that does not fit, writes the whole operation as JSON to
-`subscription_deferred_writes` in the same transaction and logs
-`SUBSCRIPTION_KEY_DEFERRED`. The guarded writers are the daily final-list and
-automatic-row batches and their log lines, subscribe and count changes, mode
-and edition changes, top-ups, redemptions (one token per entry, so balance,
-redeemed row and redeemed count move together), and consolidation re-keys.
-Coverage dirty markers for such keys are skipped, since coverage is recomputed.
+joined by `-`. Before the key-width migration every key column holds 200
+characters; after it, `subscriptions_nfts` and `subscriptions_nfts_final` hold
+666 and `subscriptions_redeemed` 567, so identities of 14 to 16 wallets still
+do not fit. A subscription write is never truncated, never fails its batch and
+never half made.
 
-With `FEATURE_SUBSCRIPTION_DEFERRED_REPLAY=true`, the `subscriptionsTopUpLoop`
-replays queued writes whose key now fits, oldest first, through the original
-code paths; a write that no longer applies (a closed or dropped card) is marked
+**One rule for every writer.** A key is written only when every subscription
+table that stores it (balances, mode, nfts, nfts_final, logs, redeemed) can
+hold it, and only when the key has no earlier write still queued. Otherwise
+the whole write waits in `subscription_deferred_writes`, written in the
+writer's own transaction and logged with `SUBSCRIPTION_KEY_DEFERRED`. An
+identity is therefore either fully on the legacy tables or fully waiting: it
+is never on a final list without a balance to charge. Widths come from
+`information_schema`, cached for five minutes; a failed read keeps the last
+widths read (200 if none were).
+
+- Daily build: a waiting key's final row, automatic row and every log line
+  wait together, and the published list is built after that split, so the
+  file and the table hold the same subscribers.
+- API: subscribe, count, mode and edition changes for a waiting key answer
+  400 with when changes resume ("Subscriptions for identities with more than
+  13 wallets resume on ..."), read from `SUBSCRIPTIONS_WIDE_IDENTITY_RESUME_ON`.
+  Nothing is queued for them.
+- Top-ups: the balance and the top-up row wait together.
+- Redemptions: one entry per token; balance, redeemed row and redeemed count
+  move together.
+- Consolidation: a re-key to a waiting key waits; the old keys keep their rows.
+- Coverage markers for keys that do not fit are skipped; coverage is
+  recomputed.
+
+**Queue.** `sequence` orders the entries; `dedupe_key` keeps one entry per
+write, so a re-run of the daily build or a retried batch replaces its entry
+instead of adding one. `key_hash` finds a key's waiting entries.
+
+**Replay.** With `FEATURE_SUBSCRIPTION_DEFERRED_REPLAY=true` (off by default),
+the `subscriptionsTopUpLoop` replays waiting writes whose key now fits, in
+queue order, paging through the whole queue; redemptions are replayed by the
+transactions loop inside its own redemption transaction. Each replay claims
+its entry (row lock, then mark) in the transaction that makes the write, so a
+write is made once and a failed write leaves its entry waiting. Once one of a
+key's entries cannot be replayed, the key's later entries wait too. A write
+that no longer applies (a card already dropped, a row already there) is marked
 skipped. Rollback: unset the flag; the queue keeps every write.
+
+**Rebuild.** Every entry can be derived again from its source: top-ups from
+Ethereum (the top-up loop skips hashes already credited), redemptions from the
+airdrop in the `transactions` table (the redemption loop charges it again when
+its cursor is set back before the airdrop's block; it re-charges every later
+airdrop too, so this is safe only when the lost airdrop is the last one), final
+and automatic rows and logs by the next daily build, and consolidations by the
+next membership change. A key with a final row always fits every table, so a
+redemption waits only after the key columns are narrowed again.
 
 ## Cross-wave message search
 

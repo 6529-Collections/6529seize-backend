@@ -15,7 +15,7 @@ import { doInDbContext } from '../secrets';
 import * as sentryContext from '../sentry.context';
 import { discoverTopUps } from './subscription_topups';
 import { appFeatures } from '../app-features';
-import { replayDeferredSubscriptionWritesNow } from '../subscription-key-width/subscription-deferred-replay';
+import { replayTopUpLoopDeferredWrites } from '../subscription-key-width/subscription-deferred-replay';
 
 const logger = Logger.get('SUBSCRIPTIONS_TOP_UP_LOOP');
 const ALERT_TITLE = 'Subscriptions TopUp Loop';
@@ -23,7 +23,7 @@ const ALERT_TITLE = 'Subscriptions TopUp Loop';
 /** A failed replay is logged and never stops the top-up scan. */
 async function replayDeferredWrites() {
   try {
-    const summary = await replayDeferredSubscriptionWritesNow();
+    const summary = await replayTopUpLoopDeferredWrites();
     if (summary.done || summary.skipped || summary.failed) {
       logger.info(`[DEFERRED WRITES REPLAYED] ${JSON.stringify(summary)}`);
     }

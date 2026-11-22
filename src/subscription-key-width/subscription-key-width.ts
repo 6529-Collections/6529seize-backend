@@ -19,7 +19,7 @@ const CACHE_TTL_MS = 5 * 60 * 1000;
 const FAILURE_TTL_MS = 60 * 1000;
 
 /** Every subscription table with a `consolidation_key` column. */
-export const SUBSCRIPTION_KEY_TABLES = [
+const SUBSCRIPTION_KEY_TABLES = [
   SUBSCRIPTIONS_BALANCES_TABLE,
   SUBSCRIPTIONS_MODE_TABLE,
   SUBSCRIPTIONS_NFTS_TABLE,
@@ -35,17 +35,19 @@ export interface NarrowColumn {
   readonly width: number;
 }
 
-export type WidthLoader = () => Promise<Map<string, number>>;
+type WidthLoader = () => Promise<Map<string, number>>;
 
 /**
  * The width of each subscription table's key column, read from the
  * database's own catalogue and cached, so writers follow the key-width
- * migration as soon as it is applied. A table the catalogue does not list,
- * or a failed read, counts as the old width of 200.
+ * migration as soon as it is applied. A table the catalogue does not list
+ * counts as the old width of 200. A failed read keeps the last widths read,
+ * or 200 if none were, and is retried a minute later.
  */
 export class SubscriptionKeyWidths {
   private cache: { widths: Map<string, number>; expiresAtMs: number } | null =
     null;
+  private lastGood: Map<string, number> | null = null;
 
   constructor(
     private readonly load: WidthLoader,
@@ -86,14 +88,17 @@ export class SubscriptionKeyWidths {
     }
     try {
       const widths = await this.load();
+      this.lastGood = widths;
       this.cache = { widths, expiresAtMs: this.now() + CACHE_TTL_MS };
     } catch (error) {
       logger.warn(
-        `Could not read the subscription key column widths; using ${SUBSCRIPTION_KEY_FALLBACK_WIDTH}`,
+        this.lastGood
+          ? 'Could not read the subscription key column widths; keeping the last widths read'
+          : `Could not read the subscription key column widths; using ${SUBSCRIPTION_KEY_FALLBACK_WIDTH}`,
         error
       );
       this.cache = {
-        widths: new Map(),
+        widths: this.lastGood ?? new Map(),
         expiresAtMs: this.now() + FAILURE_TTL_MS
       };
     }

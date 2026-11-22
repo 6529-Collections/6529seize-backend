@@ -48,10 +48,9 @@ import {
 import { markSubscriptionCoverageDirty } from '@/subscription-coverage/subscription-coverage-dirty';
 import { synchronizeAutomaticSubscriptionQuantities } from '@/subscriptionsDaily/subscription-quantity-sync.db';
 import {
-  deferSubscriptionWrites,
-  DeferredWriteKind,
-  executorSink,
-  narrowColumnsFor
+  deferralMessage,
+  deferralReason,
+  executorSink
 } from '@/subscription-key-width/subscription-deferred-writes';
 import {
   hasMinimumBalanceForAutomaticMode,
@@ -146,24 +145,18 @@ export async function fetchConsolidationAddresses(
 }
 
 /**
- * Queues the write when the consolidation key is longer than a table it
- * writes to can hold (see subscription-key-width). Returns true when queued.
+ * Refuses a change for a key whose subscription writes must wait: the key
+ * does not fit every subscription table (an identity of more wallets than
+ * the key columns hold), or the key has earlier writes still queued. The
+ * person is told when changes resume; nothing is queued for them.
  */
-async function deferredForKeyWidth(
-  kind: DeferredWriteKind,
-  consolidationKey: string,
-  payload: Record<string, unknown>,
-  connection?: any
-): Promise<boolean> {
-  const narrow = await narrowColumnsFor(kind, consolidationKey);
-  if (narrow.length === 0) {
-    return false;
+async function assertSubscriptionKeyWritable(
+  consolidationKey: string
+): Promise<void> {
+  const reason = await deferralReason(consolidationKey, executorSink());
+  if (reason) {
+    throw new BadRequestException(await deferralMessage(reason));
   }
-  await deferSubscriptionWrites(
-    [{ kind, consolidationKey, payload, narrow }],
-    executorSink(connection ? { wrappedConnection: connection } : undefined)
-  );
-  return true;
 }
 
 export async function updateSubscriptionMode(
@@ -171,6 +164,11 @@ export async function updateSubscriptionMode(
   automatic: boolean,
   connection?: any
 ) {
+  // A caller with its own transaction (the first top-up) has already
+  // checked the key as part of its own write.
+  if (!connection) {
+    await assertSubscriptionKeyWritable(consolidationKey);
+  }
   if (automatic) {
     const balance = await getForConsolidationKey(
       consolidationKey,
@@ -181,17 +179,6 @@ export async function updateSubscriptionMode(
     if (!hasMinimumBalanceForAutomaticMode(balance?.balance)) {
       throw new InsufficientSubscriptionBalanceException();
     }
-  }
-
-  if (
-    await deferredForKeyWidth(
-      'MODE',
-      consolidationKey,
-      { automatic },
-      connection
-    )
-  ) {
-    return { consolidation_key: consolidationKey, automatic, deferred: true };
   }
 
   if (connection) {
@@ -319,19 +306,8 @@ export async function updateSubscribeAllEditions(
   subscribe_all_editions: boolean,
   connection?: any
 ) {
-  if (
-    await deferredForKeyWidth(
-      'ALL_EDITIONS',
-      consolidationKey,
-      { subscribe_all_editions },
-      connection
-    )
-  ) {
-    return {
-      consolidation_key: consolidationKey,
-      subscribe_all_editions,
-      deferred: true
-    };
+  if (!connection) {
+    await assertSubscriptionKeyWritable(consolidationKey);
   }
   if (connection) {
     await updateSubscribeAllEditionsInternal(
@@ -506,6 +482,7 @@ export async function updateSubscription(
   tokenId: number,
   subscribed: boolean
 ) {
+  await assertSubscriptionKeyWritable(consolidationKey);
   if (subscribed) {
     const balance = await getForConsolidationKey(
       consolidationKey,
@@ -525,23 +502,6 @@ export async function updateSubscription(
     await fetchSubscriptionEligibility(consolidationKey);
   if (mode?.subscribe_all_editions) {
     subscribedCount = subscriptionEligibility;
-  }
-
-  if (
-    await deferredForKeyWidth('SUBSCRIPTION', consolidationKey, {
-      contract,
-      token_id: tokenId,
-      subscribed
-    })
-  ) {
-    return {
-      consolidation_key: consolidationKey,
-      contract,
-      token_id: tokenId,
-      subscribed,
-      subscribed_count: subscribedCount,
-      deferred: true
-    };
   }
 
   await sqlExecutor.executeNativeQueriesInTransaction(
@@ -599,6 +559,7 @@ export async function updateSubscriptionCount(
   tokenId: number,
   count: number
 ) {
+  await assertSubscriptionKeyWritable(consolidationKey);
   await assertSubscriptionOpen(tokenId);
 
   const subscription = await fetchSubscriptionForConsolidationKey(
@@ -630,22 +591,6 @@ export async function updateSubscriptionCount(
     throw new BadRequestException(
       `Not enough balance to subscribe for ${count} editions. Need at least ${requiredBalance} ETH.`
     );
-  }
-
-  if (
-    await deferredForKeyWidth('SUBSCRIPTION_COUNT', consolidationKey, {
-      contract,
-      token_id: tokenId,
-      count
-    })
-  ) {
-    return {
-      consolidation_key: consolidationKey,
-      contract,
-      token_id: tokenId,
-      count,
-      deferred: true
-    };
   }
 
   await sqlExecutor.executeNativeQueriesInTransaction(
