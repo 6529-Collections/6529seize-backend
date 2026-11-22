@@ -175,9 +175,15 @@ function collectHex(
   }
 }
 
-/** The gateway no longer (or not yet) holds a pinned height. */
+/**
+ * A read the page can't use: the gateway no longer (or not yet) holds the
+ * pinned height, or answered from another chain's node.
+ */
 function isHeightGone(error: unknown): boolean {
-  return error instanceof ChainGatewayError && error.code === 'height_gone';
+  return (
+    error instanceof ChainGatewayError &&
+    (error.code === 'height_gone' || error.code === 'wrong_network')
+  );
 }
 
 export type RetryKind = keyof MirrorRetry;
@@ -839,8 +845,8 @@ export class IdentityChainMirror {
 
   /**
    * Runs work whose reads are pinned; false when the gateway no longer (or
-   * not yet) holds the pinned height: the run stops there, to go on from the
-   * same place next time.
+   * not yet) holds the pinned height, or answers from another chain: the run
+   * stops there, to go on from the same place next time.
    */
   private async unlessHeightGone(work: () => Promise<void>): Promise<boolean> {
     try {
@@ -848,7 +854,9 @@ export class IdentityChainMirror {
       return true;
     } catch (error) {
       if (!isHeightGone(error)) throw error;
-      logger.warn(`[PINNED HEIGHT ${this.readAt} GONE] [NEXT RUN]`);
+      logger.warn(
+        `[PINNED READ AT ${this.readAt} REFUSED] [${messageOf(error)}] [NEXT RUN]`
+      );
       return false;
     }
   }
@@ -856,8 +864,9 @@ export class IdentityChainMirror {
   /**
    * Runs one key's work. A failure is logged and reported, not thrown, and
    * the key is kept to try again; a success takes it off, but for the kinds
-   * the work says are left (written in part). A pinned height the gateway
-   * no longer holds is thrown: the whole page is read again.
+   * the work says are left (written in part). A pinned read the gateway
+   * refuses (height gone, another chain) is thrown: the whole page is read
+   * again.
    */
   private async isolated(
     kinds: RetryKind[],

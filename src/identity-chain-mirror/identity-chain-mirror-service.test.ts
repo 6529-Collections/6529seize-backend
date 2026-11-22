@@ -1352,7 +1352,7 @@ describe('IdentityChainMirror', () => {
     ]);
   });
 
-  it('stops without moving on when the pinned height is gone, and fails nothing', async () => {
+  it('stops without moving on when a pinned read is refused, and fails nothing', async () => {
     const { mirror, db, chain, alice, bob, gateway } = world();
     await mirror.run({ budgetMs: 60_000 });
     chain.feed.push({
@@ -1381,7 +1381,16 @@ describe('IdentityChainMirror', () => {
     gateway.getIdentityByPrincipal.mockRejectedValueOnce(gone);
     const failing = [
       () => undefined,
-      () => gateway.getRatings.mockRejectedValueOnce(gone)
+      () => gateway.getRatings.mockRejectedValueOnce(gone),
+      () =>
+        gateway.getRatings.mockRejectedValueOnce(
+          new ChainGatewayError(
+            'another chain',
+            200,
+            'wrong_network',
+            '/v1/ratings'
+          )
+        )
     ];
     for (const setUp of failing) {
       setUp();
