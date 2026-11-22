@@ -1,6 +1,7 @@
 export const IDENTITY_EXPORT_HELP = `Usage: 6529 run identity:export -- --out FILE --revision HEX
          (--freeze-at TIME | --no-freeze) (--extra-ids FILE | --no-extra-ids)
          [--expect-tdh-block N] [--bulk N] [--no-delegations]
+         [--cms-fields FILE]
 
 Writes 6529.io's identities, profiles, REP and CIC ratings and reserved
 handles as a 6529.identity-export.v1 JSON file, the input of the Identities
@@ -23,6 +24,9 @@ Options:
   --bulk N               a rater's REP category with more than N targets brings
                          no target in by itself (default 2000; 0 turns it off)
   --no-delegations       leave out 6529.io's delegations table
+  --cms-fields FILE      the profile site export's cms-fields.json (profile id
+                         -> the ProfileDoc cms value): each identity of those
+                         profiles gets that value as "cms"
   --help                 this text
 `;
 
@@ -37,6 +41,8 @@ export interface IdentityExportCommand {
   readonly expectTdhBlock: number | null;
   readonly revision: string;
   readonly includeDelegations: boolean;
+  /** The profile site export's cms-fields.json; null without --cms-fields. */
+  readonly cmsFieldsFile: string | null;
 }
 
 export type IdentityExportCliCommand =
@@ -92,6 +98,34 @@ export function parseExtraIds(text: string): string[] {
     .filter((it) => it.length > 0);
 }
 
+/**
+ * The profile site export's cms-fields.json: profile id -> the ProfileDoc
+ * `cms` value (an object), carried into the export as it is.
+ */
+export function parseCmsFields(text: string): Record<string, unknown> {
+  let doc: unknown;
+  try {
+    doc = JSON.parse(text);
+  } catch {
+    throw new IdentityExportUsageError('The cms fields file is not JSON');
+  }
+  if (!doc || typeof doc !== 'object' || Array.isArray(doc)) {
+    throw new IdentityExportUsageError(
+      'The cms fields file must be a JSON object: profile id -> cms value'
+    );
+  }
+  const fields: Record<string, unknown> = {};
+  for (const [profileId, value] of Object.entries(doc)) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      throw new IdentityExportUsageError(
+        `The cms value of ${profileId} is not an object`
+      );
+    }
+    fields[profileId.trim().toLowerCase()] = value;
+  }
+  return fields;
+}
+
 interface Draft {
   out: string | null;
   bulk: number;
@@ -102,6 +136,7 @@ interface Draft {
   expectTdhBlock: number | null;
   revision: string | null;
   includeDelegations: boolean;
+  cmsFieldsFile: string | null;
 }
 
 function wholeNumber(flag: string, raw: string): number {
@@ -153,6 +188,9 @@ function readOption(
     case '--no-delegations':
       draft.includeDelegations = false;
       return 1;
+    case '--cms-fields':
+      draft.cmsFieldsFile = value();
+      return 2;
     default:
       throw new IdentityExportUsageError(`Unknown argument "${arg}"`);
   }
@@ -190,7 +228,8 @@ function checkDraft(draft: Draft): IdentityExportCommand {
     freezeMs: draft.freezeMs,
     expectTdhBlock: draft.expectTdhBlock,
     revision: draft.revision.toLowerCase(),
-    includeDelegations: draft.includeDelegations
+    includeDelegations: draft.includeDelegations,
+    cmsFieldsFile: draft.cmsFieldsFile
   };
 }
 
@@ -212,7 +251,8 @@ export function parseIdentityExportCommand(
     noFreeze: false,
     expectTdhBlock: null,
     revision: env.EXPORTER_REVISION?.trim() || null,
-    includeDelegations: true
+    includeDelegations: true,
+    cmsFieldsFile: null
   };
   for (let i = 0; i < args.length; ) {
     i += readOption(draft, args[i], args[i + 1]);

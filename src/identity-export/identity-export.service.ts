@@ -38,6 +38,8 @@ export interface IdentityExportOptions {
   /** False when exported without the waves list (noted in the file). */
   readonly wavesListGiven?: boolean;
   readonly includeDelegations: boolean;
+  /** Profile id -> the ProfileDoc `cms` value (the profile site export's). */
+  readonly cmsFields?: Readonly<Record<string, unknown>>;
   readonly freezeMs: number | null;
   readonly exporterRevision: string;
   readonly now?: () => number;
@@ -58,6 +60,39 @@ export interface IdentityExportDocument extends IdentityExportHeader {
     contributor_count: number;
   }[];
   readonly stats: Record<string, number>;
+}
+
+/**
+ * Each identity whose profile has a profile site gets its `cms` value. A
+ * value for a profile the export leaves out is noted: its site would not
+ * move to the chain.
+ */
+export function withCmsFields(
+  identities: IdentityExportIdentity[],
+  cmsFields: Readonly<Record<string, unknown>> | undefined
+): { identities: IdentityExportIdentity[]; notes: string[] } {
+  if (!cmsFields) return { identities, notes: [] };
+  const used = new Set<string>();
+  const out = identities.map((it) => {
+    const value = it.profile_id ? cmsFields[it.profile_id] : undefined;
+    if (value === undefined || !it.profile_id) return it;
+    used.add(it.profile_id);
+    return { ...it, cms: value };
+  });
+  const missing = Object.keys(cmsFields)
+    .filter((it) => !used.has(it))
+    .sort(compareCodePoints);
+  return {
+    identities: out,
+    notes: [
+      `cms: ${used.size} identities carry a profile site value`,
+      ...(missing.length
+        ? [
+            `cms: ${missing.length} profiles with a profile site value are not in the export: ${missing.join(', ')}`
+          ]
+        : [])
+    ]
+  };
 }
 
 export function reservedHandles(): string[] {
@@ -404,7 +439,8 @@ export async function buildIdentityExport(
   );
   const { scope, excluded } = await resolveScope(index, core, edges, bulk);
   const built = await buildIdentities(source, index, core, scope);
-  const identities = built.identities;
+  const cms = withCmsFields(built.identities, options.cmsFields);
+  const identities = cms.identities;
   const notes = [
     ...(options.wavesListGiven === false
       ? [
@@ -412,7 +448,8 @@ export async function buildIdentityExport(
         ]
       : []),
     ...scopeNotes(core, excluded, bulkCategories, options.bulkThreshold, scope),
-    ...built.notes
+    ...built.notes,
+    ...cms.notes
   ];
   const exportedProfiles = new Set(
     identities.map((it) => it.profile_id).filter((it): it is string => !!it)

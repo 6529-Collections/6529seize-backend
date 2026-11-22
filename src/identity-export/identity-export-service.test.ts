@@ -307,6 +307,30 @@ describe('buildIdentityExport', () => {
     expect(doc.bulk_rep).toEqual([]);
   });
 
+  it('gives each profile with a site its cms value, and notes the rest', async () => {
+    const site = { primary: { publication: 'bafk1', package: 'bafk2' } };
+    const doc = await buildIdentityExport(world().source, {
+      ...options,
+      cmsFields: { [ALICE]: site, [P('dead')]: { archive: 'bafk3' } }
+    });
+    expect(doc.identities.find((it) => it.profile_id === ALICE)?.cms).toEqual(
+      site
+    );
+    expect(
+      doc.identities
+        .filter((it) => it.cms !== undefined)
+        .map((it) => it.profile_id)
+    ).toEqual([ALICE]);
+    expect(doc.notes).toEqual(
+      expect.arrayContaining([
+        'cms: 1 identities carry a profile site value',
+        `cms: 1 profiles with a profile site value are not in the export: ${P('dead')}`
+      ])
+    );
+    const without = await buildIdentityExport(world().source, options);
+    expect(without.identities.some((it) => 'cms' in it)).toBe(false);
+  });
+
   it('leaves the delegations out when asked', async () => {
     const doc = await buildIdentityExport(world().source, {
       ...options,

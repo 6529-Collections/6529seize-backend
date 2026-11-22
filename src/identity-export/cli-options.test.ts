@@ -1,5 +1,6 @@
 import {
   IdentityExportUsageError,
+  parseCmsFields,
   parseExtraIds,
   parseFreezeTime,
   parseIdentityExportCommand
@@ -23,7 +24,8 @@ describe('parseIdentityExportCommand', () => {
       freezeMs: null,
       expectTdhBlock: null,
       revision: REV,
-      includeDelegations: true
+      includeDelegations: true,
+      cmsFieldsFile: null
     });
   });
 
@@ -39,7 +41,9 @@ describe('parseIdentityExportCommand', () => {
           'waves.json',
           '--expect-tdh-block',
           '24000000',
-          '--no-delegations'
+          '--no-delegations',
+          '--cms-fields',
+          'cms-fields.json'
         ],
         {
           IDENTITY_FREEZE_AT: '2026-11-24T00:00:00Z',
@@ -54,7 +58,8 @@ describe('parseIdentityExportCommand', () => {
       freezeMs: T,
       expectTdhBlock: 24_000_000,
       revision: 'a'.repeat(40),
-      includeDelegations: false
+      includeDelegations: false,
+      cmsFieldsFile: 'cms-fields.json'
     });
     expect(
       parseIdentityExportCommand(
@@ -167,5 +172,19 @@ describe('parseExtraIds', () => {
     expect(() => parseExtraIds('{"ids": []}')).toThrow(
       IdentityExportUsageError
     );
+  });
+});
+
+describe('parseCmsFields', () => {
+  it('reads profile id -> cms value, ids lowercase', () => {
+    expect(
+      parseCmsFields(
+        '{"A-1": {"primary": {"publication": "b1", "package": "b2"}}}'
+      )
+    ).toEqual({ 'a-1': { primary: { publication: 'b1', package: 'b2' } } });
+  });
+
+  it.each([['not json'], ['[]'], ['{"a-1": "b1"}']])('refuses %s', (text) => {
+    expect(() => parseCmsFields(text)).toThrow(IdentityExportUsageError);
   });
 });

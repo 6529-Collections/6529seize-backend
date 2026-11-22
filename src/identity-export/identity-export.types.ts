@@ -43,6 +43,11 @@ export interface IdentityExportIdentity {
   readonly level: number;
   readonly level_raw: number | null;
   readonly scope: IdentityExportScope[];
+  /**
+   * The ProfileDoc `cms` value (the profile site), from the profile site
+   * export; absent when the profile has none or none was given.
+   */
+  readonly cms?: unknown;
 }
 
 export interface IdentityExportRating {

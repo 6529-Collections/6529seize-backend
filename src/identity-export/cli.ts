@@ -3,6 +3,7 @@ import {
   IDENTITY_EXPORT_HELP,
   IdentityExportCommand,
   IdentityExportUsageError,
+  parseCmsFields,
   parseExtraIds,
   parseIdentityExportCommand
 } from './cli-options';
@@ -13,6 +14,9 @@ async function runExport(command: IdentityExportCommand) {
   const extraProfileIds = command.extraIdsFile
     ? parseExtraIds(fs.readFileSync(command.extraIdsFile, 'utf8'))
     : [];
+  const cmsFields = command.cmsFieldsFile
+    ? parseCmsFields(fs.readFileSync(command.cmsFieldsFile, 'utf8'))
+    : undefined;
   const exporterRevision = command.revision;
   // The shared environment and DB startup log to stdout: keep stdout for the
   // one JSON summary.
@@ -39,6 +43,7 @@ async function runExport(command: IdentityExportCommand) {
             extraProfileIds,
             wavesListGiven: command.extraIdsFile !== null,
             includeDelegations: command.includeDelegations,
+            cmsFields,
             freezeMs: command.freezeMs,
             exporterRevision,
             log: (message) =>
