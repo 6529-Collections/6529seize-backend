@@ -83,9 +83,15 @@ export async function persistTopUps(
         consolidationKey = topUp.from_wallet;
       }
 
+      // The key read above can be stale: a merge may have moved its balance
+      // to another key since. lockSubscriptionBalance follows the move.
+      const locked = await lockSubscriptionBalance(consolidationKey, manager);
+      consolidationKey = locked.consolidationKey;
+
       // A key that must wait (too long for a subscription table, or with
       // earlier writes waiting) has the whole top-up queued: no balance and
       // no top-up row, so the top-up is applied, once, when it is replayed.
+      // Checked on the key the top-up would be written to, after the move.
       const reason = await deferralReason(
         consolidationKey,
         sink,
@@ -108,10 +114,6 @@ export async function persistTopUps(
         continue;
       }
 
-      // The key read above can be stale: a merge may have moved its balance
-      // to another key since. lockSubscriptionBalance follows the move.
-      const locked = await lockSubscriptionBalance(consolidationKey, manager);
-      consolidationKey = locked.consolidationKey;
       let balance = locked.balance;
 
       const setToAutoSubscribe = !balance;

@@ -293,18 +293,6 @@ async function processSubscription(
     )
   )[0];
 
-  if (
-    finalSubscription &&
-    (await deferRedemption(
-      transaction,
-      finalSubscription,
-      entityManager,
-      options
-    ))
-  ) {
-    return;
-  }
-
   if (!finalSubscription) {
     const transactionLink = buildTransactionLink(transaction.transaction);
     const message = `🚨 No subscription found for airdrop address: ${transaction.to_address} \nTransaction: ${transactionLink}`;
@@ -324,6 +312,12 @@ async function processSubscription(
     entityManager
   );
   const payingKey = locked.consolidationKey;
+
+  // The key-width guard runs on the key the charge is written to.
+  if (await deferRedemption(transaction, payingKey, entityManager, options)) {
+    return;
+  }
+
   let balance = locked.balance;
   if (!balance) {
     const transactionLink = buildTransactionLink(transaction.transaction);
@@ -411,12 +405,12 @@ async function processSubscription(
  */
 async function deferRedemption(
   transaction: Transaction,
-  finalSubscription: NFTFinalSubscription,
+  consolidationKey: string,
   entityManager: EntityManager,
   options: RedemptionOptions
 ): Promise<boolean> {
   const reason = await deferralReason(
-    finalSubscription.consolidation_key,
+    consolidationKey,
     entityManager,
     options.beforeSequence,
     { locking: true }
@@ -428,7 +422,7 @@ async function deferRedemption(
     [
       {
         kind: 'REDEMPTION',
-        consolidationKey: finalSubscription.consolidation_key,
+        consolidationKey,
         dedupe: [
           transaction.transaction,
           transaction.to_address,

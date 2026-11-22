@@ -1,10 +1,21 @@
 import 'reflect-metadata';
 import { FindOneOptions, Repository } from 'typeorm';
 import * as db from '@/db';
+import { DbQueryOptions } from '@/db-query.options';
 import * as Entities from '@/entities/entities';
 import { SubscriptionBalance } from '@/entities/ISubscription';
 import { Transaction } from '@/entities/ITransaction';
-import { sqlExecutor } from '@/sql-executor';
+import {
+  ConnectionWrapper,
+  setSqlExecutor,
+  SqlExecutor,
+  sqlExecutor
+} from '@/sql-executor';
+import {
+  deferSubscriptionWrites,
+  executorSink
+} from '@/subscription-key-width/subscription-deferred-writes';
+import { subscriptionKeyWidths } from '@/subscription-key-width/subscription-key-width';
 import { describeWithSeed, Seed } from '@/tests/_setup/seed';
 import {
   ADDRESS_CONSOLIDATION_KEY,
@@ -15,7 +26,8 @@ import {
   SUBSCRIPTIONS_MODE_TABLE,
   SUBSCRIPTIONS_NFTS_FINAL_TABLE,
   SUBSCRIPTIONS_REDEEMED_TABLE,
-  SUBSCRIPTIONS_TOP_UP_TABLE
+  SUBSCRIPTIONS_TOP_UP_TABLE,
+  SUBSCRIPTION_DEFERRED_WRITES_TABLE
 } from '@/constants';
 import {
   aTdhConsolidation,
@@ -49,19 +61,55 @@ const CARD = 700;
 const AIRDROP = '0x' + 'e'.repeat(64);
 const TOP_UP = '0x' + 'f'.repeat(64);
 
+/**
+ * persistTopUps runs on a TypeORM query runner, and the key-width guard's
+ * queue writes go through the SQL executor inside that transaction, as in
+ * production. The test harness's executor hands out mysql pool connections,
+ * so these tests use one like production's on the test's data source.
+ */
+class TypeOrmExecutor extends SqlExecutor {
+  execute<T>(
+    sql: string,
+    params?: Record<string, any>,
+    options?: DbQueryOptions
+  ): Promise<T[]> {
+    return db.execSQLWithParams(sql, params, options);
+  }
+
+  async executeNativeQueriesInTransaction<T>(
+    executable: (connection: ConnectionWrapper<any>) => Promise<T>
+  ): Promise<T> {
+    const runner = db.getDataSource().createQueryRunner();
+    await runner.connect();
+    await runner.startTransaction();
+    try {
+      const result = await executable({ connection: runner });
+      await runner.commitTransaction();
+      return result;
+    } catch (error) {
+      await runner.rollbackTransaction();
+      throw error;
+    } finally {
+      await runner.release();
+    }
+  }
+}
+
+/** In a describe body: each test runs on the TypeORM executor. */
+function onTypeOrmExecutor() {
+  let previous: SqlExecutor;
+  beforeEach(() => {
+    previous = sqlExecutor;
+    setSqlExecutor(new TypeOrmExecutor());
+  });
+  afterEach(() => {
+    jest.restoreAllMocks();
+    setSqlExecutor(previous);
+  });
+}
+
 /** The top-up loop crediting `amount` from wallet A, in its own transaction. */
 function topUp(amount: number) {
-  // Production's executor hands persistTopUps a TypeORM query runner in a
-  // transaction; the test harness's executor hands it a raw connection.
-  const run = jest
-    .spyOn(sqlExecutor, 'executeNativeQueriesInTransaction')
-    .mockImplementation((executable) =>
-      db
-        .getDataSource()
-        .transaction((manager) =>
-          executable({ connection: manager.queryRunner! })
-        )
-    );
   return persistTopUps([
     {
       hash: TOP_UP,
@@ -70,26 +118,58 @@ function topUp(amount: number) {
       from_wallet: A,
       amount
     }
-  ]).finally(() => run.mockRestore());
+  ]);
 }
 
-/** The transactions processing loop charging one airdrop to wallet A. */
-function charge() {
-  const drop = {
+/** An airdrop of the card to `wallet`. */
+function airdropTo(wallet: string): Transaction {
+  return {
     created_at: new Date(),
     transaction: AIRDROP,
     block: 1,
     transaction_date: new Date('2026-11-20T00:00:00Z'),
     from_address: NULL_ADDRESS,
-    to_address: A,
+    to_address: wallet,
     contract: MEMES_CONTRACT.toLowerCase(),
     token_id: CARD,
     token_count: 1,
     value: 0
   } as Transaction;
+}
+
+/** The transactions processing loop charging one airdrop to wallet A. */
+function charge() {
   return db
     .getDataSource()
-    .transaction((manager) => processAirdrop(drop, manager));
+    .transaction((manager) => processAirdrop(airdropTo(A), manager));
+}
+
+/** Queues an earlier write for `key`, so the guard holds its next ones back. */
+function queueEarlierWrite(key: string) {
+  return deferSubscriptionWrites(
+    [
+      {
+        kind: 'LOG',
+        consolidationKey: key,
+        dedupe: 'earlier',
+        payload: { consolidation_key: key, log: 'Earlier' },
+        reason: { narrow: [], pendingEarlier: true }
+      }
+    ],
+    executorSink()
+  );
+}
+
+/** [kind, consolidation_key] of each queued write, in order. */
+async function queue() {
+  const rows = await sqlExecutor.execute<{
+    kind: string;
+    consolidation_key: string;
+  }>(
+    `SELECT kind, consolidation_key FROM ${SUBSCRIPTION_DEFERRED_WRITES_TABLE}
+      ORDER BY sequence`
+  );
+  return rows.map((row) => [row.kind, row.consolidation_key]);
 }
 
 /**
@@ -192,14 +272,16 @@ async function writeDuringMerge(write: () => Promise<unknown>) {
 /**
  * The PR text's read-only check: balances under a key whose wallets all
  * belong to one other key now, as a merge before these locks could leave
- * them. Table names come from the constants.
+ * them. Keys of up to 16 wallets. Table names come from the constants.
  */
 const BALANCES_UNDER_A_MERGED_KEY = `
+  WITH RECURSIVE positions (n) AS (
+    SELECT 1 UNION ALL SELECT n + 1 FROM positions WHERE n < 16
+  )
   SELECT b.consolidation_key, b.balance,
          MAX(m.consolidation_key) AS current_key
     FROM ${SUBSCRIPTIONS_BALANCES_TABLE} b
-    JOIN (SELECT 1 AS n UNION ALL SELECT 2 UNION ALL SELECT 3
-          UNION ALL SELECT 4 UNION ALL SELECT 5 UNION ALL SELECT 6) i
+    JOIN positions i
       ON i.n <= 1 + LENGTH(b.consolidation_key)
                   - LENGTH(REPLACE(b.consolidation_key, '-', ''))
     JOIN ${ADDRESS_CONSOLIDATION_KEY} m
@@ -274,9 +356,7 @@ describeWithSeed(
     { table: SUBSCRIPTIONS_NFTS_FINAL_TABLE, rows: [finalAllocation(A)] }
   ],
   () => {
-    afterEach(() => {
-      jest.restoreAllMocks();
-    });
+    onTypeOrmExecutor();
 
     it('keeps a top-up made while a charge holds the balance', async () => {
       await secondDuringFirst(charge, () => topUp(0.5));
@@ -327,9 +407,7 @@ describeWithSeed(
   'Real MySQL: a writer that reads during a merge',
   mergeSeeds(true),
   () => {
-    afterEach(() => {
-      jest.restoreAllMocks();
-    });
+    onTypeOrmExecutor();
 
     it('adds a top-up to the merged balance', async () => {
       await writeDuringMerge(() => topUp(1));
@@ -369,9 +447,7 @@ describeWithSeed(
   'Real MySQL: a writer that reads during a merge into a new key',
   mergeSeeds(false),
   () => {
-    afterEach(() => {
-      jest.restoreAllMocks();
-    });
+    onTypeOrmExecutor();
 
     it('adds a top-up to the balance the merge created', async () => {
       // Without the locks the top-up finds no AB row, tries to insert one
@@ -406,11 +482,14 @@ describeWithSeed(
     }
   ],
   () => {
-    afterEach(() => {
-      jest.restoreAllMocks();
-    });
+    onTypeOrmExecutor();
 
-    it('credits the key the merge moved the balance to', async () => {
+    /**
+     * Tops up 0.05 from A. Right after the top-up reads A's key, the
+     * wallets consolidate, the merge runs and commits, and then `afterMerge`
+     * runs.
+     */
+    async function topUpWhileTheKeyMoves(afterMerge?: () => Promise<unknown>) {
       const source = db.getDataSource();
       const createRunner = source.createQueryRunner.bind(source);
       let merged = false;
@@ -423,8 +502,6 @@ describeWithSeed(
           ...args: unknown[]
         ) => {
           const result = await query(...args);
-          // Right after the top-up reads wallet A's key: the wallets
-          // consolidate, and the merge runs and commits.
           if (
             !merged &&
             String(args[0]).includes(ADDRESS_CONSOLIDATION_KEY) &&
@@ -436,6 +513,7 @@ describeWithSeed(
               { key: AB }
             );
             await consolidateSubscriptions(new Set([A, B]));
+            await afterMerge?.();
           }
           return result;
         }) as never);
@@ -445,14 +523,113 @@ describeWithSeed(
       // Below the mint price, so a top-up taken for A's first one does not
       // also switch A's mode.
       await topUp(0.05);
-
       expect(merged).toBe(true);
+    }
+
+    it('credits the key the merge moved the balance to', async () => {
+      await topUpWhileTheKeyMoves();
+
       // 2 + 3 + 0.05. Without following the move, the top-up recreates A
       // with 0.05 (or, before the locks, updates A's deleted row and is lost).
       expect(await balances()).toEqual([[AB, 5.05]]);
       expect(await sqlExecutor.execute(BALANCES_UNDER_A_MERGED_KEY)).toEqual(
         []
       );
+    });
+  }
+);
+
+// Five full-length wallets: a key of 214 characters, wider than the
+// subscription tables' 200. Its first wallet tops up for the first time.
+const WIDE_WALLETS = [1, 2, 3, 4, 5].map(
+  (n) => `0x${n.toString(16).padStart(40, '0')}`
+);
+const WIDE_KEY = WIDE_WALLETS.join('-');
+
+async function setMappingWidth(width: number) {
+  await sqlExecutor.execute(
+    `ALTER TABLE ${ADDRESS_CONSOLIDATION_KEY}
+      MODIFY consolidation_key VARCHAR(${width}) NOT NULL`
+  );
+  subscriptionKeyWidths.invalidate();
+}
+
+describeWithSeed(
+  'Real MySQL: a top-up whose key moves to one the tables cannot hold',
+  [
+    {
+      table: ADDRESS_CONSOLIDATION_KEY,
+      rows: [{ address: WIDE_WALLETS[0], consolidation_key: WIDE_WALLETS[0] }]
+    }
+  ],
+  () => {
+    onTypeOrmExecutor();
+    beforeEach(() => setMappingWidth(700));
+    afterEach(async () => {
+      await sqlExecutor.execute(
+        `DELETE FROM ${ADDRESS_CONSOLIDATION_KEY} WHERE consolidation_key = :key`,
+        { key: WIDE_KEY }
+      );
+      await setMappingWidth(200);
+    });
+
+    it('queues the top-up under the key it would be written to', async () => {
+      const source = db.getDataSource();
+      const createRunner = source.createQueryRunner.bind(source);
+      let moved = false;
+      jest.spyOn(source, 'createQueryRunner').mockImplementation((mode) => {
+        const runner = createRunner(mode);
+        const query = runner.query.bind(runner) as (
+          ...args: unknown[]
+        ) => Promise<unknown>;
+        jest.spyOn(runner, 'query').mockImplementation((async (
+          ...args: unknown[]
+        ) => {
+          const result = await query(...args);
+          // Right after the top-up reads the wallet's own key, the identity
+          // sync puts the wallet in a five-wallet identity.
+          if (
+            !moved &&
+            String(args[0]).includes(ADDRESS_CONSOLIDATION_KEY) &&
+            String(args[0]).includes(`'${WIDE_WALLETS[0]}'`)
+          ) {
+            moved = true;
+            for (const address of WIDE_WALLETS) {
+              await sqlExecutor.execute(
+                `INSERT INTO ${ADDRESS_CONSOLIDATION_KEY} (address, consolidation_key)
+                  VALUES (:address, :key)
+                  ON DUPLICATE KEY UPDATE consolidation_key = :key`,
+                { address, key: WIDE_KEY }
+              );
+            }
+          }
+          return result;
+        }) as never);
+        return runner;
+      });
+
+      await persistTopUps([
+        {
+          hash: TOP_UP,
+          block: 1,
+          transaction_date: new Date('2026-11-20T00:00:00Z'),
+          from_wallet: WIDE_WALLETS[0],
+          amount: 0.05
+        }
+      ]);
+
+      // The key-width guard judges the wide key the top-up moved to, not
+      // the wallet's own key it read, and queues the whole top-up. Judged on
+      // the wallet's key, the top-up would try to insert a balance row under
+      // the wide key and fail on its length, every run.
+      expect(moved).toBe(true);
+      expect(await balances()).toEqual([]);
+      expect(await queue()).toEqual([['TOP_UP', WIDE_KEY]]);
+      expect(
+        await sqlExecutor.execute(
+          `SELECT hash FROM ${SUBSCRIPTIONS_TOP_UP_TABLE}`
+        )
+      ).toEqual([]);
     });
   }
 );
@@ -484,23 +661,13 @@ describeWithSeed(
     }
   ],
   () => {
+    onTypeOrmExecutor();
+
     it('charges the key the merge moved the balance to', async () => {
       await consolidateSubscriptions(new Set([A, B]));
-      const drop = {
-        created_at: new Date(),
-        transaction: AIRDROP,
-        block: 1,
-        transaction_date: new Date('2026-11-20T00:00:00Z'),
-        from_address: NULL_ADDRESS,
-        to_address: B,
-        contract: MEMES_CONTRACT.toLowerCase(),
-        token_id: CARD,
-        token_count: 1,
-        value: 0
-      } as Transaction;
       await db
         .getDataSource()
-        .transaction((manager) => processAirdrop(drop, manager));
+        .transaction((manager) => processAirdrop(airdropTo(B), manager));
 
       // Without following the move: a new row for B at minus the mint price,
       // and AB untouched at 2.
@@ -512,6 +679,23 @@ describeWithSeed(
       expect(await sqlExecutor.execute(BALANCES_UNDER_A_MERGED_KEY)).toEqual(
         []
       );
+    });
+
+    it('holds the charge back when the key it moved to has earlier writes waiting', async () => {
+      await consolidateSubscriptions(new Set([A, B]));
+      await queueEarlierWrite(AB);
+      await db
+        .getDataSource()
+        .transaction((manager) => processAirdrop(airdropTo(B), manager));
+
+      // The key-width guard judges AB, the key that would pay, not B, the
+      // allocation's key. Judged on B the charge would be taken from AB now.
+      expect(await balances()).toEqual([[AB, 2]]);
+      expect(await redemptionKeys()).toEqual([]);
+      expect(await queue()).toEqual([
+        ['LOG', AB],
+        ['REDEMPTION', AB]
+      ]);
     });
   }
 );
@@ -538,6 +722,8 @@ describeWithSeed(
     }
   ],
   () => {
+    onTypeOrmExecutor();
+
     it('lists the balance left under A', async () => {
       const rows = await sqlExecutor.execute<{
         consolidation_key: string;
