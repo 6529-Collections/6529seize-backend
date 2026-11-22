@@ -174,6 +174,36 @@ describe('ChainGatewayClient reads', () => {
     expect((await client.getHead()).network).toBe('0x' + '22'.repeat(32));
   });
 
+  it('drops cached answers when the network changes (a relaunch)', async () => {
+    let network = '0x' + '22'.repeat(32);
+    let handle = 'old-chain';
+    const { client, calls, advance } = setup((call) => {
+      if (path(call) === '/v1/status') {
+        const answer = status(1200);
+        answer.json.data.finalized = { ...answer.json.data.finalized, network };
+        return answer;
+      }
+      return {
+        status: 200,
+        json: {
+          read: stamp(1200),
+          data: { ...IDENTITY, handle },
+          next: null
+        }
+      };
+    });
+    expect((await client.getIdentityByHandle('alice'))?.handle).toBe(
+      'old-chain'
+    );
+    network = '0x' + '33'.repeat(32);
+    handle = 'new-chain';
+    advance(2_500);
+    expect((await client.getIdentityByHandle('alice'))?.handle).toBe(
+      'new-chain'
+    );
+    expect(calls.filter((c) => path(c) !== '/v1/status')).toHaveLength(2);
+  });
+
   it('reads at a given height without asking for the head', async () => {
     const { client, calls } = setup((call) => ({
       status: 200,
@@ -370,7 +400,8 @@ describe('ChainGatewayClient reads', () => {
       blocks: [],
       next: '120',
       nextHeight: 120,
-      atHead: false
+      atHead: false,
+      network: '0x' + '22'.repeat(32)
     });
     expect(path(calls[0])).toBe('/v1/feed');
     expect(param(calls[0], 'families')).toBe('0x0102,0x0120');
@@ -428,6 +459,16 @@ describe('ChainGatewayClient reads', () => {
       expect.objectContaining({ next: '121', nextHeight: 121, atHead: false })
     );
     expect((await client.getChanges(131)).atHead).toBe(true);
+  });
+
+  it('refuses a feed page without a whole-height through', async () => {
+    const { client } = setup(() => ({
+      status: 200,
+      json: { read: stamp(130), data: { blocks: [] }, next: null }
+    }));
+    await expect(client.getChanges(120)).rejects.toMatchObject({
+      code: 'bad_answer'
+    });
   });
 
   it('throws gone when the feed no longer holds the height', async () => {
@@ -593,8 +634,9 @@ describe('profile documents', () => {
     expect(bytesMatchCid('0x01551340' + digest + digest, doc)).toBe(false);
     expect(bytesMatchCid('0x015512' + '1f' + digest.slice(2), doc)).toBe(false);
     expect(bytesMatchCid('0x1220' + digest, doc)).toBe(false);
-    // A 31-byte digest under a 32-byte length.
+    // A 31-byte digest under a 32-byte length, and trailing bytes.
     expect(bytesMatchCid('0x01551220' + digest.slice(2), doc)).toBe(false);
+    expect(bytesMatchCid('0x01551220' + digest + '00', doc)).toBe(false);
     // CID version 2.
     expect(bytesMatchCid('0x02551220' + digest, doc)).toBe(false);
   });
@@ -603,6 +645,10 @@ describe('profile documents', () => {
     const { client, calls } = setup(() => ({ status: 200, bytes: doc }));
     await expect(
       client.getDocument('0x01551340' + '00'.repeat(64))
+    ).rejects.toMatchObject({ code: 'bad_request' });
+    // A sha2-256 CID with bytes after its digest names no document.
+    await expect(
+      client.getDocument('0x01551220' + '00'.repeat(33))
     ).rejects.toMatchObject({ code: 'bad_request' });
     expect(calls).toHaveLength(0);
   });
@@ -909,6 +955,7 @@ describe('import and membership history', () => {
   it.each([
     ['a range that is not two heights', { ranges: [[1, 2, 3]] }],
     ['a range that ends before it starts', { ranges: [[9, 4]] }],
+    ['a range that ends one before it starts', { ranges: [[5, 4]] }],
     ['a range to infinity', { ranges: [[1, 'Infinity']] }],
     ['a range below zero', { ranges: [[-5, 3]] }],
     ['ranges that are not a list', { ranges: 'all' }],

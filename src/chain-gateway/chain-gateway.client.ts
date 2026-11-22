@@ -682,6 +682,12 @@ export class ChainGatewayClient {
             pinnable: status.pinnable ?? null,
             network: status.finalized.network ?? null
           };
+          // Answers are cached by height: from another chain (a relaunch)
+          // the same heights mean other blocks.
+          const before = this.head?.value.network ?? null;
+          if (before && value.network && before !== value.network) {
+            this.caches?.answers.clear();
+          }
           this.head = { value, at: this.now() };
           return value;
         } finally {
@@ -1040,9 +1046,11 @@ export class ChainGatewayClient {
   }
 
   /**
-   * The finalized change feed from `fromHeight`: every finalized height up to
-   * `through` is covered; ask again from `next`. Throws ChainGatewayError
-   * code `gone` when the gateway no longer holds `fromHeight`: re-list.
+   * The finalized change feed from `from` (a height, or the `next` of an
+   * earlier page): every finalized height up to `through` is given whole;
+   * ask again from `next`. Throws ChainGatewayError code `gone` when the
+   * gateway no longer holds that height, and `bad_answer` for a page
+   * without a whole-height `through`.
    */
   async getChanges(
     from: ChainFeedCursor,
@@ -1062,8 +1070,11 @@ export class ChainGatewayClient {
     if (!answer) {
       throw new ChainGatewayError(`${path}: not found`, 404, 'not_found', path);
     }
-    const through = Number(answer.data.through);
-    const blocks = answer.data.blocks ?? [];
+    const through = answer.data.through;
+    if (!Number.isSafeInteger(through) || !Array.isArray(answer.data.blocks)) {
+      throw badAnswer(path, 'a page without its through height or blocks');
+    }
+    const blocks = answer.data.blocks;
     const nextHeight = through + 1;
     return {
       ...answer.data,
@@ -1072,7 +1083,8 @@ export class ChainGatewayClient {
       blocks,
       next: answer.next ?? nextHeight,
       nextHeight,
-      atHead: !blocks.length && through < feedCursorHeight(from)
+      atHead: !blocks.length && through < feedCursorHeight(from),
+      network: answer.read?.network ?? null
     };
   }
 
