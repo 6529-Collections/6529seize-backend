@@ -57,6 +57,7 @@ import {
   DbConnectionTarget,
   installMysqlIamAuthSupport,
   isDbConnectionTargetComplete,
+  isDbIamAuthRequested,
   resolveDbConnectionTargets,
   sslOptionsFor
 } from './db-iam-auth';
@@ -165,6 +166,11 @@ export async function connect() {
   }
 
   const targets = resolveDbConnectionTargets();
+  if (isDbIamAuthRequested() && !targets.write.iam) {
+    logger.warn(
+      '[DB IAM AUTH REQUESTED BUT DB_IAM_* INCOMPLETE] [USING PASSWORD]'
+    );
+  }
   if (!isDbConnectionTargetComplete(targets.write) || !process.env.DB_PORT) {
     logger.error('[MISSING CONFIGURATION FOR WRITE DB] [EXITING]');
     process.exit();
@@ -198,7 +204,11 @@ export async function connect() {
     if (target.iam) {
       attachDbAuthTokenSource(
         pool,
-        createDbAuthTokenSource({ host: target.host, port, user: target.user })
+        createDbAuthTokenSource({ host: target.host, port, user: target.user }),
+        (error) =>
+          logger.error(
+            `[DB IAM TOKEN SIGNING FAILED] [${target.host}] ${error}`
+          )
       );
     }
     return pool;
