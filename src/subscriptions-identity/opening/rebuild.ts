@@ -436,9 +436,20 @@ export async function rebuildIdentityTables(params: {
       );
     }
     await renewPause();
+    // A last write posted only in part is the tail, reported below, not a
+    // broken write: the verifier checks the complete writes.
+    const { writes, skipped, partial } = writesOf(
+      bodies,
+      opening.openingSha256
+    );
+    const complete = partial
+      ? bodies.filter(
+          (b) => !(b.opening === opening.openingSha256 && b.n === partial.n)
+        )
+      : bodies;
     // Nothing is loaded from a journal that breaks the money rules, or
     // that could not be checked.
-    const verify = await verifyJournal(bodies, {
+    const verify = await verifyJournal(complete, {
       openingSha256: opening.openingSha256,
       opening: opening.opening,
       ethereum:
@@ -456,10 +467,6 @@ export async function rebuildIdentityTables(params: {
         `The journal fails verification (${verify.failures.length}): ${verify.failures.slice(0, 3).join('; ')}`
       );
     }
-    const { writes, skipped, partial } = writesOf(
-      bodies,
-      opening.openingSha256
-    );
     const lastSeen = bodies.reduce((max, b) => Math.max(max, b.n), 0);
     const live = await liveCounter();
     await loadOpeningFiles(opening, now());
