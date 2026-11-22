@@ -265,7 +265,7 @@ describe('ChainGatewayClient reads', () => {
     expect(param(reads(calls)[0], 'height')).toBeNull();
   });
 
-  it('keeps a pinned answer only when read finalized at that height', async () => {
+  it('takes a pinned answer only when read finalized at that height', async () => {
     let at: 'finalized' | 'head' = 'head';
     let height = 900;
     const { client, calls } = setup(
@@ -274,18 +274,102 @@ describe('ChainGatewayClient reads', () => {
         json: { read: stamp(height, at), data: { level: 8 }, next: null }
       }))
     );
-    await client.getLevel('0x01', { height: 900 });
-    await client.getLevel('0x01', { height: 900 });
-    expect(reads(calls)).toHaveLength(2);
+    // The node has 900 only as its head: gone for a finalized read.
+    await expect(
+      client.getLevel('0x01', { height: 900 })
+    ).rejects.toMatchObject({ code: 'height_gone' });
     at = 'finalized';
     height = 899;
-    await client.getLevel('0x01', { height: 900 });
-    await client.getLevel('0x01', { height: 900 });
-    expect(reads(calls)).toHaveLength(4);
+    await expect(
+      client.getLevel('0x01', { height: 900 })
+    ).rejects.toMatchObject({ code: 'bad_answer' });
+    expect(reads(calls)).toHaveLength(2);
     height = 900;
     await client.getLevel('0x01', { height: 900 });
     await client.getLevel('0x01', { height: 900 });
-    expect(reads(calls)).toHaveLength(5);
+    expect(reads(calls)).toHaveLength(3);
+  });
+
+  it('re-pins a read without a height that a node answers from its head', async () => {
+    const { client, calls } = setup(
+      withStatus((call) => {
+        const height = param(call, 'height');
+        return {
+          status: 200,
+          json: {
+            read: stamp(
+              height === null ? 48 : 50,
+              height ? 'head' : 'finalized'
+            ),
+            data: IDENTITY,
+            next: null
+          }
+        };
+      }, 50)
+    );
+    expect(await client.getIdentityByPrincipal('0xab')).toEqual(IDENTITY);
+    expect(reads(calls).map((it) => param(it, 'height'))).toEqual([
+      '50',
+      '50',
+      null
+    ]);
+  });
+
+  it('keeps an answer under the network it was read from', async () => {
+    const A = stamp(1).network;
+    const B = OTHER_NETWORK;
+    let network = A;
+    let identityReads = 0;
+    const statusOf = () => {
+      const answer = status(10);
+      answer.json.data.finalized = { ...answer.json.data.finalized, network };
+      return answer;
+    };
+    const respond = (reply: { status: number; json: unknown }) => {
+      const text = JSON.stringify(reply.json);
+      return {
+        status: reply.status,
+        headers: { get: () => null },
+        arrayBuffer: async () => {
+          const bytes = Buffer.from(text);
+          return bytes.buffer.slice(
+            bytes.byteOffset,
+            bytes.byteOffset + bytes.byteLength
+          ) as ArrayBuffer;
+        }
+      };
+    };
+    const client: ChainGatewayClient = new ChainGatewayClient(() => ({
+      baseUrl: BASE,
+      serviceKey: null,
+      timeoutMs: 1_000,
+      retries: 0,
+      headTtlMs: 60_000,
+      cacheEntries: 10,
+      fetchImpl: async (url: string) => {
+        if (new URL(url).pathname === '/v1/status') return respond(statusOf());
+        identityReads++;
+        if (identityReads === 1) {
+          // The chain flips while the read is in flight; B answers it.
+          network = B;
+          await client.getHead(true);
+        }
+        return respond({
+          status: 200,
+          json: { read: { ...stamp(10), network }, data: IDENTITY, next: null }
+        });
+      }
+    }));
+    await client.getHead();
+    expect(await client.getLevel('0x01', { height: 10 })).toEqual(IDENTITY);
+    // Read on B, kept on B: the head names B now, so it is served.
+    expect(await client.getLevel('0x01', { height: 10 })).toEqual(IDENTITY);
+    expect(identityReads).toBe(1);
+    // Back on A: B's answer is not A's.
+    network = A;
+    await client.getHead(true);
+    await client.getLevel('0x01', { height: 10 });
+    expect(identityReads).toBe(2);
   });
 
   it('serves a cached answer as a copy the caller can change', async () => {
@@ -664,8 +748,10 @@ describe('ChainGatewayClient reads', () => {
   });
 
   it('passes a cursor inside a block back as given, and keeps the whole height', async () => {
-    const block = (complete: boolean) =>
-      feedBlock(120, complete, complete ? 4096 : 0);
+    const block = (complete: boolean) => ({
+      ...feedBlock(120, complete, complete ? 4096 : 0),
+      records: [{ family: '0x0104', name: 'Profile', key: '0x01', value: '0x' }]
+    });
     const answers = [
       {
         status: 200,
@@ -693,7 +779,7 @@ describe('ChainGatewayClient reads', () => {
       }
     ];
     const { client, calls: all } = setup(withStatus(() => answers.shift()!));
-    const first = await client.getChanges(120);
+    const first = await client.getChanges(120, { families: ['0x0104'] });
     expect(first).toEqual(
       expect.objectContaining({
         next: '120:4096',
@@ -701,7 +787,9 @@ describe('ChainGatewayClient reads', () => {
         atHead: false
       })
     );
-    const second = await client.getChanges(first.next);
+    const second = await client.getChanges(first.next, {
+      families: ['0x0104']
+    });
     expect(param(reads(all)[1], 'from')).toBe('120:4096');
     expect(second).toEqual(
       expect.objectContaining({ next: '121', nextHeight: 121, atHead: false })
@@ -870,6 +958,36 @@ describe('ChainGatewayClient reads', () => {
     );
   });
 
+  it('checks a cut block against its records without a family filter', async () => {
+    const records = [
+      { family: '0x0104', name: 'Profile', key: '0x01', value: '0x' },
+      { family: '0x0104', name: 'Profile', key: '0x02', value: '0x' }
+    ];
+    let next = '120:5';
+    const { client } = setup(
+      withStatus(() => ({
+        status: 200,
+        json: {
+          read: stamp(130),
+          data: {
+            through: 119,
+            blocks: [{ ...feedBlock(120, false), records }]
+          },
+          next
+        }
+      }))
+    );
+    // Five writes from 0 can't be two records: unless a filter left some out.
+    await expect(client.getChanges(120)).rejects.toMatchObject({
+      code: 'bad_answer'
+    });
+    expect((await client.getChanges(120, { families: ['0x0104'] })).next).toBe(
+      '120:5'
+    );
+    next = '120:2';
+    expect((await client.getChanges(120)).next).toBe('120:2');
+  });
+
   it('refuses a cursor that is not one before asking', async () => {
     const { client, calls } = setup(withStatus(() => new Error('not asked')));
     await expect(client.getChanges('12:x')).rejects.toMatchObject({
@@ -939,7 +1057,127 @@ describe('ChainGatewayClient reads', () => {
   });
 });
 
+describe('ChainGatewayClient status and unpinned routes', () => {
+  it("reads a node that isn't ready from its 503 status, without retrying", async () => {
+    const { client, calls } = setup(() => {
+      const answer = status(10);
+      return {
+        status: 503,
+        json: {
+          ...answer.json,
+          data: { ...answer.json.data, ready: false, notReady: 'head behind' }
+        }
+      };
+    });
+    const head = await client.getHead();
+    expect(head).toEqual(
+      expect.objectContaining({
+        finalizedHeight: 10,
+        ready: false,
+        notReady: 'head behind'
+      })
+    );
+    expect(calls).toHaveLength(1);
+    expect((await client.getHead(true)).ready).toBe(false);
+  });
+
+  it('retries a 503 status without a state, then throws it', async () => {
+    const { client, calls } = setup(() => ({
+      status: 503,
+      json: { error: { code: 'starting', message: 'no state yet' } }
+    }));
+    await expect(client.getHead()).rejects.toMatchObject({
+      code: 'starting',
+      status: 503
+    });
+    expect(calls).toHaveLength(3);
+  });
+
+  it('says a ready node is ready', async () => {
+    const { client } = setup(() => status(10));
+    expect(await client.getHead()).toEqual(
+      expect.objectContaining({ ready: true, notReady: null })
+    );
+  });
+
+  it('reads the family table without a read stamp', async () => {
+    const { client, calls } = setup(() => ({
+      status: 200,
+      json: { data: { families: [{ family: '0x0104', name: 'Profile' }] } }
+    }));
+    expect(await client.getFeedFamilies()).toEqual({
+      families: [{ family: '0x0104', name: 'Profile' }]
+    });
+    expect(calls.map(path)).toEqual(['/v1/feed/families']);
+  });
+
+  it('reads the level ranking unpinned', async () => {
+    const ranking = { rankedAt: 9, count: 1, rows: [] };
+    const { client, calls } = setup(
+      withStatus(() => ({
+        status: 200,
+        json: { read: stamp(10), data: ranking, next: 'cursor' }
+      }))
+    );
+    const answer = await client.getLevelRanking({ after: 'a', limit: 5 });
+    expect(answer.data).toEqual(ranking);
+    expect(answer.next).toBe('cursor');
+    const read = reads(calls)[0];
+    expect(path(read)).toBe('/v1/identities/by-level');
+    expect(param(read, 'height')).toBeNull();
+    expect(param(read, 'at')).toBeNull();
+    expect(param(read, 'after')).toBe('a');
+  });
+
+  it('refuses a read of the head at a height', async () => {
+    const { client, calls } = setup(withStatus(() => new Error('not asked')));
+    await expect(
+      client.read('/v1/levels/0x01', {}, { at: 'head', height: 3 })
+    ).rejects.toMatchObject({ code: 'bad_request' });
+    expect(calls).toHaveLength(0);
+  });
+
+  it('reads many wallets again at a fresh height when one is gone', async () => {
+    let finalized = 50;
+    const wallet = '0x' + '01'.repeat(20);
+    const { client, calls } = setup((call) => {
+      if (path(call) === '/v1/status') return status(finalized);
+      if (param(call, 'height') === '50') {
+        finalized = 51;
+        return {
+          status: 409,
+          json: {
+            read: stamp(51),
+            error: { code: 'height_gone', message: 'x' }
+          }
+        };
+      }
+      return {
+        status: 200,
+        json: { read: stamp(51), data: { [wallet]: IDENTITY }, next: null }
+      };
+    });
+    expect(await client.getIdentitiesByWallets([wallet])).toEqual({
+      [wallet]: IDENTITY
+    });
+    expect(reads(calls).map((it) => param(it, 'height'))).toEqual(['50', '51']);
+  });
+});
+
 describe('ChainGatewayClient retries and errors', () => {
+  it("keeps a proxy's error status code for a page that isn't JSON", async () => {
+    const { client } = setup(
+      withStatus(() => ({
+        status: 502,
+        bytes: Buffer.from('<html>bad gateway</html>')
+      }))
+    );
+    await expect(client.getLevel('0x01', { height: 3 })).rejects.toMatchObject({
+      code: 'http_502',
+      status: 502
+    });
+  });
+
   it('retries 503 and network errors, honouring Retry-After', async () => {
     let n = 0;
     const { client, calls, sleeps } = setup(
