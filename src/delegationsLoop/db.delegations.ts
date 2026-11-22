@@ -11,6 +11,10 @@ import {
 import { fetchLatestTDHBlockNumber } from '../db';
 import { Delegation } from '../entities/IDelegation';
 import { sqlExecutor } from '../sql-executor';
+import {
+  chainDelegations,
+  delegationsFromChain
+} from '../identity-chain-mirror/chain-delegations';
 
 export async function fetchAirdropAddressForConsolidationKey(
   consolidationKey: string
@@ -77,6 +81,17 @@ export async function fetchProcessedDelegations(
   wallets?: string[],
   tokenId?: number | null
 ): Promise<Delegation[]> {
+  if (delegationsFromChain()) {
+    // From switch-on the 6529 chain holds delegations: the same resolution,
+    // read from it at one finalized height.
+    const { rows } = await chainDelegations.processedDelegations(
+      collection,
+      useCase,
+      wallets,
+      tokenId
+    );
+    return rows as unknown as Delegation[];
+  }
   const tokenScope = delegationTokenScopeCondition(collection, tokenId);
   const results = await sqlExecutor.execute(
     `
