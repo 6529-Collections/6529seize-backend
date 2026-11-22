@@ -885,8 +885,9 @@ run). With the flag on, NFTDelegation's events (after the identity freeze)
 are read so the checkpoint moves on but not applied: consolidations,
 delegations, re-keying and primary addresses come from the chain. Each step's
 time comes from what the Lambda has left: the mirror (at most six minutes),
-the re-keying (as many wallets as the time left allows, at 50 ms each; a
-failure there is logged, and a mirror error stays the run's), then the
+the re-keying (as many wallets as the time left allows, at 50 ms each, and
+half the last batch when that one didn't finish; a failure there is logged,
+and a mirror error stays the run's), then the
 profile site followers (once a first full sync has ended). A gateway node
 that says it isn't ready is logged and still read (its finalized state); a
 feed page of another chain ends the run without moving on. Another network id
@@ -909,15 +910,19 @@ order, with the use case and the last wallet written saved (a new full sync
 starts from the first); rows of other use cases go at the end. Every chain
 identity's `rep`, `cic` and `level_raw` are written from the chain by each
 full sync, the first one at switch-on included (an imported identity with too
-many wallets for a key is still mapped to its profile). When a full sync has
-written every chain identity (none left to retry), profiles that are not
-chain identities keep 6529.io's REP and CIC, without the help bot's credits,
-and a level of REP + TDH: the REP of a profile with credits becomes its REP
-ratings outside the credit category, and `level_raw` becomes `rep + tdh`
-where it differs, in chunks of rows. A feed page writes the identities, rating targets and wallets it
+many wallets for a key is still mapped to its profile); a full sync page
+stops at the run's deadline or an old pin, and the next run goes on from the
+identity after the last one written. Profiles that are not chain identities
+keep 6529.io's REP and CIC, without the help bot's credits, and a level of
+REP + TDH: when a full sync has written every chain identity, the REP of a
+profile with credits becomes its REP ratings outside the credit category, and
+then and after each level sweep `level_raw` becomes `rep + tdh` where it
+differs, in chunks of rows; the ids an identity waiting to be retried could
+have are left out. A feed page writes the identities, rating targets and wallets it
 touches (a rating touches its target, not its rater) until the run's
 deadline, for at most 2,000 keys and while its pin is under eight minutes
-old; the keys it doesn't reach go to the retry list, and its place moves on.
+old; the keys it doesn't reach go to the retry list (a delegation holder
+until each of its wallets is synced), and its place moves on.
 Each feed page, retry batch and full sync page reads the identities, ratings
 and delegations it touches pinned to one finalized height at or past the one
 it needs, and never below a height read before, in this run or an earlier one
@@ -973,9 +978,9 @@ state, 500 identities a page), writing only `level_raw` of the mapped
 identities, one statement a page. A page ranked below the height the day was
 first seen at, or with a level of an earlier day, stops the sweep for the run
 without saving. Every level write (feed, full sync or sweep) records the
-chain height it was read at on the mapping (`level_height`; a sweep reads a
-level the ranking leaves out at the ranking's height), and no write puts an
-older level over a newer one. The sweep goes first in each run with a quarter of the time,
+chain height it was read at on the mapping (`level_height`; a sweep's is the
+height its answer was read at, and a level the ranking leaves out is read
+there), and no write puts an older level over a newer one. The sweep goes first in each run with a quarter of the time,
 keeps its place in the state across runs, and starts again from the top for a
 newer day. The help bot's credit category stays in 6529.io's ratings table as
 a site feature, not counted as REP, and the mirror never touches it. It never
@@ -1007,7 +1012,8 @@ read). The mirror names its chain by the network id (`chain_id`); on another
 one, read three times a second apart (one answer from a node of another chain
 wipes nothing; while the answers differ the mirror doesn't run), as after a
 relaunch, which only test chains have, the bindings and first bindings start
-again empty, the mappings of identities made on the old chain go, and a full
+again empty, the mappings of identities made on the old chain go (and every
+mapping's level height), and a full
 sync rewrites the identities of the new chain; rows of identities only the old
 chain had are not deleted. `IdentityChainLookups` (`identity-chain-lookups.ts`)
 answers "the principal of wallet W at height H" from that table below its

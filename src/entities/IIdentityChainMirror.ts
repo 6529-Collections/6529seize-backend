@@ -132,6 +132,13 @@ export class IdentityChainRegroupEntity {
 
   @Column({ type: 'bigint', nullable: false })
   readonly queued_at!: number;
+
+  /**
+   * When a re-keying batch took it up; still set on the next run, the
+   * batch didn't finish (the next one is smaller).
+   */
+  @Column({ type: 'bigint', nullable: true, default: null })
+  readonly started_at!: number | null;
 }
 
 /** One row (id 'identity'): the mirror's place in the change feed. */

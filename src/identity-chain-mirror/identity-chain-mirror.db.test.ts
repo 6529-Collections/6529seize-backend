@@ -660,6 +660,9 @@ describeWithSeed(
       await inTx((conn) => db.setLevelHeight(P, 120, conn));
       expect(await db.levelHeightOf(P)).toBe(120);
       await db.writeLevels([], 1);
+      // A relaunch takes every level height away.
+      await inTx((conn) => db.clearLevelHeights(conn));
+      expect(await db.levelHeightOf(P)).toBeNull();
       // A founder wait starts once and ends.
       expect(await db.founderWaitSince(P, 10)).toBe(10);
       expect(await db.founderWaitSince(P, 20)).toBe(10);
@@ -694,12 +697,30 @@ describeWithSeed(
           Number(it.cic),
           Number(it.level_raw)
         ])[0];
-      expect(await db.fixRowsOffTheChain(1)).toEqual({ rep: 1, level: 1 });
+      // A profile id left out (an identity waiting to be retried) is not
+      // taken for one off the chain.
+      expect(
+        await db.fixRowsOffTheChain({ chunk: 1, leaveOut: [PLACE] })
+      ).toEqual({ rep: 0, level: 0 });
+      expect(await rowOf(PLACE)).toEqual([10, 3, 99]);
+      // The levels alone: REP keeps its credits.
+      expect(await db.fixRowsOffTheChain({ chunk: 1, repToo: false })).toEqual({
+        rep: 0,
+        level: 1
+      });
+      expect(await rowOf(PLACE)).toEqual([10, 3, 30]);
+      expect(await db.fixRowsOffTheChain({ chunk: 1 })).toEqual({
+        rep: 1,
+        level: 1
+      });
       // PLACE: REP 4 without the credits, CIC kept, level 4 + 20.
       expect(await rowOf(PLACE)).toEqual([4, 3, 24]);
       // Alice is a chain identity: the mirror's, left alone.
       expect(await rowOf(ALICE)).toEqual([10, 3, 99]);
-      expect(await db.fixRowsOffTheChain(1)).toEqual({ rep: 0, level: 0 });
+      expect(await db.fixRowsOffTheChain({ chunk: 1 })).toEqual({
+        rep: 0,
+        level: 0
+      });
     });
 
     it('keeps first bindings, regroups to re-key and mapped profile ids', async () => {
@@ -732,9 +753,13 @@ describeWithSeed(
       await inTx((conn) => db.queueRegroups([B], 20, conn));
       expect(await db.pendingRegroups(10)).toEqual([A, B]);
       expect(await db.pendingRegroups(1)).toEqual([A]);
+      // A batch taken up and not finished is counted; one finished clears it.
+      await db.regroupsStarted([A, B], 12);
+      expect(await db.unfinishedRegroups()).toBe(2);
       // B was queued again after the re-keying began: it stays.
       await db.regroupsDone([A, B], 15);
       expect(await db.pendingRegroups(10)).toEqual([B]);
+      expect(await db.unfinishedRegroups()).toBe(0);
 
       await inTx((conn) => db.insertMapping(P, ALICE, 'LEGACY', 1, conn));
       expect(await db.profileIdsOfPrincipals([P.toUpperCase(), Q])).toEqual(

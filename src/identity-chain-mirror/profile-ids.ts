@@ -114,12 +114,14 @@ export class ProfileIds {
 
   /**
    * The profile ids an identity whose id can't be settled yet could get:
-   * its derived id and its founding wallet's placeholder. Its rows, if any,
-   * are under one of them.
+   * its legacy id, its derived id and its founding wallet's placeholder.
+   * Its rows, if any, are under one of them.
    */
   async candidateIds(identity: ChainIdentity): Promise<string[]> {
     const ids = [principalProfileId(identity.principalId.toLowerCase())];
     try {
+      const legacy = await this.legacyIdOf(identity);
+      if (legacy) ids.push(legacy);
       const wallet = await this.foundingWalletOf(identity);
       const placeholder = wallet
         ? await this.db.unmappedPlaceholderProfile(wallet)

@@ -375,9 +375,12 @@ async function mirrorChainIdentities(timeLeft: () => number) {
  */
 async function rekeyRegroupedWallets(timeLeft: () => number) {
   const budget = timeLeft() - IDENTITY_END_RESERVE_MS;
+  // A batch a run took up and didn't finish (cut off): half of it next.
+  const unfinished = await identityChainMirror.unfinishedRegroups();
   const batch = Math.min(
     IDENTITY_REGROUPS_PER_RUN,
-    Math.floor(budget / IDENTITY_REKEY_MS_PER_WALLET)
+    Math.floor(budget / IDENTITY_REKEY_MS_PER_WALLET),
+    unfinished ? Math.max(1, Math.floor(unfinished / 2)) : Infinity
   );
   if (batch < 1) {
     logger.warn('[REGROUPED WALLETS WAIT FOR THE NEXT RUN] [NO TIME LEFT]');
@@ -386,6 +389,7 @@ async function rekeyRegroupedWallets(timeLeft: () => number) {
   const before = Date.now();
   const wallets = await identityChainMirror.pendingRegroups(batch);
   if (!wallets.length) return;
+  await identityChainMirror.regroupsStarted(wallets);
   const health = await DelegationsLoopHealth.start(true);
   try {
     const affected = await getAffectedWalletsForAddresses(

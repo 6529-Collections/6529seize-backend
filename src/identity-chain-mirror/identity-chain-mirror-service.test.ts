@@ -138,20 +138,27 @@ class FakeDb {
     }
     return written;
   }
-  fixes = 0;
-  async fixRowsOffTheChain() {
-    this.fixes++;
+  fixes: { repToo: boolean; leaveOut: readonly string[] }[] = [];
+  async fixRowsOffTheChain({
+    repToo = true,
+    leaveOut = []
+  }: { repToo?: boolean; leaveOut?: readonly string[] } = {}) {
+    this.fixes.push({ repToo, leaveOut });
     const mapped = new Set(
       Array.from(this.mapping.values()).map((it) => it.profile)
     );
     const fixed = { rep: 0, level: 0 };
     for (const [key, row] of Array.from(this.rows.entries())) {
       if (row.profile_id === null || mapped.has(row.profile_id)) continue;
+      if (leaveOut.includes(row.profile_id)) continue;
       const ratings = (this.ratings.get(row.profile_id) ?? []).filter(
         (it) => it.matter === 'REP'
       );
       let rep = row.rep;
-      if (ratings.some((it) => isHelpBotCreditCategory(it.matter_category))) {
+      if (
+        repToo &&
+        ratings.some((it) => isHelpBotCreditCategory(it.matter_category))
+      ) {
         rep = ratings
           .filter((it) => !isHelpBotCreditCategory(it.matter_category))
           .reduce((sum, it) => sum + it.rating, 0);
@@ -162,6 +169,9 @@ class FakeDb {
       this.rows.set(key, { ...row, rep, level_raw: level });
     }
     return fixed;
+  }
+  async clearLevelHeights() {
+    this.levelHeights.clear();
   }
   async levelHeightOf(principal: string) {
     return this.levelHeights.get(principal.toLowerCase()) ?? null;
@@ -2771,10 +2781,14 @@ describe('IdentityChainMirror', () => {
     expect(db.rows.get(W(70))).toMatchObject({ rep: 2, cic: 2, level_raw: 42 });
     // A row without credits keeps its REP and level.
     expect(db.rows.get(W(71))).toMatchObject({ rep: 3, cic: 1, level_raw: 13 });
-    expect(db.fixes).toBe(1);
+    // After the first run's level sweep (levels only), then the full sync.
+    expect(db.fixes).toEqual([
+      { repToo: false, leaveOut: [] },
+      { repToo: true, leaveOut: [] }
+    ]);
   });
 
-  it('puts the off-chain rewrite off while an identity of the sync waits to be retried', async () => {
+  it('leaves out of the off-chain rewrite the ids of identities waiting to be retried', async () => {
     const { mirror, db, bob } = world();
     const apply = db.applyIdentityPlan.bind(db);
     jest
@@ -2785,7 +2799,140 @@ describe('IdentityChainMirror', () => {
       });
     await mirror.run({ budgetMs: 60_000 });
     expect(db.state?.retry.principals).toEqual([bob.principalId]);
-    expect(db.fixes).toBe(0);
+    // Bob's possible ids are left out, the others' rows fixed.
+    expect(db.fixes).toContainEqual({
+      repToo: true,
+      leaveOut: expect.arrayContaining([principalProfileId(bob.principalId)])
+    });
+  });
+
+  it("writes the levels of a relaunched chain over the old one's heights", async () => {
+    process.env[RELAUNCH_ALLOWED_ENV] = 'true';
+    const { mirror, db, chain, alice } = world();
+    chain.network = '0x' + 'aa'.repeat(32);
+    await mirror.run({ budgetMs: 60_000 });
+    // Alice's level was written as of 500 on the old chain.
+    db.levelHeights.set(alice.principalId, 500);
+    chain.network = '0x' + 'bb'.repeat(32);
+    chain.identities.set(alice.principalId, leveled(alice, 4444, 25));
+    await mirror.run({ budgetMs: 60_000 });
+    expect(db.rows.get(`${A}-${B}`)?.level_raw).toBe(4444);
+    expect(db.levelHeights.get(alice.principalId)).toBe(100);
+  });
+
+  it('takes a holder identity off the retry list once its wallets are synced', async () => {
+    const { mirror, db, alice, gateway } = world();
+    await mirror.run({ budgetMs: 60_000 });
+    db.state = {
+      ...db.state!,
+      retry: { principals: [], targets: [], wallets: [alice.principalId] }
+    };
+    const ofWallet = gateway.getDelegationsOfWallet.getMockImplementation()!;
+    gateway.getDelegationsOfWallet.mockImplementation(
+      async (wallet, ...rest) => {
+        if (wallet === B) throw new Error('timeout');
+        return await ofWallet(wallet, ...rest);
+      }
+    );
+    await mirror.run({ budgetMs: 60_000 });
+    // B failed: it and the holder stay.
+    expect(db.state?.retry.wallets).toEqual(
+      expect.arrayContaining([alice.principalId, B])
+    );
+    gateway.getDelegationsOfWallet.mockImplementation(ofWallet);
+    await mirror.run({ budgetMs: 60_000 });
+    await mirror.run({ budgetMs: 60_000 });
+    expect(db.state?.retry.wallets).toEqual([]);
+  });
+
+  it('waits for bindings that stop at the creation height itself', async () => {
+    const { mirror, db, chain } = world();
+    chain.importStart = 1;
+    chain.feed.push({ from: 1, through: 19, next: 20, blocks: [] });
+    await mirror.run({ budgetMs: 60_000 });
+    expect(db.state).toMatchObject({
+      bindings_exact: true,
+      bindings_next_height: 20
+    });
+    db.placeholders.set(W(65), 'p-65');
+    const made = chainIdentity(PID(65), [W(65)], {
+      legacyId: null,
+      founder: W(65),
+      createdHeight: 20
+    });
+    await expect(mirror.profileIdOf(made)).rejects.toMatchObject({
+      retryLater: true,
+      reason: 'bindings_behind'
+    });
+  });
+
+  it('fixes the levels of rows off the chain after each level sweep', async () => {
+    const { mirror, db, chain, alice } = world();
+    await mirror.run({ budgetMs: 60_000 });
+    db.fixes = [];
+    chain.tdhDay = 26;
+    chain.identities.set(alice.principalId, leveled(alice, 1005, 26));
+    await mirror.run({ budgetMs: 60_000 });
+    expect(db.state?.level_sweep_day).toBeNull();
+    expect(db.fixes).toEqual([{ repToo: false, leaveOut: [] }]);
+  });
+
+  it("records the height a sweep page was read at, not only the ranking's", async () => {
+    const { mirror, db, chain, alice, gateway } = world();
+    await mirror.run({ budgetMs: 60_000 });
+    chain.tdhDay = 26;
+    chain.identities.set(alice.principalId, leveled(alice, 3000, 26));
+    const rank = gateway.getLevelRanking.getMockImplementation()!;
+    gateway.getLevelRanking.mockImplementation(
+      async (opts?: { after?: string | null; limit?: number }) => {
+        const page = await rank(opts);
+        return { ...page, read: { height: 112 } as never };
+      }
+    );
+    await mirror.run({ budgetMs: 60_000 });
+    expect(db.levelHeights.get(alice.principalId)).toBe(112);
+  });
+
+  it('stops a full sync page at the deadline, going on from the identity after', async () => {
+    const { mirror, db, chain, gateway, tick } = world();
+    for (let i = 0; i < 4; i++) {
+      chain.identities.set(
+        PID(30 + i),
+        chainIdentity(PID(30 + i), [W(30 + i)])
+      );
+    }
+    const list = gateway.listIdentities.getMockImplementation()!;
+    // Pages of the six identities at once.
+    gateway.listIdentities.mockImplementation(
+      async (opts: { after?: string | null }) => {
+        const all = Array.from(chain.identities.values()).sort((a, b) =>
+          a.principalId < b.principalId ? -1 : 1
+        );
+        const start = opts.after
+          ? all.findIndex((it) => it.principalId === opts.after) + 1
+          : 0;
+        return {
+          items: all.slice(start),
+          next: null,
+          read: {} as never
+        };
+      }
+    );
+    const apply = db.applyIdentityPlan.bind(db);
+    jest
+      .spyOn(db, 'applyIdentityPlan')
+      .mockImplementation(async (plan: IdentityPlan) => {
+        tick(20_000);
+        return apply(plan);
+      });
+    await mirror.run({ budgetMs: 60_000 });
+    expect(db.state?.sync_phase).toBe('IDENTITIES');
+    const after = db.state?.sync_after;
+    expect(after).not.toBeNull();
+    gateway.listIdentities.mockClear();
+    await mirror.run({ budgetMs: 60_000 });
+    expect(gateway.listIdentities.mock.calls[0][0]).toMatchObject({ after });
+    gateway.listIdentities.mockImplementation(list);
   });
 
   it('starts the keys to retry again with a full sync', async () => {

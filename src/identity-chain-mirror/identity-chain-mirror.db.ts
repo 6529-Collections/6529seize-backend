@@ -400,17 +400,32 @@ export class IdentityChainMirrorDb extends LazyDbAccessCompatibleService {
    * Bounded statements: profile ids 500 at a time, rows `chunk` keys at a
    * time. Idempotent. Returns the rows changed of each kind.
    */
-  async fixRowsOffTheChain(
-    chunk = 1_000
-  ): Promise<{ rep: number; level: number }> {
+  async fixRowsOffTheChain({
+    chunk = 1_000,
+    repToo = true,
+    leaveOut = []
+  }: {
+    readonly chunk?: number;
+    /** With false, only the levels (REP is already without credits). */
+    readonly repToo?: boolean;
+    /** Profile ids not taken for ones off the chain (identities waiting). */
+    readonly leaveOut?: readonly string[];
+  } = {}): Promise<{ rep: number; level: number }> {
     const helpBot = HELP_BOT_CREDIT_CATEGORY.toLowerCase();
-    const credited = (
-      await this.db.execute<{ profile_id: string }>(
-        `select distinct matter_target_id as profile_id from ${RATINGS_TABLE}
-         where matter = 'REP' and lower(trim(matter_category)) = :helpBot`,
-        { helpBot }
-      )
-    ).map((it) => it.profile_id);
+    const left = new Set(leaveOut.map((it) => it.toLowerCase()));
+    // `not in` needs one value at least.
+    const skip = left.size ? Array.from(left) : [''];
+    const credited = repToo
+      ? (
+          await this.db.execute<{ profile_id: string }>(
+            `select distinct matter_target_id as profile_id from ${RATINGS_TABLE}
+             where matter = 'REP' and lower(trim(matter_category)) = :helpBot`,
+            { helpBot }
+          )
+        )
+          .map((it) => it.profile_id)
+          .filter((it) => !left.has(it.toLowerCase()))
+      : [];
     let rep = 0;
     for (let i = 0; i < credited.length; i += 500) {
       const result = await this.db.execute(
@@ -446,8 +461,9 @@ export class IdentityChainMirrorDb extends LazyDbAccessCompatibleService {
          where m.principal_id is null
            and i.consolidation_key > :after
            ${bound ? 'and i.consolidation_key <= :upTo' : ''}
+           and i.profile_id not in (:skip)
            and i.level_raw <> i.rep + i.tdh`,
-        { after, upTo: bound?.consolidation_key }
+        { after, upTo: bound?.consolidation_key, skip }
       );
       level += this.db.getAffectedRows(result);
       if (!bound) return { rep, level };
@@ -576,6 +592,19 @@ export class IdentityChainMirrorDb extends LazyDbAccessCompatibleService {
    * On another chain the mappings of identities made on the old one go (an
    * imported identity's mapping is its legacy id on any chain).
    */
+  /**
+   * Every mapping's level height goes (a relaunched chain's heights start
+   * again): the new chain's levels are written.
+   */
+  async clearLevelHeights(conn: Conn) {
+    await this.db.execute(
+      `update ${IDENTITY_CHAIN_PRINCIPALS_TABLE} set level_height = null
+       where level_height is not null`,
+      undefined,
+      { wrappedConnection: conn }
+    );
+  }
+
   async clearChainMadeMappings(conn: Conn) {
     await this.db.execute(
       `delete from ${IDENTITY_CHAIN_PRINCIPALS_TABLE} where origin <> 'LEGACY'`,
@@ -1414,7 +1443,7 @@ export class IdentityChainMirrorDb extends LazyDbAccessCompatibleService {
         .join(', ');
       await this.db.execute(
         `insert into ${IDENTITY_CHAIN_REGROUPS_TABLE} (wallet, queued_at) values ${values}
-         on duplicate key update queued_at = values(queued_at)`,
+         on duplicate key update queued_at = values(queued_at), started_at = null`,
         params,
         { wrappedConnection: conn }
       );
@@ -1431,6 +1460,26 @@ export class IdentityChainMirrorDb extends LazyDbAccessCompatibleService {
     return rows.map((it) => it.wallet);
   }
 
+  /** Wallets a re-keying batch took up and didn't finish. */
+  async unfinishedRegroups(): Promise<number> {
+    const row = await this.db.oneOrNull<{ n: number | string }>(
+      `select count(*) as n from ${IDENTITY_CHAIN_REGROUPS_TABLE}
+       where started_at is not null`
+    );
+    return Number(row?.n ?? 0);
+  }
+
+  /** A re-keying batch takes these wallets up. */
+  async regroupsStarted(wallets: string[], now: number) {
+    for (let i = 0; i < wallets.length; i += 1000) {
+      await this.db.execute(
+        `update ${IDENTITY_CHAIN_REGROUPS_TABLE} set started_at = :now
+         where wallet in (:wallets)`,
+        { wallets: wallets.slice(i, i + 1000), now }
+      );
+    }
+  }
+
   /** Re-keyed: off the queue, unless queued again since `before`. */
   async regroupsDone(wallets: string[], before: number) {
     for (let i = 0; i < wallets.length; i += 1000) {
@@ -1440,6 +1489,11 @@ export class IdentityChainMirrorDb extends LazyDbAccessCompatibleService {
         { wallets: wallets.slice(i, i + 1000), before }
       );
     }
+    // A batch finished: the next one is full size again.
+    await this.db.execute(
+      `update ${IDENTITY_CHAIN_REGROUPS_TABLE} set started_at = null
+       where started_at is not null`
+    );
   }
 
   /** Every wallet with a stored binding (a rebuild's reconciliation). */

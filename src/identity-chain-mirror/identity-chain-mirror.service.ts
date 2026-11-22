@@ -91,6 +91,8 @@ const PAGE_KEYS = 2_000;
  * before (the rest are tried again).
  */
 const PIN_WINDOW_MS = 8 * 60 * 1000;
+/** Identities waiting to be retried whose ids a fix of rows can leave out. */
+const MAX_WAITING_LEFT_OUT = 500;
 /** Environment flag: a new network id starts the mirror again (test stages). */
 export const RELAUNCH_ALLOWED_ENV = 'IDENTITY_CHAIN_MIRROR_RELAUNCH_ALLOWED';
 /** A new network id is read this many more times before anything is wiped. */
@@ -440,6 +442,16 @@ export class IdentityChainMirror {
     await this.db.regroupsDone(wallets, before);
   }
 
+  /** Wallets a re-keying batch took up and didn't finish. */
+  async unfinishedRegroups(): Promise<number> {
+    return await this.db.unfinishedRegroups();
+  }
+
+  /** A re-keying batch takes these wallets up. */
+  async regroupsStarted(wallets: string[]) {
+    await this.db.regroupsStarted(wallets, this.now());
+  }
+
   private async runInto(report: MirrorRunReport, budgetMs: number) {
     const deadline = this.now() + budgetMs;
     this.identities.clear();
@@ -662,6 +674,7 @@ export class IdentityChainMirror {
     await this.db.executeNativeQueriesInTransaction(async (conn) => {
       await this.db.clearWalletBindings(conn);
       await this.db.clearChainMadeMappings(conn);
+      await this.db.clearLevelHeights(conn);
       await this.db.saveState(fresh, this.now(), conn);
     });
     this.retry = emptyRetrySets();
@@ -700,14 +713,28 @@ export class IdentityChainMirror {
       (await this.pinReads(from)) && (await this.unlessHeightGone(work));
     while (state.sync_phase === 'IDENTITIES' && this.now() < deadline) {
       const at: MirrorAt = { height: from, source: 'FULL_SYNC' };
-      const read: { next: string | null } = { next: null };
+      const read: {
+        next: string | null;
+        last: string | null;
+        stopped: boolean;
+      } = { next: null, last: null, stopped: false };
       const done = await pinned(async () => {
         const page = await this.gateway.listIdentities({
           after: state.sync_after,
           limit: IDENTITY_PAGE,
           ...this.pin()
         });
+        read.next = page?.next ?? null;
         for (const identity of page?.items ?? []) {
+          // Out of time, or the pin is getting old: on from this identity
+          // next run (the list goes by principal id).
+          if (
+            this.now() >= deadline ||
+            this.now() - this.pinnedAt >= PIN_WINDOW_MS
+          ) {
+            read.stopped = true;
+            return;
+          }
           await this.isolated(
             ['principals', 'targets'],
             identity.principalId,
@@ -717,11 +744,16 @@ export class IdentityChainMirror {
               return await this.syncTargetRatings(identity, report, at);
             }
           );
+          read.last = identity.principalId;
         }
-        read.next = page?.next ?? null;
       });
       if (!done) return state;
-      if (!read.next) await this.fixRowsOffTheChain();
+      if (read.stopped) {
+        return read.last === null
+          ? state
+          : await this.save({ ...state, sync_after: read.last });
+      }
+      if (!read.next) await this.fixRowsOffTheChain(true);
       state = await this.save(
         read.next
           ? { ...state, sync_after: read.next }
@@ -833,20 +865,27 @@ export class IdentityChainMirror {
   }
 
   /**
-   * Once every chain identity has been written (and mapped), profiles that
-   * are not chain identities keep 6529.io's REP and CIC, without the help
-   * bot's credits, and a level of REP + TDH. Put off to the next full sync
-   * while any identity of this one waits to be tried again (it may not be
-   * mapped yet).
+   * Profiles that are not chain identities keep 6529.io's REP and CIC,
+   * without the help bot's credits, and a level of REP + TDH: the REP once a
+   * full sync has written every chain identity, the level then and after
+   * each level sweep. The profile ids an identity waiting to be retried
+   * could have (it may not be mapped yet) are left out; with more than
+   * MAX_WAITING_LEFT_OUT of them, it waits for a later time.
    */
-  private async fixRowsOffTheChain() {
-    if (this.retry.principals.size) {
+  private async fixRowsOffTheChain(repToo: boolean) {
+    const waiting = Array.from(this.retry.principals);
+    if (waiting.length > MAX_WAITING_LEFT_OUT) {
       logger.warn(
-        `[ROWS OFF THE CHAIN NOT FIXED] [${this.retry.principals.size} IDENTITIES TO RETRY]`
+        `[ROWS OFF THE CHAIN NOT FIXED] [${waiting.length} IDENTITIES TO RETRY]`
       );
       return;
     }
-    const fixed = await this.db.fixRowsOffTheChain();
+    const leaveOut: string[] = [];
+    for (const principal of waiting) {
+      const identity = await this.identity(principal);
+      if (identity) leaveOut.push(...(await this.ids.candidateIds(identity)));
+    }
+    const fixed = await this.db.fixRowsOffTheChain({ repToo, leaveOut });
     logger.info(
       `[ROWS OFF THE CHAIN FIXED] [${fixed.rep} REP WITHOUT CREDITS] [${fixed.level} LEVELS]`
     );
@@ -1055,6 +1094,8 @@ export class IdentityChainMirror {
         }
         const day = Number(state.level_sweep_day);
         const rankedAt = Number(page.data.rankedAt);
+        // Each row's identity is read as of the answer, at or past rankedAt.
+        const readAt = Math.max(Number(page.read?.height) || 0, rankedAt);
         if (
           !Number.isSafeInteger(rankedAt) ||
           rankedAt < Number(state.levels_day_height ?? 0)
@@ -1073,10 +1114,10 @@ export class IdentityChainMirror {
           const principal = row.identity.principalId.toLowerCase();
           const profileId = mapped.get(principal);
           if (!profileId) continue;
-          // Read at the ranking's height when it leaves the level out, so
-          // every level written is as of rankedAt.
+          // Read at the answer's height when it leaves the level out, so
+          // every level written is as of readAt.
           const level =
-            row.identity.level ?? (await this.levelAt(principal, rankedAt));
+            row.identity.level ?? (await this.levelAt(principal, readAt));
           if (!level) continue;
           if (Number(level.tdhDay) < day) {
             logger.warn(
@@ -1089,7 +1130,7 @@ export class IdentityChainMirror {
             levels.push({ profile_id: profileId, level_raw: raw });
           }
         }
-        await this.db.writeLevels(levels, rankedAt);
+        await this.db.writeLevels(levels, readAt);
         report.levelsSwept += levels.length;
         if (page.next) {
           state = await this.save({ ...state, level_sweep_after: page.next });
@@ -1100,6 +1141,7 @@ export class IdentityChainMirror {
             level_sweep_day: null,
             level_sweep_after: null
           });
+          await this.fixRowsOffTheChain(false);
         }
       }
     } catch (error) {
@@ -1378,6 +1420,7 @@ export class IdentityChainMirror {
         this.syncTargetRatings(identity, report, at)
       );
     }
+    const holderWallets = new Map<string, string[]>();
     for (const holder of Array.from(effects.delegationHolders)) {
       if (HEX20.test(holder)) {
         touched.add(holder);
@@ -1386,7 +1429,9 @@ export class IdentityChainMirror {
       // A holder identity not reached is retried as a holder.
       if (!room('wallets', holder)) continue;
       const identity = await this.identity(holder);
-      identity?.wallets.forEach((it) => touched.add(it.toLowerCase()));
+      const wallets = identity?.wallets.map((it) => it.toLowerCase()) ?? [];
+      wallets.forEach((it) => touched.add(it));
+      holderWallets.set(holder.toLowerCase(), wallets);
     }
     for (const wallet of Array.from(touched)) {
       if (!room('wallets', wallet)) continue;
@@ -1394,6 +1439,13 @@ export class IdentityChainMirror {
         this.syncWalletDelegations(wallet, report)
       );
     }
+    // A holder is done once each of its wallets is (they're retried
+    // themselves otherwise).
+    holderWallets.forEach((wallets, holder) => {
+      if (wallets.every((it) => !this.retry.wallets.has(it))) {
+        this.retry.wallets.delete(holder);
+      }
+    });
     const deferred = left.principals + left.targets + left.wallets;
     if (deferred) {
       report.deferred += deferred;

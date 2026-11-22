@@ -66,7 +66,9 @@ jest.mock('../identity-chain-mirror/identity-chain-mirror.service', () => ({
     run: jest.fn(),
     followProfileSites: jest.fn(async () => []),
     pendingRegroups: jest.fn(async () => []),
-    regroupsDone: jest.fn(async () => undefined)
+    regroupsDone: jest.fn(async () => undefined),
+    unfinishedRegroups: jest.fn(async () => 0),
+    regroupsStarted: jest.fn(async () => undefined)
   }
 }));
 
@@ -129,6 +131,7 @@ describe('delegations loop and the identity mirror', () => {
     });
     jest.mocked(db.fetchAllConsolidatedTdh).mockResolvedValue([]);
     jest.mocked(identityChainMirror.pendingRegroups).mockResolvedValue([]);
+    jest.mocked(identityChainMirror.unfinishedRegroups).mockResolvedValue(0);
     jest
       .mocked(getAffectedWalletsForAddresses)
       .mockResolvedValue(new Set<string>());
@@ -241,6 +244,25 @@ describe('delegations loop and the identity mirror', () => {
       .mockRejectedValueOnce(new Error('tdh read failed'));
     await expect(invoke()).rejects.toThrow('lost connection');
     expect(identityChainMirror.regroupsDone).not.toHaveBeenCalled();
+  });
+
+  it('halves the batch after one a run took up and did not finish', async () => {
+    process.env.FEATURE_IDENTITY_CHAIN_MIRROR = 'true';
+    jest.mocked(identityChainMirror.run).mockResolvedValue(report([]) as never);
+    jest.mocked(identityChainMirror.unfinishedRegroups).mockResolvedValue(800);
+    jest.mocked(identityChainMirror.pendingRegroups).mockResolvedValue([A]);
+    jest
+      .mocked(getAffectedWalletsForAddresses)
+      .mockResolvedValue(new Set([A]) as never);
+    await invoke(4 * 60_000 + 10_000);
+    expect(identityChainMirror.pendingRegroups).toHaveBeenCalledWith(400);
+    expect(identityChainMirror.regroupsStarted).toHaveBeenCalledWith([A]);
+    expect(
+      jest.mocked(identityChainMirror.regroupsStarted).mock
+        .invocationCallOrder[0]
+    ).toBeLessThan(
+      jest.mocked(getAffectedWalletsForAddresses).mock.invocationCallOrder[0]
+    );
   });
 
   it('re-keys as many regrouped wallets as the time left allows', async () => {
