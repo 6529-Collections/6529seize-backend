@@ -87,7 +87,8 @@ export const mintManifest: AreaManifest = {
   to rebuild to. A command step gets the same values in `REBUILD_*`
   environment variables.
   - Each rebuilder connects as its own MySQL user. It can write its `writes`
-    and read its `reads`; anything else is refused.
+    and read its `reads`, and lock rows it reads (`SELECT ... FOR UPDATE`,
+    as production writers do); anything else is refused.
   - A preload refuses every socket except MySQL and the run's sources.
   - Any id the API shows must come from the source, never from
     auto-increment or a random UUID, or the answers change.
