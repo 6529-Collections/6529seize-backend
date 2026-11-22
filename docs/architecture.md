@@ -2995,6 +2995,18 @@ line. Other writes that no longer apply (a card already dropped, a row
 already there) are marked skipped too. Replay is off by default. Rollback:
 unset the flag; the queue keeps every write.
 
+**Re-key fallback.** The legacy subscription tables follow consolidation
+keys because the delegations loop re-keys them (`consolidateSubscriptions`)
+when it changes a grouping. Once the identity mirror writes
+`address_consolidation_keys`, a grouping can change with no delegation
+event. With `FEATURE_SUBSCRIPTIONS_REKEY_ON_MIRROR=true` (off by default),
+the `subscriptionsTopUpLoop`, every fifth minute and before its top-up scan,
+finds each balance key with a wallet the table now keys otherwise and calls
+`consolidateSubscriptions` for those wallets, as the delegations loop would.
+A key whose re-key the key-width guard already holds back is left to the
+guard's replay. A failure is logged and never stops the scan. Rollback:
+unset the flag.
+
 **Rebuild.** Every entry can be derived again from its source:
 
 - top-ups from Ethereum, once the top-up loop's cursor
