@@ -136,6 +136,7 @@ describeWithSeed(
           bindings_next_height: null,
           chain_id: null,
           placeholders_at: null,
+          bindings_exact: false,
           retry: NO_RETRY
         },
         9
@@ -294,6 +295,7 @@ describeWithSeed(
           bindings_next_height: 12,
           chain_id: '0xabc',
           placeholders_at: 5,
+          bindings_exact: true,
           retry: { principals: [P], targets: [], wallets: [B] }
         },
         1
@@ -303,6 +305,7 @@ describeWithSeed(
           bindings_next_height: 12,
           chain_id: '0xabc',
           placeholders_at: 5,
+          bindings_exact: true,
           retry: { principals: [P], targets: [], wallets: [B] }
         })
       );
@@ -491,7 +494,7 @@ describeWithSeed(
       ]);
     });
 
-    it('keeps the rows it is not given when told to, counting them in totals', async () => {
+    it("keeps the given raters' rows it is not given, counting them in totals", async () => {
       const result = await inTx((conn) =>
         db.replaceTargetRatings(
           ALICE,
@@ -508,10 +511,11 @@ describeWithSeed(
           1_700_000_000_000,
           { targetPrincipal: Q, height: 92, source: 'FEED' },
           conn,
-          { keepUnlisted: true }
+          { keepRaters: [PLACE] }
         )
       );
-      expect(result).toEqual({ inserted: 1, updated: 0, deleted: 0 });
+      // BOB's Kind row goes (not given, not kept); PLACE's Old row stays.
+      expect(result).toEqual({ inserted: 1, updated: 0, deleted: 1 });
       const rows = await sqlExecutor.execute<any>(
         `select rater_profile_id, matter_category, rating from ${RATINGS_TABLE}
          where matter_target_id = :id and matter = 'REP' order by matter_category, rater_profile_id`,
@@ -520,18 +524,25 @@ describeWithSeed(
       expect(rows.map((it: any) => [it.matter_category, it.rating])).toEqual(
         expect.arrayContaining([
           [HELP_BOT_CREDIT_CATEGORY, 10],
-          ['Kind', 3],
           ['Old', 1],
           ['Old', 2]
         ])
       );
-      expect(rows).toHaveLength(4);
+      expect(rows).toHaveLength(3);
       const events = await sqlExecutor.execute<any>(
-        `select new_rating, total_after from ${IDENTITY_CHAIN_RATING_EVENTS_TABLE}`
+        `select matter_category, new_rating, total_after
+         from ${IDENTITY_CHAIN_RATING_EVENTS_TABLE} order by matter_category`
       );
       expect(
-        events.map((it: any) => [Number(it.new_rating), Number(it.total_after)])
-      ).toEqual([[2, 3]]);
+        events.map((it: any) => [
+          it.matter_category,
+          Number(it.new_rating),
+          Number(it.total_after)
+        ])
+      ).toEqual([
+        ['Kind', 0, 0],
+        ['Old', 2, 3]
+      ]);
     });
 
     it('replaces a wallet delegations and all pairs', async () => {
@@ -578,6 +589,55 @@ describeWithSeed(
           block: 1_000_000_100
         })
       ]);
+      // The pairs of a wallet to keep stay; the others are replaced.
+      await inTx((conn) =>
+        db.replaceAllPairs([], 1_000_000_200, 2, conn, [B.toUpperCase()])
+      );
+      expect(
+        await sqlExecutor.execute<any>(
+          `select wallet1, wallet2 from ${CONSOLIDATIONS_TABLE}`
+        )
+      ).toEqual([{ wallet1: A, wallet2: B }]);
+    });
+
+    it('keeps first bindings, regroups to re-key and mapped profile ids', async () => {
+      await inTx((conn) =>
+        db.recordFirstBindings(
+          [
+            { wallet: A, principal_id: P, height: 3 },
+            { wallet: B, principal_id: Q, height: 4 }
+          ],
+          conn
+        )
+      );
+      // A wallet keeps its first.
+      await inTx((conn) =>
+        db.recordFirstBindings(
+          [{ wallet: A, principal_id: Q, height: 9 }],
+          conn
+        )
+      );
+      expect(await db.firstBindingOf(A)).toEqual({
+        first: { wallet: A, principal_id: P, height: 3 },
+        exact: false,
+        nextHeight: null
+      });
+      expect((await db.firstBindingOf(C)).first).toBeNull();
+      await inTx((conn) => db.clearWalletBindings(conn));
+      expect((await db.firstBindingOf(A)).first).toBeNull();
+
+      await inTx((conn) => db.queueRegroups([A, B], 10, conn));
+      await inTx((conn) => db.queueRegroups([B], 20, conn));
+      expect(await db.pendingRegroups(10)).toEqual([A, B]);
+      expect(await db.pendingRegroups(1)).toEqual([A]);
+      // B was queued again after the re-keying began: it stays.
+      await db.regroupsDone([A, B], 15);
+      expect(await db.pendingRegroups(10)).toEqual([B]);
+
+      await inTx((conn) => db.insertMapping(P, ALICE, 'LEGACY', 1, conn));
+      expect(await db.profileIdsOfPrincipals([P.toUpperCase(), Q])).toEqual(
+        new Map([[P, ALICE]])
+      );
     });
   }
 );

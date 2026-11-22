@@ -62,6 +62,11 @@ export const IDENTITY_CHAIN_RATING_EVENTS_TABLE =
 export const IDENTITY_CHAIN_WALLETS_TABLE = 'identity_chain_wallets';
 /** 6529.io's placeholder profiles as the identity mirror first found them. */
 export const IDENTITY_CHAIN_PLACEHOLDERS_TABLE = 'identity_chain_placeholders';
+/** Each wallet's first principal, when the mirror followed it from the import. */
+export const IDENTITY_CHAIN_FIRST_BINDINGS_TABLE =
+  'identity_chain_first_bindings';
+/** Wallets the identity mirror regrouped, until their tables are re-keyed. */
+export const IDENTITY_CHAIN_REGROUPS_TABLE = 'identity_chain_regroups';
 export const TEAM_TABLE = 'team';
 export const DISTRIBUTION_TABLE = 'distribution';
 export const DISTRIBUTION_PHOTO_TABLE = 'distribution_photo';

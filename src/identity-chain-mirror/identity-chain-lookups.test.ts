@@ -45,7 +45,14 @@ function setup(
   const gateway = {
     getIdentityByLegacyProfileId: jest.fn(async () => null as unknown),
     getMembershipWalletHistory: jest.fn(async () => history(ranges)),
-    getHead: jest.fn(async () => ({ network }))
+    getHead: jest.fn(async () => ({ network })),
+    getMembership: jest.fn(
+      async () =>
+        ({ import: { completed: true, startHeight: null } }) as Record<
+          string,
+          unknown
+        >
+    )
   };
   const lookups = new IdentityChainLookups(
     db as unknown as IdentityChainMirrorDb,
@@ -66,10 +73,11 @@ describe('principalInHistory', () => {
   it('does not answer past the read, outside the ranges, or across a gap', () => {
     expect(principalInHistory(history([[1, 200]], 100), 150)).toBeUndefined();
     expect(principalInHistory(history([[1, 40]]), 60)).toBeUndefined();
-    // Held from 40: a change before it may be missing, so 45 is unknown;
-    // from 50 on the change is inside the range.
+    // Held from 40, after the import's start: a change before it may be
+    // missing, so 45 is unknown; from 50 on the change is inside the range.
     const later = history([[40, 200]]);
     expect(principalInHistory(later, 45)).toBeUndefined();
+    expect(principalInHistory(later, 45, 20)).toBeUndefined();
     expect(principalInHistory(later, 60)).toBe(P2);
     // A gap between 20 and 60: 70 has no change in its range.
     // A feed held from 2 may lack a change at 1: unknown.
@@ -83,7 +91,48 @@ describe('principalInHistory', () => {
   });
 });
 
+describe('principalInHistory from the import', () => {
+  // The feed is held from the import's start (40); the wallet is first
+  // bound at 50: before that it was bound to none.
+  const fromImport: ChainWalletHistory = {
+    wallet: W,
+    changes: [{ height: 50, principalId: P2 }],
+    ranges: [[40, 200]],
+    readHeight: 200
+  };
+
+  it('says bound to none before the first change when held from the import', () => {
+    expect(principalInHistory(fromImport, 45, 40)).toBeNull();
+    expect(principalInHistory(fromImport, 40, 40)).toBeNull();
+    expect(principalInHistory(fromImport, 60, 40)).toBe(P2);
+    // Held from before the import too.
+    expect(principalInHistory(fromImport, 45, 41)).toBeNull();
+  });
+
+  it('cannot say without the import, or when the feed starts after it', () => {
+    expect(principalInHistory(fromImport, 45)).toBeUndefined();
+    expect(principalInHistory(fromImport, 45, 39)).toBeUndefined();
+  });
+});
+
 describe('walletPrincipalAt', () => {
+  it("says bound to none before a wallet's first change, held from the import", async () => {
+    const { gateway, lookups } = setup(101, [[40, 200]]);
+    gateway.getMembershipWalletHistory.mockResolvedValue({
+      wallet: W,
+      changes: [{ height: 500, principalId: P2 }],
+      ranges: [[40, 600]],
+      readHeight: 600
+    });
+    gateway.getMembership.mockResolvedValue({
+      import: { completed: true, startHeight: 40 }
+    });
+    expect(await lookups.walletPrincipalAt(W, 300)).toBeNull();
+    expect(await lookups.walletPrincipalAt(W, 500)).toBe(P2);
+    // The import's start is read once.
+    expect(gateway.getMembership).toHaveBeenCalledTimes(1);
+  });
+
   it("answers from the mirror's bindings within what it has followed", async () => {
     const { gateway, lookups } = setup(101);
     expect(await lookups.walletPrincipalAt(W.toUpperCase(), 50)).toBe(P2);

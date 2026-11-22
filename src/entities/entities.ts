@@ -318,9 +318,11 @@ export { IdentityTdhSyncScopeEntity } from './IIdentityTdhSyncScope';
 
 export * from './ICompetitionScoreReset';
 export {
+  IdentityChainFirstBindingEntity,
   IdentityChainMirrorStateEntity,
   IdentityChainPrincipalEntity,
   IdentityChainPlaceholderEntity,
   IdentityChainRatingEventEntity,
+  IdentityChainRegroupEntity,
   IdentityChainWalletEntity
 } from './IIdentityChainMirror';

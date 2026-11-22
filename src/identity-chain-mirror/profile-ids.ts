@@ -3,6 +3,9 @@ import { ChainIdentity } from '@/chain-gateway/chain-gateway.types';
 import { IdentityChainMirrorDb } from './identity-chain-mirror.db';
 import { principalProfileId } from './identity-plan';
 import { ChainReadRetryLater } from './mirror-errors';
+import { Logger } from '@/logging';
+
+const logger = Logger.get('IDENTITY_CHAIN_MIRROR');
 
 type Gateway = Pick<
   ChainGatewayClient,
@@ -18,7 +21,27 @@ type Db = Pick<
   | 'profileIdOfPrincipal'
   | 'insertMapping'
   | 'unmappedPlaceholderProfile'
+  | 'firstBindingOf'
 >;
+
+/** Whether a wallet was first bound to an identity at its creation. */
+type FirstBound = boolean | 'unknowable';
+
+/**
+ * The last height h such that the ranges cover every height from `from` to
+ * h without a gap (from - 1 when they don't hold `from`).
+ */
+export function coveredTo(
+  ranges: readonly [number, number][],
+  from: number
+): number {
+  let next = from;
+  for (const [start, end] of ranges) {
+    if (start > next) break;
+    next = Math.max(next, end + 1);
+  }
+  return next - 1;
+}
 
 /**
  * Whether height ranges (`[from, to]`, ascending) cover every height from
@@ -54,6 +77,8 @@ export function isInactive(identity: ChainIdentity): boolean {
 export class ProfileIds {
   private importStart: number | null = null;
   private importDone: number | null = null;
+  /** Placeholders left to a later merge since last taken (see below). */
+  private left: string[] = [];
 
   constructor(
     private readonly gateway: Gateway,
@@ -65,6 +90,36 @@ export class ProfileIds {
   setImportHeights(start: number | null, done: number | null) {
     this.importStart = start;
     this.importDone = done;
+  }
+
+  /**
+   * The founders' placeholder profiles left without their identity since
+   * the last call, because neither the mirror nor the gateway can say
+   * whether the identity was the wallet's first: for the later merge.
+   */
+  takeLeftPlaceholders(): string[] {
+    const left = this.left;
+    this.left = [];
+    return left;
+  }
+
+  /**
+   * The profile ids an identity whose id can't be settled yet could get:
+   * its derived id and its founding wallet's placeholder. Its rows, if any,
+   * are under one of them.
+   */
+  async candidateIds(identity: ChainIdentity): Promise<string[]> {
+    const ids = [principalProfileId(identity.principalId.toLowerCase())];
+    try {
+      const wallet = await this.foundingWalletOf(identity);
+      const placeholder = wallet
+        ? await this.db.unmappedPlaceholderProfile(wallet)
+        : null;
+      if (placeholder) ids.push(placeholder.toLowerCase());
+    } catch {
+      // The derived id alone.
+    }
+    return ids;
   }
 
   /**
@@ -110,7 +165,11 @@ export class ProfileIds {
     const principalId = identity.principalId.toLowerCase();
     const mapped = await this.db.profileIdOfPrincipal(principalId);
     if (mapped) return mapped;
-    const { profileId: chosen, origin } = await this.chooseProfileId(identity);
+    const {
+      profileId: chosen,
+      origin,
+      left
+    } = await this.chooseProfileId(identity);
     try {
       await this.db.executeNativeQueriesInTransaction((conn) =>
         this.db.insertMapping(principalId, chosen, origin, this.now(), conn)
@@ -121,12 +180,18 @@ export class ProfileIds {
       if (again) return again;
       throw error;
     }
+    if (left) {
+      logger.warn(
+        `[FOUNDER PLACEHOLDER LEFT FOR A LATER MERGE] [${left}] [${principalId} MAPPED NEW: NEITHER THE MIRROR NOR THE GATEWAY CAN SAY IT WAS THE WALLET'S FIRST]`
+      );
+      this.left.push(left);
+    }
     return chosen;
   }
 
   private async chooseProfileId(
     identity: ChainIdentity
-  ): Promise<{ profileId: string; origin: string }> {
+  ): Promise<{ profileId: string; origin: string; left?: string }> {
     const principalId = identity.principalId.toLowerCase();
     const legacy = await this.legacyIdOf(identity);
     if (legacy) return { profileId: legacy, origin: 'LEGACY' };
@@ -134,15 +199,28 @@ export class ProfileIds {
     const placeholder = wallet
       ? await this.db.unmappedPlaceholderProfile(wallet)
       : null;
+    const derived = {
+      profileId: principalProfileId(principalId),
+      origin: 'NEW'
+    };
     if (
-      wallet &&
-      placeholder &&
-      !(await this.gateway.getIdentityByLegacyProfileId(placeholder)) &&
-      (await this.firstBoundTo(wallet, principalId, identity.createdHeight))
+      !wallet ||
+      !placeholder ||
+      (await this.gateway.getIdentityByLegacyProfileId(placeholder))
     ) {
-      return { profileId: placeholder.toLowerCase(), origin: 'FOUNDER' };
+      return derived;
     }
-    return { profileId: principalProfileId(principalId), origin: 'NEW' };
+    const first = await this.firstBoundTo(
+      wallet,
+      principalId,
+      Number(identity.createdHeight)
+    );
+    if (first === 'unknowable') {
+      return { ...derived, left: placeholder.toLowerCase() };
+    }
+    return first
+      ? { profileId: placeholder.toLowerCase(), origin: 'FOUNDER' }
+      : derived;
   }
 
   /**
@@ -168,33 +246,66 @@ export class ProfileIds {
 
   /**
    * Whether `principal` is the first identity `wallet` was ever bound to,
-   * from its creation. A binding seen before the creation says no.
-   * Otherwise the history must cover every height from the import's start
-   * to the creation without a gap; when it doesn't (a gateway node that
-   * started later), the identity is not mapped now and is tried again next
-   * run, rather than given a guess a rebuild might not repeat.
+   * from its creation:
+   * - from the mirror's own first binding of the wallet, recorded while the
+   *   wallet bindings followed the feed without a break from the import's
+   *   start; while they haven't reached the creation yet, tried again later;
+   * - else from the gateway's history of the wallet: a binding before the
+   *   creation says no; otherwise it must cover every height from the
+   *   import's start to the creation. A node behind is waited for (tried
+   *   again later); a history that can never say (the import's start
+   *   unknown, or the node's feed starting after it or with a gap) gives
+   *   'unknowable'.
    */
   private async firstBoundTo(
     wallet: string,
     principal: string,
     createdHeight: number
-  ): Promise<boolean> {
+  ): Promise<FirstBound> {
+    const own = await this.db.firstBindingOf(wallet);
+    if (own.first) {
+      return (
+        own.first.principal_id === principal &&
+        own.first.height === createdHeight
+      );
+    }
+    if (own.exact) {
+      // A founder is bound at the creation: past it, there'd be a record.
+      if (own.nextHeight !== null && own.nextHeight > createdHeight) {
+        return false;
+      }
+      throw new ChainReadRetryLater(
+        `The wallet bindings haven't reached ${createdHeight} yet: the identity is mapped later`,
+        'bindings_behind'
+      );
+    }
     const history = await this.gateway.getMembershipWalletHistory(wallet);
+    if (!history) {
+      throw new ChainReadRetryLater(
+        `No history of ${wallet} yet: the identity is mapped later`,
+        'history_missing'
+      );
+    }
     // Bound to any identity before this one was made: not its first.
-    const earlier = history?.changes.find(
+    const earlier = history.changes.find(
       (it) => it.principalId !== null && Number(it.height) < createdHeight
     );
     if (earlier) return false;
     const start = this.importStart;
-    if (
-      !history ||
-      start === null ||
-      !covers(history.ranges, start, createdHeight)
-    ) {
-      throw new ChainReadRetryLater(
-        `The history of ${wallet} doesn't reach back to the import: its identity is mapped later`,
-        'history_short'
-      );
+    if (start === null) return 'unknowable';
+    const reach = coveredTo(history.ranges, start);
+    if (reach < createdHeight) {
+      const held = history.ranges.length
+        ? history.ranges[history.ranges.length - 1][1]
+        : start - 1;
+      // Held from the import's start without a gap, only not that far yet.
+      if (reach >= start && reach === held) {
+        throw new ChainReadRetryLater(
+          `The history of ${wallet} doesn't reach ${createdHeight} yet: the identity is mapped later`,
+          'history_behind'
+        );
+      }
+      return 'unknowable';
     }
     const first = history.changes.find((it) => it.principalId !== null);
     return (

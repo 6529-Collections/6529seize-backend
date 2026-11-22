@@ -6,10 +6,12 @@ import {
   PrimaryGeneratedColumn
 } from 'typeorm';
 import {
+  IDENTITY_CHAIN_FIRST_BINDINGS_TABLE,
   IDENTITY_CHAIN_MIRROR_STATE_TABLE,
   IDENTITY_CHAIN_PLACEHOLDERS_TABLE,
   IDENTITY_CHAIN_PRINCIPALS_TABLE,
   IDENTITY_CHAIN_RATING_EVENTS_TABLE,
+  IDENTITY_CHAIN_REGROUPS_TABLE,
   IDENTITY_CHAIN_WALLETS_TABLE
 } from '@/constants';
 
@@ -77,6 +79,39 @@ export class IdentityChainPlaceholderEntity {
   readonly profile_id!: string;
 }
 
+/**
+ * A wallet's first-ever principal and the height it was bound at, recorded
+ * only while the wallet bindings follow the feed without a break from the
+ * import's start (bindings_exact), so it is never a guess. A founder's
+ * placeholder is given from it.
+ */
+@Entity(IDENTITY_CHAIN_FIRST_BINDINGS_TABLE)
+export class IdentityChainFirstBindingEntity {
+  @PrimaryColumn({ type: 'varchar', length: 42, nullable: false })
+  readonly wallet!: string;
+
+  @Column({ type: 'varchar', length: 66, nullable: false })
+  readonly principal_id!: string;
+
+  @Column({ type: 'bigint', nullable: false })
+  readonly height!: number;
+}
+
+/**
+ * A wallet whose consolidation key the mirror changed, written in the same
+ * transaction, until the delegations loop has re-keyed TDH, owners,
+ * balances, activity and subscriptions for it (so a run cut short loses
+ * none).
+ */
+@Entity(IDENTITY_CHAIN_REGROUPS_TABLE)
+export class IdentityChainRegroupEntity {
+  @PrimaryColumn({ type: 'varchar', length: 42, nullable: false })
+  readonly wallet!: string;
+
+  @Column({ type: 'bigint', nullable: false })
+  readonly queued_at!: number;
+}
+
 /** One row (id 'identity'): the mirror's place in the change feed. */
 @Entity(IDENTITY_CHAIN_MIRROR_STATE_TABLE)
 export class IdentityChainMirrorStateEntity {
@@ -119,6 +154,14 @@ export class IdentityChainMirrorStateEntity {
   /** When the placeholder profiles were listed (once, before any write). */
   @Column({ type: 'bigint', nullable: true, default: null })
   readonly placeholders_at!: number | null;
+
+  /**
+   * The wallet bindings have followed the feed without a break from the
+   * import's start (no membership list since): their first bindings are
+   * exact.
+   */
+  @Column({ type: 'boolean', nullable: false, default: false })
+  readonly bindings_exact!: boolean;
 
   /**
    * What the mirror could not write, tried again by the next run (JSON:

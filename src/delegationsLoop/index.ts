@@ -84,8 +84,17 @@ const logger = Logger.get('DELEGATIONS_LOOP');
 let reconsolidated = false;
 let identitiesSynced = false;
 
+/** The Lambda context's clock, where the loop runs with one. */
+interface LoopContext {
+  getRemainingTimeInMillis?: () => number;
+}
+
 export const handler = sentryContext.wrapLambdaHandler(
-  async (event: unknown) => {
+  async (event: unknown, context?: LoopContext) => {
+    const timeLeft = (): number =>
+      typeof context?.getRemainingTimeInMillis === 'function'
+        ? context.getRemainingTimeInMillis()
+        : Number.POSITIVE_INFINITY;
     const requestedWallets = readReconsolidationAction(event);
     reconsolidated = false;
     identitiesSynced = false;
@@ -135,7 +144,7 @@ export const handler = sentryContext.wrapLambdaHandler(
           // Delegations first; then finish any identities sync left pending (a
           // tdhLoop full write, a deferred full walk, a spent budget), within
           // what is left of the invocation's sync budget.
-          await thenResumePendingIdentitySync(async () => {
+          const delegationsWork = thenResumePendingIdentitySync(async () => {
             const health = await DelegationsLoopHealth.start(false);
             const delegationsResponse = await handleDelegations(
               startBlock,
@@ -147,7 +156,27 @@ export const handler = sentryContext.wrapLambdaHandler(
             );
             health.completed(delegationsResponse.blockTimestamp);
           });
-          await mirrorChainIdentities();
+          if (!appFeatures.isIdentityChainMirrorEnabled()) {
+            await delegationsWork;
+            return;
+          }
+          // From switch-on the identities come from the chain: the mirror
+          // runs even when NFTDelegation's work failed, and that failure
+          // still fails the run afterwards.
+          const delegationsFailure = await delegationsWork.then(
+            () => null,
+            (error: unknown) => ({ error })
+          );
+          try {
+            await mirrorChainIdentities(timeLeft);
+          } catch (error) {
+            if (delegationsFailure) {
+              logger.error(`[IDENTITY CHAIN MIRROR FAILED] ${error}`);
+            } else {
+              throw error;
+            }
+          }
+          if (delegationsFailure) throw delegationsFailure.error;
         },
         {
           logger,
@@ -219,6 +248,17 @@ async function handleDelegations(
     ? await fetchBlockTimestamp(startBlock)
     : undefined;
   const delegationsResponse = await findNewDelegations(startBlock);
+  if (appFeatures.isIdentityChainMirrorEnabled()) {
+    // From switch-on the identity mirror writes consolidations, delegations,
+    // consolidation keys and primary addresses from the 6529 chain; this
+    // contract's events (after the identity freeze) would fight it. They
+    // are read so the checkpoint moves on, and not applied.
+    logger.info(
+      `[IDENTITIES ON THE CHAIN: NFTDELEGATION EVENTS NOT APPLIED] [${delegationsResponse.consolidations.length} CONSOLIDATIONS] [${delegationsResponse.registrations.length} REGISTRATIONS] [${delegationsResponse.revocation.length} REVOCATIONS]`
+    );
+    await handleENS();
+    return delegationsResponse;
+  }
   await persistConsolidations(
     startBlock,
     delegationsResponse.consolidations,
@@ -253,52 +293,93 @@ async function handleDelegations(
 
 /** The run's share of time for the identity mirror (a run is 15 minutes). */
 const IDENTITY_MIRROR_BUDGET_MS = Time.minutes(6).toMillis();
-/** The profile site followers start only this soon in the mirror's step. */
-const IDENTITY_FOLLOWERS_START_BY_MS = Time.minutes(8).toMillis();
+/** The profile site followers' share, after the mirror and the re-keying. */
+const IDENTITY_FOLLOWERS_BUDGET_MS = Time.minutes(4).toMillis();
+/** Kept back from the Lambda's remaining time: re-keying, then the end. */
+const IDENTITY_REKEY_RESERVE_MS = Time.minutes(3).toMillis();
+const IDENTITY_END_RESERVE_MS = Time.minutes(1).toMillis();
+/** Below this, a step isn't started. */
+const IDENTITY_MIN_STEP_MS = Time.seconds(30).toMillis();
+/** At most this many regrouped wallets are re-keyed a run; the rest wait. */
+const IDENTITY_REGROUPS_PER_RUN = 5_000;
 
 /**
  * From switch-on, 6529.io's identity tables follow the 6529 chain
- * (FEATURE_IDENTITY_CHAIN_MIRROR). Runs after the delegations work, so a
- * mirror failure never holds NFTDelegation's record back; it still fails the
- * run, so it is seen.
+ * (FEATURE_IDENTITY_CHAIN_MIRROR). Runs after the delegations work (also
+ * when it failed); a mirror failure still fails the run, so it is seen.
+ * Each step's time comes from what the Lambda has left: the mirror, the
+ * re-keying of the wallets it regrouped (queued in its own transactions,
+ * so a run cut short re-keys them next time), then the profile site
+ * followers.
  */
-async function mirrorChainIdentities() {
+async function mirrorChainIdentities(timeLeft: () => number) {
   if (!appFeatures.isIdentityChainMirrorEnabled()) {
     return;
   }
-  const startedAt = Date.now();
-  const report = await identityChainMirror.run({
-    budgetMs: IDENTITY_MIRROR_BUDGET_MS
-  });
-  logger.info(`[IDENTITY CHAIN MIRROR] ${JSON.stringify(report)}`);
-  if (report.regroupedWallets.length) {
-    // A join or removal on the chain changes consolidation keys, as a
-    // consolidation event did: re-key TDH, owners, balances, activity and
-    // subscriptions the same way.
-    const health = await DelegationsLoopHealth.start(true);
-    try {
-      const affected = await getAffectedWalletsForAddresses(
-        report.regroupedWallets,
-        await fetchAllConsolidatedTdh()
-      );
-      await reconsolidateAffectedWallets(affected, health);
-      health.completed();
-    } catch (error) {
-      health.failed();
-      throw error;
-    }
+  const mirrorBudget = Math.min(
+    IDENTITY_MIRROR_BUDGET_MS,
+    timeLeft() - IDENTITY_REKEY_RESERVE_MS - IDENTITY_END_RESERVE_MS
+  );
+  const report =
+    mirrorBudget >= IDENTITY_MIN_STEP_MS
+      ? await identityChainMirror.run({ budgetMs: mirrorBudget })
+      : null;
+  if (report) {
+    logger.info(`[IDENTITY CHAIN MIRROR] ${JSON.stringify(report)}`);
+  } else {
+    logger.warn(
+      '[IDENTITY CHAIN MIRROR WAITS FOR THE NEXT RUN] [NO TIME LEFT]'
+    );
   }
-  if (report.error) {
+  await rekeyRegroupedWallets();
+  if (report?.error) {
     // Re-keyed what it regrouped before it stopped; the run still fails.
     throw new Error(`Identity chain mirror: ${report.error}`);
   }
   // Last, after the re-keying: the profile site index follows the chain,
   // when the run has time left for it.
+  const followersBudget = Math.min(
+    IDENTITY_FOLLOWERS_BUDGET_MS,
+    timeLeft() - IDENTITY_END_RESERVE_MS
+  );
+  if (followersBudget < IDENTITY_MIN_STEP_MS) {
+    logger.info(
+      '[PROFILE SITE FOLLOWERS WAIT FOR THE NEXT RUN] [NO TIME LEFT]'
+    );
+    return;
+  }
   const problems = await identityChainMirror.followProfileSites(
-    startedAt + IDENTITY_FOLLOWERS_START_BY_MS
+    undefined,
+    followersBudget
   );
   if (problems.length) {
     logger.error(`[PROFILE SITE FOLLOWERS] ${JSON.stringify(problems)}`);
+  }
+}
+
+/**
+ * A join or removal on the chain changes consolidation keys, as a
+ * consolidation event did: re-key TDH, owners, balances, activity and
+ * subscriptions for the wallets the mirror queued, then take them off.
+ */
+async function rekeyRegroupedWallets() {
+  const before = Date.now();
+  const wallets = await identityChainMirror.pendingRegroups(
+    IDENTITY_REGROUPS_PER_RUN
+  );
+  if (!wallets.length) return;
+  const health = await DelegationsLoopHealth.start(true);
+  try {
+    const affected = await getAffectedWalletsForAddresses(
+      wallets,
+      await fetchAllConsolidatedTdh()
+    );
+    await reconsolidateAffectedWallets(affected, health);
+    await identityChainMirror.regroupsDone(wallets, before);
+    health.completed();
+  } catch (error) {
+    health.failed();
+    throw error;
   }
 }
 

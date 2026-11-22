@@ -880,71 +880,100 @@ identity data from the chain add calls to this client, not their own.
 
 From switch-on the delegations loop also runs the identity mirror
 (`src/identity-chain-mirror`, `FEATURE_IDENTITY_CHAIN_MIRROR`) after its
-NFTDelegation work. It keeps `profiles`, `identities`,
-`address_consolidation_keys`, `consolidations` (confirmed pairs),
-`delegations`, REP and CIC `ratings`, `cic_statements` and the
-`rep`/`cic`/`level_raw` aggregates equal to the chain, so the SQL readers keep
-working: a full sync (every six hours, and when the feed no longer holds its
-height) walks every identity, delegation and pair; between full syncs it
-follows the gateway's change feed. Each feed page (and each page of a full
-sync) reads the identities, ratings and delegations it touches pinned to one
-finalized height at or past the page's last height (or the full sync's own),
-so another gateway node behind can't make it write older state; a height the
-gateway no longer holds (it keeps about 13 minutes) ends the run without
-moving on. A run that fails part way returns what it did, and the delegations
-loop re-keys the wallets it regrouped before failing the run.
-`identity_chain_principals` maps each
-principal to the 6529.io profile id its rows use: an imported identity's
-legacy id; for an identity made on the chain, its founding wallet's
-placeholder profile when no principal holds it, else the principal id's first
-16 bytes written as a UUID. A merged or closed identity is filed under its
-mapping, else the id the same rule gives, without storing one. The placeholder
-profiles are listed once, before
-the mirror's first write (`identity_chain_placeholders`), and 6529.io makes
-none from switch-on, so a rebuild from the chain gives the same ids. A placeholder
-profile whose wallets all join an identity is left without an identity row
-and logged; its ratings and follows are not moved; `identity_chain_mirror_state`
-holds its place in the feed. An identity, a rating target or a wallet whose
-rows fail to be written is logged and kept in the state (`retry_json`), saved
-with the feed's place, and tried again by later runs, up to 500 keys a run,
-until it is written; a full sync starts that list again, and with more than
-10,000 keys left the mirror starts one instead. A rater whose profile id can't
-be settled yet (its founding wallet's history doesn't reach back to the
-import) is left as it is: the target's other ratings are written and the
-target is kept to try again. A delegation expiry of 0 never expires. Profile
-documents come from the gateway's store.
+NFTDelegation work, also when that work failed (the failure still fails the
+run). With the flag on, NFTDelegation's events (after the identity freeze)
+are read so the checkpoint moves on but not applied: consolidations,
+delegations, re-keying and primary addresses come from the chain. Each step's
+time comes from what the Lambda has left: the mirror (at most six minutes),
+the re-keying, then the profile site followers.
 
-One writer per `identities` column: the mirror writes `rep`, `cic`,
-`level_raw` and the profile columns, all from the chain (the level is REP +
-TDH); the help bot's credit category stays in 6529.io's ratings table as a
-site feature, not counted as REP, and the mirror never touches it. It never
-updates `tdh`, `basetdh_rate` or the xTDH columns of a row that exists (the TDH and xTDH loops own them),
-and a row it creates for a new consolidation key starts from the profile's
-previous values. When wallets change keys, the mirror calls the handlers in
-`src/identity-chain-mirror/membership-change.ts` in its own transaction; the
-first queues every wallet of the rows before and after into
-`transfer_reconciliations` for the holdings loops. Each REP and NIC rating
-change it applies is written, in the same transaction, to
-`identity_chain_rating_events` (rater, target, matter, category, old and new
-value, total after, chain height, FEED or FULL_SYNC) for notifications.
+The mirror keeps `profiles`, `identities`, `address_consolidation_keys`,
+`consolidations` (confirmed pairs), `delegations`, REP and CIC `ratings`,
+`cic_statements` and the `rep`/`cic`/`level_raw` aggregates equal to the
+chain, so the SQL readers keep working. It follows the gateway's change feed;
+a full sync (the first time, every six hours, and when the feed no longer
+holds its height) walks every identity, delegation and pair over several runs,
+and the feed goes first in each of those runs with its share of the time, so
+a full sync never holds the site's changes back (it never moves the feed's
+place back either). Each feed page, retry batch and full sync page reads the
+identities, ratings and delegations it touches pinned to one finalized height
+at or past the one it needs, and never below a height the run already used,
+so another gateway node behind can't make it write older state; a pinned read
+the gateway refuses (a height it no longer holds, about 13 minutes on, or an
+answer from another chain) ends the run without moving on. A run that fails
+part way returns what it did, with the error.
+
+`identity_chain_principals` maps each principal to the 6529.io profile id its
+rows use: an imported identity's legacy id; for an identity made on the
+chain, its founding wallet's placeholder profile when no principal holds it,
+the import didn't take it, and the identity is the first the wallet was ever
+bound to (from its creation); else the principal id's first 16 bytes written
+as a UUID. Which identity a wallet was first bound to comes from the mirror's
+own `identity_chain_first_bindings`, recorded while the wallet bindings follow
+the feed without a break from the import's start, else from the gateway's
+history of the wallet. When neither can ever say (the import's start unknown,
+or the node's history starting after it or with a gap), the identity is
+mapped to its derived id and the placeholder is logged and reported as
+orphaned, for the later merge. A merged or closed identity is filed under its
+mapping, else the id the same rule gives, without storing one. The
+placeholder profiles are listed once, before the mirror's first write
+(`identity_chain_placeholders`), and 6529.io makes none from switch-on, so a
+rebuild from the chain gives the same ids. A placeholder profile whose wallets
+all join an identity is left without an identity row and logged; its ratings
+and follows are not moved.
+
+`identity_chain_mirror_state` holds the mirror's place in the feed. An
+identity, a rating target or a wallet whose rows fail to be written is logged
+and kept in the state (`retry_json`), saved with the feed's place, and tried
+again by later runs, up to 500 keys a run, until it is written; a full sync
+starts that list again, and with more than 10,000 keys left the mirror starts
+one instead. A rater whose profile id can't be settled yet is left as it is:
+its rows under the ids it could get stay, the target's other ratings
+(removals included) are written, and the target is kept to try again. Raters
+already mapped are named from the mapping without reading their identity. A
+delegation expiry of 0 never expires. Profile documents come from the
+gateway's store.
+
+The mirror writes `rep`, `cic` and the profile columns of `identities`, all
+from the chain, and `level_raw` from the chain's level (REP + TDH); after each
+TDH day the TDH sync keeps `level_raw` current from the chain's REP and TDH.
+The help bot's credit category stays in 6529.io's ratings table as a site
+feature, not counted as REP, and the mirror never touches it. It never
+updates `tdh`, `basetdh_rate` or the xTDH columns of a row that exists (the
+TDH and xTDH loops own them), and a row it creates for a new consolidation
+key starts from the profile's previous values. When wallets change keys, the
+mirror calls the handlers in `src/identity-chain-mirror/membership-change.ts`
+in its own transaction; the first queues every wallet of the rows before and
+after into `transfer_reconciliations` for the holdings loops. In the same
+transaction the regrouped wallets go to `identity_chain_regroups`; the
+delegations loop re-keys TDH, owners, balances, activity and subscriptions for
+them (up to 5,000 a run) and only then takes them off, so a run cut short
+loses none. Each REP and NIC rating change the mirror applies is written, in
+the same transaction, to `identity_chain_rating_events` (rater, target,
+matter, category, old and new value, total after, chain height, FEED or
+FULL_SYNC) for notifications. The pairs of identities it doesn't write
+(merged, closing, too many wallets for a key) stay as they are.
 
 `identity_chain_wallets` holds each bound wallet's principal and the chain
 height it has been bound to that principal since
 (`wallet-bindings-follower.ts`). It follows the feed's AddressBinding records
 with its own cursor (`bindings_next_height`) from the import's first block;
 rows and cursor are written in one transaction. When the gateway no longer
-holds the cursor's height, or a record's wallet can't be read, it lists the
-membership at one pinned height and stores every wallet as bound since then:
-later than the truth, never earlier. The mirror names its chain by the
-network id (`chain_id`); on another one, read three times a second apart
-(one answer from a node of another chain wipes nothing; while the answers
-differ the mirror doesn't run), as after a relaunch, which only test chains
-have, the bindings start again empty, the mappings of identities made on the
-old chain go, and a full sync rewrites the identities of the new chain; rows
-of identities only the old chain had are not deleted. `IdentityChainLookups`
-(`identity-chain-lookups.ts`) answers "the principal of wallet W at height H"
-from that table below its cursor, on the chain the gateway serves, else from
-the wallet's history on the chain where that history is exact, and throws
+holds the cursor's height, the import's start is unknown, or a record's wallet
+can't be read, it lists the membership at one pinned height and stores every
+wallet as bound since then: later than the truth, never earlier; from then on
+no first binding is recorded (nor after a binding whose principal can't be
+read). The mirror names its chain by the network id (`chain_id`); on another
+one, read three times a second apart (one answer from a node of another chain
+wipes nothing; while the answers differ the mirror doesn't run), as after a
+relaunch, which only test chains have, the bindings and first bindings start
+again empty, the mappings of identities made on the old chain go, and a full
+sync rewrites the identities of the new chain; rows of identities only the old
+chain had are not deleted. `IdentityChainLookups` (`identity-chain-lookups.ts`)
+answers "the principal of wallet W at height H" from that table below its
+cursor, on the chain the gateway serves, else from the wallet's history on the
+chain where that history is exact (a history held from the import's start
+says "bound to none" before a wallet's first change), and throws
 `WalletPrincipalUnknownError` when neither can say; and "the principal of
 profile id X" from the mapping or the import. As its last step the delegations
 loop calls `followProfileSites()`, which runs the followers in

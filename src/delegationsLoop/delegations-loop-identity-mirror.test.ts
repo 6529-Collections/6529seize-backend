@@ -64,7 +64,9 @@ jest.mock('../identity-tdh-sync', () => ({
 jest.mock('../identity-chain-mirror/identity-chain-mirror.service', () => ({
   identityChainMirror: {
     run: jest.fn(),
-    followProfileSites: jest.fn(async () => [])
+    followProfileSites: jest.fn(async () => []),
+    pendingRegroups: jest.fn(async () => []),
+    regroupsDone: jest.fn(async () => undefined)
   }
 }));
 
@@ -73,12 +75,27 @@ import * as delegations from '../delegations';
 import { consolidateSubscriptions } from '../subscriptionsDaily/subscriptions';
 import { updateTDH } from '../tdhLoop/tdh';
 import { identityChainMirror } from '../identity-chain-mirror/identity-chain-mirror.service';
-import { getAffectedWalletsForAddresses } from './reconsolidation';
+import {
+  getAffectedWallets,
+  getAffectedWalletsForAddresses
+} from './reconsolidation';
+import { identitiesService } from '../api-serverless/src/identities/identities.service';
 import { handler } from './index';
 
 const A = '0x' + '01'.repeat(20);
 const C = '0x' + '03'.repeat(20);
-const invoke = () => (handler as unknown as () => Promise<unknown>)();
+const invoke = (msLeft?: number) =>
+  (
+    handler as unknown as (
+      event: unknown,
+      context?: { getRemainingTimeInMillis: () => number }
+    ) => Promise<unknown>
+  )(
+    {},
+    msLeft === undefined
+      ? undefined
+      : { getRemainingTimeInMillis: () => msLeft }
+  );
 
 function report(regroupedWallets: string[]) {
   return {
@@ -111,6 +128,10 @@ describe('delegations loop and the identity mirror', () => {
       revocation: []
     });
     jest.mocked(db.fetchAllConsolidatedTdh).mockResolvedValue([]);
+    jest.mocked(identityChainMirror.pendingRegroups).mockResolvedValue([]);
+    jest
+      .mocked(getAffectedWalletsForAddresses)
+      .mockResolvedValue(new Set<string>());
     jest.mocked(updateTDH).mockResolvedValue({
       block: 100,
       blockTimestamp: new Date(0),
@@ -147,6 +168,7 @@ describe('delegations loop and the identity mirror', () => {
       ...report([A]),
       error: 'lost connection'
     } as never);
+    jest.mocked(identityChainMirror.pendingRegroups).mockResolvedValue([A]);
     jest
       .mocked(getAffectedWalletsForAddresses)
       .mockResolvedValue(new Set([A]) as never);
@@ -155,7 +177,92 @@ describe('delegations loop and the identity mirror', () => {
       [A],
       expect.anything()
     );
+    expect(identityChainMirror.regroupsDone).toHaveBeenCalledWith(
+      [A],
+      expect.any(Number)
+    );
     expect(identityChainMirror.followProfileSites).not.toHaveBeenCalled();
+  });
+
+  it('re-keys wallets an earlier run queued but did not re-key', async () => {
+    process.env.FEATURE_IDENTITY_CHAIN_MIRROR = 'true';
+    // This run regroups nothing; a run killed after its commits left C.
+    jest.mocked(identityChainMirror.run).mockResolvedValue(report([]) as never);
+    jest.mocked(identityChainMirror.pendingRegroups).mockResolvedValue([C]);
+    jest
+      .mocked(getAffectedWalletsForAddresses)
+      .mockResolvedValue(new Set([C]) as never);
+    await invoke();
+    expect(getAffectedWalletsForAddresses).toHaveBeenCalledWith([C], []);
+    expect(identityChainMirror.regroupsDone).toHaveBeenCalledWith(
+      [C],
+      expect.any(Number)
+    );
+  });
+
+  it('keeps queued wallets when re-keying fails', async () => {
+    process.env.FEATURE_IDENTITY_CHAIN_MIRROR = 'true';
+    jest.mocked(identityChainMirror.run).mockResolvedValue(report([]) as never);
+    jest.mocked(identityChainMirror.pendingRegroups).mockResolvedValue([C]);
+    jest
+      .mocked(getAffectedWalletsForAddresses)
+      .mockRejectedValue(new Error('tdh read failed'));
+    await expect(invoke()).rejects.toThrow('tdh read failed');
+    expect(identityChainMirror.regroupsDone).not.toHaveBeenCalled();
+  });
+
+  it('sizes the mirror run by the time the Lambda has left', async () => {
+    process.env.FEATURE_IDENTITY_CHAIN_MIRROR = 'true';
+    jest.mocked(identityChainMirror.run).mockResolvedValue(report([]) as never);
+    await invoke(7 * 60_000);
+    // 7 minutes left: 4 kept for the re-keying and the end.
+    expect(identityChainMirror.run).toHaveBeenCalledWith({
+      budgetMs: 3 * 60_000
+    });
+    expect(identityChainMirror.followProfileSites).toHaveBeenCalledWith(
+      undefined,
+      expect.any(Number)
+    );
+    jest.clearAllMocks();
+    await invoke(4 * 60_000 + 10_000);
+    expect(identityChainMirror.run).not.toHaveBeenCalled();
+    expect(identityChainMirror.pendingRegroups).toHaveBeenCalled();
+  });
+
+  it('applies no NFTDelegation event once identities are on the chain', async () => {
+    process.env.FEATURE_IDENTITY_CHAIN_MIRROR = 'true';
+    jest.mocked(identityChainMirror.run).mockResolvedValue(report([]) as never);
+    jest.mocked(delegations.findDelegationTransactions).mockResolvedValue({
+      latestBlock: 100,
+      latestBlockTimestamp: 1,
+      consolidations: [{ block: 99, wallet1: A, wallet2: C } as never],
+      registrations: [{ use_case: 1, wallet1: A } as never],
+      revocation: []
+    });
+    await invoke();
+    expect(db.persistConsolidations).not.toHaveBeenCalled();
+    expect(db.persistDelegations).not.toHaveBeenCalled();
+    expect(getAffectedWallets).not.toHaveBeenCalled();
+    expect(identitiesService.updatePrimaryAddresses).not.toHaveBeenCalled();
+    // The checkpoint still moves on.
+    expect(db.persistNftDelegationBlock).toHaveBeenCalledWith(100, 1);
+  });
+
+  it('runs the mirror when the NFTDelegation work fails, then fails the run', async () => {
+    process.env.FEATURE_IDENTITY_CHAIN_MIRROR = 'true';
+    jest.mocked(identityChainMirror.run).mockResolvedValue(report([]) as never);
+    jest
+      .mocked(db.persistNftDelegationBlock)
+      .mockRejectedValueOnce(new Error('checkpoint write failed'));
+    await expect(invoke()).rejects.toThrow('checkpoint write failed');
+    expect(identityChainMirror.run).toHaveBeenCalledTimes(1);
+    delete process.env.FEATURE_IDENTITY_CHAIN_MIRROR;
+    jest.clearAllMocks();
+    jest
+      .mocked(db.persistNftDelegationBlock)
+      .mockRejectedValueOnce(new Error('checkpoint write failed'));
+    await expect(invoke()).rejects.toThrow('checkpoint write failed');
+    expect(identityChainMirror.run).not.toHaveBeenCalled();
   });
 
   it('re-keys the consolidated tables for regrouped wallets', async () => {
@@ -163,6 +270,7 @@ describe('delegations loop and the identity mirror', () => {
     jest
       .mocked(identityChainMirror.run)
       .mockResolvedValue(report([A, C]) as never);
+    jest.mocked(identityChainMirror.pendingRegroups).mockResolvedValue([A, C]);
     jest
       .mocked(getAffectedWalletsForAddresses)
       .mockResolvedValue(new Set([A, C]));

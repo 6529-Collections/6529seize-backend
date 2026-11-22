@@ -10,7 +10,10 @@ import {
 
 type Gateway = Pick<
   ChainGatewayClient,
-  'getIdentityByLegacyProfileId' | 'getMembershipWalletHistory' | 'getHead'
+  | 'getIdentityByLegacyProfileId'
+  | 'getMembershipWalletHistory'
+  | 'getHead'
+  | 'getMembership'
 >;
 
 /**
@@ -33,14 +36,16 @@ export class WalletPrincipalUnknownError extends Error {
  * From a wallet's history: its principal at `height` (null: bound to none),
  * or undefined when the history can't say. It can say when the height is
  * within a range the feed holds and the wallet's last change at or below it
- * is in that range too, or when that range starts at the chain's first
- * block (height 0 or 1): the chain's genesis binds no wallet (identities
- * come from the import and from operations), so no earlier change is
- * missed.
+ * is in that range too, or when that range starts at or before the
+ * import's start (`importStart`), or at the chain's first block: no wallet
+ * is bound before the import starts (the chain's genesis binds none;
+ * identities come from the import and from operations), so no earlier
+ * change is missed.
  */
 export function principalInHistory(
   history: ChainWalletHistory,
-  height: number
+  height: number,
+  importStart: number | null = null
 ): string | null | undefined {
   if (height > history.readHeight) return undefined;
   const range = history.ranges.find(
@@ -53,7 +58,8 @@ export function principalInHistory(
     last = change;
   }
   if (last && last.height >= range[0]) return last.principalId;
-  return range[0] <= 1 ? (last?.principalId ?? null) : undefined;
+  const nothingBefore = Math.max(1, importStart ?? 1);
+  return range[0] <= nothingBefore ? (last?.principalId ?? null) : undefined;
 }
 
 /**
@@ -61,10 +67,27 @@ export function principalInHistory(
  * with the chain gateway as the fallback where the mirror can't answer.
  */
 export class IdentityChainLookups {
+  /** The import's first height, once the gateway has given it. */
+  private importStart: number | null = null;
+
   constructor(
     private readonly db: IdentityChainMirrorDb = identityChainMirrorDb,
     private readonly gateway: Gateway = chainGatewayClient
   ) {}
+
+  private async importStartHeight(): Promise<number | null> {
+    if (this.importStart === null) {
+      const membership = await this.gateway.getMembership();
+      const start = (membership?.import as { startHeight?: unknown })
+        ?.startHeight;
+      const height = Number(start);
+      this.importStart =
+        start !== null && start !== undefined && Number.isSafeInteger(height)
+          ? height
+          : null;
+    }
+    return this.importStart;
+  }
 
   /**
    * The chain principal of a 6529.io profile: the mirror's mapping, else
@@ -108,7 +131,9 @@ export class IdentityChainLookups {
       return binding.principal_id.toLowerCase();
     }
     const history = await this.gateway.getMembershipWalletHistory(address);
-    const principal = history ? principalInHistory(history, height) : undefined;
+    const principal = history
+      ? principalInHistory(history, height, await this.importStartHeight())
+      : undefined;
     if (principal === undefined) {
       throw new WalletPrincipalUnknownError(address, height);
     }

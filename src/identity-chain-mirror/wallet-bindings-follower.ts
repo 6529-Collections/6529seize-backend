@@ -10,7 +10,11 @@ import {
   Sleep
 } from './chain-feed-pages';
 import { messageOf } from './mirror-errors';
-import { IdentityChainMirrorDb, MirrorState } from './identity-chain-mirror.db';
+import {
+  FirstBinding,
+  IdentityChainMirrorDb,
+  MirrorState
+} from './identity-chain-mirror.db';
 import {
   ADDRESS_BINDING_FAMILY,
   BindingPage,
@@ -34,6 +38,7 @@ type Db = Pick<
   | 'walletBindings'
   | 'writeWalletBindings'
   | 'clearWalletBindings'
+  | 'recordFirstBindings'
   | 'boundWallets'
   | 'saveState'
   | 'getState'
@@ -54,6 +59,11 @@ export interface BindingsReport {
  * height, the import's start is unknown, or a record's wallet can't be
  * read, the bindings are rebuilt from one membership list. A failure is
  * reported and the caller goes on.
+ *
+ * While they follow the feed without a break from the import's start
+ * (bindings_exact), each wallet's first principal and height are recorded
+ * in identity_chain_first_bindings in the same transaction; a membership
+ * list or an unreadable binding ends that for good (until a relaunch).
  */
 export class WalletBindingsFollower {
   constructor(
@@ -77,7 +87,11 @@ export class WalletBindingsFollower {
         return await this.rebuild(initial, report);
       }
       // Lookups trust no row without a cursor: start from an empty table.
-      const start = { ...initial, bindings_next_height: importStart };
+      const start = {
+        ...initial,
+        bindings_next_height: importStart,
+        bindings_exact: true
+      };
       await this.db.executeNativeQueriesInTransaction(async (conn) => {
         await this.db.clearWalletBindings(conn);
         await this.db.saveState(start, this.now(), conn);
@@ -146,17 +160,23 @@ export class WalletBindingsFollower {
     report: BindingsReport
   ): Promise<MirrorState> {
     this.reportMalformed(page, report);
+    // A binding whose principal can't be read may be a wallet's first.
+    const exact = next.bindings_exact && !page.malformed.length;
+    const saved = { ...next, bindings_exact: exact };
     const wallets = Array.from(new Set(page.changes.map((it) => it.wallet)));
     await this.db.executeNativeQueriesInTransaction(async (conn) => {
       if (wallets.length) {
         const stored = await this.db.walletBindings(wallets, conn);
         const { upserts, deletes } = foldBindings(stored, page.changes);
         await this.db.writeWalletBindings(upserts, deletes, this.now(), conn);
+        if (exact) {
+          await this.db.recordFirstBindings(firstBindingsOf(page), conn);
+        }
       }
-      await this.db.saveState(next, this.now(), conn);
+      await this.db.saveState(saved, this.now(), conn);
     });
     report.walletBindings += page.changes.length;
-    return next;
+    return saved;
   }
 
   /**
@@ -185,7 +205,12 @@ export class WalletBindingsFollower {
         bound_from_height: height
       })
     );
-    const next = { ...state, bindings_next_height: height + 1 };
+    // Later than the truth: no first binding is exact from here.
+    const next = {
+      ...state,
+      bindings_next_height: height + 1,
+      bindings_exact: false
+    };
     const removed = await this.db.executeNativeQueriesInTransaction(
       async (conn) => {
         const deletes = (await this.db.boundWallets(conn)).filter(
@@ -235,4 +260,19 @@ export class WalletBindingsFollower {
       throw error;
     }
   }
+}
+
+/** Each wallet's first binding to a principal in a page, in block order. */
+function firstBindingsOf(page: BindingPage): FirstBinding[] {
+  const firsts = new Map<string, FirstBinding>();
+  for (const change of page.changes) {
+    if (change.principalId && !firsts.has(change.wallet)) {
+      firsts.set(change.wallet, {
+        wallet: change.wallet,
+        principal_id: change.principalId,
+        height: change.height
+      });
+    }
+  }
+  return Array.from(firsts.values());
 }

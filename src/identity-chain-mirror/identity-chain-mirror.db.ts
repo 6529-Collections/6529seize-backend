@@ -5,10 +5,12 @@ import {
   CONSOLIDATIONS_TABLE,
   DELEGATIONS_TABLE,
   IDENTITIES_TABLE,
+  IDENTITY_CHAIN_FIRST_BINDINGS_TABLE,
   IDENTITY_CHAIN_MIRROR_STATE_TABLE,
   IDENTITY_CHAIN_PLACEHOLDERS_TABLE,
   IDENTITY_CHAIN_PRINCIPALS_TABLE,
   IDENTITY_CHAIN_RATING_EVENTS_TABLE,
+  IDENTITY_CHAIN_REGROUPS_TABLE,
   IDENTITY_CHAIN_WALLETS_TABLE,
   PROFILES_TABLE,
   RATINGS_TABLE,
@@ -47,8 +49,20 @@ export interface MirrorState {
   readonly chain_id: string | null;
   /** When the placeholder profiles were listed; null before. */
   readonly placeholders_at: number | null;
+  /**
+   * The bindings have followed the feed without a break from the import's
+   * start: identity_chain_first_bindings is exact below their cursor.
+   */
+  readonly bindings_exact: boolean;
   /** What the mirror could not write, tried again by the next run. */
   readonly retry: MirrorRetry;
+}
+
+/** A wallet's first-ever principal, as the bindings recorded it. */
+export interface FirstBinding {
+  readonly wallet: string;
+  readonly principal_id: string;
+  readonly height: number;
 }
 
 /**
@@ -220,10 +234,13 @@ export class IdentityChainMirrorDb extends LazyDbAccessCompatibleService {
 
   async getState(conn?: Conn): Promise<MirrorState | null> {
     const row = await this.db.oneOrNull<
-      Omit<MirrorState, 'retry'> & { retry_json: string | null }
+      Omit<MirrorState, 'retry' | 'bindings_exact'> & {
+        retry_json: string | null;
+        bindings_exact: number | boolean | null;
+      }
     >(
       `select next_height, sync_from_height, sync_phase, sync_after, last_full_sync_at,
-              bindings_next_height, chain_id, placeholders_at, retry_json
+              bindings_next_height, chain_id, placeholders_at, bindings_exact, retry_json
        from ${IDENTITY_CHAIN_MIRROR_STATE_TABLE} where id = :id`,
       { id: STATE_ID },
       conn ? { wrappedConnection: conn } : undefined
@@ -238,6 +255,7 @@ export class IdentityChainMirrorDb extends LazyDbAccessCompatibleService {
       bindings_next_height: numberOrNull(row.bindings_next_height),
       chain_id: row.chain_id ?? null,
       placeholders_at: numberOrNull(row.placeholders_at),
+      bindings_exact: !!Number(row.bindings_exact ?? 0),
       retry: retryOf(row.retry_json)
     };
   }
@@ -246,12 +264,13 @@ export class IdentityChainMirrorDb extends LazyDbAccessCompatibleService {
     await this.db.execute(
       `insert into ${IDENTITY_CHAIN_MIRROR_STATE_TABLE}
          (id, next_height, sync_from_height, sync_phase, sync_after, last_full_sync_at,
-          bindings_next_height, chain_id, placeholders_at, retry_json, updated_at)
+          bindings_next_height, chain_id, placeholders_at, bindings_exact, retry_json, updated_at)
        values (:id, :next_height, :sync_from_height, :sync_phase, :sync_after, :last_full_sync_at,
-          :bindings_next_height, :chain_id, :placeholders_at, :retry_json, :now)
+          :bindings_next_height, :chain_id, :placeholders_at, :bindings_exact, :retry_json, :now)
        on duplicate key update
          next_height = values(next_height),
          bindings_next_height = values(bindings_next_height),
+         bindings_exact = values(bindings_exact),
          chain_id = values(chain_id),
          placeholders_at = values(placeholders_at),
          retry_json = values(retry_json),
@@ -263,6 +282,7 @@ export class IdentityChainMirrorDb extends LazyDbAccessCompatibleService {
       {
         id: STATE_ID,
         ...state,
+        bindings_exact: state.bindings_exact ? 1 : 0,
         retry_json: retryJson(state.retry),
         now
       },
@@ -300,6 +320,28 @@ export class IdentityChainMirrorDb extends LazyDbAccessCompatibleService {
       conn ? { wrappedConnection: conn } : undefined
     );
     return row?.profile_id ?? null;
+  }
+
+  /** The mapped profile ids of these principals (lowercase keys). */
+  async profileIdsOfPrincipals(
+    principalIds: string[]
+  ): Promise<Map<string, string>> {
+    const result = new Map<string, string>();
+    const ids = Array.from(new Set(principalIds.map((it) => it.toLowerCase())));
+    for (let i = 0; i < ids.length; i += 1000) {
+      const rows = await this.db.execute<{
+        principal_id: string;
+        profile_id: string;
+      }>(
+        `select principal_id, profile_id from ${IDENTITY_CHAIN_PRINCIPALS_TABLE}
+         where principal_id in (:ids)`,
+        { ids: ids.slice(i, i + 1000) }
+      );
+      rows.forEach((it) =>
+        result.set(it.principal_id.toLowerCase(), it.profile_id)
+      );
+    }
+    return result;
   }
 
   async principalOfProfile(
@@ -789,19 +831,31 @@ export class IdentityChainMirrorDb extends LazyDbAccessCompatibleService {
   }
 
   /** Every confirmed pair, replaced by the chain's (full sync only). */
+  /**
+   * Every confirmed pair becomes `pairs`, but for pairs with a wallet in
+   * `keepWallets` (identities the mirror doesn't write), which stay as
+   * they are.
+   */
   async replaceAllPairs(
     pairs: WalletPair[],
     block: number,
     now: number,
-    conn: Conn
+    conn: Conn,
+    keepWallets: string[] = []
   ) {
     const wallets = Array.from(
       new Set(pairs.flatMap((it) => [it.wallet1, it.wallet2]))
     );
     const times = await this.pairTimes(wallets, conn);
-    await this.db.execute(`delete from ${CONSOLIDATIONS_TABLE}`, undefined, {
-      wrappedConnection: conn
-    });
+    const keep = Array.from(new Set(keepWallets.map((it) => it.toLowerCase())));
+    await this.db.execute(
+      keep.length
+        ? `delete from ${CONSOLIDATIONS_TABLE}
+           where wallet1 not in (:keep) and wallet2 not in (:keep)`
+        : `delete from ${CONSOLIDATIONS_TABLE}`,
+      keep.length ? { keep } : undefined,
+      { wrappedConnection: conn }
+    );
     await this.insertPairs(pairs, times, block, now, conn);
   }
 
@@ -817,8 +871,11 @@ export class IdentityChainMirrorDb extends LazyDbAccessCompatibleService {
     now: number,
     events: RatingEventContext,
     conn: Conn,
-    /** Rows not in `wanted` stay (some raters could not be read yet). */
-    { keepUnlisted = false }: { keepUnlisted?: boolean } = {}
+    /**
+     * Raters (profile ids) whose rows not in `wanted` stay: raters the
+     * chain has but whose profile id can't be settled yet.
+     */
+    { keepRaters = [] }: { keepRaters?: readonly string[] } = {}
   ): Promise<{ inserted: number; updated: number; deleted: number }> {
     const opts = { wrappedConnection: conn };
     const existing = await this.db.execute<RatingRowWrite>(
@@ -833,20 +890,19 @@ export class IdentityChainMirrorDb extends LazyDbAccessCompatibleService {
     const want = new Map(wanted.map((it) => [ratingKey(it), it]));
     const have = new Map(existing.map((it) => [ratingKey(it), it]));
     const log: RatingEvent[] = [];
-    const removed = keepUnlisted
-      ? []
-      : Array.from(have.entries())
-          .filter(([k]) => !want.has(k))
-          .map(([, row]) => row);
+    const kept = new Set(keepRaters.map((it) => it.toLowerCase()));
+    const stays = (row: RatingRowWrite) =>
+      kept.has(row.rater_profile_id.toLowerCase());
+    const removed = Array.from(have.entries())
+      .filter(([k, row]) => !want.has(k) && !stays(row))
+      .map(([, row]) => row);
     // The target's rows once this is written: the totals of the event log.
-    const after = keepUnlisted
-      ? [
-          ...existing
-            .filter((it) => !want.has(ratingKey(it)))
-            .map((it) => ({ ...it, rating: Number(it.rating) })),
-          ...wanted
-        ]
-      : wanted;
+    const after = [
+      ...existing
+        .filter((it) => !want.has(ratingKey(it)) && stays(it))
+        .map((it) => ({ ...it, rating: Number(it.rating) })),
+      ...wanted
+    ];
     const removedPrincipals = await this.principalsOfProfiles(
       removed.map((it) => it.rater_profile_id),
       conn
@@ -1084,12 +1140,117 @@ export class IdentityChainMirrorDb extends LazyDbAccessCompatibleService {
   }
 
   /** Every binding goes (the bindings start again). */
+  /** Empties the wallet bindings and the first bindings recorded with them. */
   async clearWalletBindings(conn: Conn) {
-    await this.db.execute(
-      `delete from ${IDENTITY_CHAIN_WALLETS_TABLE}`,
-      undefined,
-      { wrappedConnection: conn }
+    for (const table of [
+      IDENTITY_CHAIN_WALLETS_TABLE,
+      IDENTITY_CHAIN_FIRST_BINDINGS_TABLE
+    ]) {
+      await this.db.execute(`delete from ${table}`, undefined, {
+        wrappedConnection: conn
+      });
+    }
+  }
+
+  /** Records first bindings; a wallet that has one keeps it. */
+  async recordFirstBindings(rows: FirstBinding[], conn: Conn) {
+    for (let i = 0; i < rows.length; i += 500) {
+      const params: Record<string, unknown> = {};
+      const values = rows
+        .slice(i, i + 500)
+        .map((it, j) => {
+          params[`w${j}`] = it.wallet.toLowerCase();
+          params[`p${j}`] = it.principal_id.toLowerCase();
+          params[`h${j}`] = it.height;
+          return `(:w${j}, :p${j}, :h${j})`;
+        })
+        .join(', ');
+      await this.db.execute(
+        `insert ignore into ${IDENTITY_CHAIN_FIRST_BINDINGS_TABLE} (wallet, principal_id, height)
+         values ${values}`,
+        params,
+        { wrappedConnection: conn }
+      );
+    }
+  }
+
+  /**
+   * A wallet's recorded first binding, and whether the bindings are exact
+   * (followed from the import's start) and how far: with no record, an
+   * exact table followed past a height says the wallet was bound to none
+   * up to it.
+   */
+  async firstBindingOf(wallet: string): Promise<{
+    first: FirstBinding | null;
+    exact: boolean;
+    nextHeight: number | null;
+  }> {
+    const row = await this.db.oneOrNull<{
+      bindings_exact: number | boolean | null;
+      bindings_next_height: number | string | null;
+      wallet: string | null;
+      principal_id: string | null;
+      height: number | string | null;
+    }>(
+      `select s.bindings_exact, s.bindings_next_height, f.wallet, f.principal_id, f.height
+       from ${IDENTITY_CHAIN_MIRROR_STATE_TABLE} s
+       left join ${IDENTITY_CHAIN_FIRST_BINDINGS_TABLE} f on f.wallet = :wallet
+       where s.id = :id`,
+      { wallet: wallet.toLowerCase(), id: STATE_ID }
     );
+    return {
+      first:
+        row?.wallet && row.principal_id
+          ? {
+              wallet: row.wallet,
+              principal_id: row.principal_id.toLowerCase(),
+              height: Number(row.height)
+            }
+          : null,
+      exact: !!Number(row?.bindings_exact ?? 0),
+      nextHeight: numberOrNull(row?.bindings_next_height)
+    };
+  }
+
+  /** Queues regrouped wallets for re-keying, in the mirror's transaction. */
+  async queueRegroups(wallets: string[], now: number, conn: Conn) {
+    for (let i = 0; i < wallets.length; i += 500) {
+      const params: Record<string, unknown> = { now };
+      const values = wallets
+        .slice(i, i + 500)
+        .map((it, j) => {
+          params[`w${j}`] = it.toLowerCase();
+          return `(:w${j}, :now)`;
+        })
+        .join(', ');
+      await this.db.execute(
+        `insert into ${IDENTITY_CHAIN_REGROUPS_TABLE} (wallet, queued_at) values ${values}
+         on duplicate key update queued_at = values(queued_at)`,
+        params,
+        { wrappedConnection: conn }
+      );
+    }
+  }
+
+  /** Wallets waiting to be re-keyed, oldest first. */
+  async pendingRegroups(limit: number): Promise<string[]> {
+    const rows = await this.db.execute<{ wallet: string }>(
+      `select wallet from ${IDENTITY_CHAIN_REGROUPS_TABLE}
+       order by queued_at asc, wallet asc limit :limit`,
+      { limit }
+    );
+    return rows.map((it) => it.wallet);
+  }
+
+  /** Re-keyed: off the queue, unless queued again since `before`. */
+  async regroupsDone(wallets: string[], before: number) {
+    for (let i = 0; i < wallets.length; i += 1000) {
+      await this.db.execute(
+        `delete from ${IDENTITY_CHAIN_REGROUPS_TABLE}
+         where wallet in (:wallets) and queued_at <= :before`,
+        { wallets: wallets.slice(i, i + 1000), before }
+      );
+    }
   }
 
   /** Every wallet with a stored binding (a rebuild's reconciliation). */
