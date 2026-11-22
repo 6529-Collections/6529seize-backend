@@ -1,4 +1,3 @@
-import { execFileSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import {
   IDENTITY_EXPORT_HELP,
@@ -8,28 +7,11 @@ import {
   parseIdentityExportCommand
 } from './cli-options';
 
-function gitRevision(): string {
-  try {
-    const head = execFileSync('git', ['rev-parse', 'HEAD'], {
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'ignore']
-    }).trim();
-    if (/^[0-9a-f]{40}$/.test(head)) {
-      return head;
-    }
-  } catch {
-    // Not a git checkout: the caller must pass --revision.
-  }
-  throw new IdentityExportUsageError(
-    'No exporter revision: pass --revision <40-hex commit> or set EXPORTER_REVISION'
-  );
-}
-
 async function runExport(command: IdentityExportCommand) {
   const extraProfileIds = command.extraIdsFile
     ? parseExtraIds(fs.readFileSync(command.extraIdsFile, 'utf8'))
     : [];
-  const exporterRevision = command.revision ?? gitRevision();
+  const exporterRevision = command.revision;
   // The shared environment and DB startup log to stdout: keep stdout for the
   // one JSON summary.
   const stdoutWrite = process.stdout.write;

@@ -1,6 +1,21 @@
 import * as fs from 'node:fs';
 import { once } from 'node:events';
 
+type Write = (chunk: string) => Promise<void>;
+
+async function writeArray(write: Write, values: unknown[]): Promise<void> {
+  if (!values.length) {
+    await write('[]');
+    return;
+  }
+  await write('[\n');
+  for (let i = 0; i < values.length; i++) {
+    const comma = i < values.length - 1 ? ',' : '';
+    await write(`    ${JSON.stringify(values[i])}${comma}\n`);
+  }
+  await write('  ]');
+}
+
 /**
  * Writes the export document as one JSON object, one array element at a time,
  * so a large export never becomes a single string in memory. The output
@@ -11,7 +26,7 @@ export async function writeJsonDocument(
   document: Record<string, unknown>
 ): Promise<void> {
   const out = fs.createWriteStream(path, { encoding: 'utf8' });
-  const write = async (chunk: string) => {
+  const write: Write = async (chunk) => {
     if (!out.write(chunk)) {
       await once(out, 'drain');
     }
@@ -25,17 +40,7 @@ export async function writeJsonDocument(
       const [key, value] = entries[i];
       await write(`  ${JSON.stringify(key)}: `);
       if (Array.isArray(value)) {
-        if (!value.length) {
-          await write('[]');
-        } else {
-          await write('[\n');
-          for (let j = 0; j < value.length; j++) {
-            await write(
-              `    ${JSON.stringify(value[j])}${j < value.length - 1 ? ',' : ''}\n`
-            );
-          }
-          await write('  ]');
-        }
+        await writeArray(write, value);
       } else {
         await write(JSON.stringify(value));
       }

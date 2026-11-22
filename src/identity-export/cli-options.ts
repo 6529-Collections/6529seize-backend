@@ -14,8 +14,9 @@ Options:
                        {"profile_ids": [...]}, or whitespace separated
   --freeze-at TIME     the freeze time T (ISO 8601 UTC) or Unix milliseconds;
                        defaults to IDENTITY_FREEZE_AT when that is set
-  --revision HEX       the exporter's 40-hex git commit (default: EXPORTER_REVISION,
-                       then git rev-parse HEAD)
+  --revision HEX       the exporter's 40-hex git commit, such as
+                       $(git rev-parse HEAD) (default: EXPORTER_REVISION; one
+                       of the two is required)
   --no-delegations     leave out 6529.io's delegations table
   --help               this text
 `;
@@ -26,7 +27,7 @@ export interface IdentityExportCommand {
   readonly bulk: number;
   readonly extraIdsFile: string | null;
   readonly freezeMs: number | null;
-  readonly revision: string | null;
+  readonly revision: string;
   readonly includeDelegations: boolean;
 }
 
@@ -50,7 +51,7 @@ export function parseFreezeTime(raw: string): number {
   if (/^\d{1,16}$/.test(value)) {
     return Number(value);
   }
-  const millis = ISO_UTC.test(value) ? Date.parse(value) : NaN;
+  const millis = ISO_UTC.test(value) ? Date.parse(value) : Number.NaN;
   if (!Number.isFinite(millis)) {
     throw new IdentityExportUsageError(
       `The freeze time must be ISO 8601 UTC or Unix milliseconds, got "${raw}"`
@@ -139,6 +140,11 @@ export function parseIdentityExportCommand(
   if (!out) {
     throw new IdentityExportUsageError('--out FILE is required');
   }
+  if (revision === null) {
+    throw new IdentityExportUsageError(
+      'The exporter revision is required: pass --revision <40-hex commit> or set EXPORTER_REVISION'
+    );
+  }
   if (revision !== null && !/^[0-9a-f]{40}$/.test(revision.toLowerCase())) {
     throw new IdentityExportUsageError(
       `The revision must be a 40-hex git commit, got "${revision}"`
@@ -150,7 +156,7 @@ export function parseIdentityExportCommand(
     bulk,
     extraIdsFile,
     freezeMs,
-    revision: revision?.toLowerCase() ?? null,
+    revision: revision.toLowerCase(),
     includeDelegations
   };
 }

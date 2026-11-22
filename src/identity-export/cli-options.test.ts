@@ -9,13 +9,18 @@ const T = Date.UTC(2026, 10, 24);
 
 describe('parseIdentityExportCommand', () => {
   it('reads the defaults', () => {
-    expect(parseIdentityExportCommand(['--out', 'x.json'], {})).toEqual({
+    expect(
+      parseIdentityExportCommand(
+        ['--out', 'x.json', '--revision', 'f'.repeat(40)],
+        {}
+      )
+    ).toEqual({
       command: 'export',
       out: 'x.json',
       bulk: 2000,
       extraIdsFile: null,
       freezeMs: null,
-      revision: null,
+      revision: 'f'.repeat(40),
       includeDelegations: true
     });
   });
@@ -68,6 +73,7 @@ describe('parseIdentityExportCommand', () => {
     [['--out'], '--out needs a value'],
     [['--out', 'x', '--bulk', '-1'], '--bulk must be a whole number'],
     [['--out', 'x', '--revision', 'abc'], 'revision must be a 40-hex'],
+    [['--out', 'x'], 'The exporter revision is required'],
     [['--out', 'x', '--freeze-at', '24 Nov'], 'freeze time'],
     [['--out', 'x', '--what'], 'Unknown argument']
   ])('refuses %j', (args, message) => {

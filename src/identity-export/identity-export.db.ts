@@ -18,6 +18,9 @@ export type ReadOnlyQuery = <T>(
   params?: Record<string, unknown>
 ) => Promise<T[]>;
 
+/** A MySQL number as the driver returns it (decimals may come as strings). */
+type DbNumber = number | string | null;
+
 export interface IdentityRow {
   readonly consolidation_key: string;
   readonly primary_address: string;
@@ -27,11 +30,11 @@ export interface IdentityRow {
   readonly pfp: string | null;
   readonly banner1: string | null;
   readonly banner2: string | null;
-  readonly tdh: number | string | null;
-  readonly xtdh: number | string | null;
-  readonly rep: number | string | null;
-  readonly cic: number | string | null;
-  readonly level_raw: number | string | null;
+  readonly tdh: DbNumber;
+  readonly xtdh: DbNumber;
+  readonly rep: DbNumber;
+  readonly cic: DbNumber;
+  readonly level_raw: DbNumber;
   /** profiles.external_id; null when the identity has no profile row. */
   readonly p_external_id: string | null;
   readonly p_handle: string | null;
