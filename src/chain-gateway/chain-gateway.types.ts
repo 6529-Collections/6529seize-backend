@@ -274,17 +274,38 @@ export interface ChainFeedBlock {
     readonly doneHeight: number | null;
     readonly completedHere: boolean;
   } | null;
+  /**
+   * False when the page ends inside this block: the next page gives the
+   * block again with the rest of its records (from `recordsFrom`).
+   */
+  readonly complete?: boolean;
+  /** The position in the block's writes its records here start at. */
+  readonly recordsFrom?: number;
   readonly records: ChainFeedRecord[];
 }
 
+/** Where a page of the feed starts: a height, or the gateway's `next`. */
+export type ChainFeedCursor = number | string;
+
 export interface ChainFeedPage {
-  readonly from: number;
-  /** Every finalized height from `from` to `through` is covered. */
+  readonly from: ChainFeedCursor;
+  /** The last height given whole. */
   readonly through: number;
   readonly blocks: ChainFeedBlock[];
   readonly ranges?: unknown;
-  /** `through + 1`: ask again from here. */
-  readonly next: number;
+  /**
+   * Where the next page starts, as the gateway gave it (`through + 1`, or
+   * `height:index` inside a block): pass it back as it is.
+   */
+  readonly next: ChainFeedCursor;
+  /**
+   * The next height to read whole (`through + 1`): what a caller keeps
+   * between runs. Reading from it again repeats at most the block a page
+   * ended inside.
+   */
+  readonly nextHeight: number;
+  /** Nothing past the start: the finalized head is reached. */
+  readonly atHead: boolean;
 }
 
 export interface ChainDraftRequest {
