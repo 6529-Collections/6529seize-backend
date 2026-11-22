@@ -17,6 +17,7 @@ import { ConnectionWrapper, sqlExecutor } from '@/sql-executor';
 import {
   claimSubscriptionWrites,
   closeSubscriptionWrites,
+  STATE_RE_READ_MS,
   JOURNAL_BEHIND_ID,
   OPENING_STATE_ID,
   openSubscriptionWrites,
@@ -535,6 +536,12 @@ export async function rebuildIdentityTables(params: {
   /** Checks the journal's top-ups and mints against Ethereum (network calls). */
   readonly ethereum?: EthereumFacts;
   readonly now?: () => number;
+  /**
+   * Over tables that are loaded and not suspended: how long to wait after
+   * suspending them, so every writer's cached state says suspended before
+   * the load (STATE_RE_READ_MS and a margin).
+   */
+  readonly writersStopMs?: number;
 }): Promise<RebuildResult> {
   const now = params.now ?? (() => Date.now());
   if (params.goLive && !params.ethereum) {
@@ -570,6 +577,30 @@ export async function rebuildIdentityTables(params: {
   };
   const source = params.source;
   try {
+    // The writers read the state through a cache. Over tables that are
+    // loaded and not suspended, suspend them first and wait the cache out,
+    // so no writer writes while they are loaded again.
+    const [held] = await sqlExecutor.execute<{
+      suspended_at: number | string | null;
+      switch_at: number | string | null;
+    }>(
+      `SELECT suspended_at, switch_at FROM ${SUBSCRIPTIONS_ID_STATE_TABLE} WHERE id = :id`,
+      { id: OPENING_STATE_ID }
+    );
+    if (held && held.suspended_at === null && held.switch_at !== null) {
+      // The load would refuse them anyway; refuse before suspending anything.
+      throw new Error(
+        'The identity tables are the truth, or set to become it: suspend them first to rebuild them'
+      );
+    }
+    if (held && held.suspended_at === null) {
+      await setSuspended(now());
+      subscriptionsIdentitySwitch.invalidate();
+      await new Promise((resolve) =>
+        setTimeout(resolve, params.writersStopMs ?? STATE_RE_READ_MS + 5000)
+      );
+      await renewPause();
+    }
     const { bodies, events } = await readJournal({
       async *walk(chain) {
         for await (const item of source.walk(chain)) {
