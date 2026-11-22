@@ -15,14 +15,6 @@ export class AppFeatures {
     return this.isFeatureEnabled('DB_MIGRATE_DISABLED');
   }
 
-  public isExperimentalBulkRepEnabled(): boolean {
-    return this.isFeatureEnabled('EXPERIMENTAL_BULK_REP');
-  }
-
-  public isXTdhEnabled(): boolean {
-    return this.isFeatureEnabled('XTDH');
-  }
-
   /**
    * Replays subscription writes queued because their consolidation key was
    * longer than a table's key column (subscription-key-width), once the key
@@ -30,6 +22,14 @@ export class AppFeatures {
    */
   public isSubscriptionDeferredReplayEnabled(): boolean {
     return this.isFeatureEnabled('SUBSCRIPTION_DEFERRED_REPLAY');
+  }
+
+  public isExperimentalBulkRepEnabled(): boolean {
+    return this.isFeatureEnabled('EXPERIMENTAL_BULK_REP');
+  }
+
+  public isXTdhEnabled(): boolean {
+    return this.isFeatureEnabled('XTDH');
   }
 
   /**
