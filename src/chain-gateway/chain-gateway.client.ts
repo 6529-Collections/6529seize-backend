@@ -589,7 +589,9 @@ function isReadStamp(value: unknown): value is ChainReadStamp {
  * not_found answers of the node rather than of the data, told apart only by
  * their message (the node's texts, routes.rs and draft.rs): `not_held`,
  * never null, never cached, as another node may hold what this one lacks.
- * The node should send a code of its own for these (such as `not_held`):
+ * The node should send a code of its own for these (such as `not_held`),
+ * and not mark them cacheable for an hour (Cache-Control max-age=3600,
+ * which the gateway honours): both are node-side fixes. They are:
  * a route an older release lacks; the import's entry on a node whose
  * release carries no identities file; a membership day it didn't save or
  * has no record of; a TDH day's lists it doesn't keep (by day, or the
@@ -1558,7 +1560,11 @@ export class ChainGatewayClient {
     // range's start when that is at or before a height no wallet was bound
     // before (`noBindingsBefore`). With no change and no such height, no
     // range is exact. For the API: an `exactFrom`, or Start writing the
-    // bindings it loads into the history, would let more be kept.
+    // bindings it loads into the history, would let more be kept. Also
+    // node-side: the route reads the changes and the ranges under two
+    // locks (routes.rs, the history route), so one answer can pair them
+    // from two moments; and node-local answers, 404s included, carry
+    // Cache-Control max-age=3600, which the gateway's cache honours.
     const height = readHeight as number;
     const first = heightRanges(answer.data.ranges, path)[0];
     const end = first && first[0] <= height ? Math.min(first[1], height) : -1;
@@ -1767,6 +1773,11 @@ export class ChainGatewayClient {
       answer.next,
       !!opts.families?.length
     );
+    // A page read at a finalized height is a height later reads don't go
+    // below: what it says changed is then seen by the reads that follow.
+    if (answer.read.at === 'finalized') {
+      this.raiseFloor(lower(answer.read.network), answer.read.height);
+    }
     // A node behind the height asked from answers through its own head:
     // the next height stays where the reader is.
     const nextHeight = Math.max(through + 1, cursor.height);

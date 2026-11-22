@@ -1719,6 +1719,36 @@ describe('ChainGatewayClient reads', () => {
     });
   });
 
+  it('reads at least at the height of a feed page read before', async () => {
+    const { client, calls } = setup((call) => {
+      if (path(call) === '/v1/status') return status(995);
+      if (path(call) === '/v1/feed') {
+        return {
+          status: 200,
+          json: {
+            read: stamp(1000),
+            data: { through: 1000, blocks: [feedBlock(1000)] },
+            next: '1001'
+          }
+        };
+      }
+      return {
+        status: 200,
+        json: {
+          read: stamp(Number(param(call, 'height'))),
+          data: IDENTITY,
+          next: null
+        }
+      };
+    });
+    await client.getHead();
+    await client.getChanges(990);
+    // The page saw block 1000: the identity is read there, not at 995.
+    await client.getIdentityByPrincipal('0xab');
+    const read = reads(calls).filter((it) => path(it) !== '/v1/feed');
+    expect(read.map((it) => param(it, 'height'))).toEqual(['1000']);
+  });
+
   it('refuses a cursor that is not one before asking', async () => {
     const { client, calls } = setup(withStatus(() => new Error('not asked')));
     await expect(client.getChanges('12:x')).rejects.toMatchObject({
@@ -2594,6 +2624,27 @@ describe('import and membership history', () => {
     ).toEqual([[500, 900]]);
   });
 
+  it('gives no range when the read height is below the feed', async () => {
+    const { client } = setup((call) =>
+      path(call) === '/v1/status'
+        ? status(900)
+        : {
+            status: 200,
+            json: {
+              read: stamp(Number(param(call, 'height'))),
+              data: { wallet: W, changes: [], ranges: [[500, 900]] },
+              next: null
+            }
+          }
+    );
+    expect(
+      await client.getMembershipWalletHistory(W, {
+        height: 400,
+        noBindingsBefore: 600
+      })
+    ).toEqual({ wallet: W, changes: [], ranges: [], readHeight: 400 });
+  });
+
   it('drops the changes after a gap in the feed', async () => {
     const { client } = setup((call) =>
       path(call) === '/v1/status'
@@ -2648,6 +2699,38 @@ describe('import and membership history', () => {
       (await client.getMembershipWalletHistory(W, { noBindingsBefore: 1 }))
         ?.ranges
     ).toEqual([[1, 50]]);
+  });
+
+  it("reads a wallet's leaving and a handle's reservation as the node writes them", async () => {
+    const left = { leftMs: 1_764_000_000_000, from: P };
+    const { client } = setup((call) =>
+      path(call) === '/v1/status'
+        ? status(50)
+        : {
+            status: 200,
+            json: {
+              read: stamp(50),
+              data: path(call).startsWith('/v1/handles/')
+                ? {
+                    handle: 'alice',
+                    valid: true,
+                    available: false,
+                    status: 'reserved',
+                    principalId: P,
+                    since: 4,
+                    reservedUntil: '1764000000000'
+                  }
+                : { wallet: W, principalId: null, leftAt: left },
+              next: null
+            }
+          }
+    );
+    const wallet = await client.getMembershipWallet(W);
+    expect(wallet?.leftAt?.leftMs).toBe(left.leftMs);
+    expect(wallet?.leftAt?.from).toBe(P);
+    const handle = await client.getHandle('alice');
+    const until: string | null | undefined = handle?.reservedUntil;
+    expect(until).toBe('1764000000000');
   });
 
   it('answers null for a history it does not have, and no ranges as none', async () => {

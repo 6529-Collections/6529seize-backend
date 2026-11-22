@@ -161,7 +161,8 @@ export interface ChainHandle {
   readonly status: 'free' | 'claimed' | 'reserved' | 'invalid';
   readonly principalId: string | null;
   readonly since: number | null;
-  readonly reservedUntil: number | null;
+  /** When a reservation ends (a decimal string), for a reserved handle. */
+  readonly reservedUntil: string | null;
 }
 
 export interface ChainMembershipWallet {
@@ -176,7 +177,8 @@ export interface ChainMembershipWallet {
   readonly index?: number;
   readonly boundCycle?: number;
   readonly wallets?: string[];
-  readonly leftAt?: number | null;
+  /** For a wallet bound to none: when it left, and the identity it left. */
+  readonly leftAt?: { readonly leftMs: number; readonly from: string } | null;
 }
 
 /** Every binding change of a wallet the gateway's feed holds, ascending. */
