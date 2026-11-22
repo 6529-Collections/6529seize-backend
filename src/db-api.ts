@@ -345,20 +345,37 @@ export async function withReadOnlySnapshot<T>(
   work: (connection: ConnectionWrapper<mysql.PoolConnection>) => Promise<T>
 ): Promise<T> {
   const connection = await getDbConnectionByPoolName(DbPoolName.READ);
+  try {
+    return await inReadOnlySnapshot(connection, work);
+  } finally {
+    connection.release();
+  }
+}
+
+/**
+ * withReadOnlySnapshot on a given connection. The session reads in UTC
+ * (timestamp columns come back as UTC whatever the server's zone) and gets
+ * the server's zone back after the rollback, as a pooled connection must.
+ */
+export async function inReadOnlySnapshot<T>(
+  connection: Pick<mysql.PoolConnection, 'query'>,
+  work: (connection: ConnectionWrapper<mysql.PoolConnection>) => Promise<T>
+): Promise<T> {
   const run = (sql: string) =>
     new Promise<void>((resolve, reject) =>
-      connection.query(sql, (err) => (err ? reject(err) : resolve()))
+      connection.query(sql, (err: unknown) => (err ? reject(err) : resolve()))
     );
+  await run("SET time_zone = '+00:00'");
   try {
     await run('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ');
     await run('START TRANSACTION WITH CONSISTENT SNAPSHOT, READ ONLY');
-    return await work({ connection });
-  } finally {
     try {
-      await run('ROLLBACK');
+      return await work({ connection: connection as mysql.PoolConnection });
     } finally {
-      connection.release();
+      await run('ROLLBACK');
     }
+  } finally {
+    await run('SET time_zone = DEFAULT');
   }
 }
 

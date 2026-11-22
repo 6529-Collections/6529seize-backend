@@ -92,10 +92,12 @@ export interface IdentityExportDocument extends IdentityExportHeader {
 export function exportRules(bulkThreshold: number) {
   return {
     help_bot_credit_category: HELP_BOT_CREDIT_CATEGORY,
-    help_bot_credit_match: 'trim_casefold',
+    help_bot_credit_match: 'js_trim_then_to_lower_case',
     help_bot_credits: 'excluded',
     rep: 'sum_of_file_ratings',
+    cic: 'as_stored',
     level: 'rep+tdh',
+    level_table: '6529.io levels, capped at 100',
     tdh: 'boosted',
     xtdh: 'as_stored',
     bulk_threshold: bulkThreshold
@@ -126,7 +128,6 @@ export function tdhBlockTimingProblem(
 export interface ExportReadiness {
   readonly tdh: TdhBlock | null;
   readonly identitySync: IdentitySyncProgress | null;
-  readonly overCredit: OverCreditRaters;
   readonly editsAfterFreeze: number;
   readonly ratingsChangedAfterFreeze: number;
 }
@@ -138,7 +139,6 @@ export function readinessProblems(
     IdentityExportOptions,
     | 'freezeMs'
     | 'expectTdhBlock'
-    | 'acceptOverCredit'
     | 'acceptEditsAfterFreeze'
     | 'acceptRatingsChangedAfterFreeze'
   >
@@ -158,13 +158,6 @@ export function readinessProblems(
     expected
   );
   if (day) problems.push({ cause: 'day', message: day });
-  const over = readiness.overCredit.withXtdh;
-  if (over > (options.acceptOverCredit ?? 0)) {
-    problems.push({
-      cause: 'over_credit',
-      message: `${over} raters give more REP or CIC than their credit (TDH + xTDH), which the over-rates loop would cut; acknowledge with --accept-over-credit ${over} to export them as they are`
-    });
-  }
   const edits = readiness.editsAfterFreeze;
   if (edits > (options.acceptEditsAfterFreeze ?? 0)) {
     problems.push({
@@ -227,7 +220,7 @@ export interface HelpBotCredits {
  * The whole rule, written in every export so the public-API exporter can
  * apply the same one.
  */
-export const HELP_BOT_CREDIT_RULE_NOTE = `help-bot credits: every REP rating in the category "${HELP_BOT_CREDIT_CATEGORY}" (any case, surrounding spaces ignored), from any rater, is dropped before the bulk rule and left out of ratings, bulk_rep, rep, level_raw and level; the public-API exporter must apply the same rule`;
+export const HELP_BOT_CREDIT_RULE_NOTE = `help-bot credits: every REP rating whose category, after JavaScript's trim() then toLowerCase(), equals "${HELP_BOT_CREDIT_CATEGORY.toLowerCase()}", from any rater, is dropped before the bulk rule and left out of ratings, bulk_rep, rep, level_raw and level; the public-API exporter must apply the same rule`;
 
 export const TDH_NOTE =
   "tdh is 6529.io's boosted TDH (identities.tdh, the consolidated boosted_tdh); the builder and the validator must count the same TDH";
@@ -273,8 +266,52 @@ export function freezeDayProblem(
 }
 
 /**
- * Each identity's rep, level_raw and level as the chain will count them: rep
- * the sum of the file's REP ratings to it, level_raw that plus TDH.
+ * The raters who give more in this file, in one matter (REP or CIC, summed
+ * as absolute values), than floor(TDH) of their exported identity: the
+ * chain's cap.
+ */
+export function overCreditInFile(
+  identities: readonly IdentityExportIdentity[],
+  ratings: readonly IdentityExportRating[]
+): number {
+  const tdh = new Map<string, number>();
+  for (const it of identities) {
+    if (it.profile_id) tdh.set(it.profile_id, it.tdh);
+  }
+  const given = new Map<string, number>();
+  for (const it of ratings) {
+    const key = `${it.rater_profile_id} ${it.matter}`;
+    given.set(key, (given.get(key) ?? 0) + Math.abs(it.rating));
+  }
+  const over = new Set<string>();
+  for (const [key, sum] of Array.from(given.entries())) {
+    const rater = key.split(' ')[0];
+    if (sum > Math.floor(tdh.get(rater) ?? 0)) over.add(rater);
+  }
+  return over.size;
+}
+
+/** Profiles whose stored cic is not the sum of the CIC ratings to them here. */
+export function cicMismatches(
+  identities: readonly IdentityExportIdentity[],
+  ratings: readonly IdentityExportRating[]
+): number {
+  const sums = new Map<string, number>();
+  for (const it of ratings) {
+    if (it.matter !== 'CIC') continue;
+    sums.set(
+      it.target_profile_id,
+      (sums.get(it.target_profile_id) ?? 0) + it.rating
+    );
+  }
+  return identities.filter(
+    (it) => it.profile_id !== null && it.cic !== (sums.get(it.profile_id) ?? 0)
+  ).length;
+}
+
+/**
+ * Each identity's rep, level_raw and level from the file: rep the sum of the
+ * file's REP ratings to it, level_raw that plus TDH, level 6529.io's table.
  */
 export function withFileRep(
   identities: readonly IdentityExportIdentity[],
@@ -326,8 +363,8 @@ export function repMismatches(
 }
 
 /**
- * The help bot's credits (REP in its reserved category, matched without
- * regard to case or surrounding spaces) are a 6529.io site feature that the
+ * The help bot's credits (REP in its reserved category, matched after
+ * trim() then toLowerCase()) are a 6529.io site feature that the
  * chain doesn't import: they stay in 6529.io's ratings table and keep
  * working through the freeze. Returns the other ratings and the credits per
  * target.
@@ -426,9 +463,10 @@ export function toExportIdentity(
   ).sort(compareCodePoints);
   const rep = Math.trunc(numberOr(row.rep, 0));
   const tdh = numberOr(row.tdh, 0);
-  // The chain's level: REP + TDH. 6529.io's level_raw also adds xTDH, which
-  // is not on the chain (xtdh is still written as stored).
+  // REP + TDH. 6529.io's level_raw also adds xTDH, which is not on the
+  // chain (xtdh is still written as stored).
   const levelRaw = rep + tdh;
+  const ioLevelRaw = numberOr(row.level_raw, 0);
   return {
     profile_id: hasProfile ? row.p_external_id!.toLowerCase() : null,
     handle: hasProfile ? row.p_handle : null,
@@ -449,6 +487,9 @@ export function toExportIdentity(
     cic: Math.trunc(numberOr(row.cic, 0)),
     level: getLevelFromScore(levelRaw),
     level_raw: levelRaw,
+    io_rep: numberOr(row.rep, 0),
+    io_level_raw: ioLevelRaw,
+    io_level: getLevelFromScore(ioLevelRaw),
     scope
   };
 }
@@ -733,7 +774,6 @@ export async function buildIdentityExport(
     {
       tdh,
       identitySync,
-      overCredit,
       editsAfterFreeze,
       ratingsChangedAfterFreeze
     },
@@ -773,7 +813,7 @@ export async function buildIdentityExport(
         ]
       : []),
     ...scopeNotes(core, excluded, bulkCategories, options.bulkThreshold, scope),
-    `rep, level_raw and level are the chain's: rep is the sum of the REP ratings to the profile in this file (help-bot credits are not in it), level_raw is rep + TDH, without xTDH (xtdh is written as stored); the public-API exporter must write them the same way`,
+    `rep is the sum of the REP ratings to the profile in this file (help-bot credits are not in it); level_raw is rep + TDH, without xTDH (xtdh is written as stored); level is 6529.io's level table on level_raw, capped at 100 (rules.level_table): the builder must compute the chain's level from level_raw. cic is as stored. io_rep, io_level_raw and io_level are 6529.io's own values as stored, xTDH and help-bot credits included, for comparisons with 6529.io. The public-API exporter must write these fields the same way`,
     TDH_NOTE,
     HELP_BOT_CREDIT_RULE_NOTE,
     ...(credits.ratings
@@ -806,7 +846,7 @@ export async function buildIdentityExport(
     )
     .sort(compareRatings);
 
-  // The file's rep and level are the chain's: from the file's ratings.
+  // rep, level_raw and level from the file's ratings.
   const cms = withCmsFields(
     withFileRep(storedMinusCredits, ratings),
     options.cmsFields
@@ -819,9 +859,29 @@ export async function buildIdentityExport(
       `${repFromFile} exported profiles have a stored rep (help-bot credits aside) that is not the sum of the REP ratings to them in this file, from raters left out of the export or a stored rep that drifted: their rep and level here are the file's, as the chain will count them, not 6529.io's`
     );
   }
-  if (overCredit.withXtdh || overCredit.tdhOnly) {
+  // Over credit in the file itself, against the chain's cap: refused at the
+  // freeze unless acknowledged; nothing has been written yet.
+  const overInFile = overCreditInFile(identities, ratings);
+  if (
+    (options.expectTdhBlock ?? null) !== null &&
+    overInFile > (options.acceptOverCredit ?? 0)
+  ) {
+    throw new IdentityExportNotReadyError([
+      {
+        cause: 'over_credit',
+        message: `${overInFile} raters give more REP or CIC in this file than floor(TDH) of their identity, the chain's cap; acknowledge with --accept-over-credit ${overInFile} to export them as they are`
+      }
+    ]);
+  }
+  if (overInFile || overCredit.withXtdh || overCredit.tdhOnly) {
     notes.push(
-      `${overCredit.withXtdh} raters give more REP or CIC than their credit as 6529.io counts it (TDH + xTDH), ${overCredit.tdhOnly} by TDH alone (the chain's credit); their ratings are exported as they are`
+      `${overInFile} raters give more REP or CIC in this file than floor(TDH) of their identity (the chain's cap); in 6529.io's ratings, ${overCredit.withXtdh} are over TDH + xTDH (its over-rates loop) and ${overCredit.tdhOnly} over TDH alone; their ratings are exported as they are`
+    );
+  }
+  const cicFromFile = cicMismatches(identities, ratings);
+  if (cicFromFile) {
+    notes.push(
+      `${cicFromFile} exported profiles have a stored cic that is not the sum of the CIC ratings to them in this file (rules.cic as_stored)`
     );
   }
   if (editsAfterFreeze) {
@@ -894,8 +954,10 @@ export async function buildIdentityExport(
       rep_mismatch: repMismatch,
       rep_differs_from_file_ratings: repFromFile,
       ratings_modified_after_freeze: ratingsChangedAfterFreeze,
+      over_credit_raters_in_file: overInFile,
       over_credit_raters: overCredit.withXtdh,
       over_credit_raters_tdh_only: overCredit.tdhOnly,
+      cic_differs_from_file_ratings: cicFromFile,
       rating_edits_after_freeze: editsAfterFreeze,
       identity_sync_pending_generation: identitySync?.pendingGeneration ?? -1,
       identity_sync_synced_generation: identitySync?.syncedGeneration ?? -1,

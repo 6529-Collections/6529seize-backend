@@ -5,6 +5,8 @@ import {
 } from './identity-export.db';
 import {
   buildIdentityExport,
+  cicMismatches,
+  overCreditInFile,
   freezeDayProblem,
   HELP_BOT_CREDIT_RULE_NOTE,
   exportRules,
@@ -219,7 +221,7 @@ describe('buildIdentityExport', () => {
     ]);
   });
 
-  it("keeps 6529.io values as stored, the wallets ascending, and the chain's level", async () => {
+  it("keeps 6529.io values as stored, the wallets ascending, and level from the file's ratings", async () => {
     const doc = await buildIdentityExport(world().source, options);
     const alice = doc.identities.find((it) => it.profile_id === ALICE)!;
     expect(alice).toEqual({
@@ -261,6 +263,10 @@ describe('buildIdentityExport', () => {
       cic: 5,
       level: 6,
       level_raw: 1 + 1000.5,
+      // 6529.io's own, as stored.
+      io_rep: 30,
+      io_level_raw: 1043.25,
+      io_level: 6,
       scope: ['handle', 'rating']
     });
     const pair = doc.identities.find((it) => it.profile_id === null)!;
@@ -586,10 +592,12 @@ describe('buildIdentityExport', () => {
     expect(doc.format).toBe('6529.identity-export.v1');
     expect(doc.rules).toEqual({
       help_bot_credit_category: 'Help6529 Credits',
-      help_bot_credit_match: 'trim_casefold',
+      help_bot_credit_match: 'js_trim_then_to_lower_case',
       help_bot_credits: 'excluded',
       rep: 'sum_of_file_ratings',
+      cic: 'as_stored',
       level: 'rep+tdh',
+      level_table: '6529.io levels, capped at 100',
       tdh: 'boosted',
       xtdh: 'as_stored',
       bulk_threshold: 2
@@ -625,7 +633,8 @@ describe('buildIdentityExport', () => {
     expect(realHandleProfileIds).not.toHaveBeenCalled();
     const doc = await buildIdentityExport(source, {
       ...options,
-      expectTdhBlock: 24_000_000
+      expectTdhBlock: 24_000_000,
+      acceptOverCredit: 2
     });
     expect(doc.tdh_block).toBe(24_000_000);
   });
@@ -667,54 +676,58 @@ describe('buildIdentityExport', () => {
     expect(rehearsal.tdh_block).toBe(1);
   });
 
-  it('refuses raters over credit and changes after the freeze unless acknowledged', async () => {
+  it("refuses changes after the freeze, then raters over the chain's cap in the file, unless acknowledged", async () => {
     const { source } = world();
     const ratingEditsSince = jest.fn(async () => 2);
     const ratingsChangedSince = jest.fn(async () => 4);
+    const ratingEdges = jest.fn(source.ratingEdges);
     const busy = {
       ...source,
       overCreditRaters: async () => ({ withXtdh: 3, tdhOnly: 5 }),
       ratingEditsSince,
-      ratingsChangedSince
+      ratingsChangedSince,
+      ratingEdges
     };
     const atFreeze = { ...options, expectTdhBlock: 24_000_000 };
     const refused = (opts: {
       acceptOverCredit?: number;
       acceptEditsAfterFreeze?: number;
+      acceptRatingsChangedAfterFreeze?: number;
     }) =>
       buildIdentityExport(busy, { ...atFreeze, ...opts }).then(
         () => null,
         (error: IdentityExportNotReadyError) => error
       );
-    const all = await refused({});
-    expect(all?.causes).toEqual([
-      'over_credit',
-      'after_freeze',
-      'after_freeze'
-    ]);
-    expect(all?.exitCode).toBe(4);
-    expect(all?.message).toContain(
-      '3 raters give more REP or CIC than their credit'
-    );
-    const after = await refused({ acceptOverCredit: 3 });
+    // Changes after the freeze: refused before the long reads.
+    const after = await refused({});
+    expect(after?.causes).toEqual(['after_freeze', 'after_freeze']);
     expect(after?.exitCode).toBe(5);
     expect(after?.message).toContain(
       '2 REP and CIC rating edits were logged after the freeze'
     );
-    expect(after?.message).toContain(
-      '4 REP and CIC ratings were changed after the freeze'
-    );
-    const changed = await refused({
-      acceptOverCredit: 3,
-      acceptEditsAfterFreeze: 2
+    expect(after?.message).toContain('--accept-ratings-changed-after-freeze 4');
+    expect(ratingEdges).not.toHaveBeenCalled();
+    // In the file, P3 gives CIC 20 and TAGGER REP 1 with TDH 0: over the
+    // chain's cap. Alice's 5 is within her 1000.
+    const over = await refused({
+      acceptEditsAfterFreeze: 2,
+      acceptRatingsChangedAfterFreeze: 4
     });
-    expect(changed?.causes).toEqual(['after_freeze']);
-    expect(changed?.message).toContain(
-      '--accept-ratings-changed-after-freeze 4'
+    expect(over?.causes).toEqual(['over_credit']);
+    expect(over?.exitCode).toBe(4);
+    expect(over?.message).toContain(
+      "2 raters give more REP or CIC in this file than floor(TDH) of their identity, the chain's cap; acknowledge with --accept-over-credit 2"
     );
+    expect(
+      await refused({
+        acceptEditsAfterFreeze: 2,
+        acceptRatingsChangedAfterFreeze: 4,
+        acceptOverCredit: 1
+      })
+    ).not.toBeNull();
     const doc = await buildIdentityExport(busy, {
       ...atFreeze,
-      acceptOverCredit: 3,
+      acceptOverCredit: 2,
       acceptEditsAfterFreeze: 2,
       acceptRatingsChangedAfterFreeze: 4
     });
@@ -722,6 +735,7 @@ describe('buildIdentityExport', () => {
     expect(ratingsChangedSince).toHaveBeenCalledWith(FREEZE);
     expect(doc.stats).toEqual(
       expect.objectContaining({
+        over_credit_raters_in_file: 2,
         over_credit_raters: 3,
         over_credit_raters_tdh_only: 5,
         rating_edits_after_freeze: 2,
@@ -731,7 +745,7 @@ describe('buildIdentityExport', () => {
     expect(doc.notes).toEqual(
       expect.arrayContaining([
         expect.stringContaining(
-          '3 raters give more REP or CIC than their credit as 6529.io counts it (TDH + xTDH), 5 by TDH alone'
+          "2 raters give more REP or CIC in this file than floor(TDH) of their identity (the chain's cap); in 6529.io's ratings, 3 are over TDH + xTDH (its over-rates loop) and 5 over TDH alone"
         ),
         expect.stringContaining('2 REP and CIC rating edits were logged'),
         expect.stringContaining(
@@ -744,7 +758,7 @@ describe('buildIdentityExport', () => {
       ...options,
       freezeMs: null
     });
-    expect(counted.stats.over_credit_raters).toBe(3);
+    expect(counted.stats.over_credit_raters_in_file).toBe(2);
     expect(counted.stats.rating_edits_after_freeze).toBe(0);
     expect(counted.stats.ratings_modified_after_freeze).toBe(0);
     expect(
@@ -752,7 +766,6 @@ describe('buildIdentityExport', () => {
         {
           tdh: { block: 24_000_000, timestampMs: FREEZE },
           identitySync: null,
-          overCredit: { withXtdh: 0, tdhOnly: 0 },
           editsAfterFreeze: 0,
           ratingsChangedAfterFreeze: 0
         },
@@ -765,6 +778,53 @@ describe('buildIdentityExport', () => {
           "the identities sync's state (identity_tdh_sync_state) could not be read"
       }
     ]);
+  });
+
+  it("counts the raters over the chain's cap in the file, by matter", () => {
+    const id = (profile: string, tdh: number) =>
+      toExportIdentity(
+        identity(W(1), { id: profile, handle: profile }, { tdh }),
+        [W(1)],
+        [],
+        ['handle']
+      );
+    const identities = [id(ALICE, 10.9), id(TAGGER, 3), id(P3, 0)];
+    expect(
+      overCreditInFile(identities, [
+        // Alice: REP |6| + |-4| = 10, within floor(10.9); CIC 10 too.
+        rating(ALICE, TAGGER, 'REP', 'A', 6),
+        rating(ALICE, P3, 'REP', 'B', -4),
+        rating(ALICE, TAGGER, 'CIC', '', 10),
+        // TAGGER: REP 4 over floor(3).
+        rating(TAGGER, ALICE, 'REP', 'A', 4),
+        // P3: nothing given.
+        rating(TAGGER, P3, 'CIC', '', 1)
+      ])
+    ).toBe(1);
+    expect(
+      overCreditInFile(identities, [rating(ALICE, P3, 'REP', 'A', 11)])
+    ).toBe(1);
+  });
+
+  it('counts stored cic that the CIC ratings in the file do not add up to', () => {
+    const alice = toExportIdentity(
+      identity(W(1), { id: ALICE, handle: 'Alice' }, { cic: 20 }),
+      [W(1)],
+      [],
+      ['handle']
+    );
+    const p3 = toExportIdentity(
+      identity(W(5), { id: P3, handle: 'p3' }, { cic: 0 }),
+      [W(5)],
+      [],
+      ['handle']
+    );
+    const ratings = [
+      rating(P3, ALICE, 'CIC', '', 20),
+      rating(ALICE, P3, 'REP', 'A', 3)
+    ];
+    expect(cicMismatches([alice, p3], ratings)).toBe(0);
+    expect(cicMismatches([{ ...alice, cic: 21 }, p3], ratings)).toBe(1);
   });
 
   it('exits 3 first: the day before over credit and changes', () => {

@@ -426,7 +426,8 @@ export class SqlIdentityExportSource implements IdentityExportSource {
     }>(
       `select from_address, to_address, collection, use_case, expiry,
               all_tokens, token_id, block
-       from ${DELEGATIONS_TABLE}`
+       from ${DELEGATIONS_TABLE}
+       order by block, from_address, to_address, collection, use_case`
     );
     return rows.map((row) => {
       const allTokens = !!Number(row.all_tokens);

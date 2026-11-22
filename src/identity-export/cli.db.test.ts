@@ -170,6 +170,11 @@ describeWithSeed(
       ]);
       expect(doc.stats.help_bot_credits_left_out).toBe(1);
       expect(doc.stats.over_credit_raters).toBe(0);
+      expect(doc.stats.over_credit_raters_in_file).toBe(0);
+      expect(doc.rules.level_table).toBe('6529.io levels, capped at 100');
+      expect([byId.get(ALICE).io_rep, byId.get(ALICE).io_level_raw]).toEqual([
+        4, 102
+      ]);
     });
 
     it('writes the export at the freeze, and refuses another day with exit 3', async () => {

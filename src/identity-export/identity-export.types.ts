@@ -38,13 +38,20 @@ export interface IdentityExportIdentity {
   readonly tdh: number;
   /** Unrounded; the builder floors it. */
   readonly xtdh: number;
-  /** 6529.io's REP without the help bot's credits, as the chain counts it. */
+  /** The sum of the REP ratings to the profile in this file. */
   readonly rep: number;
+  /** As stored. */
   readonly cic: number;
-  /** The chain's level: from level_raw. */
+  /** 6529.io's level table on level_raw (capped at 100: rules.level_table). */
   readonly level: number;
-  /** REP + TDH, without xTDH or help-bot credits. */
+  /** rep + TDH, without xTDH or help-bot credits. */
   readonly level_raw: number;
+  /** 6529.io's own rep, as stored (help-bot credits included). */
+  readonly io_rep: number;
+  /** 6529.io's own level_raw, as stored (xTDH and credits included). */
+  readonly io_level_raw: number;
+  /** 6529.io's own level, from io_level_raw. */
+  readonly io_level: number;
   readonly scope: IdentityExportScope[];
   /**
    * The ProfileDoc `cms` value (the profile site), from the profile site

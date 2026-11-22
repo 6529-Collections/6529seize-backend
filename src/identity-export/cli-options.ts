@@ -27,8 +27,9 @@ Options:
                          with that TDH write, no rater is over credit and no
                          REP or CIC edit was logged after the freeze; required
                          with a freeze time
-  --accept-over-credit N accept up to N raters over their credit (TDH + xTDH),
-                         exported as they are
+  --accept-over-credit N accept up to N raters who give more REP or CIC in
+                         the file than floor(TDH) of their identity (the
+                         chain's cap), exported as they are
   --accept-edits-after-freeze N
                          accept up to N REP or CIC edits logged after the
                          freeze (over-rate cuts and help-bot credits aside)

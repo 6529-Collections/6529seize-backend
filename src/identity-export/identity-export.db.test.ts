@@ -220,7 +220,18 @@ describeWithSeed(
     },
     {
       table: DELEGATIONS_TABLE,
+      // Out of key order: the export reads them in primary key order.
       rows: [
+        {
+          block: 20_000_001,
+          from_address: W(1),
+          to_address: W(9),
+          collection: W(10),
+          use_case: 1,
+          expiry: 64_060_588_800,
+          all_tokens: true,
+          token_id: 0
+        },
         {
           block: 20_000_000,
           from_address: W(1),
@@ -313,6 +324,16 @@ describeWithSeed(
           all_tokens: false,
           token_id: '61',
           block: 20_000_000
+        },
+        {
+          from_address: W(1),
+          to_address: W(9),
+          collection: W(10),
+          use_case: 1,
+          expiry: 64_060_588_800,
+          all_tokens: true,
+          token_id: null,
+          block: 20_000_001
         }
       ]);
     });
@@ -339,6 +360,10 @@ describeWithSeed(
       expect(alice.statements).toHaveLength(1);
       // Without the help bot's credit: rep 4 - 4, level_raw 0 + 98.
       expect([alice.rep, alice.level_raw, alice.level]).toEqual([0, 98, 2]);
+      // 6529.io's own, as stored.
+      expect([alice.io_rep, alice.io_level_raw, alice.io_level]).toEqual([
+        4, 102, 3
+      ]);
       expect(doc.ratings).toHaveLength(3);
       expect(doc.ratings.some((it) => it.category === 'Help6529 Credits')).toBe(
         false
