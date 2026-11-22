@@ -3003,17 +3003,22 @@ event. With `FEATURE_SUBSCRIPTIONS_REKEY_ON_MIRROR=true` (off by default),
 the `subscriptionsTopUpLoop`, before its top-up scan, finds each balance key
 with a wallet the table now keys otherwise and calls
 `consolidateSubscriptions` for those wallets, as the delegations loop would.
-It runs when 4.5 minutes have passed since its last run, kept in
-`subscription_rekey_fallback_state` (one row, ephemeral), so a late run is
-made up on the next minute. A partial mirror table must not split
-balances, so:
+It runs when 4.5 minutes have passed since its last run and no run holds
+the lease (15 minutes, the loop's timeout), both kept in
+`subscription_rekey_fallback_state` (one row, ephemeral). So a late run is
+made up on the next minute, and a slow run never overlaps the next. A
+partial mirror table must not split balances, so:
 
 - a wallet with no row in `address_consolidation_keys` is skipped, not
   taken as its own key;
 - above 50 stale keys, or above 5% of the keys, the run logs them, alerts
   (`SUBSCRIPTIONS_REKEY_HALTED`) and changes nothing;
 - a key is re-keyed only when it was stale on the run before too, so each
-  is logged a run before anything changes it.
+  is logged a run before anything changes it;
+- just before the call, a key waits while it, or a key sharing one of its
+  wallets, has a wallet with no row, since `consolidateSubscriptions`
+  re-keys every key sharing a wallet and takes a wallet with no row as its
+  own key.
 
 `SUBSCRIPTIONS_REKEY_MAX_STALE` (a count) and
 `SUBSCRIPTIONS_REKEY_MAX_STALE_PCT` (a percentage of the keys) replace the
@@ -3024,8 +3029,8 @@ line gives. Unset them once a run logs `"stale":0`. The two-run rule and
 the alerts hold at any limits.
 
 A key whose re-key the key-width guard already holds back is left to the
-guard's replay. A key still stale after three re-keys alerts
-(`SUBSCRIPTIONS_REKEY_STUCK`), and again about hourly. A failure is logged
+guard's replay. A key still stale after three runs that were due to
+re-key it alerts (`SUBSCRIPTIONS_REKEY_STUCK`), and again about hourly. A failure is logged
 and never stops the scan. Rollback: unset the flag.
 
 **Rebuild.** Every entry can be derived again from its source:

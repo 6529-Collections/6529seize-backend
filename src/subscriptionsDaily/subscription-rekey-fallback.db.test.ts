@@ -6,6 +6,7 @@ import { describeWithSeed } from '@/tests/_setup/seed';
 import {
   ADDRESS_CONSOLIDATION_KEY,
   SUBSCRIPTION_DEFERRED_WRITES_TABLE,
+  SUBSCRIPTION_REKEY_FALLBACK_STATE_TABLE,
   SUBSCRIPTIONS_BALANCES_TABLE,
   SUBSCRIPTIONS_MODE_TABLE
 } from '@/constants';
@@ -16,6 +17,7 @@ import {
 import { consolidateSubscriptions } from './subscriptions';
 import {
   REKEY_FALLBACK_INTERVAL_MS,
+  REKEY_FALLBACK_LEASE_MS,
   rekeyFallbackLimits,
   rekeyHaltReason,
   rekeyStaleSubscriptions
@@ -103,6 +105,7 @@ describeWithSeed(
         waiting: 0,
         firstSeen: 2,
         rekeyed: 0,
+        partial: 0,
         wallets: 0,
         stuck: 0,
         halted: null,
@@ -157,6 +160,70 @@ describeWithSeed(
       });
       await rekeyStaleSubscriptions(rekey, T0 + 5 * MINUTE, OPEN);
       expect(rekey).toHaveBeenCalledWith(new Set([A, B]));
+    });
+
+    it('holds a lease while it runs, so a slow run and the next never overlap', async () => {
+      let inner: unknown = 'not run';
+      await rekeyStaleSubscriptions(jest.fn(), T0, OPEN);
+      // The second run is slow: the run due 5 minutes later finds it running.
+      await rekeyStaleSubscriptions(
+        async () => {
+          inner = await rekeyStaleSubscriptions(
+            jest.fn(),
+            T0 + 10 * MINUTE,
+            OPEN
+          );
+        },
+        T0 + 5 * MINUTE,
+        OPEN
+      );
+      expect(inner).toBeNull();
+      // Once it ends, the lease is free.
+      expect(
+        await rekeyStaleSubscriptions(jest.fn(), T0 + 10 * MINUTE, OPEN)
+      ).not.toBeNull();
+      // A run that died keeps its lease until it lapses.
+      await sqlExecutor.execute(
+        `UPDATE ${SUBSCRIPTION_REKEY_FALLBACK_STATE_TABLE} SET lease_until = :until`,
+        { until: T0 + 10 * MINUTE + REKEY_FALLBACK_LEASE_MS }
+      );
+      expect(
+        await rekeyStaleSubscriptions(jest.fn(), T0 + 20 * MINUTE, OPEN)
+      ).toBeNull();
+      expect(
+        await rekeyStaleSubscriptions(
+          jest.fn(),
+          T0 + 10 * MINUTE + REKEY_FALLBACK_LEASE_MS,
+          OPEN
+        )
+      ).not.toBeNull();
+    });
+
+    it('waits on a key while it, or a key sharing its wallets, has a wallet with no mirror row', async () => {
+      // A-D is stale through A, and D has no row: re-keying A's wallets
+      // would also re-key A-D and split D off it, so A waits too.
+      await sqlExecutor.execute(
+        `INSERT INTO ${SUBSCRIPTIONS_BALANCES_TABLE} (consolidation_key, balance) VALUES (:key, 4)`,
+        { key: `${A}-${D}` }
+      );
+      const rekey = jest.fn();
+      expect(await rekeyStaleSubscriptions(rekey, T0, OPEN)).toMatchObject({
+        stale: 3,
+        firstSeen: 3
+      });
+      expect(
+        await rekeyStaleSubscriptions(rekey, T0 + 5 * MINUTE, OPEN)
+      ).toMatchObject({ rekeyed: 1, partial: 2, wallets: 1 });
+      expect(rekey).toHaveBeenCalledWith(new Set([B]));
+      // D's row arrives: everything goes.
+      await sqlExecutor.execute(
+        `INSERT INTO ${ADDRESS_CONSOLIDATION_KEY} (address, consolidation_key) VALUES (:d, :d)`,
+        { d: D }
+      );
+      expect(
+        await rekeyStaleSubscriptions(rekey, T0 + 10 * MINUTE, OPEN)
+      ).toMatchObject({ rekeyed: 3, partial: 0 });
+      expect(rekey).toHaveBeenLastCalledWith(new Set([A, B, D]));
     });
 
     it('stops above the limits: logs the stale keys, alerts, changes nothing and starts over', async () => {
@@ -229,7 +296,7 @@ describeWithSeed(
       }
     });
 
-    it('alerts a key that stays stale after three re-keys', async () => {
+    it('alerts a key still stale after three runs due to re-key it', async () => {
       const alert = alerts();
       // A re-key that fails to move anything.
       const rekey = jest.fn();
@@ -253,7 +320,7 @@ describeWithSeed(
         ).toEqual([
           [
             'SUBSCRIPTIONS_REKEY_STUCK',
-            `[REKEY FALLBACK STUCK] still stale after re-keys: ${A} (3 re-keys), ${B} (3 re-keys)`
+            `[REKEY FALLBACK STUCK] still stale after the runs that were due to re-key them: ${A} (3 runs), ${B} (3 runs)`
           ]
         ]);
       } finally {
