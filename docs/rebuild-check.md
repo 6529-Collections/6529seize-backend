@@ -230,7 +230,9 @@ columns that comparison leaves out, rebuilders that read kept tables, INDEX
 tables no probe read, documented GET routes no probe calls and no waiver
 names, planned tables whose code isn't in the tree, tables a fresh schema
 does not have, and pending tables. `report.json` holds the same, and both
-probe passes' answers sit beside it.
+probe passes' answers sit beside it. A run that stopped before the second
+pass says so, with the step that stopped it, instead of counting
+differences and unproven probes it never compared.
 
 ## The harness's own check
 

@@ -1,6 +1,7 @@
 import * as path from 'node:path';
 import { AreaManifest, Probe, RebuildStep } from '@/rebuild/manifest.types';
 import { AREA_MANIFESTS } from '@/rebuild/manifests';
+import { headline } from '@/rebuild/report/report';
 import { runRebuildCheck } from '@/rebuild/run/runner';
 
 // The harness's end-to-end check: a private mysqld, the schema from code,
@@ -88,6 +89,7 @@ describe('rebuild check, end to end', () => {
     expect(
       report.steps.find((s) => s.kind === 'rebuilder')?.rowsWritten
     ).toEqual({ team: 3 });
+    expect(report.probes.stoppedBefore).toBeNull();
   });
 
   it('reports rows that differ after the rebuild, and passes', async () => {
@@ -121,6 +123,13 @@ describe('rebuild check, end to end', () => {
     expect(report.verdict).toBe('FAIL');
     expect(report.failures.join(' ')).toContain(
       'rebuilder self-check.undeclared exited with 1'
+    );
+    // The run stopped before pass B: no comparison to report.
+    expect(report.probes.stoppedBefore).toBe(
+      'step rebuilder self-check.undeclared'
+    );
+    expect(headline(report)[2]).toContain(
+      'not compared: the run stopped before pass B (step rebuilder self-check.undeclared)'
     );
   });
 

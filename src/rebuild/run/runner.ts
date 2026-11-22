@@ -201,6 +201,8 @@ class RebuildRun {
   private differences: ProbeDifference[] = [];
   /** Probes whose first answer was 4xx or carried no data. */
   private unproven: ProbeDifference[] = [];
+  /** Whether pass B ran and the answers were compared. */
+  private compared = false;
   private unreadTables: string[] = [];
   /** Planned steps skipped because their module isn't in this tree. */
   private plannedSteps: string[] = [];
@@ -818,10 +820,22 @@ class RebuildRun {
     const outcomes = diffAnswers(this.calls, before, after);
     this.differences = outcomes.filter((d) => d.kind === 'failure');
     this.unproven = outcomes.filter((d) => d.kind === 'unproven');
+    this.compared = true;
     const snapshotsAfter = await this.snapshots(this.rebuiltTables);
     this.tableDiffs = this.rebuiltTables.map((t) =>
       diffSnapshots(snapshotsBefore.get(t)!, snapshotsAfter.get(t)!)
     );
+  }
+
+  /** What stopped the run before pass B compared, or null when it did. */
+  private stoppedBefore(): string | null {
+    if (this.compared) return null;
+    const step = this.steps.find((s) => s.exitCode !== 0 || s.timedOut);
+    if (step) return `step ${step.kind} ${step.id}`;
+    if (this.registry?.problems.length) return 'the registry check';
+    const first = this.failures[0]?.split('\n')[0];
+    if (!first) return 'an early stop';
+    return first.length > 120 ? `${first.slice(0, 117)}...` : first;
   }
 
   private verdict(violations: SourceViolation[]): void {
@@ -1037,7 +1051,8 @@ class RebuildRun {
         calls: this.calls.length,
         differences: this.differences,
         unproven: this.unproven,
-        unreadTables: this.unreadTables
+        unreadTables: this.unreadTables,
+        stoppedBefore: this.stoppedBefore()
       },
       routes: {
         documented:

@@ -86,6 +86,12 @@ export interface RunReport {
     readonly unproven: ProbeDifference[];
     /** INDEX tables in scope that no probe read in the first pass. */
     readonly unreadTables: string[];
+    /**
+     * What stopped the run before pass B compared the answers ("step
+     * rebuilder x.y"), or null when both passes ran. Until then the
+     * differences and unproven probes above are not known.
+     */
+    readonly stoppedBefore: string | null;
   };
   readonly routes: {
     readonly documented: number;
@@ -135,7 +141,9 @@ export function headline(report: RunReport): string[] {
   return [
     `${report.scope}, mark ${report.mark}${report.final ? ', final' : ''}, backend ${report.backendHead ?? 'unknown'}: ${report.verdict}`,
     `tables ${total}: ${classes}; rebuilt ${rebuilt}, pending ${report.pending.length}, planned ${report.planned.length}, differing ${differing}`,
-    `probes ${report.probes.calls}: differ ${report.probes.differences.length}, unproven ${report.probes.unproven.length}; INDEX tables no probe read ${report.probes.unreadTables.length}`,
+    report.probes.stoppedBefore === null
+      ? `probes ${report.probes.calls}: differ ${report.probes.differences.length}, unproven ${report.probes.unproven.length}; INDEX tables no probe read ${report.probes.unreadTables.length}`
+      : `probes ${report.probes.calls}: not compared: the run stopped before pass B (${report.probes.stoppedBefore})`,
     `GET routes ${report.routes.documented}: probed ${report.routes.probed}, waived ${report.routes.waived}, open ${report.routes.open.length}`,
     `steps ${report.steps.length}: failed ${failed}; source violations ${report.violations.length}; provisional sources ${provisional.length ? provisional.join(', ') : 'none'}`
   ];
@@ -149,14 +157,16 @@ function seconds(ms: number): string {
   return `${(ms / 1000).toFixed(1)} s`;
 }
 
-function areaTable(areas: readonly AreaSummary[]): string[] {
+/** The area table; with `compared` false, differences and unproven are unknown. */
+function areaTable(areas: readonly AreaSummary[], compared: boolean): string[] {
   if (!areas.length) return [];
+  const known = (n: number) => (compared ? String(n) : '-');
   return [
     '| Area | Tables | INDEX | Seeded | Kept | Rebuilt | Pending | Probes | Differ | Unproven | Failed steps |',
     '| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |',
     ...areas.map(
       (l) =>
-        `| ${l.area} | ${l.tables} | ${l.index} | ${l.seeded} | ${l.kept} | ${l.rebuilt} | ${l.pending} | ${l.probes} | ${l.differences} | ${l.unproven} | ${l.failedSteps} |`
+        `| ${l.area} | ${l.tables} | ${l.index} | ${l.seeded} | ${l.kept} | ${l.rebuilt} | ${l.pending} | ${l.probes} | ${known(l.differences)} | ${known(l.unproven)} | ${l.failedSteps} |`
     )
   ];
 }
@@ -207,7 +217,10 @@ export function renderMarkdown(report: RunReport): string {
       'Registry problems',
       report.registryProblems.map((p) => `- ${p.kind}: ${p.detail}`)
     ),
-    ...section('Areas', areaTable(report.areas)),
+    ...section(
+      'Areas',
+      areaTable(report.areas, report.probes.stoppedBefore === null)
+    ),
     ...section('Sources', sourceLines(report.sources)),
     ...section(
       'Steps',
@@ -287,7 +300,7 @@ export function renderMarkdown(report: RunReport): string {
 
 /** One line per run for the status file. */
 export function statusLine(report: RunReport, runDir: string): string {
-  return `- ${report.finishedAt} ${report.scope}: ${report.verdict}, rebuilt ${report.tables.rebuilt.length}, pending ${report.pending.length}, probe differences ${report.probes.differences.length}, failures ${report.failures.length}. ${runDir}`;
+  return `- ${report.finishedAt} ${report.scope}: ${report.verdict}, rebuilt ${report.tables.rebuilt.length}, pending ${report.pending.length}, ${report.probes.stoppedBefore === null ? `probe differences ${report.probes.differences.length}` : 'probes not compared'}, failures ${report.failures.length}. ${runDir}`;
 }
 
 export function writeReport(

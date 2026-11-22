@@ -78,7 +78,13 @@ function report(parts: Partial<RunReport> = {}): RunReport {
       }
     ],
     violations: [],
-    probes: { calls: 2, differences: [], unproven: [], unreadTables: [] },
+    probes: {
+      calls: 2,
+      differences: [],
+      unproven: [],
+      unreadTables: [],
+      stoppedBefore: null
+    },
     routes: { documented: 3, probed: 1, waived: 1, open: ['GET /api/x'] },
     tables: {
       rebuilt: ['team'],
@@ -120,6 +126,29 @@ describe('rebuild report', () => {
     ]);
   });
 
+  it('says the answers were not compared when the run stopped before pass B', () => {
+    const stopped = report({
+      verdict: 'FAIL',
+      probes: {
+        calls: 2,
+        differences: [],
+        unproven: [],
+        unreadTables: [],
+        stoppedBefore: 'step rebuilder mint.team'
+      }
+    });
+    expect(headline(stopped)[2]).toBe(
+      'probes 2: not compared: the run stopped before pass B (step rebuilder mint.team)'
+    );
+    const markdown = renderMarkdown(stopped);
+    expect(markdown).toContain(
+      '| mint | 3 | 2 | 1 | 1 | 1 | 1 | 2 | - | - | 0 |'
+    );
+    expect(markdown).not.toContain('differ 0, unproven 0');
+    expect(statusLine(stopped, 'runs/x')).toContain('probes not compared');
+    expect(statusLine(report(), 'runs/x')).toContain('probe differences 0');
+  });
+
   it('lists failures, differences, unproven probes, violations and pending tables by area', () => {
     const markdown = renderMarkdown(
       report({
@@ -150,7 +179,8 @@ describe('rebuild report', () => {
               after: '404 {"error":"not found"}'
             }
           ],
-          unreadTables: []
+          unreadTables: [],
+          stoppedBefore: null
         }
       })
     );
