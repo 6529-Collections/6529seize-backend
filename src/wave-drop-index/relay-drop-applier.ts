@@ -1,4 +1,5 @@
 import { DeviceEventKind } from '@/api/device-signing/device-event';
+import type { RelayEventTimes } from '@/api/device-signing/device-signed-writes.service';
 import { ApiCreateDropRequest } from '@/api/generated/models/ApiCreateDropRequest';
 import { ApiDropType } from '@/api/generated/models/ApiDropType';
 import { ApiUpdateDropRequest } from '@/api/generated/models/ApiUpdateDropRequest';
@@ -16,7 +17,15 @@ import { dropIdOfEvent } from './drop-index.subscriber';
  *
  * Each event ends `applied`, `refused` (6529.io's rules or a signature
  * check say no: final) or stays `logged` after a failure that may pass
- * (tried again next run, up to MAX_ATTEMPTS, then `failed`).
+ * (tried again next run, up to MAX_APPLY_ATTEMPTS, then `failed`); a
+ * drop's later events wait while one of its events does. An edit or a
+ * reaction whose drop is not there yet waits for its post; a post whose
+ * drop the index holds a delete of is never written. Only events under a
+ * grant 6529.io holds or whose wallet signature it checked are written.
+ *
+ * 6529.io's rules count when the event is written, not when it was
+ * signed: a backlog can meet a wave's slow mode, or moderation, that the
+ * author never met.
  */
 
 export const MAX_APPLY_ATTEMPTS = 5;
@@ -34,6 +43,8 @@ export interface RelayWriteInput {
   /** The author's 6529.io profile. */
   readonly profileId: string;
   readonly envelope: RelayEnvelope;
+  /** When it was signed and first seen, and its anchor. */
+  readonly times: RelayEventTimes;
 }
 
 /** The writes, as 6529.io's API makes them for the author. */
@@ -63,6 +74,13 @@ export interface RelayDropWrites {
 /** What the applier needs of the index's table. */
 export interface RelayApplyStore {
   pendingRelayEvents(limit: number): Promise<IngestedEvent[]>;
+  /** Whether the index holds a checked delete of this drop. */
+  hasTombstone(dropId: string): Promise<boolean>;
+  /**
+   * Drops a reservation of this event an earlier try left behind (written
+   * to device_signed_events, never finished), so the event can be written.
+   */
+  releaseStaleReservation(eventId: string): Promise<void>;
   markApplied(
     ingestSeq: number,
     status: 'applied' | 'refused' | 'failed' | 'logged',
@@ -83,6 +101,19 @@ export interface ApplyReport {
 export function isRefusal(error: unknown): boolean {
   const status = (error as { getStatusCode?: () => number })?.getStatusCode?.();
   return typeof status === 'number' && status >= 400 && status < 500;
+}
+
+/** Not found: for an edit or a reaction, its post may come later. */
+function isNotFound(error: unknown): boolean {
+  return (error as { getStatusCode?: () => number })?.getStatusCode?.() === 404;
+}
+
+/** A failure that may pass: tried again next run. */
+class Retry extends Error {
+  constructor(message: string) {
+    super(message);
+    Object.setPrototypeOf(this, new.target.prototype);
+  }
 }
 
 function reasonOf(error: unknown): string {
@@ -123,16 +154,23 @@ export class RelayDropApplier {
       retry: 0,
       reasons: {}
     };
+    // A drop whose event must wait: its later events wait too.
+    const waiting = new Set<string>();
     for (const event of await this.store.pendingRelayEvents(limit)) {
       if (this.now() >= deadline) break;
+      if (event.drop_id && waiting.has(event.drop_id)) continue;
       try {
         const dropId = await this.apply(event);
         await this.store.markApplied(event.ingest_seq, 'applied', null, dropId);
         report.applied++;
-      } catch (error) {
+      } catch (thrown) {
+        const error =
+          isNotFound(thrown) && event.kind !== DeviceEventKind.TOMBSTONE
+            ? new Retry(reasonOf(thrown))
+            : thrown;
         const reason = reasonOf(error);
         report.reasons[reason] = (report.reasons[reason] ?? 0) + 1;
-        if (isRefusal(error)) {
+        if (!(error instanceof Retry) && isRefusal(error)) {
           await this.store.markApplied(
             event.ingest_seq,
             'refused',
@@ -157,7 +195,7 @@ export class RelayDropApplier {
             null
           );
           report.retry++;
-          break;
+          if (event.drop_id) waiting.add(event.drop_id);
         }
       }
     }
@@ -166,20 +204,30 @@ export class RelayDropApplier {
 
   /** Writes one event; returns the drop it wrote or touched. */
   private async apply(event: IngestedEvent): Promise<string | null> {
+    if (event.grant_check !== 'known' && event.grant_check !== 'signature') {
+      // A contract wallet's grant 6529.io never verified.
+      throw new Refused("the event's grant could not be verified here");
+    }
     const profileId = await this.writes.profileIdOfWallet(event.author);
     if (!profileId) {
       throw new Refused('the author has no 6529.io profile');
     }
     await this.writes.ensureGrant(event.grant_proof);
+    await this.store.releaseStaleReservation(event.event_id);
     const signed = event.event as Record<string, unknown>;
     const input: RelayWriteInput = {
       event,
       profileId,
       envelope: {
-        grant_id: String(signed.auth_ref),
-        seq: Number(signed.seq),
-        claimed_time: Number(signed.claimed_time),
-        signature: String(signed.signature)
+        grant_id: event.auth_ref.toLowerCase(),
+        seq: event.seq,
+        claimed_time: event.claimed_time,
+        signature: String(signed.signature).toLowerCase()
+      },
+      times: {
+        signedAt: event.claimed_time,
+        seenAt: event.received_at,
+        anchor: Number(signed.anchor ?? 0)
       }
     };
     const body = bodyOf(event);
@@ -198,11 +246,11 @@ export class RelayDropApplier {
             "only chat drops are written from the relays; entries are the chain's"
           );
         }
-        return this.writes.createDrop(
-          input,
-          event.drop_id ?? dropIdOfEvent(event.event_id),
-          request
-        );
+        const dropId = event.drop_id ?? dropIdOfEvent(event.event_id);
+        if (await this.store.hasTombstone(dropId)) {
+          throw new Refused('the drop was deleted before it was written');
+        }
+        return this.writes.createDrop(input, dropId, request);
       }
       case DeviceEventKind.EDIT: {
         if (!target) throw new Refused('an edit names no drop');

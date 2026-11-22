@@ -7,7 +7,11 @@ import {
   SignedWriteContext
 } from '@/api/device-signing/device-signed-writes.service';
 import { dropCreationService } from '@/api/drops/drop-creation.api.service';
-import { NewDropSchema, UpdateDropSchema } from '@/api/drops/drop.validator';
+import {
+  ApiAddReactionToDropRequestSchema,
+  NewDropSchema,
+  UpdateDropSchema
+} from '@/api/drops/drop.validator';
 import { reactionsService } from '@/api/drops/reactions.service';
 import { ApiCreateDropRequest } from '@/api/generated/models/ApiCreateDropRequest';
 import { ApiUpdateDropRequest } from '@/api/generated/models/ApiUpdateDropRequest';
@@ -26,8 +30,9 @@ import { RelayDropWrites, RelayWriteInput } from './relay-drop-applier';
  * The writes of relay-only drop events, as 6529.io's drop routes make them
  * (api-serverless drops.routes.ts: POST /drops, POST /drops/:id, DELETE
  * /drops/:id, POST and DELETE /drops/:id/reaction), for the author, with
- * the event's own device signature. The signature's grant counts at the
- * event's claimed time (SignedWriteContext.relaySignedAt).
+ * the event's own device signature. The signature's grant counts when the
+ * event was signed and when 6529.io first saw it
+ * (SignedWriteContext.relayEvent).
  */
 
 const logger = Logger.get('WAVE_DROP_INDEX_WRITES');
@@ -41,7 +46,7 @@ function contextOf(input: RelayWriteInput, timer: Timer): SignedWriteContext {
       roleProfileId: null,
       activeProxyActions: []
     }),
-    relaySignedAt: input.envelope.claimed_time
+    relayEvent: input.times
   };
 }
 
@@ -90,8 +95,21 @@ export const relayDropWrites: RelayDropWrites = {
   async createDrop(input, dropId, apiRequest) {
     const timer = new Timer('relay-drop-create');
     const ctx = contextOf(input, timer);
-    // Written by an earlier try that stopped before recording it.
-    if (await dropsDb.findDropById(dropId)) return dropId;
+    if (await dropsDb.findDropById(dropId)) {
+      // Written by an earlier try that stopped before recording its signed
+      // event: record it now, writing nothing else.
+      await deviceSignedWritesService.createDrop(
+        {
+          envelope: input.envelope,
+          waveId: apiRequest.wave_id,
+          replyToDropId: apiRequest.reply_to?.drop_id,
+          body: apiRequest
+        },
+        async () => ({ id: dropId }),
+        ctx
+      );
+      return dropId;
+    }
     const newDrop: ApiCreateDropRequest = getValidatedByJoiOrThrow(
       apiRequest,
       NewDropSchema
@@ -131,27 +149,36 @@ export const relayDropWrites: RelayDropWrites = {
       is_additional_action_promised: newDrop.is_additional_action_promised,
       client_drop_id: newDrop.client_drop_id
     };
-    const created = await deviceSignedWritesService.createDrop(
-      {
-        envelope: input.envelope,
-        waveId: newDrop.wave_id,
-        replyToDropId: newDrop.reply_to?.drop_id,
-        body: apiRequest
-      },
-      () =>
-        dropCreationService.createDrop(
-          {
-            createDropRequest,
-            authorId: input.profileId,
-            representativeId: input.profileId,
-            hideLinkPreview: newDrop.hide_link_preview,
-            requestDailyActivityCredit: true,
-            newDropId: dropId
-          },
-          ctx
-        ),
-      ctx
-    );
+    const created = await deviceSignedWritesService
+      .createDrop(
+        {
+          envelope: input.envelope,
+          waveId: newDrop.wave_id,
+          replyToDropId: newDrop.reply_to?.drop_id,
+          body: apiRequest
+        },
+        () =>
+          dropCreationService.createDrop(
+            {
+              createDropRequest,
+              authorId: input.profileId,
+              representativeId: input.profileId,
+              hideLinkPreview: newDrop.hide_link_preview,
+              requestDailyActivityCredit: true,
+              newDropId: dropId
+            },
+            ctx
+          ),
+        ctx
+      )
+      .catch((error: unknown) => {
+        // Saved but not read back: the next try finds it and records its
+        // signed event.
+        if ((error as { code?: string })?.code === 'DROP_SAVED_REFRESH') {
+          throw new Error('the drop was saved but not read back');
+        }
+        throw error;
+      });
     try {
       await helpBotTriggerService.handleCreatedDrop(
         {
@@ -234,6 +261,9 @@ export const relayDropWrites: RelayDropWrites = {
   async react(input, dropId, reaction) {
     const timer = new Timer('relay-drop-react');
     const ctx = contextOf(input, timer);
+    if (reaction !== null) {
+      getValidatedByJoiOrThrow({ reaction }, ApiAddReactionToDropRequestSchema);
+    }
     await deviceSignedWritesService.mutateDrop(
       {
         envelope: input.envelope,

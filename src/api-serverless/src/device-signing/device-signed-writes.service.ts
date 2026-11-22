@@ -140,13 +140,25 @@ export type SignedWriteContext = RequestContext & {
   readonly authenticationContext: AuthenticationContext;
   /**
    * Set only for an event read from the 6529 relays (src/wave-drop-index),
-   * already checked against its grant: the event's claimed time, at which
-   * the grant's expiry and revocation count, as every relay reader counts
-   * them. No clock-skew check then: a relay event may be read long after
-   * it was signed.
+   * already checked against its grant. See RelayEventTimes.
    */
-  readonly relaySignedAt?: number;
+  readonly relayEvent?: RelayEventTimes;
 };
+
+/**
+ * A relay event's times and anchor. The grant must be usable both when the
+ * event was signed (its claimed time) and when 6529.io first saw it, so a
+ * key revoked or expired since cannot post under an earlier time; the
+ * claimed time may be up to RELAY_EVENT_MAX_AGE_MS before 6529.io saw it
+ * (a device that was offline) and no more than the API's clock skew after.
+ */
+export interface RelayEventTimes {
+  readonly signedAt: number;
+  readonly seenAt: number;
+  readonly anchor: number;
+}
+
+export const RELAY_EVENT_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 
 export interface SignedWriteTarget {
   readonly kind: DeviceEventKind;
@@ -197,7 +209,8 @@ function buildEventRow({
   envelope,
   body,
   profileId,
-  receivedAt
+  receivedAt,
+  anchor
 }: {
   readonly eventId: string;
   readonly target: SignedWriteTarget;
@@ -206,6 +219,7 @@ function buildEventRow({
   readonly body: CanonicalEventBody;
   readonly profileId: string;
   readonly receivedAt: number;
+  readonly anchor: number;
 }): DeviceSignedEventEntity {
   return {
     id: eventId,
@@ -219,7 +233,7 @@ function buildEventRow({
     device_key: grant.device_key,
     grant_id: grant.id,
     seq: envelope.seq,
-    anchor: DEVICE_EVENT_ANCHOR,
+    anchor,
     claimed_time: envelope.claimed_time,
     refs: JSON.stringify(target.refs),
     body: body.canonical,
@@ -342,28 +356,37 @@ export class DeviceSignedWritesService {
       );
     }
     const now = this.now();
-    const relaySignedAt = ctx.relaySignedAt;
-    if (
-      relaySignedAt !== undefined &&
-      relaySignedAt !== envelope.claimed_time
-    ) {
-      throw new InvalidDeviceSignatureException(
-        'relay event time differs from its claimed_time'
-      );
+    const relay = ctx.relayEvent;
+    if (relay) {
+      if (relay.signedAt !== envelope.claimed_time) {
+        throw new InvalidDeviceSignatureException(
+          'relay event time differs from its claimed_time'
+        );
+      }
+      if (
+        envelope.claimed_time < relay.seenAt - RELAY_EVENT_MAX_AGE_MS ||
+        envelope.claimed_time >
+          relay.seenAt + DEVICE_SIGNATURE_MAX_CLOCK_SKEW_MS
+      ) {
+        throw new InvalidDeviceSignatureException(
+          'relay event claimed_time is too far from when it was first seen'
+        );
+      }
     }
     const grant = await this.loadUsableGrant(
       envelope.grant_id,
       target,
-      relaySignedAt ?? now,
+      // A relay event: usable when signed and when first seen.
+      relay ? Math.max(relay.signedAt, relay.seenAt) : now,
       ctx,
-      relaySignedAt !== undefined
+      relay !== undefined
     );
     const profileId = await this.assertGrantWalletIsActingProfile(
       grant,
       authenticationContext
     );
     if (
-      relaySignedAt === undefined &&
+      !relay &&
       Math.abs(envelope.claimed_time - now) > DEVICE_SIGNATURE_MAX_CLOCK_SKEW_MS
     ) {
       throw new InvalidDeviceSignatureException(
@@ -380,7 +403,7 @@ export class DeviceSignedWritesService {
       deviceKey: grant.device_key,
       authRef: grant.id,
       seq: envelope.seq,
-      anchor: DEVICE_EVENT_ANCHOR,
+      anchor: relay?.anchor ?? DEVICE_EVENT_ANCHOR,
       claimedTime: envelope.claimed_time,
       refs: target.refs,
       bodyHash: body.bodyHash,
@@ -402,7 +425,8 @@ export class DeviceSignedWritesService {
       envelope,
       body,
       profileId,
-      receivedAt: now
+      receivedAt: now,
+      anchor: relay?.anchor ?? DEVICE_EVENT_ANCHOR
     });
     if (!(await this.db.reserveEvent(event, ctx))) {
       throw new InvalidDeviceSignatureException(
@@ -433,8 +457,8 @@ export class DeviceSignedWritesService {
     target: SignedWriteTarget,
     now: number,
     ctx: RequestContext,
-    // A relay event: a grant revoked after the event was signed still
-    // covers it.
+    // A relay event: a grant revoked after `now` (the later of when it was
+    // signed and first seen) still covers it.
     revokedOnlyBefore = false
   ): Promise<DeviceGrantEntity> {
     const grant = await this.db.findGrantById(grantId, { timer: ctx.timer });

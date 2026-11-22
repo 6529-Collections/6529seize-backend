@@ -75,8 +75,12 @@ export type RelayEventCheck =
       readonly ok: true;
       readonly event: RelayEvent;
       readonly grant: RelayGrant;
-      /** How the grant was verified. */
-      readonly grantVia: 'known' | 'signature';
+      /**
+       * How the grant was verified: held by 6529.io, its wallet's signature
+       * checked here, or neither (a contract wallet's, which wave-events
+       * also takes unchecked; never written into 6529.io's tables).
+       */
+      readonly grantVia: 'known' | 'signature' | 'unverifiable';
     }
   | { readonly ok: false; readonly reason: string };
 
@@ -317,18 +321,71 @@ function scopesOf(text: string): string[] {
   return text.split(',').filter(Boolean);
 }
 
+/** The 6529 app hosts a sign-in grant may name (grant.rs APP_GRANT_DOMAINS). */
+const APP_GRANT_DOMAINS = ['6529.io', 'staging.6529.io'];
+/** The longest grant (grant.rs MAX_GRANT_TTL_SECONDS). */
+const MAX_GRANT_TTL_SECONDS = 181 * 24 * 60 * 60;
+const SECP256K1_HALF_N = BigInt(
+  '0x7fffffffffffffffffffffffffffffff5d576e7357a4501ddfe92f46681b20a0'
+);
+
 /**
- * The grant's terms against the message its wallet signed, and the
- * wallet's signature (verify.rs `grant_consistent`, `check_grant`). Only an
- * ordinary wallet's signature can be checked here.
+ * The address an ordinary wallet's signature over `digest` recovers to, as
+ * wave-events' eth.rs `recover_prehash` reads it: exactly 65 bytes, v of
+ * 0, 1, 27 or 28, a low s. Null for anything else.
  */
-function grantSignatureProblem(grant: RelayGrant): string | null {
+function recoverStrict(digest: string, signature: string): string | null {
+  if (!/^0x[0-9a-fA-F]{130}$/.test(signature)) return null;
+  const v = parseInt(signature.slice(130, 132), 16);
+  if (![0, 1, 27, 28].includes(v)) return null;
+  if (BigInt(`0x${signature.slice(66, 130)}`) > SECP256K1_HALF_N) return null;
+  try {
+    return ethers
+      .recoverAddress(digest, {
+        r: `0x${signature.slice(2, 66)}`,
+        s: `0x${signature.slice(66, 130)}`,
+        v: v < 27 ? v + 27 : v
+      })
+      .toLowerCase();
+  } catch {
+    return null;
+  }
+}
+
+/** Scopes as the message wrote them, in its order. */
+function scopesInOrder(text: string, separator: string): string[] {
+  return text.split(separator);
+}
+
+export type GrantCheck = 'verified' | 'unverifiable';
+
+/**
+ * The grant's terms against the message its wallet signed (verify.rs
+ * `grant_consistent`), then the wallet's signature over it (`check_grant`):
+ * the check, or the problem. A signature that recovers to no one on a
+ * mainnet grant may be a contract wallet's (EIP-1271), which only Ethereum
+ * can check: `unverifiable`, as wave-events calls it.
+ */
+function checkGrantProof(grant: RelayGrant): GrantCheck | string {
+  let digest: string;
   if (grant.message.startsWith('{')) {
     const parsed = parseAppDeviceGrantMessage(grant.message);
     if (!parsed) return 'grant message unreadable';
     const { grant: terms, message } = parsed;
+    const raw = JSON.parse(grant.message) as { scopes?: unknown };
     if (
-      computeAppDeviceGrantId(message) !== grant.id ||
+      typeof raw.scopes !== 'string' ||
+      scopesInOrder(raw.scopes, ',').join(',') !== terms.scopes.join(',') ||
+      terms.issued_at <= 0 ||
+      terms.expires_at % 60 !== 0 ||
+      terms.expires_at <= terms.issued_at ||
+      terms.expires_at - terms.issued_at > MAX_GRANT_TTL_SECONDS
+    ) {
+      return 'grant terms out of bounds';
+    }
+    digest = computeAppDeviceGrantId(message);
+    if (
+      digest !== grant.id ||
       terms.origin !== grant.domain ||
       grant.chainId !== 1 ||
       !same(terms.wallet, grant.wallet) ||
@@ -338,37 +395,28 @@ function grantSignatureProblem(grant: RelayGrant): string | null {
     ) {
       return 'grant inconsistent';
     }
-    return recoversToAppGrantWallet(message, grant.walletSignature)
-      ? null
-      : 'grant signature';
+  } else {
+    digest = computeDeviceGrantId(grant.message);
+    if (digest !== grant.id) return 'grant inconsistent';
+    const parsed = parseSiweWebAuthMessage(grant.message);
+    const terms = parsed?.deviceGrant;
+    if (
+      !parsed ||
+      !terms ||
+      !APP_GRANT_DOMAINS.includes(parsed.domain) ||
+      !same(parsed.domain, grant.domain) ||
+      parsed.chainId !== grant.chainId ||
+      !same(parsed.address, grant.wallet) ||
+      !same(terms.deviceKey, grant.deviceKey) ||
+      terms.scopes.join(',') !== grant.scopes.join(',') ||
+      terms.expiresAtSeconds * 1000 !== grant.expiresAt
+    ) {
+      return 'grant inconsistent';
+    }
   }
-  if (computeDeviceGrantId(grant.message) !== grant.id) {
-    return 'grant inconsistent';
-  }
-  const parsed = parseSiweWebAuthMessage(grant.message);
-  const terms = parsed?.deviceGrant;
-  if (
-    !parsed ||
-    !terms ||
-    !same(parsed.domain, grant.domain) ||
-    parsed.chainId !== grant.chainId ||
-    !same(parsed.address, grant.wallet) ||
-    !same(terms.deviceKey, grant.deviceKey) ||
-    terms.scopes.join(',') !== grant.scopes.join(',') ||
-    terms.expiresAtSeconds * 1000 !== grant.expiresAt
-  ) {
-    return 'grant inconsistent';
-  }
-  try {
-    return same(
-      ethers.verifyMessage(grant.message, grant.walletSignature),
-      grant.wallet
-    )
-      ? null
-      : 'grant signature';
-  } catch {
-    return 'grant signature';
-  }
+  const signer = recoverStrict(digest, grant.walletSignature);
+  if (signer && same(signer, grant.wallet)) return 'verified';
+  return grant.chainId === 1 ? 'unverifiable' : 'grant signature';
 }
 
 /** A grant 6529.io holds, against the proof the event came with. */
@@ -388,10 +436,35 @@ function knownGrantProblem(
  * Checks one relay item. `known` is the grant 6529.io holds under the
  * event's grant id, if any; its revocation counts as well as the proof's.
  */
+/** Grant checks already made in a run, by the whole grant proof. */
+export type GrantCheckCache = Map<string, GrantCheck | string>;
+
 export function checkRelayEvent(
   rawEvent: Record<string, unknown>,
   rawGrant: Record<string, unknown>,
-  known: DeviceGrantEntity | null
+  known: DeviceGrantEntity | null,
+  cache?: GrantCheckCache
+): RelayEventCheck {
+  try {
+    return check(rawEvent, rawGrant, known, cache);
+  } catch (error) {
+    // Whatever a frame holds, a check answers; it never stops the reader.
+    return {
+      ok: false,
+      reason:
+        `unreadable (${error instanceof Error ? error.message : String(error)})`.slice(
+          0,
+          200
+        )
+    };
+  }
+}
+
+function check(
+  rawEvent: Record<string, unknown>,
+  rawGrant: Record<string, unknown>,
+  known: DeviceGrantEntity | null,
+  cache?: GrantCheckCache
 ): RelayEventCheck {
   const event = readRelayEvent(rawEvent);
   if (typeof event === 'string') return { ok: false, reason: event };
@@ -401,10 +474,16 @@ export function checkRelayEvent(
   if (size) return { ok: false, reason: size };
   const problem = eventProblem(event, grant);
   if (problem) return { ok: false, reason: problem };
-  const grantProblem = known
-    ? knownGrantProblem(grant, known)
-    : grantSignatureProblem(grant);
-  if (grantProblem) return { ok: false, reason: grantProblem };
+  const cacheKey = JSON.stringify(grant);
+  const proof = cache?.get(cacheKey) ?? checkGrantProof(grant);
+  cache?.set(cacheKey, proof);
+  if (proof !== 'verified' && proof !== 'unverifiable') {
+    return { ok: false, reason: proof };
+  }
+  if (known) {
+    const differs = knownGrantProblem(grant, known);
+    if (differs) return { ok: false, reason: differs };
+  }
   if (event.claimedTime >= grant.expiresAt) {
     return { ok: false, reason: 'grant expired' };
   }
@@ -414,5 +493,15 @@ export function checkRelayEvent(
   if (revokedAt.some((at) => event.claimedTime > at)) {
     return { ok: false, reason: 'grant revoked' };
   }
-  return { ok: true, event, grant, grantVia: known ? 'known' : 'signature' };
+  return {
+    ok: true,
+    event,
+    grant,
+    // A contract wallet's grant 6529.io verified when it was registered.
+    grantVia: known
+      ? 'known'
+      : proof === 'verified'
+        ? 'signature'
+        : 'unverifiable'
+  };
 }

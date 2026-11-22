@@ -39,6 +39,7 @@ function anEvent(
     event_id: String(event.id),
     relay_id: 'r-1',
     wave: 'wave-1',
+    wave_key: null,
     drop_id: refs[0] ?? null,
     kind,
     author: TEST_WALLET,
@@ -51,7 +52,8 @@ function anEvent(
     origin: 'relay',
     status: 'logged',
     status_reason: null,
-    received_at: 1,
+    grant_check: 'signature',
+    received_at: Number(event.claimed_time) + 1000,
     apply_attempts: 0,
     ...overrides
   };
@@ -59,7 +61,17 @@ function anEvent(
 
 class FakeStore implements RelayApplyStore {
   readonly marks: [number, string, string | null, string | null][] = [];
+  readonly released: string[] = [];
+  tombstones = new Set<string>();
   constructor(private readonly events: IngestedEvent[]) {}
+
+  async hasTombstone(dropId: string) {
+    return this.tombstones.has(dropId);
+  }
+
+  async releaseStaleReservation(eventId: string) {
+    this.released.push(eventId);
+  }
 
   async pendingRelayEvents(limit: number) {
     return this.events.slice(0, limit);
@@ -210,30 +222,87 @@ describe('RelayDropApplier', () => {
     expect(calls).toEqual([]);
   });
 
-  it('stops at a failure that may pass, and gives up after the last try', async () => {
+  it("holds a drop's events after a failure that may pass, goes on with others, and gives up after the last try", async () => {
     const first = anEvent(DeviceEventKind.TOMBSTONE, null, ['drop-1']);
     const second = anEvent(DeviceEventKind.TOMBSTONE, null, ['drop-2']);
-    const { writes } = aWrites({
-      deleteDrop: async () => {
-        throw new Error('database down');
+    const third = anEvent(DeviceEventKind.REACT, { on: false }, ['drop-1']);
+    const { writes, calls } = aWrites({
+      deleteDrop: async (_input, dropId) => {
+        if (dropId === 'drop-1') throw new Error('database down');
+        calls.push(['delete', dropId]);
       }
     });
-    const store = new FakeStore([first, second]);
+    const store = new FakeStore([first, second, third]);
     const report = await new RelayDropApplier(store, writes).applyPending(RUN);
-    expect(report).toMatchObject({ retry: 1, applied: 0 });
+    expect(report).toMatchObject({ retry: 1, applied: 1 });
     expect(store.marks).toEqual([
-      [first.ingest_seq, 'logged', 'database down', null]
+      [first.ingest_seq, 'logged', 'database down', null],
+      [second.ingest_seq, 'applied', null, 'drop-2']
     ]);
     const last = new FakeStore([
-      { ...first, apply_attempts: MAX_APPLY_ATTEMPTS - 1 },
-      second
+      { ...first, apply_attempts: MAX_APPLY_ATTEMPTS - 1 }
     ]);
     const after = await new RelayDropApplier(last, writes).applyPending(RUN);
-    expect(after).toMatchObject({ failed: 1, retry: 1 });
-    expect(last.marks.map((m) => m[1])).toEqual(['failed', 'logged']);
+    expect(after).toMatchObject({ failed: 1 });
   });
 
-  it('treats not-found and bad requests as refusals', async () => {
+  it("waits for an edit's or a reaction's post rather than refusing it", async () => {
+    const edit = anEvent(DeviceEventKind.EDIT, { parts: [] }, ['drop-9']);
+    const store = new FakeStore([edit]);
+    const { writes } = aWrites({
+      updateDrop: async () => {
+        throw new NotFoundException('Drop drop-9 not found');
+      }
+    });
+    const report = await new RelayDropApplier(store, writes).applyPending(RUN);
+    expect(report.retry).toBe(1);
+    expect(store.marks[0][1]).toBe('logged');
+  });
+
+  it("never writes under a grant 6529.io couldn't verify, nor a post deleted first", async () => {
+    const unverifiable = anEvent(DeviceEventKind.POST, POST, [], {
+      grant_check: 'unverifiable'
+    });
+    const deleted = anEvent(DeviceEventKind.POST, POST);
+    const store = new FakeStore([unverifiable, deleted]);
+    store.tombstones.add(dropIdOfEvent(deleted.event_id));
+    const { writes, calls } = aWrites();
+    await new RelayDropApplier(store, writes).applyPending(RUN);
+    expect(store.marks.map((m) => [m[1], m[2]])).toEqual([
+      ['refused', "the event's grant could not be verified here"],
+      ['refused', 'the drop was deleted before it was written']
+    ]);
+    expect(calls.filter((c) => c[0] === 'create')).toEqual([]);
+  });
+
+  it("writes with the event's own times, anchor and lowercase signature, after releasing a stale reservation", async () => {
+    const post = anEvent(DeviceEventKind.POST, POST);
+    const store = new FakeStore([post]);
+    let seen: unknown = null;
+    const { writes } = aWrites({
+      createDrop: async (input, dropId) => {
+        seen = { envelope: input.envelope, times: input.times };
+        return dropId;
+      }
+    });
+    await new RelayDropApplier(store, writes).applyPending(RUN);
+    expect(store.released).toEqual([post.event_id]);
+    expect(seen).toEqual({
+      envelope: {
+        grant_id: TEST_GRANT_ID,
+        seq: post.seq,
+        claimed_time: post.claimed_time,
+        signature: String(post.event.signature).toLowerCase()
+      },
+      times: {
+        signedAt: post.claimed_time,
+        seenAt: post.received_at,
+        anchor: 0
+      }
+    });
+  });
+
+  it('treats a delete of a drop not found as a refusal', async () => {
     const store = new FakeStore([
       anEvent(DeviceEventKind.TOMBSTONE, null, ['gone'])
     ]);

@@ -19,8 +19,10 @@ import {
   DropIndexConnection,
   DropIndexStore,
   DropIndexSubscriber,
-  dropIdOfEvent
+  dropIdOfEvent,
+  MAX_SINCE
 } from './drop-index.subscriber';
+import { relayWaveKey } from './relay-wave-key';
 
 class FakeStore implements DropIndexStore {
   readonly rows: IngestedEvent[] = [];
@@ -70,40 +72,56 @@ class FakeStore implements DropIndexStore {
   }
 }
 
-type Frame =
+type Frame = (
   | { t: 'EV'; wave: string; epoch?: number; item: CrpItem }
   | { t: 'EOSE'; wave: string; rseq: number }
-  | { t: 'RESYNC'; wave: string };
+  | { t: 'RESYNC'; wave: string }
+) & { sid?: number };
 
-/** A relay that plays `frames` once subscribed, and serves HIST pages. */
+/**
+ * A relay that plays `frames` to the subscription they name (sid 1, the
+ * `*` one, by default) when it is made, and serves HIST pages.
+ */
 class FakeRelay implements DropIndexConnection {
   readonly welcomeInfo: CrpWelcome;
-  subscribed: {
+  readonly subs: {
+    sid: number;
     waves: string[];
     since: CrpCursor[];
     fromStart: boolean;
-  } | null = null;
+  }[] = [];
+  readonly asked: (number | null)[] = [];
   closed = false;
   authed = 0;
+  authFails = false;
 
   constructor(
     relayId: string,
     private readonly frames: Frame[],
     private readonly log: Record<string, CrpItem[]> = {},
-    private readonly roles: string[] = []
+    private readonly roles: string[] = [],
+    private readonly histEpoch = 2,
+    logEpoch = 1
   ) {
-    this.welcomeInfo = { relayId, net: 'net-1', logEpoch: 1 };
+    this.welcomeInfo = { relayId, net: 'net-1', logEpoch };
+  }
+
+  get subscribed() {
+    const first = this.subs[0];
+    return first
+      ? { waves: first.waves, since: first.since, fromStart: first.fromStart }
+      : null;
   }
 
   subscribe(
-    _sid: number,
+    sid: number,
     waves: string[],
     since: CrpCursor[],
     fromStart: boolean,
     handlers: CrpSubscriptionHandlers
   ) {
-    this.subscribed = { waves, since, fromStart };
-    for (const frame of this.frames) {
+    this.subs.push({ sid, waves, since, fromStart });
+    for (const frame of this.frames.filter((f) => (f.sid ?? 1) === sid)) {
       if (frame.t === 'EV') {
         handlers.onEvent(frame.wave, frame.epoch ?? 1, frame.item);
       } else if (frame.t === 'EOSE') {
@@ -119,11 +137,12 @@ class FakeRelay implements DropIndexConnection {
     after: number | null,
     limit: number
   ): Promise<CrpHistoryPage> {
+    this.asked.push(after);
     const items = (this.log[wave] ?? []).filter(
       (item) => item.rseq > (after ?? 0)
     );
     return {
-      logEpoch: 2,
+      logEpoch: this.histEpoch,
       items: items.slice(0, limit),
       more: items.length > limit
     };
@@ -131,6 +150,7 @@ class FakeRelay implements DropIndexConnection {
 
   async authenticate(): Promise<CrpAuthed> {
     this.authed++;
+    if (this.authFails) throw new Error('grant expired');
     return { wallet: '0xaa', principal: null, roles: this.roles };
   }
 
@@ -245,6 +265,7 @@ describe('DropIndexSubscriber', () => {
           event_id: String(post.id),
           relay_id: 'r-1',
           wave: 'wave-1',
+          wave_key: null,
           drop_id: null,
           kind: 1,
           author: 'a',
@@ -257,6 +278,7 @@ describe('DropIndexSubscriber', () => {
           origin: 'relay',
           status: 'logged',
           status_reason: null,
+          grant_check: 'signature',
           received_at: 0
         }
       ],
@@ -304,7 +326,7 @@ describe('DropIndexSubscriber', () => {
     ]);
   });
 
-  it('counts events that fail a check, stores none of them, and moves past them', async () => {
+  it('keeps events that fail a check as rejected, hands none to listeners, and moves past them', async () => {
     const store = new FakeStore();
     const good = testSignedEvent({ seq: 1 });
     const forged = { ...testSignedEvent({ seq: 2 }), seq: 3 };
@@ -324,6 +346,12 @@ describe('DropIndexSubscriber', () => {
       rejected: 2,
       reasons: { 'event id does not match': 1, 'event of another wave': 1 }
     });
+    // Kept with why, for a later check; readers never get them.
+    expect(store.rows.map((r) => [r.status, r.status_reason])).toEqual([
+      ['logged', null],
+      ['rejected', 'event id does not match'],
+      ['rejected', 'event of another wave']
+    ]);
     expect(store.cursorsOf.get('r-1')!.get('wave-1')).toEqual({
       wave: 'wave-1',
       logEpoch: 1,
@@ -429,5 +457,121 @@ describe('DropIndexSubscriber', () => {
     expect(dropIdOfEvent(`0x${'0123456789ABCDEF'.repeat(4)}`)).toBe(
       '01234567-89ab-cdef-0123-456789abcdef'
     );
+  });
+
+  it("takes the relay's key for a 6529.io wave under the every-wave subscription", async () => {
+    const store = new FakeStore();
+    const uuid = '8fe93d73-c2b4-4160-8417-dbe9d5cce669';
+    const key = relayWaveKey(uuid) as string;
+    const post = testSignedEvent({ wave: uuid });
+    const relay = new FakeRelay('r-1', [
+      { t: 'EV', wave: key, item: item(4, post) }
+    ]);
+    const { subscriber } = aSubscriber(store, { 'wss://a.example': relay });
+    const [report] = await subscriber.run({
+      ...RUN,
+      relays: ['wss://a.example']
+    });
+    expect(report).toMatchObject({ stored: 1, rejected: 0 });
+    expect(store.rows[0]).toMatchObject({ wave: uuid, wave_key: key });
+    expect(store.cursorsOf.get('r-1')!.get(key)).toEqual({
+      wave: key,
+      logEpoch: 1,
+      rseq: 4
+    });
+  });
+
+  it('pages a resynced wave from its cursor in the same epoch, and holds its live events', async () => {
+    const store = new FakeStore();
+    store.cursorsOf.set(
+      'r-1',
+      new Map([['wave-1', { wave: 'wave-1', logEpoch: 1, rseq: 2 }]])
+    );
+    const events = [1, 2, 3, 4].map((seq) => testSignedEvent({ seq }));
+    const later = testSignedEvent({ seq: 9 });
+    const relay = new FakeRelay(
+      'r-1',
+      [
+        { t: 'RESYNC', wave: 'wave-1' },
+        // Live, while the wave waits for its pages: left for the next run.
+        { t: 'EV', wave: 'wave-1', item: item(9, later) }
+      ],
+      { 'wave-1': events.map((e, i) => item(i + 1, e)) },
+      [],
+      1
+    );
+    const { subscriber } = aSubscriber(store, { 'wss://a.example': relay });
+    const [report] = await subscriber.run({
+      ...RUN,
+      relays: ['wss://a.example']
+    });
+    expect(relay.asked).toEqual([2]);
+    expect(report.stored).toBe(2);
+    expect(store.rows.map((r) => r.event_id)).toEqual([
+      events[2].id,
+      events[3].id
+    ]);
+    expect(store.cursorsOf.get('r-1')!.get('wave-1')).toEqual({
+      wave: 'wave-1',
+      logEpoch: 1,
+      rseq: 4
+    });
+  });
+
+  it('subscribes to many known waves in parts, and pages a wave first seen live from its start', async () => {
+    const store = new FakeStore();
+    const many = new Map<string, CrpCursor>();
+    for (let n = 0; n < MAX_SINCE + 1; n++) {
+      const wave = `wave-${String(n).padStart(4, '0')}`;
+      many.set(wave, { wave, logEpoch: 1, rseq: 1 });
+    }
+    store.cursorsOf.set('r-1', many);
+    const fresh = testSignedEvent({ wave: 'wave-new', seq: 1 });
+    const known = testSignedEvent({ wave: 'wave-0000', seq: 2 });
+    const relay = new FakeRelay(
+      'r-1',
+      [
+        { t: 'EV', wave: 'wave-new', item: item(5, fresh) },
+        { t: 'EV', wave: 'wave-0000', item: item(2, known), sid: 2 }
+      ],
+      { 'wave-new': [item(1, fresh)] }
+    );
+    const { subscriber } = aSubscriber(store, { 'wss://a.example': relay });
+    await subscriber.run({ ...RUN, relays: ['wss://a.example'] });
+    expect(
+      relay.subs.map((sub) => [sub.sid, sub.waves.length, sub.fromStart])
+    ).toEqual([
+      [2, MAX_SINCE, false],
+      [3, 1, false],
+      [1, 1, false]
+    ]);
+    expect(relay.subs[2].waves).toEqual(['*']);
+    expect(relay.asked).toEqual([0]);
+    expect(store.rows.map((r) => r.event_id).sort()).toEqual(
+      [String(fresh.id), String(known.id)].sort()
+    );
+  });
+
+  it('reads open waves when its AUTH fails', async () => {
+    const store = new FakeStore();
+    const relay = new FakeRelay('r-1', [
+      { t: 'EV', wave: 'wave-1', item: item(1, testSignedEvent()) }
+    ]);
+    relay.authFails = true;
+    const { subscriber } = aSubscriber(
+      store,
+      { 'wss://a.example': relay },
+      { reader: true }
+    );
+    const [report] = await subscriber.run({
+      ...RUN,
+      relays: ['wss://a.example']
+    });
+    expect(report).toMatchObject({
+      authError: 'grant expired',
+      readsMembersOnly: false,
+      stored: 1,
+      error: null
+    });
   });
 });

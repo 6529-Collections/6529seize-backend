@@ -37,6 +37,11 @@ export class WaveRelayEventEntity {
   @Column({ type: 'varchar', length: 255, nullable: false })
   readonly wave!: string;
 
+  // The relay's key for it: a chain WAVE id, a 6529.io UUID's derived one.
+  @Index()
+  @Column({ type: 'varchar', length: 66, nullable: true, default: null })
+  readonly wave_key!: string | null;
+
   // The drop the event is about: a post's own drop (6529.io's id when it
   // was written here, else derived from the event id), the drop it names
   // for an edit, delete or reaction.
@@ -76,14 +81,21 @@ export class WaveRelayEventEntity {
   @Column({ type: 'varchar', length: 8, nullable: false })
   readonly origin!: string;
 
-  // 'logged'; then, for a relay-only event the index writes into 6529.io's
-  // drop tables (FEATURE_WAVES_DROP_INDEX_APPLY): 'applied', 'refused'
-  // (6529.io's rules said no) or 'failed' (after MAX_APPLY_ATTEMPTS).
+  // 'logged', or 'rejected' (it failed a check: status_reason says why);
+  // then, for a relay-only event the index writes into 6529.io's drop
+  // tables (FEATURE_WAVES_DROP_INDEX_APPLY): 'applied', 'refused' (6529.io's
+  // rules said no) or 'failed' (after MAX_APPLY_ATTEMPTS).
   @Column({ type: 'varchar', length: 16, nullable: false })
   readonly status!: string;
 
   @Column({ type: 'varchar', length: 255, nullable: true, default: null })
   readonly status_reason!: string | null;
+
+  // How its grant was checked: 'known' (6529.io holds it), 'signature'
+  // (its wallet's, checked here) or 'unverifiable' (a contract wallet's:
+  // never written into 6529.io's tables unless 6529.io holds it).
+  @Column({ type: 'varchar', length: 16, nullable: true, default: null })
+  readonly grant_check!: string | null;
 
   // Tries to write a relay-only event into 6529.io's drop tables that
   // failed in a way that may pass.

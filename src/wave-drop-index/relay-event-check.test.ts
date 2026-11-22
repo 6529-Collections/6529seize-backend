@@ -54,11 +54,34 @@ describe('checkRelayEvent', () => {
     ).toBe('ok');
   });
 
-  it('takes a grant 6529.io holds without its signature, and its revocation', () => {
+  it('takes a mainnet grant whose signature recovers to no one as unverifiable, as wave-events does', () => {
     const event = testSignedEvent();
-    const proof = testGrantProof({ wallet_signature: `0x${'11'.repeat(65)}` });
-    expect(reasonOf(event, proof)).toBe('grant signature');
-    expect(reasonOf(event, proof, testGrantEntity())).toBe('ok');
+    const viaOf = (proof: Record<string, unknown>, known = null as never) => {
+      const check = checkRelayEvent(event, proof, known);
+      return check.ok ? check.grantVia : check.reason;
+    };
+    expect(viaOf(testGrantProof())).toBe('signature');
+    // A contract wallet's signature, or none that this server can read.
+    expect(
+      viaOf(testGrantProof({ wallet_signature: `0x${'11'.repeat(65)}` }))
+    ).toBe('unverifiable');
+    // Only the strict form recovers: 65 bytes, v 27/28 or 0/1, a low s.
+    const valid = String(testGrantProof().wallet_signature);
+    expect(
+      viaOf(testGrantProof({ wallet_signature: valid.slice(0, 130) }))
+    ).toBe('unverifiable');
+    expect(
+      viaOf(testGrantProof({ wallet_signature: `${valid.slice(0, 130)}25` }))
+    ).toBe('unverifiable');
+    expect(
+      viaOf(testGrantProof({ wallet_signature: `${valid.slice(0, 130)}00` }))
+    ).not.toBe('signature');
+    // 6529.io holds the grant: known, with its terms compared.
+    expect(viaOf(testGrantProof(), testGrantEntity() as never)).toBe('known');
+  });
+
+  it('checks a grant 6529.io holds against the proof, and counts its revocation', () => {
+    const event = testSignedEvent();
     expect(
       reasonOf(event, testGrantProof(), testGrantEntity({ scopes: 'post' }))
     ).toBe('grant differs from the one 6529.io holds');
@@ -69,6 +92,52 @@ describe('checkRelayEvent', () => {
         testGrantEntity({ revoked_at: TEST_CLAIMED_TIME - 1 })
       )
     ).toBe('grant revoked');
+    expect(
+      reasonOf(event, testGrantProof({ domain: '6529.io' }), testGrantEntity())
+    ).toBe('grant inconsistent');
+  });
+
+  it('refuses app grants beyond the terms wave-events takes', () => {
+    const event = testSignedEvent();
+    const message = JSON.parse(String(testGrantProof().message));
+    expect(
+      reasonOf(
+        event,
+        testGrantProof({
+          message: JSON.stringify({
+            ...message,
+            scopes: 'edit,post,delete,react'
+          })
+        })
+      )
+    ).toMatch(/grant (terms out of bounds|message unreadable)/);
+    expect(
+      reasonOf(
+        event,
+        testGrantProof({
+          message: JSON.stringify({
+            ...message,
+            expiresAt: message.issuedAt + 400 * 86400
+          })
+        })
+      )
+    ).toMatch(/grant (terms out of bounds|message unreadable)/);
+  });
+
+  it('answers a grant that cannot be read at all, instead of throwing', () => {
+    const message = JSON.parse(String(testGrantProof().message));
+    const check = checkRelayEvent(
+      testSignedEvent(),
+      testGrantProof({
+        // A checksum that is wrong in mixed case makes ethers throw.
+        message: JSON.stringify({
+          ...message,
+          wallet: '0xF39fd6e51aad88F6F4ce6aB8827279cffFb92266'
+        })
+      }),
+      null
+    );
+    expect(check.ok).toBe(false);
   });
 
   it('refuses an event whose fields were changed after signing', () => {

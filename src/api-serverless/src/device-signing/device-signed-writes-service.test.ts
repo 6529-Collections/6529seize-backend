@@ -365,13 +365,16 @@ describe('DeviceSignedWritesService', () => {
 
   describe('events read from the relays', () => {
     const DAY = 24 * 60 * 60 * 1000;
-    const relayCtx = (signedAt = CLAIMED_TIME) => ({
+    const SEEN = CLAIMED_TIME + 1000;
+    const relayCtx = (
+      times: Partial<{ signedAt: number; seenAt: number; anchor: number }> = {}
+    ) => ({
       ...ctx(),
-      relaySignedAt: signedAt
+      relayEvent: { signedAt: CLAIMED_TIME, seenAt: SEEN, anchor: 0, ...times }
     });
 
     beforeEach(() => {
-      // Read a day after it was signed.
+      // Written a day after it was signed and seen.
       service = new DeviceSignedWritesService(
         db,
         identities,
@@ -380,22 +383,26 @@ describe('DeviceSignedWritesService', () => {
       );
     });
 
-    it('takes an event long after it was signed, its grant counted at that time', async () => {
+    it('takes an event long after it was seen, its grant counted when signed and seen', async () => {
       jest
         .mocked(db.findGrantById)
         .mockResolvedValue(
-          aGrant({ expires_at: CLAIMED_TIME + 1, revoked_at: CLAIMED_TIME + 1 })
+          aGrant({ expires_at: SEEN + 1, revoked_at: SEEN + 1 })
         );
       await expect(
         createVectorDrop(VECTOR_ENVELOPE, undefined, relayCtx())
       ).resolves.toEqual({ id: 'new-drop' });
       expect(db.reserveEvent).toHaveBeenCalledWith(
-        expect.objectContaining({ id: VECTOR_EVENT_ID, created_at: NOW + DAY }),
+        expect.objectContaining({
+          id: VECTOR_EVENT_ID,
+          anchor: 0,
+          created_at: NOW + DAY
+        }),
         expect.anything()
       );
     });
 
-    it('still checks the clock without the relay time', async () => {
+    it('still checks the clock without the relay times', async () => {
       jest
         .mocked(db.findGrantById)
         .mockResolvedValue(aGrant({ expires_at: NOW + 2 * DAY }));
@@ -403,12 +410,19 @@ describe('DeviceSignedWritesService', () => {
     });
 
     it.each([
+      // A key revoked before 6529.io saw the event cannot post under an
+      // earlier claimed time.
       [
-        'revoked before the event',
+        'revoked before it was seen',
+        aGrant({ revoked_at: SEEN - 1 }),
+        /revoked/
+      ],
+      [
+        'revoked before it was signed',
         aGrant({ revoked_at: CLAIMED_TIME - 1 }),
         /revoked/
       ],
-      ['expired at the event', aGrant({ expires_at: CLAIMED_TIME }), /expired/]
+      ['expired before it was seen', aGrant({ expires_at: SEEN }), /expired/]
     ])('refuses a grant %s', async (_name, grant, reason) => {
       jest.mocked(db.findGrantById).mockResolvedValue(grant);
       await expectInvalid(
@@ -417,16 +431,43 @@ describe('DeviceSignedWritesService', () => {
       );
     });
 
-    it('refuses a relay time that is not the event time', async () => {
+    it('refuses relay times that do not fit the event', async () => {
       await expectInvalid(
         createVectorDrop(
           VECTOR_ENVELOPE,
           undefined,
-          relayCtx(CLAIMED_TIME + 1)
+          relayCtx({ signedAt: CLAIMED_TIME + 1 })
         ),
         /relay event time/
       );
+      await expectInvalid(
+        createVectorDrop(
+          VECTOR_ENVELOPE,
+          undefined,
+          relayCtx({ seenAt: CLAIMED_TIME + 8 * DAY })
+        ),
+        /too far from when it was first seen/
+      );
+      await expectInvalid(
+        createVectorDrop(
+          VECTOR_ENVELOPE,
+          undefined,
+          relayCtx({ seenAt: CLAIMED_TIME - 11 * 60 * 1000 })
+        ),
+        /too far from when it was first seen/
+      );
       expect(db.findGrantById).not.toHaveBeenCalled();
+    });
+
+    it("recomputes the event id with the event's anchor", async () => {
+      jest
+        .mocked(db.findGrantById)
+        .mockResolvedValue(aGrant({ expires_at: NOW + 2 * DAY }));
+      // Signed with anchor 0: under anchor 7 it is another event.
+      await expectInvalid(
+        createVectorDrop(VECTOR_ENVELOPE, undefined, relayCtx({ anchor: 7 })),
+        /signature does not verify/
+      );
     });
   });
 

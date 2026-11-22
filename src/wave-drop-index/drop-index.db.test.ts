@@ -19,6 +19,7 @@ function aRow(n: number, overrides: Partial<IngestRow> = {}): IngestRow {
     event_id: eventId(n),
     relay_id: 'r-1',
     wave: 'wave-1',
+    wave_key: null,
     drop_id: `drop-${n}`,
     kind: 1,
     author: `0x${'a'.repeat(40)}`,
@@ -31,6 +32,7 @@ function aRow(n: number, overrides: Partial<IngestRow> = {}): IngestRow {
     origin: 'relay',
     status: 'logged',
     status_reason: null,
+    grant_check: 'signature',
     received_at: 5_000,
     ...overrides
   };
@@ -160,6 +162,34 @@ describeWithSeed(
         [eventId(4), 'site', 'logged', null, 'drop-4', 0]
       ]);
       expect(await db.pendingRelayEvents(10)).toEqual([]);
+    });
+
+    it('keeps rejected events out of what readers get, and finds deletes', async () => {
+      await db.ingest(
+        [
+          aRow(1),
+          aRow(2, { status: 'rejected', status_reason: 'signature' }),
+          aRow(3, { kind: 3, drop_id: 'drop-x' })
+        ],
+        'r-1',
+        [],
+        1
+      );
+      expect((await db.eventsAfter(0, 10)).map((e) => e.event_id)).toEqual([
+        eventId(1),
+        eventId(3)
+      ]);
+      expect(await db.hasTombstone('drop-x')).toBe(true);
+      expect(await db.hasTombstone('drop-1')).toBe(false);
+    });
+
+    it('releases a reservation only once it is stale and unfinished', async () => {
+      await sqlExecutor.execute(
+        `update ${DEVICE_SIGNED_EVENTS_TABLE} set drop_id = null, created_at = 1 where id = :id`,
+        { id: eventId(2) }
+      );
+      await db.releaseStaleReservation(eventId(2));
+      expect((await db.siteEvents([eventId(2)])).size).toBe(0);
     });
 
     it('finds the grants 6529.io holds and the events written through it', async () => {
