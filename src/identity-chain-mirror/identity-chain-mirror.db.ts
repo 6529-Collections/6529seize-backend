@@ -7,6 +7,7 @@ import {
   IDENTITIES_TABLE,
   IDENTITY_CHAIN_MIRROR_STATE_TABLE,
   IDENTITY_CHAIN_PRINCIPALS_TABLE,
+  IDENTITY_CHAIN_RATING_EVENTS_TABLE,
   PROFILES_TABLE,
   RATINGS_TABLE,
   USE_CASE_CONSOLIDATION
@@ -44,6 +45,40 @@ export interface RatingRowWrite {
   readonly matter: 'REP' | 'CIC';
   readonly matter_category: string;
   readonly rating: number;
+  /** The rater's principal id, when known. */
+  readonly rater_principal?: string | null;
+  /** The chain height the rating was last set at, when known. */
+  readonly height?: number | null;
+}
+
+/** Where a target's ratings were read: for the rating event log. */
+export interface RatingEventContext {
+  readonly targetPrincipal: string;
+  /** The height the ratings were read at: a removed rating's event height. */
+  readonly height: number;
+  readonly source: 'FEED' | 'FULL_SYNC';
+}
+
+interface RatingEvent {
+  readonly rater_profile_id: string;
+  readonly matter: string;
+  readonly matter_category: string;
+  readonly old_rating: number;
+  readonly new_rating: number;
+  readonly rater_principal: string | null;
+  readonly height: number;
+}
+
+function ratingKey(it: {
+  rater_profile_id: string;
+  matter: string;
+  matter_category: string;
+}): string {
+  return JSON.stringify([it.rater_profile_id, it.matter, it.matter_category]);
+}
+
+function totalKey(it: { matter: string; matter_category: string }): string {
+  return JSON.stringify([it.matter, it.matter_category]);
 }
 
 const STATE_ID = 'identity';
@@ -68,6 +103,21 @@ const IDENTITY_COLUMNS = [
   'xtdh_rate',
   'basetdh_rate'
 ] as const;
+
+/**
+ * Columns other loops own: tdh and basetdh_rate (the TDH loop), the xTDH
+ * columns (the xTDH loop). The mirror writes them only into a row it
+ * creates (a new consolidation key), carrying the profile's previous values;
+ * it never updates them in a row that exists.
+ */
+const METRIC_COLUMNS: ReadonlySet<string> = new Set([
+  'tdh',
+  'basetdh_rate',
+  'xtdh',
+  'produced_xtdh',
+  'granted_xtdh',
+  'xtdh_rate'
+]);
 
 function numberOf(value: unknown): number {
   const n = Number(value ?? 0);
@@ -144,6 +194,24 @@ export class IdentityChainMirrorDb extends LazyDbAccessCompatibleService {
       { id: STATE_ID, ...state, now },
       conn ? { wrappedConnection: conn } : undefined
     );
+  }
+
+  /**
+   * The narrowest consolidation_key column the mirror writes (identities,
+   * address_consolidation_keys): 200 characters (four wallets) before the
+   * widening migration, 700 (sixteen) after it. Null when it can't be read.
+   */
+  async consolidationKeyWidth(conn?: Conn): Promise<number | null> {
+    const row = await this.db.oneOrNull<{ width: number | string | null }>(
+      `select min(character_maximum_length) as width
+       from information_schema.columns
+       where table_schema = database() and column_name = 'consolidation_key'
+         and table_name in (:tables)`,
+      { tables: [IDENTITIES_TABLE, ADDRESS_CONSOLIDATION_KEY] },
+      conn ? { wrappedConnection: conn } : undefined
+    );
+    const width = Number(row?.width);
+    return Number.isInteger(width) && width > 0 ? width : null;
   }
 
   // ---------------------------------------------------------------- mapping
@@ -392,7 +460,9 @@ export class IdentityChainMirrorDb extends LazyDbAccessCompatibleService {
   private async upsertIdentityRow(row: IdentityRowState, conn: Conn) {
     const columns = IDENTITY_COLUMNS.join(', ');
     const values = IDENTITY_COLUMNS.map((it) => `:${it}`).join(', ');
-    const updates = IDENTITY_COLUMNS.filter((it) => it !== 'consolidation_key')
+    const updates = IDENTITY_COLUMNS.filter(
+      (it) => it !== 'consolidation_key' && !METRIC_COLUMNS.has(it)
+    )
       .map((it) => `${it} = values(${it})`)
       .join(', ');
     await this.db.execute(
@@ -631,11 +701,15 @@ export class IdentityChainMirrorDb extends LazyDbAccessCompatibleService {
 
   // ---------------------------------------------------------------- ratings
 
-  /** A target's REP and CIC ratings become `wanted` (help-bot credits kept). */
+  /**
+   * A target's REP and CIC ratings become `wanted` (help-bot credits kept).
+   * Each change is also written to the rating event log.
+   */
   async replaceTargetRatings(
     targetProfileId: string,
     wanted: RatingRowWrite[],
     now: number,
+    events: RatingEventContext,
     conn: Conn
   ): Promise<{ inserted: number; updated: number; deleted: number }> {
     const opts = { wrappedConnection: conn };
@@ -648,30 +722,41 @@ export class IdentityChainMirrorDb extends LazyDbAccessCompatibleService {
       { target: targetProfileId, helpBot: HELP_BOT_CREDIT_CATEGORY },
       opts
     );
-    const key = (it: RatingRowWrite) =>
-      JSON.stringify([it.rater_profile_id, it.matter, it.matter_category]);
-    const want = new Map(wanted.map((it) => [key(it), it]));
-    const have = new Map(existing.map((it) => [key(it), it]));
+    const want = new Map(wanted.map((it) => [ratingKey(it), it]));
+    const have = new Map(existing.map((it) => [ratingKey(it), it]));
+    const log: RatingEvent[] = [];
+    const removed = Array.from(have.entries())
+      .filter(([k]) => !want.has(k))
+      .map(([, row]) => row);
+    const removedPrincipals = await this.principalsOfProfiles(
+      removed.map((it) => it.rater_profile_id),
+      conn
+    );
+    for (const row of removed) {
+      await this.db.execute(
+        `delete from ${RATINGS_TABLE}
+         where rater_profile_id = :rater and matter_target_id = :target
+           and matter = :matter and matter_category = :category`,
+        {
+          rater: row.rater_profile_id,
+          target: targetProfileId,
+          matter: row.matter,
+          category: row.matter_category
+        },
+        opts
+      );
+      log.push({
+        rater_profile_id: row.rater_profile_id,
+        matter: row.matter,
+        matter_category: row.matter_category,
+        old_rating: Number(row.rating),
+        new_rating: 0,
+        rater_principal: removedPrincipals.get(row.rater_profile_id) ?? null,
+        height: events.height
+      });
+    }
     let inserted = 0;
     let updated = 0;
-    let deleted = 0;
-    for (const [k, row] of Array.from(have.entries())) {
-      if (!want.has(k)) {
-        await this.db.execute(
-          `delete from ${RATINGS_TABLE}
-           where rater_profile_id = :rater and matter_target_id = :target
-             and matter = :matter and matter_category = :category`,
-          {
-            rater: row.rater_profile_id,
-            target: targetProfileId,
-            matter: row.matter,
-            category: row.matter_category
-          },
-          opts
-        );
-        deleted++;
-      }
-    }
     for (const [k, row] of Array.from(want.entries())) {
       const old = have.get(k);
       if (old && Number(old.rating) === row.rating) continue;
@@ -690,10 +775,91 @@ export class IdentityChainMirrorDb extends LazyDbAccessCompatibleService {
         },
         opts
       );
+      log.push({
+        rater_profile_id: row.rater_profile_id,
+        matter: row.matter,
+        matter_category: row.matter_category,
+        old_rating: old ? Number(old.rating) : 0,
+        new_rating: row.rating,
+        rater_principal: row.rater_principal ?? null,
+        height: row.height ?? events.height
+      });
       if (old) updated++;
       else inserted++;
     }
-    return { inserted, updated, deleted };
+    await this.insertRatingEvents(
+      { targetProfileId, wanted, log, now, events },
+      conn
+    );
+    return { inserted, updated, deleted: removed.length };
+  }
+
+  /** Principal ids of mapped profiles. */
+  private async principalsOfProfiles(
+    profileIds: string[],
+    conn: Conn
+  ): Promise<Map<string, string>> {
+    const result = new Map<string, string>();
+    if (!profileIds.length) return result;
+    const rows = await this.db.execute<{
+      profile_id: string;
+      principal_id: string;
+    }>(
+      `select profile_id, principal_id from ${IDENTITY_CHAIN_PRINCIPALS_TABLE}
+       where profile_id in (:profileIds)`,
+      { profileIds },
+      { wrappedConnection: conn }
+    );
+    rows.forEach((it) => result.set(it.profile_id, it.principal_id));
+    return result;
+  }
+
+  private async insertRatingEvents(
+    input: {
+      targetProfileId: string;
+      wanted: RatingRowWrite[];
+      log: RatingEvent[];
+      now: number;
+      events: RatingEventContext;
+    },
+    conn: Conn
+  ) {
+    const { targetProfileId, wanted, log, now, events } = input;
+    if (!log.length) return;
+    const totals = new Map<string, number>();
+    for (const it of wanted) {
+      totals.set(totalKey(it), (totals.get(totalKey(it)) ?? 0) + it.rating);
+    }
+    for (let i = 0; i < log.length; i += 500) {
+      const params: Record<string, unknown> = {
+        target: targetProfileId,
+        targetPrincipal: events.targetPrincipal.toLowerCase(),
+        source: events.source,
+        now
+      };
+      const values = log
+        .slice(i, i + 500)
+        .map((it, j) => {
+          params[`h${j}`] = it.height;
+          params[`rp${j}`] = it.rater_principal?.toLowerCase() ?? null;
+          params[`r${j}`] = it.rater_profile_id;
+          params[`m${j}`] = it.matter;
+          params[`c${j}`] = it.matter_category;
+          params[`o${j}`] = it.old_rating;
+          params[`n${j}`] = it.new_rating;
+          params[`t${j}`] = totals.get(totalKey(it)) ?? 0;
+          return `(:h${j}, :rp${j}, :r${j}, :targetPrincipal, :target, :m${j}, :c${j}, :o${j}, :n${j}, :t${j}, :source, :now)`;
+        })
+        .join(', ');
+      await this.db.execute(
+        `insert into ${IDENTITY_CHAIN_RATING_EVENTS_TABLE}
+           (height, rater_principal, rater_profile_id, target_principal, target_profile_id,
+            matter, matter_category, old_rating, new_rating, total_after, source, created_at)
+         values ${values}`,
+        params,
+        { wrappedConnection: conn }
+      );
+    }
   }
 
   // ---------------------------------------------------------------- delegations

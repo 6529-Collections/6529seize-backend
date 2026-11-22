@@ -87,10 +87,12 @@ describe('ProfileDoc.v1', () => {
       toProfileDocFields({
         ...Object.fromEntries(fields),
         displayName: 'Alice',
+        cms: '{"primary":{"package":"bafk1","publication":"bafk2"}}',
         'statement.GENERAL.BIO.0': 'about me',
         'statement.SOCIAL_MEDIA_ACCOUNT.X.2': ''
       })
     ).toEqual({
+      cms: '{"primary":{"package":"bafk1","publication":"bafk2"}}',
       displayName: 'Alice',
       pfp: 'ipfs://pfp',
       banner1: '#112233',
