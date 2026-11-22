@@ -27,6 +27,41 @@ export interface HistoryTransaction {
   logs: Log[];
 }
 
+/**
+ * The log filters, without block bounds, whose logs are history sources:
+ * mints of the creator contracts, their URI events, and claim events of their
+ * claim extensions (of any contract in an audit).
+ */
+export function historyLogFilters(audit = false): {
+  address?: string[];
+  topics: (string | string[] | null)[];
+}[] {
+  const topic = (name: string) =>
+    HISTORY_SOURCE_IFACE.getEvent(name)!.topicHash;
+  return [
+    {
+      address: HISTORY_CREATORS,
+      topics: [
+        [topic('TransferSingle'), topic('TransferBatch')],
+        null,
+        zeroPadValue('0x00', 32)
+      ]
+    },
+    { address: HISTORY_CREATORS, topics: [topic('URI')] },
+    {
+      ...(audit ? {} : { address: CLAIM_EXTENSIONS }),
+      topics: [
+        [
+          topic('ClaimUpdated'),
+          topic('ClaimInitialized(address,uint256,address)'),
+          topic('ClaimInitialized(address,uint256)')
+        ],
+        HISTORY_CREATORS.map((address) => zeroPadValue(address, 32))
+      ]
+    }
+  ];
+}
+
 /** Event discovery is creator-scoped. No wallet is an inclusion/exclusion rule. */
 export async function discoverHistoryTransactions(
   fromBlock: number,
@@ -40,36 +75,11 @@ export async function discoverHistoryTransactions(
     fromBlock: `0x${fromBlock.toString(16)}`,
     toBlock: `0x${toBlock.toString(16)}`
   };
-  const topic = (name: string) =>
-    HISTORY_SOURCE_IFACE.getEvent(name)!.topicHash;
-  const groups = await Promise.all([
-    rpc.getLogs({
-      ...bounds,
-      address: HISTORY_CREATORS,
-      topics: [
-        [topic('TransferSingle'), topic('TransferBatch')],
-        null,
-        zeroPadValue('0x00', 32)
-      ]
-    }),
-    rpc.getLogs({
-      ...bounds,
-      address: HISTORY_CREATORS,
-      topics: [topic('URI')]
-    }),
-    rpc.getLogs({
-      ...bounds,
-      ...(audit ? {} : { address: CLAIM_EXTENSIONS }),
-      topics: [
-        [
-          topic('ClaimUpdated'),
-          topic('ClaimInitialized(address,uint256,address)'),
-          topic('ClaimInitialized(address,uint256)')
-        ],
-        HISTORY_CREATORS.map((address) => zeroPadValue(address, 32))
-      ]
-    })
-  ]);
+  const groups = await Promise.all(
+    historyLogFilters(audit).map((filter) =>
+      rpc.getLogs({ ...bounds, ...filter })
+    )
+  );
   const transactions = collectHistoryLogs(groups.flat(), fromBlock, toBlock);
 
   // Manifold's direct setTokenURI emits no URI event. Query calls TO the two

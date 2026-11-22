@@ -2,6 +2,8 @@ import { Alchemy, AssetTransfersWithMetadataResult } from '@/alchemy-sdk';
 import { Transaction } from '@/entities/ITransaction';
 import { TransactionsDiscoveryService } from '@/transactions/transactions-discovery.service';
 import { TransactionsDiscoveryDb } from '@/transactions/transactions.discovery.db';
+import { discoverEns } from '@/ens';
+import { whileRebuildingEthereumIndexes } from '@/holdings/rebuild-mode';
 
 jest.mock('@/ens', () => ({
   discoverEns: jest.fn().mockResolvedValue(undefined)
@@ -69,6 +71,24 @@ function createService(pages: AssetTransfersWithMetadataResult[][]) {
 }
 
 describe('TransactionsDiscoveryService', () => {
+  it('looks up no ENS names during a rebuild of the Ethereum indexes', async () => {
+    jest.mocked(discoverEns).mockClear();
+    const transfer = makeErc1155Transfer('event-1', [
+      { tokenId: '0x87', value: '0x1' }
+    ]);
+    const { service, batchUpsertTransactions } = createService([[transfer]]);
+
+    await whileRebuildingEthereumIndexes(() =>
+      service.getAndSaveTransactionsForContract(CONTRACT, 1, 1)
+    );
+    expect(batchUpsertTransactions).toHaveBeenCalledTimes(1);
+    expect(discoverEns).not.toHaveBeenCalled();
+
+    const live = createService([[{ ...transfer, uniqueId: 'event-2' }]]);
+    await live.service.getAndSaveTransactionsForContract(CONTRACT, 1, 1);
+    expect(discoverEns).toHaveBeenCalledTimes(1);
+  });
+
   it('counts each Alchemy event once while aggregating distinct events in one transaction', async () => {
     const duplicateBatchEvent = makeErc1155Transfer('event-1', [
       { tokenId: '0x87', value: '0x1' },

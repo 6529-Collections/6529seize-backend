@@ -21,6 +21,7 @@ import {
   synchronizeAutomaticSubscriptionQuantitiesAfterReset
 } from '@/subscriptionsDaily/subscription-quantity-sync.db';
 import { invalidateUpcomingSubscriptionCaches } from '@/subscriptionsDaily/subscription-cache';
+import { isRebuildingEthereumIndexes } from '@/holdings/rebuild-mode';
 
 const logger = Logger.get('DB_OWNER_BALANCES');
 
@@ -215,13 +216,16 @@ export async function persistConsolidatedOwnerBalances(
       );
       logger.info({ message: '[CONSOLIDATED OWNER BALANCES PERSISTED]' });
 
-      if (reset) return previousConsolidationKeys;
+      if (reset || isRebuildingEthereumIndexes())
+        return previousConsolidationKeys;
       return synchronizeAutomaticSubscriptionQuantities(
         affectedSubscriptionKeys,
         { connection: { connection: manager }, timer: undefined }
       );
     }
   );
+  // A rebuild leaves subscriptions to their own rebuild.
+  if (isRebuildingEthereumIndexes()) return;
   // Eligibility is also returned for manual subscriptions. Evict affected
   // balances after commit even when no automatic quantity needed a write.
   const cacheKeys = Array.from(
