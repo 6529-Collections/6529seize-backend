@@ -4,7 +4,9 @@ const mockIsIdentityFrozen = jest.fn();
 jest.mock('@/app-features', () => ({
   appFeatures: {
     isXTdhEnabled: mockIsXTdhEnabled,
-    isIdentityFrozen: mockIsIdentityFrozen
+    isIdentityFrozen: mockIsIdentityFrozen,
+    // The identity switch-on's flag, where the identity freeze reads it.
+    isIdentityOnChain: () => false
   }
 }));
 
@@ -26,6 +28,7 @@ describe('ReviewXTdhGrantsInQueueUseCase and the xTDH retirement', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     delete process.env.IDENTITY_FREEZE_AT;
+    delete process.env.IDENTITY_SWITCH_ON_AT;
     mockIsXTdhEnabled.mockReturnValue(true);
   });
 

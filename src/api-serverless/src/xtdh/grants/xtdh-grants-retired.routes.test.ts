@@ -19,6 +19,8 @@ jest.mock('@/api/auth/auth', () => ({
 jest.mock('@/app-features', () => ({
   appFeatures: {
     isIdentityFrozen: mockIsIdentityFrozen,
+    // The identity switch-on's flag, where the identity freeze reads it.
+    isIdentityOnChain: () => false,
     isXTdhEnabled: mockIsXTdhEnabled
   }
 }));
@@ -63,6 +65,7 @@ describe('xTDH grant routes once xTDH is retired', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     delete process.env.IDENTITY_FREEZE_AT;
+    delete process.env.IDENTITY_SWITCH_ON_AT;
     mockIsXTdhEnabled.mockReturnValue(true);
     mockGetAuthenticationContext.mockResolvedValue({
       getActingAsId: () => 'grantor',

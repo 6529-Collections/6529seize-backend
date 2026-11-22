@@ -12,6 +12,8 @@ describe('xTDH retirement', () => {
     process.env = { ...env };
     delete process.env.FEATURE_IDENTITY_FROZEN;
     delete process.env.IDENTITY_FREEZE_AT;
+    delete process.env.FEATURE_IDENTITY_ON_CHAIN;
+    delete process.env.IDENTITY_SWITCH_ON_AT;
   });
 
   afterAll(() => {
