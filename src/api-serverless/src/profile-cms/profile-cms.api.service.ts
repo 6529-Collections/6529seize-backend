@@ -218,7 +218,7 @@ export class ProfileCmsApiService {
     ),
     private readonly features: ProfileCmsRollout = profileCmsRollout,
     private readonly chainPort: () => ProfileCmsChainPort = () =>
-      createProfileCmsChainPort(process.env.CHAIN_GATEWAY_URL ?? null),
+      createProfileCmsChainPort(),
     private readonly safeVerifierAt: (
       timeMs: number
     ) => Eip1271SignatureVerifier = pinnedEip1271Verifier

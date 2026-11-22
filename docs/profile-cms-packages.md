@@ -478,9 +478,13 @@ error at a page that ends inside a block rather than skip the rest of it.
 The index keeps its own cursor in `profile_cms_chain_heads` and
 `profile_cms_chain_parked`: it reads the block of the last change it read
 again, so a pass that stopped inside a block loses none of it, and turning
-the flag off and on again catches up instead of losing changes. Draft-only
-fields of a package first published after the switch (`created_at`,
-`created_by_profile_id`) come from the draft. The serving rules do not change:
+the flag off and on again catches up instead of losing changes.
+The index reads the chain through the identity mirror's port, over the
+shared gateway client at `CHAIN_GATEWAY_URL` (`createProfileCmsChainPort`).
+A caller that names another gateway, such as a rebuild check's source, is
+refused. Until the identity mirror is wired in, the port refuses.
+Draft-only fields of a package first published after the switch
+(`created_at`, `created_by_profile_id`) come from the draft. The serving rules do not change:
 public reads still serve only the primary, and the handle check stays at read
 time. Archiving no longer hides anything from the chain: every package that
 was ever primary stays named by the person's ProfileDoc history, whatever its

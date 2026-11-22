@@ -6,20 +6,21 @@ import { createProfileCmsChainPort } from '@/profile-cms/chain/profile-cms-chain
 import { ProfileCmsChainPort } from '@/profile-cms/chain/profile-cms-chain.port';
 
 const USAGE =
-  'profile-cms:chain-sync --from-height <height> [--gateway <base url>]\n' +
+  'profile-cms:chain-sync --from-height <height>\n' +
   'Applies finalized Profile changes from <height> to the head to the profile site tables of the\n' +
   'database the environment names. For the side-by-side check, point it at a separate, empty database.\n' +
+  'It reads the chain at CHAIN_GATEWAY_URL, through the identity mirror, as the live index does.\n' +
   'It ignores FEATURE_PROFILE_CMS_CHAIN_POINTER: it is an operator tool, not the live path.\n' +
   'As a rebuild does, it retries a change whose files are missing and fails once its tries are used up.\n';
 
 interface SyncDeps {
-  readonly createPort: (gatewayBaseUrl: string | null) => ProfileCmsChainPort;
+  readonly createPort: () => ProfileCmsChainPort;
   readonly inDb: <T>(fn: () => Promise<T>) => Promise<T>;
   readonly write: (text: string) => void;
 }
 
 const defaultDeps: SyncDeps = {
-  createPort: createProfileCmsChainPort,
+  createPort: () => createProfileCmsChainPort(),
   inDb: async (fn) => {
     const { doInDbContext } = await import('@/secrets');
     return doInDbContext(fn, { syncEntities: false, skipRedis: true });
@@ -35,10 +36,10 @@ export async function main(
     deps.write(USAGE);
     return null;
   }
-  const options = parseArgs(args);
-  const port = deps.createPort(options.gateway);
+  const fromHeight = parseFromHeight(args);
+  const port = deps.createPort();
   const result = await deps.inDb(() =>
-    rebuildFollower(port).syncUntilSettled(options.fromHeight, {})
+    rebuildFollower(port).syncUntilSettled(fromHeight, {})
   );
   deps.write(
     `applied ${result.applied} Profile changes; next height ${result.nextHeight}\n`
@@ -67,28 +68,15 @@ function rebuildFollower(port: ProfileCmsChainPort): ProfileCmsChainFollower {
   return new ProfileCmsChainFollower(port, undefined, undefined, 'rebuild');
 }
 
-function parseArgs(args: readonly string[]): {
-  fromHeight: number;
-  gateway: string | null;
-} {
-  const values = new Map<string, string>();
-  for (let index = 0; index < args.length; index += 2) {
-    const key = args[index];
-    const value = args[index + 1];
-    if (
-      !key?.startsWith('--') ||
-      value === undefined ||
-      value.startsWith('--')
-    ) {
-      throw new Error(`Invalid arguments\n${USAGE}`);
-    }
-    values.set(key.slice(2), value);
+function parseFromHeight(args: readonly string[]): number {
+  if (args.length !== 2 || args[0] !== '--from-height') {
+    throw new Error(`Invalid arguments\n${USAGE}`);
   }
-  const fromHeight = Number(values.get('from-height'));
+  const fromHeight = Number(args[1]);
   if (!Number.isSafeInteger(fromHeight) || fromHeight < 0) {
-    throw new Error(`--from-height is required\n${USAGE}`);
+    throw new Error(`--from-height must be a height\n${USAGE}`);
   }
-  return { fromHeight, gateway: values.get('gateway') ?? null };
+  return fromHeight;
 }
 
 if (require.main === module)

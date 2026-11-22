@@ -1,6 +1,5 @@
 import { main } from '@/profile-cms/chain/profile-cms-chain-sync.cli';
 import { ProfileCmsChainFollower } from '@/profile-cms/chain/profile-cms-chain-follower';
-import { createProfileCmsChainPort } from '@/profile-cms/chain/profile-cms-chain-port.factory';
 import { profileCmsChainDb } from '@/profile-cms/chain/profile-cms-chain.db';
 import { ProfileCmsChainParkedEntity } from '@/entities/IProfileCmsChainParked';
 import {
@@ -14,15 +13,10 @@ describe('profile-cms:chain-sync', () => {
 
   function deps(port = new InMemoryProfileCmsChain()) {
     const written: string[] = [];
-    const created: (string | null)[] = [];
     return {
       written,
-      created,
       deps: {
-        createPort: (gateway: string | null) => {
-          created.push(gateway);
-          return port;
-        },
+        createPort: () => port,
         inDb: <T>(fn: () => Promise<T>) => fn(),
         write: (text: string) => {
           written.push(text);
@@ -36,14 +30,10 @@ describe('profile-cms:chain-sync', () => {
       .spyOn(ProfileCmsChainFollower.prototype, 'syncFrom')
       .mockResolvedValue({ applied: 3, nextHeight: 131, waiting: 0 });
     const run = deps();
-    const result = await main(
-      ['--from-height', '100', '--gateway', 'https://gateway.example.test'],
-      run.deps
-    );
+    const result = await main(['--from-height', '100'], run.deps);
     expect(result).toEqual({ applied: 3, nextHeight: 131, waiting: 0 });
     expect(sync).toHaveBeenCalledTimes(1);
     expect(sync).toHaveBeenCalledWith(100, {});
-    expect(run.created).toEqual(['https://gateway.example.test']);
     expect(run.written).toEqual([
       'applied 3 Profile changes; next height 131\n'
     ]);
@@ -109,7 +99,8 @@ describe('profile-cms:chain-sync', () => {
     [[]],
     [['--from-height', 'x']],
     [['--from-height']],
-    [['--gateway', 'x']]
+    [['--gateway', 'x']],
+    [['--from-height', '1', '--gateway', 'x']]
   ])('refuses %j', async (args) => {
     await expect(main(args, deps().deps)).rejects.toThrow(
       'profile-cms:chain-sync'
@@ -120,11 +111,5 @@ describe('profile-cms:chain-sync', () => {
     const run = deps();
     expect(await main(['--help'], run.deps)).toBeNull();
     expect(run.written[0]).toContain('--from-height');
-  });
-
-  it('refuses to run until a gateway adapter exists', () => {
-    expect(() => createProfileCmsChainPort(null)).toThrow(
-      'No chain gateway adapter yet'
-    );
   });
 });
