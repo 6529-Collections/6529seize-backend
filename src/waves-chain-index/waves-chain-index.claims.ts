@@ -63,22 +63,21 @@ function logOnce(key: string, message: string) {
 
 /**
  * MAIN_STAGE_DECISION_IDS: comma-separated chain decision ids, each `0x`
- * and 64 lowercase hex digits; empty, none. Each entry is read as it is
- * (spaces around it aside); one of another form is logged once and left
- * out.
+ * and 64 hex digits, read in lowercase as the mint lane reads them; empty,
+ * none. One of another form is logged once and left out.
  */
 export function parseMainStageDecisionIds(
   value: string | undefined | null
 ): ReadonlySet<string> {
   const ids = new Set<string>();
   for (const part of (value ?? '').split(',')) {
-    const id = part.trim();
+    const id = part.trim().toLowerCase();
     if (!id) continue;
     if (HEX_ID.test(id)) ids.add(id);
     else {
       logOnce(
         `setting:${id}`,
-        `[MAIN_STAGE_DECISION_IDS] "${id}" is not 0x and 64 lowercase hex digits: left out`
+        `[MAIN_STAGE_DECISION_IDS] "${id}" is not 0x and 64 hex digits: left out`
       );
     }
   }

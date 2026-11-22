@@ -224,6 +224,33 @@ describe('Main Stage claim builds', () => {
     expect(queue.sent).toEqual([]);
     expect(db.claims.size).toBe(0);
   });
+  it('raises an alarm when a feed gap may hide a Main Stage result', async () => {
+    const error = jest.spyOn(Logger.prototype, 'error');
+    // Settled where the feed no longer reaches: the log gets a GAP, no event.
+    chain.settle(D1, 3, [E(2)], 3);
+    chain.goneBelow = chain.height + 1;
+    const report = await index.run({ budgetMs: BIG });
+    expect(report.restartedFull).toBe('feed_gone');
+    expect(queue.sent).toEqual([]);
+    expect(
+      error.mock.calls.filter(([message]) =>
+        String(message).startsWith('[CLAIM BUILD GAP]')
+      )
+    ).toHaveLength(1);
+    expect(String(error.mock.calls[0][0])).toContain(D1);
+    error.mockClear();
+    // Off, or with no Main Stage listed, a gap is only the GAP event.
+    queue.ids = new Set();
+    chain.goneBelow = chain.height + 1;
+    chain.vote(E(1), V(1), 6);
+    await index.run({ budgetMs: BIG });
+    expect(
+      error.mock.calls.filter(([message]) =>
+        String(message).startsWith('[CLAIM BUILD GAP]')
+      )
+    ).toHaveLength(0);
+    error.mockRestore();
+  });
 });
 
 describe('claimBuildsOf', () => {
@@ -322,10 +349,10 @@ describe('claimBuildsOf', () => {
 });
 
 describe('parseMainStageDecisionIds', () => {
-  it('reads 0x and 64 lowercase hex digits a comma, and leaves out the rest, logged once', () => {
+  it('reads 0x and 64 hex digits a comma, in lowercase, and leaves out the rest, logged once', () => {
     const warn = jest.spyOn(Logger.prototype, 'warn');
-    const bad = `0x${'A'.repeat(64)}`;
-    const value = ` ${D1},${D4},, ${bad},nope,${D1}`;
+    const bad = `0x${'g'.repeat(64)}`;
+    const value = ` ${D1},${D4.toUpperCase().replace('0X', '0x')},, ${bad},nope,${D1}`;
     expect(Array.from(parseMainStageDecisionIds(value))).toEqual([D1, D4]);
     expect(Array.from(parseMainStageDecisionIds(value))).toEqual([D1, D4]);
     expect(

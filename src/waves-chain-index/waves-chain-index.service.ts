@@ -378,6 +378,16 @@ export class WavesChainIndex {
             UNKNOWN_SCAN
           );
           report.events++;
+          const mainStage = this.claims.enabled()
+            ? Array.from(this.claims.mainStage())
+            : [];
+          if (mainStage.length) {
+            // A Main Stage result that went final in the gap has no event,
+            // so no claim build: a person checks (an error alarms).
+            logger.error(
+              `[CLAIM BUILD GAP] the event log lacks heights ${from} to ${height}: a Main Stage result that went final there got no claim build. Check the results of ${mainStage.join(', ')} (GET /v1/decisions/{id}/results) and send any missing build by hand.`
+            );
+          }
         }
         await this.startFull(
           {
