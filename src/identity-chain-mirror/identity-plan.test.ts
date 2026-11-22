@@ -137,6 +137,7 @@ describe('planIdentity', () => {
     ]);
     expect(plan.statements).toEqual([]);
     expect(plan.releaseHandle).toBeNull();
+    expect(plan.regroupedWallets).toEqual([]);
   });
 
   it('merges a joining wallet and its old row into the identity', () => {
@@ -157,6 +158,7 @@ describe('planIdentity', () => {
     expect(plan.soloRows).toEqual([]);
     expect(plan.pairs).toHaveLength(3);
     expect(plan.touchedWallets).toEqual([A, B, C]);
+    expect(plan.regroupedWallets).toEqual([A, B, C]);
   });
 
   it('gives a removed wallet its own row without a profile', () => {
@@ -183,6 +185,7 @@ describe('planIdentity', () => {
     expect(plan.pairWallets).toEqual([A, B, C]);
     expect(plan.pairs).toEqual([{ wallet1: A, wallet2: B }]);
     expect(plan.touchedWallets).toEqual([A, B, C]);
+    expect(plan.regroupedWallets).toEqual([A, B, C]);
   });
 
   it('takes a handle from the profile that held it', () => {
@@ -286,6 +289,7 @@ describe('principalProfileId', () => {
       address: D,
       consolidation_key: D
     });
+    expect(plan.regroupedWallets).toEqual([A, B, C, D]);
     expect(plan.pairs).toHaveLength(3);
   });
 
