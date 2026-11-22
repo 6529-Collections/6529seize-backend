@@ -36,8 +36,15 @@ import {
  * The rebuild check's seed for the mint probes. It writes the probe fixture
  * (`src/rebuild/manifests/probe-fixture.ts`: wallets 0x..01 and 0x..02, meme
  * cards 1 and 2) through the minting writers, each wrapped by the mint log as
- * a live write is, so every row has its entry in the record log. Fixed
- * values only: nothing depends on the clock, so both probe passes match.
+ * a live write is. The writes are logged only while FEATURE_MINT_LOG_SHADOW
+ * or FEATURE_MINT_LOG_PRIMARY is on; with both off they run unlogged.
+ *
+ * It needs the TypeORM data source started (the upload and mint stats
+ * writers use it), as the rebuild check's step runner does.
+ *
+ * The seed's own values are fixed. The rows' created_at and updated_at come
+ * from the clock when it runs; the log carries them, so a rebuild from the
+ * log repeats them and both probe passes match.
  */
 
 const W1 = '0x0000000000000000000000000000000000000001';
