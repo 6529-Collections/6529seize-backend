@@ -42,7 +42,7 @@ describe('classifyWavesWrite', () => {
     ['POST', '/v3/waves/wave-1/competitions'],
     ['post', '/v3/waves/wave-1/competitions/']
   ])('counts %s %s as a wave write', (method, path) => {
-    expect(classifyWavesWrite({ method, path })).toEqual({ kind: 'WAVE' });
+    expect(classifyWavesWrite({ method, path })).toBe('WAVE');
   });
 
   it.each([
@@ -50,29 +50,9 @@ describe('classifyWavesWrite', () => {
     ['POST', '/v3/waves/wave-1/competitions/comp-1/actions/publish'],
     ['POST', '/v3/waves/wave-1/competitions/comp-1/actions/pause'],
     ['POST', '/v3/waves/wave-1/competitions/comp-1/entries'],
-    ['PUT', '/v3/waves/wave-1/competitions/comp-1/entries/entry-1/votes/me'],
-    ['POST', '/waves/wave-1/pauses'],
-    ['DELETE', '/waves/wave-1/pauses/3']
-  ])('counts %s %s as a decision write of its wave', (method, path) => {
-    expect(classifyWavesWrite({ method, path })).toEqual({
-      kind: 'DECISION',
-      waveId: 'wave-1'
-    });
-  });
-
-  it('decodes the wave id', () => {
-    expect(
-      classifyWavesWrite({
-        method: 'POST',
-        path: '/waves/wave%201/pauses'
-      })
-    ).toEqual({ kind: 'DECISION', waveId: 'wave 1' });
-  });
-
-  it('counts a legacy vote as a decision write of an unknown wave', () => {
-    expect(
-      classifyWavesWrite({ method: 'POST', path: '/drops/drop-1/ratings' })
-    ).toEqual({ kind: 'DECISION', waveId: null });
+    ['PUT', '/v3/waves/wave-1/competitions/comp-1/entries/entry-1/votes/me']
+  ])('counts %s %s as a decision write', (method, path) => {
+    expect(classifyWavesWrite({ method, path })).toBe('DECISION');
   });
 
   it('decides a new drop by its body', () => {
@@ -83,17 +63,11 @@ describe('classifyWavesWrite', () => {
     expect(post(undefined)).toBeNull();
     expect(post('text')).toBeNull();
     expect(post([])).toBeNull();
-    expect(post({ drop_type: 'CHAT', poll: { options: ['a', 'b'] } })).toEqual({
-      kind: 'WAVE'
-    });
-    expect(post({ drop_type: 'PARTICIPATORY', wave_id: 'w' })).toEqual({
-      kind: 'DECISION',
-      waveId: 'w'
-    });
-    expect(post({ drop_type: 'participatory' })).toEqual({
-      kind: 'DECISION',
-      waveId: null
-    });
+    expect(post({ drop_type: 'CHAT', poll: { options: ['a', 'b'] } })).toBe(
+      'WAVE'
+    );
+    expect(post({ drop_type: 'PARTICIPATORY', wave_id: 'w' })).toBe('DECISION');
+    expect(post({ drop_type: 'participatory' })).toBe('DECISION');
   });
 
   it.each([
@@ -118,6 +92,11 @@ describe('classifyWavesWrite', () => {
     ['POST', '/waves/wave-1/my-chat-history'],
     ['POST', '/wave-media/prep'],
     ['POST', '/drop-media/prep'],
+    // A rating on a chat drop is a reaction: the vote service decides.
+    ['POST', '/drops/drop-1/ratings'],
+    // The legacy pause routes change nothing (they ignore the command).
+    ['POST', '/waves/wave-1/pauses'],
+    ['DELETE', '/waves/wave-1/pauses/3'],
     // Left to the services, which know a direct message from a wave.
     ['POST', '/waves/wave-1'],
     ['DELETE', '/waves/wave-1'],
@@ -144,34 +123,24 @@ describe('isRefusedByWavesFreeze', () => {
   });
   afterEach(() => restore());
 
-  const wave = { kind: 'WAVE' } as const;
-  const mainStage = { kind: 'DECISION', waveId: 'main-wave' } as const;
-  const other = { kind: 'DECISION', waveId: 'other-wave' } as const;
-  const unknown = { kind: 'DECISION', waveId: null } as const;
-
   it('refuses nothing when waves are not frozen', () => {
-    for (const write of [wave, mainStage, other, unknown, null]) {
-      expect(isRefusedByWavesFreeze(write)).toBe(false);
+    for (const kind of ['WAVE', 'DECISION', null] as const) {
+      expect(isRefusedByWavesFreeze(kind)).toBe(false);
     }
   });
 
   it('refuses every waves write while frozen', () => {
     process.env[FLAG] = 'true';
-    process.env[MAIN_STAGE_WAVE] = 'main-wave';
-    for (const write of [wave, mainStage, other, unknown]) {
-      expect(isRefusedByWavesFreeze(write)).toBe(true);
-    }
+    expect(isRefusedByWavesFreeze('WAVE')).toBe(true);
+    expect(isRefusedByWavesFreeze('DECISION')).toBe(true);
     expect(isRefusedByWavesFreeze(null)).toBe(false);
   });
 
-  it('keeps the Main Stage wave open when the freeze keeps it', () => {
+  it('leaves decision writes to the services when the Main Stage is kept', () => {
     process.env[FLAG] = 'true';
     process.env[KEEP] = 'true';
-    process.env[MAIN_STAGE_WAVE] = 'main-wave';
-    expect(isRefusedByWavesFreeze(mainStage)).toBe(false);
-    expect(isRefusedByWavesFreeze(unknown)).toBe(false);
-    expect(isRefusedByWavesFreeze(other)).toBe(true);
-    expect(isRefusedByWavesFreeze(wave)).toBe(true);
+    expect(isRefusedByWavesFreeze('DECISION')).toBe(false);
+    expect(isRefusedByWavesFreeze('WAVE')).toBe(true);
   });
 });
 
@@ -286,20 +255,11 @@ describe('wavesFreezeMiddleware', () => {
     expect((await call('POST', '/api/waves/w-1', {})).status).toBe(200);
   });
 
-  it('lets the Main Stage vote through when the freeze keeps it', async () => {
+  it('passes decision writes to the services when the Main Stage is kept', async () => {
     process.env[FLAG] = 'true';
     process.env[KEEP] = 'true';
-    process.env[MAIN_STAGE_WAVE] = 'main-wave';
     expect((await call('PUT', vote, { value: 1 })).status).toBe(200);
-    expect(
-      (
-        await call(
-          'PUT',
-          '/api/v3/waves/other/competitions/c-1/entries/e-1/votes/me',
-          { value: 1 }
-        )
-      ).status
-    ).toBe(423);
+    expect((await call('POST', '/api/waves', {})).status).toBe(423);
   });
 
   it.each([undefined, 'false', 'TRUE', '1', ''])(

@@ -1,6 +1,5 @@
 import { NextFunction, Request, Response } from 'express';
 import {
-  isDecisionFrozen,
   isMainStageKeptDuringWavesFreeze,
   isWavesFrozen,
   WavesFrozenException
@@ -10,29 +9,31 @@ const READ_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
 
 /**
  * What a request writes, as far as the waves freeze is concerned:
- * - WAVE: a wave, a wave's REP or a poll; frozen with the waves.
- * - DECISION: a decision's entries, votes, pauses, edits or actions; frozen
- *   with the waves, except the Main Stage when the freeze keeps it running.
- *   `waveId` is the decision's wave when the path names it, else null.
+ * - WAVE: a wave, a wave's REP, a poll or a new decision; frozen with the
+ *   waves.
+ * - DECISION: an existing decision's entries, votes, edits or actions;
+ *   frozen with the waves, except the Main Stage when the freeze keeps it
+ *   running. Which decision is the Main Stage is the services' call (they
+ *   read the decision), so here a DECISION write is refused only when the
+ *   freeze keeps nothing running.
  */
-export type WavesWrite =
-  | { readonly kind: 'WAVE' }
-  | { readonly kind: 'DECISION'; readonly waveId: string | null };
+export type WavesWriteKind = 'WAVE' | 'DECISION';
 
 interface PathRule {
   readonly method: string;
   readonly path: RegExp;
-  readonly kind: WavesWrite['kind'];
+  readonly kind: WavesWriteKind;
 }
 
-const SEGMENT = '([^/]+)';
+const SEGMENT = '[^/]+';
 const END = '/?$';
 
 /**
  * Routes whose every write the freeze covers. Paths are relative to the API
  * router (after /api). Wave edits and deletes are left to the wave service,
- * which knows a direct message (chat, not frozen) from a wave; drops are
- * decided by their body below.
+ * which knows a direct message (chat, not frozen) from a wave; legacy votes
+ * (POST /drops/:id/ratings) to the vote service, since a rating on a chat
+ * drop is a reaction; new drops are decided by their body below.
  */
 const PATH_RULES: readonly PathRule[] = [
   // Wave create (direct messages use /waves/direct-message/new).
@@ -67,7 +68,7 @@ const PATH_RULES: readonly PathRule[] = [
     path: new RegExp(`^/v3/waves/${SEGMENT}/competitions${END}`, 'i'),
     kind: 'WAVE'
   },
-  // Decision edits, actions, entries and votes (the wave is the first id).
+  // Decision edits, actions, entries and votes.
   {
     method: 'PATCH',
     path: new RegExp(
@@ -99,22 +100,8 @@ const PATH_RULES: readonly PathRule[] = [
       'i'
     ),
     kind: 'DECISION'
-  },
-  // Decision pauses (legacy routes, by wave).
-  {
-    method: 'POST',
-    path: new RegExp(`^/waves/${SEGMENT}/pauses${END}`, 'i'),
-    kind: 'DECISION'
-  },
-  {
-    method: 'DELETE',
-    path: new RegExp(`^/waves/${SEGMENT}/pauses/${SEGMENT}${END}`, 'i'),
-    kind: 'DECISION'
   }
 ];
-
-/** Legacy votes name the drop, not the wave: the vote service decides. */
-const DROP_VOTE = new RegExp(`^/drops/${SEGMENT}/ratings${END}`, 'i');
 
 const DROP_CREATE = new RegExp(`^/drops${END}`, 'i');
 
@@ -131,62 +118,44 @@ function field(body: unknown, name: string): unknown {
   return undefined;
 }
 
-function decodedSegment(segment: string | undefined): string | null {
-  if (!segment) return null;
-  try {
-    return decodeURIComponent(segment);
-  } catch {
-    return segment;
-  }
-}
-
 /**
  * A new drop is a waves write when it carries a poll (polls are frozen) or
  * is a legacy entry (a participatory drop, a decision write).
  */
-function dropCreateWrite(body: unknown): WavesWrite | null {
+function dropCreateWrite(body: unknown): WavesWriteKind | null {
   const poll = field(body, 'poll');
   if (poll !== undefined && poll !== null) {
-    return { kind: 'WAVE' };
+    return 'WAVE';
   }
   const dropType = field(body, 'drop_type');
   if (
     typeof dropType === 'string' &&
     dropType.toUpperCase() === 'PARTICIPATORY'
   ) {
-    const waveId = field(body, 'wave_id');
-    return {
-      kind: 'DECISION',
-      waveId: typeof waveId === 'string' ? waveId : null
-    };
+    return 'DECISION';
   }
   return null;
 }
 
 /**
  * Whether a request writes what the waves freeze covers, and what. Reads
- * never do. Chat (chat drops, their edits, deletes and reactions), direct
- * messages, subscriptions, pins, mutes and curations never do.
+ * never do. Chat (chat drops, their edits, deletes, reactions and ratings),
+ * direct messages, subscriptions, pins, mutes and curations never do.
  */
 export function classifyWavesWrite({
   method,
   path,
   body
-}: WavesWriteCandidate): WavesWrite | null {
+}: WavesWriteCandidate): WavesWriteKind | null {
   const verb = method.toUpperCase();
   if (READ_METHODS.has(verb)) {
     return null;
   }
-  for (const rule of PATH_RULES) {
-    if (rule.method !== verb) continue;
-    const match = rule.path.exec(path);
-    if (!match) continue;
-    return rule.kind === 'WAVE'
-      ? { kind: 'WAVE' }
-      : { kind: 'DECISION', waveId: decodedSegment(match[1]) };
-  }
-  if (verb === 'POST' && DROP_VOTE.test(path)) {
-    return { kind: 'DECISION', waveId: null };
+  const rule = PATH_RULES.find(
+    (candidate) => candidate.method === verb && candidate.path.test(path)
+  );
+  if (rule) {
+    return rule.kind;
   }
   if (verb === 'POST' && DROP_CREATE.test(path)) {
     return dropCreateWrite(body);
@@ -194,28 +163,21 @@ export function classifyWavesWrite({
   return null;
 }
 
-/** Whether the freeze refuses this write now. */
-export function isRefusedByWavesFreeze(write: WavesWrite | null): boolean {
-  if (!write || !isWavesFrozen()) {
+/** Whether the freeze refuses this write here, before any service work. */
+export function isRefusedByWavesFreeze(kind: WavesWriteKind | null): boolean {
+  if (!kind || !isWavesFrozen()) {
     return false;
   }
-  if (write.kind === 'WAVE') {
-    return true;
-  }
-  if (write.waveId === null) {
-    // The decision is unknown here: refuse unless the Main Stage keeps
-    // running, then the vote service decides by the decision itself.
-    return !isMainStageKeptDuringWavesFreeze();
-  }
-  return isDecisionFrozen({ wave_id: write.waveId });
+  return kind === 'WAVE' || !isMainStageKeptDuringWavesFreeze();
 }
 
 /**
  * Refuses wave, decision, entry, vote, wave REP and poll writes with 423 and
  * code WAVES_FROZEN while the waves freeze is on. Mount it on the API router
  * before the routers it covers. The services check every write again,
- * including those no route shows: wave edits and deletes, replacing a group
- * a wave uses, legacy entry edits and withdrawals (src/waves-freeze).
+ * including those no route shows and the Main Stage's: wave edits and
+ * deletes, replacing a group a wave uses, legacy votes, legacy entry edits
+ * and withdrawals (src/waves-freeze).
  */
 export function wavesFreezeMiddleware() {
   return (req: Request, _res: Response, next: NextFunction) => {

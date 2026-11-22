@@ -17,7 +17,9 @@ import { Time } from '@/time';
  * The freeze is on when FEATURE_WAVES_FROZEN is `true`, or from the time in
  * WAVES_FREEZE_AT (ISO 8601 UTC such as `2026-11-24T06:00:00Z`, or Unix
  * milliseconds). The time lets a deployment made before the freeze start it
- * at the exact second, with no restart.
+ * at the exact second, with no restart. To turn the freeze off, remove both:
+ * any WAVES_FREEZE_AT that is not such a time (`0`, `false`, seconds, a
+ * local time) freezes at once, and is logged.
  *
  * FEATURE_WAVES_FREEZE_KEEP_MAIN_STAGE=true keeps the Main Stage decision
  * running here through the freeze: its entries, votes, pauses and results
@@ -52,6 +54,9 @@ export class WavesFrozenException extends CustomApiCompliantException {
 const ISO_UTC =
   /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,3})?)?(?:Z|[+-]00:00)$/;
 
+/** Earlier than any freeze: a smaller number is seconds or a mistake. */
+const EARLIEST_FREEZE_AT_MS = Date.UTC(2020, 0, 1);
+
 /**
  * The freeze start from WAVES_FREEZE_AT: `undefined` when unset, `null` when
  * set to something that is not a UTC time (which freezes: whoever set it
@@ -65,7 +70,8 @@ export function parseWavesFreezeAt(
     return undefined;
   }
   if (/^\d{1,16}$/.test(value)) {
-    return Number(value);
+    const millis = Number(value);
+    return millis >= EARLIEST_FREEZE_AT_MS ? millis : null;
   }
   if (ISO_UTC.test(value)) {
     const millis = Date.parse(value);
@@ -119,12 +125,13 @@ export interface FreezeDecisionRef {
 }
 
 /**
- * The Main Stage decision: the one with the MAIN_STAGE capability, or any
- * decision of the wave named in MAIN_STAGE_WAVE_ID.
+ * The Main Stage decision: the one with the MAIN_STAGE capability. Where a
+ * path knows only the wave (legacy entries, which act on their wave's
+ * primary decision), the decision of the wave named in MAIN_STAGE_WAVE_ID.
  */
 export function isMainStageDecision(decision: FreezeDecisionRef): boolean {
-  if (decision.capabilities?.includes(CompetitionCapability.MAIN_STAGE)) {
-    return true;
+  if (decision.capabilities) {
+    return decision.capabilities.includes(CompetitionCapability.MAIN_STAGE);
   }
   const mainStageWaveId = env.getStringOrNull(MAIN_STAGE_WAVE_ID_ENV);
   if (!mainStageWaveId) {

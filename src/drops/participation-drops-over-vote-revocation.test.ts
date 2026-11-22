@@ -128,10 +128,21 @@ it('reconciles native TDH votes in the existing transaction and preserves notifi
   );
 });
 
-it('leaves votes as they stood while waves are frozen', async () => {
+it.each([
+  ['in one transaction', () => revokeTdhBasedDropWavesOverVotes(connection)],
+  ['per competition', () => revokeTdhBasedDropWavesOverVotesPerCompetition()]
+])('leaves votes as they stood while waves are frozen (%s)', async (_, run) => {
+  setSqlExecutor({
+    executeNativeQueriesInTransaction: async <T>(
+      executable: (connection: ConnectionWrapper<unknown>) => Promise<T>
+    ) => executable(connection)
+  } as never);
   jest.mocked(appFeatures.isWavesFrozen).mockReturnValue(true);
-  await revokeTdhBasedDropWavesOverVotes(connection);
-  await revokeTdhBasedDropWavesOverVotesPerCompetition();
+  await run();
+  expect(runtime.readCompetition).toHaveBeenCalledWith(
+    competition.id,
+    expect.anything()
+  );
   expect(runtime.lockCompetition).not.toHaveBeenCalled();
   expect(service.reconcileVoterCredit).not.toHaveBeenCalled();
   expect(userNotifier.notifyOfDropVote).not.toHaveBeenCalled();

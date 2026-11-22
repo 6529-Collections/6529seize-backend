@@ -8,10 +8,7 @@ import {
   reconcileAcceptedLegacySettings
 } from '@/competitions/legacy-competition-mutation';
 import { competitionHistoryRepository } from '@/competitions/competition-history.repository';
-import {
-  assertDecisionNotFrozen,
-  assertWavesNotFrozen
-} from '@/waves-freeze/waves-freeze';
+import { assertWavesNotFrozen } from '@/waves-freeze/waves-freeze';
 import { wavesChangedNotifier } from '@/api/waves/waves-changed.notifier';
 import { waveGroupIds } from '@/waves/wave-group-ids';
 import { randomUUID } from 'crypto';
@@ -806,7 +803,6 @@ export class WaveApiService {
     ctx: RequestContext,
     reason?: string
   ): Promise<ApiWave> {
-    assertDecisionNotFrozen({ wave_id: waveId });
     const wave = await this.assertUserAllowedToModifyPauses(ctx, waveId);
     await this.assertProposedPauseValidForAddOrUpdate(wave, model, ctx);
     await this.withWaveSettingsTransaction(
@@ -850,7 +846,6 @@ export class WaveApiService {
     pauseId: number,
     ctx: RequestContext
   ): Promise<ApiWave> {
-    assertDecisionNotFrozen({ wave_id: waveId });
     const wave = await this.assertUserAllowedToModifyPauses(ctx, waveId);
     await this.assertProposedPauseValidForDeletion(wave, pauseId, ctx);
     await this.withWaveSettingsTransaction(
@@ -2392,8 +2387,6 @@ export class WaveApiService {
           wavesApiDb: this.wavesApiDb,
           ctx: tx
         });
-        // Direct messages are chat and stay open through the waves freeze.
-        if (!before.is_direct_message) assertWavesNotFrozen();
         if (
           before.created_by !== actor &&
           (!before.admin_group_id || !groups.includes(before.admin_group_id))
@@ -2409,6 +2402,9 @@ export class WaveApiService {
             groupIds: []
           };
         }
+        // An empty patch (the legacy pause routes send one) changes nothing.
+        // Direct messages are chat and stay open through the waves freeze.
+        if (!before.is_direct_message) assertWavesNotFrozen();
         const after = applyWaveHubPatch(before, patch);
         await this.validateWaveHubUpdate(before, after, actor, groups, tx);
         const hubConfiguration =

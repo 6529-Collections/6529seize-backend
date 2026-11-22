@@ -62,9 +62,6 @@ function service(wave: { id: string; is_direct_message: boolean }) {
   jest
     .spyOn(result as any, 'validateWaveUpdateAccessAndConstraints')
     .mockRejectedValue(PAST_FREEZE);
-  jest
-    .spyOn(result as any, 'assertUserAllowedToModifyPauses')
-    .mockRejectedValue(PAST_FREEZE);
   return result;
 }
 
@@ -122,12 +119,17 @@ describe('wave writes during the waves freeze', () => {
   });
 
   it('edits no wave hub, but a direct message still can be', async () => {
+    const patch = { name: 'Renamed' } as any;
     await expect(
-      service(wave).updateWaveHub('wave', {} as any, ctx)
+      service(wave).updateWaveHub('wave', patch, ctx)
     ).rejects.toBeInstanceOf(WavesFrozenException);
-    await expect(
-      service(dm).updateWaveHub('dm', {} as any, ctx)
-    ).rejects.not.toBeInstanceOf(WavesFrozenException);
+    const forDm = service(dm);
+    jest
+      .spyOn(forDm as any, 'validateWaveHubUpdate')
+      .mockRejectedValue(PAST_FREEZE);
+    await expect(forDm.updateWaveHub('dm', patch, ctx)).rejects.toBe(
+      PAST_FREEZE
+    );
   });
 
   it('deletes no wave, but a direct message still can be deleted', async () => {
@@ -137,25 +139,14 @@ describe('wave writes during the waves freeze', () => {
     await expect(service(dm).deleteWave('dm', ctx)).rejects.toBe(PAST_FREEZE);
   });
 
-  it('changes no decision pause, except the Main Stage when kept', async () => {
-    process.env.MAIN_STAGE_WAVE_ID = 'main';
-    const pause = { start_time: 1, end_time: 2 } as any;
-    await expect(
-      service(wave).createOrUpdateWavePause('main', pause, ctx)
-    ).rejects.toBeInstanceOf(WavesFrozenException);
-    await expect(
-      service(wave).deleteWavePause('main', 1, ctx)
-    ).rejects.toBeInstanceOf(WavesFrozenException);
-    process.env.FEATURE_WAVES_FREEZE_KEEP_MAIN_STAGE = 'true';
-    await expect(
-      service(wave).createOrUpdateWavePause('main', pause, ctx)
-    ).rejects.toBe(PAST_FREEZE);
-    await expect(service(wave).deleteWavePause('main', 1, ctx)).rejects.toBe(
-      PAST_FREEZE
-    );
-    await expect(
-      service(wave).deleteWavePause('other', 1, ctx)
-    ).rejects.toBeInstanceOf(WavesFrozenException);
+  it('answers an empty hub patch (the legacy pause routes send one)', async () => {
+    const forWave = service(wave);
+    jest
+      .spyOn(forWave as any, 'mapEditedWaveHub')
+      .mockResolvedValue({ id: 'wave' });
+    await expect(forWave.updateWaveHub('wave', {}, ctx)).resolves.toEqual({
+      id: 'wave'
+    });
   });
 
   it('changes nothing when waves are not frozen', async () => {
@@ -166,8 +157,12 @@ describe('wave writes during the waves freeze', () => {
     await expect(service(wave).deleteWave('wave', ctx)).rejects.toBe(
       PAST_FREEZE
     );
-    await expect(service(wave).deleteWavePause('wave', 1, ctx)).rejects.toBe(
-      PAST_FREEZE
-    );
+    const forWave = service(wave);
+    jest
+      .spyOn(forWave as any, 'validateWaveHubUpdate')
+      .mockRejectedValue(PAST_FREEZE);
+    await expect(
+      forWave.updateWaveHub('wave', { name: 'Renamed' } as any, ctx)
+    ).rejects.toBe(PAST_FREEZE);
   });
 });

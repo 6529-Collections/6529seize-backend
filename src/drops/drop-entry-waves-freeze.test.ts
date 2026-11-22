@@ -57,6 +57,10 @@ describe('legacy entries during the waves freeze', () => {
         {} as any
       );
       jest.spyOn(result as any, 'assertDropLimits').mockReturnValue(undefined);
+      // The write itself, past the owner lock and the freeze check.
+      jest
+        .spyOn(result as any, 'createOrUpdateDrop')
+        .mockRejectedValue(PAST_FREEZE);
       return result;
     }
 
@@ -66,7 +70,8 @@ describe('legacy entries during the waves freeze', () => {
           drop_type: dropType,
           wave_id: waveId,
           author_id: 'author',
-          parts: []
+          parts: [],
+          metadata: []
         } as any,
         false,
         { connection, prePublication: {} as any }
@@ -93,10 +98,8 @@ describe('legacy entries during the waves freeze', () => {
       ).rejects.toBeInstanceOf(WavesFrozenException);
     });
 
-    it('never takes the entry lock for chat', async () => {
-      await expect(execute(DropType.CHAT, 'wave')).rejects.not.toBeInstanceOf(
-        WavesFrozenException
-      );
+    it('posts chat as before, without the entry lock', async () => {
+      await expect(execute(DropType.CHAT, 'wave')).rejects.toBe(PAST_FREEZE);
       expect(withLegacyPrimaryMutation).not.toHaveBeenCalled();
     });
   });

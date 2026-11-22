@@ -84,7 +84,10 @@ describe('waves freeze', () => {
     '2026-11-24T06:00:00',
     '2026-11-24T07:00:00+01:00',
     'tomorrow',
-    '2026-13-40T00:00:00Z'
+    '2026-13-40T00:00:00Z',
+    '0',
+    'false',
+    String(Math.floor(T / 1000))
   ])('reads WAVES_FREEZE_AT=%s as no UTC time', (raw) => {
     expect(parseWavesFreezeAt(raw)).toBeNull();
   });
@@ -130,7 +133,17 @@ describe('waves freeze', () => {
       expect(isMainStageDecision({})).toBe(false);
     });
 
-    it('is any decision of MAIN_STAGE_WAVE_ID', () => {
+    it('goes by the capability whenever the decision is known', () => {
+      process.env[MAIN_STAGE_WAVE] = 'main-stage-wave';
+      expect(
+        isMainStageDecision({ capabilities: [], wave_id: 'main-stage-wave' })
+      ).toBe(false);
+      expect(
+        isMainStageDecision({ capabilities: ['MAIN_STAGE'], wave_id: 'other' })
+      ).toBe(true);
+    });
+
+    it('is the decision of MAIN_STAGE_WAVE_ID where only the wave is known', () => {
       process.env[MAIN_STAGE_WAVE] = 'main-stage-wave';
       expect(isMainStageDecision({ wave_id: 'main-stage-wave' })).toBe(true);
       expect(
