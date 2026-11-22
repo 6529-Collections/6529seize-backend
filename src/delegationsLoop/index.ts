@@ -268,6 +268,23 @@ async function mirrorChainIdentities() {
     budgetMs: IDENTITY_MIRROR_BUDGET_MS
   });
   logger.info(`[IDENTITY CHAIN MIRROR] ${JSON.stringify(report)}`);
+  if (report.regroupedWallets.length) {
+    // A join or removal on the chain changes consolidation keys, as a
+    // consolidation event did: re-key TDH, owners, balances, activity and
+    // subscriptions the same way.
+    const health = await DelegationsLoopHealth.start(true);
+    try {
+      const affected = await getAffectedWalletsForAddresses(
+        report.regroupedWallets,
+        await fetchAllConsolidatedTdh()
+      );
+      await reconsolidateAffectedWallets(affected, health);
+      health.completed();
+    } catch (error) {
+      health.failed();
+      throw error;
+    }
+  }
 }
 
 async function handleENS() {

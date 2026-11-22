@@ -71,6 +71,8 @@ export interface MirrorRunReport {
   skippedInactive: string[];
   /** Identities that failed, with why; the rest went on. */
   failed: string[];
+  /** Wallets whose consolidation key changed: re-keyed by the caller. */
+  regroupedWallets: string[];
   docProblems: string[];
   nextHeight: number | null;
 }
@@ -252,6 +254,7 @@ export class IdentityChainMirror {
       docProblems: [],
       skippedInactive: [],
       failed: [],
+      regroupedWallets: [],
       nextHeight: null
     };
   }
@@ -682,7 +685,7 @@ export class IdentityChainMirror {
       cic: toNumber(identity.nic?.total),
       levelRaw: identity.level ? toNumber(identity.level.raw) : null
     };
-    const touched = await this.db.executeNativeQueriesInTransaction(
+    const plan = await this.db.executeNativeQueriesInTransaction(
       async (conn) => {
         const state = await this.db.readIdentityState(
           wallets,
@@ -698,11 +701,14 @@ export class IdentityChainMirror {
           this.now(),
           conn
         );
-        return plan.touchedWallets;
+        return plan;
       }
     );
+    report.regroupedWallets = Array.from(
+      new Set([...report.regroupedWallets, ...plan.regroupedWallets])
+    );
     report.identities++;
-    return touched;
+    return plan.touchedWallets;
   }
 
   private ratingRow(

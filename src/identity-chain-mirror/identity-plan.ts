@@ -118,6 +118,11 @@ export interface IdentityPlan {
   readonly pairs: WalletPair[];
   /** Wallets whose identity changed: their delegation rows follow. */
   readonly touchedWallets: string[];
+  /**
+   * Wallets whose consolidation key changed (a join, a removal, another
+   * identity's row re-keyed): 6529.io's consolidated tables re-key them.
+   */
+  readonly regroupedWallets: string[];
 }
 
 export interface WalletPair {
@@ -294,6 +299,27 @@ function rekeyOtherRows(
   return { rows, wallets };
 }
 
+/** The wallets whose key differs from the row they were in. */
+function regroupedWallets(
+  state: CurrentIdentityState,
+  next: { address: string; consolidation_key: string }[]
+): string[] {
+  const before = new Map<string, string>();
+  for (const [key, list] of Object.entries(state.walletsByKey)) {
+    list.forEach((it) => before.set(it.toLowerCase(), key));
+  }
+  return uniqueSorted(
+    next
+      .filter((it) => {
+        const old = before.get(it.address);
+        return old === undefined
+          ? it.consolidation_key !== it.address
+          : old !== it.consolidation_key;
+      })
+      .map((it) => it.address)
+  );
+}
+
 export function planIdentity(
   chain: ChainIdentityView,
   state: CurrentIdentityState
@@ -387,6 +413,13 @@ export function planIdentity(
       ...pairsOf(wallets),
       ...Object.values(rekeyed.wallets).flatMap((list) => pairsOf(list))
     ],
-    touchedWallets: uniqueSorted([...wallets, ...leavers])
+    touchedWallets: uniqueSorted([...wallets, ...leavers]),
+    regroupedWallets: regroupedWallets(state, [
+      ...wallets.map((address) => ({ address, consolidation_key: key })),
+      ...Object.entries(rekeyed.wallets).flatMap(([k, list]) =>
+        list.map((address) => ({ address, consolidation_key: k }))
+      ),
+      ...leavers.map((address) => ({ address, consolidation_key: address }))
+    ])
   };
 }
