@@ -888,6 +888,64 @@ describeWithSeed('identity writers after the switch', [], () => {
     expect(await subscriptionsIdentitySwitch.writeModeOrFail()).toBe('OFF');
   });
 
+  it('writes no checkpoint, and alerts, when another opening is loaded while the snapshot is hashed', async () => {
+    await seedLegacy();
+    expect((await goLiveForTest()).switched).toBe(true);
+    const checkpoints = async () =>
+      (
+        await sqlExecutor.execute<{ entry: string }>(
+          `SELECT entry FROM ${SIGNED_RECORD_LOG_ENTRIES_TABLE}`
+        )
+      ).filter((row) => JSON.parse(row.entry).body?.kind === 'checkpoint')
+        .length;
+    const before = await checkpoints();
+    const realExecute = sqlExecutor.execute.bind(sqlExecutor);
+    let swapped = false;
+    const spy = jest.spyOn(sqlExecutor, 'execute').mockImplementation(((
+      sql: string,
+      params?: Record<string, unknown>,
+      options?: never
+    ) => {
+      if (
+        !swapped &&
+        sql.includes('LOCK IN SHARE MODE') &&
+        sql.includes(SUBSCRIPTIONS_ID_STATE_TABLE)
+      ) {
+        swapped = true;
+        // A load commits after the hash: the state names another opening.
+        return realExecute(
+          `UPDATE ${SUBSCRIPTIONS_ID_STATE_TABLE} SET opening_sha256 = :other WHERE id = 'opening'`,
+          { other: 'f'.repeat(64) }
+        ).then(() => realExecute(sql, params, options));
+      }
+      return realExecute(sql, params, options);
+    }) as never);
+    const alert = jest.spyOn(Logger.prototype, 'errorWithCode');
+    try {
+      await updateSubscriptions();
+    } finally {
+      spy.mockRestore();
+    }
+    expect(swapped).toBe(true);
+    expect(await checkpoints()).toBe(before);
+    expect(alert).toHaveBeenCalledWith(
+      'SUBSCRIPTIONS_JOURNAL_CHECKPOINT_FAILED',
+      expect.stringContaining(
+        'The opening changed while the checkpoint was hashed'
+      )
+    );
+    alert.mockRestore();
+  });
+
+  it('refuses to rebuild over identity tables that are the truth, suspending nothing', async () => {
+    await seedLegacy();
+    expect((await goLiveForTest()).switched).toBe(true);
+    await expect(
+      rebuildIdentityTables({ source: journalSource, fetch: fetchPublished })
+    ).rejects.toThrow('The identity tables are the truth');
+    expect(await subscriptionsIdentitySwitch.writeModeOrFail()).toBe('TRUTH');
+  });
+
   it('rebuilds a top-up with the identity it was credited to, after the wallet leaves', async () => {
     await seedLegacy();
     expect((await goLiveForTest()).switched).toBe(true);
