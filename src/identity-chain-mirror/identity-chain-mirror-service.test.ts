@@ -361,7 +361,9 @@ function world(followers: ProfileSiteFollower[] = []) {
       );
       return {
         wallet,
-        changes: owner ? [{ height: 3, principalId: owner.principalId }] : []
+        changes: owner ? [{ height: 3, principalId: owner.principalId }] : [],
+        ranges: [[1, 1000]] as [number, number][],
+        readHeight: chain.finalized
       };
     }),
     getImportedIdentity: jest.fn(async () => null),
@@ -838,6 +840,12 @@ describe('IdentityChainMirror', () => {
   it('follows the bindings on the feed from the import, apart from the identities', async () => {
     const { mirror, db, chain, alice, gateway } = world();
     chain.importStart = 1;
+    // A row from before the cursor existed: the table starts empty.
+    db.bindings.set(W(9), {
+      wallet: W(9),
+      principal_id: PID(9),
+      bound_from_height: 1
+    });
     chain.feed.push({
       from: 1,
       through: 120,
@@ -922,7 +930,7 @@ describe('IdentityChainMirror', () => {
   });
 
   it('starts again on another chain, also while its import runs, but not for a lagging node', async () => {
-    const { mirror, db, chain } = world();
+    const { mirror, db, chain, alice } = world();
     const stale = () =>
       db.bindings.set(W(9), {
         wallet: W(9),
@@ -937,6 +945,7 @@ describe('IdentityChainMirror', () => {
     expect(db.state?.chain_id).toBe(chain.network);
     expect(db.state?.next_height).toBe(101);
     // A relaunch: another network. Bindings and identity tables start again.
+    db.mapping.set(PID(98), { profile: 'made-on-old-chain', origin: 'NEW' });
     stale();
     chain.network = '0x' + 'bb'.repeat(32);
     chain.importCompleted = false;
@@ -946,6 +955,9 @@ describe('IdentityChainMirror', () => {
     expect(db.state?.next_height).toBeNull();
     expect(db.state?.bindings_next_height).toBeNull();
     expect(db.bindings.has(W(9))).toBe(false);
+    expect(db.mapping.has(PID(98))).toBe(false);
+    expect(db.mapping.get(alice.principalId)?.origin).toBe('LEGACY');
+    expect(db.state?.placeholders_at).toBe(1_000);
     chain.importCompleted = true;
     await mirror.run({ budgetMs: 60_000 });
     expect(db.state?.next_height).toBe(101);
@@ -1039,7 +1051,13 @@ describe('IdentityChainMirror', () => {
       createdHeight: 40
     });
     await mirror.profileIdOf(early);
-    expect(gateway.getImportedIdentity).toHaveBeenCalledTimes(1);
+    // Made in the import's last block: asked too.
+    const atEnd = chainIdentity(PID(54), [W(54)], {
+      legacyId: null,
+      createdHeight: 50
+    });
+    await mirror.profileIdOf(atEnd);
+    expect(gateway.getImportedIdentity).toHaveBeenCalledTimes(2);
   });
 
   it('halves the page when the gateway says the answer is too large', async () => {
@@ -1172,7 +1190,10 @@ describe('IdentityChainMirror', () => {
       async (id: string) =>
         id === 'p-imported' ? (chainIdentity(PID(1), [A]) as never) : null
     );
-    const other = chainIdentity(PID(92), [W(92)], { legacyId: null });
+    const other = chainIdentity(PID(92), [W(92)], {
+      legacyId: null,
+      founder: W(92)
+    });
     expect(await mirror.profileIdOf(other)).toBe(principalProfileId(PID(92)));
   });
 
@@ -1202,6 +1223,77 @@ describe('IdentityChainMirror', () => {
     await mirror.run({ budgetMs: 60_000 });
     expect(db.bindings.has(A)).toBe(true);
     expect(db.bindings.has(W(70))).toBe(false);
+  });
+
+  it('takes the anchor as founder only when it was bound at the creation', async () => {
+    const { mirror, db, gateway } = world();
+    db.placeholders.set(W(93), 'p-anchor');
+    const later = chainIdentity(PID(93), [W(93)], {
+      legacyId: null,
+      createdHeight: 5
+    });
+    gateway.getMembershipWallet.mockResolvedValueOnce({
+      wallet: W(93),
+      principalId: PID(93),
+      firstBoundHeight: 9
+    } as never);
+    expect(await mirror.profileIdOf(later)).toBe(principalProfileId(PID(93)));
+  });
+
+  it("gives a wallet's placeholder to the first identity it made", async () => {
+    const { mirror, db, gateway, chain } = world();
+    chain.importStart = 1;
+    await mirror.run({ budgetMs: 60_000 });
+    db.placeholders.set(W(94), 'p-first');
+    // W(94) made PID(94) at 3, left, and made PID(95) at 20.
+    gateway.getMembershipWalletHistory.mockResolvedValue({
+      wallet: W(94),
+      changes: [
+        { height: 3, principalId: PID(94) },
+        { height: 10, principalId: null },
+        { height: 20, principalId: PID(95) }
+      ],
+      ranges: [[1, 100]],
+      readHeight: 100
+    } as never);
+    const second = chainIdentity(PID(95), [W(94)], {
+      legacyId: null,
+      founder: W(94),
+      createdHeight: 20
+    });
+    expect(await mirror.profileIdOf(second)).toBe(principalProfileId(PID(95)));
+    const first = chainIdentity(PID(94), [W(96)], {
+      legacyId: null,
+      founder: W(94),
+      createdHeight: 3
+    });
+    expect(await mirror.profileIdOf(first)).toBe('p-first');
+  });
+
+  it('names a merged rater without mapping it', async () => {
+    const { mirror, db, chain, alice } = world();
+    const merged = chainIdentity(PID(97), [], {
+      legacyId: null,
+      mergedInto: alice.principalId
+    });
+    chain.identities.set(merged.principalId, merged);
+    chain.ratings.set(alice.principalId, [
+      ...(chain.ratings.get(alice.principalId) ?? []),
+      {
+        rater: merged.principalId,
+        target: alice.principalId,
+        matter: 'rep',
+        category: { id: '0x03', name: 'Old' },
+        value: '2',
+        updatedHeight: 31,
+        viaGrant: null
+      }
+    ]);
+    await mirror.run({ budgetMs: 60_000 });
+    expect(db.mapping.has(merged.principalId)).toBe(false);
+    expect(
+      db.ratings.get(ALICE_PROFILE)?.map((it) => it.rater_profile_id)
+    ).toContain(principalProfileId(PID(97)));
   });
 
   it('asks the import for a legacy id the gateway leaves out', async () => {

@@ -11,8 +11,9 @@ import { ChainFeedBlock } from '@/chain-gateway/chain-gateway.types';
 /** AddressBinding[address] = (principalId, via, cid, boundCycle, index). */
 export const ADDRESS_BINDING_FAMILY = '0x0102';
 
-const HEX20 = /^0x[0-9a-f]{40}$/;
-const HEX32 = /^0x[0-9a-f]{64}$/;
+/** A wallet address and a 32-byte id, lowercase hex. */
+export const HEX20 = /^0x[0-9a-f]{40}$/;
+export const HEX32 = /^0x[0-9a-f]{64}$/;
 
 export interface BindingChange {
   readonly wallet: string;

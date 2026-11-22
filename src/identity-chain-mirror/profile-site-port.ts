@@ -5,12 +5,12 @@ import {
 } from '@/chain-gateway/chain-gateway.client';
 import {
   ChainFeedBlock,
-  ChainFeedCursor,
   ChainFeedRecord,
   ChainIdentity
 } from '@/chain-gateway/chain-gateway.types';
 import { RequestContext } from '@/request.context';
-import { messageOf, readFeedPage } from './chain-feed-pages';
+import { messageOf, readWholeBlocks } from './chain-feed-pages';
+import { WalletPrincipalUnknownError } from './identity-chain-lookups';
 import { numberOrNull } from './identity-chain-mirror.db';
 import { decodeProfileDoc } from './profile-doc';
 
@@ -79,6 +79,26 @@ export interface ProfileSiteChainPort {
 }
 
 /**
+ * A read the port can't answer now, which the follower should try again
+ * later: it counts as one attempt at that change, the person's later
+ * changes wait, and everyone else's go on. Thrown when a wallet's identity
+ * at the change's height is unknown, and when the store's bytes don't
+ * match their CID. Gateway outages throw their own errors.
+ */
+export class ChainReadRetryLater extends Error {
+  readonly retryLater = true;
+
+  constructor(
+    message: string,
+    readonly reason: string
+  ) {
+    super(message);
+    Object.setPrototypeOf(this, new.target.prototype);
+    this.name = 'ChainReadRetryLater';
+  }
+}
+
+/**
  * Runs at the end of a mirror run: the profile site index's
  * `followProfileCmsChanges(port, ctx)` goes in `PROFILE_SITE_FOLLOWERS`
  * (identity-chain-mirror.service.ts).
@@ -141,6 +161,13 @@ function toChange(
   };
 }
 
+/** Bytes that don't match their CID are the store's fault: try again later. */
+function retryOnMismatch(error: unknown): unknown {
+  return error instanceof ChainGatewayError && error.code === 'cid_mismatch'
+    ? new ChainReadRetryLater(error.message, 'cid_mismatch')
+    : error;
+}
+
 /** The profile site index's chain reads, from the gateway and the mirror. */
 export class GatewayProfileSitePort implements ProfileSiteChainPort {
   constructor(
@@ -178,48 +205,31 @@ export class GatewayProfileSitePort implements ProfileSiteChainPort {
     // it), so a start below it reads from it instead of a height the feed
     // may not hold.
     const importStart = (await this.getIdentityImport())?.start_height ?? 0;
-    // The index counts in whole heights: a block the gateway's page ends
-    // inside is read on to its end before the page is returned.
-    const changes: ProfileSiteChange[] = [];
-    let cursor: ChainFeedCursor = Math.max(fromHeight, importStart);
-    for (;;) {
-      const page = await this.feedPage(cursor);
-      if (page.atHead) {
-        return {
-          changes,
-          next_height: changes.length ? page.nextHeight : null
-        };
-      }
-      for (const block of page.blocks) {
-        await this.collect(block, changes);
-        // A page full of changes ends at a whole block: the follower's
-        // pass then checks its deadline between pages.
-        if (block.complete !== false && changes.length >= MAX_PAGE_CHANGES) {
-          return { changes, next_height: Number(block.height) + 1 };
-        }
-      }
-      const cut = page.blocks[page.blocks.length - 1]?.complete === false;
-      if (!cut || String(page.next) === String(cursor)) {
-        return { changes, next_height: page.nextHeight };
-      }
-      cursor = page.next;
-    }
-  }
-
-  private async feedPage(cursor: ChainFeedCursor) {
-    const page = await readFeedPage(this.gateway, cursor, {
+    // The index counts in whole heights: only whole blocks are given.
+    const from = Math.max(fromHeight, importStart);
+    const read = await readWholeBlocks(this.gateway, from, {
       limit: FEED_PAGE_BLOCKS,
       families: [PROFILE_FAMILY]
     });
-    if (!page) {
+    if (!read) {
       throw new ChainGatewayError(
-        `/v1/feed: the gateway no longer holds height ${cursor}`,
+        `/v1/feed: the gateway no longer holds height ${from}`,
         410,
         'gone',
         '/v1/feed'
       );
     }
-    return page;
+    if (read.atHead) return { changes: [], next_height: null };
+    const changes: ProfileSiteChange[] = [];
+    for (const block of read.blocks) {
+      await this.collect(block, changes);
+      // A page full of changes ends at a block: the follower's pass then
+      // checks its deadline between pages.
+      if (changes.length >= MAX_PAGE_CHANGES) {
+        return { changes, next_height: Number(block.height) + 1 };
+      }
+    }
+    return { changes, next_height: read.nextHeight };
   }
 
   /** A block's Profile writes as changes, the source settled when unmarked. */
@@ -333,9 +343,10 @@ export class GatewayProfileSitePort implements ProfileSiteChainPort {
 
   /**
    * Of the identity's wallets now, those bound to it at `height`. A wallet
-   * whose principal then is unknown throws WalletPrincipalUnknownError, so
-   * the follower tries the change again later rather than decide on a list
-   * that may be short.
+   * whose principal then is unknown throws ChainReadRetryLater, so the
+   * follower tries the change again later rather than decide on a list that
+   * may be short. A wallet that has left since is not listed; the gateway
+   * has no route for an identity's wallets at an old height.
    */
   private async walletsAt(
     identity: ChainIdentity,
@@ -344,9 +355,14 @@ export class GatewayProfileSitePort implements ProfileSiteChainPort {
     const principal = identity.principalId.toLowerCase();
     const wallets: string[] = [];
     for (const wallet of identity.wallets) {
-      if ((await this.walletPrincipalAt(wallet, height)) === principal) {
-        wallets.push(wallet.toLowerCase());
+      let then: string | null;
+      try {
+        then = await this.walletPrincipalAt(wallet, height);
+      } catch (error) {
+        if (!(error instanceof WalletPrincipalUnknownError)) throw error;
+        throw new ChainReadRetryLater(error.message, 'wallet_unknown');
       }
+      if (then === principal) wallets.push(wallet.toLowerCase());
     }
     return wallets;
   }
@@ -361,7 +377,7 @@ export class GatewayProfileSitePort implements ProfileSiteChainPort {
       if (error instanceof ChainGatewayError && error.code === 'bad_request') {
         return { status: 'malformed', reason: error.message };
       }
-      throw error;
+      throw retryOnMismatch(error);
     }
     if (!bytes) return { status: 'missing' };
     try {
@@ -380,7 +396,11 @@ export class GatewayProfileSitePort implements ProfileSiteChainPort {
   }
 
   async getDocBytes(cid: string): Promise<Buffer | null> {
-    return await this.gateway.getDocument(cid);
+    try {
+      return await this.gateway.getDocument(cid);
+    } catch (error) {
+      throw retryOnMismatch(error);
+    }
   }
 
   async putDocBytes(bytes: Buffer): Promise<string> {

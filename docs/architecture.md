@@ -915,8 +915,10 @@ rows and cursor are written in one transaction. When the gateway no longer
 holds the cursor's height, or a record's wallet can't be read, it lists the
 membership at one pinned height and stores every wallet as bound since then:
 later than the truth, never earlier. The mirror names its chain by the
-network id (`chain_id`); on another one (a relaunch) the bindings and the
-identity tables start again. `IdentityChainLookups`
+network id (`chain_id`); on another one (a relaunch, which only test chains
+have) the bindings start again empty, the mappings of identities made on the
+old chain go, and a full sync rewrites the identities of the new chain; rows
+of identities only the old chain had are not deleted. `IdentityChainLookups`
 (`identity-chain-lookups.ts`) answers "the principal of wallet W at height H"
 from that table below its cursor, on the chain the gateway serves, else from
 the wallet's history on the chain where that history is exact, and throws

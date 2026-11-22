@@ -213,6 +213,61 @@ describe('GatewayProfileSitePort', () => {
     expect((await port.getChanges(10)).changes[0].source).toBe('operation');
   });
 
+  it('ends a page at a whole block once it holds 100 changes', async () => {
+    const { gateway, port } = setup();
+    const many = (height: number) => ({
+      height,
+      slot: 0,
+      root: '0x',
+      time: 1,
+      complete: true,
+      records: Array.from({ length: 60 }, () =>
+        profileRecord({ version: 2, docCid: DOC }, false)
+      )
+    });
+    gateway.getChanges.mockResolvedValueOnce(
+      feedPage({
+        from: 10,
+        through: 12,
+        next: 13,
+        blocks: [many(10), many(11), many(12)]
+      })
+    );
+    const read = await port.getChanges(10);
+    expect(read.changes).toHaveLength(120);
+    expect(read.next_height).toBe(12);
+  });
+
+  it('gives no change from a block it could not read to its end', async () => {
+    const { gateway, port } = setup();
+    gateway.getChanges
+      .mockResolvedValueOnce(
+        feedPage({
+          from: 10,
+          through: 11,
+          next: '12:1',
+          blocks: [
+            {
+              height: 12,
+              slot: 0,
+              root: '0x',
+              time: 1,
+              complete: false,
+              records: [profileRecord({ version: 1, docCid: DOC }, false)]
+            }
+          ]
+        })
+      )
+      // A gateway node behind: nothing past height 11.
+      .mockResolvedValueOnce(
+        feedPage({ from: '12:1', through: 11, next: '12:1', blocks: [] })
+      );
+    expect(await port.getChanges(10)).toEqual({
+      changes: [],
+      next_height: 12
+    });
+  });
+
   it('reads a block the gateway cut to its end before returning', async () => {
     const { gateway, port } = setup();
     const cutBlock = (complete: boolean, version: number) => ({
@@ -339,7 +394,7 @@ describe('GatewayProfileSitePort', () => {
     );
     await expect(
       port.getIdentityByPrincipal(P, { height: 7 })
-    ).rejects.toBeInstanceOf(WalletPrincipalUnknownError);
+    ).rejects.toMatchObject({ retryLater: true, reason: 'wallet_unknown' });
   });
 
   it('ends the pass at its deadline, and halves a page too large', async () => {
@@ -459,7 +514,8 @@ describe('GatewayProfileSitePort', () => {
     });
     // Wrong bytes from the store: tried again, never applied as broken.
     await expect(port.getProfileDoc('b1')).rejects.toMatchObject({
-      code: 'cid_mismatch'
+      retryLater: true,
+      reason: 'cid_mismatch'
     });
   });
 

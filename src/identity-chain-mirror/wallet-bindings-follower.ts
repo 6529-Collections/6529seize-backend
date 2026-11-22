@@ -2,9 +2,13 @@ import {
   ChainGatewayClient,
   ChainGatewayError
 } from '@/chain-gateway/chain-gateway.client';
-import { ChainFeedCursor } from '@/chain-gateway/chain-gateway.types';
 import { Logger } from '@/logging';
-import { messageOf, readFeedPage, realSleep, Sleep } from './chain-feed-pages';
+import {
+  messageOf,
+  readWholeBlocks,
+  realSleep,
+  Sleep
+} from './chain-feed-pages';
 import { IdentityChainMirrorDb, MirrorState } from './identity-chain-mirror.db';
 import {
   ADDRESS_BINDING_FAMILY,
@@ -93,11 +97,9 @@ export class WalletBindingsFollower {
     report: BindingsReport
   ): Promise<MirrorState> {
     let state = initial;
-    // The gateway's cursor in the run; the next whole height in the state,
-    // saved with the rows (a block a page ended inside is read again).
-    let from: ChainFeedCursor = Number(state.bindings_next_height);
     while (this.now() < deadline) {
-      const page = await readFeedPage(this.gateway, from, {
+      const from = Number(state.bindings_next_height);
+      const page = await readWholeBlocks(this.gateway, from, {
         limit: PAGE_BLOCKS,
         families: [ADDRESS_BINDING_FAMILY],
         sleep: this.sleep
@@ -106,7 +108,7 @@ export class WalletBindingsFollower {
         logger.warn(`[FEED GONE AT ${from}] [LISTING THE MEMBERSHIP]`);
         return await this.rebuild(state, report);
       }
-      if (page.atHead || String(page.next) === String(from)) break;
+      if (page.atHead || page.nextHeight <= from) break;
       const read = bindingChangesOf(page.blocks);
       if (read.stoppedAt !== null) {
         this.reportMalformed(read, report);
@@ -120,7 +122,6 @@ export class WalletBindingsFollower {
         { ...state, bindings_next_height: page.nextHeight },
         report
       );
-      from = page.next;
     }
     return state;
   }

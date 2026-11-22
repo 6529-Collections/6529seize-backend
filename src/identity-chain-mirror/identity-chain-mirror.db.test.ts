@@ -297,6 +297,13 @@ describeWithSeed(
         },
         1
       );
+      expect(await db.getState()).toEqual(
+        expect.objectContaining({
+          bindings_next_height: 12,
+          chain_id: '0xabc',
+          placeholders_at: 5
+        })
+      );
       expect(await db.walletBindingAt(B)).toEqual({
         binding: row(B, 7),
         nextHeight: 12,
