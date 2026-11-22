@@ -134,6 +134,10 @@ const PERSONAL_SETTINGS_REBUILD: RebuildStep = {
     'drops',
     'drops_parts',
     'waves',
+    // Today's reads of waves and drops go through the competition
+    // facade's views (legacy-competition-get-facade.ts).
+    'legacy_get_waves',
+    'legacy_get_drops',
     'profiles',
     'identities',
     'address_consolidation_keys'
@@ -165,6 +169,7 @@ const PERSONAL_SETTINGS_SEED: RebuildStep = {
     'address_consolidation_keys',
     'profiles'
   ],
+  reads: ['legacy_get_waves', 'legacy_get_drops'],
   after: ['identity.probe-profiles'],
   sources: ['files'],
   timeoutMinutes: 20
