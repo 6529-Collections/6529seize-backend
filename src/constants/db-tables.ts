@@ -58,6 +58,8 @@ export const IDENTITY_CHAIN_MIRROR_STATE_TABLE = 'identity_chain_mirror_state';
 /** Each REP and NIC rating change the identity mirror applied (notifications). */
 export const IDENTITY_CHAIN_RATING_EVENTS_TABLE =
   'identity_chain_rating_events';
+/** Each bound wallet's principal and the height it has been bound since. */
+export const IDENTITY_CHAIN_WALLETS_TABLE = 'identity_chain_wallets';
 export const TEAM_TABLE = 'team';
 export const DISTRIBUTION_TABLE = 'distribution';
 export const DISTRIBUTION_PHOTO_TABLE = 'distribution_photo';

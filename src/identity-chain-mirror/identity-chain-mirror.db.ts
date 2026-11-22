@@ -8,6 +8,7 @@ import {
   IDENTITY_CHAIN_MIRROR_STATE_TABLE,
   IDENTITY_CHAIN_PRINCIPALS_TABLE,
   IDENTITY_CHAIN_RATING_EVENTS_TABLE,
+  IDENTITY_CHAIN_WALLETS_TABLE,
   PROFILES_TABLE,
   RATINGS_TABLE,
   USE_CASE_CONSOLIDATION
@@ -26,6 +27,7 @@ import {
   WalletPair
 } from './identity-plan';
 import { ProfileDocStatement } from './profile-doc';
+import { WalletBindingRow } from './wallet-bindings';
 import type { DelegationRowWrite } from './delegation-rows';
 
 export type { DelegationRowWrite };
@@ -860,6 +862,81 @@ export class IdentityChainMirrorDb extends LazyDbAccessCompatibleService {
         { wrappedConnection: conn }
       );
     }
+  }
+
+  // ---------------------------------------------------------------- wallets
+
+  /** The stored bindings of these wallets (locked inside a transaction). */
+  async walletBindings(
+    wallets: string[],
+    conn?: Conn
+  ): Promise<Map<string, WalletBindingRow>> {
+    const result = new Map<string, WalletBindingRow>();
+    for (let i = 0; i < wallets.length; i += 1000) {
+      const rows = await this.db.execute<WalletBindingRow>(
+        `select wallet, principal_id, bound_from_height
+         from ${IDENTITY_CHAIN_WALLETS_TABLE} where wallet in (:wallets)
+         ${conn ? 'for update' : ''}`,
+        { wallets: wallets.slice(i, i + 1000) },
+        conn ? { wrappedConnection: conn } : undefined
+      );
+      rows.forEach((row) =>
+        result.set(row.wallet, {
+          wallet: row.wallet,
+          principal_id: row.principal_id,
+          bound_from_height: Number(row.bound_from_height)
+        })
+      );
+    }
+    return result;
+  }
+
+  async writeWalletBindings(
+    upserts: WalletBindingRow[],
+    deletes: string[],
+    now: number,
+    conn: Conn
+  ) {
+    const opts = { wrappedConnection: conn };
+    for (let i = 0; i < deletes.length; i += 1000) {
+      await this.db.execute(
+        `delete from ${IDENTITY_CHAIN_WALLETS_TABLE} where wallet in (:wallets)`,
+        { wallets: deletes.slice(i, i + 1000) },
+        opts
+      );
+    }
+    for (let i = 0; i < upserts.length; i += 500) {
+      const params: Record<string, unknown> = { now };
+      const values = upserts
+        .slice(i, i + 500)
+        .map((row, j) => {
+          params[`w${j}`] = row.wallet;
+          params[`p${j}`] = row.principal_id;
+          params[`h${j}`] = row.bound_from_height;
+          return `(:w${j}, :p${j}, :h${j}, :now)`;
+        })
+        .join(', ');
+      await this.db.execute(
+        `insert into ${IDENTITY_CHAIN_WALLETS_TABLE}
+           (wallet, principal_id, bound_from_height, updated_at)
+         values ${values}
+         on duplicate key update principal_id = values(principal_id),
+           bound_from_height = values(bound_from_height),
+           updated_at = values(updated_at)`,
+        params,
+        opts
+      );
+    }
+  }
+
+  /** Every wallet with a stored binding (a rebuild's reconciliation). */
+  async boundWallets(conn?: Conn): Promise<string[]> {
+    const rows = await this.db.execute<{ wallet: string }>(
+      `select wallet from ${IDENTITY_CHAIN_WALLETS_TABLE}`,
+      undefined,
+      conn ? { wrappedConnection: conn } : undefined
+    );
+    return rows.map((it) => it.wallet);
   }
 
   // ---------------------------------------------------------------- delegations

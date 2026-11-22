@@ -320,5 +320,6 @@ export * from './ICompetitionScoreReset';
 export {
   IdentityChainMirrorStateEntity,
   IdentityChainPrincipalEntity,
-  IdentityChainRatingEventEntity
+  IdentityChainRatingEventEntity,
+  IdentityChainWalletEntity
 } from './IIdentityChainMirror';

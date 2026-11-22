@@ -13,6 +13,8 @@ import {
   RatingRowWrite
 } from './identity-chain-mirror.db';
 import { MembershipChange } from './membership-change';
+import { ProfileSiteFollower } from './profile-site-port';
+import { WalletBindingRow } from './wallet-bindings';
 import {
   feedEffects,
   IdentityChainMirror,
@@ -74,6 +76,22 @@ class FakeDb {
   pairs: { wallet1: string; wallet2: string }[] = [];
   ratingReads: { target: string; events: RatingEventContext }[] = [];
   keyWidth: number | null = null;
+  bindings = new Map<string, WalletBindingRow>();
+
+  async walletBindings(wallets: string[]) {
+    return new Map(
+      wallets
+        .filter((w) => this.bindings.has(w))
+        .map((w) => [w, this.bindings.get(w)!] as const)
+    );
+  }
+  async writeWalletBindings(upserts: WalletBindingRow[], deletes: string[]) {
+    deletes.forEach((w) => this.bindings.delete(w));
+    upserts.forEach((row) => this.bindings.set(row.wallet, row));
+  }
+  async boundWallets() {
+    return Array.from(this.bindings.keys());
+  }
 
   async consolidationKeyWidth() {
     return this.keyWidth;
@@ -240,7 +258,7 @@ function delegation(
 }
 
 /** A gateway over a little chain the test edits. */
-function world() {
+function world(followers: ProfileSiteFollower[] = []) {
   const alice = chainIdentity(PID(1), [A, B], {
     handle: 'alice',
     rep: { total: '5', raters: 1 },
@@ -278,6 +296,7 @@ function world() {
     delegations: [delegation(alice.principalId, 'identity')],
     feed: [] as ChainFeedPage[],
     importCompleted: true,
+    importStart: null as number | null,
     finalized: 100
   };
   const gateway = {
@@ -288,8 +307,30 @@ function world() {
       pinnable: null
     })),
     getMembership: jest.fn(async () => ({
-      import: { completed: chain.importCompleted }
+      import: {
+        completed: chain.importCompleted,
+        startHeight: chain.importStart
+      }
     })),
+    listMembershipWallets: jest.fn(async () => ({
+      items: Array.from(chain.identities.values()).flatMap((it) =>
+        it.wallets.map((wallet) => ({ wallet, principalId: it.principalId }))
+      ),
+      next: null,
+      read: {} as never
+    })),
+    getMembershipWalletHistory: jest.fn(async (wallet: string) => {
+      const owner = Array.from(chain.identities.values()).find((it) =>
+        it.wallets.includes(wallet)
+      );
+      return {
+        wallet,
+        changes: owner ? [{ height: 3, principalId: owner.principalId }] : []
+      };
+    }),
+    getImportedIdentity: jest.fn(async () => null),
+    getDocument: jest.fn(async () => null),
+    putDocument: jest.fn(),
     listIdentities: jest.fn(async (opts: { after?: string | null }) => {
       const all = Array.from(chain.identities.values()).sort((a, b) =>
         a.principalId < b.principalId ? -1 : 1
@@ -380,7 +421,8 @@ function world() {
       async (change, ctx) => {
         changes.push({ change, connection: ctx.connection });
       }
-    ]
+    ],
+    followers
   );
   return {
     chain,
@@ -627,7 +669,7 @@ describe('IdentityChainMirror', () => {
       );
     }
     await mirror.run({ budgetMs: 60_000 });
-    expect(db.state?.sync_phase).toBe('IDENTITIES');
+    expect(db.state?.sync_phase).toBe('WALLETS');
     await mirror.run({ budgetMs: 60_000 });
     expect(db.state?.sync_phase).toBeNull();
   });
@@ -640,6 +682,114 @@ describe('IdentityChainMirror', () => {
     const report = await mirror.run({ budgetMs: 60_000 });
     expect(report.mode).toBe('full_sync');
     expect(gateway.listIdentities).toHaveBeenCalled();
+  });
+
+  it('lists the wallet bindings when there is no feed to replay', async () => {
+    const { mirror, db, alice, bob, gateway } = world();
+    const report = await mirror.run({ budgetMs: 60_000 });
+    expect(gateway.listMembershipWallets).toHaveBeenCalled();
+    expect(report.walletBindings).toBe(3);
+    expect(db.bindings.get(B)).toEqual({
+      wallet: B,
+      principal_id: alice.principalId,
+      bound_from_height: 3
+    });
+    expect(db.bindings.get(C)?.principal_id).toBe(bob.principalId);
+  });
+
+  it('replays the bindings from the feed since the import', async () => {
+    const { mirror, db, chain, alice, gateway } = world();
+    chain.importStart = 1;
+    const bind = (wallet: string, principal: string | null) => ({
+      family: '0x0102',
+      name: 'AddressBinding',
+      key: '0x',
+      value: principal ? '0x01' : null,
+      keyFields: { address: wallet },
+      valueFields: principal ? { principalId: principal } : null
+    });
+    chain.feed.push({
+      from: 1,
+      through: 120,
+      next: 121,
+      blocks: [
+        {
+          height: 2,
+          slot: 0,
+          root: '0x',
+          time: 0,
+          records: [bind(A, alice.principalId)]
+        },
+        {
+          height: 4,
+          slot: 0,
+          root: '0x',
+          time: 0,
+          records: [bind(B, alice.principalId)]
+        },
+        // Above the sync's height: the feed brings it later.
+        { height: 110, slot: 0, root: '0x', time: 0, records: [bind(B, null)] }
+      ]
+    });
+    await mirror.run({ budgetMs: 60_000 });
+    expect(gateway.listMembershipWallets).not.toHaveBeenCalled();
+    expect(gateway.getChanges).toHaveBeenCalledWith(1, {
+      limit: 200,
+      families: ['0x0102']
+    });
+    expect(
+      Array.from(db.bindings.values()).map((it) => [
+        it.wallet,
+        it.bound_from_height
+      ])
+    ).toEqual([
+      [A, 2],
+      [B, 4]
+    ]);
+    // The feed: B leaves at 110, C joins Alice at 112.
+    chain.feed.push({
+      from: 101,
+      through: 115,
+      next: 116,
+      blocks: [
+        { height: 110, slot: 0, root: '0x', time: 0, records: [bind(B, null)] },
+        {
+          height: 112,
+          slot: 0,
+          root: '0x',
+          time: 0,
+          records: [bind(C, alice.principalId)]
+        }
+      ]
+    });
+    await mirror.run({ budgetMs: 60_000 });
+    expect(db.bindings.has(B)).toBe(false);
+    expect(db.bindings.get(C)).toEqual({
+      wallet: C,
+      principal_id: alice.principalId,
+      bound_from_height: 112
+    });
+  });
+
+  it('runs the profile site followers after a full sync and each feed page', async () => {
+    const seen: unknown[] = [];
+    const ok: ProfileSiteFollower = async (port) => {
+      seen.push(port);
+    };
+    const broken: ProfileSiteFollower = async () => {
+      throw new Error('site index down');
+    };
+    const { mirror, chain } = world([ok, broken]);
+    const first = await mirror.run({ budgetMs: 60_000 });
+    expect(seen).toHaveLength(1);
+    expect(first.followerProblems).toEqual(['site index down']);
+    chain.feed.push({ from: 101, through: 103, next: 104, blocks: [] });
+    const second = await mirror.run({ budgetMs: 60_000 });
+    expect(second.mode).toBe('feed');
+    expect(seen).toHaveLength(2);
+    expect(typeof (seen[1] as { getChanges: unknown }).getChanges).toBe(
+      'function'
+    );
   });
 
   it('leaves an identity with more wallets than a key holds alone', async () => {

@@ -8,7 +8,8 @@ import {
 import {
   IDENTITY_CHAIN_MIRROR_STATE_TABLE,
   IDENTITY_CHAIN_PRINCIPALS_TABLE,
-  IDENTITY_CHAIN_RATING_EVENTS_TABLE
+  IDENTITY_CHAIN_RATING_EVENTS_TABLE,
+  IDENTITY_CHAIN_WALLETS_TABLE
 } from '@/constants';
 
 /**
@@ -31,6 +32,27 @@ export class IdentityChainPrincipalEntity {
 
   @Column({ type: 'bigint', nullable: false })
   readonly created_at!: number;
+}
+
+/**
+ * A wallet bound to a chain identity, from the chain's AddressBinding
+ * records: its principal, and the height it has been bound to that
+ * principal since without a break. A wallet that is not bound has no row.
+ */
+@Entity(IDENTITY_CHAIN_WALLETS_TABLE)
+@Index('identity_chain_wallets_principal_idx', ['principal_id'])
+export class IdentityChainWalletEntity {
+  @PrimaryColumn({ type: 'varchar', length: 42, nullable: false })
+  readonly wallet!: string;
+
+  @Column({ type: 'varchar', length: 66, nullable: false })
+  readonly principal_id!: string;
+
+  @Column({ type: 'bigint', nullable: false })
+  readonly bound_from_height!: number;
+
+  @Column({ type: 'bigint', nullable: false })
+  readonly updated_at!: number;
 }
 
 /** One row (id 'identity'): the mirror's place in the change feed. */

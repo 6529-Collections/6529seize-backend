@@ -899,6 +899,18 @@ change it applies is written, in the same transaction, to
 `identity_chain_rating_events` (rater, target, matter, category, old and new
 value, total after, chain height, FEED or FULL_SYNC) for notifications.
 
+`identity_chain_wallets` holds each bound wallet's principal and the chain
+height it has been bound to that principal since, from the feed's
+AddressBinding records (a full sync first replays them from where the mirror
+last read the feed, or lists the membership when the feed no longer holds
+those heights). `IdentityChainLookups` (`identity-chain-lookups.ts`) answers
+"the principal of wallet W at height H" from it, or from the wallet's history
+on the chain, and "the principal of profile id X" from the mapping or the
+import. After each feed page and each full sync the mirror runs the profile
+site followers in `PROFILE_SITE_FOLLOWERS` with `GatewayProfileSitePort`
+(`profile-site-port.ts`), the profile site index's chain reads served from
+the gateway client and the mirror's profile ids.
+
 ### Ordinary Ethereum RPC boundary
 
 The shared provider in `src/ethereum-rpc/` reads the server-only

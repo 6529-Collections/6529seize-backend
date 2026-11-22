@@ -242,6 +242,24 @@ describeWithSeed(
       ]);
     });
 
+    it('keeps the wallet bindings', async () => {
+      const row = (wallet: string, height: number) => ({
+        wallet,
+        principal_id: P,
+        bound_from_height: height
+      });
+      await inTx((conn) =>
+        db.writeWalletBindings([row(A, 3), row(B, 4)], [], 9, conn)
+      );
+      await inTx((conn) =>
+        db.writeWalletBindings([row(B, 7)], [A, C], 10, conn)
+      );
+      expect(await db.boundWallets()).toEqual([B]);
+      expect(await db.walletBindings([A, B])).toEqual(
+        new Map([[B, row(B, 7)]])
+      );
+    });
+
     it('never updates tdh, basetdh_rate or xTDH in a row that exists', async () => {
       expect(await db.consolidationKeyWidth()).toBeGreaterThanOrEqual(200);
       await inTx(async (conn) => {
