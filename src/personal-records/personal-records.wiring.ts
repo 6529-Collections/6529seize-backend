@@ -37,6 +37,9 @@ import {
   WaveScoreDirtyRefreshReason
 } from '@/api/waves/wave-score.service';
 import { identityMutesApiService } from '@/api/identity-mutes/identity-mutes.api.service';
+import { collectingRulesService } from '@/collecting/collecting-rules.service';
+import { checkNewRuleTerms } from '@/api/collect/collect-rules.service';
+import type { CollectRuleDeps } from './collect-rule-records';
 import type {
   PersonalLiveEffects,
   PersonalTables
@@ -332,4 +335,22 @@ export const personalLiveEffects: PersonalLiveEffects = {
         { timer: ctx.timer }
       )
     )
+};
+
+/** Collect rules through today's store, in the record's transaction. */
+export const collectRuleDeps: CollectRuleDeps = {
+  applyRule: (change, mode, ctx) =>
+    collectingRulesService.applyRuleRecord(change, connectionOf(ctx), {
+      log: true,
+      ...(mode === 'live'
+        ? {
+            beforeCreate: () =>
+              checkNewRuleTerms(change.profileId, change.definition)
+          }
+        : {})
+    }),
+  restoreRule: (state, ctx) =>
+    collectingRulesService.restoreRule(state, connectionOf(ctx)),
+  restoreOperation: (binding, ctx) =>
+    collectingRulesService.restoreOperation(binding, connectionOf(ctx))
 };

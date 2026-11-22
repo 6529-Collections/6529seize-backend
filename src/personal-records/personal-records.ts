@@ -10,14 +10,19 @@ import {
   registerPersonalRecordTypes
 } from './personal-record-types';
 import { PersonalRecordsService } from './personal-records.service';
-import { personalLiveEffects, personalTables } from './personal-records.wiring';
+import {
+  collectRuleDeps,
+  personalLiveEffects,
+  personalTables
+} from './personal-records.wiring';
 import { personalRecordsStateDb } from './personal-records-state.db';
 import { recordOwnerDirectory } from './record-owner-directory';
 
 const handlerDeps: PersonalHandlerDeps = {
   owners: recordOwnerDirectory,
   tables: personalTables,
-  live: personalLiveEffects
+  live: personalLiveEffects,
+  collect: collectRuleDeps
 };
 
 let providerKeys: readonly ProviderKey[] | null = null;

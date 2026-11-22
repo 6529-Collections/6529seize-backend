@@ -27,5 +27,14 @@ export class CollectRuleOperationEntity {
   @Column({ type: 'char', length: 64, nullable: true }) settlement_hash!:
     | string
     | null;
+  /** The sent transaction, so a reconcile can settle from Ethereum alone. */
+  @Column({ type: 'char', length: 66, nullable: true, default: null })
+  transaction_hash!: string | null;
+  /**
+   * Its nonce: once the funding wallet has mined past it with no receipt
+   * for the hash, the purchase can never happen and is released.
+   */
+  @Column({ type: 'bigint', nullable: true, default: null })
+  transaction_nonce!: number | null;
   @Column({ type: 'bigint' }) created_at!: number;
 }

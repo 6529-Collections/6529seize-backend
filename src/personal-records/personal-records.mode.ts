@@ -43,7 +43,8 @@ export interface SwitchStateSource {
   read(): Promise<PersonalSwitchState>;
 }
 
-async function assertNotFrozen(state: SwitchStateSource): Promise<void> {
+/** 503 while the personal settings switch has them frozen. */
+export async function assertNotFrozen(state: SwitchStateSource): Promise<void> {
   if ((await state.read()).frozen) {
     throw new CustomApiCompliantException(
       503,

@@ -1,4 +1,5 @@
 import { AuthenticationContext } from '@/auth-context';
+import { Logger } from '@/logging';
 import { marketHistoryPage } from '@/api/marketplace/marketplace-history';
 import { z } from 'zod';
 import type { ConnectionWrapper } from '@/sql-executor';
@@ -587,6 +588,26 @@ export async function listMarketOperations(
   };
 }
 
+const logger = Logger.get('MARKETPLACE');
+
+/**
+ * A rule's copy of a hash the market has kept. It never fails the submit:
+ * the market accepted the hash, so a refusal here is an alert, and the
+ * rule's reconcile checks the hash again.
+ */
+export async function keepRuleSentHash(
+  operationId: string,
+  transactionHash: string
+) {
+  try {
+    await collectingRulesService.recordSent(operationId, transactionHash);
+  } catch (error) {
+    logger.error(
+      `[COLLECT RULES] The rule did not keep the sent hash of operation ${operationId}: ${error instanceof Error ? error.message : String(error)}`
+    );
+  }
+}
+
 export async function submitMarketOperation(
   id: string,
   auth: AuthenticationContext,
@@ -607,8 +628,11 @@ export async function submitMarketOperation(
   if (
     row.transaction_hash === transactionHash.toLowerCase() &&
     ['SUBMITTED', 'MINED', 'CONFIRMED', 'UNKNOWN'].includes(row.state)
-  )
+  ) {
+    // A retry after the hash was kept but before the rule's copy was.
+    await keepRuleSentHash(id, transactionHash);
     return operationDto(row);
+  }
   if (
     !['REVIEW', 'APPROVAL'].includes(row.state) &&
     !(
@@ -645,6 +669,9 @@ export async function submitMarketOperation(
         : {})
     }
   );
+  // A rule's purchase keeps its hash with the rule, so a reconcile can
+  // settle it from Ethereum after the market journal is gone.
+  await keepRuleSentHash(id, transactionHash);
   return operationDto(await marketOperationsDb.get(id, row.profile_id));
 }
 
