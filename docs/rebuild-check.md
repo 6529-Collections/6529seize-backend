@@ -153,7 +153,10 @@ A probe whose answers match but whose first answer is a 4xx, or a 2xx that
 is empty, not JSON, or carries no data (an empty list, a page whose lists
 are all empty, or an object whose values are all zero, false, empty or the
 values the request asked about), proves nothing: the report lists it as
-unproven.
+unproven. The no-data test can't tell a value the code fills in for a
+missing row (a default such as `eligibility: 1`) from data, so the report
+also counts each INDEX table's rows after the seeds: a table with none
+proves nothing whatever its probes answered.
 
 `--final` also fails on:
 
@@ -218,14 +221,14 @@ Each `--source <name>=<spec>`:
 `report.md` opens with the verdict and the counts, then: failures,
 registry problems, a table per area (tables, INDEX, INDEX tables with rows
 after the seeds, kept, rebuilt, pending, probes, differences, unproven
-probes, failed steps), each source with where
-its answers came from, each step with its time and the rows in its tables afterwards, source
-violations, probe differences, unproven probes, tables that differ row by
-row, rebuilders that read kept tables, INDEX tables no probe read,
-documented GET routes no probe calls and no waiver names, planned tables
-whose code isn't in the tree, tables a fresh schema does not have, and
-pending tables. `report.json` holds the same, and both probe passes' answers
-sit beside it.
+probes, failed steps), each source with where its answers came from, each
+step with its time and the rows in its tables afterwards, source violations,
+probe differences, unproven probes, tables that differ row by row and the
+columns that comparison leaves out, rebuilders that read kept tables, INDEX
+tables no probe read, documented GET routes no probe calls and no waiver
+names, planned tables whose code isn't in the tree, tables a fresh schema
+does not have, and pending tables. `report.json` holds the same, and both
+probe passes' answers sit beside it.
 
 ## The harness's own check
 

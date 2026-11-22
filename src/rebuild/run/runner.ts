@@ -947,6 +947,18 @@ class RebuildRun {
     );
   }
 
+  /** The rebuilt tables' columns the row comparison leaves out. */
+  private volatileColumns(): RunReport['tables']['volatileColumns'] {
+    const entries = this.entries();
+    return this.rebuiltTables.flatMap((table) =>
+      (entries.get(table)?.entry.volatileColumns ?? []).map((v) => ({
+        table,
+        column: v.column,
+        reason: v.reason
+      }))
+    );
+  }
+
   /** Rebuilders that declare reads of kept tables. */
   private keptReads(): KeptRead[] {
     const entries = this.entries();
@@ -1032,7 +1044,8 @@ class RebuildRun {
         rebuilt: this.rebuiltTables,
         diffs: this.tableDiffs,
         notEmptyAfterDrop: this.notEmptyAfterDrop,
-        seededRows: this.seededRows
+        seededRows: this.seededRows,
+        volatileColumns: this.volatileColumns()
       },
       failures: this.failures,
       notes: this.notes

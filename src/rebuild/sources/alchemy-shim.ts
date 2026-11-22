@@ -336,20 +336,29 @@ export async function startAlchemyShim(nodeUrl: string): Promise<{
         return;
       }
       const call = JSON.parse(body.toString('utf8'));
-      if (
-        typeof call.method === 'string' &&
-        call.method.startsWith('alchemy_') &&
-        call.method !== 'alchemy_getAssetTransfers'
-      ) {
-        unsupported.push(call.method);
-        send(200, {
+      // A batch is checked call by call: one unserved method refuses it.
+      const calls: { method?: unknown; id?: unknown }[] = Array.isArray(call)
+        ? call
+        : [call];
+      const unserved = calls
+        .map((c) => c?.method)
+        .filter(
+          (method): method is string =>
+            typeof method === 'string' &&
+            method.startsWith('alchemy_') &&
+            (Array.isArray(call) || method !== 'alchemy_getAssetTransfers')
+        );
+      if (unserved.length) {
+        unsupported.push(...unserved);
+        const refusal = (c: { id?: unknown }) => ({
           jsonrpc: '2.0',
-          id: call.id ?? null,
+          id: c?.id ?? null,
           error: {
             code: -32601,
-            message: `${call.method} is not served by the rebuild check`
+            message: `${unserved.join(', ')} is not served by the rebuild check`
           }
         });
+        send(200, Array.isArray(call) ? calls.map(refusal) : refusal(call));
         return;
       }
       if (call.method !== 'alchemy_getAssetTransfers') {

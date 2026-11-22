@@ -94,7 +94,14 @@ function report(parts: Partial<RunReport> = {}): RunReport {
         }
       ],
       notEmptyAfterDrop: [],
-      seededRows: { team: 3, artists: 0 }
+      seededRows: { team: 3, artists: 0 },
+      volatileColumns: [
+        {
+          table: 'team',
+          column: 'created_at',
+          reason: 'Set when the loop writes the row.'
+        }
+      ]
     },
     failures: [],
     notes: [],
@@ -164,6 +171,9 @@ describe('rebuild report', () => {
     expect(markdown).toContain('- mint.team (mint) reads ens, PROVIDER');
     expect(markdown).toContain('- tdh (1): tdh_chain_days');
     expect(markdown).toContain('## Tables a fresh schema does not have');
+    expect(markdown).toContain(
+      '- team.created_at: Set when the loop writes the row.'
+    );
     expect(markdown).toContain('- mint (1): meme_lab_royalties');
     expect(markdown).toContain('GET /api/x');
   });

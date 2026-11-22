@@ -1,7 +1,11 @@
 // The identity area's seed for the probe fixture (identity.probe-profiles):
 // a profile for each fixture wallet, so probes that sign in (as
 // PROBE_CALLER) reach their handler, and no other area's seed writes
-// identity rows.
+// identity rows. It writes the rows with plain SQL, not through the
+// identity code's write path, because identity has no rebuilder yet and
+// its tables are kept through the drop. When identity's rebuilder lands,
+// the fixture profiles move into the chain gateway recording it rebuilds
+// from, and this seed goes.
 import { ADDRESS_CONSOLIDATION_KEY, IDENTITIES_TABLE } from '@/constants';
 import { PROBE_WALLETS } from '@/rebuild/manifests/probe-fixture';
 import { dbSupplier } from '@/sql-executor';

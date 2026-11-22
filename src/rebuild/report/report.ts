@@ -99,6 +99,12 @@ export interface RunReport {
     readonly notEmptyAfterDrop: string[];
     /** Rows in each INDEX table after the seeds, before the first pass. */
     readonly seededRows: Record<string, number>;
+    /** Columns of the rebuilt tables the row comparison leaves out. */
+    readonly volatileColumns: {
+      table: string;
+      column: string;
+      reason: string;
+    }[];
   };
   readonly failures: string[];
   readonly notes: string[];
@@ -236,6 +242,12 @@ export function renderMarkdown(report: RunReport): string {
           (d) =>
             `- ${d.table}: ${d.rowsBefore} rows before, ${d.rowsAfter} after; missing ${d.missing.join(' ') || 'none'}; extra ${d.extra.join(' ') || 'none'}; changed ${d.changed.join(' ') || 'none'}`
         )
+    ),
+    ...section(
+      'Columns the row comparison leaves out',
+      report.tables.volatileColumns.map(
+        (v) => `- ${v.table}.${v.column}: ${v.reason}`
+      )
     ),
     ...section(
       'Rebuilders that read kept tables',

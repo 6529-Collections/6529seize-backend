@@ -187,8 +187,21 @@ describe('the Alchemy stand-in', () => {
         id: 7,
         error: { code: -32601 }
       });
+      const batch = await post('/v2/key', [
+        { jsonrpc: '2.0', id: 1, method: 'eth_blockNumber', params: [] },
+        {
+          jsonrpc: '2.0',
+          id: 2,
+          method: 'alchemy_getTokenMetadata',
+          params: []
+        }
+      ]);
+      expect(await batch.json()).toEqual([
+        expect.objectContaining({ id: 1, error: expect.anything() }),
+        expect.objectContaining({ id: 2, error: expect.anything() })
+      ]);
       expect(shim.problems()).toEqual([
-        "ethereum: 2 Alchemy calls the run doesn't serve (the NFT API or enhanced methods); first POST /nft/v3/key/getNFTMetadataBatch, alchemy_getTokenBalances"
+        "ethereum: 3 Alchemy calls the run doesn't serve (the NFT API or enhanced methods); first POST /nft/v3/key/getNFTMetadataBatch, alchemy_getTokenBalances, alchemy_getTokenMetadata"
       ]);
     } finally {
       await shim.stop();
