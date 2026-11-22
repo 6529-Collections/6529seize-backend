@@ -22,10 +22,10 @@ export const A2 = addr(0xa2);
 export const A4 = addr(0xa4);
 export const ARTIST = addr(0xee);
 
-const T0 = Date.parse('2026-09-01T12:00:00.000Z');
-const T1 = Date.parse('2026-11-20T10:00:00.000Z');
-const T2 = Date.parse('2026-11-21T10:00:00.000Z');
-const T3 = Date.parse('2026-10-05T08:00:00.000Z');
+const SEP_1 = Date.parse('2026-09-01T12:00:00.000Z');
+const NOV_20 = Date.parse('2026-11-20T10:00:00.000Z');
+const NOV_21 = Date.parse('2026-11-21T10:00:00.000Z');
+const OCT_5 = Date.parse('2026-10-05T08:00:00.000Z');
 const TUE_BUILD = Date.parse('2026-11-24T00:01:05.000Z');
 const COLLECTED = Date.parse('2026-11-24T22:00:00.000Z');
 const iso = (ms: number) => new Date(ms).toISOString();
@@ -82,12 +82,12 @@ export function paritySnapshot(): ParitySnapshot {
         A1,
         [
           log(
-            T1,
+            NOV_20,
             `Subscribed for Meme #${CARD}`,
             'Edition Preference: One edition - Eligibility: x3 - Subscription Count: x1'
           ),
           log(
-            T2,
+            NOV_21,
             `Updated subscription count for Meme #${CARD} to x2`,
             'Eligibility: x3'
           )
@@ -97,7 +97,7 @@ export function paritySnapshot(): ParitySnapshot {
         K2,
         {
           consolidation_key: K2,
-          last_update: T0,
+          last_update: SEP_1,
           balance: 1,
           automatic: true,
           subscribe_all_editions: true,
@@ -111,7 +111,7 @@ export function paritySnapshot(): ParitySnapshot {
         K3,
         {
           consolidation_key: K3,
-          last_update: T3,
+          last_update: OCT_5,
           balance: 0.03,
           automatic: true,
           subscribe_all_editions: false,
@@ -125,7 +125,7 @@ export function paritySnapshot(): ParitySnapshot {
         K4,
         {
           consolidation_key: K4,
-          last_update: T3 + 1000,
+          last_update: OCT_5 + 1000,
           balance: 0.2,
           automatic: true,
           subscribe_all_editions: false,
@@ -182,21 +182,21 @@ export function legacyOutputs(): LegacyOutputs {
           count: 2,
           airdropAddress: A2,
           balance: 1,
-          subscribedAt: iso(T0)
+          subscribedAt: iso(SEP_1)
         },
         {
           key: K4,
           count: 1,
           airdropAddress: A4,
           balance: 0.2,
-          subscribedAt: iso(T3 + 1000)
+          subscribedAt: iso(OCT_5 + 1000)
         },
         {
           key: K1,
           count: 2,
           airdropAddress: A1,
           balance: 0.5,
-          subscribedAt: iso(T2)
+          subscribedAt: iso(NOV_21)
         }
       ]
     },
@@ -233,9 +233,9 @@ export function legacyOutputs(): LegacyOutputs {
       ]
     },
     finalRows: {
-      [K1]: finalRow(K1, 2, A1, 0.5, T2, 'Phase 0', 2),
-      [K2]: finalRow(K2, 2, A2, 1, T0, 'Phase 1', 2),
-      [K4]: finalRow(K4, 1, A4, 0.2, T3 + 1000, 'Public', 1)
+      [K1]: finalRow(K1, 2, A1, 0.5, NOV_21, 'Phase 0', 2),
+      [K2]: finalRow(K2, 2, A2, 1, SEP_1, 'Phase 1', 2),
+      [K4]: finalRow(K4, 1, A4, 0.2, OCT_5 + 1000, 'Public', 1)
     },
     phaseLists: {
       'Phase 0': [{ wallet: A1, amount: 2 }],

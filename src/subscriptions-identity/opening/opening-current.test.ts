@@ -12,8 +12,8 @@ const C = wallet(3);
 const X = wallet(9);
 const PAIR = `${A}-${B}`;
 const WIDE = Array.from({ length: 14 }, (_, i) => wallet(0x40 + i)).join('-');
-const T1 = '2026-11-20 10:00:00.123456';
-const T2 = '2026-11-21 11:00:00.000000';
+const NOV_20 = '2026-11-20 10:00:00.123456';
+const NOV_21 = '2026-11-21 11:00:00.000000';
 const CUT = { at: '2026-11-26T12:00:00.000Z', maxMemeId: 579 };
 const CUT_TEXT = '2026-11-26 12:00:00.000000';
 
@@ -54,7 +54,7 @@ function choice(
     subscribed: subscribed ? 1 : 0,
     subscribed_count: count,
     automatic_subscription: automatic ? 1 : 0,
-    created_at: T1,
+    created_at: NOV_20,
     updated_at: updatedAt
   };
 }
@@ -90,30 +90,35 @@ describe('currentState', () => {
       {
         consolidation_key: PAIR,
         balance: 0.25,
-        created_at: T1,
-        updated_at: T1
+        created_at: NOV_20,
+        updated_at: NOV_20
       },
-      { consolidation_key: C, balance: 0.5, created_at: T1, updated_at: T2 }
+      {
+        consolidation_key: C,
+        balance: 0.5,
+        created_at: NOV_20,
+        updated_at: NOV_21
+      }
     );
     t.modes.push(
       {
         consolidation_key: PAIR,
         automatic: 0,
         subscribe_all_editions: 1,
-        created_at: T1,
-        updated_at: T1
+        created_at: NOV_20,
+        updated_at: NOV_20
       },
       {
         consolidation_key: C,
         automatic: 1,
         subscribe_all_editions: 0,
-        created_at: T1,
-        updated_at: T1
+        created_at: NOV_20,
+        updated_at: NOV_20
       }
     );
     t.choices.push(
-      choice(PAIR, true, false, 2, T2),
-      choice(C, true, true, 1, T1)
+      choice(PAIR, true, false, 2, NOV_21),
+      choice(C, true, true, 1, NOV_20)
     );
     const state = currentState(CUT, t, byWallet);
     expect(state.blocked).toEqual([]);
@@ -147,8 +152,8 @@ describe('currentState', () => {
         subscribed: true,
         subscribedCount: 2,
         automaticSubscription: false,
-        createdAt: T1,
-        updatedAt: T1
+        createdAt: NOV_20,
+        updatedAt: NOV_20
       }
     ]);
   });
@@ -158,19 +163,19 @@ describe('currentState', () => {
     t.balances.push({
       consolidation_key: PAIR,
       balance: 0.1,
-      created_at: T1,
-      updated_at: T2
+      created_at: NOV_20,
+      updated_at: NOV_21
     });
-    t.choices.push(choice(PAIR, false, false, 1, T2));
+    t.choices.push(choice(PAIR, false, false, 1, NOV_21));
     const state = currentState(CUT, t, byWallet);
     expect(state.merged).toEqual([]);
     expect(state.balances[0]).toEqual({
       identityKey: P1,
       balance: 0.1,
-      createdAt: T1,
-      updatedAt: T2
+      createdAt: NOV_20,
+      updatedAt: NOV_21
     });
-    expect(state.choices[0].updatedAt).toBe(T2);
+    expect(state.choices[0].updatedAt).toBe(NOV_21);
   });
 
   it("credits waiting top-ups to the sender's identity with the legacy arithmetic", () => {
@@ -178,16 +183,16 @@ describe('currentState', () => {
     t.balances.push({
       consolidation_key: PAIR,
       balance: 0.1,
-      created_at: T1,
-      updated_at: T1
+      created_at: NOV_20,
+      updated_at: NOV_20
     });
     t.topUps.push({
       hash: '0xdone',
       block: 90,
-      transaction_date: T1,
+      transaction_date: NOV_20,
       from_wallet: X,
       amount: 1,
-      created_at: T1
+      created_at: NOV_20
     });
     t.queue.push(
       // X's first top-up: unrounded, and it covers a card.
@@ -203,7 +208,7 @@ describe('currentState', () => {
       {
         identityKey: P1,
         balance: 0.13333,
-        createdAt: T1,
+        createdAt: NOV_20,
         updatedAt: CUT_TEXT
       },
       {
@@ -242,7 +247,7 @@ describe('currentState', () => {
     const t = empty();
     // X unsubscribed from Meme #580 with no balance, then its first top-up
     // waited in the queue.
-    t.choices.push(choice(X, false, false, 1, T2));
+    t.choices.push(choice(X, false, false, 1, NOV_21));
     t.queue.push(queued('TOP_UP', X, topUp('0xb1', X, 0.07)));
     const state = currentState(CUT, t, byWallet);
     expect(
@@ -267,8 +272,8 @@ describe('currentState', () => {
     t.balances.push({
       consolidation_key: OLD,
       balance: 0.3,
-      created_at: T1,
-      updated_at: T1
+      created_at: NOV_20,
+      updated_at: NOV_20
     });
     t.queue.push(
       queued('CONSOLIDATION', PAIR, { newKey: PAIR, oldKeys: [OLD] })
@@ -286,8 +291,8 @@ describe('currentState', () => {
     t.balances.push({
       consolidation_key: `${A}-${X}`,
       balance: 0.3,
-      created_at: T1,
-      updated_at: T1
+      created_at: NOV_20,
+      updated_at: NOV_20
     });
     t.queue.push(
       queued('CONSOLIDATION', PAIR, { newKey: PAIR, oldKeys: [PAIR] })

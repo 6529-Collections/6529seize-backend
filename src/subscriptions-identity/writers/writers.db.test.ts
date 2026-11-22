@@ -112,8 +112,8 @@ const A = wallet(1);
 const C = wallet(3);
 const LONE = wallet(4);
 const CARD = 1;
-const T1 = '2026-11-20 10:00:00.000000';
-const T2 = '2026-11-21 11:00:00.000000';
+const NOV_20 = '2026-11-20 10:00:00.000000';
+const NOV_21 = '2026-11-21 11:00:00.000000';
 
 const execute = (sql: string, params?: Record<string, unknown>) =>
   sqlExecutor.execute(sql, params);
@@ -144,18 +144,18 @@ async function seedLegacy() {
   await execute(
     `INSERT INTO ${SUBSCRIPTIONS_BALANCES_TABLE} (consolidation_key, balance, created_at, updated_at)
       VALUES (:a, 0.5, :t1, :t1), (:lone, 0.2, :t1, :t1)`,
-    { a: A, lone: LONE, t1: T1 }
+    { a: A, lone: LONE, t1: NOV_20 }
   );
   await execute(
     `INSERT INTO ${SUBSCRIPTIONS_MODE_TABLE} (consolidation_key, automatic, subscribe_all_editions, created_at, updated_at)
       VALUES (:a, true, false, :t1, :t1)`,
-    { a: A, t1: T1 }
+    { a: A, t1: NOV_20 }
   );
   await execute(
     `INSERT INTO ${SUBSCRIPTIONS_NFTS_TABLE}
       (consolidation_key, contract, token_id, subscribed, subscribed_count, automatic_subscription, created_at, updated_at)
       VALUES (:lone, :c, :card, true, 1, false, :t2, :t2)`,
-    { lone: LONE, c: MEMES_CONTRACT, card: CARD, t2: T2 }
+    { lone: LONE, c: MEMES_CONTRACT, card: CARD, t2: NOV_21 }
   );
   await execute(
     `INSERT INTO ${SUBSCRIPTIONS_TOP_UP_TABLE} (hash, block, transaction_date, from_wallet, amount)

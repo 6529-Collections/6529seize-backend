@@ -2,8 +2,8 @@ import { MergeChoice, MergeState, mergeStates } from './identity-merge';
 
 jest.mock('@/sql-executor', () => ({ sqlExecutor: {} }));
 
-const T1 = '2026-11-20 10:00:00.123456';
-const T2 = '2026-11-21 11:00:00.000000';
+const NOV_20 = '2026-11-20 10:00:00.123456';
+const NOV_21 = '2026-11-21 11:00:00.000000';
 const AT = '2026-11-26 12:00:00.000000';
 
 const choice = (
@@ -18,30 +18,36 @@ const choice = (
   subscribed,
   subscribedCount: count,
   automaticSubscription: automatic,
-  createdAt: T1,
+  createdAt: NOV_20,
   updatedAt
 });
 
 describe('the one merge rule (O2)', () => {
   const survivor: MergeState = {
-    balance: { balance: 0.25, createdAt: T1, updatedAt: T1 },
+    balance: { balance: 0.25, createdAt: NOV_20, updatedAt: NOV_20 },
     mode: {
       automatic: false,
       subscribeAllEditions: true,
-      createdAt: T1,
-      updatedAt: T1
+      createdAt: NOV_20,
+      updatedAt: NOV_20
     },
-    choices: [choice(580, true, false, 2, T2), choice(581, false, false, 1, T2)]
+    choices: [
+      choice(580, true, false, 2, NOV_21),
+      choice(581, false, false, 1, NOV_21)
+    ]
   };
   const joining: MergeState = {
-    balance: { balance: 0.5, createdAt: T2, updatedAt: T2 },
+    balance: { balance: 0.5, createdAt: NOV_21, updatedAt: NOV_21 },
     mode: {
       automatic: true,
       subscribeAllEditions: false,
-      createdAt: T2,
-      updatedAt: T2
+      createdAt: NOV_21,
+      updatedAt: NOV_21
     },
-    choices: [choice(580, true, true, 1, T1), choice(582, true, true, 1, T2)]
+    choices: [
+      choice(580, true, true, 1, NOV_20),
+      choice(582, true, true, 1, NOV_21)
+    ]
   };
 
   it('sums balances and writes a fresh mode at the merge time, keeping either flag', () => {
@@ -63,9 +69,9 @@ describe('the one merge rule (O2)', () => {
     const merged = mergeStates([survivor, joining], AT);
     expect(merged.choices).toEqual([
       // The manual request sets the count; the earlier priority time stays.
-      { ...choice(580, true, false, 2, T1) },
-      choice(581, false, false, 1, T2),
-      choice(582, true, true, 1, T2)
+      { ...choice(580, true, false, 2, NOV_20) },
+      choice(581, false, false, 1, NOV_21),
+      choice(582, true, true, 1, NOV_21)
     ]);
   });
 

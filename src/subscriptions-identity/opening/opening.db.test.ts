@@ -75,8 +75,8 @@ const C = wallet(3);
 /** Fourteen wallets, too long for subscriptions_redeemed. */
 const WIDE = Array.from({ length: 14 }, (_, i) => wallet(0x40 + i)).join('-');
 const PAIR = `${A}-${B}`;
-const T1 = '2026-11-20 10:00:00.123456';
-const T2 = '2026-11-21 11:30:00.654321';
+const NOV_20 = '2026-11-20 10:00:00.123456';
+const NOV_21 = '2026-11-21 11:30:00.654321';
 const CUT_MS = Date.parse('2026-11-26T12:00:00Z');
 
 const execute = (sql: string, params?: Record<string, unknown>) =>
@@ -114,23 +114,23 @@ async function seedLegacy() {
   await execute(
     `INSERT INTO ${SUBSCRIPTIONS_BALANCES_TABLE} (consolidation_key, balance, created_at, updated_at)
       VALUES (:k, 0.13058, :t1, :t2), (:lone, 0.13471, :t1, :t1)`,
-    { k: PAIR, lone: LONE, t1: T1, t2: T2 }
+    { k: PAIR, lone: LONE, t1: NOV_20, t2: NOV_21 }
   );
   await execute(
     `INSERT INTO ${SUBSCRIPTIONS_MODE_TABLE} (consolidation_key, automatic, subscribe_all_editions, created_at, updated_at)
       VALUES (:k, true, false, :t1, :t2)`,
-    { k: PAIR, t1: T1, t2: T2 }
+    { k: PAIR, t1: NOV_20, t2: NOV_21 }
   );
   await execute(
     `INSERT INTO ${SUBSCRIPTIONS_NFTS_TABLE} (consolidation_key, contract, token_id, subscribed, subscribed_count, automatic_subscription, created_at, updated_at)
       VALUES (:k, :c, 580, true, 1, false, :t1, :t2)`,
-    { k: PAIR, c: MEMES_CONTRACT, t1: T1, t2: T2 }
+    { k: PAIR, c: MEMES_CONTRACT, t1: NOV_20, t2: NOV_21 }
   );
   await execute(
     `INSERT INTO ${SUBSCRIPTIONS_TOP_UP_TABLE} (hash, block, transaction_date, from_wallet, amount, created_at)
       VALUES ('0xaa', 10, '2026-11-01 00:00:00', :lone, 0.2, :t1),
              ('0xbb', 11, '2026-11-02 00:00:00', :b, 0.13058, :t1)`,
-    { lone: LONE, b: B, t1: T1 }
+    { lone: LONE, b: B, t1: NOV_20 }
   );
   await execute(
     `INSERT INTO ${SUBSCRIPTIONS_NFTS_FINAL_TABLE}
@@ -138,18 +138,18 @@ async function seedLegacy() {
        subscribed_at, phase, phase_subscriptions, phase_position, redeemed_count, created_at, updated_at)
       VALUES (1001, :lone, :c, 579, 1, :lone, 0.2, :t1, 'Public', 1, 0, 1, :t1, :t1),
              (1005, :lone, :c, 578, 1, :lone, 0.2, :t1, 'Phase 1', 1, 3, 0, :t1, :t1)`,
-    { lone: LONE, c: MEMES_CONTRACT, t1: T1 }
+    { lone: LONE, c: MEMES_CONTRACT, t1: NOV_20 }
   );
   await execute(
     `INSERT INTO ${SUBSCRIPTIONS_REDEEMED_TABLE}
       (contract, token_id, address, transaction, transaction_date, consolidation_key, value, balance_after, count, created_at)
       VALUES (:c, 579, :lone, '0xt1', '2026-11-25 15:00:00', :lone, 0.06529, 0.13471, 1, :t1)`,
-    { lone: LONE, c: MEMES_CONTRACT, t1: T1 }
+    { lone: LONE, c: MEMES_CONTRACT, t1: NOV_20 }
   );
   await execute(
     `INSERT INTO ${SUBSCRIPTIONS_LOGS_TABLE} (consolidation_key, log, additional_info, created_at)
       VALUES (:k, 'Subscribed for Meme #580', NULL, :t2), (:lone, 'Top up', 'x', :t1)`,
-    { k: PAIR, lone: LONE, t1: T1, t2: T2 }
+    { k: PAIR, lone: LONE, t1: NOV_20, t2: NOV_21 }
   );
 }
 
@@ -248,7 +248,7 @@ describeWithSeed('subscriptions opening file', [], () => {
          FROM ${SUBSCRIPTIONS_ID_BALANCES_TABLE} WHERE identity_key = :p`,
       { p: P1 }
     );
-    expect(balance.updated_at).toBe(T2);
+    expect(balance.updated_at).toBe(NOV_21);
 
     expect(await suspendIdentityTables(CUT_MS + 6)).toBe(true);
     expect((await switchAt(CUT_MS + 7).status()).reason).toBe('SUSPENDED');
@@ -303,7 +303,7 @@ describeWithSeed('subscriptions opening file', [], () => {
     await execute(
       `INSERT INTO ${SUBSCRIPTIONS_LOGS_TABLE} (consolidation_key, log, additional_info, created_at)
         VALUES (:k, 'Subscription Mode set to Manual', NULL, :t1)`,
-      { k: `${A}-${LONE}`, t1: T1 }
+      { k: `${A}-${LONE}`, t1: NOV_20 }
     );
     const [line] = await sqlExecutor.execute<{ id: number }>(
       `SELECT id FROM ${SUBSCRIPTIONS_LOGS_TABLE} WHERE consolidation_key = :k`,

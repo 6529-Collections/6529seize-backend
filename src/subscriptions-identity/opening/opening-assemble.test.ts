@@ -17,7 +17,7 @@ const DELEGATE = wallet(5);
 const PAIR = `${A}-${B}`;
 const OLD_SPLIT = `${A}-${C}`;
 const T = '2026-11-20 10:00:00.123456';
-const T2 = '2026-11-21 11:00:00.000000';
+const NOV_21 = '2026-11-21 11:00:00.000000';
 const MAX = 579;
 
 const byWallet = new Map([
@@ -33,7 +33,7 @@ function tables(): LegacyTables {
         consolidation_key: PAIR,
         balance: 0.13058,
         created_at: T,
-        updated_at: T2
+        updated_at: NOV_21
       },
       {
         consolidation_key: LONE,
@@ -48,7 +48,7 @@ function tables(): LegacyTables {
         automatic: 1,
         subscribe_all_editions: 0,
         created_at: T,
-        updated_at: T2
+        updated_at: NOV_21
       }
     ],
     choices: [
@@ -60,7 +60,7 @@ function tables(): LegacyTables {
         subscribed_count: 1,
         automatic_subscription: 0,
         created_at: T,
-        updated_at: T2
+        updated_at: NOV_21
       },
       {
         consolidation_key: OLD_SPLIT,
@@ -77,10 +77,10 @@ function tables(): LegacyTables {
       {
         hash: '0xb',
         block: 20,
-        transaction_date: T2,
+        transaction_date: NOV_21,
         from_wallet: B,
         amount: 0.1,
-        created_at: T2
+        created_at: NOV_21
       },
       {
         hash: '0xa',
@@ -116,13 +116,13 @@ function tables(): LegacyTables {
         subscribed_count: 1,
         airdrop_address: DELEGATE,
         balance: 0.13058,
-        subscribed_at: T2,
+        subscribed_at: NOV_21,
         phase: null,
         phase_subscriptions: -1,
         phase_position: -1,
         redeemed_count: 0,
-        created_at: T2,
-        updated_at: T2
+        created_at: NOV_21,
+        updated_at: NOV_21
       }
     ],
     uploads: [
@@ -131,7 +131,7 @@ function tables(): LegacyTables {
         token_id: MAX + 1,
         date: '2026-11-25',
         upload_url: 'https://example.test/list.csv',
-        created_at: T2
+        created_at: NOV_21
       }
     ],
     redeemed: [
@@ -214,7 +214,7 @@ describe('assembleOpening', () => {
     expect(o.blocked).toEqual([]);
     // Sorted by identity key, in code-unit order.
     expect(o.balances).toEqual([
-      { identityKey: P1, balance: 0.13058, createdAt: T, updatedAt: T2 },
+      { identityKey: P1, balance: 0.13058, createdAt: T, updatedAt: NOV_21 },
       { identityKey: LONE, balance: 0.06529, createdAt: T, updatedAt: T }
     ]);
     expect(o.modes[0]).toEqual({
@@ -222,7 +222,7 @@ describe('assembleOpening', () => {
       automatic: true,
       subscribeAllEditions: false,
       createdAt: T,
-      updatedAt: T2
+      updatedAt: NOV_21
     });
     expect(o.choices.map((c) => [c.identityKey, c.tokenId])).toEqual([
       [P1, MAX + 1]

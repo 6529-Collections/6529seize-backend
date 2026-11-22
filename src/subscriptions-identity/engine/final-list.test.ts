@@ -11,8 +11,8 @@ const W2 = '0x0000000000000000000000000000000000000002';
 const W3 = '0x0000000000000000000000000000000000000003';
 const W9 = '0x0000000000000000000000000000000000000009';
 const BUILD_AT = Date.parse('2026-11-25T00:01:00.000Z');
-const T1 = Date.parse('2026-10-01T10:00:00.000Z');
-const T2 = Date.parse('2026-10-02T10:00:00.000Z');
+const OCT_1 = Date.parse('2026-10-01T10:00:00.000Z');
+const OCT_2 = Date.parse('2026-10-02T10:00:00.000Z');
 
 function subscriber(
   overrides: Partial<SubscriberBuildInput> & { key: string }
@@ -48,7 +48,7 @@ describe('buildFinalList', () => {
           subscribed: true,
           subscribedCount: 2,
           automaticSubscription: false,
-          updatedAtMs: T1
+          updatedAtMs: OCT_1
         },
         eligibility: 3
       })
@@ -61,7 +61,7 @@ describe('buildFinalList', () => {
         subscribedCount: 2,
         airdropAddress: W9,
         balance: 1,
-        subscribedAt: new Date(T1).toISOString()
+        subscribedAt: new Date(OCT_1).toISOString()
       }
     ]);
   });
@@ -70,25 +70,33 @@ describe('buildFinalList', () => {
     const result = build([
       subscriber({
         key: W2,
-        mode: { automatic: true, subscribeAllEditions: true, updatedAtMs: T1 },
+        mode: {
+          automatic: true,
+          subscribeAllEditions: true,
+          updatedAtMs: OCT_1
+        },
         eligibility: 4
       })
     ]);
     expect(result.autoPopulated).toEqual([{ key: W2, subscribedCount: 4 }]);
     expect(result.rows[0].subscribedCount).toBe(4);
-    expect(result.rows[0].subscribedAt).toBe(new Date(T1).toISOString());
+    expect(result.rows[0].subscribedAt).toBe(new Date(OCT_1).toISOString());
   });
 
   it('does not populate over an existing unsubscribed row', () => {
     const result = build([
       subscriber({
         key: W2,
-        mode: { automatic: true, subscribeAllEditions: false, updatedAtMs: T1 },
+        mode: {
+          automatic: true,
+          subscribeAllEditions: false,
+          updatedAtMs: OCT_1
+        },
         card: {
           subscribed: false,
           subscribedCount: 1,
           automaticSubscription: false,
-          updatedAtMs: T2
+          updatedAtMs: OCT_2
         }
       })
     ]);
@@ -108,7 +116,7 @@ describe('buildFinalList', () => {
           subscribed: true,
           subscribedCount: 27,
           automaticSubscription: false,
-          updatedAtMs: T1
+          updatedAtMs: OCT_1
         }
       })
     ]);
@@ -120,7 +128,11 @@ describe('buildFinalList', () => {
       subscriber({
         key: W1,
         balance: 0.05,
-        mode: { automatic: true, subscribeAllEditions: false, updatedAtMs: T1 }
+        mode: {
+          automatic: true,
+          subscribeAllEditions: false,
+          updatedAtMs: OCT_1
+        }
       }),
       subscriber({
         key: W2,
@@ -129,7 +141,7 @@ describe('buildFinalList', () => {
           subscribed: true,
           subscribedCount: 1,
           automaticSubscription: false,
-          updatedAtMs: T1
+          updatedAtMs: OCT_1
         }
       })
     ]);
@@ -146,12 +158,12 @@ describe('buildFinalList', () => {
       subscribed: true,
       subscribedCount: 1,
       automaticSubscription: true,
-      updatedAtMs: T1
+      updatedAtMs: OCT_1
     };
     const mode = {
       automatic: true,
       subscribeAllEditions: true,
-      updatedAtMs: T1
+      updatedAtMs: OCT_1
     };
     const auto = build([subscriber({ key: W1, card, mode, eligibility: 3 })]);
     const manual = build([
@@ -174,7 +186,7 @@ describe('buildFinalList', () => {
           subscribed: true,
           subscribedCount: 0,
           automaticSubscription: false,
-          updatedAtMs: T1
+          updatedAtMs: OCT_1
         }
       })
     ]);
@@ -190,9 +202,9 @@ describe('buildFinalList', () => {
       updatedAtMs
     });
     const result = build([
-      subscriber({ key: W3, card: card(T2), balance: 5 }),
-      subscriber({ key: W1, card: card(T1), balance: 1 }),
-      subscriber({ key: W2, card: card(T1), balance: 2 })
+      subscriber({ key: W3, card: card(OCT_2), balance: 5 }),
+      subscriber({ key: W1, card: card(OCT_1), balance: 1 }),
+      subscriber({ key: W2, card: card(OCT_1), balance: 2 })
     ]);
     expect(result.rows.map((r) => r.key)).toEqual([W2, W1, W3]);
   });
@@ -214,7 +226,7 @@ describe('buildFinalList', () => {
                 subscribed: true,
                 subscribedCount: requested,
                 automaticSubscription: false,
-                updatedAtMs: T1
+                updatedAtMs: OCT_1
               }
             })
           ]);
