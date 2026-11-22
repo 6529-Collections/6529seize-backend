@@ -60,6 +60,17 @@ export interface E2eeDeletionRow {
   readonly positions: readonly number[];
   readonly event: string | null;
   readonly heldBy: readonly string[];
+  readonly attempts: number;
+}
+
+/**
+ * How long a DEL waits after its `attempts`-th failure: a minute, doubling
+ * to at most six hours, so a relay that refuses it is not asked every
+ * minute.
+ */
+export function e2eeDeletionRetryDelayMs(attempts: number): number {
+  const doublings = Math.min(Math.max(attempts - 1, 0), 20);
+  return Math.min(60 * 1000 * 2 ** doublings, 6 * 60 * 60 * 1000);
 }
 
 /**
@@ -137,7 +148,8 @@ export interface E2eeStreamStore {
     keepLatest: boolean,
     connection?: Conn
   ): Promise<number>;
-  listDeletions(limit: number): Promise<E2eeDeletionRow[]>;
+  /** Queued DELs due by `now` (past their backoff), oldest first. */
+  listDeletions(limit: number, now: number): Promise<E2eeDeletionRow[]>;
   /** Event ids by position (null while unsigned); positions still pending. */
   deletionTargets(
     wave: string,
@@ -148,7 +160,8 @@ export interface E2eeStreamStore {
   }>;
   saveDeletionEvent(id: number, event: string): Promise<void>;
   markDeletionHeld(id: number, url: string): Promise<void>;
-  markDeletionFailed(id: number, error: string): Promise<void>;
+  /** A failed attempt: its error, and no retry before `retryAt`. */
+  markDeletionFailed(id: number, error: string, retryAt: number): Promise<void>;
   /** Drops a DEL every relay holds, and its records' index rows. */
   finishDeletion(row: E2eeDeletionRow): Promise<void>;
   countDeletions(): Promise<number>;
@@ -536,17 +549,19 @@ export class MysqlE2eeStreamStore
     return positions.length;
   }
 
-  async listDeletions(limit: number): Promise<E2eeDeletionRow[]> {
+  async listDeletions(limit: number, now: number): Promise<E2eeDeletionRow[]> {
     const rows = await this.db.execute<{
       id: number | string;
       wave: string;
       positions: string;
       event: string | null;
       held_by: string;
+      attempts: number | string;
     }>(
-      `select id, wave, positions, event, held_by
-       from ${E2EE_RELAY_DELETIONS_TABLE} order by id limit :limit`,
-      { limit },
+      `select id, wave, positions, event, held_by, attempts
+       from ${E2EE_RELAY_DELETIONS_TABLE}
+       where next_attempt_at <= :now order by id limit :limit`,
+      { limit, now },
       this.opts()
     );
     return rows.map((row) => ({
@@ -554,7 +569,8 @@ export class MysqlE2eeStreamStore
       wave: row.wave,
       positions: parseList(row.positions).map(Number),
       event: row.event,
-      heldBy: parseList(row.held_by)
+      heldBy: parseList(row.held_by),
+      attempts: Number(row.attempts)
     }));
   }
 
@@ -605,11 +621,17 @@ export class MysqlE2eeStreamStore
     );
   }
 
-  async markDeletionFailed(id: number, error: string): Promise<void> {
+  async markDeletionFailed(
+    id: number,
+    error: string,
+    retryAt: number
+  ): Promise<void> {
     await this.db.execute(
       `update ${E2EE_RELAY_DELETIONS_TABLE}
-       set attempts = attempts + 1, last_error = :error where id = :id`,
-      { id, error: error.slice(0, 255) },
+       set attempts = attempts + 1, last_error = :error,
+         next_attempt_at = :retryAt
+       where id = :id`,
+      { id, error: error.slice(0, 255), retryAt },
       this.opts()
     );
   }

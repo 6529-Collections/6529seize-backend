@@ -34,6 +34,8 @@ const PENDING_WAVES = 500;
 /** Heads that moved this recently are checked on every relay. */
 const HEAD_CHECK_WINDOW_MS = 15 * 60 * 1000;
 const HEAD_CHECK_STREAMS = 200;
+/** The Lambda stops at 300 s: a run starts no new work after this. */
+const RUN_BUDGET_MS = 240 * 1000;
 
 export interface E2eeRelayLoopDeps {
   readonly settings: () => E2eeRelaySettings;
@@ -49,6 +51,8 @@ export interface E2eeRelayLoopDeps {
   readonly now: () => number;
   /** Where each run's lag goes as metrics (CloudWatch in the Lambda). */
   readonly metrics?: (report: E2eeRelayLoopReport) => void;
+  /** How long a run may start new work (default 240 s). */
+  readonly budgetMs?: number;
 }
 
 export interface E2eeRelayLoopReport {
@@ -73,6 +77,13 @@ export interface E2eeRelayLoopReport {
     readonly repaired: number;
     readonly unrepaired: readonly string[];
   };
+  /**
+   * Relays this run could not reach: each was tried once, then passed
+   * over until the next run.
+   */
+  readonly unreachable: readonly string[];
+  /** The phase the time budget cut short (logged as [BUDGET]), or null. */
+  readonly cut: 'publish' | 'deletions' | 'heads' | null;
 }
 
 type RefValue = string | { readonly h?: unknown } | null | undefined;
@@ -159,13 +170,18 @@ export async function copyE2eeStream(
 
 async function checkHead(
   deps: E2eeRelayLoopDeps,
-  head: E2eeStreamHead
+  head: E2eeStreamHead,
+  unreachable: Set<string>
 ): Promise<{ behind: string[]; repaired: number; unrepaired: string[] }> {
   const pool = deps.pool();
   const holders: string[] = [];
   const behind: string[] = [];
   for (const url of pool.urls) {
-    const newest = await pool.newest(url, head.wave).catch(() => undefined);
+    if (unreachable.has(url)) continue;
+    const newest = await pool.newest(url, head.wave).catch(() => {
+      unreachable.add(url);
+      return undefined;
+    });
     if (newest === undefined) continue;
     if (newest && e2eeEventContentHash(newest.event) === head.hash) {
       holders.push(url);
@@ -214,11 +230,22 @@ export async function runE2eeRelayPublishLoop(
       outbox: { rows: 0, oldestAgeMs: null },
       deletions: { done: 0, waiting: 0 },
       failures: { outbox: null, deletion: null },
-      heads: { checked: 0, behind: [], repaired: 0, unrepaired: [] }
+      heads: { checked: 0, behind: [], repaired: 0, unrepaired: [] },
+      unreachable: [],
+      cut: null
     };
   }
-  const published = await deps.publisher.publishPending(PENDING_WAVES);
-  const deleted = await deps.publisher.publishDeletions(PENDING_WAVES);
+  const started = deps.now();
+  const deadline = started + (deps.budgetMs ?? RUN_BUDGET_MS);
+  const unreachable = new Set<string>();
+  const run = { deadline, unreachable };
+  const published = await deps.publisher.publishPending(PENDING_WAVES, run);
+  const deleted = await deps.publisher.publishDeletions(PENDING_WAVES, run);
+  let cut: E2eeRelayLoopReport['cut'] = published.cut
+    ? 'publish'
+    : deleted.cut
+      ? 'deletions'
+      : null;
   const outbox = await deps.store.countOutbox();
   const waitingDeletions = await deps.store.countDeletions();
   const failures =
@@ -233,14 +260,18 @@ export async function runE2eeRelayPublishLoop(
   const unrepaired: string[] = [];
   let repaired = 0;
   for (const head of heads) {
-    const result = await checkHead(deps, head);
+    if (deps.now() >= deadline) {
+      cut ??= 'heads';
+      break;
+    }
+    const result = await checkHead(deps, head, unreachable);
     behind.push(...result.behind);
     unrepaired.push(...result.unrepaired);
     repaired += result.repaired;
   }
   const report: E2eeRelayLoopReport = {
     mode,
-    published,
+    published: { waves: published.waves, complete: published.complete },
     outbox: {
       rows: outbox.rows,
       oldestAgeMs:
@@ -250,8 +281,15 @@ export async function runE2eeRelayPublishLoop(
     },
     deletions: { done: deleted.done, waiting: waitingDeletions },
     failures,
-    heads: { checked: heads.length, behind, repaired, unrepaired }
+    heads: { checked: heads.length, behind, repaired, unrepaired },
+    unreachable: Array.from(unreachable),
+    cut
   };
+  if (cut) {
+    logger.warn(
+      `[BUDGET] stopped in ${cut} after ${deps.now() - started} ms; the next run goes on`
+    );
+  }
   if (unrepaired.length || outbox.rows || waitingDeletions) {
     logger.warn(`[LAG] ${JSON.stringify(report)}`);
   }
@@ -273,7 +311,9 @@ export function e2eeRelayLagMetrics(
     OutboxMostAttempts: report.failures.outbox?.attempts ?? 0,
     DeletionsWaiting: report.deletions.waiting,
     HeadsBehind: report.heads.behind.length,
-    HeadsUnrepaired: report.heads.unrepaired.length
+    HeadsUnrepaired: report.heads.unrepaired.length,
+    RelaysUnreachable: report.unreachable.length,
+    RunsCut: report.cut ? 1 : 0
   };
 }
 

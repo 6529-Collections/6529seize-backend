@@ -1725,7 +1725,7 @@ describe('records within the relays limits, and past their retention', () => {
     expect(s.store.deletionRows).toMatchObject([
       { wave: `dv/${B}`, positions: [1] }
     ]);
-    expect(await s.publisher.publishDeletions(10)).toEqual({
+    expect(await s.publisher.publishDeletions(10)).toMatchObject({
       queued: 1,
       done: 1
     });

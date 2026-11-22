@@ -1909,22 +1909,42 @@ export class E2eeDb extends LazyDbAccessCompatibleService {
   }
 
   private async pruneWelcomes(nowMs: number, limit: number): Promise<void> {
-    const expired = await this.many<{ welcome_id: string; device_key: string }>(
-      `select welcome_id, device_key from ${E2EE_WELCOME_DELIVERIES_TABLE}
-       where created_at < :cutoff limit :limit`,
-      { cutoff: nowMs - E2EE_RETENTION.welcomeDeliveriesMs, limit }
-    );
-    for (const row of expired) {
+    // One batch: the expired deliveries locked, deleted in one statement,
+    // and their DELs queued, one per device inbox, in the same transaction.
+    await this.executeNativeQueriesInTransaction(async (connection) => {
+      const expired = await this.many<{
+        welcome_id: string;
+        device_key: string;
+      }>(
+        `select welcome_id, device_key from ${E2EE_WELCOME_DELIVERIES_TABLE}
+         where created_at < :cutoff limit :limit for update skip locked`,
+        { cutoff: nowMs - E2EE_RETENTION.welcomeDeliveriesMs, limit },
+        connection
+      );
+      if (!expired.length) return;
+      const params: Record<string, string> = {};
+      const pairs = expired.map((row, index) => {
+        params[`w${index}`] = row.welcome_id;
+        params[`d${index}`] = row.device_key;
+        return `(:w${index}, :d${index})`;
+      });
       await this.write(
         `delete from ${E2EE_WELCOME_DELIVERIES_TABLE}
-         where welcome_id = :welcomeId and device_key = :deviceKey`,
-        { welcomeId: row.welcome_id, deviceKey: row.device_key }
+         where (welcome_id, device_key) in (${pairs.join(', ')})`,
+        params,
+        connection
       );
       // The relays keep an expired Welcome no longer than the inbox does.
-      await this.reportRecords.deleted('dv', row.device_key, [
-        `welcome:${row.welcome_id}`
-      ]);
-    }
+      const byDevice = new Map<string, string[]>();
+      for (const row of expired) {
+        const keys = byDevice.get(row.device_key) ?? [];
+        keys.push(`welcome:${row.welcome_id}`);
+        byDevice.set(row.device_key, keys);
+      }
+      for (const [device, keys] of Array.from(byDevice.entries())) {
+        await this.reportRecords.deleted('dv', device, keys, connection);
+      }
+    });
     const orphans = await this.many<{ id: string }>(
       `select w.id from ${E2EE_WELCOMES_TABLE} w
        where not exists (

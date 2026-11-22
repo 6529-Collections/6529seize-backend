@@ -736,10 +736,14 @@ while off) publishes what the outbox and the DEL queue still hold, and
 checks that every relay holds the head of each stream that moved in the
 last 15 minutes: the newest record, passing over DELs, which sit outside
 the chain. A relay found behind gets the missing records (never DELs)
-copied from a relay that has them. Each run writes the lag as metrics in namespace
+copied from a relay that has them. A relay the run cannot reach is tried once and
+then passed over until the next run, and a run starts no new work after
+240 seconds (the Lambda stops at 300) and logs `[BUDGET]` with the phase it
+left. Each run writes the lag as metrics in namespace
 `6529/E2eeRelay` (dimension `Environment`): `OutboxRows`,
 `OutboxOldestAgeSeconds`, `OutboxMostAttempts`, `DeletionsWaiting`,
-`HeadsBehind` and `HeadsUnrepaired`. The alarm `e2eeRelay-lag` goes off
+`HeadsBehind`, `HeadsUnrepaired`, `RelaysUnreachable` and `RunsCut`.
+The alarm `e2eeRelay-lag` goes off
 when a record has waited 15 minutes or more through three 5-minute periods.
 While anything waits, the `[LAG]` log line names the record and the DEL
 that failed most often, each with the last error a relay gave
@@ -788,7 +792,10 @@ none in `cv` or `dr`. An event a DEL names keeps
 only its header on the relays and is never served again, so the rebuild
 allows one missing position per id a DEL names. A relay that refuses a DEL
 leaves it queued: DELs sit outside the hash chains, so a refusal never
-holds a stream back. The report prune locks the rows it deletes and passes
+holds a stream back. A DEL that failed waits a minute before the next try,
+doubling up to six hours. A DEL naming a record whose event id was never
+saved is kept, logged and named in the lag report, never dropped. The
+report prune locks the rows it deletes and passes
 over one a moderator is holding at that moment, and queues DELs in the same
 transaction for the reports it deleted only, so a hold never loses its
 records. A message's ciphertext in a group log
@@ -802,6 +809,13 @@ its author, and what the report did for the reporter when filed:
 the reporter's hides and blocks reads these from the moderators' inbox, so
 it needs the moderation key. Both are null on reports filed before they
 were kept; the moderators' queue does not show them.
+
+**Known limit: queued DELs and a rebuild.** `e2ee_relay_deletions` is not
+rebuilt, so DELs still queued when MySQL is lost are lost with it, and the
+relays keep the content they named. The rebuilt rows are right all the
+same: the records that deleted those items replay, and retention applies
+at the rebuild's `now`. Only the relays keep that content longer than
+MySQL would. Queuing those DELs again after a rebuild is follow-up work.
 
 **Known limit: one moderators' inbox stream.** Every report record goes to
 one `md` stream, so its head lock serializes report writes and its replay

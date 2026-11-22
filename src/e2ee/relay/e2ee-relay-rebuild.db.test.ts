@@ -874,7 +874,7 @@ describeWithSeed('e2ee relay records against MySQL', SEEDS, () => {
     );
     expect(queued.map((row) => JSON.parse(row.positions))).toEqual([[1]]);
     // With the backup compaction's DEL (the compacted chunk's bytes).
-    expect(await publisher.publishDeletions(10)).toEqual({
+    expect(await publisher.publishDeletions(10)).toMatchObject({
       queued: 2,
       done: 2
     });
@@ -898,6 +898,25 @@ describeWithSeed('e2ee relay records against MySQL', SEEDS, () => {
     await emptyTables();
     expect((await rebuild('write')).ok).toBe(true);
     expect(await answers(ids)).toEqual(before);
+  });
+
+  it('prunes expired Welcomes in one batch, with a DEL per device inbox', async () => {
+    const ids = await story();
+    expect(await groups.getWelcomes('pb', ids.b)).toHaveLength(1);
+    await db.pruneExpired(
+      NOW + E2EE_RETENTION.welcomeDeliveriesMs + 1,
+      async () => []
+    );
+    const deliveries = await sqlExecutor.execute(
+      `select * from e2ee_welcome_deliveries where device_key = :device`,
+      { device: ids.b }
+    );
+    expect(deliveries).toEqual([]);
+    const queued = await sqlExecutor.execute<{ positions: string }>(
+      `select positions from e2ee_relay_deletions where wave = :wave`,
+      { wave: `dv/${ids.b}` }
+    );
+    expect(queued.map((row) => JSON.parse(row.positions))).toEqual([[1]]);
   });
 
   it('prunes only the reports it locked, and DELs only those', async () => {
@@ -989,6 +1008,10 @@ describeWithSeed('e2ee relay records against MySQL', SEEDS, () => {
       lastError: expect.stringContaining('wss://relay.test')
     });
     relay.down = false;
+    // The DEL's backoff has passed.
+    await sqlExecutor.execute(
+      `update e2ee_relay_deletions set next_attempt_at = 0`
+    );
     // The ack's record still waits in the outbox: lagging, not different.
     expect(await rebuild('verify')).toMatchObject({
       failures: [],

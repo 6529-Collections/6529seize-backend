@@ -76,23 +76,49 @@ function setup() {
     random: () => 1
   });
   const metrics: E2eeRelayLoopReport[] = [];
-  const loop = () =>
+  const loop = (budgetMs?: number) =>
     runE2eeRelayPublishLoop({
       settings: () => settings,
       publisher,
       store,
       pool: () => pool,
       now: () => clock,
-      metrics: (report) => metrics.push(report)
+      metrics: (report) => metrics.push(report),
+      budgetMs
     });
   const wait = (ms: number) => (clock += ms);
   return { relays, held, store, publisher, loop, settings, metrics, wait };
 }
 
-function message(seq: number, bytes: Buffer): E2eeRecordAppend {
+const welcomeId = (n: number) => `0x${n.toString(16).padStart(32, '0')}`;
+
+/** A pending Welcome for DEVICE, in its inbox stream. */
+function welcome(n: number): E2eeRecordAppend {
+  return {
+    family: 'dv',
+    owner: DEVICE,
+    kind: E2eeRecordKind.SEALED,
+    refs: ['welcome'],
+    type: 'welcome',
+    ops: [
+      {
+        op: 'put',
+        table: 'e2ee_welcome_deliveries',
+        row: {
+          welcome_id: welcomeId(n),
+          device_key: DEVICE,
+          profile_id: 'p',
+          created_at: n
+        }
+      }
+    ]
+  };
+}
+
+function message(seq: number, bytes: Buffer, group = GROUP): E2eeRecordAppend {
   return {
     family: 'cv',
-    owner: GROUP,
+    owner: group,
     kind: E2eeRecordKind.LOG,
     refs: ['message'],
     type: 'message',
@@ -100,7 +126,7 @@ function message(seq: number, bytes: Buffer): E2eeRecordAppend {
       {
         op: 'put',
         table: E2EE_LOG_TABLE,
-        row: { group_handle: GROUP, seq, data: new E2eeExternalBytes(bytes) }
+        row: { group_handle: group, seq, data: new E2eeExternalBytes(bytes) }
       }
     ],
     log: { epoch: 1, windows: [{ d: DEVICE, from: 0, to: null }] }
@@ -244,7 +270,7 @@ describe('mirror publishing and the publisher loop', () => {
     expect(store.deletionRows.map((row) => row.positions.length)).toEqual([
       58, 58, 14
     ]);
-    expect(await publisher.publishDeletions(10)).toEqual({
+    expect(await publisher.publishDeletions(10)).toMatchObject({
       queued: 3,
       done: 3
     });
@@ -283,7 +309,9 @@ describe('mirror publishing and the publisher loop', () => {
       OutboxMostAttempts: lagging.failures.outbox!.attempts,
       DeletionsWaiting: 0,
       HeadsBehind: 0,
-      HeadsUnrepaired: 0
+      HeadsUnrepaired: 0,
+      RelaysUnreachable: 1,
+      RunsCut: 0
     });
     relays[1].down = false;
     const drained = await loop();
@@ -340,7 +368,7 @@ describe('mirror publishing and the publisher loop', () => {
     expect(
       await publisher.queueDeletion('dv', DEVICE, [`welcome:${welcomeId(1)}`])
     ).toBe(1);
-    expect(await publisher.publishDeletions(10)).toEqual({
+    expect(await publisher.publishDeletions(10)).toMatchObject({
       queued: 1,
       done: 1
     });
@@ -370,6 +398,72 @@ describe('mirror publishing and the publisher loop', () => {
     ).toHaveLength(1);
   });
 
+  it('backs off a DEL a relay refused, and keeps one it cannot name', async () => {
+    const { relays, store, publisher, wait } = setup();
+    for (const n of [1, 2]) {
+      await publisher.run(store, (connection, batch) =>
+        batch!.append(connection, welcome(n))
+      );
+    }
+    await publisher.settled();
+    relays[1].down = true;
+    await publisher.queueDeletion('dv', DEVICE, [`welcome:${welcomeId(1)}`]);
+    expect(await publisher.publishDeletions(10)).toMatchObject({
+      queued: 1,
+      done: 0
+    });
+    expect(store.deletionRows[0].attempts).toBe(1);
+    // Not asked again within the minute, even once the relay is back.
+    relays[1].down = false;
+    expect(await publisher.publishDeletions(10)).toMatchObject({ queued: 0 });
+    wait(61 * 1000);
+    expect(await publisher.publishDeletions(10)).toMatchObject({
+      queued: 1,
+      done: 1
+    });
+    // A record whose event id was never saved: its DEL stays, named.
+    const item = store.itemRows.find(
+      (row) => row.key === `welcome:${welcomeId(2)}`
+    )!;
+    item.eventId = null;
+    await publisher.queueDeletion('dv', DEVICE, [`welcome:${welcomeId(2)}`]);
+    expect(await publisher.publishDeletions(10)).toMatchObject({
+      queued: 1,
+      done: 0
+    });
+    expect(store.deletionRows).toHaveLength(1);
+    expect((await store.worstFailures()).deletion).toMatchObject({
+      wave: `dv/${DEVICE}`,
+      lastError: expect.stringContaining('no event id saved')
+    });
+  });
+
+  it('tries an unreachable relay once a run, and stops at its time budget', async () => {
+    const { relays, store, publisher, loop } = setup();
+    relays[1].down = true;
+    const groups = ['03', '04', '05'].map((byte) => `0x${byte.repeat(32)}`);
+    for (const group of groups) {
+      await publisher.run(store, (connection, batch) =>
+        batch!.append(connection, message(1, Buffer.alloc(64, 1), group))
+      );
+    }
+    await publisher.settled();
+    const connect = jest.spyOn(relays[1], 'connect');
+    const report = await loop();
+    // Three streams and their head checks, one connection attempt.
+    expect(connect).toHaveBeenCalledTimes(1);
+    expect(report.unreachable).toEqual([relays[1].options.url]);
+    expect(report.cut).toBeNull();
+    relays[1].down = false;
+    const cut = await loop(0);
+    expect(cut).toMatchObject({
+      cut: 'publish',
+      published: { complete: 0 },
+      outbox: { rows: 3 }
+    });
+    expect((await loop()).outbox.rows).toBe(0);
+  });
+
   it('writes the metrics in embedded metric format only in a Lambda', () => {
     const report = {
       mode: 'mirror',
@@ -377,7 +471,9 @@ describe('mirror publishing and the publisher loop', () => {
       outbox: { rows: 3, oldestAgeMs: 90_500 },
       deletions: { done: 0, waiting: 1 },
       failures: { outbox: null, deletion: null },
-      heads: { checked: 0, behind: [], repaired: 0, unrepaired: [] }
+      heads: { checked: 0, behind: [], repaired: 0, unrepaired: [] },
+      unreachable: [],
+      cut: null
     } as const;
     const write = jest
       .spyOn(process.stdout, 'write')

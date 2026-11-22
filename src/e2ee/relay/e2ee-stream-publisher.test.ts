@@ -291,7 +291,7 @@ describe('E2eeStreamPublisher', () => {
     ]);
     relays[1].down = false;
     const pass = await publisher.publishPending(10);
-    expect(pass).toEqual({ waves: 1, complete: 1 });
+    expect(pass).toEqual({ waves: 1, complete: 1, cut: false });
     expect(store.outboxRows).toEqual([]);
     expect(relays[1].stored.map((item) => item.event.id)).toEqual(
       relays[0].stored.map((item) => item.event.id)

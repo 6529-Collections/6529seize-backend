@@ -18,8 +18,13 @@ import {
   e2eeRelaySettings,
   E2eeRelaySettings
 } from '@/e2ee/relay/e2ee-relay-config';
-import { E2eeRelayPayload, E2eeRelayPool } from '@/e2ee/relay/e2ee-relay-pool';
 import {
+  E2eeRelayPayload,
+  E2eeRelayPool,
+  E2eeRelayRejectedError
+} from '@/e2ee/relay/e2ee-relay-pool';
+import {
+  e2eeDeletionRetryDelayMs,
   E2eeOutboxRow,
   E2eeStreamStore,
   e2eeStreamStore
@@ -40,6 +45,21 @@ const SEALED_BODY_MAX_BYTES = 64 * 1024 - 512;
 /** And a payload at 4 MiB. */
 const PAYLOAD_MAX_BYTES = 4 * 1024 * 1024;
 const OUTBOX_PAGE = 200;
+
+/**
+ * One run of the publisher loop: when it stops starting work (it logs what
+ * it left), and the relays it found unreachable, which it passes over for
+ * the rest of the run (a breaker per run: one timeout each, not one per
+ * stream). A relay that refused a record is not unreachable.
+ */
+export interface E2eeRelayRun {
+  readonly deadline?: number;
+  readonly unreachable?: Set<string>;
+}
+
+function unreachableAfter(error: Error | null): boolean {
+  return error !== null && !(error instanceof E2eeRelayRejectedError);
+}
 /** The families the relays take a DEL in, of those the orderer writes. */
 const DEL_FAMILIES: ReadonlySet<E2eeRecordFamily> = new Set<E2eeRecordFamily>([
   'dv',
@@ -412,21 +432,45 @@ export class E2eeStreamPublisher {
    * that refuses one leaves it queued; DELs sit outside the streams' hash
    * chains, so a refusal never holds a stream back.
    */
-  async publishDeletions(limit: number): Promise<{
+  async publishDeletions(
+    limit: number,
+    run: E2eeRelayRun = {}
+  ): Promise<{
     readonly queued: number;
     readonly done: number;
+    /** True when the run's deadline stopped it before the last DEL. */
+    readonly cut: boolean;
   }> {
-    if (this.mode() === 'off') return { queued: 0, done: 0 };
+    if (this.mode() === 'off') return { queued: 0, done: 0, cut: false };
     const settings = this.deps.settings();
-    const rows = await this.deps.store.listDeletions(limit);
+    const rows = await this.deps.store.listDeletions(limit, this.deps.now());
+    const unreachable = run.unreachable ?? new Set<string>();
     let done = 0;
     for (const row of rows) {
+      if (run.deadline !== undefined && this.deps.now() >= run.deadline) {
+        return { queued: rows.length, done, cut: true };
+      }
+      const retryAt = () =>
+        this.deps.now() + e2eeDeletionRetryDelayMs(row.attempts + 1);
       try {
         const targets = await this.deps.store.deletionTargets(
           row.wave,
           row.positions
         );
         if (targets.pending) continue;
+        // A record whose event id was never saved: no DEL can name it. The
+        // DEL is kept, logged and shown in the lag report, never finished
+        // with that record left on the relays.
+        const unnamed = row.positions.filter(
+          (pos) => targets.eventIds.has(pos) && !targets.eventIds.get(pos)
+        );
+        if (unnamed.length) {
+          const reason = `no event id saved for position ${unnamed.join(', ')}`;
+          logger.warn(`[DEL ${row.wave}] ${reason}; kept`);
+          await this.deps.store.markDeletionFailed(row.id, reason, retryAt());
+          continue;
+        }
+        // Positions with no index rows left were deleted by another DEL.
         const ids = Array.from(
           new Set(
             row.positions
@@ -452,8 +496,13 @@ export class E2eeStreamPublisher {
         }
         const pool = this.deps.pool();
         let held = row.heldBy.length;
+        const failures: string[] = [];
         for (const url of settings.urls) {
           if (row.heldBy.includes(url)) continue;
+          if (unreachable.has(url)) {
+            failures.push(`${url}: unreachable in this run`);
+            continue;
+          }
           const result = await pool.publishSequence(url, [
             { event, payloads: [] }
           ]);
@@ -461,21 +510,26 @@ export class E2eeStreamPublisher {
             await this.deps.store.markDeletionHeld(row.id, url);
             held++;
           } else {
-            await this.deps.store.markDeletionFailed(
-              row.id,
-              `${url}: ${result.error?.message ?? 'refused'}`
-            );
+            if (unreachableAfter(result.error)) unreachable.add(url);
+            failures.push(`${url}: ${result.error?.message ?? 'refused'}`);
           }
         }
         if (held >= settings.urls.length) {
           await this.deps.store.finishDeletion(row);
           done++;
+        } else if (failures.length) {
+          // One failure per DEL and run, then the backoff.
+          await this.deps.store.markDeletionFailed(
+            row.id,
+            failures.join('; '),
+            retryAt()
+          );
         }
       } catch (error) {
         logger.warn(`[DEL ${row.wave}] ${(error as Error).message}`);
       }
     }
-    return { queued: rows.length, done };
+    return { queued: rows.length, done, cut: false };
   }
 
   private async signDeletion(
@@ -651,7 +705,8 @@ export class E2eeStreamPublisher {
    */
   async publishWave(
     wave: string,
-    connection?: Conn
+    connection?: Conn,
+    unreachable?: Set<string>
   ): Promise<{ readonly wave: string; readonly minHolders: number }> {
     // Inside a write's transaction (primary) the stream's head is locked.
     if (connection) return this.publishWaveNow(wave, connection);
@@ -660,7 +715,7 @@ export class E2eeStreamPublisher {
     const prior = this.running.get(wave) ?? Promise.resolve();
     const run = prior
       .catch(() => undefined)
-      .then(() => this.publishWaveNow(wave));
+      .then(() => this.publishWaveNow(wave, undefined, unreachable));
     this.running.set(wave, run);
     try {
       return await run;
@@ -671,12 +726,14 @@ export class E2eeStreamPublisher {
 
   private async publishWaveNow(
     wave: string,
-    connection?: Conn
+    connection?: Conn,
+    unreachable?: Set<string>
   ): Promise<{ readonly wave: string; readonly minHolders: number }> {
     const settings = this.deps.settings();
     // A relay that failed stays failed for this pass: its records must
-    // arrive in position order.
-    const stopped = new Set<string>();
+    // arrive in position order. One the run found unreachable is not tried.
+    const stopped = new Set<string>(unreachable ?? []);
+    if (stopped.size >= settings.urls.length) return { wave, minHolders: 0 };
     let minHolders = settings.urls.length;
     let afterPos = 0;
     for (;;) {
@@ -689,7 +746,12 @@ export class E2eeStreamPublisher {
       if (!listed.length) break;
       const rows = await this.signRows(wave, listed, afterPos, connection);
       if (rows.length) {
-        const held = await this.publishPage(rows, stopped, connection);
+        const held = await this.publishPage(
+          rows,
+          stopped,
+          connection,
+          unreachable
+        );
         minHolders = Math.min(minHolders, held);
       }
       afterPos = listed[listed.length - 1].pos;
@@ -703,7 +765,8 @@ export class E2eeStreamPublisher {
   private async publishPage(
     rows: readonly E2eeOutboxRow[],
     stopped: Set<string>,
-    connection?: Conn
+    connection?: Conn,
+    unreachable?: Set<string>
   ): Promise<number> {
     const settings = this.deps.settings();
     const holders = new Map(rows.map((row) => [row.id, new Set(row.heldBy)]));
@@ -724,6 +787,7 @@ export class E2eeStreamPublisher {
         await this.deps.store.markHeld(held, url, connection);
         if (result.error) {
           stopped.add(url);
+          if (unreachableAfter(result.error)) unreachable?.add(url);
           if (!connection) {
             await this.deps.store.markFailed(
               missing.slice(result.held).map((row) => row.id),
@@ -743,21 +807,30 @@ export class E2eeStreamPublisher {
   }
 
   /** Publishes streams with records still pending, oldest first. */
-  async publishPending(maxWaves: number): Promise<{
+  async publishPending(
+    maxWaves: number,
+    run: E2eeRelayRun = {}
+  ): Promise<{
     readonly waves: number;
     readonly complete: number;
+    /** True when the run's deadline stopped it before the last stream. */
+    readonly cut: boolean;
   }> {
     const waves = await this.deps.store.listPendingWaves(maxWaves);
+    const unreachable = run.unreachable ?? new Set<string>();
     let complete = 0;
     for (const wave of waves) {
+      if (run.deadline !== undefined && this.deps.now() >= run.deadline) {
+        return { waves: waves.length, complete, cut: true };
+      }
       try {
-        const result = await this.publishWave(wave);
+        const result = await this.publishWave(wave, undefined, unreachable);
         if (result.minHolders >= this.deps.settings().urls.length) complete++;
       } catch (error) {
         logger.warn(`[LOOP] ${wave}: ${(error as Error).message}`);
       }
     }
-    return { waves: waves.length, complete };
+    return { waves: waves.length, complete, cut: false };
   }
 }
 

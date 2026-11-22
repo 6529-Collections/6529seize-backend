@@ -91,6 +91,7 @@ interface DeletionRow {
   event: string | null;
   heldBy: string[];
   attempts: number;
+  nextAttemptAt: number;
 }
 
 interface State {
@@ -400,14 +401,16 @@ export class InMemoryE2eeStreamStore
         positions: positions.slice(at, at + E2EE_DEL_MAX_IDS),
         event: null,
         heldBy: [],
-        attempts: 0
+        attempts: 0,
+        nextAttemptAt: 0
       });
     }
     return positions.length;
   }
 
-  async listDeletions(limit: number): Promise<E2eeDeletionRow[]> {
+  async listDeletions(limit: number, now: number): Promise<E2eeDeletionRow[]> {
     return Array.from(this.state.deletions.values())
+      .filter((row) => row.nextAttemptAt <= now)
       .sort((a, b) => a.id - b.id)
       .slice(0, limit)
       .map((row) => ({
@@ -445,10 +448,15 @@ export class InMemoryE2eeStreamStore
     if (row && !row.heldBy.includes(url)) row.heldBy.push(url);
   }
 
-  async markDeletionFailed(id: number, error: string): Promise<void> {
+  async markDeletionFailed(
+    id: number,
+    error: string,
+    retryAt: number
+  ): Promise<void> {
     const row = this.state.deletions.get(id);
     if (row) {
       row.attempts++;
+      row.nextAttemptAt = retryAt;
       this.lastErrors.set(`d${id}`, error);
     }
   }

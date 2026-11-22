@@ -766,4 +766,8 @@ export class E2eeRelayDeletionEntity {
 
   @Column({ type: 'bigint' })
   readonly created_at!: number;
+
+  /** Not tried again before this (epoch ms): the backoff after a failure. */
+  @Column({ type: 'bigint', default: 0 })
+  readonly next_attempt_at!: number;
 }
