@@ -23,11 +23,11 @@ import { canonicalJson, sha256Hex } from '../opening/opening-file';
 
 /*
  * The identity tables' journal (version 2: the JournalBody below). Every
- * write to the identity tables after a load
- * appends its changed rows, before and after, to the shared record log in
- * the same transaction as the write: lane `subs` once the tables are the
- * truth, `subs-shadow` before. So the log holds every change in commit
- * order, and an entry exists exactly when its write does.
+ * write to the identity tables after a load appends its changed rows,
+ * before and after, to the shared record log in the same transaction as
+ * the write: lane `subs` once the tables are the truth, `subs-shadow`
+ * before. So the log holds every change in commit order, and an entry
+ * exists exactly when its write does.
  *
  * - Only rows the write changed are journaled: a change is the row's
  *   `before` (read FOR UPDATE before the write, where the writer captures

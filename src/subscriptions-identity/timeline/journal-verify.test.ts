@@ -595,6 +595,150 @@ describe('verifyJournal', () => {
     });
   });
 
+  describe('a redemption spread over parts', () => {
+    const MINT2_TX = hash(901);
+    const MINT2_KEY = `${MINT2_TX}|${MEMES_CONTRACT.toLowerCase()}|7|${AIRDROP}`;
+    /** Ten charges over two mints: P1 six times, P2 four times. */
+    const charges: ChargeInput[] = [
+      ...Array.from({ length: 4 }, () => ({
+        transaction: MINT_TX,
+        identity_key: P1,
+        token_count: 6
+      })),
+      ...Array.from({ length: 2 }, () => ({
+        transaction: MINT_TX,
+        identity_key: P2,
+        token_count: 6
+      })),
+      ...Array.from({ length: 2 }, () => ({
+        transaction: MINT2_TX,
+        identity_key: P1,
+        token_count: 4
+      })),
+      ...Array.from({ length: 2 }, () => ({
+        transaction: MINT2_TX,
+        identity_key: P2,
+        token_count: 4
+      }))
+    ];
+    const whole = () => redemption(7, charges, { [P1]: 1, [P2]: 1 });
+    /** `charged(b, k)`: b after k charges, with the legacy rounding. */
+    const charged = (balance: number, times: number) => {
+      let b = balance;
+      for (let i = 0; i < times; i++) {
+        b = roundSubscriptionBalance(b - MEMES_MINT_PRICE);
+      }
+      return b;
+    };
+    /** The write over `count` parts, each with its share of the charges and the changes. */
+    function spread(body: JournalBody, count: number): JournalBody[] {
+      const share = <T>(items: readonly T[], part: number) =>
+        items.slice(
+          Math.floor((part * items.length) / count),
+          Math.floor(((part + 1) * items.length) / count)
+        );
+      return Array.from({ length: count }, (_, part) => ({
+        ...body,
+        part,
+        parts: count,
+        inputs: {
+          ...body.inputs,
+          charges: share(body.inputs.charges as unknown[], part)
+        },
+        changes: share(body.changes, part)
+      }));
+    }
+
+    it("takes the union of the parts' charges, however they are split", async () => {
+      const evenly = spread(whole(), 5);
+      expect(evenly.map((b) => (b.inputs.charges as unknown[]).length)).toEqual(
+        [2, 2, 2, 2, 2]
+      );
+      expect(verifyEntryMoney(evenly)).toEqual([]);
+      const report = await verify(evenly);
+      expect(report.failures).toEqual([]);
+      expect(report.counts).toMatchObject({ charges: 10, mints: 2 });
+      // As the writer splits: the changes first, then the charges.
+      const body = whole();
+      const changesFirst = spread(body, 5).map((part, i) => ({
+        ...part,
+        changes: i === 0 ? body.changes : [],
+        inputs: {
+          ...part.inputs,
+          charges:
+            i === 0
+              ? []
+              : (body.inputs.charges as unknown[]).slice(
+                  (i - 1) * 3,
+                  i === 4 ? undefined : i * 3
+                )
+        }
+      }));
+      expect((await verify(changesFirst)).failures).toEqual([]);
+    });
+
+    it("fails when one part's charge is tampered", async () => {
+      const parts = spread(whole(), 5);
+      // Part 3 charges P1 for the second mint; the entry says P2.
+      const list = [...(parts[3].inputs.charges as Row[])];
+      list[0] = { ...list[0], identity_key: P2 };
+      parts[3] = { ...parts[3], inputs: { ...parts[3].inputs, charges: list } };
+      const failures = verifyEntryMoney(parts);
+      expect(failures).toHaveLength(4);
+      expect(failures).toEqual(
+        expect.arrayContaining([
+          `n=7 redemption: the balance of ${P1} is ${charged(1, 6)} after 5 charges from 1; expected ${charged(1, 5)}`,
+          `n=7 redemption: the balance of ${P2} is ${charged(1, 4)} after 5 charges from 1; expected ${charged(1, 5)}`,
+          `n=7 redemption: the redeemed count of ${P1} for ${MINT2_TX} moves by 2; it was charged 1 times`,
+          `n=7 redemption: the redeemed count of ${P2} for ${MINT2_TX} moves by 2; it was charged 3 times`
+        ])
+      );
+    });
+
+    it("counts every part's charges against the mint, in this write and later ones", async () => {
+      // A charge repeated in another part over-charges the first mint.
+      const parts = spread(whole(), 5);
+      const extra = (parts[0].inputs.charges as Row[])[0];
+      parts[4] = {
+        ...parts[4],
+        inputs: {
+          ...parts[4].inputs,
+          charges: [...(parts[4].inputs.charges as Row[]), extra]
+        }
+      };
+      expect((await verify(parts)).failures).toContain(
+        `mint ${MINT_KEY} delivered 6 tokens and is charged 7 times (journal n=7)`
+      );
+      // A later write charging the second mint again.
+      const again = redemption(
+        8,
+        [{ transaction: MINT2_TX, identity_key: P1, token_count: 4 }],
+        { [P1]: charged(1, 6) }
+      );
+      expect((await verify([...spread(whole(), 5), again])).failures).toEqual([
+        `mint ${MINT2_KEY} delivered 4 tokens and is charged 5 times (journal n=7, 8)`
+      ]);
+    });
+
+    it('fails when a part has no list of charges, or the parts disagree on the rest', async () => {
+      const parts = spread(whole(), 5);
+      const { charges: _none, ...rest } = parts[2].inputs;
+      const missing = [...parts];
+      missing[2] = { ...parts[2], inputs: rest };
+      expect(verifyEntryMoney(missing)).toEqual([
+        'n=7 redemption: inputs.charges is not a list of charges in every part'
+      ]);
+      const other = [...parts];
+      other[2] = {
+        ...parts[2],
+        inputs: { ...parts[2].inputs, through_block: 21 }
+      };
+      expect((await verify(other)).failures).toEqual([
+        'n=7 redemption: its parts differ in kind, mode, time or inputs'
+      ]);
+    });
+  });
+
   describe('a fold', () => {
     it('sums, unrounded, and passes when either side had no balance', async () => {
       expect(verifyEntryMoney([fold(4, 0.1, 0.2)])).toEqual([]);
@@ -681,6 +825,24 @@ describe('verifyJournal', () => {
       expect(report.failures).toEqual([
         `n=9 choice: a choice of ${P1} changes rows of ${P2}`,
         `n=9 choice: event ${EVENT} makes a choice again (first at n=8)`
+      ]);
+    });
+
+    it("passes a bare wallet's choice after the empty fold the writer journals for it, and fails it without", async () => {
+      // The wallet has no state of its own to move: the fold changes no row
+      // and only says where the wallet's choices now go.
+      const emptyFold = body(
+        4,
+        'fold',
+        { wallet: W2, identity_key: P1, at_text: T },
+        [],
+        { rekeys: [{ from: W2, to: P1 }] }
+      );
+      const entry = choice(5, `${'e'.repeat(31)}5`);
+      const byWallet = { ...entry, inputs: { ...entry.inputs, owner: W2 } };
+      expect((await verify([emptyFold, byWallet])).failures).toEqual([]);
+      expect((await verify([byWallet])).failures).toEqual([
+        `n=5 choice: a choice of ${W2} changes rows of ${P1}`
       ]);
     });
 

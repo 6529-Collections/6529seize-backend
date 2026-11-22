@@ -119,11 +119,19 @@ interface Charge {
   readonly identity_key: string;
 }
 
-function chargesOf(inputs: Row): Charge[] | null {
-  const charges = inputs.charges;
-  if (!Array.isArray(charges)) {
+/**
+ * A redemption's charges: the union of its parts' `inputs.charges`, in
+ * part order (the one list spread across parts rather than repeated), or
+ * null if a part's list is not a list of charges.
+ */
+function chargesOf(parts: readonly JournalBody[]): Charge[] | null {
+  const lists = parts.map((b) => b.inputs.charges);
+  if (!lists.every((list) => Array.isArray(list))) {
     return null;
   }
+  const charges = ([] as Array<Partial<Charge> | null>).concat(
+    ...(lists as Array<Array<Partial<Charge> | null>>)
+  );
   const valid = charges.every(
     (c: Partial<Charge> | null) =>
       typeof c === 'object' &&
@@ -248,11 +256,15 @@ function topUpMoney(
   return failures;
 }
 
-function redemptionMoney(label: string, inputs: Row, changes: JournalChange[]) {
+function redemptionMoney(
+  label: string,
+  parts: readonly JournalBody[],
+  changes: JournalChange[]
+) {
   const failures: string[] = [];
-  const charges = chargesOf(inputs);
+  const charges = chargesOf(parts);
   if (!charges) {
-    return [`${label}: inputs.charges is not a list of charges`];
+    return [`${label}: inputs.charges is not a list of charges in every part`];
   }
   const chargedTimes = new Map<string, number>();
   for (const charge of charges) {
@@ -435,7 +447,7 @@ export function verifyEntryMoney(
         ...topUpMoney(label, head.inputs, changes, balanceBefore)
       ];
     case 'redemption':
-      return [...failures, ...redemptionMoney(label, head.inputs, changes)];
+      return [...failures, ...redemptionMoney(label, bodies, changes)];
     case 'fold':
       return [
         ...failures,
@@ -513,6 +525,15 @@ class BalanceChain {
   }
 }
 
+/** The inputs every part repeats: all but a redemption's charges, which are spread across them. */
+function sharedInputs(body: JournalBody): Row {
+  if (body.kind !== 'redemption') {
+    return body.inputs;
+  }
+  const { charges: _spread, ...rest } = body.inputs;
+  return rest;
+}
+
 /** The parts of one write in part order, if they are complete and agree; else null. */
 function partsInOrder(
   parts: readonly JournalBody[],
@@ -535,7 +556,7 @@ function partsInOrder(
       kind: b.kind,
       mode: b.mode,
       at_ms: b.at_ms,
-      inputs: b.inputs,
+      inputs: sharedInputs(b),
       checkpoint: b.checkpoint
     });
   if (sorted.some((b) => shared(b) !== shared(head))) {
@@ -620,7 +641,11 @@ class OwnerIdentities {
   }
 }
 
-/** A signed choice changes only rows of its owner, or of the identity its owner's state went to. */
+/**
+ * A signed choice changes only rows of its owner, of any identity the
+ * opening file lists for the owner's key, or of one a later fold moved it
+ * to.
+ */
 function checkChoiceOwner(
   write: readonly JournalBody[],
   owners: OwnerIdentities,
@@ -730,7 +755,8 @@ function crossJournal(
   const topUps: JournalBody[] = [];
   const choices: JournalBody[] = [];
   let charges = 0;
-  for (const [head] of writes) {
+  for (const write of writes) {
+    const [head] = write;
     if (head.kind === 'top-up') {
       topUps.push(head);
       const hash = lower(head.inputs.hash);
@@ -759,7 +785,7 @@ function crossJournal(
         chosen.set(eventId, head.n);
       }
     } else if (head.kind === 'redemption') {
-      for (const charge of chargesOf(head.inputs) ?? []) {
+      for (const charge of chargesOf(write) ?? []) {
         const key = mintKeyOf(
           charge.transaction,
           charge.contract,

@@ -154,6 +154,33 @@ describe('replayedJournalSource', () => {
     ).rejects.toThrow('segment 2 does not match its head');
   });
 
+  it('ends the replay when the reader stops partway', async () => {
+    let closed = false;
+    const reader = {
+      async *walk() {
+        try {
+          for (let n = 1; n <= 3; n++) {
+            yield { head: null, entry: choice(n, `${'a'.repeat(31)}${n}`) };
+          }
+        } finally {
+          closed = true;
+        }
+      }
+    } as unknown as RecordLogReader;
+    const source = replayedJournalSource(reader, {
+      bindings: bindingSource([])
+    });
+    let read = 0;
+    for await (const _ of source.walk('public')) {
+      read++;
+      break;
+    }
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(read).toBe(1);
+    // The replay moved on, refused its next entry and closed the reader.
+    expect(closed).toBe(true);
+  });
+
   it('gives no record lookup from a source that does not verify', async () => {
     const { bodies, events } = await readJournal({
       async *walk() {

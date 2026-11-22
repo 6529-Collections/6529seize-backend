@@ -97,7 +97,7 @@ export function boundJournalSource(): JournalSource {
  * and the verifier checks every choice entry against its signed record.
  * Each entry is handed on as the replay reaches it, and the replay waits
  * until it is taken, so a rebuild renews its pause throughout and holds
- * one entry at a time.
+ * one entry at a time. A reader that stops partway ends the replay too.
  */
 export function replayedJournalSource(
   reader: RecordLogReader,
@@ -109,18 +109,27 @@ export function replayedJournalSource(
         next: { item: ReplayedEntry; taken: () => void } | null;
         arrived: (() => void) | null;
         finished: boolean;
+        stopped: boolean;
         failure: { error: unknown } | null;
-      } = { next: null, arrived: null, finished: false, failure: null };
+      } = {
+        next: null,
+        arrived: null,
+        finished: false,
+        stopped: false,
+        failure: null
+      };
       const wake = () => state.arrived?.();
       const replay = replayRecordLog(
         reader,
         chain,
         context,
         ({ entry }, verified) =>
-          new Promise<void>((taken) => {
-            state.next = { item: { entry, verified }, taken };
-            wake();
-          })
+          state.stopped
+            ? Promise.reject(new Error('The journal walk stopped'))
+            : new Promise<void>((taken) => {
+                state.next = { item: { entry, verified }, taken };
+                wake();
+              })
       ).then(
         () => {
           state.finished = true;
@@ -137,23 +146,36 @@ export function replayedJournalSource(
         state.next = null;
         return next;
       };
-      for (;;) {
-        const next = take();
-        if (next) {
-          yield next.item;
-          next.taken();
-        } else if (state.finished) {
-          break;
-        } else {
-          await new Promise<void>((resolve) => {
-            state.arrived = resolve;
-          });
-          state.arrived = null;
+      let handedOn: (() => void) | null = null;
+      try {
+        for (;;) {
+          const next = take();
+          if (next) {
+            handedOn = next.taken;
+            yield next.item;
+            handedOn = null;
+            next.taken();
+          } else if (state.finished) {
+            break;
+          } else {
+            await new Promise<void>((resolve) => {
+              state.arrived = resolve;
+            });
+            state.arrived = null;
+          }
         }
-      }
-      await replay;
-      if (state.failure) {
-        throw state.failure.error;
+        await replay;
+        if (state.failure) {
+          throw state.failure.error;
+        }
+      } finally {
+        if (!state.finished) {
+          // The reader stopped partway: let the replay move on to its next
+          // entry, which ends it, so it does not wait forever.
+          state.stopped = true;
+          (handedOn as (() => void) | null)?.();
+          take()?.taken();
+        }
       }
     }
   };

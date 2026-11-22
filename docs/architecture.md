@@ -3208,13 +3208,15 @@ failure). For one opening:
   balances and moves only the wallet's history; no other kind changes a
   balance, and no kind changes a table it may not;
 - across the journal: each balance's `before` is what the opening file or
-  the previous entry left; a choice changes only rows of its owner, or of
-  the identity the opening file or a later fold moved the owner's state
-  to; each top-up hash is credited once, and not
+  the previous entry left; a choice changes only rows of its owner, of
+  any identity the opening file lists for the owner's key, or of one a
+  later fold moved it to; each top-up hash is credited once, and not
   again after the opening file; no mint is charged more tokens than it
   delivered, counting the opening's charges of that mint; a signed event
   makes one choice; `n` increases in log order and every write has all its
-  parts;
+  parts, which repeat the same inputs except a redemption's charges: those
+  are spread across the parts, and the verifier takes their union in part
+  order;
 - each top-up against its transfer (sender, recipient, block, value) and
   each mint against its receipt, through the backend's Ethereum client and
   config, reading each block's top-ups and each receipt once;
