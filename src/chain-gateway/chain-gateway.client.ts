@@ -184,7 +184,7 @@ const DOC_CACHE_TOTAL_BYTES = 32 * 1024 * 1024;
 const DOC_CACHE_ENTRY_BYTES = 524_288;
 /** CIDv1, codec raw (0x55), multihash sha2-256 (0x12) of 32 bytes. */
 const RAW_SHA256_CID_PREFIX = [0x01, 0x55, 0x12, 0x20];
-/** CIDv1, codec raw (0x55), multihash sha2-256 (0x12) of 32 bytes. */
+
 type Query = Record<string, string | number | boolean | null | undefined>;
 
 interface Envelope<T> {
@@ -285,6 +285,20 @@ export function rawCidHexOf(bytes: Uint8Array): string {
   );
 }
 
+/** The CID the document store answered with, as hex; bad_answer if unreadable. */
+function storedCidHex(cid: string, path: string): string {
+  try {
+    return cidHex(cid);
+  } catch {
+    throw new ChainGatewayError(
+      `${path}: the store answered with a CID that can't be read`,
+      200,
+      'bad_answer',
+      path
+    );
+  }
+}
+
 /** The sha2-256 digest a CIDv1 names (any codec), or null for another CID. */
 function sha256DigestOf(cid: Uint8Array): Buffer | null {
   if (cid[0] !== 0x01) return null;
@@ -361,7 +375,12 @@ function heightRanges(value: unknown, path: string): [number, number][] {
   const ranges = Array.isArray(value) ? value : [null];
   return ranges.map((it: unknown) => {
     const [from, to] = Array.isArray(it) && it.length === 2 ? it : [];
-    if (!Number.isSafeInteger(from) || !Number.isSafeInteger(to) || to < from) {
+    if (
+      !Number.isSafeInteger(from) ||
+      !Number.isSafeInteger(to) ||
+      (from as number) < 0 ||
+      (to as number) < (from as number)
+    ) {
       throw new ChainGatewayError(
         `${path}: a height range that can't be read`,
         200,
@@ -666,7 +685,8 @@ export class ChainGatewayClient {
             headHeight: status.head.height,
             finalizedHeight: status.finalized.height,
             finalizedTime: status.finalized.time,
-            pinnable: status.pinnable ?? null
+            pinnable: status.pinnable ?? null,
+            network: status.finalized.network ?? null
           };
           this.head = { value, at: this.now() };
           return value;
@@ -1163,10 +1183,12 @@ export class ChainGatewayClient {
   }
 
   /**
-   * Stores bytes in the document store (POST /v1/docs, at most 2 MiB) and
-   * returns their CID as base32 text. The store computes the CID and checks
-   * it against the `cid` this sends; the CID it names must be these bytes'
-   * own. Storing the same bytes again is harmless.
+   * Stores bytes in the document store and returns their CID as base32
+   * text. The store's upload (the gateway's documents notes): POST /v1/docs
+   * with the bytes as application/octet-stream, at most 2 MiB, and an
+   * optional `?cid=` it checks; it answers 201, or 200 when stored already,
+   * with `{ cid, cid_hex, codec, size, url }`. The CID it names must be these
+   * bytes' own. Storing the same bytes again is harmless.
    */
   async putDocument(bytes: Buffer): Promise<string> {
     const expected = rawCidHexOf(bytes);
@@ -1181,7 +1203,7 @@ export class ChainGatewayClient {
     if ((status !== 200 && status !== 201) || !stored?.cid) {
       throw this.errorOf(path, status, json);
     }
-    if (cidHex(stored.cid) !== expected) {
+    if (storedCidHex(stored.cid, path) !== expected) {
       throw new ChainGatewayError(
         `${path}: the store named the document ${stored.cid}, not ${cidPath(expected)}`,
         status,

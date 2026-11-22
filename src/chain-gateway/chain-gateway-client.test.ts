@@ -621,6 +621,23 @@ describe('profile documents', () => {
     expect(await client.putDocument(doc)).toBe(cidPath(cid));
   });
 
+  it('refuses an answer with another status or an unreadable CID', async () => {
+    const accepted = setup(() => ({
+      status: 202,
+      json: { cid: cidPath(cid), cid_hex: cid, codec: 'raw', size: 1 }
+    }));
+    await expect(accepted.client.putDocument(doc)).rejects.toBeInstanceOf(
+      ChainGatewayError
+    );
+    const garbled = setup(() => ({
+      status: 201,
+      json: { cid: 'not a cid', codec: 'raw', size: 1 }
+    }));
+    await expect(garbled.client.putDocument(doc)).rejects.toMatchObject({
+      code: 'bad_answer'
+    });
+  });
+
   it('throws the store refusal and an answer without a CID', async () => {
     const tooBig = setup(() => ({
       status: 413,
@@ -657,6 +674,15 @@ describe('profile documents', () => {
 });
 
 describe('document cache', () => {
+  it('weighs a document set twice once', () => {
+    const cache = new LruCache<Buffer>(10, (it) => it.length, 10);
+    cache.set('a', Buffer.alloc(4));
+    cache.set('a', Buffer.alloc(4));
+    cache.set('b', Buffer.alloc(4));
+    expect(cache.get('a')).toBeDefined();
+    expect(cache.get('b')).toBeDefined();
+  });
+
   it('drops the oldest documents past its total bytes', () => {
     const cache = new LruCache<Buffer>(10, (it) => it.length, 10);
     cache.set('a', Buffer.alloc(4));
@@ -712,7 +738,8 @@ describe('import and membership history', () => {
       ],
       ranges: [
         [1, 20],
-        [30, 50]
+        [30, 50],
+        [55, 55]
       ]
     };
     const { client } = setup((call) =>
@@ -728,7 +755,8 @@ describe('import and membership history', () => {
       ],
       ranges: [
         [1, 20],
-        [30, 50]
+        [30, 50],
+        [55, 55]
       ],
       readHeight: 50
     });
@@ -802,6 +830,7 @@ describe('import and membership history', () => {
     ['a range that is not two heights', { ranges: [[1, 2, 3]] }],
     ['a range that ends before it starts', { ranges: [[9, 4]] }],
     ['a range to infinity', { ranges: [[1, 'Infinity']] }],
+    ['a range below zero', { ranges: [[-5, 3]] }],
     ['ranges that are not a list', { ranges: 'all' }],
     ['another wallet', { wallet: '0x' + '02'.repeat(20) }],
     ['no read height', { read: { ...stamp(50), height: undefined } }]
