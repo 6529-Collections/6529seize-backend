@@ -1,6 +1,6 @@
 import { mirrorIdentityDirectory } from '../identity/identity-directory';
 import {
-  closeSubscriptionWrites,
+  claimSubscriptionWrites,
   openSubscriptionWrites,
   scheduleIdentitySwitch,
   SWITCH_CUT_WINDOW_MS
@@ -19,6 +19,14 @@ import { FileUploader, publishOpeningFiles } from './published-chain';
 
 /** Stop with time to spare before the cut stops counting (STALE_CUT). */
 const WINDOW_MARGIN_MS = 60 * 1000;
+
+/**
+ * How long go-live waits between pausing the write routes and the cut. A
+ * route reads its path before its own transaction, so a write that read it
+ * just before the pause can still commit; it commits well within this, and
+ * the cut then holds it.
+ */
+export const WRITE_SETTLE_MS = 10 * 1000;
 
 export interface GoLiveResult {
   readonly switched: boolean;
@@ -45,6 +53,8 @@ export async function goLive(params: {
   readonly now?: () => number;
   /** Proves the closer posts (tests pass their own). */
   readonly postingProbe?: () => Promise<boolean>;
+  /** The wait between the pause and the cut (WRITE_SETTLE_MS). */
+  readonly settleMs?: number;
 }): Promise<GoLiveResult> {
   const now = params.now ?? (() => Date.now());
   const steps: string[] = [];
@@ -80,10 +90,17 @@ export async function goLive(params: {
     }
   }
 
-  await closeSubscriptionWrites(now());
+  if (!(await claimSubscriptionWrites(now()))) {
+    return refuse(
+      'another go-live, load or rebuild holds the write pause; wait for it to end, or run open-writes if it died'
+    );
+  }
   steps.push('unsigned writes paused');
   let openingSha256: string | null = null;
   try {
+    await new Promise((resolve) =>
+      setTimeout(resolve, params.settleMs ?? WRITE_SETTLE_MS)
+    );
     const cutStartedMs = now();
     const step = (name: string) => {
       const elapsed = now() - cutStartedMs;

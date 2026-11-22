@@ -15,6 +15,7 @@ import type { RecordVerifyResult } from '@/signed-records/record-verify';
 import { signedRecordHeadsDb } from '@/signed-records/signed-record-heads.db';
 import { ConnectionWrapper, sqlExecutor } from '@/sql-executor';
 import {
+  claimSubscriptionWrites,
   closeSubscriptionWrites,
   JOURNAL_BEHIND_ID,
   OPENING_STATE_ID,
@@ -555,7 +556,11 @@ export async function rebuildIdentityTables(params: {
       );
     }
   }
-  await closeSubscriptionWrites(now());
+  if (!(await claimSubscriptionWrites(now()))) {
+    throw new Error(
+      'Another go-live, load or rebuild holds the write pause; wait for it to end, or run open-writes if it died'
+    );
+  }
   let renewedAt = now();
   const renewPause = async () => {
     if (now() - renewedAt >= MARKER_RENEW_MS) {

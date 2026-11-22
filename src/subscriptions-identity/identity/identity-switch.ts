@@ -330,6 +330,30 @@ export async function closeSubscriptionWrites(
   );
 }
 
+/**
+ * Takes the write pause for one go-live, rebuild or load: sets the marker
+ * unless another run holds one younger than the switch window. Returns
+ * whether it was taken; the caller refuses otherwise, so two of them never
+ * run at once. The holder renews it with closeSubscriptionWrites.
+ */
+export async function claimSubscriptionWrites(
+  nowMs: number = Date.now()
+): Promise<boolean> {
+  await sqlExecutor.execute(
+    `INSERT INTO ${SUBSCRIPTIONS_ID_CURSORS_TABLE} (id, block, updated_at)
+      VALUES (:id, :nowMs, :nowMs)
+      ON DUPLICATE KEY UPDATE
+        updated_at = IF(block < :staleBefore, VALUES(updated_at), updated_at),
+        block = IF(block < :staleBefore, VALUES(block), block)`,
+    { id: WRITES_CLOSED_ID, nowMs, staleBefore: nowMs - SWITCH_CUT_WINDOW_MS }
+  );
+  const [row] = await sqlExecutor.execute<{ block: number | string }>(
+    `SELECT block FROM ${SUBSCRIPTIONS_ID_CURSORS_TABLE} WHERE id = :id`,
+    { id: WRITES_CLOSED_ID }
+  );
+  return !!row && Number(row.block) === nowMs;
+}
+
 export async function openSubscriptionWrites(): Promise<void> {
   await sqlExecutor.execute(
     `DELETE FROM ${SUBSCRIPTIONS_ID_CURSORS_TABLE} WHERE id = :id`,

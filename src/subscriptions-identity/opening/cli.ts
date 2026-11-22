@@ -7,6 +7,7 @@ import {
   mirrorIdentityDirectory
 } from '../identity/identity-directory';
 import {
+  claimSubscriptionWrites,
   openSubscriptionWrites,
   subscriptionsIdentitySwitch,
   suspendIdentityTables
@@ -165,7 +166,18 @@ function verifyCommand(args: Args): number {
 
 async function loadCommand(args: Args): Promise<number> {
   const parsed = parsedFrom(args);
-  await loadOpeningFiles(parsed);
+  // The load holds the write pause, so no go-live or rebuild runs with it.
+  if (!(await claimSubscriptionWrites())) {
+    process.stderr.write(
+      'Refusing: another go-live, load or rebuild holds the write pause; wait for it to end, or run open-writes if it died.\n'
+    );
+    return 2;
+  }
+  try {
+    await loadOpeningFiles(parsed);
+  } finally {
+    await openSubscriptionWrites();
+  }
   process.stdout.write(
     `loaded ${parsed.openingSha256}; not the truth until compare passes\n`
   );

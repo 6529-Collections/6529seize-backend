@@ -35,6 +35,7 @@ import { describeWithSeed } from '@/tests/_setup/seed';
 import { redeemSubscriptions } from '@/transactionsProcessingLoop/subscriptions';
 import { mirrorIdentityDirectory } from '../identity/identity-directory';
 import {
+  claimSubscriptionWrites,
   closeSubscriptionWrites,
   openSubscriptionWrites,
   scheduleIdentitySwitch,
@@ -297,7 +298,8 @@ function goLiveForTest() {
     signedWritesLive: true,
     acceptReportDiffs: true,
     mintedCard: 0,
-    postingProbe
+    postingProbe,
+    settleMs: 0
   });
 }
 
@@ -1747,7 +1749,8 @@ describeWithSeed('identity writers after the switch', [], () => {
       signedWritesLive: true,
       acceptReportDiffs: true,
       mintedCard: 0,
-      postingProbe
+      postingProbe,
+      settleMs: 0
     });
     expect(result.switched).toBe(true);
     expect(result.steps).toContain('unsigned writes paused');
@@ -1778,7 +1781,8 @@ describeWithSeed('identity writers after the switch', [], () => {
       signedWritesLive: true,
       acceptReportDiffs: true,
       mintedCard: 0,
-      postingProbe
+      postingProbe,
+      settleMs: 0
     });
     expect(result.switched).toBe(true);
     expect(during).toContain('paused');
@@ -1796,6 +1800,26 @@ describeWithSeed('identity writers after the switch', [], () => {
     expect(
       await subscribed(SUBSCRIPTIONS_ID_NFTS_TABLE, 'identity_key')
     ).toEqual([1]);
+  });
+
+  it('lets one go-live, load or rebuild hold the write pause at a time', async () => {
+    await seedLegacy();
+    const now = Date.now();
+    expect(await claimSubscriptionWrites(now)).toBe(true);
+    expect(await claimSubscriptionWrites(now + 1000)).toBe(false);
+    // A second go-live, or a rebuild, refuses while the first holds it.
+    const refused = await goLiveForTest();
+    expect(refused.switched).toBe(false);
+    expect(refused.steps.join('\n')).toContain('holds the write pause');
+    await expect(
+      rebuildIdentityTables({ source: journalSource, fetch: fetchPublished })
+    ).rejects.toThrow('holds the write pause');
+    // A pause older than the switch window was left by a run that died.
+    expect(await claimSubscriptionWrites(now + SWITCH_CUT_WINDOW_MS + 1)).toBe(
+      true
+    );
+    await openSubscriptionWrites();
+    expect((await goLiveForTest()).switched).toBe(true);
   });
 
   it('ignores a writes-closed marker older than the switch window, and open-writes deletes it', async () => {
