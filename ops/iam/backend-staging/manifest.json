@@ -69,6 +69,12 @@
       "file": "SignedRecordLogStagingDeployment.json",
       "characters": 4865,
       "sha256": "1afc66eb138c2a1c9dac38fc68a843e67e61bb365c82d6834fc712d897b52dc8"
+    },
+    {
+      "name": "E2eeRelayPublishStagingDeployment",
+      "file": "E2eeRelayPublishStagingDeployment.json",
+      "characters": 4793,
+      "sha256": "6bc5002eb9e7adea8c7231bbc88cb2135d352e2dcf10ff15814be3d55e7e6be6"
     }
   ],
   "additional_staging_inventory": {
