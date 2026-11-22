@@ -134,7 +134,7 @@ export class E2eeRelayPool {
 
   async connection(url: string): Promise<CrpConnection> {
     const existing = this.connections.get(url);
-    if (existing) {
+    if (existing !== undefined) {
       const connection = await existing.catch(() => null);
       const fresh =
         connection !== null &&

@@ -278,7 +278,7 @@ export class CrpConnection {
     if (
       !this.authInput ||
       !this.challenge ||
-      this.reauthing ||
+      this.reauthing !== null ||
       this.closed !== null ||
       this.sessionUntil === null ||
       this.sessionUntil - this.now() > REAUTH_WINDOW_MS
