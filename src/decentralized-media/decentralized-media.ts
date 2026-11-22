@@ -96,6 +96,45 @@ export function parseDecentralizedMediaRef(
   return parseDecentralizedMedia(input)?.ref ?? null;
 }
 
+/**
+ * The rebuild check's files source: a local server of content-addressed
+ * files at `/ar/<id>` and `/ipfs/<cid>`. When set, it replaces every
+ * gateway for fetching Arweave and IPFS content. Production never sets it.
+ */
+export const DECENTRALIZED_MEDIA_FILES_URL_ENV =
+  'DECENTRALIZED_MEDIA_FILES_URL';
+
+function filesServerOrigin(): string | null {
+  const configured = process.env[DECENTRALIZED_MEDIA_FILES_URL_ENV]?.trim();
+  if (!configured) return null;
+  return configured.replace(/\/+$/, '');
+}
+
+/**
+ * Where to fetch `input` from when the files source is set: its Arweave id
+ * or IPFS CID on that server. Null when it isn't set, or for anything that
+ * is not content-addressed (IPNS names, plain URLs).
+ */
+export function filesServerFetchUrl(input: string): string | null {
+  const base = filesServerOrigin();
+  if (!base) return null;
+  const ref = parseDecentralizedMediaRef(input);
+  if (!ref || ref.protocol === 'ipns') return null;
+  const prefix = ref.protocol === 'arweave' ? 'ar' : 'ipfs';
+  return `${base}/${prefix}/${buildPath(ref.id, ref.path)}`;
+}
+
+/** Whether `url` is on the files source named by the environment. */
+export function isFilesServerUrl(url: URL): boolean {
+  const base = filesServerOrigin();
+  if (!base) return false;
+  try {
+    return new URL(base).origin === url.origin;
+  } catch {
+    return false;
+  }
+}
+
 export function toNativeUri(ref: DecentralizedMediaRef): string {
   const protocol = ref.protocol === 'arweave' ? 'ar' : ref.protocol;
   return `${protocol}://${buildPath(ref.id, ref.path)}`;
