@@ -767,6 +767,8 @@ The API Lambda is the public synchronous boundary. It initializes local config o
 
 The API's Redis client is fail-fast: initialization waits a bounded time for the first connection, commands are rejected instead of queued while the client reconnects, and request-path cache reads/writes and rate-limit checks fail open within a short per-command budget, so per-client rate limits are not enforced while Redis is unreachable. Initialization failures are not cached; the next request in the same warm container retries setup, while route wiring runs at most once. Loops keep the default queue-until-reconnected Redis client.
 
+Database login: both the API pools and the TypeORM data source pick their target in `src/db-iam-auth.ts`. When the shared secret sets `DB_IAM_AUTH=true` with `DB_IAM_HOST`, `DB_IAM_USER`, `DB_IAM_HOST_READ` and `DB_IAM_USER_READ`, services connect over verified TLS to an RDS Proxy that only accepts IAM tokens, as the Lambda execution role, with no database password; each new pool connection gets a token at most 10 minutes old. The `mysql` driver only speaks native passwords, so IAM mode adds the plugin-auth handshake and the `mysql_clear_password` reply to it at runtime. Without those settings, services use `DB_HOST`/`DB_USER`/`DB_PASS` as before, so services built before IAM support keep working while the secret carries both.
+
 Background Lambdas that read or write application state use a shared `doInDbContext` wrapper. That wrapper prepares environment/secrets, initializes TypeORM-backed DB access, initializes Redis, runs the job, then disconnects. The `dropVideoConversionInvokerLoop` is intentionally environment-only: it reads only its function environment (no shared secret, no VPC), filters the S3 object key, and invokes MediaConvert without opening MySQL or Redis connections. Its production stack runs in `eu-west-1`, next to the media bucket it watches, while other production services run in `us-east-1`.
 
 MySQL is the integration contract between nearly all modules. API routes, scheduled pollers, queue workers, and derived-data loops all read and write shared tables. Redis is secondary and mostly disposable: API request cache, rate limiting, webhook dedupe, locks, and selected feature caches can fail open or be repopulated from MySQL.
@@ -2936,6 +2938,79 @@ WatchTower manual-review attention is derived from a subject-based union of
 open reports and pending moderation checks. The API groups this union before
 pagination and shares the case definition across queue and count surfaces; it
 adds no persisted case table, queue, service or background reconciliation.
+
+## Subscription key width guard
+
+Subscription tables key rows by the consolidation key, the identity's wallets
+joined by `-`. Before the key-width migration every key column holds 200
+characters; after it, `subscriptions_nfts` and `subscriptions_nfts_final` hold
+666 and `subscriptions_redeemed` 567, so identities of 14 to 16 wallets still
+do not fit. A subscription write is never truncated, never fails its batch and
+never half made.
+
+**One rule for every writer.** A key is written only when every subscription
+table that stores it (balances, mode, nfts, nfts_final, logs, redeemed) can
+hold it, and only when the key has no earlier write still queued. Otherwise
+the whole write waits in `subscription_deferred_writes`, written in the
+writer's own transaction and logged with `SUBSCRIPTION_KEY_DEFERRED`. An
+identity is therefore either fully on the legacy tables or fully waiting: it
+is never on a final list without a balance to charge. Widths come from
+`information_schema`, cached for five minutes; a failed read keeps the last
+widths read. A process that has never read them treats every column as 200
+characters wide, and a write with a longer key fails (and is retried) rather
+than wait. Until dbMigrationsLoop has created the queue table, the "earlier
+write waiting" check reads as none, so keys that fit are written as before.
+
+- Daily build: a waiting key's final row, automatic row and every log line
+  wait together, and the published list is built after that split, so the
+  file and the table hold the same subscribers.
+- API: subscribe, count, mode and edition changes for a waiting key answer
+  400 with when changes resume ("Subscriptions for identities with more than
+  13 wallets resume on ..."), read from `SUBSCRIPTIONS_WIDE_IDENTITY_RESUME_ON`.
+  Nothing is queued for them.
+- Top-ups: the balance and the top-up row wait together.
+- Redemptions: one entry per token; balance, redeemed row and redeemed count
+  move together.
+- Consolidation: a re-key to a waiting key waits; the old keys keep their rows.
+- Coverage markers for keys that do not fit, or that a process can't judge
+  yet because it has never read the widths, are skipped; coverage is
+  recomputed.
+
+**Queue.** `sequence` orders the entries; `dedupe_key` keeps one entry per
+write, so a re-run of the daily build or a retried batch replaces its entry
+instead of adding one. `key_hash` finds a key's waiting entries.
+
+**Replay.** With `FEATURE_SUBSCRIPTION_DEFERRED_REPLAY=true` (off by default),
+the `subscriptionsTopUpLoop` replays waiting writes whose key now fits (the
+length filter is in the query), in queue order, paging through the whole
+queue; redemptions are replayed by the transactions loop inside its own
+redemption transaction, and their wave notices and coverage markers go out
+only after it commits. Each replay claims its entry (row lock, then mark) in
+the transaction that makes the write, so a write is made once and a failed
+write leaves its entry waiting. A replayed write that has to wait again (its
+key changed, or must still wait) is counted as re-queued. Once one of a key's
+entries cannot be replayed, the key's later entries wait too. A final-list
+row is never inserted as it stood at the build: it is marked skipped and the
+next daily build decides. Queued log lines all come from the daily build and
+are skipped the same way, so an automatic row replayed this way has no log
+line. Other writes that no longer apply (a card already dropped, a row
+already there) are marked skipped too. Replay is off by default. Rollback:
+unset the flag; the queue keeps every write.
+
+**Rebuild.** Every entry can be derived again from its source:
+
+- top-ups from Ethereum, once the top-up loop's cursor
+  (`subscriptions_top_up_latest_block`) is set back before the lost top-up's
+  block; hashes already credited are skipped, so nothing is credited twice;
+- redemptions from the airdrop in the `transactions` table: the redemption
+  loop charges it again when its cursor is set back before the airdrop's
+  block, but it re-charges every later airdrop too, so this is safe only
+  when the lost airdrop is the last one;
+- final and automatic rows and logs by the next daily build;
+- consolidations only at that identity's next membership change.
+
+A key with a final row fits every table, so a redemption waits only if the
+key columns are narrowed again, or behind an earlier write of the same key.
 
 ## Cross-wave message search
 
