@@ -1,0 +1,115 @@
+import { main } from '@/profile-cms/chain/profile-cms-chain-sync.cli';
+import { ProfileCmsChainFollower } from '@/profile-cms/chain/profile-cms-chain-follower';
+import { createProfileCmsChainPort } from '@/profile-cms/chain/profile-cms-chain-port.factory';
+import { profileCmsChainDb } from '@/profile-cms/chain/profile-cms-chain.db';
+import {
+  aChainIdentity,
+  aProfileDoc,
+  InMemoryProfileCmsChain
+} from '@/tests/fixtures/profile-cms-chain.fixture';
+
+describe('profile-cms:chain-sync', () => {
+  afterEach(() => jest.restoreAllMocks());
+
+  function deps(port = new InMemoryProfileCmsChain()) {
+    const written: string[] = [];
+    const created: (string | null)[] = [];
+    return {
+      written,
+      created,
+      deps: {
+        createPort: (gateway: string | null) => {
+          created.push(gateway);
+          return port;
+        },
+        inDb: <T>(fn: () => Promise<T>) => fn(),
+        write: (text: string) => {
+          written.push(text);
+        }
+      }
+    };
+  }
+
+  it('syncs from the given height through the port', async () => {
+    const sync = jest
+      .spyOn(ProfileCmsChainFollower.prototype, 'syncFrom')
+      .mockResolvedValue({ applied: 3, nextHeight: 131, waiting: 0 });
+    const run = deps();
+    const result = await main(
+      ['--from-height', '100', '--gateway', 'https://gateway.example.test'],
+      run.deps
+    );
+    expect(result).toEqual({ applied: 3, nextHeight: 131, waiting: 0 });
+    expect(sync).toHaveBeenCalledTimes(1);
+    expect(sync).toHaveBeenCalledWith(100, {});
+    expect(run.created).toEqual(['https://gateway.example.test']);
+    expect(run.written).toEqual([
+      'applied 3 Profile changes; next height 131\n'
+    ]);
+  });
+
+  it('syncs again from the first waiting change until none waits', async () => {
+    const sync = jest
+      .spyOn(ProfileCmsChainFollower.prototype, 'syncFrom')
+      .mockResolvedValueOnce({ applied: 2, nextHeight: 120, waiting: 1 })
+      .mockResolvedValueOnce({ applied: 1, nextHeight: 131, waiting: 0 });
+    const run = deps();
+    const result = await main(['--from-height', '100'], run.deps);
+    expect(sync.mock.calls).toEqual([
+      [100, {}],
+      [120, {}]
+    ]);
+    expect(result).toEqual({ applied: 3, nextHeight: 131, waiting: 0 });
+  });
+
+  it('fails when a change stays unreadable, instead of serving no site', async () => {
+    const chain = new InMemoryProfileCmsChain();
+    chain.setIdentity(aChainIdentity({ imported: false }));
+    chain.replaceProfile({
+      version: 1,
+      height: 10,
+      timeMs: 1000,
+      doc: aProfileDoc()
+    });
+    jest.spyOn(chain, 'getProfileDoc').mockResolvedValue({ status: 'missing' });
+    const pending: number[] = [];
+    let head: { pending_version: number; pending_attempts: number } | null =
+      null;
+    jest
+      .spyOn(profileCmsChainDb, 'findHead')
+      .mockImplementation(async () => head as never);
+    jest
+      .spyOn(profileCmsChainDb, 'recordPending')
+      .mockImplementation(async (row) => {
+        pending.push(row.attempts);
+        head = { pending_version: row.version, pending_attempts: row.attempts };
+      });
+    await expect(
+      main(['--from-height', '0'], deps(chain).deps)
+    ).rejects.toThrow('Profile site rebuild stopped');
+    expect(pending).toEqual([1, 2, 3, 4]);
+  });
+
+  it.each([
+    [[]],
+    [['--from-height', 'x']],
+    [['--from-height']],
+    [['--gateway', 'x']]
+  ])('refuses %j', async (args) => {
+    await expect(main(args, deps().deps)).rejects.toThrow(
+      'profile-cms:chain-sync'
+    );
+  });
+
+  it('prints usage', async () => {
+    const run = deps();
+    expect(await main(['--help'], run.deps)).toBeNull();
+    expect(run.written[0]).toContain('--from-height');
+  });
+
+  it('refuses to run until a gateway adapter exists', () => {
+    expect(() => createProfileCmsChainPort(null)).toThrow(
+      'No chain gateway adapter yet'
+    );
+  });
+});
