@@ -1115,7 +1115,8 @@ export async function consolidateSubscriptions(
       const reason = await deferralReason(
         newKey,
         manager,
-        options.replaySequence
+        options.replaySequence,
+        { locking: true }
       );
       if (reason) {
         await deferSubscriptionWrites(

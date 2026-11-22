@@ -17,6 +17,7 @@ import {
   wantsDetailedDesktopAnswer
 } from './help-bot-desktop-knowledge';
 import { Logger } from '@/logging';
+import { appFeatures } from '@/app-features';
 import {
   frontendHelpBotKnowledgeSource,
   HelpBotKnowledgeSource,
@@ -763,7 +764,9 @@ function buildBoundaryRecord(): HelpBotKnowledgeRecord {
   };
 }
 
-function buildCapabilitiesRecord(): HelpBotKnowledgeRecord {
+function buildCapabilitiesRecord(
+  creditsEnabled: boolean
+): HelpBotKnowledgeRecord {
   return {
     id: 'help-bot.capabilities',
     kind: 'guardrail',
@@ -771,9 +774,13 @@ function buildCapabilitiesRecord(): HelpBotKnowledgeRecord {
     linkLabel: 'Waves',
     canonicalPath: '/waves',
     aliases: ['help bot capabilities'],
-    keywords: ['help', 'capabilities', 'credits'],
+    keywords: creditsEnabled
+      ? ['help', 'capabilities', 'credits']
+      : ['help', 'capabilities'],
     facts: [
-      'The help bot can answer public 6529 product questions, explain its Help6529 Credits system briefly, and ask for a topic when the user only asks for help.'
+      creditsEnabled
+        ? 'The help bot can answer public 6529 product questions, explain its Help6529 Credits system briefly, and ask for a topic when the user only asks for help.'
+        : 'The help bot can answer public 6529 product questions and ask for a topic when the user only asks for help.'
     ],
     relatedPaths: [],
     tags: ['help-bot', 'guardrail'],
@@ -781,14 +788,40 @@ function buildCapabilitiesRecord(): HelpBotKnowledgeRecord {
   };
 }
 
-function buildCreditSystemRecord(): HelpBotKnowledgeRecord {
-  return {
+/** What the bot says about credits while the meter is off. */
+const HELP_BOT_FREE_QUESTIONS_FACTS: readonly string[] = [
+  'Asking help6529 is free.',
+  `It no longer uses ${HELP_BOT_CREDIT_CATEGORY}.`
+];
+
+function buildCreditSystemRecord(
+  creditsEnabled: boolean
+): HelpBotKnowledgeRecord {
+  const record: Pick<
+    HelpBotKnowledgeRecord,
+    'id' | 'kind' | 'title' | 'aliases' | 'relatedPaths' | 'sourceRefs'
+  > = {
     id: 'help-bot.credits',
     kind: 'business_rule',
     title: 'Help6529 Credits',
+    aliases: ['help6529 credits', 'help bot credits', 'helpbot credits'],
+    relatedPaths: ['/waves'],
+    sourceRefs: ['backend help bot credit classifier']
+  };
+  if (!creditsEnabled) {
+    return {
+      ...record,
+      linkLabel: 'Waves',
+      canonicalPath: '/waves',
+      keywords: ['help6529', 'credits', 'credit', 'free'],
+      facts: [...HELP_BOT_FREE_QUESTIONS_FACTS],
+      tags: ['help-bot', 'credits']
+    };
+  }
+  return {
+    ...record,
     linkLabel: HELP_BOT_CREDIT_CATEGORY,
     canonicalPath: HELP_BOT_CREDIT_CATEGORY_PATH,
-    aliases: ['help6529 credits', 'help bot credits', 'helpbot credits'],
     keywords: ['help6529', 'credits', 'credit', 'rep'],
     facts: [
       `Help6529 uses ${HELP_BOT_CREDIT_CATEGORY} REP to meter bot questions.`,
@@ -796,9 +829,7 @@ function buildCreditSystemRecord(): HelpBotKnowledgeRecord {
       `${HELP_BOT_CREDIT_CATEGORY} is a reserved REP category managed by ${HELP_BOT_HANDLE}; normal users cannot grant REP in this category.`,
       getHelpBotCreditGrantText()
     ],
-    relatedPaths: ['/waves'],
-    tags: ['help-bot', 'credits', 'rep'],
-    sourceRefs: ['backend help bot credit classifier']
+    tags: ['help-bot', 'credits', 'rep']
   };
 }
 
@@ -1472,11 +1503,15 @@ function isHelpBotCreditQuestion(normalizedQuestion: string): boolean {
 
 function buildCreditSystemAnswer(
   question: string,
-  baseUrl: string
+  baseUrl: string,
+  creditsEnabled: boolean
 ): string | null {
   const normalizedQuestion = normalizeBoundaryText(question);
   if (!isHelpBotCreditQuestion(normalizedQuestion)) {
     return null;
+  }
+  if (!creditsEnabled) {
+    return HELP_BOT_FREE_QUESTIONS_FACTS.join(' ');
   }
 
   return ensureCanonicalMarkdownLink({
@@ -1521,12 +1556,18 @@ function buildSafePromptDesignAnswer(
   });
 }
 
-function buildGenericHelpAnswer(question: string): string | null {
+function buildGenericHelpAnswer(
+  question: string,
+  creditsEnabled: boolean
+): string | null {
   const normalizedQuestion = normalizeBoundaryText(question);
   if (!isGenericHelpRequest(normalizedQuestion)) {
     return null;
   }
-  return `What do you need help with? I can answer public 6529 product questions about TDH, REP/CIC/NIC, Waves, drops, delegation, consolidations, subscriptions, profiles, The Memes, Meme Lab, Gradients, NextGen, the Stream review, public data, the API, and where to find things on 6529.io. I use ${HELP_BOT_CREDIT_CATEGORY} REP too: each question costs ${HELP_BOT_QUESTION_CREDIT_COST} credit, with grants from signup, profile setup, and daily activity. Reply with a topic or question.`;
+  const credits = creditsEnabled
+    ? ` I use ${HELP_BOT_CREDIT_CATEGORY} REP too: each question costs ${HELP_BOT_QUESTION_CREDIT_COST} credit, with grants from signup, profile setup, and daily activity.`
+    : '';
+  return `What do you need help with? I can answer public 6529 product questions about TDH, REP/CIC/NIC, Waves, drops, delegation, consolidations, subscriptions, profiles, The Memes, Meme Lab, Gradients, NextGen, the Stream review, public data, the API, and where to find things on 6529.io.${credits} Reply with a topic or question.`;
 }
 
 function buildSocialAnswer(question: string): string | null {
@@ -1599,24 +1640,29 @@ export class HelpBotAnswerer {
       };
     }
 
+    const creditsEnabled = appFeatures.isHelpBotCreditsEnabled();
     const creditSystemAnswer = buildCreditSystemAnswer(
       request.question,
-      request.baseUrl
+      request.baseUrl,
+      creditsEnabled
     );
     if (creditSystemAnswer) {
       return {
         type: 'ANSWER',
         answer: creditSystemAnswer,
-        record: buildCreditSystemRecord()
+        record: buildCreditSystemRecord(creditsEnabled)
       };
     }
 
-    const genericHelpAnswer = buildGenericHelpAnswer(request.question);
+    const genericHelpAnswer = buildGenericHelpAnswer(
+      request.question,
+      creditsEnabled
+    );
     if (genericHelpAnswer) {
       return {
         type: 'ANSWER',
         answer: genericHelpAnswer,
-        record: buildCapabilitiesRecord()
+        record: buildCapabilitiesRecord(creditsEnabled)
       };
     }
 

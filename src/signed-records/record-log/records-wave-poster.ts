@@ -1,10 +1,4 @@
-import {
-  createHash,
-  createPrivateKey,
-  createPublicKey,
-  KeyObject,
-  sign as signBytes
-} from 'node:crypto';
+import { createHash, KeyObject, sign as signBytes } from 'node:crypto';
 import { ethers } from 'ethers';
 import { AuthenticationContext } from '@/auth-context';
 import {
@@ -24,6 +18,7 @@ import { ApiDropType } from '@/api/generated/models/ApiDropType';
 import { canonicalizeJson } from '@/profile-cms/protocol/v1/canonical-json';
 import { RequestContext } from '@/request.context';
 import type { RecordsWavePoster } from './record-log.service';
+import { deviceKeyOfSeed } from './service-device-key';
 
 /** The 6529.io service identity that signs the records wave's drops. */
 export interface ServiceIdentity {
@@ -35,10 +30,6 @@ export interface ServiceIdentity {
   readonly privateKey: KeyObject;
 }
 
-const ED25519_PKCS8_PREFIX = Buffer.from(
-  '302e020100300506032b657004220420',
-  'hex'
-);
 const HEX32 = /^0x[0-9a-f]{64}$/;
 const ADDRESS = /^0x[0-9a-f]{40}$/;
 
@@ -62,18 +53,7 @@ export function loadServiceIdentity(
   if (!ADDRESS.test(wallet) || !HEX32.test(grantId) || !HEX32.test(seed)) {
     throw new Error('Malformed signed records service identity');
   }
-  const privateKey = createPrivateKey({
-    key: Buffer.concat([
-      ED25519_PKCS8_PREFIX,
-      Buffer.from(seed.slice(2), 'hex')
-    ]),
-    format: 'der',
-    type: 'pkcs8'
-  });
-  const deviceKey = `0x${createPublicKey(privateKey)
-    .export({ format: 'der', type: 'spki' })
-    .subarray(12)
-    .toString('hex')}`;
+  const { deviceKey, privateKey } = deviceKeyOfSeed(seed);
   return { waveId, profileId, wallet, grantId, deviceKey, privateKey };
 }
 

@@ -19,6 +19,7 @@ import {
   NEXTGEN_TOKENS_TDH_TABLE,
   NEXTGEN_TOKEN_LISTINGS_TABLE
 } from '../nextgen/nextgen_constants';
+import { CONSOLIDATION_KEY_LENGTH } from '@/constants';
 import { BlockEntity } from './IBlock';
 
 @Entity(NEXTGEN_ALLOWLIST_TABLE)
@@ -480,7 +481,7 @@ export class NextGenTokenTDH {
   @Column({ type: 'int' })
   normalised_id!: number;
 
-  @Column({ type: 'varchar', length: 200 })
+  @Column({ type: 'varchar', length: CONSOLIDATION_KEY_LENGTH })
   consolidation_key!: string;
 
   @Column({ type: 'int' })

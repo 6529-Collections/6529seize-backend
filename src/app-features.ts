@@ -59,6 +59,15 @@ export class AppFeatures {
     return this.isFeatureEnabled('SIGNED_RECORD_LOG');
   }
 
+  /**
+   * Help6529 Credits, the REP-backed question meter. Off unless
+   * FEATURE_HELP_BOT_CREDITS is exactly `true`. While off, help6529 answers
+   * without charging, and nothing grants, charges or refunds credits.
+   */
+  public isHelpBotCreditsEnabled(): boolean {
+    return this.isFeatureEnabled('HELP_BOT_CREDITS');
+  }
+
   public isProfileCmsWalletGalleryEnabled(): boolean {
     return (
       (process.env.FEATURE_PROFILE_CMS_WALLET_GALLERY ?? 'true') === 'true'
