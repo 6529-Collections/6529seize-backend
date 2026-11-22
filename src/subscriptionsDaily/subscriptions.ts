@@ -792,13 +792,19 @@ async function mergeSubscriptionsIntoKey(
   }
 
   // newKey may already hold balance and mode rows of its own (both keyed by
-  // consolidation_key), so they are folded in and replaced too.
+  // consolidation_key), so they are folded in and replaced too. Both sums
+  // are read FOR UPDATE. A plain read returns the snapshot taken at the
+  // transaction's first plain read, which can be several merges earlier, so
+  // a top-up, charge or mode change committed since then was left out and
+  // lost when the rows below were deleted. The locking read sees it, and a
+  // later write to these rows waits until this transaction ends.
   const balanceAndModeKeys = Array.from(new Set([...oldKeys, newKey]));
   const placeholders = balanceAndModeKeys.map(() => '?').join(',');
   const balanceResult = await manager.query(
     `SELECT SUM(balance) as total_balance
       FROM ${SUBSCRIPTIONS_BALANCES_TABLE}
-      WHERE consolidation_key IN (${placeholders})`,
+      WHERE consolidation_key IN (${placeholders})
+      FOR UPDATE`,
     balanceAndModeKeys
   );
   const totalBalance = balanceResult[0]?.total_balance;
@@ -807,7 +813,8 @@ async function mergeSubscriptionsIntoKey(
     `SELECT SUM(automatic = true) AS automatic_count,
       SUM(subscribe_all_editions = true) AS all_editions_count
       FROM ${SUBSCRIPTIONS_MODE_TABLE}
-      WHERE consolidation_key IN (${placeholders})`,
+      WHERE consolidation_key IN (${placeholders})
+      FOR UPDATE`,
     balanceAndModeKeys
   );
   // SUM over no rows is NULL, and MySQL returns DECIMAL sums as strings.
