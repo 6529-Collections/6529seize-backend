@@ -10,7 +10,7 @@ import { BadRequestException, CustomApiCompliantException } from '@/exceptions';
 import { numbers } from '@/numbers';
 import { ConnectionWrapper } from '@/sql-executor';
 import { WaveIdentitySubmissionDuplicates } from '@/entities/IWave';
-import { CLOUDFRONT_LINK } from '@/constants';
+import { isAcceptedMediaOrigin } from '@/constants';
 
 const nativeContentPermits = new WeakSet<object>();
 export type NativeEntryContentPermit = Readonly<{
@@ -103,7 +103,7 @@ function isOwnerIdentifyingPlatformMedia(value: string): boolean {
   try {
     const url = new URL(value);
     return (
-      url.origin === CLOUDFRONT_LINK &&
+      isAcceptedMediaOrigin(url.origin) &&
       /^\/(?:drops|renditions\/drops)\/author_[^/]+\//i.test(
         decodeURIComponent(url.pathname)
       )
