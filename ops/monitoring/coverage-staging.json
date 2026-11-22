@@ -256,6 +256,18 @@
       ]
     },
     {
+      "service": "mediaResizerLoop",
+      "region": "eu-west-1",
+      "functions": [
+        "mediaResizerLoop"
+      ],
+      "coverage": [
+        "structured-error-logs",
+        "lambda-errors",
+        "lambda-throttles"
+      ]
+    },
+    {
       "service": "mintAnnouncementsLoop",
       "region": "eu-west-1",
       "functions": [
@@ -515,6 +527,19 @@
       "region": "eu-west-1",
       "functions": [
         "tdhLoop"
+      ],
+      "coverage": [
+        "structured-error-logs",
+        "lambda-errors",
+        "lambda-throttles"
+      ]
+    },
+    {
+      "service": "signedRecordLogLoop",
+      "region": "eu-west-1",
+      "functions": [
+        "signedRecordLogCloser",
+        "signedRecordLogArchiver"
       ],
       "coverage": [
         "structured-error-logs",

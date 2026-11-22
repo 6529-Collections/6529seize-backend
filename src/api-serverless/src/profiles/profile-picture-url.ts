@@ -1,12 +1,9 @@
 import * as Joi from 'joi';
-import { CLOUDFRONT_LINK } from '@/constants';
+import { getAcceptedMediaOrigins, getUserMediaOrigin } from '@/constants';
 import { BadRequestException } from '@/exceptions';
 import { Logger } from '@/logging';
 
 const logger = Logger.get('PROFILE_PICTURE_URL');
-
-const MEDIA_ORIGIN = new URL(CLOUDFRONT_LINK);
-const MEDIA_URL_PREFIX = `${MEDIA_ORIGIN.origin}/`;
 
 // Any ipfs:// value is accepted today, so this stays the accepted form until
 // PROFILE_PICTURE_IPFS_URLS_STRICT is switched on.
@@ -17,33 +14,38 @@ const ANY_IPFS_URL_REGEX = /^ipfs:\/\/.+$/;
 const BARE_CID_IPFS_URL_REGEX =
   /^ipfs:\/\/(?:Qm[1-9A-HJ-NP-Za-km-z]{44}|b[a-z2-7]{58,})$/;
 
-const INVALID_PROFILE_PICTURE_URL_MESSAGE = `Profile picture must be an ipfs:// link or an image URL starting with ${MEDIA_URL_PREFIX}`;
+function invalidProfilePictureUrlMessage(): string {
+  return `Profile picture must be an ipfs:// link or an image URL starting with ${getUserMediaOrigin()}/`;
+}
 
 /**
- * The media host, then a non-empty path without whitespace: nothing
+ * An accepted media host, then a non-empty path without whitespace: nothing
  * (userinfo, a port, a longer host name) can sit between the host and the
  * first slash.
  */
 export function isMediaHostUrl(value: string): boolean {
-  if (
-    !value.startsWith(MEDIA_URL_PREFIX) ||
-    value.length === MEDIA_URL_PREFIX.length ||
-    /\s/.test(value)
-  ) {
+  if (/\s/.test(value)) {
     return false;
   }
-  try {
-    const url = new URL(value);
-    return (
-      url.protocol === MEDIA_ORIGIN.protocol &&
-      url.hostname === MEDIA_ORIGIN.hostname &&
-      url.port === '' &&
-      url.username === '' &&
-      url.password === ''
-    );
-  } catch {
-    return false;
-  }
+  return getAcceptedMediaOrigins().some((origin) => {
+    const prefix = `${origin}/`;
+    if (!value.startsWith(prefix) || value.length === prefix.length) {
+      return false;
+    }
+    try {
+      const url = new URL(value);
+      const expected = new URL(origin);
+      return (
+        url.protocol === expected.protocol &&
+        url.hostname === expected.hostname &&
+        url.port === '' &&
+        url.username === '' &&
+        url.password === ''
+      );
+    } catch {
+      return false;
+    }
+  });
 }
 
 export function isBareCidIpfsUrl(value: string): boolean {
@@ -93,9 +95,18 @@ function checkIpfsUrl(value: string): boolean {
 const PREVIOUSLY_ACCEPTED_URL_REGEX =
   /^(?:ipfs:\/\/|https:\/\/d3lqz0a4bldqgf).+$/;
 
-/** Request-level shape of `pfp_url`, unchanged from before. */
-export const ProfilePictureUrlSchema = Joi.string().regex(
-  PREVIOUSLY_ACCEPTED_URL_REGEX
+/**
+ * Request-level shape of `pfp_url`: what was always accepted, plus a URL on
+ * this environment's media host when that is not the prod CDN.
+ */
+export const ProfilePictureUrlSchema = Joi.string().custom(
+  (value: string, helpers) =>
+    PREVIOUSLY_ACCEPTED_URL_REGEX.test(value) || isMediaHostUrl(value)
+      ? value
+      : helpers.error('string.pattern.base', {
+          regex: PREVIOUSLY_ACCEPTED_URL_REGEX,
+          name: undefined
+        })
 );
 
 /**
@@ -127,6 +138,6 @@ export function assertProfilePictureUrlChangeAllowed(
     return;
   }
   if (!isAllowedNewProfilePictureUrl(submitted)) {
-    throw new BadRequestException(INVALID_PROFILE_PICTURE_URL_MESSAGE);
+    throw new BadRequestException(invalidProfilePictureUrlMessage());
   }
 }
