@@ -29,3 +29,27 @@ functions:
     environment:
       SENTRY_DSN: ${env:SENTRY_DSN}
       SENTRY_ENVIRONMENT: 'e2eeRelayPublishLoop_${opt:stage, self:provider.stage}'
+
+resources:
+  Resources:
+    E2eeRelayLagAlarm:
+      Type: AWS::CloudWatch::Alarm
+      Properties:
+        AlarmName: !Sub "${AWS::StackName}-e2eeRelay-lag"
+        AlarmDescription: "A record MySQL committed has waited 15 minutes or more for a relay. Read [LAG] in e2eeRelayPublishLoop: failures.outbox.lastError names the wave and the relay's error."
+        Namespace: "6529/E2eeRelay"
+        MetricName: OutboxOldestAgeSeconds
+        Dimensions:
+          - Name: Environment
+            Value: ${opt:stage, self:provider.stage}
+        Statistic: Maximum
+        Period: 300
+        EvaluationPeriods: 3
+        DatapointsToAlarm: 3
+        Threshold: 900
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+        AlarmActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}
+        OKActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}

@@ -16,6 +16,7 @@ import {
   e2eeStreamPublisher
 } from '@/e2ee/relay/e2ee-stream-publisher';
 import {
+  E2eeRelayFailures,
   E2eeStreamHead,
   E2eeStreamStore,
   e2eeStreamStore
@@ -38,10 +39,12 @@ export interface E2eeRelayLoopDeps {
   >;
   readonly store: Pick<
     E2eeStreamStore,
-    'recentHeads' | 'countOutbox' | 'countDeletions'
+    'recentHeads' | 'countOutbox' | 'countDeletions' | 'worstFailures'
   >;
   readonly pool: () => E2eeRelayPool;
   readonly now: () => number;
+  /** Where each run's lag goes as metrics (CloudWatch in the Lambda). */
+  readonly metrics?: (report: E2eeRelayLoopReport) => void;
 }
 
 export interface E2eeRelayLoopReport {
@@ -54,6 +57,11 @@ export interface E2eeRelayLoopReport {
   };
   /** DELs sent this run, and those still waiting (a relay refused them). */
   readonly deletions: { readonly done: number; readonly waiting: number };
+  /**
+   * The waiting record and DEL that failed most often, with the last
+   * error a relay gave (`last_error`); null when nothing failed.
+   */
+  readonly failures: E2eeRelayFailures;
   readonly heads: {
     readonly checked: number;
     /** `wave@relay` of each relay found behind a stream's head. */
@@ -197,6 +205,7 @@ export async function runE2eeRelayPublishLoop(
       published: { waves: 0, complete: 0 },
       outbox: { rows: 0, oldestAgeMs: null },
       deletions: { done: 0, waiting: 0 },
+      failures: { outbox: null, deletion: null },
       heads: { checked: 0, behind: [], repaired: 0, unrepaired: [] }
     };
   }
@@ -204,6 +213,10 @@ export async function runE2eeRelayPublishLoop(
   const deleted = await deps.publisher.publishDeletions(PENDING_WAVES);
   const outbox = await deps.store.countOutbox();
   const waitingDeletions = await deps.store.countDeletions();
+  const failures =
+    outbox.rows || waitingDeletions
+      ? await deps.store.worstFailures()
+      : { outbox: null, deletion: null };
   const heads = await deps.store.recentHeads(
     deps.now() - HEAD_CHECK_WINDOW_MS,
     HEAD_CHECK_STREAMS
@@ -228,12 +241,64 @@ export async function runE2eeRelayPublishLoop(
           : deps.now() - outbox.oldestCreatedAt
     },
     deletions: { done: deleted.done, waiting: waitingDeletions },
+    failures,
     heads: { checked: heads.length, behind, repaired, unrepaired }
   };
   if (unrepaired.length || outbox.rows || waitingDeletions) {
     logger.warn(`[LAG] ${JSON.stringify(report)}`);
   }
+  try {
+    deps.metrics?.(report);
+  } catch (error) {
+    logger.warn(`[METRICS] ${(error as Error).message}`);
+  }
   return report;
+}
+
+/** The lag as metric values: what the dashboard and the alarm read. */
+export function e2eeRelayLagMetrics(
+  report: E2eeRelayLoopReport
+): Record<string, number> {
+  return {
+    OutboxRows: report.outbox.rows,
+    OutboxOldestAgeSeconds: Math.floor((report.outbox.oldestAgeMs ?? 0) / 1000),
+    OutboxMostAttempts: report.failures.outbox?.attempts ?? 0,
+    DeletionsWaiting: report.deletions.waiting,
+    HeadsBehind: report.heads.behind.length,
+    HeadsUnrepaired: report.heads.unrepaired.length
+  };
+}
+
+const METRIC_NAMESPACE = '6529/E2eeRelay';
+
+/**
+ * Writes the lag in CloudWatch's embedded metric format, one line per run
+ * (namespace 6529/E2eeRelay, dimension Environment). Only in a Lambda.
+ */
+export function emitE2eeRelayLagMetrics(report: E2eeRelayLoopReport): void {
+  if (!process.env.AWS_LAMBDA_FUNCTION_NAME) return;
+  const values = e2eeRelayLagMetrics(report);
+  process.stdout.write(
+    `${JSON.stringify({
+      _aws: {
+        Timestamp: Date.now(),
+        CloudWatchMetrics: [
+          {
+            Namespace: METRIC_NAMESPACE,
+            Dimensions: [['Environment']],
+            Metrics: Object.keys(values).map((name) => ({
+              Name: name,
+              Unit: name.endsWith('Seconds') ? 'Seconds' : 'Count'
+            }))
+          }
+        ]
+      },
+      Environment: (process.env.SENTRY_ENVIRONMENT ?? '').includes('staging')
+        ? 'staging'
+        : 'prod',
+      ...values
+    })}\n`
+  );
 }
 
 /** The loop's production wiring: process settings and the orderer's pool. */
@@ -243,6 +308,7 @@ export function defaultE2eeRelayLoopDeps(): E2eeRelayLoopDeps {
     publisher: e2eeStreamPublisher,
     store: e2eeStreamStore,
     pool: e2eeDefaultRelayPool,
-    now: () => Date.now()
+    now: () => Date.now(),
+    metrics: emitE2eeRelayLagMetrics
   };
 }

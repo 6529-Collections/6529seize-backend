@@ -5,6 +5,9 @@ import { E2eeRelaySettings } from '@/e2ee/relay/e2ee-relay-config';
 import { E2eeRelayPool } from '@/e2ee/relay/e2ee-relay-pool';
 import {
   e2eeEventContentHash,
+  e2eeRelayLagMetrics,
+  E2eeRelayLoopReport,
+  emitE2eeRelayLagMetrics,
   runE2eeRelayPublishLoop
 } from '@/e2ee/relay/e2ee-relay-publish-loop';
 import {
@@ -72,15 +75,18 @@ function setup() {
     now: () => clock++,
     random: () => 1
   });
+  const metrics: E2eeRelayLoopReport[] = [];
   const loop = () =>
     runE2eeRelayPublishLoop({
       settings: () => settings,
       publisher,
       store,
       pool: () => pool,
-      now: () => clock
+      now: () => clock,
+      metrics: (report) => metrics.push(report)
     });
-  return { relays, held, store, publisher, loop, settings };
+  const wait = (ms: number) => (clock += ms);
+  return { relays, held, store, publisher, loop, settings, metrics, wait };
 }
 
 function message(seq: number, bytes: Buffer): E2eeRecordAppend {
@@ -253,5 +259,75 @@ describe('mirror publishing and the publisher loop', () => {
       }
     }
     expect(store.itemRows).toEqual([]);
+  });
+
+  it('reports the lag as metrics, with the last error of what keeps failing', async () => {
+    const { relays, store, publisher, loop, metrics, wait } = setup();
+    relays[1].down = true;
+    await publisher.run(store, (connection, batch) =>
+      batch!.append(connection, message(1, Buffer.alloc(64, 1)))
+    );
+    await publisher.settled();
+    wait(20 * 60 * 1000);
+    const lagging = await loop();
+    expect(lagging.failures.outbox).toEqual({
+      wave: `cv/${GROUP}`,
+      attempts: expect.any(Number),
+      lastError: expect.stringContaining('wss://relay-1.test')
+    });
+    // The write and this run both tried relay-1.
+    expect(lagging.failures.outbox!.attempts).toBeGreaterThanOrEqual(2);
+    expect(e2eeRelayLagMetrics(metrics[0])).toEqual({
+      OutboxRows: 1,
+      OutboxOldestAgeSeconds: 1200,
+      OutboxMostAttempts: lagging.failures.outbox!.attempts,
+      DeletionsWaiting: 0,
+      HeadsBehind: 0,
+      HeadsUnrepaired: 0
+    });
+    relays[1].down = false;
+    const drained = await loop();
+    expect(drained.failures).toEqual({ outbox: null, deletion: null });
+    expect(e2eeRelayLagMetrics(metrics[1])).toMatchObject({
+      OutboxRows: 0,
+      OutboxOldestAgeSeconds: 0,
+      HeadsUnrepaired: 0
+    });
+  });
+
+  it('writes the metrics in embedded metric format only in a Lambda', () => {
+    const report = {
+      mode: 'mirror',
+      published: { waves: 0, complete: 0 },
+      outbox: { rows: 3, oldestAgeMs: 90_500 },
+      deletions: { done: 0, waiting: 1 },
+      failures: { outbox: null, deletion: null },
+      heads: { checked: 0, behind: [], repaired: 0, unrepaired: [] }
+    } as const;
+    const write = jest
+      .spyOn(process.stdout, 'write')
+      .mockImplementation(() => true);
+    const saved = process.env.AWS_LAMBDA_FUNCTION_NAME;
+    try {
+      delete process.env.AWS_LAMBDA_FUNCTION_NAME;
+      emitE2eeRelayLagMetrics(report);
+      expect(write).not.toHaveBeenCalled();
+      process.env.AWS_LAMBDA_FUNCTION_NAME = 'e2eeRelayPublishLoop';
+      emitE2eeRelayLagMetrics(report);
+      const line = JSON.parse(String(write.mock.calls[0][0]));
+      expect(line._aws.CloudWatchMetrics[0]).toMatchObject({
+        Namespace: '6529/E2eeRelay',
+        Dimensions: [['Environment']]
+      });
+      expect(line).toMatchObject({
+        OutboxRows: 3,
+        OutboxOldestAgeSeconds: 90,
+        DeletionsWaiting: 1
+      });
+    } finally {
+      if (saved === undefined) delete process.env.AWS_LAMBDA_FUNCTION_NAME;
+      else process.env.AWS_LAMBDA_FUNCTION_NAME = saved;
+      write.mockRestore();
+    }
   });
 });

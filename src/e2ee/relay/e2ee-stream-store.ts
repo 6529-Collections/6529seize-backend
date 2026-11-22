@@ -152,6 +152,23 @@ export interface E2eeStreamStore {
   /** Drops a DEL every relay holds, and its records' index rows. */
   finishDeletion(row: E2eeDeletionRow): Promise<void>;
   countDeletions(): Promise<number>;
+  /**
+   * The queued record and the queued DEL that failed most often, with the
+   * last error a relay gave for each: what the lag report names.
+   */
+  worstFailures(): Promise<E2eeRelayFailures>;
+}
+
+/** A queued record or DEL a relay refused or never answered, and why. */
+export interface E2eeRelayFailure {
+  readonly wave: string;
+  readonly attempts: number;
+  readonly lastError: string;
+}
+
+export interface E2eeRelayFailures {
+  readonly outbox: E2eeRelayFailure | null;
+  readonly deletion: E2eeRelayFailure | null;
 }
 
 interface OutboxDbRow {
@@ -618,6 +635,34 @@ export class MysqlE2eeStreamStore
       this.opts()
     );
     return Number(rows[0]?.n ?? 0);
+  }
+
+  async worstFailures(): Promise<E2eeRelayFailures> {
+    const worst = async (table: string): Promise<E2eeRelayFailure | null> => {
+      const rows = await this.db.execute<{
+        wave: string;
+        attempts: number | string;
+        last_error: string;
+      }>(
+        `select wave, attempts, last_error from ${table}
+         where last_error is not null
+         order by attempts desc, id limit 1`,
+        {},
+        this.opts()
+      );
+      const row = rows[0];
+      return row
+        ? {
+            wave: row.wave,
+            attempts: Number(row.attempts),
+            lastError: row.last_error
+          }
+        : null;
+    };
+    return {
+      outbox: await worst(E2EE_RELAY_OUTBOX_TABLE),
+      deletion: await worst(E2EE_RELAY_DELETIONS_TABLE)
+    };
   }
 }
 

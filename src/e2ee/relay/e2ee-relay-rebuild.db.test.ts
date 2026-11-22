@@ -878,4 +878,30 @@ describeWithSeed('e2ee relay records against MySQL', SEEDS, () => {
     expect((await rebuild('write')).ok).toBe(true);
     expect(await answers(ids)).toEqual(before);
   });
+
+  it('names the record and the DEL that keep failing, with the last error', async () => {
+    const ids = await story();
+    const [welcome] = await groups.getWelcomes('pb', ids.b);
+    relay.down = true;
+    await groups.ackWelcome('pb', ids.b, welcome.id);
+    await publisher.settled();
+    await publisher.publishDeletions(10);
+    const failing = await store.worstFailures();
+    expect(failing.outbox).toEqual({
+      wave: `dv/${ids.b}`,
+      attempts: 1,
+      lastError: expect.stringContaining('wss://relay.test')
+    });
+    expect(failing.deletion).toMatchObject({
+      attempts: 1,
+      lastError: expect.stringContaining('wss://relay.test')
+    });
+    relay.down = false;
+    await publisher.publishPending(10);
+    await publisher.publishDeletions(10);
+    expect(await store.worstFailures()).toEqual({
+      outbox: null,
+      deletion: null
+    });
+  });
 });

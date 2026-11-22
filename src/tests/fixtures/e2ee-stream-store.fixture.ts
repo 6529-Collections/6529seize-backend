@@ -13,6 +13,8 @@ import {
   E2eeDeletionRow,
   E2eeOutboxInsert,
   E2eeOutboxRow,
+  E2eeRelayFailure,
+  E2eeRelayFailures,
   E2eeStreamHead,
   E2eeStreamStore
 } from '@/e2ee/relay/e2ee-stream-store';
@@ -147,6 +149,8 @@ export class InMemoryE2eeStreamStore
   get deletionRows(): DeletionRow[] {
     return Array.from(this.state.deletions.values());
   }
+  /** The last error per outbox row (`o<id>`) and DEL (`d<id>`). */
+  private readonly lastErrors = new Map<string, string>();
   private readonly staged = new WeakMap<object, State>();
 
   async executeNativeQueriesInTransaction<T>(
@@ -297,11 +301,13 @@ export class InMemoryE2eeStreamStore
     }
   }
 
-  async markFailed(ids: readonly number[]): Promise<void> {
+  async markFailed(ids: readonly number[], error: string): Promise<void> {
     for (const id of ids) {
       const row = this.state.outbox.get(id);
-      if (row)
+      if (row) {
         this.state.outbox.set(id, { ...row, attempts: row.attempts + 1 });
+        this.lastErrors.set(`o${id}`, error);
+      }
     }
   }
 
@@ -439,9 +445,12 @@ export class InMemoryE2eeStreamStore
     if (row && !row.heldBy.includes(url)) row.heldBy.push(url);
   }
 
-  async markDeletionFailed(id: number): Promise<void> {
+  async markDeletionFailed(id: number, error: string): Promise<void> {
     const row = this.state.deletions.get(id);
-    if (row) row.attempts++;
+    if (row) {
+      row.attempts++;
+      this.lastErrors.set(`d${id}`, error);
+    }
   }
 
   async finishDeletion(row: E2eeDeletionRow): Promise<void> {
@@ -455,5 +464,27 @@ export class InMemoryE2eeStreamStore
 
   async countDeletions(): Promise<number> {
     return this.state.deletions.size;
+  }
+
+  async worstFailures(): Promise<E2eeRelayFailures> {
+    const worst = (
+      prefix: string,
+      rows: { id: number; wave: string; attempts: number }[]
+    ): E2eeRelayFailure | null => {
+      const [row] = rows
+        .filter((item) => this.lastErrors.has(`${prefix}${item.id}`))
+        .sort((a, b) => b.attempts - a.attempts || a.id - b.id);
+      return row
+        ? {
+            wave: row.wave,
+            attempts: row.attempts,
+            lastError: this.lastErrors.get(`${prefix}${row.id}`)!
+          }
+        : null;
+    };
+    return {
+      outbox: worst('o', Array.from(this.state.outbox.values())),
+      deletion: worst('d', Array.from(this.state.deletions.values()))
+    };
   }
 }

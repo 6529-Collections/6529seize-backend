@@ -732,10 +732,17 @@ Whether to record reads only `E2EE_RELAY_MODE` (and the opt-in), so a bad
 key setting can never break the off mode.
 
 **The publisher loop** (`e2eeRelayPublishLoop`, every minute, nothing
-while off) publishes what the outbox still holds, logs the lag (outbox
-rows and the oldest one's age), and checks that every relay holds the head
-of each stream that moved in the last 15 minutes. A relay found behind
-gets the missing records copied from a relay that has them.
+while off) publishes what the outbox and the DEL queue still hold, and
+checks that every relay holds the head of each stream that moved in the
+last 15 minutes. A relay found behind gets the missing records copied from
+a relay that has them. Each run writes the lag as metrics in namespace
+`6529/E2eeRelay` (dimension `Environment`): `OutboxRows`,
+`OutboxOldestAgeSeconds`, `OutboxMostAttempts`, `DeletionsWaiting`,
+`HeadsBehind` and `HeadsUnrepaired`. The alarm `e2eeRelay-lag` goes off
+when a record has waited 15 minutes or more through three 5-minute periods.
+While anything waits, the `[LAG]` log line names the record and the DEL
+that failed most often, each with the last error a relay gave
+(`last_error`).
 
 **Sessions.** The orderer answers the CHALLENGE each relay sends before a
 session's hour runs out, and reconnects every 30 minutes, so its anchor
