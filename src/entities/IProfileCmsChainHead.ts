@@ -29,17 +29,4 @@ export class ProfileCmsChainHeadEntity {
 
   @Column({ type: 'bigint' })
   readonly updated_at!: number;
-
-  /** A later version that could not be applied yet: a document or file was unavailable. */
-  @Column({ type: 'int', nullable: true, default: null })
-  readonly pending_version?: number | null;
-
-  @Column({ type: 'bigint', nullable: true, default: null })
-  readonly pending_height?: number | null;
-
-  @Column({ type: 'int', default: 0 })
-  readonly pending_attempts?: number;
-
-  @Column({ type: 'varchar', length: 200, nullable: true, default: null })
-  readonly pending_reason?: string | null;
 }

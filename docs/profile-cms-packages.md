@@ -458,10 +458,15 @@ alone, so a rebuild from empty tables writes the same public rows.
 
 A change whose document or files are not in the store yet, whose Safe
 check fails on the network, or whose read through the chain port fails (a
-gateway error) is retried up to five times; meanwhile that person's later
-changes wait and everyone else's go on. A read the port says to try later
-(a wallet whose principal at that height isn't known yet) waits without
-using up a try, and is logged on every pass until it reads. Live, the last try applies it as it
+gateway error) is parked in `profile_cms_chain_parked`, with that person's
+later changes queued behind it, and the index reads on: everyone else's
+changes are applied once, and the cursor doesn't wait. Every pass retries
+the parked changes first, each person's in version order, up to five tries
+a change. A read the port says to try later (a wallet whose principal at
+that height isn't known yet, or an answer the port can't use yet) waits
+without using up a try, and is logged on every pass until it reads. A
+change parked for more than 30 minutes raises an operational error,
+`PROFILE_SITE_CHANGE_STALLED`, once. Live, the last try applies it as it
 reads: no site. A rebuild (`profile-cms:chain-sync` and the rebuild-check
 steps) retries until nothing waits and fails on a change still unreadable
 after its tries, instead of serving no site. Safe (EIP-1271) signatures are
@@ -470,9 +475,10 @@ same answer. The port gives the change feed in whole blocks (the adapter
 follows the gateway's `height:index` cursor through a block cut across
 pages); the follower reads on while there is a next page, and stops with an
 error at a page that ends inside a block rather than skip the rest of it.
-The index keeps its own cursor in `profile_cms_chain_heads` (the lowest
-waiting change, else one past the last applied), so turning the flag off and
-on again catches up instead of losing changes. Draft-only
+The index keeps its own cursor in `profile_cms_chain_heads` and
+`profile_cms_chain_parked`: it reads the block of the last change it read
+again, so a pass that stopped inside a block loses none of it, and turning
+the flag off and on again catches up instead of losing changes. Draft-only
 fields of a package first published after the switch (`created_at`,
 `created_by_profile_id`) come from the draft. The serving rules do not change:
 public reads still serve only the primary, and the handle check stays at read

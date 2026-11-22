@@ -33,9 +33,11 @@ import {
   ProfileDocCms,
   readProfileDocCms
 } from '@/profile-cms/chain/profile-doc-cms';
+import { ProfileCmsChainParkedEntity } from '@/entities/IProfileCmsChainParked';
 import { ProfileCmsPackageEntity } from '@/entities/IProfileCmsPackage';
 import { CmsPublishedPackageRow } from '@/api/cms/cms.db';
 import { Eip1271SignatureVerifier } from '@/profile-cms/profile-cms-signing';
+import { Time } from '@/time';
 
 export interface ProfileCmsSyncResult {
   readonly applied: number;
@@ -58,6 +60,9 @@ export type ProfileCmsChainApplyResult =
 
 /** Tries before a change whose document or files stay unavailable is applied as it reads. */
 export const PROFILE_CMS_MAX_CHANGE_ATTEMPTS = 5;
+
+/** A change parked longer than this raises an operational error, once. */
+export const PROFILE_CMS_PARKED_ALERT_MS = 30 * 60 * 1000;
 
 type CmsRead =
   | { readonly ok: true; readonly cms: ProfileDocCms | null }
@@ -101,14 +106,18 @@ class RetryableChainReadError extends Error {
  * same transition, so they leave the same rows.
  *
  * A change whose document or files are not in the store yet, or whose port
- * read fails (a gateway error), is retried, at most
- * {@link PROFILE_CMS_MAX_CHANGE_ATTEMPTS} times; meanwhile the person's
- * later changes wait and everyone else's go on. A read the port says to try
- * later (an error with `retryLater: true`, such as a wallet whose principal
- * at that height isn't known yet) waits without using up a try, and is
- * logged on every pass until it reads. Live, the last try applies it
- * as it reads: an unreadable document or a missing site file serves no site.
- * In `rebuild` mode the last try fails the rebuild instead.
+ * read fails (a gateway error), is parked on a retry list with the person's
+ * later changes queued behind it, and the feed is read on: everyone else's
+ * changes are applied once, and the cursor doesn't wait. Each pass retries
+ * the list first, at most {@link PROFILE_CMS_MAX_CHANGE_ATTEMPTS} tries a
+ * change. A read the port says to try later (an error with
+ * `retryLater: true`, such as a wallet whose principal at that height
+ * isn't known yet) waits without using up a try, and is logged on every
+ * pass until it reads; a change parked longer than
+ * {@link PROFILE_CMS_PARKED_ALERT_MS} raises an operational error
+ * (`PROFILE_SITE_CHANGE_STALLED`). Live, the last try applies it as it
+ * reads: an unreadable document or a missing site file serves no site. In
+ * `rebuild` mode the last try fails the rebuild instead.
  */
 export class ProfileCmsChainFollower {
   private readonly logger = Logger.get(this.constructor.name);
@@ -121,60 +130,54 @@ export class ProfileCmsChainFollower {
     private readonly safeVerifierAt: (
       timeMs: number
     ) => Eip1271SignatureVerifier = pinnedEip1271Verifier,
-    private readonly mode: ProfileCmsFollowMode = 'live'
+    private readonly mode: ProfileCmsFollowMode = 'live',
+    private readonly now: () => number = () => Time.currentMillis()
   ) {}
 
-  /** Applies changes in order. A person whose change must wait has their later changes wait too. */
+  /**
+   * Applies changes in order. A change that must wait is parked, and the
+   * same person's later changes are queued behind it.
+   */
   async applyChanges(
     changes: readonly ProfileCmsProfileChange[],
     ctx: RequestContext,
     waiting: Set<string> = new Set()
-  ): Promise<{
-    readonly applied: number;
-    readonly retryAt: ProfileCmsProfileChange | null;
-  }> {
+  ): Promise<{ readonly applied: number }> {
     let applied = 0;
-    let retryAt: ProfileCmsProfileChange | null = null;
     for (const change of changes) {
       if (waiting.has(change.principal)) {
+        await this.db.parkBehind(change, this.now(), ctx);
         continue;
       }
       const result = await this.applyChange(change, ctx);
       if (result.status === 'retry') {
-        this.logger.warn(
-          `Profile site change for ${change.principal} at ${change.height} waits (try ${result.attempt}): ${result.reason}`
-        );
+        this.logWait(change, result);
         waiting.add(change.principal);
-        retryAt = retryAt ?? change;
         continue;
       }
       if (result.status === 'applied') {
         applied++;
       }
     }
-    return { applied, retryAt };
+    return { applied };
   }
 
   /**
-   * Pages through the change feed from `fromHeight` to the finalized head.
-   * `nextHeight` is where to start next time: the first change that waits,
-   * else one past the last change read. `waiting` counts the people whose
-   * changes wait.
+   * Retries the parked changes, then pages through the change feed from
+   * `fromHeight` to the finalized head. `nextHeight` is one past the last
+   * change read; `waiting` counts the people whose changes stay parked.
    */
   async syncFrom(
     fromHeight: number,
     ctx: RequestContext
   ): Promise<ProfileCmsSyncResult> {
-    let height = fromHeight;
-    let applied = 0;
-    let firstRetry: ProfileCmsProfileChange | null = null;
-    let lastHeight: number | null = null;
     const waiting = new Set<string>();
+    let applied = await this.retryParked(ctx, waiting);
+    let height = fromHeight;
+    let lastHeight: number | null = null;
     for (;;) {
       const page = await this.port.getChanges(height);
-      const result = await this.applyChanges(page.changes, ctx, waiting);
-      applied += result.applied;
-      firstRetry = firstRetry ?? result.retryAt;
+      applied += (await this.applyChanges(page.changes, ctx, waiting)).applied;
       lastHeight = page.changes.at(-1)?.height ?? lastHeight;
       if (page.next_height === null) {
         break;
@@ -191,16 +194,76 @@ export class ProfileCmsChainFollower {
       }
       height = page.next_height;
     }
-    const afterLast = lastHeight === null ? fromHeight : lastHeight + 1;
     return {
       applied,
-      nextHeight: firstRetry ? firstRetry.height : afterLast,
+      nextHeight: lastHeight === null ? fromHeight : lastHeight + 1,
       waiting: waiting.size
     };
   }
 
   /**
-   * For a rebuild: syncs again from the first waiting change until none
+   * Tries each parked change again, each person's in version order. A person
+   * whose first parked change still waits keeps the rest parked.
+   */
+  private async retryParked(
+    ctx: RequestContext,
+    waiting: Set<string>
+  ): Promise<number> {
+    let applied = 0;
+    for (const parked of await this.db.listParked(ctx)) {
+      if (waiting.has(parked.principal)) {
+        continue;
+      }
+      const change = parkedChange(parked);
+      const result = await this.applyChange(change, ctx);
+      if (result.status === 'retry') {
+        this.logWait(change, result);
+        waiting.add(parked.principal);
+        await this.alertIfStalled(parked, result.reason, ctx);
+      } else if (result.status === 'applied') {
+        applied++;
+      } else {
+        await this.db.unpark(parked.principal, parked.version, ctx);
+      }
+    }
+    return applied;
+  }
+
+  /** Live only: a rebuild ends on its own, after the change's last try. */
+  private async alertIfStalled(
+    parked: ProfileCmsChainParkedEntity,
+    reason: string,
+    ctx: RequestContext
+  ): Promise<void> {
+    const now = this.now();
+    const waited = now - parked.parked_at;
+    if (
+      this.mode !== 'live' ||
+      parked.alerted_at !== null ||
+      waited < PROFILE_CMS_PARKED_ALERT_MS
+    ) {
+      return;
+    }
+    this.logger.errorWithCode(
+      'PROFILE_SITE_CHANGE_STALLED',
+      `Profile site change for ${parked.principal} at ${parked.height} has waited ${Math.floor(
+        waited / 60_000
+      )} minutes: ${reason}`
+    );
+    await this.db.markParkedAlerted(parked.principal, parked.version, now, ctx);
+  }
+
+  private logWait(
+    change: ProfileCmsProfileChange,
+    result: { readonly reason: string; readonly attempt: number }
+  ): void {
+    this.logger.warn(
+      `Profile site change for ${change.principal} at ${change.height} waits (try ${result.attempt}): ${result.reason}`
+    );
+  }
+
+  /**
+   * For a rebuild: syncs again, retrying the parked changes, until none
    * waits. In `rebuild` mode every wait uses up a try, so this ends: a change
    * still unreadable after its last try fails the rebuild.
    */
@@ -232,9 +295,8 @@ export class ProfileCmsChainFollower {
       return { status: 'skipped', reason: 'already_applied' };
     }
     const triedBefore =
-      head?.pending_version === change.version
-        ? (head.pending_attempts ?? 0)
-        : 0;
+      (await this.db.findParked(change.principal, change.version, ctx))
+        ?.attempts ?? 0;
     const attempt = triedBefore + 1;
     // Only the live index gives up and applies a change as it reads.
     const lastTry =
@@ -307,15 +369,9 @@ export class ProfileCmsChainFollower {
           `Profile site rebuild stopped at the change of ${change.principal} at height ${change.height}: ${error.message} after ${attempts} tries`
         );
       }
-      await this.db.recordPending(
-        {
-          principal: change.principal,
-          profile_id: head?.profile_id ?? '',
-          version: change.version,
-          height: change.height,
-          attempts,
-          reason: error.message
-        },
+      await this.db.park(
+        change,
+        { attempts, reason: error.message, now: this.now() },
         ctx
       );
       return { status: 'retry', reason: error.message, attempt: attempts };
@@ -730,6 +786,21 @@ export class ProfileCmsChainFollower {
   }
 }
 
+function parkedChange(
+  parked: ProfileCmsChainParkedEntity
+): ProfileCmsProfileChange {
+  return {
+    height: parked.height,
+    time_ms: parked.time_ms,
+    principal: parked.principal,
+    version: parked.version,
+    doc_cid: parked.doc_cid,
+    ...(parked.source === 'import' || parked.source === 'operation'
+      ? { source: parked.source }
+      : {})
+  };
+}
+
 /** The port's mark for "not known yet, try later" (the identity mirror's ChainReadRetryLater). */
 function isRetryLater(error: unknown): boolean {
   return (
@@ -741,9 +812,10 @@ function isRetryLater(error: unknown): boolean {
 
 /**
  * The identity mirror's hook, called at the end of each mirror run.
- * With FEATURE_PROFILE_CMS_CHAIN_POINTER off it does nothing. On, it catches
- * up from the index's own cursor (the lowest waiting change, else one past
- * the last applied), so turning the flag off and on again loses nothing.
+ * With FEATURE_PROFILE_CMS_CHAIN_POINTER off it does nothing. On, it retries
+ * the parked changes and catches up from the index's own cursor (the block
+ * of the last change read), so turning the flag off and on again loses
+ * nothing.
  * The first time, it starts at PROFILE_CMS_CHAIN_FROM_HEIGHT (default 0).
  */
 export async function followProfileCmsChanges(

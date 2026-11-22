@@ -2,6 +2,7 @@ import { main } from '@/profile-cms/chain/profile-cms-chain-sync.cli';
 import { ProfileCmsChainFollower } from '@/profile-cms/chain/profile-cms-chain-follower';
 import { createProfileCmsChainPort } from '@/profile-cms/chain/profile-cms-chain-port.factory';
 import { profileCmsChainDb } from '@/profile-cms/chain/profile-cms-chain.db';
+import { ProfileCmsChainParkedEntity } from '@/entities/IProfileCmsChainParked';
 import {
   aChainIdentity,
   aProfileDoc,
@@ -48,7 +49,7 @@ describe('profile-cms:chain-sync', () => {
     ]);
   });
 
-  it('syncs again from the first waiting change until none waits', async () => {
+  it('syncs again, retrying the parked changes, until none waits', async () => {
     const sync = jest
       .spyOn(ProfileCmsChainFollower.prototype, 'syncFrom')
       .mockResolvedValueOnce({ applied: 2, nextHeight: 120, waiting: 1 })
@@ -72,22 +73,36 @@ describe('profile-cms:chain-sync', () => {
       doc: aProfileDoc()
     });
     jest.spyOn(chain, 'getProfileDoc').mockResolvedValue({ status: 'missing' });
-    const pending: number[] = [];
-    let head: { pending_version: number; pending_attempts: number } | null =
-      null;
+    const tries: number[] = [];
+    let parked: ProfileCmsChainParkedEntity | null = null;
+    jest.spyOn(profileCmsChainDb, 'findHead').mockResolvedValue(null);
     jest
-      .spyOn(profileCmsChainDb, 'findHead')
-      .mockImplementation(async () => head as never);
+      .spyOn(profileCmsChainDb, 'listParked')
+      .mockImplementation(async () => (parked ? [parked] : []));
     jest
-      .spyOn(profileCmsChainDb, 'recordPending')
-      .mockImplementation(async (row) => {
-        pending.push(row.attempts);
-        head = { pending_version: row.version, pending_attempts: row.attempts };
+      .spyOn(profileCmsChainDb, 'findParked')
+      .mockImplementation(async () => parked);
+    jest
+      .spyOn(profileCmsChainDb, 'park')
+      .mockImplementation(async (change, wait) => {
+        tries.push(wait.attempts);
+        parked = {
+          principal: change.principal,
+          version: change.version,
+          height: change.height,
+          time_ms: change.time_ms,
+          doc_cid: change.doc_cid,
+          source: null,
+          attempts: wait.attempts,
+          reason: wait.reason,
+          parked_at: wait.now,
+          alerted_at: null
+        };
       });
     await expect(
       main(['--from-height', '0'], deps(chain).deps)
     ).rejects.toThrow('Profile site rebuild stopped');
-    expect(pending).toEqual([1, 2, 3, 4]);
+    expect(tries).toEqual([1, 2, 3, 4]);
   });
 
   it.each([

@@ -2,6 +2,7 @@ import {
   CMS_PUBLISHED_PACKAGES_TABLE,
   CMS_SITES_TABLE,
   PROFILE_CMS_CHAIN_HEADS_TABLE,
+  PROFILE_CMS_CHAIN_PARKED_TABLE,
   PROFILE_CMS_PACKAGES_TABLE,
   PROFILE_CMS_POINTER_EVENTS_TABLE,
   PROFILE_CMS_PUBLISH_SIGNATURES_TABLE,
@@ -9,12 +10,14 @@ import {
 } from '@/constants';
 import { CmsPublishedPackageRow, CmsSiteRow } from '@/api/cms/cms.db';
 import { ProfileCmsChainHeadEntity } from '@/entities/IProfileCmsChainHead';
+import { ProfileCmsChainParkedEntity } from '@/entities/IProfileCmsChainParked';
 import {
   ProfileCmsPackageEntity,
   ProfileCmsPackageStatus
 } from '@/entities/IProfileCmsPackage';
 import { ProfileCmsPointerEventEntity } from '@/entities/IProfileCmsPointerEvent';
 import { ProfileCmsPublishSignatureEntity } from '@/entities/IProfileCmsPublishSignature';
+import { ProfileCmsProfileChange } from '@/profile-cms/chain/profile-cms-chain.port';
 import { RequestContext } from '@/request.context';
 import { dbSupplier, LazyDbAccessCompatibleService } from '@/sql-executor';
 
@@ -137,7 +140,10 @@ export class ProfileCmsChainDb extends LazyDbAccessCompatibleService {
     return rows[0] ? hydrateHead(rows[0]) : null;
   }
 
-  /** Moves a principal's head forward to an applied version; never back. */
+  /**
+   * Moves a principal's head forward to an applied version, never back,
+   * and takes that version and any earlier one off the retry list.
+   */
   async advanceHead(
     head: Pick<
       ProfileCmsChainHeadEntity,
@@ -154,9 +160,9 @@ export class ProfileCmsChainDb extends LazyDbAccessCompatibleService {
     const params = { ...head };
     await this.run(
       `insert ignore into ${PROFILE_CMS_CHAIN_HEADS_TABLE}
-         (principal, profile_id, doc_version, doc_cid, height, archive_cid, updated_at, pending_attempts)
+         (principal, profile_id, doc_version, doc_cid, height, archive_cid, updated_at)
        values
-         (:principal, :profile_id, :doc_version, :doc_cid, :height, :archive_cid, :updated_at, 0)`,
+         (:principal, :profile_id, :doc_version, :doc_cid, :height, :archive_cid, :updated_at)`,
       params,
       ctx
     );
@@ -167,74 +173,133 @@ export class ProfileCmsChainDb extends LazyDbAccessCompatibleService {
            doc_cid = :doc_cid,
            height = :height,
            archive_cid = :archive_cid,
-           updated_at = :updated_at,
-           pending_version = null,
-           pending_height = null,
-           pending_attempts = 0,
-           pending_reason = null
+           updated_at = :updated_at
        where principal = :principal and doc_version < :doc_version`,
       params,
       ctx
     );
+    await this.unpark(head.principal, head.doc_version, ctx);
   }
 
-  /** Records a version that could not be applied yet, and how often it was tried. */
-  async recordPending(
-    pending: {
-      readonly principal: string;
-      readonly profile_id: string;
-      readonly version: number;
-      readonly height: number;
+  /** The retry list, each person's changes in version order. */
+  async listParked(
+    ctx: RequestContext
+  ): Promise<ProfileCmsChainParkedEntity[]> {
+    const rows = await this.run<ProfileCmsChainParkedEntity>(
+      `select * from ${PROFILE_CMS_CHAIN_PARKED_TABLE} order by principal, version`,
+      {},
+      ctx
+    );
+    return rows.map(hydrateParked);
+  }
+
+  async findParked(
+    principal: string,
+    version: number,
+    ctx: RequestContext
+  ): Promise<ProfileCmsChainParkedEntity | null> {
+    const rows = await this.run<ProfileCmsChainParkedEntity>(
+      `select * from ${PROFILE_CMS_CHAIN_PARKED_TABLE} where principal = :principal and version = :version`,
+      { principal, version },
+      ctx
+    );
+    return rows[0] ? hydrateParked(rows[0]) : null;
+  }
+
+  /**
+   * Puts a change that must wait on the retry list, or records another try
+   * of one already there; when it was parked stays as it was.
+   */
+  async park(
+    change: ProfileCmsProfileChange,
+    wait: {
       readonly attempts: number;
       readonly reason: string;
+      readonly now: number;
     },
     ctx: RequestContext
   ): Promise<void> {
-    const params = { ...pending, reason: pending.reason.slice(0, 200) };
     await this.run(
-      `insert ignore into ${PROFILE_CMS_CHAIN_HEADS_TABLE}
-         (principal, profile_id, doc_version, doc_cid, height, archive_cid, updated_at,
-          pending_version, pending_height, pending_attempts, pending_reason)
+      `insert into ${PROFILE_CMS_CHAIN_PARKED_TABLE}
+         (principal, version, height, time_ms, doc_cid, source, attempts, reason, parked_at, alerted_at)
        values
-         (:principal, :profile_id, 0, null, 0, null, 0,
-          :version, :height, :attempts, :reason)`,
-      params,
+         (:principal, :version, :height, :time_ms, :doc_cid, :source, :attempts, :reason, :now, null)
+       on duplicate key update attempts = values(attempts), reason = values(reason)`,
+      {
+        ...parkedParams(change),
+        attempts: wait.attempts,
+        reason: wait.reason.slice(0, 200),
+        now: wait.now
+      },
       ctx
     );
+  }
+
+  /** Queues a change behind the same person's change that waits; a change already listed keeps its tries. */
+  async parkBehind(
+    change: ProfileCmsProfileChange,
+    now: number,
+    ctx: RequestContext
+  ): Promise<void> {
     await this.run(
-      `update ${PROFILE_CMS_CHAIN_HEADS_TABLE}
-       set pending_version = :version,
-           pending_height = :height,
-           pending_attempts = :attempts,
-           pending_reason = :reason
-       where principal = :principal and doc_version < :version`,
-      params,
+      `insert ignore into ${PROFILE_CMS_CHAIN_PARKED_TABLE}
+         (principal, version, height, time_ms, doc_cid, source, attempts, reason, parked_at, alerted_at)
+       values
+         (:principal, :version, :height, :time_ms, :doc_cid, :source, 0, null, :now, null)`,
+      { ...parkedParams(change), now },
+      ctx
+    );
+  }
+
+  /** Takes a person's changes up to `version` off the retry list. */
+  async unpark(
+    principal: string,
+    version: number,
+    ctx: RequestContext
+  ): Promise<void> {
+    await this.run(
+      `delete from ${PROFILE_CMS_CHAIN_PARKED_TABLE} where principal = :principal and version <= :version`,
+      { principal, version },
+      ctx
+    );
+  }
+
+  async markParkedAlerted(
+    principal: string,
+    version: number,
+    now: number,
+    ctx: RequestContext
+  ): Promise<void> {
+    await this.run(
+      `update ${PROFILE_CMS_CHAIN_PARKED_TABLE} set alerted_at = :now where principal = :principal and version = :version`,
+      { principal, version, now },
       ctx
     );
   }
 
   /**
-   * Where to follow the change feed from: the lowest change still pending,
-   * else one past the highest applied, else `fromHeight`.
+   * Where to follow the change feed from: the block of the last change read
+   * (the highest height applied or parked), else `fromHeight`. That block is
+   * read again: a pass that stopped inside it (an error) loses none of it,
+   * and the changes it already applied are skipped. Parked changes don't
+   * hold it back; they are retried from the retry list.
    */
   async cursorHeight(fromHeight: number, ctx: RequestContext): Promise<number> {
     const rows = await this.run<{
-      pending: number | string | null;
       applied: number | string | null;
+      parked: number | string | null;
     }>(
-      `select min(pending_height) as pending, max(height) as applied
-       from ${PROFILE_CMS_CHAIN_HEADS_TABLE}`,
+      `select
+         (select max(height) from ${PROFILE_CMS_CHAIN_HEADS_TABLE}) as applied,
+         (select max(height) from ${PROFILE_CMS_CHAIN_PARKED_TABLE}) as parked`,
       {},
       ctx
     );
-    const pending = rows[0]?.pending;
-    if (pending !== null && pending !== undefined) {
-      return Number(pending);
-    }
-    const applied = rows[0]?.applied;
-    return applied !== null && applied !== undefined && Number(applied) > 0
-      ? Math.max(Number(applied) + 1, fromHeight)
-      : fromHeight;
+    const lastRead = Math.max(
+      Number(rows[0]?.applied ?? 0),
+      Number(rows[0]?.parked ?? 0)
+    );
+    return lastRead > 0 ? Math.max(lastRead, fromHeight) : fromHeight;
   }
 
   /** Locks the profile row when the mirror has it, so API writes on the same profile wait. */
@@ -515,16 +580,34 @@ function hydrateHead(
     ...row,
     doc_version: Number(row.doc_version),
     height: Number(row.height),
-    updated_at: Number(row.updated_at),
-    pending_version:
-      row.pending_version === null || row.pending_version === undefined
-        ? null
-        : Number(row.pending_version),
-    pending_height:
-      row.pending_height === null || row.pending_height === undefined
-        ? null
-        : Number(row.pending_height),
-    pending_attempts: Number(row.pending_attempts ?? 0)
+    updated_at: Number(row.updated_at)
+  };
+}
+
+function hydrateParked(
+  row: ProfileCmsChainParkedEntity
+): ProfileCmsChainParkedEntity {
+  return {
+    ...row,
+    version: Number(row.version),
+    height: Number(row.height),
+    time_ms: Number(row.time_ms),
+    attempts: Number(row.attempts),
+    parked_at: Number(row.parked_at),
+    alerted_at: row.alerted_at === null ? null : Number(row.alerted_at)
+  };
+}
+
+function parkedParams(
+  change: ProfileCmsProfileChange
+): Record<string, unknown> {
+  return {
+    principal: change.principal,
+    version: change.version,
+    height: change.height,
+    time_ms: change.time_ms,
+    doc_cid: change.doc_cid,
+    source: change.source ?? null
   };
 }
 

@@ -2,8 +2,10 @@ import 'reflect-metadata';
 import {
   CMS_SITES_TABLE,
   PROFILE_CMS_CHAIN_HEADS_TABLE,
+  PROFILE_CMS_CHAIN_PARKED_TABLE,
   PROFILE_CMS_PACKAGES_TABLE
 } from '@/constants';
+import { Logger } from '@/logging';
 import {
   encodeProfileCmsArchive,
   PROFILE_CMS_ARCHIVE_SCHEMA
@@ -11,8 +13,10 @@ import {
 import {
   followProfileCmsChanges,
   PROFILE_CMS_MAX_CHANGE_ATTEMPTS,
+  PROFILE_CMS_PARKED_ALERT_MS,
   ProfileCmsChainFollower
 } from '@/profile-cms/chain/profile-cms-chain-follower';
+import { profileCmsChainDb } from '@/profile-cms/chain/profile-cms-chain.db';
 import { RequestContext } from '@/request.context';
 import { sqlExecutor } from '@/sql-executor';
 import { describeWithSeed } from '@/tests/_setup/seed';
@@ -32,7 +36,13 @@ const T = Date.parse('2026-11-25T02:00:00.000Z');
 
 async function heads(): Promise<Record<string, unknown>[]> {
   return sqlExecutor.execute(
-    `select principal, doc_version, pending_version, pending_attempts, pending_reason from ${PROFILE_CMS_CHAIN_HEADS_TABLE} order by principal`
+    `select principal, doc_version, height from ${PROFILE_CMS_CHAIN_HEADS_TABLE} order by principal`
+  );
+}
+
+async function parked(): Promise<Record<string, unknown>[]> {
+  return sqlExecutor.execute(
+    `select principal, version, height, attempts, reason, parked_at, alerted_at from ${PROFILE_CMS_CHAIN_PARKED_TABLE} order by principal, version`
   );
 }
 
@@ -60,7 +70,7 @@ function setup() {
 }
 
 describeWithSeed('profile site changes that must wait', [], () => {
-  it("retries a missing document while that person's later changes wait and others go on", async () => {
+  it("parks a missing document with that person's later changes behind it, and reads on", async () => {
     const { chain, site, pointer } = setup();
     const missingDoc = chain.replaceProfile({
       version: 1,
@@ -83,37 +93,53 @@ describeWithSeed('profile site changes that must wait', [], () => {
       doc: aProfileDoc(null)
     });
 
-    const follower = new ProfileCmsChainFollower(chain);
+    const follower = new ProfileCmsChainFollower(
+      chain,
+      undefined,
+      undefined,
+      'live',
+      () => T
+    );
     expect(await follower.syncFrom(0, ctx)).toEqual({
       applied: 1,
-      nextHeight: 100,
+      nextHeight: 111,
       waiting: 1
     });
     expect(await heads()).toEqual([
+      { principal: OTHER, doc_version: 1, height: 105 }
+    ]);
+    expect(await parked()).toEqual([
       {
         principal: CHAIN_FIXTURE_PRINCIPAL,
-        doc_version: 0,
-        pending_version: 1,
-        pending_attempts: 1,
-        pending_reason: 'profile_doc_not_found'
+        version: 1,
+        height: 100,
+        attempts: 1,
+        reason: 'profile_doc_not_found',
+        parked_at: T,
+        alerted_at: null
       },
       {
-        principal: OTHER,
-        doc_version: 1,
-        pending_version: null,
-        pending_attempts: 0,
-        pending_reason: null
+        principal: CHAIN_FIXTURE_PRINCIPAL,
+        version: 2,
+        height: 110,
+        attempts: 0,
+        reason: null,
+        parked_at: T,
+        alerted_at: null
       }
     ]);
+    // The cursor is past the parked changes: the feed isn't read again from 100.
+    expect(await profileCmsChainDb.cursorHeight(0, ctx)).toBe(110);
     expect(await primaryOf('test-profile-1')).toBeNull();
 
-    // The document arrives: both waiting changes apply, in order.
+    // The document arrives: both parked changes apply, in order.
     chain.addFile(hidden);
-    expect(await follower.syncFrom(100, ctx)).toEqual({
+    expect(await follower.syncFrom(111, ctx)).toEqual({
       applied: 2,
       nextHeight: 111,
       waiting: 0
     });
+    expect(await parked()).toEqual([]);
     expect(await primaryOf('test-profile-1')).toBe(site.draftId);
   });
 
@@ -143,14 +169,9 @@ describeWithSeed('profile site changes that must wait', [], () => {
       refused: 'publication_not_found'
     });
     expect(await heads()).toEqual([
-      {
-        principal: CHAIN_FIXTURE_PRINCIPAL,
-        doc_version: 1,
-        pending_version: null,
-        pending_attempts: 0,
-        pending_reason: null
-      }
+      { principal: CHAIN_FIXTURE_PRINCIPAL, doc_version: 1, height: 100 }
     ]);
+    expect(await parked()).toEqual([]);
   });
 
   it('catches up from its own cursor when the flag comes back on', async () => {
@@ -225,7 +246,7 @@ async function legacySites(): Promise<unknown[]> {
 }
 
 describeWithSeed("the identity import's own documents", [], () => {
-  it('waits on an import still running, without using up tries, then imports its history', async () => {
+  it('waits on an import still running, without using up tries, alerts once, then imports its history', async () => {
     const chain = new InMemoryProfileCmsChain();
     const archive = chain.addFile(legacyOnlyArchive());
     chain.setIdentity(aChainIdentity());
@@ -236,29 +257,55 @@ describeWithSeed("the identity import's own documents", [], () => {
       timeMs: T,
       doc: aProfileDoc({ archive })
     });
-    for (let run = 1; run <= PROFILE_CMS_MAX_CHANGE_ATTEMPTS + 1; run++) {
-      expect(await new ProfileCmsChainFollower(chain).syncFrom(0, ctx)).toEqual(
-        { applied: 0, nextHeight: 100, waiting: 1 }
+    let now = T;
+    const follower = () =>
+      new ProfileCmsChainFollower(
+        chain,
+        undefined,
+        undefined,
+        'live',
+        () => now
       );
+    const alert = jest
+      .spyOn(Logger.prototype, 'errorWithCode')
+      .mockImplementation(() => undefined);
+    for (let run = 1; run <= PROFILE_CMS_MAX_CHANGE_ATTEMPTS + 1; run++) {
+      expect(await follower().syncFrom(0, ctx)).toEqual({
+        applied: 0,
+        nextHeight: 101,
+        waiting: 1
+      });
+      now += PROFILE_CMS_PARKED_ALERT_MS / 2;
     }
-    expect(await heads()).toEqual([
+    expect(await heads()).toEqual([]);
+    expect(await parked()).toEqual([
       {
         principal: CHAIN_FIXTURE_PRINCIPAL,
-        doc_version: 0,
-        pending_version: 1,
-        pending_attempts: 0,
-        pending_reason: 'identity_import_running'
+        version: 1,
+        height: 100,
+        attempts: 0,
+        reason: 'identity_import_running',
+        parked_at: T,
+        alerted_at: T + PROFILE_CMS_PARKED_ALERT_MS
       }
     ]);
+    expect(alert.mock.calls).toEqual([
+      [
+        'PROFILE_SITE_CHANGE_STALLED',
+        `Profile site change for ${CHAIN_FIXTURE_PRINCIPAL} at 100 has waited 30 minutes: identity_import_running`
+      ]
+    ]);
+    alert.mockRestore();
     expect(await legacySites()).toEqual([]);
 
     // The import completes; the next run decides and imports the history.
     chain.setIdentityImport({ start_height: 100, done_height: 180 });
-    expect(await new ProfileCmsChainFollower(chain).syncFrom(0, ctx)).toEqual({
+    expect(await follower().syncFrom(101, ctx)).toEqual({
       applied: 1,
       nextHeight: 101,
       waiting: 0
     });
+    expect(await parked()).toEqual([]);
     expect(await legacySites()).toEqual([{ id: 'legacy-site-1' }]);
   });
 
