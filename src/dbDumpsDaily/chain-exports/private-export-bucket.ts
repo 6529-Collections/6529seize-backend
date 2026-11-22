@@ -150,6 +150,23 @@ export interface PutResult {
   readonly sha256: string;
 }
 
+/**
+ * A conditional write S3 refused: the object was already there (412), or
+ * another conditional write to it was in flight (409).
+ */
+export function isWriteConflict(error: unknown): boolean {
+  const { name, $metadata } = (error ?? {}) as {
+    name?: string;
+    $metadata?: { httpStatusCode?: number };
+  };
+  return (
+    name === 'PreconditionFailed' ||
+    name === 'ConditionalRequestConflict' ||
+    $metadata?.httpStatusCode === 412 ||
+    $metadata?.httpStatusCode === 409
+  );
+}
+
 /** What reading an object found. */
 export type ReadResult =
   | { readonly found: true; readonly text: string }
@@ -178,20 +195,32 @@ export class PrivateExportWriter {
     return await this.putKey(this.key(name), body, contentType, true);
   }
 
-  /** Writes a key outside the run's prefix (a pointer to the run). */
+  /**
+   * Writes a key outside the run's prefix (a pointer to the run). With
+   * `onlyIfAbsent`, S3 refuses to replace an object already there (see
+   * isWriteConflict).
+   */
   async putOutside(
     key: string,
     body: string,
-    contentType: string
+    contentType: string,
+    options: { readonly onlyIfAbsent?: boolean } = {}
   ): Promise<PutResult> {
-    return await this.putKey(key, body, contentType, false);
+    return await this.putKey(
+      key,
+      body,
+      contentType,
+      false,
+      options.onlyIfAbsent ?? false
+    );
   }
 
   private async putKey(
     key: string,
     body: Buffer | string,
     contentType: string,
-    counted: boolean
+    counted: boolean,
+    onlyIfAbsent = false
   ): Promise<PutResult> {
     const bytes = typeof body === 'string' ? Buffer.from(body, 'utf8') : body;
     const digest = createHash('sha256').update(bytes).digest();
@@ -204,7 +233,8 @@ export class PrivateExportWriter {
         ContentType: contentType,
         ServerSideEncryption: 'AES256',
         // S3 refuses the upload if the bytes it got hash differently.
-        ChecksumSHA256: digest.toString('base64')
+        ChecksumSHA256: digest.toString('base64'),
+        ...(onlyIfAbsent ? { IfNoneMatch: '*' } : {})
       })
     );
     if (counted) {

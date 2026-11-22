@@ -1,4 +1,5 @@
 import { S3Client } from '@aws-sdk/client-s3';
+import { SecretsManagerClient } from '@aws-sdk/client-secrets-manager';
 import { createHash } from 'node:crypto';
 import {
   CMS_PUBLISHED_PACKAGES_TABLE,
@@ -24,11 +25,17 @@ import {
 import { parseProfileCmsFreezeAt } from '@/profile-cms/profile-cms-identity-freeze';
 import { SqlExecutor } from '@/sql-executor';
 import {
+  FreshSecretValue,
+  LAMBDAS_SECRET_ID,
+  readFreshSecretValue
+} from './chain-exports/fresh-secret';
+import {
   assertBucketPrivate,
   BucketPrivacy,
   ExportBucket,
   exportBucketOf,
   exportStage,
+  isWriteConflict,
   linksLastAtMost,
   Presigner,
   PRESIGNED_URL_SECONDS,
@@ -111,6 +118,11 @@ export type ProfileSiteExportEvent =
        * looked at and accepted (a publish that straddled the freeze).
        */
       readonly acceptWritesAfterFreeze: readonly string[];
+      /**
+       * Replaces the by-freeze pointer if an earlier run wrote one; without
+       * it the pointer is written only where none is.
+       */
+      readonly replacePointer: boolean;
     }
   | {
       readonly job: typeof LINKS_JOB;
@@ -246,7 +258,8 @@ export function parseProfileSiteExportEvent(
     'acceptSnapshotGapMinutes',
     'rehearsal',
     'concurrency',
-    'acceptWritesAfterFreeze'
+    'acceptWritesAfterFreeze',
+    'replacePointer'
   ]);
   const profile = record.profile ?? null;
   if (
@@ -301,6 +314,17 @@ export function parseProfileSiteExportEvent(
       `acceptWritesAfterFreeze must list at most ${MAX_WRITES_AFTER_FREEZE} package ids`
     );
   }
+  const replacePointer = record.replacePointer ?? false;
+  if (typeof replacePointer !== 'boolean') {
+    throw new ProfileSiteExportEventError(
+      'replacePointer must be true or false'
+    );
+  }
+  if (replacePointer && (rehearsal || profile !== null)) {
+    throw new ProfileSiteExportEventError(
+      'replacePointer is for a real run of every profile: only that run writes the pointer'
+    );
+  }
   return {
     job: JOB,
     frozenAt: frozenAtOf(record.frozenAt),
@@ -309,7 +333,8 @@ export function parseProfileSiteExportEvent(
     acceptSnapshotGapMinutes: accept,
     rehearsal,
     concurrency,
-    acceptWritesAfterFreeze: acceptWrites as string[]
+    acceptWritesAfterFreeze: acceptWrites as string[],
+    replacePointer
   };
 }
 
@@ -386,12 +411,12 @@ export function checkFreezeSetting(
 ): void {
   if (setting.reading === 'unset') {
     throw new ProfileSiteExportSnapshotError(
-      'IDENTITY_FREEZE_AT is not set: a real run exports 6529.io’s own freeze. Use rehearsal: true before the freeze.'
+      `IDENTITY_FREEZE_AT is not set in the ${LAMBDAS_SECRET_ID} secret of this region: a real run exports 6529.io’s own freeze. Use rehearsal: true before the freeze.`
     );
   }
   if (setting.reading === 'not_a_time') {
     throw new ProfileSiteExportSnapshotError(
-      'IDENTITY_FREEZE_AT is set but is not a time: the run cannot tell which freeze it exports'
+      `IDENTITY_FREEZE_AT in the ${LAMBDAS_SECRET_ID} secret is not a time: the run cannot tell which freeze it exports`
     );
   }
   if (setting.at !== frozenAt) {
@@ -537,7 +562,11 @@ export interface ProfileSiteExportResult {
   readonly bytes: number;
   readonly profiles: number;
   readonly profilesWithCms: number;
-  /** False when a stored publication record couldn't be fetched: don't use it. */
+  /**
+   * True only for manifest.json, the manifest the import takes: false for
+   * a rehearsal, one profile, or a run missing a stored publication record
+   * (see unavailableProfiles).
+   */
   readonly usable: boolean;
   readonly rebuiltRefused: number;
   readonly unavailableProfiles: number;
@@ -548,7 +577,11 @@ export interface ProfileSiteExportResult {
   readonly evidence: ReadOnlyEvidence;
   readonly bucketPrivacy: BucketPrivacy;
   readonly frozenAt: string;
-  /** IDENTITY_FREEZE_AT as the site reads it: unset, not_a_time or time. */
+  /**
+   * IDENTITY_FREEZE_AT as the site reads it (unset, not_a_time or time),
+   * read from this secret at the run, not from the container's environment.
+   */
+  readonly identityFreezeAtSecret: string;
   readonly identityFreezeAtReading: FreezeSetting['reading'];
   readonly identityFreezeAt: string | null;
   /** The server's clock when the snapshot was taken. */
@@ -568,6 +601,8 @@ export interface ProfileSiteExportResult {
   readonly presignedManifestUrl: string;
   /** links.json: a presigned link for every object of the run. */
   readonly presignedLinksUrl: string;
+  /** The pointer this run wrote, to keep with the export; null without one. */
+  readonly presignedPointerUrl: string | null;
 }
 
 export interface ProfileSiteExportLinksResult {
@@ -576,10 +611,13 @@ export interface ProfileSiteExportLinksResult {
   readonly prefix: string;
   readonly manifestKey: string;
   readonly manifestSha256: string;
+  /** The pointer the run was found by, when asked by frozenAt. */
+  readonly pointerKey: string | null;
   readonly linksKey: string;
   readonly linksLastAtMost: string;
   readonly presignedManifestUrl: string;
   readonly presignedLinksUrl: string;
+  readonly presignedPointerUrl: string | null;
 }
 
 export interface ProfileSiteExportContext {
@@ -591,6 +629,11 @@ export interface ProfileSiteExportContext {
 export interface ProfileSiteExportDeps {
   readonly prepareEnvironment: () => Promise<void>;
   readonly env: () => Readonly<Record<string, string | undefined>>;
+  /**
+   * IDENTITY_FREEZE_AT read from the lambdas secret now: the environment a
+   * warm container loaded at its start would miss a fix to the secret.
+   */
+  readonly identityFreezeAt: () => Promise<FreshSecretValue>;
   readonly s3: Pick<S3Client, 'send'>;
   readonly presign: Presigner;
   readonly openSnapshot: (target: ReplicaTarget) => Promise<ReadOnlySnapshot>;
@@ -640,6 +683,11 @@ function defaultDeps(): ProfileSiteExportDeps {
       await prepEnvironment();
     },
     env: () => process.env,
+    identityFreezeAt: () =>
+      readFreshSecretValue(
+        new SecretsManagerClient({ region: process.env.AWS_REGION }),
+        'IDENTITY_FREEZE_AT'
+      ),
     s3,
     presign: s3Presigner(s3),
     openSnapshot: (target) => openReadOnlySnapshot(target),
@@ -710,7 +758,8 @@ export async function runProfileSiteExportJob(
     return await renewLinks(event, stage, bucket, deps);
   }
   const startedAt = deps.now();
-  const freezeSetting = readFreezeSetting(env.IDENTITY_FREEZE_AT);
+  const freezeSecret = await deps.identityFreezeAt();
+  const freezeSetting = readFreezeSetting(freezeSecret.value);
   // A rehearsal runs before the freeze: it reports the setting instead.
   if (!event.rehearsal) {
     checkFreezeSetting(event.frozenAt, freezeSetting);
@@ -840,9 +889,9 @@ export async function runProfileSiteExportJob(
   };
   await putJson('cms-fields.json', cmsFieldsJson(run));
   await putJson('report.json', reportJson(event.frozenAt, run));
-  const usable = run.unavailableProfiles === 0;
+  const recordsAvailable = run.unavailableProfiles === 0;
   const manifestName =
-    event.rehearsal || !usable
+    event.rehearsal || !recordsAvailable
       ? UNUSABLE_MANIFEST
       : event.profile
         ? PARTIAL_MANIFEST
@@ -875,6 +924,7 @@ export async function runProfileSiteExportJob(
     concurrency: event.concurrency,
     frozen_at: new Date(event.frozenAt).toISOString(),
     identity_freeze_at: {
+      secret: freezeSecret.secretId,
       reading: freezeSetting.reading,
       at: iso(freezeSetting.at)
     },
@@ -883,6 +933,7 @@ export async function runProfileSiteExportJob(
     latest_site_writes: latestWrites,
     writes_after_freeze: late,
     accepted_writes_after_freeze: event.acceptWritesAfterFreeze,
+    replace_pointer: event.replacePointer,
     started_at: startedAt.toISOString(),
     finished_at: finishedAt.toISOString(),
     seconds: (finishedAt.getTime() - startedAt.getTime()) / 1000,
@@ -903,8 +954,9 @@ export async function runProfileSiteExportJob(
     JSON.stringify(manifest, null, 2),
     'application/json'
   );
-  // Then, for the one run the import takes, a pointer from its freeze. The
-  // run is whole without it: a failed pointer is reported, not fatal.
+  // Then, for the one run the import takes, a pointer from its freeze. It
+  // never replaces an earlier run's pointer unless asked to. The run is
+  // whole without it: a pointer not written is reported, not fatal.
   let pointerKey: string | null = null;
   let pointerError: string | null = null;
   if (manifestName === MANIFEST) {
@@ -923,11 +975,14 @@ export async function runProfileSiteExportJob(
           null,
           2
         ),
-        'application/json'
+        'application/json',
+        { onlyIfAbsent: !event.replacePointer }
       );
       pointerKey = key;
     } catch (error) {
-      pointerError = String((error as Error)?.message ?? error);
+      pointerError = isWriteConflict(error)
+        ? `${key} already names an earlier run for this freeze, and was kept. To make this run the export, run again with replacePointer: true.`
+        : String((error as Error)?.message ?? error);
       logger.warn(`[POINTER NOT WRITTEN] [${key}] ${pointerError}`);
     }
   }
@@ -941,6 +996,10 @@ export async function runProfileSiteExportJob(
     writer.key('links.json'),
     PRESIGNED_URL_SECONDS
   );
+  const presignedPointerUrl =
+    pointerKey === null
+      ? null
+      : await deps.presign(bucket, pointerKey, PRESIGNED_URL_SECONDS);
   const seconds = (finishedAt.getTime() - startedAt.getTime()) / 1000;
   logger.info(
     `[EXPORT DONE] [${prefix}] [${manifestName}] [${writer.files} OBJECTS] [${writer.bytes} BYTES] [${seconds} S] ${exportSummary(run).trim()}`
@@ -961,7 +1020,7 @@ export async function runProfileSiteExportJob(
     bytes: writer.bytes,
     profiles: run.profiles,
     profilesWithCms: Object.keys(run.fields).length,
-    usable,
+    usable: manifestName === MANIFEST,
     rebuiltRefused: run.rebuiltRefused,
     unavailableProfiles: run.unavailableProfiles,
     host: snapshot.evidence.host,
@@ -969,6 +1028,7 @@ export async function runProfileSiteExportJob(
     evidence: snapshot.evidence,
     bucketPrivacy: privacy,
     frozenAt: new Date(event.frozenAt).toISOString(),
+    identityFreezeAtSecret: freezeSecret.secretId,
     identityFreezeAtReading: freezeSetting.reading,
     identityFreezeAt: iso(freezeSetting.at),
     snapshotAt: snapshot.evidence.snapshotAt,
@@ -981,7 +1041,8 @@ export async function runProfileSiteExportJob(
     seconds,
     linksLastAtMost: lastAtMost.toISOString(),
     presignedManifestUrl,
-    presignedLinksUrl
+    presignedLinksUrl,
+    presignedPointerUrl
   };
 }
 
@@ -997,6 +1058,7 @@ async function renewLinks(
 ): Promise<ProfileSiteExportLinksResult> {
   await assertBucketPrivate(deps.s3, bucket);
   let prefix = event.prefix;
+  let pointerKey: string | null = null;
   let pointed: { manifest?: unknown; manifest_sha256?: unknown } | null = null;
   if (prefix === null) {
     const key = pointerKeyOf(stage, event.frozenAt!);
@@ -1010,6 +1072,7 @@ async function renewLinks(
         `No run for that freeze: ${key} isn't there or can't be read. Pass the run's prefix instead.`
       );
     }
+    pointerKey = key;
     pointed = JSON.parse(pointer.text) as {
       prefix?: unknown;
       manifest?: unknown;
@@ -1072,6 +1135,7 @@ async function renewLinks(
     prefix,
     manifestKey,
     manifestSha256,
+    pointerKey,
     linksKey: links.key,
     linksLastAtMost: linksLastAtMost(now).toISOString(),
     presignedManifestUrl: await deps.presign(
@@ -1083,6 +1147,10 @@ async function renewLinks(
       bucket,
       links.key,
       PRESIGNED_URL_SECONDS
-    )
+    ),
+    presignedPointerUrl:
+      pointerKey === null
+        ? null
+        : await deps.presign(bucket, pointerKey, PRESIGNED_URL_SECONDS)
   };
 }

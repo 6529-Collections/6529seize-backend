@@ -11,6 +11,7 @@ import {
   chainExportsBucketName,
   exportBucketOf,
   exportStage,
+  isWriteConflict,
   linksLastAtMost,
   PRESIGNED_URL_SECONDS,
   PrivateBucketError,
@@ -157,9 +158,29 @@ describe('the chain exports bucket', () => {
       Key: 'pointer.json',
       ExpectedBucketOwner: OWNER
     });
+    expect(commands[1].input.IfNoneMatch).toBeUndefined();
     // The pointer sits outside the run: it isn't counted as the run's.
     expect(writer.files).toBe(1);
     expect(writer.bytes).toBe(3);
+    await writer.putOutside('pointer.json', '{}', 'application/json', {
+      onlyIfAbsent: true
+    });
+    expect(commands[2].input).toMatchObject({
+      Key: 'pointer.json',
+      IfNoneMatch: '*',
+      ExpectedBucketOwner: OWNER
+    });
+  });
+
+  it.each([
+    [{ name: 'PreconditionFailed' }, true],
+    [{ name: 'Unknown', $metadata: { httpStatusCode: 412 } }, true],
+    [{ name: 'ConditionalRequestConflict' }, true],
+    [{ name: 'Unknown', $metadata: { httpStatusCode: 409 } }, true],
+    [{ name: 'AccessDenied', $metadata: { httpStatusCode: 403 } }, false],
+    [null, false]
+  ])('reads %j as a write conflict: %j', (error, conflict) => {
+    expect(isWriteConflict(error)).toBe(conflict);
   });
 
   it.each([

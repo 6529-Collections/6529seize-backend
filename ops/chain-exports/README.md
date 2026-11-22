@@ -17,7 +17,11 @@ a job the function knows, or it fails. Each export:
   allows more. A real run also refuses:
   - when `IDENTITY_FREEZE_AT` is unset, is not a time, or differs from
     `frozenAt`. It reads the setting as the site does (`Z` or `+00:00`, with
-    or without milliseconds, or Unix milliseconds);
+    or without milliseconds, or Unix milliseconds), from the `prod/lambdas`
+    secret in the function's region, at the start of each run. A warm
+    container's environment keeps the secret as it was when the container
+    started, so the run doesn't use it: a fix to the secret is seen on the
+    next run;
   - a snapshot less than 2 minutes after `frozenAt`, so the replica has the
     writes made before the freeze;
   - a replica as far behind its writer as that gap, or further. The lag
@@ -69,6 +73,20 @@ bucket in the account.
 The function may not list the bucket, so S3 answers a read of a key that
 doesn't exist with 403 rather than 404. The export reports such a read as
 "no manifest".
+
+## The freeze setting, before Monday
+
+`IDENTITY_FREEZE_AT` must be a key of the `prod/lambdas` secret in the
+stage's region: `us-east-1` for prod, `eu-west-1` for staging. Its value is
+the freeze, `2026-11-24T00:00:00Z`.
+
+Ask 6529.io to set it before Monday's rehearsal. A future time has no effect
+on the site until it arrives. 6529.io's own functions read the secret when a
+container starts, and a container started before the change keeps the old
+value until it restarts, so setting it early is safer than setting it late.
+
+Monday's rehearsal passes only when it reads the setting as `time`, equal
+to Tuesday's freeze.
 
 ## Why the file is private
 
@@ -145,7 +163,7 @@ Event fields:
   them.
 - `concurrency` (optional, 1 to 4; default 1): profiles exported at once, so
   their stored publication records are fetched in parallel. The output is
-  the same at any setting.
+  the same at any setting. Tuesday uses the setting Monday proved.
 - `profile` (optional): one profile id only. Its prefix ends in
   `-profile-<id>`, and its manifest is `manifest.partial.json`.
 - `publicApi` (optional): an https base URL to check exported primaries
@@ -155,34 +173,54 @@ Event fields:
 - `acceptWritesAfterFreeze` (optional): package ids whose site writes after
   `frozenAt` the switch owner accepted, at most 100. Use it only as in
   "A publish that straddles the freeze", below.
+- `replacePointer` (optional, `true`): let this run replace the by-freeze
+  pointer an earlier run for the same freeze wrote. Without it, the pointer
+  is written only if none is there. Only for a real run of every profile,
+  and only when the switch owner says so; the manifest records it
+  (`replace_pointer`).
 
 Unknown fields are refused.
 
+`usable` in the response is true only for `manifest.json`, the one manifest
+the import takes. A rehearsal is never usable; whether its stored
+publication records were all fetched is `unavailableProfiles` (0 when they
+were).
+
 ### Monday: the production timing run
 
-This run says whether Tuesday's export fits the function's 15 minutes.
+This run says whether Tuesday's export fits the function's 15 minutes, at
+the concurrency Tuesday will use: 4, against production's gateways.
 
 ```text
 $env:AWS_MAX_ATTEMPTS='1'
-Set-Content -Encoding ascii rehearsal.json '{"job":"profileSiteExport","frozenAt":"<UTC time a few minutes ago, e.g. 2026-11-23T15:55:00Z>","rehearsal":true}'
+Set-Content -Encoding ascii rehearsal.json '{"job":"profileSiteExport","frozenAt":"<UTC time a few minutes ago, e.g. 2026-11-23T15:55:00Z>","rehearsal":true,"concurrency":4}'
 aws lambda invoke --region us-east-1 --function-name dbDumpsDaily --cli-read-timeout 960 --cli-binary-format raw-in-base64-out --payload file://rehearsal.json out.json
 ```
 
-Read `seconds` in `out.json`, and send it to the on-call engineer.
+If the CLI prints an error of its own and no `StatusCode`, the run may
+still have finished, and its `seconds` is only in the logs. Don't run it
+again: see "If the CLI fails", below.
 
-- If `seconds` is above about 600, run it again with `"concurrency":4` and
-  compare.
-- If it is still above about 600, Tuesday's run doesn't fit one invocation.
-  Then the export runs from a checkout on a machine with database access, by
-  a person the switch owner arranges. Database access is by named people only.
+Read `seconds` and `unavailableProfiles` in `out.json`, and send them to
+the on-call engineer.
+
+- If `unavailableProfiles` is above 0, some stored publication records
+  couldn't be fetched at 4. Run the rehearsal again with `"concurrency":1`.
+  If that run has none, Tuesday uses 1.
+- If `seconds` is above about 600 at the concurrency Tuesday will use,
+  Tuesday's run doesn't fit one invocation. Then the export runs from a
+  checkout on a machine with database access, by a person the switch owner
+  arranges. Database access is by named people only.
 
 Check in `out.json`:
 
 - `stage` is `prod` in `us-east-1` (`staging` in `eu-west-1`). If it isn't,
   the function's `NODE_ENV` is wrong. Tell whoever deploys `dbDumpsDaily` before Tuesday.
-- `identityFreezeAtReading` is `unset`, or `time` with `identityFreezeAt`
-  at Tuesday's freeze if 6529.io has set it already. `not_a_time`, or any
-  other time, means the setting is wrong. Tell whoever deploys `dbDumpsDaily`.
+- `identityFreezeAtReading` is `time` and `identityFreezeAt` is
+  `2026-11-24T00:00:00.000Z`. Anything else (`unset`, `not_a_time`, or
+  another time), and the rehearsal hasn't passed: ask 6529.io to fix the
+  secret (see "The freeze setting"), then run the rehearsal again. Each run
+  reads the secret afresh.
 - `evidence.replicaLagMs` is a number. If it is `null`, the lag can't be
   read, and Tuesday relies on the 2-minute gap alone. Tell the on-call engineer.
 
@@ -229,9 +267,12 @@ Set-Content -Encoding ascii event.json '{"job":"profileSiteExport","frozenAt":"2
 aws lambda invoke --region us-east-1 --function-name dbDumpsDaily --cli-read-timeout 960 --cli-binary-format raw-in-base64-out --payload file://event.json out.json
 ```
 
-Drop `"concurrency":4` if Monday's run at 1 was well inside the time.
-6529.io's `IDENTITY_FREEZE_AT` must be set to the freeze; the run refuses
-otherwise.
+Use the concurrency Monday's passing rehearsal used: 4, or 1 if Monday fell
+back to it. `IDENTITY_FREEZE_AT` must be set to the freeze in the
+`prod/lambdas` secret; the run refuses otherwise.
+
+If the CLI fails without a `FunctionError`, don't run it again: see "If the
+CLI fails".
 
 Start at least 2 minutes after the freeze; 00:05 UTC leaves room. A run
 before 00:02 is refused. Start before 01:30 UTC, or add
@@ -275,10 +316,15 @@ the response record the writes (`writes_after_freeze`,
   whoever fetches the manifest can check it.
 - `pointerKey` is set: `profile-site-export/<stage>/by-freeze/<frozenAt>.json`
   names this run's prefix and the manifest's sha256. A later full run for
-  the same freeze replaces it. If `pointerKey` is null and `pointerError` is
-  set, the run is still whole and usable, but nothing points to it. Send the
-  switch owner its `prefix` and `manifestSha256`, and fetch fresh links by
-  `prefix`, not `frozenAt`.
+  the same freeze doesn't replace it. If `pointerKey` is null and
+  `pointerError` is set, the run is still whole and usable, but nothing
+  points to it:
+  - `pointerError` says the pointer already names an earlier run: that
+    earlier run stays the export. Send both runs' `prefix` and
+    `manifestSha256` to the switch owner. Only if the switch owner picks this
+    run, run again with `"replacePointer":true`.
+  - Any other `pointerError`: send the switch owner this run's `prefix` and
+    `manifestSha256`, and fetch fresh links by `prefix`, not `frozenAt`.
 - `host`, `readOnly: true` and `evidence`: the replica it read.
   `evidence.transactionReadOnly` is true, and `serverReadOnly` or
   `innodbReadOnly` is true.
@@ -303,6 +349,11 @@ file against the manifest's `sha256`. Anyone with read access to the bucket
 can also use
 `aws s3 cp --recursive s3://<bucket>/<prefix> ./profile-site-export/`.
 
+Everything in the bucket, the pointer included, expires 30 days after it
+was written. The switch owner keeps a copy of the real export: `out.json`,
+every file in `links.json` (the manifest included), and the pointer, from
+`presignedPointerUrl`.
+
 Every `files/<cid>` is at most 2 MiB, the chain's document limit, since each
 becomes a chain document. `cms-fields.json`, `report.json`, `links.json` and
 the manifest are read by the import's builder and by people, never stored on
@@ -323,12 +374,52 @@ aws lambda invoke --region us-east-1 --function-name dbDumpsDaily --cli-read-tim
 or by its prefix: `{"job":"profileSiteExportLinks","prefix":"<prefix from
 out.json>"}`. Give one or the other. By freeze, it refuses if the manifest's
 sha256 is no longer the one the pointer names. `links-out.json` carries
-`manifestSha256` too.
+`manifestSha256` too, and, by freeze, `presignedPointerUrl`.
 
 ## When a run fails
 
-A failed run returns a function error and leaves no manifest. Run it again;
-every run has its own prefix.
+A failed run returns a function error and leaves no manifest. The CLI then
+prints `"FunctionError": "Unhandled"` with its `StatusCode`, and `out.json`
+holds the `errorMessage`. Run it again; every run has its own prefix.
+
+### If the CLI fails
+
+A CLI failure is not a run failure. The CLI waits up to 960 s for the
+answer, but a NAT can drop a connection idle for 350 s. The CLI then prints
+an error of its own (a read timeout, or a closed connection) and no
+`StatusCode`, and leaves no `out.json`, while the run goes on and may
+finish.
+
+If the CLI failed and printed no `FunctionError`:
+
+1. Don't run it again.
+2. Wait 15 minutes from the start: by then the run has ended.
+3. For a real run, ask for its links by `frozenAt` (see "Fresh links for an
+   earlier run"). If the run finished, `links-out.json` names its prefix and
+   manifest. If it says there is no run for that freeze, read the logs, as
+   below.
+4. For a rehearsal (it has no pointer), read `[EXPORT DONE]` in the
+   function's logs. It gives the prefix, the manifest's name and the
+   seconds. Then ask for links by that `prefix`.
+
+Reading the logs needs `logs:FilterLogEvents` on `/aws/lambda/dbDumpsDaily`;
+ask whoever deploys `dbDumpsDaily` if you don't have it.
+
+```text
+$since = [DateTimeOffset]::UtcNow.AddHours(-1).ToUnixTimeMilliseconds()
+aws logs filter-log-events --region us-east-1 --log-group-name /aws/lambda/dbDumpsDaily --start-time $since --filter-pattern "EXPORT DONE" --query "events[].message" --output text
+```
+
+bash:
+
+```text
+aws logs filter-log-events --region us-east-1 --log-group-name /aws/lambda/dbDumpsDaily --start-time "$(( ($(date +%s) - 3600) * 1000 ))" --filter-pattern "EXPORT DONE" --query "events[].message" --output text
+```
+
+No `[EXPORT DONE]` line within the hour means the run didn't finish: run it
+again.
+
+### Other failures
 
 - The function keeps one invocation at a time (reserved concurrency 1) and
   runs the daily dump at 01:00 UTC. A call made while another run or the dump

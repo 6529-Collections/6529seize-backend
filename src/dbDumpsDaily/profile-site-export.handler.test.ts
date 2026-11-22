@@ -78,6 +78,8 @@ function setup(
     late?: { source: string; package_id: string; at: number }[];
     getDenied?: boolean;
     verifyFails?: number;
+    /** IDENTITY_FREEZE_AT in the secret; FREEZE when not given. */
+    freezeSecret?: string;
   } = {}
 ) {
   const order: string[] = [];
@@ -103,6 +105,12 @@ function setup(
       const key = command.input.Key!;
       if (options.failPutOf && key.endsWith(options.failPutOf)) {
         throw new Error('upload failed');
+      }
+      if (command.input.IfNoneMatch === '*' && bodies.has(key)) {
+        throw Object.assign(new Error('At least one of the pre-conditions'), {
+          name: 'PreconditionFailed',
+          $metadata: { httpStatusCode: 412 }
+        });
       }
       order.push(key);
       bodies.set(key, Buffer.from(command.input.Body as Buffer).toString());
@@ -183,8 +191,18 @@ function setup(
     };
   });
   const presigned: { owner: string; key: string }[] = [];
+  // The lambdas secret as it is now; a test may change it between runs.
+  const secret: { IDENTITY_FREEZE_AT: string | undefined } = {
+    IDENTITY_FREEZE_AT:
+      'freezeSecret' in options ? options.freezeSecret : FREEZE
+  };
   const deps: ProfileSiteExportDeps = {
     prepareEnvironment: jest.fn(async () => undefined),
+    identityFreezeAt: jest.fn(async () => ({
+      secretId: 'prod/lambdas',
+      key: 'IDENTITY_FREEZE_AT',
+      value: secret.IDENTITY_FREEZE_AT
+    })),
     env: () => ({
       DB_HOST: 'primary-host',
       DB_HOST_READ: 'replica-host',
@@ -194,7 +212,6 @@ function setup(
       DB_NAME: 'app',
       AWS_REGION: 'eu-west-1',
       NODE_ENV: 'development',
-      IDENTITY_FREEZE_AT: FREEZE,
       ...options.env
     }),
     s3: { send } as never,
@@ -236,6 +253,7 @@ function setup(
     executor,
     verify,
     sleep,
+    secret,
     presigned
   };
 }
@@ -248,7 +266,8 @@ const event = {
   acceptSnapshotGapMinutes: null,
   rehearsal: false,
   concurrency: 1,
-  acceptWritesAfterFreeze: []
+  acceptWritesAfterFreeze: [],
+  replacePointer: false
 } as const;
 const context = { invokedFunctionArn: ARN, awsRequestId: 'abcdef12-3456' };
 
@@ -289,6 +308,29 @@ describe('parseProfileSiteExportEvent', () => {
       concurrency: 4,
       acceptWritesAfterFreeze: ['pkg-1', 'sha256:abc']
     });
+  });
+
+  it('reads replacePointer for a real run of every profile only', () => {
+    expect(
+      parseProfileSiteExportEvent({
+        job: 'profileSiteExport',
+        frozenAt: T,
+        replacePointer: true
+      })
+    ).toEqual({ ...event, replacePointer: true });
+    for (const bad of [
+      { replacePointer: 'yes' },
+      { replacePointer: true, rehearsal: true },
+      { replacePointer: true, profile: 'profile-a' }
+    ]) {
+      expect(() =>
+        parseProfileSiteExportEvent({
+          job: 'profileSiteExport',
+          frozenAt: T,
+          ...bad
+        })
+      ).toThrow(ProfileSiteExportEventError);
+    }
   });
 
   it('finds a run for fresh links by its prefix or by its freeze', () => {
@@ -523,6 +565,7 @@ describe('runProfileSiteExportJob', () => {
         policyPublic: false
       },
       scope: { profile: null, publicApi: null },
+      identityFreezeAtSecret: 'prod/lambdas',
       identityFreezeAtReading: 'time',
       identityFreezeAt: '2026-11-24T00:00:00.000Z',
       snapshotAt: new Date(T + 150_000).toISOString(),
@@ -557,6 +600,14 @@ describe('runProfileSiteExportJob', () => {
     expect(result.manifestKey).toBe(`${result.prefix}manifest.json`);
     expect(result.manifestSha256).toBe(sha256(bodies.get(result.manifestKey)!));
     expect(result.pointerKey).toBe(POINTER);
+    expect(result.presignedPointerUrl).toBe(
+      `https://signed/${BUCKET}/${POINTER}?s=21600`
+    );
+    // The pointer is written only where none is.
+    const pointerPut = commands.find(
+      (c) => c instanceof PutObjectCommand && c.input.Key === POINTER
+    );
+    expect(pointerPut.input.IfNoneMatch).toBe('*');
     expect(JSON.parse(bodies.get(POINTER)!)).toMatchObject({
       prefix: result.prefix,
       manifest: result.manifestKey,
@@ -582,7 +633,12 @@ describe('runProfileSiteExportJob', () => {
       rehearsal: false,
       stage: 'staging',
       scope: { profile: null, publicApi: null },
-      identity_freeze_at: { reading: 'time', at: '2026-11-24T00:00:00.000Z' },
+      identity_freeze_at: {
+        secret: 'prod/lambdas',
+        reading: 'time',
+        at: '2026-11-24T00:00:00.000Z'
+      },
+      replace_pointer: false,
       snapshot_at: new Date(T + 150_000).toISOString(),
       snapshot_gap_seconds: 150,
       read: { replicaLagMs: 40, read_only: true },
@@ -650,7 +706,6 @@ describe('runProfileSiteExportJob', () => {
       at: T + 50_000
     };
     const { deps, order, bodies } = setup({
-      env: { IDENTITY_FREEZE_AT: FREEZE },
       // Sites are still published before the freeze: recorded, not refused.
       latestWrites: { packages: T + 50_000 },
       late: [lateWrite],
@@ -665,7 +720,11 @@ describe('runProfileSiteExportJob', () => {
     )) as ProfileSiteExportResult;
     expect(result.prefix).toMatch(/-abcdef12-rehearsal\/$/);
     expect(result.manifestKey).toBe(`${result.prefix}manifest.unusable.json`);
+    // Every record was there, but a rehearsal is never the export.
+    expect(result.unavailableProfiles).toBe(0);
+    expect(result.usable).toBe(false);
     expect(result.pointerKey).toBeNull();
+    expect(result.presignedPointerUrl).toBeNull();
     expect(result.snapshotGapSeconds).toBe(10);
     expect(result.writesAfterFreeze).toEqual([
       { source: 'packages', packageId: 'pkg-9', at: '2026-11-24T00:00:50.000Z' }
@@ -686,7 +745,7 @@ describe('runProfileSiteExportJob', () => {
   ])(
     'has a rehearsal report IDENTITY_FREEZE_AT %j as the site reads it',
     async (raw, reading, at) => {
-      const { deps, bodies } = setup({ env: { IDENTITY_FREEZE_AT: raw } });
+      const { deps, bodies } = setup({ freezeSecret: raw });
       const result = (await runProfileSiteExportJob(
         { ...event, rehearsal: true },
         context,
@@ -698,19 +757,19 @@ describe('runProfileSiteExportJob', () => {
       });
       expect(
         JSON.parse(bodies.get(result.manifestKey)!).identity_freeze_at
-      ).toEqual({ reading, at });
+      ).toEqual({ secret: 'prod/lambdas', reading, at });
     }
   );
 
   it.each([
-    [undefined, /IDENTITY_FREEZE_AT is not set/],
+    [undefined, /IDENTITY_FREEZE_AT is not set in the prod\/lambdas secret/],
     ['', /IDENTITY_FREEZE_AT is not set/],
-    ['Tuesday', /not a time/],
+    ['Tuesday', /prod\/lambdas secret is not a time/],
     ['2026-11-24T00:01:00Z', /not IDENTITY_FREEZE_AT/]
   ])(
     'refuses a real run with IDENTITY_FREEZE_AT %j, before reading anything',
     async (raw, message) => {
-      const { deps, order } = setup({ env: { IDENTITY_FREEZE_AT: raw } });
+      const { deps, order } = setup({ freezeSecret: raw });
       await expect(
         runProfileSiteExportJob(event, context, deps)
       ).rejects.toThrow(message);
@@ -722,7 +781,7 @@ describe('runProfileSiteExportJob', () => {
   it.each([['2026-11-24T00:00:00+00:00'], ['2026-11-24T00:00:00.000Z']])(
     'takes IDENTITY_FREEZE_AT %j for a real run, as the site does',
     async (raw) => {
-      const { deps } = setup({ env: { IDENTITY_FREEZE_AT: raw } });
+      const { deps } = setup({ freezeSecret: raw });
       const result = (await runProfileSiteExportJob(
         event,
         context,
@@ -731,6 +790,27 @@ describe('runProfileSiteExportJob', () => {
       expect(result.identityFreezeAt).toBe('2026-11-24T00:00:00.000Z');
     }
   );
+
+  it('reads IDENTITY_FREEZE_AT from the secret at each run, not the warm environment', async () => {
+    // The container loaded the secret before the fix: its copy is stale.
+    const { deps, secret, order } = setup({
+      freezeSecret: undefined,
+      env: { IDENTITY_FREEZE_AT: FREEZE }
+    });
+    await expect(runProfileSiteExportJob(event, context, deps)).rejects.toThrow(
+      /not set in the prod\/lambdas secret/
+    );
+    expect(order).toEqual([]);
+    // 6529.io fixes the secret; the rerun, in the same container, sees it.
+    secret.IDENTITY_FREEZE_AT = '2026-11-24T00:00:00.000+00:00';
+    const result = (await runProfileSiteExportJob(
+      event,
+      context,
+      deps
+    )) as ProfileSiteExportResult;
+    expect(result.identityFreezeAt).toBe('2026-11-24T00:00:00.000Z');
+    expect(deps.identityFreezeAt).toHaveBeenCalledTimes(2);
+  });
 
   it('refuses a real run whose snapshot holds an unaccepted site write after the freeze', async () => {
     const { deps, order, close } = setup({
@@ -826,6 +906,41 @@ describe('runProfileSiteExportJob', () => {
     expect(close).toHaveBeenCalledTimes(1);
   });
 
+  it('keeps an earlier run’s pointer unless told to replace it', async () => {
+    const { deps, bodies } = setup();
+    const first = (await runProfileSiteExportJob(
+      event,
+      context,
+      deps
+    )) as ProfileSiteExportResult;
+    const second = (await runProfileSiteExportJob(
+      event,
+      { ...context, awsRequestId: 'bcdef123-4567' },
+      deps
+    )) as ProfileSiteExportResult;
+    expect(second.usable).toBe(true);
+    expect(second.pointerKey).toBeNull();
+    expect(second.presignedPointerUrl).toBeNull();
+    expect(second.pointerError).toMatch(
+      /already names an earlier run for this freeze, and was kept.*replacePointer: true/
+    );
+    expect(JSON.parse(bodies.get(POINTER)!).prefix).toBe(first.prefix);
+    const third = (await runProfileSiteExportJob(
+      { ...event, replacePointer: true },
+      { ...context, awsRequestId: 'cdef1234-5678' },
+      deps
+    )) as ProfileSiteExportResult;
+    expect(third.pointerKey).toBe(POINTER);
+    expect(third.pointerError).toBeNull();
+    expect(JSON.parse(bodies.get(POINTER)!)).toMatchObject({
+      prefix: third.prefix,
+      manifest_sha256: third.manifestSha256
+    });
+    expect(JSON.parse(bodies.get(third.manifestKey)!).replace_pointer).toBe(
+      true
+    );
+  });
+
   it('keeps a whole run when only the pointer fails, and says so', async () => {
     const { deps, order } = setup({ failPutOf: POINTER });
     const result = (await runProfileSiteExportJob(
@@ -906,6 +1021,7 @@ describe('runProfileSiteExportJob', () => {
     )) as ProfileSiteExportResult;
     expect(result.prefix).toMatch(/-abcdef12-profile-profile-a\/$/);
     expect(result.manifestKey).toBe(`${result.prefix}manifest.partial.json`);
+    expect(result.usable).toBe(false);
     expect(result.pointerKey).toBeNull();
     expect(result.scope).toEqual({ profile: 'profile-a', publicApi: null });
     expect(JSON.parse(bodies.get(result.manifestKey)!).scope).toEqual({
@@ -1036,7 +1152,9 @@ describe('runProfileSiteExportJob', () => {
       job: 'profileSiteExportLinks',
       bucket: BUCKET,
       manifestKey: first.manifestKey,
-      manifestSha256: first.manifestSha256
+      manifestSha256: first.manifestSha256,
+      pointerKey: null,
+      presignedPointerUrl: null
     });
     const links = JSON.parse(bodies.get(again.linksKey)!);
     expect(Object.keys(links.links)).toContain('files/bafyshared');
@@ -1058,7 +1176,9 @@ describe('runProfileSiteExportJob', () => {
     expect(again).toMatchObject({
       prefix: first.prefix,
       manifestKey: first.manifestKey,
-      manifestSha256: first.manifestSha256
+      manifestSha256: first.manifestSha256,
+      pointerKey: POINTER,
+      presignedPointerUrl: `https://signed/${BUCKET}/${POINTER}?s=21600`
     });
     expect(again.linksKey.startsWith(first.prefix)).toBe(true);
   });
