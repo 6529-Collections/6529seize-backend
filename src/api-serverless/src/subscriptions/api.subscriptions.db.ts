@@ -48,6 +48,12 @@ import {
 import { markSubscriptionCoverageDirty } from '@/subscription-coverage/subscription-coverage-dirty';
 import { synchronizeAutomaticSubscriptionQuantities } from '@/subscriptionsDaily/subscription-quantity-sync.db';
 import {
+  deferSubscriptionWrites,
+  DeferredWriteKind,
+  executorSink,
+  narrowColumnsFor
+} from '@/subscription-key-width/subscription-deferred-writes';
+import {
   hasMinimumBalanceForAutomaticMode,
   InsufficientSubscriptionBalanceException
 } from '@/api/subscriptions/insufficient-subscription-balance.exception';
@@ -139,6 +145,27 @@ export async function fetchConsolidationAddresses(
   ).map((address) => address.address);
 }
 
+/**
+ * Queues the write when the consolidation key is longer than a table it
+ * writes to can hold (see subscription-key-width). Returns true when queued.
+ */
+async function deferredForKeyWidth(
+  kind: DeferredWriteKind,
+  consolidationKey: string,
+  payload: Record<string, unknown>,
+  connection?: any
+): Promise<boolean> {
+  const narrow = await narrowColumnsFor(kind, consolidationKey);
+  if (narrow.length === 0) {
+    return false;
+  }
+  await deferSubscriptionWrites(
+    [{ kind, consolidationKey, payload, narrow }],
+    executorSink(connection ? { wrappedConnection: connection } : undefined)
+  );
+  return true;
+}
+
 export async function updateSubscriptionMode(
   consolidationKey: string,
   automatic: boolean,
@@ -154,6 +181,17 @@ export async function updateSubscriptionMode(
     if (!hasMinimumBalanceForAutomaticMode(balance?.balance)) {
       throw new InsufficientSubscriptionBalanceException();
     }
+  }
+
+  if (
+    await deferredForKeyWidth(
+      'MODE',
+      consolidationKey,
+      { automatic },
+      connection
+    )
+  ) {
+    return { consolidation_key: consolidationKey, automatic, deferred: true };
   }
 
   if (connection) {
@@ -281,6 +319,20 @@ export async function updateSubscribeAllEditions(
   subscribe_all_editions: boolean,
   connection?: any
 ) {
+  if (
+    await deferredForKeyWidth(
+      'ALL_EDITIONS',
+      consolidationKey,
+      { subscribe_all_editions },
+      connection
+    )
+  ) {
+    return {
+      consolidation_key: consolidationKey,
+      subscribe_all_editions,
+      deferred: true
+    };
+  }
   if (connection) {
     await updateSubscribeAllEditionsInternal(
       consolidationKey,
@@ -475,6 +527,23 @@ export async function updateSubscription(
     subscribedCount = subscriptionEligibility;
   }
 
+  if (
+    await deferredForKeyWidth('SUBSCRIPTION', consolidationKey, {
+      contract,
+      token_id: tokenId,
+      subscribed
+    })
+  ) {
+    return {
+      consolidation_key: consolidationKey,
+      contract,
+      token_id: tokenId,
+      subscribed,
+      subscribed_count: subscribedCount,
+      deferred: true
+    };
+  }
+
   await sqlExecutor.executeNativeQueriesInTransaction(
     async (wrappedConnection) => {
       let log: string;
@@ -561,6 +630,22 @@ export async function updateSubscriptionCount(
     throw new BadRequestException(
       `Not enough balance to subscribe for ${count} editions. Need at least ${requiredBalance} ETH.`
     );
+  }
+
+  if (
+    await deferredForKeyWidth('SUBSCRIPTION_COUNT', consolidationKey, {
+      contract,
+      token_id: tokenId,
+      count
+    })
+  ) {
+    return {
+      consolidation_key: consolidationKey,
+      contract,
+      token_id: tokenId,
+      count,
+      deferred: true
+    };
   }
 
   await sqlExecutor.executeNativeQueriesInTransaction(

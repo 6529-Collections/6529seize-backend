@@ -32,6 +32,10 @@ import {
   persistBlock
 } from './db.transactions_processing';
 import { markSubscriptionCoverageDirty } from '../subscription-coverage/subscription-coverage-dirty';
+import {
+  deferSubscriptionWrites,
+  narrowColumnsFor
+} from '@/subscription-key-width/subscription-deferred-writes';
 
 const logger = Logger.get('TRANSACTIONS_PROCESSING_SUBSCRIPTIONS');
 
@@ -249,6 +253,17 @@ async function processSubscription(
     )
   )[0];
 
+  if (
+    finalSubscription &&
+    (await deferRedemptionForKeyWidth(
+      transaction,
+      finalSubscription,
+      entityManager
+    ))
+  ) {
+    return;
+  }
+
   if (!finalSubscription) {
     const transactionLink = buildTransactionLink(transaction.transaction);
     const message = `🚨 No subscription found for airdrop address: ${transaction.to_address} \nTransaction: ${transactionLink}`;
@@ -337,6 +352,61 @@ async function processSubscription(
     .getRepository(NFTFinalSubscription)
     .save(finalSubscription);
   dirtyConsolidationKeys?.add(finalSubscription.consolidation_key);
+}
+
+/**
+ * A redemption whose key a balance, redeemed or final table can't hold is
+ * queued whole, one token per entry: no balance change, no redeemed row and
+ * no redeemed count until it is replayed.
+ */
+async function deferRedemptionForKeyWidth(
+  transaction: Transaction,
+  finalSubscription: NFTFinalSubscription,
+  entityManager: EntityManager
+): Promise<boolean> {
+  const narrow = await narrowColumnsFor(
+    'REDEMPTION',
+    finalSubscription.consolidation_key
+  );
+  if (narrow.length === 0) {
+    return false;
+  }
+  await deferSubscriptionWrites(
+    [
+      {
+        kind: 'REDEMPTION',
+        consolidationKey: finalSubscription.consolidation_key,
+        payload: { transaction },
+        narrow
+      }
+    ],
+    { query: (sql, values) => entityManager.query(sql, values) }
+  );
+  return true;
+}
+
+/**
+ * Replays one deferred redemption token through the normal matching, in its
+ * own transaction. Notices go to the wave as in the loop.
+ */
+export async function redeemDeferredToken(
+  transaction: Transaction
+): Promise<void> {
+  const waveNotifications: SubscriptionWaveNotification[] = [];
+  const dirtyConsolidationKeys = new Set<string>();
+  await getDataSource().transaction(async (entityManager) => {
+    await processSubscription(
+      transaction,
+      entityManager,
+      waveNotifications,
+      dirtyConsolidationKeys
+    );
+  });
+  await markSubscriptionCoverageDirty(
+    Array.from(dirtyConsolidationKeys),
+    'SUBSCRIPTION_REDEEMED'
+  );
+  await sendSubscriptionWaveNotifications(waveNotifications);
 }
 
 function buildTransactionLink(transactionHash: string): string {

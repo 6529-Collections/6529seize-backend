@@ -17,11 +17,19 @@ jest.mock('@/api/subscriptions/api.subscriptions.db', () => ({
 }));
 jest.mock('@/db', () => ({ getDataSource: jest.fn() }));
 jest.mock('@/sql-executor', () => ({
-  sqlExecutor: { executeNativeQueriesInTransaction: jest.fn() }
+  sqlExecutor: {
+    executeNativeQueriesInTransaction: jest.fn(),
+    execute: jest.fn()
+  }
 }));
 jest.mock('@/logging', () => ({
   Logger: {
-    get: () => ({ info: jest.fn(), warn: jest.fn(), error: jest.fn() })
+    get: () => ({
+      info: jest.fn(),
+      warn: jest.fn(),
+      error: jest.fn(),
+      errorWithCode: jest.fn()
+    })
   }
 }));
 jest.mock('@/eth-tools', () => ({
@@ -196,4 +204,25 @@ describe('first top-up for a consolidation without a balance', () => {
     expect(updateSubscriptionMode).not.toHaveBeenCalled();
     expect(events).toEqual(['commit', 'evict']);
   });
+});
+
+it('queues a top-up whose key the balance table cannot hold and applies none of it', async () => {
+  const longKey = [1, 2, 3, 4, 5]
+    .map((n) => `0x${String(n).padStart(40, '0')}`)
+    .join('-');
+  manager.query.mockResolvedValue([{ consolidation_key: longKey }]);
+
+  await persistTopUps([topUp]);
+
+  expect(balancesRepo.save).not.toHaveBeenCalled();
+  expect(topUpsRepo.save).not.toHaveBeenCalled();
+  expect(updateSubscriptionMode).not.toHaveBeenCalled();
+  expect(sqlExecutor.execute).toHaveBeenCalledWith(
+    expect.stringContaining('INSERT INTO subscription_deferred_writes'),
+    expect.objectContaining({ p1: 'TOP_UP', p2: longKey, p3: longKey.length }),
+    { wrappedConnection: connection }
+  );
+  expect(events).toEqual(['commit', 'evict']);
+  expect(sendDiscordUpdate).not.toHaveBeenCalled();
+  expect(sendSubscriptionTopUpWaveUpdate).not.toHaveBeenCalled();
 });

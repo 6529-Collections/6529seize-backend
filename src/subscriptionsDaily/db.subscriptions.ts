@@ -12,6 +12,14 @@ import {
   SubscriptionMode
 } from '../entities/ISubscription';
 import { insertWithoutUpdate } from '../orm_helpers';
+import { EntityManager } from 'typeorm';
+import {
+  DeferredWrite,
+  DeferredWriteKind,
+  DeferredWriteSink,
+  deferSubscriptionWrites,
+  narrowColumnsFor
+} from '@/subscription-key-width/subscription-deferred-writes';
 import { sqlExecutor } from '../sql-executor';
 import { DbQueryOptions } from '@/db-query.options';
 import {
@@ -67,15 +75,56 @@ export async function fetchSubscriptionBalanceForConsolidationKey(
     .findOne({ where: { consolidation_key } });
 }
 
+/**
+ * Splits rows into those whose key fits the kind's tables and deferred
+ * writes for the rest, so one long key never fails a batch.
+ */
+async function splitByKeyWidth<T extends { consolidation_key: string }>(
+  rows: readonly T[],
+  kind: DeferredWriteKind,
+  payloadOf: (row: T) => unknown = (row) => row
+): Promise<{ fitting: T[]; deferred: DeferredWrite[] }> {
+  const fitting: T[] = [];
+  const deferred: DeferredWrite[] = [];
+  for (const row of rows) {
+    const narrow = await narrowColumnsFor(kind, row.consolidation_key);
+    if (narrow.length) {
+      deferred.push({
+        kind,
+        consolidationKey: row.consolidation_key,
+        payload: payloadOf(row),
+        narrow
+      });
+    } else {
+      fitting.push(row);
+    }
+  }
+  return { fitting, deferred };
+}
+
+function managerSink(manager: EntityManager): DeferredWriteSink {
+  return { query: (sql, values) => manager.query(sql, values) };
+}
+
 export async function persistSubscriptions(
   subscriptions: NFTSubscription[],
   logs: SubscriptionLog[]
 ) {
+  const rows = await splitByKeyWidth(subscriptions, 'AUTO_SUBSCRIPTION');
+  const logRows = await splitByKeyWidth(logs, 'LOG');
   await getDataSource().transaction(async (manager) => {
-    await getDataSource()
-      .getRepository(NFTSubscription)
-      .upsert(subscriptions, ['consolidation_key', 'contract', 'token_id']);
-    await manager.getRepository(SubscriptionLog).insert(logs);
+    if (rows.fitting.length) {
+      await getDataSource()
+        .getRepository(NFTSubscription)
+        .upsert(rows.fitting, ['consolidation_key', 'contract', 'token_id']);
+    }
+    if (logRows.fitting.length) {
+      await manager.getRepository(SubscriptionLog).insert(logRows.fitting);
+    }
+    await deferSubscriptionWrites(
+      [...rows.deferred, ...logRows.deferred],
+      managerSink(manager)
+    );
   });
 }
 
@@ -86,6 +135,8 @@ export async function persistNFTFinalSubscriptions(
   subscriptions: NFTFinalSubscription[],
   logs: SubscriptionLog[]
 ) {
+  const rows = await splitByKeyWidth(subscriptions, 'FINAL_ROW');
+  const logRows = await splitByKeyWidth(logs, 'LOG');
   await getDataSource().transaction(async (manager) => {
     const finalRepo = manager.getRepository(NFTFinalSubscription);
     const uploadRepo = manager.getRepository(NFTFinalSubscriptionUpload);
@@ -93,10 +144,18 @@ export async function persistNFTFinalSubscriptions(
       contract: contract,
       token_id: token_id
     });
-    await insertWithoutUpdate(finalRepo, subscriptions);
+    if (rows.fitting.length) {
+      await insertWithoutUpdate(finalRepo, rows.fitting);
+    }
     await uploadRepo.upsert(upload, ['contract', 'token_id']);
 
-    await manager.getRepository(SubscriptionLog).insert(logs);
+    if (logRows.fitting.length) {
+      await manager.getRepository(SubscriptionLog).insert(logRows.fitting);
+    }
+    await deferSubscriptionWrites(
+      [...rows.deferred, ...logRows.deferred],
+      managerSink(manager)
+    );
   });
 }
 

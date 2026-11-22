@@ -2937,6 +2937,28 @@ open reports and pending moderation checks. The API groups this union before
 pagination and shares the case definition across queue and count surfaces; it
 adds no persisted case table, queue, service or background reconciliation.
 
+## Subscription key width guard
+
+Subscription tables key rows by the consolidation key, the identity's wallets
+joined by `-`. Until the key-width migration widens those columns, and for
+identities whose key is still longer than a widened column (`subscriptions_nfts`
+and `subscriptions_nfts_final` hold 666 characters, `subscriptions_redeemed`
+567: 14 to 16 wallets), a subscription write is never truncated and never fails
+its batch. Each writer reads the actual column widths from
+`information_schema` (cached for five minutes, 200 when the read fails) and,
+for a key that does not fit, writes the whole operation as JSON to
+`subscription_deferred_writes` in the same transaction and logs
+`SUBSCRIPTION_KEY_DEFERRED`. The guarded writers are the daily final-list and
+automatic-row batches and their log lines, subscribe and count changes, mode
+and edition changes, top-ups, redemptions (one token per entry, so balance,
+redeemed row and redeemed count move together), and consolidation re-keys.
+Coverage dirty markers for such keys are skipped, since coverage is recomputed.
+
+With `FEATURE_SUBSCRIPTION_DEFERRED_REPLAY=true`, the `subscriptionsTopUpLoop`
+replays queued writes whose key now fits, oldest first, through the original
+code paths; a write that no longer applies (a closed or dropped card) is marked
+skipped. Rollback: unset the flag; the queue keeps every write.
+
 ## Cross-wave message search
 
 `GET /v2/drops/search` reuses wave search text matching and accepts text, an

@@ -18,6 +18,11 @@ import {
   sendSubscriptionTopUpWaveUpdate
 } from '../subscription-wave-notifier';
 import { sqlExecutor } from '../sql-executor';
+import {
+  deferSubscriptionWrites,
+  executorSink,
+  narrowColumnsFor
+} from '@/subscription-key-width/subscription-deferred-writes';
 import { markSubscriptionCoverageDirty } from '../subscription-coverage/subscription-coverage-dirty';
 import { invalidateUpcomingSubscriptionCaches } from '@/subscriptionsDaily/subscription-cache';
 import {
@@ -57,6 +62,24 @@ export async function persistTopUps(topUps: SubscriptionTopUp[]) {
 
       if (!consolidationKey) {
         consolidationKey = topUp.from_wallet;
+      }
+
+      // A key the balance, mode or log tables can't hold is queued whole
+      // (no balance, no top-up row), so the top-up is applied once it fits.
+      const narrow = await narrowColumnsFor('TOP_UP', consolidationKey);
+      if (narrow.length) {
+        await deferSubscriptionWrites(
+          [
+            {
+              kind: 'TOP_UP',
+              consolidationKey,
+              payload: { topUp },
+              narrow
+            }
+          ],
+          executorSink({ wrappedConnection: qrHolder })
+        );
+        continue;
       }
 
       let balance = await balancesRepo.findOne({

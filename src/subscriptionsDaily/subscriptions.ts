@@ -35,6 +35,10 @@ import { sqlExecutor } from '../sql-executor';
 import { equalIgnoreCase } from '../strings';
 import { Time } from '../time';
 import {
+  deferSubscriptionWrites,
+  narrowColumnsFor
+} from '@/subscription-key-width/subscription-deferred-writes';
+import {
   fetchAllAutoSubscriptions,
   fetchAllNftSubscriptionBalances,
   fetchAllNftSubscriptions,
@@ -741,6 +745,23 @@ export async function consolidateSubscriptions(addresses: Set<string>) {
       const oldKeys = uniqueValuesWithKeys.get(newKey);
       if (!oldKeys) {
         logger.error(`No keys found for value: ${newKey}`);
+        continue;
+      }
+      // A new key the subscription tables can't hold yet is queued, not
+      // merged; the old keys keep their rows until it is replayed.
+      const narrow = await narrowColumnsFor('CONSOLIDATION', newKey);
+      if (narrow.length) {
+        await deferSubscriptionWrites(
+          [
+            {
+              kind: 'CONSOLIDATION',
+              consolidationKey: newKey,
+              payload: { newKey, oldKeys },
+              narrow
+            }
+          ],
+          { query: (sql, values) => manager.query(sql, values) }
+        );
         continue;
       }
       const savepoint = `consolidate_subscriptions_${index}`;

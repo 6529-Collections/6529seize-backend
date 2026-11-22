@@ -24,6 +24,15 @@ export class AppFeatures {
   }
 
   /**
+   * Replays subscription writes queued because their consolidation key was
+   * longer than a table's key column (subscription-key-width), once the key
+   * fits. Rollback: unset it; the queue keeps the writes.
+   */
+  public isSubscriptionDeferredReplayEnabled(): boolean {
+    return this.isFeatureEnabled('SUBSCRIPTION_DEFERRED_REPLAY');
+  }
+
+  /**
    * Large viewer group lists are read from viewer_group_set_members by their
    * hash instead of travelling in each statement (waves/viewer-group-sets).
    */
