@@ -36,6 +36,7 @@ function run(
     seed: RebuildStep;
     rebuilder: RebuildStep;
     probes?: Probe[];
+    final?: boolean;
   }
 ) {
   // Only the self-check's own steps and probe: the areas' steps and probes
@@ -57,7 +58,7 @@ function run(
     manifests,
     area,
     mark: 'head',
-    final: false,
+    final: parts.final ?? false,
     mysqlPort: PORT,
     apiPort: 0,
     sources: {},
@@ -69,8 +70,8 @@ function run(
 
 const teamSeed = step('self-check.seed', 'seedTeam', ['team']);
 
-function teamRun(rebuilder: RebuildStep) {
-  return run('mint', { seed: teamSeed, rebuilder });
+function teamRun(rebuilder: RebuildStep, final = false) {
+  return run('mint', { seed: teamSeed, rebuilder, final });
 }
 
 describe('rebuild check, end to end', () => {
@@ -89,7 +90,7 @@ describe('rebuild check, end to end', () => {
     ).toEqual({ team: 3 });
   });
 
-  it('reports rows that differ after the rebuild', async () => {
+  it('reports rows that differ after the rebuild, and passes', async () => {
     const { report } = await teamRun(
       step('self-check.renamed', 'rebuildTeamDifferently', ['team'])
     );
@@ -97,6 +98,20 @@ describe('rebuild check, end to end', () => {
     expect(diff.same).toBe(false);
     expect(diff.changed).toHaveLength(3);
     expect(report.notes.join(' ')).toContain('differ row by row');
+    expect(report.failures).toEqual([]);
+    expect(report.verdict).toBe('PASS');
+  });
+
+  it('fails a final run on rows that differ after the rebuild', async () => {
+    const { report } = await teamRun(
+      step('self-check.renamed-final', 'rebuildTeamDifferently', ['team']),
+      true
+    );
+    expect(report.verdict).toBe('FAIL');
+    expect(report.failures).toContainEqual(
+      expect.stringContaining('1 rebuilt tables differ row by row')
+    );
+    expect(report.notes.join(' ')).not.toContain('differ row by row');
   });
 
   it('fails a rebuilder that reads a table it did not declare', async () => {

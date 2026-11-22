@@ -78,6 +78,8 @@ import {
 } from '@/rebuild/sources/source-spec';
 import { RunningSource } from '@/rebuild/sources/running-source';
 import { startSources, stopSources } from '@/rebuild/sources/start-sources';
+import { judge } from '@/rebuild/run/verdict';
+import { waitForApi } from '@/rebuild/stack/api-ready';
 
 export interface RunOptions {
   readonly repoRoot: string;
@@ -170,10 +172,6 @@ export function fillSourcePlaceholders(
     /\{(gateway|relays|ethereum|files)\}/g,
     (match, name) => urls[name] ?? match
   );
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 /** One run of the rebuild check. */
@@ -576,14 +574,16 @@ class RebuildRun {
     let exited: number | null | undefined;
     void child.exited.then((code) => (exited = code));
     const started = Date.now();
-    const deadline = started + API_READY_TIMEOUT_MS;
-    while (Date.now() < deadline && exited === undefined) {
-      const ready = await fetch(`http://127.0.0.1:${this.apiPort}/health`)
-        .then(() => true)
-        .catch(() => false);
-      if (ready) return child;
-      await sleep(1000);
-    }
+    const ready = await waitForApi({
+      answers: () =>
+        fetch(`http://127.0.0.1:${this.apiPort}/health`)
+          .then(() => true)
+          .catch(() => false),
+      ended: () => exited !== undefined,
+      timeoutMs: API_READY_TIMEOUT_MS,
+      pauseMs: 1000
+    });
+    if (ready) return child;
     await child.stop();
     // An API that never answered fails the run, even if it exited with 0:
     // otherwise a run could pass with no probe answered.
@@ -819,109 +819,31 @@ class RebuildRun {
   private verdict(violations: SourceViolation[]): void {
     const stepViolations = violations.filter(
       (v) => this.stepPids.get(v.pid) !== 'api'
-    );
-    if (stepViolations.length) {
-      this.failures.push(
-        `${stepViolations.length} connections to sources outside the list (see Source violations)`
-      );
-    }
-    const unguarded = this.steps.filter((s) => !s.guarded).map((s) => s.id);
-    if (unguarded.length) {
-      (this.o.final ? this.failures : this.notes).push(
-        `${unguarded.length} command steps don't run Node, so the source guard can't watch them: ${unguarded.join(', ')}`
-      );
-    }
-    const apiViolations = violations.length - stepViolations.length;
-    if (apiViolations) {
-      this.notes.push(
-        `The API tried ${apiViolations} connections outside the list while answering probes.`
-      );
-    }
-    if (this.differences.length) {
-      this.failures.push(
-        `${this.differences.length} probes failed or answer differently`
-      );
-    }
-    if (this.unproven.length) {
-      (this.o.final ? this.failures : this.notes).push(
-        `${this.unproven.length} probes answered 4xx or with no data in the first pass, so they prove nothing yet${this.o.final ? '' : '; a final run fails them'}.`
-      );
-    }
-    const pending = this.registry?.pending ?? [];
-    if (this.o.final && pending.length) {
-      this.failures.push(`${pending.length} INDEX tables have no rebuilder`);
-    } else if (pending.length) {
-      this.notes.push(
-        `${pending.length} INDEX tables have no rebuilder yet; this run kept them, so they are not proven.`
-      );
-    }
-    if (this.o.final && this.unreadTables.length) {
-      this.failures.push(
-        `${this.unreadTables.length} rebuilt tables were read by no probe`
-      );
-    }
-    const differing = this.tableDiffs.filter((d) => !d.same).length;
-    if (differing) {
-      (this.o.final ? this.failures : this.notes).push(
-        this.differences.length
-          ? `${differing} rebuilt tables differ row by row (outside their volatile columns), and the probes differ too.`
-          : `${differing} rebuilt tables differ row by row (outside their volatile columns) while the probes match; look for a missing probe.`
-      );
-    }
-    const unseeded = this.unseededTables();
-    if (unseeded.length) {
-      (this.o.final ? this.failures : this.notes).push(
-        `${unseeded.length} rebuilt tables had no rows after the seeds, so their rebuild proves nothing: ${unseeded.join(', ')}`
-      );
-    }
-    const exempt = this.registry?.classes.EXEMPT ?? 0;
-    if (exempt)
-      this.notes.push(
-        `${exempt} EXEMPT tables are kept and not covered by this proof.`
-      );
-    this.sourceVerdict();
-  }
-
-  /** Source problems fail every run; provisional sources and planned tables fail the final one. */
-  private sourceVerdict(): void {
-    for (const source of this.running) {
-      this.failures.push(...source.problems());
-    }
-    const provisional = this.running
-      .filter((source) => source.info.provisional)
-      .map((source) => source.name);
-    if (provisional.length) {
-      (this.o.final ? this.failures : this.notes).push(
-        `Provisional sources, not a devnet's recordings: ${provisional.join(', ')}`
-      );
-    }
-    const planned = this.registry?.plannedAbsent ?? [];
-    if (planned.length) {
-      (this.o.final ? this.failures : this.notes).push(
-        `${planned.length} planned tables are not in this tree's code`
-      );
-    }
-    if (this.plannedSteps.length) {
-      (this.o.final ? this.failures : this.notes).push(
-        `${this.plannedSteps.length} planned steps were skipped because their code is not in this tree, and their rebuilders' tables were kept: ${this.plannedSteps.join(', ')}`
-      );
-    }
-    if (this.heldProbes.length) {
-      (this.o.final ? this.failures : this.notes).push(
-        `${this.heldProbes.length} planned probes were held because a table they read is not in the schema yet: ${this.heldProbes.join(', ')}`
-      );
-    }
-    const absent = this.notInSchema();
-    if (absent.length) {
-      (this.o.final ? this.failures : this.notes).push(
-        `${absent.length} tables are not in a fresh schema, so code that reads them fails on a rebuilt database: ${absent.map((a) => a.table).join(', ')}`
-      );
-    }
-    if (this.o.final && this.routes().open.length) {
-      this.failures.push(
-        `${this.routes().open.length} documented GET routes have no probe and no waiver`
-      );
-    }
+    ).length;
+    const verdict = judge({
+      final: this.o.final,
+      stepViolations,
+      apiViolations: violations.length - stepViolations,
+      unguardedSteps: this.steps.filter((s) => !s.guarded).map((s) => s.id),
+      differences: this.differences.length,
+      unproven: this.unproven.length,
+      pending: (this.registry?.pending ?? []).length,
+      unreadTables: this.unreadTables,
+      differingTables: this.tableDiffs.filter((d) => !d.same).length,
+      unseededTables: this.unseededTables(),
+      exemptTables: this.registry?.classes.EXEMPT ?? 0,
+      sourceProblems: this.running.flatMap((source) => source.problems()),
+      provisionalSources: this.running
+        .filter((source) => source.info.provisional)
+        .map((source) => source.name),
+      plannedTables: (this.registry?.plannedAbsent ?? []).length,
+      plannedSteps: this.plannedSteps,
+      heldProbes: this.heldProbes,
+      notInSchema: this.notInSchema().map((a) => a.table),
+      openRoutes: this.routes().open.length
+    });
+    this.failures.push(...verdict.failures);
+    this.notes.push(...verdict.notes);
   }
 
   private routesCache: ReturnType<typeof routeCoverage> | null = null;
