@@ -12,7 +12,10 @@ import { Time } from '@/time';
  * writes the same rows.
  */
 export class NotificationViewCursorsDb extends LazyDbAccessCompatibleService {
-  /** The cursor, locked for the caller's transaction when it has one. */
+  /**
+   * The cursor, locked for the caller's transaction when it has one. An
+   * empty value is the start, as is a missing row.
+   */
   async get(
     source: string,
     connection?: ConnectionWrapper<any>
@@ -23,7 +26,20 @@ export class NotificationViewCursorsDb extends LazyDbAccessCompatibleService {
       { source },
       connection ? { wrappedConnection: connection } : undefined
     );
-    return row?.cursor_value ?? null;
+    return row?.cursor_value || null;
+  }
+
+  /**
+   * Creates the cursor's row at the start if it is missing, so runners
+   * lock that row rather than the gap where it would be (two runners
+   * holding the same gap lock deadlock when both insert).
+   */
+  async ensure(source: string): Promise<void> {
+    await this.db.execute(
+      `insert ignore into ${NOTIFICATION_VIEW_CURSORS_TABLE} (source, cursor_value, updated_at)
+       values (:source, '', 0)`,
+      { source }
+    );
   }
 
   async set(

@@ -1,4 +1,5 @@
 import { wsListenersNotifier } from '@/api/ws/ws-listeners-notifier';
+import { isDeadlockError } from '@/e2ee/e2ee-encoding';
 import { Logger } from '@/logging';
 import { dbSupplier, SqlExecutor } from '@/sql-executor';
 import type { DerivedGroup } from '@/notifications/view/derived-notification';
@@ -58,6 +59,8 @@ export type AnnounceNotificationChanges = (
 
 const DEFAULT_BATCH_SIZE = 200;
 const DEFAULT_MAX_BATCHES = 50;
+/** Tries of a batch whose transaction deadlocks; each starts from its cursor. */
+const BATCH_ATTEMPTS = 3;
 
 /**
  * Reads each feed from its cursor, derives, and writes. A batch's rows and
@@ -101,6 +104,7 @@ export class NotificationFeedRunner {
     }
     const batchSize = options.batchSize ?? DEFAULT_BATCH_SIZE;
     const maxBatches = options.maxBatches ?? DEFAULT_MAX_BATCHES;
+    await this.cursors.ensure(feed.name);
     while (batches < maxBatches) {
       const after = await this.cursors.get(feed.name);
       const batch = await feed.read(after, batchSize);
@@ -110,8 +114,8 @@ export class NotificationFeedRunner {
         groups.push(await feed.derive(event));
       }
       const next = batch.next;
-      const result = await this.db().executeNativeQueriesInTransaction(
-        async (connection) => {
+      const result = await this.retryingDeadlocks(feed.name, () =>
+        this.db().executeNativeQueriesInTransaction(async (connection) => {
           // Another runner moved the cursor: leave this batch to it.
           if ((await this.cursors.get(feed.name, connection)) !== after) {
             return null;
@@ -123,7 +127,7 @@ export class NotificationFeedRunner {
           );
           await this.cursors.set(feed.name, next, connection);
           return derived;
-        }
+        })
       );
       if (!result) {
         this.logger.warn(`[NOTIFY_FEED_CURSOR_MOVED] [FEED ${feed.name}]`);
@@ -140,6 +144,26 @@ export class NotificationFeedRunner {
       batches++;
     }
     return { feed: feed.name, events, batches, derived: totals };
+  }
+
+  /**
+   * A deadlock rolls the batch back whole, cursor included, so trying it
+   * again is safe: the transaction re-checks the cursor first.
+   */
+  private async retryingDeadlocks<T>(
+    feedName: string,
+    work: () => Promise<T>
+  ): Promise<T> {
+    for (let attempt = 1; ; attempt++) {
+      try {
+        return await work();
+      } catch (error) {
+        if (!isDeadlockError(error) || attempt >= BATCH_ATTEMPTS) throw error;
+        this.logger.warn(
+          `[NOTIFY_FEED_DEADLOCK_RETRY] [FEED ${feedName}] [ATTEMPT ${attempt}]`
+        );
+      }
+    }
   }
 
   /** The batch is committed; a lost announcement costs only freshness. */

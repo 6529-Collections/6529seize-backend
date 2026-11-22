@@ -28,6 +28,10 @@ import {
   notifyViewMode
 } from '@/notifications/view/notify-view-flags';
 import type { DerivedNotification } from '@/notifications/view/derived-notification';
+import {
+  notificationSourceKey,
+  notificationViewId
+} from '@/notifications/view/notification-view-ids';
 import { notificationViewDb } from '@/notifications/view/notification-view.db';
 import { notificationArchive } from '@/notifications/view/notification-archive';
 import {
@@ -65,6 +69,8 @@ type SerializableNotificationInsertRow = Record<string, string | number | null>;
 
 /** Rows per bulk insert of derived copies; an @all never writes row by row. */
 const DERIVED_COPY_CHUNK = 500;
+/** View rows re-keyed per statement in a merge. */
+const VIEW_MOVE_CHUNK = 500;
 
 // Keep existing status-change notices out of both the feed and its unread count.
 const COMPETITION_NOTIFICATION_VISIBILITY_SQL = `(
@@ -1016,18 +1022,107 @@ export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
     target: string,
     connectionHolder: ConnectionWrapper<any>
   ) {
-    const tables =
-      notifyViewMode() === 'off'
-        ? [IDENTITY_NOTIFICATIONS_TABLE]
-        : [IDENTITY_NOTIFICATIONS_TABLE, NOTIFICATION_VIEW_TABLE];
-    for (const table of tables) {
-      await this.updateIdentityIdsInTable(
-        table,
-        sourceIdentity,
-        target,
-        connectionHolder
-      );
+    await this.updateIdentityIdsInTable(
+      IDENTITY_NOTIFICATIONS_TABLE,
+      sourceIdentity,
+      target,
+      connectionHolder
+    );
+    if (notifyViewMode() !== 'off') {
+      await this.moveViewRows(sourceIdentity, target, connectionHolder);
     }
+  }
+
+  /**
+   * A merge moves the view's rows to the target re-keyed for their new
+   * recipient, as the rules key them, so the next application of a group
+   * finds its row (and its read state) and a rebuild writes the same keys
+   * and ids. Where the target already has the row, the moved duplicate
+   * goes. Copies made at the switch keep their old ids.
+   */
+  private async moveViewRows(
+    source: string,
+    target: string,
+    connection: ConnectionWrapper<any>
+  ): Promise<void> {
+    const options = { wrappedConnection: connection };
+    const rows = await this.db.execute<{
+      source_key: string;
+      source_family: string;
+      source_ref: string;
+      id: number;
+      legacy_id: number | null;
+      created_at: number;
+    }>(
+      `select source_key, source_family, source_ref, id, legacy_id, created_at
+       from ${NOTIFICATION_VIEW_TABLE} where identity_id = :source
+       order by source_key for update`,
+      { source },
+      options
+    );
+    const moves = rows.map((row) => {
+      const key = notificationSourceKey(
+        row.source_family,
+        row.source_ref,
+        target
+      );
+      const keepsOldId =
+        row.legacy_id !== null && Number(row.legacy_id) === Number(row.id);
+      return {
+        from: row.source_key,
+        key,
+        id: keepsOldId
+          ? Number(row.id)
+          : notificationViewId(Number(row.created_at), key)
+      };
+    });
+    for (let i = 0; i < moves.length; i += VIEW_MOVE_CHUNK) {
+      const chunk = moves.slice(i, i + VIEW_MOVE_CHUNK);
+      const taken = new Set(
+        (
+          await this.db.execute<{ source_key: string }>(
+            `select source_key from ${NOTIFICATION_VIEW_TABLE}
+             where identity_id = :target and source_key in (:keys)`,
+            { target, keys: chunk.map((move) => move.key) },
+            options
+          )
+        ).map((row) => row.source_key)
+      );
+      const duplicates = chunk.filter((move) => taken.has(move.key));
+      if (duplicates.length) {
+        await this.db.execute(
+          `delete from ${NOTIFICATION_VIEW_TABLE}
+           where identity_id = :source and source_key in (:keys)`,
+          { source, keys: duplicates.map((move) => move.from) },
+          options
+        );
+      }
+      const params: Record<string, string | number> = { source, target };
+      const mapped = chunk
+        .filter((move) => !taken.has(move.key))
+        .map((move, index) => {
+          params[`from_${index}`] = move.from;
+          params[`key_${index}`] = move.key;
+          params[`id_${index}`] = move.id;
+          return `select :from_${index} as from_key, :key_${index} as new_key, :id_${index} as new_id`;
+        });
+      if (mapped.length) {
+        await this.db.execute(
+          `update ${NOTIFICATION_VIEW_TABLE} v
+           join (${mapped.join(' union all ')}) m
+             on v.identity_id = :source and v.source_key = m.from_key
+           set v.identity_id = :target, v.source_key = m.new_key, v.id = m.new_id`,
+          params,
+          options
+        );
+      }
+    }
+    await this.db.execute(
+      `update ${NOTIFICATION_VIEW_TABLE} set additional_identity_id = :target
+       where additional_identity_id = :source`,
+      { source, target },
+      options
+    );
   }
 
   private async updateIdentityIdsInTable(

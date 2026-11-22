@@ -1,4 +1,5 @@
 import { IdentityNotificationCause } from '@/entities/IIdentityNotification';
+import { Logger } from '@/logging';
 import {
   derivedCauseCuts,
   derivedCauses,
@@ -63,6 +64,24 @@ describe('notification view flags', () => {
       DROP_VOTED: CUT
     });
     expect(isDerivedCause(IdentityNotificationCause.IDENTITY_NIC)).toBe(false);
+  });
+
+  it('reports, once per value, a derived cause that no feed derives', () => {
+    const error = jest
+      .spyOn(Logger.prototype, 'error')
+      .mockImplementation(() => undefined);
+    try {
+      process.env.NOTIFY_VIEW_MODE = 'shadow';
+      process.env.NOTIFY_DERIVED_CAUSES = `DROP_VOTED@${CUT + 7}`;
+      derivedCauseCuts();
+      derivedCauseCuts();
+      expect(error).toHaveBeenCalledTimes(1);
+      expect(error.mock.calls[0][0]).toContain(
+        'NOTIFY_DERIVED_CAUSE_WITHOUT_FEED'
+      );
+    } finally {
+      error.mockRestore();
+    }
   });
 
   it('hands a cause over at its cut: old writer before, deriver from it', () => {

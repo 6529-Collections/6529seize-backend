@@ -33,6 +33,14 @@ const logger = Logger.get('NOTIFY_VIEW_FLAGS');
 let reportedValue: string | undefined;
 
 /**
+ * The causes a production feed adapter derives. A cause joins with its
+ * adapter; a derived cause outside this set has its old writer skipped and
+ * nothing writing it, which is reported.
+ */
+export const CAUSES_WITH_FEEDS: ReadonlySet<IdentityNotificationCause> =
+  new Set<IdentityNotificationCause>([]);
+
+/**
  * NOTIFY_DERIVED_CAUSES: comma-separated `CAUSE@cutMs`. From its cut
  * (milliseconds since the epoch) a cause comes from the deriver and its old
  * writers are skipped; before it, the old writers' rows stand. Old writers
@@ -68,11 +76,21 @@ export function derivedCauseCuts(): ReadonlyMap<
       rejected.push(item.trim());
     }
   }
-  if (rejected.length && reportedValue !== value) {
+  if (reportedValue !== value) {
     reportedValue = value;
-    logger.error(
-      `[NOTIFY_DERIVED_CAUSES_IGNORED] ${rejected.join(', ')}: each item must be CAUSE@cutMs; their old writers keep writing`
+    if (rejected.length) {
+      logger.error(
+        `[NOTIFY_DERIVED_CAUSES_IGNORED] ${rejected.join(', ')}: each item must be CAUSE@cutMs; their old writers keep writing`
+      );
+    }
+    const feedless = Array.from(cuts.keys()).filter(
+      (cause) => !CAUSES_WITH_FEEDS.has(cause)
     );
+    if (feedless.length) {
+      logger.error(
+        `[NOTIFY_DERIVED_CAUSE_WITHOUT_FEED] ${feedless.join(', ')}: their old writers are skipped and no feed derives them`
+      );
+    }
   }
   return cuts;
 }

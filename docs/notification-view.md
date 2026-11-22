@@ -1,6 +1,6 @@
 # Notification view
 
-Notifications are moving from rows each feature writes into `identity_notifications` to a view derived from source events: the chain's identity and wave records, the drop events on the relays, and people's signed records. The aim is a table that rebuilds from those sources and its archive to the same rows, with the same ids; what does not rebuild yet is listed under Archive and rebuild.
+Notifications are moving from rows each feature writes into `identity_notifications` to a view derived from source events: the chain's identity and wave records, the drop events on the relays, and people's signed records. The aim is a table that rebuilds from those sources and its archive to the same rows, with the same ids; what a rebuild relies on is listed under Archive and rebuild.
 
 The pieces: the table, the per-cause switch, the deriver, the rules, the feed runner, the switch steps, the archive and the rebuild. The adapters that feed the rules from the chain and relay indexes land with those indexes; until then the rules and the runner are tested with fixtures of the source shapes in `src/notifications/view/notification-sources.ts`.
 
@@ -43,7 +43,7 @@ Deleting a drop or a wave removes every row that names it from both tables, as b
 
 ## Feeds and the runner
 
-A feed reads one index's events after a cursor and names the rule for each (`NotificationFeed`). `NotificationFeedRunner` reads a batch, derives it, and commits the rows and the cursor after them in one transaction, so a crash repeats at most one batch and repeating it writes the same rows. It does nothing while the mode is `off`, so no cursor moves then. A run is `live`, or `replay` for a rebuild; a replay never pushes.
+A feed reads one index's events after a cursor and names the rule for each (`NotificationFeed`). `NotificationFeedRunner` reads a batch, derives it, and commits the rows and the cursor after them in one transaction, so a crash repeats at most one batch and repeating it writes the same rows. Runners of one feed take turns on its cursor row; a batch whose transaction deadlocks is tried again, up to three times. It does nothing while the mode is `off`, so no cursor moves then. A run is `live`, or `replay` for a rebuild; a replay never pushes.
 
 ## Mode `on`
 
@@ -53,14 +53,14 @@ A feed reads one index's events after a cursor and names the rule for each (`Not
 - A row an old writer adds for a cause not derived yet is copied into the view as `CARRIED`, with a time-ordered id.
 - Pushes and `IDENTITY_NOTIFICATIONS_CHANGED` frames follow the view (next section).
 
-Deleting a drop or a wave, a wave's visibility change and a profile merge update the view as they update `identity_notifications`, in every mode but `off`.
+Deleting a drop or a wave, a wave's visibility change and a profile merge update the view as they update `identity_notifications`, in every mode but `off`. A merge re-keys the moved rows for their new recipient, so their groups still find them; where the target already has the row, the moved duplicate goes.
 
 ## Pushes and frames
 
 - `off` and `shadow`: as before. Old writers queue `identity_notifications` ids in `push_notification_outbox_entries`; in `shadow` the deriver queues the copies it writes.
-- `on`: the deriver queues each new row in `notification_view_push_outbox`, in the transaction that writes it, when the run is live, pushes are on and the row is less than 15 minutes old. The queue names rows by `(identity_id, source_key)`, since view ids repeat across people. The deriver's copies in `identity_notifications` are not queued. Old writers still queue their rows' old ids.
+- `on`: the deriver queues each new row in `notification_view_push_outbox`, in the transaction that writes it, when the run is live, pushes are on, the row is less than 15 minutes old and the write filters let it through. The queue names rows by `(identity_id, source_key)`, since view ids repeat across people. The deriver's copies in `identity_notifications` are not queued. Old writers still queue their rows' old ids.
 - The scheduled publisher moves both queues to SQS, as `{identity_notification_id}` and as `{view_notification: {identity_id, source_key}}`. A key leaves its queue only after SQS accepts it.
-- The push worker reads a queued view row back from the view, on the writer. A row missing there was removed after it was queued (a tombstone, a moderation hide, a re-derivation), and is acknowledged without a push. In `on` mode a queued old id is read from the view by `legacy_id` when the view has the row, and from `identity_notifications` otherwise.
+- The push worker reads a queued view row back from the view, on the writer. A row missing there was removed after it was queued (a deleted drop or wave, a re-derivation), and is acknowledged without a push. In `on` mode a queued old id is read from the view by `legacy_id` when the view has the row, and from `identity_notifications` otherwise.
 - Either way the push carries the view id, the id the feed shows, and is skipped if the view row is read. The receipts that stop a second send to the same device are kept per row: by the old id for a queued old id, as before, and by `view:<identity_id>:<source_key>` for a queued view row.
 - `IDENTITY_NOTIFICATIONS_CHANGED`: in `on` mode the feed runner sends it after each live batch commits, once to each person whose rows the batch wrote or removed, whether or not a push follows. Queued old ids still announce from the push worker. A replay or a rebuild sends nothing.
 
@@ -92,11 +92,13 @@ MEME_COLLABORATION, SUBSCRIPTION_COVERAGE and E2EE_MESSAGE keep their writers un
 - **Ids.** A derived row's id follows its time, not the order rows were written. A drop version that arrives after a later one moves the time of the rows it names first, and so their ids.
 - **Edits.** Today an edit deletes the drop's rows and every row that names it, then writes the drop's rows again: unread, at the edit's time, pushed again, and without the root's group mentions. The drop rule keeps each row with its read state and the time of the version that first named its recipient, keeps the root's group mentions, and pushes only the recipients an edit adds. Rows that name an edited drop (replies, quotes) stay.
 - **Filters.** Today a mute, a block, hidden content or a notification preference stops a row from being written. In `on` they hide it when read: lifting a mute or switching a kind of notification back on shows rows from the meantime, and switching it off hides older ones too. Copies and pushes are filtered as today.
-- **Late rows.** A row derived after a mark-all whose time it predates stays unread.
+- **Late rows.** A row its feed delivers after a mark-all that its time predates stays unread, as a row written after the mark would today.
 
-Deleting a drop or a wave, moderation, and which recipients each cause reaches are as today.
+Deleting a drop or a wave, and which recipients each cause reaches, are as today.
 
 ## The switch
+
+A derived cause that no feed derives yet (`CAUSES_WITH_FEEDS` in `notify-view-flags.ts`, which each adapter extends) has its old writer skipped and nothing writing it; it is logged as `NOTIFY_DERIVED_CAUSE_WITHOUT_FEED`. Add a cause to `NOTIFY_DERIVED_CAUSES` only once its feed runs.
 
 Rows created before the switch keep their `identity_notifications` ids, so clients that remember an id (the desktop app's last-seen id, a push in the tray) see nothing change. The operator steps are in `ops/scripts/notification-view/cli.ts` (`bin/6529 exec ts-node -r tsconfig-paths/register ops/scripts/notification-view/cli.ts <step>`), each resumable and safe to run again:
 

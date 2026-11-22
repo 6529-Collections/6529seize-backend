@@ -813,6 +813,42 @@ describe('notification_view', () => {
       expect(await unread()).toBe(1);
     });
 
+    it('a merge re-keys the moved rows, so applying their group again keeps them', async () => {
+      setFlags({
+        NOTIFY_VIEW_MODE: 'on',
+        NOTIFY_DERIVED_CAUSES: 'IDENTITY_REP@0,IDENTITY_MENTIONED@0'
+      });
+      await apply([
+        deriveRating(rating()),
+        deriveDropCreation(drop([targetId, otherId]))
+      ]);
+      await identityNotificationsDb.markAllNotificationsAsRead(targetId, {});
+      await sqlExecutor.executeNativeQueriesInTransaction((connection) =>
+        identityNotificationsDb.updateIdentityIdsInNotifications(
+          targetId,
+          otherId,
+          connection
+        )
+      );
+      // The mention both had stays once; the rating moved, read.
+      expect(
+        (await viewRows()).map((row) => [row.identity_id, row.cause])
+      ).toEqual([
+        [otherId, IdentityNotificationCause.IDENTITY_MENTIONED],
+        [otherId, IdentityNotificationCause.IDENTITY_REP]
+      ]);
+      expect(
+        await apply([
+          deriveRating(rating({ targetId: otherId })),
+          deriveDropCreation(drop([otherId]))
+        ])
+      ).toMatchObject({ written: 0, removed: 0, legacyCopies: 0 });
+      const moved = (await viewRows()).find(
+        (row) => row.cause === IdentityNotificationCause.IDENTITY_REP
+      );
+      expect(moved!.read_at).not.toBeNull();
+    });
+
     it('writes no view row for a cause the deriver does not own yet', async () => {
       expect((await apply([deriveVote(vote())])).written).toBe(0);
       expect(await viewRows()).toEqual([]);

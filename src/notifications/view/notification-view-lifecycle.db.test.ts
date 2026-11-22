@@ -21,8 +21,10 @@ import { notificationDeriver } from './notification-deriver';
 import {
   FeedBatch,
   notificationFeedRunner,
-  NotificationFeed
+  NotificationFeed,
+  NotificationFeedRunner
 } from './notification-feed-runner';
+import { notificationViewCursorsDb } from './notification-view-cursors.db';
 import { notificationArchive } from './notification-archive';
 import { notificationSourceKey } from './notification-view-ids';
 import { notificationViewRebuild } from './notification-view-rebuild';
@@ -186,6 +188,35 @@ describe('notification view lifecycle', () => {
         `select id from ${NOTIFICATION_VIEW_TABLE}`
       );
       expect(rows).toHaveLength(5);
+    });
+
+    it('tries a deadlocked batch again from its cursor', async () => {
+      setFlags({ NOTIFY_VIEW_MODE: 'shadow' });
+      let deadlocks = 1;
+      const flaky = Object.create(sqlExecutor);
+      flaky.executeNativeQueriesInTransaction = (work: any, options?: any) =>
+        deadlocks-- > 0
+          ? Promise.reject(
+              Object.assign(new Error('Deadlock found'), {
+                code: 'ER_LOCK_DEADLOCK',
+                errno: 1213
+              })
+            )
+          : sqlExecutor.executeNativeQueriesInTransaction(work, options);
+      const runner = new NotificationFeedRunner(
+        () => flaky,
+        notificationViewCursorsDb,
+        notificationDeriver,
+        async () => undefined
+      );
+      expect(
+        await runner.run(new ListFeed([vote(0, T), vote(1, T)]), {
+          mode: 'replay'
+        })
+      ).toMatchObject({ events: 2, batches: 1 });
+      expect(
+        await sqlExecutor.execute(`select id from ${NOTIFICATION_VIEW_TABLE}`)
+      ).toHaveLength(2);
     });
 
     it('does not move a cursor while the view is off', async () => {
