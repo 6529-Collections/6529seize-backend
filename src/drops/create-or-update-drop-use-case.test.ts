@@ -31,10 +31,12 @@ import { Logger } from '@/logging';
 import { Time } from '@/time';
 import {
   CreateOrUpdateDropUseCase,
+  dropModerationFingerprint,
   normalizeDropGroupMentions,
   sanitizeDropStructuredFields,
   validateDropMediaAttachment
 } from './create-or-update-drop.use-case';
+import { moderationFingerprint } from '@/content-moderation/moderation-review.types';
 import { PrePublicationModerationService } from '@/content-moderation/pre-publication-moderation.service';
 import {
   DROP_MAX_MEDIA,
@@ -1551,6 +1553,48 @@ describe('CreateOrUpdateDropUseCase', () => {
       data_key: ' artist ',
       data_value: '  6529er  '
     });
+  });
+
+  it("keys a drop's moderation by its content, not its preset id or notify flag", () => {
+    const model = createChatDropModel({ title: ' Title ' }) as never;
+    const plain = dropModerationFingerprint(model);
+    expect(plain).toBe(
+      moderationFingerprint(sanitizeDropStructuredFields(model))
+    );
+    expect(
+      dropModerationFingerprint({
+        ...(model as object),
+        new_drop_id: 'event-drop',
+        notify: false
+      } as never)
+    ).toBe(plain);
+    expect(
+      dropModerationFingerprint({
+        ...(model as object),
+        title: 'Other'
+      } as never)
+    ).not.toBe(plain);
+  });
+
+  it('moderates a new drop under its preset id, keyed without it', async () => {
+    const moderationService = createModerationServiceMock();
+    const useCase = createUseCaseWithMocks({ moderationService });
+    const model = createChatDropModel({ new_drop_id: 'event-drop' }) as never;
+
+    const prepared = await useCase.preparePrePublication(model, {});
+
+    expect((prepared as { dropId: string }).dropId).toBe('event-drop');
+    expect(moderationService.evaluate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        dropId: 'event-drop',
+        contextFingerprint: dropModerationFingerprint({
+          ...(model as object),
+          new_drop_id: 'another-event-drop'
+        } as never)
+      }),
+      expect.anything(),
+      expect.anything()
+    );
   });
 
   it('keeps identity nomination pre-resolution best-effort for empty metadata after trimming', async () => {

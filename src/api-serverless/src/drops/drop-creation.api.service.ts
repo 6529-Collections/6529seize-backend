@@ -16,7 +16,7 @@ import { ApiUpdateDropRequest } from '../generated/models/ApiUpdateDropRequest';
 import {
   createOrUpdateDrop,
   CreateOrUpdateDropUseCase,
-  sanitizeDropStructuredFields,
+  dropModerationFingerprint,
   PrePublicationPreparation
 } from '../../../drops/create-or-update-drop.use-case';
 import {
@@ -292,7 +292,7 @@ export class DropCreationApiService {
     if (replay) {
       if (
         replay.scope.context_fingerprint !==
-          moderationFingerprint(sanitizeDropStructuredFields(createModel)) ||
+          dropModerationFingerprint(createModel) ||
         !replay.published_subject_id
       )
         moderationConflict();
@@ -560,6 +560,34 @@ export class DropCreationApiService {
       throw error;
     }
     return { ...drop, client_drop_id: clientDrop.clientDropId };
+  }
+
+  /**
+   * The drop under this id when `authorId` wrote it, read on the writer as
+   * its author sees it; else null. A signed post whose event was used
+   * already (sent twice, or written first from the 6529 relays) answers
+   * with the drop its event's id names.
+   */
+  public async findAuthorsDrop(
+    { dropId, authorId }: { dropId: string; authorId: string },
+    ctx: RequestContext
+  ): Promise<ApiDrop | null> {
+    return this.dropsDb.executeNativeQueriesInTransaction(
+      async (connection) => {
+        const drop = await this.dropsDb.findDropById(dropId, connection);
+        if (drop?.author_id !== authorId) return null;
+        return this.dropsService.findDropByIdOrThrow(
+          { dropId, skipEligibilityCheck: true },
+          {
+            connection,
+            authenticationContext:
+              AuthenticationContext.fromProfileId(authorId),
+            timer: ctx.timer
+          }
+        );
+      },
+      { isolationLevel: 'READ COMMITTED' }
+    );
   }
 
   /**
@@ -1147,8 +1175,7 @@ export class DropCreationApiService {
     );
     if (replay) {
       if (
-        replay.scope.context_fingerprint !==
-          moderationFingerprint(sanitizeDropStructuredFields(model)) ||
+        replay.scope.context_fingerprint !== dropModerationFingerprint(model) ||
         replay.published_subject_id !== dropId
       )
         moderationConflict();

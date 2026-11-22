@@ -1,4 +1,7 @@
-import { DeviceEventKind } from '@/api/device-signing/device-event';
+import {
+  DeviceEventKind,
+  dropIdOfEvent
+} from '@/api/device-signing/device-event';
 import { DeviceGrantEntity } from '@/entities/IDeviceGrant';
 import {
   CrpAuthAnswer,
@@ -144,13 +147,10 @@ const ALL_SID = 1;
 const MAX_WAVE_CHARS = 255;
 
 /**
- * A relay-only post's drop id: its event id's first 16 bytes as a UUID,
- * the id 6529.io writes it under, so a rebuild gives the same id.
+ * A relay-only post's drop id, the id 6529.io writes it under: the same
+ * rule as a post signed through 6529.io's API (device-event.ts).
  */
-export function dropIdOfEvent(eventId: string): string {
-  const h = eventId.slice(2, 34).toLowerCase();
-  return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20, 32)}`;
-}
+export { dropIdOfEvent };
 
 interface Arrival {
   readonly wave: string;

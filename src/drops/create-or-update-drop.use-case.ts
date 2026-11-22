@@ -359,6 +359,23 @@ export function sanitizeDropStructuredFields(
   };
 }
 
+/**
+ * The moderation context of a drop write: the drop, without how it is
+ * written (its preset id, the notify flag). A signed post's id follows its
+ * event, and a resend after review is signed anew: the id must not set it
+ * apart from the review it passed.
+ */
+export function dropModerationFingerprint(
+  model: CreateOrUpdateDropModel
+): string {
+  const {
+    new_drop_id: _newDropId,
+    notify: _notify,
+    ...drop
+  } = sanitizeDropStructuredFields(model);
+  return moderationFingerprint(drop);
+}
+
 export class CreateOrUpdateDropUseCase {
   // Intentionally throttled per warm Lambda container, not per wave. One
   // warning is enough to surface the shared missing environment configuration.
@@ -814,7 +831,7 @@ export class CreateOrUpdateDropUseCase {
       title: sanitizedModel.title,
       waveId: sanitizedModel.wave_id,
       currentRevision,
-      contextFingerprint: moderationFingerprint(sanitizedModel),
+      contextFingerprint: dropModerationFingerprint(sanitizedModel),
       // File attachment contents intentionally remain in their existing
       // asynchronous validation pipeline and are not inspected here.
       parts: sanitizedModel.parts.map((part) => ({ content: part.content }))

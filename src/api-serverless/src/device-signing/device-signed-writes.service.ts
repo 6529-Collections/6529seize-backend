@@ -75,6 +75,16 @@ export class InvalidDeviceSignatureException extends ApiCompliantException {
   }
 }
 
+/**
+ * The event's reservation failed: this event, or its sequence number, was
+ * used already. Thrown only after the signature verified.
+ */
+export class DeviceEventAlreadyUsedException extends InvalidDeviceSignatureException {
+  constructor(readonly eventId: string) {
+    super('event or sequence number was already used');
+  }
+}
+
 export interface DeviceSignatureEnvelope {
   readonly grant_id: string;
   readonly seq: number;
@@ -254,20 +264,27 @@ export class DeviceSignedWritesService {
     private readonly now: () => number = () => Date.now()
   ) {}
 
-  /** POST /drops: the wave and reply target come from the request. */
+  /**
+   * POST /drops: the wave and reply target come from the request. A signed
+   * write is handed its verified event's id (unsigned: undefined). When the
+   * event was used already, `alreadyWritten` may answer with what it wrote
+   * (the same post sent twice); else the write is refused.
+   */
   async createDrop<T extends { readonly id: string }>(
     {
       envelope,
       waveId,
       replyToDropId,
-      body
+      body,
+      alreadyWritten
     }: {
       readonly envelope: unknown;
       readonly waveId: string;
       readonly replyToDropId: string | null | undefined;
       readonly body: unknown;
+      readonly alreadyWritten?: (eventId: string) => Promise<T | null>;
     },
-    write: () => Promise<T>,
+    write: (eventId?: string) => Promise<T>,
     ctx: SignedWriteContext
   ): Promise<T> {
     if (envelope === undefined) {
@@ -276,17 +293,32 @@ export class DeviceSignedWritesService {
       }
       return write();
     }
-    const reservation = await this.verifyAndReserve(
-      envelope,
-      {
-        kind: DeviceEventKind.POST,
-        waveId,
-        refs: replyToDropId ? [replyToDropId] : [],
-        body
-      },
+    let reservation: ReservedDeviceEvent;
+    try {
+      reservation = await this.verifyAndReserve(
+        envelope,
+        {
+          kind: DeviceEventKind.POST,
+          waveId,
+          refs: replyToDropId ? [replyToDropId] : [],
+          body
+        },
+        ctx
+      );
+    } catch (error) {
+      const written =
+        error instanceof DeviceEventAlreadyUsedException && alreadyWritten
+          ? await alreadyWritten(error.eventId)
+          : null;
+      if (written) return written;
+      throw error;
+    }
+    return this.runReserved(
+      reservation,
+      () => write(reservation.eventId),
+      (created) => created.id,
       ctx
     );
-    return this.runReserved(reservation, write, (created) => created.id, ctx);
   }
 
   /**
@@ -429,9 +461,7 @@ export class DeviceSignedWritesService {
       anchor: relay?.anchor ?? DEVICE_EVENT_ANCHOR
     });
     if (!(await this.db.reserveEvent(event, ctx))) {
-      throw new InvalidDeviceSignatureException(
-        'event or sequence number was already used'
-      );
+      throw new DeviceEventAlreadyUsedException(eventId);
     }
     return {
       eventId,

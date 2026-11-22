@@ -295,6 +295,62 @@ describe('DeviceSignedWritesService', () => {
       expect(db.deleteReservedEvent).not.toHaveBeenCalled();
     });
 
+    it("hands the write its verified event's id", async () => {
+      const write = jest.fn().mockResolvedValue({ id: 'new-drop' });
+      await createVectorDrop(VECTOR_ENVELOPE, write);
+      expect(write).toHaveBeenCalledWith(VECTOR_EVENT_ID);
+    });
+
+    it('answers the same signed post again with what it wrote, writing nothing', async () => {
+      jest.mocked(db.reserveEvent).mockResolvedValue(false);
+      const write = jest.fn();
+      const alreadyWritten = jest.fn().mockResolvedValue({ id: 'first-drop' });
+      await expect(
+        service.createDrop(
+          {
+            envelope: VECTOR_ENVELOPE,
+            waveId: WAVE_ID,
+            replyToDropId: DROP_ID,
+            body: JSON.parse(JSON.stringify(VECTOR_BODY)),
+            alreadyWritten
+          },
+          write,
+          ctx()
+        )
+      ).resolves.toEqual({ id: 'first-drop' });
+      expect(alreadyWritten).toHaveBeenCalledWith(VECTOR_EVENT_ID);
+      expect(write).not.toHaveBeenCalled();
+      expect(db.deleteReservedEvent).not.toHaveBeenCalled();
+      expect(db.attachEventToDrop).not.toHaveBeenCalled();
+    });
+
+    it('refuses a used event when nothing of it was written, and asks only then', async () => {
+      jest.mocked(db.reserveEvent).mockResolvedValue(false);
+      const alreadyWritten = jest.fn().mockResolvedValue(null);
+      const target = {
+        envelope: VECTOR_ENVELOPE,
+        waveId: WAVE_ID,
+        replyToDropId: DROP_ID,
+        body: JSON.parse(JSON.stringify(VECTOR_BODY)),
+        alreadyWritten
+      };
+      await expectInvalid(
+        service.createDrop(target, jest.fn(), ctx()),
+        /already used/
+      );
+      expect(alreadyWritten).toHaveBeenCalledTimes(1);
+      // Any other refusal: not asked.
+      await expectInvalid(
+        service.createDrop(
+          { ...target, body: { ...target.body, title: 'changed' } },
+          jest.fn(),
+          ctx()
+        ),
+        /does not verify/
+      );
+      expect(alreadyWritten).toHaveBeenCalledTimes(1);
+    });
+
     it('signs an empty refs list when there is no reply target', async () => {
       const body = { wave_id: WAVE_ID, parts: [] };
       const canonical = '{"parts":[],"wave_id":"' + WAVE_ID + '"}';
@@ -357,6 +413,7 @@ describe('DeviceSignedWritesService', () => {
         )
       ).resolves.toEqual({ id: 'unsigned' });
 
+      expect(write).toHaveBeenCalledWith();
       expect(db.findGrantById).not.toHaveBeenCalled();
       expect(db.reserveEvent).not.toHaveBeenCalled();
       expect(db.executeNativeQueriesInTransaction).not.toHaveBeenCalled();

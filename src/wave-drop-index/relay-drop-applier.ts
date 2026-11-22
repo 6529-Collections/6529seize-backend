@@ -1,11 +1,13 @@
-import { DeviceEventKind } from '@/api/device-signing/device-event';
+import {
+  DeviceEventKind,
+  dropIdOfEvent
+} from '@/api/device-signing/device-event';
 import type { RelayEventTimes } from '@/api/device-signing/device-signed-writes.service';
 import { ApiCreateDropRequest } from '@/api/generated/models/ApiCreateDropRequest';
 import { ApiDropType } from '@/api/generated/models/ApiDropType';
 import { ApiUpdateDropRequest } from '@/api/generated/models/ApiUpdateDropRequest';
 import { BadRequestException } from '@/exceptions';
 import { IngestedEvent } from './drop-index.db';
-import { dropIdOfEvent } from './drop-index.subscriber';
 
 /**
  * Writes the drop events read only from the relays into 6529.io's drop
