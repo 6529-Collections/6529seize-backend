@@ -62,7 +62,8 @@ describeWithSeed('WavesChainIndexDb', [], () => {
       feedNext: 121,
       readHeight: 130,
       network: 'net-1',
-      lastError: 'x'.repeat(3000)
+      lastError: 'x'.repeat(3000),
+      feedPart: 2
     };
     await db.saveState(state, 5);
     expect(await db.loadState()).toEqual({

@@ -87,6 +87,49 @@ function add(set: Set<string>, value: unknown) {
   if (key) set.add(key);
 }
 
+/**
+ * Effects split into parts of about `size` reads each, in a fixed order
+ * (so a block's parts are the same on every run); its votes, which read
+ * nothing, go with the first part.
+ */
+export function splitFeedEffects(
+  effects: FeedEffects,
+  size: number
+): FeedEffects[] {
+  const sets = [
+    'groups',
+    'waves',
+    'roleWaves',
+    'repWaves',
+    'decisions',
+    'entries',
+    'polls',
+    'voteEntries',
+    'leaderboards'
+  ] as const;
+  const items: { add: (into: FeedEffects) => void }[] = [];
+  for (const field of sets) {
+    for (const id of Array.from(effects[field]).sort()) {
+      items.push({ add: (into) => into[field].add(id) });
+    }
+  }
+  for (const [key, result] of Array.from(effects.results.entries()).sort(
+    ([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)
+  )) {
+    items.push({ add: (into) => into.results.set(key, result) });
+  }
+  const parts: FeedEffects[] = [];
+  for (let i = 0; i < items.length || parts.length === 0; i += size) {
+    const part = emptyFeedEffects();
+    for (const item of items.slice(i, i + size)) item.add(part);
+    parts.push(part);
+  }
+  for (const [key, vote] of Array.from(effects.votes.entries())) {
+    parts[0].votes.set(key, vote);
+  }
+  return parts;
+}
+
 /** Every record of the page, in order, folded into what to read again. */
 export function feedEffects(
   page: Pick<ChainFeedPage, 'blocks'>,

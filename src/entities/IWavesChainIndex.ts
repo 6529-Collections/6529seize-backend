@@ -66,6 +66,11 @@ export class WavesChainIndexStateEntity {
   @Column({ type: 'text', nullable: true, default: null })
   readonly last_error!: string | null;
 
+  // Parts of the block at feed_next already applied (a block too large for
+  // one batch is applied in parts).
+  @Column({ type: 'int', nullable: false, default: 0 })
+  readonly feed_part!: number;
+
   @Column({ type: 'bigint', nullable: false })
   readonly updated_at!: number;
 }

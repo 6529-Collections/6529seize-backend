@@ -680,6 +680,53 @@ export class FakeIndexDb {
     await this.upsert(name, rows, stamp);
   }
 
+  /** Leaderboard rows written or deleted, in all. */
+  leaderboardRowWrites = 0;
+
+  /**
+   * As the SQL: writes the rows that moved or are new, deletes the gone
+   * ones; the others take only the generation.
+   */
+  async writeLeaderboardRows(
+    decisionId: string,
+    rows: readonly IndexRow[],
+    stamp: RowStamp
+  ) {
+    const table = this.table('leaderboardRows');
+    const what = (row: IndexRow) =>
+      JSON.stringify([
+        row.rank,
+        row.legacy_id ?? null,
+        row.author ?? null,
+        String(row.score),
+        String(row.total),
+        row.data
+      ]);
+    const stored = Array.from(table.values()).filter(
+      (row) => row.decision_id === decisionId
+    );
+    const byEntry = new Map(stored.map((row) => [String(row.entry_id), row]));
+    const changed = rows.filter((row) => {
+      const was = byEntry.get(String(row.entry_id));
+      return !was || what(was) !== what(JSON.parse(JSON.stringify(row)));
+    });
+    const kept = new Set(rows.map((row) => String(row.entry_id)));
+    const gone = stored.filter((row) => !kept.has(String(row.entry_id)));
+    for (const row of gone) table.delete(this.key('leaderboardRows', row));
+    await this.upsert('leaderboardRows', changed, stamp);
+    for (const row of Array.from(table.values())) {
+      if (
+        row.decision_id === decisionId &&
+        Number(row.generation) < stamp.generation
+      ) {
+        row.generation = stamp.generation;
+      }
+    }
+    const written = changed.length + gone.length;
+    this.leaderboardRowWrites += written;
+    return written;
+  }
+
   /** As the SQL: a stale vote keeps its value, its stamps still rise. */
   async applyVotes(changes: readonly VoteChange[], stamp: RowStamp) {
     const table = this.table('votes');

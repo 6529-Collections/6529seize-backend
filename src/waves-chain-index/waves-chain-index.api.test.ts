@@ -139,6 +139,25 @@ describe('GatewayWavesChainApi', () => {
     expect(client.getHead).toHaveBeenCalledWith(true);
   });
 
+  it('throws when a later page of a list is not found, and reads a missing list as empty', async () => {
+    const { client } = aClient({
+      '/v1/decisions/0xd/entries': [answer([{ entryId: '0x1' }], '0x1')]
+    });
+    const api = new GatewayWavesChainApi(client);
+    expect(await api.decisionEntries('0xd', null, 10)).toEqual({
+      items: [{ entryId: '0x1' }],
+      next: '0x1'
+    });
+    // The list was there a page ago at this height: never an empty end.
+    await expect(api.decisionEntries('0xd', '0x1', 10)).rejects.toThrow(
+      'a later page was not found'
+    );
+    await expect(api.listWaves('0x9', 10)).rejects.toThrow(
+      'a later page was not found'
+    );
+    expect(await api.listGroups(null, 10)).toEqual({ items: [], next: null });
+  });
+
   it('asks the feed for the families it follows', async () => {
     const { client } = aClient({});
     const api = new GatewayWavesChainApi(client);

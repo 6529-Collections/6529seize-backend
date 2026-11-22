@@ -362,6 +362,65 @@ describe('WavesChainIndex', () => {
     expect(rowsOf(db)).toEqual(await freshRows(chain, clock));
   });
 
+  it('applies a block too large for one batch in parts, going on across runs', async () => {
+    const { db, index } = indexOf(chain, clock);
+    await index.run({ budgetMs: BIG });
+    // One block that touches 250 groups: three parts of about 100 reads.
+    const groups = Array.from({ length: 250 }, (_, i) => id(`9${i + 100}`));
+    for (const groupId of groups) {
+      chain.live.groups.set(groupId, { groupId, version: 1, origin: 'native' });
+    }
+    chain.commit(
+      groups.map((groupId) => ({ family: '0x0401', keyFields: { groupId } }))
+    );
+    const big = chain.height;
+    chain.vote(E(1), V(1), 2);
+    chain.callMs = 10;
+    const parts: number[] = [];
+    for (let run = 0; run < 10 && db.state.feedNext! <= big; run++) {
+      await index.run({ budgetMs: 300 });
+      parts.push(db.state.feedPart);
+      if (db.state.feedNext! <= big) expect(db.state.feedNext).toBe(big);
+    }
+    expect(parts).toEqual([1, 2, 0]);
+    chain.callMs = 0;
+    await index.run({ budgetMs: BIG });
+    expect(db.state.feedNext).toBe(chain.height + 1);
+    expect(db.rows('groups').length).toBe(252);
+    expect(rowsOf(db)).toEqual(await freshRows(chain, clock));
+  });
+
+  it('writes only the leaderboard rows that moved', async () => {
+    for (let i = 10; i < 30; i++) chain.putEntry(id(`e${i}`), D3);
+    for (let i = 10; i < 30; i++) chain.vote(id(`e${i}`), V(3), i * 10);
+    const { db, index } = indexOf(chain, clock);
+    await index.run({ budgetMs: BIG });
+    const written = () =>
+      db
+        .rows('leaderboardRows', true)
+        .filter((r) => r.decision_id === D3 && r.height === chain.height)
+        .map((r) => r.entry_id);
+    expect(
+      db.rows('leaderboardRows').filter((r) => r.decision_id === D3)
+    ).toHaveLength(21);
+    // E12 moves past E13 and E14 (D3 ranks by total): three rows move.
+    chain.vote(id('e12'), V(3), 145);
+    await index.run({ budgetMs: BIG });
+    expect(written().sort()).toEqual([id('e12'), id('e13'), id('e14')]);
+    // Its total moves, not its place: one row.
+    chain.vote(id('e12'), V(3), 146);
+    await index.run({ budgetMs: BIG });
+    expect(written()).toEqual([id('e12')]);
+    expect(rowsOf(db)).toEqual(await freshRows(chain, clock));
+    // A day later the full read keeps the unmoved rows (their generation).
+    chain.tick(1000);
+    clock.t += 25 * 3600_000;
+    const full = await index.run({ budgetMs: BIG });
+    expect(full.full.completed).toBe(true);
+    expect(written()).toEqual([]);
+    expect(rowsOf(db)).toEqual(await freshRows(chain, clock));
+  });
+
   it('runs a full read again after a day', async () => {
     const { db, index } = indexOf(chain, clock);
     await index.run({ budgetMs: BIG });

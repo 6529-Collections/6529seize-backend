@@ -19,8 +19,10 @@ import {
   emptyFeedEffects,
   FeedEffects,
   feedEffects,
+  splitFeedEffects,
   WAVES_FEED_FAMILIES
 } from './waves-chain-index.feed';
+import { ChainFeedBlock } from '@/chain-gateway/chain-gateway.types';
 import {
   decisionRow,
   entryRow,
@@ -78,6 +80,8 @@ export interface WavesChainIndexReport {
   feedBatches: number;
   reread: Record<string, number>;
   votes: number;
+  /** Leaderboard rows written or deleted (only the ones that moved). */
+  leaderboardRows: number;
   timeDependent: number;
   full: {
     generation: number;
@@ -182,6 +186,7 @@ export class WavesChainIndex {
       feedBatches: 0,
       reread: {},
       votes: 0,
+      leaderboardRows: 0,
       timeDependent: 0,
       full: {
         generation: state.generation,
@@ -326,6 +331,13 @@ export class WavesChainIndex {
     }
   }
 
+  /**
+   * Applies the feed from the cursor up to H in batches of about
+   * BATCH_READS reads, saving the cursor after each, until the deadline. A
+   * block with more than that is a batch of its own, applied in parts with
+   * the deadline checked between them; a run that stops inside it saves
+   * the parts done (feedPart), and the next goes on from there.
+   */
   private async followFeed(
     initial: WavesChainIndexState,
     height: number,
@@ -335,7 +347,7 @@ export class WavesChainIndex {
     let state = initial;
     let next = state.feedNext as number;
     const stamp = { height, generation: state.generation };
-    while (next <= height && this.now() < deadline) {
+    feed: while (next <= height && this.now() < deadline) {
       const page = await this.readFeed(next);
       const pageNext = Number.isSafeInteger(Number(page.next))
         ? Number(page.next)
@@ -347,21 +359,76 @@ export class WavesChainIndex {
         .filter((block) => block.height >= next && block.height < end)
         .sort((a, b) => a.height - b.height);
       let batch = emptyFeedEffects();
+      const flush = async (to: number) => {
+        await this.applyEffects(batch, stamp, report);
+        batch = emptyFeedEffects();
+        next = to;
+        state = await this.save({ ...state, feedNext: next, feedPart: 0 });
+      };
       for (const block of blocks) {
+        const own = feedEffects({ blocks: [block] });
+        if (readsOf(own) > BATCH_READS) {
+          // What came before it first; a run resuming it starts at it.
+          if (next < block.height) await flush(block.height);
+          const done = await this.applyBlockInParts(
+            state,
+            block,
+            own,
+            stamp,
+            deadline,
+            report
+          );
+          state = done.state;
+          next = state.feedNext as number;
+          if (!done.finished || this.now() >= deadline) break feed;
+          continue;
+        }
         feedEffects({ blocks: [block] }, batch);
         if (readsOf(batch) >= BATCH_READS && block.height + 1 < end) {
-          await this.applyEffects(batch, stamp, report);
-          batch = emptyFeedEffects();
-          next = block.height + 1;
-          state = await this.save({ ...state, feedNext: next });
-          if (this.now() >= deadline) return state;
+          await flush(block.height + 1);
+          if (this.now() >= deadline) break feed;
         }
       }
-      await this.applyEffects(batch, stamp, report);
-      next = end;
-      state = await this.save({ ...state, feedNext: next });
+      await flush(end);
     }
     return state;
+  }
+
+  /**
+   * A block too large for one batch, in parts (the same parts on every
+   * run), from the one the last run stopped at; one part a run at least.
+   */
+  private async applyBlockInParts(
+    initial: WavesChainIndexState,
+    block: ChainFeedBlock,
+    effects: FeedEffects,
+    stamp: RowStamp,
+    deadline: number,
+    report: WavesChainIndexReport
+  ): Promise<{ state: WavesChainIndexState; finished: boolean }> {
+    let state = initial;
+    const parts = splitFeedEffects(effects, BATCH_READS);
+    const from =
+      state.feedNext === block.height
+        ? Math.min(state.feedPart, parts.length)
+        : 0;
+    for (let k = from; k < parts.length; k++) {
+      await this.applyEffects(parts[k], stamp, report);
+      if (k + 1 < parts.length) {
+        state = await this.save({
+          ...state,
+          feedNext: block.height,
+          feedPart: k + 1
+        });
+        if (this.now() >= deadline) return { state, finished: false };
+      }
+    }
+    state = await this.save({
+      ...state,
+      feedNext: block.height + 1,
+      feedPart: 0
+    });
+    return { state, finished: true };
   }
 
   /** Reads one object again: its row, or none when the chain has none. */
@@ -542,7 +609,7 @@ export class WavesChainIndex {
       const status = known.has(id)
         ? ((known.get(id)?.status as string | undefined) ?? null)
         : (stored.get(id)?.status ?? null);
-      await this.refreshLeaderboard(id, status === 'published', stamp);
+      await this.refreshLeaderboard(id, status === 'published', stamp, report);
       this.count(report, 'leaderboards');
     });
   }
@@ -550,7 +617,8 @@ export class WavesChainIndex {
   private async refreshLeaderboard(
     decisionId: string,
     published: boolean,
-    stamp: RowStamp
+    stamp: RowStamp,
+    report: WavesChainIndexReport
   ) {
     const leaderboard = published
       ? await this.api.decisionLeaderboard(decisionId, stamp.height)
@@ -564,9 +632,7 @@ export class WavesChainIndex {
     } else {
       await this.db.remove('leaderboards', [{ decision_id: decisionId }]);
     }
-    await this.db.replaceChildren(
-      'leaderboardRows',
-      'decision_id',
+    report.leaderboardRows += await this.db.writeLeaderboardRows(
       decisionId,
       leaderboard ? leaderboardEntryRows(decisionId, leaderboard) : [],
       stamp
@@ -631,7 +697,8 @@ export class WavesChainIndex {
         await this.refreshLeaderboard(
           id,
           decision?.status === 'published',
-          stamp
+          stamp,
+          report
         );
         this.count(report, 'leaderboards');
       }),
@@ -827,7 +894,8 @@ export class WavesChainIndex {
     await this.refreshLeaderboard(
       decisionId,
       decision.status === 'published',
-      stamp
+      stamp,
+      report
     );
     report.full.items++;
     return this.save({ ...state, fullAfter: `${decisionId}:` });

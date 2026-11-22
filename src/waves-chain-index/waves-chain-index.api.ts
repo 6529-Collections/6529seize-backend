@@ -143,6 +143,16 @@ export class GatewayWavesChainApi implements WavesChainApi {
       { ...query, limit: LIST_LIMIT, after: after ?? undefined },
       { height: at }
     );
+    if (!answer && after !== null) {
+      // The list was there a page ago at this same height: an empty last
+      // page here would let a full read's sweep drop the rest.
+      throw new ChainGatewayError(
+        `${path}: a later page was not found`,
+        404,
+        'not_found',
+        path
+      );
+    }
     return {
       items: answer ? asArray(answer.data) : [],
       next: answer?.next ?? null

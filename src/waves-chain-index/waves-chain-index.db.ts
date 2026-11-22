@@ -79,6 +79,12 @@ export interface WavesChainIndexState {
   /** The chain's network id the rows come from. */
   readonly network: string | null;
   readonly lastError: string | null;
+  /**
+   * Parts of the block at `feedNext` already applied: a block too large
+   * for one batch is applied in parts, and a run that stops inside it goes
+   * on from there.
+   */
+  readonly feedPart: number;
 }
 
 export const EMPTY_INDEX_STATE: WavesChainIndexState = {
@@ -90,7 +96,8 @@ export const EMPTY_INDEX_STATE: WavesChainIndexState = {
   feedNext: null,
   readHeight: null,
   network: null,
-  lastError: null
+  lastError: null,
+  feedPart: 0
 };
 
 const STATE_NAME = 'waves';
@@ -143,6 +150,44 @@ function rowBytes(row: IndexRow): number {
 }
 const GUARD_COLUMNS = ['height', 'generation'];
 
+/** A transaction that deadlocks is tried this many times in all. */
+const DEADLOCK_TRIES = 4;
+const DEADLOCK_BACKOFF_MS = 25;
+
+function isDeadlock(error: unknown): boolean {
+  for (let e = error as any, depth = 0; e && depth < 4; e = e.cause, depth++) {
+    if (e.code === 'ER_LOCK_DEADLOCK' || e.errno === 1213) return true;
+    if (e.serverCode === 'ER_LOCK_DEADLOCK') return true;
+  }
+  return false;
+}
+
+/** What a leaderboard row says, to compare a stored row with a read one. */
+function leaderboardRowKey(row: IndexRow): string {
+  const data = typeof row.data === 'string' ? JSON.parse(row.data) : row.data;
+  return JSON.stringify([
+    Number(row.rank),
+    row.legacy_id ?? null,
+    row.author ?? null,
+    String(row.score),
+    String(row.total),
+    sortedKeys(data ?? null)
+  ]);
+}
+
+/** A value with every object's keys in order (MySQL's JSON keeps none). */
+function sortedKeys(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(sortedKeys);
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>)
+        .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+        .map(([k, v]) => [k, sortedKeys(v)])
+    );
+  }
+  return value;
+}
+
 interface StateRow {
   readonly generation: number | string;
   readonly full_phase: string | null;
@@ -153,6 +198,7 @@ interface StateRow {
   readonly read_height: number | string | null;
   readonly network: string | null;
   readonly last_error: string | null;
+  readonly feed_part?: number | string | null;
 }
 
 function nullableNumber(
@@ -186,7 +232,8 @@ export class WavesChainIndexDb extends LazyDbAccessCompatibleService {
       feedNext: nullableNumber(row.feed_next),
       readHeight: nullableNumber(row.read_height),
       network: row.network,
-      lastError: row.last_error
+      lastError: row.last_error,
+      feedPart: Number(row.feed_part ?? 0)
     };
   }
 
@@ -195,15 +242,17 @@ export class WavesChainIndexDb extends LazyDbAccessCompatibleService {
       `insert into ${WAVES_CHAIN_INDEX_STATE_TABLE}
          (name, generation, full_phase, full_after, full_from_height,
           last_full_at, feed_next, read_height, network, last_error,
-          updated_at)
+          feed_part, updated_at)
        values (:name, :generation, :fullPhase, :fullAfter, :fullFromHeight,
-          :lastFullAt, :feedNext, :readHeight, :network, :lastError, :now)
+          :lastFullAt, :feedNext, :readHeight, :network, :lastError,
+          :feedPart, :now)
        on duplicate key update
          generation = :generation, full_phase = :fullPhase,
          full_after = :fullAfter, full_from_height = :fullFromHeight,
          last_full_at = :lastFullAt, feed_next = :feedNext,
          read_height = :readHeight, network = :network,
-         last_error = :lastError, updated_at = :now`,
+         last_error = :lastError, feed_part = :feedPart,
+         updated_at = :now`,
       {
         name: STATE_NAME,
         generation: state.generation,
@@ -215,6 +264,7 @@ export class WavesChainIndexDb extends LazyDbAccessCompatibleService {
         readHeight: state.readHeight,
         network: state.network,
         lastError: state.lastError?.slice(0, 2000) ?? null,
+        feedPart: state.feedPart,
         now
       }
     );
@@ -300,8 +350,31 @@ export class WavesChainIndexDb extends LazyDbAccessCompatibleService {
   }
 
   /**
-   * Replaces every row under one parent (a wave's roles, a decision's
-   * entries, an entry's votes) with these rows, in one transaction.
+   * A transaction at READ COMMITTED (no gap locks: up to READ_CONCURRENCY
+   * of them replace children at once, into empty tables on the first full
+   * read), tried again on a deadlock.
+   */
+  private async childrenTransaction(
+    work: (connection: ConnectionWrapper<any>) => Promise<void>
+  ): Promise<void> {
+    for (let attempt = 1; ; attempt++) {
+      try {
+        await this.executeNativeQueriesInTransaction(work, {
+          isolationLevel: 'READ COMMITTED'
+        });
+        return;
+      } catch (error) {
+        if (attempt >= DEADLOCK_TRIES || !isDeadlock(error)) throw error;
+        await new Promise((resolve) =>
+          setTimeout(resolve, DEADLOCK_BACKOFF_MS * attempt)
+        );
+      }
+    }
+  }
+
+  /**
+   * Replaces every row under one parent (a wave's roles, polls or wave
+   * REP, an entry's votes) with these rows, in one transaction.
    */
   async replaceChildren(
     table: IndexTableName,
@@ -311,7 +384,7 @@ export class WavesChainIndexDb extends LazyDbAccessCompatibleService {
     stamp: RowStamp
   ): Promise<void> {
     const { name } = INDEX_TABLES[table];
-    await this.executeNativeQueriesInTransaction(async (connection) => {
+    await this.childrenTransaction(async (connection) => {
       await this.db.execute(
         `delete from ${name} where ${quoted(parentColumn)} = :parentId`,
         { parentId },
@@ -319,6 +392,57 @@ export class WavesChainIndexDb extends LazyDbAccessCompatibleService {
       );
       await this.upsert(table, rows, stamp, connection);
     });
+  }
+
+  /**
+   * A decision's leaderboard rows: writes only the rows that moved or are
+   * new and deletes the gone ones; the others only take the full read's
+   * generation. Returns the rows written and deleted.
+   */
+  async writeLeaderboardRows(
+    decisionId: string,
+    rows: readonly IndexRow[],
+    stamp: RowStamp
+  ): Promise<number> {
+    const { name } = INDEX_TABLES.leaderboardRows;
+    let written = 0;
+    await this.childrenTransaction(async (connection) => {
+      written = 0;
+      const stored = await this.db.execute<IndexRow>(
+        `select entry_id, \`rank\`, legacy_id, author,
+                cast(score as char) as score, cast(total as char) as total,
+                data
+           from ${name} where decision_id = :decisionId`,
+        { decisionId },
+        { wrappedConnection: connection }
+      );
+      const byEntry = new Map(stored.map((row) => [String(row.entry_id), row]));
+      const changed = rows.filter((row) => {
+        const was = byEntry.get(String(row.entry_id));
+        return !was || leaderboardRowKey(was) !== leaderboardRowKey(row);
+      });
+      const kept = new Set(rows.map((row) => String(row.entry_id)));
+      const gone = stored
+        .map((row) => String(row.entry_id))
+        .filter((entryId) => !kept.has(entryId));
+      for (const chunk of statementChunks(gone, () => 80)) {
+        await this.db.execute(
+          `delete from ${name}
+            where decision_id = :decisionId and entry_id in (:gone)`,
+          { decisionId, gone: chunk },
+          { wrappedConnection: connection }
+        );
+      }
+      await this.upsert('leaderboardRows', changed, stamp, connection);
+      await this.db.execute(
+        `update ${name} set generation = :generation
+          where decision_id = :decisionId and generation < :generation`,
+        { decisionId, generation: stamp.generation },
+        { wrappedConnection: connection }
+      );
+      written = changed.length + gone.length;
+    });
+    return written;
   }
 
   /**
