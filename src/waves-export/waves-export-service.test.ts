@@ -18,7 +18,7 @@ import {
 } from './waves-export.types';
 import { RawDirectory } from './waves-export.writer';
 
-const T_W = Date.UTC(2026, 10, 24, 6, 0, 0);
+const T_W = Date.UTC(2026, 10, 25, 0, 0, 0);
 
 function wave(
   id: string,

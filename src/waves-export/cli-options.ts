@@ -19,8 +19,9 @@ Options:
   --out DIR           where to write (DIR/raw; required)
   --revision HEX      the exporter's 40-hex git commit, such as
                       $(git rev-parse HEAD) (or EXPORTER_REVISION; required)
-  --freeze-at TIME    the waves freeze T_w: ISO 8601 UTC or 13-digit Unix
-                      milliseconds (or WAVES_FREEZE_AT)
+  --freeze-at TIME    the waves freeze T_w (2026-11-25T00:00:00Z), as ISO
+                      8601 UTC or 13-digit Unix milliseconds (or
+                      WAVES_FREEZE_AT)
   --rehearsal         an export before the freeze (freeze_ms null, no check)
   --stages LIST       comma separated, in order: ${WAVES_EXPORT_STAGES.join(',')}
                       (default all; a later stage reads what earlier ones wrote)

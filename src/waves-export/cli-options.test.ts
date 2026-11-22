@@ -7,7 +7,7 @@ import {
 } from './cli-options';
 
 const REVISION = 'ab'.repeat(20);
-const T_W = Date.UTC(2026, 10, 24, 6, 0, 0);
+const T_W = Date.UTC(2026, 10, 25, 0, 0, 0);
 
 describe('parseWavesExportCommand', () => {
   it('reads an export at the freeze with defaults', () => {
@@ -19,7 +19,7 @@ describe('parseWavesExportCommand', () => {
           '--revision',
           REVISION,
           '--freeze-at',
-          '2026-11-24T06:00:00Z'
+          '2026-11-25T00:00:00Z'
         ],
         {}
       )
@@ -112,7 +112,7 @@ describe('parseWavesExportCommand', () => {
         REVISION,
         '--rehearsal',
         '--freeze-at',
-        '2026-11-24T06:00:00Z'
+        '2026-11-25T00:00:00Z'
       ],
       'not both'
     ],
@@ -149,14 +149,14 @@ describe('parseWavesExportCommand', () => {
 
 describe('option values', () => {
   it.each([
-    ['2026-11-24T06:00:00Z', T_W],
-    ['2026-11-24T06:00:00.000+00:00', T_W],
+    ['2026-11-25T00:00:00Z', T_W],
+    ['2026-11-25T00:00:00.000+00:00', T_W],
     [String(T_W), T_W]
   ])('reads freeze time %s', (raw, expected) => {
     expect(parseFreezeTime(raw)).toBe(expected);
   });
 
-  it.each(['2026-11-24 06:00', String(T_W / 1000), 'tomorrow'])(
+  it.each(['2026-11-25 00:00', String(T_W / 1000), 'tomorrow'])(
     'refuses freeze time %s',
     (raw) => {
       expect(() => parseFreezeTime(raw)).toThrow(WavesExportUsageError);
