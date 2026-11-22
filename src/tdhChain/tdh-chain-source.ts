@@ -238,7 +238,10 @@ interface KnownDay {
  *
  * Every answer is `{ read, data, next }`. A 404 whose error says "no such
  * route" means a wrong base URL or another release, and fails loudly
- * (`TdhGatewayRouteError`); any other 404 on a day is no such day.
+ * (`TdhGatewayRouteError`); any other 404 on a day is no such day. While no
+ * API node serves, the gateway answers 503 `nodes_unavailable`: after the
+ * fetcher's retries that is a `TdhChainSourceError`, which the poller reads
+ * as the gateway being down and the compare tool as a failed read.
  *
  * A day's lists are read pinned (`?height=`) at the finalized height in the
  * record's answer (`read.finalizedHeight`). It is a height the node held
@@ -288,10 +291,7 @@ export class GatewayTdhChainSource implements TdhChainSource {
       return { status: 404, noSuchRoute: message.includes('no such route') };
     }
     if (res.status !== 200) {
-      const why = body?.error
-        ? `${body.error.code}: ${body.error.message}`
-        : `HTTP ${res.status}`;
-      throw new TdhChainSourceError(`${route}: ${why}`);
+      throw new TdhChainSourceError(`${route}: ${refusal(res.status, body)}`);
     }
     if (body?.data === undefined) {
       throw new TdhChainSourceError(`${route}: the answer has no data`);
@@ -494,6 +494,22 @@ function checkChunk(
       );
     }
   }
+}
+
+/**
+ * Why the gateway refused, in its words. A node answers `{ error: { code,
+ * message } }`; the gateway itself, while no node serves, answers 503
+ * `{ error: "nodes_unavailable", message }`.
+ */
+function refusal(status: number, body: any): string {
+  const error = body?.error;
+  if (typeof error === 'string') {
+    return body?.message ? `${error}: ${body.message}` : error;
+  }
+  if (error && typeof error === 'object') {
+    return [error.code, error.message].filter(Boolean).join(': ');
+  }
+  return `HTTP ${status}`;
 }
 
 /** No day: a 404 for the day, or no data. A missing route throws. */

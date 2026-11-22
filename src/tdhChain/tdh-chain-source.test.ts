@@ -11,6 +11,7 @@ import {
   FileTdhChainSource,
   GatewayTdhChainSource,
   readChainDay,
+  TdhChainSourceError,
   TdhGatewayRouteError,
   tokenDayFileName,
   walletDayFileName
@@ -379,6 +380,29 @@ describe('GatewayTdhChainSource', () => {
     const source = new GatewayTdhChainSource(BASE, fetcher);
     expect(await source.latestDay()).toBeNull();
     expect(await source.day(20737)).toBeNull();
+  });
+
+  it("reports the gateway's 503 while no node serves, in plain words", async () => {
+    const fetcher = new RateLimitedFetcher({
+      allowedHosts: ['gateway.example'],
+      minIntervalMs: 0,
+      retries: 0,
+      fetchFn: async () =>
+        Response.json(
+          {
+            error: 'nodes_unavailable',
+            message: 'no API node is serving right now; try again shortly'
+          },
+          { status: 503, headers: { 'Retry-After': '10' } }
+        )
+    });
+    const source = new GatewayTdhChainSource(BASE, fetcher);
+    const error = await source.latestDay().catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(TdhChainSourceError);
+    expect(error).not.toBeInstanceOf(TdhGatewayRouteError);
+    expect((error as Error).message).toBe(
+      '/v1/tdh: nodes_unavailable: no API node is serving right now; try again shortly'
+    );
   });
 
   it('reports a refusal with its code', async () => {

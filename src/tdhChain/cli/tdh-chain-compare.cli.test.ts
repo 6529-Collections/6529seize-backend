@@ -148,6 +148,30 @@ describe('runCompare', () => {
     );
   });
 
+  it("fails the read in plain words while the gateway's nodes are unavailable", async () => {
+    const d = await fixtureDirs();
+    const run = runCompare(
+      parseCompareArgs([
+        '--cycle-day',
+        '20781',
+        '--chain-gateway',
+        'https://gateway.example',
+        '--site-dir',
+        d.siteDir,
+        '--out',
+        d.out
+      ]) as any,
+      async () =>
+        Response.json(
+          { error: 'nodes_unavailable', message: 'no API node is serving' },
+          { status: 503 }
+        )
+    );
+    await expect(run).rejects.toThrow(
+      '/v1/tdh/days/20781: nodes_unavailable: no API node is serving'
+    );
+  }, 30_000);
+
   it('exits 3 when the chain side serves no token list', async () => {
     const d = await fixtureDirs();
     await fs.unlink(path.join(d.chainDir, tokenDayFileName(20737)));

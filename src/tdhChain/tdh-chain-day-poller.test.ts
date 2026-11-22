@@ -13,7 +13,12 @@ import {
   PollerDeps,
   STALE_AFTER_MS
 } from './tdh-chain-day-poller';
-import { TdhChainSource, TdhGatewayRouteError } from './tdh-chain-source';
+import { RateLimitedFetcher } from './rate-limited-fetcher';
+import {
+  GatewayTdhChainSource,
+  TdhChainSource,
+  TdhGatewayRouteError
+} from './tdh-chain-source';
 import { TdhChainDay } from './tdh-chain.types';
 
 const row = (
@@ -497,6 +502,39 @@ describe('pollChainDays', () => {
       expect(await run(row(20738, { block: 2000 }), at(5))).toEqual([]);
       expect(await run(null, at(5), { mode: 'SHADOW' })).toEqual([]);
     });
+  });
+
+  it("keeps the site's own day while the gateway answers 503 nodes_unavailable, and runs the steps due", async () => {
+    const fetcher = new RateLimitedFetcher({
+      allowedHosts: ['gateway.example'],
+      minIntervalMs: 0,
+      retries: 0,
+      fetchFn: async () =>
+        Response.json(
+          { error: 'nodes_unavailable', message: 'no API node is serving' },
+          { status: 503 }
+        )
+    });
+    const log = fresh();
+    const out = await pollChainDays(
+      poller(
+        {
+          mode: 'CHAIN',
+          source: new GatewayTdhChainSource('https://gateway.example', fetcher),
+          pendingDays: async () => [
+            row(20737, {
+              mode: 'CHAIN',
+              status: 'WRITTEN',
+              stepsDone: ['nfts', 'history', 'metrics', 'uploads']
+            })
+          ]
+        },
+        log
+      )
+    );
+    expect(out).toEqual({ stepsRun: [20737] });
+    expect(log.events).toEqual(['step 20737 dayFiles']);
+    expect(log.alerts).toEqual([]);
   });
 
   it('fails the run on a route the gateway does not have', async () => {
