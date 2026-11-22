@@ -136,10 +136,14 @@ export class MysqlE2eeStreamStore
     now: number,
     connection: Conn
   ): Promise<E2eeStreamHead> {
+    // ON DUPLICATE KEY UPDATE takes the existing row's exclusive lock at
+    // once. `insert ignore` took a shared lock first, so two writers of one
+    // stream both held it and deadlocked on the `for update` below.
     await this.db.execute(
-      `insert ignore into ${E2EE_STREAMS_TABLE}
+      `insert into ${E2EE_STREAMS_TABLE}
          (wave, head_pos, head_hash, created_at, updated_at)
-       values (:wave, 0, null, :now, :now)`,
+       values (:wave, 0, null, :now, :now)
+       on duplicate key update wave = wave`,
       { wave, now },
       this.opts(connection)
     );
