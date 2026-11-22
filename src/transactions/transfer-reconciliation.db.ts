@@ -137,6 +137,39 @@ export class TransferReconciliationDb extends LazyDbAccessCompatibleService {
     });
   }
 
+  /**
+   * Puts wallets back at the tail of one consumer's queue. Deleting their
+   * rows first gives them a new enqueue_order, so wallets that keep coming
+   * back never hold the head of the queue and block the wallets behind them.
+   */
+  async requeue(
+    wallets: string[],
+    consumer: TransferConsumer,
+    ctx: RequestContext = {}
+  ): Promise<void> {
+    const unique = Array.from(
+      new Set(wallets.map((wallet) => wallet.toLowerCase()))
+    );
+    if (!unique.length) return;
+    const moveToTail = async (connectionCtx: RequestContext) => {
+      for (let offset = 0; offset < unique.length; offset += BATCH_SIZE) {
+        await this.query(
+          // NOSONAR -- Batches share a transaction connection and must run sequentially.
+          'requeue',
+          `DELETE FROM ${TRANSFER_RECONCILIATIONS_TABLE}
+           WHERE consumer = :consumer AND wallet IN (:wallets)`,
+          { consumer, wallets: unique.slice(offset, offset + BATCH_SIZE) },
+          connectionCtx
+        );
+      }
+      await this.enqueue(unique, [consumer], connectionCtx);
+    };
+    if (ctx.connection) return moveToTail(ctx);
+    await this.db.executeNativeQueriesInTransaction(async (connection) => {
+      await moveToTail({ ...ctx, connection });
+    });
+  }
+
   async publishBalances(
     wallets: string[],
     ctx: RequestContext = {}
