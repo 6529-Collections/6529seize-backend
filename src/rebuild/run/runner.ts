@@ -77,7 +77,11 @@ import {
   UrlSource
 } from '@/rebuild/sources/source-spec';
 import { RunningSource } from '@/rebuild/sources/running-source';
-import { startSources, stopSources } from '@/rebuild/sources/start-sources';
+import {
+  seedFilesDir,
+  startSources,
+  stopSources
+} from '@/rebuild/sources/start-sources';
 import { judge } from '@/rebuild/run/verdict';
 import { waitForApi } from '@/rebuild/stack/api-ready';
 
@@ -431,6 +435,10 @@ class RebuildRun {
       area: area.area,
       stepId: step.id,
       sources: this.sourceUrls(),
+      seedFilesDir:
+        kind === 'seed' && this.sourceUrl('files')
+          ? seedFilesDir(this.runDir)
+          : null,
       mark: {
         name: this.o.mark,
         chainHeight: this.o.chainHeight,

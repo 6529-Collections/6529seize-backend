@@ -212,7 +212,9 @@ Each `--source <name>=<spec>`:
   `/<id>` from the directory, and checks every file against
   `<dir>/files.json` (id to SHA-256). It doesn't derive an id from the
   content: an Arweave id is a transaction's, not a hash of the file, so
-  `files.json` is what ties each id to its bytes.
+  `files.json` is what ties each id to its bytes. A seed can add files: it
+  writes them into `ctx.seedFilesDir` and lists them in that directory's own
+  `files.json`; the server checks each one's hash when it is asked for.
 - A flag value may name a source: `{gateway}`, `{relays}`, `{ethereum}`
   or `{files}` become its URL in the run.
 

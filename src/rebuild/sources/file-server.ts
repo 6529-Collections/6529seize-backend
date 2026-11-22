@@ -58,14 +58,62 @@ export function checkFiles(dir: string): {
   return { files, problems };
 }
 
-/** Serves a directory of content-addressed files on loopback. */
-export async function startFileServer(dir: string): Promise<RunningSource> {
+/**
+ * A file the run's seeds wrote into `seedDir` and listed in its own
+ * files.json, read and checked against its hash when it is asked for.
+ */
+function seedFile(
+  seedDir: string,
+  id: string,
+  problems: string[]
+): Buffer | undefined {
+  const note = (problem: string) => {
+    if (!problems.includes(problem)) problems.push(problem);
+  };
+  const indexFile = path.join(seedDir, FILE_INDEX);
+  if (!fs.existsSync(indexFile)) return undefined;
+  let index: Record<string, unknown>;
+  try {
+    index = JSON.parse(fs.readFileSync(indexFile, 'utf8')) as Record<
+      string,
+      unknown
+    >;
+  } catch {
+    note(`the seeds' ${FILE_INDEX} is not valid JSON`);
+    return undefined;
+  }
+  const file = path.join(seedDir, id);
+  if (
+    !Object.prototype.hasOwnProperty.call(index, id) ||
+    !fs.existsSync(file)
+  ) {
+    return undefined;
+  }
+  const bytes = fs.readFileSync(file);
+  if (sha256(bytes) !== index[id]) {
+    note(`seed file ${id} does not match its hash in ${FILE_INDEX}`);
+    return undefined;
+  }
+  return bytes;
+}
+
+/**
+ * Serves a directory of content-addressed files on loopback, and, when
+ * given, the files the run's seeds write into `seedDir`.
+ */
+export async function startFileServer(
+  dir: string,
+  seedDir?: string
+): Promise<RunningSource> {
   const { files, problems } = checkFiles(dir);
   const missing: string[] = [];
   const provenance = readProvenance(dir);
   const server = http.createServer((request, response) => {
     const id = fileIdOf(request.url ?? '');
-    const bytes = id ? files.get(id) : undefined;
+    const bytes = id
+      ? (files.get(id) ??
+        (seedDir ? seedFile(seedDir, id, problems) : undefined))
+      : undefined;
     if (!bytes) {
       missing.push(request.url ?? '');
       response.writeHead(404);

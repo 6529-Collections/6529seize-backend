@@ -50,8 +50,12 @@ async function startOne(
         dir: spec.dir,
         upstream: spec.upstream
       });
-    case 'files':
-      return startFileServer(spec.dir);
+    case 'files': {
+      // Files the run's seeds write (ctx.seedFilesDir) are served too.
+      const seedDir = seedFilesDir(runDir);
+      fs.mkdirSync(seedDir, { recursive: true });
+      return startFileServer(spec.dir, seedDir);
+    }
     case 'anvil':
       return startAnvil({
         state: spec.state,
@@ -65,6 +69,11 @@ async function startOne(
       return startCrpRelay(dir);
     }
   }
+}
+
+/** Where a run's seeds write files for its files source to serve. */
+export function seedFilesDir(runDir: string): string {
+  return path.join(runDir, 'seed-files');
 }
 
 /** Starts every configured source; on a failure stops the ones started. */

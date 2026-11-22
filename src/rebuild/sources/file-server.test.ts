@@ -48,6 +48,42 @@ describe('file server', () => {
     );
   });
 
+  it('serves the files seeds write, checked against their own index', async () => {
+    const seedDir = fs.mkdtempSync(path.join(os.tmpdir(), 'rebuild-seed-'));
+    try {
+      const server = await startFileServer(dir, seedDir);
+      try {
+        // Written after the server started, as a seed writes them.
+        fs.writeFileSync(path.join(seedDir, 'seg'), 'segment');
+        fs.writeFileSync(path.join(seedDir, 'bad'), 'changed');
+        fs.writeFileSync(
+          path.join(seedDir, FILE_INDEX),
+          JSON.stringify({ seg: sha256('segment'), bad: sha256('original') })
+        );
+        expect(await (await fetch(`${server.url}/bafyone`)).text()).toBe('one');
+        expect(await (await fetch(`${server.url}/ipfs/seg`)).text()).toBe(
+          'segment'
+        );
+        expect((await fetch(`${server.url}/bad`)).status).toBe(404);
+        expect((await fetch(`${server.url}/bad`)).status).toBe(404);
+        expect(server.problems()).toEqual([
+          `files: seed file bad does not match its hash in ${FILE_INDEX}`,
+          'files: 2 requests for files not in the directory, first /bad, /bad'
+        ]);
+        // An index a seed left half written is a problem, not a crash.
+        fs.writeFileSync(path.join(seedDir, FILE_INDEX), '{"seg":');
+        expect((await fetch(`${server.url}/seg`)).status).toBe(404);
+        expect(server.problems()).toContain(
+          `files: the seeds' ${FILE_INDEX} is not valid JSON`
+        );
+      } finally {
+        await server.stop();
+      }
+    } finally {
+      fs.rmSync(seedDir, { recursive: true, force: true });
+    }
+  });
+
   it('serves files by id and reports requests for others', async () => {
     const server = await startFileServer(dir);
     try {

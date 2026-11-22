@@ -134,6 +134,12 @@ export interface RebuildContext {
   readonly area: string;
   readonly stepId: string;
   readonly sources: Readonly<Record<RebuildSource, string | null>>;
+  /**
+   * For seeds, with a files source: a directory the seed may write files
+   * into, each listed in the directory's own files.json (id to SHA-256);
+   * the files source serves them. Null for rebuilders.
+   */
+  readonly seedFilesDir: string | null;
   readonly mark: {
     readonly name: 'head' | 'switch';
     readonly chainHeight: number | null;
