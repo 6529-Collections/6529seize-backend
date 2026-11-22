@@ -229,9 +229,16 @@ export function currentState(
             updatedAt: cutText
           });
           if (hasMinimumBalanceForAutomaticMode(amount)) {
-            // As the legacy mode change on a first top-up. An identity whose
-            // first top-up waited has no choice rows (every change needs a
-            // balance first), so there is nothing to resubscribe or resize.
+            // As the legacy mode change on a first top-up: the mode line,
+            // then every open card the identity had unsubscribed from (a
+            // person can unsubscribe with no balance) subscribed again,
+            // with a line each. The legacy change also sets automatic rows'
+            // counts to the eligibility when all editions are on; the cut
+            // reads no eligibility, so those counts stay as they are until
+            // the identity's next count change. Only an identity of more
+            // wallets than the key columns hold can have a waiting top-up,
+            // and none can exist before the key-width migration.
+            const at = msToDbText(Date.parse(topUp.transaction_date));
             queuedLogs.push({
               legacyId: null,
               queueSequence: sequence,
@@ -239,8 +246,30 @@ export function currentState(
               consolidationKey: entry.consolidation_key,
               log: 'Subscription Mode set to Automatic',
               additionalInfo: null,
-              createdAt: msToDbText(Date.parse(topUp.transaction_date))
+              createdAt: at
             });
+            const unsubscribed = Array.from(choices.entries())
+              .filter(
+                ([, choice]) =>
+                  choice.identityKey === identity && !choice.subscribed
+              )
+              .sort(([, x], [, y]) => x.tokenId - y.tokenId);
+            for (const [choiceKey, choice] of unsubscribed) {
+              choices.set(choiceKey, {
+                ...choice,
+                subscribed: true,
+                updatedAt: at
+              });
+              queuedLogs.push({
+                legacyId: null,
+                queueSequence: sequence,
+                identityKey: identity,
+                consolidationKey: entry.consolidation_key,
+                log: `Subscribed to Meme #${choice.tokenId}`,
+                additionalInfo: null,
+                createdAt: at
+              });
+            }
             const mode = modes.get(identity);
             modes.set(identity, {
               identityKey: identity,

@@ -1,7 +1,6 @@
 import { getSubscriptionCutoffMemeId } from '@/api/subscriptions/subscription-cutoff';
 import {
   MEMES_CONTRACT,
-  SUBSCRIPTIONS_ID_LOGS_TABLE,
   SUBSCRIPTIONS_ID_MODE_TABLE,
   SUBSCRIPTIONS_ID_NFTS_TABLE
 } from '@/constants';
@@ -11,6 +10,7 @@ import { sqlExecutor } from '@/sql-executor';
 import { fetchSubscriptionEligibilityForKeys } from '@/subscriptionsDaily/db.subscriptions';
 import { MINIMUM_SUBSCRIPTION_ELIGIBILITY } from '@/subscriptionsDaily/subscription-eligibility';
 import { flag } from '../opening/legacy-tables';
+import { insertIdentityLog } from '../timeline/journal';
 
 /**
  * Turns automatic mode on for an identity, as the legacy
@@ -20,7 +20,8 @@ import { flag } from '../opening/legacy-tables';
  * from subscribed again with a "Subscribed to Meme #N" line, and, with all
  * editions on, the automatic rows' counts set to the eligibility. `atText`
  * is the time written (a top-up's transaction time, so a rebuild writes the
- * same). Runs in the caller's transaction.
+ * same). Runs in the caller's transaction; returns the ids of the log
+ * lines it wrote, for the journal.
  */
 export async function turnIdentityAutomaticOn(params: {
   readonly identityKey: string;
@@ -28,17 +29,25 @@ export async function turnIdentityAutomaticOn(params: {
   readonly consolidationKey: string;
   readonly atText: string;
   readonly options: DbQueryOptions;
-}): Promise<void> {
+}): Promise<number[]> {
   const { identityKey, consolidationKey, atText, options } = params;
   const q = <T>(sql: string, p: Record<string, unknown>) =>
     sqlExecutor.execute<T>(sql, p, options);
-  const log = (text: string) =>
-    q(
-      `INSERT INTO ${SUBSCRIPTIONS_ID_LOGS_TABLE}
-        (identity_key, consolidation_key, log, created_at)
-        VALUES (:identityKey, :key, :log, :atText)`,
-      { identityKey, key: consolidationKey, log: text, atText }
+  const logIds: number[] = [];
+  const log = async (text: string) => {
+    logIds.push(
+      await insertIdentityLog(
+        {
+          identityKey,
+          consolidationKey,
+          log: text,
+          additionalInfo: null,
+          atText
+        },
+        options
+      )
     );
+  };
   await q(
     `INSERT INTO ${SUBSCRIPTIONS_ID_MODE_TABLE} (identity_key, automatic, created_at, updated_at)
       VALUES (:identityKey, true, :atText, :atText)
@@ -75,7 +84,7 @@ export async function turnIdentityAutomaticOn(params: {
     { identityKey }
   );
   if (!mode || !flag(mode.subscribe_all_editions)) {
-    return;
+    return logIds;
   }
   const eligibility =
     (
@@ -93,4 +102,5 @@ export async function turnIdentityAutomaticOn(params: {
       eligibility
     }
   );
+  return logIds;
 }

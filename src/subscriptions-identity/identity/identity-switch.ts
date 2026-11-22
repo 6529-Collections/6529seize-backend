@@ -2,6 +2,7 @@ import {
   SUBSCRIPTIONS_ID_CURSORS_TABLE,
   SUBSCRIPTIONS_ID_STATE_TABLE
 } from '@/constants';
+import { DbQueryOptions } from '@/db-query.options';
 import { Logger } from '@/logging';
 import { sqlExecutor } from '@/sql-executor';
 
@@ -256,30 +257,44 @@ export async function suspendIdentityTables(
 /**
  * Sets the switch time on a verified, unsuspended load whose cut was taken
  * no earlier than SWITCH_CUT_WINDOW_MS before it. Returns false, changing
- * nothing, otherwise.
+ * nothing, otherwise. `onSwitched` runs in the same transaction once the
+ * switch is set (go-live writes the journal's opening entry there).
  */
 export async function scheduleIdentitySwitch(
   switchAtMs: number,
-  openingSha256: string
+  openingSha256: string,
+  onSwitched?: (options: DbQueryOptions) => Promise<void>
 ): Promise<boolean> {
-  await sqlExecutor.execute(
-    `UPDATE ${SUBSCRIPTIONS_ID_STATE_TABLE}
-        SET switch_at = :switchAt
-      WHERE id = :id AND opening_sha256 = :sha AND verified_at IS NOT NULL
-        AND suspended_at IS NULL AND cut_at >= :earliestCut`,
-    {
-      switchAt: switchAtMs,
-      id: OPENING_STATE_ID,
-      sha: openingSha256,
-      earliestCut: switchAtMs - SWITCH_CUT_WINDOW_MS
+  const switched = await sqlExecutor.executeNativeQueriesInTransaction(
+    async (connection) => {
+      const options = { wrappedConnection: connection };
+      await sqlExecutor.execute(
+        `UPDATE ${SUBSCRIPTIONS_ID_STATE_TABLE}
+            SET switch_at = :switchAt
+          WHERE id = :id AND opening_sha256 = :sha AND verified_at IS NOT NULL
+            AND suspended_at IS NULL AND cut_at >= :earliestCut`,
+        {
+          switchAt: switchAtMs,
+          id: OPENING_STATE_ID,
+          sha: openingSha256,
+          earliestCut: switchAtMs - SWITCH_CUT_WINDOW_MS
+        },
+        options
+      );
+      const [row] = await sqlExecutor.execute<{ switch_at: number | null }>(
+        `SELECT switch_at FROM ${SUBSCRIPTIONS_ID_STATE_TABLE} WHERE id = :id AND opening_sha256 = :sha`,
+        { id: OPENING_STATE_ID, sha: openingSha256 },
+        options
+      );
+      const done = !!row && Number(row.switch_at) === switchAtMs;
+      if (done && onSwitched) {
+        await onSwitched(options);
+      }
+      return done;
     }
   );
-  const [row] = await sqlExecutor.execute<{ switch_at: number | null }>(
-    `SELECT switch_at FROM ${SUBSCRIPTIONS_ID_STATE_TABLE} WHERE id = :id AND opening_sha256 = :sha`,
-    { id: OPENING_STATE_ID, sha: openingSha256 }
-  );
   subscriptionsIdentitySwitch.invalidate();
-  return !!row && Number(row.switch_at) === switchAtMs;
+  return switched;
 }
 
 /**

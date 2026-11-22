@@ -19,7 +19,7 @@ export interface ComparisonReport {
   readonly mode: IdentityWriteMode;
   readonly contract: string | null;
   readonly tokenId: number | null;
-  readonly verdict: 'MATCH' | 'DIFF';
+  readonly verdict: 'MATCH' | 'DIFF' | 'FAILED';
   readonly legacyRows: number;
   readonly identityRows: number;
   readonly diffs: RowDiff[];
@@ -45,6 +45,29 @@ export function compareKeyed(
       legacy: legacy.get(key) ?? null,
       identity: identity.get(key) ?? null
     }));
+}
+
+/**
+ * Saves a FAILED report for a shadow comparison that could not be made,
+ * so the go-live gate sees the gap, never an absence. The error goes in
+ * the notes.
+ */
+export async function saveFailedReport(
+  kind: ComparisonReport['kind'],
+  card: { readonly contract: string; readonly tokenId: number },
+  error: unknown
+): Promise<void> {
+  await saveReport({
+    kind,
+    mode: 'SHADOW',
+    contract: card.contract,
+    tokenId: card.tokenId,
+    verdict: 'FAILED',
+    legacyRows: 0,
+    identityRows: 0,
+    diffs: [],
+    notes: [`failed: ${error instanceof Error ? error.message : String(error)}`]
+  });
 }
 
 /** Stores a comparison and logs its one-line summary. */

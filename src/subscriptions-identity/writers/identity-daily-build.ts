@@ -5,7 +5,8 @@ import {
   SUBSCRIPTIONS_ID_MODE_TABLE,
   SUBSCRIPTIONS_ID_NFTS_FINAL_TABLE,
   SUBSCRIPTIONS_ID_NFTS_FINAL_UPLOAD_TABLE,
-  SUBSCRIPTIONS_ID_NFTS_TABLE
+  SUBSCRIPTIONS_ID_NFTS_TABLE,
+  SUBSCRIPTIONS_NFTS_FINAL_TABLE
 } from '@/constants';
 import { fetchAirdropAddressForConsolidationKey } from '@/delegationsLoop/db.delegations';
 import { sqlExecutor } from '@/sql-executor';
@@ -22,6 +23,7 @@ import {
   mirrorIdentityDirectory
 } from '../identity/identity-directory';
 import { AS_TEXT, flag, msToDbText } from '../opening/legacy-tables';
+import { insertIdentityLog, journal } from '../timeline/journal';
 
 /** Where shadow ids for rows only the identity side has begin. */
 export const SHADOW_ONLY_ID_FROM = 1_000_000_000;
@@ -239,6 +241,22 @@ export async function buildIdentityList(params: {
         row.id = next++;
       }
     }
+  } else {
+    // After the switch the identity table hands out ids and the legacy
+    // table copies them. They go on from the highest id below the shadow
+    // range in either table, whatever a shadow build left the identity
+    // table's counter at.
+    const [highest] = await sqlExecutor.execute<{ id: number | null }>(
+      `SELECT GREATEST(
+         COALESCE((SELECT MAX(id) FROM ${SUBSCRIPTIONS_ID_NFTS_FINAL_TABLE} WHERE id < :from), 0),
+         COALESCE((SELECT MAX(id) FROM ${SUBSCRIPTIONS_NFTS_FINAL_TABLE} WHERE id < :from), 0)
+       ) AS id`,
+      { from: SHADOW_ONLY_ID_FROM }
+    );
+    let next = Number(highest?.id ?? 0) + 1;
+    for (const row of withIds) {
+      row.id = next++;
+    }
   }
   const effects: BuildEffects = {
     contract: MEMES_CONTRACT,
@@ -268,8 +286,8 @@ export async function buildIdentityList(params: {
  * What a daily build writes to the identity tables: automatic rows for
  * automatic subscribers with none, the queue push for automatic
  * subscribers short of balance, the build's log lines, and the card's
- * final rows. A build applies it once; a rebuild applies the published
- * build record the same way.
+ * final rows. The build's journal entry holds what it wrote, with a
+ * checkpoint of the whole tables.
  */
 export interface BuildEffects {
   readonly contract: string;
@@ -292,7 +310,10 @@ export interface BuildEffects {
   >;
 }
 
-/** Writes a build's effects in one transaction; returns the rows with ids. */
+/**
+ * Writes a build's effects and its journal entry in one transaction;
+ * returns the rows with ids.
+ */
 export async function applyBuildEffects(
   effects: BuildEffects
 ): Promise<IdentityListRow[]> {
@@ -323,18 +344,19 @@ export async function applyBuildEffects(
         { buildText, keys: effects.queuePushed }
       );
     }
+    const logIds: number[] = [];
     for (const line of effects.logs) {
-      await q(
-        `INSERT INTO ${SUBSCRIPTIONS_ID_LOGS_TABLE}
-          (identity_key, consolidation_key, log, additional_info, created_at)
-          VALUES (:identityKey, :key, :log, :info, :buildText)`,
-        {
-          identityKey: line.identityKey,
-          key: line.consolidationKey,
-          log: line.log,
-          info: line.additionalInfo,
-          buildText
-        }
+      logIds.push(
+        await insertIdentityLog(
+          {
+            identityKey: line.identityKey,
+            consolidationKey: line.consolidationKey,
+            log: line.log,
+            additionalInfo: line.additionalInfo,
+            atText: buildText
+          },
+          options
+        )
       );
     }
     await q(
@@ -373,26 +395,65 @@ export async function applyBuildEffects(
       );
       rows.push({ ...row, id: Number(inserted.id) });
     }
+    await journal(
+      {
+        kind: 'build',
+        inputs: {
+          contract: effects.contract,
+          token_id: effects.tokenId,
+          build_at_ms: effects.buildAtMs
+        },
+        identities: [
+          ...effects.autoPopulated.map((p) => p.identityKey),
+          ...effects.queuePushed
+        ],
+        rows: [
+          { table: 'final', keys: rows.map((r) => ({ id: r.id })) },
+          { table: 'logs', keys: logIds.map((id) => ({ id })) }
+        ],
+        clearCard: { contract: effects.contract, tokenId: effects.tokenId },
+        checkpoint: true,
+        atMs: effects.buildAtMs
+      },
+      options
+    );
     return rows;
   });
 }
 
-/** Records the published file for the card in the identity tables. */
+/** Records the published file for the card, and journals it. */
 export async function recordIdentityUpload(upload: {
   readonly contract: string;
   readonly token_id: number;
   readonly date?: string;
   readonly upload_url: string;
 }): Promise<void> {
-  await sqlExecutor.execute(
-    `INSERT INTO ${SUBSCRIPTIONS_ID_NFTS_FINAL_UPLOAD_TABLE} (contract, token_id, date, upload_url)
-      VALUES (:contract, :tokenId, :date, :url)
-      ON DUPLICATE KEY UPDATE date = VALUES(date), upload_url = VALUES(upload_url)`,
-    {
-      contract: upload.contract,
-      tokenId: upload.token_id,
-      date: upload.date ?? '',
-      url: upload.upload_url
-    }
-  );
+  await sqlExecutor.executeNativeQueriesInTransaction(async (connection) => {
+    const options = { wrappedConnection: connection };
+    await sqlExecutor.execute(
+      `INSERT INTO ${SUBSCRIPTIONS_ID_NFTS_FINAL_UPLOAD_TABLE} (contract, token_id, date, upload_url)
+        VALUES (:contract, :tokenId, :date, :url)
+        ON DUPLICATE KEY UPDATE date = VALUES(date), upload_url = VALUES(upload_url)`,
+      {
+        contract: upload.contract,
+        tokenId: upload.token_id,
+        date: upload.date ?? '',
+        url: upload.upload_url
+      },
+      options
+    );
+    await journal(
+      {
+        kind: 'upload',
+        inputs: { ...upload, date: upload.date ?? '' },
+        rows: [
+          {
+            table: 'upload',
+            keys: [{ contract: upload.contract, token_id: upload.token_id }]
+          }
+        ]
+      },
+      options
+    );
+  });
 }

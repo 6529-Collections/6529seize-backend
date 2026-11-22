@@ -1,23 +1,26 @@
 import { SUBSCRIPTIONS_ID_STATE_TABLE } from '@/constants';
+import type { RecordLogEntry } from '@/signed-records/record-log/record-log-format';
 import { sqlExecutor } from '@/sql-executor';
 import {
-  IdentityDirectory,
-  mirrorIdentityDirectory
-} from '../identity/identity-directory';
-import {
+  closeSubscriptionWrites,
   OPENING_STATE_ID,
+  openSubscriptionWrites,
+  scheduleIdentitySwitch,
   subscriptionsIdentitySwitch
 } from '../identity/identity-switch';
 import {
-  applyBuildEffects,
-  recordIdentityUpload
-} from '../writers/identity-daily-build';
-import { foldBoundWallets } from '../writers/identity-fold';
-import { redeemIdentityAirdrops } from '../writers/identity-redemptions';
-import { creditIdentityTopUps } from '../writers/identity-top-ups';
-import { OPENING_FORMAT, sha256Hex } from './opening-file';
-import { loadOpeningFiles, parseOpeningFiles } from './opening-load';
-import { BUILD_RECORD_FORMAT, BuildRecord, ChainLink } from './published-chain';
+  applyJournalBody,
+  identityTablesHash,
+  journal,
+  JournalBody,
+  journalBodyOf
+} from '../timeline/journal';
+import { sha256Hex } from './opening-file';
+import {
+  loadOpeningFiles,
+  ParsedOpening,
+  parseOpeningFiles
+} from './opening-load';
 
 /** Fetches a published file's text by URI (a public GET; no credentials). */
 export type Fetcher = (uri: string) => Promise<string>;
@@ -31,113 +34,243 @@ export const publicFetcher: Fetcher = async (uri) => {
   return response.text();
 };
 
+/**
+ * What a rebuild reads the journal through: the shared record log's
+ * public chain, in log order (the records module's RecordLogReader over
+ * the records wave, from the relays). Nothing in MySQL.
+ */
+export interface JournalSource {
+  walk(chain: 'public'): AsyncIterable<{ readonly entry: RecordLogEntry }>;
+}
+
+let boundSource: (() => JournalSource) | null = null;
+
+/**
+ * Binds where the CLI's rebuild reads the record log: the records wave
+ * reader, once a relay client for the records wave lands. Until then the CLI's
+ * rebuild says so and stops.
+ */
+export function setJournalSource(source: (() => JournalSource) | null): void {
+  boundSource = source;
+}
+
+export function boundJournalSource(): JournalSource {
+  if (!boundSource) {
+    throw new Error(
+      'No record log source is bound: the rebuild reads the journal from the records wave'
+    );
+  }
+  return boundSource();
+}
+
 export interface RebuildResult {
   readonly openingSha256: string;
-  readonly buildRecords: number;
-  readonly topUpsCredited: number;
-  readonly walletsFolded: number;
-  readonly airdropsCharged: number;
+  readonly entries: number;
+  readonly checkpoints: number;
+  /** Entries of other openings (earlier loads, rehearsals), skipped. */
+  readonly skipped: number;
+  readonly switched: boolean;
+}
+
+async function journalOf(source: JournalSource): Promise<JournalBody[]> {
+  const bodies: JournalBody[] = [];
+  for await (const { entry } of source.walk('public')) {
+    const body = journalBodyOf(entry);
+    if (body) {
+      bodies.push(body);
+    }
+  }
+  return bodies;
+}
+
+interface PublishedOpening {
+  readonly parsed: ParsedOpening;
+  readonly openingUri: string;
+  readonly historyUri: string;
+}
+
+/** The opening of the last switch in the journal, fetched and checked. */
+async function lastSwitchedOpening(
+  bodies: readonly JournalBody[],
+  fetch: Fetcher
+): Promise<PublishedOpening> {
+  const switched = bodies.filter((b) => b.kind === 'opening').pop();
+  if (!switched) {
+    throw new Error('The journal names no opening that went live');
+  }
+  const inputs = switched.inputs as {
+    opening_uri: string;
+    opening_sha256: string;
+    history_uri: string;
+    history_sha256: string;
+  };
+  const openingBytes = await fetch(inputs.opening_uri);
+  const historyBytes = await fetch(inputs.history_uri);
+  if (sha256Hex(openingBytes) !== inputs.opening_sha256) {
+    throw new Error(
+      `${inputs.opening_uri} does not hash to ${inputs.opening_sha256}`
+    );
+  }
+  if (sha256Hex(historyBytes) !== inputs.history_sha256) {
+    throw new Error(
+      `${inputs.history_uri} does not hash to ${inputs.history_sha256}`
+    );
+  }
+  return {
+    parsed: parseOpeningFiles(openingBytes, historyBytes),
+    openingUri: inputs.opening_uri,
+    historyUri: inputs.history_uri
+  };
+}
+
+/** Writes stay paused through a rebuild; the marker is renewed as it goes. */
+const MARKER_RENEW_EVERY = 100;
+
+/**
+ * Rebuilds the identity tables from the opening file and the journal alone:
+ *
+ * 1. pause the unsigned write routes (go-live's marker, renewed while the
+ *    rebuild runs);
+ * 2. read the journal (lane `subs` of the record log's public chain);
+ * 3. take the opening of the last `opening` entry (go-live writes it with
+ *    the switch), fetch its two files and check their sha256; or take the
+ *    files given (a rehearsal);
+ * 4. load them into tables that are not the truth, and hold them suspended,
+ *    so no identity writer writes while the journal is written back;
+ * 5. write back, in log order, every entry made against that opening:
+ *    each identity's rows, each history row, each fold's moved rows;
+ * 6. at each checkpoint (a build), hash the rebuilt tables and stop at the
+ *    first difference.
+ *
+ * The rebuilt tables are then verified and in shadow, not the truth. With
+ * `goLive` they become the truth through go-live's own switch, in the same
+ * pause, only if at least one checkpoint matched (the comparison) and the
+ * opening came from the journal (so its entry can name the files again).
+ * On any failure the routes reopen and the tables are left suspended.
+ */
+export async function rebuildIdentityTables(params: {
+  readonly source: JournalSource;
+  readonly fetch?: Fetcher;
+  /** A rehearsal: these files instead of the last switched opening. */
+  readonly opening?: ParsedOpening;
+  readonly goLive?: boolean;
+  readonly now?: () => number;
+}): Promise<RebuildResult> {
+  const now = params.now ?? (() => Date.now());
+  await closeSubscriptionWrites(now());
+  try {
+    const bodies = await journalOf(params.source);
+    const published = params.opening
+      ? null
+      : await lastSwitchedOpening(bodies, params.fetch ?? publicFetcher);
+    const opening = params.opening ?? published!.parsed;
+    if (params.goLive && !published) {
+      throw new Error(
+        'Only a rebuild from the journal goes live: rehearsal files name no published opening'
+      );
+    }
+    await loadOpeningFiles(opening, now());
+    await setSuspended(now());
+    let entries = 0;
+    let checkpoints = 0;
+    let skipped = 0;
+    for (let index = 0; index < bodies.length; index++) {
+      const body = bodies[index];
+      if (body.opening !== opening.openingSha256) {
+        skipped++;
+        continue;
+      }
+      await sqlExecutor.executeNativeQueriesInTransaction(
+        async (connection) => {
+          const options = { wrappedConnection: connection };
+          await applyJournalBody(body, options);
+          if (body.state_sha256 !== null) {
+            const rebuilt = await identityTablesHash(options);
+            if (rebuilt !== body.state_sha256) {
+              throw new Error(
+                `The rebuilt tables differ from the checkpoint of journal entry ${index} (${body.kind} ${JSON.stringify(body.inputs)})`
+              );
+            }
+            checkpoints++;
+          }
+        }
+      );
+      entries++;
+      if (entries % MARKER_RENEW_EVERY === 0) {
+        await closeSubscriptionWrites(now());
+      }
+    }
+    // Verified and back in shadow: the identity writers go on from here.
+    await sqlExecutor.execute(
+      `UPDATE ${SUBSCRIPTIONS_ID_STATE_TABLE}
+          SET verified_at = :nowMs, suspended_at = NULL
+        WHERE id = :id`,
+      { nowMs: now(), id: OPENING_STATE_ID }
+    );
+    let switched = false;
+    if (params.goLive) {
+      if (checkpoints === 0) {
+        throw new Error(
+          'No checkpoint was compared; the rebuilt tables stay in shadow'
+        );
+      }
+      switched = await switchRebuilt(opening, published!, now());
+    }
+    return {
+      openingSha256: opening.openingSha256,
+      entries,
+      checkpoints,
+      skipped,
+      switched
+    };
+  } finally {
+    subscriptionsIdentitySwitch.invalidate();
+    await openSubscriptionWrites();
+  }
+}
+
+async function setSuspended(nowMs: number): Promise<void> {
+  await sqlExecutor.execute(
+    `UPDATE ${SUBSCRIPTIONS_ID_STATE_TABLE} SET suspended_at = :nowMs WHERE id = :id`,
+    { nowMs, id: OPENING_STATE_ID }
+  );
 }
 
 /**
- * Rebuilds the identity tables from what was published and from their
- * sources, into tables that are empty or suspended:
- *
- * 1. walk the published chain back from its head to the opening file,
- *    checking each file against the sha256 its successor names;
- * 2. load the opening and history files;
- * 3. apply each build record in order (automatic rows, queue pushes, log
- *    lines, the card's final rows with their ids, the list's URI);
- * 4. `beforeRedemptions`: the phase pulls, which the mint log records by
- *    final row id, are applied here by the mint log's own rebuild;
- * 5. credit the top-ups (legacy top-up rows, from Ethereum), fold wallets
- *    bound since the opening (from the identity mirror), and charge the
- *    airdrop mints (from the transactions table) up to the block the legacy
- *    redemption loop has processed.
- *
- * The rebuilt tables are the truth again from the opening's cut (the state
- * row is marked verified, with the switch at the cut and the chain head).
+ * The rebuilt tables are current as of now (writes are paused, and every
+ * journaled write is in them), so the cut is now and the switch follows
+ * it, with the journal's opening entry naming the same files again.
  */
-export async function rebuildIdentityTables(params: {
-  readonly head: ChainLink;
-  /** Where the history file is, when the head is the opening file itself. */
-  readonly historyUri?: string;
-  readonly fetch?: Fetcher;
-  readonly directory?: IdentityDirectory;
-  readonly beforeRedemptions?: () => Promise<void>;
-  readonly nowMs?: number;
-}): Promise<RebuildResult> {
-  const fetch = params.fetch ?? publicFetcher;
-  const directory = params.directory ?? mirrorIdentityDirectory;
-  const records: BuildRecord[] = [];
-  let link: ChainLink = params.head;
-  let historyUri = params.historyUri;
-  let openingBytes: string | null = null;
-  let openingUri = '';
-  for (;;) {
-    const bytes = await fetch(link.uri);
-    if (sha256Hex(bytes) !== link.sha256) {
-      throw new Error(`${link.uri} does not hash to ${link.sha256}`);
-    }
-    const parsed = JSON.parse(bytes) as { format?: string };
-    if (parsed.format === BUILD_RECORD_FORMAT) {
-      const record = parsed as BuildRecord;
-      records.unshift(record);
-      historyUri = record.previous.historyUri ?? historyUri;
-      link = record.previous;
-      continue;
-    }
-    if (parsed.format === OPENING_FORMAT) {
-      openingBytes = bytes;
-      openingUri = link.uri;
-      break;
-    }
-    throw new Error(
-      `${link.uri} is neither a build record nor an opening file`
-    );
-  }
-  if (!historyUri) {
-    throw new Error('No history file URI: pass it with the head');
-  }
-  const opening = parseOpeningFiles(openingBytes, await fetch(historyUri));
-  await loadOpeningFiles(opening, params.nowMs);
-  for (const record of records) {
-    await applyBuildEffects(record.effects);
-    await recordIdentityUpload({
-      contract: record.effects.contract,
-      token_id: record.effects.tokenId,
-      date: new Date(record.effects.buildAtMs).toISOString().slice(0, 10),
-      upload_url: record.listUri
-    });
-  }
-  if (params.beforeRedemptions) {
-    await params.beforeRedemptions();
-  }
-  const topUpsCredited = await creditIdentityTopUps(directory);
-  const walletsFolded = await foldBoundWallets(directory);
-  const run = await redeemIdentityAirdrops();
-  const nowMs = params.nowMs ?? Date.now();
+async function switchRebuilt(
+  opening: ParsedOpening,
+  published: PublishedOpening,
+  nowMs: number
+): Promise<boolean> {
   await sqlExecutor.execute(
     `UPDATE ${SUBSCRIPTIONS_ID_STATE_TABLE}
-        SET verified_at = :nowMs, switch_at = LEAST(cut_at, :nowMs),
-            opening_uri = :openingUri, history_uri = :historyUri,
-            head_uri = :headUri, head_sha256 = :headSha
+        SET cut_at = :nowMs, opening_uri = :openingUri, history_uri = :historyUri
       WHERE id = :id`,
     {
       nowMs,
-      openingUri,
-      historyUri,
-      headUri: params.head.uri,
-      headSha: params.head.sha256,
+      openingUri: published.openingUri,
+      historyUri: published.historyUri,
       id: OPENING_STATE_ID
     }
   );
-  subscriptionsIdentitySwitch.invalidate();
-  return {
-    openingSha256: opening.openingSha256,
-    buildRecords: records.length,
-    topUpsCredited,
-    walletsFolded,
-    airdropsCharged: run?.charged ?? 0
-  };
+  return scheduleIdentitySwitch(nowMs, opening.openingSha256, (options) =>
+    journal(
+      {
+        kind: 'opening',
+        inputs: {
+          opening_uri: published.openingUri,
+          opening_sha256: opening.openingSha256,
+          history_uri: published.historyUri,
+          history_sha256: opening.historySha256,
+          cut_at: opening.opening.cut.at,
+          rebuilt: true
+        }
+      },
+      options
+    ).then(() => undefined)
+  );
 }

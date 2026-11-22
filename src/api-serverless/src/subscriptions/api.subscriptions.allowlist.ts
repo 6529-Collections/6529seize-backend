@@ -37,8 +37,11 @@ import {
 } from '@/subscriptions-identity/identity/subscription-tables';
 import {
   compareKeyed,
+  saveFailedReport,
   saveReport
 } from '@/subscriptions-identity/writers/identity-reports';
+import { journal } from '@/subscriptions-identity/timeline/journal';
+import { DbQueryOptions } from '@/db-query.options';
 
 const shadowLogger = Logger.get('SUBSCRIPTIONS_ALLOWLIST_SHADOW');
 
@@ -174,46 +177,89 @@ function buildSubscriptionMaps(filteredSubscriptions: NFTFinalSubscription[]): {
   return { subscriptionRanks, subscriptionMap };
 }
 
+/**
+ * Writes a phase pull's phase, size and positions to the final rows, by id,
+ * in each target table. The identity rows' write and its journal entry go
+ * in one transaction.
+ */
+async function writePhases(
+  card: { readonly contract: string; readonly tokenId: number },
+  phaseName: string,
+  phaseSubscriptions: number,
+  ranked: ReadonlyArray<{ readonly id?: number; readonly rank?: number }>,
+  targets: readonly string[]
+): Promise<void> {
+  if (ranked.length === 0) {
+    return;
+  }
+  const updateParams: Record<string, unknown> = {
+    phaseName,
+    phaseSubscriptions
+  };
+  ranked.forEach((row, i) => {
+    updateParams[`rank_${i}`] = row.rank;
+    updateParams[`id_${i}`] = row.id;
+  });
+  const ids = ranked.map((_, i) => `:id_${i}`).join(', ');
+  for (const target of targets) {
+    const batchUpdateQuery = `
+      UPDATE ${target}
+      SET
+        phase = :phaseName,
+        phase_subscriptions = :phaseSubscriptions,
+        phase_position = CASE id
+          ${ranked.map((_, i) => `WHEN :id_${i} THEN :rank_${i}`).join(' ')}
+        END
+      WHERE id IN (${ids})
+    `;
+    if (target !== IDENTITY_SUBSCRIPTION_TABLES.final) {
+      await sqlExecutor.execute(batchUpdateQuery, updateParams);
+      continue;
+    }
+    await sqlExecutor.executeNativeQueriesInTransaction(async (connection) => {
+      const options = { wrappedConnection: connection };
+      await sqlExecutor.execute(batchUpdateQuery, updateParams, options);
+      await journal(
+        {
+          kind: 'phase',
+          inputs: {
+            contract: card.contract,
+            token_id: card.tokenId,
+            phase: phaseName
+          },
+          rows: [
+            { table: 'final', keys: ranked.map((row) => ({ id: row.id })) }
+          ]
+        },
+        options
+      );
+    });
+  }
+}
+
 async function buildAirdropsAndUpdateSubscriptions(
+  card: { readonly contract: string; readonly tokenId: number },
   filteredSubscriptions: NFTFinalSubscription[],
   subscriptionRanks: Map<string, number>,
   phaseName: string,
   targets: readonly string[]
 ): Promise<ResultsResponse[]> {
   const phaseSubscriptions = filteredSubscriptions.length;
-  const airdrops: ResultsResponse[] = [];
-  const updateParams: Record<string, any> = {};
+  const airdrops: ResultsResponse[] = filteredSubscriptions.map((sub) => ({
+    wallet: sub.airdrop_address,
+    amount: sub.subscribed_count
+  }));
 
-  for (let i = 0; i < filteredSubscriptions.length; i++) {
-    const sub = filteredSubscriptions[i];
-    airdrops.push({
-      wallet: sub.airdrop_address,
-      amount: sub.subscribed_count
-    });
-    const rank = subscriptionRanks.get(sub.consolidation_key);
-    updateParams[`phaseName_${i}`] = phaseName;
-    updateParams[`phaseSubscriptions_${i}`] = phaseSubscriptions;
-    updateParams[`rank_${i}`] = rank;
-    updateParams[`id_${i}`] = sub.id;
-  }
-
-  for (const target of filteredSubscriptions.length > 0 ? targets : []) {
-    const batchUpdateQuery = `
-      UPDATE ${target}
-      SET
-        phase = CASE id
-          ${filteredSubscriptions.map((_, i) => `WHEN :id_${i} THEN :phaseName_${i}`).join(' ')}
-        END,
-        phase_subscriptions = CASE id
-          ${filteredSubscriptions.map((_, i) => `WHEN :id_${i} THEN :phaseSubscriptions_${i}`).join(' ')}
-        END,
-        phase_position = CASE id
-          ${filteredSubscriptions.map((_, i) => `WHEN :id_${i} THEN :rank_${i}`).join(' ')}
-        END
-      WHERE id IN (${filteredSubscriptions.map((_, i) => `:id_${i}`).join(', ')})
-    `;
-    await sqlExecutor.execute(batchUpdateQuery, updateParams);
-  }
+  await writePhases(
+    card,
+    phaseName,
+    phaseSubscriptions,
+    filteredSubscriptions.map((sub) => ({
+      id: sub.id,
+      rank: subscriptionRanks.get(sub.consolidation_key)
+    })),
+    targets
+  );
 
   return airdrops;
 }
@@ -344,8 +390,12 @@ async function shadowSplit(
       await split()
     );
   } catch (error) {
-    // The shadow never stops the legacy pull.
+    // The shadow never stops the legacy pull; the gate sees the failure.
     shadowLogger.error(`[SHADOW PHASE SPLIT FAILED] [${phaseName}]`, error);
+    await saveFailedReport('PHASE', { contract, tokenId }, error).catch(
+      (reportError) =>
+        shadowLogger.error('[FAILED REPORT NOT SAVED]', reportError)
+    );
   }
 }
 
@@ -414,6 +464,7 @@ async function splitAllowlistResultsOn(
     filteredSubscriptions
   );
   const airdrops = await buildAirdropsAndUpdateSubscriptions(
+    { contract, tokenId },
     filteredSubscriptions,
     subscriptionRanks,
     phaseName,
@@ -489,39 +540,20 @@ async function getPublicSubscriptionsOn(
 
   const phaseSubscriptions = publicSubscriptions.length;
 
-  const airdrops: ResultsResponse[] = [];
-  const updateParams: Record<string, any> = {};
-
-  for (let i = 0; i < publicSubscriptions.length; i++) {
-    const sub = publicSubscriptions[i];
-    airdrops.push({
-      wallet: sub.airdrop_address,
-      amount: 1
-    });
-    const rank = subscriptionRanks.get(sub.consolidation_key);
-    updateParams[`phaseName_${i}`] = 'Public';
-    updateParams[`phaseSubscriptions_${i}`] = phaseSubscriptions;
-    updateParams[`rank_${i}`] = rank;
-    updateParams[`id_${i}`] = sub.id;
-  }
-
-  for (const target of publicSubscriptions.length > 0 ? targets : []) {
-    const batchUpdateQuery = `
-      UPDATE ${target}
-      SET
-        phase = CASE id
-          ${publicSubscriptions.map((_, i) => `WHEN :id_${i} THEN :phaseName_${i}`).join(' ')}
-        END,
-        phase_subscriptions = CASE id
-          ${publicSubscriptions.map((_, i) => `WHEN :id_${i} THEN :phaseSubscriptions_${i}`).join(' ')}
-        END,
-        phase_position = CASE id
-          ${publicSubscriptions.map((_, i) => `WHEN :id_${i} THEN :rank_${i}`).join(' ')}
-        END
-      WHERE id IN (${publicSubscriptions.map((_, i) => `:id_${i}`).join(', ')})
-    `;
-    await sqlExecutor.execute(batchUpdateQuery, updateParams);
-  }
+  const airdrops: ResultsResponse[] = publicSubscriptions.map((sub) => ({
+    wallet: sub.airdrop_address,
+    amount: 1
+  }));
+  await writePhases(
+    { contract, tokenId },
+    'Public',
+    phaseSubscriptions,
+    publicSubscriptions.map((sub) => ({
+      id: sub.id,
+      rank: subscriptionRanks.get(sub.consolidation_key)
+    })),
+    targets
+  );
 
   const mergedAirDrops = mergeDuplicateWallets(airdrops);
 
@@ -537,6 +569,28 @@ function filterSubscriptions(
     const subWallets = s.consolidation_key.split('-');
     return !s.phase && subWallets.some((sw) => walletSet.has(sw));
   });
+}
+
+/** Journals a reset of the card's phases on the identity rows. */
+async function journalPhaseReset(
+  contract: string,
+  tokenId: number,
+  options: DbQueryOptions
+): Promise<void> {
+  const ids = await sqlExecutor.execute<{ id: number }>(
+    `SELECT id FROM ${IDENTITY_SUBSCRIPTION_TABLES.final}
+      WHERE contract = :contract AND token_id = :tokenId`,
+    { contract, tokenId },
+    options
+  );
+  await journal(
+    {
+      kind: 'phase',
+      inputs: { contract, token_id: tokenId, phase: null, reset: true },
+      rows: [{ table: 'final', keys: ids.map((row) => ({ id: row.id })) }]
+    },
+    options
+  );
 }
 
 export async function resetAllowlist(contract: string, tokenId: number) {
@@ -559,6 +613,9 @@ export async function resetAllowlist(contract: string, tokenId: number) {
           { contract, tokenId },
           { wrappedConnection }
         );
+      }
+      if (mode === 'TRUTH') {
+        await journalPhaseReset(contract, tokenId, { wrappedConnection });
       }
 
       await sqlExecutor.execute(
@@ -612,11 +669,17 @@ export async function resetAllowlist(contract: string, tokenId: number) {
   );
   if (mode === 'SHADOW') {
     try {
-      await sqlExecutor.execute(
-        `UPDATE ${IDENTITY_SUBSCRIPTION_TABLES.final}
-          SET phase = NULL, phase_subscriptions = -1, phase_position = -1
-          WHERE contract = :contract AND token_id = :tokenId`,
-        { contract, tokenId }
+      await sqlExecutor.executeNativeQueriesInTransaction(
+        async (wrappedConnection) => {
+          await sqlExecutor.execute(
+            `UPDATE ${IDENTITY_SUBSCRIPTION_TABLES.final}
+              SET phase = NULL, phase_subscriptions = -1, phase_position = -1
+              WHERE contract = :contract AND token_id = :tokenId`,
+            { contract, tokenId },
+            { wrappedConnection }
+          );
+          await journalPhaseReset(contract, tokenId, { wrappedConnection });
+        }
       );
     } catch (error) {
       shadowLogger.error('[SHADOW ALLOWLIST RESET FAILED]', error);

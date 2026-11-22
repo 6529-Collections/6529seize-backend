@@ -46,10 +46,10 @@ import {
 } from '@/subscriptions-identity/writers/identity-daily-build';
 import {
   compareKeyed,
+  saveFailedReport,
   saveReport
 } from '@/subscriptions-identity/writers/identity-reports';
 import { identityOfLegacyKeys } from '@/subscriptions-identity/writers/legacy-key-identities';
-import { publishBuildRecord } from '@/subscriptions-identity/opening/published-chain';
 import {
   claimDeferredWrite,
   deferralReason,
@@ -105,13 +105,6 @@ export async function updateSubscriptions() {
       new Map(identityList.rows.map((r) => [r.id, r.identityKey]))
     );
     await recordIdentityUpload(identityUpload);
-    // The build record is what a rebuild replays; the list is published
-    // either way, so a failure here is logged for the operator, not retried.
-    try {
-      await publishBuildRecord(identityList.effects, identityUpload.upload_url);
-    } catch (error) {
-      logger.error('[BUILD RECORD NOT PUBLISHED]', error);
-    }
   }
 
   let legacy: LegacyBuild = {
@@ -351,6 +344,13 @@ async function shadowIdentityList(
     return list;
   } catch (error) {
     logger.error('[SHADOW IDENTITY LIST FAILED]', error);
+    await saveFailedReport(
+      'LIST',
+      { contract: MEMES_CONTRACT, tokenId },
+      error
+    ).catch((reportError) =>
+      logger.error('[FAILED REPORT NOT SAVED]', reportError)
+    );
     return null;
   }
 }

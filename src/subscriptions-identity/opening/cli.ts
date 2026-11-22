@@ -12,7 +12,7 @@ import {
   suspendIdentityTables
 } from '../identity/identity-switch';
 import { goLive } from './go-live';
-import { rebuildIdentityTables } from './rebuild';
+import { boundJournalSource, rebuildIdentityTables } from './rebuild';
 import { assertOutsideRepository, parseArgs } from '../parity/cli';
 import { cutOpeningFiles } from './opening-build';
 import { compareAndMarkVerified } from './opening-compare';
@@ -37,8 +37,9 @@ import {
  *            comparisons on the last minted card, pause unsigned writes,
  *            cut, verify, load, compare, publish the files, set the switch
  *            time, reopen the write routes
- *   rebuild  empty or suspended identity tables from the published chain
- *            (opening file, then each build record) and their sources
+ *   rebuild  empty or suspended identity tables from the last opening that
+ *            went live and the journal in the record log (or, rehearsing,
+ *            from given files); --go-live switches if the checkpoints match
  *   status   whether the identity tables are the truth, and why
  *   suspend  rollback: every reader is on the legacy tables within 60 s
  *            (API answers can be cached a minute more)
@@ -54,7 +55,7 @@ const USAGE = `usage:
   load    --opening <json> --history <json>
   compare --opening <json> --history <json> [--identities <json>] --out <json>
   go-live --out-dir <dir> --signed-writes-live [--accept-report-diffs]
-  rebuild --head-uri <uri> --head-sha256 <hex> [--history-uri <uri>] [--identities <json>]
+  rebuild [--opening <json> --history <json>] [--go-live]
   status
   suspend
   open-writes`;
@@ -197,16 +198,21 @@ async function goLiveCommand(args: Args): Promise<number> {
 
 /** Rebuilds the identity tables from the published chain's head. */
 async function rebuildCommand(args: Args): Promise<number> {
+  if (optional(args, 'identities')) {
+    process.stderr.write(
+      'Refusing: a rebuild writes back what the journal holds; it reads no directory.\n'
+    );
+    return 2;
+  }
+  const rehearsal = optional(args, 'opening') ? parsedFrom(args) : undefined;
+  const goLive = args['go-live'] === true;
   const result = await rebuildIdentityTables({
-    head: {
-      uri: required(args, 'head-uri'),
-      sha256: required(args, 'head-sha256')
-    },
-    historyUri: optional(args, 'history-uri'),
-    directory: directoryFrom(args)
+    source: boundJournalSource(),
+    opening: rehearsal,
+    goLive
   });
   process.stdout.write(`${JSON.stringify(result)}\n`);
-  return 0;
+  return goLive && !result.switched ? 2 : 0;
 }
 
 async function statusCommand(): Promise<number> {

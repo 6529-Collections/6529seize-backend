@@ -5,6 +5,7 @@ import {
   scheduleIdentitySwitch,
   SWITCH_CUT_WINDOW_MS
 } from '../identity/identity-switch';
+import { journal } from '../timeline/journal';
 import { shadowReportsMatch } from '../writers/identity-reports';
 import { cutOpeningFiles } from './opening-build';
 import { compareAndMarkVerified } from './opening-compare';
@@ -102,7 +103,26 @@ export async function goLive(params: {
       `published opening ${published.openingUri}, history ${published.historyUri}`
     );
     step('publish');
-    if (!(await scheduleIdentitySwitch(now(), parsed.openingSha256))) {
+    // The journal names the files that went live: a rebuild starts here.
+    const switched = await scheduleIdentitySwitch(
+      now(),
+      parsed.openingSha256,
+      (options) =>
+        journal(
+          {
+            kind: 'opening',
+            inputs: {
+              opening_uri: published.openingUri,
+              opening_sha256: parsed.openingSha256,
+              history_uri: published.historyUri,
+              history_sha256: parsed.historySha256,
+              cut_at: parsed.opening.cut.at
+            }
+          },
+          options
+        ).then(() => undefined)
+    );
+    if (!switched) {
       return refuse('the switch time could not be set on this load');
     }
     steps.push(`switched to opening ${parsed.openingSha256}`);

@@ -3085,7 +3085,9 @@ are posted from the identity side; the legacy loop only logs its own.
 Person-made changes (subscribe, count, mode, editions) will reach the
 identity tables through signed records, which this branch does not have yet;
 until then a shadow list differs for anyone who changed a choice since the
-opening, so cut and load again before a build to compare it.
+opening, so cut and load again before a build to compare it. A shadow build
+or phase split that fails saves a FAILED report, which the go-live gate
+counts as a difference.
 
 **One merge rule.** Subscription states that come to belong to one identity
 are merged by one function, `identity-merge.ts` (owner question O2): the cut
@@ -3097,23 +3099,37 @@ does. A wallet that leaves an identity takes nothing. Eligibility and the
 airdrop rule read by the identity's consolidation key, whichever key a route
 was given.
 
-**Published chain and rebuild.** `go-live` uploads the opening and history
-files where the final lists go (Arweave). After the switch each daily build
-also uploads a build record: the build's effects (automatic rows, queue
-pushes, log lines, the card's final rows with their ids) and the list's URI,
-naming the file before it by URI and sha256. The newest file is the chain's
-head, kept in `subscriptions_id_state`. `subscriptions:opening -- rebuild
---head-uri --head-sha256` rebuilds empty or suspended identity tables: it
-walks the chain back to the opening file checking every hash, loads the
-opening, applies each build record, then credits top-ups (legacy top-up
-rows, from Ethereum), folds bound wallets (from the identity mirror) and
-charges airdrops (from `transactions`, up to the legacy loop's block).
-Phase pulls are recorded by the mint log by final row id; its rebuild
-applies them between the build records and the redemptions. Times the
-writers set come from their sources (a top-up's transaction time, a build's
-time), so a rebuild writes the same values, except a fold, which is written
-at the time it runs. People's own changes will reach the identity tables
-through signed records.
+**Journal and rebuild.** Every write to the identity tables after a load
+(a top-up, a fold, a daily build, a phase pull or reset, a redemption run, a
+list upload) appends one entry to the shared record log (lane `subs`, public
+chain) in the same transaction as the write (`timeline/journal.ts`). So the
+log holds every change in commit order, and an entry exists exactly when its
+write does; the log's segments and head drops carry it to the records wave,
+with no gap a reader would not refuse. An entry names the opening it was
+made against and holds the facts the write acted on (a top-up's hash, block,
+wallet and the identity it was credited to; a fold's wallet and identity)
+and after-images: each touched identity's balance, mode and choice rows, and
+each history row it wrote, whole, with its id. A build's entry also holds a
+checkpoint, the hash of every identity table read with share locks, so
+writes in flight are either in it or after it in the log. `go-live` uploads
+the opening and history files (Arweave, tagged with the app name, kind and
+sha256) and writes the journal's `opening` entry, naming both by URI and
+sha256, in the switch's transaction. The load gives every row a fixed id
+(final and log rows their legacy ids), so a reload gives the same ids.
+
+`subscriptions:opening -- rebuild` rebuilds the identity tables from the
+opening and the journal alone, read through a bound record log source (the
+records wave reader): it pauses the write routes, takes the last `opening`
+entry, fetches and checks both files, loads them suspended (no writer writes
+meanwhile), writes back every entry of that opening in log order, and stops
+at the first checkpoint the rebuilt tables don't match, which is how a write
+outside the journal shows up. Nothing is read from MySQL sources or the
+identity mirror: a top-up stays with the identity it was credited to. The
+rebuilt tables end verified and in shadow, not the truth; with `--go-live`
+they become the truth through go-live's own switch, in the same pause, and
+only if at least one checkpoint matched. `--opening --history` rehearses
+from local files. People's own changes will reach the identity tables
+through signed records, journaled the same way.
 
 **Switch.** The switch is one row, `subscriptions_id_state`, so one write
 moves every service. `subscriptions:opening -- go-live --signed-writes-live`
@@ -3122,8 +3138,10 @@ card, the last list comparison matched and at least one phase and one
 redemption comparison exist, with no shadow comparison of any kind
 differing since that card's first list. It then pauses the unsigned write
 routes (503), cuts, verifies, loads, compares, publishes the files,
-sets the switch time and reopens the routes, which then answer 409 to
-unsigned writes. Each step checks that the cut is still inside the switch
+sets the switch time with the journal's opening entry and reopens the
+routes, which then answer 409 to unsigned writes. The load keeps the pause
+marker; a marker older than the switch window (a go-live that died) is
+ignored, and `open-writes` deletes it. Each step checks that the cut is still inside the switch
 window, so a slow day stops early; on any failure the routes reopen and the
 legacy tables stay the truth. go-live refuses `--identities`: the truth is
 keyed by the identity mirror, as the writers are. The identity tables are

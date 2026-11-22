@@ -51,6 +51,14 @@ export interface ParsedOpening {
   readonly historySha256: string;
 }
 
+function logIds(
+  logs: ReadonlyArray<{ readonly legacyId: number | null }>
+): number[] {
+  let next =
+    logs.reduce((max, l) => Math.max(max, Number(l.legacyId ?? 0)), 0) + 1;
+  return logs.map((l) => (l.legacyId === null ? next++ : Number(l.legacyId)));
+}
+
 /** Parses both files and checks that the opening file names this history. */
 export function parseOpeningFiles(
   openingBytes: string,
@@ -193,6 +201,7 @@ export async function loadOpeningFiles(
     await insertRows(
       SUBSCRIPTIONS_ID_NFTS_TABLE,
       [
+        'id',
         'identity_key',
         'contract',
         'token_id',
@@ -202,7 +211,10 @@ export async function loadOpeningFiles(
         'created_at',
         'updated_at'
       ],
-      opening.choices.map((c) => [
+      // Every id the load gives is fixed by the files, so a rebuild's load
+      // gives the same ids whatever the tables handed out before.
+      opening.choices.map((c, index) => [
+        index + 1,
         c.identityKey,
         c.contract,
         c.tokenId,
@@ -289,6 +301,7 @@ export async function loadOpeningFiles(
     await insertRows(
       SUBSCRIPTIONS_ID_REDEEMED_TABLE,
       [
+        'id',
         'identity_key',
         'consolidation_key',
         'contract',
@@ -301,7 +314,8 @@ export async function loadOpeningFiles(
         'count',
         'created_at'
       ],
-      opening.redeemed.map((r) => [
+      opening.redeemed.map((r, index) => [
+        index + 1,
         r.identityKey,
         r.consolidationKey,
         r.contract,
@@ -319,6 +333,7 @@ export async function loadOpeningFiles(
     await insertRows(
       SUBSCRIPTIONS_ID_LOGS_TABLE,
       [
+        'id',
         'legacy_id',
         'queue_sequence',
         'identity_key',
@@ -327,15 +342,22 @@ export async function loadOpeningFiles(
         'additional_info',
         'created_at'
       ],
-      history.logs.map((l) => [
-        l.legacyId,
-        l.queueSequence,
-        l.identityKey,
-        l.consolidationKey,
-        l.log,
-        l.additionalInfo,
-        l.createdAt
-      ]),
+      // A line keeps its legacy id, so the logs route shows the same ids
+      // across the switch; a line from the key-width queue takes the next
+      // id above every legacy one, in history order.
+      logIds(history.logs).map((id, index) => {
+        const l = history.logs[index];
+        return [
+          id,
+          l.legacyId,
+          l.queueSequence,
+          l.identityKey,
+          l.consolidationKey,
+          l.log,
+          l.additionalInfo,
+          l.createdAt
+        ];
+      }),
       options
     );
     // The redemption writer goes on from the block the cut was at. Only
@@ -348,11 +370,11 @@ export async function loadOpeningFiles(
     );
     await sqlExecutor.execute(
       `INSERT INTO ${SUBSCRIPTIONS_ID_CURSORS_TABLE} (id, block, updated_at)
-        VALUES (:id, :block, :nowMs)`,
+        VALUES (:id, :block, :cutAt)`,
       {
         id: REDEMPTION_CURSOR_ID,
         block: opening.cut.redemptionBlock,
-        nowMs
+        cutAt: Date.parse(opening.cut.at)
       },
       options
     );

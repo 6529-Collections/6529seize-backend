@@ -14,6 +14,7 @@ import {
 } from '../identity/identity-directory';
 import { AS_TEXT, msToDbText } from '../opening/legacy-tables';
 import { turnIdentityAutomaticOn } from '../identity/identity-automatic';
+import { journal } from '../timeline/journal';
 
 interface PendingTopUp {
   readonly hash: string;
@@ -131,6 +132,7 @@ export async function creditIdentityTopUps(
         if (already.length > 0) {
           return false;
         }
+        let logIds: number[] = [];
         const [balance] = await q<{ balance: number }>(
           `SELECT balance FROM ${SUBSCRIPTIONS_ID_BALANCES_TABLE}
             WHERE identity_key = :identityKey FOR UPDATE`,
@@ -154,7 +156,7 @@ export async function creditIdentityTopUps(
             { identityKey, balance: topUp.amount, at: topUp.transactionDate }
           );
           if (hasMinimumBalanceForAutomaticMode(topUp.amount)) {
-            await turnIdentityAutomaticOn({
+            logIds = await turnIdentityAutomaticOn({
               identityKey,
               consolidationKey: consolidationKeys.get(identityKey) ?? sender,
               atText: topUp.transactionDate,
@@ -174,6 +176,27 @@ export async function creditIdentityTopUps(
             amount: topUp.amount,
             identityKey
           }
+        );
+        // The identity it was credited to is in the entry: a rebuild never
+        // asks the directory again.
+        await journal(
+          {
+            kind: 'top-up',
+            inputs: {
+              hash: topUp.hash,
+              block: topUp.block,
+              transaction_date: topUp.transactionDate,
+              from_wallet: sender,
+              amount: topUp.amount,
+              identity_key: identityKey
+            },
+            identities: [identityKey],
+            rows: [
+              { table: 'top_up', keys: [{ hash: topUp.hash }] },
+              { table: 'logs', keys: logIds.map((id) => ({ id })) }
+            ]
+          },
+          options
         );
         return true;
       }

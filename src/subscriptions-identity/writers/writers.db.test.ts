@@ -13,6 +13,7 @@ import {
   SUBSCRIPTIONS_ID_STATE_TABLE,
   SUBSCRIPTIONS_ID_NFTS_FINAL_TABLE,
   SUBSCRIPTIONS_ID_REPORTS_TABLE,
+  SIGNED_RECORD_LOG_ENTRIES_TABLE,
   SUBSCRIPTIONS_MODE_TABLE,
   SUBSCRIPTIONS_NFTS_FINAL_TABLE,
   SUBSCRIPTIONS_NFTS_TABLE,
@@ -45,8 +46,8 @@ import {
   loadOpeningFiles,
   parseOpeningFiles
 } from '../opening/opening-load';
-import { publishOpeningFiles } from '../opening/published-chain';
-import { rebuildIdentityTables } from '../opening/rebuild';
+import { JournalSource, rebuildIdentityTables } from '../opening/rebuild';
+import { identityTablesHash } from '../timeline/journal';
 import {
   fetchDetailsForConsolidationKey,
   fetchFinalSubscription,
@@ -186,6 +187,56 @@ async function balance(table: string, column: string, key: string) {
     { key }
   );
   return row ? Number(row.balance) : null;
+}
+
+/** The record log's public chain, in log order, as a rebuild reads it. */
+const journalSource: JournalSource = {
+  async *walk() {
+    const rows = await sqlExecutor.execute<{ entry: string }>(
+      `SELECT entry FROM ${SIGNED_RECORD_LOG_ENTRIES_TABLE} WHERE chain = 'public' ORDER BY id`
+    );
+    for (const row of rows) {
+      yield { entry: JSON.parse(row.entry) };
+    }
+  }
+};
+
+async function fetchPublished(uri: string): Promise<string> {
+  const bytes = published.get(uri);
+  if (bytes === undefined) {
+    throw new Error(`not published: ${uri}`);
+  }
+  return bytes;
+}
+
+function goLiveForTest() {
+  return goLive({
+    signedWritesLive: true,
+    acceptReportDiffs: true,
+    mintedCard: 0
+  });
+}
+
+/** Every identity table, its state and its cursors are lost. */
+async function loseIdentityTables() {
+  for (const table of [
+    ...IDENTITY_DATA_TABLES,
+    SUBSCRIPTIONS_ID_STATE_TABLE,
+    SUBSCRIPTIONS_ID_CURSORS_TABLE
+  ]) {
+    await execute(`DELETE FROM ${table}`);
+  }
+  subscriptionsIdentitySwitch.invalidate();
+}
+
+async function identityBalances(): Promise<Record<string, number>> {
+  const rows = await sqlExecutor.execute<{
+    identity_key: string;
+    balance: number;
+  }>(`SELECT identity_key, balance FROM ${SUBSCRIPTIONS_ID_BALANCES_TABLE}`);
+  return Object.fromEntries(
+    rows.map((r) => [r.identity_key, Number(r.balance)])
+  );
 }
 
 beforeAll(async () => {
@@ -379,12 +430,11 @@ describeWithSeed('identity writers after the switch', [], () => {
     );
   });
 
-  it('rebuilds empty identity tables from the published chain and the sources, giving the same API answers', async () => {
+  it('rebuilds lost identity tables from the opening and the journal alone, giving the same API answers', async () => {
     await seedLegacy();
-    const files = await cutAndLoad(true);
-    await publishOpeningFiles(files);
-    // After the switch: a top-up, a daily build (published with its build
-    // record) and an airdrop charged.
+    expect((await goLiveForTest()).switched).toBe(true);
+    // After the switch: a top-up, a daily build, a phase pull and an
+    // airdrop charged.
     await execute(
       `INSERT INTO ${SUBSCRIPTIONS_TOP_UP_TABLE} (hash, block, transaction_date, from_wallet, amount)
         VALUES ('0xa5', 30, '2026-11-26 13:00:00', :lone, 0.05)`,
@@ -392,6 +442,7 @@ describeWithSeed('identity writers after the switch', [], () => {
     );
     await runIdentityTopUpWriters();
     await updateSubscriptions();
+    await getPublicSubscriptions(MEMES_CONTRACT, CARD);
     await execute(
       `INSERT INTO ${TRANSACTIONS_TABLE}
         (created_at, transaction, block, transaction_date, from_address, to_address,
@@ -445,39 +496,124 @@ describeWithSeed('identity writers after the switch', [], () => {
       return out;
     };
     const before = await answers();
-    const [state] = await sqlExecutor.execute<{
-      head_uri: string;
-      head_sha256: string;
-    }>(`SELECT head_uri, head_sha256 FROM ${SUBSCRIPTIONS_ID_STATE_TABLE}`);
-    expect(state.head_uri).not.toBe(files.openingSha256);
+    const tablesBefore = await identityTablesHash({});
 
-    // Lose every identity table, then rebuild from the head.
+    // Lose every identity table and the MySQL sources the live writers read
+    // (top-ups, transactions, the legacy loop's block), then rebuild.
+    await loseIdentityTables();
     for (const table of [
-      ...IDENTITY_DATA_TABLES,
-      SUBSCRIPTIONS_ID_STATE_TABLE,
-      SUBSCRIPTIONS_ID_CURSORS_TABLE
+      SUBSCRIPTIONS_TOP_UP_TABLE,
+      TRANSACTIONS_TABLE,
+      TRANSACTIONS_PROCESSED_SUBSCRIPTIONS_BLOCKS_TABLE
     ]) {
       await execute(`DELETE FROM ${table}`);
     }
-    subscriptionsIdentitySwitch.invalidate();
     const result = await rebuildIdentityTables({
-      head: { uri: state.head_uri, sha256: state.head_sha256 },
-      fetch: async (uri) => {
-        const bytes = published.get(uri);
-        if (bytes === undefined) {
-          throw new Error(`not published: ${uri}`);
-        }
-        return bytes;
-      }
+      source: journalSource,
+      fetch: fetchPublished,
+      goLive: true
     });
     expect(result).toEqual(
-      expect.objectContaining({
-        buildRecords: 1,
-        topUpsCredited: 1,
-        airdropsCharged: 1
-      })
+      expect.objectContaining({ checkpoints: 1, switched: true })
     );
+    expect(await identityTablesHash({})).toBe(tablesBefore);
     expect(await answers()).toEqual(before);
+  });
+
+  it('rebuilds a top-up with the identity it was credited to, after the wallet leaves', async () => {
+    await seedLegacy();
+    expect((await goLiveForTest()).switched).toBe(true);
+    // A tops up 0.1 while bound to P1.
+    await execute(
+      `INSERT INTO ${SUBSCRIPTIONS_TOP_UP_TABLE} (hash, block, transaction_date, from_wallet, amount)
+        VALUES ('0xa7', 30, '2026-11-26 13:00:00', :a, 0.1)`,
+      { a: A }
+    );
+    await runIdentityTopUpWriters();
+    // Then A leaves P1: it takes nothing with it.
+    await execute(
+      `UPDATE ${ADDRESS_CONSOLIDATION_KEY} SET consolidation_key = address WHERE address = :a`,
+      { a: A }
+    );
+    await runIdentityTopUpWriters();
+    const live = await identityBalances();
+    expect(live[P1]).toBeCloseTo(0.6, 10);
+    expect(live[A]).toBeUndefined();
+    const tablesBefore = await identityTablesHash({});
+
+    await loseIdentityTables();
+    await rebuildIdentityTables({
+      source: journalSource,
+      fetch: fetchPublished
+    });
+    expect(await identityBalances()).toEqual(live);
+    expect(await identityTablesHash({})).toBe(tablesBefore);
+  });
+
+  it('rebuilds a build whose list upload failed, and its airdrop, with no gap', async () => {
+    await seedLegacy();
+    expect((await goLiveForTest()).switched).toBe(true);
+    uploadFile.mockImplementation(async (bytes: Buffer) => {
+      if (bytes.toString('utf8').includes('airdrop_address')) {
+        throw new Error('arweave unavailable');
+      }
+      const url = `https://example.test/file-${published.size}`;
+      published.set(url, bytes.toString('utf8'));
+      return { url };
+    });
+    await expect(updateSubscriptions()).rejects.toThrow('arweave unavailable');
+    await execute(
+      `INSERT INTO ${TRANSACTIONS_TABLE}
+        (created_at, transaction, block, transaction_date, from_address, to_address,
+         contract, token_id, token_count, value, primary_proceeds, royalties,
+         gas_gwei, gas_price, gas_price_gwei, gas)
+        VALUES (NOW(), '0xmint', 50, '2026-11-26 15:00:00', :null, :lone, :c, :card,
+         1, 0, 0, 0, 0, 0, 0, 0)`,
+      { null: NULL_ADDRESS, lone: LONE, c: MEMES_CONTRACT, card: CARD }
+    );
+    await execute(
+      `INSERT INTO ${TRANSACTIONS_PROCESSED_SUBSCRIPTIONS_BLOCKS_TABLE} (created_at, block, timestamp)
+        VALUES (NOW(), 50, 0)`
+    );
+    await runIdentityRedemptionWriters();
+    expect(
+      await balance(SUBSCRIPTIONS_ID_BALANCES_TABLE, 'identity_key', LONE)
+    ).toBeCloseTo(0.13471, 10);
+    const tablesBefore = await identityTablesHash({});
+
+    await loseIdentityTables();
+    const result = await rebuildIdentityTables({
+      source: journalSource,
+      fetch: fetchPublished
+    });
+    expect(result.checkpoints).toBe(1);
+    expect(await identityTablesHash({})).toBe(tablesBefore);
+    expect(
+      await finalIds(SUBSCRIPTIONS_ID_NFTS_FINAL_TABLE, 'identity_key')
+    ).toHaveLength(2);
+  });
+
+  it('stops a rebuild at a checkpoint that a write outside the journal changed', async () => {
+    await seedLegacy();
+    expect((await goLiveForTest()).switched).toBe(true);
+    // A write that bypasses the journal, then a build checkpoints it.
+    await execute(
+      `UPDATE ${SUBSCRIPTIONS_ID_BALANCES_TABLE} SET balance = balance + 1 WHERE identity_key = :lone`,
+      { lone: LONE }
+    );
+    await updateSubscriptions();
+
+    await loseIdentityTables();
+    await expect(
+      rebuildIdentityTables({
+        source: journalSource,
+        fetch: fetchPublished,
+        goLive: true
+      })
+    ).rejects.toThrow('differ from the checkpoint');
+    // Left suspended and not the truth; the write routes are open again.
+    expect(await subscriptionsIdentitySwitch.writeModeOrFail()).toBe('OFF');
+    expect(await unsignedWritesNow()).toBe('OPEN');
   });
 
   it('backs the switch only with matching list, phase and redemption comparisons of the minted card', async () => {

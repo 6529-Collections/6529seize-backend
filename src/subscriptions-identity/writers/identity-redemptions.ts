@@ -10,7 +10,6 @@ import {
   TRANSACTIONS_PROCESSED_SUBSCRIPTIONS_BLOCKS_TABLE,
   TRANSACTIONS_TABLE
 } from '@/constants';
-import { getDataSource } from '@/db';
 import { Transaction } from '@/entities/ITransaction';
 import { sqlExecutor } from '@/sql-executor';
 import {
@@ -20,6 +19,9 @@ import {
   validateNonSubscriptionAirdrop
 } from '@/transactionsProcessingLoop/subscriptions';
 import { EntityManager } from 'typeorm';
+import { DbQueryOptions } from '@/db-query.options';
+import { journal } from '../timeline/journal';
+import { msToDbText } from '../opening/legacy-tables';
 import { roundSubscriptionBalance } from '../engine/parity-money';
 import { IdentityWriteMode } from '../identity/identity-switch';
 import { REDEMPTION_CURSOR_ID } from '../opening/opening-load';
@@ -39,18 +41,35 @@ export interface IdentityRedemptionRun {
   readonly notices: SubscriptionWaveNotification[];
 }
 
+interface ChargeTouches {
+  readonly identities: Set<string>;
+  readonly redeemedIds: Set<number>;
+  readonly finalIds: Set<number>;
+}
+
 async function chargeToken(
   transaction: Transaction,
-  em: EntityManager,
-  notices: SubscriptionWaveNotification[]
+  options: DbQueryOptions,
+  notices: SubscriptionWaveNotification[],
+  touches: ChargeTouches
 ): Promise<boolean> {
-  const [row] = await em.query(
+  const q = <T>(sql: string, params: Record<string, unknown>) =>
+    sqlExecutor.execute<T>(sql, params, options);
+  const [row] = await q<{
+    id: number;
+    identity_key: string;
+    consolidation_key: string;
+  }>(
     `SELECT id, identity_key, consolidation_key FROM ${SUBSCRIPTIONS_ID_NFTS_FINAL_TABLE}
-      WHERE contract = ? AND token_id = ? AND airdrop_address = ?
+      WHERE contract = :contract AND token_id = :tokenId AND airdrop_address = :address
         AND redeemed_count < subscribed_count
       ORDER BY phase ASC, phase_position ASC, id ASC
       LIMIT 1 FOR UPDATE`,
-    [transaction.contract, transaction.token_id, transaction.to_address]
+    {
+      contract: transaction.contract,
+      tokenId: transaction.token_id,
+      address: transaction.to_address
+    }
   );
   const transactionLink = buildTransactionLinkFor(transaction.transaction);
   if (!row) {
@@ -62,9 +81,9 @@ async function chargeToken(
     return false;
   }
   const identityKey: string = row.identity_key;
-  const [balanceRow] = await em.query(
-    `SELECT balance FROM ${SUBSCRIPTIONS_ID_BALANCES_TABLE} WHERE identity_key = ? FOR UPDATE`,
-    [identityKey]
+  const [balanceRow] = await q<{ balance: number }>(
+    `SELECT balance FROM ${SUBSCRIPTIONS_ID_BALANCES_TABLE} WHERE identity_key = :identityKey FOR UPDATE`,
+    { identityKey }
   );
   if (!balanceRow) {
     notices.push({
@@ -84,63 +103,90 @@ async function chargeToken(
   const balanceAfter = roundSubscriptionBalance(
     Number(balanceRow?.balance ?? 0) - MEMES_MINT_PRICE
   );
-  await em.query(
-    `INSERT INTO ${SUBSCRIPTIONS_ID_BALANCES_TABLE} (identity_key, balance) VALUES (?, ?)
+  await q(
+    `INSERT INTO ${SUBSCRIPTIONS_ID_BALANCES_TABLE} (identity_key, balance) VALUES (:identityKey, :balanceAfter)
       ON DUPLICATE KEY UPDATE balance = VALUES(balance)`,
-    [identityKey, balanceAfter]
+    { identityKey, balanceAfter }
   );
-  const [existing] = await em.query(
+  const redeemedKey = {
+    contract: transaction.contract,
+    tokenId: transaction.token_id,
+    address: transaction.to_address,
+    transaction: transaction.transaction,
+    identityKey
+  };
+  const [existing] = await q<{ id: number }>(
     `SELECT id FROM ${SUBSCRIPTIONS_ID_REDEEMED_TABLE}
-      WHERE contract = ? AND token_id = ? AND address = ? AND \`transaction\` = ? AND identity_key = ?`,
-    [
-      transaction.contract,
-      transaction.token_id,
-      transaction.to_address,
-      transaction.transaction,
-      identityKey
-    ]
+      WHERE contract = :contract AND token_id = :tokenId AND address = :address
+        AND \`transaction\` = :transaction AND identity_key = :identityKey`,
+    redeemedKey
   );
   if (existing) {
-    await em.query(
+    await q(
       `UPDATE ${SUBSCRIPTIONS_ID_REDEEMED_TABLE}
-        SET value = value + ?, count = count + 1, balance_after = ? WHERE id = ?`,
-      [MEMES_MINT_PRICE, balanceAfter, existing.id]
+        SET value = value + :price, count = count + 1, balance_after = :balanceAfter WHERE id = :id`,
+      { price: MEMES_MINT_PRICE, balanceAfter, id: existing.id }
     );
+    touches.redeemedIds.add(Number(existing.id));
   } else {
-    await em.query(
+    await q(
       `INSERT INTO ${SUBSCRIPTIONS_ID_REDEEMED_TABLE}
         (identity_key, consolidation_key, contract, token_id, address, \`transaction\`,
          transaction_date, value, balance_after, count)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
-      [
-        identityKey,
-        row.consolidation_key,
-        transaction.contract,
-        transaction.token_id,
-        transaction.to_address,
-        transaction.transaction,
-        transaction.transaction_date
-          ? new Date(transaction.transaction_date)
+        VALUES (:identityKey, :consolidationKey, :contract, :tokenId, :address, :transaction,
+         :transactionDate, :price, :balanceAfter, 1)`,
+      {
+        ...redeemedKey,
+        consolidationKey: row.consolidation_key,
+        transactionDate: transaction.transaction_date
+          ? msToDbText(new Date(transaction.transaction_date).getTime())
           : null,
-        MEMES_MINT_PRICE,
+        price: MEMES_MINT_PRICE,
         balanceAfter
-      ]
+      }
     );
+    const [inserted] = await q<{ id: number | string }>(
+      `SELECT LAST_INSERT_ID() AS id`,
+      {}
+    );
+    touches.redeemedIds.add(Number(inserted.id));
   }
-  await em.query(
-    `UPDATE ${SUBSCRIPTIONS_ID_NFTS_FINAL_TABLE} SET redeemed_count = redeemed_count + 1 WHERE id = ?`,
-    [row.id]
+  await q(
+    `UPDATE ${SUBSCRIPTIONS_ID_NFTS_FINAL_TABLE} SET redeemed_count = redeemed_count + 1 WHERE id = :id`,
+    { id: row.id }
   );
+  touches.identities.add(identityKey);
+  touches.finalIds.add(Number(row.id));
   return true;
+}
+
+/**
+ * The legacy airdrop check (validateNonSubscriptionAirdrop) reads through
+ * a TypeORM EntityManager's positional query; this runs those reads in the
+ * redemption run's own transaction.
+ */
+function inTransactionReads(options: DbQueryOptions): EntityManager {
+  const query = (sql: string, values: unknown[] = []) => {
+    const params: Record<string, unknown> = {};
+    let index = 0;
+    const named = sql.replace(/\?/g, () => {
+      const name = `p${index}`;
+      params[name] = values[index++];
+      return `:${name}`;
+    });
+    return sqlExecutor.execute(named, params, options);
+  };
+  return { query } as unknown as EntityManager;
 }
 
 /**
  * Matches the airdrop mints after the identity tables' cursor against their
  * final rows, by the legacy redemption rules (validateNonSubscriptionAirdrop,
  * then one charge per token to the row for the airdrop address in phase and
- * position order), in one transaction with the cursor. It goes only as far
- * as the legacy loop has processed, so both sides match the same airdrops.
- * Returns null before an opening is loaded (no cursor).
+ * position order), in one transaction with the cursor and the run's journal
+ * entry. It goes only as far as the legacy loop has processed, so both
+ * sides match the same airdrops. Returns null before an opening is loaded
+ * (no cursor).
  */
 export async function redeemIdentityAirdrops(): Promise<IdentityRedemptionRun | null> {
   const [cursor] = await sqlExecutor.execute<{ block: number }>(
@@ -179,9 +225,19 @@ export async function redeemIdentityAirdrops(): Promise<IdentityRedemptionRun | 
     string,
     { contract: string; tokenId: number; transactions: Set<string> }
   >();
-  await getDataSource().transaction(async (em) => {
+  await sqlExecutor.executeNativeQueriesInTransaction(async (connection) => {
+    const options = { wrappedConnection: connection };
+    const touches: ChargeTouches = {
+      identities: new Set(),
+      redeemedIds: new Set(),
+      finalIds: new Set()
+    };
+    const charges: Array<{ transaction: string; token_id: number }> = [];
     for (const airdrop of airdrops) {
-      const validation = await validateNonSubscriptionAirdrop(airdrop, em);
+      const validation = await validateNonSubscriptionAirdrop(
+        airdrop,
+        inTransactionReads(options)
+      );
       if (validation.valid) {
         continue;
       }
@@ -194,16 +250,44 @@ export async function redeemIdentityAirdrops(): Promise<IdentityRedemptionRun | 
       entry.transactions.add(airdrop.transaction);
       byCard.set(card, entry);
       for (let i = 0; i < airdrop.token_count; i++) {
-        if (await chargeToken(airdrop, em, notices)) {
+        if (await chargeToken(airdrop, options, notices, touches)) {
           charged++;
+          charges.push({
+            transaction: airdrop.transaction,
+            token_id: Number(airdrop.token_id)
+          });
         } else {
           unmatched++;
         }
       }
     }
-    await em.query(
-      `UPDATE ${SUBSCRIPTIONS_ID_CURSORS_TABLE} SET block = ?, updated_at = ? WHERE id = ?`,
-      [through, Date.now(), REDEMPTION_CURSOR_ID]
+    await sqlExecutor.execute(
+      `UPDATE ${SUBSCRIPTIONS_ID_CURSORS_TABLE} SET block = :through, updated_at = :nowMs WHERE id = :id`,
+      { through, nowMs: Date.now(), id: REDEMPTION_CURSOR_ID },
+      options
+    );
+    await journal(
+      {
+        kind: 'redemption',
+        inputs: {
+          after_block: Number(cursor.block),
+          through_block: through,
+          charges
+        },
+        identities: Array.from(touches.identities),
+        rows: [
+          {
+            table: 'redeemed',
+            keys: Array.from(touches.redeemedIds).map((id) => ({ id }))
+          },
+          {
+            table: 'final',
+            keys: Array.from(touches.finalIds).map((id) => ({ id }))
+          },
+          { table: 'cursor', keys: [{ id: REDEMPTION_CURSOR_ID }] }
+        ]
+      },
+      options
     );
   });
   return {

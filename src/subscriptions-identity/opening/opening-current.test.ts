@@ -238,6 +238,27 @@ describe('currentState', () => {
     ]);
   });
 
+  it('subscribes the open cards again on a waiting first top-up, as the legacy mode change does', () => {
+    const t = empty();
+    // X unsubscribed from Meme #580 with no balance, then its first top-up
+    // waited in the queue.
+    t.choices.push(choice(X, false, false, 1, T2));
+    t.queue.push(queued('TOP_UP', X, topUp('0xb1', X, 0.07)));
+    const state = currentState(CUT, t, byWallet);
+    expect(
+      state.choices.map((c) => [
+        c.identityKey,
+        c.tokenId,
+        c.subscribed,
+        c.updatedAt
+      ])
+    ).toEqual([[X, 580, true, '2026-11-25 09:30:00.000000']]);
+    expect(state.queuedLogs.map((l) => [l.identityKey, l.log])).toEqual([
+      [X, 'Subscription Mode set to Automatic'],
+      [X, 'Subscribed to Meme #580']
+    ]);
+  });
+
   it('applies a queued re-key that splits a key, instead of blocking the cut', () => {
     const t = empty();
     // OLD's wallets now belong to P1 (A) and X: a split. The legacy re-key
