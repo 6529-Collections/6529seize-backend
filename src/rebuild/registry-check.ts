@@ -6,6 +6,7 @@ import {
 } from '@/rebuild/manifest.types';
 import { orderSteps } from '@/rebuild/step-order';
 import { CodeTables, LiveTable } from '@/rebuild/table-discovery';
+import { protectedFlagNames } from '@/rebuild/stack/child-env';
 
 export type RegistryProblemKind =
   /** A table code or the live schema has, in no manifest. */
@@ -25,7 +26,9 @@ export type RegistryProblemKind =
   /** `after` names an unknown step, or steps wait on each other. */
   | 'BAD_ORDER'
   /** A probe with a repeated id, a bad path or a placeholder without values. */
-  | 'BAD_PROBE';
+  | 'BAD_PROBE'
+  /** A flag that would set one of the run's own variables. */
+  | 'BAD_FLAG';
 
 export interface RegistryProblem {
   readonly kind: RegistryProblemKind;
@@ -341,7 +344,14 @@ export function checkRegistry(input: RegistryInput): RegistryResult {
     ...input.manifests.flatMap((manifest) => [
       ...stepProblems(manifest, manifest.seeds, 'seed', allTables),
       ...stepProblems(manifest, manifest.rebuilders, 'rebuilder', allTables),
-      ...probeProblems(manifest, manifest.probes, seenProbes, allTables)
+      ...probeProblems(manifest, manifest.probes, seenProbes, allTables),
+      ...protectedFlagNames(manifest.flags).map(
+        (name): RegistryProblem => ({
+          kind: 'BAD_FLAG',
+          area: manifest.area,
+          detail: `flag ${name} would set one of the run's own variables`
+        })
+      )
     ]),
     ...orderProblems(
       'seed',

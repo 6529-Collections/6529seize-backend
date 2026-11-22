@@ -66,6 +66,21 @@ export function inheritedEnv(env: NodeJS.ProcessEnv): Record<string, string> {
   return result;
 }
 
+/**
+ * Variables an area's flags may never set: the run's database account, its
+ * source URLs and guard settings, Ethereum and Alchemy endpoints, AWS, and
+ * the settings that keep the app off AWS and Redis.
+ */
+const PROTECTED_FLAG =
+  /^(?:REBUILD_|DB_|ALCHEMY_|AWS_)|^(?:ETHEREUM_RPC_URL|NODE_OPTIONS|NODE_ENV|JWT_SECRET|FORCE_AVOID_REDIS|FEATURE_DB_MIGRATE_DISABLED|TS_NODE_TRANSPILE_ONLY|CONSOLIDATION_FOUR_WALLET_ACTIVATION_AT)$/i;
+
+/** The names in `flags` that an area's manifest may not set. */
+export function protectedFlagNames(
+  flags: Readonly<Record<string, string>>
+): string[] {
+  return Object.keys(flags).filter((name) => PROTECTED_FLAG.test(name));
+}
+
 export interface DbAccount {
   readonly host: string;
   readonly port: number;

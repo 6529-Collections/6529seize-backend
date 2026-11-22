@@ -28,7 +28,8 @@ import { readViolations, SourceViolation } from '@/rebuild/guard/source-guard';
 import {
   childEnv,
   DbAccount,
-  preflightProblems
+  preflightProblems,
+  protectedFlagNames
 } from '@/rebuild/stack/child-env';
 import {
   runChild,
@@ -320,24 +321,31 @@ class RebuildRun {
     for (const name of URL_SOURCES) {
       sourceEnv[`REBUILD_SOURCE_${name.toUpperCase()}`] = sources[name] ?? '';
     }
+    const refused = protectedFlagNames(extra);
+    if (refused.length) {
+      throw new Error(
+        `An area's flags may not set the run's own variables: ${refused.join(', ')}`
+      );
+    }
     const filled: Record<string, string> = {};
     for (const [name, value] of Object.entries(extra)) {
       filled[name] = fillSourcePlaceholders(value, sources);
     }
+    // The run's own settings come last, so no flag can replace them.
     return childEnv({
       parent: process.env,
       home: path.resolve(this.o.home),
       db,
       jwtSecret: this.jwtSecret,
       extra: {
+        ...filled,
         REBUILD_VIOLATIONS_FILE: this.violationsFile,
         REBUILD_ALLOWED_ENDPOINTS: this.allowedEndpoints(),
         REBUILD_MARK: this.o.mark,
         REBUILD_CHAIN_HEIGHT: this.o.chainHeight?.toString() ?? '',
         REBUILD_ETH_BLOCK: this.o.ethBlock?.toString() ?? '',
         ...sourceEnv,
-        ...this.ethereumEnv(),
-        ...filled
+        ...this.ethereumEnv()
       }
     });
   }

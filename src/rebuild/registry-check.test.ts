@@ -215,6 +215,38 @@ describe('checkRegistry', () => {
     ]);
   });
 
+  it("refuses flags that would set the run's own variables", () => {
+    const result = checkRegistry({
+      manifests: [
+        area(
+          'a',
+          {},
+          {
+            flags: {
+              FEATURE_X: 'true',
+              DB_HOST: 'elsewhere',
+              REBUILD_ALLOWED_ENDPOINTS: '*',
+              ETHEREUM_RPC_URL: 'http://192.0.2.1',
+              ALCHEMY_API_KEY: 'k'
+            }
+          }
+        )
+      ],
+      codeTables: code()
+    });
+    expect(result.problems.map((p) => [p.kind, p.detail])).toEqual(
+      [
+        'DB_HOST',
+        'REBUILD_ALLOWED_ENDPOINTS',
+        'ETHEREUM_RPC_URL',
+        'ALCHEMY_API_KEY'
+      ].map((name) => [
+        'BAD_FLAG',
+        `flag ${name} would set one of the run's own variables`
+      ])
+    );
+  });
+
   it('checks what a planned probe waits for', () => {
     const result = checkRegistry({
       manifests: [
