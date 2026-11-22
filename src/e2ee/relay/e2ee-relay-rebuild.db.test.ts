@@ -62,7 +62,8 @@ import {
 import { MockCrpRelay } from '@/tests/fixtures/e2ee-mock-crp-relay.fixture';
 import {
   e2eeTestModerationKey,
-  e2eeTestRelayIdentity
+  e2eeTestRelayIdentity,
+  settledRun
 } from '@/tests/fixtures/e2ee-stream-store.fixture';
 import {
   aUserGroup,
@@ -270,7 +271,7 @@ describeWithSeed('e2ee relay records against MySQL', SEEDS, () => {
   });
 
   async function addDevice(key: string, profile: string) {
-    await publisher.run(db, async (connection, batch) => {
+    await settledRun(publisher, db, async (connection, batch) => {
       await db.insertDevice(deviceRow(key, profile), connection);
       if (batch) await writers.deviceChanged(batch, connection, key);
     });
@@ -357,6 +358,7 @@ describeWithSeed('e2ee relay records against MySQL', SEEDS, () => {
     }
     await backups.activate('pa', backupId, a);
     await backups.compact('pa', backupId, { device_key: a, through_seq: 1 });
+    await publisher.settled();
     return { a, b, group, blobId: blob.blob_id, backupId };
   }
 
@@ -405,6 +407,7 @@ describeWithSeed('e2ee relay records against MySQL', SEEDS, () => {
       notes: 'message report notes'
     });
     await trustAndSafety.setHold('pm', message.id, true);
+    await publisher.settled();
     return {
       reportId: report.id,
       dmReportId: dmReport.id,
@@ -515,6 +518,7 @@ describeWithSeed('e2ee relay records against MySQL', SEEDS, () => {
       epoch_fp: '0102030405060708',
       sender_device_key: ids.b
     });
+    await publisher.settled();
     expect((await rebuild('verify')).ok).toBe(true);
   });
 
@@ -535,6 +539,7 @@ describeWithSeed('e2ee relay records against MySQL', SEEDS, () => {
     expect((await db.getDevice(a))?.label).toBe('Device');
     relay.down = false;
     await devices.renameDevice('pa', a, 'Phone');
+    await publisher.settled();
     expect((await db.getDevice(a))?.label).toBe('Phone');
     expect((await store.countOutbox()).rows).toBe(0);
   });
@@ -551,7 +556,7 @@ describeWithSeed('e2ee relay records against MySQL', SEEDS, () => {
       db: backfillDb,
       writers,
       run: (work) =>
-        publisher.run(backfillDb, (connection, batch) =>
+        settledRun(publisher, backfillDb, (connection, batch) =>
           work(connection, batch!)
         ),
       blobChunk: (blob, index) =>

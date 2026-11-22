@@ -696,18 +696,33 @@ MySQL: reported messages go after 180 days unless held, and resolved drop
 reports lose their evidence after 90 days. Records written before a prune
 still hold that evidence, sealed; only the moderation key opens them.
 
-**`E2EE_RELAY_MODE`** (on `seizeAPI` and `dbMigrationsLoop`):
+**`E2EE_RELAY_MODE`** (on `seizeAPI`, `dbMigrationsLoop` and
+`e2eeRelayPublishLoop`):
 
 - `off` (default): no records; writes run as before.
-- `mirror`: each write appends its records in its transaction and publishes
-  them after the commit. A relay outage never fails a write; later writes
-  and the `e2ee-relay-publish` scope retry.
-- `primary`: a write commits only after `E2EE_RELAY_ACK_QUORUM` relays hold
-  its records; otherwise it answers 503 `E2EE_RELAYS_UNAVAILABLE` and
-  changes nothing.
+- `mirror` (the target for the switch): each write appends its records in
+  its transaction. After the commit they are published in the background,
+  so no request waits on a relay and a relay outage never fails a write.
+  MySQL commits first and the relays catch up; the lag is the outbox.
+- `primary`: not ready, and stays off. A write commits only after
+  `E2EE_RELAY_ACK_QUORUM` relays hold its records; otherwise it answers
+  503 `E2EE_RELAYS_UNAVAILABLE` and rolls back in MySQL, but a relay may
+  already hold its record, a phantom at that stream position. It waits for
+  reserve-then-confirm-or-void records and for returning once the quorum
+  holds a record.
 
-**Rollback** is one change: `primary` to `mirror` (writes stop waiting on
-the relays), or `mirror` to `off`. MySQL keeps every write in every mode.
+**The publisher loop** (`e2eeRelayPublishLoop`, every minute, nothing
+while off) publishes what the outbox still holds, logs the lag (outbox
+rows and the oldest one's age), and checks that every relay holds the head
+of each stream that moved in the last 15 minutes. A relay found behind
+gets the missing records copied from a relay that has them.
+
+**Sessions.** The orderer answers the CHALLENGE each relay sends before a
+session's hour runs out, and reconnects every 30 minutes, so its anchor
+(the lowest finalized height the relays' WELCOMEs report) stays fresh.
+
+**Rollback** is one change: `mirror` to `off`. MySQL keeps every write in
+every mode.
 
 Settings: `E2EE_RELAY_URLS` (comma-separated `wss://`), `E2EE_RELAY_NET`,
 `E2EE_RELAY_ACK_QUORUM`, the orderer's `E2EE_ORDERER_KEY` (secret seed) and

@@ -28,7 +28,8 @@ import { MockCrpRelay } from '@/tests/fixtures/e2ee-mock-crp-relay.fixture';
 import {
   e2eeTestModerationKey,
   e2eeTestRelayIdentity,
-  InMemoryE2eeStreamStore
+  InMemoryE2eeStreamStore,
+  settledRun
 } from '@/tests/fixtures/e2ee-stream-store.fixture';
 
 const NET = '6529-interim-test';
@@ -141,10 +142,14 @@ describe('E2eeStreamPublisher', () => {
   it('records nothing while the mode is off', async () => {
     const { publisher, store, relays } = setup({ mode: 'off' });
     expect(publisher.batch()).toBeNull();
-    const result = await publisher.run(store, async (_connection, batch) => {
-      expect(batch).toBeNull();
-      return 'written';
-    });
+    const result = await settledRun(
+      publisher,
+      store,
+      async (_connection, batch) => {
+        expect(batch).toBeNull();
+        return 'written';
+      }
+    );
     expect(result).toBe('written');
     expect(store.outboxRows).toEqual([]);
     expect(relays[0].stored).toEqual([]);
@@ -152,7 +157,7 @@ describe('E2eeStreamPublisher', () => {
 
   it('mirror: publishes after the commit, hash-chained, to every relay', async () => {
     const { publisher, store, relays } = setup({ mode: 'mirror' });
-    await publisher.run(store, async (connection, batch) => {
+    await settledRun(publisher, store, async (connection, batch) => {
       await batch!.append(connection, welcome(1));
       await batch!.append(connection, welcome(2));
     });
@@ -187,7 +192,7 @@ describe('E2eeStreamPublisher', () => {
   it('puts an item ciphertext as its own payload and keeps the LOG body small', async () => {
     const { publisher, store, relays } = setup({ mode: 'mirror', relays: 1 });
     const ciphertext = Buffer.alloc(70_000, 7);
-    await publisher.run(store, async (connection, batch) => {
+    await settledRun(publisher, store, async (connection, batch) => {
       await batch!.append(connection, message(1, ciphertext));
     });
     const [stored] = relays[0].stored;
@@ -221,7 +226,7 @@ describe('E2eeStreamPublisher', () => {
       ],
       sealToModeration: true
     });
-    await publisher.run(store, async (connection, batch) => {
+    await settledRun(publisher, store, async (connection, batch) => {
       await batch!.append(connection, report('first report'));
       await batch!.append(connection, report('second report'));
     });
@@ -250,7 +255,7 @@ describe('E2eeStreamPublisher', () => {
   it('refuses to seal without a moderation key, or a kind other than SEALED', async () => {
     const { publisher, store, settings } = setup({ mode: 'mirror', relays: 1 });
     const append = (kind: E2eeRecordAppend['kind']) =>
-      publisher.run(store, (connection, batch) =>
+      settledRun(publisher, store, (connection, batch) =>
         batch!.append(connection, {
           ...welcome(1),
           kind,
@@ -271,7 +276,7 @@ describe('E2eeStreamPublisher', () => {
     const { publisher, store, relays } = setup({ mode: 'mirror' });
     relays[1].down = true;
     for (const n of [1, 2, 3]) {
-      await publisher.run(store, async (connection, batch) => {
+      await settledRun(publisher, store, async (connection, batch) => {
         await batch!.append(connection, welcome(n));
       });
     }
@@ -295,7 +300,7 @@ describe('E2eeStreamPublisher', () => {
     const { publisher, store, relays } = setup({ mode: 'primary' });
     relays.forEach((relay) => (relay.down = true));
     await expect(
-      publisher.run(store, async (connection, batch) => {
+      settledRun(publisher, store, async (connection, batch) => {
         await batch!.append(connection, welcome(1));
       })
     ).rejects.toBeInstanceOf(E2eeRelayQuorumError);
@@ -306,7 +311,7 @@ describe('E2eeStreamPublisher', () => {
   it('primary: commits once the quorum holds the record, the rest follow', async () => {
     const { publisher, store, relays } = setup({ mode: 'primary', quorum: 1 });
     relays[1].down = true;
-    await publisher.run(store, async (connection, batch) => {
+    await settledRun(publisher, store, async (connection, batch) => {
       await batch!.append(connection, welcome(1));
     });
     expect(relays[0].stored).toHaveLength(1);
@@ -321,7 +326,7 @@ describe('E2eeStreamPublisher', () => {
     const { publisher, store, relays } = setup({ mode: 'primary', quorum: 2 });
     relays[1].down = true;
     await expect(
-      publisher.run(store, async (connection, batch) => {
+      settledRun(publisher, store, async (connection, batch) => {
         await batch!.append(connection, welcome(1));
       })
     ).rejects.toThrow('reached 1 of 2 relays');
@@ -331,7 +336,7 @@ describe('E2eeStreamPublisher', () => {
   it('resumes a refused sequence at the refused record, keeping order', async () => {
     const { publisher, store, relays } = setup({ mode: 'mirror', relays: 1 });
     relays[0].refuseNextPubs = 1;
-    await publisher.run(store, async (connection, batch) => {
+    await settledRun(publisher, store, async (connection, batch) => {
       await batch!.append(connection, welcome(1));
       await batch!.append(connection, welcome(2));
     });
@@ -347,7 +352,7 @@ describe('E2eeStreamPublisher', () => {
   it('signs a record once, so every relay gets the same event id', async () => {
     const { publisher, store, relays } = setup({ mode: 'mirror' });
     relays[1].down = true;
-    await publisher.run(store, async (connection, batch) => {
+    await settledRun(publisher, store, async (connection, batch) => {
       await batch!.append(connection, welcome(1));
     });
     const signedEvent = store.outboxRows[0].event;
@@ -370,7 +375,7 @@ describe('E2eeStreamPublisher', () => {
       },
       now: () => 1
     });
-    await publisher.run(store, async (connection, batch) => {
+    await settledRun(publisher, store, async (connection, batch) => {
       await batch!.append(connection, welcome(1));
     });
     expect(store.outboxRows).toHaveLength(1);
@@ -382,7 +387,7 @@ describe('E2eeStreamPublisher paging', () => {
   it('publishes a backlog longer than one outbox page, in order', async () => {
     const { publisher, store, relays } = setup({ mode: 'mirror', relays: 1 });
     relays[0].down = true;
-    await publisher.run(store, async (connection, batch) => {
+    await settledRun(publisher, store, async (connection, batch) => {
       for (let n = 1; n <= 230; n++) {
         await batch!.append(connection, welcome(n));
       }
@@ -403,14 +408,14 @@ describe('E2eeStreamPublisher paging', () => {
       relays: 1
     });
     relays[0].down = true;
-    await publisher.run(store, async (connection, batch) => {
+    await settledRun(publisher, store, async (connection, batch) => {
       for (let n = 1; n <= 205; n++) {
         await batch!.append(connection, welcome(n));
       }
     });
     relays[0].down = false;
     (settings as { mode: string }).mode = 'primary';
-    await publisher.run(store, async (connection, batch) => {
+    await settledRun(publisher, store, async (connection, batch) => {
       await batch!.append(connection, welcome(206));
     });
     expect(relays[0].stored).toHaveLength(206);

@@ -630,6 +630,7 @@ export class E2eeCiphertextObjectEntity {
  * record names as `prev`. An index: a rebuild reads it back from the relays.
  */
 @Entity(E2EE_STREAMS_TABLE)
+@Index('e2ee_streams_updated_idx', ['updated_at'])
 export class E2eeStreamEntity {
   @PrimaryColumn({ type: 'varchar', length: 200 })
   readonly wave!: string;

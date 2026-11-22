@@ -15,6 +15,15 @@ import {
  */
 export const CRP_VERSION = 1;
 const DEFAULT_TIMEOUT_MS = 15_000;
+/** A relay session reads and writes for an hour. */
+export const CRP_SESSION_MS = 60 * 60 * 1000;
+/**
+ * A CHALLENGE that arrives this close to the session's end is answered at
+ * once. The relay sends one within its challenge lifetime (5 minutes) of
+ * the end; the fresh challenge that follows every AUTH comes an hour
+ * early and waits.
+ */
+const REAUTH_WINDOW_MS = 10 * 60 * 1000;
 
 /** One event with the grant proof its `auth_ref` names. */
 export interface CrpItem {
@@ -68,7 +77,15 @@ type Frame = Record<string, unknown> & { readonly t: string };
 interface Pending {
   readonly resolve: (value: unknown) => void;
   readonly reject: (error: Error) => void;
-  readonly timer: ReturnType<typeof setTimeout>;
+  /** Restarts the time limit (each frame of a long answer). */
+  readonly touch: () => void;
+}
+
+/** How a connection proves its device key, kept to answer re-challenges. */
+export interface CrpAuthInput {
+  readonly grant: E2eeRecordGrantProof;
+  readonly sign: (digest: string) => string;
+  readonly net: string;
 }
 
 /** The binary frame layout of payload uploads and downloads. */
@@ -137,6 +154,7 @@ export class CrpConnection {
       readonly done: Set<string>;
       readonly replay: CrpReplay;
       readonly settle: (error?: Error) => void;
+      readonly touch: () => void;
     }
   >();
   private welcomeWait: Pending | null = null;
@@ -144,13 +162,25 @@ export class CrpConnection {
   private challengeWait: Pending | null = null;
   private closed: string | null = null;
   private welcome: CrpWelcome | null = null;
+  private authInput: CrpAuthInput | null = null;
+  private sessionUntil: number | null = null;
+  private reauthing: Promise<void> | null = null;
+  /** When the connection was opened (its WELCOME's age). */
+  readonly openedAt: number;
 
   constructor(
     private readonly socket: CrpSocket,
-    private readonly timeoutMs: number = DEFAULT_TIMEOUT_MS
+    private readonly timeoutMs: number = DEFAULT_TIMEOUT_MS,
+    private readonly now: () => number = Date.now
   ) {
+    this.openedAt = now();
     socket.onMessage((data) => this.receive(data));
     socket.onClose((reason) => this.fail(reason));
+  }
+
+  /** When the relay session ends unless a CHALLENGE is answered. */
+  get sessionEndsAt(): number | null {
+    return this.sessionUntil;
   }
 
   get relayId(): string | null {
@@ -166,10 +196,9 @@ export class CrpConnection {
       return Promise.reject(new CrpError(this.closed, 'closed'));
     }
     return new Promise<T>((resolve, reject) => {
-      const timer = setTimeout(
-        () => reject(new CrpError('Relay did not answer in time', 'timeout')),
-        this.timeoutMs
-      );
+      const expire = () =>
+        reject(new CrpError('Relay did not answer in time', 'timeout'));
+      let timer = setTimeout(expire, this.timeoutMs);
       register({
         resolve: (value) => {
           clearTimeout(timer);
@@ -179,7 +208,10 @@ export class CrpConnection {
           clearTimeout(timer);
           reject(error);
         },
-        timer
+        touch: () => {
+          clearTimeout(timer);
+          timer = setTimeout(expire, this.timeoutMs);
+        }
       });
     });
   }
@@ -206,12 +238,13 @@ export class CrpConnection {
     return welcome;
   }
 
-  /** Answers the relay's CHALLENGE with a device key under its grant. */
-  async auth(input: {
-    readonly grant: E2eeRecordGrantProof;
-    readonly sign: (digest: string) => string;
-    readonly net: string;
-  }): Promise<CrpAuthed> {
+  /**
+   * Answers the relay's CHALLENGE with a device key under its grant. The
+   * connection keeps the key's signer and answers the CHALLENGE the relay
+   * sends before the session's hour runs out, so a long-lived connection
+   * keeps its session (and with it the orderer's role).
+   */
+  async auth(input: CrpAuthInput): Promise<CrpAuthed> {
     if (!this.welcome) throw new CrpError('AUTH before WELCOME', 'protocol');
     const challenge =
       this.challenge ??
@@ -219,6 +252,7 @@ export class CrpConnection {
         this.challengeWait = pending;
       }));
     this.challenge = null;
+    const startedAt = this.now();
     const digest = crpAuthDigest({
       net: input.net,
       relayId: this.welcome.relayId,
@@ -230,11 +264,38 @@ export class CrpConnection {
       grant: input.grant,
       sig: input.sign(digest)
     });
+    this.authInput = input;
+    this.sessionUntil = startedAt + CRP_SESSION_MS;
     return {
       wallet: String(authed.wallet ?? ''),
       principal: (authed.principal as string | null) ?? null,
       roles: Array.isArray(authed.roles) ? authed.roles.map(String) : []
     };
+  }
+
+  /** Answers a held CHALLENGE when the session ends soon. */
+  private maybeReauth() {
+    if (
+      !this.authInput ||
+      !this.challenge ||
+      this.reauthing ||
+      this.closed !== null ||
+      this.sessionUntil === null ||
+      this.sessionUntil - this.now() > REAUTH_WINDOW_MS
+    ) {
+      return;
+    }
+    const input = this.authInput;
+    this.reauthing = this.auth(input)
+      .then(() => undefined)
+      .catch((error: Error) => {
+        // The session runs out; the pool reconnects on the next failure.
+        this.fail(`re-authentication failed (${error.message})`);
+        this.socket.close();
+      })
+      .finally(() => {
+        this.reauthing = null;
+      });
   }
 
   async publish(
@@ -307,7 +368,8 @@ export class CrpConnection {
         done: new Set(),
         replay,
         settle: (error) =>
-          error ? pending.reject(error) : pending.resolve(undefined)
+          error ? pending.reject(error) : pending.resolve(undefined),
+        touch: pending.touch
       });
     });
     this.socket.send(
@@ -385,6 +447,7 @@ export class CrpConnection {
           this.challengeWait = null;
         } else {
           this.challenge = challenge;
+          this.maybeReauth();
         }
         return;
       }
@@ -421,6 +484,8 @@ export class CrpConnection {
   private onEvent(frame: Frame) {
     const sub = this.subscriptions.get(Number(frame.sid));
     if (!sub) return;
+    // A replay's time limit runs from its latest frame, not its start.
+    sub.touch();
     sub.replay.items.push({
       rseq: Number(frame.rseq),
       event: frame.event as E2eeSignedRecordEvent,
@@ -432,6 +497,7 @@ export class CrpConnection {
     const sub = this.subscriptions.get(Number(frame.sid));
     if (!sub) return;
     const wave = String(frame.wave);
+    sub.touch();
     if (frame.t === 'RESYNC') sub.replay.resync.push(wave);
     sub.done.add(wave);
     if (Array.from(sub.waves).every((name) => sub.done.has(name))) {

@@ -71,7 +71,7 @@ export async function e2eeRecordBatchIn(
 ): Promise<E2eeRecordBatch | null> {
   const batch = records?.publisher.batch() ?? null;
   if (batch && records) {
-    await afterCommit(connection, () => records.publisher.afterCommit(batch));
+    await afterCommit(connection, () => records.publisher.publishLater(batch));
   }
   return batch;
 }

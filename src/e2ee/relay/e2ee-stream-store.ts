@@ -11,6 +11,13 @@ import {
 
 type Conn = ConnectionWrapper<unknown>;
 
+/**
+ * An outbox page holds at most this many bytes of content and payloads
+ * (and at least one row), so a stream of large records never loads a
+ * whole backlog at once.
+ */
+export const E2EE_OUTBOX_PAGE_BYTES = 8 * 1024 * 1024;
+
 export interface E2eeStreamHead {
   readonly wave: string;
   readonly pos: number;
@@ -57,12 +64,16 @@ export interface E2eeStreamStore {
   ): Promise<E2eeStreamHead>;
   saveHead(head: E2eeStreamHead, now: number, connection: Conn): Promise<void>;
   insertOutbox(row: E2eeOutboxInsert, connection: Conn): Promise<void>;
-  /** A stream's outbox rows after `afterPos`, in position order. */
+  /**
+   * A stream's outbox rows after `afterPos`, in position order: at most
+   * `limit` rows and `maxBytes` bytes, and always at least one row.
+   */
   listOutbox(
     wave: string,
     limit: number,
     connection?: Conn,
-    afterPos?: number
+    afterPos?: number,
+    maxBytes?: number
   ): Promise<E2eeOutboxRow[]>;
   /** Waves with outbox rows, the longest waiting first. */
   listPendingWaves(limit: number): Promise<string[]>;
@@ -77,6 +88,11 @@ export interface E2eeStreamStore {
   deleteOutbox(ids: readonly number[], connection?: Conn): Promise<void>;
   /** Every stream head, for the side-by-side check. */
   listHeads(afterWave: string, limit: number): Promise<E2eeStreamHead[]>;
+  /**
+   * Heads that moved since `sinceMs` and have nothing left in the outbox
+   * (every relay should hold them), newest first: the head check's sample.
+   */
+  recentHeads(sinceMs: number, limit: number): Promise<E2eeStreamHead[]>;
   countOutbox(): Promise<{ rows: number; oldestCreatedAt: number | null }>;
 }
 
@@ -200,15 +216,34 @@ export class MysqlE2eeStreamStore
     wave: string,
     limit: number,
     connection?: Conn,
-    afterPos = 0
+    afterPos = 0,
+    maxBytes = E2EE_OUTBOX_PAGE_BYTES
   ): Promise<E2eeOutboxRow[]> {
+    const sizes = await this.db.execute<{
+      id: number | string;
+      bytes: number | string;
+    }>(
+      `select id, length(content) + coalesce(length(payload), 0) as bytes
+       from ${E2EE_RELAY_OUTBOX_TABLE}
+       where wave = :wave and pos > :afterPos order by pos limit :limit`,
+      { wave, limit, afterPos },
+      this.opts(connection)
+    );
+    const ids: number[] = [];
+    let total = 0;
+    for (const size of sizes) {
+      total += Number(size.bytes);
+      if (ids.length && total > maxBytes) break;
+      ids.push(Number(size.id));
+    }
+    if (!ids.length) return [];
     const rows = await this.db.execute<OutboxDbRow>(
       `select id, wave, pos, kind, refs, to_base64(content) as content_b64,
          to_base64(payload) as payload_b64, log_meta, event, held_by,
          attempts, created_at
        from ${E2EE_RELAY_OUTBOX_TABLE}
-       where wave = :wave and pos > :afterPos order by pos limit :limit`,
-      { wave, limit, afterPos },
+       where id in (:ids) order by pos`,
+      { ids },
       this.opts(connection)
     );
     return rows.map(toOutboxRow);
@@ -281,6 +316,27 @@ export class MysqlE2eeStreamStore
       `select wave, head_pos, head_hash from ${E2EE_STREAMS_TABLE}
        where wave > :afterWave order by wave limit :limit`,
       { afterWave, limit },
+      this.opts()
+    );
+    return rows.map((row) => ({
+      wave: row.wave,
+      pos: Number(row.head_pos),
+      hash: row.head_hash
+    }));
+  }
+
+  async recentHeads(sinceMs: number, limit: number): Promise<E2eeStreamHead[]> {
+    const rows = await this.db.execute<{
+      wave: string;
+      head_pos: number | string;
+      head_hash: string | null;
+    }>(
+      `select s.wave, s.head_pos, s.head_hash from ${E2EE_STREAMS_TABLE} s
+       where s.updated_at >= :sinceMs and s.head_pos > 0
+         and not exists (select 1 from ${E2EE_RELAY_OUTBOX_TABLE} o
+                         where o.wave = s.wave)
+       order by s.updated_at desc limit :limit`,
+      { sinceMs, limit },
       this.opts()
     );
     return rows.map((row) => ({

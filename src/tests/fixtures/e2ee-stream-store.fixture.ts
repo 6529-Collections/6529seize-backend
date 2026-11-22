@@ -2,8 +2,13 @@ import { ethers } from 'ethers';
 import { E2eeSealRecipient } from '@/e2ee/relay/e2ee-moderation-seal';
 import { e2eeEd25519PublicKey } from '@/e2ee/relay/e2ee-record-event';
 import { E2eeRelayIdentity } from '@/e2ee/relay/e2ee-relay-config';
-import { E2eeTransactionRunner } from '@/e2ee/relay/e2ee-stream-publisher';
 import {
+  E2eeRecordBatch,
+  E2eeStreamPublisher,
+  E2eeTransactionRunner
+} from '@/e2ee/relay/e2ee-stream-publisher';
+import {
+  E2EE_OUTBOX_PAGE_BYTES,
   E2eeOutboxInsert,
   E2eeOutboxRow,
   E2eeStreamHead,
@@ -13,6 +18,19 @@ import { ConnectionWrapper } from '@/sql-executor';
 import { loadProviderKeys, ProviderKey } from '@/signed-records/sealed-crypto';
 
 type Conn = ConnectionWrapper<unknown>;
+
+/** The publisher's run, then its background publish (mirror) settled. */
+export async function settledRun<T>(
+  publisher: E2eeStreamPublisher,
+  runner: E2eeTransactionRunner,
+  work: (connection: Conn, batch: E2eeRecordBatch | null) => Promise<T>
+): Promise<T> {
+  try {
+    return await publisher.run(runner, work);
+  } finally {
+    await publisher.settled();
+  }
+}
 
 /** A test device key under a well-formed (unsigned) grant proof. */
 export function e2eeTestRelayIdentity(
@@ -57,6 +75,7 @@ export function e2eeTestModerationKey(
 
 interface State {
   heads: Map<string, E2eeStreamHead>;
+  updatedAt: Map<string, number>;
   outbox: Map<number, E2eeOutboxRow>;
   nextId: number;
 }
@@ -64,6 +83,7 @@ interface State {
 function cloneState(state: State): State {
   return {
     heads: new Map(state.heads),
+    updatedAt: new Map(state.updatedAt),
     outbox: new Map(
       Array.from(state.outbox.entries()).map(([id, row]) => [
         id,
@@ -82,7 +102,12 @@ function cloneState(state: State): State {
 export class InMemoryE2eeStreamStore
   implements E2eeStreamStore, E2eeTransactionRunner
 {
-  private state: State = { heads: new Map(), outbox: new Map(), nextId: 1 };
+  private state: State = {
+    heads: new Map(),
+    updatedAt: new Map(),
+    outbox: new Map(),
+    nextId: 1
+  };
   private readonly staged = new WeakMap<object, State>();
 
   async executeNativeQueriesInTransaction<T>(
@@ -124,10 +149,12 @@ export class InMemoryE2eeStreamStore
 
   async saveHead(
     head: E2eeStreamHead,
-    _now: number,
+    now: number,
     connection: Conn
   ): Promise<void> {
-    this.on(connection).heads.set(head.wave, head);
+    const state = this.on(connection);
+    state.heads.set(head.wave, head);
+    state.updatedAt.set(head.wave, now);
   }
 
   async insertOutbox(row: E2eeOutboxInsert, connection: Conn): Promise<void> {
@@ -157,13 +184,40 @@ export class InMemoryE2eeStreamStore
     wave: string,
     limit: number,
     connection?: Conn,
-    afterPos = 0
+    afterPos = 0,
+    maxBytes = E2EE_OUTBOX_PAGE_BYTES
   ): Promise<E2eeOutboxRow[]> {
-    return Array.from(this.on(connection).outbox.values())
+    const rows = Array.from(this.on(connection).outbox.values())
       .filter((row) => row.wave === wave && row.pos > afterPos)
       .sort((a, b) => a.pos - b.pos)
-      .slice(0, limit)
-      .map((row) => ({ ...row, heldBy: [...row.heldBy] }));
+      .slice(0, limit);
+    const page: E2eeOutboxRow[] = [];
+    let total = 0;
+    for (const row of rows) {
+      total += row.content.length + (row.payload?.length ?? 0);
+      if (page.length && total > maxBytes) break;
+      page.push({ ...row, heldBy: [...row.heldBy] });
+    }
+    return page;
+  }
+
+  async recentHeads(sinceMs: number, limit: number): Promise<E2eeStreamHead[]> {
+    const pending = new Set(
+      Array.from(this.state.outbox.values()).map((row) => row.wave)
+    );
+    return Array.from(this.state.heads.values())
+      .filter(
+        (head) =>
+          head.pos > 0 &&
+          !pending.has(head.wave) &&
+          (this.state.updatedAt.get(head.wave) ?? 0) >= sinceMs
+      )
+      .sort(
+        (a, b) =>
+          (this.state.updatedAt.get(b.wave) ?? 0) -
+          (this.state.updatedAt.get(a.wave) ?? 0)
+      )
+      .slice(0, limit);
   }
 
   async listPendingWaves(limit: number): Promise<string[]> {

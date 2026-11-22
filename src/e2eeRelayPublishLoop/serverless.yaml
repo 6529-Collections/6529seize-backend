@@ -1,0 +1,31 @@
+service: e2eeRelayPublishLoop
+
+package:
+  artifact: dist/index.zip
+
+plugins:
+  - serverless-offline
+
+provider:
+  name: aws
+  runtime: nodejs22.x
+  memorySize: 1024
+  timeout: 300
+  architecture: arm64
+  logRetentionInDays: 60
+
+functions:
+  e2eeRelayPublishLoop:
+    handler: index.handler
+    name: e2eeRelayPublishLoop
+    description: ${env:VERSION_DESCRIPTION}
+    role: arn:aws:iam::${aws:accountId}:role/lambda-vpc-role
+    reservedConcurrency: 1
+    events:
+      - schedule: rate(1 minute)
+    vpc:
+      securityGroupIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):security}
+      subnetIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):subnets}
+    environment:
+      SENTRY_DSN: ${env:SENTRY_DSN}
+      SENTRY_ENVIRONMENT: 'e2eeRelayPublishLoop_${opt:stage, self:provider.stage}'

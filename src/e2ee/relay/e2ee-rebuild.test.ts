@@ -48,7 +48,8 @@ import { MockCrpRelay } from '@/tests/fixtures/e2ee-mock-crp-relay.fixture';
 import {
   e2eeTestModerationKey,
   e2eeTestRelayIdentity,
-  InMemoryE2eeStreamStore
+  InMemoryE2eeStreamStore,
+  settledRun
 } from '@/tests/fixtures/e2ee-stream-store.fixture';
 import { ConnectionWrapper } from '@/sql-executor';
 
@@ -273,7 +274,7 @@ async function scenario() {
       connection: ConnectionWrapper<unknown>
     ) => Promise<void>
   ) =>
-    publisher.run(store, async (connection, batch) => {
+    settledRun(publisher, store, async (connection, batch) => {
       change();
       if (recording.on) await record(batch!, connection);
     });
@@ -1101,7 +1102,9 @@ async function backfillAll(s: Awaited<ReturnType<typeof scenario>>) {
     db: backfillDb(s.db, s.store),
     writers: s.writers,
     run: (work) =>
-      s.publisher.run(s.store, (connection, batch) => work(connection, batch!)),
+      settledRun(s.publisher, s.store, (connection, batch) =>
+        work(connection, batch!)
+      ),
     // The attachment bytes, as S3 holds them in the scenario.
     blobChunk: async (_blob, index) =>
       Buffer.alloc(index === 0 ? 2000 : 1000, index + 1),

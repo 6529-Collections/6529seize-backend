@@ -140,14 +140,16 @@ export class E2eeRecordBatch {
  * anchor is the relays' current height; the signed event is then kept, and
  * every relay gets the same event id.
  *
- * - `mirror`: after the commit the batch's streams are published with a
- *   short time limit; later writes and the `e2ee-relay-publish` operator
- *   scope retry what is left.
+ * - `mirror`: after the commit the batch's streams are published in the
+ *   background; the request never waits for a relay. The publisher loop
+ *   (every minute) retries what is left and checks the relays' heads.
+ *   MySQL commits first and the relays catch up: the lag is the outbox.
  * - `primary`: before the commit, every stream the batch touched must reach
  *   the quorum, or the write fails (503) and rolls back.
  */
 export class E2eeStreamPublisher {
   private lastSeq = 0;
+  private readonly inFlight = new Set<Promise<void>>();
 
   constructor(private readonly deps: E2eePublisherDeps) {}
 
@@ -176,8 +178,28 @@ export class E2eeStreamPublisher {
         return value;
       }
     );
-    if (batch) await this.afterCommit(batch);
+    if (batch) this.publishLater(batch);
     return result;
+  }
+
+  /**
+   * After the commit: starts publishing the batch's streams and returns at
+   * once, so no request waits on a relay. What does not get through is
+   * left in the outbox for later writes and the publisher loop.
+   */
+  publishLater(batch: E2eeRecordBatch): void {
+    if (!batch.touched.length) return;
+    const work = this.afterCommit(batch).finally(() =>
+      this.inFlight.delete(work)
+    );
+    this.inFlight.add(work);
+  }
+
+  /** Waits for the background publishes started so far (tests, shutdown). */
+  async settled(): Promise<void> {
+    while (this.inFlight.size) {
+      await Promise.all(Array.from(this.inFlight));
+    }
   }
 
   /** `primary`: the batch's streams reach the quorum, or this throws. */
@@ -444,7 +466,8 @@ export class E2eeStreamPublisher {
       const held = await this.publishPage(rows, stopped, connection);
       minHolders = Math.min(minHolders, held);
       afterPos = rows[rows.length - 1].pos;
-      if (listed.length < OUTBOX_PAGE) break;
+      // Pages are cut by bytes too, so only an empty page ends the stream.
+      if (stopped.size === settings.urls.length) break;
     }
     return { wave, minHolders };
   }
@@ -533,8 +556,12 @@ export function relayHeadAnchorSource(
   return {
     async anchor() {
       const relays = pool();
-      if (relays.head === null && relays.urls[0]) {
-        await relays.connection(relays.urls[0]).catch(() => undefined);
+      if (relays.head === null) {
+        await Promise.all(
+          relays.urls.map((url) =>
+            relays.connection(url).catch(() => undefined)
+          )
+        );
       }
       if (relays.head === null || relays.head <= 0) {
         throw new Error('No relay reported a finalized height for anchors');
@@ -546,7 +573,8 @@ export function relayHeadAnchorSource(
 
 let defaultPool: E2eeRelayPool | null = null;
 
-function defaultRelayPool(): E2eeRelayPool {
+/** The orderer's connections to the configured relays. */
+export function e2eeDefaultRelayPool(): E2eeRelayPool {
   if (!defaultPool) {
     const settings = e2eeRelaySettings();
     if (!settings.orderer) throw new Error('No orderer key is configured');
@@ -562,7 +590,7 @@ function defaultRelayPool(): E2eeRelayPool {
 export const e2eeStreamPublisher = new E2eeStreamPublisher({
   settings: e2eeRelaySettings,
   store: e2eeStreamStore,
-  pool: defaultRelayPool,
-  anchors: relayHeadAnchorSource(defaultRelayPool),
+  pool: e2eeDefaultRelayPool,
+  anchors: relayHeadAnchorSource(e2eeDefaultRelayPool),
   now: () => Date.now()
 });

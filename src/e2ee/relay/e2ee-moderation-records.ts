@@ -18,7 +18,7 @@ const logger = Logger.get('E2EE_MODERATION_RECORDS');
 export interface E2eeModerationRecorderDeps {
   readonly publisher: Pick<
     E2eeStreamPublisher,
-    'mode' | 'batch' | 'afterCommit'
+    'mode' | 'batch' | 'publishLater'
   >;
   readonly writers: Pick<E2eeRecordWriters, 'moderationRowsChanged'>;
   readonly runner: E2eeTransactionRunner;
@@ -79,7 +79,7 @@ export class E2eeModerationRecorder {
           (connection) =>
             writers.moderationRowsChanged(batch, connection, { table, where })
         );
-        await publisher.afterCommit(batch);
+        publisher.publishLater(batch);
         return copied;
       } catch (error) {
         failure = error;

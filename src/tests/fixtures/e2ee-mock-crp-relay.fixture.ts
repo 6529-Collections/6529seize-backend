@@ -57,6 +57,7 @@ export class MockCrpRelay {
   private readonly logSeqs = new Map<string, string>();
   private readonly payloads = new Map<string, Buffer>();
   private readonly sockets = new Set<() => void>();
+  private readonly sessions = new Set<Session>();
   private rseq = 0;
   /** While true, every connection attempt fails and open ones close. */
   down = false;
@@ -88,6 +89,31 @@ export class MockCrpRelay {
   /** Retention: the relay drops a payload's bytes. */
   dropPayload(sha256: string) {
     this.payloads.delete(sha256);
+  }
+
+  /**
+   * The relay's keepalive near a session's end: a fresh CHALLENGE to
+   * every authenticated connection, which must answer it to keep going.
+   */
+  rechallenge() {
+    for (const session of Array.from(this.sessions)) {
+      if (!session.wallet) continue;
+      session.nonce = `0x${randomBytes(32).toString('hex')}`;
+      session.send(
+        JSON.stringify({ t: 'CHALLENGE', nonce: session.nonce, expires: 0 })
+      );
+    }
+  }
+
+  /** The relay loses its newest `count` events (an old disk restored). */
+  forgetNewest(count: number) {
+    for (const lost of this.events.splice(this.events.length - count, count)) {
+      this.byId.delete(lost.event.id);
+      if (lost.event.kind === 11) {
+        const seq = String(JSON.parse(lost.event.body ?? '{}').seq);
+        this.logSeqs.delete(`${lost.event.wave}#${seq}`);
+      }
+    }
   }
 
   /** Closes every open connection (an outage). */
@@ -122,6 +148,7 @@ export class MockCrpRelay {
       wallet: null,
       roles: []
     };
+    this.sessions.add(session);
     return {
       send: (data) => {
         if (!open) throw new Error('socket closed');
@@ -235,6 +262,11 @@ export class MockCrpRelay {
         principal: null,
         roles: session.roles
       })
+    );
+    // As the relays do: a fresh challenge follows every answer.
+    session.nonce = `0x${randomBytes(32).toString('hex')}`;
+    session.send(
+      JSON.stringify({ t: 'CHALLENGE', nonce: session.nonce, expires: 0 })
     );
   }
 
@@ -374,16 +406,19 @@ export class MockCrpRelay {
   }
 
   private hist(session: Session, frame: Frame) {
-    const after = frame.after === null ? 0 : Number(frame.after);
     const limit = Number(frame.limit);
-    const items = this.mayRead(session)
-      ? this.events
-          .filter(
-            (e) =>
-              this.matches(e.event.wave, String(frame.wave)) && e.rseq > after
-          )
-          .slice(0, limit + 1)
+    const matching = this.mayRead(session)
+      ? this.events.filter((e) =>
+          this.matches(e.event.wave, String(frame.wave))
+        )
       : [];
+    // Without `after`, the newest page.
+    const items =
+      frame.after === null || frame.after === undefined
+        ? matching.slice(-limit)
+        : matching
+            .filter((e) => e.rseq > Number(frame.after))
+            .slice(0, limit + 1);
     session.send(
       JSON.stringify({
         t: 'RES',

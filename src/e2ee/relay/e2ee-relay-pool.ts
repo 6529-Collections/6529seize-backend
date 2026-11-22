@@ -7,6 +7,7 @@ import {
 } from '@/e2ee/relay/e2ee-crp';
 import {
   e2eeEd25519Sign,
+  E2eeRecordGrantProof,
   E2eeSignedRecordEvent
 } from '@/e2ee/relay/e2ee-record-event';
 import { E2eeRelayIdentity } from '@/e2ee/relay/e2ee-relay-config';
@@ -14,6 +15,11 @@ import { Logger } from '@/logging';
 
 const logger = Logger.get('E2EE_RELAY_POOL');
 const STREAM_PAGE = 500;
+/**
+ * A connection is replaced after this long, so its WELCOME `head` (the
+ * anchor) stays fresh; re-challenges keep its session alive meanwhile.
+ */
+const CONNECTION_MAX_AGE_MS = 30 * 60 * 1000;
 
 /** A payload: bytes a record names by their sha256. */
 export interface E2eeRelayPayload {
@@ -25,6 +31,8 @@ export interface E2eeRelayPayload {
 export interface E2eeRelayRecord {
   readonly event: E2eeSignedRecordEvent;
   readonly payloads: readonly E2eeRelayPayload[];
+  /** The grant its `auth_ref` names, when not this pool's identity's. */
+  readonly grant?: E2eeRecordGrantProof;
 }
 
 /** A relay refused a record for a reason retrying will not fix. */
@@ -57,7 +65,10 @@ export type E2eeSocketOpener = (url: string) => Promise<CrpSocket>;
  */
 export class E2eeRelayPool {
   private readonly connections = new Map<string, Promise<CrpConnection>>();
-  private lastHead: number | null = null;
+  private readonly heads = new Map<
+    string,
+    { readonly head: number; readonly at: number }
+  >();
 
   constructor(
     private readonly options: {
@@ -66,6 +77,7 @@ export class E2eeRelayPool {
       readonly identity: E2eeRelayIdentity;
       readonly open?: E2eeSocketOpener;
       readonly timeoutMs?: number;
+      readonly now?: () => number;
     }
   ) {}
 
@@ -73,18 +85,34 @@ export class E2eeRelayPool {
     return this.options.urls;
   }
 
-  /** The highest finalized height a relay reported in its WELCOME. */
+  private now(): number {
+    return (this.options.now ?? Date.now)();
+  }
+
+  /**
+   * The lowest finalized height the relays reported in a recent WELCOME:
+   * an anchor no relay is behind. A relay not heard from in two
+   * connection lifetimes no longer holds the anchor back.
+   */
   get head(): number | null {
-    return this.lastHead;
+    const since = this.now() - 2 * CONNECTION_MAX_AGE_MS;
+    const heads = Array.from(this.heads.values())
+      .filter((entry) => entry.at >= since)
+      .map((entry) => entry.head);
+    return heads.length ? Math.min(...heads) : null;
   }
 
   private async connect(url: string): Promise<CrpConnection> {
     const open = this.options.open ?? openNodeCrpSocket;
     const socket = await open(url);
-    const connection = new CrpConnection(socket, this.options.timeoutMs);
+    const connection = new CrpConnection(
+      socket,
+      this.options.timeoutMs,
+      this.options.now
+    );
     const welcome = await connection.hello(this.options.net);
     if (welcome.head !== null) {
-      this.lastHead = Math.max(this.lastHead ?? 0, welcome.head);
+      this.heads.set(url, { head: welcome.head, at: this.now() });
     }
     const identity = this.options.identity;
     await connection.auth({
@@ -99,7 +127,11 @@ export class E2eeRelayPool {
     const existing = this.connections.get(url);
     if (existing) {
       const connection = await existing.catch(() => null);
-      if (connection?.isOpen) return connection;
+      const fresh =
+        connection !== null &&
+        this.now() - connection.openedAt < CONNECTION_MAX_AGE_MS;
+      if (connection?.isOpen && fresh) return connection;
+      if (connection?.isOpen) connection.close();
     }
     const fresh = this.connect(url);
     this.connections.set(url, fresh);
@@ -132,7 +164,7 @@ export class E2eeRelayPool {
             );
           }
         }
-        const grant = this.grantFor(record.event);
+        const grant = record.grant ?? this.grantFor(record.event);
         if (!grant) throw new Error('No grant for the record');
         const ack = await connection.publish(record.event, grant);
         if (ack.status === 'rejected') {
@@ -187,6 +219,28 @@ export class E2eeRelayPool {
   async payload(url: string, sha256: string): Promise<Buffer> {
     const connection = await this.connection(url);
     return connection.getPayload(sha256);
+  }
+
+  /** A stream's newest event on one relay, or null when it holds none. */
+  async newest(url: string, wave: string): Promise<CrpItem | null> {
+    const connection = await this.connection(url);
+    // HIST without `after` answers the newest page.
+    const page = await connection.history(wave, null, 1);
+    return page.items[page.items.length - 1] ?? null;
+  }
+
+  /**
+   * One page of a family (or stream) from `after` (an rseq), oldest first:
+   * how a rebuild finds the streams without holding a whole family.
+   */
+  async page(
+    url: string,
+    wave: string,
+    after: number,
+    limit: number
+  ): Promise<{ readonly items: CrpItem[]; readonly more: boolean }> {
+    const connection = await this.connection(url);
+    return connection.history(wave, after, limit);
   }
 
   close() {

@@ -1,9 +1,12 @@
 import {
+  CRP_SESSION_MS,
   CrpConnection,
   CrpError,
   decodeCrpBinaryFrame,
   encodeCrpBinaryFrame
 } from '@/e2ee/relay/e2ee-crp';
+import { E2eeRelayPool } from '@/e2ee/relay/e2ee-relay-pool';
+import { relayHeadAnchorSource } from '@/e2ee/relay/e2ee-stream-publisher';
 import { e2eeSha256 } from '@/e2ee/relay/e2ee-record-container';
 import {
   e2eeEd25519Sign,
@@ -41,6 +44,9 @@ async function connect(mock: MockCrpRelay, identity = ORDERER) {
   });
   return { connection, welcome, authed };
 }
+
+/** Lets the in-process relay's queued frames arrive. */
+const settle = () => new Promise((resolve) => setTimeout(resolve, 20));
 
 function record(seq: number) {
   return signE2eeRecord({
@@ -151,6 +157,73 @@ describe('CrpConnection', () => {
     expect((await stranger.replay(['cv'])).items).toEqual([]);
   });
 
+  it('answers the CHALLENGE that comes before its session ends, and only that one', async () => {
+    const mock = relay();
+    let clock = 1_795_000_000_000;
+    const connection = new CrpConnection(
+      await mock.connect(),
+      1000,
+      () => clock
+    );
+    await connection.hello(NET);
+    await connection.auth({
+      grant: ORDERER.grant,
+      sign: (digest) => e2eeEd25519Sign(ORDERER.seed, digest),
+      net: NET
+    });
+    await settle();
+    // The fresh challenge after AUTH comes an hour early: it waits.
+    expect(mock.seen['AUTH']).toBe(1);
+    expect(connection.sessionEndsAt).toBe(clock + CRP_SESSION_MS);
+    clock += 55 * 60_000;
+    mock.rechallenge();
+    await settle();
+    expect(mock.seen['AUTH']).toBe(2);
+    expect(connection.sessionEndsAt).toBe(clock + CRP_SESSION_MS);
+    await settle();
+    expect(mock.seen['AUTH']).toBe(2);
+    expect((await connection.publish(record(1), ORDERER.grant)).status).toBe(
+      'accepted'
+    );
+  });
+
+  it('times a replay from its latest frame, not its start', async () => {
+    const mock = relay();
+    const { connection } = await connect(mock);
+    for (const seq of [1, 2, 3, 4, 5, 6]) {
+      await connection.publish(record(seq), ORDERER.grant);
+    }
+    const socket = await mock.connect();
+    // Every frame takes 60 ms; the whole replay takes longer than the
+    // 150 ms limit, no single gap does.
+    const slow = {
+      ...socket,
+      onMessage: (listener: (data: string | Uint8Array) => void) => {
+        let queue = Promise.resolve();
+        socket.onMessage((data) => {
+          queue = queue.then(
+            () =>
+              new Promise<void>((resolve) =>
+                setTimeout(() => {
+                  listener(data);
+                  resolve();
+                }, 60)
+              )
+          );
+        });
+      }
+    };
+    const reader = new CrpConnection(slow, 150);
+    await reader.hello(NET);
+    await reader.auth({
+      grant: READER.grant,
+      sign: (digest) => e2eeEd25519Sign(READER.seed, digest),
+      net: NET
+    });
+    const replay = await reader.replay(['cv']);
+    expect(replay.items).toHaveLength(6);
+  });
+
   it('fails pending requests when the relay goes away', async () => {
     const mock = relay();
     const { connection } = await connect(mock);
@@ -159,5 +232,38 @@ describe('CrpConnection', () => {
       CrpError
     );
     expect(connection.isOpen).toBe(false);
+  });
+});
+
+describe('E2eeRelayPool', () => {
+  it('anchors at the lowest relay head and reconnects before an hour passes', async () => {
+    const low = relay();
+    const high = new MockCrpRelay({
+      ...low.options,
+      url: 'wss://relay-high.test',
+      head: 900
+    });
+    const byUrl = new Map([
+      [low.options.url, low],
+      [high.options.url, high]
+    ]);
+    let clock = 1_795_000_000_000;
+    const pool = new E2eeRelayPool({
+      urls: [low.options.url, high.options.url],
+      net: NET,
+      identity: ORDERER,
+      open: (url) => byUrl.get(url)!.connect(),
+      now: () => clock
+    });
+    await expect(relayHeadAnchorSource(() => pool).anchor()).resolves.toBe(777);
+    const first = await pool.connection(low.options.url);
+    clock += 10 * 60_000;
+    expect(await pool.connection(low.options.url)).toBe(first);
+    clock += 25 * 60_000;
+    const second = await pool.connection(low.options.url);
+    expect(second).not.toBe(first);
+    expect(first.isOpen).toBe(false);
+    expect(low.seen['HELLO']).toBe(2);
+    pool.close();
   });
 });

@@ -14,7 +14,7 @@ function recorder(input: { mode: 'off' | 'mirror'; failures?: number }) {
     publisher: {
       mode: () => input.mode,
       batch: () => (input.mode === 'off' ? null : batch),
-      afterCommit: async (b) => {
+      publishLater: (b) => {
         published.push(b);
       }
     },
