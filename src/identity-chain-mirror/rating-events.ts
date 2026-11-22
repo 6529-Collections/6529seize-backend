@@ -2,6 +2,7 @@ import {
   ChainFeedBlock,
   ChainFeedRecord,
   ChainFeedWriter,
+  ChainRating,
   ChainRatingTotal
 } from '@/chain-gateway/chain-gateway.types';
 import { HEX32 } from './wallet-bindings';
@@ -261,6 +262,48 @@ export function totalIn(
   if (!found) return 0;
   const total = Number(found.total);
   return Number.isSafeInteger(total) ? total : null;
+}
+
+/**
+ * A rating as the gateway lists it (an identity's, by target), as a ledger
+ * row: the record's key fields, its value and the height it was set at (a
+ * value it can't hold exactly is 0 and stale). Null when its key can't be
+ * read.
+ */
+export function ledgerRowOfRating(
+  rating: ChainRating,
+  height: number
+): {
+  rater: string;
+  matterCode: number;
+  targetKind: number;
+  target: string;
+  category: string;
+  value: number;
+  height: number;
+  stale: boolean;
+} | null {
+  const rater = hex32(rating.rater);
+  const target = hex32(rating.target);
+  const matter = MATTERS[String(rating.matter ?? '').toLowerCase()];
+  if (!rater || !target || !matter) return null;
+  const id = hex32(rating.category?.id);
+  const category = matter === 'REP' ? id : (id ?? ZERO32);
+  if (!category || (matter === 'REP' && category === ZERO32)) return null;
+  const value = Number(rating.value);
+  const exact = Number.isSafeInteger(value);
+  return {
+    rater,
+    matterCode: matter === 'REP' ? 1 : 2,
+    targetKind: IDENTITY_TARGET,
+    target,
+    category,
+    value: exact ? value : 0,
+    height: Number.isSafeInteger(rating.updatedHeight)
+      ? rating.updatedHeight
+      : height,
+    stale: !exact
+  };
 }
 
 /** The state key of a REP category's Category record. */

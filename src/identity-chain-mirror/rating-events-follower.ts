@@ -4,6 +4,7 @@ import {
 } from '@/chain-gateway/chain-gateway.client';
 import {
   ChainFeedBlock,
+  ChainRating,
   ChainRatingTotal
 } from '@/chain-gateway/chain-gateway.types';
 import { isHelpBotCreditCategory } from '@/help-bot/help-bot.config';
@@ -16,6 +17,7 @@ import {
 } from './chain-feed-pages';
 import {
   IdentityChainMirrorDb,
+  MirrorState,
   RatingEventRow,
   RatingEventsCursor,
   RatingLedgerKey,
@@ -26,6 +28,7 @@ import {
   categoryKey,
   ChainRatingChange,
   ledgerKeyOf,
+  ledgerRowOfRating,
   RATING_EVENT_FAMILIES,
   ratingChangesOf,
   ratingEventOrigin,
@@ -37,10 +40,24 @@ import {
 const logger = Logger.get('IDENTITY_CHAIN_RATING_EVENTS');
 
 const PAGE_BLOCKS = 200;
+/** Identities a step of a ledger rebuild's walk. */
+const REBUILD_PAGE = 100;
+/** Runs in a row without moving, behind the identities, before the alarm. */
+export const RATING_EVENTS_STUCK_RUNS = 5;
+/** Problems listed in a run's report; past these they are only counted. */
+const PROBLEMS_LISTED = 50;
+/** The longest category name the event log holds. */
+const CATEGORY_NAME_MAX = 100;
 
 type Gateway = Pick<
   ChainGatewayClient,
-  'getChanges' | 'getState' | 'getStatus' | 'getRatingTotals'
+  | 'getChanges'
+  | 'getState'
+  | 'getStatus'
+  | 'getRatingTotals'
+  | 'getHead'
+  | 'listIdentities'
+  | 'getRatings'
 >;
 
 type Db = Pick<
@@ -49,6 +66,7 @@ type Db = Pick<
   | 'getState'
   | 'saveRatingEventsCursor'
   | 'clearRatingEvents'
+  | 'clearRatingLedger'
   | 'profileIdsOfPrincipals'
   | 'ratingLedgerOf'
   | 'ratingLedgerTotalsOf'
@@ -62,39 +80,93 @@ export interface RatingEventsReport {
   /** Rating event rows written (a page read again may count again). */
   ratingEvents: number;
   /**
-   * Rating records that couldn't be read (`height:key`), rows written with
-   * a value before or a total that may be off, and what stopped the
-   * follower for the run.
+   * The first problems of the run: rating records that couldn't be read
+   * (`height:key`), rows written with a value before or a total that may be
+   * off, and what stopped the follower for the run.
    */
   ratingEventProblems: string[];
+  /** Problems past the listed ones, only counted. */
+  ratingEventProblemsLeftOut: number;
   /** Rating records after the import that carry no writer (an old gateway). */
   ratingRecordsWithoutWriter: number;
   /** Where the follower stopped: the next feed height it reads. */
   eventsNextHeight: number | null;
+  /** Set when the follower is stuck behind the identities: the run fails. */
+  error?: string;
 }
 
-function isHeightGone(error: unknown): boolean {
-  return error instanceof ChainGatewayError && error.code === 'height_gone';
+/** A problem for the run's report: the first ones listed, the rest counted. */
+export function noteRatingEventProblem(
+  report: Pick<
+    RatingEventsReport,
+    'ratingEventProblems' | 'ratingEventProblemsLeftOut'
+  >,
+  problem: string
+) {
+  if (report.ratingEventProblems.length < PROBLEMS_LISTED) {
+    report.ratingEventProblems.push(problem);
+  } else {
+    report.ratingEventProblemsLeftOut++;
+  }
+}
+
+/** The run's time ran out inside a page: it is dropped, nothing written. */
+class OutOfTime extends Error {
+  constructor() {
+    super('out of time');
+    Object.setPrototypeOf(this, new.target.prototype);
+  }
+}
+
+/**
+ * A height the gateway no longer holds. The node serves pinned reads of its
+ * last views only; a refusal stamped below the height asked is a node that
+ * hasn't finalized it yet, not one that dropped it.
+ */
+function isGoneForGood(error: unknown, height: number): boolean {
+  return (
+    error instanceof ChainGatewayError &&
+    error.code === 'height_gone' &&
+    !(error.read !== undefined && error.read.finalizedHeight < height)
+  );
+}
+
+function cursorOf(state: MirrorState): RatingEventsCursor {
+  return {
+    next: Number(state.events_next_height),
+    rebuildHeight:
+      state.events_rebuild_height === null
+        ? null
+        : Number(state.events_rebuild_height),
+    rebuildAfter: state.events_rebuild_after,
+    goneAt: state.events_gone_at === null ? null : Number(state.events_gone_at),
+    stuckRuns: Number(state.events_stuck_runs ?? 0)
+  };
 }
 
 /**
  * The rating events (identity_chain_rating_events) and their ledger
  * (identity_chain_rating_ledger), from the feed's rating families with
- * their own place in the state (events_next_height, events_resume_height),
- * from the import's start: whole blocks of the mirror's chain, up to the
- * identity sync's place (so raters and targets are mapped first), each
- * page's rows, ledger, category names and place in one transaction.
+ * their own place in the state (the events_ columns), from the import's
+ * start: whole blocks of the mirror's chain, never past the identity sync's
+ * place (so raters and targets are mapped first), each page's rows,
+ * ledger, category names and place in one transaction.
  *
  * Each Rating record of an identity gives a row: the value before, the new
  * one, the total after, the origin from its writer. The value before is
- * the ledger's while its row can be trusted, else (a key the follower
- * couldn't read, or one a gap in the feed may have changed) the chain's at
- * the height before; when the gateway no longer holds that height the row
- * is written with origin UNKNOWN. The total is the block's RatingTotal
- * record, else the ledger's while it is exact, else the chain's totals at
- * the height. Nothing comes from 6529.io's ratings, which the identity sync
- * writes at newer heights. A read that fails otherwise ends the follower's
- * run before the page is written (reported, not thrown): the page waits.
+ * the ledger's; a key the follower couldn't read is marked stale, and its
+ * next change reads the value from the chain at the height before (origin
+ * UNKNOWN when the gateway no longer holds it). The total is the block's
+ * RatingTotal record, else the ledger's when none of its rows is stale,
+ * else the chain's totals at the height. Nothing comes from 6529.io's
+ * ratings, which the identity sync writes at newer heights.
+ *
+ * A gap in the feed (seen gone on two runs) rebuilds the ledger from the
+ * chain's ratings at one pinned height, and the follower goes on from the
+ * next one. A read that fails otherwise, or a run's time running out, ends
+ * the follower's run before the page is written (reported, not thrown):
+ * the page waits. A follower that doesn't move behind the identities for
+ * RATING_EVENTS_STUCK_RUNS runs fails the run.
  */
 export class RatingEventsFollower {
   /** REP category names by id (a category's name never changes). */
@@ -119,14 +191,22 @@ export class RatingEventsFollower {
     report: RatingEventsReport
   ): Promise<void> {
     let withoutWriter = 0;
+    let state: MirrorState | null = null;
     try {
-      await this.read(importStart, importDone, deadline, report, (count) => {
-        withoutWriter += count;
+      // The state as stored: an identity step that threw leaves the run's
+      // copy behind it.
+      state = await this.db.getState();
+      if (!state) {
+        logger.warn('[NO MIRROR STATE YET] [RATING EVENTS WAIT]');
+        return;
+      }
+      await this.read(state, importStart, importDone, deadline, report, (n) => {
+        withoutWriter += n;
       });
     } catch (error) {
       const message = messageOf(error);
       logger.error(`[RATING EVENTS WAIT FOR THE NEXT RUN] ${message}`);
-      report.ratingEventProblems.push(message);
+      noteRatingEventProblem(report, message);
     } finally {
       report.ratingRecordsWithoutWriter += withoutWriter;
       if (withoutWriter) {
@@ -135,26 +215,64 @@ export class RatingEventsFollower {
         );
       }
     }
+    if (state) await this.checkProgress(state, report);
+  }
+
+  /**
+   * Counts the runs the follower didn't move while behind the identities
+   * (or in a gap); at RATING_EVENTS_STUCK_RUNS the run fails, so it alarms.
+   */
+  private async checkProgress(before: MirrorState, report: RatingEventsReport) {
+    try {
+      const after = await this.db.getState();
+      if (!after || after.events_next_height === null) return;
+      const was = before.events_next_height === null ? null : cursorOf(before);
+      const now = cursorOf(after);
+      const moved =
+        was === null ||
+        now.next > was.next ||
+        (now.rebuildHeight !== null &&
+          now.rebuildHeight === was.rebuildHeight &&
+          now.rebuildAfter !== was.rebuildAfter);
+      const behind =
+        now.rebuildHeight !== null ||
+        now.goneAt !== null ||
+        (after.next_height !== null && now.next < Number(after.next_height));
+      const stuckRuns = moved || !behind ? 0 : now.stuckRuns + 1;
+      if (stuckRuns !== now.stuckRuns) {
+        await this.db.saveRatingEventsCursor({ ...now, stuckRuns }, this.now());
+      }
+      if (stuckRuns >= RATING_EVENTS_STUCK_RUNS) {
+        const message = `Rating events stuck at ${now.next} for ${stuckRuns} runs: ${report.ratingEventProblems[0] ?? 'no page written'}`;
+        logger.error(`[RATING EVENTS STUCK] ${message}`);
+        report.error = report.error ?? message;
+      }
+    } catch (error) {
+      const message = messageOf(error);
+      logger.error(`[RATING EVENTS PROGRESS NOT SAVED] ${message}`);
+      noteRatingEventProblem(report, message);
+    }
   }
 
   private async read(
+    state: MirrorState,
     importStart: number | null,
     importDone: number | null,
     deadline: number,
     report: RatingEventsReport,
     countWithoutWriter: (count: number) => void
   ) {
-    // The state as stored: an identity step that threw leaves the run's
-    // copy behind it.
-    const state = await this.db.getState();
-    if (!state) {
-      logger.warn('[NO MIRROR STATE YET] [RATING EVENTS WAIT]');
-      return;
-    }
     if (this.namesChain !== state.chain_id) {
       this.forgetNames(state.chain_id);
     }
     report.eventsNextHeight = state.events_next_height;
+    // The identity sync's place: rows wait for it, so their raters and
+    // targets are mapped when they are written.
+    if (state.next_height === null) {
+      logger.warn('[NO IDENTITY SYNC PLACE YET] [RATING EVENTS WAIT]');
+      return;
+    }
+    const until = Number(state.next_height);
     let cursor: RatingEventsCursor;
     if (state.events_next_height === null) {
       if (importStart === null) {
@@ -162,37 +280,40 @@ export class RatingEventsFollower {
         return;
       }
       // From the import's start, with nothing left of an earlier start.
-      cursor = { next: importStart, resume: null };
-      const first = cursor;
+      const first = {
+        next: importStart,
+        rebuildHeight: null,
+        rebuildAfter: null,
+        goneAt: null,
+        stuckRuns: 0
+      };
       await this.db.executeNativeQueriesInTransaction(async (conn) => {
         await this.db.clearRatingEvents(conn);
         await this.db.saveRatingEventsCursor(first, this.now(), conn);
       });
       this.forgetNames(state.chain_id);
+      cursor = first;
       report.eventsNextHeight = cursor.next;
     } else {
-      cursor = {
-        next: Number(state.events_next_height),
-        resume:
-          state.events_resume_height === null
-            ? null
-            : Number(state.events_resume_height)
-      };
+      cursor = cursorOf(state);
     }
-    // The identity sync's place: rows wait for it, so their raters and
-    // targets are mapped when they are written.
-    const until = state.next_height === null ? null : Number(state.next_height);
     while (this.now() < deadline) {
+      if (cursor.rebuildHeight !== null) {
+        cursor = await this.rebuild(cursor, deadline, report);
+        report.eventsNextHeight = cursor.next;
+        continue;
+      }
       const from = cursor.next;
-      if (until !== null && from >= until) break;
+      if (from >= until) break;
       const page = await readWholeBlocks(this.gateway, from, {
         limit: PAGE_BLOCKS,
         families: RATING_EVENT_FAMILIES,
         sleep: this.sleep
       });
       if (!page) {
-        cursor = await this.afterGone(cursor, report);
-        break;
+        cursor = await this.afterGone(cursor);
+        if (cursor.rebuildHeight === null) break;
+        continue;
       }
       if (page.atHead || page.nextHeight <= from) break;
       if (isOtherChain(state.chain_id, page.network)) {
@@ -201,16 +322,23 @@ export class RatingEventsFollower {
         );
         break;
       }
-      const next =
-        until === null ? page.nextHeight : Math.min(page.nextHeight, until);
+      const next = Math.min(page.nextHeight, until);
       const blocks = page.blocks.filter((it) => Number(it.height) < next);
-      const written = await this.writePage(
-        blocks,
-        cursor,
-        { ...cursor, next },
-        importDone,
-        report
-      );
+      let written: { cursor: RatingEventsCursor; withoutWriter: number };
+      try {
+        written = await this.writePage(
+          blocks,
+          // A page read: a gone seen earlier was a node's.
+          { ...cursor, next, goneAt: null },
+          importDone,
+          deadline,
+          report
+        );
+      } catch (error) {
+        if (!(error instanceof OutOfTime)) throw error;
+        logger.warn(`[OUT OF TIME IN THE PAGE AT ${from}] [NEXT RUN]`);
+        break;
+      }
       cursor = written.cursor;
       countWithoutWriter(written.withoutWriter);
       report.eventsNextHeight = cursor.next;
@@ -223,31 +351,36 @@ export class RatingEventsFollower {
     this.namesChain = chainId;
   }
 
+  /** Throws OutOfTime when the run has no time left for another read. */
+  private ensureTime(deadline: number) {
+    if (this.now() >= deadline) throw new OutOfTime();
+  }
+
   /**
-   * The feed no longer holds the cursor's height: the follower goes on from
-   * the next height it holds, and the ledger (kept) may be stale for any
-   * key the gap changed.
+   * The feed no longer holds the cursor's height. One answer may be a
+   * node's: the first time it is noted, and only when the next run finds it
+   * gone too is the ledger rebuilt (the rows of the gap are lost).
    */
   private async afterGone(
-    cursor: RatingEventsCursor,
-    report: RatingEventsReport
+    cursor: RatingEventsCursor
   ): Promise<RatingEventsCursor> {
     const from = cursor.next;
     const next = await this.nextHeld(from);
-    if (next === null || next <= from) {
-      const held = next === null ? 'NO HEIGHT HELD AFTER IT' : 'STILL HELD';
+    if (next !== null && next <= from) {
       logger.error(
-        `[RATING EVENTS: FEED GONE AT ${from}] [${held}] [NEXT RUN]`
+        `[RATING EVENTS: FEED GONE AT ${from}] [STILL HELD] [NEXT RUN]`
       );
       return cursor;
     }
-    logger.error(
-      `[RATING EVENTS: FEED GONE AT ${from}] [NO ROWS FOR HEIGHTS ${from} TO ${next - 1}] [GOING ON FROM ${next}]`
-    );
-    const after = { next, resume: next };
-    await this.db.saveRatingEventsCursor(after, this.now());
-    report.eventsNextHeight = next;
-    return after;
+    if (cursor.goneAt !== from) {
+      logger.error(
+        `[RATING EVENTS: FEED GONE AT ${from}] [TAKEN AS A GAP IF THE NEXT RUN FINDS IT GONE TOO]`
+      );
+      const seen = { ...cursor, goneAt: from };
+      await this.db.saveRatingEventsCursor(seen, this.now());
+      return seen;
+    }
+    return await this.startRebuild(cursor, `FEED GONE AT ${from}`);
   }
 
   /** The first height at or after `from` the gateway's feed holds. */
@@ -268,12 +401,152 @@ export class RatingEventsFollower {
     return starts.length ? starts[0] : null;
   }
 
+  /**
+   * A ledger rebuild at the latest finalized height, from an empty ledger:
+   * the heights from the cursor's to it give no rows.
+   */
+  private async startRebuild(
+    cursor: RatingEventsCursor,
+    why: string
+  ): Promise<RatingEventsCursor> {
+    const head = await this.gateway.getHead(true);
+    const pin = Number(head.finalizedHeight);
+    logger.error(
+      `[RATING EVENTS: ${why}] [NO ROWS FOR HEIGHTS ${cursor.next} TO ${pin}] [THE LEDGER IS REBUILT AT ${pin}]`
+    );
+    const rebuilding = {
+      ...cursor,
+      rebuildHeight: pin,
+      rebuildAfter: null,
+      goneAt: null
+    };
+    await this.db.executeNativeQueriesInTransaction(async (conn) => {
+      await this.db.clearRatingLedger(conn);
+      await this.db.saveRatingEventsCursor(rebuilding, this.now(), conn);
+    });
+    return rebuilding;
+  }
+
+  /**
+   * Steps of the ledger rebuild: the identities at the pinned height, a
+   * page at a time, each with raters giving its ratings there; each step's
+   * rows and place in one transaction. Done, the follower goes on from the
+   * next height. When the gateway no longer holds the pin, the rebuild
+   * starts again at a newer one.
+   */
+  private async rebuild(
+    initial: RatingEventsCursor,
+    deadline: number,
+    report: RatingEventsReport
+  ): Promise<RatingEventsCursor> {
+    let cursor = initial;
+    const pin = Number(cursor.rebuildHeight);
+    while (this.now() < deadline) {
+      const rows: (RatingLedgerKey & RatingLedgerRow)[] = [];
+      const names = new Map<string, string>();
+      let next: string | null;
+      try {
+        this.ensureTime(deadline);
+        const page = await this.gateway.listIdentities({
+          height: pin,
+          after: cursor.rebuildAfter,
+          limit: REBUILD_PAGE
+        });
+        if (!page) throw new Error(`No identity list at ${pin}`);
+        for (const identity of page.items) {
+          if ((identity.rep?.raters ?? 0) + (identity.nic?.raters ?? 0) === 0) {
+            continue;
+          }
+          for (const rating of await this.ratingsAt(
+            identity.principalId,
+            pin,
+            deadline
+          )) {
+            const row = ledgerRowOfRating(rating, pin);
+            if (!row) {
+              noteRatingEventProblem(
+                report,
+                `${pin}: a rating of ${identity.principalId} not read`
+              );
+              continue;
+            }
+            rows.push(row);
+            const name = rating.category?.name;
+            if (row.matterCode === 1 && typeof name === 'string') {
+              names.set(row.category, name);
+            }
+          }
+        }
+        next = page.next;
+      } catch (error) {
+        if (error instanceof OutOfTime) return cursor;
+        if (isGoneForGood(error, pin)) {
+          return await this.startRebuild(
+            cursor,
+            `LEDGER REBUILD AT ${pin} GONE`
+          );
+        }
+        throw error;
+      }
+      const done = next === null;
+      const after: RatingEventsCursor = done
+        ? {
+            next: pin + 1,
+            rebuildHeight: null,
+            rebuildAfter: null,
+            goneAt: null,
+            stuckRuns: cursor.stuckRuns
+          }
+        : { ...cursor, rebuildAfter: next };
+      const stored = Array.from(names.entries())
+        .filter(([id]) => !this.storedCategories.has(id))
+        .map(([id, name]) => ({ id, name }));
+      await this.db.executeNativeQueriesInTransaction(async (conn) => {
+        await this.db.writeRatingLedger(rows, [], conn);
+        await this.db.writeRatingCategories(stored, conn);
+        await this.db.saveRatingEventsCursor(after, this.now(), conn);
+      });
+      names.forEach((name, id) => {
+        this.categoryNames.set(id, name);
+        this.storedCategories.add(id);
+      });
+      cursor = after;
+      if (done) {
+        logger.info(
+          `[RATING LEDGER REBUILT AT ${pin}] [GOING ON FROM ${pin + 1}]`
+        );
+        return cursor;
+      }
+    }
+    return cursor;
+  }
+
+  /** A target's ratings at the pinned height, every page. */
+  private async ratingsAt(
+    target: string,
+    pin: number,
+    deadline: number
+  ): Promise<ChainRating[]> {
+    const all: ChainRating[] = [];
+    let after: string | null = null;
+    for (;;) {
+      this.ensureTime(deadline);
+      const page = await this.gateway.getRatings(
+        { target },
+        { height: pin, after, limit: 500 }
+      );
+      all.push(...(page?.items ?? []));
+      after = page?.next ?? null;
+      if (!after) return all;
+    }
+  }
+
   /** One page's rows, ledger, names and place, in one transaction. */
   private async writePage(
     blocks: readonly ChainFeedBlock[],
-    cursor: RatingEventsCursor,
     after: RatingEventsCursor,
     importDone: number | null,
+    deadline: number,
     report: RatingEventsReport
   ): Promise<{ cursor: RatingEventsCursor; withoutWriter: number }> {
     const { changes, categoryNames, totals, unreadable } =
@@ -281,9 +554,9 @@ export class RatingEventsFollower {
     categoryNames.forEach((name, id) => this.categoryNames.set(id, name));
     if (unreadable.length) {
       logger.error(`[RATING RECORDS NOT READ] ${unreadable.join(', ')}`);
-      report.ratingEventProblems.push(...unreadable);
+      unreadable.forEach((it) => noteRatingEventProblem(report, it));
     }
-    await this.loadCategoryNames(changes);
+    await this.loadCategoryNames(changes, deadline);
     const ledger = await this.db.ratingLedgerOf(changes);
     const totalsBefore = await this.db.ratingLedgerTotalsOf(changes);
     const mapped = await this.db.profileIdsOfPrincipals(
@@ -322,7 +595,8 @@ export class RatingEventsFollower {
       let old: number | null;
       if (values.has(key)) {
         old = values.get(key)!;
-      } else if (set.get(key)?.stale || this.isStale(row, cursor.resume)) {
+      } else if (set.get(key)?.stale || row?.stale) {
+        this.ensureTime(deadline);
         old = await this.valueBefore(change);
       } else {
         old = row?.value ?? 0;
@@ -343,20 +617,22 @@ export class RatingEventsFollower {
         });
       }
       const changed = !known || before !== change.value;
-      // The block's own total, else the ledger's while it is exact, else
-      // the chain's at the height.
+      // The block's own total, else the ledger's when none of its rows is
+      // stale, else the chain's at the height.
       const base = running.has(totalKey)
         ? (running.get(totalKey) ?? null)
-        : this.ledgerTotal(totalsBefore.get(totalKey), cursor.resume);
+        : this.ledgerTotal(totalsBefore.get(totalKey));
       const roughBase =
         rough.get(totalKey) ?? totalsBefore.get(totalKey)?.total ?? 0;
       let total: number | null =
         totals.get(change.height)?.get(totalKey) ??
         (base !== null && known ? base + change.value - before : null);
       if (total === null && changed) {
+        this.ensureTime(deadline);
         total = await this.totalAt(change, totalsAt);
         if (total === null) {
-          report.ratingEventProblems.push(
+          noteRatingEventProblem(
+            report,
             `${change.height}: a total that may be off`
           );
         }
@@ -371,15 +647,23 @@ export class RatingEventsFollower {
       if (!changed) continue;
       const name = this.nameOf(change);
       if (name === null) {
-        report.ratingEventProblems.push(
+        noteRatingEventProblem(
+          report,
           `${change.height}: no name for the category ${change.categoryId}`
         );
         continue;
       }
       if (change.matter === 'REP' && isHelpBotCreditCategory(name)) continue;
       if (!known) {
-        report.ratingEventProblems.push(
+        noteRatingEventProblem(
+          report,
           `${change.height}: the value before is not known (origin UNKNOWN)`
+        );
+      }
+      if (name.length > CATEGORY_NAME_MAX) {
+        noteRatingEventProblem(
+          report,
+          `${change.height}: the category name of ${change.categoryId} cut to ${CATEGORY_NAME_MAX} characters`
         );
       }
       rows.push({
@@ -390,7 +674,7 @@ export class RatingEventsFollower {
         target_principal: change.target,
         target_profile_id: mapped.get(change.target) ?? null,
         matter: change.matter,
-        matter_category: name,
+        matter_category: name.slice(0, CATEGORY_NAME_MAX),
         old_rating: before,
         new_rating: change.value,
         total_after: guess,
@@ -424,31 +708,19 @@ export class RatingEventsFollower {
     return { cursor: after, withoutWriter };
   }
 
-  /**
-   * A ledger row that can't be trusted: marked stale, or older than the
-   * height the follower went on from after a gap; after a gap, no row too.
-   */
-  private isStale(
-    row: RatingLedgerRow | undefined,
-    resume: number | null
-  ): boolean {
-    if (!row) return resume !== null;
-    return row.stale || (resume !== null && row.height < resume);
-  }
-
-  /** The ledger's total when exact (no gap, no stale row); else null. */
+  /** The ledger's total when none of its rows is stale; else null. */
   private ledgerTotal(
-    entry: { total: number; stale: number } | undefined,
-    resume: number | null
+    entry: { total: number; stale: number } | undefined
   ): number | null {
-    if (resume !== null || (entry?.stale ?? 0) > 0) return null;
+    if ((entry?.stale ?? 0) > 0) return null;
     return entry?.total ?? 0;
   }
 
   /**
    * The rating's value at the height before the change, from the chain (0
    * when it had none); null when the gateway no longer holds that height or
-   * the value can't be read. Any other error ends the run: the page waits.
+   * the value can't be read. Any other error (a node that hasn't finalized
+   * the height yet among them) ends the run: the page waits.
    */
   private async valueBefore(change: ChainRatingChange): Promise<number | null> {
     const height = change.height - 1;
@@ -461,7 +733,7 @@ export class RatingEventsFollower {
       const value = Number(record.valueFields?.value);
       return Number.isSafeInteger(value) ? value : null;
     } catch (error) {
-      if (!isHeightGone(error)) throw error;
+      if (!isGoneForGood(error, height)) throw error;
       logger.warn(
         `[RATING ${change.stateKey} AT ${height} GONE] [ORIGIN UNKNOWN]`
       );
@@ -487,7 +759,7 @@ export class RatingEventsFollower {
         });
         read.set(key, Array.isArray(answer) ? answer : null);
       } catch (error) {
-        if (!isHeightGone(error)) throw error;
+        if (!isGoneForGood(error, change.height)) throw error;
         logger.warn(
           `[RATING TOTALS AT ${change.height} GONE] [A TOTAL FROM THE LEDGER]`
         );
@@ -509,7 +781,10 @@ export class RatingEventsFollower {
    * chain's. A category the chain has no name for leaves its rows out; a
    * read that fails ends the run before the page is written.
    */
-  private async loadCategoryNames(changes: readonly ChainRatingChange[]) {
+  private async loadCategoryNames(
+    changes: readonly ChainRatingChange[],
+    deadline: number
+  ) {
     const missing = Array.from(
       new Set(
         changes
@@ -525,6 +800,7 @@ export class RatingEventsFollower {
     });
     for (const id of missing) {
       if (this.categoryNames.has(id)) continue;
+      this.ensureTime(deadline);
       const record = await this.gateway.getState<{
         valueFields?: { name?: unknown } | null;
       }>(categoryKey(id));

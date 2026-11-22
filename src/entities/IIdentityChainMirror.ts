@@ -304,12 +304,23 @@ export class IdentityChainMirrorStateEntity {
   readonly events_next_height!: number | null;
 
   /**
-   * The height the follower went on from after a gap in the feed (null:
-   * none since the import's start). Ledger rows older than it, and keys
-   * without a row, may have changed in the gap.
+   * A rebuild of the rating ledger under way at this pinned height, after a
+   * gap in the feed (null: none); the follower goes on from the next one.
    */
   @Column({ type: 'bigint', nullable: true, default: null })
-  readonly events_resume_height!: number | null;
+  readonly events_rebuild_height!: number | null;
+
+  /** Where the rebuild's walk over the identities is (null: the start). */
+  @Column({ type: 'varchar', length: 66, nullable: true, default: null })
+  readonly events_rebuild_after!: string | null;
+
+  /** The height the feed was first found gone at; a second run confirms. */
+  @Column({ type: 'bigint', nullable: true, default: null })
+  readonly events_gone_at!: number | null;
+
+  /** Runs in a row the follower didn't move while behind the identities. */
+  @Column({ type: 'int', nullable: false, default: 0 })
+  readonly events_stuck_runs!: number;
 
   /**
    * What the mirror could not write, tried again by the next run (JSON:
@@ -390,11 +401,11 @@ export class IdentityChainRatingEventEntity {
    * The value before (0: none): the ledger's, or the chain's at the height
    * before when the ledger's row can't be trusted.
    */
-  @Column({ type: 'int', nullable: false })
+  @Column({ type: 'bigint', nullable: false })
   readonly old_rating!: number;
 
   /** 0: the rating was removed. */
-  @Column({ type: 'int', nullable: false })
+  @Column({ type: 'bigint', nullable: false })
   readonly new_rating!: number;
 
   /**

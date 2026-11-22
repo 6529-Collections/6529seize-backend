@@ -24,7 +24,10 @@ import {
   numberOrNull,
   RatingRowWrite
 } from './identity-chain-mirror.db';
-import { RatingEventsFollower } from './rating-events-follower';
+import {
+  noteRatingEventProblem,
+  RatingEventsFollower
+} from './rating-events-follower';
 import {
   CHAIN_BLOCK_BASE,
   ChainIdentityView,
@@ -204,8 +207,10 @@ export interface MirrorRunReport {
   deferred: number;
   /** Rating event rows written (a page read again may count again). */
   ratingEvents: number;
-  /** Rating records the events follower couldn't read or name. */
+  /** The rating events follower's first 50 problems of the run. */
   ratingEventProblems: string[];
+  /** Rating event problems past the listed ones, only counted. */
+  ratingEventProblemsLeftOut: number;
   /** Rating records after the import without a writer (an old gateway). */
   ratingRecordsWithoutWriter: number;
   /** The next feed height the rating events follower reads. */
@@ -437,6 +442,7 @@ export class IdentityChainMirror {
       deferred: 0,
       ratingEvents: 0,
       ratingEventProblems: [],
+      ratingEventProblemsLeftOut: 0,
       ratingRecordsWithoutWriter: 0,
       eventsNextHeight: null,
       ratingEventsFilled: 0,
@@ -604,7 +610,7 @@ export class IdentityChainMirror {
     } catch (error) {
       const message = messageOf(error);
       logger.error(`[RATING EVENT PROFILE IDS NOT FILLED] ${message}`);
-      report.ratingEventProblems.push(message);
+      noteRatingEventProblem(report, message);
     }
     await this.events.follow(
       numberOrNull(importState.startHeight),
@@ -664,7 +670,10 @@ export class IdentityChainMirror {
       pin_floor: null,
       off_chain_after: null,
       events_next_height: null,
-      events_resume_height: null,
+      events_rebuild_height: null,
+      events_rebuild_after: null,
+      events_gone_at: null,
+      events_stuck_runs: 0,
       retry: NO_RETRY
     };
   }

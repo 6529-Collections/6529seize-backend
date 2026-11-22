@@ -75,12 +75,18 @@ export interface MirrorState {
   /** The highest finalized height reads were pinned to. */
   readonly pin_floor: number | null;
   /**
-   * The next feed height the rating events follower reads; with
-   * events_resume_height, written only by saveRatingEventsCursor.
+   * The next feed height the rating events follower reads; with the other
+   * events_ columns, written only by saveRatingEventsCursor.
    */
   readonly events_next_height: number | null;
-  /** Where the follower went on after a gap in the feed (null: none). */
-  readonly events_resume_height: number | null;
+  /** A ledger rebuild under way at this pinned height (null: none). */
+  readonly events_rebuild_height: number | null;
+  /** Where the rebuild's walk over the identities is. */
+  readonly events_rebuild_after: string | null;
+  /** The height the feed was first found gone at (a second run confirms). */
+  readonly events_gone_at: number | null;
+  /** Runs in a row the follower didn't move while behind. */
+  readonly events_stuck_runs: number;
   /** What the mirror could not write, tried again by the next run. */
   readonly retry: MirrorRetry;
 }
@@ -169,7 +175,10 @@ export interface RatingLedgerRow {
 /** The rating events follower's place: its own columns of the state. */
 export interface RatingEventsCursor {
   readonly next: number;
-  readonly resume: number | null;
+  readonly rebuildHeight: number | null;
+  readonly rebuildAfter: string | null;
+  readonly goneAt: number | null;
+  readonly stuckRuns: number;
 }
 
 /** A row of identity_chain_rating_events. */
@@ -288,7 +297,8 @@ export class IdentityChainMirrorDb extends LazyDbAccessCompatibleService {
               bindings_next_height, chain_id, placeholders_at, bindings_exact,
               levels_tdh_day, level_sweep_day, level_sweep_after, levels_day_height,
               sync_use_case, sync_wallet_after, pin_floor, off_chain_after,
-              events_next_height, events_resume_height, retry_json
+              events_next_height, events_rebuild_height, events_rebuild_after,
+              events_gone_at, events_stuck_runs, retry_json
        from ${IDENTITY_CHAIN_MIRROR_STATE_TABLE} where id = :id`,
       { id: STATE_ID },
       conn ? { wrappedConnection: conn } : undefined
@@ -313,7 +323,10 @@ export class IdentityChainMirrorDb extends LazyDbAccessCompatibleService {
       pin_floor: numberOrNull(row.pin_floor),
       off_chain_after: row.off_chain_after ?? null,
       events_next_height: numberOrNull(row.events_next_height),
-      events_resume_height: numberOrNull(row.events_resume_height),
+      events_rebuild_height: numberOrNull(row.events_rebuild_height),
+      events_rebuild_after: row.events_rebuild_after ?? null,
+      events_gone_at: numberOrNull(row.events_gone_at),
+      events_stuck_runs: Number(row.events_stuck_runs ?? 0),
       retry: retryOf(row.retry_json)
     };
   }
@@ -1329,9 +1342,11 @@ export class IdentityChainMirrorDb extends LazyDbAccessCompatibleService {
   ) {
     await this.db.execute(
       `update ${IDENTITY_CHAIN_MIRROR_STATE_TABLE}
-       set events_next_height = :next, events_resume_height = :resume, updated_at = :now
+       set events_next_height = :next, events_rebuild_height = :rebuildHeight,
+           events_rebuild_after = :rebuildAfter, events_gone_at = :goneAt,
+           events_stuck_runs = :stuckRuns, updated_at = :now
        where id = :id`,
-      { id: STATE_ID, next: cursor.next, resume: cursor.resume, now },
+      { id: STATE_ID, ...cursor, now },
       conn ? { wrappedConnection: conn } : undefined
     );
   }
@@ -1514,10 +1529,20 @@ export class IdentityChainMirrorDb extends LazyDbAccessCompatibleService {
     }
     await this.db.execute(
       `update ${IDENTITY_CHAIN_MIRROR_STATE_TABLE}
-       set events_next_height = null, events_resume_height = null
+       set events_next_height = null, events_rebuild_height = null,
+           events_rebuild_after = null, events_gone_at = null, events_stuck_runs = 0
        where id = :id`,
       { id: STATE_ID },
       opts
+    );
+  }
+
+  /** The rating ledger emptied, for a rebuild at one height. */
+  async clearRatingLedger(conn: Conn) {
+    await this.db.execute(
+      `delete from ${IDENTITY_CHAIN_RATING_LEDGER_TABLE}`,
+      undefined,
+      { wrappedConnection: conn }
     );
   }
 

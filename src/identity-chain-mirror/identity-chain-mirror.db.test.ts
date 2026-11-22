@@ -146,7 +146,10 @@ describeWithSeed(
           pin_floor: null,
           off_chain_after: null,
           events_next_height: null,
-          events_resume_height: null,
+          events_rebuild_height: null,
+          events_rebuild_after: null,
+          events_gone_at: null,
+          events_stuck_runs: 0,
           retry: NO_RETRY
         },
         9
@@ -316,7 +319,10 @@ describeWithSeed(
           off_chain_after: C,
           // The follower's own columns: saveState leaves them.
           events_next_height: 77,
-          events_resume_height: 70,
+          events_rebuild_height: 70,
+          events_rebuild_after: P,
+          events_gone_at: 60,
+          events_stuck_runs: 3,
           retry: { principals: [P], targets: [], wallets: [B] }
         },
         1
@@ -336,16 +342,31 @@ describeWithSeed(
           pin_floor: 812,
           off_chain_after: C,
           events_next_height: null,
-          events_resume_height: null,
+          events_rebuild_height: null,
+          events_rebuild_after: null,
+          events_gone_at: null,
+          events_stuck_runs: 0,
           retry: { principals: [P], targets: [], wallets: [B] }
         })
       );
-      await db.saveRatingEventsCursor({ next: 77, resume: 70 }, 2);
+      await db.saveRatingEventsCursor(
+        {
+          next: 77,
+          rebuildHeight: 70,
+          rebuildAfter: P,
+          goneAt: 60,
+          stuckRuns: 3
+        },
+        2
+      );
       expect(await db.getState()).toEqual(
         expect.objectContaining({
           next_height: 1,
           events_next_height: 77,
-          events_resume_height: 70
+          events_rebuild_height: 70,
+          events_rebuild_after: P,
+          events_gone_at: 60,
+          events_stuck_runs: 3
         })
       );
       await inTx((conn) => db.clearRatingEvents(conn));
@@ -353,7 +374,10 @@ describeWithSeed(
         expect.objectContaining({
           next_height: 1,
           events_next_height: null,
-          events_resume_height: null
+          events_rebuild_height: null,
+          events_rebuild_after: null,
+          events_gone_at: null,
+          events_stuck_runs: 0
         })
       );
       // The retry list holds the 10,000 keys past which a full sync starts.
@@ -590,6 +614,21 @@ describeWithSeed(
         [92, 7, 7, 'OPERATION', 0, 'tx:RATING_SET', 'FEED']
       ]);
       expect(Number(events[0].block_time_ms)).toBe(1_764_000_000_090);
+      // Ratings past 32 bits fit (bigint columns).
+      await inTx((conn) =>
+        db.insertRatingEvents(
+          [{ ...row(94, 3_000_000_000), old_rating: -3_000_000_000 }],
+          3,
+          conn
+        )
+      );
+      const [big] = await sqlExecutor.execute<any>(
+        `select old_rating, new_rating from ${IDENTITY_CHAIN_RATING_EVENTS_TABLE}
+         where height = 94`
+      );
+      expect([Number(big.old_rating), Number(big.new_rating)]).toEqual([
+        -3_000_000_000, 3_000_000_000
+      ]);
       // A row without profiles, filled in once the principal is mapped.
       await inTx((conn) =>
         db.insertRatingEvents(
@@ -675,8 +714,11 @@ describeWithSeed(
           [other, 'Other']
         ])
       );
-      await inTx((conn) => db.clearRatingEvents(conn));
+      // A rebuild empties the ledger alone.
+      await inTx((conn) => db.clearRatingLedger(conn));
       expect((await db.ratingLedgerOf([key(P, kind)])).size).toBe(0);
+      expect((await db.ratingCategoryNamesOf([kind])).size).toBe(1);
+      await inTx((conn) => db.clearRatingEvents(conn));
       expect((await db.ratingCategoryNamesOf([kind])).size).toBe(0);
     });
 

@@ -1,10 +1,12 @@
 import {
   ChainFeedRecord,
+  ChainRating,
   ChainRatingTotal
 } from '@/chain-gateway/chain-gateway.types';
 import {
   categoryKey,
   ledgerKeyOf,
+  ledgerRowOfRating,
   ratingChangesOf,
   ratingEventOrigin,
   totalIn,
@@ -272,6 +274,47 @@ describe('ratingChangesOf', () => {
     // Too big to hold exactly: not taken.
     expect(
       totalIn(totals, { matter: 'REP', category: '0x' + 'dd'.repeat(32) })
+    ).toBeNull();
+  });
+
+  it('reads a listed rating as a ledger row', () => {
+    const listed = (it: Partial<ChainRating>): ChainRating => ({
+      rater: R,
+      target: T,
+      matter: 'rep',
+      category: { id: CAT, name: 'Kind' },
+      value: '-7',
+      updatedHeight: 40,
+      viaGrant: null,
+      ...it
+    });
+    expect(ledgerRowOfRating(listed({}), 99)).toEqual({
+      rater: R,
+      matterCode: 1,
+      targetKind: 1,
+      target: T,
+      category: CAT,
+      value: -7,
+      height: 40,
+      stale: false
+    });
+    // NIC's category is the zero id, whatever the list gives.
+    expect(
+      ledgerRowOfRating(
+        listed({ matter: 'nic', category: { id: null as never, name: null } }),
+        99
+      )
+    ).toMatchObject({ matterCode: 2, category: ZERO });
+    // A value it can't hold exactly: stale, at the height it was listed at.
+    expect(
+      ledgerRowOfRating(
+        listed({ value: '9'.repeat(20), updatedHeight: 'x' as never }),
+        99
+      )
+    ).toMatchObject({ value: 0, height: 99, stale: true });
+    expect(ledgerRowOfRating(listed({ rater: 'x' }), 99)).toBeNull();
+    expect(
+      ledgerRowOfRating(listed({ category: { id: ZERO, name: null } }), 99)
     ).toBeNull();
   });
 
