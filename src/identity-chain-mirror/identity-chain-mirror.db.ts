@@ -21,7 +21,8 @@ import {
   CurrentIdentityState,
   IdentityPlan,
   IdentityRowState,
-  ProfileRowState
+  ProfileRowState,
+  WalletPair
 } from './identity-plan';
 import { ProfileDocStatement } from './profile-doc';
 
@@ -226,12 +227,34 @@ export class IdentityChainMirrorDb extends LazyDbAccessCompatibleService {
 
   // ---------------------------------------------------------------- identities
 
+  /** Another profile that holds this normalised handle now. */
+  private async holderOf(
+    normalised: string,
+    exceptProfileId: string,
+    conn: Conn
+  ): Promise<{ external_id: string; primary_wallet: string } | null> {
+    return await this.db.oneOrNull<{
+      external_id: string;
+      primary_wallet: string;
+    }>(
+      `select external_id, primary_wallet from ${PROFILES_TABLE}
+       where normalised_handle = :normalised and external_id <> :exceptProfileId
+       for update`,
+      { normalised, exceptProfileId },
+      { wrappedConnection: conn }
+    );
+  }
+
   async readIdentityState(
     wallets: string[],
     profileId: string,
-    handle: string | null,
+    chainHandle: string | null,
+    primary: string,
     conn: Conn
   ): Promise<CurrentIdentityState> {
+    if (!wallets.length) {
+      throw new Error(`An identity with no wallets can't be mirrored`);
+    }
     const rows = await this.db.execute<IdentityRowState>(
       `select i.* from ${IDENTITIES_TABLE} i
        where i.profile_id = :profileId
@@ -267,19 +290,31 @@ export class IdentityChainMirrorDb extends LazyDbAccessCompatibleService {
       { profileId },
       { wrappedConnection: conn }
     );
-    const wanted = (handle ?? profile?.handle ?? null)?.toLowerCase() ?? null;
-    const handleHolder = wanted
-      ? await this.db.oneOrNull<{
-          external_id: string;
-          primary_wallet: string;
-        }>(
-          `select external_id, primary_wallet from ${PROFILES_TABLE}
-           where normalised_handle = :wanted and external_id <> :profileId
-           for update`,
-          { wanted, profileId },
-          { wrappedConnection: conn }
-        )
-      : null;
+    let handleHolder: CurrentIdentityState['handleHolder'] = null;
+    if (chainHandle) {
+      const holder = await this.holderOf(
+        chainHandle.toLowerCase(),
+        profileId,
+        conn
+      );
+      if (holder) {
+        const placeholder = `id-${holder.primary_wallet.toLowerCase()}`;
+        const placeholderHeld =
+          placeholder === chainHandle.toLowerCase() ||
+          !!(await this.holderOf(placeholder, holder.external_id, conn));
+        handleHolder = {
+          external_id: holder.external_id,
+          releaseHandle: placeholderHeld
+            ? `id-${holder.external_id.toLowerCase()}`
+            : placeholder
+        };
+      }
+    }
+    const placeholderTaken = !!(await this.holderOf(
+      `id-${primary.toLowerCase()}`,
+      profileId,
+      conn
+    ));
     return {
       rows: rows.map((row) => ({
         ...row,
@@ -295,7 +330,8 @@ export class IdentityChainMirrorDb extends LazyDbAccessCompatibleService {
       })),
       walletsByKey,
       profile,
-      handleHolder
+      handleHolder,
+      placeholderTaken
     };
   }
 
@@ -337,7 +373,7 @@ export class IdentityChainMirrorDb extends LazyDbAccessCompatibleService {
         opts
       );
     }
-    for (const row of [plan.identity, ...plan.soloRows]) {
+    for (const row of [plan.identity, ...plan.rekeyedRows, ...plan.soloRows]) {
       await this.upsertIdentityRow(row, conn);
     }
     for (const address of plan.addressKeys) {
@@ -492,6 +528,81 @@ export class IdentityChainMirrorDb extends LazyDbAccessCompatibleService {
     }
   }
 
+  /**
+   * The registration times of the existing pairs among these wallets (either
+   * direction), so a pair rewritten from the chain keeps them: the TDH
+   * grouping reads them for its four-wallet rule.
+   */
+  private async pairTimes(
+    wallets: string[],
+    conn: Conn
+  ): Promise<Map<string, { first: number | null; second: number | null }>> {
+    const times = new Map<
+      string,
+      { first: number | null; second: number | null }
+    >();
+    if (!wallets.length) return times;
+    const rows = await this.db.execute<{
+      wallet1: string;
+      wallet2: string;
+      wallet1_registered_at: number | string | null;
+      wallet2_registered_at: number | string | null;
+    }>(
+      `select wallet1, wallet2, wallet1_registered_at, wallet2_registered_at
+       from ${CONSOLIDATIONS_TABLE}
+       where wallet1 in (:wallets) or wallet2 in (:wallets)`,
+      { wallets },
+      { wrappedConnection: conn }
+    );
+    const at = (value: number | string | null) =>
+      value === null || value === undefined ? null : Number(value);
+    for (const row of rows) {
+      const a = row.wallet1.toLowerCase();
+      const b = row.wallet2.toLowerCase();
+      const ascending = a < b;
+      times.set(ascending ? `${a}-${b}` : `${b}-${a}`, {
+        first: at(
+          ascending ? row.wallet1_registered_at : row.wallet2_registered_at
+        ),
+        second: at(
+          ascending ? row.wallet2_registered_at : row.wallet1_registered_at
+        )
+      });
+    }
+    return times;
+  }
+
+  private async insertPairs(
+    pairs: WalletPair[],
+    times: Map<string, { first: number | null; second: number | null }>,
+    block: number,
+    now: number,
+    conn: Conn
+  ) {
+    const nowSeconds = Math.floor(now / 1000);
+    for (let i = 0; i < pairs.length; i += 500) {
+      const chunk = pairs.slice(i, i + 500);
+      const params: Record<string, unknown> = { now: new Date(now), block };
+      const values = chunk
+        .map((pair, j) => {
+          const kept = times.get(`${pair.wallet1}-${pair.wallet2}`);
+          params[`w1_${j}`] = pair.wallet1;
+          params[`w2_${j}`] = pair.wallet2;
+          params[`t1_${j}`] = kept?.first ?? nowSeconds;
+          params[`t2_${j}`] = kept?.second ?? nowSeconds;
+          return `(:now, :block, :w1_${j}, :w2_${j}, 1, :t1_${j}, :t2_${j})`;
+        })
+        .join(', ');
+      await this.db.execute(
+        `insert into ${CONSOLIDATIONS_TABLE}
+           (created_at, block, wallet1, wallet2, confirmed, wallet1_registered_at, wallet2_registered_at)
+         values ${values}`,
+        params,
+        { wrappedConnection: conn }
+      );
+    }
+  }
+
   private async replacePairs(
     plan: IdentityPlan,
     block: number,
@@ -499,49 +610,31 @@ export class IdentityChainMirrorDb extends LazyDbAccessCompatibleService {
     conn: Conn
   ) {
     if (!plan.pairWallets.length) return;
+    const times = await this.pairTimes(plan.pairWallets, conn);
     await this.db.execute(
       `delete from ${CONSOLIDATIONS_TABLE}
        where wallet1 in (:wallets) or wallet2 in (:wallets)`,
       { wallets: plan.pairWallets },
       { wrappedConnection: conn }
     );
-    for (const pair of plan.pairs) {
-      await this.db.execute(
-        `insert into ${CONSOLIDATIONS_TABLE} (created_at, block, wallet1, wallet2, confirmed)
-         values (:now, :block, :wallet1, :wallet2, 1)`,
-        { ...pair, block, now: new Date(now) },
-        { wrappedConnection: conn }
-      );
-    }
+    await this.insertPairs(plan.pairs, times, block, now, conn);
   }
 
   /** Every confirmed pair, replaced by the chain's (full sync only). */
   async replaceAllPairs(
-    pairs: { wallet1: string; wallet2: string }[],
+    pairs: WalletPair[],
     block: number,
     now: number,
     conn: Conn
   ) {
+    const wallets = Array.from(
+      new Set(pairs.flatMap((it) => [it.wallet1, it.wallet2]))
+    );
+    const times = await this.pairTimes(wallets, conn);
     await this.db.execute(`delete from ${CONSOLIDATIONS_TABLE}`, undefined, {
       wrappedConnection: conn
     });
-    for (let i = 0; i < pairs.length; i += 500) {
-      const chunk = pairs.slice(i, i + 500);
-      const values = chunk
-        .map((_, j) => `(:now, :block, :w1_${j}, :w2_${j}, 1)`)
-        .join(', ');
-      const params: Record<string, unknown> = { now: new Date(now), block };
-      chunk.forEach((pair, j) => {
-        params[`w1_${j}`] = pair.wallet1;
-        params[`w2_${j}`] = pair.wallet2;
-      });
-      await this.db.execute(
-        `insert into ${CONSOLIDATIONS_TABLE} (created_at, block, wallet1, wallet2, confirmed)
-         values ${values}`,
-        params,
-        { wrappedConnection: conn }
-      );
-    }
+    await this.insertPairs(pairs, times, block, now, conn);
   }
 
   // ---------------------------------------------------------------- ratings

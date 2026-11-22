@@ -14,8 +14,8 @@
 export const PROFILE_DOC_SCHEMA = '6529.ProfileDoc.v1';
 
 const MAX_FIELDS = 256;
-const MAX_KEY = 64;
-const MAX_VALUE = 8192;
+const MAX_KEY = 128;
+const MAX_VALUE = 65_536;
 
 export interface ProfileDocStatement {
   readonly group: string;
@@ -26,6 +26,8 @@ export interface ProfileDocStatement {
 
 /** The 6529.io columns a profile document fills. */
 export interface ProfileDocFields {
+  /** The handle as its owner writes it (case kept). */
+  readonly displayName: string | null;
   readonly pfp: string | null;
   readonly banner1: string | null;
   readonly banner2: string | null;
@@ -159,12 +161,22 @@ function nonEmpty(value: string | undefined): string | null {
 /**
  * The 6529.io columns from a document's fields. Statements are
  * `statement.<group>.<type>.<n>` with an optional `....<n>.comment`,
- * in n order within a group and type.
+ * in n order within a group and type; `bio` is the first GENERAL/BIO
+ * statement (the import writes it so).
  */
 export function toProfileDocFields(
   fields: Record<string, string>
 ): ProfileDocFields {
   const statements: (ProfileDocStatement & { order: number })[] = [];
+  if (fields.bio) {
+    statements.push({
+      group: 'GENERAL',
+      type: 'BIO',
+      value: fields.bio,
+      comment: null,
+      order: -1
+    });
+  }
   for (const [key, value] of Object.entries(fields)) {
     const match = STATEMENT_KEY.exec(key);
     if (!match || !value) continue;
@@ -183,6 +195,7 @@ export function toProfileDocFields(
       a.order - b.order
   );
   return {
+    displayName: nonEmpty(fields.displayName),
     pfp: nonEmpty(fields.avatar),
     banner1: nonEmpty(fields.banner1),
     banner2: nonEmpty(fields.banner2),
@@ -194,6 +207,7 @@ export function toProfileDocFields(
 }
 
 export const EMPTY_PROFILE_DOC_FIELDS: ProfileDocFields = {
+  displayName: null,
   pfp: null,
   banner1: null,
   banner2: null,

@@ -28,7 +28,8 @@ import {
 } from './identity-plan';
 
 const W = (n: number) => `0x${n.toString(16).padStart(40, '0')}`;
-const PID = (n: number) => `0x${n.toString(16).padStart(64, '0')}`;
+const PID = (n: number) =>
+  `0x${'ab'.repeat(28)}${n.toString(16).padStart(8, '0')}`;
 const A = W(1);
 const B = W(2);
 const C = W(3);
@@ -111,7 +112,8 @@ class FakeDb {
   async readIdentityState(
     wallets: string[],
     profileId: string,
-    handle: string | null
+    handle: string | null,
+    primary: string
   ): Promise<CurrentIdentityState> {
     const keys = new Set(
       wallets.map((w) => this.addressKeys.get(w)).filter((it) => !!it)
@@ -126,10 +128,12 @@ class FakeDb {
       }
     }
     const profile = this.profiles.get(profileId) ?? null;
-    const wanted = (handle ?? profile?.handle)?.toLowerCase();
-    const holder = Array.from(this.profiles.values()).find(
-      (it) => it.normalised_handle === wanted && it.external_id !== profileId
-    );
+    const holderOf = (normalised: string) =>
+      Array.from(this.profiles.values()).find(
+        (it) =>
+          it.normalised_handle === normalised && it.external_id !== profileId
+      );
+    const holder = handle ? holderOf(handle.toLowerCase()) : undefined;
     return {
       rows,
       walletsByKey,
@@ -137,9 +141,10 @@ class FakeDb {
       handleHolder: holder
         ? {
             external_id: holder.external_id,
-            primary_wallet: holder.primary_wallet
+            releaseHandle: `id-${holder.primary_wallet}`
           }
-        : null
+        : null,
+      placeholderTaken: !!holderOf(`id-${primary}`)
     };
   }
   async applyIdentityPlan(plan: IdentityPlan) {
@@ -300,6 +305,9 @@ function world() {
       )
     ),
     getProfileDoc: jest.fn(async () => null),
+    getIdentityByLegacyProfileId: jest.fn(async (uuid: string) =>
+      uuid === ALICE_PROFILE ? chain.identities.get(alice.principalId)! : null
+    ),
     getRatings: jest.fn(async (q: { target: string }) => ({
       items: chain.ratings.get(q.target) ?? [],
       next: null,
@@ -427,7 +435,7 @@ describe('IdentityChainMirror', () => {
     // Alice keeps her imported profile id; Bob gets one from his principal.
     expect(db.mapping.get(alice.principalId)).toEqual({
       profile: ALICE_PROFILE,
-      origin: 'WALLET'
+      origin: 'LEGACY'
     });
     const bobProfile = principalProfileId(bob.principalId);
     expect(db.mapping.get(bob.principalId)?.profile).toBe(bobProfile);
@@ -503,9 +511,11 @@ describe('IdentityChainMirror', () => {
   it('starts a full sync when the feed no longer holds its height', async () => {
     const { mirror, db, gateway } = world();
     await mirror.run({ budgetMs: 60_000 });
-    gateway.getChanges.mockRejectedValueOnce(
-      new ChainGatewayError('gone', 410, 'gone', '/v1/feed')
-    );
+    for (let i = 0; i < 3; i++) {
+      gateway.getChanges.mockRejectedValueOnce(
+        new ChainGatewayError('gone', 410, 'gone', '/v1/feed')
+      );
+    }
     await mirror.run({ budgetMs: 60_000 });
     expect(db.state?.sync_phase).toBe('IDENTITIES');
     await mirror.run({ budgetMs: 60_000 });
@@ -560,7 +570,12 @@ describe('feedEffects', () => {
         valueFields: { delegate: W(9) }
       }
     ]);
-    expect(Array.from(effects.principals)).toEqual([PID(1)]);
+    // A rating's ends are refreshed as identities too (their totals moved).
+    expect(Array.from(effects.principals).sort()).toEqual([
+      PID(1),
+      PID(2),
+      PID(3)
+    ]);
     expect(Array.from(effects.wallets)).toEqual([A]);
     expect(Array.from(effects.ratingTargets).sort()).toEqual([PID(2), PID(3)]);
     expect(Array.from(effects.delegationHolders).sort()).toEqual(
@@ -626,5 +641,63 @@ describe('pickWalletProfile', () => {
       'a'
     );
     expect(pickWalletProfile([], A)).toBeNull();
+  });
+});
+
+describe('IdentityChainMirror edge cases', () => {
+  it('writes the identity a merged one went into, not the merged one', async () => {
+    const { mirror, db, chain, alice } = world();
+    chain.identities.set(PID(5), {
+      ...chainIdentity(PID(5), []),
+      status: 'merged',
+      mergedInto: alice.principalId
+    });
+    const report = await mirror.run({ budgetMs: 60_000 });
+    expect(report.skippedInactive).toContain(PID(5));
+    expect(report.failed).toEqual([]);
+    expect(db.mapping.has(PID(5))).toBe(false);
+  });
+
+  it('goes on with the others when one identity fails', async () => {
+    const { mirror, db, bob } = world();
+    const apply = db.applyIdentityPlan.bind(db);
+    jest
+      .spyOn(db, 'applyIdentityPlan')
+      .mockImplementation(async (plan: IdentityPlan) => {
+        if (plan.profile.handle === 'bob') throw new Error('duplicate');
+        return apply(plan);
+      });
+    const report = await mirror.run({ budgetMs: 60_000 });
+    expect(report.failed).toEqual([`${bob.principalId}: duplicate`]);
+    expect(db.state?.sync_phase).toBeNull();
+    expect(db.rows.size).toBeGreaterThan(0);
+  });
+
+  it('asks again before giving up on a feed height', async () => {
+    const { mirror, db, gateway } = world();
+    await mirror.run({ budgetMs: 60_000 });
+    gateway.getChanges.mockRejectedValueOnce(
+      new ChainGatewayError('gone', 410, 'gone', '/v1/feed')
+    );
+    await mirror.run({ budgetMs: 60_000 });
+    expect(db.state?.sync_phase).toBeNull();
+    expect(gateway.getChanges).toHaveBeenCalledTimes(3);
+  });
+});
+
+describe('feedEffects address words', () => {
+  it('reads a holder word as its wallet', () => {
+    const word = '0x' + '0'.repeat(24) + B.slice(2);
+    const effects = feedEffects([
+      {
+        family: '0x0120',
+        name: 'Delegation',
+        key: '0x',
+        value: null,
+        keyFields: { holder: word, scope: 2 },
+        valueFields: null
+      }
+    ]);
+    expect(Array.from(effects.delegationHolders)).toEqual([B]);
   });
 });

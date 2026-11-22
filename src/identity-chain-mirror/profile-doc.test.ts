@@ -86,10 +86,12 @@ describe('ProfileDoc.v1', () => {
     expect(
       toProfileDocFields({
         ...Object.fromEntries(fields),
+        displayName: 'Alice',
         'statement.GENERAL.BIO.0': 'about me',
         'statement.SOCIAL_MEDIA_ACCOUNT.X.2': ''
       })
     ).toEqual({
+      displayName: 'Alice',
       pfp: 'ipfs://pfp',
       banner1: '#112233',
       banner2: null,
@@ -97,6 +99,7 @@ describe('ProfileDoc.v1', () => {
       classification: 'PSEUDONYM',
       subClassification: null,
       statements: [
+        { group: 'GENERAL', type: 'BIO', value: 'hello', comment: null },
         { group: 'GENERAL', type: 'BIO', value: 'about me', comment: null },
         {
           group: 'SOCIAL_MEDIA_ACCOUNT',

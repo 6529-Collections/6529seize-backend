@@ -157,8 +157,11 @@ describeWithSeed(
           [A, B, C],
           ALICE,
           'Alice',
+          A,
           conn
         );
+        expect(state.handleHolder).toBeNull();
+        expect(state.placeholderTaken).toBe(false);
         expect(state.rows.map((it) => it.consolidation_key).sort()).toEqual(
           [AB, C].sort()
         );

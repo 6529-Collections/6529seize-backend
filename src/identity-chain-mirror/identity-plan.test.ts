@@ -96,6 +96,7 @@ function state(
     walletsByKey: { [AB]: [A, B] },
     profile: profile(U, 'Alice'),
     handleHolder: null,
+    placeholderTaken: false,
     ...other
   };
 }
@@ -187,7 +188,7 @@ describe('planIdentity', () => {
   it('takes a handle from the profile that held it', () => {
     const plan = planIdentity(
       chain({ handle: 'bob' }),
-      state({ handleHolder: { external_id: V, primary_wallet: C } })
+      state({ handleHolder: { external_id: V, releaseHandle: `id-${C}` } })
     );
     expect(plan.releaseHandle).toEqual({
       external_id: V,
@@ -199,7 +200,13 @@ describe('planIdentity', () => {
   it('makes a profile with a placeholder handle for a new identity', () => {
     const plan = planIdentity(
       chain({ handle: null, wallets: [C], primary: C, doc: null }),
-      { rows: [], walletsByKey: {}, profile: null, handleHolder: null }
+      {
+        rows: [],
+        walletsByKey: {},
+        profile: null,
+        handleHolder: null,
+        placeholderTaken: false
+      }
     );
     expect(plan.profile).toEqual(
       expect.objectContaining({
@@ -248,5 +255,66 @@ describe('principalProfileId', () => {
     );
     expect(principalProfileId(P.toUpperCase().replace('0X', '0x'))).toBe(id);
     expect(principalProfileId('0x' + 'cd'.repeat(32))).not.toBe(id);
+  });
+
+  it("keeps another identity's row on its remaining wallets", () => {
+    const D = W(4);
+    const CD = consolidationKeyOf([C, D]);
+    const plan = planIdentity(
+      chain({ wallets: [A, B, C] }),
+      state({
+        rows: [
+          row(AB, U, { tdh: 1000 }),
+          row(CD, V, { tdh: 70, xtdh: 3, primary_address: C, handle: 'quinn' })
+        ],
+        walletsByKey: { [AB]: [A, B], [CD]: [C, D] }
+      })
+    );
+    expect(plan.deleteKeys).toEqual([AB, CD].sort());
+    expect(plan.rekeyedRows).toEqual([
+      expect.objectContaining({
+        consolidation_key: D,
+        profile_id: V,
+        primary_address: D,
+        tdh: 70,
+        xtdh: 3,
+        handle: 'quinn'
+      })
+    ]);
+    expect(plan.soloRows).toEqual([]);
+    expect(plan.addressKeys).toContainEqual({
+      address: D,
+      consolidation_key: D
+    });
+    expect(plan.pairs).toHaveLength(3);
+  });
+
+  it('keeps the case of a handle the owner wrote', () => {
+    expect(
+      planIdentity(chain({ handle: 'alice' }), state()).profile.handle
+    ).toBe('Alice');
+    expect(
+      planIdentity(
+        chain({
+          handle: 'bob',
+          doc: { ...EMPTY_PROFILE_DOC_FIELDS, displayName: 'BoB' }
+        }),
+        state()
+      ).profile.handle
+    ).toBe('BoB');
+  });
+
+  it('does not take a placeholder another profile holds', () => {
+    const plan = planIdentity(
+      chain({ handle: null, wallets: [C], primary: C }),
+      {
+        rows: [],
+        walletsByKey: {},
+        profile: null,
+        handleHolder: null,
+        placeholderTaken: true
+      }
+    );
+    expect(plan.profile.handle).toBe(`id-${U}`);
   });
 });

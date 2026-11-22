@@ -40,6 +40,9 @@ const FULL_SYNC_EVERY_MS = 6 * 60 * 60 * 1000;
 const FEED_PAGE_BLOCKS = 200;
 const IDENTITY_PAGE = 200;
 const LAST_USE_CASE = 998;
+const FEED_GONE_ATTEMPTS = 3;
+/** ratings.rating is a signed 32-bit int. */
+const MAX_RATING = 2_147_483_647;
 
 type Gateway = Pick<
   ChainGatewayClient,
@@ -48,6 +51,7 @@ type Gateway = Pick<
   | 'listIdentities'
   | 'getIdentityByPrincipal'
   | 'getIdentitiesByWallets'
+  | 'getIdentityByLegacyProfileId'
   | 'getProfileDoc'
   | 'getRatings'
   | 'getDelegations'
@@ -63,12 +67,18 @@ export interface MirrorRunReport {
   delegationWallets: number;
   feedBlocks: number;
   skippedTooManyWallets: string[];
+  /** Merged, closing or walletless identities, not written. */
+  skippedInactive: string[];
+  /** Identities that failed, with why; the rest went on. */
+  failed: string[];
   docProblems: string[];
   nextHeight: number | null;
 }
 
 const HEX32 = /^0x[0-9a-f]{64}$/;
 const HEX20 = /^0x[0-9a-f]{40}$/;
+/** A 32-byte word holding an address: 12 zero bytes, then the address. */
+const ADDRESS_WORD = /^0x0{24}([0-9a-f]{40})$/;
 const PRINCIPAL_FIELD = /principal|rater|target|holder|identity|merged|^p$/i;
 
 function collectHex(
@@ -81,7 +91,10 @@ function collectHex(
   for (const [name, raw] of Object.entries(fields)) {
     if (typeof raw !== 'string') continue;
     const value = raw.toLowerCase();
-    if (HEX32.test(value)) {
+    const word = ADDRESS_WORD.exec(value);
+    if (word) {
+      wallets.add(`0x${word[1]}`);
+    } else if (HEX32.test(value)) {
       anyHex32.add(value);
       if (PRINCIPAL_FIELD.test(name)) principals.add(value);
     } else if (HEX20.test(value)) {
@@ -119,7 +132,11 @@ export function feedEffects(records: readonly ChainFeedRecord[]): FeedEffects {
     const ids = principals.size ? principals : anyHex32;
     const name = `${record.name ?? ''}`;
     if (/rating/i.test(name)) {
-      ids.forEach((it) => effects.ratingTargets.add(it));
+      // A rating moves its target's totals and level too.
+      ids.forEach((it) => {
+        effects.ratingTargets.add(it);
+        effects.principals.add(it);
+      });
     } else if (/delegation/i.test(name)) {
       ids.forEach((it) => effects.delegationHolders.add(it));
       wallets.forEach((it) => effects.delegationHolders.add(it));
@@ -192,6 +209,15 @@ function compareText(a: string, b: string): number {
   return a > b ? 1 : 0;
 }
 
+/** Merged, closing or walletless: nothing of it is written. */
+export function isInactive(identity: ChainIdentity): boolean {
+  return (
+    !!identity.mergedInto ||
+    !identity.wallets.length ||
+    (!!identity.status && identity.status.toLowerCase() !== 'active')
+  );
+}
+
 function toNumber(value: string | number | null | undefined): number {
   const n = Number(value ?? 0);
   return Number.isFinite(n) ? n : 0;
@@ -224,6 +250,8 @@ export class IdentityChainMirror {
       feedBlocks: 0,
       skippedTooManyWallets: [],
       docProblems: [],
+      skippedInactive: [],
+      failed: [],
       nextHeight: null
     };
   }
@@ -299,8 +327,10 @@ export class IdentityChainMirror {
         limit: IDENTITY_PAGE
       });
       for (const identity of page?.items ?? []) {
-        await this.applyIdentity(identity, report);
-        await this.syncTargetRatings(identity, report);
+        await this.isolated(identity.principalId, report, async () => {
+          await this.applyIdentity(identity, report);
+          await this.syncTargetRatings(identity, report);
+        });
       }
       state = await this.save(
         page?.next
@@ -416,19 +446,12 @@ export class IdentityChainMirror {
   ): Promise<MirrorState> {
     let state = initial;
     while (this.now() < deadline) {
-      let page;
-      try {
-        page = await this.gateway.getChanges(Number(state.next_height), {
-          limit: FEED_PAGE_BLOCKS
-        });
-      } catch (error) {
-        if (error instanceof ChainGatewayError && error.code === 'gone') {
-          logger.warn(
-            `[FEED GONE AT ${state.next_height}] [STARTING A FULL SYNC]`
-          );
-          return await this.startFullSync(state);
-        }
-        throw error;
+      const page = await this.feedPage(Number(state.next_height));
+      if (!page) {
+        logger.warn(
+          `[FEED GONE AT ${state.next_height}] [STARTING A FULL SYNC]`
+        );
+        return await this.startFullSync(state);
       }
       if (page.through < page.from) {
         return state;
@@ -439,6 +462,38 @@ export class IdentityChainMirror {
       state = await this.save({ ...state, next_height: page.next });
     }
     return state;
+  }
+
+  /**
+   * A page of the feed, or null when the gateway no longer holds the height.
+   * Asked three times first: another API node behind the gateway may hold it.
+   */
+  private async feedPage(from: number) {
+    for (let attempt = 0; attempt < FEED_GONE_ATTEMPTS; attempt++) {
+      try {
+        return await this.gateway.getChanges(from, { limit: FEED_PAGE_BLOCKS });
+      } catch (error) {
+        if (!(error instanceof ChainGatewayError) || error.code !== 'gone') {
+          throw error;
+        }
+      }
+    }
+    return null;
+  }
+
+  /** Runs one identity's work; a failure is logged and reported, not thrown. */
+  private async isolated(
+    principalId: string,
+    report: MirrorRunReport,
+    work: () => Promise<void>
+  ) {
+    try {
+      await work();
+    } catch (error) {
+      const message = (error as Error)?.message ?? String(error);
+      logger.error(`[IDENTITY ${principalId} NOT MIRRORED] ${message}`);
+      report.failed.push(`${principalId}: ${message}`);
+    }
   }
 
   /** The principals a feed page touches, with the wallets' old and new ones. */
@@ -464,13 +519,18 @@ export class IdentityChainMirror {
     for (const principal of Array.from(principals)) {
       const identity = await this.identity(principal);
       if (!identity) continue;
-      (await this.applyIdentity(identity, report)).forEach((it) =>
-        touched.add(it)
-      );
+      await this.isolated(principal, report, async () => {
+        (await this.applyIdentity(identity, report)).forEach((it) =>
+          touched.add(it)
+        );
+      });
     }
     for (const target of Array.from(effects.ratingTargets)) {
       const identity = await this.identity(target);
-      if (identity) await this.syncTargetRatings(identity, report);
+      if (!identity) continue;
+      await this.isolated(target, report, () =>
+        this.syncTargetRatings(identity, report)
+      );
     }
     for (const holder of Array.from(effects.delegationHolders)) {
       if (HEX20.test(holder)) {
@@ -481,7 +541,9 @@ export class IdentityChainMirror {
       identity?.wallets.forEach((it) => touched.add(it.toLowerCase()));
     }
     for (const wallet of Array.from(touched)) {
-      await this.syncWalletDelegations(wallet, report);
+      await this.isolated(wallet, report, () =>
+        this.syncWalletDelegations(wallet, report)
+      );
     }
   }
 
@@ -541,9 +603,15 @@ export class IdentityChainMirror {
     return chosen;
   }
 
+  /**
+   * The imported profile (legacy id), else an existing profile of one of its
+   * wallets that the chain did not import for another identity, else one
+   * derived from the principal id.
+   */
   private async chooseProfileId(
     identity: ChainIdentity
   ): Promise<{ profileId: string; origin: string }> {
+    const principalId = identity.principalId.toLowerCase();
     const legacy = identity.legacyId?.toLowerCase() ?? null;
     if (
       legacy &&
@@ -552,19 +620,27 @@ export class IdentityChainMirror {
     ) {
       return { profileId: legacy, origin: 'LEGACY' };
     }
+    const candidates = await this.db.unmappedProfilesOfWallets(
+      identity.wallets.map((it) => it.toLowerCase())
+    );
+    const free: typeof candidates = [];
+    for (const candidate of candidates) {
+      const importedTo = await this.gateway.getIdentityByLegacyProfileId(
+        candidate.profile_id
+      );
+      if (importedTo?.principalId.toLowerCase() === principalId) {
+        return { profileId: candidate.profile_id, origin: 'LEGACY' };
+      }
+      if (!importedTo) free.push(candidate);
+    }
     const best = pickWalletProfile(
-      await this.db.unmappedProfilesOfWallets(
-        identity.wallets.map((it) => it.toLowerCase())
-      ),
+      free,
       identity.anchor?.toLowerCase() ?? null
     );
     if (best) {
       return { profileId: best, origin: 'WALLET' };
     }
-    return {
-      profileId: principalProfileId(identity.principalId.toLowerCase()),
-      origin: 'NEW'
-    };
+    return { profileId: principalProfileId(principalId), origin: 'NEW' };
   }
 
   /** Writes one identity's rows; returns the wallets whose identity changed. */
@@ -573,6 +649,15 @@ export class IdentityChainMirror {
     report: MirrorRunReport
   ): Promise<string[]> {
     const wallets = identity.wallets.map((it) => it.toLowerCase());
+    if (isInactive(identity)) {
+      report.skippedInactive.push(identity.principalId);
+      const survivor = identity.mergedInto
+        ? await this.identity(identity.mergedInto)
+        : null;
+      return survivor?.wallets.length && !survivor.mergedInto
+        ? await this.applyIdentity(survivor, report)
+        : [];
+    }
     if (consolidationKeyOf(wallets).length > MAX_CONSOLIDATION_KEY_LENGTH) {
       logger.error(
         `[IDENTITY ${identity.principalId} HAS ${wallets.length} WALLETS: TOO MANY FOR A 6529.IO CONSOLIDATION KEY, NOT MIRRORED]`
@@ -603,6 +688,7 @@ export class IdentityChainMirror {
           wallets,
           profileId,
           identity.handle,
+          view.primary,
           conn
         );
         const plan = planIdentity(view, state);
@@ -624,7 +710,7 @@ export class IdentityChainMirror {
     raterProfileId: string
   ): RatingRowWrite | null {
     const value = Math.trunc(toNumber(rating.value));
-    if (!value) return null;
+    if (!value || Math.abs(value) > MAX_RATING) return null;
     const matter = rating.matter.toUpperCase();
     if (matter === 'NIC' || matter === 'CIC') {
       return {
@@ -645,6 +731,7 @@ export class IdentityChainMirror {
 
   /** A target's REP and CIC rows become the chain's ratings of it. */
   async syncTargetRatings(identity: ChainIdentity, report: MirrorRunReport) {
+    if (isInactive(identity)) return;
     const targetProfileId = await this.profileIdOf(identity);
     const ratings: ChainRating[] = [];
     if ((identity.rep?.raters ?? 0) + (identity.nic?.raters ?? 0) > 0) {
