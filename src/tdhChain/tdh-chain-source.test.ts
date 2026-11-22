@@ -1,14 +1,13 @@
 import { promises as fs } from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { getBytes } from 'ethers';
 import { chainDayFixture } from '@/tests/fixtures/tdh-chain-day.fixture';
 import { RateLimitedFetcher } from './rate-limited-fetcher';
 import { formatTokenDayFile, formatWalletDayFile } from './tdh-day-file';
 import {
-  decodeDayInfo,
-  decodeTokenLeaves,
-  decodeWalletLeaves,
+  decodeTdhDay,
+  decodeTokenRows,
+  decodeWalletRows,
   FileTdhChainSource,
   GatewayTdhChainSource,
   readChainDay,
@@ -17,112 +16,309 @@ import {
 } from './tdh-chain-source';
 import { TdhChainDay } from './tdh-chain.types';
 
-function be(v: bigint | number, bytes: number): number[] {
-  let x = BigInt(v);
-  const out = new Array<number>(bytes).fill(0);
-  for (let i = bytes - 1; i >= 0; i--) {
-    out[i] = Number(x & BigInt(0xff));
-    x >>= BigInt(8);
-  }
-  return out;
-}
+const H = 1200;
 
-/** The gateway's CE encodings of a day's lists. */
-function encodeLists(day: TdhChainDay) {
-  const wallets = day.walletLeaves.flatMap((l) => [
-    ...Array.from(getBytes(l.wallet)),
-    ...Array.from(getBytes(l.cid)),
-    ...be(l.identityTdh, 8),
-    ...be(l.walletTdh, 8),
-    l.walletCount
-  ]);
-  const tokens = day.tokenLeaves!.flatMap((t) => [
-    ...Array.from(getBytes(t.cid)),
-    ...Array.from(getBytes(t.contract)),
-    ...be(BigInt(t.tokenId), 32),
-    ...be(t.tokenTdh, 8)
-  ]);
-  return { wallets: new Uint8Array(wallets), tokens: new Uint8Array(tokens) };
-}
-
-function dayJson(day: TdhChainDay) {
-  const h = day.header;
+function readStamp(height: number) {
   return {
-    cycle_day: h.cycleDay,
-    boundary: h.boundary,
-    tdh_rule_id: h.tdhRuleId,
-    cutoff_number: String(h.cutoffNumber),
-    cutoff_hash: h.cutoffHash.toUpperCase().replace('0X', '0x'),
-    cutoff_timestamp: h.cutoffTimestamp,
-    wallet_root: h.walletRoot,
-    wallet_count: h.walletCount,
-    identity_count: h.identityCount,
-    total_tdh: h.totalTdh,
-    token_root: h.tokenRoot,
-    token_count: h.tokenCount,
-    apply_height: day.apply.applyHeight,
-    apply_block_hash: day.apply.applyBlockHash,
-    apply_time_ms: day.apply.applyTimeMs,
-    finalized_height: day.apply.finalizedHeight
+    at: 'finalized',
+    height,
+    root: `0x${'ee'.repeat(32)}`,
+    slot: height + 10,
+    time: 1_791_000_000_000,
+    finalizedHeight: height,
+    headHeight: height + 3,
+    network: `0x${'0d'.repeat(32)}`
   };
 }
 
-describe('gateway decoders', () => {
-  it('decodes CE wallet and token leaves', () => {
-    const day = chainDayFixture();
-    const { wallets, tokens } = encodeLists(day);
-    expect(wallets.length).toBe(69 * 5);
-    expect(decodeWalletLeaves(wallets)).toEqual(day.walletLeaves);
-    expect(decodeTokenLeaves(tokens)).toEqual(day.tokenLeaves);
-    expect(() => decodeWalletLeaves(wallets.subarray(1))).toThrow();
-    expect(() => decodeTokenLeaves(tokens.subarray(3))).toThrow();
-  });
+/** A day's record as the gateway's TDH routes give it. */
+function dayData(day: TdhChainDay) {
+  const h = day.header;
+  return {
+    day: h.cycleDay,
+    boundary: h.boundary,
+    tdhRuleId: h.tdhRuleId,
+    cutoff: {
+      number: h.cutoffNumber,
+      hash: h.cutoffHash.toUpperCase().replace('0X', '0x'),
+      timestamp: h.cutoffTimestamp
+    },
+    walletRoot: h.walletRoot,
+    walletCount: h.walletCount,
+    identityCount: h.identityCount,
+    totalTdh: String(h.totalTdh),
+    tokenRoot: h.tokenRoot,
+    tokenCount: h.tokenCount,
+    changesRoot: `0x${'00'.repeat(32)}`,
+    changesCount: 0,
+    listsHeld: true
+  };
+}
 
-  it('refuses a value above 2^53 - 1', () => {
-    const bytes = encodeLists(chainDayFixture()).wallets;
-    bytes.set(be(BigInt(1) << BigInt(60), 8), 52);
-    expect(() => decodeWalletLeaves(bytes)).toThrow();
-  });
+const walletRow = (l: TdhChainDay['walletLeaves'][number]) => ({
+  wallet: l.wallet,
+  cid: l.cid,
+  identityTdh: String(l.identityTdh),
+  walletTdh: String(l.walletTdh),
+  walletCount: l.walletCount
+});
 
-  it('decodes a day, lowercasing hashes and taking integers as text too', () => {
-    const day = chainDayFixture();
-    expect(decodeDayInfo(dayJson(day))).toEqual({
-      header: day.header,
-      apply: day.apply
+const tokenRow = (t: NonNullable<TdhChainDay['tokenLeaves']>[number]) => ({
+  cid: t.cid,
+  contract: t.contract,
+  tokenId: t.tokenId,
+  tokenTdh: String(t.tokenTdh)
+});
+
+/**
+ * A gateway holding one day, at finalized height `height` (a list read
+ * pinned at a height in `gone` answers 409 `height_gone`).
+ */
+function fakeGateway(
+  day: TdhChainDay,
+  opts: {
+    tokens?: boolean;
+    gone?: number[];
+    walletRows?: ReturnType<typeof walletRow>[];
+    chunk?: (data: any) => any;
+  } = {}
+) {
+  let height = H;
+  const requests: string[] = [];
+  const json = (status: number, body: unknown) =>
+    Response.json(body, { status });
+  const notFound = () =>
+    json(404, {
+      read: readStamp(height),
+      error: { code: 'not_found', message: 'no such day' }
     });
+  const list = (url: URL, rows: any[], extra: Record<string, unknown>) => {
+    const pin = Number(url.searchParams.get('height'));
+    if ((opts.gone ?? []).includes(pin)) {
+      return json(409, {
+        read: readStamp(height),
+        error: {
+          code: 'height_gone',
+          message: `holds ${height - 64}..${height}`
+        }
+      });
+    }
+    const limit = Number(url.searchParams.get('limit'));
+    const after = url.searchParams.get('after');
+    const key = (r: any) => r.wallet ?? `${r.cid}:${r.contract}:${r.tokenId}`;
+    const from =
+      after === null ? 0 : rows.findIndex((r) => key(r) === after) + 1;
+    const page = rows.slice(from, from + limit);
+    const more = from + limit < rows.length;
+    const data = { day: day.header.cycleDay, ...extra, rows: page };
+    return json(200, {
+      read: readStamp(pin),
+      data: opts.chunk ? opts.chunk(data) : data,
+      next: more ? key(page[page.length - 1]) : null
+    });
+  };
+  const fetchFn = async (raw: string) => {
+    requests.push(raw);
+    const url = new URL(raw);
+    const p = url.pathname;
+    const n = day.header.cycleDay;
+    if (p === '/v1/tdh' || p === `/v1/tdh/days/${n}`) {
+      return json(200, {
+        read: readStamp(height),
+        data: dayData(day),
+        next: null
+      });
+    }
+    if (p === `/v1/tdh/days/${n}/wallets`) {
+      return list(url, opts.walletRows ?? day.walletLeaves.map(walletRow), {
+        walletRoot: day.header.walletRoot,
+        walletCount: day.header.walletCount,
+        identityCount: day.header.identityCount
+      });
+    }
+    if (p === `/v1/tdh/days/${n}/tokens` && opts.tokens !== false) {
+      return list(url, day.tokenLeaves!.map(tokenRow), {
+        tokenRoot: day.header.tokenRoot,
+        tokenCount: day.header.tokenCount
+      });
+    }
+    return notFound();
+  };
+  const fetcher = new RateLimitedFetcher({
+    allowedHosts: ['gateway.example'],
+    minIntervalMs: 0,
+    retries: 0,
+    fetchFn
+  });
+  return {
+    fetcher,
+    requests,
+    advance: (to: number) => {
+      height = to;
+    }
+  };
+}
+
+const BASE = 'https://gateway.example';
+const pathOf = (u: string) => {
+  const url = new URL(u);
+  return `${url.pathname}${url.search}`;
+};
+
+describe('gateway decoders', () => {
+  it('decodes a day record and its read stamp, lowercasing hashes', () => {
+    const day = chainDayFixture();
+    expect(decodeTdhDay(dayData(day), readStamp(H))).toEqual({
+      header: day.header,
+      apply: {
+        applyHeight: null,
+        applyBlockHash: null,
+        applyTimeMs: null,
+        finalizedHeight: H
+      }
+    });
+    expect(decodeTdhDay(dayData(day)).apply.finalizedHeight).toBeNull();
+  });
+
+  it('refuses a record with a bad value', () => {
+    const day = chainDayFixture();
+    const bad = (over: Record<string, unknown>) => () =>
+      decodeTdhDay({ ...dayData(day), ...over });
+    expect(bad({ totalTdh: '-1' })).toThrow();
+    expect(bad({ totalTdh: '9007199254740993' })).toThrow();
+    expect(bad({ walletRoot: '0x12' })).toThrow();
     expect(
-      decodeDayInfo({ ...dayJson(day), apply_height: null }).apply.applyHeight
-    ).toBeNull();
-    expect(() => decodeDayInfo({ ...dayJson(day), total_tdh: -1 })).toThrow();
-    expect(() =>
-      decodeDayInfo({ ...dayJson(day), wallet_root: '0x12' })
+      bad({ cutoff: { number: 1, hash: '0x00', timestamp: 1 } })
     ).toThrow();
+  });
+
+  it('decodes wallet and token rows and refuses bad ones', () => {
+    const day = chainDayFixture();
+    expect(decodeWalletRows(day.walletLeaves.map(walletRow))).toEqual(
+      day.walletLeaves
+    );
+    expect(decodeTokenRows(day.tokenLeaves!.map(tokenRow))).toEqual(
+      day.tokenLeaves
+    );
+    const w = walletRow(day.walletLeaves[0]);
+    expect(() => decodeWalletRows([{ ...w, wallet: '0x12' }])).toThrow();
+    expect(() => decodeWalletRows([{ ...w, walletTdh: 1.5 }])).toThrow();
+    expect(() => decodeWalletRows({ rows: [] })).toThrow();
+    const t = tokenRow(day.tokenLeaves![0]);
+    expect(() => decodeTokenRows([{ ...t, tokenId: '0x1' }])).toThrow();
   });
 });
 
 describe('GatewayTdhChainSource', () => {
-  it('reads a day through the provisional routes', async () => {
+  it('reads a day in chunks, every chunk pinned at the height its record was read at', async () => {
     const day = chainDayFixture();
-    const { wallets, tokens } = encodeLists(day);
-    const base = 'https://gateway.example';
-    const answers: Record<string, () => Response> = {
-      [`${base}/v1/tdh/days/latest`]: () => Response.json(dayJson(day)),
-      [`${base}/v1/tdh/days/20737`]: () => Response.json(dayJson(day)),
-      [`${base}/v1/tdh/days/20737/wallets`]: () => new Response(wallets),
-      [`${base}/v1/tdh/days/20737/tokens`]: () => new Response(tokens)
+    const gw = fakeGateway(day);
+    const source = new GatewayTdhChainSource(`${BASE}/`, gw.fetcher, 2);
+    expect((await source.latestDay())!.header).toEqual(day.header);
+    const read = await readChainDay(source, day.header.cycleDay);
+    expect(read).toEqual({
+      ...day,
+      apply: {
+        applyHeight: null,
+        applyBlockHash: null,
+        applyTimeMs: null,
+        finalizedHeight: H
+      }
+    });
+    const lists = gw.requests.map(pathOf).filter((p) => p.includes('/wallets'));
+    const w = day.walletLeaves.map((l) => l.wallet);
+    expect(lists).toEqual([
+      `/v1/tdh/days/20737/wallets?limit=2&height=${H}`,
+      `/v1/tdh/days/20737/wallets?after=${w[1]}&limit=2&height=${H}`,
+      `/v1/tdh/days/20737/wallets?after=${w[3]}&limit=2&height=${H}`
+    ]);
+    expect(gw.requests.map(pathOf)).toContain('/v1/tdh');
+    expect(await source.day(20738)).toBeNull();
+  });
+
+  it('reads no token list while the gateway serves none', async () => {
+    const day = chainDayFixture();
+    const source = new GatewayTdhChainSource(
+      BASE,
+      fakeGateway(day, { tokens: false }).fetcher
+    );
+    expect((await readChainDay(source, 20737))!.tokenLeaves).toBeNull();
+  });
+
+  it("refuses a wallet list that does not rebuild the day's root", async () => {
+    const day = chainDayFixture();
+    const rows = day.walletLeaves.map(walletRow);
+    rows[2] = {
+      ...rows[2],
+      walletTdh: String(day.walletLeaves[2].walletTdh + 1)
     };
+    const source = new GatewayTdhChainSource(
+      BASE,
+      fakeGateway(day, { walletRows: rows }).fetcher
+    );
+    await expect(source.walletLeaves(20737)).rejects.toThrow(/walletRoot/);
+  });
+
+  it('refuses a chunk that names another root or count than its day', async () => {
+    const day = chainDayFixture();
+    const source = new GatewayTdhChainSource(
+      BASE,
+      fakeGateway(day, {
+        chunk: (data) => ({ ...data, walletCount: data.walletCount + 1 })
+      }).fetcher
+    );
+    await expect(source.walletLeaves(20737)).rejects.toThrow(/walletCount/);
+  });
+
+  it('reads the list again at a fresh pin when the pinned height is gone', async () => {
+    const day = chainDayFixture();
+    const gw = fakeGateway(day, { gone: [H] });
+    const source = new GatewayTdhChainSource(BASE, gw.fetcher, 2);
+    await source.day(20737);
+    gw.advance(H + 70);
+    expect(await source.walletLeaves(20737)).toEqual(day.walletLeaves);
+    const heights = gw.requests
+      .map((u) => new URL(u))
+      .filter((u) => u.pathname.endsWith('/wallets'))
+      .map((u) => Number(u.searchParams.get('height')));
+    expect(heights).toEqual([H, H + 70, H + 70, H + 70]);
+  });
+
+  it('gives up after three pins that are gone', async () => {
+    const day = chainDayFixture();
+    const gw = fakeGateway(day, { gone: [H] });
+    const source = new GatewayTdhChainSource(BASE, gw.fetcher, 2);
+    await expect(source.walletLeaves(20737)).rejects.toThrow(/pinned height/);
+  });
+
+  it('reads no latest day before the chain has applied one', async () => {
     const fetcher = new RateLimitedFetcher({
       allowedHosts: ['gateway.example'],
       minIntervalMs: 0,
-      fetchFn: async (url) =>
-        answers[url] ? answers[url]() : new Response('', { status: 404 })
+      retries: 0,
+      fetchFn: async () =>
+        Response.json({ read: readStamp(H), data: null, next: null })
     });
-    const source = new GatewayTdhChainSource(`${base}/`, fetcher);
-    expect((await source.latestDay())!.header).toEqual(day.header);
-    expect(await readChainDay(source, 20737)).toEqual(day);
-    expect(await source.day(20738)).toBeNull();
-    delete answers[`${base}/v1/tdh/days/20737/tokens`];
-    expect(await source.tokenLeaves(20737)).toBeNull();
+    const source = new GatewayTdhChainSource(BASE, fetcher);
+    expect(await source.latestDay()).toBeNull();
+    expect(await source.day(20737)).toBeNull();
+  });
+
+  it('reports a refusal with its code', async () => {
+    const fetcher = new RateLimitedFetcher({
+      allowedHosts: ['gateway.example'],
+      minIntervalMs: 0,
+      retries: 0,
+      fetchFn: async () =>
+        Response.json(
+          { error: { code: 'starting', message: 'reading the chain' } },
+          { status: 503 }
+        )
+    });
+    const source = new GatewayTdhChainSource(BASE, fetcher);
+    await expect(source.latestDay()).rejects.toThrow(
+      'starting: reading the chain'
+    );
   });
 });
 
