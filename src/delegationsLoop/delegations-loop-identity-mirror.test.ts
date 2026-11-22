@@ -246,6 +246,19 @@ describe('delegations loop and the identity mirror', () => {
     expect(identityChainMirror.regroupsDone).not.toHaveBeenCalled();
   });
 
+  it('halves again after a halved batch did not finish either', async () => {
+    process.env.FEATURE_IDENTITY_CHAIN_MIRROR = 'true';
+    jest.mocked(identityChainMirror.run).mockResolvedValue(report([]) as never);
+    jest.mocked(identityChainMirror.pendingRegroups).mockResolvedValue([A]);
+    jest
+      .mocked(getAffectedWalletsForAddresses)
+      .mockResolvedValue(new Set([A]) as never);
+    // The last batch (400 marked) was cut off too: 200 next.
+    jest.mocked(identityChainMirror.unfinishedRegroups).mockResolvedValue(400);
+    await invoke(4 * 60_000 + 10_000);
+    expect(identityChainMirror.pendingRegroups).toHaveBeenCalledWith(200);
+  });
+
   it('halves the batch after one a run took up and did not finish', async () => {
     process.env.FEATURE_IDENTITY_CHAIN_MIRROR = 'true';
     jest.mocked(identityChainMirror.run).mockResolvedValue(report([]) as never);

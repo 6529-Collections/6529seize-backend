@@ -67,6 +67,8 @@ export interface MirrorState {
   readonly sync_use_case: number | null;
   /** Within that use case, the last wallet written. */
   readonly sync_wallet_after: string | null;
+  /** The rows off the chain's level fix: the last key it got to. */
+  readonly off_chain_after: string | null;
   /** The highest finalized height reads were pinned to. */
   readonly pin_floor: number | null;
   /** What the mirror could not write, tried again by the next run. */
@@ -257,7 +259,7 @@ export class IdentityChainMirrorDb extends LazyDbAccessCompatibleService {
       `select next_height, sync_from_height, sync_phase, sync_after, last_full_sync_at,
               bindings_next_height, chain_id, placeholders_at, bindings_exact,
               levels_tdh_day, level_sweep_day, level_sweep_after, levels_day_height,
-              sync_use_case, sync_wallet_after, pin_floor, retry_json
+              sync_use_case, sync_wallet_after, pin_floor, off_chain_after, retry_json
        from ${IDENTITY_CHAIN_MIRROR_STATE_TABLE} where id = :id`,
       { id: STATE_ID },
       conn ? { wrappedConnection: conn } : undefined
@@ -280,6 +282,7 @@ export class IdentityChainMirrorDb extends LazyDbAccessCompatibleService {
       sync_use_case: numberOrNull(row.sync_use_case),
       sync_wallet_after: row.sync_wallet_after ?? null,
       pin_floor: numberOrNull(row.pin_floor),
+      off_chain_after: row.off_chain_after ?? null,
       retry: retryOf(row.retry_json)
     };
   }
@@ -290,12 +293,13 @@ export class IdentityChainMirrorDb extends LazyDbAccessCompatibleService {
          (id, next_height, sync_from_height, sync_phase, sync_after, last_full_sync_at,
           bindings_next_height, chain_id, placeholders_at, bindings_exact,
           levels_tdh_day, level_sweep_day, level_sweep_after, levels_day_height,
-          sync_use_case, sync_wallet_after, pin_floor, retry_json, updated_at)
+          sync_use_case, sync_wallet_after, pin_floor, off_chain_after, retry_json, updated_at)
        values (:id, :next_height, :sync_from_height, :sync_phase, :sync_after, :last_full_sync_at,
           :bindings_next_height, :chain_id, :placeholders_at, :bindings_exact,
           :levels_tdh_day, :level_sweep_day, :level_sweep_after, :levels_day_height,
-          :sync_use_case, :sync_wallet_after, :pin_floor, :retry_json, :now)
+          :sync_use_case, :sync_wallet_after, :pin_floor, :off_chain_after, :retry_json, :now)
        on duplicate key update
+         off_chain_after = values(off_chain_after),
          next_height = values(next_height),
          sync_wallet_after = values(sync_wallet_after),
          pin_floor = values(pin_floor),
@@ -446,29 +450,67 @@ export class IdentityChainMirrorDb extends LazyDbAccessCompatibleService {
       rep += this.db.getAffectedRows(result);
     }
     let level = 0;
-    let after = '';
-    for (;;) {
+    let after: string | null = '';
+    while (after !== null) {
+      const step = await this.fixLevelsOffTheChain({
+        after,
+        chunks: Number.POSITIVE_INFINITY,
+        chunk,
+        leaveOut: Array.from(left)
+      });
+      level += step.level;
+      after = step.after;
+    }
+    return { rep, level };
+  }
+
+  /**
+   * The level part of fixRowsOffTheChain from the key `after` (''
+   * from the first), at most `chunks` chunks of `chunk` rows: level_raw
+   * becomes rep + tdh for rows of profiles that are not chain identities
+   * (a row without a profile included), but for the profile ids left out.
+   * Returns the rows changed and the key to go on from (null: the end).
+   */
+  async fixLevelsOffTheChain({
+    after,
+    chunks,
+    chunk = 1_000,
+    leaveOut = []
+  }: {
+    readonly after: string;
+    readonly chunks: number;
+    readonly chunk?: number;
+    readonly leaveOut?: readonly string[];
+  }): Promise<{ level: number; after: string | null }> {
+    // `not in` needs one value at least.
+    const skip = leaveOut.length
+      ? leaveOut.map((it) => it.toLowerCase())
+      : [''];
+    let level = 0;
+    let from = after;
+    for (let i = 0; i < chunks; i++) {
       const bound = await this.db.oneOrNull<{ consolidation_key: string }>(
         `select consolidation_key from ${IDENTITIES_TABLE}
-         where consolidation_key > :after
+         where consolidation_key > :from
          order by consolidation_key limit 1 offset :last`,
-        { after, last: chunk - 1 }
+        { from, last: chunk - 1 }
       );
       const result = await this.db.execute(
         `update ${IDENTITIES_TABLE} i
          left join ${IDENTITY_CHAIN_PRINCIPALS_TABLE} m on m.profile_id = i.profile_id
          set i.level_raw = i.rep + i.tdh
          where m.principal_id is null
-           and i.consolidation_key > :after
+           and i.consolidation_key > :from
            ${bound ? 'and i.consolidation_key <= :upTo' : ''}
-           and i.profile_id not in (:skip)
+           and (i.profile_id is null or i.profile_id not in (:skip))
            and i.level_raw <> i.rep + i.tdh`,
-        { after, upTo: bound?.consolidation_key, skip }
+        { from, upTo: bound?.consolidation_key, skip }
       );
       level += this.db.getAffectedRows(result);
-      if (!bound) return { rep, level };
-      after = bound.consolidation_key;
+      if (!bound) return { level, after: null };
+      from = bound.consolidation_key;
     }
+    return { level, after: from };
   }
 
   /** The chain height of an identity's last level write, when known. */
@@ -512,6 +554,25 @@ export class IdentityChainMirrorDb extends LazyDbAccessCompatibleService {
       { principalId: principalId.toLowerCase() }
     );
     return Number(row?.since ?? now);
+  }
+
+  /** The profile id decided for an identity filed without a mapping. */
+  async founderDecisionOf(principalId: string): Promise<string | null> {
+    const row = await this.db.oneOrNull<{ profile_id: string | null }>(
+      `select profile_id from ${IDENTITY_CHAIN_FOUNDER_WAITS_TABLE} where principal_id = :principalId`,
+      { principalId: principalId.toLowerCase() }
+    );
+    return row?.profile_id ?? null;
+  }
+
+  /** Keeps the profile id decided for an identity filed without a mapping. */
+  async founderDecided(principalId: string, profileId: string, now: number) {
+    await this.db.execute(
+      `insert into ${IDENTITY_CHAIN_FOUNDER_WAITS_TABLE} (principal_id, since, profile_id)
+       values (:principalId, :now, :profileId)
+       on duplicate key update profile_id = values(profile_id)`,
+      { principalId: principalId.toLowerCase(), profileId, now }
+    );
   }
 
   /** The founder is told (or the wait is over): no more waiting. */
@@ -1100,9 +1161,12 @@ export class IdentityChainMirrorDb extends LazyDbAccessCompatibleService {
       `select rater_profile_id, matter, matter_category, rating
        from ${RATINGS_TABLE}
        where matter_target_id = :target and matter in ('REP', 'CIC')
-         and not (matter = 'REP' and matter_category = :helpBot)
+         and not (matter = 'REP' and lower(trim(matter_category)) = :helpBot)
        for update`,
-      { target: targetProfileId, helpBot: HELP_BOT_CREDIT_CATEGORY },
+      {
+        target: targetProfileId,
+        helpBot: HELP_BOT_CREDIT_CATEGORY.toLowerCase()
+      },
       opts
     );
     const want = new Map(wanted.map((it) => [ratingKey(it), it]));
@@ -1471,6 +1535,11 @@ export class IdentityChainMirrorDb extends LazyDbAccessCompatibleService {
 
   /** A re-keying batch takes these wallets up. */
   async regroupsStarted(wallets: string[], now: number) {
+    // Only this batch is marked: the count of marks is the last batch's.
+    await this.db.execute(
+      `update ${IDENTITY_CHAIN_REGROUPS_TABLE} set started_at = null
+       where started_at is not null`
+    );
     for (let i = 0; i < wallets.length; i += 1000) {
       await this.db.execute(
         `update ${IDENTITY_CHAIN_REGROUPS_TABLE} set started_at = :now

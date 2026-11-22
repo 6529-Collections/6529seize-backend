@@ -144,6 +144,7 @@ describeWithSeed(
           sync_use_case: null,
           sync_wallet_after: null,
           pin_floor: null,
+          off_chain_after: null,
           retry: NO_RETRY
         },
         9
@@ -310,6 +311,7 @@ describeWithSeed(
           sync_use_case: 997,
           sync_wallet_after: B,
           pin_floor: 812,
+          off_chain_after: C,
           retry: { principals: [P], targets: [], wallets: [B] }
         },
         1
@@ -327,6 +329,7 @@ describeWithSeed(
           sync_use_case: 997,
           sync_wallet_after: B,
           pin_floor: 812,
+          off_chain_after: C,
           retry: { principals: [P], targets: [], wallets: [B] }
         })
       );
@@ -405,6 +408,30 @@ describeWithSeed(
         cic: 2,
         level_raw: 507
       });
+    });
+
+    it('keeps help-bot credits however the category is written', async () => {
+      await sqlExecutor.execute(
+        `update ${RATINGS_TABLE} set matter_category = ' HELP6529 credits '
+         where matter_category = :helpBot`,
+        { helpBot: HELP_BOT_CREDIT_CATEGORY }
+      );
+      await inTx((conn) =>
+        db.replaceTargetRatings(
+          ALICE,
+          [],
+          1,
+          { targetPrincipal: Q, height: 90, source: 'FEED' },
+          conn
+        )
+      );
+      const rows = await sqlExecutor.execute<any>(
+        `select matter_category from ${RATINGS_TABLE} where matter_target_id = :id`,
+        { id: ALICE }
+      );
+      expect(rows.map((it: any) => it.matter_category)).toEqual([
+        ' HELP6529 credits '
+      ]);
     });
 
     it('replaces a target ratings but keeps help-bot credits', async () => {
@@ -663,6 +690,10 @@ describeWithSeed(
       // A relaunch takes every level height away.
       await inTx((conn) => db.clearLevelHeights(conn));
       expect(await db.levelHeightOf(P)).toBeNull();
+      // A decision for an identity filed without a mapping is kept.
+      expect(await db.founderDecisionOf(Q)).toBeNull();
+      await db.founderDecided(Q, 'derived-id', 5);
+      expect(await db.founderDecisionOf(Q)).toBe('derived-id');
       // A founder wait starts once and ends.
       expect(await db.founderWaitSince(P, 10)).toBe(10);
       expect(await db.founderWaitSince(P, 20)).toBe(10);
@@ -721,6 +752,37 @@ describeWithSeed(
         rep: 0,
         level: 0
       });
+      // A row without a profile gets its level too, a chunk at a time.
+      await sqlExecutor.execute(
+        `insert into ${IDENTITIES_TABLE}
+           (consolidation_key, profile_id, primary_address, handle, normalised_handle,
+            tdh, rep, cic, level_raw, xtdh, produced_xtdh, granted_xtdh, xtdh_rate, basetdh_rate)
+         values (:key, null, :key, null, null, 7, 2, 0, 50, 41, 0, 0, 0, 0)`,
+        { key: W(60) }
+      );
+      const first = await db.fixLevelsOffTheChain({
+        after: '',
+        chunks: 1,
+        chunk: 1
+      });
+      expect(first.after).not.toBeNull();
+      let level = first.level;
+      let after = first.after;
+      while (after !== null) {
+        const step = await db.fixLevelsOffTheChain({
+          after,
+          chunks: 1,
+          chunk: 1
+        });
+        level += step.level;
+        after = step.after;
+      }
+      expect(level).toBe(1);
+      const [nullRow] = await sqlExecutor.execute<any>(
+        `select level_raw from ${IDENTITIES_TABLE} where consolidation_key = :key`,
+        { key: W(60) }
+      );
+      expect(Number(nullRow.level_raw)).toBe(9);
     });
 
     it('keeps first bindings, regroups to re-key and mapped profile ids', async () => {
@@ -753,9 +815,13 @@ describeWithSeed(
       await inTx((conn) => db.queueRegroups([B], 20, conn));
       expect(await db.pendingRegroups(10)).toEqual([A, B]);
       expect(await db.pendingRegroups(1)).toEqual([A]);
-      // A batch taken up and not finished is counted; one finished clears it.
+      // A batch taken up and not finished is counted; the next one, half
+      // of it, is all that is counted then; one finished clears it.
       await db.regroupsStarted([A, B], 12);
       expect(await db.unfinishedRegroups()).toBe(2);
+      await db.regroupsStarted([A], 13);
+      expect(await db.unfinishedRegroups()).toBe(1);
+      await db.regroupsStarted([A, B], 14);
       // B was queued again after the re-keying began: it stays.
       await db.regroupsDone([A, B], 15);
       expect(await db.pendingRegroups(10)).toEqual([B]);

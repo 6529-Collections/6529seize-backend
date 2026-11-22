@@ -9,6 +9,7 @@ import {
   ChainIdentity,
   ChainRating
 } from '@/chain-gateway/chain-gateway.types';
+import { USE_CASE_PRIMARY_ADDRESS } from '@/constants';
 import { isHelpBotCreditCategory } from '@/help-bot/help-bot.config';
 import { Logger } from '@/logging';
 import { ConnectionWrapper } from '@/sql-executor';
@@ -93,6 +94,10 @@ const PAGE_KEYS = 2_000;
 const PIN_WINDOW_MS = 8 * 60 * 1000;
 /** Identities waiting to be retried whose ids a fix of rows can leave out. */
 const MAX_WAITING_LEFT_OUT = 500;
+/** As many for the levels off the chain each run (it reads each one). */
+const MAX_WAITING_EACH_RUN = 50;
+/** Chunks of 1,000 rows the levels off the chain take each run. */
+const OFF_CHAIN_CHUNKS_A_RUN = 20;
 /** Environment flag: a new network id starts the mirror again (test stages). */
 export const RELAUNCH_ALLOWED_ENV = 'IDENTITY_CHAIN_MIRROR_RELAUNCH_ALLOWED';
 /** A new network id is read this many more times before anything is wiped. */
@@ -301,6 +306,18 @@ export function feedEffects(records: readonly ChainFeedRecord[]): FeedEffects {
     } else if (/delegation/i.test(name)) {
       ids.forEach((it) => effects.delegationHolders.add(it));
       wallets.forEach((it) => effects.delegationHolders.add(it));
+      // An identity's `primary` comes from its use case 997 records at the
+      // read: the identity is read again (a record that only expires is
+      // caught by the next full sync).
+      const useCase = Number(
+        record.keyFields?.useCase ?? record.valueFields?.useCase
+      );
+      if (!Number.isFinite(useCase) || useCase === USE_CASE_PRIMARY_ADDRESS) {
+        ids.forEach((it) => effects.principals.add(it));
+      }
+    } else if (/^rater/i.test(name)) {
+      // A rater's own records (its budget, when it last rated) change no row
+      // of 6529.io's: its ratings come with the Rating records.
     } else {
       ids.forEach((it) => effects.principals.add(it));
       wallets.forEach((it) => effects.wallets.add(it));
@@ -512,6 +529,10 @@ export class IdentityChainMirror {
       report
     );
     state = await this.syncIdentities(state, deadline, report);
+    // Once a first full sync has ended: before, every row waits for it.
+    if (state.last_full_sync_at !== null) {
+      state = await this.stepLevelsOffTheChain(state);
+    }
     state = await this.noteTdhDay(state);
     report.levelSweepDay = state.level_sweep_day;
     report.nextHeight = state.next_height;
@@ -566,6 +587,7 @@ export class IdentityChainMirror {
       sync_use_case: null,
       sync_wallet_after: null,
       pin_floor: null,
+      off_chain_after: null,
       retry: NO_RETRY
     };
   }
@@ -873,22 +895,60 @@ export class IdentityChainMirror {
    * MAX_WAITING_LEFT_OUT of them, it waits for a later time.
    */
   private async fixRowsOffTheChain(repToo: boolean) {
-    const waiting = Array.from(this.retry.principals);
-    if (waiting.length > MAX_WAITING_LEFT_OUT) {
-      logger.warn(
-        `[ROWS OFF THE CHAIN NOT FIXED] [${waiting.length} IDENTITIES TO RETRY]`
-      );
-      return;
-    }
-    const leaveOut: string[] = [];
-    for (const principal of waiting) {
-      const identity = await this.identity(principal);
-      if (identity) leaveOut.push(...(await this.ids.candidateIds(identity)));
-    }
+    const leaveOut = await this.idsOfIdentitiesWaiting(MAX_WAITING_LEFT_OUT);
+    if (!leaveOut) return;
     const fixed = await this.db.fixRowsOffTheChain({ repToo, leaveOut });
     logger.info(
       `[ROWS OFF THE CHAIN FIXED] [${fixed.rep} REP WITHOUT CREDITS] [${fixed.level} LEVELS]`
     );
+  }
+
+  /**
+   * The profile ids identities waiting to be retried could have (they may
+   * not be mapped yet); null with more than `limit` of them (the fix waits).
+   */
+  private async idsOfIdentitiesWaiting(
+    limit: number
+  ): Promise<string[] | null> {
+    const waiting = Array.from(this.retry.principals);
+    if (waiting.length > limit) {
+      logger.warn(
+        `[ROWS OFF THE CHAIN NOT FIXED] [${waiting.length} IDENTITIES TO RETRY]`
+      );
+      return null;
+    }
+    const ids: string[] = [];
+    for (const principal of waiting) {
+      try {
+        const identity = await this.identity(principal);
+        if (identity) ids.push(...(await this.ids.candidateIds(identity)));
+      } catch (error) {
+        logger.warn(`[ROWS OFF THE CHAIN NOT FIXED] ${messageOf(error)}`);
+        return null;
+      }
+    }
+    return ids;
+  }
+
+  /**
+   * Each run, the next few chunks of the rows off the chain get a level of
+   * REP + TDH, so their levels follow 6529.io's TDH days; the place is
+   * kept, and the walk starts again from the top at the end.
+   */
+  private async stepLevelsOffTheChain(
+    state: MirrorState
+  ): Promise<MirrorState> {
+    const leaveOut = await this.idsOfIdentitiesWaiting(MAX_WAITING_EACH_RUN);
+    if (!leaveOut) return state;
+    const step = await this.db.fixLevelsOffTheChain({
+      after: state.off_chain_after ?? '',
+      chunks: OFF_CHAIN_CHUNKS_A_RUN,
+      leaveOut
+    });
+    if (step.level) {
+      logger.info(`[LEVELS OFF THE CHAIN] [${step.level}]`);
+    }
+    return await this.save({ ...state, off_chain_after: step.after });
   }
 
   /**
@@ -1349,16 +1409,31 @@ export class IdentityChainMirror {
   }
 
   /** The principals a feed page touches, with the wallets' old and new ones. */
-  private async principalsOf(effects: FeedEffects): Promise<Set<string>> {
+  private async principalsOf(
+    effects: FeedEffects,
+    report: MirrorRunReport
+  ): Promise<Set<string>> {
     const principals = new Set(effects.principals);
     if (!effects.wallets.size) {
       return principals;
     }
     const wallets = Array.from(effects.wallets);
-    const now = await this.gateway.getIdentitiesByWallets(wallets, this.pin());
-    Object.values(now).forEach((it) => {
-      if (it) principals.add(it.principalId.toLowerCase());
-    });
+    try {
+      const now = await this.gateway.getIdentitiesByWallets(
+        wallets,
+        this.pin()
+      );
+      Object.values(now).forEach((it) => {
+        if (it) principals.add(it.principalId.toLowerCase());
+      });
+    } catch (error) {
+      if (isHeightGone(error)) throw error;
+      // The records name the identities the wallets joined, and 6529.io's
+      // rows the ones they left: the page goes on with those.
+      const message = messageOf(error);
+      logger.warn(`[WALLETS' IDENTITIES NOT READ] ${message}`);
+      report.failed.push(`wallets of the page: ${message}`);
+    }
     (await this.db.principalsOfWallets(wallets)).forEach((it) =>
       principals.add(it)
     );
@@ -1378,7 +1453,7 @@ export class IdentityChainMirror {
     at: MirrorAt,
     until: number = Number.POSITIVE_INFINITY
   ) {
-    const principals = await this.principalsOf(effects);
+    const principals = await this.principalsOf(effects, report);
     const touched = new Set<string>(effects.wallets);
     let done = 0;
     const left = { principals: 0, targets: 0, wallets: 0 };
@@ -1396,14 +1471,13 @@ export class IdentityChainMirror {
       left[kind]++;
       return false;
     };
+    // Each key's reads are its own work: one that fails is tried again,
+    // the others go on (a refused pin still stops the page).
     for (const principal of Array.from(principals)) {
       if (!room('principals', principal)) continue;
-      const identity = await this.identity(principal);
-      if (!identity) {
-        this.retry.principals.delete(principal.toLowerCase());
-        continue;
-      }
       await this.isolated(['principals'], principal, report, async () => {
+        const identity = await this.identity(principal);
+        if (!identity) return;
         (await this.applyIdentity(identity, report, at)).forEach((it) =>
           touched.add(it)
         );
@@ -1411,27 +1485,25 @@ export class IdentityChainMirror {
     }
     for (const target of Array.from(effects.ratingTargets)) {
       if (!room('targets', target)) continue;
-      const identity = await this.identity(target);
-      if (!identity) {
-        this.retry.targets.delete(target.toLowerCase());
-        continue;
-      }
-      await this.isolated(['targets'], target, report, () =>
-        this.syncTargetRatings(identity, report, at)
-      );
+      await this.isolated(['targets'], target, report, async () => {
+        const identity = await this.identity(target);
+        return identity
+          ? await this.syncTargetRatings(identity, report, at)
+          : [];
+      });
     }
-    const holderWallets = new Map<string, string[]>();
     for (const holder of Array.from(effects.delegationHolders)) {
       if (HEX20.test(holder)) {
         touched.add(holder);
         continue;
       }
-      // A holder identity not reached is retried as a holder.
+      // A holder identity is done once read: its wallets go on as wallets
+      // (each tried again itself when it fails).
       if (!room('wallets', holder)) continue;
-      const identity = await this.identity(holder);
-      const wallets = identity?.wallets.map((it) => it.toLowerCase()) ?? [];
-      wallets.forEach((it) => touched.add(it));
-      holderWallets.set(holder.toLowerCase(), wallets);
+      await this.isolated(['wallets'], holder, report, async () => {
+        const identity = await this.identity(holder);
+        identity?.wallets.forEach((it) => touched.add(it.toLowerCase()));
+      });
     }
     for (const wallet of Array.from(touched)) {
       if (!room('wallets', wallet)) continue;
@@ -1439,13 +1511,6 @@ export class IdentityChainMirror {
         this.syncWalletDelegations(wallet, report)
       );
     }
-    // A holder is done once each of its wallets is (they're retried
-    // themselves otherwise).
-    holderWallets.forEach((wallets, holder) => {
-      if (wallets.every((it) => !this.retry.wallets.has(it))) {
-        this.retry.wallets.delete(holder);
-      }
-    });
     const deferred = left.principals + left.targets + left.wallets;
     if (deferred) {
       report.deferred += deferred;

@@ -129,6 +129,10 @@ describe('walletPrincipalAt', () => {
     });
     expect(await lookups.walletPrincipalAt(W, 300)).toBeNull();
     expect(await lookups.walletPrincipalAt(W, 500)).toBe(P2);
+    // The client counts the history from the import too.
+    expect(gateway.getMembershipWalletHistory).toHaveBeenCalledWith(W, {
+      noBindingsBefore: 40
+    });
     // The import's start is read once.
     expect(gateway.getMembership).toHaveBeenCalledTimes(1);
   });

@@ -62,6 +62,13 @@ export class IdentityChainFounderWaitEntity {
 
   @Column({ type: 'bigint', nullable: false })
   readonly since!: number;
+
+  /**
+   * The profile id decided for an identity that is filed without a mapping
+   * (merged or closed): kept, so it is filed under one id only.
+   */
+  @Column({ type: 'varchar', length: 50, nullable: true, default: null })
+  readonly profile_id!: string | null;
 }
 
 /**
@@ -213,6 +220,10 @@ export class IdentityChainMirrorStateEntity {
   /** The full sync's delegation phase: the next use case to walk. */
   @Column({ type: 'int', nullable: true, default: null })
   readonly sync_use_case!: number | null;
+
+  /** The rows off the chain's level fix: the last key it got to. */
+  @Column({ type: 'varchar', length: 255, nullable: true, default: null })
+  readonly off_chain_after!: string | null;
 
   /** Within that use case, the last wallet written (wallets in order). */
   @Column({ type: 'varchar', length: 42, nullable: true, default: null })

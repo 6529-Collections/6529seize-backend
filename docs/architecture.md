@@ -886,7 +886,8 @@ are read so the checkpoint moves on but not applied: consolidations,
 delegations, re-keying and primary addresses come from the chain. Each step's
 time comes from what the Lambda has left: the mirror (at most six minutes),
 the re-keying (as many wallets as the time left allows, at 50 ms each, and
-half the last batch when that one didn't finish; a failure there is logged,
+half the last batch when that one didn't finish, the marks counting the last
+batch only; a failure there is logged,
 and a mirror error stays the run's), then the
 profile site followers (once a first full sync has ended). A gateway node
 that says it isn't ready is logged and still read (its finalized state); a
@@ -916,13 +917,18 @@ identity after the last one written. Profiles that are not chain identities
 keep 6529.io's REP and CIC, without the help bot's credits, and a level of
 REP + TDH: when a full sync has written every chain identity, the REP of a
 profile with credits becomes its REP ratings outside the credit category, and
-then and after each level sweep `level_raw` becomes `rep + tdh` where it
-differs, in chunks of rows; the ids an identity waiting to be retried could
-have are left out. A feed page writes the identities, rating targets and wallets it
-touches (a rating touches its target, not its rater) until the run's
-deadline, for at most 2,000 keys and while its pin is under eight minutes
-old; the keys it doesn't reach go to the retry list (a delegation holder
-until each of its wallets is synced), and its place moves on.
+then, after each level sweep and, 20,000 rows a run from where the last run
+got to, every run (so the levels follow 6529.io's TDH days), `level_raw`
+becomes `rep + tdh` where it differs, a row without a profile included; the
+ids an identity waiting to be retried could have are left out. A feed page
+writes the identities, rating targets and wallets it touches (a rating touches
+its target, not its rater, and a rater's own records touch nothing; a
+delegation of use case 997 touches its holder identity too, whose `primary`
+it sets; a 997 record that only expires is caught by the next full sync)
+until the run's deadline, for at most 2,000 keys and while its pin is under
+eight minutes old; the keys it doesn't reach go to the retry list, and its
+place moves on. Each key's reads are its own: one that fails is tried again
+and the page goes on (a refused pin still stops it).
 Each feed page, retry batch and full sync page reads the identities, ratings
 and delegations it touches pinned to one finalized height at or past the one
 it needs, and never below a height read before, in this run or an earlier one
@@ -940,14 +946,15 @@ as a UUID. Which identity a wallet was first bound to comes from the mirror's
 own `identity_chain_first_bindings`, recorded while the wallet bindings follow
 the feed without a break from the import's start, else from the gateway's
 history of the wallet (the gateway client keeps its first range, up to the
-read). When neither can say (the import's start unknown, or the node's
+read, counted from the import's start, before which no wallet was bound). When neither can say (the import's start unknown, or the node's
 history starting after it, or ending before a read past the creation: a gap),
 the identity is tried
 again for six hours (`identity_chain_founder_waits`), since another gateway
 node may answer meanwhile; when it stays so, it is mapped to its derived id
 and the placeholder is logged and reported as orphaned, for the later merge.
 A merged or closed identity is filed under its mapping, else the id the same
-rule gives, without storing one (its founder wait, once over, stays over). An
+rule gives, without a mapping: an id decided from its founder is kept
+(`identity_chain_founder_waits`), so it is filed under one id only. An
 answer the gateway's node doesn't hold (`not_held`) or gives unreadably
 (`bad_answer`) for these reads is tried again later, as another node may
 give it. The
@@ -988,7 +995,8 @@ height its answer was read at, and a level the ranking leaves out is read
 there), and no write puts an older level over a newer one. The sweep goes first in each run with a quarter of the time,
 keeps its place in the state across runs, and starts again from the top for a
 newer day. The help bot's credit category stays in 6529.io's ratings table as
-a site feature, not counted as REP, and the mirror never touches it. It never
+a site feature, not counted as REP, and the mirror never touches it (written
+in any case or spacing). It never
 updates `tdh`, `basetdh_rate` or the xTDH columns of a row that exists (the
 TDH and xTDH loops own them), and a row it creates for a new consolidation
 key starts from the profile's previous values. When wallets change keys, the

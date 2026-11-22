@@ -130,9 +130,12 @@ export class IdentityChainLookups {
     ) {
       return binding.principal_id.toLowerCase();
     }
-    const history = await this.gateway.getMembershipWalletHistory(address);
+    const importStart = await this.importStartHeight();
+    const history = await this.gateway.getMembershipWalletHistory(address, {
+      noBindingsBefore: importStart
+    });
     const principal = history
-      ? principalInHistory(history, height, await this.importStartHeight())
+      ? principalInHistory(history, height, importStart)
       : undefined;
     if (principal === undefined) {
       throw new WalletPrincipalUnknownError(address, height);

@@ -190,6 +190,28 @@ class FakeDb {
   }
   async founderWaitDone(principal: string) {
     this.founderWaits.delete(principal);
+    this.founderDecisions.delete(principal);
+  }
+  founderDecisions = new Map<string, string>();
+  async founderDecisionOf(principal: string) {
+    return this.founderDecisions.get(principal.toLowerCase()) ?? null;
+  }
+  async founderDecided(principal: string, profileId: string) {
+    this.founderDecisions.set(principal.toLowerCase(), profileId);
+  }
+  levelSteps: { after: string; leaveOut: readonly string[] }[] = [];
+  async fixLevelsOffTheChain({
+    after,
+    leaveOut = []
+  }: {
+    after: string;
+    chunks: number;
+    leaveOut?: readonly string[];
+  }) {
+    this.levelSteps.push({ after, leaveOut });
+    const fixed = await this.fixRowsOffTheChain({ repToo: false, leaveOut });
+    this.fixes.pop();
+    return { level: fixed.level, after: null };
   }
   outsideDeleted: number[][] = [];
   async deleteDelegationsOutside(useCases: number[]) {
@@ -2625,7 +2647,13 @@ describe('IdentityChainMirror', () => {
     chain.headHeldAt = 104;
     gateway.getIdentityByPrincipal.mockClear();
     await mirror.run({ budgetMs: 60_000 });
-    expect(gateway.getIdentityByPrincipal).not.toHaveBeenCalled();
+    const pinned = () =>
+      gateway.getIdentityByPrincipal.mock.calls.filter(
+        (it) =>
+          ((it as unknown[])[1] as { height?: number } | undefined)?.height !==
+          undefined
+      );
+    expect(pinned()).toEqual([]);
     chain.headHeldAt = 105;
     await mirror.run({ budgetMs: 60_000 });
     expect(gateway.getIdentityByPrincipal).toHaveBeenCalledWith(
@@ -2835,10 +2863,8 @@ describe('IdentityChainMirror', () => {
       }
     );
     await mirror.run({ budgetMs: 60_000 });
-    // B failed: it and the holder stay.
-    expect(db.state?.retry.wallets).toEqual(
-      expect.arrayContaining([alice.principalId, B])
-    );
+    // The holder is done once read; B failed and is tried again itself.
+    expect(db.state?.retry.wallets).toEqual([B]);
     gateway.getDelegationsOfWallet.mockImplementation(ofWallet);
     await mirror.run({ budgetMs: 60_000 });
     await mirror.run({ budgetMs: 60_000 });
@@ -3004,6 +3030,163 @@ describe('IdentityChainMirror', () => {
       reason: 'founder_unknown_yet'
     });
     expect(db.founderWaits.has(PID(54))).toBe(true);
+  });
+
+  it("reads an identity again when its primary's delegation changes", () => {
+    const effects = feedEffects([
+      {
+        family: '0x0121',
+        name: 'Delegation',
+        key: '0x',
+        value: null,
+        keyFields: { holder: PID(7), useCase: 997 },
+        valueFields: { delegate: W(9) }
+      },
+      {
+        family: '0x0121',
+        name: 'Delegation',
+        key: '0x',
+        value: null,
+        keyFields: { holder: PID(8), useCase: 2 },
+        valueFields: { delegate: W(9) }
+      },
+      {
+        family: '0x0301',
+        name: 'RaterBudget',
+        key: '0x',
+        value: null,
+        keyFields: { rater: PID(6) },
+        valueFields: null
+      }
+    ]);
+    expect(Array.from(effects.principals)).toEqual([PID(7)]);
+    expect(Array.from(effects.delegationHolders).sort()).toEqual(
+      [PID(7), PID(8), W(9)].sort()
+    );
+    expect(effects.ratingTargets.size).toBe(0);
+  });
+
+  it("goes on with a page when its wallets' identities can't be read", async () => {
+    const { mirror, db, chain, alice, bob, gateway } = world();
+    await mirror.run({ budgetMs: 60_000 });
+    // Bob's wallet C joins Alice; Bob, left without one, isn't written.
+    chain.identities.set(alice.principalId, { ...alice, wallets: [A, B, C] });
+    chain.identities.delete(bob.principalId);
+    chain.feed.push({
+      from: 101,
+      through: 101,
+      next: 102,
+      blocks: [
+        block(101, [
+          {
+            family: '0x0102',
+            name: 'AddressBinding',
+            key: '0x',
+            value: null,
+            keyFields: { address: C },
+            valueFields: { principalId: alice.principalId }
+          }
+        ])
+      ]
+    });
+    gateway.getIdentitiesByWallets.mockRejectedValueOnce(new Error('timeout'));
+    const report = await mirror.run({ budgetMs: 60_000 });
+    expect(report.error).toBeUndefined();
+    expect(db.state?.next_height).toBe(102);
+    // The record names Alice: she is written with C.
+    expect(db.addressKeys.get(C)).toBe([A, B, C].join('-'));
+    expect(report.failed).toEqual(['wallets of the page: timeout']);
+  });
+
+  it("puts a key whose identity can't be read on the retry list, and goes on", async () => {
+    const { mirror, db, chain, alice, bob, gateway } = world();
+    await mirror.run({ budgetMs: 60_000 });
+    chain.feed.push({
+      from: 101,
+      through: 101,
+      next: 102,
+      blocks: [
+        block(101, [
+          principalRecord(alice.principalId),
+          principalRecord(bob.principalId)
+        ])
+      ]
+    });
+    const read = gateway.getIdentityByPrincipal.getMockImplementation()!;
+    gateway.getIdentityByPrincipal.mockImplementation(async (p: string) => {
+      if (p === alice.principalId) throw new Error('timeout');
+      return await read(p);
+    });
+    const report = await mirror.run({ budgetMs: 60_000 });
+    expect(report.error).toBeUndefined();
+    expect(db.state?.next_height).toBe(102);
+    expect(db.state?.retry.principals).toEqual([alice.principalId]);
+  });
+
+  it('runs the levels of rows off the chain a step each run, from where it got to', async () => {
+    const { mirror, db } = world();
+    await mirror.run({ budgetMs: 60_000 });
+    db.levelSteps = [];
+    db.state = { ...db.state!, off_chain_after: W(5) };
+    await mirror.run({ budgetMs: 60_000 });
+    expect(db.levelSteps).toEqual([{ after: W(5), leaveOut: [] }]);
+    // At the end, the next run starts from the top.
+    expect(db.state?.off_chain_after).toBeNull();
+    await mirror.run({ budgetMs: 60_000 });
+    expect(db.levelSteps[1]).toEqual({ after: '', leaveOut: [] });
+  });
+
+  it('files a merged identity under the id once decided, whatever a later node says', async () => {
+    const { mirror, db, gateway, chain, tick } = world();
+    chain.importStart = 1;
+    await mirror.run({ budgetMs: 60_000 });
+    historyDecides(db);
+    db.placeholders.set(W(66), 'p-66');
+    gateway.getMembershipWalletHistory.mockResolvedValue({
+      wallet: W(66),
+      changes: [],
+      ranges: [[5, 100]],
+      readHeight: 100
+    } as never);
+    const merged = chainIdentity(PID(66), [], {
+      legacyId: null,
+      founder: W(66),
+      createdHeight: 20,
+      mergedInto: PID(1)
+    });
+    await expect(mirror.profileIdForSites(merged)).rejects.toMatchObject({
+      reason: 'founder_unknown_yet'
+    });
+    tick(FOUNDER_WAIT_MS);
+    const derived = principalProfileId(PID(66));
+    expect((await mirror.profileIdForSites(merged)).profileId).toBe(derived);
+    // A node with the whole history would say it was the founder's first.
+    gateway.getMembershipWalletHistory.mockResolvedValue({
+      wallet: W(66),
+      changes: [{ height: 20, principalId: PID(66) }],
+      ranges: [[1, 100]],
+      readHeight: 100
+    } as never);
+    expect((await mirror.profileIdForSites(merged)).profileId).toBe(derived);
+    expect(db.mapping.has(PID(66))).toBe(false);
+  });
+
+  it('counts a wallet history from the import, as the client is told', async () => {
+    const { mirror, db, gateway, chain } = world();
+    chain.importStart = 7;
+    await mirror.run({ budgetMs: 60_000 });
+    historyDecides(db);
+    db.placeholders.set(W(67), 'p-67');
+    gateway.getMembershipWalletHistory.mockClear();
+    const made = chainIdentity(PID(67), [W(67)], {
+      legacyId: null,
+      founder: W(67),
+      createdHeight: 3
+    });
+    await mirror.profileIdOf(made).catch(() => undefined);
+    expect(gateway.getMembershipWalletHistory).toHaveBeenCalledWith(W(67), {
+      noBindingsBefore: 7
+    });
   });
 
   it('starts the keys to retry again with a full sync', async () => {

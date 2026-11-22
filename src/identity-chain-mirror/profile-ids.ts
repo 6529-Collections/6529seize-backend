@@ -24,6 +24,8 @@ type Db = Pick<
   | 'firstBindingOf'
   | 'founderWaitSince'
   | 'founderWaitDone'
+  | 'founderDecisionOf'
+  | 'founderDecided'
 >;
 
 /**
@@ -152,12 +154,16 @@ export class ProfileIds {
       };
     }
     const principal = identity.principalId.toLowerCase();
-    return {
-      profileId:
-        (await this.db.profileIdOfPrincipal(principal)) ??
-        (await this.chooseProfileId(identity)).profileId,
-      imported: legacy !== null
-    };
+    const mapped =
+      (await this.db.profileIdOfPrincipal(principal)) ??
+      (await this.db.founderDecisionOf(principal));
+    if (mapped) return { profileId: mapped, imported: legacy !== null };
+    const chosen = await this.chooseProfileId(identity);
+    // Decided from its founder: kept, so it is filed under this id only.
+    if (chosen.founderAsked) {
+      await this.db.founderDecided(principal, chosen.profileId, this.now());
+    }
+    return { profileId: chosen.profileId, imported: legacy !== null };
   }
 
   /**
@@ -319,7 +325,9 @@ export class ProfileIds {
       );
     }
     const history = await orRetryLater(() =>
-      this.gateway.getMembershipWalletHistory(wallet)
+      this.gateway.getMembershipWalletHistory(wallet, {
+        noBindingsBefore: this.importStart
+      })
     );
     if (!history) {
       throw new ChainReadRetryLater(
