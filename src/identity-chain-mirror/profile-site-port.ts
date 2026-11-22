@@ -10,7 +10,11 @@ import {
 } from '@/chain-gateway/chain-gateway.types';
 import { RequestContext } from '@/request.context';
 import { readWholeBlocks, Sleep } from './chain-feed-pages';
-import { ChainReadRetryLater, messageOf } from './mirror-errors';
+import {
+  ChainReadRetryLater,
+  isAnotherNodesToGive,
+  messageOf
+} from './mirror-errors';
 import { WalletPrincipalUnknownError } from './identity-chain-lookups';
 import { numberOrNull } from './identity-chain-mirror.db';
 import { decodeProfileDoc } from './profile-doc';
@@ -153,8 +157,12 @@ function retryOnUnknown(error: unknown): unknown {
   if (error instanceof WalletPrincipalUnknownError) {
     return new ChainReadRetryLater(error.message, 'wallet_unknown');
   }
-  if (error instanceof ChainGatewayError && error.code === 'bad_answer') {
-    return new ChainReadRetryLater(error.message, 'bad_answer');
+  if (isAnotherNodesToGive(error)) {
+    const gatewayError = error as ChainGatewayError;
+    return new ChainReadRetryLater(
+      gatewayError.message,
+      String(gatewayError.code)
+    );
   }
   return error;
 }

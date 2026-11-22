@@ -1,3 +1,5 @@
+import { ChainGatewayError } from '@/chain-gateway/chain-gateway.client';
+
 /** A thrown value's message. */
 export function messageOf(error: unknown): string {
   return (error as Error)?.message ?? String(error);
@@ -21,5 +23,33 @@ export class ChainReadRetryLater extends Error {
     super(message);
     Object.setPrototypeOf(this, new.target.prototype);
     this.name = 'ChainReadRetryLater';
+  }
+}
+
+/**
+ * A gateway answer another node may give right: this node doesn't hold
+ * the data (`not_held`), or its answer can't be read (`bad_answer`).
+ */
+export function isAnotherNodesToGive(error: unknown): boolean {
+  return (
+    error instanceof ChainGatewayError &&
+    (error.code === 'not_held' || error.code === 'bad_answer')
+  );
+}
+
+/**
+ * `read()`, with an answer another node may give turned into
+ * ChainReadRetryLater (the reason is the gateway's code).
+ */
+export async function orRetryLater<T>(read: () => Promise<T>): Promise<T> {
+  try {
+    return await read();
+  } catch (error) {
+    if (!isAnotherNodesToGive(error)) throw error;
+    const gatewayError = error as ChainGatewayError;
+    throw new ChainReadRetryLater(
+      gatewayError.message,
+      String(gatewayError.code)
+    );
   }
 }

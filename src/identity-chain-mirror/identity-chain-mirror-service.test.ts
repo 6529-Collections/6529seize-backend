@@ -2935,6 +2935,77 @@ describe('IdentityChainMirror', () => {
     gateway.listIdentities.mockImplementation(list);
   });
 
+  it("maps an identity later when this node doesn't hold the import", async () => {
+    const { mirror, db, gateway } = world();
+    await mirror.run({ budgetMs: 60_000 });
+    gateway.getImportedIdentity.mockRejectedValueOnce(
+      new ChainGatewayError('not here', 404, 'not_held', '/v1/identities')
+    );
+    const old = chainIdentity(PID(52), [W(52)]);
+    await expect(mirror.profileIdOf(old)).rejects.toMatchObject({
+      retryLater: true,
+      reason: 'not_held'
+    });
+    expect(db.mapping.has(PID(52))).toBe(false);
+  });
+
+  it("waits on a founder whose wallet history this node doesn't hold", async () => {
+    const { mirror, db, gateway, chain } = world();
+    chain.importStart = 1;
+    await mirror.run({ budgetMs: 60_000 });
+    historyDecides(db);
+    db.placeholders.set(W(53), 'p-53');
+    gateway.getMembershipWalletHistory.mockRejectedValueOnce(
+      new ChainGatewayError('not here', 404, 'not_held', '/v1/membership')
+    );
+    const made = chainIdentity(PID(53), [W(53)], {
+      legacyId: null,
+      founder: W(53),
+      createdHeight: 20
+    });
+    await expect(mirror.profileIdOf(made)).rejects.toMatchObject({
+      retryLater: true,
+      reason: 'not_held'
+    });
+  });
+
+  it("goes on when this node doesn't hold the TDH day", async () => {
+    const { mirror, db, gateway } = world();
+    await mirror.run({ budgetMs: 60_000 });
+    gateway.getTdh.mockRejectedValue(
+      new ChainGatewayError('not here', 404, 'not_held', '/v1/tdh')
+    );
+    gateway.getLevelRanking.mockClear();
+    const report = await mirror.run({ budgetMs: 60_000 });
+    expect(report.error).toBeUndefined();
+    expect(gateway.getLevelRanking).not.toHaveBeenCalled();
+    expect(db.state?.next_height).toBe(101);
+  });
+
+  it("can't say from a history whose first range ends before a read past the creation", async () => {
+    const { mirror, db, gateway, chain } = world();
+    chain.importStart = 1;
+    await mirror.run({ budgetMs: 60_000 });
+    historyDecides(db);
+    db.placeholders.set(W(54), 'p-54');
+    // Held from the import to 50, read at 200: a gap before 80.
+    gateway.getMembershipWalletHistory.mockResolvedValue({
+      wallet: W(54),
+      changes: [],
+      ranges: [[1, 50]],
+      readHeight: 200
+    } as never);
+    const made = chainIdentity(PID(54), [W(54)], {
+      legacyId: null,
+      founder: W(54),
+      createdHeight: 80
+    });
+    await expect(mirror.profileIdOf(made)).rejects.toMatchObject({
+      reason: 'founder_unknown_yet'
+    });
+    expect(db.founderWaits.has(PID(54))).toBe(true);
+  });
+
   it('starts the keys to retry again with a full sync', async () => {
     const { mirror, db, gateway, tick } = world();
     await mirror.run({ budgetMs: 60_000 });

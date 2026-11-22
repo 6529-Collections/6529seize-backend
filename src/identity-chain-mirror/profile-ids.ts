@@ -2,7 +2,7 @@ import { ChainGatewayClient } from '@/chain-gateway/chain-gateway.client';
 import { ChainIdentity } from '@/chain-gateway/chain-gateway.types';
 import { IdentityChainMirrorDb } from './identity-chain-mirror.db';
 import { principalProfileId } from './identity-plan';
-import { ChainReadRetryLater } from './mirror-errors';
+import { ChainReadRetryLater, orRetryLater } from './mirror-errors';
 import { Logger } from '@/logging';
 
 const logger = Logger.get('IDENTITY_CHAIN_MIRROR');
@@ -271,7 +271,10 @@ export class ProfileIds {
   ): Promise<string | null> {
     if (identity.founder) return identity.founder.toLowerCase();
     if (!identity.anchor) return null;
-    const binding = await this.gateway.getMembershipWallet(identity.anchor);
+    const anchor = identity.anchor;
+    const binding = await orRetryLater(() =>
+      this.gateway.getMembershipWallet(anchor)
+    );
     const sinceCreation =
       binding?.principalId?.toLowerCase() ===
         identity.principalId.toLowerCase() &&
@@ -315,7 +318,9 @@ export class ProfileIds {
         'bindings_behind'
       );
     }
-    const history = await this.gateway.getMembershipWalletHistory(wallet);
+    const history = await orRetryLater(() =>
+      this.gateway.getMembershipWalletHistory(wallet)
+    );
     if (!history) {
       throw new ChainReadRetryLater(
         `No history of ${wallet} yet: the identity is mapped later`,
@@ -331,11 +336,11 @@ export class ProfileIds {
     if (start === null) return 'unknowable';
     const reach = coveredTo(history.ranges, start);
     if (reach < createdHeight) {
-      const held = history.ranges.length
-        ? history.ranges[history.ranges.length - 1][1]
-        : start - 1;
-      // Held from the import's start without a gap, only not that far yet.
-      if (reach >= start && reach === held) {
+      // Held from the import's start without a gap, only not that far yet:
+      // the node's history ends with its read (the client keeps a history's
+      // first range only, up to the read). A range that ends before a read
+      // past the creation is a gap: it can't say.
+      if (reach >= start && history.readHeight < createdHeight) {
         throw new ChainReadRetryLater(
           `The history of ${wallet} doesn't reach ${createdHeight} yet: the identity is mapped later`,
           'history_behind'
@@ -364,7 +369,9 @@ export class ProfileIds {
     if (given || (given === null && madeAfterImport)) {
       return given?.toLowerCase() ?? null;
     }
-    const entry = await this.gateway.getImportedIdentity(identity.principalId);
+    const entry = await orRetryLater(() =>
+      this.gateway.getImportedIdentity(identity.principalId)
+    );
     return entry?.legacyId?.toLowerCase() ?? null;
   }
 }

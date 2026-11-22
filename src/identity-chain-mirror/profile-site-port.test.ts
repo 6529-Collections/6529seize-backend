@@ -493,6 +493,21 @@ describe('GatewayProfileSitePort', () => {
     expect(walletPrincipalAt).not.toHaveBeenCalled();
   });
 
+  it("tries again later a wallet history this node doesn't hold", async () => {
+    const { gateway, port, walletPrincipalAt } = setup();
+    gateway.getIdentityByPrincipal
+      .mockResolvedValueOnce(now)
+      .mockRejectedValueOnce(
+        new ChainGatewayError('gone', 409, 'height_gone', '/v1/identities')
+      );
+    walletPrincipalAt.mockRejectedValueOnce(
+      new ChainGatewayError('not here', 404, 'not_held', '/v1/membership')
+    );
+    await expect(
+      port.getIdentityByPrincipal(P, { height: 7 })
+    ).rejects.toMatchObject({ retryLater: true, reason: 'not_held' });
+  });
+
   it('tries again later a height the gateway has only as its head', async () => {
     const { gateway, port, walletPrincipalAt } = setup();
     gateway.getIdentityByPrincipal

@@ -939,13 +939,18 @@ bound to (from its creation); else the principal id's first 16 bytes written
 as a UUID. Which identity a wallet was first bound to comes from the mirror's
 own `identity_chain_first_bindings`, recorded while the wallet bindings follow
 the feed without a break from the import's start, else from the gateway's
-history of the wallet. When neither can say (the import's start unknown, or
-the node's history starting after it or with a gap), the identity is tried
+history of the wallet (the gateway client keeps its first range, up to the
+read). When neither can say (the import's start unknown, or the node's
+history starting after it, or ending before a read past the creation: a gap),
+the identity is tried
 again for six hours (`identity_chain_founder_waits`), since another gateway
 node may answer meanwhile; when it stays so, it is mapped to its derived id
 and the placeholder is logged and reported as orphaned, for the later merge.
 A merged or closed identity is filed under its mapping, else the id the same
-rule gives, without storing one (its founder wait, once over, stays over). The
+rule gives, without storing one (its founder wait, once over, stays over). An
+answer the gateway's node doesn't hold (`not_held`) or gives unreadably
+(`bad_answer`) for these reads is tried again later, as another node may
+give it. The
 placeholder profiles are listed once, before the mirror's first write
 (`identity_chain_placeholders`), and 6529.io makes none from switch-on, so a
 rebuild from the chain gives the same ids. A placeholder profile whose wallets
