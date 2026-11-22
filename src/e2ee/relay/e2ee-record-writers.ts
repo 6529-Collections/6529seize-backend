@@ -568,13 +568,20 @@ export class E2eeRecordWriters {
         connection
       );
       if (chunk) {
+        // The MySQL object store's own row when it holds the bytes; the
+        // chunk's time otherwise (an object store outside MySQL).
+        const [stored] = await this.reader.rows(
+          E2EE_CIPHERTEXT_OBJECTS_TABLE,
+          { object_key: chunk.object_key },
+          connection
+        );
         ops.push(...puts(E2EE_BACKUP_CHUNKS_TABLE, [chunk]), {
           op: 'put',
           table: E2EE_CIPHERTEXT_OBJECTS_TABLE,
           row: {
             object_key: chunk.object_key,
             data: input.appended.data,
-            created_at: chunk.created_at
+            created_at: stored?.created_at ?? chunk.created_at
           }
         });
       }

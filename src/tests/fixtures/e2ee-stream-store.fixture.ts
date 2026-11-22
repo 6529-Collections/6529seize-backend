@@ -138,10 +138,11 @@ export class InMemoryE2eeStreamStore
   async listOutbox(
     wave: string,
     limit: number,
-    connection?: Conn
+    connection?: Conn,
+    afterPos = 0
   ): Promise<E2eeOutboxRow[]> {
     return Array.from(this.on(connection).outbox.values())
-      .filter((row) => row.wave === wave)
+      .filter((row) => row.wave === wave && row.pos > afterPos)
       .sort((a, b) => a.pos - b.pos)
       .slice(0, limit)
       .map((row) => ({ ...row, heldBy: [...row.heldBy] }));

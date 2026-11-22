@@ -351,6 +351,7 @@ export class E2eeStreamPublisher {
   private async signRows(
     wave: string,
     rows: E2eeOutboxRow[],
+    afterPos: number,
     connection?: Conn
   ): Promise<E2eeOutboxRow[]> {
     const unsigned = rows.filter((row) => row.event === null);
@@ -363,7 +364,7 @@ export class E2eeStreamPublisher {
         connection
       );
     }
-    return this.deps.store.listOutbox(wave, OUTBOX_PAGE, connection);
+    return this.deps.store.listOutbox(wave, OUTBOX_PAGE, connection, afterPos);
   }
 
   /**
@@ -376,15 +377,41 @@ export class E2eeStreamPublisher {
     connection?: Conn
   ): Promise<{ readonly wave: string; readonly minHolders: number }> {
     const settings = this.deps.settings();
-    let rows = await this.deps.store.listOutbox(wave, OUTBOX_PAGE, connection);
-    if (!rows.length) return { wave, minHolders: settings.urls.length };
-    rows = await this.signRows(wave, rows, connection);
+    // A relay that failed stays failed for this pass: its records must
+    // arrive in position order.
+    const stopped = new Set<string>();
+    let minHolders = settings.urls.length;
+    let afterPos = 0;
+    for (;;) {
+      const listed = await this.deps.store.listOutbox(
+        wave,
+        OUTBOX_PAGE,
+        connection,
+        afterPos
+      );
+      if (!listed.length) break;
+      const rows = await this.signRows(wave, listed, afterPos, connection);
+      const held = await this.publishPage(rows, stopped, connection);
+      minHolders = Math.min(minHolders, held);
+      afterPos = rows[rows.length - 1].pos;
+      if (listed.length < OUTBOX_PAGE) break;
+    }
+    return { wave, minHolders };
+  }
+
+  /** One page of a stream's records to every relay; the fewest holders. */
+  private async publishPage(
+    rows: readonly E2eeOutboxRow[],
+    stopped: Set<string>,
+    connection?: Conn
+  ): Promise<number> {
+    const settings = this.deps.settings();
     const holders = new Map(rows.map((row) => [row.id, new Set(row.heldBy)]));
     const pool = this.deps.pool();
     await Promise.all(
       settings.urls.map(async (url) => {
         const missing = rows.filter((row) => !row.heldBy.includes(url));
-        if (!missing.length) return;
+        if (!missing.length || stopped.has(url)) return;
         const result = await pool.publishSequence(
           url,
           missing.map((row) => ({
@@ -395,11 +422,14 @@ export class E2eeStreamPublisher {
         const held = missing.slice(0, result.held).map((row) => row.id);
         for (const id of held) holders.get(id)?.add(url);
         await this.deps.store.markHeld(held, url, connection);
-        if (result.error && !connection) {
-          await this.deps.store.markFailed(
-            missing.slice(result.held).map((row) => row.id),
-            `${url}: ${result.error.message}`
-          );
+        if (result.error) {
+          stopped.add(url);
+          if (!connection) {
+            await this.deps.store.markFailed(
+              missing.slice(result.held).map((row) => row.id),
+              `${url}: ${result.error.message}`
+            );
+          }
         }
       })
     );
@@ -409,10 +439,7 @@ export class E2eeStreamPublisher {
       )
       .map((row) => row.id);
     await this.deps.store.deleteOutbox(everywhere, connection);
-    const minHolders = Math.min(
-      ...rows.map((row) => holders.get(row.id)?.size ?? 0)
-    );
-    return { wave, minHolders };
+    return Math.min(...rows.map((row) => holders.get(row.id)?.size ?? 0));
   }
 
   /** Publishes streams with records still pending, oldest first. */

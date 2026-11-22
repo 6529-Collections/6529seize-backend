@@ -305,3 +305,43 @@ describe('E2eeStreamPublisher', () => {
     expect(store.outboxRows[0].event).toBeNull();
   });
 });
+
+describe('E2eeStreamPublisher paging', () => {
+  it('publishes a backlog longer than one outbox page, in order', async () => {
+    const { publisher, store, relays } = setup({ mode: 'mirror', relays: 1 });
+    relays[0].down = true;
+    await publisher.run(store, async (connection, batch) => {
+      for (let n = 1; n <= 230; n++) {
+        await batch!.append(connection, welcome(n));
+      }
+    });
+    expect(store.outboxRows).toHaveLength(230);
+    relays[0].down = false;
+    await publisher.publishPending(10);
+    expect(store.outboxRows).toEqual([]);
+    const positions = relays[0].stored.map(
+      (item) => contentOf(relays[0], item.event).content.pos
+    );
+    expect(positions).toEqual(Array.from({ length: 230 }, (_, i) => i + 1));
+  });
+
+  it('primary: a long backlog still reaches the quorum before the commit', async () => {
+    const { publisher, store, relays, settings } = setup({
+      mode: 'mirror',
+      relays: 1
+    });
+    relays[0].down = true;
+    await publisher.run(store, async (connection, batch) => {
+      for (let n = 1; n <= 205; n++) {
+        await batch!.append(connection, welcome(n));
+      }
+    });
+    relays[0].down = false;
+    (settings as { mode: string }).mode = 'primary';
+    await publisher.run(store, async (connection, batch) => {
+      await batch!.append(connection, welcome(206));
+    });
+    expect(relays[0].stored).toHaveLength(206);
+    expect(store.outboxRows).toEqual([]);
+  });
+});

@@ -57,11 +57,12 @@ export interface E2eeStreamStore {
   ): Promise<E2eeStreamHead>;
   saveHead(head: E2eeStreamHead, now: number, connection: Conn): Promise<void>;
   insertOutbox(row: E2eeOutboxInsert, connection: Conn): Promise<void>;
-  /** A stream's outbox rows in position order. */
+  /** A stream's outbox rows after `afterPos`, in position order. */
   listOutbox(
     wave: string,
     limit: number,
-    connection?: Conn
+    connection?: Conn,
+    afterPos?: number
   ): Promise<E2eeOutboxRow[]>;
   /** Waves with outbox rows, the longest waiting first. */
   listPendingWaves(limit: number): Promise<string[]>;
@@ -194,15 +195,16 @@ export class MysqlE2eeStreamStore
   async listOutbox(
     wave: string,
     limit: number,
-    connection?: Conn
+    connection?: Conn,
+    afterPos = 0
   ): Promise<E2eeOutboxRow[]> {
     const rows = await this.db.execute<OutboxDbRow>(
       `select id, wave, pos, kind, refs, to_base64(content) as content_b64,
          to_base64(payload) as payload_b64, log_meta, event, held_by,
          attempts, created_at
        from ${E2EE_RELAY_OUTBOX_TABLE}
-       where wave = :wave order by pos limit :limit`,
-      { wave, limit },
+       where wave = :wave and pos > :afterPos order by pos limit :limit`,
+      { wave, limit, afterPos },
       this.opts(connection)
     );
     return rows.map(toOutboxRow);
