@@ -1038,7 +1038,7 @@ from grouped_rates r
       `
       select * from ${RATINGS_TABLE} where matter_target_id = :contextProfileId and matter = 'REP' and rating <> 0 ${
         restrictions.rater_id ? ` and rater_profile_id = :rater_id ` : ``
-      } ${restrictions.category ? ` and matter_category = :category ` : withoutHelpBotCreditsSql()}
+      } ${restrictions.category ? ` and matter_category = :category ` : ``}
     `,
       {
         contextProfileId,

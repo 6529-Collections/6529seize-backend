@@ -19,6 +19,24 @@ export function creditTdhSql(alias: string): string {
   return isIdentityOnChain() ? `${alias}.tdh` : `${alias}.tdh + ${alias}.xtdh`;
 }
 
+const normalised = (category: string) => category.trim().toLowerCase();
+
+/**
+ * Whether a rating counts toward REP summed over every category: from
+ * switch-on the help bot's credits don't (any case or spacing, as the
+ * database compares them).
+ */
+export function countsTowardAllCategoryRep(
+  matter: string,
+  category: string
+): boolean {
+  return !(
+    isIdentityOnChain() &&
+    matter === 'REP' &&
+    normalised(category) === normalised(HELP_BOT_CREDIT_CATEGORY)
+  );
+}
+
 /**
  * From switch-on the help bot's credits are a 6529.io site feature, not REP:
  * REP lists, totals and breakdowns over every category leave the credit

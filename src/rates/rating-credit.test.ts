@@ -2,6 +2,7 @@ import { ProfileRepOverviewDb } from '@/api/profiles/profile-rep-overview.db';
 import { RateMatter } from '@/entities/IRating';
 import { RatingsDb } from './ratings.db';
 import {
+  countsTowardAllCategoryRep,
   creditTdh,
   creditTdhSql,
   withoutHelpBotCreditsSql
@@ -162,6 +163,35 @@ describe('rating credit', () => {
       );
       expect(statements.length).toBe(7);
       for (const sql of statements) expect(sql).toContain(CREDITS);
+    })
+  );
+
+  it("counts the help bot's credits toward all-category REP only before switch-on", async () => {
+    await onChain(false, () => {
+      expect(countsTowardAllCategoryRep('REP', 'Help6529 Credits')).toBe(true);
+    })();
+    await onChain(true, () => {
+      expect(countsTowardAllCategoryRep('REP', 'Help6529 Credits')).toBe(false);
+      expect(countsTowardAllCategoryRep('REP', ' help6529 CREDITS ')).toBe(
+        false
+      );
+      expect(countsTowardAllCategoryRep('REP', 'Help6529 Credits x')).toBe(
+        true
+      );
+      expect(countsTowardAllCategoryRep('CIC', 'Help6529 Credits')).toBe(true);
+      expect(countsTowardAllCategoryRep('REP', 'Kind')).toBe(true);
+    })();
+  });
+
+  it(
+    'from switch-on, the given REP of a group member leaves the credits out',
+    onChain(true, async () => {
+      const executor = { execute: jest.fn().mockResolvedValue([]) };
+      const { UserGroupsDb } = await import('@/user-groups/user-groups.db');
+      await new UserGroupsDb(() => executor as never).getGivenCicAndRep('p');
+      expect(
+        String(executor.execute.mock.calls[0][0]).replace(/\s+/g, ' ')
+      ).toContain(CREDITS);
     })
   );
 });

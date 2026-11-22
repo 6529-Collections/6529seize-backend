@@ -240,8 +240,12 @@ function partitionScopedRows(
  * rep, cic and level_raw, all from the chain (the ratings table keeps the help
  * bot's credits, which are not REP), and keeps levels current after each TDH
  * day. A chunk then writes tdh and basetdh_rate only, reads no ratings and
- * takes no ratings locks: it locks the TDH rows, then its identities rows,
- * the order the mirror never reverses (it reads no TDH rows).
+ * takes no ratings locks: it locks the TDH rows, then its identities rows in
+ * key order. No transaction may lock identities rows and then TDH rows (the
+ * mirror reads no TDH rows; the chain TDH writer writes no identities). A
+ * deadlock between a chunk and the mirror's writes, which lock identities
+ * in their own order, is retried by the chunk and by the mirror's retry
+ * list.
  *
  * `syncAll` walks every identity in primary-key order; `syncScoped` covers
  * only the listed identities. Each chunk is one short transaction that writes

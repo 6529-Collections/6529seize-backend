@@ -7,6 +7,7 @@ import {
 import { revokeTdhBasedDropWavesOverVotesPerCompetition } from '@/drops/participation-drops-over-vote-revocation';
 import { identitiesDb } from '@/identities/identities.db';
 import { identityConsolidationEffects } from '@/identity';
+import { isIdentityOnChain } from '@/identity-freeze/identity-freeze';
 import {
   IdentityMetricsScopedSyncOptions,
   identityMetricsSync,
@@ -532,6 +533,13 @@ async function reconcileAllProfileAddresses(): Promise<void> {
  * covers them even when it resumes in a later invocation.
  */
 async function syncConsolidations(generation: number): Promise<void> {
+  if (isIdentityOnChain()) {
+    // From switch-on identities, their wallets and their consolidations come
+    // from the chain (the identity mirror): TDH consolidations no longer
+    // make, split or merge identity rows.
+    logger.info(`[B CONSOLIDATIONS SKIPPED] [IDENTITIES ARE ON THE CHAIN]`);
+    return;
+  }
   const invalidations = await sqlExecutor.executeNativeQueriesInTransaction(
     async (connection) => {
       const { written, ...cacheInvalidations } =
