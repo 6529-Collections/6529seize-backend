@@ -40,6 +40,7 @@ functions:
 resources:
   Resources:
     NextgenMetadataLoopOOMFilter:
+      DependsOn: NextgenMetadataLoopLogGroup
       Type: AWS::Logs::MetricFilter
       Properties:
         LogGroupName: /aws/lambda/nextgenMetadataLoop

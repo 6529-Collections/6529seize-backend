@@ -1,5 +1,5 @@
 import * as Joi from 'joi';
-import { WALLET_REGEX } from '@/constants';
+import { isAcceptedMediaUrl, WALLET_REGEX } from '@/constants';
 import { REP_CATEGORY_PATTERN } from '@/entities/IAbusivenessDetectionResult';
 import { numbers } from '@/numbers';
 import { Time } from '@/time';
@@ -359,7 +359,9 @@ const waveSchemaBaseValidations = {
   picture: Joi.string()
     .optional()
     .allow(null)
-    .regex(/^https:\/\/d3lqz0a4bldqgf\.cloudfront\.net\//),
+    .custom((value: string, helpers) =>
+      isAcceptedMediaUrl(value) ? value : helpers.error('any.invalid')
+    ),
   voting: WaveVotingSchema.required(),
   visibility: WaveVisibilitySchema.required(),
   participation: WaveParticipationSchema.required(),

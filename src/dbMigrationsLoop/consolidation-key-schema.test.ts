@@ -66,8 +66,10 @@ function entityKeyColumns(): KeyColumn[] {
         )
         .filter(
           (column) =>
-            column.propertyName === 'consolidation_key' ||
-            OTHER_KEY_COLUMNS[table.name!] === column.propertyName
+            (column.propertyName === 'consolidation_key' ||
+              OTHER_KEY_COLUMNS[table.name!] === column.propertyName) &&
+            // Only the widened varchar keys: a text copy has no width.
+            column.options.type !== 'text'
         )
         .map((column) => ({
           table: table.name!,
