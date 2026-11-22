@@ -55,11 +55,18 @@ function choice(n: number, eventId: string): RecordLogEntry {
   };
 }
 
-/** The log's entries in order, as the records wave reader walks them; the replay asks it for nothing else. */
-function readerOf(entries: readonly RecordLogEntry[]): RecordLogReader {
+/**
+ * The log's entries in order, as the records wave reader walks them; the
+ * replay asks it for nothing else. `read` counts the entries handed out.
+ */
+function readerOf(
+  entries: readonly RecordLogEntry[],
+  read: { count: number } = { count: 0 }
+): RecordLogReader {
   return {
     async *walk() {
       for (const entry of entries) {
+        read.count++;
         yield { head: null, entry };
       }
     }
@@ -86,7 +93,7 @@ describe('replayedJournalSource', () => {
       ...proof,
       wallet_signature: `0x${'ab'.repeat(65)}`
     };
-    // A record of another lane is replayed, but no choice may name it.
+    // A record of lane `personal` is replayed, but no choice may name it.
     const otherLane = record(3);
     const source = replayedJournalSource(
       readerOf([
@@ -112,9 +119,39 @@ describe('replayedJournalSource', () => {
     });
     expect(report.checked.events).toBe(true);
     expect(report.failures).toEqual([
-      `n=2 choice: event ${forged.id} is not a verified record in lane subs`,
-      `n=3 choice: event ${otherLane.id} is not a verified record in lane subs`
+      `n=2 choice: event ${forged.id} is not a verified record in lane \`subs\``,
+      `n=3 choice: event ${otherLane.id} is not a verified record in lane \`subs\``
     ]);
+  });
+
+  it('hands each entry on as the replay reaches it, one at a time', async () => {
+    const read = { count: 0 };
+    const source = replayedJournalSource(
+      readerOf([choice(1, 'a'.repeat(32)), choice(2, 'b'.repeat(32))], read),
+      { bindings: bindingSource([]) }
+    );
+    const walk = source.walk('public')[Symbol.asyncIterator]();
+    const first = await walk.next();
+    expect(first.value.verified).toBeNull();
+    // The replay waits for the first entry to be taken before reading on.
+    expect(read.count).toBe(1);
+    expect((await walk.next()).done).toBe(false);
+    expect(read.count).toBe(2);
+    expect((await walk.next()).done).toBe(true);
+  });
+
+  it('ends the walk with the replay error', async () => {
+    const reader = {
+      async *walk() {
+        yield { head: null, entry: choice(1, 'a'.repeat(32)) };
+        throw new Error('segment 2 does not match its head');
+      }
+    } as unknown as RecordLogReader;
+    await expect(
+      readJournal(
+        replayedJournalSource(reader, { bindings: bindingSource([]) })
+      )
+    ).rejects.toThrow('segment 2 does not match its head');
   });
 
   it('gives no record lookup from a source that does not verify', async () => {

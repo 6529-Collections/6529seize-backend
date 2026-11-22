@@ -25,8 +25,7 @@ import {
   JournalBody,
   journalBodyOf,
   JOURNAL_COUNTER_ID,
-  JOURNAL_LANE,
-  JOURNAL_SHADOW_LANE
+  JOURNAL_LANE
 } from '../timeline/journal';
 import {
   alertOnJournalFailures,
@@ -76,8 +75,8 @@ let boundSource: (() => JournalSource) | null = null;
 
 /**
  * Binds where the CLI's rebuild reads the record log: the records wave
- * reader, once a relay client for the records wave lands. Until then the CLI's
- * rebuild says so and stops.
+ * reader over the relays, once a client for them is in the backend. Until
+ * then the CLI's rebuild says so and stops.
  */
 export function setJournalSource(source: (() => JournalSource) | null): void {
   boundSource = source;
@@ -94,10 +93,11 @@ export function boundJournalSource(): JournalSource {
 
 /**
  * The source to bind over the records wave reader: the public chain
- * replayed with replayRecordLog, so each entry of the journal's lanes
- * comes with its verification and the verifier checks every choice entry
- * against its signed record. Other lanes' entries are verified by the
- * replay and dropped here.
+ * replayed with replayRecordLog, so each entry comes with its verification
+ * and the verifier checks every choice entry against its signed record.
+ * Each entry is handed on as the replay reaches it, and the replay waits
+ * until it is taken, so a rebuild renews its pause throughout and holds
+ * one entry at a time.
  */
 export function replayedJournalSource(
   reader: RecordLogReader,
@@ -105,26 +105,63 @@ export function replayedJournalSource(
 ): JournalSource {
   return {
     async *walk(chain) {
-      const items: Array<{
-        entry: RecordLogEntry;
-        verified: RecordVerifyResult | null;
-      }> = [];
-      await replayRecordLog(
+      const state: {
+        next: { item: ReplayedEntry; taken: () => void } | null;
+        arrived: (() => void) | null;
+        finished: boolean;
+        failure: { error: unknown } | null;
+      } = { next: null, arrived: null, finished: false, failure: null };
+      const wake = () => state.arrived?.();
+      const replay = replayRecordLog(
         reader,
         chain,
         context,
-        async ({ entry }, verified) => {
-          if (
-            entry.lane === JOURNAL_LANE ||
-            entry.lane === JOURNAL_SHADOW_LANE
-          ) {
-            items.push({ entry, verified });
-          }
+        ({ entry }, verified) =>
+          new Promise<void>((taken) => {
+            state.next = { item: { entry, verified }, taken };
+            wake();
+          })
+      ).then(
+        () => {
+          state.finished = true;
+          wake();
+        },
+        (error: unknown) => {
+          state.failure = { error };
+          state.finished = true;
+          wake();
         }
       );
-      yield* items;
+      const take = () => {
+        const next = state.next;
+        state.next = null;
+        return next;
+      };
+      for (;;) {
+        const next = take();
+        if (next) {
+          yield next.item;
+          next.taken();
+        } else if (state.finished) {
+          break;
+        } else {
+          await new Promise<void>((resolve) => {
+            state.arrived = resolve;
+          });
+          state.arrived = null;
+        }
+      }
+      await replay;
+      if (state.failure) {
+        throw state.failure.error;
+      }
     }
   };
+}
+
+interface ReplayedEntry {
+  readonly entry: RecordLogEntry;
+  readonly verified: RecordVerifyResult | null;
 }
 
 export interface RebuildResult {
@@ -141,8 +178,8 @@ export interface RebuildResult {
 }
 
 /**
- * The journal's bodies in log order, and the verified records of lane
- * `subs` from the same walk when the source verifies them.
+ * The journal's bodies in log order, and the verified records of lane `subs`
+ * from the same walk when the source verifies them.
  */
 export async function readJournal(source: JournalSource): Promise<{
   readonly bodies: JournalBody[];
@@ -361,13 +398,20 @@ export async function rebuildIdentityTables(params: {
       );
     }
     await renewPause();
-    // Nothing is loaded from a journal that breaks the money rules.
+    // Nothing is loaded from a journal that breaks the money rules, or
+    // that could not be checked.
     const verify = await verifyJournal(bodies, {
       openingSha256: opening.openingSha256,
       opening: opening.opening,
       ethereum:
         params.ethereum && renewingEthereum(params.ethereum, renewPause),
       events: events ?? undefined
+    }).catch((error: unknown) => {
+      logger.errorWithCode(
+        'SUBSCRIPTIONS_JOURNAL_VERIFY_FAILED',
+        `[JOURNAL VERIFY FAILED] opening ${opening.openingSha256} could not be checked: ${error instanceof Error ? error.message : String(error)}`
+      );
+      throw error;
     });
     if (!alertOnJournalFailures(verify)) {
       throw new Error(

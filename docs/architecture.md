@@ -3206,10 +3206,11 @@ failure). For one opening:
   opens it at the amount; a redemption moves it by the mint price per
   charge, and the redeemed counts by the charges; a fold sums the two
   balances and moves only the wallet's history; no other kind changes a
-  balance, and no kind changes a table it may not; a choice changes only
-  its owner's rows;
+  balance, and no kind changes a table it may not;
 - across the journal: each balance's `before` is what the opening file or
-  the previous entry left; each top-up hash is credited once, and not
+  the previous entry left; a choice changes only rows of its owner, or of
+  the identity the opening file or a later fold moved the owner's state
+  to; each top-up hash is credited once, and not
   again after the opening file; no mint is charged more tokens than it
   delivered, counting the opening's charges of that mint; a signed event
   makes one choice; `n` increases in log order and every write has all its
@@ -3224,10 +3225,12 @@ failure). For one opening:
 `--no-ethereum` leaves Ethereum out, for rehearsals, and the output says
 what was not checked. A rebuild with `--go-live` refuses it. Without
 `--opening --history`, `verify-journal` fetches the opening file the
-journal names, as a rebuild does. A failure alerts
-(`SUBSCRIPTIONS_JOURNAL_VERIFY_FAILED`) and stops the rebuild before it
-loads anything; so does a provider error. `verifyEntryMoney` is the
-per-entry part alone, and pure.
+journal names, as a rebuild does. In a rebuild, a failure, or a provider
+error that leaves the journal unchecked, alerts
+(`SUBSCRIPTIONS_JOURNAL_VERIFY_FAILED`) and stops it before it loads
+anything. `verify-journal` alerts on a failure and exits 2; a provider
+error ends it with exit 1. `verifyEntryMoney` is the per-entry part alone,
+and pure.
 
 **Switch.** The switch is one row, `subscriptions_id_state`, so one write
 moves every service. `subscriptions:opening -- go-live --signed-writes-live`

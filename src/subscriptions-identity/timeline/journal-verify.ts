@@ -547,7 +547,7 @@ function partsInOrder(
   return sorted;
 }
 
-/** Rules of a write's shape: the tables its kind may change, and a choice's identity. */
+/** Rules of a write's shape: the tables its kind may change. */
 function checkShape(write: readonly JournalBody[], failures: string[]) {
   const [head] = write;
   const label = labelOf(head);
@@ -571,17 +571,76 @@ function checkShape(write: readonly JournalBody[], failures: string[]) {
   if (head.kind !== 'fold' && head.rekeys.length > 0) {
     failures.push(`${label}: only a fold entry carries rekeys`);
   }
-  if (head.kind === 'choice') {
-    // A signed choice changes only its owner's rows.
-    const owner = lower(head.inputs.owner);
-    const strangers = Array.from(
-      new Set(changes.map(identityOf).filter((id) => lower(id) !== owner))
-    );
-    if (strangers.length > 0) {
-      failures.push(
-        `${label}: a choice of ${owner} changes rows of ${strangers.join(', ')}`
-      );
+}
+
+/**
+ * The identities a choice's owner may write, as the journal shows them at
+ * that point: the owner itself, the identities the opening file put each
+ * wallet's key under, and each fold since, followed in chains.
+ */
+class OwnerIdentities {
+  private readonly next = new Map<string, Set<string>>();
+
+  constructor(
+    keys?: ReadonlyArray<{
+      readonly consolidationKey: string;
+      readonly identityKey: string;
+      readonly identities: readonly string[];
+    }>
+  ) {
+    for (const key of keys ?? []) {
+      for (const wallet of key.consolidationKey.split('-').filter(Boolean)) {
+        for (const identity of [key.identityKey, ...key.identities]) {
+          this.link(wallet, identity);
+        }
+      }
     }
+  }
+
+  /** A fold moved the wallet's state to the identity. */
+  link(wallet: string, identity: string): void {
+    const from = lower(wallet);
+    const known = this.next.get(from) ?? new Set<string>();
+    known.add(lower(identity));
+    this.next.set(from, known);
+  }
+
+  of(owner: string): Set<string> {
+    const reached = new Set([lower(owner)]);
+    const queue = [lower(owner)];
+    while (queue.length > 0) {
+      for (const identity of Array.from(this.next.get(queue.pop()!) ?? [])) {
+        if (!reached.has(identity)) {
+          reached.add(identity);
+          queue.push(identity);
+        }
+      }
+    }
+    return reached;
+  }
+}
+
+/** A signed choice changes only rows of its owner, or of the identity its owner's state went to. */
+function checkChoiceOwner(
+  write: readonly JournalBody[],
+  owners: OwnerIdentities,
+  failures: string[]
+) {
+  const [head] = write;
+  const owner = lower(head.inputs.owner);
+  const allowed = owners.of(owner);
+  const strangers = Array.from(
+    new Set(
+      write
+        .flatMap((b) => b.changes)
+        .map((change) => lower(identityOf(change)))
+        .filter((id) => !allowed.has(id))
+    )
+  );
+  if (strangers.length > 0) {
+    failures.push(
+      `${labelOf(head)}: a choice of ${owner} changes rows of ${strangers.join(', ')}`
+    );
   }
 }
 
@@ -614,10 +673,14 @@ export interface JournalVerifyOptions {
   /** The opening whose writes are checked (bodies of others are skipped). */
   readonly openingSha256: string;
   /**
-   * The opening file: the balances the journal starts from, and the
-   * top-ups and charges no journal entry may repeat.
+   * The opening file: the balances the journal starts from, the identity
+   * each key's state went to, and the top-ups and charges no journal entry
+   * may repeat.
    */
-  readonly opening?: Pick<OpeningFile, 'balances' | 'topUps' | 'redeemed'>;
+  readonly opening?: Pick<
+    OpeningFile,
+    'balances' | 'keys' | 'topUps' | 'redeemed'
+  >;
   readonly ethereum?: EthereumFacts;
   readonly events?: SignedEventLookup;
 }
@@ -797,7 +860,7 @@ async function checkChoices(
     const event = await events.find(eventId);
     if (!event) {
       failures.push(
-        `${label}: event ${eventId} is not a verified record in lane subs`
+        `${label}: event ${eventId} is not a verified record in lane \`subs\``
       );
       continue;
     }
@@ -821,9 +884,9 @@ async function checkChoices(
 
 /**
  * Verifies the journal of one opening. `bodies` are every journal body in
- * log order (both lanes; other openings are skipped). Ethereum and the
- * signed events are checked only through the ports given; a port's error
- * rejects, as nothing could be checked.
+ * log order (`subs` and `subs-shadow`; other openings are skipped).
+ * Ethereum and the signed events are checked only through the ports given;
+ * a port's error rejects, as nothing could be checked.
  */
 export async function verifyJournal(
   bodies: readonly JournalBody[],
@@ -842,13 +905,21 @@ export async function verifyJournal(
     }
   }
   const chain = new BalanceChain(options.opening?.balances);
+  const owners = new OwnerIdentities(options.opening?.keys);
   for (const write of complete) {
-    const label = labelOf(write[0]);
+    const [head] = write;
+    const label = labelOf(head);
     const changes = write.flatMap((b) => b.changes);
     checkShape(write, failures);
+    if (head.kind === 'choice') {
+      checkChoiceOwner(write, owners, failures);
+    }
     chain.check(label, changes, failures);
     failures.push(...verifyEntryMoney(write, (id) => chain.get(id)));
     chain.apply(changes);
+    if (head.kind === 'fold') {
+      owners.link(String(head.inputs.wallet), String(head.inputs.identity_key));
+    }
   }
   const { topUps, mints, charges, choices } = crossJournal(
     complete,

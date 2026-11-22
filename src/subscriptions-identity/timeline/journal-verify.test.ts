@@ -450,6 +450,7 @@ describe('verifyJournal', () => {
       const report = await verify([topUp(1, 0.1, null)], {
         opening: {
           balances: [],
+          keys: [],
           topUps: [{ hash: hash(1) } as never],
           redeemed: []
         }
@@ -564,6 +565,7 @@ describe('verifyJournal', () => {
       );
       const opening = {
         balances: [{ identityKey: P1, balance: 1 } as never],
+        keys: [],
         topUps: [],
         redeemed: [
           {
@@ -623,6 +625,7 @@ describe('verifyJournal', () => {
       const report = await verify([entry], {
         opening: {
           balances: [{ identityKey: W2, balance: 2 } as never],
+          keys: [],
           topUps: [],
           redeemed: []
         }
@@ -655,12 +658,12 @@ describe('verifyJournal', () => {
   });
 
   describe('a choice', () => {
-    it('fails when no verified record in lane subs has its event id', async () => {
+    it('fails when no verified record in lane `subs` has its event id', async () => {
       const report = await verify([choice(8, 'f'.repeat(32))], {
         events: eventsFixture({ [EVENT]: GOOD_EVENT })
       });
       expect(report.failures).toEqual([
-        `n=8 choice: event ${'f'.repeat(32)} is not a verified record in lane subs`
+        `n=8 choice: event ${'f'.repeat(32)} is not a verified record in lane \`subs\``
       ]);
     });
 
@@ -678,6 +681,49 @@ describe('verifyJournal', () => {
       expect(report.failures).toEqual([
         `n=9 choice: a choice of ${P1} changes rows of ${P2}`,
         `n=9 choice: event ${EVENT} makes a choice again (first at n=8)`
+      ]);
+    });
+
+    it("passes a wallet's choice that changes the identity its state went to, by the opening file or a fold", async () => {
+      // A choice owned by W2, written to P1's rows.
+      const byWallet = (n: number, wallet: string) => {
+        const entry = choice(n, `${'e'.repeat(31)}${n}`);
+        return {
+          ...entry,
+          inputs: { ...entry.inputs, owner: wallet }
+        };
+      };
+      const stranger = `n=5 choice: a choice of ${W2} changes rows of ${P1}`;
+      expect((await verify([byWallet(5, W2)])).failures).toEqual([stranger]);
+      // W2 folded into P1 first.
+      expect((await verify([fold(4, 1, 2), byWallet(5, W2)])).failures).toEqual(
+        []
+      );
+      // The opening file put W2's key under P1, through a key of two wallets.
+      const opening = {
+        balances: [],
+        keys: [
+          {
+            consolidationKey: `${W1}-${W2}`,
+            identityKey: P1,
+            identities: [P1]
+          } as never
+        ],
+        topUps: [],
+        redeemed: []
+      };
+      expect((await verify([byWallet(5, W2)], { opening })).failures).toEqual(
+        []
+      );
+      // But not another identity's rows.
+      const elsewhere = byWallet(6, W2);
+      elsewhere.changes[0] = {
+        ...elsewhere.changes[0],
+        key: { identity_key: P2 },
+        after: { identity_key: P2, automatic: 1, subscribe_all_editions: 0 }
+      };
+      expect((await verify([fold(4, 1, 2), elsewhere])).failures).toEqual([
+        `n=6 choice: a choice of ${W2} changes rows of ${P2}`
       ]);
     });
 
@@ -747,6 +793,7 @@ describe('verifyJournal', () => {
     it('starts from the opening file, where an identity it lacks has no balance', async () => {
       const opening = {
         balances: [{ identityKey: P1, balance: 2 } as never],
+        keys: [],
         topUps: [],
         redeemed: []
       };

@@ -797,6 +797,30 @@ describeWithSeed('identity writers after the switch', [], () => {
       ).rejects.toThrow(
         `n=${n} top-up: the balances change {"identity_key":"${LONE}"}: its after row is another row`
       );
+      // Ethereum could not be read: nothing is loaded either, and it alerts.
+      alert.mockClear();
+      await expect(
+        rebuildIdentityTables({
+          source: {
+            async *walk() {
+              for (const entry of posted) {
+                yield { entry };
+              }
+            }
+          },
+          fetch: fetchPublished,
+          ethereum: {
+            topUp: async () => {
+              throw new Error('provider unavailable');
+            },
+            mintedTo: async () => 0
+          }
+        })
+      ).rejects.toThrow('provider unavailable');
+      expect(alert).toHaveBeenCalledWith(
+        'SUBSCRIPTIONS_JOURNAL_VERIFY_FAILED',
+        expect.stringContaining('could not be checked: provider unavailable')
+      );
     } finally {
       alert.mockRestore();
     }

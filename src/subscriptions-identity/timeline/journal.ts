@@ -22,8 +22,8 @@ import { AS_TEXT } from '../opening/legacy-tables';
 import { canonicalJson, sha256Hex } from '../opening/opening-file';
 
 /*
- * The identity tables' journal, version 2. Every write to the identity
- * tables after a load
+ * The identity tables' journal (version 2: the JournalBody below). Every
+ * write to the identity tables after a load
  * appends its changed rows, before and after, to the shared record log in
  * the same transaction as the write: lane `subs` once the tables are the
  * truth, `subs-shadow` before. So the log holds every change in commit
