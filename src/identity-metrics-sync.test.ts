@@ -131,7 +131,7 @@ describe('IdentityMetricsSync chunks', () => {
     }
   });
 
-  it("from switch-on writes tdh and the chain's level only, without the ratings", async () => {
+  it('from switch-on writes tdh and basetdh_rate only, without the ratings', async () => {
     const original = process.env.FEATURE_IDENTITY_ON_CHAIN;
     process.env.FEATURE_IDENTITY_ON_CHAIN = 'true';
     try {
@@ -139,10 +139,8 @@ describe('IdentityMetricsSync chunks', () => {
       await new IdentityMetricsSync(() => db).syncAll({ chunkRows: 10 });
       expect(db.statements.some((it) => /from ratings/i.test(it))).toBe(false);
       const update = db.statements.find(isUpdate)!;
-      expect(update).toContain(
-        'i.level_raw = i.rep + coalesce(c.boosted_tdh, 0)'
-      );
-      expect(update).not.toMatch(/i\.rep =|i\.cic =|xtdh/);
+      expect(update).toContain('set i.tdh = coalesce(c.boosted_tdh, 0)');
+      expect(update).not.toMatch(/i\.rep =|i\.cic =|level_raw =|xtdh/);
     } finally {
       if (original === undefined) delete process.env.FEATURE_IDENTITY_ON_CHAIN;
       else process.env.FEATURE_IDENTITY_ON_CHAIN = original;

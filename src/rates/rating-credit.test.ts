@@ -1,3 +1,4 @@
+import { ProfileRepOverviewDb } from '@/api/profiles/profile-rep-overview.db';
 import { RateMatter } from '@/entities/IRating';
 import { RatingsDb } from './ratings.db';
 import {
@@ -119,6 +120,48 @@ describe('rating credit', () => {
       const [sql] = executor.execute.mock.calls[0];
       expect(sql).toContain('coalesce(i.tdh, 0) as rater_credit');
       expect(sql).not.toContain('xtdh');
+    })
+  );
+
+  it(
+    "from switch-on, a profile's REP overview leaves the credit category out",
+    onChain(true, async () => {
+      const executor = {
+        execute: jest.fn().mockResolvedValue([]),
+        oneOrNull: jest.fn().mockResolvedValue(null)
+      };
+      const db = new ProfileRepOverviewDb(() => executor as never);
+      for (const direction of ['incoming', 'outgoing'] as const) {
+        await db.getRepOverviewStats({
+          contextProfileId: 'p',
+          direction,
+          authenticatedProfileId: null
+        });
+        await db.getRepCategoriesPage({
+          contextProfileId: 'p',
+          direction,
+          authenticatedProfileId: null,
+          page: 1,
+          page_size: 10
+        } as never);
+        await db.getRepContributorsPage({
+          contextProfileId: 'p',
+          direction,
+          category: null,
+          page: 1,
+          page_size: 10
+        } as never);
+      }
+      const statements = [
+        ...executor.execute.mock.calls,
+        ...executor.oneOrNull.mock.calls
+      ].map(([sql]) =>
+        String(sql)
+          .replace(/r\.matter/g, 'matter')
+          .replace(/\s+/g, ' ')
+      );
+      expect(statements.length).toBe(7);
+      for (const sql of statements) expect(sql).toContain(CREDITS);
     })
   );
 });

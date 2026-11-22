@@ -1,3 +1,4 @@
+import { creditTdh } from '@/rates/rating-credit';
 import { constructFilters, constructFiltersOR } from '../api-helpers';
 import {
   AGGREGATED_ACTIVITY_MEMES_TABLE,
@@ -249,7 +250,7 @@ export const fetchAggregatedActivity = async (
 
   results.data.forEach((d: any) => {
     d.level = calculateLevel({
-      tdh: (d.boosted_tdh ?? 0) + (d.xtdh ?? 0),
+      tdh: creditTdh(d.boosted_tdh ?? 0, d.xtdh),
       rep: d.rep_score
     });
   });

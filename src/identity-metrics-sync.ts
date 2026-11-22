@@ -236,11 +236,12 @@ function partitionScopedRows(
  * sources (REP and CIC ratings, consolidated TDH), the same values the old
  * all-rows reset and recompute produced, without a long transaction.
  *
- * From switch-on (isIdentityOnChain) the identity mirror writes rep and cic
- * from the chain, and the ratings table keeps the help bot's credits, which
- * are not REP: a chunk then writes tdh, basetdh_rate and level_raw = rep + tdh
- * only (the chain's level, REP + TDH), reads no ratings and takes no ratings
- * locks. The level then follows each TDH day at once.
+ * From switch-on (isIdentityOnChain) the identity mirror is the one writer of
+ * rep, cic and level_raw, all from the chain (the ratings table keeps the help
+ * bot's credits, which are not REP), and keeps levels current after each TDH
+ * day. A chunk then writes tdh and basetdh_rate only, reads no ratings and
+ * takes no ratings locks: it locks the TDH rows, then its identities rows,
+ * the order the mirror never reverses (it reads no TDH rows).
  *
  * `syncAll` walks every identity in primary-key order; `syncScoped` covers
  * only the listed identities. Each chunk is one short transaction that writes
@@ -248,8 +249,9 @@ function partitionScopedRows(
  * partial value: an interrupted run leaves each row at its old or its final
  * values, and re-running converges. Rows already correct are not written.
  *
- * Lock order (the rule for every transaction writing ratings and identities):
- * ratings row locks before identities row locks, identities in key order.
+ * Lock order (the rule for every transaction writing ratings and identities
+ * before switch-on): ratings row locks before identities row locks,
+ * identities in key order.
  * A rating write that checks the rater's credit (and the over-rate
  * revocation) takes its rater's rating_credit_locks row before both; nothing
  * here locks that table. The rating path updates ratings, then applies its
@@ -439,12 +441,10 @@ export class IdentityMetricsSync extends LazyDbAccessCompatibleService {
        left join ${CONSOLIDATED_WALLETS_TDH_TABLE} c
          on c.consolidation_key = i.consolidation_key
        set i.tdh = coalesce(c.boosted_tdh, 0),
-           i.basetdh_rate = coalesce(c.boosted_tdh_rate, 0),
-           i.level_raw = i.rep + coalesce(c.boosted_tdh, 0)
+           i.basetdh_rate = coalesce(c.boosted_tdh_rate, 0)
        where ${identityRows.sql}
          and (i.tdh <> coalesce(c.boosted_tdh, 0)
-           or i.basetdh_rate <> coalesce(c.boosted_tdh_rate, 0)
-           or i.level_raw <> i.rep + coalesce(c.boosted_tdh, 0))`,
+           or i.basetdh_rate <> coalesce(c.boosted_tdh_rate, 0))`,
           identityRows.params,
           { wrappedConnection: connection }
         )
