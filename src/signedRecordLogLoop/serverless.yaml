@@ -49,3 +49,67 @@ functions:
       SIGNED_RECORD_LOG_TASK: archive
       SENTRY_DSN: ${env:SENTRY_DSN}
       SENTRY_ENVIRONMENT: "signedRecordLogArchiver_${opt:stage, self:provider.stage}"
+
+resources:
+  Resources:
+    SignedRecordLogCloserOOMFilter:
+      Type: AWS::Logs::MetricFilter
+      DependsOn: SignedRecordLogCloserLogGroup
+      Properties:
+        LogGroupName: /aws/lambda/signedRecordLogCloser
+        FilterPattern: "Runtime.OutOfMemory"
+        MetricTransformations:
+          - MetricNamespace: "Lambda/OOM"
+            MetricName: "signedRecordLogCloser_OOMErrorCount"
+            MetricValue: "1"
+            DefaultValue: 0
+
+    SignedRecordLogCloserOOMAlarm:
+      Type: AWS::CloudWatch::Alarm
+      DependsOn: SignedRecordLogCloserOOMFilter
+      Properties:
+        AlarmName: !Sub "${AWS::StackName}-signedRecordLogCloser-OOM"
+        AlarmDescription: !Sub "Lambda signedRecordLogCloser OutOfMemory in ${AWS::Region}"
+        Namespace: "Lambda/OOM"
+        MetricName: "signedRecordLogCloser_OOMErrorCount"
+        Statistic: Sum
+        Period: 60
+        EvaluationPeriods: 1
+        Threshold: 1
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+        AlarmActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}
+        OKActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}
+
+    SignedRecordLogArchiverOOMFilter:
+      Type: AWS::Logs::MetricFilter
+      DependsOn: SignedRecordLogArchiverLogGroup
+      Properties:
+        LogGroupName: /aws/lambda/signedRecordLogArchiver
+        FilterPattern: "Runtime.OutOfMemory"
+        MetricTransformations:
+          - MetricNamespace: "Lambda/OOM"
+            MetricName: "signedRecordLogArchiver_OOMErrorCount"
+            MetricValue: "1"
+            DefaultValue: 0
+
+    SignedRecordLogArchiverOOMAlarm:
+      Type: AWS::CloudWatch::Alarm
+      DependsOn: SignedRecordLogArchiverOOMFilter
+      Properties:
+        AlarmName: !Sub "${AWS::StackName}-signedRecordLogArchiver-OOM"
+        AlarmDescription: !Sub "Lambda signedRecordLogArchiver OutOfMemory in ${AWS::Region}"
+        Namespace: "Lambda/OOM"
+        MetricName: "signedRecordLogArchiver_OOMErrorCount"
+        Statistic: Sum
+        Period: 60
+        EvaluationPeriods: 1
+        Threshold: 1
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+        AlarmActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}
+        OKActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}
