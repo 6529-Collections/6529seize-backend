@@ -10,7 +10,11 @@ import {
   writeExpression
 } from './mint-log-columns';
 import { expandMerkleRoot } from './mint-log-merkle';
-import { MINT_ROW_PART_SPECS, MintRowPartSpec } from './mint-log-parts';
+import {
+  cardParams,
+  MINT_ROW_PART_SPECS,
+  MintRowPartSpec
+} from './mint-log-parts';
 import {
   MINT_ROW_PARTS,
   MintCardEffects,
@@ -156,10 +160,7 @@ export class MintStateWriter {
       .filter((column) => spec.only?.includes(column.name) ?? true)
       .filter((column) => !spec.key.includes(column.name));
     for (const row of diff.upsert) {
-      const params: Record<string, unknown> = {
-        contract: card.contract,
-        card_id: card.card_id
-      };
+      const params: Record<string, unknown> = cardParams(card);
       const sets = columns.map((column) => {
         params[`v_${column.name}`] = row[column.name] ?? null;
         return `${quoteIdentifier(column.name)} = ${writeExpression(column, `v_${column.name}`)}`;

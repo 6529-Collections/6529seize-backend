@@ -9,16 +9,26 @@ import {
   SUBSCRIPTIONS_NFTS_FINAL_TABLE
 } from '@/constants';
 import {
+  MEME_COLLABORATION_INVITATIONS_TABLE,
+  MEME_COLLABORATIONS_TABLE,
+  REMEMES_TABLE,
+  REMEMES_UPLOADS,
+  ROYALTIES_UPLOADS_TABLE
+} from '@/constants';
+import {
   NEXTGEN_ALLOWLIST_BURN_TABLE,
   NEXTGEN_ALLOWLIST_COLLECTIONS_TABLE,
   NEXTGEN_ALLOWLIST_TABLE,
   NEXTGEN_BURN_COLLECTIONS_TABLE
 } from '@/nextgen/nextgen_constants';
 import {
+  COLLAB_CARD_CONTRACT,
   MintCardRef,
   MintRow,
   MintRowPart,
-  NEXTGEN_CARD_CONTRACT
+  NEXTGEN_CARD_CONTRACT,
+  REMEMES_CARD_CONTRACT,
+  UPLOADS_CARD_CONTRACT
 } from './mint-log.types';
 
 /**
@@ -55,9 +65,30 @@ const CARD_SCOPE = 'contract = :contract and card_id = :card_id';
 const CLAIM_SCOPE = 'contract = :contract and claim_id = :card_id';
 const COLLECTION_SCOPE = 'collection_id = :card_id';
 
-const isNextgen = (card: MintCardRef) =>
-  card.contract === NEXTGEN_CARD_CONTRACT;
-const isToken = (card: MintCardRef) => !isNextgen(card);
+const SCOPES = new Set([
+  NEXTGEN_CARD_CONTRACT,
+  REMEMES_CARD_CONTRACT,
+  COLLAB_CARD_CONTRACT,
+  UPLOADS_CARD_CONTRACT
+]);
+const isScope = (name: string) => (card: MintCardRef) => card.contract === name;
+const isNextgen = isScope(NEXTGEN_CARD_CONTRACT);
+const isToken = (card: MintCardRef) => !SCOPES.has(card.contract);
+
+/**
+ * S3 copies of a rememe image: the S3 loop makes them again from the
+ * image, so they are not logged.
+ */
+const REMEME_S3_COLUMNS = [
+  's3_image_original',
+  's3_image_scaled',
+  's3_image_thumbnail',
+  's3_image_icon',
+  's3_image_processing_status',
+  's3_image_processing_error',
+  's3_image_last_attempt_at',
+  's3_image_processing_attempts'
+];
 
 export const MINT_ROW_PART_SPECS: Readonly<
   Record<MintRowPart, MintRowPartSpec>
@@ -179,11 +210,78 @@ export const MINT_ROW_PART_SPECS: Readonly<
     key: ['collection_id'],
     excluded: [],
     mode: 'upsert'
+  },
+  // A rememe contract's rows; the card key is the contract.
+  rememes: {
+    part: 'rememes',
+    appliesTo: isScope(REMEMES_CARD_CONTRACT),
+    table: REMEMES_TABLE,
+    scope: 'contract = :key',
+    key: ['contract', 'id'],
+    // updated_at moves with every provider refresh, which is not logged.
+    excluded: [...REMEME_S3_COLUMNS, 'updated_at'],
+    mode: 'upsert'
+  },
+  // One artwork's collaboration; the card key is the drop id.
+  collaboration: {
+    part: 'collaboration',
+    appliesTo: isScope(COLLAB_CARD_CONTRACT),
+    table: MEME_COLLABORATIONS_TABLE,
+    scope: 'drop_id = :key',
+    key: ['drop_id'],
+    excluded: [],
+    mode: 'upsert'
+  },
+  collaboration_invitations: {
+    part: 'collaboration_invitations',
+    appliesTo: isScope(COLLAB_CARD_CONTRACT),
+    table: MEME_COLLABORATION_INVITATIONS_TABLE,
+    scope: 'drop_id = :key',
+    key: ['id'],
+    excluded: [],
+    mode: 'upsert'
+  },
+  // Published files, one row per upload; the card key names the table.
+  rememe_uploads: {
+    part: 'rememe_uploads',
+    appliesTo: (card) =>
+      card.contract === UPLOADS_CARD_CONTRACT && card.key === REMEMES_UPLOADS,
+    table: REMEMES_UPLOADS,
+    scope: '1 = 1',
+    key: ['url'],
+    excluded: [],
+    mode: 'upsert'
+  },
+  royalties_uploads: {
+    part: 'royalties_uploads',
+    appliesTo: (card) =>
+      card.contract === UPLOADS_CARD_CONTRACT &&
+      card.key === ROYALTIES_UPLOADS_TABLE,
+    table: ROYALTIES_UPLOADS_TABLE,
+    scope: '1 = 1',
+    key: ['date'],
+    excluded: [],
+    mode: 'upsert'
   }
 };
 
-export function mintCard(contract: string, cardId: number): MintCardRef {
-  return { contract: contract.toLowerCase(), card_id: cardId };
+export function mintCard(
+  contract: string,
+  cardId: number,
+  key?: string
+): MintCardRef {
+  return key === undefined
+    ? { contract: contract.toLowerCase(), card_id: cardId }
+    : { contract: contract.toLowerCase(), card_id: cardId, key };
+}
+
+/** The named parameters a part's scope may use. */
+export function cardParams(card: MintCardRef): Record<string, string | number> {
+  return {
+    contract: card.contract,
+    card_id: card.card_id,
+    key: card.key ?? ''
+  };
 }
 
 export function partApplies(spec: MintRowPartSpec, card: MintCardRef): boolean {

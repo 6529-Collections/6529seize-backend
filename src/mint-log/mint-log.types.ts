@@ -7,6 +7,15 @@
  */
 
 export const MINT_LOG_LANE = 'mint';
+
+/**
+ * The log keeps one sequence per chain. Tokens and NextGen collections are
+ * one chain; collaborations, whose writes run inside drop and decision
+ * transactions, are another; rememes and published files a third. A write
+ * locks only its own chain's head, so a claim build (which locks decision
+ * rows) and a decision that freezes a collaboration never wait on each other.
+ */
+export type MintLogChain = 'mint' | 'collab' | 'rememes';
 export const MINT_LOG_ENTRY_VERSION = 1;
 
 export type MintLogKind =
@@ -24,7 +33,14 @@ export type MintLogKind =
   | 'dist.photos'
   | 'card.published'
   | 'nextgen.allowlist'
-  | 'nextgen.burn';
+  | 'nextgen.burn'
+  | 'rememe.add'
+  | 'collab.invite'
+  | 'collab.respond'
+  | 'collab.artwork'
+  | 'collab.freeze'
+  | 'collab.close'
+  | 'publication.receipt';
 
 /**
  * One card's slice of a table. A NextGen collection is a card too, with the
@@ -41,7 +57,12 @@ export type MintRowPart =
   | 'nextgen_allowlists'
   | 'nextgen_allowlist_rows'
   | 'nextgen_allowlist_burn_rows'
-  | 'nextgen_burn_collection';
+  | 'nextgen_burn_collection'
+  | 'rememes'
+  | 'collaboration'
+  | 'collaboration_invitations'
+  | 'rememe_uploads'
+  | 'royalties_uploads';
 
 export type MintPart = MintRowPart | 'merkle';
 
@@ -56,18 +77,32 @@ export const MINT_ROW_PARTS: readonly MintRowPart[] = [
   'nextgen_allowlists',
   'nextgen_allowlist_rows',
   'nextgen_allowlist_burn_rows',
-  'nextgen_burn_collection'
+  'nextgen_burn_collection',
+  'rememes',
+  'collaboration',
+  'collaboration_invitations',
+  'rememe_uploads',
+  'royalties_uploads'
 ];
 
-/** The card ref contract of a NextGen collection. */
+/** The card ref contracts of the scopes that are not tokens. */
 export const NEXTGEN_CARD_CONTRACT = 'nextgen';
+export const REMEMES_CARD_CONTRACT = 'rememes';
+export const COLLAB_CARD_CONTRACT = 'collab';
+export const UPLOADS_CARD_CONTRACT = 'uploads';
 
 export const MINT_PARTS: readonly MintPart[] = [...MINT_ROW_PARTS, 'merkle'];
 
 export interface MintCardRef {
-  /** Lowercase contract address, or `nextgen` for a NextGen collection. */
+  /**
+   * Lowercase contract address, or the name of a scope that is not a token:
+   * `nextgen` (a NextGen collection), `rememes` (one rememe contract),
+   * `collab` (one artwork's collaboration), `uploads` (published files).
+   */
   readonly contract: string;
   readonly card_id: number;
+  /** The scope's key when it is not a number: a rememe contract, a drop id, a table. */
+  readonly key?: string;
 }
 
 /**
@@ -141,9 +176,10 @@ export interface MintLogChecks {
 export interface MintLogEntryBody {
   readonly v: typeof MINT_LOG_ENTRY_VERSION;
   readonly kind: MintLogKind;
-  /** This log's sequence, gap-free from its first entry (0). */
+  readonly chain: MintLogChain;
+  /** The chain's sequence, gap-free from its first entry (0). */
   readonly seq: number;
-  /** sha256 of the previous mint entry's canonical JSON, or null for seq 0. */
+  /** sha256 of the chain's previous entry's canonical JSON, or null for seq 0. */
   readonly prev: string | null;
   readonly at: number;
   readonly card: MintCardRef | null;
@@ -184,5 +220,50 @@ export const MINT_KIND_PARTS: Readonly<
     'nextgen_allowlist_rows',
     'nextgen_allowlist_burn_rows'
   ],
-  'nextgen.burn': ['nextgen_burn_collection']
+  'nextgen.burn': ['nextgen_burn_collection'],
+  'rememe.add': ['rememes'],
+  'collab.invite': ['collaboration', 'collaboration_invitations'],
+  'collab.respond': ['collaboration_invitations'],
+  'collab.artwork': ['collaboration'],
+  'collab.freeze': ['collaboration', 'collaboration_invitations'],
+  'collab.close': ['collaboration', 'collaboration_invitations'],
+  'publication.receipt': ['rememe_uploads', 'royalties_uploads']
 };
+
+/** The chain each kind's writes belong to (the genesis names its own). */
+export const MINT_KIND_CHAIN: Readonly<Record<MintLogKind, MintLogChain>> = {
+  'mint.genesis': 'mint',
+  'claim.built': 'mint',
+  'claim.edit': 'mint',
+  'claim.media-request': 'mint',
+  'claim.media': 'mint',
+  'claim.action': 'mint',
+  'dist.phase': 'mint',
+  'dist.public': 'mint',
+  'dist.reset': 'mint',
+  'dist.airdrops': 'mint',
+  'dist.normalize': 'mint',
+  'dist.photos': 'mint',
+  'card.published': 'mint',
+  'nextgen.allowlist': 'mint',
+  'nextgen.burn': 'mint',
+  'rememe.add': 'rememes',
+  'collab.invite': 'collab',
+  'collab.respond': 'collab',
+  'collab.artwork': 'collab',
+  'collab.freeze': 'collab',
+  'collab.close': 'collab',
+  'publication.receipt': 'rememes'
+};
+
+/** The chain whose genesis holds a card's state. */
+export function chainOfCard(card: MintCardRef): MintLogChain {
+  if (card.contract === COLLAB_CARD_CONTRACT) return 'collab';
+  if (
+    card.contract === REMEMES_CARD_CONTRACT ||
+    card.contract === UPLOADS_CARD_CONTRACT
+  ) {
+    return 'rememes';
+  }
+  return 'mint';
+}

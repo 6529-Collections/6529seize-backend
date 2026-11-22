@@ -260,7 +260,7 @@ describeWithSeed(
 
     it('logs each real writer exactly, and the log rebuilds the tables', async () => {
       const content = memoryContent();
-      await runMintGenesis({ content, log });
+      await runMintGenesis({ content, log, chains: ['mint'] });
       await write('dist.airdrops', () =>
         insertAutomaticAirdropsForPhase(
           CONTRACT,
@@ -383,7 +383,7 @@ describeWithSeed(
         `update ${DISTRIBUTION_NORMALIZED_TABLE} set minted = 7, total_count = 10 where wallet = :wallet`,
         { wallet: W(1) }
       );
-      await runMintGenesis({ content, log });
+      await runMintGenesis({ content, log, chains: ['mint'] });
 
       await emptyMintTables();
       await new MintLogRebuilder(content).rebuild(entries);

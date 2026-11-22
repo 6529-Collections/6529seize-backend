@@ -10,6 +10,8 @@ import type { MintLogKind } from './mint-log.types';
  * intent's canonical JSON, so the record stays small whatever the request.
  */
 export const MINT_ADMIN_RECORD_TYPE = 'mint.admin';
+/** The same record for a user's own write, such as a collaboration reply. */
+export const MINT_USER_RECORD_TYPE = 'mint.user';
 
 export interface MintIntent {
   /** Method and route pattern, for example `POST /distributions/:contract/:id/normalize`. */
@@ -51,17 +53,18 @@ export function adminRecordBody(
 
 /**
  * Why a verified record does not authorize this write, or null when it does:
- * it must be a `mint.admin` record by the authenticated wallet for this exact
- * action and request.
+ * it must be a record of the given type by the authenticated wallet for this
+ * exact action and request.
  */
 export function recordMismatch(
   record: MintVerifiedRecord,
   action: MintLogKind,
   intent: MintIntent,
-  wallet: string | null
+  wallet: string | null,
+  type: string = MINT_ADMIN_RECORD_TYPE
 ): string | null {
-  if (record.refs[0] !== MINT_ADMIN_RECORD_TYPE || record.refs.length !== 2) {
-    return `refs must be ["${MINT_ADMIN_RECORD_TYPE}", key]`;
+  if (record.refs[0] !== type || record.refs.length !== 2) {
+    return `refs must be ["${type}", key]`;
   }
   if (!wallet || record.author !== wallet.toLowerCase()) {
     return 'the record author is not the signed-in wallet';

@@ -7,7 +7,11 @@ import type { MintStateWriter } from './mint-log-apply';
 import type { MintStateReader } from './mint-log-capture';
 import { applyEffectsToState, emptyCardState } from './mint-log-diff';
 import type { MintLogHead, MintLogHeadDb } from './mint-log-head.db';
-import { adminRecordBody, MINT_ADMIN_RECORD_TYPE } from './mint-log-intent';
+import {
+  adminRecordBody,
+  MINT_ADMIN_RECORD_TYPE,
+  MINT_USER_RECORD_TYPE
+} from './mint-log-intent';
 import type {
   MintLogPorts,
   MintRecordLogEntry,
@@ -464,5 +468,244 @@ describe('MintLogRecorder', () => {
         delete: []
       }
     });
+  });
+});
+
+describe('MintLogRecorder.writeWithin', () => {
+  beforeEach(() => jest.clearAllMocks());
+
+  const DROP = 'drop-1';
+  const COLLAB = { contract: 'collab', card_id: 0, key: DROP };
+  const USER = '0x0000000000000000000000000000000000000002';
+  const respondIntent = {
+    route: 'POST /drops/:drop_id/collaborations/:invitation_id/response',
+    params: { drop_id: DROP, invitation_id: 'inv-1' },
+    body: { action: 'DECLINE', artwork_hash: 'a', terms_version: 't' }
+  };
+
+  /** The caller's connection: statements and head keys, in order. */
+  function within(
+    fake: Fake,
+    flags: { shadow?: boolean; primary?: boolean }
+  ): { log: MintLogRecorder; calls: string[]; transactions: () => number } {
+    const calls: string[] = [];
+    let transactions = 0;
+    const db = () => {
+      const inner = fake.db();
+      return {
+        executeNativeQueriesInTransaction: (fn: any) => {
+          transactions++;
+          return inner.executeNativeQueriesInTransaction(fn);
+        },
+        execute: (sql: string) => {
+          calls.push(sql);
+          return inner.execute(sql);
+        }
+      } as any;
+    };
+    const head = {
+      lock: async (_connection: unknown, key = 'mint') => {
+        calls.push(`lock ${key}`);
+        return { ...fake.head };
+      },
+      advance: async (
+        next: MintLogHead,
+        _connection: unknown,
+        key = 'mint'
+      ) => {
+        calls.push(`advance ${key}`);
+        fake.head = next;
+      }
+    } as unknown as MintLogHeadDb;
+    const log = new MintLogRecorder(
+      {
+        isMintLogShadowEnabled: () => !!flags.shadow,
+        isMintLogPrimaryEnabled: () => !!flags.primary,
+        isMintLogReplayCheckEnabled: () => false
+      },
+      () => ({ records, log: fake.log }),
+      db,
+      fake.reader,
+      fake.writer,
+      head
+    );
+    return { log, calls, transactions: () => transactions };
+  }
+
+  function respondSpec(overrides: Partial<MintWriteSpec> = {}): MintWriteSpec {
+    return {
+      kind: 'collab.respond',
+      card: COLLAB,
+      actor: { type: 'user', wallet: USER, authority: 'invitee' },
+      intent: respondIntent,
+      signedRecords: null,
+      ...overrides
+    };
+  }
+
+  function userHeader(type = MINT_USER_RECORD_TYPE) {
+    return JSON.stringify([
+      {
+        id: '0x' + 'f'.repeat(64),
+        author: USER,
+        refs: [type, 'request-2'],
+        body: adminRecordBody('collab.respond', respondIntent),
+        valid: true
+      }
+    ]);
+  }
+
+  const connection = { connection: 'caller' } as any;
+
+  it('logs on the artwork head in the caller transaction', async () => {
+    const fake = new Fake();
+    const { log, calls, transactions } = within(fake, { shadow: true });
+    await expect(
+      log.writeWithin(respondSpec(), connection, async () => {
+        fake.addRow(1);
+        return 'ok';
+      })
+    ).resolves.toBe('ok');
+    expect(transactions()).toBe(0);
+    expect(calls).toEqual([
+      'SAVEPOINT mint_log_within',
+      `lock collab:${DROP}`,
+      'RELEASE SAVEPOINT mint_log_within',
+      'SAVEPOINT mint_log_within',
+      `advance collab:${DROP}`,
+      'RELEASE SAVEPOINT mint_log_within'
+    ]);
+    expect(fake.entries()[0]).toMatchObject({
+      kind: 'collab.respond',
+      chain: 'collab',
+      seq: 0,
+      prev: null,
+      card: COLLAB,
+      record_id: null
+    });
+    expect(fake.log.append).toHaveBeenCalledWith(expect.any(Array), {
+      connection
+    });
+  });
+
+  it('keeps the caller write when the log fails in shadow mode', async () => {
+    const fake = new Fake();
+    fake.failAppends = 1;
+    const { log, calls } = within(fake, { shadow: true });
+    await expect(
+      log.writeWithin(respondSpec(), connection, async () => {
+        fake.addRow(1);
+        return 'ok';
+      })
+    ).resolves.toBe('ok');
+    expect(calls).toContain('ROLLBACK TO SAVEPOINT mint_log_within');
+    expect(fake.state.distribution.map((row) => row.id)).toEqual([1]);
+    expect(fake.queue).toEqual([]);
+    expect(sendPriorityAlertIfConfigured).toHaveBeenCalledTimes(1);
+  });
+
+  it('fails the caller transaction when the log fails in primary mode', async () => {
+    const fake = new Fake();
+    fake.failAppends = 1;
+    const { log, calls } = within(fake, { primary: true });
+    await expect(
+      log.writeWithin(
+        respondSpec({ signedRecords: userHeader() }),
+        connection,
+        async () => fake.addRow(1)
+      )
+    ).rejects.toThrow('append failed');
+    expect(calls.some((sql) => sql.includes('SAVEPOINT'))).toBe(false);
+  });
+
+  it('needs a mint.user record from a user in primary mode', async () => {
+    const fake = new Fake();
+    const { log } = within(fake, { primary: true });
+    await expect(
+      log.writeWithin(respondSpec(), connection, async () => fake.addRow(1))
+    ).rejects.toBeInstanceOf(InvalidSignedRecordException);
+    await expect(
+      log.writeWithin(
+        respondSpec({ signedRecords: userHeader(MINT_ADMIN_RECORD_TYPE) }),
+        connection,
+        async () => fake.addRow(1)
+      )
+    ).rejects.toThrow('refs must be ["mint.user", key]');
+    expect(fake.state.distribution).toEqual([]);
+    await log.writeWithin(
+      respondSpec({ signedRecords: userHeader() }),
+      connection,
+      async () => fake.addRow(1)
+    );
+    expect(fake.entries()[0].record_id).toBe('0x' + 'f'.repeat(64));
+    expect(fake.state.distribution.map((row) => row.id)).toEqual([1]);
+  });
+
+  it('takes the authority of the enclosing write, and skips a no-op', async () => {
+    const fake = new Fake();
+    const { log } = within(fake, { primary: true });
+    const enclosed = respondSpec({
+      kind: 'collab.artwork',
+      intent: { route: 'drop.write', params: { drop_id: DROP }, body: null },
+      enclosing: 'drop.write'
+    });
+    await log.writeWithin(enclosed, connection, async () => undefined);
+    expect(fake.entries()).toEqual([]);
+    await log.writeWithin(enclosed, connection, async () => fake.addRow(1));
+    expect(fake.entries()).toHaveLength(1);
+    expect(fake.entries()[0].record_id).toBeNull();
+  });
+
+  it('logs nothing when the writer throws', async () => {
+    const fake = new Fake();
+    const { log } = within(fake, { shadow: true });
+    await expect(
+      log.writeWithin(respondSpec(), connection, async () => {
+        throw new Error('invitation closed');
+      })
+    ).rejects.toThrow('invitation closed');
+    expect(fake.queue).toEqual([]);
+  });
+
+  it('needs the drop id before it can lock a collaboration', async () => {
+    const fake = new Fake();
+    const { log } = within(fake, { shadow: true });
+    await expect(
+      log.write(
+        respondSpec({ card: async () => COLLAB }),
+        async () => undefined
+      )
+    ).rejects.toThrow('needs its drop id');
+  });
+});
+
+describe('MintLogRecorder record checks', () => {
+  beforeEach(() => jest.clearAllMocks());
+
+  const failing: MintSignedRecordsPort = {
+    ...records,
+    verify: async () => {
+      throw new Error('grant lookup timed out');
+    }
+  };
+
+  it('keeps a shadow write going when the verifier itself fails', async () => {
+    const fake = new Fake();
+    await recorder(fake, { shadow: true }, { records: failing }).write(
+      spec({ signedRecords: header() }),
+      async () => fake.addRow(1)
+    );
+    expect(fake.entries()[0].record_id).toBeNull();
+  });
+
+  it('answers unavailable in primary mode when the verifier fails', async () => {
+    const fake = new Fake();
+    await expect(
+      recorder(fake, { primary: true }, { records: failing }).write(
+        spec({ signedRecords: header() }),
+        async () => fake.addRow(1)
+      )
+    ).rejects.toBeInstanceOf(MintLogUnavailableException);
+    expect(fake.state.distribution).toEqual([]);
   });
 });

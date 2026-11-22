@@ -95,7 +95,7 @@ describeWithSeed('mint log on MySQL: NextGen', [], () => {
   };
 
   it('logs allowlist uploads and burn registrations, and rebuilds them', async () => {
-    await runMintGenesis({ content, log });
+    await runMintGenesis({ content, log, chains: ['mint'] });
     const first = allowlistUpload(ROOT('1'), [1, 2]);
     await recorder.write(
       nextgenWriteSpec(

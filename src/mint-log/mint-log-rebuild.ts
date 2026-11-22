@@ -17,7 +17,7 @@ import {
   MintContentPort,
   MintGenesisCard
 } from './mint-log-genesis';
-import { MintLogHeadDb, mintLogHeadDb } from './mint-log-head.db';
+import { MintLogHeadDb, mintHeadKey, mintLogHeadDb } from './mint-log-head.db';
 import { mintCard, MintRowPartSpec } from './mint-log-parts';
 import { entrySha256 } from './mint-log-recorder';
 import type { MintCardRef, MintLogEntryBody } from './mint-log.types';
@@ -49,10 +49,16 @@ const PINNED_SPEC: MintRowPartSpec = {
   mode: 'update-only'
 };
 
+interface ChainHead {
+  readonly seq: number;
+  readonly hash: string;
+}
+
 export interface MintRebuildResult {
   readonly entries: number;
   readonly cards: number;
-  readonly head: { seq: number; hash: string } | null;
+  /** The last entry of each head: `mint`, `rememes`, `collab:<drop id>`. */
+  readonly heads: Readonly<Record<string, ChainHead>>;
 }
 
 /** Where minted counts restart for a card: a block, and pinned counts or zero. */
@@ -68,6 +74,7 @@ function cardKey(card: MintCardRef): string {
 /**
  * Rebuilds the minting tables from empty: the genesis files, then every mint
  * entry in log order through the reducer the live writes were checked with.
+ * Each head's entries must follow on from each other without a gap.
  * Then the columns the log leaves out are derived again:
  * - minted counts: paid mints from Manifold or the null address to the wallet
  *   after the block where they last restarted (a normalize, or the genesis,
@@ -88,10 +95,11 @@ export class MintLogRebuilder {
     entries: AsyncIterable<MintLogEntryBody> | Iterable<MintLogEntryBody>
   ): Promise<MintRebuildResult> {
     const bases = new Map<string, { card: MintCardRef; base: MintedBase }>();
-    let previous: { seq: number; hash: string } | null = null;
+    const heads = new Map<string, ChainHead>();
     let count = 0;
     for await (const entry of entries) {
-      this.assertChain(entry, previous);
+      const key = mintHeadKey(entry.chain, entry.card);
+      this.assertChain(entry, key, heads.get(key) ?? null);
       await this.db().executeNativeQueriesInTransaction(async (connection) => {
         if (entry.kind === 'mint.genesis') {
           await this.applyGenesis(entry, bases, connection);
@@ -108,7 +116,7 @@ export class MintLogRebuilder {
           }
         }
       });
-      previous = { seq: entry.seq, hash: entrySha256(entry) };
+      heads.set(key, { seq: entry.seq, hash: entrySha256(entry) });
       count++;
     }
     await this.db().executeNativeQueriesInTransaction(async (connection) => {
@@ -116,25 +124,30 @@ export class MintLogRebuilder {
         await this.deriveMinted(card, base, connection);
         await this.deriveCardInfo(card, connection);
       }
-      if (previous) {
-        await this.head.lock(connection);
-        await this.head.advance(previous, connection);
+      for (const [key, head] of Array.from(heads.entries())) {
+        await this.head.lock(connection, key);
+        await this.head.advance(head, connection, key);
       }
     });
     logger.info(
       `[MINT_LOG_REBUILT] [entries ${count}] [cards with minted counts ${bases.size}]`
     );
-    return { entries: count, cards: bases.size, head: previous };
+    return {
+      entries: count,
+      cards: bases.size,
+      heads: Object.fromEntries(heads)
+    };
   }
 
   private assertChain(
     entry: MintLogEntryBody,
-    previous: { seq: number; hash: string } | null
+    key: string,
+    previous: ChainHead | null
   ): void {
     const expectedSeq = previous ? previous.seq + 1 : 0;
     if (entry.seq !== expectedSeq || entry.prev !== (previous?.hash ?? null)) {
       throw new Error(
-        `Mint log gap: entry ${entry.seq} (prev ${entry.prev}) after ${previous?.seq ?? 'nothing'}`
+        `Mint log gap in ${key}: entry ${entry.seq} (prev ${entry.prev}) after ${previous?.seq ?? 'nothing'}`
       );
     }
   }
@@ -151,7 +164,11 @@ export class MintLogRebuilder {
         await this.content.get(listed.cid),
         listed
       );
-      const card = mintCard(file.card.contract, file.card.card_id);
+      const card = mintCard(
+        file.card.contract,
+        file.card.card_id,
+        file.card.key
+      );
       const current = await this.reader.capture(card, connection);
       await this.writer.apply(
         card,

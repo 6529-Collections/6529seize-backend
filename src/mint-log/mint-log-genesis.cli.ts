@@ -1,15 +1,18 @@
 import { ipfsFileUploader } from '@/attachments/ipfs-file-uploader';
 import { getMintLogPorts } from './mint-log-ports';
 import {
+  GENESIS_CHAINS,
   MintContentPort,
   mintGenesisReader,
   runMintGenesis
 } from './mint-log-genesis';
+import { chainOfCard, MintLogChain } from './mint-log.types';
 
 /**
  * `mint-log:genesis`: writes the mint log's genesis files to IPFS and appends
- * entry 0. Without `--live` it is a read-only dry run that lists the cards it
- * would export. Run with `--live` once, right after MINT_LOG_SHADOW is on.
+ * the genesis entries. Without `--live` it is a read-only dry run that counts
+ * the cards of each chain. Run with `--live` once, right after
+ * MINT_LOG_SHADOW is on. `--chain mint|rememes|collab` limits it to one chain.
  */
 
 const ipfsContent: MintContentPort = {
@@ -29,13 +32,22 @@ const ipfsContent: MintContentPort = {
 export async function main(args = process.argv.slice(2)): Promise<void> {
   if (args.includes('--help')) {
     process.stdout.write(
-      'mint-log:genesis [--live]\nDefaults to a read-only dry run that lists the cards. --live writes the files to IPFS and appends the genesis entry.\n'
+      'mint-log:genesis [--live] [--chain mint|rememes|collab]\nDefaults to a read-only dry run that counts the cards of each chain. --live writes the files to IPFS and appends the genesis entries.\n'
     );
     return;
   }
-  const unknown = args.filter((arg) => arg !== '--live');
+  const chainAt = args.indexOf('--chain');
+  const chain = chainAt >= 0 ? args[chainAt + 1] : undefined;
+  if (chainAt >= 0 && !GENESIS_CHAINS.includes(chain as MintLogChain)) {
+    throw new Error('--chain takes mint, rememes or collab');
+  }
+  const unknown = args.filter(
+    (arg, index) =>
+      arg !== '--live' && index !== chainAt && index !== chainAt + 1
+  );
   if (unknown.length) throw new Error('Invalid arguments; use --help');
   const live = args.includes('--live');
+  const chains = chain ? [chain as MintLogChain] : GENESIS_CHAINS;
   const { doInDbContext } = await import('@/secrets');
   const { dbSupplier } = await import('@/sql-executor');
   const output = await doInDbContext(
@@ -44,7 +56,15 @@ export async function main(args = process.argv.slice(2)): Promise<void> {
         const cards = await dbSupplier().executeNativeQueriesInTransaction(
           (connection) => mintGenesisReader.cards(connection)
         );
-        return { live: false, cards: cards.length };
+        return {
+          live: false,
+          cards: Object.fromEntries(
+            chains.map((it) => [
+              it,
+              cards.filter((card) => chainOfCard(card) === it).length
+            ])
+          )
+        };
       }
       const log = getMintLogPorts().log;
       if (!log) {
@@ -52,12 +72,21 @@ export async function main(args = process.argv.slice(2)): Promise<void> {
           'No record log is bound: deploy the signed-records module first'
         );
       }
-      const entry = await runMintGenesis({ content: ipfsContent, log });
+      const entries = await runMintGenesis({
+        content: ipfsContent,
+        log,
+        chains
+      });
       return {
         live: true,
-        seq: entry.seq,
-        cards: (entry.inputs.cards as unknown[]).length,
-        distribution_cursor_block: entry.inputs.distribution_cursor_block
+        entries: entries.map((entry) => ({
+          chain: entry.chain,
+          seq: entry.seq,
+          card: entry.card?.key ?? null,
+          cards: (entry.inputs.cards as unknown[]).length,
+          distribution_cursor_block:
+            entry.inputs.distribution_cursor_block ?? null
+        }))
       };
     },
     { syncEntities: false, skipRedis: true }

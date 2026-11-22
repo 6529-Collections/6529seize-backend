@@ -32,6 +32,11 @@ export function emptyCardState(): MintCardState {
     nextgen_allowlist_rows: [],
     nextgen_allowlist_burn_rows: [],
     nextgen_burn_collection: [],
+    rememes: [],
+    collaboration: [],
+    collaboration_invitations: [],
+    rememe_uploads: [],
+    royalties_uploads: [],
     merkle: []
   };
 }

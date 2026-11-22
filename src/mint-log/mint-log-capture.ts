@@ -10,6 +10,7 @@ import {
 } from './mint-log-columns';
 import { compactMerkleRoot, MintProofRow } from './mint-log-merkle';
 import {
+  cardParams,
   compareText,
   MINT_ROW_PART_SPECS,
   MintRowPartSpec,
@@ -70,7 +71,7 @@ export class MintStateReader {
       `select ${columns.map(selectExpression).join(', ')}
        from ${quoteIdentifier(spec.table)}
        where ${spec.scope}`,
-      { contract: card.contract, card_id: card.card_id },
+      cardParams(card),
       { wrappedConnection: connection }
     );
     return sortRows(spec, rows.map(normalizeRow));

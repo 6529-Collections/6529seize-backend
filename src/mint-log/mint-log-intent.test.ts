@@ -2,6 +2,7 @@ import {
   adminRecordBody,
   intentSha256,
   MINT_ADMIN_RECORD_TYPE,
+  MINT_USER_RECORD_TYPE,
   MintIntent,
   recordMismatch
 } from './mint-log-intent';
@@ -45,6 +46,36 @@ describe('mint admin records', () => {
         params: { x: '2', y: '1' },
         body: { a: [2, { c: 4, d: 3 }], b: 1 }
       })
+    );
+  });
+
+  it('hashes a collaboration reply to the vector the frontend pins too', () => {
+    expect(
+      intentSha256({
+        route: 'POST /drops/:drop_id/collaborations/:invitation_id/response',
+        params: { drop_id: 'drop', invitation_id: 'inv-1' },
+        body: {
+          action: 'DECLINE',
+          artwork_hash: 'a'.repeat(64),
+          terms_version: 'b'.repeat(64)
+        }
+      })
+    ).toBe('7d159e21780275c8248076fc3908fa9a4df05f797c13a480728a0c4114e77f02');
+  });
+
+  it('accepts a mint.user record only as a user record', () => {
+    const user = record({ refs: [MINT_USER_RECORD_TYPE, 'request-2'] });
+    expect(
+      recordMismatch(
+        user,
+        'dist.airdrops',
+        intent,
+        WALLET,
+        MINT_USER_RECORD_TYPE
+      )
+    ).toBeNull();
+    expect(recordMismatch(user, 'dist.airdrops', intent, WALLET)).toBe(
+      'refs must be ["mint.admin", key]'
     );
   });
 
