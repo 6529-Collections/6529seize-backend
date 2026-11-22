@@ -598,8 +598,8 @@ describeWithSeed('e2ee relay records against MySQL', SEEDS, () => {
         reporter_profile_id: 'pb',
         drop_id: PUBLIC_DROP,
         author_profile_id: 'pa',
-        hide_drop: 1,
-        block_author: 1
+        hide_drop: true,
+        block_author: true
       }
     ]);
     // Reports on legacy DMs, live or deleted, and on a drop whose wave is
