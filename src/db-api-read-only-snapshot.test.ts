@@ -38,4 +38,28 @@ describe('inReadOnlySnapshot', () => {
     ).rejects.toThrow('read failed');
     expect(conn.sql.slice(-2)).toEqual(['ROLLBACK', 'SET time_zone = DEFAULT']);
   });
+
+  it('never lets a failing cleanup take the place of the result or the error', async () => {
+    const failing = (failOn: string[]) => {
+      const sql: string[] = [];
+      return {
+        sql,
+        query: (text: string, done: (err: unknown) => void) => {
+          sql.push(text);
+          done(failOn.includes(text) ? new Error(`${text} failed`) : null);
+        }
+      };
+    };
+    const ok = failing(['ROLLBACK', 'SET time_zone = DEFAULT']);
+    expect(await inReadOnlySnapshot(ok as never, async () => 'read')).toBe(
+      'read'
+    );
+    const bad = failing(['ROLLBACK', 'SET time_zone = DEFAULT']);
+    await expect(
+      inReadOnlySnapshot(bad as never, async () => {
+        throw new Error('the work failed');
+      })
+    ).rejects.toThrow('the work failed');
+    expect(bad.sql.slice(-2)).toEqual(['ROLLBACK', 'SET time_zone = DEFAULT']);
+  });
 });

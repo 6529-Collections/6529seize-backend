@@ -302,8 +302,17 @@ describeWithSeed(
       });
       // Every REP and CIC rating but the credit was last changed in 2024,
       // the zero rating included; none after the freeze.
-      expect(await source.ratingsChangedSince(Date.UTC(2023, 0, 1))).toBe(4);
-      expect(await source.ratingsChangedSince(FREEZE)).toBe(0);
+      const changed = await source.ratingsChangedSince(Date.UTC(2023, 0, 1));
+      expect(changed).toHaveLength(4);
+      expect(changed[0]).toEqual({
+        rater_profile_id: BOB,
+        target_profile_id: ALICE,
+        matter: 'CIC',
+        category: '',
+        rating: 9,
+        last_modified_ms: Date.UTC(2024, 0, 1)
+      });
+      expect(await source.ratingsChangedSince(FREEZE)).toEqual([]);
       // A REP and a CIC edit after the freeze; not the over-rate cut, the
       // help bot's grant, the wave REP edit or the edit before.
       expect(await source.ratingEditsSince(FREEZE)).toBe(2);

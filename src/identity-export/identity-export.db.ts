@@ -82,6 +82,16 @@ export interface OverCreditRaters {
   readonly tdhOnly: number;
 }
 
+/** A REP or CIC rating last changed after the freeze. */
+export interface ChangedRating {
+  readonly rater_profile_id: string;
+  readonly target_profile_id: string;
+  readonly matter: string;
+  readonly category: string;
+  readonly rating: number;
+  readonly last_modified_ms: number | null;
+}
+
 /** The latest TDH block 6529.io computed, and its Ethereum timestamp. */
 export interface TdhBlock {
   readonly block: number;
@@ -107,7 +117,7 @@ export interface IdentityExportSource {
    * REP and CIC ratings whose last_modified is after `sinceMs`, zeros
    * included, help-bot credits aside.
    */
-  ratingsChangedSince(sinceMs: number): Promise<number>;
+  ratingsChangedSince(sinceMs: number): Promise<ChangedRating[]>;
   /**
    * REP and CIC rating edits logged after `sinceMs`, without the over-rates
    * loop's cuts (LOST_TDH) and the help bot's credits.
@@ -352,19 +362,28 @@ export class SqlIdentityExportSource implements IdentityExportSource {
     };
   }
 
-  async ratingsChangedSince(sinceMs: number): Promise<number> {
-    const rows = await this.query<{ n: number | string }>(
-      `select count(*) as n
+  async ratingsChangedSince(sinceMs: number): Promise<ChangedRating[]> {
+    const rows = await this.query<RatingRow>(
+      `select rater_profile_id, matter_target_id, matter, matter_category,
+              rating, last_modified
        from ${RATINGS_TABLE}
        where matter in ('REP', 'CIC')
          and last_modified > :since
-         and not (matter = 'REP' and lower(trim(matter_category)) = :credit)`,
+         and not (matter = 'REP' and lower(trim(matter_category)) = :credit)
+       order by rater_profile_id, matter_target_id, matter, matter_category`,
       {
         since: new Date(sinceMs),
         credit: HELP_BOT_CREDIT_CATEGORY.toLowerCase()
       }
     );
-    return Number(rows[0]?.n ?? 0);
+    return rows.map((row) => ({
+      rater_profile_id: row.rater_profile_id.toLowerCase(),
+      target_profile_id: row.matter_target_id.toLowerCase(),
+      matter: row.matter,
+      category: row.matter === 'CIC' ? '' : row.matter_category,
+      rating: Number(row.rating),
+      last_modified_ms: toMillis(row.last_modified)
+    }));
   }
 
   async ratingEditsSince(sinceMs: number): Promise<number> {

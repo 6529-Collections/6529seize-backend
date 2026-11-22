@@ -1,15 +1,18 @@
 export const IDENTITY_EXPORT_HELP = `Usage: 6529 run identity:export -- --out FILE --revision HEX
          (--freeze-at TIME --expect-tdh-block N | --no-freeze)
-         (--extra-ids FILE | --no-extra-ids) [--bulk N] [--no-delegations]
-         [--cms-fields FILE] [--accept-over-credit N]
-         [--accept-edits-after-freeze N]
-         [--accept-ratings-changed-after-freeze N] [--overwrite]
+         (--extra-ids FILE | --no-extra-ids)
+         (--cms-fields FILE | --no-cms-fields) [--bulk N] [--no-delegations]
+         [--accept-over-credit N] [--accept-edits-after-freeze N]
+         [--accept-ratings-changed-after-freeze N]
+         [--accept-missing-extra-ids N] [--overwrite]
 
 Writes 6529.io's identities, profiles, REP and CIC ratings and reserved
 handles as a 6529.identity-export.v1 JSON file, the input of the Identities
 v1 file the 6529 chain imports at the identity freeze. Read-only: it reads
-the read pool (DB_HOST_READ) in one read-only transaction with a consistent
-snapshot. Run it against a read replica.
+the read pool (DB_HOST_READ, DB_USER_READ) in one read-only transaction with
+a consistent snapshot. Run it against a read replica. DB_HOST, DB_USER and
+DB_PASS must be set but are never connected to: they may name the replica
+with read-only credentials.
 
 Options:
   --out FILE             where to write the export (required)
@@ -18,40 +21,52 @@ Options:
   --freeze-at TIME       the freeze time T: ISO 8601 UTC or 13-digit Unix
                          milliseconds (or IDENTITY_FREEZE_AT)
   --no-freeze            a rehearsal export, not at the freeze (freeze_ms null)
-  --extra-ids FILE       profile ids in scope for waves activity: a JSON list,
-                         {"profile_ids": [...]}, or whitespace separated
+  --extra-ids FILE       profile ids in scope for waves activity: a JSON list
+                         of strings, {"profile_ids": [...]}, or whitespace
+                         separated; not empty. The file's id count and
+                         sha256 go into the export
   --no-extra-ids         export without the waves list (noted in the file)
-  --expect-tdh-block N   fail, before the long reads, unless 6529.io's latest
-                         TDH block is N (B_T at the freeze), taken in the hour
-                         before the freeze, the identities sync has caught up
-                         with that TDH write, no rater is over credit and no
-                         REP or CIC edit was logged after the freeze; required
-                         with a freeze time
-  --accept-over-credit N accept up to N raters who give more REP or CIC in
-                         the file than floor(TDH) of their identity (the
-                         chain's cap), exported as they are
+  --expect-tdh-block N   required with a freeze time: write nothing unless
+                         6529.io's latest TDH block is N (B_T at the freeze),
+                         taken in the hour before the freeze, its full TDH
+                         write is done and the identities sync has caught up
+                         with it, and every count below is 0 or acknowledged.
+                         Everything is read first; every reason is reported
+                         in one run
+  --accept-over-credit N acknowledge exactly N raters who give more REP or CIC
+                         in the file than floor(TDH) of their identity (the
+                         chain's cap; counted from the file, after the reads),
+                         exported as they are
   --accept-edits-after-freeze N
-                         accept up to N REP or CIC edits logged after the
-                         freeze (over-rate cuts and help-bot credits aside)
+                         acknowledge exactly N REP or CIC edits logged after
+                         the freeze (over-rate cuts and help-bot credits aside)
   --accept-ratings-changed-after-freeze N
-                         accept up to N REP or CIC ratings whose
+                         acknowledge exactly N REP or CIC ratings whose
                          last_modified is after the freeze (help-bot credits
-                         aside, zeros included)
+                         aside, zeros included; listed in the file)
+  --accept-missing-extra-ids N
+                         acknowledge exactly N waves-list ids with no identity
+                         or profile row (left out)
   --bulk N               a rater's REP category with more than N targets brings
                          no target in by itself (default 2000; 0 turns it off)
   --no-delegations       leave out 6529.io's delegations table
   --cms-fields FILE      the profile site export's cms-fields.json (profile id
                          -> the ProfileDoc cms value): each identity of those
-                         profiles gets that value as "cms"
+                         profiles gets that value as "cms"; its sha256 goes
+                         into the export
+  --no-cms-fields        export without profile site values (noted in the
+                         file)
   --overwrite            replace FILE if it exists (it is written to FILE.tmp
                          and renamed at the end)
   --help                 this text
 
 Exit codes: 0 written; 1 failed; 2 a usage error (or FILE exists); 3 not
 the freeze day's TDH yet (the TDH block, its time, the day's full TDH write
-or the identities sync); 4 raters over their credit, not acknowledged; 5
-REP or CIC changed after the freeze, not acknowledged. Nothing is written
-on 3, 4 or 5: wait, or acknowledge, and run again.
+or the identities sync); 4 raters over the chain's cap, not acknowledged;
+5 REP or CIC changed after the freeze, not acknowledged; 6 waves-list ids
+missing, not acknowledged. With several reasons, the lowest code; all are
+printed. Nothing is written on 3 to 6: wait, or acknowledge the exact
+counts, and run again.
 `;
 
 export interface IdentityExportCommand {
@@ -65,9 +80,10 @@ export interface IdentityExportCommand {
   readonly expectTdhBlock: number | null;
   readonly revision: string;
   readonly includeDelegations: boolean;
-  /** The profile site export's cms-fields.json; null without --cms-fields. */
+  /** The profile site export's cms-fields.json; null with --no-cms-fields. */
   readonly cmsFieldsFile: string | null;
   readonly acceptOverCredit: number;
+  readonly acceptMissingExtraIds: number;
   readonly acceptEditsAfterFreeze: number;
   readonly acceptRatingsChangedAfterFreeze: number;
   readonly overwrite: boolean;
@@ -106,13 +122,23 @@ export function parseFreezeTime(raw: string): number {
 export function parseExtraIds(text: string): string[] {
   const trimmed = text.trim();
   if (!trimmed) {
-    return [];
+    throw new IdentityExportUsageError('The extra ids file is empty');
   }
   let ids: unknown;
-  try {
-    const doc = JSON.parse(trimmed);
-    ids = Array.isArray(doc) ? doc : doc?.profile_ids;
-  } catch {
+  if (trimmed.startsWith('[') || trimmed.startsWith('{')) {
+    // JSON, or refused: never read as whitespace-separated words.
+    let doc: unknown;
+    try {
+      doc = JSON.parse(trimmed);
+    } catch {
+      throw new IdentityExportUsageError(
+        'The extra ids file starts like JSON but is not valid JSON'
+      );
+    }
+    ids = Array.isArray(doc)
+      ? doc
+      : (doc as { profile_ids?: unknown } | null)?.profile_ids;
+  } else {
     ids = trimmed.split(/\s+/);
   }
   if (!Array.isArray(ids)) {
@@ -120,10 +146,18 @@ export function parseExtraIds(text: string): string[] {
       'The extra ids file must be a JSON list, {"profile_ids": [...]}, or whitespace separated ids'
     );
   }
-  return ids
-    .filter((it): it is string => typeof it === 'string')
+  if (ids.some((it) => typeof it !== 'string')) {
+    throw new IdentityExportUsageError(
+      'Every extra id must be a string (a profile id)'
+    );
+  }
+  const list = (ids as string[])
     .map((it) => it.trim().toLowerCase())
     .filter((it) => it.length > 0);
+  if (!list.length) {
+    throw new IdentityExportUsageError('The extra ids list is empty');
+  }
+  return list;
 }
 
 /**
@@ -165,7 +199,9 @@ interface Draft {
   revision: string | null;
   includeDelegations: boolean;
   cmsFieldsFile: string | null;
+  noCmsFields: boolean;
   acceptOverCredit: number;
+  acceptMissingExtraIds: number;
   acceptEditsAfterFreeze: number;
   acceptRatingsChangedAfterFreeze: number;
   overwrite: boolean;
@@ -223,6 +259,12 @@ function readOption(
     case '--cms-fields':
       draft.cmsFieldsFile = value();
       return 2;
+    case '--no-cms-fields':
+      draft.noCmsFields = true;
+      return 1;
+    case '--accept-missing-extra-ids':
+      draft.acceptMissingExtraIds = wholeNumber(arg, value());
+      return 2;
     case '--accept-over-credit':
       draft.acceptOverCredit = wholeNumber(arg, value());
       return 2;
@@ -269,6 +311,11 @@ function checkDraft(draft: Draft): IdentityExportCommand {
       'Give the waves list (--extra-ids FILE) or --no-extra-ids, one of the two'
     );
   }
+  if ((draft.cmsFieldsFile === null) === !draft.noCmsFields) {
+    throw new IdentityExportUsageError(
+      'Give the profile site values (--cms-fields FILE) or --no-cms-fields, one of the two'
+    );
+  }
   return {
     command: 'export',
     out: draft.out,
@@ -280,6 +327,7 @@ function checkDraft(draft: Draft): IdentityExportCommand {
     includeDelegations: draft.includeDelegations,
     cmsFieldsFile: draft.cmsFieldsFile,
     acceptOverCredit: draft.acceptOverCredit,
+    acceptMissingExtraIds: draft.acceptMissingExtraIds,
     acceptEditsAfterFreeze: draft.acceptEditsAfterFreeze,
     acceptRatingsChangedAfterFreeze: draft.acceptRatingsChangedAfterFreeze,
     overwrite: draft.overwrite
@@ -306,7 +354,9 @@ export function parseIdentityExportCommand(
     revision: env.EXPORTER_REVISION?.trim() || null,
     includeDelegations: true,
     cmsFieldsFile: null,
+    noCmsFields: false,
     acceptOverCredit: 0,
+    acceptMissingExtraIds: 0,
     acceptEditsAfterFreeze: 0,
     acceptRatingsChangedAfterFreeze: 0,
     overwrite: false

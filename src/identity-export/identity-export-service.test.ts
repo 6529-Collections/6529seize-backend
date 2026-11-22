@@ -4,6 +4,7 @@ import {
   StatementRow
 } from './identity-export.db';
 import {
+  acknowledgementProblem,
   buildIdentityExport,
   cicMismatches,
   overCreditInFile,
@@ -173,7 +174,7 @@ function world(): {
     }),
     overCreditRaters: async () => ({ withXtdh: 0, tdhOnly: 0 }),
     ratingEditsSince: async () => 0,
-    ratingsChangedSince: async () => 0,
+    ratingsChangedSince: async () => [],
     identitySyncProgress: async () => ({
       pendingGeneration: 5,
       pendingBlock: 24_000_000,
@@ -600,13 +601,14 @@ describe('buildIdentityExport', () => {
       level_table: '6529.io levels, capped at 100',
       tdh: 'boosted',
       xtdh: 'as_stored',
-      bulk_threshold: 2
+      bulk_threshold: 2,
+      cms_fields_sha256: null
     });
     expect(doc.rules).toEqual(exportRules(options.bulkThreshold));
     expect(doc.tdh_block_timestamp_ms).toBe(FREEZE - 12_000);
   });
 
-  it('refuses another day before the long reads, and goes on with the right one', async () => {
+  it('refuses another day, with every reason, and goes on with the right one', async () => {
     const { source } = world();
     const ratingEdges = jest.fn(source.ratingEdges);
     const realHandleProfileIds = jest.fn(source.realHandleProfileIds);
@@ -620,21 +622,36 @@ describe('buildIdentityExport', () => {
         syncedGeneration: 5
       })
     };
-    await expect(
-      buildIdentityExport(behind, { ...options, expectTdhBlock: 24_000_000 })
-    ).rejects.toThrow(IdentityExportNotReadyError);
+    const behindError = await buildIdentityExport(behind, {
+      ...options,
+      expectTdhBlock: 24_000_000
+    }).then(
+      () => null,
+      (error: IdentityExportNotReadyError) => error
+    );
+    // The day, and the file's own counts: all in one run.
+    expect(behindError?.causes).toEqual([
+      'day',
+      'over_credit',
+      'missing_extra_ids'
+    ]);
+    expect(behindError?.exitCode).toBe(3);
+    expect(behindError?.message).toContain('the identities sync is behind');
+    expect(behindError?.message).toContain('--accept-over-credit 2');
+    expect(behindError?.message).toContain('--accept-missing-extra-ids 1');
     await expect(
       buildIdentityExport(
         { ...source, ratingEdges, realHandleProfileIds },
         { ...options, expectTdhBlock: 23_999_000 }
       )
     ).rejects.toThrow("6529.io's latest TDH block is 24000000, not 23999000");
-    expect(ratingEdges).not.toHaveBeenCalled();
-    expect(realHandleProfileIds).not.toHaveBeenCalled();
+    expect(ratingEdges).toHaveBeenCalled();
+    expect(realHandleProfileIds).toHaveBeenCalled();
     const doc = await buildIdentityExport(source, {
       ...options,
       expectTdhBlock: 24_000_000,
-      acceptOverCredit: 2
+      acceptOverCredit: 2,
+      acceptMissingExtraIds: 1
     });
     expect(doc.tdh_block).toBe(24_000_000);
   });
@@ -664,7 +681,6 @@ describe('buildIdentityExport', () => {
         options
       )
     ).rejects.toThrow(IdentityExportNotReadyError);
-    expect(ratingEdges).not.toHaveBeenCalled();
     // A rehearsal has no freeze time to hold it to.
     const rehearsal = await buildIdentityExport(
       {
@@ -676,10 +692,18 @@ describe('buildIdentityExport', () => {
     expect(rehearsal.tdh_block).toBe(1);
   });
 
-  it("refuses changes after the freeze, then raters over the chain's cap in the file, unless acknowledged", async () => {
+  it('refuses, with every reason, unless each count is acknowledged exactly', async () => {
     const { source } = world();
+    const changed = [1, 2, 3, 4].map((n) => ({
+      rater_profile_id: ALICE,
+      target_profile_id: P(String(n)),
+      matter: 'REP',
+      category: 'Late',
+      rating: n,
+      last_modified_ms: FREEZE + n
+    }));
     const ratingEditsSince = jest.fn(async () => 2);
-    const ratingsChangedSince = jest.fn(async () => 4);
+    const ratingsChangedSince = jest.fn(async () => changed);
     const ratingEdges = jest.fn(source.ratingEdges);
     const busy = {
       ...source,
@@ -689,69 +713,64 @@ describe('buildIdentityExport', () => {
       ratingEdges
     };
     const atFreeze = { ...options, expectTdhBlock: 24_000_000 };
-    const refused = (opts: {
-      acceptOverCredit?: number;
-      acceptEditsAfterFreeze?: number;
-      acceptRatingsChangedAfterFreeze?: number;
-    }) =>
-      buildIdentityExport(busy, { ...atFreeze, ...opts }).then(
+    // In the file, P3 gives CIC 20 and TAGGER REP 1 with TDH 0: over the
+    // chain's cap. One waves-list id has no identity.
+    const exact = {
+      acceptEditsAfterFreeze: 2,
+      acceptRatingsChangedAfterFreeze: 4,
+      acceptOverCredit: 2,
+      acceptMissingExtraIds: 1
+    };
+    const refused = (acks: Partial<typeof exact>) =>
+      buildIdentityExport(busy, { ...atFreeze, ...acks }).then(
         () => null,
         (error: IdentityExportNotReadyError) => error
       );
-    // Changes after the freeze: refused before the long reads.
-    const after = await refused({});
-    expect(after?.causes).toEqual(['after_freeze', 'after_freeze']);
-    expect(after?.exitCode).toBe(5);
-    expect(after?.message).toContain(
+    const all = await refused({});
+    expect(all?.causes).toEqual([
+      'after_freeze',
+      'after_freeze',
+      'over_credit',
+      'missing_extra_ids'
+    ]);
+    expect(all?.exitCode).toBe(4);
+    expect(all?.message).toContain(
       '2 REP and CIC rating edits were logged after the freeze'
     );
-    expect(after?.message).toContain('--accept-ratings-changed-after-freeze 4');
-    expect(ratingEdges).not.toHaveBeenCalled();
-    // In the file, P3 gives CIC 20 and TAGGER REP 1 with TDH 0: over the
-    // chain's cap. Alice's 5 is within her 1000.
-    const over = await refused({
-      acceptEditsAfterFreeze: 2,
-      acceptRatingsChangedAfterFreeze: 4
-    });
-    expect(over?.causes).toEqual(['over_credit']);
-    expect(over?.exitCode).toBe(4);
-    expect(over?.message).toContain(
-      "2 raters give more REP or CIC in this file than floor(TDH) of their identity, the chain's cap; acknowledge with --accept-over-credit 2"
+    expect(all?.message).toContain('--accept-ratings-changed-after-freeze 4');
+    expect(all?.message).toContain(
+      "2 raters give more REP or CIC in this file than floor(TDH) of their identity, the chain's cap"
+    );
+    expect(all?.message).toContain('--accept-missing-extra-ids 1');
+    expect(ratingEdges).toHaveBeenCalled();
+    // More than the count is refused too.
+    const tooMany = await refused({ ...exact, acceptOverCredit: 3 });
+    expect(tooMany?.causes).toEqual(['over_credit']);
+    expect(tooMany?.message).toContain(
+      '--accept-over-credit 3 does not match: 2 raters'
     );
     expect(
-      await refused({
-        acceptEditsAfterFreeze: 2,
-        acceptRatingsChangedAfterFreeze: 4,
-        acceptOverCredit: 1
-      })
-    ).not.toBeNull();
-    const doc = await buildIdentityExport(busy, {
-      ...atFreeze,
-      acceptOverCredit: 2,
-      acceptEditsAfterFreeze: 2,
-      acceptRatingsChangedAfterFreeze: 4
-    });
+      (await refused({ ...exact, acceptMissingExtraIds: 0 }))?.exitCode
+    ).toBe(6);
+    const doc = await buildIdentityExport(busy, { ...atFreeze, ...exact });
     expect(ratingEditsSince).toHaveBeenCalledWith(FREEZE);
     expect(ratingsChangedSince).toHaveBeenCalledWith(FREEZE);
+    expect(doc.acknowledged).toEqual({
+      over_credit: 2,
+      edits_after_freeze: 2,
+      ratings_changed_after_freeze: 4,
+      missing_extra_ids: 1
+    });
+    expect(doc.ratings_changed_after_freeze).toEqual(changed);
     expect(doc.stats).toEqual(
       expect.objectContaining({
         over_credit_raters_in_file: 2,
         over_credit_raters: 3,
         over_credit_raters_tdh_only: 5,
         rating_edits_after_freeze: 2,
-        ratings_modified_after_freeze: 4
+        ratings_modified_after_freeze: 4,
+        extra_ids_missing: 1
       })
-    );
-    expect(doc.notes).toEqual(
-      expect.arrayContaining([
-        expect.stringContaining(
-          "2 raters give more REP or CIC in this file than floor(TDH) of their identity (the chain's cap); in 6529.io's ratings, 3 are over TDH + xTDH (its over-rates loop) and 5 over TDH alone"
-        ),
-        expect.stringContaining('2 REP and CIC rating edits were logged'),
-        expect.stringContaining(
-          '4 REP and CIC ratings were changed after the freeze'
-        )
-      ])
     );
     // Without a freeze time (a rehearsal) they are only counted.
     const counted = await buildIdentityExport(busy, {
@@ -760,7 +779,8 @@ describe('buildIdentityExport', () => {
     });
     expect(counted.stats.over_credit_raters_in_file).toBe(2);
     expect(counted.stats.rating_edits_after_freeze).toBe(0);
-    expect(counted.stats.ratings_modified_after_freeze).toBe(0);
+    expect(counted.ratings_changed_after_freeze).toEqual([]);
+    expect(counted.acknowledged.over_credit).toBe(0);
     expect(
       readinessProblems(
         {
@@ -778,6 +798,63 @@ describe('buildIdentityExport', () => {
           "the identities sync's state (identity_tdh_sync_state) could not be read"
       }
     ]);
+  });
+
+  it('takes an acknowledgement only for the exact count', () => {
+    expect(acknowledgementProblem(3, 3, '--accept-x', 'things')).toBeNull();
+    expect(acknowledgementProblem(3, 1, '--accept-x', 'things')).toBe(
+      '3 things; acknowledge with --accept-x 3'
+    );
+    expect(acknowledgementProblem(3, 5, '--accept-x', 'things')).toBe(
+      '--accept-x 5 does not match: 3 things; give --accept-x 3'
+    );
+    expect(acknowledgementProblem(0, 2, '--accept-x', 'things')).toBe(
+      '--accept-x 2 does not match: 0 things; leave --accept-x out'
+    );
+  });
+
+  it('writes the input files given, the cms choice and the keys with no row', async () => {
+    const { source } = world();
+    const doc = await buildIdentityExport(
+      {
+        ...source,
+        multiWalletConsolidationKeys: async () => [
+          `${W(6)}-${W(7)}`,
+          `${W(12)}-${W(13)}`
+        ]
+      },
+      {
+        ...options,
+        extraIdsFile: { count: 2, sha256: 'e'.repeat(64) },
+        cmsFieldsFile: { count: 1, sha256: 'c'.repeat(64) },
+        cmsFields: { [ALICE]: { primary: {} } }
+      }
+    );
+    expect(doc.extra_ids).toEqual({ count: 2, sha256: 'e'.repeat(64) });
+    expect(doc.cms_fields).toEqual({ count: 1, sha256: 'c'.repeat(64) });
+    expect(doc.rules.cms_fields_sha256).toBe('c'.repeat(64));
+    expect(doc.stats.multi_wallet_keys_without_identity).toBe(1);
+    expect(doc.notes).toEqual(
+      expect.arrayContaining([
+        '1 consolidation keys of two or more wallets have no identities row: not exported'
+      ])
+    );
+    const none = await buildIdentityExport(source, {
+      ...options,
+      extraIdsFile: null,
+      cmsFieldsFile: null
+    });
+    expect([
+      none.extra_ids,
+      none.cms_fields,
+      none.rules.cms_fields_sha256
+    ]).toEqual([null, null, null]);
+    expect(none.notes).toEqual(
+      expect.arrayContaining([
+        'no --cms-fields: profile site values were not given, so no identity carries a cms value'
+      ])
+    );
+    expect(none.stats.multi_wallet_keys_without_identity).toBe(0);
   });
 
   it("counts the raters over the chain's cap in the file, by matter", () => {

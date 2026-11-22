@@ -5,9 +5,12 @@ import { IdentityExportNotReadyError } from './identity-export.errors';
 
 const buildIdentityExport = jest.fn();
 
-jest.mock('@/secrets', () => ({
-  doInDbContext: (fn: () => Promise<unknown>) => fn()
+const prepEnvironment = jest.fn(async () => undefined);
+jest.mock('@/env', () => ({
+  ...jest.requireActual('@/env'),
+  prepEnvironment: () => prepEnvironment()
 }));
+let disconnectFails = false;
 const dbApiCalls: string[] = [];
 jest.mock('@/db-api', () => ({
   connect: async () => {
@@ -15,6 +18,7 @@ jest.mock('@/db-api', () => ({
   },
   disconnect: async () => {
     dbApiCalls.push('disconnect');
+    if (disconnectFails) throw new Error('pool already closed');
   },
   withReadOnlySnapshot: (work: (connection: unknown) => Promise<unknown>) => {
     dbApiCalls.push('snapshot');
@@ -41,6 +45,7 @@ describe('runCli', () => {
     stderr = jest.spyOn(process.stderr, 'write').mockImplementation(() => true);
     buildIdentityExport.mockReset();
     dbApiCalls.length = 0;
+    disconnectFails = false;
   });
   afterEach(() => {
     stderr.mockRestore();
@@ -53,7 +58,8 @@ describe('runCli', () => {
     '--revision',
     REV,
     '--no-freeze',
-    '--no-extra-ids'
+    '--no-extra-ids',
+    '--no-cms-fields'
   ];
 
   it('exits 3, writing nothing, when the database is not at the freeze day', async () => {
@@ -107,10 +113,36 @@ describe('runCli', () => {
       const written = JSON.parse(fs.readFileSync(out, 'utf8'));
       expect(written.identity_sync).toBeUndefined();
       expect(written.stats).toEqual({ identities: 0 });
-      // db-api's pools are opened for the snapshot and closed after it.
+      // The environment, then db-api's pools for the snapshot, closed after.
+      expect(prepEnvironment).toHaveBeenCalled();
       expect(dbApiCalls).toEqual(['connect', 'snapshot', 'disconnect']);
     } finally {
       stdout.mockRestore();
     }
+  });
+
+  it('keeps the exit code when closing the pools fails', async () => {
+    disconnectFails = true;
+    buildIdentityExport.mockRejectedValue(
+      new IdentityExportNotReadyError([{ cause: 'over_credit', message: 'no' }])
+    );
+    expect(await runCli(args(path.join(dir, 'a.json')))).toBe(4);
+    buildIdentityExport.mockResolvedValue({
+      format: '6529.identity-export.v1',
+      tdh_block: 1,
+      freeze_ms: null,
+      stats: {},
+      notes: []
+    });
+    const stdout = jest
+      .spyOn(process.stdout, 'write')
+      .mockImplementation(() => true);
+    try {
+      expect(await runCli(args(path.join(dir, 'b.json')))).toBe(0);
+    } finally {
+      stdout.mockRestore();
+    }
+    const written = stderr.mock.calls.map(([text]) => String(text)).join('');
+    expect(written).toContain('closing the database pools failed');
   });
 });

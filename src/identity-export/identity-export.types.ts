@@ -94,4 +94,21 @@ export interface IdentityExportHeader {
   readonly tdh_block: number | null;
   /** The TDH block's Ethereum timestamp. */
   readonly tdh_block_timestamp_ms: number | null;
+  /** The waves list given (--extra-ids): its ids and the file's sha256. */
+  readonly extra_ids: InputFile | null;
+  /** The profile site values given (--cms-fields): count and sha256. */
+  readonly cms_fields: InputFile | null;
+  /** The counts acknowledged at the freeze (--accept-*), exactly. */
+  readonly acknowledged: {
+    readonly over_credit: number;
+    readonly edits_after_freeze: number;
+    readonly ratings_changed_after_freeze: number;
+    readonly missing_extra_ids: number;
+  };
+}
+
+/** An input file: how many entries it held and the sha256 of its bytes. */
+export interface InputFile {
+  readonly count: number;
+  readonly sha256: string;
 }

@@ -365,6 +365,15 @@ export async function inReadOnlySnapshot<T>(
     new Promise<void>((resolve, reject) =>
       connection.query(sql, (err: unknown) => (err ? reject(err) : resolve()))
     );
+  // A failing cleanup is logged: it never takes the place of the work's
+  // own result or error.
+  const cleanup = async (sql: string) => {
+    try {
+      await run(sql);
+    } catch (error) {
+      logger.error(`[READ-ONLY SNAPSHOT CLEANUP FAILED] [${sql}] ${error}`);
+    }
+  };
   await run("SET time_zone = '+00:00'");
   try {
     await run('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ');
@@ -372,10 +381,10 @@ export async function inReadOnlySnapshot<T>(
     try {
       return await work({ connection: connection as mysql.PoolConnection });
     } finally {
-      await run('ROLLBACK');
+      await cleanup('ROLLBACK');
     }
   } finally {
-    await run('SET time_zone = DEFAULT');
+    await cleanup('SET time_zone = DEFAULT');
   }
 }
 

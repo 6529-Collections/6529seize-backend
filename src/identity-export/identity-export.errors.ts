@@ -4,14 +4,22 @@
  *   day's full TDH write or the identities sync;
  * - `over_credit` (4): raters over their credit, not acknowledged;
  * - `after_freeze` (5): REP or CIC changed after the freeze, not
+ *   acknowledged;
+ * - `missing_extra_ids` (6): waves-list ids with no identity, not
  *   acknowledged.
+ * An acknowledgement must give the count exactly.
  */
-export type NotReadyCause = 'day' | 'over_credit' | 'after_freeze';
+export type NotReadyCause =
+  | 'day'
+  | 'over_credit'
+  | 'after_freeze'
+  | 'missing_extra_ids';
 
 export const NOT_READY_EXIT_CODES: Readonly<Record<NotReadyCause, number>> = {
   day: 3,
   over_credit: 4,
-  after_freeze: 5
+  after_freeze: 5,
+  missing_extra_ids: 6
 };
 
 export interface NotReadyProblem {
@@ -34,9 +42,14 @@ export class IdentityExportNotReadyError extends Error {
     this.causes = list.map((it) => it.cause);
   }
 
-  /** The exit code of the first cause in order: day, over credit, after. */
+  /** The exit code of the first cause in the order of their codes. */
   get exitCode(): number {
-    for (const cause of ['day', 'over_credit', 'after_freeze'] as const) {
+    for (const cause of [
+      'day',
+      'over_credit',
+      'after_freeze',
+      'missing_extra_ids'
+    ] as const) {
       if (this.causes.includes(cause)) return NOT_READY_EXIT_CODES[cause];
     }
     return NOT_READY_EXIT_CODES.day;

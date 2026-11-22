@@ -13,7 +13,15 @@ describe('parseIdentityExportCommand', () => {
   it('reads a rehearsal export', () => {
     expect(
       parseIdentityExportCommand(
-        ['--out', 'x.json', '--revision', REV, '--no-freeze', '--no-extra-ids'],
+        [
+          '--out',
+          'x.json',
+          '--revision',
+          REV,
+          '--no-freeze',
+          '--no-extra-ids',
+          '--no-cms-fields'
+        ],
         {}
       )
     ).toEqual({
@@ -27,6 +35,7 @@ describe('parseIdentityExportCommand', () => {
       includeDelegations: true,
       cmsFieldsFile: null,
       acceptOverCredit: 0,
+      acceptMissingExtraIds: 0,
       acceptEditsAfterFreeze: 0,
       acceptRatingsChangedAfterFreeze: 0,
       overwrite: false
@@ -34,7 +43,13 @@ describe('parseIdentityExportCommand', () => {
   });
 
   it('reads the acknowledgements and --overwrite', () => {
-    const rehearsal = ['--revision', REV, '--no-freeze', '--no-extra-ids'];
+    const rehearsal = [
+      '--revision',
+      REV,
+      '--no-freeze',
+      '--no-extra-ids',
+      '--no-cms-fields'
+    ];
     expect(
       parseIdentityExportCommand(
         [
@@ -47,6 +62,8 @@ describe('parseIdentityExportCommand', () => {
           '2',
           '--accept-ratings-changed-after-freeze',
           '6',
+          '--accept-missing-extra-ids',
+          '3',
           '--overwrite'
         ],
         {}
@@ -56,6 +73,7 @@ describe('parseIdentityExportCommand', () => {
         acceptOverCredit: 4,
         acceptEditsAfterFreeze: 2,
         acceptRatingsChangedAfterFreeze: 6,
+        acceptMissingExtraIds: 3,
         overwrite: true
       })
     );
@@ -99,6 +117,7 @@ describe('parseIdentityExportCommand', () => {
       includeDelegations: false,
       cmsFieldsFile: 'cms-fields.json',
       acceptOverCredit: 0,
+      acceptMissingExtraIds: 0,
       acceptEditsAfterFreeze: 0,
       acceptRatingsChangedAfterFreeze: 0,
       overwrite: false
@@ -113,6 +132,7 @@ describe('parseIdentityExportCommand', () => {
           '--revision',
           'b'.repeat(40),
           '--no-extra-ids',
+          '--no-cms-fields',
           '--expect-tdh-block',
           '1'
         ],
@@ -131,7 +151,8 @@ describe('parseIdentityExportCommand', () => {
       REV,
       '--freeze-at',
       String(T),
-      '--no-extra-ids'
+      '--no-extra-ids',
+      '--no-cms-fields'
     ];
     expect(() => parseIdentityExportCommand(atFreeze, {})).toThrow(
       'An export at the freeze needs --expect-tdh-block N'
@@ -149,26 +170,51 @@ describe('parseIdentityExportCommand', () => {
     ).toEqual(expect.objectContaining({ expectTdhBlock: 24_000_000 }));
     expect(
       parseIdentityExportCommand(
-        ['--out', 'x', '--revision', REV, '--no-freeze', '--no-extra-ids'],
+        [
+          '--out',
+          'x',
+          '--revision',
+          REV,
+          '--no-freeze',
+          '--no-extra-ids',
+          '--no-cms-fields'
+        ],
         {}
       )
     ).toEqual(expect.objectContaining({ expectTdhBlock: null }));
   });
 
-  const base = ['--revision', REV, '--no-freeze', '--no-extra-ids'];
+  const base = [
+    '--revision',
+    REV,
+    '--no-freeze',
+    '--no-extra-ids',
+    '--no-cms-fields'
+  ];
   it.each([
     [[...base], '--out FILE is required'],
     [['--out'], '--out needs a value'],
     [['--out', 'x', ...base, '--bulk', '-1'], '--bulk must be a whole number'],
     [
-      ['--out', 'x', '--revision', 'abc', '--no-freeze', '--no-extra-ids'],
+      [
+        '--out',
+        'x',
+        '--revision',
+        'abc',
+        '--no-freeze',
+        '--no-extra-ids',
+        '--no-cms-fields'
+      ],
       'revision must be a 40-hex'
     ],
     [
-      ['--out', 'x', '--no-freeze', '--no-extra-ids'],
+      ['--out', 'x', '--no-freeze', '--no-extra-ids', '--no-cms-fields'],
       'The exporter revision is required'
     ],
-    [['--out', 'x', '--revision', REV, '--no-extra-ids'], 'freeze time'],
+    [
+      ['--out', 'x', '--revision', REV, '--no-extra-ids', '--no-cms-fields'],
+      'freeze time'
+    ],
     [
       [
         '--out',
@@ -176,6 +222,7 @@ describe('parseIdentityExportCommand', () => {
         '--revision',
         REV,
         '--no-extra-ids',
+        '--no-cms-fields',
         '--no-freeze',
         '--freeze-at',
         String(T)
@@ -191,6 +238,7 @@ describe('parseIdentityExportCommand', () => {
         REV,
         '--no-freeze',
         '--no-extra-ids',
+        '--no-cms-fields',
         '--extra-ids',
         'w.json'
       ],
@@ -201,7 +249,25 @@ describe('parseIdentityExportCommand', () => {
       ['--out', 'x', ...base, '--expect-tdh-block', 'soon'],
       '--expect-tdh-block must be a whole number'
     ],
-    [['--out', 'x', ...base, '--what'], 'Unknown argument']
+    [['--out', 'x', ...base, '--what'], 'Unknown argument'],
+    [
+      [
+        '--out',
+        'x',
+        '--revision',
+        REV,
+        '--no-freeze',
+        '--no-extra-ids',
+        '--no-cms-fields',
+        '--cms-fields',
+        'c.json'
+      ],
+      'profile site values'
+    ],
+    [
+      ['--out', 'x', '--revision', REV, '--no-freeze', '--extra-ids', 'w.json'],
+      'profile site values'
+    ]
   ])('refuses %j', (args, message) => {
     expect(() => parseIdentityExportCommand(args as string[], {})).toThrow(
       message
@@ -236,12 +302,24 @@ describe('parseFreezeTime', () => {
 
 describe('parseExtraIds', () => {
   it.each([
-    ['["A-1", "b-2", 3]', ['a-1', 'b-2']],
+    ['["A-1", "b-2"]', ['a-1', 'b-2']],
     ['{"profile_ids": ["a-1"]}', ['a-1']],
-    ['a-1\n b-2  c-3', ['a-1', 'b-2', 'c-3']],
-    ['', []]
+    ['a-1\n b-2  c-3', ['a-1', 'b-2', 'c-3']]
   ])('reads %s', (text, ids) => {
     expect(parseExtraIds(text)).toEqual(ids);
+  });
+
+  it.each([
+    ['', 'is empty'],
+    ['  \n ', 'is empty'],
+    ['[]', 'list is empty'],
+    ['{"profile_ids": []}', 'list is empty'],
+    ['["a-1", 3]', 'must be a string'],
+    ['[{"id": "a-1"}]', 'must be a string'],
+    ['["a-1", "b-2"', 'not valid JSON'],
+    ['{profile_ids: a-1}', 'not valid JSON']
+  ])('refuses %j', (text, message) => {
+    expect(() => parseExtraIds(text)).toThrow(message);
   });
 
   it('refuses a JSON object without profile_ids', () => {

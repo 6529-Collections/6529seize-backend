@@ -139,7 +139,8 @@ describeWithSeed(
           '--revision',
           REV,
           '--no-freeze',
-          '--no-extra-ids'
+          '--no-extra-ids',
+          '--no-cms-fields'
         ])
       ).toBe(0);
       const doc = JSON.parse(fs.readFileSync(out, 'utf8'));
@@ -183,7 +184,8 @@ describeWithSeed(
         REV,
         '--freeze-at',
         new Date(FREEZE).toISOString(),
-        '--no-extra-ids'
+        '--no-extra-ids',
+        '--no-cms-fields'
       ];
       const out = path.join(dir, 'freeze.json');
       expect(
@@ -191,6 +193,15 @@ describeWithSeed(
       ).toBe(0);
       const doc = JSON.parse(fs.readFileSync(out, 'utf8'));
       expect(doc.freeze_ms).toBe(FREEZE);
+      expect(doc.extra_ids).toBeNull();
+      expect(doc.cms_fields).toBeNull();
+      expect(doc.acknowledged).toEqual({
+        over_credit: 0,
+        edits_after_freeze: 0,
+        ratings_changed_after_freeze: 0,
+        missing_extra_ids: 0
+      });
+      expect(doc.ratings_changed_after_freeze).toEqual([]);
       expect(doc.tdh_block_timestamp_ms).toBe(FREEZE - 12_000);
       expect(doc.stats).toEqual(
         expect.objectContaining({

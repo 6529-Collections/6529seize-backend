@@ -7,6 +7,7 @@ import { getLevelFromScore } from '@/profiles/profile-level';
 import { ProfileClassification } from '@/entities/IProfile';
 import { enums } from '@/enums';
 import {
+  ChangedRating,
   IdentityExportSource,
   IdentityRow,
   IdentitySyncProgress,
@@ -37,6 +38,7 @@ import {
   IdentityExportHeader,
   IdentityExportIdentity,
   IdentityExportRating,
+  InputFile,
   IdentityExportScope,
   IdentityExportStatement
 } from './identity-export.types';
@@ -63,6 +65,12 @@ export interface IdentityExportOptions {
   readonly acceptEditsAfterFreeze?: number;
   /** REP and CIC ratings changed after the freeze acknowledged (default 0). */
   readonly acceptRatingsChangedAfterFreeze?: number;
+  /** Waves-list ids with no identity acknowledged (default 0). */
+  readonly acceptMissingExtraIds?: number;
+  /** The waves list's file (count and sha256); null without one. */
+  readonly extraIdsFile?: InputFile | null;
+  /** The profile site values' file (count and sha256); null without one. */
+  readonly cmsFieldsFile?: InputFile | null;
   readonly exporterRevision: string;
   readonly now?: () => number;
   readonly log?: (message: string) => void;
@@ -86,10 +94,15 @@ export interface IdentityExportDocument extends IdentityExportHeader {
   readonly rules: ReturnType<typeof exportRules>;
   /** The identities sync's state read with everything else (null: unread). */
   readonly identity_sync: IdentitySyncProgress | null;
+  /** REP and CIC ratings changed after the freeze (credits aside). */
+  readonly ratings_changed_after_freeze: ChangedRating[];
 }
 
 /** The rules every export is written by; the builder refuses a file without. */
-export function exportRules(bulkThreshold: number) {
+export function exportRules(
+  bulkThreshold: number,
+  cmsFieldsSha256: string | null = null
+) {
   return {
     help_bot_credit_category: HELP_BOT_CREDIT_CATEGORY,
     help_bot_credit_match: 'js_trim_then_to_lower_case',
@@ -100,7 +113,8 @@ export function exportRules(bulkThreshold: number) {
     level_table: '6529.io levels, capped at 100',
     tdh: 'boosted',
     xtdh: 'as_stored',
-    bulk_threshold: bulkThreshold
+    bulk_threshold: bulkThreshold,
+    cms_fields_sha256: cmsFieldsSha256
   } as const;
 }
 
@@ -132,6 +146,22 @@ export interface ExportReadiness {
   readonly ratingsChangedAfterFreeze: number;
 }
 
+/**
+ * The acknowledgement of a count at the freeze must be exactly the count:
+ * a problem when it is not.
+ */
+export function acknowledgementProblem(
+  count: number,
+  accepted: number,
+  flag: string,
+  what: string
+): string | null {
+  if (count === accepted) return null;
+  return accepted < count
+    ? `${count} ${what}; acknowledge with ${flag} ${count}`
+    : `${flag} ${accepted} does not match: ${count} ${what}${count ? `; give ${flag} ${count}` : `; leave ${flag} out`}`;
+}
+
 /** Every reason the export is not the freeze day's (empty when it is). */
 export function readinessProblems(
   readiness: ExportReadiness,
@@ -143,6 +173,7 @@ export function readinessProblems(
     | 'acceptRatingsChangedAfterFreeze'
   >
 ): NotReadyProblem[] {
+  // The counts below are gated only at the freeze (--expect-tdh-block).
   const problems: NotReadyProblem[] = [];
   if (options.freezeMs !== null) {
     const timing = tdhBlockTimingProblem(readiness.tdh, options.freezeMs);
@@ -158,20 +189,20 @@ export function readinessProblems(
     expected
   );
   if (day) problems.push({ cause: 'day', message: day });
-  const edits = readiness.editsAfterFreeze;
-  if (edits > (options.acceptEditsAfterFreeze ?? 0)) {
-    problems.push({
-      cause: 'after_freeze',
-      message: `${edits} REP and CIC rating edits were logged after the freeze (over-rate cuts and help-bot credits aside); acknowledge with --accept-edits-after-freeze ${edits}`
-    });
-  }
-  const changed = readiness.ratingsChangedAfterFreeze;
-  if (changed > (options.acceptRatingsChangedAfterFreeze ?? 0)) {
-    problems.push({
-      cause: 'after_freeze',
-      message: `${changed} REP and CIC ratings were changed after the freeze (help-bot credits aside); acknowledge with --accept-ratings-changed-after-freeze ${changed}`
-    });
-  }
+  const edits = acknowledgementProblem(
+    readiness.editsAfterFreeze,
+    options.acceptEditsAfterFreeze ?? 0,
+    '--accept-edits-after-freeze',
+    'REP and CIC rating edits were logged after the freeze (over-rate cuts and help-bot credits aside)'
+  );
+  if (edits) problems.push({ cause: 'after_freeze', message: edits });
+  const changed = acknowledgementProblem(
+    readiness.ratingsChangedAfterFreeze,
+    options.acceptRatingsChangedAfterFreeze ?? 0,
+    '--accept-ratings-changed-after-freeze',
+    'REP and CIC ratings were changed after the freeze (help-bot credits aside; listed in ratings_changed_after_freeze)'
+  );
+  if (changed) problems.push({ cause: 'after_freeze', message: changed });
   return problems;
 }
 
@@ -766,10 +797,12 @@ export async function buildIdentityExport(
     options.freezeMs === null
       ? 0
       : await source.ratingEditsSince(options.freezeMs);
-  const ratingsChangedAfterFreeze =
+  const changedAfterFreeze =
     options.freezeMs === null
-      ? 0
+      ? []
       : await source.ratingsChangedSince(options.freezeMs);
+  const ratingsChangedAfterFreeze = changedAfterFreeze.length;
+  // Every reason is gathered and reported together once all is read.
   const problems = readinessProblems(
     {
       tdh,
@@ -779,9 +812,6 @@ export async function buildIdentityExport(
     },
     options
   );
-  if (problems.length) {
-    throw new IdentityExportNotReadyError(problems);
-  }
 
   const index = new IdentityIndex(source);
   const core = await readCore(source, index, options.extraProfileIds);
@@ -852,7 +882,14 @@ export async function buildIdentityExport(
     options.cmsFields
   );
   const identities = cms.identities;
-  notes.push(...cms.notes);
+  notes.push(
+    ...(options.cmsFieldsFile === null
+      ? [
+          'no --cms-fields: profile site values were not given, so no identity carries a cms value'
+        ]
+      : []),
+    ...cms.notes
+  );
   const repFromFile = repMismatches(storedMinusCredits, ratings);
   if (repFromFile) {
     notes.push(
@@ -862,20 +899,38 @@ export async function buildIdentityExport(
   // Over credit in the file itself, against the chain's cap: refused at the
   // freeze unless acknowledged; nothing has been written yet.
   const overInFile = overCreditInFile(identities, ratings);
-  if (
-    (options.expectTdhBlock ?? null) !== null &&
-    overInFile > (options.acceptOverCredit ?? 0)
-  ) {
-    throw new IdentityExportNotReadyError([
-      {
-        cause: 'over_credit',
-        message: `${overInFile} raters give more REP or CIC in this file than floor(TDH) of their identity, the chain's cap; acknowledge with --accept-over-credit ${overInFile} to export them as they are`
-      }
-    ]);
+  const atFreeze = (options.expectTdhBlock ?? null) !== null;
+  if (atFreeze) {
+    const over = acknowledgementProblem(
+      overInFile,
+      options.acceptOverCredit ?? 0,
+      '--accept-over-credit',
+      "raters give more REP or CIC in this file than floor(TDH) of their identity, the chain's cap (exported as they are once acknowledged)"
+    );
+    if (over) problems.push({ cause: 'over_credit', message: over });
+    const missing = acknowledgementProblem(
+      core.extraMissing.length,
+      options.acceptMissingExtraIds ?? 0,
+      '--accept-missing-extra-ids',
+      'waves-list ids have no identity or profile row (left out)'
+    );
+    if (missing)
+      problems.push({ cause: 'missing_extra_ids', message: missing });
+  }
+  if (problems.length) {
+    throw new IdentityExportNotReadyError(problems);
   }
   if (overInFile || overCredit.withXtdh || overCredit.tdhOnly) {
     notes.push(
       `${overInFile} raters give more REP or CIC in this file than floor(TDH) of their identity (the chain's cap); in 6529.io's ratings, ${overCredit.withXtdh} are over TDH + xTDH (its over-rates loop) and ${overCredit.tdhOnly} over TDH alone; their ratings are exported as they are`
+    );
+  }
+  const keysWithoutIdentity = core.multiWalletKeys.filter(
+    (key) => !index.rowsByKey.has(key)
+  ).length;
+  if (keysWithoutIdentity) {
+    notes.push(
+      `${keysWithoutIdentity} consolidation keys of two or more wallets have no identities row: not exported`
     );
   }
   const cicFromFile = cicMismatches(identities, ratings);
@@ -926,13 +981,26 @@ export async function buildIdentityExport(
     freeze_ms: options.freezeMs,
     tdh_block: tdhBlock,
     tdh_block_timestamp_ms: tdh?.timestampMs ?? null,
+    extra_ids: options.extraIdsFile ?? null,
+    cms_fields: options.cmsFieldsFile ?? null,
+    acknowledged: {
+      over_credit: options.acceptOverCredit ?? 0,
+      edits_after_freeze: options.acceptEditsAfterFreeze ?? 0,
+      ratings_changed_after_freeze:
+        options.acceptRatingsChangedAfterFreeze ?? 0,
+      missing_extra_ids: options.acceptMissingExtraIds ?? 0
+    },
     identities,
     reserved_handles: reservedHandles(),
     ratings,
     delegations,
     notes,
-    rules: exportRules(options.bulkThreshold),
+    rules: exportRules(
+      options.bulkThreshold,
+      options.cmsFieldsFile?.sha256 ?? null
+    ),
     identity_sync: identitySync,
+    ratings_changed_after_freeze: changedAfterFreeze,
     bulk_rep: bulkCategories.map((it) => ({
       profile_id: it.rater_profile_id,
       direction: 'outgoing' as const,
@@ -958,6 +1026,8 @@ export async function buildIdentityExport(
       over_credit_raters: overCredit.withXtdh,
       over_credit_raters_tdh_only: overCredit.tdhOnly,
       cic_differs_from_file_ratings: cicFromFile,
+      multi_wallet_keys_without_identity: keysWithoutIdentity,
+      extra_ids_missing: core.extraMissing.length,
       rating_edits_after_freeze: editsAfterFreeze,
       identity_sync_pending_generation: identitySync?.pendingGeneration ?? -1,
       identity_sync_synced_generation: identitySync?.syncedGeneration ?? -1,
