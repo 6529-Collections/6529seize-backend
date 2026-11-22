@@ -513,6 +513,22 @@ describe('RecordIndexer', () => {
     expect(mute.applied.map((it) => it.change.key)).toEqual(['p9', 'p1']);
   });
 
+  it('applies a repeated key at its last position in the record', async () => {
+    const { indexer, keyring, mute } = setup();
+    const settings = await sealedSettings(keyring, [
+      { t: 'mute', k: 'p9', b: {} },
+      { t: 'mute', k: 'p1', b: {} },
+      { t: 'mute', k: 'p9', b: null }
+    ]);
+    expect(await indexer.ingest(settings, 'live', ctx)).toMatchObject({
+      changes: 2
+    });
+    expect(mute.applied.map((it) => [it.change.key, it.change.body])).toEqual([
+      ['p1', {}],
+      ['p9', null]
+    ]);
+  });
+
   it("refuses a record today's rules refuse, with the rule's code, and keeps none of it", async () => {
     const { indexer, keyring, mute, heads } = setup(
       new TransactionalHeadStore()

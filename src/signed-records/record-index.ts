@@ -408,10 +408,13 @@ export class RecordIndexer {
     mode: ApplyMode,
     ctx: RequestContext
   ): Promise<IngestOutcome> {
-    // Later items for the same key in one record win: keep the last of each.
+    // Later items for the same key in one record win: keep the last of
+    // each, at its own position in the record.
     const latest = new Map<string, RecordChange>();
     for (const change of changes) {
-      latest.set(`${change.type}|${change.key}`, change);
+      const id = `${change.type}|${change.key}`;
+      latest.delete(id);
+      latest.set(id, change);
     }
     const handled: { change: RecordChange; handler: RecordTypeHandler }[] = [];
     let unknown = 0;
