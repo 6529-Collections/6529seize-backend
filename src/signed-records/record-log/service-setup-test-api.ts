@@ -32,6 +32,8 @@ export function fakeSetupApi(options: {
   readonly grants?: readonly ServiceGrant[];
   readonly storedId?: string;
   readonly failLogout?: boolean;
+  /** GET /device-grants answers 404. */
+  readonly listMissing?: boolean;
 }) {
   const calls: FakeCall[] = [];
   const grants: ServiceGrant[] = [...(options.grants ?? [])];
@@ -103,7 +105,12 @@ export function fakeSetupApi(options: {
       return reply(201, { id: profileId });
     }
     if (method === 'GET' && path === '/device-grants') {
-      return reply(200, grants);
+      if (options.listMissing) return reply(404, { error: 'not found' });
+      // As the server: newest first, at most 100, no pages.
+      const listed = [...grants]
+        .sort((a, b) => b.created_at - a.created_at)
+        .slice(0, 100);
+      return reply(200, listed);
     }
     if (method === 'POST' && path === '/device-grants') {
       return registerGrant(body);

@@ -145,6 +145,34 @@ describe('records service setup command', () => {
     expect(spy).not.toHaveBeenCalled();
   });
 
+  it('removes the temporary file on Ctrl-C', async () => {
+    const file = await newKeysFile();
+    const listeners = process.listenerCount('SIGINT');
+    let answer: (response: Response) => void = () => undefined;
+    jest.spyOn(global, 'fetch').mockImplementation(
+      () =>
+        new Promise<Response>((resolve) => {
+          answer = resolve;
+        })
+    );
+    const exit = jest
+      .spyOn(process, 'exit')
+      .mockImplementation((() => undefined) as never);
+    const running = main(['grant', '--keys', file, '--handle', 'records_test']);
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(tempFilesIn(dir)).toHaveLength(1);
+    (process.emit as (event: string, signal: string) => boolean)(
+      'SIGINT',
+      'SIGINT'
+    );
+    expect(exit).toHaveBeenCalledWith(130);
+    expect(tempFilesIn(dir)).toEqual([]);
+    answer(new Response('{"error":"down"}', { status: 500 }));
+    await expect(running).rejects.toThrow('answered 500');
+    expect(process.listenerCount('SIGINT')).toBe(listeners);
+    expect(tempFilesIn(dir)).toEqual([]);
+  });
+
   it('removes the temporary file when the grant fails', async () => {
     const file = await newKeysFile();
     fakeFetch();

@@ -156,21 +156,38 @@ function openReplacement(path: string) {
     if (fd !== null) fs.closeSync(fd);
     fd = null;
   };
+  const remove = () => {
+    try {
+      fs.unlinkSync(temporary);
+    } catch {
+      // Already gone.
+    }
+  };
+  // Ctrl-C or a kill while the network step runs leaves no temporary file.
+  const onSignal = (signal: NodeJS.Signals) => {
+    close();
+    remove();
+    process.exit(signal === 'SIGINT' ? 130 : 143);
+  };
+  process.once('SIGINT', onSignal);
+  process.once('SIGTERM', onSignal);
+  const release = () => {
+    process.removeListener('SIGINT', onSignal);
+    process.removeListener('SIGTERM', onSignal);
+  };
   return {
     commit(keys: ServiceKeysFile): void {
       if (fd === null) throw new Error('The replacement is closed');
       writeAndSync(fd, keys);
       close();
       fs.renameSync(temporary, path);
+      release();
       syncFolderOf(path);
     },
     discard(): void {
+      release();
       close();
-      try {
-        fs.unlinkSync(temporary);
-      } catch {
-        // Already gone.
-      }
+      remove();
     }
   };
 }

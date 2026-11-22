@@ -7,6 +7,7 @@ import { loadServiceIdentity } from './records-wave-poster';
 import { fakeSetupApi } from './service-setup-test-api';
 import {
   createServiceKeys,
+  GRANT_LIST_FULL_WARNING,
   grantServiceDevice,
   listServiceGrants,
   parseKeysFile,
@@ -467,6 +468,69 @@ describe('records service setup', () => {
       await expect(
         listServiceGrants(keys, deps(api({ grants: listed })))
       ).resolves.toEqual(listed);
+    });
+  });
+
+  describe('the grant list', () => {
+    it('stops loudly when the list is missing, never as an empty list', async () => {
+      const keys = newKeys();
+      const key = keys.public.device_key;
+      const missing = () =>
+        api({
+          profileId: 'p',
+          listMissing: true,
+          grants: [grantOf(id('01'), key)]
+        });
+      const message = 'the grant list is not available';
+      let fake = missing();
+      await expect(
+        revokeServiceGrants(
+          { keys, grantId: null, allForDevice: true },
+          deps(fake)
+        )
+      ).rejects.toThrow(message);
+      expect(fake.grants[0].revoked_at).toBeNull();
+      fake = missing();
+      await expect(grant(keys, fake, { newDeviceSeed: true })).rejects.toThrow(
+        message
+      );
+      expect(fake.routes()).not.toContain('POST /device-grants');
+      await expect(grant(keys, missing())).rejects.toThrow(message);
+      await expect(listServiceGrants(keys, deps(missing()))).rejects.toThrow(
+        message
+      );
+    });
+
+    it("warns when the list reaches the server's limit of 100", async () => {
+      const keys = newKeys();
+      const key = keys.public.device_key;
+      const newer = Array.from({ length: 100 }, (_, index) =>
+        grantOf(`0x${index.toString(16).padStart(64, '0')}`, id('77'), {
+          created_at: NOW - index * 1000
+        })
+      );
+      // Older than all 100 above, so the server's list leaves it out.
+      const hidden = grantOf(id('ee'), key, { created_at: NOW - DAY * 1000 });
+      const fake = api({ grants: [hidden, ...newer] });
+      const warnings: string[] = [];
+      const result = await revokeServiceGrants(
+        { keys, grantId: null, allForDevice: true },
+        deps(fake, (text) => warnings.push(text))
+      );
+      expect(result.revoked).toEqual([]);
+      expect(warnings).toContain(GRANT_LIST_FULL_WARNING);
+      const listWarnings: string[] = [];
+      await listServiceGrants(
+        keys,
+        deps(api({ grants: newer }), (text) => listWarnings.push(text))
+      );
+      expect(listWarnings).toEqual([GRANT_LIST_FULL_WARNING]);
+      const quiet: string[] = [];
+      await listServiceGrants(
+        keys,
+        deps(api({ grants: newer.slice(1) }), (text) => quiet.push(text))
+      );
+      expect(quiet).toEqual([]);
     });
   });
 });

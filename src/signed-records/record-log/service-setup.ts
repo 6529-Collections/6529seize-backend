@@ -378,8 +378,15 @@ export class ServiceSetupApi {
     return created.id;
   }
 
+  /** Never empty for want of an answer: a 404 is an error here. */
   async listGrants(): Promise<ServiceGrant[]> {
-    return (await this.call<ServiceGrant[]>('GET', '/device-grants')) ?? [];
+    const grants = await this.call<ServiceGrant[]>('GET', '/device-grants');
+    if (grants === null) {
+      throw new Error(
+        'GET /device-grants answered 404: the grant list is not available'
+      );
+    }
+    return grants;
   }
 
   async registerGrant(
@@ -433,6 +440,26 @@ async function asServiceWallet<T>(
   }
 }
 
+/** The most grants GET /device-grants returns, newest first; it has no pages. */
+export const SERVER_GRANT_LIST_LIMIT = 100;
+
+export const GRANT_LIST_FULL_WARNING =
+  `The server lists only the newest ${SERVER_GRANT_LIST_LIMIT} grants, and this wallet has that many: ` +
+  'older grants may be hidden from this command. This service makes one ' +
+  'grant per renewal, so the wallet key may be in use elsewhere: tell the team.';
+
+/** The wallet's grants, warning when the list may be cut short. */
+async function listAllGrants(
+  api: ServiceSetupApi,
+  deps: SetupDeps
+): Promise<ServiceGrant[]> {
+  const grants = await api.listGrants();
+  if (grants.length >= SERVER_GRANT_LIST_LIMIT) {
+    deps.warn?.(GRANT_LIST_FULL_WARNING);
+  }
+  return grants;
+}
+
 const isActive = (grant: ServiceGrant, nowMs: number) =>
   grant.revoked_at === null && grant.expires_at > nowMs;
 
@@ -440,10 +467,10 @@ const isActive = (grant: ServiceGrant, nowMs: number) =>
 async function revokeAllFor(
   api: ServiceSetupApi,
   deviceKey: string,
-  nowMs: number
+  deps: SetupDeps
 ): Promise<string[]> {
-  const active = (await api.listGrants()).filter(
-    (grant) => grant.device_key === deviceKey && isActive(grant, nowMs)
+  const active = (await listAllGrants(api, deps)).filter(
+    (grant) => grant.device_key === deviceKey && isActive(grant, deps.nowMs)
   );
   for (const grant of active) await api.revokeGrant(grant.id);
   return active.map((grant) => grant.id);
@@ -487,10 +514,10 @@ export async function grantServiceDevice(
     let keys = args.keys;
     let revoked: string[] = [];
     if (args.newDeviceSeed) {
-      revoked = await revokeAllFor(api, keys.public.device_key, deps.nowMs);
+      revoked = await revokeAllFor(api, keys.public.device_key, deps);
       keys = replaceDeviceSeed(keys, deps.random);
     } else if (
-      (await api.listGrants()).some(
+      (await listAllGrants(api, deps)).some(
         (grant) =>
           grant.device_key === keys.public.device_key &&
           grant.revoked_at !== null
@@ -552,7 +579,7 @@ export async function revokeServiceGrants(
       await api.revokeGrant(args.grantId);
       return [args.grantId];
     }
-    return revokeAllFor(api, args.keys.public.device_key, deps.nowMs);
+    return revokeAllFor(api, args.keys.public.device_key, deps);
   });
   return {
     keys: {
@@ -571,5 +598,5 @@ export async function listServiceGrants(
   keys: ServiceKeysFile,
   deps: SetupDeps
 ): Promise<ServiceGrant[]> {
-  return asServiceWallet(keys, deps, (api) => api.listGrants());
+  return asServiceWallet(keys, deps, (api) => listAllGrants(api, deps));
 }
