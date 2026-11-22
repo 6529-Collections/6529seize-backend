@@ -1,7 +1,9 @@
 import {
   IDENTITY_NOTIFICATIONS_TABLE,
+  NOTIFICATION_VIEW_TABLE,
   PUSH_NOTIFICATION_CANCELLATIONS_TABLE
 } from '@/constants';
+import { notifyViewMode } from '@/notifications/view/notify-view-flags';
 import { DbPoolName } from '@/db-query.options';
 import { RequestContext } from '@/request.context';
 import { dbSupplier, LazyDbAccessCompatibleService } from '@/sql-executor';
@@ -24,6 +26,14 @@ export class PushNotificationCancellationsDb extends LazyDbAccessCompatibleServi
       reference === 'drop'
         ? '(related_drop_id in (:values) or related_drop_2_id in (:values))'
         : 'wave_id in (:values)';
+    // The view's rows of a deleted drop or wave go with it.
+    if (notifyViewMode() !== 'off') {
+      await this.db.execute(
+        `delete from ${NOTIFICATION_VIEW_TABLE} where ${predicate}`,
+        { values },
+        options
+      );
+    }
     let afterId = 0;
     // Discover the union without locks, then acquire only primary-key locks in
     // ascending order. ORDER BY alone on a secondary-index scan can lock rows

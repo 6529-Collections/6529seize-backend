@@ -16,9 +16,19 @@ import {
   DROPS_TABLE,
   IDENTITY_MUTES_TABLE,
   IDENTITY_NOTIFICATIONS_TABLE,
+  NOTIFICATION_VIEW_TABLE,
+  PUSH_NOTIFICATION_CANCELLATIONS_TABLE,
   WAVE_READER_METRICS_TABLE,
   WAVES_TABLE
 } from '@/constants';
+import {
+  isDerivedCause,
+  legacyOutputEnabled,
+  notificationsReadTable,
+  notifyViewMode
+} from '@/notifications/view/notify-view-flags';
+import type { DerivedNotification } from '@/notifications/view/derived-notification';
+import { notificationViewDb } from '@/notifications/view/notification-view.db';
 import {
   IdentityNotificationCause,
   IdentityNotificationEntity
@@ -126,6 +136,8 @@ export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
     notification: NewIdentityNotification,
     connection?: ConnectionWrapper<any>
   ): Promise<void> {
+    // A derived cause comes from the deriver only (NOTIFY_DERIVED_CAUSES).
+    if (isDerivedCause(notification.cause)) return;
     if (!connection && this.isNotifierActivated()) {
       return this.db.executeNativeQueriesInTransaction((transaction) =>
         this.insertNotification(notification, transaction)
@@ -140,15 +152,14 @@ export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
         return;
       }
 
-      const notificationId = await this.insertNotificationRow(
-        this.serializeNotificationInsertRow(
-          filteredNotification,
-          Time.currentMillis()
-        ),
-        connection
+      const row = this.serializeNotificationInsertRow(
+        filteredNotification,
+        Time.currentMillis()
       );
+      const notificationId = await this.insertNotificationRow(row, connection);
 
       if (notificationId) {
+        await this.carryIntoView([row], [notificationId], connection);
         if (isActivated()) {
           await new PushNotificationOutboxDb(() => this.db).enqueue(
             notificationId,
@@ -162,9 +173,13 @@ export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
   }
 
   async insertManyNotifications(
-    notifications: NewIdentityNotification[],
+    allNotifications: NewIdentityNotification[],
     connection?: ConnectionWrapper<any>
   ): Promise<number[]> {
+    // A derived cause comes from the deriver only (NOTIFY_DERIVED_CAUSES).
+    const notifications = allNotifications.filter(
+      (notification) => !isDerivedCause(notification.cause)
+    );
     if (!this.isNotifierActivated() || !notifications.length) {
       return [];
     }
@@ -213,7 +228,9 @@ export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
         firstInsertId,
         connection
       );
-      if (chunkIds.length !== rows.length) {
+      if (chunkIds.length === rows.length) {
+        await this.carryIntoView(rows, chunkIds, connection);
+      } else {
         this.logger.error(
           `Expected ${rows.length} inserted notification ids, found ${chunkIds.length}`
         );
@@ -222,6 +239,106 @@ export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
     }
 
     return insertedIds;
+  }
+
+  /**
+   * In `on` mode the readers use notification_view, so a row an old writer
+   * adds for a cause that is not derived yet is copied there too.
+   */
+  private async carryIntoView(
+    rows: readonly SerializableNotificationInsertRow[],
+    ids: readonly number[],
+    connection?: ConnectionWrapper<any>
+  ): Promise<void> {
+    if (notifyViewMode() !== 'on' || !connection) return;
+    await notificationViewDb.insertCarried(
+      rows.map((row, index) => ({
+        legacy_id: ids[index],
+        identity_id: String(row.identity_id),
+        additional_identity_id: row.additional_identity_id as string | null,
+        related_drop_id: row.related_drop_id as string | null,
+        related_drop_part_no: row.related_drop_part_no as number | null,
+        related_drop_2_id: row.related_drop_2_id as string | null,
+        related_drop_2_part_no: row.related_drop_2_part_no as number | null,
+        cause: row.cause as IdentityNotificationCause,
+        additional_data: String(row.additional_data),
+        created_at: Number(row.created_at),
+        visibility_group_id: row.visibility_group_id as string | null,
+        wave_id: row.wave_id as string | null
+      })),
+      connection
+    );
+  }
+
+  /**
+   * The deriver's write filters: today's mutes, blocks, hidden drops and
+   * preferences, so a derived row is written exactly when the old writer
+   * would have written it.
+   */
+  async filterDerivedRowsForWrite<T extends NewIdentityNotification>(
+    notifications: T[],
+    connection: ConnectionWrapper<any>
+  ): Promise<T[]> {
+    if (!notifications.length) return [];
+    return this.filterNotificationRowsForWrite(notifications, connection);
+  }
+
+  /**
+   * Writes the deriver's rows into identity_notifications, keeping their
+   * times, and returns the new ids in input order. Rows are already
+   * filtered; this skips the gate that keeps old writers off derived causes.
+   */
+  async insertDerivedCopies(
+    rows: readonly DerivedNotification[],
+    connection: ConnectionWrapper<any>
+  ): Promise<number[]> {
+    const ids: number[] = [];
+    for (const row of rows) {
+      const id = await this.insertNotificationRow(
+        this.serializeNotificationInsertRow(row, row.created_at),
+        connection
+      );
+      if (!id) throw new Error('No notification id returned from insert');
+      ids.push(id);
+    }
+    return ids;
+  }
+
+  /** Brings a derived copy in line with its re-derived row, keeping read state. */
+  async updateDerivedCopy(
+    id: number,
+    row: DerivedNotification,
+    connection: ConnectionWrapper<any>
+  ): Promise<void> {
+    const serialized = this.serializeNotificationInsertRow(row, row.created_at);
+    await this.db.execute(
+      `update ${IDENTITY_NOTIFICATIONS_TABLE}
+       set ${IDENTITY_NOTIFICATION_INSERT_COLUMNS.map((column) => `\`${column}\` = :${column}`).join(', ')}
+       where id = :id`,
+      { ...serialized, id },
+      { wrappedConnection: connection }
+    );
+  }
+
+  /** Removes derived copies a re-derivation dropped; a queued push is cancelled. */
+  async deleteDerivedCopies(
+    ids: readonly number[],
+    connection: ConnectionWrapper<any>
+  ): Promise<void> {
+    if (!ids.length) return;
+    const options = { wrappedConnection: connection };
+    await this.db.execute(
+      `insert into ${PUSH_NOTIFICATION_CANCELLATIONS_TABLE} (notification_id, cancelled_at)
+       select id, :now from ${IDENTITY_NOTIFICATIONS_TABLE} where id in (:ids)
+       on duplicate key update cancelled_at = values(cancelled_at)`,
+      { ids, now: Time.currentMillis() },
+      options
+    );
+    await this.db.execute(
+      `delete from ${IDENTITY_NOTIFICATIONS_TABLE} where id in (:ids)`,
+      { ids },
+      options
+    );
   }
 
   private async filterMutedNotificationRowsForWrite<
@@ -391,39 +508,66 @@ export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
     }: { id: number; identity_id: string; readAt: number | null },
     connection?: ConnectionWrapper<any>
   ) {
-    await this.db.execute(
-      `
+    const params = { id, identity_id, read_at: readAt };
+    const options = connection ? { wrappedConnection: connection } : undefined;
+    if (notifyViewMode() !== 'on') {
+      await this.db.execute(
+        `
         update ${IDENTITY_NOTIFICATIONS_TABLE}
         set read_at = :read_at
-        where 
-          id = :id 
+        where
+          id = :id
           and identity_id = :identity_id
       `,
-      {
-        id,
-        identity_id,
-        read_at: readAt
-      },
-      connection ? { wrappedConnection: connection } : undefined
+        params,
+        options
+      );
+      return;
+    }
+    // The view answers by its own id or, for a client that still holds one,
+    // by the identity_notifications id its row was copied from. Ids of the
+    // two tables never overlap.
+    await this.db.execute(
+      `update ${NOTIFICATION_VIEW_TABLE} set read_at = :read_at
+       where identity_id = :identity_id and (id = :id or legacy_id = :id)`,
+      params,
+      options
     );
+    if (legacyOutputEnabled()) {
+      await this.db.execute(
+        `update ${IDENTITY_NOTIFICATIONS_TABLE} set read_at = :read_at
+         where identity_id = :identity_id and (
+           id = :id
+           or id in (
+             select legacy_id from ${NOTIFICATION_VIEW_TABLE}
+             where identity_id = :identity_id and id = :id and legacy_id is not null
+           )
+         )`,
+        params,
+        options
+      );
+    }
   }
 
   async markAllNotificationsAsRead(identity_id: string, ctx: RequestContext) {
     ctx.timer?.start(`${this.constructor.name}->markAllNotificationsAsRead`);
-    await this.db.execute(
-      `
-        update ${IDENTITY_NOTIFICATIONS_TABLE}
+    const readAt = Time.currentMillis();
+    for (const table of this.markReadTables()) {
+      await this.db.execute(
+        `
+        update ${table}
         set read_at = :read_at
-        where 
+        where
           identity_id = :identity_id
           and read_at is null
       `,
-      {
-        identity_id,
-        read_at: Time.currentMillis()
-      },
-      { wrappedConnection: ctx.connection }
-    );
+        {
+          identity_id,
+          read_at: readAt
+        },
+        { wrappedConnection: ctx.connection }
+      );
+    }
     ctx.timer?.stop(`${this.constructor.name}->markAllNotificationsAsRead`);
   }
 
@@ -434,24 +578,41 @@ export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
     ctx: RequestContext
   ): Promise<number> {
     ctx.timer?.start(`${this.constructor.name}->markWaveNotificationsAsRead`);
-    const result = await this.db.execute(
-      `
-        update ${IDENTITY_NOTIFICATIONS_TABLE}
+    const readAt = Time.currentMillis();
+    // The first table is the one readers use; its count is the answer.
+    const counts: number[] = [];
+    for (const table of this.markReadTables()) {
+      const result = await this.db.execute(
+        `
+        update ${table}
         set read_at = :read_at
-        where 
-          wave_id = :wave_id 
-          and identity_id = :identity_id 
+        where
+          wave_id = :wave_id
+          and identity_id = :identity_id
           and read_at is null
       `,
-      {
-        wave_id: waveId,
-        identity_id: identityId,
-        read_at: Time.currentMillis()
-      },
-      { wrappedConnection: ctx.connection }
-    );
+        {
+          wave_id: waveId,
+          identity_id: identityId,
+          read_at: readAt
+        },
+        { wrappedConnection: ctx.connection }
+      );
+      counts.push(this.db.getAffectedRows(result));
+    }
     ctx.timer?.stop(`${this.constructor.name}->markWaveNotificationsAsRead`);
-    return this.db.getAffectedRows(result);
+    return counts[0] ?? 0;
+  }
+
+  /**
+   * Where a mark-read goes: the readers' table first, and in `on` mode also
+   * identity_notifications while it is kept current for a rollback.
+   */
+  private markReadTables(): string[] {
+    const readTable = notificationsReadTable();
+    return readTable === NOTIFICATION_VIEW_TABLE && legacyOutputEnabled()
+      ? [readTable, IDENTITY_NOTIFICATIONS_TABLE]
+      : [readTable];
   }
 
   /**
@@ -465,7 +626,7 @@ export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
   ): Promise<ViewerGroupsCte | undefined> {
     if (!groupIds.length) return undefined;
     const supported = await viewerGroupsCteSupported(this.db, [
-      IDENTITY_NOTIFICATIONS_TABLE,
+      notificationsReadTable(),
       WAVES_TABLE,
       legacyGetView(WAVES_TABLE)
     ]);
@@ -495,7 +656,7 @@ export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
       .execute<IdentityNotificationEntity>(
         `
         ${groups ? `WITH ${groups.cteSql}` : ''}
-        SELECT n.* FROM ${IDENTITY_NOTIFICATIONS_TABLE} n
+        SELECT n.* FROM ${notificationsReadTable()} n
         LEFT JOIN ${WAVE_READER_METRICS_TABLE} r
           ON r.wave_id = n.wave_id
           AND r.reader_id = n.identity_id
@@ -618,7 +779,7 @@ export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
         `
         ${groups ? `WITH ${groups.cteSql}` : ''}
         SELECT COUNT(*) AS cnt
-        FROM ${IDENTITY_NOTIFICATIONS_TABLE} n
+        FROM ${notificationsReadTable()} n
         LEFT JOIN ${WAVE_READER_METRICS_TABLE} r
           ON r.wave_id = n.wave_id
           AND r.reader_id = n.identity_id
@@ -677,13 +838,33 @@ export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
     target: string,
     connectionHolder: ConnectionWrapper<any>
   ) {
+    const tables =
+      notifyViewMode() === 'off'
+        ? [IDENTITY_NOTIFICATIONS_TABLE]
+        : [IDENTITY_NOTIFICATIONS_TABLE, NOTIFICATION_VIEW_TABLE];
+    for (const table of tables) {
+      await this.updateIdentityIdsInTable(
+        table,
+        sourceIdentity,
+        target,
+        connectionHolder
+      );
+    }
+  }
+
+  private async updateIdentityIdsInTable(
+    table: string,
+    sourceIdentity: string,
+    target: string,
+    connectionHolder: ConnectionWrapper<any>
+  ) {
     await this.db.execute(
-      `update ${IDENTITY_NOTIFICATIONS_TABLE} set identity_id = :target where identity_id = :sourceIdentity`,
+      `update ${table} set identity_id = :target where identity_id = :sourceIdentity`,
       { sourceIdentity, target },
       { wrappedConnection: connectionHolder }
     );
     await this.db.execute(
-      `update ${IDENTITY_NOTIFICATIONS_TABLE} set additional_identity_id = :target where additional_identity_id = :sourceIdentity`,
+      `update ${table} set additional_identity_id = :target where additional_identity_id = :sourceIdentity`,
       { sourceIdentity, target },
       { wrappedConnection: connectionHolder }
     );

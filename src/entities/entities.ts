@@ -104,6 +104,7 @@ export {
   ContentModerationRoleEntity
 } from './IContentModeration';
 export { IdentityNotificationEntity } from './IIdentityNotification';
+export { NotificationViewEntity } from './INotificationView';
 export { IdentitySubscriptionEntity } from './IIdentitySubscription';
 export { ProfilePreferencesEntity } from './IProfilePreferences';
 export { MentionAliasEntity, MentionAliasMemberEntity } from './IMentionAlias';
