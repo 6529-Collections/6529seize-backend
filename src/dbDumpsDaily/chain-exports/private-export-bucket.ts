@@ -13,10 +13,18 @@ import { createHash } from 'node:crypto';
  * ops/chain-exports/chain-exports-bucket.yaml (an administrative step: the
  * deployment roles may not create buckets). It blocks all public access,
  * no CDN serves it, and its objects expire after 30 days.
+ *
+ * Its name is predictable, so every call names the function's own account
+ * as the bucket's expected owner: a bucket of that name made in another
+ * account is refused by S3 instead of being written to.
  */
 export const CHAIN_EXPORTS_BUCKET_PREFIX = '6529-chain-exports';
 
-/** Presigned download links last this long, or less if the role's session ends first. */
+/**
+ * Presigned download links are signed for this long. They can stop sooner:
+ * a link lasts no longer than the credentials that signed it. A fresh set
+ * comes from the export's links job.
+ */
 export const PRESIGNED_URL_SECONDS = 6 * 60 * 60;
 
 export class PrivateBucketError extends Error {
@@ -48,32 +56,53 @@ export function chainExportsBucketName(
   return `${CHAIN_EXPORTS_BUCKET_PREFIX}-${accountId}-${region}`;
 }
 
+/** The export bucket and the account that must own it. */
+export interface ExportBucket {
+  readonly name: string;
+  /** The function's own account: S3 refuses a bucket another account owns. */
+  readonly owner: string;
+}
+
+/** The export bucket for a function, from its ARN and region. */
+export function exportBucketOf(
+  functionArn: string | undefined,
+  region: string
+): ExportBucket {
+  const owner = accountIdFromFunctionArn(functionArn);
+  return { name: chainExportsBucketName(owner, region), owner };
+}
+
 /** What the export checked about the bucket before writing. */
 export interface BucketPrivacy {
   readonly bucket: string;
+  /** The account S3 confirmed owns the bucket. */
+  readonly owner: string;
   readonly publicAccessBlocked: true;
   /** S3's own verdict on the bucket policy; false means not public. */
   readonly policyPublic: false;
 }
 
 /**
- * Refuses unless the bucket blocks every kind of public access and S3 says
- * its policy isn't public. The bucket's policy grants the function's role
- * these two reads.
+ * Refuses unless the bucket is the function's own account's, blocks every
+ * kind of public access, and S3 says its policy isn't public. The bucket's
+ * policy grants the function's role these two reads.
  */
 export async function assertBucketPrivate(
   s3: Pick<S3Client, 'send'>,
-  bucket: string
+  bucket: ExportBucket
 ): Promise<BucketPrivacy> {
   let block: Record<string, boolean | undefined> | undefined;
   try {
     const answer: any = await s3.send(
-      new GetPublicAccessBlockCommand({ Bucket: bucket })
+      new GetPublicAccessBlockCommand({
+        Bucket: bucket.name,
+        ExpectedBucketOwner: bucket.owner
+      })
     );
     block = answer?.PublicAccessBlockConfiguration;
   } catch (error) {
     throw new PrivateBucketError(
-      `Can't read the public access block of ${bucket}: ${(error as Error).message}`
+      `Can't read the public access block of ${bucket.name} as its owner's: ${(error as Error).message}`
     );
   }
   const blocked =
@@ -83,43 +112,57 @@ export async function assertBucketPrivate(
     block?.RestrictPublicBuckets === true;
   if (!blocked) {
     throw new PrivateBucketError(
-      `${bucket} does not block all public access: the export is not written there`
+      `${bucket.name} does not block all public access: the export is not written there`
     );
   }
   let isPublic: boolean | undefined;
   try {
     const status: any = await s3.send(
-      new GetBucketPolicyStatusCommand({ Bucket: bucket })
+      new GetBucketPolicyStatusCommand({
+        Bucket: bucket.name,
+        ExpectedBucketOwner: bucket.owner
+      })
     );
     isPublic = status?.PolicyStatus?.IsPublic;
   } catch (error) {
     throw new PrivateBucketError(
-      `Can't read the policy status of ${bucket}: ${(error as Error).message}`
+      `Can't read the policy status of ${bucket.name}: ${(error as Error).message}`
     );
   }
   if (isPublic !== false) {
     throw new PrivateBucketError(
-      `S3 does not say ${bucket}'s policy is private: the export is not written there`
+      `S3 does not say ${bucket.name}'s policy is private: the export is not written there`
     );
   }
-  return { bucket, publicAccessBlocked: true, policyPublic: false };
+  return {
+    bucket: bucket.name,
+    owner: bucket.owner,
+    publicAccessBlocked: true,
+    policyPublic: false
+  };
 }
 
 /** One object a run wrote. */
 export interface PutResult {
   readonly key: string;
   readonly bytes: number;
+  /** Hex SHA-256 of the bytes stored; S3 checked it on upload. */
   readonly sha256: string;
 }
 
-/** Writes objects under one run's prefix and counts them. */
+/** What reading an object found. */
+export type ReadResult =
+  | { readonly found: true; readonly text: string }
+  | { readonly found: false; readonly reason: 'missing' | 'forbidden' };
+
+/** Writes and reads objects under one run's prefix, and counts what it wrote. */
 export class PrivateExportWriter {
   private count = 0;
   private total = 0;
 
   constructor(
     private readonly s3: Pick<S3Client, 'send'>,
-    readonly bucket: string,
+    readonly bucket: ExportBucket,
     readonly prefix: string
   ) {}
 
@@ -132,21 +175,72 @@ export class PrivateExportWriter {
     body: Buffer | string,
     contentType: string
   ): Promise<PutResult> {
-    const key = this.key(name);
+    return await this.putKey(this.key(name), body, contentType, true);
+  }
+
+  /** Writes a key outside the run's prefix (a pointer to the run). */
+  async putOutside(
+    key: string,
+    body: string,
+    contentType: string
+  ): Promise<PutResult> {
+    return await this.putKey(key, body, contentType, false);
+  }
+
+  private async putKey(
+    key: string,
+    body: Buffer | string,
+    contentType: string,
+    counted: boolean
+  ): Promise<PutResult> {
     const bytes = typeof body === 'string' ? Buffer.from(body, 'utf8') : body;
-    const sha256 = createHash('sha256').update(bytes).digest('hex');
+    const digest = createHash('sha256').update(bytes).digest();
     await this.s3.send(
       new PutObjectCommand({
-        Bucket: this.bucket,
+        Bucket: this.bucket.name,
+        ExpectedBucketOwner: this.bucket.owner,
         Key: key,
         Body: bytes,
         ContentType: contentType,
-        ServerSideEncryption: 'AES256'
+        ServerSideEncryption: 'AES256',
+        // S3 refuses the upload if the bytes it got hash differently.
+        ChecksumSHA256: digest.toString('base64')
       })
     );
-    this.count++;
-    this.total += bytes.length;
-    return { key, bytes: bytes.length, sha256 };
+    if (counted) {
+      this.count++;
+      this.total += bytes.length;
+    }
+    return { key, bytes: bytes.length, sha256: digest.toString('hex') };
+  }
+
+  /**
+   * Reads a text object of the run. A key that doesn't exist reads as
+   * missing; without list access S3 answers 403 for it, read as forbidden.
+   */
+  async read(name: string): Promise<ReadResult> {
+    try {
+      const answer: any = await this.s3.send(
+        new GetObjectCommand({
+          Bucket: this.bucket.name,
+          ExpectedBucketOwner: this.bucket.owner,
+          Key: this.key(name)
+        })
+      );
+      return { found: true, text: await answer.Body.transformToString('utf8') };
+    } catch (error) {
+      const { name: code, $metadata } = (error ?? {}) as {
+        name?: string;
+        $metadata?: { httpStatusCode?: number };
+      };
+      if (code === 'NoSuchKey' || code === 'NotFound') {
+        return { found: false, reason: 'missing' };
+      }
+      if (code === 'AccessDenied' || $metadata?.httpStatusCode === 403) {
+        return { found: false, reason: 'forbidden' };
+      }
+      throw error;
+    }
   }
 
   get files(): number {
@@ -159,16 +253,26 @@ export class PrivateExportWriter {
 }
 
 export type Presigner = (
-  bucket: string,
+  bucket: ExportBucket,
   key: string,
   seconds: number
 ) => Promise<string>;
 
+/**
+ * Presigned GETs that also name the expected owner. The SDK carries it in
+ * the link's query, so a download needs nothing but the link.
+ */
 export function s3Presigner(s3: S3Client): Presigner {
   return (bucket, key, seconds) =>
-    getSignedUrl(s3, new GetObjectCommand({ Bucket: bucket, Key: key }), {
-      expiresIn: seconds
-    });
+    getSignedUrl(
+      s3,
+      new GetObjectCommand({
+        Bucket: bucket.name,
+        Key: key,
+        ExpectedBucketOwner: bucket.owner
+      }),
+      { expiresIn: seconds }
+    );
 }
 
 /**
@@ -184,7 +288,8 @@ export function exportStage(nodeEnv: string | undefined): string {
 
 /**
  * A run's prefix: `<job>/<stage>/<UTC time>-<request id start>[-<scope>]/`.
- * A run of part of the export (one profile) names that part in its prefix.
+ * A rehearsal or a run of part of the export (one profile) names that in
+ * its prefix.
  */
 export function runPrefix(
   job: string,
@@ -202,27 +307,7 @@ export function runPrefix(
   return `${job}/${safeStage || 'unknown'}/${time}-${run}${part}/`;
 }
 
-/**
- * When the run's presigned links stop working: after PRESIGNED_URL_SECONDS,
- * or earlier when the credentials that signed them expire first.
- */
-export function linksExpireAt(
-  now: Date,
-  credentialsExpireAt: Date | null
-): { readonly at: Date; readonly limitedByCredentials: boolean } {
-  const byLife = new Date(now.getTime() + PRESIGNED_URL_SECONDS * 1000);
-  if (credentialsExpireAt && credentialsExpireAt < byLife) {
-    return { at: credentialsExpireAt, limitedByCredentials: true };
-  }
-  return { at: byLife, limitedByCredentials: false };
-}
-
-/** The signing credentials' expiry, when the SDK knows it. */
-export async function credentialsExpiry(s3: S3Client): Promise<Date | null> {
-  try {
-    const credentials = await s3.config.credentials();
-    return credentials.expiration ?? null;
-  } catch {
-    return null;
-  }
+/** The latest the run's links can last: they may end sooner (see above). */
+export function linksLastAtMost(now: Date): Date {
+  return new Date(now.getTime() + PRESIGNED_URL_SECONDS * 1000);
 }

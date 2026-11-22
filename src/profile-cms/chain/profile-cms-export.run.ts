@@ -79,10 +79,17 @@ export function storedPublicationFetcher(
   };
 }
 
+/** Profiles exported at once at most, when asked for more than one. */
+export const MAX_EXPORT_CONCURRENCY = 4;
+
 /**
  * Exports every profile with a site (or one), writing each file once to the
- * sink as soon as its profile is done, so no more than one profile's files are
- * held at a time. The CLI and the dbDumpsDaily export job both run this.
+ * sink as soon as its profile is done, so no more than `concurrency`
+ * profiles' files are held at a time. With a concurrency above 1, that many
+ * profiles are exported at once (their stored records fetched in parallel);
+ * the output is the same: files are content-addressed, the reports are
+ * keyed by profile id in order, and the public check runs in profile order.
+ * The CLI and the dbDumpsDaily export job both run this.
  */
 export async function runProfileCmsExport(
   options: ProfileCmsExportRunOptions,
@@ -96,18 +103,36 @@ export async function runProfileCmsExport(
      * after each; a throw stops the run there.
      */
     readonly progress?: (done: number, total: number) => void;
+    /** Called before the public API check; a throw stops the run there. */
+    readonly beforePublicCheck?: () => void;
+    /** Profiles exported at once, 1 to MAX_EXPORT_CONCURRENCY (default 1). */
+    readonly concurrency?: number;
   }
 ): Promise<ProfileCmsExportRun> {
-  const checkEntries: PublicPrimaryCheckEntry[] = [];
-  const fields: Record<string, unknown> = {};
-  const reports: Record<string, ProfileCmsExportReport> = {};
-  const written = new Set<string>();
+  const concurrency = deps.concurrency ?? 1;
+  if (
+    !Number.isSafeInteger(concurrency) ||
+    concurrency < 1 ||
+    concurrency > MAX_EXPORT_CONCURRENCY
+  ) {
+    throw new Error(
+      `concurrency must be 1 to ${MAX_EXPORT_CONCURRENCY}, not ${concurrency}`
+    );
+  }
+  const entries = new Map<string, PublicPrimaryCheckEntry>();
+  const fieldsById = new Map<string, unknown>();
+  const reportsById = new Map<string, ProfileCmsExportReport>();
+  // A CID is claimed before it is written, so two profiles exported at once
+  // never write the same file twice.
+  const claimed = new Set<string>();
   let bytes = 0;
+  let done = 0;
+  let failed = false;
   const profileIds = options.profile
     ? [options.profile]
     : await deps.db.listProfileIds();
   deps.progress?.(0, profileIds.length);
-  for (const profileId of profileIds) {
+  const exportOne = async (profileId: string) => {
     const source = await deps.db.loadSource(profileId);
     const entry = await deps.exporter.exportProfile(
       profileId,
@@ -115,16 +140,16 @@ export async function runProfileCmsExport(
       options.frozenAt
     );
     for (const file of entry.files) {
-      if (written.has(file.cid)) continue;
+      if (claimed.has(file.cid)) continue;
+      claimed.add(file.cid);
       await deps.sink.writeFile(file.cid, file.bytes);
-      written.add(file.cid);
       bytes += file.bytes.length;
     }
     if (entry.cms) {
-      fields[profileId] = snapshotCmsValue(entry.cms);
+      fieldsById.set(profileId, snapshotCmsValue(entry.cms));
     }
-    reports[profileId] = entry.report;
-    checkEntries.push({
+    reportsById.set(profileId, entry.report);
+    entries.set(profileId, {
       profile_id: profileId,
       handle: entry.handle,
       cms: entry.cms,
@@ -133,11 +158,42 @@ export async function runProfileCmsExport(
         ? entry.report.primary_package_hash
         : null
     });
-    deps.progress?.(checkEntries.length, profileIds.length);
+    done++;
+    deps.progress?.(done, profileIds.length);
+  };
+  let next = 0;
+  const worker = async () => {
+    while (!failed && next < profileIds.length) {
+      const profileId = profileIds[next++];
+      try {
+        await exportOne(profileId);
+      } catch (error) {
+        failed = true;
+        throw error;
+      }
+    }
+  };
+  await Promise.all(
+    Array.from(
+      { length: Math.min(concurrency, Math.max(profileIds.length, 1)) },
+      worker
+    )
+  );
+  // Profile order, whatever order the workers finished in.
+  const checkEntries = profileIds
+    .map((id) => entries.get(id))
+    .filter((it): it is PublicPrimaryCheckEntry => !!it);
+  const fields: Record<string, unknown> = {};
+  const reports: Record<string, ProfileCmsExportReport> = {};
+  for (const id of profileIds) {
+    if (fieldsById.has(id)) fields[id] = fieldsById.get(id);
+    const report = reportsById.get(id);
+    if (report) reports[id] = report;
   }
   if (options.publicApi && !deps.getJson) {
     throw new Error('A public API check needs a JSON getter');
   }
+  if (options.publicApi) deps.beforePublicCheck?.();
   const publicCheck =
     options.publicApi && deps.getJson
       ? await checkExportAgainstPublicApi(
@@ -157,7 +213,7 @@ export async function runProfileCmsExport(
     unavailableProfiles: Object.values(reports).filter(
       (report) => report.publication_unavailable.length > 0
     ).length,
-    files: written.size,
+    files: claimed.size,
     bytes
   };
 }
