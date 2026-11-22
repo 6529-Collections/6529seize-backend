@@ -242,6 +242,12 @@ type RetryableError = ChainGatewayError & {
   causeCode?: string;
 };
 
+/**
+ * Read options with a height the client chose itself (re-pinned on its
+ * own), not one the caller asked for.
+ */
+type PinnedHere = ChainReadOptions & { readonly pinnedHere?: boolean };
+
 /** A caller's check of an answer; it throws to refuse it. */
 type AnswerCheck<T> = (answer: ChainAnswer<T> | null) => void;
 
@@ -709,9 +715,16 @@ const holderArg = (it: string) =>
       (v) => ADDRESS_ARG.test(v) || PRINCIPAL_ARG.test(v)
     )
   );
-/** A handle that names one path segment: not empty, no '/', no dot segment. */
+/**
+ * A handle that names one path segment the gateway passes: not empty, no
+ * slash or backslash, no dot segment.
+ */
 const isHandleSegment = (v: string) =>
-  v.length > 0 && !v.includes('/') && v !== '.' && v !== '..';
+  v.length > 0 &&
+  !v.includes('/') &&
+  !v.includes('\\') &&
+  v !== '.' &&
+  v !== '..';
 const handleArg = (it: string) =>
   arg(it, 'a handle', isHandleSegment).toLowerCase();
 /** A height, limit or day: a safe integer, not negative. */
@@ -747,6 +760,44 @@ function notTaken(error: RetryableError): boolean {
   );
 }
 
+/**
+ * What a list may use of a query: the gateway refuses one over 2,048
+ * bytes, and the height, network and cursor take the rest.
+ */
+const LIST_QUERY_BYTES = 1600;
+
+/**
+ * Items split so that each list, joined by commas as one query parameter,
+ * stays within LIST_QUERY_BYTES encoded, and at most `most` items.
+ */
+function chunksForQuery(
+  items: string[],
+  name: string,
+  most: number
+): string[][] {
+  const chunks: string[][] = [];
+  let chunk: string[] = [];
+  const size = (list: string[]) =>
+    new URLSearchParams({ [name]: list.join(',') }).toString().length;
+  for (const item of items) {
+    const next = chunk.concat([item]);
+    if (chunk.length && (next.length > most || size(next) > LIST_QUERY_BYTES)) {
+      chunks.push(chunk);
+      chunk = [item];
+    } else {
+      chunk = next;
+    }
+  }
+  if (chunk.length) chunks.push(chunk);
+  return chunks;
+}
+
+/** The document store's own words for a CID it doesn't hold. */
+const STORE_NONE = [
+  'this store holds no document with that CID',
+  'not a CID this store holds'
+];
+
 /** A check that an answer is a list (an empty one is a list too). */
 function listOnly<T>(path: string): AnswerCheck<T> {
   return (answer) => {
@@ -757,7 +808,14 @@ function listOnly<T>(path: string): AnswerCheck<T> {
 }
 
 /** Refusals of a submit that say the transaction wasn't taken. */
-const REFUSALS = ['inadmissible', 'not_admitted', 'bad_request', 'too_large'];
+const REFUSALS = [
+  'inadmissible',
+  'not_admitted',
+  'bad_request',
+  'too_large',
+  'body_too_large',
+  'head_too_large'
+];
 
 /** A txId (0x and 64 hex), lowercased, or undefined. */
 function txIdOf(value: unknown): string | undefined {
@@ -1359,12 +1417,15 @@ export class ChainGatewayClient {
     }
     const asked = opts.network;
     if (opts.height !== undefined) {
+      // One node may not hold it (restarted, or behind): a height the
+      // caller chose is asked again a few times before it is gone.
       return await this.pinnedUntilHeld<T>(
         path,
         query,
         opts.height,
         asked,
-        check
+        check,
+        !(opts as PinnedHere).pinnedHere
       );
     }
     const head = await this.getHead();
@@ -1437,7 +1498,8 @@ export class ChainGatewayClient {
     query: Query,
     height: number,
     asked?: string,
-    check?: AnswerCheck<T>
+    check?: AnswerCheck<T>,
+    anyGone = false
   ): Promise<ChainAnswer<T> | null> {
     const config = this.config();
     const sleep =
@@ -1447,12 +1509,15 @@ export class ChainGatewayClient {
       try {
         return await this.pinnedRead<T>(path, query, height, asked, check);
       } catch (error) {
+        const gone =
+          error instanceof ChainGatewayError && error.code === 'height_gone';
         const notYet =
-          error instanceof ChainGatewayError &&
-          error.code === 'height_gone' &&
-          error.read !== undefined &&
-          error.read.finalizedHeight < height;
-        if (!notYet || attempt >= config.retries) throw error;
+          gone &&
+          (error as ChainGatewayError).read !== undefined &&
+          (error as ChainGatewayError).read!.finalizedHeight < height;
+        if (!(notYet || (gone && anyGone)) || attempt >= config.retries) {
+          throw error;
+        }
         await sleep(Math.min(1_000, 250 * 2 ** attempt));
       }
     }
@@ -1615,9 +1680,12 @@ export class ChainGatewayClient {
     isAsked: (data: T) => boolean
   ): Promise<T | null> {
     return await this.data<T>(path, {}, opts, (answer) => {
-      const data: unknown = answer?.data;
-      if (data === null || data === undefined) return;
+      // Only a 404 says "none": a 200 must carry what was asked.
+      if (!answer) return;
+      const data: unknown = answer.data;
       if (
+        data === null ||
+        data === undefined ||
         typeof data !== 'object' ||
         Array.isArray(data) ||
         !isAsked(data as T)
@@ -1675,8 +1743,9 @@ export class ChainGatewayClient {
     try {
       return await this.walletsAt(distinct, {
         height: this.pinOf(await this.getHead()),
-        network: opts.network
-      });
+        network: opts.network,
+        pinnedHere: true
+      } as PinnedHere);
     } catch (error) {
       if (
         !(error instanceof ChainGatewayError) ||
@@ -1689,8 +1758,9 @@ export class ChainGatewayClient {
     // one, once, so that all the chunks are read at one height.
     return await this.walletsAt(distinct, {
       height: this.pinOf(await this.getHead(true)),
-      network: opts.network
-    });
+      network: opts.network,
+      pinnedHere: true
+    } as PinnedHere);
   }
 
   private async walletsAt(
@@ -1698,8 +1768,10 @@ export class ChainGatewayClient {
     pinned: ChainReadOptions
   ): Promise<Record<string, ChainIdentity | null>> {
     const result: Record<string, ChainIdentity | null> = {};
-    for (let i = 0; i < distinct.length; i += 100) {
-      const chunk = distinct.slice(i, i + 100);
+    // The gateway refuses a query over 2,048 bytes: chunks are cut by
+    // their encoded length (with room for the height, network and cursor),
+    // and at the node's 100 wallets.
+    for (const chunk of chunksForQuery(distinct, 'wallets', 100)) {
       const path = '/v1/identities/by-wallets';
       const data = await this.data<Record<string, ChainIdentity | null>>(
         path,
@@ -1748,6 +1820,7 @@ export class ChainGatewayClient {
     opts: { readonly after?: string | null; readonly limit?: number } = {}
   ): Promise<ChainAnswer<ChainLevelRanking>> {
     const path = '/v1/identities/by-level';
+    countArg(opts.limit, 'a limit');
     const { status, json } = await this.send('GET', path, {
       after: opts.after ?? undefined,
       limit: opts.limit
@@ -1873,8 +1946,13 @@ export class ChainGatewayClient {
       wallet?: string;
       changes?: unknown;
       ranges?: unknown;
-    }>(path, {}, opts);
-    if (!answer?.data) return null;
+    }>(path, {}, opts, (it) => {
+      // Only a 404 says "none": a 200 must carry the history.
+      if (it && (it.data === null || typeof it.data !== 'object')) {
+        throw badAnswer(path, 'an answer without its history');
+      }
+    });
+    if (!answer) return null;
     const readHeight = answer.read?.height;
     if (
       lower(answer.data.wallet ?? '') !== lower(wallet) ||
@@ -2068,6 +2146,17 @@ export class ChainGatewayClient {
       isAsked = (data) => lower(String(data.wallet ?? '')) === wallet;
     } else if (query.day !== undefined) {
       const day = countArg(query.day, 'a day') as number;
+      if (
+        query.list !== undefined &&
+        ['wallets', 'identities', 'tokens'].indexOf(query.list) < 0
+      ) {
+        throw new ChainGatewayError(
+          `Not a TDH list: ${query.list}`,
+          null,
+          'bad_request',
+          ''
+        );
+      }
       const list = query.list ? '/' + query.list : '';
       path = `/v1/tdh/days/${segment(day)}${list}`;
       isAsked = (data) => data.day === day;
@@ -2137,6 +2226,15 @@ export class ChainGatewayClient {
   ): Promise<ChainFeedPage> {
     const path = '/v1/feed';
     const cursor = parseFeedCursor(from);
+    countArg(opts.limit, 'a limit');
+    for (const family of opts.families ?? []) {
+      // A family id (0x and 4 hex) or a group's name.
+      arg(
+        family,
+        'a family',
+        (v) => /^0x[0-9a-f]{4}$/i.test(v) || /^[a-z]+$/i.test(v)
+      );
+    }
     const query = {
       from: String(from),
       limit: opts.limit,
@@ -2282,12 +2380,18 @@ export class ChainGatewayClient {
    */
   async submit(
     request: ChainSubmitRequest & {
-      /** The draft's txId: not sent, carried on an outcome_unknown. */
-      readonly txId?: string;
+      /**
+       * The draft's txId: never sent. An answer of another txId, and any
+       * unknown outcome, are reported with it.
+       */
+      readonly txId: string;
     }
   ): Promise<ChainSubmitResult> {
-    const { txId, ...body } = request;
+    const { txId: given, ...body } = request;
     const path = '/v1/submit';
+    const txId = lower(
+      arg(given, 'a transaction id', (v) => PRINCIPAL_ARG.test(v))
+    );
     let answered: { status: number; json: Envelope<unknown> | null };
     try {
       answered = await this.send(
@@ -2313,7 +2417,12 @@ export class ChainGatewayClient {
       txIdOf((json?.data as { txId?: unknown } | undefined)?.txId) ??
       txId;
     try {
-      return this.submitAnswer(path, status, json);
+      const result = this.submitAnswer(path, status, json);
+      // Taken, but as another transaction than the one drafted: say so.
+      if (lower(result.txId) !== txId) {
+        throw badAnswer(path, `the node took ${result.txId}, not ${txId}`);
+      }
+      return result;
     } catch (error) {
       if (!(error instanceof ChainGatewayError)) throw error;
       if (REFUSALS.indexOf(error.code) >= 0) {
@@ -2442,14 +2551,15 @@ export class ChainGatewayClient {
       true
     );
     if (status === 404) {
-      // The store's own "none": its not_found, or the bucket's NoSuchKey.
-      // Anything else (a misrouted request) says nothing of the document.
+      // The store's own "none" (the gateway's docs route, or the bucket's
+      // NoSuchKey). Any other 404, such as the gateway's own route miss,
+      // says nothing of the document.
       const error = json?.error;
       const code = typeof error === 'string' ? error : error?.code;
       const message =
         (typeof error === 'string' ? json?.message : error?.message) ?? '';
       const none =
-        code === 'not_found' ||
+        (code === 'not_found' && STORE_NONE.indexOf(message) >= 0) ||
         (code === 'http_404' && /<Code>NoSuchKey<\/Code>/.test(message));
       if (!none) {
         throw badAnswer(path, `a 404 that isn't the store's`, 404);

@@ -308,20 +308,22 @@ describe('ChainGatewayClient reads', () => {
         json: { read: stamp(height, at), data: { level: 8 }, next: null }
       }))
     );
-    // The node has 900 only as its head: gone for a finalized read.
+    // The node has 900 only as its head: gone for a finalized read, after
+    // asking again (three tries).
     await expect(client.getLevel(P01, { height: 900 })).rejects.toMatchObject({
       code: 'height_gone'
     });
+    expect(reads(calls)).toHaveLength(3);
     at = 'finalized';
     height = 899;
     await expect(client.getLevel(P01, { height: 900 })).rejects.toMatchObject({
       code: 'bad_answer'
     });
-    expect(reads(calls)).toHaveLength(2);
+    expect(reads(calls)).toHaveLength(4);
     height = 900;
     await client.getLevel(P01, { height: 900 });
     await client.getLevel(P01, { height: 900 });
-    expect(reads(calls)).toHaveLength(3);
+    expect(reads(calls)).toHaveLength(5);
   });
 
   it('re-pins a read without a height that a node answers from its head', async () => {
@@ -1311,13 +1313,107 @@ describe('ChainGatewayClient reads', () => {
     expect(calls).toHaveLength(0);
   });
 
+  it('takes only a 404 as none: a 200 of nothing is refused', async () => {
+    const { client, calls } = setup(
+      withStatus(
+        () => ({
+          status: 200,
+          json: { read: stamp(10), data: null, next: null }
+        }),
+        10
+      )
+    );
+    await expect(
+      client.getIdentityByPrincipal(PA, { height: 10 })
+    ).rejects.toMatchObject({
+      code: 'bad_answer'
+    });
+    await expect(
+      client.getMembershipWalletHistory(WALLET1, { height: 10 })
+    ).rejects.toMatchObject({ code: 'bad_answer' });
+    // Refused, so asked again.
+    await expect(
+      client.getIdentityByPrincipal(PA, { height: 10 })
+    ).rejects.toMatchObject({
+      code: 'bad_answer'
+    });
+    expect(reads(calls)).toHaveLength(3);
+  });
+
+  it('asks a height it was given again when one node has dropped it', async () => {
+    let gone = 2;
+    const { client, calls, sleeps } = setup(
+      withStatus(
+        () =>
+          gone-- > 0
+            ? {
+                status: 409,
+                json: {
+                  read: stamp(60),
+                  error: { code: 'height_gone', message: 'x' }
+                }
+              }
+            : {
+                status: 200,
+                json: {
+                  read: stamp(50),
+                  data: { level: 3, raw: '1' },
+                  next: null
+                }
+              },
+        60
+      )
+    );
+    expect(await client.getLevel(P01, { height: 50 })).toEqual({
+      level: 3,
+      raw: '1'
+    });
+    expect(reads(calls).map((it) => param(it, 'height'))).toEqual([
+      '50',
+      '50',
+      '50'
+    ]);
+    expect(sleeps).toEqual([250, 500]);
+  });
+
+  it.each([
+    [
+      'a negative feed limit',
+      (c: ChainGatewayClient) => c.getChanges(1, { limit: -1 })
+    ],
+    [
+      'a family that is no family',
+      (c: ChainGatewayClient) => c.getChanges(1, { families: ['0x01,0x02'] })
+    ],
+    [
+      'a negative ranking limit',
+      (c: ChainGatewayClient) => c.getLevelRanking({ limit: -1 })
+    ],
+    [
+      'a TDH list that is none',
+      (c: ChainGatewayClient) => c.getTdh({ day: 3, list: 'rows' as never })
+    ]
+  ])('refuses %s before asking', async (_name, ask) => {
+    const { client, calls } = setup(withStatus(() => new Error('not asked')));
+    await expect(ask(client)).rejects.toMatchObject({ code: 'bad_request' });
+    expect(calls).toHaveLength(0);
+  });
+
+  it('answers a handle with a backslash as invalid without asking', async () => {
+    const { client, calls } = setup(withStatus(() => new Error('not asked')));
+    expect((await client.getHandle('a\\b'))?.status).toBe('invalid');
+    expect(calls).toHaveLength(0);
+  });
+
   it('refuses an empty 200 as an answer it cannot read', async () => {
     const { client } = setup(withStatus(() => ({ status: 200 }), 10));
     await expect(client.getLevel(P01, { height: 10 })).rejects.toMatchObject({
       code: 'bad_answer',
       status: 200
     });
-    await expect(client.submit({ signed: '0x00' })).rejects.toMatchObject({
+    await expect(
+      client.submit({ signed: '0x00', txId: '0x' + 'cd'.repeat(32) })
+    ).rejects.toMatchObject({
       code: 'outcome_unknown'
     });
   });
@@ -1747,7 +1843,7 @@ describe('ChainGatewayClient reads', () => {
     });
   });
 
-  it('asks for many wallets 100 at a time at one height', async () => {
+  it('asks for many wallets in queries the gateway takes, at one height', async () => {
     const wallets = Array.from(
       { length: 150 },
       (_, i) => '0x' + i.toString(16).padStart(40, '0')
@@ -1777,9 +1873,14 @@ describe('ChainGatewayClient reads', () => {
     expect(result[wallets[0]]).toEqual({ ...IDENTITY, wallets: [wallets[0]] });
     expect(result[wallets[1]]).toBeNull();
     const reads = calls.filter((c) => path(c) === '/v1/identities/by-wallets');
-    expect(reads).toHaveLength(2);
-    expect(reads.map((c) => param(c, 'height'))).toEqual(['77', '77']);
-    expect((param(reads[0], 'wallets') ?? '').split(',')).toHaveLength(100);
+    // The gateway refuses a query over 2,048 bytes.
+    expect(reads.length).toBeGreaterThan(2);
+    for (const read of reads) {
+      expect(new URL(read.url).search.length - 1).toBeLessThanOrEqual(2048);
+      expect(param(read, 'height')).toBe('77');
+    }
+    const asked = reads.flatMap((c) => (param(c, 'wallets') ?? '').split(','));
+    expect(asked).toHaveLength(150);
   });
 
   it('routes delegation queries with their filters and pages', async () => {
@@ -2676,7 +2777,8 @@ describe('ChainGatewayClient writes', () => {
     expect(draft.opName).toBe('IDENTITY_JOIN');
     const result = await client.submit({
       unsigned: '0x00',
-      signatures: [{ role: 0, keyType: 1, sig: '0x' + 'ee'.repeat(65) }]
+      signatures: [{ role: 0, keyType: 1, sig: '0x' + 'ee'.repeat(65) }],
+      txId: '0x' + 'cd'.repeat(32)
     });
     expect(result).toEqual({ txId: '0x' + 'cd'.repeat(32), accepted: true });
     const calls = reads(all);
@@ -2804,8 +2906,48 @@ describe('ChainGatewayClient writes', () => {
         }
       }))
     );
-    await expect(client.submit({ signed: '0x00' })).rejects.toMatchObject({
+    await expect(
+      client.submit({ signed: '0x00', txId: '0x' + 'cd'.repeat(32) })
+    ).rejects.toMatchObject({
       code: 'inadmissible',
+      txId: TX
+    });
+  });
+
+  it('refuses a submit without its txId before sending', async () => {
+    const { client, calls } = setup(withStatus(() => new Error('not asked')));
+    await expect(
+      client.submit({ signed: '0x00', txId: '0x01' })
+    ).rejects.toMatchObject({ code: 'bad_request' });
+    expect(calls).toHaveLength(0);
+  });
+
+  it('reports a submit taken as another transaction as an unknown outcome', async () => {
+    const { client } = setup(
+      withStatus(() => ({
+        status: 200,
+        json: { read: stamp(5, 'head'), data: { txId: TX, accepted: true } }
+      }))
+    );
+    await expect(
+      client.submit({ signed: '0x00', txId: '0x' + 'cd'.repeat(32) })
+    ).rejects.toMatchObject({ code: 'outcome_unknown', txId: TX });
+  });
+
+  it.each([
+    ['body_too_large', 413],
+    ['head_too_large', 431]
+  ])('takes a %s refusal of a submit as not taken', async (code, status) => {
+    const { client } = setup(
+      withStatus(() => ({
+        status,
+        json: { error: { code, message: 'request too large' } }
+      }))
+    );
+    await expect(
+      client.submit({ signed: '0x00', txId: TX })
+    ).rejects.toMatchObject({
+      code,
       txId: TX
     });
   });
@@ -2818,7 +2960,9 @@ describe('ChainGatewayClient writes', () => {
       }))
     );
     // Taken by the node, by all it says: never a refusal, but unknown.
-    await expect(client.submit({ signed: '0x00' })).rejects.toMatchObject({
+    await expect(
+      client.submit({ signed: '0x00', txId: '0x' + 'cd'.repeat(32) })
+    ).rejects.toMatchObject({
       code: 'outcome_unknown',
       txId: '0x' + 'cd'.repeat(32)
     });
@@ -2837,7 +2981,9 @@ describe('ChainGatewayClient writes', () => {
         }
       }))
     );
-    await expect(client.submit({ signed: '0x00' })).rejects.toMatchObject({
+    await expect(
+      client.submit({ signed: '0x00', txId: '0x' + 'cd'.repeat(32) })
+    ).rejects.toMatchObject({
       code: 'outcome_unknown',
       txId: '0x' + 'cd'.repeat(32)
     });
@@ -2854,7 +3000,9 @@ describe('ChainGatewayClient writes', () => {
       }))
     );
     await client.getHead();
-    await expect(client.submit({ signed: '0x00' })).rejects.toMatchObject({
+    await expect(
+      client.submit({ signed: '0x00', txId: '0x' + 'cd'.repeat(32) })
+    ).rejects.toMatchObject({
       code: 'outcome_unknown',
       txId: '0x' + 'cd'.repeat(32)
     });
@@ -2905,7 +3053,9 @@ describe('ChainGatewayClient writes', () => {
         }
       }))
     );
-    await expect(client.submit({ signed: '0x00' })).rejects.toMatchObject({
+    await expect(
+      client.submit({ signed: '0x00', txId: '0x' + 'cd'.repeat(32) })
+    ).rejects.toMatchObject({
       code: 'inadmissible',
       status: 422,
       message: expect.stringContaining('BAD_SIGNATURE')
@@ -2992,7 +3142,10 @@ describe('profile documents', () => {
         message: 'this store holds no document with that CID'
       }
     ],
-    ["the edge's not_found", { error: { code: 'not_found', message: 'x' } }]
+    [
+      "the edge's not_found",
+      { error: { code: 'not_found', message: 'not a CID this store holds' } }
+    ]
   ])('answers null for %s', async (_name, json) => {
     const { client } = setup(() => ({ status: 404, json }));
     expect(await client.getProfileDoc(cid)).toBeNull();
@@ -3009,6 +3162,10 @@ describe('profile documents', () => {
   });
 
   it.each([
+    [
+      "the gateway's own route miss",
+      { error: 'not_found', message: 'no such route on this gateway' }
+    ],
     ['an empty 404', undefined],
     ['a 404 of another kind', { error: 'no_route', message: 'x' }]
   ])('refuses %s for a document', async (_name, json) => {
