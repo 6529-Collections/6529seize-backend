@@ -71,7 +71,43 @@ export type NotifyLogBody =
       readonly v: 1;
       readonly cuts: Record<string, number>;
     }
-  | ({ readonly type: 'notify-read'; readonly v: 1 } & NotificationReadReceipt);
+  | ({ readonly type: 'notify-read'; readonly v: 1 } & NotificationReadReceipt)
+  | {
+      readonly type: 'notify-delete';
+      readonly v: 1;
+      readonly reference: NotificationReference;
+      readonly values: string[];
+      /**
+       * A drop edit: only the CARRIED rows went (their old writer writes
+       * them again); the deriver's rows stay.
+       */
+      readonly carried_only: boolean;
+    }
+  | {
+      readonly type: 'notify-merge';
+      readonly v: 1;
+      readonly source: string;
+      readonly target: string;
+    }
+  | {
+      readonly type: 'notify-visibility';
+      readonly v: 1;
+      readonly wave_id: string;
+      readonly visibility_group_id: string | null;
+    };
+
+/** What a delete names: drops (and rows naming them) or waves. */
+export type NotificationReference = 'drop' | 'wave';
+
+/** The rows a delete of these drops or waves removes. */
+export function deletedRowsPredicate(reference: NotificationReference): string {
+  return reference === 'drop'
+    ? '(related_drop_id in (:values) or related_drop_2_id in (:values))'
+    : 'wave_id in (:values)';
+}
+
+/** Ids per delete entry: well under the log's 4 MiB entry limit. */
+const DELETE_VALUES_PER_ENTRY = 10_000;
 
 /** Keys per read-mark entry: about 1.4 MB, under the log's 4 MiB entry limit. */
 const READ_KEYS_PER_ENTRY = 20_000;
@@ -90,11 +126,60 @@ const entry = (body: NotifyLogBody): RecordLogEntry => ({
 });
 
 /**
+ * The entries that record a delete of drops or waves, for writers outside
+ * a sqlExecutor transaction (the legacy DM purge) to append themselves.
+ */
+export function notifyDeleteEntries(
+  reference: NotificationReference,
+  values: readonly string[],
+  carriedOnly = false
+): RecordLogEntry[] {
+  const entries: RecordLogEntry[] = [];
+  for (let i = 0; i < values.length; i += DELETE_VALUES_PER_ENTRY) {
+    entries.push(
+      entry({
+        type: 'notify-delete',
+        v: 1,
+        reference,
+        values: values.slice(i, i + DELETE_VALUES_PER_ENTRY),
+        carried_only: carriedOnly
+      })
+    );
+  }
+  return entries;
+}
+
+/** A view row as the archive keeps it. */
+function archivedRowOf(row: Record<string, any>): ArchivedNotificationRow {
+  return {
+    identity_id: row.identity_id,
+    id: Number(row.id),
+    legacy_id: Number(row.legacy_id),
+    cause: row.cause,
+    additional_identity_id: row.additional_identity_id,
+    related_drop_id: row.related_drop_id,
+    related_drop_part_no: toNumberOrNull(row.related_drop_part_no),
+    related_drop_2_id: row.related_drop_2_id,
+    related_drop_2_part_no: toNumberOrNull(row.related_drop_2_part_no),
+    additional_data:
+      typeof row.additional_data === 'string'
+        ? JSON.parse(row.additional_data)
+        : row.additional_data,
+    created_at: Number(row.created_at),
+    read_at: toNumberOrNull(row.read_at),
+    visibility_group_id: row.visibility_group_id,
+    wave_id: row.wave_id
+  };
+}
+
+/**
  * Writes what the notification view cannot derive into the private record
  * log, where 6529.io's service identity seals, pins and archives it: the
  * CARRIED rows (copies of identity_notifications rows from before their
- * cause was derived), the cuts in force, and the read marks people make.
- * A rebuild reads them back (NotificationViewRebuild).
+ * cause was derived), the cuts in force, the read marks people make, and
+ * the changes to rows after they were archived (deletes of drops and
+ * waves, profile merges, wave visibility changes). A rebuild reads them
+ * back in order (NotificationViewRebuild).
  */
 export class NotificationArchive {
   constructor(
@@ -128,31 +213,7 @@ export class NotificationArchive {
       if (!rows.length) return { rows: 0, done: true };
       await this.log.append(
         [
-          entry({
-            type: 'notify-archive',
-            v: 1,
-            rows: rows.map((row) => ({
-              identity_id: row.identity_id,
-              id: Number(row.id),
-              legacy_id: Number(row.legacy_id),
-              cause: row.cause,
-              additional_identity_id: row.additional_identity_id,
-              related_drop_id: row.related_drop_id,
-              related_drop_part_no: toNumberOrNull(row.related_drop_part_no),
-              related_drop_2_id: row.related_drop_2_id,
-              related_drop_2_part_no: toNumberOrNull(
-                row.related_drop_2_part_no
-              ),
-              additional_data:
-                typeof row.additional_data === 'string'
-                  ? JSON.parse(row.additional_data)
-                  : row.additional_data,
-              created_at: Number(row.created_at),
-              read_at: toNumberOrNull(row.read_at),
-              visibility_group_id: row.visibility_group_id,
-              wave_id: row.wave_id
-            }))
-          })
+          entry({ type: 'notify-archive', v: 1, rows: rows.map(archivedRowOf) })
         ],
         { connection }
       );
@@ -169,6 +230,74 @@ export class NotificationArchive {
       );
       return { rows: rows.length, done: rows.length < batchSize };
     });
+  }
+
+  /**
+   * Archives CARRIED rows the caller writes already sealed, in its
+   * transaction, so a row an old writer adds in `on` is never missing from
+   * a rebuild.
+   */
+  async archiveRows(
+    rows: readonly Record<string, any>[],
+    ctx: RequestContext
+  ): Promise<void> {
+    const entries: RecordLogEntry[] = [];
+    for (let i = 0; i < rows.length; i += ARCHIVE_ROWS_PER_ENTRY) {
+      entries.push(
+        entry({
+          type: 'notify-archive',
+          v: 1,
+          rows: rows.slice(i, i + ARCHIVE_ROWS_PER_ENTRY).map(archivedRowOf)
+        })
+      );
+    }
+    if (entries.length) await this.log.append(entries, ctx);
+  }
+
+  /** Records a delete of drops or waves, in the caller's transaction. */
+  async recordDelete(
+    reference: NotificationReference,
+    values: readonly string[],
+    ctx: RequestContext,
+    carriedOnly = false
+  ): Promise<void> {
+    if (values.length) {
+      await this.log.append(
+        notifyDeleteEntries(reference, values, carriedOnly),
+        ctx
+      );
+    }
+  }
+
+  /** Records a profile merge, in the caller's transaction. */
+  async recordMerge(
+    source: string,
+    target: string,
+    ctx: RequestContext
+  ): Promise<void> {
+    await this.log.append(
+      [entry({ type: 'notify-merge', v: 1, source, target })],
+      ctx
+    );
+  }
+
+  /** Records a wave's new visibility group, in the caller's transaction. */
+  async recordVisibility(
+    waveId: string,
+    visibilityGroupId: string | null,
+    ctx: RequestContext
+  ): Promise<void> {
+    await this.log.append(
+      [
+        entry({
+          type: 'notify-visibility',
+          v: 1,
+          wave_id: waveId,
+          visibility_group_id: visibilityGroupId
+        })
+      ],
+      ctx
+    );
   }
 
   /** Records the cuts in force (NOTIFY_DERIVED_CAUSES); a rebuild checks them. */
@@ -306,6 +435,43 @@ export async function applyReadReceipt(
 }
 
 const READ_KEY_CHUNK = 1000;
+
+/** Applies a logged delete: the rows naming those drops or waves go. */
+export async function applyDelete(
+  db: SqlExecutor,
+  body: {
+    reference: NotificationReference;
+    values: readonly string[];
+    carried_only: boolean;
+  },
+  connection: ConnectionWrapper<any>
+): Promise<void> {
+  if (!body.values.length) return;
+  await db.execute(
+    `delete from ${NOTIFICATION_VIEW_TABLE} where ${deletedRowsPredicate(body.reference)}${
+      body.carried_only
+        ? ` and origin = '${NotificationViewOrigin.CARRIED}'`
+        : ''
+    }`,
+    { values: body.values },
+    { wrappedConnection: connection }
+  );
+}
+
+/** Applies a logged wave visibility change to the wave's rows. */
+export async function applyVisibility(
+  db: SqlExecutor,
+  waveId: string,
+  visibilityGroupId: string | null,
+  connection: ConnectionWrapper<any>
+): Promise<void> {
+  await db.execute(
+    `update ${NOTIFICATION_VIEW_TABLE} set visibility_group_id = :visibilityGroupId
+     where wave_id = :waveId`,
+    { waveId, visibilityGroupId },
+    { wrappedConnection: connection }
+  );
+}
 
 export const notificationArchive = new NotificationArchive(
   dbSupplier,

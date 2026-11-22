@@ -306,6 +306,38 @@ describe('executeLegacyDmPurge', () => {
     );
   });
 
+  it('records the view deletes in the notification archive once the view is in use', async () => {
+    const saved = process.env.NOTIFY_VIEW_MODE;
+    process.env.NOTIFY_VIEW_MODE = 'on';
+    try {
+      const { db, statements } = fakeDb({ waves: [WAVE], drops: DROPS });
+      await executeLegacyDmPurge(db, {
+        nowMillis: CUTOFF,
+        cutoffMillis: CUTOFF
+      });
+      const logged = statements
+        .filter((s) => s.sql.includes('insert into signed_record_log_entries'))
+        .map((s) => JSON.parse(String(s.params[2])).body);
+      expect(logged).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            type: 'notify-delete',
+            reference: 'drop',
+            values: ['d1', 'd2', 'd3']
+          }),
+          expect.objectContaining({
+            type: 'notify-delete',
+            reference: 'wave',
+            values: [WAVE.id]
+          })
+        ])
+      );
+    } finally {
+      if (saved === undefined) delete process.env.NOTIFY_VIEW_MODE;
+      else process.env.NOTIFY_VIEW_MODE = saved;
+    }
+  });
+
   it('reports each purged wave once its deletions have committed', async () => {
     const { db, events } = fakeDb({
       waves: [WAVE, { ...WAVE, id: 'dm-wave-2', serial_no: 6 }],

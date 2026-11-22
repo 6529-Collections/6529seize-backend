@@ -1,6 +1,6 @@
 # Notification view
 
-Notifications are moving from rows each feature writes into `identity_notifications` to a view derived from source events: the chain's identity and wave records, the drop events on the relays, and people's signed records. The aim is a table that rebuilds from those sources and its archive to the same rows, with the same ids; what a rebuild relies on is listed under Archive and rebuild.
+Notifications are moving from rows each feature writes into `identity_notifications` to a view derived from source events: the chain's identity and wave records, the drop events on the relays, and people's signed records. Rebuilt from those sources and its archive, the table gives the same answers, ids and read state included, for the causes whose feeds run; what a rebuild relies on, and how to run it, is under Archive and rebuild.
 
 The pieces: the table, the per-cause switch, the deriver, the rules, the feed runner, the switch steps, the archive and the rebuild. The adapters that feed the rules from the chain and relay indexes land with those indexes; until then the rules and the runner are tested with fixtures of the source shapes in `src/notifications/view/notification-sources.ts`.
 
@@ -22,11 +22,11 @@ The pieces: the table, the per-cause switch, the deriver, the rules, the feed ru
 
 All are read on every call from the process environment, which each service loads from its configuration when an instance starts. Set them the same for every service that writes or reads notifications (the API and the loops that notify), and redeploy those services to apply a change everywhere at once.
 
-| Flag                    | Values                          | Effect                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
-| ----------------------- | ------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `NOTIFY_VIEW_MODE`      | `off` (default), `shadow`, `on` | `off`: today; nothing reads or writes the view. `shadow`: the deriver writes the view; readers, badges and pushes use `identity_notifications`. `on`: readers, badges, pushes and notification frames use the view                                                                                                                                                                                                                                                                                                                                                                                              |
-| `NOTIFY_DERIVED_CAUSES` | `CAUSE@cutMs`, comma-separated  | From its cut a cause comes from the deriver and its old writers are skipped (one check in `identity-notifications.db.ts` covers every writer). Old writers compare the cut with the time they write, the deriver with the event's time, so each event is written once. Choose the cut no earlier than the moment the cause's old write path stopped being its source, and later than the deploy that sets it. An item without a valid cut is ignored, so its old writer keeps writing, and logged (`NOTIFY_DERIVED_CAUSES_IGNORED`). Ignored while the mode is `off`, so `off` always restores every old writer |
-| `NOTIFY_LEGACY_OUTPUT`  | `true` (default), `false`       | The deriver also writes derived causes into `identity_notifications`, so that table stays complete in `shadow` and for a rollback from `on`. Turn it off only after the rebuild check passes                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| Flag                    | Values                          | Effect                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| ----------------------- | ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `NOTIFY_VIEW_MODE`      | `off` (default), `shadow`, `on` | `off`: today; nothing reads or writes the view. `shadow`: the deriver writes the view; readers, badges and pushes use `identity_notifications`. `on`: readers, badges, pushes and notification frames use the view                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| `NOTIFY_DERIVED_CAUSES` | `CAUSE@cutMs`, comma-separated  | From its cut a cause comes from the deriver and its old writers are skipped (one check in `identity-notifications.db.ts` covers every writer). Old writers compare the cut with the time they write, the deriver with the event's time, so each event is written once. Choose the cut no earlier than the moment the cause's old write path stopped being its source, and later than the deploy that sets it. An item without a valid cut is ignored, so its old writer keeps writing, and logged (`NOTIFY_DERIVED_CAUSES_IGNORED`); a cut earlier than an instance's start is logged as a warning (`NOTIFY_DERIVED_CAUSE_CUT_BEFORE_START`). Ignored while the mode is `off`, so `off` always restores every old writer |
+| `NOTIFY_LEGACY_OUTPUT`  | `true` (default), `false`       | The deriver also writes derived causes into `identity_notifications`, so that table stays complete in `shadow` and for a rollback from `on`. Turn it off only after the rebuild check passes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 
 ## What the deriver does
 
@@ -44,6 +44,8 @@ Deleting a drop or a wave removes every row that names it from both tables, as b
 ## Feeds and the runner
 
 A feed reads one index's events after a cursor and names the rule for each (`NotificationFeed`). `NotificationFeedRunner` reads a batch, derives it, and commits the rows and the cursor after them in one transaction, so a crash repeats at most one batch and repeating it writes the same rows. Runners of one feed take turns on its cursor row; a batch whose transaction deadlocks is tried again, up to three times. It does nothing while the mode is `off`, so no cursor moves then. A run is `live`, or `replay` for a rebuild; a replay never pushes.
+
+`identity:ratings` (`feeds/identity-ratings-feed.ts`) reads the identity mirror's rating events. It runs in production once the mirror's table has `block_time_ms`, `origin` and `by_import`; until then IDENTITY_REP and IDENTITY_NIC keep their old writer. Its cursor is the last row's (height, id): if that row is gone or moved because the mirror's table was rebuilt, it reads again from that height, and the rows read twice change nothing. Only a rater's own change (`OPERATION`) notifies, as today; the chain's cap cuts, the import and rows whose origin is `UNKNOWN` (written before nodes record it) notify nobody.
 
 ## Mode `on`
 
@@ -100,31 +102,47 @@ Deleting a drop or a wave, and which recipients each cause reaches, are as today
 
 A derived cause that no feed derives yet (`CAUSES_WITH_FEEDS` in `notify-view-flags.ts`, which each adapter extends) has its old writer skipped and nothing writing it; it is logged as `NOTIFY_DERIVED_CAUSE_WITHOUT_FEED`. Add a cause to `NOTIFY_DERIVED_CAUSES` only once its feed runs.
 
-Rows created before the switch keep their `identity_notifications` ids, so clients that remember an id (the desktop app's last-seen id, a push in the tray) see nothing change. The operator steps are in `ops/scripts/notification-view/cli.ts` (`bin/6529 exec ts-node -r tsconfig-paths/register ops/scripts/notification-view/cli.ts <step>`), each resumable and safe to run again:
+Rows created before the switch keep their `identity_notifications` ids, so clients that remember an id (the desktop app's last-seen id, a push in the tray) see nothing change. A derived row takes a time-based id, so no derived row may be pushed under an old id before the switch: until the switch every cut lies in the future, and the cuts and `on` come in one deploy. The operator steps are in `ops/scripts/notification-view/cli.ts` (`bin/6529 exec ts-node -r tsconfig-paths/register ops/scripts/notification-view/cli.ts <step>`), each resumable and safe to run again:
 
 1. Deploy `dbMigrationsLoop` (creates the tables), then every service with the flags unset. Nothing changes.
-2. `NOTIFY_VIEW_MODE=shadow`, with the deriver running. A cause whose source has taken over joins `NOTIFY_DERIVED_CAUSES` with its cut (see Flags). Compare the view with `identity_notifications`.
-3. At the switch, move every cut earlier than the switch time up to it. Rows before it stand as their old copies, with their old ids.
-4. After the cut: `copy-old-rows`. It first deletes the rows the deriver wrote but does not own (causes not derived, or events before their cut), then copies every `identity_notifications` row the view lacks as CARRIED, with its id and read state.
-5. `NOTIFY_VIEW_MODE=on`, then `copy-old-rows` again for the rows written in between.
-6. `record-cuts` and `seal`, and `seal` again whenever old writers have added CARRIED rows (until every cause is derived).
+2. `NOTIFY_VIEW_MODE=shadow`, with the deriver running. A cause whose feed runs joins `NOTIFY_DERIVED_CAUSES` with its cut at the switch time, so its old writer keeps writing until then. Compare the view with `identity_notifications`.
+3. Before the switch: `copy-old-rows`, the bulk copy, then `seal`. `copy-old-rows` first deletes the rows the deriver wrote but does not own (in `shadow`, all of them), then copies every `identity_notifications` row the view lacks as CARRIED, with its id and read state.
+4. At the switch, one deploy: `NOTIFY_VIEW_MODE=on`, with every cut at the switch time, later than the deploy.
+5. After the cut: `copy-old-rows` again for the rows written since the bulk copy, then `seal` and `record-cuts`.
 
-A cause that joins later gets its own cut when it is added to `NOTIFY_DERIVED_CAUSES`; in `on` mode nothing needs pruning.
+From `on`, a row an old writer adds is archived as it is written, so `seal` is needed only after a `copy-old-rows`. A cause that joins later gets its own cut, later than the deploy that adds it; in `on` nothing needs pruning.
+
+A cause's old writer has to keep writing until its cut. If a cause's source takes over before the switch and its old writer stops seeing the events, move the switch to that time: a cut set earlier, in `shadow`, pushes rows under ids that change at `on`.
 
 ## Archive and rebuild
 
-What the view cannot derive goes into the private record log (`src/signed-records/record-log`), sealed to 6529.io's provider keys, under the lane `notify`:
+What the view cannot derive goes into the private record log (`src/signed-records/record-log`), sealed to 6529.io's provider keys, as `notify` entries:
 
-- `notify-archive`: CARRIED rows, up to 1,000 per entry, with their ids and read state when sealed;
+- `notify-archive`: CARRIED rows, up to 1,000 per entry, with their ids and read state when archived: the bulk copy's rows by `seal`, every later row as its old writer writes it;
 - `notify-cuts`: the cuts in force;
-- `notify-read`: each read mark made in `shadow` or `on` through the routes, written in the same transaction as the mark: one row by its view id, or a mark-all or mark-wave with the keys of the rows it read (split across entries past 20,000 keys).
+- `notify-read`: each read mark made in `shadow` or `on` through the routes, written in the same transaction as the mark: one row by its view id, or a mark-all or mark-wave with the keys of the rows it read (split across entries past 20,000 keys);
+- `notify-delete`: a delete of drops or waves (a drop delete, a wave delete, a chat purge, the legacy DM purge), or a drop edit's delete of its CARRIED rows, which their old writer then writes again;
+- `notify-merge`: a profile merge;
+- `notify-visibility`: a wave's new visibility group.
 
-`NotificationViewRebuild` rebuilds the view from empty with the production flags and `NOTIFY_LEGACY_OUTPUT=false`: it restores the archived rows, refuses a log whose cuts differ from the flags, replays every feed from the start, and applies the read marks in the order they were made. A mark-all or mark-wave reads the rows it lists, so a row derived after it, even for an earlier time, stays unread there as it did live.
+`NotificationViewRebuild` rebuilds the view from empty with the production flags and `NOTIFY_LEGACY_OUTPUT=false`. Run it on a copy of the database, or with the feed runners, the push worker and the API's notification routes stopped: it empties the view first, and a write in between would be lost or written twice.
+
+1. Before changing anything, it refuses when CARRIED rows are not archived yet (run `seal`), or when a logged cuts entry disagrees with the flags on a cause it names. A cause's cut never changes; causes may join later.
+2. It empties the view, restores the archived rows, and applies an edit's delete of CARRIED rows where it stands in the log.
+3. It replays every feed from the start. A replay writes only the view: no copies, no pushes, no frames.
+4. It applies the logged deletes, merges, visibility changes and read marks in the order they were made. A mark-all or mark-wave reads the rows it lists, so a row derived after it, even for an earlier time, stays unread there as it did live.
+5. Where a derived row's `identity_notifications` copy still exists, the rebuilt row names it again (`legacy_id`).
 
 What a rebuild relies on beyond the log and the feeds:
 
-- Deleted drops come from `deleted_drops`, which the drop index has to keep from its tombstones.
+- Feeds give profile ids as of each event; a logged merge moves rows to the target.
+- The waves index stops emitting a deleted wave's events, and the drop index keeps `deleted_drops` from its tombstones, which the deriver uses to leave out rows naming a deleted drop.
 
 ## Rollback
 
 `on` → `shadow` moves readers back to `identity_notifications`, which the deriver and the read marks kept current while `NOTIFY_LEGACY_OUTPUT` is on. Pushes already queued by view key still go out: the publisher drains that queue in every mode but `off`, and the deriver keeps the view current in `shadow`. `shadow` → `off` stops the deriver and restores every old writer; go through `shadow` so the view's queue empties first.
+
+What clients see after `on` → `shadow`:
+
+- The desktop app keeps the highest id it has seen (`lastSeenId`) and shows rows above it as new. View ids are time-based and above every `identity_notifications` id, so after a rollback it treats no new row as new until its last-seen id is reset. The app should reset it when the newest id in a page falls below it.
+- A push sent in `on` carries a view id that the feed no longer shows, so the iOS tray can't clear it by id when the row is read.

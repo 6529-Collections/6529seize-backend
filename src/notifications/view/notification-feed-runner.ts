@@ -1,5 +1,5 @@
 import { wsListenersNotifier } from '@/api/ws/ws-listeners-notifier';
-import { isDeadlockError } from '@/e2ee/e2ee-encoding';
+import { isDeadlockError } from '@/db-errors';
 import { Logger } from '@/logging';
 import { dbSupplier, SqlExecutor } from '@/sql-executor';
 import type { DerivedGroup } from '@/notifications/view/derived-notification';

@@ -5,13 +5,17 @@ import {
 } from '@/constants';
 import { notifyViewMode } from '@/notifications/view/notify-view-flags';
 import { NotificationViewOrigin } from '@/entities/INotificationView';
+import {
+  deletedRowsPredicate,
+  notificationArchive,
+  NotificationReference
+} from '@/notifications/view/notification-archive';
 import { DbPoolName } from '@/db-query.options';
 import { RequestContext } from '@/request.context';
 import { dbSupplier, LazyDbAccessCompatibleService } from '@/sql-executor';
 import { Time } from '@/time';
 export const CANCELLATION_RETENTION_DAYS = 30;
 const BATCH_SIZE = 1000;
-type NotificationReference = 'drop' | 'wave';
 export class PushNotificationCancellationsDb extends LazyDbAccessCompatibleService {
   /**
    * Cancels existing rows atomically, locking both drop references in ID
@@ -29,13 +33,12 @@ export class PushNotificationCancellationsDb extends LazyDbAccessCompatibleServi
       throw new Error('Notification cancellation requires a transaction');
     if (!values.length) return;
     const options = { wrappedConnection: ctx.connection };
-    const predicate =
-      reference === 'drop'
-        ? '(related_drop_id in (:values) or related_drop_2_id in (:values))'
-        : 'wave_id in (:values)';
+    const predicate = deletedRowsPredicate(reference);
     const viewOn = notifyViewMode() !== 'off';
     const keep = keepDerived && viewOn;
-    // The view's rows of a deleted drop or wave go with it.
+    // The view's rows of a deleted drop or wave go with it. The archive
+    // records the delete, so a rebuild doesn't bring back rows it sealed
+    // before.
     if (viewOn) {
       await this.db.execute(
         `delete from ${NOTIFICATION_VIEW_TABLE} where ${predicate}${
@@ -44,6 +47,7 @@ export class PushNotificationCancellationsDb extends LazyDbAccessCompatibleServi
         { values },
         options
       );
+      await notificationArchive.recordDelete(reference, values, ctx, keep);
     }
     const keptCopies = keep
       ? ` and not exists (

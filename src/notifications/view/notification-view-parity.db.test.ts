@@ -251,6 +251,7 @@ const cases: Case[] = [
           decisionId: COMPETITION,
           occurrence: 4,
           scheduledAtMs: NOW - 60_000,
+          decisionKey: null,
           waveId: WAVE,
           visibilityGroupId: GROUP,
           title: 'Main Stage',

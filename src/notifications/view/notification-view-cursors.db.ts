@@ -1,4 +1,5 @@
 import { NOTIFICATION_VIEW_CURSORS_TABLE } from '@/constants';
+import { DbPoolName } from '@/db-query.options';
 import {
   ConnectionWrapper,
   dbSupplier,
@@ -13,8 +14,10 @@ import { Time } from '@/time';
  */
 export class NotificationViewCursorsDb extends LazyDbAccessCompatibleService {
   /**
-   * The cursor, locked for the caller's transaction when it has one. An
-   * empty value is the start, as is a missing row.
+   * The cursor, locked for the caller's transaction when it has one, and
+   * otherwise read from the writer, so a lagging replica never hands back
+   * a cursor the transaction then finds moved. An empty value is the
+   * start, as is a missing row.
    */
   async get(
     source: string,
@@ -24,7 +27,9 @@ export class NotificationViewCursorsDb extends LazyDbAccessCompatibleService {
       `select cursor_value from ${NOTIFICATION_VIEW_CURSORS_TABLE}
        where source = :source${connection ? ' for update' : ''}`,
       { source },
-      connection ? { wrappedConnection: connection } : undefined
+      connection
+        ? { wrappedConnection: connection }
+        : { forcePool: DbPoolName.WRITE }
     );
     return row?.cursor_value || null;
   }

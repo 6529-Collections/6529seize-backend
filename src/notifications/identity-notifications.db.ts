@@ -261,7 +261,9 @@ export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
     connection?: ConnectionWrapper<any>
   ): Promise<void> {
     if (notifyViewMode() !== 'on' || !connection) return;
-    await notificationViewDb.insertCarried(
+    // Archived as it is written, so a rebuild never misses a CARRIED row
+    // added after the switch's sealing.
+    const carried = await notificationViewDb.insertCarried(
       rows.map((row, index) => ({
         legacy_id: ids[index],
         identity_id: String(row.identity_id),
@@ -276,14 +278,19 @@ export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
         visibility_group_id: row.visibility_group_id as string | null,
         wave_id: row.wave_id as string | null
       })),
-      connection
+      connection,
+      { sealed: true }
+    );
+    await notificationArchive.archiveRows(
+      carried.map((row) => ({ ...row, read_at: null })),
+      { connection }
     );
   }
 
   /**
-   * The deriver's write filters: today's mutes, blocks, hidden drops and
-   * preferences, so a derived row is written exactly when the old writer
-   * would have written it.
+   * Today's write filters (mutes, blocks, hidden drops and preferences),
+   * which the deriver applies to its identity_notifications copies and
+   * pushes when a row first appears.
    */
   async filterDerivedRowsForWrite<T extends NewIdentityNotification>(
     notifications: T[],
@@ -1030,6 +1037,10 @@ export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
     );
     if (notifyViewMode() !== 'off') {
       await this.moveViewRows(sourceIdentity, target, connectionHolder);
+      // A rebuild moves the rows the archive sealed under the source.
+      await notificationArchive.recordMerge(sourceIdentity, target, {
+        connection: connectionHolder
+      });
     }
   }
 
@@ -1040,7 +1051,7 @@ export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
    * and ids. Where the target already has the row, the moved duplicate
    * goes. Copies made at the switch keep their old ids.
    */
-  private async moveViewRows(
+  async moveViewRows(
     source: string,
     target: string,
     connection: ConnectionWrapper<any>

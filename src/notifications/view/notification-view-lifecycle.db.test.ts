@@ -424,7 +424,7 @@ describe('notification view lifecycle', () => {
       NOTIFY_LEGACY_OUTPUT: 'false'
     });
     const result = await notificationViewRebuild.rebuild({
-      entries: loggedEntries(),
+      entries: loggedEntries,
       feeds: [feed]
     });
     expect(result.archivedRows).toBe(4);
@@ -458,7 +458,7 @@ describe('notification view lifecycle', () => {
     const live = await answers();
     expect(live.unread).toBe(1);
     await notificationViewRebuild.rebuild({
-      entries: loggedEntries(),
+      entries: loggedEntries,
       feeds: [feed]
     });
     expect(await answers()).toEqual(live);
@@ -473,26 +473,25 @@ describe('notification view lifecycle', () => {
     const announced = jest
       .spyOn(wsListenersNotifier, 'notifyAboutIdentityNotificationsChanged')
       .mockResolvedValue(undefined);
-    // A fake of the mirror's table, with the columns still to come.
+    // A fake of the mirror's table.
+    const mirrorRow = {
+      id: 1,
+      height: 120,
+      block_time_ms: T,
+      rater_profile_id: fanId,
+      target_profile_id: authorId,
+      matter: 'REP',
+      matter_category: 'Art',
+      old_rating: 0,
+      new_rating: 4,
+      total_after: 4,
+      origin: 'OPERATION' as const,
+      by_import: false
+    };
     const feed = new IdentityRatingsFeed({
-      readAfter: async (afterId) =>
-        afterId < 1
-          ? [
-              {
-                id: 1,
-                height: 120,
-                block_time_ms: T,
-                rater_profile_id: fanId,
-                target_profile_id: authorId,
-                matter: 'REP',
-                matter_category: 'Art',
-                old_rating: 0,
-                new_rating: 4,
-                total_after: 4,
-                origin: 'OPERATION'
-              }
-            ]
-          : []
+      readFromHeight: async (height) => (height <= 120 ? [mirrorRow] : []),
+      readAfter: async () => [],
+      heightOf: async (id) => (id === 1 ? 120 : null)
     });
     expect(
       await notificationFeedRunner.run(feed, { mode: 'live', now: T })
@@ -520,7 +519,7 @@ describe('notification view lifecycle', () => {
       NOTIFY_LEGACY_OUTPUT: 'false'
     });
     await expect(
-      notificationViewRebuild.rebuild({ entries: loggedEntries(), feeds: [] })
+      notificationViewRebuild.rebuild({ entries: loggedEntries, feeds: [] })
     ).rejects.toThrow('cuts');
   });
 });

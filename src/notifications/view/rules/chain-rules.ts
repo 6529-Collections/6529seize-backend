@@ -25,13 +25,18 @@ export const DECISION_COMPLETED_EVENT_TYPE = 'COMPETITION_DECISION_COMPLETED';
  * The event id today's decision notice carries: the native competition
  * event of the decision (native-competition-runtime.repository.ts), whose
  * decision id comes from the competition and the decision's scheduled time.
+ * A decision made again for a transfer adds the transfer's key.
  */
 export function decisionCompletedEventId(
   competitionId: string,
-  scheduledAtMs: number
+  scheduledAtMs: number,
+  decisionKey: string | null = null
 ): string {
   const decisionId = legacyCompetitionDecisionId(competitionId, scheduledAtMs);
-  return stableUuid(competitionId, `event:decision:${decisionId}`);
+  return stableUuid(
+    competitionId,
+    `event:decision:${decisionId}${decisionKey ? `:${decisionKey}` : ''}`
+  );
 }
 
 /** The release id today's credit-return notice carries (voting-credit-returns.db.ts). */
@@ -114,6 +119,7 @@ export function deriveVote(event: VoteChangedEvent): DerivedGroup {
   const ref = `${event.ref}:${event.voterId}:${event.entryDropId}`;
   if (
     event.origin === 'IMPORT' ||
+    event.origin === 'UNKNOWN' ||
     event.newValue === event.oldValue ||
     event.voterId === event.entryAuthorId
   ) {
@@ -254,7 +260,8 @@ export async function deriveDecisionResult(
         additional_data: {
           event_id: decisionCompletedEventId(
             event.decisionId,
-            event.scheduledAtMs
+            event.scheduledAtMs,
+            event.decisionKey
           ),
           event_type: DECISION_COMPLETED_EVENT_TYPE,
           wave_id: event.waveId,

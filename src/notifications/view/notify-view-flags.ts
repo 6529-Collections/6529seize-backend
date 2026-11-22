@@ -31,6 +31,8 @@ const CAUSES: ReadonlySet<string> = new Set(
 
 const logger = Logger.get('NOTIFY_VIEW_FLAGS');
 let reportedValue: string | undefined;
+/** When this instance loaded its configuration. */
+const INSTANCE_STARTED_AT = Date.now();
 
 /**
  * The causes a production feed adapter derives. A cause joins with its
@@ -89,6 +91,21 @@ export function derivedCauseCuts(): ReadonlyMap<
     if (feedless.length) {
       logger.error(
         `[NOTIFY_DERIVED_CAUSE_WITHOUT_FEED] ${feedless.join(', ')}: their old writers are skipped and no feed derives them`
+      );
+    }
+    // A cut must be later than the deploy that sets it. An instance that
+    // starts after a cut can't tell a late start from a cut set in the past,
+    // so it says so once and lets the operator check.
+    const early = Array.from(cuts.entries()).filter(
+      ([, cut]) => cut < INSTANCE_STARTED_AT
+    );
+    if (early.length) {
+      logger.warn(
+        `[NOTIFY_DERIVED_CAUSE_CUT_BEFORE_START] ${early
+          .map(([cause, cut]) => `${cause}@${cut}`)
+          .join(
+            ', '
+          )}: earlier than this instance's start. If the deploy that set it started later than the cut, its old writers wrote the events in between and the deriver writes them again`
       );
     }
   }

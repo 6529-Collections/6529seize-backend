@@ -237,6 +237,7 @@ describe('chain notification rules', () => {
       decisionId: COMPETITION,
       occurrence: 3,
       scheduledAtMs: SCHEDULED,
+      decisionKey: null,
       waveId: 'wave',
       visibilityGroupId: 'group',
       title: 'Main Stage',
@@ -266,6 +267,19 @@ describe('chain notification rules', () => {
           }
         })
       );
+    });
+
+    it("names a transfer's decision with its key, as the native event does", async () => {
+      const group = await deriveDecisionResult(
+        result({ decisionKey: 'transfer-1' }),
+        lookups
+      );
+      expect(group.rows[0].additional_data).toMatchObject({
+        event_id: decisionCompletedEventId(COMPETITION, SCHEDULED, 'transfer-1')
+      });
+      expect(
+        decisionCompletedEventId(COMPETITION, SCHEDULED, 'transfer-1')
+      ).not.toBe(decisionCompletedEventId(COMPETITION, SCHEDULED));
     });
 
     it.each([

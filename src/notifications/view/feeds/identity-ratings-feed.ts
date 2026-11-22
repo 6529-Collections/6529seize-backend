@@ -1,4 +1,5 @@
 import { DbPoolName } from '@/db-query.options';
+import { Logger } from '@/logging';
 import { dbSupplier, LazyDbAccessCompatibleService } from '@/sql-executor';
 import { Time } from '@/time';
 import type { DerivedGroup } from '@/notifications/view/derived-notification';
@@ -14,23 +15,16 @@ import { deriveRating } from '@/notifications/view/rules/chain-rules';
 
 /**
  * One row of identity_chain_rating_events, the identity mirror's log of
- * the rating changes it applied. Three columns are still to come in
- * the mirror's table; until the table has
- * them this feed does not run in production, and IDENTITY_REP and
- * IDENTITY_NIC stay out of CAUSES_WITH_FEEDS:
- *
- * - block_time_ms: the block time of the change. created_at is the
- *   mirror's write time, which a rebuild of the mirror would change.
- * - origin: OPERATION (the rater's RATING_SET), CAP_CUT (the chain's
- *   TDH + xTDH cap) or IMPORT (the opening import, or a full sync at or
- *   below its height). Only operations notify, as today.
- * - one row per (height, rater, target, matter, category): the change's
- *   name, since the rows carry no transaction id.
+ * the rating changes it applies, one row per (height, rater, target,
+ * matter, category). The table lands with the identity mirror; until it
+ * has block_time_ms, origin and by_import, this feed does not run in
+ * production, and IDENTITY_REP and IDENTITY_NIC stay out of
+ * CAUSES_WITH_FEEDS, so their old writer keeps writing them.
  */
 export interface RatingEventRow {
   readonly id: number;
   readonly height: number;
-  /** Still to come in the mirror's table. */
+  /** The block's time; created_at is the mirror's write time. */
   readonly block_time_ms: number;
   readonly rater_profile_id: string;
   readonly target_profile_id: string;
@@ -41,42 +35,89 @@ export interface RatingEventRow {
   readonly old_rating: number;
   readonly new_rating: number;
   readonly total_after: number;
-  /** Still to come in the mirror's table. */
-  readonly origin: 'OPERATION' | 'CAP_CUT' | 'IMPORT';
+  /**
+   * Who wrote the record: OPERATION (the rater's RATING_SET), CAP_CUT (the
+   * chain's TDH + xTDH cap) or IMPORT. UNKNOWN until nodes record it.
+   */
+  readonly origin: 'OPERATION' | 'CAP_CUT' | 'IMPORT' | 'UNKNOWN';
+  /** The opening import, or a full sync at or below its height. */
+  readonly by_import: boolean;
+}
+
+/** Where a read resumes: the last row's height and id. */
+export interface RatingCursor {
+  readonly height: number;
+  readonly id: number;
 }
 
 /** Where the feed reads rating events: the mirror's table, or a fake. */
 export interface RatingEventSource {
-  /** At most `limit` rows with an id above `afterId`, in id order. */
-  readAfter(afterId: number, limit: number): Promise<RatingEventRow[]>;
+  /** At most `limit` rows after the cursor, in (height, id) order. */
+  readAfter(after: RatingCursor, limit: number): Promise<RatingEventRow[]>;
+  /** At most `limit` rows from this height on, in (height, id) order. */
+  readFromHeight(height: number, limit: number): Promise<RatingEventRow[]>;
+  /** The height of the row with this id, or null when there is none. */
+  heightOf(id: number): Promise<number | null>;
 }
 
-/** The constant lives on the identity branch; this name is the same. */
 const RATING_EVENTS_TABLE = 'identity_chain_rating_events';
 
 /**
  * Rows are read only once they are this old. The mirror writes its events
  * in transactions and an id is taken before its transaction commits, so a
- * row could otherwise commit below a cursor that has passed it. The window
- * must cover the mirror's longest transaction.
+ * row could otherwise commit below a cursor that has passed it. One
+ * process writes the table, a transaction at a time, each well under this.
  */
 export const RATING_EVENTS_SETTLE_MS = 10_000;
+
+const COLUMNS = `id, height, block_time_ms, rater_profile_id, target_profile_id,
+  matter, matter_category, old_rating, new_rating, total_after, origin, by_import`;
 
 /** Reads identity_chain_rating_events from the writer. */
 export class MirrorRatingEventSource
   extends LazyDbAccessCompatibleService
   implements RatingEventSource
 {
-  async readAfter(afterId: number, limit: number): Promise<RatingEventRow[]> {
+  async readAfter(
+    after: RatingCursor,
+    limit: number
+  ): Promise<RatingEventRow[]> {
+    return this.read(
+      `(height > :height or (height = :height and id > :id))`,
+      { height: after.height, id: after.id },
+      limit
+    );
+  }
+
+  async readFromHeight(
+    height: number,
+    limit: number
+  ): Promise<RatingEventRow[]> {
+    return this.read(`height >= :height`, { height }, limit);
+  }
+
+  async heightOf(id: number): Promise<number | null> {
+    const row = await this.db.oneOrNull<{ height: number }>(
+      `select height from ${RATING_EVENTS_TABLE} where id = :id`,
+      { id },
+      { forcePool: DbPoolName.WRITE }
+    );
+    return row ? Number(row.height) : null;
+  }
+
+  private async read(
+    where: string,
+    params: Record<string, number>,
+    limit: number
+  ): Promise<RatingEventRow[]> {
     const rows = await this.db.execute<Record<string, any>>(
-      `select id, height, block_time_ms, rater_profile_id, target_profile_id,
-              matter, matter_category, old_rating, new_rating, total_after, origin
+      `select ${COLUMNS}
        from ${RATING_EVENTS_TABLE}
-       where id > :afterId and created_at <= :settled
-       order by id
+       where ${where} and created_at <= :settled
+       order by height, id
        limit ${Math.max(1, Math.floor(limit))}`,
       {
-        afterId,
+        ...params,
         settled: Time.currentMillis() - RATING_EVENTS_SETTLE_MS
       },
       { forcePool: DbPoolName.WRITE }
@@ -92,16 +133,26 @@ export class MirrorRatingEventSource
       old_rating: Number(row.old_rating),
       new_rating: Number(row.new_rating),
       total_after: Number(row.total_after),
-      origin: row.origin
+      origin: row.origin,
+      by_import: Boolean(row.by_import)
     }));
   }
 }
 
-const ORIGINS: Record<RatingEventRow['origin'], ChainOrigin> = {
-  OPERATION: 'OPERATION',
-  CAP_CUT: 'SCAN',
-  IMPORT: 'IMPORT'
-};
+/** The rule's origin: only a rater's own change notifies, as today. */
+function originOf(row: RatingEventRow): ChainOrigin {
+  if (row.by_import) return 'IMPORT';
+  switch (row.origin) {
+    case 'OPERATION':
+      return 'OPERATION';
+    case 'CAP_CUT':
+      return 'SCAN';
+    case 'IMPORT':
+      return 'IMPORT';
+    default:
+      return 'UNKNOWN';
+  }
+}
 
 /** A mirror row as the rating rule reads it. */
 export function ratingEventOf(row: RatingEventRow): RatingChangedEvent {
@@ -120,8 +171,7 @@ export function ratingEventOf(row: RatingEventRow): RatingChangedEvent {
       matter,
       category
     ].join(':'),
-    // An origin the feed does not know never notifies.
-    origin: ORIGINS[row.origin] ?? 'IMPORT',
+    origin: originOf(row),
     matter,
     raterId: row.rater_profile_id,
     targetId: row.target_profile_id,
@@ -132,9 +182,27 @@ export function ratingEventOf(row: RatingEventRow): RatingChangedEvent {
   };
 }
 
-/** `identity:ratings`: IDENTITY_REP and IDENTITY_NIC from the identity mirror. */
+const cursorOf = (row: RatingEventRow) => `${row.height}:${row.id}`;
+
+function parseCursor(value: string | null): RatingCursor | null {
+  if (!value) return null;
+  const [height, id] = value.split(':').map(Number);
+  if (!Number.isSafeInteger(height) || !Number.isSafeInteger(id)) {
+    throw new Error(`Not a ratings cursor: ${value}`);
+  }
+  return { height, id };
+}
+
+/**
+ * `identity:ratings`: IDENTITY_REP and IDENTITY_NIC from the identity
+ * mirror. The cursor is the last row's (height, id). If that row is gone
+ * or moved (the mirror's table was rebuilt and its ids renumbered), the
+ * feed reads again from the cursor's height; rules give the same rows for
+ * the same events, so the rows read twice change nothing.
+ */
 export class IdentityRatingsFeed implements NotificationFeed<RatingChangedEvent> {
   readonly name = 'identity:ratings';
+  private readonly logger = Logger.get('IDENTITY_RATINGS_FEED');
 
   constructor(private readonly source: RatingEventSource) {}
 
@@ -142,11 +210,22 @@ export class IdentityRatingsFeed implements NotificationFeed<RatingChangedEvent>
     after: string | null,
     limit: number
   ): Promise<FeedBatch<RatingChangedEvent>> {
-    const rows = await this.source.readAfter(Number(after ?? 0), limit);
+    const cursor = parseCursor(after);
+    let rows: RatingEventRow[];
+    if (cursor === null) {
+      rows = await this.source.readFromHeight(0, limit);
+    } else if ((await this.source.heightOf(cursor.id)) === cursor.height) {
+      rows = await this.source.readAfter(cursor, limit);
+    } else {
+      this.logger.warn(
+        `[IDENTITY_RATINGS_CURSOR_RESET] row ${cursor.id} is not at height ${cursor.height}; reading again from that height`
+      );
+      rows = await this.source.readFromHeight(cursor.height, limit);
+    }
     const last = rows.at(-1);
     return {
       events: rows.map(ratingEventOf),
-      next: last ? String(last.id) : null
+      next: last ? cursorOf(last) : null
     };
   }
 

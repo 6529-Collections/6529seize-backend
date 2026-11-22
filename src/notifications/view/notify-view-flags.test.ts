@@ -84,6 +84,26 @@ describe('notification view flags', () => {
     }
   });
 
+  it("warns once about a cut earlier than this instance's start", () => {
+    const warn = jest
+      .spyOn(Logger.prototype, 'warn')
+      .mockImplementation(() => undefined);
+    try {
+      process.env.NOTIFY_VIEW_MODE = 'shadow';
+      process.env.NOTIFY_DERIVED_CAUSES = `DROP_VOTED@${CUT + 11},IDENTITY_REP@${Date.now() + 3_600_000}`;
+      derivedCauseCuts();
+      derivedCauseCuts();
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(warn.mock.calls[0][0]).toContain(
+        'NOTIFY_DERIVED_CAUSE_CUT_BEFORE_START'
+      );
+      expect(warn.mock.calls[0][0]).toContain(`DROP_VOTED@${CUT + 11}`);
+      expect(warn.mock.calls[0][0]).not.toContain('IDENTITY_REP');
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
   it('hands a cause over at its cut: old writer before, deriver from it', () => {
     process.env.NOTIFY_VIEW_MODE = 'shadow';
     process.env.NOTIFY_DERIVED_CAUSES = `DROP_VOTED@${CUT}`;

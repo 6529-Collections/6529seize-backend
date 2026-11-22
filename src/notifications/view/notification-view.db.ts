@@ -134,13 +134,16 @@ export class NotificationViewDb extends LazyDbAccessCompatibleService {
   /**
    * Copies rows an old writer just wrote into identity_notifications, for a
    * cause that is not derived yet. A copy's id follows its time, as derived
-   * ids do; it keeps the original id as legacy_id. Copying twice is harmless.
+   * ids do; it keeps the original id as legacy_id. Copying twice is
+   * harmless. Returns the rows as written, `sealed` as asked (the caller
+   * archives sealed rows in the same transaction).
    */
   async insertCarried(
     rows: readonly CarriedNotificationRow[],
-    connection: ConnectionWrapper<any>
-  ): Promise<void> {
-    if (!rows.length) return;
+    connection: ConnectionWrapper<any>,
+    { sealed = false }: { sealed?: boolean } = {}
+  ): Promise<(CarriedNotificationRow & { id: number })[]> {
+    if (!rows.length) return [];
     const viewRows = rows.map((row) => {
       const sourceRef = String(row.legacy_id);
       const sourceKey = notificationSourceKey(
@@ -154,17 +157,19 @@ export class NotificationViewDb extends LazyDbAccessCompatibleService {
         id: notificationViewId(row.created_at, sourceKey),
         source_family: CARRIED_FAMILY,
         source_ref: sourceRef,
-        origin: NotificationViewOrigin.CARRIED
+        origin: NotificationViewOrigin.CARRIED,
+        sealed
       };
     });
     await this.db.bulkUpsert(
       NOTIFICATION_VIEW_TABLE,
       viewRows,
-      [...WRITE_COLUMNS, 'legacy_id'],
+      [...WRITE_COLUMNS, 'legacy_id', 'sealed'],
       [],
       undefined,
       { connection }
     );
+    return viewRows;
   }
 
   async deleteRows(

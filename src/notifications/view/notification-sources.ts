@@ -18,8 +18,12 @@ export interface ChainPosition {
   readonly blockTimeMs: number;
 }
 
-/** Imported state never notifies; system cuts (scans) notify only where today's code does. */
-export type ChainOrigin = 'OPERATION' | 'IMPORT' | 'SCAN';
+/**
+ * Imported state never notifies; system cuts (scans) notify only where
+ * today's code does. UNKNOWN: a change whose writer the index can't name
+ * (the identity mirror's rows before nodes record it); it never notifies.
+ */
+export type ChainOrigin = 'OPERATION' | 'IMPORT' | 'SCAN' | 'UNKNOWN';
 
 /** One applied rating change, from the identity mirror's log. */
 export interface RatingChangedEvent extends ChainPosition {
@@ -89,6 +93,8 @@ export interface DecisionResultEvent extends ChainPosition {
   readonly occurrence: number;
   /** The occurrence's scheduled time; today's decision id derives from it. */
   readonly scheduledAtMs: number;
+  /** A transfer's key when the decision was made again for a transfer; else null. */
+  readonly decisionKey: string | null;
   readonly waveId: string;
   readonly visibilityGroupId: string | null;
   readonly title: string;
