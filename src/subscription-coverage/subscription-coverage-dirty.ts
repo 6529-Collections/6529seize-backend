@@ -3,7 +3,10 @@ import {
   SUBSCRIPTION_COVERAGE_REFRESH_REQUESTS_TABLE
 } from '@/constants';
 import { Logger } from '@/logging';
-import { subscriptionKeyWidths } from '@/subscription-key-width/subscription-key-width';
+import {
+  subscriptionKeyWidths,
+  SubscriptionKeyWidthsUnknownError
+} from '@/subscription-key-width/subscription-key-width';
 
 const logger = Logger.get('SUBSCRIPTION_COVERAGE_DIRTY');
 const DIRTY_MARKER_BATCH_SIZE = 500;
@@ -27,7 +30,9 @@ const COVERAGE_KEY_TABLES = [
 
 /**
  * Drops keys the coverage tables can't hold yet (see subscription-key-width),
- * so one long key never fails a batch. Coverage is recomputed from the
+ * or can't be judged yet (the widths were never read in this process), so
+ * one long key never fails a batch. Markers are best effort and run after
+ * the caller's write has committed; coverage is recomputed from the
  * subscription tables, so nothing is queued.
  */
 async function keysThatFit(
@@ -36,7 +41,16 @@ async function keysThatFit(
 ): Promise<string[]> {
   const fitting: string[] = [];
   for (const key of keys) {
-    if (await subscriptionKeyWidths.fits(key, COVERAGE_KEY_TABLES)) {
+    let fits: boolean;
+    try {
+      fits = await subscriptionKeyWidths.fits(key, COVERAGE_KEY_TABLES);
+    } catch (error) {
+      if (!(error instanceof SubscriptionKeyWidthsUnknownError)) {
+        throw error;
+      }
+      fits = false;
+    }
+    if (fits) {
       fitting.push(key);
     } else {
       logger.warn(

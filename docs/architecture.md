@@ -2970,7 +2970,8 @@ write waiting" check reads as none, so keys that fit are written as before.
 - Redemptions: one entry per token; balance, redeemed row and redeemed count
   move together.
 - Consolidation: a re-key to a waiting key waits; the old keys keep their rows.
-- Coverage markers for keys that do not fit are skipped; coverage is
+- Coverage markers for keys that do not fit, or that a process can't judge
+  yet because it has never read the widths, are skipped; coverage is
   recomputed.
 
 **Queue.** `sequence` orders the entries; `dedupe_key` keeps one entry per
@@ -2988,9 +2989,11 @@ write leaves its entry waiting. A replayed write that has to wait again (its
 key changed, or must still wait) is counted as re-queued. Once one of a key's
 entries cannot be replayed, the key's later entries wait too. A final-list
 row is never inserted as it stood at the build: it is marked skipped and the
-next daily build decides. Other writes that no longer apply (a card already
-dropped, a row already there) are marked skipped too. Rollback: unset the
-flag; the queue keeps every write.
+next daily build decides. Queued log lines all come from the daily build and
+are skipped the same way, so an automatic row replayed this way has no log
+line. Other writes that no longer apply (a card already dropped, a row
+already there) are marked skipped too. Replay is off by default. Rollback:
+unset the flag; the queue keeps every write.
 
 **Rebuild.** Every entry can be derived again from its source:
 

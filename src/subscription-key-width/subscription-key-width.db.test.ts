@@ -438,11 +438,12 @@ describeWithSeed(
         'key of 214 characters; an earlier write for the key is waiting'
       );
 
-      // The final row is skipped (the next daily build decides); the rest
-      // are made, in order, once.
+      // The final row and the build's log lines are skipped (the next
+      // daily build decides and writes fresh lines); the automatic row is
+      // made, once.
       expect(await replayTopUpLoopDeferredWrites()).toEqual({
-        done: 3,
-        skipped: 1,
+        done: 1,
+        skipped: 3,
         requeued: 0,
         waiting: 0,
         failed: 0
@@ -456,15 +457,12 @@ describeWithSeed(
       });
       expect(await keysIn(SUBSCRIPTIONS_NFTS_FINAL_TABLE)).toEqual([]);
       expect(await keysIn(SUBSCRIPTIONS_NFTS_TABLE)).toEqual([LONG_KEY]);
-      expect(await keysIn(SUBSCRIPTIONS_LOGS_TABLE)).toEqual([
-        LONG_KEY,
-        LONG_KEY
-      ]);
+      expect(await keysIn(SUBSCRIPTIONS_LOGS_TABLE)).toEqual([]);
       expect((await queue()).map((q) => q.outcome)).toEqual([
         'SKIPPED',
+        'SKIPPED',
         'DONE',
-        'DONE',
-        'DONE'
+        'SKIPPED'
       ]);
 
       // With nothing left waiting, the key takes the normal path.
@@ -580,10 +578,11 @@ describeWithSeed(
       // redemption still waits.
       await redeemSubscriptions();
       expect(await balanceOf(SHORT_KEY)).toBe(1);
-      // The top-up loop does not replay redemptions.
+      // The top-up loop does not replay redemptions; the earlier log line
+      // is claimed as skipped.
       expect(await replayTopUpLoopDeferredWrites()).toEqual({
-        done: 1,
-        skipped: 0,
+        done: 0,
+        skipped: 1,
         requeued: 0,
         waiting: 1,
         failed: 0
@@ -657,13 +656,32 @@ describeWithSeed(
       }
     });
 
+    it('writes no "Added to Final Subscription" line for a final row it skips', async () => {
+      const added = 'Added to Final Subscription for Meme #900 on 2026-11-25';
+      const split = await splitFinalList(
+        [finalRow(LONG_KEY)],
+        [logLine(LONG_KEY, added)]
+      );
+      await persistNFTFinalSubscriptions(MEMES_CONTRACT, CARD, upload, split);
+      await migrate();
+      expect(await replayTopUpLoopDeferredWrites()).toEqual(
+        expect.objectContaining({ done: 0, skipped: 2 })
+      );
+      expect(await keysIn(SUBSCRIPTIONS_NFTS_FINAL_TABLE)).toEqual([]);
+      const lines = await sqlExecutor.execute<{ log: string }>(
+        `SELECT log FROM ${SUBSCRIPTIONS_LOGS_TABLE}`
+      );
+      expect(lines).toEqual([]);
+    });
+
     it('never inserts a held-back final row on replay: the next daily build decides', async () => {
       await buildFinalList([LONG_KEY]);
       await migrate();
       // The balance the row was listed with is gone by the replay.
       await setBalance(LONG_KEY, 0);
       const summary = await replayTopUpLoopDeferredWrites();
-      expect(summary.skipped).toBe(1);
+      // The final row and its log line.
+      expect(summary.skipped).toBe(2);
       expect(await keysIn(SUBSCRIPTIONS_NFTS_FINAL_TABLE)).toEqual([]);
       expect((await queue())[0]).toEqual(
         expect.objectContaining({ kind: 'FINAL_ROW', outcome: 'SKIPPED' })

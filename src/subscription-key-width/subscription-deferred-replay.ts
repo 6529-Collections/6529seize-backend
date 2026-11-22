@@ -1,13 +1,5 @@
-import {
-  MEMES_CONTRACT,
-  SUBSCRIPTIONS_LOGS_TABLE,
-  SUBSCRIPTIONS_NFTS_TABLE
-} from '@/constants';
-import {
-  NFTSubscription,
-  SubscriptionLog,
-  SubscriptionTopUp
-} from '@/entities/ISubscription';
+import { MEMES_CONTRACT, SUBSCRIPTIONS_NFTS_TABLE } from '@/constants';
+import { NFTSubscription, SubscriptionTopUp } from '@/entities/ISubscription';
 import { sqlExecutor } from '@/sql-executor';
 import {
   claimDeferredWrite,
@@ -102,20 +94,18 @@ const insertAutomaticRow: DeferredWriteReplayer = (entry) => {
   );
 };
 
-const insertLog: DeferredWriteReplayer = (entry) => {
-  const log = entry.payload as SubscriptionLog;
-  return inTransaction(
+/**
+ * Every queued log line is a daily-build line (an automatic row's, or a
+ * final-list decision's). The next build writes fresh ones, and a line for
+ * a final row that is never inserted ("Added to Final Subscription") would
+ * be false, so the entry is claimed as SKIPPED and nothing is written.
+ */
+const skipLog: DeferredWriteReplayer = (entry) =>
+  inTransaction(
     entry.sequence,
-    async () => 'DONE',
-    async (sink) => {
-      await sink.query(
-        `INSERT INTO ${SUBSCRIPTIONS_LOGS_TABLE} (consolidation_key, log, additional_info)
-          VALUES (?, ?, ?)`,
-        [log.consolidation_key, log.log, log.additional_info ?? null]
-      );
-    }
+    async () => 'SKIPPED',
+    async () => undefined
   );
-};
 
 const replayTopUp: DeferredWriteReplayer = async (entry) => {
   const { persistTopUps } =
@@ -152,7 +142,7 @@ const TOP_UP_LOOP_REPLAYERS: Partial<
   TOP_UP: replayTopUp,
   AUTO_SUBSCRIPTION: insertAutomaticRow,
   FINAL_ROW: skipFinalRow,
-  LOG: insertLog,
+  LOG: skipLog,
   CONSOLIDATION: replayConsolidation
 };
 

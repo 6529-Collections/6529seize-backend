@@ -16,6 +16,7 @@ import {
   DeferralReason,
   deferralReason,
   DeferredWrite,
+  DeferredWriteSink,
   deferSubscriptionWrites,
   executorSink
 } from '@/subscription-key-width/subscription-deferred-writes';
@@ -89,10 +90,10 @@ async function splitByKey<R extends { consolidation_key: string }>(
   rows: readonly R[],
   logs: readonly SubscriptionLog[],
   kind: 'AUTO_SUBSCRIPTION' | 'FINAL_ROW',
-  dedupeOf: (row: R) => string
+  dedupeOf: (row: R) => string,
+  sink: DeferredWriteSink = executorSink()
 ): Promise<KeySplit<R>> {
   const reasons = new Map<string, DeferralReason | null>();
-  const sink = executorSink();
   const keys = Array.from(
     new Set([
       ...rows.map((r) => r.consolidation_key),
@@ -138,7 +139,11 @@ async function splitByKey<R extends { consolidation_key: string }>(
   return split;
 }
 
-/** A card's final rows and the build's log lines, split by key. */
+/**
+ * A card's final rows and the build's log lines, split by key. This split
+ * reads outside the write's transaction, because the list is published in
+ * between and the file must hold the same subscribers as the rows.
+ */
 export function splitFinalList(
   rows: readonly NFTFinalSubscription[],
   logs: readonly SubscriptionLog[]
@@ -155,13 +160,16 @@ export async function persistSubscriptions(
   subscriptions: NFTSubscription[],
   logs: SubscriptionLog[]
 ) {
-  const split = await splitByKey(
-    subscriptions,
-    logs,
-    'AUTO_SUBSCRIPTION',
-    (r) => `${r.consolidation_key}|${r.contract}|${r.token_id}`
-  );
   await getDataSource().transaction(async (manager) => {
+    // Read inside the transaction, so a write queued for a key meanwhile
+    // keeps this one behind it.
+    const split = await splitByKey(
+      subscriptions,
+      logs,
+      'AUTO_SUBSCRIPTION',
+      (r) => `${r.consolidation_key}|${r.contract}|${r.token_id}`,
+      manager
+    );
     if (split.rows.length) {
       await manager
         .getRepository(NFTSubscription)
