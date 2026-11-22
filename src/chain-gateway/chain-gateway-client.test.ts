@@ -142,6 +142,15 @@ function withoutNetwork<T extends { network?: string }>(value: T): T {
   return copy;
 }
 
+/** IDENTITY as the identity of the principal a route asked for. */
+function echo(call: Call) {
+  const asked = decodeURIComponent(path(call).split('/')[3] ?? '');
+  return {
+    ...IDENTITY,
+    principalId: asked.startsWith('0x') ? asked : IDENTITY.principalId
+  };
+}
+
 const reads = (calls: Call[]) => calls.filter((c) => path(c) !== '/v1/status');
 
 /** A feed block as the node writes it. */
@@ -215,18 +224,18 @@ describe('ChainGatewayClient reads', () => {
         status: 200,
         json: {
           read: { ...stamp(1200), network },
-          data: { ...IDENTITY, handle },
+          data: { ...IDENTITY, rep: { total: handle, raters: 1 } },
           next: null
         }
       };
     });
-    expect((await client.getIdentityByHandle('alice'))?.handle).toBe(
+    expect((await client.getIdentityByHandle('alice'))?.rep.total).toBe(
       'old-chain'
     );
     network = '0x' + '33'.repeat(32);
     handle = 'new-chain';
     advance(2_500);
-    expect((await client.getIdentityByHandle('alice'))?.handle).toBe(
+    expect((await client.getIdentityByHandle('alice'))?.rep.total).toBe(
       'new-chain'
     );
     expect(calls.filter((c) => path(c) !== '/v1/status')).toHaveLength(2);
@@ -320,13 +329,16 @@ describe('ChainGatewayClient reads', () => {
               height === null ? 51 : 50,
               height ? 'head' : 'finalized'
             ),
-            data: IDENTITY,
+            data: echo(call),
             next: null
           }
         };
       }, 50)
     );
-    expect(await client.getIdentityByPrincipal('0xab')).toEqual(IDENTITY);
+    expect(await client.getIdentityByPrincipal('0xab')).toEqual({
+      ...IDENTITY,
+      principalId: '0xab'
+    });
     expect(reads(calls).map((it) => param(it, 'height'))).toEqual([
       '50',
       '50',
@@ -697,7 +709,7 @@ describe('ChainGatewayClient reads', () => {
         status: 200,
         json: {
           read: { ...stamp(60), height: unpinnedHeight },
-          data: IDENTITY,
+          data: echo(call),
           next: null
         }
       };
@@ -721,7 +733,7 @@ describe('ChainGatewayClient reads', () => {
             status: 200,
             json: {
               read: stamp(Number(param(call, 'height'))),
-              data: IDENTITY,
+              data: echo(call),
               next: null
             }
           }
@@ -801,6 +813,140 @@ describe('ChainGatewayClient reads', () => {
     }
   );
 
+  it.each([
+    [
+      'a principal',
+      (c: ChainGatewayClient) =>
+        c.getIdentityByPrincipal('0x' + 'cd'.repeat(32))
+    ],
+    ['a handle', (c: ChainGatewayClient) => c.getIdentityByHandle('bob')],
+    [
+      'a wallet',
+      (c: ChainGatewayClient) => c.getIdentityByWallet('0x' + '02'.repeat(20))
+    ],
+    [
+      'a legacy id',
+      (c: ChainGatewayClient) =>
+        c.getIdentityByLegacyProfileId('00000000-0000-4000-8000-000000000001')
+    ],
+    [
+      'a wallet among many',
+      (c: ChainGatewayClient) =>
+        c.getIdentitiesByWallets(['0x' + '02'.repeat(20)])
+    ]
+  ])(
+    'refuses an identity other than the one asked for by %s',
+    async (_name, ask) => {
+      const { client } = setup(
+        withStatus(
+          (call) => ({
+            status: 200,
+            json: {
+              read: stamp(10),
+              data:
+                path(call) === '/v1/identities/by-wallets'
+                  ? { ['0x' + '02'.repeat(20)]: IDENTITY }
+                  : {
+                      ...IDENTITY,
+                      legacyId: '00000000-0000-4000-8000-000000000002'
+                    },
+              next: null
+            }
+          }),
+          10
+        )
+      );
+      await expect(ask(client)).rejects.toMatchObject({ code: 'bad_answer' });
+    }
+  );
+
+  it('takes an identity that is the one asked for, as the node normalises it', async () => {
+    const legacy = '00000000-0000-4000-8000-000000000001';
+    const { client } = setup(
+      withStatus(
+        () => ({
+          status: 200,
+          json: {
+            read: stamp(10),
+            data: { ...IDENTITY, legacyId: legacy },
+            next: null
+          }
+        }),
+        10
+      )
+    );
+    expect(await client.getIdentityByHandle(' ALICE ')).not.toBeNull();
+    expect(
+      await client.getIdentityByWallet(
+        IDENTITY.wallets[0].toUpperCase().replace('0X', '0x')
+      )
+    ).not.toBeNull();
+    expect(
+      await client.getIdentityByLegacyProfileId(
+        legacy.replace(/-/g, '').toUpperCase()
+      )
+    ).not.toBeNull();
+    expect(
+      await client.getIdentityByPrincipal(
+        IDENTITY.principalId.toUpperCase().replace('0X', '0x')
+      )
+    ).not.toBeNull();
+  });
+
+  it('refuses a read of another chain than the one asked for', async () => {
+    const { client, calls } = setup(
+      withStatus(
+        () => ({
+          status: 200,
+          json: { read: stamp(10), data: { level: 1 }, next: null }
+        }),
+        10
+      )
+    );
+    await expect(
+      client.read('/v1/levels/0x01', {}, { height: 10, network: OTHER_NETWORK })
+    ).rejects.toMatchObject({ code: 'wrong_network' });
+    // Not served from the cache either, once read.
+    await client.read('/v1/levels/0x01', {}, { height: 10 });
+    await expect(
+      client.read('/v1/levels/0x01', {}, { height: 10, network: OTHER_NETWORK })
+    ).rejects.toMatchObject({ code: 'wrong_network' });
+    await expect(
+      client.read('/v1/levels/0x01', {}, { at: 'head', network: OTHER_NETWORK })
+    ).rejects.toMatchObject({ code: 'wrong_network' });
+    expect(reads(calls)).toHaveLength(2);
+  });
+
+  it('reads a free handle with no principal, since or reservation', async () => {
+    const { client } = setup(
+      withStatus(
+        () => ({
+          status: 200,
+          json: {
+            read: stamp(10),
+            data: {
+              handle: 'bob',
+              valid: true,
+              available: true,
+              status: 'free'
+            },
+            next: null
+          }
+        }),
+        10
+      )
+    );
+    expect(await client.getHandle('bob')).toEqual({
+      handle: 'bob',
+      valid: true,
+      available: true,
+      status: 'free',
+      principalId: null,
+      since: null,
+      reservedUntil: null
+    });
+  });
+
   it('refuses an empty 200 as an answer it cannot read', async () => {
     const { client } = setup(withStatus(() => ({ status: 200 }), 10));
     await expect(client.getLevel('0x01', { height: 10 })).rejects.toMatchObject(
@@ -877,7 +1023,7 @@ describe('ChainGatewayClient reads', () => {
     let network = OTHER_NETWORK;
     const { client } = setup(
       withStatus(
-        () => ({
+        (call) => ({
           status: network === OTHER_NETWORK ? 404 : 200,
           json:
             network === OTHER_NETWORK
@@ -885,7 +1031,7 @@ describe('ChainGatewayClient reads', () => {
                   read: { ...stamp(10), network },
                   error: { code: 'not_found', message: 'none' }
                 }
-              : { read: stamp(10), data: IDENTITY, next: null }
+              : { read: stamp(10), data: echo(call), next: null }
         }),
         10
       )
@@ -895,7 +1041,10 @@ describe('ChainGatewayClient reads', () => {
       status: 404
     });
     network = stamp(10).network;
-    expect(await client.getIdentityByPrincipal('0xab')).toEqual(IDENTITY);
+    expect(await client.getIdentityByPrincipal('0xab')).toEqual({
+      ...IDENTITY,
+      principalId: '0xab'
+    });
   });
 
   it('refuses another chain on the unpinned read after height_gone, and on the feed', async () => {
@@ -1005,10 +1154,13 @@ describe('ChainGatewayClient reads', () => {
       }
       return {
         status: 200,
-        json: { read: stamp(unpinnedAt), data: IDENTITY, next: null }
+        json: { read: stamp(unpinnedAt), data: echo(call), next: null }
       };
     });
-    expect(await client.getIdentityByPrincipal('0xAB')).toEqual(IDENTITY);
+    expect(await client.getIdentityByPrincipal('0xAB')).toEqual({
+      ...IDENTITY,
+      principalId: '0xab'
+    });
     const reads = calls.filter((c) => path(c) !== '/v1/status');
     expect(reads.map((c) => param(c, 'height'))).toEqual(['50', '50', null]);
     expect(calls.filter((c) => path(c) === '/v1/status')).toHaveLength(2);
@@ -1042,7 +1194,7 @@ describe('ChainGatewayClient reads', () => {
           status: 200,
           json: {
             read: stamp(1001),
-            data: kind === 'wallets' ? { [wallet]: IDENTITY } : IDENTITY,
+            data: kind === 'wallets' ? { [wallet]: IDENTITY } : echo(call),
             next: null
           }
         };
@@ -1054,7 +1206,7 @@ describe('ChainGatewayClient reads', () => {
       } else {
         expect(
           await client.getIdentityByPrincipal('0x01', { height: 1001 })
-        ).toEqual(IDENTITY);
+        ).toEqual({ ...IDENTITY, principalId: '0x01' });
       }
       expect(reads(calls).map((it) => param(it, 'height'))).toEqual([
         '1001',
@@ -1080,10 +1232,13 @@ describe('ChainGatewayClient reads', () => {
       }
       return {
         status: 200,
-        json: { read: stamp(1001), data: IDENTITY, next: null }
+        json: { read: stamp(1001), data: echo(call), next: null }
       };
     });
-    expect(await client.getIdentityByPrincipal('0x01')).toEqual(IDENTITY);
+    expect(await client.getIdentityByPrincipal('0x01')).toEqual({
+      ...IDENTITY,
+      principalId: '0x01'
+    });
     expect(reads(calls).map((it) => param(it, 'height'))).toEqual([
       '1001',
       '1001',
@@ -1109,7 +1264,7 @@ describe('ChainGatewayClient reads', () => {
         status: 200,
         json: {
           read: stamp(height === null ? 1212 : Number(height)),
-          data: IDENTITY,
+          data: echo(call),
           next: null
         }
       };
@@ -1143,7 +1298,7 @@ describe('ChainGatewayClient reads', () => {
         status: 200,
         json: {
           read: { ...stamp(Number(param(call, 'height'))), network },
-          data: IDENTITY,
+          data: echo(call),
           next: null
         }
       };
@@ -1189,7 +1344,7 @@ describe('ChainGatewayClient reads', () => {
             status: 200,
             json: {
               read: stamp(Number(param(call, 'height'))),
-              data: IDENTITY,
+              data: echo(call),
               next: null
             }
           }
@@ -1244,7 +1399,10 @@ describe('ChainGatewayClient reads', () => {
         json: {
           read: stamp(77),
           data: Object.fromEntries(
-            asked.map((w, i) => [w, i % 2 === 0 ? IDENTITY : null])
+            asked.map((w, i) => [
+              w,
+              i % 2 === 0 ? { ...IDENTITY, wallets: [w] } : null
+            ])
           ),
           next: null
         }
@@ -1255,7 +1413,7 @@ describe('ChainGatewayClient reads', () => {
       wallets[0]
     ]);
     expect(Object.keys(result)).toHaveLength(150);
-    expect(result[wallets[0]]).toEqual(IDENTITY);
+    expect(result[wallets[0]]).toEqual({ ...IDENTITY, wallets: [wallets[0]] });
     expect(result[wallets[1]]).toBeNull();
     const reads = calls.filter((c) => path(c) === '/v1/identities/by-wallets');
     expect(reads).toHaveLength(2);
@@ -1736,7 +1894,7 @@ describe('ChainGatewayClient reads', () => {
         status: 200,
         json: {
           read: stamp(Number(param(call, 'height'))),
-          data: IDENTITY,
+          data: echo(call),
           next: null
         }
       };
@@ -1747,6 +1905,49 @@ describe('ChainGatewayClient reads', () => {
     await client.getIdentityByPrincipal('0xab');
     const read = reads(calls).filter((it) => path(it) !== '/v1/feed');
     expect(read.map((it) => param(it, 'height'))).toEqual(['1000']);
+  });
+
+  it("gives the head at the height a feed page was read at, while it's cached", async () => {
+    const { client } = setup((call) =>
+      path(call) === '/v1/status'
+        ? status(995)
+        : {
+            status: 200,
+            json: {
+              read: stamp(1000),
+              data: { through: 1000, blocks: [] },
+              next: '1001'
+            }
+          }
+    );
+    expect((await client.getHead()).finalizedHeight).toBe(995);
+    await client.getChanges(990);
+    expect(await client.getHead()).toEqual(
+      expect.objectContaining({
+        finalizedHeight: 1000,
+        nodeFinalizedHeight: 995,
+        finalizedTime: null
+      })
+    );
+  });
+
+  it('refuses a feed page of another chain than the cursor is of', async () => {
+    const { client } = setup(
+      withStatus(() => ({
+        status: 200,
+        json: {
+          read: stamp(130),
+          data: { through: 120, blocks: [] },
+          next: '121'
+        }
+      }))
+    );
+    await expect(
+      client.getChanges(120, { network: OTHER_NETWORK })
+    ).rejects.toMatchObject({ code: 'wrong_network' });
+    expect(
+      (await client.getChanges(120, { network: stamp(1).network })).nextHeight
+    ).toBe(121);
   });
 
   it('refuses a cursor that is not one before asking', async () => {

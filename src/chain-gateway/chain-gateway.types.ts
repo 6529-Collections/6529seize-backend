@@ -35,6 +35,12 @@ export interface ChainReadOptions {
   readonly height?: number;
   /** `head` reads the unfinalized head (never cached, never pinned). */
   readonly at?: 'finalized' | 'head';
+  /**
+   * The chain the read must be of (a walk pinned to one chain): an answer
+   * of another throws `wrong_network`, so a relaunch is never crossed
+   * silently.
+   */
+  readonly network?: string;
 }
 
 /**
@@ -158,7 +164,9 @@ export interface ChainHandle {
   readonly handle: string;
   readonly valid: boolean;
   readonly available: boolean;
-  readonly status: 'free' | 'claimed' | 'reserved' | 'invalid';
+  readonly status: 'free' | 'claimed' | 'reserved' | 'invalid' | 'other';
+  /** For an invalid handle: the rule it breaks. */
+  readonly rule?: string;
   readonly principalId: string | null;
   readonly since: number | null;
   /** When a reservation ends (a decimal string), for a reserved handle. */
@@ -375,8 +383,10 @@ export interface ChainFeedPage {
   readonly next: ChainFeedCursor;
   /**
    * The next height to read whole (`through + 1`, never below the height
-   * asked from): what a caller keeps between runs. Reading from it again
-   * repeats at most the block a page ended inside.
+   * asked from): what a caller keeps between runs, rather than `next`.
+   * Reading from it again repeats at most the block a page ended inside.
+   * A `height:index` cursor holds only for the families filter it was
+   * read with: never pass it with another.
    */
   readonly nextHeight: number;
   /**
