@@ -7,6 +7,7 @@ import { sqlExecutor } from '../sql-executor';
 import { json2csv } from 'json-2-csv';
 import {
   GetObjectCommand,
+  HeadObjectCommand,
   PutObjectCommand,
   S3Client
 } from '@aws-sdk/client-s3';
@@ -84,7 +85,7 @@ async function dumpWithManifest() {
   for (const read of reads) {
     if ('skip' in read) {
       logger.warn(`[TABLE ${read.table}] : [SKIPPED] : [${read.skip}]`);
-      files.push(skippedEntry(read.table, read.skip, previous));
+      files.push(await skippedEntry(read.table, read.skip, previous));
       continue;
     }
     files.push({
@@ -113,19 +114,28 @@ async function dumpWithManifest() {
 /**
  * A skipped table's entry. Its CSV is the one the previous manifest
  * described (directly, or carried forward itself), so that description
- * stays, with the time that file was written.
+ * stays, with the time that file was written. If the CSV was written after
+ * that manifest went up (a run with the flag off, or by hand), the
+ * description no longer fits it, and the entry says only why it was skipped.
  */
-function skippedEntry(
+async function skippedEntry(
   table: string,
   skipped: string,
-  previous: Manifest | null
-): ManifestEntry {
+  previous: PreviousManifest | null
+): Promise<ManifestEntry> {
   const key = objectKey(`${table}.csv`);
-  const earlier = previous?.files.find(
+  const earlier = previous?.manifest.files.find(
     (entry): entry is DumpedEntry =>
       entry.table === table && entry.key === key && 'sha256' in entry
   );
   if (!earlier) return { table, key, skipped };
+  const written = await lastModified(key);
+  if (!written || !previous!.lastModified || written > previous!.lastModified) {
+    logger.warn(
+      `[TABLE ${table}] : [CSV CHANGED SINCE THE PREVIOUS MANIFEST] : [NOT CARRIED]`
+    );
+    return { table, key, skipped };
+  }
   return {
     table,
     key,
@@ -135,13 +145,36 @@ function skippedEntry(
     generated_at:
       'generated_at' in earlier
         ? String(earlier.generated_at)
-        : previous!.generated_at,
+        : previous!.manifest.generated_at,
     skipped
   };
 }
 
+/** When the object was last written, or null when it is missing. */
+async function lastModified(key: string): Promise<Date | null> {
+  try {
+    const head = await s3.send(
+      new HeadObjectCommand({
+        Bucket: process.env.AWS_6529_IMAGES_BUCKET_NAME!,
+        Key: key
+      })
+    );
+    return head.LastModified ?? null;
+  } catch (error: any) {
+    if (error?.name !== 'NotFound' && error?.name !== 'NoSuchKey')
+      logger.warn(`[${key}] : [UNREADABLE] : [${error?.message ?? error}]`);
+    return null;
+  }
+}
+
+interface PreviousManifest {
+  readonly manifest: Manifest;
+  /** When it went up; every CSV it describes was written before. */
+  readonly lastModified: Date | null;
+}
+
 /** The manifest the last run wrote, or null when there is none to read. */
-async function readPreviousManifest(): Promise<Manifest | null> {
+async function readPreviousManifest(): Promise<PreviousManifest | null> {
   try {
     const response = await s3.send(
       new GetObjectCommand({
@@ -151,7 +184,9 @@ async function readPreviousManifest(): Promise<Manifest | null> {
     );
     const body = await response.Body?.transformToString();
     const manifest = body ? JSON.parse(body) : null;
-    return Array.isArray(manifest?.files) ? manifest : null;
+    return Array.isArray(manifest?.files)
+      ? { manifest, lastModified: response.LastModified ?? null }
+      : null;
   } catch (error: any) {
     if (error?.name !== 'NoSuchKey')
       logger.warn(

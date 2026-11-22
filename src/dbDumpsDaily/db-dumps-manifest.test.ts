@@ -7,7 +7,8 @@ const send = jest.fn();
 jest.mock('@aws-sdk/client-s3', () => ({
   S3Client: jest.fn(() => ({ send: (command: unknown) => send(command) })),
   PutObjectCommand: jest.fn((input: unknown) => ({ input, put: true })),
-  GetObjectCommand: jest.fn((input: unknown) => ({ input, get: true }))
+  GetObjectCommand: jest.fn((input: unknown) => ({ input, get: true })),
+  HeadObjectCommand: jest.fn((input: unknown) => ({ input, head: true }))
 }));
 jest.mock('../sentry.context', () => ({
   wrapLambdaHandler: (fn: unknown) => fn
@@ -187,9 +188,18 @@ describe('dbDumpsDaily', () => {
     ]);
   });
 
-  /** The manifest a GetObject finds, or a missing object. */
-  function previousManifest(manifest: object | null) {
+  // When the previous manifest went up, and when each CSV was last written.
+  const MANIFEST_WRITTEN = new Date('2026-11-24T03:01:05Z');
+  const CSV_WRITTEN = new Date('2026-11-24T03:01:04Z');
+
+  /** The manifest a GetObject finds (or a missing object), and the CSVs' times. */
+  function previousManifest(
+    manifest: object | null,
+    csvWritten: Date = CSV_WRITTEN
+  ) {
     send.mockImplementation(async (command) => {
+      if (command.head)
+        return { $metadata: { httpStatusCode: 200 }, LastModified: csvWritten };
       if (!command.get) return { $metadata: { httpStatusCode: 200 } };
       if (!manifest)
         throw Object.assign(new Error('The specified key does not exist.'), {
@@ -197,6 +207,7 @@ describe('dbDumpsDaily', () => {
         });
       return {
         $metadata: { httpStatusCode: 200 },
+        LastModified: MANIFEST_WRITTEN,
         Body: { transformToString: async () => JSON.stringify(manifest) }
       };
     });
@@ -274,6 +285,32 @@ describe('dbDumpsDaily', () => {
     expect(manifest.files[0]).toEqual({
       ...delegationsEntry,
       generated_at: '2026-11-20T03:00:00.000Z',
+      skipped: expect.stringContaining('has not finished a full pass')
+    });
+  });
+
+  it('carries nothing over a CSV written after the previous manifest', async () => {
+    process.env.FEATURE_DB_DUMPS_MANIFEST = 'true';
+    answer({ next_height: 4521, sync_phase: 'DELEGATIONS', updated_at: NOW });
+    // A run with the flag off rewrote the CSV the next day.
+    previousManifest(
+      {
+        version: 1,
+        generated_at: '2026-11-24T03:00:00.000Z',
+        complete: true,
+        files: [delegationsEntry]
+      },
+      new Date('2026-11-25T01:00:10Z')
+    );
+
+    await invoke();
+
+    const manifest = JSON.parse(
+      uploads()['db-dumps/production/manifest.json'].body
+    );
+    expect(manifest.files[0]).toEqual({
+      table: 'delegations',
+      key: 'db-dumps/production/delegations.csv',
       skipped: expect.stringContaining('has not finished a full pass')
     });
   });
