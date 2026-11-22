@@ -45,7 +45,7 @@ import { Profile, ProfileClassification } from '@/entities/IProfile';
 import { ids } from '@/ids';
 import { profilesDb } from '@/profiles/profiles.db';
 import { profileWavesDb } from '@/profiles/profile-waves.db';
-import { NULL_ADDRESS } from '@/constants';
+import { getUserMediaOrigin, NULL_ADDRESS } from '@/constants';
 import { findEnsForAddress } from '@/ens-lookup';
 import { helpBotCreditsService } from '@/help-bot/help-bot-credits.service';
 import { Logger } from '@/logging';
@@ -325,7 +325,7 @@ export class IdentitiesService {
       })
     );
     if (uploadedScaledImage.$metadata.httpStatusCode == 200) {
-      return `https://d3lqz0a4bldqgf.cloudfront.net/${key}?d=${Date.now()}`;
+      return `${getUserMediaOrigin()}/${key}?d=${Date.now()}`;
     }
     throw new Error('Failed to upload image');
   }

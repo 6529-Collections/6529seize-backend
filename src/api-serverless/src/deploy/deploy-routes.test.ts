@@ -139,10 +139,10 @@ describe('deploy UI dispatch route', () => {
   it('rejects a production-only service on staging', async () => {
     await expect(
       dispatchHandler(
-        makeRequest({ ...stagingRequest, services: ['mediaResizerLoop'] }),
+        makeRequest({ ...stagingRequest, services: ['newsletterLoop'] }),
         makeResponse() as unknown as Response
       )
-    ).rejects.toThrow('mediaResizerLoop cannot be deployed to staging');
+    ).rejects.toThrow('newsletterLoop cannot be deployed to staging');
 
     expect(github.dispatchDeploy).not.toHaveBeenCalled();
   });
