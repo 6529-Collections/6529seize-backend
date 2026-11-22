@@ -22,6 +22,16 @@ describe('subscription log lines', () => {
     expect(
       parseCardRowEvent('Updated subscription count for Meme #500 to x3', 500)
     ).toEqual({ kind: 'COUNT_SET', count: 3 });
+    expect(
+      parseCardRowEvent(
+        'Added to Final Subscription for Meme #500 on 2026-11-17',
+        500,
+        'Airdrop Address: 0x01 - Subscription Count: x3 - Balance: 1 ETH'
+      )
+    ).toEqual({ kind: 'BUILD_LISTED', count: 3 });
+    expect(
+      parseCardRowEvent('No Balance for Meme #500 on 2026-11-17', 500)
+    ).toEqual({ kind: 'BUILD_LISTED', count: null });
     expect(parseCardRowEvent('Subscribed for Meme #5000', 500)).toBeNull();
     expect(parseCardRowEvent('Subscribed for Meme #501', 500)).toBeNull();
   });

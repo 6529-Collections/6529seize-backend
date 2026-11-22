@@ -191,10 +191,44 @@ function laterLogs(legacy: LegacyOutputs) {
   return new Map(Object.entries(legacy.logs));
 }
 
+/**
+ * Run 1's airdrop address per key: the legacy build's own line where it has
+ * one (pinned, like balances), else the route as read. The route can move
+ * after the build (a delegation, or the day's TDH), so `drifted` counts the
+ * keys where it no longer gives the build's address.
+ */
+function legacyAirdrops(params: ParityParams): {
+  byKey: Map<string, string | null>;
+  drifted: number;
+} {
+  const byKey = new Map<string, string | null>(
+    params.snapshot.subscribers.map((s) => [
+      s.key,
+      s.airdrop?.airdropAddress ?? null
+    ])
+  );
+  let drifted = 0;
+  if (params.pinBalances ?? true) {
+    for (const [key, decision] of Object.entries(
+      params.legacy.buildDecisions
+    )) {
+      if (decision.kind !== 'ADDED') {
+        continue;
+      }
+      if (byKey.has(key) && byKey.get(key) !== decision.airdropAddress) {
+        drifted++;
+      }
+      byKey.set(key, decision.airdropAddress);
+    }
+  }
+  return { byKey, drifted };
+}
+
 function airdropResolver(
   params: ParityParams,
   mapper: KeyMapper,
-  ties: Map<string, ResolvedAirdropTarget['ties']>
+  ties: Map<string, ResolvedAirdropTarget['ties']>,
+  legacy: Map<string, string | null>
 ): (key: string) => AirdropTarget {
   if (params.run === 'run2') {
     const chain = params.chain;
@@ -220,16 +254,10 @@ function airdropResolver(
       return resolved;
     };
   }
-  const byKey = new Map(
-    params.snapshot.subscribers.map((s) => [s.key, s.airdrop])
-  );
-  return (key) => {
-    const airdrop = byKey.get(key);
-    return {
-      airdropAddress: airdrop?.airdropAddress ?? null,
-      tdhWallet: airdrop?.tdhWallet ?? null
-    };
-  };
+  return (key) => ({
+    airdropAddress: legacy.get(key) ?? null,
+    tdhWallet: null
+  });
 }
 
 interface FinalListContext {
@@ -330,12 +358,13 @@ export function compareFinalList(params: ParityParams): {
     pinnedBalances: pin ? pinnedBalances(params.legacy, list.rows) : undefined
   });
   const ties = new Map<string, ResolvedAirdropTarget['ties']>();
+  const airdrops = legacyAirdrops(params);
   const build = buildFinalList({
     contract: params.snapshot.contract,
     tokenId: params.snapshot.tokenId,
     buildAtMs: params.buildAtMs,
     subscribers: inputs.inputs,
-    resolveAirdrop: airdropResolver(params, mapper, ties)
+    resolveAirdrop: airdropResolver(params, mapper, ties, airdrops.byKey)
   });
   const context: FinalListContext = { build, inputs, mapper, ties };
 
@@ -439,6 +468,11 @@ export function compareFinalList(params: ParityParams): {
   }
   if (ties.size) {
     notes.push(`ties left to the database's order: ${ties.size} keys`);
+  }
+  if (params.run === 'run1' && airdrops.drifted) {
+    notes.push(
+      `airdrop route moved after the build for ${airdrops.drifted} keys (pinned to the build)`
+    );
   }
 
   const report: ParityReport = {

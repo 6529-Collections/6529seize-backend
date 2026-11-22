@@ -159,6 +159,42 @@ describe('toBuildInputs', () => {
     expect(notes.get(K1)).toContain('MODE_ROLLED_BACK');
   });
 
+  it('takes an earlier build line as a subscribed row when nothing else is left', () => {
+    const snapshot = paritySnapshot();
+    const k1 = snapshot.subscribers.find((s) => s.key === K1)!;
+    const { inputs, notes } = toBuildInputs(
+      {
+        ...snapshot,
+        subscribers: [
+          {
+            ...k1,
+            upcoming: null,
+            logs: [
+              {
+                id: 1,
+                createdAtMs: CUTOFF - 86_400_000 + 60_000,
+                log: `Added to Final Subscription for Meme #${CARD} on 2026-11-24`,
+                additionalInfo: `Airdrop Address: ${K1} - Subscription Count: x2 - Balance: 0.5 ETH`
+              }
+            ]
+          }
+        ]
+      },
+      { buildAtMs: BUILD_AT }
+    );
+    expect(inputs[0].card).toEqual({
+      subscribed: true,
+      subscribedCount: 2,
+      automaticSubscription: false,
+      updatedAtMs: null
+    });
+    expect(notes.get(K1)).toEqual([
+      'CARD_FROM_LOGS',
+      'ROW_FLAG_UNKNOWN',
+      'ROW_TIME_UNKNOWN'
+    ]);
+  });
+
   it('uses the legacy build balance when pinned', () => {
     const { inputs } = toBuildInputs(paritySnapshot(), {
       buildAtMs: BUILD_AT,

@@ -179,7 +179,7 @@ function cardEvents(
     if (entry.createdAtMs >= beforeMs) {
       continue;
     }
-    const event = parseCardRowEvent(entry.log, tokenId);
+    const event = parseCardRowEvent(entry.log, tokenId, entry.additionalInfo);
     if (event) {
       events.push({ at: entry.createdAtMs, event, entry });
     }
@@ -306,10 +306,14 @@ function cardFromEvents(
 ): { subscribed: boolean; count: number } | null {
   let card: { subscribed: boolean; count: number } | null = null;
   for (const { event, entry } of newestFirst.slice().reverse()) {
-    const count: number =
-      event.kind === 'COUNT_SET'
-        ? event.count
-        : (countFromInfo(entry.additionalInfo) ?? card?.count ?? 1);
+    let count: number;
+    if (event.kind === 'COUNT_SET') {
+      count = event.count;
+    } else if (event.kind === 'BUILD_LISTED') {
+      count = card?.count ?? event.count ?? 1;
+    } else {
+      count = countFromInfo(entry.additionalInfo) ?? card?.count ?? 1;
+    }
     card = {
       subscribed: event.kind !== 'UNSUBSCRIBED',
       count
@@ -352,14 +356,15 @@ function cardAt(
   if (!card) {
     return null;
   }
-  const flag = cardRowAutomaticFlag(events.map((e) => e.event));
+  const rowEvents = events.filter((e) => e.event.kind !== 'BUILD_LISTED');
+  const flag = cardRowAutomaticFlag(rowEvents.map((e) => e.event));
   if (flag.automatic === null) {
     notes.push('ROW_FLAG_UNKNOWN');
   }
   if (flag.ambiguous) {
     notes.push('ROW_FLAG_AMBIGUOUS');
   }
-  const newest = events[0]?.at ?? null;
+  const newest = rowEvents[0]?.at ?? null;
   if (newest === null) {
     notes.push('ROW_TIME_UNKNOWN');
   }

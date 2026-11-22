@@ -17,12 +17,17 @@ export type CardRowEvent =
   | { readonly kind: 'UNSUBSCRIBED' }
   | { readonly kind: 'COUNT_SET'; readonly count: number }
   | { readonly kind: 'MODE_SUBSCRIBED' }
-  | { readonly kind: 'MODE_UNSUBSCRIBED' };
+  /**
+   * A daily build's line for the card. Builds write one only for subscribed
+   * rows; `count` is the listed count when the row was added.
+   */
+  | { readonly kind: 'BUILD_LISTED'; readonly count: number | null };
 
 /** A log line about one card's row, or null. */
 export function parseCardRowEvent(
   log: string,
-  tokenId: number
+  tokenId: number,
+  additionalInfo: string | null = null
 ): CardRowEvent | null {
   const id = String(tokenId);
   switch (log) {
@@ -38,10 +43,33 @@ export function parseCardRowEvent(
       break;
   }
   const count = new RegExp(
-    `^Updated subscription count for Meme #${id} to x(\\d+)$`
+    String.raw`^Updated subscription count for Meme #${id} to x(\d+)$`
   ).exec(log);
   if (count) {
     return { kind: 'COUNT_SET', count: Number(count[1]) };
+  }
+  return parseBuildListed(log, id, additionalInfo);
+}
+
+const BUILD_DATE = String.raw`\d{4}-\d{2}-\d{2}`;
+
+function parseBuildListed(
+  log: string,
+  id: string,
+  additionalInfo: string | null
+): CardRowEvent | null {
+  const card = `Meme #${id} on ${BUILD_DATE}`;
+  if (new RegExp(`^Added to Final Subscription for ${card}$`).test(log)) {
+    const m = /Subscription Count: x(\d+)/.exec(additionalInfo ?? '');
+    return { kind: 'BUILD_LISTED', count: m ? Number(m[1]) : null };
+  }
+  const excluded = [
+    `^Insufficient Balance for ${card} - Not Added to Final Subscription$`,
+    `^No Balance for ${card}$`,
+    `^No Subscription Count for ${card} - Not Added to Final Subscription$`
+  ];
+  if (excluded.some((pattern) => new RegExp(pattern).test(log))) {
+    return { kind: 'BUILD_LISTED', count: null };
   }
   return null;
 }

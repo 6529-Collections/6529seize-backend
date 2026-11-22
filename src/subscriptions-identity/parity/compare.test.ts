@@ -248,6 +248,27 @@ describe('runParity', () => {
     ]);
   });
 
+  it('pins run 1 airdrop addresses to the build lines', () => {
+    const snapshot = paritySnapshot();
+    const { report } = compareFinalList({
+      snapshot: {
+        ...snapshot,
+        subscribers: snapshot.subscribers.map((s) =>
+          s.key === K1 && s.airdrop
+            ? { ...s, airdrop: { ...s.airdrop, airdropAddress: D9 } }
+            : s
+        )
+      },
+      legacy: legacyOutputs(),
+      run: 'run1',
+      buildAtMs: BUILD_AT
+    });
+    expect(report.verdict).toBe('MATCH');
+    expect(report.notes).toContain(
+      'airdrop route moved after the build for 1 keys (pinned to the build)'
+    );
+  });
+
   it('maps a list key that a consolidation moved after the build', () => {
     const single = K2.split('-')[0];
     expect(
