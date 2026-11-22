@@ -8,12 +8,21 @@ import {
 import {
   e2eeEd25519Sign,
   E2eeRecordGrantProof,
+  E2eeRecordKind,
   E2eeSignedRecordEvent
 } from '@/e2ee/relay/e2ee-record-event';
 import { E2eeRelayIdentity } from '@/e2ee/relay/e2ee-relay-config';
 import { Logger } from '@/logging';
 
 const logger = Logger.get('E2EE_RELAY_POOL');
+
+/** The newest events read to find a stream's newest record. */
+const NEWEST_PAGE = 32;
+
+/** A record of the stream's hash chain: anything but a DEL (kind 12). */
+export function isE2eeChainRecord(item: CrpItem): boolean {
+  return item.event.kind !== E2eeRecordKind.DEL;
+}
 const STREAM_PAGE = 500;
 /**
  * A connection is replaced after this long, so its WELCOME `head` (the
@@ -221,12 +230,21 @@ export class E2eeRelayPool {
     return connection.getPayload(sha256);
   }
 
-  /** A stream's newest event on one relay, or null when it holds none. */
+  /**
+   * A stream's newest record on one relay, or null when it holds none.
+   * DELs are passed over: they sit outside the hash chain and carry none of
+   * the stream's content, so the newest event may well be one.
+   */
   async newest(url: string, wave: string): Promise<CrpItem | null> {
     const connection = await this.connection(url);
     // HIST without `after` answers the newest page.
-    const page = await connection.history(wave, null, 1);
-    return page.items[page.items.length - 1] ?? null;
+    const page = await connection.history(wave, null, NEWEST_PAGE);
+    let records = page.items.filter(isE2eeChainRecord);
+    if (!records.length && page.items.length >= NEWEST_PAGE) {
+      // A whole page of DELs: read the stream from its start.
+      records = (await this.stream(url, wave)).filter(isE2eeChainRecord);
+    }
+    return records[records.length - 1] ?? null;
   }
 
   /**

@@ -27,7 +27,9 @@ import {
   e2eeEntryDigest,
   e2eeRevokeDigest
 } from '@/e2ee/e2ee-digests';
+import { E2EE_RETENTION } from '@/e2ee/e2ee.constants';
 import { E2eeModerationRecorder } from '@/e2ee/relay/e2ee-moderation-records';
+import { E2EE_MODERATION_INBOX } from '@/e2ee/relay/e2ee-moderation-seal';
 import { E2EE_RECORD_TABLES } from '@/e2ee/relay/e2ee-record-tables';
 import {
   E2eeRecordRowReader,
@@ -878,6 +880,77 @@ describeWithSeed('e2ee relay records against MySQL', SEEDS, () => {
     await emptyTables();
     expect((await rebuild('write')).ok).toBe(true);
     expect(await answers(ids)).toEqual(before);
+  });
+
+  it('prunes only the reports it locked, and DELs only those', async () => {
+    const ids = await story();
+    const report = (notes: string) =>
+      blobs.report('pb', {
+        group: ids.group,
+        epoch: 1,
+        body: randomBytes(64).toString('base64'),
+        signature: `0x${'00'.repeat(64)}`,
+        sender_device_key: ids.a,
+        reporter_device_key: ids.b,
+        reason: ApiE2eeReportCategory.Doxxing,
+        notes
+      });
+    const held = await report('held while the prune runs');
+    const expired = await report('expired');
+    await publisher.settled();
+    // A moderator's hold on one report, not yet committed when the prune
+    // runs past retention.
+    let locked!: () => void;
+    const holding = new Promise<void>((resolve) => (locked = resolve));
+    let release!: () => void;
+    const released = new Promise<void>((resolve) => (release = resolve));
+    const hold = sqlExecutor.executeNativeQueriesInTransaction(
+      async (connection) => {
+        await sqlExecutor.execute(
+          `update e2ee_reports set on_hold = true where id = :id`,
+          { id: held.id },
+          { wrappedConnection: connection }
+        );
+        locked();
+        await released;
+      }
+    );
+    await holding;
+    const prune = db.pruneExpiredReports(
+      NOW + E2EE_RETENTION.reportsMs + 1,
+      100
+    );
+    const first = await Promise.race([
+      prune.then(() => 'pruned'),
+      new Promise((resolve) => setTimeout(() => resolve('waited'), 3000))
+    ]);
+    release();
+    await hold;
+    expect(await prune).toBe(1);
+    const remaining = await sqlExecutor.execute<{ id: string }>(
+      `select id from e2ee_reports where id in (:ids)`,
+      { ids: [held.id, expired.id] }
+    );
+    expect(remaining.map((row) => row.id)).toEqual([held.id]);
+    const items = await sqlExecutor.execute<{
+      pos: number | string;
+      item_key: string;
+    }>(
+      `select pos, item_key from e2ee_record_items where item_key in (:keys)`,
+      { keys: [`e2ee_reports:${held.id}`, `e2ee_reports:${expired.id}`] }
+    );
+    const posOf = (id: string) =>
+      Number(items.find((item) => item.item_key === `e2ee_reports:${id}`)!.pos);
+    const queued = (
+      await sqlExecutor.execute<{ positions: string }>(
+        `select positions from e2ee_relay_deletions where wave = :wave`,
+        { wave: `md/${E2EE_MODERATION_INBOX}` }
+      )
+    ).flatMap((row) => JSON.parse(row.positions) as number[]);
+    expect(queued).toContain(posOf(expired.id));
+    expect(queued).not.toContain(posOf(held.id));
+    // The prune passed over the row being held instead of waiting on it.
+    expect(first).toBe('pruned');
   });
 
   it('names what keeps failing, with the last error; verify calls it lagging', async () => {

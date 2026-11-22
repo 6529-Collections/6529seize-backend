@@ -68,16 +68,23 @@ export class E2eeModerationRecorder {
 
   /**
    * Items the delivery service deleted or expired outside a record batch
-   * (its prunes): DELs are queued for the records that carry them. Never
-   * throws, and does nothing while records are off.
+   * (its prunes): DELs are queued for the records that carry them, in the
+   * deleting transaction when `connection` is given. Never throws, and
+   * does nothing while records are off.
    */
   async deleted(
     family: E2eeRecordFamily,
     owner: string,
-    keys: readonly string[]
+    keys: readonly string[],
+    connection?: ConnectionWrapper<any>
   ): Promise<void> {
     try {
-      await this.deps().publisher.queueDeletion(family, owner, keys);
+      await this.deps().publisher.queueDeletion(
+        family,
+        owner,
+        keys,
+        connection
+      );
     } catch (error) {
       logger.warn(
         `[DEL] ${family}/${owner} not queued: ${(error as Error).message}`

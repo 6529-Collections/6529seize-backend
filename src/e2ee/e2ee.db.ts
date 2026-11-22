@@ -1989,27 +1989,38 @@ export class E2eeDb extends LazyDbAccessCompatibleService {
     await this.pruneExpiredReports(nowMs, limit);
   }
 
-  /** Reports older than the retention window and not on hold. */
+  /**
+   * Reports older than the retention window and not on hold. The rows are
+   * locked first, and one a moderator is holding at that moment is left
+   * for a later run, so a hold either lands before the prune (and keeps
+   * the report and its records) or finds the report gone. Only the reports
+   * deleted here get a DEL, queued in the same transaction.
+   */
   async pruneExpiredReports(nowMs: number, limit: number): Promise<number> {
-    const expired = await this.many<{ id: string }>(
-      `select id from ${E2EE_REPORTS_TABLE}
-       where on_hold = false and created_at < :cutoff limit :limit`,
-      { cutoff: nowMs - E2EE_RETENTION.reportsMs, limit }
-    );
-    if (!expired.length) return 0;
-    const ids = expired.map((row) => row.id);
-    const deleted = await this.write(
-      `delete from ${E2EE_REPORTS_TABLE}
-       where id in (:ids) and on_hold = false`,
-      { ids }
-    );
-    // The relays keep a reported message no longer than MySQL does.
-    await this.reportRecords.deleted(
-      'md',
-      E2EE_MODERATION_INBOX,
-      ids.map((id) => `${E2EE_REPORTS_TABLE}:${id}`)
-    );
-    return deleted;
+    return this.executeNativeQueriesInTransaction(async (connection) => {
+      const expired = await this.many<{ id: string }>(
+        `select id from ${E2EE_REPORTS_TABLE}
+         where on_hold = false and created_at < :cutoff
+         limit :limit for update skip locked`,
+        { cutoff: nowMs - E2EE_RETENTION.reportsMs, limit },
+        connection
+      );
+      if (!expired.length) return 0;
+      const ids = expired.map((row) => row.id);
+      const deleted = await this.write(
+        `delete from ${E2EE_REPORTS_TABLE} where id in (:ids)`,
+        { ids },
+        connection
+      );
+      // The relays keep a reported message no longer than MySQL does.
+      await this.reportRecords.deleted(
+        'md',
+        E2EE_MODERATION_INBOX,
+        ids.map((id) => `${E2EE_REPORTS_TABLE}:${id}`),
+        connection
+      );
+      return deleted;
+    });
   }
 }
 

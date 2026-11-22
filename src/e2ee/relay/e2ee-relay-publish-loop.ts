@@ -9,7 +9,11 @@ import {
   e2eeRelaySettings,
   E2eeRelaySettings
 } from '@/e2ee/relay/e2ee-relay-config';
-import { E2eeRelayPayload, E2eeRelayPool } from '@/e2ee/relay/e2ee-relay-pool';
+import {
+  E2eeRelayPayload,
+  E2eeRelayPool,
+  isE2eeChainRecord
+} from '@/e2ee/relay/e2ee-relay-pool';
 import {
   e2eeDefaultRelayPool,
   E2eeStreamPublisher,
@@ -110,17 +114,21 @@ function payloadRefs(event: E2eeSignedRecordEvent): string[] {
 }
 
 /**
- * Copies a stream's events that relay `to` lacks from relay `from`, in
+ * Copies a stream's records that relay `to` lacks from relay `from`, in
  * order, with their payloads: how a relay that missed records (an outage
  * after the outbox let them go, a relay restored from an old disk) catches
  * up. Payloads `from` no longer holds (a message past retention) leave
- * their event out; the relay would refuse it.
+ * their event out; the relay would refuse it. DELs are not copied: the
+ * publisher sends each one to every relay itself, and they sit outside
+ * the chain the copy follows.
  */
 export async function copyE2eeStream(
   pool: E2eeRelayPool,
   input: { readonly from: string; readonly to: string; readonly wave: string }
 ): Promise<number> {
-  const items = await pool.stream(input.from, input.wave);
+  const items = (await pool.stream(input.from, input.wave)).filter(
+    isE2eeChainRecord
+  );
   const newest = await pool.newest(input.to, input.wave);
   const start = newest
     ? items.findIndex((item) => item.event.id === newest.event.id) + 1

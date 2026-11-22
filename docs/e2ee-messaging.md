@@ -734,8 +734,9 @@ key setting can never break the off mode.
 **The publisher loop** (`e2eeRelayPublishLoop`, every minute, nothing
 while off) publishes what the outbox and the DEL queue still hold, and
 checks that every relay holds the head of each stream that moved in the
-last 15 minutes. A relay found behind gets the missing records copied from
-a relay that has them. Each run writes the lag as metrics in namespace
+last 15 minutes: the newest record, passing over DELs, which sit outside
+the chain. A relay found behind gets the missing records (never DELs)
+copied from a relay that has them. Each run writes the lag as metrics in namespace
 `6529/E2eeRelay` (dimension `Environment`): `OutboxRows`,
 `OutboxOldestAgeSeconds`, `OutboxMostAttempts`, `DeletionsWaiting`,
 `HeadsBehind` and `HeadsUnrepaired`. The alarm `e2eeRelay-lag` goes off
@@ -787,7 +788,10 @@ none in `cv` or `dr`. An event a DEL names keeps
 only its header on the relays and is never served again, so the rebuild
 allows one missing position per id a DEL names. A relay that refuses a DEL
 leaves it queued: DELs sit outside the hash chains, so a refusal never
-holds a stream back. A message's ciphertext in a group log
+holds a stream back. The report prune locks the rows it deletes and passes
+over one a moderator is holding at that moment, and queues DELs in the same
+transaction for the reports it deleted only, so a hold never loses its
+records. A message's ciphertext in a group log
 needs none: the relays drop a LOG item's `data` payload at the end of
 retention themselves, and `cv` takes no DEL.
 

@@ -295,6 +295,81 @@ describe('mirror publishing and the publisher loop', () => {
     });
   });
 
+  it('never takes a DEL for a stream head, and copies no DEL', async () => {
+    const { relays, store, publisher, loop } = setup();
+    const welcomeId = (n: number) => `0x${n.toString(16).padStart(32, '0')}`;
+    const welcome = (n: number): E2eeRecordAppend => ({
+      family: 'dv',
+      owner: DEVICE,
+      kind: E2eeRecordKind.SEALED,
+      refs: ['welcome'],
+      type: 'welcome',
+      ops: [
+        {
+          op: 'put',
+          table: 'e2ee_welcome_deliveries',
+          row: {
+            welcome_id: welcomeId(n),
+            device_key: DEVICE,
+            profile_id: 'p',
+            created_at: n
+          }
+        }
+      ]
+    });
+    const ack: E2eeRecordAppend = {
+      family: 'dv',
+      owner: DEVICE,
+      kind: E2eeRecordKind.SEALED,
+      refs: ['welcome-ack'],
+      type: 'welcome-ack',
+      ops: [
+        {
+          op: 'del',
+          table: 'e2ee_welcome_deliveries',
+          key: { welcome_id: welcomeId(1), device_key: DEVICE }
+        }
+      ]
+    };
+    for (const draft of [welcome(1), ack]) {
+      await publisher.run(store, (connection, batch) =>
+        batch!.append(connection, draft)
+      );
+    }
+    await publisher.settled();
+    expect(
+      await publisher.queueDeletion('dv', DEVICE, [`welcome:${welcomeId(1)}`])
+    ).toBe(1);
+    expect(await publisher.publishDeletions(10)).toEqual({
+      queued: 1,
+      done: 1
+    });
+    // Each relay's newest event is now the DEL; the stream's head is the
+    // ack before it, and every relay holds it.
+    for (const relay of relays) {
+      expect(relay.stored[relay.stored.length - 1].event.kind).toBe(12);
+    }
+    expect((await loop()).heads).toMatchObject({
+      checked: 1,
+      behind: [],
+      unrepaired: []
+    });
+    await publisher.run(store, (connection, batch) =>
+      batch!.append(connection, welcome(2))
+    );
+    await publisher.settled();
+    relays[1].forgetNewest(1);
+    expect((await loop()).heads).toMatchObject({
+      behind: [`dv/${DEVICE}@${relays[1].options.url}`],
+      repaired: 1,
+      unrepaired: []
+    });
+    // The copy brought the missed record, not the DEL again.
+    expect(
+      relays[1].stored.filter((item) => item.event.kind === 12)
+    ).toHaveLength(1);
+  });
+
   it('writes the metrics in embedded metric format only in a Lambda', () => {
     const report = {
       mode: 'mirror',
