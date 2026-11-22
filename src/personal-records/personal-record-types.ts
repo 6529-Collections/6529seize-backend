@@ -94,6 +94,10 @@ const TEXT_MAX = 100;
 const GROUP_ID_MAX = 200;
 const EULA_FIELD_MAX = 32;
 
+/** Sorts strings by code unit: the same everywhere, unlike a locale. */
+const byCodeUnit = (a: string, b: string): number =>
+  a < b ? -1 : Number(a > b);
+
 const FOLLOW_ACTIONS: Readonly<
   Record<FollowTargetType, readonly FollowAction[]>
 > = {
@@ -154,8 +158,8 @@ function expectFields(
   keys: readonly string[],
   what: string
 ): void {
-  const present = Object.keys(body).sort();
-  const wanted = [...keys].sort();
+  const present = Object.keys(body).sort(byCodeUnit);
+  const wanted = [...keys].sort(byCodeUnit);
   if (
     present.length !== wanted.length ||
     present.some((key, i) => key !== wanted[i])
@@ -591,7 +595,10 @@ function waveNotifyOf(change: RecordChange): {
       `A wave-notify is {all_drops: boolean, groups: [${WAVE_GROUPS.join(', ')}]}`
     );
   }
-  return { allDrops, groups: [...(groups as WaveMentionGroup[])].sort() };
+  return {
+    allDrops,
+    groups: [...(groups as WaveMentionGroup[])].sort(byCodeUnit)
+  };
 }
 
 function waveNotifyHandler(deps: PersonalHandlerDeps): RecordTypeHandler {

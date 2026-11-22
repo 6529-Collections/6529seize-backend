@@ -39,6 +39,10 @@ const READER_TYPE = 'reader';
 // The head that holds each owner's newest applied settings record.
 const OWNER_MARK_TYPE = '~owner';
 
+/** Sorts strings by code unit: the same everywhere, unlike a locale. */
+const byCodeUnit = (a: string, b: string): number =>
+  a < b ? -1 : Number(a > b);
+
 export type PersonalSubmitOutcome =
   // Indexed: the tables changed (primary) or would have (shadow).
   | 'applied'
@@ -438,7 +442,7 @@ function keysDocumentKey(record: VerifiedRecord): string {
       : null;
   const wraps = (doc?.wraps ?? [])
     .map((wrap) => `${wrap.cls}:${wrap.gen}:${wrap.from}:${wrap.to}`)
-    .sort()
+    .sort(byCodeUnit)
     .join(',');
   return createHash('sha256')
     .update(`${record.event.device_key}|${wraps}`)

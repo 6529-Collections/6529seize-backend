@@ -10,6 +10,10 @@ import type {
 } from './personal-records.ports';
 import type { RecordOwnerDirectory } from './record-owner-directory';
 
+/** Sorts strings by code unit: the same everywhere, unlike a locale. */
+const byCodeUnit = (a: string, b: string): number =>
+  a < b ? -1 : Number(a > b);
+
 const DEFAULT_PREFERENCES = {
   direct_message_policy: 'EVERYONE',
   direct_message_group_id: null as string | null,
@@ -70,7 +74,7 @@ export class MemoryPersonalTables implements PersonalTables {
     const row = this.follows.get(
       MemoryPersonalTables.followKey(subscriberId, targetType, targetId)
     );
-    return row ? Array.from(row.actions).sort() : [];
+    return row ? Array.from(row.actions).sort(byCodeUnit) : [];
   }
 
   async addFollow(row: {
@@ -336,10 +340,10 @@ export class MemoryPersonalTables implements PersonalTables {
     return {
       follows: sorted(this.follows).map(([key, row]) => [
         key,
-        Array.from(row.actions).sort(),
+        Array.from(row.actions).sort(byCodeUnit),
         row.waveId
       ]),
-      allDrops: Array.from(this.allDrops).sort(),
+      allDrops: Array.from(this.allDrops).sort(byCodeUnit),
       waveGroups: sorted(this.waveGroups),
       mutes: sorted(this.mutes),
       blocks: sorted(this.blocks),
