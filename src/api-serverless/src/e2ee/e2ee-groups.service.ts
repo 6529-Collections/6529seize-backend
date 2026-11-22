@@ -341,10 +341,31 @@ export class E2eeGroupsService {
     await requireOwnActiveDevice(this.deps, callerProfileId, deviceKey);
     const { hasQueuedWelcomes, hasUnjoinedChats } =
       await this.db.getDeviceInboxState(callerProfileId, deviceKey);
+    const relayHead = await this.relayInboxHead(deviceKey);
     return {
       has_pending_chats: hasQueuedWelcomes || hasUnjoinedChats,
-      has_queued_welcomes: hasQueuedWelcomes
+      has_queued_welcomes: hasQueuedWelcomes,
+      ...(relayHead ? { relay_head: relayHead } : {})
     };
+  }
+
+  /**
+   * While records are on, the device's inbox stream head: a client reading
+   * Welcomes from the relays checks they hold it. A bad relay setting or a
+   * failed read leaves it out; the client then reads from 6529.io.
+   */
+  private async relayInboxHead(
+    deviceKey: string
+  ): Promise<{ pos: number; hash: string } | null> {
+    const reads = this.deps.relayReads;
+    if (!reads) return null;
+    try {
+      if (reads.settings().mode === 'off') return null;
+      const head = await reads.inboxHead(deviceKey);
+      return head ? { pos: head.pos, hash: head.hash } : null;
+    } catch {
+      return null;
+    }
   }
 
   // ------------------------------------------------------------- entries

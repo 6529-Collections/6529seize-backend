@@ -17,6 +17,7 @@ import {
   E2EE_RATE_COUNTERS_TABLE,
   E2EE_REPORT_ACCESS_LOG_TABLE,
   E2EE_REPORTS_TABLE,
+  E2EE_STREAMS_TABLE,
   E2EE_WELCOME_DELIVERIES_TABLE,
   E2EE_WELCOMES_TABLE,
   PROFILES_TABLE
@@ -1042,6 +1043,21 @@ export class E2eeDb extends LazyDbAccessCompatibleService {
        limit :limit`,
       { deviceKey, limit }
     );
+  }
+
+  /** A relay stream's head as MySQL holds it, or null before its first record. */
+  async getStreamHead(
+    wave: string
+  ): Promise<{ readonly pos: number; readonly hash: string } | null> {
+    const [row] = await this.many<{
+      head_pos: number | string;
+      head_hash: string | null;
+    }>(
+      `select head_pos, head_hash from ${E2EE_STREAMS_TABLE} where wave = :wave`,
+      { wave }
+    );
+    if (!row?.head_hash || Number(row.head_pos) < 1) return null;
+    return { pos: Number(row.head_pos), hash: row.head_hash };
   }
 
   /** Read both signals in one snapshot as the roster and Welcome change. */

@@ -731,6 +731,17 @@ there.
 Whether to record reads only `E2EE_RELAY_MODE` (and the opt-in), so a bad
 key setting can never break the off mode.
 
+**Client reads.** While records are on, `GET /e2ee/me` names the relays
+(`relay`: the mode, URLs, network and orderer key, and the caller's device
+grant proofs in primary only; in mirror the list is empty), and
+`GET /e2ee/devices/{device_key}/inbox-status` names the device's inbox
+head (`relay_head`). Browsers read Welcomes, log pages and attachment
+chunks from the relays only in primary. They check every record against
+the orderer key and its stream's hash chain (allowing the positions an
+orderer's DEL names), that the relays hold the inbox head or the group's
+`last_seq`, and that the device is active, and read from 6529.io
+otherwise.
+
 **The publisher loop** (`e2eeRelayPublishLoop`, every minute, nothing
 while off) publishes what the outbox and the DEL queue still hold, and
 checks that every relay holds the head of each stream that moved in the

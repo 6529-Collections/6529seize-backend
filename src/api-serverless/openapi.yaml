@@ -34671,6 +34671,26 @@ components:
           description: >-
             A Welcome is queued for this device. Omitted by servers that only
             provide the combined has_pending_chats hint.
+        relay_head:
+          $ref: "#/components/schemas/ApiE2eeRelayStreamHead"
+    ApiE2eeRelayStreamHead:
+      type: object
+      description: >-
+        The head of this device's inbox stream on the relays (its newest
+        record), present only while records are on and the inbox has a
+        record. A client reading Welcomes from the relays checks that they
+        hold this record, and reads from 6529.io otherwise.
+      required:
+        - pos
+        - hash
+      properties:
+        pos:
+          type: integer
+          format: int64
+          description: The record's position in the stream
+        hash:
+          type: string
+          description: The SHA-256 of the record's content, 0x-hex
     ApiE2eeDeviceLookupRequest:
       type: object
       properties:

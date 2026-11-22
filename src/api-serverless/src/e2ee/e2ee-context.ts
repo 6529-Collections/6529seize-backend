@@ -92,6 +92,10 @@ export interface E2eeRelayReads {
     readonly ordererPublicKey: string | null;
   };
   grantProofs(profileId: string): Promise<ApiDeviceGrantProof[]>;
+  /** The head of a device's inbox stream (`dv/<device>`), if it has one. */
+  inboxHead(
+    deviceKey: string
+  ): Promise<{ readonly pos: number; readonly hash: string } | null>;
 }
 
 export const defaultE2eeRelayReads: E2eeRelayReads = {
@@ -104,7 +108,8 @@ export const defaultE2eeRelayReads: E2eeRelayReads = {
         (grant) => grant.revoked_at === null && Number(grant.expires_at) > now
       )
       .map(toApiDeviceGrantProof);
-  }
+  },
+  inboxHead: (deviceKey) => e2eeDb.getStreamHead(`dv/${deviceKey}`)
 };
 
 /** Ethereum mainnet EIP-1271 checks (contract section 2.2 step 3). */
