@@ -172,8 +172,9 @@ describe('rating credit', () => {
     })();
     await onChain(true, () => {
       expect(countsTowardAllCategoryRep('REP', 'Help6529 Credits')).toBe(false);
+      // Exact, as the SQL filter (a byte-compared column).
       expect(countsTowardAllCategoryRep('REP', ' help6529 CREDITS ')).toBe(
-        false
+        true
       );
       expect(countsTowardAllCategoryRep('REP', 'Help6529 Credits x')).toBe(
         true

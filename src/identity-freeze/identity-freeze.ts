@@ -74,7 +74,10 @@ export function parseIdentityFreezeAt(
   if (!value) {
     return undefined;
   }
-  if (/^\d{1,16}$/.test(value)) {
+  // Unix milliseconds have 13 digits until the year 2286. Seconds, a date
+  // written as digits or 0 would land in 1970, which for switch-on can't be
+  // undone: anything else is not a time.
+  if (/^\d{13}$/.test(value)) {
     return Number(value);
   }
   if (ISO_UTC.test(value)) {

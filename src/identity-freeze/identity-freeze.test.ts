@@ -97,7 +97,10 @@ describe('identity freeze flag', () => {
     '2026-11-24T00:00:00',
     '2026-11-24T01:00:00+01:00',
     'tomorrow',
-    '2026-13-40T00:00:00Z'
+    '2026-13-40T00:00:00Z',
+    '1795564800',
+    '20261125',
+    '0'
   ])('reads IDENTITY_FREEZE_AT=%s as no UTC time', (raw) => {
     expect(parseIdentityFreezeAt(raw)).toBeNull();
   });
@@ -159,7 +162,7 @@ describe('identity freeze flag', () => {
   });
 
   it('freezes on a malformed switch-on time, but does not switch on', () => {
-    for (const value of ['Wednesday', '2026-11-25']) {
+    for (const value of ['Wednesday', '2026-11-25', '1795564800', '0']) {
       process.env[SWITCH_ON_AT] = value;
       expect(isIdentityOnChain(Date.UTC(2026, 11, 1))).toBe(false);
       expect(isIdentityFrozen(0)).toBe(true);

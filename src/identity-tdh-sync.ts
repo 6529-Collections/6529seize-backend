@@ -223,9 +223,10 @@ async function syncScopedMetrics(
     progress.syncedGeneration,
     generation
   );
-  const rated = await identityTdhSyncScopeDb.findRatedProfilesSince(
-    plan.ratingsSince
-  );
+  // From switch-on a chunk writes only TDH, so ratings don't widen the walk.
+  const rated = isIdentityOnChain()
+    ? []
+    : await identityTdhSyncScopeDb.findRatedProfilesSince(plan.ratingsSince);
   logger.info(
     `[C SCOPED] [GENERATION ${generation}] [KEYS ${scope.consolidationKeys.length}] [PROFILES ${scope.profileIds.length}] [RATED ${rated.length}]`
   );

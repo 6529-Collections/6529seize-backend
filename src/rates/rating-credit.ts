@@ -19,12 +19,10 @@ export function creditTdhSql(alias: string): string {
   return isIdentityOnChain() ? `${alias}.tdh` : `${alias}.tdh + ${alias}.xtdh`;
 }
 
-const normalised = (category: string) => category.trim().toLowerCase();
-
 /**
  * Whether a rating counts toward REP summed over every category: from
- * switch-on the help bot's credits don't (matched ignoring case and
- * surrounding spaces; the category is reserved, so no near-variants exist).
+ * switch-on the help bot's credits don't. The category is matched exactly,
+ * as the SQL filter below does (the column compares bytes).
  */
 export function countsTowardAllCategoryRep(
   matter: string,
@@ -33,7 +31,7 @@ export function countsTowardAllCategoryRep(
   return !(
     isIdentityOnChain() &&
     matter === 'REP' &&
-    normalised(category) === normalised(HELP_BOT_CREDIT_CATEGORY)
+    category === HELP_BOT_CREDIT_CATEGORY
   );
 }
 
