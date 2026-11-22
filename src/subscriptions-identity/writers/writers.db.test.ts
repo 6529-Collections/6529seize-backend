@@ -50,7 +50,8 @@ import { compareAndMarkVerified } from '../opening/opening-compare';
 import {
   IDENTITY_DATA_TABLES,
   loadOpeningFiles,
-  parseOpeningFiles
+  parseOpeningFiles,
+  REDEMPTION_CURSOR_ID
 } from '../opening/opening-load';
 import {
   JournalSource,
@@ -1807,6 +1808,72 @@ describeWithSeed('identity writers after the switch', [], () => {
       `SELECT verdict FROM ${SUBSCRIPTIONS_ID_REPORTS_TABLE} WHERE kind = 'REDEMPTIONS'`
     );
     expect(report.verdict).toBe('MATCH');
+  });
+
+  it('charges an airdrop once when a load commits after the run read its cursor', async () => {
+    await seedLegacy();
+    await cutAndLoad(false);
+    process.env[SHADOW_ENV] = 'true';
+    subscriptionsIdentitySwitch.invalidate();
+    await updateSubscriptions();
+    // Two editions on both lists, so a second charge would find one left.
+    for (const table of [
+      SUBSCRIPTIONS_NFTS_FINAL_TABLE,
+      SUBSCRIPTIONS_ID_NFTS_FINAL_TABLE
+    ]) {
+      await execute(
+        `UPDATE ${table} SET subscribed_count = 2 WHERE consolidation_key = :lone`,
+        { lone: LONE }
+      );
+    }
+    await execute(
+      `INSERT INTO ${TRANSACTIONS_TABLE}
+        (created_at, transaction, block, transaction_date, from_address, to_address,
+         contract, token_id, token_count, value, primary_proceeds, royalties,
+         gas_gwei, gas_price, gas_price_gwei, gas)
+        VALUES (NOW(), '0xmint', 50, '2026-11-26 15:00:00', :null, :lone, :c, :card,
+         1, 0, 0, 0, 0, 0, 0, 0)`,
+      { null: NULL_ADDRESS, lone: LONE, c: MEMES_CONTRACT, card: CARD }
+    );
+    await execute(
+      `INSERT INTO ${TRANSACTIONS_PROCESSED_SUBSCRIPTIONS_BLOCKS_TABLE} (created_at, block, timestamp)
+        VALUES (NOW(), 49, 0)`
+    );
+    // The legacy loop charges the airdrop.
+    await redeemSubscriptions();
+
+    // The identity run reads its cursor and the airdrop. Before its
+    // transaction starts, a load commits: cut from the legacy tables, which
+    // already hold the charge, with the cursor at the airdrop's block.
+    const runTransaction =
+      sqlExecutor.executeNativeQueriesInTransaction.bind(sqlExecutor);
+    const transaction = jest
+      .spyOn(sqlExecutor, 'executeNativeQueriesInTransaction')
+      .mockImplementationOnce(async (...args) => {
+        await cutAndLoad(false);
+        return runTransaction(...args);
+      });
+    try {
+      await runIdentityRedemptionWriters();
+    } finally {
+      transaction.mockRestore();
+    }
+    await runIdentityRedemptionWriters();
+
+    // Charged once, by the load. Without the cursor check the run charged
+    // it again into the loaded tables: 0.06942.
+    expect(
+      await balance(SUBSCRIPTIONS_ID_BALANCES_TABLE, 'identity_key', LONE)
+    ).toBe(0.13471);
+    const [redeemed] = await sqlExecutor.execute<{ count: number }>(
+      `SELECT SUM(count) AS count FROM ${SUBSCRIPTIONS_ID_REDEEMED_TABLE}`
+    );
+    expect(Number(redeemed.count)).toBe(1);
+    const [cursor] = await sqlExecutor.execute<{ block: number }>(
+      `SELECT block FROM ${SUBSCRIPTIONS_ID_CURSORS_TABLE} WHERE id = :id`,
+      { id: REDEMPTION_CURSOR_ID }
+    );
+    expect(Number(cursor.block)).toBe(50);
   });
 
   it("credits a new top-up to the sender's identity once", async () => {

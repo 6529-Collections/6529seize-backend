@@ -21,6 +21,7 @@ import {
 } from '@/transactionsProcessingLoop/subscriptions';
 import { EntityManager } from 'typeorm';
 import { DbQueryOptions } from '@/db-query.options';
+import { Logger } from '@/logging';
 import { journal, JournalBefore, journalBefore } from '../timeline/journal';
 import { msToDbText } from '../opening/legacy-tables';
 import { roundSubscriptionBalance } from '../engine/parity-money';
@@ -28,6 +29,8 @@ import { IdentityWriteMode } from '../identity/identity-switch';
 import { REDEMPTION_CURSOR_ID } from '../opening/opening-load';
 import { compareKeyed, saveReport } from './identity-reports';
 import { identityOfLegacyKeys } from './legacy-key-identities';
+
+const logger = Logger.get('SUBSCRIPTIONS_IDENTITY_REDEMPTIONS');
 
 export interface IdentityRedemptionRun {
   /** The airdrop transactions matched in this run, by card. */
@@ -310,6 +313,7 @@ export async function redeemIdentityAirdrops(): Promise<IdentityRedemptionRun | 
     string,
     { contract: string; tokenId: number; transactions: Set<string> }
   >();
+  let cursorMoved = false;
   await sqlExecutor.executeNativeQueriesInTransaction(async (connection) => {
     const options = { wrappedConnection: connection };
     const touches: ChargeTouches = {
@@ -320,6 +324,21 @@ export async function redeemIdentityAirdrops(): Promise<IdentityRedemptionRun | 
       insertedRedeemedIds: [],
       charges: []
     };
+    // The cursor and the airdrops were read before this transaction. A load
+    // (the CLI's, go-live's or a rebuild's) replaces the cursor and the
+    // identity tables together, and the tables it loads can already hold
+    // these airdrops' charges. The cursor is locked now: if it is not the
+    // one this run read, charge nothing. The next run starts from the new
+    // cursor.
+    const [locked] = await sqlExecutor.execute<{ block: number }>(
+      `SELECT block FROM ${SUBSCRIPTIONS_ID_CURSORS_TABLE} WHERE id = :id FOR UPDATE`,
+      { id: REDEMPTION_CURSOR_ID },
+      options
+    );
+    if (!locked || Number(locked.block) !== Number(cursor.block)) {
+      cursorMoved = true;
+      return;
+    }
     for (const airdrop of batch.airdrops) {
       const validation = await validateNonSubscriptionAirdrop(
         airdrop,
@@ -371,6 +390,12 @@ export async function redeemIdentityAirdrops(): Promise<IdentityRedemptionRun | 
       options
     );
   });
+  if (cursorMoved) {
+    logger.warn(
+      `[REDEMPTION CURSOR MOVED] [read ${cursor.block}] [a load replaced it during the run; nothing charged]`
+    );
+    return { cards: [], charged: 0, unmatched: 0, notices: [] };
+  }
   return {
     cards: Array.from(byCard.values()).map((c) => ({
       contract: c.contract,
