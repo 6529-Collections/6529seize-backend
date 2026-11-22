@@ -301,7 +301,13 @@ describe('single-copy viewer groups, batches 2 and 3', () => {
   it('always inlines the groups for active TDH voting waves (count and page)', async () => {
     const { db, statements } = fakeExecutor('match');
     await new WavesApiDb(() => db).findActiveTdhVotingWaves(
-      { eligibleGroups: groups, now: 1, limit: 10, offset: 0 },
+      {
+        eligibleGroups: groups,
+        mainStageWaveId: null,
+        now: 1,
+        limit: 10,
+        offset: 0
+      },
       {}
     );
     expect(statements).toHaveLength(2);

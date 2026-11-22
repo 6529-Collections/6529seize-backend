@@ -17,6 +17,11 @@ const membershipRuntimeTables = [
   'membership_publications',
   'membership_generation_members'
 ] as const;
+const signedRecordTables = [
+  'signed_record_heads',
+  'signed_record_log_entries',
+  'signed_record_log_segments'
+] as const;
 
 describe('private SQL diagnostics', () => {
   beforeEach(() => {
@@ -98,6 +103,11 @@ describe('private SQL diagnostics', () => {
       table,
       inline: 'private-inline-membership-authority-token',
       bound: 'private-bound-membership-authority-token'
+    })),
+    ...signedRecordTables.map((table) => ({
+      table,
+      inline: 'private-inline-muted-principal',
+      bound: 'private-bound-sealed-entry'
     }))
   ])(
     'omits bound and inline private values from slow and failed $table queries',
@@ -170,6 +180,39 @@ describe('private SQL diagnostics', () => {
     expect(diagnostics).not.toContain('SELECT');
     expect(connection.release).toHaveBeenCalledTimes(1);
   });
+  it.each(signedRecordTables)(
+    'redacts the keys and entries of a slow successful %s query',
+    async (table) => {
+      jest
+        .spyOn(Time.prototype, 'diffFromNow')
+        .mockReturnValue(Time.seconds(2));
+      const inline = 'private-inline-muted-principal';
+      const bound = 'private-bound-sealed-entry';
+      const connection = {
+        config: {},
+        query: (
+          _query: unknown,
+          callback: (error: null, rows: unknown[]) => void
+        ) => callback(null, [{ anchor: 1 }]),
+        release: jest.fn()
+      } as unknown as PoolConnection;
+      await expect(
+        execSQLWithParams(
+          `SELECT anchor FROM ${table} WHERE rkey='${inline}' AND entry=:entry`,
+          connection,
+          true,
+          { entry: bound }
+        )
+      ).resolves.toEqual([{ anchor: 1 }]);
+      expect(warn).toHaveBeenCalledWith(
+        'SQL query took 2000 ms to execute: [private signed records query]'
+      );
+      const diagnostics = JSON.stringify(warn.mock.calls);
+      expect(diagnostics).not.toContain(inline);
+      expect(diagnostics).not.toContain(bound);
+      expect(diagnostics).not.toContain('SELECT');
+    }
+  );
   it.each(['NOT_SENT', 'UNKNOWN', 'ACKNOWLEDGED'] as const)(
     'preserves the original safe budget error and %s commit outcome',
     async (commitOutcome) => {

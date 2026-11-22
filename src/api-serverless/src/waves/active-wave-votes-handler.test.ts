@@ -21,6 +21,12 @@ jest.mock('@/time', () => ({
   Timer: { getFromRequest: () => undefined },
   Time: { currentMillis: () => 1000 }
 }));
+jest.mock('@/env', () => ({
+  env: {
+    getStringOrNull: (key: string) =>
+      key === 'MAIN_STAGE_WAVE_ID' ? 'main-stage' : null
+  }
+}));
 import { handleGetActiveWaveVotes } from './active-wave-votes.handler';
 import { GetActiveWaveVotesRequest } from '@/api/generated/routes/operations';
 const request = (query: object = {}) =>
@@ -32,17 +38,32 @@ beforeEach(() => {
   mockReadGroups.mockResolvedValue(['visible-group']);
   mockFind.mockResolvedValue({
     waves: [
-      { id: 'vote', voting_period_end: '2000', next_decision_time: null }
+      { id: 'vote', voting_period_end: '2000', next_decision_time: null },
+      {
+        id: 'approval',
+        voting_period_end: null,
+        next_decision_time: null,
+        activeSubmissionCount: 0
+      }
     ],
     count: 21
   });
-  mockMap.mockResolvedValue({ vote: { id: 'vote', name: 'Vote' } });
+  mockMap.mockResolvedValue({
+    vote: { id: 'vote', name: 'Vote' },
+    approval: { id: 'approval', name: 'Approval' }
+  });
 });
 
 it('uses shared read access and maps deadlines with count-based pagination', async () => {
   const result = await handleGetActiveWaveVotes(request());
   expect(mockFind).toHaveBeenCalledWith(
-    { eligibleGroups: ['visible-group'], now: 1000, limit: 20, offset: 0 },
+    {
+      eligibleGroups: ['visible-group'],
+      mainStageWaveId: 'main-stage',
+      now: 1000,
+      limit: 20,
+      offset: 0
+    },
     expect.objectContaining({ authenticationContext: { role: 'viewer' } })
   );
   expect(result).toEqual({
@@ -51,6 +72,12 @@ it('uses shared read access and maps deadlines with count-based pagination', asy
         wave: { id: 'vote', name: 'Vote' },
         voting_ends_at: 2000,
         next_decision_at: null
+      },
+      {
+        wave: { id: 'approval', name: 'Approval' },
+        voting_ends_at: null,
+        next_decision_at: null,
+        active_submission_count: 0
       }
     ],
     count: 21,

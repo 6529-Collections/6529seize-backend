@@ -7,6 +7,9 @@ import {
 import { RequestContext } from '@/request.context';
 import { Time } from '@/time';
 import { DropsDb, dropsDb } from '@/drops/drops.db';
+import { Logger } from '@/logging';
+import { ConnectionWrapper } from '@/sql-executor';
+import { toNewUserGroupInput } from '@/api/community-members/new-user-group-input';
 import {
   userGroupsService,
   UserGroupsService
@@ -26,6 +29,8 @@ import { CurationsDb, curationsDb } from '@/api/curations/curations.db';
 import { WaveCurationEntity } from '@/entities/IWaveCuration';
 import { DropCurationEntity } from '@/entities/IDropCuration';
 import { profileWavesDb, ProfileWavesDb } from '@/profiles/profile-waves.db';
+
+const logger = Logger.get('CURATIONS_API_SERVICE');
 
 export class CurationsApiService {
   constructor(
@@ -62,18 +67,14 @@ export class CurationsApiService {
     request: ApiWaveCurationRequest,
     ctx: RequestContext
   ): Promise<ApiWaveCuration> {
-    return await this.curationsDb.executeNativeQueriesInTransaction(
+    const result = await this.curationsDb.executeNativeQueriesInTransaction(
       async (connection) => {
-        const txCtx: RequestContext = { ...ctx, connection };
-        const { wave } = await this.assertCanManageWaveCurations(waveId, txCtx);
-        const validatedName = this.validateNameOrThrow(request.name);
-        await this.assertCommunityGroupCanBeUsed(
-          {
-            groupId: request.group_id,
-            allowedPrivateGroupId: wave.admin_group_id
-          },
+        const txCtx = { ...ctx, connection };
+        const { wave, profileId } = await this.assertCanManageWaveCurations(
+          waveId,
           txCtx
         );
+        const validatedName = this.validateNameOrThrow(request.name);
         await this.assertCurationNameIsUniqueInWave(
           {
             waveId: wave.id,
@@ -87,6 +88,11 @@ export class CurationsApiService {
           requestedPriorityOrder: request.priority_order,
           maxPriorityOrder: lockedCurations.length + 1
         });
+        const group = await this.resolveCurationGroup(
+          request,
+          { profileId, adminGroupId: wave.admin_group_id },
+          txCtx
+        );
         if (priorityOrder <= lockedCurations.length) {
           await this.curationsDb.incrementWaveCurationPriorityOrderRange(
             {
@@ -101,16 +107,18 @@ export class CurationsApiService {
           id: randomUUID(),
           name: validatedName,
           wave_id: wave.id,
-          community_group_id: request.group_id,
+          community_group_id: group.id,
           created_at: now,
           updated_at: now,
           priority_order: priorityOrder
         };
         await this.curationsDb.insertWaveCuration(entity, txCtx);
 
-        return this.waveCurationToApi(entity);
+        return { curation: this.waveCurationToApi(entity), group };
       }
     );
+    await result.group.afterCommit?.();
+    return result.curation;
   }
 
   public async updateWaveCuration(
@@ -119,10 +127,13 @@ export class CurationsApiService {
     request: ApiWaveCurationRequest,
     ctx: RequestContext
   ): Promise<ApiWaveCuration> {
-    return await this.curationsDb.executeNativeQueriesInTransaction(
+    const result = await this.curationsDb.executeNativeQueriesInTransaction(
       async (connection) => {
-        const txCtx: RequestContext = { ...ctx, connection };
-        const { wave } = await this.assertCanManageWaveCurations(waveId, txCtx);
+        const txCtx = { ...ctx, connection };
+        const { wave, profileId } = await this.assertCanManageWaveCurations(
+          waveId,
+          txCtx
+        );
         const lockedCurations =
           await this.curationsDb.lockWaveCurationsByWaveId(wave.id, txCtx);
         const targetCuration = lockedCurations.find(
@@ -136,13 +147,6 @@ export class CurationsApiService {
           lockedCurations
         );
         const validatedName = this.validateNameOrThrow(request.name);
-        await this.assertCommunityGroupCanBeUsed(
-          {
-            groupId: request.group_id,
-            allowedPrivateGroupId: wave.admin_group_id
-          },
-          txCtx
-        );
         await this.assertCurationNameIsUniqueInWave(
           {
             waveId: wave.id,
@@ -158,6 +162,15 @@ export class CurationsApiService {
             maxPriorityOrder: lockedCurations.length + 1
           });
         }
+        const group = await this.resolveCurationGroup(
+          request,
+          {
+            profileId,
+            adminGroupId: wave.admin_group_id,
+            existingGroupId: targetCuration.community_group_id
+          },
+          txCtx
+        );
         const nextPriorityOrder =
           requestedPriorityOrder === undefined
             ? currentPriorityOrder
@@ -186,7 +199,7 @@ export class CurationsApiService {
             id: curationId,
             wave_id: wave.id,
             name: validatedName,
-            community_group_id: request.group_id,
+            community_group_id: group.id,
             updated_at: Time.currentMillis(),
             priority_order: nextPriorityOrder
           },
@@ -199,9 +212,11 @@ export class CurationsApiService {
         if (!updated) {
           throw new NotFoundException(`Curation ${curationId} not found`);
         }
-        return this.waveCurationToApi(updated);
+        return { curation: this.waveCurationToApi(updated), group };
       }
     );
+    await result.group.afterCommit?.();
+    return result.curation;
   }
 
   public async deleteWaveCuration(
@@ -541,20 +556,70 @@ export class CurationsApiService {
     );
   }
 
-  private async assertCommunityGroupCanBeUsed(
-    param: { groupId: string; allowedPrivateGroupId: string | null },
-    ctx: RequestContext
-  ): Promise<void> {
+  private async resolveCurationGroup(
+    request: ApiWaveCurationRequest,
+    scope: {
+      profileId: string;
+      adminGroupId: string | null;
+      existingGroupId?: string;
+    },
+    ctx: RequestContext & { connection: ConnectionWrapper<unknown> }
+  ): Promise<{ id: string; afterCommit?: () => Promise<void> }> {
+    if (request.criteria) {
+      // Each edit gets its own group ID. Other resources may still reference
+      // the prior group, so the curation write only replaces its reference.
+      const input = await toNewUserGroupInput({
+        ...request.criteria,
+        name: 'Curation criteria'
+      });
+      const id = await this.userGroupsService.insertNewGroup(
+        input,
+        scope.profileId,
+        ctx,
+        // Active membership evaluation is independent of private read access.
+        true
+      );
+      const refresh = () =>
+        this.userGroupsService.refreshNewGroupEligibility(
+          input,
+          scope.profileId
+        );
+      return {
+        id,
+        afterCommit: async () => {
+          try {
+            await refresh().catch(refresh);
+          } catch (error) {
+            // Until the cache refreshes, a stale list lacks the new group ID
+            // and cannot grant access through the previous group.
+            logger.warn('Failed to refresh curator eligibility after save', {
+              groupId: id,
+              error
+            });
+          }
+        }
+      };
+    }
+
+    const groupId = request.group_id;
+    if (!groupId) {
+      throw new BadRequestException('Provide curator criteria or a group ID');
+    }
     const group = await this.curationsDb.findCommunityGroupById(
-      param.groupId,
+      groupId,
       ctx.connection
     );
     if (!group) {
-      throw new BadRequestException(`Group ${param.groupId} not found`);
+      throw new BadRequestException(`Group ${groupId} not found`);
     }
-    if (group.is_private && group.id !== param.allowedPrivateGroupId) {
-      throw new BadRequestException(`Group ${param.groupId} is private`);
+    if (
+      group.is_private &&
+      groupId !== scope.adminGroupId &&
+      groupId !== scope.existingGroupId
+    ) {
+      throw new BadRequestException(`Group ${groupId} is private`);
     }
+    return { id: groupId };
   }
 
   private validateNameOrThrow(name: string): string {
