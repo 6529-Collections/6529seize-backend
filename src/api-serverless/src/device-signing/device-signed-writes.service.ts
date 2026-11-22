@@ -28,6 +28,35 @@ export const DEVICE_SIGNATURE_FIELD = 'device_signature';
 export const DEVICE_SIGNATURE_MAX_CLOCK_SKEW_MS = 10 * 60 * 1000;
 export const INVALID_DEVICE_SIGNATURE_PREFIX = 'Invalid device signature:';
 
+/**
+ * From waves' switch-on to the 6529 chain, drops travel peer to peer as
+ * device-signed events, so a write without a device signature can't reach
+ * the relays. FEATURE_WAVES_DEVICE_SIGNATURE_REQUIRED=true refuses drop
+ * posts, edits, deletes and reactions without one, except in direct
+ * messages (they stay off the relays).
+ */
+export const DEVICE_SIGNATURE_REQUIRED_CODE = 'DEVICE_SIGNATURE_REQUIRED';
+
+export const DEVICE_SIGNATURE_REQUIRED_MESSAGE =
+  `Posts in waves are now signed by your device. ` +
+  `Sign in again on this device to set it up, then post again.`;
+
+export function isDeviceSignatureRequired(
+  env: Record<string, string | undefined> = process.env
+): boolean {
+  return env.FEATURE_WAVES_DEVICE_SIGNATURE_REQUIRED === 'true';
+}
+
+export class DeviceSignatureRequiredException extends ApiCompliantException {
+  constructor() {
+    super(DEVICE_SIGNATURE_REQUIRED_MESSAGE, DEVICE_SIGNATURE_REQUIRED_CODE);
+  }
+
+  getStatusCode(): number {
+    return 403;
+  }
+}
+
 export class InvalidDeviceSignatureException extends ApiCompliantException {
   constructor(reason: string) {
     super(
@@ -215,6 +244,7 @@ export class DeviceSignedWritesService {
     ctx: SignedWriteContext
   ): Promise<T> {
     if (envelope === undefined) {
+      await this.assertUnsignedWriteAllowed(waveId, ctx);
       return write();
     }
     const reservation = await this.verifyAndReserve(
@@ -252,6 +282,15 @@ export class DeviceSignedWritesService {
     ctx: SignedWriteContext
   ): Promise<T> {
     if (envelope === undefined) {
+      if (isDeviceSignatureRequired()) {
+        const unsignedWaveId =
+          waveId ?? (await this.drops.findWaveIdByDropId(dropId, ctx));
+        // A missing drop's write answers as it does today (not found, or a
+        // delete that does nothing).
+        if (unsignedWaveId) {
+          await this.assertUnsignedWriteAllowed(unsignedWaveId, ctx);
+        }
+      }
       return this.runUnsigned(kind, dropId, write, ctx);
     }
     const storedWaveId =
@@ -439,6 +478,24 @@ export class DeviceSignedWritesService {
     }
     await this.finalize(reservation, dropIdOf(result), ctx);
     return result;
+  }
+
+  /**
+   * Refuses a write without a device signature once they are required,
+   * except in a direct message.
+   */
+  private async assertUnsignedWriteAllowed(
+    waveId: string,
+    ctx: RequestContext
+  ): Promise<void> {
+    if (!isDeviceSignatureRequired()) {
+      return;
+    }
+    const wave = await this.drops.findWaveByIdOrNull(waveId, ctx.connection);
+    if (wave?.is_direct_message) {
+      return;
+    }
+    throw new DeviceSignatureRequiredException();
   }
 
   private async runUnsigned<T>(

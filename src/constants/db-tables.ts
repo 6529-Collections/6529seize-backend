@@ -47,6 +47,7 @@ export const REFRESH_TOKENS_TABLE = 'refresh_tokens';
 export const WALLET_AUTH_SESSIONS_TABLE = 'wallet_auth_sessions';
 export const DEVICE_GRANTS_TABLE = 'device_grants';
 export const DEVICE_SIGNED_EVENTS_TABLE = 'device_signed_events';
+export const WAVE_RELAY_CURSORS_TABLE = 'wave_relay_cursors';
 export const DROP_AUTHOR_SIGNATURES_TABLE = 'drop_author_signatures';
 export const SIGNED_RECORD_HEADS_TABLE = 'signed_record_heads';
 export const SIGNED_RECORD_LOG_ENTRIES_TABLE = 'signed_record_log_entries';
