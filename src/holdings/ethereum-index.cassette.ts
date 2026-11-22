@@ -14,6 +14,12 @@ import {
   NULL_ADDRESS
 } from '@/constants';
 import { MANIFOLD_LAZY_CLAIM_CONTRACT } from '@/constants/manifold';
+import { NEXTGEN_CORE_IFACE, NEXTGEN_MINTER_IFACE } from '@/abis/nextgen';
+import {
+  NEXTGEN_CORE_CONTRACT,
+  NEXTGEN_MINTER_CONTRACT
+} from '@/nextgen/nextgen_constants';
+import { Network } from '@/ethereum-rpc/ethereum-rpc-network';
 
 /**
  * A small Ethereum for the rebuild tests: three Memes transactions, the
@@ -30,6 +36,10 @@ import { MANIFOLD_LAZY_CLAIM_CONTRACT } from '@/constants/manifold';
  * Block 103: the admin sets card 1's token URI. Manifold's creator contract
  *   emits no URI event for this; the cassette adds one so the history
  *   step's URI-event query is exercised as well as its creator-call query.
+ * Blocks 104-108: NextGen collection 1. The admin creates it, sets its data
+ *   (core) and its phases (minter); wallet 1 mints one token through the
+ *   minter for 0.0069 ETH and sends it to wallet 2. The calldata uses the
+ *   real contracts' ABI, which the NextGen loop decodes it with.
  */
 
 export const WALLET_1 = '0x0000000000000000000000000000000000000001';
@@ -63,8 +73,24 @@ export function cardMetadata(card: number, edition: string) {
   };
 }
 
+export const NEXTGEN_CORE = NEXTGEN_CORE_CONTRACT[Network.ETH_MAINNET];
+export const NEXTGEN_MINTER = NEXTGEN_MINTER_CONTRACT[Network.ETH_MAINNET];
+export const NEXTGEN_TOKEN = 10_000_000_000;
+/** The NextGen collection's base URI; its token's metadata is under it. */
+export const NEXTGEN_BASE_URI = `${arweave('rebuildCassetteNextGenBase')}/`;
+export const NEXTGEN_TOKEN_METADATA = {
+  name: `Cassette Pebble #${NEXTGEN_TOKEN}`,
+  description: 'A token of the cassette NextGen collection.',
+  image: arweave('rebuildCassetteNextGenImage'),
+  attributes: [
+    { trait_type: 'Palette', value: 'Blue' },
+    { trait_type: 'Shape', value: 'Round' }
+  ]
+};
+
 /** Metadata by URI; the gateways may be asked for either form of it. */
 export const METADATA: Record<string, unknown> = {
+  [`${NEXTGEN_BASE_URI}${NEXTGEN_TOKEN}`]: NEXTGEN_TOKEN_METADATA,
   [firstUri(1)]: cardMetadata(1, 'first'),
   [firstUri(2)]: cardMetadata(2, 'first'),
   [firstUri(3)]: cardMetadata(3, 'first'),
@@ -169,8 +195,109 @@ export const TRANSACTIONS: CassetteTransaction[] = [
         data: coder.encode(['string'], [CARD_1_SECOND_URI])
       }
     ]
-  }
+  },
+  ...nextGenTransactions()
 ];
+
+function nextGenTransfer(from: string, to: string): CassetteLog {
+  const event = NEXTGEN_CORE_IFACE.getEvent('Transfer')!;
+  return {
+    address: NEXTGEN_CORE,
+    topics: [event.topicHash, word(from), word(to), toBeHex(NEXTGEN_TOKEN, 32)],
+    data: '0x'
+  };
+}
+
+function nextGenTransactions(): CassetteTransaction[] {
+  const zero = `0x${'00'.repeat(32)}`;
+  const at = (
+    n: number,
+    from: string,
+    to: string,
+    input: string,
+    logs: CassetteLog[] = [],
+    value = BigInt(0)
+  ): CassetteTransaction => ({
+    hash: txHash(n),
+    blockNumber: 100 + n,
+    index: 0,
+    from,
+    to,
+    value,
+    input,
+    logs
+  });
+  return [
+    at(
+      4,
+      ADMIN,
+      NEXTGEN_CORE,
+      NEXTGEN_CORE_IFACE.encodeFunctionData('createCollection', [
+        'Cassette Pebbles',
+        'Cassette Artist',
+        'The cassette NextGen collection.',
+        'https://example.com/cassette-pebbles',
+        'CC0',
+        NEXTGEN_BASE_URI,
+        '',
+        zero,
+        ['// the generative script']
+      ])
+    ),
+    at(
+      5,
+      ADMIN,
+      NEXTGEN_CORE,
+      NEXTGEN_CORE_IFACE.encodeFunctionData('setCollectionData', [
+        1,
+        ADMIN,
+        2,
+        100,
+        0
+      ])
+    ),
+    at(
+      6,
+      ADMIN,
+      NEXTGEN_MINTER,
+      NEXTGEN_MINTER_IFACE.encodeFunctionData('setCollectionPhases', [
+        1,
+        0,
+        0,
+        1767225600,
+        1798761600,
+        zero
+      ])
+    ),
+    at(
+      7,
+      WALLET_1,
+      NEXTGEN_MINTER,
+      NEXTGEN_MINTER_IFACE.encodeFunctionData('mint', [
+        1,
+        1,
+        0,
+        '{"Phase":"Public"}',
+        WALLET_1,
+        [],
+        '0x0000000000000000000000000000000000000000',
+        0
+      ]),
+      [nextGenTransfer('0x0000000000000000000000000000000000000000', WALLET_1)],
+      BigInt('6900000000000000')
+    ),
+    at(
+      8,
+      WALLET_1,
+      NEXTGEN_CORE,
+      NEXTGEN_CORE_IFACE.encodeFunctionData(
+        'safeTransferFrom(address,address,uint256)',
+        [WALLET_1, WALLET_2, NEXTGEN_TOKEN]
+      ),
+      [nextGenTransfer(WALLET_1, WALLET_2)]
+    )
+  ];
+}
 
 const revertData = (reason: string) =>
   '0x08c379a0' + coder.encode(['string'], [reason]).slice(2);
@@ -226,6 +353,12 @@ const CALLS: {
     to: GRADIENT_CONTRACT,
     data: CREATOR.encodeFunctionData('tokenURI', [0]),
     revert: 'ERC721Metadata: URI query for nonexistent token'
+  },
+  // The NextGen loop's read of the minted token's data.
+  {
+    to: NEXTGEN_CORE,
+    data: NEXTGEN_CORE_IFACE.encodeFunctionData('tokenData', [NEXTGEN_TOKEN]),
+    result: coder.encode(['string'], ['{"Phase":"Public"}'])
   }
 ];
 
@@ -540,11 +673,16 @@ export async function startCassetteNode(): Promise<RunningCassette> {
   };
 }
 
-/** The metadata document a gateway URL names, by its Arweave id. */
+/**
+ * The metadata document a gateway URL names, by its Arweave id and any
+ * path under it (the NextGen base URI's token paths).
+ */
 export function metadataFor(url: string): unknown {
-  const id = url.split('/').filter(Boolean).pop();
-  const entry = Object.entries(METADATA).find(([uri]) =>
-    uri.endsWith(`/${id}`)
+  const path = url
+    .replace(/^https?:\/\/[^/]+/, '')
+    .replace(/^\/(?:ar|arweave)\//, '/');
+  const entry = Object.entries(METADATA).find(
+    ([uri]) => uri.replace(/^https:\/\/arweave\.net/, '') === path
   );
   return entry?.[1];
 }
