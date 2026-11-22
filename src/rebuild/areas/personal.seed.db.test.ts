@@ -8,6 +8,8 @@ import { rebuildPersonalTables } from '@/personal-records/personal-rebuild.step'
 import type { RebuildContext } from '@/rebuild/manifest.types';
 import { personalManifest } from '@/rebuild/manifests/personal.manifest';
 import { seedProbeIdentities } from '@/rebuild/run/probe-fixture.steps';
+import { startAnvil } from '@/rebuild/sources/anvil';
+import type { RunningSource } from '@/rebuild/sources/running-source';
 import { sqlExecutor } from '@/sql-executor';
 import { describeWithSeed } from '@/tests/_setup/seed';
 import { seedPersonalSettings } from './personal.seed';
@@ -38,7 +40,12 @@ const TABLES: readonly [string, string][] = [
     'push_notification_settings',
     'profile_id, device_id, identity_subscribed, identity_mentioned, identity_rep, identity_nic, drop_quoted, drop_replied, drop_voted, drop_reacted, drop_boosted, wave_created, subscription_coverage'
   ],
-  ['eula_consent', '*']
+  ['eula_consent', '*'],
+  [
+    'collect_rules',
+    'id, profile_id, idempotency_key, request_hash, payload_json, state, revision, created_at, updated_at'
+  ],
+  ['collect_rule_operations', '*']
 ];
 
 async function snapshot(): Promise<Record<string, unknown[]>> {
@@ -75,7 +82,8 @@ async function serveFiles(dir: string): Promise<http.Server> {
 function contextOf(
   stepId: string,
   files: string | null,
-  seedFilesDir: string | null
+  seedFilesDir: string | null,
+  ethereum: string | null = null
 ): RebuildContext {
   return {
     area: 'personal',
@@ -83,7 +91,7 @@ function contextOf(
     sources: {
       gateway: null,
       relays: null,
-      ethereum: null,
+      ethereum,
       files,
       repo: null
     },
@@ -97,9 +105,19 @@ describeWithSeed('the personal seed and its rebuild', [], () => {
     const env = { ...process.env, ...personalManifest.flags };
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'personal-seed-'));
     const server = await serveFiles(dir);
+    // Ethereum: the collect lane's released purchase was never mined, and
+    // the seed uses its nonce for another transaction.
+    let ethereum: RunningSource | null = null;
     try {
+      ethereum = await startAnvil({
+        state: null,
+        logFile: path.join(dir, 'anvil.log')
+      });
       await seedProbeIdentities();
-      await seedPersonalSettings(contextOf('personal.seed', null, dir), env);
+      await seedPersonalSettings(
+        contextOf('personal.seed', null, dir, ethereum.url),
+        env
+      );
       const seeded = await snapshot();
       const state = await sqlExecutor.execute(
         `select id, frozen, import_anchor, import_at from personal_records_state`
@@ -120,10 +138,29 @@ describeWithSeed('the personal seed and its rebuild', [], () => {
 
       const { port } = server.address() as AddressInfo;
       await rebuildPersonalTables(
-        contextOf('personal.settings', `http://127.0.0.1:${port}`, null),
+        contextOf(
+          'personal.settings',
+          `http://127.0.0.1:${port}`,
+          null,
+          ethereum.url
+        ),
         env
       );
       expect(await snapshot()).toEqual(seeded);
+      // A settled purchase from the import, a released one from the lane.
+      expect(
+        seeded.collect_rule_operations.map((row) => {
+          const op = row as Record<string, unknown>;
+          return [
+            op.operation_id,
+            op.transaction_hash !== null,
+            op.settlement_hash !== null
+          ];
+        })
+      ).toEqual([
+        ['rebuild-collect-op-1', true, true],
+        ['rebuild-collect-op-2', true, false]
+      ]);
       // As live: the import never goes through the indexer, so no heads.
       expect(
         await sqlExecutor.execute(`select * from signed_record_heads`)
@@ -134,6 +171,7 @@ describeWithSeed('the personal seed and its rebuild', [], () => {
         )
       ).toEqual(state);
     } finally {
+      await ethereum?.stop();
       server.close();
       fs.rmSync(dir, { recursive: true, force: true });
     }

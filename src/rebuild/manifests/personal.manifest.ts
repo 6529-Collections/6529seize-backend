@@ -6,6 +6,8 @@ import { PROBE_CALLER, PROBE_WALLETS } from '@/rebuild/manifests/probe-fixture';
 const PROBE_WAVE = '00000000-0000-4000-8000-000000000001';
 const PROBE_DROP = '00000000-0000-4000-8000-000000000002';
 const PROBE_DEVICE = 'rebuild-check-settings-device';
+/** The Collect rule the seed makes for the probe caller. */
+const PROBE_COLLECT_RULE = '00000000-0000-4000-8000-0000000000c1';
 
 /**
  * The records service identity of a rebuild run: a fake wave, profile and
@@ -107,7 +109,16 @@ const PROBES: Probe[] = [
     path: `/api/policies/eula-consent/${PROBE_DEVICE}`,
     as: PROBE_CALLER
   },
-  { id: 'personal.collect-rules', path: '/api/collect/rules', as: PROBE_CALLER }
+  {
+    id: 'personal.collect-rules',
+    path: '/api/collect/rules',
+    as: PROBE_CALLER
+  },
+  {
+    id: 'personal.collect-rule',
+    path: `/api/collect/rules/${PROBE_COLLECT_RULE}`,
+    as: PROBE_CALLER
+  }
 ];
 
 /**
@@ -137,7 +148,11 @@ const PERSONAL_SETTINGS_REBUILD: RebuildStep = {
     'eula_consent',
     'signed_record_heads',
     'signed_record_log_segments',
-    'personal_records_state'
+    'personal_records_state',
+    // Collect rules: the import, then the collect lane in its order, each
+    // settlement checked against Ethereum.
+    'collect_rules',
+    'collect_rule_operations'
   ],
   // The records wave's drops and the waves index (the waves rebuild's),
   // and the profiles and identities owners map to.
@@ -190,7 +205,8 @@ const PERSONAL_SETTINGS_SEED: RebuildStep = {
     'competition_entries'
   ],
   after: ['identity.probe-profiles'],
-  sources: ['files'],
+  // Ethereum: a purchase's nonce is used by another transaction.
+  sources: ['files', 'ethereum'],
   timeoutMinutes: 20
 };
 
@@ -219,7 +235,10 @@ export const personalManifest: AreaManifest = {
     ...FIXTURE_RECORDS_FLAGS
   },
   tables: {
-    collect_plans: { class: 'INDEX' },
+    collect_plans: {
+      class: 'EPHEMERAL',
+      why: 'Scan jobs with leases; the page makes a plan again when it needs one, and a rule keeps its plan and analysis ids in its own terms.'
+    },
     collect_rule_operations: { class: 'INDEX' },
     collect_rules: { class: 'INDEX' },
     market_operation_events: {
@@ -353,6 +372,13 @@ export const personalManifest: AreaManifest = {
   rebuilders: [PERSONAL_SETTINGS_REBUILD],
   probes: PROBES,
   waivers: {
+    unprobedTables: [
+      {
+        target: 'collect_rule_operations',
+        reason:
+          "No GET route reads it: only reconcile, a POST, reads a pending purchase's binding. The row comparison covers it; the seed fills it with a settled purchase the import carries and a released one the collect lane carries."
+      }
+    ],
     routes: [
       {
         target: 'GET /api/signed-records/owners',
