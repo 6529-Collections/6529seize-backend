@@ -42,6 +42,9 @@ import { TdhChainDay, TdhChainDayInfo } from './tdh-chain.types';
  *   a list that doesn't rebuild its root, a failed check, a stalled chain).
  *   Then the site's own day, written interim at 00:01 (no announcement, no
  *   dated uploads), is published as the day (`publishOwnDay`), once.
+ *
+ * Out of CHAIN mode (a rollback), an interim day still held is published at
+ * the next poll: nothing replaces it any more.
  */
 
 const logger = Logger.get('TDH_CHAIN_DAY_POLLER');
@@ -66,6 +69,8 @@ export interface PollerDeps {
    * announcement, once.
    */
   publishOwnDay(cycleDay: number, block: number): Promise<void>;
+  /** The block of 6529.io's own day held as interim, or null. */
+  heldOwnDayBlock(): Promise<number | null>;
   keyWidth(): Promise<number>;
   ingest(
     day: TdhChainDay,
@@ -167,6 +172,21 @@ async function alertIfStale(deps: PollerDeps): Promise<void> {
     );
     await deps.publishOwnDay(cycleDay, newest.block);
   }
+}
+
+/**
+ * Chain mode was turned off while 6529.io's own day waited as interim for
+ * the chain's: nothing replaces it now, so it is published at once instead
+ * of at the own-day point.
+ */
+async function publishHeldOwnDay(deps: PollerDeps): Promise<void> {
+  const block = await deps.heldOwnDayBlock();
+  if (block === null) return;
+  const newest = await deps.latestTdhDay();
+  if (newest?.block !== block) return;
+  const cycleDay = Math.floor(newest.timestampMs / 86_400_000) + 1;
+  logger.info(`[DAY ${cycleDay}] [CHAIN MODE OFF] [PUBLISHING THE HELD DAY]`);
+  await deps.publishOwnDay(cycleDay, block);
 }
 
 /** The day planned and read from the gateway, or null. */
@@ -282,6 +302,7 @@ async function runPendingSteps(deps: PollerDeps): Promise<number[]> {
 
 export async function pollChainDays(deps: PollerDeps): Promise<PollOutcome> {
   const mode = deps.mode;
+  if (mode !== 'CHAIN') await publishHeldOwnDay(deps);
   if (!mode) {
     logger.info('[OFF] [neither TDH chain flag is on]');
     return {};

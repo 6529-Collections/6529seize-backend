@@ -141,6 +141,20 @@ export class IdentityTdhSyncStateDb extends LazyDbAccessCompatibleService {
     return generation > 0 && Number(row?.generation ?? 0) === generation;
   }
 
+  /** The block of the interim write still waiting, or null. */
+  async heldInterimBlock(): Promise<number | null> {
+    const row = await this.db.oneOrNull<{
+      generation: number | string;
+      block: number | string;
+    }>(
+      `select generation, block from ${IDENTITY_TDH_SYNC_STATE_TABLE}
+       where id = '${INTERIM}'`,
+      undefined,
+      { forcePool: DbPoolName.WRITE }
+    );
+    return Number(row?.generation ?? 0) > 0 ? Number(row?.block) : null;
+  }
+
   /**
    * Ends the interim of the write at `block`, once, when the chain's day is
    * not written in time. NOTIFY: its identities are synced, and the caller

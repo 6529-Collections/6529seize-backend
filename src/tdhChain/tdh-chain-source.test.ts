@@ -86,6 +86,8 @@ function fakeGateway(
     chunk?: (data: any) => any;
     /** Answers 404 for a list chunk this picks (a node without the list). */
     drop?: (url: URL) => boolean;
+    /** Serves at most this many rows a chunk, whatever the limit asks. */
+    pageRows?: number;
   } = {}
 ) {
   let height = H;
@@ -110,7 +112,10 @@ function fakeGateway(
         }
       });
     }
-    const limit = Number(url.searchParams.get('limit'));
+    const limit = Math.min(
+      Number(url.searchParams.get('limit')),
+      opts.pageRows ?? Infinity
+    );
     const after = url.searchParams.get('after');
     const key = (r: any) => r.wallet ?? `${r.cid}:${r.contract}:${r.tokenId}`;
     const from =
@@ -257,6 +262,23 @@ describe('GatewayTdhChainSource', () => {
     ]);
     expect(gw.requests.map(pathOf)).toContain('/v1/tdh');
     expect(await source.day(20738)).toBeNull();
+  });
+
+  it('follows next past a chunk shorter than the limit', async () => {
+    const day = chainDayFixture();
+    const gw = fakeGateway(day, { pageRows: 1 });
+    const source = new GatewayTdhChainSource(BASE, gw.fetcher, 4);
+    const read = await readChainDay(source, day.header.cycleDay);
+    expect(read?.walletLeaves).toEqual(day.walletLeaves);
+    expect(read?.tokenLeaves).toEqual(day.tokenLeaves);
+    const w = day.walletLeaves.map((l) => l.wallet);
+    const lists = gw.requests.map(pathOf).filter((p) => p.includes('/wallets'));
+    expect(lists).toEqual(
+      w.map(
+        (_, i) =>
+          `/v1/tdh/days/20737/wallets?${i === 0 ? '' : `after=${w[i - 1]}&`}limit=4&height=${H}`
+      )
+    );
   });
 
   it('reads no token list while the gateway serves none', async () => {

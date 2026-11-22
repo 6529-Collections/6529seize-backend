@@ -285,6 +285,9 @@ async function announceSynced(generation: number): Promise<void> {
  * - E: TDH consumers are told (`announceSynced`), then the pending
  *   generation read at the start is marked synced, with C's ratings
  *   watermark, and its scope rows are dropped.
+ * - D and E wait for a later sync while the generation is an interim day
+ *   or a newer one is pending (`whyDAndEWait`); the generation is still
+ *   marked synced.
  *
  * B, C and D are idempotent, so a run that stops part way is finished by the
  * next call. The run stops cleanly between steps or chunks once the
@@ -438,12 +441,9 @@ export async function syncIdentitiesAfterTdh(
     // D and E are short and finish the sync even past the deadline.
     await lease.renew();
     const stepD = Time.now();
-    // 6529.io's own day while TDH comes from the 6529 chain: the chain's day
-    // replaces it, so votes are not revoked and nothing is announced on its
-    // values until its interim ends (identity-tdh-sync-state.db.ts).
-    const interim = await identityTdhSyncStateDb.isInterim(generation);
-    if (interim) {
-      logger.info(`[D AND E HELD] [GENERATION ${generation}] [INTERIM DAY]`);
+    const held = await whyDAndEWait(generation);
+    if (held) {
+      logger.info(`[D AND E HELD] [GENERATION ${generation}] [${held}]`);
     } else {
       await revokeTdhBasedDropWavesOverVotesPerCompetition();
       logger.info(
@@ -452,7 +452,7 @@ export async function syncIdentitiesAfterTdh(
     }
     await lease.renew();
     const stepE = Time.now();
-    if (!interim) await announceSynced(generation);
+    if (!held) await announceSynced(generation);
     await identityTdhSyncStateDb.markSynced({
       generation,
       block: progress.pendingBlock,
@@ -468,6 +468,31 @@ export async function syncIdentitiesAfterTdh(
       logger.error(`[LEASE RELEASE FAILED] ${error}`);
     });
   }
+}
+
+/**
+ * Why steps D and E wait for a later sync, or null when they run now.
+ *
+ * - An interim write is 6529.io's own day while TDH comes from the 6529
+ *   chain: the chain's day replaces it, so votes are not revoked and nothing
+ *   is announced on its values until its interim ends
+ *   (identity-tdh-sync-state.db.ts).
+ * - A newer write that committed during this sync (the chain's day landing
+ *   in the middle of an interim walk) leaves identities partly at this
+ *   generation's values. The newer generation's sync revokes and announces
+ *   once every identity has its values.
+ *
+ * The interim is read first: the chain's write ends it in the same
+ * transaction that adds the newer generation, so a write between the two
+ * reads is always seen as the newer generation.
+ */
+async function whyDAndEWait(generation: number): Promise<string | null> {
+  if (await identityTdhSyncStateDb.isInterim(generation)) return 'INTERIM DAY';
+  const { pendingGeneration } = await identityTdhSyncStateDb.readProgress();
+  if (pendingGeneration > generation) {
+    return `GENERATION ${pendingGeneration} PENDING`;
+  }
+  return null;
 }
 
 /**

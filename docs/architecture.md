@@ -198,7 +198,11 @@ takes effect without a redeploy.
   gateway down, the day not served or not final, a list that doesn't
   rebuild its root, a failed check, a stalled chain), the poller alerts once
   an hour and publishes the site's own day once: its uploads, then its
-  announcement. The 00:01 run leaves alone a day the chain already wrote.
+  announcement. Out of chain mode (a rollback) a day still held is
+  published at the next poll. When the chain's write lands while identities
+  are being synced to the interim day, that sync holds the revocation and
+  the announcement too, and the chain's generation does both. The 00:01 run
+  leaves alone a day the chain already wrote.
   The delegations loop's within-day TDH rerun stops: it would rewrite the
   chain's block. An alert also fires while the newest `tdh_blocks` row is
   more than 30 hours old.

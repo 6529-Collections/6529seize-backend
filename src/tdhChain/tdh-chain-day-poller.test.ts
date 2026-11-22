@@ -180,6 +180,7 @@ describe('pollChainDays', () => {
       publishOwnDay: async (cycleDay, block) => {
         log.events.push(`publish ${cycleDay} ${block}`);
       },
+      heldOwnDayBlock: async () => null,
       keyWidth: async () => 200,
       ingest: async (d) => {
         log.events.push(`ingest ${d.header.cycleDay}`);
@@ -509,6 +510,27 @@ describe('pollChainDays', () => {
       ).toEqual([]);
       expect(await run(row(20738, { block: 2000 }), at(5))).toEqual([]);
       expect(await run(null, at(5), { mode: 'SHADOW' })).toEqual([]);
+    });
+
+    it('publishes a held own day at the next poll once chain mode is off, and only then', async () => {
+      const held = { heldOwnDayBlock: async () => 2000 };
+      // Rolled back to no flag, or to shadow: nothing replaces the day.
+      expect(await run(null, at(1), { ...held, mode: null })).toEqual([
+        PUBLISH
+      ]);
+      expect(await run(null, at(1), { ...held, mode: 'SHADOW' })).toEqual([
+        PUBLISH
+      ]);
+      // In chain mode the day waits for the own-day point.
+      expect(await run(null, at(1), held)).toEqual([]);
+      // Nothing held, or held at a block the tables no longer end with.
+      expect(await run(null, at(1), { mode: null })).toEqual([]);
+      expect(
+        await run(null, at(1), {
+          mode: null,
+          heldOwnDayBlock: async () => 1999
+        })
+      ).toEqual([]);
     });
   });
 

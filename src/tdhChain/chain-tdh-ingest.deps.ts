@@ -334,6 +334,7 @@ export function pollerDepsFor(
     mode,
     source,
     publishOwnDay,
+    heldOwnDayBlock: () => identityTdhSyncStateDb.heldInterimBlock(),
     latestRow: () => tdhChainDaysDb.latest(),
     pendingDays: () => tdhChainDaysDb.pendingDays(),
     latestTdhDay: () => tdhChainDaysDb.latestTdhDay(),

@@ -350,6 +350,7 @@ describeWithSeed(
         'revokeTdhBasedDropWavesOverVotesPerCompetition'
       );
       expect(await identityTdhSyncStateDb.isInterim(1)).toBe(true);
+      expect(await identityTdhSyncStateDb.heldInterimBlock()).toBe(BLOCK);
       expect(await identityTdhSyncStateDb.hasPendingFullAnnouncement()).toBe(
         false
       );
@@ -377,6 +378,7 @@ describeWithSeed(
         outcome: 'NOTIFY',
         generation: 1
       });
+      expect(await identityTdhSyncStateDb.heldInterimBlock()).toBeNull();
       await expect(
         identityTdhSyncStateDb.releaseInterim(BLOCK)
       ).resolves.toEqual({
@@ -430,6 +432,60 @@ describeWithSeed(
       // A rearm after a newer write does nothing.
       await identityTdhSyncStateDb.rearmInterim(1, BLOCK);
       expect(await identityTdhSyncStateDb.isInterim(1)).toBe(false);
+    });
+
+    it("holds D and E when the chain's write lands in the middle of an interim walk", async () => {
+      await identityTdhSyncStateDb.ensureRows();
+      await sqlExecutor.executeNativeQueriesInTransaction((connection) =>
+        identityTdhSyncStateDb.markPending(BLOCK, connection, {
+          interim: true
+        })
+      );
+      const announce = jest
+        .spyOn(notifier, 'notifyTdhCalculationsDone')
+        .mockResolvedValue(undefined);
+      const revoke = jest.spyOn(
+        overvoteRevocation,
+        'revokeTdhBasedDropWavesOverVotesPerCompetition'
+      );
+
+      let landed = false;
+      await expect(
+        syncIdentitiesAfterTdh({
+          chunkRows: 3,
+          afterChunk: async (chunk) => {
+            if (chunk !== 1 || landed) return;
+            landed = true;
+            // The chain's day commits between two chunks: a full write,
+            // which ends the interim.
+            await sqlExecutor.executeNativeQueriesInTransaction((connection) =>
+              identityTdhSyncStateDb.markPending(BLOCK, connection, {
+                announceFull: true
+              })
+            );
+          }
+        })
+      ).resolves.toBe('SYNCED');
+
+      // Some identities were walked at the interim values: nothing is
+      // revoked or announced for this generation.
+      expect(await identityTdhSyncStateDb.isInterim(1)).toBe(false);
+      expect(revoke).not.toHaveBeenCalled();
+      expect(announce).not.toHaveBeenCalled();
+      expect(sqs.sendToQueueName).not.toHaveBeenCalled();
+      expect(await identityTdhSyncStateDb.readProgress()).toEqual({
+        pendingGeneration: 2,
+        pendingBlock: BLOCK,
+        syncedGeneration: 1
+      });
+
+      // The chain's generation revokes and announces once.
+      await resumePendingIdentityTdhSync();
+      expect(revoke).toHaveBeenCalledTimes(1);
+      expect(announce).toHaveBeenCalledTimes(1);
+      expect(
+        (await identityTdhSyncStateDb.readProgress()).syncedGeneration
+      ).toBe(2);
     });
 
     it('keeps a full TDH announcement armed when publishing it fails', async () => {
