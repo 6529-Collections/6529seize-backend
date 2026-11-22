@@ -3146,6 +3146,8 @@ anchor within 120 heights of the finalized head, claimed time within 10
 minutes, author bound to the owner at the anchor) and must state the
 request's change, be signed for the signed-in wallet and name the identity
 of the route's key; otherwise 400 `INVALID_SIGNED_RECORD` with the reason.
+If the anchor or the author's binding can't be read from the chain gateway,
+the answer is 503 `ANCHOR_UNAVAILABLE` or `BINDING_UNAVAILABLE`.
 A record in a bare wallet's stream whose wallet has bound to a principal
 since its anchor still counts: it writes the rows that hold the wallet's
 state at write time, the wallet's own until the top-up loop's fold moves
@@ -3154,8 +3156,10 @@ them, then the identity's, and the journal entry names that key
 the wallet into the identity is journaled first, in the same transaction,
 unless the opening's key map has the wallet in that identity: a wallet with
 no rows of its own is never folded, so otherwise nothing would tie it to
-the rows. Where the fold writer already folded the wallet, this repeats the
-link, a no-op for the rebuild.
+the rows. Any history the wallet has (log lines, top-ups, final and redeemed
+rows) moves to the identity then, as in any fold, and the fold's rekey moves
+it the same way in a rebuild. Where the fold writer already folded the
+wallet, this repeats the link, a no-op for the rebuild.
 In one transaction the event goes to the record log (lane `subs`, with
 its grant proof), the record index applies it if it is newer than the
 stored head for its choice (else 409), `makeChoice` works it out with the
@@ -3176,7 +3180,8 @@ side added are compared. Every signed change in shadow leaves a `RECORD`
 report naming rows and fields but no values: MATCH; DIFF when the rows
 differ or the identity side's rules refused what today's write took;
 FAILED on an error; REFUSED when the record itself was not taken (it did
-not verify or state the request, was stale, or the anchor was unavailable).
+not verify or state the request, was stale, or the anchor or the author's
+binding was unavailable).
 Nothing on the identity side fails the request. The go-live gate counts
 every DIFF and FAILED, and skips REFUSED, so one person's bad header can't
 hold the switch back. A

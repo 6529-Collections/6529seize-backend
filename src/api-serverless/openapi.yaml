@@ -19059,8 +19059,9 @@ paths:
         "503":
           description: >-
             Subscription changes are paused for a few minutes, or the anchor
-            height needed to check a signed record is unavailable
-            (ANCHOR_UNAVAILABLE). Try again shortly.
+            height or the wallet binding needed to check a signed record is
+            unavailable (ANCHOR_UNAVAILABLE, BINDING_UNAVAILABLE). Try again
+            shortly.
   /subscriptions/{consolidation_key}/subscribe-all-editions:
     post:
       tags:
@@ -19119,8 +19120,9 @@ paths:
         "503":
           description: >-
             Subscription changes are paused for a few minutes, or the anchor
-            height needed to check a signed record is unavailable
-            (ANCHOR_UNAVAILABLE). Try again shortly.
+            height or the wallet binding needed to check a signed record is
+            unavailable (ANCHOR_UNAVAILABLE, BINDING_UNAVAILABLE). Try again
+            shortly.
   /subscriptions/{consolidation_key}/subscription:
     post:
       tags:
@@ -19180,8 +19182,9 @@ paths:
         "503":
           description: >-
             Subscription changes are paused for a few minutes, or the anchor
-            height needed to check a signed record is unavailable
-            (ANCHOR_UNAVAILABLE). Try again shortly.
+            height or the wallet binding needed to check a signed record is
+            unavailable (ANCHOR_UNAVAILABLE, BINDING_UNAVAILABLE). Try again
+            shortly.
   /subscriptions/{consolidation_key}/subscription-count:
     post:
       tags:
@@ -19241,8 +19244,9 @@ paths:
         "503":
           description: >-
             Subscription changes are paused for a few minutes, or the anchor
-            height needed to check a signed record is unavailable
-            (ANCHOR_UNAVAILABLE). Try again shortly.
+            height or the wallet binding needed to check a signed record is
+            unavailable (ANCHOR_UNAVAILABLE, BINDING_UNAVAILABLE). Try again
+            shortly.
   /identity-subscriptions/outgoing/{target_type}:
     get:
       tags:

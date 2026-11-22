@@ -8,8 +8,12 @@ import {
 import {
   SUBSCRIPTIONS_ID_BALANCES_TABLE,
   SUBSCRIPTIONS_ID_KEY_MAP_TABLE,
+  SUBSCRIPTIONS_ID_LOGS_TABLE,
   SUBSCRIPTIONS_ID_MODE_TABLE,
-  SUBSCRIPTIONS_ID_NFTS_TABLE
+  SUBSCRIPTIONS_ID_NFTS_FINAL_TABLE,
+  SUBSCRIPTIONS_ID_NFTS_TABLE,
+  SUBSCRIPTIONS_ID_REDEEMED_TABLE,
+  SUBSCRIPTIONS_ID_TOP_UP_TABLE
 } from '@/constants';
 import {
   ApiCompliantException,
@@ -247,13 +251,39 @@ class RuleRefusalException extends CustomApiCompliantException {
 
 const STALE_SIGNED_RECORD = 'STALE_SIGNED_RECORD';
 const ANCHOR_UNAVAILABLE = 'ANCHOR_UNAVAILABLE';
+const BINDING_UNAVAILABLE = 'BINDING_UNAVAILABLE';
+
+/**
+ * The binding source for verification, with its failures (the chain
+ * gateway down or slow) answered as a 503 the device can retry, as a
+ * missing anchor is, rather than as a server error.
+ */
+function bindingsOrUnavailable(
+  source: PrincipalBindingSource
+): PrincipalBindingSource {
+  return {
+    async principalAt(wallet: string, height: number) {
+      try {
+        return await source.principalAt(wallet, height);
+      } catch (error) {
+        logger.warn('[WALLET BINDING NOT READ]', error);
+        throw new CustomApiCompliantException(
+          503,
+          'The chain gateway did not answer, so the wallet binding could not be checked',
+          BINDING_UNAVAILABLE
+        );
+      }
+    }
+  };
+}
 
 /**
  * Why a shadow companion did not apply, as a code, and whether the go-live
  * gate counts it: the record's own failings (it did not verify or state
- * the request, it was stale, the anchor could not be had) are REFUSED and
- * not counted, so one person's bad header can't hold the switch back; a
- * rule the identity side applied differently is a DIFF; an error FAILED.
+ * the request, it was stale, the anchor or the author's binding could not
+ * be had) are REFUSED and not counted, so one person's bad header can't
+ * hold the switch back; a rule the identity side applied differently is a
+ * DIFF; an error FAILED.
  */
 function failureOf(error: unknown): {
   readonly verdict: 'REFUSED' | 'DIFF' | 'FAILED';
@@ -269,7 +299,9 @@ function failureOf(error: unknown): {
     const code = error.code ?? String(error.getStatusCode());
     return {
       verdict:
-        code === STALE_SIGNED_RECORD || code === ANCHOR_UNAVAILABLE
+        code === STALE_SIGNED_RECORD ||
+        code === ANCHOR_UNAVAILABLE ||
+        code === BINDING_UNAVAILABLE
           ? 'REFUSED'
           : 'DIFF',
       cause: `refused:${code}`
@@ -468,7 +500,7 @@ export class SubscriptionChangeWriter {
     const anchor = await this.deps.anchors.getAnchor();
     const result = await verifyRecordEvent(events[0], {
       grants: this.deps.grants,
-      bindings: this.deps.bindings,
+      bindings: bindingsOrUnavailable(this.deps.bindings),
       live: {
         now: this.deps.now(),
         head: anchor.anchor,
@@ -568,10 +600,13 @@ export class SubscriptionChangeWriter {
    * wallet to the rows: the opening names only the wallets it cut, and a
    * fold is journaled only for a wallet with rows of its own. Unless the
    * opening's key map already has the wallet in the identity, an empty
-   * fold (no rows, the wallet's history rekeyed to the identity, of which it
-   * has none) goes first, in the same transaction. Folds already posted
-   * can't be seen from here, so after the fold writer's own fold of the
-   * wallet this repeats the link; a rebuild applies either as a no-op.
+   * fold goes first, in the same transaction: no balance, mode or choice
+   * rows to merge, but any history the wallet has (final, redeemed, log and
+   * top-up rows, say a log line from before the cut) moves to the identity
+   * here, as the fold writer moves it, and the fold's rekey moves it the
+   * same way in a rebuild. Folds already posted can't be seen from here, so
+   * after the fold writer's own fold of the wallet this repeats the link;
+   * a rebuild applies either as a no-op.
    */
   private async linkWalletToIdentity(
     wallet: string,
@@ -590,10 +625,31 @@ export class SubscriptionChangeWriter {
     if (linked.length > 0) {
       return;
     }
+    for (const table of [
+      SUBSCRIPTIONS_ID_NFTS_FINAL_TABLE,
+      SUBSCRIPTIONS_ID_REDEEMED_TABLE,
+      SUBSCRIPTIONS_ID_LOGS_TABLE,
+      SUBSCRIPTIONS_ID_TOP_UP_TABLE
+    ]) {
+      // Final rows keep their priority time (updated_at) when re-keyed.
+      const keepTime =
+        table === SUBSCRIPTIONS_ID_NFTS_FINAL_TABLE
+          ? ', updated_at = updated_at'
+          : '';
+      await sqlExecutor.execute(
+        `UPDATE ${table} SET identity_key = :identityKey${keepTime} WHERE identity_key = :wallet`,
+        { identityKey, wallet },
+        options
+      );
+    }
     await journal(
       {
         kind: 'fold',
-        inputs: { wallet, identity_key: identityKey },
+        inputs: {
+          wallet,
+          identity_key: identityKey,
+          at_text: msToDbText(atMs)
+        },
         rekeys: [{ from: wallet, to: identityKey }],
         atMs
       },

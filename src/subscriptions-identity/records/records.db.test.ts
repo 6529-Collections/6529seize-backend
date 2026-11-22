@@ -19,9 +19,12 @@ import {
   SUBSCRIPTIONS_ID_CURSORS_TABLE,
   SUBSCRIPTIONS_ID_LOGS_TABLE,
   SUBSCRIPTIONS_ID_MODE_TABLE,
+  SUBSCRIPTIONS_ID_NFTS_FINAL_TABLE,
   SUBSCRIPTIONS_ID_NFTS_TABLE,
+  SUBSCRIPTIONS_ID_REDEEMED_TABLE,
   SUBSCRIPTIONS_ID_REPORTS_TABLE,
   SUBSCRIPTIONS_ID_STATE_TABLE,
+  SUBSCRIPTIONS_ID_TOP_UP_TABLE,
   SUBSCRIPTIONS_LOGS_TABLE,
   SUBSCRIPTIONS_MODE_TABLE,
   SUBSCRIPTIONS_NFTS_TABLE,
@@ -635,6 +638,30 @@ describeWithSeed('signed subscription changes', [], () => {
       expect(await logEntries()).toEqual([]);
     });
 
+    it('answers 503 BINDING_UNAVAILABLE when the binding at the anchor cannot be read, and writes nothing', async () => {
+      await seedLegacy();
+      await cutAndLoad(true);
+      const before = [await rowsOf('identity', P), await rowsOf('legacy', W)];
+      const result = await refusal(
+        writer({
+          bindings: {
+            principalAt: async () => {
+              throw new Error('gateway timed out');
+            }
+          }
+        }).write(request(card(C1, true), header(record(card(C1, true)))))
+      );
+      expect([result.status, result.code]).toEqual([
+        503,
+        'BINDING_UNAVAILABLE'
+      ]);
+      expect([await rowsOf('identity', P), await rowsOf('legacy', W)]).toEqual(
+        before
+      );
+      expect(await logEntries()).toEqual([]);
+      expect(await heads()).toEqual([]);
+    });
+
     it("refuses a record signed for another wallet than the session's (author)", async () => {
       await seedLegacy();
       await cutAndLoad(true);
@@ -919,7 +946,12 @@ describeWithSeed('signed subscription changes', [], () => {
       expect(
         bodies.map((b) => [b.kind, b.inputs, b.rekeys, b.changes.length])
       ).toEqual([
-        ['fold', { wallet: W, identity_key: P }, [{ from: W, to: P }], 0],
+        [
+          'fold',
+          { wallet: W, identity_key: P, at_text: expect.any(String) },
+          [{ from: W, to: P }],
+          0
+        ],
         [
           'choice',
           expect.objectContaining({ owner: W, identity_key: P }),
@@ -946,6 +978,79 @@ describeWithSeed('signed subscription changes', [], () => {
       );
       expect(await identityTablesHash({})).toBe(tablesBefore);
     });
+
+    /** Which identity each history row (log, top-up, final, redeemed) is under. */
+    async function historyKeys(): Promise<Record<string, string[]>> {
+      const keys: Record<string, string[]> = {};
+      for (const table of [
+        SUBSCRIPTIONS_ID_LOGS_TABLE,
+        SUBSCRIPTIONS_ID_TOP_UP_TABLE,
+        SUBSCRIPTIONS_ID_NFTS_FINAL_TABLE,
+        SUBSCRIPTIONS_ID_REDEEMED_TABLE
+      ]) {
+        keys[table] = (
+          await sqlExecutor.execute<{ identity_key: string }>(
+            `SELECT identity_key FROM ${table} ORDER BY identity_key`
+          )
+        ).map((row) => row.identity_key);
+      }
+      return keys;
+    }
+
+    it.each([
+      ['a log line', 'logs'],
+      ['a top-up', 'top-up']
+    ])(
+      'moves the history of a wallet with only %s to the identity when it links them, as a rebuild does',
+      async (_name, kept) => {
+        await seedLegacy({ bound: false });
+        for (const table of [
+          SUBSCRIPTIONS_BALANCES_TABLE,
+          SUBSCRIPTIONS_NFTS_TABLE
+        ]) {
+          await execute(`DELETE FROM ${table}`);
+        }
+        if (kept === 'logs') {
+          await execute(`DELETE FROM ${SUBSCRIPTIONS_TOP_UP_TABLE}`);
+          await execute(
+            `INSERT INTO ${SUBSCRIPTIONS_LOGS_TABLE} (consolidation_key, log) VALUES (:w, 'A line from before the cut')`,
+            { w: W }
+          );
+        }
+        const opening = await cutAndLoad(true);
+        const table =
+          kept === 'logs'
+            ? SUBSCRIPTIONS_ID_LOGS_TABLE
+            : SUBSCRIPTIONS_ID_TOP_UP_TABLE;
+        expect((await historyKeys())[table]).toEqual([W]);
+        await bindInMirror();
+        await writer({ bindings: bindingSource([]) }).write(
+          request(ALL_ON, header(record(ALL_ON, { owner: W })))
+        );
+        const live = await historyKeys();
+        expect(live[table]).not.toContain(W);
+        expect(live[table]).toContain(P);
+        const tablesBefore = await identityTablesHash({});
+        for (const data of [
+          ...IDENTITY_DATA_TABLES,
+          SUBSCRIPTIONS_ID_STATE_TABLE,
+          SUBSCRIPTIONS_ID_CURSORS_TABLE,
+          SIGNED_RECORD_HEADS_TABLE
+        ]) {
+          await execute(`DELETE FROM ${data}`);
+        }
+        subscriptionsIdentitySwitch.invalidate();
+        const result = await rebuildIdentityTables({
+          source: journalSource,
+          opening
+        });
+        expect(result).toEqual(
+          expect.objectContaining({ skipped: 0, missing: null })
+        );
+        expect(await historyKeys()).toEqual(live);
+        expect(await identityTablesHash({})).toBe(tablesBefore);
+      }
+    );
 
     it('journals no link for a wallet the opening already has in the identity', async () => {
       await seedLegacy();
@@ -1289,8 +1394,9 @@ describeWithSeed('signed subscription changes', [], () => {
           { kind, card: CARD, verdict }
         );
       await gateReport('LIST', 'MATCH');
-      // Three records the identity side never took: a bad signature, the same
-      // record sent twice (stale), and one sent while the anchor was down.
+      // Four records the identity side never took: a bad signature, the same
+      // record sent twice (stale), one sent while the anchor was down, and
+      // one whose author's binding could not be read.
       const event = record(card(C1, true));
       await writer({ shadow: true }).write(
         request(
@@ -1316,6 +1422,14 @@ describeWithSeed('signed subscription changes', [], () => {
           }
         }
       }).write(request(card(C2, false), header(record(card(C2, false)))));
+      await writer({
+        shadow: true,
+        bindings: {
+          principalAt: async () => {
+            throw new Error('gateway timed out');
+          }
+        }
+      }).write(request(card(C2, true), header(record(card(C2, true)))));
       await gateReport('PHASE', 'MATCH');
       await gateReport('REDEMPTIONS', 'MATCH');
       expect(
@@ -1326,13 +1440,14 @@ describeWithSeed('signed subscription changes', [], () => {
         ['REFUSED', 'invalid-record:sig'],
         ['MATCH', null],
         ['REFUSED', 'refused:STALE_SIGNED_RECORD'],
-        ['REFUSED', 'refused:ANCHOR_UNAVAILABLE']
+        ['REFUSED', 'refused:ANCHOR_UNAVAILABLE'],
+        ['REFUSED', 'refused:BINDING_UNAVAILABLE']
       ]);
       const passing = await shadowReportsMatch(CARD);
       expect(passing.problems).toEqual([]);
       expect(passing.ok).toBe(true);
       expect(passing.checked).toContain(
-        '3 signed records refused in shadow (not counted)'
+        '4 signed records refused in shadow (not counted)'
       );
       // The identity side refusing what today's write took is counted.
       await execute(
