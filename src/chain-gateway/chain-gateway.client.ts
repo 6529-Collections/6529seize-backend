@@ -126,7 +126,6 @@ export function chainGatewayConfigFromEnv(
   };
 }
 
-/** A Map in least-recently-used order. */
 /**
  * Least recently used entries go first: past `capacity` entries, or past
  * `maxWeight` in total when entries are weighed (documents by their bytes).
@@ -180,8 +179,12 @@ export class LruCache<V> {
 }
 
 /** Cached documents take at most this many bytes in all. */
-const MAX_CACHED_DOCS_BYTES = 32 * 1024 * 1024;
-
+const DOC_CACHE_TOTAL_BYTES = 32 * 1024 * 1024;
+/** A profile document's largest size: larger documents are not cached. */
+const DOC_CACHE_ENTRY_BYTES = 524_288;
+/** CIDv1, codec raw (0x55), multihash sha2-256 (0x12) of 32 bytes. */
+const RAW_SHA256_CID_PREFIX = [0x01, 0x55, 0x12, 0x20];
+/** CIDv1, codec raw (0x55), multihash sha2-256 (0x12) of 32 bytes. */
 type Query = Record<string, string | number | boolean | null | undefined>;
 
 interface Envelope<T> {
@@ -205,8 +208,6 @@ function trimTrailingSlashes(url: string): string {
   return url.slice(0, end);
 }
 const RFC4648_LOWER = 'abcdefghijklmnopqrstuvwxyz234567';
-/** A profile document's largest size: larger documents are not cached. */
-const MAX_CACHED_DOC_BYTES = 524_288;
 
 function base32(bytes: Uint8Array): string {
   let out = '';
@@ -284,8 +285,6 @@ export function rawCidHexOf(bytes: Uint8Array): string {
   );
 }
 
-const RAW_SHA256_CID_PREFIX = [0x01, 0x55, 0x12, 0x20];
-
 /** The sha2-256 digest a CIDv1 names (any codec), or null for another CID. */
 function sha256DigestOf(cid: Uint8Array): Buffer | null {
   if (cid[0] !== 0x01) return null;
@@ -331,7 +330,7 @@ function bindingChanges(
   const changes: unknown[] = value;
   return changes.map((entry) => {
     const it = entry as { height?: unknown; principalId?: unknown } | null;
-    const height = Number(it?.height);
+    const height = typeof it?.height === 'number' ? it.height : Number.NaN;
     const principal = it?.principalId;
     const principalOk =
       principal === null ||
@@ -352,15 +351,26 @@ function bindingChanges(
   });
 }
 
-/** The feed's held height ranges, `[[from, to], ...]`; anything else is none. */
-function heightRanges(value: unknown): [number, number][] {
-  if (!Array.isArray(value)) return [];
-  return value
-    .filter(
-      (it): it is [unknown, unknown] => Array.isArray(it) && it.length === 2
-    )
-    .map(([from, to]) => [Number(from), Number(to)] as [number, number])
-    .filter(([from, to]) => Number.isSafeInteger(from) && to >= from);
+/**
+ * The feed's held height ranges, `[[from, to], ...]` of whole heights;
+ * absent is none, anything else throws (a misread range could make a
+ * history look complete).
+ */
+function heightRanges(value: unknown, path: string): [number, number][] {
+  if (value === undefined || value === null) return [];
+  const ranges = Array.isArray(value) ? value : [null];
+  return ranges.map((it: unknown) => {
+    const [from, to] = Array.isArray(it) && it.length === 2 ? it : [];
+    if (!Number.isSafeInteger(from) || !Number.isSafeInteger(to) || to < from) {
+      throw new ChainGatewayError(
+        `${path}: a height range that can't be read`,
+        200,
+        'bad_answer',
+        path
+      );
+    }
+    return [from as number, to as number];
+  });
 }
 
 function lower(address: string): string {
@@ -393,7 +403,7 @@ export class ChainGatewayClient {
         docs: new LruCache<Buffer>(
           Math.max(1, Math.floor(resolved.cacheEntries / 4)),
           (doc) => doc.length,
-          MAX_CACHED_DOCS_BYTES
+          DOC_CACHE_TOTAL_BYTES
         )
       };
       this.resolved = resolved;
@@ -887,11 +897,23 @@ export class ChainGatewayClient {
       ranges?: unknown;
     }>(path, {}, opts);
     if (!answer?.data) return null;
+    const readHeight = answer.read?.height;
+    if (
+      lower(answer.data.wallet ?? '') !== lower(wallet) ||
+      !Number.isSafeInteger(readHeight)
+    ) {
+      throw new ChainGatewayError(
+        `${path}: the answer is for another wallet or has no read height`,
+        200,
+        'bad_answer',
+        path
+      );
+    }
     return {
-      wallet: lower(answer.data.wallet ?? wallet),
+      wallet: lower(wallet),
       changes: bindingChanges(answer.data.changes, path),
-      ranges: heightRanges(answer.data.ranges),
-      readHeight: Number(answer.read?.height ?? 0)
+      ranges: heightRanges(answer.data.ranges, path),
+      readHeight
     };
   }
 
@@ -1134,7 +1156,7 @@ export class ChainGatewayClient {
         path
       );
     }
-    if (bytes.length <= MAX_CACHED_DOC_BYTES) {
+    if (bytes.length <= DOC_CACHE_ENTRY_BYTES) {
       this.docs.set(key, bytes);
     }
     return bytes;

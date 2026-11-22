@@ -528,6 +528,8 @@ describe('profile documents', () => {
     expect(bytesMatchCid('0x01551340' + digest + digest, doc)).toBe(false);
     expect(bytesMatchCid('0x015512' + '1f' + digest.slice(2), doc)).toBe(false);
     expect(bytesMatchCid('0x1220' + digest, doc)).toBe(false);
+    // CID version 2.
+    expect(bytesMatchCid('0x02551220' + digest, doc)).toBe(false);
   });
 
   it('refuses to fetch a document whose CID names another hash', async () => {
@@ -575,7 +577,8 @@ describe('profile documents', () => {
       '0x0155',
       cidPath(cid).toUpperCase(),
       'zabc',
-      'b1'
+      'b1',
+      `${cidPath(cid)}!junk`
     ]) {
       expect(() => cidHex(bad)).toThrow(ChainGatewayError);
     }
@@ -709,9 +712,7 @@ describe('import and membership history', () => {
       ],
       ranges: [
         [1, 20],
-        [30, 50],
-        ['x', 2],
-        [9, 4]
+        [30, 50]
       ]
     };
     const { client } = setup((call) =>
@@ -741,7 +742,11 @@ describe('import and membership history', () => {
       },
       {
         status: 200,
-        json: { read: stamp(50), data: { wallet: W, changes: [] }, next: null }
+        json: {
+          read: stamp(50),
+          data: { wallet: '0x' + '02'.repeat(20), changes: [] },
+          next: null
+        }
       }
     ];
     const { client } = setup((call) =>
@@ -766,7 +771,15 @@ describe('import and membership history', () => {
         { height: 3, principalId: null }
       ]
     ],
-    ['no changes at all', undefined]
+    ['no changes at all', undefined],
+    ['a height that is null', [{ height: null, principalId: null }]],
+    [
+      'two changes at one height',
+      [
+        { height: 3, principalId: P },
+        { height: 3, principalId: null }
+      ]
+    ]
   ])('refuses a history with %s', async (_name, changes) => {
     const { client } = setup((call) =>
       path(call) === '/v1/status'
@@ -776,6 +789,40 @@ describe('import and membership history', () => {
             json: {
               read: stamp(50),
               data: { wallet: W, changes, ranges: [[1, 50]] },
+              next: null
+            }
+          }
+    );
+    await expect(client.getMembershipWalletHistory(W)).rejects.toMatchObject({
+      code: 'bad_answer'
+    });
+  });
+
+  it.each([
+    ['a range that is not two heights', { ranges: [[1, 2, 3]] }],
+    ['a range that ends before it starts', { ranges: [[9, 4]] }],
+    ['a range to infinity', { ranges: [[1, 'Infinity']] }],
+    ['ranges that are not a list', { ranges: 'all' }],
+    ['another wallet', { wallet: '0x' + '02'.repeat(20) }],
+    ['no read height', { read: { ...stamp(50), height: undefined } }]
+  ])('refuses a history answer with %s', async (_name, change) => {
+    const { read: readChange, ...dataChange } = change as {
+      read?: unknown;
+      [key: string]: unknown;
+    };
+    const { client } = setup((call) =>
+      path(call) === '/v1/status'
+        ? status(50)
+        : {
+            status: 200,
+            json: {
+              read: readChange ?? stamp(50),
+              data: {
+                wallet: W,
+                changes: [{ height: 3, principalId: P }],
+                ranges: [[1, 50]],
+                ...dataChange
+              },
               next: null
             }
           }
