@@ -7,6 +7,7 @@ import {
   testSignedEvent
 } from '@/tests/fixtures/relay-events.fixture';
 import {
+  DEFAULT_LIVE_FROM,
   DropIndexConfigError,
   dropIndexConfig,
   onDropIndexStored,
@@ -35,7 +36,8 @@ describe('dropIndexConfig', () => {
       net: 'net-1',
       reader: null,
       budgetMs: 25_000,
-      apply: false
+      apply: false,
+      liveFrom: Date.parse('2026-11-26T00:00:00Z')
     });
     const reader = JSON.stringify({
       device_seed: TEST_DEVICE_SEED,
@@ -51,6 +53,26 @@ describe('dropIndexConfig', () => {
       budgetMs: 9000,
       reader: { deviceSeed: TEST_DEVICE_SEED }
     });
+  });
+
+  it('reads switch-on as ISO 8601 UTC or Unix ms', () => {
+    expect(DEFAULT_LIVE_FROM).toBe(Date.parse('2026-11-26T00:00:00Z'));
+    for (const [raw, at] of [
+      ['2026-11-27T12:30:00Z', Date.parse('2026-11-27T12:30:00Z')],
+      ['2026-11-27T12:30:00.250+00:00', Date.parse('2026-11-27T12:30:00.250Z')],
+      [' 1795000000000 ', 1795000000000],
+      ['', DEFAULT_LIVE_FROM]
+    ] as const) {
+      expect(
+        dropIndexConfig({ ...ON, WAVES_DROP_INDEX_LIVE_FROM: raw })?.liveFrom
+      ).toBe(at);
+    }
+    // Seconds, a local time, a word: not run on a guess.
+    for (const raw of ['1795000000', '2026-11-26T00:00:00', 'now', '0']) {
+      expect(() =>
+        dropIndexConfig({ ...ON, WAVES_DROP_INDEX_LIVE_FROM: raw })
+      ).toThrow('WAVES_DROP_INDEX_LIVE_FROM');
+    }
   });
 
   it('refuses settings it cannot use', () => {

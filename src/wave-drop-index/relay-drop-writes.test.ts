@@ -55,7 +55,7 @@ const POST = {
   metadata: []
 };
 
-function anInput(): RelayWriteInput {
+function anInput(notify = true): RelayWriteInput {
   return {
     event: {
       author: TEST_WALLET,
@@ -68,7 +68,8 @@ function anInput(): RelayWriteInput {
       claimed_time: 1_000,
       signature: `0x${'ab'.repeat(64)}`
     },
-    times: { signedAt: 1_000, seenAt: 2_000, anchor: 0 }
+    times: { signedAt: 1_000, seenAt: 2_000, anchor: 0 },
+    notify
   };
 }
 
@@ -210,7 +211,8 @@ describe('relayDropWrites', () => {
       'drop-1',
       'profile-1',
       ':fire:',
-      expect.anything()
+      expect.anything(),
+      { notify: true }
     );
     expect(reactionsService.removeReaction).toHaveBeenCalledWith(
       'drop-1',
@@ -218,6 +220,43 @@ describe('relayDropWrites', () => {
       expect.anything()
     );
   });
+
+  it.each([
+    [false, 'history'],
+    [true, 'a live event']
+  ])(
+    'passes notify %s to every write that notifies, for %s',
+    async (notify) => {
+      jest.mocked(dropsDb.findDropById).mockResolvedValue(null);
+      jest
+        .mocked(dropCreationService.createDrop)
+        .mockResolvedValue({ id: 'drop-new' } as never);
+      jest.mocked(dropsDb.findWaveIdByDropId).mockResolvedValue(WAVE);
+      jest
+        .mocked(dropCreationService.updateDrop)
+        .mockResolvedValue({ drop: { id: 'drop-1' }, changed: true } as never);
+      await relayDropWrites.createDrop(
+        anInput(notify),
+        'drop-new',
+        POST as never
+      );
+      await relayDropWrites.updateDrop(anInput(notify), 'drop-1', {
+        parts: POST.parts
+      } as never);
+      await relayDropWrites.react(anInput(notify), 'drop-1', ':fire:');
+      expect(
+        jest.mocked(dropCreationService.createDrop).mock.calls[0][0]
+      ).toMatchObject({ newDropId: 'drop-new', notify });
+      expect(
+        jest.mocked(dropCreationService.updateDrop).mock.calls[0][0]
+      ).toMatchObject({ dropId: 'drop-1', notify });
+      expect(
+        jest.mocked(reactionsService.addReaction).mock.calls[0][4]
+      ).toEqual({ notify });
+      // Sockets hear of the edit either way.
+      expect(wsListenersNotifier.notifyAboutDropUpdate).toHaveBeenCalled();
+    }
+  );
 
   it("stores a grant 6529.io doesn't hold, once", async () => {
     jest.mocked(deviceSigningDb.findGrantById).mockResolvedValueOnce(null);

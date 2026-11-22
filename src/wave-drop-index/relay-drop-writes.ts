@@ -165,7 +165,8 @@ export const relayDropWrites: RelayDropWrites = {
               representativeId: input.profileId,
               hideLinkPreview: newDrop.hide_link_preview,
               requestDailyActivityCredit: true,
-              newDropId: dropId
+              newDropId: dropId,
+              notify: input.notify
             },
             ctx
           ),
@@ -232,7 +233,8 @@ export const relayDropWrites: RelayDropWrites = {
             dropId,
             request: updateRequest,
             authorId: input.profileId,
-            representativeId: input.profileId
+            representativeId: input.profileId,
+            notify: input.notify
           },
           ctx
         ),
@@ -278,7 +280,8 @@ export const relayDropWrites: RelayDropWrites = {
               dropId,
               input.profileId,
               reaction,
-              ctx
+              ctx,
+              { notify: input.notify }
             ),
       ctx
     );

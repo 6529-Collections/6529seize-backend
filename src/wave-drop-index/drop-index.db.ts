@@ -10,6 +10,8 @@ import { DeviceGrantEntity } from '@/entities/IDeviceGrant';
 import { dbSupplier, LazyDbAccessCompatibleService } from '@/sql-executor';
 import { CrpCursor } from '@/wave-relay-publish/crp-client';
 
+export type EventOrigin = 'IMPORT' | 'OPERATION';
+
 /** A checked event, as the index stores it. */
 export interface IngestRow {
   readonly event_id: string;
@@ -27,6 +29,11 @@ export interface IngestRow {
   readonly event: Record<string, unknown>;
   readonly grant_proof: Record<string, unknown>;
   readonly origin: 'site' | 'relay';
+  /**
+   * IMPORT: claimed before switch-on (WAVES_DROP_INDEX_LIVE_FROM), history
+   * written with no notifications; OPERATION: from switch-on on.
+   */
+  readonly event_origin: EventOrigin;
   readonly status: string;
   readonly status_reason: string | null;
   /** How its grant was checked: known, signature or unverifiable. */
@@ -188,12 +195,12 @@ export class DropIndexDb extends LazyDbAccessCompatibleService {
           `insert into ${WAVE_RELAY_EVENTS_TABLE}
              (event_id, relay_id, wave, wave_key, drop_id, kind, author,
               device_key, auth_ref, seq, claimed_time, event, grant_proof,
-              origin, status, status_reason, grant_check, grant_revoked_at,
-              received_at)
+              origin, event_origin, status, status_reason, grant_check,
+              grant_revoked_at, received_at)
            values (:event_id, :relay_id, :wave, :wave_key, :drop_id, :kind,
               :author, :device_key, :auth_ref, :seq, :claimed_time, :event,
-              :grant_proof, :origin, :status, :status_reason, :grant_check,
-              :grant_revoked_at, :received_at)`,
+              :grant_proof, :origin, :event_origin, :status, :status_reason,
+              :grant_check, :grant_revoked_at, :received_at)`,
           {
             ...row,
             event: JSON.stringify(row.event),

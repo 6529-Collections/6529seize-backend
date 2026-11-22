@@ -36,6 +36,12 @@ import {
  *   relay-only events into 6529.io's drop tables, as 6529.io's API writes
  *   a signed drop by its author (relay-drop-applier.ts); 60% of the run
  *   reads the relays, the rest writes.
+ * - WAVES_DROP_INDEX_LIVE_FROM (optional, default 2026-11-26T00:00:00Z):
+ *   switch-on, as ISO 8601 UTC or Unix milliseconds. An event claimed
+ *   before it is history (event_origin IMPORT): the first run reads each
+ *   wave's whole log, and history is written into 6529.io's tables with no
+ *   notifications. Events from then on are OPERATION and notify as a post
+ *   through 6529.io does.
  */
 export interface DropIndexConfig {
   readonly relays: string[];
@@ -43,6 +49,8 @@ export interface DropIndexConfig {
   readonly reader: DropIndexReader | null;
   readonly budgetMs: number;
   readonly apply: boolean;
+  /** Switch-on (ms): events claimed before it are history. */
+  readonly liveFrom: number;
 }
 
 export interface DropIndexReader {
@@ -59,6 +67,32 @@ export class DropIndexConfigError extends Error {
 }
 
 const DEFAULT_BUDGET_MS = 25_000;
+
+export const DEFAULT_LIVE_FROM = Date.UTC(2026, 10, 26);
+
+const ISO_UTC =
+  /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,3})?)?(?:Z|[+-]00:00)$/;
+
+/** Earlier than any switch-on: a smaller number is seconds or a mistake. */
+const EARLIEST_LIVE_FROM_MS = Date.UTC(2020, 0, 1);
+
+function liveFromOf(raw: string | undefined): number {
+  const value = raw?.trim();
+  if (!value) return DEFAULT_LIVE_FROM;
+  const millis = /^\d{1,16}$/.test(value)
+    ? Number(value)
+    : ISO_UTC.test(value)
+      ? Date.parse(value)
+      : NaN;
+  if (!Number.isFinite(millis) || millis < EARLIEST_LIVE_FROM_MS) {
+    // A wrong time would send notifications for history, or none for new
+    // events: the index does not run on a guess.
+    throw new DropIndexConfigError(
+      `WAVES_DROP_INDEX_LIVE_FROM: "${value}" is not a UTC time (ISO 8601 with Z, or Unix ms)`
+    );
+  }
+  return millis;
+}
 
 function readerOf(raw: string | undefined): DropIndexReader | null {
   if (!raw?.trim()) return null;
@@ -123,7 +157,8 @@ export function dropIndexConfig(
     reader: readerOf(env.WAVES_DROP_INDEX_READER),
     budgetMs:
       Number.isSafeInteger(budget) && budget > 0 ? budget : DEFAULT_BUDGET_MS,
-    apply: env.FEATURE_WAVES_DROP_INDEX_APPLY === 'true'
+    apply: env.FEATURE_WAVES_DROP_INDEX_APPLY === 'true',
+    liveFrom: liveFromOf(env.WAVES_DROP_INDEX_LIVE_FROM)
   };
 }
 
@@ -210,7 +245,7 @@ const logger = Logger.get('WAVE_DROP_INDEX');
 
 export const DEFAULT_DROP_INDEX_RUN: Omit<
   DropIndexRunOptions,
-  'relays' | 'budgetMs'
+  'relays' | 'budgetMs' | 'liveFrom'
 > = {
   quietMs: 3_000,
   flushMs: 250,
@@ -254,7 +289,8 @@ export async function runDropIndex({
   const relays = await subscriber.run({
     ...DEFAULT_DROP_INDEX_RUN,
     relays: config.relays,
-    budgetMs: readMs
+    budgetMs: readMs,
+    liveFrom: config.liveFrom
   });
   if (!config.apply) return { relays, applied: null };
   await dropIndexDb.markSiteWritten();

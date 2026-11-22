@@ -52,6 +52,7 @@ function anEvent(
     event,
     grant_proof: testGrantProof(),
     origin: 'relay',
+    event_origin: 'OPERATION',
     status: 'logged',
     status_reason: null,
     grant_check: 'signature',
@@ -367,6 +368,49 @@ describe('RelayDropApplier', () => {
         anchor: 0
       }
     });
+  });
+
+  it('writes history with no notifications, and live events with them', async () => {
+    const history = { event_origin: 'IMPORT' as const };
+    const events = [
+      anEvent(DeviceEventKind.POST, POST, [], history),
+      anEvent(
+        DeviceEventKind.REACT,
+        { on: true, reaction: ':fire:' },
+        ['d-1'],
+        {
+          ...history
+        }
+      ),
+      anEvent(DeviceEventKind.EDIT, { parts: [] }, ['d-1'], history),
+      anEvent(DeviceEventKind.POST, POST),
+      anEvent(DeviceEventKind.REACT, { on: true, reaction: ':fire:' }, ['d-2'])
+    ];
+    const notified: [string, boolean][] = [];
+    const { writes } = aWrites({
+      createDrop: async (input, dropId) => {
+        notified.push(['create', input.notify]);
+        return dropId;
+      },
+      updateDrop: async (input) => {
+        notified.push(['update', input.notify]);
+      },
+      react: async (input) => {
+        notified.push(['react', input.notify]);
+      }
+    });
+    const report = await new RelayDropApplier(
+      new FakeStore(events),
+      writes
+    ).applyPending(RUN);
+    expect(report.applied).toBe(5);
+    expect(notified).toEqual([
+      ['create', false],
+      ['react', false],
+      ['update', false],
+      ['create', true],
+      ['react', true]
+    ]);
   });
 
   it('treats a delete of a drop not found as a refusal', async () => {

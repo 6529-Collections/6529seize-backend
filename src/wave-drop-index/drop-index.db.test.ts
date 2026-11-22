@@ -35,6 +35,7 @@ function aRow(n: number, overrides: Partial<IngestRow> = {}): IngestRow {
     event: { id: eventId(n), body: '{"parts":[]}' },
     grant_proof: { id: TEST_GRANT_ID },
     origin: 'relay',
+    event_origin: 'OPERATION',
     status: 'logged',
     status_reason: null,
     grant_check: 'signature',
@@ -92,7 +93,13 @@ describeWithSeed(
     const db = new DropIndexDb(() => sqlExecutor);
 
     it('stores each event once and returns what it stored, in its order', async () => {
-      const first = await db.ingest([aRow(1), aRow(2)], [], 'r-1', [], 10);
+      const first = await db.ingest(
+        [aRow(1, { event_origin: 'IMPORT' }), aRow(2)],
+        [],
+        'r-1',
+        [],
+        10
+      );
       expect(first.map((e) => [e.event_id, e.ingest_seq > 0])).toEqual([
         [eventId(1), true],
         [eventId(2), true]
@@ -105,8 +112,10 @@ describeWithSeed(
         event: { id: eventId(1), body: '{"parts":[]}' },
         grant_proof: { id: TEST_GRANT_ID },
         origin: 'relay',
+        event_origin: 'IMPORT',
         grant_revoked_at: null
       });
+      expect(first[1].event_origin).toBe('OPERATION');
       const again = await db.ingest(
         [aRow(2), aRow(3, { relay_id: 'r-2' })],
         [],
@@ -120,6 +129,13 @@ describeWithSeed(
       expect(after.map((e) => [e.event_id, e.relay_id])).toEqual([
         [eventId(2), 'r-1'],
         [eventId(3), 'r-2']
+      ]);
+      expect(
+        (await db.eventsAfter(0, 10)).map((e) => [e.event_id, e.event_origin])
+      ).toEqual([
+        [eventId(1), 'IMPORT'],
+        [eventId(2), 'OPERATION'],
+        [eventId(3), 'OPERATION']
       ]);
       expect(await db.eventsAfter(0, 1)).toHaveLength(1);
     });
@@ -156,7 +172,12 @@ describeWithSeed(
     it('hands the relay-only events to the writer, in order, and records each outcome', async () => {
       // eventId(2) is in device_signed_events: written through 6529.io since.
       await db.ingest(
-        [aRow(1), aRow(2), aRow(3), aRow(4, { origin: 'site' })],
+        [
+          aRow(1),
+          aRow(2),
+          aRow(3, { event_origin: 'IMPORT' }),
+          aRow(4, { origin: 'site' })
+        ],
         [],
         'r-1',
         [],
@@ -164,9 +185,11 @@ describeWithSeed(
       );
       expect(await db.markSiteWritten()).toBe(1);
       const pending = await db.pendingRelayEvents(10, NOW);
-      expect(pending.map((e) => [e.event_id, e.apply_attempts])).toEqual([
-        [eventId(1), 0],
-        [eventId(3), 0]
+      expect(
+        pending.map((e) => [e.event_id, e.apply_attempts, e.event_origin])
+      ).toEqual([
+        [eventId(1), 0, 'OPERATION'],
+        [eventId(3), 0, 'IMPORT']
       ]);
       await db.markApplied(pending[0].ingest_seq, 'applied', null, 'new-drop');
       await db.markApplied(pending[1].ingest_seq, 'logged', 'down', null);

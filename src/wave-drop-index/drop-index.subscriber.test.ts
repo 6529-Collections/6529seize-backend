@@ -200,7 +200,13 @@ function aSubscriber(
   return { subscriber, logs, clock };
 }
 
-const RUN = { budgetMs: 10_000, quietMs: 1_000, flushMs: 250, pageSize: 2 };
+const RUN = {
+  budgetMs: 10_000,
+  quietMs: 1_000,
+  flushMs: 250,
+  pageSize: 2,
+  liveFrom: 0
+};
 
 describe('DropIndexSubscriber', () => {
   it('stores checked events once, in order, and moves each wave cursor', async () => {
@@ -258,6 +264,66 @@ describe('DropIndexSubscriber', () => {
     expect(heard.flat()).toEqual([post.id, react.id, other.id]);
   });
 
+  it('stores events claimed before switch-on as history, the rest as live', async () => {
+    const store = new FakeStore();
+    const cut = TEST_CLAIMED_TIME + 60_000;
+    const before = testSignedEvent({ seq: 1, claimedTime: cut - 1 });
+    const at = testSignedEvent({ seq: 2, claimedTime: cut });
+    const reaction = testSignedEvent({
+      kind: DeviceEventKind.REACT,
+      seq: 3,
+      claimedTime: cut - 60_000,
+      refs: ['drop-1'],
+      body: { reaction: ':+1:' }
+    });
+    const after = testSignedEvent({ seq: 4, claimedTime: cut + 1_000 });
+    const relay = new FakeRelay('r-1', [
+      { t: 'EV', wave: 'wave-1', item: item(1, before) },
+      { t: 'EV', wave: 'wave-1', item: item(2, at) },
+      { t: 'EV', wave: 'wave-1', item: item(3, reaction) },
+      { t: 'EV', wave: 'wave-1', item: item(4, after) },
+      { t: 'EOSE', wave: 'wave-1', rseq: 4 }
+    ]);
+    const heard: [string, string][] = [];
+    const { subscriber } = aSubscriber(
+      store,
+      { 'wss://a.example': relay },
+      {
+        listeners: [
+          (events) =>
+            heard.push(
+              ...events.map((e): [string, string] => [
+                e.event_id,
+                e.event_origin
+              ])
+            )
+        ]
+      }
+    );
+    await subscriber.run({
+      ...RUN,
+      liveFrom: cut,
+      relays: ['wss://a.example']
+    });
+    const expected = [
+      [before.id, 'IMPORT'],
+      [at.id, 'OPERATION'],
+      [reaction.id, 'IMPORT'],
+      [after.id, 'OPERATION']
+    ];
+    expect(store.rows.map((r) => [r.event_id, r.event_origin])).toEqual(
+      expected
+    );
+    // Listeners get it too; origin (site or relay) is apart from it.
+    expect(heard).toEqual(expected);
+    expect(store.rows.map((r) => r.origin)).toEqual([
+      'relay',
+      'relay',
+      'relay',
+      'relay'
+    ]);
+  });
+
   it('resumes from its cursors and passes over what it holds', async () => {
     const store = new FakeStore();
     const post = testSignedEvent();
@@ -282,6 +348,7 @@ describe('DropIndexSubscriber', () => {
           event: post,
           grant_proof: {},
           origin: 'relay',
+          event_origin: 'IMPORT',
           status: 'logged',
           status_reason: null,
           grant_check: 'signature',

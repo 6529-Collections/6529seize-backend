@@ -82,6 +82,12 @@ export class WaveRelayEventEntity {
   @Column({ type: 'varchar', length: 8, nullable: false })
   readonly origin!: string;
 
+  // 'IMPORT': claimed before switch-on (WAVES_DROP_INDEX_LIVE_FROM), the
+  // history a first run reads, written into 6529.io's tables with no
+  // notifications; 'OPERATION': claimed from switch-on on.
+  @Column({ type: 'varchar', length: 16, nullable: false })
+  readonly event_origin!: string;
+
   // 'logged'; then, for a relay-only event the index writes into 6529.io's
   // drop tables (FEATURE_WAVES_DROP_INDEX_APPLY): 'applied', 'refused'
   // (6529.io's rules said no) or 'failed' (after MAX_APPLY_ATTEMPTS).

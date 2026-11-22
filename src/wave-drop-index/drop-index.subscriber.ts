@@ -44,6 +44,9 @@ import { isSameRelayWave, relayWaveKey } from './relay-wave-key';
  * - A copy that fails a check goes to wave_relay_rejects with why, so a fix
  *   can check it again; the cursor moves past it. The first valid copy of
  *   an event is the one stored, whichever relay sent a bad copy first.
+ * - An event claimed before switch-on (the run's liveFrom) is stored as
+ *   history, event_origin IMPORT, so writing it sends no notifications;
+ *   later ones as OPERATION.
  */
 
 /** What the subscriber needs of a CRP connection. */
@@ -98,6 +101,11 @@ export interface DropIndexRunOptions {
   readonly pageSize: number;
   /** Arrivals held in memory at most (default MAX_HELD). */
   readonly maxHeld?: number;
+  /**
+   * Switch-on (ms): an event claimed before it is history, stored with
+   * event_origin IMPORT; from it on, OPERATION.
+   */
+  readonly liveFrom: number;
 }
 
 export interface RelayIngestReport {
@@ -309,7 +317,8 @@ export class DropIndexSubscriber {
             relayId,
             arrivals.splice(0, STORE_BATCH),
             report,
-            grantChecks
+            grantChecks,
+            options.liveFrom
           );
         }
         for (const [wave, after] of Array.from(toPage.entries())) {
@@ -380,7 +389,8 @@ export class DropIndexSubscriber {
         relayId,
         page.items.map((item) => ({ wave, logEpoch: page.logEpoch, item })),
         report,
-        grantChecks
+        grantChecks,
+        options.liveFrom
       );
       cursor = page.items[page.items.length - 1].rseq;
       if (!page.more) return cursor;
@@ -397,7 +407,8 @@ export class DropIndexSubscriber {
     relayId: string,
     arrivals: readonly Arrival[],
     report: RelayIngestReport,
-    grantChecks: GrantCheckCache
+    grantChecks: GrantCheckCache,
+    liveFrom: number
   ): Promise<void> {
     report.received += arrivals.length;
     const eventIds = arrivals.map((a) =>
@@ -473,6 +484,7 @@ export class DropIndexSubscriber {
         event: item.event,
         grant_proof: item.grant,
         origin: isSite ? 'site' : 'relay',
+        event_origin: event.claimedTime < liveFrom ? 'IMPORT' : 'OPERATION',
         status: 'logged',
         status_reason: null,
         grant_check: check.grantVia,

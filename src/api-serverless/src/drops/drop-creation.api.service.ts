@@ -245,7 +245,8 @@ export class DropCreationApiService {
       representativeId,
       hideLinkPreview,
       requestDailyActivityCredit = false,
-      newDropId
+      newDropId,
+      notify = true
     }: {
       createDropRequest: ApiCreateDropRequest;
       authorId: string;
@@ -254,6 +255,8 @@ export class DropCreationApiService {
       requestDailyActivityCredit?: boolean;
       /** The new drop's id when its source names it; else random. */
       newDropId?: string;
+      /** False: no notifications or pushes (history from the relays). */
+      notify?: boolean;
     },
     ctx: RequestContext
   ): Promise<ApiDrop> {
@@ -283,7 +286,8 @@ export class DropCreationApiService {
       ...(hideLinkPreview === undefined
         ? {}
         : { hide_link_preview: hideLinkPreview }),
-      ...(newDropId ? { new_drop_id: newDropId } : {})
+      ...(newDropId ? { new_drop_id: newDropId } : {}),
+      ...(notify ? {} : { notify: false })
     };
     if (replay) {
       if (
@@ -1082,12 +1086,15 @@ export class DropCreationApiService {
       dropId,
       request,
       authorId,
-      representativeId
+      representativeId,
+      notify = true
     }: {
       dropId: string;
       request: ApiUpdateDropRequest;
       authorId: string;
       representativeId: string;
+      /** False: no notifications or pushes (history from the relays). */
+      notify?: boolean;
     },
     ctx: RequestContext
   ): Promise<{ drop: ApiDrop; changed: boolean }> {
@@ -1114,7 +1121,7 @@ export class DropCreationApiService {
     const dropType = drop.drop_type
       ? enums.resolveOrThrow(ApiDropType, drop.drop_type)
       : ApiDropType.Chat;
-    const model: CreateOrUpdateDropModel = await withOwnedMediaUploadIds(
+    const mapped: CreateOrUpdateDropModel = await withOwnedMediaUploadIds(
       this.dropsMappers.updateDropApiToUseCaseModel({
         request: {
           ...request,
@@ -1129,6 +1136,9 @@ export class DropCreationApiService {
       }),
       request
     );
+    const model: CreateOrUpdateDropModel = notify
+      ? mapped
+      : { ...mapped, notify: false };
     const replay = await moderationReviewDb.savedRequest(
       authorId,
       'DROP',

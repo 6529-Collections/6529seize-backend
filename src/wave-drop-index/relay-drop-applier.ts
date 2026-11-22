@@ -26,6 +26,9 @@ import { dropIdOfEvent } from './drop-index.subscriber';
  * 6529.io's rules count when the event is written, not when it was
  * signed: a backlog can meet a wave's slow mode, or moderation, that the
  * author never met.
+ *
+ * History (event_origin IMPORT: claimed before switch-on) is written with
+ * no notifications or pushes; websocket updates go out as for any write.
  */
 
 export const MAX_APPLY_ATTEMPTS = 5;
@@ -45,6 +48,11 @@ export interface RelayWriteInput {
   readonly envelope: RelayEnvelope;
   /** When it was signed and first seen, and its anchor. */
   readonly times: RelayEventTimes;
+  /**
+   * Whether writing it notifies, as a write through 6529.io does: only for
+   * an OPERATION event. History (IMPORT) is written silently.
+   */
+  readonly notify: boolean;
 }
 
 /** The writes, as 6529.io's API makes them for the author. */
@@ -285,7 +293,8 @@ export class RelayDropApplier {
         signedAt: event.claimed_time,
         seenAt: event.received_at,
         anchor: Number(signed.anchor ?? 0)
-      }
+      },
+      notify: event.event_origin === 'OPERATION'
     };
     const body = bodyOf(event);
     const target = Array.isArray(signed.refs)

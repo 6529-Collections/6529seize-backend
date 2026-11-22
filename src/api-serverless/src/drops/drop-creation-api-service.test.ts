@@ -1550,3 +1550,119 @@ describe('DropCreationApiService.createDrop media upload ids on a replay (R11-2)
     expect(execute).not.toHaveBeenCalled();
   });
 });
+
+describe('DropCreationApiService notify flag (history from the relays)', () => {
+  beforeEach(() => {
+    (sendIdentityPushNotifications as jest.Mock).mockResolvedValue(undefined);
+    jest
+      .spyOn(helpBotDailyActivityCreditQueueService, 'enqueueRequest')
+      .mockResolvedValue(false);
+    jest
+      .spyOn(waveScoreService, 'requestWaveScoreRefreshBestEffort')
+      .mockResolvedValue(undefined);
+  });
+
+  afterEach(() => {
+    jest.restoreAllMocks();
+    jest.clearAllMocks();
+  });
+
+  const chat = {
+    wave_id: 'wave-1',
+    drop_type: 'CHAT',
+    title: null,
+    parts: [{ content: 'gm', quoted_drop: null, media: [] }],
+    referenced_nfts: [],
+    mentioned_users: [],
+    metadata: []
+  };
+
+  function aService() {
+    const execute = jest.fn().mockResolvedValue({
+      drop_id: 'drop-1',
+      pending_push_notification_ids: []
+    });
+    const preparePrePublication = jest.fn().mockResolvedValue({});
+    const service = new DropCreationApiService(
+      {
+        findDropByIdOrThrow: jest
+          .fn()
+          .mockResolvedValue({ id: 'drop-1', wave_id: 'wave-1' })
+      } as never,
+      {
+        executeNativeQueriesInTransaction: jest.fn(async (callback) =>
+          callback({})
+        ),
+        findDropById: jest.fn().mockResolvedValue({
+          id: 'drop-1',
+          wave_id: 'wave-1',
+          author_id: 'author-profile',
+          drop_type: DropType.CHAT,
+          reply_to_drop_id: null,
+          is_additional_action_promised: null
+        })
+      } as never,
+      dropsMappers,
+      {
+        preResolveIdentityNomination: jest.fn().mockResolvedValue(null),
+        preparePrePublication,
+        execute
+      } as never,
+      {} as never,
+      {
+        notifyAboutDropUpdate: jest.fn().mockResolvedValue(undefined)
+      } as never,
+      { findByDropId: jest.fn().mockResolvedValue([]) } as never,
+      {} as never,
+      { createPollForDrop: jest.fn().mockResolvedValue(undefined) } as never
+    );
+    return { service, execute, preparePrePublication };
+  }
+
+  it.each([
+    [false, false],
+    [true, undefined],
+    [undefined, undefined]
+  ])(
+    'creates with notify %s: the model carries notify %s',
+    async (notify, expected) => {
+      const { service, execute, preparePrePublication } = aService();
+      await service.createDrop(
+        {
+          createDropRequest: chat as never,
+          authorId: 'author-profile',
+          representativeId: 'author-profile',
+          ...(notify === undefined ? {} : { notify })
+        },
+        { timer: undefined } as never
+      );
+      const model = execute.mock.calls[0][0];
+      expect(model.notify).toBe(expected);
+      expect('notify' in model).toBe(notify === false);
+      expect(preparePrePublication.mock.calls[0][0].notify).toBe(expected);
+    }
+  );
+
+  it.each([false, true])('edits with notify %s', async (notify) => {
+    const { service, execute } = aService();
+    await service.updateDrop(
+      {
+        dropId: 'drop-1',
+        request: {
+          parts: chat.parts,
+          title: null,
+          referenced_nfts: [],
+          mentioned_users: [],
+          metadata: []
+        } as never,
+        authorId: 'author-profile',
+        representativeId: 'author-profile',
+        notify
+      },
+      { timer: undefined } as never
+    );
+    const model = execute.mock.calls[0][0];
+    expect(model.drop_id).toBe('drop-1');
+    expect(model.notify).toBe(notify ? undefined : false);
+  });
+});

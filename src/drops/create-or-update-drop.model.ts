@@ -25,6 +25,10 @@ export interface CreateOrUpdateDropModel {
   readonly mentioned_groups: DropGroupMention[];
   readonly signature: string | null;
   readonly is_additional_action_promised: boolean | null;
+  // False writes the drop with no notifications (reply, quote, mention,
+  // follower) and so no pushes: history read from the 6529 relays. The
+  // default notifies.
+  readonly notify?: boolean;
 }
 
 export interface CreateOrUpdateDropPartModel {

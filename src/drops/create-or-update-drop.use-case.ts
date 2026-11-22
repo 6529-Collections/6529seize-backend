@@ -3225,6 +3225,8 @@ export class CreateOrUpdateDropUseCase {
     },
     { timer, connection }: { timer?: Timer; connection: ConnectionWrapper<any> }
   ): Promise<number[]> {
+    // History written from the 6529 relays notifies no one, on create or edit.
+    if (model.notify === false) return [];
     timer?.start(`${CreateOrUpdateDropUseCase.name}->notifyWaveDropRecipients`);
     const dropId = this.getRequiredDropId(model);
     const authorId = this.getRequiredAuthorId(model);

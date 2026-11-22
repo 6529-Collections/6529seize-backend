@@ -2741,6 +2741,116 @@ describe('CreateOrUpdateDropUseCase', () => {
     );
   });
 
+  it.each([
+    [false, false],
+    [true, true],
+    [undefined, true]
+  ])('with notify %s, a drop notifies: %s', async (notify, notifies) => {
+    const identitySubscriptionsDb = {
+      findWaveFollowersEligibleForDropNotifications: jest
+        .fn()
+        .mockResolvedValue([
+          {
+            identity_id: 'follower-1',
+            subscribed_to_all_drops: true,
+            has_group_mention: false
+          }
+        ]),
+      findMutedWaveReaders: jest.fn().mockResolvedValue([])
+    };
+    const userNotifier = {
+      notifyWaveDropCreatedRecipients: jest.fn().mockResolvedValue([105])
+    };
+    const useCase = createUseCaseWithMocks({
+      identitySubscriptionsDb,
+      userNotifier
+    });
+
+    const pending = await (useCase as any).notifyWaveDropRecipients(
+      {
+        model: createNotificationDropModel({ notify }),
+        wave: { id: 'public-wave', visibility_group_id: null },
+        directlyMentionedIdentityIds: ['mentioned-1'],
+        groupMentionNotificationsEnabled: true
+      },
+      { connection: {} }
+    );
+
+    expect(pending).toEqual(notifies ? [105] : []);
+    expect(userNotifier.notifyWaveDropCreatedRecipients.mock.calls.length).toBe(
+      notifies ? 1 : 0
+    );
+    expect(
+      identitySubscriptionsDb.findWaveFollowersEligibleForDropNotifications.mock
+        .calls.length
+    ).toBe(notifies ? 1 : 0);
+  });
+
+  it('keeps notify false through to the notifier step of a write', async () => {
+    const dropsDb = {
+      insertDrop: jest.fn(),
+      insertMentionedWaves: jest.fn(),
+      insertDropGroupMentions: jest.fn(),
+      insertReferencedNfts: jest.fn(),
+      insertDropMetadata: jest.fn(),
+      insertDropMedia: jest.fn(),
+      insertDropParts: jest.fn()
+    };
+    const userNotifier = { notifyWaveDropCreatedRecipients: jest.fn() };
+    const identitySubscriptionsDb = {
+      addIdentitySubscription: jest.fn(),
+      findWaveFollowersEligibleForDropNotifications: jest.fn(),
+      findMutedWaveReaders: jest.fn()
+    };
+    const useCase = createUseCaseWithMocks({
+      dropsDb,
+      userNotifier,
+      identitySubscriptionsDb,
+      attachmentsDb: { insertDropAttachments: jest.fn() },
+      dropNftLinksDb: { replaceDropLinks: jest.fn() },
+      dropMediaUploadsDb: { attachUploadsToDrop: jest.fn() }
+    });
+    jest.spyOn(profileActivityLogsDb, 'insert').mockResolvedValue(undefined);
+    jest
+      .spyOn(waveScoreService, 'markWaveScoresDirtyBestEffort')
+      .mockResolvedValue(undefined);
+    jest
+      .spyOn(useCase as any, 'resolveMentionedUsers')
+      .mockResolvedValue({ mentionEntities: [], mentionedUserIds: ['m-1'] });
+    jest
+      .spyOn(useCase as any, 'recordDropCreatedActivity')
+      .mockResolvedValue(undefined);
+    jest
+      .spyOn(useCase as any, 'insertMentionsInDrop')
+      .mockResolvedValue(undefined);
+    const notifyStep = jest.spyOn(useCase as any, 'notifyWaveDropRecipients');
+
+    await expect(
+      (useCase as any).insertAllDropComponents(
+        {
+          model: createChatDropModel({ drop_id: 'drop-1', notify: false }),
+          wave: createSlowModeWave({ visibility_group_id: null }),
+          createdAt: Date.now(),
+          updatedAt: null,
+          serialNo: null
+        },
+        { connection: {} }
+      )
+    ).resolves.toEqual([]);
+
+    expect(dropsDb.insertDrop).toHaveBeenCalled();
+    expect(notifyStep).toHaveBeenCalledWith(
+      expect.objectContaining({
+        model: expect.objectContaining({ notify: false })
+      }),
+      expect.anything()
+    );
+    expect(userNotifier.notifyWaveDropCreatedRecipients).not.toHaveBeenCalled();
+    expect(
+      identitySubscriptionsDb.findWaveFollowersEligibleForDropNotifications
+    ).not.toHaveBeenCalled();
+  });
+
   it('resolves reply and quote notification context in one drop lookup', async () => {
     const dropsDb = {
       getDropsByIds: jest.fn().mockResolvedValue([
