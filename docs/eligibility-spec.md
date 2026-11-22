@@ -208,6 +208,15 @@ rule and admits negative raw scores for a minimum-zero-only group.
 For `level_max`, level N spans `[border(N), border(N+1))`; the exclusive next
 border therefore encodes `level ≤ N` exactly.
 
+Saves store level bounds in a form that admits the same members once levels
+go above 100 (`src/groups/group-level-bounds.ts`): a `level_max` of 100 or
+more is stored as NULL, with a NULL `level_min` stored as 0, and a
+`level_min` above 100 with `level_max` NULL or 100 or more gets
+`level_max = -1`. Under levels capped at 100 each form admits the same
+members as the bounds given. The migration
+`20261122180000-rewrite-group-level-bounds-for-uncapped-levels` rewrote the
+groups saved before.
+
 `minMaxNullMeansNonZeroRequired = false`: a level-0 profile passes
 `level_min = 0`.
 
