@@ -385,26 +385,74 @@ describe('HelpBotCreditsService', () => {
     );
   });
 
-  it('charges as usual during the identity freeze: credits stay on 6529.io', async () => {
+  describe('during the identity freeze (credits stay on 6529.io)', () => {
     const original = process.env.FEATURE_IDENTITY_FROZEN;
-    process.env.FEATURE_IDENTITY_FROZEN = 'true';
-    try {
-      const { service, profileResolver } = createService({
-        executeQueryResults: [[{ rating: 0 }]]
-      });
-      const result = await service.chargeQuestionCredit(
-        { profileId: 'profile-1', interactionId: 'interaction-1' },
-        ctx
-      );
-      expect(result).toEqual({
-        charged: false,
-        balance: 0,
-        botProfileMissing: false
-      });
-      expect(profileResolver.resolveBotProfileId).toHaveBeenCalled();
-    } finally {
+    beforeEach(() => {
+      process.env.FEATURE_IDENTITY_FROZEN = 'true';
+    });
+    afterEach(() => {
       if (original === undefined) delete process.env.FEATURE_IDENTITY_FROZEN;
       else process.env.FEATURE_IDENTITY_FROZEN = original;
-    }
+    });
+
+    it('charges a question', async () => {
+      const { service, executor } = createService({
+        executeResults: [{ affectedRows: 1 }, { affectedRows: 1 }],
+        executeQueryResults: [[{ rating: 3 }]]
+      });
+      expect(
+        await service.chargeQuestionCredit(
+          { profileId: 'profile-1', interactionId: 'interaction-1' },
+          ctx
+        )
+      ).toEqual({ charged: true, balance: 2, botProfileMissing: false });
+      expect(executor.execute).toHaveBeenCalledWith(
+        expect.stringContaining('INSERT IGNORE INTO help_bot_credit_events'),
+        expect.objectContaining({ amount: -1 }),
+        expect.anything()
+      );
+      expect(executor.execute).toHaveBeenCalledWith(
+        expect.stringContaining('UPDATE ratings'),
+        expect.objectContaining({ delta: -1 }),
+        expect.anything()
+      );
+    });
+
+    it('grants daily credits', async () => {
+      const { service, executor } = createService({
+        executeResults: [{ affectedRows: 1 }],
+        oneOrNullResults: [{ rating: 100 }]
+      });
+      const result = await service.grantDailyActivityCredits(
+        { profileId: 'profile-1' },
+        ctx
+      );
+      expect(result.amountGranted).toBe(HELP_BOT_DAILY_ACTIVITY_CREDIT_GRANT);
+      expect(executor.execute).toHaveBeenCalledWith(
+        expect.stringContaining('UPDATE ratings'),
+        expect.objectContaining({
+          delta: HELP_BOT_DAILY_ACTIVITY_CREDIT_GRANT
+        }),
+        expect.anything()
+      );
+    });
+
+    it('refunds a charged question', async () => {
+      const { service, executor } = createService({
+        executeResults: [{ affectedRows: 1 }],
+        oneOrNullResults: [{ amount: -1 }, { rating: -1 }]
+      });
+      await expect(
+        service.refundQuestionCredit(
+          { profileId: 'profile-1', interactionId: 'interaction-1' },
+          ctx
+        )
+      ).resolves.toBe(true);
+      expect(executor.execute).toHaveBeenCalledWith(
+        expect.stringContaining('UPDATE ratings'),
+        expect.objectContaining({ delta: 1 }),
+        expect.anything()
+      );
+    });
   });
 });
