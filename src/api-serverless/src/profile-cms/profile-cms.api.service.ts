@@ -750,9 +750,12 @@ export class ProfileCmsApiService {
    * With profile sites on the chain the person rolls back with
    * PROFILE_REPLACE. Before they sign, the target gets the check the index
    * will run on it, since a version the index refuses would take the site
-   * offline. Answers 409 cms_pointer_on_chain when the target passes (move
-   * it on the chain), 422 cms_rollback_target_refused when it doesn't, and
-   * 503 cms_check_unavailable when its files or a Safe can't be read now.
+   * offline, and the handle check public reads run, since a version
+   * published under a former handle isn't served. Answers 409
+   * cms_pointer_on_chain when the target passes (move it on the chain), 409
+   * cms_profile_changed for a former handle, 422
+   * cms_rollback_target_refused when the index would refuse it, and 503
+   * cms_check_unavailable when its files or a Safe can't be read now.
    */
   private async refuseRollbackOnChain(
     id: string,
@@ -761,6 +764,11 @@ export class ProfileCmsApiService {
     const target = await this.getPackageEntityOrThrow(id, ctx);
     this.assertCanManageProfile(target.profile_id, ctx.authenticationContext);
     this.assertPackageCanBecomePrimary(target);
+    const profile = await this.getProfileIdentityOrThrow(
+      target.profile_id,
+      ctx
+    );
+    this.assertCurrentProfileBinding(target, profile.handle);
     if (!target.publication_cid) {
       throw new CustomApiCompliantException(
         422,

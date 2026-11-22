@@ -22,11 +22,10 @@ import { dbSupplier, LazyDbAccessCompatibleService } from '@/sql-executor';
  * the BYO agent grants, proposals and events. The chain follower's writes
  * are not logged; a rebuild gets them from the chain. Each write appends
  * the row as it stands after the write, as a service entry of lane
- * `publish`, in the
- * write's own transaction, stamped with the chain change the profile site
- * index had last applied for that profile (height and document version).
- * Replaying the entries in log order, each right after that change, rebuilds
- * the rows.
+ * `publish`, in the write's own transaction, stamped with the chain change
+ * the profile site index had last applied for that profile (height and
+ * document version). Replaying the entries in log order, each right after
+ * that change, rebuilds the rows.
  */
 export const PROFILE_CMS_LOG_LANE = 'publish';
 
@@ -95,19 +94,43 @@ export class ProfileCmsPrivateLog extends LazyDbAccessCompatibleService {
     rows: readonly (readonly [ProfileCmsPrivateKind, string])[],
     write: (ctx: RequestContext) => Promise<unknown>
   ): Promise<void> {
-    if (ctx.connection || !this.features.isProfileCmsPersonalLogEnabled()) {
-      await write(ctx);
-      for (const [kind, id] of rows) {
-        await this.rowWritten(kind, id, ctx);
+    await this.loggedWrite(ctx, async (txCtx) => {
+      await write(txCtx);
+      return rows;
+    });
+  }
+
+  /**
+   * As `logged`, for a write that finds the rows it changes itself (an
+   * update by condition): `write` returns them, read in its transaction.
+   */
+  async loggedWrite(
+    ctx: RequestContext,
+    write: (
+      ctx: RequestContext
+    ) => Promise<readonly (readonly [ProfileCmsPrivateKind, string])[]>
+  ): Promise<void> {
+    await this.inTransaction(ctx, async (txCtx) => {
+      for (const [kind, id] of await write(txCtx)) {
+        await this.rowWritten(kind, id, txCtx);
       }
+    });
+  }
+
+  /**
+   * The caller's transaction, or a new one when the log is on and the
+   * caller has none. With the flag off it just runs `fn`.
+   */
+  private async inTransaction(
+    ctx: RequestContext,
+    fn: (ctx: RequestContext) => Promise<void>
+  ): Promise<void> {
+    if (ctx.connection || !this.features.isProfileCmsPersonalLogEnabled()) {
+      await fn(ctx);
       return;
     }
     await this.executeNativeQueriesInTransaction(async (connection) => {
-      const txCtx: RequestContext = { ...ctx, connection };
-      await write(txCtx);
-      for (const [kind, id] of rows) {
-        await this.rowWritten(kind, id, txCtx);
-      }
+      await fn({ ...ctx, connection });
     });
   }
 
@@ -191,7 +214,11 @@ export class ProfileCmsPrivateLog extends LazyDbAccessCompatibleService {
         ctx.connection ? { wrappedConnection: ctx.connection } : undefined
       );
       for (const row of rows) {
-        await this.rowWritten(kind, row.id, ctx);
+        // The row and its stamp from one snapshot: the follower may apply a
+        // change for this profile meanwhile.
+        await this.inTransaction(ctx, (txCtx) =>
+          this.rowWritten(kind, row.id, txCtx)
+        );
         logged++;
       }
     }

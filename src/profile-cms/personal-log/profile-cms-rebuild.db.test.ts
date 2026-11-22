@@ -421,6 +421,66 @@ describeWithSeed('profile site private state in the record log', [], () => {
     expect(await tableRows()).toEqual(live);
   });
 
+  it("logs each row the old path's supersede changes, so a rebuild has one primary", async () => {
+    const store = new MemoryRecordLogStore();
+    const privateLog = new ProfileCmsPrivateLog(
+      dbSupplier,
+      new RecordLogWriter(store, { findGrantProofs: async () => [] }),
+      { isProfileCmsPersonalLogEnabled: () => true },
+      () => 2_000
+    );
+    const packagesDb = new ProfileCmsPackagesDb(dbSupplier, privateLog);
+    const site1 = aSignedProfileSite({ draftId: 'draft-1', version: 1 });
+    const site2 = aSignedProfileSite({
+      draftId: 'draft-2',
+      version: 2,
+      title: 'Second'
+    });
+    await packagesDb.insert(
+      {
+        ...draftRow(site1, 900),
+        status: ProfileCmsPackageStatus.PUBLISHED,
+        is_primary: true,
+        production_valid: true,
+        published_at: 900
+      },
+      ctx
+    );
+    await packagesDb.insert(draftRow(site2, 1_000), ctx);
+    // The old publish path, as with the chain flag rolled back.
+    await packagesDb.supersedePrimaryForProfile(
+      CHAIN_FIXTURE_PROFILE_ID,
+      'draft-2',
+      2_000,
+      ctx
+    );
+    await packagesDb.markPrimary('draft-2', 2_000, ctx);
+    const live = await tableRows();
+    expect(
+      (live.packages as { id: string; is_primary: unknown }[])
+        .filter((row) => Number(row.is_primary) === 1)
+        .map((row) => row.id)
+    ).toEqual(['draft-2']);
+
+    await resetTestDatabase();
+    await rebuildProfileCms(
+      {
+        port: new InMemoryProfileCmsChain(),
+        fromHeight: 0,
+        privateEntries: profileCmsPrivateEntries(
+          (async function* () {
+            for (const row of store.entries) {
+              yield { entry: JSON.parse(row.entry) as RecordLogEntry };
+            }
+          })()
+        )
+      },
+      ctx,
+      { privateLog }
+    );
+    expect(await tableRows()).toEqual(live);
+  });
+
   it('fails instead of serving no site when a file stays missing', async () => {
     const site = aSignedProfileSite({ draftId: 'draft-1', version: 1 });
     const chain = new InMemoryProfileCmsChain();

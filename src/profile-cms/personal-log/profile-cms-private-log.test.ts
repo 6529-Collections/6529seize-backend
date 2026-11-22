@@ -87,11 +87,13 @@ describe('ProfileCmsPrivateLog', () => {
   describe('logged', () => {
     function transactional(enabled: boolean) {
       const connection = { connection: 'tx' };
-      const execute = jest
-        .fn()
-        .mockImplementation(async (sql: string) =>
-          sql.startsWith('select *') ? [{ id: 'row-1', profile_id: 'p' }] : []
-        );
+      const execute = jest.fn().mockImplementation(async (sql: string) => {
+        if (sql.startsWith('select *')) {
+          return [{ id: 'row-1', profile_id: 'p' }];
+        }
+        // logExistingRows lists each table's ids.
+        return sql.startsWith('select id as id') ? [{ id: 'row-1' }] : [];
+      });
       const executeNativeQueriesInTransaction = jest.fn(
         async (fn: (c: unknown) => Promise<unknown>) => fn(connection)
       );
@@ -135,6 +137,33 @@ describe('ProfileCmsPrivateLog', () => {
       expect(executeNativeQueriesInTransaction).not.toHaveBeenCalled();
       expect(write).toHaveBeenCalledWith(ctx);
       expect(append.mock.calls[0][1]).toBe(ctx);
+    });
+
+    it('logs the rows a write finds itself, in its transaction', async () => {
+      const { log, connection, append, executeNativeQueriesInTransaction } =
+        transactional(true);
+      await log.loggedWrite({ timer: undefined }, async (txCtx) => {
+        expect(txCtx).toMatchObject({ connection });
+        return [
+          ['cms.package', 'row-1'],
+          ['cms.package', 'row-1']
+        ];
+      });
+      expect(executeNativeQueriesInTransaction).toHaveBeenCalledTimes(1);
+      expect(append).toHaveBeenCalledTimes(2);
+      expect(append.mock.calls[1][1]).toMatchObject({ connection });
+    });
+
+    it('reads each existing row and its stamp in one transaction', async () => {
+      const { log, append, executeNativeQueriesInTransaction } =
+        transactional(true);
+      const logged = await log.logExistingRows({ timer: undefined });
+      // One row per table in this fake: one transaction per row.
+      expect(logged).toBe(6);
+      expect(executeNativeQueriesInTransaction).toHaveBeenCalledTimes(6);
+      for (const call of append.mock.calls) {
+        expect(call[1]).toMatchObject({ connection: { connection: 'tx' } });
+      }
     });
 
     it('only writes with the flag off', async () => {

@@ -32,7 +32,7 @@ export class ProfileCmsPackagesDb extends LazyDbAccessCompatibleService {
     supplier: () => SqlExecutor = dbSupplier,
     private readonly privateLog: Pick<
       ProfileCmsPrivateLog,
-      'logged'
+      'logged' | 'loggedWrite'
     > = profileCmsPrivateLog
   ) {
     super(supplier);
@@ -375,25 +375,40 @@ export class ProfileCmsPackagesDb extends LazyDbAccessCompatibleService {
     now: number,
     ctx: RequestContext
   ): Promise<void> {
-    await this.timedExecute(
-      'supersedePrimaryForProfile',
-      `update ${PROFILE_CMS_PACKAGES_TABLE}
-       set status = :status,
-           is_primary = false,
-           superseded_by_id = :supersededById,
-           updated_at = :now
-       where profile_id = :profileId
-         and status = '${ProfileCmsPackageStatus.PUBLISHED}'
-         and is_primary = true
-         and id <> :supersededById`,
-      {
-        profileId,
-        supersededById,
-        now,
-        status: ProfileCmsPackageStatus.SUPERSEDED
-      },
-      ctx
-    );
+    // The rows it changes are read in its transaction, so each is logged.
+    await this.privateLog.loggedWrite(ctx, async (txCtx) => {
+      const rows = await this.timedExecute<{ id: string }>(
+        'supersedePrimaryForProfileIds',
+        `select id from ${PROFILE_CMS_PACKAGES_TABLE}
+         where profile_id = :profileId
+           and status = '${ProfileCmsPackageStatus.PUBLISHED}'
+           and is_primary = true
+           and id <> :supersededById
+         for update`,
+        { profileId, supersededById },
+        txCtx
+      );
+      if (rows.length === 0) {
+        return [];
+      }
+      await this.timedExecute(
+        'supersedePrimaryForProfile',
+        `update ${PROFILE_CMS_PACKAGES_TABLE}
+         set status = :status,
+             is_primary = false,
+             superseded_by_id = :supersededById,
+             updated_at = :now
+         where id in (:ids)`,
+        {
+          ids: rows.map((row) => row.id),
+          supersededById,
+          now,
+          status: ProfileCmsPackageStatus.SUPERSEDED
+        },
+        txCtx
+      );
+      return rows.map((row) => ['cms.package', row.id] as const);
+    });
   }
 
   async markPublished(

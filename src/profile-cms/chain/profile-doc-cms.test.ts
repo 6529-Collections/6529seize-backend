@@ -12,7 +12,7 @@ const PUBLICATION =
   'bafkreie5cyyazg2mwjwk7foh6qhhev4ize3dkpz5656e6ty6sjn4zyfzjq';
 const PACKAGE = 'bafkreiej3lbdjacakabv566nmsdidmktb6sxt765d7skg2sakrog2ttsiq';
 const ARCHIVE = 'bafkreiedy57oyhdigsburvrwepydy4i4guk6q3th5b7w42szehbt672tgm';
-// PACKAGE with the last character's two spare bits set: the same 36 bytes,
+// PACKAGE with a spare bit of its last character set: the same 36 bytes,
 // but not the canonical text, so readers must refuse it.
 const PACKAGE_NONCANONICAL = `${PACKAGE.slice(0, -1)}r`;
 
@@ -153,7 +153,8 @@ describe('readProfileDocCms', () => {
 
 /**
  * Through the identity mirror's CE decoder (`src/identity-chain-mirror/
- * profile-doc.ts`, branch claude/identity-reads-from-chain): the fields it
+ * profile-doc.ts`, branch claude/identity-chain-mirror, which refuses
+ * non-canonical CID text from 882542150 on): the fields it
  * decodes from a ProfileDoc.v1's bytes, and its own `profileDocCms`, must
  * read the same site as this module. The decoder isn't on this branch yet,
  * so the block runs once both branches meet (integration, then main) and is

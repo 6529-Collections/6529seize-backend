@@ -490,12 +490,14 @@ through the normal checks, so publishing one again can't act as a rollback. If t
 than the file's, publish returns 502 `cms_doc_store_mismatch` and records
 nothing. `unpublish` returns 409 `cms_pointer_on_chain`, and the builder
 does it with PROFILE_REPLACE too, naming no site. `rollback` first checks
-the target the way the chain index will (files, signature, a Safe at the
-latest block, production validation), since a version the index refuses
-would take the site offline: it returns 409 `cms_pointer_on_chain` when the
-target passes (the builder then names its `publication_cid`), 422
-`cms_rollback_target_refused` when it doesn't, and 503
-`cms_check_unavailable` when the files or the Safe can't be read now. The
+the target the way public reads and the chain index will (the current
+handle, then the files, signature, a Safe at the latest block and
+production validation), since a version either refuses would take the site
+offline: it returns 409 `cms_pointer_on_chain` when the target passes (the
+builder then names its `publication_cid`), 409 `cms_profile_changed` for a
+version published under a former handle, 422 `cms_rollback_target_refused`
+when the index would refuse it, and 503 `cms_check_unavailable` when the
+files or the Safe can't be read now. The
 builder shows a move 6529.io doesn't serve within two minutes as submitted,
 not done. Before the switch, during the identity freeze
 (`FEATURE_IDENTITY_FROZEN=true`, or from `IDENTITY_FREEZE_AT`), publish,

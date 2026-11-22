@@ -3,7 +3,8 @@
  *
  * The method names follow the shared gateway client (`ChainGatewayClient` in
  * `src/chain-gateway`), so the adapter that replaces the fixtures is a thin
- * mapping once that module lands.
+ * mapping once that module lands. Each member names the gateway route and
+ * field it maps to.
  */
 export interface ProfileCmsChainReadOptions {
   readonly height?: number;
@@ -19,13 +20,20 @@ export interface ProfileCmsProfileChange {
   readonly doc_cid: string | null;
   /**
    * Who wrote it, when the gateway says: the identity import or an operation
-   * (PROFILE_REPLACE, IDENTITY_CREATE). Absent: the index decides from the
-   * import's height range.
+   * (PROFILE_REPLACE, IDENTITY_CREATE). The feed record's `byImport`
+   * (`GET /v1/feed`): true is `import`, false is `operation`, and null (the
+   * block that completed the import, when it also holds transactions) leaves
+   * this out. Absent: the index decides from the import's heights and, in
+   * its last block, from `getImportedProfileDocCid`.
    */
   readonly source?: 'import' | 'operation';
 }
 
-/** The chain's `IdentityImport` record: the heights the import wrote in. */
+/**
+ * The chain's `IdentityImport` record: the heights the import wrote in
+ * (`import.startHeight` and `import.doneHeight` on `GET /v1/membership` or
+ * `GET /v1/status`).
+ */
 export interface ProfileCmsIdentityImport {
   readonly start_height: number;
   /** Null while the import is still running. */
@@ -78,9 +86,10 @@ export interface ProfileCmsChainPort {
   getProfileDoc(cid: string): Promise<ProfileCmsDocRead>;
 
   /**
-   * The CID of the ProfileDoc the identity import wrote for `principal`: its
-   * entry in the import's document list (the import file's
-   * `profile_doc_cid`); null when the import wrote none for it.
+   * The CID of the ProfileDoc the identity import wrote for `principal`, as
+   * CID text: `profileDocCid` in `GET /v1/identities/{p}/imported` (the
+   * import file's entry for it); null when the import wrote none for it or
+   * didn't create the identity (404).
    */
   getImportedProfileDocCid(principal: string): Promise<string | null>;
 

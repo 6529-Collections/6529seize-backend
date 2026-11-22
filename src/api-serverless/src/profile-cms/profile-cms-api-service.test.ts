@@ -2071,12 +2071,14 @@ describe('ProfileCmsApiService', () => {
   describe('a rollback with profile sites on the chain', () => {
     const site = aSignedProfileSite({
       draftId: 'draft-old',
-      profileId: PROFILE_CMS_FIXTURE_PROFILE_ID
+      profileId: PROFILE_CMS_FIXTURE_PROFILE_ID,
+      handle: PROFILE_CMS_FIXTURE_HANDLE
     });
     const other = aSignedProfileSite({
       draftId: 'draft-other',
       title: 'Other',
-      profileId: PROFILE_CMS_FIXTURE_PROFILE_ID
+      profileId: PROFILE_CMS_FIXTURE_PROFILE_ID,
+      handle: PROFILE_CMS_FIXTURE_HANDLE
     });
 
     function rollbackService(chain: InMemoryProfileCmsChain) {
@@ -2158,6 +2160,32 @@ describe('ProfileCmsApiService', () => {
         expect(error.getStatusCode()).toBe(422);
         expect(error.code).toBe('cms_rollback_target_refused');
       }
+    });
+
+    it('refuses a version published under a former handle, before the file check', async () => {
+      const chain = new InMemoryProfileCmsChain();
+      chain.addSite(site);
+      const getDocBytes = jest.spyOn(chain, 'getDocBytes');
+      packagesDb.findById.mockResolvedValue(
+        earlierVersion(site.publicationCid)
+      );
+      identityFetcher.getIdentityAndConsolidationsByIdentityKey.mockResolvedValue(
+        {
+          id: PROFILE_CMS_FIXTURE_PROFILE_ID,
+          handle: 'renamedprofile',
+          primary_wallet: publishSignatureRequest().signer_address
+        } as never
+      );
+      const error = await refusal(
+        rollbackService(chain).rollbackPrimary(
+          'draft-old',
+          { expected_current_package_id: null },
+          ownerContext()
+        )
+      );
+      expect(error.getStatusCode()).toBe(409);
+      expect(error.code).toBe('cms_profile_changed');
+      expect(getDocBytes).not.toHaveBeenCalled();
     });
 
     it('asks to try again when the files can not be read now', async () => {
