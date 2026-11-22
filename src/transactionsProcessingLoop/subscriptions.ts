@@ -67,7 +67,14 @@ export const redeemSubscriptions = async (reset?: boolean) => {
     TransactionsProcessedSubscriptionsBlock
   );
   const lastProcessingBlock = await getLastProcessingBlock(blockRepo, reset);
-  const maxBlockTransaction = await fetchMaxTransactionByBlockNumber();
+  // The memes contract's highest block, not the highest of all contracts.
+  // The memes transactions loop commits whole blocks, in block order, so
+  // every memes airdrop up to this block is already in the table. The
+  // gradients and memelab loops keep their own cursors and can be ahead.
+  // Recording their block skipped any memes airdrop the memes loop then
+  // committed in a lower block: it was never charged.
+  const maxBlockTransaction =
+    await fetchMaxTransactionByBlockNumber(MEMES_CONTRACT);
 
   if (!maxBlockTransaction) {
     throw new Error('No max transaction block');
@@ -80,15 +87,21 @@ export const redeemSubscriptions = async (reset?: boolean) => {
     await persistBlock(blockRepo, maxBlockTransaction);
     return;
   }
+  // Only up to the block this run records as processed: an airdrop the
+  // memes loop commits in a later block after the read above is left
+  // to the next run, which starts after that block. Unbounded, it was
+  // charged now and again by the next run.
   const airdrops: Transaction[] = await sqlExecutor.execute(
     `SELECT * FROM ${TRANSACTIONS_TABLE}
     WHERE block > :lastProcessingBlock
+    AND block <= :maxBlock
     AND from_address = :nullAddress
     AND value = 0
     AND token_count > 0
     ORDER BY block asc;`,
     {
       lastProcessingBlock,
+      maxBlock: maxBlockTransaction.block,
       nullAddress: NULL_ADDRESS
     }
   );
@@ -221,9 +234,13 @@ export async function validateNonSubscriptionAirdrop(
         ]
       )
     )[0].previous_airdrops;
+    // MySQL returns SUM as a decimal string, or NULL with no earlier
+    // airdrop. Added as a string, "1" + 1 made "11", so a distribution
+    // airdrop that followed an earlier airdrop of the card to the same wallet
+    // was taken for a subscription airdrop.
     if (
       distributionAirdropCount >=
-      previousAirdrops + transaction.token_count
+      Number(previousAirdrops ?? 0) + transaction.token_count
     ) {
       const message = 'Distribution airdrop';
       logger.info(
