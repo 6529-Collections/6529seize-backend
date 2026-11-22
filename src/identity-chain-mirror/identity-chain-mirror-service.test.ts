@@ -32,8 +32,9 @@ import {
 } from './identity-plan';
 
 const W = (n: number) => `0x${n.toString(16).padStart(40, '0')}`;
+// Distinct in their first 16 bytes, as real principal ids are.
 const PID = (n: number) =>
-  `0x${'ab'.repeat(28)}${n.toString(16).padStart(8, '0')}`;
+  `0x${n.toString(16).padStart(8, '0')}${'ab'.repeat(28)}`;
 const A = W(1);
 const B = W(2);
 const C = W(3);
@@ -123,6 +124,17 @@ class FakeDb {
       if (m.profile === profile) return p;
     }
     return null;
+  }
+  async unmappedPlaceholderProfile(wallet: string) {
+    const mapped = new Set(
+      Array.from(this.mapping.values()).map((it) => it.profile)
+    );
+    const profile = Array.from(this.profiles.values()).find(
+      (it) =>
+        it.normalised_handle === `id-${wallet.toLowerCase()}` &&
+        !mapped.has(it.external_id)
+    );
+    return profile?.external_id ?? null;
   }
   async insertMapping(p: string, profile: string, origin: string) {
     this.mapping.set(p, { profile, origin });
@@ -291,6 +303,7 @@ function world(followers: ProfileSiteFollower[] = []) {
     importCompleted: true,
     importStart: null as number | null,
     fileHash: '0x' + 'f1'.repeat(32),
+    network: null as string | null,
     finalized: 100
   };
   const gateway = {
@@ -298,7 +311,8 @@ function world(followers: ProfileSiteFollower[] = []) {
       headHeight: chain.finalized + 2,
       finalizedHeight: chain.finalized,
       finalizedTime: 0,
-      pinnable: null
+      pinnable: null,
+      network: chain.network
     })),
     getMembership: jest.fn(async () => ({
       import: {
@@ -846,32 +860,156 @@ describe('IdentityChainMirror', () => {
     expect(report.nextHeight).toBe(111);
   });
 
-  it('starts the bindings again on another chain, or past its head', async () => {
+  it('starts the bindings again on another chain', async () => {
     const { mirror, db, chain } = world();
+    const stale = () =>
+      db.bindings.set(W(9), {
+        wallet: W(9),
+        principal_id: PID(9),
+        bound_from_height: 50
+      });
+    // A gateway without a network id: the import file's hash names it.
     await mirror.run({ budgetMs: 60_000 });
     expect(db.state?.bindings_chain).toBe(chain.fileHash);
-    db.bindings.set(W(9), {
-      wallet: W(9),
-      principal_id: PID(9),
-      bound_from_height: 50
-    });
-    // A relaunch: another import file, and the cursor past the new head.
+    stale();
     chain.fileHash = '0x' + 'f2'.repeat(32);
-    chain.finalized = 20;
     chain.importStart = 1;
     const report = await mirror.run({ budgetMs: 60_000 });
     expect(db.state?.bindings_chain).toBe(chain.fileHash);
     expect(db.bindings.has(W(9))).toBe(false);
     expect(report.bindingsNextHeight).toBe(1);
-    // Same chain, cursor past the head (a gateway serving another network).
-    db.state = { ...db.state!, bindings_next_height: 500 };
-    db.bindings.set(W(9), {
-      wallet: W(9),
-      principal_id: PID(9),
-      bound_from_height: 50
-    });
+    // The network id names it when the gateway gives one: a relaunch with
+    // the same import file is another network.
+    chain.network = '0x' + 'aa'.repeat(32);
     await mirror.run({ budgetMs: 60_000 });
+    stale();
+    chain.network = '0x' + 'bb'.repeat(32);
+    await mirror.run({ budgetMs: 60_000 });
+    expect(db.state?.bindings_chain).toBe(chain.network);
     expect(db.bindings.has(W(9))).toBe(false);
+    // The same network with the cursor ahead of this node's head (another
+    // node behind it) is not a reset.
+    db.state = { ...db.state!, bindings_next_height: 500 };
+    stale();
+    await mirror.run({ budgetMs: 60_000 });
+    expect(db.bindings.has(W(9))).toBe(true);
+  });
+
+  it("gives an identity made on the chain its founding wallet's placeholder profile", async () => {
+    const { mirror, db, chain } = world();
+    const founder = W(40);
+    const placeholder = '00000000-0000-4000-8000-00000000f00d';
+    db.profiles.set(placeholder, {
+      external_id: placeholder,
+      handle: `id-${founder}`,
+      normalised_handle: `id-${founder}`,
+      primary_wallet: founder,
+      pfp_url: null,
+      banner_1: null,
+      banner_2: null,
+      website: null,
+      classification: null,
+      sub_classification: null
+    });
+    const made = chainIdentity(PID(40), [founder, W(41)], {
+      legacyId: null
+    });
+    // Its second wallet had a placeholder too: left without wallets.
+    const other = '00000000-0000-4000-8000-00000000beef';
+    db.rows.set(W(41), {
+      consolidation_key: W(41),
+      profile_id: other,
+      primary_address: W(41),
+      handle: `id-${W(41)}`,
+      normalised_handle: `id-${W(41)}`,
+      tdh: 0,
+      rep: 0,
+      cic: 0,
+      level_raw: 0,
+      pfp: null,
+      banner1: null,
+      banner2: null,
+      classification: null,
+      sub_classification: null,
+      xtdh: 0,
+      produced_xtdh: 0,
+      granted_xtdh: 0,
+      xtdh_rate: 0,
+      basetdh_rate: 0
+    });
+    db.addressKeys.set(W(41), W(41));
+    chain.identities.set(made.principalId, made);
+    const report = await mirror.run({ budgetMs: 60_000 });
+    expect(db.mapping.get(made.principalId)).toEqual({
+      profile: placeholder,
+      origin: 'FOUNDER'
+    });
+    expect(report.orphanedProfiles).toEqual([other]);
+    // A rebuild from the chain maps it the same way.
+    db.mapping.delete(made.principalId);
+    expect(await mirror.profileIdOf(made)).toBe(placeholder);
+  });
+
+  it('files a merged identity for the profile site index without mapping it', async () => {
+    const { mirror, db } = world();
+    const merged = chainIdentity(PID(60), [], {
+      legacyId: null,
+      mergedInto: PID(1)
+    });
+    expect(await mirror.profileIdForSites(merged)).toBe(
+      principalProfileId(PID(60))
+    );
+    expect(db.mapping.has(PID(60))).toBe(false);
+  });
+
+  it('stores no binding for a listed wallet bound to no one', async () => {
+    const { mirror, db, gateway, chain } = world();
+    gateway.listMembershipWallets.mockImplementationOnce(async () => ({
+      items: [
+        { wallet: A, principalId: PID(1) },
+        { wallet: W(70), principalId: null as unknown as string }
+      ],
+      next: null,
+      read: { height: chain.finalized } as never
+    }));
+    await mirror.run({ budgetMs: 60_000 });
+    expect(db.bindings.has(A)).toBe(true);
+    expect(db.bindings.has(W(70))).toBe(false);
+  });
+
+  it('asks the import for a legacy id the gateway leaves out', async () => {
+    const { mirror, gateway } = world();
+    const old = chainIdentity(PID(50), [W(50)]);
+    gateway.getImportedIdentity.mockResolvedValueOnce({
+      principalId: PID(50),
+      legacyId: '00000000-0000-4000-8000-0000000000aa'
+    } as never);
+    expect(await mirror.profileIdOf(old)).toBe(
+      '00000000-0000-4000-8000-0000000000aa'
+    );
+    const made = chainIdentity(PID(51), [W(51)], { legacyId: null });
+    expect(await mirror.profileIdOf(made)).toBe(principalProfileId(PID(51)));
+    expect(gateway.getImportedIdentity).toHaveBeenCalledTimes(1);
+  });
+
+  it("takes no help-bot credit from the chain's ratings", async () => {
+    const { mirror, db, chain, alice, bob } = world();
+    chain.ratings.set(alice.principalId, [
+      ...(chain.ratings.get(alice.principalId) ?? []),
+      {
+        rater: bob.principalId,
+        target: alice.principalId,
+        matter: 'rep',
+        category: { id: '0x02', name: 'help6529 credits ' },
+        value: '9',
+        updatedHeight: 31,
+        viaGrant: null
+      }
+    ]);
+    await mirror.run({ budgetMs: 60_000 });
+    expect(
+      db.ratings.get(ALICE_PROFILE)?.map((it) => it.matter_category)
+    ).toEqual(['Kind']);
   });
 
   it('reports a bindings failure and goes on with the identities', async () => {

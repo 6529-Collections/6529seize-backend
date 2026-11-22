@@ -155,6 +155,22 @@ describe('GatewayProfileSitePort', () => {
     });
     expect((await port.getChanges(10)).changes[0].source).toBe('import');
     expect((await port.getChanges(10)).changes[0].source).toBe('operation');
+    // A later version with the import's document is still an operation.
+    gateway.getChanges.mockResolvedValueOnce({
+      from: 10,
+      through: 10,
+      next: 11,
+      blocks: [
+        {
+          height: 10,
+          slot: 0,
+          root: '0x',
+          time: 1,
+          records: [profileRecord({ version: 2, docCid: DOC }, null)]
+        }
+      ]
+    });
+    expect((await port.getChanges(10)).changes[0].source).toBe('operation');
   });
 
   it('ends at the finalized head', async () => {
@@ -200,6 +216,21 @@ describe('GatewayProfileSitePort', () => {
     expect(await port.getIdentityByPrincipal(P)).toBeNull();
   });
 
+  it('leaves out a wallet bound to another identity then, and says when one was not imported', async () => {
+    const { gateway, port, walletPrincipalAt } = setup();
+    gateway.getIdentityByPrincipal
+      .mockResolvedValueOnce({ ...now, legacyId: null })
+      .mockRejectedValueOnce(
+        new ChainGatewayError('gone', 409, 'height_gone', '/v1/identities')
+      );
+    walletPrincipalAt.mockImplementation(async (wallet: string) =>
+      wallet === W ? P : '0x' + 'cd'.repeat(32)
+    );
+    const identity = await port.getIdentityByPrincipal(P, { height: 7 });
+    expect(identity?.wallets).toEqual([W]);
+    expect(identity?.imported).toBe(false);
+  });
+
   it('lists the wallets bound then when the gateway no longer holds the height', async () => {
     const { gateway, port, walletPrincipalAt } = setup();
     gateway.getIdentityByPrincipal
@@ -238,21 +269,49 @@ describe('GatewayProfileSitePort', () => {
     );
   });
 
-  it('reads the import heights', async () => {
+  it.each([
+    [
+      'the heights of a done import',
+      { startHeight: 5, doneHeight: 9, count: 3 },
+      { start_height: 5, done_height: 9 }
+    ],
+    // The feed starts after the import's first block: every Profile write
+    // up to the done height is the import's.
+    [
+      'a start the gateway does not hold as 0',
+      { startHeight: null, doneHeight: 9, count: 3 },
+      { start_height: 0, done_height: 9 }
+    ],
+    ['no import as null', { count: 0 }, null],
+    ['no record as null', undefined, null]
+  ])('reads %s', async (_name, record, expected) => {
     const { gateway, port } = setup();
-    gateway.getMembership.mockResolvedValueOnce({
-      import: { startHeight: 5, doneHeight: 9, completed: true }
+    gateway.getMembership.mockResolvedValue({ import: record });
+    expect(await port.getIdentityImport()).toEqual(expected);
+  });
+
+  it('keeps a done import and reads from its start', async () => {
+    const { gateway, port } = setup();
+    gateway.getMembership.mockResolvedValue({
+      import: { startHeight: 5, doneHeight: 9, count: 3 }
     });
-    gateway.getMembership.mockResolvedValueOnce({});
-    gateway.getMembership.mockResolvedValueOnce({
-      import: { startHeight: null, doneHeight: 9, completed: true }
+    gateway.getChanges.mockResolvedValue({
+      from: 5,
+      through: 4,
+      next: 5,
+      blocks: []
     });
-    expect(await port.getIdentityImport()).toEqual({
-      start_height: 5,
-      done_height: 9
+    await port.getChanges(0);
+    await port.getChanges(7);
+    expect(gateway.getChanges).toHaveBeenNthCalledWith(1, 5, {
+      limit: 200,
+      families: [PROFILE_FAMILY]
     });
-    expect(await port.getIdentityImport()).toBeNull();
-    expect(await port.getIdentityImport()).toBeNull();
+    expect(gateway.getChanges).toHaveBeenNthCalledWith(2, 7, {
+      limit: 200,
+      families: [PROFILE_FAMILY]
+    });
+    expect(gateway.getMembership).toHaveBeenCalledTimes(1);
   });
 
   it('reads a document as found, missing or malformed', async () => {

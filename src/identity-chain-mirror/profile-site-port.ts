@@ -156,10 +156,17 @@ export class GatewayProfileSitePort implements ProfileSiteChainPort {
    * index starts from a height the feed holds, such as the import's start.
    */
   async getChanges(fromHeight: number): Promise<ProfileSiteChangesPage> {
-    const page = await this.gateway.getChanges(fromHeight, {
-      limit: FEED_PAGE_BLOCKS,
-      families: [PROFILE_FAMILY]
-    });
+    // No Profile is written before the import starts (identities come from
+    // it), so a start below it reads from it instead of a height the feed
+    // may not hold.
+    const importStart = (await this.getIdentityImport())?.start_height ?? 0;
+    const page = await this.gateway.getChanges(
+      Math.max(fromHeight, importStart),
+      {
+        limit: FEED_PAGE_BLOCKS,
+        families: [PROFILE_FAMILY]
+      }
+    );
     if (page.through < page.from) {
       return { changes: [], next_height: null };
     }
@@ -194,25 +201,40 @@ export class GatewayProfileSitePort implements ProfileSiteChainPort {
   }
 
   /**
-   * The import's heights; null when no import ran, or when this gateway
-   * doesn't hold the import's first block (its feed starts later).
+   * The import's heights; null when no import ran. When this gateway's feed
+   * starts after the import's first block, the start reads as 0: no
+   * identity operation runs while the import runs, so every Profile write
+   * up to its done height is the import's (the completing block is told
+   * apart by each record's marker).
    */
   async getIdentityImport() {
+    if (this.importHeights !== undefined) return this.importHeights;
     const membership = await this.gateway.getMembership();
     const state = membership?.import as
-      | { startHeight?: number | null; doneHeight?: number | null }
+      | {
+          startHeight?: number | null;
+          doneHeight?: number | null;
+          count?: number;
+        }
       | undefined;
-    if (state?.startHeight === null || state?.startHeight === undefined) {
+    if (!state || !state.count) {
       return null;
     }
-    return {
-      start_height: Number(state.startHeight),
+    const heights = {
+      start_height: Number(state.startHeight ?? 0),
       done_height:
         state.doneHeight === null || state.doneHeight === undefined
           ? null
           : Number(state.doneHeight)
     };
+    // Kept once the import is done: its heights don't change after that.
+    if (heights.done_height !== null) this.importHeights = heights;
+    return heights;
   }
+
+  private importHeights:
+    | { readonly start_height: number; readonly done_height: number | null }
+    | undefined = undefined;
 
   /**
    * An identity now, or at a height: its wallets and handle then, its

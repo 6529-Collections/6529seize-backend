@@ -9,6 +9,7 @@ import {
   ChainIdentity,
   ChainRating
 } from '@/chain-gateway/chain-gateway.types';
+import { isHelpBotCreditCategory } from '@/help-bot/help-bot.config';
 import { Logger } from '@/logging';
 import { ConnectionWrapper } from '@/sql-executor';
 import {
@@ -114,6 +115,8 @@ export interface MirrorRunReport {
   failed: string[];
   /** Wallets whose consolidation key changed: re-keyed by the caller. */
   regroupedWallets: string[];
+  /** Placeholder profiles whose wallets all joined an identity. */
+  orphanedProfiles: string[];
   /** AddressBinding changes applied to the wallet bindings. */
   walletBindings: number;
   /** AddressBinding records that could not be read (height:key). */
@@ -212,6 +215,10 @@ export function isInactive(identity: ChainIdentity): boolean {
   );
 }
 
+function messageOf(error: unknown): string {
+  return (error as Error)?.message ?? String(error);
+}
+
 function toNumber(value: string | number | null | undefined): number {
   const n = Number(value ?? 0);
   return Number.isFinite(n) ? n : 0;
@@ -278,6 +285,7 @@ export class IdentityChainMirror {
       skippedInactive: [],
       failed: [],
       regroupedWallets: [],
+      orphanedProfiles: [],
       walletBindings: 0,
       bindingProblems: [],
       bindingsNextHeight: null,
@@ -402,46 +410,44 @@ export class IdentityChainMirror {
         return await this.rebuildBindings(state, report);
       }
       // Lookups trust no row without a cursor: start from an empty table.
-      await this.db.executeNativeQueriesInTransaction((conn) =>
-        this.db.clearWalletBindings(conn)
-      );
-      state = await this.save({
-        ...state,
-        bindings_next_height: chain.startHeight
+      const start = { ...state, bindings_next_height: chain.startHeight };
+      await this.db.executeNativeQueriesInTransaction(async (conn) => {
+        await this.db.clearWalletBindings(conn);
+        await this.db.saveState(start, this.now(), conn);
       });
-      return await this.readBindings(state, deadline, report);
+      return await this.readBindings(start, deadline, report);
     } catch (error) {
-      const message = (error as Error)?.message ?? String(error);
+      const message = messageOf(error);
       logger.error(`[WALLET BINDINGS FAILED] ${message}`);
       report.bindingProblems.push(message);
       return (await this.db.getState()) ?? state;
     }
   }
 
-  /** The bindings' state, started again when they are of another chain. */
+  /**
+   * The bindings' state, started again when they were read from another
+   * chain: its network id (or, from a gateway that doesn't give one, its
+   * import file's hash) differs.
+   */
   private async bindingsOfThisChain(
     state: MirrorState,
     fileHash: string | null
   ): Promise<MirrorState> {
-    const finalized = (await this.gateway.getHead()).finalizedHeight;
-    const otherChain =
-      state.bindings_chain !== null && state.bindings_chain !== fileHash;
-    const pastHead =
-      state.bindings_next_height !== null &&
-      state.bindings_next_height > finalized + 1;
-    if (otherChain || pastHead) {
+    const network = (await this.gateway.getHead(true)).network;
+    const chain = network?.toLowerCase() ?? fileHash;
+    if (state.bindings_chain !== null && state.bindings_chain !== chain) {
       logger.warn(
-        `[WALLET BINDINGS OF ANOTHER CHAIN] [${state.bindings_chain} AT ${state.bindings_next_height}] [STARTING AGAIN]`
+        `[WALLET BINDINGS OF ANOTHER CHAIN] [${state.bindings_chain}] [NOW ${chain}] [STARTING AGAIN]`
       );
       return await this.save({
         ...state,
         bindings_next_height: null,
-        bindings_chain: fileHash
+        bindings_chain: chain
       });
     }
-    return state.bindings_chain === fileHash
+    return state.bindings_chain === chain
       ? state
-      : await this.save({ ...state, bindings_chain: fileHash });
+      : await this.save({ ...state, bindings_chain: chain });
   }
 
   /** Pages of the feed's binding records from the cursor, to the deadline. */
@@ -462,33 +468,44 @@ export class IdentityChainMirror {
       }
       if (page.through < page.from || page.next <= from) break;
       const read = bindingChangesOf(page.blocks);
-      await this.applyBindingPage(read, report);
       const next = read.stoppedAt ?? page.next;
-      if (next !== from) {
-        state = await this.save({ ...state, bindings_next_height: next });
-      }
+      state = await this.applyBindingPage(
+        read,
+        { ...state, bindings_next_height: next },
+        report
+      );
       if (read.stoppedAt !== null) break;
       from = next;
     }
     return state;
   }
 
-  /** A page of binding changes onto the stored bindings, in one transaction. */
-  private async applyBindingPage(page: BindingPage, report: MirrorRunReport) {
+  /**
+   * A page of binding changes onto the stored bindings, and the cursor
+   * past it, in one transaction.
+   */
+  private async applyBindingPage(
+    page: BindingPage,
+    next: MirrorState,
+    report: MirrorRunReport
+  ): Promise<MirrorState> {
     if (page.malformed.length) {
       logger.error(
         `[UNREADABLE ADDRESS BINDINGS] ${page.malformed.join(', ')}`
       );
       report.bindingProblems.push(...page.malformed);
     }
-    if (!page.changes.length) return;
     const wallets = Array.from(new Set(page.changes.map((it) => it.wallet)));
     await this.db.executeNativeQueriesInTransaction(async (conn) => {
-      const stored = await this.db.walletBindings(wallets, conn);
-      const { upserts, deletes } = foldBindings(stored, page.changes);
-      await this.db.writeWalletBindings(upserts, deletes, this.now(), conn);
+      if (wallets.length) {
+        const stored = await this.db.walletBindings(wallets, conn);
+        const { upserts, deletes } = foldBindings(stored, page.changes);
+        await this.db.writeWalletBindings(upserts, deletes, this.now(), conn);
+      }
+      await this.db.saveState(next, this.now(), conn);
     });
     report.walletBindings += page.changes.length;
+    return next;
   }
 
   /**
@@ -517,12 +534,14 @@ export class IdentityChainMirror {
         bound_from_height: height
       })
     );
+    const next = { ...state, bindings_next_height: height + 1 };
     const removed = await this.db.executeNativeQueriesInTransaction(
       async (conn) => {
         const deletes = (await this.db.boundWallets(conn)).filter(
           (it) => !bound.has(it)
         );
         await this.db.writeWalletBindings(upserts, deletes, this.now(), conn);
+        await this.db.saveState(next, this.now(), conn);
         return deletes.length;
       }
     );
@@ -530,7 +549,7 @@ export class IdentityChainMirror {
       `[BINDINGS REBUILT AT ${height}] [${upserts.length} BOUND] [${removed} REMOVED]`
     );
     report.walletBindings += upserts.length + removed;
-    return await this.save({ ...state, bindings_next_height: height + 1 });
+    return next;
   }
 
   /** Every bound wallet at `height`, or null when not all of it reads there. */
@@ -617,9 +636,12 @@ export class IdentityChainMirror {
    * sync; the delegations loop runs this last. A failure is logged and
    * returned; the others go on.
    */
-  async followProfileSites(): Promise<string[]> {
+  async followProfileSites(notAfter?: number): Promise<string[]> {
     const problems: string[] = [];
     if (!this.profileSiteFollowers.length) return problems;
+    if (notAfter !== undefined && this.now() > notAfter) {
+      return ['no time left in this run: the followers wait for the next'];
+    }
     const state = await this.db.getState();
     if (!state || state.sync_phase || state.next_height === null) {
       return problems;
@@ -629,7 +651,7 @@ export class IdentityChainMirror {
       try {
         await follower(port, {});
       } catch (error) {
-        const message = (error as Error)?.message ?? String(error);
+        const message = messageOf(error);
         logger.error(`[PROFILE SITE FOLLOWER FAILED] ${message}`);
         problems.push(message);
       }
@@ -777,7 +799,7 @@ export class IdentityChainMirror {
     try {
       await work();
     } catch (error) {
-      const message = (error as Error)?.message ?? String(error);
+      const message = messageOf(error);
       logger.error(`[IDENTITY ${principalId} NOT MIRRORED] ${message}`);
       report.failed.push(`${principalId}: ${message}`);
     }
@@ -872,26 +894,23 @@ export class IdentityChainMirror {
   }
 
   /**
-   * The 6529.io profile id of a chain identity: its mapping, else its legacy
-   * id (an imported identity keeps its 6529.io profile id), else the id
-   * derived from its principal (an identity made on the chain). Both come
-   * from the chain alone, so a rebuild gives the same ids.
+   * The 6529.io profile id of a chain identity: its mapping, else
+   * - an imported identity's legacy id (its 6529.io profile id);
+   * - for an identity made on the chain, the placeholder profile of its
+   *   founding wallet (the anchor) when no principal holds it, so that
+   *   wallet's follows and history stay with it;
+   * - else the principal id's first 16 bytes written as a UUID.
+   * 6529.io makes no placeholder profiles from switch-on, so a rebuild from
+   * the chain gives the same ids.
    */
   async profileIdOf(identity: ChainIdentity): Promise<string> {
     const principalId = identity.principalId.toLowerCase();
     const mapped = await this.db.profileIdOfPrincipal(principalId);
     if (mapped) return mapped;
-    const legacy = identity.legacyId?.toLowerCase() ?? null;
-    const chosen = legacy ?? principalProfileId(principalId);
+    const { profileId: chosen, origin } = await this.chooseProfileId(identity);
     try {
       await this.db.executeNativeQueriesInTransaction((conn) =>
-        this.db.insertMapping(
-          principalId,
-          chosen,
-          legacy ? 'LEGACY' : 'NEW',
-          this.now(),
-          conn
-        )
+        this.db.insertMapping(principalId, chosen, origin, this.now(), conn)
       );
     } catch (error) {
       // Another run mapped it meanwhile: use that.
@@ -900,6 +919,37 @@ export class IdentityChainMirror {
       throw error;
     }
     return chosen;
+  }
+
+  private async chooseProfileId(
+    identity: ChainIdentity
+  ): Promise<{ profileId: string; origin: string }> {
+    const principalId = identity.principalId.toLowerCase();
+    const legacy = await this.legacyIdOf(identity);
+    if (legacy) return { profileId: legacy, origin: 'LEGACY' };
+    const founder = identity.anchor
+      ? await this.db.unmappedPlaceholderProfile(identity.anchor)
+      : null;
+    if (
+      founder &&
+      !(await this.gateway.getIdentityByLegacyProfileId(founder))
+    ) {
+      return { profileId: founder.toLowerCase(), origin: 'FOUNDER' };
+    }
+    return { profileId: principalProfileId(principalId), origin: 'NEW' };
+  }
+
+  /**
+   * The imported profile id. A gateway that leaves the field out (older
+   * than the field) is asked for the import's entry instead, so an imported
+   * identity is never taken for one made on the chain.
+   */
+  private async legacyIdOf(identity: ChainIdentity): Promise<string | null> {
+    if (identity.legacyId !== undefined) {
+      return identity.legacyId?.toLowerCase() ?? null;
+    }
+    const entry = await this.gateway.getImportedIdentity(identity.principalId);
+    return entry?.legacyId?.toLowerCase() ?? null;
   }
 
   /**
@@ -972,6 +1022,12 @@ export class IdentityChainMirror {
     report.regroupedWallets = Array.from(
       new Set([...report.regroupedWallets, ...plan.regroupedWallets])
     );
+    if (plan.orphanedProfiles.length) {
+      logger.warn(
+        `[PROFILES LEFT WITHOUT WALLETS] [${plan.orphanedProfiles.join(', ')}] [THEIR WALLETS JOINED ${identity.principalId}]`
+      );
+      report.orphanedProfiles.push(...plan.orphanedProfiles);
+    }
     report.identities++;
     return plan.touchedWallets;
   }
@@ -994,6 +1050,10 @@ export class IdentityChainMirror {
     const value = Math.trunc(toNumber(rating.value));
     if (!value || Math.abs(value) > MAX_RATING) return null;
     const matter = rating.matter.toUpperCase();
+    // The help bot's credits stay on 6529.io: none come from the chain.
+    if (matter === 'REP' && isHelpBotCreditCategory(rating.category?.name)) {
+      return null;
+    }
     const base = {
       rater_profile_id: raterProfileId,
       rating: value,

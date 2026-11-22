@@ -128,6 +128,12 @@ export interface IdentityPlan {
    * identity's row re-keyed): 6529.io's consolidated tables re-key them.
    */
   readonly regroupedWallets: string[];
+  /**
+   * Other profiles whose every wallet joined this identity (a joining
+   * wallet's placeholder profile): left with no identity row. Their
+   * ratings and follows are not moved; the mirror logs them.
+   */
+  readonly orphanedProfiles: string[];
 }
 
 export interface WalletPair {
@@ -283,9 +289,14 @@ function rekeyOtherRows(
   chain: ChainIdentityView,
   state: CurrentIdentityState,
   ours: ReadonlySet<string>
-): { rows: IdentityRowState[]; wallets: Record<string, string[]> } {
+): {
+  rows: IdentityRowState[];
+  wallets: Record<string, string[]>;
+  orphaned: string[];
+} {
   const rows: IdentityRowState[] = [];
   const wallets: Record<string, string[]> = {};
+  const orphaned: string[] = [];
   for (const row of state.rows) {
     if (!row.profile_id || row.profile_id === chain.profileId) continue;
     const remaining = uniqueSorted(
@@ -293,7 +304,10 @@ function rekeyOtherRows(
         (it) => !ours.has(it.toLowerCase())
       )
     );
-    if (!remaining.length) continue;
+    if (!remaining.length) {
+      orphaned.push(row.profile_id);
+      continue;
+    }
     const key = consolidationKeyOf(remaining);
     const primary = row.primary_address.toLowerCase();
     rows.push({
@@ -303,7 +317,7 @@ function rekeyOtherRows(
     });
     wallets[key] = remaining;
   }
-  return { rows, wallets };
+  return { rows, wallets, orphaned };
 }
 
 /** The wallets whose key differs from the row they were in. */
@@ -417,6 +431,7 @@ export function planIdentity(
     profile,
     releaseHandle,
     statements: doc === undefined ? null : (doc?.statements ?? []),
+    orphanedProfiles: uniqueSorted(rekeyed.orphaned),
     pairWallets: uniqueSorted([...wallets, ...oldWallets]),
     pairs: [
       ...pairsOf(wallets),

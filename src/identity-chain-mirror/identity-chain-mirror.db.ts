@@ -256,6 +256,26 @@ export class IdentityChainMirrorDb extends LazyDbAccessCompatibleService {
     return row?.principal_id ?? null;
   }
 
+  /**
+   * The placeholder profile (`id-<wallet>`) of a wallet that no principal
+   * holds: what an identity made on the chain takes when that wallet founded
+   * it. 6529.io makes no placeholder profiles from switch-on, so the answer
+   * is the same on a rebuild.
+   */
+  async unmappedPlaceholderProfile(
+    wallet: string,
+    conn?: Conn
+  ): Promise<string | null> {
+    const row = await this.db.oneOrNull<{ external_id: string }>(
+      `select p.external_id from ${PROFILES_TABLE} p
+       left join ${IDENTITY_CHAIN_PRINCIPALS_TABLE} m on m.profile_id = p.external_id
+       where p.normalised_handle = :placeholder and m.principal_id is null`,
+      { placeholder: `id-${wallet.toLowerCase()}` },
+      conn ? { wrappedConnection: conn } : undefined
+    );
+    return row?.external_id ?? null;
+  }
+
   async insertMapping(
     principalId: string,
     profileId: string,

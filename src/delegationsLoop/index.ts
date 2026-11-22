@@ -253,6 +253,8 @@ async function handleDelegations(
 
 /** The run's share of time for the identity mirror (a run is 15 minutes). */
 const IDENTITY_MIRROR_BUDGET_MS = Time.minutes(6).toMillis();
+/** The profile site followers start only this soon in the mirror's step. */
+const IDENTITY_FOLLOWERS_START_BY_MS = Time.minutes(8).toMillis();
 
 /**
  * From switch-on, 6529.io's identity tables follow the 6529 chain
@@ -264,6 +266,7 @@ async function mirrorChainIdentities() {
   if (!appFeatures.isIdentityChainMirrorEnabled()) {
     return;
   }
+  const startedAt = Date.now();
   const report = await identityChainMirror.run({
     budgetMs: IDENTITY_MIRROR_BUDGET_MS
   });
@@ -285,8 +288,11 @@ async function mirrorChainIdentities() {
       throw error;
     }
   }
-  // Last, after the re-keying: the profile site index follows the chain.
-  const problems = await identityChainMirror.followProfileSites();
+  // Last, after the re-keying: the profile site index follows the chain,
+  // when the run has time left for it.
+  const problems = await identityChainMirror.followProfileSites(
+    startedAt + IDENTITY_FOLLOWERS_START_BY_MS
+  );
   if (problems.length) {
     logger.error(`[PROFILE SITE FOLLOWERS] ${JSON.stringify(problems)}`);
   }

@@ -238,6 +238,13 @@ describeWithSeed(
       ]);
     });
 
+    it("finds a wallet's placeholder profile that no principal holds", async () => {
+      expect(await db.unmappedPlaceholderProfile(C.toUpperCase())).toBe(PLACE);
+      await inTx((conn) => db.insertMapping(P, PLACE, 'FOUNDER', 1, conn));
+      expect(await db.unmappedPlaceholderProfile(C)).toBeNull();
+      expect(await db.unmappedPlaceholderProfile(A)).toBeNull();
+    });
+
     it('keeps the wallet bindings', async () => {
       const row = (wallet: string, height: number) => ({
         wallet,
