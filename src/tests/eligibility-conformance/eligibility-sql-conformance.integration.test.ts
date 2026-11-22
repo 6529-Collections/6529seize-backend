@@ -32,7 +32,7 @@ import { BadRequestException } from '@/exceptions';
 
 /**
  * Set-based SQL conformance harness (docs/eligibility-spec.md,
- * spec_version 2).
+ * spec_version 3).
  *
  * Seeds the union of every golden vector's state into one database, then per
  * vector generates each group's member-set SQL with the real

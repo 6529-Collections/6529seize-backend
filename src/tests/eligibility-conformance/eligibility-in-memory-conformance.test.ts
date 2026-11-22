@@ -12,7 +12,7 @@ jest.mock('@/redis', () => ({
 }));
 
 /**
- * In-memory conformance harness (docs/eligibility-spec.md, spec_version 2).
+ * In-memory conformance harness (docs/eligibility-spec.md, spec_version 3).
  *
  * Runs every golden vector against the real in-memory eligibility engine
  * (`UserGroupsService.getGroupsUserIsEligibleFor` →

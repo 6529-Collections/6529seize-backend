@@ -10,7 +10,7 @@
  * entities.
  *
  * The normative behavior is defined by `docs/eligibility-spec.md`
- * (spec_version 2). Both production engines must match every vector.
+ * (spec_version 3). Both production engines must match every vector.
  */
 
 export type VectorCollection = 'memes' | 'gradient' | 'lab' | 'nextgen';
