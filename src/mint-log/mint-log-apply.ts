@@ -77,18 +77,28 @@ export class MintStateWriter {
     }
   }
 
+  /** Deletes by key, a batch of rows per statement. */
   private async deleteRows(
     spec: MintRowPartSpec,
     keys: readonly MintRow[],
     connection: ConnectionWrapper<any>
   ): Promise<void> {
-    for (const key of keys) {
-      const where = spec.key
-        .map((column) => `${quoteIdentifier(column)} = :${column}`)
-        .join(' and ');
+    const columns = `(${spec.key.map(quoteIdentifier).join(', ')})`;
+    for (let start = 0; start < keys.length; start += BATCH) {
+      const params: Record<string, unknown> = {};
+      const tuples = keys.slice(start, start + BATCH).map(
+        (key, i) =>
+          `(${spec.key
+            .map((column) => {
+              params[`k${i}_${column}`] = key[column] ?? null;
+              return `:k${i}_${column}`;
+            })
+            .join(', ')})`
+      );
       await this.db().execute(
-        `delete from ${quoteIdentifier(spec.table)} where ${where}`,
-        { ...key },
+        `delete from ${quoteIdentifier(spec.table)}
+         where ${columns} in (${tuples.join(', ')})`,
+        params,
         { wrappedConnection: connection }
       );
     }

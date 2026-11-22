@@ -1,4 +1,4 @@
-import { ipfsFileUploader } from '@/attachments/ipfs-file-uploader';
+import { ipfsMintContent } from './mint-log-content';
 import { getMintLogPorts } from './mint-log-ports';
 import {
   GENESIS_CHAINS,
@@ -15,19 +15,7 @@ import { chainOfCard, MintLogChain } from './mint-log.types';
  * MINT_LOG_SHADOW is on. `--chain mint|rememes|collab` limits it to one chain.
  */
 
-const ipfsContent: MintContentPort = {
-  put: async (name, bytes) =>
-    (
-      await ipfsFileUploader.uploadFile({
-        fileName: name,
-        fileBuffer: bytes,
-        contentType: 'application/gzip'
-      })
-    ).cid,
-  get: async () => {
-    throw new Error('The genesis run only writes files');
-  }
-};
+const ipfsContent: MintContentPort = ipfsMintContent();
 
 export async function main(args = process.argv.slice(2)): Promise<void> {
   if (args.includes('--help')) {

@@ -1,4 +1,22 @@
+// The routers build their auth middleware on import; the endpoints this
+// test reads are public, so authentication passes through.
+jest.mock('@/api/auth/auth', () => {
+  const pass = () => (_req: unknown, _res: unknown, next: () => void) =>
+    next();
+  return {
+    ...jest.requireActual('@/api/auth/auth'),
+    needsAuthenticatedUser: pass,
+    maybeAuthenticatedUser: pass
+  };
+});
+
 import 'reflect-metadata';
+import express from 'express';
+import type { AddressInfo } from 'node:net';
+import type { Server } from 'node:http';
+import distributionPhotosRoutes from '@/api/distribution-photos/api.distribution_photos.routes';
+import distributionsRoutes from '@/api/distributions/api.distributions.routes';
+import mintingClaimsRoutes from '@/api/minting-claims/api.minting-claims.routes';
 import {
   DISTRIBUTION_PHASE_AIRDROP_ARTIST,
   DISTRIBUTION_PHASE_AIRDROP_TEAM
@@ -40,6 +58,7 @@ import { distributionCursorBlock } from './mint-log-inputs';
 import { mintCard } from './mint-log-parts';
 import type { MintRecordLogEntry, MintRecordLogPort } from './mint-log-ports';
 import { MintLogRebuilder } from './mint-log-rebuild';
+import { rebuildMintLogFromRecordLog } from './mint-log-rebuild.run';
 import { MintLogRecorder, MintWriteSpec } from './mint-log-recorder';
 import type { MintLogEntryBody, MintLogKind } from './mint-log.types';
 
@@ -163,6 +182,44 @@ async function capture() {
   return sqlExecutor.executeNativeQueriesInTransaction((connection) =>
     mintStateReader.capture(CARD, connection)
   );
+}
+
+/**
+ * The public endpoints that read the minting tables, answered by the real
+ * routers. Minted counts come from the distribution loop, which this test
+ * does not run; the minted-count test below checks them.
+ */
+async function endpointJson(): Promise<Record<string, unknown>> {
+  const app = express();
+  app.use('/api/distribution_photos', distributionPhotosRoutes);
+  app.use('/api/minting-claims', mintingClaimsRoutes);
+  app.use('/api', distributionsRoutes);
+  const server = await new Promise<Server>((resolve) => {
+    const listening = app.listen(0, '127.0.0.1', () => resolve(listening));
+  });
+  try {
+    const { port } = server.address() as AddressInfo;
+    const answers: Record<string, unknown> = {};
+    for (const path of [
+      `/distribution_phases/${CONTRACT}/${CARD_ID}`,
+      `/distributions?card_id=${CARD_ID}&contract=${CONTRACT}`,
+      `/distribution_photos/${CONTRACT}/${CARD_ID}`,
+      `/minting-claims/${CONTRACT}/${CARD_ID}/roots`,
+      `/minting-claims/${CONTRACT}/${CARD_ID}/airdrops`,
+      `/minting-claims/${CONTRACT}/${CARD_ID}/allowlists`
+    ]) {
+      const response = await fetch(`http://127.0.0.1:${port}/api${path}`);
+      const body = JSON.parse(await response.text(), (key, value) =>
+        key === 'minted' || key === 'total_count' ? undefined : value
+      );
+      answers[path] = { status: response.status, body };
+    }
+    return answers;
+  } finally {
+    await new Promise<void>((resolve, reject) =>
+      server.close((error) => (error ? reject(error) : resolve()))
+    );
+  }
 }
 
 async function cursor() {
@@ -372,14 +429,44 @@ describeWithSeed(
 
       const live = await capture();
       expect(live.merkle.map((root) => root.row.phase)).toEqual(['Phase 2']);
+      const answers = await endpointJson();
+      for (const answer of Object.values(answers)) {
+        expect(answer).toMatchObject({ status: 200 });
+      }
 
       // Drop the rows, then rebuild from the genesis files and the logged
-      // entries, through the same reducer.
+      // entries as the record log holds them (beside other modules' entries),
+      // through the same reducer.
       await emptyMintTables();
-      const result = await new MintLogRebuilder(content).rebuild(entries);
+      const result = await rebuildMintLogFromRecordLog({
+        content,
+        source: {
+          walk: async function* () {
+            yield { entry: { t: 'entry', lane: 'waves', body: {} } as any };
+            for (const body of entries) {
+              yield {
+                entry: {
+                  t: 'entry',
+                  lane: 'mint',
+                  chain: 'public',
+                  body: body as unknown as Record<string, unknown>
+                }
+              };
+            }
+          }
+        }
+      });
       expect(result.entries).toBe(10);
       expect(differingParts(await capture(), live)).toEqual([]);
       expect(await cursor()).toBe(140);
+      expect(await endpointJson()).toEqual(answers);
+      // A second rebuild over the rebuilt rows is refused.
+      await expect(
+        rebuildMintLogFromRecordLog({
+          content,
+          source: { walk: async function* () {} }
+        })
+      ).rejects.toThrow('rebuilds into empty tables');
     });
 
     it('derives minted counts after the normalize, on top of genesis counts', async () => {
