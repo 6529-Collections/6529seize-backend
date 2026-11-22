@@ -45,6 +45,7 @@ import profileSubClassificationsRoutes from './profiles/profiles-sub-classificat
 import profilesRoutes from './profiles/profiles.routes';
 import repCategorySearchRoutes from './profiles/rep-category-search.routes';
 import proxiesRoutes from './proxies/proxies.routes';
+import { identityFreezeMiddleware } from './identity-freeze/identity-freeze.middleware';
 import pushNotificationsRoutes from './push-notifications/push-notifications.routes';
 import bulkRepRoutes from './ratings/bulk-rep.routes';
 import ratingsRoutes from './ratings/ratings.routes';
@@ -1363,6 +1364,9 @@ function wireApp() {
     });
   });
 
+  // Identities move to the 6529 chain: while FEATURE_IDENTITY_FROZEN is on,
+  // profile, statement, REP, NIC, rating and REP/NIC proxy writes are refused.
+  apiRouter.use(identityFreezeMiddleware());
   apiRouter.use(`/boosted-drops`, boostedDropsRoutes);
   apiRouter.use(`/curated-profile-wave-drops`, curatedProfileWaveDropsRoutes);
   apiRouter.use(`/drop-ids`, dropIdsRoutes);

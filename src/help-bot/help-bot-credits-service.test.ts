@@ -355,4 +355,54 @@ describe('HelpBotCreditsService', () => {
       expect.anything()
     );
   });
+
+  describe('during the identity freeze', () => {
+    const original = process.env.FEATURE_IDENTITY_FROZEN;
+    beforeEach(() => {
+      process.env.FEATURE_IDENTITY_FROZEN = 'true';
+    });
+    afterEach(() => {
+      if (original === undefined) delete process.env.FEATURE_IDENTITY_FROZEN;
+      else process.env.FEATURE_IDENTITY_FROZEN = original;
+    });
+
+    it('grants no credits and writes no REP', async () => {
+      const { service, executor, profileResolver } = createService({});
+      for (const grant of [
+        () => service.grantSignupCredits({ profileId: 'profile-1' }, ctx),
+        () => service.grantProfileSetupCredits({ profileId: 'profile-1' }, ctx),
+        () => service.grantDailyActivityCredits({ profileId: 'profile-1' }, ctx)
+      ]) {
+        expect(await grant()).toEqual({
+          amountGranted: 0,
+          balance: null,
+          alreadyGranted: false,
+          botProfileMissing: false
+        });
+      }
+      expect(executor.execute).not.toHaveBeenCalled();
+      expect(executor.oneOrNull).not.toHaveBeenCalled();
+      expect(profileResolver.resolveBotProfileId).not.toHaveBeenCalled();
+      expect(profileActivityLogsDb.insert).not.toHaveBeenCalled();
+    });
+
+    it('answers a question without charging and refunds nothing', async () => {
+      const { service, executor } = createService({});
+      expect(
+        await service.chargeQuestionCredit(
+          { profileId: 'profile-1', interactionId: 'interaction-1' },
+          ctx
+        )
+      ).toEqual({ charged: true, balance: null, botProfileMissing: false });
+      expect(
+        await service.refundQuestionCredit(
+          { profileId: 'profile-1', interactionId: 'interaction-1' },
+          ctx
+        )
+      ).toBe(false);
+      expect(executor.execute).not.toHaveBeenCalled();
+      expect(executor.oneOrNull).not.toHaveBeenCalled();
+      expect(profileActivityLogsDb.insert).not.toHaveBeenCalled();
+    });
+  });
 });

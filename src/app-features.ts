@@ -24,6 +24,14 @@ export class AppFeatures {
   }
 
   /**
+   * Identities move to the 6529 chain: profiles, handles, statements, REP
+   * and NIC are read-only here while this is on (src/identity-freeze).
+   */
+  public isIdentityFrozen(): boolean {
+    return this.isFeatureEnabled('IDENTITY_FROZEN');
+  }
+
+  /**
    * Large viewer group lists are read from viewer_group_set_members by their
    * hash instead of travelling in each statement (waves/viewer-group-sets).
    */
