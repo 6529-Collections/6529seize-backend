@@ -372,6 +372,89 @@ describe('ChainGatewayClient reads', () => {
     expect(identityReads).toBe(2);
   });
 
+  it('reads a pinned height again after a relaunch, once the head is old', async () => {
+    let network = stamp(1).network;
+    const { client, calls, advance } = setup((call) => {
+      if (path(call) === '/v1/status') {
+        const answer = status(10);
+        answer.json.data.finalized = { ...answer.json.data.finalized, network };
+        return answer;
+      }
+      return {
+        status: 200,
+        json: {
+          read: { ...stamp(10), network },
+          data: { level: network === OTHER_NETWORK ? 2 : 1 },
+          next: null
+        }
+      };
+    });
+    expect(await client.getLevel('0x01', { height: 10 })).toEqual({ level: 1 });
+    network = OTHER_NETWORK;
+    advance(2_500);
+    expect(await client.getLevel('0x01', { height: 10 })).toEqual({ level: 2 });
+    expect(reads(calls)).toHaveLength(2);
+  });
+
+  it.each([
+    [
+      'a wallet history',
+      '/v1/membership/wallets/0x01/history',
+      (n: number) => ({ wallet: '0x01', changes: [], ranges: [[1, n]] })
+    ],
+    [
+      'a membership day',
+      '/v1/membership/days/26',
+      (n: number) => ({ record: { day: 26 }, saved: n })
+    ],
+    ['a TDH day', '/v1/tdh/days/26', (n: number) => ({ day: 26, rows: n })],
+    [
+      'an identity without its level',
+      '/v1/identities/0xab',
+      (n: number) => ({ ...IDENTITY, level: null, rep: n })
+    ],
+    [
+      'identities without their level',
+      '/v1/identities/by-wallets',
+      (n: number) => ({ '0x01': { ...IDENTITY, level: null, rep: n } })
+    ]
+  ])(
+    'reads %s again at the same height: the node may add to it',
+    async (_name, route, data) => {
+      let n = 1;
+      const { client, calls } = setup(
+        withStatus(() => ({
+          status: 200,
+          json: { read: stamp(10), data: data(n), next: null }
+        }))
+      );
+      expect((await client.read(route, {}, { height: 10 }))?.data).toEqual(
+        data(1)
+      );
+      n = 2;
+      expect((await client.read(route, {}, { height: 10 }))?.data).toEqual(
+        data(2)
+      );
+      expect(reads(calls)).toHaveLength(2);
+    }
+  );
+
+  it('keeps an identity with its level, and a level read, at that height', async () => {
+    const { client, calls } = setup(
+      withStatus(() => ({
+        status: 200,
+        json: {
+          read: stamp(10),
+          data: { ...IDENTITY, level: { level: 1, raw: '5' } },
+          next: null
+        }
+      }))
+    );
+    await client.read('/v1/identities/0xab', {}, { height: 10 });
+    await client.read('/v1/identities/0xab', {}, { height: 10 });
+    expect(reads(calls)).toHaveLength(1);
+  });
+
   it('serves a cached answer as a copy the caller can change', async () => {
     const { client } = setup(
       withStatus(() => ({
@@ -413,6 +496,7 @@ describe('ChainGatewayClient reads', () => {
   it.each([
     ['without a body', undefined],
     ['without the node envelope', { message: 'no route' }],
+    ["with the node's code but no read stamp", { error: 'not_found' }],
     [
       'with another code',
       { read: stamp(10), error: { code: 'no_route', message: 'x' } }
@@ -931,6 +1015,51 @@ describe('ChainGatewayClient reads', () => {
     });
   });
 
+  it.each([
+    ['a cut block two past through', 120, 119, 121, '121:1', 0],
+    [
+      'a filtered cut block whose next is its start',
+      '120:5',
+      119,
+      120,
+      '120:5',
+      5
+    ],
+    [
+      'a filtered cut block whose next is behind it',
+      '120:5',
+      119,
+      120,
+      '120:4',
+      5
+    ]
+  ])('refuses %s', async (_name, from, through, height, next, recordsFrom) => {
+    const record = {
+      family: '0x0104',
+      name: 'Profile',
+      key: '0x01',
+      value: '0x'
+    };
+    const { client } = setup(
+      withStatus(() => ({
+        status: 200,
+        json: {
+          read: stamp(130),
+          data: {
+            through,
+            blocks: [
+              { ...feedBlock(height, false, recordsFrom), records: [record] }
+            ]
+          },
+          next
+        }
+      }))
+    );
+    await expect(
+      client.getChanges(from, { families: ['0x0104'] })
+    ).rejects.toMatchObject({ code: 'bad_answer' });
+  });
+
   it('takes a page from a node behind the height asked from, without moving back', async () => {
     const answers = [
       { through: 130, next: '136' },
@@ -950,11 +1079,11 @@ describe('ChainGatewayClient reads', () => {
       })
     );
     expect(await client.getChanges(136)).toEqual(
-      expect.objectContaining({ nextHeight: 136, atHead: true, next: '136' })
+      expect.objectContaining({ nextHeight: 136, atHead: true, next: 136 })
     );
     // Asked from inside a block it doesn't have yet: the height stays.
     expect(await client.getChanges('136:40')).toEqual(
-      expect.objectContaining({ nextHeight: 136, atHead: true })
+      expect.objectContaining({ nextHeight: 136, atHead: true, next: '136:40' })
     );
   });
 
@@ -1250,22 +1379,24 @@ describe('ChainGatewayClient retries and errors', () => {
 
 describe('ChainGatewayClient writes', () => {
   it('drafts and relays signed operations', async () => {
-    const { client, calls } = setup((call) =>
-      path(call) === '/v1/draft'
-        ? {
-            status: 200,
-            json: {
-              read: stamp(5, 'head'),
-              data: { txId: '0x' + 'cd'.repeat(32), opName: 'IDENTITY_JOIN' }
+    const { client, calls: all } = setup(
+      withStatus((call) =>
+        path(call) === '/v1/draft'
+          ? {
+              status: 200,
+              json: {
+                read: stamp(5, 'head'),
+                data: { txId: '0x' + 'cd'.repeat(32), opName: 'IDENTITY_JOIN' }
+              }
             }
-          }
-        : {
-            status: 200,
-            json: {
-              read: stamp(5, 'head'),
-              data: { txId: '0x' + 'cd'.repeat(32), accepted: true }
+          : {
+              status: 200,
+              json: {
+                read: stamp(5, 'head'),
+                data: { txId: '0x' + 'cd'.repeat(32), accepted: true }
+              }
             }
-          }
+      )
     );
     const draft = await client.getDraft({
       opType: 'IDENTITY_JOIN',
@@ -1279,6 +1410,7 @@ describe('ChainGatewayClient writes', () => {
       signatures: [{ role: 0, keyType: 1, sig: '0x' + 'ee'.repeat(65) }]
     });
     expect(result).toEqual({ txId: '0x' + 'cd'.repeat(32), accepted: true });
+    const calls = reads(all);
     expect(calls.map((c) => [c.method, path(c)])).toEqual([
       ['POST', '/v1/draft'],
       ['POST', '/v1/submit']
@@ -1290,17 +1422,34 @@ describe('ChainGatewayClient writes', () => {
     expect(calls[1].headers['content-type']).toBe('application/json');
   });
 
-  it('throws inadmissible with the chain code', async () => {
-    const { client } = setup(() => ({
-      status: 422,
-      json: {
-        read: stamp(5, 'head'),
-        error: {
-          code: 'inadmissible',
-          message: '0x0201 BAD_SIGNATURE, detail 1'
+  it('refuses a draft or submit answered by another chain', async () => {
+    const { client } = setup(
+      withStatus(() => ({
+        status: 200,
+        json: {
+          read: { ...stamp(5, 'head'), network: OTHER_NETWORK },
+          data: { txId: '0x' + 'cd'.repeat(32), accepted: true }
         }
-      }
-    }));
+      }))
+    );
+    await expect(client.submit({ signed: '0x00' })).rejects.toMatchObject({
+      code: 'wrong_network'
+    });
+  });
+
+  it('throws inadmissible with the chain code', async () => {
+    const { client } = setup(
+      withStatus(() => ({
+        status: 422,
+        json: {
+          read: stamp(5, 'head'),
+          error: {
+            code: 'inadmissible',
+            message: '0x0201 BAD_SIGNATURE, detail 1'
+          }
+        }
+      }))
+    );
     await expect(client.submit({ signed: '0x00' })).rejects.toMatchObject({
       code: 'inadmissible',
       status: 422,
@@ -1654,6 +1803,29 @@ describe('import and membership history', () => {
       ],
       readHeight: 50
     });
+  });
+
+  it('reads a history again at the same height after its ranges grow', async () => {
+    let to = 40;
+    const { client } = setup((call) =>
+      path(call) === '/v1/status'
+        ? status(50)
+        : {
+            status: 200,
+            json: {
+              read: stamp(50),
+              data: { wallet: W, changes: [], ranges: [[1, to]] },
+              next: null
+            }
+          }
+    );
+    expect((await client.getMembershipWalletHistory(W))?.ranges).toEqual([
+      [1, 40]
+    ]);
+    to = 50;
+    expect((await client.getMembershipWalletHistory(W))?.ranges).toEqual([
+      [1, 50]
+    ]);
   });
 
   it('answers null for a history it does not have, and no ranges as none', async () => {

@@ -37,6 +37,11 @@ export interface ChainReadOptions {
   readonly at?: 'finalized' | 'head';
 }
 
+/**
+ * A page of a list. Without `height` each page follows the head, so a walk
+ * over many pages can span heights: pass the first page's `read.height` as
+ * `height` to read every page of one state.
+ */
 export interface ChainPageOptions extends ChainReadOptions {
   readonly after?: string | null;
   readonly limit?: number;
