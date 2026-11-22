@@ -13,7 +13,7 @@ import {
  */
 export const XTDH_FROZEN_MESSAGE =
   `xTDH is frozen. Grants can't be created or changed ` +
-  `until one-time grants exist on the 6529 chain.`;
+  `until one-time grants exist on the 6529 Network.`;
 
 export function isXTdhFrozen(nowMillis?: number): boolean {
   return isIdentityFrozen(nowMillis);
