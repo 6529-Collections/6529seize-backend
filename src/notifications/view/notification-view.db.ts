@@ -81,6 +81,8 @@ export interface CarriedNotificationRow {
   readonly wave_id: string | null;
 }
 
+const LEGACY_ID_CHUNK = 500;
+
 const toNumberOrNull = (value: unknown): number | null =>
   value === null || value === undefined ? null : Number(value);
 
@@ -169,26 +171,50 @@ export class NotificationViewDb extends LazyDbAccessCompatibleService {
     keys: readonly { identity_id: string; source_key: string }[],
     connection: ConnectionWrapper<any>
   ): Promise<void> {
-    for (const key of keys) {
+    for (let i = 0; i < keys.length; i += LEGACY_ID_CHUNK) {
+      const chunk = keys.slice(i, i + LEGACY_ID_CHUNK);
+      const params: Record<string, string> = {};
+      const pairs = chunk.map((key, index) => {
+        params[`identity_${index}`] = key.identity_id;
+        params[`source_${index}`] = key.source_key;
+        return `(identity_id = :identity_${index} and source_key = :source_${index})`;
+      });
       await this.db.execute(
-        `delete from ${NOTIFICATION_VIEW_TABLE}
-         where identity_id = :identity_id and source_key = :source_key`,
-        key,
+        `delete from ${NOTIFICATION_VIEW_TABLE} where ${pairs.join(' or ')}`,
+        params,
         { wrappedConnection: connection }
       );
     }
   }
 
-  async setLegacyId(
-    key: { identity_id: string; source_key: string; legacy_id: number },
+  /** Records the identity_notifications copy of each row, in one statement per chunk. */
+  async setLegacyIds(
+    keys: readonly {
+      identity_id: string;
+      source_key: string;
+      legacy_id: number;
+    }[],
     connection: ConnectionWrapper<any>
   ): Promise<void> {
-    await this.db.execute(
-      `update ${NOTIFICATION_VIEW_TABLE} set legacy_id = :legacy_id
-       where identity_id = :identity_id and source_key = :source_key`,
-      key,
-      { wrappedConnection: connection }
-    );
+    for (let i = 0; i < keys.length; i += LEGACY_ID_CHUNK) {
+      const chunk = keys.slice(i, i + LEGACY_ID_CHUNK);
+      const params: Record<string, string | number> = {};
+      const rows = chunk.map((key, index) => {
+        params[`identity_${index}`] = key.identity_id;
+        params[`source_${index}`] = key.source_key;
+        params[`legacy_${index}`] = key.legacy_id;
+        return `select :identity_${index} as identity_id, :source_${index} as source_key, :legacy_${index} as legacy_id`;
+      });
+      await this.db.execute(
+        `update ${NOTIFICATION_VIEW_TABLE} v
+         join (${rows.join(' union all ')}) copies
+           on copies.identity_id = v.identity_id
+          and copies.source_key = v.source_key
+         set v.legacy_id = copies.legacy_id`,
+        params,
+        { wrappedConnection: connection }
+      );
+    }
   }
 }
 

@@ -6,7 +6,8 @@ import {
   IDENTITY_NOTIFICATIONS_TABLE,
   NOTIFICATION_VIEW_TABLE,
   PUSH_NOTIFICATION_CANCELLATIONS_TABLE,
-  PUSH_NOTIFICATION_OUTBOX_TABLE
+  PUSH_NOTIFICATION_OUTBOX_TABLE,
+  SIGNED_RECORD_LOG_ENTRIES_TABLE
 } from '@/constants';
 import { IdentityNotificationCause } from '@/entities/IIdentityNotification';
 import { anIdentity } from '@/tests/fixtures/identity.fixture';
@@ -18,7 +19,11 @@ import {
   PUSH_LIVE_WINDOW_MS
 } from './notification-deriver';
 import { deriveRating, deriveVote } from './rules/chain-rules';
-import { deriveDropCreation, DropCreationFacts } from './rules/relay-rules';
+import {
+  deriveDropCreation,
+  deriveFollow,
+  DropCreationFacts
+} from './rules/relay-rules';
 import type { DerivedGroup } from './derived-notification';
 import type {
   RatingChangedEvent,
@@ -41,7 +46,8 @@ const TABLES = [
   PUSH_NOTIFICATION_OUTBOX_TABLE,
   PUSH_NOTIFICATION_CANCELLATIONS_TABLE,
   IDENTITIES_TABLE,
-  IDENTITY_MUTES_TABLE
+  IDENTITY_MUTES_TABLE,
+  SIGNED_RECORD_LOG_ENTRIES_TABLE
 ];
 const NOW = 1_795_000_000_000;
 
@@ -203,7 +209,7 @@ describe('notification_view', () => {
   it('shadow: a derived cause skips its old writer; the deriver writes the view and the copy', async () => {
     setFlags({
       NOTIFY_VIEW_MODE: 'shadow',
-      NOTIFY_DERIVED_CAUSES: 'IDENTITY_REP'
+      NOTIFY_DERIVED_CAUSES: 'IDENTITY_REP@0'
     });
     await userNotifier.notifyOfIdentityRep({
       rater_id: raterId,
@@ -277,7 +283,7 @@ describe('notification_view', () => {
     }
     setFlags({
       NOTIFY_VIEW_MODE: 'shadow',
-      NOTIFY_DERIVED_CAUSES: 'IDENTITY_REP,DROP_VOTED'
+      NOTIFY_DERIVED_CAUSES: 'IDENTITY_REP@0,DROP_VOTED@0'
     });
     await apply([deriveRating(rating()), deriveVote(vote())]);
     expect((await oldRows()).map(comparable)).toEqual(legacy);
@@ -300,7 +306,7 @@ describe('notification_view', () => {
   it('pushes only live, fresh rows', async () => {
     setFlags({
       NOTIFY_VIEW_MODE: 'shadow',
-      NOTIFY_DERIVED_CAUSES: 'DROP_VOTED'
+      NOTIFY_DERIVED_CAUSES: 'DROP_VOTED@0'
     });
     await apply([deriveVote(vote({ ref: '0xreplayed' }))], 'replay');
     await apply([
@@ -312,10 +318,51 @@ describe('notification_view', () => {
     expect(await outbox()).toEqual([]);
   });
 
+  it('shadow: a cause switched at a cut leaves the events before it to the old writer', async () => {
+    // The old writer wrote this vote; the deriver wrote its comparison row.
+    setFlags({ NOTIFY_VIEW_MODE: 'shadow' });
+    await userNotifier.notifyOfDropVote(
+      {
+        voter_id: voterId,
+        drop_id: 'drop-1',
+        drop_author_id: targetId,
+        vote: 3,
+        vote_change: 3,
+        total_vote: 3,
+        wave_id: 'wave-1'
+      },
+      null
+    );
+    await apply([deriveVote(vote())]);
+    expect(await oldRows()).toHaveLength(1);
+    expect(await outbox()).toHaveLength(1);
+
+    setFlags({
+      NOTIFY_VIEW_MODE: 'shadow',
+      NOTIFY_DERIVED_CAUSES: `DROP_VOTED@${NOW + 1}`
+    });
+    // The same event again: before the cut, so no second row and no push.
+    expect(await apply([deriveVote(vote())])).toMatchObject({
+      legacyCopies: 0,
+      pushed: 0
+    });
+    expect(await oldRows()).toHaveLength(1);
+    expect(await outbox()).toHaveLength(1);
+    // An event from the cut on is the deriver's.
+    expect(
+      await apply([deriveVote(vote({ ref: '0xafter', blockTimeMs: NOW + 1 }))])
+    ).toMatchObject({ legacyCopies: 1, pushed: 1 });
+    expect((await oldRows()).map((row) => Number(row.created_at))).toEqual([
+      expect.any(Number),
+      NOW + 1
+    ]);
+    expect(await outbox()).toHaveLength(2);
+  });
+
   it('applies the old write filters: a muted actor writes no row', async () => {
     setFlags({
       NOTIFY_VIEW_MODE: 'shadow',
-      NOTIFY_DERIVED_CAUSES: 'IDENTITY_REP'
+      NOTIFY_DERIVED_CAUSES: 'IDENTITY_REP@0'
     });
     await sqlExecutor.execute(
       `insert into ${IDENTITY_MUTES_TABLE} (muter_id, muted_identity_id, created_at)
@@ -330,7 +377,7 @@ describe('notification_view', () => {
   it('replaces a group: a dropped recipient goes, a kept one keeps its read state', async () => {
     setFlags({
       NOTIFY_VIEW_MODE: 'shadow',
-      NOTIFY_DERIVED_CAUSES: 'IDENTITY_MENTIONED'
+      NOTIFY_DERIVED_CAUSES: 'IDENTITY_MENTIONED@0'
     });
     await apply([deriveDropCreation(drop([targetId, otherId]))]);
     const copies = await oldRows();
@@ -372,7 +419,7 @@ describe('notification_view', () => {
     beforeEach(() => {
       setFlags({
         NOTIFY_VIEW_MODE: 'on',
-        NOTIFY_DERIVED_CAUSES: 'IDENTITY_REP'
+        NOTIFY_DERIVED_CAUSES: 'IDENTITY_REP@0'
       });
     });
 
@@ -459,13 +506,16 @@ describe('notification_view', () => {
       expect(await unread()).toBe(0);
     });
 
-    it('marks all and a wave read in both tables', async () => {
-      await apply([deriveRating(rating()), deriveVote(vote())]);
+    it('marks all and a wave read in both tables, and logs each mark', async () => {
       setFlags({
         NOTIFY_VIEW_MODE: 'on',
-        NOTIFY_DERIVED_CAUSES: 'IDENTITY_REP,DROP_VOTED'
+        NOTIFY_DERIVED_CAUSES: 'IDENTITY_REP@0,DROP_VOTED@0'
       });
-      await apply([deriveVote(vote({ ref: '0xvote2' }))]);
+      await apply([
+        deriveRating(rating()),
+        deriveVote(vote()),
+        deriveVote(vote({ ref: '0xvote2' }))
+      ]);
       expect(
         await identityNotificationsDb.markWaveNotificationsAsRead(
           'wave-1',
@@ -476,6 +526,55 @@ describe('notification_view', () => {
       await identityNotificationsDb.markAllNotificationsAsRead(targetId, {});
       expect(await unread()).toBe(0);
       expect((await oldRows()).every((row) => row.read_at !== null)).toBe(true);
+      const logged = await sqlExecutor.execute<{ entry: string }>(
+        `select entry from ${SIGNED_RECORD_LOG_ENTRIES_TABLE} where lane = 'notify' order by id`
+      );
+      expect(
+        logged.map((row) => {
+          const { body } = JSON.parse(row.entry);
+          return [body.type, body.scope];
+        })
+      ).toEqual([
+        ['notify-read', 'wave'],
+        ['notify-read', 'all']
+      ]);
+    });
+
+    it('a cause switched at a cut keeps the old row of an event before it, once', async () => {
+      setFlags({ NOTIFY_VIEW_MODE: 'on' });
+      await userNotifier.notifyOfIdentitySubscription({
+        subscriber_id: otherId,
+        subscribed_to: targetId
+      });
+      setFlags({
+        NOTIFY_VIEW_MODE: 'on',
+        NOTIFY_DERIVED_CAUSES: `IDENTITY_SUBSCRIBED@${NOW + 1}`
+      });
+      const follow = (subscriberId: string, timeMs: number) =>
+        deriveFollow({
+          eventId: `0xfollow-${subscriberId}`,
+          timeMs,
+          subscriberId,
+          targetId,
+          following: true,
+          wasFollowing: false,
+          imported: false
+        });
+      // The old writer's row stands for the event before the cut.
+      expect((await apply([follow(otherId, NOW)])).written).toBe(0);
+      expect((await page()).map((row) => row.cause)).toEqual([
+        IdentityNotificationCause.IDENTITY_SUBSCRIBED
+      ]);
+      expect(await unread()).toBe(1);
+      // A follow from the cut on is derived.
+      expect((await apply([follow(voterId, NOW + 1)])).written).toBe(1);
+      expect(await page()).toHaveLength(2);
+      expect(await unread()).toBe(2);
+    });
+
+    it('writes no view row for a cause the deriver does not own yet', async () => {
+      expect((await apply([deriveVote(vote())])).written).toBe(0);
+      expect(await viewRows()).toEqual([]);
     });
   });
 });

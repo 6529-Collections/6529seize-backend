@@ -25,7 +25,8 @@ import {
 } from '@/notifications/view/notification-view.db';
 import {
   notifyViewMode,
-  writesLegacyCopy
+  writesLegacyCopy,
+  writesViewRow
 } from '@/notifications/view/notify-view-flags';
 
 /** A derived row is pushed only while it is this fresh. */
@@ -126,7 +127,7 @@ export class NotificationDeriver {
     connection: ConnectionWrapper<any>
   ): Promise<DeriveResult> {
     const allowed = await this.notificationsDb.filterDerivedRowsForWrite(
-      [...group.rows],
+      group.rows.filter((row) => writesViewRow(row.cause, row.created_at)),
       connection
     );
     const keyed = this.keyRows(group, allowed);
@@ -230,7 +231,9 @@ export class NotificationDeriver {
   ): Promise<{ written: number; pushed: number }> {
     const fresh: KeyedRow[] = [];
     for (const row of keyed) {
-      if (!writesLegacyCopy(row.derived.cause)) continue;
+      if (!writesLegacyCopy(row.derived.cause, row.derived.created_at)) {
+        continue;
+      }
       const before = stored.get(rowKey(row.view));
       if (before?.legacy_id == null) {
         fresh.push(row);
@@ -247,17 +250,14 @@ export class NotificationDeriver {
       fresh.map(({ derived }) => derived),
       connection
     );
-    for (let index = 0; index < fresh.length; index++) {
-      const { view } = fresh[index];
-      await this.viewDb.setLegacyId(
-        {
-          identity_id: view.identity_id,
-          source_key: view.source_key,
-          legacy_id: ids[index]
-        },
-        connection
-      );
-    }
+    await this.viewDb.setLegacyIds(
+      fresh.map(({ view }, index) => ({
+        identity_id: view.identity_id,
+        source_key: view.source_key,
+        legacy_id: ids[index]
+      })),
+      connection
+    );
     const now = options.now ?? Time.currentMillis();
     const pushIds =
       options.mode === 'live' && this.pushActivated()

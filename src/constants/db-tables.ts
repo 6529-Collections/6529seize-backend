@@ -230,6 +230,7 @@ export const CONTENT_MODERATION_PRE_PUBLICATION_CHECKS_TABLE =
   'content_moderation_pre_publication_checks';
 export const IDENTITY_NOTIFICATIONS_TABLE = 'identity_notifications';
 export const NOTIFICATION_VIEW_TABLE = 'notification_view';
+export const NOTIFICATION_VIEW_CURSORS_TABLE = 'notification_view_cursors';
 export const PROFILE_PREFERENCES_TABLE = 'profile_preferences';
 export const WAVE_GROUP_NOTIFICATION_SUBSCRIPTIONS_TABLE =
   'wave_group_notification_subscriptions';

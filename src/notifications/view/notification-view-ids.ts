@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 
-const SOURCE_KEY_DOMAIN = '6529.notify.v1';
+/** The first field of every source key; SQL that computes keys uses it too. */
+export const NOTIFICATION_SOURCE_KEY_DOMAIN = '6529.notify.v1';
 const ID_SPREAD = 4096;
 /** The last millisecond whose ids stay safe JavaScript integers (Sep 2039). */
 export const MAX_VIEW_ID_CREATED_AT = Math.floor(
@@ -18,7 +19,9 @@ export function notificationSourceKey(
   recipientId: string
 ): string {
   return createHash('sha256')
-    .update([SOURCE_KEY_DOMAIN, family, ref, recipientId].join('\u0000'))
+    .update(
+      [NOTIFICATION_SOURCE_KEY_DOMAIN, family, ref, recipientId].join('\u0000')
+    )
     .digest('hex');
 }
 

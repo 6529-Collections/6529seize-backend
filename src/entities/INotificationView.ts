@@ -1,5 +1,8 @@
 import { Column, Entity, Index, PrimaryColumn } from 'typeorm';
-import { NOTIFICATION_VIEW_TABLE } from '@/constants';
+import {
+  NOTIFICATION_VIEW_CURSORS_TABLE,
+  NOTIFICATION_VIEW_TABLE
+} from '@/constants';
 import { IdentityNotificationCause } from './IIdentityNotification';
 
 export enum NotificationViewOrigin {
@@ -20,6 +23,7 @@ export enum NotificationViewOrigin {
 @Index('idx_notification_view_unread', ['identity_id', 'read_at'])
 @Index('idx_notification_view_wave', ['wave_id', 'identity_id', 'read_at'])
 @Index('idx_notification_view_source', ['source_family', 'source_ref'])
+@Index('idx_notification_view_seal', ['origin', 'sealed', 'id'])
 export class NotificationViewEntity {
   @PrimaryColumn({ type: 'varchar', length: 50 })
   readonly identity_id!: string;
@@ -80,4 +84,25 @@ export class NotificationViewEntity {
 
   @Column({ type: 'varchar', length: 100, nullable: true, default: null })
   readonly wave_id!: string | null;
+
+  /** A CARRIED row already written to the notification archive. */
+  @Column({ type: 'boolean', nullable: false, default: false })
+  readonly sealed!: boolean;
+}
+
+/**
+ * Where each notification feed, and each one-off pass over old rows, has
+ * got to. Ephemeral: losing a cursor replays from the start, and replaying
+ * writes the same rows.
+ */
+@Entity(NOTIFICATION_VIEW_CURSORS_TABLE)
+export class NotificationViewCursorEntity {
+  @PrimaryColumn({ type: 'varchar', length: 64 })
+  readonly source!: string;
+
+  @Column({ type: 'varchar', length: 512, nullable: false })
+  readonly cursor_value!: string;
+
+  @Column({ type: 'bigint', nullable: false })
+  readonly updated_at!: number;
 }
