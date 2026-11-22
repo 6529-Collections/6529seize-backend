@@ -6,11 +6,33 @@ import { sqlExecutor } from '../sql-executor';
 import { json2csv } from 'json-2-csv';
 import { PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { doInDbContext } from '../secrets';
+import type { Context } from 'aws-lambda';
 
 const logger = Logger.get('DB_DUMPS_DAILY');
 const s3 = new S3Client({ region: 'eu-west-1' });
 
-export const handler = sentryContext.wrapLambdaHandler(async () => {
+/**
+ * The daily dump on its schedule. An invocation whose event names a `job`
+ * runs that job instead (the chain exports, invoked by hand); a job no
+ * module knows fails, so a typo never runs the daily dump.
+ */
+export const handler = sentryContext.wrapLambdaHandler(
+  async (event: unknown, context: Context) => {
+    if (event && typeof event === 'object' && 'job' in event) {
+      // Loaded only for a job, so the export's modules never touch the dump.
+      const { parseProfileSiteExportEvent, runProfileSiteExportJob } =
+        await import('./profile-site-export.handler');
+      const profileSiteExport = parseProfileSiteExportEvent(event);
+      if (profileSiteExport) {
+        return await runProfileSiteExportJob(profileSiteExport, context);
+      }
+      throw new Error(`Unknown dbDumpsDaily job: ${String(event.job)}`);
+    }
+    await dumpDaily();
+  }
+);
+
+async function dumpDaily() {
   await doInDbContext(
     async () => {
       for (const table of DB_DUMPS_DAILY_TABLES) {
@@ -24,7 +46,7 @@ export const handler = sentryContext.wrapLambdaHandler(async () => {
     },
     { logger }
   );
-});
+}
 
 async function dumpTable(tableName: string) {
   logger.info(`[TABLE ${tableName}] : [DUMPING...]`);

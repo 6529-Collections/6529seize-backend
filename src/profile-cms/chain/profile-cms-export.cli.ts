@@ -2,17 +2,16 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
   ProfileCmsExporter,
-  profileCmsExportDb,
-  ProfileCmsExportReport,
-  snapshotCmsValue
+  profileCmsExportDb
 } from '@/profile-cms/chain/profile-cms-export';
 import {
-  checkExportAgainstPublicApi,
-  httpPublicPrimaryLookup,
-  PublicPrimaryCheckEntry,
-  PublicPrimaryCheckResult
-} from '@/profile-cms/chain/profile-cms-public-check';
-import { canonicalizeJson } from '@/profile-cms/protocol/v1';
+  cmsFieldsJson,
+  exportSummary,
+  getJson,
+  reportJson,
+  runProfileCmsExport,
+  storedPublicationFetcher
+} from '@/profile-cms/chain/profile-cms-export.run';
 
 const USAGE =
   'profile-cms:export --out <dir> --frozen-at <epoch ms> [--profile <profile id>] [--public-api <api base url>]\n' +
@@ -37,135 +36,45 @@ export async function main(args = process.argv.slice(2)): Promise<void> {
   const { doInDbContext } = await import('@/secrets');
   const { profileCmsPublicationStorage } =
     await import('@/profile-cms/profile-cms-publication-storage');
-  // A stored publication record is fetched up to three times; one that still
-  // fails is reported and fails the run, never replaced.
-  const exporter = new ProfileCmsExporter(async (receipt) => {
-    for (let attempt = 1; attempt <= 3; attempt++) {
-      try {
-        return await profileCmsPublicationStorage.verify({
-          provider: receipt.uri.startsWith('ipfs://') ? 'ipfs' : 'arweave',
-          uri: receipt.uri,
-          content_hash: receipt.content_hash,
-          recorded_at: new Date(options.frozenAt).toISOString()
-        });
-      } catch {
-        await new Promise((resolve) => setTimeout(resolve, attempt * 2_000));
-      }
-    }
-    return null;
-  });
-  const checkEntries: PublicPrimaryCheckEntry[] = [];
-  const fields: Record<string, unknown> = {};
-  const reports: Record<string, ProfileCmsExportReport> = {};
-  await doInDbContext(
+  const exporter = new ProfileCmsExporter(
+    storedPublicationFetcher(options.frozenAt, (receipt) =>
+      profileCmsPublicationStorage.verify(receipt)
+    )
+  );
+  const run = await doInDbContext(
     async () => {
-      const profileIds = options.profile
-        ? [options.profile]
-        : await profileCmsExportDb.listProfileIds();
       await mkdir(join(options.out, 'files'), { recursive: true });
-      for (const profileId of profileIds) {
-        const source = await profileCmsExportDb.loadSource(profileId);
-        const entry = await exporter.exportProfile(
-          profileId,
-          source,
-          options.frozenAt
-        );
-        for (const file of entry.files) {
-          await writeFile(join(options.out, 'files', file.cid), file.bytes);
-        }
-        if (entry.cms) {
-          fields[profileId] = snapshotCmsValue(entry.cms);
-        }
-        reports[profileId] = entry.report;
-        checkEntries.push({
-          profile_id: profileId,
-          handle: entry.handle,
-          cms: entry.cms,
-          primaryHandle: entry.report.primary_handle,
-          refusedPrimaryHash: entry.report.primary_refused
-            ? entry.report.primary_package_hash
-            : null
-        });
-      }
+      return await runProfileCmsExport(options, {
+        db: profileCmsExportDb,
+        exporter,
+        sink: {
+          writeFile: (cid, bytes) =>
+            writeFile(join(options.out, 'files', cid), bytes)
+        },
+        getJson
+      });
     },
     { syncEntities: false, skipRedis: true }
   );
-  const publicCheck = options.publicApi
-    ? await checkExportAgainstPublicApi(
-        checkEntries,
-        httpPublicPrimaryLookup(options.publicApi, getJson)
-      )
-    : null;
-  await writeFile(
-    join(options.out, 'cms-fields.json'),
-    canonicalizeJson(fields)
-  );
+  await writeFile(join(options.out, 'cms-fields.json'), cmsFieldsJson(run));
   await writeFile(
     join(options.out, 'report.json'),
-    JSON.stringify(
-      {
-        frozen_at: options.frozenAt,
-        profiles: reports,
-        public_check: publicCheck
-      },
-      null,
-      2
-    )
+    reportJson(options.frozenAt, run)
   );
-  process.stdout.write(summary(checkEntries.length, fields, publicCheck));
-  const refused = Object.values(reports).reduce(
-    (count, report) => count + report.rebuilt_refused.length,
-    0
-  );
-  if (refused > 0) {
+  process.stdout.write(exportSummary(run));
+  if (run.rebuiltRefused > 0) {
     process.stderr.write(
-      `${refused} rebuilt publication records fail the reader's check; see rebuilt_refused in report.json.\n`
+      `${run.rebuiltRefused} rebuilt publication records fail the reader's check; see rebuilt_refused in report.json.
+`
     );
   }
-  const unavailable = Object.entries(reports).filter(
-    ([, report]) => report.publication_unavailable.length > 0
-  );
-  if (unavailable.length > 0) {
+  if (run.unavailableProfiles > 0) {
     process.stderr.write(
-      `${unavailable.length} profiles have stored publication records that could not be fetched; see report.json. Do not use this export.\n`
+      `${run.unavailableProfiles} profiles have stored publication records that could not be fetched; see report.json. Do not use this export.
+`
     );
     process.exitCode = 1;
   }
-}
-
-function summary(
-  profiles: number,
-  fields: Record<string, unknown>,
-  publicCheck: PublicPrimaryCheckResult | null
-): string {
-  const lines = [
-    `${profiles} profiles, ${Object.keys(fields).length} with a cms value`
-  ];
-  if (publicCheck) {
-    lines.push(
-      `public API: ${publicCheck.checked} checked, ${publicCheck.mismatches.length} mismatches, ${publicCheck.refused.length} primaries refused at T`
-    );
-  }
-  return `${lines.join('\n')}\n`;
-}
-
-async function getJson(
-  url: string
-): Promise<{ readonly status: number; readonly body: unknown }> {
-  const { default: fetch } = await import('node-fetch');
-  const response = await fetch(url, {
-    headers: { accept: 'application/json' },
-    redirect: 'error',
-    timeout: 10_000
-  });
-  const text = await response.text();
-  let body: unknown = null;
-  try {
-    body = JSON.parse(text);
-  } catch {
-    body = null;
-  }
-  return { status: response.status, body };
 }
 
 function parseArgs(args: readonly string[]): ExportOptions {
