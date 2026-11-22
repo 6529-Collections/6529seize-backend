@@ -28,8 +28,43 @@ export interface RecordLogSegmentRow {
   readonly archive_drop_id: string | null;
 }
 
+/** The ids of the leading entries within maxBytes; at least the first. */
+export function takeWithinBytes(
+  sizes: readonly { readonly id: number; readonly bytes: number }[],
+  maxBytes: number
+): number[] {
+  const ids: number[] = [];
+  let total = 0;
+  for (const { id, bytes } of sizes) {
+    if (ids.length > 0 && total + bytes > maxBytes) {
+      break;
+    }
+    ids.push(id);
+    total += bytes;
+  }
+  return ids;
+}
+
 const withConnection = (ctx: RequestContext) =>
   ctx.connection ? { wrappedConnection: ctx.connection } : undefined;
+
+/**
+ * The executor hands a blob back as a Buffer or, after its JSON round trip,
+ * as `{ type: 'Buffer', data: [...] }`; both become a Buffer.
+ */
+export function toBufferOrNull(value: unknown): Buffer | null {
+  if (value === null || value === undefined) {
+    return null;
+  }
+  if (Buffer.isBuffer(value)) {
+    return value;
+  }
+  const serialized = value as { type?: unknown; data?: unknown };
+  if (serialized.type === 'Buffer' && Array.isArray(serialized.data)) {
+    return Buffer.from(serialized.data as number[]);
+  }
+  throw new Error('A segment file is neither a Buffer nor a serialized one');
+}
 
 const toSegment = (row: Record<string, unknown>): RecordLogSegmentRow => ({
   chain: row.chain as RecordLogChain,
@@ -40,7 +75,7 @@ const toSegment = (row: Record<string, unknown>): RecordLogSegmentRow => ({
   entries: Number(row.entries),
   opened_at: Number(row.opened_at),
   closed_at: Number(row.closed_at),
-  content: (row.content as Buffer | null) ?? null,
+  content: toBufferOrNull(row.content),
   head_drop_id: (row.head_drop_id as string | null) ?? null,
   arweave_tx: (row.arweave_tx as string | null) ?? null,
   archive_drop_id: (row.archive_drop_id as string | null) ?? null
@@ -68,16 +103,36 @@ export class RecordLogDb extends LazyDbAccessCompatibleService {
     }
   }
 
+  /**
+   * The oldest open entries of a chain: at most `limit` of them and
+   * `maxBytes` in all, but always the first one. Sizes are read first, so a
+   * large backlog is never loaded whole.
+   */
   async findOpenEntries(
     chain: RecordLogChain,
     limit: number,
+    maxBytes: number,
     ctx: RequestContext
   ): Promise<RecordLogEntryRow[]> {
-    const rows = await this.db.execute<RecordLogEntryRow>(
-      `select id, lane, entry, created_at from ${SIGNED_RECORD_LOG_ENTRIES_TABLE}
+    const sizes = await this.db.execute<{ id: number; bytes: number }>(
+      `select id, octet_length(entry) as bytes
+       from ${SIGNED_RECORD_LOG_ENTRIES_TABLE}
        where chain = :chain and segment_seq is null
        order by id asc limit :limit`,
       { chain, limit },
+      withConnection(ctx)
+    );
+    const ids = takeWithinBytes(
+      sizes.map((row) => ({ id: Number(row.id), bytes: Number(row.bytes) })),
+      maxBytes
+    );
+    if (ids.length === 0) {
+      return [];
+    }
+    const rows = await this.db.execute<RecordLogEntryRow>(
+      `select id, lane, entry, created_at from ${SIGNED_RECORD_LOG_ENTRIES_TABLE}
+       where id in (:ids) order by id asc`,
+      { ids },
       withConnection(ctx)
     );
     return rows.map((row) => ({
@@ -85,6 +140,20 @@ export class RecordLogDb extends LazyDbAccessCompatibleService {
       id: Number(row.id),
       created_at: Number(row.created_at)
     }));
+  }
+
+  /** Drops a segment's entries from the queue once its head is posted. */
+  async deleteSegmentEntries(
+    chain: RecordLogChain,
+    seq: number,
+    ctx: RequestContext
+  ): Promise<void> {
+    await this.db.execute(
+      `delete from ${SIGNED_RECORD_LOG_ENTRIES_TABLE}
+       where chain = :chain and segment_seq = :seq`,
+      { chain, seq },
+      withConnection(ctx)
+    );
   }
 
   async findLatestSegment(

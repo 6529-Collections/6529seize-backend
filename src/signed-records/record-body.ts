@@ -23,6 +23,12 @@ export class RecordBodyError extends Error {
   }
 }
 
+/** A SEALED body `{"h","n","v":1}`: the sha256 and size of a payload. */
+export interface SealedPayloadRef {
+  readonly sha256: string;
+  readonly size: number;
+}
+
 export type ParsedRecordBody =
   | {
       readonly kind: typeof RecordKind.RECORD;
@@ -34,7 +40,10 @@ export type ParsedRecordBody =
   | {
       readonly kind: typeof RecordKind.SEALED;
       readonly label: string;
-      readonly bytes: Buffer;
+      // The inline `c` bytes, or null for a payload reference.
+      readonly bytes: Buffer | null;
+      // A payload stored apart (relay-inbox payloads), or null when inline.
+      readonly payload: SealedPayloadRef | null;
     }
   | {
       readonly kind: typeof RecordKind.LOG;
@@ -45,15 +54,29 @@ export type ParsedRecordBody =
       readonly ids: readonly string[];
     };
 
+export const SEALED_PAYLOAD_MAX_BYTES = 4 * 1024 * 1024;
+
 const EVENT_ID = /^0x[0-9a-f]{64}$/;
+const SHA256 = /^0x[0-9a-f]{64}$/;
 const BASE64URL = /^[A-Za-z0-9_-]+$/;
+// A UTF-16 surrogate without its pair: not Unicode, not encodable as UTF-8.
+const LONE_SURROGATE =
+  /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
+
+/** Whether a string is well-formed Unicode (no lone surrogate). */
+export function isWellFormed(value: string): boolean {
+  return !LONE_SURROGATE.test(value);
+}
 
 export function isRecordType(value: string): boolean {
   return RECORD_TYPE_PATTERN.test(value);
 }
 
 export function isRecordKey(value: string): boolean {
-  return Buffer.byteLength(value, 'utf8') <= RECORD_KEY_MAX_BYTES;
+  return (
+    isWellFormed(value) &&
+    Buffer.byteLength(value, 'utf8') <= RECORD_KEY_MAX_BYTES
+  );
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -109,12 +132,27 @@ function parseRecord(event: SignedRecordEvent): ParsedRecordBody {
   return { kind: RecordKind.RECORD, type, key: key ?? '', body };
 }
 
-function parseSealed(event: SignedRecordEvent): ParsedRecordBody {
-  const [label, ...rest] = event.refs;
-  if (label === undefined || rest.length > 0 || !isRecordType(label)) {
-    throw new RecordBodyError('refs', 'refs must be [label]');
+function parsePayloadRef(body: Record<string, unknown>): SealedPayloadRef {
+  const { h, n, v, ...extra } = body;
+  if (
+    v !== 1 ||
+    Object.keys(extra).length > 0 ||
+    typeof h !== 'string' ||
+    !SHA256.test(h) ||
+    typeof n !== 'number' ||
+    !Number.isSafeInteger(n) ||
+    n < 1 ||
+    n > SEALED_PAYLOAD_MAX_BYTES
+  ) {
+    throw new RecordBodyError(
+      'body',
+      'a payload reference must be {"h","n","v":1}'
+    );
   }
-  const body = parseCanonicalObject(event.body, SEALED_BODY_MAX_BYTES);
+  return { sha256: h, size: n };
+}
+
+function parseInline(body: Record<string, unknown>): Buffer {
   const { c, v, ...extra } = body;
   if (
     v !== 1 ||
@@ -128,7 +166,29 @@ function parseSealed(event: SignedRecordEvent): ParsedRecordBody {
   if (bytes.length === 0 || bytes.toString('base64url') !== c) {
     throw new RecordBodyError('body', 'c is not canonical base64url');
   }
-  return { kind: RecordKind.SEALED, label, bytes };
+  return bytes;
+}
+
+function parseSealed(event: SignedRecordEvent): ParsedRecordBody {
+  const [label, ...rest] = event.refs;
+  if (label === undefined || rest.length > 0 || !isRecordType(label)) {
+    throw new RecordBodyError('refs', 'refs must be [label]');
+  }
+  const body = parseCanonicalObject(event.body, SEALED_BODY_MAX_BYTES);
+  if ('h' in body) {
+    return {
+      kind: RecordKind.SEALED,
+      label,
+      bytes: null,
+      payload: parsePayloadRef(body)
+    };
+  }
+  return {
+    kind: RecordKind.SEALED,
+    label,
+    bytes: parseInline(body),
+    payload: null
+  };
 }
 
 function parseDel(event: SignedRecordEvent): ParsedRecordBody {
@@ -151,7 +211,7 @@ function parseDel(event: SignedRecordEvent): ParsedRecordBody {
 }
 
 /**
- * Checks a record's refs and body against its kind (section 2 of the API).
+ * Checks a record's refs and body against its kind (API section 2).
  * Throws RecordBodyError.
  */
 export function parseRecordBody(event: SignedRecordEvent): ParsedRecordBody {

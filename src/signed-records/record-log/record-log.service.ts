@@ -9,8 +9,10 @@ import {
   checkLogEntry,
   formatArchiveDrop,
   formatHeadDrop,
+  RECORD_LOG_ENTRY_MAX_BYTES,
   RecordLogChain,
   RecordLogEntry,
+  RecordLogFormatError,
   RecordLogHead,
   RecordLogSegmentHeader,
   sha256Hex
@@ -29,6 +31,7 @@ export type RecordLogStore = Pick<
   | 'setArweaveTx'
   | 'findSegmentsToAnnounce'
   | 'setArchiveDrop'
+  | 'deleteSegmentEntries'
 >;
 
 export interface GrantProofSource {
@@ -55,6 +58,11 @@ export interface RecordsWavePoster {
 
 const CHAINS: readonly RecordLogChain[] = ['public', 'private'];
 const MAX_ENTRIES_PER_SEGMENT = 5000;
+// Bounds a segment's memory in the loop and its row in MySQL. An entry is at
+// most RECORD_LOG_ENTRY_MAX_BYTES, so every entry fits a segment.
+const MAX_SEGMENT_BYTES = 16 * 1024 * 1024;
+// An archive drop stays far below the drop size limit at about 150 lines.
+const MAX_ARCHIVE_LINES_PER_DROP = 150;
 
 /**
  * Appends entries to the open segment. Call it inside the caller's own
@@ -75,10 +83,16 @@ export class RecordLogWriter {
     const createdAt = this.now();
     const rows = entries.map((entry) => {
       const checked = checkLogEntry(entry);
+      const canonical = canonicalizeJson(checked);
+      if (Buffer.byteLength(canonical, 'utf8') > RECORD_LOG_ENTRY_MAX_BYTES) {
+        throw new RecordLogFormatError(
+          `a log entry is at most ${RECORD_LOG_ENTRY_MAX_BYTES} bytes`
+        );
+      }
       return {
         chain: chainOfEntry(checked),
         lane: checked.lane,
-        entry: canonicalizeJson(checked),
+        entry: canonical,
         created_at: createdAt
       };
     });
@@ -121,6 +135,7 @@ export class RecordLogSegmenter {
       readonly providers: readonly Pick<ProviderKey, 'id' | 'publicKey'>[];
       readonly now?: () => number;
       readonly maxEntriesPerSegment?: number;
+      readonly maxSegmentBytes?: number;
     }
   ) {}
 
@@ -143,9 +158,16 @@ export class RecordLogSegmenter {
     ctx: RequestContext
   ): Promise<RecordLogHead[]> {
     const limit = this.deps.maxEntriesPerSegment ?? MAX_ENTRIES_PER_SEGMENT;
+    const maxBytes = this.deps.maxSegmentBytes ?? MAX_SEGMENT_BYTES;
     const heads: RecordLogHead[] = [];
     for (;;) {
-      const rows = await this.deps.store.findOpenEntries(chain, limit, ctx);
+      // At most `limit` entries and `maxBytes` of them, never fewer than one.
+      const rows = await this.deps.store.findOpenEntries(
+        chain,
+        limit,
+        maxBytes,
+        ctx
+      );
       if (rows.length === 0) {
         return heads;
       }
@@ -195,13 +217,15 @@ export class RecordLogSegmenter {
         prev: header.prev,
         entries: rows.length
       });
-      if (rows.length < limit) {
-        return heads;
-      }
     }
   }
 
-  /** Posts the heads not posted yet, in order; stops a chain at its first failure. */
+  /**
+   * Posts the heads not posted yet, in order; stops a chain at its first
+   * failure. A posted head's entries leave the queue: the segment holds them.
+   * A head posted again after a crash has the same text, so the drop's
+   * client id returns the first drop, and readers take identical heads once.
+   */
   async postHeads(ctx: RequestContext): Promise<number> {
     const pending = await this.deps.store.findSegmentsWithoutHead(ctx);
     const blocked = new Set<RecordLogChain>();
@@ -221,6 +245,11 @@ export class RecordLogSegmenter {
           dropId,
           ctx
         );
+        await this.deps.store.deleteSegmentEntries(
+          segment.chain,
+          segment.seq,
+          ctx
+        );
         posted++;
       } catch (error) {
         blocked.add(segment.chain);
@@ -233,7 +262,10 @@ export class RecordLogSegmenter {
     return posted;
   }
 
-  /** Hourly: uploads posted segments to Arweave and lists them in one archive drop. */
+  /**
+   * Hourly: uploads posted segments to Arweave and lists their ids in
+   * archive drops of at most 150 lines each.
+   */
   async archive(ctx: RequestContext): Promise<number> {
     for (const segment of await this.deps.store.findSegmentsToUpload(ctx)) {
       if (!segment.content) {
@@ -243,21 +275,21 @@ export class RecordLogSegmenter {
       await this.deps.store.setArweaveTx(segment.chain, segment.seq, tx, ctx);
     }
     const announce = await this.deps.store.findSegmentsToAnnounce(ctx);
-    if (announce.length === 0) {
-      return 0;
+    for (let i = 0; i < announce.length; i += MAX_ARCHIVE_LINES_PER_DROP) {
+      const batch = announce.slice(i, i + MAX_ARCHIVE_LINES_PER_DROP);
+      const dropId = await this.deps.poster.post(
+        formatArchiveDrop(
+          batch.map((segment) => ({
+            chain: segment.chain,
+            seq: segment.seq,
+            sha256: segment.sha256,
+            arweaveTx: segment.arweave_tx ?? ''
+          }))
+        ),
+        ctx
+      );
+      await this.deps.store.setArchiveDrop(batch, dropId, ctx);
     }
-    const dropId = await this.deps.poster.post(
-      formatArchiveDrop(
-        announce.map((segment) => ({
-          chain: segment.chain,
-          seq: segment.seq,
-          sha256: segment.sha256,
-          arweaveTx: segment.arweave_tx ?? ''
-        }))
-      ),
-      ctx
-    );
-    await this.deps.store.setArchiveDrop(announce, dropId, ctx);
     return announce.length;
   }
 }

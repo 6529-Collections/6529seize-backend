@@ -344,7 +344,8 @@ export function sealItems(args: {
   deviceKey: string;
   senderKey: Buffer;
   items: readonly SealedItem[];
-  nonce?: Buffer;
+  // Test vectors only: production seals always take a random nonce.
+  fixedNonceForTests?: Buffer;
 }): Buffer {
   checkClassAndGeneration(args.cls, args.gen);
   if (!DEVICE_KEY.test(args.deviceKey)) {
@@ -353,8 +354,14 @@ export function sealItems(args: {
   if (args.items.length === 0) {
     throw new SealedFormatError('nothing to seal');
   }
+  if (
+    args.fixedNonceForTests !== undefined &&
+    args.fixedNonceForTests.length !== NONCE_BYTES
+  ) {
+    throw new SealedFormatError('a nonce is 12 bytes');
+  }
   const items = args.items.map(checkItem);
-  const nonce = args.nonce ?? randomBytes(NONCE_BYTES);
+  const nonce = args.fixedNonceForTests ?? randomBytes(NONCE_BYTES);
   const header = Buffer.concat([
     Buffer.from([SealedFormat.ITEMS, args.cls]),
     u32(args.gen),
@@ -581,7 +588,13 @@ export function loadProviderKeys(raw: string | undefined): ProviderKey[] {
   if (raw === undefined || raw.trim() === '') {
     return [];
   }
-  const parsed: unknown = JSON.parse(raw);
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    // A fixed message: the parser's text could quote key material.
+    throw new SealedFormatError('provider keys are not valid JSON');
+  }
   if (!Array.isArray(parsed)) {
     throw new SealedFormatError('provider keys must be a JSON array');
   }

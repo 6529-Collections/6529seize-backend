@@ -2,14 +2,15 @@ import { createHash } from 'node:crypto';
 import { RecordGrantProof, signRecordEvent } from '../record-event';
 import { RecordKind } from '../record-kinds';
 import {
+  appGrantFixture,
   bindingSource,
-  grantSource,
   hexBytes,
+  signedRecord,
   VECTOR_GRANT,
   vectorDeviceKey,
   VECTORS
 } from '../record-test-fixtures';
-import { ProviderKey } from '../sealed-crypto';
+import { ProviderKey, x25519PublicKeyOf } from '../sealed-crypto';
 import {
   buildSegmentFile,
   formatArchiveDrop,
@@ -155,9 +156,12 @@ class FakeNetwork {
   }
 }
 
-function setup(maxEntriesPerSegment?: number) {
-  const store = new MemoryRecordLogStore();
-  const network = new FakeNetwork();
+function setup(
+  maxEntriesPerSegment?: number,
+  maxSegmentBytes?: number,
+  store = new MemoryRecordLogStore(),
+  network = new FakeNetwork()
+) {
   const writer = new RecordLogWriter(
     store,
     { findGrantProofs: async () => [GRANT] },
@@ -171,9 +175,27 @@ function setup(maxEntriesPerSegment?: number) {
     poster: network.poster,
     providers: [provider],
     now: () => clock++,
-    maxEntriesPerSegment
+    maxEntriesPerSegment,
+    maxSegmentBytes
   });
   return { store, network, writer, segmenter };
+}
+
+async function appGrantEntries() {
+  const { proof, grant } = await appGrantFixture();
+  const event = signedRecord(grant, {
+    kind: RecordKind.RECORD,
+    wave: `ps/${inputs.principal}`,
+    refs: ['follow', `identity:${inputs.target}`],
+    body: { actions: ['DROP_CREATED'] },
+    seq: 1,
+    anchor: 1000,
+    claimedTime: Date.UTC(2026, 10, 26)
+  });
+  const bindings = bindingSource([
+    { wallet: grant.wallet, principal: inputs.principal, from: 1 }
+  ]);
+  return { proof, grant, event, bindings };
 }
 
 async function collect(reader: RecordLogReader, chain: 'public' | 'private') {
@@ -214,6 +236,24 @@ describe('segment files', () => {
     expect(() => parseSegmentFile(tampered, [provider])).toThrow(
       RecordLogFormatError
     );
+  });
+
+  it('tries every provider key, past a wrap that does not open', () => {
+    const second: ProviderKey = {
+      id: 'second-key',
+      privateKey: Buffer.alloc(32, 9),
+      publicKey: x25519PublicKeyOf(Buffer.alloc(32, 9))
+    };
+    const bytes = buildSegmentFile({
+      header: header({ chain: 'private', entries: 1 }),
+      entries: [privateEntry],
+      providers: [provider, second]
+    });
+    // A rotated first key: same id, another private key.
+    const rotated = { ...provider, privateKey: Buffer.alloc(32, 3) };
+    expect(parseSegmentFile(bytes, [rotated, second]).entries).toEqual([
+      privateEntry
+    ]);
   });
 
   it('refuses entries of the other chain and wrong counts', () => {
@@ -300,28 +340,179 @@ describe('the record log', () => {
     expect(privateItems.map((item) => item.entry)).toEqual([privateEntry]);
   });
 
-  it('replays events with verification for a rebuild', async () => {
+  it('replays events against the grant proofs they carry, with no grant table', async () => {
     const { network, writer, segmenter } = setup();
-    await writer.append([publicEntry, serviceEntry], ctx);
+    const { proof, event, bindings } = await appGrantEntries();
+    await writer.append(
+      [
+        { t: 'event', lane: 'personal', event, grant: proof },
+        // The vectors' fake proof: its signature does not verify.
+        publicEntry,
+        serviceEntry
+      ],
+      ctx
+    );
     await segmenter.closeSegments(ctx);
     const seen: string[] = [];
     const count = await replayRecordLog(
       network.reader(),
       'public',
-      {
-        grants: grantSource([VECTOR_GRANT]),
-        bindings: bindingSource([
-          { wallet: inputs.author, principal: inputs.principal, from: 1 }
-        ])
-      },
+      { bindings },
       async (item, verified) => {
         seen.push(
-          `${item.entry.t}:${verified === null ? 'service' : verified.ok}`
+          verified === null
+            ? 'service'
+            : `${verified.ok}:${verified.ok ? '' : verified.reason}`
         );
       }
     );
-    expect(count).toBe(2);
-    expect(seen).toEqual(['event:true', 'entry:service']);
+    expect(count).toBe(3);
+    expect(seen).toEqual(['true:', 'false:grant-unknown', 'service']);
+  });
+
+  it("refuses an entry whose grant proof is not the event's grant", async () => {
+    const { writer } = setup();
+    const { proof, event } = await appGrantEntries();
+    await expect(
+      writer.append(
+        [{ t: 'event', lane: 'personal', event, grant: GRANT }],
+        ctx
+      )
+    ).rejects.toThrow('does not match');
+    await expect(
+      writer.append(
+        [
+          {
+            t: 'event',
+            lane: 'personal',
+            event,
+            grant: { ...proof, scopes: 'post' as never }
+          }
+        ],
+        ctx
+      )
+    ).rejects.toThrow('event entry must be');
+  });
+
+  it('caps a segment by bytes and refuses an entry over 4 MiB', async () => {
+    const { network, writer, segmenter } = setup(undefined, 1200);
+    const entries: RecordLogEntry[] = [1, 2, 3].map((n) => ({
+      t: 'entry',
+      lane: 'mint',
+      chain: 'public',
+      body: { n, phase: 'x'.repeat(500) }
+    }));
+    await writer.append(entries, ctx);
+    const heads = await segmenter.closeSegments(ctx);
+    expect(heads.map((head) => head.entries)).toEqual([2, 1]);
+    expect(
+      (await collect(network.reader(), 'public')).map((item) => item.entry)
+    ).toEqual(entries);
+    await expect(
+      writer.append(
+        [
+          {
+            t: 'entry',
+            lane: 'mint',
+            chain: 'public',
+            body: { phase: 'x'.repeat(4 * 1024 * 1024) }
+          }
+        ],
+        ctx
+      )
+    ).rejects.toThrow('at most');
+  });
+
+  it('drops queued entries once their head is posted', async () => {
+    const { store, network, writer, segmenter } = setup();
+    network.failPosts = 1;
+    await writer.append([publicEntry], ctx);
+    await segmenter.closeSegments(ctx);
+    expect(store.entries).toHaveLength(1);
+    await segmenter.closeSegments(ctx);
+    expect(store.entries).toHaveLength(0);
+  });
+
+  it('survives a crash between the pin and the segment row', async () => {
+    const store = new MemoryRecordLogStore();
+    const insert = store.insertSegmentClaimingEntries.bind(store);
+    let failures = 1;
+    store.insertSegmentClaimingEntries = async (...args) => {
+      if (failures-- > 0) {
+        throw new Error('database gone');
+      }
+      return insert(...args);
+    };
+    const { network, writer, segmenter } = setup(undefined, undefined, store);
+    await writer.append([publicEntry, serviceEntry], ctx);
+    await expect(segmenter.closeSegments(ctx)).rejects.toThrow('database gone');
+    expect(network.ipfs.size).toBe(1);
+    expect(network.drops).toHaveLength(0);
+    await segmenter.closeSegments(ctx);
+    expect(
+      (await collect(network.reader(), 'public')).map((item) => item.entry)
+    ).toEqual([publicEntry, serviceEntry]);
+  });
+
+  it('survives a crash between the head drop and its id', async () => {
+    const store = new MemoryRecordLogStore();
+    const setHead = store.setHeadDrop.bind(store);
+    let failures = 1;
+    store.setHeadDrop = async (...args) => {
+      if (failures-- > 0) {
+        throw new Error('database gone');
+      }
+      return setHead(...args);
+    };
+    const { network, writer, segmenter } = setup(undefined, undefined, store);
+    await writer.append([publicEntry], ctx);
+    await segmenter.closeSegments(ctx);
+    await segmenter.closeSegments(ctx);
+    // The head went out twice with the same text; readers take it once.
+    expect(network.drops).toHaveLength(2);
+    expect(network.drops[0].text).toBe(network.drops[1].text);
+    expect(
+      (await collect(network.reader(), 'public')).map((item) => item.entry)
+    ).toEqual([publicEntry]);
+  });
+
+  it('lets only one of two closers running at once take the entries', async () => {
+    const store = new MemoryRecordLogStore();
+    const network = new FakeNetwork();
+    const first = setup(undefined, undefined, store, network);
+    const second = setup(undefined, undefined, store, network);
+    await first.writer.append([publicEntry, serviceEntry], ctx);
+    const results = await Promise.allSettled([
+      first.segmenter.closeSegments(ctx),
+      second.segmenter.closeSegments(ctx)
+    ]);
+    expect(results.map((result) => result.status).sort()).toEqual([
+      'fulfilled',
+      'rejected'
+    ]);
+    expect(store.segments).toHaveLength(1);
+    expect(
+      (await collect(network.reader(), 'public')).map((item) => item.entry)
+    ).toEqual([publicEntry, serviceEntry]);
+  });
+
+  it('lists at most 150 segments per archive drop', async () => {
+    const { network, writer, segmenter } = setup(1);
+    await writer.append(
+      Array.from({ length: 160 }, (_, n) => ({
+        t: 'entry' as const,
+        lane: 'subs',
+        chain: 'public' as const,
+        body: { n }
+      })),
+      ctx
+    );
+    await segmenter.closeSegments(ctx);
+    expect(await segmenter.archive(ctx)).toBe(160);
+    const archives = network.drops
+      .map((drop) => parseArchiveDrop(drop.text))
+      .filter((it) => it !== null);
+    expect(archives.map((it) => it.length)).toEqual([150, 10]);
   });
 
   it('splits large batches and keeps the order', async () => {

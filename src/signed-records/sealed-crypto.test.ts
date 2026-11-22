@@ -73,7 +73,7 @@ describe('sealed items (format 0x01)', () => {
       deviceKey: inputs.deviceKey,
       senderKey,
       items: [{ t: 'mute', k: inputs.target, b: {} }],
-      nonce: hexBytes(inputs.sealNonce)
+      fixedNonceForTests: hexBytes(inputs.sealNonce)
     });
     expect(`0x${c.toString('hex')}`).toBe(VECTORS.sealedSettings.c);
     expect(c).toEqual(sealedC());
@@ -271,6 +271,27 @@ describe('loadProviderKeys', () => {
 
   it('refuses malformed entries', () => {
     expect(() => loadProviderKeys('{}')).toThrow('JSON array');
+    // The parser's own message could quote the secret; ours never does.
+    const secret = `[{"id":"k","private_key":"${inputs.providerPrivateKey}"`;
+    expect(() => loadProviderKeys(secret)).toThrow(
+      'provider keys are not valid JSON'
+    );
+    try {
+      loadProviderKeys(secret);
+    } catch (error) {
+      expect(String(error)).not.toContain(inputs.providerPrivateKey.slice(2));
+    }
+    expect(() =>
+      sealItems({
+        wave: PV_WAVE,
+        cls: SealedClass.PROVIDER,
+        gen: 1,
+        deviceKey: inputs.deviceKey,
+        senderKey,
+        items: [{ t: 'mute', k: 'x', b: null }],
+        fixedNonceForTests: Buffer.alloc(11)
+      })
+    ).toThrow('12 bytes');
     expect(() =>
       loadProviderKeys(JSON.stringify([{ id: 'Bad Id', private_key: '0x00' }]))
     ).toThrow(SealedFormatError);

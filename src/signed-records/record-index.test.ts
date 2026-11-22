@@ -142,7 +142,7 @@ describe('RecordIndexer', () => {
     });
     expect(
       await indexer.ingest(await verified(VECTORS.keys.event), 'live', ctx)
-    ).toEqual({ kind: 'keys', unwrapped: 1 });
+    ).toEqual({ kind: 'keys', unwrapped: 1, conflicts: 0 });
     expect(await indexer.ingest(sealed, 'live', ctx)).toMatchObject({
       kind: 'applied',
       changes: 1
@@ -278,8 +278,101 @@ describe('RecordIndexer', () => {
     );
     await expect(
       indexer.ingest(await verified(event), 'live', ctx)
-    ).rejects.toThrow('bad body');
+    ).resolves.toEqual({
+      kind: 'refused',
+      reason: 'invalid-change',
+      detail: 'bad body'
+    });
     expect(follow.applied).toHaveLength(0);
+  });
+
+  it('refuses bad ciphertext and a bad keys document without throwing', async () => {
+    const { indexer, keyring } = setup();
+    await indexer.ingest(await verified(VECTORS.keys.event), 'live', ctx);
+    const good = Buffer.from(
+      (JSON.parse(VECTORS.sealedSettings.event.body!) as { c: string }).c,
+      'base64url'
+    );
+    good[good.length - 1] ^= 1;
+    const tampered = record(
+      RecordKind.SEALED,
+      PV_WAVE,
+      ['settings'],
+      { c: good.toString('base64url'), v: 1 },
+      1000
+    );
+    expect(await indexer.ingest(await verified(tampered), 'live', ctx)).toEqual(
+      expect.objectContaining({ kind: 'refused', reason: 'sealed-format' })
+    );
+    const badKeys = record(
+      RecordKind.SEALED,
+      PV_WAVE,
+      ['keys'],
+      { c: Buffer.from([2, 123]).toString('base64url'), v: 1 },
+      1000
+    );
+    expect(await indexer.ingest(await verified(badKeys), 'live', ctx)).toEqual(
+      expect.objectContaining({ kind: 'refused', reason: 'keys-format' })
+    );
+    expect(keyring.find(PRINCIPAL, inputs.deviceKey, 1, 1)).toEqual(
+      hexBytes(inputs.senderKey)
+    );
+  });
+
+  it('keeps the first sender key when a second one names the same generation', async () => {
+    const { indexer, keyring } = setup();
+    await indexer.ingest(await verified(VECTORS.keys.event), 'live', ctx);
+    const other = wrapSenderKey({
+      wave: PV_WAVE,
+      cls: SealedClass.PROVIDER,
+      gen: 1,
+      from: inputs.deviceKey,
+      to: `svc:${provider.id}`,
+      recipientPublicKey: provider.publicKey,
+      senderKey: Buffer.alloc(32, 7)
+    });
+    const keys = encodeKeysDocument({
+      v: 1,
+      dev: inputs.deviceKey,
+      box: null,
+      wraps: [other]
+    });
+    const event = record(
+      RecordKind.SEALED,
+      PV_WAVE,
+      ['keys'],
+      { c: keys.toString('base64url'), v: 1 },
+      1000
+    );
+    expect(await indexer.ingest(await verified(event), 'live', ctx)).toEqual({
+      kind: 'keys',
+      unwrapped: 0,
+      conflicts: 1
+    });
+    expect(keyring.find(PRINCIPAL, inputs.deviceKey, 1, 1)).toEqual(
+      hexBytes(inputs.senderKey)
+    );
+  });
+
+  it('leaves payload references to the lanes', async () => {
+    const { indexer } = setup();
+    const event = record(
+      RecordKind.SEALED,
+      PV_WAVE,
+      ['cms'],
+      { h: `0x${'a'.repeat(64)}`, n: 2048, v: 1 },
+      1000
+    );
+    expect(await indexer.ingest(await verified(event), 'live', ctx)).toEqual({
+      kind: 'skipped',
+      reason: 'payload'
+    });
+  });
+
+  it('applies each record in one transaction', async () => {
+    const { indexer, heads } = setup();
+    await indexer.ingest(await verified(VECTORS.followRecord), 'live', ctx);
+    expect(heads.transactions).toBe(1);
   });
 
   it('leaves DEL, unregistered types and other families to the lanes', async () => {

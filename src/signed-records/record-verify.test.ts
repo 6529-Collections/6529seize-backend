@@ -260,3 +260,138 @@ describe('verifyRecordEvent', () => {
     });
   });
 });
+
+describe('families, writers and strings', () => {
+  const follow = VECTORS.followRecord;
+  const PV = `pv/${PRINCIPAL}`;
+  const sealed = { c: 'AQ', v: 1 };
+
+  it('refuses kinds and record types a family does not carry', async () => {
+    // A sealed item in a public stream, a log anywhere but cv, any RECORD
+    // type but reader in pv.
+    expect(
+      await reason(
+        resign(follow, {
+          kind: RecordKind.SEALED,
+          refs: ['settings'],
+          body: sealed
+        })
+      )
+    ).toBe('family');
+    expect(
+      await reason(
+        resign(follow, { kind: RecordKind.LOG, refs: ['entry'], body: {} })
+      )
+    ).toBe('family');
+    expect(await reason(resign(follow, { wave: PV }))).toBe('family');
+    expect(
+      await reason(
+        resign(follow, { wave: 'dr/0x01', refs: ['mls-device', 'k'], body: {} })
+      )
+    ).toBe('ok');
+    expect(
+      await reason(
+        resign(follow, { wave: 'dr/0x01', refs: ['follow', 'k'], body: {} })
+      )
+    ).toBe('family');
+    expect(
+      await reason(
+        resign(follow, {
+          kind: RecordKind.DEL,
+          wave: 'cv/g1',
+          refs: [],
+          body: { ids: [follow.id] }
+        })
+      )
+    ).toBe('family');
+  });
+
+  it('takes a reader record in pv only when it names a wallet', async () => {
+    const reader = (key: string) =>
+      resign(follow, { wave: PV, refs: ['reader', key], body: {} });
+    expect(await reason(reader(`0x${'5'.repeat(40)}`))).toBe('ok');
+    expect(await reason(reader('someone'))).toBe('refs');
+  });
+
+  it('lets the orderer write into pv and bk but not ps', async () => {
+    const otherPrincipal = `0x${'0'.repeat(63)}9`;
+    const ctx = {
+      ...context(),
+      ordererWallets: [inputs.author.toUpperCase().replace('0X', '0x')]
+    };
+    const intoPv = resign(follow, {
+      kind: RecordKind.SEALED,
+      wave: `pv/${otherPrincipal}`,
+      refs: ['cms'],
+      body: sealed
+    });
+    expect(await verifyRecordEvent(intoPv, ctx)).toMatchObject({
+      ok: true,
+      record: { writer: 'orderer', owner: otherPrincipal, principal: PRINCIPAL }
+    });
+    expect(await reason(intoPv)).toBe('not-bound');
+    expect(
+      await reason(resign(follow, { wave: `ps/${otherPrincipal}` }), ctx)
+    ).toBe('not-bound');
+    const own = await verifyRecordEvent(follow, ctx);
+    expect(own).toMatchObject({ ok: true, record: { writer: 'author' } });
+  });
+
+  it('takes a public stream owned by a bare wallet from that wallet while it is unbound', async () => {
+    const walletStream = resign(follow, {
+      wave: `ps/${inputs.author}`,
+      refs: ['subs.mode'],
+      body: { automatic: true }
+    });
+    const unbound = { ...context(), bindings: bindingSource([]) };
+    expect(await verifyRecordEvent(walletStream, unbound)).toMatchObject({
+      ok: true,
+      record: { owner: inputs.author, principal: null, writer: 'author' }
+    });
+    // Bound to a principal at the anchor: its records go to ps/<principal>.
+    expect(await reason(walletStream)).toBe('not-bound');
+    expect(
+      await reason(resign(follow, { wave: `ps/0x${'7'.repeat(40)}` }), unbound)
+    ).toBe('not-bound');
+    expect(await reason(resign(follow, { wave: `pv/${inputs.author}` }))).toBe(
+      'family'
+    );
+  });
+
+  it('parses sealed payload references', async () => {
+    const ref = resign(follow, {
+      kind: RecordKind.SEALED,
+      wave: PV,
+      refs: ['welcome'],
+      body: { h: `0x${'a'.repeat(64)}`, n: 4096, v: 1 }
+    });
+    expect(await verifyRecordEvent(ref, context())).toMatchObject({
+      ok: true,
+      record: {
+        parsed: {
+          bytes: null,
+          payload: { sha256: `0x${'a'.repeat(64)}`, size: 4096 }
+        }
+      }
+    });
+    const tooBig = resign(follow, {
+      kind: RecordKind.SEALED,
+      wave: PV,
+      refs: ['welcome'],
+      body: { h: `0x${'a'.repeat(64)}`, n: 5 * 1024 * 1024, v: 1 }
+    });
+    expect(await reason(tooBig)).toBe('body');
+  });
+
+  it('refuses lone surrogates instead of throwing', async () => {
+    expect(await reason({ ...follow, refs: ['follow', '\uD800x'] })).toBe(
+      'shape'
+    );
+    expect(await reason({ ...follow, wave: `ps/${PRINCIPAL}\uDC00` })).toBe(
+      'shape'
+    );
+    expect(await reason({ ...follow, body: '{"actions":["\uD800"]}' })).toBe(
+      'shape'
+    );
+  });
+});

@@ -7,16 +7,20 @@ import {
   SignedRecordEventSchema
 } from './record-event';
 import {
+  isKindAllowedInFamily,
+  isOrdererFamily,
   isPrincipalFamily,
+  isWalletAddress,
   parseFamilyWave,
   RecordFamily
 } from './record-families';
 import {
+  isWellFormed,
   ParsedRecordBody,
   parseRecordBody,
   RecordBodyError
 } from './record-body';
-import { isRecordKind, RECORD_GRANT_SCOPE } from './record-kinds';
+import { isRecordKind, RECORD_GRANT_SCOPE, RecordKind } from './record-kinds';
 import { orderKeyOf, RecordOrderKey } from './record-order';
 
 export type RecordRejectReason =
@@ -69,14 +73,22 @@ export interface RecordVerifyContext {
   readonly grants: RecordGrantSource;
   readonly bindings: PrincipalBindingSource;
   readonly live?: LiveRecordWindow;
+  /**
+   * Wallets of the orderer role (the relays' config): they may write into
+   * `pv` and `bk` and the lane families, for items they author.
+   */
+  readonly ordererWallets?: readonly string[];
 }
 
 export interface VerifiedRecord {
   readonly event: SignedRecordEvent;
   readonly family: RecordFamily;
   readonly owner: string;
-  // The author wallet's principal at the anchor; the owner for ps, pv, bk.
+  // The author wallet's principal at the anchor: the owner for ps, pv and bk,
+  // unless the orderer wrote it or the owner is a bare wallet.
   readonly principal: string | null;
+  // 'orderer' when the orderer role wrote it, else 'author'.
+  readonly writer: 'author' | 'orderer';
   readonly order: RecordOrderKey;
   readonly parsed: ParsedRecordBody;
 }
@@ -109,7 +121,33 @@ function checkShape(event: unknown): SignedRecordEvent {
   if (error) {
     throw new RecordReject('shape', error.message);
   }
+  const strings = [value.wave, ...value.refs, value.body ?? ''];
+  if (!strings.every(isWellFormed)) {
+    throw new RecordReject('shape', 'a string is not well-formed Unicode');
+  }
   return value;
+}
+
+function checkFamily(event: SignedRecordEvent, parsed: ParsedRecordBody) {
+  const stream = parseFamilyWave(event.wave);
+  if (!stream) {
+    throw new RecordReject('family', 'wave is not a record stream');
+  }
+  const recordType = parsed.kind === RecordKind.RECORD ? parsed.type : null;
+  if (!isKindAllowedInFamily(stream.family, event.kind, recordType)) {
+    throw new RecordReject(
+      'family',
+      `${stream.family} does not carry kind ${event.kind} ${recordType ?? ''}`.trim()
+    );
+  }
+  if (
+    parsed.kind === RecordKind.RECORD &&
+    parsed.type === 'reader' &&
+    !isWalletAddress(parsed.key)
+  ) {
+    throw new RecordReject('refs', 'a reader record names a wallet');
+  }
+  return stream;
 }
 
 function checkBody(event: SignedRecordEvent): ParsedRecordBody {
@@ -172,7 +210,10 @@ async function checkGrant(
     throw new RecordReject('grant-expired', 'grant expired');
   }
   // A record signed before a revocation stays valid when replayed; a live
-  // submission needs a grant that is not revoked at all.
+  // submission needs a grant that is not revoked at all. Replay judges by
+  // the author's claimed time, as the relays do, so someone holding a
+  // revoked key could backdate a record to before the revocation. Native
+  // anchors bound that from below (P33 3.6). This is as designed.
   const revoked =
     grant.revokedAt !== null &&
     (ctx.live !== undefined || event.claimed_time > grant.revokedAt);
@@ -200,41 +241,78 @@ function checkAnchor(event: SignedRecordEvent, ctx: RecordVerifyContext) {
   }
 }
 
+/**
+ * Who may write: for ps, pv and bk, the author bound to the owner at the
+ * anchor; for pv and bk also the orderer role; for a ps stream owned by a
+ * bare wallet, that wallet while it is bound to no principal. The other
+ * families' writers are the lanes' rule; the orderer is named either way.
+ */
+function checkWriter(
+  event: SignedRecordEvent,
+  stream: { readonly family: RecordFamily; readonly owner: string },
+  principal: string | null,
+  ctx: RecordVerifyContext
+): 'author' | 'orderer' {
+  const orderer =
+    isOrdererFamily(stream.family) &&
+    (ctx.ordererWallets ?? []).some(
+      (wallet) => wallet.toLowerCase() === event.author
+    );
+  if (!isPrincipalFamily(stream.family)) {
+    return orderer ? 'orderer' : 'author';
+  }
+  if (isWalletAddress(stream.owner)) {
+    if (event.author === stream.owner && principal === null) {
+      return 'author';
+    }
+    throw new RecordReject(
+      'not-bound',
+      'only the owner wallet, bound to no principal, writes its stream'
+    );
+  }
+  if (principal === stream.owner) {
+    return 'author';
+  }
+  if (orderer) {
+    return 'orderer';
+  }
+  throw new RecordReject(
+    'not-bound',
+    'author wallet is not bound to the stream owner at the anchor'
+  );
+}
+
 async function verify(
   raw: unknown,
   ctx: RecordVerifyContext
 ): Promise<VerifiedRecord> {
   const event = checkShape(raw);
-  const stream = parseFamilyWave(event.wave);
-  if (!stream) {
+  if (!parseFamilyWave(event.wave)) {
     throw new RecordReject('family', 'wave is not a record stream');
   }
   const parsed = checkBody(event);
+  const stream = checkFamily(event, parsed);
   checkSignature(event);
   await checkGrant(event, ctx);
   checkAnchor(event, ctx);
   const principal = await ctx.bindings.principalAt(event.author, event.anchor);
-  if (isPrincipalFamily(stream.family) && principal !== stream.owner) {
-    throw new RecordReject(
-      'not-bound',
-      'author wallet is not bound to the stream owner at the anchor'
-    );
-  }
   return {
     event,
     family: stream.family,
     owner: stream.owner,
     principal,
+    writer: checkWriter(event, stream, principal, ctx),
     order: orderKeyOf(event),
     parsed
   };
 }
 
 /**
- * Verifies a signed record: shape, stream, body against its kind, event id,
- * Ed25519 signature, grant (key, wallet, `post` scope, expiry, revocation),
- * anchor, and, for principal-owned streams, that the author wallet was
- * bound to the owner at the anchor. Never throws for a bad record.
+ * Verifies a signed record: shape (well-formed strings), stream, body
+ * against its kind, the kinds its family carries, event id, Ed25519
+ * signature, grant (key, wallet, `post` scope, expiry, revocation), anchor
+ * and writer (checkWriter). Never throws for a bad record; throws only when
+ * a grant or binding source fails.
  */
 export async function verifyRecordEvent(
   event: unknown,

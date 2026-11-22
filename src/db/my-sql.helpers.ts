@@ -90,13 +90,19 @@ type PrivateQueryFamily =
   | 'content moderation'
   | 'CMS agent'
   | 'competition authorization'
-  | 'membership runtime';
+  | 'membership runtime'
+  | 'signed records';
 
 function privateQueryFamily(sql: string): PrivateQueryFamily | null {
   // Encrypted-messaging rows carry ciphertext, KeyPackages, welcomes and
   // notify hints; neither statements nor bound values may reach logs.
   if (/\be2ee_[a-z_]+\b/i.test(sql)) {
     return 'e2ee messaging';
+  }
+  // Signed records and their log carry people's settings (whom they mute or
+  // block) and private entries; the head keys name them too.
+  if (/\bsigned_record_[a-z_]+\b/i.test(sql)) {
+    return 'signed records';
   }
   if (
     /\bcompetition_(?:entry_content_versions|signature_nonces|commands)\b/i.test(

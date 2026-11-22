@@ -1,5 +1,9 @@
 import type { RecordLogStore } from './record-log.service';
-import type { RecordLogEntryRow, RecordLogSegmentRow } from './record-log.db';
+import {
+  RecordLogEntryRow,
+  RecordLogSegmentRow,
+  takeWithinBytes
+} from './record-log.db';
 import type { RecordLogChain } from './record-log-format';
 
 type EntryRow = RecordLogEntryRow & {
@@ -28,17 +32,41 @@ export class MemoryRecordLogStore implements RecordLogStore {
 
   async findOpenEntries(
     chain: RecordLogChain,
-    limit: number
+    limit: number,
+    maxBytes: number
   ): Promise<RecordLogEntryRow[]> {
-    return this.entries
+    const open = this.entries
       .filter((row) => row.chain === chain && row.segment_seq === null)
-      .slice(0, limit)
+      .slice(0, limit);
+    const ids = takeWithinBytes(
+      open.map((row) => ({
+        id: row.id,
+        bytes: Buffer.byteLength(row.entry, 'utf8')
+      })),
+      maxBytes
+    );
+    return open
+      .filter((row) => ids.includes(row.id))
       .map(({ id, lane, entry, created_at }) => ({
         id,
         lane,
         entry,
         created_at
       }));
+  }
+
+  async deleteSegmentEntries(
+    chain: RecordLogChain,
+    seq: number
+  ): Promise<void> {
+    for (let i = this.entries.length - 1; i >= 0; i--) {
+      if (
+        this.entries[i].chain === chain &&
+        this.entries[i].segment_seq === seq
+      ) {
+        this.entries.splice(i, 1);
+      }
+    }
   }
 
   async findLatestSegment(

@@ -1,4 +1,5 @@
 import type { SignedRecordEvent } from '../record-event';
+import { GrantProofRecordSource } from '../record-grant-proofs';
 import {
   RecordVerifyContext,
   RecordVerifyResult,
@@ -150,13 +151,17 @@ export class RecordLogReader {
 }
 
 /**
- * Replays a chain for a rebuild: verifies each event entry again (grants and
- * bindings as of its anchor) and hands every entry to the lane's handler.
+ * Replays a chain for a rebuild: verifies each event entry again against
+ * the grant proof it carries (the wallet signature checked, the proof's id
+ * equal to the event's auth_ref), so a rebuild from empty needs no grant
+ * table. Grant expiry and revocation are judged at the event's claimed
+ * time; the binding to the owner at its anchor. Every entry then goes to
+ * the lane's handler; service entries come with `verified = null`.
  */
 export async function replayRecordLog(
   reader: RecordLogReader,
   chain: RecordLogChain,
-  verifyContext: RecordVerifyContext,
+  verifyContext: Omit<RecordVerifyContext, 'grants' | 'live'>,
   onEntry: (
     item: RecordLogItem,
     verified: RecordVerifyResult | null
@@ -166,10 +171,10 @@ export async function replayRecordLog(
   for await (const item of reader.walk(chain)) {
     const verified =
       item.entry.t === 'event'
-        ? await verifyRecordEvent(
-            item.entry.event as SignedRecordEvent,
-            verifyContext
-          )
+        ? await verifyRecordEvent(item.entry.event as SignedRecordEvent, {
+            ...verifyContext,
+            grants: new GrantProofRecordSource([item.entry.grant])
+          })
         : null;
     await onEntry(item, verified);
     count++;

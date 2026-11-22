@@ -13,6 +13,7 @@ import {
   SealedClass,
   SealedFormat,
   SealedFormatError,
+  SealedItem,
   unwrapSenderKey
 } from './sealed-crypto';
 
@@ -38,8 +39,10 @@ export type ApplyMode = 'live' | 'rebuild';
 
 /**
  * What a lane registers for each of its types. `validate` throws for a body
- * the type does not accept; `apply` writes the index (and, live, today's side
- * effects). Rebuilds apply without side effects.
+ * the type does not accept (the record is then refused, nothing applied);
+ * `apply` writes the index and, live, today's side effects. An error from
+ * `apply` is an infrastructure error and propagates. Rebuilds apply without
+ * side effects.
  */
 export interface RecordTypeHandler {
   readonly family: 'ps' | 'pv';
@@ -60,13 +63,23 @@ export interface RecordHeadKey {
   readonly key: string;
 }
 
+/**
+ * The newest order key indexed per key. `lock` reads it and holds a lock on
+ * it until the transaction in ctx.connection ends, so two submits for one
+ * key are applied one after the other; it requires ctx.connection.
+ */
 export interface RecordHeadStore {
-  get(key: RecordHeadKey, ctx: RequestContext): Promise<RecordOrderKey | null>;
+  lock(key: RecordHeadKey, ctx: RequestContext): Promise<RecordOrderKey | null>;
   put(
     key: RecordHeadKey,
     order: RecordOrderKey,
     ctx: RequestContext
   ): Promise<void>;
+  /** Runs fn in a transaction, or in the caller's when ctx has one. */
+  inTransaction<T>(
+    ctx: RequestContext,
+    fn: (ctx: RequestContext) => Promise<T>
+  ): Promise<T>;
 }
 
 export class RecordRegistry {
@@ -93,10 +106,17 @@ export class RecordRegistry {
   }
 }
 
+export interface KeyringResult {
+  readonly unwrapped: number;
+  // Wraps naming a (device, class, generation) that already has another key.
+  readonly conflicts: number;
+}
+
 /**
  * Sender keys 6529.io can read: the PROVIDER-class keys each device wraps to
  * a provider key in its `keys` record. Held in memory only; a rebuild reads
- * the `keys` records again.
+ * the `keys` records again. A second, different key for the same device,
+ * class and generation is refused: the first one stays.
  */
 export class SenderKeyring {
   private readonly logger = Logger.get(SenderKeyring.name);
@@ -109,46 +129,57 @@ export class SenderKeyring {
     deviceKey: string,
     cls: number,
     gen: number
-  ) {
+  ): string {
     return `${owner}|${deviceKey.toLowerCase()}|${cls}|${gen}`;
   }
 
-  /** Unwraps every provider wrap of a verified `keys` record; returns the count. */
-  addKeysRecord(record: VerifiedRecord): number {
+  /** Unwraps every provider wrap of a verified `keys` record. Throws SealedFormatError. */
+  addKeysRecord(record: VerifiedRecord): KeyringResult {
     const parsed = record.parsed;
-    if (parsed.kind !== RecordKind.SEALED || parsed.label !== KEYS_LABEL) {
-      return 0;
+    if (
+      parsed.kind !== RecordKind.SEALED ||
+      parsed.label !== KEYS_LABEL ||
+      parsed.bytes === null
+    ) {
+      throw new SealedFormatError('not a keys record');
     }
     const doc = decodeKeysDocument(parsed.bytes);
     if (doc.dev !== record.event.device_key) {
       throw new SealedFormatError('keys document names another device');
     }
     let unwrapped = 0;
+    let conflicts = 0;
     for (const wrap of doc.wraps) {
       const provider = this.providers.find(
         (candidate) => providerRecipient(candidate) === wrap.to
       );
-      if (!provider || wrap.cls !== SealedClass.PROVIDER) {
+      // A device publishes wraps of its own keys; others re-wrap later (Own).
+      if (
+        !provider ||
+        wrap.cls !== SealedClass.PROVIDER ||
+        wrap.from !== doc.dev
+      ) {
         continue;
       }
+      let key: Buffer;
       try {
-        const key = unwrapSenderKey({
-          wave: record.event.wave,
-          wrap,
-          provider
-        });
-        this.keys.set(
-          SenderKeyring.id(record.owner, wrap.from, wrap.cls, wrap.gen),
-          key
-        );
-        unwrapped++;
+        key = unwrapSenderKey({ wave: record.event.wave, wrap, provider });
       } catch (error) {
         this.logger.warn(
           `Wrap in ${record.event.id} for ${wrap.to} does not open: ${String(error)}`
         );
+        continue;
       }
+      const id = SenderKeyring.id(record.owner, wrap.from, wrap.cls, wrap.gen);
+      const known = this.keys.get(id);
+      if (known && !known.equals(key)) {
+        conflicts++;
+        continue;
+      }
+      this.keys.set(id, key);
+      unwrapped++;
     }
-    return unwrapped;
+    return { unwrapped, conflicts };
   }
 
   find(
@@ -169,7 +200,11 @@ export type IngestOutcome =
       // Items of types no handler is registered for (a newer client's).
       readonly unknown: number;
     }
-  | { readonly kind: 'keys'; readonly unwrapped: number }
+  | {
+      readonly kind: 'keys';
+      readonly unwrapped: number;
+      readonly conflicts: number;
+    }
   | {
       readonly kind: 'skipped';
       readonly reason:
@@ -177,13 +212,31 @@ export type IngestOutcome =
         | 'own-class'
         | 'no-sender-key'
         | 'not-indexed'
+        | 'payload'
         | 'del';
+    }
+  // The record's content is bad: nothing of it was applied.
+  | {
+      readonly kind: 'refused';
+      readonly reason: 'sealed-format' | 'keys-format' | 'invalid-change';
+      readonly detail: string;
     };
+
+type Refused = Extract<IngestOutcome, { kind: 'refused' }>;
+
+const refused = (reason: Refused['reason'], error: unknown): Refused => ({
+  kind: 'refused',
+  reason,
+  detail: error instanceof Error ? error.message : String(error)
+});
 
 /**
  * Index records: keep only changes newer than the stored head for their
- * key, check them with the type's handler, apply them. Handles RECORD in
- * `ps` and PROVIDER-class SEALED items in `pv`; the rest is the lanes'.
+ * key, check them with the type's handler, apply them, in one transaction
+ * per record with the heads locked. Handles RECORD in `ps` and
+ * PROVIDER-class SEALED items in `pv`; the rest is the lanes'. Bad record
+ * content gives `refused`, so one bad record never stops a rebuild; only
+ * infrastructure errors (the database, a handler's apply) throw.
  */
 export class RecordIndexer {
   constructor(
@@ -217,9 +270,58 @@ export class RecordIndexer {
       return this.applyChanges([change], false, mode, ctx);
     }
     if (parsed.kind === RecordKind.SEALED && record.family === 'pv') {
+      if (parsed.bytes === null) {
+        return { kind: 'skipped', reason: 'payload' };
+      }
       return this.ingestSealed(record, parsed.label, parsed.bytes, mode, ctx);
     }
     return { kind: 'skipped', reason: 'not-indexed' };
+  }
+
+  private ingestKeys(record: VerifiedRecord): IngestOutcome {
+    try {
+      return { kind: 'keys', ...this.deps.keyring.addKeysRecord(record) };
+    } catch (error) {
+      if (error instanceof SealedFormatError) {
+        return refused('keys-format', error);
+      }
+      throw error;
+    }
+  }
+
+  private openItems(
+    record: VerifiedRecord,
+    bytes: Buffer
+  ): { items: SealedItem[]; cls: number } | IngestOutcome {
+    try {
+      const header = readSealedItemsHeader(bytes);
+      if (header.cls !== SealedClass.PROVIDER) {
+        return { kind: 'skipped', reason: 'own-class' };
+      }
+      if (header.deviceKey !== record.event.device_key) {
+        throw new SealedFormatError('sealed items name another device');
+      }
+      const senderKey = this.deps.keyring.find(
+        record.owner,
+        header.deviceKey,
+        header.cls,
+        header.gen
+      );
+      if (!senderKey) {
+        return { kind: 'skipped', reason: 'no-sender-key' };
+      }
+      const opened = openSealedItems({
+        wave: record.event.wave,
+        bytes,
+        senderKey
+      });
+      return { items: opened.items, cls: header.cls };
+    } catch (error) {
+      if (error instanceof SealedFormatError) {
+        return refused('sealed-format', error);
+      }
+      throw error;
+    }
   }
 
   private async ingestSealed(
@@ -230,35 +332,15 @@ export class RecordIndexer {
     ctx: RequestContext
   ): Promise<IngestOutcome> {
     if (label === KEYS_LABEL) {
-      return {
-        kind: 'keys',
-        unwrapped: this.deps.keyring.addKeysRecord(record)
-      };
+      return this.ingestKeys(record);
     }
     if (bytes[0] !== SealedFormat.ITEMS) {
       return { kind: 'skipped', reason: 'not-indexed' };
     }
-    const header = readSealedItemsHeader(bytes);
-    if (header.cls !== SealedClass.PROVIDER) {
-      return { kind: 'skipped', reason: 'own-class' };
+    const opened = this.openItems(record, bytes);
+    if ('kind' in opened) {
+      return opened;
     }
-    if (header.deviceKey !== record.event.device_key) {
-      throw new SealedFormatError('sealed items name another device');
-    }
-    const senderKey = this.deps.keyring.find(
-      record.owner,
-      header.deviceKey,
-      header.cls,
-      header.gen
-    );
-    if (!senderKey) {
-      return { kind: 'skipped', reason: 'no-sender-key' };
-    }
-    const opened = openSealedItems({
-      wave: record.event.wave,
-      bytes,
-      senderKey
-    });
     const changes = opened.items.map(
       (item): RecordChange => ({
         owner: record.owner,
@@ -268,7 +350,7 @@ export class RecordIndexer {
         body: item.b,
         order: record.order,
         eventId: record.event.id,
-        sealedClass: header.cls
+        sealedClass: opened.cls
       })
     );
     return this.applyChanges(changes, true, mode, ctx);
@@ -312,27 +394,43 @@ export class RecordIndexer {
     if (handled.length === 0) {
       return { kind: 'skipped', reason: 'no-handler' };
     }
-    for (const { change, handler } of handled) {
-      handler.validate(change);
-    }
-    let applied = 0;
-    let stale = 0;
-    for (const { change, handler } of handled) {
-      const headKey: RecordHeadKey = {
-        owner: change.owner,
-        family: change.family,
-        type: change.type,
-        key: change.key
-      };
-      const head = await this.deps.heads.get(headKey, ctx);
-      if (head && compareOrderKeys(change.order, head) <= 0) {
-        stale++;
-        continue;
+    try {
+      for (const { change, handler } of handled) {
+        handler.validate(change);
       }
-      await handler.apply(change, mode, ctx);
-      await this.deps.heads.put(headKey, change.order, ctx);
-      applied++;
+    } catch (error) {
+      return refused('invalid-change', error);
     }
-    return { kind: 'applied', changes: applied, stale, unknown };
+    // Lock heads in one order, so two records sharing keys cannot deadlock.
+    handled.sort((a, b) =>
+      headId(a.change) < headId(b.change)
+        ? -1
+        : Number(headId(a.change) > headId(b.change))
+    );
+    return this.deps.heads.inTransaction(ctx, async (txCtx) => {
+      let applied = 0;
+      let stale = 0;
+      for (const { change, handler } of handled) {
+        const headKey: RecordHeadKey = {
+          owner: change.owner,
+          family: change.family,
+          type: change.type,
+          key: change.key
+        };
+        const head = await this.deps.heads.lock(headKey, txCtx);
+        if (head && compareOrderKeys(change.order, head) <= 0) {
+          stale++;
+          continue;
+        }
+        await handler.apply(change, mode, txCtx);
+        await this.deps.heads.put(headKey, change.order, txCtx);
+        applied++;
+      }
+      return { kind: 'applied' as const, changes: applied, stale, unknown };
+    });
   }
+}
+
+function headId(change: RecordChange): string {
+  return `${change.owner}|${change.family}|${change.type}|${change.key}`;
 }

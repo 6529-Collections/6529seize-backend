@@ -11,6 +11,7 @@ import {
   SignedRecordEventSchema
 } from '../record-event';
 import { parseFamilyWave } from '../record-families';
+import { RecordGrantProofSchema } from '../record-grant-proofs';
 import {
   hpkeOpenBase,
   hpkeSealBase,
@@ -82,6 +83,8 @@ export class RecordLogFormatError extends Error {
 }
 
 const LANE = /^[a-z0-9-]{1,32}$/;
+/** The largest entry the log takes (canonical JSON bytes). */
+export const RECORD_LOG_ENTRY_MAX_BYTES = 4 * 1024 * 1024;
 const SHA256 = /^[0-9a-f]{64}$/;
 const CID = /^[A-Za-z0-9]{10,128}$/;
 const ARWEAVE_TX = /^[A-Za-z0-9_-]{43}$/;
@@ -121,19 +124,20 @@ export function checkLogEntry(value: unknown): RecordLogEntry {
     const { error, value: event } = SignedRecordEventSchema.validate(
       value.event
     );
-    if (
-      error ||
-      !isPlainObject(value.grant) ||
-      Object.keys(value).length !== 4
-    ) {
+    const proof = RecordGrantProofSchema.validate(value.grant);
+    if (error || proof.error || Object.keys(value).length !== 4) {
       return fail('event entry must be {t, lane, event, grant}');
     }
-    return {
-      t: 'event',
-      lane: value.lane,
-      event,
-      grant: value.grant as unknown as RecordGrantProof
-    };
+    const grant: RecordGrantProof = proof.value;
+    // The proof must be the grant the event names, for its key and wallet.
+    if (
+      grant.id !== event.auth_ref ||
+      grant.device_key !== event.device_key ||
+      grant.wallet !== event.author
+    ) {
+      return fail('the grant proof does not match the event');
+    }
+    return { t: 'event', lane: value.lane, event, grant };
   }
   if (
     value.t === 'entry' &&
@@ -266,6 +270,33 @@ function parsePlain(text: string): {
   return { header, entries };
 }
 
+/** Tries every wrap addressed to each provider key until one opens. */
+function openFileKey(
+  wraps: readonly { to: string; enc: string; ct: string }[],
+  providers: readonly ProviderKey[],
+  info: Buffer
+): Buffer | null {
+  for (const provider of providers) {
+    for (const wrap of wraps) {
+      if (wrap.to !== providerRecipient(provider)) {
+        continue;
+      }
+      try {
+        return hpkeOpenBase({
+          recipientPrivateKey: provider.privateKey,
+          enc: Buffer.from(wrap.enc, 'base64url'),
+          info,
+          aad: Buffer.alloc(0),
+          ct: Buffer.from(wrap.ct, 'base64url')
+        });
+      } catch {
+        // Another wrap or another provider key may open it.
+      }
+    }
+  }
+  return null;
+}
+
 function openPrivate(text: string, providers: readonly ProviderKey[]): string {
   const newline = text.indexOf('\n');
   const sealedHeader = text.slice(0, newline);
@@ -286,22 +317,7 @@ function openPrivate(text: string, providers: readonly ProviderKey[]): string {
     fail('bad sealed segment header');
   }
   const info = Buffer.from(`${SEGMENT_INFO}|${String(parsed.seq)}`, 'utf8');
-  const fileKey = providers
-    .map((provider) => {
-      const wrap = parsed.wraps?.find(
-        (candidate) => candidate.to === providerRecipient(provider)
-      );
-      return wrap
-        ? hpkeOpenBase({
-            recipientPrivateKey: provider.privateKey,
-            enc: Buffer.from(wrap.enc, 'base64url'),
-            info,
-            aad: Buffer.alloc(0),
-            ct: Buffer.from(wrap.ct, 'base64url')
-          })
-        : null;
-    })
-    .find((key) => key !== null);
+  const fileKey = openFileKey(parsed.wraps ?? [], providers, info);
   if (!fileKey) {
     return fail('no provider key opens this segment');
   }
