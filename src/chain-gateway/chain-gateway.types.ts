@@ -103,6 +103,11 @@ export interface ChainIdentity {
   readonly mergedInto: string | null;
   /** The 6529.io profile id it was imported from, when the API gives it. */
   readonly legacyId?: string | null;
+  /**
+   * The wallet that signed IDENTITY_CREATE (never changes), when the
+   * gateway gives it.
+   */
+  readonly founder?: string | null;
 }
 
 export interface ChainHandle {
