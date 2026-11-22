@@ -1,7 +1,13 @@
 import 'reflect-metadata';
 import * as db from '@/db';
+import { DbQueryOptions } from '@/db-query.options';
 import * as Entities from '@/entities/entities';
-import { sqlExecutor } from '@/sql-executor';
+import {
+  ConnectionWrapper,
+  setSqlExecutor,
+  SqlExecutor,
+  sqlExecutor
+} from '@/sql-executor';
 import { describeWithSeed } from '@/tests/_setup/seed';
 import {
   ADDRESS_CONSOLIDATION_KEY,
@@ -121,17 +127,42 @@ async function mergeWithWriteAfterSnapshot(write: () => Promise<unknown>) {
   expect(wrote).toBe(true);
 }
 
-/** The top-up loop's own transaction: a TypeORM query runner, as in production. */
+/**
+ * persistTopUps runs on a TypeORM query runner, and its statements through
+ * the SQL executor inside that transaction, as in production. The test
+ * harness's executor hands out mysql pool connections, so these tests use
+ * one like production's on the test's data source.
+ */
+class TypeOrmExecutor extends SqlExecutor {
+  execute<T>(
+    sql: string,
+    params?: Record<string, any>,
+    options?: DbQueryOptions
+  ): Promise<T[]> {
+    return db.execSQLWithParams(sql, params, options);
+  }
+
+  async executeNativeQueriesInTransaction<T>(
+    executable: (connection: ConnectionWrapper<any>) => Promise<T>
+  ): Promise<T> {
+    const runner = db.getDataSource().createQueryRunner();
+    await runner.connect();
+    await runner.startTransaction();
+    try {
+      const result = await executable({ connection: runner });
+      await runner.commitTransaction();
+      return result;
+    } catch (error) {
+      await runner.rollbackTransaction();
+      throw error;
+    } finally {
+      await runner.release();
+    }
+  }
+}
+
+/** The top-up loop crediting `amount` from wallet A, in its own transaction. */
 function topUp(amount: number) {
-  const run = jest
-    .spyOn(sqlExecutor, 'executeNativeQueriesInTransaction')
-    .mockImplementation((executable) =>
-      db
-        .getDataSource()
-        .transaction((manager) =>
-          executable({ connection: manager.queryRunner! })
-        )
-    );
   return persistTopUps([
     {
       hash: '0x' + 'f'.repeat(64),
@@ -140,7 +171,7 @@ function topUp(amount: number) {
       from_wallet: A,
       amount
     }
-  ]).finally(() => run.mockRestore());
+  ]);
 }
 
 /** The transactions processing loop charging one airdrop to wallet A. */
@@ -266,8 +297,14 @@ describeWithSeed(
     }
   ],
   () => {
+    let previous: SqlExecutor;
+    beforeEach(() => {
+      previous = sqlExecutor;
+      setSqlExecutor(new TypeOrmExecutor());
+    });
     afterEach(() => {
       jest.restoreAllMocks();
+      setSqlExecutor(previous);
     });
 
     it('keeps a top-up committed after the merge took its snapshot', async () => {
