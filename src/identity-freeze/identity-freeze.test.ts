@@ -158,8 +158,11 @@ describe('identity freeze flag', () => {
     });
   });
 
-  it('treats a malformed switch-on time as come', () => {
-    process.env[SWITCH_ON_AT] = 'Wednesday';
-    expect(isIdentityOnChain(0)).toBe(true);
+  it('freezes on a malformed switch-on time, but does not switch on', () => {
+    for (const value of ['Wednesday', '2026-11-25']) {
+      process.env[SWITCH_ON_AT] = value;
+      expect(isIdentityOnChain(Date.UTC(2026, 11, 1))).toBe(false);
+      expect(isIdentityFrozen(0)).toBe(true);
+    }
   });
 });

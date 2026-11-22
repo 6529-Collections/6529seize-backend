@@ -23,8 +23,8 @@ const normalised = (category: string) => category.trim().toLowerCase();
 
 /**
  * Whether a rating counts toward REP summed over every category: from
- * switch-on the help bot's credits don't (any case or spacing, as the
- * database compares them).
+ * switch-on the help bot's credits don't (matched ignoring case and
+ * surrounding spaces; the category is reserved, so no near-variants exist).
  */
 export function countsTowardAllCategoryRep(
   matter: string,

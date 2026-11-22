@@ -86,8 +86,16 @@ export function parseIdentityFreezeAt(
 
 const warnedAboutBadTime = new Set<string>();
 
-/** Whether the time in `env` has come; a malformed time counts as come. */
-function timeHasCome(env: string, nowMillis: number): boolean {
+/**
+ * Whether the time in `env` has come. A malformed time is logged once and
+ * counts as `malformed` says: come for the freeze (refusing writes is the
+ * safe side), not come for switch-on, whose effects can't be undone.
+ */
+function timeHasCome(
+  env: string,
+  nowMillis: number,
+  malformed: 'come' | 'not_come'
+): boolean {
   const raw = process.env[env];
   const start = parseIdentityFreezeAt(raw);
   if (start === undefined) {
@@ -97,12 +105,19 @@ function timeHasCome(env: string, nowMillis: number): boolean {
     if (!warnedAboutBadTime.has(env)) {
       warnedAboutBadTime.add(env);
       logger.error(
-        `[${env} IS NOT A UTC TIME] [VALUE ${raw}] [TREATED AS COME]`
+        `[${env} IS NOT A UTC TIME] [VALUE ${raw}] [TREATED AS ${
+          malformed === 'come' ? 'COME' : 'NOT COME, WRITES FROZEN'
+        }]`
       );
     }
-    return true;
+    return malformed === 'come';
   }
   return nowMillis >= start;
+}
+
+/** A switch-on time that is set but can't be read. */
+function switchOnTimeMalformed(): boolean {
+  return parseIdentityFreezeAt(process.env[IDENTITY_SWITCH_ON_AT_ENV]) === null;
 }
 
 /** From switch-on the 6529 chain holds identities for good. */
@@ -111,7 +126,7 @@ export function isIdentityOnChain(
 ): boolean {
   return (
     appFeatures.isIdentityOnChain() ||
-    timeHasCome(IDENTITY_SWITCH_ON_AT_ENV, nowMillis)
+    timeHasCome(IDENTITY_SWITCH_ON_AT_ENV, nowMillis, 'not_come')
   );
 }
 
@@ -121,7 +136,10 @@ export function isIdentityFrozen(
 ): boolean {
   return (
     appFeatures.isIdentityFrozen() ||
-    timeHasCome(IDENTITY_FREEZE_AT_ENV, nowMillis) ||
+    timeHasCome(IDENTITY_FREEZE_AT_ENV, nowMillis, 'come') ||
+    // A switch-on time that can't be read doesn't switch on, but it does
+    // freeze: whoever set it meant identity writes to stop.
+    switchOnTimeMalformed() ||
     isIdentityOnChain(nowMillis)
   );
 }
