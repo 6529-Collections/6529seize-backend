@@ -44,6 +44,14 @@ export class AppFeatures {
   public isWavesChainIndexEnabled(): boolean {
     return this.isFeatureEnabled('WAVES_CHAIN_INDEX');
   }
+
+  /**
+   * The chain index queues a claim build for the rank-1 entry of a final
+   * result of a Main Stage decision (MAIN_STAGE_DECISION_IDS).
+   */
+  public isWavesChainClaimBuildsEnabled(): boolean {
+    return this.isFeatureEnabled('WAVES_CHAIN_CLAIM_BUILDS');
+  }
 }
 
 export const appFeatures = new AppFeatures();

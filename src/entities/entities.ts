@@ -239,6 +239,8 @@ export {
   ChainDecisionLeaderboardEntity,
   ChainLeaderboardRowEntity,
   ChainEntryEntity,
+  ChainClaimBuildEntity,
+  ChainEventEntity,
   ChainGroupEntity,
   ChainPollEntity,
   ChainResultEntity,
