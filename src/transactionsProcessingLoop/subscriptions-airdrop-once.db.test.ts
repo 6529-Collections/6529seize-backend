@@ -2,6 +2,11 @@ import 'reflect-metadata';
 import * as db from '@/db';
 import * as Entities from '@/entities/entities';
 import {
+  DISTRIBUTION_PHASE_AIRDROP,
+  DISTRIBUTION_PHASE_AIRDROP_ARTIST
+} from '@/airdrop-phases';
+import {
+  DISTRIBUTION_TABLE,
   GRADIENT_CONTRACT,
   MEMES_CONTRACT,
   MEMES_MINT_PRICE,
@@ -28,6 +33,7 @@ const SELLER = '0x00000000000000000000000000000000000000b2';
 const CARD = 600;
 const FIRST = '0x' + '1'.repeat(64);
 const SECOND = '0x' + '2'.repeat(64);
+const THIRD = '0x' + '3'.repeat(64);
 const MEMES_SALE = '0x' + '5'.repeat(64);
 const GRADIENTS_SALE = '0x' + '6'.repeat(64);
 
@@ -215,6 +221,68 @@ describeWithSeed(
           r.subscribers
         ])
       ).toEqual([[FIRST, 2, 1, WALLET]]);
+    });
+  }
+);
+
+describeWithSeed(
+  'legacy airdrop redemption: distribution airdrops',
+  [
+    {
+      table: TRANSACTIONS_PROCESSED_SUBSCRIPTIONS_BLOCKS_TABLE,
+      rows: [{ created_at: new Date(), block: 100, timestamp: 0 }]
+    },
+    {
+      table: SUBSCRIPTIONS_BALANCES_TABLE,
+      rows: [{ consolidation_key: WALLET, balance: 1 }]
+    },
+    {
+      // The wallet is on two airdrop phases of the card: two free tokens.
+      table: DISTRIBUTION_TABLE,
+      rows: [DISTRIBUTION_PHASE_AIRDROP, DISTRIBUTION_PHASE_AIRDROP_ARTIST].map(
+        (phase) => ({
+          created_at: new Date(),
+          updated_at: new Date(),
+          card_id: CARD,
+          contract: MEMES_CONTRACT,
+          phase,
+          wallet: WALLET,
+          count: 1
+        })
+      )
+    },
+    {
+      // It also subscribed to one edition.
+      table: SUBSCRIPTIONS_NFTS_FINAL_TABLE,
+      rows: [
+        {
+          consolidation_key: WALLET,
+          contract: MEMES_CONTRACT,
+          token_id: CARD,
+          subscribed_count: 1,
+          airdrop_address: WALLET,
+          balance: 1,
+          subscribed_at: '2026-11-20 00:00:00',
+          phase: 'Phase 1',
+          phase_subscriptions: 1,
+          phase_position: 1,
+          redeemed_count: 0
+        }
+      ]
+    }
+  ],
+  () => {
+    it('charges neither distribution airdrop when they come in two transactions', async () => {
+      await airdrop(FIRST, 101);
+      await airdrop(SECOND, 102);
+      await airdrop(THIRD, 103);
+      await redeemSubscriptions();
+
+      // Only the third, the subscription airdrop, is charged. Before the fix
+      // the second was charged and took the edition the third needed.
+      const after = await charges();
+      expect(after.perTransaction).toEqual([[THIRD, 1]]);
+      expect(after.balance).toBeCloseTo(1 - MEMES_MINT_PRICE, 10);
     });
   }
 );

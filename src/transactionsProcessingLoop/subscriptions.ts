@@ -223,9 +223,13 @@ export async function validateNonSubscriptionAirdrop(
         ]
       )
     )[0].previous_airdrops;
+    // MySQL returns SUM as a decimal string, or NULL with no earlier
+    // airdrop. Added as a string, "1" + 1 made "11", so a distribution
+    // airdrop that followed an earlier airdrop of the card to the same wallet
+    // was taken for a subscription airdrop.
     if (
       distributionAirdropCount >=
-      previousAirdrops + transaction.token_count
+      Number(previousAirdrops ?? 0) + transaction.token_count
     ) {
       const message = 'Distribution airdrop';
       logger.info(
