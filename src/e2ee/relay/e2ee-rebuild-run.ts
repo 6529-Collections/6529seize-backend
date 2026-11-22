@@ -3,6 +3,7 @@ import {
   E2EE_RECORD_FAMILIES,
   E2eeRebuildProblem,
   E2eeRebuildSource,
+  e2eeStalePositions,
   rebuildE2eeStream
 } from '@/e2ee/relay/e2ee-rebuild';
 import {
@@ -101,6 +102,24 @@ export interface E2eeRebuildReport {
   readonly next: string | null;
   /** True when this slice found nothing wrong. */
   readonly ok: boolean;
+  /**
+   * verify: the switch gate for this slice. `pass` only with no stream
+   * different, every MySQL entity covered and no stream lagging; `rerun`
+   * when lagging streams are all it found (run the slice again once
+   * `e2ee_relay_outbox` drains); `fail` otherwise. `ok` alone passes
+   * lagging streams, so it is not the gate.
+   */
+  readonly gate?: E2eeSwitchGate;
+}
+
+export type E2eeSwitchGate = 'pass' | 'rerun' | 'fail';
+
+export function e2eeSwitchGate(input: {
+  readonly ok: boolean;
+  readonly lagging: number;
+}): E2eeSwitchGate {
+  if (!input.ok) return 'fail';
+  return input.lagging > 0 ? 'rerun' : 'pass';
 }
 
 interface RunInput {
@@ -115,6 +134,12 @@ interface RunInput {
   readonly limit?: number;
   /** write: when to stop starting streams and hand back a cursor. */
   readonly timeBudgetMs?: number;
+  /**
+   * write: queue DELs again for records whose content no rebuilt row needs
+   * (default true). The rebuild check turns it off: it keeps the DEL queue
+   * through its drop, and its rebuilder may write only INDEX tables.
+   */
+  readonly queueDeletions?: boolean;
   readonly clock?: () => number;
 }
 
@@ -177,7 +202,11 @@ export async function runE2eeRebuild(
         problemCount: 0,
         problems: [],
         next: report.next,
-        ok: report.ok && covered
+        ok: report.ok && covered,
+        gate: e2eeSwitchGate({
+          ok: report.ok && covered,
+          lagging: report.lagging
+        })
       };
     }
     return await writeSlice(input, db, source, options);
@@ -290,7 +319,11 @@ async function writeSlice(
         ...options,
         revokedDevices: revoked ?? new Set<string>()
       });
-      await db.writeStream(stream, input.now);
+      await db.writeStream(
+        stream,
+        input.now,
+        input.queueDeletions === false ? [] : e2eeStalePositions(stream)
+      );
       streams++;
       problemCount += stream.problems.length;
       problems.push(

@@ -487,7 +487,10 @@ export async function rebuildE2ee(): Promise<void> {
       mode: 'write',
       now: Date.now(),
       settings: e2eeRelaySettings(),
-      after
+      after,
+      // The check keeps the DEL queue (EPHEMERAL) through its drop, and a
+      // rebuilder writes only INDEX tables.
+      queueDeletions: false
     });
     if (!report.ok) {
       throw new Error(

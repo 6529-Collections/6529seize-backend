@@ -9,6 +9,7 @@ import {
   E2EE_LOG_TABLE,
   E2EE_REPORT_ACCESS_LOG_TABLE,
   E2EE_RECORD_ITEMS_TABLE,
+  E2EE_RELAY_DELETIONS_TABLE,
   E2EE_RELAY_OUTBOX_TABLE,
   E2EE_REPORTS_TABLE,
   E2EE_STREAMS_TABLE,
@@ -31,7 +32,10 @@ import {
   e2eeRecordWhere
 } from '@/e2ee/relay/e2ee-record-tables';
 import type { E2eeRebuiltStream } from '@/e2ee/relay/e2ee-rebuild';
-import { E2eeStreamHead } from '@/e2ee/relay/e2ee-stream-store';
+import {
+  E2EE_DEL_MAX_IDS,
+  E2eeStreamHead
+} from '@/e2ee/relay/e2ee-stream-store';
 import {
   ConnectionWrapper,
   dbSupplier,
@@ -343,11 +347,30 @@ export class E2eeRebuildDb extends LazyDbAccessCompatibleService {
 
   /**
    * Write mode: one rebuilt stream's rows (insert, or replace a row another
-   * stream wrote) and its head, in one transaction. A stream with no
+   * stream wrote), its head, and DELs for the `stale` positions (records
+   * whose content no row needs), in one transaction. A stream with no
    * usable record loses its placeholder head.
    */
-  async writeStream(stream: E2eeRebuiltStream, now: number): Promise<void> {
+  async writeStream(
+    stream: E2eeRebuiltStream,
+    now: number,
+    stale: readonly number[] = []
+  ): Promise<void> {
     await this.executeNativeQueriesInTransaction(async (connection) => {
+      for (let at = 0; at < stale.length; at += E2EE_DEL_MAX_IDS) {
+        await this.db.execute(
+          `insert into ${E2EE_RELAY_DELETIONS_TABLE}
+             (wave, positions, event, held_by, attempts, last_error,
+              created_at)
+           values (:wave, :positions, null, '[]', 0, null, :now)`,
+          {
+            wave: stream.wave,
+            positions: JSON.stringify(stale.slice(at, at + E2EE_DEL_MAX_IDS)),
+            now
+          },
+          { wrappedConnection: connection }
+        );
+      }
       for (const [table, rows] of Array.from(stream.tables.entries())) {
         const columns = [
           ...Object.keys(e2eeRecordTable(table).columns),

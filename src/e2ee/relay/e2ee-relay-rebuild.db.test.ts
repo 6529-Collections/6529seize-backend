@@ -549,6 +549,7 @@ describeWithSeed('e2ee relay records against MySQL', SEEDS, () => {
       coverage: slices[0].coverage,
       failures: slices.flatMap((report) => report.failures ?? []),
       laggingStreams: slices.flatMap((report) => report.laggingStreams ?? []),
+      gates: Array.from(new Set(slices.map((report) => report.gate))),
       problems: slices.flatMap((report) => report.problems),
       ok: slices.every((report) => report.ok)
     };
@@ -900,6 +901,30 @@ describeWithSeed('e2ee relay records against MySQL', SEEDS, () => {
     expect(await answers(ids)).toEqual(before);
   });
 
+  it('queues again, when it rebuilds, the DELs MySQL lost', async () => {
+    const ids = await story();
+    const [welcome] = await groups.getWelcomes('pb', ids.b);
+    await groups.ackWelcome('pb', ids.b, welcome.id);
+    await publisher.settled();
+    // MySQL is lost before the loop sends the Welcome's DEL.
+    await emptyTables();
+    expect((await rebuild('write')).ok).toBe(true);
+    const queued = await sqlExecutor.execute<{ positions: string }>(
+      `select positions from e2ee_relay_deletions where wave = :wave`,
+      { wave: `dv/${ids.b}` }
+    );
+    expect(queued.map((row) => JSON.parse(row.positions))).toEqual([[1]]);
+    await publisher.publishDeletions(10);
+    const [first] = relay.stored.filter(
+      (item) => item.event.wave === `dv/${ids.b}`
+    );
+    expect(first.event.body).toBeNull();
+    expect(
+      await sqlExecutor.execute(`select * from e2ee_relay_deletions`)
+    ).toEqual([]);
+    expect((await rebuild('verify')).ok).toBe(true);
+  });
+
   it('prunes expired Welcomes in one batch, with a DEL per device inbox', async () => {
     const ids = await story();
     expect(await groups.getWelcomes('pb', ids.b)).toHaveLength(1);
@@ -1012,18 +1037,21 @@ describeWithSeed('e2ee relay records against MySQL', SEEDS, () => {
     await sqlExecutor.execute(
       `update e2ee_relay_deletions set next_attempt_at = 0`
     );
-    // The ack's record still waits in the outbox: lagging, not different.
+    // The ack's record still waits in the outbox: lagging, not different,
+    // and the switch gate says to run it again.
     expect(await rebuild('verify')).toMatchObject({
       failures: [],
       laggingStreams: [`dv/${ids.b}`],
-      ok: true
+      ok: true,
+      gates: expect.arrayContaining(['rerun'])
     });
     await publisher.publishPending(10);
     await publisher.publishDeletions(10);
     expect(await rebuild('verify')).toMatchObject({
       failures: [],
       laggingStreams: [],
-      ok: true
+      ok: true,
+      gates: ['pass']
     });
     expect(await store.worstFailures()).toEqual({
       outbox: null,

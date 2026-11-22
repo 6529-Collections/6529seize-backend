@@ -384,6 +384,48 @@ export function e2eeItemKeysOf(
   }
 }
 
+/**
+ * Whether a stream's rows still hold an item `e2eeItemKeysOf` names, for
+ * finding records whose content no row needs any more.
+ */
+export function e2eeItemPresence(
+  family: string,
+  tables: ReadonlyMap<string, ReadonlyMap<string, E2eeRow>>
+): (key: string) => boolean {
+  const values = (table: string, column: string) =>
+    new Set(
+      Array.from(tables.get(table)?.values() ?? []).map((row) =>
+        String(row[column])
+      )
+    );
+  const after = (key: string) => key.slice(key.indexOf(':') + 1);
+  switch (family) {
+    case 'dv': {
+      const ids = values(E2EE_WELCOME_DELIVERIES_TABLE, 'welcome_id');
+      return (key) => ids.has(after(key));
+    }
+    case 'bl': {
+      const held = (tables.get(E2EE_BLOBS_TABLE)?.size ?? 0) > 0;
+      return () => held;
+    }
+    case 'bk': {
+      const keys = values(E2EE_CIPHERTEXT_OBJECTS_TABLE, 'object_key');
+      return (key) => keys.has(after(key));
+    }
+    case 'md': {
+      const ids = new Map(
+        [CONTENT_MODERATION_REPORTS_TABLE, E2EE_REPORTS_TABLE].map(
+          (table) => [table, values(table, 'id')] as const
+        )
+      );
+      return (key) =>
+        ids.get(key.slice(0, key.indexOf(':')))?.has(after(key)) ?? true;
+    }
+    default:
+      return () => true;
+  }
+}
+
 /** The tables the moderators' inbox carries. */
 export const E2EE_MODERATION_TABLES: readonly string[] = [
   CONTENT_MODERATION_REPORTS_TABLE,

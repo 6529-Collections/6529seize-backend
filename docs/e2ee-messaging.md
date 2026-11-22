@@ -810,12 +810,14 @@ the reporter's hides and blocks reads these from the moderators' inbox, so
 it needs the moderation key. Both are null on reports filed before they
 were kept; the moderators' queue does not show them.
 
-**Known limit: queued DELs and a rebuild.** `e2ee_relay_deletions` is not
-rebuilt, so DELs still queued when MySQL is lost are lost with it, and the
-relays keep the content they named. The rebuilt rows are right all the
-same: the records that deleted those items replay, and retention applies
-at the rebuild's `now`. Only the relays keep that content longer than
-MySQL would. Queuing those DELs again after a rebuild is follow-up work.
+**Queued DELs and a rebuild.** DELs still queued when MySQL is lost are
+lost with it, so `write` queues them again: for each stream it writes, the
+records whose content no rebuilt row needs (every item they carry is gone:
+an acked or expired Welcome, a deleted backup object, an expired
+attachment, a pruned report; or, for backups and reports, a newer record
+carries it) get a DEL in the same transaction as the stream's rows. The
+publisher loop sends them as usual. (The rebuild check turns this off: it
+keeps the DEL queue through its drop.)
 
 **Known limit: one moderators' inbox stream.** Every report record goes to
 one `md` stream, so its head lock serializes report writes and its replay
@@ -854,7 +856,8 @@ one slice and returns `next`; call again with `"after": "<next>"` until
   only with none. A stream that differs only because records past the
   relays' head still wait in `e2ee_relay_outbox` is lagging, not
   different: it is counted in `lagging`, named in `laggingStreams`, and
-  does not fail the check. Run it again once the outbox drains.
+  does not fail the check. Run it again once the outbox drains: the
+  slice's `gate` is `rerun` until then (`pass` needs none lagging).
 - `write` rebuilds into empty tables and refuses otherwise. It lists the
   streams each relay holds (as placeholder heads), then rebuilds and writes
   them one at a time, each in one transaction with its head, so a slice cut
@@ -903,7 +906,12 @@ in the API, so no other loop is involved. To switch an environment: set
 migration (dry run first). To switch back, set `E2EE_BLOB_STORE=mysql` and
 keep the S3 settings so blobs already in S3 stay readable.
 
-Relay records add `e2ee_streams` and `e2ee_relay_outbox`: deploy
-`dbMigrationsLoop` (full entity sync) before `api`. Then set the relay
-settings, `E2EE_RELAY_MODE=mirror`, run the backfill (dry run first), run
-`verify`, and only then `primary`.
+Relay records add `e2ee_streams`, `e2ee_relay_outbox`, `e2ee_record_items`
+and `e2ee_relay_deletions`, and the report columns `hide_drop` and
+`block_author`: deploy `dbMigrationsLoop` (full entity sync) before `api`. Then set the relay
+settings, `E2EE_RELAY_MODE=mirror`, run the backfill (dry run first), and
+run `verify` over every slice. The gate is each slice's `gate`, not `ok`:
+`pass` on every slice. A `rerun` slice found only streams still in the
+outbox: wait for `OutboxRows` 0 and run that slice again. Only then
+`primary`. `e2eeRelayPublishLoop` deploys once its deploy policy
+(`ops/iam/*/E2eeRelayPublishLoopDeployment.json`) is installed.

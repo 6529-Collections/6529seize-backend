@@ -35,6 +35,7 @@ import {
 } from '@/e2ee/relay/e2ee-record-event';
 import {
   e2eeItemKeysOf,
+  e2eeItemPresence,
   E2EE_RECORD_TABLES,
   e2eeRecordKeyString,
   e2eeRecordTable
@@ -634,6 +635,41 @@ export interface E2eeRebuiltStream {
     readonly eventId: string;
     readonly keys: readonly string[];
   }[];
+}
+
+/**
+ * Families whose items are rows put again in full by later records (a
+ * backup snapshot, a report's next state): only the newest record carrying
+ * an item is needed.
+ */
+const NEWEST_ONLY: ReadonlySet<string> = new Set(['bk', 'md']);
+
+/**
+ * Positions of a rebuilt stream whose records' content no row needs: every
+ * item they carry is gone from the rows (an acked or expired Welcome, a
+ * deleted backup object, an expired attachment, a pruned report) or, in
+ * `bk` and `md`, a newer record carries it. These are the DELs the orderer
+ * had queued, or would have, when MySQL was lost; a write queues them
+ * again, so the relays keep no content MySQL no longer holds.
+ */
+export function e2eeStalePositions(stream: E2eeRebuiltStream): number[] {
+  const family = stream.wave.slice(0, stream.wave.indexOf('/'));
+  const present = e2eeItemPresence(family, stream.tables);
+  const newest = new Map<string, number>();
+  for (const item of stream.items) {
+    for (const key of item.keys) {
+      newest.set(key, Math.max(newest.get(key) ?? 0, item.pos));
+    }
+  }
+  const newestOnly = NEWEST_ONLY.has(family);
+  return stream.items
+    .filter((item) =>
+      item.keys.every(
+        (key) =>
+          !present(key) || (newestOnly && (newest.get(key) ?? 0) > item.pos)
+      )
+    )
+    .map((item) => item.pos);
 }
 
 /**

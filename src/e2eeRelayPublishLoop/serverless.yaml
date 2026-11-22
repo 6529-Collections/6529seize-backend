@@ -22,7 +22,11 @@ functions:
     role: arn:aws:iam::${aws:accountId}:role/lambda-vpc-role
     reservedConcurrency: 1
     events:
-      - schedule: rate(1 minute)
+      # Named, so the deploy policy can name the rule exactly: CloudFormation
+      # would cut the stack name short in a generated one.
+      - schedule:
+          rate: rate(1 minute)
+          name: e2eeRelayPublishLoop-${opt:stage, self:provider.stage}-publish
     vpc:
       securityGroupIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):security}
       subnetIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):subnets}
@@ -47,6 +51,82 @@ resources:
         EvaluationPeriods: 3
         DatapointsToAlarm: 3
         Threshold: 900
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+        AlarmActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}
+        OKActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}
+
+    # The lag metrics come from runs that finish: these see the runs that don't.
+    E2eeRelayLoopErrorsAlarm:
+      Type: AWS::CloudWatch::Alarm
+      Properties:
+        AlarmName: !Sub "${AWS::StackName}-e2eeRelay-loop-errors"
+        AlarmDescription: "e2eeRelayPublishLoop failed or timed out in 3 of the last 5 minutes, so its lag metrics stopped too. Read the function's log."
+        Namespace: AWS/Lambda
+        MetricName: Errors
+        Dimensions:
+          - Name: FunctionName
+            Value: e2eeRelayPublishLoop
+        Statistic: Sum
+        Period: 60
+        EvaluationPeriods: 5
+        DatapointsToAlarm: 3
+        Threshold: 1
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+        AlarmActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}
+        OKActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}
+
+    E2eeRelayLoopDurationAlarm:
+      Type: AWS::CloudWatch::Alarm
+      Properties:
+        AlarmName: !Sub "${AWS::StackName}-e2eeRelay-loop-duration"
+        AlarmDescription: "e2eeRelayPublishLoop ran 270 s or more (its timeout is 300 s, its budget 240 s) through three 5-minute periods: a relay or MySQL is hanging it. Read [BUDGET] and [LAG] in its log."
+        Namespace: AWS/Lambda
+        MetricName: Duration
+        Dimensions:
+          - Name: FunctionName
+            Value: e2eeRelayPublishLoop
+        Statistic: Maximum
+        Period: 300
+        EvaluationPeriods: 3
+        DatapointsToAlarm: 3
+        Threshold: 270000
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+        AlarmActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}
+        OKActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}
+
+    E2eeRelayLoopOOMFilter:
+      Type: AWS::Logs::MetricFilter
+      DependsOn: E2eeRelayPublishLoopLogGroup
+      Properties:
+        LogGroupName: /aws/lambda/e2eeRelayPublishLoop
+        FilterPattern: "Runtime.OutOfMemory"
+        MetricTransformations:
+          - MetricNamespace: "Lambda/OOM"
+            MetricName: "e2eeRelayPublishLoop_OOMErrorCount"
+            MetricValue: "1"
+            DefaultValue: 0
+
+    E2eeRelayLoopOOMAlarm:
+      Type: AWS::CloudWatch::Alarm
+      DependsOn: E2eeRelayLoopOOMFilter
+      Properties:
+        AlarmName: !Sub "${AWS::StackName}-e2eeRelayPublishLoop-OOM"
+        AlarmDescription: !Sub "Lambda e2eeRelayPublishLoop OutOfMemory in ${AWS::Region}"
+        Namespace: "Lambda/OOM"
+        MetricName: "e2eeRelayPublishLoop_OOMErrorCount"
+        Statistic: Sum
+        Period: 60
+        EvaluationPeriods: 1
+        Threshold: 1
         ComparisonOperator: GreaterThanOrEqualToThreshold
         TreatMissingData: notBreaching
         AlarmActions:

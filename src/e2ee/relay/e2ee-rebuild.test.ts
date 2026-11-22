@@ -28,9 +28,17 @@ import {
   E2EE_WINDOWS_PER_RECORD,
   E2eeRecordWriters
 } from '@/e2ee/relay/e2ee-record-writers';
-import { rebuildE2eeState, rebuildE2eeStream } from '@/e2ee/relay/e2ee-rebuild';
+import {
+  E2eeRebuiltStream,
+  e2eeStalePositions,
+  rebuildE2eeState,
+  rebuildE2eeStream
+} from '@/e2ee/relay/e2ee-rebuild';
 import { compareE2eeTables } from '@/e2ee/relay/e2ee-rebuild.db';
-import { relayE2eeRebuildSource } from '@/e2ee/relay/e2ee-rebuild-run';
+import {
+  e2eeSwitchGate,
+  relayE2eeRebuildSource
+} from '@/e2ee/relay/e2ee-rebuild-run';
 import {
   backfillE2eeRecords,
   E2EE_BACKFILL_FAMILIES,
@@ -1437,6 +1445,76 @@ function verifyDb(
       )
   };
 }
+
+describe('the DELs a rebuild queues again', () => {
+  const stream = (
+    wave: string,
+    tables: Record<string, Record<string, unknown>[]>,
+    items: { pos: number; keys: string[] }[]
+  ): E2eeRebuiltStream => ({
+    wave,
+    tables: new Map(
+      Object.entries(tables).map(([table, rows]) => [
+        table,
+        new Map(rows.map((row, index) => [String(index), row as never]))
+      ])
+    ),
+    head: null,
+    problems: [],
+    records: items.length,
+    deleted: 0,
+    items: items.map((item) => ({ ...item, eventId: `0x${'0'.repeat(64)}` }))
+  });
+
+  it('names the records whose every item is gone from the rows', () => {
+    const inbox = stream(
+      `dv/${hex('d1')}`,
+      { [E2EE_WELCOME_DELIVERIES_TABLE]: [{ welcome_id: '0xaa' }] },
+      [
+        { pos: 1, keys: ['welcome:0xaa'] },
+        { pos: 2, keys: ['welcome:0xbb'] },
+        { pos: 3, keys: ['welcome:0xaa', 'welcome:0xcc'] }
+      ]
+    );
+    // pos 3 still carries a pending Welcome: it stays.
+    expect(e2eeStalePositions(inbox)).toEqual([2]);
+    const blob = stream(`bl/${hex('b1')}`, { [E2EE_BLOBS_TABLE]: [] }, [
+      { pos: 1, keys: ['blob'] },
+      { pos: 2, keys: ['blob'] }
+    ]);
+    expect(e2eeStalePositions(blob)).toEqual([1, 2]);
+  });
+
+  it('keeps only the newest record of a report or backup object', () => {
+    const inbox = stream(
+      INBOX,
+      {
+        [CONTENT_MODERATION_REPORTS_TABLE]: [{ id: 'r1' }],
+        [E2EE_REPORTS_TABLE]: []
+      },
+      [
+        { pos: 1, keys: [`${CONTENT_MODERATION_REPORTS_TABLE}:r1`] },
+        { pos: 2, keys: [`${E2EE_REPORTS_TABLE}:0xe1`] },
+        { pos: 3, keys: [`${CONTENT_MODERATION_REPORTS_TABLE}:r1`] }
+      ]
+    );
+    expect(e2eeStalePositions(inbox)).toEqual([1, 2]);
+    // An attachment's records all carry the one blob: none goes while it
+    // is held.
+    const blob = stream(`bl/${hex('b2')}`, { [E2EE_BLOBS_TABLE]: [{}] }, [
+      { pos: 1, keys: ['blob'] },
+      { pos: 2, keys: ['blob'] }
+    ]);
+    expect(e2eeStalePositions(blob)).toEqual([]);
+  });
+
+  it('passes the switch gate only with nothing lagging', () => {
+    expect(e2eeSwitchGate({ ok: true, lagging: 0 })).toBe('pass');
+    expect(e2eeSwitchGate({ ok: true, lagging: 2 })).toBe('rerun');
+    expect(e2eeSwitchGate({ ok: false, lagging: 0 })).toBe('fail');
+    expect(e2eeSwitchGate({ ok: false, lagging: 2 })).toBe('fail');
+  });
+});
 
 describe('verifyE2eeStreams', () => {
   it('checks every stream alone, in slices, and finds none different', async () => {
