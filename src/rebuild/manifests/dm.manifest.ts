@@ -304,9 +304,14 @@ export const dmManifest: AreaManifest = {
         // The fixture profiles the probes sign in as (identity tables).
         'identities',
         'address_consolidation_keys',
-        // A public wave and drop the reports name (waves tables).
+        // A public wave and drop the reports name (waves tables), with the
+        // rows production's wave and drop creation write next to them.
         'waves',
-        'drops'
+        'drops',
+        'wave_metrics',
+        'wave_dropper_metrics',
+        'identity_subscriptions',
+        'wave_group_notification_subscriptions'
       ],
       sources: ['relays'],
       timeoutMinutes: 10

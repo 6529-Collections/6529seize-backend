@@ -13,6 +13,7 @@ import { E2eeGroupsService } from '@/api/e2ee/e2ee-groups.service';
 import { E2eeTrustAndSafetyService } from '@/api/e2ee/e2ee-trust-and-safety.service';
 import { ApiE2eeReportCategory } from '@/api/generated/models/ApiE2eeReportCategory';
 import { ApiE2eeSubmitEntryRequestKindEnum } from '@/api/generated/models/ApiE2eeSubmitEntryRequest';
+import { identitySubscriptionsDb } from '@/api/identity-subscriptions/identity-subscriptions.db';
 import { contentModerationDb } from '@/content-moderation/content-moderation.db';
 import { moderationReviewDb } from '@/content-moderation/moderation-review.db';
 import { E2eeBackupDb } from '@/e2ee/e2ee-backup.db';
@@ -39,7 +40,13 @@ import {
   ContentReportReason,
   ContentReportStatus
 } from '@/entities/IContentModeration';
+import { dropsDb } from '@/drops/drops.db';
+import {
+  ActivityEventAction,
+  ActivityEventTargetType
+} from '@/entities/IActivityEvent';
 import { DropType } from '@/entities/IDrop';
+import { waveGroupNotificationSubscriptionsDb } from '@/notifications/wave-group-notification-subscriptions.db';
 import { dbSupplier } from '@/sql-executor';
 import { e2eeKeyFromSeed } from '@/tests/fixtures/e2ee.fixture';
 import { aWave } from '@/tests/fixtures/wave.fixture';
@@ -232,27 +239,65 @@ async function insertRow(table: string, row: Record<string, unknown>) {
 
 /**
  * A public wave and a drop in it (the waves tables): reports are
- * recorded only on drops known to be in a public wave.
+ * recorded only on drops known to be in a public wave. Profile a creates
+ * both. The rows production's wave and drop creation write next to them
+ * come from the same writers: the creator follows the wave with the ALL
+ * group, the author follows the drop, and the wave's metrics count both.
  */
 async function seedPublicDrop(): Promise<void> {
+  const creator = E2EE_CHECK_PROFILES.a.profileId;
+  const waveId = E2EE_CHECK_IDS.publicWave;
   const { serial_no: _serial, ...wave } = aWave(
-    { is_direct_message: false },
-    { id: E2EE_CHECK_IDS.publicWave, name: E2EE_CHECK_IDS.publicWave }
+    { is_direct_message: false, created_by: creator },
+    { id: waveId, name: waveId }
   );
+  const drop = {
+    id: E2EE_CHECK_IDS.publicDrop,
+    wave_id: waveId,
+    author_id: creator,
+    drop_type: DropType.CHAT
+  };
   await insertRow('waves', wave);
   await insertRow('drops', {
-    id: E2EE_CHECK_IDS.publicDrop,
-    wave_id: E2EE_CHECK_IDS.publicWave,
-    author_id: E2EE_CHECK_PROFILES.a.profileId,
+    ...drop,
     created_at: Date.now(),
     updated_at: null,
     title: null,
     parts_count: 1,
     reply_to_drop_id: null,
     reply_to_part_id: null,
-    drop_type: DropType.CHAT,
     signature: null,
     hide_link_preview: false
+  });
+  await dbSupplier().executeNativeQueriesInTransaction(async (connection) => {
+    await identitySubscriptionsDb.addIdentitySubscription(
+      {
+        subscriber_id: creator,
+        target_id: waveId,
+        target_type: ActivityEventTargetType.WAVE,
+        target_action: ActivityEventAction.DROP_CREATED,
+        wave_id: waveId,
+        subscribed_to_all_drops: false
+      },
+      connection
+    );
+    await waveGroupNotificationSubscriptionsDb.addDefaultGroupsForWaveSubscription(
+      creator,
+      waveId,
+      connection
+    );
+    await identitySubscriptionsDb.addIdentitySubscription(
+      {
+        subscriber_id: creator,
+        target_id: drop.id,
+        target_type: ActivityEventTargetType.DROP,
+        target_action: ActivityEventAction.DROP_REPLIED,
+        wave_id: waveId,
+        subscribed_to_all_drops: false
+      },
+      connection
+    );
+    await dropsDb.applyInsertedDropMetricsDelta(drop, { connection });
   });
 }
 
