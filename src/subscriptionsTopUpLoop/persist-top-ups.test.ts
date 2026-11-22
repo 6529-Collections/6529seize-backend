@@ -10,6 +10,7 @@ import { sqlExecutor } from '@/sql-executor';
 import { markSubscriptionCoverageDirty } from '@/subscription-coverage/subscription-coverage-dirty';
 import { sendSubscriptionTopUpWaveUpdate } from '@/subscription-wave-notifier';
 import { invalidateUpcomingSubscriptionCaches } from '@/subscriptionsDaily/subscription-cache';
+import { subscriptionKeyWidths } from '@/subscription-key-width/subscription-key-width';
 import { persistTopUps } from './db.subscriptions_topup';
 
 jest.mock('@/api/subscriptions/api.subscriptions.db', () => ({
@@ -216,6 +217,7 @@ describe('keys that must wait', () => {
   beforeEach(() => {
     claimRows = [{ replayed_at: null }];
     pendingRows = [];
+    subscriptionKeyWidths.invalidate();
     jest.mocked(sqlExecutor.execute).mockImplementation((async (
       sql: string
     ) => {
@@ -225,8 +227,11 @@ describe('keys that must wait', () => {
       if (sql.includes('replayed_at IS NULL')) {
         return pendingRows;
       }
-      // The column widths can't be read here, so every key column counts
-      // as the pre-migration 200 characters.
+      if (sql.includes('information_schema')) {
+        // The catalogue lists no widened column: every key column holds
+        // the pre-migration 200 characters.
+        return [];
+      }
       return undefined;
     }) as never);
   });

@@ -24,7 +24,7 @@ const ALERT_TITLE = 'Subscriptions TopUp Loop';
 async function replayDeferredWrites() {
   try {
     const summary = await replayTopUpLoopDeferredWrites();
-    if (summary.done || summary.skipped || summary.failed) {
+    if (summary.done || summary.skipped || summary.requeued || summary.failed) {
       logger.info(`[DEFERRED WRITES REPLAYED] ${JSON.stringify(summary)}`);
     }
   } catch (error) {

@@ -12,10 +12,11 @@ import {
   SUBSCRIPTIONS_NFTS_FINAL_TABLE,
   SUBSCRIPTIONS_NFTS_TABLE,
   SUBSCRIPTIONS_REDEEMED_TABLE,
+  SUBSCRIPTIONS_TOP_UP_TABLE,
   TRANSACTIONS_PROCESSED_SUBSCRIPTIONS_BLOCKS_TABLE,
   TRANSACTIONS_TABLE
 } from '@/constants';
-import { connect, disconnect, getDataSource } from '@/db';
+import { connect, disconnect, execSQLWithParams, getDataSource } from '@/db';
 import {
   NFTFinalSubscription,
   NFTFinalSubscriptionUpload,
@@ -28,8 +29,15 @@ import {
   SubscriptionTopUpLatestBlock
 } from '@/entities/ISubscription';
 import { Transaction } from '@/entities/ITransaction';
+import { DbQueryOptions } from '@/db-query.options';
 import { TransactionsProcessedSubscriptionsBlock } from '@/entities/ITransactionsProcessing';
-import { sqlExecutor } from '@/sql-executor';
+import {
+  ConnectionWrapper,
+  setSqlExecutor,
+  SqlExecutor,
+  sqlExecutor
+} from '@/sql-executor';
+import { persistTopUps } from '@/subscriptionsTopUpLoop/db.subscriptions_topup';
 import { markSubscriptionCoverageDirty } from '@/subscription-coverage/subscription-coverage-dirty';
 import {
   updateSubscription,
@@ -49,6 +57,7 @@ import {
 import { replayTopUpLoopDeferredWrites } from './subscription-deferred-replay';
 import {
   claimDeferredWrite,
+  deferralReason,
   deferSubscriptionWrites,
   executorSink,
   replayDeferredSubscriptionWrites
@@ -288,6 +297,39 @@ async function redeemedCount(): Promise<number> {
   return Number(rows[0].total ?? 0);
 }
 
+/**
+ * persistTopUps works on a TypeORM QueryRunner, as in production; the test
+ * harness's executor hands out mysql pool connections. This one runs the
+ * production executor's statements on the test's data source.
+ */
+class TypeOrmExecutor extends SqlExecutor {
+  execute<T>(
+    sql: string,
+    params?: Record<string, any>,
+    options?: DbQueryOptions
+  ): Promise<T[]> {
+    return execSQLWithParams(sql, params, options);
+  }
+
+  async executeNativeQueriesInTransaction<T>(
+    executable: (connection: ConnectionWrapper<any>) => Promise<T>
+  ): Promise<T> {
+    const runner = getDataSource().createQueryRunner();
+    await runner.connect();
+    await runner.startTransaction();
+    try {
+      const result = await executable({ connection: runner });
+      await runner.commitTransaction();
+      return result;
+    } catch (error) {
+      await runner.rollbackTransaction();
+      throw error;
+    } finally {
+      await runner.release();
+    }
+  }
+}
+
 beforeAll(async () => {
   await connect([
     SubscriptionBalance,
@@ -383,7 +425,7 @@ describeWithSeed(
       await expect(
         updateSubscription(LONG_KEY, MEMES_CONTRACT, CARD, true)
       ).rejects.toThrow(
-        'Subscription changes for this identity resume after the identity switch, after its earlier updates are applied.'
+        'Subscription changes for this identity resume once its earlier updates are applied, after the identity switch.'
       );
       const queued = await queue();
       expect(queued.map((q) => q.kind)).toEqual([
@@ -396,26 +438,30 @@ describeWithSeed(
         'key of 214 characters; an earlier write for the key is waiting'
       );
 
+      // The final row is skipped (the next daily build decides); the rest
+      // are made, in order, once.
       expect(await replayTopUpLoopDeferredWrites()).toEqual({
-        done: 4,
-        skipped: 0,
+        done: 3,
+        skipped: 1,
+        requeued: 0,
         waiting: 0,
         failed: 0
       });
       expect(await replayTopUpLoopDeferredWrites()).toEqual({
         done: 0,
         skipped: 0,
+        requeued: 0,
         waiting: 0,
         failed: 0
       });
-      expect(await keysIn(SUBSCRIPTIONS_NFTS_FINAL_TABLE)).toEqual([LONG_KEY]);
+      expect(await keysIn(SUBSCRIPTIONS_NFTS_FINAL_TABLE)).toEqual([]);
       expect(await keysIn(SUBSCRIPTIONS_NFTS_TABLE)).toEqual([LONG_KEY]);
       expect(await keysIn(SUBSCRIPTIONS_LOGS_TABLE)).toEqual([
         LONG_KEY,
         LONG_KEY
       ]);
       expect((await queue()).map((q) => q.outcome)).toEqual([
-        'DONE',
+        'SKIPPED',
         'DONE',
         'DONE',
         'DONE'
@@ -430,11 +476,11 @@ describeWithSeed(
       await deferSubscriptionWrites(
         [
           {
-            kind: 'FINAL_ROW',
+            kind: 'AUTO_SUBSCRIPTION',
             consolidationKey: SHORT_KEY,
             dedupe: 'bad',
             // subscribed_count is an int column: the insert fails.
-            payload: { ...finalRow(SHORT_KEY), subscribed_count: 'many' },
+            payload: { ...autoRow(SHORT_KEY), subscribed_count: 'many' },
             reason: { narrow: [], pendingEarlier: true }
           },
           {
@@ -450,11 +496,12 @@ describeWithSeed(
       expect(await replayTopUpLoopDeferredWrites()).toEqual({
         done: 0,
         skipped: 0,
+        requeued: 0,
         waiting: 1,
         failed: 1
       });
       expect((await queue()).map((q) => q.replayed_at)).toEqual([null, null]);
-      expect(await keysIn(SUBSCRIPTIONS_NFTS_FINAL_TABLE)).toEqual([]);
+      expect(await keysIn(SUBSCRIPTIONS_NFTS_TABLE)).toEqual([]);
       expect(await keysIn(SUBSCRIPTIONS_LOGS_TABLE)).toEqual([]);
 
       const [first] = await queue();
@@ -510,7 +557,13 @@ describeWithSeed(
         },
         { pageSize: 1 }
       );
-      expect(summary).toEqual({ done: 1, skipped: 0, waiting: 3, failed: 0 });
+      expect(summary).toEqual({
+        done: 1,
+        skipped: 0,
+        requeued: 0,
+        waiting: 3,
+        failed: 0
+      });
       expect(replayed).toEqual([(await queue())[3].sequence]);
     });
 
@@ -531,6 +584,7 @@ describeWithSeed(
       expect(await replayTopUpLoopDeferredWrites()).toEqual({
         done: 1,
         skipped: 0,
+        requeued: 0,
         waiting: 1,
         failed: 0
       });
@@ -586,6 +640,83 @@ describeWithSeed(
       expect((await replayTopUpLoopDeferredWrites()).done).toBe(0);
       expect(await keysIn(SUBSCRIPTIONS_BALANCES_TABLE)).toEqual([LONG_KEY]);
       expect(await balanceOf(LONG_KEY)).toBe(3);
+    });
+
+    it('reads a missing queue table as nothing waiting, so keys that fit are written as before', async () => {
+      await sqlExecutor.execute(
+        `RENAME TABLE ${SUBSCRIPTION_DEFERRED_WRITES_TABLE} TO ${SUBSCRIPTION_DEFERRED_WRITES_TABLE}_aside`
+      );
+      try {
+        expect(await deferralReason(SHORT_KEY, executorSink())).toBeNull();
+        await persistSubscriptions([autoRow(SHORT_KEY)], [log(SHORT_KEY)]);
+        expect(await keysIn(SUBSCRIPTIONS_NFTS_TABLE)).toEqual([SHORT_KEY]);
+      } finally {
+        await sqlExecutor.execute(
+          `RENAME TABLE ${SUBSCRIPTION_DEFERRED_WRITES_TABLE}_aside TO ${SUBSCRIPTION_DEFERRED_WRITES_TABLE}`
+        );
+      }
+    });
+
+    it('never inserts a held-back final row on replay: the next daily build decides', async () => {
+      await buildFinalList([LONG_KEY]);
+      await migrate();
+      // The balance the row was listed with is gone by the replay.
+      await setBalance(LONG_KEY, 0);
+      const summary = await replayTopUpLoopDeferredWrites();
+      expect(summary.skipped).toBe(1);
+      expect(await keysIn(SUBSCRIPTIONS_NFTS_FINAL_TABLE)).toEqual([]);
+      expect((await queue())[0]).toEqual(
+        expect.objectContaining({ kind: 'FINAL_ROW', outcome: 'SKIPPED' })
+      );
+    });
+
+    it('replays a held-back top-up once: one balance credit, one top-up row', async () => {
+      await migrate(ADDRESS_CONSOLIDATION_KEY);
+      for (const n of [1, 2, 3, 4, 5]) {
+        await sqlExecutor.execute(
+          `INSERT INTO ${ADDRESS_CONSOLIDATION_KEY} (address, consolidation_key) VALUES (:address, :key)`,
+          { address: wallet(n), key: LONG_KEY }
+        );
+      }
+      const topUp: SubscriptionTopUp = {
+        hash: '0x' + 'cd'.repeat(32),
+        block: 50,
+        transaction_date: new Date('2026-11-25T10:00:00Z'),
+        from_wallet: wallet(1),
+        amount: 0.2
+      };
+      const previous = sqlExecutor;
+      setSqlExecutor(new TypeOrmExecutor());
+      try {
+        expect(await persistTopUps([topUp])).toBe(true);
+        expect(await balanceOf(LONG_KEY)).toBeNull();
+        expect((await queue()).map((q) => q.kind)).toEqual(['TOP_UP']);
+
+        await migrate();
+        expect(await replayTopUpLoopDeferredWrites()).toEqual({
+          done: 1,
+          skipped: 0,
+          requeued: 0,
+          waiting: 0,
+          failed: 0
+        });
+        expect((await replayTopUpLoopDeferredWrites()).done).toBe(0);
+        // A second delivery of the same top-up is not credited again.
+        expect(await persistTopUps([topUp])).toBe(true);
+      } finally {
+        setSqlExecutor(previous);
+      }
+      expect(await balanceOf(LONG_KEY)).toBe(0.2);
+      const rows = await sqlExecutor.execute<{ count: number }>(
+        `SELECT COUNT(*) AS count FROM ${SUBSCRIPTIONS_TOP_UP_TABLE} WHERE hash = :hash`,
+        { hash: topUp.hash }
+      );
+      expect(Number(rows[0].count)).toBe(1);
+      const mode = await sqlExecutor.execute<{ automatic: number }>(
+        `SELECT automatic FROM ${SUBSCRIPTIONS_MODE_TABLE} WHERE consolidation_key = :key`,
+        { key: LONG_KEY }
+      );
+      expect(Number(mode[0].automatic)).toBe(1);
     });
 
     it('marks coverage for the keys that fit and skips the one that does not', async () => {

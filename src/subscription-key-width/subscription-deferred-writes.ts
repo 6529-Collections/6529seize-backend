@@ -77,21 +77,49 @@ export interface DeferralReason {
   readonly pendingEarlier: boolean;
 }
 
+/** MySQL's "table doesn't exist", however the driver wraps it. */
+function isMissingTable(error: unknown): boolean {
+  const e = error as {
+    code?: string;
+    errno?: number;
+    driverError?: { code?: string; errno?: number };
+  } | null;
+  return (
+    e?.code === 'ER_NO_SUCH_TABLE' ||
+    e?.errno === 1146 ||
+    e?.driverError?.code === 'ER_NO_SUCH_TABLE' ||
+    e?.driverError?.errno === 1146
+  );
+}
+
+/**
+ * Whether the key has a write waiting. Before dbMigrationsLoop has created
+ * the queue table nothing can be waiting, so a missing table reads as none
+ * and writes for keys that fit go on as before.
+ */
 async function hasPendingWrite(
   key: string,
   sink: DeferredWriteSink,
   beforeSequence?: number
 ): Promise<boolean> {
-  const rows = (await sink.query(
-    `SELECT sequence FROM ${SUBSCRIPTION_DEFERRED_WRITES_TABLE}
-      WHERE key_hash = ? AND replayed_at IS NULL${
-        beforeSequence === undefined ? '' : ' AND sequence < ?'
-      }
-      LIMIT 1`,
-    beforeSequence === undefined
-      ? [keyHash(key)]
-      : [keyHash(key), beforeSequence]
-  )) as unknown[];
+  let rows: unknown;
+  try {
+    rows = await sink.query(
+      `SELECT sequence FROM ${SUBSCRIPTION_DEFERRED_WRITES_TABLE}
+        WHERE key_hash = ? AND replayed_at IS NULL${
+          beforeSequence === undefined ? '' : ' AND sequence < ?'
+        }
+        LIMIT 1`,
+      beforeSequence === undefined
+        ? [keyHash(key)]
+        : [keyHash(key), beforeSequence]
+    );
+  } catch (error) {
+    if (isMissingTable(error)) {
+      return false;
+    }
+    throw error;
+  }
   return Array.isArray(rows) && rows.length > 0;
 }
 
@@ -116,10 +144,7 @@ export async function deferralReason(
 
 /** The most wallets an identity can have and still fit every table. */
 async function maxWalletsThatFit(): Promise<number> {
-  let width = Number.POSITIVE_INFINITY;
-  for (const table of SUBSCRIPTION_WRITE_TABLES) {
-    width = Math.min(width, await subscriptionKeyWidths.widthOf(table));
-  }
+  const width = await subscriptionKeyWidths.minWidth(SUBSCRIPTION_WRITE_TABLES);
   return Math.floor((width + 1) / KEY_CHARACTERS_PER_WALLET);
 }
 
@@ -133,7 +158,7 @@ export async function deferralMessage(reason: DeferralReason): Promise<string> {
   if (reason.narrow.length) {
     return `Subscriptions for identities with more than ${await maxWalletsThatFit()} wallets resume ${resumeText()}.`;
   }
-  return `Subscription changes for this identity resume ${resumeText()}, after its earlier updates are applied.`;
+  return `Subscription changes for this identity resume once its earlier updates are applied, ${resumeText()}.`;
 }
 
 export interface DeferredWrite {
@@ -156,7 +181,8 @@ function reasonText(write: DeferredWrite): string {
 /**
  * Queues writes in the caller's transaction (a rolled-back batch leaves no
  * entry behind) and logs each one. A write already queued under the same
- * dedupe key is replaced and made pending again, keeping its place.
+ * dedupe key is replaced, under the key it has now, and made pending again,
+ * keeping its place.
  */
 export async function deferSubscriptionWrites(
   writes: readonly DeferredWrite[],
@@ -168,7 +194,9 @@ export async function deferSubscriptionWrites(
       `INSERT INTO ${SUBSCRIPTION_DEFERRED_WRITES_TABLE}
         (kind, consolidation_key, key_hash, key_length, dedupe_key, payload, reason, created_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        ON DUPLICATE KEY UPDATE payload = VALUES(payload), reason = VALUES(reason),
+        ON DUPLICATE KEY UPDATE consolidation_key = VALUES(consolidation_key),
+          key_hash = VALUES(key_hash), key_length = VALUES(key_length),
+          payload = VALUES(payload), reason = VALUES(reason),
           replayed_at = NULL, outcome = NULL`,
       [
         write.kind,
@@ -188,6 +216,7 @@ export async function deferSubscriptionWrites(
   }
 }
 
+/** What a replay claims an entry as. */
 export type ReplayOutcome = 'DONE' | 'SKIPPED';
 
 /**
@@ -243,6 +272,9 @@ export type DeferredWriteReplayer = (
 export interface ReplaySummary {
   readonly done: number;
   readonly skipped: number;
+  /** Replayed, but the write had to wait again (its key must still wait). */
+  readonly requeued: number;
+  /** Not replayed this run: the key is too long, or an earlier entry blocks it. */
   readonly waiting: number;
   readonly failed: number;
 }
@@ -251,12 +283,21 @@ function parsePayload(payload: unknown): unknown {
   return typeof payload === 'string' ? JSON.parse(payload) : payload;
 }
 
+async function isPendingAgain(sequence: number): Promise<boolean> {
+  const rows = await sqlExecutor.execute<{ replayed_at: number | null }>(
+    `SELECT replayed_at FROM ${SUBSCRIPTION_DEFERRED_WRITES_TABLE} WHERE sequence = :sequence`,
+    { sequence }
+  );
+  return rows.length === 1 && rows[0].replayed_at === null;
+}
+
 /**
  * Replays queued writes in queue order, a page at a time through the whole
- * queue. A key's writes stay in order: once one of its entries can't be
- * replayed here (the key still doesn't fit, its kind is replayed by another
- * loop, or the replay failed), the key's later entries wait too. Other keys
- * go on.
+ * queue. Only keys that now fit every subscription table are read (the
+ * length filter is in the query); the rest count as waiting. A key's writes
+ * stay in order: once one of its entries can't be replayed here (its kind is
+ * replayed by another loop, the replay failed, or the write had to wait
+ * again), the key's later entries wait too. Other keys go on.
  */
 export async function replayDeferredSubscriptionWrites(
   replayers: Partial<Record<DeferredWriteKind, DeferredWriteReplayer>>,
@@ -264,7 +305,21 @@ export async function replayDeferredSubscriptionWrites(
 ): Promise<ReplaySummary> {
   const pageSize = params.pageSize ?? 100;
   const maxEntries = params.maxEntries ?? 1000;
-  const summary = { done: 0, skipped: 0, waiting: 0, failed: 0 };
+  const maxLength = await subscriptionKeyWidths.minWidth(
+    SUBSCRIPTION_WRITE_TABLES
+  );
+  const [tooLong] = await sqlExecutor.execute<{ count: number | string }>(
+    `SELECT COUNT(*) AS count FROM ${SUBSCRIPTION_DEFERRED_WRITES_TABLE}
+      WHERE replayed_at IS NULL AND key_length > :maxLength`,
+    { maxLength }
+  );
+  const summary = {
+    done: 0,
+    skipped: 0,
+    requeued: 0,
+    waiting: Number(tooLong?.count ?? 0),
+    failed: 0
+  };
   const blockedKeys = new Set<string>();
   let after = 0;
   let seen = 0;
@@ -272,10 +327,10 @@ export async function replayDeferredSubscriptionWrites(
     const page = await sqlExecutor.execute<PendingDeferredWrite>(
       `SELECT sequence, kind, consolidation_key, key_hash, payload
          FROM ${SUBSCRIPTION_DEFERRED_WRITES_TABLE}
-        WHERE replayed_at IS NULL AND sequence > :after
+        WHERE replayed_at IS NULL AND sequence > :after AND key_length <= :maxLength
         ORDER BY sequence ASC
         LIMIT :pageSize`,
-      { after, pageSize }
+      { after, maxLength, pageSize }
     );
     if (page.length === 0) {
       break;
@@ -285,23 +340,17 @@ export async function replayDeferredSubscriptionWrites(
       after = Number(row.sequence);
       const write = { ...row, payload: parsePayload(row.payload) };
       const replayer = replayers[write.kind];
-      if (
-        blockedKeys.has(write.key_hash) ||
-        !replayer ||
-        (
-          await subscriptionKeyWidths.narrowFor(
-            write.consolidation_key,
-            SUBSCRIPTION_WRITE_TABLES
-          )
-        ).length > 0
-      ) {
+      if (blockedKeys.has(write.key_hash) || !replayer) {
         blockedKeys.add(write.key_hash);
         summary.waiting++;
         continue;
       }
       try {
         const outcome = await replayer(write);
-        if (outcome === 'DONE') {
+        if (outcome === 'DONE' && (await isPendingAgain(write.sequence))) {
+          blockedKeys.add(write.key_hash);
+          summary.requeued++;
+        } else if (outcome === 'DONE') {
           summary.done++;
         } else if (outcome === 'SKIPPED') {
           summary.skipped++;

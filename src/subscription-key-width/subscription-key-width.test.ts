@@ -4,7 +4,8 @@ import {
 } from '@/constants';
 import {
   SUBSCRIPTION_KEY_FALLBACK_WIDTH,
-  SubscriptionKeyWidths
+  SubscriptionKeyWidths,
+  SubscriptionKeyWidthsUnknownError
 } from './subscription-key-width';
 
 jest.mock('@/logging', () => ({
@@ -37,16 +38,44 @@ describe('SubscriptionKeyWidths', () => {
     expect(load).toHaveBeenCalledTimes(2);
   });
 
-  it('uses 200 after a failed read and retries a minute later', async () => {
+  it('before any read works, passes keys of up to 200 and throws for longer ones, then retries a minute later', async () => {
     let now = 0;
     const load = jest
       .fn()
       .mockRejectedValueOnce(new Error('no catalogue'))
       .mockResolvedValue(new Map([[SUBSCRIPTIONS_NFTS_TABLE, 666]]));
     const widths = new SubscriptionKeyWidths(load, () => now);
+    const tables = [SUBSCRIPTIONS_NFTS_TABLE];
     expect(await widths.widthOf(SUBSCRIPTIONS_NFTS_TABLE)).toBe(200);
+    expect(await widths.narrowFor(wallets(4), tables)).toEqual([]);
+    await expect(widths.narrowFor(wallets(5), tables)).rejects.toThrow(
+      SubscriptionKeyWidthsUnknownError
+    );
     now += 60 * 1000 + 1;
     expect(await widths.widthOf(SUBSCRIPTIONS_NFTS_TABLE)).toBe(666);
+    expect(await widths.narrowFor(wallets(5), tables)).toEqual([]);
+  });
+
+  it('keeps the last widths read when a later read fails', async () => {
+    let now = 0;
+    const load = jest
+      .fn()
+      .mockResolvedValueOnce(
+        new Map([
+          [SUBSCRIPTIONS_NFTS_TABLE, 666],
+          [SUBSCRIPTIONS_REDEEMED_TABLE, 567]
+        ])
+      )
+      .mockRejectedValue(new Error('no catalogue'));
+    const widths = new SubscriptionKeyWidths(load, () => now);
+    const tables = [SUBSCRIPTIONS_NFTS_TABLE, SUBSCRIPTIONS_REDEEMED_TABLE];
+    expect(await widths.minWidth(tables)).toBe(567);
+    now += 5 * 60 * 1000 + 1;
+    expect(await widths.minWidth(tables)).toBe(567);
+    expect(await widths.narrowFor(wallets(14), tables)).toEqual([
+      { table: SUBSCRIPTIONS_REDEEMED_TABLE, width: 567 }
+    ]);
+    expect(load).toHaveBeenCalledTimes(2);
   });
 
   it('names the tables too narrow for a key, by wallet count', async () => {

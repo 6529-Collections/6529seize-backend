@@ -28,12 +28,16 @@ jest.mock('@/logging', () => ({
 }));
 jest.mock('@/sql-executor', () => ({ sqlExecutor: { execute: jest.fn() } }));
 jest.mock('./subscription-key-width', () => ({
-  subscriptionKeyWidths: { narrowFor: jest.fn(), widthOf: jest.fn() }
+  subscriptionKeyWidths: {
+    narrowFor: jest.fn(),
+    widthOf: jest.fn(),
+    minWidth: jest.fn()
+  }
 }));
 
 const execute = sqlExecutor.execute as jest.Mock;
 const narrowFor = subscriptionKeyWidths.narrowFor as jest.Mock;
-const widthOf = subscriptionKeyWidths.widthOf as jest.Mock;
+const minWidth = subscriptionKeyWidths.minWidth as jest.Mock;
 const LONG_KEY = 'k'.repeat(250);
 const sha = (v: string) => createHash('sha256').update(v).digest('hex');
 
@@ -64,7 +68,10 @@ describe('deferred subscription writes', () => {
     );
     const [sql, values] = sink.query.mock.calls[0];
     expect(sql).toContain(`INSERT INTO ${SUBSCRIPTION_DEFERRED_WRITES_TABLE}`);
-    expect(sql).toContain('ON DUPLICATE KEY UPDATE');
+    // A repeat moves the entry to the key the write has now.
+    expect(sql).toMatch(
+      /ON DUPLICATE KEY UPDATE consolidation_key = VALUES\(consolidation_key\),\s+key_hash = VALUES\(key_hash\), key_length = VALUES\(key_length\)/
+    );
     expect(values).toEqual([
       'FINAL_ROW',
       LONG_KEY,
@@ -115,10 +122,23 @@ describe('deferred subscription writes', () => {
     );
   });
 
+  it('reads a missing queue table as nothing waiting, and other errors as errors', async () => {
+    const missing = Object.assign(new Error("Table doesn't exist"), {
+      code: 'ER_NO_SUCH_TABLE',
+      errno: 1146
+    });
+    const sink = { query: jest.fn().mockRejectedValue(missing) };
+    expect(await deferralReason('short', sink)).toBeNull();
+    // TypeORM wraps the driver's error.
+    sink.query.mockRejectedValue({ driverError: { errno: 1146 } });
+    expect(await deferralReason('short', sink)).toBeNull();
+    sink.query.mockRejectedValue(new Error('Lock wait timeout exceeded'));
+    await expect(deferralReason('short', sink)).rejects.toThrow('Lock wait');
+  });
+
   it('tells a person how many wallets fit and when changes resume', async () => {
-    widthOf.mockImplementation(async (table: string) =>
-      table === SUBSCRIPTIONS_REDEEMED_TABLE ? 567 : 666
-    );
+    // subscriptions_redeemed, the narrowest, holds 567 characters.
+    minWidth.mockResolvedValue(567);
     const narrow = {
       narrow: [{ table: SUBSCRIPTIONS_REDEEMED_TABLE, width: 567 }],
       pendingEarlier: false
@@ -128,7 +148,7 @@ describe('deferred subscription writes', () => {
     );
     process.env.SUBSCRIPTIONS_WIDE_IDENTITY_RESUME_ON = '26 Nov 2026';
     expect(await deferralMessage({ narrow: [], pendingEarlier: true })).toBe(
-      'Subscription changes for this identity resume on 26 Nov 2026, after its earlier updates are applied.'
+      'Subscription changes for this identity resume once its earlier updates are applied, on 26 Nov 2026.'
     );
   });
 
@@ -144,7 +164,7 @@ describe('deferred subscription writes', () => {
     expect(await claimDeferredWrite(6, 'DONE', sink)).toBe(false);
   });
 
-  it('replays in queue order, pages through the queue, and keeps each key in order', async () => {
+  it('replays keys that fit in queue order, pages through the queue, and keeps each key in order', async () => {
     const entry = (sequence: number, kind: string, key: string) => ({
       sequence,
       kind,
@@ -152,19 +172,30 @@ describe('deferred subscription writes', () => {
       key_hash: sha(key),
       payload: '{}'
     });
-    execute
-      .mockResolvedValueOnce([
-        entry(1, 'LOG', 'a'),
-        entry(2, 'REDEMPTION', 'b')
-      ])
-      .mockResolvedValueOnce([entry(3, 'LOG', 'b'), entry(4, 'LOG', LONG_KEY)])
-      .mockResolvedValueOnce([entry(5, 'LOG', 'c'), entry(6, 'LOG', 'd')])
-      .mockResolvedValueOnce([]);
-    narrowFor.mockImplementation(async (key: string) =>
-      key === LONG_KEY ? [{ table: SUBSCRIPTIONS_NFTS_TABLE, width: 200 }] : []
+    const pages = [
+      [entry(1, 'LOG', 'a'), entry(2, 'REDEMPTION', 'b')],
+      [entry(3, 'LOG', 'b'), entry(4, 'LOG', 'e')],
+      [entry(5, 'LOG', 'c'), entry(6, 'LOG', 'd')],
+      []
+    ];
+    const pageParams: Array<Record<string, unknown>> = [];
+    minWidth.mockResolvedValue(567);
+    execute.mockImplementation(
+      async (sql: string, params: Record<string, unknown>) => {
+        if (sql.includes('COUNT(*)')) {
+          return [{ count: 2 }];
+        }
+        if (sql.includes('WHERE sequence = :sequence')) {
+          // Entry 4 was replayed but had to wait again.
+          return [{ replayed_at: params.sequence === 4 ? null : 9 }];
+        }
+        pageParams.push(params);
+        return pages.shift();
+      }
     );
     const log = jest
       .fn()
+      .mockResolvedValueOnce('DONE')
       .mockResolvedValueOnce('DONE')
       .mockRejectedValueOnce(new Error('boom'))
       .mockResolvedValueOnce(null);
@@ -172,13 +203,26 @@ describe('deferred subscription writes', () => {
       { LOG: log },
       { pageSize: 2 }
     );
-    // a done; b waits (its first entry is a redemption, replayed elsewhere)
-    // and so does its later log; the long key waits; c fails; d was claimed
-    // by another run.
-    expect(summary).toEqual({ done: 1, skipped: 0, waiting: 3, failed: 1 });
-    expect(log.mock.calls.map(([w]) => w.sequence)).toEqual([1, 5, 6]);
-    expect(execute.mock.calls.map(([, params]) => params.after)).toEqual([
-      0, 2, 4, 6
-    ]);
+    // a done; b waits behind its redemption (replayed elsewhere), and so
+    // does its later log; e is re-queued; c fails; d was claimed by another
+    // run; two entries are too long for the tables.
+    expect(summary).toEqual({
+      done: 1,
+      skipped: 0,
+      requeued: 1,
+      waiting: 4,
+      failed: 1
+    });
+    expect(log.mock.calls.map(([w]) => w.sequence)).toEqual([1, 4, 5, 6]);
+    expect(pageParams).toEqual(
+      [0, 2, 4, 6].map((after) => ({
+        after,
+        maxLength: 567,
+        pageSize: 2
+      }))
+    );
+    expect(
+      execute.mock.calls.find(([sql]) => sql.includes('LIMIT'))?.[0]
+    ).toContain('key_length <= :maxLength');
   });
 });

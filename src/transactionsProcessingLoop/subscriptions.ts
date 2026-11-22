@@ -428,24 +428,36 @@ async function replayDeferredRedemptions(): Promise<void> {
           transaction: Transaction;
           tokenIndex: number;
         };
-        return getDataSource().transaction(async (entityManager) => {
-          if (
-            !(await claimDeferredWrite(write.sequence, 'DONE', entityManager))
-          ) {
-            return null;
+        // This token's notices and dirty keys count only once its
+        // transaction has committed.
+        const notices: SubscriptionWaveNotification[] = [];
+        const dirty = new Set<string>();
+        const outcome = await getDataSource().transaction(
+          async (entityManager) => {
+            if (
+              !(await claimDeferredWrite(write.sequence, 'DONE', entityManager))
+            ) {
+              return null;
+            }
+            await processSubscription(
+              transaction,
+              entityManager,
+              notices,
+              dirty,
+              {
+                tokenIndex,
+                beforeSequence: write.sequence
+              }
+            );
+            return 'DONE' as const;
           }
-          await processSubscription(
-            transaction,
-            entityManager,
-            waveNotifications,
-            dirtyConsolidationKeys,
-            { tokenIndex, beforeSequence: write.sequence }
-          );
-          return 'DONE';
-        });
+        );
+        waveNotifications.push(...notices);
+        dirty.forEach((key) => dirtyConsolidationKeys.add(key));
+        return outcome;
       }
     });
-    if (summary.done || summary.failed) {
+    if (summary.done || summary.requeued || summary.failed) {
       logger.info(`[DEFERRED REDEMPTIONS REPLAYED] ${JSON.stringify(summary)}`);
     }
   } catch (error) {

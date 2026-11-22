@@ -2954,7 +2954,10 @@ writer's own transaction and logged with `SUBSCRIPTION_KEY_DEFERRED`. An
 identity is therefore either fully on the legacy tables or fully waiting: it
 is never on a final list without a balance to charge. Widths come from
 `information_schema`, cached for five minutes; a failed read keeps the last
-widths read (200 if none were).
+widths read. A process that has never read them treats every column as 200
+characters wide, and a write with a longer key fails (and is retried) rather
+than wait. Until dbMigrationsLoop has created the queue table, the "earlier
+write waiting" check reads as none, so keys that fit are written as before.
 
 - Daily build: a waiting key's final row, automatic row and every log line
   wait together, and the published list is built after that split, so the
@@ -2975,23 +2978,34 @@ write, so a re-run of the daily build or a retried batch replaces its entry
 instead of adding one. `key_hash` finds a key's waiting entries.
 
 **Replay.** With `FEATURE_SUBSCRIPTION_DEFERRED_REPLAY=true` (off by default),
-the `subscriptionsTopUpLoop` replays waiting writes whose key now fits, in
-queue order, paging through the whole queue; redemptions are replayed by the
-transactions loop inside its own redemption transaction. Each replay claims
-its entry (row lock, then mark) in the transaction that makes the write, so a
-write is made once and a failed write leaves its entry waiting. Once one of a
-key's entries cannot be replayed, the key's later entries wait too. A write
-that no longer applies (a card already dropped, a row already there) is marked
-skipped. Rollback: unset the flag; the queue keeps every write.
+the `subscriptionsTopUpLoop` replays waiting writes whose key now fits (the
+length filter is in the query), in queue order, paging through the whole
+queue; redemptions are replayed by the transactions loop inside its own
+redemption transaction, and their wave notices and coverage markers go out
+only after it commits. Each replay claims its entry (row lock, then mark) in
+the transaction that makes the write, so a write is made once and a failed
+write leaves its entry waiting. A replayed write that has to wait again (its
+key changed, or must still wait) is counted as re-queued. Once one of a key's
+entries cannot be replayed, the key's later entries wait too. A final-list
+row is never inserted as it stood at the build: it is marked skipped and the
+next daily build decides. Other writes that no longer apply (a card already
+dropped, a row already there) are marked skipped too. Rollback: unset the
+flag; the queue keeps every write.
 
-**Rebuild.** Every entry can be derived again from its source: top-ups from
-Ethereum (the top-up loop skips hashes already credited), redemptions from the
-airdrop in the `transactions` table (the redemption loop charges it again when
-its cursor is set back before the airdrop's block; it re-charges every later
-airdrop too, so this is safe only when the lost airdrop is the last one), final
-and automatic rows and logs by the next daily build, and consolidations by the
-next membership change. A key with a final row always fits every table, so a
-redemption waits only after the key columns are narrowed again.
+**Rebuild.** Every entry can be derived again from its source:
+
+- top-ups from Ethereum, once the top-up loop's cursor
+  (`subscriptions_top_up_latest_block`) is set back before the lost top-up's
+  block; hashes already credited are skipped, so nothing is credited twice;
+- redemptions from the airdrop in the `transactions` table: the redemption
+  loop charges it again when its cursor is set back before the airdrop's
+  block, but it re-charges every later airdrop too, so this is safe only
+  when the lost airdrop is the last one;
+- final and automatic rows and logs by the next daily build;
+- consolidations only at that identity's next membership change.
+
+A key with a final row fits every table, so a redemption waits only if the
+key columns are narrowed again, or behind an earlier write of the same key.
 
 ## Cross-wave message search
 

@@ -38,15 +38,36 @@ export interface NarrowColumn {
 type WidthLoader = () => Promise<Map<string, number>>;
 
 /**
+ * The widths have never been read in this process, so a key over the old
+ * 200 characters can't be judged: the write fails, to be retried, rather
+ * than being held back for a reason that may not be true.
+ */
+export class SubscriptionKeyWidthsUnknownError extends Error {
+  constructor(keyLength: number) {
+    super(
+      `Subscription key column widths are unknown; a key of ${keyLength} characters can't be written or held back yet`
+    );
+    // The ES5 target loses the subclass on Error unless it is set back.
+    Object.setPrototypeOf(this, SubscriptionKeyWidthsUnknownError.prototype);
+    this.name = 'SubscriptionKeyWidthsUnknownError';
+  }
+}
+
+/**
  * The width of each subscription table's key column, read from the
  * database's own catalogue and cached, so writers follow the key-width
  * migration as soon as it is applied. A table the catalogue does not list
- * counts as the old width of 200. A failed read keeps the last widths read,
- * or 200 if none were, and is retried a minute later.
+ * counts as the old width of 200. A failed read keeps the last widths read
+ * and is retried a minute later. If no read has ever worked in this process,
+ * keys of up to 200 characters (which fit any version of the tables) go on,
+ * and a longer key throws SubscriptionKeyWidthsUnknownError.
  */
 export class SubscriptionKeyWidths {
-  private cache: { widths: Map<string, number>; expiresAtMs: number } | null =
-    null;
+  private cache: {
+    widths: Map<string, number>;
+    known: boolean;
+    expiresAtMs: number;
+  } | null = null;
   private lastGood: Map<string, number> | null = null;
 
   constructor(
@@ -55,15 +76,32 @@ export class SubscriptionKeyWidths {
   ) {}
 
   async widthOf(table: string): Promise<number> {
-    const widths = await this.widths();
+    const { widths } = await this.widths();
     return widths.get(table) ?? SUBSCRIPTION_KEY_FALLBACK_WIDTH;
   }
 
-  /** The tables whose key column is too narrow for `key`. */
+  /** The narrowest key column among `tables`. */
+  async minWidth(tables: readonly string[]): Promise<number> {
+    let width = Number.POSITIVE_INFINITY;
+    for (const table of tables) {
+      width = Math.min(width, await this.widthOf(table));
+    }
+    return width;
+  }
+
+  /**
+   * The tables whose key column is too narrow for `key`. Throws
+   * SubscriptionKeyWidthsUnknownError for a key over 200 characters while
+   * the widths have never been read.
+   */
   async narrowFor(
     key: string,
     tables: readonly string[]
   ): Promise<NarrowColumn[]> {
+    const { known } = await this.widths();
+    if (!known && key.length > SUBSCRIPTION_KEY_FALLBACK_WIDTH) {
+      throw new SubscriptionKeyWidthsUnknownError(key.length);
+    }
     const narrow: NarrowColumn[] = [];
     for (const table of tables) {
       const width = await this.widthOf(table);
@@ -82,27 +120,35 @@ export class SubscriptionKeyWidths {
     this.cache = null;
   }
 
-  private async widths(): Promise<Map<string, number>> {
+  private async widths(): Promise<{
+    widths: Map<string, number>;
+    known: boolean;
+  }> {
     if (this.cache && this.cache.expiresAtMs > this.now()) {
-      return this.cache.widths;
+      return this.cache;
     }
     try {
       const widths = await this.load();
       this.lastGood = widths;
-      this.cache = { widths, expiresAtMs: this.now() + CACHE_TTL_MS };
+      this.cache = {
+        widths,
+        known: true,
+        expiresAtMs: this.now() + CACHE_TTL_MS
+      };
     } catch (error) {
       logger.warn(
         this.lastGood
           ? 'Could not read the subscription key column widths; keeping the last widths read'
-          : `Could not read the subscription key column widths; using ${SUBSCRIPTION_KEY_FALLBACK_WIDTH}`,
+          : `Could not read the subscription key column widths; keys over ${SUBSCRIPTION_KEY_FALLBACK_WIDTH} characters wait for a read`,
         error
       );
       this.cache = {
         widths: this.lastGood ?? new Map(),
+        known: this.lastGood !== null,
         expiresAtMs: this.now() + FAILURE_TTL_MS
       };
     }
-    return this.cache.widths;
+    return this.cache;
   }
 }
 

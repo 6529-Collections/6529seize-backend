@@ -1,11 +1,9 @@
 import {
   MEMES_CONTRACT,
   SUBSCRIPTIONS_LOGS_TABLE,
-  SUBSCRIPTIONS_NFTS_FINAL_TABLE,
   SUBSCRIPTIONS_NFTS_TABLE
 } from '@/constants';
 import {
-  NFTFinalSubscription,
   NFTSubscription,
   SubscriptionLog,
   SubscriptionTopUp
@@ -65,38 +63,17 @@ function inTransaction(
   });
 }
 
-const insertFinalRow: DeferredWriteReplayer = (entry) => {
-  const row = entry.payload as NFTFinalSubscription;
-  return inTransaction(
+/**
+ * A final-list row is never inserted as it stood at the build: the balance
+ * or the list may have moved since. The entry is claimed as SKIPPED and the
+ * next daily build, which rebuilds the card's list, decides.
+ */
+const skipFinalRow: DeferredWriteReplayer = (entry) =>
+  inTransaction(
     entry.sequence,
-    async (sink) =>
-      (await cardStillUpcoming(row.contract, row.token_id)) &&
-      !(await rowExists(sink, SUBSCRIPTIONS_NFTS_FINAL_TABLE, row))
-        ? 'DONE'
-        : 'SKIPPED',
-    async (sink) => {
-      await sink.query(
-        `INSERT INTO ${SUBSCRIPTIONS_NFTS_FINAL_TABLE}
-          (consolidation_key, contract, token_id, subscribed_count, airdrop_address,
-           balance, subscribed_at, phase, phase_subscriptions, phase_position, redeemed_count)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          row.consolidation_key,
-          row.contract,
-          row.token_id,
-          row.subscribed_count,
-          row.airdrop_address,
-          row.balance,
-          row.subscribed_at,
-          row.phase ?? null,
-          row.phase_subscriptions ?? -1,
-          row.phase_position ?? -1,
-          row.redeemed_count ?? 0
-        ]
-      );
-    }
+    async () => 'SKIPPED',
+    async () => undefined
   );
-};
 
 const insertAutomaticRow: DeferredWriteReplayer = (entry) => {
   const row = entry.payload as NFTSubscription;
@@ -174,7 +151,7 @@ const TOP_UP_LOOP_REPLAYERS: Partial<
 > = {
   TOP_UP: replayTopUp,
   AUTO_SUBSCRIPTION: insertAutomaticRow,
-  FINAL_ROW: insertFinalRow,
+  FINAL_ROW: skipFinalRow,
   LOG: insertLog,
   CONSOLIDATION: replayConsolidation
 };
