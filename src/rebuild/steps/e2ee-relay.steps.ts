@@ -398,6 +398,8 @@ async function seedReports(
 /**
  * The fixture profiles the probes sign in as: an identity and its wallet's
  * consolidation key each (identity tables, kept through this check's drop).
+ * A wallet another seed already holds stops the seed: the probes would sign
+ * in as that seed's profile and fail.
  */
 async function seedIdentities(): Promise<void> {
   for (const { profileId, wallet } of Object.values(E2EE_CHECK_PROFILES)) {
@@ -415,6 +417,18 @@ async function seedIdentities(): Promise<void> {
        values (:wallet, :wallet)`,
       { wallet }
     );
+    const holders = await dbSupplier().execute<{ profile_id: string }>(
+      `select i.profile_id from address_consolidation_keys a
+       join identities i on i.consolidation_key = a.consolidation_key
+       where a.address = :wallet`,
+      { wallet }
+    );
+    if (holders.length !== 1 || holders[0].profile_id !== profileId) {
+      const found = holders.map((h) => h.profile_id).join(', ') || 'nobody';
+      throw new Error(
+        `Wallet ${wallet} signs in as ${found}, not ${profileId}: another seed holds it`
+      );
+    }
   }
 }
 
