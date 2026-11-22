@@ -169,6 +169,11 @@ describe('ChainGatewayClient reads', () => {
     expect(param(later[1], 'height')).toBe('1201');
   });
 
+  it("reads the chain's network id with the head", async () => {
+    const { client } = setup(() => status(1200));
+    expect((await client.getHead()).network).toBe('0x' + '22'.repeat(32));
+  });
+
   it('reads at a given height without asking for the head', async () => {
     const { client, calls } = setup((call) => ({
       status: 200,
@@ -528,6 +533,8 @@ describe('profile documents', () => {
     expect(bytesMatchCid('0x01551340' + digest + digest, doc)).toBe(false);
     expect(bytesMatchCid('0x015512' + '1f' + digest.slice(2), doc)).toBe(false);
     expect(bytesMatchCid('0x1220' + digest, doc)).toBe(false);
+    // A 31-byte digest under a 32-byte length.
+    expect(bytesMatchCid('0x01551220' + digest.slice(2), doc)).toBe(false);
     // CID version 2.
     expect(bytesMatchCid('0x02551220' + digest, doc)).toBe(false);
   });
@@ -542,9 +549,12 @@ describe('profile documents', () => {
 
   it('fetches a document once and checks it', async () => {
     const { client, calls } = setup(() => ({ status: 200, bytes: doc }));
-    expect(
-      await client.getProfileDoc(cid.toUpperCase().replace('0X', '0x'))
-    ).toEqual(doc);
+    const first = await client.getProfileDoc(
+      cid.toUpperCase().replace('0X', '0x')
+    );
+    expect(first).toEqual(doc);
+    first!.fill(0);
+    // The cache hands out copies.
     expect(await client.getProfileDoc(cid)).toEqual(doc);
     expect(calls).toHaveLength(1);
     expect(path(calls[0])).toBe(`/v1/docs/${cidPath(cid)}`);
@@ -674,6 +684,13 @@ describe('profile documents', () => {
 });
 
 describe('document cache', () => {
+  it('drops the old value when a key is set to one too heavy to keep', () => {
+    const cache = new LruCache<Buffer>(10, (it) => it.length, 10);
+    cache.set('a', Buffer.alloc(4));
+    cache.set('a', Buffer.alloc(11));
+    expect(cache.get('a')).toBeUndefined();
+  });
+
   it('weighs a document set twice once', () => {
     const cache = new LruCache<Buffer>(10, (it) => it.length, 10);
     cache.set('a', Buffer.alloc(4));

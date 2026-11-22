@@ -150,8 +150,8 @@ export class LruCache<V> {
   }
 
   set(key: string, value: V): void {
-    if (this.capacity <= 0 || this.weigh(value) > this.maxWeight) return;
     this.remove(key);
+    if (this.capacity <= 0 || this.weigh(value) > this.maxWeight) return;
     this.map.set(key, value);
     this.weight += this.weigh(value);
     while (this.map.size > this.capacity || this.weight > this.maxWeight) {
@@ -180,7 +180,10 @@ export class LruCache<V> {
 
 /** Cached documents take at most this many bytes in all. */
 const DOC_CACHE_TOTAL_BYTES = 32 * 1024 * 1024;
-/** A profile document's largest size: larger documents are not cached. */
+/**
+ * A profile document's largest size (524,288 bytes, the ProfileDoc.v1
+ * limit): larger documents, such as profile site files, are not cached.
+ */
 const DOC_CACHE_ENTRY_BYTES = 524_288;
 /** CIDv1, codec raw (0x55), multihash sha2-256 (0x12) of 32 bytes. */
 const RAW_SHA256_CID_PREFIX = [0x01, 0x55, 0x12, 0x20];
@@ -285,17 +288,17 @@ export function rawCidHexOf(bytes: Uint8Array): string {
   );
 }
 
+/** An answer the client can't read (the gateway's, not the caller's fault). */
+function badAnswer(path: string, what: string): ChainGatewayError {
+  return new ChainGatewayError(`${path}: ${what}`, 200, 'bad_answer', path);
+}
+
 /** The CID the document store answered with, as hex; bad_answer if unreadable. */
 function storedCidHex(cid: string, path: string): string {
   try {
     return cidHex(cid);
   } catch {
-    throw new ChainGatewayError(
-      `${path}: the store answered with a CID that can't be read`,
-      200,
-      'bad_answer',
-      path
-    );
+    throw badAnswer(path, `the store answered with a CID that can't be read`);
   }
 }
 
@@ -333,12 +336,7 @@ function bindingChanges(
   path: string
 ): { height: number; principalId: string | null }[] {
   if (!Array.isArray(value)) {
-    throw new ChainGatewayError(
-      `${path}: no binding changes in the answer`,
-      200,
-      'bad_answer',
-      path
-    );
+    throw badAnswer(path, `no binding changes in the answer`);
   }
   let previous = -1;
   const changes: unknown[] = value;
@@ -350,12 +348,7 @@ function bindingChanges(
       principal === null ||
       (typeof principal === 'string' && /^0x[0-9a-f]{64}$/i.test(principal));
     if (!Number.isSafeInteger(height) || height <= previous || !principalOk) {
-      throw new ChainGatewayError(
-        `${path}: a binding change that can't be read`,
-        200,
-        'bad_answer',
-        path
-      );
+      throw badAnswer(path, `a binding change that can't be read`);
     }
     previous = height;
     return {
@@ -381,12 +374,7 @@ function heightRanges(value: unknown, path: string): [number, number][] {
       (from as number) < 0 ||
       (to as number) < (from as number)
     ) {
-      throw new ChainGatewayError(
-        `${path}: a height range that can't be read`,
-        200,
-        'bad_answer',
-        path
-      );
+      throw badAnswer(path, `a height range that can't be read`);
     }
     return [from as number, to as number];
   });
@@ -922,11 +910,9 @@ export class ChainGatewayClient {
       lower(answer.data.wallet ?? '') !== lower(wallet) ||
       !Number.isSafeInteger(readHeight)
     ) {
-      throw new ChainGatewayError(
-        `${path}: the answer is for another wallet or has no read height`,
-        200,
-        'bad_answer',
-        path
+      throw badAnswer(
+        path,
+        `the answer is for another wallet or has no read height`
       );
     }
     return {
@@ -1152,7 +1138,8 @@ export class ChainGatewayClient {
     }
     const cached = this.docs.get(key);
     if (cached) {
-      return cached;
+      // A copy: a caller that changes it can't change the cache.
+      return Buffer.from(cached);
     }
     const path = `/v1/docs/${cidPath(key)}`;
     const { status, json, bytes } = await this.send(
@@ -1177,7 +1164,7 @@ export class ChainGatewayClient {
       );
     }
     if (bytes.length <= DOC_CACHE_ENTRY_BYTES) {
-      this.docs.set(key, bytes);
+      this.docs.set(key, Buffer.from(bytes));
     }
     return bytes;
   }
