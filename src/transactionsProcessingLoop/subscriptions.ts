@@ -402,7 +402,8 @@ async function deferRedemption(
   const reason = await deferralReason(
     finalSubscription.consolidation_key,
     entityManager,
-    options.beforeSequence
+    options.beforeSequence,
+    { locking: true }
   );
   if (!reason) {
     return false;

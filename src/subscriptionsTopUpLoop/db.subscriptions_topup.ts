@@ -87,7 +87,8 @@ export async function persistTopUps(
       const reason = await deferralReason(
         consolidationKey,
         sink,
-        options.replaySequence
+        options.replaySequence,
+        { locking: true }
       );
       if (reason) {
         await deferSubscriptionWrites(
