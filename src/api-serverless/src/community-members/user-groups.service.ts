@@ -2825,19 +2825,24 @@ export class UserGroupsService {
     params: Record<string, any>
   ): string {
     const { min, max } = group.level;
-    // All raw scores map to levels 0..100. A negative upper bound is
-    // impossible, while a nonpositive lower bound is vacuous.
+    // Every raw score maps to a level of 0 or more, with no upper limit. A
+    // negative upper bound is impossible, while a nonpositive lower bound is
+    // vacuous.
     if (max !== null && max < 0) {
       return 'and false ';
     }
-    // Strictly increasing borders make reversed ranges empty:
+    // Borders never decrease (from level 603 up they all equal
+    // Number.MAX_SAFE_INTEGER), so reversed ranges stay empty:
     // min > max implies border(min) >= border(max + 1).
     let sql = '';
     if (min !== null && min > 0) {
       sql += 'and i.level_raw >= :level_min ';
       params.level_min = getLevelComponentsBorderByLevel(min);
     }
-    if (max !== null && max < 100) {
+    if (max !== null) {
+      // Level max ends just below the next level's border. Past level 602
+      // the border is not a safe integer (above 2^53 - 1), so it reads as
+      // Number.MAX_SAFE_INTEGER, which no score reaches.
       sql += 'and i.level_raw < :level_max ';
       params.level_max = getLevelComponentsBorderByLevel(max + 1);
     }

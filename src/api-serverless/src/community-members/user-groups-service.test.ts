@@ -1263,6 +1263,31 @@ describe('UserGroupsService draft membership SQL', () => {
     expect(result!.params).toEqual({ level_max: 25 });
   });
 
+  it('bounds levels above 100 by their raw score borders', async () => {
+    const service = buildService();
+    const paramsFor = async (level: {
+      min: number | null;
+      max: number | null;
+    }) =>
+      (await service.getSqlAndParamsForPreview(
+        buildPreviewGroup({ level }),
+        {}
+      ))!.params;
+
+    // Level 101 starts at 26,000,000, so level_max 100 ends just below it.
+    expect(await paramsFor({ min: null, max: 100 })).toEqual({
+      level_max: 26000000
+    });
+    expect(await paramsFor({ min: 101, max: null })).toEqual({
+      level_min: 26000000
+    });
+    // Level 1001 has no safe integer border, so that bound admits every score.
+    expect(await paramsFor({ min: 150, max: 1000 })).toEqual({
+      level_min: 177667015,
+      level_max: Number.MAX_SAFE_INTEGER
+    });
+  });
+
   it('separates NFT and beneficiary grant CTEs with valid delimiters', async () => {
     const service = buildService();
     const getGrantById = jest

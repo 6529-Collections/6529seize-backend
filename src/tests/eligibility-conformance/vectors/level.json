@@ -94,7 +94,7 @@
   {
     "name": "level-max-one-hundred",
     "dimension": "level",
-    "description": "Level 100 is the highest possible level, so level_max 100 is an intentionally unbounded upper limit.",
+    "description": "Levels go on above 100. level_raw 30000000 is level 104 (each level above 100 needs a 25th more than the one before), so level_max 100 and 103 leave it out, level_max 104 admits it, and level_min 104 admits it while 105 does not.",
     "identities": [
       {
         "id": "subject",
@@ -106,6 +106,80 @@
       {
         "id": "g-max-100",
         "level_max": 100
+      },
+      {
+        "id": "g-max-103",
+        "level_max": 103
+      },
+      {
+        "id": "g-max-104",
+        "level_max": 104
+      },
+      {
+        "id": "g-min-104",
+        "level_min": 104
+      },
+      {
+        "id": "g-min-105",
+        "level_min": 105
+      }
+    ],
+    "expected": {
+      "eligible_group_ids": ["g-max-104", "g-min-104"]
+    }
+  },
+  {
+    "name": "level-at-border-above-one-hundred",
+    "dimension": "level",
+    "description": "level_raw 26000000 is exactly level 101's lower border. level_max 100 leaves it out, level_min 101 and level_max 101 admit it.",
+    "identities": [
+      {
+        "id": "subject",
+        "level_raw": 26000000
+      }
+    ],
+    "subject": "subject",
+    "groups": [
+      {
+        "id": "g-max-100",
+        "level_max": 100
+      },
+      {
+        "id": "g-max-101",
+        "level_max": 101
+      },
+      {
+        "id": "g-min-101",
+        "level_min": 101
+      },
+      {
+        "id": "g-min-102",
+        "level_min": 102
+      }
+    ],
+    "expected": {
+      "eligible_group_ids": ["g-max-101", "g-min-101"]
+    }
+  },
+  {
+    "name": "level-just-below-border-above-one-hundred",
+    "dimension": "level",
+    "description": "level_raw 25999999 is still level 100, one below level 101's border.",
+    "identities": [
+      {
+        "id": "subject",
+        "level_raw": 25999999
+      }
+    ],
+    "subject": "subject",
+    "groups": [
+      {
+        "id": "g-max-100",
+        "level_max": 100
+      },
+      {
+        "id": "g-min-101",
+        "level_min": 101
       }
     ],
     "expected": {
@@ -1327,6 +1401,123 @@
         "min-zero-included-other",
         "min-one",
         "min-hundred-max-hundred",
+        "min-negative",
+        "negative-max-included"
+      ]
+    }
+  },
+  {
+    "name": "level-bounds-raw-26000000",
+    "dimension": "level",
+    "description": "Raw score 26000000 maps to level 101, above the old cap; level_max 100 now leaves it out, and explicit zero remains a criterion through bounds, inclusion, exclusion, and combined rules.",
+    "identities": [
+      {
+        "id": "subject",
+        "level_raw": 26000000
+      },
+      {
+        "id": "other"
+      }
+    ],
+    "subject": "subject",
+    "profile_groups": [
+      {
+        "id": "other",
+        "members": ["other"]
+      },
+      {
+        "id": "subject-list",
+        "members": ["subject"]
+      }
+    ],
+    "groups": [
+      {
+        "id": "absent"
+      },
+      {
+        "id": "min-zero",
+        "level_min": 0
+      },
+      {
+        "id": "min-zero-max-zero",
+        "level_min": 0,
+        "level_max": 0
+      },
+      {
+        "id": "max-zero",
+        "level_max": 0
+      },
+      {
+        "id": "min-one",
+        "level_min": 1
+      },
+      {
+        "id": "min-zero-max-one",
+        "level_min": 0,
+        "level_max": 1
+      },
+      {
+        "id": "min-one-max-one",
+        "level_min": 1,
+        "level_max": 1
+      },
+      {
+        "id": "max-hundred",
+        "level_max": 100
+      },
+      {
+        "id": "min-hundred-max-hundred",
+        "level_min": 100,
+        "level_max": 100
+      },
+      {
+        "id": "min-zero-included-other",
+        "level_min": 0,
+        "profile_group_id": "other"
+      },
+      {
+        "id": "included-other",
+        "profile_group_id": "other"
+      },
+      {
+        "id": "zero-excluded",
+        "level_min": 0,
+        "excluded_profile_group_id": "subject-list"
+      },
+      {
+        "id": "zero-other-axis-fails",
+        "level_min": 0,
+        "tdh_min": 1
+      },
+      {
+        "id": "min-negative",
+        "level_min": -100
+      },
+      {
+        "id": "max-negative",
+        "level_max": -1
+      },
+      {
+        "id": "negative-range",
+        "level_min": -100,
+        "level_max": -1
+      },
+      {
+        "id": "negative-max-included",
+        "level_max": -1,
+        "profile_group_id": "subject-list"
+      },
+      {
+        "id": "reversed-range",
+        "level_min": 1,
+        "level_max": 0
+      }
+    ],
+    "expected": {
+      "eligible_group_ids": [
+        "min-zero",
+        "min-zero-included-other",
+        "min-one",
         "min-negative",
         "negative-max-included"
       ]
