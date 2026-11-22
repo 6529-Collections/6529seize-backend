@@ -73,7 +73,7 @@ const rating = (
   height: 10,
   txIndex: 0,
   blockTimeMs: NOW,
-  txId: '0xrating',
+  ref: '0xrating',
   origin: 'OPERATION',
   matter: 'REP',
   raterId: raterId,
@@ -775,11 +775,11 @@ describe('notification_view', () => {
 
       // Nothing more: the same row again, a replay, a stale event.
       await apply([deriveRating(rating())]);
-      await apply([deriveRating(rating({ txId: '0xreplayed' }))], 'replay');
+      await apply([deriveRating(rating({ ref: '0xreplayed' }))], 'replay');
       await apply([
         deriveRating(
           rating({
-            txId: '0xstale',
+            ref: '0xstale',
             blockTimeMs: NOW - PUSH_LIVE_WINDOW_MS - 1
           })
         )

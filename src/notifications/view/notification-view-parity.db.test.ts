@@ -99,7 +99,7 @@ const cases: Case[] = [
     derive: () =>
       deriveRating({
         ...at,
-        txId: '0xrep',
+        ref: '0xrep',
         origin: 'OPERATION',
         matter: 'REP',
         raterId: actorId,
@@ -123,7 +123,7 @@ const cases: Case[] = [
     derive: () =>
       deriveRating({
         ...at,
-        txId: '0xnic',
+        ref: '0xnic',
         origin: 'OPERATION',
         matter: 'NIC',
         raterId: actorId,

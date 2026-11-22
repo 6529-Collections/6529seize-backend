@@ -30,7 +30,7 @@ const rating = (
   over: Partial<RatingChangedEvent> = {}
 ): RatingChangedEvent => ({
   ...at,
-  txId: '0xtx1',
+  ref: '0xtx1:REP',
   origin: 'OPERATION',
   matter: 'REP',
   raterId: 'rater',

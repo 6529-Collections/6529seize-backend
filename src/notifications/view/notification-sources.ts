@@ -21,9 +21,13 @@ export interface ChainPosition {
 /** Imported state never notifies; system cuts (scans) notify only where today's code does. */
 export type ChainOrigin = 'OPERATION' | 'IMPORT' | 'SCAN';
 
-/** One applied RATING_SET, from the identity mirror's log. */
+/** One applied rating change, from the identity mirror's log. */
 export interface RatingChangedEvent extends ChainPosition {
-  readonly txId: string;
+  /**
+   * Names this change, the same on every read: one per (rater, target,
+   * matter, category) change. The mirror's events carry no transaction id.
+   */
+  readonly ref: string;
   readonly origin: ChainOrigin;
   readonly matter: 'REP' | 'NIC';
   readonly raterId: string;

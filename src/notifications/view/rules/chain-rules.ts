@@ -71,7 +71,7 @@ function row(
  * over-rate reductions don't.
  */
 export function deriveRating(event: RatingChangedEvent): DerivedGroup {
-  const ref = `${event.txId}:${event.matter}`;
+  const ref = event.ref;
   const amount = event.newValue - event.oldValue;
   if (
     event.origin !== 'OPERATION' ||

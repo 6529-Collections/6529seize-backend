@@ -25,6 +25,7 @@ import {
   NotificationFeedRunner
 } from './notification-feed-runner';
 import { notificationViewCursorsDb } from './notification-view-cursors.db';
+import { IdentityRatingsFeed } from './feeds/identity-ratings-feed';
 import { notificationArchive } from './notification-archive';
 import { notificationSourceKey } from './notification-view-ids';
 import { notificationViewRebuild } from './notification-view-rebuild';
@@ -461,6 +462,49 @@ describe('notification view lifecycle', () => {
       feeds: [feed]
     });
     expect(await answers()).toEqual(live);
+    announced.mockRestore();
+  });
+
+  it('derives IDENTITY_REP through the identity:ratings feed', async () => {
+    setFlags({
+      NOTIFY_VIEW_MODE: 'on',
+      NOTIFY_DERIVED_CAUSES: 'IDENTITY_REP@0'
+    });
+    const announced = jest
+      .spyOn(wsListenersNotifier, 'notifyAboutIdentityNotificationsChanged')
+      .mockResolvedValue(undefined);
+    // A fake of the mirror's table, with the columns still to come.
+    const feed = new IdentityRatingsFeed({
+      readAfter: async (afterId) =>
+        afterId < 1
+          ? [
+              {
+                id: 1,
+                height: 120,
+                block_time_ms: T,
+                rater_profile_id: fanId,
+                target_profile_id: authorId,
+                matter: 'REP',
+                matter_category: 'Art',
+                old_rating: 0,
+                new_rating: 4,
+                total_after: 4,
+                origin: 'OPERATION'
+              }
+            ]
+          : []
+    });
+    expect(
+      await notificationFeedRunner.run(feed, { mode: 'live', now: T })
+    ).toMatchObject({ events: 1, derived: { written: 1 } });
+    expect((await answers()).page).toEqual([
+      expect.objectContaining({
+        cause: 'IDENTITY_REP',
+        actor: fanId,
+        created_at: T
+      })
+    ]);
+    expect(announced).toHaveBeenCalledWith([authorId]);
     announced.mockRestore();
   });
 
