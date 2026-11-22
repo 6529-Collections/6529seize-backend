@@ -778,6 +778,7 @@ export * from '../models/ApiSetCompetitionVoteRequest';
 export * from '../models/ApiSetDropReplyCollapseRequest';
 export * from '../models/ApiSetPinnedDropRequest';
 export * from '../models/ApiSetProfileWaveRequest';
+export * from '../models/ApiSignedRecordsAnchor';
 export * from '../models/ApiStartMultipartMediaUploadResponse';
 export * from '../models/ApiSubmissionDropContext';
 export * from '../models/ApiSubmissionDropStatus';
@@ -1782,6 +1783,7 @@ import { ApiSetCompetitionVoteRequest } from '../models/ApiSetCompetitionVoteReq
 import { ApiSetDropReplyCollapseRequest } from '../models/ApiSetDropReplyCollapseRequest';
 import { ApiSetPinnedDropRequest } from '../models/ApiSetPinnedDropRequest';
 import { ApiSetProfileWaveRequest } from '../models/ApiSetProfileWaveRequest';
+import { ApiSignedRecordsAnchor } from '../models/ApiSignedRecordsAnchor';
 import { ApiStartMultipartMediaUploadResponse     } from '../models/ApiStartMultipartMediaUploadResponse';
 import { ApiSubmissionDropContext        } from '../models/ApiSubmissionDropContext';
 import { ApiSubmissionDropStatus } from '../models/ApiSubmissionDropStatus';
@@ -3034,6 +3036,7 @@ let typeMap: {[index: string]: any} = {
     "ApiSetDropReplyCollapseRequest": ApiSetDropReplyCollapseRequest,
     "ApiSetPinnedDropRequest": ApiSetPinnedDropRequest,
     "ApiSetProfileWaveRequest": ApiSetProfileWaveRequest,
+    "ApiSignedRecordsAnchor": ApiSignedRecordsAnchor,
     "ApiStartMultipartMediaUploadResponse": ApiStartMultipartMediaUploadResponse,
     "ApiSubmissionDropContext": ApiSubmissionDropContext,
     "ApiSubmissionDropVoting": ApiSubmissionDropVoting,
