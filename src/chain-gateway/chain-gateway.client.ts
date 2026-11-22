@@ -587,26 +587,44 @@ function isReadStamp(value: unknown): value is ChainReadStamp {
 
 /**
  * not_found answers of the node rather than of the data, told apart only by
- * their message (the node's texts, routes.rs): never null, never cached.
- * The node should send codes of its own for these (such as `not_held`).
- * - A route an older release lacks: `bad_answer`.
- * - Data this node doesn't hold, which another node may: `not_held`. The
- *   import's entry on a node whose release carries no identities file, a
- *   membership day it didn't save or has no record of, a TDH day's lists
- *   it doesn't keep, token rows it never computed.
+ * their message (the node's texts, routes.rs and draft.rs): `not_held`,
+ * never null, never cached, as another node may hold what this one lacks.
+ * The node should send a code of its own for these (such as `not_held`):
+ * a route an older release lacks; the import's entry on a node whose
+ * release carries no identities file; a membership day it didn't save or
+ * has no record of; a TDH day's lists it doesn't keep (by day, or the
+ * read's); token rows it never computed; a transaction neither its chain
+ * nor its pool holds.
  * The identity's `founder` depends on the identities file the same way:
  * for an imported identity the node takes it from the file it carries
  * (reads.rs, `founder`), so a node without it can name another wallet.
  * That one is for the API to settle; the client can't tell.
  */
-const NO_SUCH_ROUTE = /^no such route/i;
 const NOT_HELD = [
+  /^no such route/i,
   /^this node's chain imports no identities file/i,
   /^this node didn't save day \d+/i,
   /^no MembershipDay record of day \d+ here/i,
-  /^this node holds no lists of TDH day \d+/i,
-  /^this node has no token rows/i
+  /^this node holds no lists of (the read's )?TDH day/i,
+  /^this node has no token rows/i,
+  /^neither a block on this node's chain nor its pool holds that transaction/i
 ];
+
+/** A refusal of data the answering node doesn't hold; another may. */
+function notHeld(
+  path: string,
+  message: string,
+  read: ChainReadStamp | undefined
+): ChainGatewayError {
+  const error = new ChainGatewayError(
+    `${path}: not_held: ${message}`,
+    404,
+    'not_held',
+    path
+  );
+  error.read = read;
+  return error;
+}
 
 /** An identity whose level the node can't give yet (its TDH lists). */
 function lacksLevel(value: unknown): boolean {
@@ -979,22 +997,8 @@ export class ChainGatewayClient {
       // Some not_found answers are of the node, not of the data (see
       // NOT_HELD): never null or cached.
       const message = typeof error === 'string' ? '' : (error?.message ?? '');
-      if (NO_SUCH_ROUTE.test(message)) {
-        throw badAnswer(
-          path,
-          `the node that answered can't say: ${message}`,
-          404
-        );
-      }
       if (NOT_HELD.some((it) => it.test(message))) {
-        const notHeld = new ChainGatewayError(
-          `${path}: not_held: ${message}`,
-          404,
-          'not_held',
-          path
-        );
-        notHeld.read = read;
-        throw notHeld;
+        throw notHeld(path, message, read);
       }
       return { read, answer: null };
     }
@@ -1080,10 +1084,16 @@ export class ChainGatewayClient {
           // network (a node behind the others can answer the status), and
           // the head says so: its finalized height never goes back.
           this.raiseFloor(value.network!, value.finalizedHeight);
+          const pin = this.pinOf(value);
           const steady: ChainHead = {
             ...value,
-            finalizedHeight: this.pinOf(value),
-            nodeFinalizedHeight: value.finalizedHeight
+            headHeight: Math.max(value.headHeight, pin),
+            finalizedHeight: pin,
+            // The answering node's block time, for its own height only.
+            finalizedTime:
+              pin === value.finalizedHeight ? finalized!.time : null,
+            nodeFinalizedHeight: value.finalizedHeight,
+            nodeFinalizedTime: finalized!.time
           };
           this.head = { value: steady, at: this.now() };
           return steady;
@@ -1424,7 +1434,9 @@ export class ChainGatewayClient {
   /**
    * Identities by level, highest first, a page at a time. The node ranks
    * its latest finalized state and refuses a height or the head here, so
-   * this read is neither pinned nor cached (`rankedAt` says its height).
+   * this read is neither pinned nor cached (`rankedAt` says its height). A
+   * walk over pages must start again when `rankedAt` changes between them:
+   * the cursor belongs to one ranking.
    */
   async getLevelRanking(
     opts: { readonly after?: string | null; readonly limit?: number } = {}
@@ -1442,15 +1454,42 @@ export class ChainGatewayClient {
     if (!answer || !Array.isArray(answer.data?.rows)) {
       throw badAnswer(path, 'a ranking without its rows');
     }
+    // Ranked at the answering node's finalized state: one behind the
+    // height reads already pinned would take them back.
+    const network = lower(answer.read.network);
+    const floor = this.pinFloors.get(network) ?? 0;
+    if (answer.read.height < floor) {
+      throw new ChainGatewayError(
+        `${path}: answered at ${answer.read.height}, below the height ${floor} already read`,
+        409,
+        'height_gone',
+        path
+      );
+    }
+    this.raiseFloor(network, answer.read.height);
     return answer;
   }
 
-  getLevel(principalId: string, opts?: ChainReadOptions) {
-    return this.data<ChainLevel>(
-      `/v1/levels/${segment(lower(principalId))}`,
-      {},
-      opts
-    );
+  /**
+   * An identity's level, or null when no identity has that principal. A
+   * node that hasn't copied the read's TDH day lists yet answers no level:
+   * that throws `not_held` (another node, or a later read, can say).
+   */
+  async getLevel(
+    principalId: string,
+    opts?: ChainReadOptions
+  ): Promise<ChainLevel | null> {
+    const path = `/v1/levels/${segment(lower(principalId))}`;
+    const answer = await this.read<ChainLevel | null>(path, {}, opts);
+    if (!answer) return null;
+    if (answer.data === null) {
+      throw notHeld(
+        path,
+        `no level: the TDH day's lists aren't copied yet`,
+        answer.read
+      );
+    }
+    return answer.data;
   }
 
   getHandle(handle: string, opts?: ChainReadOptions) {
@@ -1481,7 +1520,15 @@ export class ChainGatewayClient {
    */
   async getMembershipWalletHistory(
     wallet: string,
-    opts?: ChainReadOptions
+    opts: ChainReadOptions & {
+      /**
+       * A height before which no wallet was bound (the identity import's
+       * start). When the feed's first range starts at or before it, the
+       * node loaded no binding the history lacks, so the history is exact
+       * from that range's start.
+       */
+      readonly noBindingsBefore?: number | null;
+    } = {}
   ): Promise<ChainWalletHistory | null> {
     const path = `/v1/membership/wallets/${segment(lower(wallet))}/history`;
     const answer = await this.read<{
@@ -1500,27 +1547,36 @@ export class ChainGatewayClient {
         `the answer is for another wallet or has no read height`
       );
     }
-    // Only the first range the feed holds is exact, and only to the read
-    // height (the node reads the history from its feed whatever the height
-    // asked). The node builds a history from feed blocks alone: after a gap
-    // it starts again from the membership without writing it into the
-    // history (feed.rs, Start), and a change back to the principal it last
-    // noted before the gap is skipped (feed.rs, note). So a later range can
-    // hold wrong values: it is dropped, with every change past the first.
-    // For the API: an `exactFrom`, or Start writing the bindings it loads
-    // into the history, would make later ranges usable.
+    // The node builds a history from feed blocks alone. When its feed
+    // starts (and again after a gap) it loads the membership without
+    // writing it into the history (feed.rs, Start), and after a gap a
+    // change back to the principal it last noted is skipped (feed.rs,
+    // note). So only the first range is kept, to the read height (the node
+    // reads its feed whatever the height asked), and within it the history
+    // is exact only from the wallet's first change there: before it, the
+    // wallet held whatever the loaded membership said. It is exact from the
+    // range's start when that is at or before a height no wallet was bound
+    // before (`noBindingsBefore`). With no change and no such height, no
+    // range is exact. For the API: an `exactFrom`, or Start writing the
+    // bindings it loads into the history, would let more be kept.
     const height = readHeight as number;
     const first = heightRanges(answer.data.ranges, path)[0];
-    const ranges: [number, number][] =
-      first && first[0] <= height
-        ? [[first[0], Math.min(first[1], height)]]
-        : [];
-    const end = ranges.length ? ranges[0][1] : -1;
+    const end = first && first[0] <= height ? Math.min(first[1], height) : -1;
+    const changes = bindingChanges(answer.data.changes, path).filter(
+      (it) => it.height <= end
+    );
+    const before = opts.noBindingsBefore;
+    const fromStart =
+      !!first && before !== undefined && before !== null && first[0] <= before;
+    let ranges: [number, number][] = [];
+    if (end >= 0 && fromStart) {
+      ranges = [[first[0], end]];
+    } else if (changes.length) {
+      ranges = [[changes[0].height, end]];
+    }
     return {
       wallet: lower(wallet),
-      changes: bindingChanges(answer.data.changes, path).filter(
-        (it) => it.height <= end
-      ),
+      changes,
       ranges,
       readHeight: height
     };
