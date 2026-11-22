@@ -179,6 +179,8 @@ export class LruCache<V> {
   }
 }
 
+/** The document store's largest file. */
+const MAX_DOC_BYTES = 2 * 1024 * 1024;
 /** Cached documents take at most this many bytes in all. */
 const DOC_CACHE_TOTAL_BYTES = 32 * 1024 * 1024;
 /**
@@ -370,29 +372,32 @@ function checkFeedPage(
   blocks: ChainFeedPage['blocks'],
   next: string | null
 ) {
+  const last = blocks[blocks.length - 1];
+  const cut = last?.complete === false;
   let previous = -1;
   for (const block of blocks) {
     const height = Number(block.height);
+    // Heights rise; every block is within `through`, but a cut last one,
+    // which is the block after it; only the last block may be cut.
+    const limit = block === last && cut ? through + 1 : through;
+    const whole = block === last || block.complete !== false;
     if (
       !Number.isSafeInteger(height) ||
-      height < previous ||
-      height > through + 1
+      height <= previous ||
+      height > limit ||
+      (block === last && cut && height !== through + 1) ||
+      !whole
     ) {
       throw badAnswer(path, 'blocks out of order or past the page');
     }
     previous = height;
   }
-  const last = blocks[blocks.length - 1];
-  const inside = next !== null && String(next).includes(':');
-  const cut = last?.complete === false;
-  const fits = inside
-    ? cut && feedCursorHeight(next) === Number(last.height)
-    : !cut;
+  // `next` is inside the cut block, or else the height after `through`.
+  const fits = cut
+    ? String(next).includes(':') && feedCursorHeight(next!) === through + 1
+    : next === null || Number(next) === through + 1;
   if (!fits) {
-    throw badAnswer(
-      path,
-      'a next inside a block that the page does not end in'
-    );
+    throw badAnswer(path, 'a next that is not where the page ends');
   }
 }
 
@@ -570,6 +575,14 @@ export class ChainGatewayClient {
       }
       if (binary && response.status === 200) {
         const bytes = Buffer.from(await response.arrayBuffer());
+        if (bytes.length > MAX_DOC_BYTES) {
+          throw new ChainGatewayError(
+            `${method} ${path}: ${bytes.length} bytes is over the store's ${MAX_DOC_BYTES}`,
+            200,
+            'bad_answer',
+            path
+          );
+        }
         return { ok: true, status: 200, json: null, bytes };
       }
       return {
@@ -803,13 +816,19 @@ export class ChainGatewayClient {
     }
     const { status, json } = await this.send('GET', path, { ...query, height });
     const answer = this.toAnswer<T>(path, status, json);
-    // Kept only when read from the chain the head names: an answer from
-    // another (a relaunch, or one in flight across it) is not reused.
+    // An answer from another chain than the head names (a relaunch, or a
+    // gateway mixing nodes across one) is refused, never served or kept.
     const network = this.head?.value.network ?? null;
     const readFrom = answer?.read?.network ?? null;
-    if (!network || !readFrom || network === readFrom) {
-      this.answers.set(key, answer as ChainAnswer<unknown> | null);
+    if (network && readFrom && network !== readFrom) {
+      throw new ChainGatewayError(
+        `${path}: read from network ${readFrom}, not ${network}`,
+        status,
+        'wrong_network',
+        path
+      );
     }
+    this.answers.set(key, answer as ChainAnswer<unknown> | null);
     return answer;
   }
 
