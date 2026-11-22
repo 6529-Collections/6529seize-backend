@@ -2,7 +2,7 @@ import {
   HeadObjectCommand,
   type HeadObjectCommandOutput
 } from '@aws-sdk/client-s3';
-import { CLOUDFRONT_LINK } from '@/constants';
+import { getUserMediaOrigin } from '@/constants';
 import { env } from '@/env';
 import { BadRequestException } from '@/exceptions';
 import { getS3 } from '@/s3.client';
@@ -24,7 +24,8 @@ export async function validateMainStageMediaSize(
   } = {}
 ): Promise<void> {
   const parsedUrl = new URL(mediaUrl);
-  if (parsedUrl.origin !== CLOUDFRONT_LINK) {
+  // Only this environment's bucket can be checked.
+  if (parsedUrl.origin !== getUserMediaOrigin()) {
     return;
   }
 

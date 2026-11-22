@@ -157,6 +157,80 @@ it('returns 404 without an operational error for a missing source object', async
   expect(Upload).not.toHaveBeenCalled();
 });
 
+describe('function URL requests and the legacy media store', () => {
+  const missingSource = () =>
+    Object.assign(new Error('The specified key does not exist.'), {
+      name: 'NoSuchKey',
+      $metadata: { httpStatusCode: 404 }
+    });
+  afterEach(() => {
+    delete process.env.LEGACY_FILE_SERVER_URL;
+  });
+
+  it('reads the resize path from a function URL raw path', async () => {
+    const result = await handler(
+      { rawPath: '/synthetic/6x6_max/fixture' },
+      {} as Context,
+      () => undefined
+    );
+
+    expect(result.statusCode).toBe(302);
+    expect(GetObjectCommand).toHaveBeenCalledWith({
+      Bucket: 'synthetic-bucket',
+      Key: 'synthetic/fixture'
+    });
+  });
+
+  it('decodes an encoded raw path to the object key', async () => {
+    await handler(
+      { rawPath: '/synthetic/6x6_max/my%20fixture.jpg' },
+      {} as Context,
+      () => undefined
+    );
+
+    expect(GetObjectCommand).toHaveBeenCalledWith({
+      Bucket: 'synthetic-bucket',
+      Key: 'synthetic/my fixture.jpg'
+    });
+  });
+
+  it.each([[{}], [{ rawPath: '/' }], [{ rawPath: '/%E0%A4%A' }]])(
+    'returns 404 for a request without a usable path: %j',
+    async (event) => {
+      const result = await handler(event, {} as Context, () => undefined);
+
+      expect(result.statusCode).toBe(404);
+      expect(GetObjectCommand).not.toHaveBeenCalled();
+    }
+  );
+
+  it('redirects a missing source to the legacy media store when configured', async () => {
+    process.env.LEGACY_FILE_SERVER_URL = 'https://legacy.example';
+    mockGetObjectError = missingSource();
+
+    const result = await handler(
+      { rawPath: '/synthetic/6x6_max/my%20fixture.jpg' },
+      {} as Context,
+      () => undefined
+    );
+
+    expect(result).toEqual({
+      statusCode: 302,
+      headers: {
+        Location: 'https://legacy.example/synthetic/6x6_max/my%20fixture.jpg',
+        'Cache-Control': 'public, max-age=60'
+      }
+    });
+    expect(Upload).not.toHaveBeenCalled();
+  });
+
+  it('keeps answering 404 for a missing source without a legacy store', async () => {
+    mockGetObjectError = missingSource();
+
+    expect((await resize()).statusCode).toBe(404);
+  });
+});
+
 it.each([
   ['AccessDenied', 403],
   ['ServiceUnavailable', 503],
