@@ -15,7 +15,6 @@ import {
   deferSubscriptionWrites,
   executorSink
 } from '@/subscription-key-width/subscription-deferred-writes';
-import { subscriptionKeyWidths } from '@/subscription-key-width/subscription-key-width';
 import { describeWithSeed, Seed } from '@/tests/_setup/seed';
 import {
   ADDRESS_CONSOLIDATION_KEY,
@@ -539,20 +538,14 @@ describeWithSeed(
   }
 );
 
-// Five full-length wallets: a key of 214 characters, wider than the
-// subscription tables' 200. Its first wallet tops up for the first time.
-const WIDE_WALLETS = [1, 2, 3, 4, 5].map(
-  (n) => `0x${n.toString(16).padStart(40, '0')}`
+// Fourteen full-length wallets: a key of 601 characters. The mapping and the
+// balance table hold it; the redemption table holds 567, thirteen wallets.
+// Its first wallet tops up for the first time.
+const WIDE_WALLETS = Array.from(
+  { length: 14 },
+  (_, n) => `0x${(n + 1).toString(16).padStart(40, '0')}`
 );
 const WIDE_KEY = WIDE_WALLETS.join('-');
-
-async function setMappingWidth(width: number) {
-  await sqlExecutor.execute(
-    `ALTER TABLE ${ADDRESS_CONSOLIDATION_KEY}
-      MODIFY consolidation_key VARCHAR(${width}) NOT NULL`
-  );
-  subscriptionKeyWidths.invalidate();
-}
 
 describeWithSeed(
   'Real MySQL: a top-up whose key moves to one the tables cannot hold',
@@ -564,13 +557,11 @@ describeWithSeed(
   ],
   () => {
     onTypeOrmExecutor();
-    beforeEach(() => setMappingWidth(700));
     afterEach(async () => {
       await sqlExecutor.execute(
         `DELETE FROM ${ADDRESS_CONSOLIDATION_KEY} WHERE consolidation_key = :key`,
         { key: WIDE_KEY }
       );
-      await setMappingWidth(200);
     });
 
     it('queues the top-up under the key it would be written to', async () => {
@@ -587,7 +578,7 @@ describeWithSeed(
         ) => {
           const result = await query(...args);
           // Right after the top-up reads the wallet's own key, the identity
-          // sync puts the wallet in a five-wallet identity.
+          // sync puts the wallet in a fourteen-wallet identity.
           if (
             !moved &&
             String(args[0]).includes(ADDRESS_CONSOLIDATION_KEY) &&
@@ -620,8 +611,8 @@ describeWithSeed(
 
       // The key-width guard judges the wide key the top-up moved to, not
       // the wallet's own key it read, and queues the whole top-up. Judged on
-      // the wallet's key, the top-up would try to insert a balance row under
-      // the wide key and fail on its length, every run.
+      // the wallet's key, the top-up would be written at once under the wide
+      // key, whose other writes the guard holds back.
       expect(moved).toBe(true);
       expect(await balances()).toEqual([]);
       expect(await queue()).toEqual([['TOP_UP', WIDE_KEY]]);
