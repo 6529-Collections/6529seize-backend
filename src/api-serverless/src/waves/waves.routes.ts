@@ -87,6 +87,7 @@ import { waveApiService } from './wave.api.service';
 import { SearchWavesParams } from './waves.api.db';
 import { ApiWaveCuration } from '@/api/generated/models/ApiWaveCuration';
 import { ApiWaveCurationRequest } from '@/api/generated/models/ApiWaveCurationRequest';
+import { WaveCurationSchema } from '@/api/curations/wave-curation.schema';
 import { curationsApiService } from '@/api/curations/curations.api.service';
 import { ApiCurationDropsPage } from '@/api/generated/models/ApiCurationDropsPage';
 import waveRepRoutes from './wave-rep.routes';
@@ -97,12 +98,6 @@ import {
 } from './wave-score.service';
 
 const router = asyncRouter();
-
-const WaveCurationSchema = Joi.object<ApiWaveCurationRequest>({
-  name: Joi.string().trim().min(1).max(50).required(),
-  group_id: Joi.string().required(),
-  priority_order: Joi.number().integer().min(1).optional()
-});
 
 async function handleSimpleWaveAction(
   req: Request<{ id: string }, any, any, any, any>,

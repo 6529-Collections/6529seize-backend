@@ -82,6 +82,24 @@ Lambda or environment variable. Deploy affected backend delivery workers and
 the video conversion invoker's compatible media-path reader before the API
 accepts the new setting, then deploy the frontend creation control.
 
+## Main Stage artwork trait validation
+
+Enabled Main Stage decisions publish their artwork trait rules on the competition
+resource. The API uses the same validator for the read-only trait preflight and
+the signed entry command. Artist, title, description, meme name, palette, and
+card points require a valid value. Optional card text fields default to `No` and
+omitted yes/no traits default to `false`. API clients omit skipped keys; supplied
+metadata strings still follow the shared nonblank and length rules. The entry
+command authenticates the original signed request and records both that payload
+and the effective stored metadata.
+
+The staging API enables the policy by default when the configured API URL is
+`api.staging.6529.io` and the runtime is in development mode. The production API
+uses the existing behavior until `MAIN_STAGE_TRAIT_VALIDATION_ENABLED=true` is
+explicitly set. Setting it to `false` disables both rule publication and
+validation. The policy applies to new entries. Existing entry content and mint
+claims retain their prior metadata.
+
 ## Meme collaborator invitations
 
 Artwork submissions retain one author, voting result and minting claim. The API
@@ -730,7 +748,7 @@ reset behavior, and the required writer-before-collector deployment order.
 | `xTdhLoop`                       | SNS `tdh-calculation-done.fifo` or a direct post-persistence partial-TDH enqueue via SQS `xtdh-start.fifo`; self-queued stats phase | Recalculate the xTDH universe after TDH finishes, then rebuild and publish xTDH stats in a follow-up queue message.                                                                     |
 | `overRatesRevocationLoop`        | SNS `tdh-calculation-done.fifo` via SQS `over-rates-revocation-start.fifo`                                                          | Revoke over-rates after TDH changes.                                                                                                                                                    |
 | `waveScoreRefreshLoop`           | SNS `tdh-calculation-done.fifo` via SQS `wave-score-refresh-start.fifo`; SQS `wave-score-refresh-dirty.fifo`; EventBridge fallback  | Refresh materialized wave REP and Wave Score discovery fields after TDH changes or wave/drop/rating/subscription mutations.                                                             |
-| `mediaResizerLoop`               | CloudFront/request path                                                                                                             | Resize images on demand.                                                                                                                                                                |
+| `mediaResizerLoop`               | Prod: S3 website 404 routing → HTTP API. Staging: media CDN failover origin (function URL) for size paths                           | Resize images on demand.                                                                                                                                                                |
 | `nextgenMediaProxyInterceptor`   | Lambda@Edge / CloudFront request                                                                                                    | Provide NextGen metadata fallback.                                                                                                                                                      |
 | `dropVideoConversionInvokerLoop` | S3 object-created event for `drops/`                                                                                                | Invoke MediaConvert for uploaded drop videos.                                                                                                                                           |
 
@@ -749,7 +767,7 @@ The API Lambda is the public synchronous boundary. It initializes local config o
 
 The API's Redis client is fail-fast: initialization waits a bounded time for the first connection, commands are rejected instead of queued while the client reconnects, and request-path cache reads/writes and rate-limit checks fail open within a short per-command budget, so per-client rate limits are not enforced while Redis is unreachable. Initialization failures are not cached; the next request in the same warm container retries setup, while route wiring runs at most once. Loops keep the default queue-until-reconnected Redis client.
 
-Background Lambdas that read or write application state use a shared `doInDbContext` wrapper. That wrapper prepares environment/secrets, initializes TypeORM-backed DB access, initializes Redis, runs the job, then disconnects. The `dropVideoConversionInvokerLoop` is intentionally environment-only: it loads config/secrets, filters the S3 object key, and invokes MediaConvert without opening MySQL or Redis connections.
+Background Lambdas that read or write application state use a shared `doInDbContext` wrapper. That wrapper prepares environment/secrets, initializes TypeORM-backed DB access, initializes Redis, runs the job, then disconnects. The `dropVideoConversionInvokerLoop` is intentionally environment-only: it reads only its function environment (no shared secret, no VPC), filters the S3 object key, and invokes MediaConvert without opening MySQL or Redis connections. Its production stack runs in `eu-west-1`, next to the media bucket it watches, while other production services run in `us-east-1`.
 
 MySQL is the integration contract between nearly all modules. API routes, scheduled pollers, queue workers, and derived-data loops all read and write shared tables. Redis is secondary and mostly disposable: API request cache, rate limiting, webhook dedupe, locks, and selected feature caches can fail open or be repopulated from MySQL.
 
@@ -1021,6 +1039,12 @@ transport cancels connections and response bodies after five seconds; metadata
 HTTP requests also observe the overall budget. Retries stop when the remaining
 budget cannot cover their backoff and another RPC. Failed resolution preserves
 cached metadata and releases the existing processing lock.
+
+For a verified Manifold listing whose selected token has no media, the resolver
+can read an Ethereum mainnet ERC-721 token's `tokenURI` through `NFT_INDEXER_RPC`.
+It retrieves the metadata through the bounded public HTTP client and sends the
+resulting image or animation through the existing preview pipeline. Successful
+media recovery skips the listing page's Open Graph fetch.
 
 An exact HTTP 404 from a required Transient or Manifold canonical page ends
 further attempts in that eligible run. The internal nullable

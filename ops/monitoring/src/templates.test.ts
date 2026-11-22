@@ -281,6 +281,39 @@ test('release-note contention uses processing-health routing while errors retain
   assert.equal(prod.RelayDeadLettersAlarm.Properties.EvaluationPeriods, 1);
 });
 
+test('the production media resizer error alarm requires two failures in five minutes', () => {
+  const prod = JSON.parse(
+    readFileSync(new URL('../source-prod.json', import.meta.url), 'utf8')
+  ).Resources;
+  const stage = JSON.parse(
+    readFileSync(new URL('../source-staging.json', import.meta.url), 'utf8')
+  ).Resources;
+  assert.deepEqual(prod.mediaResizerLoopErrors.Properties, {
+    AlarmName: {
+      'Fn::Sub': 'seize-monitoring-${Environment}-mediaResizerLoop-Errors'
+    },
+    Namespace: 'AWS/Lambda',
+    MetricName: 'Errors',
+    Dimensions: [{ Name: 'FunctionName', Value: 'mediaResizerLoop' }],
+    Statistic: 'Sum',
+    Period: 300,
+    EvaluationPeriods: 1,
+    Threshold: 2,
+    ComparisonOperator: 'GreaterThanOrEqualToThreshold',
+    TreatMissingData: 'notBreaching',
+    AlarmActions: {
+      'Fn::If': ['HasAlarmTopic', [{ Ref: 'ExistingAlarmTopicArn' }], []]
+    }
+  });
+  assert.equal(prod.mediaResizerLoopThrottles.Properties.Period, 60);
+  assert.equal(prod.mediaResizerLoopThrottles.Properties.Threshold, 1);
+  const stagingErrors = stage.mediaResizerLoopErrors?.Properties;
+  if (stagingErrors) {
+    assert.equal(stagingErrors.Period, 60);
+    assert.equal(stagingErrors.Threshold, 1);
+  }
+});
+
 test('wave throttling is sustained while queue backlog and dead letters have independent alarms', () => {
   for (const env of ['prod', 'staging']) {
     const resources = JSON.parse(
@@ -433,13 +466,47 @@ test('source catalog coverage is complete and monitoring delivery has no applica
         'utf8'
       )
     );
-    const targets: string[] = [...catalog.services, ...retained.services]
-      .filter((s: { allowed_environments: string[] }) =>
-        s.allowed_environments.includes(env)
-      )
-      .flatMap(
-        (s: { verification_targets: string[] }) => s.verification_targets
+    type CatalogService = {
+      name: string;
+      allowed_environments: string[];
+      aws_region: Record<string, string>;
+      verification_targets: string[];
+    };
+    const sourceRegion = catalog.services.find(
+      (s: CatalogService) => s.name === 'api'
+    ).aws_region[env];
+    const deployed: CatalogService[] = [
+      ...catalog.services,
+      ...retained.services
+    ].filter((s: CatalogService) => s.allowed_environments.includes(env));
+    const targets: string[] = deployed
+      .filter((s) => s.aws_region[env] === sourceRegion)
+      .flatMap((s) => s.verification_targets);
+    // A service deployed outside the single source region is listed apart and
+    // gets no relay subscription in the regional source stack.
+    const otherRegionTargets: string[] = deployed
+      .filter((s) => s.aws_region[env] !== sourceRegion)
+      .flatMap((s) => s.verification_targets);
+    assert.deepEqual(
+      coverage.otherRegionServices
+        .flatMap((s: { functions: string[] }) => s.functions)
+        .sort((left: string, right: string) => left.localeCompare(right)),
+      otherRegionTargets.sort((left, right) => left.localeCompare(right))
+    );
+    assert.deepEqual(
+      [
+        ...new Set(
+          coverage.services.map((s: { region: string }) => s.region)
+        )
+      ],
+      [sourceRegion]
+    );
+    for (const name of otherRegionTargets) {
+      assert.equal(
+        source.Resources[`${name.replace(/[^a-zA-Z0-9]/g, '')}ErrorLogs`],
+        undefined
       );
+    }
     assert.deepEqual(
       coverage.services
         .flatMap((s: { functions: string[] }) => s.functions)

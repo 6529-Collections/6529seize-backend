@@ -4,7 +4,14 @@ import * as Joi from 'joi';
 import { ApiDropCompetitionContext } from '@/api/generated/models/ApiDropCompetitionContext';
 import { getAuthenticationContext } from '@/api/auth/auth';
 import { getValidatedByJoiOrThrow } from '@/api/validation';
-import { NewDropSchema, NewWaveDropSchema } from '@/api/drops/drop.validator';
+import {
+  DropMetadataListSchema,
+  NewDropSchema,
+  NewWaveDropSchema
+} from '@/api/drops/drop.validator';
+import { ApiValidateMainStageTraitsRequest } from '@/api/generated/models/ApiValidateMainStageTraitsRequest';
+import { ApiMainStageTraitValidation } from '@/api/generated/models/ApiMainStageTraitValidation';
+import { checkMainStageTraits, mainStageTraitRules } from './main-stage-traits';
 import {
   WaveChatSchema,
   WaveScopeSchema,
@@ -37,6 +44,7 @@ import {
   UpdateCompetitionV3Request,
   ExecuteCompetitionActionV3Request,
   CreateCompetitionEntryV3Request,
+  ValidateMainStageTraitsV3Request,
   SetCompetitionVoteV3Request,
   GetCompetitionCreditBudgetV3Request,
   ListCompetitionMyVotesV3Request,
@@ -210,6 +218,29 @@ export async function handleGetCompetitionConfigurationV3(
     competition_id,
     await context(req)
   );
+}
+
+export async function handleValidateMainStageTraitsV3(
+  req: ValidateMainStageTraitsV3Request
+): Promise<ApiMainStageTraitValidation> {
+  noQuery(req.query);
+  const { wave_id, competition_id } = path(req.params);
+  const ctx = await context(req);
+  const competition = await competitionService.getCompetition(
+    wave_id,
+    competition_id,
+    ctx
+  );
+  const rules = mainStageTraitRules(competition.capabilities);
+  if (!rules)
+    throw new NotFoundException('Main Stage trait validation is unavailable');
+  const { metadata } = getValidatedByJoiOrThrow(
+    req.body,
+    Joi.object<ApiValidateMainStageTraitsRequest>({
+      metadata: DropMetadataListSchema.required()
+    }).required()
+  );
+  return { issues: checkMainStageTraits(metadata, rules).issues };
 }
 
 export async function handleCreateCompetitionEntryV3(

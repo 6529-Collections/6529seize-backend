@@ -21,10 +21,13 @@ import {
   competitionAnonymityService
 } from '@/competitions/competition-anonymity';
 
+import { mainStageTraitRules } from './main-stage-traits';
+
 export function toApiCompetition(
   competition: PublicCompetition
 ): ApiCompetition {
   const { presentation, ...details } = competition;
+  const traitRules = mainStageTraitRules(competition.capabilities);
   return {
     ...details,
     type: enums.resolveOrThrow(ApiCompetitionType, competition.type),
@@ -54,7 +57,8 @@ export function toApiCompetition(
     capabilities: competition.capabilities.map((capability) =>
       enums.resolveOrThrow(ApiCompetitionCapability, capability)
     ),
-    ...(presentation ? { presentation: [...presentation] } : {})
+    ...(presentation ? { presentation: [...presentation] } : {}),
+    ...(traitRules ? { main_stage_trait_rules: traitRules } : {})
   };
 }
 

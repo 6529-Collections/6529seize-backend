@@ -155,18 +155,18 @@ export class NftLinkResolver {
 
       // If needs network verification, let caller decide to enforce it.
       const adapter = getAdapterFor(canonical);
-      if (adapter) {
-        const res = await adapter.resolveFast(canonical);
-        if (res?.patch) {
-          card = this.deepMerge(card, res.patch);
-        }
+      const resolved = await adapter?.resolveFast(canonical);
+      if (resolved?.patch) {
+        card = this.deepMerge(card, resolved.patch);
       }
 
       // OG fallback (allowlisted domains only; our validator ensures this)
       budget?.check();
-      const ogRes = await this.enrichWithOgIfMissing(card, canonical);
-      if (ogRes) {
-        card = this.deepMerge(card, ogRes.patch);
+      if (!resolved?.skipOpenGraph) {
+        const ogRes = await this.enrichWithOgIfMissing(card, canonical);
+        if (ogRes) {
+          card = this.deepMerge(card, ogRes.patch);
+        }
       }
 
       budget?.check();

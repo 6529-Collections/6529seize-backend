@@ -234,3 +234,46 @@ describe('profile picture URLs already stored for the profile', () => {
     }
   });
 });
+
+describe('profile picture URLs with a per-environment media host', () => {
+  const original = process.env.FILE_SERVER_URL;
+
+  beforeEach(() => {
+    process.env.FILE_SERVER_URL = 'https://media.staging.6529.io/';
+  });
+
+  afterEach(() => {
+    if (original === undefined) {
+      delete process.env.FILE_SERVER_URL;
+    } else {
+      process.env.FILE_SERVER_URL = original;
+    }
+  });
+
+  it('accepts a new picture on the configured media host', () => {
+    expect(validate('https://media.staging.6529.io/pfp/a.png')).toEqual({
+      value: 'https://media.staging.6529.io/pfp/a.png'
+    });
+  });
+
+  it('still accepts a new picture on the prod CDN', () => {
+    expect(
+      isMediaHostUrl('https://d3lqz0a4bldqgf.cloudfront.net/pfp/a.png')
+    ).toBe(true);
+  });
+
+  it.each([
+    'https://media.staging.6529.io.example/pfp.png',
+    'https://x@media.staging.6529.io/pfp.png',
+    'https://media.staging.6529.io:8443/pfp.png',
+    'https://media.staging.6529.io/'
+  ])('rejects %s', (value) => {
+    expect(isMediaHostUrl(value)).toBe(false);
+  });
+
+  it('names the configured host in the error', () => {
+    expect(validate('https://media.staging.6529.io/').error).toContain(
+      'https://media.staging.6529.io/'
+    );
+  });
+});

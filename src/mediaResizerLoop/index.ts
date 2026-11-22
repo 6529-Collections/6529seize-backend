@@ -37,7 +37,7 @@ const s3Client = new S3Client({
 });
 
 const liveHandler = wrapLambdaHandler(async (event: any, context) => {
-  let path = event.queryStringParameters?.path;
+  let path = requestedPath(event);
   if (!path) {
     return notFound();
   }
@@ -78,7 +78,8 @@ const liveHandler = wrapLambdaHandler(async (event: any, context) => {
     const originImage = await getSourceObject(key);
     if (!originImage?.Body) {
       logger.info(`[${path}] S3 origin file not found`);
-      return notFound();
+      const legacyServer = process.env.LEGACY_FILE_SERVER_URL;
+      return legacyServer ? legacyRedirect(legacyServer, path) : notFound();
     }
 
     sourceRevision = getSourceObjectRevision(
@@ -272,6 +273,45 @@ function parseResizeOption(requestedOption: string) {
   )
     return null;
   return { preserveGif, resizeOption };
+}
+
+/**
+ * The resize path comes from `?path=` behind API Gateway (prod: S3 website
+ * routing rules redirect there) or from the URL path itself behind a Lambda
+ * function URL used as a CloudFront failover origin (staging).
+ */
+function requestedPath(event: any): string | null {
+  const queryPath = event?.queryStringParameters?.path;
+  if (queryPath) return queryPath;
+  const rawPath = event?.rawPath;
+  if (typeof rawPath !== 'string' || rawPath.length <= 1) return null;
+  try {
+    return decodeURIComponent(rawPath);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * An original missing from this environment's bucket may still live in the
+ * legacy media store (staging data created before it had its own bucket).
+ * Send the request there, where the legacy CDN serves or resizes it.
+ */
+function legacyRedirect(legacyServer: string, path: string) {
+  const location = `${legacyServer}/${path
+    .split('/')
+    .map(encodeURIComponent)
+    .join('/')}`;
+  logger.info(
+    `[${path}] Source not in this bucket. Redirecting to ${location}`
+  );
+  return {
+    statusCode: 302,
+    headers: {
+      Location: location,
+      'Cache-Control': 'public, max-age=60'
+    }
+  };
 }
 
 function resizedRedirect(path: string) {

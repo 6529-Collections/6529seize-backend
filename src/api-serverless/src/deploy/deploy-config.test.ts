@@ -28,11 +28,15 @@ describe('deploy.config', () => {
   });
 
   it('keeps the workflow environment constraints in sync', () => {
+    expect(canDeployServiceToEnvironment('newsletterLoop', 'prod')).toBe(true);
+    expect(canDeployServiceToEnvironment('newsletterLoop', 'staging')).toBe(
+      false
+    );
     expect(canDeployServiceToEnvironment('mediaResizerLoop', 'prod')).toBe(
       true
     );
     expect(canDeployServiceToEnvironment('mediaResizerLoop', 'staging')).toBe(
-      false
+      true
     );
     expect(
       canDeployServiceToEnvironment('releaseNotesGenerationLoop', 'prod')
@@ -45,6 +49,9 @@ describe('deploy.config', () => {
     ).toBe(true);
     expect(
       canDeployServiceToEnvironment('dropVideoConversionInvokerLoop', 'prod')
+    ).toBe(true);
+    expect(
+      canDeployServiceToEnvironment('dropMediaIngestStorage', 'prod')
     ).toBe(false);
     expect(canDeployServiceToEnvironment('api', 'staging')).toBe(true);
     expect(canDeployServiceToEnvironment('api', 'prod')).toBe(true);

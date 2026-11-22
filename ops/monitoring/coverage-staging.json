@@ -256,6 +256,18 @@
       ]
     },
     {
+      "service": "mediaResizerLoop",
+      "region": "eu-west-1",
+      "functions": [
+        "mediaResizerLoop"
+      ],
+      "coverage": [
+        "structured-error-logs",
+        "lambda-errors",
+        "lambda-throttles"
+      ]
+    },
+    {
       "service": "mintAnnouncementsLoop",
       "region": "eu-west-1",
       "functions": [
@@ -523,6 +535,19 @@
       ]
     },
     {
+      "service": "signedRecordLogLoop",
+      "region": "eu-west-1",
+      "functions": [
+        "signedRecordLogCloser",
+        "signedRecordLogArchiver"
+      ],
+      "coverage": [
+        "structured-error-logs",
+        "lambda-errors",
+        "lambda-throttles"
+      ]
+    },
+    {
       "service": "teamLoop",
       "region": "eu-west-1",
       "functions": [
@@ -665,6 +690,7 @@
       ]
     }
   ],
+  "otherRegionServices": [],
   "supplementalSource": "ops/monitoring/platform-functions.json",
   "platformOnly": [
     {
@@ -688,24 +714,6 @@
     {
       "name": "allowlist-token-pool-downloader",
       "owner": "external",
-      "coverage": [
-        "lambda-errors",
-        "lambda-throttles"
-      ],
-      "deployCode": false
-    },
-    {
-      "name": "tdhConsolidationsLoop",
-      "owner": "legacy",
-      "coverage": [
-        "lambda-errors",
-        "lambda-throttles"
-      ],
-      "deployCode": false
-    },
-    {
-      "name": "transactionsReplayLoop",
-      "owner": "legacy",
       "coverage": [
         "lambda-errors",
         "lambda-throttles"

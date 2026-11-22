@@ -149,6 +149,7 @@ import { ApiE2eeCreateBlobRequest } from '@/api/generated/models/ApiE2eeCreateBl
 import { ApiE2eeCreateGroupRequest } from '@/api/generated/models/ApiE2eeCreateGroupRequest';
 import { ApiE2eeDevice } from '@/api/generated/models/ApiE2eeDevice';
 import { ApiE2eeDeviceGroup } from '@/api/generated/models/ApiE2eeDeviceGroup';
+import { ApiE2eeDeviceInboxStatus } from '@/api/generated/models/ApiE2eeDeviceInboxStatus';
 import { ApiE2eeDeviceLookupRequest } from '@/api/generated/models/ApiE2eeDeviceLookupRequest';
 import { ApiE2eeDeviceLookupResponse } from '@/api/generated/models/ApiE2eeDeviceLookupResponse';
 import { ApiE2eeEligibilityRequest } from '@/api/generated/models/ApiE2eeEligibilityRequest';
@@ -182,6 +183,7 @@ import { ApiGlobalRepCategoryWaveOverview } from '@/api/generated/models/ApiGlob
 import { ApiGlobalRepCategoryWavesPage } from '@/api/generated/models/ApiGlobalRepCategoryWavesPage';
 import { ApiGroupMembersPreviewRequest } from '@/api/generated/models/ApiGroupMembersPreviewRequest';
 import { ApiJoinedWavesPage } from '@/api/generated/models/ApiJoinedWavesPage';
+import { ApiMainStageTraitValidation } from '@/api/generated/models/ApiMainStageTraitValidation';
 import { ApiMarketBatchCapabilities } from '@/api/generated/models/ApiMarketBatchCapabilities';
 import { ApiMarketBatchPreflight } from '@/api/generated/models/ApiMarketBatchPreflight';
 import { ApiMarketBatchPreflightRequest } from '@/api/generated/models/ApiMarketBatchPreflightRequest';
@@ -245,6 +247,7 @@ import { ApiSaveEulaConsentResponse } from '@/api/generated/models/ApiSaveEulaCo
 import { ApiSaveProfileCmsPackageDraftRequest } from '@/api/generated/models/ApiSaveProfileCmsPackageDraftRequest';
 import { ApiSetCompetitionVoteRequest } from '@/api/generated/models/ApiSetCompetitionVoteRequest';
 import { ApiSetDropReplyCollapseRequest } from '@/api/generated/models/ApiSetDropReplyCollapseRequest';
+import { ApiSignedRecordsAnchor } from '@/api/generated/models/ApiSignedRecordsAnchor';
 import { ApiSubmitProfileCmsAgentProposalRequest } from '@/api/generated/models/ApiSubmitProfileCmsAgentProposalRequest';
 import { ApiSubscriptionCoverage } from '@/api/generated/models/ApiSubscriptionCoverage';
 import { ApiTdhRules } from '@/api/generated/models/ApiTdhRules';
@@ -254,6 +257,7 @@ import { ApiUpdateCompetitionRequest } from '@/api/generated/models/ApiUpdateCom
 import { ApiUpdatePinnedWaveOrder } from '@/api/generated/models/ApiUpdatePinnedWaveOrder';
 import { ApiUpdateProfilePreferences } from '@/api/generated/models/ApiUpdateProfilePreferences';
 import { ApiUpdateWaveHubRequest } from '@/api/generated/models/ApiUpdateWaveHubRequest';
+import { ApiValidateMainStageTraitsRequest } from '@/api/generated/models/ApiValidateMainStageTraitsRequest';
 import { ApiValidateProfileCmsAgentCandidateRequest } from '@/api/generated/models/ApiValidateProfileCmsAgentCandidateRequest';
 import { ApiValidateProfileCmsAgentPatchRequest } from '@/api/generated/models/ApiValidateProfileCmsAgentPatchRequest';
 import { ApiValidateProfileCmsPackageRequest } from '@/api/generated/models/ApiValidateProfileCmsPackageRequest';
@@ -1962,6 +1966,22 @@ export type E2eeGetDeviceGroupsRequest = Request<
   Record<string, never>
 >;
 
+export interface E2eeGetDeviceInboxStatusPathParams {
+  "device_key": string;
+}
+
+export type E2eeGetDeviceInboxStatusQuery = Record<string, never>;
+
+export type E2eeGetDeviceInboxStatusResponse = ApiE2eeDeviceInboxStatus;
+
+export type E2eeGetDeviceInboxStatusRequest = Request<
+  E2eeGetDeviceInboxStatusPathParams,
+  ApiResponse<E2eeGetDeviceInboxStatusResponse>,
+  never,
+  E2eeGetDeviceInboxStatusQuery,
+  Record<string, never>
+>;
+
 export interface E2eeUploadKeyPackagesPathParams {
   "device_key": string;
 }
@@ -3361,6 +3381,20 @@ export type GetGlobalRepCategoryWavesRequest = Request<
   Record<string, never>
 >;
 
+export type GetSignedRecordsAnchorPathParams = Record<string, never>;
+
+export type GetSignedRecordsAnchorQuery = Record<string, never>;
+
+export type GetSignedRecordsAnchorResponse = ApiSignedRecordsAnchor;
+
+export type GetSignedRecordsAnchorRequest = Request<
+  GetSignedRecordsAnchorPathParams,
+  ApiResponse<GetSignedRecordsAnchorResponse>,
+  never,
+  GetSignedRecordsAnchorQuery,
+  Record<string, never>
+>;
+
 export interface GetSubscriptionCoveragePathParams {
   "consolidation_key": string;
 }
@@ -4539,6 +4573,23 @@ export type ListCompetitionLeaderboardV3Request = Request<
   ApiResponse<ListCompetitionLeaderboardV3Response>,
   never,
   ListCompetitionLeaderboardV3Query,
+  Record<string, never>
+>;
+
+export interface ValidateMainStageTraitsV3PathParams {
+  "wave_id": string;
+  "competition_id": string;
+}
+
+export type ValidateMainStageTraitsV3Query = Record<string, never>;
+
+export type ValidateMainStageTraitsV3Response = ApiMainStageTraitValidation;
+
+export type ValidateMainStageTraitsV3Request = Request<
+  ValidateMainStageTraitsV3PathParams,
+  ApiResponse<ValidateMainStageTraitsV3Response>,
+  ApiValidateMainStageTraitsRequest,
+  ValidateMainStageTraitsV3Query,
   Record<string, never>
 >;
 
