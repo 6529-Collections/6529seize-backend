@@ -887,6 +887,18 @@ follows the gateway's change feed. `identity_chain_principals` maps each
 principal to the 6529.io profile id its rows use; `identity_chain_mirror_state`
 holds its place in the feed. Profile documents come from the gateway's store.
 
+One writer per `identities` column: the mirror writes `rep`, `cic`,
+`level_raw` and the profile columns; it never updates `tdh`, `basetdh_rate`
+or the xTDH columns of a row that exists (the TDH and xTDH loops own them),
+and a row it creates for a new consolidation key starts from the profile's
+previous values. When wallets change keys, the mirror calls the handlers in
+`src/identity-chain-mirror/membership-change.ts` in its own transaction; the
+first queues every wallet of the rows before and after into
+`transfer_reconciliations` for the holdings loops. Each REP and NIC rating
+change it applies is written, in the same transaction, to
+`identity_chain_rating_events` (rater, target, matter, category, old and new
+value, total after, chain height, FEED or FULL_SYNC) for notifications.
+
 ### Ordinary Ethereum RPC boundary
 
 The shared provider in `src/ethereum-rpc/` reads the server-only

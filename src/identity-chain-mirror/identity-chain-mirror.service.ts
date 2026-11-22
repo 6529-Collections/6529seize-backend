@@ -10,21 +10,29 @@ import {
   ChainRating
 } from '@/chain-gateway/chain-gateway.types';
 import { Logger } from '@/logging';
+import { ConnectionWrapper } from '@/sql-executor';
 import {
   DelegationRowWrite,
   identityChainMirrorDb,
   IdentityChainMirrorDb,
   MirrorState,
+  RatingEventContext,
   RatingRowWrite
 } from './identity-chain-mirror.db';
 import {
   CHAIN_BLOCK_BASE,
   ChainIdentityView,
   consolidationKeyOf,
+  membershipChangeOf,
   NEVER_EXPIRES,
   planIdentity,
   principalProfileId
 } from './identity-plan';
+import {
+  MEMBERSHIP_CHANGE_HANDLERS,
+  MembershipChange,
+  MembershipChangeHandler
+} from './membership-change';
 import { toDelegationRow } from './delegation-rows';
 import {
   decodeProfileDoc,
@@ -34,7 +42,11 @@ import {
 
 const logger = Logger.get('IDENTITY_CHAIN_MIRROR');
 
-/** 6529.io's consolidation keys hold four wallets (varchar 200). */
+/**
+ * 6529.io's consolidation keys held four wallets (varchar 200) before the
+ * widening migration; the mirror reads the live width at each run and falls
+ * back to this.
+ */
 export const MAX_CONSOLIDATION_KEY_LENGTH = 200;
 const FULL_SYNC_EVERY_MS = 6 * 60 * 60 * 1000;
 const FEED_PAGE_BLOCKS = 200;
@@ -103,6 +115,12 @@ function collectHex(
       wallets.add(value);
     }
   }
+}
+
+/** Where the mirror is reading: the height and how it got there. */
+export interface MirrorAt {
+  readonly height: number;
+  readonly source: RatingEventContext['source'];
 }
 
 export interface FeedEffects {
@@ -199,11 +217,13 @@ function toNumber(value: string | number | null | undefined): number {
  */
 export class IdentityChainMirror {
   private readonly identities = new Map<string, ChainIdentity | null>();
+  private keyWidth = MAX_CONSOLIDATION_KEY_LENGTH;
 
   constructor(
     private readonly gateway: Gateway = chainGatewayClient,
     private readonly db: IdentityChainMirrorDb = identityChainMirrorDb,
-    private readonly now: () => number = () => Date.now()
+    private readonly now: () => number = () => Date.now(),
+    private readonly membershipHandlers: readonly MembershipChangeHandler[] = MEMBERSHIP_CHANGE_HANDLERS
   ) {}
 
   private report(): MirrorRunReport {
@@ -234,6 +254,8 @@ export class IdentityChainMirror {
       report.skipped = 'import_not_complete';
       return report;
     }
+    this.keyWidth =
+      (await this.db.consolidationKeyWidth()) ?? MAX_CONSOLIDATION_KEY_LENGTH;
     let state = (await this.db.getState()) ?? this.emptyState();
     const fullSyncDue =
       state.last_full_sync_at === null ||
@@ -292,10 +314,14 @@ export class IdentityChainMirror {
         after: state.sync_after,
         limit: IDENTITY_PAGE
       });
+      const at: MirrorAt = {
+        height: Number(state.sync_from_height),
+        source: 'FULL_SYNC'
+      };
       for (const identity of page?.items ?? []) {
         await this.isolated(identity.principalId, report, async () => {
-          await this.applyIdentity(identity, report);
-          await this.syncTargetRatings(identity, report);
+          await this.applyIdentity(identity, report, at);
+          await this.syncTargetRatings(identity, report, at);
         });
       }
       state = await this.save(
@@ -339,7 +365,7 @@ export class IdentityChainMirror {
       const wallets = identity.wallets
         .map((it) => it.toLowerCase())
         .sort((a, b) => (a < b ? -1 : Number(a > b)));
-      if (consolidationKeyOf(wallets).length > MAX_CONSOLIDATION_KEY_LENGTH) {
+      if (consolidationKeyOf(wallets).length > this.keyWidth) {
         continue;
       }
       for (let i = 0; i < wallets.length; i++) {
@@ -423,7 +449,10 @@ export class IdentityChainMirror {
         return state;
       }
       const records = page.blocks.flatMap((block) => block.records);
-      await this.applyEffects(feedEffects(records), report);
+      await this.applyEffects(feedEffects(records), report, {
+        height: page.through,
+        source: 'FEED'
+      });
       report.feedBlocks += page.through - page.from + 1;
       state = await this.save({ ...state, next_height: page.next });
     }
@@ -479,14 +508,18 @@ export class IdentityChainMirror {
     return principals;
   }
 
-  private async applyEffects(effects: FeedEffects, report: MirrorRunReport) {
+  private async applyEffects(
+    effects: FeedEffects,
+    report: MirrorRunReport,
+    at: MirrorAt
+  ) {
     const principals = await this.principalsOf(effects);
     const touched = new Set<string>(effects.wallets);
     for (const principal of Array.from(principals)) {
       const identity = await this.identity(principal);
       if (!identity) continue;
       await this.isolated(principal, report, async () => {
-        (await this.applyIdentity(identity, report)).forEach((it) =>
+        (await this.applyIdentity(identity, report, at)).forEach((it) =>
           touched.add(it)
         );
       });
@@ -495,7 +528,7 @@ export class IdentityChainMirror {
       const identity = await this.identity(target);
       if (!identity) continue;
       await this.isolated(target, report, () =>
-        this.syncTargetRatings(identity, report)
+        this.syncTargetRatings(identity, report, at)
       );
     }
     for (const holder of Array.from(effects.delegationHolders)) {
@@ -609,10 +642,15 @@ export class IdentityChainMirror {
     return { profileId: principalProfileId(principalId), origin: 'NEW' };
   }
 
-  /** Writes one identity's rows; returns the wallets whose identity changed. */
+  /**
+   * Writes one identity's rows; returns the wallets whose identity changed.
+   * A change in which wallets share a key goes to the membership handlers
+   * in the same transaction.
+   */
   async applyIdentity(
     identity: ChainIdentity,
-    report: MirrorRunReport
+    report: MirrorRunReport,
+    at: MirrorAt
   ): Promise<string[]> {
     const wallets = identity.wallets.map((it) => it.toLowerCase());
     if (isInactive(identity)) {
@@ -621,10 +659,10 @@ export class IdentityChainMirror {
         ? await this.identity(identity.mergedInto)
         : null;
       return survivor?.wallets.length && !survivor.mergedInto
-        ? await this.applyIdentity(survivor, report)
+        ? await this.applyIdentity(survivor, report, at)
         : [];
     }
-    if (consolidationKeyOf(wallets).length > MAX_CONSOLIDATION_KEY_LENGTH) {
+    if (consolidationKeyOf(wallets).length > this.keyWidth) {
       logger.error(
         `[IDENTITY ${identity.principalId} HAS ${wallets.length} WALLETS: TOO MANY FOR A 6529.IO CONSOLIDATION KEY, NOT MIRRORED]`
       );
@@ -664,6 +702,10 @@ export class IdentityChainMirror {
           this.now(),
           conn
         );
+        await this.membershipChanged(
+          membershipChangeOf(plan, state, at.height),
+          conn
+        );
         return plan;
       }
     );
@@ -674,6 +716,17 @@ export class IdentityChainMirror {
     return plan.touchedWallets;
   }
 
+  /** Each membership handler, in the mirror's transaction. */
+  private async membershipChanged(
+    change: MembershipChange | null,
+    conn: ConnectionWrapper<any>
+  ) {
+    if (!change) return;
+    for (const handler of this.membershipHandlers) {
+      await handler(change, { connection: conn });
+    }
+  }
+
   private ratingRow(
     rating: ChainRating,
     raterProfileId: string
@@ -681,25 +734,28 @@ export class IdentityChainMirror {
     const value = Math.trunc(toNumber(rating.value));
     if (!value || Math.abs(value) > MAX_RATING) return null;
     const matter = rating.matter.toUpperCase();
+    const base = {
+      rater_profile_id: raterProfileId,
+      rating: value,
+      rater_principal: rating.rater.toLowerCase(),
+      height: rating.updatedHeight ?? null
+    };
     if (matter === 'NIC' || matter === 'CIC') {
-      return {
-        rater_profile_id: raterProfileId,
-        matter: 'CIC',
-        matter_category: 'CIC',
-        rating: value
-      };
+      return { ...base, matter: 'CIC', matter_category: 'CIC' };
     }
     if (matter !== 'REP' || !rating.category?.name) return null;
-    return {
-      rater_profile_id: raterProfileId,
-      matter: 'REP',
-      matter_category: rating.category.name,
-      rating: value
-    };
+    return { ...base, matter: 'REP', matter_category: rating.category.name };
   }
 
-  /** A target's REP and CIC rows become the chain's ratings of it. */
-  async syncTargetRatings(identity: ChainIdentity, report: MirrorRunReport) {
+  /**
+   * A target's REP and CIC rows become the chain's ratings of it; each
+   * change goes to the rating event log in the same transaction.
+   */
+  async syncTargetRatings(
+    identity: ChainIdentity,
+    report: MirrorRunReport,
+    at: MirrorAt
+  ) {
     if (isInactive(identity)) return;
     const targetProfileId = await this.profileIdOf(identity);
     const ratings: ChainRating[] = [];
@@ -722,8 +778,19 @@ export class IdentityChainMirror {
       const row = this.ratingRow(rating, await this.profileIdOf(rater));
       if (row) rows.push(row);
     }
+    const events: RatingEventContext = {
+      targetPrincipal: identity.principalId.toLowerCase(),
+      height: at.height,
+      source: at.source
+    };
     await this.db.executeNativeQueriesInTransaction((conn) =>
-      this.db.replaceTargetRatings(targetProfileId, rows, this.now(), conn)
+      this.db.replaceTargetRatings(
+        targetProfileId,
+        rows,
+        this.now(),
+        events,
+        conn
+      )
     );
     report.ratingTargets++;
   }

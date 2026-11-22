@@ -10,6 +10,7 @@ import {
   CONSOLIDATIONS_TABLE,
   DELEGATIONS_TABLE,
   IDENTITIES_TABLE,
+  IDENTITY_CHAIN_RATING_EVENTS_TABLE,
   PROFILES_TABLE,
   RATINGS_TABLE
 } from '@/constants';
@@ -27,6 +28,7 @@ const PLACE = '00000000-0000-4000-8000-000000000003';
 const BOB = '00000000-0000-4000-8000-000000000b0b';
 const AB = consolidationKeyOf([A, B]);
 const P = '0x' + 'ab'.repeat(32);
+const Q = '0x' + 'cd'.repeat(32);
 
 const db = new IdentityChainMirrorDb(() => sqlExecutor);
 const inTx = <T>(fn: (conn: any) => Promise<T>) =>
@@ -240,6 +242,60 @@ describeWithSeed(
       ]);
     });
 
+    it('never updates tdh, basetdh_rate or xTDH in a row that exists', async () => {
+      expect(await db.consolidationKeyWidth()).toBeGreaterThanOrEqual(200);
+      await inTx(async (conn) => {
+        const state = await db.readIdentityState([A, B], ALICE, null, A, conn);
+        const plan = planIdentity(
+          {
+            principalId: P,
+            profileId: ALICE,
+            handle: 'alice',
+            wallets: [A, B],
+            primary: A,
+            doc: undefined,
+            rep: 7,
+            cic: 2,
+            levelRaw: 507
+          },
+          state
+        );
+        expect(plan.identity.consolidation_key).toBe(AB);
+        // Another loop's values in the plan: the existing row keeps its own.
+        await db.applyIdentityPlan(
+          {
+            ...plan,
+            identity: {
+              ...plan.identity,
+              tdh: 1,
+              basetdh_rate: 9,
+              xtdh: 7,
+              xtdh_rate: 3
+            }
+          },
+          1_000_000_050,
+          77,
+          conn
+        );
+      });
+      const row = await sqlExecutor.oneOrNull<any>(
+        `select tdh, basetdh_rate, xtdh, xtdh_rate, rep, cic, level_raw
+         from ${IDENTITIES_TABLE} where consolidation_key = :key`,
+        { key: AB }
+      );
+      expect(
+        Object.fromEntries(Object.entries(row!).map(([k, v]) => [k, Number(v)]))
+      ).toEqual({
+        tdh: 500,
+        basetdh_rate: 0,
+        xtdh: 0,
+        xtdh_rate: 0,
+        rep: 7,
+        cic: 2,
+        level_raw: 507
+      });
+    });
+
     it('replaces a target ratings but keeps help-bot credits', async () => {
       const result = await inTx((conn) =>
         db.replaceTargetRatings(
@@ -249,20 +305,78 @@ describeWithSeed(
               rater_profile_id: BOB,
               matter: 'REP',
               matter_category: 'Kind',
-              rating: 4
+              rating: 4,
+              rater_principal: P,
+              height: 88
             },
             {
               rater_profile_id: BOB,
               matter: 'CIC',
               matter_category: 'CIC',
-              rating: 2
+              rating: 2,
+              rater_principal: P,
+              height: 89
             }
           ],
           1_700_000_000_000,
+          { targetPrincipal: Q, height: 90, source: 'FEED' },
           conn
         )
       );
       expect(result).toEqual({ inserted: 1, updated: 1, deleted: 1 });
+      // One event per change, in the same transaction.
+      const events = await sqlExecutor.execute<any>(
+        `select height, rater_principal, rater_profile_id, target_principal, target_profile_id,
+                matter, matter_category, old_rating, new_rating, total_after, source
+         from ${IDENTITY_CHAIN_RATING_EVENTS_TABLE} order by matter, matter_category`
+      );
+      expect(
+        events.map((it: any) => ({
+          ...it,
+          height: Number(it.height),
+          total_after: Number(it.total_after)
+        }))
+      ).toEqual([
+        {
+          height: 89,
+          rater_principal: P,
+          rater_profile_id: BOB,
+          target_principal: Q,
+          target_profile_id: ALICE,
+          matter: 'CIC',
+          matter_category: 'CIC',
+          old_rating: 0,
+          new_rating: 2,
+          total_after: 2,
+          source: 'FEED'
+        },
+        {
+          height: 88,
+          rater_principal: P,
+          rater_profile_id: BOB,
+          target_principal: Q,
+          target_profile_id: ALICE,
+          matter: 'REP',
+          matter_category: 'Kind',
+          old_rating: 3,
+          new_rating: 4,
+          total_after: 4,
+          source: 'FEED'
+        },
+        {
+          height: 90,
+          rater_principal: null,
+          rater_profile_id: PLACE,
+          target_principal: Q,
+          target_profile_id: ALICE,
+          matter: 'REP',
+          matter_category: 'Old',
+          old_rating: 1,
+          new_rating: 0,
+          total_after: 0,
+          source: 'FEED'
+        }
+      ]);
       const rows = await sqlExecutor.execute<any>(
         `select rater_profile_id, matter, matter_category, rating from ${RATINGS_TABLE}
          where matter_target_id = :id order by matter, matter_category`,

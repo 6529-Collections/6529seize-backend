@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { consolidationTools } from '@/consolidation-tools';
+import type { MembershipChange } from './membership-change';
 import { ProfileDocFields, ProfileDocStatement } from './profile-doc';
 
 /**
@@ -427,4 +428,34 @@ export function planIdentity(
       ...leavers.map((address) => ({ address, consolidation_key: address }))
     ])
   };
+}
+
+/**
+ * The membership change a plan makes, or null when no wallet's key changes:
+ * the wallets of every row before and after, each with its key before and
+ * after (a wallet with no row before keys to itself).
+ */
+export function membershipChangeOf(
+  plan: IdentityPlan,
+  state: CurrentIdentityState,
+  height: number
+): MembershipChange | null {
+  if (!plan.regroupedWallets.length) return null;
+  const keysBefore: Record<string, string> = {};
+  for (const [key, list] of Object.entries(state.walletsByKey)) {
+    list.forEach((it) => (keysBefore[it.toLowerCase()] = key));
+  }
+  const keysAfter: Record<string, string> = {};
+  plan.addressKeys.forEach(
+    (it) => (keysAfter[it.address.toLowerCase()] = it.consolidation_key)
+  );
+  const wallets = uniqueSorted([
+    ...Object.keys(keysBefore),
+    ...Object.keys(keysAfter)
+  ]);
+  for (const wallet of wallets) {
+    keysBefore[wallet] = keysBefore[wallet] ?? wallet;
+    keysAfter[wallet] = keysAfter[wallet] ?? keysBefore[wallet];
+  }
+  return { height, wallets, keysBefore, keysAfter };
 }

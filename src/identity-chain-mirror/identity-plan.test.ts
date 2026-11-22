@@ -3,6 +3,7 @@ import {
   consolidationKeyOf,
   CurrentIdentityState,
   IdentityRowState,
+  membershipChangeOf,
   planIdentity,
   principalProfileId,
   ProfileRowState
@@ -159,6 +160,28 @@ describe('planIdentity', () => {
     expect(plan.pairs).toHaveLength(3);
     expect(plan.touchedWallets).toEqual([A, B, C]);
     expect(plan.regroupedWallets).toEqual([A, B, C]);
+    expect(
+      membershipChangeOf(
+        plan,
+        state({
+          rows: [row(AB, U), row(C, V)],
+          walletsByKey: { [AB]: [A, B], [C]: [C] }
+        }),
+        42
+      )
+    ).toEqual({
+      height: 42,
+      wallets: [A, B, C],
+      keysBefore: { [A]: AB, [B]: AB, [C]: C },
+      keysAfter: { [A]: ABC, [B]: ABC, [C]: ABC }
+    });
+  });
+
+  it('makes no membership change when every key stays', () => {
+    const current = state();
+    expect(membershipChangeOf(planIdentity(chain(), current), current, 7)).toBe(
+      null
+    );
   });
 
   it('gives a removed wallet its own row without a profile', () => {
@@ -186,6 +209,18 @@ describe('planIdentity', () => {
     expect(plan.pairs).toEqual([{ wallet1: A, wallet2: B }]);
     expect(plan.touchedWallets).toEqual([A, B, C]);
     expect(plan.regroupedWallets).toEqual([A, B, C]);
+    expect(
+      membershipChangeOf(
+        plan,
+        state({ rows: [row(ABC, U)], walletsByKey: { [ABC]: [A, B, C] } }),
+        42
+      )
+    ).toEqual({
+      height: 42,
+      wallets: [A, B, C],
+      keysBefore: { [A]: ABC, [B]: ABC, [C]: ABC },
+      keysAfter: { [A]: AB, [B]: AB, [C]: C }
+    });
   });
 
   it('takes a handle from the profile that held it', () => {
