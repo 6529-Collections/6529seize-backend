@@ -1,11 +1,17 @@
 import {
+  CONTENT_MODERATION_REPORTS_TABLE,
   E2EE_BACKUPS_TABLE,
   E2EE_BLOB_CHUNKS_TABLE,
   E2EE_BLOBS_TABLE,
   E2EE_DEVICES_TABLE,
-  E2EE_KEY_PACKAGES_TABLE,
-  E2EE_STREAMS_TABLE
+  E2EE_GROUPS_TABLE,
+  E2EE_LOG_TABLE,
+  E2EE_REPORT_ACCESS_LOG_TABLE,
+  E2EE_REPORTS_TABLE,
+  E2EE_STREAMS_TABLE,
+  E2EE_WELCOME_DELIVERIES_TABLE
 } from '@/constants/db-tables';
+import { E2EE_MODERATION_INBOX } from '@/e2ee/relay/e2ee-moderation-seal';
 import { DbPoolName } from '@/db-query.options';
 import {
   E2eeMissingBytes,
@@ -20,9 +26,13 @@ import {
   e2eeRecordTable,
   e2eeRecordWhere
 } from '@/e2ee/relay/e2ee-record-tables';
-import { E2eeRebuiltState } from '@/e2ee/relay/e2ee-rebuild';
+import type { E2eeRebuiltStream } from '@/e2ee/relay/e2ee-rebuild';
 import { E2eeStreamHead } from '@/e2ee/relay/e2ee-stream-store';
-import { dbSupplier, LazyDbAccessCompatibleService } from '@/sql-executor';
+import {
+  ConnectionWrapper,
+  dbSupplier,
+  LazyDbAccessCompatibleService
+} from '@/sql-executor';
 
 const INSERT_BATCH = 200;
 const EXAMPLES = 5;
@@ -111,6 +121,18 @@ export function compareE2eeTables(
   };
 }
 
+/** MySQL entities with no stream, by kind (the check's first slice). */
+export interface E2eeCoverage {
+  readonly groups: number;
+  readonly devices: number;
+  readonly inboxes: number;
+  readonly blobs: number;
+  readonly backups: number;
+  readonly reports: number;
+  readonly missing: number;
+  readonly examples: readonly string[];
+}
+
 /** Reads and writes the delivery service's tables for a rebuild. */
 export class E2eeRebuildDb extends LazyDbAccessCompatibleService {
   private exec<T>(sql: string, params: Record<string, unknown> = {}) {
@@ -130,24 +152,6 @@ export class E2eeRebuildDb extends LazyDbAccessCompatibleService {
       counts[table] = Number(row?.cnt ?? 0);
     }
     return counts;
-  }
-
-  /** Every row of a recorded table, as a rebuild would carry it. */
-  async rows(table: string): Promise<Map<string, E2eeRow>> {
-    const target = e2eeRecordTable(table);
-    const where = e2eeRecordWhere(
-      target,
-      table === E2EE_KEY_PACKAGES_TABLE ? ['last_resort = true'] : []
-    );
-    const raw = await this.exec<Record<string, unknown>>(
-      `select ${e2eeRecordSelectList(target)} from ${table} ${where}`
-    );
-    return new Map(
-      raw.map((item) => {
-        const row = e2eeRecordRow(target, item);
-        return [e2eeRecordKeyString(target, row), row];
-      })
-    );
   }
 
   /** Rows of a table matching every column given (arrays match any). */
@@ -207,55 +211,157 @@ export class E2eeRebuildDb extends LazyDbAccessCompatibleService {
     return rows.map((row) => row.profile_id);
   }
 
-  async heads(): Promise<E2eeStreamHead[]> {
-    const rows = await this.exec<{
-      wave: string;
-      head_pos: number | string;
-      head_hash: string | null;
-    }>(`select wave, head_pos, head_hash from ${E2EE_STREAMS_TABLE}`);
-    return rows.map((row) => ({
-      wave: row.wave,
-      pos: Number(row.head_pos),
-      hash: row.head_hash
-    }));
-  }
-
-  /** Writes rebuilt rows into empty tables. */
-  async insert(state: E2eeRebuiltState, now: number): Promise<void> {
-    for (const [table, rows] of Array.from(state.tables.entries())) {
-      const columns = [
-        ...Object.keys(e2eeRecordTable(table).columns),
-        ...(EXTRA_COLUMNS[table] ?? [])
-      ];
-      const list = Array.from(rows.values());
-      for (let start = 0; start < list.length; start += INSERT_BATCH) {
-        await this.insertBatch(
-          table,
-          columns,
-          list.slice(start, start + INSERT_BATCH)
-        );
+  /**
+   * MySQL entities with no stream at all (the per-stream check only sees
+   * streams that have a head), with a few examples.
+   */
+  async coverage(): Promise<E2eeCoverage> {
+    const reportScope = e2eeRecordWhere(
+      e2eeRecordTable(CONTENT_MODERATION_REPORTS_TABLE)
+    );
+    const checks: Record<
+      keyof Omit<E2eeCoverage, 'missing' | 'examples'>,
+      string
+    > = {
+      groups: `select g.group_handle as k from ${E2EE_GROUPS_TABLE} g
+        left join ${E2EE_STREAMS_TABLE} s on s.wave = concat('cv/', g.group_handle)
+        where s.wave is null`,
+      devices: `select d.device_key as k from ${E2EE_DEVICES_TABLE} d
+        left join ${E2EE_STREAMS_TABLE} s on s.wave = concat('dr/', d.device_key)
+        where s.wave is null`,
+      inboxes: `select distinct w.device_key as k
+        from ${E2EE_WELCOME_DELIVERIES_TABLE} w
+        left join ${E2EE_STREAMS_TABLE} s on s.wave = concat('dv/', w.device_key)
+        where s.wave is null`,
+      blobs: `select b.blob_id as k from ${E2EE_BLOBS_TABLE} b
+        left join ${E2EE_STREAMS_TABLE} s on s.wave = concat('bl/', b.blob_id)
+        where b.complete = true and s.wave is null`,
+      backups: `select distinct b.profile_id as k from ${E2EE_BACKUPS_TABLE} b
+        left join ${E2EE_STREAMS_TABLE} s on s.wave = concat('bk/0x',
+          sha2(concat('6529.io e2ee backups ', b.profile_id), 256))
+        where s.wave is null`,
+      reports: `select 'reports' as k from dual
+        where not exists (select 1 from ${E2EE_STREAMS_TABLE}
+                          where wave = :inbox)
+          and (exists (select 1 from ${CONTENT_MODERATION_REPORTS_TABLE} ${reportScope})
+            or exists (select 1 from ${E2EE_REPORTS_TABLE})
+            or exists (select 1 from ${E2EE_REPORT_ACCESS_LOG_TABLE}))`
+    };
+    const counts: Record<string, number> = {};
+    const examples: string[] = [];
+    let missing = 0;
+    for (const [name, sql] of Object.entries(checks)) {
+      const rows = await this.exec<{ k: string }>(
+        `select count(*) as cnt, min(k) as k from (${sql}) missing`,
+        { inbox: `md/${E2EE_MODERATION_INBOX}` }
+      );
+      const count = Number((rows[0] as { cnt?: unknown })?.cnt ?? 0);
+      counts[name] = count;
+      missing += count;
+      if (count && examples.length < EXAMPLES) {
+        examples.push(`${name}: ${String(rows[0]?.k)}`);
       }
     }
-    const heads = state.heads.map((head) => ({
-      wave: head.wave,
-      head_pos: head.pos,
-      head_hash: head.hash,
-      created_at: now,
-      updated_at: now
-    }));
-    for (let start = 0; start < heads.length; start += INSERT_BATCH) {
-      await this.insertBatch(
-        E2EE_STREAMS_TABLE,
-        ['wave', 'head_pos', 'head_hash', 'created_at', 'updated_at'],
-        heads.slice(start, start + INSERT_BATCH)
+    return {
+      ...(counts as Omit<E2eeCoverage, 'missing' | 'examples'>),
+      missing,
+      examples
+    };
+  }
+
+  /** Write mode: streams a relay listed, as placeholder heads at 0. */
+  async addPendingStreams(waves: readonly string[], now: number) {
+    for (let start = 0; start < waves.length; start += INSERT_BATCH) {
+      const slice = waves.slice(start, start + INSERT_BATCH);
+      if (!slice.length) continue;
+      await this.exec(
+        `insert ignore into ${E2EE_STREAMS_TABLE}
+           (wave, head_pos, head_hash, created_at, updated_at)
+         values ${slice.map((_, i) => `(:w${i}, 0, null, :now, :now)`).join(', ')}`,
+        Object.fromEntries([
+          ['now', now],
+          ...slice.map((wave, i) => [`w${i}`, wave])
+        ])
       );
     }
   }
 
-  private async insertBatch(
+  /**
+   * Write mode: streams not yet written, devices first (revocations are
+   * read from them) and inboxes after groups (a revocation's roster rows
+   * replace the groups' own), the moderators' inbox last.
+   */
+  async pendingStreams(limit: number): Promise<string[]> {
+    const rows = await this.exec<{ wave: string }>(
+      `select wave from ${E2EE_STREAMS_TABLE} where head_pos = 0
+       order by field(substring_index(wave, '/', 1),
+                      'dr', 'cv', 'dv', 'bl', 'bk', 'md'), wave
+       limit :limit`,
+      { limit }
+    );
+    return rows.map((row) => row.wave);
+  }
+
+  async revokedDevices(): Promise<Set<string>> {
+    const rows = await this.exec<{ device_key: string }>(
+      `select device_key from ${E2EE_DEVICES_TABLE} where revoked_at is not null`
+    );
+    return new Set(rows.map((row) => row.device_key));
+  }
+
+  /**
+   * Write mode: one rebuilt stream's rows (insert, or replace a row another
+   * stream wrote) and its head, in one transaction. A stream with no
+   * usable record loses its placeholder head.
+   */
+  async writeStream(stream: E2eeRebuiltStream, now: number): Promise<void> {
+    await this.executeNativeQueriesInTransaction(async (connection) => {
+      for (const [table, rows] of Array.from(stream.tables.entries())) {
+        const columns = [
+          ...Object.keys(e2eeRecordTable(table).columns),
+          ...(EXTRA_COLUMNS[table] ?? [])
+        ];
+        const list = Array.from(rows.values());
+        for (let start = 0; start < list.length; start += INSERT_BATCH) {
+          await this.upsert(
+            table,
+            columns,
+            list.slice(start, start + INSERT_BATCH),
+            connection
+          );
+        }
+      }
+      await this.db.execute(
+        stream.head
+          ? `update ${E2EE_STREAMS_TABLE}
+             set head_pos = :pos, head_hash = :hash, updated_at = :now
+             where wave = :wave`
+          : `delete from ${E2EE_STREAMS_TABLE} where wave = :wave`,
+        {
+          wave: stream.wave,
+          pos: stream.head?.pos ?? 0,
+          hash: stream.head?.hash ?? null,
+          now
+        },
+        { wrappedConnection: connection }
+      );
+    });
+  }
+
+  /** Write mode, last: each device's activity is its latest log item. */
+  async deriveActivity(): Promise<void> {
+    await this.exec(
+      `update ${E2EE_DEVICES_TABLE} d set d.last_seen_at = (
+         select max(l.created_at) from ${E2EE_LOG_TABLE} l
+         where l.sender_device_key = d.device_key)`
+    );
+  }
+
+  private async upsert(
     table: string,
     columns: readonly string[],
-    rows: readonly Readonly<Record<string, E2eeRowValue>>[]
+    rows: readonly Readonly<Record<string, E2eeRowValue>>[],
+    connection: ConnectionWrapper<unknown>
   ): Promise<void> {
     if (!rows.length) return;
     const params: Record<string, unknown> = {};
@@ -267,9 +373,13 @@ export class E2eeRebuildDb extends LazyDbAccessCompatibleService {
       });
       return `(${names.join(', ')})`;
     });
-    await this.exec(
-      `insert into ${table} (${columns.join(', ')}) values ${values.join(', ')}`,
-      params
+    await this.db.execute(
+      `insert into ${table} (${columns.join(', ')}) values ${values.join(', ')}
+       on duplicate key update ${columns
+         .map((column) => `${column} = values(${column})`)
+         .join(', ')}`,
+      params,
+      { wrappedConnection: connection }
     );
   }
 }

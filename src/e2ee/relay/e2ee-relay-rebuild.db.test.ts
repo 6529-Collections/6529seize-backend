@@ -21,7 +21,11 @@ import { E2eeBackupDb } from '@/e2ee/e2ee-backup.db';
 import { createE2eeBlobStores } from '@/e2ee/e2ee-blob-stores';
 import { MysqlE2eeCiphertextStore } from '@/e2ee/e2ee-ciphertext-store';
 import { E2eeDb, E2eeDeviceRow } from '@/e2ee/e2ee.db';
-import { E2eeEntryKind, e2eeEntryDigest } from '@/e2ee/e2ee-digests';
+import {
+  E2eeEntryKind,
+  e2eeEntryDigest,
+  e2eeRevokeDigest
+} from '@/e2ee/e2ee-digests';
 import { E2eeModerationRecorder } from '@/e2ee/relay/e2ee-moderation-records';
 import { E2EE_RECORD_TABLES } from '@/e2ee/relay/e2ee-record-tables';
 import {
@@ -31,8 +35,8 @@ import {
 import { E2eeRebuildDb } from '@/e2ee/relay/e2ee-rebuild.db';
 import {
   relayE2eeRebuildSource,
-  runE2eeRebuild,
-  runE2eeStreamVerify
+  E2eeRebuildReport,
+  runE2eeRebuild
 } from '@/e2ee/relay/e2ee-rebuild-run';
 import {
   backfillE2eeRecords,
@@ -279,7 +283,8 @@ describeWithSeed('e2ee relay records against MySQL', SEEDS, () => {
 
   async function story() {
     const a = randomE2eeKey().publicKey;
-    const b = randomE2eeKey().publicKey;
+    const bKey = randomE2eeKey();
+    const b = bKey.publicKey;
     await addDevice(a, 'pa');
     await addDevice(b, 'pb');
     await devices.renameDevice('pa', a, 'Laptop');
@@ -359,7 +364,7 @@ describeWithSeed('e2ee relay records against MySQL', SEEDS, () => {
     await backups.activate('pa', backupId, a);
     await backups.compact('pa', backupId, { device_key: a, through_seq: 1 });
     await publisher.settled();
-    return { a, b, group, blobId: blob.blob_id, backupId };
+    return { a, b, bKey, group, blobId: blob.blob_id, backupId };
   }
 
   /**
@@ -454,11 +459,17 @@ describeWithSeed('e2ee relay records against MySQL', SEEDS, () => {
     }
   }
 
-  function rebuild(mode: 'verify' | 'write') {
+  function slice(
+    mode: 'verify' | 'write',
+    after?: string,
+    extra: Partial<Parameters<typeof runE2eeRebuild>[0]> = {}
+  ) {
     return runE2eeRebuild({
       mode,
       now: NOW,
       settings,
+      after,
+      limit: 2,
       db: new E2eeRebuildDb(() => sqlExecutor),
       source: relayE2eeRebuildSource(
         new E2eeRelayPool({
@@ -467,8 +478,31 @@ describeWithSeed('e2ee relay records against MySQL', SEEDS, () => {
           identity: READER,
           open: () => relay.connect()
         })
-      )
+      ),
+      ...extra
     });
+  }
+
+  /** Every slice of a run, as an operator runs them. */
+  async function rebuild(
+    mode: 'verify' | 'write',
+    extra: Partial<Parameters<typeof runE2eeRebuild>[0]> = {}
+  ) {
+    const slices: E2eeRebuildReport[] = [];
+    let after: string | undefined;
+    do {
+      const report = await slice(mode, after, extra);
+      slices.push(report);
+      after = report.next ?? undefined;
+    } while (after !== undefined);
+    return {
+      slices: slices.length,
+      streams: slices.reduce((sum, report) => sum + report.streams, 0),
+      coverage: slices[0].coverage,
+      failures: slices.flatMap((report) => report.failures ?? []),
+      problems: slices.flatMap((report) => report.problems),
+      ok: slices.every((report) => report.ok)
+    };
   }
 
   it('drops every table, rebuilds from the relays, and the API answers the same', async () => {
@@ -491,16 +525,14 @@ describeWithSeed('e2ee relay records against MySQL', SEEDS, () => {
     }
 
     const verify = await rebuild('verify');
-    expect(verify.problems).toEqual([]);
-    expect(
-      verify.tables?.filter((t) => t.missing + t.extra + t.changed)
-    ).toEqual([]);
-    expect(verify.heads).toMatchObject({ missing: 0, behind: 0, differ: 0 });
+    expect(verify.failures).toEqual([]);
+    expect(verify.coverage).toMatchObject({ missing: 0 });
     expect(verify.ok).toBe(true);
 
     await emptyTables();
     const write = await rebuild('write');
-    expect(write).toMatchObject({ written: true, ok: true, problemCount: 0 });
+    expect(write).toMatchObject({ ok: true, problems: [] });
+    expect(write.streams).toBe(7);
     expect(await answers(ids)).toEqual(before);
     expect(await reportAnswers(reports)).toEqual(reportsBefore);
     // The report on a legacy DM was never recorded, so it is not rebuilt.
@@ -524,7 +556,7 @@ describeWithSeed('e2ee relay records against MySQL', SEEDS, () => {
 
   it('refuses to write into tables that are not empty', async () => {
     await story();
-    await expect(rebuild('write')).rejects.toThrow('only into empty tables');
+    await expect(slice('write')).rejects.toThrow('only into empty tables');
   });
 
   it('primary mode: a write the relays do not confirm changes nothing', async () => {
@@ -598,10 +630,8 @@ describeWithSeed('e2ee relay records against MySQL', SEEDS, () => {
       } while (after !== undefined);
     }
     const verify = await rebuild('verify');
-    expect(verify.problems).toEqual([]);
-    expect(
-      verify.tables?.filter((t) => t.missing + t.extra + t.changed)
-    ).toEqual([]);
+    expect(verify.failures).toEqual([]);
+    expect(verify.coverage).toMatchObject({ missing: 0 });
     expect(verify.ok).toBe(true);
     const before = await answers(ids);
     const reportsBefore = await reportAnswers(reports);
@@ -613,32 +643,13 @@ describeWithSeed('e2ee relay records against MySQL', SEEDS, () => {
   it('checks stream by stream against MySQL, and names a changed row', async () => {
     const ids = await story();
     const reports = await reportStory(ids);
-    const verify = (after?: string) =>
-      runE2eeStreamVerify({
-        now: NOW,
-        settings,
-        after,
-        limit: 2,
-        db: new E2eeRebuildDb(() => sqlExecutor),
-        source: relayE2eeRebuildSource(
-          new E2eeRelayPool({
-            urls: settings.urls,
-            net: NET,
-            identity: READER,
-            open: () => relay.connect()
-          })
-        )
-      });
-    let after: string | undefined;
-    let checked = 0;
-    do {
-      const page = await verify(after);
-      expect(page.failures).toEqual([]);
-      checked += page.checked;
-      after = page.next ?? undefined;
-    } while (after !== undefined);
+    const verify = (after?: string) => slice('verify', after);
+    const clean = await rebuild('verify');
+    expect(clean.failures).toEqual([]);
     // dr for each device, cv, dv, bl, bk and the moderators' inbox.
-    expect(checked).toBe(7);
+    expect(clean.streams).toBe(7);
+    expect(clean.slices).toBe(4);
+    let after: string | undefined;
     await sqlExecutor.execute(
       `update e2ee_log set epoch_fp = 'ffffffffffffffff' where group_handle = :group and seq = 2`,
       { group: ids.group }
@@ -647,7 +658,7 @@ describeWithSeed('e2ee relay records against MySQL', SEEDS, () => {
     after = undefined;
     do {
       const page = await verify(after);
-      failures.push(...page.failures);
+      failures.push(...(page.failures ?? []));
       after = page.next ?? undefined;
     } while (after !== undefined);
     expect(failures.map((f) => f.wave)).toEqual([`cv/${ids.group}`]);
@@ -663,7 +674,7 @@ describeWithSeed('e2ee relay records against MySQL', SEEDS, () => {
     after = undefined;
     do {
       const page = await verify(after);
-      reportFailures.push(...page.failures);
+      reportFailures.push(...(page.failures ?? []));
       after = page.next ?? undefined;
     } while (after !== undefined);
     expect(reportFailures).toHaveLength(1);
@@ -671,5 +682,112 @@ describeWithSeed('e2ee relay records against MySQL', SEEDS, () => {
       wave: expect.stringMatching(/^md\//),
       tables: [{ table: 'e2ee_reports', changed: 1 }]
     });
+  });
+
+  it('names an entity with no stream, and writes in slices that resume', async () => {
+    settings = { ...settings, mode: 'off' };
+    const a = randomE2eeKey().publicKey;
+    await addDevice(a, 'pa');
+    settings = { ...settings, mode: 'mirror' };
+    const ids = await story();
+    const coverage = await rebuild('verify');
+    expect(coverage.ok).toBe(false);
+    expect(coverage.coverage).toMatchObject({ devices: 1, missing: 1 });
+    await sqlExecutor.execute(
+      `delete from e2ee_devices where device_key = :a`,
+      {
+        a
+      }
+    );
+    const before = await answers(ids);
+    await emptyTables();
+    // A clock that runs out after a step or two: every slice stops early
+    // and the next one picks up where it stopped.
+    let clock = 0;
+    const write = await rebuild('write', {
+      timeBudgetMs: 2500,
+      clock: () => (clock += 1000)
+    });
+    expect(write.ok).toBe(true);
+    expect(write.slices).toBeGreaterThan(5);
+    expect(write.streams).toBe(6);
+    expect(await answers(ids)).toEqual(before);
+    expect((await rebuild('verify')).ok).toBe(true);
+  });
+
+  it('records a revocation once, in the device inbox, and rebuilds the rosters', async () => {
+    const ids = await story();
+    const outboxBefore = relay.stored.length;
+    const revokedAt = Math.floor(NOW / 1000);
+    await devices.revokeDevice('pb', ids.b, {
+      revoker_device_key: ids.b,
+      revoked_at: revokedAt,
+      signature: ids.bKey.sign(
+        e2eeRevokeDigest({
+          targetDeviceKey: ids.b,
+          revokerDeviceKey: ids.b,
+          revokedAtSeconds: revokedAt
+        })
+      )
+    });
+    await publisher.settled();
+    const added = relay.stored
+      .slice(outboxBefore)
+      .map((item) => item.event.wave);
+    expect(added.sort()).toEqual([`dr/${ids.b}`, `dv/${ids.b}`].sort());
+    // A revoked device reads nothing; the others see its closed rows.
+    const seen = async () =>
+      withoutActivity({
+        group: await groups.getGroup('pa', ids.group, ids.a),
+        logA: await groups.getLog('pa', ids.group, { device_key: ids.a }),
+        devices: await devices.getProfileDevices('pb'),
+        rosters: await sqlExecutor.execute(
+          `select * from e2ee_group_roster order by id`
+        )
+      });
+    const before = await seen();
+    expect((await rebuild('verify')).ok).toBe(true);
+    await emptyTables();
+    expect((await rebuild('write')).ok).toBe(true);
+    expect(await seen()).toEqual(before);
+  });
+
+  it('appends from 16 writers to one stream at once without a deadlock', async () => {
+    const device = randomE2eeKey().publicKey;
+    const results = await Promise.allSettled(
+      Array.from({ length: 16 }, (_, n) =>
+        settledRun(publisher, db, (connection, batch) =>
+          batch!.append(connection, {
+            family: 'dv',
+            owner: device,
+            kind: 10,
+            refs: ['welcome'],
+            type: 'welcome',
+            ops: [
+              {
+                op: 'put',
+                table: 'e2ee_welcome_deliveries',
+                row: {
+                  welcome_id: `0x${n.toString(16).padStart(32, '0')}`,
+                  device_key: device,
+                  profile_id: 'pa',
+                  created_at: NOW
+                }
+              }
+            ]
+          })
+        )
+      )
+    );
+    expect(results.filter((r) => r.status === 'rejected')).toEqual([]);
+    const [head] = await sqlExecutor.execute(
+      `select head_pos from e2ee_streams where wave = :wave`,
+      { wave: `dv/${device}` }
+    );
+    expect(Number(head.head_pos)).toBe(16);
+    await publisher.publishPending(10);
+    expect(
+      relay.stored.filter((item) => item.event.wave === `dv/${device}`)
+    ).toHaveLength(16);
   });
 });

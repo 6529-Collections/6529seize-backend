@@ -79,7 +79,9 @@ function setup(input: {
     store,
     pool: () => pool,
     anchors: relayHeadAnchorSource(() => pool),
-    now: () => clock++
+    now: () => clock++,
+    // No after-commit catch-up unless a test asks for it.
+    random: () => 1
   });
   return { relays, store, publisher, pool, settings };
 }

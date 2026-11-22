@@ -4,11 +4,13 @@ import {
   E2EE_BACKUPS_TABLE,
   E2EE_BLOBS_TABLE,
   E2EE_DEVICES_TABLE,
+  E2EE_GROUP_ROSTER_TABLE,
   E2EE_GROUPS_TABLE,
   E2EE_KEY_PACKAGES_TABLE,
   E2EE_LOG_TABLE,
   E2EE_REPORT_ACCESS_LOG_TABLE,
   E2EE_REPORTS_TABLE,
+  E2EE_STREAMS_TABLE,
   E2EE_WELCOME_DELIVERIES_TABLE,
   E2EE_WELCOMES_TABLE,
   PROFILES_TABLE
@@ -111,8 +113,12 @@ export interface E2eeBackfillDb extends E2eeTransactionRunner {
   /** Keys after `after`, in key order (the cursor). */
   groups(after: string, limit: number): Promise<string[]>;
   devices(after: string, limit: number): Promise<string[]>;
-  /** `welcome_id:device_key` keys of pending deliveries. */
-  deliveries(after: string, limit: number): Promise<string[]>;
+  /**
+   * Device inboxes to copy: devices with pending Welcomes or closed roster
+   * rows, and every inbox stream already recorded (one emptied while
+   * records were off still needs its snapshot).
+   */
+  inboxes(after: string, limit: number): Promise<string[]>;
   completeBlobs(after: string, limit: number): Promise<E2eeBackfillBlob[]>;
   backupProfiles(after: string, limit: number): Promise<string[]>;
   /** Report table keys after `after` (see E2eeBackfillReportKey). */
@@ -121,11 +127,6 @@ export interface E2eeBackfillDb extends E2eeTransactionRunner {
   /** Locks the group row; returns its last_seq, or null if gone. */
   lockGroup(group: string, connection: Conn): Promise<number | null>;
   lockDevice(device: string, connection: Conn): Promise<number[] | null>;
-  lockDelivery(
-    welcomeId: string,
-    device: string,
-    connection: Conn
-  ): Promise<boolean>;
   lockBlob(blobId: string, connection: Conn): Promise<boolean>;
   lockBackups(
     profileId: string,
@@ -174,11 +175,15 @@ const ITEMS_PER_TRANSACTION = 50;
 const DEFAULT_TIME_BUDGET_MS = 10 * 60 * 1000;
 
 /**
- * Copies what MySQL already holds into the orderer's streams, once, when
- * records are switched on. Each entity is copied under the lock its writes
- * take, so a write that comes later is recorded after the copy and wins.
- * Records already written by the live path may be copied again; a copy
- * carries the same rows, so the rebuild is unchanged. Legacy plaintext DMs
+ * Copies what MySQL holds into the orderer's streams: when records are
+ * first switched on, and again after any time they were off. Each entity
+ * is copied under the lock its writes take, so a write that comes later is
+ * recorded after the copy and wins. The copies are snapshots: a group's
+ * epochs and roster, a device inbox's deliveries and a profile's backups
+ * are deleted and put again, so deletes and acks made while records were
+ * off are carried; log items, attachments and reports change only by
+ * retention, which the rebuild applies. Running it twice, or over records
+ * the live path wrote, leaves the rebuild unchanged. Legacy plaintext DMs
  * are drops, not delivery-service rows: they are never copied (D153).
  */
 export async function backfillE2eeRecords(
@@ -257,7 +262,7 @@ async function familyKeys(
     case 'cv':
       return page((await db.groups(after, limit)).map((id) => ({ id })));
     case 'dv':
-      return page((await db.deliveries(after, limit)).map((id) => ({ id })));
+      return page((await db.inboxes(after, limit)).map((id) => ({ id })));
     case 'bl':
       return page(
         (await db.completeBlobs(after, limit)).map((blob) => ({
@@ -322,7 +327,7 @@ async function copyOne(
     case 'cv':
       return copyGroup(deps, key.id);
     case 'dv':
-      return copyDelivery(deps, key.id);
+      return copyInbox(deps, key.id);
     case 'bl':
       return copyBlob(deps, key.blob!);
     case 'bk':
@@ -386,16 +391,12 @@ async function copyGroup(
   return bytes;
 }
 
-async function copyDelivery(
+async function copyInbox(
   deps: E2eeBackfillDeps,
-  key: string
+  device: string
 ): Promise<number | null> {
-  const [welcomeId, device] = key.split(':');
   return deps.run(async (connection, batch) => {
-    if (!(await deps.db.lockDelivery(welcomeId, device, connection))) {
-      return null;
-    }
-    await deps.writers.welcomeStored(batch, connection, welcomeId, device);
+    await deps.writers.inboxSnapshot(batch, connection, device);
     return 0;
   });
 }
@@ -451,9 +452,12 @@ async function copyBackups(
     });
   }
   await deps.run((connection, batch) =>
-    deps.db
-      .lockBackups(profileId, connection)
-      .then(() => deps.writers.backupsChanged(batch, connection, { profileId }))
+    deps.db.lockBackups(profileId, connection).then(() =>
+      deps.writers.backupsChanged(batch, connection, {
+        profileId,
+        snapshot: true
+      })
+    )
   );
   return bytes;
 }
@@ -545,12 +549,18 @@ export class MysqlE2eeBackfillDb
     );
   }
 
-  deliveries(after: string, limit: number) {
+  inboxes(after: string, limit: number) {
     return this.keys(
-      `select concat(welcome_id, ':', device_key) as k
-       from ${E2EE_WELCOME_DELIVERIES_TABLE}
-       where concat(welcome_id, ':', device_key) > :after
-       order by welcome_id, device_key limit :limit`,
+      `select k from (
+         select device_key as k from ${E2EE_WELCOME_DELIVERIES_TABLE}
+         union
+         select device_key as k from ${E2EE_GROUP_ROSTER_TABLE}
+           where removal_kind = 'revoke'
+         union
+         select substring(wave, 4) as k from ${E2EE_STREAMS_TABLE}
+           where wave like 'dv/%'
+       ) inboxes
+       where k > :after order by k limit :limit`,
       after,
       limit
     );
@@ -676,16 +686,6 @@ export class MysqlE2eeBackfillDb
       connection
     );
     return suites.map((row) => Number(row.ciphersuite));
-  }
-
-  async lockDelivery(welcomeId: string, device: string, connection: Conn) {
-    const rows = await this.exec(
-      `select welcome_id from ${E2EE_WELCOME_DELIVERIES_TABLE}
-       where welcome_id = :welcomeId and device_key = :device for update`,
-      { welcomeId, device },
-      connection
-    );
-    return rows.length > 0;
   }
 
   async lockBlob(blobId: string, connection: Conn) {

@@ -31,8 +31,10 @@ type Conn = ConnectionWrapper<unknown>;
 
 /** Bodies up to this much base64url carry the content inline. */
 const INLINE_CONTENT_CHARS = 48 * 1024;
-/** RECORD bodies are at most 16 KiB. */
-const RECORD_BODY_MAX_CHARS = 16 * 1024 - 64;
+/** The relays cap a RECORD body at 16 KiB. */
+const RECORD_BODY_MAX_BYTES = 16 * 1024;
+/** And a SEALED or LOG body at 64 KiB; the rest stays for the margin. */
+const SEALED_BODY_MAX_BYTES = 64 * 1024 - 512;
 const OUTBOX_PAGE = 200;
 const PRIMARY_PUBLISH_TIMEOUT_MS = 4_000;
 const MIRROR_PUBLISH_TIMEOUT_MS = 2_000;
@@ -292,6 +294,7 @@ export class E2eeStreamPublisher {
     const content = input.sealToModeration
       ? this.sealToModeration(input, wave, encoded.content)
       : encoded.content;
+    checkBodyBudget(wave, input, content);
     await this.deps.store.insertOutbox(
       {
         wave,
@@ -346,7 +349,9 @@ export class E2eeStreamPublisher {
   }
 
   /**
-   * The record's body and the payloads it names.
+   * The record's body and the payloads it names. The whole body stays
+   * within the relays' limit: content goes inline only when it fits with
+   * everything else, and is a payload reference otherwise.
    * - LOG (`cv`): `{seq, epoch, item, windows, ds, data}`. `ds` is the
    *   content, inline or a payload reference; `data` references the item's
    *   ciphertext (the content's external bytes), which the relays drop at
@@ -375,22 +380,21 @@ export class E2eeStreamPublisher {
       if (row.payload && data) {
         payloads.push({ sha256: data.h, bytes: row.payload });
       }
-      return {
-        body: {
-          seq: row.pos,
-          epoch: meta.epoch ?? null,
-          item: meta.item ?? null,
-          windows: meta.windows ?? [],
-          ds: inline ? encoded : contentRef,
-          data
-        },
-        payloads
+      const rest = {
+        seq: row.pos,
+        epoch: meta.epoch ?? null,
+        item: meta.item ?? null,
+        windows: meta.windows ?? [],
+        data
       };
+      const fits =
+        inline && bodyBytes({ ...rest, ds: encoded }) <= SEALED_BODY_MAX_BYTES;
+      if (!fits && inline) {
+        payloads.unshift({ sha256: contentRef.h, bytes: row.content });
+      }
+      return { body: { ...rest, ds: fits ? encoded : contentRef }, payloads };
     }
     if (row.kind === E2eeRecordKind.RECORD) {
-      if (!inline || encoded.length > RECORD_BODY_MAX_CHARS) {
-        throw new Error(`RECORD ${row.wave}#${row.pos} is over 16 KiB`);
-      }
       return { body: { c: encoded, v: 1 }, payloads: [] };
     }
     return {
@@ -419,7 +423,12 @@ export class E2eeStreamPublisher {
     });
   }
 
-  /** Signs the rows that have no event yet, keeping whichever was first. */
+  /**
+   * Signs the rows that have no event yet, keeping whichever was first
+   * (another publisher of the stream may sign at the same time), and
+   * returns the listed rows with their events. Rows appended or published
+   * meanwhile by others are left to the next page or pass.
+   */
   private async signRows(
     wave: string,
     rows: E2eeOutboxRow[],
@@ -436,7 +445,14 @@ export class E2eeStreamPublisher {
         connection
       );
     }
-    return this.deps.store.listOutbox(wave, OUTBOX_PAGE, connection, afterPos);
+    const ids = new Set(rows.map((row) => row.id));
+    const relisted = await this.deps.store.listOutbox(
+      wave,
+      OUTBOX_PAGE,
+      connection,
+      afterPos
+    );
+    return relisted.filter((row) => ids.has(row.id) && row.event !== null);
   }
 
   /**
@@ -463,9 +479,11 @@ export class E2eeStreamPublisher {
       );
       if (!listed.length) break;
       const rows = await this.signRows(wave, listed, afterPos, connection);
-      const held = await this.publishPage(rows, stopped, connection);
-      minHolders = Math.min(minHolders, held);
-      afterPos = rows[rows.length - 1].pos;
+      if (rows.length) {
+        const held = await this.publishPage(rows, stopped, connection);
+        minHolders = Math.min(minHolders, held);
+      }
+      afterPos = listed[listed.length - 1].pos;
       // Pages are cut by bytes too, so only an empty page ends the stream.
       if (stopped.size === settings.urls.length) break;
     }
@@ -531,6 +549,45 @@ export class E2eeStreamPublisher {
       }
     }
     return { waves: waves.length, complete };
+  }
+}
+
+function bodyBytes(body: Record<string, unknown>): number {
+  return Buffer.byteLength(JSON.stringify(body), 'utf8');
+}
+
+/**
+ * Refuses, inside the write's transaction, a record whose body could not
+ * fit the relays' limits even with its content as a payload: such a
+ * record would block its stream forever. Writers split what is large
+ * (E2EE_WINDOWS_PER_RECORD), so this only guards against a mistake.
+ */
+function checkBodyBudget(
+  wave: string,
+  input: E2eeRecordAppend,
+  content: Buffer
+) {
+  if (input.kind === E2eeRecordKind.RECORD) {
+    const body = { c: content.toString('base64url'), v: 1 };
+    if (bodyBytes(body) > RECORD_BODY_MAX_BYTES) {
+      throw new Error(`A RECORD in ${wave} is over the relays' 16 KiB`);
+    }
+    return;
+  }
+  if (input.kind === E2eeRecordKind.LOG) {
+    const smallest = {
+      seq: Number.MAX_SAFE_INTEGER,
+      epoch: input.log?.epoch ?? null,
+      item: input.type,
+      windows: input.log?.windows ?? [],
+      ds: { h: `0x${'0'.repeat(64)}`, n: content.length },
+      data: { h: `0x${'0'.repeat(64)}`, n: Number.MAX_SAFE_INTEGER }
+    };
+    if (bodyBytes(smallest) > SEALED_BODY_MAX_BYTES) {
+      throw new Error(
+        `A LOG record in ${wave} carries too many delivery windows`
+      );
+    }
   }
 }
 

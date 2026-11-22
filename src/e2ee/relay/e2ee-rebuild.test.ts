@@ -23,8 +23,11 @@ import {
   e2eeRecordKeyString,
   e2eeRecordTable
 } from '@/e2ee/relay/e2ee-record-tables';
-import { E2eeRecordWriters } from '@/e2ee/relay/e2ee-record-writers';
-import { rebuildE2eeState } from '@/e2ee/relay/e2ee-rebuild';
+import {
+  E2EE_WINDOWS_PER_RECORD,
+  E2eeRecordWriters
+} from '@/e2ee/relay/e2ee-record-writers';
+import { rebuildE2eeState, rebuildE2eeStream } from '@/e2ee/relay/e2ee-rebuild';
 import { compareE2eeTables } from '@/e2ee/relay/e2ee-rebuild.db';
 import { relayE2eeRebuildSource } from '@/e2ee/relay/e2ee-rebuild-run';
 import {
@@ -1028,10 +1031,20 @@ function backfillDb(
         cursor,
         limit
       ),
-    deliveries: async (cursor, limit) =>
+    inboxes: async (cursor, limit) =>
       after(
-        all(E2EE_WELCOME_DELIVERIES_TABLE).map(
-          (row) => `${String(row.welcome_id)}:${String(row.device_key)}`
+        Array.from(
+          new Set([
+            ...all(E2EE_WELCOME_DELIVERIES_TABLE).map((row) =>
+              String(row.device_key)
+            ),
+            ...all(E2EE_GROUP_ROSTER_TABLE)
+              .filter((row) => row.removal_kind === 'revoke')
+              .map((row) => String(row.device_key)),
+            ...(await runner.listHeads('', 100_000))
+              .filter((head) => head.wave.startsWith('dv/'))
+              .map((head) => head.wave.slice(3))
+          ])
         ),
         cursor,
         limit
@@ -1078,10 +1091,6 @@ function backfillDb(
             )
           )
         : null,
-    lockDelivery: async (welcomeId, device) =>
-      all(E2EE_WELCOME_DELIVERIES_TABLE).some(
-        (row) => row.welcome_id === welcomeId && row.device_key === device
-      ),
     lockBlob: async (blobId) =>
       all(E2EE_BLOBS_TABLE).some(
         (row) => row.blob_id === blobId && row.complete === true
@@ -1197,6 +1206,59 @@ describe('backfillE2eeRecords', () => {
   it('is safe to run twice and over records the live path already wrote', async () => {
     const s = await runScenario(true);
     await backfillAll(s);
+    await backfillAll(s);
+    expectSameTables(s.db, await rebuildFrom(s.relay));
+  });
+
+  it('carries deletes and acks made while records were off', async () => {
+    const s = await runScenario(true);
+    s.recording.on = false;
+    // While off: B's pending Welcome is acked, a backup chunk compacted
+    // away, and A repairs the roster.
+    const welcome = hex('4d', 16);
+    s.db.put(E2EE_WELCOMES_TABLE, {
+      id: welcome,
+      group_handle: G,
+      epoch: 2,
+      data: Buffer.from('w4'),
+      ratchet_tree: null,
+      added_by_profile_id: 'pa',
+      added_by_device_key: A,
+      created_at: T0 + 30
+    });
+    s.db.put(E2EE_WELCOME_DELIVERIES_TABLE, {
+      welcome_id: welcome,
+      device_key: B,
+      profile_id: 'pb',
+      created_at: T0 + 30
+    });
+    s.recording.on = true;
+    await s.write(
+      () => undefined,
+      (batch, c) => s.writers.welcomeStored(batch, c, welcome)
+    );
+    s.recording.on = false;
+    s.db.del(E2EE_WELCOME_DELIVERIES_TABLE, { welcome_id: welcome });
+    s.db.del(E2EE_WELCOMES_TABLE, { id: welcome });
+    const gen = hex('9e', 16);
+    s.db.del(E2EE_BACKUP_CHUNKS_TABLE, { backup_id: gen, seq: 2 });
+    s.db.del(E2EE_CIPHERTEXT_OBJECTS_TABLE, { object_key: `backup/${gen}/2` });
+    s.db.update(
+      E2EE_BACKUPS_TABLE,
+      { backup_id: gen },
+      { chunk_count: 0, size: 0, updated_at: T0 + 31 }
+    );
+    s.db.update(
+      E2EE_GROUP_ROSTER_TABLE,
+      { device_key: A },
+      { removed_epoch: 2, removed_at: T0 + 32, removal_kind: 'repair' }
+    );
+    // Without the snapshot copies the relays still say otherwise.
+    expect(
+      (await rebuildFrom(s.relay)).tables.get(E2EE_WELCOME_DELIVERIES_TABLE)!
+        .size
+    ).toBe(1);
+    s.recording.on = true;
     await backfillAll(s);
     expectSameTables(s.db, await rebuildFrom(s.relay));
   });
@@ -1363,5 +1425,185 @@ describe('verifyE2eeStreams', () => {
     expect(report.failures[0].head.relays).toBe(
       (report.failures[0].head.mysql ?? 0) - 1
     );
+  });
+});
+
+describe('records within the relays limits, and past their retention', () => {
+  it('splits a large roster so no body passes 64 KiB, and rebuilds it whole', async () => {
+    const s = await scenario();
+    const group = hex('5a');
+    const roster = Array.from({ length: 700 }, (_, index) => ({
+      id: 1000 + index,
+      group_handle: group,
+      device_key: `0x${(index + 1).toString(16).padStart(64, '0')}`,
+      profile_id: `p${index}`,
+      joined_epoch: 0,
+      added_at: T0
+    }));
+    await s.write(
+      () => {
+        s.db.put(E2EE_GROUPS_TABLE, {
+          group_handle: group,
+          epoch: 0,
+          commit_key: hex('c0'),
+          last_seq: 0,
+          created_by_profile_id: 'p0',
+          created_at: T0,
+          updated_at: T0
+        });
+        for (const row of roster) s.db.put(E2EE_GROUP_ROSTER_TABLE, row);
+      },
+      (batch, c) => s.writers.groupCreated(batch, c, group)
+    );
+    const records = s.relay.stored.filter(
+      (item) => item.event.wave === `cv/${group}`
+    );
+    expect(records.map((item) => item.event.refs[0])).toEqual([
+      'genesis',
+      'roster',
+      'roster'
+    ]);
+    for (const item of records) {
+      expect(Buffer.byteLength(item.event.body!)).toBeLessThan(64 * 1024);
+      expect(JSON.parse(item.event.body!).windows.length).toBeLessThanOrEqual(
+        E2EE_WINDOWS_PER_RECORD
+      );
+    }
+    const stream = await rebuildE2eeStream(
+      readerSource(s.relay),
+      `cv/${group}`,
+      {
+        ordererDeviceKey: ORDERER.deviceKey,
+        now: NOW
+      }
+    );
+    expect(stream.problems).toEqual([]);
+    expect(stream.tables.get(E2EE_GROUP_ROSTER_TABLE)!.size).toBe(700);
+  });
+
+  it('refuses, inside the write, a record its windows would make too big', async () => {
+    const s = await scenario();
+    await expect(
+      s.publisher.run(s.store, (connection, batch) =>
+        batch!.append(connection, {
+          family: 'cv',
+          owner: G,
+          kind: 11,
+          refs: ['roster'],
+          type: 'roster',
+          ops: [],
+          log: {
+            epoch: 0,
+            windows: Array.from({ length: 1200 }, (_, index) => ({
+              d: `0x${index.toString(16).padStart(64, '0')}`,
+              from: 0,
+              to: null
+            }))
+          }
+        })
+      )
+    ).rejects.toThrow('too many delivery windows');
+    expect(s.store.outboxRows).toEqual([]);
+  });
+
+  it('takes content gone past retention as expired, not lost', async () => {
+    const s = await scenario();
+    const welcome = hex('7e', 16);
+    await s.write(
+      () => {
+        s.db.put(E2EE_WELCOMES_TABLE, {
+          id: welcome,
+          group_handle: G,
+          epoch: 1,
+          data: Buffer.alloc(40_000, 9),
+          ratchet_tree: null,
+          added_by_profile_id: 'pa',
+          added_by_device_key: A,
+          created_at: T0
+        });
+        s.db.put(E2EE_WELCOME_DELIVERIES_TABLE, {
+          welcome_id: welcome,
+          device_key: B,
+          profile_id: 'pb',
+          created_at: T0
+        });
+      },
+      (batch, c) => s.writers.welcomeStored(batch, c, welcome)
+    );
+    await s.write(
+      () => {
+        s.db.del(E2EE_WELCOME_DELIVERIES_TABLE, { welcome_id: welcome });
+        s.db.del(E2EE_WELCOMES_TABLE, { id: welcome });
+      },
+      (batch, c) =>
+        s.writers.welcomeAcked(batch, c, { welcomeId: welcome, deviceKey: B })
+    );
+    const [first] = s.relay.stored.filter(
+      (item) => item.event.wave === `dv/${B}`
+    );
+    // The Welcome's content went out as a payload; the relay drops it.
+    s.relay.dropPayload(JSON.parse(first.event.body!).h);
+    const read = (now: number) =>
+      rebuildE2eeStream(readerSource(s.relay), `dv/${B}`, {
+        ordererDeviceKey: ORDERER.deviceKey,
+        now
+      });
+    expect((await read(NOW)).problems.map((p) => p.reason)).toContain(
+      'content is missing'
+    );
+    const later = await read(NOW + 31 * DAY);
+    expect(later.problems).toEqual([]);
+    expect(later).toMatchObject({ expired: 1, head: { pos: 2 } });
+    expect(s.store.head(`dv/${B}`)?.pos).toBe(2);
+  });
+
+  it("leaves an upload in progress and MySQL's lazy prune out of the check", async () => {
+    const s = await runScenario();
+    // A blob upload in progress: rows and a recorded chunk, not complete.
+    const upload = hex('b2', 16);
+    await s.write(
+      () => {
+        s.db.put(E2EE_BLOBS_TABLE, {
+          blob_id: upload,
+          group_handle: G,
+          uploader_device_key: A,
+          uploader_profile_id: 'pa',
+          size: 10,
+          chunk_count: 2,
+          complete: false,
+          created_at: NOW - 60_000,
+          completed_at: null,
+          storage: 'mysql',
+          storage_location: null
+        });
+        s.db.put(E2EE_BLOB_CHUNKS_TABLE, {
+          blob_id: upload,
+          chunk_index: 0,
+          data: Buffer.alloc(5, 1),
+          size: 5,
+          created_at: NOW - 60_000
+        });
+      },
+      (batch, c) =>
+        s.writers.blobChunkStored(batch, c, {
+          blobId: upload,
+          index: 0,
+          data: Buffer.alloc(5, 1)
+        })
+    );
+    // A message past retention that MySQL's prune has not reached yet.
+    s.db.put(
+      E2EE_LOG_TABLE,
+      logItem(G_OLD, 1, { created_at: NOW - 100 * DAY })
+    );
+    const report = await verifyE2eeStreams({
+      source: readerSource(s.relay),
+      db: verifyDb(s.db, s.store),
+      ordererDeviceKey: ORDERER.deviceKey,
+      now: NOW,
+      moderationKeys: MODERATION.keys,
+      limit: 100
+    });
+    expect(report.failures).toEqual([]);
   });
 });

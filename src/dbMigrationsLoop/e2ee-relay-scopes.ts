@@ -4,10 +4,8 @@ import { e2eeDb } from '@/e2ee/e2ee.db';
 import { e2eeRecordWriters } from '@/e2ee/relay/e2ee-record-writers';
 import {
   E2eeRebuildReport,
-  runE2eeRebuild,
-  runE2eeStreamVerify
+  runE2eeRebuild
 } from '@/e2ee/relay/e2ee-rebuild-run';
-import { E2eeStreamVerifyReport } from '@/e2ee/relay/e2ee-stream-verify';
 import { e2eeRelaySettings } from '@/e2ee/relay/e2ee-relay-config';
 import {
   backfillE2eeRecords,
@@ -26,14 +24,15 @@ import { e2eeStreamPublisher } from '@/e2ee/relay/e2ee-stream-publisher';
  *   {"schema_scope": "e2ee-relay-backfill", "family": "cv", "live": true,
  *    "after": "<next>", "limit": 200}                                   copy
  *   {"schema_scope": "e2ee-relay-publish", "waves": 500}                drain
- *   {"schema_scope": "e2ee-relay-rebuild", "mode": "verify"}            check
- *   {"schema_scope": "e2ee-relay-rebuild", "mode": "verify-streams",
+ *   {"schema_scope": "e2ee-relay-rebuild", "mode": "verify",
  *    "after": "<next>", "limit": 200}                                   check, in slices
- *   {"schema_scope": "e2ee-relay-rebuild", "mode": "write"}             rebuild
+ *   {"schema_scope": "e2ee-relay-rebuild", "mode": "write",
+ *    "after": "<next>"}                                                 rebuild, in slices
  *
  * Families run in the order dr, cv, dv, bl, bk, md. A live backfill needs
- * E2EE_RELAY_MODE mirror or primary. `write` refuses unless every table it
- * fills is empty.
+ * E2EE_RELAY_MODE mirror or primary. Rebuild slices go one stream at a
+ * time and return `next` until done; `write` starts only into empty
+ * tables. `verify-streams` is the old name of `verify`.
  */
 export const E2EE_RELAY_BACKFILL_SCOPE = 'e2ee-relay-backfill';
 export const E2EE_RELAY_PUBLISH_SCOPE = 'e2ee-relay-publish';
@@ -118,25 +117,19 @@ export async function runE2eeRelayPublishScope(
 
 export async function runE2eeRelayRebuildScope(
   event: Record<string, unknown>
-): Promise<E2eeRebuildReport | E2eeStreamVerifyReport> {
-  const mode = event.mode;
-  if (mode === 'verify-streams') {
-    if (event.after !== undefined && typeof event.after !== 'string') {
-      throw new Error('after must be a string');
-    }
-    return runE2eeStreamVerify({
-      now: Date.now(),
-      settings: e2eeRelaySettings(),
-      after: event.after as string | undefined,
-      limit: boundedInteger(event.limit, 'limit', DEFAULT_LIMIT, MAX_LIMIT)
-    });
-  }
+): Promise<E2eeRebuildReport> {
+  const mode = event.mode === 'verify-streams' ? 'verify' : event.mode;
   if (mode !== 'verify' && mode !== 'write') {
     throw new Error('mode must be verify, verify-streams or write');
+  }
+  if (event.after !== undefined && typeof event.after !== 'string') {
+    throw new Error('after must be a string');
   }
   return runE2eeRebuild({
     mode,
     now: Date.now(),
-    settings: e2eeRelaySettings()
+    settings: e2eeRelaySettings(),
+    after: event.after as string | undefined,
+    limit: boundedInteger(event.limit, 'limit', DEFAULT_LIMIT, MAX_LIMIT)
   });
 }

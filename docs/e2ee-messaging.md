@@ -665,14 +665,14 @@ that `e2ee-relay-rebuild` rebuilds from the relays alone.
 and the content hash of the record before it, so every stream is
 hash-chained. The streams:
 
-| Stream                 | What it holds                                                                                                                                                                                       |
-| ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `cv/<group>` (LOG)     | Group creation, every sequenced entry and message, roster repairs and revocations. An item's ciphertext is a separate payload, so relays can drop it at the end of retention while the record stays |
-| `dv/<device>` (SEALED) | Welcomes waiting for the device, and their acknowledgements                                                                                                                                         |
-| `dr/<device>` (RECORD) | The device row after each change; its last-resort KeyPackages                                                                                                                                       |
-| `bl/<blob>` (SEALED)   | Each attachment chunk with its bytes; the blob once complete                                                                                                                                        |
-| `bk/<owner>` (SEALED)  | A profile's backup generations, chunks with their bytes, deletions                                                                                                                                  |
-| `md/<inbox>` (SEALED)  | Reports: drop reports, reported messages with their holds, and the trust-and-safety access log. Sealed to the moderation service key                                                                |
+| Stream                 | What it holds                                                                                                                                                                       |
+| ---------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `cv/<group>` (LOG)     | Group creation, every sequenced entry and message, roster repairs. An item's ciphertext is a separate payload, so relays can drop it at the end of retention while the record stays |
+| `dv/<device>` (SEALED) | Welcomes waiting for the device, their acknowledgements, and its revocation: one record with every roster row the revocation closed                                                 |
+| `dr/<device>` (RECORD) | The device row after each change; its last-resort KeyPackages                                                                                                                       |
+| `bl/<blob>` (SEALED)   | Each attachment chunk with its bytes; the blob once complete                                                                                                                        |
+| `bk/<owner>` (SEALED)  | A profile's backup generations, chunks with their bytes, deletions                                                                                                                  |
+| `md/<inbox>` (SEALED)  | Reports: drop reports, reported messages with their holds, and the trust-and-safety access log. Sealed to the moderation service key                                                |
 
 Not carried: one-time KeyPackages, rate counters and push throttles
 (ephemeral; devices upload fresh KeyPackages), incomplete uploads,
@@ -735,29 +735,46 @@ service's X25519 key) is required; `E2EE_MODERATION_KEYS` (secret,
 `[{"id", "private_key"}]`) is set only where reports are rebuilt or
 checked. The owner holds the moderation key too.
 
-**Operator scopes** (`dbMigrationsLoop`, never scheduled):
+**Size limits.** The relays cap a RECORD body at 16 KiB and a SEALED or
+LOG body at 64 KiB. Content goes inline only when the whole body fits, and
+is a payload otherwise. A roster goes out at most 300 delivery windows to a
+record (a 2048-device roster takes seven). A record that could not fit even
+then is refused inside the write's transaction, so it never blocks a
+stream.
+
+**Operator scopes** (`dbMigrationsLoop`, never scheduled). Each call does
+one slice and returns `next`; call again with `"after": "<next>"` until
+`next` is null.
 
 ```json
 {"schema_scope": "e2ee-relay-backfill", "family": "cv"}
 {"schema_scope": "e2ee-relay-backfill", "family": "cv", "live": true, "after": "<next>"}
 {"schema_scope": "e2ee-relay-publish", "waves": 500}
-{"schema_scope": "e2ee-relay-rebuild", "mode": "verify"}
-{"schema_scope": "e2ee-relay-rebuild", "mode": "verify-streams", "after": "<next>", "limit": 200}
-{"schema_scope": "e2ee-relay-rebuild", "mode": "write"}
+{"schema_scope": "e2ee-relay-rebuild", "mode": "verify", "after": "<next>", "limit": 200}
+{"schema_scope": "e2ee-relay-rebuild", "mode": "write", "after": "<next>"}
 ```
 
-- The backfill copies what MySQL held before records were on, family by
-  family in the order `dr`, `cv`, `dv`, `bl`, `bk`, `md`, each entity under
-  the lock its writes take, so a later write wins. Without `live` it only
-  reports the volume. Running it twice is harmless.
-- `verify` rebuilds in memory and compares every stream head and every row
-  with MySQL; `ok` is true only with no difference. Run it when
-  `e2ee_relay_outbox` is empty.
-- `verify-streams` does the same check one stream at a time, in slices of
-  `limit` streams after `after`, so it never holds more than one stream in
-  memory at production size.
-- `write` rebuilds into empty tables and refuses otherwise. Attachment bytes
-  come back into MySQL storage.
+- The backfill copies what MySQL holds, family by family in the order `dr`,
+  `cv`, `dv`, `bl`, `bk`, `md`, each entity under the lock its writes take,
+  so a later write wins. Its copies are snapshots: a group's epochs and
+  roster, a device inbox's deliveries and a profile's backups are deleted
+  and put again. **Run it for every family whenever records come back on
+  after time off**: deletes and acks made while off are carried only that
+  way. Without `live` it only reports the volume. Running it twice is
+  harmless.
+- `verify` (the side-by-side check; `verify-streams` is its old name) first
+  counts MySQL entities that have no stream at all, then rebuilds `limit`
+  streams alone and compares their rows and heads with MySQL. Both sides go
+  through the same retention rules at one `now`, so uploads in progress and
+  rows MySQL's prune has not reached yet are no difference. `ok` is true
+  only with none. Run it when `e2ee_relay_outbox` is empty.
+- `write` rebuilds into empty tables and refuses otherwise. It lists the
+  streams each relay holds (as placeholder heads), then rebuilds and writes
+  them one at a time, each in one transaction with its head, so a slice cut
+  short resumes. Attachment bytes come back into MySQL storage. Memory stays
+  at one stream.
+- A record whose content a relay dropped after the family's retention is
+  expired, not lost: the rebuild skips it without a problem.
 
 ## Implementation choices
 

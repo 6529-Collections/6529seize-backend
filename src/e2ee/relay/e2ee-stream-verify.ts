@@ -18,6 +18,7 @@ import { parseE2eeFamilyWave } from '@/e2ee/relay/e2ee-record-event';
 import { E2EE_MODERATION_TABLES } from '@/e2ee/relay/e2ee-record-tables';
 import { e2eeBackupStreamOwner } from '@/e2ee/relay/e2ee-record-writers';
 import {
+  applyE2eeRules,
   E2eeRebuildProblem,
   E2eeRebuiltStream,
   rebuildE2eeStream
@@ -94,6 +95,13 @@ async function groupScope(
       rebuilt: stream.tables.get(table)!
     });
   }
+  // A revocation's roster rows live in the device's inbox stream.
+  const roster = out.find((item) => item.table === E2EE_GROUP_ROSTER_TABLE)!;
+  for (const [key, row] of Array.from(roster.mysql.entries())) {
+    if (row.removal_kind !== 'revoke') continue;
+    roster.mysql.delete(key);
+    roster.rebuilt.delete(key);
+  }
   return out;
 }
 
@@ -121,6 +129,14 @@ async function inboxScope(
       rebuilt: pick(stream.tables.get(E2EE_WELCOMES_TABLE)!, (row) =>
         rebuiltWelcomeIds.has(String(row.id))
       )
+    },
+    {
+      table: E2EE_GROUP_ROSTER_TABLE,
+      mysql: await db.rowsWhere(E2EE_GROUP_ROSTER_TABLE, {
+        device_key: device,
+        removal_kind: 'revoke'
+      }),
+      rebuilt: stream.tables.get(E2EE_GROUP_ROSTER_TABLE)!
     }
   ];
 }
@@ -290,11 +306,19 @@ async function verifyStream(
     revokedDevices
   });
   const scoped = await scopeOf(input.db, stream, parsed, backupOwners);
+  applyE2eeRules(
+    new Map(scoped.map((item) => [item.table, item.mysql])),
+    input.now,
+    revokedDevices
+  );
   const tables = scoped
     .map((item) => compareE2eeTables(item.table, item.rebuilt, item.mysql))
     .filter((t) => t.missing + t.extra + t.changed > 0);
+  // Records whose content expired on the relays may be the newest ones.
   const headMatches =
-    stream.head?.pos === head.pos && stream.head?.hash === head.hash;
+    (stream.head?.pos === head.pos && stream.head?.hash === head.hash) ||
+    (stream.expired > 0 &&
+      (stream.head?.pos ?? 0) + stream.expired >= head.pos);
   if (!tables.length && headMatches && !stream.problems.length) return null;
   return {
     wave: head.wave,

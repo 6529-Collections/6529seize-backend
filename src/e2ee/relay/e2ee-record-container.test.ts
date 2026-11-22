@@ -91,7 +91,10 @@ describe('e2ee record container', () => {
     fc.assert(
       fc.property(
         fc.dictionary(
-          fc.stringMatching(/^[a-z_]{1,12}$/),
+          // Not `__proto__`: an object literal key that is not a column.
+          fc
+            .stringMatching(/^[a-z_]{1,12}$/)
+            .filter((key) => key !== '__proto__'),
           fc.oneof(
             fc.string(),
             fc.integer(),

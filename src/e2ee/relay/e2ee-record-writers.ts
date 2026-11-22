@@ -94,23 +94,58 @@ function windowsOf(roster: readonly E2eeRow[]): E2eeDeliveryWindow[] {
   }));
 }
 
-function groupLog(
+/**
+ * Delivery windows (and their roster rows) per LOG record. A window is
+ * about 100 bytes of the body, which the relays cap at 64 KiB, so a
+ * roster of up to 2048 devices goes out in several records.
+ */
+export const E2EE_WINDOWS_PER_RECORD = 300;
+
+/**
+ * A group's LOG records for one change: the first carries `ops` with the
+ * first slice of the roster rows and their windows; each further slice
+ * follows as a `roster` record. Windows are deltas, so splitting them
+ * across consecutive records gives the relays the same windows.
+ */
+function groupLogs(
   group: string,
   type: string,
   ops: readonly E2eeRowOp[],
   epoch: number | null,
   roster: readonly E2eeRow[]
-): E2eeRecordAppend {
-  return {
-    family: 'cv',
-    owner: group,
-    kind: E2eeRecordKind.LOG,
-    refs: [type],
-    type,
-    ops,
-    log: { epoch, windows: windowsOf(roster) }
-  };
+): E2eeRecordAppend[] {
+  const slices: E2eeRow[][] = [];
+  for (let at = 0; at < roster.length; at += E2EE_WINDOWS_PER_RECORD) {
+    slices.push(roster.slice(at, at + E2EE_WINDOWS_PER_RECORD));
+  }
+  if (!slices.length) slices.push([]);
+  return slices.map((slice, index) => {
+    const recordType = index === 0 ? type : 'roster';
+    return {
+      family: 'cv',
+      owner: group,
+      kind: E2eeRecordKind.LOG,
+      refs: [recordType],
+      type: recordType,
+      ops: [
+        ...(index === 0 ? ops : []),
+        ...puts(E2EE_GROUP_ROSTER_TABLE, slice)
+      ],
+      log: { epoch, windows: windowsOf(slice) }
+    };
+  });
 }
+
+async function appendAll(
+  batch: E2eeRecordBatch,
+  connection: Conn,
+  records: readonly E2eeRecordAppend[]
+) {
+  for (const record of records) await batch.append(connection, record);
+}
+
+/** A device inbox snapshot's records carry about this much Welcome data. */
+const INBOX_RECORD_BYTES = 2 * 1024 * 1024;
 
 /**
  * The stream owner for a profile's backups. The relay families key `bk` by
@@ -151,7 +186,9 @@ export class E2eeRecordWriters {
   /**
    * A group's whole state: its row, every epoch key and every roster row.
    * `genesis` when the group is created; `import` when the backfill copies
-   * an existing group (under its row lock, so no write interleaves).
+   * an existing group (under its row lock, so no write interleaves). An
+   * import is a snapshot: it first deletes the group's epochs and roster
+   * rows, so a change made while records were off is carried too.
    */
   async groupCreated(
     batch: E2eeRecordBatch,
@@ -172,15 +209,29 @@ export class E2eeRecordWriters {
       connection,
       'id'
     );
-    await batch.append(
+    await appendAll(
+      batch,
       connection,
-      groupLog(
+      groupLogs(
         group,
         type,
         [
+          ...(type === 'import'
+            ? ([
+                {
+                  op: 'del',
+                  table: E2EE_GROUP_EPOCHS_TABLE,
+                  key: { group_handle: group }
+                },
+                {
+                  op: 'del',
+                  table: E2EE_GROUP_ROSTER_TABLE,
+                  key: { group_handle: group }
+                }
+              ] satisfies E2eeRowOp[])
+            : []),
           ...puts(E2EE_GROUPS_TABLE, [groupRow]),
-          ...puts(E2EE_GROUP_EPOCHS_TABLE, epochs),
-          ...puts(E2EE_GROUP_ROSTER_TABLE, roster)
+          ...puts(E2EE_GROUP_EPOCHS_TABLE, epochs)
         ],
         Number(groupRow.epoch),
         roster
@@ -259,9 +310,10 @@ export class E2eeRecordWriters {
       'id'
     );
     if (!Buffer.isBuffer(item.data)) throw new Error('Log item has no data');
-    await batch.append(
+    await appendAll(
+      batch,
       connection,
-      groupLog(
+      groupLogs(
         input.group,
         String(item.item_type),
         [
@@ -269,8 +321,7 @@ export class E2eeRecordWriters {
             { ...item, data: new E2eeExternalBytes(item.data) }
           ]),
           ...puts(E2EE_GROUPS_TABLE, [groupRow]),
-          ...puts(E2EE_GROUP_EPOCHS_TABLE, epochs),
-          ...puts(E2EE_GROUP_ROSTER_TABLE, roster)
+          ...puts(E2EE_GROUP_EPOCHS_TABLE, epochs)
         ],
         Number(groupRow.epoch),
         roster
@@ -292,15 +343,10 @@ export class E2eeRecordWriters {
       connection,
       'id'
     );
-    await batch.append(
+    await appendAll(
+      batch,
       connection,
-      groupLog(
-        input.group,
-        'roster',
-        puts(E2EE_GROUP_ROSTER_TABLE, roster),
-        Number(groupRow.epoch),
-        roster
-      )
+      groupLogs(input.group, 'roster', [], Number(groupRow.epoch), roster)
     );
   }
 
@@ -341,6 +387,82 @@ export class E2eeRecordWriters {
   }
 
   /** A device took its Welcome (or never will): the delivery ends. */
+  /**
+   * A device inbox as MySQL holds it, for the backfill: its pending
+   * Welcomes and the roster rows its revocation closed, after deleting
+   * every delivery the stream held, so acks made while records were off
+   * are carried. Locks the stream first, so a live write that lands
+   * during the copy is recorded after it. Large inboxes go out in several
+   * records of about 2 MiB.
+   */
+  async inboxSnapshot(
+    batch: E2eeRecordBatch,
+    connection: Conn,
+    deviceKey: string
+  ): Promise<number> {
+    await batch.lock(connection, 'dv', deviceKey);
+    const deliveries = await this.reader.rows(
+      E2EE_WELCOME_DELIVERIES_TABLE,
+      { device_key: deviceKey },
+      connection,
+      'welcome_id'
+    );
+    const welcomes = await this.reader.rows(
+      E2EE_WELCOMES_TABLE,
+      { id: deliveries.map((row) => String(row.welcome_id)) },
+      connection,
+      'id'
+    );
+    const revoked = (
+      await this.reader.rows(
+        E2EE_GROUP_ROSTER_TABLE,
+        { device_key: deviceKey },
+        connection,
+        'id'
+      )
+    ).filter((row) => row.removal_kind === 'revoke');
+    const records: E2eeRowOp[][] = [
+      [
+        {
+          op: 'del',
+          table: E2EE_WELCOME_DELIVERIES_TABLE,
+          key: { device_key: deviceKey }
+        },
+        ...puts(E2EE_GROUP_ROSTER_TABLE, revoked)
+      ]
+    ];
+    let bytes = 0;
+    for (const delivery of deliveries) {
+      const welcome = welcomes.find((row) => row.id === delivery.welcome_id);
+      if (!welcome) continue;
+      const size =
+        (Buffer.isBuffer(welcome.data) ? welcome.data.length : 0) +
+        (Buffer.isBuffer(welcome.ratchet_tree)
+          ? welcome.ratchet_tree.length
+          : 0);
+      if (bytes > 0 && bytes + size > INBOX_RECORD_BYTES) {
+        records.push([]);
+        bytes = 0;
+      }
+      bytes += size;
+      records[records.length - 1].push(
+        ...puts(E2EE_WELCOMES_TABLE, [welcome]),
+        ...puts(E2EE_WELCOME_DELIVERIES_TABLE, [delivery])
+      );
+    }
+    for (const ops of records) {
+      await batch.append(connection, {
+        family: 'dv',
+        owner: deviceKey,
+        kind: E2eeRecordKind.SEALED,
+        refs: ['inbox'],
+        type: 'inbox',
+        ops
+      });
+    }
+    return deliveries.length;
+  }
+
   async welcomeAcked(
     batch: E2eeRecordBatch,
     connection: Conn,
@@ -400,18 +522,38 @@ export class E2eeRecordWriters {
    * in. Its KeyPackages and pending Welcomes go with the revocation; the
    * rebuild drops those of revoked devices by the same rule.
    */
+  /**
+   * A revocation: the device's directory record, and one record in its
+   * inbox with every roster row the revocation closed (one per group it
+   * was in, up to 2000). The group streams get nothing: a revoked device
+   * reads nothing more, and one record replaces one per group. The
+   * rebuild puts these rows after the groups' own (`dv` replays after
+   * `cv`).
+   */
   async deviceRevoked(
     batch: E2eeRecordBatch,
     connection: Conn,
     input: { readonly deviceKey: string; readonly groups: readonly string[] }
   ): Promise<void> {
     await this.deviceChanged(batch, connection, input.deviceKey);
-    for (const group of input.groups) {
-      await this.rosterChanged(batch, connection, {
-        group,
-        devices: [input.deviceKey]
-      });
-    }
+    if (!input.groups.length) return;
+    const closed = (
+      await this.reader.rows(
+        E2EE_GROUP_ROSTER_TABLE,
+        { device_key: input.deviceKey, group_handle: input.groups },
+        connection,
+        'id'
+      )
+    ).filter((row) => row.removal_kind === 'revoke');
+    if (!closed.length) return;
+    await batch.append(connection, {
+      family: 'dv',
+      owner: input.deviceKey,
+      kind: E2eeRecordKind.SEALED,
+      refs: ['revocation'],
+      type: 'revocation',
+      ops: puts(E2EE_GROUP_ROSTER_TABLE, closed)
+    });
   }
 
   /** A device's last-resort KeyPackages of one suite, as they now are. */
@@ -533,6 +675,12 @@ export class E2eeRecordWriters {
         readonly seq: number;
         readonly data: Buffer;
       };
+      /**
+       * The backfill's last record for a profile: deletes every backup
+       * and chunk row first, so deletions made while records were off are
+       * carried (the chunks' bytes stay in the records that put them).
+       */
+      readonly snapshot?: boolean;
     }
   ): Promise<void> {
     const backups = await this.reader.rows(
@@ -542,6 +690,24 @@ export class E2eeRecordWriters {
       'backup_id'
     );
     const ops: E2eeRowOp[] = [];
+    if (input.snapshot) {
+      const profile = { profile_id: input.profileId };
+      ops.push(
+        { op: 'del', table: E2EE_BACKUP_CHUNKS_TABLE, key: profile },
+        { op: 'del', table: E2EE_BACKUPS_TABLE, key: profile }
+      );
+      ops.push(
+        ...puts(
+          E2EE_BACKUP_CHUNKS_TABLE,
+          await this.reader.rows(
+            E2EE_BACKUP_CHUNKS_TABLE,
+            profile,
+            connection,
+            'backup_id, seq'
+          )
+        )
+      );
+    }
     for (const backupId of input.deletedBackups ?? []) {
       ops.push(
         {
