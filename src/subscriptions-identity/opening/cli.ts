@@ -12,6 +12,8 @@ import {
   suspendIdentityTables
 } from '../identity/identity-switch';
 import { shadowReportsMatch } from '../writers/identity-reports';
+import { publishOpeningFiles } from './published-chain';
+import { rebuildIdentityTables } from './rebuild';
 import { assertOutsideRepository, parseArgs } from '../parity/cli';
 import { cutOpeningFiles } from './opening-build';
 import { compareAndMarkVerified } from './opening-compare';
@@ -33,7 +35,10 @@ import {
  *   compare  the opening comparison: the identity tables hold the files and the legacy tables
  *            still give the same files; on a match, mark them verified
  *   go-live  the switch in one step: check the shadow comparisons, cut,
- *            verify, load, compare, then set the switch time to now
+ *            verify, load, compare, publish the files, then set the
+ *            switch time to now
+ *   rebuild  empty or suspended identity tables from the published chain
+ *            (opening file, then each build record) and their sources
  *   status   whether the identity tables are the truth, and why
  *   suspend  rollback: every reader is on the legacy tables within 60 s
  *            (API answers can be cached a minute more)
@@ -47,6 +52,7 @@ const USAGE = `usage:
   load    --opening <json> --history <json>
   compare --opening <json> --history <json> [--identities <json>] --out <json>
   go-live --out-dir <dir> --signed-writes-live [--accept-report-diffs] [--identities <json>]
+  rebuild --head-uri <uri> --head-sha256 <hex> [--history-uri <uri>] [--identities <json>]
   status
   suspend`;
 
@@ -208,6 +214,10 @@ async function goLiveCommand(args: Args): Promise<number> {
     );
     return 2;
   }
+  const published = await publishOpeningFiles(files);
+  process.stdout.write(
+    `published: opening ${published.openingUri}, history ${published.historyUri}\n`
+  );
   const switched = await scheduleIdentitySwitch(
     Date.now(),
     parsed.openingSha256
@@ -218,6 +228,20 @@ async function goLiveCommand(args: Args): Promise<number> {
       : 'Refusing: the switch time could not be set on this load\n'
   );
   return switched ? 0 : 2;
+}
+
+/** Rebuilds the identity tables from the published chain's head. */
+async function rebuildCommand(args: Args): Promise<number> {
+  const result = await rebuildIdentityTables({
+    head: {
+      uri: required(args, 'head-uri'),
+      sha256: required(args, 'head-sha256')
+    },
+    historyUri: optional(args, 'history-uri'),
+    directory: directoryFrom(args)
+  });
+  process.stdout.write(`${JSON.stringify(result)}\n`);
+  return 0;
 }
 
 async function statusCommand(): Promise<number> {
@@ -250,6 +274,8 @@ export async function main(argv: readonly string[]): Promise<number> {
       return inDb(() => loadCommand(args));
     case 'compare':
       return inDb(() => compareCommand(args));
+    case 'rebuild':
+      return inDb(() => rebuildCommand(args));
     case 'go-live':
       return inDb(() => goLiveCommand(args));
     case 'status':

@@ -7,37 +7,142 @@ import {
   SUBSCRIPTIONS_ID_REDEEMED_TABLE,
   SUBSCRIPTIONS_ID_TOP_UP_TABLE
 } from '@/constants';
+import { DbQueryOptions } from '@/db-query.options';
 import { sqlExecutor } from '@/sql-executor';
-import { mergeUpcomingSubscriptions } from '@/subscriptionsDaily/subscription-merge';
 import {
   IdentityDirectory,
   isPrincipalId,
   mirrorIdentityDirectory
 } from '../identity/identity-directory';
-import { AS_TEXT, flag } from '../opening/legacy-tables';
+import { MergeState, mergeStates } from '../identity/identity-merge';
+import { AS_TEXT, flag, msToDbText } from '../opening/legacy-tables';
 
 /*
  * A wallet that binds to an identity after the opening brings its state
- * with it (owner question O2; this file is the one place the rule lives):
- * its balance is added to the identity's, automatic and all editions are
- * kept if either had them, choices for the same card are combined as the
- * legacy merge does (mergeUpcomingSubscriptions), and its history rows move
- * to the identity. A wallet that leaves takes nothing.
+ * with it, by the one merge rule (identity-merge.ts): the identity's state
+ * survives and the wallet's is folded in at the time of the fold, and the
+ * wallet's history rows move to the identity. A wallet that leaves takes
+ * nothing.
  */
 
-type ChoiceRow = {
-  id: number;
-  token_id: number;
-  contract: string;
-  subscribed: number;
-  automatic_subscription: number;
-  subscribed_count: number;
-  updated_at: string;
-};
+async function readState(
+  identityKey: string,
+  options: DbQueryOptions
+): Promise<MergeState> {
+  const q = <T>(sql: string) =>
+    sqlExecutor.execute<T>(sql, { identityKey }, options);
+  const [balance] = await q<{
+    balance: number;
+    created_at: string;
+    updated_at: string;
+  }>(
+    `SELECT balance, ${AS_TEXT('created_at')} AS created_at, ${AS_TEXT('updated_at')} AS updated_at
+       FROM ${SUBSCRIPTIONS_ID_BALANCES_TABLE} WHERE identity_key = :identityKey FOR UPDATE`
+  );
+  const [mode] = await q<{
+    automatic: number;
+    subscribe_all_editions: number;
+    created_at: string;
+    updated_at: string;
+  }>(
+    `SELECT automatic, subscribe_all_editions, ${AS_TEXT('created_at')} AS created_at,
+            ${AS_TEXT('updated_at')} AS updated_at
+       FROM ${SUBSCRIPTIONS_ID_MODE_TABLE} WHERE identity_key = :identityKey FOR UPDATE`
+  );
+  const choices = await q<{
+    contract: string;
+    token_id: number;
+    subscribed: number;
+    subscribed_count: number;
+    automatic_subscription: number;
+    created_at: string;
+    updated_at: string;
+  }>(
+    `SELECT contract, token_id, subscribed, subscribed_count, automatic_subscription,
+            ${AS_TEXT('created_at')} AS created_at, ${AS_TEXT('updated_at')} AS updated_at
+       FROM ${SUBSCRIPTIONS_ID_NFTS_TABLE} WHERE identity_key = :identityKey ORDER BY id FOR UPDATE`
+  );
+  return {
+    balance: balance
+      ? {
+          balance: Number(balance.balance),
+          createdAt: balance.created_at,
+          updatedAt: balance.updated_at
+        }
+      : null,
+    mode: mode
+      ? {
+          automatic: flag(mode.automatic),
+          subscribeAllEditions: flag(mode.subscribe_all_editions),
+          createdAt: mode.created_at,
+          updatedAt: mode.updated_at
+        }
+      : null,
+    choices: choices.map((c) => ({
+      contract: c.contract,
+      tokenId: Number(c.token_id),
+      subscribed: flag(c.subscribed),
+      subscribedCount: Number(c.subscribed_count),
+      automaticSubscription: flag(c.automatic_subscription),
+      createdAt: c.created_at,
+      updatedAt: c.updated_at
+    }))
+  };
+}
+
+async function writeState(
+  identityKey: string,
+  state: MergeState,
+  options: DbQueryOptions
+): Promise<void> {
+  const q = (sql: string, p: Record<string, unknown>) =>
+    sqlExecutor.execute(sql, p, options);
+  if (state.balance) {
+    await q(
+      `INSERT INTO ${SUBSCRIPTIONS_ID_BALANCES_TABLE} (identity_key, balance, created_at, updated_at)
+        VALUES (:identityKey, :balance, :createdAt, :updatedAt)`,
+      { identityKey, ...state.balance }
+    );
+  }
+  if (state.mode) {
+    await q(
+      `INSERT INTO ${SUBSCRIPTIONS_ID_MODE_TABLE}
+        (identity_key, automatic, subscribe_all_editions, created_at, updated_at)
+        VALUES (:identityKey, :automatic, :all, :createdAt, :updatedAt)`,
+      {
+        identityKey,
+        automatic: state.mode.automatic,
+        all: state.mode.subscribeAllEditions,
+        createdAt: state.mode.createdAt,
+        updatedAt: state.mode.updatedAt
+      }
+    );
+  }
+  for (const choice of state.choices) {
+    await q(
+      `INSERT INTO ${SUBSCRIPTIONS_ID_NFTS_TABLE}
+        (identity_key, contract, token_id, subscribed, subscribed_count, automatic_subscription,
+         created_at, updated_at)
+        VALUES (:identityKey, :contract, :tokenId, :subscribed, :count, :automatic,
+         :createdAt, :updatedAt)`,
+      {
+        identityKey,
+        contract: choice.contract,
+        tokenId: choice.tokenId,
+        subscribed: choice.subscribed,
+        count: choice.subscribedCount,
+        automatic: choice.automaticSubscription,
+        createdAt: choice.createdAt,
+        updatedAt: choice.updatedAt
+      }
+    );
+  }
+}
 
 /** Folds the wallet-keyed state of wallets now bound to an identity. */
 export async function foldBoundWallets(
-  directory: IdentityDirectory = mirrorIdentityDirectory
+  directory: IdentityDirectory = mirrorIdentityDirectory,
+  nowMs: () => number = () => Date.now()
 ): Promise<number> {
   const keyed = await sqlExecutor.execute<{ identity_key: string }>(
     `SELECT identity_key FROM ${SUBSCRIPTIONS_ID_BALANCES_TABLE} WHERE LENGTH(identity_key) = 42
@@ -57,105 +162,22 @@ export async function foldBoundWallets(
     }
     await sqlExecutor.executeNativeQueriesInTransaction(async (connection) => {
       const options = { wrappedConnection: connection };
-      const q = <T>(sql: string, p: Record<string, unknown>) =>
-        sqlExecutor.execute<T>(sql, p, options);
-      const [walletBalance] = await q<{ balance: number }>(
-        `SELECT balance FROM ${SUBSCRIPTIONS_ID_BALANCES_TABLE} WHERE identity_key = :wallet FOR UPDATE`,
-        { wallet }
+      const merged = mergeStates(
+        [await readState(identity, options), await readState(wallet, options)],
+        msToDbText(nowMs())
       );
-      if (walletBalance) {
-        await q(
-          `INSERT INTO ${SUBSCRIPTIONS_ID_BALANCES_TABLE} (identity_key, balance)
-            VALUES (:identity, :balance)
-            ON DUPLICATE KEY UPDATE balance = balance + VALUES(balance)`,
-          { identity, balance: Number(walletBalance.balance) }
+      for (const table of [
+        SUBSCRIPTIONS_ID_BALANCES_TABLE,
+        SUBSCRIPTIONS_ID_MODE_TABLE,
+        SUBSCRIPTIONS_ID_NFTS_TABLE
+      ]) {
+        await sqlExecutor.execute(
+          `DELETE FROM ${table} WHERE identity_key IN (:keys)`,
+          { keys: [identity, wallet] },
+          options
         );
       }
-      const [walletMode] = await q<{
-        automatic: number;
-        subscribe_all_editions: number;
-      }>(
-        `SELECT automatic, subscribe_all_editions FROM ${SUBSCRIPTIONS_ID_MODE_TABLE}
-          WHERE identity_key = :wallet FOR UPDATE`,
-        { wallet }
-      );
-      if (walletMode) {
-        await q(
-          `INSERT INTO ${SUBSCRIPTIONS_ID_MODE_TABLE} (identity_key, automatic, subscribe_all_editions)
-            VALUES (:identity, :automatic, :all)
-            ON DUPLICATE KEY UPDATE automatic = automatic OR VALUES(automatic),
-              subscribe_all_editions = subscribe_all_editions OR VALUES(subscribe_all_editions)`,
-          {
-            identity,
-            automatic: flag(walletMode.automatic),
-            all: flag(walletMode.subscribe_all_editions)
-          }
-        );
-      }
-      const choices = (wallet: string) =>
-        q<ChoiceRow>(
-          `SELECT id, contract, token_id, subscribed, automatic_subscription, subscribed_count,
-                  ${AS_TEXT('updated_at')} AS updated_at
-             FROM ${SUBSCRIPTIONS_ID_NFTS_TABLE} WHERE identity_key = :key FOR UPDATE`,
-          { key: wallet }
-        );
-      const surviving = new Map(
-        (await choices(identity)).map((c) => [
-          `${c.contract}|${Number(c.token_id)}`,
-          c
-        ])
-      );
-      for (const moved of await choices(wallet)) {
-        const card = `${moved.contract}|${Number(moved.token_id)}`;
-        const kept = surviving.get(card);
-        if (!kept) {
-          await q(
-            `UPDATE ${SUBSCRIPTIONS_ID_NFTS_TABLE} SET identity_key = :identity, updated_at = updated_at WHERE id = :id`,
-            { identity, id: moved.id }
-          );
-          continue;
-        }
-        const state = (c: ChoiceRow) => ({
-          subscribed: flag(c.subscribed),
-          automatic_subscription: flag(c.automatic_subscription),
-          subscribed_count: Number(c.subscribed_count),
-          updated_at: new Date(
-            `${c.updated_at.replace(' ', 'T').slice(0, 23)}Z`
-          )
-        });
-        const keptState = state(kept);
-        const combined = mergeUpcomingSubscriptions(keptState, state(moved));
-        if (combined !== keptState) {
-          const earliest = [kept, moved]
-            .filter((c) => flag(c.subscribed))
-            .map((c) => c.updated_at)
-            .sort()[0];
-          await q(
-            `UPDATE ${SUBSCRIPTIONS_ID_NFTS_TABLE}
-              SET subscribed = :subscribed, automatic_subscription = :automatic,
-                subscribed_count = :count, updated_at = :updatedAt
-              WHERE id = :id`,
-            {
-              subscribed: combined.subscribed,
-              automatic: combined.automatic_subscription,
-              count: combined.subscribed_count,
-              updatedAt: earliest,
-              id: kept.id
-            }
-          );
-        }
-        await q(`DELETE FROM ${SUBSCRIPTIONS_ID_NFTS_TABLE} WHERE id = :id`, {
-          id: moved.id
-        });
-      }
-      await q(
-        `DELETE FROM ${SUBSCRIPTIONS_ID_BALANCES_TABLE} WHERE identity_key = :wallet`,
-        { wallet }
-      );
-      await q(
-        `DELETE FROM ${SUBSCRIPTIONS_ID_MODE_TABLE} WHERE identity_key = :wallet`,
-        { wallet }
-      );
+      await writeState(identity, merged, options);
       for (const table of [
         SUBSCRIPTIONS_ID_NFTS_FINAL_TABLE,
         SUBSCRIPTIONS_ID_REDEEMED_TABLE,
@@ -167,9 +189,10 @@ export async function foldBoundWallets(
           table === SUBSCRIPTIONS_ID_NFTS_FINAL_TABLE
             ? ', updated_at = updated_at'
             : '';
-        await q(
+        await sqlExecutor.execute(
           `UPDATE ${table} SET identity_key = :identity${keepTime} WHERE identity_key = :wallet`,
-          { identity, wallet }
+          { identity, wallet },
+          options
         );
       }
     });

@@ -332,6 +332,23 @@ export class SubscriptionIdStateEntity {
   /** When the identity tables become the truth; set by the CLI's go-live. */
   @Column({ type: 'bigint', nullable: true, default: null })
   switch_at!: number | null;
+
+  /** Where the opening file and its history file were published. */
+  @Column({ type: 'text', nullable: true, default: null })
+  opening_uri!: string | null;
+
+  @Column({ type: 'text', nullable: true, default: null })
+  history_uri!: string | null;
+
+  /**
+   * The newest published file of the chain a rebuild walks back from: the
+   * opening file, then each daily build's record naming the one before.
+   */
+  @Column({ type: 'text', nullable: true, default: null })
+  head_uri!: string | null;
+
+  @Column({ type: 'varchar', length: 64, nullable: true, default: null })
+  head_sha256!: string | null;
 }
 
 /**

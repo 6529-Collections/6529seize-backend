@@ -41,6 +41,8 @@ export interface IdentityListBuild {
   readonly tokenId: number;
   readonly rows: IdentityListRow[];
   readonly decisions: FinalListDecision[];
+  /** What the build wrote, with the rows' ids: the build record's body. */
+  readonly effects: BuildEffects;
 }
 
 const dbTextToMs = (text: string | null): number | null =>
@@ -184,105 +186,175 @@ export async function buildIdentityList(params: {
       airdrops.get(identity) ?? { airdropAddress: null, tdhWallet: null }
   });
 
+  const logs: Array<BuildEffects['logs'][number]> = [];
+  for (const populated of build.autoPopulated) {
+    const mode = modeOf.get(populated.key);
+    const eligibilityCount =
+      eligibility.get(keyOf(populated.key).toLowerCase()) ??
+      MINIMUM_SUBSCRIPTION_ELIGIBILITY;
+    logs.push({
+      identityKey: populated.key,
+      consolidationKey: keyOf(populated.key),
+      log: `Auto-Subscribed to Meme #${tokenId}`,
+      additionalInfo: `Edition Preference: ${mode && flag(mode.subscribe_all_editions) ? 'All eligible' : 'One edition'} - Eligibility: x${eligibilityCount} - Subscription Count: x${populated.subscribedCount}`
+    });
+  }
+  for (const decision of build.decisions) {
+    const text = decisionLog(decision, tokenId, dateStr);
+    logs.push({
+      identityKey: decision.key,
+      consolidationKey: keyOf(decision.key),
+      log: text.log,
+      additionalInfo: text.additional_info
+    });
+  }
+  // Rows that share a legacy id go in first, so a row that takes the
+  // table's next id can't take one a later row must share.
+  const withIds = build.rows.map((row) => ({
+    id: params.idOf?.(row.key),
+    identityKey: row.key,
+    consolidationKey: keyOf(row.key),
+    contract: row.contract,
+    tokenId: row.tokenId,
+    subscribedCount: row.subscribedCount,
+    airdropAddress: row.airdropAddress ?? '',
+    balance: row.balance,
+    subscribedAt: row.subscribedAt
+  }));
+  const effects: BuildEffects = {
+    contract: MEMES_CONTRACT,
+    tokenId,
+    buildAtMs,
+    autoPopulated: build.autoPopulated.map((p) => ({
+      identityKey: p.key,
+      subscribedCount: p.subscribedCount
+    })),
+    queuePushed: build.queuePushedKeys,
+    logs,
+    rows: [
+      ...withIds.filter((r) => r.id !== undefined),
+      ...withIds.filter((r) => r.id === undefined)
+    ]
+  };
+  const rows = await applyBuildEffects(effects);
+  return {
+    tokenId,
+    rows,
+    decisions: build.decisions,
+    effects: { ...effects, rows }
+  };
+}
+
+/**
+ * What a daily build writes to the identity tables: automatic rows for
+ * automatic subscribers with none, the queue push for automatic
+ * subscribers short of balance, the build's log lines, and the card's
+ * final rows. A build applies it once; a rebuild applies the published
+ * build record the same way.
+ */
+export interface BuildEffects {
+  readonly contract: string;
+  readonly tokenId: number;
+  readonly buildAtMs: number;
+  readonly autoPopulated: ReadonlyArray<{
+    readonly identityKey: string;
+    readonly subscribedCount: number;
+  }>;
+  readonly queuePushed: readonly string[];
+  readonly logs: ReadonlyArray<{
+    readonly identityKey: string;
+    readonly consolidationKey: string;
+    readonly log: string;
+    readonly additionalInfo: string | null;
+  }>;
+  /** A row without an id takes the table's next one. */
+  readonly rows: ReadonlyArray<
+    Omit<IdentityListRow, 'id'> & { readonly id?: number }
+  >;
+}
+
+/** Writes a build's effects in one transaction; returns the rows with ids. */
+export async function applyBuildEffects(
+  effects: BuildEffects
+): Promise<IdentityListRow[]> {
+  const buildText = msToDbText(effects.buildAtMs);
   return sqlExecutor.executeNativeQueriesInTransaction(async (connection) => {
     const options = { wrappedConnection: connection };
     const q = <T>(sql: string, p: Record<string, unknown>) =>
       sqlExecutor.execute<T>(sql, p, options);
-    const log = async (
-      identityKey: string,
-      text: { log: string; additional_info: string | null }
-    ) =>
-      q(
-        `INSERT INTO ${SUBSCRIPTIONS_ID_LOGS_TABLE}
-          (identity_key, consolidation_key, log, additional_info)
-          VALUES (:identityKey, :key, :log, :info)`,
-        {
-          identityKey,
-          key: keyOf(identityKey),
-          log: text.log,
-          info: text.additional_info
-        }
-      );
-    for (const populated of build.autoPopulated) {
-      const mode = modeOf.get(populated.key);
+    for (const populated of effects.autoPopulated) {
       await q(
         `INSERT INTO ${SUBSCRIPTIONS_ID_NFTS_TABLE}
-          (identity_key, contract, token_id, subscribed, subscribed_count, automatic_subscription)
-          VALUES (:identityKey, :contract, :tokenId, true, :count, true)`,
+          (identity_key, contract, token_id, subscribed, subscribed_count, automatic_subscription,
+           created_at, updated_at)
+          VALUES (:identityKey, :contract, :tokenId, true, :count, true, :buildText, :buildText)`,
         {
-          identityKey: populated.key,
-          contract: MEMES_CONTRACT,
-          tokenId,
-          count: populated.subscribedCount
+          identityKey: populated.identityKey,
+          contract: effects.contract,
+          tokenId: effects.tokenId,
+          count: populated.subscribedCount,
+          buildText
         }
       );
-      const eligibilityCount =
-        eligibility.get(keyOf(populated.key).toLowerCase()) ??
-        MINIMUM_SUBSCRIPTION_ELIGIBILITY;
-      await log(populated.key, {
-        log: `Auto-Subscribed to Meme #${tokenId}`,
-        additional_info: `Edition Preference: ${mode && flag(mode.subscribe_all_editions) ? 'All eligible' : 'One edition'} - Eligibility: x${eligibilityCount} - Subscription Count: x${populated.subscribedCount}`
-      });
     }
-    if (build.queuePushedKeys.length > 0) {
+    if (effects.queuePushed.length > 0) {
       await q(
         `UPDATE ${SUBSCRIPTIONS_ID_MODE_TABLE} SET updated_at = :buildText
           WHERE identity_key IN (:keys)`,
-        { buildText, keys: build.queuePushedKeys }
+        { buildText, keys: effects.queuePushed }
       );
     }
-    for (const decision of build.decisions) {
-      await log(decision.key, decisionLog(decision, tokenId, dateStr));
+    for (const line of effects.logs) {
+      await q(
+        `INSERT INTO ${SUBSCRIPTIONS_ID_LOGS_TABLE}
+          (identity_key, consolidation_key, log, additional_info, created_at)
+          VALUES (:identityKey, :key, :log, :info, :buildText)`,
+        {
+          identityKey: line.identityKey,
+          key: line.consolidationKey,
+          log: line.log,
+          info: line.additionalInfo,
+          buildText
+        }
+      );
     }
     await q(
       `DELETE FROM ${SUBSCRIPTIONS_ID_NFTS_FINAL_TABLE} WHERE contract = :contract AND token_id = :tokenId`,
-      { contract: MEMES_CONTRACT, tokenId }
+      { contract: effects.contract, tokenId: effects.tokenId }
     );
     const rows: IdentityListRow[] = [];
-    // Rows that share a legacy id go in first, so a row that takes the
-    // table's next id can't take one a later row must share.
-    const ordered = [
-      ...build.rows.filter((r) => params.idOf?.(r.key) !== undefined),
-      ...build.rows.filter((r) => params.idOf?.(r.key) === undefined)
-    ];
-    for (const row of ordered) {
-      const sharedId = params.idOf?.(row.key);
+    for (const row of effects.rows) {
       await q(
         `INSERT INTO ${SUBSCRIPTIONS_ID_NFTS_FINAL_TABLE}
-          (${sharedId === undefined ? '' : 'id, '}identity_key, consolidation_key, contract, token_id,
-           subscribed_count, airdrop_address, balance, subscribed_at)
-          VALUES (${sharedId === undefined ? '' : ':id, '}:identityKey, :key, :contract, :tokenId,
-           :count, :airdrop, :balance, :subscribedAt)`,
+          (${row.id === undefined ? '' : 'id, '}identity_key, consolidation_key, contract, token_id,
+           subscribed_count, airdrop_address, balance, subscribed_at, created_at, updated_at)
+          VALUES (${row.id === undefined ? '' : ':id, '}:identityKey, :key, :contract, :tokenId,
+           :count, :airdrop, :balance, :subscribedAt, :buildText, :buildText)`,
         {
-          id: sharedId,
-          identityKey: row.key,
-          key: keyOf(row.key),
+          id: row.id,
+          identityKey: row.identityKey,
+          key: row.consolidationKey,
           contract: row.contract,
           tokenId: row.tokenId,
           count: row.subscribedCount,
           airdrop: row.airdropAddress,
           balance: row.balance,
-          subscribedAt: row.subscribedAt
+          subscribedAt: row.subscribedAt,
+          buildText
         }
       );
       const [inserted] = await q<{ id: number }>(
         `SELECT id FROM ${SUBSCRIPTIONS_ID_NFTS_FINAL_TABLE}
           WHERE identity_key = :identityKey AND contract = :contract AND token_id = :tokenId`,
-        { identityKey: row.key, contract: row.contract, tokenId: row.tokenId }
+        {
+          identityKey: row.identityKey,
+          contract: row.contract,
+          tokenId: row.tokenId
+        }
       );
-      rows.push({
-        id: Number(inserted.id),
-        identityKey: row.key,
-        consolidationKey: keyOf(row.key),
-        contract: row.contract,
-        tokenId: row.tokenId,
-        subscribedCount: row.subscribedCount,
-        airdropAddress: row.airdropAddress ?? '',
-        balance: row.balance,
-        subscribedAt: row.subscribedAt
-      });
+      rows.push({ ...row, id: Number(inserted.id) });
     }
-    return { tokenId, rows, decisions: build.decisions };
+    return rows;
   });
 }
 

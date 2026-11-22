@@ -1,8 +1,6 @@
 import {
   SUBSCRIPTION_DEFERRED_WRITES_TABLE,
   SUBSCRIPTIONS_ID_BALANCES_TABLE,
-  SUBSCRIPTIONS_ID_LOGS_TABLE,
-  SUBSCRIPTIONS_ID_MODE_TABLE,
   SUBSCRIPTIONS_ID_TOP_UP_TABLE,
   SUBSCRIPTIONS_TOP_UP_TABLE
 } from '@/constants';
@@ -15,6 +13,7 @@ import {
   mirrorIdentityDirectory
 } from '../identity/identity-directory';
 import { AS_TEXT, msToDbText } from '../opening/legacy-tables';
+import { turnIdentityAutomaticOn } from '../identity/identity-automatic';
 
 interface PendingTopUp {
   readonly hash: string;
@@ -97,7 +96,9 @@ async function pendingTopUps(): Promise<PendingTopUp[]> {
  * Credits new top-ups to the identity tables, each to the sender's identity
  * as the directory has it now, with the legacy top-up arithmetic: a first
  * top-up opens the balance unrounded and, if it covers a card, turns
- * automatic mode on; later ones add and round to five decimals. Each top-up
+ * automatic mode on as the legacy mode change does (turnIdentityAutomaticOn);
+ * later ones add and round to five decimals. Times written are the
+ * top-up's transaction time, so a rebuild writes the same. Each top-up
  * is one transaction, keyed by its hash, so a run that stops halfway goes
  * on where it stopped. Returns how many were credited.
  */
@@ -110,6 +111,9 @@ export async function creditIdentityTopUps(
   }
   const identities = await directory.identitiesOf(
     topUps.map((t) => t.fromWallet)
+  );
+  const consolidationKeys = await directory.consolidationKeysOf(
+    Array.from(new Set(identities.values()))
   );
   let credited = 0;
   for (const topUp of topUps) {
@@ -145,26 +149,17 @@ export async function creditIdentityTopUps(
           );
         } else {
           await q(
-            `INSERT INTO ${SUBSCRIPTIONS_ID_BALANCES_TABLE} (identity_key, balance)
-              VALUES (:identityKey, :balance)`,
-            { identityKey, balance: topUp.amount }
+            `INSERT INTO ${SUBSCRIPTIONS_ID_BALANCES_TABLE} (identity_key, balance, created_at, updated_at)
+              VALUES (:identityKey, :balance, :at, :at)`,
+            { identityKey, balance: topUp.amount, at: topUp.transactionDate }
           );
           if (hasMinimumBalanceForAutomaticMode(topUp.amount)) {
-            await q(
-              `INSERT INTO ${SUBSCRIPTIONS_ID_MODE_TABLE} (identity_key, automatic)
-                VALUES (:identityKey, true)
-                ON DUPLICATE KEY UPDATE automatic = true`,
-              { identityKey }
-            );
-            await q(
-              `INSERT INTO ${SUBSCRIPTIONS_ID_LOGS_TABLE}
-                (identity_key, consolidation_key, log) VALUES (:identityKey, :key, :log)`,
-              {
-                identityKey,
-                key: sender,
-                log: 'Subscription Mode set to Automatic'
-              }
-            );
+            await turnIdentityAutomaticOn({
+              identityKey,
+              consolidationKey: consolidationKeys.get(identityKey) ?? sender,
+              atText: topUp.transactionDate,
+              options
+            });
           }
         }
         await q(

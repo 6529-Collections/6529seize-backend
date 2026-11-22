@@ -6,6 +6,11 @@ import {
   NULL_ADDRESS,
   SUBSCRIPTIONS_BALANCES_TABLE,
   SUBSCRIPTIONS_ID_BALANCES_TABLE,
+  SUBSCRIPTIONS_ID_LOGS_TABLE,
+  SUBSCRIPTIONS_ID_MODE_TABLE,
+  SUBSCRIPTIONS_ID_NFTS_TABLE,
+  SUBSCRIPTIONS_ID_CURSORS_TABLE,
+  SUBSCRIPTIONS_ID_STATE_TABLE,
   SUBSCRIPTIONS_ID_NFTS_FINAL_TABLE,
   SUBSCRIPTIONS_ID_REPORTS_TABLE,
   SUBSCRIPTIONS_MODE_TABLE,
@@ -30,7 +35,21 @@ import {
 } from '../identity/identity-switch';
 import { cutOpeningFiles } from '../opening/opening-build';
 import { compareAndMarkVerified } from '../opening/opening-compare';
-import { loadOpeningFiles, parseOpeningFiles } from '../opening/opening-load';
+import {
+  IDENTITY_DATA_TABLES,
+  loadOpeningFiles,
+  parseOpeningFiles
+} from '../opening/opening-load';
+import { publishOpeningFiles } from '../opening/published-chain';
+import { rebuildIdentityTables } from '../opening/rebuild';
+import {
+  fetchDetailsForConsolidationKey,
+  fetchFinalSubscription,
+  fetchLogsForConsolidationKey,
+  fetchRedeemedSubscriptionsForConsolidationKey,
+  fetchSubscriptionUploads,
+  fetchTopUpsForConsolidationKey
+} from '@/api/subscriptions/api.subscriptions.db';
 import {
   runIdentityRedemptionWriters,
   runIdentityTopUpWriters
@@ -68,6 +87,9 @@ const T2 = '2026-11-21 11:00:00.000000';
 
 const execute = (sql: string, params?: Record<string, unknown>) =>
   sqlExecutor.execute(sql, params);
+
+/** What the (mocked) uploader has published, by URL. */
+const published = new Map<string, string>();
 
 /** The legacy state, with the redemption loop's cursor at block 1. */
 async function seedLegacy() {
@@ -132,6 +154,7 @@ async function cutAndLoad(goLive: boolean) {
     );
   }
   subscriptionsIdentitySwitch.invalidate();
+  return files;
 }
 
 async function seed() {
@@ -167,9 +190,12 @@ afterAll(async () => {
 
 describeWithSeed('identity writers after the switch', [], () => {
   beforeEach(() => {
-    uploadFile
-      .mockReset()
-      .mockResolvedValue({ url: 'https://example.test/list.csv' });
+    published.clear();
+    uploadFile.mockReset().mockImplementation(async (bytes: Buffer) => {
+      const url = `https://example.test/file-${published.size}`;
+      published.set(url, bytes.toString('utf8'));
+      return { url };
+    });
   });
   afterEach(() => {
     delete process.env[SHADOW_ENV];
@@ -347,6 +373,107 @@ describeWithSeed('identity writers after the switch', [], () => {
     );
   });
 
+  it('rebuilds empty identity tables from the published chain and the sources, giving the same API answers', async () => {
+    await seedLegacy();
+    const files = await cutAndLoad(true);
+    await publishOpeningFiles(files);
+    // After the switch: a top-up, a daily build (published with its build
+    // record) and an airdrop charged.
+    await execute(
+      `INSERT INTO ${SUBSCRIPTIONS_TOP_UP_TABLE} (hash, block, transaction_date, from_wallet, amount)
+        VALUES ('0xa5', 30, '2026-11-26 13:00:00', :lone, 0.05)`,
+      { lone: LONE }
+    );
+    await runIdentityTopUpWriters();
+    await updateSubscriptions();
+    await execute(
+      `INSERT INTO ${TRANSACTIONS_TABLE}
+        (created_at, transaction, block, transaction_date, from_address, to_address,
+         contract, token_id, token_count, value, primary_proceeds, royalties,
+         gas_gwei, gas_price, gas_price_gwei, gas)
+        VALUES (NOW(), '0xmint', 50, '2026-11-26 15:00:00', :null, :lone, :c, :card,
+         1, 0, 0, 0, 0, 0, 0, 0)`,
+      { null: NULL_ADDRESS, lone: LONE, c: MEMES_CONTRACT, card: CARD }
+    );
+    await redeemSubscriptions();
+    await runIdentityRedemptionWriters();
+
+    const answers = async () => {
+      const out: Record<string, unknown> = {};
+      for (const key of [A, P1, LONE]) {
+        const strip = (rows: any[], fields: string[]) =>
+          rows.map((r) => fields.map((f) => String(r[f])).join('|')).sort();
+        out[key] = {
+          details: await fetchDetailsForConsolidationKey(key),
+          final: (({
+            id,
+            identity_key,
+            subscribed_count,
+            airdrop_address,
+            balance
+          }: any) => ({
+            id,
+            identity_key,
+            subscribed_count,
+            airdrop_address,
+            balance
+          }))((await fetchFinalSubscription(key, MEMES_CONTRACT, CARD)) ?? {}),
+          redeemed: strip(
+            (await fetchRedeemedSubscriptionsForConsolidationKey(key, 50, 1))
+              .data,
+            ['transaction', 'count', 'value', 'balance_after']
+          ),
+          topUps: strip(
+            (await fetchTopUpsForConsolidationKey(key, 50, 1)).data,
+            ['hash', 'amount']
+          ),
+          logs: strip((await fetchLogsForConsolidationKey(key, 200, 1)).data, [
+            'log',
+            'additional_info'
+          ])
+        };
+      }
+      out.uploads = (
+        await fetchSubscriptionUploads(MEMES_CONTRACT, 10, 1)
+      ).data.map((u: any) => u.upload_url);
+      return out;
+    };
+    const before = await answers();
+    const [state] = await sqlExecutor.execute<{
+      head_uri: string;
+      head_sha256: string;
+    }>(`SELECT head_uri, head_sha256 FROM ${SUBSCRIPTIONS_ID_STATE_TABLE}`);
+    expect(state.head_uri).not.toBe(files.openingSha256);
+
+    // Lose every identity table, then rebuild from the head.
+    for (const table of [
+      ...IDENTITY_DATA_TABLES,
+      SUBSCRIPTIONS_ID_STATE_TABLE,
+      SUBSCRIPTIONS_ID_CURSORS_TABLE
+    ]) {
+      await execute(`DELETE FROM ${table}`);
+    }
+    subscriptionsIdentitySwitch.invalidate();
+    const result = await rebuildIdentityTables({
+      head: { uri: state.head_uri, sha256: state.head_sha256 },
+      fetch: async (uri) => {
+        const bytes = published.get(uri);
+        if (bytes === undefined) {
+          throw new Error(`not published: ${uri}`);
+        }
+        return bytes;
+      }
+    });
+    expect(result).toEqual(
+      expect.objectContaining({
+        buildRecords: 1,
+        topUpsCredited: 1,
+        airdropsCharged: 1
+      })
+    );
+    expect(await answers()).toEqual(before);
+  });
+
   it('charges an airdrop once in the identity tables, the same as the legacy loop', async () => {
     await seed();
     await updateSubscriptions();
@@ -391,6 +518,50 @@ describeWithSeed('identity writers after the switch', [], () => {
     expect(
       await balance(SUBSCRIPTIONS_ID_BALANCES_TABLE, 'identity_key', P1)
     ).toBe(0.6);
+  });
+
+  it('turns automatic mode on for a first top-up as the legacy mode change does', async () => {
+    await seed();
+    const W = wallet(8);
+    // W unsubscribed from the upcoming card before it had a balance.
+    await execute(
+      `INSERT INTO ${SUBSCRIPTIONS_ID_NFTS_TABLE}
+        (identity_key, contract, token_id, subscribed, subscribed_count, automatic_subscription)
+        VALUES (:w, :c, :card, false, 1, false)`,
+      { w: W, c: MEMES_CONTRACT, card: CARD }
+    );
+    await execute(
+      `INSERT INTO ${SUBSCRIPTIONS_TOP_UP_TABLE} (hash, block, transaction_date, from_wallet, amount)
+        VALUES ('0xa4', 62, '2026-11-26 14:00:00', :w, 0.1)`,
+      { w: W }
+    );
+    await runIdentityTopUpWriters();
+    const [mode] = await sqlExecutor.execute<{
+      automatic: number;
+      updated_at: string;
+    }>(
+      `SELECT automatic, DATE_FORMAT(updated_at, '%Y-%m-%d %H:%i:%s') AS updated_at
+         FROM ${SUBSCRIPTIONS_ID_MODE_TABLE} WHERE identity_key = :w`,
+      { w: W }
+    );
+    // The mode time is the top-up's transaction time, so a rebuild writes it too.
+    expect([Number(mode.automatic), mode.updated_at]).toEqual([
+      1,
+      '2026-11-26 14:00:00'
+    ]);
+    const [row] = await sqlExecutor.execute<{ subscribed: number }>(
+      `SELECT subscribed FROM ${SUBSCRIPTIONS_ID_NFTS_TABLE} WHERE identity_key = :w`,
+      { w: W }
+    );
+    expect(Number(row.subscribed)).toBe(1);
+    const lines = await sqlExecutor.execute<{ log: string }>(
+      `SELECT log FROM ${SUBSCRIPTIONS_ID_LOGS_TABLE} WHERE identity_key = :w ORDER BY id`,
+      { w: W }
+    );
+    expect(lines.map((l) => l.log)).toEqual([
+      'Subscription Mode set to Automatic',
+      `Subscribed to Meme #${CARD}`
+    ]);
   });
 
   it('folds a wallet that binds after the opening into its identity', async () => {

@@ -3052,10 +3052,11 @@ switch, or before it with `FEATURE_SUBSCRIPTIONS_SHADOW=true` and an opening
 loaded), each legacy loop also writes them:
 
 - the top-up loop folds wallets that bound to an identity after the opening
-  into it (balance added, mode and choices merged by the legacy rules, history
-  re-keyed; a wallet that leaves takes nothing; `identity-fold.ts`), then
-  credits new top-ups, including those the key-width guard holds back, to the
-  sender's identity;
+  into it, then credits new top-ups, including those the key-width guard
+  holds back, to the sender's identity. A first top-up that covers a card
+  turns automatic mode on as the legacy mode change does (the mode line,
+  upcoming cards subscribed again, all-editions counts set to the
+  eligibility), at the top-up's transaction time;
 - the daily loop builds the card's list from the identity tables with the
   legacy rules (the engine's `buildFinalList`);
 - the transactions loop matches airdrop mints against the identity final
@@ -3080,11 +3081,39 @@ identity tables through signed records, so in shadow a list differs for
 anyone who changed a choice since the opening; cut and load again before a
 build to compare it.
 
+**One merge rule.** Subscription states that come to belong to one identity
+are merged by one function, `identity-merge.ts` (owner question O2): the cut
+uses it for keys of one identity whose re-key was held back, and the top-up
+loop for a wallet that binds later. Balances are summed; a fresh mode row is
+written at the merge time, automatic and all editions kept if any part had
+them; choices for one card are combined as `mergeUpcomingSubscriptions`
+does. A wallet that leaves an identity takes nothing. Eligibility and the
+airdrop rule read by the identity's consolidation key, whichever key a route
+was given.
+
+**Published chain and rebuild.** `go-live` uploads the opening and history
+files where the final lists go (Arweave). After the switch each daily build
+also uploads a build record: the build's effects (automatic rows, queue
+pushes, log lines, the card's final rows with their ids) and the list's URI,
+naming the file before it by URI and sha256. The newest file is the chain's
+head, kept in `subscriptions_id_state`. `subscriptions:opening -- rebuild
+--head-uri --head-sha256` rebuilds empty or suspended identity tables: it
+walks the chain back to the opening file checking every hash, loads the
+opening, applies each build record, then credits top-ups (legacy top-up
+rows, from Ethereum), folds bound wallets (from the identity mirror) and
+charges airdrops (from `transactions`, up to the legacy loop's block).
+Phase pulls are recorded by the mint log by final row id; its rebuild
+applies them between the build records and the redemptions. Times the
+writers set come from their sources (a top-up's transaction time, a build's
+time), so a rebuild writes the same values, except a fold, which is written
+at the time it runs. People's own changes reach the identity tables through
+signed records.
+
 **Switch.** The switch is one row, `subscriptions_id_state`, so one write
 moves every service. `subscriptions:opening -- go-live --signed-writes-live`
 does it in one step: it refuses unless the latest shadow list comparison
 matched and no shadow comparison differs since, then cuts, verifies, loads,
-compares and sets the switch time to now. The identity tables are the
+compares, publishes the files and sets the switch time to now. The identity tables are the
 truth from that time while the load is verified and not suspended, and only
 for a cut taken at most 15 minutes before it. `load` refuses to replace
 tables that are, or are set to become, the truth, and a cut whose redemption

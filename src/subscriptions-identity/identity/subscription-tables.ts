@@ -131,9 +131,10 @@ export async function subscriptionReadScope(
   }
   const directory = options.directory ?? mirrorIdentityDirectory;
   const identityKey = await identityOfRouteKey(routeKey, directory);
-  const consolidationKey = isPrincipalId(routeKey)
-    ? ((await directory.consolidationKeysOf([identityKey])).get(identityKey) ??
-      identityKey)
-    : routeKey.toLowerCase();
+  // Eligibility and the airdrop rule read by the identity's consolidation
+  // key now, whichever key the route was given.
+  const consolidationKey =
+    (await directory.consolidationKeysOf([identityKey])).get(identityKey) ??
+    identityKey;
   return { tables, key: identityKey, consolidationKey };
 }

@@ -1,6 +1,10 @@
 import { hasMinimumBalanceForAutomaticMode } from '@/api/subscriptions/insufficient-subscription-balance.exception';
-import { mergeUpcomingSubscriptions } from '@/subscriptionsDaily/subscription-merge';
 import { roundSubscriptionBalance } from '../engine/parity-money';
+import {
+  MergeChoice,
+  MergeState,
+  mergeStates
+} from '../identity/identity-merge';
 import { compareText } from '../engine/text-order';
 import {
   identitiesOfKey,
@@ -55,36 +59,6 @@ export interface CurrentState {
   /** Waiting log lines, for the history file. */
   readonly queuedLogs: HistoryLog[];
   readonly queued: QueuedNote[];
-}
-
-type Choice = Omit<OpeningChoice, 'identityKey'>;
-
-/** Folds two rows for one card as the legacy merge does, keeping date text. */
-function foldChoice(surviving: Choice, merged: Choice): Choice {
-  const state = (c: Choice) => ({
-    subscribed: c.subscribed,
-    automatic_subscription: c.automaticSubscription,
-    subscribed_count: c.subscribedCount,
-    updated_at: new Date(`${c.updatedAt.replace(' ', 'T')}Z`)
-  });
-  const survivingState = state(surviving);
-  const combined = mergeUpcomingSubscriptions(survivingState, state(merged));
-  if (combined === survivingState) {
-    // Neither row is subscribed: the surviving row stays as it was.
-    return surviving;
-  }
-  // The earlier priority time of the subscribed rows, to the microsecond.
-  const updatedAt = [surviving, merged]
-    .filter((c) => c.subscribed)
-    .map((c) => c.updatedAt)
-    .sort(compareText)[0];
-  return {
-    ...surviving,
-    subscribed: combined.subscribed,
-    automaticSubscription: combined.automatic_subscription,
-    subscribedCount: combined.subscribed_count,
-    updatedAt
-  };
 }
 
 export function currentState(
@@ -146,84 +120,69 @@ export function currentState(
       consolidationKeys: [...consolidationKeys]
     }))
     .sort((a, b) => compareText(a.identityKey, b.identityKey));
-  const isMerged = (identity: string) => map.shared.has(identity);
-
+  // Each identity's state from its keys, in fold order. A key alone moves
+  // as it is; keys of one identity are merged by the one merge rule
+  // (identity-merge.ts), at the cut's time.
   const balanceByKey = new Map(
     tables.balances.map((r) => [r.consolidation_key, r])
   );
   const modeByKey = new Map(tables.modes.map((r) => [r.consolidation_key, r]));
+  const choicesByKey = new Map<string, MergeChoice[]>();
+  for (const r of tables.choices.filter((c) => open(c.token_id))) {
+    choicesByKey.set(r.consolidation_key, [
+      ...(choicesByKey.get(r.consolidation_key) ?? []),
+      {
+        contract: r.contract,
+        tokenId: Number(r.token_id),
+        subscribed: flag(r.subscribed),
+        subscribedCount: Number(r.subscribed_count),
+        automaticSubscription: flag(r.automatic_subscription),
+        createdAt: r.created_at,
+        updatedAt: r.updated_at
+      }
+    ]);
+  }
+  const stateOfKey = (key: string): MergeState => {
+    const b = balanceByKey.get(key);
+    const m = modeByKey.get(key);
+    return {
+      balance: b
+        ? {
+            balance: Number(b.balance),
+            createdAt: b.created_at,
+            updatedAt: b.updated_at
+          }
+        : null,
+      mode: m
+        ? {
+            automatic: flag(m.automatic),
+            subscribeAllEditions: flag(m.subscribe_all_editions),
+            createdAt: m.created_at,
+            updatedAt: m.updated_at
+          }
+        : null,
+      choices: choicesByKey.get(key) ?? []
+    };
+  };
   const balances = new Map<string, OpeningBalance>();
   const modes = new Map<string, OpeningMode>();
+  const choices = new Map<string, OpeningChoice>();
   for (const [identity, keys] of Array.from(keysOf.entries())) {
-    const keyBalances = keys
-      .map((k) => balanceByKey.get(k))
-      .filter((b): b is NonNullable<typeof b> => !!b);
-    const keyModes = keys
-      .map((k) => modeByKey.get(k))
-      .filter((m): m is NonNullable<typeof m> => !!m);
-    if (!isMerged(identity)) {
-      const b = keyBalances[0];
-      if (b) {
-        balances.set(identity, {
-          identityKey: identity,
-          balance: Number(b.balance),
-          createdAt: b.created_at,
-          updatedAt: b.updated_at
-        });
-      }
-      const m = keyModes[0];
-      if (m) {
-        modes.set(identity, {
-          identityKey: identity,
-          automatic: flag(m.automatic),
-          subscribeAllEditions: flag(m.subscribe_all_editions),
-          createdAt: m.created_at,
-          updatedAt: m.updated_at
-        });
-      }
-      continue;
+    const state = map.shared.has(identity)
+      ? mergeStates(keys.map(stateOfKey), cutText)
+      : stateOfKey(keys[0]);
+    if (state.balance) {
+      balances.set(identity, { identityKey: identity, ...state.balance });
     }
-    // The legacy merge writes fresh balance and mode rows.
-    if (keyBalances.length > 0) {
-      balances.set(identity, {
+    if (state.mode) {
+      modes.set(identity, { identityKey: identity, ...state.mode });
+    }
+    for (const choice of state.choices) {
+      choices.set(`${identity}|${choice.contract}|${choice.tokenId}`, {
         identityKey: identity,
-        balance: keyBalances.reduce((sum, b) => sum + Number(b.balance), 0),
-        createdAt: cutText,
-        updatedAt: cutText
+        ...choice
       });
     }
-    modes.set(identity, {
-      identityKey: identity,
-      automatic: keyModes.some((m) => flag(m.automatic)),
-      subscribeAllEditions: keyModes.some((m) =>
-        flag(m.subscribe_all_editions)
-      ),
-      createdAt: cutText,
-      updatedAt: cutText
-    });
-  }
-
-  const choices = new Map<string, OpeningChoice>();
-  const openChoices = tables.choices
-    .filter((r) => open(r.token_id))
-    .sort((a, b) => compareText(a.consolidation_key, b.consolidation_key));
-  for (const r of openChoices) {
-    const identityKey = identityOf(r.consolidation_key);
-    const id = `${identityKey}|${r.contract}|${Number(r.token_id)}`;
-    const row: Choice = {
-      contract: r.contract,
-      tokenId: Number(r.token_id),
-      subscribed: flag(r.subscribed),
-      subscribedCount: Number(r.subscribed_count),
-      automaticSubscription: flag(r.automatic_subscription),
-      createdAt: r.created_at,
-      updatedAt: r.updated_at
-    };
-    const surviving = choices.get(id);
-    choices.set(id, {
-      identityKey,
-      ...(surviving ? foldChoice(surviving, row) : row)
-    });
   }
 
   const creditedTopUps: OpeningTopUp[] = [];
@@ -270,6 +229,18 @@ export function currentState(
             updatedAt: cutText
           });
           if (hasMinimumBalanceForAutomaticMode(amount)) {
+            // As the legacy mode change on a first top-up. An identity whose
+            // first top-up waited has no choice rows (every change needs a
+            // balance first), so there is nothing to resubscribe or resize.
+            queuedLogs.push({
+              legacyId: null,
+              queueSequence: sequence,
+              identityKey: identity,
+              consolidationKey: entry.consolidation_key,
+              log: 'Subscription Mode set to Automatic',
+              additionalInfo: null,
+              createdAt: msToDbText(Date.parse(topUp.transaction_date))
+            });
             const mode = modes.get(identity);
             modes.set(identity, {
               identityKey: identity,
