@@ -15,7 +15,7 @@ import { Time } from '@/time';
  * (posting, editing and deleting chat drops, reactions, DMs) stays open.
  *
  * The freeze is on when FEATURE_WAVES_FROZEN is `true`, or from the time in
- * WAVES_FREEZE_AT (ISO 8601 UTC such as `2026-11-24T06:00:00Z`, or Unix
+ * WAVES_FREEZE_AT (ISO 8601 UTC such as `2026-11-25T00:00:00Z`, or Unix
  * milliseconds). The time lets a deployment made before the freeze start it
  * at the exact second, with no restart. To turn the freeze off, remove both:
  * any WAVES_FREEZE_AT that is not such a time (`0`, `false`, seconds, a

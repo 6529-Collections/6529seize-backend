@@ -78,4 +78,47 @@ describe('during the waves freeze', () => {
       })
     ).toBe(false);
   });
+
+  // The freeze starts Wed 25 Nov 00:00 UTC and row 7 Thu 26 Nov 00:00 UTC,
+  // so the Main Stage's Wed 25 Nov 16:00 result falls inside the freeze.
+  describe('a Main Stage result inside the freeze', () => {
+    const tueResult = Date.UTC(2026, 10, 24, 16, 0, 0);
+    const wedResult = Date.UTC(2026, 10, 25, 16, 0, 0);
+    const mainStage = {
+      execution_mode: active,
+      capabilities: ['MAIN_STAGE'],
+      wave_id: 'main'
+    };
+    const other = { execution_mode: active, capabilities: [], wave_id: 'wave' };
+
+    beforeEach(() => {
+      delete process.env.FEATURE_WAVES_FROZEN;
+      process.env.WAVES_FREEZE_AT = '2026-11-25T00:00:00Z';
+    });
+    afterEach(() => {
+      jest.restoreAllMocks();
+    });
+
+    const at = (millis: number) =>
+      jest.spyOn(Date, 'now').mockReturnValue(millis);
+
+    it('settles the result before the freeze as usual', () => {
+      at(tueResult);
+      expect(router.isNativeExecutionAllowed(mainStage)).toBe(true);
+      expect(router.isNativeExecutionAllowed(other)).toBe(true);
+    });
+
+    it('holds it by default', () => {
+      at(wedResult);
+      expect(router.isNativeExecutionAllowed(mainStage)).toBe(false);
+      expect(router.isNativeExecutionAllowed(other)).toBe(false);
+    });
+
+    it('settles it here when the freeze keeps the Main Stage', () => {
+      process.env.FEATURE_WAVES_FREEZE_KEEP_MAIN_STAGE = 'true';
+      at(wedResult);
+      expect(router.isNativeExecutionAllowed(mainStage)).toBe(true);
+      expect(router.isNativeExecutionAllowed(other)).toBe(false);
+    });
+  });
 });

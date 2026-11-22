@@ -15,7 +15,7 @@ const FLAG = 'FEATURE_WAVES_FROZEN';
 const KEEP = 'FEATURE_WAVES_FREEZE_KEEP_MAIN_STAGE';
 const AT = 'WAVES_FREEZE_AT';
 const MAIN_STAGE_WAVE = 'MAIN_STAGE_WAVE_ID';
-const T = Date.UTC(2026, 10, 24, 6, 0, 0);
+const T = Date.UTC(2026, 10, 25, 0, 0, 0);
 
 const ENV_NAMES = [FLAG, KEEP, AT, MAIN_STAGE_WAVE];
 
@@ -69,20 +69,20 @@ describe('waves freeze', () => {
   });
 
   it.each([
-    ['2026-11-24T06:00:00Z', T],
-    ['2026-11-24T06:00Z', T],
-    ['2026-11-24T06:00:00.000Z', T],
-    ['2026-11-24T06:00:00+00:00', T],
+    ['2026-11-25T00:00:00Z', T],
+    ['2026-11-25T00:00Z', T],
+    ['2026-11-25T00:00:00.000Z', T],
+    ['2026-11-25T00:00:00+00:00', T],
     [String(T), T],
-    ['  2026-11-24T06:00:00Z  ', T]
+    ['  2026-11-25T00:00:00Z  ', T]
   ])('reads WAVES_FREEZE_AT=%s as a UTC time', (raw, expected) => {
     expect(parseWavesFreezeAt(raw)).toBe(expected);
   });
 
   it.each([
-    '2026-11-24 06:00',
-    '2026-11-24T06:00:00',
-    '2026-11-24T07:00:00+01:00',
+    '2026-11-25 00:00',
+    '2026-11-25T00:00:00',
+    '2026-11-25T01:00:00+01:00',
     'tomorrow',
     '2026-13-40T00:00:00Z',
     '0',
@@ -100,20 +100,20 @@ describe('waves freeze', () => {
   );
 
   it('freezes from WAVES_FREEZE_AT on, without the flag', () => {
-    process.env[AT] = '2026-11-24T06:00:00Z';
+    process.env[AT] = '2026-11-25T00:00:00Z';
     expect(isWavesFrozen(T - 1)).toBe(false);
     expect(isWavesFrozen(T)).toBe(true);
     expect(isWavesFrozen(T + 60_000)).toBe(true);
   });
 
   it('freezes on a malformed WAVES_FREEZE_AT', () => {
-    process.env[AT] = '24 Nov 2026';
+    process.env[AT] = '25 Nov 2026';
     expect(isWavesFrozen(0)).toBe(true);
   });
 
   it('the flag freezes before WAVES_FREEZE_AT too', () => {
     process.env[FLAG] = 'true';
-    process.env[AT] = '2026-11-24T06:00:00Z';
+    process.env[AT] = '2026-11-25T00:00:00Z';
     expect(isWavesFrozen(T - 1)).toBe(true);
   });
 
