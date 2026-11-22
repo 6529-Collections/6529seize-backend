@@ -10,7 +10,7 @@ custom:
   # Production archives market-depth history before retention deletes it
   # (6529-infra stack Prod-MarketArchive). Staging keeps no archive.
   marketDepthArchiveBucket:
-    prod: 6529-market-depth-archive-987989283142
+    prod: 6529-market-depth-archive-${aws:accountId}
     staging: ''
 
 provider:

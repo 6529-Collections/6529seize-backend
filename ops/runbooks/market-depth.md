@@ -186,15 +186,16 @@ bucket `6529-market-depth-archive-<account>` (6529-infra stack
 `Prod-MarketArchive`, us-east-1), within a three-minute budget and up to 48
 hours per kind:
 
-- `market-depth/v1/events/contract=<c>/date=<YYYY-MM-DD>/hour=<HH>.jsonl.gz`:
+- `market-depth/v1/events/contract=<c>/date=<YYYY-MM-DD>/hour=<HH>/part-<NNNN>.jsonl.gz`:
   every event observed in that hour, one JSON object per line with all columns,
-  including the provider payload (`raw`);
+  including the provider payload (`raw`), at most 50,000 events per part;
 - `market-depth/v1/snapshots/contract=<c>/date=<YYYY-MM-DD>/hour=<HH>/`: each
   snapshot completed in that hour as `<completed_at>_<id>.raw.json.gz` and
   `.normalized.json.gz` (the stored archives, byte for byte), plus
   `manifest.jsonl.gz` with every snapshot's metadata and keys.
 
-An hour is archived once it ended at least 10 minutes ago. Hours without rows
+An hour is archived once it ended at least 20 minutes ago: the stream
+collector writes events up to one invocation (15 minutes) after receiving them. Hours without rows
 produce no files. After each hour, the collector records how far it got in
 `market-depth/v1/_state/<kind>/contract=<c>.json` (`archived_through`).
 Retention never deletes events or snapshots at or after that watermark, and

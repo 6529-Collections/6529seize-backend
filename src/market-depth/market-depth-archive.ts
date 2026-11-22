@@ -1,3 +1,4 @@
+import { once } from 'node:events';
 import { createGzip } from 'node:zlib';
 import { Logger } from '@/logging';
 import { Time } from '@/time';
@@ -11,10 +12,15 @@ const logger = Logger.get('MARKET_DEPTH_ARCHIVE');
 
 export const MARKET_DEPTH_ARCHIVE_PREFIX = 'market-depth/v1';
 const HOUR_MS = Time.hours(1).toMillis();
-// Rows carry the time they were written, so an hour is complete once it has
-// passed; the margin covers clock skew between writers.
-const SETTLE_MS = Time.minutes(10).toMillis();
+// An hour is complete once no writer can still add rows stamped inside it.
+// REST catch-up and reconciliation stamp rows when they write them; the
+// stream collector stamps events on receipt and writes them within the same
+// invocation, at most 15 minutes later (its Lambda timeout).
+const SETTLE_MS = Time.minutes(20).toMillis();
 const EVENT_PAGE_SIZE = 2_000;
+// Keeps each event file, and the memory used to build it, bounded however
+// busy an hour is.
+export const MARKET_DEPTH_ARCHIVE_EVENTS_PER_PART = 50_000;
 const MAX_HOURS_PER_KIND_PER_RUN = 48;
 
 export type MarketDepthArchiveKind = 'snapshots' | 'events';
@@ -99,9 +105,11 @@ class GzipLines {
     });
   }
 
-  write(value: unknown): void {
-    this.gzip.write(`${JSON.stringify(value)}\n`);
+  async write(value: unknown): Promise<void> {
     this.lines++;
+    if (!this.gzip.write(`${JSON.stringify(value)}\n`)) {
+      await once(this.gzip, 'drain');
+    }
   }
 
   async finish(): Promise<Buffer> {
@@ -137,7 +145,27 @@ async function archiveEventHour(
   from: Date,
   to: Date
 ): Promise<number> {
-  const lines = new GzipLines();
+  const prefix = marketDepthArchiveHourPrefix('events', input.contract, from);
+  let part = new GzipLines();
+  let parts = 0;
+  let rows = 0;
+  const uploadPart = async () => {
+    const lines = part.lines;
+    const body = await part.finish();
+    if (lines === 0) return;
+    parts++;
+    await input.store.putObject({
+      key: `${prefix}/part-${String(parts).padStart(4, '0')}.jsonl.gz`,
+      body,
+      contentType: 'application/gzip',
+      metadata: {
+        rows: String(lines),
+        from: from.toISOString(),
+        to: to.toISOString()
+      }
+    });
+    part = new GzipLines();
+  };
   let after: { observed_at: Date; event_id: string } | null = null;
   for (;;) {
     const page = await input.db.getEventsObservedBetween({
@@ -147,25 +175,18 @@ async function archiveEventHour(
       after,
       limit: EVENT_PAGE_SIZE
     });
-    for (const event of page)
-      lines.write({ ...event, raw: parseJson(event.raw) });
+    for (const event of page) {
+      await part.write({ ...event, raw: parseJson(event.raw) });
+      rows++;
+      if (part.lines >= MARKET_DEPTH_ARCHIVE_EVENTS_PER_PART)
+        await uploadPart();
+    }
     const last = page.at(-1);
     if (!last || page.length < EVENT_PAGE_SIZE) break;
     after = { observed_at: last.observed_at, event_id: last.event_id };
   }
-  const body = await lines.finish();
-  if (lines.lines === 0) return 0;
-  await input.store.putObject({
-    key: `${marketDepthArchiveHourPrefix('events', input.contract, from)}.jsonl.gz`,
-    body,
-    contentType: 'application/gzip',
-    metadata: {
-      rows: String(lines.lines),
-      from: from.toISOString(),
-      to: to.toISOString()
-    }
-  });
-  return lines.lines;
+  await uploadPart();
+  return rows;
 }
 
 async function archiveSnapshotHour(
@@ -190,7 +211,7 @@ async function archiveSnapshotHour(
     // Retention never deletes past the watermark, so a missing archive means
     // the snapshot was never stored completely; record that it is absent.
     if (!archive) {
-      manifest.write({ ...snapshot, archives: null });
+      await manifest.write({ ...snapshot, archives: null });
       continue;
     }
     const base = `${prefix}/${compactTimestamp(snapshot.completed_at)}_${snapshot.id}`;
@@ -211,7 +232,7 @@ async function archiveSnapshotHour(
       contentType: 'application/gzip',
       metadata
     });
-    manifest.write({
+    await manifest.write({
       ...snapshot,
       archives: {
         raw: `${base}.raw.json.gz`,
@@ -262,6 +283,8 @@ async function archiveKind(
     input.now().getTime() < deadlineMs
   ) {
     const to = new Date(through.getTime() + HOUR_MS);
+    // Object keys are deterministic, so an hour re-run after a failed watermark
+    // write overwrites the same files (the previous versions stay 30 days).
     rows += await exportHour(input, through, to);
     hours++;
     through = await nextHourWithRows(to);
@@ -299,11 +322,11 @@ export async function archiveMarketDepthHistory(input: {
     now
   };
   // Snapshots get half of the budget; time they leave unused passes to events.
-  const half = Math.max(0, input.deadlineMs - now().getTime()) / 2;
+  const startedMs = now().getTime();
   const snapshots = await archiveKind(
     archiveInput,
     'snapshots',
-    Math.min(input.deadlineMs, now().getTime() + half)
+    startedMs + Math.max(0, input.deadlineMs - startedMs) / 2
   );
   const events = await archiveKind(archiveInput, 'events', input.deadlineMs);
   const result = { snapshots, events };

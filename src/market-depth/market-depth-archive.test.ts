@@ -1,6 +1,7 @@
 import { gunzipSync, gzipSync } from 'node:zlib';
 import {
   archiveMarketDepthHistory,
+  MARKET_DEPTH_ARCHIVE_EVENTS_PER_PART,
   MarketDepthArchivedEvent,
   MarketDepthArchiveDb,
   MarketDepthArchiveKind,
@@ -10,7 +11,7 @@ import {
 import { MarketDepthSnapshotMetadata } from './market-depth.types';
 
 const CONTRACT = '0x33fd426905f149f8376e227d0c9d3340aad17af1';
-const NOW = new Date('2026-11-22T12:05:00.000Z');
+const NOW = new Date('2026-11-22T12:15:00.000Z');
 const HOUR = 3_600_000;
 
 function event(id: string, observedAt: string): MarketDepthArchivedEvent {
@@ -171,12 +172,12 @@ describe('market-depth archive', () => {
     expect(
       Array.from(objects.keys()).sort((a, b) => a.localeCompare(b))
     ).toEqual([
-      `market-depth/v1/events/contract=${CONTRACT}/date=2026-11-22/hour=08.jsonl.gz`,
-      `market-depth/v1/events/contract=${CONTRACT}/date=2026-11-22/hour=10.jsonl.gz`
+      `market-depth/v1/events/contract=${CONTRACT}/date=2026-11-22/hour=08/part-0001.jsonl.gz`,
+      `market-depth/v1/events/contract=${CONTRACT}/date=2026-11-22/hour=10/part-0001.jsonl.gz`
     ]);
     const hour8 = lines(
       objects.get(
-        `market-depth/v1/events/contract=${CONTRACT}/date=2026-11-22/hour=08.jsonl.gz`
+        `market-depth/v1/events/contract=${CONTRACT}/date=2026-11-22/hour=08/part-0001.jsonl.gz`
       )
     );
     expect(hour8.map((row) => row.event_id)).toEqual(['a', 'b']);
@@ -205,7 +206,7 @@ describe('market-depth archive', () => {
     });
     await run(db, store);
     expect(Array.from(objects.keys())).toEqual([
-      `market-depth/v1/events/contract=${CONTRACT}/date=2026-11-22/hour=10.jsonl.gz`
+      `market-depth/v1/events/contract=${CONTRACT}/date=2026-11-22/hour=10/part-0001.jsonl.gz`
     ]);
   });
 
@@ -219,11 +220,50 @@ describe('market-depth archive', () => {
     expect(db.getEventsObservedBetween).toHaveBeenCalledTimes(3);
     const rows = lines(
       objects.get(
-        `market-depth/v1/events/contract=${CONTRACT}/date=2026-11-22/hour=08.jsonl.gz`
+        `market-depth/v1/events/contract=${CONTRACT}/date=2026-11-22/hour=08/part-0001.jsonl.gz`
       )
     );
     expect(rows).toHaveLength(4_500);
     expect(new Set(rows.map((row) => row.event_id)).size).toBe(4_500);
+  });
+
+  it('splits a very busy hour into bounded part files', async () => {
+    const busy = Array.from(
+      { length: MARKET_DEPTH_ARCHIVE_EVENTS_PER_PART + 1 },
+      (_, index) =>
+        event(`e${String(index).padStart(6, '0')}`, '2026-11-22T08:30:00.000Z')
+    );
+    const { store, objects } = memoryStore();
+    await run(fakeDb(busy, []), store);
+    const prefix = `market-depth/v1/events/contract=${CONTRACT}/date=2026-11-22/hour=08`;
+    expect(
+      Array.from(objects.keys()).sort((a, b) => a.localeCompare(b))
+    ).toEqual([`${prefix}/part-0001.jsonl.gz`, `${prefix}/part-0002.jsonl.gz`]);
+    expect(lines(objects.get(`${prefix}/part-0001.jsonl.gz`))).toHaveLength(
+      MARKET_DEPTH_ARCHIVE_EVENTS_PER_PART
+    );
+    expect(
+      lines(objects.get(`${prefix}/part-0002.jsonl.gz`)).map(
+        (row) => row.event_id
+      )
+    ).toEqual([
+      `e${String(MARKET_DEPTH_ARCHIVE_EVENTS_PER_PART).padStart(6, '0')}`
+    ]);
+  });
+
+  it('waits for stream writes before treating an hour as complete', async () => {
+    // 11:56 is inside the 20-minute settle window at 12:15.
+    const db = fakeDb([event('late', '2026-11-22T11:56:00.000Z')], []);
+    const { store, objects, state } = memoryStore();
+    await archiveMarketDepthHistory({
+      contract: CONTRACT,
+      db,
+      store,
+      deadlineMs: NOW.getTime() + 60_000,
+      now: () => new Date('2026-11-22T12:15:00.000Z')
+    });
+    expect(objects.size).toBe(0);
+    expect(state.get('events')).toEqual(new Date('2026-11-22T11:00:00.000Z'));
   });
 
   it('caps hours per run and records progress after each hour', async () => {
