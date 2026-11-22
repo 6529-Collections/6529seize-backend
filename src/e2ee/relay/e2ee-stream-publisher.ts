@@ -40,6 +40,15 @@ const SEALED_BODY_MAX_BYTES = 64 * 1024 - 512;
 /** And a payload at 4 MiB. */
 const PAYLOAD_MAX_BYTES = 4 * 1024 * 1024;
 const OUTBOX_PAGE = 200;
+/** The families the relays take a DEL in, of those the orderer writes. */
+const DEL_FAMILIES: ReadonlySet<E2eeRecordFamily> = new Set<E2eeRecordFamily>([
+  'dv',
+  'bl',
+  'bk',
+  'md'
+]);
+/** A DEL's body is at most 4 KiB. */
+const DEL_BODY_MAX_BYTES = 4 * 1024;
 const PRIMARY_PUBLISH_TIMEOUT_MS = 4_000;
 const MIRROR_PUBLISH_TIMEOUT_MS = 2_000;
 const CATCH_UP_PROBABILITY = 0.05;
@@ -383,6 +392,11 @@ export class E2eeStreamPublisher {
     keepLatest = false
   ): Promise<number> {
     if (this.mode() === 'off' || !keys.length) return 0;
+    if (!DEL_FAMILIES.has(family)) {
+      // The relays refuse a DEL in cv and dr.
+      logger.warn(`[DEL] ${family} takes no DEL; nothing queued`);
+      return 0;
+    }
     return this.deps.store.queueDeletion(
       e2eeFamilyWave(family, owner),
       keys,
@@ -413,9 +427,14 @@ export class E2eeStreamPublisher {
           row.positions
         );
         if (targets.pending) continue;
-        const ids = row.positions
-          .map((pos) => targets.eventIds.get(pos))
-          .filter((id): id is string => typeof id === 'string');
+        const ids = Array.from(
+          new Set(
+            row.positions
+              .map((pos) => targets.eventIds.get(pos))
+              .filter((id): id is string => typeof id === 'string')
+              .map((id) => id.toLowerCase())
+          )
+        );
         if (!ids.length) {
           await this.deps.store.finishDeletion(row);
           done++;
@@ -465,6 +484,9 @@ export class E2eeStreamPublisher {
   ): Promise<E2eeSignedRecordEvent> {
     const orderer = this.deps.settings().orderer;
     if (!orderer) throw new Error('No orderer key is configured');
+    if (bodyBytes({ ids: [...ids] }) > DEL_BODY_MAX_BYTES) {
+      throw new Error(`A DEL of ${ids.length} ids is over 4 KiB`);
+    }
     const now = this.deps.now();
     return signE2eeRecord({
       draft: {

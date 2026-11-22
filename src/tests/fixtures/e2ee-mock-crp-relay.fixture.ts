@@ -58,6 +58,8 @@ export class MockCrpRelay {
   private readonly payloads = new Map<string, Buffer>();
   private readonly sockets = new Set<() => void>();
   private readonly sessions = new Set<Session>();
+  /** Events a DEL removed: kept as headers, never served again. */
+  private readonly removed = new Set<string>();
   private rseq = 0;
   /** While true, every connection attempt fails and open ones close. */
   down = false;
@@ -334,7 +336,7 @@ export class MockCrpRelay {
 
   /**
    * A DEL (kind 12): the named events of its wave lose their body and
-   * payloads; their headers stay.
+   * payloads; their headers stay, and they are never served again.
    */
   private applyDel(del: E2eeSignedRecordEvent) {
     const ids = (JSON.parse(del.body ?? '{}') as { ids?: string[] }).ids ?? [];
@@ -345,6 +347,7 @@ export class MockCrpRelay {
       const stub = { ...target, event: { ...target.event, body: null } };
       this.events[this.events.indexOf(target)] = stub;
       this.byId.set(id, stub);
+      this.removed.add(id);
     }
   }
 
@@ -394,9 +397,9 @@ export class MockCrpRelay {
     const waves = (frame.waves as string[]) ?? [];
     for (const name of waves) {
       if (this.mayRead(session)) {
-        for (const item of this.events.filter((e) =>
-          this.matches(e.event.wave, name)
-        )) {
+        for (const item of this.events
+          .filter((e) => !this.removed.has(e.event.id))
+          .filter((e) => this.matches(e.event.wave, name))) {
           session.send(
             JSON.stringify({
               t: 'EV',
@@ -425,9 +428,9 @@ export class MockCrpRelay {
   private hist(session: Session, frame: Frame) {
     const limit = Number(frame.limit);
     const matching = this.mayRead(session)
-      ? this.events.filter((e) =>
-          this.matches(e.event.wave, String(frame.wave))
-        )
+      ? this.events
+          .filter((e) => !this.removed.has(e.event.id))
+          .filter((e) => this.matches(e.event.wave, String(frame.wave)))
       : [];
     // Without `after`, the newest page.
     const items =

@@ -203,4 +203,55 @@ describe('mirror publishing and the publisher loop', () => {
     expect(store.outboxRows).toEqual([]);
     expect(relays[0].stored).toHaveLength(3);
   });
+
+  it('sends DELs of at most 58 distinct ids in 4 KiB, never in cv', async () => {
+    const { relays, store, publisher } = setup();
+    for (let n = 0; n < 130; n++) {
+      await publisher.run(store, (connection, batch) =>
+        batch!.append(connection, {
+          family: 'dv',
+          owner: DEVICE,
+          kind: E2eeRecordKind.SEALED,
+          refs: ['welcome'],
+          type: 'welcome',
+          ops: [
+            {
+              op: 'put',
+              table: 'e2ee_welcome_deliveries',
+              row: {
+                welcome_id: `0x${n.toString(16).padStart(32, '0')}`,
+                device_key: DEVICE,
+                profile_id: 'p',
+                created_at: n
+              }
+            }
+          ]
+        })
+      );
+    }
+    await publisher.settled();
+    await publisher.publishPending(10);
+    expect(await publisher.queueDeletion('cv', GROUP, ['message:*'])).toBe(0);
+    expect(await publisher.queueDeletion('dv', DEVICE, ['welcome:*'])).toBe(
+      130
+    );
+    expect(store.deletionRows.map((row) => row.positions.length)).toEqual([
+      58, 58, 14
+    ]);
+    expect(await publisher.publishDeletions(10)).toEqual({
+      queued: 3,
+      done: 3
+    });
+    for (const relay of relays) {
+      const dels = relay.stored.filter((item) => item.event.kind === 12);
+      expect(dels).toHaveLength(3);
+      for (const del of dels) {
+        expect(del.event.refs).toEqual([]);
+        expect(Buffer.byteLength(del.event.body!)).toBeLessThanOrEqual(4096);
+        const ids = JSON.parse(del.event.body!).ids as string[];
+        expect(new Set(ids).size).toBe(ids.length);
+      }
+    }
+    expect(store.itemRows).toEqual([]);
+  });
 });

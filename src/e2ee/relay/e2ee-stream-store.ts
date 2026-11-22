@@ -62,8 +62,12 @@ export interface E2eeDeletionRow {
   readonly heldBy: readonly string[];
 }
 
-/** A DEL names at most this many events. */
-export const E2EE_DEL_MAX_IDS = 64;
+/**
+ * Events one DEL names. The relays take 1 to 64 distinct ids in a body of
+ * at most 4 KiB; an id is 66 characters, so 58 of them make a body of
+ * 4011 bytes (`{"ids":[...]}`), inside both limits.
+ */
+export const E2EE_DEL_MAX_IDS = 58;
 
 /**
  * Stream heads and the publish outbox. Methods that take a connection run

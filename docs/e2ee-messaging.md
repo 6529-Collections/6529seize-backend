@@ -773,9 +773,14 @@ reported message past retention; a report's evidence after the 90-day
 prune. `e2ee_record_items` indexes which records carry which item (by
 stream position, with the event id once signed); the rebuild refills it.
 DELs wait in `e2ee_relay_deletions` until the records they name are on
-every relay, then the publisher loop signs and sends them. A relay that
-refuses a DEL leaves it queued: DELs sit outside the hash chains, so a
-refusal never holds a stream back. A message's ciphertext in a group log
+every relay, then the publisher loop signs and sends them. A DEL names at
+most 58 distinct event ids, so its body stays under the relays' 4 KiB (and
+their 64 ids), and goes only to `dv`, `bl`, `bk` and `md`; the relays take
+none in `cv` or `dr`. An event a DEL names keeps
+only its header on the relays and is never served again, so the rebuild
+allows one missing position per id a DEL names. A relay that refuses a DEL
+leaves it queued: DELs sit outside the hash chains, so a refusal never
+holds a stream back. A message's ciphertext in a group log
 needs none: the relays drop a LOG item's `data` payload at the end of
 retention themselves, and `cv` takes no DEL.
 

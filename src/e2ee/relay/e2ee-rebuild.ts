@@ -550,17 +550,18 @@ async function collect(
   problems: E2eeRebuildProblem[]
 ): Promise<Collected> {
   const byWave = new Map<string, Located[]>();
-  const deleted = new Map<string, number>();
   const named = deletedIds(items, options, problems);
+  // A record a DEL names is deleted: the relays serve it no more (or only
+  // its header), its rows are not applied, and its position may be missing.
+  const deleted = new Map<string, number>();
+  for (const key of Array.from(named)) {
+    const wave = key.slice(0, key.indexOf('|'));
+    deleted.set(wave, (deleted.get(wave) ?? 0) + 1);
+  }
   for (const item of items) {
     const family = parseE2eeFamilyWave(item.event.wave);
     if (!family || item.event.kind === E2eeRecordKind.DEL) continue;
-    // A record a DEL names is deleted: its content may be gone, and its
-    // rows are not applied.
-    if (named.has(`${item.event.wave}|${item.event.id}`)) {
-      deleted.set(item.event.wave, (deleted.get(item.event.wave) ?? 0) + 1);
-      continue;
-    }
+    if (named.has(`${item.event.wave}|${item.event.id}`)) continue;
     const check = checkE2eeRecord(item.event, options.ordererDeviceKey);
     if (!check.ok) {
       problems.push({
