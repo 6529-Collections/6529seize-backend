@@ -78,6 +78,10 @@ export const mintManifest: AreaManifest = {
   The run sets them for seeds, rebuilders and the API. A flag may not set
   the run's own variables (`REBUILD_*`, `DB_*`, `ETHEREUM_RPC_URL`,
   `ALCHEMY_*`, `AWS_*` and the like); the registry refuses it.
+- A table's `volatileColumns` (each with its `reason`) are left out when
+  its rows are compared after the rebuild. A volatile primary-key column,
+  such as an auto-increment id the API never shows, also stops keying the
+  rows: they match by their other columns.
 - `seeds`: steps that put the stack in its "before" state: legacy rows, kept
   rows, and the live loops run forward.
 - `rebuilders`: steps that fill your INDEX tables from empty. A module step
