@@ -26,6 +26,7 @@ import {
 } from '@/entities/ICompetition';
 import { BadRequestException } from '@/exceptions';
 import { RequestContext } from '@/request.context';
+import { assertWavesNotFrozen } from '@/waves-freeze/waves-freeze';
 import {
   administerCompetitionWave,
   competitionActor,
@@ -152,6 +153,8 @@ export class CompetitionLifecycleService {
     request: ApiCreateCompetitionRequest,
     ctx: RequestContext
   ) {
+    // No new decisions while waves move to the 6529 chain.
+    assertWavesNotFrozen();
     await administerCompetitionWave(waveId, ctx);
     const actor = competitionActor(ctx);
     return competitionCommandRepository.command(

@@ -25,6 +25,7 @@ import {
   withLegacyPrimaryMutation,
   readLegacyMutationSource
 } from '@/competitions/legacy-competition-mutation';
+import { assertDecisionNotFrozen } from '@/waves-freeze/waves-freeze';
 import { dbSupplier } from '@/sql-executor';
 import { nativeCompetitionRuntimeService } from '@/competitions/native-competition-runtime.service';
 import { getPublishedDropMediaMimeType } from '@/drops/drop-media-upload.config';
@@ -540,11 +541,16 @@ export class CreateOrUpdateDropUseCase {
     // Chat persistence skips legacy voting rows as well as the owner fence.
     // Edits use the stored source type and lock entry memberships before cleanup.
     // Native entry commands already hold their own competition lock.
-    const withOwner: typeof withLegacyPrimaryMutation =
-      nativeEntryContent ||
-      (await this.isOrdinaryChatMutation(model, connection))
-        ? async (_waveId, _ctx, action) => action(null)
-        : withLegacyPrimaryMutation;
+    const ownerFree =
+      !!nativeEntryContent ||
+      (await this.isOrdinaryChatMutation(model, connection));
+    // A legacy entry (a participatory or winner drop) is a decision write:
+    // while waves move to the 6529 chain it is held as it stood at the
+    // freeze. Native entries were checked under their competition's lock.
+    if (!ownerFree) assertDecisionNotFrozen({ wave_id: model.wave_id });
+    const withOwner: typeof withLegacyPrimaryMutation = ownerFree
+      ? async (_waveId, _ctx, action) => action(null)
+      : withLegacyPrimaryMutation;
     return withOwner(
       model.wave_id,
       { timer, connection },

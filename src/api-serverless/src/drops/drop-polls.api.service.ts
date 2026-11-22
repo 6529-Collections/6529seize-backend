@@ -28,6 +28,7 @@ import { wavesApiDb, WavesApiDb } from '@/api/waves/waves.api.db';
 import { DropType } from '@/entities/IDrop';
 import { DropPollEntity, DropPollOptionEntity } from '@/entities/IDropPoll';
 import { WaveEntity } from '@/entities/IWave';
+import { assertWavesNotFrozen } from '@/waves-freeze/waves-freeze';
 import {
   BadRequestException,
   ForbiddenException,
@@ -99,6 +100,9 @@ export class DropPollsApiService {
     if (!poll) {
       return;
     }
+    // Polls move to the 6529 chain with the waves: none are made here once
+    // waves are frozen.
+    assertWavesNotFrozen();
     if (dropType !== DropType.CHAT) {
       throw new BadRequestException(`Polls can only be created on chat drops`);
     }
@@ -211,6 +215,7 @@ export class DropPollsApiService {
     if (ctx.authenticationContext?.isAuthenticatedAsProxy()) {
       throw new ForbiddenException(`Proxy is not allowed to vote in polls`);
     }
+    assertWavesNotFrozen();
     const drop = await this.findVisibleDropOrThrow(dropId, {
       ...ctx,
       authenticationContext: AuthenticationContext.fromProfileId(voterId)

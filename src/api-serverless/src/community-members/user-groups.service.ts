@@ -58,6 +58,11 @@ import * as mcache from 'memory-cache';
 import { RequestContext } from '@/request.context';
 import { readWaveCatalogueWithDiagnostics } from './wave-catalogue-read-diagnostics';
 import {
+  isWavesFrozen,
+  WAVES_FROZEN_GROUP_MESSAGE,
+  WavesFrozenException
+} from '@/waves-freeze/waves-freeze';
+import {
   CatalogueRead,
   RedisWaveGroupsCatalogueStore,
   WaveGroupsCatalogue
@@ -1700,6 +1705,21 @@ export class UserGroupsService {
     );
   }
 
+  /**
+   * Replacing a group gives the new version the old one's id, so every wave
+   * and decision that names it changes with it. While waves move to the
+   * 6529 chain, a group a wave, decision or curation uses can't be replaced.
+   */
+  private async assertReplacementNotFrozen(
+    oldVersionId: string | null | undefined,
+    ctx: RequestContext
+  ): Promise<void> {
+    if (!oldVersionId || !isWavesFrozen()) return;
+    const waveGroupIds = await this.userGroupsDb.getAllWaveRelatedGroups(ctx);
+    if (waveGroupIds.includes(oldVersionId))
+      throw new WavesFrozenException(WAVES_FROZEN_GROUP_MESSAGE);
+  }
+
   async changeVisibility(
     {
       group_id,
@@ -1737,6 +1757,7 @@ export class UserGroupsService {
         moderationConflict();
       return this.getByIdOrThrow(replay.published_subject_id, ctx);
     }
+    await this.assertReplacementNotFrozen(old_version_id, ctx);
     const initialGroup = await this.getByIdOrThrow(group_id, ctx);
     if (initialGroup.created_by?.id !== profile_id)
       throw new ForbiddenException(

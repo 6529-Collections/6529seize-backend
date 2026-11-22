@@ -10,6 +10,7 @@ import { ProfileProxyActionType } from '@/entities/IProfileProxyAction';
 import { ForbiddenException } from '@/exceptions';
 import { Logger } from '@/logging';
 import { RequestContext } from '@/request.context';
+import { assertWavesNotFrozen } from '@/waves-freeze/waves-freeze';
 import { competitionActor } from './competition-command-access';
 
 export class WaveHubCreationService {
@@ -28,6 +29,7 @@ export class WaveHubCreationService {
       id: string;
     }>(actor, request.idempotency_key, payload, ctx);
     if (saved) return competitionService.getHub(saved.id, ctx);
+    assertWavesNotFrozen();
     const waveRequest: ApiCreateNewWave = {
       name: request.name,
       picture: request.picture,

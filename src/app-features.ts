@@ -33,6 +33,23 @@ export class AppFeatures {
   }
 
   /**
+   * Waves, groups and decisions move to the 6529 chain: wave, group and
+   * decision writes, entries, votes, wave REP and polls are refused here
+   * while this is on (src/waves-freeze). Chat stays open.
+   */
+  public isWavesFrozen(): boolean {
+    return this.isFeatureEnabled('WAVES_FROZEN');
+  }
+
+  /**
+   * The Main Stage decision keeps running here through the waves freeze,
+   * one more cycle: its entries, votes, pauses and results go on.
+   */
+  public isWavesFreezeKeepingMainStage(): boolean {
+    return this.isFeatureEnabled('WAVES_FREEZE_KEEP_MAIN_STAGE');
+  }
+
+  /**
    * Large viewer group lists are read from viewer_group_set_members by their
    * hash instead of travelling in each statement (waves/viewer-group-sets).
    */

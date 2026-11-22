@@ -16,6 +16,7 @@ import {
 } from '@/api/community-members/user-groups.service';
 import { NotFoundException } from '@/exceptions';
 import { RequestContext } from '@/request.context';
+import { assertWavesNotFrozen } from '@/waves-freeze/waves-freeze';
 
 export class WaveMetadataApiService {
   constructor(
@@ -56,6 +57,7 @@ export class WaveMetadataApiService {
     },
     ctx: RequestContext
   ): Promise<ApiWaveMetadata> {
+    assertWavesNotFrozen();
     await this.assertCanManageWaveMetadata(waveId, ctx);
     const metadata = await this.waveMetadataDb.create(
       { waveId, dataKey, dataValue },
@@ -74,6 +76,7 @@ export class WaveMetadataApiService {
     },
     ctx: RequestContext
   ): Promise<ApiWaveMetadata> {
+    assertWavesNotFrozen();
     await this.assertCanManageWaveMetadata(waveId, ctx);
     const metadata = await this.waveMetadataDb.deleteByIdAndWaveId(
       metadataId,

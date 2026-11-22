@@ -34,7 +34,11 @@ jest.mock('@/notifications/user.notifier', () => ({
   userNotifier: { notifyOfDropVote: jest.fn() }
 }));
 jest.mock('@/app-features', () => ({
-  appFeatures: { isDropOvervoteRevocationEnabled: () => true }
+  appFeatures: {
+    isDropOvervoteRevocationEnabled: () => true,
+    isWavesFrozen: jest.fn(),
+    isWavesFreezeKeepingMainStage: jest.fn()
+  }
 }));
 
 import {
@@ -51,6 +55,7 @@ import { competitionDropVotesDb as votes } from '@/competitions/competition-drop
 import { wavesApiDb } from '@/api/waves/waves.api.db';
 import { userNotifier } from '@/notifications/user.notifier';
 import { competitionTdhOvervotesDb } from '@/competitions/competition-tdh-overvotes.db';
+import { appFeatures } from '@/app-features';
 
 const connection = {} as never;
 const competition = {
@@ -121,6 +126,25 @@ it('reconciles native TDH votes in the existing transaction and preserves notifi
     expect.any(Number),
     expect.objectContaining({ connection })
   );
+});
+
+it('leaves votes as they stood while waves are frozen', async () => {
+  jest.mocked(appFeatures.isWavesFrozen).mockReturnValue(true);
+  await revokeTdhBasedDropWavesOverVotes(connection);
+  await revokeTdhBasedDropWavesOverVotesPerCompetition();
+  expect(runtime.lockCompetition).not.toHaveBeenCalled();
+  expect(service.reconcileVoterCredit).not.toHaveBeenCalled();
+  expect(userNotifier.notifyOfDropVote).not.toHaveBeenCalled();
+});
+
+it('keeps reconciling the Main Stage when the waves freeze keeps it', async () => {
+  const mainStage = { ...competition, capabilities: ['MAIN_STAGE'] };
+  jest.mocked(runtime.readCompetition).mockResolvedValue(mainStage as never);
+  jest.mocked(runtime.lockCompetition).mockResolvedValue(mainStage as never);
+  jest.mocked(appFeatures.isWavesFrozen).mockReturnValue(true);
+  jest.mocked(appFeatures.isWavesFreezeKeepingMainStage).mockReturnValue(true);
+  await revokeTdhBasedDropWavesOverVotes(connection);
+  expect(service.reconcileVoterCredit).toHaveBeenCalled();
 });
 
 it('does not execute disabled competitions', async () => {

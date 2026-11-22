@@ -49,6 +49,10 @@ import {
 import { IdentitiesDb, identitiesDb } from '../identities/identities.db';
 import { ids } from '../ids';
 import { Logger } from '../logging';
+import {
+  isWavesFrozen,
+  WavesFrozenException
+} from '../waves-freeze/waves-freeze';
 import { metricsRecorder, MetricsRecorder } from '../metrics/MetricsRecorder';
 import { userNotifier } from '../notifications/user.notifier';
 import {
@@ -86,6 +90,18 @@ import {
 } from './ratings.db';
 
 const RATINGS_TRANSFER_PAGE_SIZE = 1000;
+
+/**
+ * Wave REP moves to the 6529 chain with the waves, so it freezes with them:
+ * no wave REP is given or reduced here while waves are frozen, and the chain
+ * imports it as it stood at the freeze.
+ */
+export function isWaveRepFrozen(
+  matter: string,
+  frozen: boolean = isWavesFrozen()
+): boolean {
+  return frozen && matter === RateMatter.WAVE_REP;
+}
 
 interface UpdateRatingInternalResult {
   readonly identityUpdates: IdentityUpdate[];
@@ -137,6 +153,9 @@ export class RatingsService {
     request: UpdateRatingViaApiRequest,
     ctx: RequestContext
   ) {
+    if (isWaveRepFrozen(request.matter)) {
+      throw new WavesFrozenException();
+    }
     try {
       ctx.timer?.start(`${this.constructor.name}->updateRating`);
       return await this.ratingsDb.executeNativeQueriesInTransaction(
@@ -629,6 +648,10 @@ export class RatingsService {
     this.logger.info(`Reducing rates for profile ${raterProfileId}`);
     const waveRepTargetsToRefresh = new Set<string>();
     for (const overRatedMatter of profileMatters) {
+      if (isWaveRepFrozen(overRatedMatter.matter)) {
+        // Wave REP stays as it stood at the waves freeze.
+        continue;
+      }
       const coefficient = overRatedMatter.rater_credit / overRatedMatter.tally;
       const changedWaveRepTargetIds =
         await this.ratingsDb.executeNativeQueriesInTransaction(

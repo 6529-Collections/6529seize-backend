@@ -45,6 +45,7 @@ import profileSubClassificationsRoutes from './profiles/profiles-sub-classificat
 import profilesRoutes from './profiles/profiles.routes';
 import repCategorySearchRoutes from './profiles/rep-category-search.routes';
 import proxiesRoutes from './proxies/proxies.routes';
+import { wavesFreezeMiddleware } from './waves-freeze/waves-freeze.middleware';
 import pushNotificationsRoutes from './push-notifications/push-notifications.routes';
 import bulkRepRoutes from './ratings/bulk-rep.routes';
 import ratingsRoutes from './ratings/ratings.routes';
@@ -1363,6 +1364,10 @@ function wireApp() {
     });
   });
 
+  // Waves, groups and decisions move to the 6529 chain: while the waves
+  // freeze is on, wave, decision, entry, vote, wave REP and poll writes are
+  // refused. Chat stays open.
+  apiRouter.use(wavesFreezeMiddleware());
   apiRouter.use(`/boosted-drops`, boostedDropsRoutes);
   apiRouter.use(`/curated-profile-wave-drops`, curatedProfileWaveDropsRoutes);
   apiRouter.use(`/drop-ids`, dropIdsRoutes);

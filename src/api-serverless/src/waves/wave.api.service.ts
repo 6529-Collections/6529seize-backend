@@ -8,6 +8,10 @@ import {
   reconcileAcceptedLegacySettings
 } from '@/competitions/legacy-competition-mutation';
 import { competitionHistoryRepository } from '@/competitions/competition-history.repository';
+import {
+  assertDecisionNotFrozen,
+  assertWavesNotFrozen
+} from '@/waves-freeze/waves-freeze';
 import { wavesChangedNotifier } from '@/api/waves/waves-changed.notifier';
 import { waveGroupIds } from '@/waves/wave-group-ids';
 import { randomUUID } from 'crypto';
@@ -553,6 +557,9 @@ export class WaveApiService {
     deferredEffects?: Array<() => Promise<void>>,
     prepared?: Awaited<ReturnType<WaveApiService['prepareWaveCreation']>>
   ): Promise<ApiWave> {
+    // Waves move to the 6529 chain: no new waves here once they are frozen.
+    // Direct messages are chat and stay open.
+    if (!isDirectMessage) assertWavesNotFrozen();
     const timer = this.getRequiredTimer(ctx);
     const authenticationContext = this.getRequiredAuthenticationContext(ctx);
     const actingAsId = this.getRequiredActingAsId(authenticationContext);
@@ -799,6 +806,7 @@ export class WaveApiService {
     ctx: RequestContext,
     reason?: string
   ): Promise<ApiWave> {
+    assertDecisionNotFrozen({ wave_id: waveId });
     const wave = await this.assertUserAllowedToModifyPauses(ctx, waveId);
     await this.assertProposedPauseValidForAddOrUpdate(wave, model, ctx);
     await this.withWaveSettingsTransaction(
@@ -842,6 +850,7 @@ export class WaveApiService {
     pauseId: number,
     ctx: RequestContext
   ): Promise<ApiWave> {
+    assertDecisionNotFrozen({ wave_id: waveId });
     const wave = await this.assertUserAllowedToModifyPauses(ctx, waveId);
     await this.assertProposedPauseValidForDeletion(wave, pauseId, ctx);
     await this.withWaveSettingsTransaction(
@@ -2128,6 +2137,8 @@ export class WaveApiService {
         if (!waveEntity) {
           throw new NotFoundException(`Wave ${waveId} not found`);
         }
+        // Direct messages are chat and stay open through the waves freeze.
+        if (!waveEntity.is_direct_message) assertWavesNotFrozen();
         const groupsUserIsEligibleFor =
           await this.userGroupsService.getGroupsUserIsEligibleFor(
             authenticatedUserId
@@ -2381,6 +2392,8 @@ export class WaveApiService {
           wavesApiDb: this.wavesApiDb,
           ctx: tx
         });
+        // Direct messages are chat and stay open through the waves freeze.
+        if (!before.is_direct_message) assertWavesNotFrozen();
         if (
           before.created_by !== actor &&
           (!before.admin_group_id || !groups.includes(before.admin_group_id))
@@ -2486,6 +2499,8 @@ export class WaveApiService {
             if (!waveBeforeUpdate) {
               throw new NotFoundException(`Wave ${waveId} not found`);
             }
+            // Direct messages are chat and stay open through the freeze.
+            if (!waveBeforeUpdate.is_direct_message) assertWavesNotFrozen();
             const currentMillis = Time.currentMillis();
             await this.validateWaveUpdateAccessAndConstraints({
               waveId,

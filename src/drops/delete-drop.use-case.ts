@@ -1,5 +1,6 @@
 import { inSequence } from '@/db/in-sequence';
 import { memeCollaborationsService } from '@/meme-collaborations/meme-collaborations.service';
+import { assertDecisionNotFrozen } from '@/waves-freeze/waves-freeze';
 import {
   withLegacyPrimaryMutation,
   readLegacyMutationSource
@@ -258,6 +259,15 @@ export class DeleteDropUseCase {
                       : ownershipDrop.drop_type
             };
         const waveId = drop.wave_id;
+        // Deleting an entry withdraws it: while waves move to the 6529 chain
+        // entries are held as they stood at the freeze. Chat deletes stay
+        // open, and so do the backend's own deletes (moderation).
+        if (
+          isPermanentDelete &&
+          !isBackendDelete &&
+          drop.drop_type !== DropType.CHAT
+        )
+          assertDecisionNotFrozen({ wave_id: waveId });
         const wave = await this.dropsDb.findWaveByIdOrNull(waveId, connection);
         if (!isBackendDelete) {
           if (!resolvedDeleterId) {

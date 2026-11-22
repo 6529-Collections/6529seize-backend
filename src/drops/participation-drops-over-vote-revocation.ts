@@ -15,6 +15,7 @@ import { Competition } from '@/competitions/competition.types';
 import { wavesApiDb } from '@/api/waves/waves.api.db';
 import { competitionTdhOvervotesDb } from '@/competitions/competition-tdh-overvotes.db';
 import { isRetryableDbLockError } from '@/nextgen/nextgen-db-lock-retry';
+import { competitionExecutionRouter } from '@/competitions/competition-execution.router';
 
 const logger = Logger.get('PARTICIPATION_DROPS_OVER_VOTE_REVOCATION');
 
@@ -115,7 +116,8 @@ function isRevocable(
   return (
     !!competition &&
     accepts(competition) &&
-    competition.execution_mode === 'ACTIVE' &&
+    // ACTIVE, and not held by the waves freeze (votes stay as imported).
+    competitionExecutionRouter.isNativeExecutionAllowed(competition) &&
     competition.lifecycle === 'PUBLISHED'
   );
 }

@@ -37,6 +37,10 @@ import {
 } from '../../../drops/delete-drop.use-case';
 import { ApiDropType } from '../generated/models/ApiDropType';
 import {
+  assertDecisionNotFrozen,
+  assertWavesNotFrozen
+} from '@/waves-freeze/waves-freeze';
+import {
   wsListenersNotifier,
   WsListenersNotifier
 } from '../ws/ws-listeners-notifier';
@@ -306,6 +310,11 @@ export class DropCreationApiService {
         return replay;
       }
     }
+    // Refused before any moderation work while waves move to the 6529 chain:
+    // new polls, and legacy entries (the use case checks them again).
+    if (createDropRequest.poll) assertWavesNotFrozen();
+    if (createDropRequest.drop_type === ApiDropType.Participatory)
+      assertDecisionNotFrozen({ wave_id: createDropRequest.wave_id });
     const preResolvedIdentityNomination =
       await this.createOrUpdateDrop.preResolveIdentityNomination(createModel, {
         timer: ctx.timer
