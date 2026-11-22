@@ -605,6 +605,36 @@ describe('ChainGatewayClient reads', () => {
     ).rejects.toMatchObject({ code: 'bad_answer', status: 404 });
   });
 
+  it('refuses a not_found for a route the node lacks, and keeps nothing of it', async () => {
+    let known = false;
+    const { client } = setup(
+      withStatus(
+        () =>
+          known
+            ? {
+                status: 200,
+                json: { read: stamp(10), data: { legacyId: 'p-1' }, next: null }
+              }
+            : {
+                status: 404,
+                json: {
+                  read: stamp(10),
+                  error: { code: 'not_found', message: 'no such route' }
+                }
+              },
+        10
+      )
+    );
+    await expect(client.getImportedIdentity('0xab')).rejects.toMatchObject({
+      code: 'bad_answer',
+      status: 404
+    });
+    known = true;
+    expect(await client.getImportedIdentity('0xab')).toEqual({
+      legacyId: 'p-1'
+    });
+  });
+
   it('refuses an answer without data or without its read stamp', async () => {
     let json: unknown = { read: stamp(10), next: null };
     const { client } = setup(withStatus(() => ({ status: 200, json }), 10));
@@ -789,6 +819,72 @@ describe('ChainGatewayClient reads', () => {
     await expect(client.getIdentityByPrincipal('0xAB')).rejects.toMatchObject({
       code: 'height_gone'
     });
+  });
+
+  it('raises the pin to the height an unpinned read was answered at', async () => {
+    const { client, calls } = setup((call) => {
+      if (path(call) === '/v1/status') return status(1210);
+      const height = param(call, 'height');
+      if (height === '1210') {
+        return {
+          status: 409,
+          json: {
+            read: stamp(1205),
+            error: { code: 'height_gone', message: 'x' }
+          }
+        };
+      }
+      return {
+        status: 200,
+        json: {
+          read: stamp(height === null ? 1212 : Number(height)),
+          data: IDENTITY,
+          next: null
+        }
+      };
+    });
+    await client.getIdentityByPrincipal('0x01');
+    await client.getIdentityByPrincipal('0x02');
+    expect(reads(calls).map((it) => param(it, 'height'))).toEqual([
+      '1210',
+      '1210',
+      null,
+      '1212'
+    ]);
+  });
+
+  it('keeps each network its own pin while a relaunch flips the status', async () => {
+    let network = stamp(1).network;
+    let finalized = 1000;
+    const { client, calls, advance } = setup((call) => {
+      if (path(call) === '/v1/status') {
+        const answer = status(finalized);
+        answer.json.data.finalized = { ...answer.json.data.finalized, network };
+        return answer;
+      }
+      return {
+        status: 200,
+        json: {
+          read: { ...stamp(Number(param(call, 'height'))), network },
+          data: IDENTITY,
+          next: null
+        }
+      };
+    });
+    await client.getIdentityByPrincipal('0x01');
+    network = OTHER_NETWORK;
+    finalized = 5;
+    advance(2_500);
+    await client.getIdentityByPrincipal('0x02');
+    network = stamp(1).network;
+    finalized = 997;
+    advance(2_500);
+    await client.getIdentityByPrincipal('0x03');
+    expect(reads(calls).map((it) => param(it, 'height'))).toEqual([
+      '1000',
+      '5',
+      '1000'
+    ]);
   });
 
   it('never pins a read below a finalized height already seen', async () => {
@@ -1131,6 +1227,35 @@ describe('ChainGatewayClient reads', () => {
       '121'
     ],
     [
+      'a record without its key',
+      120,
+      {
+        through: 120,
+        blocks: [
+          { ...feedBlock(120), records: [{ family: '0x0104', value: '0x' }] }
+        ]
+      },
+      '121'
+    ],
+    [
+      'a record without its value',
+      120,
+      {
+        through: 120,
+        blocks: [{ ...feedBlock(120), records: [{ key: '0x01' }] }]
+      },
+      '121'
+    ],
+    [
+      'a record whose value is not hex or null',
+      120,
+      {
+        through: 120,
+        blocks: [{ ...feedBlock(120), records: [{ key: '0x01', value: 5 }] }]
+      },
+      '121'
+    ],
+    [
       'a block that does not say whether it is whole',
       120,
       { through: 120, blocks: [{ ...feedBlock(120), complete: undefined }] },
@@ -1324,14 +1449,37 @@ describe('ChainGatewayClient reads', () => {
     });
   });
 
-  it('throws gone when the feed no longer holds the height', async () => {
-    const { client } = setup(
+  it('throws gone when the feed no longer holds the height, asked twice', async () => {
+    const { client, calls } = setup(
       withStatus(() => ({
         status: 410,
         json: { read: stamp(1), error: { code: 'gone', message: 'from 50' } }
       }))
     );
     await expect(client.getChanges(1)).rejects.toMatchObject({ code: 'gone' });
+    expect(reads(calls)).toHaveLength(2);
+  });
+
+  it('asks again when one node says gone: another may hold the height', async () => {
+    let n = 0;
+    const { client } = setup(
+      withStatus(() =>
+        n++ === 0
+          ? {
+              status: 410,
+              json: { read: stamp(130), error: { code: 'gone', message: 'x' } }
+            }
+          : {
+              status: 200,
+              json: {
+                read: stamp(130),
+                data: { through: 120, blocks: [feedBlock(120)] },
+                next: '121'
+              }
+            }
+      )
+    );
+    expect((await client.getChanges(120)).nextHeight).toBe(121);
   });
 });
 

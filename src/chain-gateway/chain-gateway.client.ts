@@ -446,6 +446,18 @@ function bindingChanges(
   });
 }
 
+/** A feed record as the node writes it: a hex key, a value or null. */
+function isFeedRecord(record: unknown): boolean {
+  const it = record as { key?: unknown; value?: unknown } | null;
+  return (
+    !!it &&
+    typeof it === 'object' &&
+    typeof it.key === 'string' &&
+    'value' in it &&
+    (it.value === null || typeof it.value === 'string')
+  );
+}
+
 /**
  * A feed page holds together, as the node writes it: blocks are whole
  * heights, rising, none below the height asked from; the block asked from
@@ -478,6 +490,7 @@ function checkFeedPage(
       !Number.isSafeInteger(height) ||
       height <= previous ||
       !Array.isArray(block.records) ||
+      !block.records.every(isFeedRecord) ||
       typeof block.complete !== 'boolean' ||
       block.recordsFrom !== recordsFrom ||
       (cut ? !last || height !== through + 1 : height > through)
@@ -609,7 +622,11 @@ export class ChainGatewayClient {
   private head: { value: ChainHead; at: number } | null = null;
   private headInFlight: Promise<ChainHead> | null = null;
   /** The highest finalized height seen on the head's network. */
-  private pinFloor: { network: string; height: number } | null = null;
+  /**
+   * The highest finalized height seen on each network: kept per network,
+   * so a status flipping between two during a relaunch keeps both.
+   */
+  private readonly pinFloors = new Map<string, number>();
   private caches: {
     /** JSON text of answers (`null` for a 404), parsed afresh on each hit. */
     readonly answers: LruCache<string>;
@@ -908,6 +925,14 @@ export class ChainGatewayClient {
       if (!read || code !== 'not_found') {
         throw badAnswer(path, `a 404 that isn't the node's not_found`, 404);
       }
+      // A node without the route (an older release behind the load
+      // balancer) answers not_found too, told apart only by its message: it
+      // says nothing of the data, so it is never null or cached. A distinct
+      // code from the node would be firmer than the message.
+      const message = typeof error === 'string' ? '' : (error?.message ?? '');
+      if (/^no such route/i.test(message)) {
+        throw badAnswer(path, `the node that answered has no such route`, 404);
+      }
       return { read, answer: null };
     }
     if (status !== 200 || !json || error) {
@@ -987,14 +1012,7 @@ export class ChainGatewayClient {
           }
           // Reads never pin below a finalized height already seen on this
           // network (a node behind the others can answer the status).
-          const floor = this.pinFloor;
-          this.pinFloor = {
-            network: value.network!,
-            height:
-              floor?.network === value.network
-                ? Math.max(floor.height, value.finalizedHeight)
-                : value.finalizedHeight
-          };
+          this.raiseFloor(value.network!, value.finalizedHeight);
           this.head = { value, at: this.now() };
           return value;
         } finally {
@@ -1094,15 +1112,24 @@ export class ChainGatewayClient {
         path
       );
     }
+    // A finalized height read is one the next reads don't go below.
+    if (read.at === 'finalized') {
+      this.raiseFloor(lower(read.network), read.height);
+    }
     return answer;
   }
 
   /** The height a read without one pins: the head's, never going down. */
   private pinOf(head: ChainHead): number {
-    const floor = this.pinFloor;
-    return floor?.network === head.network
-      ? Math.max(floor.height, head.finalizedHeight)
-      : head.finalizedHeight;
+    const floor = head.network ? this.pinFloors.get(head.network) : undefined;
+    return Math.max(floor ?? 0, head.finalizedHeight);
+  }
+
+  private raiseFloor(network: string, height: number) {
+    this.pinFloors.set(
+      network,
+      Math.max(this.pinFloors.get(network) ?? 0, height)
+    );
   }
 
   private async pinnedRead<T>(
@@ -1506,16 +1533,31 @@ export class ChainGatewayClient {
   ): Promise<ChainFeedPage> {
     const path = '/v1/feed';
     const cursor = parseFeedCursor(from);
-    const { status, json } = await this.send('GET', path, {
+    const query = {
       from: String(from),
       limit: opts.limit,
       families: opts.families?.join(',')
-    });
-    const { answer } = await this.toAnswer<{
-      through: number;
-      blocks?: unknown;
-      ranges?: unknown;
-    }>(path, status, json);
+    };
+    const readPage = async () => {
+      const { status, json } = await this.send('GET', path, query);
+      return await this.toAnswer<{
+        through: number;
+        blocks?: unknown;
+        ranges?: unknown;
+      }>(path, status, json);
+    };
+    let page: Awaited<ReturnType<typeof readPage>>;
+    try {
+      page = await readPage();
+    } catch (error) {
+      // Each node keeps its own feed from its own start: a younger one
+      // behind the load balancer can say gone for a height an older holds.
+      if (!(error instanceof ChainGatewayError) || error.code !== 'gone') {
+        throw error;
+      }
+      page = await readPage();
+    }
+    const { answer } = page;
     if (!answer) {
       throw new ChainGatewayError(`${path}: not found`, 404, 'not_found', path);
     }
