@@ -336,6 +336,32 @@ function getDbConnectionByPoolName(
   });
 }
 
+/**
+ * Runs work on one read-pool connection inside a read-only transaction with
+ * a consistent snapshot, then rolls it back: every query made through the
+ * given connection sees the same state, and none can write. For exports.
+ */
+export async function withReadOnlySnapshot<T>(
+  work: (connection: ConnectionWrapper<mysql.PoolConnection>) => Promise<T>
+): Promise<T> {
+  const connection = await getDbConnectionByPoolName(DbPoolName.READ);
+  const run = (sql: string) =>
+    new Promise<void>((resolve, reject) =>
+      connection.query(sql, (err) => (err ? reject(err) : resolve()))
+    );
+  try {
+    await run('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ');
+    await run('START TRANSACTION WITH CONSISTENT SNAPSHOT, READ ONLY');
+    return await work({ connection });
+  } finally {
+    try {
+      await run('ROLLBACK');
+    } finally {
+      connection.release();
+    }
+  }
+}
+
 export async function fetchLatestTDHBlockNumber() {
   const sql = `SELECT block_number FROM ${TDH_BLOCKS_TABLE} order by block_number desc limit 1;`;
   const r = await sqlExecutor.execute(sql);
