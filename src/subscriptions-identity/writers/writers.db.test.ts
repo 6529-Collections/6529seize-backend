@@ -2065,6 +2065,51 @@ describeWithSeed('identity writers after the switch', [], () => {
     ]);
   });
 
+  it("leaves the identity's mode row as it was when the folded wallet brings no mode", async () => {
+    await seed();
+    const W = wallet(8);
+    // Less than a card: a balance and no mode.
+    await execute(
+      `INSERT INTO ${SUBSCRIPTIONS_TOP_UP_TABLE} (hash, block, transaction_date, from_wallet, amount)
+        VALUES ('0xa4', 62, '2026-11-26 13:00:00', :w, 0.05)`,
+      { w: W }
+    );
+    await runIdentityTopUpWriters();
+    const modeOf = (key: string) =>
+      sqlExecutor.execute<{
+        automatic: number;
+        subscribe_all_editions: number;
+        created_at: string;
+        updated_at: string;
+      }>(
+        `SELECT automatic, subscribe_all_editions, CAST(created_at AS CHAR) AS created_at,
+            CAST(updated_at AS CHAR) AS updated_at
+          FROM ${SUBSCRIPTIONS_ID_MODE_TABLE} WHERE identity_key = :key`,
+        { key }
+      );
+    expect(await modeOf(W)).toEqual([]);
+    const before = await modeOf(P1);
+    expect(before).toHaveLength(1);
+    // W joins P1's identity on the chain; the mirror re-keys it.
+    await execute(
+      `INSERT INTO ${ADDRESS_CONSOLIDATION_KEY} (address, consolidation_key) VALUES (:w, :k)`,
+      { w: W, k: `${A}-${W}` }
+    );
+    await execute(
+      `UPDATE ${ADDRESS_CONSOLIDATION_KEY} SET consolidation_key = :k WHERE address = :a`,
+      { k: `${A}-${W}`, a: A }
+    );
+    await execute(
+      `UPDATE ${IDENTITIES_TABLE} SET consolidation_key = :k WHERE profile_id = 'profile-1'`,
+      { k: `${A}-${W}` }
+    );
+    await runIdentityTopUpWriters();
+    expect(
+      await balance(SUBSCRIPTIONS_ID_BALANCES_TABLE, 'identity_key', W)
+    ).toBe(null);
+    expect(await modeOf(P1)).toEqual(before);
+  });
+
   it('folds a wallet that binds after the opening into its identity', async () => {
     await seed();
     const W = wallet(7);

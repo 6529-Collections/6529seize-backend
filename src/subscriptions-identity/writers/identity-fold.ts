@@ -173,10 +173,15 @@ export async function foldBoundWallets(
         options
       );
       const atText = msToDbText(nowMs());
-      const merged = mergeStates(
-        [await readState(identity, options), await readState(wallet, options)],
-        atText
-      );
+      const identityState = await readState(identity, options);
+      const walletState = await readState(wallet, options);
+      const sum = mergeStates([identityState, walletState], atText);
+      // A wallet that brings no mode leaves the identity's mode row as it
+      // was, its times too: nothing about the mode changed.
+      const merged =
+        walletState.mode === null && identityState.mode !== null
+          ? { ...sum, mode: identityState.mode }
+          : sum;
       for (const table of [
         SUBSCRIPTIONS_ID_BALANCES_TABLE,
         SUBSCRIPTIONS_ID_MODE_TABLE,
