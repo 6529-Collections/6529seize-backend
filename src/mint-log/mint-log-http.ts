@@ -1,5 +1,6 @@
 import type { Request } from 'express';
 import { getAuthenticatedWalletOrNull } from '@/api/auth/auth';
+import type { MintIntent } from './mint-log-intent';
 import type { MintWriteSpec } from './mint-log-recorder';
 export { mintCard } from './mint-log-parts';
 import type { MintCardRef, MintLogKind } from './mint-log.types';
@@ -27,6 +28,39 @@ export const MINT_ADMIN_ROUTES = {
 export type MintAdminRoute =
   (typeof MINT_ADMIN_ROUTES)[keyof typeof MINT_ADMIN_ROUTES];
 
+/**
+ * A user's own writes the mint log records, signed as `mint.user` records.
+ * The frontend signs the same route strings.
+ */
+export const MINT_USER_ROUTES = {
+  collabInvite: 'POST /drops/:drop_id/collaborations',
+  collabRespond: 'POST /drops/:drop_id/collaborations/:invitation_id/response'
+} as const;
+
+export type MintUserRoute =
+  (typeof MINT_USER_ROUTES)[keyof typeof MINT_USER_ROUTES];
+
+/** What a user's request brings to its logged write. */
+export interface MintUserRequest {
+  readonly intent: MintIntent;
+  readonly signedRecords: string | null;
+}
+
+/** The intent and records header of a user's request. */
+export function userRequest(
+  req: Request<any, any, any, any, any>,
+  route: MintUserRoute
+): MintUserRequest {
+  return {
+    intent: {
+      route,
+      params: routeParams(route, req.params ?? {}),
+      body: intentBody(req.body)
+    },
+    signedRecords: req.get?.(SIGNED_RECORDS_HEADER) ?? null
+  };
+}
+
 export const SIGNED_RECORDS_HEADER = 'x-6529-signed-records';
 
 export const MINT_AUTHORITY = {
@@ -38,7 +72,7 @@ export const MINT_AUTHORITY = {
 
 /** The route's path parameters as sent, by the names in its pattern. */
 export function routeParams(
-  route: MintAdminRoute,
+  route: MintAdminRoute | MintUserRoute,
   params: Record<string, string | undefined>
 ): Record<string, string> {
   const names = route

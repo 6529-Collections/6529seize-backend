@@ -15,6 +15,7 @@ import { memeCollaborationsService } from '@/meme-collaborations/meme-collaborat
 import { sendIdentityPushNotifications } from '@/api/push-notifications/push-notifications.service';
 import { Timer } from '@/time';
 import { Logger } from '@/logging';
+import { MINT_USER_ROUTES, userRequest } from '@/mint-log/mint-log-http';
 
 const UNAVAILABLE_ARTWORK_MESSAGE =
   'This artwork is not available for collaboration review';
@@ -80,7 +81,8 @@ export async function respondToMemeCollaboration(
     req.params.invitation_id,
     body,
     auth,
-    ctx
+    ctx,
+    userRequest(req, MINT_USER_ROUTES.collabRespond)
   );
   try {
     if (body.action === 'ACCEPT') {
@@ -151,7 +153,8 @@ export async function inviteMemeCollaborators(
     req.params.drop_id,
     body.collaborator_ids,
     auth,
-    ctx
+    ctx,
+    userRequest(req, MINT_USER_ROUTES.collabInvite)
   );
   await sendIdentityPushNotifications(notificationIds);
   const state = await memeCollaborationsService.state(

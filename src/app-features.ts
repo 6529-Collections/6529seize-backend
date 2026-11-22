@@ -41,8 +41,9 @@ export class AppFeatures {
 
   /**
    * Mint log, primary (the switch): admin writes need a signed `mint.admin`
-   * record, and a write fails unless its log entry is queued. Rollback: set it
-   * to false; the shadow log keeps running if MINT_LOG_SHADOW is on.
+   * record, collaboration invites and replies a `mint.user` record, and a
+   * write fails unless its log entry is queued. Rollback: set it to false;
+   * the shadow log keeps running if MINT_LOG_SHADOW is on.
    */
   public isMintLogPrimaryEnabled(): boolean {
     return this.isFeatureEnabled('MINT_LOG_PRIMARY');
@@ -62,6 +63,15 @@ export class AppFeatures {
    */
   public isNextgenAllowlistSignedFileRequired(): boolean {
     return this.isFeatureEnabled('NEXTGEN_ALLOWLIST_SIGNED_FILE');
+  }
+
+  /**
+   * The rememes file loop removes only rows that came from rememes.csv, so
+   * rememes added on the site stay. Off: it removes every row missing from
+   * the file, as before. Rollback: set it to false.
+   */
+  public isRememesKeepAddedEnabled(): boolean {
+    return this.isFeatureEnabled('REMEMES_KEEP_ADDED');
   }
 
   /**
