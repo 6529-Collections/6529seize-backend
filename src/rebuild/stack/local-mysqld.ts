@@ -121,7 +121,9 @@ export interface ProcessProbe {
 /** How long one system command may take, and how long a probe keeps trying. */
 const PROBE_COMMAND_MS = 120_000;
 const PROBE_DEADLINE_MS = 300_000;
-const PROBE_RETRY_MS = 2_000;
+// At most one try a minute, so a failing command never floods the machine
+// with processes.
+const PROBE_RETRY_MS = 60_000;
 
 /** A command's output, or why there is none. */
 type Answer = { stdout: string } | 'timed out' | 'failed' | 'not run';

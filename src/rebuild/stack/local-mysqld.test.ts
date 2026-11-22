@@ -17,6 +17,8 @@ const DATA_DIR = path.join(os.tmpdir(), 'rebuild-home', 'mysql', 'data');
 /** A loaded machine can take minutes to answer; the probes retry, bounded. */
 const SYSTEM_TEST_MS = 1_000_000;
 const LISTENER_WAIT_MS = 300_000;
+/** Each look starts a process, so once a minute at most. */
+const LISTENER_RETRY_MS = 60_000;
 
 function probe(
   info: ProcessInfo | null,
@@ -33,7 +35,7 @@ async function eventually<T>(ask: () => Promise<T>, want: T): Promise<T> {
   const deadline = Date.now() + LISTENER_WAIT_MS;
   let answer = await ask();
   while (answer !== want && Date.now() < deadline) {
-    await new Promise((resolve) => setTimeout(resolve, 1_000));
+    await new Promise((resolve) => setTimeout(resolve, LISTENER_RETRY_MS));
     answer = await ask();
   }
   return answer;
@@ -177,6 +179,9 @@ describe('a leftover server', () => {
         expect(() => process.kill(bystander.pid!, 0)).not.toThrow();
       } finally {
         bystander.kill();
+        if (bystander.exitCode === null) {
+          await new Promise((resolve) => bystander.once('exit', resolve));
+        }
         await new Promise((resolve) => listener.close(resolve));
         fs.rmSync(home, { recursive: true, force: true });
       }

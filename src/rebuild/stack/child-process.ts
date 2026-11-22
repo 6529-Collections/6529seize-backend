@@ -123,13 +123,20 @@ export function startChild(spec: ChildSpec): StartedChild {
     pid: child.pid ?? null,
     exited,
     async stop() {
-      const ended = (ms: number) =>
-        Promise.race([
-          exited.then(() => true),
-          new Promise<boolean>((resolve) =>
-            setTimeout(() => resolve(false), ms)
-          )
-        ]);
+      // Whether the child exits within `ms`; the timer never outlives it.
+      const ended = async (ms: number) => {
+        let timer: NodeJS.Timeout | undefined;
+        try {
+          return await Promise.race([
+            exited.then(() => true),
+            new Promise<boolean>((resolve) => {
+              timer = setTimeout(() => resolve(false), ms);
+            })
+          ]);
+        } finally {
+          clearTimeout(timer);
+        }
+      };
       if (child.exitCode === null && child.pid !== undefined) {
         endProcess(child.pid);
         // If the tree kill didn't take, end the process itself, so a run
