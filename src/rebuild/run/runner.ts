@@ -312,23 +312,28 @@ class RebuildRun {
     return flags;
   }
 
+  /**
+   * A child's environment: `flags` (an area's, checked and with source
+   * placeholders filled) under the run's own variables and `own`.
+   */
   private env(
     db: DbAccount,
-    extra: Record<string, string>
+    flags: Readonly<Record<string, string>>,
+    own: Readonly<Record<string, string>> = {}
   ): Record<string, string> {
     const sources = this.sourceUrls();
     const sourceEnv: Record<string, string> = {};
     for (const name of URL_SOURCES) {
       sourceEnv[`REBUILD_SOURCE_${name.toUpperCase()}`] = sources[name] ?? '';
     }
-    const refused = protectedFlagNames(extra);
+    const refused = protectedFlagNames(flags);
     if (refused.length) {
       throw new Error(
         `An area's flags may not set the run's own variables: ${refused.join(', ')}`
       );
     }
     const filled: Record<string, string> = {};
-    for (const [name, value] of Object.entries(extra)) {
+    for (const [name, value] of Object.entries(flags)) {
       filled[name] = fillSourcePlaceholders(value, sources);
     }
     // The run's own settings come last, so no flag can replace them.
@@ -345,7 +350,8 @@ class RebuildRun {
         REBUILD_CHAIN_HEIGHT: this.o.chainHeight?.toString() ?? '',
         REBUILD_ETH_BLOCK: this.o.ethBlock?.toString() ?? '',
         ...sourceEnv,
-        ...this.ethereumEnv()
+        ...this.ethereumEnv(),
+        ...own
       }
     });
   }
@@ -433,8 +439,7 @@ class RebuildRun {
         ethBlock: this.o.ethBlock
       }
     };
-    const extra: Record<string, string> = {
-      ...area.flags,
+    const own: Record<string, string> = {
       REBUILD_AREA: area.area,
       REBUILD_STEP_ID: step.id
     };
@@ -457,8 +462,8 @@ class RebuildRun {
       result = await runChild({
         ...common,
         entry: path.join('src', 'rebuild', 'run', 'step.child.ts'),
-        env: this.env(account, {
-          ...extra,
+        env: this.env(account, area.flags, {
+          ...own,
           [STEP_SPEC_ENV]: JSON.stringify(spec)
         })
       });
@@ -467,8 +472,8 @@ class RebuildRun {
       result = await runChild({
         ...common,
         command: step.run.command,
-        env: this.env(account, {
-          ...extra,
+        env: this.env(account, area.flags, {
+          ...own,
           REBUILD_CONTEXT: JSON.stringify(context)
         })
       });
@@ -561,8 +566,7 @@ class RebuildRun {
       ],
       guardLoaded: true,
       cwd: path.dirname(await this.apiBundle()),
-      env: this.env(this.appAccount(), {
-        ...flags,
+      env: this.env(this.appAccount(), flags, {
         REBUILD_API_PORT: String(this.apiPort)
       }),
       logFile,
