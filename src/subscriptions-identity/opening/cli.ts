@@ -9,6 +9,7 @@ import {
 import {
   claimSubscriptionWrites,
   openSubscriptionWrites,
+  releaseSubscriptionWrites,
   subscriptionsIdentitySwitch
 } from '../identity/identity-switch';
 import { suspendWithJournal } from './suspend';
@@ -171,7 +172,8 @@ function verifyCommand(args: Args): number {
 async function loadCommand(args: Args): Promise<number> {
   const parsed = parsedFrom(args);
   // The load holds the write pause, so no go-live or rebuild runs with it.
-  if (!(await claimSubscriptionWrites())) {
+  const pausedSince = Date.now();
+  if (!(await claimSubscriptionWrites(pausedSince))) {
     process.stderr.write(
       'Refusing: another go-live, load or rebuild holds the write pause; wait for it to end, or run open-writes if it died.\n'
     );
@@ -180,7 +182,7 @@ async function loadCommand(args: Args): Promise<number> {
   try {
     await loadOpeningFiles(parsed);
   } finally {
-    await openSubscriptionWrites();
+    await releaseSubscriptionWrites(pausedSince);
   }
   process.stdout.write(
     `loaded ${parsed.openingSha256}; not the truth until compare passes\n`

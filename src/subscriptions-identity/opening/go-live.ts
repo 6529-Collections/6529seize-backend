@@ -1,7 +1,7 @@
 import { mirrorIdentityDirectory } from '../identity/identity-directory';
 import {
   claimSubscriptionWrites,
-  openSubscriptionWrites,
+  releaseSubscriptionWrites,
   scheduleIdentitySwitch,
   SWITCH_CUT_WINDOW_MS
 } from '../identity/identity-switch';
@@ -93,7 +93,8 @@ export async function goLive(params: {
     }
   }
 
-  if (!(await claimSubscriptionWrites(now()))) {
+  const pausedSince = now();
+  if (!(await claimSubscriptionWrites(pausedSince))) {
     return refuse(
       'another go-live, load or rebuild holds the write pause; wait for it to end, or run open-writes if it died'
     );
@@ -172,7 +173,7 @@ export async function goLive(params: {
   } catch (error) {
     return refuse((error as Error).message);
   } finally {
-    await openSubscriptionWrites();
+    await releaseSubscriptionWrites(pausedSince);
     steps.push('unsigned write routes reopened');
   }
 }

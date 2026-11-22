@@ -38,6 +38,8 @@ import {
   claimSubscriptionWrites,
   closeSubscriptionWrites,
   openSubscriptionWrites,
+  releaseSubscriptionWrites,
+  renewSubscriptionWrites,
   scheduleIdentitySwitch,
   SHADOW_ENV,
   SubscriptionsIdentitySwitch,
@@ -2112,6 +2114,23 @@ describeWithSeed('identity writers after the switch', [], () => {
     );
     await openSubscriptionWrites();
     expect((await goLiveForTest()).switched).toBe(true);
+  });
+
+  it("lifts only its own write pause: a run that outlived the window can't lift the next run's", async () => {
+    await seedLegacy();
+    const first = Date.now();
+    expect(await claimSubscriptionWrites(first)).toBe(true);
+    // The first run outlives the switch window; a second one takes over.
+    const second = first + SWITCH_CUT_WINDOW_MS + 1;
+    expect(await claimSubscriptionWrites(second)).toBe(true);
+    // The first run can neither renew the pause nor lift it.
+    expect(await renewSubscriptionWrites(first, second + 1)).toBe(false);
+    await releaseSubscriptionWrites(first);
+    expect(await subscriptionWritePathNow(second + 2)).toBe('PAUSED');
+    // The second renews and lifts its own.
+    expect(await renewSubscriptionWrites(second, second + 3)).toBe(true);
+    await releaseSubscriptionWrites(second + 3);
+    expect(await subscriptionWritePathNow(second + 4)).toBe('LEGACY');
   });
 
   it('ignores a writes-closed marker older than the switch window, and open-writes deletes it', async () => {

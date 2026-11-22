@@ -354,6 +354,42 @@ export async function claimSubscriptionWrites(
   return !!row && Number(row.block) === nowMs;
 }
 
+/**
+ * Renews a held pause: moves the marker from `heldSince` to `nowMs`, only
+ * while it is still this run's. Returns false when another run has taken
+ * it over (this run outlived the switch window).
+ */
+export async function renewSubscriptionWrites(
+  heldSince: number,
+  nowMs: number
+): Promise<boolean> {
+  await sqlExecutor.execute(
+    `UPDATE ${SUBSCRIPTIONS_ID_CURSORS_TABLE} SET block = :nowMs, updated_at = :nowMs
+      WHERE id = :id AND block = :heldSince`,
+    { id: WRITES_CLOSED_ID, nowMs, heldSince }
+  );
+  const [row] = await sqlExecutor.execute<{ block: number | string }>(
+    `SELECT block FROM ${SUBSCRIPTIONS_ID_CURSORS_TABLE} WHERE id = :id`,
+    { id: WRITES_CLOSED_ID }
+  );
+  return !!row && Number(row.block) === nowMs;
+}
+
+/**
+ * Lifts a held pause, only while it is still this run's (the marker is the
+ * one it set or last renewed), so a run that outlived the switch window
+ * can't lift the pause of the run that took over.
+ */
+export async function releaseSubscriptionWrites(
+  heldSince: number
+): Promise<void> {
+  await sqlExecutor.execute(
+    `DELETE FROM ${SUBSCRIPTIONS_ID_CURSORS_TABLE} WHERE id = :id AND block = :heldSince`,
+    { id: WRITES_CLOSED_ID, heldSince }
+  );
+}
+
+/** Deletes the pause whoever holds it: `open-writes`, after a run that died. */
 export async function openSubscriptionWrites(): Promise<void> {
   await sqlExecutor.execute(
     `DELETE FROM ${SUBSCRIPTIONS_ID_CURSORS_TABLE} WHERE id = :id`,

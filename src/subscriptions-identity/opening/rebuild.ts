@@ -16,11 +16,11 @@ import { signedRecordHeadsDb } from '@/signed-records/signed-record-heads.db';
 import { ConnectionWrapper, sqlExecutor } from '@/sql-executor';
 import {
   claimSubscriptionWrites,
-  closeSubscriptionWrites,
   STATE_RE_READ_MS,
   JOURNAL_BEHIND_ID,
   OPENING_STATE_ID,
-  openSubscriptionWrites,
+  releaseSubscriptionWrites,
+  renewSubscriptionWrites,
   scheduleIdentitySwitch,
   subscriptionsIdentitySwitch
 } from '../identity/identity-switch';
@@ -578,16 +578,21 @@ export async function rebuildIdentityTables(params: {
       );
     }
   }
-  if (!(await claimSubscriptionWrites(now()))) {
+  let pausedSince = now();
+  if (!(await claimSubscriptionWrites(pausedSince))) {
     throw new Error(
       'Another go-live, load or rebuild holds the write pause; wait for it to end, or run open-writes if it died'
     );
   }
-  let renewedAt = now();
   const renewPause = async () => {
-    if (now() - renewedAt >= MARKER_RENEW_MS) {
-      await closeSubscriptionWrites(now());
-      renewedAt = now();
+    const at = now();
+    if (at - pausedSince >= MARKER_RENEW_MS) {
+      if (!(await renewSubscriptionWrites(pausedSince, at))) {
+        throw new Error(
+          'Another run took over the write pause; this rebuild stops'
+        );
+      }
+      pausedSince = at;
     }
   };
   const source = params.source;
@@ -776,7 +781,7 @@ export async function rebuildIdentityTables(params: {
     };
   } finally {
     subscriptionsIdentitySwitch.invalidate();
-    await openSubscriptionWrites();
+    await releaseSubscriptionWrites(pausedSince);
   }
 }
 
