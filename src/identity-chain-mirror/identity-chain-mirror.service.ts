@@ -4,7 +4,6 @@ import {
 } from '@/chain-gateway/chain-gateway.client';
 import {
   ChainDelegation,
-  ChainFeedCursor,
   ChainFeedRecord,
   ChainIdentity,
   ChainRating
@@ -16,7 +15,9 @@ import {
   DelegationRowWrite,
   identityChainMirrorDb,
   IdentityChainMirrorDb,
+  MirrorRetry,
   MirrorState,
+  NO_RETRY,
   numberOrNull,
   RatingEventContext,
   RatingRowWrite
@@ -27,8 +28,7 @@ import {
   consolidationKeyOf,
   membershipChangeOf,
   NEVER_EXPIRES,
-  planIdentity,
-  principalProfileId
+  planIdentity
 } from './identity-plan';
 import {
   MEMBERSHIP_CHANGE_HANDLERS,
@@ -43,12 +43,16 @@ import { IdentityChainLookups } from './identity-chain-lookups';
 import { HEX20, HEX32 } from './wallet-bindings';
 import { WalletBindingsFollower } from './wallet-bindings-follower';
 import {
-  ChainReadRetryLater,
-  messageOf,
+  allPages,
+  isOtherChain,
   readWholeBlocks,
   realSleep,
   Sleep
 } from './chain-feed-pages';
+import { messageOf } from './mirror-errors';
+import { covers, isInactive, ProfileIds } from './profile-ids';
+
+export { covers, isInactive };
 import { toDelegationRow } from './delegation-rows';
 import {
   decodeProfileDoc,
@@ -66,6 +70,8 @@ const logger = Logger.get('IDENTITY_CHAIN_MIRROR');
 export const MAX_CONSOLIDATION_KEY_LENGTH = 200;
 const FULL_SYNC_EVERY_MS = 6 * 60 * 60 * 1000;
 const FEED_PAGE_BLOCKS = 200;
+/** Past this many keys to try again, a full sync is quicker. */
+const RETRY_LIMIT = 10_000;
 const IDENTITY_PAGE = 200;
 const LAST_USE_CASE = 998;
 /** ratings.rating is a signed 32-bit int. */
@@ -119,6 +125,8 @@ export interface MirrorRunReport {
   skippedInactive: string[];
   /** Identities that failed, with why; the rest went on. */
   failed: string[];
+  /** Keys left to try again next run (principals, targets, wallets). */
+  retryLeft: number;
   /** Wallets whose consolidation key changed: re-keyed by the caller. */
   regroupedWallets: string[];
   /** Other profiles whose wallets all joined an identity: left without a row. */
@@ -157,6 +165,17 @@ function collectHex(
       wallets.add(value);
     }
   }
+}
+
+type RetryKind = keyof MirrorRetry;
+type RetrySets = { [kind in RetryKind]: Set<string> };
+
+function emptyRetrySets(): RetrySets {
+  return { principals: new Set(), targets: new Set(), wallets: new Set() };
+}
+
+function retrySize(retry: MirrorRetry): number {
+  return retry.principals.length + retry.targets.length + retry.wallets.length;
 }
 
 /** Where the mirror is reading: the height and how it got there. */
@@ -210,33 +229,6 @@ export function feedEffects(records: readonly ChainFeedRecord[]): FeedEffects {
   return effects;
 }
 
-/**
- * Whether height ranges (`[from, to]`, ascending) cover every height from
- * `from` to `to` without a gap.
- */
-export function covers(
-  ranges: readonly [number, number][],
-  from: number,
-  to: number
-): boolean {
-  let next = from;
-  for (const [start, end] of ranges) {
-    if (start > next) break;
-    next = Math.max(next, end + 1);
-    if (next > to) return true;
-  }
-  return next > to;
-}
-
-/** Merged, closing or walletless: nothing of it is written. */
-export function isInactive(identity: ChainIdentity): boolean {
-  return (
-    !!identity.mergedInto ||
-    !identity.wallets.length ||
-    (!!identity.status && identity.status.toLowerCase() !== 'active')
-  );
-}
-
 function toNumber(value: string | number | null | undefined): number {
   const n = Number(value ?? 0);
   return Number.isFinite(n) ? n : 0;
@@ -256,9 +248,11 @@ function toNumber(value: string | number | null | undefined): number {
 export class IdentityChainMirror {
   private readonly identities = new Map<string, ChainIdentity | null>();
   private keyWidth = MAX_CONSOLIDATION_KEY_LENGTH;
-  /** The import's heights, as the run read them (null before). */
-  private importDoneHeight: number | null = null;
-  private importStartHeight: number | null = null;
+  /** Keys a run failed to write, saved with the state. */
+  private retry: RetrySets = emptyRetrySets();
+  /** The keys earlier runs left, tried again once by this run. */
+  private leftByEarlierRuns: MirrorRetry = NO_RETRY;
+  private readonly ids: ProfileIds;
   private readonly bindings: WalletBindingsFollower;
 
   constructor(
@@ -270,6 +264,19 @@ export class IdentityChainMirror {
     private readonly sleep: Sleep = realSleep
   ) {
     this.bindings = new WalletBindingsFollower(gateway, db, now, sleep);
+    this.ids = new ProfileIds(gateway, db, now);
+  }
+
+  /** The 6529.io profile id of a chain identity (mapped now if needed). */
+  profileIdOf(identity: ChainIdentity): Promise<string> {
+    return this.ids.profileIdOf(identity);
+  }
+
+  /** The profile id the profile site index files an identity under. */
+  profileIdForSites(
+    identity: ChainIdentity
+  ): Promise<{ profileId: string; imported: boolean }> {
+    return this.ids.profileIdForSites(identity);
   }
 
   /**
@@ -286,33 +293,6 @@ export class IdentityChainMirror {
     );
   }
 
-  /**
-   * The profile id the profile site index files an identity under, and
-   * whether the import made it: the mirror's own id (mapped now if needed)
-   * for an identity the mirror writes; for a merged or closed one, its
-   * mapping if it has one, else its legacy id, else the id derived from its
-   * principal, with nothing stored.
-   */
-  async profileIdForSites(
-    identity: ChainIdentity
-  ): Promise<{ profileId: string; imported: boolean }> {
-    const legacy = await this.legacyIdOf(identity);
-    if (!isInactive(identity)) {
-      return {
-        profileId: await this.profileIdOf(identity),
-        imported: legacy !== null
-      };
-    }
-    const principal = identity.principalId.toLowerCase();
-    return {
-      profileId:
-        (await this.db.profileIdOfPrincipal(principal)) ??
-        legacy ??
-        principalProfileId(principal),
-      imported: legacy !== null
-    };
-  }
-
   private report(): MirrorRunReport {
     return {
       mode: 'idle',
@@ -324,6 +304,7 @@ export class IdentityChainMirror {
       docProblems: [],
       skippedInactive: [],
       failed: [],
+      retryLeft: 0,
       regroupedWallets: [],
       orphanedProfiles: [],
       walletBindings: 0,
@@ -341,6 +322,12 @@ export class IdentityChainMirror {
     let state = await this.onThisChain(
       (await this.db.getState()) ?? this.emptyState()
     );
+    this.leftByEarlierRuns = state.retry;
+    this.retry = {
+      principals: new Set(state.retry.principals),
+      targets: new Set(state.retry.targets),
+      wallets: new Set(state.retry.wallets)
+    };
     const membership = await this.gateway.getMembership();
     const importState = membership?.import as
       | {
@@ -353,8 +340,10 @@ export class IdentityChainMirror {
       report.skipped = 'import_not_complete';
       return report;
     }
-    this.importDoneHeight = numberOrNull(importState.doneHeight);
-    this.importStartHeight = numberOrNull(importState.startHeight);
+    this.ids.setImportHeights(
+      numberOrNull(importState.startHeight),
+      numberOrNull(importState.doneHeight)
+    );
     this.keyWidth =
       (await this.db.consolidationKeyWidth()) ?? MAX_CONSOLIDATION_KEY_LENGTH;
     state = await this.listPlaceholders(state);
@@ -367,6 +356,7 @@ export class IdentityChainMirror {
     report.bindingsNextHeight = state.bindings_next_height;
     state = await this.syncIdentities(state, deadline, report);
     report.nextHeight = state.next_height;
+    report.retryLeft = retrySize(state.retry);
     return report;
   }
 
@@ -403,13 +393,23 @@ export class IdentityChainMirror {
       last_full_sync_at: null,
       bindings_next_height: null,
       chain_id: null,
-      placeholders_at: null
+      placeholders_at: null,
+      retry: NO_RETRY
     };
   }
 
+  /** Saves the state with the keys left to try again. */
   private async save(state: MirrorState): Promise<MirrorState> {
-    await this.db.saveState(state, this.now());
-    return state;
+    const saved: MirrorState = {
+      ...state,
+      retry: {
+        principals: Array.from(this.retry.principals),
+        targets: Array.from(this.retry.targets),
+        wallets: Array.from(this.retry.wallets)
+      }
+    };
+    await this.db.saveState(saved, this.now());
+    return saved;
   }
 
   // ---------------------------------------------------------------- full sync
@@ -417,6 +417,9 @@ export class IdentityChainMirror {
   private async startFullSync(state: MirrorState): Promise<MirrorState> {
     const head = await this.gateway.getHead(true);
     logger.info(`[FULL SYNC FROM HEIGHT ${head.finalizedHeight}]`);
+    // The full sync writes everything again: nothing is left to retry.
+    this.retry = emptyRetrySets();
+    this.leftByEarlierRuns = NO_RETRY;
     return await this.save({
       ...state,
       sync_from_height: head.finalizedHeight,
@@ -429,9 +432,11 @@ export class IdentityChainMirror {
 
   /**
    * The chain the mirror reads is named by its network id. On another one
-   * (a relaunch) the wallet bindings and the identity tables start again:
-   * an empty bindings table, and a full sync once its import completes. A
-   * gateway that gives no network id changes nothing.
+   * (a relaunch, which only test chains have): an empty bindings table, the
+   * mappings of identities made on the old chain removed, and a full sync
+   * once the new chain's import completes; rows of identities only the old
+   * chain had are not deleted. A gateway that gives no network id changes
+   * nothing.
    */
   private async onThisChain(state: MirrorState): Promise<MirrorState> {
     const network =
@@ -487,10 +492,15 @@ export class IdentityChainMirror {
         source: 'FULL_SYNC'
       };
       for (const identity of page?.items ?? []) {
-        await this.isolated(identity.principalId, report, async () => {
-          await this.applyIdentity(identity, report, at);
-          await this.syncTargetRatings(identity, report, at);
-        });
+        await this.isolated(
+          ['principals', 'targets'],
+          identity.principalId,
+          report,
+          async () => {
+            await this.applyIdentity(identity, report, at);
+            await this.syncTargetRatings(identity, report, at);
+          }
+        );
       }
       state = await this.save(
         page?.next
@@ -552,14 +562,9 @@ export class IdentityChainMirror {
   }
 
   private async allIdentities(): Promise<ChainIdentity[]> {
-    const all: ChainIdentity[] = [];
-    let after: string | null = null;
-    for (;;) {
-      const page = await this.gateway.listIdentities({ after, limit: 500 });
-      all.push(...(page?.items ?? []));
-      if (!page?.next) return all;
-      after = page.next;
-    }
+    return await allPages((after) =>
+      this.gateway.listIdentities({ after, limit: 500 })
+    );
   }
 
   private async fullSyncPairs(state: MirrorState) {
@@ -597,19 +602,16 @@ export class IdentityChainMirror {
       wanted.set(row.from_address, list);
     };
     for (let useCase = 1; useCase <= LAST_USE_CASE; useCase++) {
-      let after: string | null = null;
-      for (;;) {
-        const page = await this.gateway.getDelegations(
+      const records = await allPages((after) =>
+        this.gateway.getDelegations(
           { byUseCase: useCase },
           { after, limit: 1000 }
-        );
-        for (const record of page?.items ?? []) {
-          for (const wallet of await this.walletsOfHolder(record)) {
-            add(wallet, record);
-          }
+        )
+      );
+      for (const record of records) {
+        for (const wallet of await this.walletsOfHolder(record)) {
+          add(wallet, record);
         }
-        if (!page?.next) break;
-        after = page.next;
       }
     }
     const wallets = new Set<string>([
@@ -639,7 +641,7 @@ export class IdentityChainMirror {
     deadline: number,
     report: MirrorRunReport
   ): Promise<MirrorState> {
-    let state = initial;
+    let state = await this.retryFailed(initial, report);
     while (this.now() < deadline) {
       const from = Number(state.next_height);
       const read = await readWholeBlocks(this.gateway, from, {
@@ -664,8 +666,44 @@ export class IdentityChainMirror {
       });
       report.feedBlocks += read.blocks.length;
       state = await this.save({ ...state, next_height: read.nextHeight });
+      if (retrySize(state.retry) > RETRY_LIMIT) {
+        logger.warn(`[OVER ${RETRY_LIMIT} TO RETRY] [STARTING A FULL SYNC]`);
+        return await this.startFullSync(state);
+      }
     }
     return state;
+  }
+
+  /**
+   * Tries again, once a run, what earlier runs could not write and is still
+   * left, read at the gateway's finalized height (past the last page read).
+   * What fails again stays for the next run.
+   */
+  private async retryFailed(
+    state: MirrorState,
+    report: MirrorRunReport
+  ): Promise<MirrorState> {
+    const left = (kind: RetryKind) =>
+      new Set(
+        this.leftByEarlierRuns[kind].filter((it) => this.retry[kind].has(it))
+      );
+    const principals = left('principals');
+    const targets = left('targets');
+    const wallets = left('wallets');
+    this.leftByEarlierRuns = NO_RETRY;
+    if (!principals.size && !targets.size && !wallets.size) return state;
+    this.identities.clear();
+    await this.applyEffects(
+      {
+        principals,
+        wallets: new Set<string>(),
+        ratingTargets: targets,
+        delegationHolders: wallets
+      },
+      report,
+      { height: Number(state.next_height) - 1, source: 'FEED' }
+    );
+    return await this.save(state);
   }
 
   /**
@@ -678,7 +716,7 @@ export class IdentityChainMirror {
     state: MirrorState,
     read: { nextHeight: number; network: string | null }
   ): Promise<boolean> {
-    if (state.chain_id && read.network && read.network !== state.chain_id) {
+    if (isOtherChain(state.chain_id, read.network)) {
       logger.warn(`[FEED PAGE OF ANOTHER CHAIN] [${read.network}] [NEXT RUN]`);
       return false;
     }
@@ -692,18 +730,25 @@ export class IdentityChainMirror {
     return true;
   }
 
-  /** Runs one identity's work; a failure is logged and reported, not thrown. */
+  /**
+   * Runs one key's work. A failure is logged and reported, not thrown, and
+   * the key is kept to try again; a success takes it off.
+   */
   private async isolated(
-    principalId: string,
+    kinds: RetryKind[],
+    key: string,
     report: MirrorRunReport,
     work: () => Promise<void>
   ) {
+    const id = key.toLowerCase();
     try {
       await work();
+      kinds.forEach((kind) => this.retry[kind].delete(id));
     } catch (error) {
       const message = messageOf(error);
-      logger.error(`[IDENTITY ${principalId} NOT MIRRORED] ${message}`);
-      report.failed.push(`${principalId}: ${message}`);
+      logger.error(`[${id} NOT MIRRORED] ${message}`);
+      report.failed.push(`${id}: ${message}`);
+      kinds.forEach((kind) => this.retry[kind].add(id));
     }
   }
 
@@ -733,8 +778,11 @@ export class IdentityChainMirror {
     const touched = new Set<string>(effects.wallets);
     for (const principal of Array.from(principals)) {
       const identity = await this.identity(principal);
-      if (!identity) continue;
-      await this.isolated(principal, report, async () => {
+      if (!identity) {
+        this.retry.principals.delete(principal.toLowerCase());
+        continue;
+      }
+      await this.isolated(['principals'], principal, report, async () => {
         (await this.applyIdentity(identity, report, at)).forEach((it) =>
           touched.add(it)
         );
@@ -742,8 +790,11 @@ export class IdentityChainMirror {
     }
     for (const target of Array.from(effects.ratingTargets)) {
       const identity = await this.identity(target);
-      if (!identity) continue;
-      await this.isolated(target, report, () =>
+      if (!identity) {
+        this.retry.targets.delete(target.toLowerCase());
+        continue;
+      }
+      await this.isolated(['targets'], target, report, () =>
         this.syncTargetRatings(identity, report, at)
       );
     }
@@ -756,7 +807,7 @@ export class IdentityChainMirror {
       identity?.wallets.forEach((it) => touched.add(it.toLowerCase()));
     }
     for (const wallet of Array.from(touched)) {
-      await this.isolated(wallet, report, () =>
+      await this.isolated(['wallets'], wallet, report, () =>
         this.syncWalletDelegations(wallet, report)
       );
     }
@@ -791,125 +842,6 @@ export class IdentityChainMirror {
       report.docProblems.push(`${identity.principalId}: ${messageOf(error)}`);
       return undefined;
     }
-  }
-
-  /**
-   * The 6529.io profile id of a chain identity: its mapping, else
-   * - an imported identity's legacy id (its 6529.io profile id);
-   * - for an identity made on the chain, the listed placeholder profile of
-   *   the wallet that made it, when no principal holds it, the import didn't
-   *   take it, and this is the first identity that wallet was bound to, so
-   *   the wallet's follows and history stay with it;
-   * - else the principal id's first 16 bytes written as a UUID.
-   * The placeholders are listed before the mirror's first write and 6529.io
-   * makes none from switch-on, so a rebuild from the chain gives the same
-   * ids.
-   */
-  async profileIdOf(identity: ChainIdentity): Promise<string> {
-    const principalId = identity.principalId.toLowerCase();
-    const mapped = await this.db.profileIdOfPrincipal(principalId);
-    if (mapped) return mapped;
-    const { profileId: chosen, origin } = await this.chooseProfileId(identity);
-    try {
-      await this.db.executeNativeQueriesInTransaction((conn) =>
-        this.db.insertMapping(principalId, chosen, origin, this.now(), conn)
-      );
-    } catch (error) {
-      // Another run mapped it meanwhile: use that.
-      const again = await this.db.profileIdOfPrincipal(principalId);
-      if (again) return again;
-      throw error;
-    }
-    return chosen;
-  }
-
-  private async chooseProfileId(
-    identity: ChainIdentity
-  ): Promise<{ profileId: string; origin: string }> {
-    const principalId = identity.principalId.toLowerCase();
-    const legacy = await this.legacyIdOf(identity);
-    if (legacy) return { profileId: legacy, origin: 'LEGACY' };
-    const wallet = await this.foundingWalletOf(identity);
-    const placeholder = wallet
-      ? await this.db.unmappedPlaceholderProfile(wallet)
-      : null;
-    const takesIt =
-      !!wallet &&
-      !!placeholder &&
-      !(await this.gateway.getIdentityByLegacyProfileId(placeholder)) &&
-      (await this.firstBoundTo(wallet, principalId, identity.createdHeight));
-    return takesIt
-      ? { profileId: placeholder!.toLowerCase(), origin: 'FOUNDER' }
-      : { profileId: principalProfileId(principalId), origin: 'NEW' };
-  }
-
-  /**
-   * The wallet that made the identity: the gateway's founder field; until
-   * the gateway gives it, the anchor when it has been bound to the identity
-   * since its creation; else none. Its placeholder goes to this identity
-   * only when it is the first the wallet was ever bound to (firstBoundTo),
-   * so that a wallet that made two identities gives it to the first
-   * whatever order a rebuild reads them in.
-   */
-  private async foundingWalletOf(
-    identity: ChainIdentity
-  ): Promise<string | null> {
-    if (identity.founder) return identity.founder.toLowerCase();
-    if (!identity.anchor) return null;
-    const binding = await this.gateway.getMembershipWallet(identity.anchor);
-    const sinceCreation =
-      binding?.principalId?.toLowerCase() ===
-        identity.principalId.toLowerCase() &&
-      Number(binding?.firstBoundHeight) === Number(identity.createdHeight);
-    return sinceCreation ? identity.anchor.toLowerCase() : null;
-  }
-
-  /**
-   * Whether `principal` is the first identity `wallet` was ever bound to,
-   * from its creation. A binding to another identity seen before then says
-   * no. Otherwise the history must cover every height from the import's
-   * start to the creation without a gap; when it doesn't (a gateway node
-   * that started later), the identity is not mapped now and is tried again
-   * next run, rather than given a guess a rebuild might not repeat.
-   */
-  private async firstBoundTo(
-    wallet: string,
-    principal: string,
-    createdHeight: number
-  ): Promise<boolean> {
-    const history = await this.gateway.getMembershipWalletHistory(wallet);
-    const first = history?.changes.find((it) => it.principalId !== null);
-    if (first && first.principalId !== principal) return false;
-    const start = this.importStartHeight;
-    if (
-      !history ||
-      start === null ||
-      !covers(history.ranges, start, createdHeight)
-    ) {
-      throw new ChainReadRetryLater(
-        `The history of ${wallet} doesn't reach back to the import: its identity is mapped later`,
-        'history_short'
-      );
-    }
-    return !!first && Number(first.height) === Number(createdHeight);
-  }
-
-  /**
-   * The imported profile id. The import's entry is asked when the gateway
-   * leaves the field out (older than the field), or gives none for an
-   * identity created no later than the import's end, so an imported
-   * identity is never taken for one made on the chain.
-   */
-  private async legacyIdOf(identity: ChainIdentity): Promise<string | null> {
-    const given = identity.legacyId;
-    const created = Number(identity.createdHeight);
-    const madeAfterImport =
-      this.importDoneHeight !== null && created > this.importDoneHeight;
-    if (given || (given === null && madeAfterImport)) {
-      return given?.toLowerCase() ?? null;
-    }
-    const entry = await this.gateway.getImportedIdentity(identity.principalId);
-    return entry?.legacyId?.toLowerCase() ?? null;
   }
 
   /**

@@ -4,11 +4,12 @@ import {
 } from '@/chain-gateway/chain-gateway.client';
 import { Logger } from '@/logging';
 import {
-  messageOf,
+  isOtherChain,
   readWholeBlocks,
   realSleep,
   Sleep
 } from './chain-feed-pages';
+import { messageOf } from './mirror-errors';
 import { IdentityChainMirrorDb, MirrorState } from './identity-chain-mirror.db';
 import {
   ADDRESS_BINDING_FAMILY,
@@ -109,7 +110,7 @@ export class WalletBindingsFollower {
         return await this.rebuild(state, report);
       }
       if (page.atHead || page.nextHeight <= from) break;
-      if (state.chain_id && page.network && page.network !== state.chain_id) {
+      if (isOtherChain(state.chain_id, page.network)) {
         logger.warn(
           `[FEED PAGE OF ANOTHER CHAIN] [${page.network}] [NEXT RUN]`
         );

@@ -274,15 +274,17 @@ describe('planIdentity', () => {
     const plan = planIdentity(
       chain({ doc: undefined, levelRaw: null }),
       state({
-        rows: [row(AB, U, { pfp: 'old-pfp', tdh: 100, xtdh: 2 })],
+        rows: [
+          row(AB, U, { pfp: 'old-pfp', tdh: 100, xtdh: 2, level_raw: 777 })
+        ],
         profile: profile(U, 'Alice', { website: 'old-site' })
       })
     );
     expect(plan.identity.pfp).toBe('old-pfp');
     expect(plan.profile.website).toBe('old-site');
     expect(plan.statements).toBeNull();
-    // REP + TDH; the xTDH (2) doesn't count, as on the chain.
-    expect(plan.identity.level_raw).toBe(30 + 100);
+    // No level from the gateway: the row's own, not a mix of sources.
+    expect(plan.identity.level_raw).toBe(777);
   });
 });
 
@@ -302,9 +304,15 @@ describe('principalProfileId', () => {
     const plan = planIdentity(chain(), state());
     expect(plan.identity.rep).toBe(30);
     expect(plan.identity.level_raw).toBe(1234);
+    // Without the chain's level, the row's own; a new row starts at 0.
     const noLevel = planIdentity(chain({ levelRaw: null }), state());
-    // REP + TDH, no xTDH (5 here), as the chain counts it.
-    expect(noLevel.identity.level_raw).toBe(30 + 1000);
+    expect(noLevel.identity.level_raw).toBe(0);
+    const kept = planIdentity(
+      chain({ levelRaw: null }),
+      state({ rows: [row(AB, U, { level_raw: 1500 })] })
+    );
+    expect(kept.identity.level_raw).toBe(1500);
+    expect(kept.identity.rep).toBe(30);
   });
 
   it("keeps another identity's row on its remaining wallets", () => {

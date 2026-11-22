@@ -8,32 +8,6 @@ import {
   ChainFeedPage
 } from '@/chain-gateway/chain-gateway.types';
 
-/** A thrown value's message. */
-export function messageOf(error: unknown): string {
-  return (error as Error)?.message ?? String(error);
-}
-
-/**
- * A read the port can't answer now, which the follower should try again
- * later: it counts as one attempt at that change, the person's later
- * changes wait, and everyone else's go on. Thrown when a wallet's identity
- * at the change's height is unknown, when the store's bytes don't match
- * their CID, and when an identity's profile id can't be settled yet.
- * Gateway outages throw their own errors.
- */
-export class ChainReadRetryLater extends Error {
-  readonly retryLater = true;
-
-  constructor(
-    message: string,
-    readonly reason: string
-  ) {
-    super(message);
-    Object.setPrototypeOf(this, new.target.prototype);
-    this.name = 'ChainReadRetryLater';
-  }
-}
-
 export type Sleep = (ms: number) => Promise<void>;
 
 export const realSleep: Sleep = (ms) =>
@@ -108,6 +82,33 @@ function continues(
   );
 }
 
+/**
+ * Whether a page was read from another chain than the one named (both
+ * known): it is then not used.
+ */
+export function isOtherChain(
+  chainId: string | null | undefined,
+  network: string | null | undefined
+): boolean {
+  return !!chainId && !!network && chainId !== network;
+}
+
+/** Every item of a paged list, read on while the gateway gives a `next`. */
+export async function allPages<T>(
+  read: (
+    after: string | null
+  ) => Promise<{ items: T[]; next: string | null } | null>
+): Promise<T[]> {
+  const all: T[] = [];
+  let after: string | null = null;
+  for (;;) {
+    const page = await read(after);
+    all.push(...(page?.items ?? []));
+    if (!page?.next) return all;
+    after = page.next;
+  }
+}
+
 /** Whole blocks of the feed, and the height to read next. */
 export interface WholeBlocks {
   /** Each with all its records (the family filter's). */
@@ -141,16 +142,29 @@ export async function readWholeBlocks(
   }
   const blocks = [...first.blocks];
   let page = first;
+  // The one block a call completes: the first page's cut block.
+  let completing: number | null = null;
   for (;;) {
     const cut = blocks[blocks.length - 1];
     if (!cut || cut.complete !== false) {
       return { blocks, nextHeight: page.nextHeight, atHead: false, network };
     }
-    const rest = await readFeedPage(gateway, page.next, opts);
-    if (!rest || !continues(cut, page.next, rest)) {
+    const height = Number(cut.height);
+    completing = completing ?? height;
+    const rest =
+      height === completing
+        ? await readFeedPage(gateway, page.next, opts)
+        : null;
+    if (
+      !rest ||
+      !continues(cut, page.next, rest) ||
+      isOtherChain(network, rest.network)
+    ) {
+      // Left out, to be read from its height next time: a block whose rest
+      // can't be read now, or a second block a page ended inside.
       return {
         blocks: blocks.slice(0, -1),
-        nextHeight: Number(cut.height),
+        nextHeight: height,
         atHead: false,
         network
       };

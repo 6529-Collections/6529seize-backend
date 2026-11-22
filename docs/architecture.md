@@ -892,7 +892,11 @@ the mirror's first write (`identity_chain_placeholders`), and 6529.io makes
 none from switch-on, so a rebuild from the chain gives the same ids. A placeholder
 profile whose wallets all join an identity is left without an identity row
 and logged; its ratings and follows are not moved; `identity_chain_mirror_state`
-holds its place in the feed. Profile documents come from the gateway's store.
+holds its place in the feed. An identity, a rating target or a wallet whose
+rows fail to be written is logged and kept in the state (`retry_json`), saved
+with the feed's place, and tried again once by each later run until it is
+written; a full sync starts that list again, and past 10,000 keys the mirror
+starts one. Profile documents come from the gateway's store.
 
 One writer per `identities` column: the mirror writes `rep`, `cic`,
 `level_raw` and the profile columns, all from the chain (the level is REP +

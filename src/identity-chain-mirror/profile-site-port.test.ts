@@ -64,7 +64,7 @@ function setup() {
     gateway as never,
     profileIdOf,
     walletPrincipalAt,
-    { deadline: 5_000, now: () => now }
+    { deadline: 5_000, now: () => now, sleep: async () => undefined }
   );
   return {
     gateway,
@@ -408,6 +408,33 @@ describe('GatewayProfileSitePort', () => {
     const identity = await port.getIdentityByPrincipal(P, { height: 7 });
     expect(identity?.wallets).toEqual([W]);
     expect(identity?.imported).toBe(false);
+  });
+
+  it('throws gone when the feed no longer holds the height asked for', async () => {
+    const { gateway, port } = setup();
+    gateway.getMembership.mockResolvedValue({
+      import: { completed: true, startHeight: 5, doneHeight: 9 }
+    });
+    gateway.getChanges.mockRejectedValue(
+      new ChainGatewayError('gone', 410, 'gone', '/v1/feed')
+    );
+    await expect(port.getChanges(10)).rejects.toMatchObject({
+      code: 'gone',
+      status: 410
+    });
+    expect(gateway.getChanges).toHaveBeenCalledTimes(3);
+  });
+
+  it('throws any other refusal of a read at a height as it is', async () => {
+    const { gateway, port, walletPrincipalAt } = setup();
+    const down = new ChainGatewayError('down', 503, 'unavailable', '/v1/x');
+    gateway.getIdentityByPrincipal
+      .mockResolvedValueOnce(now)
+      .mockRejectedValueOnce(down);
+    await expect(port.getIdentityByPrincipal(P, { height: 7 })).rejects.toBe(
+      down
+    );
+    expect(walletPrincipalAt).not.toHaveBeenCalled();
   });
 
   it('lists the wallets bound then when the gateway no longer holds the height', async () => {

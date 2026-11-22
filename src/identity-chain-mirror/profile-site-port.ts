@@ -9,13 +9,8 @@ import {
   ChainIdentity
 } from '@/chain-gateway/chain-gateway.types';
 import { RequestContext } from '@/request.context';
-import {
-  ChainReadRetryLater,
-  messageOf,
-  readWholeBlocks
-} from './chain-feed-pages';
-
-export { ChainReadRetryLater };
+import { readWholeBlocks, Sleep } from './chain-feed-pages';
+import { ChainReadRetryLater, messageOf } from './mirror-errors';
 import { WalletPrincipalUnknownError } from './identity-chain-lookups';
 import { numberOrNull } from './identity-chain-mirror.db';
 import { decodeProfileDoc } from './profile-doc';
@@ -26,6 +21,8 @@ import { decodeProfileDoc } from './profile-doc';
  * are the index's chain port, written out here so this module stands on its
  * own; TypeScript matches them by shape.
  */
+
+export { ChainReadRetryLater };
 
 /** Profile[principalId] = (version, docCid, updatedHeight). */
 export const PROFILE_FAMILY = '0x0104';
@@ -184,10 +181,14 @@ export class GatewayProfileSitePort implements ProfileSiteChainPort {
       wallet: string,
       height: number
     ) => Promise<string | null>,
-    /** Past `deadline`, a read of changes ends the follower's pass. */
+    /**
+     * Past `deadline`, a read of changes ends the follower's pass; `sleep`
+     * waits between reads of a height the feed says is gone.
+     */
     private readonly options: {
       readonly deadline?: number;
       readonly now?: () => number;
+      readonly sleep?: Sleep;
     } = {}
   ) {}
 
@@ -209,7 +210,8 @@ export class GatewayProfileSitePort implements ProfileSiteChainPort {
     const from = Math.max(fromHeight, importStart);
     const read = await readWholeBlocks(this.gateway, from, {
       limit: FEED_PAGE_BLOCKS,
-      families: [PROFILE_FAMILY]
+      families: [PROFILE_FAMILY],
+      sleep: this.options.sleep
     });
     if (!read) {
       throw new ChainGatewayError(

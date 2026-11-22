@@ -358,9 +358,9 @@ export function planIdentity(
   const doc = chain.doc;
   const ownRow = state.rows.find((it) => it.profile_id === chain.profileId);
   const metrics = carriedMetrics(chain, state.rows);
-  // The chain's level is REP + TDH (no xTDH); without one from the gateway,
-  // the same from the chain's REP and 6529.io's TDH.
-  const levelRaw = chain.levelRaw ?? chain.rep + Number(metrics.tdh);
+  // The chain's level (REP + TDH); without one from the gateway (a node that
+  // lacks the day's lists), the level the row has, rather than a mix.
+  const levelRaw = chain.levelRaw ?? Number(ownRow?.level_raw ?? 0);
   const identity: IdentityRowState = {
     consolidation_key: key,
     profile_id: chain.profileId,

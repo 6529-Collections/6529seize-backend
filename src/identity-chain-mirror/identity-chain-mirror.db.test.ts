@@ -15,7 +15,7 @@ import {
   RATINGS_TABLE
 } from '@/constants';
 import { HELP_BOT_CREDIT_CATEGORY } from '@/help-bot/help-bot.config';
-import { IdentityChainMirrorDb } from './identity-chain-mirror.db';
+import { IdentityChainMirrorDb, NO_RETRY } from './identity-chain-mirror.db';
 import { consolidationKeyOf, planIdentity } from './identity-plan';
 import { EMPTY_PROFILE_DOC_FIELDS } from './profile-doc';
 
@@ -135,7 +135,8 @@ describeWithSeed(
           last_full_sync_at: 5,
           bindings_next_height: null,
           chain_id: null,
-          placeholders_at: null
+          placeholders_at: null,
+          retry: NO_RETRY
         },
         9
       );
@@ -292,7 +293,8 @@ describeWithSeed(
           last_full_sync_at: 1,
           bindings_next_height: 12,
           chain_id: '0xabc',
-          placeholders_at: 5
+          placeholders_at: 5,
+          retry: { principals: [P], targets: [], wallets: [B] }
         },
         1
       );
@@ -300,7 +302,8 @@ describeWithSeed(
         expect.objectContaining({
           bindings_next_height: 12,
           chain_id: '0xabc',
-          placeholders_at: 5
+          placeholders_at: 5,
+          retry: { principals: [P], targets: [], wallets: [B] }
         })
       );
       expect(await db.walletBindingAt(B)).toEqual({

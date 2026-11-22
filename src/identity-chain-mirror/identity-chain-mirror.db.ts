@@ -47,11 +47,55 @@ export interface MirrorState {
   readonly chain_id: string | null;
   /** When the placeholder profiles were listed; null before. */
   readonly placeholders_at: number | null;
+  /** What the mirror could not write, tried again by the next run. */
+  readonly retry: MirrorRetry;
+}
+
+/**
+ * Identities whose rows, targets whose ratings and wallets whose delegations
+ * failed to be written, by key (lowercase).
+ */
+export interface MirrorRetry {
+  readonly principals: readonly string[];
+  readonly targets: readonly string[];
+  readonly wallets: readonly string[];
+}
+
+export const NO_RETRY: MirrorRetry = {
+  principals: [],
+  targets: [],
+  wallets: []
+};
+
+/** The retry column's lists; anything unreadable is an empty list. */
+export function retryOf(json: string | null | undefined): MirrorRetry {
+  let parsed: Record<string, unknown> = {};
+  try {
+    parsed = json ? (JSON.parse(json) ?? {}) : {};
+  } catch {
+    parsed = {};
+  }
+  const list = (value: unknown): string[] =>
+    Array.isArray(value)
+      ? value.filter((it): it is string => typeof it === 'string')
+      : [];
+  return {
+    principals: list(parsed.principals),
+    targets: list(parsed.targets),
+    wallets: list(parsed.wallets)
+  };
 }
 
 /** A nullable number column. */
 export function numberOrNull(value: unknown): number | null {
   return value === null || value === undefined ? null : Number(value);
+}
+
+function retryJson(retry: MirrorRetry | undefined): string | null {
+  const { principals = [], targets = [], wallets = [] } = retry ?? NO_RETRY;
+  return principals.length || targets.length || wallets.length
+    ? JSON.stringify({ principals, targets, wallets })
+    : null;
 }
 
 export interface RatingRowWrite {
@@ -175,9 +219,11 @@ export class IdentityChainMirrorDb extends LazyDbAccessCompatibleService {
   // ---------------------------------------------------------------- state
 
   async getState(conn?: Conn): Promise<MirrorState | null> {
-    const row = await this.db.oneOrNull<MirrorState>(
+    const row = await this.db.oneOrNull<
+      Omit<MirrorState, 'retry'> & { retry_json: string | null }
+    >(
       `select next_height, sync_from_height, sync_phase, sync_after, last_full_sync_at,
-              bindings_next_height, chain_id, placeholders_at
+              bindings_next_height, chain_id, placeholders_at, retry_json
        from ${IDENTITY_CHAIN_MIRROR_STATE_TABLE} where id = :id`,
       { id: STATE_ID },
       conn ? { wrappedConnection: conn } : undefined
@@ -191,7 +237,8 @@ export class IdentityChainMirrorDb extends LazyDbAccessCompatibleService {
       last_full_sync_at: numberOrNull(row.last_full_sync_at),
       bindings_next_height: numberOrNull(row.bindings_next_height),
       chain_id: row.chain_id ?? null,
-      placeholders_at: numberOrNull(row.placeholders_at)
+      placeholders_at: numberOrNull(row.placeholders_at),
+      retry: retryOf(row.retry_json)
     };
   }
 
@@ -199,20 +246,26 @@ export class IdentityChainMirrorDb extends LazyDbAccessCompatibleService {
     await this.db.execute(
       `insert into ${IDENTITY_CHAIN_MIRROR_STATE_TABLE}
          (id, next_height, sync_from_height, sync_phase, sync_after, last_full_sync_at,
-          bindings_next_height, chain_id, placeholders_at, updated_at)
+          bindings_next_height, chain_id, placeholders_at, retry_json, updated_at)
        values (:id, :next_height, :sync_from_height, :sync_phase, :sync_after, :last_full_sync_at,
-          :bindings_next_height, :chain_id, :placeholders_at, :now)
+          :bindings_next_height, :chain_id, :placeholders_at, :retry_json, :now)
        on duplicate key update
          next_height = values(next_height),
          bindings_next_height = values(bindings_next_height),
          chain_id = values(chain_id),
          placeholders_at = values(placeholders_at),
+         retry_json = values(retry_json),
          sync_from_height = values(sync_from_height),
          sync_phase = values(sync_phase),
          sync_after = values(sync_after),
          last_full_sync_at = values(last_full_sync_at),
          updated_at = values(updated_at)`,
-      { id: STATE_ID, ...state, now },
+      {
+        id: STATE_ID,
+        ...state,
+        retry_json: retryJson(state.retry),
+        now
+      },
       conn ? { wrappedConnection: conn } : undefined
     );
   }
