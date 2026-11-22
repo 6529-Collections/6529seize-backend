@@ -32,6 +32,14 @@ export class AppFeatures {
   }
 
   /**
+   * Identity lookups by wallet, handle and profile id, login and handle
+   * availability read the 6529 chain (src/identity-chain-mirror).
+   */
+  public isIdentityReadsFromChainEnabled(): boolean {
+    return this.isFeatureEnabled('IDENTITY_READS_FROM_CHAIN');
+  }
+
+  /**
    * Large viewer group lists are read from viewer_group_set_members by their
    * hash instead of travelling in each statement (waves/viewer-group-sets).
    */

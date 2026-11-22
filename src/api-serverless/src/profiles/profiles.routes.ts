@@ -45,6 +45,10 @@ import {
   profilePictureIpfsUploadService
 } from './profile-picture-ipfs-upload';
 import { ProfilePictureUrlSchema } from '@/api/profiles/profile-picture-url';
+import {
+  chainIdentityReads,
+  identityReadsFromChain
+} from '@/identity-chain-mirror/chain-identity-reads';
 
 const router = asyncRouter();
 const logger = Logger.get('ProfilesRoutes');
@@ -96,6 +100,12 @@ router.get(
         available: false,
         message: `Invalid username. Use 3-15 letters, numbers, or underscores.`
       });
+    }
+    if (identityReadsFromChain()) {
+      // Handles are claimed on the 6529 chain: its rule decides.
+      return res
+        .status(200)
+        .send(await chainIdentityReads.handleAvailability(proposedHandle));
     }
     const authenticatedHandle = maybeAuthenticatedWallet
       ? (
