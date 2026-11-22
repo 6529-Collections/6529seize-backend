@@ -24,6 +24,9 @@ export const E2EE_CHECK_KEYS = {
 
 /** The ids the seed gives its group, attachment, backup and report. */
 export const E2EE_CHECK_IDS = {
+  /** A public wave and a drop in it: reports are recorded only on those. */
+  publicWave: 'rebuild-check-public-wave',
+  publicDrop: 'rebuild-check-public-drop',
   group: `0x${'c1'.repeat(32)}`,
   blob: `0x${'b1'.repeat(16)}`,
   backup: `0x${'bb'.repeat(16)}`,

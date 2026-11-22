@@ -20,6 +20,8 @@ import {
   E2EE_PUSH_THROTTLE_TABLE,
   E2EE_RATE_COUNTERS_TABLE,
   E2EE_REPORT_ACCESS_LOG_TABLE,
+  E2EE_RECORD_ITEMS_TABLE,
+  E2EE_RELAY_DELETIONS_TABLE,
   E2EE_RELAY_OUTBOX_TABLE,
   E2EE_REPORTS_TABLE,
   E2EE_STREAMS_TABLE,
@@ -693,6 +695,66 @@ export class E2eeRelayOutboxEntity {
   readonly event!: string | null;
 
   /** Relay URLs that hold the record, JSON array. */
+  @Column({ type: 'text' })
+  readonly held_by!: string;
+
+  @Column({ type: 'int', default: 0 })
+  readonly attempts!: number;
+
+  @Column({ type: 'varchar', length: 255, nullable: true, default: null })
+  readonly last_error!: string | null;
+
+  @Column({ type: 'bigint' })
+  readonly created_at!: number;
+}
+
+/**
+ * Which records carry an item the delivery service may delete (a Welcome,
+ * a backup chunk's bytes, an attachment, a report), by stream position,
+ * with the record's event id once signed: what a DEL names. An index the
+ * rebuild refills from the records.
+ */
+@Entity(E2EE_RECORD_ITEMS_TABLE)
+@Index('e2ee_record_items_key_idx', ['wave', 'item_key'])
+export class E2eeRecordItemEntity {
+  @PrimaryColumn({ type: 'varchar', length: 200 })
+  readonly wave!: string;
+
+  @PrimaryColumn({ type: 'bigint' })
+  readonly pos!: number;
+
+  @PrimaryColumn({ type: 'varchar', length: 200 })
+  readonly item_key!: string;
+
+  @Column({ type: 'varchar', length: 66, nullable: true, default: null })
+  readonly event_id!: string | null;
+
+  @Column({ type: 'bigint' })
+  readonly created_at!: number;
+}
+
+/**
+ * A DEL (kind 12) waiting for the relays: the stream positions of records
+ * whose item MySQL deleted or expired. Ephemeral: deleted, with the items'
+ * index rows, once every relay holds it.
+ */
+@Entity(E2EE_RELAY_DELETIONS_TABLE)
+@Index('e2ee_relay_deletions_created_idx', ['created_at'])
+export class E2eeRelayDeletionEntity {
+  @PrimaryGeneratedColumn('increment', { type: 'bigint' })
+  readonly id!: number;
+
+  @Column({ type: 'varchar', length: 200 })
+  readonly wave!: string;
+
+  /** Stream positions of the records to delete, JSON array (at most 64). */
+  @Column({ type: 'text' })
+  readonly positions!: string;
+
+  /** The signed DEL event, once signed. */
+  @Column({ type: 'mediumtext', nullable: true, default: null })
+  readonly event!: string | null;
+
   @Column({ type: 'text' })
   readonly held_by!: string;
 

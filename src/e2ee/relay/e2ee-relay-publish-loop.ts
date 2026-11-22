@@ -32,8 +32,14 @@ const HEAD_CHECK_STREAMS = 200;
 
 export interface E2eeRelayLoopDeps {
   readonly settings: () => E2eeRelaySettings;
-  readonly publisher: Pick<E2eeStreamPublisher, 'publishPending'>;
-  readonly store: Pick<E2eeStreamStore, 'recentHeads' | 'countOutbox'>;
+  readonly publisher: Pick<
+    E2eeStreamPublisher,
+    'mode' | 'publishPending' | 'publishDeletions'
+  >;
+  readonly store: Pick<
+    E2eeStreamStore,
+    'recentHeads' | 'countOutbox' | 'countDeletions'
+  >;
   readonly pool: () => E2eeRelayPool;
   readonly now: () => number;
 }
@@ -46,6 +52,8 @@ export interface E2eeRelayLoopReport {
     readonly rows: number;
     readonly oldestAgeMs: number | null;
   };
+  /** DELs sent this run, and those still waiting (a relay refused them). */
+  readonly deletions: { readonly done: number; readonly waiting: number };
   readonly heads: {
     readonly checked: number;
     /** `wave@relay` of each relay found behind a stream's head. */
@@ -182,17 +190,20 @@ async function checkHead(
 export async function runE2eeRelayPublishLoop(
   deps: E2eeRelayLoopDeps
 ): Promise<E2eeRelayLoopReport> {
-  const mode = deps.settings().mode;
+  const mode = deps.publisher.mode();
   if (mode === 'off') {
     return {
       mode,
       published: { waves: 0, complete: 0 },
       outbox: { rows: 0, oldestAgeMs: null },
+      deletions: { done: 0, waiting: 0 },
       heads: { checked: 0, behind: [], repaired: 0, unrepaired: [] }
     };
   }
   const published = await deps.publisher.publishPending(PENDING_WAVES);
+  const deleted = await deps.publisher.publishDeletions(PENDING_WAVES);
   const outbox = await deps.store.countOutbox();
+  const waitingDeletions = await deps.store.countDeletions();
   const heads = await deps.store.recentHeads(
     deps.now() - HEAD_CHECK_WINDOW_MS,
     HEAD_CHECK_STREAMS
@@ -216,9 +227,10 @@ export async function runE2eeRelayPublishLoop(
           ? null
           : deps.now() - outbox.oldestCreatedAt
     },
+    deletions: { done: deleted.done, waiting: waitingDeletions },
     heads: { checked: heads.length, behind, repaired, unrepaired }
   };
-  if (unrepaired.length || outbox.rows) {
+  if (unrepaired.length || outbox.rows || waitingDeletions) {
     logger.warn(`[LAG] ${JSON.stringify(report)}`);
   }
   return report;

@@ -145,8 +145,8 @@ async function appendAll(
   for (const record of records) await batch.append(connection, record);
 }
 
-/** A device inbox snapshot's records carry about this much Welcome data. */
-const INBOX_RECORD_BYTES = 2 * 1024 * 1024;
+/** Chunk rows (no bytes) per backup snapshot record: well under 4 MiB. */
+const BACKUP_CHUNKS_PER_RECORD = 2000;
 
 /**
  * The stream owner for a profile's backups. The relay families key `bk` by
@@ -393,8 +393,8 @@ export class E2eeRecordWriters {
    * Welcomes and the roster rows its revocation closed, after deleting
    * every delivery the stream held, so acks made while records were off
    * are carried. Locks the stream first, so a live write that lands
-   * during the copy is recorded after it. Large inboxes go out in several
-   * records of about 2 MiB.
+   * during the copy is recorded after it. Each Welcome goes in a record of
+   * its own.
    */
   async inboxSnapshot(
     batch: E2eeRecordBatch,
@@ -432,24 +432,14 @@ export class E2eeRecordWriters {
         ...puts(E2EE_GROUP_ROSTER_TABLE, revoked)
       ]
     ];
-    let bytes = 0;
+    // One Welcome per record, so an ack's DEL names only its own.
     for (const delivery of deliveries) {
       const welcome = welcomes.find((row) => row.id === delivery.welcome_id);
       if (!welcome) continue;
-      const size =
-        (Buffer.isBuffer(welcome.data) ? welcome.data.length : 0) +
-        (Buffer.isBuffer(welcome.ratchet_tree)
-          ? welcome.ratchet_tree.length
-          : 0);
-      if (bytes > 0 && bytes + size > INBOX_RECORD_BYTES) {
-        records.push([]);
-        bytes = 0;
-      }
-      bytes += size;
-      records[records.length - 1].push(
+      records.push([
         ...puts(E2EE_WELCOMES_TABLE, [welcome]),
         ...puts(E2EE_WELCOME_DELIVERIES_TABLE, [delivery])
-      );
+      ]);
     }
     for (const ops of records) {
       await batch.append(connection, {
@@ -483,6 +473,10 @@ export class E2eeRecordWriters {
         }
       ]
     });
+    // The relays keep the Welcome no longer than the inbox does.
+    await batch.deleteItems(connection, 'dv', input.deviceKey, [
+      `welcome:${input.welcomeId}`
+    ]);
   }
 
   /** A device row after any change: registration, renewal, label, revocation. */
@@ -546,6 +540,8 @@ export class E2eeRecordWriters {
         'id'
       )
     ).filter((row) => row.removal_kind === 'revoke');
+    // Its pending Welcomes are deleted with it.
+    await batch.deleteItems(connection, 'dv', input.deviceKey, ['welcome:*']);
     if (!closed.length) return;
     await batch.append(connection, {
       family: 'dv',
@@ -573,13 +569,9 @@ export class E2eeRecordWriters {
       connection,
       'id'
     );
-    await batch.append(connection, {
-      family: 'dr',
-      owner: input.deviceKey,
-      kind: E2eeRecordKind.RECORD,
-      refs: ['mls-lastresort', String(input.ciphersuite)],
-      type: 'last-resort',
-      ops: [
+    // A KeyPackage per record: a RECORD body is at most 16 KiB.
+    const slices: E2eeRowOp[][] = [
+      [
         {
           op: 'del',
           table: E2EE_KEY_PACKAGES_TABLE,
@@ -589,9 +581,20 @@ export class E2eeRecordWriters {
             last_resort: true
           }
         },
-        ...puts(E2EE_KEY_PACKAGES_TABLE, rows)
-      ]
-    });
+        ...puts(E2EE_KEY_PACKAGES_TABLE, rows.slice(0, 1))
+      ],
+      ...rows.slice(1).map((row) => puts(E2EE_KEY_PACKAGES_TABLE, [row]))
+    ];
+    for (const ops of slices) {
+      await batch.append(connection, {
+        family: 'dr',
+        owner: input.deviceKey,
+        kind: E2eeRecordKind.RECORD,
+        refs: ['mls-lastresort', String(input.ciphersuite)],
+        type: 'last-resort',
+        ops
+      });
+    }
   }
 
   /** An attachment chunk as uploaded, bytes included whatever the store. */
@@ -733,6 +736,13 @@ export class E2eeRecordWriters {
         key: { object_key: objectKey }
       });
     }
+    // The relays keep a deleted chunk's bytes no longer than MySQL does.
+    await batch.deleteItems(
+      connection,
+      'bk',
+      e2eeBackupStreamOwner(input.profileId),
+      (input.deletedObjectKeys ?? []).map((key) => `object:${key}`)
+    );
     ops.push(...puts(E2EE_BACKUPS_TABLE, backups));
     if (input.appended) {
       const [chunk] = await this.reader.rows(
@@ -759,14 +769,34 @@ export class E2eeRecordWriters {
         });
       }
     }
-    await batch.append(connection, {
-      family: 'bk',
-      owner: e2eeBackupStreamOwner(input.profileId),
-      kind: E2eeRecordKind.SEALED,
-      refs: ['backup'],
-      type: 'backup',
-      ops
-    });
+    // A snapshot of a long backup goes out in slices of chunk rows, so no
+    // record's content passes the relays' payload limit.
+    const chunkPuts = ops.filter(
+      (op) => op.op === 'put' && op.table === E2EE_BACKUP_CHUNKS_TABLE
+    );
+    const first = input.snapshot
+      ? [
+          ...ops.filter((op) => !chunkPuts.includes(op)),
+          ...chunkPuts.slice(0, BACKUP_CHUNKS_PER_RECORD)
+        ]
+      : ops;
+    const rest = input.snapshot
+      ? chunkPuts.slice(BACKUP_CHUNKS_PER_RECORD)
+      : [];
+    const records = [first];
+    for (let at = 0; at < rest.length; at += BACKUP_CHUNKS_PER_RECORD) {
+      records.push(rest.slice(at, at + BACKUP_CHUNKS_PER_RECORD));
+    }
+    for (const slice of records) {
+      await batch.append(connection, {
+        family: 'bk',
+        owner: e2eeBackupStreamOwner(input.profileId),
+        kind: E2eeRecordKind.SEALED,
+        refs: ['backup'],
+        type: 'backup',
+        ops: slice
+      });
+    }
   }
 
   /**
@@ -779,7 +809,15 @@ export class E2eeRecordWriters {
   async moderationRowsChanged(
     batch: E2eeRecordBatch,
     connection: Conn,
-    change: { readonly table: string; readonly where: Where }
+    change: {
+      readonly table: string;
+      readonly where: Where;
+      /**
+       * The rows' older records go (a DEL): the evidence prune, after which
+       * the relays keep only the pruned row.
+       */
+      readonly dropOlder?: boolean;
+    }
   ): Promise<number> {
     if (!E2EE_MODERATION_TABLES.includes(change.table)) {
       throw new Error(`${change.table} is not a report table`);
@@ -808,15 +846,27 @@ export class E2eeRecordWriters {
       }
       return rows.length;
     }
-    await batch.append(connection, {
-      family: 'md',
-      owner: E2EE_MODERATION_INBOX,
-      kind: E2eeRecordKind.SEALED,
-      refs: ['report'],
-      type: 'report',
-      ops: puts(change.table, rows),
-      sealToModeration: true
-    });
+    // One row per record, so a DEL names only the row it should.
+    for (const row of rows) {
+      await batch.append(connection, {
+        family: 'md',
+        owner: E2EE_MODERATION_INBOX,
+        kind: E2eeRecordKind.SEALED,
+        refs: ['report'],
+        type: 'report',
+        ops: puts(change.table, [row]),
+        sealToModeration: true
+      });
+    }
+    if (change.dropOlder) {
+      await batch.deleteItems(
+        connection,
+        'md',
+        E2EE_MODERATION_INBOX,
+        rows.map((row) => `${change.table}:${String(row.id)}`),
+        true
+      );
+    }
     return rows.length;
   }
 }

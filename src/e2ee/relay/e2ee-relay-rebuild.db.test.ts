@@ -11,6 +11,7 @@ import { ApiE2eeReportCategory } from '@/api/generated/models/ApiE2eeReportCateg
 import { ApiE2eeSubmitEntryRequestKindEnum } from '@/api/generated/models/ApiE2eeSubmitEntryRequest';
 import {
   CONTENT_MODERATION_REPORTS_TABLE,
+  DELETED_DROPS_TABLE,
   DROPS_TABLE,
   E2EE_RELAY_OUTBOX_TABLE,
   E2EE_STREAMS_TABLE
@@ -86,6 +87,40 @@ const dmGroup = aUserGroup({ is_direct_message: true });
 const dmWave = aWave({ is_direct_message: true, chat_group_id: dmGroup.id });
 const DM_DROP = 'drop-in-a-legacy-dm';
 const PUBLIC_DROP = 'drop-in-a-public-wave';
+const publicWave = aWave({ is_direct_message: false });
+/** Author deletes are hard deletes: only `deleted_drops` keeps the wave. */
+const DELETED_DM_DROP = 'deleted-drop-in-a-legacy-dm';
+const DELETED_PUBLIC_DROP = 'deleted-drop-in-a-public-wave';
+/** A drop whose DM wave was deleted too: neither table knows the wave. */
+const DROP_OF_DELETED_WAVE = 'deleted-drop-of-a-deleted-dm-wave';
+
+function dropRow(serialNo: number, id: string, waveId: string) {
+  return {
+    serial_no: serialNo,
+    id,
+    wave_id: waveId,
+    author_id: 'pa',
+    created_at: NOW,
+    updated_at: null,
+    title: null,
+    parts_count: 1,
+    reply_to_drop_id: null,
+    reply_to_part_id: null,
+    drop_type: DropType.CHAT,
+    signature: null,
+    hide_link_preview: false
+  };
+}
+
+function deletedDrop(id: string, waveId: string) {
+  return {
+    id,
+    wave_id: waveId,
+    author_id: 'pa',
+    created_at: NOW - 1000,
+    deleted_at: NOW - 500
+  };
+}
 
 function hexBytes(bytes: number) {
   return `0x${randomBytes(bytes).toString('hex')}`;
@@ -134,25 +169,20 @@ function withoutActivity(value: unknown): unknown {
 
 const SEEDS = [
   withUserGroups([dmGroup]),
-  withWaves([dmWave]),
+  withWaves([dmWave, publicWave]),
   {
     table: DROPS_TABLE,
     rows: [
-      {
-        serial_no: 1,
-        id: DM_DROP,
-        wave_id: dmWave.id,
-        author_id: 'pa',
-        created_at: NOW,
-        updated_at: null,
-        title: null,
-        parts_count: 1,
-        reply_to_drop_id: null,
-        reply_to_part_id: null,
-        drop_type: DropType.CHAT,
-        signature: null,
-        hide_link_preview: false
-      }
+      dropRow(1, DM_DROP, dmWave.id),
+      dropRow(2, PUBLIC_DROP, publicWave.id)
+    ]
+  },
+  {
+    table: DELETED_DROPS_TABLE,
+    rows: [
+      deletedDrop(DELETED_DM_DROP, dmWave.id),
+      deletedDrop(DELETED_PUBLIC_DROP, publicWave.id),
+      deletedDrop(DROP_OF_DELETED_WAVE, 'a-deleted-dm-wave')
     ]
   }
 ];
@@ -401,6 +431,19 @@ describeWithSeed('e2ee relay records against MySQL', SEEDS, () => {
       { ...reported, dropId: DM_DROP },
       {}
     );
+    // Reports on deleted drops: a moderator resolves them as deleted,
+    // which records them unless the drop was a DM's.
+    const deletedReports: Record<string, string> = {};
+    for (const dropId of [
+      DELETED_DM_DROP,
+      DROP_OF_DELETED_WAVE,
+      DELETED_PUBLIC_DROP
+    ]) {
+      deletedReports[dropId] = (
+        await moderation.createReport({ ...reported, dropId }, {})
+      ).id;
+      await review.resolveDeletedReports(dropId, 'pm', 'deleted', {});
+    }
     const message = await blobs.report('pb', {
       group: ids.group,
       epoch: 1,
@@ -416,7 +459,8 @@ describeWithSeed('e2ee relay records against MySQL', SEEDS, () => {
     return {
       reportId: report.id,
       dmReportId: dmReport.id,
-      messageReportId: message.id
+      messageReportId: message.id,
+      deletedReports
     };
   }
 
@@ -453,7 +497,9 @@ describeWithSeed('e2ee relay records against MySQL', SEEDS, () => {
     for (const table of [
       ...Object.keys(E2EE_RECORD_TABLES),
       E2EE_STREAMS_TABLE,
-      E2EE_RELAY_OUTBOX_TABLE
+      E2EE_RELAY_OUTBOX_TABLE,
+      'e2ee_record_items',
+      'e2ee_relay_deletions'
     ]) {
       await sqlExecutor.execute(`delete from ${table}`);
     }
@@ -535,13 +581,18 @@ describeWithSeed('e2ee relay records against MySQL', SEEDS, () => {
     expect(write.streams).toBe(7);
     expect(await answers(ids)).toEqual(before);
     expect(await reportAnswers(reports)).toEqual(reportsBefore);
-    // The report on a legacy DM was never recorded, so it is not rebuilt.
-    expect(
-      await sqlExecutor.execute(
-        `select id from ${CONTENT_MODERATION_REPORTS_TABLE} where id = :id`,
-        { id: reports.dmReportId }
-      )
-    ).toEqual([]);
+    // Reports on legacy DMs, live or deleted, and on a drop whose wave is
+    // gone, were never recorded, so they are not rebuilt; the report on a
+    // deleted public drop is.
+    const rebuiltReports = await sqlExecutor.execute<{ id: string }>(
+      `select id from ${CONTENT_MODERATION_REPORTS_TABLE} where id in (:ids)`,
+      {
+        ids: [reports.dmReportId, ...Object.values(reports.deletedReports)]
+      }
+    );
+    expect(rebuiltReports.map((row) => row.id)).toEqual([
+      reports.deletedReports[DELETED_PUBLIC_DROP]
+    ]);
 
     // The rebuilt index keeps working: the next record extends the chain.
     await groups.sendMessage('pb', ids.group, {
@@ -612,7 +663,7 @@ describeWithSeed('e2ee relay records against MySQL', SEEDS, () => {
       backups: 1,
       backupChunks: 1,
       backupBytes: 4096,
-      reports: 1,
+      reports: 2,
       messageReports: 1,
       reportAccess: 1
     });
@@ -789,5 +840,42 @@ describeWithSeed('e2ee relay records against MySQL', SEEDS, () => {
     expect(
       relay.stored.filter((item) => item.event.wave === `dv/${device}`)
     ).toHaveLength(16);
+  });
+
+  it('sends a DEL for an acked Welcome; the relays drop it and the rebuild agrees', async () => {
+    const ids = await story();
+    const [welcome] = await groups.getWelcomes('pb', ids.b);
+    await groups.ackWelcome('pb', ids.b, welcome.id);
+    await publisher.settled();
+    const queued = await sqlExecutor.execute<{ positions: string }>(
+      `select positions from e2ee_relay_deletions where wave = :wave`,
+      { wave: `dv/${ids.b}` }
+    );
+    expect(queued.map((row) => JSON.parse(row.positions))).toEqual([[1]]);
+    // With the backup compaction's DEL (the compacted chunk's bytes).
+    expect(await publisher.publishDeletions(10)).toEqual({
+      queued: 2,
+      done: 2
+    });
+    const [first] = relay.stored.filter(
+      (item) => item.event.wave === `dv/${ids.b}`
+    );
+    // The relay keeps the Welcome's header only.
+    expect(first.event.body).toBeNull();
+    expect(
+      relay.stored.some(
+        (item) =>
+          item.event.kind === 12 &&
+          JSON.parse(item.event.body!).ids.includes(first.event.id)
+      )
+    ).toBe(true);
+    expect(
+      await sqlExecutor.execute(`select * from e2ee_relay_deletions`)
+    ).toEqual([]);
+    const before = await answers(ids);
+    expect((await rebuild('verify')).ok).toBe(true);
+    await emptyTables();
+    expect((await rebuild('write')).ok).toBe(true);
+    expect(await answers(ids)).toEqual(before);
   });
 });

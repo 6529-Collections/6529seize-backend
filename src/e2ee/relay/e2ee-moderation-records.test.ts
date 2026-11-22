@@ -16,7 +16,8 @@ function recorder(input: { mode: 'off' | 'mirror'; failures?: number }) {
       batch: () => (input.mode === 'off' ? null : batch),
       publishLater: (b) => {
         published.push(b);
-      }
+      },
+      queueDeletion: async () => 0
     },
     writers: {
       moderationRowsChanged: async (_batch, _connection, change) => {
@@ -47,7 +48,11 @@ describe('E2eeModerationRecorder', () => {
     const { recorder: on, calls, published } = recorder({ mode: 'mirror' });
     await on.changed(CONTENT_MODERATION_REPORTS_TABLE, { drop_id: 'd1' });
     expect(calls).toEqual([
-      { table: CONTENT_MODERATION_REPORTS_TABLE, where: { drop_id: 'd1' } }
+      {
+        table: CONTENT_MODERATION_REPORTS_TABLE,
+        where: { drop_id: 'd1' },
+        dropOlder: false
+      }
     ]);
     expect(published).toHaveLength(1);
   });

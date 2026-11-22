@@ -324,11 +324,11 @@ async function verifyStream(
   const tables = scoped
     .map((item) => compareE2eeTables(item.table, item.rebuilt, item.mysql))
     .filter((t) => t.missing + t.extra + t.changed > 0);
-  // Records whose content expired on the relays may be the newest ones.
+  // Records a DEL named may be the newest ones.
   const headMatches =
     (stream.head?.pos === head.pos && stream.head?.hash === head.hash) ||
-    (stream.expired > 0 &&
-      (stream.head?.pos ?? 0) + stream.expired >= head.pos);
+    (stream.deleted > 0 &&
+      (stream.head?.pos ?? 0) + stream.deleted >= head.pos);
   if (!tables.length && headMatches && !stream.problems.length) return null;
   return {
     wave: head.wave,

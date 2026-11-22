@@ -1227,11 +1227,27 @@ export class ModerationReviewDb extends LazyDbAccessCompatibleService {
           this.options(tx)
         );
       });
-      await this.db.execute(
-        `update ${CONTENT_MODERATION_REPORTS_TABLE} set content_snapshot=json_object('evidence_expired',true),notes=null,ai_rationale=null,ai_evidence=null where status<>'OPEN' and resolved_at<:old and json_extract(content_snapshot,'$.evidence_expired') is null limit 1000`,
+      const wiped = await this.db.execute<{ id: string }>(
+        `select id from ${CONTENT_MODERATION_REPORTS_TABLE} where status<>'OPEN' and resolved_at<:old and json_extract(content_snapshot,'$.evidence_expired') is null limit 1000`,
         { old: Date.now() - 90 * 86400000 },
         this.options(ctx)
       );
+      if (wiped.length) {
+        const ids = wiped.map((row) => row.id);
+        await this.db.execute(
+          `update ${CONTENT_MODERATION_REPORTS_TABLE} set content_snapshot=json_object('evidence_expired',true),notes=null,ai_rationale=null,ai_evidence=null where id in (:ids) and json_extract(content_snapshot,'$.evidence_expired') is null`,
+          { ids },
+          this.options(ctx)
+        );
+        // The relays keep the pruned rows only: older records carried the
+        // evidence, and a DEL drops them.
+        await this.reportRecords.changed(
+          CONTENT_MODERATION_REPORTS_TABLE,
+          { id: ids },
+          ctx.connection,
+          { dropOlder: true }
+        );
+      }
     });
   }
 }

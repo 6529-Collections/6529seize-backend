@@ -678,8 +678,12 @@ Not carried: one-time KeyPackages, rate counters and push throttles
 (ephemeral; devices upload fresh KeyPackages), incomplete uploads,
 `last_seen_at` (rebuilt as the device's latest log item) and the
 `registered_*` columns (no route reads them). Legacy plaintext DMs are drops
-and are never copied (D153), and neither are reports on them: they are
-deleted with the DMs on 1 Dec.
+and are never copied (D153). A report, or a drop's moderation item, is
+recorded only when its drop is known to be in a public wave: a live drop,
+or a deleted one (`deleted_drops` keeps its wave), in a live wave neither
+of whose DM flags is set. A report on a DM drop, live or deleted, or one
+whose drop or wave cannot be found, is never recorded, so a DM's text never
+reaches a relay.
 
 **Reports.** Moderators read reports in 6529.io's moderation tool, from
 MySQL, as today. After each write of `content_moderation_reports`,
@@ -693,8 +697,10 @@ transaction and published best effort, and a record that could not be
 written at all is logged and copied by the `md` backfill. Holds stay per
 report (`e2ee_reports.on_hold`). The rebuild applies the same retention as
 MySQL: reported messages go after 180 days unless held, and resolved drop
-reports lose their evidence after 90 days. Records written before a prune
-still hold that evidence, sealed; only the moderation key opens them.
+reports lose their evidence after 90 days. Each report row goes in a
+record of its own; when the prune clears a report's evidence, the pruned
+row is recorded and a DEL drops the report's older records, so the relays
+keep the evidence no longer than MySQL does.
 
 **Moderators' decisions.** Where a moderator acts on a moderation item (an
 override, a permit granted or used, a suppression, binding a report and
@@ -714,12 +720,16 @@ there.
   its transaction. After the commit they are published in the background,
   so no request waits on a relay and a relay outage never fails a write.
   MySQL commits first and the relays catch up; the lag is the outbox.
-- `primary`: not ready, and stays off. A write commits only after
-  `E2EE_RELAY_ACK_QUORUM` relays hold its records; otherwise it answers
-  503 `E2EE_RELAYS_UNAVAILABLE` and rolls back in MySQL, but a relay may
-  already hold its record, a phantom at that stream position. It waits for
-  reserve-then-confirm-or-void records and for returning once the quorum
-  holds a record.
+- `primary`: not ready, and stays off: it takes effect only with
+  `E2EE_RELAY_PRIMARY_OPT_IN=true`, and is `mirror` otherwise. A write
+  commits only after `E2EE_RELAY_ACK_QUORUM` relays hold its records;
+  otherwise it answers 503 `E2EE_RELAYS_UNAVAILABLE` and rolls back in
+  MySQL, but a relay may already hold its record, a phantom at that stream
+  position. It waits for reserve-then-confirm-or-void records and for
+  returning once the quorum holds a record.
+
+Whether to record reads only `E2EE_RELAY_MODE` (and the opt-in), so a bad
+key setting can never break the off mode.
 
 **The publisher loop** (`e2eeRelayPublishLoop`, every minute, nothing
 while off) publishes what the outbox still holds, logs the lag (outbox
@@ -748,9 +758,33 @@ checked. The owner holds the moderation key too.
 **Size limits.** The relays cap a RECORD body at 16 KiB and a SEALED or
 LOG body at 64 KiB. Content goes inline only when the whole body fits, and
 is a payload otherwise. A roster goes out at most 300 delivery windows to a
-record (a 2048-device roster takes seven). A record that could not fit even
-then is refused inside the write's transaction, so it never blocks a
-stream.
+record (a 2048-device roster takes seven); a last-resort KeyPackage and a
+Welcome go one to a record, a backup snapshot's chunk rows 2000 to one. A
+record that could not fit even then is skipped and logged, and the user's
+write goes on: the stream misses that change, and the side-by-side check
+names it. It never blocks a stream.
+
+**Deletions (DEL).** The relays keep every record's content until a DEL
+(kind 12) names the record. So when the delivery service deletes or
+expires an item in MySQL, the orderer queues a DEL for the records that
+carry it: an acked, expired or revoked device's Welcome; a deleted backup
+chunk's bytes; an expired attachment (every record of its stream); a
+reported message past retention; a report's evidence after the 90-day
+prune. `e2ee_record_items` indexes which records carry which item (by
+stream position, with the event id once signed); the rebuild refills it.
+DELs wait in `e2ee_relay_deletions` until the records they name are on
+every relay, then the publisher loop signs and sends them. A relay that
+refuses a DEL leaves it queued: DELs sit outside the hash chains, so a
+refusal never holds a stream back. A message's ciphertext in a group log
+needs none: the relays drop a LOG item's `data` payload at the end of
+retention themselves, and `cv` takes no DEL.
+
+**Known limit: one moderators' inbox stream.** Every report record goes to
+one `md` stream, so its head lock serializes report writes and its replay
+grows with every report and access. Sharding it by month is not cheap: a
+report's rows are written again in later months, so a stream by month
+could no longer be checked alone against MySQL. It stays one stream until
+after the switch.
 
 **Operator scopes** (`dbMigrationsLoop`, never scheduled). Each call does
 one slice and returns `next`; call again with `"after": "<next>"` until
@@ -783,8 +817,9 @@ one slice and returns `next`; call again with `"after": "<next>"` until
   them one at a time, each in one transaction with its head, so a slice cut
   short resumes. Attachment bytes come back into MySQL storage. Memory stays
   at one stream.
-- A record whose content a relay dropped after the family's retention is
-  expired, not lost: the rebuild skips it without a problem.
+- A record an orderer's DEL names is deleted: the rebuild skips it, and
+  its position, without a problem. Content missing without a DEL is a
+  loss, and a problem.
 
 ## Implementation choices
 

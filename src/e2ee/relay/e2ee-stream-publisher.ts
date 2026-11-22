@@ -4,6 +4,7 @@ import {
   E2eeRowOp,
   encodeE2eeRecordContent
 } from '@/e2ee/relay/e2ee-record-container';
+import { e2eeItemKeysOf } from '@/e2ee/relay/e2ee-record-tables';
 import {
   e2eeFamilyWave,
   E2eeRecordFamily,
@@ -13,6 +14,7 @@ import {
 } from '@/e2ee/relay/e2ee-record-event';
 import {
   E2eeRelayMode,
+  e2eeRelayMode,
   e2eeRelaySettings,
   E2eeRelaySettings
 } from '@/e2ee/relay/e2ee-relay-config';
@@ -35,6 +37,8 @@ const INLINE_CONTENT_CHARS = 48 * 1024;
 const RECORD_BODY_MAX_BYTES = 16 * 1024;
 /** And a SEALED or LOG body at 64 KiB; the rest stays for the margin. */
 const SEALED_BODY_MAX_BYTES = 64 * 1024 - 512;
+/** And a payload at 4 MiB. */
+const PAYLOAD_MAX_BYTES = 4 * 1024 * 1024;
 const OUTBOX_PAGE = 200;
 const PRIMARY_PUBLISH_TIMEOUT_MS = 4_000;
 const MIRROR_PUBLISH_TIMEOUT_MS = 2_000;
@@ -94,6 +98,11 @@ export const e2eeContentHash = e2eeSha256;
 
 export interface E2eePublisherDeps {
   readonly settings: () => E2eeRelaySettings;
+  /**
+   * The mode alone, without parsing keys (defaults to `settings().mode`):
+   * whether to record at all must not depend on a key setting parsing.
+   */
+  readonly mode?: () => E2eeRelayMode;
   readonly store: E2eeStreamStore;
   readonly pool: () => E2eeRelayPool;
   readonly anchors: E2eeAnchorSource;
@@ -112,10 +121,33 @@ export class E2eeRecordBatch {
     return Array.from(this.waves);
   }
 
-  /** Appends one record to its stream, in the caller's transaction. */
+  /**
+   * Appends one record to its stream, in the caller's transaction. A record
+   * too big for the relays is skipped (logged), never the user's write.
+   */
   async append(connection: Conn, input: E2eeRecordAppend): Promise<void> {
     const wave = await this.publisher.appendRecord(connection, input);
-    this.waves.add(wave);
+    if (wave !== null) this.waves.add(wave);
+  }
+
+  /**
+   * Queues DELs for the records of a stream that carry these items (MySQL
+   * deleted or expired them). `keepLatest` keeps each item's newest record.
+   */
+  async deleteItems(
+    connection: Conn,
+    family: E2eeRecordFamily,
+    owner: string,
+    keys: readonly string[],
+    keepLatest = false
+  ): Promise<void> {
+    await this.publisher.queueDeletion(
+      family,
+      owner,
+      keys,
+      connection,
+      keepLatest
+    );
   }
 
   /**
@@ -152,11 +184,13 @@ export class E2eeRecordBatch {
 export class E2eeStreamPublisher {
   private lastSeq = 0;
   private readonly inFlight = new Set<Promise<void>>();
+  /** The publish running for each stream, so one runs at a time. */
+  private readonly running = new Map<string, Promise<unknown>>();
 
   constructor(private readonly deps: E2eePublisherDeps) {}
 
   mode(): E2eeRelayMode {
-    return this.deps.settings().mode;
+    return this.deps.mode ? this.deps.mode() : this.deps.settings().mode;
   }
 
   /** A batch for one transaction, or null when records are off. */
@@ -270,10 +304,11 @@ export class E2eeStreamPublisher {
     await this.deps.store.lockHead(wave, this.deps.now(), connection);
   }
 
+  /** The record's stream, or null when it was too big and skipped. */
   async appendRecord(
     connection: Conn,
     input: E2eeRecordAppend
-  ): Promise<string> {
+  ): Promise<string | null> {
     const wave = e2eeFamilyWave(input.family, input.owner);
     const now = this.deps.now();
     const head = await this.deps.store.lockHead(wave, now, connection);
@@ -294,7 +329,13 @@ export class E2eeStreamPublisher {
     const content = input.sealToModeration
       ? this.sealToModeration(input, wave, encoded.content)
       : encoded.content;
-    checkBodyBudget(wave, input, content);
+    const overBudget = bodyBudgetProblem(wave, input, content);
+    if (overBudget) {
+      // Never fail the user's write for the relays: the stream misses this
+      // change, and the side-by-side check names the stream.
+      logger.error(`[RECORD SKIPPED] ${overBudget}`);
+      return null;
+    }
     await this.deps.store.insertOutbox(
       {
         wave,
@@ -319,7 +360,125 @@ export class E2eeStreamPublisher {
       now,
       connection
     );
+    await this.deps.store.insertItemKeys(
+      wave,
+      pos,
+      e2eeItemKeysOf(input.family, input.ops),
+      now,
+      connection
+    );
     return wave;
+  }
+
+  /**
+   * Queues DELs (kind 12) for the records of `family/owner` that carry
+   * `keys`: the delivery service deleted or expired those items, so the
+   * relays should keep them no longer. Nothing while records are off.
+   */
+  async queueDeletion(
+    family: E2eeRecordFamily,
+    owner: string,
+    keys: readonly string[],
+    connection?: Conn,
+    keepLatest = false
+  ): Promise<number> {
+    if (this.mode() === 'off' || !keys.length) return 0;
+    return this.deps.store.queueDeletion(
+      e2eeFamilyWave(family, owner),
+      keys,
+      this.deps.now(),
+      keepLatest,
+      connection
+    );
+  }
+
+  /**
+   * Publishes queued DELs once the records they name are on every relay:
+   * signs each once and sends it to every relay that lacks it. A relay
+   * that refuses one leaves it queued; DELs sit outside the streams' hash
+   * chains, so a refusal never holds a stream back.
+   */
+  async publishDeletions(limit: number): Promise<{
+    readonly queued: number;
+    readonly done: number;
+  }> {
+    if (this.mode() === 'off') return { queued: 0, done: 0 };
+    const settings = this.deps.settings();
+    const rows = await this.deps.store.listDeletions(limit);
+    let done = 0;
+    for (const row of rows) {
+      try {
+        const targets = await this.deps.store.deletionTargets(
+          row.wave,
+          row.positions
+        );
+        if (targets.pending) continue;
+        const ids = row.positions
+          .map((pos) => targets.eventIds.get(pos))
+          .filter((id): id is string => typeof id === 'string');
+        if (!ids.length) {
+          await this.deps.store.finishDeletion(row);
+          done++;
+          continue;
+        }
+        let event = row.event
+          ? (JSON.parse(row.event) as E2eeSignedRecordEvent)
+          : null;
+        if (!event) {
+          event = await this.signDeletion(row.wave, ids);
+          await this.deps.store.saveDeletionEvent(
+            row.id,
+            JSON.stringify(event)
+          );
+        }
+        const pool = this.deps.pool();
+        let held = row.heldBy.length;
+        for (const url of settings.urls) {
+          if (row.heldBy.includes(url)) continue;
+          const result = await pool.publishSequence(url, [
+            { event, payloads: [] }
+          ]);
+          if (result.held) {
+            await this.deps.store.markDeletionHeld(row.id, url);
+            held++;
+          } else {
+            await this.deps.store.markDeletionFailed(
+              row.id,
+              `${url}: ${result.error?.message ?? 'refused'}`
+            );
+          }
+        }
+        if (held >= settings.urls.length) {
+          await this.deps.store.finishDeletion(row);
+          done++;
+        }
+      } catch (error) {
+        logger.warn(`[DEL ${row.wave}] ${(error as Error).message}`);
+      }
+    }
+    return { queued: rows.length, done };
+  }
+
+  private async signDeletion(
+    wave: string,
+    ids: readonly string[]
+  ): Promise<E2eeSignedRecordEvent> {
+    const orderer = this.deps.settings().orderer;
+    if (!orderer) throw new Error('No orderer key is configured');
+    const now = this.deps.now();
+    return signE2eeRecord({
+      draft: {
+        kind: E2eeRecordKind.DEL,
+        wave,
+        refs: [],
+        body: { ids: [...ids] }
+      },
+      seed: orderer.seed,
+      grant: orderer.grant,
+      seq: this.nextSeq(now),
+      anchor: await this.deps.anchors.anchor(),
+      claimedTime: now
+    });
   }
 
   private sealToModeration(
@@ -449,13 +608,18 @@ export class E2eeStreamPublisher {
       );
     }
     const ids = new Set(rows.map((row) => row.id));
-    const relisted = await this.deps.store.listOutbox(
-      wave,
-      OUTBOX_PAGE,
-      connection,
-      afterPos
+    const relisted = (
+      await this.deps.store.listOutbox(wave, OUTBOX_PAGE, connection, afterPos)
+    ).filter((row) => ids.has(row.id) && row.event !== null);
+    await this.deps.store.saveEventIds(
+      relisted.map((row) => ({
+        wave: row.wave,
+        pos: row.pos,
+        eventId: (JSON.parse(row.event!) as E2eeSignedRecordEvent).id
+      })),
+      connection
     );
-    return relisted.filter((row) => ids.has(row.id) && row.event !== null);
+    return relisted;
   }
 
   /**
@@ -464,6 +628,26 @@ export class E2eeStreamPublisher {
    * fewest relays holding any of the rows.
    */
   async publishWave(
+    wave: string,
+    connection?: Conn
+  ): Promise<{ readonly wave: string; readonly minHolders: number }> {
+    // Inside a write's transaction (primary) the stream's head is locked.
+    if (connection) return this.publishWaveNow(wave, connection);
+    // Otherwise one publish per stream at a time in this process: a second
+    // runs after the first, so it starts from what the first left.
+    const prior = this.running.get(wave) ?? Promise.resolve();
+    const run = prior
+      .catch(() => undefined)
+      .then(() => this.publishWaveNow(wave));
+    this.running.set(wave, run);
+    try {
+      return await run;
+    } finally {
+      if (this.running.get(wave) === run) this.running.delete(wave);
+    }
+  }
+
+  private async publishWaveNow(
     wave: string,
     connection?: Conn
   ): Promise<{ readonly wave: string; readonly minHolders: number }> {
@@ -560,22 +744,24 @@ function bodyBytes(body: Record<string, unknown>): number {
 }
 
 /**
- * Refuses, inside the write's transaction, a record whose body could not
- * fit the relays' limits even with its content as a payload: such a
- * record would block its stream forever. Writers split what is large
- * (E2EE_WINDOWS_PER_RECORD), so this only guards against a mistake.
+ * Why a record could not fit the relays' limits even with its content as
+ * a payload (such a record would block its stream forever), or null.
+ * Writers split what is large (delivery windows, KeyPackages, backup
+ * chunks), so this only guards against what they could not split.
  */
-function checkBodyBudget(
+function bodyBudgetProblem(
   wave: string,
   input: E2eeRecordAppend,
   content: Buffer
-) {
+): string | null {
   if (input.kind === E2eeRecordKind.RECORD) {
     const body = { c: content.toString('base64url'), v: 1 };
-    if (bodyBytes(body) > RECORD_BODY_MAX_BYTES) {
-      throw new Error(`A RECORD in ${wave} is over the relays' 16 KiB`);
-    }
-    return;
+    return bodyBytes(body) > RECORD_BODY_MAX_BYTES
+      ? `A RECORD in ${wave} is over the relays' 16 KiB`
+      : null;
+  }
+  if (content.length > PAYLOAD_MAX_BYTES) {
+    return `A record in ${wave} is over the relays' 4 MiB payload limit`;
   }
   if (input.kind === E2eeRecordKind.LOG) {
     const smallest = {
@@ -587,11 +773,10 @@ function checkBodyBudget(
       data: { h: `0x${'0'.repeat(64)}`, n: Number.MAX_SAFE_INTEGER }
     };
     if (bodyBytes(smallest) > SEALED_BODY_MAX_BYTES) {
-      throw new Error(
-        `A LOG record in ${wave} carries too many delivery windows`
-      );
+      return `A LOG record in ${wave} carries too many delivery windows`;
     }
   }
+  return null;
 }
 
 async function withTimeout<T>(
@@ -649,6 +834,7 @@ export function e2eeDefaultRelayPool(): E2eeRelayPool {
 
 export const e2eeStreamPublisher = new E2eeStreamPublisher({
   settings: e2eeRelaySettings,
+  mode: () => e2eeRelayMode(),
   store: e2eeStreamStore,
   pool: e2eeDefaultRelayPool,
   anchors: relayHeadAnchorSource(e2eeDefaultRelayPool),

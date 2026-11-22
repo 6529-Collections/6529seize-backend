@@ -1,6 +1,7 @@
 import {
   CONTENT_MODERATION_ITEMS_TABLE,
   CONTENT_MODERATION_REPORTS_TABLE,
+  DELETED_DROPS_TABLE,
   DROPS_TABLE,
   E2EE_BACKUP_CHUNKS_TABLE,
   E2EE_BACKUPS_TABLE,
@@ -16,10 +17,11 @@ import {
   E2EE_REPORT_ACCESS_LOG_TABLE,
   E2EE_REPORTS_TABLE,
   E2EE_WELCOME_DELIVERIES_TABLE,
-  E2EE_WELCOMES_TABLE
+  E2EE_WELCOMES_TABLE,
+  USER_GROUPS_TABLE,
+  WAVES_TABLE
 } from '@/constants/db-tables';
 import { E2eeRow, E2eeRowValue } from '@/e2ee/relay/e2ee-record-container';
-import { DM_WAVES_SQL } from '@/legacy-dm/legacy-dm-purge.inventory';
 
 /**
  * How a column is carried in a record and written back by the rebuild.
@@ -52,18 +54,38 @@ function table(
 }
 
 /**
- * Reports on legacy plaintext DMs stay off the relays: those drops and
- * their reports are deleted on 1 Dec (D153), so they are neither recorded
- * nor expected by the rebuild check.
+ * Waves known to be public: a live wave neither of whose DM flags is set
+ * (the wave's or its chat group's). A deleted wave is not known, so
+ * nothing about it is recorded.
  */
-const LEGACY_DM_DROPS = `select dm_drop.id from ${DROPS_TABLE} dm_drop
-  where dm_drop.wave_id in (${DM_WAVES_SQL})`;
-const NOT_A_LEGACY_DM_REPORT = `${CONTENT_MODERATION_REPORTS_TABLE}.drop_id not in (
-  ${LEGACY_DM_DROPS})`;
-const NOT_A_LEGACY_DM_ITEM = `not (${CONTENT_MODERATION_ITEMS_TABLE}.subject_type = 'DROP'
-  and (${CONTENT_MODERATION_ITEMS_TABLE}.subject_id in (${LEGACY_DM_DROPS})
-    or coalesce(${CONTENT_MODERATION_ITEMS_TABLE}.published_subject_id, '')
-       in (${LEGACY_DM_DROPS})))`;
+const PUBLIC_WAVES = `select pw.id from ${WAVES_TABLE} pw
+  left join ${USER_GROUPS_TABLE} pg on pg.id = pw.chat_group_id
+  where coalesce(pw.is_direct_message, 0) = 0
+    and coalesce(pg.is_direct_message, 0) = 0`;
+
+/**
+ * Drops known to be in a public wave, live or deleted (a deleted drop keeps
+ * its wave in `deleted_drops`; author deletes are hard deletes).
+ */
+const PUBLIC_DROPS = `select ld.id from ${DROPS_TABLE} ld
+    where ld.wave_id in (${PUBLIC_WAVES})
+  union
+  select dd.id from ${DELETED_DROPS_TABLE} dd
+    where dd.wave_id in (${PUBLIC_WAVES})`;
+
+/**
+ * Reports and moderation items on legacy plaintext DMs stay off the relays:
+ * those drops are deleted on 1 Dec (D153), and a DM's text must never
+ * reach a relay. A report or a drop's item is recorded only when its drop
+ * is known to be in a public wave, live or deleted; one whose drop or wave
+ * cannot be found is not recorded either.
+ */
+const PUBLIC_DROP_REPORT = `${CONTENT_MODERATION_REPORTS_TABLE}.drop_id in (
+  ${PUBLIC_DROPS})`;
+const PUBLIC_ITEM = `(${CONTENT_MODERATION_ITEMS_TABLE}.subject_type <> 'DROP'
+  or coalesce(${CONTENT_MODERATION_ITEMS_TABLE}.published_subject_id,
+              ${CONTENT_MODERATION_ITEMS_TABLE}.subject_id)
+     in (${PUBLIC_DROPS}))`;
 
 /**
  * Moderation items whose moderators' decisions are recorded: an override,
@@ -269,7 +291,7 @@ export const E2EE_RECORD_TABLES: Readonly<Record<string, E2eeRecordTable>> = {
       resolution_reason: 'text',
       resolved_at: 'int'
     },
-    NOT_A_LEGACY_DM_REPORT
+    PUBLIC_DROP_REPORT
   ),
   [E2EE_REPORTS_TABLE]: table(E2EE_REPORTS_TABLE, ['id'], {
     id: 'text',
@@ -319,9 +341,46 @@ export const E2EE_RECORD_TABLES: Readonly<Record<string, E2eeRecordTable>> = {
       suppressed: 'bool',
       created_at: 'int'
     },
-    NOT_A_LEGACY_DM_ITEM
+    PUBLIC_ITEM
   )
 };
+
+/**
+ * The items a record carries that the delivery service may later delete
+ * or expire, so a DEL can name the record then: a Welcome in a device
+ * inbox, a backup chunk's bytes, an attachment (every record of its
+ * stream), a report row. Derived from the record's own operations, so the
+ * rebuild finds the same keys.
+ */
+export function e2eeItemKeysOf(
+  family: string,
+  ops: readonly {
+    readonly op: string;
+    readonly table: string;
+    readonly row?: E2eeRow;
+  }[]
+): string[] {
+  const puts = (table: string) =>
+    ops.filter((op) => op.op === 'put' && op.table === table && op.row);
+  switch (family) {
+    case 'dv':
+      return puts(E2EE_WELCOME_DELIVERIES_TABLE).map(
+        (op) => `welcome:${String(op.row!.welcome_id)}`
+      );
+    case 'bl':
+      return ['blob'];
+    case 'bk':
+      return puts(E2EE_CIPHERTEXT_OBJECTS_TABLE).map(
+        (op) => `object:${String(op.row!.object_key)}`
+      );
+    case 'md':
+      return [CONTENT_MODERATION_REPORTS_TABLE, E2EE_REPORTS_TABLE].flatMap(
+        (table) => puts(table).map((op) => `${table}:${String(op.row!.id)}`)
+      );
+    default:
+      return [];
+  }
+}
 
 /** The tables the moderators' inbox carries. */
 export const E2EE_MODERATION_TABLES: readonly string[] = [

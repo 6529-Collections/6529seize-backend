@@ -1,4 +1,6 @@
 import {
+  E2EE_RECORD_ITEMS_TABLE,
+  E2EE_RELAY_DELETIONS_TABLE,
   E2EE_RELAY_OUTBOX_TABLE,
   E2EE_STREAMS_TABLE
 } from '@/constants/db-tables';
@@ -51,6 +53,18 @@ export interface E2eeOutboxRow {
   readonly createdAt: number;
 }
 
+/** A DEL waiting for the relays. */
+export interface E2eeDeletionRow {
+  readonly id: number;
+  readonly wave: string;
+  readonly positions: readonly number[];
+  readonly event: string | null;
+  readonly heldBy: readonly string[];
+}
+
+/** A DEL names at most this many events. */
+export const E2EE_DEL_MAX_IDS = 64;
+
 /**
  * Stream heads and the publish outbox. Methods that take a connection run
  * inside the caller's transaction (the head stays locked until it commits).
@@ -94,6 +108,46 @@ export interface E2eeStreamStore {
    */
   recentHeads(sinceMs: number, limit: number): Promise<E2eeStreamHead[]>;
   countOutbox(): Promise<{ rows: number; oldestCreatedAt: number | null }>;
+  /** The items a record carries, at its position (the DEL index). */
+  insertItemKeys(
+    wave: string,
+    pos: number,
+    keys: readonly string[],
+    now: number,
+    connection: Conn
+  ): Promise<void>;
+  /** Event ids of signed records, for their items' index rows. */
+  saveEventIds(
+    rows: readonly { wave: string; pos: number; eventId: string }[],
+    connection?: Conn
+  ): Promise<void>;
+  /**
+   * Queues DELs for the records that carry `keys` in `wave` (a key ending
+   * in `*` matches a prefix). `keepLatest` leaves each key's newest record:
+   * the one that carries the item as it now is.
+   */
+  queueDeletion(
+    wave: string,
+    keys: readonly string[],
+    now: number,
+    keepLatest: boolean,
+    connection?: Conn
+  ): Promise<number>;
+  listDeletions(limit: number): Promise<E2eeDeletionRow[]>;
+  /** Event ids by position (null while unsigned); positions still pending. */
+  deletionTargets(
+    wave: string,
+    positions: readonly number[]
+  ): Promise<{
+    readonly eventIds: ReadonlyMap<number, string | null>;
+    readonly pending: boolean;
+  }>;
+  saveDeletionEvent(id: number, event: string): Promise<void>;
+  markDeletionHeld(id: number, url: string): Promise<void>;
+  markDeletionFailed(id: number, error: string): Promise<void>;
+  /** Drops a DEL every relay holds, and its records' index rows. */
+  finishDeletion(row: E2eeDeletionRow): Promise<void>;
+  countDeletions(): Promise<number>;
 }
 
 interface OutboxDbRow {
@@ -367,6 +421,199 @@ export class MysqlE2eeStreamStore
           ? null
           : Number(row.oldest)
     };
+  }
+
+  async insertItemKeys(
+    wave: string,
+    pos: number,
+    keys: readonly string[],
+    now: number,
+    connection: Conn
+  ): Promise<void> {
+    if (!keys.length) return;
+    const params: Record<string, unknown> = { wave, pos, now };
+    const values = keys.map((key, index) => {
+      params[`k${index}`] = key;
+      return `(:wave, :pos, :k${index}, null, :now)`;
+    });
+    await this.db.execute(
+      `insert ignore into ${E2EE_RECORD_ITEMS_TABLE}
+         (wave, pos, item_key, event_id, created_at)
+       values ${values.join(', ')}`,
+      params,
+      this.opts(connection)
+    );
+  }
+
+  async saveEventIds(
+    rows: readonly { wave: string; pos: number; eventId: string }[],
+    connection?: Conn
+  ): Promise<void> {
+    for (const row of rows) {
+      await this.db.execute(
+        `update ${E2EE_RECORD_ITEMS_TABLE} set event_id = :eventId
+         where wave = :wave and pos = :pos and event_id is null`,
+        row,
+        this.opts(connection)
+      );
+    }
+  }
+
+  async queueDeletion(
+    wave: string,
+    keys: readonly string[],
+    now: number,
+    keepLatest: boolean,
+    connection?: Conn
+  ): Promise<number> {
+    if (!keys.length) return 0;
+    const params: Record<string, unknown> = { wave };
+    const matches = keys.map((key, index) => {
+      params[`k${index}`] = key.endsWith('*') ? `${key.slice(0, -1)}%` : key;
+      return key.endsWith('*')
+        ? `item_key like :k${index}`
+        : `item_key = :k${index}`;
+    });
+    const rows = await this.db.execute<{
+      pos: number | string;
+      item_key: string;
+    }>(
+      `select pos, item_key from ${E2EE_RECORD_ITEMS_TABLE}
+       where wave = :wave and (${matches.join(' or ')}) order by pos`,
+      params,
+      this.opts(connection)
+    );
+    const latest = new Map<string, number>();
+    for (const row of rows) {
+      latest.set(
+        row.item_key,
+        Math.max(latest.get(row.item_key) ?? 0, Number(row.pos))
+      );
+    }
+    const positions = Array.from(
+      new Set(
+        rows
+          .filter(
+            (row) => !keepLatest || Number(row.pos) !== latest.get(row.item_key)
+          )
+          .map((row) => Number(row.pos))
+      )
+    ).sort((a, b) => a - b);
+    for (let at = 0; at < positions.length; at += E2EE_DEL_MAX_IDS) {
+      await this.db.execute(
+        `insert into ${E2EE_RELAY_DELETIONS_TABLE}
+           (wave, positions, event, held_by, attempts, last_error, created_at)
+         values (:wave, :positions, null, '[]', 0, null, :now)`,
+        {
+          wave,
+          positions: JSON.stringify(positions.slice(at, at + E2EE_DEL_MAX_IDS)),
+          now
+        },
+        this.opts(connection)
+      );
+    }
+    return positions.length;
+  }
+
+  async listDeletions(limit: number): Promise<E2eeDeletionRow[]> {
+    const rows = await this.db.execute<{
+      id: number | string;
+      wave: string;
+      positions: string;
+      event: string | null;
+      held_by: string;
+    }>(
+      `select id, wave, positions, event, held_by
+       from ${E2EE_RELAY_DELETIONS_TABLE} order by id limit :limit`,
+      { limit },
+      this.opts()
+    );
+    return rows.map((row) => ({
+      id: Number(row.id),
+      wave: row.wave,
+      positions: parseList(row.positions).map(Number),
+      event: row.event,
+      heldBy: parseList(row.held_by)
+    }));
+  }
+
+  async deletionTargets(
+    wave: string,
+    positions: readonly number[]
+  ): Promise<{
+    readonly eventIds: ReadonlyMap<number, string | null>;
+    readonly pending: boolean;
+  }> {
+    const ids = await this.db.execute<{
+      pos: number | string;
+      event_id: string | null;
+    }>(
+      `select pos, max(event_id) as event_id from ${E2EE_RECORD_ITEMS_TABLE}
+       where wave = :wave and pos in (:positions) group by pos`,
+      { wave, positions },
+      this.opts()
+    );
+    const pending = await this.db.execute<{ n: number | string }>(
+      `select count(*) as n from ${E2EE_RELAY_OUTBOX_TABLE}
+       where wave = :wave and pos in (:positions)`,
+      { wave, positions },
+      this.opts()
+    );
+    return {
+      eventIds: new Map(ids.map((row) => [Number(row.pos), row.event_id])),
+      pending: Number(pending[0]?.n ?? 0) > 0
+    };
+  }
+
+  async saveDeletionEvent(id: number, event: string): Promise<void> {
+    await this.db.execute(
+      `update ${E2EE_RELAY_DELETIONS_TABLE} set event = :event
+       where id = :id and event is null`,
+      { id, event },
+      this.opts()
+    );
+  }
+
+  async markDeletionHeld(id: number, url: string): Promise<void> {
+    await this.db.execute(
+      `update ${E2EE_RELAY_DELETIONS_TABLE}
+       set held_by = json_array_append(held_by, '$', :url)
+       where id = :id and not json_contains(held_by, json_quote(:url))`,
+      { id, url },
+      this.opts()
+    );
+  }
+
+  async markDeletionFailed(id: number, error: string): Promise<void> {
+    await this.db.execute(
+      `update ${E2EE_RELAY_DELETIONS_TABLE}
+       set attempts = attempts + 1, last_error = :error where id = :id`,
+      { id, error: error.slice(0, 255) },
+      this.opts()
+    );
+  }
+
+  async finishDeletion(row: E2eeDeletionRow): Promise<void> {
+    await this.db.execute(
+      `delete from ${E2EE_RECORD_ITEMS_TABLE}
+       where wave = :wave and pos in (:positions)`,
+      { wave: row.wave, positions: row.positions },
+      this.opts()
+    );
+    await this.db.execute(
+      `delete from ${E2EE_RELAY_DELETIONS_TABLE} where id = :id`,
+      { id: row.id },
+      this.opts()
+    );
+  }
+
+  async countDeletions(): Promise<number> {
+    const rows = await this.db.execute<{ n: number | string }>(
+      `select count(*) as n from ${E2EE_RELAY_DELETIONS_TABLE}`,
+      {},
+      this.opts()
+    );
+    return Number(rows[0]?.n ?? 0);
   }
 }
 

@@ -8,7 +8,9 @@ import {
   E2eeTransactionRunner
 } from '@/e2ee/relay/e2ee-stream-publisher';
 import {
+  E2EE_DEL_MAX_IDS,
   E2EE_OUTBOX_PAGE_BYTES,
+  E2eeDeletionRow,
   E2eeOutboxInsert,
   E2eeOutboxRow,
   E2eeStreamHead,
@@ -73,10 +75,28 @@ export function e2eeTestModerationKey(
   return { recipient: { id, publicKey: keys[0].publicKey }, keys };
 }
 
+interface ItemRow {
+  wave: string;
+  pos: number;
+  key: string;
+  eventId: string | null;
+}
+
+interface DeletionRow {
+  id: number;
+  wave: string;
+  positions: number[];
+  event: string | null;
+  heldBy: string[];
+  attempts: number;
+}
+
 interface State {
   heads: Map<string, E2eeStreamHead>;
   updatedAt: Map<string, number>;
   outbox: Map<number, E2eeOutboxRow>;
+  items: Map<string, ItemRow>;
+  deletions: Map<number, DeletionRow>;
   nextId: number;
 }
 
@@ -84,6 +104,15 @@ function cloneState(state: State): State {
   return {
     heads: new Map(state.heads),
     updatedAt: new Map(state.updatedAt),
+    items: new Map(
+      Array.from(state.items.entries()).map(([key, row]) => [key, { ...row }])
+    ),
+    deletions: new Map(
+      Array.from(state.deletions.entries()).map(([id, row]) => [
+        id,
+        { ...row, positions: [...row.positions], heldBy: [...row.heldBy] }
+      ])
+    ),
     outbox: new Map(
       Array.from(state.outbox.entries()).map(([id, row]) => [
         id,
@@ -106,8 +135,18 @@ export class InMemoryE2eeStreamStore
     heads: new Map(),
     updatedAt: new Map(),
     outbox: new Map(),
+    items: new Map(),
+    deletions: new Map(),
     nextId: 1
   };
+
+  get itemRows(): ItemRow[] {
+    return Array.from(this.state.items.values());
+  }
+
+  get deletionRows(): DeletionRow[] {
+    return Array.from(this.state.deletions.values());
+  }
   private readonly staged = new WeakMap<object, State>();
 
   async executeNativeQueriesInTransaction<T>(
@@ -289,5 +328,132 @@ export class InMemoryE2eeStreamStore
         ? Math.min(...rows.map((row) => row.createdAt))
         : null
     };
+  }
+
+  async insertItemKeys(
+    wave: string,
+    pos: number,
+    keys: readonly string[],
+    _now: number,
+    connection: Conn
+  ): Promise<void> {
+    const state = this.on(connection);
+    for (const key of keys) {
+      const id = `${wave}#${pos}#${key}`;
+      if (!state.items.has(id)) {
+        state.items.set(id, { wave, pos, key, eventId: null });
+      }
+    }
+  }
+
+  async saveEventIds(
+    rows: readonly { wave: string; pos: number; eventId: string }[],
+    connection?: Conn
+  ): Promise<void> {
+    const state = this.on(connection);
+    for (const row of rows) {
+      for (const item of Array.from(state.items.values())) {
+        if (item.wave === row.wave && item.pos === row.pos && !item.eventId) {
+          item.eventId = row.eventId;
+        }
+      }
+    }
+  }
+
+  async queueDeletion(
+    wave: string,
+    keys: readonly string[],
+    _now: number,
+    keepLatest: boolean,
+    connection?: Conn
+  ): Promise<number> {
+    const state = this.on(connection);
+    const matches = (key: string) =>
+      keys.some((want) =>
+        want.endsWith('*') ? key.startsWith(want.slice(0, -1)) : key === want
+      );
+    const rows = Array.from(state.items.values()).filter(
+      (item) => item.wave === wave && matches(item.key)
+    );
+    const latest = new Map<string, number>();
+    for (const row of rows) {
+      latest.set(row.key, Math.max(latest.get(row.key) ?? 0, row.pos));
+    }
+    const positions = Array.from(
+      new Set(
+        rows
+          .filter((row) => !keepLatest || row.pos !== latest.get(row.key))
+          .map((row) => row.pos)
+      )
+    ).sort((a, b) => a - b);
+    for (let at = 0; at < positions.length; at += E2EE_DEL_MAX_IDS) {
+      const id = state.nextId++;
+      state.deletions.set(id, {
+        id,
+        wave,
+        positions: positions.slice(at, at + E2EE_DEL_MAX_IDS),
+        event: null,
+        heldBy: [],
+        attempts: 0
+      });
+    }
+    return positions.length;
+  }
+
+  async listDeletions(limit: number): Promise<E2eeDeletionRow[]> {
+    return Array.from(this.state.deletions.values())
+      .sort((a, b) => a.id - b.id)
+      .slice(0, limit)
+      .map((row) => ({
+        ...row,
+        positions: [...row.positions],
+        heldBy: [...row.heldBy]
+      }));
+  }
+
+  async deletionTargets(
+    wave: string,
+    positions: readonly number[]
+  ): Promise<{
+    readonly eventIds: ReadonlyMap<number, string | null>;
+    readonly pending: boolean;
+  }> {
+    const eventIds = new Map<number, string | null>();
+    for (const item of Array.from(this.state.items.values())) {
+      if (item.wave !== wave || !positions.includes(item.pos)) continue;
+      eventIds.set(item.pos, eventIds.get(item.pos) ?? item.eventId);
+    }
+    const pending = Array.from(this.state.outbox.values()).some(
+      (row) => row.wave === wave && positions.includes(row.pos)
+    );
+    return { eventIds, pending };
+  }
+
+  async saveDeletionEvent(id: number, event: string): Promise<void> {
+    const row = this.state.deletions.get(id);
+    if (row && !row.event) row.event = event;
+  }
+
+  async markDeletionHeld(id: number, url: string): Promise<void> {
+    const row = this.state.deletions.get(id);
+    if (row && !row.heldBy.includes(url)) row.heldBy.push(url);
+  }
+
+  async markDeletionFailed(id: number): Promise<void> {
+    const row = this.state.deletions.get(id);
+    if (row) row.attempts++;
+  }
+
+  async finishDeletion(row: E2eeDeletionRow): Promise<void> {
+    for (const [key, item] of Array.from(this.state.items.entries())) {
+      if (item.wave === row.wave && row.positions.includes(item.pos)) {
+        this.state.items.delete(key);
+      }
+    }
+    this.state.deletions.delete(row.id);
+  }
+
+  async countDeletions(): Promise<number> {
+    return this.state.deletions.size;
   }
 }

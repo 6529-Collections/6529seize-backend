@@ -1,3 +1,4 @@
+import { E2EE_MODERATION_INBOX } from '@/e2ee/relay/e2ee-moderation-seal';
 import {
   E2eeModerationRecorder,
   e2eeModerationRecorder
@@ -217,7 +218,7 @@ export class E2eeDb extends LazyDbAccessCompatibleService {
     /** Records report writes for the relays; off unless records are on. */
     private readonly reportRecords: Pick<
       E2eeModerationRecorder,
-      'changed'
+      'changed' | 'deleted'
     > = e2eeModerationRecorder
   ) {
     super(sqlExecutorGetter);
@@ -1694,29 +1695,36 @@ export class E2eeDb extends LazyDbAccessCompatibleService {
       storage_location: string | null;
     }) => `${row.storage}|${row.storage_location ?? ''}`;
     const expected = new Map(blobs.map((row) => [row.blob_id, placeOf(row)]));
-    return this.executeNativeQueriesInTransaction(async (connection) => {
-      const current = await this.many<E2eeExpiredBlobRow>(
-        `select blob_id, chunk_count, storage, storage_location
+    const deleted = await this.executeNativeQueriesInTransaction(
+      async (connection) => {
+        const current = await this.many<E2eeExpiredBlobRow>(
+          `select blob_id, chunk_count, storage, storage_location
          from ${E2EE_BLOBS_TABLE} where blob_id in (:ids) for update`,
-        { ids: Array.from(expected.keys()) },
-        connection
-      );
-      const ids = current
-        .filter((row) => expected.get(row.blob_id) === placeOf(row))
-        .map((row) => row.blob_id);
-      if (!ids.length) return 0;
-      await this.write(
-        `delete from ${E2EE_BLOB_CHUNKS_TABLE} where blob_id in (:ids)`,
-        { ids },
-        connection
-      );
-      await this.write(
-        `delete from ${E2EE_BLOBS_TABLE} where blob_id in (:ids)`,
-        { ids },
-        connection
-      );
-      return ids.length;
-    });
+          { ids: Array.from(expected.keys()) },
+          connection
+        );
+        const ids = current
+          .filter((row) => expected.get(row.blob_id) === placeOf(row))
+          .map((row) => row.blob_id);
+        if (!ids.length) return [];
+        await this.write(
+          `delete from ${E2EE_BLOB_CHUNKS_TABLE} where blob_id in (:ids)`,
+          { ids },
+          connection
+        );
+        await this.write(
+          `delete from ${E2EE_BLOBS_TABLE} where blob_id in (:ids)`,
+          { ids },
+          connection
+        );
+        return ids;
+      }
+    );
+    // The relays keep an attachment no longer than MySQL does.
+    for (const blobId of deleted) {
+      await this.reportRecords.deleted('bl', blobId, ['blob']);
+    }
+    return deleted.length;
   }
 
   /** Expired blobs (complete after 365 days, incomplete after 24 h). */
@@ -1901,11 +1909,22 @@ export class E2eeDb extends LazyDbAccessCompatibleService {
   }
 
   private async pruneWelcomes(nowMs: number, limit: number): Promise<void> {
-    await this.write(
-      `delete from ${E2EE_WELCOME_DELIVERIES_TABLE}
+    const expired = await this.many<{ welcome_id: string; device_key: string }>(
+      `select welcome_id, device_key from ${E2EE_WELCOME_DELIVERIES_TABLE}
        where created_at < :cutoff limit :limit`,
       { cutoff: nowMs - E2EE_RETENTION.welcomeDeliveriesMs, limit }
     );
+    for (const row of expired) {
+      await this.write(
+        `delete from ${E2EE_WELCOME_DELIVERIES_TABLE}
+         where welcome_id = :welcomeId and device_key = :deviceKey`,
+        { welcomeId: row.welcome_id, deviceKey: row.device_key }
+      );
+      // The relays keep an expired Welcome no longer than the inbox does.
+      await this.reportRecords.deleted('dv', row.device_key, [
+        `welcome:${row.welcome_id}`
+      ]);
+    }
     const orphans = await this.many<{ id: string }>(
       `select w.id from ${E2EE_WELCOMES_TABLE} w
        where not exists (
@@ -1972,11 +1991,25 @@ export class E2eeDb extends LazyDbAccessCompatibleService {
 
   /** Reports older than the retention window and not on hold. */
   async pruneExpiredReports(nowMs: number, limit: number): Promise<number> {
-    return this.write(
-      `delete from ${E2EE_REPORTS_TABLE}
+    const expired = await this.many<{ id: string }>(
+      `select id from ${E2EE_REPORTS_TABLE}
        where on_hold = false and created_at < :cutoff limit :limit`,
       { cutoff: nowMs - E2EE_RETENTION.reportsMs, limit }
     );
+    if (!expired.length) return 0;
+    const ids = expired.map((row) => row.id);
+    const deleted = await this.write(
+      `delete from ${E2EE_REPORTS_TABLE}
+       where id in (:ids) and on_hold = false`,
+      { ids }
+    );
+    // The relays keep a reported message no longer than MySQL does.
+    await this.reportRecords.deleted(
+      'md',
+      E2EE_MODERATION_INBOX,
+      ids.map((id) => `${E2EE_REPORTS_TABLE}:${id}`)
+    );
+    return deleted;
   }
 }
 

@@ -11,7 +11,11 @@ import {
   encodeE2eeRecordContent
 } from '@/e2ee/relay/e2ee-record-container';
 import { parseE2eeFamilyWave } from '@/e2ee/relay/e2ee-record-event';
-import { readE2eeRelaySettings } from '@/e2ee/relay/e2ee-relay-config';
+import {
+  e2eeRelayMode,
+  readE2eeRelaySettings
+} from '@/e2ee/relay/e2ee-relay-config';
+import { E2eeStreamPublisher } from '@/e2ee/relay/e2ee-stream-publisher';
 import {
   e2eeTestModerationKey,
   e2eeTestRelayIdentity
@@ -157,5 +161,31 @@ describe('report records sealed to the moderation service key', () => {
         ])
       })
     ).toThrow('holds another key for mod-test');
+  });
+
+  it('takes primary only with its opt-in, and reads the mode alone', () => {
+    expect(e2eeRelayMode({ E2EE_RELAY_MODE: 'primary' })).toBe('mirror');
+    expect(
+      e2eeRelayMode({
+        E2EE_RELAY_MODE: 'primary',
+        E2EE_RELAY_PRIMARY_OPT_IN: 'true'
+      })
+    ).toBe('primary');
+    expect(e2eeRelayMode({ E2EE_RELAY_MODE: 'mirror' })).toBe('mirror');
+    expect(e2eeRelayMode({})).toBe('off');
+    // Off never parses a key setting, so a bad one cannot break writes.
+    const publisher = new E2eeStreamPublisher({
+      settings: () => {
+        throw new Error('E2EE_MODERATION_KEYS is not JSON');
+      },
+      mode: () => 'off',
+      store: {} as never,
+      pool: () => {
+        throw new Error('no pool');
+      },
+      anchors: { anchor: async () => 1 },
+      now: () => 1
+    });
+    expect(publisher.batch()).toBeNull();
   });
 });

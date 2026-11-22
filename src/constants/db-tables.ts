@@ -348,6 +348,8 @@ export const E2EE_CIPHERTEXT_OBJECTS_TABLE = 'e2ee_ciphertext_objects';
 // (ephemeral: a row goes once every relay holds its record).
 export const E2EE_STREAMS_TABLE = 'e2ee_streams';
 export const E2EE_RELAY_OUTBOX_TABLE = 'e2ee_relay_outbox';
+export const E2EE_RECORD_ITEMS_TABLE = 'e2ee_record_items';
+export const E2EE_RELAY_DELETIONS_TABLE = 'e2ee_relay_deletions';
 
 export const MEME_COLLABORATIONS_TABLE = 'meme_collaborations';
 export const MEME_COLLABORATION_INVITATIONS_TABLE =

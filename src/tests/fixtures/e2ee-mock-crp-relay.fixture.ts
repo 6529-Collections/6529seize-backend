@@ -328,7 +328,24 @@ export class MockCrpRelay {
     const stored = { rseq: ++this.rseq, event, grant };
     this.events.push(stored);
     this.byId.set(event.id, stored);
+    if (event.kind === 12) this.applyDel(event);
     this.ack(session, frame.rid, event.id, 'accepted');
+  }
+
+  /**
+   * A DEL (kind 12): the named events of its wave lose their body and
+   * payloads; their headers stay.
+   */
+  private applyDel(del: E2eeSignedRecordEvent) {
+    const ids = (JSON.parse(del.body ?? '{}') as { ids?: string[] }).ids ?? [];
+    for (const id of ids) {
+      const target = this.byId.get(id);
+      if (!target || target.event.wave !== del.wave) continue;
+      for (const ref of payloadRefs(target.event)) this.payloads.delete(ref);
+      const stub = { ...target, event: { ...target.event, body: null } };
+      this.events[this.events.indexOf(target)] = stub;
+      this.byId.set(id, stub);
+    }
   }
 
   private putPayload(session: Session, header: Frame, bytes: Buffer) {

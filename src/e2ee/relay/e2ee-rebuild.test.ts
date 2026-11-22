@@ -1560,7 +1560,7 @@ describe('records within the relays limits, and past their retention', () => {
     expect(stream.tables.get(E2EE_GROUP_ROSTER_TABLE)!.size).toBe(700);
   });
 
-  it('refuses, inside the write, a record its windows would make too big', async () => {
+  it('skips, never fails the write, a record its windows would make too big', async () => {
     const s = await scenario();
     await expect(
       s.publisher.run(s.store, (connection, batch) =>
@@ -1581,11 +1581,56 @@ describe('records within the relays limits, and past their retention', () => {
           }
         })
       )
-    ).rejects.toThrow('too many delivery windows');
+    ).resolves.toBeUndefined();
     expect(s.store.outboxRows).toEqual([]);
+    expect(s.store.head(`cv/${G}`)?.pos ?? 0).toBe(0);
   });
 
-  it('takes content gone past retention as expired, not lost', async () => {
+  it('reports a lost record content as a problem, whatever its age (R2-C)', async () => {
+    const s = await scenario();
+    // A revocation closing a device's roster rows in 300 groups: its
+    // content is over the inline size, so it travels as a payload.
+    const rows = Array.from({ length: 300 }, (_, index) => ({
+      id: 5000 + index,
+      group_handle: `0x${(index + 1).toString(16).padStart(64, '0')}`,
+      device_key: C,
+      profile_id: 'pc',
+      joined_epoch: 1,
+      removed_epoch: 5,
+      added_at: T0 - DAY,
+      removed_at: T0,
+      removal_kind: 'revoke'
+    }));
+    await settledRun(s.publisher, s.store, (connection, batch) =>
+      batch!.append(connection, {
+        family: 'dv',
+        owner: C,
+        kind: 10,
+        refs: ['revocation'],
+        type: 'revocation',
+        ops: rows.map((row) => ({
+          op: 'put' as const,
+          table: E2EE_GROUP_ROSTER_TABLE,
+          row
+        }))
+      })
+    );
+    const [stored] = s.relay.stored.filter(
+      (item) => item.event.wave === `dv/${C}`
+    );
+    s.relay.dropPayload(JSON.parse(stored.event.body!).h);
+    for (const now of [NOW, NOW + 400 * DAY]) {
+      const stream = await rebuildE2eeStream(readerSource(s.relay), `dv/${C}`, {
+        ordererDeviceKey: ORDERER.deviceKey,
+        now
+      });
+      expect(stream.problems.map((p) => p.reason)).toContain(
+        'content is missing'
+      );
+    }
+  });
+
+  it('sends a DEL when a Welcome is acked; the rebuild takes it as deleted', async () => {
     const s = await scenario();
     const welcome = hex('7e', 16);
     await s.write(
@@ -1609,6 +1654,9 @@ describe('records within the relays limits, and past their retention', () => {
       },
       (batch, c) => s.writers.welcomeStored(batch, c, welcome)
     );
+    expect(s.store.itemRows).toMatchObject([
+      { wave: `dv/${B}`, pos: 1, key: `welcome:${welcome}` }
+    ]);
     await s.write(
       () => {
         s.db.del(E2EE_WELCOME_DELIVERIES_TABLE, { welcome_id: welcome });
@@ -1617,23 +1665,32 @@ describe('records within the relays limits, and past their retention', () => {
       (batch, c) =>
         s.writers.welcomeAcked(batch, c, { welcomeId: welcome, deviceKey: B })
     );
-    const [first] = s.relay.stored.filter(
+    expect(s.store.deletionRows).toMatchObject([
+      { wave: `dv/${B}`, positions: [1] }
+    ]);
+    expect(await s.publisher.publishDeletions(10)).toEqual({
+      queued: 1,
+      done: 1
+    });
+    const [first, , del] = s.relay.stored.filter(
       (item) => item.event.wave === `dv/${B}`
     );
-    // The Welcome's content went out as a payload; the relay drops it.
-    s.relay.dropPayload(JSON.parse(first.event.body!).h);
-    const read = (now: number) =>
-      rebuildE2eeStream(readerSource(s.relay), `dv/${B}`, {
-        ordererDeviceKey: ORDERER.deviceKey,
-        now
-      });
-    expect((await read(NOW)).problems.map((p) => p.reason)).toContain(
-      'content is missing'
-    );
-    const later = await read(NOW + 31 * DAY);
-    expect(later.problems).toEqual([]);
-    expect(later).toMatchObject({ expired: 1, head: { pos: 2 } });
-    expect(s.store.head(`dv/${B}`)?.pos).toBe(2);
+    expect(del.event).toMatchObject({ kind: 12, refs: [] });
+    expect(JSON.parse(del.event.body!)).toEqual({ ids: [first.event.id] });
+    // The relay dropped the Welcome's content; the index forgot it.
+    expect(first.event.body).toBeNull();
+    expect(s.store.deletionRows).toEqual([]);
+    expect(s.store.itemRows).toEqual([]);
+    const stream = await rebuildE2eeStream(readerSource(s.relay), `dv/${B}`, {
+      ordererDeviceKey: ORDERER.deviceKey,
+      now: NOW
+    });
+    expect(stream).toMatchObject({
+      problems: [],
+      deleted: 1,
+      head: { pos: 2 }
+    });
+    expect(stream.tables.get(E2EE_WELCOMES_TABLE)!.size).toBe(0);
   });
 
   it("leaves an upload in progress and MySQL's lazy prune out of the check", async () => {

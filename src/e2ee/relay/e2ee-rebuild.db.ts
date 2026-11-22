@@ -8,6 +8,7 @@ import {
   E2EE_GROUPS_TABLE,
   E2EE_LOG_TABLE,
   E2EE_REPORT_ACCESS_LOG_TABLE,
+  E2EE_RECORD_ITEMS_TABLE,
   E2EE_REPORTS_TABLE,
   E2EE_STREAMS_TABLE,
   E2EE_WELCOME_DELIVERIES_TABLE
@@ -345,6 +346,23 @@ export class E2eeRebuildDb extends LazyDbAccessCompatibleService {
             columns,
             list.slice(start, start + INSERT_BATCH),
             connection
+          );
+        }
+      }
+      for (const item of stream.items) {
+        for (const key of item.keys) {
+          await this.db.execute(
+            `insert ignore into ${E2EE_RECORD_ITEMS_TABLE}
+               (wave, pos, item_key, event_id, created_at)
+             values (:wave, :pos, :key, :eventId, :now)`,
+            {
+              wave: stream.wave,
+              pos: item.pos,
+              key,
+              eventId: item.eventId,
+              now
+            },
+            { wrappedConnection: connection }
           );
         }
       }

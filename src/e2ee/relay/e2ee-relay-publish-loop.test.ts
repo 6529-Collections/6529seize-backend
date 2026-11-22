@@ -168,4 +168,39 @@ describe('mirror publishing and the publisher loop', () => {
     expect((await loop()).heads.checked).toBe(0);
     expect(relays[0].seen['HELLO']).toBeUndefined();
   });
+
+  it('runs one publish per stream at a time', async () => {
+    const { relays, store, publisher } = setup();
+    relays[0].down = true;
+    relays[1].down = true;
+    for (const seq of [1, 2, 3]) {
+      await publisher.run(store, (connection, batch) =>
+        batch!.append(connection, message(seq, Buffer.alloc(64, seq)))
+      );
+    }
+    await publisher.settled();
+    relays[0].down = false;
+    relays[1].down = false;
+    let active = 0;
+    let most = 0;
+    const listOutbox = store.listOutbox.bind(store);
+    store.listOutbox = async (...args) => {
+      active++;
+      most = Math.max(most, active);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      try {
+        return await listOutbox(...args);
+      } finally {
+        active--;
+      }
+    };
+    await Promise.all([
+      publisher.publishWave(`cv/${GROUP}`),
+      publisher.publishWave(`cv/${GROUP}`),
+      publisher.publishWave(`cv/${GROUP}`)
+    ]);
+    expect(most).toBe(1);
+    expect(store.outboxRows).toEqual([]);
+    expect(relays[0].stored).toHaveLength(3);
+  });
 });

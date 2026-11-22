@@ -29,7 +29,8 @@ const RECORD_TABLES = [
   'e2ee_log',
   'e2ee_welcome_deliveries',
   'e2ee_welcomes',
-  'e2ee_streams'
+  'e2ee_streams',
+  'e2ee_record_items'
 ];
 
 /**
@@ -251,8 +252,9 @@ export const dmManifest: AreaManifest = {
       why: 'The duplicate fingerprint and the hourly budget of pre-publication checks, pruned at 30 days.'
     },
     // Reports and their access log: the moderators' inbox (md), sealed to
-    // the moderation service key. Reports on legacy DMs go with the DMs on
-    // 1 Dec and are never recorded.
+    // the moderation service key. Only reports whose drop is known to be in
+    // a public wave (live or deleted) are recorded; reports on legacy DMs,
+    // or on drops or waves that cannot be found, never are.
     content_moderation_reports: { class: 'INDEX' },
     e2ee_report_access_log: { class: 'INDEX' },
     e2ee_reports: { class: 'INDEX' },
@@ -272,6 +274,21 @@ export const dmManifest: AreaManifest = {
     e2ee_relay_outbox: {
       class: 'EPHEMERAL',
       why: 'Records not yet on every relay; a row goes once every relay holds it.'
+    },
+    // Which records carry an item MySQL may delete (the DEL index): the
+    // rebuild refills it from the records' own operations.
+    e2ee_record_items: {
+      class: 'INDEX',
+      volatileColumns: [
+        {
+          column: 'created_at',
+          reason: 'When the index row was written; no route shows it.'
+        }
+      ]
+    },
+    e2ee_relay_deletions: {
+      class: 'EPHEMERAL',
+      why: 'DELs not yet on every relay; a row goes once every relay holds it.'
     }
   },
   seeds: [
@@ -281,11 +298,15 @@ export const dmManifest: AreaManifest = {
       writes: [
         ...RECORD_TABLES,
         'e2ee_relay_outbox',
+        'e2ee_relay_deletions',
         // The report path's own audit row (a moderation table).
         'content_moderation_audit_log',
         // The fixture profiles the probes sign in as (identity tables).
         'identities',
-        'address_consolidation_keys'
+        'address_consolidation_keys',
+        // A public wave and drop the reports name (waves tables).
+        'waves',
+        'drops'
       ],
       sources: ['relays'],
       timeoutMinutes: 10
@@ -317,6 +338,11 @@ export const dmManifest: AreaManifest = {
         target: 'e2ee_group_epochs',
         reason:
           'No GET route reads it: writes check a commit against the epoch keys. The run compares its rows table by table.'
+      },
+      {
+        target: 'e2ee_record_items',
+        reason:
+          'The DEL index: no GET route reads it. The run compares its rows table by table.'
       },
       {
         target: 'e2ee_streams',

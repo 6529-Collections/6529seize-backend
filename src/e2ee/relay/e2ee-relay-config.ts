@@ -14,16 +14,23 @@ type Env = Readonly<Record<string, string | undefined>>;
  * `E2EE_RELAY_MODE`, the switch of the delivery service's relay records:
  * - `off` (default, and anything unknown): no records, as today;
  * - `mirror`: every write also becomes a signed record, published to the
- *   relays after the commit (best effort; later writes catch up);
+ *   relays after the commit (best effort; the publisher loop catches up);
  * - `primary`: a write commits only after at least `E2EE_RELAY_ACK_QUORUM`
- *   relays hold its records.
- * Rollback from `primary` is one change: `mirror`.
+ *   relays hold its records. Not ready (it can leave phantoms on the
+ *   relays): it takes effect only with `E2EE_RELAY_PRIMARY_OPT_IN=true`,
+ *   and is `mirror` otherwise.
+ * Rollback is one change: `off`. Reads only these two variables, so a bad
+ * key setting can never break the off mode.
  */
 export type E2eeRelayMode = 'off' | 'mirror' | 'primary';
 
 export function e2eeRelayMode(env: Env = process.env): E2eeRelayMode {
   const value = env.E2EE_RELAY_MODE?.trim().toLowerCase();
-  return value === 'mirror' || value === 'primary' ? value : 'off';
+  if (value === 'primary') {
+    const optIn = env.E2EE_RELAY_PRIMARY_OPT_IN?.trim().toLowerCase();
+    return optIn === 'true' ? 'primary' : 'mirror';
+  }
+  return value === 'mirror' ? value : 'off';
 }
 
 /** A device key and its grant: the orderer's, or the site-reader's. */
@@ -245,6 +252,7 @@ let cached: {
 
 const SETTINGS_ENV = [
   'E2EE_RELAY_MODE',
+  'E2EE_RELAY_PRIMARY_OPT_IN',
   'E2EE_RELAY_URLS',
   'E2EE_RELAY_NET',
   'E2EE_RELAY_ACK_QUORUM',

@@ -39,8 +39,10 @@ import {
   ContentReportReason,
   ContentReportStatus
 } from '@/entities/IContentModeration';
+import { DropType } from '@/entities/IDrop';
 import { dbSupplier } from '@/sql-executor';
 import { e2eeKeyFromSeed } from '@/tests/fixtures/e2ee.fixture';
+import { aWave } from '@/tests/fixtures/wave.fixture';
 
 type TestKey = ReturnType<typeof e2eeKeyFromSeed>;
 
@@ -198,6 +200,53 @@ async function commit(
   });
 }
 
+/** A row as it is: objects as JSON. */
+async function insertRow(table: string, row: Record<string, unknown>) {
+  const columns = Object.keys(row);
+  const params = Object.fromEntries(
+    columns.map((column) => {
+      const value = row[column];
+      return [
+        column,
+        value !== null && typeof value === 'object' && !(value instanceof Date)
+          ? JSON.stringify(value)
+          : value
+      ];
+    })
+  );
+  await dbSupplier().execute(
+    `insert ignore into ${table} (${columns.map((c) => `\`${c}\``).join(', ')})
+     values (${columns.map((c) => `:${c}`).join(', ')})`,
+    params
+  );
+}
+
+/**
+ * A public wave and a drop in it (the waves tables): reports are
+ * recorded only on drops known to be in a public wave.
+ */
+async function seedPublicDrop(): Promise<void> {
+  const { serial_no: _serial, ...wave } = aWave(
+    { is_direct_message: false },
+    { id: E2EE_CHECK_IDS.publicWave, name: E2EE_CHECK_IDS.publicWave }
+  );
+  await insertRow('waves', wave);
+  await insertRow('drops', {
+    id: E2EE_CHECK_IDS.publicDrop,
+    wave_id: E2EE_CHECK_IDS.publicWave,
+    author_id: E2EE_CHECK_PROFILES.a.profileId,
+    created_at: Date.now(),
+    updated_at: null,
+    title: null,
+    parts_count: 1,
+    reply_to_drop_id: null,
+    reply_to_part_id: null,
+    drop_type: DropType.CHAT,
+    signature: null,
+    hide_link_preview: false
+  });
+}
+
 /** A moderation item as the AI capture writes it (no decision yet). */
 async function insertItem(input: {
   readonly id: string;
@@ -211,12 +260,13 @@ async function insertItem(input: {
         operation, policy_family, policy_version, scope, evidence,
         content_fingerprint, outcome, \`trigger\`, review_status, version,
         created_at, updated_at)
-     values (:id, 'DROP', 'rebuild-check-drop', :author, :actor, :operation,
+     values (:id, 'DROP', :drop, :author, :actor, :operation,
         'WAVE_CONTENT', 'rebuild-check', cast(:scope as json),
         cast(:evidence as json), :fingerprint, 'ALLOW', 'REPORT',
         'NEEDS_REVIEW', 1, :now, :now)`,
     {
       ...input,
+      drop: E2EE_CHECK_IDS.publicDrop,
       author: E2EE_CHECK_PROFILES.a.profileId,
       actor: E2EE_CHECK_PROFILES.b.profileId,
       scope: JSON.stringify(input.scope),
@@ -237,7 +287,7 @@ async function seedReports(
 ) {
   const report = await contentModerationDb.createReport(
     {
-      dropId: 'rebuild-check-drop',
+      dropId: E2EE_CHECK_IDS.publicDrop,
       reporterProfileId: E2EE_CHECK_PROFILES.b.profileId,
       authorProfileId: E2EE_CHECK_PROFILES.a.profileId,
       reason: ContentReportReason.SPAM,
@@ -262,7 +312,7 @@ async function seedReports(
     policyVersion: 'rebuild-check'
   });
   await contentModerationDb.resolveOpenReportsForDrop({
-    dropId: 'rebuild-check-drop',
+    dropId: E2EE_CHECK_IDS.publicDrop,
     status: ContentReportStatus.RESOLVED_REMOVED,
     moderatorProfileId: 'pm',
     reason: 'removed'
@@ -320,6 +370,7 @@ async function seedIdentities(): Promise<void> {
  */
 export async function seedE2ee(): Promise<void> {
   await seedIdentities();
+  await seedPublicDrop();
   const all = services();
   const { groups, devices, blobs, backups } = all;
   const pa = E2EE_CHECK_PROFILES.a.profileId;

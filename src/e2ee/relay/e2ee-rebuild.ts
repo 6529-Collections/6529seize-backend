@@ -34,6 +34,7 @@ import {
   parseE2eeFamilyWave
 } from '@/e2ee/relay/e2ee-record-event';
 import {
+  e2eeItemKeysOf,
   E2EE_RECORD_TABLES,
   e2eeRecordKeyString,
   e2eeRecordTable
@@ -136,26 +137,16 @@ function bodyRefs(event: E2eeSignedRecordEvent): {
 }
 
 /**
- * How long the relays keep a family's content payloads, from an event's
- * claimed time (before the relays kept every content payload): a record
- * whose content is gone after this is expired, not lost.
+ * Finds a record's content (inline or a payload) and decodes it. The relays
+ * keep every record's content until a DEL names the
+ * record, so content that is missing is a loss, reported as a problem.
  */
-const CONTENT_RETENTION_MS: Readonly<Partial<Record<string, number>>> = {
-  cv: E2EE_RETENTION.entriesMs,
-  dv: E2EE_RETENTION.welcomeDeliveriesMs,
-  bl: E2EE_RETENTION.blobsMs,
-  md: E2EE_RETENTION.reportsMs
-};
-
-/** A record whose content the relays dropped at the end of retention. */
-const EXPIRED = 'expired' as const;
-
 async function locate(
   item: CrpItem,
   source: E2eeRebuildSource,
   problems: E2eeRebuildProblem[],
   options: E2eeRebuildOptions
-): Promise<Located | typeof EXPIRED | null> {
+): Promise<Located | null> {
   const { event } = item;
   const problem = (reason: string) => {
     problems.push({ wave: event.wave, eventId: event.id, reason });
@@ -174,14 +165,7 @@ async function locate(
     bytes = await source.payload(refs.content.h);
     if (bytes && e2eeSha256(bytes) !== refs.content.h) bytes = null;
   }
-  if (!bytes) {
-    const family = event.wave.slice(0, event.wave.indexOf('/'));
-    const keep = CONTENT_RETENTION_MS[family];
-    if (keep !== undefined && event.claimed_time < options.now - keep) {
-      return EXPIRED;
-    }
-    return problem('content is missing');
-  }
+  if (!bytes) return problem('content is missing');
   let plain = bytes;
   if (isSealedE2eeRecordContent(bytes)) {
     try {
@@ -218,16 +202,16 @@ async function locate(
 
 /**
  * Orders one stream's records by position and checks the hash chain.
- * `expired` records (content gone past retention) may leave that many
- * positions missing without a problem.
+ * Records a DEL named (`deleted` of them) leave their positions missing
+ * without a problem.
  */
 function chainOf(
   wave: string,
   records: readonly Located[],
   problems: E2eeRebuildProblem[],
-  expired = 0
+  deleted = 0
 ): Located[] {
-  let tolerated = expired;
+  let tolerated = deleted;
   const byPos = new Map<number, Located[]>();
   for (const record of records) {
     const list = byPos.get(record.content.pos) ?? [];
@@ -529,8 +513,34 @@ function evidenceExpired(row: E2eeRow, now: number): boolean {
 /** Checks and locates the orderer's records, grouped by stream. */
 interface Collected {
   readonly byWave: Map<string, Located[]>;
-  /** Records per stream whose content expired on the relays. */
-  readonly expired: Map<string, number>;
+  /** Records per stream an orderer's DEL named: deleted, not missing. */
+  readonly deleted: Map<string, number>;
+}
+
+/** The record ids the orderer's DELs name, by stream. */
+function deletedIds(
+  items: readonly CrpItem[],
+  options: E2eeRebuildOptions,
+  problems: E2eeRebuildProblem[]
+): Set<string> {
+  const ids = new Set<string>();
+  for (const item of items) {
+    if (item.event.kind !== E2eeRecordKind.DEL) continue;
+    const check = checkE2eeRecord(item.event, options.ordererDeviceKey);
+    if (!check.ok) {
+      problems.push({
+        wave: item.event.wave,
+        eventId: item.event.id,
+        reason: `not the orderer's DEL (${check.reason})`
+      });
+      continue;
+    }
+    const body = JSON.parse(item.event.body ?? '{}') as { ids?: unknown };
+    for (const id of Array.isArray(body.ids) ? body.ids : []) {
+      if (typeof id === 'string') ids.add(`${item.event.wave}|${id}`);
+    }
+  }
+  return ids;
 }
 
 async function collect(
@@ -540,10 +550,17 @@ async function collect(
   problems: E2eeRebuildProblem[]
 ): Promise<Collected> {
   const byWave = new Map<string, Located[]>();
-  const expired = new Map<string, number>();
+  const deleted = new Map<string, number>();
+  const named = deletedIds(items, options, problems);
   for (const item of items) {
     const family = parseE2eeFamilyWave(item.event.wave);
     if (!family || item.event.kind === E2eeRecordKind.DEL) continue;
+    // A record a DEL names is deleted: its content may be gone, and its
+    // rows are not applied.
+    if (named.has(`${item.event.wave}|${item.event.id}`)) {
+      deleted.set(item.event.wave, (deleted.get(item.event.wave) ?? 0) + 1);
+      continue;
+    }
     const check = checkE2eeRecord(item.event, options.ordererDeviceKey);
     if (!check.ok) {
       problems.push({
@@ -554,16 +571,12 @@ async function collect(
       continue;
     }
     const located = await locate(item, source, problems, options);
-    if (located === EXPIRED) {
-      expired.set(item.event.wave, (expired.get(item.event.wave) ?? 0) + 1);
-      continue;
-    }
     if (!located) continue;
     const list = byWave.get(located.wave) ?? [];
     list.push(located);
     byWave.set(located.wave, list);
   }
-  return { byWave, expired };
+  return { byWave, deleted };
 }
 
 /**
@@ -578,7 +591,7 @@ export async function rebuildE2eeState(
 ): Promise<E2eeRebuiltState> {
   const problems: E2eeRebuildProblem[] = [];
   const items = await source.events(E2EE_RECORD_FAMILIES);
-  const { byWave, expired } = await collect(items, source, options, problems);
+  const { byWave, deleted } = await collect(items, source, options, problems);
   const store = new RowStore(problems);
   const heads: E2eeStreamHead[] = [];
   let records = 0;
@@ -589,7 +602,7 @@ export async function rebuildE2eeState(
       wave,
       byWave.get(wave)!,
       problems,
-      expired.get(wave) ?? 0
+      deleted.get(wave) ?? 0
     );
     for (const record of chain) store.apply(record);
     records += chain.length;
@@ -612,8 +625,14 @@ export interface E2eeRebuiltStream {
   readonly head: E2eeStreamHead | null;
   readonly problems: E2eeRebuildProblem[];
   readonly records: number;
-  /** Records whose content the relays dropped at the end of retention. */
-  readonly expired: number;
+  /** Records an orderer's DEL named: deleted, not applied. */
+  readonly deleted: number;
+  /** The deletable items each applied record carries (the DEL index). */
+  readonly items: readonly {
+    readonly pos: number;
+    readonly eventId: string;
+    readonly keys: readonly string[];
+  }[];
 }
 
 /**
@@ -635,13 +654,13 @@ export async function rebuildE2eeStream(
   const items = (await source.stream(wave)).filter(
     (item) => item.event.wave === wave
   );
-  const { byWave, expired } = await collect(items, source, options, problems);
+  const { byWave, deleted } = await collect(items, source, options, problems);
   const store = new RowStore(problems);
   const chain = chainOf(
     wave,
     byWave.get(wave) ?? [],
     problems,
-    expired.get(wave) ?? 0
+    deleted.get(wave) ?? 0
   );
   for (const record of chain) store.apply(record);
   applyRules(store, options.now, problems, options.revokedDevices);
@@ -652,6 +671,20 @@ export async function rebuildE2eeStream(
     head: last ? { wave, pos: last.content.pos, hash: last.hash } : null,
     problems,
     records: chain.length,
-    expired: expired.get(wave) ?? 0
+    deleted: deleted.get(wave) ?? 0,
+    items: chain
+      .map((record) => ({
+        pos: record.content.pos,
+        eventId: record.event.id,
+        keys: e2eeItemKeysOf(
+          wave.slice(0, wave.indexOf('/')),
+          record.content.ops.map((op) =>
+            op.op === 'put'
+              ? { op: op.op, table: op.table, row: op.row }
+              : { op: op.op, table: op.table }
+          )
+        )
+      }))
+      .filter((item) => item.keys.length > 0)
   };
 }
