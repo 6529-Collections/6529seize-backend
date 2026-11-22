@@ -51,7 +51,10 @@ export const publishManifest: AreaManifest = {
     },
     cms_published_packages: { class: 'INDEX' },
     cms_sites: { class: 'INDEX' },
-    profile_cms_chain_heads: { class: 'INDEX', origin: 'planned' }
+    profile_cms_chain_heads: { class: 'INDEX', origin: 'planned' },
+    // Chain versions the follower couldn't apply yet; the change feed
+    // fills it again on a rebuild.
+    profile_cms_chain_parked: { class: 'INDEX', origin: 'planned' }
   },
   seeds: [],
   rebuilders: [],
