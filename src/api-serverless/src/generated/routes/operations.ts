@@ -261,6 +261,7 @@ import { ApiSaveEulaConsentResponse } from '@/api/generated/models/ApiSaveEulaCo
 import { ApiSaveProfileCmsPackageDraftRequest } from '@/api/generated/models/ApiSaveProfileCmsPackageDraftRequest';
 import { ApiSetCompetitionVoteRequest } from '@/api/generated/models/ApiSetCompetitionVoteRequest';
 import { ApiSetDropReplyCollapseRequest } from '@/api/generated/models/ApiSetDropReplyCollapseRequest';
+import { ApiSignedRecordsAnchor } from '@/api/generated/models/ApiSignedRecordsAnchor';
 import { ApiSubmitProfileCmsAgentProposalRequest } from '@/api/generated/models/ApiSubmitProfileCmsAgentProposalRequest';
 import { ApiSubscriptionCoverage } from '@/api/generated/models/ApiSubscriptionCoverage';
 import { ApiTdhRules } from '@/api/generated/models/ApiTdhRules';
@@ -3641,6 +3642,20 @@ export type GetGlobalRepCategoryWavesRequest = Request<
   ApiResponse<GetGlobalRepCategoryWavesResponse>,
   never,
   GetGlobalRepCategoryWavesQuery,
+  Record<string, never>
+>;
+
+export type GetSignedRecordsAnchorPathParams = Record<string, never>;
+
+export type GetSignedRecordsAnchorQuery = Record<string, never>;
+
+export type GetSignedRecordsAnchorResponse = ApiSignedRecordsAnchor;
+
+export type GetSignedRecordsAnchorRequest = Request<
+  GetSignedRecordsAnchorPathParams,
+  ApiResponse<GetSignedRecordsAnchorResponse>,
+  never,
+  GetSignedRecordsAnchorQuery,
   Record<string, never>
 >;
 
