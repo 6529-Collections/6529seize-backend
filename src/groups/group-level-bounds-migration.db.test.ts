@@ -326,12 +326,14 @@ describeWithSeed(
             '(min 101, max null) x2, (min 110, max null) x1, ' +
             '(min 150, max null) x1, (min 150, max 200) x1'
         ],
+        ['levels migration: statement 1 updated 5 community_groups rows'],
         [
           'levels migration: statement 2 rewrites 9 community_groups rows: ' +
             '(min null, max 100) x4, (min null, max 120) x1, ' +
             '(min null, max 150) x1, (min -5, max 100) x1, ' +
             '(min 50, max 100) x1, (min 100, max 100) x1'
-        ]
+        ],
+        ['levels migration: statement 2 updated 9 community_groups rows']
       ]);
       log.mockClear();
       const expected = Object.fromEntries(
@@ -356,7 +358,9 @@ describeWithSeed(
       expect(await storedBounds(groupId(''))).toEqual(expected);
       expect(log.mock.calls).toEqual([
         ['levels migration: statement 1 rewrites 0 community_groups rows'],
-        ['levels migration: statement 2 rewrites 0 community_groups rows']
+        ['levels migration: statement 1 updated 0 community_groups rows'],
+        ['levels migration: statement 2 rewrites 0 community_groups rows'],
+        ['levels migration: statement 2 updated 0 community_groups rows']
       ]);
       log.mockRestore();
     });

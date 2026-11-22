@@ -27,10 +27,12 @@
 // Every other bound means the same under both rules: borders up to level
 // 100 do not change.
 
-// Before each rewrite, the migration logs how many rows it changes, grouped
-// by their bounds (counts and bound values only), to the migrations loop's
-// log. Migrations run as plain files next to the loop's bundle, so they log
-// with console.log, which the loop's Lambda log captures.
+// Before each rewrite, the migration logs how many rows it will change,
+// grouped by their bounds, and after it the number of rows the UPDATE
+// changed. A group saved between the two can make them differ. The lines
+// have counts and bound values only. Migrations run as plain files next to
+// the loop's bundle, so they log with console.log, which the loop's Lambda
+// log captures.
 var STATEMENTS = [
   {
     set: 'level_max = -1',
@@ -71,6 +73,19 @@ function describeRows(index, rows) {
   );
 }
 
+// The driver answers an UPDATE with an object holding affectedRows; some
+// wrappers return it inside an array.
+function affectedRows(result) {
+  var packet = Array.isArray(result) ? result[0] : result;
+  if (packet && typeof packet === 'object' && 'affectedRows' in packet) {
+    return Number(packet.affectedRows);
+  }
+  if (Array.isArray(result) && typeof result[1] === 'number') {
+    return result[1];
+  }
+  return 0;
+}
+
 function rewrite(db, log) {
   return STATEMENTS.reduce(function (promise, statement, index) {
     return promise
@@ -88,6 +103,15 @@ function rewrite(db, log) {
             statement.set +
             ' WHERE ' +
             statement.where
+        );
+      })
+      .then(function (result) {
+        log(
+          'levels migration: statement ' +
+            (index + 1) +
+            ' updated ' +
+            affectedRows(result) +
+            ' community_groups rows'
         );
       });
   }, Promise.resolve());
