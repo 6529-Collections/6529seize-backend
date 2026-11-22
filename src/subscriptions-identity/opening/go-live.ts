@@ -5,7 +5,11 @@ import {
   scheduleIdentitySwitch,
   SWITCH_CUT_WINDOW_MS
 } from '../identity/identity-switch';
-import { journal, journalPosting } from '../timeline/journal';
+import {
+  journal,
+  journalPosting,
+  journalPostingProbe
+} from '../timeline/journal';
 import { shadowReportsMatch } from '../writers/identity-reports';
 import { cutOpeningFiles } from './opening-build';
 import { compareAndMarkVerified } from './opening-compare';
@@ -39,6 +43,8 @@ export async function goLive(params: {
   readonly saveFile?: (name: string, text: string) => void;
   readonly uploader?: FileUploader;
   readonly now?: () => number;
+  /** Proves the closer posts (tests pass their own). */
+  readonly postingProbe?: () => Promise<boolean>;
 }): Promise<GoLiveResult> {
   const now = params.now ?? (() => Date.now());
   const steps: string[] = [];
@@ -57,6 +63,14 @@ export async function goLive(params: {
   if (!posting.ok) {
     return refuse(`the journal is not being posted: ${posting.reason}`);
   }
+  // And prove the closer posts now: a probe entry must be posted within
+  // a closer period and a half.
+  if (!(await (params.postingProbe ?? journalPostingProbe)())) {
+    return refuse(
+      'the journal is not being posted: a probe entry was not posted within 11 minutes'
+    );
+  }
+  steps.push('the journal is being posted');
   const reports = await shadowReportsMatch(params.mintedCard);
   steps.push(...reports.checked.map((c) => `checked ${c}`));
   if (!reports.ok) {
@@ -101,7 +115,9 @@ export async function goLive(params: {
     step('load');
     const g4 = await compareAndMarkVerified(parsed, mirrorIdentityDirectory);
     if (!g4.ok) {
-      return refuse('the opening comparison differs; the legacy tables stay the truth');
+      return refuse(
+        'the opening comparison differs; the legacy tables stay the truth'
+      );
     }
     step('compare');
     const published = await publishOpeningFiles(files, params.uploader);

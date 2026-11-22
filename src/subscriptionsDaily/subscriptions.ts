@@ -50,6 +50,7 @@ import {
   saveReport
 } from '@/subscriptions-identity/writers/identity-reports';
 import { journalCheckpoint } from '@/subscriptions-identity/timeline/journal';
+import { mirrorIdentityDirectory } from '@/subscriptions-identity/identity/identity-directory';
 import { identityOfLegacyKeys } from '@/subscriptions-identity/writers/legacy-key-identities';
 import {
   claimDeferredWrite,
@@ -109,6 +110,7 @@ export async function updateSubscriptions() {
   }
 
   let legacy: LegacyBuild = {
+    explainedKeys: [],
     uploadLink: '',
     affectedConsolidationKeys: [],
     legacyRows: [],
@@ -166,7 +168,8 @@ export async function updateSubscriptions() {
         writeMode,
         identityList,
         legacyRows,
-        legacy.notes
+        legacy.notes,
+        legacy.explainedKeys
       );
     } catch (error) {
       logger.error('[LIST COMPARISON FAILED]', error);
@@ -180,7 +183,11 @@ export async function updateSubscriptions() {
         `[JOURNAL CHECKPOINT] through n=${checkpoint.through_n} ${checkpoint.state_sha256}`
       );
     } catch (error) {
-      logger.error('[JOURNAL CHECKPOINT FAILED]', error);
+      // Without checkpoints a rebuild can't go live: find out now.
+      logger.errorWithCode(
+        'SUBSCRIPTIONS_JOURNAL_CHECKPOINT_FAILED',
+        `[JOURNAL CHECKPOINT FAILED] ${(error as Error).message}`
+      );
     }
   }
 }
@@ -293,7 +300,11 @@ function identityRowAsFinal(row: IdentityListRow): NFTFinalSubscription {
 async function sharedIdRows(
   rows: NFTFinalSubscription[],
   identity: IdentityTruth
-): Promise<{ rows: NFTFinalSubscription[]; notes: string[] }> {
+): Promise<{
+  rows: NFTFinalSubscription[];
+  notes: string[];
+  skippedKeys: string[];
+}> {
   const identities = await identityOfLegacyKeys(
     rows.map((r) => r.consolidation_key)
   );
@@ -301,6 +312,7 @@ async function sharedIdRows(
   const taken = new Set<number>();
   const shared: NFTFinalSubscription[] = [];
   const notes: string[] = [];
+  const skippedKeys: string[] = [];
   for (const row of rows) {
     const identityKey = identities.get(row.consolidation_key.toLowerCase());
     const id = identityKey ? idOf.get(identityKey) : undefined;
@@ -308,12 +320,14 @@ async function sharedIdRows(
       notes.push(
         `legacy row without an identity row, not written: ${row.consolidation_key}`
       );
+      skippedKeys.push(row.consolidation_key);
       continue;
     }
     if (taken.has(id)) {
       notes.push(
         `second legacy row of one identity, not written: ${row.consolidation_key}`
       );
+      skippedKeys.push(row.consolidation_key);
       continue;
     }
     taken.add(id);
@@ -322,7 +336,7 @@ async function sharedIdRows(
   for (const note of notes) {
     logger.warn(`[LEGACY DUAL WRITE] [MEME #${identity.list.tokenId}] ${note}`);
   }
-  return { rows: shared, notes };
+  return { rows: shared, notes, skippedKeys };
 }
 
 /**
@@ -371,8 +385,13 @@ async function reportListComparison(
   mode: IdentityWriteMode,
   identityList: IdentityListBuild,
   legacyRows: readonly NFTFinalSubscription[],
-  writeNotes: readonly string[] = []
+  writeNotes: readonly string[] = [],
+  writeExplainedKeys: readonly string[] = []
 ): Promise<void> {
+  // Legacy keys whose difference has a known structural cause.
+  const structuralKeys = new Set(
+    writeExplainedKeys.map((k) => k.toLowerCase())
+  );
   const identities = await identityOfLegacyKeys(
     legacyRows.map((r) => r.consolidation_key)
   );
@@ -384,12 +403,14 @@ async function reportListComparison(
     const identity = identities.get(row.consolidation_key.toLowerCase());
     if (!identity) {
       notes.push(`legacy key spans identities: ${row.consolidation_key}`);
+      structuralKeys.add(row.consolidation_key.toLowerCase());
       continue;
     }
     if (legacy.has(identity)) {
       notes.push(
         `two legacy rows of one identity: ${identity} (${row.consolidation_key})`
       );
+      structuralKeys.add(row.consolidation_key.toLowerCase());
       continue;
     }
     legacy.set(
@@ -404,6 +425,19 @@ async function reportListComparison(
     ])
   );
   const diffs = compareKeyed(legacy, identity);
+  // The identities those keys belong to: their differences are expected.
+  const explained = new Set(
+    (
+      await mirrorIdentityDirectory.identitiesOf(
+        Array.from(structuralKeys).flatMap((key) => key.split('-'))
+      )
+    ).values()
+  );
+  // A write note other than a skipped row (the dual write failing) is not
+  // structural.
+  const unexplained =
+    diffs.filter((d) => !explained.has(d.key)).length +
+    writeNotes.filter((note) => !note.includes(', not written: ')).length;
   await saveReport({
     kind: 'LIST',
     mode,
@@ -413,7 +447,8 @@ async function reportListComparison(
     legacyRows: legacyRows.length,
     identityRows: identityList.rows.length,
     diffs,
-    notes
+    notes,
+    unexplained
   });
 }
 
@@ -424,6 +459,8 @@ interface LegacyBuild {
   readonly legacyRows: NFTFinalSubscription[];
   /** After the switch: legacy rows the dual write left out, and why. */
   readonly notes: string[];
+  /** Their keys, and keys the key-width guard held back: known causes. */
+  readonly explainedKeys: string[];
 }
 
 async function buildFinalSubscription(
@@ -445,9 +482,9 @@ async function buildFinalSubscription(
 
   // After the switch the identity list is the published one, and the legacy
   // rows share its ids.
-  const { rows, notes } = identity
+  const { rows, notes, skippedKeys } = identity
     ? await sharedIdRows(split.rows, identity)
-    : { rows: split.rows, notes: [] };
+    : { rows: split.rows, notes: [], skippedKeys: [] };
   const upload: NFTFinalSubscriptionUpload = identity
     ? identity.upload
     : await uploadFinalSubscriptions(MEMES_CONTRACT, newMeme, rows);
@@ -462,6 +499,12 @@ async function buildFinalSubscription(
   return {
     legacyRows,
     notes,
+    explainedKeys: [
+      ...skippedKeys,
+      ...split.deferred
+        .filter((d) => d.kind === 'FINAL_ROW')
+        .map((d) => d.consolidationKey)
+    ],
     uploadLink: upload.upload_url,
     affectedConsolidationKeys: Array.from(
       new Set(

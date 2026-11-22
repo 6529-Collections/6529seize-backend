@@ -25,6 +25,13 @@ export interface ComparisonReport {
   readonly diffs: RowDiff[];
   /** Rows only one side could have (for example a key the legacy tables can't hold). */
   readonly notes: string[];
+  /**
+   * How many differences and notes have no known structural cause. A list
+   * report counts out the identities whose difference the notes explain (a
+   * key spanning identities, a second legacy row of one identity, a row the
+   * key-width guard holds back). Unset: every difference counts.
+   */
+  readonly unexplained?: number;
 }
 
 /**
@@ -73,9 +80,14 @@ export async function saveFailedReport(
 /** Stores a comparison and logs its one-line summary. */
 export async function saveReport(report: ComparisonReport): Promise<void> {
   const summary = `[${report.kind} ${report.verdict}] [${report.mode}] card ${report.tokenId ?? '-'}: ${report.identityRows} identity rows, ${report.legacyRows} legacy rows, ${report.diffs.length} differences`;
-  if (report.mode === 'TRUTH' && report.verdict !== 'MATCH') {
+  if (
+    report.mode === 'TRUTH' &&
+    report.verdict !== 'MATCH' &&
+    (report.unexplained === undefined || report.unexplained > 0)
+  ) {
     // After the switch the legacy dual write is the only independent check
-    // of the truth: a difference is someone's money or list, so alert.
+    // of the truth: a difference without a known cause is someone's money
+    // or list, so alert.
     logger.errorWithCode('SUBSCRIPTIONS_TRUTH_COMPARISON_DIFF', summary);
   } else {
     logger.info(summary);

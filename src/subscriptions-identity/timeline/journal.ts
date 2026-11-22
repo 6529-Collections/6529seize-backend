@@ -22,7 +22,7 @@ import { AS_TEXT } from '../opening/legacy-tables';
 import { canonicalJson, sha256Hex } from '../opening/opening-file';
 
 /*
- * The identity tables' journal, version 2. Every write to the identity
+ * The identity tables' journal (version 2). Every write to the identity
  * tables after a load
  * appends its changed rows, before and after, to the shared record log in
  * the same transaction as the write: lane `subs` once the tables are the
@@ -236,6 +236,15 @@ export interface JournalWrite extends JournalSelection {
     readonly state_sha256: string;
   };
   readonly atMs?: number;
+  /**
+   * A list in `inputs` too long to repeat in every part (a redemption's
+   * charges): it is split across the parts instead, and a reader takes the
+   * union of the parts' lists, in part order.
+   */
+  readonly spread?: {
+    readonly key: string;
+    readonly items: readonly unknown[];
+  };
 }
 
 interface Match {
@@ -498,11 +507,13 @@ function stripUndefined<T>(value: T): T {
 function partsOf(
   base: Omit<JournalBody, 'part' | 'parts' | 'changes' | 'rekeys'>,
   changes: readonly JournalChange[],
-  rekeys: JournalBody['rekeys']
+  rekeys: JournalBody['rekeys'],
+  spread: JournalWrite['spread']
 ): JournalBody[] {
-  const groups: JournalChange[][] = [[]];
   // The whole log entry counts: the body inside {t, lane, chain, body}, with
-  // room for part numbers of any size.
+  // room for part numbers of any size, and an empty spread list.
+  const inputsOf = (items: readonly unknown[]): Row =>
+    spread ? { ...base.inputs, [spread.key]: items } : base.inputs;
   const envelope = Buffer.byteLength(
     canonicalJson({
       t: 'entry',
@@ -510,6 +521,7 @@ function partsOf(
       chain: 'public',
       body: stripUndefined({
         ...base,
+        inputs: inputsOf([]),
         part: Number.MAX_SAFE_INTEGER,
         parts: Number.MAX_SAFE_INTEGER,
         changes: [],
@@ -518,30 +530,39 @@ function partsOf(
     }),
     'utf8'
   );
-  let size = envelope;
-  for (const change of changes) {
+  type Group = { changes: JournalChange[]; spread: unknown[]; size: number };
+  const groups: Group[] = [{ changes: [], spread: [], size: envelope }];
+  const place = (item: unknown, what: string) => {
     const bytes =
-      Buffer.byteLength(canonicalJson(stripUndefined(change)), 'utf8') + 1;
+      Buffer.byteLength(canonicalJson(stripUndefined(item)), 'utf8') + 1;
     if (envelope + bytes > JOURNAL_PART_MAX_BYTES) {
       throw new Error(
-        `A ${change.table} row of ${bytes} bytes does not fit a journal part`
+        `A ${what} of ${bytes} bytes does not fit a journal part`
       );
     }
+    let group = groups[groups.length - 1];
     if (
-      size + bytes > JOURNAL_PART_MAX_BYTES &&
-      groups[groups.length - 1].length
+      group.size + bytes > JOURNAL_PART_MAX_BYTES &&
+      (group.changes.length || group.spread.length)
     ) {
-      groups.push([]);
-      size = envelope;
+      group = { changes: [], spread: [], size: envelope };
+      groups.push(group);
     }
-    groups[groups.length - 1].push(change);
-    size += bytes;
+    group.size += bytes;
+    return group;
+  };
+  for (const change of changes) {
+    place(change, `${change.table} row`).changes.push(change);
+  }
+  for (const item of spread?.items ?? []) {
+    place(item, `${spread!.key} item`).spread.push(item);
   }
   return groups.map((group, part) => ({
     ...base,
+    inputs: inputsOf(group.spread),
     part,
     parts: groups.length,
-    changes: group,
+    changes: group.changes,
     rekeys: part === 0 ? rekeys : []
   }));
 }
@@ -585,7 +606,8 @@ export async function journal(
       checkpoint: write.checkpoint ?? null
     },
     changes,
-    [...(write.rekeys ?? [])]
+    [...(write.rekeys ?? [])],
+    write.spread
   );
   const lane = mode === 'truth' ? JOURNAL_LANE : JOURNAL_SHADOW_LANE;
   try {
@@ -804,14 +826,13 @@ export async function journalCheckpoint(): Promise<{
 export const JOURNAL_POSTING_MAX_AGE_MS = 10 * 60 * 1000;
 
 /**
- * Whether journal entries reach the records wave: the record log's closer
- * is on, and no journal entry has waited unposted longer than
- * JOURNAL_POSTING_MAX_AGE_MS. Until an entry is posted, losing the
- * database loses it.
+ * Whether journal entries reach the records wave: no journal entry has
+ * waited unposted longer than JOURNAL_POSTING_MAX_AGE_MS. Until an entry is
+ * posted, losing the database loses it. (The closer's flag lives in its
+ * own Lambda; an entry waiting too long is how its being off shows here.)
  */
 export async function journalPosting(
-  nowMs: number = Date.now(),
-  closerOn: boolean = process.env.FEATURE_SIGNED_RECORD_LOG === 'true'
+  nowMs: number = Date.now()
 ): Promise<{ readonly ok: boolean; readonly reason: string | null }> {
   const [oldest] = await sqlExecutor.execute<{ created_at: number | string }>(
     `SELECT MIN(created_at) AS created_at FROM ${SIGNED_RECORD_LOG_ENTRIES_TABLE}
@@ -823,13 +844,6 @@ export async function journalPosting(
     oldest?.created_at === null || oldest?.created_at === undefined
       ? null
       : Number(oldest.created_at);
-  if (!closerOn) {
-    return {
-      ok: false,
-      reason:
-        'FEATURE_SIGNED_RECORD_LOG is off: journal entries are never posted'
-    };
-  }
   if (
     waitingSince !== null &&
     nowMs - waitingSince > JOURNAL_POSTING_MAX_AGE_MS
@@ -840,6 +854,58 @@ export async function journalPosting(
     };
   }
   return { ok: true, reason: null };
+}
+
+/**
+ * Proves the closer posts now: appends a probe entry to the shadow lane
+ * (not a journal body, so a rebuild skips it) and waits until it has left
+ * the open entries, which happens when its segment's head is posted.
+ * Returns false if it is still waiting after `timeoutMs`.
+ */
+export async function journalPostingProbe(
+  params: {
+    readonly timeoutMs?: number;
+    readonly pollMs?: number;
+  } = {}
+): Promise<boolean> {
+  const timeoutMs = params.timeoutMs ?? 11 * 60 * 1000;
+  const pollMs = params.pollMs ?? 15 * 1000;
+  const id = await sqlExecutor.executeNativeQueriesInTransaction(
+    async (connection) => {
+      const options = { wrappedConnection: connection };
+      await sharedRecordLog.append(
+        [
+          {
+            t: 'entry',
+            lane: JOURNAL_SHADOW_LANE,
+            chain: 'public',
+            body: { t: 'probe', at_ms: Date.now() }
+          }
+        ],
+        { connection }
+      );
+      const [row] = await sqlExecutor.execute<{ id: number | string }>(
+        `SELECT LAST_INSERT_ID() AS id`,
+        {},
+        options
+      );
+      return Number(row.id);
+    }
+  );
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const waiting = await sqlExecutor.execute<{ id: number }>(
+      `SELECT id FROM ${SIGNED_RECORD_LOG_ENTRIES_TABLE} WHERE id = :id`,
+      { id }
+    );
+    if (waiting.length === 0) {
+      return true;
+    }
+    if (Date.now() >= deadline) {
+      return false;
+    }
+    await new Promise((resolve) => setTimeout(resolve, pollMs));
+  }
 }
 
 /** Inserts a log line and returns its id (the journal keeps log ids). */

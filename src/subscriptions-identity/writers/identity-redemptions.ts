@@ -191,28 +191,51 @@ async function chargeToken(
 
 /** A run charges at most this many airdrops (whole blocks), so its journal stays small. */
 export const REDEMPTION_RUN_MAX_AIRDROPS = 200;
+/** ... and at most this many tokens. */
+export const REDEMPTION_RUN_MAX_TOKENS = 1000;
 
 /**
- * The airdrops a run takes: whole blocks, in order, up to
- * REDEMPTION_RUN_MAX_AIRDROPS (a single larger block is taken whole), and
- * the block the cursor moves to. The next run goes on from there.
+ * The airdrops a run takes: whole blocks, in order, while the run stays
+ * within REDEMPTION_RUN_MAX_AIRDROPS airdrops and REDEMPTION_RUN_MAX_TOKENS
+ * tokens, and the block the cursor moves to; the next run goes on from
+ * there. A first block larger than either is taken whole: its journal
+ * entry spreads the charges over as many parts as it needs, so any block
+ * fits, and the caps keep every other run, and the time a run holds the
+ * journal's counter, small.
  */
 function boundedBatch(
   airdrops: Transaction[],
   through: number
 ): { airdrops: Transaction[]; through: number } {
-  if (airdrops.length <= REDEMPTION_RUN_MAX_AIRDROPS) {
+  let airdropCount = 0;
+  let tokens = 0;
+  let end = 0;
+  while (end < airdrops.length) {
+    const block = Number(airdrops[end].block);
+    let blockEnd = end;
+    let blockTokens = 0;
+    while (
+      blockEnd < airdrops.length &&
+      Number(airdrops[blockEnd].block) === block
+    ) {
+      blockTokens += Number(airdrops[blockEnd].token_count);
+      blockEnd++;
+    }
+    const fits =
+      airdropCount + (blockEnd - end) <= REDEMPTION_RUN_MAX_AIRDROPS &&
+      tokens + blockTokens <= REDEMPTION_RUN_MAX_TOKENS;
+    if (!fits && end > 0) {
+      break;
+    }
+    airdropCount += blockEnd - end;
+    tokens += blockTokens;
+    end = blockEnd;
+    if (!fits) {
+      break;
+    }
+  }
+  if (end === airdrops.length) {
     return { airdrops, through };
-  }
-  let end = REDEMPTION_RUN_MAX_AIRDROPS;
-  const boundary = Number(airdrops[end].block);
-  while (end > 0 && Number(airdrops[end - 1].block) === boundary) {
-    end--;
-  }
-  if (end === 0) {
-    // One block holds more than the limit: take that block whole.
-    end = airdrops.findIndex((a) => Number(a.block) !== boundary);
-    end = end < 0 ? airdrops.length : end;
   }
   return {
     airdrops: airdrops.slice(0, end),
@@ -330,9 +353,11 @@ export async function redeemIdentityAirdrops(): Promise<IdentityRedemptionRun | 
         kind: 'redemption',
         inputs: {
           after_block: Number(cursor.block),
-          through_block: batch.through,
-          charges: touches.charges
+          through_block: batch.through
         },
+        // One charge per token: split across the entry's parts, so a large
+        // airdrop block always fits.
+        spread: { key: 'charges', items: touches.charges },
         before: touches.before,
         rows: [
           {

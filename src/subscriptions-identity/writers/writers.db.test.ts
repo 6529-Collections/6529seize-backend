@@ -52,8 +52,10 @@ import { JournalSource, rebuildIdentityTables } from '../opening/rebuild';
 import {
   identityTablesHash,
   journal,
-  JOURNAL_PART_MAX_BYTES
+  JOURNAL_PART_MAX_BYTES,
+  journalPostingProbe
 } from '../timeline/journal';
+import { Logger } from '@/logging';
 import { creditIdentityTopUps } from './identity-top-ups';
 import {
   fetchDetailsForConsolidationKey,
@@ -67,7 +69,7 @@ import {
   runIdentityRedemptionWriters,
   runIdentityTopUpWriters
 } from './identity-loop-hooks';
-import { shadowReportsMatch } from './identity-reports';
+import { saveReport, shadowReportsMatch } from './identity-reports';
 import { buildIdentityList, SHADOW_ONLY_ID_FROM } from './identity-daily-build';
 import { goLive } from '../opening/go-live';
 import { updateSubscription } from '@/api/subscriptions/api.subscriptions.db';
@@ -220,9 +222,14 @@ function goLiveForTest() {
   return goLive({
     signedWritesLive: true,
     acceptReportDiffs: true,
-    mintedCard: 0
+    mintedCard: 0,
+    postingProbe
   });
 }
+
+/** The record log's closer, as go-live's probe sees it in these tests. */
+let closerPosts = true;
+const postingProbe = async () => closerPosts;
 
 /** Every identity table, its state and its cursors are lost. */
 async function loseIdentityTables() {
@@ -266,11 +273,9 @@ describeWithSeed('identity writers after the switch', [], () => {
     });
   });
   beforeEach(() => {
-    // The record log's closer is on: go-live needs the journal posted.
-    process.env.FEATURE_SIGNED_RECORD_LOG = 'true';
+    closerPosts = true;
   });
   afterEach(() => {
-    delete process.env.FEATURE_SIGNED_RECORD_LOG;
     delete process.env[SHADOW_ENV];
     subscriptionsIdentitySwitch.invalidate();
   });
@@ -410,7 +415,15 @@ describeWithSeed('identity writers after the switch', [], () => {
     );
     await cutAndLoad(true);
 
+    const alert = jest.spyOn(Logger.prototype, 'errorWithCode');
     await updateSubscriptions();
+    // A known structural difference: no alert.
+    expect(
+      alert.mock.calls.filter(
+        (call) => call[0] === 'SUBSCRIPTIONS_TRUTH_COMPARISON_DIFF'
+      )
+    ).toHaveLength(0);
+    alert.mockRestore();
 
     const identityRows = await finalIds(
       SUBSCRIPTIONS_ID_NFTS_FINAL_TABLE,
@@ -709,12 +722,177 @@ describeWithSeed('identity writers after the switch', [], () => {
 
   it('refuses go-live while the journal is not being posted', async () => {
     await seedLegacy();
-    delete process.env.FEATURE_SIGNED_RECORD_LOG;
+    closerPosts = false;
     const result = await goLiveForTest();
     expect(result.switched).toBe(false);
-    expect(result.steps.join(' ')).toContain(
-      'FEATURE_SIGNED_RECORD_LOG is off'
+    expect(result.steps.join(' ')).toContain('a probe entry was not posted');
+  });
+
+  it("proves posting with a probe entry that leaves the open entries when it's posted", async () => {
+    await seedLegacy();
+    // Nobody posts: the probe waits, then says no.
+    expect(await journalPostingProbe({ timeoutMs: 300, pollMs: 50 })).toBe(
+      false
     );
+    // The closer posts (the entry leaves the open entries) while it waits.
+    const posting = journalPostingProbe({ timeoutMs: 5000, pollMs: 50 });
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    await execute(
+      `DELETE FROM ${SIGNED_RECORD_LOG_ENTRIES_TABLE} WHERE lane = 'subs-shadow'`
+    );
+    expect(await posting).toBe(true);
+  });
+
+  it('charges one airdrop block of 5,000 tokens in one write whose parts all fit', async () => {
+    await seedLegacy();
+    expect((await goLiveForTest()).switched).toBe(true);
+    const N = 1000;
+    const EDITIONS = 5;
+    const ids = Array.from({ length: N }, (_, i) => wallet(0x3000 + i));
+    for (let i = 0; i < N; i += 250) {
+      const chunk = ids.slice(i, i + 250);
+      const params = {
+        ...Object.fromEntries(chunk.map((w, j) => [`w${j}`, w])),
+        c: MEMES_CONTRACT,
+        card: CARD
+      };
+      await execute(
+        `INSERT INTO ${SUBSCRIPTIONS_ID_BALANCES_TABLE} (identity_key, balance) VALUES ${chunk.map((_, j) => `(:w${j}, 1)`).join(', ')}`,
+        params
+      );
+      await execute(
+        `INSERT INTO ${SUBSCRIPTIONS_ID_NFTS_FINAL_TABLE}
+          (identity_key, consolidation_key, contract, token_id, subscribed_count,
+           airdrop_address, balance, subscribed_at, phase, phase_subscriptions,
+           phase_position, redeemed_count)
+          VALUES ${chunk
+            .map(
+              (_, j) =>
+                `(:w${j}, :w${j}, :c, :card, ${EDITIONS}, :w${j}, 1, '2026-11-20 00:00:00', 'Phase 1', ${N}, ${i + j}, 0)`
+            )
+            .join(', ')}`,
+        params
+      );
+      // All in one block: 1,000 airdrops of 5 tokens.
+      await execute(
+        `INSERT INTO ${TRANSACTIONS_TABLE}
+          (created_at, transaction, block, transaction_date, from_address, to_address,
+           contract, token_id, token_count, value, primary_proceeds, royalties,
+           gas_gwei, gas_price, gas_price_gwei, gas)
+          VALUES ${chunk
+            .map(
+              (_, j) =>
+                `(NOW(), :tx${j}, 100, '2026-11-26 15:00:00', :null, :w${j}, :c, :card, ${EDITIONS}, 0, 0, 0, 0, 0, 0, 0)`
+            )
+            .join(', ')}`,
+        {
+          ...params,
+          null: NULL_ADDRESS,
+          ...Object.fromEntries(
+            chunk.map((_, j) => [
+              `tx${j}`,
+              `0x${(0x5000 + i + j).toString(16).padStart(64, '0')}`
+            ])
+          )
+        }
+      );
+    }
+    await execute(
+      `INSERT INTO ${TRANSACTIONS_PROCESSED_SUBSCRIPTIONS_BLOCKS_TABLE} (created_at, block, timestamp)
+        VALUES (NOW(), 100, 0)`
+    );
+    await runIdentityRedemptionWriters();
+    const [charged] = await sqlExecutor.execute<{ n: number }>(
+      `SELECT SUM(count) AS n FROM ${SUBSCRIPTIONS_ID_REDEEMED_TABLE}`
+    );
+    expect(Number(charged.n)).toBe(N * EDITIONS);
+    const entries = (
+      await sqlExecutor.execute<{ entry: string }>(
+        `SELECT entry FROM ${SIGNED_RECORD_LOG_ENTRIES_TABLE} ORDER BY id`
+      )
+    ).map((row) => ({
+      bytes: Buffer.byteLength(row.entry),
+      entry: JSON.parse(row.entry)
+    }));
+    expect(Math.max(...entries.map((e) => e.bytes))).toBeLessThanOrEqual(
+      JOURNAL_PART_MAX_BYTES
+    );
+    const redemption = entries
+      .map((e) => e.entry.body)
+      .filter((body) => body?.kind === 'redemption');
+    expect(redemption.length).toBeGreaterThan(1);
+    expect(new Set(redemption.map((body) => body.n)).size).toBe(1);
+    expect(
+      redemption.flatMap((body) => body.inputs.charges as unknown[])
+    ).toHaveLength(N * EDITIONS);
+  }, 900000);
+
+  it('reports a last write posted only in part as the tail, and stays suspended', async () => {
+    await seedLegacy();
+    expect((await goLiveForTest()).switched).toBe(true);
+    // A write of several parts (a long list in its inputs, no row changed).
+    await sqlExecutor.executeNativeQueriesInTransaction((connection) =>
+      journal(
+        {
+          kind: 'phase',
+          inputs: {
+            contract: MEMES_CONTRACT,
+            token_id: CARD,
+            phase: 'Phase 1'
+          },
+          spread: {
+            key: 'padding',
+            items: Array.from({ length: 4000 }, (_, i) => 'x'.repeat(500) + i)
+          }
+        },
+        { wrappedConnection: connection }
+      )
+    );
+    const rows = await sqlExecutor.execute<{ entry: string }>(
+      `SELECT entry FROM ${SIGNED_RECORD_LOG_ENTRIES_TABLE} WHERE chain = 'public' ORDER BY id`
+    );
+    const lastParts = rows
+      .map((r) => JSON.parse(r.entry).body)
+      .filter((body) => body?.kind === 'phase');
+    expect(lastParts[0].parts).toBeGreaterThan(1);
+    await loseIdentityTables();
+    // The segment ended after the write's first part.
+    const result = await rebuildIdentityTables({
+      source: {
+        async *walk() {
+          for (const row of rows.slice(0, rows.length - lastParts.length + 1)) {
+            yield { entry: JSON.parse(row.entry) };
+          }
+        }
+      },
+      fetch: fetchPublished
+    });
+    expect(result.missing).toContain('ends inside write');
+    expect(await subscriptionsIdentitySwitch.writeModeOrFail()).toBe('OFF');
+  });
+
+  it('alerts on a difference after the switch only when no known cause explains it', async () => {
+    const alert = jest.spyOn(Logger.prototype, 'errorWithCode');
+    const report = (unexplained: number | undefined) =>
+      saveReport({
+        kind: 'LIST',
+        mode: 'TRUTH',
+        contract: MEMES_CONTRACT,
+        tokenId: CARD,
+        verdict: 'DIFF',
+        legacyRows: 1,
+        identityRows: 2,
+        diffs: [{ key: P1, legacy: null, identity: 'x' }],
+        notes: [`second legacy row of one identity, not written: ${A}`],
+        unexplained
+      });
+    await report(0);
+    expect(alert).not.toHaveBeenCalled();
+    await report(1);
+    await report(undefined);
+    expect(alert).toHaveBeenCalledTimes(2);
+    expect(alert.mock.calls[0][0]).toBe('SUBSCRIPTIONS_TRUTH_COMPARISON_DIFF');
+    alert.mockRestore();
   });
 
   it('keeps every journal entry small for a build and a mint over 900 identities with long histories', async () => {
@@ -933,7 +1111,8 @@ describeWithSeed('identity writers after the switch', [], () => {
     const result = await goLive({
       signedWritesLive: true,
       acceptReportDiffs: true,
-      mintedCard: 0
+      mintedCard: 0,
+      postingProbe
     });
     expect(result.switched).toBe(true);
     expect(result.steps).toContain('unsigned writes paused');
@@ -965,7 +1144,8 @@ describeWithSeed('identity writers after the switch', [], () => {
     const result = await goLive({
       signedWritesLive: true,
       acceptReportDiffs: true,
-      mintedCard: 0
+      mintedCard: 0,
+      postingProbe
     });
     expect(result.switched).toBe(true);
     expect(during).toContain('paused');

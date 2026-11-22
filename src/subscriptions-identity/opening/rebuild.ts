@@ -56,8 +56,8 @@ let boundSource: (() => JournalSource) | null = null;
 
 /**
  * Binds where the CLI's rebuild reads the record log: the records wave
- * reader, once a relay client for the records wave lands. Until then the CLI's
- * rebuild says so and stops.
+ * reader, once a relay client for the records wave is available. Until
+ * then the CLI's rebuild says so and stops.
  */
 export function setJournalSource(source: (() => JournalSource) | null): void {
   boundSource = source;
@@ -150,7 +150,12 @@ interface JournalWriteRecord {
 function writesOf(
   bodies: readonly JournalBody[],
   openingSha256: string
-): { writes: JournalWriteRecord[]; skipped: number } {
+): {
+  writes: JournalWriteRecord[];
+  skipped: number;
+  /** The last write, posted only in part (a segment ended inside it). */
+  partial: { n: number; have: number; parts: number } | null;
+} {
   const byN = new Map<number, JournalBody[]>();
   let skipped = 0;
   for (const body of bodies) {
@@ -160,22 +165,31 @@ function writesOf(
     }
     byN.set(body.n, [...(byN.get(body.n) ?? []), body]);
   }
-  const writes = Array.from(byN.entries())
-    .sort(([a], [b]) => a - b)
-    .map(([n, parts]) => {
-      const sorted = [...parts].sort((a, b) => a.part - b.part);
-      const expected = sorted[0].parts;
-      if (
-        sorted.length !== expected ||
-        sorted.some((body, i) => body.part !== i || body.parts !== expected)
-      ) {
-        throw new Error(
-          `Journal write n=${n} has ${sorted.length} of its ${expected} parts`
-        );
-      }
-      return { n, bodies: sorted };
-    });
-  return { writes, skipped };
+  const ordered = Array.from(byN.entries()).sort(([a], [b]) => a - b);
+  const writes: JournalWriteRecord[] = [];
+  let partial: { n: number; have: number; parts: number } | null = null;
+  for (let index = 0; index < ordered.length; index++) {
+    const [n, parts] = ordered[index];
+    const sorted = [...parts].sort((a, b) => a.part - b.part);
+    const expected = sorted[0].parts;
+    const complete =
+      sorted.length === expected &&
+      sorted.every((body, i) => body.part === i && body.parts === expected);
+    if (complete) {
+      writes.push({ n, bodies: sorted });
+      continue;
+    }
+    // The closer can end a segment between a write's parts: the last write
+    // is then a tail still being posted. Anywhere else it is a gap.
+    if (index === ordered.length - 1 && sorted.every((b, i) => b.part === i)) {
+      partial = { n, have: sorted.length, parts: expected };
+      continue;
+    }
+    throw new Error(
+      `Journal write n=${n} has ${sorted.length} of its ${expected} parts`
+    );
+  }
+  return { writes, skipped, partial };
 }
 
 async function liveCounter(): Promise<number | null> {
@@ -240,7 +254,10 @@ export async function rebuildIdentityTables(params: {
         'Only a rebuild from the journal goes live: rehearsal files name no published opening'
       );
     }
-    const { writes, skipped } = writesOf(bodies, opening.openingSha256);
+    const { writes, skipped, partial } = writesOf(
+      bodies,
+      opening.openingSha256
+    );
     const lastSeen = bodies.reduce((max, b) => Math.max(max, b.n), 0);
     const live = await liveCounter();
     await loadOpeningFiles(opening, now());
@@ -286,8 +303,9 @@ export async function rebuildIdentityTables(params: {
         ON DUPLICATE KEY UPDATE block = GREATEST(block, VALUES(block))`,
       { id: JOURNAL_COUNTER_ID, n: lastSeen, now: now() }
     );
-    const missing =
-      live !== null && live > lastSeen
+    const missing = partial
+      ? `The posted journal ends inside write n=${partial.n} (${partial.have} of its ${partial.parts} parts). Wait for the next segment, then rebuild again.`
+      : live !== null && live > lastSeen
         ? `The posted journal ends at n=${lastSeen}; live's counter is at n=${live}. Close and post the open segment, then rebuild again.`
         : null;
     if (missing) {
