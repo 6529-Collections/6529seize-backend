@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomInt } from 'node:crypto';
 import { Logger } from '@/logging';
 import {
   ChainAnswer,
@@ -112,7 +112,7 @@ export function chainGatewayConfigFromEnv(
     );
   }
   return {
-    baseUrl: baseUrl.replace(/\/+$/, ''),
+    baseUrl: trimTrailingSlashes(baseUrl),
     serviceKey: env.CHAIN_GATEWAY_SERVICE_KEY?.trim() || null,
     timeoutMs: intOr(env.CHAIN_GATEWAY_TIMEOUT_MS, 10_000),
     retries: intOr(env.CHAIN_GATEWAY_RETRIES, 3),
@@ -169,6 +169,14 @@ interface Envelope<T> {
 }
 
 const RETRYABLE = new Set([429, 500, 502, 503, 504]);
+
+type RetryableError = ChainGatewayError & { retryAfterMs?: number };
+
+function trimTrailingSlashes(url: string): string {
+  let end = url.length;
+  while (end > 0 && url[end - 1] === '/') end--;
+  return url.slice(0, end);
+}
 const RFC4648_LOWER = 'abcdefghijklmnopqrstuvwxyz234567';
 
 function base32(bytes: Uint8Array): string {
@@ -285,7 +293,96 @@ export class ChainGatewayClient {
       params.append(key, String(value));
     }
     const search = params.toString();
-    return `${this.config().baseUrl}${path}${search ? `?${search}` : ''}`;
+    const suffix = search ? '?' + search : '';
+    return `${this.config().baseUrl}${path}${suffix}`;
+  }
+
+  private headersFor(binary: boolean, hasBody: boolean) {
+    const headers: Record<string, string> = {
+      accept: binary ? 'application/octet-stream' : 'application/json',
+      'user-agent': '6529-backend'
+    };
+    const key = this.config().serviceKey;
+    if (key) {
+      headers.authorization = `Bearer ${key}`;
+    }
+    if (hasBody) {
+      headers['content-type'] = 'application/json';
+    }
+    return headers;
+  }
+
+  /**
+   * One attempt: the answer, or a ChainGatewayError marked retryable for a
+   * network error, a timeout, 429 or 5xx.
+   */
+  private async attempt(
+    method: 'GET' | 'POST',
+    path: string,
+    url: string,
+    body: unknown,
+    binary: boolean
+  ): Promise<
+    | {
+        ok: true;
+        status: number;
+        json: Envelope<unknown> | null;
+        bytes?: Buffer;
+      }
+    | { ok: false; error: RetryableError }
+  > {
+    const config = this.config();
+    const fetchImpl: FetchLike =
+      config.fetchImpl ?? (globalThis.fetch as unknown as FetchLike);
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), config.timeoutMs);
+    try {
+      const response = await fetchImpl(url, {
+        method,
+        headers: this.headersFor(binary, body !== undefined),
+        body: body === undefined ? undefined : JSON.stringify(body),
+        signal: controller.signal
+      });
+      if (RETRYABLE.has(response.status)) {
+        const error = this.errorOf(
+          path,
+          response.status,
+          await this.parse(response)
+        );
+        return {
+          ok: false,
+          error: Object.assign(error, {
+            retryAfterMs: this.retryAfterMs(response.headers.get('retry-after'))
+          })
+        };
+      }
+      if (binary && response.status === 200) {
+        const bytes = Buffer.from(await response.arrayBuffer());
+        return { ok: true, status: 200, json: null, bytes };
+      }
+      return {
+        ok: true,
+        status: response.status,
+        json: await this.parse(response)
+      };
+    } catch (error) {
+      if (error instanceof ChainGatewayError) {
+        throw error;
+      }
+      const reason = (error as Error)?.message ?? String(error);
+      const code = controller.signal.aborted ? 'timeout' : 'network';
+      return {
+        ok: false,
+        error: new ChainGatewayError(
+          `${method} ${path} failed: ${reason}`,
+          null,
+          code,
+          path
+        )
+      };
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   private async send(
@@ -300,79 +397,40 @@ export class ChainGatewayClient {
     bytes?: Buffer;
   }> {
     const config = this.config();
-    const fetchImpl: FetchLike =
-      config.fetchImpl ?? (globalThis.fetch as unknown as FetchLike);
     const sleep =
       config.sleep ??
       ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
     const url = this.url(path, query);
-    const headers: Record<string, string> = {
-      accept: binary ? 'application/octet-stream' : 'application/json',
-      'user-agent': '6529-backend'
-    };
-    if (config.serviceKey) {
-      headers.authorization = `Bearer ${config.serviceKey}`;
-    }
-    if (body !== undefined) {
-      headers['content-type'] = 'application/json';
-    }
-    let lastError: ChainGatewayError | null = null;
+    let lastError: RetryableError = new ChainGatewayError(
+      `${method} ${path} was not attempted`,
+      null,
+      'network',
+      path
+    );
     for (let attempt = 0; attempt <= config.retries; attempt++) {
       if (attempt > 0) {
         await sleep(this.backoff(attempt, lastError));
       }
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), config.timeoutMs);
-      try {
-        const response = await fetchImpl(url, {
-          method,
-          headers,
-          body: body === undefined ? undefined : JSON.stringify(body),
-          signal: controller.signal
-        });
-        if (RETRYABLE.has(response.status)) {
-          const json = await this.parse(response);
-          lastError = this.errorOf(path, response.status, json);
-          (lastError as { retryAfterMs?: number }).retryAfterMs =
-            this.retryAfterMs(response.headers.get('retry-after'));
-          continue;
-        }
-        if (binary && response.status === 200) {
-          return {
-            status: 200,
-            json: null,
-            bytes: Buffer.from(await response.arrayBuffer())
-          };
-        }
-        return { status: response.status, json: await this.parse(response) };
-      } catch (error) {
-        lastError =
-          error instanceof ChainGatewayError
-            ? error
-            : new ChainGatewayError(
-                `${method} ${path} failed: ${(error as Error)?.message ?? error}`,
-                null,
-                controller.signal.aborted ? 'timeout' : 'network',
-                path
-              );
-      } finally {
-        clearTimeout(timer);
+      const result = await this.attempt(method, path, url, body, binary);
+      if (result.ok) {
+        return result;
       }
+      lastError = result.error;
     }
     logger.warn(
-      `[GATEWAY ${method} ${path} GAVE UP] [${lastError?.code}] [${lastError?.message}]`
+      `[GATEWAY ${method} ${path} GAVE UP] [${lastError.code}] [${lastError.message}]`
     );
-    throw lastError!;
+    throw lastError;
   }
 
-  private backoff(attempt: number, error: ChainGatewayError | null): number {
-    const retryAfter = (error as { retryAfterMs?: number } | null)
-      ?.retryAfterMs;
-    if (retryAfter !== undefined) {
-      return Math.min(retryAfter, 10_000);
+  private backoff(attempt: number, error: RetryableError): number {
+    if (error.retryAfterMs !== undefined) {
+      return Math.min(error.retryAfterMs, 10_000);
     }
     const base = Math.min(5_000, 200 * 2 ** (attempt - 1));
-    return base + Math.floor(Math.random() * 100);
+    // Jitter only spreads retries out; it needs no secure randomness, but
+    // randomInt keeps one generator in the file.
+    return base + randomInt(100);
   }
 
   private retryAfterMs(header: string | null): number | undefined {
@@ -739,7 +797,8 @@ export class ChainGatewayClient {
     if (query.wallet) {
       path = `/v1/tdh/wallets/${segment(lower(query.wallet))}`;
     } else if (query.day !== undefined) {
-      path = `/v1/tdh/days/${segment(query.day)}${query.list ? `/${query.list}` : ''}`;
+      const list = query.list ? '/' + query.list : '';
+      path = `/v1/tdh/days/${segment(query.day)}${list}`;
     }
     return this.read<T>(
       path,

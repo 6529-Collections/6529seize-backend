@@ -5,19 +5,17 @@
  * TDH, xTDH) as decimal strings; heights, slots, times and counts as numbers.
  */
 
-export type Hex = string;
-
 /** Which state a read came from, on every answer. */
 export interface ChainReadStamp {
   readonly at: 'finalized' | 'head';
   readonly height: number;
-  readonly root: Hex;
+  readonly root: string;
   readonly slot: number;
   /** The block's slot start, Unix ms. */
   readonly time: number;
   readonly finalizedHeight: number;
   readonly headHeight: number;
-  readonly network: Hex;
+  readonly network: string;
 }
 
 /** One answer: its data, the state it read and the next page's cursor. */
@@ -81,18 +79,18 @@ export interface ChainLevel {
 }
 
 export interface ChainIdentity {
-  readonly principalId: Hex;
+  readonly principalId: string;
   readonly kind: string;
   readonly status: string;
   readonly createdHeight: number;
   readonly handle: string | null;
-  readonly anchor: Hex;
-  readonly primary: Hex;
+  readonly anchor: string;
+  readonly primary: string;
   readonly primarySource: 'delegation' | 'anchor';
   /** BoundAt order; the anchor first for imported identities. */
-  readonly wallets: Hex[];
+  readonly wallets: string[];
   readonly profile: {
-    readonly docCid: Hex;
+    readonly docCid: string;
     readonly version: number;
     readonly updatedHeight: number;
   } | null;
@@ -100,7 +98,7 @@ export interface ChainIdentity {
   readonly nic: { readonly total: string; readonly raters: number };
   readonly xtdh: string;
   readonly level: ChainLevel | null;
-  readonly mergedInto: Hex | null;
+  readonly mergedInto: string | null;
   /** The 6529.io profile id it was imported from, when the API gives it. */
   readonly legacyId?: string | null;
 }
@@ -110,18 +108,18 @@ export interface ChainHandle {
   readonly valid: boolean;
   readonly available: boolean;
   readonly status: 'free' | 'claimed' | 'reserved' | 'invalid';
-  readonly principalId: Hex | null;
+  readonly principalId: string | null;
   readonly since: number | null;
   readonly reservedUntil: number | null;
 }
 
 export interface ChainMembershipWallet {
-  readonly wallet: Hex;
-  readonly principalId: Hex | null;
+  readonly wallet: string;
+  readonly principalId: string | null;
   readonly via?: string;
   readonly index?: number;
   readonly boundCycle?: number;
-  readonly wallets?: Hex[];
+  readonly wallets?: string[];
   readonly leftAt?: number | null;
 }
 
@@ -132,14 +130,14 @@ export interface ChainMembershipDay {
 
 export interface ChainMembershipDayWallets {
   readonly record: Record<string, unknown> | null;
-  readonly wallets: { readonly wallet: Hex; readonly principalId: Hex }[];
+  readonly wallets: { readonly wallet: string; readonly principalId: string }[];
 }
 
 export interface ChainDelegation {
   readonly scope: 'identity' | 'wallet';
-  readonly holder: Hex;
-  readonly collection: Hex;
-  readonly delegate: Hex;
+  readonly holder: string;
+  readonly collection: string;
+  readonly delegate: string;
   readonly useCase: number;
   readonly allTokens: boolean;
   readonly tokenId: string;
@@ -150,28 +148,28 @@ export interface ChainDelegation {
   readonly setHeight: number;
   readonly ethBlock: number | null;
   readonly logIndex: number | null;
-  readonly setBy: Hex | null;
+  readonly setBy: string | null;
 }
 
 export interface ChainDelegationFilters {
   readonly useCase?: number;
-  readonly collection?: Hex;
-  readonly delegate?: Hex;
+  readonly collection?: string;
+  readonly delegate?: string;
   /** Leave out records expired at the read's block time. */
   readonly live?: boolean;
 }
 
 export type ChainDelegationQuery = ChainDelegationFilters &
   (
-    | { readonly holder: Hex }
-    | { readonly byDelegate: Hex }
-    | { readonly byCollection: Hex }
+    | { readonly holder: string }
+    | { readonly byDelegate: string }
+    | { readonly byCollection: string }
     | { readonly byUseCase: number }
   );
 
 export interface ChainWalletDelegations {
   readonly scope: 'wallet' | 'identity';
-  readonly holder: Hex;
+  readonly holder: string;
   readonly records: ChainDelegation[];
   readonly more: boolean;
 }
@@ -179,27 +177,27 @@ export interface ChainWalletDelegations {
 export type ChainRatingMatter = 'rep' | 'nic';
 
 export interface ChainRating {
-  readonly rater: Hex;
-  readonly target: Hex;
+  readonly rater: string;
+  readonly target: string;
   readonly targetKind?: string;
   readonly matter: string;
-  readonly category: { readonly id: Hex; readonly name: string | null };
+  readonly category: { readonly id: string; readonly name: string | null };
   readonly value: string;
   readonly updatedHeight: number;
-  readonly viaGrant: Hex | null;
+  readonly viaGrant: string | null;
 }
 
 export interface ChainRatingTotal {
   readonly matter: string;
-  readonly category: { readonly id: Hex; readonly name: string | null };
+  readonly category: { readonly id: string; readonly name: string | null };
   readonly total: string;
   readonly raters: number;
 }
 
 export interface ChainFeedRecord {
-  readonly family: Hex;
+  readonly family: string;
   readonly name: string;
-  readonly key: Hex;
+  readonly key: string;
   /** null: the record was deleted in this block. */
   readonly value: unknown;
   readonly keyFields?: Record<string, unknown>;
@@ -209,7 +207,7 @@ export interface ChainFeedRecord {
 export interface ChainFeedBlock {
   readonly height: number;
   readonly slot: number;
-  readonly root: Hex;
+  readonly root: string;
   readonly time: number;
   readonly records: ChainFeedRecord[];
 }
@@ -227,11 +225,11 @@ export interface ChainFeedPage {
 export interface ChainDraftRequest {
   readonly opType: string | number;
   readonly opVersion?: number;
-  readonly principal?: Hex | null;
-  readonly signer?: Hex;
+  readonly principal?: string | null;
+  readonly signer?: string;
   readonly keyType?: number;
-  readonly keyId?: Hex;
-  readonly authRef?: Hex;
+  readonly keyId?: string;
+  readonly authRef?: string;
   readonly body: Record<string, unknown>;
   readonly nonce?: number;
   readonly nonceLane?: number;
@@ -245,17 +243,17 @@ export interface ChainDraftRequest {
 
 export interface ChainDraft {
   /** The EIP-712 digest every signature signs. */
-  readonly txId: Hex;
+  readonly txId: string;
   readonly opType: number;
   readonly opName: string;
   readonly opVersion: number;
   readonly typedData: Record<string, unknown>;
-  readonly unsigned: Hex;
+  readonly unsigned: string;
   readonly envelope: Record<string, unknown>;
   readonly signatures: {
     readonly role: number;
     readonly keyType: number;
-    readonly signer: Hex;
+    readonly signer: string;
   }[];
   readonly fee: Record<string, unknown>;
   readonly readAt: number;
@@ -264,15 +262,15 @@ export interface ChainDraft {
 export interface ChainSignature {
   readonly role: number;
   readonly keyType: number;
-  readonly sig: Hex;
+  readonly sig: string;
 }
 
 export type ChainSubmitRequest =
-  | { readonly signed: Hex }
-  | { readonly unsigned: Hex; readonly signatures: ChainSignature[] };
+  | { readonly signed: string }
+  | { readonly unsigned: string; readonly signatures: ChainSignature[] };
 
 export interface ChainSubmitResult {
-  readonly txId: Hex;
+  readonly txId: string;
   readonly accepted: boolean;
   readonly eligibleAt?: number;
   readonly opType?: number;
@@ -281,7 +279,7 @@ export interface ChainSubmitResult {
 export interface ChainTx {
   readonly status: 'final' | 'in_block' | 'failed' | 'pending';
   readonly height?: number;
-  readonly block?: Hex;
+  readonly block?: string;
   readonly position?: number;
   readonly opType?: number;
   readonly result?: {
@@ -295,7 +293,7 @@ export interface ChainTx {
 
 export interface ChainTdhQuery {
   readonly day?: number;
-  readonly wallet?: Hex;
+  readonly wallet?: string;
   /** With `day`: `wallets` or `identities` lists that day's rows. */
   readonly list?: 'wallets' | 'identities';
 }
