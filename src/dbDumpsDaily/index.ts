@@ -5,7 +5,11 @@ import { NFTDELEGATION_BLOCKS_TABLE } from '@/constants';
 import { DB_DUMPS_DAILY_TABLES } from './db-dumps-daily-tables';
 import { sqlExecutor } from '../sql-executor';
 import { json2csv } from 'json-2-csv';
-import { PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
+import {
+  GetObjectCommand,
+  PutObjectCommand,
+  S3Client
+} from '@aws-sdk/client-s3';
 import { doInDbContext } from '../secrets';
 import { appFeatures } from '../app-features';
 import { Time } from '../time';
@@ -42,9 +46,21 @@ export const handler = sentryContext.wrapLambdaHandler(async () => {
   );
 });
 
+type DumpedEntry = DumpedFile & { readonly source: DumpSource };
+
 type ManifestEntry =
-  | (DumpedFile & { readonly source: DumpSource })
+  | DumpedEntry
+  /** A skipped file whose CSV an earlier run wrote, as that run described it. */
+  | (DumpedEntry & { readonly generated_at: string; readonly skipped: string })
+  /** A skipped file that no manifest has described. */
   | { readonly table: string; readonly key: string; readonly skipped: string };
+
+interface Manifest {
+  readonly version: number;
+  readonly generated_at: string;
+  readonly complete: boolean;
+  readonly files: ManifestEntry[];
+}
 
 /**
  * FEATURE_DB_DUMPS_MANIFEST: dumps delegations and consolidations first, read
@@ -52,12 +68,14 @@ type ManifestEntry =
  * the latest NFTDelegation block, then writes manifest.json beside the CSVs:
  * each file's row count, SHA-256 and source, so a reader can check them
  * against Ethereum and the 6529 chain. A skipped table keeps its previous
- * file and has an entry that says so. The manifest goes up last, so a run
- * that fails part way leaves the previous manifest, whose hashes then show
- * which files changed since.
+ * file, and its entry says why and carries that file's hash, rows, source
+ * and time forward from the previous manifest. The manifest goes up last,
+ * so a run that fails part way leaves the previous manifest, whose hashes
+ * then show which files changed since.
  */
 async function dumpWithManifest() {
   const now = Time.currentMillis();
+  const previous = await readPreviousManifest();
   const files: ManifestEntry[] = [];
   const reads: TableRead[] = [
     ...(await readChainTables(now)),
@@ -66,11 +84,7 @@ async function dumpWithManifest() {
   for (const read of reads) {
     if ('skip' in read) {
       logger.warn(`[TABLE ${read.table}] : [SKIPPED] : [${read.skip}]`);
-      files.push({
-        table: read.table,
-        key: objectKey(`${read.table}.csv`),
-        skipped: read.skip
-      });
+      files.push(skippedEntry(read.table, read.skip, previous));
       continue;
     }
     files.push({
@@ -94,6 +108,57 @@ async function dumpWithManifest() {
     ),
     'application/json'
   );
+}
+
+/**
+ * A skipped table's entry. Its CSV is the one the previous manifest
+ * described (directly, or carried forward itself), so that description
+ * stays, with the time that file was written.
+ */
+function skippedEntry(
+  table: string,
+  skipped: string,
+  previous: Manifest | null
+): ManifestEntry {
+  const key = objectKey(`${table}.csv`);
+  const earlier = previous?.files.find(
+    (entry): entry is DumpedEntry =>
+      entry.table === table && entry.key === key && 'sha256' in entry
+  );
+  if (!earlier) return { table, key, skipped };
+  return {
+    table,
+    key,
+    rows: earlier.rows,
+    sha256: earlier.sha256,
+    source: earlier.source,
+    generated_at:
+      'generated_at' in earlier
+        ? String(earlier.generated_at)
+        : previous!.generated_at,
+    skipped
+  };
+}
+
+/** The manifest the last run wrote, or null when there is none to read. */
+async function readPreviousManifest(): Promise<Manifest | null> {
+  try {
+    const response = await s3.send(
+      new GetObjectCommand({
+        Bucket: process.env.AWS_6529_IMAGES_BUCKET_NAME!,
+        Key: objectKey('manifest.json')
+      })
+    );
+    const body = await response.Body?.transformToString();
+    const manifest = body ? JSON.parse(body) : null;
+    return Array.isArray(manifest?.files) ? manifest : null;
+  } catch (error: any) {
+    if (error?.name !== 'NoSuchKey')
+      logger.warn(
+        `[MANIFEST] : [PREVIOUS UNREADABLE] : [${error?.message ?? error}]`
+      );
+    return null;
+  }
 }
 
 async function dumpTable(tableName: string): Promise<DumpedFile> {

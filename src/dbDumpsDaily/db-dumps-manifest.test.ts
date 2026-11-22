@@ -6,7 +6,8 @@ import { handler } from './index';
 const send = jest.fn();
 jest.mock('@aws-sdk/client-s3', () => ({
   S3Client: jest.fn(() => ({ send: (command: unknown) => send(command) })),
-  PutObjectCommand: jest.fn((input: unknown) => ({ input }))
+  PutObjectCommand: jest.fn((input: unknown) => ({ input, put: true })),
+  GetObjectCommand: jest.fn((input: unknown) => ({ input, get: true }))
 }));
 jest.mock('../sentry.context', () => ({
   wrapLambdaHandler: (fn: unknown) => fn
@@ -34,10 +35,12 @@ const rows: Record<string, Record<string, unknown>[]> = {
 
 function uploads(): Record<string, { body: string; type: string }> {
   return Object.fromEntries(
-    send.mock.calls.map(([command]) => [
-      command.input.Key,
-      { body: command.input.Body, type: command.input.ContentType }
-    ])
+    send.mock.calls
+      .filter(([command]) => command.put)
+      .map(([command]) => [
+        command.input.Key,
+        { body: command.input.Body, type: command.input.ContentType }
+      ])
   );
 }
 
@@ -182,5 +185,114 @@ describe('dbDumpsDaily', () => {
       'transactions',
       'nftdelegation_blocks'
     ]);
+  });
+
+  /** The manifest a GetObject finds, or a missing object. */
+  function previousManifest(manifest: object | null) {
+    send.mockImplementation(async (command) => {
+      if (!command.get) return { $metadata: { httpStatusCode: 200 } };
+      if (!manifest)
+        throw Object.assign(new Error('The specified key does not exist.'), {
+          name: 'NoSuchKey'
+        });
+      return {
+        $metadata: { httpStatusCode: 200 },
+        Body: { transformToString: async () => JSON.stringify(manifest) }
+      };
+    });
+  }
+
+  const delegationsEntry = {
+    table: 'delegations',
+    key: 'db-dumps/production/delegations.csv',
+    rows: 12,
+    sha256: 'a'.repeat(64),
+    source: {
+      kind: 'identity_chain_mirror',
+      next_height: 4400,
+      updated_at: NOW - 86_400_000
+    }
+  };
+
+  it("carries a skipped file's hash, rows and source forward, with the time it was written", async () => {
+    process.env.FEATURE_DB_DUMPS_MANIFEST = 'true';
+    answer({ next_height: 4521, sync_phase: 'DELEGATIONS', updated_at: NOW });
+    previousManifest({
+      version: 1,
+      generated_at: '2026-11-24T03:00:00.000Z',
+      complete: true,
+      files: [delegationsEntry]
+    });
+
+    await invoke();
+
+    const manifest = JSON.parse(
+      uploads()['db-dumps/production/manifest.json'].body
+    );
+    expect(manifest.complete).toBe(false);
+    expect(manifest.files.slice(0, 2)).toEqual([
+      {
+        ...delegationsEntry,
+        generated_at: '2026-11-24T03:00:00.000Z',
+        skipped: expect.stringContaining('has not finished a full pass')
+      },
+      // No earlier description of this file: the entry says only why.
+      {
+        table: 'consolidations',
+        key: 'db-dumps/production/consolidations.csv',
+        skipped: expect.stringContaining('has not finished a full pass')
+      }
+    ]);
+    // The previous manifest is read before anything goes up.
+    expect(send.mock.calls[0][0]).toMatchObject({
+      get: true,
+      input: { Key: 'db-dumps/production/manifest.json' }
+    });
+  });
+
+  it('keeps the first time through a run of skips', async () => {
+    process.env.FEATURE_DB_DUMPS_MANIFEST = 'true';
+    answer({ next_height: 4521, sync_phase: 'DELEGATIONS', updated_at: NOW });
+    previousManifest({
+      version: 1,
+      generated_at: '2026-11-24T03:00:00.000Z',
+      complete: false,
+      files: [
+        {
+          ...delegationsEntry,
+          generated_at: '2026-11-20T03:00:00.000Z',
+          skipped: 'the identity mirror is mid-pass'
+        }
+      ]
+    });
+
+    await invoke();
+
+    const manifest = JSON.parse(
+      uploads()['db-dumps/production/manifest.json'].body
+    );
+    expect(manifest.files[0]).toEqual({
+      ...delegationsEntry,
+      generated_at: '2026-11-20T03:00:00.000Z',
+      skipped: expect.stringContaining('has not finished a full pass')
+    });
+  });
+
+  it('still writes the dumps when there is no previous manifest to read', async () => {
+    process.env.FEATURE_DB_DUMPS_MANIFEST = 'true';
+    answer({ next_height: 4521, sync_phase: 'DELEGATIONS', updated_at: NOW });
+    previousManifest(null);
+
+    await invoke();
+
+    const manifest = JSON.parse(
+      uploads()['db-dumps/production/manifest.json'].body
+    );
+    expect(manifest.files[0]).toEqual({
+      table: 'delegations',
+      key: 'db-dumps/production/delegations.csv',
+      skipped: expect.stringContaining('has not finished a full pass')
+    });
+    expect(uploads()['db-dumps/production/transactions.csv']).toBeDefined();
   });
 });
