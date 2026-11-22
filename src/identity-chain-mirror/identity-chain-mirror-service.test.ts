@@ -1,3 +1,4 @@
+import { isHelpBotCreditCategory } from '@/help-bot/help-bot.config';
 import { ChainGatewayError } from '@/chain-gateway/chain-gateway.client';
 import {
   ChainDelegation,
@@ -137,19 +138,30 @@ class FakeDb {
     }
     return written;
   }
-  resets = 0;
-  async resetUnmappedAggregates() {
-    this.resets++;
+  fixes = 0;
+  async fixRowsOffTheChain() {
+    this.fixes++;
     const mapped = new Set(
       Array.from(this.mapping.values()).map((it) => it.profile)
     );
-    let changed = 0;
+    const fixed = { rep: 0, level: 0 };
     for (const [key, row] of Array.from(this.rows.entries())) {
-      if (row.profile_id !== null && mapped.has(row.profile_id)) continue;
-      if (row.rep || row.cic || row.level_raw !== row.tdh) changed++;
-      this.rows.set(key, { ...row, rep: 0, cic: 0, level_raw: row.tdh });
+      if (row.profile_id === null || mapped.has(row.profile_id)) continue;
+      const ratings = (this.ratings.get(row.profile_id) ?? []).filter(
+        (it) => it.matter === 'REP'
+      );
+      let rep = row.rep;
+      if (ratings.some((it) => isHelpBotCreditCategory(it.matter_category))) {
+        rep = ratings
+          .filter((it) => !isHelpBotCreditCategory(it.matter_category))
+          .reduce((sum, it) => sum + it.rating, 0);
+        if (rep !== row.rep) fixed.rep++;
+      }
+      const level = rep + row.tdh;
+      if (level !== row.level_raw) fixed.level++;
+      this.rows.set(key, { ...row, rep, level_raw: level });
     }
-    return changed;
+    return fixed;
   }
   async levelHeightOf(principal: string) {
     return this.levelHeights.get(principal.toLowerCase()) ?? null;
@@ -2710,9 +2722,29 @@ describe('IdentityChainMirror', () => {
     expect(written[0]).toBe(`2:${sorted[first.length]}`);
   });
 
-  it('rewrites, once a first full sync ends, the figures of rows no chain identity holds', async () => {
+  it('takes the help bot credits and xTDH out of rows no chain identity holds, once a full sync ends', async () => {
     const { mirror, db } = world();
-    // A 6529.io profile not on the chain, with help-bot credits in its REP.
+    // A 6529.io profile not on the chain: REP 7 with 5 of help-bot credits,
+    // CIC 2, a level with 30 of xTDH in it.
+    const credit = (category: string, rating: number) => ({
+      rater_profile_id: 'some-rater',
+      matter: 'REP' as const,
+      matter_category: category,
+      rating
+    });
+    db.ratings.set('not-on-chain', [
+      credit(' help6529 CREDITS ', 5),
+      credit('Kind', 2)
+    ]);
+    db.rows.set(W(71), {
+      ...db.rows.get(`${A}-${B}`)!,
+      consolidation_key: W(71),
+      profile_id: 'off-chain-uncredited',
+      tdh: 10,
+      rep: 3,
+      cic: 1,
+      level_raw: 13
+    });
     db.rows.set(W(70), {
       consolidation_key: W(70),
       profile_id: 'not-on-chain',
@@ -2722,21 +2754,24 @@ describe('IdentityChainMirror', () => {
       tdh: 40,
       rep: 7,
       cic: 2,
-      level_raw: 47,
+      level_raw: 77,
       pfp: null,
       banner1: null,
       banner2: null,
       classification: null,
       sub_classification: null,
-      xtdh: 0,
+      xtdh: 30,
       produced_xtdh: 0,
       granted_xtdh: 0,
       xtdh_rate: 0,
       basetdh_rate: 0
     });
     await mirror.run({ budgetMs: 60_000 });
-    expect(db.rows.get(W(70))).toMatchObject({ rep: 0, cic: 0, level_raw: 40 });
-    expect(db.resets).toBe(1);
+    // REP without the credits, CIC kept, level REP + TDH.
+    expect(db.rows.get(W(70))).toMatchObject({ rep: 2, cic: 2, level_raw: 42 });
+    // A row without credits keeps its REP and level.
+    expect(db.rows.get(W(71))).toMatchObject({ rep: 3, cic: 1, level_raw: 13 });
+    expect(db.fixes).toBe(1);
   });
 
   it('puts the off-chain rewrite off while an identity of the sync waits to be retried', async () => {
@@ -2750,7 +2785,7 @@ describe('IdentityChainMirror', () => {
       });
     await mirror.run({ budgetMs: 60_000 });
     expect(db.state?.retry.principals).toEqual([bob.principalId]);
-    expect(db.resets).toBe(0);
+    expect(db.fixes).toBe(0);
   });
 
   it('starts the keys to retry again with a full sync', async () => {
@@ -3202,9 +3237,31 @@ describe('IdentityChainMirror', () => {
     const { mirror, db, chain } = world();
     const many = Array.from({ length: 5 }, (_, i) => W(100 + i));
     chain.identities.set(PID(9), chainIdentity(PID(9), many));
+    // An imported one is mapped to its own profile all the same, so its
+    // row isn't taken for a profile off the chain.
+    const wide = Array.from({ length: 5 }, (_, i) => W(110 + i));
+    chain.identities.set(
+      PID(10),
+      chainIdentity(PID(10), wide, { legacyId: 'p-wide' })
+    );
     const report = await mirror.run({ budgetMs: 60_000 });
-    expect(report.skippedTooManyWallets).toEqual([PID(9)]);
+    expect(report.skippedTooManyWallets).toEqual([PID(9), PID(10)]);
     expect(Array.from(db.addressKeys.keys())).not.toContain(many[0]);
+    expect(db.mapping.get(PID(10))?.profile).toBe('p-wide');
+    // Also when only the feed names it (not as a rating target).
+    const wider = Array.from({ length: 5 }, (_, i) => W(120 + i));
+    chain.identities.set(
+      PID(11),
+      chainIdentity(PID(11), wider, { legacyId: 'p-wide-2' })
+    );
+    chain.feed.push({
+      from: 101,
+      through: 101,
+      next: 102,
+      blocks: [block(101, [principalRecord(PID(11))])]
+    });
+    await mirror.run({ budgetMs: 60_000 });
+    expect(db.mapping.get(PID(11))?.profile).toBe('p-wide-2');
   });
 
   it('writes a five-wallet identity once the key columns are wide', async () => {

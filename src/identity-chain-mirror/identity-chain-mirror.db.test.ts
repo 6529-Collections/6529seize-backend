@@ -667,30 +667,39 @@ describeWithSeed(
       expect(await db.founderWaitSince(P, 30)).toBe(30);
     });
 
-    it('gives rows no chain identity holds no REP or NIC and their TDH as level', async () => {
-      // Alice is mapped; PLACE's row (seeded with figures) isn't.
+    it('takes the credits and xTDH out of rows off the chain, in chunks, keeping CIC', async () => {
+      // Alice is mapped; PLACE's row isn't. Seeded ratings of ALICE: BOB's
+      // Kind 3, PLACE's Old 1, BOB's credits 10. PLACE gets credits too.
       await inTx((conn) => db.insertMapping(P, ALICE, 'LEGACY', 1, conn));
       await sqlExecutor.execute(
-        `update ${IDENTITIES_TABLE} set rep = 12, cic = 3, level_raw = 99 where profile_id in (:ids)`,
+        `insert into ${RATINGS_TABLE}
+           (rater_profile_id, matter_target_id, matter, matter_category, rating, last_modified)
+         values (:bob, :place, 'REP', ' help6529 credits ', 6, now()),
+                (:bob, :place, 'REP', 'Kind', 4, now())`,
+        { bob: BOB, place: PLACE }
+      );
+      await sqlExecutor.execute(
+        `update ${IDENTITIES_TABLE} set rep = 10, cic = 3, tdh = 20, level_raw = 99
+         where profile_id in (:ids)`,
         { ids: [ALICE, PLACE] }
       );
-      expect(await db.resetUnmappedAggregates()).toBe(1);
-      const rows = await sqlExecutor.execute<any>(
-        `select profile_id, tdh, rep, cic, level_raw from ${IDENTITIES_TABLE}
-         where profile_id in (:ids) order by profile_id`,
-        { ids: [ALICE, PLACE] }
-      );
-      const place = rows.find((it: any) => it.profile_id === PLACE);
-      const alice = rows.find((it: any) => it.profile_id === ALICE);
-      expect([place.rep, place.cic, Number(place.level_raw)]).toEqual([
-        0,
-        0,
-        Number(place.tdh)
-      ]);
-      expect([alice.rep, alice.cic, Number(alice.level_raw)]).toEqual([
-        12, 3, 99
-      ]);
-      expect(await db.resetUnmappedAggregates()).toBe(0);
+      const rowOf = async (profileId: string) =>
+        (
+          await sqlExecutor.execute<any>(
+            `select rep, cic, tdh, level_raw from ${IDENTITIES_TABLE} where profile_id = :id`,
+            { id: profileId }
+          )
+        ).map((it: any) => [
+          Number(it.rep),
+          Number(it.cic),
+          Number(it.level_raw)
+        ])[0];
+      expect(await db.fixRowsOffTheChain(1)).toEqual({ rep: 1, level: 1 });
+      // PLACE: REP 4 without the credits, CIC kept, level 4 + 20.
+      expect(await rowOf(PLACE)).toEqual([4, 3, 24]);
+      // Alice is a chain identity: the mirror's, left alone.
+      expect(await rowOf(ALICE)).toEqual([10, 3, 99]);
+      expect(await db.fixRowsOffTheChain(1)).toEqual({ rep: 0, level: 0 });
     });
 
     it('keeps first bindings, regroups to re-key and mapped profile ids', async () => {

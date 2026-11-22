@@ -906,12 +906,15 @@ a full sync never holds the site's changes back (it never moves the feed's
 place back either). Delegations are walked one use case at a time, only the
 use cases the chain's records take (1 to 17, 997, 998), the wallets of each in
 order, with the use case and the last wallet written saved (a new full sync
-starts from the first); rows of other use cases go at the end. When a full
-sync has written every chain identity (none left to retry), the rows of
-6529.io profiles no chain identity holds get the chain's figures too: REP and
-NIC 0, level their TDH, so no help-bot credit stays in a REP total; with the
-first full sync at switch-on, every row's `rep`, `cic` and `level_raw` is the
-chain's. A feed page writes the identities, rating targets and wallets it
+starts from the first); rows of other use cases go at the end. Every chain
+identity's `rep`, `cic` and `level_raw` are written from the chain by each
+full sync, the first one at switch-on included (an imported identity with too
+many wallets for a key is still mapped to its profile). When a full sync has
+written every chain identity (none left to retry), profiles that are not
+chain identities keep 6529.io's REP and CIC, without the help bot's credits,
+and a level of REP + TDH: the REP of a profile with credits becomes its REP
+ratings outside the credit category, and `level_raw` becomes `rep + tdh`
+where it differs, in chunks of rows. A feed page writes the identities, rating targets and wallets it
 touches (a rating touches its target, not its rater) until the run's
 deadline, for at most 2,000 keys and while its pin is under eight minutes
 old; the keys it doesn't reach go to the retry list, and its place moves on.

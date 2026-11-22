@@ -721,7 +721,7 @@ export class IdentityChainMirror {
         read.next = page?.next ?? null;
       });
       if (!done) return state;
-      if (!read.next) await this.resetRowsOffTheChain();
+      if (!read.next) await this.fixRowsOffTheChain();
       state = await this.save(
         read.next
           ? { ...state, sync_after: read.next }
@@ -833,21 +833,23 @@ export class IdentityChainMirror {
   }
 
   /**
-   * Once every chain identity has been written (and mapped), the rows of
-   * 6529.io profiles no chain identity holds get the chain's figures: no
-   * REP or NIC (the help bot's credits never count), level = TDH. Put off
-   * to the next full sync while any identity of this one waits to be tried
-   * again (it may not be mapped yet).
+   * Once every chain identity has been written (and mapped), profiles that
+   * are not chain identities keep 6529.io's REP and CIC, without the help
+   * bot's credits, and a level of REP + TDH. Put off to the next full sync
+   * while any identity of this one waits to be tried again (it may not be
+   * mapped yet).
    */
-  private async resetRowsOffTheChain() {
+  private async fixRowsOffTheChain() {
     if (this.retry.principals.size) {
       logger.warn(
-        `[ROWS OFF THE CHAIN NOT RESET] [${this.retry.principals.size} IDENTITIES TO RETRY]`
+        `[ROWS OFF THE CHAIN NOT FIXED] [${this.retry.principals.size} IDENTITIES TO RETRY]`
       );
       return;
     }
-    const reset = await this.db.resetUnmappedAggregates();
-    logger.info(`[ROWS OFF THE CHAIN RESET] [${reset}]`);
+    const fixed = await this.db.fixRowsOffTheChain();
+    logger.info(
+      `[ROWS OFF THE CHAIN FIXED] [${fixed.rep} REP WITHOUT CREDITS] [${fixed.level} LEVELS]`
+    );
   }
 
   /**
@@ -1468,6 +1470,9 @@ export class IdentityChainMirror {
         `[IDENTITY ${identity.principalId} HAS ${wallets.length} WALLETS: TOO MANY FOR A 6529.IO CONSOLIDATION KEY, NOT MIRRORED]`
       );
       report.skippedTooManyWallets.push(identity.principalId);
+      // An imported one is mapped all the same, so its 6529.io row isn't
+      // taken for a profile off the chain.
+      if (identity.legacyId) await this.profileIdOf(identity);
       return [];
     }
     const doc = await this.docOf(identity, report);

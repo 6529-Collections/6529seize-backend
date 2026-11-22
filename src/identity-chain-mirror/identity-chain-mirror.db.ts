@@ -392,19 +392,67 @@ export class IdentityChainMirrorDb extends LazyDbAccessCompatibleService {
   }
 
   /**
-   * Identities rows of profiles no chain identity maps to: rep and cic 0
-   * and level_raw their TDH, as the chain counts them (no REP on the chain;
-   * the help bot's credits stay out). Returns the rows changed.
+   * Identities rows of profiles that are not chain identities (no mapping)
+   * keep 6529.io's REP and CIC, without the help bot's credits, and a level
+   * of REP + TDH: the REP of a credited profile (a small set, from the
+   * ratings) becomes its REP ratings outside the credit category, then
+   * level_raw becomes rep + tdh where it differs (no xTDH, no credits).
+   * Bounded statements: profile ids 500 at a time, rows `chunk` keys at a
+   * time. Idempotent. Returns the rows changed of each kind.
    */
-  async resetUnmappedAggregates(): Promise<number> {
-    const result = await this.db.execute(
-      `update ${IDENTITIES_TABLE} i
-       left join ${IDENTITY_CHAIN_PRINCIPALS_TABLE} m on m.profile_id = i.profile_id
-       set i.rep = 0, i.cic = 0, i.level_raw = i.tdh
-       where m.principal_id is null
-         and (i.rep <> 0 or i.cic <> 0 or i.level_raw <> i.tdh)`
-    );
-    return this.db.getAffectedRows(result);
+  async fixRowsOffTheChain(
+    chunk = 1_000
+  ): Promise<{ rep: number; level: number }> {
+    const helpBot = HELP_BOT_CREDIT_CATEGORY.toLowerCase();
+    const credited = (
+      await this.db.execute<{ profile_id: string }>(
+        `select distinct matter_target_id as profile_id from ${RATINGS_TABLE}
+         where matter = 'REP' and lower(trim(matter_category)) = :helpBot`,
+        { helpBot }
+      )
+    ).map((it) => it.profile_id);
+    let rep = 0;
+    for (let i = 0; i < credited.length; i += 500) {
+      const result = await this.db.execute(
+        `update ${IDENTITIES_TABLE} i
+         left join ${IDENTITY_CHAIN_PRINCIPALS_TABLE} m on m.profile_id = i.profile_id
+         join (
+           select matter_target_id as profile_id,
+                  sum(case when lower(trim(matter_category)) = :helpBot
+                           then 0 else rating end) as rep
+           from ${RATINGS_TABLE}
+           where matter = 'REP' and matter_target_id in (:ids)
+           group by matter_target_id
+         ) r on r.profile_id = i.profile_id
+         set i.rep = r.rep
+         where m.principal_id is null and i.rep <> r.rep`,
+        { helpBot, ids: credited.slice(i, i + 500) }
+      );
+      rep += this.db.getAffectedRows(result);
+    }
+    let level = 0;
+    let after = '';
+    for (;;) {
+      const bound = await this.db.oneOrNull<{ consolidation_key: string }>(
+        `select consolidation_key from ${IDENTITIES_TABLE}
+         where consolidation_key > :after
+         order by consolidation_key limit 1 offset :last`,
+        { after, last: chunk - 1 }
+      );
+      const result = await this.db.execute(
+        `update ${IDENTITIES_TABLE} i
+         left join ${IDENTITY_CHAIN_PRINCIPALS_TABLE} m on m.profile_id = i.profile_id
+         set i.level_raw = i.rep + i.tdh
+         where m.principal_id is null
+           and i.consolidation_key > :after
+           ${bound ? 'and i.consolidation_key <= :upTo' : ''}
+           and i.level_raw <> i.rep + i.tdh`,
+        { after, upTo: bound?.consolidation_key }
+      );
+      level += this.db.getAffectedRows(result);
+      if (!bound) return { rep, level };
+      after = bound.consolidation_key;
+    }
   }
 
   /** The chain height of an identity's last level write, when known. */
