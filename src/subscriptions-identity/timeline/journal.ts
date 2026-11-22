@@ -894,16 +894,19 @@ export async function journalCheckpoint(): Promise<{
   );
   let lockReleased!: () => void;
   const released = new Promise<void>((resolve) => (lockReleased = resolve));
+  // The opening the hashed tables belong to, read in the same snapshot.
+  let snapshotOpening: string | null = null;
   const hashing = sqlExecutor.executeNativeQueriesInTransaction(
     async (connection) => {
       const options = { wrappedConnection: connection };
       await counterLocked;
       // The first plain read opens this transaction's snapshot.
-      await sqlExecutor.execute(
-        `SELECT id FROM ${SUBSCRIPTIONS_ID_STATE_TABLE} LIMIT 1`,
-        {},
+      const [state] = await sqlExecutor.execute<{ opening_sha256: string }>(
+        `SELECT opening_sha256 FROM ${SUBSCRIPTIONS_ID_STATE_TABLE} WHERE id = :id`,
+        { id: OPENING_STATE_ID },
         options
       );
+      snapshotOpening = state?.opening_sha256 ?? null;
       snapshotOpen();
       await released;
       return identityTablesHash(options);
@@ -928,16 +931,30 @@ export async function journalCheckpoint(): Promise<{
     lockReleased();
   }
   const stateSha256 = await hashing;
-  await sqlExecutor.executeNativeQueriesInTransaction((connection) =>
-    journal(
+  await sqlExecutor.executeNativeQueriesInTransaction(async (connection) => {
+    const options = { wrappedConnection: connection };
+    // A load in between (a new opening) would file this hash under tables
+    // it was not taken from; the state row stays locked until the entry
+    // commits.
+    const [state] = await sqlExecutor.execute<{ opening_sha256: string }>(
+      `SELECT opening_sha256 FROM ${SUBSCRIPTIONS_ID_STATE_TABLE} WHERE id = :id LOCK IN SHARE MODE`,
+      { id: OPENING_STATE_ID },
+      options
+    );
+    if (!state || state.opening_sha256 !== snapshotOpening) {
+      throw new Error(
+        'The opening changed while the checkpoint was hashed; no checkpoint is written'
+      );
+    }
+    await journal(
       {
         kind: 'checkpoint',
         inputs: {},
         checkpoint: { through_n: throughN, state_sha256: stateSha256 }
       },
-      { wrappedConnection: connection }
-    )
-  );
+      options
+    );
+  });
   return { through_n: throughN, state_sha256: stateSha256 };
 }
 
