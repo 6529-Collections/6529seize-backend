@@ -718,23 +718,62 @@ describe('ChainGatewayClient reads', () => {
   });
 
   it.each([
-    ['the route', 'no such route'],
-    ['the import file', "this node's chain imports no identities file"]
-  ])('refuses a not_found of a node that lacks %s', async (_name, message) => {
-    const { client } = setup(
-      withStatus(
-        () => ({
-          status: 404,
-          json: { read: stamp(10), error: { code: 'not_found', message } }
-        }),
-        10
-      )
-    );
-    await expect(client.getImportedIdentity('0xab')).rejects.toMatchObject({
-      code: 'bad_answer',
-      status: 404
-    });
-  });
+    [
+      'the route',
+      '/v1/identities/0xab/imported',
+      'no such route',
+      'bad_answer'
+    ],
+    [
+      'the import file',
+      '/v1/identities/0xab/imported',
+      "this node's chain imports no identities file",
+      'not_held'
+    ],
+    [
+      'a saved day',
+      '/v1/membership/days/26/wallets',
+      "this node didn't save day 26's membership (it started after that day's height)",
+      'not_held'
+    ],
+    [
+      "a day's record",
+      '/v1/membership/days/26',
+      'no MembershipDay record of day 26 here',
+      'not_held'
+    ],
+    [
+      "a TDH day's lists",
+      '/v1/tdh/days/26/wallets',
+      'this node holds no lists of TDH day 26; it keeps the latest two',
+      'not_held'
+    ],
+    [
+      'token rows',
+      '/v1/tdh/days/26/tokens',
+      'this node has no token rows of TDH day 26: only a node in API mode keeps them',
+      'not_held'
+    ]
+  ])(
+    'refuses a not_found of a node that lacks %s',
+    async (_name, route, message, code) => {
+      const { client } = setup(
+        withStatus(
+          () => ({
+            status: 404,
+            json: { read: stamp(10), error: { code: 'not_found', message } }
+          }),
+          10
+        )
+      );
+      await expect(
+        client.read(route, {}, { height: 10 })
+      ).rejects.toMatchObject({
+        code,
+        status: 404
+      });
+    }
+  );
 
   it('refuses an empty 200 as an answer it cannot read', async () => {
     const { client } = setup(withStatus(() => ({ status: 200 }), 10));
@@ -933,6 +972,52 @@ describe('ChainGatewayClient reads', () => {
     });
   });
 
+  it.each([
+    ['a read at a given height', 'explicit'],
+    ['many wallets', 'wallets']
+  ])(
+    'waits for a pin a node has not finalized yet: %s',
+    async (_name, kind) => {
+      const wallet = '0x' + '01'.repeat(20);
+      let tries = 0;
+      const { client, calls, sleeps } = setup((call) => {
+        if (path(call) === '/v1/status') return status(1001);
+        if (tries++ < 2) {
+          return {
+            status: 409,
+            json: {
+              read: stamp(1000),
+              error: { code: 'height_gone', message: 'x' }
+            }
+          };
+        }
+        return {
+          status: 200,
+          json: {
+            read: stamp(1001),
+            data: kind === 'wallets' ? { [wallet]: IDENTITY } : IDENTITY,
+            next: null
+          }
+        };
+      });
+      if (kind === 'wallets') {
+        expect(await client.getIdentitiesByWallets([wallet])).toEqual({
+          [wallet]: IDENTITY
+        });
+      } else {
+        expect(
+          await client.getIdentityByPrincipal('0x01', { height: 1001 })
+        ).toEqual(IDENTITY);
+      }
+      expect(reads(calls).map((it) => param(it, 'height'))).toEqual([
+        '1001',
+        '1001',
+        '1001'
+      ]);
+      expect(sleeps).toEqual([250, 500]);
+    }
+  );
+
   it('waits for a pin a node has not finalized yet, then reads it', async () => {
     let tries = 0;
     const { client, calls, sleeps } = setup((call) => {
@@ -1050,7 +1135,13 @@ describe('ChainGatewayClient reads', () => {
     // A node behind the others answers the next status.
     finalized = 997;
     advance(2_500);
-    expect((await client.getHead()).finalizedHeight).toBe(997);
+    // The head reports the pin, and what the node said beside it.
+    expect(await client.getHead()).toEqual(
+      expect.objectContaining({
+        finalizedHeight: 1000,
+        nodeFinalizedHeight: 997
+      })
+    );
     await client.getIdentityByPrincipal('0x02');
     await client
       .getIdentitiesByWallets(['0x' + '03'.repeat(20)])
@@ -1518,6 +1609,31 @@ describe('ChainGatewayClient reads', () => {
     );
     next = '120:2';
     expect((await client.getChanges(120)).next).toBe('120:2');
+  });
+
+  it('refuses a cut block past its read height', async () => {
+    const record = {
+      family: '0x0104',
+      name: 'Profile',
+      key: '0x01',
+      value: '0x'
+    };
+    const { client } = setup(
+      withStatus(() => ({
+        status: 200,
+        json: {
+          read: stamp(119),
+          data: {
+            through: 119,
+            blocks: [{ ...feedBlock(120, false), records: [record] }]
+          },
+          next: '120:1'
+        }
+      }))
+    );
+    await expect(client.getChanges(120)).rejects.toMatchObject({
+      code: 'bad_answer'
+    });
   });
 
   it('refuses a feed page through a height past its read stamp', async () => {
@@ -2301,17 +2417,73 @@ describe('import and membership history', () => {
         ? status(50)
         : { status: 200, json: { read: stamp(50), data: history, next: null } }
     );
-    // The node reads its feed past the height asked: cut at 50.
+    // Only the first range is exact: later ones and their changes go.
     expect(await client.getMembershipWalletHistory(W)).toEqual({
       wallet: W,
       changes: [
         { height: 3, principalId: P },
         { height: 9, principalId: null }
       ],
-      ranges: [
-        [1, 20],
-        [30, 50]
-      ],
+      ranges: [[1, 20]],
+      readHeight: 50
+    });
+  });
+
+  it('keeps nothing of a history past its read height', async () => {
+    const { client } = setup((call) =>
+      path(call) === '/v1/status'
+        ? status(50)
+        : {
+            status: 200,
+            json: {
+              read: stamp(50),
+              data: {
+                wallet: W,
+                changes: [
+                  { height: 3, principalId: P },
+                  { height: 60, principalId: null }
+                ],
+                ranges: [[1, 70]]
+              },
+              next: null
+            }
+          }
+    );
+    expect(await client.getMembershipWalletHistory(W)).toEqual({
+      wallet: W,
+      changes: [{ height: 3, principalId: P }],
+      ranges: [[1, 50]],
+      readHeight: 50
+    });
+  });
+
+  it('drops the changes after a gap in the feed', async () => {
+    const { client } = setup((call) =>
+      path(call) === '/v1/status'
+        ? status(50)
+        : {
+            status: 200,
+            json: {
+              read: stamp(50),
+              data: {
+                wallet: W,
+                changes: [
+                  { height: 3, principalId: P },
+                  { height: 35, principalId: null }
+                ],
+                ranges: [
+                  [1, 20],
+                  [30, 50]
+                ]
+              },
+              next: null
+            }
+          }
+    );
+    expect(await client.getMembershipWalletHistory(W)).toEqual({
+      wallet: W,
+      changes: [{ height: 3, principalId: P }],
+      ranges: [[1, 20]],
       readHeight: 50
     });
   });
