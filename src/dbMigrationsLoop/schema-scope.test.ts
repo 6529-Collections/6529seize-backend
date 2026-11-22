@@ -41,6 +41,10 @@ import { widenGlobalTdhHistoryBeforeSchemaSync } from './global-tdh-history-sche
 jest.mock('./global-tdh-history-schema', () => ({
   widenGlobalTdhHistoryBeforeSchemaSync: jest.fn().mockResolvedValue(undefined)
 }));
+import { widenConsolidationKeysBeforeSchemaSync } from './consolidation-key-schema';
+jest.mock('./consolidation-key-schema', () => ({
+  widenConsolidationKeysBeforeSchemaSync: jest.fn().mockResolvedValue(undefined)
+}));
 import { DropEntity } from '@/entities/IDrop';
 import { applyWaveScoreInputIndexSchema } from './wave-score-input-index-schema';
 jest.mock('./wave-score-input-index-schema', () => ({
@@ -310,6 +314,18 @@ describe('dbMigrationsLoop explicit schema scope', () => {
     expect(migrations.getInstance).not.toHaveBeenCalled();
   });
 
+  it('stops before TypeORM sync if widening consolidation keys fails', async () => {
+    jest
+      .mocked(widenConsolidationKeysBeforeSchemaSync)
+      .mockRejectedValueOnce(new Error('Specified key was too long'));
+
+    await expect(invoke({ schema_scope: 'full' })).rejects.toThrow(
+      'Specified key was too long'
+    );
+    expect(synchronizeSchemaBounded).not.toHaveBeenCalled();
+    expect(migrations.getInstance).not.toHaveBeenCalled();
+  });
+
   it.each([undefined, {}, { schema_scope: 'full' }])(
     'preserves full manual migration behavior for %j',
     async (event) => {
@@ -321,6 +337,13 @@ describe('dbMigrationsLoop explicit schema scope', () => {
       });
       expect(assertCompetitionSchemaSyncSafe).toHaveBeenCalledTimes(1);
       expect(widenGlobalTdhHistoryBeforeSchemaSync).toHaveBeenCalledTimes(1);
+      expect(widenConsolidationKeysBeforeSchemaSync).toHaveBeenCalledTimes(1);
+      expect(
+        jest.mocked(widenConsolidationKeysBeforeSchemaSync).mock
+          .invocationCallOrder[0]
+      ).toBeLessThan(
+        jest.mocked(getDataSource().synchronize).mock.invocationCallOrder[0]
+      );
       expect(
         jest.mocked(widenGlobalTdhHistoryBeforeSchemaSync).mock
           .invocationCallOrder[0]
@@ -374,6 +397,7 @@ describe('dbMigrationsLoop explicit schema scope', () => {
       ).toHaveBeenCalledTimes(1);
       // Scheduled maintenance also cleans up unused viewer group sets.
       expect(deleteUnusedViewerGroupSets).toHaveBeenCalledTimes(1);
+      expect(widenConsolidationKeysBeforeSchemaSync).not.toHaveBeenCalled();
       expect(migrations.getInstance).not.toHaveBeenCalled();
       expect(
         contentModerationDb.deleteExpiredPrePublicationChecks

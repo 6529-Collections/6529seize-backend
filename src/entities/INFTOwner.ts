@@ -7,6 +7,7 @@ import {
   UpdateDateColumn
 } from 'typeorm';
 import {
+  CONSOLIDATION_KEY_LENGTH,
   NFT_OWNERS_CONSOLIDATION_TABLE,
   NFT_OWNERS_SYNC_STATE_TABLE,
   NFT_OWNERS_TABLE
@@ -41,7 +42,7 @@ export class NFTOwner extends NFTOwnerBase {
 
 @Entity(NFT_OWNERS_CONSOLIDATION_TABLE)
 export class ConsolidatedNFTOwner extends NFTOwnerBase {
-  @PrimaryColumn({ type: 'varchar', length: 200 })
+  @PrimaryColumn({ type: 'varchar', length: CONSOLIDATION_KEY_LENGTH })
   consolidation_key!: string;
 }
 
