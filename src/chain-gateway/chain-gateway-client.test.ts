@@ -565,6 +565,7 @@ describe('profile documents', () => {
 
   it('reads a CID in hex or in base32 text', () => {
     expect(cidHex(cidPath(cid))).toBe(cid);
+    expect(cidHex(cid.slice(2))).toBe(cid);
     expect(cidHex(cid.toUpperCase().replace('0X', '0x'))).toBe(cid);
     expect(rawCidHexOf(doc)).toBe(cid);
     for (const bad of [
@@ -652,6 +653,20 @@ describe('profile documents', () => {
   });
 });
 
+describe('document cache', () => {
+  it('drops the oldest documents past its total bytes', () => {
+    const cache = new LruCache<Buffer>(10, (it) => it.length, 10);
+    cache.set('a', Buffer.alloc(4));
+    cache.set('b', Buffer.alloc(4));
+    cache.set('c', Buffer.alloc(4));
+    expect(cache.get('a')).toBeUndefined();
+    expect(cache.get('b')).toBeDefined();
+    cache.set('d', Buffer.alloc(11));
+    expect(cache.get('d')).toBeUndefined();
+    expect(cache.size).toBe(2);
+  });
+});
+
 describe('import and membership history', () => {
   const P = '0x' + 'ab'.repeat(32);
   const W = '0x' + '01'.repeat(20);
@@ -715,6 +730,58 @@ describe('import and membership history', () => {
         [30, 50]
       ],
       readHeight: 50
+    });
+  });
+
+  it('answers null for a history it does not have, and no ranges as none', async () => {
+    const answers = [
+      {
+        status: 404,
+        json: { read: stamp(50), error: { code: 'not_found', message: 'none' } }
+      },
+      {
+        status: 200,
+        json: { read: stamp(50), data: { wallet: W, changes: [] }, next: null }
+      }
+    ];
+    const { client } = setup((call) =>
+      path(call) === '/v1/status' ? status(50) : answers.shift()!
+    );
+    expect(await client.getMembershipWalletHistory(W)).toBeNull();
+    expect(
+      await client.getMembershipWalletHistory('0x' + '02'.repeat(20))
+    ).toEqual(
+      expect.objectContaining({ changes: [], ranges: [], readHeight: 50 })
+    );
+  });
+
+  it.each([
+    ['a renamed principal field', [{ height: 3, principal: P }]],
+    ['a principal that is not one', [{ height: 3, principalId: '0x12' }]],
+    ['a height that is not one', [{ height: 'x', principalId: P }]],
+    [
+      'heights out of order',
+      [
+        { height: 9, principalId: P },
+        { height: 3, principalId: null }
+      ]
+    ],
+    ['no changes at all', undefined]
+  ])('refuses a history with %s', async (_name, changes) => {
+    const { client } = setup((call) =>
+      path(call) === '/v1/status'
+        ? status(50)
+        : {
+            status: 200,
+            json: {
+              read: stamp(50),
+              data: { wallet: W, changes, ranges: [[1, 50]] },
+              next: null
+            }
+          }
+    );
+    await expect(client.getMembershipWalletHistory(W)).rejects.toMatchObject({
+      code: 'bad_answer'
     });
   });
 });

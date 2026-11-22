@@ -127,9 +127,19 @@ export function chainGatewayConfigFromEnv(
 }
 
 /** A Map in least-recently-used order. */
+/**
+ * Least recently used entries go first: past `capacity` entries, or past
+ * `maxWeight` in total when entries are weighed (documents by their bytes).
+ */
 export class LruCache<V> {
   private readonly map = new Map<string, V>();
-  constructor(private readonly capacity: number) {}
+  private weight = 0;
+
+  constructor(
+    private readonly capacity: number,
+    private readonly weigh: (value: V) => number = () => 0,
+    private readonly maxWeight = Number.POSITIVE_INFINITY
+  ) {}
 
   get(key: string): V | undefined {
     const value = this.map.get(key);
@@ -141,14 +151,22 @@ export class LruCache<V> {
   }
 
   set(key: string, value: V): void {
-    if (this.capacity <= 0) return;
-    this.map.delete(key);
+    if (this.capacity <= 0 || this.weigh(value) > this.maxWeight) return;
+    this.remove(key);
     this.map.set(key, value);
-    while (this.map.size > this.capacity) {
+    this.weight += this.weigh(value);
+    while (this.map.size > this.capacity || this.weight > this.maxWeight) {
       const oldest = this.map.keys().next().value;
       if (oldest === undefined) break;
-      this.map.delete(oldest);
+      this.remove(oldest);
     }
+  }
+
+  private remove(key: string) {
+    const value = this.map.get(key);
+    if (value === undefined) return;
+    this.weight -= this.weigh(value);
+    this.map.delete(key);
   }
 
   get size(): number {
@@ -157,8 +175,12 @@ export class LruCache<V> {
 
   clear(): void {
     this.map.clear();
+    this.weight = 0;
   }
 }
+
+/** Cached documents take at most this many bytes in all. */
+const MAX_CACHED_DOCS_BYTES = 32 * 1024 * 1024;
 
 type Query = Record<string, string | number | boolean | null | undefined>;
 
@@ -223,7 +245,8 @@ export function cidPath(cid: string): string {
  */
 export function cidHex(cid: string): string {
   const text = cid.trim();
-  if (/^0x/i.test(text)) {
+  // A CIDv1 in hex starts with its version byte, 01; base32 text with `b`.
+  if (/^(0x)?0[0-9a-f]*$/i.test(text)) {
     const bytes = hexToBytes(text);
     if (bytes.length < 4) {
       throw new ChainGatewayError(`Not a CID: ${cid}`, null, 'bad_request', '');
@@ -276,8 +299,8 @@ function sha256DigestOf(cid: Uint8Array): Buffer | null {
 }
 
 /**
- * Whether the bytes are the content a sha2-256 CIDv1 names (raw, dag-json,
- * json or dag-cbor). False for any other CID: its content can't be checked.
+ * Whether the bytes are the content a CIDv1 with a sha2-256 multihash names,
+ * whatever its codec. False for any other CID: its content can't be checked.
  */
 export function bytesMatchCid(cid: string, bytes: Uint8Array): boolean {
   const digest = sha256DigestOf(hexToBytes(cid));
@@ -285,6 +308,48 @@ export function bytesMatchCid(cid: string, bytes: Uint8Array): boolean {
     digest !== null &&
     createHash('sha256').update(bytes).digest().equals(digest)
   );
+}
+
+/**
+ * A wallet's binding changes, strictly: each a whole height, ascending, and
+ * a principal id or null. Anything else throws, because a misread change
+ * could read as "bound to none".
+ */
+function bindingChanges(
+  value: unknown,
+  path: string
+): { height: number; principalId: string | null }[] {
+  if (!Array.isArray(value)) {
+    throw new ChainGatewayError(
+      `${path}: no binding changes in the answer`,
+      200,
+      'bad_answer',
+      path
+    );
+  }
+  let previous = -1;
+  const changes: unknown[] = value;
+  return changes.map((entry) => {
+    const it = entry as { height?: unknown; principalId?: unknown } | null;
+    const height = Number(it?.height);
+    const principal = it?.principalId;
+    const principalOk =
+      principal === null ||
+      (typeof principal === 'string' && /^0x[0-9a-f]{64}$/i.test(principal));
+    if (!Number.isSafeInteger(height) || height <= previous || !principalOk) {
+      throw new ChainGatewayError(
+        `${path}: a binding change that can't be read`,
+        200,
+        'bad_answer',
+        path
+      );
+    }
+    previous = height;
+    return {
+      height,
+      principalId: principal === null ? null : lower(principal)
+    };
+  });
 }
 
 /** The feed's held height ranges, `[[from, to], ...]`; anything else is none. */
@@ -325,7 +390,11 @@ export class ChainGatewayClient {
       const resolved = this.configSupplier();
       this.caches = {
         answers: new LruCache(resolved.cacheEntries),
-        docs: new LruCache(Math.max(1, Math.floor(resolved.cacheEntries / 4)))
+        docs: new LruCache<Buffer>(
+          Math.max(1, Math.floor(resolved.cacheEntries / 4)),
+          (doc) => doc.length,
+          MAX_CACHED_DOCS_BYTES
+        )
       };
       this.resolved = resolved;
     }
@@ -811,18 +880,16 @@ export class ChainGatewayClient {
     wallet: string,
     opts?: ChainReadOptions
   ): Promise<ChainWalletHistory | null> {
+    const path = `/v1/membership/wallets/${segment(lower(wallet))}/history`;
     const answer = await this.read<{
-      wallet: string;
-      changes?: { height: number; principalId: string | null }[];
+      wallet?: string;
+      changes?: unknown;
       ranges?: unknown;
-    }>(`/v1/membership/wallets/${segment(lower(wallet))}/history`, {}, opts);
-    if (!answer) return null;
+    }>(path, {}, opts);
+    if (!answer?.data) return null;
     return {
       wallet: lower(answer.data.wallet ?? wallet),
-      changes: (answer.data.changes ?? []).map((it) => ({
-        height: Number(it.height),
-        principalId: it.principalId ? lower(it.principalId) : null
-      })),
+      changes: bindingChanges(answer.data.changes, path),
       ranges: heightRanges(answer.data.ranges),
       readHeight: Number(answer.read?.height ?? 0)
     };
@@ -1075,8 +1142,9 @@ export class ChainGatewayClient {
 
   /**
    * Stores bytes in the document store (POST /v1/docs, at most 2 MiB) and
-   * returns their CID as base32 text. The store computes the CID; it must be
-   * the one these bytes have. Storing the same bytes again is harmless.
+   * returns their CID as base32 text. The store computes the CID and checks
+   * it against the `cid` this sends; the CID it names must be these bytes'
+   * own. Storing the same bytes again is harmless.
    */
   async putDocument(bytes: Buffer): Promise<string> {
     const expected = rawCidHexOf(bytes);
