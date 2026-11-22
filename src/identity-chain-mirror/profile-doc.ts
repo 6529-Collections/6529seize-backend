@@ -24,6 +24,22 @@ export interface ProfileDocStatement {
   readonly comment: string | null;
 }
 
+/**
+ * The profile site (P37 4.2): three flat keys in the document,
+ * `cms.primary.publication`, `cms.primary.package` and `cms.archive`, each a
+ * raw-codec sha2-256 CIDv1 in base32 (`b` prefix). Publication and package
+ * come together or not at all; only the import sets the archive.
+ */
+export interface ProfileDocCms {
+  /** The site served at /{handle}/index.html; null: none. */
+  readonly primary: {
+    readonly publication: string;
+    readonly package: string;
+  } | null;
+  /** The 6529.io site history as of the freeze; null: none. */
+  readonly archive: string | null;
+}
+
 /** The 6529.io columns a profile document fills. */
 export interface ProfileDocFields {
   /** The handle as its owner writes it (case kept). */
@@ -36,10 +52,11 @@ export interface ProfileDocFields {
   readonly subClassification: string | null;
   readonly statements: ProfileDocStatement[];
   /**
-   * The profile site field (`cms`), as written: the publish lane's follower
-   * reads and checks it; the mirror carries it for a column the sweep names.
+   * The profile site, rebuilt from its three keys in the shape the profile
+   * site code reads; null: none (or only one of publication and package).
+   * The profile site follower checks the files; the mirror only carries it.
    */
-  readonly cms: string | null;
+  readonly cms: ProfileDocCms | null;
 }
 
 export class ProfileDocError extends Error {
@@ -159,6 +176,24 @@ export function decodeProfileDoc(bytes: Buffer): Record<string, string> {
 
 const STATEMENT_KEY = /^statement\.([^.]+)\.([^.]+)\.(\d+)$/;
 
+/** A raw-codec sha2-256 CIDv1 in base32: `bafkrei` and 52 more characters. */
+const CMS_CID = /^bafkrei[a-z2-7]{52}$/;
+
+function cmsCid(value: string | undefined): string | null {
+  return value !== undefined && CMS_CID.test(value) ? value : null;
+}
+
+/** The profile site from its three keys; a lone or malformed CID is left out. */
+export function profileDocCms(
+  fields: Record<string, string>
+): ProfileDocCms | null {
+  const publication = cmsCid(fields['cms.primary.publication']);
+  const pkg = cmsCid(fields['cms.primary.package']);
+  const archive = cmsCid(fields['cms.archive']);
+  const primary = publication && pkg ? { publication, package: pkg } : null;
+  return primary || archive ? { primary, archive } : null;
+}
+
 function nonEmpty(value: string | undefined): string | null {
   return value !== undefined && value.length > 0 ? value : null;
 }
@@ -208,7 +243,7 @@ export function toProfileDocFields(
     classification: nonEmpty(fields.classification),
     subClassification: nonEmpty(fields.subClassification),
     statements: statements.map(({ order: _order, ...rest }) => rest),
-    cms: nonEmpty(fields.cms)
+    cms: profileDocCms(fields)
   };
 }
 
