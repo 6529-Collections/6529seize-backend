@@ -23,6 +23,7 @@ import {
   TRANSACTIONS_TABLE
 } from '@/constants';
 import { connect, disconnect } from '@/db';
+import { Logger } from '@/logging';
 import * as Entities from '@/entities/entities';
 import { sqlExecutor } from '@/sql-executor';
 import { getPublicSubscriptions } from '@/api/subscriptions/api.subscriptions.allowlist';
@@ -51,6 +52,7 @@ import { JournalSource, rebuildIdentityTables } from '../opening/rebuild';
 import {
   identityTablesHash,
   journal,
+  journalCheckpoint,
   JOURNAL_PART_MAX_BYTES
 } from '../timeline/journal';
 import { creditIdentityTopUps } from './identity-top-ups';
@@ -628,36 +630,40 @@ describeWithSeed('identity writers after the switch', [], () => {
     expect(await unsignedWritesNow()).toBe('OPEN');
   });
 
-  it('rebuilds when a top-up commits while a build is under way', async () => {
+  it('rebuilds when a phase pull commits while a build is under way', async () => {
     await seedLegacy();
     expect((await goLiveForTest()).switched).toBe(true);
-    await execute(
-      `INSERT INTO ${SUBSCRIPTIONS_TOP_UP_TABLE} (hash, block, transaction_date, from_wallet, amount)
-        VALUES ('0xa9', 30, '2026-11-26 13:00:00', :a, 0.1)`,
-      { a: A }
-    );
+    // The card's final rows, and the build's checkpoint.
+    await updateSubscriptions();
     await sqlExecutor.executeNativeQueriesInTransaction(async (connection) => {
       const options = { wrappedConnection: connection };
       // The build's first plain read fixes its snapshot.
       await sqlExecutor.execute(
-        `SELECT balance FROM ${SUBSCRIPTIONS_ID_BALANCES_TABLE} WHERE identity_key = :p`,
-        { p: P1 },
+        `SELECT phase FROM ${SUBSCRIPTIONS_ID_NFTS_FINAL_TABLE}
+          WHERE contract = :c AND token_id = :card`,
+        { c: MEMES_CONTRACT, card: CARD },
         options
       );
-      // Meanwhile the top-up loop credits P1 and commits, journaled.
-      await creditIdentityTopUps();
-      // The build journals P1's rows: the latest committed ones, not its
-      // snapshot's.
+      // Meanwhile a phase pull splits the card's rows and commits, journaled.
+      await getPublicSubscriptions(MEMES_CONTRACT, CARD);
+      // The build journals the card's final rows: the latest committed
+      // ones, not its snapshot's. (A build may not journal balances: the
+      // verifier refuses that.)
       await journal(
         {
           kind: 'build',
           inputs: { contract: MEMES_CONTRACT, token_id: CARD },
-          identities: [P1]
+          rows: [
+            {
+              table: 'final',
+              keys: [{ contract: MEMES_CONTRACT, token_id: CARD }]
+            }
+          ]
         },
         options
       );
     });
-    await updateSubscriptions();
+    await journalCheckpoint();
     const tablesBefore = await identityTablesHash({});
 
     await loseIdentityTables();
@@ -666,9 +672,59 @@ describeWithSeed('identity writers after the switch', [], () => {
       fetch: fetchPublished
     });
     expect(result).toEqual(
-      expect.objectContaining({ checkpoints: 1, missing: null })
+      expect.objectContaining({ checkpoints: 2, missing: null })
     );
     expect(await identityTablesHash({})).toBe(tablesBefore);
+  });
+
+  it('stops a rebuild on a journal that breaks the money rules, before loading anything, and alerts', async () => {
+    await seedLegacy();
+    expect((await goLiveForTest()).switched).toBe(true);
+    await execute(
+      `INSERT INTO ${SUBSCRIPTIONS_TOP_UP_TABLE} (hash, block, transaction_date, from_wallet, amount)
+        VALUES ('0xab', 32, '2026-11-26 13:00:00', :lone, 0.3)`,
+      { lone: LONE }
+    );
+    expect(await creditIdentityTopUps()).toBe(1);
+    const entries = (
+      await sqlExecutor.execute<{ entry: string }>(
+        `SELECT entry FROM ${SIGNED_RECORD_LOG_ENTRIES_TABLE} WHERE chain = 'public' ORDER BY id`
+      )
+    ).map((row) => JSON.parse(row.entry));
+    // As posted, the journal passes; then the top-up's entry is made to
+    // credit 0.01 more than the transfer brought.
+    const topUp = entries.find((e) => e.body?.kind === 'top-up');
+    const credited = topUp.body.changes.find(
+      (c: { table: string }) => c.table === 'balances'
+    );
+    expect(Number(credited.after.balance)).toBe(0.5);
+    credited.after.balance = 0.51;
+    await loseIdentityTables();
+    const alert = jest.spyOn(Logger.prototype, 'errorWithCode');
+    try {
+      await expect(
+        rebuildIdentityTables({
+          source: {
+            async *walk() {
+              for (const entry of entries) {
+                yield { entry };
+              }
+            }
+          },
+          fetch: fetchPublished
+        })
+      ).rejects.toThrow(
+        `n=${topUp.body.n} top-up: the balance of ${LONE} is 0.51 after a top-up of 0.3 to 0.2; expected 0.5`
+      );
+      expect(alert).toHaveBeenCalledWith(
+        'SUBSCRIPTIONS_JOURNAL_VERIFY_FAILED',
+        expect.stringContaining('is 0.51 after a top-up of 0.3')
+      );
+    } finally {
+      alert.mockRestore();
+    }
+    // Nothing was loaded.
+    expect(await identityBalances()).toEqual({});
   });
 
   it('says what is missing when the posted journal ends before live, and stays suspended', async () => {

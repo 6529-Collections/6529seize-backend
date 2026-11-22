@@ -4,6 +4,7 @@ import {
 } from '@/constants';
 import { Logger } from '@/logging';
 import type { RecordLogEntry } from '@/signed-records/record-log/record-log-format';
+import type { RecordVerifyResult } from '@/signed-records/record-verify';
 import { sqlExecutor } from '@/sql-executor';
 import {
   closeSubscriptionWrites,
@@ -18,8 +19,17 @@ import {
   journal,
   JournalBody,
   journalBodyOf,
-  JOURNAL_COUNTER_ID
+  JOURNAL_COUNTER_ID,
+  JOURNAL_LANE
 } from '../timeline/journal';
+import {
+  alertOnJournalFailures,
+  EthereumFacts,
+  JournalVerifyReport,
+  ReplayedSubscriptionEvents,
+  SignedEventLookup,
+  verifyJournal
+} from '../timeline/journal-verify';
 import { sha256Hex } from './opening-file';
 import {
   loadOpeningFiles,
@@ -44,10 +54,16 @@ export const publicFetcher: Fetcher = async (uri) => {
 /**
  * What a rebuild reads the journal through: the shared record log's
  * public chain, in log order (the records module's RecordLogReader over
- * the records wave, from the relays). Nothing in MySQL.
+ * the records wave, from the relays). Nothing in MySQL. A source that
+ * replays the log (replayRecordLog) gives each entry's `verified` result,
+ * null for a service entry; the verifier then checks every choice entry
+ * against its signed record. Without it, choice entries go unchecked.
  */
 export interface JournalSource {
-  walk(chain: 'public'): AsyncIterable<{ readonly entry: RecordLogEntry }>;
+  walk(chain: 'public'): AsyncIterable<{
+    readonly entry: RecordLogEntry;
+    readonly verified?: RecordVerifyResult | null;
+  }>;
 }
 
 let boundSource: (() => JournalSource) | null = null;
@@ -79,17 +95,31 @@ export interface RebuildResult {
   readonly switched: boolean;
   /** Set when live's counter is ahead of the posted journal. */
   readonly missing: string | null;
+  /** The journal verifier's report (it passed, or the rebuild stops). */
+  readonly verify: JournalVerifyReport;
 }
 
-async function journalOf(source: JournalSource): Promise<JournalBody[]> {
+/**
+ * The journal's bodies in log order, and the verified records of lane
+ * `subs` from the same walk when the source verifies them.
+ */
+export async function readJournal(source: JournalSource): Promise<{
+  readonly bodies: JournalBody[];
+  readonly events: SignedEventLookup | null;
+}> {
   const bodies: JournalBody[] = [];
-  for await (const { entry } of source.walk('public')) {
+  const events = new ReplayedSubscriptionEvents();
+  let verifying = false;
+  for await (const { entry, verified } of source.walk('public')) {
+    verifying = verifying || verified !== undefined;
     const body = journalBodyOf(entry);
     if (body) {
       bodies.push(body);
+    } else if (entry.t === 'event' && entry.lane === JOURNAL_LANE && verified) {
+      events.add(verified);
     }
   }
-  return bodies;
+  return { bodies, events: verifying ? events : null };
 }
 
 interface PublishedOpening {
@@ -194,13 +224,17 @@ async function liveCounter(): Promise<number | null> {
  * 3. take the opening of the last `opening` entry (go-live writes it with
  *    the switch), fetch its two files and check their sha256; or take the
  *    files given (a rehearsal);
- * 4. load them into tables that are not the truth, and hold them suspended,
+ * 4. verify that opening's journal (journal-verify.ts): the money rules,
+ *    the order and parts of its writes, and, through the ports given,
+ *    Ethereum and the signed records; a failure alerts and stops the
+ *    rebuild before anything is loaded;
+ * 5. load them into tables that are not the truth, and hold them suspended,
  *    so no identity writer writes while the journal is written back;
- * 5. write back every write made against that opening, in `n` order: each
+ * 6. write back every write made against that opening, in `n` order: each
  *    change's captured `before` must equal the rebuilt row, then its
  *    `after` is written;
- * 6. compare each checkpoint's hash once the writes up to its `n` are in;
- * 7. when the live database is there, compare the journal's last `n` with
+ * 7. compare each checkpoint's hash once the writes up to its `n` are in;
+ * 8. when the live database is there, compare the journal's last `n` with
  *    live's counter: a missing tail leaves the tables suspended, saying
  *    what's missing.
  *
@@ -216,6 +250,8 @@ export async function rebuildIdentityTables(params: {
   /** A rehearsal: these files instead of the last switched opening. */
   readonly opening?: ParsedOpening;
   readonly goLive?: boolean;
+  /** Checks the journal's top-ups and mints against Ethereum (network calls). */
+  readonly ethereum?: EthereumFacts;
   readonly now?: () => number;
 }): Promise<RebuildResult> {
   const now = params.now ?? (() => Date.now());
@@ -228,7 +264,7 @@ export async function rebuildIdentityTables(params: {
     }
   };
   try {
-    const bodies = await journalOf(params.source);
+    const { bodies, events } = await readJournal(params.source);
     const published = params.opening
       ? null
       : await lastSwitchedOpening(bodies, params.fetch ?? publicFetcher);
@@ -236,6 +272,18 @@ export async function rebuildIdentityTables(params: {
     if (params.goLive && !published) {
       throw new Error(
         'Only a rebuild from the journal goes live: rehearsal files name no published opening'
+      );
+    }
+    // Nothing is loaded from a journal that breaks the money rules.
+    const verify = await verifyJournal(bodies, {
+      openingSha256: opening.openingSha256,
+      opening: opening.opening,
+      ethereum: params.ethereum,
+      events: events ?? undefined
+    });
+    if (!alertOnJournalFailures(verify)) {
+      throw new Error(
+        `The journal fails verification (${verify.failures.length}): ${verify.failures.slice(0, 3).join('; ')}`
       );
     }
     const { writes, skipped } = writesOf(bodies, opening.openingSha256);
@@ -295,7 +343,8 @@ export async function rebuildIdentityTables(params: {
         checkpoints: compared,
         skipped,
         switched: false,
-        missing
+        missing,
+        verify
       };
     }
     // Verified and back in shadow: the identity writers go on from here.
@@ -320,7 +369,8 @@ export async function rebuildIdentityTables(params: {
       checkpoints: compared,
       skipped,
       switched,
-      missing: null
+      missing: null,
+      verify
     };
   } finally {
     subscriptionsIdentitySwitch.invalidate();

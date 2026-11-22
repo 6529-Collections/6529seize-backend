@@ -12,7 +12,17 @@ import {
   suspendIdentityTables
 } from '../identity/identity-switch';
 import { goLive } from './go-live';
-import { boundJournalSource, rebuildIdentityTables } from './rebuild';
+import {
+  boundJournalSource,
+  readJournal,
+  rebuildIdentityTables
+} from './rebuild';
+import type { JournalBody } from '../timeline/journal';
+import {
+  alertOnJournalFailures,
+  EthereumFacts,
+  verifyJournal
+} from '../timeline/journal-verify';
 import { assertOutsideRepository, parseArgs } from '../parity/cli';
 import { cutOpeningFiles } from './opening-build';
 import { compareAndMarkVerified } from './opening-compare';
@@ -40,6 +50,10 @@ import {
  *   rebuild  empty or suspended identity tables from the last opening that
  *            went live and the journal in the record log (or, rehearsing,
  *            from given files); --go-live switches if the checkpoints match
+ *   verify-journal  check the journal of an opening against the money
+ *            rules: each entry from its own before and after, then across
+ *            the journal; with --ethereum, top-ups and mints against
+ *            Ethereum too (rebuild runs the same check first)
  *   status   whether the identity tables are the truth, and why
  *   suspend  rollback: every reader is on the legacy tables within 60 s
  *            (API answers can be cached a minute more)
@@ -55,7 +69,8 @@ const USAGE = `usage:
   load    --opening <json> --history <json>
   compare --opening <json> --history <json> [--identities <json>] --out <json>
   go-live --out-dir <dir> --signed-writes-live [--accept-report-diffs]
-  rebuild [--opening <json> --history <json>] [--go-live]
+  rebuild [--opening <json> --history <json>] [--go-live] [--ethereum]
+  verify-journal [--opening-sha256 <sha256> | --opening <json> --history <json>] [--ethereum] [--out <json>]
   status
   suspend
   open-writes`;
@@ -209,10 +224,76 @@ async function rebuildCommand(args: Args): Promise<number> {
   const result = await rebuildIdentityTables({
     source: boundJournalSource(),
     opening: rehearsal,
-    goLive
+    goLive,
+    ethereum: await ethereumFrom(args)
   });
   process.stdout.write(`${JSON.stringify(result)}\n`);
   return goLive && !result.switched ? 2 : 0;
+}
+
+/** The backend's own Ethereum reads, only when --ethereum is given. */
+async function ethereumFrom(args: Args): Promise<EthereumFacts | undefined> {
+  if (args.ethereum !== true) {
+    return undefined;
+  }
+  const { backendEthereumFacts } =
+    await import('../timeline/journal-verify-ethereum');
+  return backendEthereumFacts();
+}
+
+/** The opening a journal went live with last, or else the one its last entry was written against. */
+function journalOpening(bodies: readonly JournalBody[]): string | null {
+  const switched = bodies.filter((b) => b.kind === 'opening').pop();
+  if (switched) {
+    return String(switched.inputs.opening_sha256);
+  }
+  return bodies.length > 0 ? bodies[bodies.length - 1].opening : null;
+}
+
+/** Verifies the journal of one opening (journal-verify.ts) and prints what failed. */
+async function verifyJournalCommand(args: Args): Promise<number> {
+  const files = optional(args, 'opening') ? parsedFrom(args) : undefined;
+  const { bodies, events } = await readJournal(boundJournalSource());
+  const openingSha256 =
+    optional(args, 'opening-sha256') ??
+    files?.openingSha256 ??
+    journalOpening(bodies);
+  if (!openingSha256) {
+    process.stderr.write('The journal holds no entry to verify.\n');
+    return 2;
+  }
+  if (files && files.openingSha256 !== openingSha256) {
+    process.stderr.write(
+      `--opening hashes to ${files.openingSha256}, not ${openingSha256}\n`
+    );
+    return 2;
+  }
+  const report = await verifyJournal(bodies, {
+    openingSha256,
+    opening: files?.opening,
+    ethereum: await ethereumFrom(args),
+    events: events ?? undefined
+  });
+  const out = optional(args, 'out');
+  if (out) {
+    writeOut(out, JSON.stringify(report, null, 2) + '\n');
+  }
+  const c = report.counts;
+  const lines = [
+    `opening ${openingSha256}: ${report.writes} writes, ${c.topUps} top-ups, ${c.charges} charges over ${c.mints} mints, ${c.choices} choices`,
+    report.checked.ethereum
+      ? 'Ethereum: checked'
+      : 'Ethereum: not checked (pass --ethereum)',
+    report.checked.events
+      ? 'signed records: checked'
+      : 'signed records: not checked (the bound source does not verify records)',
+    ...report.failures.map((f) => `FAIL ${f}`),
+    report.failures.length === 0
+      ? 'PASS'
+      : `FAIL: ${report.failures.length} failures`
+  ];
+  process.stdout.write(lines.join('\n') + '\n');
+  return alertOnJournalFailures(report) ? 0 : 2;
 }
 
 async function statusCommand(): Promise<number> {
@@ -253,6 +334,8 @@ export async function main(argv: readonly string[]): Promise<number> {
       return inDb(() => compareCommand(args));
     case 'rebuild':
       return inDb(() => rebuildCommand(args));
+    case 'verify-journal':
+      return inDb(() => verifyJournalCommand(args));
     case 'go-live':
       return inDb(() => goLiveCommand(args));
     case 'status':

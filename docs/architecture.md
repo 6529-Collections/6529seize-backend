@@ -3149,7 +3149,8 @@ does.
 `subscriptions:opening -- rebuild` rebuilds the identity tables from the
 opening and the journal alone, read through a bound record log source (the
 records wave reader). It pauses the write routes (renewed by time), takes
-the last `opening` entry, fetches and checks both files, loads them
+the last `opening` entry, fetches and checks both files, verifies that
+opening's journal (below; `--ethereum` as there), loads the files
 suspended (no writer writes meanwhile), and writes back every write of that
 opening in `n` order, each with all its parts. A change's captured `before`
 must equal the rebuilt row, and each checkpoint must match once the writes
@@ -3166,6 +3167,31 @@ same pause, and only if at least one checkpoint matched. `--opening
 identity tables through signed records, journaled the same way. After the
 switch a comparison with the legacy dual write that isn't a MATCH alerts
 (`SUBSCRIPTIONS_TRUTH_COMPARISON_DIFF`).
+
+**Journal verifier.** A rebuild proves it repeats what live wrote, not that
+live wrote the right money. `timeline/journal-verify.ts` checks that, and
+`subscriptions:opening -- verify-journal` runs it on its own (exit 2 on a
+failure). For one opening:
+
+- each entry, from its own `before` and `after`: a top-up moves the
+  balance by its amount, rounded to five decimals, or opens it at the
+  amount; a redemption moves it by the mint price per charge, and the
+  redeemed counts by the charges; a fold sums the two balances; no other
+  kind changes a balance, and no kind changes a table it may not;
+- across the journal: each top-up hash is credited once, and not again
+  after the opening file; no mint is charged more tokens than it delivered,
+  counting the opening's charges of that mint; `n` increases in log order
+  and every write has all its parts;
+- with `--ethereum`, each top-up against its transfer (sender, recipient,
+  block, value) and each mint against its receipt, through the backend's
+  Ethereum client and config;
+- when the record log source verifies signed records (`replayRecordLog`),
+  each choice against its record in lane `subs`: type, key and owner, and a
+  body.
+
+A failure alerts (`SUBSCRIPTIONS_JOURNAL_VERIFY_FAILED`) and stops the
+rebuild before it loads anything. `verifyEntryMoney` is the per-entry part
+alone, pure, for a writer to run on the entries it is about to append.
 
 **Switch.** The switch is one row, `subscriptions_id_state`, so one write
 moves every service. `subscriptions:opening -- go-live --signed-writes-live`
