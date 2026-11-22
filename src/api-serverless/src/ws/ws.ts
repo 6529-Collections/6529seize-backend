@@ -219,6 +219,21 @@ function isAlreadyDisconnected(error: unknown): boolean {
   }
 }
 
+/**
+ * WS_CLOSE_UNKNOWN_CONNECTION=true: connection rows are ephemeral. If a row
+ * is deleted while its socket stays open (the table was emptied), the socket
+ * receives nothing, and a socket that only sends PING stays open until the
+ * gateway's two-hour limit, since PING never reads the row. Deregistration
+ * (an expired JWT, $disconnect) closes the socket itself. With the flag, a
+ * wave update whose row is confirmed missing throws, and the handler closes
+ * the transport so the client reconnects and registers again. Unset keeps
+ * today's behaviour. The value comes from the API's environment, loaded when
+ * an instance starts (ops/docs/operations/websocket-delivery.md).
+ */
+function closesUnknownConnections(): boolean {
+  return process.env.WS_CLOSE_UNKNOWN_CONNECTION === 'true';
+}
+
 export class AppWebSockets {
   private readonly logger = Logger.get(AppWebSockets.name);
 
@@ -408,10 +423,11 @@ export class AppWebSockets {
     }: { connectionId: string; openWaveId: string | null },
     ctx: RequestContext
   ) {
-    await this.wsConnectionRepository.updateOpenWaveId(
+    const matched = await this.wsConnectionRepository.updateOpenWaveId(
       { connectionId, waveId: openWaveId },
       ctx
     );
+    await this.requireKnownConnection(connectionId, matched, ctx);
   }
 
   async updateActiveWaveForConnection(
@@ -424,13 +440,29 @@ export class AppWebSockets {
     },
     ctx: RequestContext
   ) {
-    await this.wsConnectionRepository.updateWaveId(
+    const matched = await this.wsConnectionRepository.updateWaveId(
       {
         connectionId,
         waveId: activeWaveId
       },
       ctx
     );
+    await this.requireKnownConnection(connectionId, matched, ctx);
+  }
+
+  /**
+   * A zero count from the driver (or a proxy in front of it) is only a hint.
+   * A primary-key read on the writer decides: the socket is closed only when
+   * its row is really gone.
+   */
+  private async requireKnownConnection(
+    connectionId: string,
+    matched: number | undefined,
+    ctx: RequestContext
+  ): Promise<void> {
+    if (matched !== 0 || !closesUnknownConnections()) return;
+    if (!(await this.wsConnectionRepository.existsOnWriter(connectionId, ctx)))
+      throw new SocketNotAvailableException();
   }
 
   async authenticateConnection(

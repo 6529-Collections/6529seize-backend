@@ -8,6 +8,14 @@ After bounded SDK attempts, the shared sender pauses the connection for roughly 
 
 The browser staggers and combines refreshes, refetches active queries and leaves inactive queries stale until needed. It also reconciles after reconnect and foreground resume. Authentication and notification-identity acknowledgements have priority and are never substituted with refresh markers. Exhausted legacy control sends return an explicit failed outcome; the existing client protocol timeout owns recovery. Confirmed sends reset the failure streak while preserving any still-needed refresh. A listener with at least three consecutive failed sends spanning two minutes can be closed only when it advertised `recovery_capability=resync_v1`, at least three peers are healthy and the fleet is not degraded. Older clients suppress normal-close reconnects, so they are never automatically closed by this policy. The fixed capability flag is stored in the private Redis connection state beyond AWS’s two-hour connection lifetime; missing state disables closure. AWS must confirm closure before the subscription is deleted. Server-initiated normal closure reconnects through the client's existing jittered backoff.
 
+## Connection rows that disappear
+
+`ws_connections` is ephemeral. Deregistration ($disconnect, an expired JWT, a gone connection) deletes the row and closes the socket together. If rows are deleted while their sockets stay open (the table emptied), each socket still answers PING but receives no frames. `AUTHENTICATE` and `SYNC_NOTIFICATION_IDENTITIES` already close such a socket; a socket that only sends PING stays open until API Gateway's two-hour connection limit.
+
+With `WS_CLOSE_UNKNOWN_CONNECTION=true`, a `SUBSCRIBE_TO_WAVE` or `SET_OPEN_WAVE` whose update reports no matched row reads the row by primary key; only when it is really missing does the server close the transport and answer 410, so the client reconnects and registers a new row. A count from the driver or the database proxy alone never closes a socket. PING stays free of database reads. Older clients that suppress normal-close reconnects end up as they were: no frames until reload.
+
+Before emptying the table on purpose, close every listed connection through the gateway first. Set the flag where the API reads its configuration (the shared runtime secret, or the API's runtime environment). Each API instance reads it once at start; redeploy the `api` service to apply a change everywhere at once. Rollback: unset it.
+
 ## Respond to an alert
 
 1. Open the latest `WS_DELIVERY_HEALTH` summary in `/aws/lambda/webSocketDeliveryLoop` in the alerted environment. Compare attempted/sent/throttled/deferred counts, distinct connections, pending count, oldest failure and health classification. Metrics in `6529/WebSocketDelivery` have only the Environment dimension; never add connection IDs as dimensions.

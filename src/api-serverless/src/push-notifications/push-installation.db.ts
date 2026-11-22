@@ -20,6 +20,8 @@ export interface InstallationProof {
   device_id: string;
   installation_secret?: string;
   token?: string;
+  /** The revision a registering client presents (registration only). */
+  installation_revision?: number;
 }
 export interface InstallationRevocation extends InstallationProof {
   installation_secret: string;
@@ -47,6 +49,44 @@ const conflict = () =>
 
 type InstallationOperation = 'registration' | 'revocation' | 'token_cleanup';
 
+/**
+ * PUSH_INSTALLATION_ADOPT_REVISION=true: push device rows are ephemeral, so a
+ * client may present a revision for an installation the server no longer
+ * holds. Without this, a re-created row starts at revision 0, so every
+ * registration from a phone that ever logged out fails with 409, a queued
+ * logout past revision 1 fails with 409 too, and a token cleanup whose token
+ * no registration row holds never clears. Unset keeps today's behaviour. The
+ * value comes from the API's environment, loaded when an instance starts, so
+ * a change reaches each instance as it recycles (docs/mobile-badge-sync.md).
+ */
+function adoptsClientRevision(): boolean {
+  return process.env.PUSH_INSTALLATION_ADOPT_REVISION === 'true';
+}
+
+/** The locked row, and whether this call claimed it from no credential. */
+type LockedInstallation = PushInstallationEntity & { claimed: boolean };
+
+/**
+ * The revision an unclaimed installation takes when a credential claims it.
+ * A fence still refuses any registration older than the logout it records;
+ * a newer revision means the server lost state the client still holds.
+ */
+function claimRevision(
+  operation: InstallationOperation,
+  known: number,
+  presented: number | undefined
+): number {
+  if (
+    operation === 'registration' &&
+    presented !== undefined &&
+    presented > known &&
+    adoptsClientRevision()
+  ) {
+    return presented;
+  }
+  return known;
+}
+
 // The installation row already serializes this read; avoid missing-key gap locks.
 async function getLogoutFence(proof: InstallationProof, ctx: RequestContext) {
   return sqlExecutor.oneOrNull<{ revision: number }>(
@@ -65,7 +105,7 @@ async function lockInstallation(
   proof: InstallationProof,
   ctx: RequestContext,
   operation: InstallationOperation
-) {
+): Promise<LockedInstallation> {
   if (!ctx.connection?.connection) {
     throw new Error('Push installation locks require a transaction connection');
   }
@@ -84,7 +124,7 @@ async function lockInstallation(
     options
   );
   if (!installation) throw new Error('Push installation lock failed');
-  if (operation === 'token_cleanup') return installation;
+  if (operation === 'token_cleanup') return { ...installation, claimed: false };
   if (installation.secret_hash) {
     if (
       !proof.installation_secret ||
@@ -104,7 +144,7 @@ async function lockInstallation(
     // Early logout may only fence its own secret; authenticated registration
     // remains free to establish the installation using a different credential.
     if (!legacy.length && !installation.token && operation === 'revocation') {
-      return installation;
+      return { ...installation, claimed: false };
     }
     // Device IDs are public to registered profiles. A caller must know the
     // existing FCM token, and cannot add its own token row to claim others.
@@ -121,7 +161,11 @@ async function lockInstallation(
       );
     }
     const fence = await getLogoutFence(proof, ctx);
-    installation.revision = fence?.revision ?? installation.revision;
+    installation.revision = claimRevision(
+      operation,
+      fence?.revision ?? installation.revision,
+      proof.installation_revision
+    );
     installation.secret_hash = digest(proof.installation_secret);
     installation.token =
       legacy[0]?.token ?? installation.token ?? proof.token ?? null;
@@ -139,8 +183,9 @@ async function lockInstallation(
       { device_id: proof.device_id, secret_hash: installation.secret_hash },
       options
     );
+    return { ...installation, claimed: true };
   }
-  return installation;
+  return { ...installation, claimed: false };
 }
 
 export async function registerInstallationDevice(
@@ -226,8 +271,8 @@ export async function revokeInstallation(
   const timer = 'PushInstallationDb->revoke';
   ctx.timer?.start(timer);
   try {
-    const revoked = await sqlExecutor.executeNativeQueriesInTransaction(
-      async (connection) => {
+    const revoked = await sqlExecutor
+      .executeNativeQueriesInTransaction(async (connection) => {
         const installation = await lockInstallation(
           request,
           { ...ctx, connection },
@@ -241,7 +286,12 @@ export async function revokeInstallation(
         }
         // A retry must never delete a profile deliberately reconnected later.
         if (request.revision <= installation.revision) return installation;
-        if (request.revision !== installation.revision + 1) throw conflict();
+        // A row this call claimed from lost state may be behind the client.
+        if (
+          request.revision !== installation.revision + 1 &&
+          !(installation.claimed && adoptsClientRevision())
+        )
+          throw conflict();
         const options = { wrappedConnection: connection };
         const scope = request.all_profiles
           ? ''
@@ -266,14 +316,48 @@ export async function revokeInstallation(
           options
         );
         return { ...installation, revision: request.revision };
-      }
-    );
+      })
+      .catch(acknowledgedOrRethrow);
     // Keep the verifier and delivery token inside the persistence boundary,
     // including on the idempotent retry path.
     return { device_id: revoked.device_id, revision: revoked.revision };
   } finally {
     ctx.timer?.stop(timer);
   }
+}
+
+/** Rolls the transaction back, then answers the caller with `result`. */
+class UnknownInstallationAcknowledgement extends Error {
+  constructor(
+    readonly result: Pick<PushInstallationEntity, 'device_id' | 'revision'>
+  ) {
+    super('Unknown push installation acknowledged');
+    Object.setPrototypeOf(this, new.target.prototype);
+  }
+}
+
+function acknowledgedOrRethrow(
+  error: unknown
+): Pick<PushInstallationEntity, 'device_id' | 'revision'> {
+  if (error instanceof UnknownInstallationAcknowledgement) return error.result;
+  throw error;
+}
+
+/**
+ * A token cleanup with no fence, no session proof and no push registration
+ * row holding its token: there is nothing it may remove and nothing a
+ * proofless caller may write, so the whole transaction rolls back, including
+ * the placeholder installation row the lock inserted. An installation row
+ * that already existed stays as it was, with its last token. Acknowledge, so
+ * the client's queued cleanup clears instead of retrying forever.
+ */
+function acknowledgeUnknownInstallation(
+  request: InstallationRevocation
+): never {
+  throw new UnknownInstallationAcknowledgement({
+    device_id: request.device_id,
+    revision: request.revision
+  });
 }
 
 /** Caller holds the shared installation row lock, but this row grants no ownership. */
@@ -287,13 +371,16 @@ async function revokeBeforeRegistration(
       ...(request.reconciliation_sessions ?? []),
       ...request.sessions
     ];
+    // Kept with the flag on: an app that signs in again proves the logout
+    // through its reconciliation sessions, and the fence still gets written.
     await requireLiveNativeSession(proofs, ctx);
   }
   const currentRevision = fence?.revision ?? 0;
   if (request.revision <= currentRevision) {
     return { device_id: request.device_id, revision: currentRevision };
   }
-  if (request.revision !== currentRevision + 1) throw conflict();
+  if (request.revision !== currentRevision + 1 && !adoptsClientRevision())
+    throw conflict();
   await revokeNativeSessions(request.sessions, ctx);
   await sqlExecutor.execute(
     `INSERT INTO ${PUSH_NOTIFICATION_DEVICE_LOGOUT_FENCES_TABLE} (device_id, secret_hash, revision)
@@ -331,7 +418,18 @@ async function revokeTokenCohort(
     !fence &&
     !targets.some((row) => matchesToken(row.token, request.token))
   ) {
-    await requireLiveNativeSession(request.sessions, ctx);
+    try {
+      await requireLiveNativeSession(request.sessions, ctx);
+    } catch (error) {
+      // A cleanup job has no reconciliation path. No registration row holds
+      // its token, so there is nothing to remove: acknowledge so the job
+      // clears. The answer is the same whether or not the device ID has
+      // other rows, so a token cleanup reveals nothing about the device;
+      // logout errors still differ, as before.
+      if (error instanceof ForbiddenException && adoptsClientRevision())
+        return acknowledgeUnknownInstallation(request);
+      throw error;
+    }
   }
   const scope = request.all_profiles ? '' : ' AND profile_id = :profile_id';
   if (request.all_profiles || request.profile_id) {

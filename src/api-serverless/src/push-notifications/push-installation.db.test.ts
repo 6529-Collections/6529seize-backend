@@ -58,8 +58,18 @@ describe('push installation logout', () => {
       await sqlExecutor.execute(`TRUNCATE TABLE ${table}`);
     }
   };
-  beforeEach(resetInstallationFixtures);
-  afterEach(resetInstallationFixtures);
+  // Every test states the lost-state flag; the suite runs with it off.
+  const ADOPT_FLAG = 'PUSH_INSTALLATION_ADOPT_REVISION';
+  const originalAdoptFlag = process.env[ADOPT_FLAG];
+  beforeEach(async () => {
+    delete process.env[ADOPT_FLAG];
+    await resetInstallationFixtures();
+  });
+  afterEach(async () => {
+    if (originalAdoptFlag === undefined) delete process.env[ADOPT_FLAG];
+    else process.env[ADOPT_FLAG] = originalAdoptFlag;
+    await resetInstallationFixtures();
+  });
 
   it.each(['registration', 'revocation'] as const)(
     'rejects %s before querying when its transaction connection is missing',
@@ -956,10 +966,16 @@ describe('push installation logout', () => {
     expect(await registrations()).toEqual([]);
   });
 
-  it('does not permit token cleanup based on a public device ID or similar token', async () => {
-    await registerInstallationDevice(device('A'), credential, {});
-    for (const token of [undefined, 'FCM-token', 'fcm-token-extra']) {
-      await expect(
+  it.each([false, true])(
+    'does not permit token cleanup based on a public device ID or similar token (adopt flag %s)',
+    async (adopt) => {
+      if (adopt) process.env[ADOPT_FLAG] = 'true';
+      await registerInstallationDevice(device('A'), credential, {});
+      const fencesBefore = await sqlExecutor.execute(
+        `SELECT * FROM ${PUSH_NOTIFICATION_DEVICE_LOGOUT_FENCES_TABLE}`
+      );
+      const installationBefore = await storedInstallation();
+      const cleanup = (token: string | undefined) =>
         revokeInstallation(
           {
             device_id: 'phone',
@@ -971,13 +987,31 @@ describe('push installation logout', () => {
             sessions: []
           },
           {}
+        );
+      await expect(cleanup(undefined)).rejects.toThrow('requires a token');
+      for (const token of ['FCM-token', 'fcm-token-extra']) {
+        if (adopt) {
+          // Lost-state flag: a proofless cleanup that matches no row is
+          // acknowledged and writes nothing.
+          await expect(cleanup(token)).resolves.toEqual({
+            device_id: 'phone',
+            revision: 1
+          });
+        } else {
+          await expect(cleanup(token)).rejects.toThrow('native session');
+        }
+      }
+      expect(await registrations()).toEqual([
+        { device_id: 'phone', profile_id: 'A' }
+      ]);
+      expect(
+        await sqlExecutor.execute(
+          `SELECT * FROM ${PUSH_NOTIFICATION_DEVICE_LOGOUT_FENCES_TABLE}`
         )
-      ).rejects.toThrow();
+      ).toEqual(fencesBefore);
+      expect(await storedInstallation()).toEqual(installationBefore);
     }
-    expect(await registrations()).toEqual([
-      { device_id: 'phone', profile_id: 'A' }
-    ]);
-  });
+  );
 
   it('rotates every profile token in the verified installation without changing another phone', async () => {
     for (const profile of ['A', 'B'])
