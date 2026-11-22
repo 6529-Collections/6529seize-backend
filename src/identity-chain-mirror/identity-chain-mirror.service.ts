@@ -1,4 +1,3 @@
-import { MAX_STORABLE_DELEGATION_TOKEN_ID } from '@/delegation-row';
 import {
   ChainGatewayClient,
   ChainGatewayError,
@@ -26,6 +25,7 @@ import {
   planIdentity,
   principalProfileId
 } from './identity-plan';
+import { toDelegationRow } from './delegation-rows';
 import {
   decodeProfileDoc,
   ProfileDocFields,
@@ -148,43 +148,6 @@ export function feedEffects(records: readonly ChainFeedRecord[]): FeedEffects {
     }
   }
   return effects;
-}
-
-export function toDelegationRow(
-  wallet: string,
-  record: ChainDelegation
-): DelegationRowWrite | null {
-  let tokenId = 0;
-  if (!record.allTokens) {
-    try {
-      const big = BigInt(record.tokenId);
-      if (big > MAX_STORABLE_DELEGATION_TOKEN_ID) return null;
-      tokenId = Number(big);
-    } catch {
-      return null;
-    }
-  }
-  let expiry = NEVER_EXPIRES;
-  try {
-    const big = BigInt(record.expiry);
-    expiry = big < BigInt(NEVER_EXPIRES) ? Number(big) : NEVER_EXPIRES;
-  } catch {
-    expiry = NEVER_EXPIRES;
-  }
-  const block =
-    record.source === 'imported' && record.ethBlock
-      ? Number(record.ethBlock)
-      : CHAIN_BLOCK_BASE + Number(record.setHeight);
-  return {
-    block,
-    from_address: wallet.toLowerCase(),
-    to_address: record.delegate.toLowerCase(),
-    collection: record.collection.toLowerCase(),
-    use_case: Number(record.useCase),
-    expiry,
-    all_tokens: !!record.allTokens,
-    token_id: tokenId
-  };
 }
 
 /**
@@ -797,3 +760,5 @@ export class IdentityChainMirror {
 }
 
 export const identityChainMirror = new IdentityChainMirror();
+
+export { toDelegationRow };

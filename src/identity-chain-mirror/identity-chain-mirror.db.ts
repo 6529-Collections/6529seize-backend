@@ -25,6 +25,9 @@ import {
   WalletPair
 } from './identity-plan';
 import { ProfileDocStatement } from './profile-doc';
+import type { DelegationRowWrite } from './delegation-rows';
+
+export type { DelegationRowWrite };
 
 type Conn = ConnectionWrapper<any>;
 
@@ -41,17 +44,6 @@ export interface RatingRowWrite {
   readonly matter: 'REP' | 'CIC';
   readonly matter_category: string;
   readonly rating: number;
-}
-
-export interface DelegationRowWrite {
-  readonly block: number;
-  readonly from_address: string;
-  readonly to_address: string;
-  readonly collection: string;
-  readonly use_case: number;
-  readonly expiry: number;
-  readonly all_tokens: boolean;
-  readonly token_id: number;
 }
 
 const STATE_ID = 'identity';
