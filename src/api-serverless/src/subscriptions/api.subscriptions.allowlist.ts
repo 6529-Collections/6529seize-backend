@@ -281,7 +281,7 @@ async function phaseTargets(): Promise<{
   readonly source: SubscriptionTables;
   readonly targets: string[];
 }> {
-  const mode = await subscriptionsIdentitySwitch.writeModeForLegacy();
+  const mode = await subscriptionsIdentitySwitch.writeModeOrFail();
   return mode === 'TRUTH'
     ? {
         mode,
@@ -541,7 +541,7 @@ function filterSubscriptions(
 
 export async function resetAllowlist(contract: string, tokenId: number) {
   const contractLower = contract.toLowerCase();
-  const mode = await subscriptionsIdentitySwitch.writeModeForLegacy();
+  const mode = await subscriptionsIdentitySwitch.writeModeOrFail();
   // After the switch both final tables reset together. In shadow the
   // identity table is reset afterwards, on its own, so a failure there
   // never undoes the legacy reset.

@@ -3071,15 +3071,21 @@ re-key the key-width guard held back) can't share an id: the first takes it
 and the other is not written, and the list report names it. A phase pull writes the same phase to
 both tables by id. In shadow the legacy side publishes and allocates, and the
 identity side is built beside it with the same ids and compared. Every
-comparison (a card's list, a phase, a run's redemptions) is kept in
-`subscriptions_id_reports` with a MATCH or DIFF verdict. In shadow the
+comparison (a card's list; a card's phase; each card's redemptions, with the
+touched identities' balances) is kept in `subscriptions_id_reports` with a
+MATCH or DIFF verdict. In shadow, a row only the identity side has takes an
+id from 1,000,000,000 up, which the legacy table never reaches. In shadow the
 identity side runs after the legacy side's own work and notices, a failure is
-logged, and a legacy loop that can't read the switch state goes on alone;
-after the switch an identity writer's failure fails the run, and a failed
-legacy dual write is logged. Person-made changes (subscribe, count, mode, editions) reach the
-identity tables through signed records, so in shadow a list differs for
-anyone who changed a choice since the opening; cut and load again before a
-build to compare it.
+logged, and a loop's identity writer that can't read the switch state skips
+the run and catches up on the next. The daily build, phase pulls and the
+read routes fail instead of guessing, and the write routes read the state
+row uncached at every write. After the switch an identity writer's failure
+fails the run, a failed legacy dual write is logged, and redemption warnings
+are posted from the identity side; the legacy loop only logs its own.
+Person-made changes (subscribe, count, mode, editions) will reach the
+identity tables through signed records, which this branch does not have yet;
+until then a shadow list differs for anyone who changed a choice since the
+opening, so cut and load again before a build to compare it.
 
 **One merge rule.** Subscription states that come to belong to one identity
 are merged by one function, `identity-merge.ts` (owner question O2): the cut
@@ -3106,16 +3112,25 @@ Phase pulls are recorded by the mint log by final row id; its rebuild
 applies them between the build records and the redemptions. Times the
 writers set come from their sources (a top-up's transaction time, a build's
 time), so a rebuild writes the same values, except a fold, which is written
-at the time it runs. People's own changes reach the identity tables through
-signed records.
+at the time it runs. People's own changes will reach the identity tables
+through signed records.
 
 **Switch.** The switch is one row, `subscriptions_id_state`, so one write
 moves every service. `subscriptions:opening -- go-live --signed-writes-live`
-does it in one step: it refuses unless the latest shadow list comparison
-matched and no shadow comparison differs since, then cuts, verifies, loads,
-compares, publishes the files and sets the switch time to now. The identity tables are the
-truth from that time while the load is verified and not suspended, and only
-for a cut taken at most 15 minutes before it. `load` refuses to replace
+does it in one step (`go-live.ts`). It refuses unless, for the last minted
+card, the last list comparison matched and at least one phase and one
+redemption comparison exist, with no shadow comparison of any kind
+differing since that card's first list. It then pauses the unsigned write
+routes (503), cuts, verifies, loads, compares, publishes the files,
+sets the switch time and reopens the routes, which then answer 409 to
+unsigned writes. Each step checks that the cut is still inside the switch
+window, so a slow day stops early; on any failure the routes reopen and the
+legacy tables stay the truth. go-live refuses `--identities`: the truth is
+keyed by the identity mirror, as the writers are. The identity tables are
+the truth from the switch time while the load is verified and not
+suspended, and only for a cut taken at most 15 minutes before it. A missing
+state table or column (code deployed before the schema sync) reads as
+nothing loaded. `load` refuses to replace
 tables that are, or are set to become, the truth, and a cut whose redemption
 loop never ran. Readers re-read the row at least every 60 seconds, so
 `suspend` rolls every lambda back to the legacy tables within 60 seconds,

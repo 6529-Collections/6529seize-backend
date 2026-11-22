@@ -1,4 +1,7 @@
-import { SUBSCRIPTIONS_ID_STATE_TABLE } from '@/constants';
+import {
+  SUBSCRIPTIONS_ID_CURSORS_TABLE,
+  SUBSCRIPTIONS_ID_STATE_TABLE
+} from '@/constants';
 import { Logger } from '@/logging';
 import { sqlExecutor } from '@/sql-executor';
 
@@ -52,16 +55,22 @@ export interface SwitchStatus {
 const numberOrNull = (value: unknown): number | null =>
   value === null || value === undefined ? null : Number(value);
 
-function isMissingTable(error: unknown): boolean {
+/**
+ * The state table or one of its columns isn't there yet (code deployed
+ * before dbMigrationsLoop's schema sync): nothing is loaded.
+ */
+function isMissingSchema(error: unknown): boolean {
   const e = error as {
     code?: string;
     errno?: number;
     driverError?: { errno?: number };
   } | null;
+  const errno = e?.errno ?? e?.driverError?.errno;
   return (
     e?.code === 'ER_NO_SUCH_TABLE' ||
-    e?.errno === 1146 ||
-    e?.driverError?.errno === 1146
+    e?.code === 'ER_BAD_FIELD_ERROR' ||
+    errno === 1146 ||
+    errno === 1054
   );
 }
 
@@ -74,8 +83,8 @@ async function readOpeningState(): Promise<OpeningState | null> {
       { id: OPENING_STATE_ID }
     );
   } catch (error) {
-    // Before dbMigrationsLoop has created the table nothing is loaded.
-    if (isMissingTable(error)) {
+    // Before dbMigrationsLoop has synced the table nothing is loaded.
+    if (isMissingSchema(error)) {
       return null;
     }
     throw error;
@@ -180,10 +189,27 @@ export class SubscriptionsIdentitySwitch {
   }
 
   /**
-   * The mode for a legacy loop or route deciding whether to run the
-   * identity side. If the state can't be read and was never read, the
-   * legacy side goes on alone (OFF), with an error logged: a shadow
-   * failure never stops it.
+   * The mode, read again now (not from the cache), retried a few times;
+   * throws if the state can't be read. For a run that must not guess: the
+   * daily build, a phase pull, and a write route's check.
+   */
+  async writeModeOrFail(): Promise<IdentityWriteMode> {
+    let lastError: unknown;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      this.cache = null;
+      try {
+        return await this.writeMode();
+      } catch (error) {
+        lastError = error;
+      }
+    }
+    throw lastError;
+  }
+
+  /**
+   * The mode for a loop's identity writer, which catches up on its next
+   * run: if the state can't be read and was never read, the legacy side
+   * goes on alone (OFF), with an error logged.
    */
   async writeModeForLegacy(): Promise<IdentityWriteMode> {
     try {
@@ -254,4 +280,60 @@ export async function scheduleIdentitySwitch(
   );
   subscriptionsIdentitySwitch.invalidate();
   return !!row && Number(row.switch_at) === switchAtMs;
+}
+
+/**
+ * The marker go-live sets before its cut and clears after the switch: while
+ * it is there, the unsigned write routes answer 503, so no change lands
+ * between the cut and the switch. It lives in subscriptions_id_cursors
+ * (block holds the time it was set, in ms), which a load leaves alone.
+ */
+export const WRITES_CLOSED_ID = 'writes-closed';
+
+export async function closeSubscriptionWrites(
+  nowMs: number = Date.now()
+): Promise<void> {
+  await sqlExecutor.execute(
+    `INSERT INTO ${SUBSCRIPTIONS_ID_CURSORS_TABLE} (id, block, updated_at)
+      VALUES (:id, :nowMs, :nowMs)
+      ON DUPLICATE KEY UPDATE block = VALUES(block), updated_at = VALUES(updated_at)`,
+    { id: WRITES_CLOSED_ID, nowMs }
+  );
+}
+
+export async function openSubscriptionWrites(): Promise<void> {
+  await sqlExecutor.execute(
+    `DELETE FROM ${SUBSCRIPTIONS_ID_CURSORS_TABLE} WHERE id = :id`,
+    { id: WRITES_CLOSED_ID }
+  );
+}
+
+export type UnsignedWrites = 'OPEN' | 'PAUSED' | 'SIGNED_ONLY';
+
+/**
+ * Whether the unsigned write routes may write, read uncached at the moment
+ * of the write: PAUSED while go-live runs, SIGNED_ONLY once the identity
+ * tables are the truth. Throws if the state can't be read, so a write is
+ * refused rather than landing only in the legacy tables.
+ */
+export async function unsignedWritesNow(
+  nowMs: number = Date.now()
+): Promise<UnsignedWrites> {
+  let closed: unknown[];
+  try {
+    closed = await sqlExecutor.execute(
+      `SELECT id FROM ${SUBSCRIPTIONS_ID_CURSORS_TABLE} WHERE id = :id`,
+      { id: WRITES_CLOSED_ID }
+    );
+  } catch (error) {
+    if (!isMissingSchema(error)) {
+      throw error;
+    }
+    closed = [];
+  }
+  if (Array.isArray(closed) && closed.length > 0) {
+    return 'PAUSED';
+  }
+  const reason = switchReason(await readOpeningState(), nowMs);
+  return reason === 'IDENTITY_TABLES' ? 'SIGNED_ONLY' : 'OPEN';
 }

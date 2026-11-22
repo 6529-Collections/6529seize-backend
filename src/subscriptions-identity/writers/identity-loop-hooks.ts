@@ -9,6 +9,7 @@ import {
   reportRedemptionComparison
 } from './identity-redemptions';
 import { creditIdentityTopUps } from './identity-top-ups';
+import { sendSubscriptionWaveNotifications } from '@/transactionsProcessingLoop/subscriptions';
 
 const logger = Logger.get('SUBSCRIPTIONS_IDENTITY_WRITERS');
 
@@ -54,6 +55,11 @@ export function runIdentityRedemptionWriters(): Promise<void> {
   return runIdentityWriter('REDEMPTIONS', async (mode) => {
     const run = await redeemIdentityAirdrops();
     if (run) {
+      // After the switch the warnings come from the truth (the legacy
+      // loop only logs its own); in shadow the legacy loop posts them.
+      if (mode === 'TRUTH') {
+        await sendSubscriptionWaveNotifications(run.notices, 'IDENTITY');
+      }
       await reportRedemptionComparison(mode, run);
     }
   });

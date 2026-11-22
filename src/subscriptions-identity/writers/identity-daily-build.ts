@@ -23,6 +23,9 @@ import {
 } from '../identity/identity-directory';
 import { AS_TEXT, flag, msToDbText } from '../opening/legacy-tables';
 
+/** Where shadow ids for rows only the identity side has begin. */
+export const SHADOW_ONLY_ID_FROM = 1_000_000_000;
+
 /** A row of a card's list as the identity tables hold it. */
 export interface IdentityListRow {
   readonly id: number;
@@ -221,6 +224,22 @@ export async function buildIdentityList(params: {
     balance: row.balance,
     subscribedAt: row.subscribedAt
   }));
+  // In shadow the legacy side allocates ids. A row only the identity side
+  // has (for example a wide identity the legacy tables hold back) takes an
+  // id from SHADOW_ONLY_ID_FROM up, a range the legacy table never reaches;
+  // the go-live load replaces every row with the legacy ids anyway.
+  if (params.idOf) {
+    const [highest] = await sqlExecutor.execute<{ id: number | null }>(
+      `SELECT MAX(id) AS id FROM ${SUBSCRIPTIONS_ID_NFTS_FINAL_TABLE} WHERE id >= :from`,
+      { from: SHADOW_ONLY_ID_FROM }
+    );
+    let next = Math.max(Number(highest?.id ?? 0), SHADOW_ONLY_ID_FROM - 1) + 1;
+    for (const row of withIds) {
+      if (row.id === undefined) {
+        row.id = next++;
+      }
+    }
+  }
   const effects: BuildEffects = {
     contract: MEMES_CONTRACT,
     tokenId,

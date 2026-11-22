@@ -78,7 +78,9 @@ import {
 const logger = Logger.get('SUBSCRIPTIONS');
 
 export async function updateSubscriptions() {
-  const writeMode = await subscriptionsIdentitySwitch.writeModeForLegacy();
+  // A cold run that can't read the switch fails (Lambda retries it) rather
+  // than publish the legacy list after the switch.
+  const writeMode = await subscriptionsIdentitySwitch.writeModeOrFail();
   const buildAtMs = Time.now().toMillis();
   const autoSubscriptions = await fetchAllAutoSubscriptions();
   logger.info(`[FOUND ${autoSubscriptions.length} AUTO SUBSCRIPTIONS]`);

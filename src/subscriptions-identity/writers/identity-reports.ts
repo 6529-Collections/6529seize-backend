@@ -69,47 +69,55 @@ export async function saveReport(report: ComparisonReport): Promise<void> {
 }
 
 /**
- * Whether the shadow comparisons back a switch: the latest shadow LIST
- * report is MATCH, and no shadow report since it is DIFF.
+ * Whether the shadow comparisons back a switch: an exact match of who gets
+ * what on a real mint. For the last minted card it requires a MATCH list
+ * from its last build, at least one phase comparison and at least one
+ * redemption comparison, all MATCH, and no shadow DIFF of any kind since
+ * that card's first list comparison. `checked` says what was looked at.
  */
-export async function shadowReportsMatch(): Promise<{
+export async function shadowReportsMatch(mintedCard: number): Promise<{
   readonly ok: boolean;
-  readonly detail: string;
+  readonly checked: string[];
+  readonly problems: string[];
 }> {
-  const [list] = await sqlExecutor.execute<{
+  const reports = await sqlExecutor.execute<{
     id: number;
+    kind: string;
     verdict: string;
     token_id: number | null;
   }>(
-    `SELECT id, verdict, token_id FROM ${SUBSCRIPTIONS_ID_REPORTS_TABLE}
-      WHERE kind = 'LIST' AND mode = 'SHADOW' ORDER BY id DESC LIMIT 1`
+    `SELECT id, kind, verdict, token_id FROM ${SUBSCRIPTIONS_ID_REPORTS_TABLE}
+      WHERE mode = 'SHADOW' ORDER BY id ASC`
   );
-  if (!list) {
-    return { ok: false, detail: 'no shadow list comparison yet' };
+  const ofCard = (kind: ReportKind) =>
+    reports.filter((r) => r.kind === kind && Number(r.token_id) === mintedCard);
+  const lists = ofCard('LIST');
+  const phases = ofCard('PHASE');
+  const redemptions = ofCard('REDEMPTIONS');
+  const checked = [
+    `card ${mintedCard}: ${lists.length} list, ${phases.length} phase and ${redemptions.length} redemption comparisons`
+  ];
+  const problems: string[] = [];
+  if (lists.length === 0) {
+    problems.push(`no list comparison for card ${mintedCard}`);
+  } else if (lists[lists.length - 1].verdict !== 'MATCH') {
+    problems.push(`card ${mintedCard}'s last list comparison is a DIFF`);
   }
-  if (list.verdict !== 'MATCH') {
-    return {
-      ok: false,
-      detail: `the latest shadow list comparison (card ${list.token_id}) is ${list.verdict}`
-    };
+  if (phases.length === 0) {
+    problems.push(`no phase comparison for card ${mintedCard}`);
   }
-  const diffs = await sqlExecutor.execute<{
-    kind: string;
-    token_id: number | null;
-  }>(
-    `SELECT kind, token_id FROM ${SUBSCRIPTIONS_ID_REPORTS_TABLE}
-      WHERE mode = 'SHADOW' AND verdict = 'DIFF' AND id > :since`,
-    { since: list.id }
+  if (redemptions.length === 0) {
+    problems.push(`no redemption comparison for card ${mintedCard}`);
+  }
+  const since = lists[0]?.id ?? 0;
+  const diffs = reports.filter((r) => r.id >= since && r.verdict !== 'MATCH');
+  checked.push(
+    `${reports.filter((r) => r.id >= since).length} shadow comparisons since card ${mintedCard}'s first list`
   );
-  return diffs.length === 0
-    ? {
-        ok: true,
-        detail: `shadow comparisons match since card ${list.token_id}`
-      }
-    : {
-        ok: false,
-        detail: `${diffs.length} shadow comparisons differ since card ${list.token_id}: ${diffs
-          .map((d) => d.kind)
-          .join(', ')}`
-      };
+  for (const diff of diffs) {
+    problems.push(
+      `${diff.kind} comparison ${diff.id} (card ${diff.token_id ?? '-'}) is a DIFF`
+    );
+  }
+  return { ok: problems.length === 0, checked, problems };
 }

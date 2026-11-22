@@ -11,6 +11,7 @@ import {
   SUBSCRIPTIONS_REDEEMED_TABLE
 } from '@/constants';
 import { sqlExecutor } from '@/sql-executor';
+import { subscriptionsIdentitySwitch } from '@/subscriptions-identity/identity/identity-switch';
 import {
   fetchMemeSubscriptionCount,
   fetchPastMemeSubscriptionCounts,
@@ -22,6 +23,11 @@ import {
 jest.mock('./subscription-cutoff', () => ({
   getSubscriptionCutoffMemeId: jest.fn().mockResolvedValue(516)
 }));
+
+// Before the identity switch every reader uses the legacy tables.
+beforeEach(() => {
+  jest.spyOn(subscriptionsIdentitySwitch, 'writeMode').mockResolvedValue('OFF');
+});
 
 describe('fetchPastMemeSubscriptionCounts', () => {
   afterEach(() => {

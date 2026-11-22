@@ -57,6 +57,7 @@ import {
   InsufficientSubscriptionBalanceException
 } from '@/api/subscriptions/insufficient-subscription-balance.exception';
 import { mirrorIdentityDirectory } from '@/subscriptions-identity/identity/identity-directory';
+import { unsignedWritesNow } from '@/subscriptions-identity/identity/identity-switch';
 import {
   LEGACY_SUBSCRIPTION_TABLES,
   subscriptionReadScope,
@@ -167,7 +168,21 @@ export async function fetchConsolidationAddresses(
  * record; the legacy write path refuses it.
  */
 async function assertUnsignedWritesOpen(): Promise<void> {
-  if ((await subscriptionTables()).identity) {
+  // Read now, not from the 60-second cache: a change accepted after the
+  // switch would land only in the legacy tables.
+  let writes: Awaited<ReturnType<typeof unsignedWritesNow>>;
+  try {
+    writes = await unsignedWritesNow();
+  } catch {
+    writes = 'PAUSED';
+  }
+  if (writes === 'PAUSED') {
+    throw new CustomApiCompliantException(
+      503,
+      'Subscription changes are paused for a few minutes. Try again shortly.'
+    );
+  }
+  if (writes === 'SIGNED_ONLY') {
     throw new CustomApiCompliantException(
       409,
       'Subscription changes are signed now. Update the app and try again.'

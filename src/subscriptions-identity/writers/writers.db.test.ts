@@ -29,8 +29,11 @@ import { describeWithSeed } from '@/tests/_setup/seed';
 import { redeemSubscriptions } from '@/transactionsProcessingLoop/subscriptions';
 import { mirrorIdentityDirectory } from '../identity/identity-directory';
 import {
+  closeSubscriptionWrites,
+  openSubscriptionWrites,
   scheduleIdentitySwitch,
   SHADOW_ENV,
+  SubscriptionsIdentitySwitch,
   subscriptionsIdentitySwitch
 } from '../identity/identity-switch';
 import { cutOpeningFiles } from '../opening/opening-build';
@@ -55,6 +58,9 @@ import {
   runIdentityTopUpWriters
 } from './identity-loop-hooks';
 import { shadowReportsMatch } from './identity-reports';
+import { buildIdentityList, SHADOW_ONLY_ID_FROM } from './identity-daily-build';
+import { goLive } from '../opening/go-live';
+import { updateSubscription } from '@/api/subscriptions/api.subscriptions.db';
 
 const uploadFile = jest.fn();
 jest.mock('@/arweave', () => ({
@@ -63,11 +69,13 @@ jest.mock('@/arweave', () => ({
   }
 }));
 jest.mock('@/notifier-discord', () => ({ sendDiscordUpdate: jest.fn() }));
+const noSubscriptionWarning = jest.fn();
 jest.mock('@/subscription-wave-notifier', () => ({
   sendDailySubscriptionsWaveUpdate: jest.fn(),
   sendProcessedTopUpWaveWarning: jest.fn(),
   sendSubscriptionTopUpWaveUpdate: jest.fn(),
-  sendNoSubscriptionFoundWaveWarning: jest.fn(),
+  sendNoSubscriptionFoundWaveWarning: (...args: unknown[]) =>
+    noSubscriptionWarning(...args),
   sendNoBalanceFoundWaveError: jest.fn(),
   sendInsufficientBalanceWaveError: jest.fn()
 }));
@@ -273,16 +281,12 @@ describeWithSeed('identity writers after the switch', [], () => {
         `SELECT verdict, mode FROM ${SUBSCRIPTIONS_ID_REPORTS_TABLE} WHERE kind = 'LIST'`
       );
       expect(report).toEqual({ verdict: 'MATCH', mode: 'SHADOW' });
-      // go-live checks these: a later shadow DIFF stops it.
-      expect((await shadowReportsMatch()).ok).toBe(true);
-      await execute(
-        `INSERT INTO ${SUBSCRIPTIONS_ID_REPORTS_TABLE} (kind, mode, verdict, report, created_at)
-          VALUES ('PHASE', 'SHADOW', 'DIFF', '{}', 0)`
-      );
-      expect(await shadowReportsMatch()).toEqual({
-        ok: false,
-        detail: `1 shadow comparisons differ since card ${CARD}: PHASE`
-      });
+      // A list alone doesn't back the switch: the mint's phases and
+      // redemptions must have been compared too.
+      expect((await shadowReportsMatch(CARD)).problems).toEqual([
+        `no phase comparison for card ${CARD}`,
+        `no redemption comparison for card ${CARD}`
+      ]);
     } finally {
       delete process.env[SHADOW_ENV];
     }
@@ -472,6 +476,120 @@ describeWithSeed('identity writers after the switch', [], () => {
       })
     );
     expect(await answers()).toEqual(before);
+  });
+
+  it('backs the switch only with matching list, phase and redemption comparisons of the minted card', async () => {
+    const report = (kind: string, token: number | null, verdict: string) =>
+      execute(
+        `INSERT INTO ${SUBSCRIPTIONS_ID_REPORTS_TABLE} (kind, mode, token_id, verdict, report, created_at)
+          VALUES (:kind, 'SHADOW', :token, :verdict, '{}', 0)`,
+        { kind, token, verdict }
+      );
+    // Wednesday's mint differs, Thursday's list matches.
+    await report('LIST', 579, 'MATCH');
+    await report('PHASE', 579, 'DIFF');
+    await report('REDEMPTIONS', 579, 'DIFF');
+    await report('LIST', 580, 'MATCH');
+    const verdict = await shadowReportsMatch(579);
+    expect(verdict.ok).toBe(false);
+    expect(verdict.problems).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining('PHASE comparison'),
+        expect.stringContaining('REDEMPTIONS comparison')
+      ])
+    );
+    await execute(`DELETE FROM ${SUBSCRIPTIONS_ID_REPORTS_TABLE}`);
+    await report('LIST', 579, 'MATCH');
+    await report('PHASE', 579, 'MATCH');
+    await report('REDEMPTIONS', 579, 'MATCH');
+    await report('LIST', 580, 'MATCH');
+    expect(await shadowReportsMatch(579)).toEqual(
+      expect.objectContaining({ ok: true, problems: [] })
+    );
+  });
+
+  it('in shadow, gives identity-only rows ids the legacy table never hands out', async () => {
+    await seedLegacy();
+    await cutAndLoad(false);
+    // X subscribes on the identity side only (as a wide identity would).
+    const X = wallet(0x99);
+    await execute(
+      `INSERT INTO ${SUBSCRIPTIONS_ID_BALANCES_TABLE} (identity_key, balance) VALUES (:x, 1)`,
+      { x: X }
+    );
+    await execute(
+      `INSERT INTO ${SUBSCRIPTIONS_ID_MODE_TABLE} (identity_key, automatic) VALUES (:x, true)`,
+      { x: X }
+    );
+    const first = await buildIdentityList({
+      tokenId: CARD,
+      buildAtMs: Date.parse('2026-11-25T00:01:00Z'),
+      idOf: (identity) =>
+        identity === P1 ? 1 : identity === LONE ? 2 : undefined
+    });
+    // The legacy table hands the next card ids 3 and 4.
+    const second = await buildIdentityList({
+      tokenId: CARD + 1,
+      buildAtMs: Date.parse('2026-11-27T00:01:00Z'),
+      idOf: (identity) => (identity === P1 ? 3 : undefined)
+    });
+    const idOf = (rows: { identityKey: string; id: number }[], key: string) =>
+      rows.find((r) => r.identityKey === key)?.id;
+    expect(idOf(first.rows, P1)).toBe(1);
+    expect(idOf(first.rows, X)).toBe(SHADOW_ONLY_ID_FROM);
+    expect(idOf(second.rows, P1)).toBe(3);
+    expect(idOf(second.rows, X)).toBe(SHADOW_ONLY_ID_FROM + 1);
+  });
+
+  it('pauses unsigned writes during go-live and refuses them right after the switch, whatever a cache says', async () => {
+    await seedLegacy();
+    // Another container warmed its cache before go-live.
+    const otherContainer = new SubscriptionsIdentitySwitch();
+    expect(await otherContainer.writeMode()).toBe('OFF');
+    await closeSubscriptionWrites();
+    await expect(
+      updateSubscription(LONE, MEMES_CONTRACT, CARD, false)
+    ).rejects.toThrow('paused');
+    await openSubscriptionWrites();
+    const result = await goLive({
+      signedWritesLive: true,
+      acceptReportDiffs: true,
+      mintedCard: 0
+    });
+    expect(result.switched).toBe(true);
+    expect(result.steps).toContain('unsigned writes paused');
+    // Its cache still says OFF; the write route reads the row now.
+    expect(await otherContainer.writeMode()).toBe('OFF');
+    await expect(
+      updateSubscription(LONE, MEMES_CONTRACT, CARD, false)
+    ).rejects.toThrow('signed now');
+  });
+
+  it('after the switch, posts redemption warnings from the identity side only', async () => {
+    await seed();
+    noSubscriptionWarning.mockReset();
+    // An airdrop to an address on no list, identity or legacy.
+    const STRANGER = wallet(0x77);
+    await execute(
+      `INSERT INTO ${TRANSACTIONS_TABLE}
+        (created_at, transaction, block, transaction_date, from_address, to_address,
+         contract, token_id, token_count, value, primary_proceeds, royalties,
+         gas_gwei, gas_price, gas_price_gwei, gas)
+        VALUES (NOW(), '0xstray', 50, '2026-11-26 15:00:00', :null, :to, :c, :card,
+         1, 0, 0, 0, 0, 0, 0, 0)`,
+      { null: NULL_ADDRESS, to: STRANGER, c: MEMES_CONTRACT, card: CARD }
+    );
+    await execute(
+      `INSERT INTO ${TRANSACTIONS_PROCESSED_SUBSCRIPTIONS_BLOCKS_TABLE} (created_at, block, timestamp)
+        VALUES (NOW(), 49, 0)`
+    );
+    await redeemSubscriptions();
+    expect(noSubscriptionWarning).not.toHaveBeenCalled();
+    await runIdentityRedemptionWriters();
+    expect(noSubscriptionWarning).toHaveBeenCalledTimes(1);
+    expect(noSubscriptionWarning.mock.calls[0][0]).toEqual(
+      expect.objectContaining({ airdropAddress: STRANGER })
+    );
   });
 
   it('charges an airdrop once in the identity tables, the same as the legacy loop', async () => {
