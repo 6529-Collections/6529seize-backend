@@ -453,6 +453,70 @@ describeWithSeed('identity writers after the switch', [], () => {
     expect(String(report.report)).toContain(
       'second legacy row of one identity'
     );
+
+    // The mint: P1's airdrop, charged on both sides. P1's balance is its
+    // two legacy keys' together, so its redemption comparison raises no
+    // alert either.
+    const [p1Row] = await sqlExecutor.execute<{ airdrop_address: string }>(
+      `SELECT airdrop_address FROM ${SUBSCRIPTIONS_ID_NFTS_FINAL_TABLE} WHERE identity_key = :p1`,
+      { p1: P1 }
+    );
+    await execute(
+      `INSERT INTO ${TRANSACTIONS_TABLE}
+        (created_at, transaction, block, transaction_date, from_address, to_address,
+         contract, token_id, token_count, value, primary_proceeds, royalties,
+         gas_gwei, gas_price, gas_price_gwei, gas)
+        VALUES (NOW(), '0xmerged', 50, '2026-11-26 15:00:00', :null, :to, :c, :card,
+         1, 0, 0, 0, 0, 0, 0, 0)`,
+      {
+        null: NULL_ADDRESS,
+        to: p1Row.airdrop_address,
+        c: MEMES_CONTRACT,
+        card: CARD
+      }
+    );
+    await redeemSubscriptions();
+    const mintAlert = jest.spyOn(Logger.prototype, 'errorWithCode');
+    await runIdentityRedemptionWriters();
+    expect(
+      mintAlert.mock.calls.filter(
+        (call) => call[0] === 'SUBSCRIPTIONS_TRUTH_COMPARISON_DIFF'
+      )
+    ).toHaveLength(0);
+    mintAlert.mockRestore();
+    const [redemptions] = await sqlExecutor.execute<{ report: string }>(
+      `SELECT report FROM ${SUBSCRIPTIONS_ID_REPORTS_TABLE} WHERE kind = 'REDEMPTIONS'`
+    );
+    expect(String(redemptions.report)).toContain('compared as the sum');
+  });
+
+  it('alerts when the identity list drops someone the legacy list has', async () => {
+    await seedLegacy();
+    await cutAndLoad(true);
+    // LONE's choice is lost on the identity side only.
+    await execute(
+      `DELETE FROM ${SUBSCRIPTIONS_ID_NFTS_TABLE} WHERE identity_key = :lone`,
+      { lone: LONE }
+    );
+    const alert = jest.spyOn(Logger.prototype, 'errorWithCode');
+    await updateSubscriptions();
+    expect(
+      alert.mock.calls.filter(
+        (call) => call[0] === 'SUBSCRIPTIONS_TRUTH_COMPARISON_DIFF'
+      )
+    ).toHaveLength(1);
+    alert.mockRestore();
+    const [report] = await sqlExecutor.execute<{ report: string }>(
+      `SELECT report FROM ${SUBSCRIPTIONS_ID_REPORTS_TABLE} WHERE kind = 'LIST'`
+    );
+    const parsed = JSON.parse(String(report.report)) as {
+      diffs: { key: string; identity: string | null }[];
+      unexplained: number;
+    };
+    expect(parsed.unexplained).toBe(1);
+    expect(parsed.diffs).toEqual([
+      expect.objectContaining({ key: LONE, identity: null })
+    ]);
   });
 
   it('rebuilds lost identity tables from the opening and the journal alone, giving the same API answers', async () => {

@@ -3,6 +3,7 @@ import {
   NULL_ADDRESS,
   SUBSCRIPTIONS_ID_BALANCES_TABLE,
   SUBSCRIPTIONS_ID_CURSORS_TABLE,
+  SUBSCRIPTIONS_ID_KEY_MAP_TABLE,
   SUBSCRIPTIONS_ID_NFTS_FINAL_TABLE,
   SUBSCRIPTIONS_ID_REDEEMED_TABLE,
   SUBSCRIPTIONS_BALANCES_TABLE,
@@ -467,12 +468,53 @@ async function reportCard(
       ...Array.from(legacyKeysOf.keys())
     ])
   );
+  // Every legacy key an identity has (the opening's key map), not only the
+  // ones this card charged: a merged identity's balance is their sum.
+  if (touched.length > 0) {
+    const mapped = await sqlExecutor.execute<{
+      consolidation_key: string;
+      identity_key: string;
+    }>(
+      `SELECT consolidation_key, identity_key FROM ${SUBSCRIPTIONS_ID_KEY_MAP_TABLE}
+        WHERE identity_key IN (:touched)`,
+      { touched }
+    );
+    for (const row of mapped) {
+      legacyKeysOf.set(
+        row.identity_key,
+        new Set([
+          ...Array.from(legacyKeysOf.get(row.identity_key) ?? []),
+          row.consolidation_key
+        ])
+      );
+    }
+  }
   for (const identityKey of touched) {
     const keys = Array.from(legacyKeysOf.get(identityKey) ?? []);
-    if (keys.length !== 1) {
-      notes.push(
-        `balance of ${identityKey} not comparable: its charges went to ${keys.length} legacy keys`
+    if (keys.length > 1) {
+      // One identity, several legacy keys: its balance should be theirs
+      // together, give or take each key's own rounding to five decimals.
+      const [sum] = await sqlExecutor.execute<{ balance: number | null }>(
+        `SELECT SUM(balance) AS balance FROM ${SUBSCRIPTIONS_BALANCES_TABLE} WHERE consolidation_key IN (:keys)`,
+        { keys }
       );
+      const [identityBalance] = await sqlExecutor.execute<{ balance: number }>(
+        `SELECT balance FROM ${SUBSCRIPTIONS_ID_BALANCES_TABLE} WHERE identity_key = :identityKey`,
+        { identityKey }
+      );
+      const legacyTotal = Number(sum?.balance ?? 0);
+      const identityTotal = Number(identityBalance?.balance ?? 0);
+      if (Math.abs(legacyTotal - identityTotal) <= 0.00001 * keys.length) {
+        notes.push(
+          `balance of ${identityKey} compared as the sum of its ${keys.length} legacy keys`
+        );
+      } else {
+        legacy.set(`${identityKey}|balance`, `sum ${legacyTotal}`);
+        identity.set(`${identityKey}|balance`, `sum ${identityTotal}`);
+      }
+      continue;
+    }
+    if (keys.length === 0) {
       continue;
     }
     const [legacyBalance] = await sqlExecutor.execute<{ balance: number }>(
@@ -502,6 +544,9 @@ async function reportCard(
     legacyRows: legacyRows.length,
     identityRows: identityRows.length,
     diffs,
-    notes
+    notes,
+    // The notes are known causes (a key spanning identities, a balance
+    // compared as a sum); a difference is not.
+    unexplained: diffs.length
   });
 }

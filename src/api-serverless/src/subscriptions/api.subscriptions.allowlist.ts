@@ -381,7 +381,8 @@ async function reportPhase(
     legacyRows: legacy.length,
     identityRows: identity.length,
     diffs,
-    notes: [`phase ${phaseName}`]
+    notes: [`phase ${phaseName}`],
+    unexplained: diffs.length
   });
 }
 

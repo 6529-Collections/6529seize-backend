@@ -366,6 +366,7 @@ async function restoreRecordHead(
   const inputs = body.inputs as {
     event_id: string;
     owner: string;
+    family?: 'ps' | 'pv';
     type: string;
     key: string;
     anchor: number;
@@ -373,7 +374,8 @@ async function restoreRecordHead(
   };
   const head = {
     owner: inputs.owner,
-    family: 'ps' as const,
+    // The family the record was signed in; subscription choices are `ps`.
+    family: inputs.family ?? ('ps' as const),
     type: inputs.type,
     key: inputs.key
   };
