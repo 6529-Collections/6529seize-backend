@@ -1,4 +1,5 @@
 import {
+  CONTENT_MODERATION_ITEMS_TABLE,
   CONTENT_MODERATION_REPORTS_TABLE,
   E2EE_BACKUP_CHUNKS_TABLE,
   E2EE_BACKUPS_TABLE,
@@ -749,6 +750,67 @@ async function runScenario(recorded = true) {
       ),
     report(CONTENT_MODERATION_REPORTS_TABLE, { drop_id: 'drop-1' })
   );
+  // Moderation items: r1's report item, bound while r1 was open (the prune
+  // marks it reviewed later, unrecorded), and an override a moderator gave.
+  const item = (id: string, input: Record<string, E2eeRowValue>) => ({
+    id,
+    subject_type: 'DROP',
+    subject_id: 'drop-1',
+    author_profile_id: 'pa',
+    actor_profile_id: 'pb',
+    operation: 'REPORT',
+    policy_family: 'WAVE_CONTENT',
+    policy_version: 'v1',
+    content_fingerprint: 'f'.repeat(64),
+    scope: '{"report_id": "r1"}',
+    review_status: 'NEEDS_REVIEW',
+    override: null,
+    permit_expires_at: null,
+    permit_consumed_at: null,
+    published_subject_id: 'drop-1',
+    suppressed: false,
+    created_at: T0 + 33,
+    ...input
+  });
+  await write(
+    () => {
+      s.db.put(CONTENT_MODERATION_ITEMS_TABLE, item('a'.repeat(64), {}));
+      s.db.update(
+        CONTENT_MODERATION_REPORTS_TABLE,
+        { id: 'r1' },
+        { item_id: 'a'.repeat(64) }
+      );
+    },
+    async (batch, c) => {
+      await writers.moderationRowsChanged(batch, c, {
+        table: CONTENT_MODERATION_REPORTS_TABLE,
+        where: { id: 'r1' }
+      });
+      await writers.moderationRowsChanged(batch, c, {
+        table: CONTENT_MODERATION_ITEMS_TABLE,
+        where: { id: 'a'.repeat(64) }
+      });
+    }
+  );
+  s.db.update(
+    CONTENT_MODERATION_ITEMS_TABLE,
+    { id: 'a'.repeat(64) },
+    { review_status: 'REVIEWED' }
+  );
+  await write(
+    () =>
+      s.db.put(
+        CONTENT_MODERATION_ITEMS_TABLE,
+        item('b'.repeat(64), {
+          operation: 'CREATE',
+          scope: '{}',
+          review_status: 'REVIEWED',
+          override: 'ALLOW',
+          permit_expires_at: NOW + 7 * DAY
+        })
+      ),
+    report(CONTENT_MODERATION_ITEMS_TABLE, { id: 'b'.repeat(64) })
+  );
   // Resolved 100 days ago: MySQL's prune has since cleared its evidence.
   await write(
     () =>
@@ -932,16 +994,27 @@ describe('rebuildE2eeState', () => {
   it('rebuilds the reports only with the moderation key; relays see no report', async () => {
     const { relay } = await runScenario();
     const reports = relay.stored.filter((item) => item.event.wave === INBOX);
-    expect(reports.length).toBe(10);
+    expect(reports.length).toBe(13);
+    // Report rows go as SEALED records; a moderator's decision on an item
+    // as a RECORD keyed by the item id. Both are sealed.
+    expect(
+      reports
+        .filter((item) => item.event.kind === 9)
+        .map((item) => item.event.refs)
+    ).toEqual([
+      ['moderation-item', 'a'.repeat(64)],
+      ['moderation-item', 'b'.repeat(64)]
+    ]);
     for (const item of reports) {
-      expect(item.event.kind).toBe(10);
+      expect([9, 10]).toContain(item.event.kind);
       expect(item.event.body).not.toContain('reported');
+      expect(item.event.body).not.toContain('ALLOW');
     }
     const state = await rebuildE2eeState(readerSource(relay), {
       ordererDeviceKey: ORDERER.deviceKey,
       now: NOW
     });
-    expect(state.problems).toHaveLength(10);
+    expect(state.problems).toHaveLength(13);
     expect(state.problems[0]).toMatchObject({
       wave: INBOX,
       reason:
@@ -996,7 +1069,8 @@ function backfillDb(
       backupBytes: 0,
       reports: all(CONTENT_MODERATION_REPORTS_TABLE).length,
       messageReports: all(E2EE_REPORTS_TABLE).length,
-      reportAccess: all(E2EE_REPORT_ACCESS_LOG_TABLE).length
+      reportAccess: all(E2EE_REPORT_ACCESS_LOG_TABLE).length,
+      moderationDecisions: all(CONTENT_MODERATION_ITEMS_TABLE).length
     }),
     reportKeys: async (cursor, limit) =>
       [
@@ -1008,6 +1082,11 @@ function backfillDb(
         ...all(E2EE_REPORTS_TABLE).map((row) => ({
           key: `e:${String(row.id)}`,
           table: E2EE_REPORTS_TABLE,
+          id: String(row.id)
+        })),
+        ...all(CONTENT_MODERATION_ITEMS_TABLE).map((row) => ({
+          key: `i:${String(row.id)}`,
+          table: CONTENT_MODERATION_ITEMS_TABLE,
           id: String(row.id)
         })),
         ...all(CONTENT_MODERATION_REPORTS_TABLE).map((row) => ({

@@ -66,7 +66,7 @@ export interface E2eeRecordAppend {
     readonly epoch: number | null;
     readonly windows: readonly E2eeDeliveryWindow[];
   };
-  /** SEALED records only: seal the content to the moderation service key. */
+  /** SEALED or RECORD (`md`): seal the content to the moderation key. */
   readonly sealToModeration?: boolean;
 }
 
@@ -327,8 +327,11 @@ export class E2eeStreamPublisher {
     wave: string,
     content: Buffer
   ): Buffer {
-    if (input.kind !== E2eeRecordKind.SEALED) {
-      throw new Error('Only SEALED records are sealed');
+    if (
+      input.kind !== E2eeRecordKind.SEALED &&
+      input.kind !== E2eeRecordKind.RECORD
+    ) {
+      throw new Error('Only SEALED and RECORD records are sealed');
     }
     const settings = this.deps.settings();
     if (!settings.moderation) {

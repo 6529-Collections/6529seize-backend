@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import {
+  CONTENT_MODERATION_ITEMS_TABLE,
   E2EE_BACKUP_CHUNKS_TABLE,
   E2EE_BACKUPS_TABLE,
   E2EE_BLOB_CHUNKS_TABLE,
@@ -791,6 +792,22 @@ export class E2eeRecordWriters {
       'id'
     );
     if (!rows.length) return 0;
+    if (change.table === CONTENT_MODERATION_ITEMS_TABLE) {
+      // Moderators' decisions: one RECORD per item, keyed by its id; the
+      // newest record of an item wins.
+      for (const row of rows) {
+        await batch.append(connection, {
+          family: 'md',
+          owner: E2EE_MODERATION_INBOX,
+          kind: E2eeRecordKind.RECORD,
+          refs: ['moderation-item', String(row.id)],
+          type: 'moderation-item',
+          ops: puts(change.table, [row]),
+          sealToModeration: true
+        });
+      }
+      return rows.length;
+    }
     await batch.append(connection, {
       family: 'md',
       owner: E2EE_MODERATION_INBOX,

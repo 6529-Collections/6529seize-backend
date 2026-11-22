@@ -1,4 +1,5 @@
 import {
+  CONTENT_MODERATION_ITEMS_TABLE,
   CONTENT_MODERATION_REPORTS_TABLE,
   E2EE_BACKUPS_TABLE,
   E2EE_BLOB_CHUNKS_TABLE,
@@ -23,6 +24,7 @@ import {
   e2eeRecordKeyString,
   e2eeRecordRow,
   e2eeRecordSelectList,
+  E2EE_DECIDED_ITEM_SQL,
   e2eeRecordTable,
   e2eeRecordWhere
 } from '@/e2ee/relay/e2ee-record-tables';
@@ -39,7 +41,16 @@ const EXAMPLES = 5;
 
 /** Columns a rebuild writes beyond the carried ones. */
 const EXTRA_COLUMNS: Readonly<Record<string, readonly string[]>> = {
-  [E2EE_DEVICES_TABLE]: ['last_seen_at']
+  [E2EE_DEVICES_TABLE]: ['last_seen_at'],
+  // The AI result of a moderation item, left to a rerun (outcome PENDING).
+  [CONTENT_MODERATION_ITEMS_TABLE]: [
+    'evidence',
+    'outcome',
+    'trigger',
+    'evidence_expires_at',
+    'version',
+    'updated_at'
+  ]
 };
 
 /**
@@ -219,6 +230,10 @@ export class E2eeRebuildDb extends LazyDbAccessCompatibleService {
     const reportScope = e2eeRecordWhere(
       e2eeRecordTable(CONTENT_MODERATION_REPORTS_TABLE)
     );
+    const itemScope = e2eeRecordWhere(
+      e2eeRecordTable(CONTENT_MODERATION_ITEMS_TABLE),
+      [E2EE_DECIDED_ITEM_SQL]
+    );
     const checks: Record<
       keyof Omit<E2eeCoverage, 'missing' | 'examples'>,
       string
@@ -245,7 +260,9 @@ export class E2eeRebuildDb extends LazyDbAccessCompatibleService {
                           where wave = :inbox)
           and (exists (select 1 from ${CONTENT_MODERATION_REPORTS_TABLE} ${reportScope})
             or exists (select 1 from ${E2EE_REPORTS_TABLE})
-            or exists (select 1 from ${E2EE_REPORT_ACCESS_LOG_TABLE}))`
+            or exists (select 1 from ${E2EE_REPORT_ACCESS_LOG_TABLE})
+            or exists (select 1 from ${CONTENT_MODERATION_ITEMS_TABLE}
+              ${itemScope}))`
     };
     const counts: Record<string, number> = {};
     const examples: string[] = [];
@@ -373,10 +390,12 @@ export class E2eeRebuildDb extends LazyDbAccessCompatibleService {
       });
       return `(${names.join(', ')})`;
     });
+    // Quoted: moderation items have a column named `trigger`.
+    const quoted = columns.map((column) => `\`${column}\``);
     await this.db.execute(
-      `insert into ${table} (${columns.join(', ')}) values ${values.join(', ')}
-       on duplicate key update ${columns
-         .map((column) => `${column} = values(${column})`)
+      `insert into ${table} (${quoted.join(', ')}) values ${values.join(', ')}
+       on duplicate key update ${quoted
+         .map((name) => `${name} = values(${name})`)
          .join(', ')}`,
       params,
       { wrappedConnection: connection }

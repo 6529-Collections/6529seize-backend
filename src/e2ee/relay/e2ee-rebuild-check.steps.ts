@@ -14,6 +14,7 @@ import { E2eeTrustAndSafetyService } from '@/api/e2ee/e2ee-trust-and-safety.serv
 import { ApiE2eeReportCategory } from '@/api/generated/models/ApiE2eeReportCategory';
 import { ApiE2eeSubmitEntryRequestKindEnum } from '@/api/generated/models/ApiE2eeSubmitEntryRequest';
 import { contentModerationDb } from '@/content-moderation/content-moderation.db';
+import { moderationReviewDb } from '@/content-moderation/moderation-review.db';
 import { E2eeBackupDb } from '@/e2ee/e2ee-backup.db';
 import { createE2eeBlobStores } from '@/e2ee/e2ee-blob-stores';
 import { MysqlE2eeCiphertextStore } from '@/e2ee/e2ee-ciphertext-store';
@@ -190,7 +191,37 @@ async function commit(
   });
 }
 
-/** Reports: a drop report assessed and resolved; a message report put on hold. */
+/** A moderation item as the AI capture writes it (no decision yet). */
+async function insertItem(input: {
+  readonly id: string;
+  readonly operation: string;
+  readonly scope: Record<string, unknown>;
+}) {
+  const now = Date.now();
+  await dbSupplier().execute(
+    `insert into content_moderation_items
+       (id, subject_type, subject_id, author_profile_id, actor_profile_id,
+        operation, policy_family, policy_version, scope, evidence,
+        content_fingerprint, outcome, \`trigger\`, review_status, version,
+        created_at, updated_at)
+     values (:id, 'DROP', 'rebuild-check-drop', 'pa', 'pb', :operation,
+        'WAVE_CONTENT', 'rebuild-check', cast(:scope as json),
+        cast(:evidence as json), :fingerprint, 'ALLOW', 'REPORT',
+        'NEEDS_REVIEW', 1, :now, :now)`,
+    {
+      ...input,
+      scope: JSON.stringify(input.scope),
+      evidence: JSON.stringify({ text: 'reported words' }),
+      fingerprint: 'f'.repeat(64),
+      now
+    }
+  );
+}
+
+/**
+ * Reports: a drop report bound to its moderation item, assessed and resolved;
+ * a moderator's ALLOW on another item; a message report put on hold.
+ */
 async function seedReports(
   { blobs, trustAndSafety }: Services,
   input: { readonly group: string; readonly a: string; readonly b: string }
@@ -206,6 +237,13 @@ async function seedReports(
     },
     {}
   );
+  const reportItem = hexBytes(32).slice(2);
+  await insertItem({
+    id: reportItem,
+    operation: 'REPORT',
+    scope: { report_id: report.id }
+  });
+  await moderationReviewDb.bindReport(report.id, reportItem);
   await contentModerationDb.saveReportAssessment(report.id, {
     recommendation: ContentModerationRecommendation.NEEDS_HUMAN_REVIEW,
     category: 'spam',
@@ -220,6 +258,14 @@ async function seedReports(
     moderatorProfileId: 'pm',
     reason: 'removed'
   });
+  await moderationReviewDb.refreshReportResolution(reportItem, {});
+  const decided = hexBytes(32).slice(2);
+  await insertItem({ id: decided, operation: 'CREATE', scope: {} });
+  await moderationReviewDb.decide(
+    await moderationReviewDb.get(decided),
+    'ALLOW',
+    {}
+  );
   const message = await blobs.report('pb', {
     group: input.group,
     epoch: 1,

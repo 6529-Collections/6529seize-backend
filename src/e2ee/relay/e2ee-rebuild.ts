@@ -1,4 +1,5 @@
 import {
+  CONTENT_MODERATION_ITEMS_TABLE,
   CONTENT_MODERATION_REPORTS_TABLE,
   E2EE_BACKUP_CHUNKS_TABLE,
   E2EE_BLOB_CHUNKS_TABLE,
@@ -57,6 +58,17 @@ export const E2EE_RECORD_FAMILIES: readonly E2eeRecordFamily[] = [
 const REPORT_EVIDENCE_MS = 90 * 86_400_000;
 /** What the prune leaves in `content_snapshot`, in MySQL's JSON text. */
 const EXPIRED_SNAPSHOT = '{"evidence_expired": true}';
+/**
+ * A rebuilt moderation item's AI result: none yet. The decisions come back
+ * from the records; the AI check runs again on demand.
+ */
+const ITEM_AI_RERUN = {
+  evidence: null,
+  outcome: 'PENDING',
+  trigger: 'REBUILD',
+  evidence_expires_at: null,
+  version: 1
+} as const;
 
 /** How a rebuild reads: the orderer's key, the time, the moderation keys. */
 export interface E2eeRebuildOptions {
@@ -459,6 +471,30 @@ function applyRules(
         }
       : row
   );
+  // A report item is reviewed once none of its reports is open, as the
+  // moderation prune marks it.
+  const reportsByItem = new Map<string, E2eeRow[]>();
+  for (const report of Array.from(
+    store.table(CONTENT_MODERATION_REPORTS_TABLE).values()
+  )) {
+    if (report.item_id === null) continue;
+    const list = reportsByItem.get(String(report.item_id)) ?? [];
+    list.push(report);
+    reportsByItem.set(String(report.item_id), list);
+  }
+  store.update(CONTENT_MODERATION_ITEMS_TABLE, (row) => {
+    const reports = reportsByItem.get(String(row.id)) ?? [];
+    const resolved =
+      row.operation === 'REPORT' &&
+      reports.length > 0 &&
+      reports.every((report) => report.status !== 'OPEN');
+    return {
+      ...row,
+      review_status: resolved ? 'REVIEWED' : row.review_status,
+      ...ITEM_AI_RERUN,
+      updated_at: row.created_at
+    };
+  });
 }
 
 /**

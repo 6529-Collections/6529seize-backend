@@ -665,14 +665,14 @@ that `e2ee-relay-rebuild` rebuilds from the relays alone.
 and the content hash of the record before it, so every stream is
 hash-chained. The streams:
 
-| Stream                 | What it holds                                                                                                                                                                       |
-| ---------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `cv/<group>` (LOG)     | Group creation, every sequenced entry and message, roster repairs. An item's ciphertext is a separate payload, so relays can drop it at the end of retention while the record stays |
-| `dv/<device>` (SEALED) | Welcomes waiting for the device, their acknowledgements, and its revocation: one record with every roster row the revocation closed                                                 |
-| `dr/<device>` (RECORD) | The device row after each change; its last-resort KeyPackages                                                                                                                       |
-| `bl/<blob>` (SEALED)   | Each attachment chunk with its bytes; the blob once complete                                                                                                                        |
-| `bk/<owner>` (SEALED)  | A profile's backup generations, chunks with their bytes, deletions                                                                                                                  |
-| `md/<inbox>` (SEALED)  | Reports: drop reports, reported messages with their holds, and the trust-and-safety access log. Sealed to the moderation service key                                                |
+| Stream                        | What it holds                                                                                                                                                                                                    |
+| ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `cv/<group>` (LOG)            | Group creation, every sequenced entry and message, roster repairs. An item's ciphertext is a separate payload, so relays can drop it at the end of retention while the record stays                              |
+| `dv/<device>` (SEALED)        | Welcomes waiting for the device, their acknowledgements, and its revocation: one record with every roster row the revocation closed                                                                              |
+| `dr/<device>` (RECORD)        | The device row after each change; its last-resort KeyPackages                                                                                                                                                    |
+| `bl/<blob>` (SEALED)          | Each attachment chunk with its bytes; the blob once complete                                                                                                                                                     |
+| `bk/<owner>` (SEALED)         | A profile's backup generations, chunks with their bytes, deletions                                                                                                                                               |
+| `md/<inbox>` (SEALED, RECORD) | Reports: drop reports, reported messages with their holds, the trust-and-safety access log (SEALED), and moderators' decisions on moderation items (a RECORD per item). All sealed to the moderation service key |
 
 Not carried: one-time KeyPackages, rate counters and push throttles
 (ephemeral; devices upload fresh KeyPackages), incomplete uploads,
@@ -695,6 +695,16 @@ report (`e2ee_reports.on_hold`). The rebuild applies the same retention as
 MySQL: reported messages go after 180 days unless held, and resolved drop
 reports lose their evidence after 90 days. Records written before a prune
 still hold that evidence, sealed; only the moderation key opens them.
+
+**Moderators' decisions.** Where a moderator acts on a moderation item (an
+override, a permit granted or used, a suppression, binding a report and
+its review status), the item's identity and decisions go to the same
+stream as one RECORD keyed by the item id, sealed; the newest wins. The AI
+result (evidence, outcome, trigger, evidence expiry, version) is not
+recorded: a rebuilt item reads `PENDING` until the check runs again, and
+an item no moderator acted on is not rebuilt at all. This holds until
+moderation decisions get records of their own; these records then move
+there.
 
 **`E2EE_RELAY_MODE`** (on `seizeAPI`, `dbMigrationsLoop` and
 `e2eeRelayPublishLoop`):

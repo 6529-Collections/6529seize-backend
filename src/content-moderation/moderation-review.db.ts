@@ -330,6 +330,7 @@ export class ModerationReviewDb extends LazyDbAccessCompatibleService {
         { id: reportId },
         ctx.connection
       );
+      await this.reportRecords.changed(ITEMS, { id: itemId }, ctx.connection);
     });
   }
   async refreshReportResolution(id: string, ctx: RequestContext) {
@@ -343,6 +344,7 @@ export class ModerationReviewDb extends LazyDbAccessCompatibleService {
         { id, now: Date.now(), retention: 90 * 86400000 },
         this.options(ctx)
       );
+      await this.reportRecords.changed(ITEMS, { id }, ctx.connection);
     });
   }
   async openReportCount(dropId: string, ctx: RequestContext): Promise<number> {
@@ -384,6 +386,11 @@ export class ModerationReviewDb extends LazyDbAccessCompatibleService {
           and not exists(select 1 from ${CONTENT_MODERATION_REPORTS_TABLE} r where r.item_id=i.id and r.status='OPEN')`,
         { dropId, expiry: now + 90 * 86400000 },
         this.options(ctx)
+      );
+      await this.reportRecords.changed(
+        ITEMS,
+        { published_subject_id: dropId, operation: 'REPORT' },
+        ctx.connection
       );
     });
   }
@@ -837,6 +844,14 @@ export class ModerationReviewDb extends LazyDbAccessCompatibleService {
           },
           this.options(ctx)
         );
+        await this.reportRecords.changed(
+          ITEMS,
+          {
+            subject_type: item.subject_type,
+            published_subject_id: item.published_subject_id
+          },
+          ctx.connection
+        );
       }
       const expiry =
         action === 'ALLOW' && item.subject_type !== 'REP_CATEGORY'
@@ -863,6 +878,8 @@ export class ModerationReviewDb extends LazyDbAccessCompatibleService {
         },
         this.options(ctx)
       );
+      // A moderator's decision: override, permit, suppression, review.
+      await this.reportRecords.changed(ITEMS, { id: item.id }, ctx.connection);
     });
   }
   async consume(
@@ -908,6 +925,8 @@ export class ModerationReviewDb extends LazyDbAccessCompatibleService {
           },
           this.options(ctx)
         );
+        // The permit a moderator granted is used up.
+        await this.reportRecords.changed(ITEMS, { id }, ctx.connection);
       } else {
         await this.db.execute(
           `update ${ITEMS} set published_subject_id=:publishedId where id=:id`,

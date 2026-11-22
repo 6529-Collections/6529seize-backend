@@ -1,4 +1,5 @@
 import {
+  CONTENT_MODERATION_ITEMS_TABLE,
   E2EE_BACKUP_CHUNKS_TABLE,
   E2EE_BACKUPS_TABLE,
   E2EE_BLOB_CHUNKS_TABLE,
@@ -211,17 +212,26 @@ async function backupScope(
   ];
 }
 
-/** The moderators' inbox holds every recorded report row. */
+/**
+ * The moderators' inbox holds every recorded report row, and the decided
+ * moderation items (an item no moderator acted on is not recorded).
+ */
 async function moderationScope(
   db: E2eeStreamVerifyDb,
   stream: E2eeRebuiltStream
 ): Promise<ScopedTables[]> {
   const out: ScopedTables[] = [];
   for (const table of E2EE_MODERATION_TABLES) {
+    const rebuilt = stream.tables.get(table)!;
     out.push({
       table,
-      mysql: await db.rowsWhere(table, {}),
-      rebuilt: stream.tables.get(table)!
+      mysql: await db.rowsWhere(
+        table,
+        table === CONTENT_MODERATION_ITEMS_TABLE
+          ? { id: ids(rebuilt, 'id') }
+          : {}
+      ),
+      rebuilt
     });
   }
   return out;

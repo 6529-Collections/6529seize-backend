@@ -7,6 +7,7 @@ const STEPS = 'src/e2ee/relay/e2ee-rebuild-check.steps';
  * reports in the moderators' inbox), and the stream heads.
  */
 const RECORD_TABLES = [
+  'content_moderation_items',
   'content_moderation_reports',
   'e2ee_report_access_log',
   'e2ee_reports',
@@ -118,11 +119,21 @@ export const dmManifest: AreaManifest = {
       class: 'EPHEMERAL',
       why: 'Automated check results; checks run again on demand.'
     },
-    // The moderation review queue's items: the AI outcome per content
-    // fingerprint (rerun on demand) and moderators' decisions (override,
-    // permit, suppressed), which move to records of their own later. Not
-    // rebuilt until then.
-    content_moderation_items: { class: 'INDEX' },
+    content_moderation_items: {
+      class: 'INDEX',
+      why: "The rebuilder restores each item a moderator acted on (an override, a permit, a suppression, a report's item and its review status) from the moderators' inbox (md), where each decision is a RECORD keyed by the item id. It leaves the AI result (evidence, outcome, trigger, evidence_expires_at, version, updated_at) to a rerun: rebuilt items read PENDING. Items no moderator acted on are AI results only and are not restored. This holds until moderation decisions get records of their own.",
+      volatileColumns: [
+        'evidence',
+        'outcome',
+        'trigger',
+        'evidence_expires_at',
+        'version',
+        'updated_at'
+      ].map((column) => ({
+        column,
+        reason: 'The AI result: rerun on demand, not rebuilt.'
+      }))
+    },
     content_moderation_pre_publication_checks: {
       class: 'EPHEMERAL',
       why: 'The duplicate fingerprint and the hourly budget of pre-publication checks, pruned at 30 days.'

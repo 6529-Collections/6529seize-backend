@@ -1,4 +1,5 @@
 import {
+  CONTENT_MODERATION_ITEMS_TABLE,
   CONTENT_MODERATION_REPORTS_TABLE,
   E2EE_BACKUP_CHUNKS_TABLE,
   E2EE_BACKUPS_TABLE,
@@ -17,6 +18,7 @@ import {
 } from '@/constants/db-tables';
 import { DbPoolName, DbQueryOptions } from '@/db-query.options';
 import {
+  E2EE_DECIDED_ITEM_SQL,
   e2eeRecordTable,
   e2eeRecordWhere
 } from '@/e2ee/relay/e2ee-record-tables';
@@ -67,6 +69,7 @@ export interface E2eeBackfillVolume {
   readonly reports: number;
   readonly messageReports: number;
   readonly reportAccess: number;
+  readonly moderationDecisions: number;
 }
 
 /** The volume queries, exactly as the team runs them for the dry run. */
@@ -83,12 +86,17 @@ export const E2EE_BACKFILL_VOLUME_SQL = {
     e2eeRecordTable(CONTENT_MODERATION_REPORTS_TABLE)
   )}`,
   messageReports: `select count(*) as n from ${E2EE_REPORTS_TABLE}`,
-  reportAccess: `select count(*) as n from ${E2EE_REPORT_ACCESS_LOG_TABLE}`
+  reportAccess: `select count(*) as n from ${E2EE_REPORT_ACCESS_LOG_TABLE}`,
+  moderationDecisions: `select count(*) as n from ${CONTENT_MODERATION_ITEMS_TABLE} ${e2eeRecordWhere(
+    e2eeRecordTable(CONTENT_MODERATION_ITEMS_TABLE),
+    [E2EE_DECIDED_ITEM_SQL]
+  )}`
 } as const;
 
 /**
  * A slice of one report table for the moderators' inbox: the keys come as
- * `<table letter>:<id>` (`a` access log, `e` message reports, `r` reports),
+ * `<table letter>:<id>` (`a` access log, `e` message reports, `i` decided
+ * moderation items, `r` reports),
  * so one cursor walks the three tables in turn.
  */
 export interface E2eeBackfillReportKey {
@@ -518,7 +526,8 @@ export class MysqlE2eeBackfillDb
       backupBytes: sum(chunks),
       reports: count(await this.exec(sql.reports)),
       messageReports: count(await this.exec(sql.messageReports)),
-      reportAccess: count(await this.exec(sql.reportAccess))
+      reportAccess: count(await this.exec(sql.reportAccess)),
+      moderationDecisions: count(await this.exec(sql.moderationDecisions))
     };
   }
 
@@ -616,6 +625,19 @@ export class MysqlE2eeBackfillDb
         sql: (from) => ({
           sql: `select id as k from ${E2EE_REPORTS_TABLE}
                 where id > :from order by id limit :limit`,
+          from
+        })
+      },
+      {
+        letter: 'i',
+        table: CONTENT_MODERATION_ITEMS_TABLE,
+        sql: (from) => ({
+          sql: `select id as k from ${CONTENT_MODERATION_ITEMS_TABLE}
+                ${e2eeRecordWhere(
+                  e2eeRecordTable(CONTENT_MODERATION_ITEMS_TABLE),
+                  [E2EE_DECIDED_ITEM_SQL, 'id > :from']
+                )}
+                order by id limit :limit`,
           from
         })
       },

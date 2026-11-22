@@ -1,4 +1,5 @@
 import {
+  CONTENT_MODERATION_ITEMS_TABLE,
   CONTENT_MODERATION_REPORTS_TABLE,
   DROPS_TABLE,
   E2EE_BACKUP_CHUNKS_TABLE,
@@ -55,9 +56,22 @@ function table(
  * their reports are deleted on 1 Dec (D153), so they are neither recorded
  * nor expected by the rebuild check.
  */
+const LEGACY_DM_DROPS = `select dm_drop.id from ${DROPS_TABLE} dm_drop
+  where dm_drop.wave_id in (${DM_WAVES_SQL})`;
 const NOT_A_LEGACY_DM_REPORT = `${CONTENT_MODERATION_REPORTS_TABLE}.drop_id not in (
-  select dm_drop.id from ${DROPS_TABLE} dm_drop
-  where dm_drop.wave_id in (${DM_WAVES_SQL}))`;
+  ${LEGACY_DM_DROPS})`;
+const NOT_A_LEGACY_DM_ITEM = `not (${CONTENT_MODERATION_ITEMS_TABLE}.subject_type = 'DROP'
+  and (${CONTENT_MODERATION_ITEMS_TABLE}.subject_id in (${LEGACY_DM_DROPS})
+    or coalesce(${CONTENT_MODERATION_ITEMS_TABLE}.published_subject_id, '')
+       in (${LEGACY_DM_DROPS})))`;
+
+/**
+ * Moderation items whose moderators' decisions are recorded: an override,
+ * a permit (granted or used), a suppression, or a report's item.
+ */
+export const E2EE_DECIDED_ITEM_SQL = `(override is not null
+  or permit_expires_at is not null or permit_consumed_at is not null
+  or suppressed = true or operation = 'REPORT')`;
 
 /**
  * Every table the delivery service's records carry, with every column. The
@@ -279,14 +293,42 @@ export const E2EE_RECORD_TABLES: Readonly<Record<string, E2eeRecordTable>> = {
     action: 'text',
     report_ids: 'text',
     created_at: 'int'
-  })
+  }),
+  // A moderation item's identity and its moderators' decisions. The AI
+  // result columns (evidence, outcome, trigger, evidence_expires_at,
+  // version, updated_at) are not carried: they are rerun on demand.
+  [CONTENT_MODERATION_ITEMS_TABLE]: table(
+    CONTENT_MODERATION_ITEMS_TABLE,
+    ['id'],
+    {
+      id: 'text',
+      subject_type: 'text',
+      subject_id: 'text',
+      author_profile_id: 'text',
+      actor_profile_id: 'text',
+      operation: 'text',
+      policy_family: 'text',
+      policy_version: 'text',
+      content_fingerprint: 'text',
+      scope: 'json',
+      review_status: 'text',
+      override: 'text',
+      permit_expires_at: 'int',
+      permit_consumed_at: 'int',
+      published_subject_id: 'text',
+      suppressed: 'bool',
+      created_at: 'int'
+    },
+    NOT_A_LEGACY_DM_ITEM
+  )
 };
 
 /** The tables the moderators' inbox carries. */
 export const E2EE_MODERATION_TABLES: readonly string[] = [
   CONTENT_MODERATION_REPORTS_TABLE,
   E2EE_REPORTS_TABLE,
-  E2EE_REPORT_ACCESS_LOG_TABLE
+  E2EE_REPORT_ACCESS_LOG_TABLE,
+  CONTENT_MODERATION_ITEMS_TABLE
 ];
 
 export function e2eeRecordTable(name: string): E2eeRecordTable {

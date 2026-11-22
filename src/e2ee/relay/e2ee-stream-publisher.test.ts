@@ -264,8 +264,8 @@ describe('E2eeStreamPublisher', () => {
           sealToModeration: true
         })
       );
-    await expect(append(E2eeRecordKind.RECORD)).rejects.toThrow(
-      'Only SEALED records are sealed'
+    await expect(append(E2eeRecordKind.LOG)).rejects.toThrow(
+      'Only SEALED and RECORD records are sealed'
     );
     Object.assign(settings, { moderation: null });
     await expect(append(E2eeRecordKind.SEALED)).rejects.toThrow(
