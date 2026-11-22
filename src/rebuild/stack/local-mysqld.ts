@@ -118,11 +118,12 @@ export interface ProcessProbe {
   listener(port: number): number | null;
 }
 
+/** PowerShell can take tens of seconds to start on a busy server. */
 function powershell(command: string): string | null {
   const result = spawnSync(
     'powershell',
     ['-NoProfile', '-NonInteractive', '-Command', command],
-    { windowsHide: true, encoding: 'utf8', timeout: 30_000 }
+    { windowsHide: true, encoding: 'utf8', timeout: 120_000 }
   );
   return result.status === 0 ? result.stdout.trim() : null;
 }

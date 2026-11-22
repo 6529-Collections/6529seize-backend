@@ -72,7 +72,7 @@ describe('a leftover server', () => {
     } finally {
       await new Promise((resolve) => server.close(resolve));
     }
-  }, 60_000);
+  }, 300_000);
 
   it('never ends the process a stale pid file names when it is not the server', async () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), 'rebuild-stale-'));
@@ -105,5 +105,5 @@ describe('a leftover server', () => {
       await new Promise((resolve) => listener.close(resolve));
       fs.rmSync(home, { recursive: true, force: true });
     }
-  }, 60_000);
+  }, 300_000);
 });
