@@ -55,6 +55,8 @@ export interface ChainHead {
   readonly finalizedTime: number;
   /** Heights `?height=` can still pin. */
   readonly pinnable: { readonly from: number; readonly to: number } | null;
+  /** The chain's network id; another one means another chain (a relaunch). */
+  readonly network: string | null;
 }
 
 export interface ChainStatus {
