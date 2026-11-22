@@ -298,6 +298,7 @@ export { DeviceSignedEventEntity } from './IDeviceSignedEvent';
 export { WaveRelayCursorEntity } from './IWaveRelayCursor';
 export {
   WaveRelayEventEntity,
+  WaveRelayRejectEntity,
   WaveRelaySubscriptionEntity
 } from './IWaveRelayIngest';
 export { DropAuthorSignatureEntity } from './IDropAuthorSignature';

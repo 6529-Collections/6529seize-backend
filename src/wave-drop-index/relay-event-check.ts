@@ -323,6 +323,8 @@ function scopesOf(text: string): string[] {
 
 /** The 6529 app hosts a sign-in grant may name (grant.rs APP_GRANT_DOMAINS). */
 const APP_GRANT_DOMAINS = ['6529.io', 'staging.6529.io'];
+/** The latest date a grant may name (wave-events time.rs MAX_DATE_SECONDS). */
+const MAX_DATE_SECONDS = 8_640_000_000_000;
 /** The longest grant (grant.rs MAX_GRANT_TTL_SECONDS). */
 const MAX_GRANT_TTL_SECONDS = 181 * 24 * 60 * 60;
 const SECP256K1_HALF_N = BigInt(
@@ -367,18 +369,33 @@ export type GrantCheck = 'verified' | 'unverifiable';
  * can check: `unverifiable`, as wave-events calls it.
  */
 function checkGrantProof(grant: RelayGrant): GrantCheck | string {
+  // wave-events takes any hex signature (a wrong length is unverifiable)
+  // and refuses anything else.
+  if (!/^0x(?:[0-9a-fA-F]{2})*$/.test(grant.walletSignature)) {
+    return 'grant signature';
+  }
   let digest: string;
   if (grant.message.startsWith('{')) {
-    const parsed = parseAppDeviceGrantMessage(grant.message);
+    // wave-events reads the message's wallet in any case; ethers wants a
+    // valid checksum or none, so the address goes in lowercase.
+    const raw = JSON.parse(grant.message) as {
+      scopes?: unknown;
+      wallet?: unknown;
+    };
+    const parsed = parseAppDeviceGrantMessage(
+      typeof raw.wallet === 'string'
+        ? JSON.stringify({ ...raw, wallet: raw.wallet.toLowerCase() })
+        : grant.message
+    );
     if (!parsed) return 'grant message unreadable';
     const { grant: terms, message } = parsed;
-    const raw = JSON.parse(grant.message) as { scopes?: unknown };
     if (
       typeof raw.scopes !== 'string' ||
       scopesInOrder(raw.scopes, ',').join(',') !== terms.scopes.join(',') ||
       terms.issued_at <= 0 ||
       terms.expires_at % 60 !== 0 ||
       terms.expires_at <= terms.issued_at ||
+      terms.expires_at > MAX_DATE_SECONDS ||
       terms.expires_at - terms.issued_at > MAX_GRANT_TTL_SECONDS
     ) {
       return 'grant terms out of bounds';

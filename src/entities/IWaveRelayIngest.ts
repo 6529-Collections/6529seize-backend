@@ -7,6 +7,7 @@ import {
 } from 'typeorm';
 import {
   WAVE_RELAY_EVENTS_TABLE,
+  WAVE_RELAY_REJECTS_TABLE,
   WAVE_RELAY_SUBSCRIPTIONS_TABLE
 } from '@/constants';
 
@@ -81,10 +82,10 @@ export class WaveRelayEventEntity {
   @Column({ type: 'varchar', length: 8, nullable: false })
   readonly origin!: string;
 
-  // 'logged', or 'rejected' (it failed a check: status_reason says why);
-  // then, for a relay-only event the index writes into 6529.io's drop
-  // tables (FEATURE_WAVES_DROP_INDEX_APPLY): 'applied', 'refused' (6529.io's
-  // rules said no) or 'failed' (after MAX_APPLY_ATTEMPTS).
+  // 'logged'; then, for a relay-only event the index writes into 6529.io's
+  // drop tables (FEATURE_WAVES_DROP_INDEX_APPLY): 'applied', 'refused'
+  // (6529.io's rules said no) or 'failed' (after MAX_APPLY_ATTEMPTS).
+  // Events that fail a check are in wave_relay_rejects, never here.
   @Column({ type: 'varchar', length: 16, nullable: false })
   readonly status!: string;
 
@@ -97,10 +98,51 @@ export class WaveRelayEventEntity {
   @Column({ type: 'varchar', length: 16, nullable: true, default: null })
   readonly grant_check!: string | null;
 
+  // When its grant was revoked, if it was (6529.io's record or the proof):
+  // an event signed before but first seen after is valid to every relay
+  // reader, and a reader that acts on it may want to know.
+  @Column({ type: 'bigint', nullable: true, default: null })
+  readonly grant_revoked_at!: number | null;
+
   // Tries to write a relay-only event into 6529.io's drop tables that
   // failed in a way that may pass.
   @Column({ type: 'int', nullable: false, default: 0 })
   readonly apply_attempts!: number;
+
+  @Column({ type: 'bigint', nullable: false })
+  readonly received_at!: number;
+}
+
+/**
+ * Copies of events that failed a check, kept with why so a fix can check
+ * them again. Apart from wave_relay_events, so a forged copy under a real
+ * event's id never stands in the way of a valid copy from another relay.
+ */
+@Entity(WAVE_RELAY_REJECTS_TABLE)
+export class WaveRelayRejectEntity {
+  @PrimaryGeneratedColumn({ type: 'bigint' })
+  readonly id!: number;
+
+  // The id the copy claims; null when it can't be read.
+  @Index()
+  @Column({ type: 'varchar', length: 66, nullable: true, default: null })
+  readonly event_id!: string | null;
+
+  @Column({ type: 'varchar', length: 100, nullable: false })
+  readonly relay_id!: string;
+
+  // The wave the relay named it under.
+  @Column({ type: 'varchar', length: 255, nullable: false })
+  readonly wave!: string;
+
+  @Column({ type: 'varchar', length: 255, nullable: false })
+  readonly reason!: string;
+
+  @Column({ type: 'json', nullable: false })
+  readonly event!: unknown;
+
+  @Column({ type: 'json', nullable: false })
+  readonly grant_proof!: unknown;
 
   @Column({ type: 'bigint', nullable: false })
   readonly received_at!: number;

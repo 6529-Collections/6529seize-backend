@@ -10,7 +10,7 @@ import {
   CrpSubscriptionHandlers,
   CrpWelcome
 } from '@/wave-relay-publish/crp-client';
-import { IngestedEvent, IngestRow } from './drop-index.db';
+import { IngestedEvent, IngestRow, RejectRow } from './drop-index.db';
 import {
   checkRelayEvent,
   GrantCheckCache,
@@ -26,9 +26,14 @@ import { isSameRelayWave, relayWaveKey } from './relay-wave-key';
  *
  * - Up to MAX_SINCE known waves: one subscription to every wave (`*`) with
  *   their cursors, waves without one replayed from their start. More: the
- *   known waves in subscriptions of MAX_SINCE each (a SUB frame stays under
- *   the relay's 128 KiB), and `*` for live events only; a wave first seen
- *   there is paged with HIST from its start.
+ *   known waves in subscriptions of SUB_WAVES each (the relay takes at most
+ *   500 waves a subscription, and a frame stays under its 128 KiB), and `*`
+ *   for live events only; a wave first seen there is paged with HIST from
+ *   its start.
+ * - Before a wave's replay ends (EOSE), its cursor moves only through
+ *   events that follow it without a gap; a live event that comes ahead of
+ *   the replay waits for the EOSE, so a run cut short never leaves a cursor
+ *   past events it hasn't read.
  * - A wave whose cursor the relay can no longer replay (RESYNC) is paged
  *   with HIST from its cursor when the relay's log epoch is the cursor's,
  *   else from the start. Its live events wait for the paging, so its
@@ -36,9 +41,9 @@ import { isSameRelayWave, relayWaveKey } from './relay-wave-key';
  * - A relay names a wave as its subscriber did; under `*`, by its key (a
  *   6529.io wave UUID's derived chain id), while the event keeps the name
  *   its author signed.
- * - An event that fails a check is stored as `rejected` with why (when its
- *   id can be read), so a later fix can check it again; the cursor moves
- *   past it.
+ * - A copy that fails a check goes to wave_relay_rejects with why, so a fix
+ *   can check it again; the cursor moves past it. The first valid copy of
+ *   an event is the one stored, whichever relay sent a bad copy first.
  */
 
 /** What the subscriber needs of a CRP connection. */
@@ -70,6 +75,7 @@ export interface DropIndexStore {
   siteEvents(eventIds: readonly string[]): Promise<Map<string, string | null>>;
   ingest(
     rows: readonly IngestRow[],
+    rejects: readonly RejectRow[],
     relayId: string,
     cursors: readonly CrpCursor[],
     now: number
@@ -106,8 +112,12 @@ export interface RelayIngestReport {
   error: string | null;
 }
 
-/** Cursors one SUB frame carries, so it stays under 128 KiB. */
+/** Cursors one `*` SUB frame carries, so it stays under 128 KiB. */
 export const MAX_SINCE = 800;
+/** Waves one explicit SUB names (the relay takes at most 500). */
+export const SUB_WAVES = 450;
+/** Arrivals checked and stored at once. */
+const STORE_BATCH = 500;
 const ALL_SID = 1;
 /** The wave ids the index's tables hold. */
 const MAX_WAVE_CHARS = 255;
@@ -200,6 +210,13 @@ export class DropIndexSubscriber {
       const paging = new Set<string>();
       let lastFrameAt = this.now();
       const relayEpoch = connection.welcomeInfo.logEpoch;
+      // Before a wave's EOSE: the rseq its events follow without a gap, and
+      // the events that came ahead of it.
+      const contiguous = new Map<string, number>(
+        cursors.map((c) => [c.wave, c.logEpoch === relayEpoch ? c.rseq : 0])
+      );
+      const ahead = new Map<string, Arrival[]>();
+      const replayed = new Set<string>();
       const handlers = (live: boolean): CrpSubscriptionHandlers => ({
         onEvent: (wave, logEpoch, item) => {
           lastFrameAt = this.now();
@@ -209,10 +226,24 @@ export class DropIndexSubscriber {
             toPage.set(wave, 0);
             return;
           }
-          arrivals.push({ wave, logEpoch, item });
+          const arrival = { wave, logEpoch, item };
+          if (replayed.has(wave)) {
+            arrivals.push(arrival);
+            return;
+          }
+          const at = contiguous.get(wave) ?? 0;
+          if (item.rseq <= at + 1) {
+            contiguous.set(wave, Math.max(at, item.rseq));
+            arrivals.push(arrival);
+          } else {
+            ahead.set(wave, [...(ahead.get(wave) ?? []), arrival]);
+          }
         },
-        onEose: () => {
+        onEose: (wave) => {
           lastFrameAt = this.now();
+          replayed.add(wave);
+          arrivals.push(...(ahead.get(wave) ?? []));
+          ahead.delete(wave);
         },
         onResync: (wave) => {
           lastFrameAt = this.now();
@@ -226,10 +257,10 @@ export class DropIndexSubscriber {
       if (cursors.length <= MAX_SINCE) {
         connection.subscribe(ALL_SID, ['*'], cursors, true, handlers(false));
       } else {
-        for (let i = 0; i < cursors.length; i += MAX_SINCE) {
-          const chunk = cursors.slice(i, i + MAX_SINCE);
+        for (let i = 0; i < cursors.length; i += SUB_WAVES) {
+          const chunk = cursors.slice(i, i + SUB_WAVES);
           connection.subscribe(
-            ALL_SID + 1 + i / MAX_SINCE,
+            ALL_SID + 1 + i / SUB_WAVES,
             chunk.map((c) => c.wave),
             chunk,
             false,
@@ -240,8 +271,13 @@ export class DropIndexSubscriber {
       }
       while (this.now() < deadline) {
         await this.sleep(options.flushMs);
-        if (arrivals.length) {
-          await this.store_(relayId, arrivals.splice(0), report, grantChecks);
+        while (arrivals.length && this.now() < deadline) {
+          await this.store_(
+            relayId,
+            arrivals.splice(0, STORE_BATCH),
+            report,
+            grantChecks
+          );
         }
         for (const [wave, after] of Array.from(toPage.entries())) {
           if (this.now() >= deadline) break;
@@ -280,7 +316,15 @@ export class DropIndexSubscriber {
     }
     if (arrivals.length && relayId && report.error === null) {
       try {
-        await this.store_(relayId, arrivals.splice(0), report, grantChecks);
+        // What came before the close, at most a few batches.
+        while (arrivals.length) {
+          await this.store_(
+            relayId,
+            arrivals.splice(0, STORE_BATCH),
+            report,
+            grantChecks
+          );
+        }
       } catch (error) {
         report.error = error instanceof Error ? error.message : String(error);
         this.log(`[DROP INDEX] ${relay}: ${report.error}`);
@@ -348,13 +392,15 @@ export class DropIndexSubscriber {
     ]);
     const now = this.now();
     const rows: IngestRow[] = [];
+    const rejects: RejectRow[] = [];
     const seen = new Set<string>();
     for (const { wave, item } of arrivals) {
       const authRef = String(item.event.auth_ref ?? '').toLowerCase();
+      const knownGrant = known.get(authRef) ?? null;
       const check = checkRelayEvent(
         item.event,
         item.grant,
-        known.get(authRef) ?? null,
+        knownGrant,
         grantChecks
       );
       const reason = !check.ok
@@ -369,39 +415,24 @@ export class DropIndexSubscriber {
         report.rejected++;
         report.reasons[why] = (report.reasons[why] ?? 0) + 1;
         const readable = readRelayEvent(item.event);
-        if (
-          typeof readable !== 'string' &&
-          readable.wave.length <= MAX_WAVE_CHARS &&
-          !seen.has(readable.id)
-        ) {
-          seen.add(readable.id);
-          rows.push({
-            event_id: readable.id,
-            relay_id: relayId,
-            wave: readable.wave,
-            wave_key: relayWaveKey(readable.wave),
-            drop_id: null,
-            kind: readable.kind,
-            author: readable.author,
-            device_key: readable.deviceKey.slice(0, 66),
-            auth_ref: readable.authRef.slice(0, 66),
-            seq: readable.seq,
-            claimed_time: readable.claimedTime,
-            event: item.event,
-            grant_proof: item.grant,
-            origin: 'relay',
-            status: 'rejected',
-            status_reason: why.slice(0, 255),
-            grant_check: null,
-            received_at: now
-          });
-        }
+        rejects.push({
+          event_id: typeof readable === 'string' ? null : readable.id,
+          relay_id: relayId,
+          wave: wave.slice(0, MAX_WAVE_CHARS),
+          reason: why.slice(0, 255),
+          event: item.event,
+          grant_proof: item.grant,
+          received_at: now
+        });
         continue;
       }
-      const { event } = check;
+      const { event, grant } = check;
       if (seen.has(event.id)) continue;
       seen.add(event.id);
       const isSite = site.has(event.id);
+      const revokedAt = [grant.revokedAt, knownGrant?.revoked_at ?? null]
+        .filter((at): at is number => at !== null && at !== undefined)
+        .map(Number);
       rows.push({
         event_id: event.id,
         relay_id: relayId,
@@ -425,6 +456,7 @@ export class DropIndexSubscriber {
         status: 'logged',
         status_reason: null,
         grant_check: check.grantVia,
+        grant_revoked_at: revokedAt.length ? Math.min(...revokedAt) : null,
         received_at: now
       });
     }
@@ -437,20 +469,19 @@ export class DropIndexSubscriber {
     }
     const stored = await this.store.ingest(
       rows,
+      rejects,
       relayId,
       Array.from(cursors.values()).filter(
         (c) => c.wave.length <= MAX_WAVE_CHARS
       ),
       now
     );
-    const accepted = stored.filter((event) => event.status !== 'rejected');
-    report.stored += accepted.length;
-    report.held +=
-      rows.filter((row) => row.status !== 'rejected').length - accepted.length;
-    if (!accepted.length) return;
+    report.stored += stored.length;
+    report.held += rows.length - stored.length;
+    if (!stored.length) return;
     for (const listener of this.listeners()) {
       try {
-        await listener(accepted);
+        await listener(stored);
       } catch (error) {
         this.log(`[DROP INDEX LISTENER FAILED] ${error}`);
       }

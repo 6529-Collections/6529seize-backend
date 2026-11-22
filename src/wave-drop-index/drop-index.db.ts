@@ -2,6 +2,7 @@ import {
   DEVICE_GRANTS_TABLE,
   DEVICE_SIGNED_EVENTS_TABLE,
   WAVE_RELAY_EVENTS_TABLE,
+  WAVE_RELAY_REJECTS_TABLE,
   WAVE_RELAY_SUBSCRIPTIONS_TABLE
 } from '@/constants';
 import { DeviceEventKind } from '@/api/device-signing/device-event';
@@ -30,6 +31,19 @@ export interface IngestRow {
   readonly status_reason: string | null;
   /** How its grant was checked: known, signature or unverifiable. */
   readonly grant_check: string | null;
+  /** When its grant was revoked, if it was. */
+  readonly grant_revoked_at: number | null;
+  readonly received_at: number;
+}
+
+/** A copy that failed a check. */
+export interface RejectRow {
+  readonly event_id: string | null;
+  readonly relay_id: string;
+  readonly wave: string;
+  readonly reason: string;
+  readonly event: Record<string, unknown>;
+  readonly grant_proof: Record<string, unknown>;
   readonly received_at: number;
 }
 
@@ -59,6 +73,10 @@ function toIngested(row: StoredRow): IngestedEvent {
     seq: Number(row.seq),
     claimed_time: Number(row.claimed_time),
     received_at: Number(row.received_at),
+    grant_revoked_at:
+      row.grant_revoked_at === null || row.grant_revoked_at === undefined
+        ? null
+        : Number(row.grant_revoked_at),
     event: json(row.event),
     grant_proof: json(row.grant_proof)
   };
@@ -123,6 +141,7 @@ export class DropIndexDb extends LazyDbAccessCompatibleService {
    */
   async ingest(
     rows: readonly IngestRow[],
+    rejects: readonly RejectRow[],
     relayId: string,
     cursors: readonly CrpCursor[],
     now: number
@@ -130,6 +149,21 @@ export class DropIndexDb extends LazyDbAccessCompatibleService {
     return this.executeNativeQueriesInTransaction(async (connection) => {
       const opts = { wrappedConnection: connection };
       const added: string[] = [];
+      for (const reject of rejects) {
+        await this.db.execute(
+          `insert into ${WAVE_RELAY_REJECTS_TABLE}
+             (event_id, relay_id, wave, reason, event, grant_proof,
+              received_at)
+           values (:event_id, :relay_id, :wave, :reason, :event,
+              :grant_proof, :received_at)`,
+          {
+            ...reject,
+            event: JSON.stringify(reject.event),
+            grant_proof: JSON.stringify(reject.grant_proof)
+          },
+          opts
+        );
+      }
       // One writer (the loop runs once at a time): what the index holds is
       // read first, and a plain insert lets any bad value fail the batch.
       const held = new Set(
@@ -151,11 +185,12 @@ export class DropIndexDb extends LazyDbAccessCompatibleService {
           `insert into ${WAVE_RELAY_EVENTS_TABLE}
              (event_id, relay_id, wave, wave_key, drop_id, kind, author,
               device_key, auth_ref, seq, claimed_time, event, grant_proof,
-              origin, status, status_reason, grant_check, received_at)
+              origin, status, status_reason, grant_check, grant_revoked_at,
+              received_at)
            values (:event_id, :relay_id, :wave, :wave_key, :drop_id, :kind,
               :author, :device_key, :auth_ref, :seq, :claimed_time, :event,
               :grant_proof, :origin, :status, :status_reason, :grant_check,
-              :received_at)`,
+              :grant_revoked_at, :received_at)`,
           {
             ...row,
             event: JSON.stringify(row.event),
@@ -218,16 +253,58 @@ export class DropIndexDb extends LazyDbAccessCompatibleService {
     return rows.map(toIngested);
   }
 
-  /** Whether the index holds a checked delete of this drop. */
-  async hasTombstone(dropId: string): Promise<boolean> {
+  /**
+   * Whether the index holds a checked delete of this drop by its author's
+   * wallet: only the author's own key, under a grant of theirs, deletes a
+   * post before it is written.
+   */
+  async hasTombstone(dropId: string, author: string): Promise<boolean> {
     const row = await this.db.oneOrNull<{ found: number }>(
       `select 1 as found from ${WAVE_RELAY_EVENTS_TABLE}
-        where drop_id = :dropId and kind = :kind
+        where drop_id = :dropId and kind = :kind and author = :author
           and status in ('logged', 'applied')
         limit 1`,
-      { dropId, kind: DeviceEventKind.TOMBSTONE }
+      { dropId, kind: DeviceEventKind.TOMBSTONE, author: author.toLowerCase() }
     );
     return row !== null;
+  }
+
+  /**
+   * Whether 6529.io holds an unfinished reservation of this event (an
+   * earlier try reserved it and stopped before writing).
+   */
+  async hasPendingReservation(eventId: string): Promise<boolean> {
+    const row = await this.db.oneOrNull<{ found: number }>(
+      `select 1 as found from ${DEVICE_SIGNED_EVENTS_TABLE}
+        where id = :eventId and drop_id is null limit 1`,
+      { eventId }
+    );
+    return row !== null;
+  }
+
+  /** Copies that failed a check, after `id` (a fix checks them again). */
+  async rejectsAfter(
+    id: number,
+    limit: number
+  ): Promise<(RejectRow & { id: number })[]> {
+    const rows = await this.db.execute<
+      RejectRow & {
+        id: number | string;
+        event: string | Record<string, unknown>;
+        grant_proof: string | Record<string, unknown>;
+      }
+    >(
+      `select * from ${WAVE_RELAY_REJECTS_TABLE}
+        where id > :id order by id limit :limit`,
+      { id, limit }
+    );
+    return rows.map((row) => ({
+      ...row,
+      id: Number(row.id),
+      received_at: Number(row.received_at),
+      event: json(row.event),
+      grant_proof: json(row.grant_proof)
+    }));
   }
 
   /**
@@ -246,32 +323,36 @@ export class DropIndexDb extends LazyDbAccessCompatibleService {
   /** Records what writing an event into 6529.io's tables came to. */
   async markApplied(
     ingestSeq: number,
-    status: 'applied' | 'refused' | 'failed' | 'logged',
+    status: 'applied' | 'refused' | 'failed' | 'logged' | 'waiting',
     reason: string | null,
     dropId: string | null
   ): Promise<void> {
+    // 'waiting' stays pending (as 'logged') without counting a try.
     await this.db.execute(
       `update ${WAVE_RELAY_EVENTS_TABLE}
-          set status = :status, status_reason = :reason,
+          set status = :stored, status_reason = :reason,
               drop_id = coalesce(:dropId, drop_id),
-              apply_attempts = apply_attempts + if(:status = 'applied', 0, 1)
+              apply_attempts = apply_attempts
+                + if(:status in ('applied', 'waiting'), 0, 1)
         where ingest_seq = :ingestSeq`,
-      { ingestSeq, status, reason: reason?.slice(0, 255) ?? null, dropId }
+      {
+        ingestSeq,
+        status,
+        stored: status === 'waiting' ? 'logged' : status,
+        reason: reason?.slice(0, 255) ?? null,
+        dropId
+      }
     );
   }
 
-  /**
-   * The index's events after `ingestSeq`, in its order (its readers);
-   * events that failed a check are left out.
-   */
+  /** The index's events after `ingestSeq`, in its order (its readers). */
   async eventsAfter(
     ingestSeq: number,
     limit: number
   ): Promise<IngestedEvent[]> {
     const rows = await this.db.execute<StoredRow>(
       `select * from ${WAVE_RELAY_EVENTS_TABLE}
-        where ingest_seq > :ingestSeq and status <> 'rejected'
-        order by ingest_seq limit :limit`,
+        where ingest_seq > :ingestSeq order by ingest_seq limit :limit`,
       { ingestSeq, limit }
     );
     return rows.map(toIngested);

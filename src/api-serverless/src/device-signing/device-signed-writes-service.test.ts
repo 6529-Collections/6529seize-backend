@@ -16,6 +16,7 @@ import { DeviceSigningDb } from './device-signing.db';
 import {
   DeviceSignedWritesService,
   InvalidDeviceSignatureException,
+  RELAY_EVENT_MAX_AGE_MS,
   stripDeviceSignature
 } from './device-signed-writes.service';
 
@@ -444,7 +445,7 @@ describe('DeviceSignedWritesService', () => {
         createVectorDrop(
           VECTOR_ENVELOPE,
           undefined,
-          relayCtx({ seenAt: CLAIMED_TIME + 8 * DAY })
+          relayCtx({ seenAt: CLAIMED_TIME + RELAY_EVENT_MAX_AGE_MS + 1 })
         ),
         /too far from when it was first seen/
       );

@@ -124,17 +124,26 @@ describe('checkRelayEvent', () => {
     ).toMatch(/grant (terms out of bounds|message unreadable)/);
   });
 
-  it('answers a grant that cannot be read at all, instead of throwing', () => {
+  it('reads the wallet in a grant message in any case, as wave-events does', () => {
     const message = JSON.parse(String(testGrantProof().message));
+    // A checksum that is wrong in mixed case: ethers alone would throw.
     const check = checkRelayEvent(
       testSignedEvent(),
       testGrantProof({
-        // A checksum that is wrong in mixed case makes ethers throw.
         message: JSON.stringify({
           ...message,
           wallet: '0xF39fd6e51aad88F6F4ce6aB8827279cffFb92266'
         })
       }),
+      null
+    );
+    expect(check).toMatchObject({ ok: true, grantVia: 'signature' });
+  });
+
+  it('answers a grant that cannot be read at all, instead of throwing', () => {
+    const check = checkRelayEvent(
+      testSignedEvent(),
+      testGrantProof({ message: '{"wallet": ' }),
       null
     );
     expect(check.ok).toBe(false);

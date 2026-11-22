@@ -1,6 +1,7 @@
 import { DeviceEventKind } from '@/api/device-signing/device-event';
 import { DeviceGrantEntity } from '@/entities/IDeviceGrant';
 import {
+  TEST_CLAIMED_TIME,
   TEST_GRANT_ID,
   testGrantEntity,
   testGrantProof,
@@ -14,18 +15,20 @@ import {
   CrpSubscriptionHandlers,
   CrpWelcome
 } from '@/wave-relay-publish/crp-client';
-import { IngestedEvent, IngestRow } from './drop-index.db';
+import { IngestedEvent, IngestRow, RejectRow } from './drop-index.db';
 import {
   DropIndexConnection,
   DropIndexStore,
   DropIndexSubscriber,
   dropIdOfEvent,
-  MAX_SINCE
+  MAX_SINCE,
+  SUB_WAVES
 } from './drop-index.subscriber';
 import { relayWaveKey } from './relay-wave-key';
 
 class FakeStore implements DropIndexStore {
   readonly rows: IngestedEvent[] = [];
+  readonly rejects: RejectRow[] = [];
   readonly cursorsOf = new Map<string, Map<string, CrpCursor>>();
   grants = new Map<string, DeviceGrantEntity>();
   site = new Map<string, string | null>();
@@ -49,10 +52,12 @@ class FakeStore implements DropIndexStore {
 
   async ingest(
     rows: readonly IngestRow[],
+    rejects: readonly RejectRow[],
     relayId: string,
     cursors: readonly CrpCursor[]
   ) {
     if (this.failIngest) throw new Error('database down');
+    this.rejects.push(...rejects);
     const added: IngestedEvent[] = [];
     for (const row of rows) {
       if (this.rows.some((r) => r.event_id === row.event_id)) continue;
@@ -212,7 +217,7 @@ describe('DropIndexSubscriber', () => {
       { t: 'EV', wave: 'wave-1', item: item(2, react) },
       // The same event again (another wave's replay, a reconnect).
       { t: 'EV', wave: 'wave-1', item: item(2, react) },
-      { t: 'EV', wave: 'wave-2', item: item(7, other) },
+      { t: 'EV', wave: 'wave-2', item: item(1, other) },
       { t: 'EOSE', wave: 'wave-1', rseq: 2 }
     ]);
     const heard: string[][] = [];
@@ -247,7 +252,7 @@ describe('DropIndexSubscriber', () => {
     ]);
     expect(Array.from(store.cursorsOf.get('r-1')!.values())).toEqual([
       { wave: 'wave-1', logEpoch: 1, rseq: 2 },
-      { wave: 'wave-2', logEpoch: 1, rseq: 7 }
+      { wave: 'wave-2', logEpoch: 1, rseq: 1 }
     ]);
     expect(heard.flat()).toEqual([post.id, react.id, other.id]);
   });
@@ -279,9 +284,11 @@ describe('DropIndexSubscriber', () => {
           status: 'logged',
           status_reason: null,
           grant_check: 'signature',
+          grant_revoked_at: null,
           received_at: 0
         }
       ],
+      [],
       'r-1',
       []
     );
@@ -326,10 +333,13 @@ describe('DropIndexSubscriber', () => {
     ]);
   });
 
-  it('keeps events that fail a check as rejected, hands none to listeners, and moves past them', async () => {
+  it('keeps copies that fail a check apart, hands none to listeners, and moves past them', async () => {
     const store = new FakeStore();
     const good = testSignedEvent({ seq: 1 });
-    const forged = { ...testSignedEvent({ seq: 2 }), seq: 3 };
+    const forged: Record<string, unknown> = {
+      ...testSignedEvent({ seq: 2 }),
+      seq: 3
+    };
     const elsewhere = testSignedEvent({ wave: 'wave-9', seq: 4 });
     const relay = new FakeRelay('r-1', [
       { t: 'EV', wave: 'wave-1', item: item(1, good) },
@@ -346,11 +356,13 @@ describe('DropIndexSubscriber', () => {
       rejected: 2,
       reasons: { 'event id does not match': 1, 'event of another wave': 1 }
     });
-    // Kept with why, for a later check; readers never get them.
-    expect(store.rows.map((r) => [r.status, r.status_reason])).toEqual([
-      ['logged', null],
-      ['rejected', 'event id does not match'],
-      ['rejected', 'event of another wave']
+    // Kept apart with why, for a later check; readers never get them.
+    expect(store.rows.map((r) => r.event_id)).toEqual([good.id]);
+    expect(
+      store.rejects.map((r) => [r.event_id, r.relay_id, r.wave, r.reason])
+    ).toEqual([
+      [forged.id, 'r-1', 'wave-1', 'event id does not match'],
+      [elsewhere.id, 'r-1', 'wave-1', 'event of another wave']
     ]);
     expect(store.cursorsOf.get('r-1')!.get('wave-1')).toEqual({
       wave: 'wave-1',
@@ -465,7 +477,7 @@ describe('DropIndexSubscriber', () => {
     const key = relayWaveKey(uuid) as string;
     const post = testSignedEvent({ wave: uuid });
     const relay = new FakeRelay('r-1', [
-      { t: 'EV', wave: key, item: item(4, post) }
+      { t: 'EV', wave: key, item: item(1, post) }
     ]);
     const { subscriber } = aSubscriber(store, { 'wss://a.example': relay });
     const [report] = await subscriber.run({
@@ -477,7 +489,7 @@ describe('DropIndexSubscriber', () => {
     expect(store.cursorsOf.get('r-1')!.get(key)).toEqual({
       wave: key,
       logEpoch: 1,
-      rseq: 4
+      rseq: 1
     });
   });
 
@@ -538,13 +550,19 @@ describe('DropIndexSubscriber', () => {
     );
     const { subscriber } = aSubscriber(store, { 'wss://a.example': relay });
     await subscriber.run({ ...RUN, relays: ['wss://a.example'] });
+    // The relay takes at most 500 waves a subscription.
     expect(
       relay.subs.map((sub) => [sub.sid, sub.waves.length, sub.fromStart])
     ).toEqual([
-      [2, MAX_SINCE, false],
-      [3, 1, false],
+      [2, SUB_WAVES, false],
+      [3, MAX_SINCE + 1 - SUB_WAVES, false],
       [1, 1, false]
     ]);
+    expect(relay.subs.every((sub) => sub.waves.length <= 500)).toBe(true);
+    expect(relay.subs.every((sub) => sub.since.length <= MAX_SINCE)).toBe(true);
+    expect(relay.subs[1].waves[0]).toBe(
+      `wave-${String(SUB_WAVES).padStart(4, '0')}`
+    );
     expect(relay.subs[2].waves).toEqual(['*']);
     expect(relay.asked).toEqual([0]);
     expect(store.rows.map((r) => r.event_id).sort()).toEqual(
@@ -573,5 +591,132 @@ describe('DropIndexSubscriber', () => {
       stored: 1,
       error: null
     });
+  });
+
+  it('stores the valid copy of an event a forged copy came ahead of', async () => {
+    const store = new FakeStore();
+    const genuine = testSignedEvent({ seq: 1 });
+    // Same id, different body: fails the id check.
+    const forged = { ...genuine, body: '{"parts":[{"content":"x"}]}' };
+    const a = new FakeRelay('r-a', [
+      { t: 'EV', wave: 'wave-1', item: item(1, forged) },
+      // The same relay later serves the genuine copy too.
+      { t: 'EV', wave: 'wave-1', item: item(2, genuine) }
+    ]);
+    const b = new FakeRelay('r-b', [
+      { t: 'EV', wave: 'wave-1', item: item(1, forged) },
+      { t: 'EV', wave: 'wave-1', item: item(2, genuine) }
+    ]);
+    const { subscriber } = aSubscriber(store, {
+      'wss://a.example': a,
+      'wss://b.example': b
+    });
+    const reports = await subscriber.run({
+      ...RUN,
+      relays: ['wss://a.example', 'wss://b.example']
+    });
+    expect(reports.map((r) => [r.stored, r.rejected, r.held])).toEqual([
+      [1, 1, 0],
+      [0, 1, 1]
+    ]);
+    expect(store.rows.map((r) => [r.event_id, r.relay_id])).toEqual([
+      [genuine.id, 'r-a']
+    ]);
+    expect(store.rows[0].event).toEqual(genuine);
+    expect(store.rejects.map((r) => [r.event_id, r.relay_id])).toEqual([
+      [genuine.id, 'r-a'],
+      [genuine.id, 'r-b']
+    ]);
+  });
+
+  it('moves a cursor only through events without a gap until the replay ends', async () => {
+    const store = new FakeStore();
+    store.cursorsOf.set(
+      'r-1',
+      new Map([
+        ['wave-1', { wave: 'wave-1', logEpoch: 1, rseq: 2 }],
+        ['wave-2', { wave: 'wave-2', logEpoch: 1, rseq: 2 }]
+      ])
+    );
+    const [e3, e4, e5] = [3, 4, 5].map((seq) => testSignedEvent({ seq }));
+    const [f3, f5] = [3, 5].map((seq) =>
+      testSignedEvent({ wave: 'wave-2', seq })
+    );
+    const relay = new FakeRelay('r-1', [
+      // wave-1: a live event comes ahead of the replay, which then ends.
+      { t: 'EV', wave: 'wave-1', item: item(5, e5) },
+      { t: 'EV', wave: 'wave-1', item: item(3, e3) },
+      { t: 'EV', wave: 'wave-1', item: item(4, e4) },
+      { t: 'EOSE', wave: 'wave-1', rseq: 4 },
+      // wave-2: the run ends before its replay does, with 4 not yet read.
+      { t: 'EV', wave: 'wave-2', item: item(3, f3) },
+      { t: 'EV', wave: 'wave-2', item: item(5, f5) }
+    ]);
+    const { subscriber } = aSubscriber(store, { 'wss://a.example': relay });
+    const [report] = await subscriber.run({
+      ...RUN,
+      relays: ['wss://a.example']
+    });
+    expect(report.stored).toBe(4);
+    expect(store.rows.map((r) => r.event_id).sort()).toEqual(
+      [e3.id, e4.id, e5.id, f3.id].map(String).sort()
+    );
+    expect(Array.from(store.cursorsOf.get('r-1')!.values())).toEqual([
+      { wave: 'wave-1', logEpoch: 1, rseq: 5 },
+      { wave: 'wave-2', logEpoch: 1, rseq: 3 }
+    ]);
+  });
+
+  it('notes when the grant of a valid event was revoked after it was signed', async () => {
+    const store = new FakeStore();
+    const revokedAt = TEST_CLAIMED_TIME + 60_000;
+    store.grants.set(TEST_GRANT_ID, testGrantEntity({ revoked_at: revokedAt }));
+    const relay = new FakeRelay('r-1', [
+      { t: 'EV', wave: 'wave-1', item: item(1, testSignedEvent()) },
+      {
+        t: 'EV',
+        wave: 'wave-1',
+        item: item(2, testSignedEvent({ seq: 2, claimedTime: revokedAt + 1 }))
+      }
+    ]);
+    const { subscriber } = aSubscriber(store, { 'wss://a.example': relay });
+    const [report] = await subscriber.run({
+      ...RUN,
+      relays: ['wss://a.example']
+    });
+    expect(report).toMatchObject({
+      stored: 1,
+      rejected: 1,
+      reasons: { 'grant revoked': 1 }
+    });
+    expect(store.rows[0]).toMatchObject({
+      grant_check: 'known',
+      grant_revoked_at: revokedAt
+    });
+  });
+
+  it('stores a large replay in batches', async () => {
+    const store = new FakeStore();
+    let batches = 0;
+    const ingest = store.ingest.bind(store);
+    store.ingest = async (...args) => {
+      batches++;
+      return ingest(...args);
+    };
+    const events = Array.from({ length: 1_200 }, (_, n) =>
+      item(n + 1, testSignedEvent({ seq: n + 1 }))
+    );
+    const relay = new FakeRelay(
+      'r-1',
+      events.map((it) => ({ t: 'EV' as const, wave: 'wave-1', item: it }))
+    );
+    const { subscriber } = aSubscriber(store, { 'wss://a.example': relay });
+    const [report] = await subscriber.run({
+      ...RUN,
+      relays: ['wss://a.example']
+    });
+    expect(report.stored).toBe(1_200);
+    expect(batches).toBe(3);
+    expect(store.cursorsOf.get('r-1')!.get('wave-1')!.rseq).toBe(1_200);
   });
 });

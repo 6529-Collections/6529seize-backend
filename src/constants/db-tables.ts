@@ -49,6 +49,7 @@ export const DEVICE_GRANTS_TABLE = 'device_grants';
 export const DEVICE_SIGNED_EVENTS_TABLE = 'device_signed_events';
 export const WAVE_RELAY_CURSORS_TABLE = 'wave_relay_cursors';
 export const WAVE_RELAY_EVENTS_TABLE = 'wave_relay_events';
+export const WAVE_RELAY_REJECTS_TABLE = 'wave_relay_rejects';
 export const WAVE_RELAY_SUBSCRIPTIONS_TABLE = 'wave_relay_subscriptions';
 export const DROP_AUTHOR_SIGNATURES_TABLE = 'drop_author_signatures';
 export const SIGNED_RECORD_HEADS_TABLE = 'signed_record_heads';

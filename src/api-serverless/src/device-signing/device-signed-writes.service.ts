@@ -158,7 +158,7 @@ export interface RelayEventTimes {
   readonly anchor: number;
 }
 
-export const RELAY_EVENT_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+export const RELAY_EVENT_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
 
 export interface SignedWriteTarget {
   readonly kind: DeviceEventKind;

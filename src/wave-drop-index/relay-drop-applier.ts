@@ -74,8 +74,10 @@ export interface RelayDropWrites {
 /** What the applier needs of the index's table. */
 export interface RelayApplyStore {
   pendingRelayEvents(limit: number): Promise<IngestedEvent[]>;
-  /** Whether the index holds a checked delete of this drop. */
-  hasTombstone(dropId: string): Promise<boolean>;
+  /** Whether the index holds a checked delete of this drop by `author`. */
+  hasTombstone(dropId: string, author: string): Promise<boolean>;
+  /** Whether 6529.io holds an unfinished reservation of this event. */
+  hasPendingReservation(eventId: string): Promise<boolean>;
   /**
    * Drops a reservation of this event an earlier try left behind (written
    * to device_signed_events, never finished), so the event can be written.
@@ -83,7 +85,7 @@ export interface RelayApplyStore {
   releaseStaleReservation(eventId: string): Promise<void>;
   markApplied(
     ingestSeq: number,
-    status: 'applied' | 'refused' | 'failed' | 'logged',
+    status: 'applied' | 'refused' | 'failed' | 'logged' | 'waiting',
     reason: string | null,
     dropId: string | null
   ): Promise<void>;
@@ -115,6 +117,17 @@ class Retry extends Error {
     Object.setPrototypeOf(this, new.target.prototype);
   }
 }
+
+/** Waiting for something else first: tried again, not counted as a try. */
+class Wait extends Error {
+  constructor(message: string) {
+    super(message);
+    Object.setPrototypeOf(this, new.target.prototype);
+  }
+}
+
+/** How long an edit or a reaction waits for its post. */
+export const POST_WAIT_MS = 60 * 60 * 1000;
 
 function reasonOf(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error);
@@ -164,13 +177,20 @@ export class RelayDropApplier {
         await this.store.markApplied(event.ingest_seq, 'applied', null, dropId);
         report.applied++;
       } catch (thrown) {
-        const error =
-          isNotFound(thrown) && event.kind !== DeviceEventKind.TOMBSTONE
-            ? new Retry(reasonOf(thrown))
-            : thrown;
+        const error = await this.mayPass(event, thrown);
         const reason = reasonOf(error);
         report.reasons[reason] = (report.reasons[reason] ?? 0) + 1;
-        if (!(error instanceof Retry) && isRefusal(error)) {
+        if (error instanceof Wait) {
+          // Not a try: the event waits for something else to happen first.
+          await this.store.markApplied(
+            event.ingest_seq,
+            'waiting',
+            reason,
+            null
+          );
+          report.retry++;
+          if (event.drop_id) waiting.add(event.drop_id);
+        } else if (!(error instanceof Retry) && isRefusal(error)) {
           await this.store.markApplied(
             event.ingest_seq,
             'refused',
@@ -200,6 +220,31 @@ export class RelayDropApplier {
       }
     }
     return report;
+  }
+
+  /**
+   * A refusal that may pass on its own: an edit or a reaction whose post is
+   * not there yet (for up to POST_WAIT_MS), or an event an earlier try
+   * reserved and never finished (released after 15 minutes).
+   */
+  private async mayPass(
+    event: IngestedEvent,
+    thrown: unknown
+  ): Promise<unknown> {
+    if (
+      isNotFound(thrown) &&
+      event.kind !== DeviceEventKind.TOMBSTONE &&
+      this.now() - event.received_at < POST_WAIT_MS
+    ) {
+      return new Wait(reasonOf(thrown));
+    }
+    if (
+      /already used/.test(reasonOf(thrown)) &&
+      (await this.store.hasPendingReservation(event.event_id))
+    ) {
+      return new Wait('an earlier try left it reserved');
+    }
+    return thrown;
   }
 
   /** Writes one event; returns the drop it wrote or touched. */
@@ -247,7 +292,7 @@ export class RelayDropApplier {
           );
         }
         const dropId = event.drop_id ?? dropIdOfEvent(event.event_id);
-        if (await this.store.hasTombstone(dropId)) {
+        if (await this.store.hasTombstone(dropId, event.author)) {
           throw new Refused('the drop was deleted before it was written');
         }
         return this.writes.createDrop(input, dropId, request);

@@ -10,7 +10,7 @@ import {
   TEST_GRANT_ID,
   testGrantEntity
 } from '@/tests/fixtures/relay-events.fixture';
-import { DropIndexDb, IngestRow } from './drop-index.db';
+import { DropIndexDb, IngestRow, RejectRow } from './drop-index.db';
 
 const eventId = (n: number) => `0x${String(n).padStart(64, '0')}`;
 
@@ -33,10 +33,26 @@ function aRow(n: number, overrides: Partial<IngestRow> = {}): IngestRow {
     status: 'logged',
     status_reason: null,
     grant_check: 'signature',
+    grant_revoked_at: null,
     received_at: 5_000,
     ...overrides
   };
 }
+
+function aReject(n: number, overrides: Partial<RejectRow> = {}): RejectRow {
+  return {
+    event_id: eventId(n),
+    relay_id: 'r-9',
+    wave: 'wave-1',
+    reason: 'signature',
+    event: { id: eventId(n), body: '{"forged":true}' },
+    grant_proof: { id: TEST_GRANT_ID },
+    received_at: 4_000,
+    ...overrides
+  };
+}
+
+const AUTHOR = `0x${'a'.repeat(40)}`;
 
 const SITE_EVENT: DeviceSignedEventEntity = {
   id: eventId(2),
@@ -70,7 +86,7 @@ describeWithSeed(
     const db = new DropIndexDb(() => sqlExecutor);
 
     it('stores each event once and returns what it stored, in its order', async () => {
-      const first = await db.ingest([aRow(1), aRow(2)], 'r-1', [], 10);
+      const first = await db.ingest([aRow(1), aRow(2)], [], 'r-1', [], 10);
       expect(first.map((e) => [e.event_id, e.ingest_seq > 0])).toEqual([
         [eventId(1), true],
         [eventId(2), true]
@@ -82,10 +98,12 @@ describeWithSeed(
         claimed_time: 1_001,
         event: { id: eventId(1), body: '{"parts":[]}' },
         grant_proof: { id: TEST_GRANT_ID },
-        origin: 'relay'
+        origin: 'relay',
+        grant_revoked_at: null
       });
       const again = await db.ingest(
         [aRow(2), aRow(3, { relay_id: 'r-2' })],
+        [],
         'r-2',
         [],
         11
@@ -101,13 +119,13 @@ describeWithSeed(
     });
 
     it('moves a cursor forward within its epoch, and takes a new epoch', async () => {
-      await db.ingest([], 'r-1', [{ wave: 'w', logEpoch: 1, rseq: 5 }], 1);
-      await db.ingest([], 'r-1', [{ wave: 'w', logEpoch: 1, rseq: 3 }], 2);
+      await db.ingest([], [], 'r-1', [{ wave: 'w', logEpoch: 1, rseq: 5 }], 1);
+      await db.ingest([], [], 'r-1', [{ wave: 'w', logEpoch: 1, rseq: 3 }], 2);
       expect(await db.cursors('r-1')).toEqual([
         { wave: 'w', logEpoch: 1, rseq: 5 }
       ]);
-      await db.ingest([], 'r-1', [{ wave: 'w', logEpoch: 2, rseq: 1 }], 3);
-      await db.ingest([], 'r-1', [{ wave: 'v', logEpoch: 2, rseq: 9 }], 3);
+      await db.ingest([], [], 'r-1', [{ wave: 'w', logEpoch: 2, rseq: 1 }], 3);
+      await db.ingest([], [], 'r-1', [{ wave: 'v', logEpoch: 2, rseq: 9 }], 3);
       expect(await db.cursors('r-1')).toEqual([
         { wave: 'v', logEpoch: 2, rseq: 9 },
         { wave: 'w', logEpoch: 2, rseq: 1 }
@@ -119,6 +137,7 @@ describeWithSeed(
       await expect(
         db.ingest(
           [aRow(1), aRow(2, { wave: null as unknown as string })],
+          [],
           'r-1',
           [{ wave: 'w', logEpoch: 1, rseq: 5 }],
           1
@@ -132,6 +151,7 @@ describeWithSeed(
       // eventId(2) is in device_signed_events: written through 6529.io since.
       await db.ingest(
         [aRow(1), aRow(2), aRow(3), aRow(4, { origin: 'site' })],
+        [],
         'r-1',
         [],
         1
@@ -164,23 +184,78 @@ describeWithSeed(
       expect(await db.pendingRelayEvents(10)).toEqual([]);
     });
 
-    it('keeps rejected events out of what readers get, and finds deletes', async () => {
+    it('keeps a bad copy apart, so the valid copy of the same id is stored', async () => {
+      // A relay sends a forged copy under eventId(2) first.
+      const first = await db.ingest(
+        [aRow(1)],
+        [aReject(2), aReject(7, { event_id: null, reason: 'unreadable' })],
+        'r-9',
+        [],
+        1
+      );
+      expect(first.map((e) => e.event_id)).toEqual([eventId(1)]);
+      // Another relay then sends the genuine one.
+      const second = await db.ingest(
+        [aRow(2, { relay_id: 'r-1', grant_revoked_at: 1_500 })],
+        [],
+        'r-1',
+        [],
+        2
+      );
+      expect(second.map((e) => [e.event_id, e.relay_id])).toEqual([
+        [eventId(2), 'r-1']
+      ]);
+      expect(second[0].grant_revoked_at).toBe(1_500);
+      expect(second[0].event).toEqual({
+        id: eventId(2),
+        body: '{"parts":[]}'
+      });
+      const rejects = await db.rejectsAfter(0, 10);
+      expect(
+        rejects.map((r) => [r.event_id, r.relay_id, r.reason, r.event])
+      ).toEqual([
+        [
+          eventId(2),
+          'r-9',
+          'signature',
+          { id: eventId(2), body: '{"forged":true}' }
+        ],
+        [null, 'r-9', 'unreadable', { id: eventId(7), body: '{"forged":true}' }]
+      ]);
+      expect(await db.rejectsAfter(rejects[0].id, 10)).toHaveLength(1);
+      expect((await db.eventsAfter(0, 10)).map((e) => e.event_id)).toEqual([
+        eventId(1),
+        eventId(2)
+      ]);
+    });
+
+    it("finds a delete only when it is by the post's author", async () => {
       await db.ingest(
         [
           aRow(1),
-          aRow(2, { status: 'rejected', status_reason: 'signature' }),
-          aRow(3, { kind: 3, drop_id: 'drop-x' })
+          aRow(3, { kind: 3, drop_id: 'drop-x' }),
+          aRow(4, { kind: 3, drop_id: 'drop-y', author: `0x${'b'.repeat(40)}` })
         ],
+        [],
         'r-1',
         [],
         1
       );
-      expect((await db.eventsAfter(0, 10)).map((e) => e.event_id)).toEqual([
-        eventId(1),
-        eventId(3)
-      ]);
-      expect(await db.hasTombstone('drop-x')).toBe(true);
-      expect(await db.hasTombstone('drop-1')).toBe(false);
+      expect(await db.hasTombstone('drop-x', AUTHOR)).toBe(true);
+      expect(await db.hasTombstone('drop-x', AUTHOR.toUpperCase())).toBe(true);
+      expect(await db.hasTombstone('drop-y', AUTHOR)).toBe(false);
+      expect(await db.hasTombstone('drop-1', AUTHOR)).toBe(false);
+    });
+
+    it('lets an event wait without counting a try', async () => {
+      await db.ingest([aRow(1)], [], 'r-1', [], 1);
+      const [pending] = await db.pendingRelayEvents(10);
+      await db.markApplied(pending.ingest_seq, 'waiting', 'no post yet', null);
+      await db.markApplied(pending.ingest_seq, 'waiting', 'no post yet', null);
+      const [still] = await db.pendingRelayEvents(10);
+      expect([still.status, still.status_reason, still.apply_attempts]).toEqual(
+        ['logged', 'no post yet', 0]
+      );
     });
 
     it('releases a reservation only once it is stale and unfinished', async () => {
@@ -188,8 +263,11 @@ describeWithSeed(
         `update ${DEVICE_SIGNED_EVENTS_TABLE} set drop_id = null, created_at = 1 where id = :id`,
         { id: eventId(2) }
       );
+      expect(await db.hasPendingReservation(eventId(2))).toBe(true);
+      expect(await db.hasPendingReservation(eventId(9))).toBe(false);
       await db.releaseStaleReservation(eventId(2));
       expect((await db.siteEvents([eventId(2)])).size).toBe(0);
+      expect(await db.hasPendingReservation(eventId(2))).toBe(false);
     });
 
     it('finds the grants 6529.io holds and the events written through it', async () => {
