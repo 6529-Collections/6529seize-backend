@@ -107,11 +107,21 @@ cache for 30 seconds so manual profile creation becomes active quickly.
 
 ### 2.4 Help6529 Credits
 
-The bot uses the reserved `Help6529 Credits` REP category to gate questions.
-Automatic signup, profile setup, and daily activity grants all use the same
-grant amount from `HELP_BOT_CREDIT_GRANT`. When the env var is missing, the
-default grant is 10 credits. `HELP_BOT_QUESTION_CREDIT_COST` remains a fixed
-hardcoded cost of 1 credit per question.
+Help6529 Credits are off. Asking help6529 is free: a question that passes the
+trigger's other checks (public wave, chat eligibility, size, and the spam and
+daily limits in section 10) is queued for an answer with no charge. With
+`FEATURE_HELP_BOT_CREDITS` unset or anything but `true` (the default), nothing
+grants, charges or refunds credits, drop creation writes no daily-activity
+credit requests, leftover requests complete without a grant, and the bot's own
+answers about credits say questions are free. The rest of this section
+describes the meter when the flag is `true`; the meter, its REP and the
+reserved category are being removed.
+
+When on, the bot uses the reserved `Help6529 Credits` REP category to gate
+questions. Automatic signup, profile setup, and daily activity grants all use
+the same grant amount from `HELP_BOT_CREDIT_GRANT`. When the env var is
+missing, the default grant is 10 credits. `HELP_BOT_QUESTION_CREDIT_COST`
+remains a fixed hardcoded cost of 1 credit per question.
 
 The credit is charged when the trigger is accepted. It is refunded only when
 the worker fails before or while producing the answer (knowledge source,

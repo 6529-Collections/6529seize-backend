@@ -192,18 +192,22 @@ export class HelpBotTriggerService {
         return;
       }
 
-      const chargeResult = await this.tryChargeQuestionCredit(
-        {
-          botProfileId,
-          interaction,
-          authorProfileId: trigger.authorProfileId,
-          triggerDropId: trigger.triggerDropId,
-          waveId: trigger.waveId
-        },
-        ctx
-      );
-      if (!chargeResult) {
-        return;
+      // With the credit meter off (the default) every question that passed
+      // the spam and daily limits above is answered.
+      if (this.creditsService.isEnabled()) {
+        const charged = await this.tryChargeQuestionCredit(
+          {
+            botProfileId,
+            interaction,
+            authorProfileId: trigger.authorProfileId,
+            triggerDropId: trigger.triggerDropId,
+            waveId: trigger.waveId
+          },
+          ctx
+        );
+        if (!charged) {
+          return;
+        }
       }
 
       await this.trySetReaction(
