@@ -47,6 +47,10 @@ const ITEMS_PER_ENTRY = 2_000;
 // Owners read and resolved per page.
 const OWNERS_PER_PAGE = 500;
 
+/** Sorts strings by code unit: the same everywhere, unlike a locale. */
+const byCodeUnit = (a: string, b: string): number =>
+  a < b ? -1 : Number(a > b);
+
 export interface PersonalImportItem {
   readonly t: string;
   readonly k: string;
@@ -425,13 +429,15 @@ export class PersonalImportBuilder {
         add(sub, 'ps', {
           t: PersonalRecordType.FOLLOW,
           k: `identity:${target}`,
-          b: { actions: [...actions].sort() }
+          // In row order: the API lists a follow's actions so.
+          b: { actions: [...actions] }
         });
       } else {
         add(sub, 'pv', {
           t: PersonalRecordType.FOLLOW,
           k: `${type.toLowerCase()}:${row.target_id}`,
-          b: { actions: [...actions].sort() }
+          // In row order: the API lists a follow's actions so.
+          b: { actions: [...actions] }
         });
       }
     }
@@ -452,7 +458,7 @@ export class PersonalImportBuilder {
       });
     }
     for (const [id, state] of Array.from(waveStates.entries())) {
-      const waveGroups = [...(groups.get(id) ?? [])].sort();
+      const waveGroups = [...(groups.get(id) ?? [])].sort(byCodeUnit);
       const own = page.follows.some(
         (row) =>
           `${row.subscriber_id}|${row.target_id}` === id &&
@@ -790,11 +796,13 @@ export async function rebuildPersonalState(args: {
     if (!changes.length) continue;
     note(
       `import ${body.family} ${body.owner}`,
+      // Live never puts the import through the indexer: no heads.
       await args.indexer.ingestImported(
         changes,
         body.family === 'pv',
         'rebuild',
-        args.ctx
+        args.ctx,
+        { heads: false }
       )
     );
   }
@@ -825,7 +833,8 @@ export async function rebuildPersonalState(args: {
           reportEffectChanges(step.report),
           true,
           'rebuild',
-          args.ctx
+          args.ctx,
+          { heads: false }
         )
       );
     }
@@ -914,7 +923,8 @@ export class PersonalExportDb extends LazyDbAccessCompatibleService {
          from ${IDENTITY_SUBSCRIPTIONS_TABLE} s
          left join ${DROPS_TABLE} d on s.target_type = 'DROP' and d.id = s.target_id
          left join ${WAVES_TABLE} w on s.target_type = 'WAVE' and w.id = s.target_id
-         where s.subscriber_id in (:ids)`
+         where s.subscriber_id in (:ids)
+         order by s.id`
       ),
       waveGroups: await read(
         `select identity_id, wave_id, mentioned_group

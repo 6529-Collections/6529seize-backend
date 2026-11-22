@@ -379,6 +379,36 @@ describe('RecordIndexer', () => {
     ]);
   });
 
+  it('applies imported state without a head when told to keep none', async () => {
+    const { indexer, follow, heads } = setup();
+    const imported: RecordChange = {
+      owner: PRINCIPAL,
+      family: 'ps',
+      type: 'follow',
+      key: `identity:${inputs.target}`,
+      body: { actions: ['DROP_CREATED'] },
+      order: importOrderKey(1000, VECTORS.followRecord.claimed_time + 1),
+      eventId: null,
+      sealedClass: null,
+      writer: 'author'
+    };
+    await expect(
+      indexer.ingestImported([imported], false, 'rebuild', ctx, {
+        heads: false
+      })
+    ).resolves.toMatchObject({ kind: 'applied', changes: 1 });
+    expect(follow.applied.map((it) => it.change.body)).toEqual([
+      { actions: ['DROP_CREATED'] }
+    ]);
+    expect(heads.heads.size).toBe(0);
+    // With no head, the stale check against the import is the caller's
+    // (the import order key), as live.
+    expect(
+      await indexer.ingest(await verified(VECTORS.followRecord), 'rebuild', ctx)
+    ).toMatchObject({ changes: 1 });
+    expect(heads.heads.size).toBe(1);
+  });
+
   it('refuses a body the handler does not accept, before applying anything', async () => {
     const { indexer, follow } = setup();
     const event = record(

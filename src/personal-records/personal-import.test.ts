@@ -122,7 +122,8 @@ describe('PersonalImportBuilder', () => {
         {
           t: 'follow',
           k: `identity:${P_ALICE}`,
-          b: { actions: ['DROP_CREATED', 'DROP_REPLIED'] }
+          // In row order, as the API lists them.
+          b: { actions: ['DROP_REPLIED', 'DROP_CREATED'] }
         }
       ]
     });

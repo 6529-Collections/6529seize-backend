@@ -396,21 +396,28 @@ export class RecordIndexer {
     return this.applyChanges(changes, true, mode, ctx);
   }
 
-  /** Imported state, each change at its import order key. */
+  /**
+   * Imported state, each change at its import order key. With `heads:
+   * false` no head is written: state that live never puts through the
+   * indexer (an import at a switch, a derived effect) leaves no head live
+   * either, so a rebuild keeps none.
+   */
   async ingestImported(
     changes: readonly RecordChange[],
     sealed: boolean,
     mode: ApplyMode,
-    ctx: RequestContext
+    ctx: RequestContext,
+    opts: { readonly heads?: boolean } = {}
   ): Promise<IngestOutcome> {
-    return this.applyChanges(changes, sealed, mode, ctx);
+    return this.applyChanges(changes, sealed, mode, ctx, opts.heads !== false);
   }
 
   private async applyChanges(
     changes: readonly RecordChange[],
     sealed: boolean,
     mode: ApplyMode,
-    ctx: RequestContext
+    ctx: RequestContext,
+    writeHeads = true
   ): Promise<IngestOutcome> {
     // Later items for the same key in one record win: keep the last of
     // each, at its own position in the record.
@@ -445,7 +452,7 @@ export class RecordIndexer {
       return refused('invalid-change', error);
     }
     try {
-      return await this.applyLocked(handled, unknown, mode, ctx);
+      return await this.applyLocked(handled, unknown, mode, ctx, writeHeads);
     } catch (error) {
       if (error instanceof RecordRuleError) {
         return { ...refused('rule', error), code: error.code };
@@ -458,7 +465,8 @@ export class RecordIndexer {
     handled: readonly { change: RecordChange; handler: RecordTypeHandler }[],
     unknown: number,
     mode: ApplyMode,
-    ctx: RequestContext
+    ctx: RequestContext,
+    writeHeads: boolean
   ): Promise<IngestOutcome> {
     const headKeyOf = (change: RecordChange): RecordHeadKey => ({
       owner: change.owner,
@@ -489,7 +497,9 @@ export class RecordIndexer {
           continue;
         }
         await handler.apply(change, mode, txCtx);
-        await this.deps.heads.put(headKeyOf(change), change.order, txCtx);
+        if (writeHeads) {
+          await this.deps.heads.put(headKeyOf(change), change.order, txCtx);
+        }
         applied++;
       }
       return { kind: 'applied' as const, changes: applied, stale, unknown };
