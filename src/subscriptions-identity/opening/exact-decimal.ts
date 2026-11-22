@@ -3,6 +3,9 @@
  * read as the decimal JavaScript prints for it (the shortest one that reads
  * back to the same double), scaled to 30 decimals as a bigint, so totals and
  * differences are exact and don't depend on the order they are added in.
+ * A double with digits past the 30th decimal, such as a float residue like
+ * 1.3877787807814457e-17, is rounded to 30 decimals the way Math.round
+ * rounds: half toward positive infinity.
  */
 
 const SCALE_DIGITS = 30;
@@ -17,6 +20,18 @@ function pow10(n: number): bigint {
 }
 
 const SCALE = pow10(SCALE_DIGITS);
+
+/** `digits` without its last `drop` digits, rounded as Math.round rounds. */
+function roundOff(digits: bigint, drop: number, negative: boolean): bigint {
+  const unit = pow10(drop);
+  const kept = digits / unit;
+  const twice = (digits % unit) * BigInt(2);
+  // Half goes toward positive infinity: up in size for a positive value,
+  // down for a negative one.
+  return twice > unit || (twice === unit && !negative)
+    ? kept + BigInt(1)
+    : kept;
+}
 
 /** A double as an exact scaled integer of its printed decimal. */
 export function toScaled(value: number): bigint {
@@ -33,10 +48,10 @@ export function toScaled(value: number): bigint {
   const digits = `${whole}${fraction}`;
   // value = digits * 10^(exponent - fraction.length)
   const shift = SCALE_DIGITS + exponent - fraction.length;
-  if (shift < 0) {
-    throw new Error(`More than ${SCALE_DIGITS} decimals: ${text}`);
-  }
-  const scaled = BigInt(digits) * pow10(shift);
+  const scaled =
+    shift >= 0
+      ? BigInt(digits) * pow10(shift)
+      : roundOff(BigInt(digits), -shift, sign === '-');
   return sign === '-' ? -scaled : scaled;
 }
 
