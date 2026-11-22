@@ -305,7 +305,9 @@ export class WavesChainIndex {
       fullAfter: null,
       fullFromHeight: height,
       feedNext:
-        feedGone || state.feedNext === null ? height + 1 : state.feedNext
+        feedGone || state.feedNext === null ? height + 1 : state.feedNext,
+      // Parts done of a block before the new cursor count for nothing past it.
+      feedPart: feedGone || state.feedNext === null ? 0 : state.feedPart
     });
   }
 

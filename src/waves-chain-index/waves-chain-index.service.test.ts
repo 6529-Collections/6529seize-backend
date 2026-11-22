@@ -348,11 +348,14 @@ describe('WavesChainIndex', () => {
     chain.live.votes.delete(E(3));
     chain.putWave(id('a4'));
     chain.goneBelow = chain.height + 1;
+    // Parts done of an old block mean nothing at the new cursor.
+    Object.assign(db.state, { feedPart: 1 });
     const report = await index.run({ budgetMs: BIG });
     expect(report.restartedFull).toBe('feed_gone');
     expect(db.state).toMatchObject({
       generation: 2,
       fullPhase: 'groups',
+      feedPart: 0,
       feedNext: chain.height + 1
     });
     const done = await index.run({ budgetMs: BIG });
