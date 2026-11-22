@@ -9,7 +9,12 @@ import { PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { doInDbContext } from '../secrets';
 import { appFeatures } from '../app-features';
 import { Time } from '../time';
-import { DumpSource, planDumps } from './db-dumps-sources';
+import {
+  DumpSource,
+  readChainTables,
+  readTransactions,
+  TableRead
+} from './db-dumps-sources';
 
 const logger = Logger.get('DB_DUMPS_DAILY');
 const s3 = new S3Client({ region: 'eu-west-1' });
@@ -37,28 +42,41 @@ export const handler = sentryContext.wrapLambdaHandler(async () => {
   );
 });
 
+type ManifestEntry =
+  | (DumpedFile & { readonly source: DumpSource })
+  | { readonly table: string; readonly key: string; readonly skipped: string };
+
 /**
- * FEATURE_DB_DUMPS_MANIFEST: dumps each table whose source is ready, then
- * writes manifest.json beside the CSVs with each file's row count, SHA-256
- * and source, so a reader can check the files against Ethereum and the 6529
- * chain. A skipped table keeps its previous file and is listed as skipped.
+ * FEATURE_DB_DUMPS_MANIFEST: dumps delegations and consolidations first, read
+ * with the identity mirror's state in one snapshot, then the transactions and
+ * the latest NFTDelegation block, then writes manifest.json beside the CSVs:
+ * each file's row count, SHA-256 and source, so a reader can check them
+ * against Ethereum and the 6529 chain. A skipped table keeps its previous
+ * file and has an entry that says so. The manifest goes up last, so a run
+ * that fails part way leaves the previous manifest, whose hashes then show
+ * which files changed since.
  */
 async function dumpWithManifest() {
   const now = Time.currentMillis();
-  const plans = await planDumps(
-    (sql) => sqlExecutor.execute(sql),
-    DB_DUMPS_DAILY_TABLES,
-    now
-  );
-  const files: (DumpedFile & { source: DumpSource })[] = [];
-  const skipped: { table: string; reason: string }[] = [];
-  for (const plan of plans) {
-    if ('skip' in plan) {
-      logger.warn(`[TABLE ${plan.table}] : [SKIPPED] : [${plan.skip}]`);
-      skipped.push({ table: plan.table, reason: plan.skip });
+  const files: ManifestEntry[] = [];
+  const reads: TableRead[] = [
+    ...(await readChainTables(now)),
+    await readTransactions()
+  ];
+  for (const read of reads) {
+    if ('skip' in read) {
+      logger.warn(`[TABLE ${read.table}] : [SKIPPED] : [${read.skip}]`);
+      files.push({
+        table: read.table,
+        key: objectKey(`${read.table}.csv`),
+        skipped: read.skip
+      });
       continue;
     }
-    files.push({ ...(await dumpTable(plan.table)), source: plan.source });
+    files.push({
+      ...(await dumpData(read.table, read.rows)),
+      source: read.source
+    });
   }
   const { file, block } = await dumpLatestNftDelegationBlock();
   files.push({ ...file, source: { kind: 'nftdelegation', last_block: block } });
@@ -68,9 +86,8 @@ async function dumpWithManifest() {
       {
         version: 1,
         generated_at: new Date(now).toISOString(),
-        complete: skipped.length === 0,
-        files,
-        skipped
+        complete: files.every((entry) => !('skipped' in entry)),
+        files
       },
       null,
       2
@@ -117,12 +134,16 @@ async function dumpData(tableName: string, data: any): Promise<DumpedFile> {
   };
 }
 
+function objectKey(name: string): string {
+  return `db-dumps/${process.env.NODE_ENV}/${name}`;
+}
+
 async function putObject(
   name: string,
   body: string,
   contentType: string
 ): Promise<string> {
-  const key = `db-dumps/${process.env.NODE_ENV}/${name}`;
+  const key = objectKey(name);
   const put = await s3.send(
     new PutObjectCommand({
       Bucket: process.env.AWS_6529_IMAGES_BUCKET_NAME!,

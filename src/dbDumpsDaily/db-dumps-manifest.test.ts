@@ -15,7 +15,13 @@ jest.mock('../secrets', () => ({
   doInDbContext: jest.fn(async (work: () => Promise<void>) => work())
 }));
 jest.mock('../sql-executor', () => ({
-  sqlExecutor: { execute: jest.fn() }
+  sqlExecutor: {
+    execute: jest.fn(),
+    executeNativeQueriesInTransaction: jest.fn(
+      async (work: (connection: unknown) => Promise<unknown>) =>
+        work({ connection: {} })
+    )
+  }
 }));
 
 const NOW = Date.UTC(2026, 10, 25, 3, 0, 0);
@@ -98,21 +104,14 @@ describe('dbDumpsDaily', () => {
     expect(manifest).toMatchObject({
       version: 1,
       generated_at: '2026-11-25T03:00:00.000Z',
-      complete: true,
-      skipped: []
+      complete: true
     });
     const sha = (table: string) =>
       createHash('sha256')
         .update(json2csv(rows[table] as object[]))
         .digest('hex');
+    // The chain files first, from one snapshot; the manifest last.
     expect(manifest.files).toEqual([
-      {
-        table: 'transactions',
-        key: 'db-dumps/production/transactions.csv',
-        rows: 1,
-        sha256: sha('transactions'),
-        source: { kind: 'ethereum', max_block: 23800000 }
-      },
       {
         table: 'delegations',
         key: 'db-dumps/production/delegations.csv',
@@ -130,6 +129,13 @@ describe('dbDumpsDaily', () => {
         source: expect.objectContaining({ kind: 'identity_chain_mirror' })
       }),
       {
+        table: 'transactions',
+        key: 'db-dumps/production/transactions.csv',
+        rows: 1,
+        sha256: sha('transactions'),
+        source: { kind: 'ethereum', max_block: 23800000 }
+      },
+      {
         table: 'nftdelegation_blocks',
         key: 'db-dumps/production/nftdelegation_blocks.csv',
         rows: 1,
@@ -140,6 +146,8 @@ describe('dbDumpsDaily', () => {
     expect(files['db-dumps/production/transactions.csv'].body).toBe(
       json2csv(rows.transactions as object[])
     );
+    const keys = send.mock.calls.map(([command]) => command.input.Key);
+    expect(keys[keys.length - 1]).toBe('db-dumps/production/manifest.json');
   });
 
   it('keeps the previous chain files while the mirror is mid-pass, and says so', async () => {
@@ -155,11 +163,22 @@ describe('dbDumpsDaily', () => {
       files['db-dumps/production/manifest.json'].body
     );
     expect(manifest.complete).toBe(false);
-    expect(manifest.skipped.map((s: { table: string }) => s.table)).toEqual([
-      'delegations',
-      'consolidations'
+    // A skipped file keeps an entry that says so; its previous CSV stays.
+    expect(manifest.files.slice(0, 2)).toEqual([
+      {
+        table: 'delegations',
+        key: 'db-dumps/production/delegations.csv',
+        skipped: expect.stringContaining('has not finished a full pass')
+      },
+      {
+        table: 'consolidations',
+        key: 'db-dumps/production/consolidations.csv',
+        skipped: expect.stringContaining('has not finished a full pass')
+      }
     ]);
     expect(manifest.files.map((f: { table: string }) => f.table)).toEqual([
+      'delegations',
+      'consolidations',
       'transactions',
       'nftdelegation_blocks'
     ]);

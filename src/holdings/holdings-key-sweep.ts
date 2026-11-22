@@ -19,36 +19,49 @@ const logger = Logger.get('HOLDINGS_KEY_SWEEP');
 // Queued per loop per sweep; the next sweep takes the rest.
 const MAX_WALLETS_PER_CONSUMER = 2000;
 
-/** A wallet table, the consolidated table built from it, and its loop. */
-interface SweptTables {
-  readonly consumer: TransferConsumer;
+/**
+ * Where a consolidated table's keys should come from: the wallets of a wallet
+ * table, each mapped through address_consolidation_keys (else itself).
+ * owners_balances has one row per wallet that holds anything, so it stands in
+ * for nft_owners (one row per token held) and costs one lookup per wallet,
+ * not one per token.
+ */
+interface KeySource {
   readonly walletTable: string;
-  readonly consolidatedTable: string;
-  /**
-   * A column whose rows count only when above 0, on both sides, as the loops
-   * keep them; none when every row counts.
-   */
+  /** A column whose rows count only when above 0; none when every row does. */
   readonly positive: string | null;
 }
 
-const SWEPT: readonly SweptTables[] = [
+interface SweptTable {
+  readonly consumer: TransferConsumer;
+  readonly consolidatedTable: string;
+  readonly positive: string | null;
+  readonly expected: KeySource;
+}
+
+const HOLDERS: KeySource = {
+  walletTable: OWNERS_BALANCES_TABLE,
+  positive: 'total_balance'
+};
+
+const SWEPT: readonly SweptTable[] = [
   {
     consumer: 'owners',
-    walletTable: NFT_OWNERS_TABLE,
     consolidatedTable: NFT_OWNERS_CONSOLIDATION_TABLE,
-    positive: 'balance'
+    positive: 'balance',
+    expected: HOLDERS
   },
   {
     consumer: 'balances',
-    walletTable: OWNERS_BALANCES_TABLE,
     consolidatedTable: CONSOLIDATED_OWNERS_BALANCES_TABLE,
-    positive: 'total_balance'
+    positive: 'total_balance',
+    expected: HOLDERS
   },
   {
     consumer: 'activity',
-    walletTable: AGGREGATED_ACTIVITY_TABLE,
     consolidatedTable: CONSOLIDATED_AGGREGATED_ACTIVITY_TABLE,
-    positive: null
+    positive: null,
+    expected: { walletTable: AGGREGATED_ACTIVITY_TABLE, positive: null }
   }
 ];
 
@@ -66,21 +79,37 @@ export interface HoldingsKeySweepResult {
   readonly wallets_queued: number;
 }
 
-/** Each wallet row's key: its address_consolidation_keys key, else itself. */
-async function expectedKeys(tables: SweptTables): Promise<Set<string>> {
+/** Grouped totals against wallet totals; report mode only. */
+export interface HoldingsSumCheck {
+  /** NFT tokens (contract, token id) whose held total differs. */
+  readonly nft_tokens_compared: number;
+  readonly nft_tokens_differing: number;
+  readonly wallet_total_balance: number;
+  readonly consolidated_total_balance: number;
+}
+
+export interface HoldingsKeySweepReport {
+  readonly tables: HoldingsKeySweepResult[];
+  readonly sums: HoldingsSumCheck | null;
+}
+
+const where = (alias: string, positive: string | null) =>
+  positive ? `${alias}${positive} > 0` : 'TRUE';
+
+async function expectedKeys(source: KeySource): Promise<Set<string>> {
   const rows = await sqlExecutor.execute<{ k: string }>(
     `SELECT DISTINCT COALESCE(a.consolidation_key, LOWER(w.wallet)) AS k
-     FROM ${tables.walletTable} w
+     FROM ${source.walletTable} w
      LEFT JOIN ${ADDRESS_CONSOLIDATION_KEY} a ON a.address = LOWER(w.wallet)
-     WHERE ${tables.positive ? `w.${tables.positive} > 0` : 'TRUE'}`
+     WHERE ${where('w.', source.positive)}`
   );
   return new Set(rows.map((row) => row.k.toLowerCase()));
 }
 
-async function storedKeys(tables: SweptTables): Promise<Set<string>> {
+async function storedKeys(table: SweptTable): Promise<Set<string>> {
   const rows = await sqlExecutor.execute<{ k: string }>(
-    `SELECT DISTINCT consolidation_key AS k FROM ${tables.consolidatedTable}
-     WHERE ${tables.positive ? `${tables.positive} > 0` : 'TRUE'}`
+    `SELECT DISTINCT consolidation_key AS k FROM ${table.consolidatedTable}
+     WHERE ${where('', table.positive)}`
   );
   return new Set(rows.map((row) => row.k.toLowerCase()));
 }
@@ -89,12 +118,12 @@ function walletsOf(key: string): string[] {
   return key.split('-').filter(Boolean);
 }
 
-async function sweepTables(
-  tables: SweptTables,
+async function sweepTable(
+  table: SweptTable,
+  expected: Set<string>,
   repair: boolean
 ): Promise<HoldingsKeySweepResult> {
-  const expected = await expectedKeys(tables);
-  const stored = await storedKeys(tables);
+  const stored = await storedKeys(table);
   const wallets = new Set<string>();
   let stale = 0;
   let missing = 0;
@@ -123,10 +152,10 @@ async function sweepTables(
     .sort((a, b) => a.localeCompare(b))
     .slice(0, MAX_WALLETS_PER_CONSUMER);
   if (repair && toQueue.length) {
-    await transferReconciliationDb.enqueueFor(toQueue, tables.consumer);
+    await transferReconciliationDb.enqueueIfAbsent(toQueue, table.consumer);
   }
   return {
-    consumer: tables.consumer,
+    consumer: table.consumer,
     expected_keys: expected.size,
     stored_keys: stored.size,
     stale_keys: stale,
@@ -138,30 +167,84 @@ async function sweepTables(
 }
 
 /**
- * Compares each consolidated holdings table with the keys its wallet rows map
- * to in address_consolidation_keys. With `repair`, queues the wallets of
- * every stale or missing key, and of every wallet stored under two keys, for
- * the loop that writes the table; otherwise only reports. A wallet already
- * queued keeps its place, so a sweep never delays the loops' own work.
+ * Each NFT token's total held by wallets against its total held by
+ * consolidations, and all wallets' total balance against all consolidations'.
+ * A wrong total under the right key shows here and not in the key check.
+ */
+async function checkSums(): Promise<HoldingsSumCheck> {
+  const [tokens] = await sqlExecutor.execute<{
+    compared: number | string;
+    differing: number | string;
+  }>(
+    `SELECT COUNT(*) AS compared,
+            COALESCE(SUM(COALESCE(w.total, 0) <> COALESCE(c.total, 0)), 0) AS differing
+     FROM (
+       SELECT LOWER(contract) AS contract, token_id FROM ${NFT_OWNERS_TABLE} WHERE balance > 0
+       UNION
+       SELECT LOWER(contract), token_id FROM ${NFT_OWNERS_CONSOLIDATION_TABLE} WHERE balance > 0
+     ) t
+     LEFT JOIN (
+       SELECT LOWER(contract) AS contract, token_id, SUM(balance) AS total
+       FROM ${NFT_OWNERS_TABLE} WHERE balance > 0 GROUP BY LOWER(contract), token_id
+     ) w ON w.contract = t.contract AND w.token_id = t.token_id
+     LEFT JOIN (
+       SELECT LOWER(contract) AS contract, token_id, SUM(balance) AS total
+       FROM ${NFT_OWNERS_CONSOLIDATION_TABLE} WHERE balance > 0 GROUP BY LOWER(contract), token_id
+     ) c ON c.contract = t.contract AND c.token_id = t.token_id`
+  );
+  const [balances] = await sqlExecutor.execute<{
+    wallets: number | string | null;
+    consolidated: number | string | null;
+  }>(
+    `SELECT
+       (SELECT SUM(total_balance) FROM ${OWNERS_BALANCES_TABLE} WHERE total_balance > 0) AS wallets,
+       (SELECT SUM(total_balance) FROM ${CONSOLIDATED_OWNERS_BALANCES_TABLE} WHERE total_balance > 0) AS consolidated`
+  );
+  return {
+    nft_tokens_compared: Number(tokens?.compared ?? 0),
+    nft_tokens_differing: Number(tokens?.differing ?? 0),
+    wallet_total_balance: Number(balances?.wallets ?? 0),
+    consolidated_total_balance: Number(balances?.consolidated ?? 0)
+  };
+}
+
+/**
+ * Compares each consolidated holdings table with the keys its wallets map to
+ * in address_consolidation_keys: stale keys, missing keys, and a wallet
+ * stored under two keys. With `repair`, queues those wallets for the loop
+ * that writes the table; a wallet already queued is left as it is. Without
+ * it, only reports, and also compares the grouped totals with the wallets'.
  */
 export async function sweepHoldingsKeys({
   repair
 }: {
   repair: boolean;
-}): Promise<HoldingsKeySweepResult[]> {
-  const results: HoldingsKeySweepResult[] = [];
-  for (const tables of SWEPT) {
-    results.push(await sweepTables(tables, repair));
+}): Promise<HoldingsKeySweepReport> {
+  const expectedBySource = new Map<KeySource, Set<string>>();
+  const tables: HoldingsKeySweepResult[] = [];
+  for (const table of SWEPT) {
+    let expected = expectedBySource.get(table.expected);
+    if (!expected) {
+      expected = await expectedKeys(table.expected);
+      expectedBySource.set(table.expected, expected);
+    }
+    tables.push(await sweepTable(table, expected, repair));
   }
-  const mismatched = results.some((result) => result.wallets_to_queue > 0);
+  const sums = repair ? null : await checkSums();
+  const mismatched =
+    tables.some((result) => result.wallets_to_queue > 0) ||
+    (sums !== null &&
+      (sums.nft_tokens_differing > 0 ||
+        sums.wallet_total_balance !== sums.consolidated_total_balance));
+  const report = { tables, sums };
   if (mismatched) {
     logger.warn({
       message: '[HOLDINGS KEY SWEEP: MISMATCHES]',
       repair,
-      results
+      ...report
     });
   } else {
-    logger.info({ message: '[HOLDINGS KEY SWEEP: CLEAN]', results });
+    logger.info({ message: '[HOLDINGS KEY SWEEP: CLEAN]', repair, ...report });
   }
-  return results;
+  return report;
 }

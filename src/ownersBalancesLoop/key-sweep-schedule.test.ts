@@ -11,7 +11,7 @@ jest.mock('../secrets', () => ({
 }));
 jest.mock('./owners_balances', () => ({ updateOwnerBalances: jest.fn() }));
 jest.mock('@/holdings/holdings-key-sweep', () => ({
-  sweepHoldingsKeys: jest.fn(async () => [])
+  sweepHoldingsKeys: jest.fn(async () => ({ tables: [], sums: null }))
 }));
 jest.mock('@/subscriptionsDaily/subscription-cache', () => ({
   retryPendingSubscriptionCacheInvalidations: jest.fn()
@@ -37,8 +37,8 @@ describe('ownersBalancesLoop key sweep', () => {
     jest.restoreAllMocks();
   });
 
-  it('repairs on the scheduled minutes that are a multiple of 15, after the balances', async () => {
-    at(30);
+  it('repairs once an hour, on the scheduled run at minute 0, after the balances', async () => {
+    at(0);
     await invoke({ source: 'aws.events' });
     expect(updateOwnerBalances).toHaveBeenCalledTimes(1);
     expect(sweepHoldingsKeys).toHaveBeenCalledWith({ repair: true });
@@ -48,10 +48,10 @@ describe('ownersBalancesLoop key sweep', () => {
   });
 
   it('does not sweep on other minutes, or with the flag off', async () => {
-    at(31);
+    at(15);
     await invoke({ source: 'aws.events' });
     delete process.env.FEATURE_HOLDINGS_MEMBERSHIP_QUEUE;
-    at(45);
+    at(0);
     await invoke({ source: 'aws.events' });
     expect(updateOwnerBalances).toHaveBeenCalledTimes(2);
     expect(sweepHoldingsKeys).not.toHaveBeenCalled();
@@ -71,7 +71,8 @@ describe('ownersBalancesLoop key sweep', () => {
     expect(result).toEqual({
       action: 'holdings-key-sweep',
       repair: false,
-      results: []
+      tables: [],
+      sums: null
     });
   });
 });

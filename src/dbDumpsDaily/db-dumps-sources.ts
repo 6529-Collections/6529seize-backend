@@ -4,12 +4,11 @@ import {
   NFTDELEGATION_BLOCKS_TABLE,
   TRANSACTIONS_TABLE
 } from '@/constants';
+import { ConnectionWrapper, sqlExecutor } from '@/sql-executor';
 import { Time } from '@/time';
 
-type Query = <T>(sql: string) => Promise<T[]>;
-
 // The identity mirror's state row, from the identity mirror's own entity
-// (identity_chain_mirror_state, id 'identity'). Read only.
+// (identity_chain_mirror_state, id 'identity'). Read only; never dumped.
 const MIRROR_STATE_TABLE = 'identity_chain_mirror_state';
 // A mirror that hasn't moved for longer than this isn't following the chain.
 const MIRROR_FRESH_MILLIS = Time.minutes(30).toMillis();
@@ -20,14 +19,23 @@ export type DumpSource =
   | { readonly kind: 'nftdelegation'; readonly last_block: number | null }
   | {
       readonly kind: 'identity_chain_mirror';
-      /** The next finalized 6529 chain height the mirror will read. */
+      /**
+       * The next finalized 6529 chain height the mirror will read: every
+       * height below it was applied when the rows were read. The mirror
+       * saves this after a page's rows, so the rows can also hold part of
+       * the page from this height on, never less than the heights below it.
+       */
       readonly next_height: number;
       /** When the mirror last moved, Unix milliseconds. */
       readonly updated_at: number;
     };
 
-export type DumpPlan =
-  | { readonly table: string; readonly source: DumpSource }
+export type TableRead =
+  | {
+      readonly table: string;
+      readonly rows: Record<string, unknown>[];
+      readonly source: DumpSource;
+    }
   | { readonly table: string; readonly skip: string };
 
 interface MirrorState {
@@ -36,9 +44,11 @@ interface MirrorState {
   readonly updated_at: number | string;
 }
 
-async function readMirrorState(query: Query): Promise<MirrorState | null> {
+type Read = <T>(sql: string) => Promise<T[]>;
+
+async function readMirrorState(read: Read): Promise<MirrorState | null> {
   try {
-    const rows = await query<MirrorState>(
+    const rows = await read<MirrorState>(
       `SELECT next_height, sync_phase, updated_at FROM ${MIRROR_STATE_TABLE} WHERE id = 'identity'`
     );
     return rows[0] ?? null;
@@ -49,56 +59,99 @@ async function readMirrorState(query: Query): Promise<MirrorState | null> {
   }
 }
 
-async function maxBlock(query: Query, table: string): Promise<number | null> {
-  const [row] = await query<{ block: number | string | null }>(
-    `SELECT MAX(block) AS block FROM ${table}`
+function blockOf(rows: { block: number | string | null }[]): number | null {
+  const block = rows[0]?.block;
+  return block === null || block === undefined ? null : Number(block);
+}
+
+/** Runs `work` in one REPEATABLE READ transaction: one snapshot for all reads. */
+async function inOneSnapshot<T>(work: (read: Read) => Promise<T>): Promise<T> {
+  return sqlExecutor.executeNativeQueriesInTransaction(
+    (connection: ConnectionWrapper<any>) =>
+      work(<R>(sql: string) =>
+        sqlExecutor.execute<R>(sql, undefined, {
+          wrappedConnection: connection
+        })
+      ),
+    { isolationLevel: 'REPEATABLE READ' }
   );
-  return row?.block === null || row?.block === undefined
-    ? null
-    : Number(row.block);
 }
 
 /**
- * The source of each dumped table. Delegations and consolidations come from
- * NFTDelegation until the identity mirror runs, then from the mirror. While
- * the mirror is part way through a full pass, hasn't passed once, or has
- * stopped moving, those two tables are skipped: the previous files stay, and
- * a later run dumps them.
+ * Delegations and consolidations, read with the identity mirror's state in
+ * one snapshot, so the files and the height the manifest names belong
+ * together however the mirror moves during the dump. Before the mirror runs
+ * they come from NFTDelegation. While the mirror is part way through a full
+ * pass, hasn't passed once, or has stopped moving, both are skipped: the
+ * previous files stay, and a later run dumps them.
  */
-export async function planDumps(
-  query: Query,
-  tables: readonly string[],
-  now: number
-): Promise<DumpPlan[]> {
-  const mirror = await readMirrorState(query);
-  let chainSource: DumpSource | string;
-  if (!mirror) {
-    chainSource = {
-      kind: 'nftdelegation',
-      last_block: await maxBlock(query, NFTDELEGATION_BLOCKS_TABLE)
-    };
-  } else if (mirror.next_height === null || mirror.sync_phase !== null) {
-    chainSource = 'the identity mirror has not finished a full pass';
-  } else if (now - Number(mirror.updated_at) > MIRROR_FRESH_MILLIS) {
-    chainSource = 'the identity mirror has not moved for 30 minutes';
-  } else {
-    chainSource = {
-      kind: 'identity_chain_mirror',
-      next_height: Number(mirror.next_height),
-      updated_at: Number(mirror.updated_at)
-    };
-  }
-  const ethereum: DumpSource = {
-    kind: 'ethereum',
-    max_block: await maxBlock(query, TRANSACTIONS_TABLE)
-  };
-  return tables.map((table) => {
-    if (table === TRANSACTIONS_TABLE) return { table, source: ethereum };
-    if (table === DELEGATIONS_TABLE || table === CONSOLIDATIONS_TABLE) {
-      return typeof chainSource === 'string'
-        ? { table, skip: chainSource }
-        : { table, source: chainSource };
+export async function readChainTables(
+  now: number,
+  afterSnapshot: () => Promise<void> = async () => undefined
+): Promise<TableRead[]> {
+  return inOneSnapshot(async (read) => {
+    const mirror = await readMirrorState(read);
+    // Tests change the mirror here, after the snapshot is taken.
+    await afterSnapshot();
+    let source: DumpSource | string;
+    if (!mirror) {
+      source = {
+        kind: 'nftdelegation',
+        last_block: blockOf(
+          await read(
+            `SELECT MAX(block) AS block FROM ${NFTDELEGATION_BLOCKS_TABLE}`
+          )
+        )
+      };
+    } else if (mirror.next_height === null || mirror.sync_phase !== null) {
+      source = 'the identity mirror has not finished a full pass';
+    } else if (now - Number(mirror.updated_at) > MIRROR_FRESH_MILLIS) {
+      source = 'the identity mirror has not moved for 30 minutes';
+    } else {
+      source = {
+        kind: 'identity_chain_mirror',
+        next_height: Number(mirror.next_height),
+        updated_at: Number(mirror.updated_at)
+      };
     }
-    throw new Error(`No dump source known for ${table}`);
+    if (typeof source === 'string') {
+      const skip = source;
+      return [DELEGATIONS_TABLE, CONSOLIDATIONS_TABLE].map((table) => ({
+        table,
+        skip
+      }));
+    }
+    return [
+      {
+        table: DELEGATIONS_TABLE,
+        rows: await read<Record<string, unknown>>(
+          `SELECT * FROM ${DELEGATIONS_TABLE}`
+        ),
+        source
+      },
+      {
+        table: CONSOLIDATIONS_TABLE,
+        rows: await read<Record<string, unknown>>(
+          `SELECT * FROM ${CONSOLIDATIONS_TABLE}`
+        ),
+        source
+      }
+    ];
+  });
+}
+
+/** The transactions, with the highest block, in one snapshot. */
+export async function readTransactions(): Promise<TableRead> {
+  return inOneSnapshot(async (read) => {
+    const max_block = blockOf(
+      await read(`SELECT MAX(block) AS block FROM ${TRANSACTIONS_TABLE}`)
+    );
+    return {
+      table: TRANSACTIONS_TABLE,
+      rows: await read<Record<string, unknown>>(
+        `SELECT * FROM ${TRANSACTIONS_TABLE}`
+      ),
+      source: { kind: 'ethereum', max_block }
+    };
   });
 }

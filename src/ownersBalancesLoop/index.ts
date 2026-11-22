@@ -19,8 +19,8 @@ import { retryPendingSubscriptionCacheInvalidations } from '@/subscriptionsDaily
 
 const logger = Logger.get('OWNER_BALANCES_LOOP');
 
-// The key sweep runs on the scheduled minute that is a multiple of this.
-const KEY_SWEEP_EVERY_MINUTES = 15;
+// The key sweep runs once an hour, on the scheduled run at this minute.
+const KEY_SWEEP_MINUTE = 0;
 
 export const handler = sentryContext.wrapLambdaHandler(
   async (event: unknown) => {
@@ -31,16 +31,14 @@ export const handler = sentryContext.wrapLambdaHandler(
           return {
             action: sweepAction.action,
             repair: sweepAction.repair,
-            results: await sweepHoldingsKeys({ repair: sweepAction.repair })
+            ...(await sweepHoldingsKeys({ repair: sweepAction.repair }))
           };
         }
         await retryPendingSubscriptionCacheInvalidations();
         await updateOwnerBalances(process.env.OWNER_BALANCES_RESET == 'true');
         if (
           appFeatures.isHoldingsMembershipQueueEnabled() &&
-          new Date(Time.currentMillis()).getUTCMinutes() %
-            KEY_SWEEP_EVERY_MINUTES ===
-            0
+          new Date(Time.currentMillis()).getUTCMinutes() === KEY_SWEEP_MINUTE
         ) {
           try {
             await sweepHoldingsKeys({ repair: true });

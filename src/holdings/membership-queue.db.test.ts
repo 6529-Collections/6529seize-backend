@@ -226,7 +226,15 @@ describe('holdings re-keyed through the membership queue', () => {
     expect(fromQueue).toEqual(await consolidatedState());
 
     const sweep = await sweepHoldingsKeys({ repair: false });
-    expect(sweep.map((result) => result.wallets_to_queue)).toEqual([0, 0, 0]);
+    expect(sweep.tables.map((result) => result.wallets_to_queue)).toEqual([
+      0, 0, 0
+    ]);
+    // The grouped totals equal the wallets' totals.
+    expect(sweep.sums?.nft_tokens_compared).toBeGreaterThan(0);
+    expect(sweep.sums?.nft_tokens_differing).toBe(0);
+    expect(sweep.sums?.consolidated_total_balance).toBe(
+      sweep.sums?.wallet_total_balance
+    );
   });
 
   it('gives the same rows when a group is regrouped across two queue batches', async () => {
@@ -259,7 +267,9 @@ describe('holdings re-keyed through the membership queue', () => {
     );
 
     const found = await sweepHoldingsKeys({ repair: true });
-    expect(found.every((result) => result.wallets_queued > 0)).toBe(true);
+    expect(found.tables.every((result) => result.wallets_queued > 0)).toBe(
+      true
+    );
     await runLoops();
     await updateOwnerBalances();
 
@@ -267,7 +277,7 @@ describe('holdings re-keyed through the membership queue', () => {
     await resetLoops();
     expect(repaired).toEqual(await consolidatedState());
     expect(
-      (await sweepHoldingsKeys({ repair: false })).map(
+      (await sweepHoldingsKeys({ repair: false })).tables.map(
         (r) => r.wallets_to_queue
       )
     ).toEqual([0, 0, 0]);
