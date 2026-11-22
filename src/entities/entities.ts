@@ -208,6 +208,7 @@ export {
 export { SubscriptionCoverageAlertStateEntity } from './ISubscriptionCoverageAlertState';
 export { SubscriptionCoverageRefreshRequestEntity } from './ISubscriptionCoverageRefreshRequest';
 export { SubscriptionDeferredWriteEntity } from './ISubscriptionDeferredWrite';
+export { SubscriptionRekeyFallbackStateEntity } from './ISubscriptionRekeyFallbackState';
 export {
   SubscriptionIdBalanceEntity,
   SubscriptionIdChoiceEntity,

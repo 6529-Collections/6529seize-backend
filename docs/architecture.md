@@ -3000,12 +3000,25 @@ keys because the delegations loop re-keys them (`consolidateSubscriptions`)
 when it changes a grouping. Once the identity mirror writes
 `address_consolidation_keys`, a grouping can change with no delegation
 event. With `FEATURE_SUBSCRIPTIONS_REKEY_ON_MIRROR=true` (off by default),
-the `subscriptionsTopUpLoop`, every fifth minute and before its top-up scan,
-finds each balance key with a wallet the table now keys otherwise and calls
+the `subscriptionsTopUpLoop`, before its top-up scan, finds each balance key
+with a wallet the table now keys otherwise and calls
 `consolidateSubscriptions` for those wallets, as the delegations loop would.
+It runs when 4.5 minutes have passed since its last run, kept in
+`subscription_rekey_fallback_state` (one row, ephemeral), so a late run is
+made up on the next minute. A partial mirror table must not split
+balances, so:
+
+- a wallet with no row in `address_consolidation_keys` is skipped, not
+  taken as its own key;
+- above 50 stale keys, or above 5% of the keys, the run logs them, alerts
+  (`SUBSCRIPTIONS_REKEY_HALTED`) and changes nothing;
+- a key is re-keyed only when it was stale on the run before too, so each
+  is logged a run before anything changes it.
+
 A key whose re-key the key-width guard already holds back is left to the
-guard's replay. A failure is logged and never stops the scan. Rollback:
-unset the flag.
+guard's replay. A key still stale after three re-keys alerts
+(`SUBSCRIPTIONS_REKEY_STUCK`), and again about hourly. A failure is logged
+and never stops the scan. Rollback: unset the flag.
 
 **Rebuild.** Every entry can be derived again from its source:
 
