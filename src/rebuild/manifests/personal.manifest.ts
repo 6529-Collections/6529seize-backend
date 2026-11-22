@@ -143,6 +143,34 @@ const PERSONAL_SETTINGS_REBUILD: RebuildStep = {
 };
 
 /**
+ * The probe caller's settings, written as today's routes write them, then
+ * the switch: the import into the record log, a closed segment in the
+ * run's seed files and its head drop in the records wave
+ * (src/rebuild/areas/personal.seed.ts). The rebuild takes every row back
+ * from there.
+ */
+const PERSONAL_SETTINGS_SEED: RebuildStep = {
+  id: 'personal.seed',
+  run: {
+    module: 'src/rebuild/areas/personal.seed',
+    exportName: 'seedPersonalSettings'
+  },
+  writes: [
+    ...PERSONAL_SETTINGS_REBUILD.writes,
+    'signed_record_log_entries',
+    'waves',
+    'drops',
+    'drops_parts',
+    'identities',
+    'address_consolidation_keys',
+    'profiles'
+  ],
+  after: ['identity.probe-profiles'],
+  sources: ['files'],
+  timeoutMinutes: 20
+};
+
+/**
  * Personal settings and Collect plans.
  *
  * The personal settings tables are rebuilt from the one-time import at the
@@ -243,7 +271,19 @@ export const personalManifest: AreaManifest = {
     },
     pinned_waves: { class: 'INDEX' },
     profile_preferences: { class: 'INDEX' },
-    push_notification_settings: { class: 'INDEX' },
+    push_notification_settings: {
+      class: 'INDEX',
+      volatileColumns: [
+        {
+          column: 'created_at',
+          reason: 'Row housekeeping; the API never returns it.'
+        },
+        {
+          column: 'updated_at',
+          reason: 'Row housekeeping; the API never returns it.'
+        }
+      ]
+    },
     wave_group_notification_subscriptions: { class: 'INDEX' },
     // The switch state: the rebuild writes it with settings open (not
     // frozen) and the latest import's order key, from the import's closing
@@ -256,7 +296,7 @@ export const personalManifest: AreaManifest = {
     },
     signed_record_log_segments: { class: 'INDEX' }
   },
-  seeds: [],
+  seeds: [PERSONAL_SETTINGS_SEED],
   rebuilders: [PERSONAL_SETTINGS_REBUILD],
   probes: PROBES
 };
