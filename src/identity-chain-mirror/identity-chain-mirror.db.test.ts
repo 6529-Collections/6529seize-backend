@@ -140,6 +140,8 @@ describeWithSeed(
           levels_tdh_day: null,
           level_sweep_day: null,
           level_sweep_after: null,
+          levels_day_height: null,
+          sync_use_case: null,
           retry: NO_RETRY
         },
         9
@@ -302,6 +304,8 @@ describeWithSeed(
           levels_tdh_day: 25,
           level_sweep_day: 25,
           level_sweep_after: 'ranked-after',
+          levels_day_height: 700,
+          sync_use_case: 997,
           retry: { principals: [P], targets: [], wallets: [B] }
         },
         1
@@ -315,6 +319,8 @@ describeWithSeed(
           levels_tdh_day: 25,
           level_sweep_day: 25,
           level_sweep_after: 'ranked-after',
+          levels_day_height: 700,
+          sync_use_case: 997,
           retry: { principals: [P], targets: [], wallets: [B] }
         })
       );
@@ -609,26 +615,50 @@ describeWithSeed(
       ).toEqual([{ wallet1: A, wallet2: B }]);
     });
 
-    it("writes only level_raw of the profiles' rows, in one statement", async () => {
+    it("writes only level_raw of mapped profiles' rows, never over a later level", async () => {
+      await inTx((conn) => db.insertMapping(P, ALICE, 'LEGACY', 1, conn));
+      // PLACE's row isn't mapped: left alone.
       const before = await sqlExecutor.execute<any>(
         `select profile_id, tdh, rep, level_raw from ${IDENTITIES_TABLE} order by profile_id`
       );
       const alice = before.find((it: any) => it.profile_id === ALICE);
-      expect(
-        await db.writeLevels([
+      await db.writeLevels(
+        [
           { profile_id: ALICE, level_raw: 4321 },
-          { profile_id: 'no-such-profile', level_raw: 9 }
-        ])
-      ).toBe(1);
-      const after = await sqlExecutor.execute<any>(
-        `select profile_id, tdh, rep, level_raw from ${IDENTITIES_TABLE} order by profile_id`
+          { profile_id: PLACE, level_raw: 9 }
+        ],
+        100
       );
-      expect(after).toEqual(
+      const levels = async () =>
+        await sqlExecutor.execute<any>(
+          `select profile_id, tdh, rep, level_raw from ${IDENTITIES_TABLE} order by profile_id`
+        );
+      expect(await levels()).toEqual(
         before.map((it: any) =>
           it.profile_id === ALICE ? { ...alice, level_raw: 4321 } : it
         )
       );
-      expect(await db.writeLevels([])).toBe(0);
+      expect(await db.levelHeightOf(P)).toBe(100);
+      // An older level isn't written; one as late is.
+      await db.writeLevels([{ profile_id: ALICE, level_raw: 1 }], 99);
+      expect(
+        (await levels()).find((it: any) => it.profile_id === ALICE).level_raw
+      ).toBe(4321);
+      await db.writeLevels([{ profile_id: ALICE, level_raw: 5000 }], 100);
+      expect(
+        (await levels()).find((it: any) => it.profile_id === ALICE).level_raw
+      ).toBe(5000);
+      // The feed's writes move the height on, never back.
+      await inTx((conn) => db.setLevelHeight(P, 50, conn));
+      expect(await db.levelHeightOf(P)).toBe(100);
+      await inTx((conn) => db.setLevelHeight(P, 120, conn));
+      expect(await db.levelHeightOf(P)).toBe(120);
+      await db.writeLevels([], 1);
+      // A founder wait starts once and ends.
+      expect(await db.founderWaitSince(P, 10)).toBe(10);
+      expect(await db.founderWaitSince(P, 20)).toBe(10);
+      await db.founderWaitDone(P);
+      expect(await db.founderWaitSince(P, 30)).toBe(30);
     });
 
     it('keeps first bindings, regroups to re-key and mapped profile ids', async () => {

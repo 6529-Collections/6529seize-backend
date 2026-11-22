@@ -885,9 +885,14 @@ run). With the flag on, NFTDelegation's events (after the identity freeze)
 are read so the checkpoint moves on but not applied: consolidations,
 delegations, re-keying and primary addresses come from the chain. Each step's
 time comes from what the Lambda has left: the mirror (at most six minutes),
-the re-keying, then the profile site followers. A gateway node that says it
-isn't ready is logged and still read (its finalized state); a feed page of
-another chain ends the run without moving on.
+the re-keying (as many wallets as the time left allows, at 50 ms each), then
+the profile site followers (once a first full sync has ended). A gateway node
+that says it isn't ready is logged and still read (its finalized state); a
+feed page of another chain ends the run without moving on. Another network id
+than the mirror's is a misconfiguration in production: the run stops with an
+error and nothing is wiped; only a test stage with
+`IDENTITY_CHAIN_MIRROR_RELAUNCH_ALLOWED=true` starts again on a relaunched
+chain.
 
 The mirror keeps `profiles`, `identities`, `address_consolidation_keys`,
 `consolidations` (confirmed pairs), `delegations`, REP and CIC `ratings`,
@@ -897,7 +902,14 @@ a full sync (the first time, every six hours, and when the feed no longer
 holds its height) walks every identity, delegation and pair over several runs,
 and the feed goes first in each of those runs with its share of the time, so
 a full sync never holds the site's changes back (it never moves the feed's
-place back either). Each feed page, retry batch and full sync page reads the
+place back either). Delegations are walked one use case at a time, only the
+use cases the chain's records take (1 to 17, 997, 998), with the next one
+saved; rows of other use cases go at the end. A feed page writes the
+identities, rating targets and wallets it touches (a rating touches its
+target, not its rater) until the run's deadline, for at most 2,000 keys and
+while its pin is under eight minutes old; the keys it doesn't reach go to the
+retry list, and its place moves on. Each feed page, retry batch and full sync
+page reads the
 identities, ratings and delegations it touches pinned to one finalized height
 at or past the one it needs, and never below a height the run already used,
 so another gateway node behind can't make it write older state; a pinned read
@@ -913,10 +925,11 @@ bound to (from its creation); else the principal id's first 16 bytes written
 as a UUID. Which identity a wallet was first bound to comes from the mirror's
 own `identity_chain_first_bindings`, recorded while the wallet bindings follow
 the feed without a break from the import's start, else from the gateway's
-history of the wallet. When neither can ever say (the import's start unknown,
-or the node's history starting after it or with a gap), the identity is
-mapped to its derived id and the placeholder is logged and reported as
-orphaned, for the later merge. A merged or closed identity is filed under its
+history of the wallet. When neither can say (the import's start unknown, or
+the node's history starting after it or with a gap), the identity is tried
+again for six hours (`identity_chain_founder_waits`), since another gateway
+node may answer meanwhile; when it stays so, it is mapped to its derived id
+and the placeholder is logged and reported as orphaned, for the later merge. A merged or closed identity is filed under its
 mapping, else the id the same rule gives, without storing one. The
 placeholder profiles are listed once, before the mirror's first write
 (`identity_chain_placeholders`), and 6529.io makes none from switch-on, so a
@@ -940,13 +953,18 @@ One writer per `identities` column: from switch-on the mirror alone writes
 `rep`, `cic`, `level_raw` and the profile columns, all from the chain (the
 level is REP + TDH), and the TDH sync writes only `tdh` and `basetdh_rate`. A
 level changes with REP, which the feed carries, and with each TDH day, which
-it doesn't: when the identities a run reads show a TDH day later than the last
-one seen (`levels_tdh_day`), the mirror sweeps the chain's level ranking
-(`/v1/identities/by-level`, its latest finalized state, 500 identities a
-page), writing only `level_raw` of the mapped identities, one statement a
-page. The sweep goes first in each run with a quarter of the time, keeps its
-place in the state across runs, and starts again from the top for a newer
-day. The help bot's credit category stays in 6529.io's ratings table as a site
+it doesn't: when the chain's TDH day (`/v1/tdh`, read once a run) or the
+identities a run reads show a day later than the last one seen
+(`levels_tdh_day`, with the height it was first seen at), the mirror sweeps
+the chain's level ranking (`/v1/identities/by-level`, its latest finalized
+state, 500 identities a page), writing only `level_raw` of the mapped
+identities, one statement a page. A page ranked below the height the day was
+first seen at, or with a level of an earlier day, stops the sweep for the run
+without saving. Every level write (feed, full sync or sweep) records its chain
+height on the mapping (`level_height`), and no write puts an older level over
+a newer one. The sweep goes first in each run with a quarter of the time,
+keeps its place in the state across runs, and starts again from the top for a
+newer day. The help bot's credit category stays in 6529.io's ratings table as a site
 feature, not counted as REP, and the mirror never touches it. It never
 updates `tdh`, `basetdh_rate` or the xTDH columns of a row that exists (the
 TDH and xTDH loops own them), and a row it creates for a new consolidation

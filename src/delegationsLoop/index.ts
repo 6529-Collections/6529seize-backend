@@ -302,6 +302,11 @@ const IDENTITY_END_RESERVE_MS = Time.minutes(1).toMillis();
 const IDENTITY_MIN_STEP_MS = Time.seconds(30).toMillis();
 /** At most this many regrouped wallets are re-keyed a run; the rest wait. */
 const IDENTITY_REGROUPS_PER_RUN = 5_000;
+/**
+ * What re-keying a wallet is taken to cost (TDH, owners, balances, activity
+ * and subscriptions together), to size the batch to the time left.
+ */
+const IDENTITY_REKEY_MS_PER_WALLET = 50;
 
 /**
  * From switch-on, 6529.io's identity tables follow the 6529 chain
@@ -309,8 +314,8 @@ const IDENTITY_REGROUPS_PER_RUN = 5_000;
  * when it failed); a mirror failure still fails the run, so it is seen.
  * Each step's time comes from what the Lambda has left: the mirror, the
  * re-keying of the wallets it regrouped (queued in its own transactions,
- * so a run cut short re-keys them next time), then the profile site
- * followers.
+ * so a run cut short re-keys them next time; as many as the time left
+ * allows), then the profile site followers.
  */
 async function mirrorChainIdentities(timeLeft: () => number) {
   if (!appFeatures.isIdentityChainMirrorEnabled()) {
@@ -331,7 +336,7 @@ async function mirrorChainIdentities(timeLeft: () => number) {
       '[IDENTITY CHAIN MIRROR WAITS FOR THE NEXT RUN] [NO TIME LEFT]'
     );
   }
-  await rekeyRegroupedWallets();
+  await rekeyRegroupedWallets(timeLeft);
   if (report?.error) {
     // Re-keyed what it regrouped before it stopped; the run still fails.
     throw new Error(`Identity chain mirror: ${report.error}`);
@@ -362,11 +367,18 @@ async function mirrorChainIdentities(timeLeft: () => number) {
  * consolidation event did: re-key TDH, owners, balances, activity and
  * subscriptions for the wallets the mirror queued, then take them off.
  */
-async function rekeyRegroupedWallets() {
-  const before = Date.now();
-  const wallets = await identityChainMirror.pendingRegroups(
-    IDENTITY_REGROUPS_PER_RUN
+async function rekeyRegroupedWallets(timeLeft: () => number) {
+  const budget = timeLeft() - IDENTITY_END_RESERVE_MS;
+  const batch = Math.min(
+    IDENTITY_REGROUPS_PER_RUN,
+    Math.floor(budget / IDENTITY_REKEY_MS_PER_WALLET)
   );
+  if (batch < 1) {
+    logger.warn('[REGROUPED WALLETS WAIT FOR THE NEXT RUN] [NO TIME LEFT]');
+    return;
+  }
+  const before = Date.now();
+  const wallets = await identityChainMirror.pendingRegroups(batch);
   if (!wallets.length) return;
   const health = await DelegationsLoopHealth.start(true);
   try {

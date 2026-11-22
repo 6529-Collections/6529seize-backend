@@ -7,6 +7,7 @@ import {
 } from 'typeorm';
 import {
   IDENTITY_CHAIN_FIRST_BINDINGS_TABLE,
+  IDENTITY_CHAIN_FOUNDER_WAITS_TABLE,
   IDENTITY_CHAIN_MIRROR_STATE_TABLE,
   IDENTITY_CHAIN_PLACEHOLDERS_TABLE,
   IDENTITY_CHAIN_PRINCIPALS_TABLE,
@@ -40,6 +41,27 @@ export class IdentityChainPrincipalEntity {
 
   @Column({ type: 'bigint', nullable: false })
   readonly created_at!: number;
+
+  /**
+   * The chain height of the identity's last level_raw write (feed, full
+   * sync or level sweep): no older level is written over it.
+   */
+  @Column({ type: 'bigint', nullable: true, default: null })
+  readonly level_height!: number | null;
+}
+
+/**
+ * An identity made on the chain whose founding wallet's first binding no
+ * history could tell yet: since when. Past a bounded wait it is mapped to
+ * its derived id; until then it is tried again.
+ */
+@Entity(IDENTITY_CHAIN_FOUNDER_WAITS_TABLE)
+export class IdentityChainFounderWaitEntity {
+  @PrimaryColumn({ type: 'varchar', length: 66, nullable: false })
+  readonly principal_id!: string;
+
+  @Column({ type: 'bigint', nullable: false })
+  readonly since!: number;
 }
 
 /**
@@ -176,6 +198,14 @@ export class IdentityChainMirrorStateEntity {
 
   @Column({ type: 'varchar', length: 200, nullable: true, default: null })
   readonly level_sweep_after!: string | null;
+
+  /** The chain height the latest TDH day was first seen at. */
+  @Column({ type: 'bigint', nullable: true, default: null })
+  readonly levels_day_height!: number | null;
+
+  /** The full sync's delegation phase: the next use case to walk. */
+  @Column({ type: 'int', nullable: true, default: null })
+  readonly sync_use_case!: number | null;
 
   /**
    * What the mirror could not write, tried again by the next run (JSON:

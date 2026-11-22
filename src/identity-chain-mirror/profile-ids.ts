@@ -22,7 +22,16 @@ type Db = Pick<
   | 'insertMapping'
   | 'unmappedPlaceholderProfile'
   | 'firstBindingOf'
+  | 'founderWaitSince'
+  | 'founderWaitDone'
 >;
+
+/**
+ * How long an identity whose founder no history can tell is tried again
+ * before it is mapped to its derived id: the gateway may answer from
+ * another node (one with the whole history) meanwhile.
+ */
+export const FOUNDER_WAIT_MS = 6 * 60 * 60 * 1000;
 
 /** Whether a wallet was first bound to an identity at its creation. */
 type FirstBound = boolean | 'unknowable';
@@ -216,8 +225,19 @@ export class ProfileIds {
       Number(identity.createdHeight)
     );
     if (first === 'unknowable') {
+      // One node's answer decides nothing: tried again for a while, and
+      // mapped to the derived id only when it stays so.
+      const since = await this.db.founderWaitSince(principalId, this.now());
+      if (this.now() - since < FOUNDER_WAIT_MS) {
+        throw new ChainReadRetryLater(
+          `No history tells whether ${wallet} was first bound to ${principalId} yet: tried again until ${new Date(since + FOUNDER_WAIT_MS).toISOString()}`,
+          'founder_unknown_yet'
+        );
+      }
+      await this.db.founderWaitDone(principalId);
       return { ...derived, left: placeholder.toLowerCase() };
     }
+    await this.db.founderWaitDone(principalId);
     return first
       ? { profileId: placeholder.toLowerCase(), origin: 'FOUNDER' }
       : derived;
@@ -253,9 +273,10 @@ export class ProfileIds {
    * - else from the gateway's history of the wallet: a binding before the
    *   creation says no; otherwise it must cover every height from the
    *   import's start to the creation. A node behind is waited for (tried
-   *   again later); a history that can never say (the import's start
-   *   unknown, or the node's feed starting after it or with a gap) gives
-   *   'unknowable'.
+   *   again later); a history that can't say (the import's start unknown,
+   *   or the node's feed starting after it or with a gap) gives
+   *   'unknowable', which the caller waits on for FOUNDER_WAIT_MS before
+   *   deciding.
    */
   private async firstBoundTo(
     wallet: string,

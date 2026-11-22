@@ -229,6 +229,20 @@ describe('delegations loop and the identity mirror', () => {
     expect(identityChainMirror.pendingRegroups).toHaveBeenCalled();
   });
 
+  it('re-keys as many regrouped wallets as the time left allows', async () => {
+    process.env.FEATURE_IDENTITY_CHAIN_MIRROR = 'true';
+    jest.mocked(identityChainMirror.run).mockResolvedValue(report([]) as never);
+    // 4 min 10 s left: no mirror run; 3 min 10 s for re-keying at 50 ms each.
+    await invoke(4 * 60_000 + 10_000);
+    expect(identityChainMirror.pendingRegroups).toHaveBeenCalledWith(3_800);
+    jest.clearAllMocks();
+    await invoke(60_500);
+    expect(identityChainMirror.pendingRegroups).toHaveBeenCalledWith(10);
+    jest.clearAllMocks();
+    await invoke(60_000);
+    expect(identityChainMirror.pendingRegroups).not.toHaveBeenCalled();
+  });
+
   it('applies no NFTDelegation event once identities are on the chain', async () => {
     process.env.FEATURE_IDENTITY_CHAIN_MIRROR = 'true';
     jest.mocked(identityChainMirror.run).mockResolvedValue(report([]) as never);

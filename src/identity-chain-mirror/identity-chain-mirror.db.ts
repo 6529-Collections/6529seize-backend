@@ -6,6 +6,7 @@ import {
   DELEGATIONS_TABLE,
   IDENTITIES_TABLE,
   IDENTITY_CHAIN_FIRST_BINDINGS_TABLE,
+  IDENTITY_CHAIN_FOUNDER_WAITS_TABLE,
   IDENTITY_CHAIN_MIRROR_STATE_TABLE,
   IDENTITY_CHAIN_PLACEHOLDERS_TABLE,
   IDENTITY_CHAIN_PRINCIPALS_TABLE,
@@ -60,6 +61,10 @@ export interface MirrorState {
   readonly level_sweep_day: number | null;
   /** The sweep's place in the chain's level ranking (null: from the top). */
   readonly level_sweep_after: string | null;
+  /** The chain height the latest TDH day was first seen at. */
+  readonly levels_day_height: number | null;
+  /** The full sync's delegation phase: the next use case to walk. */
+  readonly sync_use_case: number | null;
   /** What the mirror could not write, tried again by the next run. */
   readonly retry: MirrorRetry;
 }
@@ -247,7 +252,8 @@ export class IdentityChainMirrorDb extends LazyDbAccessCompatibleService {
     >(
       `select next_height, sync_from_height, sync_phase, sync_after, last_full_sync_at,
               bindings_next_height, chain_id, placeholders_at, bindings_exact,
-              levels_tdh_day, level_sweep_day, level_sweep_after, retry_json
+              levels_tdh_day, level_sweep_day, level_sweep_after, levels_day_height,
+              sync_use_case, retry_json
        from ${IDENTITY_CHAIN_MIRROR_STATE_TABLE} where id = :id`,
       { id: STATE_ID },
       conn ? { wrappedConnection: conn } : undefined
@@ -266,6 +272,8 @@ export class IdentityChainMirrorDb extends LazyDbAccessCompatibleService {
       levels_tdh_day: numberOrNull(row.levels_tdh_day),
       level_sweep_day: numberOrNull(row.level_sweep_day),
       level_sweep_after: row.level_sweep_after ?? null,
+      levels_day_height: numberOrNull(row.levels_day_height),
+      sync_use_case: numberOrNull(row.sync_use_case),
       retry: retryOf(row.retry_json)
     };
   }
@@ -275,12 +283,16 @@ export class IdentityChainMirrorDb extends LazyDbAccessCompatibleService {
       `insert into ${IDENTITY_CHAIN_MIRROR_STATE_TABLE}
          (id, next_height, sync_from_height, sync_phase, sync_after, last_full_sync_at,
           bindings_next_height, chain_id, placeholders_at, bindings_exact,
-          levels_tdh_day, level_sweep_day, level_sweep_after, retry_json, updated_at)
+          levels_tdh_day, level_sweep_day, level_sweep_after, levels_day_height,
+          sync_use_case, retry_json, updated_at)
        values (:id, :next_height, :sync_from_height, :sync_phase, :sync_after, :last_full_sync_at,
           :bindings_next_height, :chain_id, :placeholders_at, :bindings_exact,
-          :levels_tdh_day, :level_sweep_day, :level_sweep_after, :retry_json, :now)
+          :levels_tdh_day, :level_sweep_day, :level_sweep_after, :levels_day_height,
+          :sync_use_case, :retry_json, :now)
        on duplicate key update
          next_height = values(next_height),
+         levels_day_height = values(levels_day_height),
+         sync_use_case = values(sync_use_case),
          levels_tdh_day = values(levels_tdh_day),
          level_sweep_day = values(level_sweep_day),
          level_sweep_after = values(level_sweep_after),
@@ -338,16 +350,20 @@ export class IdentityChainMirrorDb extends LazyDbAccessCompatibleService {
   }
 
   /**
-   * The chain's levels of mapped identities, as one statement: only
-   * level_raw of each profile's identities row changes (a profile without
-   * a row is left alone).
+   * The chain's levels of mapped identities as of chain height `height`,
+   * as one statement: only level_raw of each profile's identities row
+   * changes, and only where no later level was written (the mapping's
+   * level_height, set to `height` with it). A profile without a row is left
+   * alone.
    */
   async writeLevels(
-    levels: { readonly profile_id: string; readonly level_raw: number }[]
-  ): Promise<number> {
-    if (!levels.length) return 0;
+    levels: { readonly profile_id: string; readonly level_raw: number }[],
+    height: number
+  ): Promise<void> {
+    if (!levels.length) return;
     const params: Record<string, unknown> = {
-      ids: levels.map((it) => it.profile_id)
+      ids: levels.map((it) => it.profile_id),
+      height
     };
     const cases = levels
       .map((it, i) => {
@@ -356,13 +372,66 @@ export class IdentityChainMirrorDb extends LazyDbAccessCompatibleService {
         return `when :p${i} then :l${i}`;
       })
       .join(' ');
-    const result = await this.db.execute(
-      `update ${IDENTITIES_TABLE}
-       set level_raw = case profile_id ${cases} else level_raw end
-       where profile_id in (:ids)`,
+    await this.db.execute(
+      `update ${IDENTITIES_TABLE} i
+       join ${IDENTITY_CHAIN_PRINCIPALS_TABLE} m on m.profile_id = i.profile_id
+       set i.level_raw = case i.profile_id ${cases} else i.level_raw end,
+           m.level_height = :height
+       where i.profile_id in (:ids)
+         and (m.level_height is null or m.level_height <= :height)`,
       params
     );
-    return this.db.getAffectedRows(result);
+  }
+
+  /** The chain height of an identity's last level write, when known. */
+  async levelHeightOf(
+    principalId: string,
+    conn?: Conn
+  ): Promise<number | null> {
+    const row = await this.db.oneOrNull<{
+      level_height: number | string | null;
+    }>(
+      `select level_height from ${IDENTITY_CHAIN_PRINCIPALS_TABLE} where principal_id = :principalId`,
+      { principalId: principalId.toLowerCase() },
+      conn ? { wrappedConnection: conn } : undefined
+    );
+    return numberOrNull(row?.level_height);
+  }
+
+  /** An identity's level was written as of `height` (never moved back). */
+  async setLevelHeight(principalId: string, height: number, conn: Conn) {
+    await this.db.execute(
+      `update ${IDENTITY_CHAIN_PRINCIPALS_TABLE} set level_height = :height
+       where principal_id = :principalId
+         and (level_height is null or level_height < :height)`,
+      { principalId: principalId.toLowerCase(), height },
+      { wrappedConnection: conn }
+    );
+  }
+
+  /**
+   * Since when no history could tell an identity's founder: the first
+   * time asked is now.
+   */
+  async founderWaitSince(principalId: string, now: number): Promise<number> {
+    await this.db.execute(
+      `insert ignore into ${IDENTITY_CHAIN_FOUNDER_WAITS_TABLE} (principal_id, since)
+       values (:principalId, :now)`,
+      { principalId: principalId.toLowerCase(), now }
+    );
+    const row = await this.db.oneOrNull<{ since: number | string }>(
+      `select since from ${IDENTITY_CHAIN_FOUNDER_WAITS_TABLE} where principal_id = :principalId`,
+      { principalId: principalId.toLowerCase() }
+    );
+    return Number(row?.since ?? now);
+  }
+
+  /** The founder is told (or the wait is over): no more waiting. */
+  async founderWaitDone(principalId: string) {
+    await this.db.execute(
+      `delete from ${IDENTITY_CHAIN_FOUNDER_WAITS_TABLE} where principal_id = :principalId`,
+      { principalId: principalId.toLowerCase() }
+    );
   }
 
   /** The mapped profile ids of these principals (lowercase keys). */
@@ -438,6 +507,11 @@ export class IdentityChainMirrorDb extends LazyDbAccessCompatibleService {
   async clearChainMadeMappings(conn: Conn) {
     await this.db.execute(
       `delete from ${IDENTITY_CHAIN_PRINCIPALS_TABLE} where origin <> 'LEGACY'`,
+      undefined,
+      { wrappedConnection: conn }
+    );
+    await this.db.execute(
+      `delete from ${IDENTITY_CHAIN_FOUNDER_WAITS_TABLE}`,
       undefined,
       { wrappedConnection: conn }
     );
@@ -1309,18 +1383,24 @@ export class IdentityChainMirrorDb extends LazyDbAccessCompatibleService {
   // ---------------------------------------------------------------- delegations
 
   /** A wallet's delegation rows (not consolidations) become `wanted`. */
+  /**
+   * A wallet's delegation rows (not consolidations) become `wanted`; with
+   * `useCase`, only that use case's rows.
+   */
   async replaceWalletDelegations(
     wallet: string,
     wanted: DelegationRowWrite[],
-    conn: Conn
+    conn: Conn,
+    useCase?: number
   ): Promise<{ written: number; deleted: number }> {
     const opts = { wrappedConnection: conn };
     const existing = await this.db.execute<DelegationRowWrite>(
       `select block, from_address, to_address, collection, use_case, expiry, all_tokens, token_id
        from ${DELEGATIONS_TABLE}
        where from_address = :wallet and use_case <> :consolidation
+         ${useCase === undefined ? '' : 'and use_case = :useCase'}
        for update`,
-      { wallet, consolidation: USE_CASE_CONSOLIDATION },
+      { wallet, consolidation: USE_CASE_CONSOLIDATION, useCase },
       opts
     );
     const want = new Map(wanted.map((it) => [delegationKey(it), it]));
@@ -1364,14 +1444,31 @@ export class IdentityChainMirrorDb extends LazyDbAccessCompatibleService {
     return { written, deleted };
   }
 
-  /** Wallets holding delegation rows (not consolidations): for a full sync. */
-  async walletsWithDelegations(conn?: Conn): Promise<string[]> {
+  /**
+   * Wallets holding delegation rows (not consolidations), of one use case
+   * when given: for a full sync.
+   */
+  async walletsWithDelegations(
+    conn?: Conn,
+    useCase?: number
+  ): Promise<string[]> {
     const rows = await this.db.execute<{ from_address: string }>(
-      `select distinct from_address from ${DELEGATIONS_TABLE} where use_case <> :consolidation`,
-      { consolidation: USE_CASE_CONSOLIDATION },
+      `select distinct from_address from ${DELEGATIONS_TABLE}
+       where use_case <> :consolidation
+         ${useCase === undefined ? '' : 'and use_case = :useCase'}`,
+      { consolidation: USE_CASE_CONSOLIDATION, useCase },
       conn ? { wrappedConnection: conn } : undefined
     );
     return rows.map((it) => it.from_address.toLowerCase());
+  }
+
+  /** Delegation rows of a use case the chain doesn't have go. */
+  async deleteDelegationsOutside(useCases: readonly number[]) {
+    await this.db.execute(
+      `delete from ${DELEGATIONS_TABLE}
+       where use_case <> :consolidation and use_case not in (:useCases)`,
+      { consolidation: USE_CASE_CONSOLIDATION, useCases }
+    );
   }
 
   /** Principals whose 6529.io rows hold these wallets now. */

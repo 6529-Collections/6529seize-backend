@@ -18,10 +18,13 @@ import { MembershipChange } from './membership-change';
 import { ProfileSiteFollower } from './profile-site-port';
 import { WalletBindingRow } from './wallet-bindings';
 import {
+  CHAIN_DELEGATION_USE_CASES,
   feedEffects,
   IdentityChainMirror,
+  RELAUNCH_ALLOWED_ENV,
   toDelegationRow
 } from './identity-chain-mirror.service';
+import { FOUNDER_WAIT_MS } from './profile-ids';
 import {
   CHAIN_BLOCK_BASE,
   CurrentIdentityState,
@@ -110,18 +113,57 @@ class FakeDb {
     });
   }
   levelWrites: { profile_id: string; level_raw: number }[][] = [];
-  async writeLevels(levels: { profile_id: string; level_raw: number }[]) {
+  levelHeights = new Map<string, number>();
+  founderWaits = new Map<string, number>();
+  async writeLevels(
+    levels: { profile_id: string; level_raw: number }[],
+    height: number
+  ) {
     this.levelWrites.push(levels);
     let written = 0;
     for (const it of levels) {
+      const principal = Array.from(this.mapping.entries()).find(
+        ([, m]) => m.profile === it.profile_id
+      )?.[0];
+      if (!principal) continue;
+      if ((this.levelHeights.get(principal) ?? -1) > height) continue;
       for (const [key, row] of Array.from(this.rows.entries())) {
         if (row.profile_id === it.profile_id) {
           this.rows.set(key, { ...row, level_raw: it.level_raw });
+          this.levelHeights.set(principal, height);
           written++;
         }
       }
     }
     return written;
+  }
+  async levelHeightOf(principal: string) {
+    return this.levelHeights.get(principal.toLowerCase()) ?? null;
+  }
+  async setLevelHeight(principal: string, height: number) {
+    const key = principal.toLowerCase();
+    if ((this.levelHeights.get(key) ?? -1) < height) {
+      this.levelHeights.set(key, height);
+    }
+  }
+  async founderWaitSince(principal: string, now: number) {
+    if (!this.founderWaits.has(principal)) {
+      this.founderWaits.set(principal, now);
+    }
+    return this.founderWaits.get(principal)!;
+  }
+  async founderWaitDone(principal: string) {
+    this.founderWaits.delete(principal);
+  }
+  outsideDeleted: number[][] = [];
+  async deleteDelegationsOutside(useCases: number[]) {
+    this.outsideDeleted.push(useCases);
+    for (const [wallet, rows] of Array.from(this.delegations.entries())) {
+      this.delegations.set(
+        wallet,
+        rows.filter((it) => useCases.includes(it.use_case))
+      );
+    }
   }
   async profileIdsOfPrincipals(principals: string[]) {
     const result = new Map<string, string>();
@@ -313,12 +355,28 @@ class FakeDb {
     this.ratingReads.push({ target, events });
     return { inserted: rows.length, updated: 0, deleted: 0 };
   }
-  async replaceWalletDelegations(wallet: string, rows: DelegationRowWrite[]) {
-    this.delegations.set(wallet, rows);
+  async replaceWalletDelegations(
+    wallet: string,
+    rows: DelegationRowWrite[],
+    _conn?: unknown,
+    useCase?: number
+  ) {
+    const others =
+      useCase === undefined
+        ? []
+        : (this.delegations.get(wallet) ?? []).filter(
+            (it) => it.use_case !== useCase
+          );
+    this.delegations.set(wallet, [...others, ...rows]);
     return { written: rows.length, deleted: 0 };
   }
-  async walletsWithDelegations() {
-    return Array.from(this.delegations.keys());
+  async walletsWithDelegations(_conn?: unknown, useCase?: number) {
+    return Array.from(this.delegations.entries())
+      .filter(
+        ([, rows]) =>
+          useCase === undefined || rows.some((it) => it.use_case === useCase)
+      )
+      .map(([wallet]) => wallet);
   }
   async principalsOfWallets(wallets: string[]) {
     return wallets.flatMap((w) => {
@@ -361,6 +419,10 @@ type FeedPage = Omit<ChainFeedPage, 'nextHeight' | 'atHead'> & {
 };
 
 const NOTHING_TO_RETRY = { principals: [], targets: [], wallets: [] };
+
+afterEach(() => {
+  delete process.env[RELAUNCH_ALLOWED_ENV];
+});
 
 /**
  * As after a membership list: the mirror's first bindings aren't exact, so
@@ -414,7 +476,8 @@ function world(followers: ProfileSiteFollower[] = []) {
     fileHash: '0x' + 'f1'.repeat(32),
     network: null as string | null,
     headHeldAt: null as number | null,
-    finalized: 100
+    finalized: 100,
+    tdhDay: 25
   };
   const gateway = {
     // The gateway's finalized height reaches what its feed gives, unless a
@@ -489,6 +552,14 @@ function world(followers: ProfileSiteFollower[] = []) {
     }),
     getIdentityByPrincipal: jest.fn(
       async (p: string) => chain.identities.get(p) ?? null
+    ),
+    getTdh: jest.fn(async () => ({
+      read: { height: chain.finalized } as never,
+      data: { day: chain.tdhDay },
+      next: null
+    })),
+    getLevel: jest.fn(
+      async (p: string) => chain.identities.get(p)?.level ?? null
     ),
     // Active identities by the raw level the test sets, highest first.
     getLevelRanking: jest.fn(
@@ -1049,7 +1120,21 @@ describe('IdentityChainMirror', () => {
     });
   });
 
+  it('stops on another chain without the stage flag, wiping nothing', async () => {
+    const { mirror, db, chain } = world();
+    chain.network = '0x' + 'aa'.repeat(32);
+    await mirror.run({ budgetMs: 60_000 });
+    db.mapping.set(PID(98), { profile: 'made-on-this-chain', origin: 'NEW' });
+    chain.network = '0x' + 'bb'.repeat(32);
+    const report = await mirror.run({ budgetMs: 60_000 });
+    expect(report.error).toContain('another chain');
+    expect(db.state?.chain_id).toBe('0x' + 'aa'.repeat(32));
+    expect(db.mapping.has(PID(98))).toBe(true);
+    expect(db.state?.next_height).toBe(101);
+  });
+
   it('starts again on another chain, also while its import runs, but not for a lagging node', async () => {
+    process.env[RELAUNCH_ALLOWED_ENV] = 'true';
     const { mirror, db, chain, alice } = world();
     const stale = () =>
       db.bindings.set(W(9), {
@@ -1237,7 +1322,7 @@ describe('IdentityChainMirror', () => {
   });
 
   it('maps NEW and leaves the placeholder for a later merge when no history can ever say', async () => {
-    const { mirror, db, gateway, chain } = world();
+    const { mirror, db, gateway, chain, tick } = world();
     chain.importStart = 1;
     await mirror.run({ budgetMs: 60_000 });
     historyDecides(db);
@@ -1254,8 +1339,20 @@ describe('IdentityChainMirror', () => {
       founder: W(99),
       createdHeight: 20
     });
+    // One node's answer decides nothing: tried again for six hours.
+    await expect(mirror.profileIdOf(made)).rejects.toMatchObject({
+      retryLater: true,
+      reason: 'founder_unknown_yet'
+    });
+    expect(db.mapping.has(PID(99))).toBe(false);
+    tick(FOUNDER_WAIT_MS - 1);
+    await expect(mirror.profileIdOf(made)).rejects.toMatchObject({
+      reason: 'founder_unknown_yet'
+    });
+    tick(1);
     expect(await mirror.profileIdOf(made)).toBe(principalProfileId(PID(99)));
     expect(db.mapping.get(PID(99))?.origin).toBe('NEW');
+    expect(db.founderWaits.size).toBe(0);
     const report = await mirror.run({ budgetMs: 60_000 });
     expect(report.orphanedProfiles).toContain('p-maybe');
     // A binding to another identity first says no, whatever the gap.
@@ -1431,7 +1528,7 @@ describe('IdentityChainMirror', () => {
   });
 
   it('maps NEW without the import start, end to end, leaving the placeholder', async () => {
-    const { mirror, db, chain } = world();
+    const { mirror, db, chain, tick } = world();
     chain.importStart = null;
     const founder = W(89);
     db.profiles.set('p-89', {
@@ -1452,9 +1549,14 @@ describe('IdentityChainMirror', () => {
       founder
     });
     chain.identities.set(made.principalId, made);
-    const report = await mirror.run({ budgetMs: 60_000 });
+    const first = await mirror.run({ budgetMs: 60_000 });
     // The bindings come from a membership list: not exact.
     expect(db.state?.bindings_exact).toBe(false);
+    // Waited on before it is decided.
+    expect(db.mapping.has(made.principalId)).toBe(false);
+    expect(first.orphanedProfiles).toEqual([]);
+    tick(FOUNDER_WAIT_MS);
+    const report = await mirror.run({ budgetMs: 60_000 });
     expect(db.mapping.get(made.principalId)).toEqual({
       profile: principalProfileId(PID(89)),
       origin: 'NEW'
@@ -1931,10 +2033,8 @@ describe('IdentityChainMirror', () => {
   it('sweeps the levels after a TDH day, writing only level_raw of mapped identities', async () => {
     const { mirror, db, chain, alice, bob, gateway } = world();
     await mirror.run({ budgetMs: 60_000 });
-    // Day 25 was seen on the first run's reads: the next run sweeps it.
+    // The chain's day 25, read first, was swept in the first run.
     expect(db.state?.levels_tdh_day).toBe(25);
-    expect(db.state?.level_sweep_day).toBe(25);
-    await mirror.run({ budgetMs: 60_000 });
     expect(db.state?.level_sweep_day).toBeNull();
     db.levelWrites = [];
     gateway.getLevelRanking.mockClear();
@@ -1967,7 +2067,7 @@ describe('IdentityChainMirror', () => {
         ?.level_raw
     ).toBe(700);
     expect(db.mapping.has(unmapped.principalId)).toBe(false);
-    expect(second.levelsWritten).toBe(2);
+    expect(second.levelsSwept).toBe(2);
   });
 
   it('goes on with a level sweep across runs, a page at a time, and starts again for a newer day', async () => {
@@ -1977,6 +2077,14 @@ describe('IdentityChainMirror', () => {
       chain.identities.set(it.principalId, it);
     }
     await mirror.run({ budgetMs: 60_000 });
+    for (let i = 0; i < 4; i++) {
+      const it = chain.identities.get(PID(80 + i))!;
+      chain.identities.set(it.principalId, leveled(it, 100 - i, 26));
+    }
+    chain.identities.set(
+      PID(1),
+      leveled(chain.identities.get(PID(1))!, 1005, 26)
+    );
     db.state = {
       ...db.state!,
       level_sweep_day: 26,
@@ -2088,6 +2196,237 @@ describe('IdentityChainMirror', () => {
     const report = await mirror.run({ budgetMs: 60_000 });
     expect(report.error).toBeUndefined();
     expect(db.state?.next_height).toBe(101);
+  });
+
+  it('writes a big feed page in part, leaving the rest to retry, and moves on', async () => {
+    const { mirror, db, chain, gateway, tick } = world();
+    await mirror.run({ budgetMs: 60_000 });
+    const many = Array.from({ length: 2_001 }, (_, i) =>
+      principalRecord(PID(5_000 + i))
+    );
+    chain.feed.push({
+      from: 101,
+      through: 101,
+      next: 102,
+      blocks: [block(101, many)]
+    });
+    const report = await mirror.run({ budgetMs: 60 * 60_000 });
+    expect(db.state?.next_height).toBe(102);
+    expect(report.deferred).toBe(1);
+    expect(db.state?.retry.principals).toEqual([PID(7_000)]);
+    // Past the run's deadline: the rest is left too.
+    chain.feed.push({
+      from: 102,
+      through: 102,
+      next: 103,
+      blocks: [
+        block(102, [
+          principalRecord(PID(1)),
+          principalRecord(PID(2)),
+          principalRecord(PID(3))
+        ])
+      ]
+    });
+    const read = gateway.getIdentityByPrincipal.getMockImplementation()!;
+    gateway.getIdentityByPrincipal.mockImplementation(async (...args) => {
+      tick(25_000);
+      return await read(...args);
+    });
+    const late = await mirror.run({ budgetMs: 60_000 });
+    expect(db.state?.next_height).toBe(103);
+    expect(late.deferred).toBeGreaterThan(0);
+    expect(db.state?.retry.principals).toContain(PID(3));
+  });
+
+  it('leaves the rest of a page to retry once its pin is old', async () => {
+    const { mirror, db, chain, gateway, tick } = world();
+    await mirror.run({ budgetMs: 60_000 });
+    chain.feed.push({
+      from: 101,
+      through: 101,
+      next: 102,
+      blocks: [
+        block(101, [
+          principalRecord(PID(1)),
+          principalRecord(PID(2)),
+          principalRecord(PID(3))
+        ])
+      ]
+    });
+    const read = gateway.getIdentityByPrincipal.getMockImplementation()!;
+    gateway.getIdentityByPrincipal.mockImplementation(async (...args) => {
+      tick(5 * 60_000);
+      return await read(...args);
+    });
+    const report = await mirror.run({ budgetMs: 2 * 60 * 60_000 });
+    expect(db.state?.next_height).toBe(102);
+    // Two identities read in ten minutes; the third, and the wallets, wait.
+    expect(report.deferred).toBeGreaterThan(0);
+    expect(db.state?.retry.principals).toEqual([PID(3)]);
+  });
+
+  it('walks only the chain use cases, resuming the delegations where a run stopped', async () => {
+    const { mirror, db, chain, gateway, tick } = world();
+    await mirror.run({ budgetMs: 60_000 });
+    const asked = () =>
+      gateway.getDelegations.mock.calls
+        .map((it) => (it[0] as { byUseCase?: number }).byUseCase)
+        .filter((it) => it !== undefined);
+    expect(asked()).toEqual(CHAIN_DELEGATION_USE_CASES);
+    expect(db.outsideDeleted).toEqual([CHAIN_DELEGATION_USE_CASES]);
+    // A full sync whose run ends after the third use case.
+    gateway.getDelegations.mockClear();
+    db.state = {
+      ...db.state!,
+      sync_phase: 'DELEGATIONS',
+      sync_from_height: 100,
+      sync_use_case: null
+    };
+    const list = gateway.getDelegations.getMockImplementation()!;
+    gateway.getDelegations.mockImplementation(async (...args) => {
+      tick(9_000);
+      return await list(...args);
+    });
+    chain.feed.length = 0;
+    await mirror.run({ budgetMs: 60_000 });
+    const first = asked();
+    expect(first.length).toBeGreaterThan(0);
+    expect(first.length).toBeLessThan(CHAIN_DELEGATION_USE_CASES.length);
+    expect(db.state?.sync_phase).toBe('DELEGATIONS');
+    expect(db.state?.sync_use_case).toBe(
+      CHAIN_DELEGATION_USE_CASES[first.length]
+    );
+    gateway.getDelegations.mockClear();
+    gateway.getDelegations.mockImplementation(list);
+    await mirror.run({ budgetMs: 60_000 });
+    expect(asked()[0]).toBe(CHAIN_DELEGATION_USE_CASES[first.length]);
+    expect(db.state?.sync_phase).toBeNull();
+    expect(db.state?.sync_use_case).toBeNull();
+  });
+
+  it('sweeps after a TDH day the chain says began, though the feed is quiet', async () => {
+    const { mirror, db, chain, gateway, alice } = world();
+    await mirror.run({ budgetMs: 60_000 });
+    await mirror.run({ budgetMs: 60_000 });
+    expect(db.state?.level_sweep_day).toBeNull();
+    chain.tdhDay = 26;
+    chain.finalized = 130;
+    chain.identities.set(alice.principalId, leveled(alice, 3000, 26));
+    gateway.getLevelRanking.mockClear();
+    await mirror.run({ budgetMs: 60_000 });
+    expect(db.state).toMatchObject({
+      levels_tdh_day: 26,
+      levels_day_height: 130,
+      level_sweep_day: null
+    });
+    expect(gateway.getLevelRanking).toHaveBeenCalled();
+    expect(db.rows.get(`${A}-${B}`)?.level_raw).toBe(3000);
+  });
+
+  it('sweeps no ranking from before the day, nor a level of an earlier day', async () => {
+    const { mirror, db, chain, alice, gateway } = world();
+    await mirror.run({ budgetMs: 60_000 });
+    await mirror.run({ budgetMs: 60_000 });
+    chain.tdhDay = 26;
+    chain.finalized = 130;
+    // The node ranking is still at 120, from before day 26 began.
+    const sweep = (rankedAt: number, day: number) => {
+      chain.identities.set(alice.principalId, leveled(alice, 3000, day));
+      return rankedAt;
+    };
+    const rank = gateway.getLevelRanking.getMockImplementation()!;
+    gateway.getLevelRanking.mockImplementation(
+      async (opts?: { after?: string | null; limit?: number }) => {
+        const rankedAt = sweep(120, 26);
+        const page = await rank(opts);
+        return { ...page, data: { ...page.data, rankedAt } };
+      }
+    );
+    await mirror.run({ budgetMs: 60_000 });
+    expect(db.state?.level_sweep_day).toBe(26);
+    expect(db.rows.get(`${A}-${B}`)?.level_raw).not.toBe(3000);
+    // Ranked after the day began, but its levels are of day 25: not yet.
+    gateway.getLevelRanking.mockImplementation(
+      async (opts?: { after?: string | null; limit?: number }) => {
+        const rankedAt = sweep(130, 25);
+        const page = await rank(opts);
+        return { ...page, data: { ...page.data, rankedAt } };
+      }
+    );
+    await mirror.run({ budgetMs: 60_000 });
+    expect(db.state?.level_sweep_day).toBe(26);
+    // Both right: swept.
+    gateway.getLevelRanking.mockImplementation(
+      async (opts?: { after?: string | null; limit?: number }) => {
+        const rankedAt = sweep(130, 26);
+        const page = await rank(opts);
+        return { ...page, data: { ...page.data, rankedAt } };
+      }
+    );
+    await mirror.run({ budgetMs: 60_000 });
+    expect(db.state?.level_sweep_day).toBeNull();
+    expect(db.rows.get(`${A}-${B}`)?.level_raw).toBe(3000);
+  });
+
+  it('never writes a level older than the one the row has', async () => {
+    const { mirror, db, chain, alice, gateway } = world();
+    await mirror.run({ budgetMs: 60_000 });
+    await mirror.run({ budgetMs: 60_000 });
+    // The feed wrote alice's level as of 150.
+    db.levelHeights.set(alice.principalId, 150);
+    db.rows.set(`${A}-${B}`, { ...db.rows.get(`${A}-${B}`)!, level_raw: 7777 });
+    // A sweep ranked at 130 doesn't go over it.
+    chain.tdhDay = 26;
+    chain.finalized = 130;
+    chain.identities.set(alice.principalId, leveled(alice, 3000, 26));
+    await mirror.run({ budgetMs: 60_000 });
+    expect(db.state?.level_sweep_day).toBeNull();
+    expect(db.rows.get(`${A}-${B}`)?.level_raw).toBe(7777);
+    // Nor does an identity read at 130.
+    db.state = {
+      ...db.state!,
+      retry: { principals: [alice.principalId], targets: [], wallets: [] }
+    };
+    await mirror.run({ budgetMs: 60_000 });
+    expect(db.rows.get(`${A}-${B}`)?.level_raw).toBe(7777);
+    // One read at 160 does, and moves the height on.
+    chain.finalized = 160;
+    chain.identities.set(alice.principalId, leveled(alice, 3100, 26));
+    db.state = {
+      ...db.state!,
+      retry: { principals: [alice.principalId], targets: [], wallets: [] }
+    };
+    gateway.getLevelRanking.mockClear();
+    await mirror.run({ budgetMs: 60_000 });
+    expect(db.rows.get(`${A}-${B}`)?.level_raw).toBe(3100);
+    expect(db.levelHeights.get(alice.principalId)).toBe(160);
+  });
+
+  it('reads a level the ranking leaves out', async () => {
+    const { mirror, db, chain, alice, gateway } = world();
+    await mirror.run({ budgetMs: 60_000 });
+    await mirror.run({ budgetMs: 60_000 });
+    chain.tdhDay = 26;
+    chain.identities.set(alice.principalId, leveled(alice, 3000, 26));
+    const rank = gateway.getLevelRanking.getMockImplementation()!;
+    gateway.getLevelRanking.mockImplementation(
+      async (opts?: { after?: string | null; limit?: number }) => {
+        const page = await rank(opts);
+        return {
+          ...page,
+          data: {
+            ...page.data,
+            rows: page.data.rows.map((row) => ({
+              ...row,
+              identity: { ...row.identity, level: null }
+            }))
+          }
+        };
+      }
+    );
+    await mirror.run({ budgetMs: 60_000 });
+    expect(gateway.getLevel).toHaveBeenCalledWith(alice.principalId);
+    expect(db.rows.get(`${A}-${B}`)?.level_raw).toBe(3000);
   });
 
   it('starts the keys to retry again with a full sync', async () => {
@@ -2497,17 +2836,22 @@ describe('IdentityChainMirror', () => {
     expect(db.bindings.size).toBe(0);
   });
 
-  it('runs no profile site follower in the middle of a full sync', async () => {
+  it('runs no profile site follower before the first full sync ends, and does during a later one', async () => {
     const calls: unknown[] = [];
-    const { mirror, db } = world([
+    const { mirror, db, gateway } = world([
       async (port) => {
         calls.push(port);
       }
     ]);
+    gateway.listIdentities.mockRejectedValueOnce(new Error('timeout'));
+    await mirror.run({ budgetMs: 60_000 });
+    expect(db.state?.last_full_sync_at).toBeNull();
+    expect(await mirror.followProfileSites()).toEqual([]);
+    expect(calls).toHaveLength(0);
     await mirror.run({ budgetMs: 60_000 });
     db.state = { ...db.state!, sync_phase: 'DELEGATIONS' };
     expect(await mirror.followProfileSites()).toEqual([]);
-    expect(calls).toHaveLength(0);
+    expect(calls).toHaveLength(1);
   });
 
   it('runs the profile site followers when asked, after a full sync', async () => {
@@ -2578,14 +2922,22 @@ describe('feedEffects', () => {
         valueFields: { delegate: W(9) }
       }
     ]);
-    // A rating's ends are refreshed as identities too (their totals moved).
-    expect(Array.from(effects.principals).sort()).toEqual([
-      PID(1),
-      PID(2),
-      PID(3)
-    ]);
+    // A rating's target is refreshed (its totals moved); its rater isn't.
+    expect(Array.from(effects.principals).sort()).toEqual([PID(1), PID(3)]);
     expect(Array.from(effects.wallets)).toEqual([A]);
-    expect(Array.from(effects.ratingTargets).sort()).toEqual([PID(2), PID(3)]);
+    expect(Array.from(effects.ratingTargets)).toEqual([PID(3)]);
+    // Without a field naming the target, every principal it names.
+    const unnamed = feedEffects([
+      {
+        family: '0x0701',
+        name: 'Rating',
+        key: '0x',
+        value: null,
+        keyFields: { rater: PID(2), principal: PID(4) },
+        valueFields: null
+      }
+    ]);
+    expect(Array.from(unnamed.ratingTargets).sort()).toEqual([PID(2), PID(4)]);
     expect(Array.from(effects.delegationHolders).sort()).toEqual(
       [B, W(9)].sort()
     );
