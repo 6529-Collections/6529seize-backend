@@ -2,6 +2,7 @@ jest.mock('@/priority-alerts.context', () => ({
   sendPriorityAlertIfConfigured: jest.fn().mockResolvedValue(undefined)
 }));
 
+import { Logger } from '@/logging';
 import { sendPriorityAlertIfConfigured } from '@/priority-alerts.context';
 import type { MintStateWriter } from './mint-log-apply';
 import type { MintStateReader } from './mint-log-capture';
@@ -877,5 +878,19 @@ describe('MintLogRecorder when the log itself fails', () => {
     );
     await expect(log.write(media(), upload(fake))).resolves.toBe('uploaded');
     expect(fake.state.claim).toHaveLength(1);
+  });
+});
+
+describe('MintLogRecorder shadow record warnings', () => {
+  it('name the wallet, so an admin without a record can be found', async () => {
+    const warn = jest.spyOn(Logger.get('MINT_LOG'), 'warn');
+    const fake = new Fake();
+    await recorder(fake, { shadow: true }).write(spec(), async () =>
+      fake.addRow(1)
+    );
+    expect(warn).toHaveBeenCalledWith(
+      `[MINT_LOG_SHADOW_RECORD] [dist.airdrops] [missing] [wallet ${ADMIN}] this write needs a signed mint.admin record`
+    );
+    warn.mockRestore();
   });
 });

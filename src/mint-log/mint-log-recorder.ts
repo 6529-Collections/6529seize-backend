@@ -390,7 +390,7 @@ export class MintLogRecorder {
         throw new InvalidSignedRecordException(reason, detail);
       }
       logger.warn(
-        `[MINT_LOG_SHADOW_RECORD] [${spec.kind}] [${reason}] ${detail}`
+        `[MINT_LOG_SHADOW_RECORD] [${spec.kind}] [${reason}] [wallet ${spec.actor.wallet ?? 'none'}] ${detail}`
       );
       return null;
     };

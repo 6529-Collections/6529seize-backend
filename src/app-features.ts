@@ -45,10 +45,12 @@ export class AppFeatures {
    * Mint log, primary (the switch): admin writes need a signed `mint.admin`
    * record (collaboration invites and replies a `mint.user` record once
    * MINT_LOG_COLLAB_RECORDS is on), and a write fails unless its log entry
-   * is queued. Not usable yet: until the
-   * signed-records module binds the principal bindings (and the frontend its
-   * context source), it answers 503 to every admin minting write. The API
-   * logs the state at start ([MINT_LOG] ... [RECORD VERIFIER ...]).
+   * is queued. Not usable yet: until the principal bindings and the site's
+   * principal source are bound, it refuses every admin minting write from
+   * the site (400 INVALID_SIGNED_RECORD, since the site sends no record yet;
+   * 503 for a record that cannot be checked). NextGen uploads and service
+   * writes are not refused. The API logs the state at start
+   * ([MINT_LOG] ... [RECORD VERIFIER ...]).
    * Rollback: set it to false; the shadow log keeps running if
    * MINT_LOG_SHADOW is on.
    */

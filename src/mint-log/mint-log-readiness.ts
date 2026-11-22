@@ -14,8 +14,11 @@ export interface MintLogReadiness {
 
 /**
  * What the mint log can do as configured. PRIMARY needs the principal
- * bindings from the signed-records module; until they are bound, PRIMARY
- * answers 503 to every admin minting write.
+ * bindings and the site's principal source. Until then it refuses every
+ * admin minting write from the site: with no record header (the site sends
+ * none yet) the answer is 400 INVALID_SIGNED_RECORD, and a header that
+ * cannot be checked gets 503. NextGen uploads (wallet-signed) and service
+ * writes are not refused.
  */
 export function mintLogReadiness(
   features: Pick<
@@ -34,7 +37,7 @@ export function mintLogReadiness(
   const problems: string[] = [];
   if (mode === 'primary' && !recordVerifier) {
     problems.push(
-      'PRIMARY is on but no principal bindings are bound: every admin minting write answers 503'
+      'PRIMARY is on but no principal bindings are bound: admin minting writes from the site are refused (400 INVALID_SIGNED_RECORD without a record, 503 with one); NextGen uploads and service writes go on'
     );
   }
   if (mode === 'shadow' && !recordVerifier) {

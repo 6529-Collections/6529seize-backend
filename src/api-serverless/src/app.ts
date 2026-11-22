@@ -542,7 +542,7 @@ async function initializeApp() {
   // (ERROR log, EMF metric) and treated as not started; nothing else changes.
   logger.info(describeE2eeSuiteTransition());
   // What the mint log can do as configured; PRIMARY without bound principal
-  // bindings answers 503 to every admin minting write.
+  // bindings refuses every admin minting write from the site.
   logger.info(describeMintLogReadiness());
   await initRedis({ failFast: API_REDIS_FAIL_FAST_OPTIONS });
   // Plain-text sign-in challenges issued before this build stay valid for a
