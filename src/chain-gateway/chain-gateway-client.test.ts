@@ -364,10 +364,70 @@ describe('ChainGatewayClient reads', () => {
         limit: 20,
         families: ['0x0102', '0x0120']
       })
-    ).toEqual({ from: 100, through: 119, blocks: [], next: 120 });
+    ).toEqual({
+      from: 100,
+      through: 119,
+      blocks: [],
+      next: '120',
+      nextHeight: 120,
+      atHead: false
+    });
     expect(path(calls[0])).toBe('/v1/feed');
     expect(param(calls[0], 'families')).toBe('0x0102,0x0120');
     expect(param(calls[0], 'height')).toBeNull();
+  });
+
+  it('passes a cursor inside a block back as given, and keeps the whole height', async () => {
+    const block = (complete: boolean) => ({
+      height: 120,
+      slot: 0,
+      root: '0x',
+      time: 1,
+      complete,
+      recordsFrom: complete ? 4096 : 0,
+      records: []
+    });
+    const answers = [
+      {
+        status: 200,
+        json: {
+          read: stamp(130),
+          data: { from: 120, through: 119, blocks: [block(false)] },
+          next: '120:4096'
+        }
+      },
+      {
+        status: 200,
+        json: {
+          read: stamp(130),
+          data: { from: '120:4096', through: 120, blocks: [block(true)] },
+          next: 121
+        }
+      },
+      {
+        status: 200,
+        json: {
+          read: stamp(130),
+          data: { from: 131, through: 130, blocks: [] },
+          next: 131
+        }
+      }
+    ];
+    const { client, calls } = setup(() => answers.shift()!);
+    const first = await client.getChanges(120);
+    expect(first).toEqual(
+      expect.objectContaining({
+        next: '120:4096',
+        nextHeight: 120,
+        atHead: false
+      })
+    );
+    const second = await client.getChanges(first.next);
+    expect(param(calls[1], 'from')).toBe('120:4096');
+    expect(second).toEqual(
+      expect.objectContaining({ next: '121', nextHeight: 121, atHead: false })
+    );
+    expect((await client.getChanges(131)).atHead).toBe(true);
   });
 
   it('throws gone when the feed no longer holds the height', async () => {

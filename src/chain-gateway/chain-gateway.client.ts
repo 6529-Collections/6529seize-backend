@@ -6,6 +6,7 @@ import {
   ChainDelegationQuery,
   ChainDraft,
   ChainDraftRequest,
+  ChainFeedCursor,
   ChainFeedPage,
   ChainHandle,
   ChainHead,
@@ -356,6 +357,11 @@ function bindingChanges(
       principalId: principal === null ? null : lower(principal)
     };
   });
+}
+
+/** The height a feed cursor (a height, or `height:index`) starts in. */
+export function feedCursorHeight(cursor: ChainFeedCursor): number {
+  return Number(String(cursor).split(':')[0]);
 }
 
 /**
@@ -1039,26 +1045,34 @@ export class ChainGatewayClient {
    * code `gone` when the gateway no longer holds `fromHeight`: re-list.
    */
   async getChanges(
-    fromHeight: number,
+    from: ChainFeedCursor,
     opts: { readonly limit?: number; readonly families?: string[] } = {}
   ): Promise<ChainFeedPage> {
     const path = '/v1/feed';
     const { status, json } = await this.send('GET', path, {
-      from: fromHeight,
+      from: String(from),
       limit: opts.limit,
       families: opts.families?.join(',')
     });
-    const answer = this.toAnswer<Omit<ChainFeedPage, 'next'>>(
-      path,
-      status,
-      json
-    );
+    const answer = this.toAnswer<{
+      through: number;
+      blocks?: ChainFeedPage['blocks'];
+      ranges?: unknown;
+    }>(path, status, json);
     if (!answer) {
       throw new ChainGatewayError(`${path}: not found`, 404, 'not_found', path);
     }
+    const through = Number(answer.data.through);
+    const blocks = answer.data.blocks ?? [];
+    const nextHeight = through + 1;
     return {
       ...answer.data,
-      next: answer.next !== null ? Number(answer.next) : answer.data.through + 1
+      from,
+      through,
+      blocks,
+      next: answer.next ?? nextHeight,
+      nextHeight,
+      atHead: !blocks.length && through < feedCursorHeight(from)
     };
   }
 
