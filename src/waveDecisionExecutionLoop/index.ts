@@ -11,6 +11,7 @@ import {
   decisionLoopBudget,
   finalDispatchBudgetMs
 } from './decision-loop-budget';
+import { sendSettlementsBestEffort } from './waves-settlement-step';
 
 const logger = Logger.get('WAVE_DECISION_EXECUTION_LOOP');
 
@@ -54,6 +55,7 @@ export const handler = sentryContext.wrapLambdaHandler(
             }
           ]);
         } finally {
+          await sendSettlementsBestEffort(remainingMillis?.());
           if (
             !context?.getRemainingTimeInMillis ||
             context.getRemainingTimeInMillis() > 5000

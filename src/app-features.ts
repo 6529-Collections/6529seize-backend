@@ -36,6 +36,14 @@ export class AppFeatures {
       (process.env.FEATURE_PROFILE_CMS_WALLET_GALLERY ?? 'true') === 'true'
     );
   }
+
+  /**
+   * The wave decision loop also sends a SETTLEMENT_REQUEST for each decision
+   * result due on the 6529 chain (src/waves-settlement).
+   */
+  public isWavesSettlementSenderEnabled(): boolean {
+    return this.isFeatureEnabled('WAVES_SETTLEMENT_SENDER');
+  }
 }
 
 export const appFeatures = new AppFeatures();

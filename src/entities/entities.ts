@@ -285,6 +285,7 @@ export { PushNotificationCancellationEntity } from './IPushNotificationCancellat
 
 export * from './ICompetitionRuntime';
 export { CompetitionWorkerCursorEntity } from './ICompetitionWorkerCursor';
+export { WavesSettlementSendEntity } from './IWavesSettlementSend';
 
 export * from './ICompetitionCommand';
 export * from './ICompetitionEntryContentVersion';
