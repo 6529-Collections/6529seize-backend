@@ -20,7 +20,7 @@ import {
 } from '../sealed-crypto';
 
 /**
- * The interim record log (S2): until the relays carry per-person streams,
+ * The interim record log: until the relays carry per-person streams,
  * 6529.io's service identity batches signed records into hash-chained
  * segment files, pins them to IPFS, archives them to Arweave and posts each
  * segment's head as a signed drop in one public wave. Public streams go to
