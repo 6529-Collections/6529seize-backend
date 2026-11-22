@@ -1,15 +1,19 @@
 import { TypedDataEncoder, Wallet } from 'ethers';
 import { E2EE_GRANT_DOMAIN } from '@/e2ee/e2ee-grant';
 import fc from 'fast-check';
+import { GRANT_MAX_LIFETIME_SECONDS } from './device-grant-message';
 import {
   APP_DEVICE_GRANT_DOMAIN,
   APP_DEVICE_GRANT_TYPES,
+  APP_GRANT_STATEMENTS,
   AppDeviceGrant,
+  AppGrantStatementWording,
   buildAppDeviceGrantMessage,
   computeAppDeviceGrantId,
   findAppDeviceGrantProblem,
   findAppDeviceGrantRegistrationProblem,
   isAppDeviceGrantMessage,
+  isAppDeviceGrantStatement,
   parseAppDeviceGrantMessage,
   renderAppDeviceGrantStatement,
   serializeAppDeviceGrantMessage,
@@ -273,6 +277,90 @@ describe('app device grant', () => {
           expect(() => parseAppDeviceGrantMessage(text)).not.toThrow();
         })
       );
+    });
+  });
+
+  describe('statement wordings', () => {
+    const DAY = 24 * 60 * 60;
+    // A wording that replaces the current one for grants issued from T on.
+    const T = ISSUED_AT + 30 * DAY;
+    const NEXT: AppGrantStatementWording = {
+      from: T,
+      render: (grant) => `Next wording, until ${grant.expires_at}.`
+    };
+    const wordings = [NEXT, ...APP_GRANT_STATEMENTS];
+
+    it('gives every grant the one wording there is today', () => {
+      const later = signingGrant({
+        issued_at: ISSUED_AT + 365 * DAY,
+        expires_at: EXPIRES_AT + 365 * DAY
+      });
+      expect(APP_GRANT_STATEMENTS).toHaveLength(1);
+      expect(renderAppDeviceGrantStatement(signingGrant())).toBe(
+        SIGNING_STATEMENT
+      );
+      expect(renderAppDeviceGrantStatement(later)).toMatch(
+        /^Turn on signed messages on this device until /
+      );
+    });
+
+    it('keeps a grant issued before a new wording on the old text', () => {
+      const old = signingGrant();
+      expect(renderAppDeviceGrantStatement(old, wordings)).toBe(
+        SIGNING_STATEMENT
+      );
+      expect(isAppDeviceGrantStatement(SIGNING_STATEMENT, old, wordings)).toBe(
+        true
+      );
+      expect(isAppDeviceGrantStatement(NEXT.render(old), old, wordings)).toBe(
+        false
+      );
+      // Its id and signature are unchanged.
+      const message = buildAppDeviceGrantMessage(
+        old,
+        renderAppDeviceGrantStatement(old, wordings)
+      );
+      expect(computeAppDeviceGrantId(message)).toBe(SIGNING_GRANT_ID);
+    });
+
+    it('gives a grant issued from the new wording on the new text only', () => {
+      const fresh = signingGrant({
+        issued_at: T,
+        expires_at: T + 180 * DAY
+      });
+      expect(renderAppDeviceGrantStatement(fresh, wordings)).toBe(
+        NEXT.render(fresh)
+      );
+      expect(
+        isAppDeviceGrantStatement(NEXT.render(fresh), fresh, wordings)
+      ).toBe(true);
+      expect(
+        isAppDeviceGrantStatement(
+          renderAppDeviceGrantStatement(fresh),
+          fresh,
+          wordings
+        )
+      ).toBe(false);
+    });
+
+    it('lets the old text lapse with the last grant issued under it', () => {
+      const last = signingGrant({
+        issued_at: T - 1,
+        expires_at: Math.floor((T - 1 + GRANT_MAX_LIFETIME_SECONDS) / 60) * 60
+      });
+      const text = renderAppDeviceGrantStatement(last, wordings);
+      expect(text).toBe(renderAppDeviceGrantStatement(last));
+      expect(isAppDeviceGrantStatement(text, last, wordings)).toBe(true);
+      expect(findAppDeviceGrantProblem(last, last.expires_at - 60)).toBeNull();
+      expect(last.expires_at).toBeLessThanOrEqual(T + 181 * DAY);
+      expect(findAppDeviceGrantProblem(last, T + 181 * DAY)).toBe('expired');
+      // No grant under it lasts longer.
+      expect(
+        findAppDeviceGrantProblem(
+          { ...last, expires_at: last.expires_at + 60 },
+          NOW_SECONDS
+        )
+      ).toBe('lifetime');
     });
   });
 });

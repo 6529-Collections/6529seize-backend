@@ -169,25 +169,47 @@ const renderAppGrantStatementDraft1: StatementRenderer = (grant) =>
   `No transaction, no gas, no token approvals. ` +
   keysNote(grant);
 
+/** A wording of the statement and the grants it is for. */
+export interface AppGrantStatementWording {
+  /** Grants issued at or after this (seconds) use it, until a newer one. */
+  readonly from: number;
+  readonly render: StatementRenderer;
+}
+
 /**
- * Statements, newest first. New grants use the first; verification accepts
- * every entry, so grants signed under an earlier wording keep verifying. To
- * change the wording after release, add a renderer at the front and keep the
- * old ones.
+ * Wordings, newest first. A grant's statement is the wording in force when
+ * it was issued: the newest whose `from` is at or before its issued_at.
+ *
+ * To change the wording: add the new one at the front, with `from` a time
+ * after every client that renders it (web, desktop, CLI) has shipped it, and
+ * keep the old ones. New grants then take the new text, and a grant issued
+ * under an old one keeps verifying until it expires, at most
+ * GRANT_MAX_LIFETIME_SECONDS (181 days) after it was issued. The validator's
+ * wave-events (AppGrant::statement) and the frontend's
+ * lib/device-signing/app-grant.ts follow the same rule with the same
+ * wordings and times.
  */
-const APP_GRANT_STATEMENTS: readonly StatementRenderer[] = [
-  renderAppGrantStatementDraft1
+export const APP_GRANT_STATEMENTS: readonly AppGrantStatementWording[] = [
+  { from: 0, render: renderAppGrantStatementDraft1 }
 ];
 
-export function renderAppDeviceGrantStatement(grant: AppDeviceGrant): string {
-  return APP_GRANT_STATEMENTS[0](grant);
+/** The statement a grant carries: the wording in force at its issued_at. */
+export function renderAppDeviceGrantStatement(
+  grant: AppDeviceGrant,
+  wordings: readonly AppGrantStatementWording[] = APP_GRANT_STATEMENTS
+): string {
+  const wording =
+    wordings.find((w) => w.from <= grant.issued_at) ??
+    wordings[wordings.length - 1];
+  return wording.render(grant);
 }
 
 export function isAppDeviceGrantStatement(
   statement: string,
-  grant: AppDeviceGrant
+  grant: AppDeviceGrant,
+  wordings: readonly AppGrantStatementWording[] = APP_GRANT_STATEMENTS
 ): boolean {
-  return APP_GRANT_STATEMENTS.some((render) => render(grant) === statement);
+  return renderAppDeviceGrantStatement(grant, wordings) === statement;
 }
 
 export function buildAppDeviceGrantMessage(
