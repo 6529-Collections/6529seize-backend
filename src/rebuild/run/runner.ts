@@ -131,7 +131,7 @@ function secret(): string {
 
 function gitHead(repoRoot: string): string | null {
   const result = spawnSync(
-    'git',
+    'git', // NOSONAR -- the developer's own git from PATH; no shell, and every argument is fixed.
     ['-C', repoRoot, 'rev-parse', '--short', 'HEAD'],
     {
       encoding: 'utf8',

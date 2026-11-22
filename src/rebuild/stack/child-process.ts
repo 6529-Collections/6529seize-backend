@@ -56,12 +56,21 @@ function guardNodeOptions(repoRoot: string): string {
     .join(' ');
 }
 
+/** Windows' own taskkill, by its full path rather than from PATH. */
+function taskkill(): string {
+  return path.join(
+    process.env.SystemRoot ?? 'C:\\Windows',
+    'System32',
+    'taskkill.exe'
+  );
+}
+
 /** Ends a process this run started, with its children on Windows. */
 export function endProcess(pid: number): void {
   if (process.platform === 'win32') {
     // taskkill can hang on a busy server; it gets a minute, then the
     // caller's fallback ends the process itself.
-    spawnSync('taskkill', ['/PID', String(pid), '/T', '/F'], {
+    spawnSync(taskkill(), ['/PID', String(pid), '/T', '/F'], {
       windowsHide: true,
       timeout: 60_000
     });
