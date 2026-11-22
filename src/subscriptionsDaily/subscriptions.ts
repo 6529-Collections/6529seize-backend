@@ -50,6 +50,7 @@ import {
   saveReport
 } from '@/subscriptions-identity/writers/identity-reports';
 import { journalCheckpoint } from '@/subscriptions-identity/timeline/journal';
+import { verifyPostedJournal } from '@/subscriptions-identity/opening/rebuild';
 import { mirrorIdentityDirectory } from '@/subscriptions-identity/identity/identity-directory';
 import { identityOfLegacyKeys } from '@/subscriptions-identity/writers/legacy-key-identities';
 import {
@@ -181,6 +182,17 @@ export async function updateSubscriptions() {
       logger.errorWithCode(
         'SUBSCRIPTIONS_JOURNAL_CHECKPOINT_FAILED',
         `[JOURNAL CHECKPOINT FAILED] ${(error as Error).message}`
+      );
+    }
+    // The day's check of the posted journal (once the records wave can be
+    // read): money, Ethereum and signed records. Failures alert.
+    try {
+      const verified = await verifyPostedJournal();
+      logger.info(`[JOURNAL VERIFY] ${verified}`);
+    } catch (error) {
+      logger.errorWithCode(
+        'SUBSCRIPTIONS_JOURNAL_VERIFY_FAILED',
+        `[JOURNAL VERIFY FAILED] the posted journal could not be checked: ${(error as Error).message}`
       );
     }
   }

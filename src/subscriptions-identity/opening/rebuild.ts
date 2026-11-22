@@ -37,6 +37,7 @@ import {
   SignedEventLookup,
   verifyJournal
 } from '../timeline/journal-verify';
+import { backendEthereumFacts } from '../timeline/journal-verify-ethereum';
 import { sha256Hex } from './opening-file';
 import {
   loadOpeningFiles,
@@ -82,6 +83,53 @@ let boundSource: (() => JournalSource) | null = null;
  */
 export function setJournalSource(source: (() => JournalSource) | null): void {
   boundSource = source;
+}
+
+/** Whether a records-wave source is bound (the daily check runs only then). */
+export function isJournalSourceBound(): boolean {
+  return boundSource !== null;
+}
+
+/**
+ * The daily check of the posted journal: the loaded opening's writes,
+ * verified against their money rules, the opening file, Ethereum and their
+ * signed records (verifyJournal), alerting on any failure. It reads the
+ * records wave, so it runs only once a source is bound, and says so
+ * otherwise.
+ */
+export async function verifyPostedJournal(
+  params: { readonly ethereum?: EthereumFacts; readonly fetch?: Fetcher } = {}
+): Promise<'not-bound' | 'no-opening' | 'passed' | 'failed'> {
+  if (!boundSource) {
+    logger.info(
+      '[JOURNAL VERIFY] not run: no records-wave source is bound to read the posted journal'
+    );
+    return 'not-bound';
+  }
+  const [state] = await sqlExecutor.execute<{ opening_sha256: string }>(
+    `SELECT opening_sha256 FROM ${SUBSCRIPTIONS_ID_STATE_TABLE} WHERE id = :id`,
+    { id: OPENING_STATE_ID }
+  );
+  if (!state) {
+    return 'no-opening';
+  }
+  const { bodies, events } = await readJournal(boundSource());
+  const named = bodies
+    .filter(
+      (b) =>
+        b.kind === 'opening' && b.inputs.opening_sha256 === state.opening_sha256
+    )
+    .pop();
+  const opening = named
+    ? (await fetchNamedOpening(named, params.fetch ?? publicFetcher)).parsed
+    : null;
+  const report = await verifyJournal(bodies, {
+    openingSha256: state.opening_sha256,
+    opening: opening?.opening,
+    ethereum: params.ethereum ?? backendEthereumFacts(),
+    events: events ?? undefined
+  });
+  return alertOnJournalFailures(report) ? 'passed' : 'failed';
 }
 
 export function boundJournalSource(): JournalSource {

@@ -577,6 +577,57 @@ const sharedRecordLog = new RecordLogWriter(recordLogDb, {
   }
 });
 
+/** The writes that move money, which the verifier's rules check as they are made. */
+const MONEY_KINDS: readonly JournalKind[] = ['top-up', 'redemption', 'fold'];
+
+/**
+ * Checks a money write against the verifier's rules for its kind before
+ * its entries are appended: a top-up moves the balance by its amount, a
+ * redemption by the mint price per charge, a fold sums. A write that breaks
+ * them alerts and fails, so it is never made. An identity the write leaves
+ * unchanged has its balance as it is now, which is its balance before.
+ */
+async function assertMoneyRules(
+  write: JournalWrite,
+  bodies: readonly JournalBody[],
+  options: DbQueryOptions
+): Promise<void> {
+  if (!MONEY_KINDS.includes(write.kind)) {
+    return;
+  }
+  const { verifyEntryMoney } = await import('./journal-verify');
+  const named = [write.inputs.identity_key, write.inputs.wallet].filter(
+    (key): key is string => typeof key === 'string'
+  );
+  const balances = new Map<string, number>();
+  if (named.length > 0) {
+    const rows = await sqlExecutor.execute<{
+      identity_key: string;
+      balance: number | string;
+    }>(
+      `SELECT identity_key, balance FROM ${SUBSCRIPTIONS_ID_BALANCES_TABLE}
+        WHERE identity_key IN (:named)`,
+      { named },
+      options
+    );
+    for (const row of rows) {
+      balances.set(row.identity_key, Number(row.balance));
+    }
+  }
+  const failures = verifyEntryMoney(bodies, (identity) =>
+    named.includes(identity) ? (balances.get(identity) ?? null) : undefined
+  );
+  if (failures.length > 0) {
+    logger.errorWithCode(
+      'SUBSCRIPTIONS_JOURNAL_VERIFY_FAILED',
+      `[JOURNAL MONEY RULE BROKEN] ${write.kind}: ${failures.slice(0, 3).join('; ')}`
+    );
+    throw new Error(
+      `A ${write.kind} write breaks the journal's money rules: ${failures.join('; ')}`
+    );
+  }
+}
+
 /**
  * Appends a write's journal entries in its own transaction (options must
  * carry the transaction's connection), as the write's last step. Returns
@@ -609,6 +660,7 @@ export async function journal(
     [...(write.rekeys ?? [])],
     write.spread
   );
+  await assertMoneyRules(write, bodies, options);
   const lane = mode === 'truth' ? JOURNAL_LANE : JOURNAL_SHADOW_LANE;
   try {
     await sharedRecordLog.append(
