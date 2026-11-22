@@ -461,6 +461,105 @@ describe('ChainGatewayClient reads', () => {
     expect((await client.getChanges(131)).atHead).toBe(true);
   });
 
+  it.each([
+    ['blocks that are not a list', { through: 120, blocks: 'none' }, null],
+    [
+      'blocks out of order',
+      {
+        through: 121,
+        blocks: [
+          {
+            height: 121,
+            slot: 0,
+            root: '0x',
+            time: 1,
+            complete: true,
+            records: []
+          },
+          {
+            height: 120,
+            slot: 0,
+            root: '0x',
+            time: 1,
+            complete: true,
+            records: []
+          }
+        ]
+      },
+      null
+    ],
+    [
+      'a next inside a block the page does not end in',
+      {
+        through: 120,
+        blocks: [
+          {
+            height: 120,
+            slot: 0,
+            root: '0x',
+            time: 1,
+            complete: true,
+            records: []
+          }
+        ]
+      },
+      '121:4096'
+    ],
+    [
+      'a cut block with a whole next',
+      {
+        through: 119,
+        blocks: [
+          {
+            height: 120,
+            slot: 0,
+            root: '0x',
+            time: 1,
+            complete: false,
+            records: []
+          }
+        ]
+      },
+      '120'
+    ]
+  ])('refuses a feed page with %s', async (_name, data, next) => {
+    const { client } = setup(() => ({
+      status: 200,
+      json: { read: stamp(130), data, next }
+    }));
+    await expect(client.getChanges(120)).rejects.toMatchObject({
+      code: 'bad_answer'
+    });
+  });
+
+  it('says the head is reached on an empty page through its start', async () => {
+    const { client } = setup(() => ({
+      status: 200,
+      json: { read: stamp(130), data: { through: 120, blocks: [] }, next: 121 }
+    }));
+    // Nothing past 120 yet, read from 120: 120 itself was given (empty).
+    expect((await client.getChanges(120)).atHead).toBe(false);
+    expect((await client.getChanges(121)).atHead).toBe(true);
+  });
+
+  it('does not keep an answer read from another chain than the head', async () => {
+    const { client, calls } = setup((call) =>
+      path(call) === '/v1/status'
+        ? status(50)
+        : {
+            status: 200,
+            json: {
+              read: { ...stamp(50), network: '0x' + '99'.repeat(32) },
+              data: IDENTITY,
+              next: null
+            }
+          }
+    );
+    await client.getIdentityByHandle('alice');
+    await client.getIdentityByHandle('alice');
+    expect(calls.filter((c) => path(c) !== '/v1/status')).toHaveLength(2);
+  });
+
   it('refuses a feed page without a whole-height through', async () => {
     const { client } = setup(() => ({
       status: 200,

@@ -866,7 +866,7 @@ this API support while new clients are deployed; roll back the frontend first.
 Identities (profiles, handles, consolidations, delegations, REP, NIC and
 levels) move to the 6529 chain. `src/chain-gateway/chain-gateway.client.ts`
 (`chainGatewayClient`) is the backend's one client for it: reads through the
-chain gateway's service lane (`CHAIN_GATEWAY_URL`, bearer
+chain gateway's service access (`CHAIN_GATEWAY_URL`, bearer
 `CHAIN_GATEWAY_SERVICE_KEY`), relays signed operations (`POST /v1/draft`,
 `POST /v1/submit`), and fetches profile documents from the gateway's document
 store by CID, checking each against its CID. Reads are pinned to the latest
