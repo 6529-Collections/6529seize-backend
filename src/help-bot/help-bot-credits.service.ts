@@ -7,7 +7,6 @@ import { HelpBotCreditEventType } from '@/entities/IHelpBotCreditEvent';
 import { ProfileActivityLogType } from '@/entities/IProfileActivityLog';
 import { RateMatter } from '@/entities/IRating';
 import { revokeRepBasedDropOverVotes } from '@/drops/participation-drops-over-vote-revocation';
-import { isIdentityFrozen } from '@/identity-freeze/identity-freeze';
 import { profileActivityLogsDb } from '@/profileActivityLogs/profile-activity-logs.db';
 import { RequestContext } from '@/request.context';
 import {
@@ -139,15 +138,6 @@ export class HelpBotCreditsService extends LazyDbAccessCompatibleService {
     },
     ctx: RequestContext
   ): Promise<HelpBotCreditChargeResult> {
-    if (isIdentityFrozen()) {
-      // Credits are REP ratings, which are frozen while identities move to
-      // the 6529 chain: questions are answered without a charge meanwhile.
-      return {
-        charged: true,
-        balance: null,
-        botProfileMissing: false
-      };
-    }
     const botProfileId = await this.resolveBotProfileId(ctx);
     if (!botProfileId) {
       return {
@@ -243,10 +233,6 @@ export class HelpBotCreditsService extends LazyDbAccessCompatibleService {
     },
     ctx: RequestContext
   ): Promise<boolean> {
-    if (isIdentityFrozen()) {
-      // No REP is written during the identity freeze (see chargeQuestionCredit).
-      return false;
-    }
     const botProfileId = await this.resolveBotProfileId(ctx);
     if (!botProfileId) {
       return false;
@@ -311,15 +297,6 @@ export class HelpBotCreditsService extends LazyDbAccessCompatibleService {
     request: AutomaticCreditGrantRequest,
     ctx: RequestContext
   ): Promise<HelpBotCreditGrantResult> {
-    if (isIdentityFrozen()) {
-      // Grants are REP ratings, frozen while identities move to the chain.
-      return {
-        amountGranted: 0,
-        balance: null,
-        alreadyGranted: false,
-        botProfileMissing: false
-      };
-    }
     const botProfileId = await this.resolveBotProfileId(ctx);
     if (!botProfileId) {
       return {
