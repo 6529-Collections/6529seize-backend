@@ -40,6 +40,7 @@ import {
 import { backendEthereumFacts } from '../timeline/journal-verify-ethereum';
 import { sha256Hex } from './opening-file';
 import {
+  IDENTITY_DATA_TABLES,
   loadOpeningFiles,
   ParsedOpening,
   parseOpeningFiles
@@ -399,6 +400,29 @@ function writesOf(
   return { writes, skipped, partial };
 }
 
+/**
+ * Why the identity tables are not lost, or null when they and their state
+ * row are empty.
+ */
+async function identityTablesInUse(): Promise<string | null> {
+  const [state] = await sqlExecutor.execute<{ id: string }>(
+    `SELECT id FROM ${SUBSCRIPTIONS_ID_STATE_TABLE} WHERE id = :id`,
+    { id: OPENING_STATE_ID }
+  );
+  if (state) {
+    return 'their state row is still there';
+  }
+  for (const table of IDENTITY_DATA_TABLES) {
+    const [row] = await sqlExecutor.execute<{ one: number }>(
+      `SELECT 1 AS one FROM ${table} LIMIT 1`
+    );
+    if (row) {
+      return `${table} still holds rows`;
+    }
+  }
+  return null;
+}
+
 async function liveCounter(): Promise<number | null> {
   const [row] = await sqlExecutor.execute<{ block: number | string }>(
     `SELECT block FROM ${SUBSCRIPTIONS_ID_CURSORS_TABLE} WHERE id = :id`,
@@ -439,6 +463,13 @@ async function liveCounter(): Promise<number | null> {
  * from the journal (so its entry can name the files again) and the journal
  * was checked against Ethereum. On any failure the routes reopen and the
  * tables are left suspended.
+ *
+ * `goLive` is for a lost database only: it refuses unless the identity
+ * tables and their state row are empty when the rebuild starts. While the
+ * identity tables are suspended, or before the switch, writes land in the
+ * legacy tables with no journal, so a rebuild from the journal would miss
+ * them; after a suspend, only go-live, which cuts from the legacy tables,
+ * switches.
  */
 export async function rebuildIdentityTables(params: {
   readonly source: JournalSource;
@@ -455,6 +486,15 @@ export async function rebuildIdentityTables(params: {
     throw new Error(
       'A rebuild goes live only with its journal checked against Ethereum'
     );
+  }
+  if (params.goLive) {
+    const held = await identityTablesInUse();
+    if (held) {
+      throw new Error(
+        `A rebuild goes live only over lost identity tables, and ${held}. ` +
+          'Writes made while they were suspended, or before the switch, are in the legacy tables and not in the journal; switch with go-live, which cuts from the legacy tables.'
+      );
+    }
   }
   await closeSubscriptionWrites(now());
   let renewedAt = now();

@@ -3193,8 +3193,12 @@ compared with live's counter; a missing tail (entries not yet posted) is
 reported and alerted (`SUBSCRIPTIONS_JOURNAL_TAIL_MISSING`), and the tables
 stay suspended. Otherwise they end verified and in shadow, not the truth;
 with `--go-live` they become the truth through go-live's own switch, in the
-same pause, and only if at least one checkpoint matched. `--opening
---history` rehearses from local files. People's own changes will reach the
+same pause, and only if at least one checkpoint matched. `--go-live` is for
+a lost database: it refuses while the state row or any identity row is
+there. While the identity tables are suspended, writes land only in the
+legacy tables, with no journal, so after a suspend only `go-live`, which
+cuts from the legacy tables, switches again. `--opening --history`
+rehearses from local files. People's own changes will reach the
 identity tables through signed records, journaled the same way. After the
 switch a comparison with the legacy dual write that isn't a MATCH alerts
 (`SUBSCRIPTIONS_TRUTH_COMPARISON_DIFF`).

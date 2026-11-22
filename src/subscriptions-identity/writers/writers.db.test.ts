@@ -41,6 +41,7 @@ import {
   SHADOW_ENV,
   SubscriptionsIdentitySwitch,
   subscriptionsIdentitySwitch,
+  suspendIdentityTables,
   SWITCH_CUT_WINDOW_MS,
   unsignedWritesNow
 } from '../identity/identity-switch';
@@ -666,6 +667,62 @@ describeWithSeed('identity writers after the switch', [], () => {
     );
     expect(await identityTablesHash({})).toBe(tablesBefore);
     expect(await answers()).toEqual(before);
+  });
+
+  it('refuses to go live from a rebuild after a suspend, whose writes the journal lacks', async () => {
+    await seedLegacy();
+    expect((await goLiveForTest()).switched).toBe(true);
+    await updateSubscriptions();
+    const ethereum = await ethereumAsRecorded();
+    expect(await suspendIdentityTables()).toBe(true);
+    // Suspended, the identity writers stop: a top-up lands in the legacy
+    // tables only, with no journal entry.
+    await execute(
+      `INSERT INTO ${SUBSCRIPTIONS_TOP_UP_TABLE} (hash, block, transaction_date, from_wallet, amount)
+        VALUES ('0xa9', 31, '2026-11-26 14:00:00', :lone, 0.05)`,
+      { lone: LONE }
+    );
+    await runIdentityTopUpWriters();
+    expect(await subscriptionsIdentitySwitch.writeModeOrFail()).toBe('OFF');
+    const tablesBefore = await identityTablesHash({});
+
+    await expect(
+      rebuildIdentityTables({
+        source: journalSource,
+        fetch: fetchPublished,
+        goLive: true,
+        ethereum
+      })
+    ).rejects.toThrow(
+      'A rebuild goes live only over lost identity tables, and their state row is still there'
+    );
+    // Nothing moved: still suspended, the tables as they were, the write
+    // routes open.
+    expect(await subscriptionsIdentitySwitch.writeModeOrFail()).toBe('OFF');
+    expect(await identityTablesHash({})).toBe(tablesBefore);
+    expect(await unsignedWritesNow()).toBe('OPEN');
+
+    // Identity rows left without their state row are not a lost database
+    // either.
+    await execute(`DELETE FROM ${SUBSCRIPTIONS_ID_STATE_TABLE}`);
+    subscriptionsIdentitySwitch.invalidate();
+    await expect(
+      rebuildIdentityTables({
+        source: journalSource,
+        fetch: fetchPublished,
+        goLive: true,
+        ethereum
+      })
+    ).rejects.toThrow('still holds rows');
+    // Over lost tables it goes live, as before.
+    await loseIdentityTables();
+    const result = await rebuildIdentityTables({
+      source: journalSource,
+      fetch: fetchPublished,
+      goLive: true,
+      ethereum
+    });
+    expect(result.switched).toBe(true);
   });
 
   it('rebuilds a top-up with the identity it was credited to, after the wallet leaves', async () => {

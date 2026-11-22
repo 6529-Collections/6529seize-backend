@@ -51,7 +51,10 @@ import {
  *            time, reopen the write routes
  *   rebuild  empty or suspended identity tables from the last opening that
  *            went live and the journal in the record log (or, rehearsing,
- *            from given files); --go-live switches if the checkpoints match
+ *            from given files); --go-live is for a lost database: it
+ *            refuses unless the identity tables and their state row are
+ *            empty, and switches if the checkpoints match. After a suspend,
+ *            switch with go-live, which cuts from the legacy tables
  *   verify-journal  check the journal of an opening against the money
  *            rules, from the opening file's balances on, and its top-ups
  *            and mints against Ethereum (rebuild runs the same check
