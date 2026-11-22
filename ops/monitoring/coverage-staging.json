@@ -719,15 +719,6 @@
         "lambda-throttles"
       ],
       "deployCode": false
-    },
-    {
-      "name": "dropVideoRenditionsCompletionLoop",
-      "owner": "legacy",
-      "coverage": [
-        "lambda-errors",
-        "lambda-throttles"
-      ],
-      "deployCode": false
     }
   ]
 }
