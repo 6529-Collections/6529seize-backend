@@ -176,11 +176,66 @@ export function decodeProfileDoc(bytes: Buffer): Record<string, string> {
 
 const STATEMENT_KEY = /^statement\.([^.]+)\.([^.]+)\.(\d+)$/;
 
-/** A raw-codec sha2-256 CIDv1 in base32: `bafkrei` and 52 more characters. */
-const CMS_CID = /^bafkrei[a-z2-7]{52}$/;
+const BASE32 = 'abcdefghijklmnopqrstuvwxyz234567';
+/** CIDv1, codec raw (0x55), multihash sha2-256 (0x12) of 32 bytes. */
+const CMS_CID_PREFIX = Buffer.from([0x01, 0x55, 0x12, 0x20]);
+const CMS_CID_BYTES = CMS_CID_PREFIX.length + 32;
+/** `b` and 58 base32 characters: 36 bytes. */
+const CMS_CID_TEXT = /^b[a-z2-7]{58}$/;
+
+/** Lower-case RFC 4648 base32, no padding. */
+function toBase32(bytes: Buffer): string {
+  let out = '';
+  let bits = 0;
+  let value = 0;
+  for (let i = 0; i < bytes.length; i++) {
+    value = ((value << 8) | bytes[i]) & 0xfff;
+    bits += 8;
+    while (bits >= 5) {
+      out += BASE32[(value >>> (bits - 5)) & 31];
+      bits -= 5;
+    }
+  }
+  return bits > 0 ? out + BASE32[(value << (5 - bits)) & 31] : out;
+}
+
+/** The whole bytes of base32 text (spare trailing bits dropped); null if not base32. */
+function fromBase32(text: string): Buffer | null {
+  const out: number[] = [];
+  let bits = 0;
+  let value = 0;
+  for (const char of text) {
+    const index = BASE32.indexOf(char);
+    if (index < 0) return null;
+    value = ((value << 5) | index) & 0xfff;
+    bits += 5;
+    if (bits >= 8) {
+      out.push((value >>> (bits - 8)) & 0xff);
+      bits -= 8;
+    }
+  }
+  return Buffer.from(out);
+}
+
+/**
+ * A raw-codec sha2-256 CIDv1 in canonical base32 text (`bafkrei...`). The
+ * last character carries two spare bits; text with them set names the same
+ * bytes but is not canonical and is refused, as the profile site index
+ * refuses it: the text must be what its bytes encode to.
+ */
+export function isCmsCid(text: string): boolean {
+  if (!CMS_CID_TEXT.test(text)) return false;
+  const bytes = fromBase32(text.slice(1));
+  return (
+    bytes !== null &&
+    bytes.length === CMS_CID_BYTES &&
+    bytes.subarray(0, CMS_CID_PREFIX.length).equals(CMS_CID_PREFIX) &&
+    `b${toBase32(bytes)}` === text
+  );
+}
 
 function cmsCid(value: string | undefined): string | null {
-  return value !== undefined && CMS_CID.test(value) ? value : null;
+  return value !== undefined && isCmsCid(value) ? value : null;
 }
 
 /** The profile site from its three keys; a lone or malformed CID is left out. */
