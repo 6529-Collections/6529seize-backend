@@ -11,6 +11,7 @@ import {
   IDENTITY_CHAIN_MIRROR_STATE_TABLE,
   IDENTITY_CHAIN_PLACEHOLDERS_TABLE,
   IDENTITY_CHAIN_PRINCIPALS_TABLE,
+  IDENTITY_CHAIN_RATING_CATEGORIES_TABLE,
   IDENTITY_CHAIN_RATING_EVENTS_TABLE,
   IDENTITY_CHAIN_RATING_LEDGER_TABLE,
   IDENTITY_CHAIN_REGROUPS_TABLE,
@@ -185,6 +186,26 @@ export class IdentityChainRatingLedgerEntity {
 
   @Column({ type: 'bigint', nullable: false })
   readonly height!: number;
+
+  /**
+   * The value can't be trusted (a record the follower couldn't read): the
+   * key's next change reads its value before from the chain.
+   */
+  @Column({ type: 'boolean', nullable: false, default: false })
+  readonly stale!: boolean;
+}
+
+/**
+ * The chain's REP category names by id, as the rating events follower read
+ * them (a name never changes), so a cold start reads none again.
+ */
+@Entity(IDENTITY_CHAIN_RATING_CATEGORIES_TABLE)
+export class IdentityChainRatingCategoryEntity {
+  @PrimaryColumn({ type: 'varchar', length: 66, nullable: false })
+  readonly category_id!: string;
+
+  @Column({ type: 'varchar', length: 100, nullable: false })
+  readonly name!: string;
 }
 
 /** One row (id 'identity'): the mirror's place in the change feed. */
@@ -275,16 +296,20 @@ export class IdentityChainMirrorStateEntity {
   @Column({ type: 'bigint', nullable: true, default: null })
   readonly pin_floor!: number | null;
 
-  /** The next feed height the rating events follower reads. */
+  /**
+   * The next feed height the rating events follower reads (its own column:
+   * the rest of the mirror never writes it).
+   */
   @Column({ type: 'bigint', nullable: true, default: null })
   readonly events_next_height!: number | null;
 
   /**
-   * The rating ledger has followed the feed without a break from the
-   * import's start: its totals are exact.
+   * The height the follower went on from after a gap in the feed (null:
+   * none since the import's start). Ledger rows older than it, and keys
+   * without a row, may have changed in the gap.
    */
-  @Column({ type: 'boolean', nullable: false, default: false })
-  readonly events_exact!: boolean;
+  @Column({ type: 'bigint', nullable: true, default: null })
+  readonly events_resume_height!: number | null;
 
   /**
    * What the mirror could not write, tried again by the next run (JSON:
@@ -361,7 +386,10 @@ export class IdentityChainRatingEventEntity {
   @Column({ type: 'varchar', length: 100, nullable: false })
   readonly matter_category!: string;
 
-  /** The value before, from the ledger (0: none). */
+  /**
+   * The value before (0: none): the ledger's, or the chain's at the height
+   * before when the ledger's row can't be trusted.
+   */
   @Column({ type: 'int', nullable: false })
   readonly old_rating!: number;
 
@@ -372,7 +400,8 @@ export class IdentityChainRatingEventEntity {
   /**
    * The target's total in this matter and category after the block: its
    * RatingTotal record; without one, the ledger's total plus the change
-   * while the ledger is exact, else the chain's totals at that height.
+   * when none of its rows is stale and there was no gap, else the chain's
+   * totals at that height.
    */
   @Column({ type: 'bigint', nullable: false })
   readonly total_after!: number;

@@ -323,6 +323,7 @@ export {
   IdentityChainMirrorStateEntity,
   IdentityChainPrincipalEntity,
   IdentityChainPlaceholderEntity,
+  IdentityChainRatingCategoryEntity,
   IdentityChainRatingEventEntity,
   IdentityChainRatingLedgerEntity,
   IdentityChainRegroupEntity,

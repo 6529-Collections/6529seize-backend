@@ -95,7 +95,7 @@ const PAGE_KEYS = 2_000;
 const PIN_WINDOW_MS = 8 * 60 * 1000;
 /** Rating event rows written in the last day get profile ids once mapped. */
 const RATING_EVENT_FILL_MS = 24 * 60 * 60 * 1000;
-/** The rating events follower's share of a run (it goes last). */
+/** The rating events' share of a run (they go last). */
 const RATING_EVENTS_SHARE = 0.25;
 /** Identities waiting to be retried whose ids a fix of rows can leave out. */
 const MAX_WAITING_LEFT_OUT = 500;
@@ -514,7 +514,7 @@ export class IdentityChainMirror {
       report.skipped = 'network_unsettled';
       return;
     }
-    let state = onChain;
+    const state = onChain;
     // No run pins below what an earlier one read (on this chain).
     this.highestPin = state.pin_floor ?? 0;
     const membership = await this.gateway.getMembership();
@@ -533,9 +533,26 @@ export class IdentityChainMirror {
       numberOrNull(importState.startHeight),
       numberOrNull(importState.doneHeight)
     );
+    try {
+      await this.syncInto(state, importState, report, budgetMs, deadline);
+    } finally {
+      // The rating events after the identity steps, also when one of them
+      // threw; their own failures are reported, never thrown.
+      await this.followRatingEvents(importState, deadline, report);
+    }
+  }
+
+  /** The run's identity steps, once the import is complete. */
+  private async syncInto(
+    initial: MirrorState,
+    importState: { startHeight?: number | null },
+    report: MirrorRunReport,
+    budgetMs: number,
+    deadline: number
+  ) {
     this.keyWidth =
       (await this.db.consolidationKeyWidth()) ?? MAX_CONSOLIDATION_KEY_LENGTH;
-    state = await this.listPlaceholders(state);
+    let state = await this.listPlaceholders(initial);
     state = await this.bindings.follow(
       state,
       numberOrNull(importState.startHeight),
@@ -568,16 +585,28 @@ export class IdentityChainMirror {
     report.levelSweepDay = state.level_sweep_day;
     report.nextHeight = state.next_height;
     report.retryLeft = retrySize(state.retry);
-    // Profile ids of rating events written in the last day whose rater or
-    // target is mapped since.
-    report.ratingEventsFilled = await this.db.fillRatingEventProfiles(
-      this.now() - RATING_EVENT_FILL_MS
-    );
-    // The rating events last, after the identity sync mapped most raters
-    // and targets: a page they can't write yet ends the run and holds up
-    // nothing else.
+  }
+
+  /**
+   * The profile ids of rating events written in the last day whose rater or
+   * target is mapped since, then the rating events follower (from the
+   * stored state, up to the identity sync's place). Failures are reported.
+   */
+  private async followRatingEvents(
+    importState: { startHeight?: number | null; doneHeight?: number | null },
+    deadline: number,
+    report: MirrorRunReport
+  ) {
+    try {
+      report.ratingEventsFilled = await this.db.fillRatingEventProfiles(
+        this.now() - RATING_EVENT_FILL_MS
+      );
+    } catch (error) {
+      const message = messageOf(error);
+      logger.error(`[RATING EVENT PROFILE IDS NOT FILLED] ${message}`);
+      report.ratingEventProblems.push(message);
+    }
     await this.events.follow(
-      state,
       numberOrNull(importState.startHeight),
       numberOrNull(importState.doneHeight),
       deadline,
@@ -635,7 +664,7 @@ export class IdentityChainMirror {
       pin_floor: null,
       off_chain_after: null,
       events_next_height: null,
-      events_exact: false,
+      events_resume_height: null,
       retry: NO_RETRY
     };
   }

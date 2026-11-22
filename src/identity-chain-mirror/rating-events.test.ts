@@ -184,6 +184,7 @@ describe('ratingChangesOf', () => {
         targetKind: 1,
         category: CAT,
         categoryId: CAT,
+        stateKey: '0x',
         value: 5,
         writer: tx('RATING_SET'),
         byImport: false
@@ -198,9 +199,26 @@ describe('ratingChangesOf', () => {
         targetKind: 1,
         category: ZERO,
         categoryId: null,
+        stateKey: '0x',
         value: 0,
         writer: null,
         byImport: true
+      },
+      // Its key can be read, not its value: the ledger marks it stale.
+      {
+        height: 7,
+        blockTimeMs: 1_764_000_084_000,
+        rater: R,
+        target: T,
+        matter: 'REP',
+        matterCode: 1,
+        targetKind: 1,
+        category: CAT,
+        categoryId: CAT,
+        stateKey: '0x04',
+        value: null,
+        writer: null,
+        byImport: null
       }
     ]);
   });

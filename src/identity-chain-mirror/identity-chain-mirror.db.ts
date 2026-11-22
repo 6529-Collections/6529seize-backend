@@ -10,6 +10,7 @@ import {
   IDENTITY_CHAIN_MIRROR_STATE_TABLE,
   IDENTITY_CHAIN_PLACEHOLDERS_TABLE,
   IDENTITY_CHAIN_PRINCIPALS_TABLE,
+  IDENTITY_CHAIN_RATING_CATEGORIES_TABLE,
   IDENTITY_CHAIN_RATING_EVENTS_TABLE,
   IDENTITY_CHAIN_RATING_LEDGER_TABLE,
   IDENTITY_CHAIN_REGROUPS_TABLE,
@@ -73,10 +74,13 @@ export interface MirrorState {
   readonly off_chain_after: string | null;
   /** The highest finalized height reads were pinned to. */
   readonly pin_floor: number | null;
-  /** The next feed height the rating events follower reads. */
+  /**
+   * The next feed height the rating events follower reads; with
+   * events_resume_height, written only by saveRatingEventsCursor.
+   */
   readonly events_next_height: number | null;
-  /** The rating ledger followed the feed from the import's start. */
-  readonly events_exact: boolean;
+  /** Where the follower went on after a gap in the feed (null: none). */
+  readonly events_resume_height: number | null;
   /** What the mirror could not write, tried again by the next run. */
   readonly retry: MirrorRetry;
 }
@@ -153,6 +157,19 @@ export interface RatingLedgerKey {
   readonly targetKind: number;
   readonly target: string;
   readonly category: string;
+}
+
+/** A rating ledger row: the value, its height, and whether it is stale. */
+export interface RatingLedgerRow {
+  readonly value: number;
+  readonly height: number;
+  readonly stale: boolean;
+}
+
+/** The rating events follower's place: its own columns of the state. */
+export interface RatingEventsCursor {
+  readonly next: number;
+  readonly resume: number | null;
 }
 
 /** A row of identity_chain_rating_events. */
@@ -271,7 +288,7 @@ export class IdentityChainMirrorDb extends LazyDbAccessCompatibleService {
               bindings_next_height, chain_id, placeholders_at, bindings_exact,
               levels_tdh_day, level_sweep_day, level_sweep_after, levels_day_height,
               sync_use_case, sync_wallet_after, pin_floor, off_chain_after,
-              events_next_height, events_exact, retry_json
+              events_next_height, events_resume_height, retry_json
        from ${IDENTITY_CHAIN_MIRROR_STATE_TABLE} where id = :id`,
       { id: STATE_ID },
       conn ? { wrappedConnection: conn } : undefined
@@ -296,7 +313,7 @@ export class IdentityChainMirrorDb extends LazyDbAccessCompatibleService {
       pin_floor: numberOrNull(row.pin_floor),
       off_chain_after: row.off_chain_after ?? null,
       events_next_height: numberOrNull(row.events_next_height),
-      events_exact: !!Number(row.events_exact ?? 0),
+      events_resume_height: numberOrNull(row.events_resume_height),
       retry: retryOf(row.retry_json)
     };
   }
@@ -308,15 +325,13 @@ export class IdentityChainMirrorDb extends LazyDbAccessCompatibleService {
           bindings_next_height, chain_id, placeholders_at, bindings_exact,
           levels_tdh_day, level_sweep_day, level_sweep_after, levels_day_height,
           sync_use_case, sync_wallet_after, pin_floor, off_chain_after,
-          events_next_height, events_exact, retry_json, updated_at)
+          retry_json, updated_at)
        values (:id, :next_height, :sync_from_height, :sync_phase, :sync_after, :last_full_sync_at,
           :bindings_next_height, :chain_id, :placeholders_at, :bindings_exact,
           :levels_tdh_day, :level_sweep_day, :level_sweep_after, :levels_day_height,
           :sync_use_case, :sync_wallet_after, :pin_floor, :off_chain_after,
-          :events_next_height, :events_exact, :retry_json, :now)
+          :retry_json, :now)
        on duplicate key update
-         events_next_height = values(events_next_height),
-         events_exact = values(events_exact),
          off_chain_after = values(off_chain_after),
          next_height = values(next_height),
          sync_wallet_after = values(sync_wallet_after),
@@ -340,7 +355,6 @@ export class IdentityChainMirrorDb extends LazyDbAccessCompatibleService {
         id: STATE_ID,
         ...state,
         bindings_exact: state.bindings_exact ? 1 : 0,
-        events_exact: state.events_exact ? 1 : 0,
         retry_json: retryJson(state.retry),
         now
       },
@@ -1304,12 +1318,30 @@ export class IdentityChainMirrorDb extends LazyDbAccessCompatibleService {
     return written;
   }
 
+  /**
+   * The rating events follower's place, in its own columns of the state row
+   * (the rest of the state is left as it is; saveState never writes them).
+   */
+  async saveRatingEventsCursor(
+    cursor: RatingEventsCursor,
+    now: number,
+    conn?: Conn
+  ) {
+    await this.db.execute(
+      `update ${IDENTITY_CHAIN_MIRROR_STATE_TABLE}
+       set events_next_height = :next, events_resume_height = :resume, updated_at = :now
+       where id = :id`,
+      { id: STATE_ID, next: cursor.next, resume: cursor.resume, now },
+      conn ? { wrappedConnection: conn } : undefined
+    );
+  }
+
   /** The rating ledger's rows of these keys (by ledgerKeyOf). */
   async ratingLedgerOf(
     keys: readonly RatingLedgerKey[],
     conn?: Conn
-  ): Promise<Map<string, { value: number; height: number }>> {
-    const result = new Map<string, { value: number; height: number }>();
+  ): Promise<Map<string, RatingLedgerRow>> {
+    const result = new Map<string, RatingLedgerRow>();
     for (let i = 0; i < keys.length; i += 500) {
       const params: Record<string, unknown> = {};
       const tuples = keys
@@ -1331,8 +1363,9 @@ export class IdentityChainMirrorDb extends LazyDbAccessCompatibleService {
         category: string;
         value: number | string;
         height: number | string;
+        stale: number | string | boolean;
       }>(
-        `select rater_principal, matter, target_kind, target_principal, category, value, height
+        `select rater_principal, matter, target_kind, target_principal, category, value, height, stale
          from ${IDENTITY_CHAIN_RATING_LEDGER_TABLE}
          where (rater_principal, matter, target_kind, target_principal, category) in (${tuples})`,
         params,
@@ -1347,14 +1380,21 @@ export class IdentityChainMirrorDb extends LazyDbAccessCompatibleService {
             target: it.target_principal,
             category: it.category
           }),
-          { value: Number(it.value), height: Number(it.height) }
+          {
+            value: Number(it.value),
+            height: Number(it.height),
+            stale: !!Number(it.stale)
+          }
         )
       );
     }
     return result;
   }
 
-  /** The ledger's totals of targets by matter and category (totalKeyOf). */
+  /**
+   * The ledger's totals of targets by matter and category (totalKeyOf),
+   * with how many of their rows are stale.
+   */
   async ratingLedgerTotalsOf(
     keys: readonly {
       readonly targetKind: number;
@@ -1363,8 +1403,8 @@ export class IdentityChainMirrorDb extends LazyDbAccessCompatibleService {
       readonly category: string;
     }[],
     conn?: Conn
-  ): Promise<Map<string, number>> {
-    const result = new Map<string, number>();
+  ): Promise<Map<string, { total: number; stale: number }>> {
+    const result = new Map<string, { total: number; stale: number }>();
     for (let i = 0; i < keys.length; i += 500) {
       const params: Record<string, unknown> = {};
       const tuples = keys
@@ -1383,8 +1423,10 @@ export class IdentityChainMirrorDb extends LazyDbAccessCompatibleService {
         matter: number | string;
         category: string;
         total: number | string;
+        stale: number | string;
       }>(
-        `select target_kind, target_principal, matter, category, sum(value) as total
+        `select target_kind, target_principal, matter, category, sum(value) as total,
+                sum(stale) as stale
          from ${IDENTITY_CHAIN_RATING_LEDGER_TABLE}
          where (target_kind, target_principal, matter, category) in (${tuples})
          group by target_kind, target_principal, matter, category`,
@@ -1399,16 +1441,16 @@ export class IdentityChainMirrorDb extends LazyDbAccessCompatibleService {
             matterCode: Number(it.matter),
             category: it.category
           }),
-          Number(it.total)
+          { total: Number(it.total), stale: Number(it.stale) }
         )
       );
     }
     return result;
   }
 
-  /** Ledger rows set (a value) and taken away (a removed rating). */
+  /** Ledger rows set (a value, or a stale mark) and taken away (a removal). */
   async writeRatingLedger(
-    upserts: readonly (RatingLedgerKey & { value: number; height: number })[],
+    upserts: readonly (RatingLedgerKey & RatingLedgerRow)[],
     deletes: readonly RatingLedgerKey[],
     conn: Conn
   ) {
@@ -1425,14 +1467,16 @@ export class IdentityChainMirrorDb extends LazyDbAccessCompatibleService {
           params[`c${j}`] = it.category;
           params[`v${j}`] = it.value;
           params[`h${j}`] = it.height;
-          return `(:r${j}, :m${j}, :k${j}, :t${j}, :c${j}, :v${j}, :h${j})`;
+          params[`s${j}`] = it.stale ? 1 : 0;
+          return `(:r${j}, :m${j}, :k${j}, :t${j}, :c${j}, :v${j}, :h${j}, :s${j})`;
         })
         .join(', ');
       await this.db.execute(
         `insert into ${IDENTITY_CHAIN_RATING_LEDGER_TABLE}
-           (rater_principal, matter, target_kind, target_principal, category, value, height)
+           (rater_principal, matter, target_kind, target_principal, category, value, height, stale)
          values ${values}
-         on duplicate key update value = values(value), height = values(height)`,
+         on duplicate key update value = values(value), height = values(height),
+           stale = values(stale)`,
         params,
         opts
       );
@@ -1454,15 +1498,70 @@ export class IdentityChainMirrorDb extends LazyDbAccessCompatibleService {
     }
   }
 
-  /** A relaunched chain's ratings start again: its ledger and events. */
+  /**
+   * The rating events start again (a relaunched chain, or the follower's
+   * first start): the ledger, the events, the category names and the
+   * follower's place.
+   */
   async clearRatingEvents(conn: Conn) {
+    const opts = { wrappedConnection: conn };
     for (const table of [
       IDENTITY_CHAIN_RATING_LEDGER_TABLE,
-      IDENTITY_CHAIN_RATING_EVENTS_TABLE
+      IDENTITY_CHAIN_RATING_EVENTS_TABLE,
+      IDENTITY_CHAIN_RATING_CATEGORIES_TABLE
     ]) {
-      await this.db.execute(`delete from ${table}`, undefined, {
-        wrappedConnection: conn
-      });
+      await this.db.execute(`delete from ${table}`, undefined, opts);
+    }
+    await this.db.execute(
+      `update ${IDENTITY_CHAIN_MIRROR_STATE_TABLE}
+       set events_next_height = null, events_resume_height = null
+       where id = :id`,
+      { id: STATE_ID },
+      opts
+    );
+  }
+
+  /** The stored names of these REP categories, by id. */
+  async ratingCategoryNamesOf(
+    ids: readonly string[]
+  ): Promise<Map<string, string>> {
+    const result = new Map<string, string>();
+    for (let i = 0; i < ids.length; i += 500) {
+      const rows = await this.db.execute<{
+        category_id: string;
+        name: string;
+      }>(
+        `select category_id, name from ${IDENTITY_CHAIN_RATING_CATEGORIES_TABLE}
+         where category_id in (:ids)`,
+        { ids: ids.slice(i, i + 500) }
+      );
+      rows.forEach((it) => result.set(it.category_id.toLowerCase(), it.name));
+    }
+    return result;
+  }
+
+  /** REP category names read from the chain (a name already there stays). */
+  async writeRatingCategories(
+    names: readonly { readonly id: string; readonly name: string }[],
+    conn: Conn
+  ) {
+    for (let i = 0; i < names.length; i += 500) {
+      const params: Record<string, unknown> = {};
+      const values = names
+        .slice(i, i + 500)
+        .map((it, j) => {
+          params[`i${j}`] = it.id;
+          params[`n${j}`] = it.name;
+          return `(:i${j}, :n${j})`;
+        })
+        .join(', ');
+      await this.db.execute(
+        `insert into ${IDENTITY_CHAIN_RATING_CATEGORIES_TABLE} (category_id, name)
+         values ${values}
+         on duplicate key update category_id = category_id`,
+        params,
+        { wrappedConnection: conn }
+      );
     }
   }
 

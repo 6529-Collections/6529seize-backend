@@ -61,6 +61,9 @@ export const IDENTITY_CHAIN_RATING_EVENTS_TABLE =
 /** Each chain rating's value and height, as the rating events follower saw it. */
 export const IDENTITY_CHAIN_RATING_LEDGER_TABLE =
   'identity_chain_rating_ledger';
+/** The chain's REP category names, as the rating events follower read them. */
+export const IDENTITY_CHAIN_RATING_CATEGORIES_TABLE =
+  'identity_chain_rating_categories';
 /** Each bound wallet's principal and the height it has been bound since. */
 export const IDENTITY_CHAIN_WALLETS_TABLE = 'identity_chain_wallets';
 /** 6529.io's placeholder profiles as the identity mirror first found them. */

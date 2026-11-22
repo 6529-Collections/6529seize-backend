@@ -95,8 +95,13 @@ export interface ChainRatingChange {
   readonly category: string;
   /** The REP category's id; null for NIC. */
   readonly categoryId: string | null;
-  /** The value set; 0 when the rating was removed. */
-  readonly value: number;
+  /** The record's state key (to read the rating at another height). */
+  readonly stateKey: string;
+  /**
+   * The value set; 0 when the rating was removed; null when the record's
+   * value can't be read (its key can: the ledger marks it stale).
+   */
+  readonly value: number | null;
   readonly writer: ChainFeedWriter | null;
   /** The record's import marker as given (null: not known). */
   readonly byImport: boolean | null;
@@ -150,11 +155,12 @@ function toRatingChange(
   if (matter === 'REP' && category === ZERO32) return 'unreadable';
   // A removal has no value; a value without its fields can't be read (it
   // is never taken for a removal).
-  let value = 0;
+  let value: number | null = 0;
   if (record.value !== null) {
-    if (record.valueFields == null) return 'unreadable';
-    value = Number(record.valueFields.value);
-    if (!Number.isSafeInteger(value)) return 'unreadable';
+    value = Number(record.valueFields?.value);
+    if (record.valueFields == null || !Number.isSafeInteger(value)) {
+      value = null;
+    }
   }
   return {
     height: Number(block.height),
@@ -166,6 +172,7 @@ function toRatingChange(
     targetKind,
     category,
     categoryId: matter === 'REP' ? category : null,
+    stateKey: record.key,
     value,
     writer: record.writer ?? null,
     byImport: record.byImport ?? null
@@ -177,7 +184,8 @@ function toRatingChange(
  * gives each key's final value in a block once), the REP category names
  * the blocks' Category records give, and each block's RatingTotal sums
  * (by height, then totalKeyOf). Records of other target kinds are left
- * out; ones that can't be read are named (`height:key`).
+ * out; ones that can't be read are named (`height:key`), and a record
+ * whose key can be read but not its value is a change with value null.
  */
 export function ratingChangesOf(blocks: readonly ChainFeedBlock[]): {
   changes: ChainRatingChange[];
@@ -222,8 +230,11 @@ export function ratingChangesOf(blocks: readonly ChainFeedBlock[]): {
       }
       if (family !== RATING_FAMILY) continue;
       const change = toRatingChange(block, record);
-      if (change === 'unreadable') unreadable.push(`${height}:${record.key}`);
-      else if (change !== 'other') changes.push(change);
+      if (change === 'other') continue;
+      if (change === 'unreadable' || change.value === null) {
+        unreadable.push(`${height}:${record.key}`);
+      }
+      if (change !== 'unreadable') changes.push(change);
     }
   }
   return { changes, categoryNames, totals, unreadable };

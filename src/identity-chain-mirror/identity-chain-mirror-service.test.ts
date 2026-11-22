@@ -1,5 +1,6 @@
 import { isHelpBotCreditCategory } from '@/help-bot/help-bot.config';
 import { ChainGatewayError } from '@/chain-gateway/chain-gateway.client';
+import { Logger } from '@/logging';
 import {
   ChainDelegation,
   ChainFeedPage,
@@ -30,6 +31,7 @@ import {
 } from './identity-chain-mirror.service';
 import { FOUNDER_WAIT_MS } from './profile-ids';
 import { ledgerKeyOf, totalKeyOf } from './rating-events';
+import type { RatingLedgerRow } from './identity-chain-mirror.db';
 import {
   CHAIN_BLOCK_BASE,
   CurrentIdentityState,
@@ -85,7 +87,8 @@ class FakeDb {
   pairs: { wallet1: string; wallet2: string }[] = [];
   ratingReads: { target: string }[] = [];
   ratingEvents: (RatingEventRow & { created_at: number })[] = [];
-  ledger = new Map<string, { value: number; height: number }>();
+  ledger = new Map<string, RatingLedgerRow>();
+  categoryNames = new Map<string, string>();
   async insertRatingEvents(rows: RatingEventRow[], now: number) {
     let written = 0;
     for (const row of rows) {
@@ -104,7 +107,7 @@ class FakeDb {
     return written;
   }
   async ratingLedgerOf(keys: RatingLedgerKey[]) {
-    const result = new Map<string, { value: number; height: number }>();
+    const result = new Map<string, RatingLedgerRow>();
     keys.forEach((it) => {
       const row = this.ledger.get(ledgerKeyOf(it));
       if (row) result.set(ledgerKeyOf(it), row);
@@ -119,9 +122,10 @@ class FakeDb {
       category: string;
     }[]
   ) {
-    const result = new Map<string, number>();
+    const result = new Map<string, { total: number; stale: number }>();
     for (const key of keys) {
       let total = 0;
+      let stale = 0;
       let any = false;
       this.ledger.forEach((row, k) => {
         const [, matter, kind, target, category] = JSON.parse(k);
@@ -132,25 +136,63 @@ class FakeDb {
           category === key.category
         ) {
           total += row.value;
+          stale += row.stale ? 1 : 0;
           any = true;
         }
       });
-      if (any) result.set(totalKeyOf(key), total);
+      if (any) result.set(totalKeyOf(key), { total, stale });
     }
     return result;
   }
   async writeRatingLedger(
-    upserts: (RatingLedgerKey & { value: number; height: number })[],
+    upserts: (RatingLedgerKey & RatingLedgerRow)[],
     deletes: RatingLedgerKey[]
   ) {
     upserts.forEach((it) =>
-      this.ledger.set(ledgerKeyOf(it), { value: it.value, height: it.height })
+      this.ledger.set(ledgerKeyOf(it), {
+        value: it.value,
+        height: it.height,
+        stale: it.stale
+      })
     );
     deletes.forEach((it) => this.ledger.delete(ledgerKeyOf(it)));
   }
   async clearRatingEvents() {
     this.ledger.clear();
     this.ratingEvents = [];
+    this.categoryNames.clear();
+    if (this.state) {
+      this.state = {
+        ...this.state,
+        events_next_height: null,
+        events_resume_height: null
+      };
+    }
+  }
+  async saveRatingEventsCursor(cursor: {
+    next: number;
+    resume: number | null;
+  }) {
+    if (!this.state) return;
+    this.state = {
+      ...this.state,
+      events_next_height: cursor.next,
+      events_resume_height: cursor.resume
+    };
+  }
+  async ratingCategoryNamesOf(ids: string[]) {
+    return new Map(
+      ids.flatMap((id) => {
+        const name = this.categoryNames.get(id);
+        return name === undefined ? [] : [[id, name] as [string, string]];
+      })
+    );
+  }
+  async writeRatingCategories(names: { id: string; name: string }[]) {
+    names.forEach((it) => {
+      if (!this.categoryNames.has(it.id))
+        this.categoryNames.set(it.id, it.name);
+    });
   }
   async fillRatingEventProfiles(createdSince: number) {
     let filled = 0;
@@ -361,7 +403,12 @@ class FakeDb {
     return this.state;
   }
   async saveState(state: MirrorState) {
-    this.state = state;
+    // The rating events follower's columns are its own (saveRatingEventsCursor).
+    this.state = {
+      ...state,
+      events_next_height: this.state?.events_next_height ?? null,
+      events_resume_height: this.state?.events_resume_height ?? null
+    };
   }
   async profileIdOfPrincipal(p: string) {
     return this.mapping.get(p)?.profile ?? null;
@@ -1058,6 +1105,13 @@ describe('IdentityChainMirror', () => {
   const CATEGORY = '0x' + '0c'.repeat(32);
   const OTHER = '0x' + '0d'.repeat(32);
   const CREDITS = '0x' + 'cc'.repeat(32);
+  /** A REP rating's state key, as the feed gives it. */
+  const ratingKey = (rater: string, target: string, category = CATEGORY) =>
+    '0x070101' + [rater, target, category].map((it) => it.slice(2)).join('');
+  const gone = (path: string) =>
+    new ChainGatewayError('gone', 410, 'height_gone', path);
+  const down = (path: string) =>
+    new ChainGatewayError('down', 503, 'unavailable', path);
   const ratingRecord = (
     rater: string,
     target: string,
@@ -1068,7 +1122,7 @@ describe('IdentityChainMirror', () => {
   ): ChainFeedRecord => ({
     family: '0x0701',
     name: 'Rating',
-    key: '0x',
+    key: ratingKey(rater, target, category),
     value: value === null ? null : '0x01',
     keyFields: { rater, matter: 1, targetKind: 1, target, category },
     valueFields:
@@ -1115,6 +1169,28 @@ describe('IdentityChainMirror', () => {
    */
   const ratedWorld = () => {
     const w = world();
+    // The chain's ratings by height, for reads of a value before ('gone':
+    // the gateway no longer holds those heights; 'down': it can't answer).
+    const history = new Map<
+      string,
+      [number, number | null][] | 'gone' | 'down'
+    >();
+    const categoryState = w.gateway.getState.getMockImplementation()!;
+    w.gateway.getState.mockImplementation((async (
+      key: string,
+      opts?: { height?: number }
+    ) => {
+      if (!key.startsWith('0x0701')) return await categoryState(key);
+      const known = history.get(key) ?? [];
+      if (known === 'gone') throw gone('/v1/state');
+      if (known === 'down') throw down('/v1/state');
+      const at = known
+        .filter(([height]) => height <= (opts?.height ?? Infinity))
+        .at(-1);
+      return at && at[1] !== null
+        ? { family: '0x0701', value: '0x01', valueFields: { value: at[1] } }
+        : null;
+    }) as never);
     w.chain.importStart = 50;
     w.chain.importDone = 60;
     w.chain.feed.push({
@@ -1136,8 +1212,13 @@ describe('IdentityChainMirror', () => {
         ])
       ]
     });
-    return w;
+    return { ...w, history };
   };
+  /** A follower that starts cold: no category names in memory. */
+  const forgetNames = (mirror: unknown) =>
+    (
+      mirror as { events: { categoryNames: Map<string, string> } }
+    ).events.categoryNames.clear();
   const feedRows = (rows: RatingEventRow[]) =>
     rows
       .filter((it) => it.height > 60)
@@ -1208,13 +1289,20 @@ describe('IdentityChainMirror', () => {
       writer: 'tx:RATING_SET'
     });
     expect(report.ratingEvents).toBe(2);
-    // The ledger followed the feed from the import: no totals read.
-    expect(db.state?.events_exact).toBe(true);
+    // The ledger followed the feed from the import: nothing read again.
+    expect(db.state?.events_resume_height).toBeNull();
     expect(gateway.getRatingTotals).not.toHaveBeenCalled();
+    expect(gateway.getState).not.toHaveBeenCalledWith(
+      expect.stringMatching(/^0x0701/),
+      expect.anything()
+    );
+    // The category's name is stored for a cold start.
+    expect(db.categoryNames.get(CATEGORY)).toBe('Kind');
   });
 
-  it('gives the import heights origin IMPORT, with or without a writer', async () => {
+  it('gives the heights below the import end origin IMPORT, and the end block its writer', async () => {
     const { mirror, db, chain, alice, bob } = ratedWorld();
+    chain.categories.set(OTHER, 'Other');
     chain.feed[0] = {
       ...chain.feed[0],
       blocks: [
@@ -1228,7 +1316,12 @@ describe('IdentityChainMirror', () => {
             null
           )
         ]),
-        ...chain.feed[0].blocks
+        timed(60, [
+          ...chain.feed[0].blocks[0].records,
+          // The block the import ended in also runs transactions.
+          ratingRecord(alice.principalId, bob.principalId, 4, ratingSet, OTHER),
+          ratingRecord(bob.principalId, alice.principalId, 2, null, OTHER, null)
+        ])
       ]
     };
     const report = await mirror.run({ budgetMs: 60_000 });
@@ -1236,9 +1329,11 @@ describe('IdentityChainMirror', () => {
       db.ratingEvents.map((it) => [it.height, it.origin, it.writer])
     ).toEqual([
       [55, 'IMPORT', null],
-      [60, 'IMPORT', 'system:IMPORT']
+      [60, 'IMPORT', 'system:IMPORT'],
+      [60, 'OPERATION', 'tx:RATING_SET'],
+      [60, 'UNKNOWN', null]
     ]);
-    expect(report.ratingRecordsWithoutWriter).toBe(0);
+    expect(report.ratingRecordsWithoutWriter).toBe(1);
   });
 
   it('starts a rating again from 0 after its removal', async () => {
@@ -1472,10 +1567,11 @@ describe('IdentityChainMirror', () => {
     });
   });
 
-  it('skips a record it cannot read or name, and goes on', async () => {
-    const { mirror, db, chain, alice, bob, gateway } = ratedWorld();
+  it('marks only the key of a record it cannot read stale, and skips a category with no name', async () => {
+    const { mirror, db, chain, alice, bob, gateway, history } = ratedWorld();
     await mirror.run({ budgetMs: 60_000 });
     const nameless = '0x' + '0e'.repeat(32);
+    const unread = ratingKey(bob.principalId, alice.principalId);
     chain.feed.push({
       from: 101,
       through: 101,
@@ -1501,12 +1597,27 @@ describe('IdentityChainMirror', () => {
     expect(db.state?.events_next_height).toBe(102);
     expect(db.ratingEvents).toHaveLength(1);
     expect(report.ratingEventProblems).toEqual([
-      '101:0x',
+      `101:${unread}`,
       `101: no name for the category ${nameless}`
     ]);
     expect(gateway.getState).toHaveBeenCalledWith(`0x0705${'0e'.repeat(32)}`);
-    // The ledger missed a record: its totals are no longer taken as exact.
-    expect(db.state?.events_exact).toBe(false);
+    expect(db.state?.events_resume_height).toBeNull();
+    expect(
+      db.ledger.get(
+        ledgerKeyOf({
+          rater: bob.principalId,
+          matterCode: 1,
+          targetKind: 1,
+          target: alice.principalId,
+          category: CATEGORY
+        })
+      )
+    ).toMatchObject({ value: 5, stale: true });
+    // The chain had 6 from 101: the key's next change reads it there.
+    history.set(unread, [
+      [60, 5],
+      [101, 6]
+    ]);
     gateway.getRatingTotals.mockResolvedValue([
       {
         matter: 'REP',
@@ -1515,22 +1626,90 @@ describe('IdentityChainMirror', () => {
         raters: 3
       }
     ]);
-    // The unread record left the ledger as it was: the next change from 5.
+    chain.feed.push({
+      from: 102,
+      through: 103,
+      next: 104,
+      blocks: [
+        timed(102, [
+          ratingRecord(bob.principalId, alice.principalId, 1, ratingSet)
+        ]),
+        // Another key: its ledger (no row, no gap) is trusted.
+        timed(103, [
+          ratingRecord(alice.principalId, bob.principalId, 2, ratingSet)
+        ])
+      ]
+    });
+    await mirror.run({ budgetMs: 60_000 });
+    expect(feedRows(db.ratingEvents)).toEqual([
+      [102, 6, 1, 21],
+      [103, 0, 2, 2]
+    ]);
+    expect(gateway.getState).toHaveBeenCalledWith(unread, { height: 101 });
+    expect(gateway.getState).not.toHaveBeenCalledWith(
+      ratingKey(alice.principalId, bob.principalId),
+      expect.anything()
+    );
+    // Only the stale key's total is read from the chain.
+    expect(gateway.getRatingTotals).toHaveBeenCalledTimes(1);
+    expect(gateway.getRatingTotals).toHaveBeenCalledWith(alice.principalId, {
+      height: 102
+    });
+  });
+
+  it('waits for a category name it cannot read, and keeps the names it read', async () => {
+    const { mirror, db, chain, alice, bob, gateway } = ratedWorld();
+    await mirror.run({ budgetMs: 60_000 });
+    chain.categories.set(OTHER, 'Other');
+    chain.feed.push({
+      from: 101,
+      through: 101,
+      next: 102,
+      blocks: [
+        timed(101, [
+          ratingRecord(bob.principalId, alice.principalId, 4, ratingSet, OTHER)
+        ])
+      ]
+    });
+    const stateOf = gateway.getState.getMockImplementation()!;
+    let failing = true;
+    gateway.getState.mockImplementation((async (
+      key: string,
+      opts?: { height?: number }
+    ) => {
+      if (failing && key === `0x0705${'0d'.repeat(32)}`) {
+        failing = false;
+        throw down('/v1/state');
+      }
+      return await (stateOf as (k: string, o?: unknown) => Promise<unknown>)(
+        key,
+        opts
+      );
+    }) as never);
+    const stopped = await mirror.run({ budgetMs: 60_000 });
+    expect(stopped.error).toBeUndefined();
+    expect(stopped.ratingEventProblems).toEqual(['down']);
+    expect(db.state?.events_next_height).toBe(101);
+    expect(feedRows(db.ratingEvents)).toEqual([]);
+    await mirror.run({ budgetMs: 60_000 });
+    expect(feedRows(db.ratingEvents)).toEqual([[101, 0, 4, 4]]);
+    expect(db.categoryNames.get(OTHER)).toBe('Other');
+    // A cold start reads the stored names, not the chain.
+    forgetNames(mirror);
+    gateway.getState.mockClear();
     chain.feed.push({
       from: 102,
       through: 102,
       next: 103,
       blocks: [
         timed(102, [
-          ratingRecord(bob.principalId, alice.principalId, 1, ratingSet)
+          ratingRecord(alice.principalId, bob.principalId, 2, ratingSet, OTHER)
         ])
       ]
     });
     await mirror.run({ budgetMs: 60_000 });
-    expect(feedRows(db.ratingEvents)).toEqual([[102, 5, 1, 21]]);
-    expect(gateway.getRatingTotals).toHaveBeenCalledWith(alice.principalId, {
-      height: 102
-    });
+    expect(feedRows(db.ratingEvents).at(-1)).toEqual([102, 0, 2, 2]);
+    expect(gateway.getState).not.toHaveBeenCalled();
   });
 
   it("leaves out the help bot's credit category and records that change nothing", async () => {
@@ -1581,10 +1760,12 @@ describe('IdentityChainMirror', () => {
     expect(db.ratingEvents).toHaveLength(2);
   });
 
-  it('goes on from the next height the feed holds when its place is gone', async () => {
-    const { mirror, db, gateway, chain, alice, bob } = ratedWorld();
+  it('reads the value before from the chain for keys a gap in the feed may have changed', async () => {
+    const { mirror, db, gateway, chain, alice, bob, history } = ratedWorld();
     await mirror.run({ budgetMs: 60_000 });
-    db.state = { ...db.state!, events_next_height: 150 };
+    // The identity sync is past the gap; the follower's place is in it.
+    db.state = { ...db.state!, next_height: 500 };
+    await db.saveRatingEventsCursor({ next: 150, resume: null });
     const changesOf = gateway.getChanges.getMockImplementation()!;
     gateway.getChanges.mockImplementation(
       async (from: number | string, opts?: { families?: string[] }) => {
@@ -1600,76 +1781,135 @@ describe('IdentityChainMirror', () => {
         [200, 400]
       ]
     } as never);
-    await mirror.run({ budgetMs: 60_000 });
+    const after = await mirror.run({ budgetMs: 60_000 });
     expect(db.state).toMatchObject({
       events_next_height: 200,
-      events_exact: false
+      events_resume_height: 200
     });
+    expect(after.eventsNextHeight).toBe(200);
     expect(db.ledger.size).toBe(1);
-    // A ledger with a gap: the total of a block without its RatingTotal
-    // comes from the chain's totals at that height.
+    // In the gap Bob rated Alice's Kind 9 and her Other 3.
+    chain.categories.set(OTHER, 'Other');
+    history.set(ratingKey(bob.principalId, alice.principalId), [
+      [60, 5],
+      [170, 9]
+    ]);
+    history.set(ratingKey(bob.principalId, alice.principalId, OTHER), [
+      [180, 3]
+    ]);
+    history.set(ratingKey(alice.principalId, bob.principalId, OTHER), 'gone');
     gateway.getRatingTotals.mockImplementation((async (
-      _p: string,
+      principal: string,
       opts?: { height?: number }
     ) => {
-      if (opts?.height === 200) {
-        return [
-          {
-            matter: 'NIC',
-            category: { id: null, name: null },
-            total: '99',
-            raters: 9
-          },
+      const totals = (kind: number, other: number) =>
+        [
           {
             matter: 'REP',
             category: { id: CATEGORY, name: 'Kind' },
-            total: '33',
-            raters: 4
+            total: String(kind),
+            raters: 1
+          },
+          {
+            matter: 'REP',
+            category: { id: OTHER, name: 'Other' },
+            total: String(other),
+            raters: 1
           }
         ] as ChainRatingTotal[];
-      }
-      throw new ChainGatewayError('gone', 410, 'height_gone', '/v1/ratings');
+      if (opts?.height !== 200) throw gone('/v1/ratings');
+      return principal === alice.principalId ? totals(33, 7) : totals(1, 0);
     }) as never);
-    chain.feed.push({
-      from: 200,
-      through: 201,
-      next: 202,
-      blocks: [
-        timed(200, [
-          ratingRecord(bob.principalId, alice.principalId, 6, ratingSet)
-        ]),
-        timed(201, [
-          ratingRecord(bob.principalId, alice.principalId, 2, ratingSet)
-        ])
-      ]
-    });
-    const report = await mirror.run({ budgetMs: 60_000 });
-    expect(feedRows(db.ratingEvents)).toEqual([
-      [200, 5, 6, 33],
-      // The chain no longer holds 201's totals: the ledger's, noted.
-      [201, 6, 2, 29]
-    ]);
-    expect(report.ratingEventProblems).toEqual([
-      '201: a total from a ledger with a gap'
-    ]);
-    // Totals the gateway can't give now: the block waits, nothing written.
-    gateway.getRatingTotals.mockRejectedValue(
-      new ChainGatewayError('down', 503, 'unavailable', '/v1/ratings')
+    chain.feed.push(
+      {
+        from: 200,
+        through: 200,
+        next: 201,
+        blocks: [
+          timed(200, [
+            // Back to the value the ledger had before the gap: a change.
+            ratingRecord(bob.principalId, alice.principalId, 5, ratingSet),
+            ratingRecord(
+              bob.principalId,
+              alice.principalId,
+              4,
+              ratingSet,
+              OTHER
+            ),
+            // A key the gap left alone: no rating before.
+            ratingRecord(alice.principalId, bob.principalId, 1, ratingSet)
+          ])
+        ]
+      },
+      {
+        from: 201,
+        through: 201,
+        next: 202,
+        blocks: [
+          timed(201, [
+            ratingRecord(bob.principalId, alice.principalId, 2, ratingSet)
+          ])
+        ]
+      },
+      {
+        from: 202,
+        through: 202,
+        next: 203,
+        blocks: [
+          // The chain no longer holds the height before: origin UNKNOWN.
+          timed(202, [
+            ratingRecord(
+              alice.principalId,
+              bob.principalId,
+              6,
+              ratingSet,
+              OTHER
+            ),
+            totalRecord(bob.principalId, 6, OTHER)
+          ])
+        ]
+      }
     );
+    const report = await mirror.run({ budgetMs: 60_000 });
+    expect(
+      feedRows(db.ratingEvents).map((it, i) => [
+        ...it,
+        db.ratingEvents.filter((row) => row.height > 60)[i].origin
+      ])
+    ).toEqual([
+      [200, 9, 5, 33, 'OPERATION'],
+      [200, 3, 4, 7, 'OPERATION'],
+      [200, 0, 1, 1, 'OPERATION'],
+      // The chain no longer holds 201's totals: the ledger's, noted.
+      [201, 5, 2, 2, 'OPERATION'],
+      [202, 0, 6, 6, 'UNKNOWN']
+    ]);
+    expect(gateway.getState).toHaveBeenCalledWith(
+      ratingKey(bob.principalId, alice.principalId),
+      { height: 199 }
+    );
+    expect(report.ratingEventProblems).toEqual([
+      '201: a total that may be off',
+      '202: the value before is not known (origin UNKNOWN)'
+    ]);
+    // Totals the gateway can't give now: the block waits, the run goes on.
+    gateway.getRatingTotals.mockRejectedValue(down('/v1/ratings'));
     chain.feed.push({
-      from: 202,
-      through: 202,
-      next: 203,
+      from: 203,
+      through: 203,
+      next: 204,
       blocks: [
-        timed(202, [
+        timed(203, [
           ratingRecord(bob.principalId, alice.principalId, 8, ratingSet)
         ])
       ]
     });
-    const stopped = await mirror.run({ budgetMs: 60_000 });
-    expect(stopped.error).toBeTruthy();
-    expect(db.state?.events_next_height).toBe(202);
-    expect(db.ratingEvents).toHaveLength(3);
+    const waiting = await mirror.run({ budgetMs: 60_000 });
+    expect(waiting.error).toBeUndefined();
+    expect(waiting.ratingEventProblems).toEqual(['down']);
+    expect(waiting.eventsNextHeight).toBe(203);
+    expect(db.state?.events_next_height).toBe(203);
+    expect(db.ratingEvents).toHaveLength(6);
     gateway.getRatingTotals.mockResolvedValue([
       {
         matter: 'REP',
@@ -1679,7 +1919,143 @@ describe('IdentityChainMirror', () => {
       }
     ]);
     await mirror.run({ budgetMs: 60_000 });
-    expect(feedRows(db.ratingEvents).at(-1)).toEqual([202, 2, 8, 35]);
+    expect(feedRows(db.ratingEvents).at(-1)).toEqual([203, 2, 8, 35]);
+  });
+
+  it('keeps its ledger trusted when the feed is gone at a height it still holds', async () => {
+    const { mirror, db, gateway } = ratedWorld();
+    await mirror.run({ budgetMs: 60_000 });
+    db.state = { ...db.state!, next_height: 500 };
+    const changesOf = gateway.getChanges.getMockImplementation()!;
+    gateway.getChanges.mockImplementation(
+      async (from: number | string, opts?: { families?: string[] }) => {
+        if (opts?.families?.includes('0x0704')) {
+          throw new ChainGatewayError('gone', 410, 'gone', '/v1/feed');
+        }
+        return await changesOf(from, opts);
+      }
+    );
+    const report = await mirror.run({ budgetMs: 60_000 });
+    expect(gateway.getStatus).toHaveBeenCalled();
+    expect(db.state).toMatchObject({
+      events_next_height: 101,
+      events_resume_height: null
+    });
+    expect(report.eventsNextHeight).toBe(101);
+  });
+
+  it('waits for a value before it cannot read now, and writes UNKNOWN for one gone, even unchanged', async () => {
+    const { mirror, db, chain, alice, bob, history } = ratedWorld();
+    await mirror.run({ budgetMs: 60_000 });
+    db.state = { ...db.state!, next_height: 500 };
+    await db.saveRatingEventsCursor({ next: 200, resume: 200 });
+    const key = ratingKey(bob.principalId, alice.principalId);
+    history.set(key, 'down');
+    chain.feed.push({
+      from: 200,
+      through: 200,
+      next: 201,
+      blocks: [
+        timed(200, [
+          // The value the ledger had before the gap.
+          ratingRecord(bob.principalId, alice.principalId, 5, ratingSet),
+          totalRecord(alice.principalId, 5)
+        ])
+      ]
+    });
+    const waiting = await mirror.run({ budgetMs: 60_000 });
+    expect(waiting.ratingEventProblems).toEqual(['down']);
+    expect(db.state?.events_next_height).toBe(200);
+    expect(feedRows(db.ratingEvents)).toEqual([]);
+    history.set(key, 'gone');
+    await mirror.run({ budgetMs: 60_000 });
+    expect(
+      db.ratingEvents
+        .filter((it) => it.height > 60)
+        .map((it) => [it.height, it.old_rating, it.new_rating, it.origin])
+    ).toEqual([[200, 5, 5, 'UNKNOWN']]);
+  });
+
+  it('starts from the import with an empty ledger and log, and waits without an import start', async () => {
+    const { mirror, db, chain } = ratedWorld();
+    const errors = jest.spyOn(
+      Logger.get('IDENTITY_CHAIN_RATING_EVENTS'),
+      'error'
+    );
+    chain.importStart = null;
+    try {
+      const waiting = await mirror.run({ budgetMs: 60_000 });
+      expect(waiting.eventsNextHeight).toBeNull();
+      expect(errors).toHaveBeenCalledWith(
+        '[NO IMPORT START] [RATING EVENTS WAIT]'
+      );
+    } finally {
+      errors.mockRestore();
+    }
+    expect(db.ratingEvents).toEqual([]);
+    // Left from an earlier start: cleared with the first place.
+    db.ledger.set('left-over', { value: 3, height: 1, stale: false });
+    db.ratingEvents = [{ height: 1 } as never];
+    db.categoryNames.set(OTHER, 'Old');
+    chain.importStart = 50;
+    await mirror.run({ budgetMs: 60_000 });
+    expect(db.ledger.has('left-over')).toBe(false);
+    expect(db.categoryNames.has(OTHER)).toBe(false);
+    expect(db.ratingEvents.map((it) => it.height)).toEqual([60]);
+    expect(db.state?.events_next_height).toBe(101);
+  });
+
+  it('follows the rating events when an identity step throws', async () => {
+    const { mirror, db, chain, alice, bob } = ratedWorld();
+    await mirror.run({ budgetMs: 60_000 });
+    expect(db.state?.last_full_sync_at).not.toBeNull();
+    chain.feed.push({
+      from: 101,
+      through: 101,
+      next: 102,
+      blocks: [
+        timed(101, [
+          ratingRecord(bob.principalId, alice.principalId, 7, ratingSet)
+        ])
+      ]
+    });
+    db.fixLevelsOffTheChain = jest.fn(async () => {
+      throw new Error('levels down');
+    }) as never;
+    const report = await mirror.run({ budgetMs: 60_000 });
+    expect(report.error).toBe('levels down');
+    expect(feedRows(db.ratingEvents)).toEqual([[101, 5, 7, 7]]);
+  });
+
+  it("writes no row past the identity sync's place", async () => {
+    const { mirror, db, chain, gateway, alice, bob } = ratedWorld();
+    await mirror.run({ budgetMs: 60_000 });
+    chain.feed.push({
+      from: 101,
+      through: 101,
+      next: 102,
+      blocks: [
+        timed(101, [
+          ratingRecord(bob.principalId, alice.principalId, 7, ratingSet)
+        ])
+      ]
+    });
+    const changesOf = gateway.getChanges.getMockImplementation()!;
+    gateway.getChanges.mockImplementation(
+      async (from: number | string, opts?: { families?: string[] }) => {
+        // The identity sync reads the whole feed: it can't now.
+        if (!opts?.families) throw down('/v1/feed');
+        return await changesOf(from, opts);
+      }
+    );
+    const stopped = await mirror.run({ budgetMs: 60_000 });
+    expect(stopped.error).toBe('down');
+    expect(db.state?.next_height).toBe(101);
+    expect(db.state?.events_next_height).toBe(101);
+    expect(feedRows(db.ratingEvents)).toEqual([]);
+    gateway.getChanges.mockImplementation(changesOf);
+    await mirror.run({ budgetMs: 60_000 });
+    expect(feedRows(db.ratingEvents)).toEqual([[101, 5, 7, 7]]);
   });
 
   it("fills in the profile ids of the last day's rating events once mapped", async () => {
@@ -1931,9 +2307,13 @@ describe('IdentityChainMirror', () => {
     // A relaunch: another network. Bindings and identity tables start again.
     db.mapping.set(PID(98), { profile: 'made-on-old-chain', origin: 'NEW' });
     stale();
-    db.ledger.set('of-the-old-chain', { value: 3, height: 50 });
+    db.ledger.set('of-the-old-chain', { value: 3, height: 50, stale: false });
     db.ratingEvents = [{ height: 50 } as never];
-    db.state = { ...db.state!, events_next_height: 120, events_exact: true };
+    db.state = {
+      ...db.state!,
+      events_next_height: 120,
+      events_resume_height: null
+    };
     chain.network = '0x' + 'bb'.repeat(32);
     chain.importCompleted = false;
     const during = await mirror.run({ budgetMs: 60_000 });

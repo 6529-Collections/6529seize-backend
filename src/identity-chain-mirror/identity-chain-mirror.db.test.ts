@@ -146,7 +146,7 @@ describeWithSeed(
           pin_floor: null,
           off_chain_after: null,
           events_next_height: null,
-          events_exact: false,
+          events_resume_height: null,
           retry: NO_RETRY
         },
         9
@@ -314,8 +314,9 @@ describeWithSeed(
           sync_wallet_after: B,
           pin_floor: 812,
           off_chain_after: C,
+          // The follower's own columns: saveState leaves them.
           events_next_height: 77,
-          events_exact: true,
+          events_resume_height: 70,
           retry: { principals: [P], targets: [], wallets: [B] }
         },
         1
@@ -334,9 +335,25 @@ describeWithSeed(
           sync_wallet_after: B,
           pin_floor: 812,
           off_chain_after: C,
-          events_next_height: 77,
-          events_exact: true,
+          events_next_height: null,
+          events_resume_height: null,
           retry: { principals: [P], targets: [], wallets: [B] }
+        })
+      );
+      await db.saveRatingEventsCursor({ next: 77, resume: 70 }, 2);
+      expect(await db.getState()).toEqual(
+        expect.objectContaining({
+          next_height: 1,
+          events_next_height: 77,
+          events_resume_height: 70
+        })
+      );
+      await inTx((conn) => db.clearRatingEvents(conn));
+      expect(await db.getState()).toEqual(
+        expect.objectContaining({
+          next_height: 1,
+          events_next_height: null,
+          events_resume_height: null
         })
       );
       // The retry list holds the 10,000 keys past which a full sync starts.
@@ -608,9 +625,14 @@ describeWithSeed(
       await inTx((conn) =>
         db.writeRatingLedger(
           [
-            { ...key(P, kind), value: 5, height: 10 },
-            { ...key(W(5) + '0'.repeat(24), kind), value: -2, height: 11 },
-            { ...key(P, other), value: 4, height: 12 }
+            { ...key(P, kind), value: 5, height: 10, stale: false },
+            {
+              ...key(W(5) + '0'.repeat(24), kind),
+              value: -2,
+              height: 11,
+              stale: true
+            },
+            { ...key(P, other), value: 4, height: 12, stale: false }
           ],
           [],
           conn
@@ -618,20 +640,44 @@ describeWithSeed(
       );
       await inTx((conn) =>
         db.writeRatingLedger(
-          [{ ...key(P, kind), value: 7, height: 13 }],
+          [{ ...key(P, kind), value: 7, height: 13, stale: false }],
           [key(P, other)],
           conn
         )
       );
       const ledger = await db.ratingLedgerOf([key(P, kind), key(P, other)]);
-      expect(Array.from(ledger.values())).toEqual([{ value: 7, height: 13 }]);
+      expect(Array.from(ledger.values())).toEqual([
+        { value: 7, height: 13, stale: false }
+      ]);
       const totals = await db.ratingLedgerTotalsOf([
         { targetKind: 1, target: Q, matterCode: 1, category: kind },
         { targetKind: 1, target: Q, matterCode: 1, category: other }
       ]);
-      expect(Array.from(totals.values())).toEqual([5]);
+      expect(Array.from(totals.values())).toEqual([{ total: 5, stale: 1 }]);
+      // Category names: one stored stays as it is.
+      await inTx((conn) =>
+        db.writeRatingCategories(
+          [
+            { id: kind, name: 'Kind' },
+            { id: other, name: 'Other' }
+          ],
+          conn
+        )
+      );
+      await inTx((conn) =>
+        db.writeRatingCategories([{ id: kind, name: 'Changed' }], conn)
+      );
+      expect(
+        await db.ratingCategoryNamesOf([kind, other, '0x' + '0e'.repeat(32)])
+      ).toEqual(
+        new Map([
+          [kind, 'Kind'],
+          [other, 'Other']
+        ])
+      );
       await inTx((conn) => db.clearRatingEvents(conn));
       expect((await db.ratingLedgerOf([key(P, kind)])).size).toBe(0);
+      expect((await db.ratingCategoryNamesOf([kind])).size).toBe(0);
     });
 
     it('replaces a wallet delegations and all pairs', async () => {

@@ -1013,49 +1013,68 @@ From switch-on `identity_chain_rating_events` is the source of REP and NIC
 notifications. The rating events follower
 (`src/identity-chain-mirror/rating-events-follower.ts`, reading with
 `rating-events.ts`) writes it. Like the wallet bindings follower it reads the
-feed with its own cursor (`events_next_height`) from the import's first block,
-whole blocks of the mirror's chain, only the rating families: Rating (0x0701),
-RatingTotal (0x0704) and Category (0x0705). Each page's rows, ledger changes
-and cursor are written in one transaction. The follower keeps its own copy of
-every rating in `identity_chain_rating_ledger`, keyed by the record's key
-fields (rater, matter, target kind, target, category) with the value and the
-height it was set at. Nothing comes from 6529.io's ratings table, which the
-identity sync writes at newer heights, so that sync can't change an event. It
-runs last in each run, after the identity sync (which leaves it a quarter of
-the time), so most raters and targets are mapped when their rows are written.
+feed from the import's first block, whole blocks of the mirror's chain, only
+the rating families: Rating (0x0701), RatingTotal (0x0704) and Category
+(0x0705). Its place is in two columns of the mirror's state that only it
+writes: `events_next_height`, and `events_resume_height`, the height it went
+on from after a gap in the feed. It never reads past the identity sync's
+place (`next_height`), so raters and targets are mapped when their rows are
+written. Each page's rows, ledger changes, category names and place are
+written in one transaction. The follower keeps its own copy of every rating
+in `identity_chain_rating_ledger`, keyed by the record's key fields (rater,
+matter, target kind, target, category) with the value, the height it was set
+at and a `stale` mark, and the REP category names it has read in
+`identity_chain_rating_categories`, so a cold start reads none again. Nothing
+comes from 6529.io's ratings table, which the identity sync writes at newer
+heights, so that sync can't change an event. Each run fills in profile ids,
+then runs the follower last, after the identity steps (which leave it a
+quarter of the time), also when one of them threw. Its first start clears the
+ledger, the rows and the names in the transaction that saves its first place;
+without the import's start it logs an error and waits.
 
 Each Rating record of an identity gives one row: the block's height and time
 (`block_time_ms`, the block's slot start), the rater and target principals
-and, when mapped then, their profile ids (none is made here; each run fills in
+and, when mapped, their profile ids (none is made here; each run fills in
 those of the rows written in the last day whose principal is mapped since, and
 a principal never mapped, merged or closed, can leave one null), the matter
-(REP, or CIC for NIC), the REP category's name (`''` for CIC; from the chain's
-Category records), the value before (from the ledger, 0 when it has none) and
-the new one (0 when removed), `total_after` (the target's total in that matter
-and category after the block: its RatingTotal record; without one, the
-ledger's total plus the change while the ledger is exact, else the chain's
-totals of the target read at that height), the record's `byImport` and raw
-`writer` (`tx:<op>` or `system:<step>`), and `origin`: IMPORT at the import's
-own heights (up to the height it was done at), and after them OPERATION for a
+(REP, or CIC for NIC), the REP category's name (`''` for CIC), the value
+before and the new one (0 when removed), `total_after`, the record's
+`byImport` and raw `writer` (`tx:<op>` or `system:<step>`), and `origin`:
+IMPORT below the height the import ended at, and from it OPERATION for a
 RATING_SET transaction, CAP_CUT for the daily rating reduction (RATING_SCAN),
-IMPORT for no writer on a record the import wrote, UNKNOWN otherwise. Only OPERATION notifies. Rows are written with `on duplicate key
-update id = id` (one row per height, rater, target, matter and category), so a
-page read again writes no row twice and a run cut short loses none. A record
-that changes nothing (the ledger has that value) or of the help bot's credit
-category writes no row but still updates the ledger. A record that can't be
-read (a bad key, or a value without its fields, which is never taken for a
-removal) and a REP category with no name are left out, logged and listed in
-the run's report; the cursor moves on. A record it can't read also leaves the
-ledger short of a change, so from then on it is no longer exact. A Rating record after the import with
-no writer (an old gateway) has origin UNKNOWN and notifies no one; the run
-logs one error and counts them in its report. A full sync and a retry of keys
-write no rows. When the gateway no longer holds the cursor's height, the
-follower logs the gap and goes on from the first height the feed still holds;
-the ledger stays, but is no longer exact (`events_exact`). A page whose totals
-can't be read from the chain is not written and the run stops there, so the
-block waits for the next run; when the gateway no longer holds the totals at
-that height, the ledger's total is used and noted in the report. A relaunch clears the ledger and the
-rows, and the follower starts again from the new import.
+IMPORT for no writer on a record the import wrote, UNKNOWN otherwise. Only
+OPERATION notifies.
+
+The value before is the ledger's (0 without a row) while the key's row can be
+trusted. A row marked stale (a record of that key the follower couldn't
+read), or after a gap a row older than `events_resume_height` or no row at
+all, can't be: the value is read from the chain at the height before. When
+the gateway no longer holds that height the row is still written, with the
+ledger's value and origin UNKNOWN, and noted in the report. `total_after` is
+the target's total in that matter and category after the block: its
+RatingTotal record; without one, the ledger's total plus the change when no
+row of it is stale and there was no gap, else the chain's totals of the
+target read at that height (when the gateway no longer holds those, the
+ledger's guess, noted).
+
+Rows are written with `on duplicate key update id = id` (one row per height,
+rater, target, matter and category), so a page read again writes no row
+twice and a run cut short loses none. A record that changes nothing (a value
+before equal to the new one) or of the help bot's credit category writes no
+row but still updates the ledger. A record whose key can't be read, or a REP
+category the chain has no name for, is left out, logged and listed in the
+run's report, and the place moves on; a value without its fields is never
+taken for a removal, and marks its key stale. Any other read that fails (a
+category name, a value before, a total) ends the follower's run before the
+page is written, so the page waits for the next run; that failure goes to
+the run's report and never fails the run. A Rating record from the import's
+end on with no writer (an old gateway) has origin UNKNOWN and notifies no
+one; the run logs one error and counts them in its report. A full sync and a
+retry of keys write no rows. When the gateway no longer holds the place's
+height, the follower logs the gap and goes on from the first later height
+the feed holds, which becomes `events_resume_height`. A relaunch clears the
+ledger, the rows, the names and the place, and the follower starts again from
+the new import.
 
 `identity_chain_wallets` holds each bound wallet's principal and the chain
 height it has been bound to that principal since
