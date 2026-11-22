@@ -20,8 +20,10 @@ export interface SettlementSend {
   readonly occurrence: number;
   readonly count_next: number | null;
   readonly nonce_lane: number;
-  /** Requests sent for this step (occurrence and count_next). */
+  /** Tries for this step (occurrence and count_next), of any outcome. */
   readonly attempts: number;
+  /** Requests for this step that failed in a block, paying their fee. */
+  readonly failures: number;
   readonly tx_id: string | null;
   readonly sent_at: number;
   readonly status: SettlementSendStatus;
@@ -47,6 +49,7 @@ const COLUMNS = [
   'count_next',
   'nonce_lane',
   'attempts',
+  'failures',
   'tx_id',
   'sent_at',
   'status',
@@ -81,6 +84,7 @@ export class WavesSettlementSendsDb
       count_next: row.count_next === null ? null : Number(row.count_next),
       nonce_lane: Number(row.nonce_lane),
       attempts: Number(row.attempts),
+      failures: Number(row.failures),
       sent_at: Number(row.sent_at)
     }));
   }

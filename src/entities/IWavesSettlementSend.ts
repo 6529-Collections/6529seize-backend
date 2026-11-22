@@ -11,10 +11,14 @@ import { WAVES_SETTLEMENT_SENDS_TABLE } from '@/constants';
  * - `nonce_lane` is the sender wallet's nonce lane (0 to 15), derived from
  *   the decision id, so every request for a decision, from any sender with
  *   the same key, takes the same lane and nonce and only one executes.
- * - `attempts`: requests sent for this step; a new step starts again at 1.
+ * - `attempts`: tries for this step (drafts, refusals, lost submits and
+ *   failures alike), which set the wait before the next; `failures`: the
+ *   requests for this step that failed in a block and paid their fee, which
+ *   end the tries. A new step starts both again at 0.
  * - `status`: `submitting` (saved before the submit, so a submit whose
  *   answer is lost is still checked), `submitted`, `refused`, `error`,
- *   `given_up` (no more requests for this step), or the transaction's state
+ *   `given_up` (no request for this step for a few hours), or the
+ *   transaction's state
  *   as the gateway last gave it (`pending`, `in_block`, `final`, `failed`,
  *   `unknown`).
  */
@@ -34,6 +38,9 @@ export class WavesSettlementSendEntity {
 
   @Column({ type: 'int', default: 0 })
   readonly attempts!: number;
+
+  @Column({ type: 'int', default: 0 })
+  readonly failures!: number;
 
   @Column({ type: 'varchar', length: 66, nullable: true, default: null })
   readonly tx_id!: string | null;

@@ -10,7 +10,8 @@ import {
   checkSettlementDraft,
   SettlementSettings,
   settlementSettingsFromEnv,
-  SettlementSettingsResult
+  SettlementSettingsResult,
+  worstFeeOf
 } from './settlement-draft';
 import {
   SettlementSigner,
@@ -36,18 +37,29 @@ import {
  * `scoring` with a new `next`), at most one a run.
  *
  * At most one request per decision may run at a time. A request expires
- * after SETTLEMENT_VALID_FOR_MS. One that failed, was refused, or was not
- * seen in a block after SETTLEMENT_RESEND_AFTER_MS (by then expired) is sent
- * again, after a wait that doubles each time (SETTLEMENT_BACKOFF_MS); after
- * SETTLEMENT_MAX_ATTEMPTS requests for one step the sender gives up on it
- * and logs `[SETTLEMENT GIVEN UP]`.
+ * after SETTLEMENT_VALID_FOR_MS and carries WAVES_SETTLEMENT_MAX_FEE as its
+ * maxFee. A step is tried again when its request failed, was refused or was
+ * not seen in a block after SETTLEMENT_RESEND_AFTER_MS (by then expired), or
+ * when its draft could not be made, each time after a wait that doubles
+ * from SETTLEMENT_BACKOFF_MS up to SETTLEMENT_MAX_BACKOFF_MS. Only requests
+ * that failed in a block pay a fee: after SETTLEMENT_MAX_FAILURES of them
+ * for one step the sender logs `[SETTLEMENT GIVEN UP]` and leaves the step
+ * for SETTLEMENT_GIVE_UP_PAUSE_MS, then tries it again from the start and
+ * logs `[SETTLEMENT TRYING AGAIN]`. Refusals, lost submits and gateway
+ * errors never end the tries.
+ *
+ * Settings: WAVES_SETTLEMENT_SENDER_KEY (required), and in
+ * settlement-draft.ts WAVES_SETTLEMENT_NETWORK_ID (set it in production:
+ * without it the network the requests are signed for is the one the
+ * gateway's read names) and WAVES_SETTLEMENT_MAX_FEE.
  *
  * Run one sender key in one sending environment per chain. Each decision's
- * requests use a nonce lane derived from its id, so when a second sender
- * with the same key (a staging set up with prod's key, say) drafts at the
- * same time, both requests take the same lane and nonce and only one can
- * execute. One drafted after the other landed is a new transaction and can
- * still pay a fee for nothing.
+ * requests use a nonce lane derived from its id. When a second sender with
+ * the same key (a staging set up with prod's key, say) drafts at the same
+ * time, both requests take the same lane and nonce: at most one can
+ * execute, and nodes propose neither while both are held, so the two
+ * senders stall each other until the requests expire. One drafted after the
+ * other landed is a new transaction and can still pay a fee for nothing.
  */
 
 const logger = Logger.get('WAVES_SETTLEMENT_SENDER');
@@ -56,10 +68,14 @@ const logger = Logger.get('WAVES_SETTLEMENT_SENDER');
 export const SETTLEMENT_VALID_FOR_MS = 5 * 60_000;
 /** A request not seen in a block by then has expired and is sent again. */
 export const SETTLEMENT_RESEND_AFTER_MS = 10 * 60_000;
-/** Requests for one step of a count before the sender gives up on it. */
-export const SETTLEMENT_MAX_ATTEMPTS = 8;
-/** The wait before the second request for one step; it doubles each time. */
+/** Requests for one step that failed in a block before the sender stops. */
+export const SETTLEMENT_MAX_FAILURES = 8;
+/** How long a step is left after the sender gave up on it. */
+export const SETTLEMENT_GIVE_UP_PAUSE_MS = 6 * 60 * 60_000;
+/** The wait before the second try for one step; it doubles each time... */
 export const SETTLEMENT_BACKOFF_MS = 60_000;
+/** ...up to this. */
+export const SETTLEMENT_MAX_BACKOFF_MS = 15 * 60_000;
 /** Statuses of a request that may still execute. */
 const MAY_RUN: readonly SettlementSendStatus[] = [
   'submitting',
@@ -166,10 +182,27 @@ export function nonceLaneOf(decisionId: string): number {
   return parseInt(keccak256(decisionId).slice(-1), 16);
 }
 
-/** The wait after `attempts` requests for one step before the next. */
+/** The wait after `attempts` tries for one step before the next. */
 export function backoffMs(attempts: number): number {
-  return attempts <= 0 ? 0 : SETTLEMENT_BACKOFF_MS * Math.pow(2, attempts - 1);
+  if (attempts <= 0) return 0;
+  return Math.min(
+    SETTLEMENT_MAX_BACKOFF_MS,
+    SETTLEMENT_BACKOFF_MS * Math.pow(2, Math.min(attempts, 30) - 1)
+  );
 }
+
+/** What to do with a due decision this run. */
+type Plan =
+  | {
+      readonly action: 'send';
+      /** The tries and failures so far for this step. */
+      readonly attempts: number;
+      readonly failures: number;
+    }
+  | { readonly action: 'wait' }
+  | { readonly action: 'give_up' };
+
+const FRESH: Plan = { action: 'send', attempts: 0, failures: 0 };
 
 export class WavesSettlementSender {
   /** The last state logged per subject, so each change is logged once. */
@@ -309,10 +342,13 @@ export class WavesSettlementSender {
       const txId = row.tx_id;
       let status: SettlementSendStatus;
       let lastError = row.last_error;
+      let failures = row.failures;
       try {
         const tx = await timed(() => this.deps.gateway.getTx(txId));
         status = tx && TX_STATUSES.includes(tx.status) ? tx.status : 'unknown';
         if (tx?.status === 'failed') {
+          // It paid its fee: this counts toward giving the step up.
+          failures++;
           lastError = `failed in block ${tx.height}: ${tx.result?.code} ${tx.result?.name}`;
           logger.warn(
             `[SETTLEMENT FAILED] [decision ${row.decision_id}] [tx ${txId}] ${lastError}`
@@ -324,7 +360,10 @@ export class WavesSettlementSender {
         continue;
       }
       if (status !== row.status) {
-        await this.save({ ...row, status, last_error: lastError }, rows);
+        await this.save(
+          { ...row, status, failures, last_error: lastError },
+          rows
+        );
       }
     }
     return rows;
@@ -346,22 +385,27 @@ export class WavesSettlementSender {
     if (settlement.count?.stage === 'final') return 'waiting';
     const row = rows.get(step.decisionId);
     const plan = this.plan(row, step);
-    if (plan === 'wait') return 'waiting';
-    if (plan === 'give_up') return await this.giveUp(row!, rows);
+    if (plan.action === 'wait') return 'waiting';
+    if (plan.action === 'give_up') return await this.giveUp(row!, rows);
     const lane = nonceLaneOf(step.decisionId);
     if (this.laneTaken(step.decisionId, lane, rows)) return 'waiting';
     const where = `[decision ${step.decisionId}] [occurrence ${step.occurrence}] [next ${step.next}] [lane ${lane}]`;
-    const attempts = row && sameStep(row, step) ? row.attempts : 0;
+    if (row?.status === 'given_up' && sameStep(row, step)) {
+      logger.warn(`[SETTLEMENT TRYING AGAIN] ${where} after giving it up`);
+    }
+    // Every try counts toward the wait before the next, whatever its end.
+    const attempts = plan.attempts + 1;
     const base = {
       decision_id: step.decisionId,
       occurrence: step.occurrence,
       count_next: step.next,
       nonce_lane: lane,
       attempts,
+      failures: plan.failures,
       sent_at: this.deps.now()
     };
     let draft: ChainDraft;
-    let checked: { txId: string; role: number; keyType: number };
+    let checked: ReturnType<typeof checkSettlementDraft>;
     try {
       draft = await run.timed(() =>
         this.deps.gateway.getDraft({
@@ -373,7 +417,8 @@ export class WavesSettlementSender {
             maxEntries: step.maxEntries
           },
           nonceLane: lane,
-          validForMs: SETTLEMENT_VALID_FOR_MS
+          validForMs: SETTLEMENT_VALID_FOR_MS,
+          maxFee: run.settings.maxFee.toString()
         })
       );
       checked = checkSettlementDraft(draft, {
@@ -385,9 +430,16 @@ export class WavesSettlementSender {
         validForMs: SETTLEMENT_VALID_FOR_MS,
         now: this.deps.now()
       });
+      // The chain refuses a maxFee below the worst case (0x0305), so a
+      // request is not sent while base fees put the worst case over the cap.
+      const worst = worstFeeOf(draft);
+      if (worst !== null && worst > checked.maxFee) {
+        throw new Error(
+          `the worst-case fee ${worst} is over the maxFee ${checked.maxFee}`
+        );
+      }
     } catch (error) {
       if (error instanceof BudgetSpent) throw error;
-      // Not a request: the attempts stay as they were.
       const lastError = `draft: ${describe(error)}`;
       logger.warn(`[SETTLEMENT NOT SENT] ${where} ${lastError}`);
       await this.save(
@@ -401,13 +453,12 @@ export class WavesSettlementSender {
     // the gateway about this txId instead of sending again.
     const sending: SettlementSend = {
       ...base,
-      attempts: attempts + 1,
       tx_id: checked.txId,
       status: 'submitting',
       last_error: null
     };
     await this.save(sending, rows);
-    const sent = `${where} [attempt ${attempts + 1}] [tx ${checked.txId}]`;
+    const sent = `${where} [attempt ${attempts}] [tx ${checked.txId}]`;
     try {
       const result = await run.timed(() =>
         this.deps.gateway.submit({
@@ -445,25 +496,27 @@ export class WavesSettlementSender {
     }
   }
 
-  private plan(
-    row: SettlementSend | undefined,
-    step: Step
-  ): 'send' | 'wait' | 'give_up' {
-    if (!row) return 'send';
+  private plan(row: SettlementSend | undefined, step: Step): Plan {
+    if (!row) return FRESH;
+    const now = this.deps.now();
     const live = row.tx_id !== null && !this.expired(row);
     // One request per decision may run at a time, whatever its step.
-    if (live && MAY_RUN.includes(row.status)) return 'wait';
-    // A new step (or occurrence) starts its attempts again.
-    if (!sameStep(row, step)) return 'send';
+    if (live && MAY_RUN.includes(row.status)) return { action: 'wait' };
+    // A new step (or occurrence) starts its tries again.
+    if (!sameStep(row, step)) return FRESH;
     // The same step: the request landed and the read has not caught up...
-    if (live && LANDED.includes(row.status)) return 'wait';
-    // ...or it is sent again, later each time, and only so many times.
-    if (row.status === 'given_up' || row.attempts >= SETTLEMENT_MAX_ATTEMPTS) {
-      return 'give_up';
+    if (live && LANDED.includes(row.status)) return { action: 'wait' };
+    // ...or the sender gave it up a while ago...
+    if (row.status === 'given_up') {
+      return now < row.sent_at + SETTLEMENT_GIVE_UP_PAUSE_MS
+        ? { action: 'give_up' }
+        : FRESH;
     }
-    return this.deps.now() >= row.sent_at + backoffMs(row.attempts)
-      ? 'send'
-      : 'wait';
+    if (row.failures >= SETTLEMENT_MAX_FAILURES) return { action: 'give_up' };
+    // ...or it is tried again, later each time.
+    return now >= row.sent_at + backoffMs(row.attempts)
+      ? { action: 'send', attempts: row.attempts, failures: row.failures }
+      : { action: 'wait' };
   }
 
   private async giveUp(
@@ -472,7 +525,7 @@ export class WavesSettlementSender {
   ): Promise<Outcome> {
     if (row.status !== 'given_up') {
       logger.error(
-        `[SETTLEMENT GIVEN UP] [decision ${row.decision_id}] [occurrence ${row.occurrence}] [next ${row.count_next}] after ${row.attempts} requests, the last: ${row.status} ${row.last_error ?? ''}. The sender tries again at the next step, or once this row of waves_settlement_sends is deleted`
+        `[SETTLEMENT GIVEN UP] [decision ${row.decision_id}] [occurrence ${row.occurrence}] [next ${row.count_next}] after ${row.failures} requests failed in their blocks, the last: ${row.last_error ?? ''}. The sender tries it again in ${SETTLEMENT_GIVE_UP_PAUSE_MS / 3_600_000} hours, at the next step, or once this row of waves_settlement_sends is deleted`
       );
       await this.save({ ...row, status: 'given_up' }, rows);
     }

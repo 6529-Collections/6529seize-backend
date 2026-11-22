@@ -79,9 +79,14 @@ export type SettlementSettingsResult =
   | { readonly ok: false; readonly problem: string };
 
 /**
- * WAVES_SETTLEMENT_NETWORK_ID (optional, `0x` and 64 hex digits) pins the
- * chain the sender signs for; WAVES_SETTLEMENT_MAX_FEE (optional, a whole
- * number of base units) caps a request's maxFee.
+ * - WAVES_SETTLEMENT_NETWORK_ID (`0x` and 64 hex digits): the chain the
+ *   sender signs for. Set it in production: without it the domain's salt
+ *   is the network the gateway's own read names.
+ * - WAVES_SETTLEMENT_MAX_FEE (a whole number of base units, default 100
+ *   coins): the maxFee each request carries. A request pays only what it
+ *   uses, and the payer holds only the worst case at the base fees, so a
+ *   high cap costs nothing; a draft whose worst case is above it is not
+ *   sent.
  */
 export function settlementSettingsFromEnv(
   env: NodeJS.ProcessEnv = process.env
@@ -136,13 +141,22 @@ function word(value: unknown): string | null {
 }
 
 /**
- * The txId to sign and the signature entry to send, or an Error naming what
- * in the draft was refused.
+ * The draft's worst-case fee at the next slot's base fees (`fee.worst`), or
+ * null when it can't be read. A request whose maxFee is below it is refused
+ * (0x0305 FEE_UNCOVERED).
+ */
+export function worstFeeOf(draft: ChainDraft): bigint | null {
+  return uint(draft.fee?.worst, 128);
+}
+
+/**
+ * The txId to sign, the signature entry to send and the request's maxFee,
+ * or an Error naming what in the draft was refused.
  */
 export function checkSettlementDraft(
   draft: ChainDraft,
   want: SettlementDraftWant
-): { txId: string; role: number; keyType: number } {
+): { txId: string; role: number; keyType: number; maxFee: bigint } {
   const refuse = (what: string): never => {
     throw new Error(`the draft was refused: ${what}`);
   };
@@ -230,5 +244,5 @@ export function checkSettlementDraft(
   ) {
     refuse('it asks for another signature');
   }
-  return { txId, role: ROLE_SIGNER, keyType: 1 };
+  return { txId, role: ROLE_SIGNER, keyType: 1, maxFee: h.maxFee };
 }

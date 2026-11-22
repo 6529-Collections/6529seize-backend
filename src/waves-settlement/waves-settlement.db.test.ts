@@ -15,6 +15,7 @@ function row(n: number, fields: Partial<SettlementSend> = {}) {
     count_next: null,
     nonce_lane: 0,
     attempts: 1,
+    failures: 0,
     tx_id: '0x' + String(n).repeat(64).slice(0, 64),
     sent_at: NOW,
     status: 'submitted',
@@ -32,7 +33,12 @@ describeWithSeed(
       row(1, { status: 'final', count_next: 300 }),
       row(2, { status: 'pending', nonce_lane: 2 }),
       row(3, { status: 'pending', sent_at: NOW - 3_600_000 }),
-      row(4, { status: 'given_up', last_error: 'not accepted', attempts: 8 })
+      row(4, {
+        status: 'given_up',
+        last_error: 'not accepted',
+        attempts: 8,
+        failures: 8
+      })
     ]
   },
   () => {
@@ -51,6 +57,7 @@ describeWithSeed(
         count_next: 300,
         nonce_lane: 0,
         attempts: 1,
+        failures: 0,
         tx_id: '0x' + '1'.repeat(64),
         sent_at: NOW,
         status: 'final',
@@ -70,7 +77,8 @@ describeWithSeed(
         occurrence: 4,
         count_next: null,
         nonce_lane: 15,
-        attempts: 0,
+        attempts: 1,
+        failures: 0,
         tx_id: null,
         sent_at: NOW + 1,
         status: 'error',
@@ -81,6 +89,7 @@ describeWithSeed(
         ...first,
         count_next: 128,
         attempts: 3,
+        failures: 2,
         tx_id: '0x' + 'ab'.repeat(32),
         sent_at: NOW + 2,
         status: 'submitting',

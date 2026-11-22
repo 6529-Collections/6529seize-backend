@@ -165,7 +165,8 @@ describe('checkSettlementDraft', () => {
     expect(checkSettlementDraft(draft, WANT)).toEqual({
       txId: draft.txId.toLowerCase(),
       role: 0,
-      keyType: 1
+      keyType: 1,
+      maxFee: BigInt('2250000000000000000')
     });
   });
 

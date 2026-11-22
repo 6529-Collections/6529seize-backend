@@ -26,7 +26,9 @@ import {
   backoffMs,
   ChainSettlement,
   nonceLaneOf,
-  SETTLEMENT_MAX_ATTEMPTS,
+  SETTLEMENT_GIVE_UP_PAUSE_MS,
+  SETTLEMENT_MAX_BACKOFF_MS,
+  SETTLEMENT_MAX_FAILURES,
   SETTLEMENT_RESEND_AFTER_MS,
   WavesSettlementSender
 } from './waves-settlement.sender';
@@ -76,7 +78,7 @@ function headerFor(request: ChainDraftRequest, now: number, nonce: number) {
     ethRefHash: ZERO32,
     feeMode: 3,
     sponsorRef: ZERO32,
-    maxFee: '1000000000000000000',
+    maxFee: request.maxFee ?? '1000000000000000000',
     maxWork: '6000000',
     tipPerRU: '0'
   };
@@ -88,13 +90,15 @@ function draftOf({
   body,
   signer,
   types = SETTLEMENT_TYPES,
-  domain = settlementDomain(NETWORK)
+  domain = settlementDomain(NETWORK),
+  worst = '1000000000000000000'
 }: {
   header: Record<string, unknown>;
   body: Record<string, unknown>;
   signer: string;
   types?: Types;
   domain?: Record<string, unknown>;
+  worst?: string;
 }): ChainDraft {
   const message = { header, body };
   const txId = TypedDataEncoder.hash(domain, types, message);
@@ -119,7 +123,7 @@ function draftOf({
     unsigned: '0x0609' + txId.slice(2),
     envelope: {},
     signatures: [{ role: 0, keyType: 1, signer }],
-    fee: {},
+    fee: { worst, maxFee: header.maxFee },
     readAt: 1
   };
 }
@@ -141,6 +145,8 @@ class FakeGateway {
   network: string | null = NETWORK;
   /** The due count the answer gives, when not the list's length. */
   reportedCount: number | null = null;
+  /** The worst-case fee the drafts name. */
+  worst = '1000000000000000000';
   /** How long each call takes on the fake clock. */
   callMs = 0;
   submitAnswer: () => ChainSubmitResult | Error = () => ({
@@ -216,7 +222,8 @@ class FakeGateway {
     const honest = draftOf({
       header: headerFor(request, this.clock.now, this.nonces.get(lane) ?? 0),
       body: request.body,
-      signer: request.signer!
+      signer: request.signer!,
+      worst: this.worst
     });
     const draft = this.tamper(honest, request);
     this.byUnsigned.set(draft.unsigned, { txId: draft.txId, lane });
@@ -360,7 +367,8 @@ describe('WavesSettlementSender', () => {
         signer: SENDER,
         body: { decisionId: D1, occurrence: 3, maxEntries: 40 },
         nonceLane: nonceLaneOf(D1),
-        validForMs: 300_000
+        validForMs: 300_000,
+        maxFee: '100000000000000000000'
       }
     ]);
     expect(gateway.submitted).toEqual([
@@ -424,42 +432,116 @@ describe('WavesSettlementSender', () => {
     ]);
   });
 
-  it('backs off between requests for one step and gives up after the last, logging it once', async () => {
+  it('backs off up to 15 minutes, gives a step up after 8 paid failures, and tries it again hours later', async () => {
     const { gateway, store, run, later } = setup();
     gateway.due(D1);
     const sentAt: number[] = [];
-    for (let minute = 0; minute < 200; minute++) {
+    for (let minute = 0; minute < 430; minute++) {
       const before = gateway.submitted.length;
       await run();
       if (gateway.submitted.length > before) {
         sentAt.push(minute);
-        // Each lands and fails in its block, paying its fee.
-        gateway.land(gateway.lastTx(), 'failed');
+        // Each of the first 8 lands and fails in its block, paying its fee.
+        if (sentAt.length <= SETTLEMENT_MAX_FAILURES) {
+          gateway.land(gateway.lastTx(), 'failed');
+        }
+      }
+      if (minute === 100) {
+        expect(store.rows.get(D1)).toEqual(
+          expect.objectContaining({
+            status: 'given_up',
+            attempts: 8,
+            failures: 8
+          })
+        );
+        expect(await run()).toEqual(expect.objectContaining({ givenUp: 1 }));
       }
       later();
     }
-    // Waits of 1, 2, 4, ... minutes after each request.
-    expect(sentAt).toEqual([0, 1, 3, 7, 15, 31, 63, 127]);
-    expect(sentAt).toHaveLength(SETTLEMENT_MAX_ATTEMPTS);
+    // Waits of 1, 2, 4, 8, then 15 minutes; then six hours after the last.
+    const retry = 60 + SETTLEMENT_GIVE_UP_PAUSE_MS / MINUTE;
+    expect(sentAt).toEqual([0, 1, 3, 7, 15, 30, 45, 60, retry]);
     expect(backoffMs(3)).toBe(4 * MINUTE);
+    expect(backoffMs(9)).toBe(SETTLEMENT_MAX_BACKOFF_MS);
     expect(logged(error, '[SETTLEMENT GIVEN UP]')).toHaveLength(1);
+    expect(logged(warn, '[SETTLEMENT TRYING AGAIN]')).toHaveLength(1);
     expect(store.rows.get(D1)).toEqual(
-      expect.objectContaining({ status: 'given_up', attempts: 8 })
+      expect.objectContaining({ status: 'pending', attempts: 1, failures: 0 })
     );
-    expect(await run()).toEqual(expect.objectContaining({ givenUp: 1 }));
 
     // Another sender counted the step: the next one starts again.
+    gateway.land(gateway.lastTx());
     gateway.due(D1, {
       count: { status: 'counting', stage: 'scoring', next: 100 }
     });
     later();
     expect(await run()).toEqual(expect.objectContaining({ sent: 1 }));
     expect(store.rows.get(D1)).toEqual(
-      expect.objectContaining({ attempts: 1, count_next: 100 })
+      expect.objectContaining({ attempts: 1, failures: 0, count_next: 100 })
     );
   });
 
-  it('counts a refusal as an attempt and waits before the next', async () => {
+  it('never gives a step up for refusals, which pay no fee', async () => {
+    const { gateway, store, run, later } = setup();
+    gateway.due(D1);
+    gateway.submitAnswer = () =>
+      new ChainGatewayError(
+        '/v1/submit: inadmissible: 0x0305 FEE_UNCOVERED, detail 0',
+        422,
+        'inadmissible',
+        '/v1/submit'
+      );
+    const refusedAt: number[] = [];
+    for (let minute = 0; minute < 300; minute++) {
+      const report = await run();
+      if (report.refused) refusedAt.push(minute);
+      later();
+    }
+    expect(refusedAt.slice(0, 7)).toEqual([0, 1, 3, 7, 15, 30, 45]);
+    expect(refusedAt).toHaveLength(23);
+    expect(store.rows.get(D1)).toEqual(
+      expect.objectContaining({ status: 'refused', failures: 0 })
+    );
+    expect(logged(error, '[SETTLEMENT GIVEN UP]')).toHaveLength(0);
+
+    // The wallet is topped up: the next try goes within 15 minutes.
+    gateway.submitAnswer = () => ({ txId: '', accepted: true });
+    let sentAfter = -1;
+    for (let minute = 0; minute <= 15 && sentAfter < 0; minute++) {
+      if ((await run()).sent) sentAfter = minute;
+      later();
+    }
+    expect(sentAfter).toBeGreaterThanOrEqual(0);
+  });
+
+  it('backs off on drafts the gateway could not make, and never gives up', async () => {
+    const { gateway, store, run, later } = setup();
+    gateway.due(D1);
+    const getDraft = gateway.getDraft.bind(gateway);
+    gateway.getDraft = async () => {
+      throw new ChainGatewayError('/v1/draft: busy', 503, 'busy', '/v1/draft');
+    };
+    let errors = 0;
+    for (let minute = 0; minute < 120; minute++) {
+      errors += (await run()).errors;
+      later();
+    }
+    // 0, 1, 3, 7, 15, then every 15 minutes.
+    expect(errors).toBe(11);
+    expect(store.rows.get(D1)).toEqual(
+      expect.objectContaining({
+        status: 'error',
+        attempts: 11,
+        failures: 0,
+        tx_id: null
+      })
+    );
+    gateway.getDraft = getDraft;
+    later(SETTLEMENT_MAX_BACKOFF_MS);
+    expect(await run()).toEqual(expect.objectContaining({ sent: 1 }));
+  });
+
+  it('counts a refusal as a try and waits before the next', async () => {
     const { gateway, store, run, later } = setup();
     gateway.due(D1);
     gateway.submitAnswer = () => ({ txId: '', accepted: false });
@@ -472,21 +554,30 @@ describe('WavesSettlementSender', () => {
     expect(store.rows.get(D1)?.attempts).toBe(2);
   });
 
-  it('does not count a draft the gateway could not make', async () => {
-    const { gateway, store, run, later } = setup();
+  it('asks for its cap as maxFee and sends nothing while fees are above it', async () => {
+    const { gateway, store, run, later } = setup({
+      env: { WAVES_SETTLEMENT_MAX_FEE: '5000000000000000000' }
+    });
     gateway.due(D1);
-    const getDraft = gateway.getDraft.bind(gateway);
-    gateway.getDraft = async () => {
-      throw new ChainGatewayError('/v1/draft: busy', 503, 'busy', '/v1/draft');
-    };
-    for (let minute = 0; minute < 20; minute++) {
-      expect(await run()).toEqual(expect.objectContaining({ errors: 1 }));
-      later();
-    }
-    expect(store.rows.get(D1)).toEqual(
-      expect.objectContaining({ status: 'error', attempts: 0, tx_id: null })
+    gateway.worst = '6000000000000000000';
+    expect(await run()).toEqual(
+      expect.objectContaining({ errors: 1, sent: 0 })
     );
-    gateway.getDraft = getDraft;
+    expect(gateway.drafts[0].maxFee).toBe('5000000000000000000');
+    expect(gateway.submitted).toHaveLength(0);
+    expect(store.rows.get(D1)).toEqual(
+      expect.objectContaining({
+        status: 'error',
+        attempts: 1,
+        last_error: expect.stringContaining(
+          'the worst-case fee 6000000000000000000 is over the maxFee 5000000000000000000'
+        )
+      })
+    );
+
+    // Base fees fell.
+    gateway.worst = '4000000000000000000';
+    later();
     expect(await run()).toEqual(expect.objectContaining({ sent: 1 }));
   });
 
@@ -752,7 +843,7 @@ describe('WavesSettlementSender', () => {
         expect.objectContaining({
           status: 'error',
           tx_id: null,
-          attempts: 0,
+          attempts: 1,
           last_error: expect.stringContaining(field)
         })
       );
