@@ -1,0 +1,47 @@
+service: signedRecordLogLoop
+
+package:
+  artifact: dist/index.zip
+
+plugins:
+  - serverless-offline
+
+provider:
+  name: aws
+  runtime: nodejs22.x
+  memorySize: 1024
+  timeout: 900
+  architecture: arm64
+  logRetentionInDays: 60
+
+functions:
+  signedRecordLogCloser:
+    handler: index.handler
+    name: signedRecordLogCloser
+    description: ${env:VERSION_DESCRIPTION}
+    role: arn:aws:iam::${aws:accountId}:role/lambda-vpc-role
+    reservedConcurrency: 1
+    events:
+      - schedule: rate(5 minutes)
+    vpc:
+      securityGroupIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):security}
+      subnetIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):subnets}
+    environment:
+      SIGNED_RECORD_LOG_TASK: close
+      SENTRY_DSN: ${env:SENTRY_DSN}
+      SENTRY_ENVIRONMENT: "signedRecordLogCloser_${opt:stage, self:provider.stage}"
+  signedRecordLogArchiver:
+    handler: index.handler
+    name: signedRecordLogArchiver
+    description: ${env:VERSION_DESCRIPTION}
+    role: arn:aws:iam::${aws:accountId}:role/lambda-vpc-role
+    reservedConcurrency: 1
+    events:
+      - schedule: cron(7 * * * ? *)
+    vpc:
+      securityGroupIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):security}
+      subnetIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):subnets}
+    environment:
+      SIGNED_RECORD_LOG_TASK: archive
+      SENTRY_DSN: ${env:SENTRY_DSN}
+      SENTRY_ENVIRONMENT: "signedRecordLogArchiver_${opt:stage, self:provider.stage}"
