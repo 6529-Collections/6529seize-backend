@@ -48,6 +48,9 @@ jest.mock('../ownersBalancesLoop/owners_balances', () => ({
 jest.mock('../subscriptionsDaily/subscriptions', () => ({
   consolidateSubscriptions: jest.fn()
 }));
+jest.mock('../transactions/transfer-reconciliation.db', () => ({
+  transferReconciliationDb: { enqueueRepair: jest.fn() }
+}));
 jest.mock('../tdhLoop/tdh', () => ({ updateTDH: jest.fn() }));
 jest.mock('../tdhLoop/tdh_consolidation', () => ({
   consolidateAndPersistTDH: jest.fn()
@@ -69,6 +72,7 @@ import { identitiesService } from '../api-serverless/src/identities/identities.s
 import { consolidateNftOwners } from '../nftOwnersLoop/nft_owners';
 import { consolidateOwnerBalances } from '../ownersBalancesLoop/owners_balances';
 import { consolidateSubscriptions } from '../subscriptionsDaily/subscriptions';
+import { transferReconciliationDb } from '../transactions/transfer-reconciliation.db';
 import { updateTDH } from '../tdhLoop/tdh';
 import { consolidateAndPersistTDH } from '../tdhLoop/tdh_consolidation';
 import { handler } from './index';
@@ -189,6 +193,32 @@ describe('delegations loop on-demand reconsolidation', () => {
       affected_wallets: [COLD, HOT],
       block: 26_000_000
     });
+  });
+
+  it('queues the holdings instead of regrouping them with the membership queue on', async () => {
+    process.env.FEATURE_HOLDINGS_MEMBERSHIP_QUEUE = 'true';
+
+    await invoke({ action: 'reconsolidate', wallets: [COLD] });
+
+    expect(transferReconciliationDb.enqueueRepair).toHaveBeenCalledWith([
+      COLD,
+      HOT
+    ]);
+    [
+      consolidateNftOwners,
+      consolidateOwnerBalances,
+      consolidateActivity
+    ].forEach((fn) => expect(fn).not.toHaveBeenCalled());
+    const pipeline = [
+      updateTDH,
+      consolidateAndPersistTDH,
+      transferReconciliationDb.enqueueRepair,
+      consolidateSubscriptions
+    ];
+    const calls = pipeline.map(
+      (fn) => jest.mocked(fn).mock.invocationCallOrder[0]
+    );
+    expect(calls).toEqual([...calls].sort((a, b) => a - b));
   });
 
   it('keeps the chain-event path on the same reconsolidation pipeline', async () => {

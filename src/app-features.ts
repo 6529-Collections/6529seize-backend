@@ -31,6 +31,16 @@ export class AppFeatures {
     return this.isFeatureEnabled('VIEWER_GROUP_SET_TABLE');
   }
 
+  /**
+   * Holdings re-key through the reconciliation queue: the identity mirror's
+   * membership hook queues the regrouped wallets, a sweep every 15 minutes
+   * queues any it missed, and the delegations loop queues instead of
+   * consolidating holdings itself.
+   */
+  public isHoldingsMembershipQueueEnabled(): boolean {
+    return this.isFeatureEnabled('HOLDINGS_MEMBERSHIP_QUEUE');
+  }
+
   public isProfileCmsWalletGalleryEnabled(): boolean {
     return (
       (process.env.FEATURE_PROFILE_CMS_WALLET_GALLERY ?? 'true') === 'true'

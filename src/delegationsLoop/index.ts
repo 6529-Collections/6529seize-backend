@@ -1,4 +1,4 @@
-import { consolidateActivity } from '../aggregatedActivityLoop/aggregated_activity';
+import { regroupHoldings } from '../holdings/holdings-regroup';
 import { identitiesService } from '../api-serverless/src/identities/identities.service';
 import { USE_CASE_PRIMARY_ADDRESS } from '@/constants';
 import {
@@ -47,8 +47,6 @@ import {
   TDHMemes
 } from '../entities/ITDH';
 import { Logger } from '../logging';
-import { consolidateNftOwners } from '../nftOwnersLoop/nft_owners';
-import { consolidateOwnerBalances } from '../ownersBalancesLoop/owners_balances';
 import { doInDbContext } from '../secrets';
 import * as sentryContext from '../sentry.context';
 import { consolidateSubscriptions } from '../subscriptionsDaily/subscriptions';
@@ -356,12 +354,7 @@ async function reconsolidateAffectedWallets(
       currentConsolidatedTdh: replacementConsolidations
     });
     health.committedStage();
-    await consolidateNftOwners(affectedWallets);
-    health.committedStage();
-    await consolidateOwnerBalances(affectedWallets);
-    health.committedStage();
-    await consolidateActivity(affectedWallets);
-    health.committedStage();
+    await regroupHoldings(affectedWallets, () => health.committedStage());
     await consolidateSubscriptions(affectedWallets);
     health.committedStage();
     return block;

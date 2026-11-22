@@ -138,6 +138,22 @@ export class TransferReconciliationDb extends LazyDbAccessCompatibleService {
   }
 
   /**
+   * Asks one consumer to recompute these wallets. A wallet already waiting
+   * keeps its place in the queue.
+   */
+  async enqueueFor(
+    wallets: string[],
+    consumer: TransferConsumer,
+    ctx: RequestContext = {}
+  ): Promise<void> {
+    if (!wallets.length) return;
+    if (ctx.connection) return this.enqueue(wallets, [consumer], ctx);
+    await this.db.executeNativeQueriesInTransaction(async (connection) => {
+      await this.enqueue(wallets, [consumer], { ...ctx, connection });
+    });
+  }
+
+  /**
    * Puts wallets back at the tail of one consumer's queue. Deleting their
    * rows first gives them a new enqueue_order, so wallets that keep coming
    * back never hold the head of the queue and block the wallets behind them.
