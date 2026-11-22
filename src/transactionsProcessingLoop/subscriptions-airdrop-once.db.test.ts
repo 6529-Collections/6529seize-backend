@@ -7,6 +7,7 @@ import {
   DISTRIBUTION_PHASE_AIRDROP_ARTIST
 } from '@/airdrop-phases';
 import {
+  ADDRESS_CONSOLIDATION_KEY,
   DISTRIBUTION_TABLE,
   GRADIENT_CONTRACT,
   MEMES_CONTRACT,
@@ -21,6 +22,11 @@ import {
 import { Transaction } from '@/entities/ITransaction';
 import { sqlExecutor } from '@/sql-executor';
 import { describeWithSeed } from '@/tests/_setup/seed';
+import {
+  aTdhConsolidation,
+  withTdhConsolidations
+} from '@/tests/fixtures/tdh_consolidation.fixture';
+import { consolidateSubscriptions } from '@/subscriptionsDaily/subscriptions';
 import { processAirdrop, redeemSubscriptions } from './subscriptions';
 
 jest.mock('@/subscription-wave-notifier', () => ({
@@ -77,10 +83,15 @@ const AIRDROP_STEPS = `
   )`;
 
 /**
- * Per subscriber, card and airdrop wallet: the charges the loop recorded
- * against the charges due. The loop fills a wallet's editions in phase
- * order, so the charges due are the first editions in that order, one per
- * subscription token the wallet received.
+ * Per card and airdrop wallet, across all subscriber keys: the charges the
+ * loop recorded against the charges due, one per subscription token the
+ * wallet received while it had an edition left. Keys are left out of the
+ * sums because a merge of consolidated wallets moves redemptions to the new
+ * key but can leave a final allocation under the old one. The loop fills a
+ * wallet's editions in phase order, and that order only names the key: the
+ * one holding the last edition charged for extra charges, the first open
+ * edition for missed ones. current_key is where that key's wallets belong
+ * now. eth uses the price the redemptions recorded.
  */
 const WRONG_CHARGES = `${AIRDROP_STEPS},
   received AS (
@@ -91,39 +102,61 @@ const WRONG_CHARGES = `${AIRDROP_STEPS},
      WHERE COALESCE(f.tokens, 0) < a.earlier + a.token_count
      GROUP BY a.token_id, a.wallet
   ),
-  editions AS (
+  allocations AS (
     SELECT s.consolidation_key, s.token_id,
            LOWER(s.airdrop_address) AS wallet, s.subscribed_count,
-           COALESCE(SUM(s.subscribed_count) OVER (
+           s.redeemed_count,
+           ROW_NUMBER() OVER (
              PARTITION BY s.token_id, LOWER(s.airdrop_address)
-             ORDER BY s.phase, s.phase_position, s.id
-             ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING), 0) AS ahead
+             ORDER BY s.phase, s.phase_position, s.id) AS fill
       FROM ${SUBSCRIPTIONS_NFTS_FINAL_TABLE} s
      WHERE s.contract = '${MEMES}'
   ),
+  wallets AS (
+    SELECT token_id, wallet, SUM(subscribed_count) AS editions,
+           MAX(CASE WHEN redeemed_count > 0 THEN fill END) AS last_charged,
+           MIN(CASE WHEN redeemed_count < subscribed_count THEN fill END)
+             AS first_open
+      FROM allocations
+     GROUP BY token_id, wallet
+  ),
   charged AS (
-    SELECT consolidation_key, token_id, LOWER(address) AS wallet,
-           SUM(count) AS charges
+    SELECT token_id, LOWER(address) AS wallet, SUM(count) AS charges,
+           SUM(value) / SUM(count) AS price
       FROM ${SUBSCRIPTIONS_REDEEMED_TABLE}
      WHERE contract = '${MEMES}'
-     GROUP BY consolidation_key, token_id, LOWER(address)
-  )
-  SELECT k.*, k.charged - k.due AS difference FROM (
-    SELECT e.token_id, e.wallet, e.consolidation_key,
-           COALESCE(r.tokens, 0) AS received,
-           e.subscribed_count AS editions,
-           GREATEST(0, LEAST(e.subscribed_count,
-                             COALESCE(r.tokens, 0) - e.ahead)) AS due,
-           COALESCE(c.charges, 0) AS charged
-      FROM editions e
+     GROUP BY token_id, LOWER(address)
+  ),
+  totals AS (
+    SELECT w.token_id, w.wallet, COALESCE(r.tokens, 0) AS received,
+           w.editions, LEAST(COALESCE(r.tokens, 0), w.editions) AS due,
+           COALESCE(c.charges, 0) AS charged, c.price,
+           w.last_charged, w.first_open
+      FROM wallets w
       LEFT JOIN received r
-        ON r.token_id = e.token_id AND r.wallet = e.wallet
+        ON r.token_id = w.token_id AND r.wallet = w.wallet
       LEFT JOIN charged c
-        ON c.consolidation_key = e.consolidation_key
-       AND c.token_id = e.token_id AND c.wallet = e.wallet
-  ) k
-  WHERE charged <> due
-  ORDER BY token_id, wallet, consolidation_key`;
+        ON c.token_id = w.token_id AND c.wallet = w.wallet
+  ),
+  named AS (
+    SELECT t.token_id, t.wallet, t.received, t.editions, t.due, t.charged,
+           t.charged - t.due AS difference,
+           ROUND((t.charged - t.due) * COALESCE(t.price, ${MEMES_MINT_PRICE}), 5)
+             AS eth,
+           a.consolidation_key AS named_key
+      FROM totals t
+      LEFT JOIN allocations a
+        ON a.token_id = t.token_id AND a.wallet = t.wallet
+       AND a.fill = IF(t.charged > t.due, t.last_charged, t.first_open)
+     WHERE t.charged <> t.due
+  )
+  SELECT n.*,
+         (SELECT GROUP_CONCAT(DISTINCT m.consolidation_key)
+            FROM ${ADDRESS_CONSOLIDATION_KEY} m
+           WHERE FIND_IN_SET(m.address, REPLACE(n.named_key, '-', ',')) > 0)
+           AS current_key
+    FROM named n
+   ORDER BY n.token_id, n.wallet`;
 
 /**
  * Per airdrop to a subscribed wallet: the cases to check. A subscription
@@ -154,7 +187,7 @@ const AIRDROPS_TO_CHECK = `${AIRDROP_STEPS}
 function transfer(
   hash: string,
   block: number,
-  opts: { from?: string; contract?: string; value?: number } = {}
+  opts: { from?: string; to?: string; contract?: string; value?: number } = {}
 ) {
   return sqlExecutor.execute(
     `INSERT INTO ${TRANSACTIONS_TABLE}
@@ -167,7 +200,7 @@ function transfer(
       hash,
       block,
       from: opts.from ?? NULL_ADDRESS,
-      to: WALLET,
+      to: opts.to ?? WALLET,
       contract: (opts.contract ?? MEMES_CONTRACT).toLowerCase(),
       card: CARD,
       value: opts.value ?? 0
@@ -175,11 +208,16 @@ function transfer(
   );
 }
 
-function airdrop(hash: string, block: number) {
-  return transfer(hash, block);
+function airdrop(hash: string, block: number, to = WALLET) {
+  return transfer(hash, block, { to });
 }
 
-function subscribe(key: string, editions: number, position: number) {
+function subscribe(
+  key: string,
+  editions: number,
+  position: number,
+  wallet = WALLET
+) {
   return sqlExecutor.execute(
     `INSERT INTO ${SUBSCRIPTIONS_NFTS_FINAL_TABLE}
       (consolidation_key, contract, token_id, subscribed_count, airdrop_address,
@@ -192,7 +230,7 @@ function subscribe(key: string, editions: number, position: number) {
       contract: MEMES_CONTRACT,
       card: CARD,
       editions,
-      wallet: WALLET,
+      wallet,
       position
     }
   );
@@ -254,16 +292,21 @@ async function charges() {
   };
 }
 
-/** [key, received, editions, due, charged, difference] per row. */
+/**
+ * [named_key, current_key, received, editions, due, charged, difference,
+ * eth] per row.
+ */
 async function wrongCharges() {
   const rows = await sqlExecutor.execute<Record<string, string>>(WRONG_CHARGES);
   return rows.map((r) => [
-    r.consolidation_key,
+    r.named_key,
+    r.current_key,
     Number(r.received),
     Number(r.editions),
     Number(r.due),
     Number(r.charged),
-    Number(r.difference)
+    Number(r.difference),
+    Number(r.eth)
   ]);
 }
 
@@ -449,6 +492,14 @@ describeWithSeed(
       rows: [{ created_at: new Date(), block: 100, timestamp: 0 }]
     },
     {
+      // Each subscriber is a key of its own.
+      table: ADDRESS_CONSOLIDATION_KEY,
+      rows: [WALLET, OTHER_KEY].map((address) => ({
+        address,
+        consolidation_key: address
+      }))
+    },
+    {
       table: SUBSCRIPTIONS_BALANCES_TABLE,
       rows: [
         { consolidation_key: WALLET, balance: 1 },
@@ -485,7 +536,9 @@ describeWithSeed(
       await airdrop(SECOND, 102);
       await redeemSubscriptions();
 
-      expect(await wrongCharges()).toEqual([[WALLET, 2, 3, 2, 3, 1]]);
+      expect(await wrongCharges()).toEqual([
+        [WALLET, WALLET, 2, 3, 2, 3, 1, MEMES_MINT_PRICE]
+      ]);
       expect(await airdropsToCheck()).toEqual([[FIRST, 1, 0, 2]]);
     });
 
@@ -499,7 +552,10 @@ describeWithSeed(
       // The second airdrop went to OTHER_KEY, and so did its extra charge.
       await chargeAgain(SECOND);
 
-      expect(await wrongCharges()).toEqual([[OTHER_KEY, 2, 2, 1, 2, 1]]);
+      // Across both keys: two tokens, three editions, three charges.
+      expect(await wrongCharges()).toEqual([
+        [OTHER_KEY, OTHER_KEY, 2, 3, 2, 3, 1, MEMES_MINT_PRICE]
+      ]);
       expect(await airdropsToCheck()).toEqual([[SECOND, 1, 0, 2]]);
     });
 
@@ -511,7 +567,9 @@ describeWithSeed(
       await airdrop(SECOND, 101);
       await redeemSubscriptions();
 
-      expect(await wrongCharges()).toEqual([[WALLET, 2, 2, 2, 1, -1]]);
+      expect(await wrongCharges()).toEqual([
+        [WALLET, WALLET, 2, 2, 2, 1, -1, -MEMES_MINT_PRICE]
+      ]);
       expect(await airdropsToCheck()).toEqual([[SECOND, 1, 0, 0]]);
     });
 
@@ -527,8 +585,67 @@ describeWithSeed(
       await chargedByHand(SECOND, WALLET);
 
       // One subscription token received, two charges.
-      expect(await wrongCharges()).toEqual([[WALLET, 1, 2, 1, 2, 1]]);
+      expect(await wrongCharges()).toEqual([
+        [WALLET, WALLET, 1, 2, 1, 2, 1, MEMES_MINT_PRICE]
+      ]);
       expect(await airdropsToCheck()).toEqual([[SECOND, 1, 1, 1]]);
+    });
+  }
+);
+
+// WALLET and OTHER_KEY each subscribed to the card with their own wallet,
+// then consolidate. The merge moves WALLET's allocation to the new key,
+// leaves OTHER_KEY's under OTHER_KEY because the new key already has the
+// card, and moves OTHER_KEY's redemption to the new key.
+const MERGED = `${WALLET}-${OTHER_KEY}`;
+describeWithSeed(
+  'queries for past wrong charges: after a merge',
+  [
+    {
+      table: TRANSACTIONS_PROCESSED_SUBSCRIPTIONS_BLOCKS_TABLE,
+      rows: [{ created_at: new Date(), block: 100, timestamp: 0 }]
+    },
+    {
+      table: ADDRESS_CONSOLIDATION_KEY,
+      rows: [WALLET, OTHER_KEY].map((address) => ({
+        address,
+        consolidation_key: MERGED
+      }))
+    },
+    withTdhConsolidations([
+      aTdhConsolidation([WALLET, OTHER_KEY], { boosted_tdh: 100 })
+    ]),
+    {
+      table: SUBSCRIPTIONS_BALANCES_TABLE,
+      rows: [
+        { consolidation_key: WALLET, balance: 1 },
+        { consolidation_key: OTHER_KEY, balance: 1 }
+      ]
+    }
+  ],
+  () => {
+    it('counts a charge the merge moved to the new key against its wallet', async () => {
+      await subscribe(WALLET, 1, 1);
+      await subscribe(OTHER_KEY, 1, 2, OTHER_KEY);
+      await airdrop(FIRST, 101, OTHER_KEY);
+      await redeemSubscriptions();
+      expect(await wrongCharges()).toEqual([]);
+
+      await consolidateSubscriptions(new Set([WALLET, OTHER_KEY]));
+      const allocations = await sqlExecutor.execute<{
+        consolidation_key: string;
+      }>(
+        `SELECT consolidation_key FROM ${SUBSCRIPTIONS_NFTS_FINAL_TABLE}
+          ORDER BY consolidation_key`
+      );
+      expect(allocations.map((row) => row.consolidation_key)).toEqual(
+        [MERGED, OTHER_KEY].sort((a, b) => a.localeCompare(b))
+      );
+
+      // The charge now sits under the new key, the allocation under the
+      // old one. Per wallet the airdrop is still charged once.
+      expect(await wrongCharges()).toEqual([]);
+      expect(await airdropsToCheck()).toEqual([]);
     });
   }
 );
