@@ -334,7 +334,8 @@ export async function closeSubscriptionWrites(
  * Takes the write pause for one go-live, rebuild or load: sets the marker
  * unless another run holds one younger than the switch window. Returns
  * whether it was taken; the caller refuses otherwise, so two of them never
- * run at once. The holder renews it with closeSubscriptionWrites.
+ * run at once. The holder renews it with renewSubscriptionWrites and lifts
+ * it with releaseSubscriptionWrites.
  */
 export async function claimSubscriptionWrites(
   nowMs: number = Date.now()
