@@ -73,7 +73,6 @@ const PROBES: Probe[] = [
 
 /**
  * Meme subscriptions.
- * Classes start from the migration map; the area confirms or changes each one.
  */
 export const subsManifest: AreaManifest = {
   area: 'subs',

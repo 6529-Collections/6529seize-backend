@@ -23,7 +23,6 @@ const PROBES: Probe[] = [
 /**
  * Notifications, push delivery, sign-in sessions, live updates and bot
  * bookkeeping.
- * Classes start from the migration map; the area confirms or changes each one.
  */
 export const notifyManifest: AreaManifest = {
   area: 'notify',

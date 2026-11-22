@@ -15,7 +15,7 @@ import {
 } from '@/rebuild/sources/running-source';
 import { UrlSource } from '@/rebuild/sources/source-spec';
 
-export const RECORDING_FILE = 'recording.jsonl';
+const RECORDING_FILE = 'recording.jsonl';
 
 /** One saved answer. JSON-RPC ids are left out of the key and put back. */
 export interface RecordedExchange {
@@ -115,7 +115,7 @@ export function withRequestIds(
   return responseBody;
 }
 
-export function loadRecording(dir: string): Map<string, RecordedExchange> {
+function loadRecording(dir: string): Map<string, RecordedExchange> {
   const file = path.join(dir, RECORDING_FILE);
   const exchanges = new Map<string, RecordedExchange>();
   if (!fs.existsSync(file)) return exchanges;

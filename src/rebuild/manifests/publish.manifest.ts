@@ -31,7 +31,6 @@ const PROBES: Probe[] = [
 
 /**
  * Profile sites and legacy CMS sites.
- * Classes start from the migration map; the area confirms or changes each one.
  */
 export const publishManifest: AreaManifest = {
   area: 'publish',

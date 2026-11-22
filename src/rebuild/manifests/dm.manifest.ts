@@ -2,7 +2,6 @@ import { AreaManifest } from '@/rebuild/manifest.types';
 
 /**
  * Encrypted direct messages and reports to moderators.
- * Classes start from the migration map; the area confirms or changes each one.
  */
 export const dmManifest: AreaManifest = {
   area: 'dm',

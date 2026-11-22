@@ -24,7 +24,7 @@ export interface Provenance {
   readonly recorded_at?: string;
 }
 
-export const PROVENANCE_FILE = 'PROVENANCE.json';
+const PROVENANCE_FILE = 'PROVENANCE.json';
 
 export function readProvenance(dir: string): Provenance | null {
   const file = path.join(dir, PROVENANCE_FILE);

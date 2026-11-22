@@ -15,6 +15,7 @@ export interface StepOutcome {
   readonly timedOut: boolean;
   readonly durationMs: number;
   readonly log: string;
+  /** Rows in each table the step writes, counted after it ran. */
   readonly rowsWritten?: Record<string, number>;
   /** Command steps that don't run Node have no source guard. */
   readonly guarded: boolean;
@@ -206,7 +207,7 @@ export function renderMarkdown(report: RunReport): string {
       'Steps',
       report.steps.map(
         (s) =>
-          `- ${s.kind} ${s.id}${s.area ? ` (${s.area})` : ''}: exit ${s.exitCode}${s.timedOut ? ', timed out' : ''}, ${seconds(s.durationMs)}${s.guarded ? '' : ', no source guard'}${s.rowsWritten ? `, rows ${JSON.stringify(s.rowsWritten)}` : ''}. Log: ${s.log}`
+          `- ${s.kind} ${s.id}${s.area ? ` (${s.area})` : ''}: exit ${s.exitCode}${s.timedOut ? ', timed out' : ''}, ${seconds(s.durationMs)}${s.guarded ? '' : ', no source guard'}${s.rowsWritten ? `, rows in its tables afterwards ${JSON.stringify(s.rowsWritten)}` : ''}. Log: ${s.log}`
       )
     ),
     ...section(

@@ -288,8 +288,9 @@ async function collectTransfers(
 }
 
 /**
- * Starts the shim on loopback in front of `nodeUrl`. Every other JSON-RPC
- * method goes to the node unchanged.
+ * Starts the shim on loopback in front of `nodeUrl`. Standard JSON-RPC
+ * methods go to the node unchanged; the NFT API and other alchemy_* methods
+ * are refused and reported as the source's problems.
  */
 export async function startAlchemyShim(nodeUrl: string): Promise<{
   readonly url: string;
@@ -324,7 +325,33 @@ export async function startAlchemyShim(nodeUrl: string): Promise<{
         return;
       }
       const body = await readBody(request);
+      // The NFT API (also POST, under /nft/) and Alchemy's other
+      // enhanced methods are not served: refused and reported, never
+      // passed to the node to fail there unseen.
+      if ((request.url ?? '').includes('/nft/')) {
+        unsupported.push(`POST ${request.url}`);
+        send(501, {
+          error: 'the Alchemy NFT API is not served by the rebuild check'
+        });
+        return;
+      }
       const call = JSON.parse(body.toString('utf8'));
+      if (
+        typeof call.method === 'string' &&
+        call.method.startsWith('alchemy_') &&
+        call.method !== 'alchemy_getAssetTransfers'
+      ) {
+        unsupported.push(call.method);
+        send(200, {
+          jsonrpc: '2.0',
+          id: call.id ?? null,
+          error: {
+            code: -32601,
+            message: `${call.method} is not served by the rebuild check`
+          }
+        });
+        return;
+      }
       if (call.method !== 'alchemy_getAssetTransfers') {
         const upstream = await fetch(nodeUrl, {
           method: 'POST',
@@ -354,7 +381,7 @@ export async function startAlchemyShim(nodeUrl: string): Promise<{
     problems: () =>
       unsupported.length
         ? [
-            `ethereum: ${unsupported.length} Alchemy NFT API calls, which the run doesn't serve; first ${unsupported.slice(0, 3).join(', ')}`
+            `ethereum: ${unsupported.length} Alchemy calls the run doesn't serve (the NFT API or enhanced methods); first ${unsupported.slice(0, 3).join(', ')}`
           ]
         : [],
     stop: () => closeServer(server)

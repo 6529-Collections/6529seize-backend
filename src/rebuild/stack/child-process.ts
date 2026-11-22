@@ -28,7 +28,7 @@ export interface ChildSpec {
   readonly cwd?: string;
 }
 
-export const GUARD_PRELOAD = path.join(
+const GUARD_PRELOAD = path.join(
   'src',
   'rebuild',
   'guard',
@@ -36,7 +36,7 @@ export const GUARD_PRELOAD = path.join(
 );
 
 /** Node arguments that load TypeScript, path aliases and the source guard. */
-export function nodePreloadArgs(repoRoot: string): string[] {
+function nodePreloadArgs(repoRoot: string): string[] {
   return [
     '-r',
     'ts-node/register',
@@ -48,7 +48,7 @@ export function nodePreloadArgs(repoRoot: string): string[] {
 }
 
 /** NODE_OPTIONS that put the guard into any Node process a command starts. */
-export function guardNodeOptions(repoRoot: string): string {
+function guardNodeOptions(repoRoot: string): string {
   const resolve = (request: string) =>
     require.resolve(request, { paths: [repoRoot] });
   return [resolve('ts-node/register'), path.join(repoRoot, GUARD_PRELOAD)]

@@ -158,7 +158,7 @@ function statusOk(probe: Probe, status: number): boolean {
 }
 
 /** The values a request names: its path segments and query values. */
-export function askedValues(requestPath: string): string[] {
+function askedValues(requestPath: string): string[] {
   return requestPath
     .split(/[/?&=]/)
     .filter((part) => part.length > 0)

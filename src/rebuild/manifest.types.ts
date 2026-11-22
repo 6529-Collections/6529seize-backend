@@ -18,7 +18,7 @@ export type TableClass =
   | 'VIEW'
   /** A name code still knows, with no table in a fresh schema. */
   | 'RETIRED'
-  /** Kept and reported as not covered, by an owner decision. */
+  /** Kept and reported as not covered, for the reason in its `why`. */
   | 'EXEMPT';
 
 /** The only places a rebuilder may read from. */
@@ -115,7 +115,7 @@ export interface Waiver {
 
 export interface AreaManifest {
   readonly area: string;
-  /** Environment the area's code needs set for the post-switch configuration. */
+  /** Feature flags and settings the area's code needs for its new path. */
   readonly flags: Readonly<Record<string, string>>;
   readonly tables: Readonly<Record<string, TableEntry>>;
   readonly seeds: readonly RebuildStep[];

@@ -60,7 +60,7 @@ export function connectTarget(args: unknown[]): ConnectTarget | null {
   return null;
 }
 
-export function describeTarget(target: ConnectTarget): string {
+function describeTarget(target: ConnectTarget): string {
   return 'path' in target ? target.path : `${target.host}:${target.port}`;
 }
 

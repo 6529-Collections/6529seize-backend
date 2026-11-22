@@ -3,7 +3,6 @@ import { AreaManifest } from '@/rebuild/manifest.types';
 /**
  * Identity: identities, profiles, handles, consolidations, delegations,
  * REP, NIC, levels and proxies.
- * Classes start from the migration map; the area confirms or changes each one.
  */
 export const identityManifest: AreaManifest = {
   area: 'identity',

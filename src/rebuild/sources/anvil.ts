@@ -11,7 +11,7 @@ import { RunningSource } from '@/rebuild/sources/running-source';
 const READY_TIMEOUT_MS = 60_000;
 
 /** `REBUILD_ANVIL`, Foundry's default install, or `anvil` on PATH. */
-export function anvilPath(): string {
+function anvilPath(): string {
   if (process.env.REBUILD_ANVIL) return process.env.REBUILD_ANVIL;
   const name = process.platform === 'win32' ? 'anvil.exe' : 'anvil';
   const foundry = path.join(os.homedir(), '.foundry', 'bin', name);

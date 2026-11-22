@@ -87,7 +87,7 @@ export interface RunOptions {
   /** One area's tables only; null for the full run. */
   readonly area: string | null;
   readonly mark: 'head' | 'switch';
-  /** The Friday criteria: nothing pending, every rebuilt table probed. */
+  /** The full proof: everything a run otherwise only notes fails it. */
   readonly final: boolean;
   readonly mysqlPort: number;
   /** 0 picks a free port. */
@@ -585,6 +585,11 @@ class RebuildRun {
       await sleep(1000);
     }
     await child.stop();
+    // An API that never answered fails the run, even if it exited with 0:
+    // otherwise a run could pass with no probe answered.
+    this.failures.push(
+      `The API (${label}) never answered /health; see ${logFile}`
+    );
     this.record(
       {
         kind: 'api',
@@ -690,6 +695,9 @@ class RebuildRun {
       await admin.recreateDatabase(MAIN_DB);
       if (!(await this.buildSchema('schema-after-drop'))) return false;
       this.o.log(`restoring ${kept.length} kept tables`);
+      // Rows the schema build wrote into a kept table give way to the
+      // copy, as in an area run.
+      await admin.truncate(MAIN_DB, kept);
       for (const table of kept) await admin.copyRows(KEPT_DB, MAIN_DB, table);
     }
     const keptSet = new Set(kept);

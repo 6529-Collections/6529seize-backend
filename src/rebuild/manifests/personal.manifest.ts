@@ -2,7 +2,6 @@ import { AreaManifest } from '@/rebuild/manifest.types';
 
 /**
  * Personal settings and Collect plans.
- * Classes start from the migration map; the area confirms or changes each one.
  */
 export const personalManifest: AreaManifest = {
   area: 'personal',

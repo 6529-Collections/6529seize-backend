@@ -197,6 +197,37 @@ function stepProblems(
   return problems;
 }
 
+/**
+ * A rebuilder that reads a table another rebuilder writes must run after
+ * it, or it reads an empty table (holdings reads identity's consolidation
+ * keys, for example).
+ */
+function readOrderProblems(
+  rebuilders: readonly RebuildStep[]
+): RegistryProblem[] {
+  const writerOf = new Map<string, string>();
+  for (const step of rebuilders) {
+    for (const table of step.writes) writerOf.set(table, step.id);
+  }
+  const problems: RegistryProblem[] = [];
+  for (const step of rebuilders) {
+    for (const table of step.reads ?? []) {
+      const writer = writerOf.get(table);
+      if (
+        writer &&
+        writer !== step.id &&
+        !(step.after ?? []).includes(writer)
+      ) {
+        problems.push({
+          kind: 'BAD_ORDER',
+          detail: `rebuilder ${step.id} reads ${table}, which ${writer} rebuilds; add after: ['${writer}']`
+        });
+      }
+    }
+  }
+  return problems;
+}
+
 function orderProblems(
   label: string,
   steps: readonly RebuildStep[]
@@ -356,6 +387,9 @@ export function checkRegistry(input: RegistryInput): RegistryResult {
     ...orderProblems(
       'seed',
       input.manifests.flatMap((manifest) => manifest.seeds)
+    ),
+    ...readOrderProblems(
+      input.manifests.flatMap((manifest) => manifest.rebuilders)
     ),
     ...orderProblems(
       'rebuilder',

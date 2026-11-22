@@ -3,7 +3,6 @@ import { AreaManifest } from '@/rebuild/manifest.types';
 /**
  * Schema objects that hold no data: TypeORM and db-migrate bookkeeping, a test
  * fixture table and the competition facade views.
- * Classes start from the migration map; the area confirms or changes each one.
  */
 export const harnessManifest: AreaManifest = {
   area: 'harness',

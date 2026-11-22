@@ -1,6 +1,7 @@
 import { AbiCoder } from 'ethers';
 import {
   selectTransfers,
+  startAlchemyShim,
   TRANSFER_BATCH_TOPIC,
   TRANSFER_SINGLE_TOPIC,
   TRANSFER_TOPIC,
@@ -158,5 +159,39 @@ describe('Alchemy shim', () => {
         contractAddresses: [CONTRACT.toUpperCase()]
       }).transfers
     ).toHaveLength(2);
+  });
+});
+
+describe('the Alchemy stand-in', () => {
+  it('refuses and reports the NFT API and other alchemy_ methods', async () => {
+    // The node is never reached for these calls.
+    const shim = await startAlchemyShim('http://127.0.0.1:9');
+    try {
+      const post = (url: string, body: unknown) =>
+        fetch(`${shim.url}${url}`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(body)
+        });
+      const nft = await post('/nft/v3/key/getNFTMetadataBatch', {
+        tokens: []
+      });
+      expect(nft.status).toBe(501);
+      const balances = await post('/v2/key', {
+        jsonrpc: '2.0',
+        id: 7,
+        method: 'alchemy_getTokenBalances',
+        params: []
+      });
+      expect(await balances.json()).toMatchObject({
+        id: 7,
+        error: { code: -32601 }
+      });
+      expect(shim.problems()).toEqual([
+        "ethereum: 2 Alchemy calls the run doesn't serve (the NFT API or enhanced methods); first POST /nft/v3/key/getNFTMetadataBatch, alchemy_getTokenBalances"
+      ]);
+    } finally {
+      await shim.stop();
+    }
   });
 });

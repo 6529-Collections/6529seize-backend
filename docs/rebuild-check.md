@@ -74,8 +74,10 @@ export const mintManifest: AreaManifest = {
 };
 ```
 
-- `flags`: the environment your code needs for the post-switch
-  configuration. The run sets it for seeds, rebuilders and the API.
+- `flags`: the feature flags and settings your code needs for its new path.
+  The run sets them for seeds, rebuilders and the API. A flag may not set
+  the run's own variables (`REBUILD_*`, `DB_*`, `ETHEREUM_RPC_URL`,
+  `ALCHEMY_*`, `AWS_*` and the like); the registry refuses it.
 - `seeds`: steps that put the stack in its "before" state: legacy rows, kept
   rows, and the live loops run forward.
 - `rebuilders`: steps that fill your INDEX tables from empty. A module step
@@ -201,11 +203,13 @@ Each `--source <name>=<spec>`:
   and payloads before the records that name them. It checks no signatures.
 - `anvil` starts a local anvil (chain id 1) behind a shim that answers
   `alchemy_getAssetTransfers` from its logs and blocks. Children get the
-  shim as `ETHEREUM_RPC_URL` and `ALCHEMY_BASE_URL`. The Alchemy NFT API
-  is not served; a call to it fails the run.
+  shim as `ETHEREUM_RPC_URL` and `ALCHEMY_BASE_URL`. The Alchemy NFT API and
+  its other `alchemy_*` methods are not served; a call to them fails the run.
 - The files server answers `/ipfs/<id>`, `/ar/<id>`, `/docs/<id>` and
   `/<id>` from the directory, and checks every file against
-  `<dir>/files.json` (id to SHA-256).
+  `<dir>/files.json` (id to SHA-256). It doesn't derive an id from the
+  content: an Arweave id is a transaction's, not a hash of the file, so
+  `files.json` is what ties each id to its bytes.
 - A flag value may name a source: `{gateway}`, `{relays}`, `{ethereum}`
   or `{files}` become its URL in the run.
 
@@ -215,7 +219,7 @@ Each `--source <name>=<spec>`:
 registry problems, a table per area (tables, INDEX, INDEX tables with rows
 after the seeds, kept, rebuilt, pending, probes, differences, unproven
 probes, failed steps), each source with where
-its answers came from, each step with its time and rows written, source
+its answers came from, each step with its time and the rows in its tables afterwards, source
 violations, probe differences, unproven probes, tables that differ row by
 row, rebuilders that read kept tables, INDEX tables no probe read,
 documented GET routes no probe calls and no waiver names, planned tables

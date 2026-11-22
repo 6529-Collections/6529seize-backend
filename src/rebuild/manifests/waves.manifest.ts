@@ -3,7 +3,6 @@ import { AreaManifest } from '@/rebuild/manifest.types';
 /**
  * Waves: waves, drops, reactions, mentions, polls, curations, decisions,
  * votes, wave REP and groups.
- * Classes start from the migration map; the area confirms or changes each one.
  */
 export const wavesManifest: AreaManifest = {
   area: 'waves',

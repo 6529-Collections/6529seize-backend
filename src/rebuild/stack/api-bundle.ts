@@ -2,12 +2,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 
 /** The API's entry for the run, bundled with the API's own compiler settings. */
-export const API_ENTRY = path.join(
-  'src',
-  'rebuild',
-  'stack',
-  'api-server.child.ts'
-);
+const API_ENTRY = path.join('src', 'rebuild', 'stack', 'api-server.child.ts');
 
 /** Files the API reads from its working directory; its deploy copies them beside the bundle. */
 const API_FILES = ['openapi.yaml', 'openapi.oracle.yaml'];

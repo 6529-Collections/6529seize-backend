@@ -148,7 +148,6 @@ const PROBES: Probe[] = [
 /**
  * Holdings and the Ethereum indexes: transactions, NFTs, history, NextGen,
  * ENS, market stats and link cards.
- * Classes start from the migration map; the area confirms or changes each one.
  */
 const step = (module: string, exportName: string) => ({ module, exportName });
 

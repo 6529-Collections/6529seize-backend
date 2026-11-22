@@ -33,7 +33,7 @@ const STRING_EXPORT =
   /export\s+const\s+([A-Z][A-Z0-9_]*)\s*(?::\s*string\s*)?=\s*(['"`])([a-z0-9_]+)\2\s*;/g;
 
 /** Tables of the entities the schema build creates (`src/entities/entities.ts`). */
-export function entityTableNames(): string[] {
+function entityTableNames(): string[] {
   const targets = new Set<unknown>(
     Object.values(Entities).filter((entity) => typeof entity === 'function')
   );
@@ -80,7 +80,7 @@ function sourceFiles(directory: string, found: string[] = []): string[] {
 }
 
 /** Table names exported as constants anywhere under `srcRoot`. */
-export function constantTableNames(
+function constantTableNames(
   srcRoot: string = path.resolve(__dirname, '..')
 ): string[] {
   const constantsFile = path.join(srcRoot, TABLE_CONSTANTS_FILE);
@@ -90,12 +90,12 @@ export function constantTableNames(
 }
 
 /** Names code retired: no table in a fresh schema. */
-export function retiredTableNames(): string[] {
+function retiredTableNames(): string[] {
   return [...RETIRED_COMPETITION_TABLES, ...RETIRED_MEMBERSHIP_TABLES];
 }
 
 /** The competition facade's views, which the schema build creates. */
-export function viewNames(): string[] {
+function viewNames(): string[] {
   return LEGACY_GET_SOURCE_TABLES.map((table) => legacyGetView(table));
 }
 

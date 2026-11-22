@@ -29,7 +29,7 @@ const INHERITED = new Set(
 );
 
 /** The node environment of every child; `.env.<this>` must not exist. */
-export const CHILD_NODE_ENV = 'local';
+const CHILD_NODE_ENV = 'local';
 
 /**
  * Reasons the run must not start: a local env file the app would load (it

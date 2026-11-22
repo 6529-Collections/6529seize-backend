@@ -9,7 +9,7 @@ const USAGE = `Usage: rebuild:check -- [options]
   --home <dir>          mysql data, runs and STATUS.md (default .rebuild)
   --area <area>         rebuild one area's tables only
   --mark head|switch    the world mark to rebuild to (default head)
-  --final               the Friday criteria: nothing pending, every rebuilt table probed
+  --final               the full proof: fail on everything a run otherwise only notes
   --mysql-port <n>      the private mysqld's port (default 3407)
   --api-port <n>        the API's port (default: a free port)
   --mysqld <path>       the mysqld binary

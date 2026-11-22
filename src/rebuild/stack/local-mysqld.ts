@@ -28,7 +28,7 @@ export interface LocalMysqld {
   stop(): Promise<void>;
 }
 
-export function defaultMysqldPath(): string {
+function defaultMysqldPath(): string {
   if (process.env.REBUILD_MYSQLD) return process.env.REBUILD_MYSQLD;
   if (process.platform === 'win32' && fs.existsSync(WINDOWS_MYSQLD)) {
     return WINDOWS_MYSQLD;
@@ -41,7 +41,7 @@ function sleep(ms: number): Promise<void> {
 }
 
 /** The server options, the same at initialize and at start. */
-export function serverArgs(dataDir: string, logDir: string): string[] {
+function serverArgs(dataDir: string, logDir: string): string[] {
   return [
     '--no-defaults',
     `--datadir=${dataDir}`,
@@ -52,7 +52,7 @@ export function serverArgs(dataDir: string, logDir: string): string[] {
   ];
 }
 
-export function startArgs(
+function startArgs(
   dataDir: string,
   logDir: string,
   port: number,

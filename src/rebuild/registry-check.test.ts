@@ -215,6 +215,36 @@ describe('checkRegistry', () => {
     ]);
   });
 
+  it("makes a rebuilder that reads another rebuilder's table wait for it", () => {
+    const result = checkRegistry({
+      manifests: [
+        area(
+          'a',
+          { keys: index() },
+          { rebuilders: [step('a.keys', { writes: ['keys'] })] }
+        ),
+        area(
+          'b',
+          { held: index(), ordered: index() },
+          {
+            rebuilders: [
+              step('b.held', { writes: ['held'], reads: ['keys'] }),
+              step('b.ordered', {
+                writes: ['ordered'],
+                reads: ['keys'],
+                after: ['a.keys']
+              })
+            ]
+          }
+        )
+      ],
+      codeTables: code('keys', 'held', 'ordered')
+    });
+    expect(result.problems.map((p) => p.detail)).toEqual([
+      "rebuilder b.held reads keys, which a.keys rebuilds; add after: ['a.keys']"
+    ]);
+  });
+
   it("refuses flags that would set the run's own variables", () => {
     const result = checkRegistry({
       manifests: [

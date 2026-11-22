@@ -85,7 +85,6 @@ const PROBES: Probe[] = [
 
 /**
  * TDH, its history and files, xTDH and community metrics.
- * Classes start from the migration map; the area confirms or changes each one.
  */
 export const tdhManifest: AreaManifest = {
   area: 'tdh',

@@ -127,11 +127,10 @@ const PROBES: Probe[] = [
  * Distributions, claims, NextGen allowlists, team, collaborations,
  * announcements, royalty uploads and rememes. Artists and the Meme Lab
  * royalties are in the holdings manifest.
- * Classes start from the migration map; the area confirms or changes each one.
  */
 export const mintManifest: AreaManifest = {
   area: 'mint',
-  // The mint area's post-switch flags. MAIN_STAGE_DECISION_IDS waits for
+  // The mint area's flags for its new path. MAIN_STAGE_DECISION_IDS waits for
   // the chain's decision ids.
   flags: {
     FEATURE_MINT_LOG_SHADOW: 'true',
