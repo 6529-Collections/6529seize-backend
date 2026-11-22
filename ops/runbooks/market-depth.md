@@ -37,6 +37,23 @@ events. A missing order or HTTP 404 is not proof of cancellation. Temporary
 failures remain retryable. Public activity identifies whether an event came
 from Ethereum, provider delivery or a status observation.
 
+Each run reconciles up to 5,000 due rows per collection within 60 seconds, in
+pages of 500. Most need no provider request (measured on production, November
+2026: about half had expired before they disappeared, and about 94% of the
+rest already had a recorded cancellation or invalidation):
+
+- a recorded cancellation or fulfilment resolves the row with no new event;
+- the latest recorded invalidation resolves it if it followed the snapshot
+  that last showed the order active and was not revalidated afterwards;
+- an elapsed expiry records an `expiration` event, as before;
+- the rest get provider status requests, at most 25 per collection per run.
+  Rows over that budget are deferred six hours without counting an attempt,
+  so they cannot hold the front of the due order and block newer work.
+
+Sales do not count as evidence because a partial fill leaves the order active.
+Each run logs `OpenSea reconciliation {examined, explained, expired, provider,
+deferred, resolved}` per collection.
+
 OpenSea Stream delivery is best effort. REST cannot replay every cancellation,
 invalidation or revalidation. Recorded history is therefore not a guarantee of
 every off-chain action, especially before capture began or during an outage.

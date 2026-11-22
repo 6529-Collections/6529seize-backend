@@ -230,3 +230,24 @@ export interface MarketDepthReconciliationResolveInput {
   expected_attempt_count: number;
   resolved_at: Date;
 }
+
+export interface MarketDepthReconciliationKey {
+  next_attempt_at: Date;
+  id: string;
+}
+
+export interface MarketDepthBulkResolveInput {
+  items: ReadonlyArray<{ id: string; expected_attempt_count: number }>;
+  resolved_at: Date;
+}
+
+export interface MarketDepthBulkDeferInput {
+  items: ReadonlyArray<{ id: string; expected_attempt_count: number }>;
+  next_attempt_at: Date;
+}
+
+export interface MarketDepthOrderStatusEvidence {
+  order_id: string;
+  kind: string;
+  occurred_at: Date;
+}
