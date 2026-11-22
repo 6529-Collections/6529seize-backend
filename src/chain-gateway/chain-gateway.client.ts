@@ -1171,7 +1171,7 @@ export class ChainGatewayClient {
 
   /**
    * Stores bytes in the document store and returns their CID as base32
-   * text. The store's upload (the gateway's documents notes): POST /v1/docs
+   * text. The document store's upload route: POST /v1/docs
    * with the bytes as application/octet-stream, at most 2 MiB, and an
    * optional `?cid=` it checks; it answers 201, or 200 when stored already,
    * with `{ cid, cid_hex, codec, size, url }`. The CID it names must be these
