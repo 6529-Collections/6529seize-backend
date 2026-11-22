@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { EVENT_TYPE, parseAlert, renderAlert } from './contract.js';
 
 export const fixture = {
@@ -84,6 +85,30 @@ test('push conditions are finite safe labels; arbitrary condition text is discar
   });
   assert.equal(unknown.condition, undefined);
   assert.doesNotMatch(JSON.stringify(renderAlert(unknown)), /PRIVATE_TOKEN/);
+});
+/** The labels in a source file's `const <name> ... = [ ... ]` list. */
+function listedConditions(source: string, name: string): string[] {
+  const start = source.indexOf(`const ${name}`);
+  assert.ok(start >= 0, `${name} not found`);
+  const open = source.indexOf('= [', start);
+  const list = source.slice(open, source.indexOf(']', open + 3));
+  return Array.from(list.matchAll(/'([A-Z_]+)'/g), (match) => match[1]!);
+}
+test('the producer names exactly the conditions this contract knows', () => {
+  const producer = readFileSync(
+    new URL('../../../src/operational-errors.ts', import.meta.url),
+    'utf8'
+  );
+  const contract = readFileSync(
+    new URL('./contract.ts', import.meta.url),
+    'utf8'
+  );
+  const named = listedConditions(producer, 'NAMED_CONDITIONS');
+  assert.ok(named.includes('PROFILE_SITE_CHANGE_STALLED'));
+  assert.deepEqual(
+    named.sort(),
+    listedConditions(contract, 'CONDITIONS').sort()
+  );
 });
 test('a profile site change that waits too long is named with its cause', () => {
   const alert = parseAlert({
