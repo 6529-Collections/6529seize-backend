@@ -9,7 +9,6 @@ import {
   ChainIdentity
 } from '@/chain-gateway/chain-gateway.types';
 import { RequestContext } from '@/request.context';
-import { WalletPrincipalUnknownError } from './identity-chain-lookups';
 import { decodeProfileDoc } from './profile-doc';
 
 /**
@@ -147,7 +146,12 @@ export class GatewayProfileSitePort implements ProfileSiteChainPort {
     private readonly walletPrincipalAt: (
       wallet: string,
       height: number
-    ) => Promise<string | null>
+    ) => Promise<string | null>,
+    /** Past `deadline`, a read of changes ends the follower's pass. */
+    private readonly options: {
+      readonly deadline?: number;
+      readonly now?: () => number;
+    } = {}
   ) {}
 
   /**
@@ -156,17 +160,15 @@ export class GatewayProfileSitePort implements ProfileSiteChainPort {
    * index starts from a height the feed holds, such as the import's start.
    */
   async getChanges(fromHeight: number): Promise<ProfileSiteChangesPage> {
+    const now = this.options.now ?? Date.now;
+    if (this.options.deadline !== undefined && now() > this.options.deadline) {
+      return { changes: [], next_height: null };
+    }
     // No Profile is written before the import starts (identities come from
     // it), so a start below it reads from it instead of a height the feed
     // may not hold.
     const importStart = (await this.getIdentityImport())?.start_height ?? 0;
-    const page = await this.gateway.getChanges(
-      Math.max(fromHeight, importStart),
-      {
-        limit: FEED_PAGE_BLOCKS,
-        families: [PROFILE_FAMILY]
-      }
-    );
+    const page = await this.profilePage(Math.max(fromHeight, importStart));
     if (page.through < page.from) {
       return { changes: [], next_height: null };
     }
@@ -181,6 +183,25 @@ export class GatewayProfileSitePort implements ProfileSiteChainPort {
       }
     }
     return { changes, next_height: page.next };
+  }
+
+  /** A page of Profile writes; too large for the gateway, fewer blocks. */
+  private async profilePage(from: number) {
+    let limit = FEED_PAGE_BLOCKS;
+    for (;;) {
+      try {
+        return await this.gateway.getChanges(from, {
+          limit,
+          families: [PROFILE_FAMILY]
+        });
+      } catch (error) {
+        const tooLarge =
+          error instanceof ChainGatewayError &&
+          (error.status === 413 || error.code === 'too_large');
+        if (!tooLarge || limit === 1) throw error;
+        limit = Math.max(1, Math.floor(limit / 2));
+      }
+    }
   }
 
   /**
@@ -283,7 +304,12 @@ export class GatewayProfileSitePort implements ProfileSiteChainPort {
     };
   }
 
-  /** Of the identity's wallets now, those bound to it at `height`. */
+  /**
+   * Of the identity's wallets now, those bound to it at `height`. A wallet
+   * whose principal then is unknown throws WalletPrincipalUnknownError, so
+   * the follower tries the change again later rather than decide on a list
+   * that may be short.
+   */
   private async walletsAt(
     identity: ChainIdentity,
     height: number
@@ -291,13 +317,8 @@ export class GatewayProfileSitePort implements ProfileSiteChainPort {
     const principal = identity.principalId.toLowerCase();
     const wallets: string[] = [];
     for (const wallet of identity.wallets) {
-      try {
-        if ((await this.walletPrincipalAt(wallet, height)) === principal) {
-          wallets.push(wallet.toLowerCase());
-        }
-      } catch (error) {
-        // Unknown at that height: not listed.
-        if (!(error instanceof WalletPrincipalUnknownError)) throw error;
+      if ((await this.walletPrincipalAt(wallet, height)) === principal) {
+        wallets.push(wallet.toLowerCase());
       }
     }
     return wallets;

@@ -42,12 +42,22 @@ function setup() {
     async (wallet: string, _height: number): Promise<string | null> =>
       wallet === W ? P : null
   );
+  let now = 1_000;
   const port = new GatewayProfileSitePort(
     gateway as never,
     profileIdOf,
-    walletPrincipalAt
+    walletPrincipalAt,
+    { deadline: 5_000, now: () => now }
   );
-  return { gateway, port, profileIdOf, walletPrincipalAt };
+  return {
+    gateway,
+    port,
+    profileIdOf,
+    walletPrincipalAt,
+    advance: (ms: number) => {
+      now += ms;
+    }
+  };
 }
 
 describe('GatewayProfileSitePort', () => {
@@ -248,25 +258,59 @@ describe('GatewayProfileSitePort', () => {
     expect(walletPrincipalAt).toHaveBeenCalledWith(W2, 7);
   });
 
-  it('leaves out a wallet whose principal then is unknown, and fails on others', async () => {
+  it("throws when a wallet's principal then is unknown, so the change is tried again", async () => {
     const { gateway, port, walletPrincipalAt } = setup();
-    const gone = () =>
-      new ChainGatewayError('gone', 409, 'height_gone', '/v1/identities');
     gateway.getIdentityByPrincipal
       .mockResolvedValueOnce(now)
-      .mockRejectedValueOnce(gone())
-      .mockResolvedValueOnce(now)
-      .mockRejectedValueOnce(gone());
-    walletPrincipalAt
-      .mockRejectedValueOnce(new WalletPrincipalUnknownError(W, 7))
-      .mockResolvedValueOnce(P)
-      .mockRejectedValueOnce(new Error('database down'));
-    expect(
-      (await port.getIdentityByPrincipal(P, { height: 7 }))?.wallets
-    ).toEqual([W2]);
-    await expect(port.getIdentityByPrincipal(P, { height: 7 })).rejects.toThrow(
-      'database down'
+      .mockRejectedValueOnce(
+        new ChainGatewayError('gone', 409, 'height_gone', '/v1/identities')
+      );
+    walletPrincipalAt.mockRejectedValueOnce(
+      new WalletPrincipalUnknownError(W, 7)
     );
+    await expect(
+      port.getIdentityByPrincipal(P, { height: 7 })
+    ).rejects.toBeInstanceOf(WalletPrincipalUnknownError);
+  });
+
+  it('ends the pass at its deadline, and halves a page too large', async () => {
+    const { gateway, port, advance } = setup();
+    gateway.getMembership.mockResolvedValue({});
+    gateway.getChanges
+      .mockRejectedValueOnce(
+        new ChainGatewayError('too large', 413, 'too_large', '/v1/feed')
+      )
+      .mockResolvedValueOnce({ from: 1, through: 0, next: 1, blocks: [] });
+    await port.getChanges(1);
+    expect(gateway.getChanges).toHaveBeenNthCalledWith(2, 1, {
+      limit: 100,
+      families: [PROFILE_FAMILY]
+    });
+    advance(10_000);
+    expect(await port.getChanges(1)).toEqual({
+      changes: [],
+      next_height: null
+    });
+    expect(gateway.getChanges).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not keep the import heights while the import runs', async () => {
+    const { gateway, port } = setup();
+    gateway.getMembership
+      .mockResolvedValueOnce({
+        import: { startHeight: 5, doneHeight: null, count: 3 }
+      })
+      .mockResolvedValueOnce({
+        import: { startHeight: 5, doneHeight: 9, count: 3 }
+      });
+    expect(await port.getIdentityImport()).toEqual({
+      start_height: 5,
+      done_height: null
+    });
+    expect(await port.getIdentityImport()).toEqual({
+      start_height: 5,
+      done_height: 9
+    });
   });
 
   it.each([

@@ -7,6 +7,7 @@ import {
 } from 'typeorm';
 import {
   IDENTITY_CHAIN_MIRROR_STATE_TABLE,
+  IDENTITY_CHAIN_PLACEHOLDERS_TABLE,
   IDENTITY_CHAIN_PRINCIPALS_TABLE,
   IDENTITY_CHAIN_RATING_EVENTS_TABLE,
   IDENTITY_CHAIN_WALLETS_TABLE
@@ -26,7 +27,11 @@ export class IdentityChainPrincipalEntity {
   @Column({ type: 'varchar', length: 50, nullable: false })
   readonly profile_id!: string;
 
-  /** LEGACY (imported profile), WALLET (a wallet's existing profile), NEW. */
+  /**
+   * LEGACY (an imported identity's profile), FOUNDER (the placeholder
+   * profile of the wallet that made it on the chain), NEW (derived from the
+   * principal id).
+   */
   @Column({ type: 'varchar', length: 20, nullable: false })
   readonly origin!: string;
 
@@ -53,6 +58,22 @@ export class IdentityChainWalletEntity {
 
   @Column({ type: 'bigint', nullable: false })
   readonly updated_at!: number;
+}
+
+/**
+ * 6529.io's placeholder profiles (handle `id-<wallet>`) that no chain
+ * identity held, listed once before the mirror's first write. An identity
+ * made on the chain takes its founding wallet's. 6529.io makes no
+ * placeholder profiles from switch-on and the list never changes, so a
+ * rebuild gives the same profile ids.
+ */
+@Entity(IDENTITY_CHAIN_PLACEHOLDERS_TABLE)
+export class IdentityChainPlaceholderEntity {
+  @PrimaryColumn({ type: 'varchar', length: 42, nullable: false })
+  readonly wallet!: string;
+
+  @Column({ type: 'varchar', length: 50, nullable: false })
+  readonly profile_id!: string;
 }
 
 /** One row (id 'identity'): the mirror's place in the change feed. */
@@ -88,11 +109,15 @@ export class IdentityChainMirrorStateEntity {
   readonly bindings_next_height!: number | null;
 
   /**
-   * The chain the wallet bindings were read from (its import file's hash):
-   * read from another chain (a relaunch), they start again.
+   * The network id of the chain the mirror read: on another one (a
+   * relaunch) the bindings and the identity tables start again.
    */
   @Column({ type: 'varchar', length: 80, nullable: true, default: null })
-  readonly bindings_chain!: string | null;
+  readonly chain_id!: string | null;
+
+  /** When the placeholder profiles were listed (once, before any write). */
+  @Column({ type: 'bigint', nullable: true, default: null })
+  readonly placeholders_at!: number | null;
 
   @Column({ type: 'bigint', nullable: false })
   readonly updated_at!: number;

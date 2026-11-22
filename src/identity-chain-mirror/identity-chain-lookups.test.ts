@@ -27,20 +27,25 @@ function history(
   };
 }
 
+const NETWORK = '0x' + '22'.repeat(32);
+
 function setup(
   nextHeight: number | null,
-  ranges: [number, number][] = [[1, 200]]
+  ranges: [number, number][] = [[1, 200]],
+  network: string | null = NETWORK
 ) {
   const db = {
     walletBindingAt: jest.fn(async () => ({
       binding: { wallet: W, principal_id: P2, bound_from_height: 50 },
-      nextHeight
+      nextHeight,
+      chainId: NETWORK
     })),
     principalOfProfile: jest.fn(async () => null as string | null)
   };
   const gateway = {
     getIdentityByLegacyProfileId: jest.fn(async () => null as unknown),
-    getMembershipWalletHistory: jest.fn(async () => history(ranges))
+    getMembershipWalletHistory: jest.fn(async () => history(ranges)),
+    getHead: jest.fn(async () => ({ network }))
   };
   const lookups = new IdentityChainLookups(
     db as unknown as IdentityChainMirrorDb,
@@ -92,6 +97,15 @@ describe('walletPrincipalAt', () => {
     expect(await lookups.walletPrincipalAt(W, 35)).toBeNull();
     expect(await lookups.walletPrincipalAt(W, 101)).toBe(P2);
     expect(gateway.getMembershipWalletHistory).toHaveBeenCalledTimes(3);
+  });
+
+  it('asks the chain when the bindings were read from another chain', async () => {
+    const { gateway, lookups } = setup(101, [[1, 200]], '0x' + '33'.repeat(32));
+    expect(await lookups.walletPrincipalAt(W, 60)).toBe(P2);
+    expect(gateway.getMembershipWalletHistory).toHaveBeenCalledTimes(1);
+    const noNetwork = setup(101, [[1, 200]], null);
+    expect(await noNetwork.lookups.walletPrincipalAt(W, 60)).toBe(P2);
+    expect(noNetwork.gateway.getMembershipWalletHistory).not.toHaveBeenCalled();
   });
 
   it('asks the chain before the first full sync', async () => {

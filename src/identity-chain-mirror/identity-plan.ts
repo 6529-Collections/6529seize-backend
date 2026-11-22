@@ -129,8 +129,8 @@ export interface IdentityPlan {
    */
   readonly regroupedWallets: string[];
   /**
-   * Other profiles whose every wallet joined this identity (a joining
-   * wallet's placeholder profile): left with no identity row. Their
+   * Other profiles whose every wallet joined this identity (usually a
+   * joining wallet's placeholder profile): left with no identity row. Their
    * ratings and follows are not moved; the mirror logs them.
    */
   readonly orphanedProfiles: string[];

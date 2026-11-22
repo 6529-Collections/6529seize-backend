@@ -99,7 +99,8 @@ class FakeDb {
   async walletBindingAt(wallet: string) {
     return {
       binding: this.bindings.get(wallet) ?? null,
-      nextHeight: this.state?.bindings_next_height ?? null
+      nextHeight: this.state?.bindings_next_height ?? null,
+      chainId: this.state?.chain_id ?? null
     };
   }
 
@@ -125,16 +126,28 @@ class FakeDb {
     }
     return null;
   }
+  placeholders = new Map<string, string>();
+  async listPlaceholderProfiles() {
+    const mapped = new Set(
+      Array.from(this.mapping.values()).map((it) => it.profile)
+    );
+    for (const profile of Array.from(this.profiles.values())) {
+      const wallet = profile.primary_wallet.toLowerCase();
+      if (
+        profile.normalised_handle === `id-${wallet}` &&
+        !mapped.has(profile.external_id) &&
+        !this.placeholders.has(wallet)
+      ) {
+        this.placeholders.set(wallet, profile.external_id);
+      }
+    }
+  }
   async unmappedPlaceholderProfile(wallet: string) {
     const mapped = new Set(
       Array.from(this.mapping.values()).map((it) => it.profile)
     );
-    const profile = Array.from(this.profiles.values()).find(
-      (it) =>
-        it.normalised_handle === `id-${wallet.toLowerCase()}` &&
-        !mapped.has(it.external_id)
-    );
-    return profile?.external_id ?? null;
+    const profile = this.placeholders.get(wallet.toLowerCase());
+    return profile && !mapped.has(profile) ? profile : null;
   }
   async insertMapping(p: string, profile: string, origin: string) {
     this.mapping.set(p, { profile, origin });
@@ -832,10 +845,11 @@ describe('IdentityChainMirror', () => {
     expect(db.bindings.get(A)?.bound_from_height).toBe(3);
   });
 
-  it('drops a row whose binding it cannot read, and stops at a wallet it cannot read', async () => {
-    const { mirror, db, chain, alice } = world();
+  it('drops a row whose binding it cannot read, and lists the membership past a wallet it cannot read', async () => {
+    const { mirror, db, chain, alice, bob } = world();
     await mirror.run({ budgetMs: 60_000 });
     expect(db.bindings.has(A)).toBe(true);
+    chain.finalized = 110;
     chain.feed.push({
       from: 101,
       through: 110,
@@ -849,18 +863,20 @@ describe('IdentityChainMirror', () => {
       ]
     });
     const report = await mirror.run({ budgetMs: 60_000 });
-    // A falls back to the chain; B's block holds the cursor; C waits.
-    expect(db.bindings.has(A)).toBe(false);
     expect(report.bindingProblems).toEqual([
       `102:${bind(A, null).key}`,
       `105:${bind(B, null).key}`
     ]);
-    expect(report.bindingsNextHeight).toBe(105);
-    expect(db.bindings.get(C)?.bound_from_height).toBe(100);
-    expect(report.nextHeight).toBe(111);
+    // Listed at the head instead: the cursor moves past the block.
+    expect(report.bindingsNextHeight).toBe(111);
+    expect(db.bindings.get(C)).toEqual({
+      wallet: C,
+      principal_id: bob.principalId,
+      bound_from_height: 110
+    });
   });
 
-  it('starts the bindings again on another chain', async () => {
+  it('starts again on another chain, also while its import runs, but not for a lagging node', async () => {
     const { mirror, db, chain } = world();
     const stale = () =>
       db.bindings.set(W(9), {
@@ -868,31 +884,86 @@ describe('IdentityChainMirror', () => {
         principal_id: PID(9),
         bound_from_height: 50
       });
-    // A gateway without a network id: the import file's hash names it.
+    // No network id from the gateway: nothing to compare.
     await mirror.run({ budgetMs: 60_000 });
-    expect(db.state?.bindings_chain).toBe(chain.fileHash);
-    stale();
-    chain.fileHash = '0x' + 'f2'.repeat(32);
-    chain.importStart = 1;
-    const report = await mirror.run({ budgetMs: 60_000 });
-    expect(db.state?.bindings_chain).toBe(chain.fileHash);
-    expect(db.bindings.has(W(9))).toBe(false);
-    expect(report.bindingsNextHeight).toBe(1);
-    // The network id names it when the gateway gives one: a relaunch with
-    // the same import file is another network.
+    expect(db.state?.chain_id).toBeNull();
     chain.network = '0x' + 'aa'.repeat(32);
     await mirror.run({ budgetMs: 60_000 });
+    expect(db.state?.chain_id).toBe(chain.network);
+    expect(db.state?.next_height).toBe(101);
+    // A relaunch: another network. Bindings and identity tables start again.
     stale();
     chain.network = '0x' + 'bb'.repeat(32);
-    await mirror.run({ budgetMs: 60_000 });
-    expect(db.state?.bindings_chain).toBe(chain.network);
+    chain.importCompleted = false;
+    const during = await mirror.run({ budgetMs: 60_000 });
+    expect(during.skipped).toBe('import_not_complete');
+    expect(db.state?.chain_id).toBe(chain.network);
+    expect(db.state?.next_height).toBeNull();
+    expect(db.state?.bindings_next_height).toBeNull();
     expect(db.bindings.has(W(9))).toBe(false);
+    chain.importCompleted = true;
+    await mirror.run({ budgetMs: 60_000 });
+    expect(db.state?.next_height).toBe(101);
     // The same network with the cursor ahead of this node's head (another
     // node behind it) is not a reset.
     db.state = { ...db.state!, bindings_next_height: 500 };
     stale();
     await mirror.run({ budgetMs: 60_000 });
     expect(db.bindings.has(W(9))).toBe(true);
+  });
+
+  it('halves the page when the gateway says the answer is too large', async () => {
+    const { mirror, db, chain, gateway, alice } = world();
+    chain.importStart = 1;
+    chain.feed.push({
+      from: 1,
+      through: 10,
+      next: 11,
+      blocks: [block(2, [bind(A, alice.principalId)])]
+    });
+    gateway.getChanges.mockRejectedValueOnce(
+      new ChainGatewayError('too large', 413, 'too_large', '/v1/feed')
+    );
+    await mirror.run({ budgetMs: 60_000 });
+    expect(gateway.getChanges).toHaveBeenNthCalledWith(1, 1, {
+      limit: 200,
+      families: ['0x0102']
+    });
+    expect(gateway.getChanges).toHaveBeenNthCalledWith(2, 1, {
+      limit: 100,
+      families: ['0x0102']
+    });
+    expect(db.bindings.get(A)?.bound_from_height).toBe(2);
+  });
+
+  it('lists the placeholder profiles once, before any write', async () => {
+    const { mirror, db } = world();
+    const before = '00000000-0000-4000-8000-00000000aaaa';
+    db.profiles.set(before, {
+      external_id: before,
+      handle: `id-${W(80)}`,
+      normalised_handle: `id-${W(80)}`,
+      primary_wallet: W(80),
+      pfp_url: null,
+      banner_1: null,
+      banner_2: null,
+      website: null,
+      classification: null,
+      sub_classification: null
+    });
+    await mirror.run({ budgetMs: 60_000 });
+    expect(db.state?.placeholders_at).toBe(1_000);
+    expect(db.placeholders.get(W(80))).toBe(before);
+    // A profile made later with a placeholder handle is not listed.
+    db.profiles.set('later', {
+      ...db.profiles.get(before)!,
+      external_id: 'later',
+      handle: `id-${W(81)}`,
+      normalised_handle: `id-${W(81)}`,
+      primary_wallet: W(81)
+    });
+    await mirror.run({ budgetMs: 60_000 });
+    expect(db.placeholders.has(W(81))).toBe(false);
   });
 
   it("gives an identity made on the chain its founding wallet's placeholder profile", async () => {
@@ -945,9 +1016,34 @@ describe('IdentityChainMirror', () => {
       origin: 'FOUNDER'
     });
     expect(report.orphanedProfiles).toEqual([other]);
-    // A rebuild from the chain maps it the same way.
+    // A rebuild from the chain maps it the same way, even after the
+    // profile took a handle.
+    db.profiles.set(placeholder, {
+      ...db.profiles.get(placeholder)!,
+      handle: 'carol',
+      normalised_handle: 'carol'
+    });
     db.mapping.delete(made.principalId);
     expect(await mirror.profileIdOf(made)).toBe(placeholder);
+  });
+
+  it('takes the founder the gateway names over the anchor, and not an imported profile', async () => {
+    const { mirror, db, gateway } = world();
+    db.placeholders.set(W(90), 'p-founder');
+    db.placeholders.set(W(91), 'p-anchor');
+    const made = chainIdentity(PID(90), [W(91), W(90)], {
+      legacyId: null,
+      anchor: W(91),
+      founder: W(90)
+    });
+    expect(await mirror.profileIdOf(made)).toBe('p-founder');
+    db.placeholders.set(W(92), 'p-imported');
+    gateway.getIdentityByLegacyProfileId.mockImplementation(
+      async (id: string) =>
+        id === 'p-imported' ? (chainIdentity(PID(1), [A]) as never) : null
+    );
+    const other = chainIdentity(PID(92), [W(92)], { legacyId: null });
+    expect(await mirror.profileIdOf(other)).toBe(principalProfileId(PID(92)));
   });
 
   it('files a merged identity for the profile site index without mapping it', async () => {
@@ -1054,6 +1150,19 @@ describe('IdentityChainMirror', () => {
     const report = await mirror.run({ budgetMs: 60_000 });
     expect(report.bindingsNextHeight).toBeNull();
     expect(db.bindings.size).toBe(0);
+  });
+
+  it('runs no profile site follower in the middle of a full sync', async () => {
+    const calls: unknown[] = [];
+    const { mirror, db } = world([
+      async (port) => {
+        calls.push(port);
+      }
+    ]);
+    await mirror.run({ budgetMs: 60_000 });
+    db.state = { ...db.state!, sync_phase: 'DELEGATIONS' };
+    expect(await mirror.followProfileSites()).toEqual([]);
+    expect(calls).toHaveLength(0);
   });
 
   it('runs the profile site followers when asked, after a full sync', async () => {

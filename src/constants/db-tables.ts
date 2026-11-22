@@ -60,6 +60,8 @@ export const IDENTITY_CHAIN_RATING_EVENTS_TABLE =
   'identity_chain_rating_events';
 /** Each bound wallet's principal and the height it has been bound since. */
 export const IDENTITY_CHAIN_WALLETS_TABLE = 'identity_chain_wallets';
+/** 6529.io's placeholder profiles as the identity mirror first found them. */
+export const IDENTITY_CHAIN_PLACEHOLDERS_TABLE = 'identity_chain_placeholders';
 export const TEAM_TABLE = 'team';
 export const DISTRIBUTION_TABLE = 'distribution';
 export const DISTRIBUTION_PHOTO_TABLE = 'distribution_photo';

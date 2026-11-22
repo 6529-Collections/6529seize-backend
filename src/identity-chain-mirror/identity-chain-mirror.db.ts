@@ -6,6 +6,7 @@ import {
   DELEGATIONS_TABLE,
   IDENTITIES_TABLE,
   IDENTITY_CHAIN_MIRROR_STATE_TABLE,
+  IDENTITY_CHAIN_PLACEHOLDERS_TABLE,
   IDENTITY_CHAIN_PRINCIPALS_TABLE,
   IDENTITY_CHAIN_RATING_EVENTS_TABLE,
   IDENTITY_CHAIN_WALLETS_TABLE,
@@ -42,8 +43,10 @@ export interface MirrorState {
   readonly last_full_sync_at: number | null;
   /** The next feed height the wallet bindings read (exact before it). */
   readonly bindings_next_height: number | null;
-  /** The chain the bindings were read from (its import file's hash). */
-  readonly bindings_chain: string | null;
+  /** The network id of the chain the mirror read. */
+  readonly chain_id: string | null;
+  /** When the placeholder profiles were listed; null before. */
+  readonly placeholders_at: number | null;
 }
 
 /** A nullable number column. */
@@ -174,7 +177,7 @@ export class IdentityChainMirrorDb extends LazyDbAccessCompatibleService {
   async getState(conn?: Conn): Promise<MirrorState | null> {
     const row = await this.db.oneOrNull<MirrorState>(
       `select next_height, sync_from_height, sync_phase, sync_after, last_full_sync_at,
-              bindings_next_height, bindings_chain
+              bindings_next_height, chain_id, placeholders_at
        from ${IDENTITY_CHAIN_MIRROR_STATE_TABLE} where id = :id`,
       { id: STATE_ID },
       conn ? { wrappedConnection: conn } : undefined
@@ -187,7 +190,8 @@ export class IdentityChainMirrorDb extends LazyDbAccessCompatibleService {
       sync_after: row.sync_after ?? null,
       last_full_sync_at: numberOrNull(row.last_full_sync_at),
       bindings_next_height: numberOrNull(row.bindings_next_height),
-      bindings_chain: row.bindings_chain ?? null
+      chain_id: row.chain_id ?? null,
+      placeholders_at: numberOrNull(row.placeholders_at)
     };
   }
 
@@ -195,13 +199,14 @@ export class IdentityChainMirrorDb extends LazyDbAccessCompatibleService {
     await this.db.execute(
       `insert into ${IDENTITY_CHAIN_MIRROR_STATE_TABLE}
          (id, next_height, sync_from_height, sync_phase, sync_after, last_full_sync_at,
-          bindings_next_height, bindings_chain, updated_at)
+          bindings_next_height, chain_id, placeholders_at, updated_at)
        values (:id, :next_height, :sync_from_height, :sync_phase, :sync_after, :last_full_sync_at,
-          :bindings_next_height, :bindings_chain, :now)
+          :bindings_next_height, :chain_id, :placeholders_at, :now)
        on duplicate key update
          next_height = values(next_height),
          bindings_next_height = values(bindings_next_height),
-         bindings_chain = values(bindings_chain),
+         chain_id = values(chain_id),
+         placeholders_at = values(placeholders_at),
          sync_from_height = values(sync_from_height),
          sync_phase = values(sync_phase),
          sync_after = values(sync_after),
@@ -257,23 +262,38 @@ export class IdentityChainMirrorDb extends LazyDbAccessCompatibleService {
   }
 
   /**
-   * The placeholder profile (`id-<wallet>`) of a wallet that no principal
-   * holds: what an identity made on the chain takes when that wallet founded
-   * it. 6529.io makes no placeholder profiles from switch-on, so the answer
-   * is the same on a rebuild.
+   * Lists 6529.io's placeholder profiles (handle `id-<wallet>`) that no
+   * chain identity holds, once, before the mirror's first write; the list
+   * then never changes.
+   */
+  async listPlaceholderProfiles(conn: Conn) {
+    await this.db.execute(
+      `insert ignore into ${IDENTITY_CHAIN_PLACEHOLDERS_TABLE} (wallet, profile_id)
+       select lower(p.primary_wallet), p.external_id from ${PROFILES_TABLE} p
+       left join ${IDENTITY_CHAIN_PRINCIPALS_TABLE} m on m.profile_id = p.external_id
+       where p.normalised_handle = concat('id-', lower(p.primary_wallet))
+         and m.principal_id is null`,
+      undefined,
+      { wrappedConnection: conn }
+    );
+  }
+
+  /**
+   * A wallet's listed placeholder profile, when no principal holds it:
+   * what an identity made on the chain takes when that wallet founded it.
    */
   async unmappedPlaceholderProfile(
     wallet: string,
     conn?: Conn
   ): Promise<string | null> {
-    const row = await this.db.oneOrNull<{ external_id: string }>(
-      `select p.external_id from ${PROFILES_TABLE} p
-       left join ${IDENTITY_CHAIN_PRINCIPALS_TABLE} m on m.profile_id = p.external_id
-       where p.normalised_handle = :placeholder and m.principal_id is null`,
-      { placeholder: `id-${wallet.toLowerCase()}` },
+    const row = await this.db.oneOrNull<{ profile_id: string }>(
+      `select c.profile_id from ${IDENTITY_CHAIN_PLACEHOLDERS_TABLE} c
+       left join ${IDENTITY_CHAIN_PRINCIPALS_TABLE} m on m.profile_id = c.profile_id
+       where c.wallet = :wallet and m.principal_id is null`,
+      { wallet: wallet.toLowerCase() },
       conn ? { wrappedConnection: conn } : undefined
     );
-    return row?.external_id ?? null;
+    return row?.profile_id ?? null;
   }
 
   async insertMapping(
@@ -948,14 +968,16 @@ export class IdentityChainMirrorDb extends LazyDbAccessCompatibleService {
   async walletBindingAt(wallet: string): Promise<{
     binding: WalletBindingRow | null;
     nextHeight: number | null;
+    chainId: string | null;
   }> {
     const row = await this.db.oneOrNull<{
       bindings_next_height: number | string | null;
+      chain_id: string | null;
       wallet: string | null;
       principal_id: string | null;
       bound_from_height: number | string | null;
     }>(
-      `select s.bindings_next_height, w.wallet, w.principal_id, w.bound_from_height
+      `select s.bindings_next_height, s.chain_id, w.wallet, w.principal_id, w.bound_from_height
        from ${IDENTITY_CHAIN_MIRROR_STATE_TABLE} s
        left join ${IDENTITY_CHAIN_WALLETS_TABLE} w on w.wallet = :wallet
        where s.id = :id`,
@@ -969,7 +991,11 @@ export class IdentityChainMirrorDb extends LazyDbAccessCompatibleService {
             bound_from_height: Number(row.bound_from_height)
           }
         : null;
-    return { binding, nextHeight: numberOrNull(row?.bindings_next_height) };
+    return {
+      binding,
+      nextHeight: numberOrNull(row?.bindings_next_height),
+      chainId: row?.chain_id ?? null
+    };
   }
 
   /** Every binding goes (the bindings start again). */

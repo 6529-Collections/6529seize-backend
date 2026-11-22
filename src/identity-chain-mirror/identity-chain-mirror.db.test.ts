@@ -134,7 +134,8 @@ describeWithSeed(
           sync_after: null,
           last_full_sync_at: 5,
           bindings_next_height: null,
-          bindings_chain: null
+          chain_id: null,
+          placeholders_at: null
         },
         9
       );
@@ -239,6 +240,13 @@ describeWithSeed(
     });
 
     it("finds a wallet's placeholder profile that no principal holds", async () => {
+      // Listed once; a later rename or a later profile doesn't change it.
+      await inTx((conn) => db.listPlaceholderProfiles(conn));
+      await sqlExecutor.execute(
+        `update ${PROFILES_TABLE} set handle = 'carol', normalised_handle = 'carol' where external_id = :id`,
+        { id: PLACE }
+      );
+      await inTx((conn) => db.listPlaceholderProfiles(conn));
       expect(await db.unmappedPlaceholderProfile(C.toUpperCase())).toBe(PLACE);
       await inTx((conn) => db.insertMapping(P, PLACE, 'FOUNDER', 1, conn));
       expect(await db.unmappedPlaceholderProfile(C)).toBeNull();
@@ -267,7 +275,8 @@ describeWithSeed(
       // One read: no state row yet, then the binding with the followed height.
       expect(await db.walletBindingAt(B)).toEqual({
         binding: null,
-        nextHeight: null
+        nextHeight: null,
+        chainId: null
       });
       await db.saveState(
         {
@@ -277,17 +286,20 @@ describeWithSeed(
           sync_after: null,
           last_full_sync_at: 1,
           bindings_next_height: 12,
-          bindings_chain: '0xabc'
+          chain_id: '0xabc',
+          placeholders_at: 5
         },
         1
       );
       expect(await db.walletBindingAt(B)).toEqual({
         binding: row(B, 7),
-        nextHeight: 12
+        nextHeight: 12,
+        chainId: '0xabc'
       });
       expect(await db.walletBindingAt(A)).toEqual({
         binding: null,
-        nextHeight: 12
+        nextHeight: 12,
+        chainId: '0xabc'
       });
     });
 

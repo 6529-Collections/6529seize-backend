@@ -40,13 +40,7 @@ import {
   ProfileSiteFollower
 } from './profile-site-port';
 import { IdentityChainLookups } from './identity-chain-lookups';
-import {
-  ADDRESS_BINDING_FAMILY,
-  BindingPage,
-  bindingChangesOf,
-  foldBindings,
-  WalletBindingRow
-} from './wallet-bindings';
+import { WalletBindingsFollower } from './wallet-bindings-follower';
 import { toDelegationRow } from './delegation-rows';
 import {
   decodeProfileDoc,
@@ -80,6 +74,8 @@ export const PROFILE_SITE_FOLLOWERS: readonly ProfileSiteFollower[] = [];
 
 /** The wallet bindings take at most this share of a run's budget. */
 const BINDINGS_SHARE = 0.5;
+/** The profile site followers' pass ends after this long. */
+const FOLLOWERS_BUDGET_MS = 4 * 60 * 1000;
 
 type Gateway = Pick<
   ChainGatewayClient,
@@ -115,7 +111,7 @@ export interface MirrorRunReport {
   failed: string[];
   /** Wallets whose consolidation key changed: re-keyed by the caller. */
   regroupedWallets: string[];
-  /** Placeholder profiles whose wallets all joined an identity. */
+  /** Other profiles whose wallets all joined an identity: left without a row. */
   orphanedProfiles: string[];
   /** AddressBinding changes applied to the wallet bindings. */
   walletBindings: number;
@@ -238,6 +234,7 @@ function toNumber(value: string | number | null | undefined): number {
 export class IdentityChainMirror {
   private readonly identities = new Map<string, ChainIdentity | null>();
   private keyWidth = MAX_CONSOLIDATION_KEY_LENGTH;
+  private readonly bindings: WalletBindingsFollower;
 
   constructor(
     private readonly gateway: Gateway = chainGatewayClient,
@@ -245,15 +242,21 @@ export class IdentityChainMirror {
     private readonly now: () => number = () => Date.now(),
     private readonly membershipHandlers: readonly MembershipChangeHandler[] = MEMBERSHIP_CHANGE_HANDLERS,
     private readonly profileSiteFollowers: readonly ProfileSiteFollower[] = PROFILE_SITE_FOLLOWERS
-  ) {}
+  ) {
+    this.bindings = new WalletBindingsFollower(gateway, db, now);
+  }
 
-  /** The profile site index's chain reads, with this mirror's profile ids. */
-  profileSitePort(): GatewayProfileSitePort {
+  /**
+   * The profile site index's chain reads, with this mirror's profile ids;
+   * past `deadline` a read of changes ends the follower's pass.
+   */
+  profileSitePort(deadline?: number): GatewayProfileSitePort {
     const lookups = new IdentityChainLookups(this.db, this.gateway);
     return new GatewayProfileSitePort(
       this.gateway,
       (identity) => this.profileIdForSites(identity),
-      (wallet, height) => lookups.walletPrincipalAt(wallet, height)
+      (wallet, height) => lookups.walletPrincipalAt(wallet, height),
+      { deadline, now: this.now }
     );
   }
 
@@ -297,13 +300,13 @@ export class IdentityChainMirror {
     const deadline = this.now() + budgetMs;
     const report = this.report();
     this.identities.clear();
+    // Before the import gate: a relaunched chain is seen while its import runs.
+    let state = await this.onThisChain(
+      (await this.db.getState()) ?? this.emptyState()
+    );
     const membership = await this.gateway.getMembership();
     const importState = membership?.import as
-      | {
-          completed?: boolean;
-          startHeight?: number | null;
-          fileHash?: string | null;
-        }
+      | { completed?: boolean; startHeight?: number | null }
       | undefined;
     if (!importState?.completed) {
       report.skipped = 'import_not_complete';
@@ -311,13 +314,10 @@ export class IdentityChainMirror {
     }
     this.keyWidth =
       (await this.db.consolidationKeyWidth()) ?? MAX_CONSOLIDATION_KEY_LENGTH;
-    let state = (await this.db.getState()) ?? this.emptyState();
-    state = await this.followBindings(
+    state = await this.listPlaceholders(state);
+    state = await this.bindings.follow(
       state,
-      {
-        startHeight: numberOrNull(importState.startHeight),
-        fileHash: importState.fileHash?.toLowerCase() ?? null
-      },
+      numberOrNull(importState.startHeight),
       Math.min(deadline, this.now() + budgetMs * BINDINGS_SHARE),
       report
     );
@@ -359,7 +359,8 @@ export class IdentityChainMirror {
       sync_after: null,
       last_full_sync_at: null,
       bindings_next_height: null,
-      bindings_chain: null
+      chain_id: null,
+      placeholders_at: null
     };
   }
 
@@ -381,208 +382,45 @@ export class IdentityChainMirror {
     });
   }
 
-  // ---------------------------------------------------------------- wallet bindings
+  // ---------------------------------------------------------------- chain and placeholders
 
   /**
-   * The wallet bindings follow the feed's AddressBinding records with their
-   * own cursor, from the import's first block. Rows are written before the
-   * cursor moves, so the table is never behind the height it claims (rows
-   * ahead of it only send a lookup to the chain). They start again, empty,
-   * when read from another chain or when the cursor is past the chain's
-   * finalized height (a relaunch). When the gateway no longer holds the
-   * cursor's height, or the import's start is unknown, they are rebuilt from
-   * the membership list. A failure here is reported and the identity tables
-   * go on.
+   * The chain the mirror reads is named by its network id. On another one
+   * (a relaunch) the wallet bindings and the identity tables start again:
+   * an empty bindings table, and a full sync once its import completes. A
+   * gateway that gives no network id changes nothing.
    */
-  private async followBindings(
-    initial: MirrorState,
-    chain: { startHeight: number | null; fileHash: string | null },
-    deadline: number,
-    report: MirrorRunReport
-  ): Promise<MirrorState> {
-    let state = initial;
-    try {
-      state = await this.bindingsOfThisChain(state, chain.fileHash);
-      if (state.bindings_next_height !== null) {
-        return await this.readBindings(state, deadline, report);
-      }
-      if (chain.startHeight === null) {
-        return await this.rebuildBindings(state, report);
-      }
-      // Lookups trust no row without a cursor: start from an empty table.
-      const start = { ...state, bindings_next_height: chain.startHeight };
-      await this.db.executeNativeQueriesInTransaction(async (conn) => {
-        await this.db.clearWalletBindings(conn);
-        await this.db.saveState(start, this.now(), conn);
-      });
-      return await this.readBindings(start, deadline, report);
-    } catch (error) {
-      const message = messageOf(error);
-      logger.error(`[WALLET BINDINGS FAILED] ${message}`);
-      report.bindingProblems.push(message);
-      return (await this.db.getState()) ?? state;
+  private async onThisChain(state: MirrorState): Promise<MirrorState> {
+    const network =
+      (await this.gateway.getHead(true)).network?.toLowerCase() ?? null;
+    if (network === null || state.chain_id === network) return state;
+    if (state.chain_id === null) {
+      return await this.save({ ...state, chain_id: network });
     }
-  }
-
-  /**
-   * The bindings' state, started again when they were read from another
-   * chain: its network id (or, from a gateway that doesn't give one, its
-   * import file's hash) differs.
-   */
-  private async bindingsOfThisChain(
-    state: MirrorState,
-    fileHash: string | null
-  ): Promise<MirrorState> {
-    const network = (await this.gateway.getHead(true)).network;
-    const chain = network?.toLowerCase() ?? fileHash;
-    if (state.bindings_chain !== null && state.bindings_chain !== chain) {
-      logger.warn(
-        `[WALLET BINDINGS OF ANOTHER CHAIN] [${state.bindings_chain}] [NOW ${chain}] [STARTING AGAIN]`
-      );
-      return await this.save({
-        ...state,
-        bindings_next_height: null,
-        bindings_chain: chain
-      });
-    }
-    return state.bindings_chain === chain
-      ? state
-      : await this.save({ ...state, bindings_chain: chain });
-  }
-
-  /** Pages of the feed's binding records from the cursor, to the deadline. */
-  private async readBindings(
-    initial: MirrorState,
-    deadline: number,
-    report: MirrorRunReport
-  ): Promise<MirrorState> {
-    let state = initial;
-    let from = Number(state.bindings_next_height);
-    while (this.now() < deadline) {
-      const page = await this.feedPage(from, true);
-      if (!page) {
-        logger.warn(
-          `[BINDINGS: FEED GONE AT ${from}] [LISTING THE MEMBERSHIP]`
-        );
-        return await this.rebuildBindings(state, report);
-      }
-      if (page.through < page.from || page.next <= from) break;
-      const read = bindingChangesOf(page.blocks);
-      const next = read.stoppedAt ?? page.next;
-      state = await this.applyBindingPage(
-        read,
-        { ...state, bindings_next_height: next },
-        report
-      );
-      if (read.stoppedAt !== null) break;
-      from = next;
-    }
-    return state;
-  }
-
-  /**
-   * A page of binding changes onto the stored bindings, and the cursor
-   * past it, in one transaction.
-   */
-  private async applyBindingPage(
-    page: BindingPage,
-    next: MirrorState,
-    report: MirrorRunReport
-  ): Promise<MirrorState> {
-    if (page.malformed.length) {
-      logger.error(
-        `[UNREADABLE ADDRESS BINDINGS] ${page.malformed.join(', ')}`
-      );
-      report.bindingProblems.push(...page.malformed);
-    }
-    const wallets = Array.from(new Set(page.changes.map((it) => it.wallet)));
+    logger.warn(
+      `[ANOTHER CHAIN] [${state.chain_id}] [NOW ${network}] [STARTING AGAIN]`
+    );
+    const fresh: MirrorState = {
+      ...this.emptyState(),
+      chain_id: network,
+      placeholders_at: state.placeholders_at
+    };
     await this.db.executeNativeQueriesInTransaction(async (conn) => {
-      if (wallets.length) {
-        const stored = await this.db.walletBindings(wallets, conn);
-        const { upserts, deletes } = foldBindings(stored, page.changes);
-        await this.db.writeWalletBindings(upserts, deletes, this.now(), conn);
-      }
+      await this.db.clearWalletBindings(conn);
+      await this.db.saveState(fresh, this.now(), conn);
+    });
+    return fresh;
+  }
+
+  /** The placeholder profiles, listed once before the mirror's first write. */
+  private async listPlaceholders(state: MirrorState): Promise<MirrorState> {
+    if (state.placeholders_at !== null) return state;
+    const next = { ...state, placeholders_at: this.now() };
+    await this.db.executeNativeQueriesInTransaction(async (conn) => {
+      await this.db.listPlaceholderProfiles(conn);
       await this.db.saveState(next, this.now(), conn);
     });
-    report.walletBindings += page.changes.length;
     return next;
-  }
-
-  /**
-   * Without the feed for some heights, nothing says when a wallet was bound
-   * (it may have left and come back in the gap), so every bound wallet, as
-   * one membership list pinned at the finalized height shows it, is stored
-   * as bound since that height: later than the truth, never earlier. For an
-   * earlier height a lookup asks the chain's history. Unlisted rows go, and
-   * the bindings follow the feed from the next height. A list the gateway
-   * can't give at one height is tried again next run.
-   */
-  private async rebuildBindings(
-    state: MirrorState,
-    report: MirrorRunReport
-  ): Promise<MirrorState> {
-    const height = (await this.gateway.getHead(true)).finalizedHeight;
-    const bound = await this.membershipAt(height);
-    if (!bound) {
-      logger.warn(`[BINDINGS: NO MEMBERSHIP LIST AT ${height}] [NEXT RUN]`);
-      return state;
-    }
-    const upserts: WalletBindingRow[] = Array.from(bound.entries()).map(
-      ([wallet, principal]) => ({
-        wallet,
-        principal_id: principal,
-        bound_from_height: height
-      })
-    );
-    const next = { ...state, bindings_next_height: height + 1 };
-    const removed = await this.db.executeNativeQueriesInTransaction(
-      async (conn) => {
-        const deletes = (await this.db.boundWallets(conn)).filter(
-          (it) => !bound.has(it)
-        );
-        await this.db.writeWalletBindings(upserts, deletes, this.now(), conn);
-        await this.db.saveState(next, this.now(), conn);
-        return deletes.length;
-      }
-    );
-    logger.info(
-      `[BINDINGS REBUILT AT ${height}] [${upserts.length} BOUND] [${removed} REMOVED]`
-    );
-    report.walletBindings += upserts.length + removed;
-    return next;
-  }
-
-  /** Every bound wallet at `height`, or null when not all of it reads there. */
-  private async membershipAt(
-    height: number
-  ): Promise<Map<string, string> | null> {
-    const bound = new Map<string, string>();
-    let after: string | null = null;
-    try {
-      for (;;) {
-        const page = await this.gateway.listMembershipWallets({
-          after,
-          limit: 5000,
-          height
-        });
-        if (!page || Number(page.read?.height) !== height) return null;
-        for (const item of page.items) {
-          if (item.principalId) {
-            bound.set(
-              item.wallet.toLowerCase(),
-              item.principalId.toLowerCase()
-            );
-          }
-        }
-        if (!page.next) return bound;
-        after = page.next;
-      }
-    } catch (error) {
-      if (error instanceof ChainGatewayError && error.code === 'height_gone') {
-        return null;
-      }
-      throw error;
-    }
   }
 
   private async continueFullSync(
@@ -636,7 +474,10 @@ export class IdentityChainMirror {
    * sync; the delegations loop runs this last. A failure is logged and
    * returned; the others go on.
    */
-  async followProfileSites(notAfter?: number): Promise<string[]> {
+  async followProfileSites(
+    notAfter?: number,
+    budgetMs = FOLLOWERS_BUDGET_MS
+  ): Promise<string[]> {
     const problems: string[] = [];
     if (!this.profileSiteFollowers.length) return problems;
     if (notAfter !== undefined && this.now() > notAfter) {
@@ -646,7 +487,7 @@ export class IdentityChainMirror {
     if (!state || state.sync_phase || state.next_height === null) {
       return problems;
     }
-    const port = this.profileSitePort();
+    const port = this.profileSitePort(this.now() + budgetMs);
     for (const follower of this.profileSiteFollowers) {
       try {
         await follower(port, {});
@@ -774,13 +615,10 @@ export class IdentityChainMirror {
    * A page of the feed, or null when the gateway no longer holds the height.
    * Asked three times first: another API node behind the gateway may hold it.
    */
-  private async feedPage(from: number, bindingsOnly = false) {
+  private async feedPage(from: number) {
     for (let attempt = 0; attempt < FEED_GONE_ATTEMPTS; attempt++) {
       try {
-        return await this.gateway.getChanges(from, {
-          limit: FEED_PAGE_BLOCKS,
-          ...(bindingsOnly ? { families: [ADDRESS_BINDING_FAMILY] } : {})
-        });
+        return await this.gateway.getChanges(from, { limit: FEED_PAGE_BLOCKS });
       } catch (error) {
         if (!(error instanceof ChainGatewayError) || error.code !== 'gone') {
           throw error;
@@ -927,8 +765,11 @@ export class IdentityChainMirror {
     const principalId = identity.principalId.toLowerCase();
     const legacy = await this.legacyIdOf(identity);
     if (legacy) return { profileId: legacy, origin: 'LEGACY' };
-    const founder = identity.anchor
-      ? await this.db.unmappedPlaceholderProfile(identity.anchor)
+    // The founding wallet: the gateway's founder field, else the anchor
+    // (which the chain moves only when the anchor leaves).
+    const foundingWallet = identity.founder ?? identity.anchor ?? null;
+    const founder = foundingWallet
+      ? await this.db.unmappedPlaceholderProfile(foundingWallet)
       : null;
     if (
       founder &&

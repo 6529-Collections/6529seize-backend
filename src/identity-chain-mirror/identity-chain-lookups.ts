@@ -10,7 +10,7 @@ import {
 
 type Gateway = Pick<
   ChainGatewayClient,
-  'getIdentityByLegacyProfileId' | 'getMembershipWalletHistory'
+  'getIdentityByLegacyProfileId' | 'getMembershipWalletHistory' | 'getHead'
 >;
 
 /**
@@ -81,10 +81,11 @@ export class IdentityChainLookups {
 
   /**
    * The principal `wallet` was bound to at chain height `height`, or null
-   * when it was bound to none. From the mirror's bindings when the mirror
-   * has followed the chain to `height` and the wallet has been bound to the
-   * same principal since at or before it; else from the wallet's history on
-   * the chain. Throws WalletPrincipalUnknownError when neither can say.
+   * when it was bound to none. From the mirror's bindings when they were
+   * read from the chain the gateway serves now, have followed it to
+   * `height`, and the wallet has been bound to the same principal since at
+   * or before it; else from the wallet's history on the chain. Throws
+   * WalletPrincipalUnknownError when neither can say.
    */
   async walletPrincipalAt(
     wallet: string,
@@ -94,10 +95,13 @@ export class IdentityChainLookups {
       throw new Error(`Not a chain height: ${height}`);
     }
     const address = wallet.toLowerCase();
-    const { binding, nextHeight } = await this.db.walletBindingAt(address);
+    const { binding, nextHeight, chainId } =
+      await this.db.walletBindingAt(address);
+    const network = (await this.gateway.getHead()).network?.toLowerCase();
     if (
       binding &&
       nextHeight !== null &&
+      (!network || chainId === network) &&
       height < nextHeight &&
       height >= binding.bound_from_height
     ) {

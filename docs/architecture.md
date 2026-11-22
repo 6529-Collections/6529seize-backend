@@ -887,8 +887,9 @@ follows the gateway's change feed. `identity_chain_principals` maps each
 principal to the 6529.io profile id its rows use: an imported identity's
 legacy id; for an identity made on the chain, its founding wallet's
 placeholder profile when no principal holds it, else the principal id's first
-16 bytes written as a UUID. 6529.io makes no placeholder profiles from
-switch-on, so a rebuild from the chain gives the same ids. A placeholder
+16 bytes written as a UUID. The placeholder profiles are listed once, before
+the mirror's first write (`identity_chain_placeholders`), and 6529.io makes
+none from switch-on, so a rebuild from the chain gives the same ids. A placeholder
 profile whose wallets all join an identity is left without an identity row
 and logged; its ratings and follows are not moved; `identity_chain_mirror_state`
 holds its place in the feed. Profile documents come from the gateway's store.
@@ -907,23 +908,24 @@ change it applies is written, in the same transaction, to
 value, total after, chain height, FEED or FULL_SYNC) for notifications.
 
 `identity_chain_wallets` holds each bound wallet's principal and the chain
-height it has been bound to that principal since. It follows the feed's
-AddressBinding records with its own cursor (`bindings_next_height`), from the
-import's first block; rows are written before the cursor moves. They start
-again, empty, when read from another chain (`bindings_chain`: the chain's
-network id, or the import file's hash from a gateway without one); rows and
-cursor are written in one transaction. When the
-gateway no longer holds the cursor's height it lists the membership at one
-pinned height and stores every wallet as bound since then: later than the
-truth, never earlier. `IdentityChainLookups` (`identity-chain-lookups.ts`)
-answers "the principal of wallet W at height H" from that table below its
-cursor, else from the wallet's history on the chain where that history is
-exact, and throws `WalletPrincipalUnknownError` when neither can say; and "the
-principal of profile id X" from the mapping or the import. As its last step
-the delegations loop calls `followProfileSites()`, which runs the followers in
-`PROFILE_SITE_FOLLOWERS` with `GatewayProfileSitePort` (`profile-site-port.ts`),
-the profile site index's chain reads served from the gateway client and the
-mirror's profile ids.
+height it has been bound to that principal since
+(`wallet-bindings-follower.ts`). It follows the feed's AddressBinding records
+with its own cursor (`bindings_next_height`) from the import's first block;
+rows and cursor are written in one transaction. When the gateway no longer
+holds the cursor's height, or a record's wallet can't be read, it lists the
+membership at one pinned height and stores every wallet as bound since then:
+later than the truth, never earlier. The mirror names its chain by the
+network id (`chain_id`); on another one (a relaunch) the bindings and the
+identity tables start again. `IdentityChainLookups`
+(`identity-chain-lookups.ts`) answers "the principal of wallet W at height H"
+from that table below its cursor, on the chain the gateway serves, else from
+the wallet's history on the chain where that history is exact, and throws
+`WalletPrincipalUnknownError` when neither can say; and "the principal of
+profile id X" from the mapping or the import. As its last step the delegations
+loop calls `followProfileSites()`, which runs the followers in
+`PROFILE_SITE_FOLLOWERS` with `GatewayProfileSitePort` (`profile-site-port.ts`)
+for at most four minutes: the profile site index's chain reads, served from
+the gateway client and the mirror's profile ids.
 
 ### Ordinary Ethereum RPC boundary
 
