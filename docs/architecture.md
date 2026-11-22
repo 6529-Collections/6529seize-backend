@@ -1180,7 +1180,10 @@ needed for normalization preserve exact integer strings.
 After each refresh, a bounded retention pass removes the collection's events
 older than 30 days, snapshots older than 14 days and reconciliation rows older
 than 7 days. It keeps the latest snapshot and the history of orders in the live
-book; the activity feed applies the same 30-day event window.
+book; the activity feed applies the same 30-day event window. In production,
+completed hours of events and snapshots are first archived to S3
+(`Prod-MarketArchive`), and retention deletes nothing past the archive
+watermark.
 
 The API exposes currency-specific quoted depth for an individual token and a
 merged feed of canonical transactions and market actions. Quoted quantities can
