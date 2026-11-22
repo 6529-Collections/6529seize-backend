@@ -14,6 +14,7 @@ import {
 import { DbQueryOptions } from '@/db-query.options';
 import { sqlExecutor } from '@/sql-executor';
 import {
+  JOURNAL_BEHIND_ID,
   OPENING_STATE_ID,
   subscriptionsIdentitySwitch
 } from '../identity/identity-switch';
@@ -378,9 +379,11 @@ export async function loadOpeningFiles(
     // The redemption writer goes on from the block the cut was at. Only
     // its own row is replaced: go-live's writes-closed marker is in this
     // table too, and it must stay until the switch.
+    // A new opening starts its own journal, so a behind-posted marker of the
+    // last one no longer holds.
     await sqlExecutor.execute(
-      `DELETE FROM ${SUBSCRIPTIONS_ID_CURSORS_TABLE} WHERE id = :id`,
-      { id: REDEMPTION_CURSOR_ID },
+      `DELETE FROM ${SUBSCRIPTIONS_ID_CURSORS_TABLE} WHERE id IN (:ids)`,
+      { ids: [REDEMPTION_CURSOR_ID, JOURNAL_BEHIND_ID] },
       options
     );
     await sqlExecutor.execute(

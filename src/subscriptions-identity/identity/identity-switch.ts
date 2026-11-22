@@ -310,6 +310,15 @@ export async function scheduleIdentitySwitch(
  */
 export const WRITES_CLOSED_ID = 'writes-closed';
 
+/**
+ * The cursors row a check of the posted journal sets when live's journal
+ * counter is behind it, as after a restore from an older backup: block holds
+ * the posted journal's highest `n` for the loaded opening. Live would hand
+ * out `n` the posted journal already has, so every journaled write refuses
+ * (journal.ts) until go-live loads a new opening, whose load deletes the row.
+ */
+export const JOURNAL_BEHIND_ID = 'journal-behind';
+
 export async function closeSubscriptionWrites(
   nowMs: number = Date.now()
 ): Promise<void> {

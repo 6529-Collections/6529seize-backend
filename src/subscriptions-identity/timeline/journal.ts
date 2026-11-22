@@ -17,7 +17,11 @@ import type { RecordLogEntry } from '@/signed-records/record-log/record-log-form
 import { recordLogDb } from '@/signed-records/record-log/record-log.db';
 import { RecordLogWriter } from '@/signed-records/record-log/record-log.service';
 import { sqlExecutor } from '@/sql-executor';
-import { OPENING_STATE_ID, switchReason } from '../identity/identity-switch';
+import {
+  JOURNAL_BEHIND_ID,
+  OPENING_STATE_ID,
+  switchReason
+} from '../identity/identity-switch';
 import { AS_TEXT } from '../opening/legacy-tables';
 import { canonicalJson, sha256Hex } from '../opening/opening-file';
 
@@ -480,6 +484,31 @@ async function openingNow(
 }
 
 /**
+ * Refuses a write whose `n` the posted journal already has (see
+ * JOURNAL_BEHIND_ID). The write's transaction rolls back, the counter with
+ * it, so every write refuses until a new opening is loaded.
+ */
+async function assertNotBehindPosted(
+  n: number,
+  options: DbQueryOptions
+): Promise<void> {
+  const [behind] = await sqlExecutor.execute<{ block: number | string }>(
+    `SELECT block FROM ${SUBSCRIPTIONS_ID_CURSORS_TABLE} WHERE id = :id`,
+    { id: JOURNAL_BEHIND_ID },
+    options
+  );
+  if (behind && n <= Number(behind.block)) {
+    logger.errorWithCode(
+      'SUBSCRIPTIONS_JOURNAL_BEHIND',
+      `[JOURNAL BEHIND POSTED] write n=${n} refused: the posted journal is at n=${behind.block}. Suspend, then go-live for a new opening.`
+    );
+    throw new Error(
+      `Live's journal counter (n=${n}) is behind the posted journal (n=${behind.block}); writes refuse until go-live loads a new opening`
+    );
+  }
+}
+
+/**
  * The next `n`, taken as a write's last step: the counter row stays locked
  * until the write commits, so `n` follows commit order.
  */
@@ -644,6 +673,7 @@ export async function journal(
   const { opening, mode } = await openingNow(options, atMs);
   const changes = await changesOf(write, options);
   const n = await nextN(options);
+  await assertNotBehindPosted(n, options);
   const bodies = partsOf(
     {
       t: 'journal',
@@ -820,11 +850,11 @@ export async function identityTablesHash(
       ...spec.columns.map((c) => `IFNULL(CAST(\`${c}\` AS CHAR), '\\N')`),
       ...spec.times.map((t) => `IFNULL(${AS_TEXT(t)}, '\\N')`)
     ].join(', ');
-    // The cursors table also holds go-live's marker and the journal's
-    // counter, which are not state.
+    // The cursors table also holds go-live's marker, the journal's counter
+    // and the behind-posted marker, which are not state.
     const where =
       table === 'cursor'
-        ? `WHERE id NOT IN ('writes-closed', '${JOURNAL_COUNTER_ID}')`
+        ? `WHERE id NOT IN ('writes-closed', '${JOURNAL_COUNTER_ID}', '${JOURNAL_BEHIND_ID}')`
         : '';
     // Both as text: the XOR is a 64-bit unsigned number, which the driver
     // would hand back as a BigInt.

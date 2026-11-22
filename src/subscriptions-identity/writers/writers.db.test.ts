@@ -1391,6 +1391,63 @@ describeWithSeed('identity writers after the switch', [], () => {
     ).toBeCloseTo(0.2, 10);
   });
 
+  it("refuses every write while live's journal counter is behind the posted journal, until a new opening", async () => {
+    await seedLegacy();
+    expect((await goLiveForTest()).switched).toBe(true);
+    await execute(
+      `INSERT INTO ${SUBSCRIPTIONS_TOP_UP_TABLE} (hash, block, transaction_date, from_wallet, amount)
+        VALUES ('0xa5', 30, '2026-11-26 13:00:00', :lone, 0.05)`,
+      { lone: LONE }
+    );
+    await runIdentityTopUpWriters();
+    // A restore from an older backup: live's counter is back before the
+    // last posted write.
+    await execute(
+      `UPDATE ${SUBSCRIPTIONS_ID_CURSORS_TABLE} SET block = block - 1 WHERE id = 'journal'`
+    );
+    const alert = jest.spyOn(Logger.prototype, 'errorWithCode');
+    setJournalSource(() => journalSource);
+    try {
+      expect(
+        await verifyPostedJournal({
+          ethereum: await ethereumAsRecorded(),
+          fetch: fetchPublished
+        })
+      ).toBe('behind');
+    } finally {
+      setJournalSource(null);
+    }
+    expect(alert).toHaveBeenCalledWith(
+      'SUBSCRIPTIONS_JOURNAL_BEHIND',
+      expect.stringContaining('Suspend, then go-live')
+    );
+
+    // Every write refuses and changes nothing.
+    const balancesBefore = await identityBalances();
+    const tablesBefore = await identityTablesHash({});
+    await execute(
+      `INSERT INTO ${SUBSCRIPTIONS_TOP_UP_TABLE} (hash, block, transaction_date, from_wallet, amount)
+        VALUES ('0xa6', 31, '2026-11-26 14:00:00', :lone, 0.05)`,
+      { lone: LONE }
+    );
+    await expect(runIdentityTopUpWriters()).rejects.toThrow(
+      'behind the posted journal'
+    );
+    expect(await identityBalances()).toEqual(balancesBefore);
+    expect(await identityTablesHash({})).toBe(tablesBefore);
+    alert.mockRestore();
+
+    // The runbook: suspend, then go-live loads a new opening, and the
+    // writers go on.
+    expect(await suspendIdentityTables()).toBe(true);
+    expect((await goLiveForTest()).switched).toBe(true);
+    await runIdentityTopUpWriters();
+    const [marker] = await sqlExecutor.execute(
+      `SELECT id FROM ${SUBSCRIPTIONS_ID_CURSORS_TABLE} WHERE id = 'journal-behind'`
+    );
+    expect(marker).toBeUndefined();
+  });
+
   it('checks the posted journal daily once a records-wave source is bound', async () => {
     await seedLegacy();
     expect((await goLiveForTest()).switched).toBe(true);

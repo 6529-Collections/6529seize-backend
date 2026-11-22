@@ -15,6 +15,7 @@ import { signedRecordHeadsDb } from '@/signed-records/signed-record-heads.db';
 import { ConnectionWrapper, sqlExecutor } from '@/sql-executor';
 import {
   closeSubscriptionWrites,
+  JOURNAL_BEHIND_ID,
   OPENING_STATE_ID,
   openSubscriptionWrites,
   scheduleIdentitySwitch,
@@ -97,10 +98,15 @@ export function isJournalSourceBound(): boolean {
  * signed records (verifyJournal), alerting on any failure. It reads the
  * records wave, so it runs only once a source is bound, and says so
  * otherwise.
+ *
+ * First it compares live's counter with the posted journal's highest `n`
+ * for the loaded opening. Behind it (a restore from an older backup), live
+ * would reuse posted `n`: it sets the behind-posted marker, so every write
+ * refuses until go-live loads a new opening, and alerts.
  */
 export async function verifyPostedJournal(
   params: { readonly ethereum?: EthereumFacts; readonly fetch?: Fetcher } = {}
-): Promise<'not-bound' | 'no-opening' | 'passed' | 'failed'> {
+): Promise<'not-bound' | 'no-opening' | 'behind' | 'passed' | 'failed'> {
   if (!boundSource) {
     logger.info(
       '[JOURNAL VERIFY] not run: no records-wave source is bound to read the posted journal'
@@ -115,6 +121,23 @@ export async function verifyPostedJournal(
     return 'no-opening';
   }
   const { bodies, events } = await readJournal(boundSource());
+  const postedMax = bodies
+    .filter((b) => b.opening === state.opening_sha256)
+    .reduce((max, b) => Math.max(max, b.n), 0);
+  const live = (await liveCounter()) ?? 0;
+  if (live < postedMax) {
+    await sqlExecutor.execute(
+      `INSERT INTO ${SUBSCRIPTIONS_ID_CURSORS_TABLE} (id, block, updated_at)
+        VALUES (:id, :n, :now)
+        ON DUPLICATE KEY UPDATE block = VALUES(block), updated_at = VALUES(updated_at)`,
+      { id: JOURNAL_BEHIND_ID, n: postedMax, now: Date.now() }
+    );
+    logger.errorWithCode(
+      'SUBSCRIPTIONS_JOURNAL_BEHIND',
+      `[JOURNAL BEHIND POSTED] live's counter is at n=${live}, the posted journal of opening ${state.opening_sha256} at n=${postedMax}: identity writes refuse. Suspend, then go-live for a new opening.`
+    );
+    return 'behind';
+  }
   const named = bodies
     .filter(
       (b) =>
