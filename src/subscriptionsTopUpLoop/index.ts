@@ -14,6 +14,7 @@ import * as priorityAlertsContext from '../priority-alerts.context';
 import { doInDbContext } from '../secrets';
 import * as sentryContext from '../sentry.context';
 import { discoverTopUps } from './subscription_topups';
+import { runIdentityTopUpWriters } from '@/subscriptions-identity/writers/identity-loop-hooks';
 import { appFeatures } from '../app-features';
 import { replayTopUpLoopDeferredWrites } from '../subscription-key-width/subscription-deferred-replay';
 
@@ -39,6 +40,7 @@ export const handler = sentryContext.wrapLambdaHandler(async () => {
         await replayDeferredWrites();
       }
       await discoverTopUps(process.env.SUBSCRIPTIONS_RESET == 'true');
+      await runIdentityTopUpWriters();
     }),
     {
       logger,

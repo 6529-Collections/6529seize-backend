@@ -185,15 +185,17 @@ export async function persistSubscriptions(
 /**
  * Replaces a card's final rows with the split list. The caller splits first
  * (`splitFinalList`) so the published file and these rows hold the same
- * subscribers.
+ * subscribers. A row that carries an id keeps it (after the identity switch
+ * each final row has one id in both tables). Returns the rows written, with
+ * their ids.
  */
 export async function persistNFTFinalSubscriptions(
   contract: string,
   token_id: number,
   upload: NFTFinalSubscriptionUpload,
   split: KeySplit<NFTFinalSubscription>
-) {
-  await getDataSource().transaction(async (manager) => {
+): Promise<NFTFinalSubscription[]> {
+  return getDataSource().transaction(async (manager) => {
     const finalRepo = manager.getRepository(NFTFinalSubscription);
     const uploadRepo = manager.getRepository(NFTFinalSubscriptionUpload);
     await finalRepo.delete({
@@ -209,6 +211,7 @@ export async function persistNFTFinalSubscriptions(
       await manager.getRepository(SubscriptionLog).insert(split.logs);
     }
     await deferSubscriptionWrites(split.deferred, manager);
+    return finalRepo.find({ where: { contract, token_id } });
   });
 }
 

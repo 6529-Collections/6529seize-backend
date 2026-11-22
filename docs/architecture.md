@@ -3047,6 +3047,34 @@ final row id.
   legacy tables, cut again, must give the same files. Only then is the
   opening state marked verified.
 
+**Writers.** While the identity tables are kept up to date (after the
+switch, or before it with `FEATURE_SUBSCRIPTIONS_SHADOW=true` and an opening
+loaded), each legacy loop also writes them:
+
+- the top-up loop folds wallets that bound to an identity after the opening
+  into it (balance added, mode and choices merged by the legacy rules, history
+  re-keyed; a wallet that leaves takes nothing), then credits new top-ups,
+  including those the key-width guard holds back, to the sender's identity;
+- the daily loop builds the card's list from the identity tables with the
+  legacy rules (the engine's `buildFinalList`);
+- the transactions loop matches airdrop mints against the identity final
+  rows from its own cursor;
+- a phase pull splits the identity rows.
+
+After the switch the identity list is the one published (with an identity
+column), and each final row has one id in both tables: the identity table
+allocates it and the legacy dual write copies it, so the mint log keys phase
+rows by the same id before and after. A phase pull writes the same phase to
+both tables by id. In shadow the legacy side publishes and allocates, and the
+identity side is built beside it with the same ids and compared. Every
+comparison (a card's list, a phase, a run's redemptions) is kept in
+`subscriptions_id_reports` with a MATCH or DIFF verdict. In shadow a writer's
+failure is logged and never stops the legacy loop; after the switch it fails
+the run. Person-made changes (subscribe, count, mode, editions) reach the
+identity tables through signed records, so in shadow a list differs for
+anyone who changed a choice since the opening; cut and load again before a
+build to compare it.
+
 **Switch.** The identity tables are the truth once
 `FEATURE_SUBSCRIPTIONS_IDENTITY_FROM` (an ISO time) has passed and the
 opening state is verified and not suspended. Readers re-read the state at

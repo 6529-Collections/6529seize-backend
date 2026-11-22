@@ -1,5 +1,6 @@
 import {
   SUBSCRIPTIONS_ID_BALANCES_TABLE,
+  SUBSCRIPTIONS_ID_CURSORS_TABLE,
   SUBSCRIPTIONS_ID_KEY_MAP_TABLE,
   SUBSCRIPTIONS_ID_LOGS_TABLE,
   SUBSCRIPTIONS_ID_MODE_TABLE,
@@ -36,6 +37,9 @@ export const IDENTITY_DATA_TABLES = [
 ] as const;
 
 const BATCH_SIZE = 200;
+
+/** The redemption writer's cursor row (subscriptions_id_cursors). */
+export const REDEMPTION_CURSOR_ID = 'redemption';
 
 export interface ParsedOpening {
   readonly opening: OpeningFile;
@@ -305,6 +309,22 @@ export async function loadOpeningFiles(
         l.additionalInfo,
         l.createdAt
       ]),
+      options
+    );
+    // The redemption writer goes on from the block the cut was at.
+    await sqlExecutor.execute(
+      `DELETE FROM ${SUBSCRIPTIONS_ID_CURSORS_TABLE}`,
+      undefined,
+      options
+    );
+    await sqlExecutor.execute(
+      `INSERT INTO ${SUBSCRIPTIONS_ID_CURSORS_TABLE} (id, block, updated_at)
+        VALUES (:id, :block, :nowMs)`,
+      {
+        id: REDEMPTION_CURSOR_ID,
+        block: opening.cut.redemptionBlock ?? 0,
+        nowMs
+      },
       options
     );
     await sqlExecutor.execute(

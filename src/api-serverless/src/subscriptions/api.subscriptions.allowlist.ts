@@ -1,4 +1,5 @@
 import { Request } from 'express';
+import { Logger } from '@/logging';
 import fetch from 'node-fetch';
 import { DISTRIBUTION_AUTOMATIC_AIRDROP_PHASES } from '@/airdrop-phases';
 import {
@@ -25,6 +26,21 @@ import {
   fetchAllNftFinalSubscriptionsForContractAndToken,
   fetchAllPublicFinalSubscriptionsForContractAndToken
 } from './api.subscriptions.db';
+import {
+  IdentityWriteMode,
+  subscriptionsIdentitySwitch
+} from '@/subscriptions-identity/identity/identity-switch';
+import {
+  IDENTITY_SUBSCRIPTION_TABLES,
+  LEGACY_SUBSCRIPTION_TABLES,
+  SubscriptionTables
+} from '@/subscriptions-identity/identity/subscription-tables';
+import {
+  compareKeyed,
+  saveReport
+} from '@/subscriptions-identity/writers/identity-reports';
+
+const shadowLogger = Logger.get('SUBSCRIPTIONS_ALLOWLIST_SHADOW');
 
 export interface AllowlistResponse {
   allowlist_id: string;
@@ -161,7 +177,8 @@ function buildSubscriptionMaps(filteredSubscriptions: NFTFinalSubscription[]): {
 async function buildAirdropsAndUpdateSubscriptions(
   filteredSubscriptions: NFTFinalSubscription[],
   subscriptionRanks: Map<string, number>,
-  phaseName: string
+  phaseName: string,
+  targets: readonly string[]
 ): Promise<ResultsResponse[]> {
   const phaseSubscriptions = filteredSubscriptions.length;
   const airdrops: ResultsResponse[] = [];
@@ -180,9 +197,9 @@ async function buildAirdropsAndUpdateSubscriptions(
     updateParams[`id_${i}`] = sub.id;
   }
 
-  if (filteredSubscriptions.length > 0) {
+  for (const target of filteredSubscriptions.length > 0 ? targets : []) {
     const batchUpdateQuery = `
-      UPDATE ${SUBSCRIPTIONS_NFTS_FINAL_TABLE}
+      UPDATE ${target}
       SET
         phase = CASE id
           ${filteredSubscriptions.map((_, i) => `WHEN :id_${i} THEN :phaseName_${i}`).join(' ')}
@@ -246,16 +263,136 @@ function buildAllowlists(
   return allowlists;
 }
 
+interface SplitResult {
+  airdrops: ResultsResponse[];
+  airdrops_unconsolidated: ResultsResponse[];
+  allowlists: ResultsResponse[];
+}
+
+/**
+ * Which final rows a phase pull splits, and which tables it writes:
+ * before the identity switch the legacy rows (and, in shadow, the identity
+ * rows again, split on their own and compared); after it the identity rows,
+ * with the same phase written by id to both tables (each final row has one
+ * id in both).
+ */
+async function phaseTargets(): Promise<{
+  readonly mode: IdentityWriteMode;
+  readonly source: SubscriptionTables;
+  readonly targets: string[];
+}> {
+  const mode = await subscriptionsIdentitySwitch.writeMode();
+  return mode === 'TRUTH'
+    ? {
+        mode,
+        source: IDENTITY_SUBSCRIPTION_TABLES,
+        targets: [
+          IDENTITY_SUBSCRIPTION_TABLES.final,
+          LEGACY_SUBSCRIPTION_TABLES.final
+        ]
+      }
+    : {
+        mode,
+        source: LEGACY_SUBSCRIPTION_TABLES,
+        targets: [LEGACY_SUBSCRIPTION_TABLES.final]
+      };
+}
+
+async function reportPhase(
+  mode: IdentityWriteMode,
+  contract: string,
+  tokenId: number,
+  phaseName: string,
+  legacy: ResultsResponse[],
+  identity: ResultsResponse[]
+): Promise<void> {
+  const asMap = (rows: ResultsResponse[]) =>
+    new Map(rows.map((r) => [r.wallet.toLowerCase(), `x${r.amount}`]));
+  const diffs = compareKeyed(asMap(legacy), asMap(identity));
+  await saveReport({
+    kind: 'PHASE',
+    mode,
+    contract,
+    tokenId,
+    verdict: diffs.length === 0 ? 'MATCH' : 'DIFF',
+    legacyRows: legacy.length,
+    identityRows: identity.length,
+    diffs,
+    notes: [`phase ${phaseName}`]
+  });
+}
+
+/** In shadow, splits the identity rows on their own and compares. */
+async function shadowSplit(
+  mode: IdentityWriteMode,
+  contract: string,
+  tokenId: number,
+  phaseName: string,
+  legacy: ResultsResponse[],
+  split: () => Promise<ResultsResponse[]>
+): Promise<void> {
+  if (mode !== 'SHADOW') {
+    return;
+  }
+  try {
+    await reportPhase(
+      mode,
+      contract,
+      tokenId,
+      phaseName,
+      legacy,
+      await split()
+    );
+  } catch (error) {
+    // The shadow never stops the legacy pull.
+    shadowLogger.error(`[SHADOW PHASE SPLIT FAILED] [${phaseName}]`, error);
+  }
+}
+
 export async function splitAllowlistResults(
   contract: string,
   tokenId: number,
   phaseName: string,
   results: ALResultsResponse[]
-): Promise<{
-  airdrops: ResultsResponse[];
-  airdrops_unconsolidated: ResultsResponse[];
-  allowlists: ResultsResponse[];
-}> {
+): Promise<SplitResult> {
+  const { mode, source, targets } = await phaseTargets();
+  const result = await splitAllowlistResultsOn(
+    contract,
+    tokenId,
+    phaseName,
+    results,
+    source,
+    targets
+  );
+  await shadowSplit(
+    mode,
+    contract,
+    tokenId,
+    phaseName,
+    result.airdrops,
+    async () =>
+      (
+        await splitAllowlistResultsOn(
+          contract,
+          tokenId,
+          phaseName,
+          results,
+          IDENTITY_SUBSCRIPTION_TABLES,
+          [IDENTITY_SUBSCRIPTION_TABLES.final]
+        )
+      ).airdrops
+  );
+  return result;
+}
+
+async function splitAllowlistResultsOn(
+  contract: string,
+  tokenId: number,
+  phaseName: string,
+  results: ALResultsResponse[],
+  source: SubscriptionTables,
+  targets: readonly string[]
+): Promise<SplitResult> {
   const wallets = results.map((r) => r.wallet.toLowerCase());
   const listHasDuplicates = new Set(wallets).size !== wallets.length;
   if (listHasDuplicates) {
@@ -263,7 +400,7 @@ export async function splitAllowlistResults(
   }
 
   const [subscriptions, walletMintingDelegations] = await Promise.all([
-    fetchAllNftFinalSubscriptionsForContractAndToken(contract, tokenId),
+    fetchAllNftFinalSubscriptionsForContractAndToken(contract, tokenId, source),
     fetchProcessedDelegations(
       MEMES_CONTRACT,
       USE_CASE_MINTING,
@@ -279,7 +416,8 @@ export async function splitAllowlistResults(
   const airdrops = await buildAirdropsAndUpdateSubscriptions(
     filteredSubscriptions,
     subscriptionRanks,
-    phaseName
+    phaseName,
+    targets
   );
   const allowlists = buildAllowlists(
     results,
@@ -303,10 +441,45 @@ export async function getPublicSubscriptions(
 ): Promise<{
   airdrops: ResultsResponse[];
 }> {
+  const { mode, source, targets } = await phaseTargets();
+  const result = await getPublicSubscriptionsOn(
+    contract,
+    tokenId,
+    source,
+    targets
+  );
+  await shadowSplit(
+    mode,
+    contract,
+    tokenId,
+    'Public',
+    result.airdrops,
+    async () =>
+      (
+        await getPublicSubscriptionsOn(
+          contract,
+          tokenId,
+          IDENTITY_SUBSCRIPTION_TABLES,
+          [IDENTITY_SUBSCRIPTION_TABLES.final]
+        )
+      ).airdrops
+  );
+  return result;
+}
+
+async function getPublicSubscriptionsOn(
+  contract: string,
+  tokenId: number,
+  source: SubscriptionTables,
+  targets: readonly string[]
+): Promise<{
+  airdrops: ResultsResponse[];
+}> {
   const publicSubscriptions =
     await fetchAllPublicFinalSubscriptionsForContractAndToken(
       contract,
-      tokenId
+      tokenId,
+      source
     );
 
   const subscriptionRanks = new Map<string, number>();
@@ -332,9 +505,9 @@ export async function getPublicSubscriptions(
     updateParams[`id_${i}`] = sub.id;
   }
 
-  if (publicSubscriptions.length > 0) {
+  for (const target of publicSubscriptions.length > 0 ? targets : []) {
     const batchUpdateQuery = `
-      UPDATE ${SUBSCRIPTIONS_NFTS_FINAL_TABLE}
+      UPDATE ${target}
       SET
         phase = CASE id
           ${publicSubscriptions.map((_, i) => `WHEN :id_${i} THEN :phaseName_${i}`).join(' ')}
@@ -368,24 +541,22 @@ function filterSubscriptions(
 
 export async function resetAllowlist(contract: string, tokenId: number) {
   const contractLower = contract.toLowerCase();
+  // Both final tables are reset whenever the identity writers run.
+  const finals =
+    (await subscriptionsIdentitySwitch.writeMode()) === 'OFF'
+      ? [SUBSCRIPTIONS_NFTS_FINAL_TABLE]
+      : [SUBSCRIPTIONS_NFTS_FINAL_TABLE, IDENTITY_SUBSCRIPTION_TABLES.final];
   await sqlExecutor.executeNativeQueriesInTransaction(
     async (wrappedConnection) => {
-      const updateQuery = `
-        UPDATE ${SUBSCRIPTIONS_NFTS_FINAL_TABLE} 
-        SET 
-          phase = NULL, 
-          phase_subscriptions = -1,
-          phase_position = -1
-        WHERE contract = :contract AND token_id = :tokenId`;
-
-      await sqlExecutor.execute(
-        updateQuery,
-        {
-          contract,
-          tokenId
-        },
-        { wrappedConnection }
-      );
+      for (const final of finals) {
+        await sqlExecutor.execute(
+          `UPDATE ${final}
+            SET phase = NULL, phase_subscriptions = -1, phase_position = -1
+            WHERE contract = :contract AND token_id = :tokenId`,
+          { contract, tokenId },
+          { wrappedConnection }
+        );
+      }
 
       await sqlExecutor.execute(
         `DELETE FROM ${DISTRIBUTION_TABLE}

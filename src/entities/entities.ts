@@ -211,12 +211,14 @@ export { SubscriptionDeferredWriteEntity } from './ISubscriptionDeferredWrite';
 export {
   SubscriptionIdBalanceEntity,
   SubscriptionIdChoiceEntity,
+  SubscriptionIdCursorEntity,
   SubscriptionIdFinalEntity,
   SubscriptionIdFinalUploadEntity,
   SubscriptionIdKeyMapEntity,
   SubscriptionIdLogEntity,
   SubscriptionIdModeEntity,
   SubscriptionIdRedeemedEntity,
+  SubscriptionIdReportEntity,
   SubscriptionIdStateEntity,
   SubscriptionIdTopUpEntity
 } from './ISubscriptionIdentity';

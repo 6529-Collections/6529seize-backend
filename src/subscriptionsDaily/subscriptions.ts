@@ -35,6 +35,21 @@ import { sqlExecutor } from '../sql-executor';
 import { equalIgnoreCase } from '../strings';
 import { Time } from '../time';
 import {
+  IdentityWriteMode,
+  subscriptionsIdentitySwitch
+} from '@/subscriptions-identity/identity/identity-switch';
+import {
+  buildIdentityList,
+  IdentityListBuild,
+  IdentityListRow,
+  recordIdentityUpload
+} from '@/subscriptions-identity/writers/identity-daily-build';
+import {
+  compareKeyed,
+  saveReport
+} from '@/subscriptions-identity/writers/identity-reports';
+import { identityOfLegacyKeys } from '@/subscriptions-identity/writers/legacy-key-identities';
+import {
   claimDeferredWrite,
   deferralReason,
   deferSubscriptionWrites
@@ -62,18 +77,49 @@ import {
 const logger = Logger.get('SUBSCRIPTIONS');
 
 export async function updateSubscriptions() {
+  const writeMode = await subscriptionsIdentitySwitch.writeMode();
+  const buildAtMs = Time.now().toMillis();
   const autoSubscriptions = await fetchAllAutoSubscriptions();
   logger.info(`[FOUND ${autoSubscriptions.length} AUTO SUBSCRIPTIONS]`);
 
   const maxMemeId = await getMaxMemeId();
   const nextMemeId = maxMemeId + 1;
 
-  logger.info(`[MAX CURRENT MEME ${maxMemeId}]`);
+  logger.info(
+    `[MAX CURRENT MEME ${maxMemeId}] [IDENTITY WRITERS ${writeMode}]`
+  );
+
+  // After the identity switch the identity tables build and publish the
+  // list; the legacy tables are written the same rows, with the same ids.
+  let identityList: IdentityListBuild | null = null;
+  let identityUpload: NFTFinalSubscriptionUpload | null = null;
+  if (writeMode === 'TRUTH') {
+    identityList = await buildIdentityList({ tokenId: nextMemeId, buildAtMs });
+    identityUpload = await uploadFinalSubscriptions(
+      MEMES_CONTRACT,
+      nextMemeId,
+      identityList.rows.map(identityRowAsFinal),
+      new Map(identityList.rows.map((r) => [r.id, r.identityKey]))
+    );
+    await recordIdentityUpload(identityUpload);
+  }
 
   await populateAutoSubscriptionsForMemeId(nextMemeId, autoSubscriptions);
 
-  const { uploadLink, affectedConsolidationKeys } =
-    await buildFinalSubscription(nextMemeId, autoSubscriptions);
+  const { uploadLink, affectedConsolidationKeys, legacyRows } =
+    await buildFinalSubscription(
+      nextMemeId,
+      autoSubscriptions,
+      identityList && identityUpload
+        ? { list: identityList, upload: identityUpload }
+        : null
+    );
+
+  if (writeMode === 'SHADOW') {
+    await shadowIdentityList(nextMemeId, buildAtMs, legacyRows);
+  } else if (identityList) {
+    await reportListComparison(writeMode, identityList, legacyRows);
+  }
   await markSubscriptionCoverageDirty(
     affectedConsolidationKeys,
     'DAILY_FINALIZATION'
@@ -166,12 +212,144 @@ async function populateAutoSubscriptionsForMemeId(
   }
 }
 
+/**
+ * After the identity switch: the identity tables' list for the card and its
+ * published file. The legacy rows take the identity rows' ids, so each final
+ * row has one id in both tables; a legacy row with no identity row is not
+ * written (the list report names it).
+ */
+interface IdentityTruth {
+  readonly list: IdentityListBuild;
+  readonly upload: NFTFinalSubscriptionUpload;
+}
+
+function identityRowAsFinal(row: IdentityListRow): NFTFinalSubscription {
+  return {
+    id: row.id,
+    consolidation_key: row.consolidationKey,
+    contract: row.contract,
+    token_id: row.tokenId,
+    subscribed_count: row.subscribedCount,
+    airdrop_address: row.airdropAddress,
+    balance: row.balance,
+    subscribed_at: row.subscribedAt,
+    phase: null,
+    phase_subscriptions: -1,
+    phase_position: -1,
+    redeemed_count: 0
+  };
+}
+
+async function sharedIdRows(
+  rows: NFTFinalSubscription[],
+  identity: IdentityTruth
+): Promise<NFTFinalSubscription[]> {
+  const identities = await identityOfLegacyKeys(
+    rows.map((r) => r.consolidation_key)
+  );
+  const idOf = new Map(identity.list.rows.map((r) => [r.identityKey, r.id]));
+  const shared: NFTFinalSubscription[] = [];
+  for (const row of rows) {
+    const identityKey = identities.get(row.consolidation_key.toLowerCase());
+    const id = identityKey ? idOf.get(identityKey) : undefined;
+    if (id === undefined) {
+      logger.warn(
+        `[LEGACY ROW WITHOUT AN IDENTITY ROW] [${row.consolidation_key}] [MEME #${row.token_id}] : [NOT WRITTEN]`
+      );
+      continue;
+    }
+    shared.push({ ...row, id });
+  }
+  return shared;
+}
+
+/**
+ * Before the switch the legacy list is the truth and is already published.
+ * The identity list is built from the identity tables, its rows sharing the
+ * legacy rows' ids, and compared with it. A shadow failure is logged and
+ * never fails the run (a retry would publish the legacy list again).
+ */
+async function shadowIdentityList(
+  tokenId: number,
+  buildAtMs: number,
+  legacyRows: NFTFinalSubscription[]
+): Promise<IdentityListBuild | null> {
+  try {
+    const identities = await identityOfLegacyKeys(
+      legacyRows.map((r) => r.consolidation_key)
+    );
+    const legacyIdOf = new Map<string, number>();
+    for (const row of legacyRows) {
+      const identity = identities.get(row.consolidation_key.toLowerCase());
+      if (identity && row.id !== undefined) {
+        legacyIdOf.set(identity, row.id);
+      }
+    }
+    const list = await buildIdentityList({
+      tokenId,
+      buildAtMs,
+      idOf: (identity) => legacyIdOf.get(identity)
+    });
+    await reportListComparison('SHADOW', list, legacyRows);
+    return list;
+  } catch (error) {
+    logger.error('[SHADOW IDENTITY LIST FAILED]', error);
+    return null;
+  }
+}
+
+async function reportListComparison(
+  mode: IdentityWriteMode,
+  identityList: IdentityListBuild,
+  legacyRows: readonly NFTFinalSubscription[]
+): Promise<void> {
+  const identities = await identityOfLegacyKeys(
+    legacyRows.map((r) => r.consolidation_key)
+  );
+  const text = (airdrop: string, count: number, balance: number) =>
+    `${airdrop.toLowerCase()} x${count} balance ${balance}`;
+  const legacy = new Map<string, string>();
+  const notes: string[] = [];
+  for (const row of legacyRows) {
+    const identity = identities.get(row.consolidation_key.toLowerCase());
+    if (!identity) {
+      notes.push(`legacy key spans identities: ${row.consolidation_key}`);
+      continue;
+    }
+    legacy.set(
+      identity,
+      text(row.airdrop_address, row.subscribed_count, row.balance)
+    );
+  }
+  const identity = new Map(
+    identityList.rows.map((r) => [
+      r.identityKey,
+      text(r.airdropAddress, r.subscribedCount, r.balance)
+    ])
+  );
+  const diffs = compareKeyed(legacy, identity);
+  await saveReport({
+    kind: 'LIST',
+    mode,
+    contract: MEMES_CONTRACT,
+    tokenId: identityList.tokenId,
+    verdict: diffs.length === 0 && notes.length === 0 ? 'MATCH' : 'DIFF',
+    legacyRows: legacyRows.length,
+    identityRows: identityList.rows.length,
+    diffs,
+    notes
+  });
+}
+
 async function buildFinalSubscription(
   newMeme: number,
-  autoSubscriptions: SubscriptionMode[]
+  autoSubscriptions: SubscriptionMode[],
+  identity: IdentityTruth | null
 ): Promise<{
   readonly uploadLink: string;
   readonly affectedConsolidationKeys: string[];
+  /** The rows written to the legacy table, with their ids. */
+  readonly legacyRows: NFTFinalSubscription[];
 }> {
   logger.info(`[BUILDING FINAL SUBSCRIPTION FOR MEME #${newMeme}]`);
 
@@ -185,15 +363,22 @@ async function buildFinalSubscription(
   // the same subscribers; a key that must wait is on neither.
   const split = await splitFinalList(finalSubscriptions, newSubscriptionLogs);
 
-  const upload: NFTFinalSubscriptionUpload = await uploadFinalSubscriptions(
+  // After the switch the identity list is the published one, and the legacy
+  // rows share its ids.
+  const rows = identity ? await sharedIdRows(split.rows, identity) : split.rows;
+  const upload: NFTFinalSubscriptionUpload = identity
+    ? identity.upload
+    : await uploadFinalSubscriptions(MEMES_CONTRACT, newMeme, rows);
+
+  const legacyRows = await persistNFTFinalSubscriptions(
     MEMES_CONTRACT,
     newMeme,
-    split.rows
+    upload,
+    { ...split, rows }
   );
 
-  await persistNFTFinalSubscriptions(MEMES_CONTRACT, newMeme, upload, split);
-
   return {
+    legacyRows,
     uploadLink: upload.upload_url,
     affectedConsolidationKeys: Array.from(
       new Set(
@@ -388,7 +573,9 @@ async function addFundedFinalSubscription(
 async function uploadFinalSubscriptions(
   contract: string,
   newMeme: number,
-  finalSubscriptions: NFTFinalSubscription[]
+  finalSubscriptions: NFTFinalSubscription[],
+  /** After the switch: the identity of each row, by row id, as a column. */
+  identityById?: ReadonlyMap<number, string>
 ): Promise<NFTFinalSubscriptionUpload> {
   logger.info(
     `[UPLOADING FINAL SUBSCRIPTION FOR MEME #${newMeme}] : [FOUND ${finalSubscriptions.length} SUBSCRIPTIONS]`
@@ -410,7 +597,10 @@ async function uploadFinalSubscriptions(
         airdrop_address: sub.airdrop_address,
         consolidation_key: sub.consolidation_key,
         balance: sub.balance,
-        subscribed_at: sub.subscribed_at
+        subscribed_at: sub.subscribed_at,
+        ...(identityById && sub.id !== undefined
+          ? { identity: identityById.get(sub.id) ?? '' }
+          : {})
       };
     });
   const csv = json2csv(finalUpload);

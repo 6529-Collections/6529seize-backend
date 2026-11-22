@@ -799,10 +799,11 @@ export async function fetchFinalSubscriptionsByPhase(
 
 export async function fetchAllNftFinalSubscriptionsForContractAndToken(
   contract: string,
-  token_id: number
+  token_id: number,
+  tables?: SubscriptionTables
 ): Promise<NFTFinalSubscription[]> {
   return sqlExecutor.execute(
-    `SELECT * FROM ${(await subscriptionTables()).final}
+    `SELECT * FROM ${(tables ?? (await subscriptionTables())).final}
     WHERE
       contract = :contract
       AND token_id = :token_id
@@ -813,10 +814,11 @@ export async function fetchAllNftFinalSubscriptionsForContractAndToken(
 
 export async function fetchAllPublicFinalSubscriptionsForContractAndToken(
   contract: string,
-  token_id: number
+  token_id: number,
+  tables?: SubscriptionTables
 ): Promise<NFTFinalSubscription[]> {
   return sqlExecutor.execute(
-    `SELECT * FROM ${(await subscriptionTables()).final}
+    `SELECT * FROM ${(tables ?? (await subscriptionTables())).final}
     WHERE
       contract = :contract
       AND token_id = :token_id

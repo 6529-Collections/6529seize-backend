@@ -5,6 +5,14 @@ import { sqlExecutor } from '@/sql-executor';
 const logger = Logger.get('SUBSCRIPTIONS_IDENTITY_SWITCH');
 
 export const IDENTITY_FROM_ENV = 'FEATURE_SUBSCRIPTIONS_IDENTITY_FROM';
+export const SHADOW_ENV = 'FEATURE_SUBSCRIPTIONS_SHADOW';
+
+/**
+ * Whether the identity writers keep the identity tables up to date:
+ * TRUTH after the switch; SHADOW before it, with FEATURE_SUBSCRIPTIONS_SHADOW
+ * on and an opening loaded, to be compared with the legacy tables; else OFF.
+ */
+export type IdentityWriteMode = 'OFF' | 'SHADOW' | 'TRUTH';
 /** The opening state row's id. */
 export const OPENING_STATE_ID = 'opening';
 /** How long a reader trusts what it last read of the opening state. */
@@ -68,7 +76,9 @@ export class SubscriptionsIdentitySwitch {
     private readonly readState: () => Promise<OpeningState | null> = readOpeningState,
     private readonly now: () => number = () => Date.now(),
     private readonly flag: () => string | undefined = () =>
-      process.env[IDENTITY_FROM_ENV]
+      process.env[IDENTITY_FROM_ENV],
+    private readonly shadowFlag: () => string | undefined = () =>
+      process.env[SHADOW_ENV]
   ) {}
 
   /** The switch time from the flag: null when unset, NaN when not an ISO time. */
@@ -169,6 +179,17 @@ export class SubscriptionsIdentitySwitch {
       reason: 'IDENTITY_TABLES',
       openingSha256
     };
+  }
+
+  async writeMode(): Promise<IdentityWriteMode> {
+    if ((await this.status()).identityTables) {
+      return 'TRUTH';
+    }
+    if (this.shadowFlag() !== 'true') {
+      return 'OFF';
+    }
+    const state = await this.state();
+    return state && state.suspended_at === null ? 'SHADOW' : 'OFF';
   }
 
   async identityTablesAreTruth(): Promise<boolean> {

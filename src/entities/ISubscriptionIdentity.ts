@@ -10,6 +10,7 @@ import {
 } from 'typeorm';
 import {
   SUBSCRIPTIONS_ID_BALANCES_TABLE,
+  SUBSCRIPTIONS_ID_CURSORS_TABLE,
   SUBSCRIPTIONS_ID_KEY_MAP_TABLE,
   SUBSCRIPTIONS_ID_LOGS_TABLE,
   SUBSCRIPTIONS_ID_MODE_TABLE,
@@ -17,6 +18,7 @@ import {
   SUBSCRIPTIONS_ID_NFTS_FINAL_UPLOAD_TABLE,
   SUBSCRIPTIONS_ID_NFTS_TABLE,
   SUBSCRIPTIONS_ID_REDEEMED_TABLE,
+  SUBSCRIPTIONS_ID_REPORTS_TABLE,
   SUBSCRIPTIONS_ID_STATE_TABLE,
   SUBSCRIPTIONS_ID_TOP_UP_TABLE
 } from '@/constants';
@@ -325,4 +327,55 @@ export class SubscriptionIdStateEntity {
   /** Rollback: set, and every reader is back on the legacy tables in 60 s. */
   @Column({ type: 'bigint', nullable: true, default: null })
   suspended_at!: number | null;
+}
+
+/**
+ * Where an identity writer is in its source: 'redemption' is the last
+ * Ethereum block whose airdrops were matched against the identity tables.
+ */
+@Entity(SUBSCRIPTIONS_ID_CURSORS_TABLE)
+export class SubscriptionIdCursorEntity {
+  @PrimaryColumn({ type: 'varchar', length: 40 })
+  id!: string;
+
+  @Column({ type: 'bigint' })
+  block!: number;
+
+  @Column({ type: 'bigint' })
+  updated_at!: number;
+}
+
+/**
+ * A comparison of the identity writers' output with the legacy system's,
+ * kept for the side-by-side gates (a card's list, a phase, redemptions).
+ */
+@Entity(SUBSCRIPTIONS_ID_REPORTS_TABLE)
+@Index('idx_subscriptions_id_reports_card', ['contract', 'token_id', 'kind'])
+export class SubscriptionIdReportEntity {
+  @PrimaryGeneratedColumn({ type: 'bigint' })
+  id?: number;
+
+  /** LIST, PHASE or REDEMPTIONS. */
+  @Column({ type: 'varchar', length: 40 })
+  kind!: string;
+
+  /** SHADOW or TRUTH: which side was the truth when it ran. */
+  @Column({ type: 'varchar', length: 10 })
+  mode!: string;
+
+  @Column({ type: 'varchar', length: 100, nullable: true, default: null })
+  contract!: string | null;
+
+  @Column({ type: 'bigint', nullable: true, default: null })
+  token_id!: number | null;
+
+  /** MATCH or DIFF. */
+  @Column({ type: 'varchar', length: 10 })
+  verdict!: string;
+
+  @Column({ type: 'json' })
+  report!: unknown;
+
+  @Column({ type: 'bigint' })
+  created_at!: number;
 }
