@@ -1,5 +1,6 @@
 import { Column, Entity, Index, PrimaryColumn } from 'typeorm';
 import {
+  CONSOLIDATION_KEY_LENGTH,
   LATEST_TDH_GLOBAL_HISTORY_TABLE,
   LATEST_TDH_HISTORY_TABLE,
   RECENT_TDH_HISTORY_TABLE,
@@ -108,7 +109,7 @@ abstract class BaseTDHHistoryWithConsolidation extends tdhHistoryWithDeltas(
   @Column({ type: 'varchar', length: 500 })
   consolidation_display!: string;
 
-  @PrimaryColumn({ type: 'varchar', length: 200 })
+  @PrimaryColumn({ type: 'varchar', length: CONSOLIDATION_KEY_LENGTH })
   consolidation_key!: string;
 
   @Column({ type: 'json', nullable: false })

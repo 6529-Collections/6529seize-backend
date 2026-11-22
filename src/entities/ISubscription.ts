@@ -9,6 +9,7 @@ import {
   UpdateDateColumn
 } from 'typeorm';
 import {
+  CONSOLIDATION_KEY_LENGTH,
   SUBSCRIPTIONS_BALANCES_TABLE,
   SUBSCRIPTIONS_LOGS_TABLE,
   SUBSCRIPTIONS_MODE_TABLE,
@@ -19,6 +20,13 @@ import {
   SUBSCRIPTIONS_TOP_UP_LATEST_BLOCK_TABLE,
   SUBSCRIPTIONS_TOP_UP_TABLE
 } from '@/constants';
+
+// InnoDB caps an index at 3,072 bytes (4 per utf8mb4 character). The unique
+// key (consolidation_key, contract, token_id) leaves room for 666 characters,
+// 15 wallets; the redemption primary key leaves 567, 13 wallets. Longer keys
+// need those indexes changed first.
+const NFT_SUBSCRIPTION_KEY_LENGTH = 666;
+const REDEEMED_SUBSCRIPTION_KEY_LENGTH = 567;
 
 @Entity(SUBSCRIPTIONS_TOP_UP_TABLE)
 export class SubscriptionTopUp {
@@ -49,7 +57,7 @@ export class SubscriptionBalance {
   @UpdateDateColumn({ type: 'datetime' })
   updated_at?: Date;
 
-  @PrimaryColumn({ type: 'varchar', length: 200 })
+  @PrimaryColumn({ type: 'varchar', length: CONSOLIDATION_KEY_LENGTH })
   consolidation_key!: string;
 
   @Column({ type: 'double' })
@@ -64,7 +72,7 @@ export class SubscriptionMode {
   @UpdateDateColumn({ type: 'datetime' })
   updated_at?: Date;
 
-  @PrimaryColumn({ type: 'varchar', length: 200 })
+  @PrimaryColumn({ type: 'varchar', length: CONSOLIDATION_KEY_LENGTH })
   consolidation_key!: string;
 
   @Column({ type: 'boolean', default: false })
@@ -84,7 +92,7 @@ class NFTSubscriptionFields {
   @PrimaryGeneratedColumn()
   id?: number;
 
-  @Column({ type: 'varchar', length: 200 })
+  @Column({ type: 'varchar', length: NFT_SUBSCRIPTION_KEY_LENGTH })
   consolidation_key!: string;
 
   @Column({ type: 'varchar', length: 100 })
@@ -171,7 +179,7 @@ export class SubscriptionLog {
   @PrimaryGeneratedColumn()
   id?: number;
 
-  @Column({ type: 'varchar', length: 200 })
+  @Column({ type: 'varchar', length: CONSOLIDATION_KEY_LENGTH })
   consolidation_key!: string;
 
   @Column({ type: 'text' })
@@ -201,7 +209,7 @@ export class RedeemedSubscription {
   @Column({ type: 'datetime', nullable: true, default: null })
   transaction_date!: Date;
 
-  @PrimaryColumn({ type: 'varchar', length: 200 })
+  @PrimaryColumn({ type: 'varchar', length: REDEEMED_SUBSCRIPTION_KEY_LENGTH })
   consolidation_key!: string;
 
   @Column({ type: 'double' })
