@@ -9,7 +9,7 @@ type Env = Readonly<Record<string, string | undefined>>;
  * `E2EE_RELAY_MODE`, the switch of the delivery service's relay records:
  * - `off` (default, and anything unknown): no records, as today;
  * - `mirror`: every write also becomes a signed record, published to the
- *   relays after the commit (best effort; the publish loop catches up);
+ *   relays after the commit (best effort; later writes catch up);
  * - `primary`: a write commits only after at least `E2EE_RELAY_ACK_QUORUM`
  *   relays hold its records.
  * Rollback from `primary` is one change: `mirror`.
@@ -34,6 +34,12 @@ export interface E2eeRelaySettings {
   readonly net: string;
   readonly quorum: number;
   readonly orderer: E2eeRelayIdentity | null;
+  /**
+   * The orderer's public key, the only key whose records a rebuild accepts:
+   * the configured orderer's, or `E2EE_ORDERER_PUBLIC_KEY` where only a
+   * reader runs (the rebuild and the side-by-side check).
+   */
+  readonly ordererPublicKey: string | null;
   readonly siteReader: E2eeRelayIdentity | null;
 }
 
@@ -141,8 +147,22 @@ export function readE2eeRelaySettings(
     .map((url) => url.trim())
     .filter(Boolean);
   const net = env.E2EE_RELAY_NET?.trim() ?? '';
+  const pinned = env.E2EE_ORDERER_PUBLIC_KEY?.trim().toLowerCase() || null;
+  if (pinned !== null && !/^0x[0-9a-f]{64}$/.test(pinned)) {
+    throw new E2eeRelayConfigError(
+      'E2EE_ORDERER_PUBLIC_KEY must be 0x and 32 bytes of hex'
+    );
+  }
   if (mode === 'off') {
-    return { mode, urls, net, quorum: 1, orderer: null, siteReader };
+    return {
+      mode,
+      urls,
+      net,
+      quorum: 1,
+      orderer: null,
+      ordererPublicKey: pinned,
+      siteReader
+    };
   }
   if (!urls.length) {
     throw new E2eeRelayConfigError('E2EE_RELAY_URLS is empty');
@@ -154,12 +174,25 @@ export function readE2eeRelaySettings(
   if (!orderer) {
     throw new E2eeRelayConfigError('E2EE_ORDERER_KEY is missing');
   }
+  if (pinned !== null && pinned !== orderer.deviceKey) {
+    throw new E2eeRelayConfigError(
+      'E2EE_ORDERER_PUBLIC_KEY is not the configured orderer key'
+    );
+  }
   const rawQuorum = Number(env.E2EE_RELAY_ACK_QUORUM ?? 1);
   const quorum =
     Number.isSafeInteger(rawQuorum) && rawQuorum >= 1
       ? Math.min(rawQuorum, urls.length)
       : 1;
-  return { mode, urls, net, quorum, orderer, siteReader };
+  return {
+    mode,
+    urls,
+    net,
+    quorum,
+    orderer,
+    ordererPublicKey: orderer.deviceKey,
+    siteReader
+  };
 }
 
 let cached: {
@@ -174,6 +207,7 @@ const SETTINGS_ENV = [
   'E2EE_RELAY_ACK_QUORUM',
   'E2EE_ORDERER_KEY',
   'E2EE_ORDERER_GRANT',
+  'E2EE_ORDERER_PUBLIC_KEY',
   'E2EE_SITE_READER_KEY',
   'E2EE_SITE_READER_GRANT'
 ];

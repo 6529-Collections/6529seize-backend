@@ -35,6 +35,8 @@ const RECORD_BODY_MAX_CHARS = 16 * 1024 - 64;
 const OUTBOX_PAGE = 200;
 const PRIMARY_PUBLISH_TIMEOUT_MS = 4_000;
 const MIRROR_PUBLISH_TIMEOUT_MS = 2_000;
+const CATCH_UP_PROBABILITY = 0.05;
+const CATCH_UP_WAVES = 5;
 
 /** A device's delivery window in a group, for the relay. */
 export interface E2eeDeliveryWindow {
@@ -91,6 +93,8 @@ export interface E2eePublisherDeps {
   readonly pool: () => E2eeRelayPool;
   readonly anchors: E2eeAnchorSource;
   readonly now: () => number;
+  /** Uniform [0, 1); for the after-commit catch-up odds. */
+  readonly random?: () => number;
 }
 
 /** The records appended in one transaction. */
@@ -121,7 +125,8 @@ export class E2eeRecordBatch {
  * every relay gets the same event id.
  *
  * - `mirror`: after the commit the batch's streams are published with a
- *   short time limit; the publish loop retries what is left.
+ *   short time limit; later writes and the `e2ee-relay-publish` operator
+ *   scope retry what is left.
  * - `primary`: before the commit, every stream the batch touched must reach
  *   the quorum, or the write fails (503) and rolls back.
  */
@@ -191,20 +196,27 @@ export class E2eeStreamPublisher {
     }
   }
 
-  /** After the commit: publish the batch's streams, best effort. */
+  /**
+   * After the commit: publish the batch's streams, best effort. About one
+   * write in twenty also retries a few streams other writes left behind
+   * (relay outages), as retention pruning piggybacks on writes.
+   */
   async afterCommit(batch: E2eeRecordBatch): Promise<void> {
     if (!batch.touched.length) return;
+    const catchUp = (this.deps.random ?? Math.random)() < CATCH_UP_PROBABILITY;
     try {
       const outcome = await withTimeout(
-        Promise.all(batch.touched.map((wave) => this.publishWave(wave))),
+        Promise.all(batch.touched.map((wave) => this.publishWave(wave))).then(
+          () => (catchUp ? this.publishPending(CATCH_UP_WAVES) : undefined)
+        ),
         MIRROR_PUBLISH_TIMEOUT_MS
       );
       if (outcome === 'timeout') {
-        logger.warn('[AFTER COMMIT] relays slow; the publish loop retries');
+        logger.warn('[AFTER COMMIT] relays slow; later writes retry');
       }
     } catch (error) {
       logger.warn(
-        `[AFTER COMMIT] publish failed, the loop retries: ${(error as Error).message}`
+        `[AFTER COMMIT] publish failed; later writes retry: ${(error as Error).message}`
       );
     }
   }
@@ -403,7 +415,7 @@ export class E2eeStreamPublisher {
     return { wave, minHolders };
   }
 
-  /** The publish loop's pass: every stream with records still pending. */
+  /** Publishes streams with records still pending, oldest first. */
   async publishPending(maxWaves: number): Promise<{
     readonly waves: number;
     readonly complete: number;

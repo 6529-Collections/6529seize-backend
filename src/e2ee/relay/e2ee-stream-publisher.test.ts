@@ -52,6 +52,7 @@ function setup(input: {
     net: NET,
     quorum: input.quorum ?? 1,
     orderer: ORDERER,
+    ordererPublicKey: ORDERER.deviceKey,
     siteReader: null
   };
   const pool = new E2eeRelayPool({

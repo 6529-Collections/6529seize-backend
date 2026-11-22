@@ -1,5 +1,8 @@
 import { ethers } from 'ethers';
-import { computeDeviceEventId } from '@/api/device-signing/device-event';
+import {
+  computeDeviceEventId,
+  DeviceEventKind
+} from '@/api/device-signing/device-event';
 import {
   checkE2eeRecord,
   computeE2eeRecordEventId,
@@ -58,7 +61,7 @@ describe('e2ee record events', () => {
     });
     expect(event.id).toBe(
       computeDeviceEventId({
-        kind: 10,
+        kind: 10 as DeviceEventKind,
         kindVersion: 1,
         wave: event.wave,
         author: event.author,

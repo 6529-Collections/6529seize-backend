@@ -5,34 +5,36 @@ import {
   E2eeExternalBytes,
   E2eeMissingBytes,
   E2eeRecordContainerError,
+  E2eeRecordContent,
   e2eeSha256,
   encodeE2eeRecordContent
 } from '@/e2ee/relay/e2ee-record-container';
 
 describe('e2ee record container', () => {
-  const content = {
+  const logRow = {
+    group_handle: `0x${'01'.repeat(32)}`,
+    seq: 7,
+    data: new E2eeExternalBytes(Buffer.from('ciphertext')),
+    kind: null,
+    complete: true
+  };
+  const content: E2eeRecordContent = {
     type: 'message',
     pos: 7,
     prev: `0x${'ab'.repeat(32)}`,
     ops: [
       {
-        op: 'put' as const,
+        op: 'put',
         table: 'e2ee_log',
-        row: {
-          group_handle: `0x${'01'.repeat(32)}`,
-          seq: 7,
-          data: new E2eeExternalBytes(Buffer.from('ciphertext')),
-          kind: null,
-          complete: true
-        }
+        row: logRow
       },
       {
-        op: 'put' as const,
+        op: 'put',
         table: 'e2ee_welcomes',
         row: { id: '0x01', data: Buffer.from([1, 2, 3]), ratchet_tree: null }
       },
       {
-        op: 'del' as const,
+        op: 'del',
         table: 'e2ee_welcome_deliveries',
         key: { welcome_id: '0x01', device_key: '0x02' }
       }
@@ -44,7 +46,7 @@ describe('e2ee record container', () => {
     expect(encoded.content[0]).toBe(E2EE_RECORD_CONTAINER_TAG);
     expect(encoded.external).toEqual([Buffer.from('ciphertext')]);
     const byHash = new Map([
-      [e2eeSha256(encoded.external[0]), encoded.external[0]]
+      [e2eeSha256(encoded.external[0]!), encoded.external[0]!]
     ]);
     const decoded = decodeE2eeRecordContent(
       encoded.content,
@@ -60,7 +62,7 @@ describe('e2ee record container', () => {
       op: 'put',
       table: 'e2ee_log',
       row: {
-        group_handle: content.ops[0].row.group_handle,
+        group_handle: logRow.group_handle,
         seq: 7,
         data: Buffer.from('ciphertext'),
         kind: null,
@@ -100,11 +102,11 @@ describe('e2ee record container', () => {
         ),
         fc.integer({ min: 1, max: 1_000_000 }),
         (row, pos) => {
-          const input = {
+          const input: E2eeRecordContent = {
             type: 'roster',
             pos,
             prev: null,
-            ops: [{ op: 'put' as const, table: 't', row }]
+            ops: [{ op: 'put', table: 't', row }]
           };
           const first = encodeE2eeRecordContent(input).content;
           const second = encodeE2eeRecordContent(input).content;

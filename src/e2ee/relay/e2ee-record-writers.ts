@@ -142,11 +142,16 @@ export class E2eeRecordWriters {
     return row;
   }
 
-  /** A new group: its row, its epoch-0 key and its creator's device. */
+  /**
+   * A group's whole state: its row, every epoch key and every roster row.
+   * `genesis` when the group is created; `import` when the backfill copies
+   * an existing group (under its row lock, so no write interleaves).
+   */
   async groupCreated(
     batch: E2eeRecordBatch,
     connection: Conn,
-    group: string
+    group: string,
+    type: 'genesis' | 'import' = 'genesis'
   ): Promise<void> {
     const groupRow = await this.groupRow(group, connection);
     const epochs = await this.reader.rows(
@@ -165,7 +170,7 @@ export class E2eeRecordWriters {
       connection,
       groupLog(
         group,
-        'genesis',
+        type,
         [
           ...puts(E2EE_GROUPS_TABLE, [groupRow]),
           ...puts(E2EE_GROUP_EPOCHS_TABLE, epochs),
@@ -175,6 +180,41 @@ export class E2eeRecordWriters {
         roster
       )
     );
+  }
+
+  /**
+   * Existing log items copied by the backfill: the item rows only, never
+   * the group's state, so a copy appended after newer records cannot undo
+   * them. Log items never change; retention only deletes them.
+   */
+  async logItemsImported(
+    batch: E2eeRecordBatch,
+    connection: Conn,
+    input: { readonly group: string; readonly seqs: readonly number[] }
+  ): Promise<number> {
+    const items = await this.reader.rows(
+      E2EE_LOG_TABLE,
+      { group_handle: input.group, seq: input.seqs },
+      connection,
+      'seq'
+    );
+    let bytes = 0;
+    for (const item of items) {
+      if (!Buffer.isBuffer(item.data)) continue;
+      bytes += item.data.length;
+      await batch.append(connection, {
+        family: 'cv',
+        owner: input.group,
+        kind: E2eeRecordKind.LOG,
+        refs: [String(item.item_type)],
+        type: String(item.item_type),
+        ops: puts(E2EE_LOG_TABLE, [
+          { ...item, data: new E2eeExternalBytes(item.data) }
+        ]),
+        log: { epoch: Number(item.epoch), windows: [] }
+      });
+    }
+    return bytes;
   }
 
   /**
@@ -262,7 +302,8 @@ export class E2eeRecordWriters {
   async welcomeStored(
     batch: E2eeRecordBatch,
     connection: Conn,
-    welcomeId: string
+    welcomeId: string,
+    onlyDevice?: string
   ): Promise<void> {
     const [welcome] = await this.reader.rows(
       E2EE_WELCOMES_TABLE,
@@ -272,7 +313,9 @@ export class E2eeRecordWriters {
     if (!welcome) return;
     const deliveries = await this.reader.rows(
       E2EE_WELCOME_DELIVERIES_TABLE,
-      { welcome_id: welcomeId },
+      onlyDevice === undefined
+        ? { welcome_id: welcomeId }
+        : { welcome_id: welcomeId, device_key: onlyDevice },
       connection,
       'device_key'
     );

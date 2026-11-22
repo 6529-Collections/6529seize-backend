@@ -653,6 +653,72 @@ The MLS implementation lives in the clients (OpenMLS). No public third-party
 audit of OpenMLS exists; the owner decided to ship without one (D110). Pinned
 versions and OpenMLS security advisories are the safeguard.
 
+## Signed records on the relays
+
+6529.io stays the orderer (D109), but MySQL stops being where the delivery
+service's state lives: every write also becomes a record signed by an
+orderer key, and the relays keep the records. The tables become an index
+that `e2ee-relay-rebuild` rebuilds from the relays alone.
+
+**Records.** A record is the shared interim event (kinds 9 RECORD,
+10 SEALED, 11 LOG). Each one carries whole table rows, its stream position
+and the content hash of the record before it, so every stream is
+hash-chained. The streams:
+
+| Stream                 | What it holds                                                                                                                                                                                       |
+| ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `cv/<group>` (LOG)     | Group creation, every sequenced entry and message, roster repairs and revocations. An item's ciphertext is a separate payload, so relays can drop it at the end of retention while the record stays |
+| `dv/<device>` (SEALED) | Welcomes waiting for the device, and their acknowledgements                                                                                                                                         |
+| `dr/<device>` (RECORD) | The device row after each change; its last-resort KeyPackages                                                                                                                                       |
+| `bl/<blob>` (SEALED)   | Each attachment chunk with its bytes; the blob once complete                                                                                                                                        |
+| `bk/<owner>` (SEALED)  | A profile's backup generations, chunks with their bytes, deletions                                                                                                                                  |
+
+Not carried: one-time KeyPackages, rate counters and push throttles
+(ephemeral; devices upload fresh KeyPackages), incomplete uploads,
+`last_seen_at` (rebuilt as the device's latest log item) and the
+`registered_*` columns (no route reads them). Legacy plaintext DMs are drops
+and are never copied (D153).
+
+**`E2EE_RELAY_MODE`** (on `seizeAPI` and `dbMigrationsLoop`):
+
+- `off` (default): no records; writes run as before.
+- `mirror`: each write appends its records in its transaction and publishes
+  them after the commit. A relay outage never fails a write; later writes
+  and the `e2ee-relay-publish` scope retry.
+- `primary`: a write commits only after `E2EE_RELAY_ACK_QUORUM` relays hold
+  its records; otherwise it answers 503 `E2EE_RELAYS_UNAVAILABLE` and
+  changes nothing.
+
+**Rollback** is one change: `primary` to `mirror` (writes stop waiting on
+the relays), or `mirror` to `off`. MySQL keeps every write in every mode.
+
+Settings: `E2EE_RELAY_URLS` (comma-separated `wss://`), `E2EE_RELAY_NET`,
+`E2EE_RELAY_ACK_QUORUM`, the orderer's `E2EE_ORDERER_KEY` (secret seed) and
+`E2EE_ORDERER_GRANT` (its grant proof), and for rebuilds the site-reader's
+`E2EE_SITE_READER_KEY` and `E2EE_SITE_READER_GRANT` with
+`E2EE_ORDERER_PUBLIC_KEY`. The relays pin the orderer's public key; the
+team holds the key.
+
+**Operator scopes** (`dbMigrationsLoop`, never scheduled):
+
+```json
+{"schema_scope": "e2ee-relay-backfill", "family": "cv"}
+{"schema_scope": "e2ee-relay-backfill", "family": "cv", "live": true, "after": "<next>"}
+{"schema_scope": "e2ee-relay-publish", "waves": 500}
+{"schema_scope": "e2ee-relay-rebuild", "mode": "verify"}
+{"schema_scope": "e2ee-relay-rebuild", "mode": "write"}
+```
+
+- The backfill copies what MySQL held before records were on, family by
+  family in the order `dr`, `cv`, `dv`, `bl`, `bk`, each entity under the
+  lock its writes take, so a later write wins. Without `live` it only
+  reports the volume. Running it twice is harmless.
+- `verify` rebuilds in memory and compares every stream head and every row
+  with MySQL; `ok` is true only with no difference. Run it when
+  `e2ee_relay_outbox` is empty.
+- `write` rebuilds into empty tables and refuses otherwise. Attachment bytes
+  come back into MySQL storage.
+
 ## Implementation choices
 
 - The welcome acknowledgement schema `ApiE2eeAck` carries an optional
@@ -691,3 +757,8 @@ in the API, so no other loop is involved. To switch an environment: set
 `seizeAPI`, then `E2EE_BLOB_STORE=s3`, check an upload, then run the
 migration (dry run first). To switch back, set `E2EE_BLOB_STORE=mysql` and
 keep the S3 settings so blobs already in S3 stay readable.
+
+Relay records add `e2ee_streams` and `e2ee_relay_outbox`: deploy
+`dbMigrationsLoop` (full entity sync) before `api`. Then set the relay
+settings, `E2EE_RELAY_MODE=mirror`, run the backfill (dry run first), run
+`verify`, and only then `primary`.
