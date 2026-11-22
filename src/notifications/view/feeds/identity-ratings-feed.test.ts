@@ -138,7 +138,7 @@ describe('identity:ratings', () => {
       target_profile_id: null
     };
     const source = new ListSource([row(), unsettled, row({ id: 3 })]);
-    let now = NOW;
+    const now = NOW;
     const feed = new IdentityRatingsFeed(source, () => now);
     const first = await feed.read(null, 10);
     expect(first.events.map((event) => event.height)).toEqual([120, 120]);

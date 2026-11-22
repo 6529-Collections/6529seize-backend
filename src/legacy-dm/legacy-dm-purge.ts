@@ -471,16 +471,21 @@ async function logViewDelete(
 /**
  * The record log's own store over the purge's transaction, which takes
  * positional parameters: the store's statements name theirs, so each name
- * becomes a `?` with its value, in order.
+ * becomes a `?` with its value, in order. A name is a `:word` after a space,
+ * a comma or a parenthesis, as the store writes them; one without a value
+ * fails the purge rather than write a wrong row.
  */
 function recordLogStoreIn(tx: LegacyDmSql): RecordLogDb {
   const execute = (sql: string, params: Record<string, unknown> = {}) => {
     const values: unknown[] = [];
-    const positional = sql.replace(/:(\w+)/g, (_, name: string) => {
-      if (!(name in params)) throw new Error(`No value for :${name}`);
-      values.push(params[name]);
-      return '?';
-    });
+    const positional = sql.replace(
+      /([\s,(]):(\w+)/g,
+      (_, before: string, name: string) => {
+        if (!(name in params)) throw new Error(`No value for :${name}`);
+        values.push(params[name]);
+        return `${before}?`;
+      }
+    );
     return tx.execute(positional, values);
   };
   return new RecordLogDb(() => ({ execute }) as unknown as SqlExecutor);
