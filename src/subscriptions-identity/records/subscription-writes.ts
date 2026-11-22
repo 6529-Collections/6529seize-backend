@@ -63,7 +63,10 @@ import {
   SubscriptionWritePath,
   subscriptionWritePathNow
 } from '../identity/identity-switch';
-import { identityOfRouteKey } from '../identity/subscription-tables';
+import {
+  identityOfRouteKey,
+  KEY_SPANS_IDENTITIES
+} from '../identity/subscription-tables';
 import { msToDbText } from '../opening/legacy-tables';
 import {
   journal,
@@ -282,8 +285,10 @@ function bindingsOrUnavailable(
  * gate counts it: the record's own failings (it did not verify or state
  * the request, it was stale, the anchor or the author's binding could not
  * be had) are REFUSED and not counted, so one person's bad header can't
- * hold the switch back; a rule the identity side applied differently is a
- * DIFF; an error FAILED.
+ * hold the switch back, and so is a route key whose wallets span
+ * identities for now (mid re-key), which says nothing about the identity
+ * tables; a rule the identity side applied differently is a DIFF; an error
+ * FAILED.
  */
 function failureOf(error: unknown): {
   readonly verdict: 'REFUSED' | 'DIFF' | 'FAILED';
@@ -301,7 +306,8 @@ function failureOf(error: unknown): {
       verdict:
         code === STALE_SIGNED_RECORD ||
         code === ANCHOR_UNAVAILABLE ||
-        code === BINDING_UNAVAILABLE
+        code === BINDING_UNAVAILABLE ||
+        code === KEY_SPANS_IDENTITIES
           ? 'REFUSED'
           : 'DIFF',
       cause: `refused:${code}`

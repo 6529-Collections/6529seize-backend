@@ -1367,6 +1367,30 @@ describeWithSeed('signed subscription changes', [], () => {
       expect(await logEntries()).toEqual([]);
     });
 
+    it("keeps today's write and reports it REFUSED, not counted, when the key's wallets span identities mid re-key", async () => {
+      await seedLegacy();
+      await cutAndLoad(false);
+      // A legacy key of W and a wallet bound to no principal: the mirror
+      // has its wallets in two identities until the re-key catches up.
+      const spanning = `${W}-${OTHER}`;
+      await execute(
+        `INSERT INTO ${SUBSCRIPTIONS_BALANCES_TABLE} (consolidation_key, balance) VALUES (:k, 0.5)`,
+        { k: spanning }
+      );
+      const identityBefore = await rowsOf('identity', P);
+      await writer({ shadow: true }).write({
+        ...request(MODE_ON, header(record(MODE_ON))),
+        routeKey: spanning
+      });
+      expect(
+        (await rowsOf('legacy', spanning)).mode.map(([automatic]) => automatic)
+      ).toEqual([1]);
+      expect(await rowsOf('identity', P)).toEqual(identityBefore);
+      const [report] = await reports();
+      expect([report.kind, report.verdict]).toEqual(['RECORD', 'REFUSED']);
+      expect(report.report.notes[1]).toBe('refused:KEY_SPANS_IDENTITIES');
+    });
+
     it("reports a DIFF when the identity side refuses what today's write took", async () => {
       await seedLegacy();
       await cutAndLoad(false);

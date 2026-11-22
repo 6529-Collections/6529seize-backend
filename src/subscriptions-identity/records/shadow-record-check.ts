@@ -226,8 +226,9 @@ export async function compareShadowChange(input: {
  * write went through, with the cause as a code (a refusal's reason or rule
  * code), never the record or the refusal's text:
  * - REFUSED: the record itself was not taken (it did not verify, did not
- *   state the request, was stale, or could not be checked); one person's bad
- *   record says nothing about the identity tables, so the gate skips it;
+ *   state the request, was stale, or could not be checked), or the route
+ *   key's wallets span identities for now (mid re-key); neither says
+ *   anything about the identity tables, so the gate skips it;
  * - DIFF: the identity side's rules refused what today's write took;
  * - FAILED: the identity side failed (an error).
  */

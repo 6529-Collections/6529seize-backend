@@ -93,6 +93,13 @@ export interface SubscriptionReadScope {
  * consolidation key through its wallets' identity. A key whose wallets now
  * belong to more than one identity is refused with 409.
  */
+/**
+ * The code of the 409 for a key whose wallets now belong to more than one
+ * identity: a key in the middle of a re-key, until the legacy side catches
+ * up with the identity mirror.
+ */
+export const KEY_SPANS_IDENTITIES = 'KEY_SPANS_IDENTITIES';
+
 export async function identityOfRouteKey(
   routeKey: string,
   directory: IdentityDirectory = mirrorIdentityDirectory
@@ -107,7 +114,8 @@ export async function identityOfRouteKey(
   if (identities.size !== 1) {
     throw new CustomApiCompliantException(
       409,
-      'The wallets of this key now belong to more than one identity; use one wallet or the identity.'
+      'The wallets of this key now belong to more than one identity; use one wallet or the identity.',
+      KEY_SPANS_IDENTITIES
     );
   }
   return Array.from(identities)[0];
