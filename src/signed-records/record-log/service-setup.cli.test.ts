@@ -1,37 +1,75 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import * as fs from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import {
-  buildAppDeviceGrantMessage,
-  computeAppDeviceGrantId
-} from '@/api/device-signing/app-device-grant';
-import { main } from './service-setup.cli';
-import { ServiceKeysFile } from './service-setup';
+import { isInGitWorkTree, main } from './service-setup.cli';
+import { fakeSetupApi } from './service-setup-test-api';
+import { ServiceKeysFile, SETUP_APIS } from './service-setup';
 
-const API = 'https://api.example.test';
+/** When set, a temporary file can't be created, as in a read-only folder. */
+let mockFailTemporaryFiles = false;
+
+jest.mock('node:fs', () => {
+  const actual = jest.requireActual('node:fs');
+  return {
+    ...actual,
+    openSync: (path: unknown, ...rest: unknown[]) => {
+      if (mockFailTemporaryFiles && String(path).endsWith('.tmp')) {
+        throw new Error('read-only');
+      }
+      return actual.openSync(path, ...rest);
+    }
+  };
+});
 
 describe('records service setup command', () => {
   let dir: string;
   let output: string;
 
   beforeEach(() => {
-    dir = mkdtempSync(join(tmpdir(), 'records-setup-'));
+    dir = fs.mkdtempSync(join(tmpdir(), 'records-setup-'));
     output = '';
     jest.spyOn(process.stdout, 'write').mockImplementation((chunk) => {
       output += String(chunk);
       return true;
     });
-    process.env.WEB_APP_ORIGIN = 'https://web.example.test';
   });
 
   afterEach(() => {
+    mockFailTemporaryFiles = false;
     jest.restoreAllMocks();
-    delete process.env.WEB_APP_ORIGIN;
-    rmSync(dir, { recursive: true, force: true });
+    fs.rmSync(dir, { recursive: true, force: true });
   });
 
   const readKeys = (path: string) =>
-    JSON.parse(readFileSync(path, 'utf8')) as ServiceKeysFile;
+    JSON.parse(fs.readFileSync(path, 'utf8')) as ServiceKeysFile;
+
+  const newKeysFile = async (environment = 'staging') => {
+    const file = join(dir, `records-service-${environment}.json`);
+    await main(['new-keys', '--env', environment, '--out', file]);
+    output = '';
+    return file;
+  };
+
+  /** Routes fetch to a fake staging API. */
+  const fakeFetch = () => {
+    const fake = fakeSetupApi({
+      base: SETUP_APIS.staging.base,
+      nowMs: Date.now()
+    });
+    const spy = jest
+      .spyOn(global, 'fetch')
+      .mockImplementation(async (url, init) => {
+        const answer = await fake.fetchFn(String(url), init as any);
+        return new Response(
+          answer.status === 204 ? null : await answer.text(),
+          { status: answer.status }
+        );
+      });
+    return { fake, spy };
+  };
+
+  const tempFilesIn = (folder: string) =>
+    fs.readdirSync(folder).filter((name) => name.endsWith('.tmp'));
 
   it('prints the usage', async () => {
     await main(['--help']);
@@ -43,7 +81,6 @@ describe('records service setup command', () => {
     await main(['new-keys', '--env', 'staging', '--out', file]);
     const keys = readKeys(file);
     expect(output).toContain(keys.public.SIGNED_RECORDS_SERVICE_WALLET);
-    expect(output).toContain(keys.public.device_key);
     for (const secret of [
       keys.secret.service_wallet_private_key,
       keys.secret.SIGNED_RECORDS_SERVICE_DEVICE_SEED,
@@ -59,46 +96,86 @@ describe('records service setup command', () => {
     expect(readKeys(file)).toEqual(keys);
   });
 
-  it('adds the grant to the same file', async () => {
-    const file = join(dir, 'keys.json');
-    await main(['new-keys', '--env', 'production', '--out', file]);
+  (process.platform === 'win32' ? it.skip : it)(
+    'makes the keys file readable by its owner only',
+    async () => {
+      const file = await newKeysFile();
+      expect(fs.statSync(file).mode & 0o777).toBe(0o600);
+    }
+  );
+
+  it('refuses a keys file inside a git checkout', async () => {
+    const repo = join(dir, 'repo');
+    fs.mkdirSync(join(repo, '.git'), { recursive: true });
+    fs.mkdirSync(join(repo, 'deep'));
+    const file = join(repo, 'deep', 'keys.json');
+    expect(isInGitWorkTree(file)).toBe(true);
+    expect(isInGitWorkTree(join(dir, 'keys.json'))).toBe(false);
+    await expect(
+      main(['new-keys', '--env', 'staging', '--out', file])
+    ).rejects.toThrow('must not be inside a git checkout');
+    expect(fs.existsSync(file)).toBe(false);
+    await expect(main(['print-secrets', '--keys', file])).rejects.toThrow(
+      'must not be inside a git checkout'
+    );
+  });
+
+  it('adds the grant to the same file, leaving no temporary file', async () => {
+    const file = await newKeysFile();
     const before = readKeys(file);
-    jest.spyOn(global, 'fetch').mockImplementation(async (url, init) => {
-      const path = String(url).slice(`${API}/api`.length);
-      const body = init?.body ? JSON.parse(String(init.body)) : undefined;
-      const reply = (value: unknown) =>
-        new Response(JSON.stringify(value), { status: 200 });
-      if (path.startsWith('/auth/session-nonce')) {
-        return reply({ signable_message: 'm', server_signature: 's' });
-      }
-      if (path === '/auth/session-login') {
-        return reply({ access_token: 't' });
-      }
-      if (path.startsWith('/identities/')) {
-        return reply({ id: 'profile-id' });
-      }
-      return reply({
-        id: computeAppDeviceGrantId(buildAppDeviceGrantMessage(body.grant))
-      });
-    });
-    await main(['grant', '--keys', file, '--api', API, '--new-device-seed']);
+    const { fake } = fakeFetch();
+    await main(['grant', '--keys', file, '--handle', 'records_test']);
     const after = readKeys(file);
-    expect(after.public.SIGNED_RECORDS_SERVICE_PROFILE_ID).toBe('profile-id');
-    expect(after.public.SIGNED_RECORDS_SERVICE_GRANT_ID).toMatch(
-      /^0x[0-9a-f]{64}$/
+    expect(after.public.SIGNED_RECORDS_SERVICE_GRANT_ID).toBe(
+      fake.grants[0].id
     );
-    expect(after.public.device_key).not.toBe(before.public.device_key);
-    expect(after.secret.service_wallet_private_key).toBe(
-      before.secret.service_wallet_private_key
+    expect(after.secret).toEqual(before.secret);
+    expect(tempFilesIn(dir)).toEqual([]);
+    expect(output).toContain(fake.grants[0].id);
+  });
+
+  it('fails before any network call when the file cannot be replaced', async () => {
+    const file = await newKeysFile();
+    const { spy } = fakeFetch();
+    mockFailTemporaryFiles = true;
+    await expect(
+      main(['grant', '--keys', file, '--handle', 'records_test'])
+    ).rejects.toThrow('Cannot write next to');
+    mockFailTemporaryFiles = false;
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  it('removes the temporary file when the grant fails', async () => {
+    const file = await newKeysFile();
+    fakeFetch();
+    await expect(main(['grant', '--keys', file])).rejects.toThrow(
+      'pass --handle'
     );
-    expect(existsSync(`${file}.tmp`)).toBe(false);
+    expect(tempFilesIn(dir)).toEqual([]);
+  });
+
+  it('lists and revokes the grants of the device key', async () => {
+    const file = await newKeysFile();
+    const { fake } = fakeFetch();
+    await main(['grant', '--keys', file, '--handle', 'records_test']);
+    output = '';
+    await main(['list', '--keys', file]);
+    expect(output).toContain(`${fake.grants[0].id}  this file's device key`);
+    expect(output).toContain('active');
+    output = '';
+    await main(['revoke', '--keys', file, '--all-for-device']);
+    expect(output).toBe(`Revoked ${fake.grants[0].id}\n`);
+    expect(readKeys(file).public.revoked_grant_ids).toEqual([
+      fake.grants[0].id
+    ]);
+    output = '';
+    await main(['revoke', '--keys', file, '--all-for-device']);
+    expect(output).toBe('No active grant to revoke\n');
   });
 
   it('prints the two config secrets ready to paste', async () => {
-    const file = join(dir, 'keys.json');
-    await main(['new-keys', '--env', 'staging', '--out', file]);
+    const file = await newKeysFile();
     const { secret } = readKeys(file);
-    output = '';
     await main(['print-secrets', '--keys', file]);
     expect(output.split('\n')).toEqual([
       'SIGNED_RECORDS_SERVICE_DEVICE_SEED',
@@ -113,19 +190,23 @@ describe('records service setup command', () => {
   });
 
   it('refuses bad arguments', async () => {
-    const file = join(dir, 'keys.json');
+    const file = await newKeysFile();
     await expect(main(['rotate'])).rejects.toThrow('Unknown command');
-    await expect(main(['grant', '--keys', file])).rejects.toThrow(
-      '"api" is required'
-    );
-    await expect(main(['grant', '--keys', file, '--api'])).rejects.toThrow(
+    await expect(main(['grant'])).rejects.toThrow('"keys" is required');
+    await expect(main(['grant', '--keys'])).rejects.toThrow(
       'Invalid arguments'
     );
     await expect(
-      main(['new-keys', '--env', 'dev', '--out', file])
+      main(['new-keys', '--env', 'dev', '--out', join(dir, 'x.json')])
     ).rejects.toThrow('"env" must be one of');
+    await expect(main(['revoke', '--keys', file])).rejects.toThrow(
+      'must contain at least one of'
+    );
     await expect(
-      main(['revoke', '--keys', file, '--api', API, '--grant', '0x12'])
+      main(['revoke', '--keys', file, '--grant', '0x12'])
     ).rejects.toThrow('"grant"');
+    await expect(
+      main(['grant', '--keys', join(dir, 'missing.json')])
+    ).rejects.toThrow('Cannot read');
   });
 });
