@@ -35,7 +35,9 @@ import {
   backfillE2eeRecords,
   E2EE_BACKFILL_FAMILIES,
   E2eeBackfillDb,
-  E2eeBackfillDeps
+  E2eeBackfillDeps,
+  E2eeBackfillFamily,
+  E2eeBackfillReport
 } from '@/e2ee/relay/e2ee-relay-backfill';
 import { E2eeRelaySettings } from '@/e2ee/relay/e2ee-relay-config';
 import {
@@ -1185,7 +1187,11 @@ function backfillDb(
   };
 }
 
-async function backfillAll(s: Awaited<ReturnType<typeof scenario>>) {
+async function backfillAll(
+  s: Awaited<ReturnType<typeof scenario>>,
+  overrides: Partial<E2eeBackfillDeps> = {},
+  families: readonly E2eeBackfillFamily[] = E2EE_BACKFILL_FAMILIES
+): Promise<E2eeBackfillReport[]> {
   const deps: E2eeBackfillDeps = {
     db: backfillDb(s.db, s.store),
     writers: s.writers,
@@ -1202,9 +1208,11 @@ async function backfillAll(s: Awaited<ReturnType<typeof scenario>>) {
       ).find((object) => object.object_key === key);
       return (row?.data as Buffer | undefined) ?? null;
     },
-    now: () => NOW
+    now: () => NOW,
+    ...overrides
   };
-  for (const family of E2EE_BACKFILL_FAMILIES) {
+  const reports: E2eeBackfillReport[] = [];
+  for (const family of families) {
     let after: string | undefined;
     do {
       const report = await backfillE2eeRecords(deps, {
@@ -1213,9 +1221,13 @@ async function backfillAll(s: Awaited<ReturnType<typeof scenario>>) {
         after,
         limit: 2
       });
+      // The volume scans run in the dry run only.
+      expect(report.volume).toBeNull();
+      reports.push(report);
       after = report.next ?? undefined;
     } while (after !== undefined);
   }
+  return reports;
 }
 
 function expectSameTables(
@@ -1273,6 +1285,19 @@ describe('backfillE2eeRecords', () => {
       }
     });
     expect(s.relay.stored).toEqual([]);
+  });
+
+  it('skips an attachment whose stored bytes read back empty', async () => {
+    const s = await runScenario(false);
+    const reports = await backfillAll(
+      s,
+      { blobChunk: async () => Buffer.alloc(0) },
+      ['bl']
+    );
+    expect(reports.flatMap((report) => report.skipped)).toHaveLength(1);
+    expect(
+      s.relay.stored.filter((item) => item.event.wave.startsWith('bl/'))
+    ).toEqual([]);
   });
 
   it('copies state written before records existed, so a rebuild matches MySQL', async () => {

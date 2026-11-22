@@ -816,8 +816,10 @@ one slice and returns `next`; call again with `"after": "<next>"` until
   roster, a device inbox's deliveries and a profile's backups are deleted
   and put again. **Run it for every family whenever records come back on
   after time off**: deletes and acks made while off are carried only that
-  way. Without `live` it only reports the volume. Running it twice is
-  harmless.
+  way. Without `live` it only reports the volume (whole-table counts, on
+  the read pool); a live slice skips those scans and reports `volume: null`.
+  An attachment whose bytes read back empty is skipped, never recorded.
+  Running it twice is harmless.
 - `verify` (the side-by-side check; `verify-streams` is its old name) first
   counts MySQL entities that have no stream at all, then rebuilds `limit`
   streams alone and compares their rows and heads with MySQL. Both sides go

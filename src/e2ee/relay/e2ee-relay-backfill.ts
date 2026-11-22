@@ -117,6 +117,7 @@ export interface E2eeBackfillBlob {
 
 /** What the backfill reads and locks. */
 export interface E2eeBackfillDb extends E2eeTransactionRunner {
+  /** Whole-table scans, on the read pool: the dry run only. */
   volume(): Promise<E2eeBackfillVolume>;
   /** Keys after `after`, in key order (the cursor). */
   groups(after: string, limit: number): Promise<string[]>;
@@ -170,7 +171,8 @@ export interface E2eeBackfillRequest {
 export interface E2eeBackfillReport {
   readonly live: boolean;
   readonly family: E2eeBackfillFamily;
-  readonly volume: E2eeBackfillVolume;
+  /** The dry run's measure; null in a live slice, which skips the scans. */
+  readonly volume: E2eeBackfillVolume | null;
   readonly examined: number;
   readonly copied: number;
   readonly bytes: number;
@@ -198,11 +200,11 @@ export async function backfillE2eeRecords(
   deps: E2eeBackfillDeps,
   request: E2eeBackfillRequest
 ): Promise<E2eeBackfillReport> {
-  const volume = await deps.db.volume();
-  const base = { live: request.live, family: request.family, volume };
+  const base = { live: request.live, family: request.family };
   if (!request.live) {
     return {
       ...base,
+      volume: await deps.db.volume(),
       examined: 0,
       copied: 0,
       bytes: 0,
@@ -238,6 +240,7 @@ export async function backfillE2eeRecords(
   const done = examined === keys.length && !full;
   return {
     ...base,
+    volume: null,
     examined,
     copied,
     bytes,
@@ -417,7 +420,9 @@ async function copyBlob(
   const chunks: Buffer[] = [];
   for (let index = 0; index < Number(blob.chunk_count); index++) {
     const data = await deps.blobChunk(blob, index);
-    if (!data) return null;
+    // No chunk is ever stored empty: empty bytes are a failed read, and a
+    // record of them would put the loss on the relays.
+    if (!data?.length) return null;
     chunks.push(data);
   }
   return deps.run(async (connection, batch) => {
@@ -493,41 +498,46 @@ export class MysqlE2eeBackfillDb
     return this.db.execute<T>(sql, params, options);
   }
 
+  /** A whole-table scan, off the writer. */
+  private read<T>(sql: string): Promise<T[]> {
+    return this.db.execute<T>(sql, {}, { forcePool: DbPoolName.READ });
+  }
+
   async volume(): Promise<E2eeBackfillVolume> {
     const sql = E2EE_BACKFILL_VOLUME_SQL;
-    const items = await this.exec<{
+    const items = await this.read<{
       item_type: string;
       n: number;
       bytes: number;
     }>(sql.items);
     const of = (type: string) =>
       items.find((row) => row.item_type === type) ?? { n: 0, bytes: 0 };
-    const welcomes = await this.exec<{ n: number; bytes: number }>(
+    const welcomes = await this.read<{ n: number; bytes: number }>(
       sql.welcomes
     );
-    const blobs = await this.exec<{ n: number; bytes: number }>(sql.blobs);
-    const chunks = await this.exec<{ n: number; bytes: number }>(
+    const blobs = await this.read<{ n: number; bytes: number }>(sql.blobs);
+    const chunks = await this.read<{ n: number; bytes: number }>(
       sql.backupChunks
     );
     return {
-      groups: count(await this.exec(sql.groups)),
+      groups: count(await this.read(sql.groups)),
       entries: Number(of('entry').n),
       entryBytes: Number(of('entry').bytes),
       messages: Number(of('message').n),
       messageBytes: Number(of('message').bytes),
       pendingWelcomes: count(welcomes),
       welcomeBytes: sum(welcomes),
-      devices: count(await this.exec(sql.devices)),
-      lastResortKeyPackages: count(await this.exec(sql.lastResort)),
+      devices: count(await this.read(sql.devices)),
+      lastResortKeyPackages: count(await this.read(sql.lastResort)),
       completeBlobs: count(blobs),
       blobBytes: sum(blobs),
-      backups: count(await this.exec(sql.backups)),
+      backups: count(await this.read(sql.backups)),
       backupChunks: count(chunks),
       backupBytes: sum(chunks),
-      reports: count(await this.exec(sql.reports)),
-      messageReports: count(await this.exec(sql.messageReports)),
-      reportAccess: count(await this.exec(sql.reportAccess)),
-      moderationDecisions: count(await this.exec(sql.moderationDecisions))
+      reports: count(await this.read(sql.reports)),
+      messageReports: count(await this.read(sql.messageReports)),
+      reportAccess: count(await this.read(sql.reportAccess)),
+      moderationDecisions: count(await this.read(sql.moderationDecisions))
     };
   }
 
