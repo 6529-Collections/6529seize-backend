@@ -1,3 +1,7 @@
+import {
+  subscriptionKeyWidths,
+  SubscriptionKeyWidthsUnknownError
+} from '@/subscription-key-width/subscription-key-width';
 import { subscriptionCoverageRepository } from './subscription-coverage.repository';
 import {
   markSubscriptionCoverageDirty,
@@ -20,6 +24,29 @@ describe('subscription coverage dirty markers', () => {
   beforeEach(() => {
     repository.findDemonstratedIntentKeys.mockReset();
     repository.markDirty.mockReset();
+  });
+
+  it('skips a key whose width cannot be judged yet and still marks the rest', async () => {
+    const long = `0x${'1'.repeat(40)}-`.repeat(5).slice(0, -1);
+    const fits = jest
+      .spyOn(subscriptionKeyWidths, 'fits')
+      .mockImplementation(async (key: string) => {
+        if (key.length > 200) {
+          throw new SubscriptionKeyWidthsUnknownError(key.length);
+        }
+        return true;
+      });
+    repository.markDirty.mockResolvedValue(undefined);
+    try {
+      await expect(
+        markSubscriptionCoverageDirty(['short-key', long], 'BALANCE_TOPPED_UP')
+      ).resolves.toBeUndefined();
+      expect(repository.markDirty.mock.calls.map(([batch]) => batch)).toEqual([
+        ['short-key']
+      ]);
+    } finally {
+      fits.mockRestore();
+    }
   });
 
   it('normalizes and persists dirty keys in bounded batches', async () => {

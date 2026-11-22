@@ -39,6 +39,7 @@ functions:
 resources:
   Resources:
     NextgenMediaUploaderOOMFilter:
+      DependsOn: NextgenMediaUploaderLogGroup
       Type: AWS::Logs::MetricFilter
       Properties:
         LogGroupName: /aws/lambda/nextgenMediaUploader
