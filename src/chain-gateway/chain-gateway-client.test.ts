@@ -554,7 +554,10 @@ describe('profile documents', () => {
     );
     expect(first).toEqual(doc);
     first!.fill(0);
-    // The cache hands out copies.
+    // The cache keeps its own copy and hands out copies.
+    const second = await client.getProfileDoc(cid);
+    expect(second).toEqual(doc);
+    second!.fill(0);
     expect(await client.getProfileDoc(cid)).toEqual(doc);
     expect(calls).toHaveLength(1);
     expect(path(calls[0])).toBe(`/v1/docs/${cidPath(cid)}`);
