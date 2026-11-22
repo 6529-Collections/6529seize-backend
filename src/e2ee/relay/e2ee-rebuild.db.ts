@@ -9,6 +9,7 @@ import {
   E2EE_LOG_TABLE,
   E2EE_REPORT_ACCESS_LOG_TABLE,
   E2EE_RECORD_ITEMS_TABLE,
+  E2EE_RELAY_OUTBOX_TABLE,
   E2EE_REPORTS_TABLE,
   E2EE_STREAMS_TABLE,
   E2EE_WELCOME_DELIVERIES_TABLE
@@ -216,6 +217,19 @@ export class E2eeRebuildDb extends LazyDbAccessCompatibleService {
   }
 
   /** Profiles with backups, for the bk stream owner of each. */
+  /**
+   * A stream's records still in the outbox after position `afterPos`: what
+   * MySQL committed that some relay does not hold yet.
+   */
+  async outboxAfter(wave: string, afterPos: number): Promise<number> {
+    const [row] = await this.exec<{ n: number | string }>(
+      `select count(*) as n from ${E2EE_RELAY_OUTBOX_TABLE}
+       where wave = :wave and pos > :afterPos`,
+      { wave, afterPos }
+    );
+    return Number(row?.n ?? 0);
+  }
+
   async backupProfiles(): Promise<string[]> {
     const rows = await this.exec<{ profile_id: string }>(
       `select distinct profile_id from ${E2EE_BACKUPS_TABLE}`

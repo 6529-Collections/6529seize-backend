@@ -33,7 +33,7 @@ import {
 /** The reads the per-stream check needs from MySQL. */
 export type E2eeStreamVerifyDb = Pick<
   E2eeRebuildDb,
-  'rowsWhere' | 'headsPage' | 'backupProfiles'
+  'rowsWhere' | 'headsPage' | 'backupProfiles' | 'outboxAfter'
 >;
 import type { E2eeStreamRebuildSource } from '@/e2ee/relay/e2ee-rebuild-run';
 import { E2eeStreamHead } from '@/e2ee/relay/e2ee-stream-store';
@@ -59,6 +59,13 @@ export interface E2eeStreamVerifyReport {
   readonly checked: number;
   readonly failed: number;
   readonly failures: readonly E2eeStreamFailure[];
+  /**
+   * Streams the relays are only behind on: MySQL is ahead by records still
+   * in the outbox, which the publisher loop sends. They do not fail the
+   * check; run it again once the outbox drains.
+   */
+  readonly lagging: number;
+  readonly laggingStreams: readonly string[];
   /** Pass as `after` to continue; null when every stream was checked. */
   readonly next: string | null;
   readonly ok: boolean;
@@ -260,22 +267,46 @@ export async function verifyE2eeStreams(input: {
     }
   }
   const failures: E2eeStreamFailure[] = [];
+  const laggingStreams: string[] = [];
   let failed = 0;
+  let lagging = 0;
   for (const head of heads) {
     const failure = await verifyStream(input, head, backupOwners);
-    if (failure) {
-      failed++;
-      if (failures.length < REPORTED_FAILURES) failures.push(failure);
+    if (!failure) continue;
+    if (await isLagging(input.db, failure)) {
+      lagging++;
+      if (laggingStreams.length < REPORTED_FAILURES) {
+        laggingStreams.push(head.wave);
+      }
+      continue;
     }
+    failed++;
+    if (failures.length < REPORTED_FAILURES) failures.push(failure);
   }
   const last = heads[heads.length - 1];
   return {
     checked: heads.length,
     failed,
     failures,
+    lagging,
+    laggingStreams,
     next: heads.length === input.limit && last ? last.wave : null,
     ok: failed === 0
   };
+}
+
+/**
+ * A stream the relays are behind on, and nothing else: its records read
+ * back without a problem, and MySQL holds more only because records past
+ * the relays' head are still in the outbox. Rows differ until they land.
+ */
+async function isLagging(
+  db: E2eeStreamVerifyDb,
+  failure: E2eeStreamFailure
+): Promise<boolean> {
+  const relays = failure.head.relays ?? 0;
+  if (failure.problems.length || relays >= failure.head.mysql) return false;
+  return (await db.outboxAfter(failure.wave, relays)) > 0;
 }
 
 async function verifyStream(

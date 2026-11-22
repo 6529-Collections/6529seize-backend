@@ -546,6 +546,7 @@ describeWithSeed('e2ee relay records against MySQL', SEEDS, () => {
       streams: slices.reduce((sum, report) => sum + report.streams, 0),
       coverage: slices[0].coverage,
       failures: slices.flatMap((report) => report.failures ?? []),
+      laggingStreams: slices.flatMap((report) => report.laggingStreams ?? []),
       problems: slices.flatMap((report) => report.problems),
       ok: slices.every((report) => report.ok)
     };
@@ -879,7 +880,7 @@ describeWithSeed('e2ee relay records against MySQL', SEEDS, () => {
     expect(await answers(ids)).toEqual(before);
   });
 
-  it('names the record and the DEL that keep failing, with the last error', async () => {
+  it('names what keeps failing, with the last error; verify calls it lagging', async () => {
     const ids = await story();
     const [welcome] = await groups.getWelcomes('pb', ids.b);
     relay.down = true;
@@ -897,8 +898,19 @@ describeWithSeed('e2ee relay records against MySQL', SEEDS, () => {
       lastError: expect.stringContaining('wss://relay.test')
     });
     relay.down = false;
+    // The ack's record still waits in the outbox: lagging, not different.
+    expect(await rebuild('verify')).toMatchObject({
+      failures: [],
+      laggingStreams: [`dv/${ids.b}`],
+      ok: true
+    });
     await publisher.publishPending(10);
     await publisher.publishDeletions(10);
+    expect(await rebuild('verify')).toMatchObject({
+      failures: [],
+      laggingStreams: [],
+      ok: true
+    });
     expect(await store.worstFailures()).toEqual({
       outbox: null,
       deletion: null

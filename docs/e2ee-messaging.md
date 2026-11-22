@@ -823,7 +823,10 @@ one slice and returns `next`; call again with `"after": "<next>"` until
   streams alone and compares their rows and heads with MySQL. Both sides go
   through the same retention rules at one `now`, so uploads in progress and
   rows MySQL's prune has not reached yet are no difference. `ok` is true
-  only with none. Run it when `e2ee_relay_outbox` is empty.
+  only with none. A stream that differs only because records past the
+  relays' head still wait in `e2ee_relay_outbox` is lagging, not
+  different: it is counted in `lagging`, named in `laggingStreams`, and
+  does not fail the check. Run it again once the outbox drains.
 - `write` rebuilds into empty tables and refuses otherwise. It lists the
   streams each relay holds (as placeholder heads), then rebuilds and writes
   them one at a time, each in one transaction with its head, so a slice cut

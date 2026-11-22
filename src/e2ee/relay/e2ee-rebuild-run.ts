@@ -88,6 +88,12 @@ export interface E2eeRebuildReport {
   /** verify: the streams whose rows or head differ. */
   readonly failures?: readonly E2eeStreamFailure[];
   readonly failed?: number;
+  /**
+   * verify: streams the relays are only behind on (records still in the
+   * outbox). Not differences; they do not fail the slice.
+   */
+  readonly lagging?: number;
+  readonly laggingStreams?: readonly string[];
   /** write: problems in the records of the streams written. */
   readonly problemCount: number;
   readonly problems: readonly E2eeRebuildProblem[];
@@ -166,6 +172,8 @@ export async function runE2eeRebuild(
         coverage,
         failures: report.failures,
         failed: report.failed,
+        lagging: report.lagging,
+        laggingStreams: report.laggingStreams,
         problemCount: 0,
         problems: [],
         next: report.next,

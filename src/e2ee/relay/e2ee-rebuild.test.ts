@@ -1399,6 +1399,9 @@ function verifyDb(
       );
     },
     headsPage: (after, limit) => store.listHeads(after, limit),
+    outboxAfter: async (wave, afterPos) =>
+      store.outboxRows.filter((row) => row.wave === wave && row.pos > afterPos)
+        .length,
     backupProfiles: async () =>
       Array.from(
         new Set(
@@ -1483,7 +1486,7 @@ describe('verifyE2eeStreams', () => {
     });
   });
 
-  it('names a stream whose head is ahead of the relays', async () => {
+  it('reports a stream whose records wait in the outbox as lagging', async () => {
     const s = await runScenario();
     s.relay.down = true;
     await s.write(
@@ -1500,6 +1503,35 @@ describe('verifyE2eeStreams', () => {
       moderationKeys: MODERATION.keys,
       limit: 100
     });
+    expect(report).toMatchObject({
+      failed: 0,
+      failures: [],
+      lagging: 1,
+      laggingStreams: [`dr/${B}`],
+      ok: true
+    });
+  });
+
+  it('names a stream whose head is ahead of the relays with nothing to send', async () => {
+    const s = await runScenario();
+    s.relay.down = true;
+    await s.write(
+      () =>
+        s.db.update(E2EE_DEVICES_TABLE, { device_key: B }, { label: 'Tablet' }),
+      (batch, c) => s.writers.deviceChanged(batch, c, B)
+    );
+    s.relay.down = false;
+    // The record left the outbox but no relay has it: a loss.
+    await s.store.deleteOutbox(s.store.outboxRows.map((row) => row.id));
+    const report = await verifyE2eeStreams({
+      source: readerSource(s.relay),
+      db: verifyDb(s.db, s.store),
+      ordererDeviceKey: ORDERER.deviceKey,
+      now: NOW,
+      moderationKeys: MODERATION.keys,
+      limit: 100
+    });
+    expect(report.lagging).toBe(0);
     expect(report.failures.map((f) => f.wave)).toEqual([`dr/${B}`]);
     expect(report.failures[0].head.relays).toBe(
       (report.failures[0].head.mysql ?? 0) - 1
