@@ -4,7 +4,7 @@ import * as mcache from 'memory-cache';
 import { mock } from 'ts-jest-mocker';
 import { UserGroupsService } from '@/api/community-members/user-groups.service';
 import { USER_GROUPS_TABLE } from '@/constants';
-import { toRuleNeutralLevelBounds } from '@/groups/group-level-bounds';
+import * as profileLevel from '@/profiles/profile-level';
 import { sqlExecutor } from '@/sql-executor';
 import { describeWithSeed } from '@/tests/_setup/seed';
 import { anIdentity, withIdentities } from '@/tests/fixtures/identity.fixture';
@@ -22,16 +22,21 @@ type LevelBoundsMigration = {
   }) => Promise<unknown>;
 };
 
-const migration = require(
-  path.resolve(
-    process.cwd(),
-    'migrations/20261122180000-rewrite-group-level-bounds-for-uncapped-levels.js'
-  )
-) as LevelBoundsMigration;
+// The first rewrite ships while levels end at 100. The second, the same
+// rewrite, runs just before levels go above 100 and catches groups saved in
+// the old form while the first was deploying.
+const MIGRATIONS = [
+  '20261122180000-rewrite-group-level-bounds-for-uncapped-levels',
+  '20261123090000-rewrite-group-level-bounds-saved-during-rollout'
+];
+const loadMigration = (name: string) =>
+  require(
+    path.resolve(process.cwd(), `migrations/${name}.js`)
+  ) as LevelBoundsMigration;
 
-// Made-up scores around level 100's border of 25,000,000. Each name is the
-// level the score has once levels go above 100; today every score from
-// 25,000,000 up is level 100.
+// Made-up scores around and above level 100's border of 25,000,000. Each
+// name is the score's level; while levels ended at 100, every score from
+// 25,000,000 up was level 100.
 const SCORES: Record<string, number> = {
   negative: -100,
   zero: 0,
@@ -190,6 +195,28 @@ const boundsBefore = (spec: GroupSpec): Bounds => ({
 /** Group name to sorted member names. */
 type Membership = Record<string, string[]>;
 
+const realGetLevelFromScore = profileLevel.getLevelFromScore;
+const realGetBorder = profileLevel.getLevelComponentsBorderByLevel;
+
+/**
+ * Runs the code as it was while levels ended at 100. The table up to level
+ * 100 did not change, so that level is today's capped at 100, and the border
+ * of any level above 100 was Number.MAX_SAFE_INTEGER. With that border, a
+ * level_max of 100 or more gives the SQL bound level_raw <
+ * Number.MAX_SAFE_INTEGER, which no score here reaches; the capped code left
+ * that bound out. So the member sets are the capped code's.
+ */
+function useLevelsCappedAt100() {
+  jest
+    .spyOn(profileLevel, 'getLevelFromScore')
+    .mockImplementation((score) => Math.min(realGetLevelFromScore(score), 100));
+  jest
+    .spyOn(profileLevel, 'getLevelComponentsBorderByLevel')
+    .mockImplementation((level) =>
+      level > 100 ? Number.MAX_SAFE_INTEGER : realGetBorder(level)
+    );
+}
+
 describeWithSeed(
   'group level bounds migration',
   [
@@ -203,6 +230,10 @@ describeWithSeed(
 
     beforeEach(() => {
       mcache.clear();
+    });
+
+    afterEach(() => {
+      jest.restoreAllMocks();
     });
 
     async function sqlMembership(
@@ -267,8 +298,8 @@ describeWithSeed(
       return bySql;
     }
 
-    async function migrate() {
-      await migration.up({
+    async function migrate(name: string) {
+      await loadMigration(name).up({
         runSql: (sql: string) => sqlExecutor.execute(sql)
       });
     }
@@ -295,105 +326,104 @@ describeWithSeed(
       );
     }
 
-    it('keeps every group the same members', async () => {
-      // Reading groups does not change in this release, so the members
-      // read here are the ones the code before it reads too.
-      const before = await membershipOnEveryPath();
-      // Today everyone is at most level 100, and nobody is above it.
-      expect(before['max-100']).toEqual(everyone);
-      expect(before['max-150']).toEqual(everyone);
-      expect(before['min-101']).toEqual([]);
-      expect(before['min-101-with-list']).toEqual(['l200']);
-      expect(before['max-100-with-list']).toEqual(everyone);
-      expect(before['max-100-with-exclusion']).toEqual(
-        everyone.filter((name) => name !== 'l104')
-      );
+    it.each(MIGRATIONS)(
+      'keeps every group the same members across %s and levels above 100',
+      async (name) => {
+        useLevelsCappedAt100();
+        const before = await membershipOnEveryPath();
+        // Levels ending at 100: everyone is at most level 100, and nobody
+        // is above it.
+        expect(before['max-100']).toEqual(everyone);
+        expect(before['max-150']).toEqual(everyone);
+        expect(before['min-101']).toEqual([]);
+        expect(before['min-101-with-list']).toEqual(['l200']);
+        expect(before['max-100-with-list']).toEqual(everyone);
+        expect(before['max-100-with-exclusion']).toEqual(
+          everyone.filter((it) => it !== 'l104')
+        );
+        jest.restoreAllMocks();
 
-      jest.spyOn(console, 'log').mockImplementation(() => {});
-      await migrate();
-      jest.restoreAllMocks();
+        // Without the rewrite, levels above 100 would change these groups.
+        const unmigrated = await membershipOnEveryPath();
+        const above100 = ['l101', 'l104', 'l110', 'l150', 'l200'];
+        expect(unmigrated['max-100']).toEqual(
+          everyone.filter((it) => !above100.includes(it))
+        );
+        expect(unmigrated['min-101']).toEqual(above100);
 
-      expect(await membershipOnEveryPath()).toEqual(before);
-    });
+        jest.spyOn(console, 'log').mockImplementation(() => {});
+        await migrate(name);
+        jest.restoreAllMocks();
 
-    it('rewrites the bounds into the form a new save stores', async () => {
-      const log = jest.spyOn(console, 'log').mockImplementation(() => {});
-      await migrate();
-      // Counts and bound values only: no group ids, names or creators.
-      expect(log.mock.calls).toEqual([
-        [
-          'levels migration: statement 1 rewrites 5 community_groups rows: ' +
-            '(min 101, max null) x2, (min 110, max null) x1, ' +
-            '(min 150, max null) x1, (min 150, max 200) x1'
-        ],
-        ['levels migration: statement 1 updated 5 community_groups rows'],
-        [
-          'levels migration: statement 2 rewrites 9 community_groups rows: ' +
-            '(min null, max 100) x4, (min null, max 120) x1, ' +
-            '(min null, max 150) x1, (min -5, max 100) x1, ' +
-            '(min 50, max 100) x1, (min 100, max 100) x1'
-        ],
-        ['levels migration: statement 2 updated 9 community_groups rows']
-      ]);
-      log.mockClear();
-      const expected = Object.fromEntries(
-        GROUPS.map((spec) => [
-          spec.name,
-          {
-            ...(spec.after ?? boundsBefore(spec)),
-            pure: spec.name === 'list-only'
-          }
-        ])
-      );
-      expect(await storedBounds(groupId(''))).toEqual(expected);
-      for (const spec of GROUPS) {
-        expect({
-          name: spec.name,
-          ...toRuleNeutralLevelBounds(boundsBefore(spec))
-        }).toEqual({ name: spec.name, ...(spec.after ?? boundsBefore(spec)) });
+        // The rewritten rows, while levels still end at 100.
+        useLevelsCappedAt100();
+        expect(await membershipOnEveryPath()).toEqual(before);
+        jest.restoreAllMocks();
+
+        // Then levels above 100.
+        expect(await membershipOnEveryPath()).toEqual(before);
       }
-      // A group keeps a level bound, so none becomes a list-only group.
-      // Running the statements again changes nothing.
-      await migrate();
-      expect(await storedBounds(groupId(''))).toEqual(expected);
-      expect(log.mock.calls).toEqual([
-        ['levels migration: statement 1 rewrites 0 community_groups rows'],
-        ['levels migration: statement 1 updated 0 community_groups rows'],
-        ['levels migration: statement 2 rewrites 0 community_groups rows'],
-        ['levels migration: statement 2 updated 0 community_groups rows']
-      ]);
-      log.mockRestore();
-    });
+    );
 
-    it('stores a new save in the rewritten form', async () => {
-      const saved: [Bounds, Bounds][] = [
-        [
-          { level_min: null, level_max: 100 },
-          { level_min: 0, level_max: null }
-        ],
-        [
-          { level_min: 50, level_max: 100 },
-          { level_min: 50, level_max: null }
-        ],
-        [
-          { level_min: 100, level_max: 100 },
-          { level_min: 100, level_max: null }
-        ],
-        [
-          { level_min: null, level_max: 99 },
-          { level_min: null, level_max: 99 }
-        ],
-        [
-          { level_min: 1, level_max: null },
-          { level_min: 1, level_max: null }
-        ]
+    it.each(MIGRATIONS)(
+      '%s rewrites the bounds and logs the counts',
+      async (name) => {
+        const log = jest.spyOn(console, 'log').mockImplementation(() => {});
+        await migrate(name);
+        // Counts and bound values only: no group ids, names or creators.
+        expect(log.mock.calls).toEqual([
+          [
+            'levels migration: statement 1 rewrites 5 community_groups rows: ' +
+              '(min 101, max null) x2, (min 110, max null) x1, ' +
+              '(min 150, max null) x1, (min 150, max 200) x1'
+          ],
+          ['levels migration: statement 1 updated 5 community_groups rows'],
+          [
+            'levels migration: statement 2 rewrites 9 community_groups rows: ' +
+              '(min null, max 100) x4, (min null, max 120) x1, ' +
+              '(min null, max 150) x1, (min -5, max 100) x1, ' +
+              '(min 50, max 100) x1, (min 100, max 100) x1'
+          ],
+          ['levels migration: statement 2 updated 9 community_groups rows']
+        ]);
+        log.mockClear();
+        const expected = Object.fromEntries(
+          GROUPS.map((spec) => [
+            spec.name,
+            {
+              ...(spec.after ?? boundsBefore(spec)),
+              pure: spec.name === 'list-only'
+            }
+          ])
+        );
+        expect(await storedBounds(groupId(''))).toEqual(expected);
+        // A group keeps a level bound, so none becomes a list-only group.
+        // Running the statements again changes nothing.
+        await migrate(name);
+        expect(await storedBounds(groupId(''))).toEqual(expected);
+        expect(log.mock.calls).toEqual([
+          ['levels migration: statement 1 rewrites 0 community_groups rows'],
+          ['levels migration: statement 1 updated 0 community_groups rows'],
+          ['levels migration: statement 2 rewrites 0 community_groups rows'],
+          ['levels migration: statement 2 updated 0 community_groups rows']
+        ]);
+        log.mockRestore();
+      }
+    );
+
+    it('stores a new save as given', async () => {
+      const saved: Bounds[] = [
+        { level_min: null, level_max: 100 },
+        { level_min: null, level_max: 150 },
+        { level_min: 120, level_max: null },
+        { level_min: 101, level_max: 200 },
+        { level_min: null, level_max: 99 }
       ];
       await userGroupsDb.executeNativeQueriesInTransaction(
         async (connection) => {
           for (let index = 0; index < saved.length; index++) {
-            const [bounds] = saved[index];
             const { is_pure_profile_group: _pure, ...entity } = aUserGroup(
-              { is_direct_message: false, ...bounds },
+              { is_direct_message: false, ...saved[index] },
               { id: `level-bounds-save--${index}`, name: `save ${index}` }
             );
             await userGroupsDb.save(entity, connection);
@@ -402,10 +432,7 @@ describeWithSeed(
       );
       expect(await storedBounds('level-bounds-save--')).toEqual(
         Object.fromEntries(
-          saved.map(([, stored], index) => [
-            `${index}`,
-            { ...stored, pure: false }
-          ])
+          saved.map((bounds, index) => [`${index}`, { ...bounds, pure: false }])
         )
       );
     });
