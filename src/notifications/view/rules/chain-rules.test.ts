@@ -9,7 +9,9 @@ import type {
   WaveCreatedEvent
 } from '@/notifications/view/notification-sources';
 import {
+  creditReleaseId,
   DECISION_COMPLETED_EVENT_TYPE,
+  decisionCompletedEventId,
   deriveDecisionResult,
   deriveEntryReleased,
   derivePollBallot,
@@ -21,6 +23,8 @@ import {
 
 const at = { height: 100, txIndex: 2, blockTimeMs: 1_795_000_000_000 };
 const MAIN_STAGE = '0x' + 'a'.repeat(64);
+const COMPETITION = '00000000-0000-4000-8000-000000000001';
+const SCHEDULED = 1_794_999_000_000;
 
 const rating = (
   over: Partial<RatingChangedEvent> = {}
@@ -147,7 +151,7 @@ describe('chain notification rules', () => {
       ...over
     });
 
-    it('notifies the poll author with the new choices', () => {
+    it('notifies the poll author with the new choices, in option order', () => {
       expect(derivePollBallot(ballot()).rows).toEqual([
         expect.objectContaining({
           identity_id: 'author',
@@ -156,8 +160,8 @@ describe('chain notification rules', () => {
           related_drop_id: 'poll',
           additional_data: {
             poll_options: [
-              { option_no: 2, option_string: 'Two' },
-              { option_no: 1, option_string: 'One' }
+              { option_no: 1, option_string: 'One' },
+              { option_no: 2, option_string: 'Two' }
             ]
           }
         })
@@ -230,8 +234,9 @@ describe('chain notification rules', () => {
       over: Partial<DecisionResultEvent> = {}
     ): DecisionResultEvent => ({
       ...at,
-      decisionId: 'decision',
+      decisionId: COMPETITION,
       occurrence: 3,
+      scheduledAtMs: SCHEDULED,
       waveId: 'wave',
       visibilityGroupId: 'group',
       title: 'Main Stage',
@@ -243,7 +248,7 @@ describe('chain notification rules', () => {
 
     it('notifies the wave followers of a decided result', async () => {
       const group = await deriveDecisionResult(result(), lookups);
-      expect(group.ref).toBe('decision:3');
+      expect(group.ref).toBe(`${COMPETITION}:3`);
       expect(group.rows.map((row) => row.identity_id)).toEqual(['f1', 'f2']);
       expect(group.rows[0]).toEqual(
         expect.objectContaining({
@@ -253,10 +258,10 @@ describe('chain notification rules', () => {
           wave_id: 'wave',
           visibility_group_id: 'group',
           additional_data: {
-            event_id: 'decision:3',
+            event_id: decisionCompletedEventId(COMPETITION, SCHEDULED),
             event_type: DECISION_COMPLETED_EVENT_TYPE,
             wave_id: 'wave',
-            competition_id: 'decision',
+            competition_id: COMPETITION,
             competition_title: 'Main Stage'
           }
         })
@@ -279,7 +284,7 @@ describe('chain notification rules', () => {
     ): EntryReleasedEvent => ({
       ...at,
       entryId: 'entry',
-      decisionId: 'decision',
+      decisionId: COMPETITION,
       decisionTitle: 'Main Stage',
       waveId: 'wave',
       visibilityGroupId: null,
@@ -306,10 +311,10 @@ describe('chain notification rules', () => {
           cause: IdentityNotificationCause.VOTING_CREDITS_RETURNED,
           related_drop_id: null,
           additional_data: {
-            event_id: 'decision:entry',
+            event_id: creditReleaseId(COMPETITION, 'entry'),
             reason: 'WIN',
             wave_id: 'wave',
-            competition_id: 'decision',
+            competition_id: COMPETITION,
             competition_title: 'Main Stage',
             entry_id: 'entry',
             drop_id: 'drop',
@@ -342,7 +347,7 @@ describe('chain notification rules', () => {
       ...at,
       entryId: 'entry',
       chainDecisionId: MAIN_STAGE.toUpperCase().replace('0X', '0x'),
-      decisionId: 'decision',
+      decisionId: COMPETITION,
       decisionTitle: 'Main Stage',
       waveId: 'wave',
       visibilityGroupId: null,
@@ -381,7 +386,7 @@ describe('chain notification rules', () => {
             artist_id: 'artist',
             drop_id: 'drop',
             wave_id: 'wave',
-            competition_id: 'decision',
+            competition_id: COMPETITION,
             entry_id: 'entry',
             competition_title: 'Main Stage',
             artwork_title: 'Artwork',

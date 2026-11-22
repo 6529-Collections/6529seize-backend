@@ -84,6 +84,18 @@ Drop frames (`DROP_UPDATE`, `DROP_DELETE`, reactions and ratings) and `COMPETITI
 
 MEME_COLLABORATION, SUBSCRIPTION_COVERAGE and E2EE_MESSAGE keep their writers until their own records exist.
 
+`notification-view-parity.db.test.ts` checks each derived cause against its old writer: the rule's row, written as the deriver's copy, has the old writer's columns and `additional_data`, except `id`, `created_at` and `read_at`. Which people a rule picks is checked in the rules' own tests.
+
+## Differences from today
+
+- **Time.** A derived row's `created_at` is the event's time (block time, a drop version's effective time, a record's time), not the moment a writer ran.
+- **Ids.** A derived row's id follows its time, not the order rows were written. A drop version that arrives after a later one moves the time of the rows it names first, and so their ids.
+- **Edits.** Today an edit deletes the drop's rows and every row that names it, then writes the drop's rows again: unread, at the edit's time, pushed again, and without the root's group mentions. The drop rule keeps each row with its read state and the time of the version that first named its recipient, keeps the root's group mentions, and pushes only the recipients an edit adds. Rows that name an edited drop (replies, quotes) stay.
+- **Filters.** Today a mute, a block, hidden content or a notification preference stops a row from being written. In `on` they hide it when read: lifting a mute or switching a kind of notification back on shows rows from the meantime, and switching it off hides older ones too. Copies and pushes are filtered as today.
+- **Late rows.** A row derived after a mark-all whose time it predates stays unread.
+
+Deleting a drop or a wave, moderation, and which recipients each cause reaches are as today.
+
 ## The switch
 
 Rows created before the switch keep their `identity_notifications` ids, so clients that remember an id (the desktop app's last-seen id, a push in the tray) see nothing change. The operator steps are in `ops/scripts/notification-view/cli.ts` (`bin/6529 exec ts-node -r tsconfig-paths/register ops/scripts/notification-view/cli.ts <step>`), each resumable and safe to run again:

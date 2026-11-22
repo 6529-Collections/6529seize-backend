@@ -80,8 +80,11 @@ export interface WaveCreatedEvent extends ChainPosition {
 
 /** A decision's result became FINAL. */
 export interface DecisionResultEvent extends ChainPosition {
+  /** The decision's 6529.io competition id (the waves index's id map), shown as competition_id. */
   readonly decisionId: string;
   readonly occurrence: number;
+  /** The occurrence's scheduled time; today's decision id derives from it. */
+  readonly scheduledAtMs: number;
   readonly waveId: string;
   readonly visibilityGroupId: string | null;
   readonly title: string;
@@ -91,7 +94,9 @@ export interface DecisionResultEvent extends ChainPosition {
 
 /** An entry left ACTIVE: it won, or its submitter withdrew it. */
 export interface EntryReleasedEvent extends ChainPosition {
+  /** The entry's 6529.io id. */
   readonly entryId: string;
+  /** The decision's 6529.io competition id, shown as competition_id. */
   readonly decisionId: string;
   readonly decisionTitle: string;
   readonly waveId: string;
@@ -109,7 +114,7 @@ export interface SubmissionCreatedEvent extends ChainPosition {
   readonly entryId: string;
   /** The decision's chain id, matched against MAIN_STAGE_DECISION_IDS. */
   readonly chainDecisionId: string;
-  /** The decision's 6529.io id, shown as competition_id. */
+  /** The decision's 6529.io competition id, shown as competition_id. */
   readonly decisionId: string;
   readonly decisionTitle: string;
   readonly waveId: string;

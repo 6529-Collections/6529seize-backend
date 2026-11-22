@@ -1,3 +1,7 @@
+import {
+  legacyCompetitionDecisionId,
+  stableUuid
+} from '@/competitions/competition-id';
 import { IdentityNotificationCause } from '@/entities/IIdentityNotification';
 import type {
   DerivedGroup,
@@ -16,6 +20,27 @@ import type { NotificationLookups } from '@/notifications/view/rules/notificatio
 
 /** Today's lifecycle notice names this event type; the reader shows only it. */
 export const DECISION_COMPLETED_EVENT_TYPE = 'COMPETITION_DECISION_COMPLETED';
+
+/**
+ * The event id today's decision notice carries: the native competition
+ * event of the decision (native-competition-runtime.repository.ts), whose
+ * decision id comes from the competition and the decision's scheduled time.
+ */
+export function decisionCompletedEventId(
+  competitionId: string,
+  scheduledAtMs: number
+): string {
+  const decisionId = legacyCompetitionDecisionId(competitionId, scheduledAtMs);
+  return stableUuid(competitionId, `event:decision:${decisionId}`);
+}
+
+/** The release id today's credit-return notice carries (voting-credit-returns.db.ts). */
+export function creditReleaseId(
+  competitionId: string,
+  entryId: string
+): string {
+  return stableUuid(competitionId, `credit-release:${entryId}`);
+}
 
 type RowFields = Omit<DerivedNotification, 'identity_id' | 'created_at'>;
 
@@ -152,10 +177,13 @@ export function derivePollBallot(event: PollBallotEvent): DerivedGroup {
         wave_id: event.waveId,
         visibility_group_id: event.visibilityGroupId,
         additional_data: {
-          poll_options: event.newChoices.map((choice) => ({
-            option_no: choice.option_no,
-            option_string: choice.option_string
-          }))
+          // In option order, as drop-polls.api.service.ts lists them.
+          poll_options: [...event.newChoices]
+            .sort((a, b) => a.option_no - b.option_no)
+            .map((choice) => ({
+              option_no: choice.option_no,
+              option_string: choice.option_string
+            }))
         }
       })
     ]
@@ -224,7 +252,10 @@ export async function deriveDecisionResult(
         wave_id: event.waveId,
         visibility_group_id: event.visibilityGroupId,
         additional_data: {
-          event_id: ref,
+          event_id: decisionCompletedEventId(
+            event.decisionId,
+            event.scheduledAtMs
+          ),
           event_type: DECISION_COMPLETED_EVENT_TYPE,
           wave_id: event.waveId,
           competition_id: event.decisionId,
@@ -264,7 +295,7 @@ export async function deriveEntryReleased(
           wave_id: event.waveId,
           visibility_group_id: event.visibilityGroupId,
           additional_data: {
-            event_id: `${event.decisionId}:${event.entryId}`,
+            event_id: creditReleaseId(event.decisionId, event.entryId),
             reason: event.reason,
             wave_id: event.waveId,
             competition_id: event.decisionId,
