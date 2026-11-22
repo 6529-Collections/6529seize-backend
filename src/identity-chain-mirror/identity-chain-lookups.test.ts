@@ -67,6 +67,8 @@ describe('principalInHistory', () => {
     expect(principalInHistory(later, 45)).toBeUndefined();
     expect(principalInHistory(later, 60)).toBe(P2);
     // A gap between 20 and 60: 70 has no change in its range.
+    // A feed held from 2 may lack a change at 1: unknown.
+    expect(principalInHistory(history([[2, 200]]), 5)).toBeUndefined();
     const gap = history([
       [1, 20],
       [60, 200]

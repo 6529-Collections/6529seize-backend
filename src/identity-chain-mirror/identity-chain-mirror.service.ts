@@ -16,6 +16,7 @@ import {
   identityChainMirrorDb,
   IdentityChainMirrorDb,
   MirrorState,
+  numberOrNull,
   RatingEventContext,
   RatingRowWrite
 } from './identity-chain-mirror.db';
@@ -202,30 +203,6 @@ export function feedEffects(records: readonly ChainFeedRecord[]): FeedEffects {
   return effects;
 }
 
-/**
- * Of the existing 6529.io profiles of an identity's wallets, the one it
- * takes over: a real handle first, then the anchor wallet's, then the lowest id.
- */
-export function pickWalletProfile(
-  candidates: { profile_id: string; handle: string; address: string }[],
-  anchor: string | null
-): string | null {
-  const real = (it: { handle: string }) =>
-    Number(!it.handle.toLowerCase().startsWith('id-0x'));
-  const sorted = [...candidates].sort(
-    (a, b) =>
-      real(b) - real(a) ||
-      Number(b.address === anchor) - Number(a.address === anchor) ||
-      compareText(a.profile_id, b.profile_id)
-  );
-  return sorted[0]?.profile_id ?? null;
-}
-
-function compareText(a: string, b: string): number {
-  if (a < b) return -1;
-  return a > b ? 1 : 0;
-}
-
 /** Merged, closing or walletless: nothing of it is written. */
 export function isInactive(identity: ChainIdentity): boolean {
   return (
@@ -233,10 +210,6 @@ export function isInactive(identity: ChainIdentity): boolean {
     !identity.wallets.length ||
     (!!identity.status && identity.status.toLowerCase() !== 'active')
   );
-}
-
-function numberOrNull(value: unknown): number | null {
-  return value === null || value === undefined ? null : Number(value);
 }
 
 function toNumber(value: string | number | null | undefined): number {
@@ -258,7 +231,6 @@ function toNumber(value: string | number | null | undefined): number {
 export class IdentityChainMirror {
   private readonly identities = new Map<string, ChainIdentity | null>();
   private keyWidth = MAX_CONSOLIDATION_KEY_LENGTH;
-  private importStartHeight: number | null = null;
 
   constructor(
     private readonly gateway: Gateway = chainGatewayClient,
@@ -319,18 +291,25 @@ export class IdentityChainMirror {
     this.identities.clear();
     const membership = await this.gateway.getMembership();
     const importState = membership?.import as
-      | { completed?: boolean; startHeight?: number | null }
+      | {
+          completed?: boolean;
+          startHeight?: number | null;
+          fileHash?: string | null;
+        }
       | undefined;
     if (!importState?.completed) {
       report.skipped = 'import_not_complete';
       return report;
     }
-    this.importStartHeight = numberOrNull(importState.startHeight);
     this.keyWidth =
       (await this.db.consolidationKeyWidth()) ?? MAX_CONSOLIDATION_KEY_LENGTH;
     let state = (await this.db.getState()) ?? this.emptyState();
     state = await this.followBindings(
       state,
+      {
+        startHeight: numberOrNull(importState.startHeight),
+        fileHash: importState.fileHash?.toLowerCase() ?? null
+      },
       Math.min(deadline, this.now() + budgetMs * BINDINGS_SHARE),
       report
     );
@@ -371,7 +350,8 @@ export class IdentityChainMirror {
       sync_phase: null,
       sync_after: null,
       last_full_sync_at: null,
-      bindings_next_height: null
+      bindings_next_height: null,
+      bindings_chain: null
     };
   }
 
@@ -399,19 +379,79 @@ export class IdentityChainMirror {
    * The wallet bindings follow the feed's AddressBinding records with their
    * own cursor, from the import's first block. Rows are written before the
    * cursor moves, so the table is never behind the height it claims (rows
-   * ahead of it only send a lookup to the chain). When the gateway no
-   * longer holds the cursor's height, or the import's start is unknown,
-   * they are rebuilt from the membership list.
+   * ahead of it only send a lookup to the chain). They start again, empty,
+   * when read from another chain or when the cursor is past the chain's
+   * finalized height (a relaunch). When the gateway no longer holds the
+   * cursor's height, or the import's start is unknown, they are rebuilt from
+   * the membership list. A failure here is reported and the identity tables
+   * go on.
    */
   private async followBindings(
+    initial: MirrorState,
+    chain: { startHeight: number | null; fileHash: string | null },
+    deadline: number,
+    report: MirrorRunReport
+  ): Promise<MirrorState> {
+    let state = initial;
+    try {
+      state = await this.bindingsOfThisChain(state, chain.fileHash);
+      if (state.bindings_next_height !== null) {
+        return await this.readBindings(state, deadline, report);
+      }
+      if (chain.startHeight === null) {
+        return await this.rebuildBindings(state, report);
+      }
+      // Lookups trust no row without a cursor: start from an empty table.
+      await this.db.executeNativeQueriesInTransaction((conn) =>
+        this.db.clearWalletBindings(conn)
+      );
+      state = await this.save({
+        ...state,
+        bindings_next_height: chain.startHeight
+      });
+      return await this.readBindings(state, deadline, report);
+    } catch (error) {
+      const message = (error as Error)?.message ?? String(error);
+      logger.error(`[WALLET BINDINGS FAILED] ${message}`);
+      report.bindingProblems.push(message);
+      return (await this.db.getState()) ?? state;
+    }
+  }
+
+  /** The bindings' state, started again when they are of another chain. */
+  private async bindingsOfThisChain(
+    state: MirrorState,
+    fileHash: string | null
+  ): Promise<MirrorState> {
+    const finalized = (await this.gateway.getHead()).finalizedHeight;
+    const otherChain =
+      state.bindings_chain !== null && state.bindings_chain !== fileHash;
+    const pastHead =
+      state.bindings_next_height !== null &&
+      state.bindings_next_height > finalized + 1;
+    if (otherChain || pastHead) {
+      logger.warn(
+        `[WALLET BINDINGS OF ANOTHER CHAIN] [${state.bindings_chain} AT ${state.bindings_next_height}] [STARTING AGAIN]`
+      );
+      return await this.save({
+        ...state,
+        bindings_next_height: null,
+        bindings_chain: fileHash
+      });
+    }
+    return state.bindings_chain === fileHash
+      ? state
+      : await this.save({ ...state, bindings_chain: fileHash });
+  }
+
+  /** Pages of the feed's binding records from the cursor, to the deadline. */
+  private async readBindings(
     initial: MirrorState,
     deadline: number,
     report: MirrorRunReport
   ): Promise<MirrorState> {
     let state = initial;
-    const start = state.bindings_next_height ?? this.importStartHeight;
-    if (start === null) return await this.rebuildBindings(state, report);
-    let from = start;
+    let from = Number(state.bindings_next_height);
     while (this.now() < deadline) {
       const page = await this.feedPage(from, true);
       if (!page) {
@@ -420,7 +460,7 @@ export class IdentityChainMirror {
         );
         return await this.rebuildBindings(state, report);
       }
-      if (page.through < page.from) break;
+      if (page.through < page.from || page.next <= from) break;
       const read = bindingChangesOf(page.blocks);
       await this.applyBindingPage(read, report);
       const next = read.stoppedAt ?? page.next;
@@ -477,16 +517,19 @@ export class IdentityChainMirror {
         bound_from_height: height
       })
     );
-    const deletes = (await this.db.boundWallets()).filter(
-      (it) => !bound.has(it)
-    );
-    await this.db.executeNativeQueriesInTransaction((conn) =>
-      this.db.writeWalletBindings(upserts, deletes, this.now(), conn)
+    const removed = await this.db.executeNativeQueriesInTransaction(
+      async (conn) => {
+        const deletes = (await this.db.boundWallets(conn)).filter(
+          (it) => !bound.has(it)
+        );
+        await this.db.writeWalletBindings(upserts, deletes, this.now(), conn);
+        return deletes.length;
+      }
     );
     logger.info(
-      `[BINDINGS REBUILT AT ${height}] [${upserts.length} BOUND] [${deletes.length} REMOVED]`
+      `[BINDINGS REBUILT AT ${height}] [${upserts.length} BOUND] [${removed} REMOVED]`
     );
-    report.walletBindings += upserts.length + deletes.length;
+    report.walletBindings += upserts.length + removed;
     return await this.save({ ...state, bindings_next_height: height + 1 });
   }
 
@@ -829,18 +872,26 @@ export class IdentityChainMirror {
   }
 
   /**
-   * The 6529.io profile id of a chain identity: its mapping, else the
-   * imported profile (legacy id), else the existing profile of one of its
-   * wallets that no other identity holds, else one derived from its id.
+   * The 6529.io profile id of a chain identity: its mapping, else its legacy
+   * id (an imported identity keeps its 6529.io profile id), else the id
+   * derived from its principal (an identity made on the chain). Both come
+   * from the chain alone, so a rebuild gives the same ids.
    */
   async profileIdOf(identity: ChainIdentity): Promise<string> {
     const principalId = identity.principalId.toLowerCase();
     const mapped = await this.db.profileIdOfPrincipal(principalId);
     if (mapped) return mapped;
-    const { profileId: chosen, origin } = await this.chooseProfileId(identity);
+    const legacy = identity.legacyId?.toLowerCase() ?? null;
+    const chosen = legacy ?? principalProfileId(principalId);
     try {
       await this.db.executeNativeQueriesInTransaction((conn) =>
-        this.db.insertMapping(principalId, chosen, origin, this.now(), conn)
+        this.db.insertMapping(
+          principalId,
+          chosen,
+          legacy ? 'LEGACY' : 'NEW',
+          this.now(),
+          conn
+        )
       );
     } catch (error) {
       // Another run mapped it meanwhile: use that.
@@ -849,46 +900,6 @@ export class IdentityChainMirror {
       throw error;
     }
     return chosen;
-  }
-
-  /**
-   * The imported profile (legacy id), else an existing profile of one of its
-   * wallets that the chain did not import for another identity, else one
-   * derived from the principal id.
-   */
-  private async chooseProfileId(
-    identity: ChainIdentity
-  ): Promise<{ profileId: string; origin: string }> {
-    const principalId = identity.principalId.toLowerCase();
-    const legacy = identity.legacyId?.toLowerCase() ?? null;
-    if (
-      legacy &&
-      (await this.db.profileExists(legacy)) &&
-      !(await this.db.principalOfProfile(legacy))
-    ) {
-      return { profileId: legacy, origin: 'LEGACY' };
-    }
-    const candidates = await this.db.unmappedProfilesOfWallets(
-      identity.wallets.map((it) => it.toLowerCase())
-    );
-    const free: typeof candidates = [];
-    for (const candidate of candidates) {
-      const importedTo = await this.gateway.getIdentityByLegacyProfileId(
-        candidate.profile_id
-      );
-      if (importedTo?.principalId.toLowerCase() === principalId) {
-        return { profileId: candidate.profile_id, origin: 'LEGACY' };
-      }
-      if (!importedTo) free.push(candidate);
-    }
-    const best = pickWalletProfile(
-      free,
-      identity.anchor?.toLowerCase() ?? null
-    );
-    if (best) {
-      return { profileId: best, origin: 'WALLET' };
-    }
-    return { profileId: principalProfileId(principalId), origin: 'NEW' };
   }
 
   /**

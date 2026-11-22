@@ -42,10 +42,12 @@ export interface MirrorState {
   readonly last_full_sync_at: number | null;
   /** The next feed height the wallet bindings read (exact before it). */
   readonly bindings_next_height: number | null;
+  /** The chain the bindings were read from (its import file's hash). */
+  readonly bindings_chain: string | null;
 }
 
 /** A nullable number column. */
-function numberOrNull(value: unknown): number | null {
+export function numberOrNull(value: unknown): number | null {
   return value === null || value === undefined ? null : Number(value);
 }
 
@@ -172,7 +174,7 @@ export class IdentityChainMirrorDb extends LazyDbAccessCompatibleService {
   async getState(conn?: Conn): Promise<MirrorState | null> {
     const row = await this.db.oneOrNull<MirrorState>(
       `select next_height, sync_from_height, sync_phase, sync_after, last_full_sync_at,
-              bindings_next_height
+              bindings_next_height, bindings_chain
        from ${IDENTITY_CHAIN_MIRROR_STATE_TABLE} where id = :id`,
       { id: STATE_ID },
       conn ? { wrappedConnection: conn } : undefined
@@ -184,7 +186,8 @@ export class IdentityChainMirrorDb extends LazyDbAccessCompatibleService {
       sync_phase: row.sync_phase ?? null,
       sync_after: row.sync_after ?? null,
       last_full_sync_at: numberOrNull(row.last_full_sync_at),
-      bindings_next_height: numberOrNull(row.bindings_next_height)
+      bindings_next_height: numberOrNull(row.bindings_next_height),
+      bindings_chain: row.bindings_chain ?? null
     };
   }
 
@@ -192,12 +195,13 @@ export class IdentityChainMirrorDb extends LazyDbAccessCompatibleService {
     await this.db.execute(
       `insert into ${IDENTITY_CHAIN_MIRROR_STATE_TABLE}
          (id, next_height, sync_from_height, sync_phase, sync_after, last_full_sync_at,
-          bindings_next_height, updated_at)
+          bindings_next_height, bindings_chain, updated_at)
        values (:id, :next_height, :sync_from_height, :sync_phase, :sync_after, :last_full_sync_at,
-          :bindings_next_height, :now)
+          :bindings_next_height, :bindings_chain, :now)
        on duplicate key update
          next_height = values(next_height),
          bindings_next_height = values(bindings_next_height),
+         bindings_chain = values(bindings_chain),
          sync_from_height = values(sync_from_height),
          sync_phase = values(sync_phase),
          sync_after = values(sync_after),
@@ -250,36 +254,6 @@ export class IdentityChainMirrorDb extends LazyDbAccessCompatibleService {
       conn ? { wrappedConnection: conn } : undefined
     );
     return row?.principal_id ?? null;
-  }
-
-  async profileExists(profileId: string, conn?: Conn): Promise<boolean> {
-    const row = await this.db.oneOrNull<{ n: number }>(
-      `select 1 as n from ${PROFILES_TABLE} where external_id = :profileId limit 1`,
-      { profileId },
-      conn ? { wrappedConnection: conn } : undefined
-    );
-    return !!row;
-  }
-
-  /**
-   * Profiles of the wallets' current identity rows that no principal holds
-   * yet, with each one's handle and wallet.
-   */
-  async unmappedProfilesOfWallets(
-    wallets: string[],
-    conn?: Conn
-  ): Promise<{ profile_id: string; handle: string; address: string }[]> {
-    if (!wallets.length) return [];
-    return await this.db.execute(
-      `select i.profile_id, p.handle, a.address
-       from ${ADDRESS_CONSOLIDATION_KEY} a
-       join ${IDENTITIES_TABLE} i on i.consolidation_key = a.consolidation_key
-       join ${PROFILES_TABLE} p on p.external_id = i.profile_id
-       left join ${IDENTITY_CHAIN_PRINCIPALS_TABLE} m on m.profile_id = i.profile_id
-       where a.address in (:wallets) and m.principal_id is null`,
-      { wallets },
-      conn ? { wrappedConnection: conn } : undefined
-    );
   }
 
   async insertMapping(
@@ -387,6 +361,13 @@ export class IdentityChainMirrorDb extends LazyDbAccessCompatibleService {
       profileId,
       conn
     ));
+    const credits = await this.db.oneOrNull<{ total: number | string | null }>(
+      `select sum(rating) as total from ${RATINGS_TABLE}
+       where matter_target_id = :profileId and matter = 'REP'
+         and matter_category = :helpBot`,
+      { profileId, helpBot: HELP_BOT_CREDIT_CATEGORY },
+      { wrappedConnection: conn }
+    );
     return {
       rows: rows.map((row) => ({
         ...row,
@@ -403,7 +384,8 @@ export class IdentityChainMirrorDb extends LazyDbAccessCompatibleService {
       walletsByKey,
       profile,
       handleHolder,
-      placeholderTaken
+      placeholderTaken,
+      helpBotCredits: numberOf(credits?.total)
     };
   }
 
@@ -968,6 +950,15 @@ export class IdentityChainMirrorDb extends LazyDbAccessCompatibleService {
           }
         : null;
     return { binding, nextHeight: numberOrNull(row?.bindings_next_height) };
+  }
+
+  /** Every binding goes (the bindings start again). */
+  async clearWalletBindings(conn: Conn) {
+    await this.db.execute(
+      `delete from ${IDENTITY_CHAIN_WALLETS_TABLE}`,
+      undefined,
+      { wrappedConnection: conn }
+    );
   }
 
   /** Every wallet with a stored binding (a rebuild's reconciliation). */

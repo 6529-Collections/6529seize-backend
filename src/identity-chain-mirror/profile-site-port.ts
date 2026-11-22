@@ -150,6 +150,11 @@ export class GatewayProfileSitePort implements ProfileSiteChainPort {
     ) => Promise<string | null>
   ) {}
 
+  /**
+   * Profile writes from `fromHeight`. A height the gateway's feed no longer
+   * holds (before its first, or in a gap) throws its `gone` refusal: the
+   * index starts from a height the feed holds, such as the import's start.
+   */
   async getChanges(fromHeight: number): Promise<ProfileSiteChangesPage> {
     const page = await this.gateway.getChanges(fromHeight, {
       limit: FEED_PAGE_BLOCKS,
@@ -179,7 +184,10 @@ export class GatewayProfileSitePort implements ProfileSiteChainPort {
   private async settleSource(
     change: ProfileSiteChange
   ): Promise<ProfileSiteChange> {
-    const imported = await this.getImportedProfileDocCid(change.principal);
+    const imported =
+      change.version === 1
+        ? await this.getImportedProfileDocCid(change.principal)
+        : null;
     const source =
       imported !== null && imported === change.doc_cid ? 'import' : 'operation';
     return { ...change, source };

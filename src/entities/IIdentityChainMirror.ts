@@ -87,6 +87,13 @@ export class IdentityChainMirrorStateEntity {
   @Column({ type: 'bigint', nullable: true, default: null })
   readonly bindings_next_height!: number | null;
 
+  /**
+   * The chain the wallet bindings were read from (its import file's hash):
+   * read from another chain (a relaunch), they start again.
+   */
+  @Column({ type: 'varchar', length: 80, nullable: true, default: null })
+  readonly bindings_chain!: string | null;
+
   @Column({ type: 'bigint', nullable: false })
   readonly updated_at!: number;
 }

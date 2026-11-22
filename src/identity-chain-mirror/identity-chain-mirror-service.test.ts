@@ -19,7 +19,6 @@ import { WalletBindingRow } from './wallet-bindings';
 import {
   feedEffects,
   IdentityChainMirror,
-  pickWalletProfile,
   toDelegationRow
 } from './identity-chain-mirror.service';
 import {
@@ -93,6 +92,9 @@ class FakeDb {
   async boundWallets() {
     return Array.from(this.bindings.keys());
   }
+  async clearWalletBindings() {
+    this.bindings.clear();
+  }
   async walletBindingAt(wallet: string) {
     return {
       binding: this.bindings.get(wallet) ?? null,
@@ -121,23 +123,6 @@ class FakeDb {
       if (m.profile === profile) return p;
     }
     return null;
-  }
-  async profileExists(profile: string) {
-    return this.profiles.has(profile);
-  }
-  async unmappedProfilesOfWallets(wallets: string[]) {
-    const mapped = new Set(
-      Array.from(this.mapping.values()).map((it) => it.profile)
-    );
-    return wallets.flatMap((address) => {
-      const row = this.rows.get(this.addressKeys.get(address) ?? '');
-      const profile = row?.profile_id
-        ? this.profiles.get(row.profile_id)
-        : null;
-      return profile && !mapped.has(profile.external_id)
-        ? [{ profile_id: profile.external_id, handle: profile.handle, address }]
-        : [];
-    });
   }
   async insertMapping(p: string, profile: string, origin: string) {
     this.mapping.set(p, { profile, origin });
@@ -268,6 +253,7 @@ function delegation(
 function world(followers: ProfileSiteFollower[] = []) {
   const alice = chainIdentity(PID(1), [A, B], {
     handle: 'alice',
+    legacyId: ALICE_PROFILE,
     rep: { total: '5', raters: 1 },
     level: {
       level: 6,
@@ -304,6 +290,7 @@ function world(followers: ProfileSiteFollower[] = []) {
     feed: [] as ChainFeedPage[],
     importCompleted: true,
     importStart: null as number | null,
+    fileHash: '0x' + 'f1'.repeat(32),
     finalized: 100
   };
   const gateway = {
@@ -316,7 +303,8 @@ function world(followers: ProfileSiteFollower[] = []) {
     getMembership: jest.fn(async () => ({
       import: {
         completed: chain.importCompleted,
-        startHeight: chain.importStart
+        startHeight: chain.importStart,
+        fileHash: chain.fileHash
       }
     })),
     listMembershipWallets: jest.fn(async (opts: { height?: number }) => ({
@@ -817,7 +805,7 @@ describe('IdentityChainMirror', () => {
     const { mirror, db, chain, gateway, alice } = world();
     chain.importStart = 1;
     const first = await mirror.run({ budgetMs: 60_000 });
-    expect(first.bindingsNextHeight).toBeNull();
+    expect(first.bindingsNextHeight).toBe(1);
     expect(gateway.listIdentities).toHaveBeenCalled();
     chain.feed.push({
       from: 1,
@@ -856,6 +844,78 @@ describe('IdentityChainMirror', () => {
     expect(report.bindingsNextHeight).toBe(105);
     expect(db.bindings.get(C)?.bound_from_height).toBe(100);
     expect(report.nextHeight).toBe(111);
+  });
+
+  it('starts the bindings again on another chain, or past its head', async () => {
+    const { mirror, db, chain } = world();
+    await mirror.run({ budgetMs: 60_000 });
+    expect(db.state?.bindings_chain).toBe(chain.fileHash);
+    db.bindings.set(W(9), {
+      wallet: W(9),
+      principal_id: PID(9),
+      bound_from_height: 50
+    });
+    // A relaunch: another import file, and the cursor past the new head.
+    chain.fileHash = '0x' + 'f2'.repeat(32);
+    chain.finalized = 20;
+    chain.importStart = 1;
+    const report = await mirror.run({ budgetMs: 60_000 });
+    expect(db.state?.bindings_chain).toBe(chain.fileHash);
+    expect(db.bindings.has(W(9))).toBe(false);
+    expect(report.bindingsNextHeight).toBe(1);
+    // Same chain, cursor past the head (a gateway serving another network).
+    db.state = { ...db.state!, bindings_next_height: 500 };
+    db.bindings.set(W(9), {
+      wallet: W(9),
+      principal_id: PID(9),
+      bound_from_height: 50
+    });
+    await mirror.run({ budgetMs: 60_000 });
+    expect(db.bindings.has(W(9))).toBe(false);
+  });
+
+  it('reports a bindings failure and goes on with the identities', async () => {
+    const { mirror, db, gateway } = world();
+    gateway.listMembershipWallets.mockRejectedValueOnce(
+      new Error('membership read failed')
+    );
+    const report = await mirror.run({ budgetMs: 60_000 });
+    expect(report.bindingProblems).toEqual(['membership read failed']);
+    expect(report.bindingsNextHeight).toBeNull();
+    expect(db.state?.next_height).toBe(101);
+  });
+
+  it('keeps the cursor when writing the rows fails', async () => {
+    const { mirror, db, chain, alice } = world();
+    chain.importStart = 1;
+    chain.feed.push({
+      from: 1,
+      through: 10,
+      next: 11,
+      blocks: [block(2, [bind(A, alice.principalId)])]
+    });
+    const write = jest
+      .spyOn(db, 'writeWalletBindings')
+      .mockRejectedValueOnce(new Error('deadlock'));
+    const report = await mirror.run({ budgetMs: 60_000 });
+    expect(report.bindingProblems).toEqual(['deadlock']);
+    expect(db.state?.bindings_next_height).toBe(1);
+    write.mockRestore();
+    await mirror.run({ budgetMs: 60_000 });
+    expect(db.state?.bindings_next_height).toBe(11);
+    expect(db.bindings.get(A)?.bound_from_height).toBe(2);
+  });
+
+  it('refuses a membership list page read at another height', async () => {
+    const { mirror, db, gateway, chain } = world();
+    gateway.listMembershipWallets.mockImplementationOnce(async () => ({
+      items: [{ wallet: A, principalId: PID(1) }],
+      next: null,
+      read: { height: chain.finalized - 5 } as never
+    }));
+    const report = await mirror.run({ budgetMs: 60_000 });
+    expect(report.bindingsNextHeight).toBeNull();
+    expect(db.bindings.size).toBe(0);
   });
 
   it('runs the profile site followers when asked, after a full sync', async () => {
@@ -975,28 +1035,6 @@ describe('toDelegationRow', () => {
         })
       )
     ).toBeNull();
-  });
-});
-
-describe('pickWalletProfile', () => {
-  it('prefers a real handle, then the anchor wallet, then the lowest id', () => {
-    const placeholderAnchor = {
-      profile_id: 'b',
-      handle: `id-${A}`,
-      address: A
-    };
-    const placeholderOther = { profile_id: 'a', handle: `id-${B}`, address: B };
-    const real = { profile_id: 'c', handle: 'carol', address: C };
-    expect(
-      pickWalletProfile([placeholderAnchor, placeholderOther, real], A)
-    ).toBe('c');
-    expect(pickWalletProfile([placeholderOther, placeholderAnchor], A)).toBe(
-      'b'
-    );
-    expect(pickWalletProfile([placeholderAnchor, placeholderOther], null)).toBe(
-      'a'
-    );
-    expect(pickWalletProfile([], A)).toBeNull();
   });
 });
 

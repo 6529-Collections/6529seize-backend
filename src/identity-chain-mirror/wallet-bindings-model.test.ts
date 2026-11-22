@@ -9,8 +9,9 @@ import {
 /**
  * A model of the bindings table: random binding histories, read in pages
  * of random size, sometimes rebuilt from a membership list at a random
- * height. After every step, a row must never say a wallet was bound to a
- * principal at a height where it wasn't, for any height the table claims.
+ * height. After every step, every wallet bound at the last height read has
+ * a row, and each row's bound-from height is exactly the start of the
+ * wallet's unbroken binding, or the rebuild's height when that came later.
  */
 
 const WALLETS = [1, 2, 3].map((n) => `0x${n.toString(16).padStart(40, '0')}`);
@@ -65,19 +66,43 @@ function truth(
   return principal;
 }
 
+/** The start of the wallet's unbroken binding at `height`, if bound. */
+function boundSince(
+  blocks: ChainFeedBlock[],
+  wallet: string,
+  height: number
+): number | null {
+  const principal = truth(blocks, wallet, height);
+  if (principal === null) return null;
+  let since = height;
+  while (since > 1 && truth(blocks, wallet, since - 1) === principal) since--;
+  return since;
+}
+
 function checkRows(
   rows: Map<string, WalletBindingRow>,
   blocks: ChainFeedBlock[],
-  nextHeight: number
+  nextHeight: number,
+  rebuiltAt: number | null
 ) {
-  for (const row of Array.from(rows.values())) {
-    for (let h = row.bound_from_height; h < nextHeight; h++) {
-      expect([row.wallet, h, truth(blocks, row.wallet, h)]).toEqual([
-        row.wallet,
-        h,
-        row.principal_id
-      ]);
+  const last = nextHeight - 1;
+  for (const wallet of WALLETS) {
+    const principal = last >= 1 ? truth(blocks, wallet, last) : null;
+    const row = rows.get(wallet) ?? null;
+    if (principal === null) {
+      expect([wallet, row]).toEqual([wallet, null]);
+      continue;
     }
+    const since = boundSince(blocks, wallet, last)!;
+    expect([wallet, row]).toEqual([
+      wallet,
+      {
+        wallet,
+        principal_id: principal,
+        bound_from_height:
+          rebuiltAt !== null && since <= rebuiltAt ? rebuiltAt : since
+      }
+    ]);
   }
 }
 
@@ -105,6 +130,7 @@ describe('the wallet bindings model', () => {
           const rows = new Map<string, WalletBindingRow>();
           let next = 1;
           let pages = 0;
+          let rebuiltAt: number | null = null;
           while (next <= LAST) {
             if (rebuildAt !== null && next <= rebuildAt && pages === 2) {
               // The feed is gone: list the membership at rebuildAt.
@@ -120,6 +146,7 @@ describe('the wallet bindings model', () => {
                 }
               }
               next = rebuildAt + 1;
+              rebuiltAt = rebuildAt;
             } else {
               const size = pageSizes[pages % pageSizes.length];
               const through = Math.min(LAST, next + size - 1);
@@ -132,7 +159,7 @@ describe('the wallet bindings model', () => {
               next = through + 1;
             }
             pages++;
-            checkRows(rows, blocks, next);
+            checkRows(rows, blocks, next, rebuiltAt);
           }
         }
       ),

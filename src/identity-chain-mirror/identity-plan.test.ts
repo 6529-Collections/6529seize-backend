@@ -286,13 +286,26 @@ describe('planIdentity', () => {
 });
 
 describe('principalProfileId', () => {
-  it('derives the same UUID for the same principal', () => {
-    const id = principalProfileId(P);
-    expect(id).toMatch(
-      /^[0-9a-f]{8}-[0-9a-f]{4}-8[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
+  it("writes the principal id's first 16 bytes as a UUID", () => {
+    const principal = '0x00112233445566778899aabbccddeeff' + 'ab'.repeat(16);
+    expect(principalProfileId(principal)).toBe(
+      '00112233-4455-6677-8899-aabbccddeeff'
     );
-    expect(principalProfileId(P.toUpperCase().replace('0X', '0x'))).toBe(id);
-    expect(principalProfileId('0x' + 'cd'.repeat(32))).not.toBe(id);
+    expect(
+      principalProfileId(principal.toUpperCase().replace('0X', '0x'))
+    ).toBe('00112233-4455-6677-8899-aabbccddeeff');
+    expect(() => principalProfileId('0x1234')).toThrow('Not a principal id');
+  });
+
+  it("adds the help bot's credits kept on 6529.io to rep and level", () => {
+    const plan = planIdentity(chain(), state({ helpBotCredits: 7 }));
+    expect(plan.identity.rep).toBe(30 + 7);
+    expect(plan.identity.level_raw).toBe(1234 + 7);
+    const noLevel = planIdentity(
+      chain({ levelRaw: null }),
+      state({ helpBotCredits: 7 })
+    );
+    expect(noLevel.identity.level_raw).toBe(30 + 1000 + 5 + 7);
   });
 
   it("keeps another identity's row on its remaining wallets", () => {

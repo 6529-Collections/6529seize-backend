@@ -1,4 +1,3 @@
-import { createHash } from 'node:crypto';
 import { consolidationTools } from '@/consolidation-tools';
 import type { MembershipChange } from './membership-change';
 import { ProfileDocFields, ProfileDocStatement } from './profile-doc';
@@ -86,6 +85,11 @@ export interface CurrentIdentityState {
   } | null;
   /** Whether another profile holds the placeholder `id-<primary>`. */
   readonly placeholderTaken: boolean;
+  /**
+   * The help bot's credits the profile received (REP in its reserved
+   * category): not on the chain, kept on 6529.io and added to its totals.
+   */
+  readonly helpBotCredits?: number;
 }
 
 export type ProfileWrite = Omit<ProfileRowState, 'external_id'> & {
@@ -156,18 +160,15 @@ export function placeholderHandle(wallet: string): string {
 }
 
 /**
- * The 6529.io profile id of a chain identity that has none (one made on the
- * chain): a UUID derived from the principal id, so a rebuild gives the same.
+ * The 6529.io profile id of an identity made on the chain (an imported one
+ * keeps its legacy id): the principal id's first 16 bytes written as a UUID,
+ * so a rebuild from the chain gives the same ids.
  */
 export function principalProfileId(principalId: string): string {
-  const digest = createHash('sha256')
-    .update('6529.ChainProfileId.v1')
-    .update(Buffer.from(principalId.toLowerCase().replace(/^0x/, ''), 'hex'))
-    .digest();
-  const bytes = Buffer.from(digest.subarray(0, 16));
-  bytes[6] = (bytes[6] & 0x0f) | 0x80; // version 8: custom
-  bytes[8] = (bytes[8] & 0x3f) | 0x80; // RFC 4122 variant
-  const hex = bytes.toString('hex');
+  const hex = principalId.toLowerCase().replace(/^0x/, '').slice(0, 32);
+  if (!/^[0-9a-f]{32}$/.test(hex)) {
+    throw new Error(`Not a principal id: ${principalId}`);
+  }
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
@@ -348,15 +349,17 @@ export function planIdentity(
   const doc = chain.doc;
   const ownRow = state.rows.find((it) => it.profile_id === chain.profileId);
   const metrics = carriedMetrics(chain, state.rows);
+  const credits = state.helpBotCredits ?? 0;
   const levelRaw =
-    chain.levelRaw ?? chain.rep + Number(metrics.tdh) + Number(metrics.xtdh);
+    (chain.levelRaw ?? chain.rep + Number(metrics.tdh) + Number(metrics.xtdh)) +
+    credits;
   const identity: IdentityRowState = {
     consolidation_key: key,
     profile_id: chain.profileId,
     primary_address: primary,
     handle,
     normalised_handle: normalised,
-    rep: chain.rep,
+    rep: chain.rep + credits,
     cic: chain.cic,
     level_raw: levelRaw,
     pfp: docColumn(

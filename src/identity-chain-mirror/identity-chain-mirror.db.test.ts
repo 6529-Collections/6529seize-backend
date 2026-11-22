@@ -133,25 +133,18 @@ describeWithSeed(
           sync_phase: null,
           sync_after: null,
           last_full_sync_at: 5,
-          bindings_next_height: null
+          bindings_next_height: null,
+          bindings_chain: null
         },
         9
       );
       expect(await db.getState()).toEqual(
         expect.objectContaining({ next_height: 101, last_full_sync_at: 5 })
       );
-      expect(
-        (await db.unmappedProfilesOfWallets([A, C]))
-          .map((it) => it.profile_id)
-          .sort()
-      ).toEqual([ALICE, PLACE].sort());
-      await inTx((conn) => db.insertMapping(P, ALICE, 'WALLET', 1, conn));
+      await inTx((conn) => db.insertMapping(P, ALICE, 'LEGACY', 1, conn));
       expect(await db.profileIdOfPrincipal(P)).toBe(ALICE);
       expect(await db.principalOfProfile(ALICE)).toBe(P);
       expect(await db.principalsOfWallets([B])).toEqual([P]);
-      expect(
-        (await db.unmappedProfilesOfWallets([A, C])).map((it) => it.profile_id)
-      ).toEqual([PLACE]);
     });
 
     it('applies a join: one row for the three wallets, pairs, the handle', async () => {
@@ -165,6 +158,8 @@ describeWithSeed(
         );
         expect(state.handleHolder).toBeNull();
         expect(state.placeholderTaken).toBe(false);
+        // The help bot's credit to Alice stays on 6529.io and counts.
+        expect(state.helpBotCredits).toBe(10);
         expect(state.rows.map((it) => it.consolidation_key).sort()).toEqual(
           [AB, C].sort()
         );
@@ -203,7 +198,7 @@ describeWithSeed(
           handle: 'Alice'
         })
       ]);
-      expect(Number(rows[0].level_raw)).toBe(503);
+      expect(Number(rows[0].level_raw)).toBe(503 + 10);
       expect(Number(rows[0].tdh)).toBe(500);
       const keys = await sqlExecutor.execute<any>(
         `select address, consolidation_key from ${ADDRESS_CONSOLIDATION_KEY} order by address`
@@ -256,6 +251,9 @@ describeWithSeed(
         db.writeWalletBindings([row(B, 7)], [A, C], 10, conn)
       );
       expect(await db.boundWallets()).toEqual([B]);
+      await inTx((conn) => db.clearWalletBindings(conn));
+      expect(await db.boundWallets()).toEqual([]);
+      await inTx((conn) => db.writeWalletBindings([row(B, 7)], [], 11, conn));
       expect(await db.walletBindings([A, B])).toEqual(
         new Map([[B, row(B, 7)]])
       );
@@ -271,7 +269,8 @@ describeWithSeed(
           sync_phase: null,
           sync_after: null,
           last_full_sync_at: 1,
-          bindings_next_height: 12
+          bindings_next_height: 12,
+          bindings_chain: '0xabc'
         },
         1
       );
@@ -333,9 +332,9 @@ describeWithSeed(
         basetdh_rate: 0,
         xtdh: 0,
         xtdh_rate: 0,
-        rep: 7,
+        rep: 7 + 10,
         cic: 2,
-        level_raw: 507
+        level_raw: 507 + 10
       });
     });
 

@@ -884,11 +884,14 @@ NFTDelegation work. It keeps `profiles`, `identities`,
 working: a full sync (every six hours, and when the feed no longer holds its
 height) walks every identity, delegation and pair; between full syncs it
 follows the gateway's change feed. `identity_chain_principals` maps each
-principal to the 6529.io profile id its rows use; `identity_chain_mirror_state`
+principal to the 6529.io profile id its rows use (an imported identity's
+legacy id, else the principal id's first 16 bytes written as a UUID, so a
+rebuild from the chain gives the same ids); `identity_chain_mirror_state`
 holds its place in the feed. Profile documents come from the gateway's store.
 
 One writer per `identities` column: the mirror writes `rep`, `cic`,
-`level_raw` and the profile columns; it never updates `tdh`, `basetdh_rate`
+`level_raw` and the profile columns (`rep` and `level_raw` are the chain's
+plus the help bot's credits, which stay on 6529.io and not on the chain); it never updates `tdh`, `basetdh_rate`
 or the xTDH columns of a row that exists (the TDH and xTDH loops own them),
 and a row it creates for a new consolidation key starts from the profile's
 previous values. When wallets change keys, the mirror calls the handlers in
@@ -902,7 +905,9 @@ value, total after, chain height, FEED or FULL_SYNC) for notifications.
 `identity_chain_wallets` holds each bound wallet's principal and the chain
 height it has been bound to that principal since. It follows the feed's
 AddressBinding records with its own cursor (`bindings_next_height`), from the
-import's first block; rows are written before the cursor moves. When the
+import's first block; rows are written before the cursor moves. They start
+again, empty, when read from another chain (`bindings_chain`, the import
+file's hash) or when the cursor is past the chain's head. When the
 gateway no longer holds the cursor's height it lists the membership at one
 pinned height and stores every wallet as bound since then: later than the
 truth, never earlier. `IdentityChainLookups` (`identity-chain-lookups.ts`)
