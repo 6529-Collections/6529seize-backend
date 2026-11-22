@@ -287,7 +287,7 @@ describe('ChainGatewayClient reads', () => {
         status: 200,
         json: {
           read: stamp(5, 'head'),
-          data: { status: 'pending' },
+          data: { txId: TX, status: 'pending' },
           next: null
         }
       }))
@@ -519,7 +519,11 @@ describe('ChainGatewayClient reads', () => {
         ready
           ? {
               status: 200,
-              json: { read: stamp(100), data: { tdh: '5' }, next: null }
+              json: {
+                read: stamp(100),
+                data: { wallet: '0x' + '01'.repeat(20), tdh: '5' },
+                next: null
+              }
             }
           : {
               status: 404,
@@ -537,7 +541,7 @@ describe('ChainGatewayClient reads', () => {
     expect(
       (await client.getTdh({ wallet: '0x' + '01'.repeat(20) }, { height: 100 }))
         ?.data
-    ).toEqual({ tdh: '5' });
+    ).toEqual({ wallet: '0x' + '01'.repeat(20), tdh: '5' });
   });
 
   it('reads the membership summary and a proof without its state proof again', async () => {
@@ -1145,6 +1149,168 @@ describe('ChainGatewayClient reads', () => {
     }
   );
 
+  it.each([
+    [
+      'a state record of another key',
+      (c: ChainGatewayClient) => c.getState('0x0102', { height: 10 }),
+      { key: '0x0103' }
+    ],
+    [
+      'a proof of another key',
+      (c: ChainGatewayClient) => c.getProof('0x0102', { height: 10 }),
+      { key: '0x0103', stateProof: '0x' }
+    ],
+    [
+      'another transaction',
+      (c: ChainGatewayClient) => c.getTx(TX),
+      { txId: '0x' + 'bb'.repeat(32), status: 'pending' }
+    ],
+    [
+      'ratings of another target',
+      (c: ChainGatewayClient) => c.getRatings({ target: PA }, { height: 10 }),
+      [{ rater: P01, target: P02, matter: 'rep' }]
+    ],
+    [
+      'ratings of another matter',
+      (c: ChainGatewayClient) =>
+        c.getRatings({ rater: P01, matter: 'rep' }, { height: 10 }),
+      [{ rater: P01, target: PA, matter: 'nic' }]
+    ],
+    [
+      'delegations of another holder',
+      (c: ChainGatewayClient) =>
+        c.getDelegations({ holder: WALLET1 }, { height: 10 }),
+      [{ holder: '0x' + '02'.repeat(20), useCase: 1 }]
+    ],
+    [
+      'delegations outside the filter',
+      (c: ChainGatewayClient) =>
+        c.getDelegations({ byUseCase: 3, collection: WALLET1 }, { height: 10 }),
+      [{ useCase: 3, collection: '0x' + '02'.repeat(20) }]
+    ],
+    [
+      'an expired delegation when live ones were asked',
+      (c: ChainGatewayClient) =>
+        c.getDelegations({ byUseCase: 3, live: true }, { height: 10 }),
+      [{ useCase: 3, expired: true }]
+    ],
+    [
+      'a membership day of another day',
+      (c: ChainGatewayClient) => c.getMembershipDay(26, { height: 10 }),
+      { record: { day: 25 }, saved: null }
+    ],
+    [
+      "another day's wallets",
+      (c: ChainGatewayClient) => c.listMembershipDayWallets(26, { height: 10 }),
+      { record: { day: 25 }, wallets: [] }
+    ],
+    [
+      'a TDH day of another day',
+      (c: ChainGatewayClient) =>
+        c.getTdh({ day: 26, list: 'wallets' }, { height: 10 }),
+      { day: 25, rows: [] }
+    ],
+    [
+      'rating totals that are no list',
+      (c: ChainGatewayClient) => c.getRatingTotals(PA, { height: 10 }),
+      { matter: 'rep' }
+    ],
+    [
+      "a wallet's delegations that are no list",
+      (c: ChainGatewayClient) =>
+        c.getDelegationsOfWallet('0x' + '01'.repeat(20), { height: 10 }),
+      { records: [] }
+    ]
+  ])('refuses %s, and keeps nothing of it', async (_name, ask, data) => {
+    const { client, calls } = setup(
+      withStatus(
+        (call) => ({
+          status: 200,
+          json: {
+            read: param(call, 'at') === 'head' ? stamp(10, 'head') : stamp(10),
+            data,
+            next: null
+          }
+        }),
+        10
+      )
+    );
+    await expect(ask(client)).rejects.toMatchObject({ code: 'bad_answer' });
+    await expect(ask(client)).rejects.toMatchObject({ code: 'bad_answer' });
+    expect(reads(calls)).toHaveLength(2);
+  });
+
+  it.each([
+    ['a dot', '.'],
+    ['two dots', '..'],
+    ['a slash', 'a/b']
+  ])(
+    'answers a handle of %s as invalid without asking',
+    async (_name, handle) => {
+      const { client, calls } = setup(withStatus(() => new Error('not asked')));
+      expect(await client.getHandle(handle)).toEqual(
+        expect.objectContaining({
+          valid: false,
+          available: false,
+          status: 'invalid'
+        })
+      );
+      await expect(client.getIdentityByHandle(handle)).rejects.toMatchObject({
+        code: 'bad_request'
+      });
+      expect(calls).toHaveLength(0);
+    }
+  );
+
+  it.each([
+    [
+      'two wallets in one',
+      (c: ChainGatewayClient) =>
+        c.getIdentitiesByWallets([`${WALLET1},${WALLET1}`])
+    ],
+    [
+      'a negative height',
+      (c: ChainGatewayClient) => c.getLevel(PA, { height: -1 })
+    ],
+    [
+      'a fractional height',
+      (c: ChainGatewayClient) => c.getLevel(PA, { height: 1.5 })
+    ],
+    [
+      'a negative limit',
+      (c: ChainGatewayClient) => c.listIdentities({ limit: -1 })
+    ],
+    ['a fractional day', (c: ChainGatewayClient) => c.getMembershipDay(2.5)],
+    ['a negative TDH day', (c: ChainGatewayClient) => c.getTdh({ day: -1 })],
+    [
+      'a negative use case filter',
+      (c: ChainGatewayClient) =>
+        c.getDelegations({ holder: WALLET1, useCase: -1 })
+    ],
+    [
+      'a short collection filter',
+      (c: ChainGatewayClient) =>
+        c.getDelegations({ holder: WALLET1, collection: '0x01' })
+    ],
+    [
+      'a short delegate filter',
+      (c: ChainGatewayClient) =>
+        c.getDelegations({ holder: WALLET1, delegate: '0x01' })
+    ]
+  ])('refuses %s before asking', async (_name, ask) => {
+    const { client, calls } = setup(withStatus(() => new Error('not asked')));
+    await expect(ask(client)).rejects.toMatchObject({ code: 'bad_request' });
+    expect(calls).toHaveLength(0);
+  });
+
+  it("refuses a document over the store's size before uploading it", async () => {
+    const { client, calls } = setup(() => new Error('not asked'));
+    await expect(
+      client.putDocument(Buffer.alloc(2 * 1024 * 1024 + 1))
+    ).rejects.toMatchObject({ code: 'bad_request' });
+    expect(calls).toHaveLength(0);
+  });
+
   it('refuses an empty 200 as an answer it cannot read', async () => {
     const { client } = setup(withStatus(() => ({ status: 200 }), 10));
     await expect(client.getLevel(P01, { height: 10 })).rejects.toMatchObject({
@@ -1152,7 +1318,7 @@ describe('ChainGatewayClient reads', () => {
       status: 200
     });
     await expect(client.submit({ signed: '0x00' })).rejects.toMatchObject({
-      code: 'bad_answer'
+      code: 'outcome_unknown'
     });
   });
 
@@ -1617,12 +1783,27 @@ describe('ChainGatewayClient reads', () => {
   });
 
   it('routes delegation queries with their filters and pages', async () => {
+    // Each route answers rows of what it was asked.
+    const rowFor = (call: Call) => {
+      const [, , , by, key] = path(call).split('/');
+      return {
+        useCase: Number(
+          param(call, 'useCase') ?? (by === 'by-use-case' ? key : 2)
+        ),
+        delegate:
+          by === 'by-delegate' ? key : (param(call, 'delegate') ?? '0x00'),
+        collection:
+          by === 'by-collection' ? key : (param(call, 'collection') ?? '0x00'),
+        holder: by === 'by-holder' ? key : '0x00',
+        expired: false
+      };
+    };
     const { client, calls } = setup((call) =>
       path(call) === '/v1/status'
         ? status(9)
         : {
             status: 200,
-            json: { read: stamp(9), data: [{ useCase: 2 }], next: 'cursor-2' }
+            json: { read: stamp(9), data: [rowFor(call)], next: 'cursor-2' }
           }
     );
     const page = await client.getDelegations(
@@ -1635,7 +1816,15 @@ describe('ChainGatewayClient reads', () => {
       { after: 'cursor-1', limit: 10 }
     );
     expect(page).toEqual({
-      items: [{ useCase: 2 }],
+      items: [
+        {
+          useCase: 2,
+          delegate: '0x' + 'dd'.repeat(20),
+          collection: '0x' + 'cc'.repeat(20),
+          holder: '0x00',
+          expired: false
+        }
+      ],
       next: 'cursor-2',
       read: stamp(9)
     });
@@ -2628,9 +2817,14 @@ describe('ChainGatewayClient writes', () => {
         json: { data: { txId: '0x' + 'cd'.repeat(32), accepted: true } }
       }))
     );
+    // Taken by the node, by all it says: never a refusal, but unknown.
     await expect(client.submit({ signed: '0x00' })).rejects.toMatchObject({
-      code: 'bad_answer'
+      code: 'outcome_unknown',
+      txId: '0x' + 'cd'.repeat(32)
     });
+    await expect(
+      client.getDraft({ opType: 'IDENTITY_JOIN', body: {} })
+    ).rejects.toMatchObject({ code: 'bad_answer' });
   });
 
   it('refuses a draft or submit answer with a stamp it cannot read', async () => {
@@ -2644,7 +2838,8 @@ describe('ChainGatewayClient writes', () => {
       }))
     );
     await expect(client.submit({ signed: '0x00' })).rejects.toMatchObject({
-      code: 'bad_answer'
+      code: 'outcome_unknown',
+      txId: '0x' + 'cd'.repeat(32)
     });
   });
 
@@ -2658,9 +2853,43 @@ describe('ChainGatewayClient writes', () => {
         }
       }))
     );
+    await client.getHead();
     await expect(client.submit({ signed: '0x00' })).rejects.toMatchObject({
-      code: 'wrong_network'
+      code: 'outcome_unknown',
+      txId: '0x' + 'cd'.repeat(32)
     });
+    await expect(
+      client.getDraft({ opType: 'IDENTITY_JOIN', body: {} })
+    ).rejects.toMatchObject({ code: 'wrong_network' });
+  });
+
+  it('takes an accepted submit without asking for the status', async () => {
+    const { client, calls } = setup((call) =>
+      path(call) === '/v1/status'
+        ? {
+            status: 503,
+            json: {
+              data: {
+                ready: false,
+                notReady: 'starting',
+                head: null,
+                finalized: null
+              }
+            }
+          }
+        : {
+            status: 200,
+            json: {
+              read: stamp(5, 'head'),
+              data: { txId: TX, accepted: true }
+            }
+          }
+    );
+    expect(await client.submit({ signed: '0x00', txId: TX })).toEqual({
+      txId: TX,
+      accepted: true
+    });
+    expect(calls.map(path)).toEqual(['/v1/submit']);
   });
 
   it('throws inadmissible with the chain code', async () => {

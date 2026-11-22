@@ -709,8 +709,24 @@ const holderArg = (it: string) =>
       (v) => ADDRESS_ARG.test(v) || PRINCIPAL_ARG.test(v)
     )
   );
+/** A handle that names one path segment: not empty, no '/', no dot segment. */
+const isHandleSegment = (v: string) =>
+  v.length > 0 && !v.includes('/') && v !== '.' && v !== '..';
 const handleArg = (it: string) =>
-  arg(it, 'a handle', (v) => v.length > 0 && !v.includes('/')).toLowerCase();
+  arg(it, 'a handle', isHandleSegment).toLowerCase();
+/** A height, limit or day: a safe integer, not negative. */
+function countArg(value: number | undefined, what: string): number | undefined {
+  if (value === undefined) return undefined;
+  if (!Number.isSafeInteger(value) || value < 0) {
+    throw new ChainGatewayError(
+      `Not ${what}: ${value}`,
+      null,
+      'bad_request',
+      ''
+    );
+  }
+  return value;
+}
 const hexArg = (it: string, what: string) =>
   lower(arg(it, what, (v) => HEX_ARG.test(v)));
 
@@ -731,13 +747,45 @@ function notTaken(error: RetryableError): boolean {
   );
 }
 
-/** A submit error after which the transaction may or may not have landed. */
-function isUnknownOutcome(error: ChainGatewayError): boolean {
-  const retryableKind =
-    error.code === 'timeout' ||
-    error.code === 'network' ||
-    (error.status !== null && error.status >= 500);
-  return retryableKind && !notTaken(error as RetryableError);
+/** A check that an answer is a list (an empty one is a list too). */
+function listOnly<T>(path: string): AnswerCheck<T> {
+  return (answer) => {
+    if (answer && !Array.isArray(answer.data)) {
+      throw badAnswer(path, 'a list that is not a list');
+    }
+  };
+}
+
+/** Refusals of a submit that say the transaction wasn't taken. */
+const REFUSALS = ['inadmissible', 'not_admitted', 'bad_request', 'too_large'];
+
+/** A txId (0x and 64 hex), lowercased, or undefined. */
+function txIdOf(value: unknown): string | undefined {
+  return typeof value === 'string' && PRINCIPAL_ARG.test(value)
+    ? value.toLowerCase()
+    : undefined;
+}
+
+/** The txId a node's message names ("(txId 0x…)"), if any. */
+function txIdIn(message: unknown): string | undefined {
+  const match = /\(txId (0x[0-9a-f]{64})\)/i.exec(String(message ?? ''));
+  return match ? match[1].toLowerCase() : undefined;
+}
+
+/** A submit whose transaction may or may not have landed: ask getTx. */
+function outcomeUnknown(
+  path: string,
+  error: ChainGatewayError,
+  txId: string | undefined
+): ChainGatewayError {
+  const unknown = new ChainGatewayError(
+    `${path}: the outcome is unknown (${error.code}): ask getTx${txId ? ` for ${txId}` : ''}`,
+    error.status,
+    'outcome_unknown',
+    path
+  );
+  unknown.txId = txId;
+  return unknown;
 }
 
 /** A UUID compared without its dashes, in lower case. */
@@ -1285,6 +1333,8 @@ export class ChainGatewayClient {
     opts: ChainReadOptions = {},
     check?: AnswerCheck<T>
   ): Promise<ChainAnswer<T> | null> {
+    countArg(opts.height, 'a height');
+    countArg((opts as ChainPageOptions).limit, 'a limit');
     if (opts.at === 'head' && opts.height !== undefined) {
       throw new ChainGatewayError(
         `${path}: a read is of the head or at a height, not both`,
@@ -1616,7 +1666,8 @@ export class ChainGatewayClient {
     wallets: string[],
     opts: ChainReadOptions = {}
   ): Promise<Record<string, ChainIdentity | null>> {
-    const distinct = Array.from(new Set(wallets.map(lower)));
+    // A comma would split one wallet into two at the node.
+    const distinct = Array.from(new Set(wallets.map(walletArg)));
     if (!distinct.length) return {};
     if (opts.at === 'head' || opts.height !== undefined) {
       return await this.walletsAt(distinct, opts);
@@ -1755,6 +1806,22 @@ export class ChainGatewayClient {
     handle: string,
     opts?: ChainReadOptions
   ): Promise<ChainHandle | null> {
+    const given = String(handle ?? '')
+      .trim()
+      .toLowerCase();
+    // A handle that can't be a path segment can't be a handle either: it
+    // is answered here (a dot segment would reach another route).
+    if (given.length > 0 && !isHandleSegment(given)) {
+      return {
+        handle: given,
+        valid: false,
+        available: false,
+        status: 'invalid',
+        principalId: null,
+        since: null,
+        reservedUntil: null
+      };
+    }
     const asked = handleArg(handle);
     const answer = await this.askedAnswer<ChainHandle>(
       `/v1/handles/${segment(asked)}`,
@@ -1862,21 +1929,38 @@ export class ChainGatewayClient {
   }
 
   /** TDH day `day`'s membership record (and the node's saved copy). */
-  getMembershipDay(day: number, opts?: ChainReadOptions) {
-    return this.data<ChainMembershipDay>(
-      `/v1/membership/days/${segment(day)}`,
-      {},
-      opts
+  async getMembershipDay(day: number, opts?: ChainReadOptions) {
+    const asked = countArg(day, 'a day') as number;
+    // The record and the node's saved copy, each of the day asked.
+    return this.askedAnswer<ChainMembershipDay>(
+      `/v1/membership/days/${segment(asked)}`,
+      opts,
+      (it) => {
+        const of = it as unknown as {
+          record?: { day?: unknown } | null;
+          saved?: { record?: { day?: unknown } } | null;
+        };
+        const days = [of.record?.day, of.saved?.record?.day].filter(
+          (d) => d !== undefined && d !== null
+        );
+        return days.length > 0 && days.every((d) => d === asked);
+      }
     );
   }
 
   /** Every wallet's principal at day `day`'s cutoff height, by wallet. */
-  listMembershipDayWallets(day: number, opts: ChainPageOptions = {}) {
+  async listMembershipDayWallets(day: number, opts: ChainPageOptions = {}) {
+    const asked = countArg(day, 'a day') as number;
     return this.page<ChainMembershipDayWallets['wallets'][number]>(
-      `/v1/membership/days/${segment(day)}/wallets`,
+      `/v1/membership/days/${segment(asked)}/wallets`,
       {},
       opts,
-      (data) => (data as ChainMembershipDayWallets | null)?.wallets
+      (data) => {
+        const of = data as ChainMembershipDayWallets | null;
+        const ofDay = (of?.record as { day?: unknown } | undefined)?.day;
+        // A list of another day is no list of this one.
+        return ofDay === asked ? of?.wallets : undefined;
+      }
     );
   }
 
@@ -1887,43 +1971,55 @@ export class ChainGatewayClient {
     opts: ChainPageOptions = {}
   ) {
     let path: string;
+    let keeps: (row: ChainDelegation) => boolean;
     if ('holder' in query) {
-      path = `/v1/delegations/by-holder/${segment(holderArg(query.holder))}`;
+      const holder = holderArg(query.holder);
+      path = `/v1/delegations/by-holder/${segment(holder)}`;
+      keeps = (row) => lower(row.holder ?? '') === holder;
     } else if ('byDelegate' in query) {
-      path = `/v1/delegations/by-delegate/${segment(walletArg(query.byDelegate))}`;
+      const delegate = walletArg(query.byDelegate);
+      path = `/v1/delegations/by-delegate/${segment(delegate)}`;
+      keeps = (row) => lower(row.delegate ?? '') === delegate;
     } else if ('byCollection' in query) {
-      path = `/v1/delegations/by-collection/${segment(walletArg(query.byCollection))}`;
+      const collection = walletArg(query.byCollection);
+      path = `/v1/delegations/by-collection/${segment(collection)}`;
+      keeps = (row) => lower(row.collection ?? '') === collection;
     } else {
-      const useCase = Number(query.byUseCase);
-      if (!Number.isSafeInteger(useCase) || useCase < 0) {
-        throw new ChainGatewayError(
-          `Not a use case: ${query.byUseCase}`,
-          null,
-          'bad_request',
-          ''
-        );
-      }
+      const useCase = countArg(query.byUseCase, 'a use case') as number;
       path = `/v1/delegations/by-use-case/${segment(useCase)}`;
+      keeps = (row) => row.useCase === useCase;
     }
+    // The filters, checked as the route and the rows.
+    const useCase = countArg(query.useCase, 'a use case');
+    const collection = query.collection
+      ? walletArg(query.collection)
+      : undefined;
+    const delegate = query.delegate ? walletArg(query.delegate) : undefined;
+    const asked = (row: ChainDelegation) =>
+      !!row &&
+      typeof row === 'object' &&
+      keeps(row) &&
+      (useCase === undefined || row.useCase === useCase) &&
+      (collection === undefined ||
+        lower(row.collection ?? '') === collection) &&
+      (delegate === undefined || lower(row.delegate ?? '') === delegate) &&
+      (!query.live || row.expired !== true);
     return this.page<ChainDelegation>(
       path,
-      {
-        useCase: query.useCase,
-        collection: query.collection ? lower(query.collection) : undefined,
-        delegate: query.delegate ? lower(query.delegate) : undefined,
-        live: query.live
-      },
-      opts
+      { useCase, collection, delegate, live: query.live },
+      opts,
+      (data) =>
+        Array.isArray(data) &&
+        data.every((row) => asked(row as ChainDelegation))
+          ? data
+          : undefined
     );
   }
 
   /** The wallet's own records and its identity's (when bound). */
   async getDelegationsOfWallet(wallet: string, opts?: ChainReadOptions) {
-    return this.data<ChainWalletDelegations[]>(
-      `/v1/delegations/of-wallet/${segment(walletArg(wallet))}`,
-      {},
-      opts
-    );
+    const path = `/v1/delegations/of-wallet/${segment(walletArg(wallet))}`;
+    return this.data<ChainWalletDelegations[]>(path, {}, opts, listOnly(path));
   }
 
   // Ratings
@@ -1934,19 +2030,28 @@ export class ChainGatewayClient {
       | { readonly rater: string; readonly matter?: ChainRatingMatter },
     opts: ChainPageOptions = {}
   ) {
-    const path =
-      'target' in query
-        ? `/v1/ratings/by-target/${segment(principalArg(query.target))}`
-        : `/v1/ratings/by-rater/${segment(principalArg(query.rater))}`;
-    return this.page<ChainRating>(path, { matter: query.matter }, opts);
+    const byTarget = 'target' in query;
+    const asked = principalArg(byTarget ? query.target : query.rater);
+    const path = byTarget
+      ? `/v1/ratings/by-target/${segment(asked)}`
+      : `/v1/ratings/by-rater/${segment(asked)}`;
+    const matter = query.matter;
+    const ofAsked = (row: ChainRating) =>
+      !!row &&
+      typeof row === 'object' &&
+      lower((byTarget ? row.target : row.rater) ?? '') === asked &&
+      (matter === undefined ||
+        String(row.matter ?? '').toLowerCase() === matter.toLowerCase());
+    return this.page<ChainRating>(path, { matter }, opts, (data) =>
+      Array.isArray(data) && data.every((row) => ofAsked(row as ChainRating))
+        ? data
+        : undefined
+    );
   }
 
   async getRatingTotals(principalId: string, opts?: ChainReadOptions) {
-    return this.data<ChainRatingTotal[]>(
-      `/v1/ratings/totals/${segment(principalArg(principalId))}`,
-      {},
-      opts
-    );
+    const path = `/v1/ratings/totals/${segment(principalArg(principalId))}`;
+    return this.data<ChainRatingTotal[]>(path, {}, opts, listOnly(path));
   }
 
   // TDH (the TDH loop types the answers)
@@ -1956,16 +2061,32 @@ export class ChainGatewayClient {
     opts: ChainPageOptions = {}
   ): Promise<ChainAnswer<T> | null> {
     let path = '/v1/tdh';
+    let isAsked: (data: Record<string, unknown>) => boolean = () => true;
     if (query.wallet) {
-      path = `/v1/tdh/wallets/${segment(walletArg(query.wallet))}`;
+      const wallet = walletArg(query.wallet);
+      path = `/v1/tdh/wallets/${segment(wallet)}`;
+      isAsked = (data) => lower(String(data.wallet ?? '')) === wallet;
     } else if (query.day !== undefined) {
+      const day = countArg(query.day, 'a day') as number;
       const list = query.list ? '/' + query.list : '';
-      path = `/v1/tdh/days/${segment(query.day)}${list}`;
+      path = `/v1/tdh/days/${segment(day)}${list}`;
+      isAsked = (data) => data.day === day;
     }
     return this.read<T>(
       path,
       query.list ? { after: opts.after ?? undefined, limit: opts.limit } : {},
-      opts
+      opts,
+      (answer) => {
+        const data = answer?.data as unknown;
+        if (data === null || data === undefined) return;
+        if (
+          typeof data !== 'object' ||
+          Array.isArray(data) ||
+          !isAsked(data as Record<string, unknown>)
+        ) {
+          throw badAnswer(path, 'an answer of something other than was asked');
+        }
+      }
     );
   }
 
@@ -1975,10 +2096,11 @@ export class ChainGatewayClient {
     key: string,
     opts?: ChainReadOptions
   ) {
-    return this.data<T>(
-      `/v1/state/${segment(hexArg(key, 'a state key'))}`,
-      {},
-      opts
+    const asked = hexArg(key, 'a state key');
+    return this.askedAnswer<T>(
+      `/v1/state/${segment(asked)}`,
+      opts,
+      (it) => lower(String((it as { key?: unknown }).key ?? '')) === asked
     );
   }
 
@@ -1986,10 +2108,11 @@ export class ChainGatewayClient {
     key: string,
     opts?: ChainReadOptions
   ) {
-    return this.data<T>(
-      `/v1/proof/${segment(hexArg(key, 'a state key'))}`,
-      {},
-      opts
+    const asked = hexArg(key, 'a state key');
+    return this.askedAnswer<T>(
+      `/v1/proof/${segment(asked)}`,
+      opts,
+      (it) => lower(String((it as { key?: unknown }).key ?? '')) === asked
     );
   }
 
@@ -2165,27 +2288,70 @@ export class ChainGatewayClient {
   ): Promise<ChainSubmitResult> {
     const { txId, ...body } = request;
     const path = '/v1/submit';
+    let answered: { status: number; json: Envelope<unknown> | null };
     try {
-      return await this.post<ChainSubmitResult>(path, body, notTaken);
+      answered = await this.send(
+        'POST',
+        path,
+        {},
+        body,
+        false,
+        undefined,
+        notTaken
+      );
+    } catch (error) {
+      if (!(error instanceof ChainGatewayError) || notTaken(error)) throw error;
+      throw outcomeUnknown(path, error, txIdIn(error.message) ?? txId);
+    }
+    // The node answered, not with 503 or 429: from here only its refusals
+    // say the transaction wasn't taken; anything else may have landed.
+    const { status, json } = answered;
+    const named =
+      txIdIn(
+        typeof json?.error === 'string' ? json.message : json?.error?.message
+      ) ??
+      txIdOf((json?.data as { txId?: unknown } | undefined)?.txId) ??
+      txId;
+    try {
+      return this.submitAnswer(path, status, json);
     } catch (error) {
       if (!(error instanceof ChainGatewayError)) throw error;
-      const named = /\(txId (0x[0-9a-f]{64})\)/i.exec(error.message)?.[1];
-      if (error.code === 'inadmissible') {
-        error.txId = named ?? txId;
+      if (REFUSALS.indexOf(error.code) >= 0) {
+        error.txId = named;
         throw error;
       }
-      if (isUnknownOutcome(error)) {
-        const unknown = new ChainGatewayError(
-          `${path}: the outcome is unknown (${error.code}): ask getTx${txId ? ` for ${txId}` : ''}`,
-          error.status,
-          'outcome_unknown',
-          path
-        );
-        unknown.txId = named ?? txId;
-        throw unknown;
-      }
-      throw error;
+      throw outcomeUnknown(path, error, named);
     }
+  }
+
+  /**
+   * A submit's answer, checked without asking anything more: the stamp,
+   * its network against the head already known (no new status read), the
+   * txId.
+   */
+  private submitAnswer(
+    path: string,
+    status: number,
+    json: Envelope<unknown> | null
+  ): ChainSubmitResult {
+    const stamp = json?.read;
+    if (stamp !== undefined && stamp !== null) {
+      if (!isReadStamp(stamp)) {
+        throw badAnswer(path, `a read stamp that can't be read`, status);
+      }
+      const known = this.head?.value.network ?? null;
+      if (known !== null && lower(stamp.network) !== known) {
+        throw wrongNetwork(path, stamp.network, known, status);
+      }
+    }
+    if (status !== 200 || !json || json.error) {
+      throw this.errorOf(path, status, json);
+    }
+    const data = json.data as ChainSubmitResult | undefined;
+    if (!stamp || !data || !txIdOf(data.txId)) {
+      throw badAnswer(path, 'an answer without its read stamp or txId');
+    }
+    return data;
   }
 
   /**
@@ -2195,12 +2361,13 @@ export class ChainGatewayClient {
    * it may never land.
    */
   async getTx(txId: string): Promise<ChainTx | null> {
-    return this.data<ChainTx>(
-      `/v1/tx/${segment(lower(arg(txId, 'a transaction id', (v) => PRINCIPAL_ARG.test(v))))}`,
-      {},
-      {
-        at: 'head'
-      }
+    const asked = lower(
+      arg(txId, 'a transaction id', (v) => PRINCIPAL_ARG.test(v))
+    );
+    return this.askedAnswer<ChainTx>(
+      `/v1/tx/${segment(asked)}`,
+      { at: 'head' },
+      (it) => lower(String((it as { txId?: unknown }).txId ?? '')) === asked
     );
   }
 
@@ -2315,6 +2482,14 @@ export class ChainGatewayClient {
    * bytes' own. Storing the same bytes again is harmless.
    */
   async putDocument(bytes: Buffer): Promise<string> {
+    if (bytes.length > MAX_DOC_BYTES) {
+      throw new ChainGatewayError(
+        `/v1/docs: ${bytes.length} bytes is over the store's ${MAX_DOC_BYTES}`,
+        null,
+        'bad_request',
+        '/v1/docs'
+      );
+    }
     const expected = rawCidHexOf(bytes);
     const path = '/v1/docs';
     const { status, json } = await this.send(
