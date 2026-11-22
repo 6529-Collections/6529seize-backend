@@ -33,7 +33,7 @@ export class AppFeatures {
 
   /**
    * Holdings re-key through the reconciliation queue: the identity mirror's
-   * membership hook queues the regrouped wallets, a sweep every 15 minutes
+   * membership hook queues the regrouped wallets, an hourly key sweep
    * queues any it missed, and the delegations loop queues instead of
    * consolidating holdings itself.
    */
