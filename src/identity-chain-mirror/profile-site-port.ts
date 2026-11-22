@@ -5,10 +5,13 @@ import {
 } from '@/chain-gateway/chain-gateway.client';
 import {
   ChainFeedBlock,
+  ChainFeedCursor,
   ChainFeedRecord,
   ChainIdentity
 } from '@/chain-gateway/chain-gateway.types';
 import { RequestContext } from '@/request.context';
+import { messageOf, readFeedPage } from './chain-feed-pages';
+import { numberOrNull } from './identity-chain-mirror.db';
 import { decodeProfileDoc } from './profile-doc';
 
 /**
@@ -21,6 +24,8 @@ import { decodeProfileDoc } from './profile-doc';
 /** Profile[principalId] = (version, docCid, updatedHeight). */
 export const PROFILE_FAMILY = '0x0104';
 const FEED_PAGE_BLOCKS = 200;
+/** A page of changes ends at the block where it reaches this many. */
+const MAX_PAGE_CHANGES = 100;
 
 export interface ProfileSiteChange {
   readonly height: number;
@@ -140,8 +145,13 @@ function toChange(
 export class GatewayProfileSitePort implements ProfileSiteChainPort {
   constructor(
     private readonly gateway: Gateway,
-    /** The mirror's profile id for an identity (it maps one if needed). */
-    private readonly profileIdOf: (identity: ChainIdentity) => Promise<string>,
+    /**
+     * The mirror's profile id for an identity (it maps one if needed), and
+     * whether the import made the identity.
+     */
+    private readonly profileIdOf: (
+      identity: ChainIdentity
+    ) => Promise<{ profileId: string; imported: boolean }>,
     /** A wallet's principal at a height (throws when unknown). */
     private readonly walletPrincipalAt: (
       wallet: string,
@@ -168,39 +178,58 @@ export class GatewayProfileSitePort implements ProfileSiteChainPort {
     // it), so a start below it reads from it instead of a height the feed
     // may not hold.
     const importStart = (await this.getIdentityImport())?.start_height ?? 0;
-    const page = await this.profilePage(Math.max(fromHeight, importStart));
-    if (page.through < page.from) {
-      return { changes: [], next_height: null };
-    }
+    // The index counts in whole heights: a block the gateway's page ends
+    // inside is read on to its end before the page is returned.
     const changes: ProfileSiteChange[] = [];
-    for (const block of page.blocks) {
-      for (const record of block.records) {
-        const change = record.name === 'Profile' && toChange(block, record);
-        if (!change) continue;
-        changes.push(
-          record.byImport === null ? await this.settleSource(change) : change
-        );
+    let cursor: ChainFeedCursor = Math.max(fromHeight, importStart);
+    for (;;) {
+      const page = await this.feedPage(cursor);
+      if (page.atHead) {
+        return {
+          changes,
+          next_height: changes.length ? page.nextHeight : null
+        };
       }
+      for (const block of page.blocks) {
+        await this.collect(block, changes);
+        // A page full of changes ends at a whole block: the follower's
+        // pass then checks its deadline between pages.
+        if (block.complete !== false && changes.length >= MAX_PAGE_CHANGES) {
+          return { changes, next_height: Number(block.height) + 1 };
+        }
+      }
+      const cut = page.blocks[page.blocks.length - 1]?.complete === false;
+      if (!cut || String(page.next) === String(cursor)) {
+        return { changes, next_height: page.nextHeight };
+      }
+      cursor = page.next;
     }
-    return { changes, next_height: page.next };
   }
 
-  /** A page of Profile writes; too large for the gateway, fewer blocks. */
-  private async profilePage(from: number) {
-    let limit = FEED_PAGE_BLOCKS;
-    for (;;) {
-      try {
-        return await this.gateway.getChanges(from, {
-          limit,
-          families: [PROFILE_FAMILY]
-        });
-      } catch (error) {
-        const tooLarge =
-          error instanceof ChainGatewayError &&
-          (error.status === 413 || error.code === 'too_large');
-        if (!tooLarge || limit === 1) throw error;
-        limit = Math.max(1, Math.floor(limit / 2));
-      }
+  private async feedPage(cursor: ChainFeedCursor) {
+    const page = await readFeedPage(this.gateway, cursor, {
+      limit: FEED_PAGE_BLOCKS,
+      families: [PROFILE_FAMILY]
+    });
+    if (!page) {
+      throw new ChainGatewayError(
+        `/v1/feed: the gateway no longer holds height ${cursor}`,
+        410,
+        'gone',
+        '/v1/feed'
+      );
+    }
+    return page;
+  }
+
+  /** A block's Profile writes as changes, the source settled when unmarked. */
+  private async collect(block: ChainFeedBlock, changes: ProfileSiteChange[]) {
+    for (const record of block.records) {
+      const change = record.name === 'Profile' && toChange(block, record);
+      if (!change) continue;
+      changes.push(
+        record.byImport === null ? await this.settleSource(change) : change
+      );
     }
   }
 
@@ -243,10 +272,7 @@ export class GatewayProfileSitePort implements ProfileSiteChainPort {
     }
     const heights = {
       start_height: Number(state.startHeight ?? 0),
-      done_height:
-        state.doneHeight === null || state.doneHeight === undefined
-          ? null
-          : Number(state.doneHeight)
+      done_height: numberOrNull(state.doneHeight)
     };
     // Kept once the import is done: its heights don't change after that.
     if (heights.done_height !== null) this.importHeights = heights;
@@ -262,7 +288,7 @@ export class GatewayProfileSitePort implements ProfileSiteChainPort {
    * profile id as the mirror files it now. The gateway keeps only recent
    * heights; for an older one the wallets are those of its wallets now that
    * were bound to it at that height (a wallet that has left since is not
-   * listed: a signer check then refuses rather than accepts).
+   * listed), and the handle is the one it has now.
    */
   async getIdentityByPrincipal(
     principal: string,
@@ -295,12 +321,13 @@ export class GatewayProfileSitePort implements ProfileSiteChainPort {
     current: ChainIdentity,
     then: Pick<ChainIdentity, 'handle' | 'wallets'>
   ): Promise<ProfileSiteIdentity> {
+    const { profileId, imported } = await this.profileIdOf(current);
     return {
       principal: current.principalId.toLowerCase(),
-      profile_id: await this.profileIdOf(current),
+      profile_id: profileId,
       handle: then.handle,
       wallets: then.wallets.map((it) => it.toLowerCase()),
-      imported: !!current.legacyId
+      imported
     };
   }
 
@@ -342,7 +369,7 @@ export class GatewayProfileSitePort implements ProfileSiteChainPort {
     } catch (error) {
       return {
         status: 'malformed',
-        reason: (error as Error)?.message ?? String(error)
+        reason: messageOf(error)
       };
     }
   }

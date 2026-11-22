@@ -127,7 +127,12 @@ class FakeDb {
     return null;
   }
   placeholders = new Map<string, string>();
-  async listPlaceholderProfiles() {
+  async clearChainMadeMappings() {
+    for (const [principal, it] of Array.from(this.mapping.entries())) {
+      if (it.origin !== 'LEGACY') this.mapping.delete(principal);
+    }
+  }
+  async listPlaceholderProfiles(): Promise<string | null> {
     const mapped = new Set(
       Array.from(this.mapping.values()).map((it) => it.profile)
     );
@@ -141,6 +146,7 @@ class FakeDb {
         this.placeholders.set(wallet, profile.external_id);
       }
     }
+    return null;
   }
   async unmappedPlaceholderProfile(wallet: string) {
     const mapped = new Set(
@@ -274,6 +280,12 @@ function delegation(
   };
 }
 
+/** A feed page as a test writes it; the fake adds what the client derives. */
+type FeedPage = Omit<ChainFeedPage, 'nextHeight' | 'atHead'> & {
+  from: number;
+  next: number;
+};
+
 /** A gateway over a little chain the test edits. */
 function world(followers: ProfileSiteFollower[] = []) {
   const alice = chainIdentity(PID(1), [A, B], {
@@ -312,9 +324,10 @@ function world(followers: ProfileSiteFollower[] = []) {
       ]
     ]),
     delegations: [delegation(alice.principalId, 'identity')],
-    feed: [] as ChainFeedPage[],
+    feed: [] as FeedPage[],
     importCompleted: true,
     importStart: null as number | null,
+    importDone: null as number | null,
     fileHash: '0x' + 'f1'.repeat(32),
     network: null as string | null,
     finalized: 100
@@ -331,6 +344,7 @@ function world(followers: ProfileSiteFollower[] = []) {
       import: {
         completed: chain.importCompleted,
         startHeight: chain.importStart,
+        doneHeight: chain.importDone,
         fileHash: chain.fileHash
       }
     })),
@@ -351,6 +365,18 @@ function world(followers: ProfileSiteFollower[] = []) {
       };
     }),
     getImportedIdentity: jest.fn(async () => null),
+    getMembershipWallet: jest.fn(async (wallet: string) => {
+      const owner = Array.from(chain.identities.values()).find((it) =>
+        it.wallets.includes(wallet)
+      );
+      return owner
+        ? {
+            wallet,
+            principalId: owner.principalId,
+            firstBoundHeight: owner.createdHeight
+          }
+        : { wallet, principalId: null };
+    }),
     getDocument: jest.fn(async () => null),
     putDocument: jest.fn(),
     listIdentities: jest.fn(async (opts: { after?: string | null }) => {
@@ -429,9 +455,27 @@ function world(followers: ProfileSiteFollower[] = []) {
     // The feed's pages by their first height; with a family filter, only
     // those records (and the blocks that have some).
     getChanges: jest.fn(
-      async (from: number, opts: { families?: string[] } = {}) => {
-        const page = chain.feed.find((it) => it.from === from);
-        if (!page) return { from, through: from - 1, blocks: [], next: from };
+      async (
+        from: number | string,
+        opts: { families?: string[] } = {}
+      ): Promise<ChainFeedPage> => {
+        const found = chain.feed.find((it) => String(it.from) === String(from));
+        if (!found) {
+          const height = Number(String(from).split(':')[0]);
+          return {
+            from,
+            through: height - 1,
+            blocks: [],
+            next: from,
+            nextHeight: height,
+            atHead: true
+          };
+        }
+        const page = {
+          ...found,
+          nextHeight: found.through + 1,
+          atHead: false
+        };
         if (!opts.families) return page;
         const families = opts.families;
         return {
@@ -460,7 +504,8 @@ function world(followers: ProfileSiteFollower[] = []) {
         changes.push({ change, connection: ctx.connection });
       }
     ],
-    followers
+    followers,
+    async () => undefined
   );
   return {
     chain,
@@ -912,6 +957,91 @@ describe('IdentityChainMirror', () => {
     expect(db.bindings.has(W(9))).toBe(true);
   });
 
+  it('follows a block the gateway cut, keeping the whole height between runs', async () => {
+    const { mirror, db, chain, gateway, alice } = world();
+    chain.importStart = 1;
+    const part = (
+      complete: boolean,
+      records: ChainFeedPage['blocks'][0]['records']
+    ) => ({
+      height: 2,
+      slot: 0,
+      root: '0x',
+      time: 0,
+      complete,
+      records
+    });
+    gateway.getChanges.mockImplementation(
+      async (from: string | number, opts: { families?: string[] } = {}) => {
+        if (!opts.families) {
+          return {
+            from,
+            through: 0,
+            blocks: [],
+            next: from,
+            nextHeight: Number(from),
+            atHead: true
+          };
+        }
+        if (String(from) === '1') {
+          return {
+            from,
+            through: 1,
+            next: '2:1',
+            nextHeight: 2,
+            atHead: false,
+            blocks: [part(false, [bind(A, alice.principalId)])]
+          };
+        }
+        if (String(from) === '2:1') {
+          return {
+            from,
+            through: 2,
+            next: '3',
+            nextHeight: 3,
+            atHead: false,
+            blocks: [part(true, [bind(B, alice.principalId)])]
+          };
+        }
+        return {
+          from,
+          through: 2,
+          blocks: [],
+          next: from,
+          nextHeight: 3,
+          atHead: true
+        };
+      }
+    );
+    await mirror.run({ budgetMs: 60_000 });
+    expect(db.bindings.get(A)?.bound_from_height).toBe(2);
+    expect(db.bindings.get(B)?.bound_from_height).toBe(2);
+    expect(db.state?.bindings_next_height).toBe(3);
+    expect(gateway.getChanges).toHaveBeenCalledWith('2:1', {
+      limit: 200,
+      families: ['0x0102']
+    });
+  });
+
+  it('confirms no legacy id only for an identity made before the import ended', async () => {
+    const { mirror, chain, gateway } = world();
+    chain.importDone = 50;
+    await mirror.run({ budgetMs: 60_000 });
+    gateway.getImportedIdentity.mockClear();
+    const late = chainIdentity(PID(52), [W(52)], {
+      legacyId: null,
+      createdHeight: 60
+    });
+    expect(await mirror.profileIdOf(late)).toBe(principalProfileId(PID(52)));
+    expect(gateway.getImportedIdentity).not.toHaveBeenCalled();
+    const early = chainIdentity(PID(53), [W(53)], {
+      legacyId: null,
+      createdHeight: 40
+    });
+    await mirror.profileIdOf(early);
+    expect(gateway.getImportedIdentity).toHaveBeenCalledTimes(1);
+  });
+
   it('halves the page when the gateway says the answer is too large', async () => {
     const { mirror, db, chain, gateway, alice } = world();
     chain.importStart = 1;
@@ -1052,9 +1182,10 @@ describe('IdentityChainMirror', () => {
       legacyId: null,
       mergedInto: PID(1)
     });
-    expect(await mirror.profileIdForSites(merged)).toBe(
-      principalProfileId(PID(60))
-    );
+    expect(await mirror.profileIdForSites(merged)).toEqual({
+      profileId: principalProfileId(PID(60)),
+      imported: false
+    });
     expect(db.mapping.has(PID(60))).toBe(false);
   });
 
@@ -1085,7 +1216,8 @@ describe('IdentityChainMirror', () => {
     );
     const made = chainIdentity(PID(51), [W(51)], { legacyId: null });
     expect(await mirror.profileIdOf(made)).toBe(principalProfileId(PID(51)));
-    expect(gateway.getImportedIdentity).toHaveBeenCalledTimes(1);
+    // The import's end isn't known yet (no run), so a null is confirmed too.
+    expect(gateway.getImportedIdentity).toHaveBeenCalledTimes(2);
   });
 
   it("takes no help-bot credit from the chain's ratings", async () => {

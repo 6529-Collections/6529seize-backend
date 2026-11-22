@@ -281,7 +281,8 @@ describe('planIdentity', () => {
     expect(plan.identity.pfp).toBe('old-pfp');
     expect(plan.profile.website).toBe('old-site');
     expect(plan.statements).toBeNull();
-    expect(plan.identity.level_raw).toBe(30 + 100 + 2);
+    // REP + TDH; the xTDH (2) doesn't count, as on the chain.
+    expect(plan.identity.level_raw).toBe(30 + 100);
   });
 });
 
@@ -305,7 +306,8 @@ describe('principalProfileId', () => {
       chain({ levelRaw: null }),
       state({ helpBotCredits: 7 })
     );
-    expect(noLevel.identity.level_raw).toBe(30 + 1000 + 5 + 7);
+    // REP + TDH, no xTDH (5 here), as the chain counts it.
+    expect(noLevel.identity.level_raw).toBe(30 + 1000 + 7);
   });
 
   it("keeps another identity's row on its remaining wallets", () => {

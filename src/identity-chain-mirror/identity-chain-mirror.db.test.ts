@@ -240,13 +240,19 @@ describeWithSeed(
     });
 
     it("finds a wallet's placeholder profile that no principal holds", async () => {
-      // Listed once; a later rename or a later profile doesn't change it.
-      await inTx((conn) => db.listPlaceholderProfiles(conn));
+      // Listed in chunks of one; a later rename doesn't change the list.
+      let after: string | null = '';
+      let chunks = 0;
+      while (after !== null) {
+        after = await db.listPlaceholderProfiles(after, 1);
+        chunks++;
+      }
+      expect(chunks).toBe(4);
       await sqlExecutor.execute(
         `update ${PROFILES_TABLE} set handle = 'carol', normalised_handle = 'carol' where external_id = :id`,
         { id: PLACE }
       );
-      await inTx((conn) => db.listPlaceholderProfiles(conn));
+      expect(await db.listPlaceholderProfiles('', 10)).toBeNull();
       expect(await db.unmappedPlaceholderProfile(C.toUpperCase())).toBe(PLACE);
       await inTx((conn) => db.insertMapping(P, PLACE, 'FOUNDER', 1, conn));
       expect(await db.unmappedPlaceholderProfile(C)).toBeNull();

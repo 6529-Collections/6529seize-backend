@@ -364,9 +364,10 @@ export function planIdentity(
   const ownRow = state.rows.find((it) => it.profile_id === chain.profileId);
   const metrics = carriedMetrics(chain, state.rows);
   const credits = state.helpBotCredits ?? 0;
+  // The chain's level is REP + TDH (no xTDH); without one from the gateway,
+  // the same from the chain's REP and 6529.io's TDH.
   const levelRaw =
-    (chain.levelRaw ?? chain.rep + Number(metrics.tdh) + Number(metrics.xtdh)) +
-    credits;
+    (chain.levelRaw ?? chain.rep + Number(metrics.tdh)) + credits;
   const identity: IdentityRowState = {
     consolidation_key: key,
     profile_id: chain.profileId,

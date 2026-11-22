@@ -11,6 +11,22 @@ const W = '0x' + '01'.repeat(20);
 const DOC = '0x01551220' + '33'.repeat(32);
 const LEGACY = '00000000-0000-4000-8000-000000000001';
 
+/** A feed page as the gateway client gives it, from its raw fields. */
+function feedPage(page: {
+  from: number | string;
+  through: number;
+  next: number | string;
+  blocks: unknown[];
+}) {
+  return {
+    ...page,
+    nextHeight: page.through + 1,
+    atHead:
+      !page.blocks.length &&
+      page.through < Number(String(page.from).split(':')[0])
+  };
+}
+
 function profileRecord(
   value: { version: number; docCid: string } | null,
   byImport?: boolean | null
@@ -35,9 +51,10 @@ function setup() {
     getDocument: jest.fn(),
     putDocument: jest.fn()
   };
-  const profileIdOf = jest.fn(async (identity: ChainIdentity) =>
-    identity.legacyId ? identity.legacyId : 'derived-id'
-  );
+  const profileIdOf = jest.fn(async (identity: ChainIdentity) => ({
+    profileId: identity.legacyId ? identity.legacyId : 'derived-id',
+    imported: !!identity.legacyId
+  }));
   const walletPrincipalAt = jest.fn(
     async (wallet: string, _height: number): Promise<string | null> =>
       wallet === W ? P : null
@@ -63,36 +80,43 @@ function setup() {
 describe('GatewayProfileSitePort', () => {
   it('reads Profile writes from the feed with their block time and source', async () => {
     const { gateway, port } = setup();
-    gateway.getChanges.mockResolvedValueOnce({
-      from: 10,
-      through: 20,
-      next: 21,
-      blocks: [
-        {
-          height: 12,
-          slot: 0,
-          root: '0x',
-          time: 5_000,
-          records: [
-            profileRecord({ version: 1, docCid: DOC }, true),
-            { family: '0x0102', name: 'AddressBinding', key: '0x', value: null }
-          ]
-        },
-        {
-          height: 15,
-          slot: 0,
-          root: '0x',
-          time: 6_000,
-          records: [
-            profileRecord({ version: 2, docCid: DOC }, false),
-            profileRecord({ version: 3, docCid: '0x' }, null),
-            // Deleted (merged away) or without a version: not a change.
-            profileRecord(null, null),
-            profileRecord({ version: 0, docCid: DOC }, false)
-          ]
-        }
-      ]
-    });
+    gateway.getChanges.mockResolvedValueOnce(
+      feedPage({
+        from: 10,
+        through: 20,
+        next: 21,
+        blocks: [
+          {
+            height: 12,
+            slot: 0,
+            root: '0x',
+            time: 5_000,
+            records: [
+              profileRecord({ version: 1, docCid: DOC }, true),
+              {
+                family: '0x0102',
+                name: 'AddressBinding',
+                key: '0x',
+                value: null
+              }
+            ]
+          },
+          {
+            height: 15,
+            slot: 0,
+            root: '0x',
+            time: 6_000,
+            records: [
+              profileRecord({ version: 2, docCid: DOC }, false),
+              profileRecord({ version: 3, docCid: '0x' }, null),
+              // Deleted (merged away) or without a version: not a change.
+              profileRecord(null, null),
+              profileRecord({ version: 0, docCid: DOC }, false)
+            ]
+          }
+        ]
+      })
+    );
     expect(await port.getChanges(10)).toEqual({
       changes: [
         {
@@ -131,34 +155,38 @@ describe('GatewayProfileSitePort', () => {
   it('settles the source in the block that completed the import', async () => {
     const { gateway, port } = setup();
     const OTHER = '0x01551220' + '44'.repeat(32);
-    gateway.getChanges.mockResolvedValueOnce({
-      from: 10,
-      through: 10,
-      next: 11,
-      blocks: [
-        {
-          height: 10,
-          slot: 0,
-          root: '0x',
-          time: 1,
-          records: [profileRecord({ version: 1, docCid: DOC }, null)]
-        }
-      ]
-    });
-    gateway.getChanges.mockResolvedValueOnce({
-      from: 10,
-      through: 10,
-      next: 11,
-      blocks: [
-        {
-          height: 10,
-          slot: 0,
-          root: '0x',
-          time: 1,
-          records: [profileRecord({ version: 2, docCid: OTHER }, null)]
-        }
-      ]
-    });
+    gateway.getChanges.mockResolvedValueOnce(
+      feedPage({
+        from: 10,
+        through: 10,
+        next: 11,
+        blocks: [
+          {
+            height: 10,
+            slot: 0,
+            root: '0x',
+            time: 1,
+            records: [profileRecord({ version: 1, docCid: DOC }, null)]
+          }
+        ]
+      })
+    );
+    gateway.getChanges.mockResolvedValueOnce(
+      feedPage({
+        from: 10,
+        through: 10,
+        next: 11,
+        blocks: [
+          {
+            height: 10,
+            slot: 0,
+            root: '0x',
+            time: 1,
+            records: [profileRecord({ version: 2, docCid: OTHER }, null)]
+          }
+        ]
+      })
+    );
     gateway.getImportedIdentity.mockResolvedValue({
       principalId: P,
       profileDocCid: DOC
@@ -166,31 +194,72 @@ describe('GatewayProfileSitePort', () => {
     expect((await port.getChanges(10)).changes[0].source).toBe('import');
     expect((await port.getChanges(10)).changes[0].source).toBe('operation');
     // A later version with the import's document is still an operation.
-    gateway.getChanges.mockResolvedValueOnce({
-      from: 10,
-      through: 10,
-      next: 11,
-      blocks: [
-        {
-          height: 10,
-          slot: 0,
-          root: '0x',
-          time: 1,
-          records: [profileRecord({ version: 2, docCid: DOC }, null)]
-        }
-      ]
-    });
+    gateway.getChanges.mockResolvedValueOnce(
+      feedPage({
+        from: 10,
+        through: 10,
+        next: 11,
+        blocks: [
+          {
+            height: 10,
+            slot: 0,
+            root: '0x',
+            time: 1,
+            records: [profileRecord({ version: 2, docCid: DOC }, null)]
+          }
+        ]
+      })
+    );
     expect((await port.getChanges(10)).changes[0].source).toBe('operation');
+  });
+
+  it('reads a block the gateway cut to its end before returning', async () => {
+    const { gateway, port } = setup();
+    const cutBlock = (complete: boolean, version: number) => ({
+      height: 12,
+      slot: 0,
+      root: '0x',
+      time: 5_000,
+      complete,
+      recordsFrom: complete ? 1 : 0,
+      records: [profileRecord({ version, docCid: DOC }, false)]
+    });
+    gateway.getChanges
+      .mockResolvedValueOnce({
+        from: 10,
+        through: 11,
+        next: '12:1',
+        nextHeight: 12,
+        atHead: false,
+        blocks: [cutBlock(false, 1)]
+      })
+      .mockResolvedValueOnce({
+        from: '12:1',
+        through: 12,
+        next: '13',
+        nextHeight: 13,
+        atHead: false,
+        blocks: [cutBlock(true, 2)]
+      });
+    const page = await port.getChanges(10);
+    expect(page.changes.map((it) => it.version)).toEqual([1, 2]);
+    expect(page.next_height).toBe(13);
+    expect(gateway.getChanges).toHaveBeenNthCalledWith(2, '12:1', {
+      limit: 200,
+      families: [PROFILE_FAMILY]
+    });
   });
 
   it('ends at the finalized head', async () => {
     const { gateway, port } = setup();
-    gateway.getChanges.mockResolvedValueOnce({
-      from: 30,
-      through: 29,
-      next: 30,
-      blocks: []
-    });
+    gateway.getChanges.mockResolvedValueOnce(
+      feedPage({
+        from: 30,
+        through: 29,
+        next: 30,
+        blocks: []
+      })
+    );
     expect(await port.getChanges(30)).toEqual({
       changes: [],
       next_height: null
@@ -280,7 +349,9 @@ describe('GatewayProfileSitePort', () => {
       .mockRejectedValueOnce(
         new ChainGatewayError('too large', 413, 'too_large', '/v1/feed')
       )
-      .mockResolvedValueOnce({ from: 1, through: 0, next: 1, blocks: [] });
+      .mockResolvedValueOnce(
+        feedPage({ from: 1, through: 0, next: 1, blocks: [] })
+      );
     await port.getChanges(1);
     expect(gateway.getChanges).toHaveBeenNthCalledWith(2, 1, {
       limit: 100,
@@ -339,12 +410,14 @@ describe('GatewayProfileSitePort', () => {
     gateway.getMembership.mockResolvedValue({
       import: { startHeight: 5, doneHeight: 9, count: 3 }
     });
-    gateway.getChanges.mockResolvedValue({
-      from: 5,
-      through: 4,
-      next: 5,
-      blocks: []
-    });
+    gateway.getChanges.mockResolvedValue(
+      feedPage({
+        from: 5,
+        through: 4,
+        next: 5,
+        blocks: []
+      })
+    );
     await port.getChanges(0);
     await port.getChanges(7);
     expect(gateway.getChanges).toHaveBeenNthCalledWith(1, 5, {

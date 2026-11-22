@@ -2,8 +2,9 @@ import {
   ChainGatewayClient,
   ChainGatewayError
 } from '@/chain-gateway/chain-gateway.client';
-import { ChainFeedPage } from '@/chain-gateway/chain-gateway.types';
+import { ChainFeedCursor } from '@/chain-gateway/chain-gateway.types';
 import { Logger } from '@/logging';
+import { messageOf, readFeedPage, realSleep, Sleep } from './chain-feed-pages';
 import { IdentityChainMirrorDb, MirrorState } from './identity-chain-mirror.db';
 import {
   ADDRESS_BINDING_FAMILY,
@@ -16,7 +17,6 @@ import {
 const logger = Logger.get('IDENTITY_CHAIN_BINDINGS');
 
 const PAGE_BLOCKS = 200;
-const GONE_ATTEMPTS = 3;
 
 type Gateway = Pick<
   ChainGatewayClient,
@@ -39,13 +39,6 @@ export interface BindingsReport {
   bindingProblems: string[];
 }
 
-function isTooLarge(error: unknown): boolean {
-  return (
-    error instanceof ChainGatewayError &&
-    (error.status === 413 || error.code === 'too_large')
-  );
-}
-
 /**
  * Keeps identity_chain_wallets: each bound wallet's principal and the
  * height it has been bound to it since without a break, from the feed's
@@ -61,7 +54,8 @@ export class WalletBindingsFollower {
   constructor(
     private readonly gateway: Gateway,
     private readonly db: Db,
-    private readonly now: () => number
+    private readonly now: () => number,
+    private readonly sleep: Sleep = realSleep
   ) {}
 
   async follow(
@@ -85,7 +79,7 @@ export class WalletBindingsFollower {
       });
       return await this.read(start, deadline, report);
     } catch (error) {
-      const message = (error as Error)?.message ?? String(error);
+      const message = messageOf(error);
       logger.error(`[WALLET BINDINGS FAILED] ${message}`);
       report.bindingProblems.push(message);
       return (await this.db.getState()) ?? initial;
@@ -99,14 +93,20 @@ export class WalletBindingsFollower {
     report: BindingsReport
   ): Promise<MirrorState> {
     let state = initial;
-    let from = Number(state.bindings_next_height);
+    // The gateway's cursor in the run; the next whole height in the state,
+    // saved with the rows (a block a page ended inside is read again).
+    let from: ChainFeedCursor = Number(state.bindings_next_height);
     while (this.now() < deadline) {
-      const page = await this.page(from);
+      const page = await readFeedPage(this.gateway, from, {
+        limit: PAGE_BLOCKS,
+        families: [ADDRESS_BINDING_FAMILY],
+        sleep: this.sleep
+      });
       if (!page) {
         logger.warn(`[FEED GONE AT ${from}] [LISTING THE MEMBERSHIP]`);
         return await this.rebuild(state, report);
       }
-      if (page.through < page.from || page.next <= from) break;
+      if (page.atHead || String(page.next) === String(from)) break;
       const read = bindingChangesOf(page.blocks);
       if (read.stoppedAt !== null) {
         this.reportMalformed(read, report);
@@ -117,40 +117,12 @@ export class WalletBindingsFollower {
       }
       state = await this.apply(
         read,
-        { ...state, bindings_next_height: page.next },
+        { ...state, bindings_next_height: page.nextHeight },
         report
       );
       from = page.next;
     }
     return state;
-  }
-
-  /**
-   * A page of binding records from `from`, or null when the gateway no
-   * longer holds the height (asked three times: another node behind the
-   * gateway may hold it). An answer too large for the gateway is asked
-   * again for fewer blocks, down to one.
-   */
-  private async page(from: number): Promise<ChainFeedPage | null> {
-    let limit = PAGE_BLOCKS;
-    for (let attempt = 0; attempt < GONE_ATTEMPTS; ) {
-      try {
-        return await this.gateway.getChanges(from, {
-          limit,
-          families: [ADDRESS_BINDING_FAMILY]
-        });
-      } catch (error) {
-        if (isTooLarge(error) && limit > 1) {
-          limit = Math.max(1, Math.floor(limit / 2));
-          continue;
-        }
-        if (!(error instanceof ChainGatewayError) || error.code !== 'gone') {
-          throw error;
-        }
-        attempt++;
-      }
-    }
-    return null;
   }
 
   private reportMalformed(page: BindingPage, report: BindingsReport) {

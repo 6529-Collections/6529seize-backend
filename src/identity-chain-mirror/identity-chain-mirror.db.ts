@@ -262,17 +262,44 @@ export class IdentityChainMirrorDb extends LazyDbAccessCompatibleService {
   }
 
   /**
-   * Lists 6529.io's placeholder profiles (handle `id-<wallet>`) that no
-   * chain identity holds, once, before the mirror's first write; the list
-   * then never changes.
+   * Lists one chunk of 6529.io's placeholder profiles (handle
+   * `id-<wallet>`) that no chain identity holds: the profiles after `after`
+   * in id order, up to `limit` of them. Returns the chunk's last profile id,
+   * or null after the last chunk. Short transactions, so profile writes
+   * aren't held up while the list is taken.
    */
-  async listPlaceholderProfiles(conn: Conn) {
+  async listPlaceholderProfiles(
+    after: string,
+    limit: number
+  ): Promise<string | null> {
+    const last = await this.db.oneOrNull<{ external_id: string }>(
+      `select external_id from ${PROFILES_TABLE}
+       where external_id > :after order by external_id limit 1 offset :skip`,
+      { after, skip: limit - 1 }
+    );
+    await this.db.executeNativeQueriesInTransaction((conn) =>
+      this.db.execute(
+        `insert ignore into ${IDENTITY_CHAIN_PLACEHOLDERS_TABLE} (wallet, profile_id)
+         select lower(p.primary_wallet), p.external_id from ${PROFILES_TABLE} p
+         left join ${IDENTITY_CHAIN_PRINCIPALS_TABLE} m on m.profile_id = p.external_id
+         where p.external_id > :after
+           ${last ? 'and p.external_id <= :last' : ''}
+           and p.normalised_handle = concat('id-', lower(p.primary_wallet))
+           and m.principal_id is null`,
+        { after, last: last?.external_id ?? null },
+        { wrappedConnection: conn }
+      )
+    );
+    return last?.external_id ?? null;
+  }
+
+  /**
+   * On another chain the mappings of identities made on the old one go (an
+   * imported identity's mapping is its legacy id on any chain).
+   */
+  async clearChainMadeMappings(conn: Conn) {
     await this.db.execute(
-      `insert ignore into ${IDENTITY_CHAIN_PLACEHOLDERS_TABLE} (wallet, profile_id)
-       select lower(p.primary_wallet), p.external_id from ${PROFILES_TABLE} p
-       left join ${IDENTITY_CHAIN_PRINCIPALS_TABLE} m on m.profile_id = p.external_id
-       where p.normalised_handle = concat('id-', lower(p.primary_wallet))
-         and m.principal_id is null`,
+      `delete from ${IDENTITY_CHAIN_PRINCIPALS_TABLE} where origin <> 'LEGACY'`,
       undefined,
       { wrappedConnection: conn }
     );

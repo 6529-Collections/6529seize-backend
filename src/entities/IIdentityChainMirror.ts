@@ -15,8 +15,9 @@ import {
 
 /**
  * A 6529 chain identity (principal) and the 6529.io profile id its rows use:
- * the imported profile's own id, or one derived from the principal id for an
- * identity made on the chain. Rebuilt from the chain like the rows it maps.
+ * the imported profile's own id; for an identity made on the chain, its
+ * founding wallet's placeholder profile, else an id derived from the
+ * principal id. Rebuilt from the chain like the rows it maps.
  */
 @Entity(IDENTITY_CHAIN_PRINCIPALS_TABLE)
 export class IdentityChainPrincipalEntity {

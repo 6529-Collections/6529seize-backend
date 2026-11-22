@@ -1,10 +1,10 @@
 import {
   ChainGatewayClient,
-  ChainGatewayError,
   chainGatewayClient
 } from '@/chain-gateway/chain-gateway.client';
 import {
   ChainDelegation,
+  ChainFeedCursor,
   ChainFeedRecord,
   ChainIdentity,
   ChainRating
@@ -41,6 +41,7 @@ import {
 } from './profile-site-port';
 import { IdentityChainLookups } from './identity-chain-lookups';
 import { WalletBindingsFollower } from './wallet-bindings-follower';
+import { messageOf, readFeedPage, realSleep, Sleep } from './chain-feed-pages';
 import { toDelegationRow } from './delegation-rows';
 import {
   decodeProfileDoc,
@@ -60,7 +61,6 @@ const FULL_SYNC_EVERY_MS = 6 * 60 * 60 * 1000;
 const FEED_PAGE_BLOCKS = 200;
 const IDENTITY_PAGE = 200;
 const LAST_USE_CASE = 998;
-const FEED_GONE_ATTEMPTS = 3;
 /** ratings.rating is a signed 32-bit int. */
 const MAX_RATING = 2_147_483_647;
 
@@ -72,6 +72,8 @@ const MAX_RATING = 2_147_483_647;
  */
 export const PROFILE_SITE_FOLLOWERS: readonly ProfileSiteFollower[] = [];
 
+/** Profiles listed per transaction when the placeholders are listed. */
+const PLACEHOLDER_CHUNK = 10_000;
 /** The wallet bindings take at most this share of a run's budget. */
 const BINDINGS_SHARE = 0.5;
 /** The profile site followers' pass ends after this long. */
@@ -84,6 +86,7 @@ type Gateway = Pick<
   | 'listMembershipWallets'
   | 'getMembershipWalletHistory'
   | 'getImportedIdentity'
+  | 'getMembershipWallet'
   | 'getDocument'
   | 'putDocument'
   | 'listIdentities'
@@ -211,10 +214,6 @@ export function isInactive(identity: ChainIdentity): boolean {
   );
 }
 
-function messageOf(error: unknown): string {
-  return (error as Error)?.message ?? String(error);
-}
-
 function toNumber(value: string | number | null | undefined): number {
   const n = Number(value ?? 0);
   return Number.isFinite(n) ? n : 0;
@@ -234,6 +233,8 @@ function toNumber(value: string | number | null | undefined): number {
 export class IdentityChainMirror {
   private readonly identities = new Map<string, ChainIdentity | null>();
   private keyWidth = MAX_CONSOLIDATION_KEY_LENGTH;
+  /** The import's done height, as the run read it (null before). */
+  private importDoneHeight: number | null = null;
   private readonly bindings: WalletBindingsFollower;
 
   constructor(
@@ -241,9 +242,10 @@ export class IdentityChainMirror {
     private readonly db: IdentityChainMirrorDb = identityChainMirrorDb,
     private readonly now: () => number = () => Date.now(),
     private readonly membershipHandlers: readonly MembershipChangeHandler[] = MEMBERSHIP_CHANGE_HANDLERS,
-    private readonly profileSiteFollowers: readonly ProfileSiteFollower[] = PROFILE_SITE_FOLLOWERS
+    private readonly profileSiteFollowers: readonly ProfileSiteFollower[] = PROFILE_SITE_FOLLOWERS,
+    private readonly sleep: Sleep = realSleep
   ) {
-    this.bindings = new WalletBindingsFollower(gateway, db, now);
+    this.bindings = new WalletBindingsFollower(gateway, db, now, sleep);
   }
 
   /**
@@ -261,19 +263,30 @@ export class IdentityChainMirror {
   }
 
   /**
-   * The profile id the profile site index files an identity under: the
-   * mirror's own (mapped now if needed) for an identity the mirror writes;
-   * for a merged or closed one, its mapping if it has one, else its legacy
-   * id, else the id derived from its principal, with nothing stored.
+   * The profile id the profile site index files an identity under, and
+   * whether the import made it: the mirror's own id (mapped now if needed)
+   * for an identity the mirror writes; for a merged or closed one, its
+   * mapping if it has one, else its legacy id, else the id derived from its
+   * principal, with nothing stored.
    */
-  async profileIdForSites(identity: ChainIdentity): Promise<string> {
-    if (!isInactive(identity)) return await this.profileIdOf(identity);
+  async profileIdForSites(
+    identity: ChainIdentity
+  ): Promise<{ profileId: string; imported: boolean }> {
+    const legacy = await this.legacyIdOf(identity);
+    if (!isInactive(identity)) {
+      return {
+        profileId: await this.profileIdOf(identity),
+        imported: legacy !== null
+      };
+    }
     const principal = identity.principalId.toLowerCase();
-    return (
-      (await this.db.profileIdOfPrincipal(principal)) ??
-      identity.legacyId?.toLowerCase() ??
-      principalProfileId(principal)
-    );
+    return {
+      profileId:
+        (await this.db.profileIdOfPrincipal(principal)) ??
+        legacy ??
+        principalProfileId(principal),
+      imported: legacy !== null
+    };
   }
 
   private report(): MirrorRunReport {
@@ -306,12 +319,17 @@ export class IdentityChainMirror {
     );
     const membership = await this.gateway.getMembership();
     const importState = membership?.import as
-      | { completed?: boolean; startHeight?: number | null }
+      | {
+          completed?: boolean;
+          startHeight?: number | null;
+          doneHeight?: number | null;
+        }
       | undefined;
     if (!importState?.completed) {
       report.skipped = 'import_not_complete';
       return report;
     }
+    this.importDoneHeight = numberOrNull(importState.doneHeight);
     this.keyWidth =
       (await this.db.consolidationKeyWidth()) ?? MAX_CONSOLIDATION_KEY_LENGTH;
     state = await this.listPlaceholders(state);
@@ -400,6 +418,7 @@ export class IdentityChainMirror {
     logger.warn(
       `[ANOTHER CHAIN] [${state.chain_id}] [NOW ${network}] [STARTING AGAIN]`
     );
+    // The placeholder list is of 6529.io's profiles: it stays.
     const fresh: MirrorState = {
       ...this.emptyState(),
       chain_id: network,
@@ -407,20 +426,24 @@ export class IdentityChainMirror {
     };
     await this.db.executeNativeQueriesInTransaction(async (conn) => {
       await this.db.clearWalletBindings(conn);
+      await this.db.clearChainMadeMappings(conn);
       await this.db.saveState(fresh, this.now(), conn);
     });
     return fresh;
   }
 
-  /** The placeholder profiles, listed once before the mirror's first write. */
+  /**
+   * The placeholder profiles, listed once before the mirror's first write,
+   * in chunks. A run cut short lists again from the start (listing is
+   * idempotent); the time is saved after the last chunk.
+   */
   private async listPlaceholders(state: MirrorState): Promise<MirrorState> {
     if (state.placeholders_at !== null) return state;
-    const next = { ...state, placeholders_at: this.now() };
-    await this.db.executeNativeQueriesInTransaction(async (conn) => {
-      await this.db.listPlaceholderProfiles(conn);
-      await this.db.saveState(next, this.now(), conn);
-    });
-    return next;
+    let after: string | null = '';
+    while (after !== null) {
+      after = await this.db.listPlaceholderProfiles(after, PLACEHOLDER_CHUNK);
+    }
+    return await this.save({ ...state, placeholders_at: this.now() });
   }
 
   private async continueFullSync(
@@ -589,43 +612,40 @@ export class IdentityChainMirror {
     report: MirrorRunReport
   ): Promise<MirrorState> {
     let state = initial;
+    // In a run the gateway's own cursor is followed (it can point inside a
+    // block); between runs the next whole height is kept, so a block a page
+    // ended inside is read again, which is harmless.
+    let cursor: ChainFeedCursor = Number(state.next_height);
     while (this.now() < deadline) {
-      const page = await this.feedPage(Number(state.next_height));
+      const page = await this.feedPage(cursor);
       if (!page) {
-        logger.warn(
-          `[FEED GONE AT ${state.next_height}] [STARTING A FULL SYNC]`
-        );
+        logger.warn(`[FEED GONE AT ${cursor}] [STARTING A FULL SYNC]`);
         return await this.startFullSync(state);
       }
-      if (page.through < page.from) {
+      if (page.atHead || String(page.next) === String(cursor)) {
         return state;
       }
       const records = page.blocks.flatMap((block) => block.records);
+      const last = page.blocks[page.blocks.length - 1];
+      // Read through `through`, and into the last block when the page ended
+      // inside it.
       await this.applyEffects(feedEffects(records), report, {
-        height: page.through,
+        height: Math.max(page.through, last ? Number(last.height) : 0),
         source: 'FEED'
       });
-      report.feedBlocks += page.through - page.from + 1;
-      state = await this.save({ ...state, next_height: page.next });
+      report.feedBlocks += page.blocks.length;
+      state = await this.save({ ...state, next_height: page.nextHeight });
+      cursor = page.next;
     }
     return state;
   }
 
-  /**
-   * A page of the feed, or null when the gateway no longer holds the height.
-   * Asked three times first: another API node behind the gateway may hold it.
-   */
-  private async feedPage(from: number) {
-    for (let attempt = 0; attempt < FEED_GONE_ATTEMPTS; attempt++) {
-      try {
-        return await this.gateway.getChanges(from, { limit: FEED_PAGE_BLOCKS });
-      } catch (error) {
-        if (!(error instanceof ChainGatewayError) || error.code !== 'gone') {
-          throw error;
-        }
-      }
-    }
-    return null;
+  /** A page of the feed, or null when the gateway no longer holds the height. */
+  private async feedPage(from: ChainFeedCursor) {
+    return await readFeedPage(this.gateway, from, {
+      limit: FEED_PAGE_BLOCKS,
+      sleep: this.sleep
+    });
   }
 
   /** Runs one identity's work; a failure is logged and reported, not thrown. */
@@ -765,9 +785,7 @@ export class IdentityChainMirror {
     const principalId = identity.principalId.toLowerCase();
     const legacy = await this.legacyIdOf(identity);
     if (legacy) return { profileId: legacy, origin: 'LEGACY' };
-    // The founding wallet: the gateway's founder field, else the anchor
-    // (which the chain moves only when the anchor leaves).
-    const foundingWallet = identity.founder ?? identity.anchor ?? null;
+    const foundingWallet = await this.foundingWalletOf(identity);
     const founder = foundingWallet
       ? await this.db.unmappedPlaceholderProfile(foundingWallet)
       : null;
@@ -781,13 +799,37 @@ export class IdentityChainMirror {
   }
 
   /**
-   * The imported profile id. A gateway that leaves the field out (older
-   * than the field) is asked for the import's entry instead, so an imported
+   * The wallet that made the identity: the gateway's founder field; until
+   * the gateway gives it, the anchor when it has been bound to the identity
+   * since the identity's creation (an anchor that came later, after the
+   * founder left, proves nothing); else none.
+   */
+  private async foundingWalletOf(
+    identity: ChainIdentity
+  ): Promise<string | null> {
+    if (identity.founder) return identity.founder.toLowerCase();
+    if (!identity.anchor) return null;
+    const binding = await this.gateway.getMembershipWallet(identity.anchor);
+    const sinceCreation =
+      binding?.principalId?.toLowerCase() ===
+        identity.principalId.toLowerCase() &&
+      Number(binding?.firstBoundHeight) === Number(identity.createdHeight);
+    return sinceCreation ? identity.anchor.toLowerCase() : null;
+  }
+
+  /**
+   * The imported profile id. The import's entry is asked when the gateway
+   * leaves the field out (older than the field), or gives none for an
+   * identity created no later than the import's end, so an imported
    * identity is never taken for one made on the chain.
    */
   private async legacyIdOf(identity: ChainIdentity): Promise<string | null> {
-    if (identity.legacyId !== undefined) {
-      return identity.legacyId?.toLowerCase() ?? null;
+    const given = identity.legacyId;
+    const created = Number(identity.createdHeight);
+    const madeAfterImport =
+      this.importDoneHeight !== null && created > this.importDoneHeight;
+    if (given || (given === null && madeAfterImport)) {
+      return given?.toLowerCase() ?? null;
     }
     const entry = await this.gateway.getImportedIdentity(identity.principalId);
     return entry?.legacyId?.toLowerCase() ?? null;
