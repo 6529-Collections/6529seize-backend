@@ -1,11 +1,19 @@
 import {
+  E2eeModerationRecorder,
+  e2eeModerationRecorder
+} from '@/e2ee/relay/e2ee-moderation-records';
+import {
   moderationCaseIdSql,
   moderationCaseWorkSql,
   moderationNonAdministrativeSql,
   ModerationReviewCase
 } from './moderation-review-cases';
 import { randomUUID } from 'node:crypto';
-import { dbSupplier, LazyDbAccessCompatibleService } from '@/sql-executor';
+import {
+  dbSupplier,
+  LazyDbAccessCompatibleService,
+  SqlExecutor
+} from '@/sql-executor';
 import { RequestContext } from '@/request.context';
 import { DbPoolName } from '@/db-query.options';
 import {
@@ -138,6 +146,17 @@ type RevisionItem = Pick<
   Partial<ModerationItem>;
 
 export class ModerationReviewDb extends LazyDbAccessCompatibleService {
+  constructor(
+    sqlExecutorGetter: () => SqlExecutor,
+    /** Records report writes for the relays; off unless records are on. */
+    private readonly reportRecords: Pick<
+      E2eeModerationRecorder,
+      'changed'
+    > = e2eeModerationRecorder
+  ) {
+    super(sqlExecutorGetter);
+  }
+
   async lockProfile(id: string, ctx: RequestContext) {
     return this.timed('lockProfile', ctx, async () => {
       await this.db.execute(
@@ -306,6 +325,11 @@ export class ModerationReviewDb extends LazyDbAccessCompatibleService {
         { reportId, itemId },
         this.options(ctx)
       );
+      await this.reportRecords.changed(
+        CONTENT_MODERATION_REPORTS_TABLE,
+        { id: reportId },
+        ctx.connection
+      );
     });
   }
   async refreshReportResolution(id: string, ctx: RequestContext) {
@@ -349,6 +373,11 @@ export class ModerationReviewDb extends LazyDbAccessCompatibleService {
         this.options(ctx)
       );
       if (this.db.getAffectedRows(result) === 0) moderationConflict();
+      await this.reportRecords.changed(
+        CONTENT_MODERATION_REPORTS_TABLE,
+        { drop_id: dropId },
+        ctx.connection
+      );
       await this.db.execute(
         `update ${ITEMS} i set i.review_status='REVIEWED', i.evidence_expires_at=coalesce(i.evidence_expires_at,:expiry)
         where i.subject_type='DROP' and i.operation='REPORT' and i.published_subject_id=:dropId

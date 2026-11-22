@@ -31,7 +31,7 @@ import { e2eeStreamPublisher } from '@/e2ee/relay/e2ee-stream-publisher';
  *    "after": "<next>", "limit": 200}                                   check, in slices
  *   {"schema_scope": "e2ee-relay-rebuild", "mode": "write"}             rebuild
  *
- * Families run in the order dr, cv, dv, bl, bk. A live backfill needs
+ * Families run in the order dr, cv, dv, bl, bk, md. A live backfill needs
  * E2EE_RELAY_MODE mirror or primary. `write` refuses unless every table it
  * fills is empty.
  */

@@ -1,4 +1,8 @@
 import {
+  E2eeModerationRecorder,
+  e2eeModerationRecorder
+} from '@/e2ee/relay/e2ee-moderation-records';
+import {
   DEVICE_GRANTS_TABLE,
   E2EE_BLOB_CHUNKS_TABLE,
   E2EE_BLOBS_TABLE,
@@ -33,7 +37,8 @@ import {
 import {
   ConnectionWrapper,
   dbSupplier,
-  LazyDbAccessCompatibleService
+  LazyDbAccessCompatibleService,
+  SqlExecutor
 } from '@/sql-executor';
 
 export type E2eeDeviceRow = E2eeDeviceEntity;
@@ -191,11 +196,33 @@ function inList(values: readonly string[]): string[] {
   return Array.from(new Set(values));
 }
 
+/** An insert's auto-increment id, from either driver's write result. */
+function insertIdOf(result: unknown): number {
+  if (result !== null && typeof result === 'object' && 'insertId' in result) {
+    return Number((result as { insertId?: unknown }).insertId ?? 0);
+  }
+  if (Array.isArray(result) && typeof result[2] === 'number') {
+    return result[2];
+  }
+  return 0;
+}
+
 /**
  * Database access for E2EE messaging. Reads outside a transaction use the
  * primary so that ordering checks never act on replica lag.
  */
 export class E2eeDb extends LazyDbAccessCompatibleService {
+  constructor(
+    sqlExecutorGetter: () => SqlExecutor,
+    /** Records report writes for the relays; off unless records are on. */
+    private readonly reportRecords: Pick<
+      E2eeModerationRecorder,
+      'changed'
+    > = e2eeModerationRecorder
+  ) {
+    super(sqlExecutorGetter);
+  }
+
   private opts(connection?: Conn): DbQueryOptions {
     return connection
       ? { wrappedConnection: connection }
@@ -1448,6 +1475,7 @@ export class E2eeDb extends LazyDbAccessCompatibleService {
       )`,
       { ...row }
     );
+    await this.reportRecords.changed(E2EE_REPORTS_TABLE, { id: row.id });
   }
 
   /** Newest first, for trust and safety review; bodies as base64. */
@@ -1507,6 +1535,7 @@ export class E2eeDb extends LazyDbAccessCompatibleService {
       { id, onHold },
       connection
     );
+    await this.reportRecords.changed(E2EE_REPORTS_TABLE, { id }, connection);
     return true;
   }
 
@@ -1514,13 +1543,21 @@ export class E2eeDb extends LazyDbAccessCompatibleService {
     row: Omit<E2eeReportAccessEntity, 'id'>,
     connection?: Conn
   ) {
-    await this.write(
+    const result: unknown = await this.db.execute(
       `insert into ${E2EE_REPORT_ACCESS_LOG_TABLE}
          (viewer_profile_id, action, report_ids, created_at)
        values (:viewer_profile_id, :action, :report_ids, :created_at)`,
       { ...row },
-      connection
+      this.opts(connection)
     );
+    const id = insertIdOf(result);
+    if (id > 0) {
+      await this.reportRecords.changed(
+        E2EE_REPORT_ACCESS_LOG_TABLE,
+        { id },
+        connection
+      );
+    }
   }
 
   async listReportAccess(): Promise<E2eeReportAccessEntity[]> {

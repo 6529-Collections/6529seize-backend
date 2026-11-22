@@ -672,12 +672,29 @@ hash-chained. The streams:
 | `dr/<device>` (RECORD) | The device row after each change; its last-resort KeyPackages                                                                                                                                       |
 | `bl/<blob>` (SEALED)   | Each attachment chunk with its bytes; the blob once complete                                                                                                                                        |
 | `bk/<owner>` (SEALED)  | A profile's backup generations, chunks with their bytes, deletions                                                                                                                                  |
+| `md/<inbox>` (SEALED)  | Reports: drop reports, reported messages with their holds, and the trust-and-safety access log. Sealed to the moderation service key                                                                |
 
 Not carried: one-time KeyPackages, rate counters and push throttles
 (ephemeral; devices upload fresh KeyPackages), incomplete uploads,
 `last_seen_at` (rebuilt as the device's latest log item) and the
 `registered_*` columns (no route reads them). Legacy plaintext DMs are drops
-and are never copied (D153).
+and are never copied (D153), and neither are reports on them: they are
+deleted with the DMs on 1 Dec.
+
+**Reports.** Moderators read reports in 6529.io's moderation tool, from
+MySQL, as today. After each write of `content_moderation_reports`,
+`e2ee_reports` or `e2ee_report_access_log` commits, the changed rows go to
+the moderators' inbox, one `md` stream, in a record sealed to the moderation
+service key: a fresh AES-256-GCM key per record, wrapped to that key with
+HPKE (record content version 2, `e2ee-moderation-seal.ts`). The relays hold
+only ciphertext; a rebuild opens it with the private key. A report never
+fails because a relay is down: the record is written in its own short
+transaction and published best effort, and a record that could not be
+written at all is logged and copied by the `md` backfill. Holds stay per
+report (`e2ee_reports.on_hold`). The rebuild applies the same retention as
+MySQL: reported messages go after 180 days unless held, and resolved drop
+reports lose their evidence after 90 days. Records written before a prune
+still hold that evidence, sealed; only the moderation key opens them.
 
 **`E2EE_RELAY_MODE`** (on `seizeAPI` and `dbMigrationsLoop`):
 
@@ -697,7 +714,11 @@ Settings: `E2EE_RELAY_URLS` (comma-separated `wss://`), `E2EE_RELAY_NET`,
 `E2EE_ORDERER_GRANT` (its grant proof), and for rebuilds the site-reader's
 `E2EE_SITE_READER_KEY` and `E2EE_SITE_READER_GRANT` with
 `E2EE_ORDERER_PUBLIC_KEY`. The relays pin the orderer's public key; the
-team holds the key.
+team holds the key. With records on,
+`E2EE_MODERATION_PUBLIC_KEY` (`{"id", "public_key"}`, the moderation
+service's X25519 key) is required; `E2EE_MODERATION_KEYS` (secret,
+`[{"id", "private_key"}]`) is set only where reports are rebuilt or
+checked. The owner holds the moderation key too.
 
 **Operator scopes** (`dbMigrationsLoop`, never scheduled):
 
@@ -706,16 +727,20 @@ team holds the key.
 {"schema_scope": "e2ee-relay-backfill", "family": "cv", "live": true, "after": "<next>"}
 {"schema_scope": "e2ee-relay-publish", "waves": 500}
 {"schema_scope": "e2ee-relay-rebuild", "mode": "verify"}
+{"schema_scope": "e2ee-relay-rebuild", "mode": "verify-streams", "after": "<next>", "limit": 200}
 {"schema_scope": "e2ee-relay-rebuild", "mode": "write"}
 ```
 
 - The backfill copies what MySQL held before records were on, family by
-  family in the order `dr`, `cv`, `dv`, `bl`, `bk`, each entity under the
-  lock its writes take, so a later write wins. Without `live` it only
+  family in the order `dr`, `cv`, `dv`, `bl`, `bk`, `md`, each entity under
+  the lock its writes take, so a later write wins. Without `live` it only
   reports the volume. Running it twice is harmless.
 - `verify` rebuilds in memory and compares every stream head and every row
   with MySQL; `ok` is true only with no difference. Run it when
   `e2ee_relay_outbox` is empty.
+- `verify-streams` does the same check one stream at a time, in slices of
+  `limit` streams after `after`, so it never holds more than one stream in
+  memory at production size.
 - `write` rebuilds into empty tables and refuses otherwise. Attachment bytes
   come back into MySQL storage.
 

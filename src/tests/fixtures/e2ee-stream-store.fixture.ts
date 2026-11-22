@@ -1,4 +1,5 @@
 import { ethers } from 'ethers';
+import { E2eeSealRecipient } from '@/e2ee/relay/e2ee-moderation-seal';
 import { e2eeEd25519PublicKey } from '@/e2ee/relay/e2ee-record-event';
 import { E2eeRelayIdentity } from '@/e2ee/relay/e2ee-relay-config';
 import { E2eeTransactionRunner } from '@/e2ee/relay/e2ee-stream-publisher';
@@ -9,6 +10,7 @@ import {
   E2eeStreamStore
 } from '@/e2ee/relay/e2ee-stream-store';
 import { ConnectionWrapper } from '@/sql-executor';
+import { loadProviderKeys, ProviderKey } from '@/signed-records/sealed-crypto';
 
 type Conn = ConnectionWrapper<unknown>;
 
@@ -35,6 +37,22 @@ export function e2eeTestRelayIdentity(
       revoked_at: null
     }
   };
+}
+
+/** A test moderation service key: its public half and its private keys. */
+export function e2eeTestModerationKey(
+  seedByte: number,
+  id = 'mod-test'
+): { readonly recipient: E2eeSealRecipient; readonly keys: ProviderKey[] } {
+  const keys = loadProviderKeys(
+    JSON.stringify([
+      {
+        id,
+        private_key: `0x${seedByte.toString(16).padStart(2, '0').repeat(32)}`
+      }
+    ])
+  );
+  return { recipient: { id, publicKey: keys[0].publicKey }, keys };
 }
 
 interface State {

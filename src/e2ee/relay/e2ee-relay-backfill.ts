@@ -1,4 +1,5 @@
 import {
+  CONTENT_MODERATION_REPORTS_TABLE,
   E2EE_BACKUP_CHUNKS_TABLE,
   E2EE_BACKUPS_TABLE,
   E2EE_BLOBS_TABLE,
@@ -6,11 +7,17 @@ import {
   E2EE_GROUPS_TABLE,
   E2EE_KEY_PACKAGES_TABLE,
   E2EE_LOG_TABLE,
+  E2EE_REPORT_ACCESS_LOG_TABLE,
+  E2EE_REPORTS_TABLE,
   E2EE_WELCOME_DELIVERIES_TABLE,
   E2EE_WELCOMES_TABLE,
   PROFILES_TABLE
 } from '@/constants/db-tables';
 import { DbPoolName, DbQueryOptions } from '@/db-query.options';
+import {
+  e2eeRecordTable,
+  e2eeRecordWhere
+} from '@/e2ee/relay/e2ee-record-tables';
 import { E2eeRecordWriters } from '@/e2ee/relay/e2ee-record-writers';
 import {
   E2eeRecordBatch,
@@ -27,9 +34,16 @@ type Conn = ConnectionWrapper<unknown>;
 /**
  * The families the backfill copies, in the order to run them: device
  * records first (the rest names devices), then groups, Welcomes,
- * attachments and backups.
+ * attachments, backups and the moderators' inbox (reports).
  */
-export const E2EE_BACKFILL_FAMILIES = ['dr', 'cv', 'dv', 'bl', 'bk'] as const;
+export const E2EE_BACKFILL_FAMILIES = [
+  'dr',
+  'cv',
+  'dv',
+  'bl',
+  'bk',
+  'md'
+] as const;
 export type E2eeBackfillFamily = (typeof E2EE_BACKFILL_FAMILIES)[number];
 
 /** What a backfill would copy: the dry run's answer. */
@@ -48,6 +62,9 @@ export interface E2eeBackfillVolume {
   readonly backups: number;
   readonly backupChunks: number;
   readonly backupBytes: number;
+  readonly reports: number;
+  readonly messageReports: number;
+  readonly reportAccess: number;
 }
 
 /** The volume queries, exactly as the team runs them for the dry run. */
@@ -59,8 +76,27 @@ export const E2EE_BACKFILL_VOLUME_SQL = {
   lastResort: `select count(*) as n from ${E2EE_KEY_PACKAGES_TABLE} where last_resort = true`,
   blobs: `select count(*) as n, coalesce(sum(size), 0) as bytes from ${E2EE_BLOBS_TABLE} where complete = true`,
   backups: `select count(*) as n from ${E2EE_BACKUPS_TABLE}`,
-  backupChunks: `select count(*) as n, coalesce(sum(size), 0) as bytes from ${E2EE_BACKUP_CHUNKS_TABLE}`
+  backupChunks: `select count(*) as n, coalesce(sum(size), 0) as bytes from ${E2EE_BACKUP_CHUNKS_TABLE}`,
+  reports: `select count(*) as n from ${CONTENT_MODERATION_REPORTS_TABLE} ${e2eeRecordWhere(
+    e2eeRecordTable(CONTENT_MODERATION_REPORTS_TABLE)
+  )}`,
+  messageReports: `select count(*) as n from ${E2EE_REPORTS_TABLE}`,
+  reportAccess: `select count(*) as n from ${E2EE_REPORT_ACCESS_LOG_TABLE}`
 } as const;
+
+/**
+ * A slice of one report table for the moderators' inbox: the keys come as
+ * `<table letter>:<id>` (`a` access log, `e` message reports, `r` reports),
+ * so one cursor walks the three tables in turn.
+ */
+export interface E2eeBackfillReportKey {
+  readonly key: string;
+  readonly table: string;
+  readonly id: string | number;
+}
+
+/** Report rows in one md record during the backfill (bodies up to 64 KiB). */
+const REPORT_ROWS_PER_RECORD = 20;
 
 export interface E2eeBackfillBlob {
   readonly blob_id: string;
@@ -79,6 +115,8 @@ export interface E2eeBackfillDb extends E2eeTransactionRunner {
   deliveries(after: string, limit: number): Promise<string[]>;
   completeBlobs(after: string, limit: number): Promise<E2eeBackfillBlob[]>;
   backupProfiles(after: string, limit: number): Promise<string[]>;
+  /** Report table keys after `after` (see E2eeBackfillReportKey). */
+  reportKeys(after: string, limit: number): Promise<E2eeBackfillReportKey[]>;
   itemSeqs(group: string, throughSeq: number): Promise<number[]>;
   /** Locks the group row; returns its last_seq, or null if gone. */
   lockGroup(group: string, connection: Conn): Promise<number | null>;
@@ -162,7 +200,12 @@ export async function backfillE2eeRecords(
   const deadline =
     deps.now() + (request.timeBudgetMs ?? DEFAULT_TIME_BUDGET_MS);
   const after = request.after ?? '';
-  const keys = await familyKeys(deps.db, request.family, after, request.limit);
+  const { keys, full } = await familyKeys(
+    deps.db,
+    request.family,
+    after,
+    request.limit
+  );
   let copied = 0;
   let bytes = 0;
   let examined = 0;
@@ -179,7 +222,7 @@ export async function backfillE2eeRecords(
     }
     last = key.id;
   }
-  const done = examined === keys.length && keys.length < request.limit;
+  const done = examined === keys.length && !full;
   return {
     ...base,
     examined,
@@ -193,29 +236,78 @@ export async function backfillE2eeRecords(
 interface FamilyKey {
   readonly id: string;
   readonly blob?: E2eeBackfillBlob;
+  /** md: report rows of one table, copied in one record. */
+  readonly reports?: {
+    readonly table: string;
+    readonly ids: readonly (string | number)[];
+  };
 }
 
+/** The family's next keys, and whether the page was full (more may follow). */
 async function familyKeys(
   db: E2eeBackfillDb,
   family: E2eeBackfillFamily,
   after: string,
   limit: number
-): Promise<FamilyKey[]> {
+): Promise<{ readonly keys: FamilyKey[]; readonly full: boolean }> {
+  const page = (keys: FamilyKey[]) => ({ keys, full: keys.length >= limit });
   switch (family) {
     case 'dr':
-      return (await db.devices(after, limit)).map((id) => ({ id }));
+      return page((await db.devices(after, limit)).map((id) => ({ id })));
     case 'cv':
-      return (await db.groups(after, limit)).map((id) => ({ id }));
+      return page((await db.groups(after, limit)).map((id) => ({ id })));
     case 'dv':
-      return (await db.deliveries(after, limit)).map((id) => ({ id }));
+      return page((await db.deliveries(after, limit)).map((id) => ({ id })));
     case 'bl':
-      return (await db.completeBlobs(after, limit)).map((blob) => ({
-        id: blob.blob_id,
-        blob
-      }));
+      return page(
+        (await db.completeBlobs(after, limit)).map((blob) => ({
+          id: blob.blob_id,
+          blob
+        }))
+      );
     case 'bk':
-      return (await db.backupProfiles(after, limit)).map((id) => ({ id }));
+      return page(
+        (await db.backupProfiles(after, limit)).map((id) => ({ id }))
+      );
+    case 'md': {
+      const rows = await db.reportKeys(after, limit);
+      return { keys: reportSlices(rows), full: rows.length >= limit };
+    }
   }
+}
+
+/** Consecutive keys of one table, a record's worth at a time. */
+function reportSlices(rows: readonly E2eeBackfillReportKey[]): FamilyKey[] {
+  const slices: FamilyKey[] = [];
+  let current: {
+    table: string;
+    ids: (string | number)[];
+    last: string;
+  } | null = null;
+  for (const row of rows) {
+    if (
+      !current ||
+      current.table !== row.table ||
+      current.ids.length >= REPORT_ROWS_PER_RECORD
+    ) {
+      if (current) {
+        slices.push({
+          id: current.last,
+          reports: { table: current.table, ids: current.ids }
+        });
+      }
+      current = { table: row.table, ids: [], last: row.key };
+    }
+    current.ids.push(row.id);
+    current.last = row.key;
+  }
+  if (current) {
+    slices.push({
+      id: current.last,
+      reports: { table: current.table, ids: current.ids }
+    });
+  }
+  return slices;
 }
 
 /** Copies one entity; returns the payload bytes copied, or null if gone. */
@@ -235,7 +327,23 @@ async function copyOne(
       return copyBlob(deps, key.blob!);
     case 'bk':
       return copyBackups(deps, key.id);
+    case 'md':
+      return copyReports(deps, key.reports!);
   }
+}
+
+async function copyReports(
+  deps: E2eeBackfillDeps,
+  reports: NonNullable<FamilyKey['reports']>
+): Promise<number | null> {
+  // The writer locks the inbox before it reads the rows, as the live path.
+  const copied = await deps.run((connection, batch) =>
+    deps.writers.moderationRowsChanged(batch, connection, {
+      table: reports.table,
+      where: { id: reports.ids }
+    })
+  );
+  return copied ? 0 : null;
 }
 
 async function copyDevice(
@@ -403,7 +511,10 @@ export class MysqlE2eeBackfillDb
       blobBytes: sum(blobs),
       backups: count(await this.exec(sql.backups)),
       backupChunks: count(chunks),
-      backupBytes: sum(chunks)
+      backupBytes: sum(chunks),
+      reports: count(await this.exec(sql.reports)),
+      messageReports: count(await this.exec(sql.messageReports)),
+      reportAccess: count(await this.exec(sql.reportAccess))
     };
   }
 
@@ -466,6 +577,69 @@ export class MysqlE2eeBackfillDb
       after,
       limit
     );
+  }
+
+  async reportKeys(
+    after: string,
+    limit: number
+  ): Promise<E2eeBackfillReportKey[]> {
+    const [afterTable, ...rest] = after.split(':');
+    const afterId = rest.join(':');
+    const out: E2eeBackfillReportKey[] = [];
+    const slices: {
+      readonly letter: string;
+      readonly table: string;
+      readonly sql: (from: string) => { sql: string; from: unknown };
+    }[] = [
+      {
+        letter: 'a',
+        table: E2EE_REPORT_ACCESS_LOG_TABLE,
+        sql: (from) => ({
+          sql: `select id as k from ${E2EE_REPORT_ACCESS_LOG_TABLE}
+                where id > :from order by id limit :limit`,
+          from: from ? Number(from) : 0
+        })
+      },
+      {
+        letter: 'e',
+        table: E2EE_REPORTS_TABLE,
+        sql: (from) => ({
+          sql: `select id as k from ${E2EE_REPORTS_TABLE}
+                where id > :from order by id limit :limit`,
+          from
+        })
+      },
+      {
+        letter: 'r',
+        table: CONTENT_MODERATION_REPORTS_TABLE,
+        sql: (from) => ({
+          sql: `select id as k from ${CONTENT_MODERATION_REPORTS_TABLE}
+                ${e2eeRecordWhere(
+                  e2eeRecordTable(CONTENT_MODERATION_REPORTS_TABLE),
+                  ['id > :from']
+                )}
+                order by id limit :limit`,
+          from
+        })
+      }
+    ];
+    for (const slice of slices) {
+      if (out.length >= limit) break;
+      if (after && slice.letter < afterTable) continue;
+      const query = slice.sql(slice.letter === afterTable ? afterId : '');
+      const rows = await this.exec<{ k: string | number }>(query.sql, {
+        from: query.from,
+        limit: limit - out.length
+      });
+      for (const row of rows) {
+        out.push({
+          key: `${slice.letter}:${row.k}`,
+          table: slice.table,
+          id: slice.letter === 'a' ? Number(row.k) : String(row.k)
+        });
+      }
+    }
+    return out;
   }
 
   async itemSeqs(group: string, throughSeq: number) {

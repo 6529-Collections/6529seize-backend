@@ -15,6 +15,7 @@ import {
 } from '@/constants/db-tables';
 import { E2eeRow } from '@/e2ee/relay/e2ee-record-container';
 import { parseE2eeFamilyWave } from '@/e2ee/relay/e2ee-record-event';
+import { E2EE_MODERATION_TABLES } from '@/e2ee/relay/e2ee-record-tables';
 import { e2eeBackupStreamOwner } from '@/e2ee/relay/e2ee-record-writers';
 import {
   E2eeRebuildProblem,
@@ -34,6 +35,7 @@ export type E2eeStreamVerifyDb = Pick<
 >;
 import type { E2eeStreamRebuildSource } from '@/e2ee/relay/e2ee-rebuild-run';
 import { E2eeStreamHead } from '@/e2ee/relay/e2ee-stream-store';
+import { ProviderKey } from '@/signed-records/sealed-crypto';
 
 const REPORTED_FAILURES = 50;
 
@@ -193,6 +195,22 @@ async function backupScope(
   ];
 }
 
+/** The moderators' inbox holds every recorded report row. */
+async function moderationScope(
+  db: E2eeStreamVerifyDb,
+  stream: E2eeRebuiltStream
+): Promise<ScopedTables[]> {
+  const out: ScopedTables[] = [];
+  for (const table of E2EE_MODERATION_TABLES) {
+    out.push({
+      table,
+      mysql: await db.rowsWhere(table, {}),
+      rebuilt: stream.tables.get(table)!
+    });
+  }
+  return out;
+}
+
 /**
  * The side-by-side check one stream at a time: for each stream MySQL has a
  * head for, rebuild that stream alone from the relays and compare its rows
@@ -204,6 +222,7 @@ export async function verifyE2eeStreams(input: {
   readonly db: E2eeStreamVerifyDb;
   readonly ordererDeviceKey: string;
   readonly now: number;
+  readonly moderationKeys?: readonly ProviderKey[];
   readonly after?: string;
   readonly limit: number;
 }): Promise<E2eeStreamVerifyReport> {
@@ -239,6 +258,7 @@ async function verifyStream(
     readonly db: E2eeStreamVerifyDb;
     readonly ordererDeviceKey: string;
     readonly now: number;
+    readonly moderationKeys?: readonly ProviderKey[];
   },
   head: E2eeStreamHead,
   backupOwners: ReadonlyMap<string, string>
@@ -266,6 +286,7 @@ async function verifyStream(
   const stream = await rebuildE2eeStream(input.source, head.wave, {
     ordererDeviceKey: input.ordererDeviceKey,
     now: input.now,
+    moderationKeys: input.moderationKeys,
     revokedDevices
   });
   const scoped = await scopeOf(input.db, stream, parsed, backupOwners);
@@ -300,6 +321,8 @@ function scopeOf(
       return blobScope(db, stream, parsed.owner);
     case 'bk':
       return backupScope(db, stream, backupOwners.get(parsed.owner) ?? null);
+    case 'md':
+      return moderationScope(db, stream);
     default:
       return Promise.resolve([]);
   }

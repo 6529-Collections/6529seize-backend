@@ -1,4 +1,5 @@
 import {
+  CONTENT_MODERATION_REPORTS_TABLE,
   E2EE_BACKUP_CHUNKS_TABLE,
   E2EE_BACKUPS_TABLE,
   E2EE_BLOB_CHUNKS_TABLE,
@@ -10,9 +11,12 @@ import {
   E2EE_GROUPS_TABLE,
   E2EE_KEY_PACKAGES_TABLE,
   E2EE_LOG_TABLE,
+  E2EE_REPORT_ACCESS_LOG_TABLE,
+  E2EE_REPORTS_TABLE,
   E2EE_WELCOME_DELIVERIES_TABLE,
   E2EE_WELCOMES_TABLE
 } from '@/constants/db-tables';
+import { E2EE_MODERATION_INBOX } from '@/e2ee/relay/e2ee-moderation-seal';
 import { E2eeRow, E2eeRowValue } from '@/e2ee/relay/e2ee-record-container';
 import {
   E2EE_RECORD_TABLES,
@@ -42,6 +46,7 @@ import {
 } from '@/e2ee/relay/e2ee-stream-publisher';
 import { MockCrpRelay } from '@/tests/fixtures/e2ee-mock-crp-relay.fixture';
 import {
+  e2eeTestModerationKey,
   e2eeTestRelayIdentity,
   InMemoryE2eeStreamStore
 } from '@/tests/fixtures/e2ee-stream-store.fixture';
@@ -50,6 +55,8 @@ import { ConnectionWrapper } from '@/sql-executor';
 const NET = '6529-interim-test';
 const ORDERER = e2eeTestRelayIdentity(7, `0x${'aa'.repeat(20)}`);
 const READER = e2eeTestRelayIdentity(9, `0x${'bb'.repeat(20)}`);
+const MODERATION = e2eeTestModerationKey(0x31);
+const INBOX = `md/${E2EE_MODERATION_INBOX}`;
 const DAY = 24 * 60 * 60 * 1000;
 const NOW = 1_795_000_000_000;
 const T0 = NOW - DAY;
@@ -174,6 +181,51 @@ function logItem(
   };
 }
 
+function dropReport(id: string, input: Record<string, E2eeRowValue>) {
+  return {
+    id,
+    item_id: null,
+    drop_id: 'drop-1',
+    reporter_profile_id: 'pb',
+    author_profile_id: 'pa',
+    reason: 'SPAM',
+    notes: 'the reporter notes',
+    content_snapshot: '{"parts": [{"content": "reported words"}]}',
+    status: 'OPEN',
+    ai_recommendation: null,
+    ai_category: null,
+    ai_confidence: null,
+    ai_rationale: null,
+    ai_evidence: null,
+    ai_policy_version: null,
+    ai_assessed_at: null,
+    created_at: T0 + 30,
+    resolved_by_profile_id: null,
+    resolution_reason: null,
+    resolved_at: null,
+    ...input
+  };
+}
+
+function messageReport(id: string, createdAt: number) {
+  return {
+    id,
+    group_handle: G,
+    epoch: 1,
+    body: Buffer.from(`reported message ${id}`),
+    signature: '0xsig',
+    sender_device_key: A,
+    sender_profile_id: 'pa',
+    reporter_device_key: B,
+    reporter_profile_id: 'pb',
+    reason: 'harassment',
+    notes: null,
+    verified: true,
+    created_at: createdAt,
+    on_hold: false
+  };
+}
+
 async function scenario() {
   const relay = new MockCrpRelay({
     url: 'wss://relay.test',
@@ -191,7 +243,9 @@ async function scenario() {
     quorum: 1,
     orderer: ORDERER,
     ordererPublicKey: ORDERER.deviceKey,
-    siteReader: READER
+    siteReader: READER,
+    moderation: MODERATION.recipient,
+    moderationKeys: []
   };
   const pool = new E2eeRelayPool({
     urls: settings.urls,
@@ -653,6 +707,104 @@ async function runScenario(recorded = true) {
         deletedObjectKeys: [`backup/${gen}/1`]
       })
   );
+  // Reports, recorded after each write as the report services do.
+  const report =
+    (table: string, where: Record<string, E2eeRowValue>) =>
+    async (batch: E2eeRecordBatch, c: ConnectionWrapper<unknown>) => {
+      await writers.moderationRowsChanged(batch, c, { table, where });
+    };
+  await write(
+    () => db.put(CONTENT_MODERATION_REPORTS_TABLE, dropReport('r1', {})),
+    report(CONTENT_MODERATION_REPORTS_TABLE, { id: 'r1' })
+  );
+  await write(
+    () =>
+      db.update(
+        CONTENT_MODERATION_REPORTS_TABLE,
+        { id: 'r1' },
+        {
+          ai_recommendation: 'REMOVE',
+          ai_confidence: '0.9500',
+          ai_rationale: 'spam',
+          ai_evidence: '[{"quote": "reported words"}]',
+          ai_assessed_at: T0 + 31
+        }
+      ),
+    report(CONTENT_MODERATION_REPORTS_TABLE, { id: 'r1' })
+  );
+  await write(
+    () =>
+      db.update(
+        CONTENT_MODERATION_REPORTS_TABLE,
+        { drop_id: 'drop-1' },
+        {
+          status: 'RESOLVED_REMOVED',
+          resolved_by_profile_id: 'pm',
+          resolved_at: T0 + 32
+        }
+      ),
+    report(CONTENT_MODERATION_REPORTS_TABLE, { drop_id: 'drop-1' })
+  );
+  // Resolved 100 days ago: MySQL's prune has since cleared its evidence.
+  await write(
+    () =>
+      db.put(
+        CONTENT_MODERATION_REPORTS_TABLE,
+        dropReport('r2', {
+          drop_id: 'drop-2',
+          status: 'DISMISSED',
+          created_at: NOW - 101 * DAY,
+          resolved_at: NOW - 100 * DAY
+        })
+      ),
+    report(CONTENT_MODERATION_REPORTS_TABLE, { id: 'r2' })
+  );
+  db.update(
+    CONTENT_MODERATION_REPORTS_TABLE,
+    { id: 'r2' },
+    {
+      content_snapshot: '{"evidence_expired": true}',
+      notes: null,
+      ai_rationale: null,
+      ai_evidence: null
+    }
+  );
+  // Message reports: one put on hold; an old one past retention (pruned);
+  // an old one held.
+  await write(
+    () => db.put(E2EE_REPORTS_TABLE, messageReport('0xe1', T0 + 40)),
+    report(E2EE_REPORTS_TABLE, { id: '0xe1' })
+  );
+  await write(
+    () => db.update(E2EE_REPORTS_TABLE, { id: '0xe1' }, { on_hold: true }),
+    report(E2EE_REPORTS_TABLE, { id: '0xe1' })
+  );
+  await write(
+    () => db.put(E2EE_REPORTS_TABLE, messageReport('0xe2', NOW - 200 * DAY)),
+    report(E2EE_REPORTS_TABLE, { id: '0xe2' })
+  );
+  db.del(E2EE_REPORTS_TABLE, { id: '0xe2' });
+  await write(
+    () =>
+      db.put(E2EE_REPORTS_TABLE, {
+        ...messageReport('0xe3', NOW - 200 * DAY),
+        on_hold: true
+      }),
+    report(E2EE_REPORTS_TABLE, { id: '0xe3' })
+  );
+  for (const id of [1, 2]) {
+    await write(
+      () =>
+        db.put(E2EE_REPORT_ACCESS_LOG_TABLE, {
+          id,
+          viewer_profile_id: 'pm',
+          action: id === 1 ? 'list' : 'hold',
+          report_ids: '0xe1',
+          created_at: T0 + 40 + id
+        }),
+      report(E2EE_REPORT_ACCESS_LOG_TABLE, { id })
+    );
+  }
   return s;
 }
 
@@ -673,7 +825,8 @@ describe('rebuildE2eeState', () => {
     expect(store.outboxRows).toEqual([]);
     const state = await rebuildE2eeState(readerSource(relay), {
       ordererDeviceKey: ORDERER.deviceKey,
-      now: NOW
+      now: NOW,
+      moderationKeys: MODERATION.keys
     });
     expect(state.problems).toEqual([]);
     for (const table of Object.keys(E2EE_RECORD_TABLES)) {
@@ -725,7 +878,8 @@ describe('rebuildE2eeState', () => {
     const { relay } = await scenario();
     const state = await rebuildE2eeState(readerSource(relay), {
       ordererDeviceKey: ORDERER.deviceKey,
-      now: NOW
+      now: NOW,
+      moderationKeys: MODERATION.keys
     });
     expect(state.problems).toEqual([]);
     expect(state.heads).toEqual([]);
@@ -742,7 +896,8 @@ describe('rebuildE2eeState', () => {
     relay.dropPayload(JSON.parse(item.event.body!).data.h);
     const state = await rebuildE2eeState(readerSource(relay), {
       ordererDeviceKey: ORDERER.deviceKey,
-      now: NOW
+      now: NOW,
+      moderationKeys: MODERATION.keys
     });
     expect(state.problems).toContainEqual({
       wave: `cv/${G}`,
@@ -757,13 +912,39 @@ describe('rebuildE2eeState', () => {
           ),
         payload: source.payload
       },
-      { ordererDeviceKey: ORDERER.deviceKey, now: NOW }
+      {
+        ordererDeviceKey: ORDERER.deviceKey,
+        now: NOW,
+        moderationKeys: MODERATION.keys
+      }
     );
     expect(withGap.problems).toContainEqual({
       wave: `cv/${G}`,
       pos: 3,
       reason: 'gap in the stream'
     });
+  });
+
+  it('rebuilds the reports only with the moderation key; relays see no report', async () => {
+    const { relay } = await runScenario();
+    const reports = relay.stored.filter((item) => item.event.wave === INBOX);
+    expect(reports.length).toBe(10);
+    for (const item of reports) {
+      expect(item.event.kind).toBe(10);
+      expect(item.event.body).not.toContain('reported');
+    }
+    const state = await rebuildE2eeState(readerSource(relay), {
+      ordererDeviceKey: ORDERER.deviceKey,
+      now: NOW
+    });
+    expect(state.problems).toHaveLength(10);
+    expect(state.problems[0]).toMatchObject({
+      wave: INBOX,
+      reason:
+        'sealed content: Sealed to svc:mod-test, a key this reader does not hold'
+    });
+    expect(state.tables.get(E2EE_REPORTS_TABLE)!.size).toBe(0);
+    expect(state.tables.get(E2EE_LOG_TABLE)!.size).toBe(3);
   });
 
   it('accepts only the pinned orderer key', async () => {
@@ -808,8 +989,32 @@ function backfillDb(
       blobBytes: 0,
       backups: all(E2EE_BACKUPS_TABLE).length,
       backupChunks: all(E2EE_BACKUP_CHUNKS_TABLE).length,
-      backupBytes: 0
+      backupBytes: 0,
+      reports: all(CONTENT_MODERATION_REPORTS_TABLE).length,
+      messageReports: all(E2EE_REPORTS_TABLE).length,
+      reportAccess: all(E2EE_REPORT_ACCESS_LOG_TABLE).length
     }),
+    reportKeys: async (cursor, limit) =>
+      [
+        ...all(E2EE_REPORT_ACCESS_LOG_TABLE).map((row) => ({
+          key: `a:${String(row.id).padStart(20, '0')}`,
+          table: E2EE_REPORT_ACCESS_LOG_TABLE,
+          id: Number(row.id)
+        })),
+        ...all(E2EE_REPORTS_TABLE).map((row) => ({
+          key: `e:${String(row.id)}`,
+          table: E2EE_REPORTS_TABLE,
+          id: String(row.id)
+        })),
+        ...all(CONTENT_MODERATION_REPORTS_TABLE).map((row) => ({
+          key: `r:${String(row.id)}`,
+          table: CONTENT_MODERATION_REPORTS_TABLE,
+          id: String(row.id)
+        }))
+      ]
+        .filter((key) => key.key > cursor)
+        .sort((a, b) => (a.key < b.key ? -1 : 1))
+        .slice(0, limit),
     groups: async (cursor, limit) =>
       after(
         all(E2EE_GROUPS_TABLE).map((row) => String(row.group_handle)),
@@ -945,7 +1150,8 @@ function expectSameTables(
 function rebuildFrom(relay: MockCrpRelay) {
   return rebuildE2eeState(readerSource(relay), {
     ordererDeviceKey: ORDERER.deviceKey,
-    now: NOW
+    now: NOW,
+    moderationKeys: MODERATION.keys
   });
 }
 
@@ -1068,6 +1274,7 @@ describe('verifyE2eeStreams', () => {
       db: verifyDb(s.db, s.store),
       ordererDeviceKey: ORDERER.deviceKey,
       now: NOW,
+      moderationKeys: MODERATION.keys,
       limit: 3
     });
     expect(first).toMatchObject({ checked: 3, failed: 0, ok: true });
@@ -1080,6 +1287,7 @@ describe('verifyE2eeStreams', () => {
         db: verifyDb(s.db, s.store),
         ordererDeviceKey: ORDERER.deviceKey,
         now: NOW,
+        moderationKeys: MODERATION.keys,
         after,
         limit: 3
       });
@@ -1102,6 +1310,7 @@ describe('verifyE2eeStreams', () => {
       db: verifyDb(s.db, s.store),
       ordererDeviceKey: ORDERER.deviceKey,
       now: NOW,
+      moderationKeys: MODERATION.keys,
       limit: 100
     });
     expect(report.ok).toBe(false);
@@ -1109,6 +1318,24 @@ describe('verifyE2eeStreams', () => {
     expect(report.failures[0]).toMatchObject({
       wave: `cv/${G}`,
       tables: [{ table: E2EE_LOG_TABLE, changed: 1 }]
+    });
+  });
+
+  it("names the moderators' inbox when a report row differs", async () => {
+    const s = await runScenario();
+    s.db.update(E2EE_REPORTS_TABLE, { id: '0xe1' }, { on_hold: false });
+    const report = await verifyE2eeStreams({
+      source: readerSource(s.relay),
+      db: verifyDb(s.db, s.store),
+      ordererDeviceKey: ORDERER.deviceKey,
+      now: NOW,
+      moderationKeys: MODERATION.keys,
+      limit: 100
+    });
+    expect(report.failures).toHaveLength(1);
+    expect(report.failures[0]).toMatchObject({
+      wave: INBOX,
+      tables: [{ table: E2EE_REPORTS_TABLE, changed: 1 }]
     });
   });
 
@@ -1126,6 +1353,7 @@ describe('verifyE2eeStreams', () => {
       db: verifyDb(s.db, s.store),
       ordererDeviceKey: ORDERER.deviceKey,
       now: NOW,
+      moderationKeys: MODERATION.keys,
       limit: 100
     });
     expect(report.failures.map((f) => f.wave)).toEqual([`dr/${B}`]);

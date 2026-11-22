@@ -1,3 +1,4 @@
+import { sealE2eeRecordContent } from '@/e2ee/relay/e2ee-moderation-seal';
 import {
   e2eeSha256,
   E2eeRowOp,
@@ -63,6 +64,8 @@ export interface E2eeRecordAppend {
     readonly epoch: number | null;
     readonly windows: readonly E2eeDeliveryWindow[];
   };
+  /** SEALED records only: seal the content to the moderation service key. */
+  readonly sealToModeration?: boolean;
 }
 
 /** Where the orderer takes its anchor: a recent finalized chain height. */
@@ -111,6 +114,19 @@ export class E2eeRecordBatch {
   async append(connection: Conn, input: E2eeRecordAppend): Promise<void> {
     const wave = await this.publisher.appendRecord(connection, input);
     this.waves.add(wave);
+  }
+
+  /**
+   * Locks a stream's head before the rows a record copies are read. A
+   * writer that records after another transaction's commit takes this
+   * first, so of two writers the later one reads the later rows.
+   */
+  async lock(
+    connection: Conn,
+    family: E2eeRecordFamily,
+    owner: string
+  ): Promise<void> {
+    await this.publisher.lockStream(connection, family, owner);
   }
 }
 
@@ -221,6 +237,15 @@ export class E2eeStreamPublisher {
     }
   }
 
+  async lockStream(
+    connection: Conn,
+    family: E2eeRecordFamily,
+    owner: string
+  ): Promise<void> {
+    const wave = e2eeFamilyWave(family, owner);
+    await this.deps.store.lockHead(wave, this.deps.now(), connection);
+  }
+
   async appendRecord(
     connection: Conn,
     input: E2eeRecordAppend
@@ -229,18 +254,22 @@ export class E2eeStreamPublisher {
     const now = this.deps.now();
     const head = await this.deps.store.lockHead(wave, now, connection);
     const pos = head.pos + 1;
-    const { content, external } = encodeE2eeRecordContent({
+    const encoded = encodeE2eeRecordContent({
       type: input.type,
       pos,
       prev: head.hash,
       ops: input.ops
     });
+    const { external } = encoded;
     if (external.length > 1) {
       throw new Error('A record carries at most one external payload');
     }
     if (external.length && input.kind !== E2eeRecordKind.LOG) {
       throw new Error('Only LOG records carry external payloads');
     }
+    const content = input.sealToModeration
+      ? this.sealToModeration(input, wave, encoded.content)
+      : encoded.content;
     await this.deps.store.insertOutbox(
       {
         wave,
@@ -266,6 +295,27 @@ export class E2eeStreamPublisher {
       connection
     );
     return wave;
+  }
+
+  private sealToModeration(
+    input: E2eeRecordAppend,
+    wave: string,
+    content: Buffer
+  ): Buffer {
+    if (input.kind !== E2eeRecordKind.SEALED) {
+      throw new Error('Only SEALED records are sealed');
+    }
+    const settings = this.deps.settings();
+    if (!settings.moderation) {
+      throw new Error('No moderation key is configured');
+    }
+    if (!settings.orderer) throw new Error('No orderer key is configured');
+    return sealE2eeRecordContent({
+      content,
+      wave,
+      from: settings.orderer.deviceKey,
+      to: settings.moderation
+    });
   }
 
   private nextSeq(now: number): number {

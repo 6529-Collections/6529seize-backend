@@ -1,4 +1,6 @@
 import {
+  CONTENT_MODERATION_REPORTS_TABLE,
+  DROPS_TABLE,
   E2EE_BACKUP_CHUNKS_TABLE,
   E2EE_BACKUPS_TABLE,
   E2EE_BLOB_CHUNKS_TABLE,
@@ -10,27 +12,52 @@ import {
   E2EE_GROUPS_TABLE,
   E2EE_KEY_PACKAGES_TABLE,
   E2EE_LOG_TABLE,
+  E2EE_REPORT_ACCESS_LOG_TABLE,
+  E2EE_REPORTS_TABLE,
   E2EE_WELCOME_DELIVERIES_TABLE,
   E2EE_WELCOMES_TABLE
 } from '@/constants/db-tables';
 import { E2eeRow, E2eeRowValue } from '@/e2ee/relay/e2ee-record-container';
+import { DM_WAVES_SQL } from '@/legacy-dm/legacy-dm-purge.inventory';
 
-/** How a column is carried in a record and written back by the rebuild. */
-export type E2eeColumnKind = 'text' | 'int' | 'bool' | 'bin';
+/**
+ * How a column is carried in a record and written back by the rebuild.
+ * `json` and `decimal` travel as MySQL's own text for them, so a rebuilt
+ * row reads back exactly as the original.
+ */
+export type E2eeColumnKind =
+  | 'text'
+  | 'int'
+  | 'bool'
+  | 'bin'
+  | 'json'
+  | 'decimal';
 
 export interface E2eeRecordTable {
   readonly name: string;
   readonly key: readonly string[];
   readonly columns: Readonly<Record<string, E2eeColumnKind>>;
+  /** Which rows are recorded, when not all are (an SQL condition). */
+  readonly scope?: string;
 }
 
 function table(
   name: string,
   key: readonly string[],
-  columns: Record<string, E2eeColumnKind>
+  columns: Record<string, E2eeColumnKind>,
+  scope?: string
 ): E2eeRecordTable {
-  return { name, key, columns };
+  return scope ? { name, key, columns, scope } : { name, key, columns };
 }
+
+/**
+ * Reports on legacy plaintext DMs stay off the relays: those drops and
+ * their reports are deleted on 1 Dec (D153), so they are neither recorded
+ * nor expected by the rebuild check.
+ */
+const NOT_A_LEGACY_DM_REPORT = `${CONTENT_MODERATION_REPORTS_TABLE}.drop_id not in (
+  select dm_drop.id from ${DROPS_TABLE} dm_drop
+  where dm_drop.wave_id in (${DM_WAVES_SQL}))`;
 
 /**
  * Every table the delivery service's records carry, with every column. The
@@ -40,6 +67,9 @@ function table(
  * Not carried: `e2ee_devices.last_seen_at` (activity, rebuilt from the log)
  * and the four `registered_*` columns (how a device was registered: no
  * route reads them). Both are ephemeral.
+ *
+ * The report tables are carried in the moderators' inbox, sealed to
+ * the moderation service key.
  */
 export const E2EE_RECORD_TABLES: Readonly<Record<string, E2eeRecordTable>> = {
   [E2EE_GROUPS_TABLE]: table(E2EE_GROUPS_TABLE, ['group_handle'], {
@@ -199,8 +229,65 @@ export const E2EE_RECORD_TABLES: Readonly<Record<string, E2eeRecordTable>> = {
     ciphersuite: 'int',
     expires_at_seconds: 'int',
     created_at: 'int'
+  }),
+  [CONTENT_MODERATION_REPORTS_TABLE]: table(
+    CONTENT_MODERATION_REPORTS_TABLE,
+    ['id'],
+    {
+      id: 'text',
+      item_id: 'text',
+      drop_id: 'text',
+      reporter_profile_id: 'text',
+      author_profile_id: 'text',
+      reason: 'text',
+      notes: 'text',
+      content_snapshot: 'json',
+      status: 'text',
+      ai_recommendation: 'text',
+      ai_category: 'text',
+      ai_confidence: 'decimal',
+      ai_rationale: 'text',
+      ai_evidence: 'json',
+      ai_policy_version: 'text',
+      ai_assessed_at: 'int',
+      created_at: 'int',
+      resolved_by_profile_id: 'text',
+      resolution_reason: 'text',
+      resolved_at: 'int'
+    },
+    NOT_A_LEGACY_DM_REPORT
+  ),
+  [E2EE_REPORTS_TABLE]: table(E2EE_REPORTS_TABLE, ['id'], {
+    id: 'text',
+    group_handle: 'text',
+    epoch: 'int',
+    body: 'bin',
+    signature: 'text',
+    sender_device_key: 'text',
+    sender_profile_id: 'text',
+    reporter_device_key: 'text',
+    reporter_profile_id: 'text',
+    reason: 'text',
+    notes: 'text',
+    verified: 'bool',
+    created_at: 'int',
+    on_hold: 'bool'
+  }),
+  [E2EE_REPORT_ACCESS_LOG_TABLE]: table(E2EE_REPORT_ACCESS_LOG_TABLE, ['id'], {
+    id: 'int',
+    viewer_profile_id: 'text',
+    action: 'text',
+    report_ids: 'text',
+    created_at: 'int'
   })
 };
+
+/** The tables the moderators' inbox carries. */
+export const E2EE_MODERATION_TABLES: readonly string[] = [
+  CONTENT_MODERATION_REPORTS_TABLE,
+  E2EE_REPORTS_TABLE,
+  E2EE_REPORT_ACCESS_LOG_TABLE
+];
 
 export function e2eeRecordTable(name: string): E2eeRecordTable {
   const found = E2EE_RECORD_TABLES[name];
@@ -224,13 +311,29 @@ function normalizeValue(kind: E2eeColumnKind, value: unknown): E2eeRowValue {
   }
 }
 
-/** Selects every carried column, bytes as base64 (the caster's safe form). */
+/**
+ * Selects every carried column: bytes as base64 (the caster's safe form),
+ * JSON and decimals as MySQL's text for them.
+ */
 export function e2eeRecordSelectList(target: E2eeRecordTable): string {
   return Object.entries(target.columns)
-    .map(([column, kind]) =>
-      kind === 'bin' ? `to_base64(${column}) as ${column}` : column
-    )
+    .map(([column, kind]) => {
+      if (kind === 'bin') return `to_base64(${column}) as ${column}`;
+      if (kind === 'json' || kind === 'decimal') {
+        return `cast(${column} as char) as ${column}`;
+      }
+      return column;
+    })
     .join(', ');
+}
+
+/** The table's scope as a `where` clause, or `extra` alone (or nothing). */
+export function e2eeRecordWhere(
+  target: E2eeRecordTable,
+  extra: readonly string[] = []
+): string {
+  const clauses = [...(target.scope ? [target.scope] : []), ...extra];
+  return clauses.length ? `where ${clauses.join(' and ')}` : '';
 }
 
 /** A MySQL row, normalized to the table's column kinds. */

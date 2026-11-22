@@ -1,4 +1,9 @@
 import {
+  E2EE_MODERATION_INBOX,
+  isSealedE2eeRecordContent,
+  openE2eeRecordContent
+} from '@/e2ee/relay/e2ee-moderation-seal';
+import {
   decodeE2eeRecordContent,
   E2eeExternalBytes,
   e2eeSha256
@@ -21,6 +26,7 @@ import {
 } from '@/e2ee/relay/e2ee-stream-publisher';
 import { MockCrpRelay } from '@/tests/fixtures/e2ee-mock-crp-relay.fixture';
 import {
+  e2eeTestModerationKey,
   e2eeTestRelayIdentity,
   InMemoryE2eeStreamStore
 } from '@/tests/fixtures/e2ee-stream-store.fixture';
@@ -29,6 +35,7 @@ const NET = '6529-interim-test';
 const ORDERER = e2eeTestRelayIdentity(7, `0x${'aa'.repeat(20)}`);
 const GROUP = `0x${'01'.repeat(32)}`;
 const DEVICE = `0x${'02'.repeat(32)}`;
+const MODERATION = e2eeTestModerationKey(0x31);
 
 function setup(input: {
   mode: E2eeRelayMode;
@@ -53,7 +60,9 @@ function setup(input: {
     quorum: input.quorum ?? 1,
     orderer: ORDERER,
     ordererPublicKey: ORDERER.deviceKey,
-    siteReader: null
+    siteReader: null,
+    moderation: MODERATION.recipient,
+    moderationKeys: []
   };
   const pool = new E2eeRelayPool({
     urls: settings.urls,
@@ -193,6 +202,69 @@ describe('E2eeStreamPublisher', () => {
     expect(typeof body.ds).toBe('string');
     expect(relays[0].hasPayload(e2eeSha256(ciphertext))).toBe(true);
     expect(stored.event.body!.length).toBeLessThan(2048);
+  });
+
+  it('seals report records to the moderation key; the chain covers the sealed bytes', async () => {
+    const { publisher, store, relays } = setup({ mode: 'mirror', relays: 1 });
+    const report = (notes: string): E2eeRecordAppend => ({
+      family: 'md',
+      owner: E2EE_MODERATION_INBOX,
+      kind: E2eeRecordKind.SEALED,
+      refs: ['report'],
+      type: 'report',
+      ops: [
+        {
+          op: 'put',
+          table: 'e2ee_reports',
+          row: { id: notes, notes, body: Buffer.from(`message ${notes}`) }
+        }
+      ],
+      sealToModeration: true
+    });
+    await publisher.run(store, async (connection, batch) => {
+      await batch!.append(connection, report('first report'));
+      await batch!.append(connection, report('second report'));
+    });
+    const wave = `md/${E2EE_MODERATION_INBOX}`;
+    const sealed = relays[0].stored.map((item) => {
+      expect(item.event.wave).toBe(wave);
+      expect(item.event.body).not.toContain(' report');
+      return Buffer.from(JSON.parse(item.event.body!).c, 'base64url');
+    });
+    expect(sealed.every(isSealedE2eeRecordContent)).toBe(true);
+    const [first, second] = sealed.map((bytes) =>
+      decodeE2eeRecordContent(
+        openE2eeRecordContent({ bytes, wave, keys: MODERATION.keys })
+      )
+    );
+    expect(first).toMatchObject({ pos: 1, prev: null });
+    expect(first.ops[0]).toMatchObject({ row: { notes: 'first report' } });
+    expect(second).toMatchObject({ pos: 2, prev: e2eeSha256(sealed[0]) });
+    expect(store.head(wave)).toEqual({
+      wave,
+      pos: 2,
+      hash: e2eeSha256(sealed[1])
+    });
+  });
+
+  it('refuses to seal without a moderation key, or a kind other than SEALED', async () => {
+    const { publisher, store, settings } = setup({ mode: 'mirror', relays: 1 });
+    const append = (kind: E2eeRecordAppend['kind']) =>
+      publisher.run(store, (connection, batch) =>
+        batch!.append(connection, {
+          ...welcome(1),
+          kind,
+          sealToModeration: true
+        })
+      );
+    await expect(append(E2eeRecordKind.RECORD)).rejects.toThrow(
+      'Only SEALED records are sealed'
+    );
+    Object.assign(settings, { moderation: null });
+    await expect(append(E2eeRecordKind.SEALED)).rejects.toThrow(
+      'No moderation key is configured'
+    );
+    expect(store.outboxRows).toEqual([]);
   });
 
   it('mirror: a relay outage never fails the write; the loop catches up in order', async () => {

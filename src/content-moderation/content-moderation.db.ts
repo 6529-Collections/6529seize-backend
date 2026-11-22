@@ -1,4 +1,8 @@
 import {
+  E2eeModerationRecorder,
+  e2eeModerationRecorder
+} from '@/e2ee/relay/e2ee-moderation-records';
+import {
   ATTACHMENTS_TABLE,
   CONTENT_MODERATION_AUDIT_LOG_TABLE,
   CONTENT_MODERATION_DROP_STATES_TABLE,
@@ -31,7 +35,8 @@ import { RequestContext } from '@/request.context';
 import {
   ConnectionWrapper,
   dbSupplier,
-  LazyDbAccessCompatibleService
+  LazyDbAccessCompatibleService,
+  SqlExecutor
 } from '@/sql-executor';
 import { Time } from '@/time';
 import { randomUUID } from 'node:crypto';
@@ -252,6 +257,17 @@ function getInsertIdFromWriteResult(result: unknown): number {
 }
 
 export class ContentModerationDb extends LazyDbAccessCompatibleService {
+  constructor(
+    sqlExecutorGetter: () => SqlExecutor,
+    /** Records report writes for the relays; off unless records are on. */
+    private readonly reportRecords: Pick<
+      E2eeModerationRecorder,
+      'changed'
+    > = e2eeModerationRecorder
+  ) {
+    super(sqlExecutorGetter);
+  }
+
   async blockProfile(
     blockerProfileId: string,
     blockedProfileId: string,
@@ -936,6 +952,11 @@ export class ContentModerationDb extends LazyDbAccessCompatibleService {
       },
       this.connectionOptions(ctx.connection)
     );
+    await this.reportRecords.changed(
+      CONTENT_MODERATION_REPORTS_TABLE,
+      { id },
+      ctx.connection
+    );
     await this.insertAudit(
       {
         actorProfileId: input.reporterProfileId,
@@ -1048,6 +1069,11 @@ export class ContentModerationDb extends LazyDbAccessCompatibleService {
         { reportId: report.id, withdrawnAt },
         this.connectionOptions(connection)
       );
+      await this.reportRecords.changed(
+        CONTENT_MODERATION_REPORTS_TABLE,
+        { id: report.id },
+        connection
+      );
       await this.insertAudit(
         {
           actorProfileId: reporterProfileId,
@@ -1119,6 +1145,11 @@ export class ContentModerationDb extends LazyDbAccessCompatibleService {
         assessedAt
       },
       this.connectionOptions(connection)
+    );
+    await this.reportRecords.changed(
+      CONTENT_MODERATION_REPORTS_TABLE,
+      { id: reportId },
+      connection
     );
   }
 
@@ -1590,6 +1621,11 @@ export class ContentModerationDb extends LazyDbAccessCompatibleService {
       `,
       { ...input, resolvedAt: Time.currentMillis() },
       this.connectionOptions(connection)
+    );
+    await this.reportRecords.changed(
+      CONTENT_MODERATION_REPORTS_TABLE,
+      { drop_id: input.dropId },
+      connection
     );
   }
 

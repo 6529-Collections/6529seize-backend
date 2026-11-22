@@ -17,7 +17,8 @@ import {
   e2eeRecordKeyString,
   e2eeRecordRow,
   e2eeRecordSelectList,
-  e2eeRecordTable
+  e2eeRecordTable,
+  e2eeRecordWhere
 } from '@/e2ee/relay/e2ee-record-tables';
 import { E2eeRebuiltState } from '@/e2ee/relay/e2ee-rebuild';
 import { E2eeStreamHead } from '@/e2ee/relay/e2ee-stream-store';
@@ -134,8 +135,10 @@ export class E2eeRebuildDb extends LazyDbAccessCompatibleService {
   /** Every row of a recorded table, as a rebuild would carry it. */
   async rows(table: string): Promise<Map<string, E2eeRow>> {
     const target = e2eeRecordTable(table);
-    const where =
-      table === E2EE_KEY_PACKAGES_TABLE ? 'where last_resort = true' : '';
+    const where = e2eeRecordWhere(
+      target,
+      table === E2EE_KEY_PACKAGES_TABLE ? ['last_resort = true'] : []
+    );
     const raw = await this.exec<Record<string, unknown>>(
       `select ${e2eeRecordSelectList(target)} from ${table} ${where}`
     );
@@ -167,7 +170,7 @@ export class E2eeRebuildDb extends LazyDbAccessCompatibleService {
     });
     const raw = await this.exec<Record<string, unknown>>(
       `select ${e2eeRecordSelectList(target)} from ${table}
-       where ${clauses.join(' and ')}`,
+       ${e2eeRecordWhere(target, clauses)}`,
       params
     );
     return new Map(

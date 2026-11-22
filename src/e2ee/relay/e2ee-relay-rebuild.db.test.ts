@@ -6,18 +6,28 @@ import { E2eeBackupsService } from '@/api/e2ee/e2ee-backups.service';
 import { E2eeBlobsService } from '@/api/e2ee/e2ee-blobs.service';
 import { E2eeDevicesService } from '@/api/e2ee/e2ee-devices.service';
 import { E2eeGroupsService } from '@/api/e2ee/e2ee-groups.service';
+import { E2eeTrustAndSafetyService } from '@/api/e2ee/e2ee-trust-and-safety.service';
+import { ApiE2eeReportCategory } from '@/api/generated/models/ApiE2eeReportCategory';
 import { ApiE2eeSubmitEntryRequestKindEnum } from '@/api/generated/models/ApiE2eeSubmitEntryRequest';
 import {
+  CONTENT_MODERATION_REPORTS_TABLE,
+  DROPS_TABLE,
   E2EE_RELAY_OUTBOX_TABLE,
   E2EE_STREAMS_TABLE
 } from '@/constants/db-tables';
+import { ContentModerationDb } from '@/content-moderation/content-moderation.db';
+import { ModerationReviewDb } from '@/content-moderation/moderation-review.db';
 import { E2eeBackupDb } from '@/e2ee/e2ee-backup.db';
 import { createE2eeBlobStores } from '@/e2ee/e2ee-blob-stores';
 import { MysqlE2eeCiphertextStore } from '@/e2ee/e2ee-ciphertext-store';
 import { E2eeDb, E2eeDeviceRow } from '@/e2ee/e2ee.db';
 import { E2eeEntryKind, e2eeEntryDigest } from '@/e2ee/e2ee-digests';
+import { E2eeModerationRecorder } from '@/e2ee/relay/e2ee-moderation-records';
 import { E2EE_RECORD_TABLES } from '@/e2ee/relay/e2ee-record-tables';
-import { E2eeRecordWriters } from '@/e2ee/relay/e2ee-record-writers';
+import {
+  E2eeRecordRowReader,
+  E2eeRecordWriters
+} from '@/e2ee/relay/e2ee-record-writers';
 import { E2eeRebuildDb } from '@/e2ee/relay/e2ee-rebuild.db';
 import {
   relayE2eeRebuildSource,
@@ -37,6 +47,12 @@ import {
   relayHeadAnchorSource
 } from '@/e2ee/relay/e2ee-stream-publisher';
 import { MysqlE2eeStreamStore } from '@/e2ee/relay/e2ee-stream-store';
+import {
+  ContentModerationRecommendation,
+  ContentReportReason,
+  ContentReportStatus
+} from '@/entities/IContentModeration';
+import { DropType } from '@/entities/IDrop';
 import { sqlExecutor } from '@/sql-executor';
 import { describeWithSeed } from '@/tests/_setup/seed';
 import {
@@ -44,12 +60,27 @@ import {
   randomE2eeKey
 } from '@/tests/fixtures/e2ee.fixture';
 import { MockCrpRelay } from '@/tests/fixtures/e2ee-mock-crp-relay.fixture';
-import { e2eeTestRelayIdentity } from '@/tests/fixtures/e2ee-stream-store.fixture';
+import {
+  e2eeTestModerationKey,
+  e2eeTestRelayIdentity
+} from '@/tests/fixtures/e2ee-stream-store.fixture';
+import {
+  aUserGroup,
+  withUserGroups
+} from '@/tests/fixtures/user-group.fixture';
+import { aWave, withWaves } from '@/tests/fixtures/wave.fixture';
 
 const NET = '6529-interim-test';
 const ORDERER = e2eeTestRelayIdentity(7, `0x${'aa'.repeat(20)}`);
 const READER = e2eeTestRelayIdentity(9, `0x${'bb'.repeat(20)}`);
 const NOW = 1_795_000_000_000;
+const MODERATION = e2eeTestModerationKey(0x31);
+
+/** A legacy plaintext DM: its reports stay off the relays (D153). */
+const dmGroup = aUserGroup({ is_direct_message: true });
+const dmWave = aWave({ is_direct_message: true, chat_group_id: dmGroup.id });
+const DM_DROP = 'drop-in-a-legacy-dm';
+const PUBLIC_DROP = 'drop-in-a-public-wave';
 
 function hexBytes(bytes: number) {
   return `0x${randomBytes(bytes).toString('hex')}`;
@@ -96,7 +127,32 @@ function withoutActivity(value: unknown): unknown {
   );
 }
 
-describeWithSeed('e2ee relay records against MySQL', [], () => {
+const SEEDS = [
+  withUserGroups([dmGroup]),
+  withWaves([dmWave]),
+  {
+    table: DROPS_TABLE,
+    rows: [
+      {
+        serial_no: 1,
+        id: DM_DROP,
+        wave_id: dmWave.id,
+        author_id: 'pa',
+        created_at: NOW,
+        updated_at: null,
+        title: null,
+        parts_count: 1,
+        reply_to_drop_id: null,
+        reply_to_part_id: null,
+        drop_type: DropType.CHAT,
+        signature: null,
+        hide_link_preview: false
+      }
+    ]
+  }
+];
+
+describeWithSeed('e2ee relay records against MySQL', SEEDS, () => {
   let relay: MockCrpRelay;
   let settings: E2eeRelaySettings;
   let deps: E2eeServiceDeps;
@@ -108,6 +164,9 @@ describeWithSeed('e2ee relay records against MySQL', [], () => {
   let writers: E2eeRecordWriters;
   let publisher: E2eeStreamPublisher;
   let store: MysqlE2eeStreamStore;
+  let moderation: ContentModerationDb;
+  let review: ModerationReviewDb;
+  let trustAndSafety: E2eeTrustAndSafetyService;
 
   beforeEach(() => {
     relay = new MockCrpRelay({
@@ -126,7 +185,9 @@ describeWithSeed('e2ee relay records against MySQL', [], () => {
       quorum: 1,
       orderer: ORDERER,
       ordererPublicKey: ORDERER.deviceKey,
-      siteReader: READER
+      siteReader: READER,
+      moderation: MODERATION.recipient,
+      moderationKeys: MODERATION.keys
     };
     const pool = new E2eeRelayPool({
       urls: settings.urls,
@@ -144,8 +205,22 @@ describeWithSeed('e2ee relay records against MySQL', [], () => {
       now: () => clock++,
       random: () => 1
     });
-    db = new E2eeDb(() => sqlExecutor);
     writers = new E2eeRecordWriters();
+    const reportRecords = new E2eeModerationRecorder(() => ({
+      publisher,
+      writers,
+      runner: new E2eeRecordRowReader(() => sqlExecutor)
+    }));
+    db = new E2eeDb(() => sqlExecutor, reportRecords);
+    moderation = new ContentModerationDb(() => sqlExecutor, reportRecords);
+    review = new ModerationReviewDb(() => sqlExecutor, reportRecords);
+    trustAndSafety = new E2eeTrustAndSafetyService({
+      db,
+      now: () => NOW,
+      isModerator: async () => true,
+      groupId: () => null,
+      isGroupMember: async () => false
+    });
     const noEvent = async () => undefined;
     deps = {
       db,
@@ -285,6 +360,69 @@ describeWithSeed('e2ee relay records against MySQL', [], () => {
     return { a, b, group, blobId: blob.blob_id, backupId };
   }
 
+  /**
+   * Reports: a drop report assessed by the AI and resolved; a report
+   * on a legacy DM; a message report put on hold (a trust-and-safety read).
+   */
+  async function reportStory(ids: Awaited<ReturnType<typeof story>>) {
+    const reported = {
+      reporterProfileId: 'pb',
+      authorProfileId: 'pa',
+      reason: ContentReportReason.SPAM,
+      notes: 'the reporter notes',
+      contentSnapshot: { parts: [{ content: 'reported words' }], n: 1 }
+    };
+    const report = await moderation.createReport(
+      { ...reported, dropId: PUBLIC_DROP },
+      {}
+    );
+    await moderation.saveReportAssessment(report.id, {
+      recommendation: ContentModerationRecommendation.NEEDS_HUMAN_REVIEW,
+      category: 'spam',
+      confidence: 0.9512,
+      rationale: 'looks like spam',
+      evidence: [{ quote: 'reported words' }],
+      policyVersion: 'test-1'
+    });
+    await moderation.resolveOpenReportsForDrop({
+      dropId: PUBLIC_DROP,
+      status: ContentReportStatus.RESOLVED_REMOVED,
+      moderatorProfileId: 'pm',
+      reason: 'removed'
+    });
+    const dmReport = await moderation.createReport(
+      { ...reported, dropId: DM_DROP },
+      {}
+    );
+    const message = await blobs.report('pb', {
+      group: ids.group,
+      epoch: 1,
+      body: randomBytes(64).toString('base64'),
+      signature: `0x${'00'.repeat(64)}`,
+      sender_device_key: ids.a,
+      reporter_device_key: ids.b,
+      reason: ApiE2eeReportCategory.Doxxing,
+      notes: 'message report notes'
+    });
+    await trustAndSafety.setHold('pm', message.id, true);
+    return {
+      reportId: report.id,
+      dmReportId: dmReport.id,
+      messageReportId: message.id
+    };
+  }
+
+  async function reportAnswers(ids: Awaited<ReturnType<typeof reportStory>>) {
+    const accessLog = await db.listReportAccess();
+    return {
+      report: await review.reportForReview(ids.reportId),
+      messageReports: (await db.listReportsForReview(null, 10)).map((row) => ({
+        ...row
+      })),
+      accessLog: accessLog.map((row) => ({ ...row }))
+    };
+  }
+
   async function answers(ids: Awaited<ReturnType<typeof story>>) {
     return withoutActivity({
       logA: await groups.getLog('pa', ids.group, { device_key: ids.a }),
@@ -332,8 +470,22 @@ describeWithSeed('e2ee relay records against MySQL', [], () => {
 
   it('drops every table, rebuilds from the relays, and the API answers the same', async () => {
     const ids = await story();
+    const reports = await reportStory(ids);
     expect((await store.countOutbox()).rows).toBe(0);
     const before = await answers(ids);
+    const reportsBefore = await reportAnswers(reports);
+    expect(reportsBefore.report).toMatchObject({
+      status: ContentReportStatus.RESOLVED_REMOVED,
+      content_snapshot: { parts: [{ content: 'reported words' }], n: 1 },
+      ai_evidence: [{ quote: 'reported words' }]
+    });
+    expect(Number(reportsBefore.report.ai_confidence)).toBe(0.9512);
+    expect(reportsBefore.messageReports[0]).toMatchObject({ on_hold: true });
+    // The report records are sealed: no relay holds a report in the clear.
+    for (const item of relay.stored) {
+      expect(item.event.body ?? '').not.toContain('reporter notes');
+      expect(item.event.body ?? '').not.toContain('message report notes');
+    }
 
     const verify = await rebuild('verify');
     expect(verify.problems).toEqual([]);
@@ -347,6 +499,14 @@ describeWithSeed('e2ee relay records against MySQL', [], () => {
     const write = await rebuild('write');
     expect(write).toMatchObject({ written: true, ok: true, problemCount: 0 });
     expect(await answers(ids)).toEqual(before);
+    expect(await reportAnswers(reports)).toEqual(reportsBefore);
+    // The report on a legacy DM was never recorded, so it is not rebuilt.
+    expect(
+      await sqlExecutor.execute(
+        `select id from ${CONTENT_MODERATION_REPORTS_TABLE} where id = :id`,
+        { id: reports.dmReportId }
+      )
+    ).toEqual([]);
 
     // The rebuilt index keeps working: the next record extends the chain.
     await groups.sendMessage('pb', ids.group, {
@@ -381,6 +541,7 @@ describeWithSeed('e2ee relay records against MySQL', [], () => {
   it('backfills what was written while records were off, and verify passes', async () => {
     settings = { ...settings, mode: 'off' };
     const ids = await story();
+    const reports = await reportStory(ids);
     expect(relay.stored).toEqual([]);
     settings = { ...settings, mode: 'mirror' };
     const backfillDb = new MysqlE2eeBackfillDb(() => sqlExecutor);
@@ -413,7 +574,10 @@ describeWithSeed('e2ee relay records against MySQL', [], () => {
       blobBytes: 3000,
       backups: 1,
       backupChunks: 1,
-      backupBytes: 4096
+      backupBytes: 4096,
+      reports: 1,
+      messageReports: 1,
+      reportAccess: 1
     });
     for (const family of E2EE_BACKFILL_FAMILIES) {
       let after: string | undefined;
@@ -435,12 +599,15 @@ describeWithSeed('e2ee relay records against MySQL', [], () => {
     ).toEqual([]);
     expect(verify.ok).toBe(true);
     const before = await answers(ids);
+    const reportsBefore = await reportAnswers(reports);
     await emptyTables();
     expect((await rebuild('write')).ok).toBe(true);
     expect(await answers(ids)).toEqual(before);
+    expect(await reportAnswers(reports)).toEqual(reportsBefore);
   });
   it('checks stream by stream against MySQL, and names a changed row', async () => {
     const ids = await story();
+    const reports = await reportStory(ids);
     const verify = (after?: string) =>
       runE2eeStreamVerify({
         now: NOW,
@@ -465,8 +632,8 @@ describeWithSeed('e2ee relay records against MySQL', [], () => {
       checked += page.checked;
       after = page.next ?? undefined;
     } while (after !== undefined);
-    // dr for each device, cv, dv, bl and bk.
-    expect(checked).toBe(6);
+    // dr for each device, cv, dv, bl, bk and the moderators' inbox.
+    expect(checked).toBe(7);
     await sqlExecutor.execute(
       `update e2ee_log set epoch_fp = 'ffffffffffffffff' where group_handle = :group and seq = 2`,
       { group: ids.group }
@@ -479,5 +646,25 @@ describeWithSeed('e2ee relay records against MySQL', [], () => {
       after = page.next ?? undefined;
     } while (after !== undefined);
     expect(failures.map((f) => f.wave)).toEqual([`cv/${ids.group}`]);
+    await sqlExecutor.execute(
+      `update e2ee_log set epoch_fp = '0102030405060708' where group_handle = :group and seq = 2`,
+      { group: ids.group }
+    );
+    await sqlExecutor.execute(
+      `update e2ee_reports set on_hold = false where id = :id`,
+      { id: reports.messageReportId }
+    );
+    const reportFailures = [];
+    after = undefined;
+    do {
+      const page = await verify(after);
+      reportFailures.push(...page.failures);
+      after = page.next ?? undefined;
+    } while (after !== undefined);
+    expect(reportFailures).toHaveLength(1);
+    expect(reportFailures[0]).toMatchObject({
+      wave: expect.stringMatching(/^md\//),
+      tables: [{ table: 'e2ee_reports', changed: 1 }]
+    });
   });
 });

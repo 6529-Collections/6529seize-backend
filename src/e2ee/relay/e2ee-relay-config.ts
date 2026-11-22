@@ -1,7 +1,12 @@
 import {
+  E2eeSealRecipient,
+  parseE2eeModerationKey
+} from '@/e2ee/relay/e2ee-moderation-seal';
+import {
   e2eeEd25519PublicKey,
   E2eeRecordGrantProof
 } from '@/e2ee/relay/e2ee-record-event';
+import { loadProviderKeys, ProviderKey } from '@/signed-records/sealed-crypto';
 
 type Env = Readonly<Record<string, string | undefined>>;
 
@@ -41,6 +46,10 @@ export interface E2eeRelaySettings {
    */
   readonly ordererPublicKey: string | null;
   readonly siteReader: E2eeRelayIdentity | null;
+  /** The moderation service key report records are sealed to. */
+  readonly moderation: E2eeSealRecipient | null;
+  /** Its private keys: only a rebuild or check of reports holds them. */
+  readonly moderationKeys: readonly ProviderKey[];
 }
 
 export class E2eeRelayConfigError extends Error {
@@ -118,6 +127,28 @@ function parseIdentity(
   return { seed, deviceKey, grant };
 }
 
+function parseModeration(env: Env): {
+  readonly moderation: E2eeSealRecipient | null;
+  readonly moderationKeys: readonly ProviderKey[];
+} {
+  const raw = env.E2EE_MODERATION_PUBLIC_KEY?.trim();
+  let moderation: E2eeSealRecipient | null = null;
+  let moderationKeys: ProviderKey[] = [];
+  try {
+    moderation = raw ? parseE2eeModerationKey(raw) : null;
+    moderationKeys = loadProviderKeys(env.E2EE_MODERATION_KEYS);
+  } catch (error) {
+    throw new E2eeRelayConfigError((error as Error).message);
+  }
+  const pair = moderationKeys.find((key) => key.id === moderation?.id);
+  if (moderation && pair && !pair.publicKey.equals(moderation.publicKey)) {
+    throw new E2eeRelayConfigError(
+      `E2EE_MODERATION_KEYS holds another key for ${moderation.id}`
+    );
+  }
+  return { moderation, moderationKeys };
+}
+
 /**
  * Reads the relay settings. With the mode off nothing else is read. Any
  * other mode needs the relay URLs, the network tag and the orderer's key and
@@ -132,6 +163,10 @@ function parseIdentity(
  *   seed (secret) and its grant proof (JSON, CRP's GrantProof).
  * - `E2EE_SITE_READER_KEY` and `E2EE_SITE_READER_GRANT`: the site-reader's,
  *   for the rebuild and the side-by-side check (optional otherwise).
+ * - `E2EE_MODERATION_PUBLIC_KEY`: `{"id", "public_key"}`, the moderation
+ *   service's X25519 key that report records are sealed to (required with
+ *   records on). `E2EE_MODERATION_KEYS` (secret): its private keys as
+ *   `[{"id", "private_key"}]`, only where reports are rebuilt or checked.
  */
 export function readE2eeRelaySettings(
   env: Env = process.env
@@ -153,6 +188,7 @@ export function readE2eeRelaySettings(
       'E2EE_ORDERER_PUBLIC_KEY must be 0x and 32 bytes of hex'
     );
   }
+  const { moderation, moderationKeys } = parseModeration(env);
   if (mode === 'off') {
     return {
       mode,
@@ -161,7 +197,9 @@ export function readE2eeRelaySettings(
       quorum: 1,
       orderer: null,
       ordererPublicKey: pinned,
-      siteReader
+      siteReader,
+      moderation,
+      moderationKeys
     };
   }
   if (!urls.length) {
@@ -173,6 +211,9 @@ export function readE2eeRelaySettings(
   const orderer = parseIdentity(env, 'E2EE_ORDERER_KEY', 'E2EE_ORDERER_GRANT');
   if (!orderer) {
     throw new E2eeRelayConfigError('E2EE_ORDERER_KEY is missing');
+  }
+  if (!moderation) {
+    throw new E2eeRelayConfigError('E2EE_MODERATION_PUBLIC_KEY is missing');
   }
   if (pinned !== null && pinned !== orderer.deviceKey) {
     throw new E2eeRelayConfigError(
@@ -191,7 +232,9 @@ export function readE2eeRelaySettings(
     quorum,
     orderer,
     ordererPublicKey: orderer.deviceKey,
-    siteReader
+    siteReader,
+    moderation,
+    moderationKeys
   };
 }
 
@@ -209,7 +252,9 @@ const SETTINGS_ENV = [
   'E2EE_ORDERER_GRANT',
   'E2EE_ORDERER_PUBLIC_KEY',
   'E2EE_SITE_READER_KEY',
-  'E2EE_SITE_READER_GRANT'
+  'E2EE_SITE_READER_GRANT',
+  'E2EE_MODERATION_PUBLIC_KEY',
+  'E2EE_MODERATION_KEYS'
 ];
 
 /** The settings from `process.env`, parsed once per distinct value set. */

@@ -15,6 +15,7 @@ import {
   E2EE_WELCOMES_TABLE
 } from '@/constants/db-tables';
 import { DbQueryOptions } from '@/db-query.options';
+import { E2EE_MODERATION_INBOX } from '@/e2ee/relay/e2ee-moderation-seal';
 import {
   E2eeExternalBytes,
   E2eeRow,
@@ -23,9 +24,11 @@ import {
 } from '@/e2ee/relay/e2ee-record-container';
 import { E2eeRecordKind } from '@/e2ee/relay/e2ee-record-event';
 import {
+  E2EE_MODERATION_TABLES,
   e2eeRecordRow,
   e2eeRecordSelectList,
-  e2eeRecordTable
+  e2eeRecordTable,
+  e2eeRecordWhere
 } from '@/e2ee/relay/e2ee-record-tables';
 import {
   E2eeDeliveryWindow,
@@ -39,7 +42,10 @@ import {
 } from '@/sql-executor';
 
 type Conn = ConnectionWrapper<unknown>;
-type Where = Readonly<Record<string, E2eeRowValue | readonly E2eeRowValue[]>>;
+export type E2eeRecordWhere = Readonly<
+  Record<string, E2eeRowValue | readonly E2eeRowValue[]>
+>;
+type Where = E2eeRecordWhere;
 
 /** Reads rows of the recorded tables, column for column, in a transaction. */
 export class E2eeRecordRowReader extends LazyDbAccessCompatibleService {
@@ -65,7 +71,7 @@ export class E2eeRecordRowReader extends LazyDbAccessCompatibleService {
     const options: DbQueryOptions = { wrappedConnection: connection };
     const raw = await this.db.execute<Record<string, unknown>>(
       `select ${e2eeRecordSelectList(target)} from ${tableName}
-       ${clauses.length ? `where ${clauses.join(' and ')}` : ''}
+       ${e2eeRecordWhere(target, clauses)}
        ${orderBy ? `order by ${orderBy}` : ''}`,
       params,
       options
@@ -594,6 +600,41 @@ export class E2eeRecordWriters {
       type: 'backup',
       ops
     });
+  }
+
+  /**
+   * Report rows for the moderators' inbox: the rows of a report table
+   * that match `where`, as MySQL holds them once the stream is locked, in
+   * one record sealed to the moderation service key. Runs after the
+   * report's own write committed; rows outside the table's scope (reports
+   * on legacy DMs) are not copied. Returns the rows copied.
+   */
+  async moderationRowsChanged(
+    batch: E2eeRecordBatch,
+    connection: Conn,
+    change: { readonly table: string; readonly where: Where }
+  ): Promise<number> {
+    if (!E2EE_MODERATION_TABLES.includes(change.table)) {
+      throw new Error(`${change.table} is not a report table`);
+    }
+    await batch.lock(connection, 'md', E2EE_MODERATION_INBOX);
+    const rows = await this.reader.rows(
+      change.table,
+      change.where,
+      connection,
+      'id'
+    );
+    if (!rows.length) return 0;
+    await batch.append(connection, {
+      family: 'md',
+      owner: E2EE_MODERATION_INBOX,
+      kind: E2eeRecordKind.SEALED,
+      refs: ['report'],
+      type: 'report',
+      ops: puts(change.table, rows),
+      sealToModeration: true
+    });
+    return rows.length;
   }
 }
 

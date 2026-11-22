@@ -1,4 +1,5 @@
 import {
+  CONTENT_MODERATION_REPORTS_TABLE,
   E2EE_BACKUP_CHUNKS_TABLE,
   E2EE_BLOB_CHUNKS_TABLE,
   E2EE_BLOBS_TABLE,
@@ -6,11 +7,16 @@ import {
   E2EE_DEVICES_TABLE,
   E2EE_KEY_PACKAGES_TABLE,
   E2EE_LOG_TABLE,
+  E2EE_REPORTS_TABLE,
   E2EE_WELCOME_DELIVERIES_TABLE,
   E2EE_WELCOMES_TABLE
 } from '@/constants/db-tables';
 import { E2EE_RETENTION } from '@/e2ee/e2ee.constants';
 import { CrpItem } from '@/e2ee/relay/e2ee-crp';
+import {
+  isSealedE2eeRecordContent,
+  openE2eeRecordContent
+} from '@/e2ee/relay/e2ee-moderation-seal';
 import {
   decodeE2eeRecordContent,
   E2eeDecodedRecordContent,
@@ -32,15 +38,33 @@ import {
   e2eeRecordTable
 } from '@/e2ee/relay/e2ee-record-tables';
 import { E2eeStreamHead } from '@/e2ee/relay/e2ee-stream-store';
+import { ProviderKey } from '@/signed-records/sealed-crypto';
 
-/** The families the delivery service's records live in. */
+/** The families the delivery service's and the reports' records live in. */
 export const E2EE_RECORD_FAMILIES: readonly E2eeRecordFamily[] = [
   'cv',
   'dv',
   'dr',
   'bl',
-  'bk'
+  'bk',
+  'md'
 ];
+
+/**
+ * Resolved reports keep their evidence (snapshot, notes, AI rationale and
+ * evidence) this long, as `moderation-review.db.ts` prunes it.
+ */
+const REPORT_EVIDENCE_MS = 90 * 86_400_000;
+/** What the prune leaves in `content_snapshot`, in MySQL's JSON text. */
+const EXPIRED_SNAPSHOT = '{"evidence_expired": true}';
+
+/** How a rebuild reads: the orderer's key, the time, the moderation keys. */
+export interface E2eeRebuildOptions {
+  readonly ordererDeviceKey: string;
+  readonly now: number;
+  /** Opens the reports sealed to the moderation service key. */
+  readonly moderationKeys?: readonly ProviderKey[];
+}
 
 /** Where a rebuild reads: the relays (or a fixture). */
 export interface E2eeRebuildSource {
@@ -102,7 +126,8 @@ function bodyRefs(event: E2eeSignedRecordEvent): {
 async function locate(
   item: CrpItem,
   source: E2eeRebuildSource,
-  problems: E2eeRebuildProblem[]
+  problems: E2eeRebuildProblem[],
+  moderationKeys: readonly ProviderKey[]
 ): Promise<Located | null> {
   const { event } = item;
   const problem = (reason: string) => {
@@ -123,10 +148,22 @@ async function locate(
     if (bytes && e2eeSha256(bytes) !== refs.content.h) bytes = null;
   }
   if (!bytes) return problem('content is missing');
+  let plain = bytes;
+  if (isSealedE2eeRecordContent(bytes)) {
+    try {
+      plain = openE2eeRecordContent({
+        bytes,
+        wave: event.wave,
+        keys: moderationKeys
+      });
+    } catch (error) {
+      return problem(`sealed content: ${(error as Error).message}`);
+    }
+  }
   const external = refs.external ? await source.payload(refs.external) : null;
   let content: E2eeDecodedRecordContent;
   try {
-    content = decodeE2eeRecordContent(bytes, (sha) =>
+    content = decodeE2eeRecordContent(plain, (sha) =>
       sha === refs.external ? external : null
     );
   } catch (error) {
@@ -360,20 +397,54 @@ function applyRules(
     ...row,
     last_seen_at: lastSent.get(String(row.device_key)) ?? null
   }));
+  // Reported messages go at retention unless trust and safety holds them.
+  store.filter(
+    E2EE_REPORTS_TABLE,
+    (row) =>
+      row.on_hold === true ||
+      Number(row.created_at) >= now - E2EE_RETENTION.reportsMs
+  );
+  store.update(CONTENT_MODERATION_REPORTS_TABLE, (row) =>
+    evidenceExpired(row, now)
+      ? {
+          ...row,
+          content_snapshot: EXPIRED_SNAPSHOT,
+          notes: null,
+          ai_rationale: null,
+          ai_evidence: null
+        }
+      : row
+  );
+}
+
+/** A resolved report whose evidence the moderation prune clears. */
+function evidenceExpired(row: E2eeRow, now: number): boolean {
+  if (row.status === 'OPEN' || row.resolved_at === null) return false;
+  if (Number(row.resolved_at) >= now - REPORT_EVIDENCE_MS) return false;
+  try {
+    const snapshot = JSON.parse(String(row.content_snapshot));
+    return !(
+      snapshot !== null &&
+      typeof snapshot === 'object' &&
+      'evidence_expired' in snapshot
+    );
+  } catch {
+    return true;
+  }
 }
 
 /** Checks and locates the orderer's records, grouped by stream. */
 async function collect(
   items: readonly CrpItem[],
   source: E2eeRebuildSource,
-  ordererDeviceKey: string,
+  options: E2eeRebuildOptions,
   problems: E2eeRebuildProblem[]
 ): Promise<Map<string, Located[]>> {
   const byWave = new Map<string, Located[]>();
   for (const item of items) {
     const family = parseE2eeFamilyWave(item.event.wave);
     if (!family || item.event.kind === E2eeRecordKind.DEL) continue;
-    const check = checkE2eeRecord(item.event, ordererDeviceKey);
+    const check = checkE2eeRecord(item.event, options.ordererDeviceKey);
     if (!check.ok) {
       problems.push({
         wave: item.event.wave,
@@ -382,7 +453,12 @@ async function collect(
       });
       continue;
     }
-    const located = await locate(item, source, problems);
+    const located = await locate(
+      item,
+      source,
+      problems,
+      options.moderationKeys ?? []
+    );
     if (!located) continue;
     const list = byWave.get(located.wave) ?? [];
     list.push(located);
@@ -399,16 +475,11 @@ async function collect(
  */
 export async function rebuildE2eeState(
   source: E2eeRebuildSource,
-  options: { readonly ordererDeviceKey: string; readonly now: number }
+  options: E2eeRebuildOptions
 ): Promise<E2eeRebuiltState> {
   const problems: E2eeRebuildProblem[] = [];
   const items = await source.events(E2EE_RECORD_FAMILIES);
-  const byWave = await collect(
-    items,
-    source,
-    options.ordererDeviceKey,
-    problems
-  );
+  const byWave = await collect(items, source, options, problems);
   const store = new RowStore(problems);
   const heads: E2eeStreamHead[] = [];
   let records = 0;
@@ -448,9 +519,7 @@ export async function rebuildE2eeStream(
     stream(wave: string): Promise<CrpItem[]>;
   },
   wave: string,
-  options: {
-    readonly ordererDeviceKey: string;
-    readonly now: number;
+  options: E2eeRebuildOptions & {
     readonly revokedDevices?: ReadonlySet<string>;
   }
 ): Promise<E2eeRebuiltStream> {
@@ -458,12 +527,7 @@ export async function rebuildE2eeStream(
   const items = (await source.stream(wave)).filter(
     (item) => item.event.wave === wave
   );
-  const byWave = await collect(
-    items,
-    source,
-    options.ordererDeviceKey,
-    problems
-  );
+  const byWave = await collect(items, source, options, problems);
   const store = new RowStore(problems);
   const chain = chainOf(wave, byWave.get(wave) ?? [], problems);
   for (const record of chain) store.apply(record);

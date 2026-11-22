@@ -164,7 +164,8 @@ export async function runE2eeRebuild(input: {
     }
     const state = await rebuildE2eeState(source, {
       ordererDeviceKey,
-      now: input.now
+      now: input.now,
+      moderationKeys: input.settings.moderationKeys
     });
     const base = {
       mode: input.mode,
@@ -229,6 +230,7 @@ export async function runE2eeStreamVerify(input: {
       db: input.db ?? e2eeRebuildDb,
       ordererDeviceKey,
       now: input.now,
+      moderationKeys: input.settings.moderationKeys,
       after: input.after,
       limit: input.limit
     });
