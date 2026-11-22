@@ -17,6 +17,7 @@ describeWithSeed('ChainPendingOperationsDb', [], () => {
           op_type: 'IDENTITY_JOIN',
           principal: '0x' + 'ab'.repeat(32),
           unsigned_hex: '0x0102',
+          typed_data_json: '{"primaryType":"IdentityJoin"}',
           created_by: A,
           expires_at: 5_000,
           status: 'PENDING',

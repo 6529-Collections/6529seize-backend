@@ -25,6 +25,7 @@ export interface PendingOperation {
   readonly op_type: string;
   readonly principal: string | null;
   readonly unsigned_hex: string;
+  readonly typed_data_json: string;
   readonly created_by: string;
   readonly expires_at: number;
   readonly status: PendingStatus;
@@ -72,10 +73,11 @@ export class ChainPendingOperationsDb extends LazyDbAccessCompatibleService {
   async insert(op: PendingOperation, conn: Conn) {
     await this.db.execute(
       `insert into ${CHAIN_PENDING_OPERATIONS_TABLE}
-         (tx_id, op_type, principal, unsigned_hex, created_by, expires_at, status,
-          result_json, last_error, created_at, updated_at)
-       values (:tx_id, :op_type, :principal, :unsigned_hex, :created_by, :expires_at,
-          :status, :result_json, :last_error, :created_at, :updated_at)`,
+         (tx_id, op_type, principal, unsigned_hex, typed_data_json, created_by,
+          expires_at, status, result_json, last_error, created_at, updated_at)
+       values (:tx_id, :op_type, :principal, :unsigned_hex, :typed_data_json,
+          :created_by, :expires_at, :status, :result_json, :last_error,
+          :created_at, :updated_at)`,
       { ...op },
       { wrappedConnection: conn }
     );

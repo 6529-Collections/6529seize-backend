@@ -51,6 +51,12 @@ interface PendingBody {
   readonly op_type: string | number;
   readonly principal: string | null;
   readonly unsigned: string;
+  readonly typed_data: {
+    domain: Record<string, unknown>;
+    primaryType: string;
+    types: Record<string, { name: string; type: string }[]>;
+    message: Record<string, unknown>;
+  };
   readonly expires_at: number;
   readonly required: { role: number; key_type: number; signer: string }[];
   readonly signatures: SignatureBody[];
@@ -70,6 +76,22 @@ const PendingSchema = Joi.object<PendingBody>({
   unsigned: Joi.string()
     .pattern(/^0x[0-9a-fA-F]+$/)
     .required(),
+  typed_data: Joi.object({
+    domain: Joi.object().unknown(true).required(),
+    primaryType: Joi.string().max(100).required(),
+    types: Joi.object()
+      .pattern(
+        Joi.string().max(100),
+        Joi.array().items(
+          Joi.object({
+            name: Joi.string().max(100).required(),
+            type: Joi.string().max(100).required()
+          })
+        )
+      )
+      .required(),
+    message: Joi.object().unknown(true).required()
+  }).required(),
   expires_at: Joi.number().integer().required(),
   required: Joi.array()
     .items(
@@ -99,6 +121,7 @@ export function toApiPendingOperation(op: PendingOperation) {
     op_type: op.op_type,
     principal: op.principal,
     unsigned: op.unsigned_hex,
+    typed_data: JSON.parse(op.typed_data_json),
     created_by: op.created_by,
     expires_at: op.expires_at,
     status: op.status,
@@ -150,6 +173,7 @@ router.post(
         opType: body.op_type,
         principal: body.principal,
         unsigned: body.unsigned,
+        typedData: body.typed_data,
         expiresAt: body.expires_at,
         required: body.required.map((it) => ({
           role: it.role,

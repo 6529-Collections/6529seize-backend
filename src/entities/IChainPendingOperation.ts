@@ -26,6 +26,13 @@ export class ChainPendingOperationEntity {
   @Column({ type: 'mediumtext', nullable: false })
   readonly unsigned_hex!: string;
 
+  /**
+   * The draft's EIP-712 typed data (JSON), which the other wallets sign; it
+   * hashes to tx_id.
+   */
+  @Column({ type: 'mediumtext', nullable: false })
+  readonly typed_data_json!: string;
+
   @Column({ type: 'varchar', length: 50, nullable: false })
   readonly created_by!: string;
 

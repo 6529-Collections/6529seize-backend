@@ -1,4 +1,4 @@
-import { Wallet } from 'ethers';
+import { TypedDataEncoder, Wallet } from 'ethers';
 import { ChainGatewayError } from '@/chain-gateway/chain-gateway.client';
 import {
   BadRequestException,
@@ -12,11 +12,39 @@ import {
 } from './chain-pending-operations.db';
 import {
   ChainRelayService,
+  ChainTypedData,
   PendingOperationInput,
+  typedDataDigest,
   walletSignerOf
 } from './chain-relay.service';
 
-const TX = '0x' + '5a'.repeat(32);
+/** A join's typed data, as the gateway drafts it; TX is its EIP-712 digest. */
+const TYPED: ChainTypedData = {
+  domain: { name: '6529 Network', version: '1', chainId: 1 },
+  primaryType: 'IdentityJoin',
+  types: {
+    EIP712Domain: [
+      { name: 'name', type: 'string' },
+      { name: 'version', type: 'string' },
+      { name: 'chainId', type: 'uint256' }
+    ],
+    IdentityJoin: [
+      { name: 'principal', type: 'bytes32' },
+      { name: 'wallet', type: 'address' },
+      { name: 'nonce', type: 'uint64' }
+    ]
+  },
+  message: {
+    principal: '0x' + 'ab'.repeat(32),
+    wallet: '0x' + '22'.repeat(20),
+    nonce: 7
+  }
+};
+const TX = TypedDataEncoder.hash(
+  TYPED.domain as never,
+  { IdentityJoin: TYPED.types.IdentityJoin },
+  TYPED.message
+).toLowerCase();
 const ANCHOR = new Wallet('0x' + '11'.repeat(32));
 const JOINER = new Wallet('0x' + '22'.repeat(32));
 const STRANGER = new Wallet('0x' + '33'.repeat(32));
@@ -101,6 +129,7 @@ function joinInput(
     opType: 'IDENTITY_JOIN',
     principal: '0x' + 'ab'.repeat(32),
     unsigned: '0x0102',
+    typedData: TYPED,
     expiresAt: 1_000_000 + 3_600_000,
     required: [
       { role: 0, keyType: 1, signer: ANCHOR.address },
@@ -109,6 +138,16 @@ function joinInput(
     signatures
   };
 }
+
+describe('typedDataDigest', () => {
+  it('is the EIP-712 digest a wallet signs', () => {
+    expect(typedDataDigest(TYPED)).toBe(TX);
+    expect(
+      typedDataDigest({ ...TYPED, message: { ...TYPED.message, nonce: 8 } })
+    ).not.toBe(TX);
+    expect(typedDataDigest({ ...TYPED, types: {} })).toBeNull();
+  });
+});
 
 describe('walletSignerOf', () => {
   it('recovers the wallet that signed the digest', () => {
@@ -206,6 +245,10 @@ describe('ChainRelayService pending operations', () => {
       { ...joinInput(), expiresAt: 999_999 },
       { ...joinInput(), expiresAt: 1_000_000 + 8 * 24 * 3_600_000 },
       { ...joinInput(), txId: '0x12' },
+      {
+        ...joinInput(),
+        typedData: { ...TYPED, message: { ...TYPED.message, nonce: 9 } }
+      },
       { ...joinInput(), unsigned: '0xabc' },
       {
         ...joinInput(),

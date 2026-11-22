@@ -1,4 +1,4 @@
-import { recoverAddress } from 'ethers';
+import { recoverAddress, TypedDataEncoder, TypedDataField } from 'ethers';
 import {
   ChainGatewayClient,
   ChainGatewayError,
@@ -28,6 +28,7 @@ const logger = Logger.get('CHAIN_RELAY');
 /** keyType 1: an Ethereum wallet's secp256k1 signature over the txId. */
 export const WALLET_KEY_TYPE = 1;
 const MAX_UNSIGNED_BYTES = 128 * 1024;
+const MAX_TYPED_DATA_CHARS = 64 * 1024;
 const MAX_SIGNERS = 4;
 const MAX_VALIDITY_MS = 7 * 24 * 60 * 60 * 1000 + 60_000;
 
@@ -41,6 +42,8 @@ export interface PendingOperationInput {
   readonly opType: string | number;
   readonly principal: string | null;
   readonly unsigned: string;
+  /** The draft's EIP-712 typed data: the other wallets sign it. */
+  readonly typedData: ChainTypedData;
   /** Unix ms, the draft's expiresAt. */
   readonly expiresAt: number;
   /** The draft's signer list: who must sign, in which role. */
@@ -54,6 +57,27 @@ export interface PendingOperationInput {
 }
 
 type Gateway = Pick<ChainGatewayClient, 'submit'>;
+
+export interface ChainTypedData {
+  readonly domain: Record<string, unknown>;
+  readonly primaryType: string;
+  readonly types: Record<string, TypedDataField[]>;
+  readonly message: Record<string, unknown>;
+}
+
+/** The EIP-712 digest of typed data (what a wallet signs), or null. */
+export function typedDataDigest(typedData: ChainTypedData): string | null {
+  try {
+    const { EIP712Domain: _domain, ...types } = typedData.types ?? {};
+    return TypedDataEncoder.hash(
+      typedData.domain as never,
+      types,
+      typedData.message
+    ).toLowerCase();
+  } catch {
+    return null;
+  }
+}
 
 function badRequest(message: string): never {
   throw new BadRequestException(message);
@@ -146,6 +170,12 @@ export class ChainRelayService {
     if (!TX_ID.test(lower(input.txId)))
       badRequest('txId must be 32 bytes of 0x hex');
     this.checkUnsigned(input.unsigned);
+    if (JSON.stringify(input.typedData ?? null).length > MAX_TYPED_DATA_CHARS) {
+      badRequest('typed_data is too large');
+    }
+    if (typedDataDigest(input.typedData) !== lower(input.txId)) {
+      badRequest('typed_data does not hash to tx_id');
+    }
     if (input.principal !== null && !TX_ID.test(lower(input.principal))) {
       badRequest('principal must be 32 bytes of 0x hex, or null');
     }
@@ -227,6 +257,7 @@ export class ChainRelayService {
             op_type: String(input.opType),
             principal: input.principal ? lower(input.principal) : null,
             unsigned_hex: lower(input.unsigned),
+            typed_data_json: JSON.stringify(input.typedData),
             created_by: me,
             expires_at: input.expiresAt,
             status: 'PENDING',
