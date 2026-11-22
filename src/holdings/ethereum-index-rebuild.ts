@@ -59,8 +59,10 @@ export async function rebuildNftOwners(): Promise<void> {
 }
 
 /**
- * 3. The NFT catalogue from token metadata (supply from the owners), then the
- * extended data and the Memes seasons.
+ * 3. The NFT catalogue from token metadata (supply from the owners), with its
+ * artists from the cards' artist names, then the extended data and the Memes
+ * seasons. Artists' hand-typed bios, pictures, works and links are not
+ * rebuilt; no API serves them.
  */
 export async function rebuildNftCatalogue(): Promise<void> {
   await whileRebuildingEthereumIndexes(async () => {

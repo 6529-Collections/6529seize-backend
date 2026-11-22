@@ -45,6 +45,10 @@ import { widenConsolidationKeysBeforeSchemaSync } from './consolidation-key-sche
 jest.mock('./consolidation-key-schema', () => ({
   widenConsolidationKeysBeforeSchemaSync: jest.fn().mockResolvedValue(undefined)
 }));
+import { createMissingUnsyncedHoldingsTables } from './unsynced-holdings-tables-schema';
+jest.mock('./unsynced-holdings-tables-schema', () => ({
+  createMissingUnsyncedHoldingsTables: jest.fn().mockResolvedValue(undefined)
+}));
 import { DropEntity } from '@/entities/IDrop';
 import { applyWaveScoreInputIndexSchema } from './wave-score-input-index-schema';
 jest.mock('./wave-score-input-index-schema', () => ({
@@ -338,6 +342,13 @@ describe('dbMigrationsLoop explicit schema scope', () => {
       expect(assertCompetitionSchemaSyncSafe).toHaveBeenCalledTimes(1);
       expect(widenGlobalTdhHistoryBeforeSchemaSync).toHaveBeenCalledTimes(1);
       expect(widenConsolidationKeysBeforeSchemaSync).toHaveBeenCalledTimes(1);
+      expect(createMissingUnsyncedHoldingsTables).toHaveBeenCalledTimes(1);
+      expect(
+        jest.mocked(createMissingUnsyncedHoldingsTables).mock
+          .invocationCallOrder[0]
+      ).toBeGreaterThan(
+        jest.mocked(getDataSource().synchronize).mock.invocationCallOrder[0]
+      );
       expect(
         jest.mocked(widenConsolidationKeysBeforeSchemaSync).mock
           .invocationCallOrder[0]
@@ -398,6 +409,7 @@ describe('dbMigrationsLoop explicit schema scope', () => {
       expect(deleteUnusedViewerGroupSets).toHaveBeenCalledTimes(1);
       expect(getDataSource().synchronize).not.toHaveBeenCalled();
       expect(widenConsolidationKeysBeforeSchemaSync).not.toHaveBeenCalled();
+      expect(createMissingUnsyncedHoldingsTables).not.toHaveBeenCalled();
       expect(migrations.getInstance).not.toHaveBeenCalled();
       expect(
         contentModerationDb.deleteExpiredPrePublicationChecks

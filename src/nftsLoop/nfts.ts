@@ -1341,7 +1341,7 @@ export async function processNFTs(mode: NFT_MODE, health?: NftsLoopHealth) {
     );
     if (!isRebuildingEthereumIndexes())
       await publishPendingS3UploaderOutboxJobs(mode);
-    if (mode === NFT_MODE.REFRESH && !isRebuildingEthereumIndexes()) {
+    if (mode === NFT_MODE.REFRESH) {
       await syncArtists();
     }
   } finally {
