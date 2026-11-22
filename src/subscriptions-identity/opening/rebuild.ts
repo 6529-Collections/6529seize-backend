@@ -4,6 +4,11 @@ import {
 } from '@/constants';
 import { Logger } from '@/logging';
 import type { RecordLogEntry } from '@/signed-records/record-log/record-log-format';
+import {
+  RecordLogReader,
+  RecordReplayContext,
+  replayRecordLog
+} from '@/signed-records/record-log/record-log-reader';
 import type { RecordVerifyResult } from '@/signed-records/record-verify';
 import { sqlExecutor } from '@/sql-executor';
 import {
@@ -20,7 +25,8 @@ import {
   JournalBody,
   journalBodyOf,
   JOURNAL_COUNTER_ID,
-  JOURNAL_LANE
+  JOURNAL_LANE,
+  JOURNAL_SHADOW_LANE
 } from '../timeline/journal';
 import {
   alertOnJournalFailures,
@@ -84,6 +90,41 @@ export function boundJournalSource(): JournalSource {
     );
   }
   return boundSource();
+}
+
+/**
+ * The source to bind over the records wave reader: the public chain
+ * replayed with replayRecordLog, so each entry of the journal's lanes
+ * comes with its verification and the verifier checks every choice entry
+ * against its signed record. Other lanes' entries are verified by the
+ * replay and dropped here.
+ */
+export function replayedJournalSource(
+  reader: RecordLogReader,
+  context: RecordReplayContext
+): JournalSource {
+  return {
+    async *walk(chain) {
+      const items: Array<{
+        entry: RecordLogEntry;
+        verified: RecordVerifyResult | null;
+      }> = [];
+      await replayRecordLog(
+        reader,
+        chain,
+        context,
+        async ({ entry }, verified) => {
+          if (
+            entry.lane === JOURNAL_LANE ||
+            entry.lane === JOURNAL_SHADOW_LANE
+          ) {
+            items.push({ entry, verified });
+          }
+        }
+      );
+      yield* items;
+    }
+  };
 }
 
 export interface RebuildResult {
