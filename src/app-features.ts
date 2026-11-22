@@ -50,6 +50,15 @@ export class AppFeatures {
   }
 
   /**
+   * Profile site drafts and BYO agent grants, proposals and events are
+   * appended to the interim record log's private chain as they are written,
+   * so they can be rebuilt. Rollback: set FEATURE_PROFILE_CMS_PERSONAL_LOG=false.
+   */
+  public isProfileCmsPersonalLogEnabled(): boolean {
+    return this.isFeatureEnabled('PROFILE_CMS_PERSONAL_LOG');
+  }
+
+  /**
    * The interim record log: signed records batched into hash-chained
    * segment files whose heads are posted in the records wave.
    */

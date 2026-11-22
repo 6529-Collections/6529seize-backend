@@ -9,8 +9,13 @@ import { RequestContext } from '@/request.context';
 import {
   ConnectionWrapper,
   dbSupplier,
-  LazyDbAccessCompatibleService
+  LazyDbAccessCompatibleService,
+  SqlExecutor
 } from '@/sql-executor';
+import {
+  ProfileCmsPrivateLog,
+  profileCmsPrivateLog
+} from '@/profile-cms/personal-log/profile-cms-private-log';
 
 export type NewProfileCmsPackageEntity = Omit<
   ProfileCmsPackageEntity,
@@ -23,6 +28,28 @@ export type NewProfileCmsPackageEntity = Omit<
 };
 
 export class ProfileCmsPackagesDb extends LazyDbAccessCompatibleService {
+  constructor(
+    supplier: () => SqlExecutor = dbSupplier,
+    private readonly privateLog: Pick<
+      ProfileCmsPrivateLog,
+      'logged'
+    > = profileCmsPrivateLog
+  ) {
+    super(supplier);
+  }
+
+  /**
+   * Every write of a package row is logged for the rebuild (with the flag
+   * on), in the same transaction as the write.
+   */
+  private async loggedWrite(
+    id: string,
+    ctx: RequestContext,
+    write: (ctx: RequestContext) => Promise<unknown>
+  ): Promise<void> {
+    await this.privateLog.logged(ctx, [['cms.package', id]], write);
+  }
+
   async getNextVersion(
     profileId: string,
     packageId: string,
@@ -43,9 +70,10 @@ export class ProfileCmsPackagesDb extends LazyDbAccessCompatibleService {
     entity: NewProfileCmsPackageEntity,
     ctx: RequestContext
   ): Promise<ProfileCmsPackageEntity> {
-    await this.timedExecute(
-      'insert',
-      `insert into ${PROFILE_CMS_PACKAGES_TABLE} (
+    await this.loggedWrite(entity.id, ctx, (txCtx) =>
+      this.timedExecute(
+        'insert',
+        `insert into ${PROFILE_CMS_PACKAGES_TABLE} (
         id,
         profile_id,
         profile_handle,
@@ -110,8 +138,9 @@ export class ProfileCmsPackagesDb extends LazyDbAccessCompatibleService {
         :storage_pinned,
         :storage_canonical
       )`,
-      this.toParams(entity),
-      ctx
+        this.toParams(entity),
+        txCtx
+      )
     );
     return this.findByIdOrThrow(entity.id, ctx);
   }
@@ -299,18 +328,20 @@ export class ProfileCmsPackagesDb extends LazyDbAccessCompatibleService {
     now: number,
     ctx: RequestContext
   ): Promise<void> {
-    await this.updateStatus(
-      {
-        id,
-        status: ProfileCmsPackageStatus.VALIDATING,
-        updated_at: now,
-        production_valid: false,
-        validated_at: null,
-        failed_at: null,
-        validation_result: null,
-        validation_error: null
-      },
-      ctx
+    await this.loggedWrite(id, ctx, (txCtx) =>
+      this.updateStatus(
+        {
+          id,
+          status: ProfileCmsPackageStatus.VALIDATING,
+          updated_at: now,
+          production_valid: false,
+          validated_at: null,
+          failed_at: null,
+          validation_result: null,
+          validation_error: null
+        },
+        txCtx
+      )
     );
   }
 
@@ -321,18 +352,20 @@ export class ProfileCmsPackagesDb extends LazyDbAccessCompatibleService {
     now: number,
     ctx: RequestContext
   ): Promise<void> {
-    await this.updateStatus(
-      {
-        id,
-        status: ProfileCmsPackageStatus.FAILED,
-        updated_at: now,
-        production_valid: false,
-        validated_at: now,
-        failed_at: now,
-        validation_result: JSON.stringify(validationResult),
-        validation_error: validationError
-      },
-      ctx
+    await this.loggedWrite(id, ctx, (txCtx) =>
+      this.updateStatus(
+        {
+          id,
+          status: ProfileCmsPackageStatus.FAILED,
+          updated_at: now,
+          production_valid: false,
+          validated_at: now,
+          failed_at: now,
+          validation_result: JSON.stringify(validationResult),
+          validation_error: validationError
+        },
+        txCtx
+      )
     );
   }
 
@@ -370,9 +403,10 @@ export class ProfileCmsPackagesDb extends LazyDbAccessCompatibleService {
     now: number,
     ctx: RequestContext
   ): Promise<void> {
-    await this.timedExecute(
-      'markPublished',
-      `update ${PROFILE_CMS_PACKAGES_TABLE}
+    await this.loggedWrite(id, ctx, (txCtx) =>
+      this.timedExecute(
+        'markPublished',
+        `update ${PROFILE_CMS_PACKAGES_TABLE}
        set status = :status,
            is_primary = true,
            published_by_profile_id = :publishedByProfileId,
@@ -384,14 +418,15 @@ export class ProfileCmsPackagesDb extends LazyDbAccessCompatibleService {
            validation_result = :validationResult,
            validation_error = null
        where id = :id`,
-      {
-        id,
-        publishedByProfileId,
-        now,
-        status: ProfileCmsPackageStatus.PUBLISHED,
-        validationResult: JSON.stringify(validationResult)
-      },
-      ctx
+        {
+          id,
+          publishedByProfileId,
+          now,
+          status: ProfileCmsPackageStatus.PUBLISHED,
+          validationResult: JSON.stringify(validationResult)
+        },
+        txCtx
+      )
     );
   }
 
@@ -400,20 +435,22 @@ export class ProfileCmsPackagesDb extends LazyDbAccessCompatibleService {
     now: number,
     ctx: RequestContext
   ): Promise<void> {
-    await this.timedExecute(
-      'markPrimary',
-      `update ${PROFILE_CMS_PACKAGES_TABLE}
+    await this.loggedWrite(id, ctx, (txCtx) =>
+      this.timedExecute(
+        'markPrimary',
+        `update ${PROFILE_CMS_PACKAGES_TABLE}
        set status = :status,
            is_primary = true,
            superseded_by_id = null,
            updated_at = :now
        where id = :id`,
-      {
-        id,
-        now,
-        status: ProfileCmsPackageStatus.PUBLISHED
-      },
-      ctx
+        {
+          id,
+          now,
+          status: ProfileCmsPackageStatus.PUBLISHED
+        },
+        txCtx
+      )
     );
   }
 
@@ -433,9 +470,10 @@ export class ProfileCmsPackagesDb extends LazyDbAccessCompatibleService {
     },
     ctx: RequestContext
   ): Promise<void> {
-    await this.timedExecute(
-      'updateStorageReceipt',
-      `update ${PROFILE_CMS_PACKAGES_TABLE}
+    await this.loggedWrite(fields.id, ctx, (txCtx) =>
+      this.timedExecute(
+        'updateStorageReceipt',
+        `update ${PROFILE_CMS_PACKAGES_TABLE}
        set cms_package = :cms_package,
            storage_receipts = :storage_receipts,
            storage_provider = :storage_provider,
@@ -447,38 +485,41 @@ export class ProfileCmsPackagesDb extends LazyDbAccessCompatibleService {
            storage_canonical = :storage_canonical,
            updated_at = :updated_at
        where id = :id`,
-      {
-        id: fields.id,
-        cms_package: JSON.stringify(fields.cms_package),
-        storage_receipts: JSON.stringify(fields.storage_receipts),
-        storage_provider: fields.storage_provider,
-        storage_uri: fields.storage_uri,
-        storage_content_hash: fields.storage_content_hash,
-        storage_provider_content_id: fields.storage_provider_content_id,
-        storage_recorded_at: fields.storage_recorded_at,
-        storage_pinned: nullableBooleanParam(fields.storage_pinned),
-        storage_canonical: nullableBooleanParam(fields.storage_canonical),
-        updated_at: fields.updated_at
-      },
-      ctx
+        {
+          id: fields.id,
+          cms_package: JSON.stringify(fields.cms_package),
+          storage_receipts: JSON.stringify(fields.storage_receipts),
+          storage_provider: fields.storage_provider,
+          storage_uri: fields.storage_uri,
+          storage_content_hash: fields.storage_content_hash,
+          storage_provider_content_id: fields.storage_provider_content_id,
+          storage_recorded_at: fields.storage_recorded_at,
+          storage_pinned: nullableBooleanParam(fields.storage_pinned),
+          storage_canonical: nullableBooleanParam(fields.storage_canonical),
+          updated_at: fields.updated_at
+        },
+        txCtx
+      )
     );
   }
 
   async archive(id: string, now: number, ctx: RequestContext): Promise<void> {
-    await this.timedExecute(
-      'archive',
-      `update ${PROFILE_CMS_PACKAGES_TABLE}
+    await this.loggedWrite(id, ctx, (txCtx) =>
+      this.timedExecute(
+        'archive',
+        `update ${PROFILE_CMS_PACKAGES_TABLE}
        set status = :status,
            is_primary = false,
            archived_at = :now,
            updated_at = :now
        where id = :id`,
-      {
-        id,
-        now,
-        status: ProfileCmsPackageStatus.ARCHIVED
-      },
-      ctx
+        {
+          id,
+          now,
+          status: ProfileCmsPackageStatus.ARCHIVED
+        },
+        txCtx
+      )
     );
   }
 
@@ -490,15 +531,17 @@ export class ProfileCmsPackagesDb extends LazyDbAccessCompatibleService {
     now: number,
     ctx: RequestContext
   ): Promise<void> {
-    await this.timedExecute(
-      'recordPublication',
-      `update ${PROFILE_CMS_PACKAGES_TABLE}
+    await this.loggedWrite(id, ctx, (txCtx) =>
+      this.timedExecute(
+        'recordPublication',
+        `update ${PROFILE_CMS_PACKAGES_TABLE}
        set publication_cid = :publicationCid,
            recovery_receipt = :receipt,
            updated_at = :now
        where id = :id`,
-      { id, publicationCid, receipt: JSON.stringify(receipt), now },
-      ctx
+        { id, publicationCid, receipt: JSON.stringify(receipt), now },
+        txCtx
+      )
     );
   }
 
@@ -507,11 +550,13 @@ export class ProfileCmsPackagesDb extends LazyDbAccessCompatibleService {
     receipt: unknown,
     ctx: RequestContext
   ): Promise<void> {
-    await this.timedExecute(
-      'setRecoveryReceipt',
-      `update ${PROFILE_CMS_PACKAGES_TABLE} set recovery_receipt = :receipt where id = :id`,
-      { id, receipt: JSON.stringify(receipt) },
-      ctx
+    await this.loggedWrite(id, ctx, (txCtx) =>
+      this.timedExecute(
+        'setRecoveryReceipt',
+        `update ${PROFILE_CMS_PACKAGES_TABLE} set recovery_receipt = :receipt where id = :id`,
+        { id, receipt: JSON.stringify(receipt) },
+        txCtx
+      )
     );
   }
 
@@ -522,26 +567,30 @@ export class ProfileCmsPackagesDb extends LazyDbAccessCompatibleService {
     now: number,
     ctx: RequestContext
   ): Promise<void> {
-    await this.timedExecute(
-      'recordDraftFailure',
-      `update ${PROFILE_CMS_PACKAGES_TABLE} set validation_result = :result, validation_error = :error, validated_at = :now, failed_at = :now where id = :id and status = :status`,
-      {
-        id,
-        result: JSON.stringify(result),
-        error,
-        now,
-        status: ProfileCmsPackageStatus.DRAFT
-      },
-      ctx
+    await this.loggedWrite(id, ctx, (txCtx) =>
+      this.timedExecute(
+        'recordDraftFailure',
+        `update ${PROFILE_CMS_PACKAGES_TABLE} set validation_result = :result, validation_error = :error, validated_at = :now, failed_at = :now where id = :id and status = :status`,
+        {
+          id,
+          result: JSON.stringify(result),
+          error,
+          now,
+          status: ProfileCmsPackageStatus.DRAFT
+        },
+        txCtx
+      )
     );
   }
 
   async unpublish(id: string, now: number, ctx: RequestContext): Promise<void> {
-    await this.timedExecute(
-      'unpublish',
-      `update ${PROFILE_CMS_PACKAGES_TABLE} set is_primary = false, status = :status, updated_at = :now where id = :id and status = 'PUBLISHED' and is_primary = true`,
-      { id, now, status: ProfileCmsPackageStatus.SUPERSEDED },
-      ctx
+    await this.loggedWrite(id, ctx, (txCtx) =>
+      this.timedExecute(
+        'unpublish',
+        `update ${PROFILE_CMS_PACKAGES_TABLE} set is_primary = false, status = :status, updated_at = :now where id = :id and status = 'PUBLISHED' and is_primary = true`,
+        { id, now, status: ProfileCmsPackageStatus.SUPERSEDED },
+        txCtx
+      )
     );
   }
 
