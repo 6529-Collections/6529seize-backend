@@ -39,6 +39,7 @@ functions:
 resources:
   Resources:
     AggregatedActivityLoopOOMFilter:
+      DependsOn: AggregatedActivityLoopLogGroup
       Type: AWS::Logs::MetricFilter
       Properties:
         LogGroupName: /aws/lambda/aggregatedActivityLoop

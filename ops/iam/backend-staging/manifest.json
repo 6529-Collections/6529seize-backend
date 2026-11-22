@@ -63,6 +63,12 @@
       "file": "BackendStagingDeployment10.json",
       "characters": 3871,
       "sha256": "83b6b751f3fdd256482297a428954ecff0958b9adcbfdcc20867d439bc336673"
+    },
+    {
+      "name": "SignedRecordLogStagingDeployment",
+      "file": "SignedRecordLogStagingDeployment.json",
+      "characters": 4865,
+      "sha256": "1afc66eb138c2a1c9dac38fc68a843e67e61bb365c82d6834fc712d897b52dc8"
     }
   ],
   "additional_staging_inventory": {
