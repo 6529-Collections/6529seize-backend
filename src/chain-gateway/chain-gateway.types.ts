@@ -57,14 +57,25 @@ export interface ChainHead {
   readonly pinnable: { readonly from: number; readonly to: number } | null;
   /** The chain's network id; another one means another chain (a relaunch). */
   readonly network: string | null;
+  /**
+   * Whether the node that answered is ready (its head current, its driver
+   * passing). One that isn't still answers its finalized state, which the
+   * client reads; always set by the client.
+   */
+  readonly ready?: boolean;
+  /** Why the node isn't ready, when it isn't. */
+  readonly notReady?: string | null;
 }
 
 export interface ChainStatus {
   readonly api: string;
   readonly node: string;
   readonly ready: boolean;
-  readonly head: ChainReadStamp;
-  readonly finalized: ChainReadStamp;
+  readonly notReady?: string | null;
+  readonly lagSlots?: number | null;
+  /** Null while the node has no state to read yet. */
+  readonly head: ChainReadStamp | null;
+  readonly finalized: ChainReadStamp | null;
   readonly pinnable?: { readonly from: number; readonly to: number };
   readonly ruleVersion: number;
   readonly feed?: unknown;
@@ -77,6 +88,19 @@ export interface ChainLevel {
   readonly rep: string;
   readonly tdh: string;
   readonly tdhDay: number;
+}
+
+/** A page of identities by level, highest `raw` first. */
+export interface ChainLevelRanking {
+  /** The finalized height the ranking was built at. */
+  readonly rankedAt: number;
+  readonly count: number;
+  readonly rows: {
+    readonly rank: number;
+    readonly level: number;
+    readonly raw: string;
+    readonly identity: ChainIdentity;
+  }[];
 }
 
 export interface ChainIdentity {

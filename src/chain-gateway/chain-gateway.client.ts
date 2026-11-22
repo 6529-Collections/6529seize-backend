@@ -13,6 +13,7 @@ import {
   ChainIdentity,
   ChainImportedIdentity,
   ChainLevel,
+  ChainLevelRanking,
   ChainMembershipDay,
   ChainMembershipDayWallets,
   ChainMembershipWallet,
@@ -39,10 +40,12 @@ import {
  *
  * - Reads are pinned to a height. Without `opts.height` the client pins the
  *   latest finalized height it knows (refreshed every `headTtlMs`), so the
- *   reads of one task agree; a pinned answer read finalized at that height
- *   never changes and is cached in memory (copies, by network, path, query
- *   and height, 64 MiB of JSON at most). `opts.at = 'head'` reads the
- *   unfinalized head, uncached.
+ *   reads of one task agree. A pinned answer must be read finalized at that
+ *   height (a node that has it only as its head: `height_gone`); it never
+ *   changes and is cached in memory (copies, by network, path, query and
+ *   height, 64 MiB of JSON at most). `opts.at = 'head'` reads the
+ *   unfinalized head, uncached. A node that isn't ready still gives its
+ *   status (503 with its stamps): the head says `ready: false`.
  * - Every answer must be of the chain the head names: another network id
  *   throws `wrong_network` (and the head is read again), a missing one
  *   `bad_answer`.
@@ -224,6 +227,9 @@ interface Envelope<T> {
 const RETRYABLE = new Set([429, 500, 502, 503, 504]);
 
 type RetryableError = ChainGatewayError & { retryAfterMs?: number };
+
+/** Whether a caller takes a retryable status's body as its answer. */
+type Accept = (status: number, json: Envelope<unknown> | null) => boolean;
 
 function trimTrailingSlashes(url: string): string {
   let end = url.length;
@@ -441,7 +447,8 @@ function bindingChanges(
  * heights, rising, none below the height asked from; the block asked from
  * inside starts at the cursor's index, every other at 0; only the last
  * block may be cut, and then it is the block after `through` and `next`
- * names a later index in it; otherwise `next` is the height after
+ * names a later index in it (exactly past its records without a family
+ * filter); otherwise `next` is the height after
  * `through`, or the height asked from when the node is behind it.
  */
 function checkFeedPage(
@@ -449,7 +456,8 @@ function checkFeedPage(
   from: { readonly height: number; readonly index: number },
   through: number,
   blocks: unknown,
-  next: string | null
+  next: string | null,
+  filtered: boolean
 ): ChainFeedPage['blocks'] {
   if (!Number.isSafeInteger(through) || through < 0 || !Array.isArray(blocks)) {
     throw badAnswer(path, 'a page without its through height or blocks');
@@ -492,10 +500,16 @@ function checkFeedPage(
   let fits: boolean;
   if (last?.complete === false) {
     const inside = /^(\d+):(\d+)$/.exec(String(next));
+    // The index counts every write of the block: without a family filter
+    // the page holds exactly those from recordsFrom to it.
+    const from = Number(last.recordsFrom);
+    const index = Number(inside?.[2]);
+    // A page always moves on: the cut block holds a record at least.
     fits =
       !!inside &&
       Number(inside[1]) === last.height &&
-      Number(inside[2]) > Number(last.recordsFrom);
+      last.records.length > 0 &&
+      (filtered ? index > from : index === from + last.records.length);
   } else {
     const whole = Math.max(through + 1, from.height);
     fits = next === null || (/^\d+$/.test(next) && Number(next) === whole);
@@ -648,7 +662,8 @@ export class ChainGatewayClient {
     path: string,
     url: string,
     body: unknown,
-    binary: boolean
+    binary: boolean,
+    accept?: Accept
   ): Promise<
     | {
         ok: true;
@@ -671,11 +686,11 @@ export class ChainGatewayClient {
         signal: controller.signal
       });
       if (RETRYABLE.has(response.status)) {
-        const error = this.errorOf(
-          path,
-          response.status,
-          await this.parse(response, path)
-        );
+        const json = await this.parse(response, path);
+        if (accept?.(response.status, json)) {
+          return { ok: true, status: response.status, json };
+        }
+        const error = this.errorOf(path, response.status, json);
         return {
           ok: false,
           error: Object.assign(error, {
@@ -718,7 +733,8 @@ export class ChainGatewayClient {
     path: string,
     query: Query,
     body?: unknown,
-    binary = false
+    binary = false,
+    accept?: Accept
   ): Promise<{
     status: number;
     json: Envelope<unknown> | null;
@@ -739,7 +755,14 @@ export class ChainGatewayClient {
       if (attempt > 0) {
         await sleep(this.backoff(attempt, lastError));
       }
-      const result = await this.attempt(method, path, url, body, binary);
+      const result = await this.attempt(
+        method,
+        path,
+        url,
+        body,
+        binary,
+        accept
+      );
       if (result.ok) {
         return result;
       }
@@ -780,7 +803,10 @@ export class ChainGatewayClient {
     try {
       return JSON.parse(text) as Envelope<unknown>;
     } catch {
-      return { error: { code: 'bad_answer', message: text.slice(0, 200) } };
+      // A proxy's page for an error status keeps that status's code.
+      const code =
+        response.status === 200 ? 'bad_answer' : `http_${response.status}`;
+      return { error: { code, message: text.slice(0, 200) } };
     }
   }
 
@@ -873,7 +899,7 @@ export class ChainGatewayClient {
         try {
           const status = await this.getStatus();
           const head = status?.head?.height;
-          const finalized = status?.finalized;
+          const finalized = status?.finalized ?? null;
           const network = finalized?.network;
           if (
             !Number.isSafeInteger(head) ||
@@ -888,11 +914,14 @@ export class ChainGatewayClient {
             );
           }
           const value: ChainHead = {
-            headHeight: head,
-            finalizedHeight: finalized.height,
-            finalizedTime: finalized.time,
+            headHeight: head as number,
+            finalizedHeight: finalized!.height,
+            finalizedTime: finalized!.time,
             pinnable: status.pinnable ?? null,
-            network: lower(network)
+            network: lower(network),
+            ready: status.ready === true,
+            notReady:
+              typeof status.notReady === 'string' ? status.notReady : null
           };
           // Answers are kept by network, and dropped on another one (a
           // relaunch: the same heights mean other blocks).
@@ -910,10 +939,25 @@ export class ChainGatewayClient {
     return await this.headInFlight;
   }
 
+  /**
+   * The node's status. A node that isn't ready (behind, or its driver
+   * stalled) answers 503 with the same body while it has a state to read:
+   * that is its status, taken as it is and not retried.
+   */
   async getStatus(): Promise<ChainStatus> {
     const path = '/v1/status';
-    const { status, json } = await this.send('GET', path, {});
-    if (status !== 200 || !json?.data) {
+    const stamped: Accept = (status, json) =>
+      status === 503 &&
+      !!(json?.data as Partial<ChainStatus> | undefined)?.finalized;
+    const { status, json } = await this.send(
+      'GET',
+      path,
+      {},
+      undefined,
+      false,
+      stamped
+    );
+    if ((status !== 200 && !stamped(status, json)) || !json?.data) {
       throw this.errorOf(path, status, json);
     }
     return json.data as ChainStatus;
@@ -921,13 +965,22 @@ export class ChainGatewayClient {
 
   /**
    * Any read route: the answer, or null for 404. Pinned as the class says.
-   * Use the typed methods below where one exists.
+   * Use the typed methods below where one exists. Not for routes the node
+   * refuses a height on: `/v1/identities/by-level` (getLevelRanking).
    */
   async read<T>(
     path: string,
     query: Query = {},
     opts: ChainReadOptions = {}
   ): Promise<ChainAnswer<T> | null> {
+    if (opts.at === 'head' && opts.height !== undefined) {
+      throw new ChainGatewayError(
+        `${path}: a read is of the head or at a height, not both`,
+        null,
+        'bad_request',
+        path
+      );
+    }
     if (opts.at === 'head') {
       const { status, json } = await this.send('GET', path, {
         ...query,
@@ -981,11 +1034,25 @@ export class ChainGatewayClient {
     }
     const { status, json } = await this.send('GET', path, { ...query, height });
     const { read, answer } = await this.toAnswer<T>(path, status, json);
-    // Kept only when read at that height of the finalized chain: a node
-    // answering from its head (a height not final there) may change it.
-    if (read.at === 'finalized' && read.height === height) {
-      this.answers.set(`${lower(read.network)} ${url}`, JSON.stringify(answer));
+    // A node that has the height only as its head answers from there: not
+    // the finalized state pinned, so the height is gone for this read.
+    if (read.at !== 'finalized') {
+      throw new ChainGatewayError(
+        `${path}: height ${height} is not finalized on the node that answered`,
+        409,
+        'height_gone',
+        path
+      );
     }
+    if (read.height !== height) {
+      throw badAnswer(
+        path,
+        `an answer at height ${read.height}, not ${height}`
+      );
+    }
+    // Kept under the network it was read from, whatever the head was when
+    // it was asked.
+    this.answers.set(`${lower(read.network)} ${url}`, JSON.stringify(answer));
     return answer;
   }
 
@@ -1072,12 +1139,34 @@ export class ChainGatewayClient {
     opts: ChainReadOptions = {}
   ): Promise<Record<string, ChainIdentity | null>> {
     const distinct = Array.from(new Set(wallets.map(lower)));
+    if (!distinct.length) return {};
+    if (opts.at === 'head' || opts.height !== undefined) {
+      return await this.walletsAt(distinct, opts);
+    }
+    try {
+      return await this.walletsAt(distinct, {
+        height: (await this.getHead()).finalizedHeight
+      });
+    } catch (error) {
+      if (
+        !(error instanceof ChainGatewayError) ||
+        error.code !== 'height_gone'
+      ) {
+        throw error;
+      }
+    }
+    // A node that doesn't hold that height: every chunk again at a fresh
+    // one, once, so that all the chunks are read at one height.
+    return await this.walletsAt(distinct, {
+      height: (await this.getHead(true)).finalizedHeight
+    });
+  }
+
+  private async walletsAt(
+    distinct: string[],
+    pinned: ChainReadOptions
+  ): Promise<Record<string, ChainIdentity | null>> {
     const result: Record<string, ChainIdentity | null> = {};
-    if (!distinct.length) return result;
-    const pinned: ChainReadOptions =
-      opts.at === 'head' || opts.height !== undefined
-        ? opts
-        : { height: (await this.getHead()).finalizedHeight };
     for (let i = 0; i < distinct.length; i += 100) {
       const chunk = distinct.slice(i, i + 100);
       const path = '/v1/identities/by-wallets';
@@ -1099,6 +1188,30 @@ export class ChainGatewayClient {
 
   listIdentities(opts: ChainPageOptions = {}) {
     return this.page<ChainIdentity>('/v1/identities', {}, opts);
+  }
+
+  /**
+   * Identities by level, highest first, a page at a time. The node ranks
+   * its latest finalized state and refuses a height or the head here, so
+   * this read is neither pinned nor cached (`rankedAt` says its height).
+   */
+  async getLevelRanking(
+    opts: { readonly after?: string | null; readonly limit?: number } = {}
+  ): Promise<ChainAnswer<ChainLevelRanking>> {
+    const path = '/v1/identities/by-level';
+    const { status, json } = await this.send('GET', path, {
+      after: opts.after ?? undefined,
+      limit: opts.limit
+    });
+    const { answer } = await this.toAnswer<ChainLevelRanking>(
+      path,
+      status,
+      json
+    );
+    if (!answer || !Array.isArray(answer.data?.rows)) {
+      throw badAnswer(path, 'a ranking without its rows');
+    }
+    return answer;
   }
 
   getLevel(principalId: string, opts?: ChainReadOptions) {
@@ -1310,7 +1423,8 @@ export class ChainGatewayClient {
       cursor,
       through,
       data.blocks,
-      answer.next
+      answer.next,
+      !!opts.families?.length
     );
     // A node behind the height asked from answers through its own head:
     // the next height stays where the reader is.
@@ -1327,14 +1441,21 @@ export class ChainGatewayClient {
     };
   }
 
-  getFeedFamilies(): Promise<Record<string, unknown> | null> {
-    return this.data<Record<string, unknown>>(
-      '/v1/feed/families',
-      {},
-      {
-        at: 'head'
-      }
-    );
+  /**
+   * The feed's family table (names, key and value fields), for decoding
+   * records generically. The node serves it without a read stamp (it reads
+   * no state), so it is taken as it is.
+   */
+  async getFeedFamilies(): Promise<Record<string, unknown>> {
+    const path = '/v1/feed/families';
+    const { status, json } = await this.send('GET', path, {});
+    if (status !== 200 || !json || json.error) {
+      throw this.errorOf(path, status, json);
+    }
+    if (!json.data || typeof json.data !== 'object') {
+      throw badAnswer(path, 'no family table');
+    }
+    return json.data as Record<string, unknown>;
   }
 
   // Writes: drafts and relaying signed operations
