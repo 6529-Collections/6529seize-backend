@@ -51,6 +51,7 @@ class Fake {
   queue: MintRecordLogEntry[] = [];
   savepoint: MintCardState | null = null;
   failAppends = 0;
+  failLocks = 0;
   applyBug = false;
 
   readonly db = () =>
@@ -91,7 +92,15 @@ class Fake {
   } as unknown as MintStateWriter;
 
   readonly headDb = {
-    lock: async () => ({ ...this.head }),
+    lock: async () => {
+      if (this.failLocks > 0) {
+        this.failLocks--;
+        throw Object.assign(new Error('Lock wait timeout exceeded'), {
+          code: 'ER_LOCK_WAIT_TIMEOUT'
+        });
+      }
+      return { ...this.head };
+    },
     advance: async (next: MintLogHead) => {
       this.head = next;
     }
@@ -669,13 +678,19 @@ describe('MintLogRecorder.writeWithin', () => {
 
   it('needs the drop id before it can lock a collaboration', async () => {
     const fake = new Fake();
-    const { log } = within(fake, { shadow: true });
+    const { log } = within(fake, { primary: true });
+    const writer = jest.fn(async () => undefined);
     await expect(
       log.write(
-        respondSpec({ card: async () => COLLAB }),
-        async () => undefined
+        respondSpec({
+          kind: 'collab.freeze',
+          actor: { type: 'service', wallet: null, authority: null },
+          card: async () => COLLAB
+        }),
+        writer
       )
     ).rejects.toThrow('needs its drop id');
+    expect(writer).not.toHaveBeenCalled();
   });
 });
 
@@ -707,5 +722,136 @@ describe('MintLogRecorder record checks', () => {
       )
     ).rejects.toBeInstanceOf(MintLogUnavailableException);
     expect(fake.state.distribution).toEqual([]);
+  });
+});
+
+describe('MintLogRecorder when the log itself fails', () => {
+  beforeEach(() => jest.clearAllMocks());
+
+  const media = (overrides: Partial<MintWriteSpec> = {}) =>
+    spec({
+      kind: 'claim.media',
+      actor: { type: 'service', wallet: null, authority: null },
+      lockScope: 'capture',
+      ...overrides
+    });
+  const upload = (fake: Fake) => async () => {
+    fake.state = applyEffectsToState(fake.state, {
+      claim: {
+        upsert: [{ drop_id: 'd1', metadata_location: 'ar1' }],
+        delete: []
+      }
+    });
+    return 'uploaded';
+  };
+
+  it('runs the writer unlogged in shadow mode when the head cannot be locked', async () => {
+    const fake = new Fake();
+    fake.failLocks = 1;
+    await expect(
+      recorder(fake, { shadow: true }).write(spec(), async () => {
+        fake.addRow(1);
+        return 'written';
+      })
+    ).resolves.toBe('written');
+    expect(fake.state.distribution.map((row) => row.id)).toEqual([1]);
+    expect(fake.queue).toEqual([]);
+    expect(sendPriorityAlertIfConfigured).toHaveBeenCalledWith(
+      'Mint log',
+      expect.objectContaining({
+        message: expect.stringContaining('[MINT_LOG_SHADOW_SKIPPED]')
+      })
+    );
+  });
+
+  it('runs the writer unlogged in shadow mode when the ports cannot be built', async () => {
+    const fake = new Fake();
+    const log = new MintLogRecorder(
+      {
+        isMintLogShadowEnabled: () => true,
+        isMintLogPrimaryEnabled: () => false,
+        isMintLogReplayCheckEnabled: () => false
+      },
+      () => {
+        throw new Error('no table');
+      },
+      fake.db,
+      fake.reader,
+      fake.writer,
+      fake.headDb
+    );
+    await expect(log.write(spec(), async () => 'written')).resolves.toBe(
+      'written'
+    );
+  });
+
+  it('fails the write before the writer in primary mode when the head cannot be locked', async () => {
+    const fake = new Fake();
+    fake.failLocks = 1;
+    const writer = jest.fn(async () => fake.addRow(1));
+    await expect(
+      recorder(fake, { primary: true }).write(
+        spec({ signedRecords: header() }),
+        writer
+      )
+    ).rejects.toThrow('Lock wait timeout');
+    expect(writer).not.toHaveBeenCalled();
+  });
+
+  it('logs a long write after its upload even when the first log attempt fails', async () => {
+    const fake = new Fake();
+    fake.failAppends = 1;
+    await expect(
+      recorder(fake, { shadow: true }).write(media(), upload(fake))
+    ).resolves.toBe('uploaded');
+    expect(fake.entries()).toHaveLength(1);
+    expect(fake.entries()[0].effects.claim?.upsert).toHaveLength(1);
+  });
+
+  it('keeps a long write in shadow mode when its entry cannot be written, and alerts', async () => {
+    const fake = new Fake();
+    fake.failAppends = 2;
+    await expect(
+      recorder(fake, { shadow: true }).write(media(), upload(fake))
+    ).resolves.toBe('uploaded');
+    expect(fake.entries()).toEqual([]);
+    expect(fake.state.claim).toHaveLength(1);
+    expect(sendPriorityAlertIfConfigured).toHaveBeenCalledWith(
+      'Mint log',
+      expect.objectContaining({
+        message: expect.stringContaining('[MINT_LOG_ENTRY_LOST]')
+      })
+    );
+  });
+
+  it('undoes a long write in primary mode when its entry cannot be written', async () => {
+    const fake = new Fake();
+    fake.failAppends = 2;
+    await expect(
+      recorder(fake, { primary: true }).write(media(), upload(fake))
+    ).rejects.toBeInstanceOf(MintLogUnavailableException);
+    expect(fake.state.claim).toEqual([]);
+  });
+
+  it('runs a long write unlogged in shadow mode when its capture fails', async () => {
+    const fake = new Fake();
+    const log = new MintLogRecorder(
+      {
+        isMintLogShadowEnabled: () => true,
+        isMintLogPrimaryEnabled: () => false,
+        isMintLogReplayCheckEnabled: () => false
+      },
+      () => ({ records, log: fake.log }),
+      fake.db,
+      {
+        capture: async () => {
+          throw new Error('capture failed');
+        }
+      } as unknown as MintStateReader,
+      fake.writer,
+      fake.headDb
+    );
+    await expect(log.write(media(), upload(fake))).resolves.toBe('uploaded');
+    expect(fake.state.claim).toHaveLength(1);
   });
 });

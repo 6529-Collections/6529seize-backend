@@ -196,7 +196,14 @@ export class MintLogRecorder {
   async write<T>(spec: MintWriteSpec<T>, run: () => Promise<T>): Promise<T> {
     const mode = this.mode();
     if (mode === 'off') return run();
-    const ports = this.ports();
+    let ports: MintLogPorts;
+    try {
+      ports = this.ports();
+    } catch (error) {
+      if (mode === 'primary') throw error;
+      await this.skipped(spec, error);
+      return run();
+    }
     if (!ports.log) {
       if (mode === 'primary') {
         throw new MintLogUnavailableException('no record log is bound');
@@ -208,9 +215,31 @@ export class MintLogRecorder {
     }
     const record = await this.authorize(spec, mode, ports);
     if (spec.lockScope === 'capture') {
-      return this.loggedAfter(spec, record, run);
+      return this.loggedAfter(spec, mode, record, run);
     }
     return this.logged(spec, mode, record, run);
+  }
+
+  /**
+   * Shadow mode: the log failed before the writer ran (a lock wait, a
+   * deadlock, a missing table). The write goes ahead unlogged, and the gap
+   * is alerted: a later genesis or the replay check shows it.
+   */
+  private async skipped<T>(
+    spec: MintWriteSpec<T>,
+    error: unknown
+  ): Promise<void> {
+    await this.alert(
+      `[MINT_LOG_SHADOW_SKIPPED] [${spec.kind}] the write ran unlogged: ${errorText(error)}`
+    );
+  }
+
+  private async alert(message: string): Promise<void> {
+    logger.error(message);
+    await sendPriorityAlertIfConfigured('Mint log', new Error(message)).catch(
+      (alertError) =>
+        logger.warn(`[MINT_LOG_ALERT_FAILED] ${errorText(alertError)}`)
+    );
   }
 
   /**
@@ -228,7 +257,14 @@ export class MintLogRecorder {
   ): Promise<T> {
     const mode = this.mode();
     if (mode === 'off') return run();
-    const ports = this.ports();
+    let ports: MintLogPorts;
+    try {
+      ports = this.ports();
+    } catch (error) {
+      if (mode === 'primary') throw error;
+      await this.skipped(spec, error);
+      return run();
+    }
     if (!ports.log) {
       if (mode === 'primary') {
         throw new MintLogUnavailableException('no record log is bound');
@@ -292,11 +328,8 @@ export class MintLogRecorder {
       await execute(`ROLLBACK TO SAVEPOINT ${WITHIN_SAVEPOINT}`).catch(() => {
         throw error;
       });
-      const message = `[MINT_LOG_SHADOW_FAILED] [${spec.kind}] ${errorText(error)}`;
-      logger.error(message);
-      await sendPriorityAlertIfConfigured('Mint log', new Error(message)).catch(
-        (alertError) =>
-          logger.warn(`[MINT_LOG_ALERT_FAILED] ${errorText(alertError)}`)
+      await this.alert(
+        `[MINT_LOG_SHADOW_FAILED] [${spec.kind}] ${errorText(error)}`
       );
       return null;
     }
@@ -424,7 +457,12 @@ export class MintLogRecorder {
         { isolationLevel: 'READ COMMITTED' }
       );
     } catch (error) {
-      if (!state.outcome || !state.captured) throw error;
+      if (!state.outcome || !state.captured) {
+        // The log failed before the writer ran.
+        if (mode === 'primary') throw error;
+        await this.skipped(spec, error);
+        return run();
+      }
       entry = await this.afterLostTransaction(
         spec,
         mode,
@@ -462,11 +500,8 @@ export class MintLogRecorder {
     try {
       return await this.recover(spec, record, captured, outcome);
     } catch (error) {
-      const message = `[MINT_LOG_ENTRY_LOST] [${spec.kind}] [card ${cardLabel(captured.card)}] ${errorText(error)}`;
-      logger.error(message);
-      await sendPriorityAlertIfConfigured('Mint log', new Error(message)).catch(
-        (alertError) =>
-          logger.warn(`[MINT_LOG_ALERT_FAILED] ${errorText(alertError)}`)
+      await this.alert(
+        `[MINT_LOG_ENTRY_LOST] [${spec.kind}] [card ${cardLabel(captured.card)}] ${errorText(error)}`
       );
       if (mode === 'primary') {
         await this.revert(spec, captured);
@@ -567,32 +602,50 @@ export class MintLogRecorder {
     );
   }
 
-  /** The 'capture' lock scope: capture, run unlocked, then log. */
+  /**
+   * The 'capture' lock scope: capture, run unlocked, then log. A failure to
+   * log after the writer committed goes the way of a lost transaction:
+   * alerted, and undone in primary mode.
+   */
   private async loggedAfter<T>(
     spec: MintWriteSpec<T>,
+    mode: MintLogMode,
     record: MintVerifiedRecord | null,
     run: () => Promise<T>
   ): Promise<T> {
-    const captured = await this.db().executeNativeQueriesInTransaction(
-      async (connection): Promise<Captured> => {
-        const card =
-          typeof spec.card === 'function'
-            ? await spec.card(connection)
-            : spec.card;
-        const inputs = spec.inputs ? await spec.inputs(connection) : {};
-        const before = await this.reader.capture(card, connection);
-        return { card, before, inputs };
-      },
-      { isolationLevel: 'READ COMMITTED' }
-    );
+    let captured: Captured;
+    try {
+      captured = await this.db().executeNativeQueriesInTransaction(
+        async (connection): Promise<Captured> => {
+          const card =
+            typeof spec.card === 'function'
+              ? await spec.card(connection)
+              : spec.card;
+          const inputs = spec.inputs ? await spec.inputs(connection) : {};
+          const before = await this.reader.capture(card, connection);
+          return { card, before, inputs };
+        },
+        { isolationLevel: 'READ COMMITTED' }
+      );
+    } catch (error) {
+      if (mode === 'primary') throw error;
+      await this.skipped(spec, error);
+      return run();
+    }
     const outcome = await settle(run);
-    const entry = await this.recover(
-      spec,
-      record,
-      captured,
-      outcome,
-      'skipped'
-    );
+    let entry: MintLogEntryBody | null;
+    try {
+      entry = await this.recover(spec, record, captured, outcome, 'skipped');
+    } catch (error) {
+      entry = await this.afterLostTransaction(
+        spec,
+        mode,
+        record,
+        captured,
+        outcome,
+        error
+      );
+    }
     if (entry) await this.report(entry);
     if (!outcome.ok) throw outcome.error;
     return outcome.value;
@@ -726,10 +779,8 @@ export class MintLogRecorder {
     ];
     if (!problems.length) return;
     const card = entry.card ? cardLabel(entry.card) : 'none';
-    const message = `[MINT_LOG_MISMATCH] [${entry.chain} ${entry.seq}] [${entry.kind}] [card ${card}] ${problems.join('; ')}`;
-    logger.error(message);
-    await sendPriorityAlertIfConfigured('Mint log', new Error(message)).catch(
-      (error) => logger.warn(`[MINT_LOG_ALERT_FAILED] ${errorText(error)}`)
+    await this.alert(
+      `[MINT_LOG_MISMATCH] [${entry.chain} ${entry.seq}] [${entry.kind}] [card ${card}] ${problems.join('; ')}`
     );
   }
 }

@@ -38,15 +38,13 @@ export function mintHeadKey(
   return `${CARD_KEY_PREFIX}${card.key}`;
 }
 
-function isDuplicate(error: unknown): boolean {
-  return (error as { code?: unknown })?.code === 'ER_DUP_ENTRY';
-}
-
 export class MintLogHeadDb extends LazyDbAccessCompatibleService {
   /**
    * Locks the head row until the caller's transaction ends. Every logged
    * write holds its head, so writes and their entries keep one order per
-   * head.
+   * head. The row is created and locked exclusively in one statement: an
+   * `insert ignore` would take a shared lock first, and two writes that both
+   * hold it deadlock when each asks for the exclusive one.
    */
   async lock(
     connection: ConnectionWrapper<any>,
@@ -57,8 +55,9 @@ export class MintLogHeadDb extends LazyDbAccessCompatibleService {
     }
     const id = this.headId(key);
     await this.db.execute(
-      `insert ignore into ${MINT_LOG_HEAD_TABLE} (id, seq, hash, updated_at)
-       values (:id, -1, null, :now)`,
+      `insert into ${MINT_LOG_HEAD_TABLE} (id, seq, hash, updated_at)
+       values (:id, -1, null, :now)
+       on duplicate key update id = id`,
       { id, now: Time.currentMillis() },
       { wrappedConnection: connection }
     );
@@ -114,7 +113,7 @@ export class MintLogHeadDb extends LazyDbAccessCompatibleService {
    * would lock a gap under REPEATABLE READ and hold up other artworks' first
    * writes until this transaction ends. Only writes to the same artwork,
    * already serialized by its collaboration row, could create the row in
-   * between; then the insert fails on the key and the row is locked.
+   * between; the insert then locks the existing row exclusively instead.
    */
   private async lockCard(
     connection: ConnectionWrapper<any>,
@@ -133,17 +132,13 @@ export class MintLogHeadDb extends LazyDbAccessCompatibleService {
       { wrappedConnection: connection }
     );
     if (!seen) {
-      try {
-        await this.db.execute(
-          `insert into ${MINT_LOG_CARD_HEADS_TABLE} (card_key, seq, hash, updated_at)
-           values (:card_key, -1, null, :now)`,
-          { card_key: cardKey, now: Time.currentMillis() },
-          { wrappedConnection: connection }
-        );
-        return { seq: -1, hash: null };
-      } catch (error) {
-        if (!isDuplicate(error)) throw error;
-      }
+      await this.db.execute(
+        `insert into ${MINT_LOG_CARD_HEADS_TABLE} (card_key, seq, hash, updated_at)
+         values (:card_key, -1, null, :now)
+         on duplicate key update card_key = card_key`,
+        { card_key: cardKey, now: Time.currentMillis() },
+        { wrappedConnection: connection }
+      );
     }
     const row = await locked();
     if (!row) throw new Error(`Mint log head ${cardKey} is missing`);
