@@ -4,6 +4,7 @@ import * as path from 'node:path';
 import { IdentityExportUsageError } from './cli-options';
 import {
   checkOutPath,
+  jsonDocumentBytes,
   writeExportFile,
   writeJsonDocument
 } from './identity-export.writer';
@@ -94,4 +95,18 @@ describe('writeJsonDocument', () => {
       'is not a directory that can be written'
     );
   }, 10_000);
+
+  it('gives the same bytes for an upload as it writes to a file', async () => {
+    const document = {
+      format: '6529.identity-export.v1',
+      identities: [{ profile_id: 'a' }, { profile_id: 'b' }],
+      ratings: [],
+      stats: { identities: 2 }
+    };
+    const file = path.join(dir, 'export.json');
+    await writeJsonDocument(file, document);
+    expect(
+      (await jsonDocumentBytes(document)).equals(fs.readFileSync(file))
+    ).toBe(true);
+  });
 });

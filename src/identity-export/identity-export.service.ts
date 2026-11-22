@@ -833,6 +833,7 @@ export async function buildIdentityExport(
   );
   const { scope, excluded } = await resolveScope(index, core, edges, bulk);
   const built = await buildIdentities(source, index, core, scope);
+  log(`identities: ${built.identities.length} read`);
   const repMismatch = repMismatches(built.identities, read);
   // Stored rep without the credits: compared below with the file's ratings.
   const storedMinusCredits = withoutCredits(built.identities, credits);
