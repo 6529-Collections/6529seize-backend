@@ -1,8 +1,8 @@
 import { IdentityExportRating } from './identity-export.types';
 
 /**
- * Which identities the 6529 chain imports (MIGRATION-PLAN section 1, with
- * the snapshot lane's bulk rule, as its builder applies it):
+ * Which identities the 6529 chain imports, with the bulk rule as the
+ * snapshot builder applies it:
  * - core: a real handle, two or more wallets, or waves activity;
  * - and every profile at either end of a REP or CIC rating, except that a
  *   rating in a bulk category (one rater's REP category with more than

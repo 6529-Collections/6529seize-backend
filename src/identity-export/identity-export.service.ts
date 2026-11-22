@@ -1,4 +1,5 @@
 import { RESERVED_HANDLES } from '@/api/profiles/profiles.constants';
+import { isHelpBotCreditCategory } from '@/help-bot/help-bot.config';
 import { getLevelFromScore } from '@/profiles/profile-level';
 import { ProfileClassification } from '@/entities/IProfile';
 import { enums } from '@/enums';
@@ -95,6 +96,69 @@ export function withCmsFields(
   };
 }
 
+export interface HelpBotCredits {
+  /** Target profile id -> the sum of its help-bot credits. */
+  readonly byTarget: Map<string, number>;
+  readonly ratings: number;
+}
+
+/**
+ * The help bot's credits (REP in its reserved category, matched without
+ * regard to case or surrounding spaces) are a 6529.io site feature that the
+ * chain doesn't import: they stay in 6529.io's ratings table and keep
+ * working through the freeze. Returns the other ratings and the credits per
+ * target.
+ */
+export function leaveOutHelpBotCredits<
+  T extends {
+    matter: string;
+    category: string;
+    target_profile_id: string;
+    rating: number;
+  }
+>(edges: T[]): { edges: T[]; credits: HelpBotCredits } {
+  const byTarget = new Map<string, number>();
+  let ratings = 0;
+  const kept = edges.filter((edge) => {
+    if (edge.matter !== 'REP' || !isHelpBotCreditCategory(edge.category)) {
+      return true;
+    }
+    byTarget.set(
+      edge.target_profile_id,
+      (byTarget.get(edge.target_profile_id) ?? 0) + edge.rating
+    );
+    ratings++;
+    return false;
+  });
+  return { edges: kept, credits: { byTarget, ratings } };
+}
+
+/**
+ * Each identity's rep and level as the chain will have them: without the
+ * help-bot credits it received. The rep, level_raw and ratings come from one
+ * read-only snapshot, so a credit given while the export runs is either in
+ * all of them or in none.
+ */
+export function withoutCredits(
+  identities: IdentityExportIdentity[],
+  credits: HelpBotCredits
+): IdentityExportIdentity[] {
+  if (!credits.ratings) return identities;
+  return identities.map((it) => {
+    const credit = it.profile_id
+      ? (credits.byTarget.get(it.profile_id) ?? 0)
+      : 0;
+    if (!credit) return it;
+    const levelRaw = it.level_raw === null ? null : it.level_raw - credit;
+    return {
+      ...it,
+      rep: it.rep - credit,
+      level_raw: levelRaw,
+      level: getLevelFromScore(levelRaw ?? 0)
+    };
+  });
+}
+
 export function reservedHandles(): string[] {
   return Array.from(new Set(RESERVED_HANDLES.map((it) => it.toLowerCase())))
     .filter((it) => it.length > 0)
@@ -131,10 +195,12 @@ export function toExportIdentity(
   const walletList = Array.from(
     new Set((wallets.length ? wallets : [primary]).map((w) => w.toLowerCase()))
   ).sort(compareCodePoints);
+  const rep = Math.trunc(numberOr(row.rep, 0));
+  const tdh = numberOr(row.tdh, 0);
+  // The chain's level: REP + TDH. 6529.io's level_raw also adds xTDH, which
+  // is not on the chain (xtdh is still written as stored).
   const levelRaw =
-    row.level_raw === null || row.level_raw === undefined
-      ? null
-      : numberOr(row.level_raw, 0);
+    row.level_raw === null || row.level_raw === undefined ? null : rep + tdh;
   return {
     profile_id: hasProfile ? row.p_external_id!.toLowerCase() : null,
     handle: hasProfile ? row.p_handle : null,
@@ -149,9 +215,9 @@ export function toExportIdentity(
     banner2: row.banner2 ?? null,
     website: hasProfile ? (row.p_website ?? null) : null,
     statements: [...statements].sort((a, b) => compareCodePoints(a.id, b.id)),
-    tdh: numberOr(row.tdh, 0),
+    tdh,
     xtdh: numberOr(row.xtdh, 0),
-    rep: Math.trunc(numberOr(row.rep, 0)),
+    rep,
     cic: Math.trunc(numberOr(row.cic, 0)),
     level: getLevelFromScore(levelRaw ?? 0),
     level_raw: levelRaw,
@@ -427,11 +493,12 @@ export async function buildIdentityExport(
     `core: ${core.profiles.size} profiles (${core.multiWalletKeys.length} multi-wallet consolidations, ${core.extraIds.length} waves)`
   );
 
-  const edges = (await source.ratingEdges()).map((edge) => ({
+  const read = (await source.ratingEdges()).map((edge) => ({
     ...edge,
     rater_profile_id: edge.rater_profile_id.toLowerCase(),
     target_profile_id: edge.target_profile_id.toLowerCase()
   }));
+  const { edges, credits } = leaveOutHelpBotCredits(read);
   const bulkCategories = findBulkCategories(edges, options.bulkThreshold);
   const bulk = bulkKeys(bulkCategories);
   log(
@@ -439,7 +506,10 @@ export async function buildIdentityExport(
   );
   const { scope, excluded } = await resolveScope(index, core, edges, bulk);
   const built = await buildIdentities(source, index, core, scope);
-  const cms = withCmsFields(built.identities, options.cmsFields);
+  const cms = withCmsFields(
+    withoutCredits(built.identities, credits),
+    options.cmsFields
+  );
   const identities = cms.identities;
   const notes = [
     ...(options.wavesListGiven === false
@@ -448,6 +518,12 @@ export async function buildIdentityExport(
         ]
       : []),
     ...scopeNotes(core, excluded, bulkCategories, options.bulkThreshold, scope),
+    `level and level_raw are the chain's: REP + TDH, without xTDH (xtdh is written as stored) and without help-bot credits; the public-API exporter must write them the same way`,
+    ...(credits.ratings
+      ? [
+          `help-bot credits left out: ${credits.ratings} REP ratings in the help bot's category to ${credits.byTarget.size} profiles; each identity's rep and level_raw exclude them (a 6529.io site feature the chain doesn't import)`
+        ]
+      : []),
     ...built.notes,
     ...cms.notes
   ];
@@ -506,7 +582,9 @@ export async function buildIdentityExport(
       scope_rating: byScope('rating'),
       scope_waves: byScope('waves'),
       ratings: ratings.length,
-      ratings_read: edges.length,
+      ratings_read: read.length,
+      help_bot_credits_left_out: credits.ratings,
+      help_bot_credit_profiles: credits.byTarget.size,
       bulk_categories: bulkCategories.length,
       bulk_ratings_left_out: scope.bulkLeftOut,
       profiles_left_out: excluded.size,

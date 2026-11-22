@@ -38,9 +38,12 @@ export interface IdentityExportIdentity {
   readonly tdh: number;
   /** Unrounded; the builder floors it. */
   readonly xtdh: number;
+  /** 6529.io's REP without the help bot's credits, as the chain counts it. */
   readonly rep: number;
   readonly cic: number;
+  /** The chain's level: from level_raw. */
   readonly level: number;
+  /** REP + TDH, without xTDH or help-bot credits; null when 6529.io has none. */
   readonly level_raw: number | null;
   readonly scope: IdentityExportScope[];
   /**

@@ -5,8 +5,11 @@ import {
 } from './identity-export.db';
 import {
   buildIdentityExport,
+  leaveOutHelpBotCredits,
   reservedHandles,
-  shownClassification
+  shownClassification,
+  toExportIdentity,
+  withoutCredits
 } from './identity-export.service';
 import { IdentityExportRating } from './identity-export.types';
 
@@ -191,7 +194,7 @@ describe('buildIdentityExport', () => {
     ]);
   });
 
-  it('keeps 6529.io values as stored and the wallets ascending', async () => {
+  it("keeps 6529.io values as stored, the wallets ascending, and the chain's level", async () => {
     const doc = await buildIdentityExport(world().source, options);
     const alice = doc.identities.find((it) => it.profile_id === ALICE)!;
     expect(alice).toEqual({
@@ -229,8 +232,9 @@ describe('buildIdentityExport', () => {
       xtdh: 12.75,
       rep: 30,
       cic: 5,
+      // REP + TDH: 6529.io's 1043.25 also counts the xTDH.
       level: 6,
-      level_raw: 1043.25,
+      level_raw: 30 + 1000.5,
       scope: ['handle', 'rating']
     });
     const pair = doc.identities.find((it) => it.profile_id === null)!;
@@ -331,6 +335,119 @@ describe('buildIdentityExport', () => {
     expect(without.identities.some((it) => 'cms' in it)).toBe(false);
   });
 
+  it("leaves the help bot's credits out, and out of rep and level", async () => {
+    const { source } = world();
+    const edges = await source.ratingEdges();
+    const credit = (target: string, rating: number) => ({
+      rater_profile_id: TAGGER,
+      target_profile_id: target,
+      matter: 'REP' as const,
+      category: 'Help6529 Credits',
+      rating,
+      last_modified_ms: 1
+    });
+    const doc = await buildIdentityExport(
+      {
+        ...source,
+        ratingEdges: async () => [
+          ...edges,
+          credit(ALICE, 5),
+          credit(ALICE.toUpperCase(), 2)
+        ]
+      },
+      options
+    );
+    expect(doc.ratings.some((it) => it.category === 'Help6529 Credits')).toBe(
+      false
+    );
+    const alice = doc.identities.find((it) => it.profile_id === ALICE)!;
+    expect(alice.rep).toBe(30 - 7);
+    expect(alice.level_raw).toBe(30 + 1000.5 - 7);
+    expect(doc.stats.help_bot_credits_left_out).toBe(2);
+    expect(doc.stats.help_bot_credit_profiles).toBe(1);
+    expect(doc.notes).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining('help-bot credits left out: 2 REP ratings')
+      ])
+    );
+  });
+
+  it('matches the help-bot category whatever its case or surrounding spaces', () => {
+    const edge = (category: string) => ({
+      rater_profile_id: TAGGER,
+      target_profile_id: ALICE,
+      matter: 'REP',
+      category,
+      rating: 1
+    });
+    const { edges, credits } = leaveOutHelpBotCredits([
+      edge('Help6529 Credits'),
+      edge(' help6529 credits '),
+      edge('HELP6529 CREDITS'),
+      edge('Help6529 Credits extra'),
+      { ...edge('Help6529 Credits'), matter: 'CIC' }
+    ]);
+    expect(edges.map((it) => [it.matter, it.category])).toEqual([
+      ['REP', 'Help6529 Credits extra'],
+      ['CIC', 'Help6529 Credits']
+    ]);
+    expect(credits.ratings).toBe(3);
+    expect(credits.byTarget.get(ALICE)).toBe(3);
+  });
+
+  it('makes no bulk category of the credits and brings no one in by them', async () => {
+    const { source } = world();
+    const edges = await source.ratingEdges();
+    const bot = P('b07');
+    const credit = (target: string) => ({
+      rater_profile_id: bot,
+      target_profile_id: target,
+      matter: 'REP' as const,
+      category: 'Help6529 Credits',
+      rating: 10,
+      last_modified_ms: 1
+    });
+    const doc = await buildIdentityExport(
+      {
+        ...source,
+        ratingEdges: async () => [...edges, ...[P1, P2, P3, ALICE].map(credit)]
+      },
+      options
+    );
+    expect(doc.bulk_rep.map((it) => it.profile_id)).toEqual([TAGGER]);
+    const ids = doc.identities.map((it) => it.profile_id);
+    expect(ids).not.toContain(P1);
+    expect(ids).not.toContain(P2);
+    expect(ids).not.toContain(bot);
+    expect(doc.stats.help_bot_credits_left_out).toBe(4);
+  });
+
+  it('takes nothing from anyone for credits given to a profile not exported', async () => {
+    const { source } = world();
+    const edges = await source.ratingEdges();
+    const plain = await buildIdentityExport(source, options);
+    const doc = await buildIdentityExport(
+      {
+        ...source,
+        ratingEdges: async () => [
+          ...edges,
+          {
+            rater_profile_id: TAGGER,
+            target_profile_id: P1,
+            matter: 'REP' as const,
+            category: 'Help6529 Credits',
+            rating: 9,
+            last_modified_ms: 1
+          }
+        ]
+      },
+      options
+    );
+    expect(doc.identities).toEqual(plain.identities);
+    expect(doc.ratings).toEqual(plain.ratings);
+    expect(doc.stats.help_bot_credit_profiles).toBe(1);
+  });
+
   it('leaves the delegations out when asked', async () => {
     const doc = await buildIdentityExport(world().source, {
       ...options,
@@ -376,5 +493,56 @@ describe('values as the public API shows them', () => {
     });
     expect(asked.flat().sort()).toEqual([ALICE, TAGGER].sort());
     expect(doc.notes[0]).toContain('no --extra-ids');
+  });
+});
+
+describe("the chain's level", () => {
+  const row = (rep: number, tdh: number, xtdh: number) =>
+    identity(
+      W(1),
+      { id: ALICE, handle: 'Alice' },
+      {
+        rep,
+        tdh,
+        xtdh,
+        level_raw: rep + tdh + xtdh
+      }
+    );
+
+  it('drops a level when the xTDH no longer counts', () => {
+    // 6529.io: 990 + 20 = 1010, level 6; the chain: 990, level 5.
+    const it = toExportIdentity(row(0, 990, 20), [W(1)], [], ['handle']);
+    expect(it.level_raw).toBe(990);
+    expect(it.level).toBe(5);
+    expect(it.xtdh).toBe(20);
+  });
+
+  it('drops a level when the credits no longer count', () => {
+    const it = toExportIdentity(row(10, 1000, 5), [W(1)], [], ['handle']);
+    expect([it.level_raw, it.level]).toEqual([1010, 6]);
+    const [credited] = withoutCredits([it], {
+      byTarget: new Map([[ALICE, 11]]),
+      ratings: 1
+    });
+    expect([credited.rep, credited.level_raw, credited.level]).toEqual([
+      -1, 999, 5
+    ]);
+    // Exactly at the boundary stays at the level.
+    const [atBoundary] = withoutCredits([it], {
+      byTarget: new Map([[ALICE, 10]]),
+      ratings: 1
+    });
+    expect([atBoundary.level_raw, atBoundary.level]).toEqual([1000, 6]);
+  });
+
+  it('keeps a missing level_raw missing', () => {
+    const it = toExportIdentity(
+      identity(W(1), null, { rep: 5, tdh: 100, level_raw: null }),
+      [W(1)],
+      [],
+      ['wallets']
+    );
+    expect(it.level_raw).toBeNull();
+    expect(it.level).toBe(0);
   });
 });
