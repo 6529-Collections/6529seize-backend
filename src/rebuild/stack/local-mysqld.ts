@@ -1,4 +1,5 @@
 import { ChildProcess, spawn, spawnSync } from 'node:child_process';
+import { randomBytes } from 'node:crypto';
 import * as fs from 'node:fs';
 import * as net from 'node:net';
 import * as path from 'node:path';
@@ -54,10 +55,12 @@ export function serverArgs(dataDir: string, logDir: string): string[] {
 export function startArgs(
   dataDir: string,
   logDir: string,
-  port: number
+  port: number,
+  initFile?: string
 ): string[] {
   return [
     ...serverArgs(dataDir, logDir),
+    ...(initFile ? [`--init-file=${initFile}`] : []),
     `--port=${port}`,
     '--bind-address=127.0.0.1',
     '--mysqlx=OFF',
@@ -102,17 +105,42 @@ function sameDirectory(a: string, b: string): boolean {
   return norm(a) === norm(b);
 }
 
-/** Stops a server a previous run left behind, after checking it is ours. */
+function processAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Stops a server a previous run left behind, after checking it is ours: by
+ * the PID its run recorded in `<home>/mysql` (its root password died with
+ * that run), or by SHUTDOWN when it still has the empty password of a fresh
+ * data directory and serves this run's data directory.
+ */
 async function stopLeftover(
   target: AdminTarget,
   dataDir: string,
+  pidFile: string,
   log: (line: string) => void
 ): Promise<void> {
   if (!(await portOpen(target.port))) return;
   let admin: MysqlAdmin;
   try {
-    admin = await MysqlAdmin.connect(target);
+    admin = await MysqlAdmin.connect({ ...target, password: '' });
   } catch (error) {
+    const pid = fs.existsSync(pidFile)
+      ? Number(fs.readFileSync(pidFile, 'utf8').trim())
+      : NaN;
+    if (Number.isInteger(pid) && pid > 0 && processAlive(pid)) {
+      log(
+        `ending the server pid ${pid} a previous run left on port ${target.port}`
+      );
+      endProcess(pid);
+      if (await waitPortClosed(target.port)) return;
+    }
     throw new Error(
       `127.0.0.1:${target.port} is in use, and not by this run's server (${String(error)}); choose another port`
     );
@@ -201,33 +229,50 @@ export async function startLocalMysqld(
   const dataDir = path.join(root, 'data');
   const logDir = path.join(root, 'log');
   fs.mkdirSync(logDir, { recursive: true });
+  const pidFile = path.join(root, 'harness-mysqld.pid');
+  // A new root password for every start, set by the server itself from a
+  // file it reads at startup and deleted once it is up. Only this process
+  // knows it; steps connect as their own users.
   const target: AdminTarget = {
     host: '127.0.0.1',
     port: options.port,
     user: 'root',
-    password: ''
+    password: randomBytes(24).toString('hex')
   };
-  await stopLeftover(target, dataDir, options.log);
+  await stopLeftover(target, dataDir, pidFile, options.log);
   if (!fs.existsSync(dataDir) || fs.readdirSync(dataDir).length === 0) {
     initialize(mysqld, dataDir, logDir, options.log);
   }
+  const initFile = path.join(
+    root,
+    `init-${randomBytes(8).toString('hex')}.sql`
+  );
+  fs.writeFileSync(
+    initFile,
+    `ALTER USER 'root'@'localhost' IDENTIFIED BY '${target.password}';\n`,
+    { mode: 0o600 }
+  );
   const out = fs.openSync(path.join(logDir, 'mysqld.out'), 'a');
-  const child = spawn(mysqld, startArgs(dataDir, logDir, options.port), {
-    windowsHide: true,
-    stdio: ['ignore', out, out]
-  });
+  const child = spawn(
+    mysqld,
+    startArgs(dataDir, logDir, options.port, initFile),
+    { windowsHide: true, stdio: ['ignore', out, out] }
+  );
   fs.closeSync(out);
   if (child.pid === undefined) {
+    fs.rmSync(initFile, { force: true });
     throw new Error(`Could not start ${mysqld}`);
   }
   const pid = child.pid;
-  fs.writeFileSync(path.join(root, 'harness-mysqld.pid'), `${pid}\n`);
+  fs.writeFileSync(pidFile, `${pid}\n`);
   options.log(`mysqld started, pid ${pid}, port ${options.port}`);
   try {
     await waitReady(child, target, logDir);
   } catch (error) {
     if (child.exitCode === null) endProcess(pid);
     throw error;
+  } finally {
+    fs.rmSync(initFile, { force: true });
   }
   let stopped = false;
   return {
