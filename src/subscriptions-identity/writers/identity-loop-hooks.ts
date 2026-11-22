@@ -92,7 +92,7 @@ export function runIdentityTopUpWriters(): Promise<void> {
 /** The transactions loop's identity writer: airdrops charged, then compared. */
 export function runIdentityRedemptionWriters(): Promise<void> {
   return runIdentityWriter('REDEMPTIONS', async (mode) => {
-    const run = await redeemIdentityAirdrops();
+    const run = await redeemIdentityAirdrops(mode);
     if (run) {
       // After the switch the warnings come from the truth (the legacy
       // loop only logs its own); in shadow the legacy loop posts them.

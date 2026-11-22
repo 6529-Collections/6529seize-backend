@@ -1876,6 +1876,55 @@ describeWithSeed('identity writers after the switch', [], () => {
     expect(Number(cursor.block)).toBe(50);
   });
 
+  it('after the switch, charges up to the highest memes block while the legacy loop is behind', async () => {
+    await seed();
+    await updateSubscriptions();
+    await execute(
+      `INSERT INTO ${TRANSACTIONS_TABLE}
+        (created_at, transaction, block, transaction_date, from_address, to_address,
+         contract, token_id, token_count, value, primary_proceeds, royalties,
+         gas_gwei, gas_price, gas_price_gwei, gas)
+        VALUES (NOW(), '0xmint', 50, '2026-11-26 15:00:00', :null, :lone, :c, :card,
+         1, 0, 0, 0, 0, 0, 0, 0)`,
+      {
+        null: NULL_ADDRESS,
+        lone: LONE,
+        c: MEMES_CONTRACT.toLowerCase(),
+        card: CARD
+      }
+    );
+    // The legacy loop has not run since: its processed block is still 1.
+    await runIdentityRedemptionWriters();
+    await runIdentityRedemptionWriters();
+
+    // Charged once in the identity tables, the truth; not yet in legacy.
+    // Bounded by the legacy loop's block, the run would charge nothing.
+    expect(
+      await balance(SUBSCRIPTIONS_ID_BALANCES_TABLE, 'identity_key', LONE)
+    ).toBe(0.13471);
+    expect(
+      await balance(SUBSCRIPTIONS_BALANCES_TABLE, 'consolidation_key', LONE)
+    ).toBe(0.2);
+    const [cursor] = await sqlExecutor.execute<{ block: number }>(
+      `SELECT block FROM ${SUBSCRIPTIONS_ID_CURSORS_TABLE} WHERE id = :id`,
+      { id: REDEMPTION_CURSOR_ID }
+    );
+    expect(Number(cursor.block)).toBe(50);
+    // The comparison names what it could not compare yet, with no
+    // unexplained difference, so it raises no alert.
+    const reports = await sqlExecutor.execute<{ report: string }>(
+      `SELECT report FROM ${SUBSCRIPTIONS_ID_REPORTS_TABLE} WHERE kind = 'REDEMPTIONS'`
+    );
+    expect(reports).toHaveLength(1);
+    const report = JSON.parse(reports[0].report);
+    expect(report.mode).toBe('TRUTH');
+    expect(report.diffs).toEqual([]);
+    expect(report.unexplained).toBe(0);
+    expect(report.notes).toEqual([
+      "1 airdrop transaction(s) after the legacy loop's block 1: not yet compared"
+    ]);
+  });
+
   it("credits a new top-up to the sender's identity once", async () => {
     await seed();
     await execute(

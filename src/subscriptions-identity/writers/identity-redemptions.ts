@@ -1,4 +1,5 @@
 import {
+  MEMES_CONTRACT,
   MEMES_MINT_PRICE,
   NULL_ADDRESS,
   SUBSCRIPTIONS_ID_BALANCES_TABLE,
@@ -37,8 +38,13 @@ export interface IdentityRedemptionRun {
   readonly cards: ReadonlyArray<{
     readonly contract: string;
     readonly tokenId: number;
+    /** At or below the legacy loop's block: compared with its charges. */
     readonly transactions: string[];
+    /** Above it (only after the switch): not yet compared. */
+    readonly pending: string[];
   }>;
+  /** The legacy loop's processed block when the run started. */
+  readonly legacyThrough: number | null;
   readonly charged: number;
   readonly unmatched: number;
   /** Warnings for the subscriptions wave, posted after the switch. */
@@ -193,6 +199,14 @@ async function chargeToken(
   return true;
 }
 
+function blockOrNull(value: number | string | null | undefined): number | null {
+  if (value === null || value === undefined) {
+    return null;
+  }
+  const block = Number(value);
+  return Number.isNaN(block) ? null : block;
+}
+
 /** A run charges at most this many airdrops (whole blocks), so its journal stays small. */
 export const REDEMPTION_RUN_MAX_AIRDROPS = 200;
 /** ... and at most this many tokens. */
@@ -275,7 +289,9 @@ function inTransactionReads(options: DbQueryOptions): EntityManager {
  * sides match the same airdrops. Returns null before an opening is loaded
  * (no cursor).
  */
-export async function redeemIdentityAirdrops(): Promise<IdentityRedemptionRun | null> {
+export async function redeemIdentityAirdrops(
+  mode: IdentityWriteMode
+): Promise<IdentityRedemptionRun | null> {
   const [cursor] = await sqlExecutor.execute<{ block: number }>(
     `SELECT block FROM ${SUBSCRIPTIONS_ID_CURSORS_TABLE} WHERE id = :id`,
     { id: REDEMPTION_CURSOR_ID }
@@ -283,16 +299,40 @@ export async function redeemIdentityAirdrops(): Promise<IdentityRedemptionRun | 
   if (!cursor) {
     return null;
   }
-  const [legacy] = await sqlExecutor.execute<{ block: number | null }>(
-    `SELECT MAX(block) AS block FROM ${TRANSACTIONS_PROCESSED_SUBSCRIPTIONS_BLOCKS_TABLE}`
+  const legacyThrough = blockOrNull(
+    (
+      await sqlExecutor.execute<{ block: number | null }>(
+        `SELECT MAX(block) AS block FROM ${TRANSACTIONS_PROCESSED_SUBSCRIPTIONS_BLOCKS_TABLE}`
+      )
+    )[0]?.block
   );
-  const through = legacy?.block === null ? null : Number(legacy?.block);
-  if (
-    through === null ||
-    Number.isNaN(through) ||
-    through <= Number(cursor.block)
-  ) {
-    return { cards: [], charged: 0, unmatched: 0, notices: [] };
+  // In shadow the run goes as far as the legacy loop has processed, so both
+  // sides charge the same airdrops. Once the identity tables are the truth
+  // it no longer waits for the legacy loop: it goes to the highest memes
+  // block in the transactions table, read once here. The memes contract's,
+  // not all contracts': its loop commits whole blocks in order, so every
+  // memes airdrop up to that block is already there, while another
+  // contract's loop can be ahead of it.
+  const through =
+    mode === 'TRUTH'
+      ? blockOrNull(
+          (
+            await sqlExecutor.execute<{ block: number | null }>(
+              `SELECT MAX(block) AS block FROM ${TRANSACTIONS_TABLE} WHERE contract = :contract`,
+              { contract: MEMES_CONTRACT.toLowerCase() }
+            )
+          )[0]?.block
+        )
+      : legacyThrough;
+  const nothing: IdentityRedemptionRun = {
+    cards: [],
+    legacyThrough,
+    charged: 0,
+    unmatched: 0,
+    notices: []
+  };
+  if (through === null || through <= Number(cursor.block)) {
+    return nothing;
   }
   const airdrops: Transaction[] = await sqlExecutor.execute(
     `SELECT * FROM ${TRANSACTIONS_TABLE}
@@ -311,7 +351,12 @@ export async function redeemIdentityAirdrops(): Promise<IdentityRedemptionRun | 
   const notices: SubscriptionWaveNotification[] = [];
   const byCard = new Map<
     string,
-    { contract: string; tokenId: number; transactions: Set<string> }
+    {
+      contract: string;
+      tokenId: number;
+      transactions: Set<string>;
+      pending: Set<string>;
+    }
   >();
   let cursorMoved = false;
   await sqlExecutor.executeNativeQueriesInTransaction(async (connection) => {
@@ -351,9 +396,14 @@ export async function redeemIdentityAirdrops(): Promise<IdentityRedemptionRun | 
       const entry = byCard.get(card) ?? {
         contract: airdrop.contract,
         tokenId: Number(airdrop.token_id),
-        transactions: new Set<string>()
+        transactions: new Set<string>(),
+        pending: new Set<string>()
       };
-      entry.transactions.add(airdrop.transaction);
+      if (legacyThrough !== null && Number(airdrop.block) <= legacyThrough) {
+        entry.transactions.add(airdrop.transaction);
+      } else {
+        entry.pending.add(airdrop.transaction);
+      }
       byCard.set(card, entry);
       for (let i = 0; i < airdrop.token_count; i++) {
         if (await chargeToken(airdrop, options, notices, touches)) {
@@ -394,14 +444,16 @@ export async function redeemIdentityAirdrops(): Promise<IdentityRedemptionRun | 
     logger.warn(
       `[REDEMPTION CURSOR MOVED] [read ${cursor.block}] [a load replaced it during the run; nothing charged]`
     );
-    return { cards: [], charged: 0, unmatched: 0, notices: [] };
+    return nothing;
   }
   return {
     cards: Array.from(byCard.values()).map((c) => ({
       contract: c.contract,
       tokenId: c.tokenId,
-      transactions: Array.from(c.transactions)
+      transactions: Array.from(c.transactions),
+      pending: Array.from(c.pending)
     })),
+    legacyThrough,
     charged,
     unmatched,
     notices
@@ -413,21 +465,65 @@ export async function redeemIdentityAirdrops(): Promise<IdentityRedemptionRun | 
  * airdrops: the tokens charged per identity and transaction, and each
  * touched identity's balance afterwards. A balance is compared only for an
  * identity whose legacy charges went to one legacy key; any other is named
- * in the notes, which makes the report DIFF.
+ * in the notes, which makes the report DIFF. Only airdrops the legacy loop
+ * has processed are compared; the rest (after the switch, when the legacy
+ * loop is behind) are named in the notes as not yet compared, and so are
+ * the balances of the identities they charged.
  */
 export async function reportRedemptionComparison(
   mode: IdentityWriteMode,
   run: IdentityRedemptionRun
 ): Promise<void> {
   for (const card of run.cards) {
-    await reportCard(mode, card);
+    await reportCard(mode, card, run.legacyThrough);
   }
+}
+
+async function pendingIdentities(
+  card: IdentityRedemptionRun['cards'][number]
+): Promise<Set<string>> {
+  if (card.pending.length === 0) {
+    return new Set();
+  }
+  const rows = await sqlExecutor.execute<{ identity_key: string }>(
+    `SELECT DISTINCT identity_key FROM ${SUBSCRIPTIONS_ID_REDEEMED_TABLE}
+      WHERE \`transaction\` IN (:transactions) AND contract = :contract AND token_id = :tokenId`,
+    {
+      transactions: card.pending,
+      contract: card.contract,
+      tokenId: card.tokenId
+    }
+  );
+  return new Set(rows.map((r) => r.identity_key));
 }
 
 async function reportCard(
   mode: IdentityWriteMode,
-  card: IdentityRedemptionRun['cards'][number]
+  card: IdentityRedemptionRun['cards'][number],
+  legacyThrough: number | null
 ): Promise<void> {
+  const notes: string[] = [];
+  if (card.pending.length > 0) {
+    notes.push(
+      `${card.pending.length} airdrop transaction(s) after the legacy loop's block ${legacyThrough ?? 'none'}: not yet compared`
+    );
+  }
+  const uncompared = await pendingIdentities(card);
+  if (card.transactions.length === 0) {
+    await saveReport({
+      kind: 'REDEMPTIONS',
+      mode,
+      contract: card.contract,
+      tokenId: card.tokenId,
+      verdict: 'DIFF',
+      legacyRows: 0,
+      identityRows: 0,
+      diffs: [],
+      notes,
+      unexplained: 0
+    });
+    return;
+  }
   const legacyRows = await sqlExecutor.execute<{
     consolidation_key: string;
     transaction: string;
@@ -457,7 +553,6 @@ async function reportCard(
   const identities = await identityOfLegacyKeys(
     legacyRows.map((r) => r.consolidation_key)
   );
-  const notes: string[] = [];
   const legacyCounts = new Map<string, number>();
   const legacyKeysOf = new Map<string, Set<string>>();
   for (const r of legacyRows) {
@@ -515,6 +610,13 @@ async function reportCard(
     }
   }
   for (const identityKey of touched) {
+    if (uncompared.has(identityKey)) {
+      // The legacy loop has not charged its later airdrops yet.
+      notes.push(
+        `balance of ${identityKey} not yet compared: charged after the legacy loop's block`
+      );
+      continue;
+    }
     const keys = Array.from(legacyKeysOf.get(identityKey) ?? []);
     if (keys.length > 1) {
       // One identity, several legacy keys: its balance should be theirs
