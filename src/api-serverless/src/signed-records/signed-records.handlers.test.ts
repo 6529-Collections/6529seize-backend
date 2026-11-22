@@ -20,10 +20,17 @@ describe('GET /signed-records/owners', () => {
       finalizedTime: 1_795_000_000_000,
       maxAnchorLag: 120
     });
+    jest.spyOn(recordOwnerDirectory, 'hasChain').mockReturnValue(true);
     jest
-      .spyOn(recordOwnerDirectory, 'ownerAt')
-      .mockImplementation(async (wallet) =>
-        wallet === BOUND ? PRINCIPAL : wallet
+      .spyOn(recordOwnerDirectory, 'ownersAt')
+      .mockImplementation(
+        async (wallets) =>
+          new Map(
+            wallets.map((wallet) => [
+              wallet,
+              wallet === BOUND ? PRINCIPAL : wallet
+            ])
+          )
       );
   });
 
@@ -31,7 +38,7 @@ describe('GET /signed-records/owners', () => {
     jest.restoreAllMocks();
   });
 
-  it('names each wallet once, lowercase, by its owner at the latest finalized height', async () => {
+  it('names each wallet once, lowercase, by its owner at the latest finalized height, in one batch', async () => {
     await expect(
       handleGetSignedRecordsOwners(
         request(
@@ -45,7 +52,11 @@ describe('GET /signed-records/owners', () => {
         { wallet: UNBOUND, owner: UNBOUND }
       ]
     });
-    expect(recordOwnerDirectory.ownerAt).toHaveBeenCalledWith(BOUND, 900);
+    expect(recordOwnerDirectory.ownersAt).toHaveBeenCalledTimes(1);
+    expect(recordOwnerDirectory.ownersAt).toHaveBeenCalledWith(
+      [BOUND, UNBOUND],
+      900
+    );
   });
 
   it('takes 1 to 50 wallets, each an address', async () => {
@@ -62,5 +73,27 @@ describe('GET /signed-records/owners', () => {
     await expect(handleGetSignedRecordsOwners(request(many))).rejects.toThrow(
       'Send 1 to 50 wallets'
     );
+  });
+
+  it('answers 503 while the gateway is not wired in, rather than call every wallet unbound', async () => {
+    jest.spyOn(recordOwnerDirectory, 'hasChain').mockReturnValue(false);
+    await expect(
+      handleGetSignedRecordsOwners(request(BOUND))
+    ).rejects.toMatchObject({
+      code: 'OWNERS_UNAVAILABLE',
+      getStatusCode: expect.any(Function)
+    });
+    expect(recordOwnerDirectory.ownersAt).not.toHaveBeenCalled();
+  });
+
+  it("answers 503 when the gateway doesn't answer", async () => {
+    jest
+      .spyOn(recordOwnerDirectory, 'ownersAt')
+      .mockRejectedValue(new Error('gateway timeout'));
+    const thrown = await handleGetSignedRecordsOwners(request(BOUND)).catch(
+      (error: { getStatusCode(): number; code?: string }) => error
+    );
+    expect(thrown).toMatchObject({ code: 'OWNERS_UNAVAILABLE' });
+    expect((thrown as { getStatusCode(): number }).getStatusCode()).toBe(503);
   });
 });

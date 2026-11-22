@@ -4,11 +4,22 @@ import type { PrincipalBindingSource } from '@/signed-records/record-verify';
 
 /**
  * The chain's identities, as the shared gateway client reads them
- * (`ChainGatewayClient`: these are its method names and fields). Until
- * that client lands, wiring it is
- * `recordOwnerDirectory.setChain(chainGatewayClient)`.
+ * (`ChainGatewayClient`: these are its method names and fields). Wire it
+ * with `wireSignedRecordsChain(chainGatewayClient)`, which also gives the
+ * anchor service its source.
  */
 export interface ChainIdentityReader {
+  /**
+   * Every binding change of a wallet the gateway's feed holds
+   * (GET /v1/membership/wallets/{a}/history). Its principal at height H
+   * is the last change at or below H, exact for any H within `ranges`.
+   * A pinned read (`?height=`) reaches back only minutes, so a record's
+   * anchor and a rebuild read bindings here.
+   */
+  getMembershipWalletHistory(
+    wallet: string
+  ): Promise<ChainWalletHistoryLike | null>;
+  /** The identity of a wallet; pinned to `height` when given. */
   getIdentityByWallet(
     wallet: string,
     opts?: { readonly height?: number }
@@ -22,6 +33,18 @@ export interface ChainIdentityReader {
     wallets: string[],
     opts?: { readonly height?: number }
   ): Promise<Record<string, ChainIdentityLike | null>>;
+}
+
+export interface ChainWalletHistoryLike {
+  // Ascending.
+  readonly changes: readonly {
+    readonly height: number;
+    readonly principalId: string | null;
+  }[];
+  // [from, to], inclusive: the heights the history is exact within.
+  readonly ranges: readonly (readonly [number, number])[];
+  // The finalized height of the read.
+  readonly readHeight: number;
 }
 
 export interface ChainIdentityLike {
@@ -82,20 +105,43 @@ export class ChainRecordOwnerDirectory implements RecordOwnerDirectory {
     this.bindings.clear();
   }
 
+  /** Whether the gateway client is wired in. */
+  hasChain(): boolean {
+    return this.chain !== null;
+  }
+
+  /**
+   * The principal a wallet was bound to at a finalized height, from the
+   * wallet's binding history. Throws when the history doesn't cover that
+   * height, rather than call a bound wallet unbound.
+   */
   async principalAt(wallet: string, height: number): Promise<string | null> {
     const chain = this.chain;
     if (!chain) {
       return null;
     }
-    const key = `${wallet.toLowerCase()}@${height}`;
+    const lower = wallet.toLowerCase();
+    const key = `${lower}@${height}`;
     const cached = this.bindings.get(key);
     if (cached !== undefined) {
       return cached;
     }
-    const identity = await chain.getIdentityByWallet(wallet.toLowerCase(), {
-      height
-    });
-    const principal = identity?.principalId.toLowerCase() ?? null;
+    const history = await chain.getMembershipWalletHistory(lower);
+    let principal: string | null = null;
+    if (history) {
+      const covered =
+        height <= history.readHeight &&
+        history.ranges.some(([from, to]) => height >= from && height <= to);
+      if (!covered) {
+        throw new Error(
+          `The chain gateway's binding history of ${lower} does not cover height ${height}`
+        );
+      }
+      for (const change of history.changes) {
+        if (change.height > height) break;
+        principal = change.principalId?.toLowerCase() ?? null;
+      }
+    }
     this.bindings.set(key, principal);
     return principal;
   }
@@ -104,7 +150,10 @@ export class ChainRecordOwnerDirectory implements RecordOwnerDirectory {
     return (await this.principalAt(wallet, height)) ?? wallet.toLowerCase();
   }
 
-  /** ownerAt for many wallets, in the client's batches when it has them. */
+  /**
+   * ownerAt for many wallets at a recent height (the latest anchor): one
+   * pinned batch read when the client has it, else each wallet's history.
+   */
   async ownersAt(
     wallets: readonly string[],
     height: number

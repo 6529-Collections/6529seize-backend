@@ -4,7 +4,7 @@ import {
   GetSignedRecordsAnchorRequest,
   GetSignedRecordsOwnersRequest
 } from '@/api/generated/routes/operations';
-import { BadRequestException } from '@/exceptions';
+import { BadRequestException, CustomApiCompliantException } from '@/exceptions';
 import {
   RecordAnchorService,
   recordAnchorService
@@ -49,12 +49,36 @@ export async function handleGetSignedRecordsOwners(
       `Send 1 to ${OWNERS_MAX_WALLETS} wallets, 0x and 40 hex digits each`
     );
   }
+  if (!recordOwnerDirectory.hasChain()) {
+    throw new CustomApiCompliantException(
+      503,
+      'The chain gateway is not configured, so wallets have no owners yet',
+      'OWNERS_UNAVAILABLE'
+    );
+  }
   const { anchor } = await recordAnchorService.getAnchor();
-  const owners = await Promise.all(
-    wallets.map(async (wallet) => ({
-      wallet,
-      owner: await recordOwnerDirectory.ownerAt(wallet, anchor)
-    }))
-  );
-  return { anchor, owners };
+  let owners: Map<string, string>;
+  try {
+    owners = await recordOwnerDirectory.ownersAt(wallets, anchor);
+  } catch {
+    throw new CustomApiCompliantException(
+      503,
+      'The chain gateway did not answer, so wallets have no owners yet',
+      'OWNERS_UNAVAILABLE'
+    );
+  }
+  return {
+    anchor,
+    owners: wallets.map((wallet) => {
+      const owner = owners.get(wallet);
+      if (!owner) {
+        throw new CustomApiCompliantException(
+          503,
+          'The chain gateway named no owner for a wallet',
+          'OWNERS_UNAVAILABLE'
+        );
+      }
+      return { wallet, owner };
+    })
+  };
 }
