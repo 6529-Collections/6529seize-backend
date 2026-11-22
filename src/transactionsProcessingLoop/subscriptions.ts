@@ -32,6 +32,13 @@ import {
   persistBlock
 } from './db.transactions_processing';
 import { markSubscriptionCoverageDirty } from '../subscription-coverage/subscription-coverage-dirty';
+import {
+  claimDeferredWrite,
+  deferralReason,
+  deferSubscriptionWrites,
+  replayDeferredSubscriptionWrites
+} from '@/subscription-key-width/subscription-deferred-writes';
+import { appFeatures } from '@/app-features';
 
 const logger = Logger.get('TRANSACTIONS_PROCESSING_SUBSCRIPTIONS');
 
@@ -53,6 +60,9 @@ type SubscriptionWaveNotification =
     };
 
 export const redeemSubscriptions = async (reset?: boolean) => {
+  if (appFeatures.isSubscriptionDeferredReplayEnabled()) {
+    await replayDeferredRedemptions();
+  }
   const blockRepo = getDataSource().getRepository(
     TransactionsProcessedSubscriptionsBlock
   );
@@ -137,7 +147,8 @@ export async function processAirdrop(
       transaction,
       entityManager,
       waveNotifications,
-      dirtyConsolidationKeys
+      dirtyConsolidationKeys,
+      { tokenIndex: i }
     );
   }
 }
@@ -231,11 +242,19 @@ export async function validateNonSubscriptionAirdrop(
   };
 }
 
+interface RedemptionOptions {
+  /** Which token of the transaction this is, from 0. */
+  readonly tokenIndex: number;
+  /** For a replayed token: only writes queued before it hold it back. */
+  readonly beforeSequence?: number;
+}
+
 async function processSubscription(
   transaction: Transaction,
   entityManager: EntityManager,
   waveNotifications: SubscriptionWaveNotification[],
-  dirtyConsolidationKeys?: Set<string>
+  dirtyConsolidationKeys: Set<string> | undefined,
+  options: RedemptionOptions
 ) {
   const finalSubscription: NFTFinalSubscription | undefined = (
     await entityManager.query(
@@ -248,6 +267,18 @@ async function processSubscription(
       [transaction.contract, transaction.token_id, transaction.to_address]
     )
   )[0];
+
+  if (
+    finalSubscription &&
+    (await deferRedemption(
+      transaction,
+      finalSubscription,
+      entityManager,
+      options
+    ))
+  ) {
+    return;
+  }
 
   if (!finalSubscription) {
     const transactionLink = buildTransactionLink(transaction.transaction);
@@ -337,6 +368,106 @@ async function processSubscription(
     .getRepository(NFTFinalSubscription)
     .save(finalSubscription);
   dirtyConsolidationKeys?.add(finalSubscription.consolidation_key);
+}
+
+/**
+ * A redemption whose key must wait (too long for a subscription table, or
+ * with earlier writes waiting) is queued whole, one token per entry: no
+ * balance change, no redeemed row and no redeemed count until it is
+ * replayed.
+ */
+async function deferRedemption(
+  transaction: Transaction,
+  finalSubscription: NFTFinalSubscription,
+  entityManager: EntityManager,
+  options: RedemptionOptions
+): Promise<boolean> {
+  const reason = await deferralReason(
+    finalSubscription.consolidation_key,
+    entityManager,
+    options.beforeSequence
+  );
+  if (!reason) {
+    return false;
+  }
+  await deferSubscriptionWrites(
+    [
+      {
+        kind: 'REDEMPTION',
+        consolidationKey: finalSubscription.consolidation_key,
+        dedupe: [
+          transaction.transaction,
+          transaction.to_address,
+          transaction.contract,
+          transaction.token_id,
+          options.tokenIndex
+        ]
+          .join('|')
+          .toLowerCase(),
+        payload: { transaction, tokenIndex: options.tokenIndex },
+        reason
+      }
+    ],
+    entityManager
+  );
+  return true;
+}
+
+/**
+ * Replays queued redemption tokens whose key now fits, in queue order. Each
+ * token is matched and charged by the normal path and its queue entry is
+ * claimed in the same transaction, so a token is charged once.
+ */
+async function replayDeferredRedemptions(): Promise<void> {
+  const waveNotifications: SubscriptionWaveNotification[] = [];
+  const dirtyConsolidationKeys = new Set<string>();
+  try {
+    const summary = await replayDeferredSubscriptionWrites({
+      REDEMPTION: async (write) => {
+        const { transaction, tokenIndex } = write.payload as {
+          transaction: Transaction;
+          tokenIndex: number;
+        };
+        // This token's notices and dirty keys count only once its
+        // transaction has committed.
+        const notices: SubscriptionWaveNotification[] = [];
+        const dirty = new Set<string>();
+        const outcome = await getDataSource().transaction(
+          async (entityManager) => {
+            if (
+              !(await claimDeferredWrite(write.sequence, 'DONE', entityManager))
+            ) {
+              return null;
+            }
+            await processSubscription(
+              transaction,
+              entityManager,
+              notices,
+              dirty,
+              {
+                tokenIndex,
+                beforeSequence: write.sequence
+              }
+            );
+            return 'DONE' as const;
+          }
+        );
+        waveNotifications.push(...notices);
+        dirty.forEach((key) => dirtyConsolidationKeys.add(key));
+        return outcome;
+      }
+    });
+    if (summary.done || summary.requeued || summary.failed) {
+      logger.info(`[DEFERRED REDEMPTIONS REPLAYED] ${JSON.stringify(summary)}`);
+    }
+  } catch (error) {
+    logger.error('[DEFERRED REDEMPTIONS REPLAY FAILED]', error);
+  }
+  await markSubscriptionCoverageDirty(
+    Array.from(dirtyConsolidationKeys),
+    'SUBSCRIPTION_REDEEMED'
+  );
+  await sendSubscriptionWaveNotifications(waveNotifications);
 }
 
 function buildTransactionLink(transactionHash: string): string {
