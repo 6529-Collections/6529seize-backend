@@ -40,7 +40,9 @@ const emptyPage: PersonalExportPage = {
   aliasMembers: [],
   push: [],
   eula: [],
-  moderationLog: []
+  moderationLog: [],
+  collectRules: [],
+  collectOperations: []
 };
 
 const follow = (
@@ -272,6 +274,85 @@ describe('PersonalImportBuilder', () => {
         b: { members: [P_ALICE], id: '11111111-1111-4111-8111-111111111111' }
       }
     ]);
+  });
+
+  it('carries each Collect rule as stored and its bindings, sealed', async () => {
+    const ruleId = '00000000-0000-4000-8000-0000000000c1';
+    const rule = { id: ruleId, revision: 3, state: 'ACTIVE' };
+    const { bodies, emitted, result } = await build({
+      collectRules: [
+        {
+          id: ruleId,
+          profile_id: 'me',
+          idempotency_key: 'key-1',
+          request_hash: 'a'.repeat(64),
+          payload_json: JSON.stringify(rule)
+        }
+      ],
+      collectOperations: [
+        {
+          operation_id: 'op-1',
+          rule_id: ruleId,
+          review_hash: 'b'.repeat(64),
+          settlement_hash: null,
+          transaction_hash: `0x${'c'.repeat(64)}`,
+          transaction_nonce: '3',
+          created_at: '7'
+        },
+        {
+          operation_id: 'op-2',
+          rule_id: 'a-rule-not-on-this-page',
+          review_hash: 'b'.repeat(64),
+          settlement_hash: null,
+          transaction_hash: null,
+          transaction_nonce: null,
+          created_at: 8
+        }
+      ]
+    });
+    expect((emitted[0] as { chain: string }).chain).toBe('private');
+    expect(bodies[0]).toMatchObject({ owner: P_ME, family: 'pv' });
+    expect(bodies[0].items).toEqual([
+      {
+        t: 'collect.rule-state',
+        k: ruleId,
+        b: { rule, idempotency_key: 'key-1', request_hash: 'a'.repeat(64) }
+      },
+      {
+        t: 'collect.op',
+        k: 'op-1',
+        b: {
+          rule_id: ruleId,
+          review_hash: 'b'.repeat(64),
+          settlement_hash: null,
+          transaction_hash: `0x${'c'.repeat(64)}`,
+          transaction_nonce: 3,
+          created_at: 7
+        }
+      }
+    ]);
+    expect(result.skipped).toEqual({
+      'collect operation without its rule': 1
+    });
+  });
+
+  it("splits an owner's items so no entry passes the size limit", async () => {
+    const big = 'x'.repeat(1024 * 1024);
+    const { bodies } = await build({
+      collectRules: [1, 2, 3, 4].map((n) => ({
+        id: `00000000-0000-4000-8000-00000000000${n}`,
+        profile_id: 'me',
+        idempotency_key: `key-${n}`,
+        request_hash: 'a'.repeat(64),
+        payload_json: JSON.stringify({
+          id: `00000000-0000-4000-8000-00000000000${n}`,
+          note: big
+        })
+      }))
+    });
+    expect(
+      bodies.filter((body) => body.items).map((body) => body.items.length)
+    ).toEqual([2, 2]);
   });
 });
 

@@ -1,4 +1,20 @@
 import fetch from 'node-fetch';
+import { JsonRpcProvider } from 'ethers';
+import {
+  COLLECT_LOG_LANE,
+  CollectLogBody,
+  parseCollectLogBody
+} from '@/collecting/collecting-rules.log';
+import type { SentEvidence } from '@/collecting/collecting-rules.chain-check';
+import { nonceTransactionOnChain } from '@/collecting/collecting-rules.nonce-search';
+import { collectingRulesService } from '@/collecting/collecting-rules.service';
+import { canonicalizeJson } from '@/profile-cms/protocol/v1/canonical-json';
+import {
+  compareOrderKeys,
+  importOrderKey,
+  RecordOrderKey
+} from '@/signed-records/record-order';
+import { dbSupplier } from '@/sql-executor';
 import { Logger } from '@/logging';
 import type { RebuildContext } from '@/rebuild/manifest.types';
 import { RequestContext } from '@/request.context';
@@ -26,14 +42,16 @@ import {
   PersonalImportBody,
   PersonalImportDone,
   PersonalRebuildReport,
+  latestImport,
   personalExportDb,
   rebuildPersonalState
 } from './personal-import';
+import type { SignedCollectRule } from './collect-rule-records';
 import { registerPersonalRecordTypes } from './personal-record-types';
 import type { PersonalLiveEffects } from './personal-records.ports';
 import { PERSONAL_LOG_LANE } from './personal-records.service';
 import { personalRecordsStateDb } from './personal-records-state.db';
-import { personalTables } from './personal-records.wiring';
+import { collectRuleDeps, personalTables } from './personal-records.wiring';
 import {
   RecordOwnerDirectory,
   recordOwnerDirectory
@@ -47,6 +65,8 @@ export interface PersonalLogRead {
   readonly records: VerifiedRecord[];
   // Personal settings events that no longer verify, by reason.
   readonly rejected: Record<string, number>;
+  // The collect lane's entries, in the order they were logged.
+  readonly collect?: CollectLogBody[];
 }
 
 /**
@@ -58,13 +78,25 @@ export async function readPersonalLog(
   reader: RecordLogReader,
   replay: RecordReplayContext
 ): Promise<PersonalLogRead> {
-  const read: PersonalLogRead = { imports: [], records: [], rejected: {} };
+  const read: PersonalLogRead = {
+    imports: [],
+    records: [],
+    rejected: {},
+    collect: []
+  };
   for (const chain of ['public', 'private'] as const) {
     await replayRecordLog(reader, chain, replay, async ({ entry }, result) => {
       if (entry.t === 'entry' && entry.lane === PERSONAL_IMPORT_LANE) {
         read.imports.push(
           entry.body as unknown as PersonalImportBody | PersonalImportDone
         );
+      } else if (entry.t === 'entry' && entry.lane === COLLECT_LOG_LANE) {
+        try {
+          read.collect!.push(parseCollectLogBody(entry.body));
+        } catch {
+          read.rejected['collect-format'] =
+            (read.rejected['collect-format'] ?? 0) + 1;
+        }
       } else if (entry.t === 'event' && entry.lane === PERSONAL_LOG_LANE) {
         if (result?.ok) {
           read.records.push(result.record);
@@ -226,11 +258,19 @@ export async function rebuildPersonalTables(
         : {})
     }
   );
-  const registry = registerPersonalRecordTypes(new RecordRegistry(), {
-    owners,
-    tables: personalTables,
-    live: NO_LIVE_EFFECTS
-  });
+  // collect.rule records keep their heads here and are kept as signed; the
+  // collect pass below applies rules in the collect lane's order.
+  const signedRules = new Map<string, SignedCollectRule>();
+  const registry = registerPersonalRecordTypes(
+    new RecordRegistry(),
+    {
+      owners,
+      tables: personalTables,
+      live: NO_LIVE_EFFECTS,
+      collect: collectRuleDeps
+    },
+    { deferredCollectRules: signedRules }
+  );
   const requestContext: RequestContext = {};
   await runPersonalRebuild({
     read,
@@ -249,4 +289,160 @@ export async function rebuildPersonalTables(
       }),
     setImport: restorePersonalSwitchState
   });
+  const done = latestImport(read.imports).done;
+  const collect = await replayCollectLog({
+    entries: read.collect ?? [],
+    importOrder: done ? importOrderKey(done.anchor, done.at) : null,
+    records: new Map(
+      read.records.map((record) => [record.event.id, record.order])
+    ),
+    signed: signedRules,
+    chain: ctx.sources.ethereum ? chainReader(ctx.sources.ethereum) : null,
+    replay: (body, evidence) =>
+      dbSupplier().executeNativeQueriesInTransaction((connection) =>
+        collectingRulesService.replay(body, connection, evidence)
+      )
+  });
+  logger.info(
+    `[PERSONAL REBUILD] collect entries applied ${collect.applied}, refused ${collect.refused.length}`
+  );
+  if (collect.refused.length) {
+    throw new Error(
+      `The Collect rules rebuild left out ${collect.refused.length} entries: ${collect.refused
+        .slice(0, 5)
+        .map((it) => `${it.what} (${it.detail})`)
+        .join('; ')}`
+    );
+  }
+}
+
+/** What Ethereum shows for a sent hash: its transaction and receipt. */
+function chainReader(url: string): (hash: string) => Promise<SentEvidence> {
+  const provider = new JsonRpcProvider(url, undefined, { staticNetwork: true });
+  return async (hash) => {
+    const [transaction, receipt] = await Promise.all([
+      provider.getTransaction(hash),
+      provider.getTransactionReceipt(hash)
+    ]);
+    return {
+      transaction: transaction
+        ? {
+            from: transaction.from,
+            to: transaction.to,
+            value: transaction.value,
+            nonce: transaction.nonce
+          }
+        : null,
+      receipt: receipt
+        ? {
+            status: receipt.status,
+            gasUsed: receipt.gasUsed,
+            gasPrice: receipt.gasPrice,
+            logs: receipt.logs.map((log) => ({
+              address: log.address,
+              topics: log.topics,
+              data: log.data
+            }))
+          }
+        : null,
+      minedNonce: (wallet) => provider.getTransactionCount(wallet, 'safe'),
+      nonceTransaction: (wallet, nonce) =>
+        nonceTransactionOnChain(provider, wallet, nonce)
+    };
+  };
+}
+
+/** Why a `rule` entry isn't what the person signed, or null when it is. */
+function signedRuleProblem(
+  body: Extract<CollectLogBody, { kind: 'rule' }>,
+  signed: SignedCollectRule | undefined
+): string | null {
+  if (!signed) return `record ${body.event_id} was not opened as a rule`;
+  if (
+    signed.rule !== body.rule ||
+    signed.profileId !== body.profile_id ||
+    signed.paused !== body.paused ||
+    canonicalizeJson(signed.definition as never) !==
+      canonicalizeJson(body.definition as never)
+  ) {
+    return `the entry differs from record ${body.event_id} as signed`;
+  }
+  return null;
+}
+
+/**
+ * The collect lane after the import, in logged order (the order the
+ * changes were made live), each through the same store functions and
+ * checks at its logged (server) time. What the import holds is not
+ * replayed: a rule change whose record is ordered at or before the
+ * import's order key (as the personal records rebuild decides), a server
+ * entry logged before the import's time. A sent hash is replayed whatever
+ * its time: it may have been logged while settings were frozen, after the
+ * import read its binding, and setting it again changes nothing.
+ * A rule change must say what the person's record says; a settlement, and
+ * a release of a sent transaction, must match Ethereum. Anything else is
+ * left out and reported.
+ */
+export async function replayCollectLog(args: {
+  readonly entries: readonly CollectLogBody[];
+  readonly importOrder: RecordOrderKey | null;
+  // Every verified record's order key, by event id.
+  readonly records: ReadonlyMap<string, RecordOrderKey>;
+  // The collect.rule records the first pass opened, by event id.
+  readonly signed: ReadonlyMap<string, SignedCollectRule>;
+  readonly chain: ((hash: string) => Promise<SentEvidence>) | null;
+  readonly replay: (
+    body: CollectLogBody,
+    evidence?: SentEvidence
+  ) => Promise<void>;
+}): Promise<{
+  applied: number;
+  refused: { what: string; detail: string }[];
+}> {
+  const refused: { what: string; detail: string }[] = [];
+  let applied = 0;
+  const { importOrder } = args;
+  for (const body of args.entries) {
+    const what = `collect ${body.kind} ${body.rule}`;
+    if (body.kind === 'rule') {
+      const order = args.records.get(body.event_id);
+      if (!order) {
+        refused.push({ what, detail: `no verified record ${body.event_id}` });
+        continue;
+      }
+      if (importOrder && compareOrderKeys(order, importOrder) <= 0) continue;
+      const problem = signedRuleProblem(body, args.signed.get(body.event_id));
+      if (problem) {
+        refused.push({ what, detail: problem });
+        continue;
+      }
+    } else if (
+      body.kind !== 'sent' &&
+      importOrder &&
+      body.at < importOrder.claimedTime
+    ) {
+      continue;
+    }
+    const hash =
+      body.kind === 'settle'
+        ? body.settlement.transaction_hash
+        : body.kind === 'released'
+          ? body.transaction_hash
+          : null;
+    let evidence: SentEvidence | undefined;
+    if (hash) {
+      if (!args.chain) {
+        refused.push({ what, detail: 'no Ethereum source to check it' });
+        continue;
+      }
+      evidence = await args.chain(hash);
+    }
+    try {
+      await args.replay(body, evidence);
+      applied++;
+    } catch (error) {
+      refused.push({ what, detail: (error as Error).message });
+    }
+  }
+  return { applied, refused };
 }
