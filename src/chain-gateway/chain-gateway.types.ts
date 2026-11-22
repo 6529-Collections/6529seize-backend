@@ -116,11 +116,50 @@ export interface ChainHandle {
 export interface ChainMembershipWallet {
   readonly wallet: string;
   readonly principalId: string | null;
+  /**
+   * The height the wallet first joined this identity (one that left and
+   * came back keeps it; the history has each change).
+   */
+  readonly firstBoundHeight?: number | null;
   readonly via?: string;
   readonly index?: number;
   readonly boundCycle?: number;
   readonly wallets?: string[];
   readonly leftAt?: number | null;
+}
+
+/** Every binding change of a wallet the gateway's feed holds, ascending. */
+export interface ChainWalletHistory {
+  readonly wallet: string;
+  /** The wallet's principal at height H: the last change at or below H. */
+  readonly changes: {
+    readonly height: number;
+    readonly principalId: string | null;
+  }[];
+  /** The heights the history is exact within. */
+  readonly ranges?: unknown;
+}
+
+/** The import file's entry an identity was created from. */
+export interface ChainImportedIdentity {
+  readonly principalId: string;
+  readonly legacyId: string | null;
+  readonly handle: string | null;
+  readonly wallets: string[];
+  readonly primary: string | null;
+  /** The ProfileDoc the import wrote (hex CID), or null. */
+  readonly profileDocCid: string | null;
+  readonly xtdh?: string;
+}
+
+/** The document store's answer to an upload. */
+export interface ChainStoredDoc {
+  /** Base32 (`b...`). */
+  readonly cid: string;
+  readonly cid_hex: string;
+  readonly codec: string;
+  readonly size: number;
+  readonly url?: string;
 }
 
 export interface ChainMembershipDay {
@@ -202,13 +241,27 @@ export interface ChainFeedRecord {
   readonly value: unknown;
   readonly keyFields?: Record<string, unknown>;
   readonly valueFields?: Record<string, unknown> | null;
+  /**
+   * Written by the identity import (true), by a transaction (false), or
+   * unknown (null: a block that completed the import and ran transactions;
+   * ask `/v1/identities/{p}/imported`).
+   */
+  readonly byImport?: boolean | null;
 }
 
 export interface ChainFeedBlock {
   readonly height: number;
   readonly slot: number;
   readonly root: string;
+  /** The block's slot start, Unix ms. */
   readonly time: number;
+  /** Set on a block that moved the identity import. */
+  readonly import?: {
+    readonly next: number;
+    readonly count: number;
+    readonly doneHeight: number | null;
+    readonly completedHere: boolean;
+  } | null;
   readonly records: ChainFeedRecord[];
 }
 
