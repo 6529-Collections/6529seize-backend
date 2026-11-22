@@ -19,8 +19,11 @@ Options:
   --extra-ids FILE       profile ids in scope for waves activity: a JSON list,
                          {"profile_ids": [...]}, or whitespace separated
   --no-extra-ids         export without the waves list (noted in the file)
-  --expect-tdh-block N   fail unless 6529.io's latest TDH block is N (B_T at the
-                         freeze), so the wallets are the freeze day's
+  --expect-tdh-block N   fail, before the long reads, unless 6529.io's latest
+                         TDH block is N (B_T at the freeze) and the identities
+                         sync has caught up with that TDH write, so wallets,
+                         TDH and levels are all the freeze day's; required
+                         with a freeze time
   --bulk N               a rater's REP category with more than N targets brings
                          no target in by itself (default 2000; 0 turns it off)
   --no-delegations       leave out 6529.io's delegations table
@@ -213,6 +216,11 @@ function checkDraft(draft: Draft): IdentityExportCommand {
   if ((draft.freezeMs === null) === !draft.noFreeze) {
     throw new IdentityExportUsageError(
       'Give the freeze time (--freeze-at or IDENTITY_FREEZE_AT) or --no-freeze for a rehearsal, one of the two'
+    );
+  }
+  if (draft.freezeMs !== null && draft.expectTdhBlock === null) {
+    throw new IdentityExportUsageError(
+      "An export at the freeze needs --expect-tdh-block N, the freeze day's TDH block, so it can't write another day's TDH (a --no-freeze rehearsal needs none)"
     );
   }
   if ((draft.extraIdsFile === null) === !draft.noExtraIds) {

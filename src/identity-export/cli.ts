@@ -1,4 +1,5 @@
 import * as fs from 'node:fs';
+import { IdentityExportNotReadyError } from './identity-export.errors';
 import {
   IDENTITY_EXPORT_HELP,
   IdentityExportCommand,
@@ -27,8 +28,7 @@ async function runExport(command: IdentityExportCommand) {
     const { withReadOnlySnapshot } = await import('@/db-api');
     const { sqlExecutor } = await import('@/sql-executor');
     const { SqlIdentityExportSource } = await import('./identity-export.db');
-    const { buildIdentityExport, freezeDayProblem } =
-      await import('./identity-export.service');
+    const { buildIdentityExport } = await import('./identity-export.service');
     const { writeJsonDocument } = await import('./identity-export.writer');
     return await doInDbContext(
       () =>
@@ -46,20 +46,12 @@ async function runExport(command: IdentityExportCommand) {
             includeDelegations: command.includeDelegations,
             cmsFields,
             freezeMs: command.freezeMs,
+            expectTdhBlock: command.expectTdhBlock,
             exporterRevision,
             log: (message) =>
               process.stderr.write(`[identity-export] ${message}\n`)
           });
-          const problem =
-            command.expectTdhBlock === null
-              ? null
-              : freezeDayProblem(document, command.expectTdhBlock);
-          if (problem) {
-            throw new IdentityExportUsageError(
-              `${problem}: wait for the freeze day's TDH run and its identity sync, then export again`
-            );
-          }
-          // The sync's state is checked above; the file carries it in stats.
+          // The sync's state was checked first; the file carries it in stats.
           const { identity_sync: _sync, ...file } = document;
           await writeJsonDocument(command.out, file);
           return {
@@ -92,6 +84,13 @@ export async function main(
 
 if (require.main === module) {
   main().catch((error) => {
+    if (error instanceof IdentityExportNotReadyError) {
+      process.stderr.write(
+        `${error.message}: wait for the freeze day's TDH run and its identity sync, then export again\n`
+      );
+      process.exitCode = 3;
+      return;
+    }
     if (error instanceof IdentityExportUsageError) {
       process.stderr.write(`${error.message}\n\n${IDENTITY_EXPORT_HELP}`);
       process.exitCode = 2;

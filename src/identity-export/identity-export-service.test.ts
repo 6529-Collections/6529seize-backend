@@ -7,7 +7,9 @@ import {
   buildIdentityExport,
   freezeDayProblem,
   HELP_BOT_CREDIT_RULE_NOTE,
+  IDENTITY_EXPORT_RULES,
   identitySyncProblem,
+  modifiedAfter,
   leaveOutHelpBotCredits,
   repMismatches,
   reservedHandles,
@@ -16,6 +18,7 @@ import {
   toExportIdentity,
   withoutCredits
 } from './identity-export.service';
+import { IdentityExportNotReadyError } from './identity-export.errors';
 import { IdentityExportRating } from './identity-export.types';
 
 const W = (n: number) => `0x${n.toString(16).padStart(40, '0')}`;
@@ -563,6 +566,125 @@ describe('buildIdentityExport', () => {
       ])
     );
     expect(freezeDayProblem(behind, 24_000_000)).toContain('behind');
+  });
+
+  it('writes the rules it was written by, for the builder to check', async () => {
+    const doc = await buildIdentityExport(world().source, options);
+    expect(doc.format).toBe('6529.identity-export.v1');
+    expect(doc.rules).toEqual({
+      help_bot_credit_category: 'Help6529 Credits',
+      help_bot_credits: 'excluded',
+      level: 'rep+tdh',
+      tdh: 'boosted',
+      xtdh: 'as_stored'
+    });
+    expect(doc.rules).toBe(IDENTITY_EXPORT_RULES);
+  });
+
+  it('refuses another day before the long reads, and goes on with the right one', async () => {
+    const { source } = world();
+    const ratingEdges = jest.fn(source.ratingEdges);
+    const realHandleProfileIds = jest.fn(source.realHandleProfileIds);
+    const behind = {
+      ...source,
+      ratingEdges,
+      realHandleProfileIds,
+      identitySyncProgress: async () => ({
+        pendingGeneration: 6,
+        pendingBlock: 24_000_000,
+        syncedGeneration: 5
+      })
+    };
+    await expect(
+      buildIdentityExport(behind, { ...options, expectTdhBlock: 24_000_000 })
+    ).rejects.toThrow(IdentityExportNotReadyError);
+    await expect(
+      buildIdentityExport(
+        { ...source, ratingEdges, realHandleProfileIds },
+        { ...options, expectTdhBlock: 23_999_000 }
+      )
+    ).rejects.toThrow("6529.io's latest TDH block is 24000000, not 23999000");
+    expect(ratingEdges).not.toHaveBeenCalled();
+    expect(realHandleProfileIds).not.toHaveBeenCalled();
+    const doc = await buildIdentityExport(source, {
+      ...options,
+      expectTdhBlock: 24_000_000
+    });
+    expect(doc.tdh_block).toBe(24_000_000);
+  });
+
+  it("counts reps the file's own ratings don't add up to", async () => {
+    const { source } = world();
+    const edges = await source.ratingEdges();
+    // Alice's stored 5 is TAGGER's 1 and a profile with no identity's 4;
+    // P3's -5 is Alice's: every stored rep adds up to the ratings read.
+    const doc = await buildIdentityExport(
+      {
+        ...source,
+        ratingEdges: async () => [
+          ...edges,
+          rating(GHOST, ALICE, 'REP', 'Good Person', 4)
+        ],
+        identitiesByProfileIds: async (ids) =>
+          (await source.identitiesByProfileIds(ids)).map((it) =>
+            it.p_external_id === ALICE
+              ? { ...it, rep: 5 }
+              : it.p_external_id === P3
+                ? { ...it, rep: -5 }
+                : it
+          )
+      },
+      options
+    );
+    expect(doc.stats.rep_mismatch).toBe(0);
+    expect(doc.stats.rep_differs_from_file_ratings).toBe(1);
+    expect(doc.notes).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining(
+          "1 exported profiles have a rep that is not the sum of the REP ratings to them in this file: the chain counts REP from the file's ratings"
+        )
+      ])
+    );
+  });
+
+  it('counts ratings changed after the freeze, credits left out', async () => {
+    const { source } = world();
+    const edges = await source.ratingEdges();
+    const after = options.freezeMs + 1;
+    const doc = await buildIdentityExport(
+      {
+        ...source,
+        ratingEdges: async () => [
+          ...edges,
+          {
+            ...rating(ALICE, TAGGER, 'REP', 'Late', 1),
+            last_modified_ms: after
+          },
+          {
+            ...rating(BOT, ALICE, 'REP', 'Help6529 Credits', 1),
+            last_modified_ms: after
+          }
+        ]
+      },
+      options
+    );
+    expect(doc.stats.ratings_modified_after_freeze).toBe(1);
+    expect(doc.notes).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining(
+          '1 REP and CIC ratings (help-bot credits left out) were changed after the freeze time'
+        )
+      ])
+    );
+    const rehearsal = await buildIdentityExport(source, {
+      ...options,
+      freezeMs: null
+    });
+    expect(rehearsal.stats.ratings_modified_after_freeze).toBe(0);
+    expect(
+      modifiedAfter([{ last_modified_ms: 10 }, { last_modified_ms: null }], 9)
+    ).toBe(1);
+    expect(modifiedAfter([{ last_modified_ms: 10 }], 10)).toBe(0);
   });
 
   it('leaves the delegations out when asked', async () => {

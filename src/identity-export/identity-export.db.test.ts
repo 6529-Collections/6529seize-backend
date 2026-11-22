@@ -31,7 +31,9 @@ const HELP_BOT = '00000000-0000-4000-8000-0000000000b0';
 
 const identities = [
   anIdentity(
-    { tdh: 100, rep: 7, level_raw: 107 },
+    // 4 of Alice's REP is the help bot's credit: 6529.io's level 3 (102)
+    // is the chain's level 2 (98).
+    { tdh: 98, rep: 4, level_raw: 102 },
     {
       consolidation_key: W(1),
       profile_id: ALICE,
@@ -94,6 +96,12 @@ const profiles = [
 ];
 
 const ratings = [
+  aRepRating({
+    rater_profile_id: HELP_BOT,
+    matter_target_id: ALICE,
+    matter_category: 'Help6529 Credits',
+    rating: 4
+  }),
   aRepRating({
     rater_profile_id: ALICE,
     matter_target_id: BOB,
@@ -213,7 +221,9 @@ describeWithSeed(
           it.rating
         ])
       ).toEqual([
-        // Primary key order, bytewise: BOB's id sorts before ALICE's.
+        // Primary key order, bytewise: the help bot's id sorts before BOB's,
+        // BOB's before ALICE's.
+        [HELP_BOT, ALICE, 'REP', 'Help6529 Credits', 4],
         [BOB, ALICE, 'CIC', '', 9],
         [ALICE, PLACE, 'REP', 'Good', -3],
         [ALICE, BOB, 'REP', 'Good', 5]
@@ -266,8 +276,14 @@ describeWithSeed(
       const alice = doc.identities.find((it) => it.profile_id === ALICE)!;
       expect(alice.website).toBe('https://example.org');
       expect(alice.statements).toHaveLength(1);
-      expect(alice.level).toBe(3);
+      // Without the help bot's credit: rep 4 - 4, level_raw 0 + 98.
+      expect([alice.rep, alice.level_raw, alice.level]).toEqual([0, 98, 2]);
       expect(doc.ratings).toHaveLength(3);
+      expect(doc.ratings.some((it) => it.category === 'Help6529 Credits')).toBe(
+        false
+      );
+      expect(doc.stats.help_bot_credits_left_out).toBe(1);
+      expect(doc.stats.help_bot_credits_from_others).toBe(0);
       expect(doc.tdh_block).toBe(24_000_000);
       expect(doc.stats).toEqual(
         expect.objectContaining({

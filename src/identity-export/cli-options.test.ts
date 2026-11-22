@@ -70,13 +70,47 @@ describe('parseIdentityExportCommand', () => {
           String(T + 1),
           '--revision',
           'b'.repeat(40),
-          '--no-extra-ids'
+          '--no-extra-ids',
+          '--expect-tdh-block',
+          '1'
         ],
         { IDENTITY_FREEZE_AT: '2026-11-24T00:00:00Z' }
       )
     ).toEqual(
       expect.objectContaining({ freezeMs: T + 1, revision: 'b'.repeat(40) })
     );
+  });
+
+  it('needs the expected TDH block at the freeze, not in a rehearsal', () => {
+    const atFreeze = [
+      '--out',
+      'x',
+      '--revision',
+      REV,
+      '--freeze-at',
+      String(T),
+      '--no-extra-ids'
+    ];
+    expect(() => parseIdentityExportCommand(atFreeze, {})).toThrow(
+      'An export at the freeze needs --expect-tdh-block N'
+    );
+    expect(() =>
+      parseIdentityExportCommand(atFreeze, {
+        IDENTITY_FREEZE_AT: '2026-11-24T00:00:00Z'
+      })
+    ).toThrow(IdentityExportUsageError);
+    expect(
+      parseIdentityExportCommand(
+        [...atFreeze, '--expect-tdh-block', '24000000'],
+        {}
+      )
+    ).toEqual(expect.objectContaining({ expectTdhBlock: 24_000_000 }));
+    expect(
+      parseIdentityExportCommand(
+        ['--out', 'x', '--revision', REV, '--no-freeze', '--no-extra-ids'],
+        {}
+      )
+    ).toEqual(expect.objectContaining({ expectTdhBlock: null }));
   });
 
   const base = ['--revision', REV, '--no-freeze', '--no-extra-ids'];

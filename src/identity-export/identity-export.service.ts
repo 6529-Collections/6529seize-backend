@@ -25,6 +25,7 @@ import {
   RatingScope,
   selectRatingScope
 } from './identity-export.scope';
+import { IdentityExportNotReadyError } from './identity-export.errors';
 import {
   IDENTITY_EXPORT_FORMAT,
   IdentityExportDelegation,
@@ -46,6 +47,11 @@ export interface IdentityExportOptions {
   /** Profile id -> the ProfileDoc `cms` value (the profile site export's). */
   readonly cmsFields?: Readonly<Record<string, unknown>>;
   readonly freezeMs: number | null;
+  /**
+   * The freeze day's TDH block: the export refuses, before its long reads,
+   * unless the TDH block is this one and the identities sync caught up.
+   */
+  readonly expectTdhBlock?: number | null;
   readonly exporterRevision: string;
   readonly now?: () => number;
   readonly log?: (message: string) => void;
@@ -65,9 +71,20 @@ export interface IdentityExportDocument extends IdentityExportHeader {
     contributor_count: number;
   }[];
   readonly stats: Record<string, number>;
+  /** The rules the file was written by, for the builder to check. */
+  readonly rules: typeof IDENTITY_EXPORT_RULES;
   /** The identities sync's state read with everything else (null: unread). */
   readonly identity_sync: IdentitySyncProgress | null;
 }
+
+/** The rules every export is written by; the builder refuses a file without. */
+export const IDENTITY_EXPORT_RULES = {
+  help_bot_credit_category: HELP_BOT_CREDIT_CATEGORY,
+  help_bot_credits: 'excluded',
+  level: 'rep+tdh',
+  tdh: 'boosted',
+  xtdh: 'as_stored'
+} as const;
 
 /**
  * Each identity whose profile has a profile site gets its `cms` value. A
@@ -152,6 +169,20 @@ export function freezeDayProblem(
     return `6529.io's latest TDH block is ${document.tdh_block}, not ${expectTdhBlock}`;
   }
   return identitySyncProblem(document.tdh_block, document.identity_sync);
+}
+
+/**
+ * The REP and CIC ratings (help-bot credits already left out) last changed
+ * after the freeze time; none without one.
+ */
+export function modifiedAfter(
+  edges: readonly { last_modified_ms: number | null }[],
+  freezeMs: number | null
+): number {
+  if (freezeMs === null) return 0;
+  return edges.filter(
+    (it) => it.last_modified_ms !== null && it.last_modified_ms > freezeMs
+  ).length;
 }
 
 /**
@@ -569,6 +600,19 @@ export async function buildIdentityExport(
   const log = options.log ?? (() => undefined);
   const startedAt = now();
 
+  // The day first, in the same snapshot: a wrong one is refused before the
+  // long reads.
+  const tdhBlock = await source.latestTdhBlock();
+  const identitySync = await source.identitySyncProgress();
+  const expected = options.expectTdhBlock ?? null;
+  if (expected !== null) {
+    const problem = freezeDayProblem(
+      { tdh_block: tdhBlock, identity_sync: identitySync },
+      expected
+    );
+    if (problem) throw new IdentityExportNotReadyError(problem);
+  }
+
   const index = new IdentityIndex(source);
   const core = await readCore(source, index, options.extraProfileIds);
   log(
@@ -634,6 +678,19 @@ export async function buildIdentityExport(
     )
     .sort(compareRatings);
 
+  const repFromFile = repMismatches(identities, ratings);
+  if (repFromFile) {
+    notes.push(
+      `${repFromFile} exported profiles have a rep that is not the sum of the REP ratings to them in this file: the chain counts REP from the file's ratings, so theirs will differ (ratings from raters left out of the export, or a stored rep that drifted)`
+    );
+  }
+  const afterFreeze = modifiedAfter(edges, options.freezeMs);
+  if (afterFreeze) {
+    notes.push(
+      `${afterFreeze} REP and CIC ratings (help-bot credits left out) were changed after the freeze time: the freeze should have stopped them`
+    );
+  }
+
   // Diagnostic for the comparison with the public-API export.
   const reach = publicExporterReach({ core: core.profiles, edges, bulk });
   const outsideReach = Array.from(exportedProfiles).filter(
@@ -645,8 +702,6 @@ export async function buildIdentityExport(
     );
   }
 
-  const tdhBlock = await source.latestTdhBlock();
-  const identitySync = await source.identitySyncProgress();
   const syncProblem = identitySyncProblem(tdhBlock, identitySync);
   if (syncProblem) {
     notes.push(
@@ -671,6 +726,7 @@ export async function buildIdentityExport(
     ratings,
     delegations,
     notes,
+    rules: IDENTITY_EXPORT_RULES,
     identity_sync: identitySync,
     bulk_rep: bulkCategories.map((it) => ({
       profile_id: it.rater_profile_id,
@@ -691,6 +747,8 @@ export async function buildIdentityExport(
       help_bot_credit_profiles: credits.byTarget.size,
       help_bot_credits_from_others: credits.fromOthers ?? 0,
       rep_mismatch: repMismatch,
+      rep_differs_from_file_ratings: repFromFile,
+      ratings_modified_after_freeze: afterFreeze,
       identity_sync_pending_generation: identitySync?.pendingGeneration ?? -1,
       identity_sync_synced_generation: identitySync?.syncedGeneration ?? -1,
       identity_sync_pending_block: identitySync?.pendingBlock ?? -1,
