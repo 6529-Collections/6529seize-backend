@@ -161,6 +161,14 @@ describe('identity freeze flag', () => {
     });
   });
 
+  it('does not switch on at a switch-on time before 24 Nov 2026, freeze time or not', () => {
+    process.env[SWITCH_ON_AT] = '1764028800000';
+    expect(isIdentityOnChain(Date.UTC(2026, 10, 23))).toBe(false);
+    expect(isIdentityFrozen(Date.UTC(2026, 10, 23))).toBe(true);
+    process.env[SWITCH_ON_AT] = '2026-11-25T00:00:00Z';
+    expect(isIdentityOnChain(Date.UTC(2026, 10, 25))).toBe(true);
+  });
+
   it('does not switch on at a switch-on time before the freeze time, but freezes', () => {
     process.env[AT] = '2026-11-24T00:00:00Z';
     process.env[SWITCH_ON_AT] = '2025-11-25T00:00:00Z';

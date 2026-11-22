@@ -30,7 +30,7 @@ function ratingsDb() {
   return { executor, db: new RatingsDb(() => executor as never) };
 }
 
-const CREDITS = `and not (matter = 'REP' and matter_category = 'Help6529 Credits')`;
+const CREDITS = `and not (matter = 'REP' and lower(trim(matter_category)) = 'help6529 credits')`;
 
 describe('rating credit', () => {
   it(
@@ -49,7 +49,7 @@ describe('rating credit', () => {
       expect(creditTdh(10, 5)).toBe(10);
       expect(creditTdhSql('i')).toBe('i.tdh');
       expect(withoutHelpBotCreditsSql('r')).toBe(
-        ` and not (r.matter = 'REP' and r.matter_category = 'Help6529 Credits')`
+        ` and not (r.matter = 'REP' and lower(trim(r.matter_category)) = 'help6529 credits')`
       );
     })
   );
@@ -172,9 +172,9 @@ describe('rating credit', () => {
     })();
     await onChain(true, () => {
       expect(countsTowardAllCategoryRep('REP', 'Help6529 Credits')).toBe(false);
-      // Exact, as the SQL filter (a byte-compared column).
+      // Trimmed and case-blind, as the mirror, the export and the SQL.
       expect(countsTowardAllCategoryRep('REP', ' help6529 CREDITS ')).toBe(
-        true
+        false
       );
       expect(countsTowardAllCategoryRep('REP', 'Help6529 Credits x')).toBe(
         true

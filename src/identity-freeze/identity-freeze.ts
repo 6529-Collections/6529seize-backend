@@ -122,6 +122,8 @@ function timeHasCome(
   return nowMillis >= start;
 }
 
+const EARLIEST_SWITCH_ON_MS = Date.UTC(2026, 10, 24);
+
 /**
  * A switch-on time that is set but can't be used: not a time, or earlier
  * than the freeze time (a wrong year or month would otherwise switch on at
@@ -132,6 +134,12 @@ function switchOnTimeMalformed(): boolean {
     process.env[IDENTITY_SWITCH_ON_AT_ENV]
   );
   if (switchOn === null) return true;
+  // No switch-on comes before the freeze day: a wrong year or month set
+  // without IDENTITY_FREEZE_AT would otherwise switch on at deploy. Test
+  // stages switch on earlier with FEATURE_IDENTITY_ON_CHAIN.
+  if (typeof switchOn === 'number' && switchOn < EARLIEST_SWITCH_ON_MS) {
+    return true;
+  }
   const freeze = parseIdentityFreezeAt(process.env[IDENTITY_FREEZE_AT_ENV]);
   return (
     typeof switchOn === 'number' &&

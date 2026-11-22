@@ -19,10 +19,13 @@ export function creditTdhSql(alias: string): string {
   return isIdentityOnChain() ? `${alias}.tdh` : `${alias}.tdh + ${alias}.xtdh`;
 }
 
+const normalised = (category: string) => category.trim().toLowerCase();
+
 /**
  * Whether a rating counts toward REP summed over every category: from
- * switch-on the help bot's credits don't. The category is matched exactly,
- * as the SQL filter below does (the column compares bytes).
+ * switch-on the help bot's credits don't. The category is matched trimmed
+ * and case-blind, as the identity mirror and the export match it, and as
+ * the SQL filter below does.
  */
 export function countsTowardAllCategoryRep(
   matter: string,
@@ -31,7 +34,7 @@ export function countsTowardAllCategoryRep(
   return !(
     isIdentityOnChain() &&
     matter === 'REP' &&
-    category === HELP_BOT_CREDIT_CATEGORY
+    normalised(category) === normalised(HELP_BOT_CREDIT_CATEGORY)
   );
 }
 
@@ -44,7 +47,7 @@ export function countsTowardAllCategoryRep(
 export function withoutHelpBotCreditsSql(alias?: string): string {
   if (!isIdentityOnChain()) return '';
   const column = alias ? `${alias}.` : '';
-  return ` and not (${column}matter = 'REP' and ${column}matter_category = ${mysql.escape(
-    HELP_BOT_CREDIT_CATEGORY
+  return ` and not (${column}matter = 'REP' and lower(trim(${column}matter_category)) = ${mysql.escape(
+    normalised(HELP_BOT_CREDIT_CATEGORY)
   )})`;
 }

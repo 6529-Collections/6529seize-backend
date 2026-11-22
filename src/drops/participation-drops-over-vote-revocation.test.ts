@@ -174,23 +174,41 @@ it('never locks a candidate whose unlocked configuration does not apply', async 
   expect(service.reconcileVoterCredit).not.toHaveBeenCalled();
 });
 
-it('from switch-on also cuts REP votes beyond the credit, voter by voter', async () => {
+it('leaves REP competitions to the leaderboard snapshotter, also from switch-on', async () => {
   mockFeatures.onChain = true;
   try {
-    const rep = {
+    jest.mocked(runtime.readCompetition).mockResolvedValue({
       ...competition,
       voting: { ...competition.voting, credit_type: 'REP' }
-    } as never;
-    jest.mocked(runtime.readCompetition).mockResolvedValue(rep);
-    jest.mocked(runtime.lockCompetition).mockResolvedValue(rep);
-    jest.mocked(runtime.listActiveVoters).mockResolvedValue(['voter-1']);
+    } as never);
     await revokeTdhBasedDropWavesOverVotes(connection);
-    expect(runtime.lockCompetition).toHaveBeenCalledTimes(1);
-    expect(runtime.listActiveVoters).toHaveBeenCalledWith(
-      'native-competition',
-      expect.anything()
+    expect(runtime.lockCompetition).not.toHaveBeenCalled();
+  } finally {
+    mockFeatures.onChain = false;
+  }
+});
+
+it('from switch-on a help-bot charge does not check REP waves with no category', async () => {
+  mockFeatures.onChain = true;
+  try {
+    jest.mocked(runtime.readCompetition).mockResolvedValue({
+      ...competition,
+      voting: {
+        ...competition.voting,
+        credit_type: 'REP',
+        credit_category: null,
+        credit_creditor: null
+      }
+    } as never);
+    await revokeRepBasedDropOverVotes(
+      {
+        rep_recipient_id: 'voter',
+        rep_giver_id: 'help-bot',
+        credit_category: 'Help6529 Credits'
+      },
+      connection
     );
-    expect(competitionTdhOvervotesDb.findOvervoters).not.toHaveBeenCalled();
+    expect(runtime.lockCompetition).not.toHaveBeenCalled();
   } finally {
     mockFeatures.onChain = false;
   }

@@ -15,7 +15,7 @@ import { Competition } from '@/competitions/competition.types';
 import { wavesApiDb } from '@/api/waves/waves.api.db';
 import { competitionTdhOvervotesDb } from '@/competitions/competition-tdh-overvotes.db';
 import { isRetryableDbLockError } from '@/nextgen/nextgen-db-lock-retry';
-import { isIdentityOnChain } from '@/identity-freeze/identity-freeze';
+import { countsTowardAllCategoryRep } from '@/rates/rating-credit';
 
 const logger = Logger.get('PARTICIPATION_DROPS_OVER_VOTE_REVOCATION');
 
@@ -33,8 +33,11 @@ export async function revokeRepBasedDropOverVotes(
   await revokeNativeOvervotes(
     (competition) =>
       competition.voting.credit_type === WaveCreditType.REP &&
-      (competition.voting.credit_category === null ||
-        competition.voting.credit_category === change.credit_category) &&
+      // A wave with no category counts the change unless it is a help-bot
+      // credit after switch-on (credits then aren't REP).
+      (competition.voting.credit_category === null
+        ? countsTowardAllCategoryRep('REP', change.credit_category)
+        : competition.voting.credit_category === change.credit_category) &&
       (competition.voting.credit_creditor === null ||
         competition.voting.credit_creditor === change.rep_giver_id),
     change.rep_recipient_id,
@@ -44,13 +47,12 @@ export async function revokeRepBasedDropOverVotes(
 
 /**
  * The competitions an identities sync checks for over-votes: those whose
- * credit is TDH. From switch-on also REP: REP then comes from the chain and
- * no 6529.io REP write triggers a check (and the help bot's credits leave
- * REP waves with no category), so the daily sync is where votes beyond the
- * new credit are cut.
+ * credit is TDH. REP competitions, also after switch-on when REP comes from
+ * the chain, are reconciled every few minutes by the leaderboard
+ * snapshotter (reconcileCompetitionCredit, every credit type).
  */
 const acceptsTdhCredit = (competition: Competition) =>
-  competition.voting.credit_type !== WaveCreditType.REP || isIdentityOnChain();
+  competition.voting.credit_type !== WaveCreditType.REP;
 
 export async function revokeTdhBasedDropWavesOverVotes(
   connection: ConnectionWrapper<unknown>
@@ -200,15 +202,10 @@ async function reconcileTdhOvervoters(
   competition: Competition,
   ctx: RequestContext
 ): Promise<void> {
-  // A REP competition (checked here only from switch-on) has no SQL credit
-  // source: each active voter's budget is read as at vote time.
-  const voters =
-    competition.voting.credit_type === WaveCreditType.REP
-      ? await nativeCompetitionRuntimeRepository.listActiveVoters(
-          competition.id,
-          ctx
-        )
-      : await competitionTdhOvervotesDb.findOvervoters(competition, ctx);
+  const voters = await competitionTdhOvervotesDb.findOvervoters(
+    competition,
+    ctx
+  );
   let changed = 0;
   await readSequentially(voters, async (voter) => {
     if (await reduceNativeVoter(competition, voter, ctx)) changed++;
