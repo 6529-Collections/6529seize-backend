@@ -9,8 +9,10 @@ import {
   DelegationRowWrite,
   IdentityChainMirrorDb,
   MirrorState,
+  RatingEventContext,
   RatingRowWrite
 } from './identity-chain-mirror.db';
+import { MembershipChange } from './membership-change';
 import {
   feedEffects,
   IdentityChainMirror,
@@ -70,6 +72,12 @@ class FakeDb {
   ratings = new Map<string, RatingRowWrite[]>();
   delegations = new Map<string, DelegationRowWrite[]>();
   pairs: { wallet1: string; wallet2: string }[] = [];
+  ratingReads: { target: string; events: RatingEventContext }[] = [];
+  keyWidth: number | null = null;
+
+  async consolidationKeyWidth() {
+    return this.keyWidth;
+  }
 
   async executeNativeQueriesInTransaction<T>(fn: (c: unknown) => Promise<T>) {
     return fn({});
@@ -180,8 +188,14 @@ class FakeDb {
   async replaceAllPairs(pairs: { wallet1: string; wallet2: string }[]) {
     this.pairs = [...pairs];
   }
-  async replaceTargetRatings(target: string, rows: RatingRowWrite[]) {
+  async replaceTargetRatings(
+    target: string,
+    rows: RatingRowWrite[],
+    _now: number,
+    events: RatingEventContext
+  ) {
     this.ratings.set(target, rows);
+    this.ratingReads.push({ target, events });
     return { inserted: rows.length, updated: 0, deleted: 0 };
   }
   async replaceWalletDelegations(wallet: string, rows: DelegationRowWrite[]) {
@@ -357,16 +371,23 @@ function world() {
   };
   const db = new FakeDb();
   let now = 1_000;
+  const changes: { change: MembershipChange; connection: unknown }[] = [];
   const mirror = new IdentityChainMirror(
     gateway as never,
     db as unknown as IdentityChainMirrorDb,
-    () => now
+    () => now,
+    [
+      async (change, ctx) => {
+        changes.push({ change, connection: ctx.connection });
+      }
+    ]
   );
   return {
     chain,
     gateway,
     db,
     mirror,
+    changes,
     alice,
     bob,
     tick: (ms: number) => {
@@ -448,9 +469,19 @@ describe('IdentityChainMirror', () => {
         rater_profile_id: bobProfile,
         matter: 'REP',
         matter_category: 'Kind',
-        rating: 5
+        rating: 5,
+        rater_principal: bob.principalId,
+        height: 30
       }
     ]);
+    // Found by a full pass at the height it started from.
+    expect(
+      db.ratingReads.find((it) => it.target === ALICE_PROFILE)?.events
+    ).toEqual({
+      targetPrincipal: alice.principalId,
+      height: 100,
+      source: 'FULL_SYNC'
+    });
     // The identity's delegation covers each of its wallets.
     expect(db.delegations.get(A)).toEqual([
       expect.objectContaining({
@@ -466,8 +497,9 @@ describe('IdentityChainMirror', () => {
   });
 
   it('applies a join from the feed, moving the wallet into the identity', async () => {
-    const { mirror, db, chain, alice, bob } = world();
+    const { mirror, db, chain, alice, bob, changes } = world();
     await mirror.run({ budgetMs: 60_000 });
+    changes.length = 0;
     // Bob's wallet C leaves Bob and joins Alice.
     chain.identities.set(alice.principalId, { ...alice, wallets: [A, B, C] });
     chain.identities.set(bob.principalId, { ...bob, wallets: [] });
@@ -506,6 +538,84 @@ describe('IdentityChainMirror', () => {
     expect(db.addressKeys.get(C)).toBe(key);
     expect(db.pairs).toHaveLength(3);
     expect(db.delegations.get(C)).toHaveLength(1);
+    // The membership handlers hear of it in the mirror's transaction, with
+    // every wallet of the rows before and after.
+    expect(changes).toHaveLength(1);
+    expect(changes[0].connection).toBeDefined();
+    expect(changes[0].change).toEqual({
+      height: 105,
+      wallets: [A, B, C],
+      keysBefore: { [A]: `${A}-${B}`, [B]: `${A}-${B}`, [C]: C },
+      keysAfter: { [A]: key, [B]: key, [C]: key }
+    });
+  });
+
+  it('tells the membership handlers nothing when no key changes', async () => {
+    const { mirror, chain, alice, changes } = world();
+    await mirror.run({ budgetMs: 60_000 });
+    changes.length = 0;
+    chain.identities.set(alice.principalId, {
+      ...alice,
+      rep: { total: '6', raters: 1 }
+    });
+    chain.feed.push({
+      from: 101,
+      through: 101,
+      next: 102,
+      blocks: [
+        {
+          height: 101,
+          slot: 0,
+          root: '0x',
+          time: 0,
+          records: [
+            {
+              family: '0x0201',
+              name: 'Principal',
+              key: '0x',
+              value: null,
+              keyFields: { principal: alice.principalId }
+            }
+          ]
+        }
+      ]
+    });
+    await mirror.run({ budgetMs: 60_000 });
+    expect(changes).toEqual([]);
+  });
+
+  it('logs a rating change found on the feed at the feed height', async () => {
+    const { mirror, db, chain, alice, bob } = world();
+    await mirror.run({ budgetMs: 60_000 });
+    db.ratingReads = [];
+    chain.feed.push({
+      from: 101,
+      through: 103,
+      next: 104,
+      blocks: [
+        {
+          height: 102,
+          slot: 0,
+          root: '0x',
+          time: 0,
+          records: [
+            {
+              family: '0x0301',
+              name: 'Rating',
+              key: '0x',
+              value: null,
+              keyFields: { rater: bob.principalId, target: alice.principalId }
+            }
+          ]
+        }
+      ]
+    });
+    await mirror.run({ budgetMs: 60_000 });
+    expect(db.ratingReads.map((it) => it.events)).toContainEqual({
+      targetPrincipal: alice.principalId,
+      height: 103,
+      source: 'FEED'
+    });
   });
 
   it('starts a full sync when the feed no longer holds its height', async () => {
@@ -539,6 +649,16 @@ describe('IdentityChainMirror', () => {
     const report = await mirror.run({ budgetMs: 60_000 });
     expect(report.skippedTooManyWallets).toEqual([PID(9)]);
     expect(Array.from(db.addressKeys.keys())).not.toContain(many[0]);
+  });
+
+  it('writes a five-wallet identity once the key columns are wide', async () => {
+    const { mirror, db, chain } = world();
+    db.keyWidth = 700;
+    const many = Array.from({ length: 5 }, (_, i) => W(100 + i));
+    chain.identities.set(PID(9), chainIdentity(PID(9), many));
+    const report = await mirror.run({ budgetMs: 60_000 });
+    expect(report.skippedTooManyWallets).toEqual([]);
+    expect(db.addressKeys.get(many[0])).toBe(many.join('-'));
   });
 });
 

@@ -35,6 +35,11 @@ export interface ProfileDocFields {
   readonly classification: string | null;
   readonly subClassification: string | null;
   readonly statements: ProfileDocStatement[];
+  /**
+   * The profile site field (`cms`), as written: the publish lane's follower
+   * reads and checks it; the mirror carries it for a column the sweep names.
+   */
+  readonly cms: string | null;
 }
 
 export class ProfileDocError extends Error {
@@ -202,7 +207,8 @@ export function toProfileDocFields(
     website: nonEmpty(fields.website),
     classification: nonEmpty(fields.classification),
     subClassification: nonEmpty(fields.subClassification),
-    statements: statements.map(({ order: _order, ...rest }) => rest)
+    statements: statements.map(({ order: _order, ...rest }) => rest),
+    cms: nonEmpty(fields.cms)
   };
 }
 
@@ -214,5 +220,6 @@ export const EMPTY_PROFILE_DOC_FIELDS: ProfileDocFields = {
   website: null,
   classification: null,
   subClassification: null,
-  statements: []
+  statements: [],
+  cms: null
 };
