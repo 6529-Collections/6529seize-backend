@@ -137,6 +137,9 @@ describeWithSeed(
           chain_id: null,
           placeholders_at: null,
           bindings_exact: false,
+          levels_tdh_day: null,
+          level_sweep_day: null,
+          level_sweep_after: null,
           retry: NO_RETRY
         },
         9
@@ -296,6 +299,9 @@ describeWithSeed(
           chain_id: '0xabc',
           placeholders_at: 5,
           bindings_exact: true,
+          levels_tdh_day: 25,
+          level_sweep_day: 25,
+          level_sweep_after: 'ranked-after',
           retry: { principals: [P], targets: [], wallets: [B] }
         },
         1
@@ -306,6 +312,9 @@ describeWithSeed(
           chain_id: '0xabc',
           placeholders_at: 5,
           bindings_exact: true,
+          levels_tdh_day: 25,
+          level_sweep_day: 25,
+          level_sweep_after: 'ranked-after',
           retry: { principals: [P], targets: [], wallets: [B] }
         })
       );
@@ -598,6 +607,28 @@ describeWithSeed(
           `select wallet1, wallet2 from ${CONSOLIDATIONS_TABLE}`
         )
       ).toEqual([{ wallet1: A, wallet2: B }]);
+    });
+
+    it("writes only level_raw of the profiles' rows, in one statement", async () => {
+      const before = await sqlExecutor.execute<any>(
+        `select profile_id, tdh, rep, level_raw from ${IDENTITIES_TABLE} order by profile_id`
+      );
+      const alice = before.find((it: any) => it.profile_id === ALICE);
+      expect(
+        await db.writeLevels([
+          { profile_id: ALICE, level_raw: 4321 },
+          { profile_id: 'no-such-profile', level_raw: 9 }
+        ])
+      ).toBe(1);
+      const after = await sqlExecutor.execute<any>(
+        `select profile_id, tdh, rep, level_raw from ${IDENTITIES_TABLE} order by profile_id`
+      );
+      expect(after).toEqual(
+        before.map((it: any) =>
+          it.profile_id === ALICE ? { ...alice, level_raw: 4321 } : it
+        )
+      );
+      expect(await db.writeLevels([])).toBe(0);
     });
 
     it('keeps first bindings, regroups to re-key and mapped profile ids', async () => {

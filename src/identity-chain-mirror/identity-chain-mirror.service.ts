@@ -77,6 +77,10 @@ const RETRY_LIMIT = 10_000;
 const RETRY_BATCH = 500;
 /** During a full sync, the feed's share of each run (it goes first). */
 const FEED_SHARE_IN_FULL_SYNC = 0.4;
+/** A level sweep's share of a run (it goes before the identities). */
+const LEVEL_SWEEP_SHARE = 0.25;
+/** Identities per page of the chain's level ranking. */
+const LEVEL_PAGE = 500;
 /** A new network id is read this many more times before anything is wiped. */
 const NETWORK_CONFIRMATIONS = 2;
 const NETWORK_CONFIRM_WAIT_MS = 1_000;
@@ -119,6 +123,7 @@ type Gateway = Pick<
   | 'getDelegations'
   | 'getDelegationsOfWallet'
   | 'getChanges'
+  | 'getLevelRanking'
 >;
 
 export interface MirrorRunReport {
@@ -149,6 +154,14 @@ export interface MirrorRunReport {
   bindingsNextHeight: number | null;
   docProblems: string[];
   nextHeight: number | null;
+  /** level_raw values a level sweep wrote. */
+  levelsWritten: number;
+  /** The TDH day a level sweep under way is for, when one is. */
+  levelSweepDay: number | null;
+  /** Why a level sweep stopped early (it goes on next run). */
+  levelSweepProblem?: string;
+  /** Why the gateway's node says it isn't ready (its state is still read). */
+  gatewayNotReady?: string;
 }
 
 /** A 32-byte word holding an address: 12 zero bytes, then the address. */
@@ -175,6 +188,11 @@ function collectHex(
       wallets.add(value);
     }
   }
+}
+
+/** An answer from another chain's node than the head names. */
+function isWrongNetwork(error: unknown): boolean {
+  return error instanceof ChainGatewayError && error.code === 'wrong_network';
 }
 
 /**
@@ -280,6 +298,8 @@ export class IdentityChainMirror {
   private readAt: number | undefined = undefined;
   /** The highest height pinned in this run: no later pin goes below it. */
   private highestPin = 0;
+  /** The latest TDH day on the levels of the identities read this run. */
+  private seenTdhDay: number | null = null;
   private readonly ids: ProfileIds;
   private readonly bindings: WalletBindingsFollower;
 
@@ -330,6 +350,8 @@ export class IdentityChainMirror {
       feedBlocks: 0,
       skippedTooManyWallets: [],
       docProblems: [],
+      levelsWritten: 0,
+      levelSweepDay: null,
       skippedInactive: [],
       failed: [],
       retryLeft: 0,
@@ -379,6 +401,7 @@ export class IdentityChainMirror {
     this.identities.clear();
     this.readAt = undefined;
     this.highestPin = 0;
+    this.seenTdhDay = null;
     const loaded = (await this.db.getState()) ?? this.emptyState();
     this.leftByEarlierRuns = loaded.retry;
     this.retry = {
@@ -387,7 +410,7 @@ export class IdentityChainMirror {
       wallets: new Set(loaded.retry.wallets)
     };
     // Before the import gate: a relaunched chain is seen while its import runs.
-    const onChain = await this.onThisChain(loaded);
+    const onChain = await this.onThisChain(loaded, report);
     if (!onChain) {
       report.skipped = 'network_unsettled';
       return;
@@ -419,7 +442,16 @@ export class IdentityChainMirror {
       report
     );
     report.bindingsNextHeight = state.bindings_next_height;
+    // A sweep after a TDH day goes first with its share, so the feed's newer
+    // reads come after it.
+    state = await this.sweepLevels(
+      state,
+      this.now() + (deadline - this.now()) * LEVEL_SWEEP_SHARE,
+      report
+    );
     state = await this.syncIdentities(state, deadline, report);
+    state = await this.noteTdhDay(state);
+    report.levelSweepDay = state.level_sweep_day;
     report.nextHeight = state.next_height;
     report.retryLeft = retrySize(state.retry);
   }
@@ -465,6 +497,9 @@ export class IdentityChainMirror {
       chain_id: null,
       placeholders_at: null,
       bindings_exact: false,
+      levels_tdh_day: null,
+      level_sweep_day: null,
+      level_sweep_after: null,
       retry: NO_RETRY
     };
   }
@@ -523,8 +558,20 @@ export class IdentityChainMirror {
    * from a node of another chain doesn't wipe: null (no run) while the
    * answers differ.
    */
-  private async onThisChain(state: MirrorState): Promise<MirrorState | null> {
-    const network = await this.networkNow();
+  private async onThisChain(
+    state: MirrorState,
+    report: MirrorRunReport
+  ): Promise<MirrorState | null> {
+    const head = await this.gateway.getHead(true);
+    if (head.ready === false) {
+      // Its finalized state is still read: the feed and reads wait for it
+      // by height where they need to.
+      report.gatewayNotReady = head.notReady ?? 'not ready';
+      logger.warn(
+        `[GATEWAY NODE NOT READY] [${report.gatewayNotReady}] [READING ITS FINALIZED STATE]`
+      );
+    }
+    const network = head.network?.toLowerCase() ?? null;
     if (network === null || state.chain_id === network) return state;
     if (state.chain_id === null) {
       return await this.save({ ...state, chain_id: network });
@@ -768,6 +815,88 @@ export class IdentityChainMirror {
     return identity?.wallets.map((it) => it.toLowerCase()) ?? [];
   }
 
+  // ---------------------------------------------------------------- levels
+
+  /** The TDH day of an identity's level, when it is the latest seen. */
+  private noteLevel(identity: ChainIdentity | null) {
+    const day = Number(identity?.level?.tdhDay);
+    if (Number.isSafeInteger(day) && day > (this.seenTdhDay ?? -1)) {
+      this.seenTdhDay = day;
+    }
+  }
+
+  /**
+   * A level changes with REP (on the feed) and with each TDH day, which
+   * the feed carries no record of: a TDH day later than the last one seen,
+   * on the identities this run read, starts a level sweep (again from the
+   * top when one was under way).
+   */
+  private async noteTdhDay(state: MirrorState): Promise<MirrorState> {
+    const seen = this.seenTdhDay;
+    if (seen === null || seen <= (state.levels_tdh_day ?? -1)) return state;
+    logger.info(`[TDH DAY ${seen}] [SWEEPING LEVELS]`);
+    return await this.save({
+      ...state,
+      levels_tdh_day: seen,
+      level_sweep_day: seen,
+      level_sweep_after: null
+    });
+  }
+
+  /**
+   * The level sweep: the chain's level ranking (its latest finalized
+   * state), a page at a time to `until`, each page's level_raw written for
+   * the mapped identities in one statement, and the place saved, so it goes
+   * on next run. A failure stops it for this run.
+   */
+  private async sweepLevels(
+    initial: MirrorState,
+    until: number,
+    report: MirrorRunReport
+  ): Promise<MirrorState> {
+    let state = initial;
+    try {
+      while (state.level_sweep_day !== null && this.now() < until) {
+        const page = await this.gateway.getLevelRanking({
+          after: state.level_sweep_after,
+          limit: LEVEL_PAGE
+        });
+        if (isOtherChain(state.chain_id, page.read?.network)) {
+          logger.warn(
+            `[LEVEL RANKING OF ANOTHER CHAIN] [${page.read?.network}] [NEXT RUN]`
+          );
+          return state;
+        }
+        const rows = page.data.rows;
+        const mapped = await this.db.profileIdsOfPrincipals(
+          rows.map((it) => it.identity.principalId)
+        );
+        const levels = rows.flatMap((it) => {
+          const profileId = mapped.get(it.identity.principalId.toLowerCase());
+          const raw = Number(it.raw);
+          return profileId && Number.isFinite(raw)
+            ? [{ profile_id: profileId, level_raw: raw }]
+            : [];
+        });
+        report.levelsWritten += await this.db.writeLevels(levels);
+        if (page.next) {
+          state = await this.save({ ...state, level_sweep_after: page.next });
+        } else {
+          logger.info(`[LEVELS SWEPT FOR TDH DAY ${state.level_sweep_day}]`);
+          state = await this.save({
+            ...state,
+            level_sweep_day: null,
+            level_sweep_after: null
+          });
+        }
+      }
+    } catch (error) {
+      report.levelSweepProblem = messageOf(error);
+      logger.error(`[LEVEL SWEEP STOPPED] ${report.levelSweepProblem}`);
+    }
+    return state;
+  }
+
   // ---------------------------------------------------------------- the feed
 
   private async followFeed(
@@ -789,7 +918,14 @@ export class IdentityChainMirror {
       const read = await readWholeBlocks(this.gateway, from, {
         limit: FEED_PAGE_BLOCKS,
         sleep: this.sleep
+      }).catch((error: unknown) => {
+        if (isWrongNetwork(error)) return 'other_chain' as const;
+        throw error;
       });
+      if (read === 'other_chain') {
+        logger.warn(`[FEED PAGE OF ANOTHER CHAIN AT ${from}] [NEXT RUN]`);
+        return state;
+      }
       if (!read) {
         logger.warn(`[FEED GONE AT ${from}] [STARTING A FULL SYNC]`);
         return await this.startFullSync(state, true);
@@ -1014,10 +1150,12 @@ export class IdentityChainMirror {
   private async identity(principalId: string): Promise<ChainIdentity | null> {
     const key = principalId.toLowerCase();
     if (!this.identities.has(key)) {
-      this.identities.set(
+      const identity = await this.gateway.getIdentityByPrincipal(
         key,
-        await this.gateway.getIdentityByPrincipal(key, this.pin())
+        this.pin()
       );
+      this.noteLevel(identity);
+      this.identities.set(key, identity);
     }
     return this.identities.get(key) ?? null;
   }
@@ -1054,6 +1192,7 @@ export class IdentityChainMirror {
     at: MirrorAt
   ): Promise<string[]> {
     const wallets = identity.wallets.map((it) => it.toLowerCase());
+    this.noteLevel(identity);
     if (isInactive(identity)) {
       report.skippedInactive.push(identity.principalId);
       const survivor = identity.mergedInto

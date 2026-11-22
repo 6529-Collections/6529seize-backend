@@ -109,6 +109,20 @@ class FakeDb {
       }
     });
   }
+  levelWrites: { profile_id: string; level_raw: number }[][] = [];
+  async writeLevels(levels: { profile_id: string; level_raw: number }[]) {
+    this.levelWrites.push(levels);
+    let written = 0;
+    for (const it of levels) {
+      for (const [key, row] of Array.from(this.rows.entries())) {
+        if (row.profile_id === it.profile_id) {
+          this.rows.set(key, { ...row, level_raw: it.level_raw });
+          written++;
+        }
+      }
+    }
+    return written;
+  }
   async profileIdsOfPrincipals(principals: string[]) {
     const result = new Map<string, string>();
     principals.forEach((p) => {
@@ -475,6 +489,33 @@ function world(followers: ProfileSiteFollower[] = []) {
     }),
     getIdentityByPrincipal: jest.fn(
       async (p: string) => chain.identities.get(p) ?? null
+    ),
+    // Active identities by the raw level the test sets, highest first.
+    getLevelRanking: jest.fn(
+      async (opts: { after?: string | null; limit?: number } = {}) => {
+        const ranked = Array.from(chain.identities.values())
+          .filter((it) => it.level)
+          .sort((a, b) => Number(b.level!.raw) - Number(a.level!.raw));
+        const start = opts.after
+          ? ranked.findIndex((it) => it.principalId === opts.after) + 1
+          : 0;
+        const rows = ranked.slice(start, start + (opts.limit ?? 500));
+        const last = rows[rows.length - 1];
+        return {
+          read: { network: chain.network } as never,
+          data: {
+            rankedAt: chain.finalized,
+            count: ranked.length,
+            rows: rows.map((identity, i) => ({
+              rank: start + i + 1,
+              level: identity.level!.level,
+              raw: identity.level!.raw,
+              identity
+            }))
+          },
+          next: start + rows.length < ranked.length ? last.principalId : null
+        };
+      }
     ),
     getIdentitiesByWallets: jest.fn(async (wallets: string[]) =>
       Object.fromEntries(
@@ -1870,6 +1911,183 @@ describe('IdentityChainMirror', () => {
     // A pair no identity holds goes.
     expect(db.pairs).not.toContainEqual({ wallet1: W(80), wallet2: W(81) });
     expect(db.pairs.filter((it) => it.wallet1 === W(72))).toHaveLength(1);
+  });
+
+  const leveled = (
+    identity: ChainIdentity,
+    raw: number,
+    tdhDay: number
+  ): ChainIdentity => ({
+    ...identity,
+    level: {
+      level: 1,
+      raw: String(raw),
+      rep: '0',
+      tdh: String(raw),
+      tdhDay
+    }
+  });
+
+  it('sweeps the levels after a TDH day, writing only level_raw of mapped identities', async () => {
+    const { mirror, db, chain, alice, bob, gateway } = world();
+    await mirror.run({ budgetMs: 60_000 });
+    // Day 25 was seen on the first run's reads: the next run sweeps it.
+    expect(db.state?.levels_tdh_day).toBe(25);
+    expect(db.state?.level_sweep_day).toBe(25);
+    await mirror.run({ budgetMs: 60_000 });
+    expect(db.state?.level_sweep_day).toBeNull();
+    db.levelWrites = [];
+    gateway.getLevelRanking.mockClear();
+    // Day 26: the levels move; nothing on the feed says so.
+    chain.identities.set(alice.principalId, leveled(alice, 2000, 26));
+    chain.identities.set(bob.principalId, leveled(bob, 700, 26));
+    const unmapped = leveled(chainIdentity(PID(50), [W(50)]), 900, 26);
+    chain.identities.set(unmapped.principalId, unmapped);
+    // A later read of one identity (here, for its ratings) shows the day.
+    db.state = {
+      ...db.state!,
+      retry: { principals: [], targets: [alice.principalId], wallets: [] }
+    };
+    const first = await mirror.run({ budgetMs: 60_000 });
+    expect(db.state?.levels_tdh_day).toBe(26);
+    expect(first.levelSweepDay).toBe(26);
+    // The next run sweeps it.
+    const second = await mirror.run({ budgetMs: 60_000 });
+    expect(second.levelSweepDay).toBeNull();
+    expect(db.state?.level_sweep_day).toBeNull();
+    const bobProfile = db.mapping.get(bob.principalId)!.profile;
+    expect(db.levelWrites).toEqual([
+      [
+        { profile_id: ALICE_PROFILE, level_raw: 2000 },
+        { profile_id: bobProfile, level_raw: 700 }
+      ]
+    ]);
+    expect(
+      Array.from(db.rows.values()).find((it) => it.profile_id === bobProfile)
+        ?.level_raw
+    ).toBe(700);
+    expect(db.mapping.has(unmapped.principalId)).toBe(false);
+    expect(second.levelsWritten).toBe(2);
+  });
+
+  it('goes on with a level sweep across runs, a page at a time, and starts again for a newer day', async () => {
+    const { mirror, db, chain, gateway, tick } = world();
+    for (let i = 0; i < 4; i++) {
+      const it = leveled(chainIdentity(PID(80 + i), [W(80 + i)]), 100 - i, 25);
+      chain.identities.set(it.principalId, it);
+    }
+    await mirror.run({ budgetMs: 60_000 });
+    db.state = {
+      ...db.state!,
+      level_sweep_day: 26,
+      level_sweep_after: null,
+      levels_tdh_day: 26
+    };
+    // One page of 500 holds them all: a page fits in each run's share.
+    gateway.getLevelRanking.mockClear();
+    let pages = 0;
+    const rank = gateway.getLevelRanking.getMockImplementation()!;
+    gateway.getLevelRanking.mockImplementation(async (opts) => {
+      pages++;
+      tick(20_000);
+      return await rank({ ...opts, limit: 2 });
+    });
+    await mirror.run({ budgetMs: 60_000 });
+    // A quarter of the run's minute for the sweep: one 20 s page.
+    expect(pages).toBe(1);
+    expect(db.state?.level_sweep_day).toBe(26);
+    expect(db.state?.level_sweep_after).not.toBeNull();
+    const after = db.state?.level_sweep_after;
+    await mirror.run({ budgetMs: 60_000 });
+    expect(gateway.getLevelRanking.mock.calls[1][0]).toMatchObject({ after });
+    // A newer day while one is under way starts again from the top.
+    db.state = { ...db.state!, level_sweep_day: 26, level_sweep_after: 'x' };
+    chain.identities.set(
+      PID(80),
+      leveled(chain.identities.get(PID(80))!, 99, 27)
+    );
+    db.state = {
+      ...db.state!,
+      retry: { principals: [PID(80)], targets: [], wallets: [] }
+    };
+    gateway.getLevelRanking.mockImplementation(async () => {
+      throw new Error('not reached');
+    });
+    const report = await mirror.run({ budgetMs: 60_000 });
+    expect(report.levelSweepProblem).toBe('not reached');
+    expect(db.state).toMatchObject({
+      levels_tdh_day: 27,
+      level_sweep_day: 27,
+      level_sweep_after: null
+    });
+  });
+
+  it('starts no level sweep without a newer TDH day', async () => {
+    const { mirror, db, gateway, alice } = world();
+    await mirror.run({ budgetMs: 60_000 });
+    await mirror.run({ budgetMs: 60_000 });
+    gateway.getLevelRanking.mockClear();
+    // Alice is read again, still on day 25.
+    db.state = {
+      ...db.state!,
+      retry: { principals: [alice.principalId], targets: [], wallets: [] }
+    };
+    await mirror.run({ budgetMs: 60_000 });
+    expect(gateway.getIdentityByPrincipal).toHaveBeenCalledWith(
+      alice.principalId,
+      expect.anything()
+    );
+    await mirror.run({ budgetMs: 60_000 });
+    expect(gateway.getLevelRanking).not.toHaveBeenCalled();
+    expect(db.state?.levels_tdh_day).toBe(25);
+  });
+
+  it("says when the gateway's node isn't ready, and reads on", async () => {
+    const { mirror, db, chain, gateway } = world();
+    await mirror.run({ budgetMs: 60_000 });
+    const headOf = gateway.getHead.getMockImplementation()!;
+    gateway.getHead.mockImplementation(async () => ({
+      ...(await headOf()),
+      ready: false,
+      notReady: 'head 20 slots behind'
+    }));
+    chain.feed.push({
+      from: 101,
+      through: 101,
+      next: 102,
+      blocks: [block(101, [])]
+    });
+    const report = await mirror.run({ budgetMs: 60_000 });
+    expect(report.gatewayNotReady).toBe('head 20 slots behind');
+    expect(db.state?.next_height).toBe(102);
+  });
+
+  it('ends the run without moving on at a feed page of another chain', async () => {
+    const { mirror, db, chain, gateway } = world();
+    await mirror.run({ budgetMs: 60_000 });
+    chain.feed.push({
+      from: 101,
+      through: 101,
+      next: 102,
+      blocks: [block(101, [])]
+    });
+    const changesOf = gateway.getChanges.getMockImplementation()!;
+    gateway.getChanges.mockImplementation(
+      async (from: number | string, opts?: { families?: string[] }) => {
+        if (String(from) === '101' && !opts?.families) {
+          throw new ChainGatewayError(
+            'another chain',
+            200,
+            'wrong_network',
+            '/v1/feed'
+          );
+        }
+        return await changesOf(from, opts);
+      }
+    );
+    const report = await mirror.run({ budgetMs: 60_000 });
+    expect(report.error).toBeUndefined();
+    expect(db.state?.next_height).toBe(101);
   });
 
   it('starts the keys to retry again with a full sync', async () => {

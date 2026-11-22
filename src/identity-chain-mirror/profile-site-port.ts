@@ -99,6 +99,7 @@ type Gateway = Pick<
   | 'getImportedIdentity'
   | 'getDocument'
   | 'putDocument'
+  | 'getHead'
 >;
 
 /**
@@ -307,7 +308,9 @@ export class GatewayProfileSitePort implements ProfileSiteChainPort {
    * profile id as the mirror files it now. The gateway keeps only recent
    * heights; for an older one the wallets are those of its wallets now that
    * were bound to it at that height (a wallet that has left since is not
-   * listed), and the handle is the one it has now.
+   * listed), and the handle is the one it has now. A height past the
+   * gateway's finalized one (a node that has it only as its head) is tried
+   * again later.
    */
   async getIdentityByPrincipal(
     principal: string,
@@ -327,6 +330,13 @@ export class GatewayProfileSitePort implements ProfileSiteChainPort {
         !(error instanceof ChainGatewayError && error.code === 'height_gone')
       ) {
         throw error;
+      }
+      const finalized = (await this.gateway.getHead(true)).finalizedHeight;
+      if (opts.height > finalized) {
+        throw new ChainReadRetryLater(
+          `Height ${opts.height} isn't final on the gateway yet (${finalized})`,
+          'height_not_final'
+        );
       }
     }
     if (!current) return null;

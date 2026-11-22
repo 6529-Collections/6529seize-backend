@@ -54,6 +54,12 @@ export interface MirrorState {
    * start: identity_chain_first_bindings is exact below their cursor.
    */
   readonly bindings_exact: boolean;
+  /** The latest TDH day seen on the chain's levels; null before. */
+  readonly levels_tdh_day: number | null;
+  /** A level sweep under way: the TDH day it is for, null when none. */
+  readonly level_sweep_day: number | null;
+  /** The sweep's place in the chain's level ranking (null: from the top). */
+  readonly level_sweep_after: string | null;
   /** What the mirror could not write, tried again by the next run. */
   readonly retry: MirrorRetry;
 }
@@ -240,7 +246,8 @@ export class IdentityChainMirrorDb extends LazyDbAccessCompatibleService {
       }
     >(
       `select next_height, sync_from_height, sync_phase, sync_after, last_full_sync_at,
-              bindings_next_height, chain_id, placeholders_at, bindings_exact, retry_json
+              bindings_next_height, chain_id, placeholders_at, bindings_exact,
+              levels_tdh_day, level_sweep_day, level_sweep_after, retry_json
        from ${IDENTITY_CHAIN_MIRROR_STATE_TABLE} where id = :id`,
       { id: STATE_ID },
       conn ? { wrappedConnection: conn } : undefined
@@ -256,6 +263,9 @@ export class IdentityChainMirrorDb extends LazyDbAccessCompatibleService {
       chain_id: row.chain_id ?? null,
       placeholders_at: numberOrNull(row.placeholders_at),
       bindings_exact: !!Number(row.bindings_exact ?? 0),
+      levels_tdh_day: numberOrNull(row.levels_tdh_day),
+      level_sweep_day: numberOrNull(row.level_sweep_day),
+      level_sweep_after: row.level_sweep_after ?? null,
       retry: retryOf(row.retry_json)
     };
   }
@@ -264,11 +274,16 @@ export class IdentityChainMirrorDb extends LazyDbAccessCompatibleService {
     await this.db.execute(
       `insert into ${IDENTITY_CHAIN_MIRROR_STATE_TABLE}
          (id, next_height, sync_from_height, sync_phase, sync_after, last_full_sync_at,
-          bindings_next_height, chain_id, placeholders_at, bindings_exact, retry_json, updated_at)
+          bindings_next_height, chain_id, placeholders_at, bindings_exact,
+          levels_tdh_day, level_sweep_day, level_sweep_after, retry_json, updated_at)
        values (:id, :next_height, :sync_from_height, :sync_phase, :sync_after, :last_full_sync_at,
-          :bindings_next_height, :chain_id, :placeholders_at, :bindings_exact, :retry_json, :now)
+          :bindings_next_height, :chain_id, :placeholders_at, :bindings_exact,
+          :levels_tdh_day, :level_sweep_day, :level_sweep_after, :retry_json, :now)
        on duplicate key update
          next_height = values(next_height),
+         levels_tdh_day = values(levels_tdh_day),
+         level_sweep_day = values(level_sweep_day),
+         level_sweep_after = values(level_sweep_after),
          bindings_next_height = values(bindings_next_height),
          bindings_exact = values(bindings_exact),
          chain_id = values(chain_id),
@@ -320,6 +335,34 @@ export class IdentityChainMirrorDb extends LazyDbAccessCompatibleService {
       conn ? { wrappedConnection: conn } : undefined
     );
     return row?.profile_id ?? null;
+  }
+
+  /**
+   * The chain's levels of mapped identities, as one statement: only
+   * level_raw of each profile's identities row changes (a profile without
+   * a row is left alone).
+   */
+  async writeLevels(
+    levels: { readonly profile_id: string; readonly level_raw: number }[]
+  ): Promise<number> {
+    if (!levels.length) return 0;
+    const params: Record<string, unknown> = {
+      ids: levels.map((it) => it.profile_id)
+    };
+    const cases = levels
+      .map((it, i) => {
+        params[`p${i}`] = it.profile_id;
+        params[`l${i}`] = it.level_raw;
+        return `when :p${i} then :l${i}`;
+      })
+      .join(' ');
+    const result = await this.db.execute(
+      `update ${IDENTITIES_TABLE}
+       set level_raw = case profile_id ${cases} else level_raw end
+       where profile_id in (:ids)`,
+      params
+    );
+    return this.db.getAffectedRows(result);
   }
 
   /** The mapped profile ids of these principals (lowercase keys). */

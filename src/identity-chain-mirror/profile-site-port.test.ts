@@ -49,7 +49,8 @@ function setup() {
     getIdentityByPrincipal: jest.fn(),
     getImportedIdentity: jest.fn(),
     getDocument: jest.fn(),
-    putDocument: jest.fn()
+    putDocument: jest.fn(),
+    getHead: jest.fn(async () => ({ finalizedHeight: 100 }))
   };
   const profileIdOf = jest.fn(async (identity: ChainIdentity) => ({
     profileId: identity.legacyId ? identity.legacyId : 'derived-id',
@@ -489,6 +490,19 @@ describe('GatewayProfileSitePort', () => {
     await expect(port.getIdentityByPrincipal(P, { height: 7 })).rejects.toBe(
       down
     );
+    expect(walletPrincipalAt).not.toHaveBeenCalled();
+  });
+
+  it('tries again later a height the gateway has only as its head', async () => {
+    const { gateway, port, walletPrincipalAt } = setup();
+    gateway.getIdentityByPrincipal
+      .mockResolvedValueOnce(now)
+      .mockRejectedValueOnce(
+        new ChainGatewayError('gone', 409, 'height_gone', '/v1/identities')
+      );
+    await expect(
+      port.getIdentityByPrincipal(P, { height: 101 })
+    ).rejects.toMatchObject({ retryLater: true, reason: 'height_not_final' });
     expect(walletPrincipalAt).not.toHaveBeenCalled();
   });
 

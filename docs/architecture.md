@@ -885,7 +885,9 @@ run). With the flag on, NFTDelegation's events (after the identity freeze)
 are read so the checkpoint moves on but not applied: consolidations,
 delegations, re-keying and primary addresses come from the chain. Each step's
 time comes from what the Lambda has left: the mirror (at most six minutes),
-the re-keying, then the profile site followers.
+the re-keying, then the profile site followers. A gateway node that says it
+isn't ready is logged and still read (its finalized state); a feed page of
+another chain ends the run without moving on.
 
 The mirror keeps `profiles`, `identities`, `address_consolidation_keys`,
 `consolidations` (confirmed pairs), `delegations`, REP and CIC `ratings`,
@@ -934,10 +936,17 @@ already mapped are named from the mapping without reading their identity. A
 delegation expiry of 0 never expires. Profile documents come from the
 gateway's store.
 
-The mirror writes `rep`, `cic` and the profile columns of `identities`, all
-from the chain, and `level_raw` from the chain's level (REP + TDH); after each
-TDH day the TDH sync keeps `level_raw` current from the chain's REP and TDH.
-The help bot's credit category stays in 6529.io's ratings table as a site
+One writer per `identities` column: from switch-on the mirror alone writes
+`rep`, `cic`, `level_raw` and the profile columns, all from the chain (the
+level is REP + TDH), and the TDH sync writes only `tdh` and `basetdh_rate`. A
+level changes with REP, which the feed carries, and with each TDH day, which
+it doesn't: when the identities a run reads show a TDH day later than the last
+one seen (`levels_tdh_day`), the mirror sweeps the chain's level ranking
+(`/v1/identities/by-level`, its latest finalized state, 500 identities a
+page), writing only `level_raw` of the mapped identities, one statement a
+page. The sweep goes first in each run with a quarter of the time, keeps its
+place in the state across runs, and starts again from the top for a newer
+day. The help bot's credit category stays in 6529.io's ratings table as a site
 feature, not counted as REP, and the mirror never touches it. It never
 updates `tdh`, `basetdh_rate` or the xTDH columns of a row that exists (the
 TDH and xTDH loops own them), and a row it creates for a new consolidation

@@ -163,6 +163,20 @@ export class IdentityChainMirrorStateEntity {
   @Column({ type: 'boolean', nullable: false, default: false })
   readonly bindings_exact!: boolean;
 
+  /** The latest TDH day seen on the chain's levels. */
+  @Column({ type: 'int', nullable: true, default: null })
+  readonly levels_tdh_day!: number | null;
+
+  /**
+   * A level sweep under way after a TDH day (the day it is for), and its
+   * place in the chain's level ranking.
+   */
+  @Column({ type: 'int', nullable: true, default: null })
+  readonly level_sweep_day!: number | null;
+
+  @Column({ type: 'varchar', length: 200, nullable: true, default: null })
+  readonly level_sweep_after!: string | null;
+
   /**
    * What the mirror could not write, tried again by the next run (JSON:
    * principals, rating targets and wallets). A full sync starts it again.
