@@ -38,8 +38,9 @@ function run(
     probes?: Probe[];
   }
 ) {
-  // Only the self-check's own probe: the areas' probes answer for the
-  // areas, in area and integration runs, not for the harness.
+  // Only the self-check's own steps and probe: the areas' steps and probes
+  // answer for the areas, in area and integration runs, not for the
+  // harness, and one area's steps may wait on another's.
   const manifests: AreaManifest[] = AREA_MANIFESTS.map((manifest) =>
     manifest.area === area
       ? {
@@ -48,7 +49,7 @@ function run(
           rebuilders: [parts.rebuilder],
           probes: parts.probes ?? []
         }
-      : { ...manifest, probes: [] }
+      : { ...manifest, seeds: [], rebuilders: [], probes: [] }
   );
   return runRebuildCheck({
     repoRoot: path.resolve(__dirname, '..', '..', '..'),
