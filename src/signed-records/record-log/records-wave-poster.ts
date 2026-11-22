@@ -62,6 +62,18 @@ export function loadServiceIdentity(
   if (!ADDRESS.test(wallet) || !HEX32.test(grantId) || !HEX32.test(seed)) {
     throw new Error('Malformed signed records service identity');
   }
+  const { deviceKey, privateKey } = deviceKeyOfSeed(seed);
+  return { waveId, profileId, wallet, grantId, deviceKey, privateKey };
+}
+
+/**
+ * The Ed25519 key of a device seed (0x + 64 lowercase hex): the private key
+ * and the public key as a grant names it (0x + 64 hex).
+ */
+export function deviceKeyOfSeed(seed: string): {
+  readonly deviceKey: string;
+  readonly privateKey: KeyObject;
+} {
   const privateKey = createPrivateKey({
     key: Buffer.concat([
       ED25519_PKCS8_PREFIX,
@@ -74,7 +86,7 @@ export function loadServiceIdentity(
     .export({ format: 'der', type: 'spki' })
     .subarray(12)
     .toString('hex')}`;
-  return { waveId, profileId, wallet, grantId, deviceKey, privateKey };
+  return { deviceKey, privateKey };
 }
 
 /** A UUID derived from the text, so a retried post returns the first drop. */
