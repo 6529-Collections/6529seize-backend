@@ -28,7 +28,7 @@ import {
   E2EE_CHECK_IDS,
   E2EE_CHECK_KEYS,
   E2EE_CHECK_PROFILES
-} from '@/e2ee/relay/e2ee-rebuild-check.fixture';
+} from '@/rebuild/steps/e2ee-relay.fixture';
 import { e2eeRecordWriters } from '@/e2ee/relay/e2ee-record-writers';
 import { runE2eeRebuild } from '@/e2ee/relay/e2ee-rebuild-run';
 import { e2eeRelaySettings } from '@/e2ee/relay/e2ee-relay-config';

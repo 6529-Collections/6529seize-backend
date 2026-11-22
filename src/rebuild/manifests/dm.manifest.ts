@@ -2,10 +2,10 @@ import {
   E2EE_CHECK_IDS,
   E2EE_CHECK_KEYS,
   E2EE_CHECK_PROFILES
-} from '@/e2ee/relay/e2ee-rebuild-check.fixture';
+} from '@/rebuild/steps/e2ee-relay.fixture';
 import { AreaManifest, Probe } from '@/rebuild/manifest.types';
 
-const STEPS = 'src/e2ee/relay/e2ee-rebuild-check.steps';
+const STEPS = 'src/rebuild/steps/e2ee-relay.steps';
 
 /**
  * The tables the relay records carry (the delivery service's, and the
