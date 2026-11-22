@@ -6,12 +6,13 @@ import {
 } from './cli-options';
 
 const T = Date.UTC(2026, 10, 24);
+const REV = 'f'.repeat(40);
 
 describe('parseIdentityExportCommand', () => {
-  it('reads the defaults', () => {
+  it('reads a rehearsal export', () => {
     expect(
       parseIdentityExportCommand(
-        ['--out', 'x.json', '--revision', 'f'.repeat(40)],
+        ['--out', 'x.json', '--revision', REV, '--no-freeze', '--no-extra-ids'],
         {}
       )
     ).toEqual({
@@ -20,12 +21,13 @@ describe('parseIdentityExportCommand', () => {
       bulk: 2000,
       extraIdsFile: null,
       freezeMs: null,
-      revision: 'f'.repeat(40),
+      expectTdhBlock: null,
+      revision: REV,
       includeDelegations: true
     });
   });
 
-  it('reads every option and the environment', () => {
+  it('reads the export at the freeze, from options and the environment', () => {
     expect(
       parseIdentityExportCommand(
         [
@@ -35,6 +37,8 @@ describe('parseIdentityExportCommand', () => {
           '0',
           '--extra-ids',
           'waves.json',
+          '--expect-tdh-block',
+          '24000000',
           '--no-delegations'
         ],
         {
@@ -48,6 +52,7 @@ describe('parseIdentityExportCommand', () => {
       bulk: 0,
       extraIdsFile: 'waves.json',
       freezeMs: T,
+      expectTdhBlock: 24_000_000,
       revision: 'a'.repeat(40),
       includeDelegations: false
     });
@@ -59,7 +64,8 @@ describe('parseIdentityExportCommand', () => {
           '--freeze-at',
           String(T + 1),
           '--revision',
-          'b'.repeat(40)
+          'b'.repeat(40),
+          '--no-extra-ids'
         ],
         { IDENTITY_FREEZE_AT: '2026-11-24T00:00:00Z' }
       )
@@ -68,14 +74,53 @@ describe('parseIdentityExportCommand', () => {
     );
   });
 
+  const base = ['--revision', REV, '--no-freeze', '--no-extra-ids'];
   it.each([
-    [[], '--out FILE is required'],
+    [[...base], '--out FILE is required'],
     [['--out'], '--out needs a value'],
-    [['--out', 'x', '--bulk', '-1'], '--bulk must be a whole number'],
-    [['--out', 'x', '--revision', 'abc'], 'revision must be a 40-hex'],
-    [['--out', 'x'], 'The exporter revision is required'],
-    [['--out', 'x', '--freeze-at', '24 Nov'], 'freeze time'],
-    [['--out', 'x', '--what'], 'Unknown argument']
+    [['--out', 'x', ...base, '--bulk', '-1'], '--bulk must be a whole number'],
+    [
+      ['--out', 'x', '--revision', 'abc', '--no-freeze', '--no-extra-ids'],
+      'revision must be a 40-hex'
+    ],
+    [
+      ['--out', 'x', '--no-freeze', '--no-extra-ids'],
+      'The exporter revision is required'
+    ],
+    [['--out', 'x', '--revision', REV, '--no-extra-ids'], 'freeze time'],
+    [
+      [
+        '--out',
+        'x',
+        '--revision',
+        REV,
+        '--no-extra-ids',
+        '--no-freeze',
+        '--freeze-at',
+        String(T)
+      ],
+      'freeze time'
+    ],
+    [['--out', 'x', '--revision', REV, '--no-freeze'], 'waves list'],
+    [
+      [
+        '--out',
+        'x',
+        '--revision',
+        REV,
+        '--no-freeze',
+        '--no-extra-ids',
+        '--extra-ids',
+        'w.json'
+      ],
+      'waves list'
+    ],
+    [['--out', 'x', ...base, '--freeze-at', '24 Nov'], 'freeze time'],
+    [
+      ['--out', 'x', ...base, '--expect-tdh-block', 'soon'],
+      '--expect-tdh-block must be a whole number'
+    ],
+    [['--out', 'x', ...base, '--what'], 'Unknown argument']
   ])('refuses %j', (args, message) => {
     expect(() => parseIdentityExportCommand(args as string[], {})).toThrow(
       message
@@ -86,7 +131,7 @@ describe('parseIdentityExportCommand', () => {
   });
 
   it('answers help', () => {
-    expect(parseIdentityExportCommand(['--help'], {})).toEqual({
+    expect(parseIdentityExportCommand(['--out', 'x', '--help'], {})).toEqual({
       command: 'help'
     });
   });
@@ -99,6 +144,12 @@ describe('parseFreezeTime', () => {
     [String(T), T]
   ])('reads %s', (raw, millis) => {
     expect(parseFreezeTime(raw)).toBe(millis);
+  });
+
+  it('refuses Unix seconds', () => {
+    expect(() => parseFreezeTime(String(T / 1000))).toThrow(
+      IdentityExportUsageError
+    );
   });
 });
 

@@ -1,4 +1,6 @@
-export const IDENTITY_EXPORT_HELP = `Usage: 6529 run identity:export -- --out FILE [options]
+export const IDENTITY_EXPORT_HELP = `Usage: 6529 run identity:export -- --out FILE --revision HEX
+         (--freeze-at TIME | --no-freeze) (--extra-ids FILE | --no-extra-ids)
+         [--expect-tdh-block N] [--bulk N] [--no-delegations]
 
 Writes 6529.io's identities, profiles, REP and CIC ratings and reserved
 handles as a 6529.identity-export.v1 JSON file, the input of the Identities
@@ -7,26 +9,32 @@ the read pool (DB_HOST_READ) in one read-only transaction with a consistent
 snapshot. Run it against a read replica.
 
 Options:
-  --out FILE           where to write the export (required)
-  --bulk N             a rater's REP category with more than N targets brings
-                       no one in by itself (default 2000; 0 turns it off)
-  --extra-ids FILE     profile ids in scope for waves activity: a JSON list,
-                       {"profile_ids": [...]}, or whitespace separated
-  --freeze-at TIME     the freeze time T (ISO 8601 UTC) or Unix milliseconds;
-                       defaults to IDENTITY_FREEZE_AT when that is set
-  --revision HEX       the exporter's 40-hex git commit, such as
-                       $(git rev-parse HEAD) (default: EXPORTER_REVISION; one
-                       of the two is required)
-  --no-delegations     leave out 6529.io's delegations table
-  --help               this text
+  --out FILE             where to write the export (required)
+  --revision HEX         the exporter's 40-hex git commit, such as
+                         $(git rev-parse HEAD) (or EXPORTER_REVISION; required)
+  --freeze-at TIME       the freeze time T: ISO 8601 UTC or 13-digit Unix
+                         milliseconds (or IDENTITY_FREEZE_AT)
+  --no-freeze            a rehearsal export, not at the freeze (freeze_ms null)
+  --extra-ids FILE       profile ids in scope for waves activity: a JSON list,
+                         {"profile_ids": [...]}, or whitespace separated
+  --no-extra-ids         export without the waves list (noted in the file)
+  --expect-tdh-block N   fail unless 6529.io's latest TDH block is N (B_T at the
+                         freeze), so the wallets are the freeze day's
+  --bulk N               a rater's REP category with more than N targets brings
+                         no target in by itself (default 2000; 0 turns it off)
+  --no-delegations       leave out 6529.io's delegations table
+  --help                 this text
 `;
 
 export interface IdentityExportCommand {
   readonly command: 'export';
   readonly out: string;
   readonly bulk: number;
+  /** null with --no-extra-ids. */
   readonly extraIdsFile: string | null;
+  /** null with --no-freeze. */
   readonly freezeMs: number | null;
+  readonly expectTdhBlock: number | null;
   readonly revision: string;
   readonly includeDelegations: boolean;
 }
@@ -46,15 +54,16 @@ export class IdentityExportUsageError extends Error {
 const ISO_UTC =
   /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,3})?)?(?:Z|[+-]00:00)$/;
 
+/** ISO 8601 UTC, or Unix milliseconds (13 digits: seconds are refused). */
 export function parseFreezeTime(raw: string): number {
   const value = raw.trim();
-  if (/^\d{1,16}$/.test(value)) {
+  if (/^\d{13}$/.test(value)) {
     return Number(value);
   }
   const millis = ISO_UTC.test(value) ? Date.parse(value) : Number.NaN;
   if (!Number.isFinite(millis)) {
     throw new IdentityExportUsageError(
-      `The freeze time must be ISO 8601 UTC or Unix milliseconds, got "${raw}"`
+      `The freeze time must be ISO 8601 UTC or 13-digit Unix milliseconds, got "${raw}"`
     );
   }
   return millis;
@@ -83,80 +92,130 @@ export function parseExtraIds(text: string): string[] {
     .filter((it) => it.length > 0);
 }
 
-export function parseIdentityExportCommand(
-  args: string[],
-  env: Record<string, string | undefined> = process.env
-): IdentityExportCliCommand {
-  let out: string | null = null;
-  let bulk = 2000;
-  let extraIdsFile: string | null = null;
-  let freezeMs: number | null = env.IDENTITY_FREEZE_AT
-    ? parseFreezeTime(env.IDENTITY_FREEZE_AT)
-    : null;
-  let revision: string | null = env.EXPORTER_REVISION?.trim() || null;
-  let includeDelegations = true;
-  const value = (i: number, flag: string) => {
-    const v = args[i + 1];
-    if (v === undefined || v.startsWith('--')) {
-      throw new IdentityExportUsageError(`${flag} needs a value`);
-    }
-    return v;
-  };
-  for (let i = 0; i < args.length; i++) {
-    const arg = args[i];
-    switch (arg) {
-      case '--help':
-      case '-h':
-        return { command: 'help' };
-      case '--out':
-        out = value(i++, arg);
-        break;
-      case '--bulk': {
-        const raw = value(i++, arg);
-        if (!/^\d+$/.test(raw)) {
-          throw new IdentityExportUsageError(
-            `--bulk must be a whole number, got "${raw}"`
-          );
-        }
-        bulk = Number(raw);
-        break;
-      }
-      case '--extra-ids':
-        extraIdsFile = value(i++, arg);
-        break;
-      case '--freeze-at':
-        freezeMs = parseFreezeTime(value(i++, arg));
-        break;
-      case '--revision':
-        revision = value(i++, arg);
-        break;
-      case '--no-delegations':
-        includeDelegations = false;
-        break;
-      default:
-        throw new IdentityExportUsageError(`Unknown argument "${arg}"`);
-    }
+interface Draft {
+  out: string | null;
+  bulk: number;
+  extraIdsFile: string | null;
+  noExtraIds: boolean;
+  freezeMs: number | null;
+  noFreeze: boolean;
+  expectTdhBlock: number | null;
+  revision: string | null;
+  includeDelegations: boolean;
+}
+
+function wholeNumber(flag: string, raw: string): number {
+  if (!/^\d+$/.test(raw)) {
+    throw new IdentityExportUsageError(
+      `${flag} must be a whole number, got "${raw}"`
+    );
   }
-  if (!out) {
+  return Number(raw);
+}
+
+/** Reads one option into the draft; returns how many arguments it took. */
+function readOption(
+  draft: Draft,
+  arg: string,
+  next: string | undefined
+): number {
+  const value = () => {
+    if (next === undefined || next.startsWith('--')) {
+      throw new IdentityExportUsageError(`${arg} needs a value`);
+    }
+    return next;
+  };
+  switch (arg) {
+    case '--out':
+      draft.out = value();
+      return 2;
+    case '--bulk':
+      draft.bulk = wholeNumber(arg, value());
+      return 2;
+    case '--extra-ids':
+      draft.extraIdsFile = value();
+      return 2;
+    case '--no-extra-ids':
+      draft.noExtraIds = true;
+      return 1;
+    case '--freeze-at':
+      draft.freezeMs = parseFreezeTime(value());
+      return 2;
+    case '--no-freeze':
+      draft.noFreeze = true;
+      return 1;
+    case '--expect-tdh-block':
+      draft.expectTdhBlock = wholeNumber(arg, value());
+      return 2;
+    case '--revision':
+      draft.revision = value();
+      return 2;
+    case '--no-delegations':
+      draft.includeDelegations = false;
+      return 1;
+    default:
+      throw new IdentityExportUsageError(`Unknown argument "${arg}"`);
+  }
+}
+
+function checkDraft(draft: Draft): IdentityExportCommand {
+  if (!draft.out) {
     throw new IdentityExportUsageError('--out FILE is required');
   }
-  if (revision === null) {
+  if (draft.revision === null) {
     throw new IdentityExportUsageError(
       'The exporter revision is required: pass --revision <40-hex commit> or set EXPORTER_REVISION'
     );
   }
-  if (revision !== null && !/^[0-9a-f]{40}$/.test(revision.toLowerCase())) {
+  if (!/^[0-9a-f]{40}$/.test(draft.revision.toLowerCase())) {
     throw new IdentityExportUsageError(
-      `The revision must be a 40-hex git commit, got "${revision}"`
+      `The revision must be a 40-hex git commit, got "${draft.revision}"`
+    );
+  }
+  if ((draft.freezeMs === null) === !draft.noFreeze) {
+    throw new IdentityExportUsageError(
+      'Give the freeze time (--freeze-at or IDENTITY_FREEZE_AT) or --no-freeze for a rehearsal, one of the two'
+    );
+  }
+  if ((draft.extraIdsFile === null) === !draft.noExtraIds) {
+    throw new IdentityExportUsageError(
+      'Give the waves list (--extra-ids FILE) or --no-extra-ids, one of the two'
     );
   }
   return {
     command: 'export',
-    out,
-    bulk,
-    extraIdsFile,
-    freezeMs,
-    revision: revision.toLowerCase(),
-    includeDelegations
+    out: draft.out,
+    bulk: draft.bulk,
+    extraIdsFile: draft.extraIdsFile,
+    freezeMs: draft.freezeMs,
+    expectTdhBlock: draft.expectTdhBlock,
+    revision: draft.revision.toLowerCase(),
+    includeDelegations: draft.includeDelegations
   };
+}
+
+export function parseIdentityExportCommand(
+  args: string[],
+  env: Record<string, string | undefined> = process.env
+): IdentityExportCliCommand {
+  if (args.includes('--help') || args.includes('-h')) {
+    return { command: 'help' };
+  }
+  const draft: Draft = {
+    out: null,
+    bulk: 2000,
+    extraIdsFile: null,
+    noExtraIds: false,
+    freezeMs: env.IDENTITY_FREEZE_AT
+      ? parseFreezeTime(env.IDENTITY_FREEZE_AT)
+      : null,
+    noFreeze: false,
+    expectTdhBlock: null,
+    revision: env.EXPORTER_REVISION?.trim() || null,
+    includeDelegations: true
+  };
+  for (let i = 0; i < args.length; ) {
+    i += readOption(draft, args[i], args[i + 1]);
+  }
+  return checkDraft(draft);
 }

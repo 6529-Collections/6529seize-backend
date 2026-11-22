@@ -5,7 +5,8 @@ import {
 } from './identity-export.db';
 import {
   buildIdentityExport,
-  reservedHandles
+  reservedHandles,
+  shownClassification
 } from './identity-export.service';
 import { IdentityExportRating } from './identity-export.types';
 
@@ -254,7 +255,12 @@ describe('buildIdentityExport', () => {
       [ALICE, 'REP', P3, 'Good Person', -5]
     ]);
     expect(doc.bulk_rep).toEqual([
-      { profile_id: TAGGER, category: 'Holder', contributor_count: 3 }
+      {
+        profile_id: TAGGER,
+        direction: 'outgoing',
+        category: 'Holder',
+        contributor_count: 3
+      }
     ]);
     expect(doc.stats).toEqual(
       expect.objectContaining({
@@ -318,5 +324,33 @@ describe('reservedHandles', () => {
         a < b ? -1 : a > b ? 1 : 0
       )
     );
+  });
+});
+
+describe('values as the public API shows them', () => {
+  it('reads an unset or unknown classification as PSEUDONYM', () => {
+    expect(shownClassification(null)).toBe('PSEUDONYM');
+    expect(shownClassification('SOMETHING_ELSE')).toBe('PSEUDONYM');
+    expect(shownClassification('ORGANIZATION')).toBe('ORGANIZATION');
+  });
+
+  it('reads statements of real handles only, and notes a missing waves list', async () => {
+    const { source } = world();
+    const asked: string[][] = [];
+    const statementsByProfileIds = source.statementsByProfileIds;
+    source.statementsByProfileIds = async (ids) => {
+      asked.push(ids);
+      return statementsByProfileIds(ids);
+    };
+    const doc = await buildIdentityExport(source, {
+      bulkThreshold: 2,
+      extraProfileIds: [],
+      wavesListGiven: false,
+      includeDelegations: false,
+      freezeMs: null,
+      exporterRevision: 'a'.repeat(40)
+    });
+    expect(asked.flat().sort()).toEqual([ALICE, TAGGER].sort());
+    expect(doc.notes[0]).toContain('no --extra-ids');
   });
 });

@@ -1,5 +1,7 @@
 import { RESERVED_HANDLES } from '@/api/profiles/profiles.constants';
 import { getLevelFromScore } from '@/profiles/profile-level';
+import { ProfileClassification } from '@/entities/IProfile';
+import { enums } from '@/enums';
 import {
   IdentityExportSource,
   IdentityRow,
@@ -12,7 +14,6 @@ import {
   compareCodePoints,
   compareRatings,
   findBulkCategories,
-  isPlaceholderHandle,
   isRealHandle,
   publicExporterReach,
   RatingEdge,
@@ -34,6 +35,8 @@ export interface IdentityExportOptions {
   readonly bulkThreshold: number;
   /** Profiles in scope for waves activity (the waves lead's list at T). */
   readonly extraProfileIds: readonly string[];
+  /** False when exported without the waves list (noted in the file). */
+  readonly wavesListGiven?: boolean;
   readonly includeDelegations: boolean;
   readonly freezeMs: number | null;
   readonly exporterRevision: string;
@@ -50,6 +53,7 @@ export interface IdentityExportDocument extends IdentityExportHeader {
   /** Extra keys, as the public-API exporter writes them. */
   readonly bulk_rep: {
     profile_id: string;
+    direction: 'outgoing';
     category: string;
     contributor_count: number;
   }[];
@@ -103,7 +107,7 @@ export function toExportIdentity(
     primary_address: primary,
     wallets: walletList,
     consolidation_key: row.consolidation_key,
-    classification: row.classification ?? null,
+    classification: shownClassification(row.classification),
     sub_classification: row.sub_classification ?? null,
     pfp: row.pfp ?? null,
     banner1: row.banner1 ?? null,
@@ -118,6 +122,17 @@ export function toExportIdentity(
     level_raw: levelRaw,
     scope
   };
+}
+
+/**
+ * The classification as 6529.io shows it (the public API and so the
+ * public-API export): unset or unknown reads as PSEUDONYM.
+ */
+export function shownClassification(value: string | null): string {
+  return (
+    (value ? enums.resolve(ProfileClassification, value) : null) ??
+    ProfileClassification.PSEUDONYM
+  );
 }
 
 function compareIdentities(
@@ -272,8 +287,7 @@ async function readStatements(
 
 function identityNotes(
   keys: string[],
-  wallets: Map<string, string[]>,
-  identities: IdentityExportIdentity[]
+  wallets: Map<string, string[]>
 ): string[] {
   const notes: string[] = [];
   const walletsMissing = keys.filter(
@@ -282,14 +296,6 @@ function identityNotes(
   if (walletsMissing) {
     notes.push(
       `${walletsMissing} identities have no address_consolidation_keys row: their primary address is their one wallet`
-    );
-  }
-  const placeholderStatements = identities.filter(
-    (it) => isPlaceholderHandle(it.handle) && it.statements.length > 0
-  ).length;
-  if (placeholderStatements) {
-    notes.push(
-      `${placeholderStatements} exported profiles with a placeholder handle have statements (exported)`
     );
   }
   return notes;
@@ -311,9 +317,12 @@ async function buildIdentities(
   }
   const keys = Array.from(exportKeys).sort(compareCodePoints);
   const wallets = await source.walletsByConsolidationKeys(keys);
+  // Only profiles with a real handle have a profile document's statements,
+  // as the public-API export reads them.
   const statements = await readStatements(
     source,
     keys
+      .filter((key) => isRealHandle(index.rowsByKey.get(key)?.p_handle ?? null))
       .map((key) => index.profileOfKey(key))
       .filter((it): it is string => !!it)
   );
@@ -332,7 +341,7 @@ async function buildIdentities(
     })
     .filter((it) => it.scope.length > 0)
     .sort(compareIdentities);
-  return { identities, notes: identityNotes(keys, wallets, identities) };
+  return { identities, notes: identityNotes(keys, wallets) };
 }
 
 function scopeNotes(
@@ -397,6 +406,11 @@ export async function buildIdentityExport(
   const built = await buildIdentities(source, index, core, scope);
   const identities = built.identities;
   const notes = [
+    ...(options.wavesListGiven === false
+      ? [
+          'no --extra-ids: profiles in scope only for waves activity (drops, entries, waves, votes, wave ratings, group lists) are not included'
+        ]
+      : []),
     ...scopeNotes(core, excluded, bulkCategories, options.bulkThreshold, scope),
     ...built.notes
   ];
@@ -443,6 +457,7 @@ export async function buildIdentityExport(
     notes,
     bulk_rep: bulkCategories.map((it) => ({
       profile_id: it.rater_profile_id,
+      direction: 'outgoing' as const,
       category: it.category,
       contributor_count: it.targets
     })),

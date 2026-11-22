@@ -8,6 +8,8 @@ import {
 } from './cli-options';
 
 async function runExport(command: IdentityExportCommand) {
+  // Dates read from MySQL (statements, ratings) in UTC, whatever the host.
+  process.env.TZ = 'UTC';
   const extraProfileIds = command.extraIdsFile
     ? parseExtraIds(fs.readFileSync(command.extraIdsFile, 'utf8'))
     : [];
@@ -35,12 +37,21 @@ async function runExport(command: IdentityExportCommand) {
           const document = await buildIdentityExport(source, {
             bulkThreshold: command.bulk,
             extraProfileIds,
+            wavesListGiven: command.extraIdsFile !== null,
             includeDelegations: command.includeDelegations,
             freezeMs: command.freezeMs,
             exporterRevision,
             log: (message) =>
               process.stderr.write(`[identity-export] ${message}\n`)
           });
+          if (
+            command.expectTdhBlock !== null &&
+            document.tdh_block !== command.expectTdhBlock
+          ) {
+            throw new IdentityExportUsageError(
+              `6529.io's latest TDH block is ${document.tdh_block}, not ${command.expectTdhBlock}: wait for the freeze day's TDH run and its identity sync, then export again`
+            );
+          }
           await writeJsonDocument(command.out, { ...document });
           return {
             out: command.out,

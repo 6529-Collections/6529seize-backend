@@ -2,11 +2,12 @@ import { IdentityExportRating } from './identity-export.types';
 
 /**
  * Which identities the 6529 chain imports (MIGRATION-PLAN section 1, with
- * the snapshot lane's bulk rule):
+ * the snapshot lane's bulk rule, as its builder applies it):
  * - core: a real handle, two or more wallets, or waves activity;
  * - and every profile at either end of a REP or CIC rating, except that a
  *   rating in a bulk category (one rater's REP category with more than
- *   `bulkThreshold` targets, such as holder tags) brings no one in by itself.
+ *   `bulkThreshold` targets, such as holder tags) does not bring its target
+ *   in (its rater gave a rating, so it is in).
  * Every rating whose two ends are both in is exported, bulk or not.
  * `bulkThreshold` 0 turns the bulk rule off.
  */
@@ -124,8 +125,9 @@ export function selectRatingScope({
     if (!excluded.has(it)) profiles.add(it);
   });
   for (const edge of usable) {
+    // A rater always gave a rating; a bulk rating brings no target in.
+    profiles.add(edge.rater_profile_id);
     if (!isBulkEdge(edge, bulk)) {
-      profiles.add(edge.rater_profile_id);
       profiles.add(edge.target_profile_id);
     }
   }

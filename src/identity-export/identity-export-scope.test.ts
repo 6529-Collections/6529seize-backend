@@ -117,6 +117,25 @@ describe('selectRatingScope', () => {
     expect(scope.rated.has('p6')).toBe(false);
   });
 
+  it('brings in a bulk rater outside the core: it gave a rating', () => {
+    const outsider = 'outsider';
+    const many = [
+      rep(outsider, 'alice', 'Tag'),
+      rep(outsider, 'q1', 'Tag'),
+      rep(outsider, 'q2', 'Tag')
+    ];
+    const scope = selectRatingScope({
+      core: new Set(['alice']),
+      edges: many,
+      bulk: bulkKeys(findBulkCategories(many, 2)),
+      excluded: new Set()
+    });
+    expect(scope.profiles.has(outsider)).toBe(true);
+    expect(scope.profiles.has('q1')).toBe(false);
+    expect(scope.ratings).toEqual([rep(outsider, 'alice', 'Tag')]);
+    expect(scope.rated.has(outsider)).toBe(true);
+  });
+
   it('with the bulk rule off, brings in every end', () => {
     const scope = selectRatingScope({
       core,
@@ -163,7 +182,13 @@ describe('selectRatingScope', () => {
           for (const profile of Array.from(scope.profiles)) {
             expect(excluded.has(profile)).toBe(false);
             if (!coreList.includes(profile)) {
-              expect(scope.rated.has(profile)).toBe(true);
+              const rater = graph.some(
+                (edge) =>
+                  edge.rater_profile_id === profile &&
+                  edge.target_profile_id !== profile &&
+                  !excluded.has(edge.target_profile_id)
+              );
+              expect(scope.rated.has(profile) || rater).toBe(true);
             }
           }
           for (const edge of scope.ratings) {
