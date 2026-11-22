@@ -101,10 +101,12 @@ class RetryableChainReadError extends Error {
  * same transition, so they leave the same rows.
  *
  * A change whose document or files are not in the store yet, or whose port
- * read fails in any way (a gateway error, a wallet whose principal at that
- * height isn't known yet), is retried, at most
+ * read fails (a gateway error), is retried, at most
  * {@link PROFILE_CMS_MAX_CHANGE_ATTEMPTS} times; meanwhile the person's
- * later changes wait and everyone else's go on. Live, the last try applies it
+ * later changes wait and everyone else's go on. A read the port says to try
+ * later (an error with `retryLater: true`, such as a wallet whose principal
+ * at that height isn't known yet) waits without using up a try, and is
+ * logged on every pass until it reads. Live, the last try applies it
  * as it reads: an unreadable document or a missing site file serves no site.
  * In `rebuild` mode the last try fails the rebuild instead.
  */
@@ -453,6 +455,13 @@ export class ProfileCmsChainFollower {
       throw error;
     }
     const message = error instanceof Error ? error.message : String(error);
+    if (isRetryLater(error)) {
+      // Not known yet, not a failure: the change waits, never skipped.
+      throw new RetryableChainReadError(
+        `${what}_retry_later: ${message}`,
+        false
+      );
+    }
     if (!lastTry) {
       throw new RetryableChainReadError(`${what}_read_failed: ${message}`);
     }
@@ -721,8 +730,17 @@ export class ProfileCmsChainFollower {
   }
 }
 
+/** The port's mark for "not known yet, try later" (the identity mirror's ChainReadRetryLater). */
+function isRetryLater(error: unknown): boolean {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    (error as { readonly retryLater?: unknown }).retryLater === true
+  );
+}
+
 /**
- * The identity mirror's hook, called after each finalized page it reads.
+ * The identity mirror's hook, called at the end of each mirror run.
  * With FEATURE_PROFILE_CMS_CHAIN_POINTER off it does nothing. On, it catches
  * up from the index's own cursor (the lowest waiting change, else one past
  * the last applied), so turning the flag off and on again loses nothing.

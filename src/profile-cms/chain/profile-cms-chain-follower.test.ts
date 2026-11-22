@@ -153,6 +153,28 @@ describe('ProfileCmsChainFollower', () => {
       expect(db.heads.get(OTHER)).toMatchObject({ doc_version: 1 });
     });
 
+    it('waits on a read to try later without using up tries or skipping', async () => {
+      const { chain, db, follower } = setup();
+      const notYet = Object.assign(
+        new Error('wallet principal unknown at height 10'),
+        { retryLater: true }
+      );
+      jest.spyOn(chain, 'getIdentityByPrincipal').mockRejectedValue(notYet);
+      const at = change(CHAIN_FIXTURE_PRINCIPAL, 10);
+      for (let pass = 1; pass <= PROFILE_CMS_MAX_CHANGE_ATTEMPTS + 2; pass++) {
+        expect(await follower.applyChange(at, ctx)).toEqual({
+          status: 'retry',
+          reason: 'identity_retry_later: wallet principal unknown at height 10',
+          attempt: 0
+        });
+      }
+      expect(db.heads.get(CHAIN_FIXTURE_PRINCIPAL)).toMatchObject({
+        doc_version: 0,
+        pending_version: 1,
+        pending_attempts: 0
+      });
+    });
+
     it('gives up on the last try as for a missing identity', async () => {
       const { chain, db, follower } = setup();
       jest

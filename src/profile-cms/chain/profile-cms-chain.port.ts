@@ -5,6 +5,10 @@
  * `src/chain-gateway`), so the adapter that replaces the fixtures is a thin
  * mapping once that module lands. Each member names the gateway route and
  * field it maps to.
+ *
+ * Errors: a read that throws an error with `retryLater: true` means "not
+ * known yet" (a wallet's principal at that height, say); the change waits
+ * without using up a try. Any other error is one of a change's tries.
  */
 export interface ProfileCmsChainReadOptions {
   readonly height?: number;

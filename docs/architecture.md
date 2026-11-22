@@ -1718,10 +1718,11 @@ Important API responsibilities:
 - Profile sites on the 6529 chain, behind `FEATURE_PROFILE_CMS_CHAIN_POINTER`
   (default off). The person's ProfileDoc keys `cms.primary.publication` and
   `cms.primary.package` name the primary site's signed publication record and
-  content core by CID; `PROFILE_REPLACE` moves them. The identity mirror
-  passes each finalized Profile change to `src/profile-cms/chain`, which reads the document and files through the chain
-  gateway, checks them, and indexes the pointer and its events in the profile
-  CMS tables, so a rebuild from the change feed writes the same rows. The
+  content core by CID; `PROFILE_REPLACE` moves them. At the end of each
+  identity mirror run, `src/profile-cms/chain` follows the finalized Profile
+  changes from its own cursor: it reads the documents and files through the
+  chain gateway, checks them, and indexes the pointer and its events in the
+  profile CMS tables, so a rebuild from the change feed writes the same rows. The
   `profile-cms:export` command builds the import's site keys, archive files
   and package files at the identity freeze. With the flag on, publish stores
   the signed publication in the document store and returns its CID for the

@@ -457,10 +457,11 @@ place), times (the block time) and rows follow from the chain and the files
 alone, so a rebuild from empty tables writes the same public rows.
 
 A change whose document or files are not in the store yet, whose Safe
-check fails on the network, or whose read through the chain port fails in
-any way (a gateway error, a wallet whose principal at that height isn't
-known yet) is retried up to five times; meanwhile that person's later
-changes wait and everyone else's go on. Live, the last try applies it as it
+check fails on the network, or whose read through the chain port fails (a
+gateway error) is retried up to five times; meanwhile that person's later
+changes wait and everyone else's go on. A read the port says to try later
+(a wallet whose principal at that height isn't known yet) waits without
+using up a try, and is logged on every pass until it reads. Live, the last try applies it as it
 reads: no site. A rebuild (`profile-cms:chain-sync` and the rebuild-check
 steps) retries until nothing waits and fails on a change still unreadable
 after its tries, instead of serving no site. Safe (EIP-1271) signatures are
