@@ -127,6 +127,16 @@ describe('personal record types', () => {
     ).not.toBeNull();
   });
 
+  it("answers 503 when the gateway can't say whose a target wallet is", async () => {
+    const { run, owners } = setup();
+    jest
+      .spyOn(owners, 'principalAt')
+      .mockRejectedValue(new Error('does not cover height'));
+    await expect(run('mute', UNBOUND_WALLET, {})).rejects.toMatchObject({
+      code: 'OWNERS_UNAVAILABLE'
+    });
+  });
+
   describe('follow', () => {
     it('sets the full set of actions, notifies a new follower once, and unfollows', async () => {
       const { run, tables, live } = setup();

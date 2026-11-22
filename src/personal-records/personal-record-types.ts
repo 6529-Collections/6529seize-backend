@@ -29,6 +29,7 @@ import type {
   PushSettings,
   WaveMentionGroup
 } from './personal-records.ports';
+import { ownersUnavailable } from './personal-records.ports';
 import type { RecordOwnerDirectory } from './record-owner-directory';
 
 /**
@@ -242,10 +243,12 @@ async function targetProfileId(
   mode: ApplyMode
 ): Promise<string | null> {
   if (mode === 'live' && isWalletAddress(target)) {
-    const principal = await deps.owners.principalAt(
-      target,
-      change.order.anchor
-    );
+    let principal: string | null;
+    try {
+      principal = await deps.owners.principalAt(target, change.order.anchor);
+    } catch {
+      throw ownersUnavailable();
+    }
     if (principal) {
       rule('Name this profile by its principal id.', 'TARGET_NOT_CANONICAL');
     }

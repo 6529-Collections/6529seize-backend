@@ -26,6 +26,7 @@ import {
   VerifiedRecord
 } from '@/signed-records/record-verify';
 import type { RecordLogWriter } from '@/signed-records/record-log/record-log.service';
+import { ownersUnavailable } from './personal-records.ports';
 import type { RecordOwnerDirectory } from './record-owner-directory';
 
 /** At most this many records in one submit. */
@@ -139,16 +140,23 @@ export class PersonalRecordsService {
     const accepted: { index: number; record: VerifiedRecord }[] = [];
     for (let index = 0; index < events.length; index++) {
       const event = events[index];
-      const verified = await verifyRecordEvent(event, {
-        grants: this.deps.grants,
-        bindings: this.deps.owners,
-        live: {
-          now,
-          head: anchor.anchor,
-          maxAnchorLag: anchor.maxAnchorLag,
-          maxClockSkewMs: this.deps.maxClockSkewMs
-        }
-      });
+      let verified: Awaited<ReturnType<typeof verifyRecordEvent>>;
+      try {
+        verified = await verifyRecordEvent(event, {
+          grants: this.deps.grants,
+          bindings: this.deps.owners,
+          live: {
+            now,
+            head: anchor.anchor,
+            maxAnchorLag: anchor.maxAnchorLag,
+            maxClockSkewMs: this.deps.maxClockSkewMs
+          }
+        });
+      } catch {
+        // A bad record answers as a verify result; a throw here is the
+        // gateway failing to say whose the author's wallet was.
+        throw ownersUnavailable();
+      }
       if (!verified.ok) {
         results.set(index, {
           id: idOf(event),

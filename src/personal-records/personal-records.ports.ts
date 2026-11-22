@@ -1,5 +1,20 @@
 import type { RequestContext } from '@/request.context';
 
+import { CustomApiCompliantException } from '@/exceptions';
+
+/**
+ * The answer when the chain gateway can't say whose a wallet is (it is
+ * down, or its binding history doesn't reach the height asked): 503, as
+ * GET /signed-records/owners answers, so the client tries again later.
+ */
+export function ownersUnavailable(): CustomApiCompliantException {
+  return new CustomApiCompliantException(
+    503,
+    "The chain gateway can't say who owns a wallet right now. Try again shortly.",
+    'OWNERS_UNAVAILABLE'
+  );
+}
+
 /** The follow actions a target type takes (today's API values). */
 export type FollowTargetType = 'IDENTITY' | 'WAVE' | 'DROP';
 export type FollowAction = 'DROP_CREATED' | 'WAVE_CREATED' | 'DROP_REPLIED';

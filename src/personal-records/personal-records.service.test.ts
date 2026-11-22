@@ -159,7 +159,7 @@ function setup(
     now: () => NOW,
     maxClockSkewMs: 10 * 60 * 1000
   });
-  return { service, tables, logged, heads };
+  return { service, tables, logged, heads, owners };
 }
 
 describe('PersonalRecordsService.submit', () => {
@@ -283,6 +283,18 @@ describe('PersonalRecordsService.submit', () => {
       { id: forged.id, outcome: 'rejected', reason: 'sig' },
       { id: null, outcome: 'rejected', reason: 'shape' }
     ]);
+  });
+
+  it("answers 503 when the gateway can't say whose the author's wallet was", async () => {
+    const { service, owners } = setup();
+    jest
+      .spyOn(owners, 'principalAt')
+      .mockRejectedValue(new Error('does not cover height 1050'));
+    const thrown = await service
+      .submit([VECTORS.followRecord], 'primary', 'p-me', {})
+      .catch((error: { code?: string; getStatusCode(): number }) => error);
+    expect(thrown).toMatchObject({ code: 'OWNERS_UNAVAILABLE' });
+    expect((thrown as { getStatusCode(): number }).getStatusCode()).toBe(503);
   });
 
   it("refuses another profile's records", async () => {
