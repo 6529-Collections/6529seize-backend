@@ -281,7 +281,7 @@ async function phaseTargets(): Promise<{
   readonly source: SubscriptionTables;
   readonly targets: string[];
 }> {
-  const mode = await subscriptionsIdentitySwitch.writeMode();
+  const mode = await subscriptionsIdentitySwitch.writeModeForLegacy();
   return mode === 'TRUTH'
     ? {
         mode,
@@ -541,11 +541,14 @@ function filterSubscriptions(
 
 export async function resetAllowlist(contract: string, tokenId: number) {
   const contractLower = contract.toLowerCase();
-  // Both final tables are reset whenever the identity writers run.
+  const mode = await subscriptionsIdentitySwitch.writeModeForLegacy();
+  // After the switch both final tables reset together. In shadow the
+  // identity table is reset afterwards, on its own, so a failure there
+  // never undoes the legacy reset.
   const finals =
-    (await subscriptionsIdentitySwitch.writeMode()) === 'OFF'
-      ? [SUBSCRIPTIONS_NFTS_FINAL_TABLE]
-      : [SUBSCRIPTIONS_NFTS_FINAL_TABLE, IDENTITY_SUBSCRIPTION_TABLES.final];
+    mode === 'TRUTH'
+      ? [SUBSCRIPTIONS_NFTS_FINAL_TABLE, IDENTITY_SUBSCRIPTION_TABLES.final]
+      : [SUBSCRIPTIONS_NFTS_FINAL_TABLE];
   await sqlExecutor.executeNativeQueriesInTransaction(
     async (wrappedConnection) => {
       for (const final of finals) {
@@ -607,4 +610,16 @@ export async function resetAllowlist(contract: string, tokenId: number) {
       );
     }
   );
+  if (mode === 'SHADOW') {
+    try {
+      await sqlExecutor.execute(
+        `UPDATE ${IDENTITY_SUBSCRIPTION_TABLES.final}
+          SET phase = NULL, phase_subscriptions = -1, phase_position = -1
+          WHERE contract = :contract AND token_id = :tokenId`,
+        { contract, tokenId }
+      );
+    } catch (error) {
+      shadowLogger.error('[SHADOW ALLOWLIST RESET FAILED]', error);
+    }
+  }
 }

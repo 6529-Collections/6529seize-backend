@@ -13,7 +13,10 @@ import {
 } from '@/constants';
 import { DbQueryOptions } from '@/db-query.options';
 import { sqlExecutor } from '@/sql-executor';
-import { OPENING_STATE_ID } from '../identity/identity-switch';
+import {
+  OPENING_STATE_ID,
+  subscriptionsIdentitySwitch
+} from '../identity/identity-switch';
 import {
   HISTORY_FORMAT,
   HistoryFile,
@@ -112,6 +115,30 @@ export async function loadOpeningFiles(
   if (opening.blocked.length > 0) {
     throw new Error(
       `The opening file lists ${opening.blocked.length} blocked keys; re-key them and cut again`
+    );
+  }
+  if (opening.cut.redemptionBlock === null) {
+    throw new Error(
+      'The cut has no redemption block (the redemption loop never ran); the identity writer would charge every airdrop since block 0'
+    );
+  }
+  // Never wipe identity tables that are, or are set to become, the truth.
+  const [current] = await sqlExecutor.execute<{
+    verified_at: number | null;
+    suspended_at: number | null;
+    switch_at: number | null;
+  }>(
+    `SELECT verified_at, suspended_at, switch_at FROM ${SUBSCRIPTIONS_ID_STATE_TABLE} WHERE id = :id`,
+    { id: OPENING_STATE_ID }
+  );
+  if (
+    current &&
+    current.switch_at !== null &&
+    current.verified_at !== null &&
+    current.suspended_at === null
+  ) {
+    throw new Error(
+      'The identity tables are the truth (or set to become it); suspend them before loading again'
     );
   }
   await sqlExecutor.executeNativeQueriesInTransaction(async (connection) => {
@@ -322,7 +349,7 @@ export async function loadOpeningFiles(
         VALUES (:id, :block, :nowMs)`,
       {
         id: REDEMPTION_CURSOR_ID,
-        block: opening.cut.redemptionBlock ?? 0,
+        block: opening.cut.redemptionBlock,
         nowMs
       },
       options
@@ -341,4 +368,5 @@ export async function loadOpeningFiles(
       options
     );
   });
+  subscriptionsIdentitySwitch.invalidate();
 }

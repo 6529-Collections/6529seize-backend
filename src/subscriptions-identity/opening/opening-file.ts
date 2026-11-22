@@ -39,8 +39,9 @@ export interface OpeningKey {
 
 export type BlockedReason =
   /**
-   * The key's wallets belong to more than one identity: a split, which the
-   * legacy re-key (consolidateSubscriptions) must make before the cut.
+   * The key's wallets belong to more than one identity (a split) and no
+   * queued re-key says where its state goes: the legacy re-key
+   * (consolidateSubscriptions) must make it before the cut.
    */
   | 'SPANS_IDENTITIES'
   /**
@@ -80,6 +81,10 @@ export type QueuedEffect =
   | 'LEFT_TO_THE_BUILD'
   /** A re-key, made at the cut by merging the identity's keys. */
   | 'MERGED_AT_CUT'
+  /** A re-key that splits a key: the key's state went where it decided. */
+  | 'SPLIT_APPLIED_AT_CUT'
+  /** A re-key with nothing left to do at the cut. */
+  | 'NOTHING_TO_APPLY'
   /** A redemption: the cut is blocked until it is replayed. */
   | 'BLOCKS_THE_CUT';
 

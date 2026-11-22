@@ -3053,34 +3053,46 @@ loaded), each legacy loop also writes them:
 
 - the top-up loop folds wallets that bound to an identity after the opening
   into it (balance added, mode and choices merged by the legacy rules, history
-  re-keyed; a wallet that leaves takes nothing), then credits new top-ups,
-  including those the key-width guard holds back, to the sender's identity;
+  re-keyed; a wallet that leaves takes nothing; `identity-fold.ts`), then
+  credits new top-ups, including those the key-width guard holds back, to the
+  sender's identity;
 - the daily loop builds the card's list from the identity tables with the
   legacy rules (the engine's `buildFinalList`);
 - the transactions loop matches airdrop mints against the identity final
-  rows from its own cursor;
+  rows from its own cursor, up to the block the legacy loop has processed;
 - a phase pull splits the identity rows.
 
 After the switch the identity list is the one published (with an identity
 column), and each final row has one id in both tables: the identity table
 allocates it and the legacy dual write copies it, so the mint log keys phase
-rows by the same id before and after. A phase pull writes the same phase to
+rows by the same id before and after. Two legacy keys of one identity (a
+re-key the key-width guard held back) can't share an id: the first takes it
+and the other is not written, and the list report names it. A phase pull writes the same phase to
 both tables by id. In shadow the legacy side publishes and allocates, and the
 identity side is built beside it with the same ids and compared. Every
 comparison (a card's list, a phase, a run's redemptions) is kept in
-`subscriptions_id_reports` with a MATCH or DIFF verdict. In shadow a writer's
-failure is logged and never stops the legacy loop; after the switch it fails
-the run. Person-made changes (subscribe, count, mode, editions) reach the
+`subscriptions_id_reports` with a MATCH or DIFF verdict. In shadow the
+identity side runs after the legacy side's own work and notices, a failure is
+logged, and a legacy loop that can't read the switch state goes on alone;
+after the switch an identity writer's failure fails the run, and a failed
+legacy dual write is logged. Person-made changes (subscribe, count, mode, editions) reach the
 identity tables through signed records, so in shadow a list differs for
 anyone who changed a choice since the opening; cut and load again before a
 build to compare it.
 
-**Switch.** The identity tables are the truth once
-`FEATURE_SUBSCRIPTIONS_IDENTITY_FROM` (an ISO time) has passed and the
-opening state is verified and not suspended. Readers re-read the state at
-least every 60 seconds, so `subscriptions:opening -- suspend` rolls every
-lambda back to the legacy tables in one step. Going forward again takes a new
-cut and load.
+**Switch.** The switch is one row, `subscriptions_id_state`, so one write
+moves every service. `subscriptions:opening -- go-live --signed-writes-live`
+does it in one step: it refuses unless the latest shadow list comparison
+matched and no shadow comparison differs since, then cuts, verifies, loads,
+compares and sets the switch time to now. The identity tables are the
+truth from that time while the load is verified and not suspended, and only
+for a cut taken at most 15 minutes before it. `load` refuses to replace
+tables that are, or are set to become, the truth, and a cut whose redemption
+loop never ran. Readers re-read the row at least every 60 seconds, so
+`suspend` rolls every lambda back to the legacy tables within 60 seconds,
+about 2 minutes counting the API cache. Going forward again takes a new
+go-live. Without signed subscription writes every change after the switch
+gets a 409, which is why go-live asks for `--signed-writes-live`.
 
 ## Cross-wave message search
 

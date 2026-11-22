@@ -238,6 +238,44 @@ describe('currentState', () => {
     ]);
   });
 
+  it('applies a queued re-key that splits a key, instead of blocking the cut', () => {
+    const t = empty();
+    // OLD's wallets now belong to P1 (A) and X: a split. The legacy re-key
+    // chose P1's key for it, but the key-width guard held that back.
+    const OLD = `${A}-${X}`;
+    t.balances.push({
+      consolidation_key: OLD,
+      balance: 0.3,
+      created_at: T1,
+      updated_at: T1
+    });
+    t.queue.push(
+      queued('CONSOLIDATION', PAIR, { newKey: PAIR, oldKeys: [OLD] })
+    );
+    const state = currentState(CUT, t, byWallet);
+    expect(state.blocked).toEqual([]);
+    expect(state.balances.map((b) => [b.identityKey, b.balance])).toEqual([
+      [P1, 0.3]
+    ]);
+    expect(state.queued.map((q) => q.effect)).toEqual(['SPLIT_APPLIED_AT_CUT']);
+  });
+
+  it('blocks a split with no queued decision, and names a re-key with nothing left to do', () => {
+    const t = empty();
+    t.balances.push({
+      consolidation_key: `${A}-${X}`,
+      balance: 0.3,
+      created_at: T1,
+      updated_at: T1
+    });
+    t.queue.push(
+      queued('CONSOLIDATION', PAIR, { newKey: PAIR, oldKeys: [PAIR] })
+    );
+    const state = currentState(CUT, t, byWallet);
+    expect(state.blocked.map((b) => b.reason)).toEqual(['SPANS_IDENTITIES']);
+    expect(state.queued.map((q) => q.effect)).toEqual(['NOTHING_TO_APPLY']);
+  });
+
   it('carries waiting log lines, leaves list rows to the build, and blocks on a waiting redemption', () => {
     const t = empty();
     t.queue.push(
@@ -248,7 +286,7 @@ describe('currentState', () => {
       }),
       queued('FINAL_ROW', WIDE, {}),
       queued('AUTO_SUBSCRIPTION', WIDE, {}),
-      queued('CONSOLIDATION', WIDE, {}),
+      queued('CONSOLIDATION', WIDE, { newKey: WIDE, oldKeys: [WIDE] }),
       queued('REDEMPTION', PAIR, {}),
       queued('REDEMPTION', PAIR, {})
     );
@@ -270,7 +308,7 @@ describe('currentState', () => {
       'LOG_CARRIED',
       'LEFT_TO_THE_BUILD',
       'LEFT_TO_THE_BUILD',
-      'MERGED_AT_CUT',
+      'NOTHING_TO_APPLY',
       'BLOCKS_THE_CUT',
       'BLOCKS_THE_CUT'
     ]);

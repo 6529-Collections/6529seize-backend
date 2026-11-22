@@ -300,8 +300,9 @@ export class SubscriptionIdKeyMapEntity {
 
 /**
  * One row, id 'opening': the opening file loaded into the identity tables.
- * The identity tables are the truth only while `verified_at` is set and
- * `suspended_at` is not (see identity-switch.ts).
+ * The identity tables are the truth from `switch_at`, while `verified_at`
+ * is set, `suspended_at` is not, and the cut was taken at the switch (see
+ * identity-switch.ts).
  */
 @Entity(SUBSCRIPTIONS_ID_STATE_TABLE)
 export class SubscriptionIdStateEntity {
@@ -327,6 +328,10 @@ export class SubscriptionIdStateEntity {
   /** Rollback: set, and every reader is back on the legacy tables in 60 s. */
   @Column({ type: 'bigint', nullable: true, default: null })
   suspended_at!: number | null;
+
+  /** When the identity tables become the truth; set by the CLI's go-live. */
+  @Column({ type: 'bigint', nullable: true, default: null })
+  switch_at!: number | null;
 }
 
 /**

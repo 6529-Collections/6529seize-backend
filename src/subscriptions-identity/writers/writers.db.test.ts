@@ -24,7 +24,7 @@ import { describeWithSeed } from '@/tests/_setup/seed';
 import { redeemSubscriptions } from '@/transactionsProcessingLoop/subscriptions';
 import { mirrorIdentityDirectory } from '../identity/identity-directory';
 import {
-  IDENTITY_FROM_ENV,
+  scheduleIdentitySwitch,
   SHADOW_ENV,
   subscriptionsIdentitySwitch
 } from '../identity/identity-switch';
@@ -35,6 +35,7 @@ import {
   runIdentityRedemptionWriters,
   runIdentityTopUpWriters
 } from './identity-loop-hooks';
+import { shadowReportsMatch } from './identity-reports';
 
 const uploadFile = jest.fn();
 jest.mock('@/arweave', () => ({
@@ -59,6 +60,7 @@ const wallet = (n: number) => `0x${n.toString(16).padStart(40, '0')}`;
 const P1 = `0x${'b1'.padStart(64, '0')}`;
 /** Bound to P1; its key is itself. */
 const A = wallet(1);
+const C = wallet(3);
 const LONE = wallet(4);
 const CARD = 1;
 const T1 = '2026-11-20 10:00:00.000000';
@@ -67,7 +69,8 @@ const T2 = '2026-11-21 11:00:00.000000';
 const execute = (sql: string, params?: Record<string, unknown>) =>
   sqlExecutor.execute(sql, params);
 
-async function seed() {
+/** The legacy state, with the redemption loop's cursor at block 1. */
+async function seedLegacy() {
   await execute(`CREATE TABLE IF NOT EXISTS identity_chain_principals (
     principal_id varchar(66) NOT NULL PRIMARY KEY,
     profile_id varchar(50) NOT NULL UNIQUE,
@@ -107,7 +110,14 @@ async function seed() {
       VALUES ('0xa0', 5, '2026-11-01 00:00:00', :a, 0.5), ('0xa1', 6, '2026-11-01 00:00:00', :lone, 0.2)`,
     { a: A, lone: LONE }
   );
-  // Make the identity tables the truth: cut, load, verify, switch time passed.
+  await execute(
+    `INSERT INTO ${TRANSACTIONS_PROCESSED_SUBSCRIPTIONS_BLOCKS_TABLE} (created_at, block, timestamp)
+      VALUES (NOW(), 1, 0)`
+  );
+}
+
+/** Cut, load and verify; with `goLive`, set the switch time to now. */
+async function cutAndLoad(goLive: boolean) {
   const files = await cutOpeningFiles(
     mirrorIdentityDirectory,
     Date.parse('2026-11-26T12:00:00Z')
@@ -116,8 +126,17 @@ async function seed() {
   await loadOpeningFiles(parsed);
   const g4 = await compareAndMarkVerified(parsed, mirrorIdentityDirectory);
   expect(g4.ok).toBe(true);
-  process.env[IDENTITY_FROM_ENV] = '2026-01-01T00:00:00Z';
+  if (goLive) {
+    expect(await scheduleIdentitySwitch(Date.now(), parsed.openingSha256)).toBe(
+      true
+    );
+  }
   subscriptionsIdentitySwitch.invalidate();
+}
+
+async function seed() {
+  await seedLegacy();
+  await cutAndLoad(true);
 }
 
 async function finalIds(table: string, keyColumn: string) {
@@ -153,7 +172,7 @@ describeWithSeed('identity writers after the switch', [], () => {
       .mockResolvedValue({ url: 'https://example.test/list.csv' });
   });
   afterEach(() => {
-    delete process.env[IDENTITY_FROM_ENV];
+    delete process.env[SHADOW_ENV];
     subscriptionsIdentitySwitch.invalidate();
   });
 
@@ -203,8 +222,8 @@ describeWithSeed('identity writers after the switch', [], () => {
   });
 
   it('in shadow, publishes the legacy list and builds the identity list beside it with the same ids', async () => {
-    await seed();
-    delete process.env[IDENTITY_FROM_ENV];
+    await seedLegacy();
+    await cutAndLoad(false);
     process.env[SHADOW_ENV] = 'true';
     subscriptionsIdentitySwitch.invalidate();
     try {
@@ -228,9 +247,104 @@ describeWithSeed('identity writers after the switch', [], () => {
         `SELECT verdict, mode FROM ${SUBSCRIPTIONS_ID_REPORTS_TABLE} WHERE kind = 'LIST'`
       );
       expect(report).toEqual({ verdict: 'MATCH', mode: 'SHADOW' });
+      // go-live checks these: a later shadow DIFF stops it.
+      expect((await shadowReportsMatch()).ok).toBe(true);
+      await execute(
+        `INSERT INTO ${SUBSCRIPTIONS_ID_REPORTS_TABLE} (kind, mode, verdict, report, created_at)
+          VALUES ('PHASE', 'SHADOW', 'DIFF', '{}', 0)`
+      );
+      expect(await shadowReportsMatch()).toEqual({
+        ok: false,
+        detail: `1 shadow comparisons differ since card ${CARD}: PHASE`
+      });
     } finally {
       delete process.env[SHADOW_ENV];
     }
+  });
+
+  it('gives one shared id to one legacy row of an identity whose re-key was held back', async () => {
+    await seedLegacy();
+    // C joined A's identity, but the legacy re-key was held back: C's own
+    // key still holds a balance and an automatic mode.
+    await execute(
+      `INSERT INTO ${ADDRESS_CONSOLIDATION_KEY} (address, consolidation_key) VALUES (:c, :k)`,
+      { c: C, k: `${A}-${C}` }
+    );
+    await execute(
+      `UPDATE ${ADDRESS_CONSOLIDATION_KEY} SET consolidation_key = :k WHERE address = :a`,
+      { k: `${A}-${C}`, a: A }
+    );
+    await execute(
+      `UPDATE ${IDENTITIES_TABLE} SET consolidation_key = :k WHERE profile_id = 'profile-1'`,
+      { k: `${A}-${C}` }
+    );
+    await execute(
+      `INSERT INTO ${SUBSCRIPTIONS_BALANCES_TABLE} (consolidation_key, balance) VALUES (:c, 0.5)`,
+      { c: C }
+    );
+    await execute(
+      `INSERT INTO ${SUBSCRIPTIONS_MODE_TABLE} (consolidation_key, automatic, subscribe_all_editions)
+        VALUES (:c, true, false)`,
+      { c: C }
+    );
+    await execute(
+      `INSERT INTO ${SUBSCRIPTIONS_TOP_UP_TABLE} (hash, block, transaction_date, from_wallet, amount)
+        VALUES ('0xc0', 4, '2026-11-01 00:00:00', :c, 0.5)`,
+      { c: C }
+    );
+    // The airdrop rule needs a TDH wallet for a two-wallet key.
+    const required = await sqlExecutor.execute<{ c: string }>(
+      `SELECT column_name AS c FROM information_schema.columns
+        WHERE table_schema = DATABASE() AND table_name = 'tdh'
+          AND is_nullable = 'NO' AND column_default IS NULL`
+    );
+    const columns = required.map((r) => r.c);
+    await execute(
+      `INSERT INTO tdh (${columns.map((n) => `\`${n}\``).join(', ')})
+        VALUES (${columns
+          .map((n) =>
+            n === 'wallet'
+              ? `'${A}'`
+              : n === 'date'
+                ? 'NOW()'
+                : n === 'boosted_tdh'
+                  ? '10'
+                  : '0'
+          )
+          .join(', ')})`
+    );
+    await cutAndLoad(true);
+
+    await updateSubscriptions();
+
+    const identityRows = await finalIds(
+      SUBSCRIPTIONS_ID_NFTS_FINAL_TABLE,
+      'identity_key'
+    );
+    const legacyRows = await finalIds(
+      SUBSCRIPTIONS_NFTS_FINAL_TABLE,
+      'consolidation_key'
+    );
+    const p1Id = identityRows.find((r) => r.key === P1)?.id;
+    expect(p1Id).toBeDefined();
+    // One of A's and C's legacy rows shares P1's id; the other is left out.
+    expect(
+      legacyRows.filter((r) => Number(r.id) === Number(p1Id))
+    ).toHaveLength(1);
+    expect(legacyRows.filter((r) => r.key === A || r.key === C)).toHaveLength(
+      1
+    );
+    expect(uploadFile).toHaveBeenCalledTimes(1);
+    const [report] = await sqlExecutor.execute<{
+      verdict: string;
+      report: string;
+    }>(
+      `SELECT verdict, report FROM ${SUBSCRIPTIONS_ID_REPORTS_TABLE} WHERE kind = 'LIST'`
+    );
+    expect(report.verdict).toBe('DIFF');
+    expect(String(report.report)).toContain(
+      'second legacy row of one identity'
+    );
   });
 
   it('charges an airdrop once in the identity tables, the same as the legacy loop', async () => {

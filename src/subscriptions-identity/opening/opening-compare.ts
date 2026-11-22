@@ -274,9 +274,8 @@ export interface G4Result {
 /**
  * The opening comparison: the loaded identity tables hold exactly the file, and the legacy
  * tables, cut again now, give exactly the same file (nothing moved since
- * the cut). On a match the opening state is marked verified, which makes
- * the identity tables the truth once FEATURE_SUBSCRIPTIONS_IDENTITY_FROM
- * has passed. On any difference nothing is marked.
+ * the cut). On a match the opening state is marked verified; go-live then
+ * sets the switch time. On any difference nothing is marked.
  */
 export async function compareAndMarkVerified(
   parsed: ParsedOpening,

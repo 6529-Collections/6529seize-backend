@@ -104,7 +104,32 @@ export function currentState(
       .filter((r) => open(r.token_id))
       .map((r) => r.consolidation_key)
   ]);
-  const map = mapCurrentKeys(currentKeys, byWallet);
+  // Re-keys the key-width guard held back: old key -> the identity of the
+  // new key the legacy re-key chose for it.
+  const decisions = new Map<string, string>();
+  for (const entry of tables.queue) {
+    if (entry.kind !== 'CONSOLIDATION') {
+      continue;
+    }
+    const { newKey, oldKeys } = queuePayload<{
+      newKey: string;
+      oldKeys: string[];
+    }>(entry);
+    const target = identitiesOfKey(newKey, byWallet);
+    if (target.length === 1) {
+      for (const oldKey of oldKeys) {
+        decisions.set(oldKey.toLowerCase(), target[0]);
+      }
+    }
+  }
+  const map = mapCurrentKeys(currentKeys, byWallet, (key) =>
+    decisions.get(key.toLowerCase())
+  );
+  const splitsApplied = new Set(
+    Array.from(map.identityOf.keys()).filter(
+      (key) => identitiesOfKey(key, byWallet).length > 1
+    )
+  );
   const identityOf = (key: string) =>
     map.identityOf.get(key) ?? identitiesOfKey(key, byWallet)[0];
   const blocked: BlockedKey[] = [...map.blocked];
@@ -289,9 +314,21 @@ export function currentState(
         note('LOG_CARRIED');
         break;
       }
-      case 'CONSOLIDATION':
-        note('MERGED_AT_CUT');
+      case 'CONSOLIDATION': {
+        const { newKey, oldKeys } = queuePayload<{
+          newKey: string;
+          oldKeys: string[];
+        }>(entry);
+        const target = identitiesOfKey(newKey, byWallet)[0];
+        if (oldKeys.some((k) => splitsApplied.has(k))) {
+          note('SPLIT_APPLIED_AT_CUT', target);
+        } else if (map.shared.has(target)) {
+          note('MERGED_AT_CUT', target);
+        } else {
+          note('NOTHING_TO_APPLY', target);
+        }
         break;
+      }
       case 'REDEMPTION':
         if (
           !blocked.some(

@@ -77,7 +77,7 @@ import {
 const logger = Logger.get('SUBSCRIPTIONS');
 
 export async function updateSubscriptions() {
-  const writeMode = await subscriptionsIdentitySwitch.writeMode();
+  const writeMode = await subscriptionsIdentitySwitch.writeModeForLegacy();
   const buildAtMs = Time.now().toMillis();
   const autoSubscriptions = await fetchAllAutoSubscriptions();
   logger.info(`[FOUND ${autoSubscriptions.length} AUTO SUBSCRIPTIONS]`);
@@ -104,22 +104,33 @@ export async function updateSubscriptions() {
     await recordIdentityUpload(identityUpload);
   }
 
-  await populateAutoSubscriptionsForMemeId(nextMemeId, autoSubscriptions);
-
-  const { uploadLink, affectedConsolidationKeys, legacyRows } =
-    await buildFinalSubscription(
+  let legacy: LegacyBuild = {
+    uploadLink: '',
+    affectedConsolidationKeys: [],
+    legacyRows: [],
+    notes: []
+  };
+  try {
+    await populateAutoSubscriptionsForMemeId(nextMemeId, autoSubscriptions);
+    legacy = await buildFinalSubscription(
       nextMemeId,
       autoSubscriptions,
       identityList && identityUpload
         ? { list: identityList, upload: identityUpload }
         : null
     );
-
-  if (writeMode === 'SHADOW') {
-    await shadowIdentityList(nextMemeId, buildAtMs, legacyRows);
-  } else if (identityList) {
-    await reportListComparison(writeMode, identityList, legacyRows);
+  } catch (error) {
+    // After the switch the legacy tables are the rollback copy: the list
+    // is already published from the identity tables, so a failed dual
+    // write is reported and the run goes on to the notices.
+    if (writeMode !== 'TRUTH') {
+      throw error;
+    }
+    logger.error('[LEGACY DUAL WRITE OF THE LIST FAILED]', error);
+    legacy = { ...legacy, notes: ['the legacy dual write failed'] };
   }
+  const uploadLink = identityUpload?.upload_url ?? legacy.uploadLink;
+  const { affectedConsolidationKeys, legacyRows } = legacy;
   await markSubscriptionCoverageDirty(
     affectedConsolidationKeys,
     'DAILY_FINALIZATION'
@@ -140,6 +151,23 @@ export async function updateSubscriptions() {
     seizeDomain,
     uploadLink
   });
+
+  // The comparisons come last: nothing the identity side does can hold up
+  // or fail the published list's notices.
+  if (writeMode === 'SHADOW') {
+    await shadowIdentityList(nextMemeId, buildAtMs, legacyRows);
+  } else if (identityList) {
+    try {
+      await reportListComparison(
+        writeMode,
+        identityList,
+        legacyRows,
+        legacy.notes
+      );
+    } catch (error) {
+      logger.error('[LIST COMPARISON FAILED]', error);
+    }
+  }
 }
 
 async function populateAutoSubscriptionsForMemeId(
@@ -240,27 +268,46 @@ function identityRowAsFinal(row: IdentityListRow): NFTFinalSubscription {
   };
 }
 
+/**
+ * The legacy rows written after the switch, each with its identity row's
+ * id. Two legacy keys of one identity (a re-key the key-width guard held
+ * back, merged at the cut) can't share one id: the first in list order
+ * takes it, and the others are not written. A legacy row with no identity
+ * row is not written either. Each skipped row is named in the notes.
+ */
 async function sharedIdRows(
   rows: NFTFinalSubscription[],
   identity: IdentityTruth
-): Promise<NFTFinalSubscription[]> {
+): Promise<{ rows: NFTFinalSubscription[]; notes: string[] }> {
   const identities = await identityOfLegacyKeys(
     rows.map((r) => r.consolidation_key)
   );
   const idOf = new Map(identity.list.rows.map((r) => [r.identityKey, r.id]));
+  const taken = new Set<number>();
   const shared: NFTFinalSubscription[] = [];
+  const notes: string[] = [];
   for (const row of rows) {
     const identityKey = identities.get(row.consolidation_key.toLowerCase());
     const id = identityKey ? idOf.get(identityKey) : undefined;
     if (id === undefined) {
-      logger.warn(
-        `[LEGACY ROW WITHOUT AN IDENTITY ROW] [${row.consolidation_key}] [MEME #${row.token_id}] : [NOT WRITTEN]`
+      notes.push(
+        `legacy row without an identity row, not written: ${row.consolidation_key}`
       );
       continue;
     }
+    if (taken.has(id)) {
+      notes.push(
+        `second legacy row of one identity, not written: ${row.consolidation_key}`
+      );
+      continue;
+    }
+    taken.add(id);
     shared.push({ ...row, id });
   }
-  return shared;
+  for (const note of notes) {
+    logger.warn(`[LEGACY DUAL WRITE] [MEME #${identity.list.tokenId}] ${note}`);
+  }
+  return { rows: shared, notes };
 }
 
 /**
@@ -301,7 +348,8 @@ async function shadowIdentityList(
 async function reportListComparison(
   mode: IdentityWriteMode,
   identityList: IdentityListBuild,
-  legacyRows: readonly NFTFinalSubscription[]
+  legacyRows: readonly NFTFinalSubscription[],
+  writeNotes: readonly string[] = []
 ): Promise<void> {
   const identities = await identityOfLegacyKeys(
     legacyRows.map((r) => r.consolidation_key)
@@ -309,11 +357,17 @@ async function reportListComparison(
   const text = (airdrop: string, count: number, balance: number) =>
     `${airdrop.toLowerCase()} x${count} balance ${balance}`;
   const legacy = new Map<string, string>();
-  const notes: string[] = [];
+  const notes: string[] = [...writeNotes];
   for (const row of legacyRows) {
     const identity = identities.get(row.consolidation_key.toLowerCase());
     if (!identity) {
       notes.push(`legacy key spans identities: ${row.consolidation_key}`);
+      continue;
+    }
+    if (legacy.has(identity)) {
+      notes.push(
+        `two legacy rows of one identity: ${identity} (${row.consolidation_key})`
+      );
       continue;
     }
     legacy.set(
@@ -341,16 +395,20 @@ async function reportListComparison(
   });
 }
 
-async function buildFinalSubscription(
-  newMeme: number,
-  autoSubscriptions: SubscriptionMode[],
-  identity: IdentityTruth | null
-): Promise<{
+interface LegacyBuild {
   readonly uploadLink: string;
   readonly affectedConsolidationKeys: string[];
   /** The rows written to the legacy table, with their ids. */
   readonly legacyRows: NFTFinalSubscription[];
-}> {
+  /** After the switch: legacy rows the dual write left out, and why. */
+  readonly notes: string[];
+}
+
+async function buildFinalSubscription(
+  newMeme: number,
+  autoSubscriptions: SubscriptionMode[],
+  identity: IdentityTruth | null
+): Promise<LegacyBuild> {
   logger.info(`[BUILDING FINAL SUBSCRIPTION FOR MEME #${newMeme}]`);
 
   const now = Time.now();
@@ -365,7 +423,9 @@ async function buildFinalSubscription(
 
   // After the switch the identity list is the published one, and the legacy
   // rows share its ids.
-  const rows = identity ? await sharedIdRows(split.rows, identity) : split.rows;
+  const { rows, notes } = identity
+    ? await sharedIdRows(split.rows, identity)
+    : { rows: split.rows, notes: [] };
   const upload: NFTFinalSubscriptionUpload = identity
     ? identity.upload
     : await uploadFinalSubscriptions(MEMES_CONTRACT, newMeme, rows);
@@ -379,6 +439,7 @@ async function buildFinalSubscription(
 
   return {
     legacyRows,
+    notes,
     uploadLink: upload.upload_url,
     affectedConsolidationKeys: Array.from(
       new Set(

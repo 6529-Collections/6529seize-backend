@@ -6,9 +6,10 @@ import {
   SUBSCRIPTIONS_ID_NFTS_FINAL_TABLE,
   SUBSCRIPTIONS_ID_REDEEMED_TABLE,
   SUBSCRIPTIONS_REDEEMED_TABLE,
+  TRANSACTIONS_PROCESSED_SUBSCRIPTIONS_BLOCKS_TABLE,
   TRANSACTIONS_TABLE
 } from '@/constants';
-import { fetchMaxTransactionByBlockNumber, getDataSource } from '@/db';
+import { getDataSource } from '@/db';
 import { Transaction } from '@/entities/ITransaction';
 import { sqlExecutor } from '@/sql-executor';
 import { validateNonSubscriptionAirdrop } from '@/transactionsProcessingLoop/subscriptions';
@@ -105,8 +106,9 @@ async function chargeToken(
  * Matches the airdrop mints after the identity tables' cursor against their
  * final rows, by the legacy redemption rules (validateNonSubscriptionAirdrop,
  * then one charge per token to the row for the airdrop address in phase and
- * position order), in one transaction with the cursor. Returns null before
- * an opening is loaded (no cursor).
+ * position order), in one transaction with the cursor. It goes only as far
+ * as the legacy loop has processed, so both sides match the same airdrops.
+ * Returns null before an opening is loaded (no cursor).
  */
 export async function redeemIdentityAirdrops(): Promise<IdentityRedemptionRun | null> {
   const [cursor] = await sqlExecutor.execute<{ block: number }>(
@@ -116,8 +118,15 @@ export async function redeemIdentityAirdrops(): Promise<IdentityRedemptionRun | 
   if (!cursor) {
     return null;
   }
-  const maxBlockTransaction = await fetchMaxTransactionByBlockNumber();
-  if (!maxBlockTransaction) {
+  const [legacy] = await sqlExecutor.execute<{ block: number | null }>(
+    `SELECT MAX(block) AS block FROM ${TRANSACTIONS_PROCESSED_SUBSCRIPTIONS_BLOCKS_TABLE}`
+  );
+  const through = legacy?.block === null ? null : Number(legacy?.block);
+  if (
+    through === null ||
+    Number.isNaN(through) ||
+    through <= Number(cursor.block)
+  ) {
     return { transactions: [], charged: 0, unmatched: 0 };
   }
   const airdrops: Transaction[] = await sqlExecutor.execute(
@@ -127,7 +136,7 @@ export async function redeemIdentityAirdrops(): Promise<IdentityRedemptionRun | 
       ORDER BY block ASC`,
     {
       after: Number(cursor.block),
-      through: Number(maxBlockTransaction.block),
+      through,
       nullAddress: NULL_ADDRESS
     }
   );
@@ -151,7 +160,7 @@ export async function redeemIdentityAirdrops(): Promise<IdentityRedemptionRun | 
     }
     await em.query(
       `UPDATE ${SUBSCRIPTIONS_ID_CURSORS_TABLE} SET block = ?, updated_at = ? WHERE id = ?`,
-      [Number(maxBlockTransaction.block), Date.now(), REDEMPTION_CURSOR_ID]
+      [through, Date.now(), REDEMPTION_CURSOR_ID]
     );
   });
   return { transactions: Array.from(transactions), charged, unmatched };
@@ -195,21 +204,31 @@ export async function reportRedemptionComparison(
   );
   const notes: string[] = [];
   const legacy = new Map<string, string>();
+  const legacyCounts = new Map<string, number>();
   for (const r of legacyRows) {
     const identity = identities.get(r.consolidation_key.toLowerCase());
     if (!identity) {
       notes.push(`legacy key spans identities: ${r.consolidation_key}`);
       continue;
     }
-    legacy.set(
-      `${identity}|${r.transaction}|${r.token_id}`,
-      `x${r.count} balance after ${r.balance_after}`
-    );
+    const key = `${identity}|${r.transaction}|${r.token_id}`;
+    legacyCounts.set(key, (legacyCounts.get(key) ?? 0) + Number(r.count));
+  }
+  for (const [key, count] of Array.from(legacyCounts.entries())) {
+    legacy.set(key, `x${count}`);
+  }
+  // Per identity, transaction and token: the tokens charged. Balances are
+  // compared by the hourly state comparison, not here, since two legacy
+  // keys of one identity hold two balances.
+  const identityCounts = new Map<string, number>();
+  for (const r of identityRows) {
+    const key = `${r.identity_key}|${r.transaction}|${r.token_id}`;
+    identityCounts.set(key, (identityCounts.get(key) ?? 0) + Number(r.count));
   }
   const identity = new Map(
-    identityRows.map((r) => [
-      `${r.identity_key}|${r.transaction}|${r.token_id}`,
-      `x${r.count} balance after ${r.balance_after}`
+    Array.from(identityCounts.entries()).map(([key, count]) => [
+      key,
+      `x${count}`
     ])
   );
   const diffs = compareKeyed(legacy, identity);

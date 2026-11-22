@@ -67,3 +67,49 @@ export async function saveReport(report: ComparisonReport): Promise<void> {
     }
   );
 }
+
+/**
+ * Whether the shadow comparisons back a switch: the latest shadow LIST
+ * report is MATCH, and no shadow report since it is DIFF.
+ */
+export async function shadowReportsMatch(): Promise<{
+  readonly ok: boolean;
+  readonly detail: string;
+}> {
+  const [list] = await sqlExecutor.execute<{
+    id: number;
+    verdict: string;
+    token_id: number | null;
+  }>(
+    `SELECT id, verdict, token_id FROM ${SUBSCRIPTIONS_ID_REPORTS_TABLE}
+      WHERE kind = 'LIST' AND mode = 'SHADOW' ORDER BY id DESC LIMIT 1`
+  );
+  if (!list) {
+    return { ok: false, detail: 'no shadow list comparison yet' };
+  }
+  if (list.verdict !== 'MATCH') {
+    return {
+      ok: false,
+      detail: `the latest shadow list comparison (card ${list.token_id}) is ${list.verdict}`
+    };
+  }
+  const diffs = await sqlExecutor.execute<{
+    kind: string;
+    token_id: number | null;
+  }>(
+    `SELECT kind, token_id FROM ${SUBSCRIPTIONS_ID_REPORTS_TABLE}
+      WHERE mode = 'SHADOW' AND verdict = 'DIFF' AND id > :since`,
+    { since: list.id }
+  );
+  return diffs.length === 0
+    ? {
+        ok: true,
+        detail: `shadow comparisons match since card ${list.token_id}`
+      }
+    : {
+        ok: false,
+        detail: `${diffs.length} shadow comparisons differ since card ${list.token_id}: ${diffs
+          .map((d) => d.kind)
+          .join(', ')}`
+      };
+}

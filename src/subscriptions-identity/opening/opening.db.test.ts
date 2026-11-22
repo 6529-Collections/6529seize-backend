@@ -12,7 +12,8 @@ import {
   SUBSCRIPTIONS_NFTS_FINAL_TABLE,
   SUBSCRIPTIONS_NFTS_TABLE,
   SUBSCRIPTIONS_REDEEMED_TABLE,
-  SUBSCRIPTIONS_TOP_UP_TABLE
+  SUBSCRIPTIONS_TOP_UP_TABLE,
+  TRANSACTIONS_PROCESSED_SUBSCRIPTIONS_BLOCKS_TABLE
 } from '@/constants';
 import { connect, disconnect } from '@/db';
 import {
@@ -42,6 +43,7 @@ import { sqlExecutor } from '@/sql-executor';
 import { describeWithSeed } from '@/tests/_setup/seed';
 import { mirrorIdentityDirectory } from '../identity/identity-directory';
 import {
+  scheduleIdentitySwitch,
   SubscriptionsIdentitySwitch,
   subscriptionsIdentitySwitch,
   suspendIdentityTables
@@ -74,7 +76,6 @@ const WIDE = Array.from({ length: 14 }, (_, i) => wallet(0x40 + i)).join('-');
 const PAIR = `${A}-${B}`;
 const T1 = '2026-11-20 10:00:00.123456';
 const T2 = '2026-11-21 11:30:00.654321';
-const FROM = '2026-11-26T12:00:00Z';
 const CUT_MS = Date.parse('2026-11-26T12:00:00Z');
 
 const execute = (sql: string, params?: Record<string, unknown>) =>
@@ -91,6 +92,11 @@ async function createPrincipalsTable() {
 
 async function seedLegacy() {
   await createPrincipalsTable();
+  // The redemption loop has run: the identity writer goes on from its block.
+  await execute(
+    `INSERT INTO ${TRANSACTIONS_PROCESSED_SUBSCRIPTIONS_BLOCKS_TABLE} (created_at, block, timestamp)
+      VALUES (NOW(), 40, 0)`
+  );
   await execute(
     `INSERT INTO ${ADDRESS_CONSOLIDATION_KEY} (address, consolidation_key) VALUES (:a, :k), (:b, :k)`,
     { a: A, b: B, k: PAIR }
@@ -147,11 +153,7 @@ async function seedLegacy() {
 }
 
 function switchAt(nowMs: number) {
-  return new SubscriptionsIdentitySwitch(
-    undefined,
-    () => nowMs,
-    () => FROM
-  );
+  return new SubscriptionsIdentitySwitch(undefined, () => nowMs);
 }
 
 async function cutAndParse() {
@@ -209,7 +211,11 @@ describeWithSeed('subscriptions opening file', [], () => {
     expect(report.conservation.adjustments).toEqual([]);
 
     await loadOpeningFiles(parsed, CUT_MS + 1);
-    expect((await switchAt(CUT_MS).status()).reason).toBe('NOT_VERIFIED');
+    expect((await switchAt(CUT_MS).status()).reason).toBe('NO_SWITCH_TIME');
+    // A switch time can't be set on an unverified load.
+    expect(await scheduleIdentitySwitch(CUT_MS + 5, parsed.openingSha256)).toBe(
+      false
+    );
 
     const g4 = await compareAndMarkVerified(
       parsed,
@@ -218,10 +224,22 @@ describeWithSeed('subscriptions opening file', [], () => {
     );
     expect(g4.diffs.filter((d) => d.missingCount || d.extraCount)).toEqual([]);
     expect(g4.ok).toBe(true);
-    expect((await switchAt(CUT_MS - 1).status()).reason).toBe(
+    // Only a cut taken at the switch counts: not one from 16 minutes before.
+    expect(
+      await scheduleIdentitySwitch(
+        CUT_MS + 16 * 60 * 1000,
+        parsed.openingSha256
+      )
+    ).toBe(false);
+    expect(await scheduleIdentitySwitch(CUT_MS + 5, parsed.openingSha256)).toBe(
+      true
+    );
+    expect((await switchAt(CUT_MS + 4).status()).reason).toBe(
       'BEFORE_SWITCH_TIME'
     );
-    expect(await switchAt(CUT_MS).identityTablesAreTruth()).toBe(true);
+    expect(await switchAt(CUT_MS + 5).identityTablesAreTruth()).toBe(true);
+    // Tables that are the truth are never wiped by another load.
+    await expect(loadOpeningFiles(parsed)).rejects.toThrow('suspend them');
 
     // Dates load back to the microsecond, so queue order is kept.
     const [balance] = await sqlExecutor.execute<{ updated_at: string }>(
@@ -231,8 +249,9 @@ describeWithSeed('subscriptions opening file', [], () => {
     );
     expect(balance.updated_at).toBe(T2);
 
-    expect(await suspendIdentityTables(CUT_MS + 3)).toBe(true);
-    expect((await switchAt(CUT_MS + 4).status()).reason).toBe('SUSPENDED');
+    expect(await suspendIdentityTables(CUT_MS + 6)).toBe(true);
+    expect((await switchAt(CUT_MS + 7).status()).reason).toBe('SUSPENDED');
+    await loadOpeningFiles(parsed);
   });
 
   it('finds a legacy write after the cut and marks nothing', async () => {
@@ -388,12 +407,12 @@ describeWithSeed('subscriptions opening file', [], () => {
       { k: PAIR }
     );
     try {
-      delete process.env.FEATURE_SUBSCRIPTIONS_IDENTITY_FROM;
       subscriptionsIdentitySwitch.invalidate();
       expect((await fetchDetailsForConsolidationKey(PAIR)).balance).toBe(9);
 
-      process.env.FEATURE_SUBSCRIPTIONS_IDENTITY_FROM = '2026-01-01T00:00:00Z';
-      subscriptionsIdentitySwitch.invalidate();
+      expect(
+        await scheduleIdentitySwitch(Date.now(), parsed.openingSha256)
+      ).toBe(true);
       // By the consolidation key, a wallet, or the principal id.
       for (const key of [PAIR, A, P1]) {
         const details = await fetchDetailsForConsolidationKey(key);
@@ -422,7 +441,6 @@ describeWithSeed('subscriptions opening file', [], () => {
         updateSubscription(PAIR, MEMES_CONTRACT, 580, false)
       ).rejects.toThrow('Subscription changes are signed now');
     } finally {
-      delete process.env.FEATURE_SUBSCRIPTIONS_IDENTITY_FROM;
       subscriptionsIdentitySwitch.invalidate();
     }
   });

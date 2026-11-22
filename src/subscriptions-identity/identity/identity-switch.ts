@@ -4,7 +4,6 @@ import { sqlExecutor } from '@/sql-executor';
 
 const logger = Logger.get('SUBSCRIPTIONS_IDENTITY_SWITCH');
 
-export const IDENTITY_FROM_ENV = 'FEATURE_SUBSCRIPTIONS_IDENTITY_FROM';
 export const SHADOW_ENV = 'FEATURE_SUBSCRIPTIONS_SHADOW';
 
 /**
@@ -17,88 +16,128 @@ export type IdentityWriteMode = 'OFF' | 'SHADOW' | 'TRUTH';
 export const OPENING_STATE_ID = 'opening';
 /** How long a reader trusts what it last read of the opening state. */
 export const STATE_RE_READ_MS = 60 * 1000;
+/**
+ * The cut that becomes the truth must be taken at the switch: no earlier
+ * than this before the switch time, so no person's change made in between
+ * is left out of the identity tables.
+ */
+export const SWITCH_CUT_WINDOW_MS = 15 * 60 * 1000;
 
 export interface OpeningState {
   readonly opening_sha256: string;
+  readonly cut_at: number;
   readonly verified_at: number | null;
   readonly suspended_at: number | null;
+  /** When the identity tables become the truth; set by the CLI. */
+  readonly switch_at: number | null;
 }
 
 export type SwitchReason =
-  | 'FLAG_UNSET'
-  | 'FLAG_INVALID'
-  | 'BEFORE_SWITCH_TIME'
   | 'NOT_LOADED'
-  | 'NOT_VERIFIED'
+  | 'NO_SWITCH_TIME'
+  | 'BEFORE_SWITCH_TIME'
   | 'SUSPENDED'
+  | 'NOT_VERIFIED'
+  | 'STALE_CUT'
   | 'IDENTITY_TABLES';
 
 export interface SwitchStatus {
   /** The identity tables are the truth. */
   readonly identityTables: boolean;
   readonly reason: SwitchReason;
-  readonly fromMs: number | null;
+  readonly switchAtMs: number | null;
   readonly openingSha256: string | null;
 }
 
-async function readOpeningState(): Promise<OpeningState | null> {
-  const [row] = await sqlExecutor.execute<OpeningState>(
-    `SELECT opening_sha256, verified_at, suspended_at
-       FROM ${SUBSCRIPTIONS_ID_STATE_TABLE} WHERE id = :id`,
-    { id: OPENING_STATE_ID }
+const numberOrNull = (value: unknown): number | null =>
+  value === null || value === undefined ? null : Number(value);
+
+function isMissingTable(error: unknown): boolean {
+  const e = error as {
+    code?: string;
+    errno?: number;
+    driverError?: { errno?: number };
+  } | null;
+  return (
+    e?.code === 'ER_NO_SUCH_TABLE' ||
+    e?.errno === 1146 ||
+    e?.driverError?.errno === 1146
   );
+}
+
+async function readOpeningState(): Promise<OpeningState | null> {
+  let rows: Record<string, unknown>[];
+  try {
+    rows = await sqlExecutor.execute<Record<string, unknown>>(
+      `SELECT opening_sha256, cut_at, verified_at, suspended_at, switch_at
+         FROM ${SUBSCRIPTIONS_ID_STATE_TABLE} WHERE id = :id`,
+      { id: OPENING_STATE_ID }
+    );
+  } catch (error) {
+    // Before dbMigrationsLoop has created the table nothing is loaded.
+    if (isMissingTable(error)) {
+      return null;
+    }
+    throw error;
+  }
+  const row = Array.isArray(rows) ? rows[0] : undefined;
   return row
     ? {
-        opening_sha256: row.opening_sha256,
-        verified_at: row.verified_at === null ? null : Number(row.verified_at),
-        suspended_at:
-          row.suspended_at === null ? null : Number(row.suspended_at)
+        opening_sha256: String(row.opening_sha256),
+        cut_at: Number(row.cut_at),
+        verified_at: numberOrNull(row.verified_at),
+        suspended_at: numberOrNull(row.suspended_at),
+        switch_at: numberOrNull(row.switch_at)
       }
     : null;
 }
 
+/** Whether a state makes the identity tables the truth at `nowMs`, and why. */
+export function switchReason(
+  state: OpeningState | null,
+  nowMs: number
+): SwitchReason {
+  if (!state) {
+    return 'NOT_LOADED';
+  }
+  if (state.switch_at === null) {
+    return 'NO_SWITCH_TIME';
+  }
+  if (nowMs < state.switch_at) {
+    return 'BEFORE_SWITCH_TIME';
+  }
+  if (state.suspended_at !== null) {
+    return 'SUSPENDED';
+  }
+  if (state.verified_at === null) {
+    return 'NOT_VERIFIED';
+  }
+  if (state.cut_at < state.switch_at - SWITCH_CUT_WINDOW_MS) {
+    return 'STALE_CUT';
+  }
+  return 'IDENTITY_TABLES';
+}
+
 /**
- * Whether the identity-keyed subscription tables are the truth. They are
- * once FEATURE_SUBSCRIPTIONS_IDENTITY_FROM (an ISO time) has passed and the
- * opening file is loaded and verified, and not after a rollback.
+ * Whether the identity-keyed subscription tables are the truth. That is one
+ * row in the database, subscriptions_id_state, so one write moves every
+ * service: the CLI's go-live sets its switch time after loading and
+ * verifying a cut taken at the switch, and suspend rolls back.
  *
- * Rollback is one step for every lambda: `suspend` sets suspended_at on the
- * opening state, and each reader re-reads that row at least every 60
- * seconds. Clearing the flag also rolls back, lambda by lambda as each is
- * redeployed. Going forward again needs a new cut and load, since the
- * legacy tables moved on while suspended.
+ * Each reader re-reads the row at least every 60 seconds, so a suspend
+ * reaches every lambda within 60 seconds; API answers can be cached for
+ * another minute, so allow about 2 minutes. Going forward again after a
+ * suspend needs a new cut and load, since the legacy tables moved on.
  */
 export class SubscriptionsIdentitySwitch {
   private cache: { state: OpeningState | null; readAtMs: number } | null = null;
-  private warnedInvalid: string | null = null;
 
   constructor(
     private readonly readState: () => Promise<OpeningState | null> = readOpeningState,
     private readonly now: () => number = () => Date.now(),
-    private readonly flag: () => string | undefined = () =>
-      process.env[IDENTITY_FROM_ENV],
     private readonly shadowFlag: () => string | undefined = () =>
       process.env[SHADOW_ENV]
   ) {}
-
-  /** The switch time from the flag: null when unset, NaN when not an ISO time. */
-  fromMs(): number | null {
-    const value = this.flag()?.trim();
-    if (!value) {
-      return null;
-    }
-    const ms = Date.parse(value);
-    if (Number.isNaN(ms) || !/^\d{4}-\d{2}-\d{2}T/.test(value)) {
-      if (this.warnedInvalid !== value) {
-        this.warnedInvalid = value;
-        logger.error(
-          `[${IDENTITY_FROM_ENV} IS NOT AN ISO TIME] [${value}] [LEGACY TABLES STAY THE TRUTH]`
-        );
-      }
-      return Number.NaN;
-    }
-    return ms;
-  }
 
   private async state(): Promise<OpeningState | null> {
     const nowMs = this.now();
@@ -119,77 +158,43 @@ export class SubscriptionsIdentitySwitch {
   }
 
   async status(): Promise<SwitchStatus> {
-    const fromMs = this.fromMs();
-    const base = {
-      fromMs: fromMs === null || Number.isNaN(fromMs) ? null : fromMs
-    };
-    if (fromMs === null) {
-      return {
-        ...base,
-        identityTables: false,
-        reason: 'FLAG_UNSET',
-        openingSha256: null
-      };
-    }
-    if (Number.isNaN(fromMs)) {
-      return {
-        ...base,
-        identityTables: false,
-        reason: 'FLAG_INVALID',
-        openingSha256: null
-      };
-    }
-    if (this.now() < fromMs) {
-      return {
-        ...base,
-        identityTables: false,
-        reason: 'BEFORE_SWITCH_TIME',
-        openingSha256: null
-      };
-    }
     const state = await this.state();
-    const openingSha256 = state?.opening_sha256 ?? null;
-    if (!state) {
-      return {
-        ...base,
-        identityTables: false,
-        reason: 'NOT_LOADED',
-        openingSha256
-      };
-    }
-    if (state.suspended_at !== null) {
-      return {
-        ...base,
-        identityTables: false,
-        reason: 'SUSPENDED',
-        openingSha256
-      };
-    }
-    if (state.verified_at === null) {
-      return {
-        ...base,
-        identityTables: false,
-        reason: 'NOT_VERIFIED',
-        openingSha256
-      };
-    }
+    const reason = switchReason(state, this.now());
     return {
-      ...base,
-      identityTables: true,
-      reason: 'IDENTITY_TABLES',
-      openingSha256
+      identityTables: reason === 'IDENTITY_TABLES',
+      reason,
+      switchAtMs: state?.switch_at ?? null,
+      openingSha256: state?.opening_sha256 ?? null
     };
   }
 
   async writeMode(): Promise<IdentityWriteMode> {
-    if ((await this.status()).identityTables) {
+    const state = await this.state();
+    if (switchReason(state, this.now()) === 'IDENTITY_TABLES') {
       return 'TRUTH';
     }
     if (this.shadowFlag() !== 'true') {
       return 'OFF';
     }
-    const state = await this.state();
     return state && state.suspended_at === null ? 'SHADOW' : 'OFF';
+  }
+
+  /**
+   * The mode for a legacy loop or route deciding whether to run the
+   * identity side. If the state can't be read and was never read, the
+   * legacy side goes on alone (OFF), with an error logged: a shadow
+   * failure never stops it.
+   */
+  async writeModeForLegacy(): Promise<IdentityWriteMode> {
+    try {
+      return await this.writeMode();
+    } catch (error) {
+      logger.error(
+        '[IDENTITY WRITE MODE UNKNOWN] [LEGACY SIDE GOES ON]',
+        error
+      );
+      return 'OFF';
+    }
   }
 
   async identityTablesAreTruth(): Promise<boolean> {
@@ -220,4 +225,33 @@ export async function suspendIdentityTables(
   );
   subscriptionsIdentitySwitch.invalidate();
   return !!row && row.suspended_at !== null;
+}
+
+/**
+ * Sets the switch time on a verified, unsuspended load whose cut was taken
+ * no earlier than SWITCH_CUT_WINDOW_MS before it. Returns false, changing
+ * nothing, otherwise.
+ */
+export async function scheduleIdentitySwitch(
+  switchAtMs: number,
+  openingSha256: string
+): Promise<boolean> {
+  await sqlExecutor.execute(
+    `UPDATE ${SUBSCRIPTIONS_ID_STATE_TABLE}
+        SET switch_at = :switchAt
+      WHERE id = :id AND opening_sha256 = :sha AND verified_at IS NOT NULL
+        AND suspended_at IS NULL AND cut_at >= :earliestCut`,
+    {
+      switchAt: switchAtMs,
+      id: OPENING_STATE_ID,
+      sha: openingSha256,
+      earliestCut: switchAtMs - SWITCH_CUT_WINDOW_MS
+    }
+  );
+  const [row] = await sqlExecutor.execute<{ switch_at: number | null }>(
+    `SELECT switch_at FROM ${SUBSCRIPTIONS_ID_STATE_TABLE} WHERE id = :id AND opening_sha256 = :sha`,
+    { id: OPENING_STATE_ID, sha: openingSha256 }
+  );
+  subscriptionsIdentitySwitch.invalidate();
+  return !!row && Number(row.switch_at) === switchAtMs;
 }

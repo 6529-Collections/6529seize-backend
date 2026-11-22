@@ -56,14 +56,21 @@ export interface CurrentKeyMap {
  */
 export function mapCurrentKeys(
   currentKeys: Iterable<string>,
-  byWallet: WalletIdentities
+  byWallet: WalletIdentities,
+  /**
+   * For a key whose wallets now span identities: the identity the legacy
+   * re-key decided it goes to, when that decision is waiting in the queue.
+   */
+  decided: (consolidationKey: string) => string | undefined = () => undefined
 ): CurrentKeyMap {
   const keys = Array.from(new Set(Array.from(currentKeys))).sort(compareText);
   const blocked: BlockedKey[] = [];
   const identityOf = new Map<string, string>();
   const keysByIdentity = new Map<string, string[]>();
   for (const key of keys) {
-    const identities = identitiesOfKey(key, byWallet);
+    const spanned = identitiesOfKey(key, byWallet);
+    const decision = spanned.length === 1 ? undefined : decided(key);
+    const identities = decision ? [decision] : spanned;
     if (identities.length !== 1) {
       blocked.push({
         consolidationKey: key,

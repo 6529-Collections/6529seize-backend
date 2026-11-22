@@ -13,15 +13,16 @@ import { creditIdentityTopUps } from './identity-top-ups';
 const logger = Logger.get('SUBSCRIPTIONS_IDENTITY_WRITERS');
 
 /**
- * Runs an identity writer when the identity tables are kept up to date. In
- * shadow a failure is logged and never stops the legacy loop; once the
- * identity tables are the truth it fails the run.
+ * Runs an identity writer, after the legacy loop's own work, when the
+ * identity tables are kept up to date. In shadow a failure (including not
+ * being able to read the mode) is logged and never stops the legacy loop;
+ * once the identity tables are the truth it fails the run.
  */
 async function runIdentityWriter(
   name: string,
   write: (mode: IdentityWriteMode) => Promise<void>
 ): Promise<void> {
-  const mode = await subscriptionsIdentitySwitch.writeMode();
+  const mode = await subscriptionsIdentitySwitch.writeModeForLegacy();
   if (mode === 'OFF') {
     return;
   }

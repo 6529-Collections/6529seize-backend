@@ -239,7 +239,13 @@ export async function buildIdentityList(params: {
       { contract: MEMES_CONTRACT, tokenId }
     );
     const rows: IdentityListRow[] = [];
-    for (const row of build.rows) {
+    // Rows that share a legacy id go in first, so a row that takes the
+    // table's next id can't take one a later row must share.
+    const ordered = [
+      ...build.rows.filter((r) => params.idOf?.(r.key) !== undefined),
+      ...build.rows.filter((r) => params.idOf?.(r.key) === undefined)
+    ];
+    for (const row of ordered) {
       const sharedId = params.idOf?.(row.key);
       await q(
         `INSERT INTO ${SUBSCRIPTIONS_ID_NFTS_FINAL_TABLE}

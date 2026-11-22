@@ -72,7 +72,9 @@ export const IDENTITY_SUBSCRIPTION_TABLES: SubscriptionTables = {
 export async function subscriptionTables(
   identitySwitch: SubscriptionsIdentitySwitch = subscriptionsIdentitySwitch
 ): Promise<SubscriptionTables> {
-  return (await identitySwitch.identityTablesAreTruth())
+  // A reader that has never read the switch state and can't read it now
+  // serves the legacy tables, which the dual write keeps current.
+  return (await identitySwitch.writeModeForLegacy()) === 'TRUTH'
     ? IDENTITY_SUBSCRIPTION_TABLES
     : LEGACY_SUBSCRIPTION_TABLES;
 }

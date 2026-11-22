@@ -7,9 +7,11 @@ import {
   mirrorIdentityDirectory
 } from '../identity/identity-directory';
 import {
+  scheduleIdentitySwitch,
   subscriptionsIdentitySwitch,
   suspendIdentityTables
 } from '../identity/identity-switch';
+import { shadowReportsMatch } from '../writers/identity-reports';
 import { assertOutsideRepository, parseArgs } from '../parity/cli';
 import { cutOpeningFiles } from './opening-build';
 import { compareAndMarkVerified } from './opening-compare';
@@ -30,8 +32,11 @@ import {
  *   load     empty the identity tables and load the files (unverified)
  *   compare  the opening comparison: the identity tables hold the files and the legacy tables
  *            still give the same files; on a match, mark them verified
+ *   go-live  the switch in one step: check the shadow comparisons, cut,
+ *            verify, load, compare, then set the switch time to now
  *   status   whether the identity tables are the truth, and why
  *   suspend  rollback: every reader is on the legacy tables within 60 s
+ *            (API answers can be cached a minute more)
  *
  * Files name wallets, so they are written outside the repository.
  */
@@ -41,6 +46,7 @@ const USAGE = `usage:
   verify  --opening <json> --history <json> [--eth-top-ups <json>] [--eth-mints <json>] --out <json>
   load    --opening <json> --history <json>
   compare --opening <json> --history <json> [--identities <json>] --out <json>
+  go-live --out-dir <dir> --signed-writes-live [--accept-report-diffs] [--identities <json>]
   status
   suspend`;
 
@@ -153,6 +159,67 @@ async function compareCommand(args: Args): Promise<number> {
   return result.ok ? 0 : 2;
 }
 
+/**
+ * The switch, in one step. Refuses unless signed subscription writes are
+ * live (otherwise every change gets a 409) and the shadow comparisons match;
+ * then cuts at the switch, verifies, loads, compares and sets the
+ * switch time, so the identity tables are the truth from a cut taken now.
+ */
+async function goLiveCommand(args: Args): Promise<number> {
+  if (args['signed-writes-live'] !== true) {
+    process.stderr.write(
+      'Refusing: pass --signed-writes-live once signed subscription writes are deployed; without them every change gets a 409.\n'
+    );
+    return 2;
+  }
+  const reports = await shadowReportsMatch();
+  process.stdout.write(`shadow comparisons: ${reports.detail}\n`);
+  if (!reports.ok && args['accept-report-diffs'] !== true) {
+    process.stderr.write(
+      'Refusing: the shadow comparisons do not match (pass --accept-report-diffs to go on anyway).\n'
+    );
+    return 2;
+  }
+  const outDir = required(args, 'out-dir');
+  const directory = directoryFrom(args);
+  const files = await cutOpeningFiles(directory);
+  writeOut(
+    join(outDir, `history-${files.historySha256}.json`),
+    files.historyBytes
+  );
+  writeOut(
+    join(outDir, `opening-${files.openingSha256}.json`),
+    files.openingBytes
+  );
+  const parsed = parseOpeningFiles(files.openingBytes, files.historyBytes);
+  const report = verifyOpening(parsed);
+  const failed = report.checks.filter((c) => !c.ok);
+  if (failed.length > 0) {
+    process.stderr.write(
+      `Refusing: the cut fails ${failed.map((c) => c.name).join(', ')}\n`
+    );
+    return 2;
+  }
+  await loadOpeningFiles(parsed);
+  const g4 = await compareAndMarkVerified(parsed, directory);
+  if (!g4.ok) {
+    process.stderr.write(
+      'Refusing: the opening comparison differs; the legacy tables stay the truth.\n'
+    );
+    return 2;
+  }
+  const switched = await scheduleIdentitySwitch(
+    Date.now(),
+    parsed.openingSha256
+  );
+  process.stdout.write(
+    switched
+      ? `switched: the identity tables are the truth from opening ${parsed.openingSha256}\n`
+      : 'Refusing: the switch time could not be set on this load\n'
+  );
+  return switched ? 0 : 2;
+}
+
 async function statusCommand(): Promise<number> {
   subscriptionsIdentitySwitch.invalidate();
   const status = await subscriptionsIdentitySwitch.status();
@@ -183,6 +250,8 @@ export async function main(argv: readonly string[]): Promise<number> {
       return inDb(() => loadCommand(args));
     case 'compare':
       return inDb(() => compareCommand(args));
+    case 'go-live':
+      return inDb(() => goLiveCommand(args));
     case 'status':
       return inDb(statusCommand);
     case 'suspend':
