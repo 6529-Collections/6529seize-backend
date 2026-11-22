@@ -146,7 +146,6 @@ type Gateway = Pick<
   | 'getDelegationsOfWallet'
   | 'getChanges'
   | 'getLevelRanking'
-  | 'getLevel'
   | 'getTdh'
 >;
 
@@ -462,6 +461,8 @@ export class IdentityChainMirror {
       return;
     }
     let state = onChain;
+    // No run pins below what an earlier one read (on this chain).
+    this.highestPin = state.pin_floor ?? 0;
     const membership = await this.gateway.getMembership();
     const importState = membership?.import as
       | {
@@ -551,14 +552,18 @@ export class IdentityChainMirror {
       level_sweep_after: null,
       levels_day_height: null,
       sync_use_case: null,
+      sync_wallet_after: null,
+      pin_floor: null,
       retry: NO_RETRY
     };
   }
 
   /** Saves the state with the keys left to try again. */
   private async save(state: MirrorState): Promise<MirrorState> {
+    const floor = Math.max(state.pin_floor ?? 0, this.highestPin);
     const saved: MirrorState = {
       ...state,
+      pin_floor: floor > 0 ? floor : null,
       retry: {
         principals: Array.from(this.retry.principals),
         targets: Array.from(this.retry.targets),
@@ -593,7 +598,9 @@ export class IdentityChainMirror {
           : state.next_height,
       sync_from_height: head.finalizedHeight,
       sync_phase: 'IDENTITIES',
-      sync_after: null
+      sync_after: null,
+      sync_use_case: null,
+      sync_wallet_after: null
     });
   }
 
@@ -714,6 +721,7 @@ export class IdentityChainMirror {
         read.next = page?.next ?? null;
       });
       if (!done) return state;
+      if (!read.next) await this.resetRowsOffTheChain();
       state = await this.save(
         read.next
           ? { ...state, sync_after: read.next }
@@ -825,11 +833,30 @@ export class IdentityChainMirror {
   }
 
   /**
+   * Once every chain identity has been written (and mapped), the rows of
+   * 6529.io profiles no chain identity holds get the chain's figures: no
+   * REP or NIC (the help bot's credits never count), level = TDH. Put off
+   * to the next full sync while any identity of this one waits to be tried
+   * again (it may not be mapped yet).
+   */
+  private async resetRowsOffTheChain() {
+    if (this.retry.principals.size) {
+      logger.warn(
+        `[ROWS OFF THE CHAIN NOT RESET] [${this.retry.principals.size} IDENTITIES TO RETRY]`
+      );
+      return;
+    }
+    const reset = await this.db.resetUnmappedAggregates();
+    logger.info(`[ROWS OFF THE CHAIN RESET] [${reset}]`);
+  }
+
+  /**
    * Every delegation of the chain's use cases, one use case at a time, each
    * read at one height at or past `from` and written per wallet for that use
-   * case; the next use case is saved, so a run cut short (the deadline, a
-   * height the node no longer holds) goes on from it. Rows of other use
-   * cases go once all are done; then the phase moves on.
+   * case, the wallets in order; the use case and the last wallet written are
+   * saved, so a run cut short (the deadline, a height the node no longer
+   * holds) goes on from there. Rows of other use cases go once all are
+   * done; then the phase moves on.
    */
   private async fullSyncDelegations(
     initial: MirrorState,
@@ -866,14 +893,26 @@ export class IdentityChainMirror {
         }
       });
       if (!read) return state;
-      const wallets = new Set<string>([
-        ...Array.from(wanted.keys()),
-        ...(await this.db.walletsWithDelegations(undefined, useCase))
-      ]);
-      for (const wallet of Array.from(wallets)) {
-        // Cut short, the use case is walked again next run (it rewrites
-        // the same rows).
-        if (this.now() >= deadline) return state;
+      const after = state.sync_wallet_after;
+      const wallets = Array.from(
+        new Set<string>([
+          ...Array.from(wanted.keys()),
+          ...(await this.db.walletsWithDelegations(undefined, useCase))
+        ])
+      )
+        .filter((it) => after === null || it > after)
+        .sort();
+      let last: string | null = null;
+      for (const wallet of wallets) {
+        if (this.now() >= deadline) {
+          return last === null
+            ? state
+            : await this.save({
+                ...state,
+                sync_use_case: useCase,
+                sync_wallet_after: last
+              });
+        }
         await this.db.executeNativeQueriesInTransaction((conn) =>
           this.db.replaceWalletDelegations(
             wallet,
@@ -882,19 +921,22 @@ export class IdentityChainMirror {
             useCase
           )
         );
+        last = wallet;
         report.delegationWallets++;
       }
       index++;
       state = await this.save({
         ...state,
-        sync_use_case: useCases[index] ?? null
+        sync_use_case: useCases[index] ?? null,
+        sync_wallet_after: null
       });
     }
     await this.db.deleteDelegationsOutside(useCases);
     return await this.save({
       ...state,
       sync_phase: 'CONSOLIDATIONS',
-      sync_use_case: null
+      sync_use_case: null,
+      sync_wallet_after: null
     });
   }
 
@@ -955,6 +997,19 @@ export class IdentityChainMirror {
    * on the identities this run read, starts a level sweep (again from the
    * top when one was under way).
    */
+  /** An identity's level at a height; null when the node can't say. */
+  private async levelAt(principal: string, height: number) {
+    try {
+      return (
+        (await this.gateway.getIdentityByPrincipal(principal, { height }))
+          ?.level ?? null
+      );
+    } catch (error) {
+      if (isHeightGone(error)) return null;
+      throw error;
+    }
+  }
+
   private async noteTdhDay(state: MirrorState): Promise<MirrorState> {
     const seen = this.seenTdhDay;
     if (seen === null || seen <= (state.levels_tdh_day ?? -1)) return state;
@@ -1016,8 +1071,10 @@ export class IdentityChainMirror {
           const principal = row.identity.principalId.toLowerCase();
           const profileId = mapped.get(principal);
           if (!profileId) continue;
+          // Read at the ranking's height when it leaves the level out, so
+          // every level written is as of rankedAt.
           const level =
-            row.identity.level ?? (await this.gateway.getLevel(principal));
+            row.identity.level ?? (await this.levelAt(principal, rankedAt));
           if (!level) continue;
           if (Number(level.tdhDay) < day) {
             logger.warn(
@@ -1238,7 +1295,12 @@ export class IdentityChainMirror {
       const message = messageOf(error);
       logger.error(`[${id} NOT MIRRORED] ${message}`);
       report.failed.push(`${id}: ${message}`);
-      kinds.forEach((kind) => this.retry[kind].add(id));
+      // To the back of the list, so keys that keep failing don't hold the
+      // others back.
+      kinds.forEach((kind) => {
+        this.retry[kind].delete(id);
+        this.retry[kind].add(id);
+      });
     }
   }
 
@@ -1368,7 +1430,12 @@ export class IdentityChainMirror {
         );
         return undefined;
       }
-      return toProfileDocFields(decodeProfileDoc(bytes));
+      const problems: string[] = [];
+      const fields = toProfileDocFields(decodeProfileDoc(bytes), problems);
+      problems.forEach((it) =>
+        report.docProblems.push(`${identity.principalId}: ${it}`)
+      );
+      return fields;
     } catch (error) {
       report.docProblems.push(`${identity.principalId}: ${messageOf(error)}`);
       return undefined;

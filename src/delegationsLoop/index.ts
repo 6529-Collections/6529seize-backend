@@ -336,7 +336,13 @@ async function mirrorChainIdentities(timeLeft: () => number) {
       '[IDENTITY CHAIN MIRROR WAITS FOR THE NEXT RUN] [NO TIME LEFT]'
     );
   }
-  await rekeyRegroupedWallets(timeLeft);
+  try {
+    await rekeyRegroupedWallets(timeLeft);
+  } catch (error) {
+    if (!report?.error) throw error;
+    // Both are logged; the mirror's error is the run's.
+    logger.error(`[REGROUPED WALLETS NOT RE-KEYED] ${error}`);
+  }
   if (report?.error) {
     // Re-keyed what it regrouped before it stopped; the run still fails.
     throw new Error(`Identity chain mirror: ${report.error}`);

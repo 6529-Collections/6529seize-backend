@@ -207,6 +207,17 @@ export class IdentityChainMirrorStateEntity {
   @Column({ type: 'int', nullable: true, default: null })
   readonly sync_use_case!: number | null;
 
+  /** Within that use case, the last wallet written (wallets in order). */
+  @Column({ type: 'varchar', length: 42, nullable: true, default: null })
+  readonly sync_wallet_after!: string | null;
+
+  /**
+   * The highest finalized height the mirror has pinned reads to: no later
+   * run pins below it, so none writes older state than one before.
+   */
+  @Column({ type: 'bigint', nullable: true, default: null })
+  readonly pin_floor!: number | null;
+
   /**
    * What the mirror could not write, tried again by the next run (JSON:
    * principals, rating targets and wallets). A full sync starts it again.

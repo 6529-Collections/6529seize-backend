@@ -137,6 +137,20 @@ class FakeDb {
     }
     return written;
   }
+  resets = 0;
+  async resetUnmappedAggregates() {
+    this.resets++;
+    const mapped = new Set(
+      Array.from(this.mapping.values()).map((it) => it.profile)
+    );
+    let changed = 0;
+    for (const [key, row] of Array.from(this.rows.entries())) {
+      if (row.profile_id !== null && mapped.has(row.profile_id)) continue;
+      if (row.rep || row.cic || row.level_raw !== row.tdh) changed++;
+      this.rows.set(key, { ...row, rep: 0, cic: 0, level_raw: row.tdh });
+    }
+    return changed;
+  }
   async levelHeightOf(principal: string) {
     return this.levelHeights.get(principal.toLowerCase()) ?? null;
   }
@@ -2424,9 +2438,319 @@ describe('IdentityChainMirror', () => {
         };
       }
     );
+    gateway.getIdentityByPrincipal.mockClear();
     await mirror.run({ budgetMs: 60_000 });
-    expect(gateway.getLevel).toHaveBeenCalledWith(alice.principalId);
+    // Read at the ranking's height, so the level written is as of it.
+    expect(gateway.getIdentityByPrincipal).toHaveBeenCalledWith(
+      alice.principalId,
+      { height: 100 }
+    );
     expect(db.rows.get(`${A}-${B}`)?.level_raw).toBe(3000);
+  });
+
+  it('restarts the delegations from the first use case when a full sync starts again', async () => {
+    const { mirror, db, chain, gateway } = world();
+    await mirror.run({ budgetMs: 60_000 });
+    db.state = {
+      ...db.state!,
+      sync_phase: 'DELEGATIONS',
+      sync_from_height: 100,
+      sync_use_case: 5,
+      sync_wallet_after: W(1)
+    };
+    // The feed no longer holds its height: a new full sync.
+    const changesOf = gateway.getChanges.getMockImplementation()!;
+    gateway.getChanges.mockImplementation(
+      async (from: number | string, opts?: { families?: string[] }) => {
+        if (!opts?.families && String(from) === '101') {
+          throw new ChainGatewayError('gone', 410, 'gone', '/v1/feed');
+        }
+        return await changesOf(from, opts);
+      }
+    );
+    chain.finalized = 120;
+    gateway.getDelegations.mockClear();
+    await mirror.run({ budgetMs: 60_000 });
+    const asked = gateway.getDelegations.mock.calls
+      .map((it) => (it[0] as { byUseCase?: number }).byUseCase)
+      .filter((it) => it !== undefined);
+    expect(asked[0]).toBe(1);
+    expect(asked).toEqual(CHAIN_DELEGATION_USE_CASES);
+  });
+
+  it("writes an identity whose document has values 6529.io can't hold, naming them", async () => {
+    const { mirror, db, chain, alice, gateway } = world();
+    chain.identities.set(alice.principalId, {
+      ...alice,
+      profile: { version: 1, docCid: 'b-doc', updatedHeight: 50 } as never
+    });
+    gateway.getProfileDoc.mockResolvedValue(
+      Buffer.from(
+        JSON.stringify({
+          fields: {
+            classification: 'C'.repeat(300),
+            website: 'https://example.com'
+          }
+        })
+      ) as never
+    );
+    const report = await mirror.run({ budgetMs: 60_000 });
+    expect(report.failed).toEqual([]);
+    expect(report.docProblems).toEqual([
+      expect.stringContaining('classification')
+    ]);
+    expect(db.profiles.get(ALICE_PROFILE)?.website).toBe('https://example.com');
+    expect(db.profiles.get(ALICE_PROFILE)?.classification).toBeNull();
+  });
+
+  it('tries again the keys behind ones that keep failing', async () => {
+    const { mirror, db, gateway } = world();
+    await mirror.run({ budgetMs: 60_000 });
+    const wallets = Array.from({ length: 600 }, (_, i) => W(3_000 + i));
+    const failing = new Set(wallets.slice(0, 500));
+    const ofWallet = gateway.getDelegationsOfWallet.getMockImplementation()!;
+    gateway.getDelegationsOfWallet.mockImplementation(
+      async (wallet, ...rest) => {
+        if (failing.has(wallet)) throw new Error('timeout');
+        return await ofWallet(wallet, ...rest);
+      }
+    );
+    db.state = {
+      ...db.state!,
+      retry: { principals: [], targets: [], wallets }
+    };
+    await mirror.run({ budgetMs: 60_000 });
+    // The 500 tried first failed and went to the back.
+    expect(db.state?.retry.wallets.slice(0, 100)).toEqual(wallets.slice(500));
+    gateway.getDelegationsOfWallet.mockClear();
+    await mirror.run({ budgetMs: 60_000 });
+    const tried = gateway.getDelegationsOfWallet.mock.calls.map((it) => it[0]);
+    expect(tried).toEqual(expect.arrayContaining(wallets.slice(500)));
+    expect(db.state?.retry.wallets).toHaveLength(500);
+  });
+
+  it('settles a merged identity whose founder no history tells, without asking again', async () => {
+    const { mirror, db, gateway, chain, tick } = world();
+    chain.importStart = 1;
+    await mirror.run({ budgetMs: 60_000 });
+    historyDecides(db);
+    db.placeholders.set(W(62), 'p-62');
+    gateway.getMembershipWalletHistory.mockResolvedValue({
+      wallet: W(62),
+      changes: [],
+      ranges: [[5, 100]],
+      readHeight: 100
+    } as never);
+    const merged = chainIdentity(PID(62), [], {
+      legacyId: null,
+      founder: W(62),
+      mergedInto: PID(1)
+    });
+    await expect(mirror.profileIdForSites(merged)).rejects.toMatchObject({
+      reason: 'founder_unknown_yet'
+    });
+    tick(FOUNDER_WAIT_MS);
+    const settled = {
+      profileId: principalProfileId(PID(62)),
+      imported: false
+    };
+    expect(await mirror.profileIdForSites(merged)).toEqual(settled);
+    // Nothing stored, and the wait kept: later calls settle at once.
+    tick(60_000);
+    expect(await mirror.profileIdForSites(merged)).toEqual(settled);
+    expect(db.founderWaits.has(PID(62))).toBe(true);
+    expect(db.mapping.has(PID(62))).toBe(false);
+  });
+
+  it('never pins below what an earlier run read', async () => {
+    const { mirror, db, chain, gateway } = world();
+    await mirror.run({ budgetMs: 60_000 });
+    chain.feed.push({
+      from: 101,
+      through: 105,
+      next: 106,
+      blocks: [block(105, [])]
+    });
+    await mirror.run({ budgetMs: 60_000 });
+    expect(db.state?.pin_floor).toBe(105);
+    // A full sync from 100, and another node, behind at 102, answers.
+    chain.headHeldAt = 102;
+    db.state = {
+      ...db.state!,
+      sync_phase: 'IDENTITIES',
+      sync_from_height: 100,
+      sync_after: null
+    };
+    gateway.listIdentities.mockClear();
+    await mirror.run({ budgetMs: 60_000 });
+    expect(gateway.listIdentities).not.toHaveBeenCalled();
+    expect(db.state?.sync_phase).toBe('IDENTITIES');
+    expect(db.state?.pin_floor).toBe(105);
+    chain.headHeldAt = 105;
+    await mirror.run({ budgetMs: 60_000 });
+    expect(gateway.listIdentities).toHaveBeenCalled();
+  });
+
+  it('pins a retry batch at the feed place, not below', async () => {
+    const { mirror, db, chain, gateway, alice } = world();
+    await mirror.run({ budgetMs: 60_000 });
+    db.state = {
+      ...db.state!,
+      next_height: 106,
+      pin_floor: null,
+      retry: { principals: [alice.principalId], targets: [], wallets: [] }
+    };
+    chain.headHeldAt = 104;
+    gateway.getIdentityByPrincipal.mockClear();
+    await mirror.run({ budgetMs: 60_000 });
+    expect(gateway.getIdentityByPrincipal).not.toHaveBeenCalled();
+    chain.headHeldAt = 105;
+    await mirror.run({ budgetMs: 60_000 });
+    expect(gateway.getIdentityByPrincipal).toHaveBeenCalledWith(
+      alice.principalId,
+      { height: 105 }
+    );
+  });
+
+  it("waits for a head at a page's last height", async () => {
+    const { mirror, db, chain } = world();
+    await mirror.run({ budgetMs: 60_000 });
+    chain.feed.push({
+      from: 101,
+      through: 105,
+      next: 106,
+      blocks: [block(105, [])]
+    });
+    chain.headHeldAt = 104;
+    await mirror.run({ budgetMs: 60_000 });
+    expect(db.state?.next_height).toBe(101);
+    chain.headHeldAt = 105;
+    await mirror.run({ budgetMs: 60_000 });
+    expect(db.state?.next_height).toBe(106);
+  });
+
+  it('takes a history with no ranges as one that cannot say, not one behind', async () => {
+    const { mirror, db, gateway, chain } = world();
+    chain.importStart = 1;
+    await mirror.run({ budgetMs: 60_000 });
+    historyDecides(db);
+    db.placeholders.set(W(63), 'p-63');
+    gateway.getMembershipWalletHistory.mockResolvedValue({
+      wallet: W(63),
+      changes: [],
+      ranges: [],
+      readHeight: 100
+    } as never);
+    const made = chainIdentity(PID(63), [W(63)], {
+      legacyId: null,
+      founder: W(63),
+      createdHeight: 20
+    });
+    await expect(mirror.profileIdOf(made)).rejects.toMatchObject({
+      reason: 'founder_unknown_yet'
+    });
+  });
+
+  it('gives no placeholder when the exact bindings passed the creation without the wallet', async () => {
+    const { mirror, db, chain, gateway } = world();
+    chain.importStart = 1;
+    chain.feed.push({ from: 1, through: 30, next: 31, blocks: [] });
+    await mirror.run({ budgetMs: 60_000 });
+    expect(db.state).toMatchObject({
+      bindings_exact: true,
+      bindings_next_height: 31
+    });
+    db.placeholders.set(W(64), 'p-64');
+    gateway.getMembershipWalletHistory.mockClear();
+    const made = chainIdentity(PID(64), [W(64)], {
+      legacyId: null,
+      founder: W(64),
+      createdHeight: 20
+    });
+    expect(await mirror.profileIdOf(made)).toBe(principalProfileId(PID(64)));
+    expect(gateway.getMembershipWalletHistory).not.toHaveBeenCalled();
+  });
+
+  it('resumes a use case at the wallet after the last one written', async () => {
+    const { mirror, db, chain, gateway, tick } = world();
+    await mirror.run({ budgetMs: 60_000 });
+    chain.delegations.push(
+      delegation(W(41), 'wallet', { useCase: 2 }),
+      delegation(W(42), 'wallet', { useCase: 2 }),
+      delegation(W(43), 'wallet', { useCase: 2 })
+    );
+    db.state = {
+      ...db.state!,
+      sync_phase: 'DELEGATIONS',
+      sync_from_height: 100,
+      sync_use_case: 2,
+      sync_wallet_after: null
+    };
+    const written: string[] = [];
+    const replace = db.replaceWalletDelegations.bind(db);
+    jest
+      .spyOn(db, 'replaceWalletDelegations')
+      .mockImplementation(async (wallet, rows, conn, useCase) => {
+        written.push(`${useCase}:${wallet}`);
+        tick(20_000);
+        return await replace(wallet, rows, conn, useCase);
+      });
+    const sorted = [A, B, W(41), W(42), W(43)].sort();
+    // Each write takes 20 s of the run's minute.
+    await mirror.run({ budgetMs: 60_000 });
+    const first = written.filter((it) => it.startsWith('2:'));
+    expect(first.length).toBeGreaterThan(0);
+    expect(first.length).toBeLessThan(sorted.length);
+    expect(db.state).toMatchObject({
+      sync_use_case: 2,
+      sync_wallet_after: sorted[first.length - 1]
+    });
+    written.length = 0;
+    await mirror.run({ budgetMs: 60_000 });
+    expect(written[0]).toBe(`2:${sorted[first.length]}`);
+  });
+
+  it('rewrites, once a first full sync ends, the figures of rows no chain identity holds', async () => {
+    const { mirror, db } = world();
+    // A 6529.io profile not on the chain, with help-bot credits in its REP.
+    db.rows.set(W(70), {
+      consolidation_key: W(70),
+      profile_id: 'not-on-chain',
+      primary_address: W(70),
+      handle: `id-${W(70)}`,
+      normalised_handle: `id-${W(70)}`,
+      tdh: 40,
+      rep: 7,
+      cic: 2,
+      level_raw: 47,
+      pfp: null,
+      banner1: null,
+      banner2: null,
+      classification: null,
+      sub_classification: null,
+      xtdh: 0,
+      produced_xtdh: 0,
+      granted_xtdh: 0,
+      xtdh_rate: 0,
+      basetdh_rate: 0
+    });
+    await mirror.run({ budgetMs: 60_000 });
+    expect(db.rows.get(W(70))).toMatchObject({ rep: 0, cic: 0, level_raw: 40 });
+    expect(db.resets).toBe(1);
+  });
+
+  it('puts the off-chain rewrite off while an identity of the sync waits to be retried', async () => {
+    const { mirror, db, bob } = world();
+    const apply = db.applyIdentityPlan.bind(db);
+    jest
+      .spyOn(db, 'applyIdentityPlan')
+      .mockImplementation(async (plan: IdentityPlan) => {
+        if (plan.profile.handle === 'bob') throw new Error('deadlock');
+        return apply(plan);
+      });
+    await mirror.run({ budgetMs: 60_000 });
+    expect(db.state?.retry.principals).toEqual([bob.principalId]);
+    expect(db.resets).toBe(0);
   });
 
   it('starts the keys to retry again with a full sync', async () => {

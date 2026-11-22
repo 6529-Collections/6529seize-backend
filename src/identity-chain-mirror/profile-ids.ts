@@ -177,7 +177,8 @@ export class ProfileIds {
     const {
       profileId: chosen,
       origin,
-      left
+      left,
+      founderAsked
     } = await this.chooseProfileId(identity);
     try {
       await this.db.executeNativeQueriesInTransaction((conn) =>
@@ -189,6 +190,9 @@ export class ProfileIds {
       if (again) return again;
       throw error;
     }
+    // Stored: a wait for its founder is over. (Not stored, as for a merged
+    // identity, the wait stays, so later calls give the derived id at once.)
+    if (founderAsked) await this.db.founderWaitDone(principalId);
     if (left) {
       logger.warn(
         `[FOUNDER PLACEHOLDER LEFT FOR A LATER MERGE] [${left}] [${principalId} MAPPED NEW: NEITHER THE MIRROR NOR THE GATEWAY CAN SAY IT WAS THE WALLET'S FIRST]`
@@ -198,9 +202,12 @@ export class ProfileIds {
     return chosen;
   }
 
-  private async chooseProfileId(
-    identity: ChainIdentity
-  ): Promise<{ profileId: string; origin: string; left?: string }> {
+  private async chooseProfileId(identity: ChainIdentity): Promise<{
+    profileId: string;
+    origin: string;
+    left?: string;
+    founderAsked?: boolean;
+  }> {
     const principalId = identity.principalId.toLowerCase();
     const legacy = await this.legacyIdOf(identity);
     if (legacy) return { profileId: legacy, origin: 'LEGACY' };
@@ -234,13 +241,19 @@ export class ProfileIds {
           'founder_unknown_yet'
         );
       }
-      await this.db.founderWaitDone(principalId);
-      return { ...derived, left: placeholder.toLowerCase() };
+      return {
+        ...derived,
+        left: placeholder.toLowerCase(),
+        founderAsked: true
+      };
     }
-    await this.db.founderWaitDone(principalId);
     return first
-      ? { profileId: placeholder.toLowerCase(), origin: 'FOUNDER' }
-      : derived;
+      ? {
+          profileId: placeholder.toLowerCase(),
+          origin: 'FOUNDER',
+          founderAsked: true
+        }
+      : { ...derived, founderAsked: true };
   }
 
   /**

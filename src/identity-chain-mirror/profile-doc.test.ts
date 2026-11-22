@@ -157,6 +157,51 @@ describe('ProfileDoc.v1', () => {
   });
 });
 
+describe('toProfileDocFields: what 6529.io can hold', () => {
+  it('leaves out and names values its columns or enums cannot take', () => {
+    const problems: string[] = [];
+    const fields = toProfileDocFields(
+      {
+        displayName: 'x'.repeat(101),
+        avatar: 'https://example.com/' + 'a'.repeat(16_000),
+        website: 'https://example.com',
+        classification: 'C'.repeat(300),
+        subClassification: 's'.repeat(256),
+        'statement.CONTACT.EMAIL.0': 'kept',
+        'statement.CONTACT.EMAIL.0.comment': 'c'.repeat(16_001),
+        'statement.CONTACT.PHONE.0': 'v'.repeat(16_001),
+        'statement.UNKNOWN_GROUP.X.0': 'dropped',
+        [`statement.CONTACT.${'t'.repeat(251)}.0`]: 'dropped'
+      },
+      problems
+    );
+    expect(fields).toMatchObject({
+      displayName: null,
+      pfp: null,
+      website: 'https://example.com',
+      classification: null,
+      subClassification: null,
+      statements: [
+        { group: 'CONTACT', type: 'EMAIL', value: 'kept', comment: null }
+      ]
+    });
+    expect(problems).toHaveLength(8);
+    expect(problems.join(' ')).toContain('UNKNOWN_GROUP');
+  });
+
+  it('keeps a classification 6529.io has, and drops one it has not', () => {
+    const problems: string[] = [];
+    expect(
+      toProfileDocFields({ classification: 'PSEUDONYM' }, problems)
+        .classification
+    ).toBe('PSEUDONYM');
+    expect(
+      toProfileDocFields({ classification: 'WIZARD' }, problems).classification
+    ).toBeNull();
+    expect(problems).toEqual([expect.stringContaining('WIZARD')]);
+  });
+});
+
 describe('profileDocCms', () => {
   it('rebuilds the profile site from its three keys', () => {
     expect(

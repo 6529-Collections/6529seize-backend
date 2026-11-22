@@ -885,8 +885,9 @@ run). With the flag on, NFTDelegation's events (after the identity freeze)
 are read so the checkpoint moves on but not applied: consolidations,
 delegations, re-keying and primary addresses come from the chain. Each step's
 time comes from what the Lambda has left: the mirror (at most six minutes),
-the re-keying (as many wallets as the time left allows, at 50 ms each), then
-the profile site followers (once a first full sync has ended). A gateway node
+the re-keying (as many wallets as the time left allows, at 50 ms each; a
+failure there is logged, and a mirror error stays the run's), then the
+profile site followers (once a first full sync has ended). A gateway node
 that says it isn't ready is logged and still read (its finalized state); a
 feed page of another chain ends the run without moving on. Another network id
 than the mirror's is a misconfiguration in production: the run stops with an
@@ -903,19 +904,24 @@ holds its height) walks every identity, delegation and pair over several runs,
 and the feed goes first in each of those runs with its share of the time, so
 a full sync never holds the site's changes back (it never moves the feed's
 place back either). Delegations are walked one use case at a time, only the
-use cases the chain's records take (1 to 17, 997, 998), with the next one
-saved; rows of other use cases go at the end. A feed page writes the
-identities, rating targets and wallets it touches (a rating touches its
-target, not its rater) until the run's deadline, for at most 2,000 keys and
-while its pin is under eight minutes old; the keys it doesn't reach go to the
-retry list, and its place moves on. Each feed page, retry batch and full sync
-page reads the
-identities, ratings and delegations it touches pinned to one finalized height
-at or past the one it needs, and never below a height the run already used,
-so another gateway node behind can't make it write older state; a pinned read
-the gateway refuses (a height it no longer holds, about 13 minutes on, or an
-answer from another chain) ends the run without moving on. A run that fails
-part way returns what it did, with the error.
+use cases the chain's records take (1 to 17, 997, 998), the wallets of each in
+order, with the use case and the last wallet written saved (a new full sync
+starts from the first); rows of other use cases go at the end. When a full
+sync has written every chain identity (none left to retry), the rows of
+6529.io profiles no chain identity holds get the chain's figures too: REP and
+NIC 0, level their TDH, so no help-bot credit stays in a REP total; with the
+first full sync at switch-on, every row's `rep`, `cic` and `level_raw` is the
+chain's. A feed page writes the identities, rating targets and wallets it
+touches (a rating touches its target, not its rater) until the run's
+deadline, for at most 2,000 keys and while its pin is under eight minutes
+old; the keys it doesn't reach go to the retry list, and its place moves on.
+Each feed page, retry batch and full sync page reads the identities, ratings
+and delegations it touches pinned to one finalized height at or past the one
+it needs, and never below a height read before, in this run or an earlier one
+(`pin_floor`), so another gateway node behind can't make it write older
+state; a pinned read the gateway refuses (a height it no longer holds, about
+13 minutes on, or an answer from another chain) ends the run without moving
+on. A run that fails part way returns what it did, with the error.
 
 `identity_chain_principals` maps each principal to the 6529.io profile id its
 rows use: an imported identity's legacy id; for an identity made on the
@@ -929,8 +935,9 @@ history of the wallet. When neither can say (the import's start unknown, or
 the node's history starting after it or with a gap), the identity is tried
 again for six hours (`identity_chain_founder_waits`), since another gateway
 node may answer meanwhile; when it stays so, it is mapped to its derived id
-and the placeholder is logged and reported as orphaned, for the later merge. A merged or closed identity is filed under its
-mapping, else the id the same rule gives, without storing one. The
+and the placeholder is logged and reported as orphaned, for the later merge.
+A merged or closed identity is filed under its mapping, else the id the same
+rule gives, without storing one (its founder wait, once over, stays over). The
 placeholder profiles are listed once, before the mirror's first write
 (`identity_chain_placeholders`), and 6529.io makes none from switch-on, so a
 rebuild from the chain gives the same ids. A placeholder profile whose wallets
@@ -940,14 +947,16 @@ and follows are not moved.
 `identity_chain_mirror_state` holds the mirror's place in the feed. An
 identity, a rating target or a wallet whose rows fail to be written is logged
 and kept in the state (`retry_json`), saved with the feed's place, and tried
-again by later runs, up to 500 keys a run, until it is written; a full sync
-starts that list again, and with more than 10,000 keys left the mirror starts
-one instead. A rater whose profile id can't be settled yet is left as it is:
+again by later runs, up to 500 keys a run (one that fails again goes to the
+back), until it is written; a full sync starts that list again, and with more
+than 10,000 keys left the mirror starts one instead. A rater whose profile id can't be settled yet is left as it is:
 its rows under the ids it could get stay, the target's other ratings
 (removals included) are written, and the target is kept to try again. Raters
 already mapped are named from the mapping without reading their identity. A
 delegation expiry of 0 never expires. Profile documents come from the
-gateway's store.
+gateway's store; a value 6529.io can't hold (longer than its column, or a
+classification or statement group it doesn't have) is left out and reported
+in the run's `docProblems`, and the rest of the identity is written.
 
 One writer per `identities` column: from switch-on the mirror alone writes
 `rep`, `cic`, `level_raw` and the profile columns, all from the chain (the
@@ -960,12 +969,13 @@ the chain's level ranking (`/v1/identities/by-level`, its latest finalized
 state, 500 identities a page), writing only `level_raw` of the mapped
 identities, one statement a page. A page ranked below the height the day was
 first seen at, or with a level of an earlier day, stops the sweep for the run
-without saving. Every level write (feed, full sync or sweep) records its chain
-height on the mapping (`level_height`), and no write puts an older level over
-a newer one. The sweep goes first in each run with a quarter of the time,
+without saving. Every level write (feed, full sync or sweep) records the
+chain height it was read at on the mapping (`level_height`; a sweep reads a
+level the ranking leaves out at the ranking's height), and no write puts an
+older level over a newer one. The sweep goes first in each run with a quarter of the time,
 keeps its place in the state across runs, and starts again from the top for a
-newer day. The help bot's credit category stays in 6529.io's ratings table as a site
-feature, not counted as REP, and the mirror never touches it. It never
+newer day. The help bot's credit category stays in 6529.io's ratings table as
+a site feature, not counted as REP, and the mirror never touches it. It never
 updates `tdh`, `basetdh_rate` or the xTDH columns of a row that exists (the
 TDH and xTDH loops own them), and a row it creates for a new consolidation
 key starts from the profile's previous values. When wallets change keys, the

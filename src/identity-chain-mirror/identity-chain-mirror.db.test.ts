@@ -142,6 +142,8 @@ describeWithSeed(
           level_sweep_after: null,
           levels_day_height: null,
           sync_use_case: null,
+          sync_wallet_after: null,
+          pin_floor: null,
           retry: NO_RETRY
         },
         9
@@ -306,6 +308,8 @@ describeWithSeed(
           level_sweep_after: 'ranked-after',
           levels_day_height: 700,
           sync_use_case: 997,
+          sync_wallet_after: B,
+          pin_floor: 812,
           retry: { principals: [P], targets: [], wallets: [B] }
         },
         1
@@ -321,6 +325,8 @@ describeWithSeed(
           level_sweep_after: 'ranked-after',
           levels_day_height: 700,
           sync_use_case: 997,
+          sync_wallet_after: B,
+          pin_floor: 812,
           retry: { principals: [P], targets: [], wallets: [B] }
         })
       );
@@ -659,6 +665,32 @@ describeWithSeed(
       expect(await db.founderWaitSince(P, 20)).toBe(10);
       await db.founderWaitDone(P);
       expect(await db.founderWaitSince(P, 30)).toBe(30);
+    });
+
+    it('gives rows no chain identity holds no REP or NIC and their TDH as level', async () => {
+      // Alice is mapped; PLACE's row (seeded with figures) isn't.
+      await inTx((conn) => db.insertMapping(P, ALICE, 'LEGACY', 1, conn));
+      await sqlExecutor.execute(
+        `update ${IDENTITIES_TABLE} set rep = 12, cic = 3, level_raw = 99 where profile_id in (:ids)`,
+        { ids: [ALICE, PLACE] }
+      );
+      expect(await db.resetUnmappedAggregates()).toBe(1);
+      const rows = await sqlExecutor.execute<any>(
+        `select profile_id, tdh, rep, cic, level_raw from ${IDENTITIES_TABLE}
+         where profile_id in (:ids) order by profile_id`,
+        { ids: [ALICE, PLACE] }
+      );
+      const place = rows.find((it: any) => it.profile_id === PLACE);
+      const alice = rows.find((it: any) => it.profile_id === ALICE);
+      expect([place.rep, place.cic, Number(place.level_raw)]).toEqual([
+        0,
+        0,
+        Number(place.tdh)
+      ]);
+      expect([alice.rep, alice.cic, Number(alice.level_raw)]).toEqual([
+        12, 3, 99
+      ]);
+      expect(await db.resetUnmappedAggregates()).toBe(0);
     });
 
     it('keeps first bindings, regroups to re-key and mapped profile ids', async () => {

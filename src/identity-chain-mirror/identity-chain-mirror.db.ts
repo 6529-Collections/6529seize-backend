@@ -65,6 +65,10 @@ export interface MirrorState {
   readonly levels_day_height: number | null;
   /** The full sync's delegation phase: the next use case to walk. */
   readonly sync_use_case: number | null;
+  /** Within that use case, the last wallet written. */
+  readonly sync_wallet_after: string | null;
+  /** The highest finalized height reads were pinned to. */
+  readonly pin_floor: number | null;
   /** What the mirror could not write, tried again by the next run. */
   readonly retry: MirrorRetry;
 }
@@ -253,7 +257,7 @@ export class IdentityChainMirrorDb extends LazyDbAccessCompatibleService {
       `select next_height, sync_from_height, sync_phase, sync_after, last_full_sync_at,
               bindings_next_height, chain_id, placeholders_at, bindings_exact,
               levels_tdh_day, level_sweep_day, level_sweep_after, levels_day_height,
-              sync_use_case, retry_json
+              sync_use_case, sync_wallet_after, pin_floor, retry_json
        from ${IDENTITY_CHAIN_MIRROR_STATE_TABLE} where id = :id`,
       { id: STATE_ID },
       conn ? { wrappedConnection: conn } : undefined
@@ -274,6 +278,8 @@ export class IdentityChainMirrorDb extends LazyDbAccessCompatibleService {
       level_sweep_after: row.level_sweep_after ?? null,
       levels_day_height: numberOrNull(row.levels_day_height),
       sync_use_case: numberOrNull(row.sync_use_case),
+      sync_wallet_after: row.sync_wallet_after ?? null,
+      pin_floor: numberOrNull(row.pin_floor),
       retry: retryOf(row.retry_json)
     };
   }
@@ -284,13 +290,15 @@ export class IdentityChainMirrorDb extends LazyDbAccessCompatibleService {
          (id, next_height, sync_from_height, sync_phase, sync_after, last_full_sync_at,
           bindings_next_height, chain_id, placeholders_at, bindings_exact,
           levels_tdh_day, level_sweep_day, level_sweep_after, levels_day_height,
-          sync_use_case, retry_json, updated_at)
+          sync_use_case, sync_wallet_after, pin_floor, retry_json, updated_at)
        values (:id, :next_height, :sync_from_height, :sync_phase, :sync_after, :last_full_sync_at,
           :bindings_next_height, :chain_id, :placeholders_at, :bindings_exact,
           :levels_tdh_day, :level_sweep_day, :level_sweep_after, :levels_day_height,
-          :sync_use_case, :retry_json, :now)
+          :sync_use_case, :sync_wallet_after, :pin_floor, :retry_json, :now)
        on duplicate key update
          next_height = values(next_height),
+         sync_wallet_after = values(sync_wallet_after),
+         pin_floor = values(pin_floor),
          levels_day_height = values(levels_day_height),
          sync_use_case = values(sync_use_case),
          levels_tdh_day = values(levels_tdh_day),
@@ -381,6 +389,22 @@ export class IdentityChainMirrorDb extends LazyDbAccessCompatibleService {
          and (m.level_height is null or m.level_height <= :height)`,
       params
     );
+  }
+
+  /**
+   * Identities rows of profiles no chain identity maps to: rep and cic 0
+   * and level_raw their TDH, as the chain counts them (no REP on the chain;
+   * the help bot's credits stay out). Returns the rows changed.
+   */
+  async resetUnmappedAggregates(): Promise<number> {
+    const result = await this.db.execute(
+      `update ${IDENTITIES_TABLE} i
+       left join ${IDENTITY_CHAIN_PRINCIPALS_TABLE} m on m.profile_id = i.profile_id
+       set i.rep = 0, i.cic = 0, i.level_raw = i.tdh
+       where m.principal_id is null
+         and (i.rep <> 0 or i.cic <> 0 or i.level_raw <> i.tdh)`
+    );
+    return this.db.getAffectedRows(result);
   }
 
   /** The chain height of an identity's last level write, when known. */
