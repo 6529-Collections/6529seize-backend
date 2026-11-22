@@ -12,7 +12,11 @@ import {
   MANIFOLD
 } from '@/constants';
 import { fetchPaginated } from '../../../db-api';
-import { calculateLevel } from '../../../profiles/profile-level';
+import {
+  calculateLevel,
+  getLevelFromScore
+} from '../../../profiles/profile-level';
+import { isIdentityOnChain } from '@/identity-freeze/identity-freeze';
 import { MetricsCollector, MetricsContent } from '../tdh/api.tdh.db';
 import { sqlExecutor } from '../../../sql-executor';
 import { ApiAggregatedActivity } from '../generated/models/ApiAggregatedActivity';
@@ -248,11 +252,15 @@ export const fetchAggregatedActivity = async (
     ''
   );
 
+  const onChain = isIdentityOnChain();
   results.data.forEach((d: any) => {
-    d.level = calculateLevel({
-      tdh: creditTdh(d.boosted_tdh ?? 0, d.xtdh),
-      rep: d.rep_score
-    });
+    // From switch-on the level is the chain's (level_raw, from the mirror).
+    d.level = onChain
+      ? getLevelFromScore(Number(d.level ?? 0))
+      : calculateLevel({
+          tdh: creditTdh(d.boosted_tdh ?? 0, d.xtdh),
+          rep: d.rep_score
+        });
   });
   return results;
 };

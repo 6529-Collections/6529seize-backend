@@ -33,8 +33,13 @@ jest.mock('@/api/waves/waves.api.db', () => ({
 jest.mock('@/notifications/user.notifier', () => ({
   userNotifier: { notifyOfDropVote: jest.fn() }
 }));
+const mockFeatures = { onChain: false };
 jest.mock('@/app-features', () => ({
-  appFeatures: { isDropOvervoteRevocationEnabled: () => true }
+  appFeatures: {
+    isDropOvervoteRevocationEnabled: () => true,
+    isIdentityOnChain: () => mockFeatures.onChain,
+    isIdentityFrozen: () => false
+  }
 }));
 
 import {
@@ -167,6 +172,28 @@ it('never locks a candidate whose unlocked configuration does not apply', async 
   await revokeTdhBasedDropWavesOverVotes(connection);
   expect(runtime.lockCompetition).not.toHaveBeenCalled();
   expect(service.reconcileVoterCredit).not.toHaveBeenCalled();
+});
+
+it('from switch-on also cuts REP votes beyond the credit, voter by voter', async () => {
+  mockFeatures.onChain = true;
+  try {
+    const rep = {
+      ...competition,
+      voting: { ...competition.voting, credit_type: 'REP' }
+    } as never;
+    jest.mocked(runtime.readCompetition).mockResolvedValue(rep);
+    jest.mocked(runtime.lockCompetition).mockResolvedValue(rep);
+    jest.mocked(runtime.listActiveVoters).mockResolvedValue(['voter-1']);
+    await revokeTdhBasedDropWavesOverVotes(connection);
+    expect(runtime.lockCompetition).toHaveBeenCalledTimes(1);
+    expect(runtime.listActiveVoters).toHaveBeenCalledWith(
+      'native-competition',
+      expect.anything()
+    );
+    expect(competitionTdhOvervotesDb.findOvervoters).not.toHaveBeenCalled();
+  } finally {
+    mockFeatures.onChain = false;
+  }
 });
 
 it('never locks a candidate that is no longer active and published', async () => {

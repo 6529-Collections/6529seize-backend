@@ -433,7 +433,8 @@ export async function syncIdentitiesAfterTdh(
         logger.warn(
           `[PROFILE ADDRESS RECONCILIATION DEFERRED] [GENERATION ${generation}] [NO BUDGET LEFT] [NEXT FULL WALK]`
         );
-      } else {
+      } else if (!isIdentityOnChain()) {
+        // From switch-on the identity mirror writes profiles' addresses.
         await reconcileAllProfileAddresses();
       }
     }

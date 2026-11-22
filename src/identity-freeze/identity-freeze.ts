@@ -82,7 +82,11 @@ export function parseIdentityFreezeAt(
   }
   if (ISO_UTC.test(value)) {
     const millis = Date.parse(value);
-    return Number.isFinite(millis) ? millis : null;
+    // A date that doesn't exist (30 Feb) rolls over silently: not a time.
+    const real =
+      Number.isFinite(millis) &&
+      new Date(millis).toISOString().slice(0, 10) === value.slice(0, 10);
+    return real ? millis : null;
   }
   return null;
 }
@@ -118,9 +122,22 @@ function timeHasCome(
   return nowMillis >= start;
 }
 
-/** A switch-on time that is set but can't be read. */
+/**
+ * A switch-on time that is set but can't be used: not a time, or earlier
+ * than the freeze time (a wrong year or month would otherwise switch on at
+ * deploy, which can't be undone).
+ */
 function switchOnTimeMalformed(): boolean {
-  return parseIdentityFreezeAt(process.env[IDENTITY_SWITCH_ON_AT_ENV]) === null;
+  const switchOn = parseIdentityFreezeAt(
+    process.env[IDENTITY_SWITCH_ON_AT_ENV]
+  );
+  if (switchOn === null) return true;
+  const freeze = parseIdentityFreezeAt(process.env[IDENTITY_FREEZE_AT_ENV]);
+  return (
+    typeof switchOn === 'number' &&
+    typeof freeze === 'number' &&
+    switchOn < freeze
+  );
 }
 
 /** From switch-on the 6529 chain holds identities for good. */
@@ -129,7 +146,8 @@ export function isIdentityOnChain(
 ): boolean {
   return (
     appFeatures.isIdentityOnChain() ||
-    timeHasCome(IDENTITY_SWITCH_ON_AT_ENV, nowMillis, 'not_come')
+    (!switchOnTimeMalformed() &&
+      timeHasCome(IDENTITY_SWITCH_ON_AT_ENV, nowMillis, 'not_come'))
   );
 }
 
