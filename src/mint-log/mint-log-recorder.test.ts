@@ -495,7 +495,7 @@ describe('MintLogRecorder.writeWithin', () => {
   /** The caller's connection: statements and head keys, in order. */
   function within(
     fake: Fake,
-    flags: { shadow?: boolean; primary?: boolean }
+    flags: { shadow?: boolean; primary?: boolean; collabRecords?: boolean }
   ): { log: MintLogRecorder; calls: string[]; transactions: () => number } {
     const calls: string[] = [];
     let transactions = 0;
@@ -530,7 +530,8 @@ describe('MintLogRecorder.writeWithin', () => {
       {
         isMintLogShadowEnabled: () => !!flags.shadow,
         isMintLogPrimaryEnabled: () => !!flags.primary,
-        isMintLogReplayCheckEnabled: () => false
+        isMintLogReplayCheckEnabled: () => false,
+        isMintLogCollabRecordsRequired: () => !!flags.collabRecords
       },
       () => ({ records, log: fake.log }),
       db,
@@ -616,7 +617,7 @@ describe('MintLogRecorder.writeWithin', () => {
   it('fails the caller transaction when the log fails in primary mode', async () => {
     const fake = new Fake();
     fake.failAppends = 1;
-    const { log, calls } = within(fake, { primary: true });
+    const { log, calls } = within(fake, { primary: true, collabRecords: true });
     await expect(
       log.writeWithin(
         respondSpec({ signedRecords: userHeader() }),
@@ -627,9 +628,32 @@ describe('MintLogRecorder.writeWithin', () => {
     expect(calls.some((sql) => sql.includes('SAVEPOINT'))).toBe(false);
   });
 
-  it('needs a mint.user record from a user in primary mode', async () => {
+  it('keeps shadow rules for collaboration records in primary mode by default', async () => {
     const fake = new Fake();
     const { log } = within(fake, { primary: true });
+    await log.writeWithin(respondSpec(), connection, async () =>
+      fake.addRow(1)
+    );
+    await log.writeWithin(
+      respondSpec({ signedRecords: userHeader(MINT_ADMIN_RECORD_TYPE) }),
+      connection,
+      async () => fake.addRow(2)
+    );
+    expect(fake.entries().map((entry) => entry.record_id)).toEqual([
+      null,
+      null
+    ]);
+    expect(fake.state.distribution.map((row) => row.id)).toEqual([1, 2]);
+    // Still primary: the entry itself must be written.
+    fake.failAppends = 1;
+    await expect(
+      log.writeWithin(respondSpec(), connection, async () => fake.addRow(3))
+    ).rejects.toThrow('append failed');
+  });
+
+  it('needs a mint.user record from a user in primary mode once required', async () => {
+    const fake = new Fake();
+    const { log } = within(fake, { primary: true, collabRecords: true });
     await expect(
       log.writeWithin(respondSpec(), connection, async () => fake.addRow(1))
     ).rejects.toBeInstanceOf(InvalidSignedRecordException);

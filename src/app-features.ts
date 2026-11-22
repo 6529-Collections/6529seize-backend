@@ -43,8 +43,9 @@ export class AppFeatures {
 
   /**
    * Mint log, primary (the switch): admin writes need a signed `mint.admin`
-   * record, collaboration invites and replies a `mint.user` record, and a
-   * write fails unless its log entry is queued. Not usable yet: until the
+   * record (collaboration invites and replies a `mint.user` record once
+   * MINT_LOG_COLLAB_RECORDS is on), and a write fails unless its log entry
+   * is queued. Not usable yet: until the
    * signed-records module binds the principal bindings (and the frontend its
    * context source), it answers 503 to every admin minting write. The API
    * logs the state at start ([MINT_LOG] ... [RECORD VERIFIER ...]).
@@ -53,6 +54,18 @@ export class AppFeatures {
    */
   public isMintLogPrimaryEnabled(): boolean {
     return this.isFeatureEnabled('MINT_LOG_PRIMARY');
+  }
+
+  /**
+   * In primary mode, collaboration invites and replies through the API need
+   * the user's signed `mint.user` record too. Off (the default): they keep
+   * shadow rules, and a missing or bad record is logged, never refused, so
+   * artists without a device grant can still invite and reply. Turn it on
+   * once most artists have enrolled; the team decides when. Rollback: set it
+   * to false.
+   */
+  public isMintLogCollabRecordsRequired(): boolean {
+    return this.isFeatureEnabled('MINT_LOG_COLLAB_RECORDS');
   }
 
   /**

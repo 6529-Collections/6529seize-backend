@@ -46,6 +46,16 @@ const logger = Logger.get('MINT_LOG');
 const REPLAY_SAVEPOINT = 'mint_log_replay';
 const WITHIN_SAVEPOINT = 'mint_log_within';
 
+/**
+ * A user's own collaboration writes. They need the user's device grant, and
+ * until most artists have one they keep shadow rules in primary mode
+ * (MINT_LOG_COLLAB_RECORDS turns the requirement on).
+ */
+const USER_ENROLMENT_KINDS: ReadonlySet<MintLogKind> = new Set<MintLogKind>([
+  'collab.invite',
+  'collab.respond'
+]);
+
 export type MintLogMode = 'off' | 'shadow' | 'primary';
 
 export interface MintWriteSpec<T = unknown> {
@@ -179,7 +189,10 @@ export class MintLogRecorder {
       | 'isMintLogShadowEnabled'
       | 'isMintLogPrimaryEnabled'
       | 'isMintLogReplayCheckEnabled'
-    > = appFeatures,
+    > &
+      Partial<
+        Pick<AppFeatures, 'isMintLogCollabRecordsRequired'>
+      > = appFeatures,
     private readonly ports: () => MintLogPorts = getMintLogPorts,
     private readonly db: () => SqlExecutor = dbSupplier,
     private readonly reader: MintStateReader = mintStateReader,
@@ -365,8 +378,15 @@ export class MintLogRecorder {
       spec.actor.type === 'admin'
         ? MINT_ADMIN_RECORD_TYPE
         : MINT_USER_RECORD_TYPE;
+    // Records are required in primary mode, except a user's collaboration
+    // invite or reply until the team turns that on (most artists have no
+    // device grant yet): those keep shadow rules.
+    const required =
+      mode === 'primary' &&
+      (!USER_ENROLMENT_KINDS.has(spec.kind) ||
+        this.features.isMintLogCollabRecordsRequired?.() === true);
     const problem = (reason: string, detail: string) => {
-      if (mode === 'primary') {
+      if (required) {
         throw new InvalidSignedRecordException(reason, detail);
       }
       logger.warn(
@@ -381,7 +401,7 @@ export class MintLogRecorder {
       );
     }
     if (!ports.records) {
-      if (mode === 'primary') {
+      if (required) {
         throw new MintLogUnavailableException('no record verifier is bound');
       }
       return null;
@@ -400,8 +420,8 @@ export class MintLogRecorder {
       verified = await ports.records.verify(events[0]);
     } catch (error) {
       // The verifier itself failed (a grant lookup, say): not the caller's
-      // fault, and in shadow mode never a reason to fail the write.
-      if (mode === 'primary') {
+      // fault, and under shadow rules never a reason to fail the write.
+      if (required) {
         throw new MintLogUnavailableException(
           `the record could not be checked: ${errorText(error)}`
         );
