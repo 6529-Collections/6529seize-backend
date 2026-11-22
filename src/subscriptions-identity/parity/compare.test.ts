@@ -1,11 +1,9 @@
 import { MEMES_CONTRACT, USE_CASE_AIRDROPS } from '@/constants';
-import {
-  ChainInputs,
-  compareFinalList,
-  rekeyedAfterBuild,
-  runParity,
-  summaryLine
-} from './compare';
+import { ChainInputs } from './chain-inputs';
+import { runParity } from './compare';
+import { compareFinalList, rekeyedAfterBuild } from './compare-list';
+import { LegacyCsvRow } from './legacy-outputs';
+import { summaryLine } from './parity-report';
 import {
   A1,
   A2,
@@ -20,48 +18,44 @@ import {
 } from './parity.fixture';
 
 const D9 = '0x00000000000000000000000000000000000000d9';
+const P2 = `0x${'2'.repeat(64)}`;
+const P4 = `0x${'4'.repeat(64)}`;
 
 function chain(overrides: Partial<ChainInputs> = {}): ChainInputs {
+  const delegation = (
+    fromAddress: string,
+    toAddress: string,
+    block: number
+  ) => ({
+    fromAddress,
+    toAddress,
+    collection: MEMES_CONTRACT,
+    useCase: USE_CASE_AIRDROPS,
+    block,
+    expiry: BUILD_AT / 1000 + 1000,
+    allTokens: true
+  });
   return {
     version: 1,
     source: 'fixture',
     nowSeconds: BUILD_AT / 1000,
     delegations: [
-      {
-        fromAddress: K1,
-        toAddress: A1,
-        collection: MEMES_CONTRACT,
-        useCase: USE_CASE_AIRDROPS,
-        block: 10,
-        expiry: BUILD_AT / 1000 + 1000,
-        allTokens: true
-      },
-      {
-        fromAddress: K2.split('-')[1],
-        toAddress: A2,
-        collection: MEMES_CONTRACT,
-        useCase: USE_CASE_AIRDROPS,
-        block: 11,
-        expiry: BUILD_AT / 1000 + 1000,
-        allTokens: true
-      },
-      {
-        fromAddress: K4,
-        toAddress: A4,
-        collection: MEMES_CONTRACT,
-        useCase: USE_CASE_AIRDROPS,
-        block: 12,
-        expiry: BUILD_AT / 1000 + 1000,
-        allTokens: true
-      }
+      delegation(K1, A1, 10),
+      delegation(K2.split('-')[1], A2, 11),
+      delegation(K4, A4, 12)
     ],
     boostedTdhByWallet: {},
     ...overrides
   };
 }
 
-describe('runParity', () => {
-  it('matches the legacy list, phases and redemptions on consistent data', () => {
+function withListRows(rows: LegacyCsvRow[]) {
+  const legacy = legacyOutputs();
+  return { ...legacy, csv: { ...legacy.csv!, rows } };
+}
+
+describe('runParity in gate mode', () => {
+  it('matches on data where inputs read before the build give the list', () => {
     const reports = runParity({
       snapshot: paritySnapshot(),
       legacy: legacyOutputs(),
@@ -75,14 +69,25 @@ describe('runParity', () => {
       ['PHASE', 'Public', 'MATCH'],
       ['REDEMPTIONS', null, 'MATCH']
     ]);
-    expect(reports[0].positionsDiffer).toBe(0);
+    const g1 = reports[0];
+    expect(g1.mode).toBe('gate');
+    expect(g1.checked).toEqual(['rows', 'count', 'cards', 'balance']);
+    expect(g1.notChecked).toEqual([
+      'airdropAddress (copied from legacy route, read before the build)',
+      'order (subscribed_at; positions reported)'
+    ]);
+    expect(reports[1].notChecked[0]).toContain('membership (copied');
+    expect(reports[4].checked).toEqual(['redemption', 'count', 'balanceAfter']);
     expect(reports[4].notes[0]).toBe('transfers: 4, skipped: 1');
-    expect(summaryLine(reports[0])).toBe(
-      'LIST card 500 run1: MATCH (old 3 rows, new 3 rows, 0 diffs)'
+    expect(summaryLine(g1)).toBe(
+      'LIST card 500 run1 [gate]: MATCH on rows, count, cards, balance ' +
+        '(old 3 rows/5 cards, new 3 rows/5 cards, 0 diffs); not checked: ' +
+        'airdropAddress (copied from legacy route, read before the build), ' +
+        'order (subscribed_at; positions reported)'
     );
   });
 
-  it('matches in run 2 with airdrop addresses from chain records', () => {
+  it('checks airdrop addresses in run 2, where the ported rule runs', () => {
     const reports = runParity({
       snapshot: paritySnapshot(),
       legacy: legacyOutputs(),
@@ -91,6 +96,7 @@ describe('runParity', () => {
       chain: chain()
     });
     expect(reports.every((r) => r.verdict === 'MATCH')).toBe(true);
+    expect(reports[0].checked).toContain('airdropAddress');
   });
 
   it('names a chain-sourced airdrop address that differs', () => {
@@ -108,7 +114,6 @@ describe('runParity', () => {
         ]
       }
     });
-    expect(report.verdict).toBe('DIFF');
     expect(report.diffs).toEqual([
       {
         key: K1,
@@ -120,22 +125,71 @@ describe('runParity', () => {
     ]);
   });
 
-  it('reports a count difference and a key it never read', () => {
+  it('resolves principal ids on their wallet lists in run 2', () => {
+    const c = chain({
+      keyMap: { [K2]: P2, [K4]: P4 },
+      identities: { [P2]: K2.split('-'), [P4]: [K4] }
+    });
     const legacy = legacyOutputs();
+    const reports = runParity({
+      snapshot: paritySnapshot(),
+      legacy,
+      run: 'run2',
+      buildAtMs: BUILD_AT,
+      chain: c
+    });
+    expect(reports.map((r) => r.verdict)).toEqual([
+      'MATCH',
+      'MATCH',
+      'MATCH',
+      'MATCH',
+      'MATCH'
+    ]);
+    const missing = compareFinalList({
+      snapshot: paritySnapshot(),
+      legacy,
+      run: 'run2',
+      buildAtMs: BUILD_AT,
+      chain: { ...c, identities: { [P2]: K2.split('-') } }
+    });
+    expect(missing.report.diffs).toEqual([
+      {
+        key: P4,
+        field: 'airdropAddress',
+        old: A4,
+        new: null,
+        cause: 'no-wallets'
+      }
+    ]);
+  });
+
+  it('reports a duplicated identity and the card total, never MATCH', () => {
+    const rows = legacyOutputs().csv!.rows;
+    const { report } = compareFinalList({
+      snapshot: paritySnapshot(),
+      legacy: withListRows([...rows, { ...rows[0], count: 9 }]),
+      run: 'run1',
+      buildAtMs: BUILD_AT
+    });
+    expect(report.verdict).toBe('DIFF');
+    expect(report.old.rows).toBe(4);
+    expect(report.diffs).toEqual([
+      { key: K2, field: 'rows', old: 2, new: 1, cause: 'duplicate-identity' },
+      { key: null, field: 'cards', old: 14, new: 5, cause: 'unknown' }
+    ]);
+  });
+
+  it('reports a count difference and a key it never read', () => {
     const snapshot = paritySnapshot();
-    const csv = legacy.csv!;
+    const rows = legacyOutputs().csv!.rows;
     const { report } = compareFinalList({
       snapshot: {
         ...snapshot,
         subscribers: snapshot.subscribers.filter((s) => s.key !== K4)
       },
-      legacy: {
-        ...legacy,
-        csv: {
-          ...csv,
-          rows: csv.rows.map((r) => (r.key === K1 ? { ...r, count: 1 } : r))
-        }
-      },
+      legacy: withListRows(
+        rows.map((r) => (r.key === K1 ? { ...r, count: 1 } : r))
+      ),
       run: 'run1',
       buildAtMs: BUILD_AT
     });
@@ -145,94 +199,78 @@ describe('runParity', () => {
     ]);
   });
 
-  it('flags an extra new row the legacy build left out for balance', () => {
+  it('computes balances from the read and earlier top-ups, and checks them', () => {
     const legacy = legacyOutputs();
-    const { report } = compareFinalList({
-      snapshot: paritySnapshot(),
-      legacy: {
-        ...legacy,
-        buildDecisions: {
-          ...legacy.buildDecisions,
-          [K3]: {
-            kind: 'INSUFFICIENT_BALANCE',
-            date: legacy.buildDate,
-            balance: 0.03
-          }
-        }
-      },
-      run: 'run1',
-      buildAtMs: BUILD_AT,
-      pinBalances: false
+    const topUp = (date: string, amount: number) => ({
+      hash: '0x' + 'f'.repeat(64),
+      block: 1,
+      transaction_date: date,
+      from_wallet: K3,
+      amount
     });
-    expect(report.verdict).toBe('MATCH');
-    const snapshot = paritySnapshot();
-    const richer = {
-      ...snapshot,
-      subscribers: snapshot.subscribers.map((s) =>
-        s.key === K3 && s.details
-          ? { ...s, details: { ...s.details, balance: 1 } }
-          : s
-      )
-    };
-    const second = compareFinalList({
-      snapshot: richer,
-      legacy,
-      run: 'run1',
-      buildAtMs: BUILD_AT,
-      pinBalances: false
-    });
-    expect(second.report.diffs).toEqual([
+    const withTopUp = (date: string) =>
+      compareFinalList({
+        snapshot: paritySnapshot(),
+        legacy: {
+          ...legacy,
+          topUps: { ...legacy.topUps, [K3]: [topUp(date, 0.1)] }
+        },
+        run: 'run1',
+        buildAtMs: BUILD_AT
+      }).report;
+    const before = withTopUp('2026-11-24T23:00:00.000Z');
+    expect(before.diffs).toEqual([
       {
         key: K3,
         field: 'row',
         old: 'INSUFFICIENT_BALANCE',
         new: 1,
         cause: 'balance-input'
-      }
+      },
+      { key: null, field: 'cards', old: 5, new: 6, cause: 'unknown' }
+    ]);
+    const atBuild = withTopUp('2026-11-25T00:00:30.000Z');
+    expect(atBuild.diffs[0].cause).toBe('topup-timing');
+    const after = withTopUp('2026-11-25T01:00:00.000Z');
+    expect(after.verdict).toBe('MATCH');
+    const rows = legacy.csv!.rows;
+    const changed = compareFinalList({
+      snapshot: paritySnapshot(),
+      legacy: withListRows(
+        rows.map((r) => (r.key === K1 ? { ...r, balance: 0.6 } : r))
+      ),
+      run: 'run1',
+      buildAtMs: BUILD_AT
+    }).report;
+    expect(changed.diffs).toEqual([
+      { key: K1, field: 'balance', old: 0.6, new: 0.5, cause: 'balance-input' }
     ]);
   });
 
   it('reports a redemption whose balance differs after a top-up', () => {
     const legacy = legacyOutputs();
-    const reports = runParity({
-      snapshot: paritySnapshot(),
-      legacy: {
-        ...legacy,
-        topUps: {
-          ...legacy.topUps,
-          [K1]: [
-            {
-              hash: '0x' + 'f'.repeat(64),
-              block: 2000,
-              transaction_date: '2026-11-25T16:00:00.000Z',
-              from_wallet: K1,
-              amount: 0.1
-            }
-          ]
+    const topUps = (block: number, date: string) => ({
+      ...legacy.topUps,
+      [K1]: [
+        {
+          hash: '0x' + 'f'.repeat(64),
+          block,
+          transaction_date: date,
+          from_wallet: K1,
+          amount: 0.1
         }
-      },
+      ]
+    });
+    const late = runParity({
+      snapshot: paritySnapshot(),
+      legacy: { ...legacy, topUps: topUps(2000, '2026-11-25T16:00:00.000Z') },
       run: 'run1',
       buildAtMs: BUILD_AT
-    });
-    const g3 = reports.find((r) => r.gate === 'REDEMPTIONS')!;
-    expect(g3.verdict).toBe('MATCH');
+    }).find((r) => r.gate === 'REDEMPTIONS')!;
+    expect(late.verdict).toBe('MATCH');
     const early = runParity({
       snapshot: paritySnapshot(),
-      legacy: {
-        ...legacy,
-        topUps: {
-          ...legacy.topUps,
-          [K1]: [
-            {
-              hash: '0x' + 'f'.repeat(64),
-              block: 900,
-              transaction_date: '2026-11-25T10:00:00.000Z',
-              from_wallet: K1,
-              amount: 0.1
-            }
-          ]
-        }
-      },
+      legacy: { ...legacy, topUps: topUps(900, '2026-11-25T10:00:00.000Z') },
       run: 'run1',
       buildAtMs: BUILD_AT
     }).find((r) => r.gate === 'REDEMPTIONS')!;
@@ -246,53 +284,6 @@ describe('runParity', () => {
         cause: 'topup-timing'
       }
     ]);
-  });
-
-  it('pins run 1 airdrop addresses to the build lines', () => {
-    const snapshot = paritySnapshot();
-    const { report } = compareFinalList({
-      snapshot: {
-        ...snapshot,
-        subscribers: snapshot.subscribers.map((s) =>
-          s.key === K1 && s.airdrop
-            ? { ...s, airdrop: { ...s.airdrop, airdropAddress: D9 } }
-            : s
-        )
-      },
-      legacy: legacyOutputs(),
-      run: 'run1',
-      buildAtMs: BUILD_AT
-    });
-    expect(report.verdict).toBe('MATCH');
-    expect(report.notes).toContain(
-      'airdrop route moved after the build for 1 keys (pinned to the build)'
-    );
-  });
-
-  it('maps a list key that a consolidation moved after the build', () => {
-    const single = K2.split('-')[0];
-    expect(
-      rekeyedAfterBuild([single, K1], [single, K1, K2], new Set([K1, K2]))
-    ).toEqual(new Map([[single, K2]]));
-    expect(
-      rekeyedAfterBuild([single], [single, K2], new Set([single, K2]))
-    ).toEqual(new Map());
-    const legacy = legacyOutputs();
-    const csv = legacy.csv!;
-    const { report } = compareFinalList({
-      snapshot: paritySnapshot(),
-      legacy: {
-        ...legacy,
-        csv: {
-          ...csv,
-          rows: csv.rows.map((r) => (r.key === K2 ? { ...r, key: single } : r))
-        }
-      },
-      run: 'run1',
-      buildAtMs: BUILD_AT
-    });
-    expect(report.verdict).toBe('MATCH');
-    expect(report.notes).toContain('list keys re-keyed after the build: 1');
   });
 
   it('reports a phase list that differs from the phase route', () => {
@@ -309,16 +300,120 @@ describe('runParity', () => {
       run: 'run1',
       buildAtMs: BUILD_AT
     });
-    const phase1 = reports.find((r) => r.phase === 'Phase 1')!;
-    expect(phase1.diffs).toEqual([
+    expect(reports.find((r) => r.phase === 'Phase 1')!.diffs).toEqual([
       {
         key: null,
         wallet: A2,
         field: 'phaseRow',
-        old: 1,
-        new: 2,
+        old: [1],
+        new: [2],
         cause: 'unknown'
       }
     ]);
+  });
+});
+
+describe('a snapshot read after the build', () => {
+  it('is never a gate MATCH, and is fine for a pinned diagnostic', () => {
+    const snapshot = paritySnapshot();
+    const late = {
+      ...snapshot,
+      subscribers: snapshot.subscribers.map((s) => ({
+        ...s,
+        collectedAtMs: BUILD_AT + 60_000
+      }))
+    };
+    const gate = compareFinalList({
+      snapshot: late,
+      legacy: legacyOutputs(),
+      run: 'run1',
+      buildAtMs: BUILD_AT
+    }).report;
+    expect(gate.verdict).toBe('DIFF');
+    expect(gate.diffs).toContainEqual({
+      key: null,
+      field: 'keysReadAfterBuild',
+      old: 0,
+      new: 4,
+      cause: 'read-after-build'
+    });
+    const pinned = compareFinalList({
+      snapshot: late,
+      legacy: legacyOutputs(),
+      run: 'run1',
+      mode: 'pinned',
+      buildAtMs: BUILD_AT
+    }).report;
+    expect(pinned.diffs.map((d) => d.field)).not.toContain(
+      'keysReadAfterBuild'
+    );
+  });
+});
+
+describe('pinned mode', () => {
+  it('copies balances and run 1 airdrop addresses and checks neither', () => {
+    const snapshot = paritySnapshot();
+    const { report } = compareFinalList({
+      snapshot: {
+        ...snapshot,
+        subscribers: snapshot.subscribers.map((s) =>
+          s.key === K1 && s.airdrop && s.details
+            ? {
+                ...s,
+                airdrop: { ...s.airdrop, airdropAddress: D9 },
+                details: { ...s.details, balance: 0.01 }
+              }
+            : s
+        )
+      },
+      legacy: legacyOutputs(),
+      run: 'run1',
+      mode: 'pinned',
+      buildAtMs: BUILD_AT
+    });
+    expect(report.verdict).toBe('MATCH');
+    expect(report.checked).toEqual(['rows', 'count', 'cards']);
+    expect(report.notChecked).toEqual([
+      'balance (copied from build lines)',
+      'airdropAddress (copied from legacy build lines)',
+      'order (subscribed_at; positions reported)'
+    ]);
+    expect(report.notes).toContain(
+      'airdrop route moved after the build: 1 keys'
+    );
+  });
+});
+
+describe('rekeyedAfterBuild', () => {
+  const single = K2.split('-')[0];
+
+  it('maps a list key that a consolidation moved after the build', () => {
+    expect(
+      rekeyedAfterBuild([single, K1], [single, K1, K2], new Set([K1, K2]))
+    ).toEqual(new Map([[single, K2]]));
+    const rows = legacyOutputs().csv!.rows;
+    const { report } = compareFinalList({
+      snapshot: paritySnapshot(),
+      legacy: withListRows(
+        rows.map((r) => (r.key === K2 ? { ...r, key: single } : r))
+      ),
+      run: 'run1',
+      buildAtMs: BUILD_AT
+    });
+    expect(report.verdict).toBe('MATCH');
+    expect(report.notes).toContain('list keys re-keyed after the build: 1');
+  });
+
+  it('refuses a holder that has its own list row or that two keys claim', () => {
+    const other = K2.split('-')[1];
+    expect(
+      rekeyedAfterBuild([single], [single, K2], new Set([single, K2]))
+    ).toEqual(new Map());
+    expect(
+      rekeyedAfterBuild([single, K2], [single, K2], new Set([K2]))
+    ).toEqual(new Map());
+    expect(
+      rekeyedAfterBuild([single, other], [single, other, K2], new Set([K2]))
+    ).toEqual(new Map());
   });
 });

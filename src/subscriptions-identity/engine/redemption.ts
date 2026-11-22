@@ -105,7 +105,12 @@ function compareTransfers(a: AirdropTransfer, b: AirdropTransfer): number {
   return a.tokenId - b.tokenId;
 }
 
-/** MySQL ascending order: NULL first, then case-insensitive text. */
+/**
+ * MySQL ascending order as used here: NULL first, then lowercase text. The
+ * column's collation also folds accents and has its own weights, so this is
+ * an approximation; the phase names in use (Phase 0 to 2, Public) order the
+ * same under both.
+ */
 function comparePhase(a: string | null, b: string | null): number {
   if (a === b) {
     return 0;

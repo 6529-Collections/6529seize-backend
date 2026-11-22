@@ -1,15 +1,28 @@
 import fetch from 'node-fetch';
 
+export interface HttpRequest {
+  readonly url: string;
+  readonly headers: Readonly<Record<string, string>>;
+}
+
 export interface HttpResponse {
   readonly status: number;
   readonly body: string;
+  /** The Location header of a redirect, as sent. */
+  readonly location?: string | null;
 }
 
-export type HttpGet = (url: string) => Promise<HttpResponse>;
+/** One request, redirects not followed. */
+export type HttpGet = (request: HttpRequest) => Promise<HttpResponse>;
 
 export interface PublicApiClientOptions {
-  /** The API base, for example `https://<api host>/api`. No credentials. */
+  /** The API base, https only, for example `https://<api host>/api`. */
   readonly baseUrl: string;
+  /**
+   * Hosts list files may be read from (and their subdomains). The API host
+   * is always allowed.
+   */
+  readonly fileHosts?: readonly string[];
   /** At least this long between request starts. 500 ms is 2 a second. */
   readonly minIntervalMs?: number;
   readonly maxRetries?: number;
@@ -20,38 +33,30 @@ export interface PublicApiClientOptions {
 
 const DEFAULT_MIN_INTERVAL_MS = 500;
 const DEFAULT_MAX_RETRIES = 4;
-
 const MAX_REDIRECTS = 5;
+/** The gateway that serves the published list files. */
+const DEFAULT_FILE_HOSTS = ['arweave.net'];
 
 /**
- * GET with redirects followed here, so a protocol-relative Location (as file
- * gateways send) resolves against the request URL and stays on https.
+ * Sent on every request: no authorization, no cookie. Some file gateways
+ * answer a redirect without a Location when JSON is preferred, so any type
+ * is accepted.
  */
-async function defaultHttpGet(url: string): Promise<HttpResponse> {
-  let current = url;
-  for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
-    const response = await fetch(current, {
-      redirect: 'manual',
-      headers: {
-        accept: '*/*',
-        'user-agent': 'subscriptions-parity'
-      }
-    });
-    const location = response.headers.get('location');
-    if (response.status >= 300 && response.status < 400 && location) {
-      const next = new URL(location, current);
-      if (
-        next.protocol !== 'https:' &&
-        next.protocol !== new URL(current).protocol
-      ) {
-        throw new Error(`Refusing a redirect to ${next.protocol}`);
-      }
-      current = next.toString();
-      continue;
-    }
-    return { status: response.status, body: await response.text() };
+export const REQUEST_HEADERS: Readonly<Record<string, string>> = {
+  accept: '*/*',
+  'user-agent': 'subscriptions-parity'
+};
+
+async function defaultHttpGet(request: HttpRequest): Promise<HttpResponse> {
+  const response = await fetch(request.url, {
+    redirect: 'manual',
+    headers: { ...request.headers }
+  });
+  const location = response.headers.get('location');
+  if (response.status >= 300 && response.status < 400) {
+    return { status: response.status, body: '', location };
   }
-  throw new Error(`Too many redirects from ${url}`);
+  return { status: response.status, body: await response.text() };
 }
 
 function defaultSleep(ms: number): Promise<void> {
@@ -62,13 +67,20 @@ function isRetryable(status: number): boolean {
   return status === 429 || status >= 500;
 }
 
+function isRedirect(response: HttpResponse): boolean {
+  return response.status >= 300 && response.status < 400;
+}
+
 /**
- * Unauthenticated GETs against the public API, one at a time and never
- * faster than one start per `minIntervalMs`. Sends no cookies and no
- * authorization header. Retries 429 and 5xx with doubling waits.
+ * Unauthenticated GETs against the public API and the list-file gateway,
+ * one at a time and never faster than one start per `minIntervalMs`,
+ * redirect hops included. Only https, and only the API host and the file
+ * hosts. Retries 429 and 5xx with doubling waits.
  */
 export class PublicApiClient {
   private readonly baseUrl: string;
+  private readonly apiHost: string;
+  private readonly fileHosts: readonly string[];
   private readonly minIntervalMs: number;
   private readonly maxRetries: number;
   private readonly httpGet: HttpGet;
@@ -79,10 +91,15 @@ export class PublicApiClient {
   private requests = 0;
 
   constructor(options: PublicApiClientOptions) {
-    if (!/^https?:\/\//.test(options.baseUrl)) {
-      throw new Error('The API base must be an http(s) URL');
+    const base = new URL(options.baseUrl);
+    if (base.protocol !== 'https:') {
+      throw new Error('The API base must be an https URL');
     }
     this.baseUrl = options.baseUrl.replace(/\/+$/, '');
+    this.apiHost = base.host.toLowerCase();
+    this.fileHosts = (options.fileHosts ?? DEFAULT_FILE_HOSTS).map((h) =>
+      h.toLowerCase()
+    );
     this.minIntervalMs = Math.max(
       options.minIntervalMs ?? DEFAULT_MIN_INTERVAL_MS,
       DEFAULT_MIN_INTERVAL_MS
@@ -125,12 +142,23 @@ export class PublicApiClient {
     return JSON.parse(response.body) as T;
   }
 
-  /** Text from an absolute URL (a published list file). */
+  /** Text from an absolute URL on the API host or a file host. */
   async getText(url: string): Promise<string> {
-    if (!/^https:\/\//.test(url)) {
-      throw new Error(`Refusing a non-https file URL: ${url}`);
-    }
     return (await this.get(url, [])).body;
+  }
+
+  private assertAllowed(url: string) {
+    const parsed = new URL(url);
+    if (parsed.protocol !== 'https:') {
+      throw new Error(`Refusing a non-https URL: ${url}`);
+    }
+    const host = parsed.host.toLowerCase();
+    const allowed =
+      host === this.apiHost ||
+      this.fileHosts.some((h) => host === h || host.endsWith(`.${h}`));
+    if (!allowed) {
+      throw new Error(`Refusing a host outside the allow-list: ${host}`);
+    }
   }
 
   private get(url: string, nullOn: readonly number[]): Promise<HttpResponse> {
@@ -144,9 +172,7 @@ export class PublicApiClient {
     nullOn: readonly number[]
   ): Promise<HttpResponse> {
     for (let attempt = 0; ; attempt++) {
-      await this.waitForSlot();
-      this.requests++;
-      const response = await this.httpGet(url);
+      const response = await this.getFollowingRedirects(url);
       if (response.status === 200 || nullOn.includes(response.status)) {
         return response;
       }
@@ -155,6 +181,24 @@ export class PublicApiClient {
       }
       await this.sleep(this.minIntervalMs * 2 ** (attempt + 1));
     }
+  }
+
+  private async getFollowingRedirects(url: string): Promise<HttpResponse> {
+    let current = url;
+    for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
+      this.assertAllowed(current);
+      await this.waitForSlot();
+      this.requests++;
+      const response = await this.httpGet({
+        url: current,
+        headers: REQUEST_HEADERS
+      });
+      if (!isRedirect(response) || !response.location) {
+        return response;
+      }
+      current = new URL(response.location, current).toString();
+    }
+    throw new Error(`Too many redirects from ${url}`);
   }
 
   private async waitForSlot(): Promise<void> {

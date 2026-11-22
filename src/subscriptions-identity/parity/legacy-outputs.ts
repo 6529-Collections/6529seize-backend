@@ -48,7 +48,7 @@ export interface LegacyOutputs {
   readonly phaseLists: Record<string, LegacyPhaseAirdrop[]>;
   readonly distributions: LegacyNormalizedDistribution[];
   readonly redeemed: LegacyRedeemed[];
-  /** Top-ups per key since the build, newest first. */
+  /** Top-ups per key since the snapshot started, newest first. */
   readonly topUps: Record<string, LegacyTopUp[]>;
   readonly airdropTransfers: AirdropTransfer[];
   readonly cardCount: number | null;
@@ -108,7 +108,8 @@ function latestDecision(
  * Reads the legacy outputs for a card after its build (and, for the
  * redemption check, after its airdrop): the published list, each key's
  * build line and final row, the phase lists, the distribution, the
- * redemptions, top-ups since the build and the airdrop mints.
+ * redemptions, each key's top-ups since the snapshot started, and the
+ * airdrop mints.
  */
 export async function collectLegacyOutputs(
   api: LegacySubscriptionsApi,
@@ -117,9 +118,9 @@ export async function collectLegacyOutputs(
     readonly tokenId: number;
     readonly buildDate: string;
     readonly keys: readonly string[];
-    /** Read log lines back to here (the snapshot's start). */
+    /** Read log lines and top-ups back to here (the snapshot's start). */
     readonly logsSinceMs: number;
-    /** Read top-ups and redemptions back to here (the build). */
+    /** Read redemptions back to here (the build). */
     readonly buildAtMs: number;
     readonly now?: () => number;
     readonly onProgress?: (done: number, total: number) => void;
@@ -160,14 +161,14 @@ export async function collectLegacyOutputs(
     if (decision) {
       buildDecisions[key] = decision;
     }
+    topUps[key] = (await api.topUps(key, params.logsSinceMs)).filter(
+      (t) => Date.parse(t.transaction_date) >= params.logsSinceMs
+    );
     if (onList.has(key) || decision?.kind === 'ADDED') {
       const row = await api.finalRow(key, contract, params.tokenId);
       if (row) {
         finalRows[key] = row;
       }
-      topUps[key] = (await api.topUps(key, params.buildAtMs)).filter(
-        (t) => Date.parse(t.transaction_date) >= params.buildAtMs
-      );
       redeemed.push(
         ...(await api.redeemed(key, params.buildAtMs)).filter(
           (r) => Number(r.token_id) === params.tokenId

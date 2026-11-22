@@ -17,11 +17,12 @@ function fakeApi(routes: Record<string, unknown>): LegacySubscriptionsApi {
   return new LegacySubscriptionsApi(
     new PublicApiClient({
       baseUrl: 'https://api.example/api',
+      fileHosts: ['files.example'],
       now: () => now,
       sleep: async (ms) => {
         now += ms;
       },
-      httpGet: async (url) => {
+      httpGet: async ({ url }) => {
         const path = url.replace('https://api.example/api', '');
         const hit = Object.keys(routes).find(
           (p) => path === p || path.startsWith(`${p}?`)
@@ -151,17 +152,94 @@ describe('toBuildInputs', () => {
       )
     };
     const { inputs, notes } = toBuildInputs(late, { buildAtMs: BUILD_AT });
+    expect(inputs.find((i) => i.key === K1)?.mode).toBeNull();
+    expect(notes.get(K1)).toContain('MODE_ROLLED_BACK');
+  });
+
+  function lateRead(
+    details: { automatic: boolean },
+    lines: Array<[number, string]>
+  ) {
+    const snapshot = paritySnapshot();
+    return {
+      ...snapshot,
+      subscribers: snapshot.subscribers.map((s) =>
+        s.key === K1 && s.details
+          ? {
+              ...s,
+              collectedAtMs: BUILD_AT + 3_600_000,
+              details: { ...s.details, ...details, last_update: 0 },
+              logs: [
+                ...lines.map(([at, log], i) => ({
+                  id: 9000 + i,
+                  createdAtMs: at,
+                  log,
+                  additionalInfo: null
+                })),
+                ...s.logs
+              ]
+            }
+          : s
+      )
+    };
+  }
+
+  it('keeps an automatic mode that a late line turned to Manual', () => {
+    const { inputs } = toBuildInputs(
+      lateRead({ automatic: false }, [
+        [BUILD_AT + 600_000, 'Subscription Mode set to Manual']
+      ]),
+      { buildAtMs: BUILD_AT }
+    );
     expect(inputs.find((i) => i.key === K1)?.mode).toEqual({
-      automatic: false,
+      automatic: true,
       subscribeAllEditions: false,
       updatedAtMs: null
     });
-    expect(notes.get(K1)).toContain('MODE_ROLLED_BACK');
+  });
+
+  it('takes the newest line before the build over repeated late sets', () => {
+    const { inputs } = toBuildInputs(
+      lateRead({ automatic: true }, [
+        [BUILD_AT - 86_400_000, 'Subscription Mode set to Automatic'],
+        [BUILD_AT + 600_000, 'Subscription Mode set to Automatic'],
+        [BUILD_AT + 700_000, 'Subscription Mode set to Automatic']
+      ]),
+      { buildAtMs: BUILD_AT }
+    );
+    expect(inputs.find((i) => i.key === K1)?.mode).toEqual({
+      automatic: true,
+      subscribeAllEditions: false,
+      updatedAtMs: BUILD_AT - 86_400_000
+    });
+  });
+
+  it('reads a zero balance as a row holding zero, and notes it', () => {
+    const snapshot = paritySnapshot();
+    const { inputs, notes } = toBuildInputs(
+      {
+        ...snapshot,
+        subscribers: snapshot.subscribers.map((s) =>
+          s.key === K1 && s.details
+            ? { ...s, details: { ...s.details, balance: 0 } }
+            : s
+        )
+      },
+      { buildAtMs: BUILD_AT }
+    );
+    expect(inputs.find((i) => i.key === K1)?.balance).toBe(0);
+    expect(notes.get(K1)).toEqual(['ZERO_BALANCE_AS_ROW']);
   });
 
   it('takes an earlier build line as a subscribed row when nothing else is left', () => {
     const snapshot = paritySnapshot();
     const k1 = snapshot.subscribers.find((s) => s.key === K1)!;
+    const buildLine = {
+      id: 1,
+      createdAtMs: CUTOFF - 86_400_000 + 60_000,
+      log: `Added to Final Subscription for Meme #${CARD} on 2026-11-24`,
+      additionalInfo: `Airdrop Address: ${K1} - Subscription Count: x2 - Balance: 0.5 ETH`
+    };
     const { inputs, notes } = toBuildInputs(
       {
         ...snapshot,
@@ -169,14 +247,7 @@ describe('toBuildInputs', () => {
           {
             ...k1,
             upcoming: null,
-            logs: [
-              {
-                id: 1,
-                createdAtMs: CUTOFF - 86_400_000 + 60_000,
-                log: `Added to Final Subscription for Meme #${CARD} on 2026-11-24`,
-                additionalInfo: `Airdrop Address: ${K1} - Subscription Count: x2 - Balance: 0.5 ETH`
-              }
-            ]
+            logs: [buildLine]
           }
         ]
       },
@@ -190,15 +261,24 @@ describe('toBuildInputs', () => {
     });
     expect(notes.get(K1)).toEqual([
       'CARD_FROM_LOGS',
+      'COUNT_FROM_BUILD_LINE',
       'ROW_FLAG_UNKNOWN',
       'ROW_TIME_UNKNOWN'
     ]);
+    const gate = toBuildInputs(
+      {
+        ...snapshot,
+        subscribers: [{ ...k1, upcoming: null, logs: [buildLine] }]
+      },
+      { buildAtMs: BUILD_AT, useBuildLines: false }
+    );
+    expect(gate.inputs[0].card).toBeNull();
   });
 
-  it('uses the legacy build balance when pinned', () => {
+  it('uses a given balance over the read one', () => {
     const { inputs } = toBuildInputs(paritySnapshot(), {
       buildAtMs: BUILD_AT,
-      pinnedBalances: new Map<string, number | null>([
+      balances: new Map<string, number | null>([
         [K1, 0.7],
         [K2, null]
       ])

@@ -117,16 +117,25 @@ function highestTdhWallet(
  */
 export function resolveAirdropTarget(params: {
   readonly key: string;
+  /**
+   * The identity's wallets. Without them the key is read as a legacy
+   * consolidation key (wallets joined by "-"); a principal id needs them.
+   */
+  readonly wallets?: readonly string[];
   readonly delegations: readonly DelegationRow[];
   readonly boostedTdhByWallet: ReadonlyMap<string, number>;
   readonly nowSeconds: number;
 }): ResolvedAirdropTarget {
-  const wallets = lower(params.key).split('-');
+  const wallets = params.wallets
+    ? params.wallets.map(lower)
+    : lower(params.key).split('-');
   const ties = new Set<ResolvedAirdropTarget['ties'][number]>();
-  const tdhWallet =
-    wallets.length < 2
-      ? params.key
-      : highestTdhWallet(wallets, params.boostedTdhByWallet, ties);
+  let tdhWallet: string | null;
+  if (wallets.length >= 2) {
+    tdhWallet = highestTdhWallet(wallets, params.boostedTdhByWallet, ties);
+  } else {
+    tdhWallet = params.wallets ? (wallets[0] ?? null) : params.key;
+  }
 
   const walletSet = new Set(wallets);
   const live = topPerDelegator(

@@ -110,6 +110,26 @@ describe('resolveAirdropTarget', () => {
     expect(result.airdropAddress).toBe(D2);
   });
 
+  it('resolves an identity key on the wallet list it is given', () => {
+    const principal = `0x${'7'.repeat(64)}`;
+    const one = resolveAirdropTarget({
+      key: principal,
+      wallets: [W1],
+      delegations: [],
+      boostedTdhByWallet: new Map(),
+      nowSeconds: NOW
+    });
+    expect(one).toEqual({ airdropAddress: W1, tdhWallet: W1, ties: [] });
+    const two = resolveAirdropTarget({
+      key: principal,
+      wallets: [W1, W2],
+      delegations: [delegation({ fromAddress: W2, toAddress: D2 })],
+      boostedTdhByWallet: new Map([[W1, 5]]),
+      nowSeconds: NOW
+    });
+    expect(two).toEqual({ airdropAddress: D2, tdhWallet: W1, ties: [] });
+  });
+
   it('ignores records for one token only', () => {
     const result = resolve(W1, [delegation({ allTokens: false })]);
     expect(result.airdropAddress).toBe(W1);

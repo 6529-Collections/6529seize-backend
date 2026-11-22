@@ -1,16 +1,16 @@
 import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { main, parseArgs } from './cli';
+import { assertOutsideRepository, main, parseArgs } from './cli';
 import { BUILD_AT, legacyOutputs, paritySnapshot } from './parity.fixture';
 
 describe('parity cli', () => {
   it('parses commands and flags', () => {
     expect(
-      parseArgs(['compare', '--run', 'run2', '--no-pin', '--out', 'r.json'])
+      parseArgs(['compare', '--run', 'run2', '--verbose', '--out', 'r.json'])
     ).toEqual({
       command: 'compare',
-      args: { run: 'run2', 'no-pin': true, out: 'r.json' }
+      args: { run: 'run2', verbose: true, out: 'r.json' }
     });
     expect(() => parseArgs(['compare', 'stray'])).toThrow(
       'Unexpected argument'
@@ -51,6 +51,21 @@ describe('parity cli', () => {
       'MATCH',
       'MATCH'
     ]);
+  });
+
+  it('refuses to write reports inside the repository', () => {
+    expect(() =>
+      assertOutsideRepository(join(__dirname, 'report.json'))
+    ).toThrow('inside the repository');
+    expect(() =>
+      assertOutsideRepository(join(tmpdir(), 'report.json'))
+    ).not.toThrow();
+  });
+
+  it('refuses an unknown input mode', async () => {
+    await expect(
+      main(['compare', '--mode', 'loose', '--snapshot', 'x', '--legacy', 'y'])
+    ).rejects.toThrow('--mode is gate or pinned');
   });
 
   it('prints usage for an unknown command', async () => {

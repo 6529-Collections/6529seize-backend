@@ -120,11 +120,12 @@ describe('legacy outputs', () => {
     const api = new LegacySubscriptionsApi(
       new PublicApiClient({
         baseUrl: 'https://api.example/api',
+        fileHosts: ['files.example'],
         now: () => now,
         sleep: async (ms) => {
           now += ms;
         },
-        httpGet: async (url) => {
+        httpGet: async ({ url }) => {
           requested.push(url);
           const path = url.startsWith('https://api.example/api')
             ? url.replace('https://api.example/api', '')

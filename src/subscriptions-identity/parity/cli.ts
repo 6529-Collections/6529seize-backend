@@ -1,9 +1,12 @@
-import { readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { dirname, isAbsolute, relative, resolve } from 'node:path';
 import { MEMES_CONTRACT } from '@/constants';
 import { AirdropTransfer } from '../engine/redemption';
-import { ChainInputs, ParityRun, runParity, summaryLine } from './compare';
+import { ChainInputs } from './chain-inputs';
+import { runParity } from './compare';
 import { LegacySubscriptionsApi } from './legacy-api';
 import { collectLegacyOutputs, LegacyOutputs } from './legacy-outputs';
+import { InputMode, ParityRun, summaryLine } from './parity-report';
 import { PublicApiClient } from './public-api-client';
 import { candidateKeys, collectSnapshot, ParitySnapshot } from './snapshot';
 
@@ -15,14 +18,22 @@ import { candidateKeys, collectSnapshot, ParitySnapshot } from './snapshot';
  *   legacy    read what the legacy build, phases and redemptions produced
  *   compare   run the engine and diff it with the legacy outputs
  *
- * Reads only unauthenticated GETs of the public API, at most 2 a second.
+ * Makes only unauthenticated GETs, at most 2 a second (redirect hops
+ * included): the public API, and the published list files on the file
+ * gateway the API links to. Outputs name wallets, so they are written
+ * outside the repository.
+ *
+ * `compare --mode gate` (the default) computes from inputs read before the
+ * build; `--mode pinned` copies balances and run 1's airdrop addresses from
+ * the legacy build lines and checks neither.
  */
 
 const USAGE = `usage:
   keys     --api <base> [--recent-lists 12] [--keys-file <txt>] --out <json>
   snapshot --api <base> --card <id> --cutoff <iso> --keys <json> [--logs-days 30] --out <json>
   legacy   --api <base> --card <id> --build-date <yyyy-mm-dd> --build-at <iso> --snapshot <json> --out <json>
-  compare  --snapshot <json> --legacy <json> --build-at <iso> [--run run1|run2] [--chain <json>] [--transfers <json>] [--no-pin] --out <json>`;
+  compare  --snapshot <json> --legacy <json> --build-at <iso> [--run run1|run2] [--mode gate|pinned] [--chain <json>] [--transfers <json>] --out <json>
+  --file-hosts <host,host> overrides the list-file hosts`;
 
 type Args = Record<string, string | true>;
 
@@ -86,13 +97,48 @@ function readJson<T>(path: string): T {
   return JSON.parse(readFileSync(path, 'utf8')) as T;
 }
 
+/** The nearest directory above `start` that holds a .git entry. */
+function repositoryRoot(start: string): string | null {
+  let dir = resolve(start);
+  for (;;) {
+    if (existsSync(resolve(dir, '.git'))) {
+      return dir;
+    }
+    const parent = dirname(dir);
+    if (parent === dir) {
+      return null;
+    }
+    dir = parent;
+  }
+}
+
+/** Refuses an output path inside the repository (outputs name wallets). */
+export function assertOutsideRepository(
+  path: string,
+  start: string = __dirname
+): void {
+  const root = repositoryRoot(start);
+  if (!root) {
+    return;
+  }
+  const rel = relative(root, resolve(path));
+  if (rel === '' || (!rel.startsWith('..') && !isAbsolute(rel))) {
+    throw new Error(`Refusing to write inside the repository: ${path}`);
+  }
+}
+
 function writeJson(path: string, value: unknown) {
+  assertOutsideRepository(path);
   writeFileSync(path, JSON.stringify(value, null, 2) + '\n');
 }
 
 function api(args: Args): LegacySubscriptionsApi {
+  const fileHosts = optional(args, 'file-hosts');
   return new LegacySubscriptionsApi(
-    new PublicApiClient({ baseUrl: required(args, 'api') })
+    new PublicApiClient({
+      baseUrl: required(args, 'api'),
+      fileHosts: fileHosts ? fileHosts.split(',') : undefined
+    })
   );
 }
 
@@ -154,18 +200,22 @@ function compareCommand(args: Args) {
   if (run !== 'run1' && run !== 'run2') {
     throw new Error('--run is run1 or run2');
   }
+  const mode = (optional(args, 'mode') ?? 'gate') as InputMode;
+  if (mode !== 'gate' && mode !== 'pinned') {
+    throw new Error('--mode is gate or pinned');
+  }
   const chainPath = optional(args, 'chain');
   const transfersPath = optional(args, 'transfers');
   const reports = runParity({
     snapshot: readJson<ParitySnapshot>(required(args, 'snapshot')),
     legacy: readJson<LegacyOutputs>(required(args, 'legacy')),
     run,
+    mode,
     buildAtMs: timeArg(args, 'build-at'),
     chain: chainPath ? readJson<ChainInputs>(chainPath) : undefined,
     transfers: transfersPath
       ? readJson<AirdropTransfer[]>(transfersPath)
-      : undefined,
-    pinBalances: args['no-pin'] !== true
+      : undefined
   });
   writeJson(required(args, 'out'), reports);
   for (const report of reports) {
