@@ -51,6 +51,7 @@ jest.mock('../identity-tdh-sync-state.db', () => ({
   }
 }));
 
+import { tdhChainDaysDb } from '@/tdhChain/tdh-chain-days.db';
 import { tdhLoop } from './index';
 
 describe('tdhLoop xTDH completion trigger', () => {
@@ -114,19 +115,47 @@ describe('tdhLoop xTDH completion trigger', () => {
     expect(mockNotifyTdhCalculationsDone).not.toHaveBeenCalled();
   });
 
-  it.each([
-    ['TDH comes from the 6529 chain', 'FEATURE_TDH_FROM_CHAIN'],
-    ['the chain is only shadowed', 'FEATURE_TDH_CHAIN_SHADOW']
-  ])(
-    "computes 6529.io's own day at 00:01 when %s, so the day is never missing",
-    async (_when, flag) => {
+  describe('with TDH from the 6529 chain or its shadow', () => {
+    const run = async (flag: string, chainWrote = false) => {
+      const wrote = jest
+        .spyOn(tdhChainDaysDb, 'chainWroteDay')
+        .mockResolvedValue(chainWrote);
       process.env[flag] = 'true';
       try {
         await tdhLoop(true);
+        // The days asked about, read before the spy is restored.
+        return wrote.mock.calls.map(([cycleDay]) => cycleDay);
       } finally {
         delete process.env[flag];
+        wrote.mockRestore();
       }
+    };
+
+    it("computes 6529.io's own day at 00:01 in chain mode, so the day is never missing, interim: no announcement, no uploads", async () => {
+      // Today's cycle day, the latest UTC midnight.
+      expect(await run('FEATURE_TDH_FROM_CHAIN')).toEqual([
+        Math.floor(Date.now() / 86_400_000)
+      ]);
       expect(mockUpdateTdh).toHaveBeenCalledTimes(1);
+      expect(mockConsolidateAndPersistTdh).toHaveBeenCalledWith(
+        123,
+        blockTimestamp,
+        { mode: 'FULL', interim: true }
+      );
+      expect(mockUploadTdh).not.toHaveBeenCalled();
+      expect(mockFindNftTdh).toHaveBeenCalledTimes(1);
+      expect(mockNotifyTdhCalculationsDone).not.toHaveBeenCalled();
+    });
+
+    it("leaves a day the chain wrote alone, so a retry or a manual run can't undo it", async () => {
+      await run('FEATURE_TDH_FROM_CHAIN', true);
+      expect(mockUpdateTdh).not.toHaveBeenCalled();
+      expect(mockConsolidateAndPersistTdh).not.toHaveBeenCalled();
+      expect(mockNotifyTdhCalculationsDone).not.toHaveBeenCalled();
+    });
+
+    it('computes, uploads and announces as before while the chain is only shadowed', async () => {
+      expect(await run('FEATURE_TDH_CHAIN_SHADOW')).toEqual([]);
       expect(mockConsolidateAndPersistTdh).toHaveBeenCalledWith(
         123,
         blockTimestamp,
@@ -134,8 +163,8 @@ describe('tdhLoop xTDH completion trigger', () => {
       );
       expect(mockUploadTdh).toHaveBeenCalledTimes(2);
       expect(mockFindNftTdh).toHaveBeenCalledTimes(1);
-    }
-  );
+    });
+  });
 
   it('preserves completion notification on skipped retry attempts', async () => {
     mockNotifyTdhCalculationsDone

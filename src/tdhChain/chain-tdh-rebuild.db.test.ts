@@ -35,6 +35,7 @@ import {
 import { parseCsv } from './csv';
 import { cidOf, compareText, tokenRoot, walletRoot } from './p28';
 import { COLLECTION_CONTRACTS, SITE_COLLECTIONS } from './site-day';
+import { identityTdhSyncStateDb } from '@/identity-tdh-sync-state.db';
 import { CHAIN_DAY_STEPS, tdhChainDaysDb } from './tdh-chain-days.db';
 import { pollChainDays } from './tdh-chain-day-poller';
 import { pollerDepsFor, sitePollerDeps } from './chain-tdh-ingest.deps';
@@ -286,17 +287,25 @@ function chainDayOf(
   };
 }
 
-async function oldPathDay(cycleDay: number, block: number) {
+/**
+ * A day on the old path, as tdhLoop writes it. `interim`: in chain mode,
+ * written without its announcement and its dated uploads.
+ */
+async function oldPathDay(cycleDay: number, block: number, interim = false) {
   const ts = cutoffTime(cycleDay);
   const r = await updateTDH(ts, undefined, {
     block: { number: block, timestamp: ts }
   });
-  const consolidated = await consolidateAndPersistTDH(block, ts, {
-    mode: 'FULL'
-  });
+  const consolidated = await consolidateAndPersistTDH(
+    block,
+    ts,
+    interim ? { mode: 'FULL', interim: true } : { mode: 'FULL' }
+  );
   await findNftTDH();
-  await uploadTDH(block, ts, r.tdh, false, true);
-  await uploadTDH(block, ts, consolidated, true, true);
+  if (!interim) {
+    await uploadTDH(block, ts, r.tdh, false, true);
+    await uploadTDH(block, ts, consolidated, true, true);
+  }
   await runTdhHistoryForDate(new Date(cycleDay * 86_400_000), {
     fallback: false
   }).catch(() => undefined);
@@ -629,8 +638,9 @@ describeWithSeed('rebuilding the TDH tables from the 6529 chain', SEEDS, () => {
       await fetchAllConsolidatedTdh()
     );
     // tdhLoop's 00:01 run writes the site's own day 2 in every mode
-    // (src/tdhLoop/index.test.ts); here it is the old path's write.
-    await oldPathDay(DAY_2, BLOCK_2);
+    // (src/tdhLoop/index.test.ts); in chain mode it is interim: no
+    // announcement and no dated uploads yet.
+    await oldPathDay(DAY_2, BLOCK_2, true);
     const day2 = chainDayOf(
       DAY_2,
       BLOCK_2,
@@ -639,9 +649,15 @@ describeWithSeed('rebuilding the TDH tables from the 6529 chain', SEEDS, () => {
     );
     const own = await snapshot();
     const alerts: string[] = [];
-    // 05:15 on day 2: four hours past its boundary, at the hourly check.
-    const now = DAY_2 * 86_400_000 + 5 * 3_600_000 + 15 * 60_000;
-    const poll = (mode: 'CHAIN' | 'SHADOW', source: TdhChainSource) =>
+    // The hourly check on day 2: 03:15, before the own-day point, and 05:15,
+    // past it.
+    const at = (hours: number) =>
+      DAY_2 * 86_400_000 + hours * 3_600_000 + 15 * 60_000;
+    const poll = (
+      mode: 'CHAIN' | 'SHADOW',
+      source: TdhChainSource,
+      now = at(3)
+    ) =>
       pollChainDays(
         pollerDepsFor(
           mode,
@@ -684,15 +700,52 @@ describeWithSeed('rebuilding the TDH tables from the 6529 chain', SEEDS, () => {
     const block2 = async () =>
       (await fetchBlocks(10, 1)).data.find((b) => b.block_number === BLOCK_2)!;
     expect((await block2()).chain_cycle_day).toBeNull();
-    expect(alerts).toContain(`TDH day ${DAY_2}: 6529.io shows its own TDH`);
+    // Before the own-day point only the failed check is alerted.
+    expect(alerts).toEqual([
+      `TDH day ${DAY_2} from the 6529 chain failed its checks`
+    ]);
     expect(await tdhChainDaysDb.get(DAY_2)).toMatchObject({
       mode: 'CHAIN',
       status: 'FAILED'
     });
 
+    // The own-day point: still no usable chain day, so 6529.io's own day is
+    // published, once: its dated uploads, and its announcement, armed for
+    // its identities sync (which hasn't run here).
+    const uploads = () =>
+      sqlExecutor.execute<{ date: string; block: number }>(
+        `select date, block from uploads where block = ${BLOCK_2}
+         union all
+         select date, block from uploads_consolidation where block = ${BLOCK_2}`
+      );
+    // The generation armed to be announced: day 1's write, not day 2's.
+    const armed = async () =>
+      Number(
+        (
+          await sqlExecutor.execute<{ generation: number }>(
+            `select generation from identity_tdh_sync_state where id = 'full_announce'`
+          )
+        )[0].generation
+      );
+    const { pendingGeneration: day2Write } =
+      await identityTdhSyncStateDb.readProgress();
+    expect(await uploads()).toEqual([]);
+    expect(await identityTdhSyncStateDb.isInterim(day2Write)).toBe(true);
+    expect(await armed()).toBeLessThan(day2Write);
+    await poll('CHAIN', gatewayDown, at(5));
+    expect(alerts.slice(1)).toEqual([
+      `TDH day ${DAY_2}: 6529.io shows its own TDH`
+    ]);
+    expect(await uploads()).toHaveLength(2);
+    expect(await identityTdhSyncStateDb.isInterim(day2Write)).toBe(false);
+    expect(await armed()).toBe(day2Write);
+    const published = await snapshot();
+    await poll('CHAIN', gatewayDown, at(6));
+    expect(await snapshot()).toEqual(published);
+
     // Shadow alone: day 2 is compared, and nothing users see changes.
     await poll('SHADOW', memorySource([day1, day2]));
-    expect(await snapshot()).toEqual(own);
+    expect(await snapshot()).toEqual(published);
     expect((await block2()).chain_cycle_day).toBeNull();
     expect(await tdhChainDaysDb.get(DAY_2)).toMatchObject({
       mode: 'SHADOW',

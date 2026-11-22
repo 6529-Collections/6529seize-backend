@@ -438,13 +438,21 @@ export async function syncIdentitiesAfterTdh(
     // D and E are short and finish the sync even past the deadline.
     await lease.renew();
     const stepD = Time.now();
-    await revokeTdhBasedDropWavesOverVotesPerCompetition();
-    logger.info(
-      `[D OVERVOTES DONE] [${stepD.diffFromNow()}] [${start.diffFromNow()}]`
-    );
+    // 6529.io's own day while TDH comes from the 6529 chain: the chain's day
+    // replaces it, so votes are not revoked and nothing is announced on its
+    // values until its interim ends (identity-tdh-sync-state.db.ts).
+    const interim = await identityTdhSyncStateDb.isInterim(generation);
+    if (interim) {
+      logger.info(`[D AND E HELD] [GENERATION ${generation}] [INTERIM DAY]`);
+    } else {
+      await revokeTdhBasedDropWavesOverVotesPerCompetition();
+      logger.info(
+        `[D OVERVOTES DONE] [${stepD.diffFromNow()}] [${start.diffFromNow()}]`
+      );
+    }
     await lease.renew();
     const stepE = Time.now();
-    await announceSynced(generation);
+    if (!interim) await announceSynced(generation);
     await identityTdhSyncStateDb.markSynced({
       generation,
       block: progress.pendingBlock,

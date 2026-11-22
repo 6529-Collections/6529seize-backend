@@ -15,14 +15,19 @@ const LEASE = 'lease';
 const METRICS_WALK = 'metrics_walk';
 const FULL_ANNOUNCE = 'full_announce';
 const FULL_WALK = 'full_walk';
+const INTERIM = 'interim';
 const ROW_IDS = [
   PENDING,
   SYNCED,
   LEASE,
   METRICS_WALK,
   FULL_ANNOUNCE,
-  FULL_WALK
+  FULL_WALK,
+  INTERIM
 ];
+
+/** What `releaseInterim` did. */
+export type InterimRelease = 'NOTIFY' | 'ARMED' | 'NONE';
 
 /**
  * The rows are never deleted, so the pending generation only grows and the
@@ -62,7 +67,8 @@ export class IdentityTdhSyncStateDb extends LazyDbAccessCompatibleService {
               ('${LEASE}', 0, 0, null, 0, 0),
               ('${METRICS_WALK}', 0, 0, null, 0, 0),
               ('${FULL_ANNOUNCE}', 0, 0, null, 0, 0),
-              ('${FULL_WALK}', 0, 0, null, 0, 0)`
+              ('${FULL_WALK}', 0, 0, null, 0, 0),
+              ('${INTERIM}', 0, 0, null, 0, 0)`
     );
   }
 
@@ -71,11 +77,20 @@ export class IdentityTdhSyncStateDb extends LazyDbAccessCompatibleService {
    * sync for this generation is pending until `markSynced`. A full TDH write
    * also arms its "TDH calculations done" announcement, which the sync
    * publishes once identities reflect it (`claimFullAnnouncement`).
+   *
+   * An `interim` write is 6529.io's own day while TDH comes from the 6529
+   * chain: the chain's day replaces it. Its sync updates identities but
+   * neither revokes votes nor announces (`isInterim`), until the chain's
+   * write ends the interim or the poller releases it (`releaseInterim`).
+   * Any other write ends an interim.
    */
   async markPending(
     block: number,
     connection: ConnectionWrapper<any>,
-    { announceFull = false }: { announceFull?: boolean } = {}
+    {
+      announceFull = false,
+      interim = false
+    }: { announceFull?: boolean; interim?: boolean } = {}
   ): Promise<number> {
     const now = Time.currentMillis();
     await this.db.execute(
@@ -101,7 +116,99 @@ export class IdentityTdhSyncStateDb extends LazyDbAccessCompatibleService {
         { wrappedConnection: connection }
       );
     }
+    await this.db.execute(
+      `update ${IDENTITY_TDH_SYNC_STATE_TABLE}
+       set generation = :generation, block = :block, updated_at = :now
+       where id = '${INTERIM}'`,
+      {
+        generation: interim ? generation : 0,
+        block: interim ? block : 0,
+        now
+      },
+      { wrappedConnection: connection }
+    );
     return generation;
+  }
+
+  /** Whether `generation` is an interim write still waiting (`markPending`). */
+  async isInterim(generation: number): Promise<boolean> {
+    const row = await this.db.oneOrNull<{ generation: number | string }>(
+      `select generation from ${IDENTITY_TDH_SYNC_STATE_TABLE}
+       where id = '${INTERIM}'`,
+      undefined,
+      { forcePool: DbPoolName.WRITE }
+    );
+    return generation > 0 && Number(row?.generation ?? 0) === generation;
+  }
+
+  /**
+   * Ends the interim of the write at `block`, once, when the chain's day is
+   * not written in time. NOTIFY: its identities are synced, and the caller
+   * announces it. ARMED: its sync is still due and will revoke and announce
+   * as for any full write. NONE: no interim write at that block (the chain
+   * wrote the day, or it was released already).
+   */
+  async releaseInterim(
+    block: number
+  ): Promise<{ outcome: InterimRelease; generation: number }> {
+    return this.executeNativeQueriesInTransaction(async (connection) => {
+      const options = { wrappedConnection: connection };
+      const interim = await this.db.oneOrNull<{
+        generation: number | string;
+        block: number | string;
+      }>(
+        `select generation, block from ${IDENTITY_TDH_SYNC_STATE_TABLE}
+         where id = '${INTERIM}' for update`,
+        undefined,
+        options
+      );
+      const generation = Number(interim?.generation ?? 0);
+      if (generation === 0 || Number(interim?.block) !== block) {
+        return { outcome: 'NONE' as const, generation: 0 };
+      }
+      const now = Time.currentMillis();
+      await this.db.execute(
+        `update ${IDENTITY_TDH_SYNC_STATE_TABLE}
+         set generation = 0, block = 0, updated_at = :now
+         where id = '${INTERIM}'`,
+        { now },
+        options
+      );
+      const synced = await this.db.oneOrNull<{ generation: number | string }>(
+        `select generation from ${IDENTITY_TDH_SYNC_STATE_TABLE}
+         where id = '${SYNCED}'`,
+        undefined,
+        options
+      );
+      if (Number(synced?.generation ?? 0) >= generation) {
+        return { outcome: 'NOTIFY' as const, generation };
+      }
+      await this.db.execute(
+        `update ${IDENTITY_TDH_SYNC_STATE_TABLE}
+         set generation = greatest(generation, :generation), block = :block,
+             updated_at = :now
+         where id = '${FULL_ANNOUNCE}'`,
+        { generation, block, now },
+        options
+      );
+      return { outcome: 'ARMED' as const, generation };
+    });
+  }
+
+  /**
+   * Puts a released interim back when announcing it failed, unless another
+   * write has come since.
+   */
+  async rearmInterim(generation: number, block: number): Promise<void> {
+    await this.db.execute(
+      `update ${IDENTITY_TDH_SYNC_STATE_TABLE} i
+       join ${IDENTITY_TDH_SYNC_STATE_TABLE} p on p.id = '${PENDING}'
+       set i.generation = :generation, i.block = :block,
+           i.updated_at = :now
+       where i.id = '${INTERIM}' and i.generation = 0
+         and p.generation = :generation`,
+      { generation, block, now: Time.currentMillis() }
+    );
   }
 
   async readProgress(): Promise<IdentityTdhSyncProgress> {

@@ -161,6 +161,18 @@ function isChainWrite(mode: string, status: string): boolean {
 }
 
 export class TdhChainDaysDb extends LazyDbAccessCompatibleService {
+  /** Whether the chain wrote the day into the tables, not since superseded. */
+  async chainWroteDay(cycleDay: number): Promise<boolean> {
+    const rows = await this.db.execute<{ n: number }>(
+      `select count(*) as n from ${TDH_CHAIN_DAYS_TABLE}
+       where cycle_day = :cycleDay and mode = 'CHAIN'
+         and status in ('WRITTEN', 'INGESTED') and superseded_at is null`,
+      { cycleDay },
+      { forcePool: DbPoolName.WRITE }
+    );
+    return Number(rows[0]?.n ?? 0) > 0;
+  }
+
   /** One day's record, or null. */
   async get(cycleDay: number): Promise<TdhChainDayRow | null> {
     const rows = await this.db.execute<DayRowRecord>(

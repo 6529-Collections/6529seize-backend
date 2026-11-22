@@ -40,6 +40,8 @@ import { TdhChainDay, TdhChainDayInfo } from './tdh-chain.types';
  *   boundary, and was not compared in shadow before the switch: the chain's
  *   day is not usable (the gateway down, the day not served or not final,
  *   a list that doesn't rebuild its root, a failed check, a stalled chain).
+ *   Then the site's own day, written interim at 00:01 (no announcement, no
+ *   dated uploads), is published as the day (`publishOwnDay`), once.
  */
 
 const logger = Logger.get('TDH_CHAIN_DAY_POLLER');
@@ -59,6 +61,11 @@ export interface PollerDeps {
   latestTdhDay(): Promise<{ block: number; timestampMs: number } | null>;
   /** One day's record, or null. */
   dayRecord(cycleDay: number): Promise<TdhChainDayRow | null>;
+  /**
+   * 6529.io's own day stands in for the chain's: publish its uploads and
+   * announcement, once.
+   */
+  publishOwnDay(cycleDay: number, block: number): Promise<void>;
   keyWidth(): Promise<number>;
   ingest(
     day: TdhChainDay,
@@ -158,6 +165,7 @@ async function alertIfStale(deps: PollerDeps): Promise<void> {
       `TDH day ${cycleDay}: 6529.io shows its own TDH`,
       `the 6529 chain's day is not written: ${why}`
     );
+    await deps.publishOwnDay(cycleDay, newest.block);
   }
 }
 

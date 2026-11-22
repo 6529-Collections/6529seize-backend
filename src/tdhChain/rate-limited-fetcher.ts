@@ -49,6 +49,16 @@ export class FetchRefusedError extends Error {
 }
 
 const MAX_REDIRECTS = 5;
+/** The longest `Retry-After` honoured, in seconds. */
+const MAX_RETRY_AFTER_S = 10;
+
+/** The wait before a retry: the answer's `Retry-After` (seconds, capped), else 1 s more each time. */
+function retryDelayMs(res: Response, attempt: number): number {
+  const seconds = Number(res.headers.get('retry-after'));
+  return Number.isFinite(seconds) && seconds > 0
+    ? Math.min(seconds, MAX_RETRY_AFTER_S) * 1000
+    : 1000 * attempt;
+}
 
 export class RateLimitedFetcher {
   private readonly minIntervalMs: number;
@@ -148,7 +158,7 @@ export class RateLimitedFetcher {
           sha256: null
         });
         attempt++;
-        await this.sleep(1000 * attempt);
+        await this.sleep(retryDelayMs(res, attempt));
         res = await this.paced(current, jsonBody);
       }
       if (res.status >= 300 && res.status < 400) {

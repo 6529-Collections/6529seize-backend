@@ -161,6 +161,38 @@ describe('RateLimitedFetcher', () => {
     expect((await f.get('https://api.example/busy')).status).toBe(429);
   });
 
+  it("waits as long as the answer's Retry-After says, up to 10 s", async () => {
+    const clock = fakeClock();
+    const calls: Call[] = [];
+    let n = 0;
+    const f = new RateLimitedFetcher({
+      allowedHosts: ['api.example'],
+      retries: 2,
+      minIntervalMs: 0,
+      ...clock,
+      fetchFn: fakeFetch(
+        {
+          'https://api.example/starting': () =>
+            ++n === 1
+              ? new Response('', {
+                  status: 503,
+                  headers: { 'Retry-After': '4' }
+                })
+              : n === 2
+                ? new Response('', {
+                    status: 503,
+                    headers: { 'Retry-After': '120' }
+                  })
+                : new Response('ok')
+        },
+        calls,
+        clock
+      )
+    });
+    expect((await f.get('https://api.example/starting')).status).toBe(200);
+    expect(calls.map((c) => c.at - calls[0].at)).toEqual([0, 4000, 14_000]);
+  });
+
   it('posts JSON for an RPC read', async () => {
     const clock = fakeClock();
     const calls: Call[] = [];

@@ -177,6 +177,9 @@ describe('pollChainDays', () => {
       pendingDays: async () => [],
       latestTdhDay: async () => null,
       dayRecord: async () => null,
+      publishOwnDay: async (cycleDay, block) => {
+        log.events.push(`publish ${cycleDay} ${block}`);
+      },
       keyWidth: async () => 200,
       ingest: async (d) => {
         log.events.push(`ingest ${d.header.cycleDay}`);
@@ -473,24 +476,29 @@ describe('pollChainDays', () => {
           log
         )
       );
-      return log.alerts;
+      // The alerts, then any own-day publication.
+      return [
+        ...log.alerts,
+        ...log.events.filter((e) => e.startsWith('publish'))
+      ];
     };
     const ALERT = 'TDH day 20738: 6529.io shows its own TDH';
+    const PUBLISH = 'publish 20738 2000';
 
-    it('alerts from four hours past the boundary when the chain has no usable day', async () => {
+    it('alerts from four hours past the boundary when the chain has no usable day, and publishes the own day', async () => {
       expect(await run(null, at(3))).toEqual([]);
-      expect(await run(null, at(4))).toEqual([ALERT]);
+      expect(await run(null, at(4))).toEqual([ALERT, PUBLISH]);
       expect(await run(null, at(4, 35))).toEqual([]);
       for (const record of [
         row(20738, { mode: 'CHAIN', status: 'FAILED', block: 2000 }),
         row(20738, { mode: 'CHAIN', status: 'SKIPPED', block: 2000 }),
         row(20738, { mode: 'CHAIN', block: 2000, superseded: true })
       ]) {
-        expect(await run(record, at(5))).toEqual([ALERT]);
+        expect(await run(record, at(5))).toEqual([ALERT, PUBLISH]);
       }
     });
 
-    it('is quiet once the chain wrote the day, for a day compared in shadow, and in SHADOW mode', async () => {
+    it('is quiet once the chain wrote the day, for a day compared in shadow, and in SHADOW mode, and publishes nothing', async () => {
       const written = row(20738, { mode: 'CHAIN', block: 2000 });
       expect(await run(written, at(5))).toEqual([]);
       expect(

@@ -40,7 +40,7 @@ import { keepConsolidationKeysThatFit } from './tdh-key-width';
 const logger = Logger.get('TDH_CONSOLIDATION');
 
 export type TdhConsolidationRequest =
-  | { readonly mode: 'FULL' }
+  | { readonly mode: 'FULL'; readonly interim?: boolean }
   | {
       readonly mode: 'PARTIAL';
       readonly wallets: string[];
@@ -299,7 +299,10 @@ export const consolidateAndPersistTDH = async (
   const nftTdh = calculateNftTDH(consolidatedTdh);
 
   assertNoOverlappingConsolidationWallets(consolidatedTdh);
-  let persistenceScope: ConsolidatedTdhPersistenceScope = { mode: 'FULL' };
+  let persistenceScope: ConsolidatedTdhPersistenceScope =
+    request.mode === 'FULL' && request.interim
+      ? { mode: 'FULL', interim: true }
+      : { mode: 'FULL' };
   if (request.mode === 'PARTIAL') {
     if (!consolidationKeysToReplace) {
       throw new Error(

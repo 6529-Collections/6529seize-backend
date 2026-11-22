@@ -1385,7 +1385,8 @@ export async function persistTDHBlock(
 }
 
 export type ConsolidatedTdhPersistenceScope =
-  | { readonly mode: 'FULL' }
+  /** `interim`: 6529.io's own day while TDH comes from the 6529 chain. */
+  | { readonly mode: 'FULL'; readonly interim?: boolean }
   | {
       readonly mode: 'PARTIAL';
       readonly wallets: string[];
@@ -1518,11 +1519,13 @@ export async function persistConsolidatedTDH(
       { wrappedConnection: qrHolder }
     );
     // A full rewrite (tdhLoop) leaves the sync to delegationsLoop and has its
-    // completion announced once the sync is done.
+    // completion announced once the sync is done; an interim one (6529.io's
+    // own day while TDH comes from the 6529 chain) is not announced.
+    const interim = scope.mode === 'FULL' && scope.interim === true;
     const generation = await identityTdhSyncStateDb.markPending(
       block,
       qrHolder,
-      { announceFull: scope.mode === 'FULL' }
+      { announceFull: scope.mode === 'FULL' && !interim, interim }
     );
     // A partial write records the keys it replaced and the keys whose
     // boosted TDH or rate it changed (it rewrites every row, re-ranked), so

@@ -266,6 +266,9 @@ describe('GatewayTdhChainSource', () => {
       fakeGateway(day, { tokens: false }).fetcher
     );
     expect((await readChainDay(source, 20737))!.tokenLeaves).toBeNull();
+    expect(source.noTokenListReason(20737)).toBe(
+      'the gateway has no token route'
+    );
   });
 
   it("refuses a wallet list that does not rebuild the day's root", async () => {
@@ -345,6 +348,10 @@ describe('GatewayTdhChainSource', () => {
         .fetcher
     );
     expect(await always.tokenLeaves(20737)).toBeNull();
+    expect(always.noTokenListReason(20737)).toBe(
+      'the gateway served no token list for the day (404, 3 tries)'
+    );
+    expect(source.noTokenListReason(20737)).toBeNull();
   });
 
   it('reads a token answer it cannot read as no token list', async () => {
@@ -360,6 +367,9 @@ describe('GatewayTdhChainSource', () => {
     const read = await readChainDay(source, 20737);
     expect(read!.tokenLeaves).toBeNull();
     expect(read!.walletLeaves).toEqual(day.walletLeaves);
+    expect(source.noTokenListReason(20737)).toMatch(
+      /^the gateway served a token list, refused: tokenTdh/
+    );
   });
 
   it('gives up after three pins that are gone', async () => {
@@ -403,6 +413,18 @@ describe('GatewayTdhChainSource', () => {
     expect((error as Error).message).toBe(
       '/v1/tdh: nodes_unavailable: no API node is serving right now; try again shortly'
     );
+  });
+
+  it('names the HTTP status when a refusal says nothing', async () => {
+    const fetcher = new RateLimitedFetcher({
+      allowedHosts: ['gateway.example'],
+      minIntervalMs: 0,
+      retries: 0,
+      fetchFn: async () => Response.json({ error: {} }, { status: 500 })
+    });
+    await expect(
+      new GatewayTdhChainSource(BASE, fetcher).latestDay()
+    ).rejects.toThrow('/v1/tdh: HTTP 500');
   });
 
   it('reports a refusal with its code', async () => {

@@ -259,6 +259,7 @@ interface KnownDay {
  */
 export class GatewayTdhChainSource implements TdhChainSource {
   private readonly days = new Map<number, KnownDay>();
+  private readonly tokenNotes = new Map<number, string>();
 
   constructor(
     private readonly baseUrl: string,
@@ -399,7 +400,11 @@ export class GatewayTdhChainSource implements TdhChainSource {
             `[DAY ${cycleDay}] [${kind.toUpperCase()}] [READ ON TRY ${attempt} OF ${MAX_PINS}]`
           );
         }
-        return chunks === null ? null : check(chunks, header);
+        if (chunks === null) {
+          this.tokenNotes.set(cycleDay, 'the gateway has no token route');
+          return null;
+        }
+        return check(chunks, header);
       } catch (e) {
         const gone = e instanceof HeightGoneError || e instanceof ListGoneError;
         if (!gone) throw e;
@@ -408,7 +413,13 @@ export class GatewayTdhChainSource implements TdhChainSource {
         );
         if (attempt >= MAX_PINS) {
           // The last answer wins: no token list, or no wallet list (thrown).
-          if (kind === 'tokens' && e instanceof ListGoneError) return null;
+          if (kind === 'tokens' && e instanceof ListGoneError) {
+            this.tokenNotes.set(
+              cycleDay,
+              `the gateway served no token list for the day (404, ${MAX_PINS} tries)`
+            );
+            return null;
+          }
           throw e;
         }
         this.days.delete(cycleDay);
@@ -446,6 +457,7 @@ export class GatewayTdhChainSource implements TdhChainSource {
    * the day's read.
    */
   async tokenLeaves(cycleDay: number): Promise<TdhTokenLeaf[] | null> {
+    this.tokenNotes.delete(cycleDay);
     try {
       return await this.readTokenLeaves(cycleDay);
     } catch (e) {
@@ -453,8 +465,17 @@ export class GatewayTdhChainSource implements TdhChainSource {
       logger.warn(
         `[DAY ${cycleDay}] [NO TOKEN LIST] [the token answer can't be read: ${e.message}]`
       );
+      this.tokenNotes.set(
+        cycleDay,
+        `the gateway served a token list, refused: ${e.message}`
+      );
       return null;
     }
+  }
+
+  /** Why the last read of the day has no token list, or null. */
+  noTokenListReason(cycleDay: number): string | null {
+    return this.tokenNotes.get(cycleDay) ?? null;
   }
 
   private readTokenLeaves(cycleDay: number): Promise<TdhTokenLeaf[] | null> {
@@ -507,7 +528,8 @@ function refusal(status: number, body: any): string {
     return body?.message ? `${error}: ${body.message}` : error;
   }
   if (error && typeof error === 'object') {
-    return [error.code, error.message].filter(Boolean).join(': ');
+    const text = [error.code, error.message].filter(Boolean).join(': ');
+    if (text) return text;
   }
   return `HTTP ${status}`;
 }

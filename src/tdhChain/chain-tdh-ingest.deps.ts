@@ -29,6 +29,8 @@ import { calculateMemesTdh } from '@/tdhLoop/tdh_memes';
 import { calculateNftTDH } from '@/tdhLoop/tdh_nft';
 import { uploadTDH } from '@/tdhLoop/tdh_upload';
 import { recordTdhMetrics } from '@/tdhLoop/tdh-metrics';
+import { identityTdhSyncStateDb } from '@/identity-tdh-sync-state.db';
+import { notifyTdhCalculationsDone } from '@/notifier';
 import { applyChainTokenValues } from './apply-chain-values';
 import {
   ChainDayRef,
@@ -148,20 +150,9 @@ export function siteStepRunner(source: TdhChainSource): ChainDayStepRunner {
       case 'metrics':
         await recordTdhMetrics();
         return;
-      case 'uploads': {
-        const date = dateOfCycleDay(cycleDay);
-        if (!(await tdhChainDaysDb.uploadExists(false, date, block))) {
-          const wallets = (await fetchAllTDH(block)) as TDH[];
-          await uploadTDH(block, blockTimestamp, wallets, false, true);
-        }
-        if (!(await tdhChainDaysDb.uploadExists(true, date, block))) {
-          const consolidated = (await fetchAllConsolidatedTdh()).filter(
-            (row) => Number(row.block) === block
-          );
-          await uploadTDH(block, blockTimestamp, consolidated, true, true);
-        }
+      case 'uploads':
+        await uploadDayIfMissing(cycleDay, block, blockTimestamp);
         return;
-      }
       case 'dayFiles':
         await publishDayFiles(cycleDay, source);
         return;
@@ -176,6 +167,53 @@ export function siteStepRunner(source: TdhChainSource): ChainDayStepRunner {
     giveUp: (cycleDay, steps) =>
       tdhChainDaysDb.giveUpSteps(cycleDay, steps, Date.now())
   };
+}
+
+/** The day's two dated uploads from the tables, each unless already listed. */
+async function uploadDayIfMissing(
+  cycleDay: number,
+  block: number,
+  blockTimestamp: Date
+): Promise<void> {
+  const date = dateOfCycleDay(cycleDay);
+  if (!(await tdhChainDaysDb.uploadExists(false, date, block))) {
+    const wallets = (await fetchAllTDH(block)) as TDH[];
+    await uploadTDH(block, blockTimestamp, wallets, false, true);
+  }
+  if (!(await tdhChainDaysDb.uploadExists(true, date, block))) {
+    const consolidated = (await fetchAllConsolidatedTdh()).filter(
+      (row) => Number(row.block) === block
+    );
+    await uploadTDH(block, blockTimestamp, consolidated, true, true);
+  }
+}
+
+/**
+ * The own-day point: the chain's day is not written 4 hours past the
+ * boundary, so 6529.io's own day (written interim at 00:01) is published as
+ * the day: its dated uploads, then its announcement, once
+ * (`releaseInterim`). Nothing to do if the day wasn't interim.
+ */
+export async function publishOwnDay(
+  cycleDay: number,
+  block: number
+): Promise<void> {
+  await uploadDayIfMissing(
+    cycleDay,
+    block,
+    new Date(cycleDay * 86_400_000 - 1000)
+  );
+  const { outcome, generation } =
+    await identityTdhSyncStateDb.releaseInterim(block);
+  if (outcome === 'NOTIFY') {
+    try {
+      await notifyTdhCalculationsDone();
+    } catch (e) {
+      await identityTdhSyncStateDb.rearmInterim(generation, block);
+      throw e;
+    }
+  }
+  logger.info(`[DAY ${cycleDay}] [6529.IO'S OWN DAY PUBLISHED] [${outcome}]`);
 }
 
 function arweaveKey(): JWKInterface {
@@ -295,6 +333,7 @@ export function pollerDepsFor(
   return {
     mode,
     source,
+    publishOwnDay,
     latestRow: () => tdhChainDaysDb.latest(),
     pendingDays: () => tdhChainDaysDb.pendingDays(),
     latestTdhDay: () => tdhChainDaysDb.latestTdhDay(),

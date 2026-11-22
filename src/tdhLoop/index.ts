@@ -33,6 +33,7 @@ import { uploadTDH } from './tdh_upload';
 import { recordTdhMetrics } from './tdh-metrics';
 import { appFeatures } from '@/app-features';
 import { TdhChainDayEntity } from '@/entities/ITdhChainDay';
+import { tdhChainDaysDb } from '@/tdhChain/tdh-chain-days.db';
 import { sitePollerDeps } from '@/tdhChain/chain-tdh-ingest.deps';
 import { pollChainDays } from '@/tdhChain/tdh-chain-day-poller';
 import { refreshTdhChainSettings } from '@/tdhChain/tdh-chain-flags';
@@ -89,13 +90,26 @@ export const handler = sentryContext.wrapLambdaHandler(
 );
 
 export async function tdhLoop(force?: boolean) {
-  if (appFeatures.isTdhFromChainEnabled()) {
+  const fromChain = appFeatures.isTdhFromChainEnabled();
+  if (fromChain) {
+    const today = Math.floor(Time.latestUtcMidnight().toMillis() / 86_400_000);
+    if (await tdhChainDaysDb.chainWroteDay(today)) {
+      // A retry or a manual run must not undo the chain's day.
+      logger.info(
+        `[TDH FROM THE 6529 CHAIN] [DAY ${today} IS THE CHAIN'S] [SKIPPING]`
+      );
+      return;
+    }
+    // The site's own day, interim until the chain's day replaces it: no
+    // announcement and no dated uploads until the chain's write, or the
+    // poller's own-day point 4 hours past the boundary.
     logger.info(
-      `[TDH FROM THE 6529 CHAIN] [COMPUTING THE SITE'S OWN DAY UNTIL THE CHAIN'S DAY REPLACES IT]`
+      `[TDH FROM THE 6529 CHAIN] [COMPUTING THE SITE'S OWN DAY ${today}, INTERIM]`
     );
   }
-  const computed = await tdh(force);
+  const computed = await tdh(force, fromChain);
   await findNftTDH();
+  if (fromChain) return;
   if (computed) {
     // The identities sync for this TDH runs in delegationsLoop, which
     // announces "TDH calculations done" once identities reflect it.
@@ -113,8 +127,11 @@ export async function tdhLoop(force?: boolean) {
   await notifier.notifyTdhCalculationsDone();
 }
 
-/** True when this run computed and wrote today's TDH. */
-async function tdh(force?: boolean): Promise<boolean> {
+/**
+ * True when this run computed and wrote today's TDH. An interim day (TDH
+ * from the 6529 chain) is written without its announcement or its uploads.
+ */
+async function tdh(force?: boolean, interim = false): Promise<boolean> {
   const lastTDHCalc = Time.latestUtcMidnight().toDate();
 
   const lastTdhDB = await fetchLatestTDHBDate();
@@ -125,9 +142,10 @@ async function tdh(force?: boolean): Promise<boolean> {
     const consolidatedTdh = await consolidateAndPersistTDH(
       block,
       blockTimestamp,
-      { mode: 'FULL' }
+      interim ? { mode: 'FULL', interim: true } : { mode: 'FULL' }
     );
     await recordTdhMetrics();
+    if (interim) return true;
     await uploadTDH(block, blockTimestamp, tdh, false, true);
     await uploadTDH(block, blockTimestamp, consolidatedTdh, true, true);
     return true;

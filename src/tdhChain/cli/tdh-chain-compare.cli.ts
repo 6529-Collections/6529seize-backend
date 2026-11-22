@@ -192,6 +192,12 @@ export async function runCompare(
   const date = dateOfCycleDay(args.cycleDay);
   let site: SiteDay;
   const notes: string[] = [];
+  if (day.tokenLeaves === null && source instanceof GatewayTdhChainSource) {
+    // For whoever decides on a MATCH_WITHOUT_TOKENS: served and refused, or
+    // not served.
+    const why = source.noTokenListReason(args.cycleDay);
+    if (why) notes.push(`Tokens: ${why}`);
+  }
   if (args.siteDir) {
     site = siteDayFromUploads(
       await fs.readFile(path.join(args.siteDir, 'wallets.csv'), 'utf8'),
