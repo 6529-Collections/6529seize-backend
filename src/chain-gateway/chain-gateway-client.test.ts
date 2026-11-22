@@ -186,7 +186,7 @@ describe('ChainGatewayClient reads', () => {
       return {
         status: 200,
         json: {
-          read: stamp(1200),
+          read: { ...stamp(1200), network },
           data: { ...IDENTITY, handle },
           next: null
         }
@@ -506,6 +506,91 @@ describe('ChainGatewayClient reads', () => {
       '121:4096'
     ],
     [
+      'a whole block past through',
+      {
+        through: 119,
+        blocks: [
+          {
+            height: 120,
+            slot: 0,
+            root: '0x',
+            time: 1,
+            complete: true,
+            records: []
+          }
+        ]
+      },
+      '120'
+    ],
+    [
+      'two blocks at one height',
+      {
+        through: 120,
+        blocks: [
+          {
+            height: 120,
+            slot: 0,
+            root: '0x',
+            time: 1,
+            complete: true,
+            records: []
+          },
+          {
+            height: 120,
+            slot: 0,
+            root: '0x',
+            time: 1,
+            complete: true,
+            records: []
+          }
+        ]
+      },
+      '121'
+    ],
+    [
+      'a cut block before the last',
+      {
+        through: 121,
+        blocks: [
+          {
+            height: 120,
+            slot: 0,
+            root: '0x',
+            time: 1,
+            complete: false,
+            records: []
+          },
+          {
+            height: 121,
+            slot: 0,
+            root: '0x',
+            time: 1,
+            complete: true,
+            records: []
+          }
+        ]
+      },
+      '122'
+    ],
+    [
+      'a cut block named by a cursor in another block',
+      {
+        through: 119,
+        blocks: [
+          {
+            height: 120,
+            slot: 0,
+            root: '0x',
+            time: 1,
+            complete: false,
+            records: []
+          }
+        ]
+      },
+      '125:3'
+    ],
+    ['a whole next that skips heights', { through: 119, blocks: [] }, '125'],
+    [
       'a cut block with a whole next',
       {
         through: 119,
@@ -542,7 +627,7 @@ describe('ChainGatewayClient reads', () => {
     expect((await client.getChanges(121)).atHead).toBe(true);
   });
 
-  it('does not keep an answer read from another chain than the head', async () => {
+  it('refuses an answer read from another chain than the head', async () => {
     const { client, calls } = setup((call) =>
       path(call) === '/v1/status'
         ? status(50)
@@ -555,8 +640,12 @@ describe('ChainGatewayClient reads', () => {
             }
           }
     );
-    await client.getIdentityByHandle('alice');
-    await client.getIdentityByHandle('alice');
+    await expect(client.getIdentityByHandle('alice')).rejects.toMatchObject({
+      code: 'wrong_network'
+    });
+    await expect(client.getIdentityByHandle('alice')).rejects.toMatchObject({
+      code: 'wrong_network'
+    });
     expect(calls.filter((c) => path(c) !== '/v1/status')).toHaveLength(2);
   });
 
@@ -807,6 +896,14 @@ describe('profile documents', () => {
     expect(await client.getDocument(cidPath(cid))).toEqual(doc);
     expect(await client.getProfileDoc(cid)).toEqual(doc);
     expect(calls).toHaveLength(1);
+  });
+
+  it('refuses a document larger than the store holds', async () => {
+    const huge = Buffer.alloc(2 * 1024 * 1024 + 1);
+    const { client } = setup(() => ({ status: 200, bytes: huge }));
+    await expect(client.getDocument(rawCidHexOf(huge))).rejects.toMatchObject({
+      code: 'bad_answer'
+    });
   });
 
   it('does not cache a document larger than a profile document', async () => {

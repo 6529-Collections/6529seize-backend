@@ -76,8 +76,6 @@ export interface ChainLevel {
   readonly raw: string;
   readonly rep: string;
   readonly tdh: string;
-  /** Gone from the gateway's answers (xTDH is not on the chain). */
-  readonly xtdh?: string;
   readonly tdhDay: number;
 }
 
@@ -99,8 +97,6 @@ export interface ChainIdentity {
   } | null;
   readonly rep: { readonly total: string; readonly raters: number };
   readonly nic: { readonly total: string; readonly raters: number };
-  /** Gone from the gateway's answers (xTDH is not on the chain). */
-  readonly xtdh?: string;
   readonly level: ChainLevel | null;
   readonly mergedInto: string | null;
   /** The 6529.io profile id it was imported from, when the API gives it. */
