@@ -3,7 +3,11 @@ import {
   SIGNED_RECORD_LOG_SEGMENTS_TABLE
 } from '@/constants';
 import { RequestContext } from '@/request.context';
-import { dbSupplier, LazyDbAccessCompatibleService } from '@/sql-executor';
+import {
+  ConnectionWrapper,
+  dbSupplier,
+  LazyDbAccessCompatibleService
+} from '@/sql-executor';
 import type { RecordLogChain } from './record-log-format';
 
 export interface RecordLogEntryRow {
@@ -142,20 +146,6 @@ export class RecordLogDb extends LazyDbAccessCompatibleService {
     }));
   }
 
-  /** Drops a segment's entries from the queue once its head is posted. */
-  async deleteSegmentEntries(
-    chain: RecordLogChain,
-    seq: number,
-    ctx: RequestContext
-  ): Promise<void> {
-    await this.db.execute(
-      `delete from ${SIGNED_RECORD_LOG_ENTRIES_TABLE}
-       where chain = :chain and segment_seq = :seq`,
-      { chain, seq },
-      withConnection(ctx)
-    );
-  }
-
   async findLatestSegment(
     chain: RecordLogChain,
     ctx: RequestContext
@@ -216,18 +206,36 @@ export class RecordLogDb extends LazyDbAccessCompatibleService {
     return rows.map(toSegment);
   }
 
+  /**
+   * Records a segment's posted head and drops its entries from the queue,
+   * in one transaction: a crash between the two can't strand entries
+   * behind a segment that no longer waits for its head.
+   */
   async setHeadDrop(
     chain: RecordLogChain,
     seq: number,
     dropId: string,
     ctx: RequestContext
   ): Promise<void> {
-    await this.db.execute(
-      `update ${SIGNED_RECORD_LOG_SEGMENTS_TABLE} set head_drop_id = :dropId
-       where chain = :chain and seq = :seq`,
-      { chain, seq, dropId },
-      withConnection(ctx)
-    );
+    const write = async (connection: ConnectionWrapper<any>) => {
+      await this.db.execute(
+        `update ${SIGNED_RECORD_LOG_SEGMENTS_TABLE} set head_drop_id = :dropId
+         where chain = :chain and seq = :seq`,
+        { chain, seq, dropId },
+        { wrappedConnection: connection }
+      );
+      await this.db.execute(
+        `delete from ${SIGNED_RECORD_LOG_ENTRIES_TABLE}
+         where chain = :chain and segment_seq = :seq`,
+        { chain, seq },
+        { wrappedConnection: connection }
+      );
+    };
+    if (ctx.connection) {
+      await write(ctx.connection);
+    } else {
+      await this.executeNativeQueriesInTransaction(write);
+    }
   }
 
   /** Segments with a posted head and no Arweave copy yet. */

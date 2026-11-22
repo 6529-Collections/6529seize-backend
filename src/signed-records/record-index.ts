@@ -33,6 +33,8 @@ export interface RecordChange {
   readonly eventId: string | null;
   // null for a RECORD.
   readonly sealedClass: number | null;
+  // 'orderer' when the orderer role wrote the record into the owner's stream.
+  readonly writer: 'author' | 'orderer';
 }
 
 export type ApplyMode = 'live' | 'rebuild';
@@ -48,6 +50,12 @@ export interface RecordTypeHandler {
   readonly family: 'ps' | 'pv';
   readonly type: string;
   readonly sealed: boolean;
+  /**
+   * Whether the type takes items the orderer role wrote into a person's
+   * stream (publish's `cms`). Off by default: an orderer item is never
+   * applied as the person's own setting.
+   */
+  readonly acceptsOrderer?: boolean;
   validate(change: RecordChange): void;
   apply(
     change: RecordChange,
@@ -197,7 +205,8 @@ export type IngestOutcome =
       readonly kind: 'applied';
       readonly changes: number;
       readonly stale: number;
-      // Items of types no handler is registered for (a newer client's).
+      // Items no handler takes: types none is registered for (a newer
+      // client's), or the orderer's items for a type that does not take them.
       readonly unknown: number;
     }
   | {
@@ -265,7 +274,8 @@ export class RecordIndexer {
         body: parsed.body,
         order: record.order,
         eventId: record.event.id,
-        sealedClass: null
+        sealedClass: null,
+        writer: record.writer
       };
       return this.applyChanges([change], false, mode, ctx);
     }
@@ -350,7 +360,8 @@ export class RecordIndexer {
         body: item.b,
         order: record.order,
         eventId: record.event.id,
-        sealedClass: opened.cls
+        sealedClass: opened.cls,
+        writer: record.writer
       })
     );
     return this.applyChanges(changes, true, mode, ctx);
@@ -385,7 +396,7 @@ export class RecordIndexer {
         change.type,
         sealed
       );
-      if (handler) {
+      if (handler && (change.writer === 'author' || handler.acceptsOrderer)) {
         handled.push({ change, handler });
       } else {
         unknown++;

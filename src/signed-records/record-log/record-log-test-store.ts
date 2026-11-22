@@ -55,10 +55,7 @@ export class MemoryRecordLogStore implements RecordLogStore {
       }));
   }
 
-  async deleteSegmentEntries(
-    chain: RecordLogChain,
-    seq: number
-  ): Promise<void> {
+  private deleteSegmentEntries(chain: RecordLogChain, seq: number): void {
     for (let i = this.entries.length - 1; i >= 0; i--) {
       if (
         this.entries[i].chain === chain &&
@@ -135,6 +132,7 @@ export class MemoryRecordLogStore implements RecordLogStore {
     dropId: string
   ): Promise<void> {
     this.update(chain, seq, { head_drop_id: dropId });
+    this.deleteSegmentEntries(chain, seq);
   }
 
   async findSegmentsToUpload(): Promise<RecordLogSegmentRow[]> {

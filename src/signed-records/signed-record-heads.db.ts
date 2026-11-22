@@ -32,8 +32,11 @@ export class SignedRecordHeadsDb
 
   /**
    * Makes sure the head row exists (a zero row below any real order key),
-   * then reads it with `for update`. The row lock, not a gap lock, is what
-   * serializes concurrent submits for one key.
+   * then reads it with `for update`. The insert takes the row's exclusive
+   * lock even when the row exists (`on duplicate key update`, a no-op
+   * there): `insert ignore` would take a shared lock, and two submits
+   * holding it would deadlock at `for update`. The row lock, not a gap
+   * lock, is what serializes concurrent submits for one key.
    */
   async lock(
     key: RecordHeadKey,
@@ -44,9 +47,10 @@ export class SignedRecordHeadsDb
     }
     const options = { wrappedConnection: ctx.connection };
     await this.db.execute(
-      `insert ignore into ${SIGNED_RECORD_HEADS_TABLE}
+      `insert into ${SIGNED_RECORD_HEADS_TABLE}
          (owner, family, rtype, rkey, anchor, claimed_time, event_id)
-       values (:owner, :family, :type, :key, 0, 0, :zero)`,
+       values (:owner, :family, :type, :key, 0, 0, :zero)
+       on duplicate key update anchor = anchor`,
       { ...key, zero: ethers.ZeroHash },
       options
     );

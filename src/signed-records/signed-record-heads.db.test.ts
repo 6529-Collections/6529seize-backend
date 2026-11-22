@@ -41,6 +41,43 @@ function followRecord(rkey: string, at: RecordOrderKey): VerifiedRecord {
   };
 }
 
+/**
+ * sqlExecutor with every insert into the heads table held after it returns
+ * until a second one has returned too (or a second passes), so two lock()
+ * calls hold whatever their insert locked when they reach `for update`.
+ */
+function executorMeetingAtHeadInsert(): typeof sqlExecutor {
+  let finished = 0;
+  let bothFinished: () => void = () => undefined;
+  const met = new Promise<void>((resolve) => {
+    bothFinished = resolve;
+  });
+  return new Proxy(sqlExecutor, {
+    get(target, prop, receiver) {
+      if (prop !== 'execute') {
+        const value = Reflect.get(target, prop, receiver);
+        return typeof value === 'function' ? value.bind(target) : value;
+      }
+      return async (...args: Parameters<typeof sqlExecutor.execute>) => {
+        const sql = String(args[0]);
+        const isHeadInsert =
+          /insert/i.test(sql) && sql.includes(SIGNED_RECORD_HEADS_TABLE);
+        const result = await target.execute(...args);
+        if (isHeadInsert) {
+          if (++finished === 2) {
+            bothFinished();
+          }
+          await Promise.race([
+            met,
+            new Promise((resolve) => setTimeout(resolve, 1000))
+          ]);
+        }
+        return result;
+      };
+    }
+  });
+}
+
 describeWithSeed('SignedRecordHeadsDb', [], () => {
   const db = new SignedRecordHeadsDb(() => sqlExecutor);
   const ctx: RequestContext = {};
@@ -124,6 +161,54 @@ describeWithSeed('SignedRecordHeadsDb', [], () => {
     expect(applied).toEqual([20]);
     await db.inTransaction(ctx, async (tx) => {
       expect(await db.lock(key('x'), tx)).toEqual(order(20));
+    });
+  });
+
+  it('serializes two submits that reach an existing head together, without a deadlock', async () => {
+    await db.inTransaction(ctx, async (tx) => {
+      await db.lock(key('y'), tx);
+      await db.put(key('y'), order(5), tx);
+    });
+    const executor = executorMeetingAtHeadInsert();
+    const meeting = new SignedRecordHeadsDb(() => executor);
+    const registry = new RecordRegistry();
+    const applied: number[] = [];
+    registry.register({
+      family: 'ps',
+      type: 'follow',
+      sealed: false,
+      validate: () => undefined,
+      apply: async (change: RecordChange) => {
+        applied.push(change.order.anchor);
+      }
+    });
+    const indexer = new RecordIndexer({
+      registry,
+      heads: meeting,
+      keyring: new SenderKeyring([])
+    });
+    const outcomes = await Promise.allSettled([
+      indexer.ingest(
+        followRecord('y', order(30, `0x${'b'.repeat(64)}`)),
+        'live',
+        ctx
+      ),
+      indexer.ingest(
+        followRecord('y', order(40, `0x${'c'.repeat(64)}`)),
+        'live',
+        ctx
+      )
+    ]);
+    expect(outcomes.map((outcome) => outcome.status)).toEqual([
+      'fulfilled',
+      'fulfilled'
+    ]);
+    // Whichever ran first, the newer order is the head and was applied.
+    expect(applied).toContain(40);
+    await db.inTransaction(ctx, async (tx) => {
+      expect(await db.lock(key('y'), tx)).toEqual(
+        order(40, `0x${'c'.repeat(64)}`)
+      );
     });
   });
 });

@@ -138,19 +138,10 @@ function privateQueryFamily(sql: string): PrivateQueryFamily | null {
 }
 
 function describeQuery(sql: string, params?: Record<string, unknown>): string {
+  // Every private family, so a new one can't leak SQL or params into the
+  // slow-query log by missing a branch here.
   const family = privateQueryFamily(sql);
-  if (family === 'competition authorization')
-    return '[private competition authorization query]';
-  if (family === 'e2ee messaging') return '[private e2ee messaging query]';
-  if (family === 'artwork documentation') {
-    return '[private artwork documentation query]';
-  }
-  if (family === 'market depth') return '[private market depth query]';
-  if (family === 'CMS agent') return '[private CMS agent query]';
-  if (family === 'content moderation')
-    return '[private content moderation query]';
-  if (family === 'membership runtime')
-    return '[private membership runtime query]';
+  if (family) return `[private ${family} query]`;
   const normalized = sql.replace('\n', ' ');
   if (!params) return normalized;
   return `${normalized} with params ${JSON.stringify(params)}`;

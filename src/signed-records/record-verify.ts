@@ -8,7 +8,7 @@ import {
 } from './record-event';
 import {
   isKindAllowedInFamily,
-  isOrdererFamily,
+  isOrdererAllowed,
   isPrincipalFamily,
   isWalletAddress,
   parseFamilyWave,
@@ -254,7 +254,7 @@ function checkWriter(
   ctx: RecordVerifyContext
 ): 'author' | 'orderer' {
   const orderer =
-    isOrdererFamily(stream.family) &&
+    isOrdererAllowed(stream.family, event.kind as RecordKind) &&
     (ctx.ordererWallets ?? []).some(
       (wallet) => wallet.toLowerCase() === event.author
     );

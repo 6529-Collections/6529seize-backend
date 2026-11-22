@@ -31,7 +31,6 @@ export type RecordLogStore = Pick<
   | 'setArweaveTx'
   | 'findSegmentsToAnnounce'
   | 'setArchiveDrop'
-  | 'deleteSegmentEntries'
 >;
 
 export interface GrantProofSource {
@@ -239,15 +238,11 @@ export class RecordLogSegmenter {
           formatHeadDrop(segment),
           ctx
         );
+        // Also drops the segment's entries, in the same transaction.
         await this.deps.store.setHeadDrop(
           segment.chain,
           segment.seq,
           dropId,
-          ctx
-        );
-        await this.deps.store.deleteSegmentEntries(
-          segment.chain,
-          segment.seq,
           ctx
         );
         posted++;

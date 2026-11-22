@@ -62,10 +62,14 @@ describe('record families', () => {
       family: 'ps',
       owner: PRINCIPAL
     });
-    expect(parseFamilyWave('cv/group-1')).toEqual({
+    expect(parseFamilyWave('cv/0x0a1b')).toEqual({
       family: 'cv',
-      owner: 'group-1'
+      owner: '0x0a1b'
     });
+    // Lane owners are lowercase hex, as the relays take them.
+    expect(parseFamilyWave('cv/group-1')).toBeNull();
+    expect(parseFamilyWave('cv/0x0A1B')).toBeNull();
+    expect(parseFamilyWave(`dv/0x${'a'.repeat(129)}`)).toBeNull();
     expect(parseFamilyWave('4a1e0e2c-7a7d-4b38-9c0b-2f1d6d1c9a10')).toBeNull();
     expect(parseFamilyWave(`pv/${PRINCIPAL.toUpperCase()}`)).toBeNull();
     expect(parseFamilyWave('pv/0x01')).toBeNull();

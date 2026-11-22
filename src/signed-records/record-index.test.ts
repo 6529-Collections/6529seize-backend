@@ -159,6 +159,60 @@ describe('RecordIndexer', () => {
     });
   });
 
+  it("never applies the orderer's items as the person's own, unless the type takes them", async () => {
+    const { indexer, mute, registry } = setup();
+    await indexer.ingest(await verified(VECTORS.keys.event), 'live', ctx);
+    const byOrderer: VerifiedRecord = {
+      ...(await verified(VECTORS.sealedSettings.event)),
+      writer: 'orderer'
+    };
+    expect(await indexer.ingest(byOrderer, 'live', ctx)).toEqual({
+      kind: 'skipped',
+      reason: 'no-handler'
+    });
+    expect(mute.applied).toHaveLength(0);
+    // A type that opts in (publish's cms) takes them, marked as the orderer's.
+    const cms = Object.assign(new RecordingHandler('pv', 'cms', true), {
+      acceptsOrderer: true
+    });
+    registry.register(cms);
+    const c = sealItems({
+      wave: PV_WAVE,
+      cls: SealedClass.PROVIDER,
+      gen: 1,
+      deviceKey: inputs.deviceKey,
+      senderKey: hexBytes(inputs.senderKey),
+      items: [
+        { t: 'cms', k: 'page', b: { v: 1 } },
+        { t: 'mute', k: inputs.target, b: {} }
+      ],
+      fixedNonceForTests: Buffer.alloc(12, 7)
+    });
+    const mixed: VerifiedRecord = {
+      ...(await verified(
+        record(
+          RecordKind.SEALED,
+          PV_WAVE,
+          ['settings'],
+          { c: c.toString('base64url'), v: 1 },
+          1000
+        )
+      )),
+      writer: 'orderer'
+    };
+    expect(await indexer.ingest(mixed, 'live', ctx)).toEqual({
+      kind: 'applied',
+      changes: 1,
+      stale: 0,
+      unknown: 1
+    });
+    expect(cms.applied[0].change).toMatchObject({
+      type: 'cms',
+      writer: 'orderer'
+    });
+    expect(mute.applied).toHaveLength(0);
+  });
+
   it('skips own-class items, which 6529.io cannot read', async () => {
     const { indexer } = setup();
     const c = sealItems({
@@ -250,7 +304,8 @@ describe('RecordIndexer', () => {
       body: { actions: ['DROP_CREATED', 'DROP_REPLIED'] },
       order: importOrderKey(1000, VECTORS.followRecord.claimed_time + 1),
       eventId: null,
-      sealedClass: null
+      sealedClass: null,
+      writer: 'author'
     };
     await indexer.ingestImported([imported], false, 'rebuild', ctx);
     // The set record is older than the import: stale.
@@ -393,7 +448,7 @@ describe('RecordIndexer', () => {
       kind: 'skipped',
       reason: 'no-handler'
     });
-    const log = record(RecordKind.LOG, 'cv/g1', ['entry'], {}, 1000);
+    const log = record(RecordKind.LOG, 'cv/0x01', ['entry'], {}, 1000);
     expect(await indexer.ingest(await verified(log), 'live', ctx)).toEqual({
       kind: 'skipped',
       reason: 'not-indexed'

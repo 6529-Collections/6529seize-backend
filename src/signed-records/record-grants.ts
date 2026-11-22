@@ -43,7 +43,8 @@ export function toRecordGrantProof(
   return {
     id: entity.id.toLowerCase(),
     message: entity.message,
-    wallet_signature: entity.wallet_signature,
+    // Stored as the wallet returned it; proofs carry lowercase hex.
+    wallet_signature: entity.wallet_signature.toLowerCase(),
     chain_id: Number(entity.chain_id),
     wallet: entity.wallet.toLowerCase(),
     device_key: entity.device_key.toLowerCase(),

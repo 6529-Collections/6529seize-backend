@@ -181,8 +181,8 @@ function setup(
   return { store, network, writer, segmenter };
 }
 
-async function appGrantEntries() {
-  const { proof, grant } = await appGrantFixture();
+async function appGrantEntries(wallet?: string) {
+  const { proof, grant } = await appGrantFixture(wallet ? { wallet } : {});
   const event = signedRecord(grant, {
     kind: RecordKind.RECORD,
     wave: `ps/${inputs.principal}`,
@@ -368,6 +368,54 @@ describe('the record log', () => {
     );
     expect(count).toBe(3);
     expect(seen).toEqual(['true:', 'false:grant-unknown', 'service']);
+  });
+
+  it('replays a contract-wallet grant through EIP-1271, and asks the fallback when a proof fails', async () => {
+    const contractWallet = `0x${'c0'.repeat(20)}`;
+    const { network, writer, segmenter } = setup();
+    const { proof, grant, event, bindings } =
+      await appGrantEntries(contractWallet);
+    await writer.append(
+      [{ t: 'event', lane: 'personal', event, grant: proof }],
+      ctx
+    );
+    await segmenter.closeSegments(ctx);
+    const outcomes = async (
+      options: Partial<Parameters<typeof replayRecordLog>[2]>
+    ) => {
+      const seen: string[] = [];
+      await replayRecordLog(
+        network.reader(),
+        'public',
+        { bindings, ...options },
+        async (_item, verified) => {
+          seen.push(
+            verified?.ok ? 'ok' : `${verified?.ok}:${verified?.reason ?? ''}`
+          );
+        }
+      );
+      return seen;
+    };
+    // Without Ethereum a contract wallet's grant can't be checked.
+    expect(await outcomes({})).toEqual(['false:grant-unknown']);
+    expect(
+      await outcomes({
+        contractWallets: {
+          isValidSignature: async (args) =>
+            args.chainId === 1 &&
+            args.wallet === contractWallet &&
+            args.hash === proof.id &&
+            args.signature === proof.wallet_signature
+        }
+      })
+    ).toEqual(['ok']);
+    expect(
+      await outcomes({
+        fallback: {
+          findGrant: async (id) => (id === grant.id ? grant : null)
+        }
+      })
+    ).toEqual(['ok']);
   });
 
   it("refuses an entry whose grant proof is not the event's grant", async () => {

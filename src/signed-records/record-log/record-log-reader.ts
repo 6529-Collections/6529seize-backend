@@ -1,5 +1,8 @@
 import type { SignedRecordEvent } from '../record-event';
-import { GrantProofRecordSource } from '../record-grant-proofs';
+import {
+  GrantProofRecordSource,
+  GrantProofSourceOptions
+} from '../record-grant-proofs';
 import {
   RecordVerifyContext,
   RecordVerifyResult,
@@ -151,6 +154,15 @@ export class RecordLogReader {
 }
 
 /**
+ * How a replay verifies: the verify context without grants (they come with
+ * the entries), plus `contractWallets` (EIP-1271 for grants signed by a
+ * contract wallet, read from Ethereum) and `fallback` (a grant source asked
+ * when an entry's proof does not verify).
+ */
+export type RecordReplayContext = Omit<RecordVerifyContext, 'grants' | 'live'> &
+  GrantProofSourceOptions;
+
+/**
  * Replays a chain for a rebuild: verifies each event entry again against
  * the grant proof it carries (the wallet signature checked, the proof's id
  * equal to the event's auth_ref), so a rebuild from empty needs no grant
@@ -161,19 +173,23 @@ export class RecordLogReader {
 export async function replayRecordLog(
   reader: RecordLogReader,
   chain: RecordLogChain,
-  verifyContext: Omit<RecordVerifyContext, 'grants' | 'live'>,
+  replayContext: RecordReplayContext,
   onEntry: (
     item: RecordLogItem,
     verified: RecordVerifyResult | null
   ) => Promise<void>
 ): Promise<number> {
+  const { contractWallets, fallback, ...verifyContext } = replayContext;
   let count = 0;
   for await (const item of reader.walk(chain)) {
     const verified =
       item.entry.t === 'event'
         ? await verifyRecordEvent(item.entry.event as SignedRecordEvent, {
             ...verifyContext,
-            grants: new GrantProofRecordSource([item.entry.grant])
+            grants: await GrantProofRecordSource.from([item.entry.grant], {
+              contractWallets,
+              fallback
+            })
           })
         : null;
     await onEntry(item, verified);

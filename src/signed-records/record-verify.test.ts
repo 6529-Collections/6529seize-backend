@@ -249,14 +249,14 @@ describe('verifyRecordEvent', () => {
   it('returns the author principal for lane-owned families', async () => {
     const event = resign(VECTORS.followRecord, {
       kind: RecordKind.LOG,
-      wave: 'cv/group-1',
+      wave: 'cv/0x0a1b',
       refs: ['entry'],
       body: { seq: 1 }
     });
     const result = await verifyRecordEvent(event, context());
     expect(result).toMatchObject({
       ok: true,
-      record: { family: 'cv', owner: 'group-1', principal: PRINCIPAL }
+      record: { family: 'cv', owner: '0x0a1b', principal: PRINCIPAL }
     });
   });
 });
@@ -298,7 +298,7 @@ describe('families, writers and strings', () => {
       await reason(
         resign(follow, {
           kind: RecordKind.DEL,
-          wave: 'cv/g1',
+          wave: 'cv/0x01',
           refs: [],
           body: { ids: [follow.id] }
         })
@@ -335,6 +335,28 @@ describe('families, writers and strings', () => {
     ).toBe('not-bound');
     const own = await verifyRecordEvent(follow, ctx);
     expect(own).toMatchObject({ ok: true, record: { writer: 'author' } });
+    // In pv the orderer writes SEALED only: no reader record, no DEL.
+    expect(
+      await reason(
+        resign(follow, {
+          wave: `pv/${otherPrincipal}`,
+          refs: ['reader', `0x${'5'.repeat(40)}`],
+          body: {}
+        }),
+        ctx
+      )
+    ).toBe('not-bound');
+    expect(
+      await reason(
+        resign(follow, {
+          kind: RecordKind.DEL,
+          wave: `pv/${otherPrincipal}`,
+          refs: [],
+          body: { ids: [follow.id] }
+        }),
+        ctx
+      )
+    ).toBe('not-bound');
   });
 
   it('takes a public stream owned by a bare wallet from that wallet while it is unbound', async () => {

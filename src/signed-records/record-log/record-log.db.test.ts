@@ -104,8 +104,8 @@ describeWithSeed('RecordLogDb', [], () => {
     );
     expect(await db.findSegmentsWithoutHead(ctx)).toHaveLength(1);
     expect(await db.findSegmentsToUpload(ctx)).toHaveLength(0);
+    // Setting the head also drops the segment's entries.
     await db.setHeadDrop('public', 1, 'drop-1', ctx);
-    await db.deleteSegmentEntries('public', 1, ctx);
     const left = await sqlExecutor.execute<{ count: number }>(
       'select count(*) as count from signed_record_log_entries'
     );

@@ -25,19 +25,22 @@ interface FamilyRule {
   readonly sealed: boolean;
   readonly log: boolean;
   readonly del: boolean;
-  // Whether the orderer role may write (relay-inbox section 2.1).
-  readonly orderer: boolean;
+  // What the orderer role may write (relay-inbox section 2.1): every kind
+  // the family carries, SEALED only, or nothing.
+  readonly orderer: boolean | 'sealed';
 }
 
 /** What each family carries (relay-inbox design, section 2.1). */
 const FAMILY_RULES: Readonly<Record<RecordFamily, FamilyRule>> = {
   ps: { records: 'any', sealed: false, log: false, del: true, orderer: false },
+  // The orderer seals items into a person's pv (publish's cms); a reader
+  // record or a DEL there is the person's alone.
   pv: {
     records: ['reader'],
     sealed: true,
     log: false,
     del: true,
-    orderer: true
+    orderer: 'sealed'
   },
   dr: {
     records: ['mls-device', 'mls-revoke'],
@@ -60,8 +63,9 @@ const PRINCIPAL_FAMILIES: readonly RecordFamily[] = ['ps', 'pv', 'bk'];
 
 const PRINCIPAL_ID_PATTERN = /^0x[0-9a-f]{64}$/;
 const WALLET_PATTERN = /^0x[0-9a-f]{40}$/;
-// Owners of the other families are lane-defined ids: hex, UUIDs, handles.
-const OWNER_PATTERN = /^[0-9A-Za-z._:-]{1,128}$/;
+// Owners of the other families (dr, dv, cv, bl, md): 0x and 1 to 128
+// lowercase hex digits, as the relays take them (MLS keys, group ids).
+const OWNER_PATTERN = /^0x[0-9a-f]{1,128}$/;
 
 function isRecordFamily(value: string): value is RecordFamily {
   return (FAMILIES as readonly string[]).includes(value);
@@ -131,6 +135,13 @@ export function isKindAllowedInFamily(
   }
 }
 
-export function isOrdererFamily(family: RecordFamily): boolean {
-  return FAMILY_RULES[family].orderer;
+/** Whether the orderer role may write this kind into the family. */
+export function isOrdererAllowed(
+  family: RecordFamily,
+  kind: RecordKind
+): boolean {
+  const orderer = FAMILY_RULES[family].orderer;
+  return (
+    orderer === true || (orderer === 'sealed' && kind === RecordKind.SEALED)
+  );
 }
