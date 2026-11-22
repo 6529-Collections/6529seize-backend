@@ -138,25 +138,32 @@ export class PersonalRecordsService {
     const now = (this.deps.now ?? Date.now)();
     const results = new Map<number, PersonalSubmitResult>();
     const accepted: { index: number; record: VerifiedRecord }[] = [];
+    // Only the gateway failing to say whose the author's wallet was answers
+    // 503; any other failure (the grants table, a bug) stays a failure.
+    const bindings = {
+      principalAt: async (wallet: string, height: number) => {
+        try {
+          return await this.deps.owners.principalAt(wallet, height);
+        } catch (error) {
+          this.logger.warn(
+            `[OWNERS UNAVAILABLE] [WALLET ${wallet}] [HEIGHT ${height}] ${(error as Error)?.message ?? error}`
+          );
+          throw ownersUnavailable();
+        }
+      }
+    };
     for (let index = 0; index < events.length; index++) {
       const event = events[index];
-      let verified: Awaited<ReturnType<typeof verifyRecordEvent>>;
-      try {
-        verified = await verifyRecordEvent(event, {
-          grants: this.deps.grants,
-          bindings: this.deps.owners,
-          live: {
-            now,
-            head: anchor.anchor,
-            maxAnchorLag: anchor.maxAnchorLag,
-            maxClockSkewMs: this.deps.maxClockSkewMs
-          }
-        });
-      } catch {
-        // A bad record answers as a verify result; a throw here is the
-        // gateway failing to say whose the author's wallet was.
-        throw ownersUnavailable();
-      }
+      const verified = await verifyRecordEvent(event, {
+        grants: this.deps.grants,
+        bindings,
+        live: {
+          now,
+          head: anchor.anchor,
+          maxAnchorLag: anchor.maxAnchorLag,
+          maxClockSkewMs: this.deps.maxClockSkewMs
+        }
+      });
       if (!verified.ok) {
         results.set(index, {
           id: idOf(event),

@@ -136,8 +136,9 @@ function setup(
   const deps = { owners, tables, live: new RecordingLiveEffects(tables) };
   const heads = new RollbackHeadStore(tables);
   const logged: string[] = [];
+  const grants = grantSource([VECTOR_GRANT]);
   const service = new PersonalRecordsService({
-    grants: grantSource([VECTOR_GRANT]),
+    grants,
     owners,
     anchors: {
       getAnchor: async () => ({
@@ -159,7 +160,7 @@ function setup(
     now: () => NOW,
     maxClockSkewMs: 10 * 60 * 1000
   });
-  return { service, tables, logged, heads, owners };
+  return { service, tables, logged, heads, owners, grants };
 }
 
 describe('PersonalRecordsService.submit', () => {
@@ -295,6 +296,15 @@ describe('PersonalRecordsService.submit', () => {
       .catch((error: { code?: string; getStatusCode(): number }) => error);
     expect(thrown).toMatchObject({ code: 'OWNERS_UNAVAILABLE' });
     expect((thrown as { getStatusCode(): number }).getStatusCode()).toBe(503);
+  });
+
+  it('keeps any other failure in verification a failure, not a 503', async () => {
+    const { service, grants } = setup();
+    const failure = new Error('device_grants is unreachable');
+    jest.spyOn(grants, 'findGrant').mockRejectedValue(failure);
+    await expect(
+      service.submit([VECTORS.followRecord], 'primary', 'p-me', {})
+    ).rejects.toBe(failure);
   });
 
   it("refuses another profile's records", async () => {
