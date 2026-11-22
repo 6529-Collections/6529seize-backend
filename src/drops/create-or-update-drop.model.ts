@@ -4,6 +4,10 @@ import { DropGroupMention } from '../entities/IWaveGroupNotificationSubscription
 export interface CreateOrUpdateDropModel {
   readonly collaborator_ids?: string[];
   readonly drop_id: string | null;
+  // The id a new drop takes when its source names it (a post read from the
+  // 6529 relays: its event id as a UUID, so a rebuild gives the same id);
+  // otherwise a random one. Ignored for an update.
+  readonly new_drop_id?: string | null;
   readonly wave_id: string;
   readonly reply_to: DropPartIdentifierModel | null;
   readonly title: string | null;

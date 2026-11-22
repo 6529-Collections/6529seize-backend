@@ -138,6 +138,14 @@ const UNSIGNED_AUTHOR_SIGNATURE_EFFECT: Record<
 
 export type SignedWriteContext = RequestContext & {
   readonly authenticationContext: AuthenticationContext;
+  /**
+   * Set only for an event read from the 6529 relays (src/wave-drop-index),
+   * already checked against its grant: the event's claimed time, at which
+   * the grant's expiry and revocation count, as every relay reader counts
+   * them. No clock-skew check then: a relay event may be read long after
+   * it was signed.
+   */
+  readonly relaySignedAt?: number;
 };
 
 export interface SignedWriteTarget {
@@ -334,17 +342,28 @@ export class DeviceSignedWritesService {
       );
     }
     const now = this.now();
+    const relaySignedAt = ctx.relaySignedAt;
+    if (
+      relaySignedAt !== undefined &&
+      relaySignedAt !== envelope.claimed_time
+    ) {
+      throw new InvalidDeviceSignatureException(
+        'relay event time differs from its claimed_time'
+      );
+    }
     const grant = await this.loadUsableGrant(
       envelope.grant_id,
       target,
-      now,
-      ctx
+      relaySignedAt ?? now,
+      ctx,
+      relaySignedAt !== undefined
     );
     const profileId = await this.assertGrantWalletIsActingProfile(
       grant,
       authenticationContext
     );
     if (
+      relaySignedAt === undefined &&
       Math.abs(envelope.claimed_time - now) > DEVICE_SIGNATURE_MAX_CLOCK_SKEW_MS
     ) {
       throw new InvalidDeviceSignatureException(
@@ -413,13 +432,19 @@ export class DeviceSignedWritesService {
     grantId: string,
     target: SignedWriteTarget,
     now: number,
-    ctx: RequestContext
+    ctx: RequestContext,
+    // A relay event: a grant revoked after the event was signed still
+    // covers it.
+    revokedOnlyBefore = false
   ): Promise<DeviceGrantEntity> {
     const grant = await this.db.findGrantById(grantId, { timer: ctx.timer });
     if (!grant) {
       throw new InvalidDeviceSignatureException('unknown grant');
     }
-    if (grant.revoked_at !== null) {
+    if (
+      grant.revoked_at !== null &&
+      (!revokedOnlyBefore || now > Number(grant.revoked_at))
+    ) {
       throw new InvalidDeviceSignatureException('grant was revoked');
     }
     if (Number(grant.expires_at) <= now) {

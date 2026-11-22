@@ -4,6 +4,7 @@ import { Logger } from '@/logging';
 import { recoverWithWorkerRedis } from './recovery-redis';
 import { recordClientVersionGauge } from '@/ws-client-versions/ws-client-versions';
 import { runWaveRelayPublishingBestEffort } from '@/wave-relay-publish/wave-relay-publish';
+import { runDropIndexBestEffort } from '@/wave-drop-index/drop-index';
 
 const logger = Logger.get('WEBSOCKET_DELIVERY_LOOP');
 
@@ -19,6 +20,9 @@ export const handler = sentryContext.wrapLambdaHandler(async () => {
         // Device-signed drop events to the 6529 relays (off unless
         // FEATURE_WAVES_RELAY_PUBLISH). Best effort, about half a minute.
         await runWaveRelayPublishingBestEffort();
+        // The relays' drop events into 6529.io's drop index (off unless
+        // FEATURE_WAVES_DROP_INDEX). Best effort, about 25 seconds.
+        await runDropIndexBestEffort();
       }
     },
     { logger, entities: [], skipRedis: true }

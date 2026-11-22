@@ -244,13 +244,16 @@ export class DropCreationApiService {
       authorId,
       representativeId,
       hideLinkPreview,
-      requestDailyActivityCredit = false
+      requestDailyActivityCredit = false,
+      newDropId
     }: {
       createDropRequest: ApiCreateDropRequest;
       authorId: string;
       representativeId: string;
       hideLinkPreview?: boolean;
       requestDailyActivityCredit?: boolean;
+      /** The new drop's id when its source names it; else random. */
+      newDropId?: string;
     },
     ctx: RequestContext
   ): Promise<ApiDrop> {
@@ -275,13 +278,13 @@ export class DropCreationApiService {
       createDropRequest,
       { publishedDropId: replay?.published_subject_id ?? null }
     );
-    const createModel: typeof model =
-      hideLinkPreview === undefined
-        ? model
-        : {
-            ...model,
-            hide_link_preview: hideLinkPreview
-          };
+    const createModel: typeof model = {
+      ...model,
+      ...(hideLinkPreview === undefined
+        ? {}
+        : { hide_link_preview: hideLinkPreview }),
+      ...(newDropId ? { new_drop_id: newDropId } : {})
+    };
     if (replay) {
       if (
         replay.scope.context_fingerprint !==

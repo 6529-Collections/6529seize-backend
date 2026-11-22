@@ -794,7 +794,8 @@ export class CreateOrUpdateDropUseCase {
     const sanitizedModel = sanitizeDropStructuredFields(model);
     const operation: 'CREATE' | 'UPDATE' =
       sanitizedModel.drop_id === null ? 'CREATE' : 'UPDATE';
-    const dropId = sanitizedModel.drop_id ?? randomUUID();
+    const dropId =
+      sanitizedModel.drop_id ?? sanitizedModel.new_drop_id ?? randomUUID();
     const authorProfileId = this.getRequiredAuthorId(sanitizedModel);
     const currentRevision = sanitizedModel.drop_id
       ? await moderationReviewDb.currentRevision(
@@ -1076,7 +1077,7 @@ export class CreateOrUpdateDropUseCase {
     const operation = preExistingDropId === null ? 'CREATE' : 'UPDATE';
     const candidateDropId =
       'trustedSystem' in prePublication
-        ? (preExistingDropId ?? randomUUID())
+        ? (preExistingDropId ?? validatedModel.new_drop_id ?? randomUUID())
         : prePublication.dropId;
     if (
       !('trustedSystem' in prePublication) &&

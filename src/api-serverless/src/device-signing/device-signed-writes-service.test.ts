@@ -363,6 +363,73 @@ describe('DeviceSignedWritesService', () => {
     });
   });
 
+  describe('events read from the relays', () => {
+    const DAY = 24 * 60 * 60 * 1000;
+    const relayCtx = (signedAt = CLAIMED_TIME) => ({
+      ...ctx(),
+      relaySignedAt: signedAt
+    });
+
+    beforeEach(() => {
+      // Read a day after it was signed.
+      service = new DeviceSignedWritesService(
+        db,
+        identities,
+        drops,
+        () => NOW + DAY
+      );
+    });
+
+    it('takes an event long after it was signed, its grant counted at that time', async () => {
+      jest
+        .mocked(db.findGrantById)
+        .mockResolvedValue(
+          aGrant({ expires_at: CLAIMED_TIME + 1, revoked_at: CLAIMED_TIME + 1 })
+        );
+      await expect(
+        createVectorDrop(VECTOR_ENVELOPE, undefined, relayCtx())
+      ).resolves.toEqual({ id: 'new-drop' });
+      expect(db.reserveEvent).toHaveBeenCalledWith(
+        expect.objectContaining({ id: VECTOR_EVENT_ID, created_at: NOW + DAY }),
+        expect.anything()
+      );
+    });
+
+    it('still checks the clock without the relay time', async () => {
+      jest
+        .mocked(db.findGrantById)
+        .mockResolvedValue(aGrant({ expires_at: NOW + 2 * DAY }));
+      await expectInvalid(createVectorDrop(), /claimed_time/);
+    });
+
+    it.each([
+      [
+        'revoked before the event',
+        aGrant({ revoked_at: CLAIMED_TIME - 1 }),
+        /revoked/
+      ],
+      ['expired at the event', aGrant({ expires_at: CLAIMED_TIME }), /expired/]
+    ])('refuses a grant %s', async (_name, grant, reason) => {
+      jest.mocked(db.findGrantById).mockResolvedValue(grant);
+      await expectInvalid(
+        createVectorDrop(VECTOR_ENVELOPE, undefined, relayCtx()),
+        reason
+      );
+    });
+
+    it('refuses a relay time that is not the event time', async () => {
+      await expectInvalid(
+        createVectorDrop(
+          VECTOR_ENVELOPE,
+          undefined,
+          relayCtx(CLAIMED_TIME + 1)
+        ),
+        /relay event time/
+      );
+      expect(db.findGrantById).not.toHaveBeenCalled();
+    });
+  });
+
   describe('rejections', () => {
     it.each([
       ['null', null],
