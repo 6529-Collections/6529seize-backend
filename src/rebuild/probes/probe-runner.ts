@@ -16,6 +16,8 @@ export interface ProbeAnswer {
   readonly status: number;
   /** Parsed JSON, or the SHA-256 of a non-JSON body. */
   readonly body: unknown;
+  /** False when the body was empty or not JSON. */
+  readonly json?: boolean;
   readonly error?: string;
 }
 
@@ -117,12 +119,14 @@ async function callOne(
     });
     const text = await response.text();
     let body: unknown;
+    let json = true;
     try {
       body = JSON.parse(text);
     } catch {
+      json = false;
       body = { sha256: createHash('sha256').update(text).digest('hex') };
     }
-    return { id: call.id, status: response.status, body };
+    return { id: call.id, status: response.status, body, json };
   } catch (error) {
     return { id: call.id, status: 0, body: null, error: String(error) };
   }
@@ -212,8 +216,9 @@ export function carriesNoData(body: unknown, requestPath = ''): boolean {
 
 /**
  * Compares the two passes. A probe whose first pass fails, or whose answers
- * differ, is a failure. One whose first pass answers 4xx or carries no data
- * proves nothing and is unproven.
+ * differ, is a failure. One whose answers match but whose first answer is a
+ * 4xx, or a 2xx that is empty, not JSON or carries no data, proves nothing
+ * and is unproven.
  */
 export function diffAnswers(
   calls: readonly ProbeCall[],
@@ -240,6 +245,7 @@ export function diffAnswers(
         after: form(b)
       });
     const expected = call.probe.expectStatus;
+    const success = !!a && a.status >= 200 && a.status < 300;
     if (!a || a.status === 0 || a.status >= 500) {
       difference('failure', 'the first pass failed');
     } else if (expected !== undefined && a.status !== expected) {
@@ -247,12 +253,16 @@ export function diffAnswers(
         'failure',
         `the first pass answered ${a.status}, not ${expected}`
       );
-    } else if (expected === undefined && !statusOk(call.probe, a.status)) {
-      difference('unproven', `the first pass answered ${a.status}`);
-    } else if (expected === undefined && carriesNoData(a.body, call.path)) {
-      difference('unproven', 'the first pass answered with no data');
     } else if (form(a) !== form(b)) {
+      // Compared whatever the first answer was: an unproven probe that
+      // answers differently after the rebuild still fails.
       difference('failure', 'the answers differ');
+    } else if (!statusOk(call.probe, a.status)) {
+      difference('unproven', `the first pass answered ${a.status}`);
+    } else if (success && a.json === false) {
+      difference('unproven', 'the first pass answered without JSON');
+    } else if (success && carriesNoData(a.body, call.path)) {
+      difference('unproven', 'the first pass answered with no data');
     }
   }
   return differences;

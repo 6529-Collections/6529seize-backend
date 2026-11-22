@@ -836,10 +836,16 @@ class RebuildRun {
     }
     const differing = this.tableDiffs.filter((d) => !d.same).length;
     if (differing) {
-      this.notes.push(
+      (this.o.final ? this.failures : this.notes).push(
         this.differences.length
-          ? `${differing} rebuilt tables differ row by row, and the probes differ too.`
-          : `${differing} rebuilt tables differ row by row while the probes match; look for a missing probe.`
+          ? `${differing} rebuilt tables differ row by row (outside their volatile columns), and the probes differ too.`
+          : `${differing} rebuilt tables differ row by row (outside their volatile columns) while the probes match; look for a missing probe.`
+      );
+    }
+    const unseeded = this.unseededTables();
+    if (unseeded.length) {
+      (this.o.final ? this.failures : this.notes).push(
+        `${unseeded.length} rebuilt tables had no rows after the seeds, so their rebuild proves nothing: ${unseeded.join(', ')}`
       );
     }
     const exempt = this.registry?.classes.EXEMPT ?? 0;
@@ -978,6 +984,18 @@ class RebuildRun {
       counts[table] = await this.admin!.rowCount(MAIN_DB, table);
     }
     return counts;
+  }
+
+  /** Rebuilt tables with no rows after the seeds and no waiver. */
+  private unseededTables(): string[] {
+    const waived = new Set(
+      this.o.manifests.flatMap((m) =>
+        (m.waivers?.unseededTables ?? []).map((w) => w.target)
+      )
+    );
+    return this.rebuiltTables.filter(
+      (t) => !waived.has(t) && (this.seededRows[t] ?? 0) === 0
+    );
   }
 
   /** Rebuilders that declare reads of kept tables. */

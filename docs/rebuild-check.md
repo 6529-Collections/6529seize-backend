@@ -97,6 +97,10 @@ export const mintManifest: AreaManifest = {
   probe with `origin: 'planned'` and `needs: [tables]` reads tables a later
   branch creates: runs hold it while any of them is missing from the fresh
   schema and say so, and a final run fails on it.
+- `waivers`: `routes` (documented GET routes no probe needs to call),
+  `unprobedTables` (rebuilt tables no probe needs to read) and
+  `unseededTables` (rebuilt tables that may have no rows after the seeds),
+  each entry with its reason.
 
 ## Running it
 
@@ -138,17 +142,29 @@ answers against the rebuilt ones.
 A run passes when the registry is clean, every step exits 0 in its time, no
 step connects outside the sources, no source reports a problem (a request a
 recording lacks, a file that doesn't match its hash), the rebuilt tables were
-empty after the drop, and every probe answers the same. A probe whose first
-answer is 4xx, or carries no data (nothing, an empty list, a page whose
-lists are all empty, or an object whose values are all zero, false, empty or
-the values the request asked about), proves nothing: the report lists it as
-unproven. `--final` also fails on unproven probes, INDEX tables without a
-rebuilder, rebuilt tables no probe read (unless waived), planned tables whose
-code isn't there, tables a manifest keeps or rebuilds that the schema build
-doesn't make (no entity or migration creates them), provisional sources, and
-documented GET routes with no probe and no waiver. A probe whose first pass gets no answer or a 5xx, or
-not the `expectStatus` it names, fails every run. Tables that differ row by
-row while the probes match are reported, not failed.
+empty after the drop, and every probe answers the same in both passes. A
+probe whose first pass gets no answer, a 5xx, or not the `expectStatus` it
+names fails every run, and so does one whose two answers differ.
+
+A probe whose answers match but whose first answer is a 4xx, or a 2xx that
+is empty, not JSON, or carries no data (an empty list, a page whose lists
+are all empty, or an object whose values are all zero, false, empty or the
+values the request asked about), proves nothing: the report lists it as
+unproven.
+
+`--final` also fails on:
+
+- unproven and held probes;
+- INDEX tables without a rebuilder, and planned steps or tables whose code
+  isn't in the tree;
+- rebuilt tables that differ row by row outside their volatile columns;
+- rebuilt tables with no rows after the seeds (unless waived), and rebuilt
+  tables no probe read (unless waived);
+- tables a manifest keeps or rebuilds that the schema build doesn't make;
+- provisional sources;
+- documented GET routes with no probe and no waiver.
+
+Without `--final` each of these is a note in the report.
 
 Every process it starts gets a fresh environment: no `.env.*` file (the run
 refuses to start if `.env.local` exists), no AWS or provider credentials, and

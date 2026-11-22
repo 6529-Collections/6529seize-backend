@@ -124,6 +124,8 @@ export interface AreaManifest {
   readonly waivers?: {
     readonly routes?: readonly Waiver[];
     readonly unprobedTables?: readonly Waiver[];
+    /** Rebuilt tables a final run accepts with no rows after the seeds. */
+    readonly unseededTables?: readonly Waiver[];
   };
 }
 

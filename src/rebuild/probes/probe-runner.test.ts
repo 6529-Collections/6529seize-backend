@@ -74,12 +74,14 @@ describe('probe runner', () => {
       expect(answers.a).toEqual({
         id: 'a',
         status: 200,
-        body: { url: '/x', auth: null }
+        body: { url: '/x', auth: null },
+        json: true
       });
       expect((answers.b.body as { auth: string }).auth).toMatch(/^Bearer /);
       expect(answers.c.body).toEqual({
         sha256: expect.stringMatching(/^[0-9a-f]{64}$/)
       });
+      expect(answers.c.json).toBe(false);
     } finally {
       await new Promise((resolve) => server.close(resolve));
     }
@@ -106,16 +108,23 @@ describe('probe runner', () => {
       }),
       ...expandProbe('l', { id: 'zeros', path: '/10' }),
       ...expandProbe('l', { id: 'echo', path: '/balances/0x0a' }),
-      ...expandProbe('l', { id: 'data', path: '/balances/0x0a' })
+      ...expandProbe('l', { id: 'data', path: '/balances/0x0a' }),
+      ...expandProbe('l', { id: 'empty-then-not', path: '/11' }),
+      ...expandProbe('l', { id: 'csv', path: '/12' }),
+      ...expandProbe('l', { id: 'blank', path: '/13' }),
+      ...expandProbe('l', { id: 'ok-empty', path: '/14', expectStatus: 200 }),
+      ...expandProbe('l', { id: 'gone-then-back', path: '/15' })
     ];
     const answer = (
       id: string,
       status: number,
-      body: unknown
+      body: unknown,
+      json = true
     ): ProbeAnswer => ({
       id,
       status,
-      body
+      body,
+      json
     });
     const before = {
       same: answer('same', 200, { a: 1, b: 2 }),
@@ -133,13 +142,20 @@ describe('probe runner', () => {
       'wrong-status': answer('wrong-status', 200, { v: 1 }),
       zeros: answer('zeros', 200, { tdh: 0, rank: 0 }),
       echo: answer('echo', 200, { wallet: '0x0A', balance: 0, last: null }),
-      data: answer('data', 200, { wallet: '0x0a', balance: 3 })
+      data: answer('data', 200, { wallet: '0x0a', balance: 3 }),
+      'empty-then-not': answer('empty-then-not', 200, []),
+      csv: answer('csv', 200, { sha256: 'ab' }, false),
+      blank: answer('blank', 200, { sha256: 'e3' }, false),
+      'ok-empty': answer('ok-empty', 200, { data: [] }),
+      'gone-then-back': answer('gone-then-back', 404, { error: 'not found' })
     };
     const after = {
       ...before,
       same: answer('same', 200, { b: 2, a: 1 }),
       ignored: answer('ignored', 200, { v: 1, t: 2 }),
-      differs: answer('differs', 200, { v: 2 })
+      differs: answer('differs', 200, { v: 2 }),
+      'empty-then-not': answer('empty-then-not', 200, [{ id: 1 }]),
+      'gone-then-back': answer('gone-then-back', 200, { id: 1 })
     };
     expect(
       diffAnswers(calls, before, after).map((d) => [d.id, d.kind, d.reason])
@@ -151,7 +167,12 @@ describe('probe runner', () => {
       ['empty-page', 'unproven', 'the first pass answered with no data'],
       ['wrong-status', 'failure', 'the first pass answered 200, not 404'],
       ['zeros', 'unproven', 'the first pass answered with no data'],
-      ['echo', 'unproven', 'the first pass answered with no data']
+      ['echo', 'unproven', 'the first pass answered with no data'],
+      ['empty-then-not', 'failure', 'the answers differ'],
+      ['csv', 'unproven', 'the first pass answered without JSON'],
+      ['blank', 'unproven', 'the first pass answered without JSON'],
+      ['ok-empty', 'unproven', 'the first pass answered with no data'],
+      ['gone-then-back', 'failure', 'the answers differ']
     ]);
   });
 
