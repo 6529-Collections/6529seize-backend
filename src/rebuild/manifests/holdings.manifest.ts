@@ -197,7 +197,7 @@ const HOLDINGS_SEED: RebuildStep = {
   ],
   reads: ['eth_price', 'address_consolidation_keys', 'tdh_nft'],
   // The fixture wallets' consolidation keys first.
-  after: ['harness.probe-identities'],
+  after: ['identity.probe-profiles'],
   sources: ['ethereum', 'files', 'repo'],
   timeoutMinutes: 30,
   origin: 'planned'

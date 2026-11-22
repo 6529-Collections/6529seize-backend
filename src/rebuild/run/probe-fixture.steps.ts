@@ -1,6 +1,7 @@
-// The harness's seed for the probe fixture: a profile for each fixture
-// wallet, so probes that sign in (as PROBE_CALLER) reach their handler, and
-// no two areas' seeds write the same identity rows.
+// The identity area's seed for the probe fixture (identity.probe-profiles):
+// a profile for each fixture wallet, so probes that sign in (as
+// PROBE_CALLER) reach their handler, and no other area's seed writes
+// identity rows.
 import { ADDRESS_CONSOLIDATION_KEY, IDENTITIES_TABLE } from '@/constants';
 import { PROBE_WALLETS } from '@/rebuild/manifests/probe-fixture';
 import { dbSupplier } from '@/sql-executor';

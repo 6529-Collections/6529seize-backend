@@ -1,6 +1,8 @@
 // A child of the rebuild run: builds the schema of an empty database from
 // code, as the test setup does: entity sync, then the migrations loop's full
 // scope (bounded sync, the wave score index, the competition facade views).
+// The old db-migrate scripts don't run (FEATURE_DB_MIGRATE_DISABLED), as in
+// the tests.
 import 'reflect-metadata';
 import { DataSource } from 'typeorm';
 import * as Entities from '@/entities/entities';

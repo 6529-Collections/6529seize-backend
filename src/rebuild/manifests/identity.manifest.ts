@@ -9,11 +9,11 @@ export const identityManifest: AreaManifest = {
   area: 'identity',
   flags: {},
   tables: {
-    // The harness seed harness.probe-identities writes the probe fixture's
-    // profiles (rebuild-probe-1 for 0x...01, rebuild-probe-2 for 0x...02)
-    // here and in address_consolidation_keys. The identity rebuilder must
-    // bring them back from its sources, or every probe that signs in
-    // answers differently after the drop.
+    // The seed identity.probe-profiles writes the probe fixture's profiles
+    // (rebuild-probe-1 for 0x...01, rebuild-probe-2 for 0x...02) here and in
+    // address_consolidation_keys. The identity rebuilder must bring them
+    // back from its sources, or every probe that signs in answers
+    // differently after the drop.
     identities: { class: 'INDEX' },
     profiles: { class: 'INDEX' },
     profiles_archive: { class: 'INDEX' },
@@ -58,7 +58,21 @@ export const identityManifest: AreaManifest = {
       origin: 'planned'
     }
   },
-  seeds: [],
+  // A profile for each probe fixture wallet (probe-fixture.ts), for the
+  // probes that sign in, written as identity rows. Identity's rebuilder
+  // must bring them back from its sources.
+  seeds: [
+    {
+      id: 'identity.probe-profiles',
+      run: {
+        module: 'src/rebuild/run/probe-fixture.steps',
+        exportName: 'seedProbeIdentities'
+      },
+      writes: ['identities', 'address_consolidation_keys'],
+      sources: ['repo'],
+      timeoutMinutes: 5
+    }
+  ],
   rebuilders: [],
   probes: []
 };

@@ -34,29 +34,29 @@ export const personalManifest: AreaManifest = {
       class: 'EPHEMERAL',
       why: "The browser's cookie is the record."
     },
-    drop_bookmarks: {
-      class: 'PROVIDER',
-      why: '6529.io keeps these for each person as a service.'
-    },
+    drop_bookmarks: { class: 'INDEX' },
     drop_quickvote_skips: {
-      class: 'PROVIDER',
-      why: '6529.io keeps these for each person as a service.'
+      class: 'EPHEMERAL',
+      why: 'A per-person cursor through the quick-vote queue. If lost, quick vote shows a few drops again.'
     },
     eula_consent: { class: 'INDEX' },
     identity_mutes: { class: 'INDEX' },
     identity_subscriptions: { class: 'INDEX' },
-    mention_alias_members: {
-      class: 'PROVIDER',
-      why: '6529.io keeps these for each person as a service.'
-    },
+    mention_alias_members: { class: 'INDEX' },
     mention_aliases: {
-      class: 'PROVIDER',
-      why: '6529.io keeps these for each person as a service.'
+      class: 'INDEX',
+      volatileColumns: [
+        {
+          column: 'created_at',
+          reason: 'Row housekeeping; the API never returns it.'
+        },
+        {
+          column: 'updated_at',
+          reason: 'Row housekeeping; the API never returns it.'
+        }
+      ]
     },
-    pinned_waves: {
-      class: 'PROVIDER',
-      why: '6529.io keeps these for each person as a service.'
-    },
+    pinned_waves: { class: 'INDEX' },
     profile_preferences: { class: 'INDEX' },
     push_notification_settings: { class: 'INDEX' },
     wave_group_notification_subscriptions: { class: 'INDEX' },

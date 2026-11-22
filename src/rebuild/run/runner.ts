@@ -959,9 +959,10 @@ class RebuildRun {
   }
 
   /**
-   * Tables a manifest keeps or rebuilds that the schema build doesn't make:
-   * no entity or migration creates them. Left out: planned tables whose code
-   * isn't here, tables made at runtime by design, and SCHEMA tables.
+   * Tables a manifest keeps or rebuilds that the schema build doesn't make
+   * (entity sync and the migrations loop's schema steps; the old db-migrate
+   * scripts don't run). Left out: planned tables whose code isn't here,
+   * tables made at runtime by design, and SCHEMA tables.
    */
   private notInSchema(): { area: string; table: string }[] {
     if (!this.live.length) return [];

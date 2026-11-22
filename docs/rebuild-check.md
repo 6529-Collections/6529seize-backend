@@ -93,7 +93,7 @@ export const mintManifest: AreaManifest = {
     Until it is in the tree, runs skip the step and note it, and keep a
     skipped rebuilder's tables like pending ones; a final run fails.
 - `probes`: API requests whose answers must match before and after. `ignore`
-  and `unordered` paths each need a reason, and the report counts them. A
+  and `unordered` paths each need a reason, which the registry checks. A
   probe with `origin: 'planned'` and `needs: [tables]` reads tables a later
   branch creates: runs hold it while any of them is missing from the fresh
   schema and say so, and a final run fails on it.
@@ -121,8 +121,9 @@ unless `--api-port` names one.
 The steps of a run:
 
 1. Check the registry, start `mysqld`, build the schema from code (entity
-   sync and the migrations loop), and check the live schema against the
-   classes.
+   sync, then the migrations loop's schema steps; the old db-migrate
+   scripts are left out, as in the tests), and check the live schema
+   against the classes.
 2. Run every area's seeds, then count the rows of every INDEX table, so the
    report shows which tables the probes can find data in.
 3. Copy the kept tables aside: EPHEMERAL, PROVIDER, EXEMPT, and, unless
@@ -161,7 +162,8 @@ unproven.
 - rebuilt tables with no rows after the seeds (unless waived), and rebuilt
   tables no probe read (unless waived);
 - tables a manifest keeps or rebuilds that the schema build doesn't make;
-- provisional sources;
+- provisional sources, and command steps that don't run Node (the source
+  guard watches only Node processes);
 - documented GET routes with no probe and no waiver.
 
 Without `--final` each of these is a note in the report.
@@ -187,8 +189,12 @@ Each `--source <name>=<spec>`:
   answers 599 and fails the run. `record` proxies to the URL and adds every
   new answer to the recording. Keys leave out JSON-RPC ids and key order.
 - `<dir>/PROVENANCE.json` says what made a recording (`made_by`: a
-  devnet scenario, an anvil state, or `hand`). A recording written by hand,
-  and the harness relay, are provisional: `--final` fails on them.
+  devnet scenario, an anvil state, or `hand`). Provisional, so `--final`
+  fails on them: a live URL, a `record` run (it reaches a live URL), a
+  recording written by hand, and the harness relay. Recording into a
+  directory marked `hand` keeps that mark.
+- The report shows source URLs without credentials, query values or
+  key-like path segments.
 - The harness relay speaks CRP v1 over WebSocket (HELLO, AUTH, PUB, payloads,
   SUB, HIST). It keeps what the run publishes, starting from a copy of
   `<dir>`, and checks one copy per event id, a LOG `seq` once per wave

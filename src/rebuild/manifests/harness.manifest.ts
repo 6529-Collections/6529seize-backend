@@ -80,21 +80,7 @@ export const harnessManifest: AreaManifest = {
       why: 'Competition facade view over the competitions tables; the schema build makes it.'
     }
   },
-  // A profile for each probe fixture wallet (probe-fixture.ts), for the
-  // probes that sign in. These are identity tables: kept until their
-  // rebuilder lands, which must then bring these profiles back.
-  seeds: [
-    {
-      id: 'harness.probe-identities',
-      run: {
-        module: 'src/rebuild/run/probe-fixture.steps',
-        exportName: 'seedProbeIdentities'
-      },
-      writes: ['identities', 'address_consolidation_keys'],
-      sources: ['repo'],
-      timeoutMinutes: 5
-    }
-  ],
+  seeds: [],
   rebuilders: [],
   probes: []
 };
