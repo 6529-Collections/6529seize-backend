@@ -34,9 +34,27 @@ export function readMemeLabRoyalties(
     .sort((a, b) => a.token_id - b.token_id);
 }
 
+export type MemeLabRoyaltyRow = ReturnType<typeof readMemeLabRoyalties>[number];
+
 /** Rebuilds meme_lab_royalties from the repository file. */
 export async function rebuildMemeLabRoyalties(): Promise<void> {
-  const rows = readMemeLabRoyalties();
+  await writeMemeLabRoyalties(readMemeLabRoyalties());
+}
+
+/**
+ * Replaces the table's rows with `rows`, in one transaction. It refuses
+ * an empty list and changes nothing: the file is empty until the team
+ * exports production's splits into it, and run against any database before
+ * then, it would delete every split.
+ */
+export async function writeMemeLabRoyalties(
+  rows: readonly MemeLabRoyaltyRow[]
+): Promise<void> {
+  if (!rows.length) {
+    throw new Error(
+      'src/holdings/meme-lab-royalties.json has no splits yet; meme_lab_royalties is left as it is'
+    );
+  }
   await sqlExecutor.executeNativeQueriesInTransaction(async (connection) => {
     await sqlExecutor.execute(
       `DELETE FROM ${MEME_LAB_ROYALTIES_TABLE}`,

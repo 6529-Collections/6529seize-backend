@@ -4,7 +4,10 @@ import { connect, disconnect, getDataSource, persistArtists } from '@/db';
 import { fetchArtistsNamesMemeLab, fetchArtistsNamesMemes } from '@/db-api';
 import * as Entities from '@/entities/entities';
 import { fetchMemesMintStatsTotals } from '@/api/memes-mint-stats/api.memes-mint-stats.db';
-import { rebuildMemeLabRoyalties } from '@/holdings/meme-lab-royalties-rebuild';
+import {
+  rebuildMemeLabRoyalties,
+  writeMemeLabRoyalties
+} from '@/holdings/meme-lab-royalties-rebuild';
 import { createMissingUnsyncedHoldingsTables } from './unsynced-holdings-tables-schema';
 
 jest.mock('@/holdings/meme-lab-royalties.json', () => ({
@@ -154,5 +157,17 @@ describe('artists and meme_lab_royalties on a fresh schema', () => {
         secondary_royalty_split: 0.25
       }
     ]);
+  });
+
+  it('leaves the royalties as they are when given no splits', async () => {
+    await expect(writeMemeLabRoyalties([])).rejects.toThrow(
+      'has no splits yet'
+    );
+
+    expect(
+      await getDataSource().query(
+        `SELECT token_id FROM ${MEME_LAB_ROYALTIES_TABLE} ORDER BY token_id`
+      )
+    ).toEqual([{ token_id: 1 }, { token_id: 2 }]);
   });
 });

@@ -1,4 +1,15 @@
-import { readMemeLabRoyalties } from './meme-lab-royalties-rebuild';
+import { sqlExecutor } from '@/sql-executor';
+import {
+  readMemeLabRoyalties,
+  writeMemeLabRoyalties
+} from './meme-lab-royalties-rebuild';
+
+jest.mock('@/sql-executor', () => ({
+  sqlExecutor: {
+    execute: jest.fn(),
+    executeNativeQueriesInTransaction: jest.fn()
+  }
+}));
 
 describe('readMemeLabRoyalties', () => {
   it('reads the checked-in file', () => {
@@ -31,5 +42,17 @@ describe('readMemeLabRoyalties', () => {
         }
       })
     ).toThrow(`Invalid Meme Lab royalty splits for token ${tokenId}`);
+  });
+});
+
+describe('writeMemeLabRoyalties', () => {
+  it('refuses no splits, and touches nothing', async () => {
+    await expect(writeMemeLabRoyalties([])).rejects.toThrow(
+      'src/holdings/meme-lab-royalties.json has no splits yet; meme_lab_royalties is left as it is'
+    );
+    expect(
+      sqlExecutor.executeNativeQueriesInTransaction
+    ).not.toHaveBeenCalled();
+    expect(sqlExecutor.execute).not.toHaveBeenCalled();
   });
 });
