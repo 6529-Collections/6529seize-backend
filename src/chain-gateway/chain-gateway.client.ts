@@ -43,7 +43,10 @@ import {
  *   reads of one task agree. A pinned answer must be read finalized at that
  *   height (a node that has it only as its head: `height_gone`); it never
  *   changes and is cached in memory (copies, by network, path, query and
- *   height, 64 MiB of JSON at most). `opts.at = 'head'` reads the
+ *   height, 64 MiB of JSON at most), except answers of the node's own data
+ *   (wallet histories, saved membership and TDH days, a level it can't give
+ *   yet). Unpinned list pages each follow the head: pin a walk to its first
+ *   page's `read.height` to read one state. `opts.at = 'head'` reads the
  *   unfinalized head, uncached. A node that isn't ready still gives its
  *   status (503 with its stamps): the head says `ready: false`.
  * - Every answer must be of the chain the head names: another network id
@@ -547,6 +550,41 @@ function heightRanges(value: unknown, path: string): [number, number][] {
   });
 }
 
+/** An identity whose level the node can't give yet (its TDH lists). */
+function lacksLevel(value: unknown): boolean {
+  const it = value as { principalId?: unknown; level?: unknown } | null;
+  return (
+    !!it && typeof it === 'object' && 'principalId' in it && it.level === null
+  );
+}
+
+/**
+ * Whether an answer comes from the node's own data rather than the state at
+ * the height read, so it can change at that height: wallet histories and
+ * their ranges (written by the feed), the saved membership days, the TDH
+ * days' lists, and a level the node can't give until it has copied the TDH
+ * lists (null alone or in an identity).
+ */
+function nodeLocal(path: string, data: unknown): boolean {
+  if (
+    /\/history$/.test(path) ||
+    path.startsWith('/v1/membership/days/') ||
+    path.startsWith('/v1/tdh/days/')
+  ) {
+    return true;
+  }
+  if (path.startsWith('/v1/levels/') && data === null) return true;
+  let rows: unknown[] = [data];
+  if (Array.isArray(data)) {
+    rows = data;
+  } else if (data && typeof data === 'object' && !('principalId' in data)) {
+    rows = Object.keys(data).map(
+      (key) => (data as Record<string, unknown>)[key]
+    );
+  }
+  return rows.some(lacksLevel);
+}
+
 function lower(address: string): string {
   return address.trim().toLowerCase();
 }
@@ -875,7 +913,7 @@ export class ChainGatewayClient {
     if (typeof network !== 'string' || !network.trim()) {
       throw badAnswer(path, 'an answer without its network id', status);
     }
-    const expected = (this.head?.value ?? (await this.getHead())).network;
+    const expected = (await this.getHead()).network;
     if (lower(network) === expected) return;
     await this.getHead(true).catch(() => undefined);
     throw new ChainGatewayError(
@@ -1025,7 +1063,9 @@ export class ChainGatewayClient {
     height: number
   ): Promise<ChainAnswer<T> | null> {
     // Kept by network too: an answer of another chain is never served.
-    const network = (this.head?.value ?? (await this.getHead())).network;
+    // The head as of now (read again past its TTL): after a relaunch the
+    // old chain's answers are not looked up.
+    const network = (await this.getHead()).network;
     const url = this.url(path, { ...query, height });
     const cached = this.answers.get(`${network} ${url}`);
     if (cached !== undefined) {
@@ -1051,8 +1091,11 @@ export class ChainGatewayClient {
       );
     }
     // Kept under the network it was read from, whatever the head was when
-    // it was asked.
-    this.answers.set(`${lower(read.network)} ${url}`, JSON.stringify(answer));
+    // it was asked; not kept when it is the node's own data rather than the
+    // state at that height.
+    if (!nodeLocal(path, answer?.data)) {
+      this.answers.set(`${lower(read.network)} ${url}`, JSON.stringify(answer));
+    }
     return answer;
   }
 
@@ -1064,6 +1107,11 @@ export class ChainGatewayClient {
     return (await this.read<T>(path, query, opts))?.data ?? null;
   }
 
+  /**
+   * One page of a list. Without `opts.height` each page is pinned to the
+   * head as of that call, so a walk over many pages can span heights:
+   * pin every page to the first page's `read.height` to read one state.
+   */
   private async page<T>(
     path: string,
     query: Query,
@@ -1429,14 +1477,17 @@ export class ChainGatewayClient {
     // A node behind the height asked from answers through its own head:
     // the next height stays where the reader is.
     const nextHeight = Math.max(through + 1, cursor.height);
+    const atHead = !blocks.length && through < cursor.height;
     return {
       ...data,
       from,
       through,
       blocks,
-      next: answer.next ?? nextHeight,
+      // A node behind a cursor inside a block answers its height alone:
+      // the cursor asked is kept, so the block's start isn't read again.
+      next: atHead ? from : (answer.next ?? nextHeight),
       nextHeight,
-      atHead: !blocks.length && through < cursor.height,
+      atHead,
       network: lower(answer.read.network)
     };
   }
@@ -1490,6 +1541,9 @@ export class ChainGatewayClient {
 
   private async post<T>(path: string, body: unknown): Promise<T> {
     const { status, json } = await this.send('POST', path, {}, body);
+    if (json?.read && typeof json.read === 'object') {
+      await this.checkNetwork(path, status, json.read);
+    }
     if (status !== 200 || !json || json.error || json.data === undefined) {
       throw this.errorOf(path, status, json);
     }
