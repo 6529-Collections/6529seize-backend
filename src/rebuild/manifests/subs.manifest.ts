@@ -2,7 +2,8 @@ import { AreaManifest, Probe } from '@/rebuild/manifest.types';
 import {
   PROBE_CONSOLIDATION_KEYS,
   PROBE_MEME_IDS,
-  PROBE_MEMES_CONTRACT
+  PROBE_MEMES_CONTRACT,
+  PROBE_UPCOMING_MEME_ID
 } from '@/rebuild/manifests/probe-fixture';
 
 /** The subscription answers, for the probe fixture's consolidations. */
@@ -34,8 +35,9 @@ const PROBES: Probe[] = [
   },
   {
     id: 'subs.upcoming-meme',
-    path: '/api/subscriptions/consolidation/upcoming-memes/{id}/{key}',
-    each: { id: PROBE_MEME_IDS, key: PROBE_CONSOLIDATION_KEYS }
+    // A card that hasn't dropped: the route answers 400 for a dropped one.
+    path: `/api/subscriptions/consolidation/upcoming-memes/${PROBE_UPCOMING_MEME_ID}/{key}`,
+    each: { key: PROBE_CONSOLIDATION_KEYS }
   },
   {
     id: 'subs.airdrop-address',
