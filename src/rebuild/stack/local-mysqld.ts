@@ -3,7 +3,7 @@ import { randomBytes } from 'node:crypto';
 import * as fs from 'node:fs';
 import * as net from 'node:net';
 import * as path from 'node:path';
-import { endProcess } from '@/rebuild/stack/child-process';
+import { endProcess, systemTool } from '@/rebuild/stack/child-process';
 import { AdminTarget, MysqlAdmin } from '@/rebuild/stack/mysql-admin';
 
 /** The installed MySQL 8.0 server on Windows; elsewhere `mysqld` on PATH. */
@@ -265,7 +265,7 @@ export const systemProcessProbe: ProcessProbe = {
     if (process.platform === 'win32') {
       // Only WMI has another process's command line on Windows.
       const out = await output(
-        'powershell',
+        systemTool('WindowsPowerShell', 'v1.0', 'powershell.exe'),
         [
           '-NoProfile',
           '-NonInteractive',
@@ -312,7 +312,11 @@ export const systemProcessProbe: ProcessProbe = {
   async listener(port) {
     if (process.platform === 'linux') return procListener(port);
     if (process.platform === 'win32') {
-      const out = await output('netstat', ['-ano', '-p', 'TCP'], true);
+      const out = await output(
+        systemTool('netstat.exe'),
+        ['-ano', '-p', 'TCP'],
+        true
+      );
       return out ? netstatListener(out, port) : null;
     }
     const out = await output('lsof', [
