@@ -175,7 +175,10 @@ async function insertProfile(
 async function seedSettings(
   me: string,
   other: string,
-  blocked: string,
+  // The records service: muted and blocked, so the probe caller's mute and
+  // block don't touch the other probe profile, whose follows and
+  // notifications the other areas' seeds write.
+  quiet: string,
   ctx: RequestContext
 ): Promise<void> {
   const t = personalTables;
@@ -218,9 +221,8 @@ async function seedSettings(
   );
   await t.replaceWaveGroups(me, PERSONAL_PROBE_WAVE, ['ALL'], ctx);
   await t.setWaveAllDrops(me, PERSONAL_PROBE_WAVE, true, ctx);
-  await t.setMuted(me, other, true, SEEDED_AT, ctx);
-  // Not the other probe profile: a block removes the follows between two.
-  await t.setBlocked(me, blocked, true, SEEDED_AT, ctx, false);
+  await t.setMuted(me, quiet, true, SEEDED_AT, ctx);
+  await t.setBlocked(me, quiet, true, SEEDED_AT, ctx, false);
   await t.setArtworkAlert(me, other, true, SEEDED_AT, ctx);
   await t.setArtworkAlert(other, me, true, SEEDED_AT, ctx);
   await t.updatePreferences(

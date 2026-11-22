@@ -46,7 +46,8 @@ const PROBES: Probe[] = [
   {
     id: 'personal.mute',
     path: '/api/identities/{wallet}/mute',
-    each: { wallet: PROBE_WALLETS },
+    // The seed mutes the records service, not the other probe profile.
+    each: { wallet: [FIXTURE_RECORDS_FLAGS.SIGNED_RECORDS_SERVICE_WALLET] },
     as: PROBE_CALLER
   },
   {
