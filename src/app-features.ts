@@ -66,6 +66,15 @@ export class AppFeatures {
   }
 
   /**
+   * The team loop also loads the Meme Lab royalty splits and the pre-vote
+   * artist badges from the files beside team.csv. Rollback: set it to false;
+   * the tables keep their rows.
+   */
+  public isMintHandListsEnabled(): boolean {
+    return this.isFeatureEnabled('MINT_HAND_LISTS');
+  }
+
+  /**
    * The rememes file loop removes only rows that came from rememes.csv, so
    * rememes added on the site stay. Off: it removes every row missing from
    * the file, as before. Rollback: set it to false.
