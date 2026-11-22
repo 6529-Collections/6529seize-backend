@@ -3,7 +3,8 @@ import { WAVES_EXPORT_STAGES, WavesExportStage } from './waves-export.service';
 export const WAVES_EXPORT_HELP = `Usage: 6529 run waves:export -- --out DIR --revision HEX
          (--freeze-at TIME | --rehearsal) [--stages LIST]
          [--waves LIST | --waves-file FILE] [--page-size N]
-         [--concurrency N] [--both-metric]
+         [--concurrency N] [--both-metric] [--resume]
+         [--allow-failed-waves]
 
 Writes 6529.io's waves, the groups they use, decisions, entries, votes,
 vote logs, results, wave REP, polls and every wave's drops into DIR/raw,
@@ -30,6 +31,12 @@ Options:
   --both-metric       count TDH plus xTDH as a clause the chain evaluates
                       (the snapshot tooling's --both-metric), so such groups
                       are not written as their members
+  --resume            keep each wave's drops an earlier run of this export
+                      finished (with --stages drops after a stopped run)
+  --allow-failed-waves
+                      exit 0 even when some waves could not be read (they
+                      are left out and listed in export.json); without it
+                      the export exits 3
   --help              this text
 `;
 
@@ -46,6 +53,8 @@ export interface WavesExportCommand {
   readonly pageSize: number;
   readonly concurrency: number;
   readonly bothMetric: boolean;
+  readonly resume: boolean;
+  readonly allowFailedWaves: boolean;
 }
 
 export type WavesExportCliCommand =
@@ -145,6 +154,8 @@ export function parseWavesExportCommand(
   let pageSize = 500;
   let concurrency = 4;
   let bothMetric = false;
+  let resume = false;
+  let allowFailedWaves = false;
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
     const value = () => {
@@ -188,6 +199,12 @@ export function parseWavesExportCommand(
       case '--both-metric':
         bothMetric = true;
         break;
+      case '--resume':
+        resume = true;
+        break;
+      case '--allow-failed-waves':
+        allowFailedWaves = true;
+        break;
       default:
         throw new WavesExportUsageError(`Unknown argument "${arg}"`);
     }
@@ -224,6 +241,8 @@ export function parseWavesExportCommand(
     wavesFile,
     pageSize,
     concurrency,
-    bothMetric
+    bothMetric,
+    resume,
+    allowFailedWaves
   };
 }

@@ -19,14 +19,20 @@ import { identityFetcher } from '@/api/identities/identity.fetcher';
 import { PageSortDirection } from '@/api/page-request';
 import { waveApiService } from '@/api/waves/wave.api.service';
 import { AuthenticationContext } from '@/auth-context';
-import { competitionAnonymityService } from '@/competitions/competition-anonymity';
+import {
+  anonymousCompetitionAuthor,
+  competitionAnonymityService
+} from '@/competitions/competition-anonymity';
 import { competitionDropVotesDb } from '@/competitions/competition-drop-votes.db';
 import { collectCompetitionPages } from '@/competitions/competition-page';
 import { competitionRepository } from '@/competitions/competition.repository';
 import { PublicCompetition } from '@/competitions/competition.service';
 import { CompetitionEntry } from '@/competitions/competition.types';
 import { NativeCompetitionReader } from '@/competitions/native-competition.reader';
-import { legacyGetView } from '@/competitions/legacy-competition-get-facade';
+import {
+  legacyGetView,
+  withLegacyCompetitionGetFacade
+} from '@/competitions/legacy-competition-get-facade';
 import { COMPETITIONS_TABLE, RATINGS_TABLE, WAVES_TABLE } from '@/constants';
 import { dropsDb } from '@/drops/drops.db';
 import { CompetitionEntryStatus } from '@/entities/ICompetition';
@@ -87,6 +93,16 @@ function toMillis(value: unknown): number | null {
 /** A JSON round trip: what the API's response body holds. */
 function asJson<T>(value: T): Json {
   return JSON.parse(JSON.stringify(value)) as Json;
+}
+
+/**
+ * The API reads every GET outside /v3 inside the legacy competition facade
+ * (api-serverless app.ts), which shows a primary decision's entry drops as
+ * PARTICIPATORY or WINNER drops. Reads that stand for such a GET run inside
+ * it too, so they give what the public API gives.
+ */
+function asLegacyGet<T>(read: () => Promise<T>): Promise<T> {
+  return withLegacyCompetitionGetFacade(read);
 }
 
 function chunks<T>(items: readonly T[], size: number): T[][] {
@@ -181,6 +197,13 @@ export class BackendWavesExportSource implements WavesExportSource {
       collectCompetitionPages((page) => reader.listPauses(record, page)),
       collectCompetitionPages((page) => reader.listVoters(record, page))
     ]);
+    // An anonymous decision's open entries name their submitter by the
+    // same stable pseudonym the API gives a reader (toApiEntryPage): the
+    // file the chain imports is public.
+    const hidden = await competitionAnonymityService.hiddenDropIds(
+      entries.map((entry) => entry.drop_id),
+      this.ctx
+    );
     return {
       competition: asJson(api),
       details: {
@@ -188,7 +211,10 @@ export class BackendWavesExportSource implements WavesExportSource {
         // export by its id, the one field the import reads.
         entries: entries.map((entry) => {
           const { submitter_id, ...rest } = entry;
-          return asJson({ ...rest, submitter: { id: submitter_id } });
+          const submitter = hidden.has(entry.drop_id)
+            ? anonymousCompetitionAuthor({ id: submitter_id }, entry.drop_id).id
+            : submitter_id;
+          return asJson({ ...rest, submitter: { id: submitter } });
         }),
         decisions: decisions.map(asJson),
         outcomes: outcomes.map(asJson),
@@ -204,7 +230,9 @@ export class BackendWavesExportSource implements WavesExportSource {
       entry.competition_id,
       this.ctx
     );
-    if (!record) return [];
+    if (!record) {
+      throw new Error(`Decision ${entry.competition_id} not found`);
+    }
     const reader = new NativeCompetitionReader(competitionRepository, this.ctx);
     const votes = await collectCompetitionPages((page) =>
       reader.listEntryVotes(record, entry.entry_id, page)
@@ -212,9 +240,16 @@ export class BackendWavesExportSource implements WavesExportSource {
     return votes.map(asJson);
   }
 
+  /**
+   * The entry's vote edit log as `/v2/drops/{id}/votes/logs` gives it: the
+   * drop read as that GET reads it decides between the decision's vote
+   * history (a native entry drop) and the legacy vote edit log.
+   */
   async entryVoteLog(entry: ExportActiveEntry): Promise<ExportVoteLogRow[]> {
-    const drop = await dropsDb.findDropById(entry.drop_id);
-    if (!drop) return [];
+    const drop = await asLegacyGet(() => dropsDb.findDropById(entry.drop_id));
+    if (!drop) {
+      throw new Error(`Entry drop ${entry.drop_id} not found`);
+    }
     const rows: ExportVoteLogRow[] = [];
     if (drop.drop_type === DropType.COMPETITION) {
       const native = await competitionRepository.findNativeEntry(
@@ -222,7 +257,9 @@ export class BackendWavesExportSource implements WavesExportSource {
         entry.entry_id,
         this.ctx
       );
-      if (!native) return [];
+      if (!native) {
+        throw new Error(`Entry ${entry.entry_id} not found`);
+      }
       for (let offset = 0; ; offset += LOG_PAGE) {
         const page = await competitionDropVotesDb.logs(
           native as CompetitionEntry,
@@ -244,15 +281,17 @@ export class BackendWavesExportSource implements WavesExportSource {
       return rows;
     }
     for (let offset = 0; ; offset += LOG_PAGE) {
-      const page = await dropsDb.findDropVoteEditLogEntities(
-        {
-          wave_id: drop.wave_id,
-          drop_id: drop.id,
-          offset,
-          limit: LOG_PAGE,
-          sort_direction: PageSortDirection.DESC
-        },
-        this.ctx
+      const page = await asLegacyGet(() =>
+        dropsDb.findDropVoteEditLogEntities(
+          {
+            wave_id: drop.wave_id,
+            drop_id: drop.id,
+            offset,
+            limit: LOG_PAGE,
+            sort_direction: PageSortDirection.DESC
+          },
+          this.ctx
+        )
       );
       rows.push(
         ...page.map((log) => {
@@ -273,9 +312,8 @@ export class BackendWavesExportSource implements WavesExportSource {
   async groups(groupIds: string[]): Promise<Record<string, Json>> {
     const out: Record<string, Json> = {};
     for (const batch of chunks(groupIds, 200)) {
-      for (const group of await userGroupsService.findByIdsForExport(
-        batch,
-        this.ctx
+      for (const group of await asLegacyGet(() =>
+        userGroupsService.findByIdsForExport(batch, this.ctx)
       )) {
         out[group.id] = asJson(group);
       }
@@ -290,9 +328,13 @@ export class BackendWavesExportSource implements WavesExportSource {
   }
 
   async groupMembers(group: Json): Promise<ExportGroupMember[]> {
-    const membership = await userGroupsService.getSqlAndParamsForExport(
-      group as unknown as ApiGroupFull,
-      this.ctx
+    // The membership SQL rewrites the definition's rater names in place:
+    // give it a copy, so the saved definition stays as the API shows it.
+    const membership = await asLegacyGet(() =>
+      userGroupsService.getSqlAndParamsForExport(
+        structuredClone(group) as unknown as ApiGroupFull,
+        this.ctx
+      )
     );
     if (!membership) return [];
     const rows = await sqlExecutor.execute<{
@@ -353,23 +395,27 @@ export class BackendWavesExportSource implements WavesExportSource {
   ): Promise<Json[]> {
     const dropIds: string[] = [];
     for (let offset = 0; ; offset += POLL_PAGE) {
-      const polls = await dropPollsDb.findWavePolls(
-        {
-          waveId,
-          limit: POLL_PAGE,
-          offset,
-          order: PageSortDirection.DESC,
-          orderBy: DropPollsOrderBy.CREATED_AT,
-          state: state === 'OPEN' ? DropPollState.OPEN : DropPollState.CLOSED,
-          now: nowMillis
-        },
-        this.ctx
+      const polls = await asLegacyGet(() =>
+        dropPollsDb.findWavePolls(
+          {
+            waveId,
+            limit: POLL_PAGE,
+            offset,
+            order: PageSortDirection.DESC,
+            orderBy: DropPollsOrderBy.CREATED_AT,
+            state: state === 'OPEN' ? DropPollState.OPEN : DropPollState.CLOSED,
+            now: nowMillis
+          },
+          this.ctx
+        )
       );
       dropIds.push(...polls.map((poll) => poll.drop_id));
       if (polls.length < POLL_PAGE) break;
     }
     if (!dropIds.length) return [];
-    const drops = await dropsService.findDropsV2ByIds(dropIds, this.ctx);
+    const drops = await asLegacyGet(() =>
+      dropsService.findDropsV2ByIds(dropIds, this.ctx)
+    );
     return dropIds
       .map((dropId) => drops[dropId])
       .filter((drop) => drop !== undefined)
@@ -382,24 +428,28 @@ export class BackendWavesExportSource implements WavesExportSource {
   ): AsyncIterable<Json[]> {
     let serialNoLimit = Number.MAX_SAFE_INTEGER;
     for (;;) {
-      const entities = await dropsDb.findLatestDropsSimple(
-        {
-          wave_id: waveId,
-          amount: pageSize,
-          serial_no_limit: serialNoLimit,
-          search_strategy: ApiDropSearchStrategy.Older,
-          drop_type: null,
-          exclude_replies: false
-        },
-        this.ctx
+      const read = await asLegacyGet(async () => {
+        const entities = await dropsDb.findLatestDropsSimple(
+          {
+            wave_id: waveId,
+            amount: pageSize,
+            serial_no_limit: serialNoLimit,
+            search_strategy: ApiDropSearchStrategy.Older,
+            drop_type: null,
+            exclude_replies: false
+          },
+          this.ctx
+        );
+        const drops = entities.length
+          ? await dropsMappers.convertToDropsWithoutWaves(entities, this.ctx)
+          : [];
+        return { entities, drops };
+      });
+      if (!read.entities.length) return;
+      yield read.drops.map(asJson);
+      serialNoLimit = Math.min(
+        ...read.entities.map((entity) => entity.serial_no)
       );
-      if (!entities.length) return;
-      const drops = await dropsMappers.convertToDropsWithoutWaves(
-        entities,
-        this.ctx
-      );
-      yield drops.map(asJson);
-      serialNoLimit = Math.min(...entities.map((entity) => entity.serial_no));
     }
   }
 
@@ -423,7 +473,9 @@ export class BackendWavesExportSource implements WavesExportSource {
       competitionAnonymityService
     );
     const ids = Array.from(byId.keys());
-    const batch = asJson(await service.findForDrops(ids, this.ctx));
+    const batch = asJson(
+      await asLegacyGet(() => service.findForDrops(ids, this.ctx))
+    );
     const grants = new Map<string, Json>();
     for (const grant of (batch.grants as Json[] | undefined) ?? []) {
       grants.set(String(grant.id), stableGrant(grant));
@@ -449,7 +501,9 @@ export class BackendWavesExportSource implements WavesExportSource {
     }
     for (const dropId of (batch.truncated_drop_ids as string[] | undefined) ??
       []) {
-      const single = asJson(await service.findForDrop(dropId, this.ctx));
+      const single = asJson(
+        await asLegacyGet(() => service.findForDrop(dropId, this.ctx))
+      );
       out.set(dropId, {
         drop_id: dropId,
         current_event_id: (single.current_event_id as string | null) ?? null,

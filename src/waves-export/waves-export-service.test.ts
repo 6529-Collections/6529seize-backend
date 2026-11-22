@@ -453,11 +453,74 @@ describe('WavesExport', () => {
         wave_rep_rows: 2,
         waves: 3,
         waves_failed: 1
-      }
+      },
+      both_metric: false,
+      failed_waves: [
+        { id: 'w-broken', error: 'Error: Wave w-broken not found' }
+      ]
     });
     expect(messages.some((message) => message.startsWith('== drops'))).toBe(
       true
     );
+  });
+
+  it('keeps finished waves on --resume and tries a failed read again', async () => {
+    let calls = 0;
+    const flaky = new FakeSource();
+    flaky.wavePagesOfDrops = async function* (waveId: string, size: number) {
+      calls++;
+      if (calls === 1) throw new Error('connection lost');
+      yield* FakeSource.prototype.wavePagesOfDrops.call(this, waveId, size);
+    };
+    const run = (resumeDrops: boolean, source: FakeSource) =>
+      new WavesExport(source, {
+        raw: new RawDirectory(path.join(out, 'raw')),
+        stages: ['drops'],
+        freezeMs: T_W,
+        exporterRevision: 'a'.repeat(40),
+        waveIds: null,
+        dropPageSize: 2,
+        concurrency: 1,
+        bothMetric: false,
+        resumeDrops,
+        retryDelayMs: 0,
+        log: () => undefined
+      }).run();
+    const resumed = await run(true, new FakeSource());
+    expect(resumed.counts).toMatchObject({ drops: 0, drop_waves_kept: 1 });
+    // The waves stage's failures carry over from export.json.
+    expect(resumed.failed_waves.map((wave) => wave.id)).toEqual(['w-broken']);
+    const again = await run(false, flaky);
+    expect(again.counts).toMatchObject({ drops: 3, drop_waves_kept: 0 });
+    expect(
+      readLines(path.join(out, 'raw', 'drops', 'w-pub.jsonl.gz'))
+    ).toHaveLength(3);
+  });
+
+  it('puts no partial file in place when a wave cannot be read', async () => {
+    const broken = new FakeSource();
+    broken.wavePagesOfDrops = async function* () {
+      yield [drop('d-1', 1, false)];
+      throw new Error('replica gone');
+    };
+    const target = path.join(out, 'raw', 'drops', 'w-pub.jsonl.gz');
+    fs.rmSync(target, { force: true });
+    await expect(
+      new WavesExport(broken, {
+        raw: new RawDirectory(path.join(out, 'raw')),
+        stages: ['drops'],
+        freezeMs: T_W,
+        exporterRevision: 'a'.repeat(40),
+        waveIds: null,
+        dropPageSize: 2,
+        concurrency: 1,
+        bothMetric: false,
+        retryDelayMs: 0,
+        log: () => undefined
+      }).run()
+    ).rejects.toThrow('replica gone');
+    expect(fs.existsSync(target)).toBe(false);
+    expect(fs.existsSync(`${target}.tmp`)).toBe(false);
   });
 });
 

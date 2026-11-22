@@ -1,73 +1,94 @@
 /**
- * JSON written the way Python's `json.dumps(value, ensure_ascii=False)` writes
- * it: `", "` between items and `": "` after keys, non-ASCII text as is. The
- * waves snapshot tooling (validator repository, tools/legacy-snapshot) reads
- * the raw drop files a line at a time and finds a drop's id and serial number
- * by their position in that form, so the export writes the same form.
+ * The raw files are written the way the waves snapshot tooling's fetch stage
+ * writes them (validator repository, tools/legacy-snapshot):
+ *
+ * - It parses the API's JSON with `parse_float=str`, so a number the API
+ *   writes with a fraction or an exponent (`0.5`, `1e-7`, `1e+21`) is kept as
+ *   that text, a JSON string; other numbers stay numbers. `fetchForm` gives
+ *   a value that form.
+ * - It writes drop lines with Python's `json.dumps(value,
+ *   ensure_ascii=False)`: `", "` between items, `": "` after keys, non-ASCII
+ *   text as is. Its normalize stage finds a drop's id and serial number by
+ *   their position in that form. `pythonJson` writes it.
  */
-export function pythonJson(value: unknown): string {
+
+/** The API's JSON text for a number. */
+function numberText(value: number): string {
+  if (!Number.isFinite(value)) {
+    throw new Error(`Cannot write ${value} as JSON`);
+  }
+  return JSON.stringify(value);
+}
+
+/** True for JSON number text Python reads as a float (a fraction or exponent). */
+function isFloatText(text: string): boolean {
+  return /[.eE]/.test(text);
+}
+
+/**
+ * The value as the fetch stage holds it after parsing the API's JSON: a
+ * number with a fraction or an exponent becomes its JSON text, a string;
+ * dates become ISO text; undefined fields are left out.
+ */
+export function fetchForm(value: unknown): unknown {
   if (value === null || value === undefined) {
+    return null;
+  }
+  if (typeof value === 'number') {
+    const text = numberText(value);
+    return isFloatText(text) ? text : value;
+  }
+  if (typeof value === 'string' || typeof value === 'boolean') {
+    return value;
+  }
+  if (typeof value === 'bigint') {
+    return Number(value);
+  }
+  if (value instanceof Date) {
+    return value.toISOString();
+  }
+  if (Array.isArray(value)) {
+    return value.map((item) => (item === undefined ? null : fetchForm(item)));
+  }
+  if (typeof value === 'object') {
+    const out: Record<string, unknown> = {};
+    for (const [key, item] of Object.entries(
+      value as Record<string, unknown>
+    )) {
+      if (item !== undefined) {
+        out[key] = fetchForm(item);
+      }
+    }
+    return out;
+  }
+  throw new Error(`Cannot write a ${typeof value} as JSON`);
+}
+
+/** Python's json.dumps(fetchForm(value), ensure_ascii=False). */
+export function pythonJson(value: unknown): string {
+  return pythonDumps(fetchForm(value));
+}
+
+function pythonDumps(value: unknown): string {
+  if (value === null) {
     return 'null';
   }
   if (typeof value === 'string') {
     return JSON.stringify(value);
   }
   if (typeof value === 'number') {
-    return pythonNumber(value);
+    return numberText(value);
   }
   if (typeof value === 'boolean') {
     return value ? 'true' : 'false';
   }
-  if (typeof value === 'bigint') {
-    return value.toString();
-  }
   if (Array.isArray(value)) {
-    return `[${value.map((item) => pythonJson(item)).join(', ')}]`;
+    return `[${value.map((item) => pythonDumps(item)).join(', ')}]`;
   }
-  if (value instanceof Date) {
-    return JSON.stringify(value.toISOString());
-  }
-  if (typeof value === 'object') {
-    const entries = Object.entries(value as Record<string, unknown>).filter(
-      ([, item]) => item !== undefined
-    );
-    return `{${entries
-      .map(([key, item]) => `${JSON.stringify(key)}: ${pythonJson(item)}`)
-      .join(', ')}}`;
-  }
-  throw new Error(`Cannot write a ${typeof value} as JSON`);
-}
-
-/**
- * A number as Python writes what it parsed from the API's JSON: a whole
- * number as JavaScript writes it (Python read it as an int, or, past 1e21, as
- * a float it writes the same way), any other as Python's float repr, which
- * switches to an exponent below 1e-4 and from 1e16 (`1e-05`, `1.5e+16`)
- * where JavaScript writes `0.00001`. Both write the shortest digits that read
- * back the same.
- */
-export function pythonNumber(value: number): string {
-  if (!Number.isFinite(value)) {
-    throw new Error(`Cannot write ${value} as JSON`);
-  }
-  if (Number.isInteger(value)) {
-    return JSON.stringify(value);
-  }
-  const [mantissa, exponentText] = Math.abs(value).toExponential().split('e');
-  const digits = mantissa.replace('.', '');
-  const exponent = Number(exponentText);
-  const sign = value < 0 ? '-' : '';
-  if (exponent < -4 || exponent >= 16) {
-    const fraction = digits.length > 1 ? `.${digits.slice(1)}` : '';
-    const magnitude = String(Math.abs(exponent)).padStart(2, '0');
-    return `${sign}${digits[0]}${fraction}e${exponent < 0 ? '-' : '+'}${magnitude}`;
-  }
-  if (exponent < 0) {
-    return `${sign}0.${'0'.repeat(-exponent - 1)}${digits}`;
-  }
-  const whole = digits.slice(0, exponent + 1).padEnd(exponent + 1, '0');
-  const fraction = digits.slice(exponent + 1);
-  return `${sign}${whole}.${fraction || '0'}`;
+  const entries = Object.entries(value as Record<string, unknown>);
+  return `{${entries
+    .map(([key, item]) => `${JSON.stringify(key)}: ${pythonDumps(item)}`)
+    .join(', ')}}`;
 }
 
 /**

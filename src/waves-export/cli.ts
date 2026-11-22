@@ -40,6 +40,7 @@ async function runExport(command: WavesExportCommand) {
           dropPageSize: command.pageSize,
           concurrency: command.concurrency,
           bothMetric: command.bothMetric,
+          resumeDrops: command.resume,
           log: (message) =>
             process.stderr.write(
               `[waves-export] ${new Date().toISOString()} ${message}\n`
@@ -64,6 +65,12 @@ export async function main(
   process.stdout.write(
     `${JSON.stringify({ out: command.out, ...summary }, null, 2)}\n`
   );
+  if (summary.failed_waves.length && !command.allowFailedWaves) {
+    process.stderr.write(
+      `${summary.failed_waves.length} waves could not be read and are left out (export.json lists them). Fix them and run --stages waves again, or accept them with --allow-failed-waves.\n`
+    );
+    process.exitCode = 3;
+  }
 }
 
 if (require.main === module) {

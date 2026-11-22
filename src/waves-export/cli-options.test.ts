@@ -43,7 +43,9 @@ describe('parseWavesExportCommand', () => {
       wavesFile: null,
       pageSize: 500,
       concurrency: 4,
-      bothMetric: false
+      bothMetric: false,
+      resume: false,
+      allowFailedWaves: false
     });
   });
 
@@ -72,7 +74,9 @@ describe('parseWavesExportCommand', () => {
           '200',
           '--concurrency',
           '8',
-          '--both-metric'
+          '--both-metric',
+          '--resume',
+          '--allow-failed-waves'
         ],
         {}
       )
@@ -83,7 +87,9 @@ describe('parseWavesExportCommand', () => {
       waveIds: ['w-1', 'w-2'],
       pageSize: 200,
       concurrency: 8,
-      bothMetric: true
+      bothMetric: true,
+      resume: true,
+      allowFailedWaves: true
     });
   });
 

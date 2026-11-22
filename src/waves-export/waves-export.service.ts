@@ -28,6 +28,9 @@ export const WAVES_EXPORT_FORMAT = '6529io-waves-export-raw-v1';
 /** Drops a batch read of signed events takes (the public batch's size). */
 const SIGNED_BATCH = 50;
 
+/** Tries of one read (a wave, a decision, a wave's drops) before giving up. */
+const ATTEMPTS = 3;
+
 export interface WavesExportOptions {
   /** OUT/raw. */
   readonly raw: RawDirectory;
@@ -41,6 +44,10 @@ export interface WavesExportOptions {
   readonly concurrency: number;
   /** TDH plus xTDH as a clause metric (the snapshot tooling's --both-metric). */
   readonly bothMetric: boolean;
+  /** Keep a wave's drops already written by an earlier run of this export. */
+  readonly resumeDrops?: boolean;
+  /** Wait before trying a failed read again (tests pass 0). */
+  readonly retryDelayMs?: number;
   readonly now?: () => number;
   readonly log: (message: string) => void;
 }
@@ -50,7 +57,10 @@ export interface WavesExportSummary {
   readonly freeze_ms: number | null;
   readonly exporter_revision: string;
   readonly stages: readonly WavesExportStage[];
+  readonly both_metric: boolean;
   readonly counts: Record<string, number>;
+  /** Waves the backend could not read: left out of the export. */
+  readonly failed_waves: { readonly id: string; readonly error: string }[];
 }
 
 type WaveV3 = { id: string; configuration?: Json; _error?: string };
@@ -168,6 +178,7 @@ export function activeEntries(
 
 export class WavesExport {
   private readonly counts: Record<string, number> = {};
+  private failedWaves: { id: string; error: string }[] = [];
 
   constructor(
     private readonly source: WavesExportSource,
@@ -182,6 +193,26 @@ export class WavesExport {
     this.counts[key] = value;
   }
 
+  /** A read, tried again after a pause when it fails (a dropped connection). */
+  private async attempt<T>(label: string, read: () => Promise<T>): Promise<T> {
+    let lastError: unknown;
+    for (let attempt = 1; attempt <= ATTEMPTS; attempt++) {
+      try {
+        return await read();
+      } catch (error) {
+        lastError = error;
+        if (attempt < ATTEMPTS) {
+          this.log(
+            `${label}: attempt ${attempt} failed (${String(error)}), trying again`
+          );
+          const delay = (this.options.retryDelayMs ?? 2_000) * attempt;
+          await new Promise((resolve) => setTimeout(resolve, delay));
+        }
+      }
+    }
+    throw lastError;
+  }
+
   async run(): Promise<WavesExportSummary> {
     const raw = this.options.raw;
     await raw.ensure();
@@ -194,12 +225,26 @@ export class WavesExport {
         `== ${stage} done in ${Math.round((Date.now() - stageStart) / 1000)} s`
       );
     }
+    if (!this.options.stages.includes('waves')) {
+      // Waves read by an earlier run of the export.
+      this.failedWaves =
+        (
+          await raw.load<{ failed_waves?: { id: string; error: string }[] }>(
+            'export.json',
+            {}
+          )
+        ).failed_waves ?? [];
+    }
     const summary: WavesExportSummary = {
       format: WAVES_EXPORT_FORMAT,
       freeze_ms: this.options.freezeMs,
       exporter_revision: this.options.exporterRevision,
       stages: this.options.stages,
-      counts: sortedKeys(this.counts)
+      both_metric: this.options.bothMetric,
+      counts: sortedKeys(this.counts),
+      failed_waves: [...this.failedWaves].sort((a, b) =>
+        compareCodePoints(a.id, b.id)
+      )
     };
     await raw.save('export.json', {
       ...summary,
@@ -249,9 +294,8 @@ export class WavesExport {
     let failed = 0;
     await forEachLimited(rows, this.options.concurrency, async (wave) => {
       try {
-        const configuration = await this.source.waveConfiguration(
-          wave,
-          eligibleGroupsForWave(wave, byId)
+        const configuration = await this.attempt(`wave ${wave.id}`, () =>
+          this.source.waveConfiguration(wave, eligibleGroupsForWave(wave, byId))
         );
         waves[wave.id] = {
           id: wave.id,
@@ -262,6 +306,8 @@ export class WavesExport {
       } catch (error) {
         failed++;
         waves[wave.id] = { id: wave.id, _error: String(error) };
+        this.failedWaves.push({ id: wave.id, error: String(error) });
+        this.log(`wave ${wave.id} not read, left out: ${String(error)}`);
       }
     });
     const exported = new Set(Object.keys(waves));
@@ -294,7 +340,9 @@ export class WavesExport {
     const details: Record<string, Json> = {};
     let entries = 0;
     await forEachLimited(ids, this.options.concurrency, async (id) => {
-      const read = await this.source.competition(id);
+      const read = await this.attempt(`decision ${id}`, () =>
+        this.source.competition(id)
+      );
       if (!read || !exported.has(String(read.competition.wave_id))) return;
       competitions[id] = read.competition;
       details[id] = read.details;
@@ -327,7 +375,10 @@ export class WavesExport {
     const votes: Record<string, Json[]> = {};
     let rows = 0;
     await forEachLimited(entries, this.options.concurrency, async (entry) => {
-      votes[entry.entry_id] = await this.source.entryVotes(entry);
+      votes[entry.entry_id] = await this.attempt(
+        `votes of ${entry.entry_id}`,
+        () => this.source.entryVotes(entry)
+      );
       rows += votes[entry.entry_id].length;
     });
     await this.options.raw.save('entry_votes.json', sortedKeys(votes));
@@ -340,7 +391,9 @@ export class WavesExport {
     const logs: Record<string, Json[]> = {};
     let rows = 0;
     await forEachLimited(entries, this.options.concurrency, async (entry) => {
-      const log = await this.source.entryVoteLog(entry);
+      const log = await this.attempt(`vote log of ${entry.drop_id}`, () =>
+        this.source.entryVoteLog(entry)
+      );
       logs[entry.drop_id] = log.map((row) => ({
         id: row.id,
         old_vote: row.old_vote,
@@ -450,7 +503,9 @@ export class WavesExport {
     let count = 0;
     await forEachLimited(waveIds, this.options.concurrency, async (waveId) => {
       for (const state of ['OPEN', 'CLOSED'] as const) {
-        const items = await this.source.wavePolls(waveId, state, nowMillis);
+        const items = await this.attempt(`polls of ${waveId}`, () =>
+          this.source.wavePolls(waveId, state, nowMillis)
+        );
         if (!items.length) continue;
         polls[waveId] = polls[waveId] ?? {};
         polls[waveId][state] = items;
@@ -468,8 +523,19 @@ export class WavesExport {
     let drops = 0;
     let signed = 0;
     let done = 0;
+    let kept = 0;
     await forEachLimited(waveIds, this.options.concurrency, async (waveId) => {
-      const written = await this.exportWaveDrops(waveId);
+      if (
+        this.options.resumeDrops &&
+        raw.exists('drops', `${waveId}.jsonl.gz`)
+      ) {
+        kept++;
+        done++;
+        return;
+      }
+      const written = await this.attempt(`drops of ${waveId}`, () =>
+        this.exportWaveDrops(waveId)
+      );
       drops += written.drops;
       signed += written.signed;
       done++;
@@ -482,13 +548,23 @@ export class WavesExport {
     await raw.ensure('drops');
     this.count('drops', drops);
     this.count('signed_drops', signed);
-    this.log(`drops: ${drops} in ${waveIds.length} waves, ${signed} signed`);
+    this.count('drop_waves_kept', kept);
+    this.log(
+      `drops: ${drops} in ${waveIds.length} waves, ${signed} signed` +
+        (kept ? `; ${kept} waves kept from an earlier run` : '')
+    );
   }
 
+  /**
+   * A wave's drops and signed events, each file put in place only when the
+   * whole wave was read: the signed events first, then the drops, so a
+   * wave whose drops file exists is complete (what --resume keeps).
+   */
   private async exportWaveDrops(
     waveId: string
   ): Promise<{ drops: number; signed: number }> {
     const raw = this.options.raw;
+    await raw.remove('signed', `${waveId}.jsonl.gz`);
     const writer = await raw.openJsonLines('drops', `${waveId}.jsonl.gz`);
     const signed: ExportSignedDrop[] = [];
     try {
@@ -510,21 +586,25 @@ export class WavesExport {
           );
         }
       }
-    } finally {
-      await writer.close();
-    }
-    const signedWriter = await raw.openJsonLines(
-      'signed',
-      `${waveId}.jsonl.gz`
-    );
-    try {
-      for (const item of signed.sort((a, b) =>
-        compareCodePoints(a.drop_id, b.drop_id)
-      )) {
-        await signedWriter.write(item);
+      const signedWriter = await raw.openJsonLines(
+        'signed',
+        `${waveId}.jsonl.gz`
+      );
+      try {
+        for (const item of signed.sort((a, b) =>
+          compareCodePoints(a.drop_id, b.drop_id)
+        )) {
+          await signedWriter.write(item);
+        }
+        await signedWriter.commit();
+      } catch (error) {
+        await signedWriter.abort();
+        throw error;
       }
-    } finally {
-      await signedWriter.close();
+      await writer.commit();
+    } catch (error) {
+      await writer.abort();
+      throw error;
     }
     return { drops: writer.count, signed: signed.length };
   }
