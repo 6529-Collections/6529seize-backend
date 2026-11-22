@@ -43,7 +43,7 @@ import {
   subscriptionsIdentitySwitch,
   suspendIdentityTables,
   SWITCH_CUT_WINDOW_MS,
-  unsignedWritesNow
+  subscriptionWritePathNow
 } from '../identity/identity-switch';
 import { cutOpeningFiles } from '../opening/opening-build';
 import { compareAndMarkVerified } from '../opening/opening-compare';
@@ -83,7 +83,7 @@ import {
 import { saveReport, shadowReportsMatch } from './identity-reports';
 import { buildIdentityList, SHADOW_ONLY_ID_FROM } from './identity-daily-build';
 import { goLive } from '../opening/go-live';
-import { updateSubscription } from '@/api/subscriptions/api.subscriptions.db';
+import { subscriptionChangeWriter } from '../records/subscription-writes';
 
 const uploadFile = jest.fn();
 jest.mock('@/arweave', () => ({
@@ -118,6 +118,20 @@ const NOV_21 = '2026-11-21 11:00:00.000000';
 
 const execute = (sql: string, params?: Record<string, unknown>) =>
   sqlExecutor.execute(sql, params);
+
+/** An unsigned unsubscribe from the open card, as the write route makes it. */
+const unsignedUnsubscribe = (key: string) =>
+  subscriptionChangeWriter.write({
+    routeKey: key,
+    wallet: key,
+    signedRecords: undefined,
+    change: {
+      type: 'subs.card',
+      contract: MEMES_CONTRACT,
+      tokenId: CARD,
+      subscribed: false
+    }
+  });
 
 /** What the (mocked) uploader has published, by URL. */
 const published = new Map<string, string>();
@@ -829,7 +843,7 @@ describeWithSeed('identity writers after the switch', [], () => {
     ).rejects.toThrow(/differ/);
     // Left suspended and not the truth; the write routes are open again.
     expect(await subscriptionsIdentitySwitch.writeModeOrFail()).toBe('OFF');
-    expect(await unsignedWritesNow()).toBe('OPEN');
+    expect(await subscriptionWritePathNow()).toBe('LEGACY');
   });
 
   it('rebuilds when a phase pull commits while a build is under way', async () => {
@@ -1556,9 +1570,7 @@ describeWithSeed('identity writers after the switch', [], () => {
     const otherContainer = new SubscriptionsIdentitySwitch();
     expect(await otherContainer.writeMode()).toBe('OFF');
     await closeSubscriptionWrites();
-    await expect(
-      updateSubscription(LONE, MEMES_CONTRACT, CARD, false)
-    ).rejects.toThrow('paused');
+    await expect(unsignedUnsubscribe(LONE)).rejects.toThrow('paused');
     await openSubscriptionWrites();
     const result = await goLive({
       signedWritesLive: true,
@@ -1570,9 +1582,7 @@ describeWithSeed('identity writers after the switch', [], () => {
     expect(result.steps).toContain('unsigned writes paused');
     // Its cache still says OFF; the write route reads the row now.
     expect(await otherContainer.writeMode()).toBe('OFF');
-    await expect(
-      updateSubscription(LONE, MEMES_CONTRACT, CARD, false)
-    ).rejects.toThrow('signed now');
+    await expect(unsignedUnsubscribe(LONE)).rejects.toThrow('signed now');
   });
 
   it('keeps unsigned writes paused through the load and the publish, until the switch', async () => {
@@ -1583,7 +1593,7 @@ describeWithSeed('identity writers after the switch', [], () => {
     uploadFile.mockImplementation(async (bytes: Buffer) => {
       if (during === 'not tried') {
         try {
-          await updateSubscription(LONE, MEMES_CONTRACT, CARD, false);
+          await unsignedUnsubscribe(LONE);
           during = 'accepted';
         } catch (error) {
           during = (error as Error).message;
@@ -1621,11 +1631,11 @@ describeWithSeed('identity writers after the switch', [], () => {
     await seedLegacy();
     const now = Date.now();
     await closeSubscriptionWrites(now - SWITCH_CUT_WINDOW_MS - 1000);
-    expect(await unsignedWritesNow(now)).toBe('OPEN');
+    expect(await subscriptionWritePathNow(now)).toBe('LEGACY');
     await closeSubscriptionWrites(now);
-    expect(await unsignedWritesNow(now)).toBe('PAUSED');
+    expect(await subscriptionWritePathNow(now)).toBe('PAUSED');
     await openSubscriptionWrites();
-    expect(await unsignedWritesNow(now)).toBe('OPEN');
+    expect(await subscriptionWritePathNow(now)).toBe('LEGACY');
   });
 
   it('after the switch, posts redemption warnings from the identity side only', async () => {

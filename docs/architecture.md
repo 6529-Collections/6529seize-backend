@@ -3122,12 +3122,47 @@ read routes fail instead of guessing, and the write routes read the state
 row uncached at every write. After the switch an identity writer's failure
 fails the run, a failed legacy dual write is logged, and redemption warnings
 are posted from the identity side; the legacy loop only logs its own.
-Person-made changes (subscribe, count, mode, editions) will reach the
-identity tables through signed records, which this branch does not have yet;
-until then a shadow list differs for anyone who changed a choice since the
-opening, so cut and load again before a build to compare it. A shadow build
-or phase split that fails saves a FAILED report, which the go-live gate
-counts as a difference.
+Person-made changes (subscribe, count, mode, editions) reach the identity
+tables only as signed records (below); an unsigned change in shadow reaches
+the legacy tables alone, so a shadow list differs for anyone who made one
+since the opening, and go-live cuts again. A shadow build or phase split
+that fails saves a FAILED report, which the go-live gate counts as a
+difference.
+
+**Signed changes.** The four write routes keep their own checks (the key's
+wallet, the body, a released card) and then hand the change to
+`SubscriptionChangeWriter` (`records/subscription-writes.ts`), which reads
+the path uncached at every write (`subscriptionWritePathNow`): PAUSED (503)
+while go-live runs, IDENTITY after the switch, SHADOW before it with
+`FEATURE_SUBSCRIPTIONS_SHADOW=true` and an opening loaded, else LEGACY
+(today's write; the header is ignored). A change is a kind 9 RECORD in the
+author's `ps` stream (`ps/<principal>`, or `ps/<wallet>` while the wallet
+is bound to none) of type `subs.mode`, `subs.all-editions`, `subs.card` or
+`subs.count`, sent in the `x-6529-signed-records` header, one record per
+request. It is verified (device grant with the `post` scope, signature,
+anchor within 120 heights of the finalized head, claimed time within 10
+minutes, author bound to the owner at the anchor) and must state the
+request's change, be signed for the signed-in wallet and name the identity
+of the route's key; otherwise 400 `INVALID_SIGNED_RECORD` with the reason.
+In one transaction the event goes to the record log (lane `subs`, with
+its grant proof), the record index applies it if it is newer than the
+stored head for its choice (else 409), `makeChoice` works it out with the
+legacy route's checks and words (400 with code BALANCE, CLOSED,
+NOT_SUBSCRIBED or OVER_ELIGIBILITY) and writes it, and its journal entry
+(kind `choice`: the record's event id, owner, type, key, anchor and claimed
+time, and the mode, choice and log rows it changed, each before and after)
+follows the event. The event always goes to lane `subs`; the journal entry
+goes to `subs` or `subs-shadow` like any other write. After
+the switch an unsigned change gets 409 `SIGNED_RECORD_REQUIRED`; an applied
+one is then written to the legacy tables under the identity's consolidation
+key (a failure is logged and coverage marked). In shadow today's write goes
+first with its own refusals; a record that came with it is applied to the
+identity tables, and the rows the change is about and the log lines each
+side added are compared. Every signed change in shadow leaves a `RECORD`
+report, MATCH or DIFF, naming rows and fields but no values; nothing on the
+identity side fails the request, and the go-live gate counts every DIFF. A
+rebuild writes a choice back from its journal entry like any other write;
+the event before it can be verified against the grant proof it carries.
 
 **One merge rule.** Subscription states that come to belong to one identity
 are merged by one function, `identity-merge.ts` (owner question O2): the cut
@@ -3141,8 +3176,8 @@ was given.
 
 **Journal and rebuild.** Every write to the identity tables after a load
 (a top-up, a fold, a daily build, a phase pull or reset, a redemption run, a
-list upload) appends its changed rows to the shared record log, public
-chain, in the same transaction as the write (`timeline/journal.ts`): lane
+person's signed choice, a list upload) appends its changed rows to the
+shared record log, public chain, in the same transaction as the write (`timeline/journal.ts`): lane
 `subs` once the tables are the truth, `subs-shadow` before. So the log holds
 every change in commit order, and an entry exists exactly when its write
 does.
@@ -3198,8 +3233,8 @@ a lost database: it refuses while the state row or any identity row is
 there. While the identity tables are suspended, writes land only in the
 legacy tables, with no journal, so after a suspend only `go-live`, which
 cuts from the legacy tables, switches again. `--opening --history`
-rehearses from local files. People's own changes will reach the
-identity tables through signed records, journaled the same way. After the
+rehearses from local files. People's own changes come as signed records,
+journaled the same way (Signed changes, above). After the
 switch a comparison with the legacy dual write that isn't a MATCH alerts
 (`SUBSCRIPTIONS_TRUTH_COMPARISON_DIFF`).
 
@@ -3264,8 +3299,8 @@ tables that are, or are set to become, the truth, and a cut whose redemption
 loop never ran. Readers re-read the row at least every 60 seconds, so
 `suspend` rolls every lambda back to the legacy tables within 60 seconds,
 about 2 minutes counting the API cache. Going forward again takes a new
-go-live. Without signed subscription writes every change after the switch
-gets a 409, which is why go-live asks for `--signed-writes-live`.
+go-live. After the switch an unsigned change gets a 409, so go-live asks
+for `--signed-writes-live`: the site must sign the four changes by then.
 
 ## Cross-wave message search
 

@@ -32,7 +32,7 @@ import {
   SubscriptionBalance,
   SubscriptionMode
 } from '@/entities/ISubscription';
-import { BadRequestException, CustomApiCompliantException } from '@/exceptions';
+import { BadRequestException } from '@/exceptions';
 import { getMaxMemeId } from '@/nftsLoop/db.nfts';
 import { sqlExecutor } from '@/sql-executor';
 import { equalIgnoreCase } from '@/strings';
@@ -57,7 +57,6 @@ import {
   InsufficientSubscriptionBalanceException
 } from '@/api/subscriptions/insufficient-subscription-balance.exception';
 import { mirrorIdentityDirectory } from '@/subscriptions-identity/identity/identity-directory';
-import { unsignedWritesNow } from '@/subscriptions-identity/identity/identity-switch';
 import {
   LEGACY_SUBSCRIPTION_TABLES,
   subscriptionReadScope,
@@ -163,32 +162,13 @@ export async function fetchConsolidationAddresses(
   ).map((address) => address.address);
 }
 
-/**
- * Once the identity tables are the truth, a change must come as a signed
- * record; the legacy write path refuses it.
+/*
+ * The four writes below are today's write of a person's change to the
+ * legacy tables. Whether a change may be made, and on which path, is
+ * decided before them (subscription-writes.ts): paused during go-live,
+ * today's write before the identity switch, and after it a signed record
+ * applied to the identity tables, with these as the legacy dual write.
  */
-async function assertUnsignedWritesOpen(): Promise<void> {
-  // Read now, not from the 60-second cache: a change accepted after the
-  // switch would land only in the legacy tables.
-  let writes: Awaited<ReturnType<typeof unsignedWritesNow>>;
-  try {
-    writes = await unsignedWritesNow();
-  } catch {
-    writes = 'PAUSED';
-  }
-  if (writes === 'PAUSED') {
-    throw new CustomApiCompliantException(
-      503,
-      'Subscription changes are paused for a few minutes. Try again shortly.'
-    );
-  }
-  if (writes === 'SIGNED_ONLY') {
-    throw new CustomApiCompliantException(
-      409,
-      'Subscription changes are signed now. Update the app and try again.'
-    );
-  }
-}
 
 /**
  * Refuses a change for a key whose subscription writes must wait: the key
@@ -213,7 +193,6 @@ export async function updateSubscriptionMode(
   // A caller with its own transaction (the first top-up) has already
   // checked the key as part of its own write.
   if (!connection) {
-    await assertUnsignedWritesOpen();
     await assertSubscriptionKeyWritable(consolidationKey);
   }
   if (automatic) {
@@ -354,7 +333,6 @@ export async function updateSubscribeAllEditions(
   connection?: any
 ) {
   if (!connection) {
-    await assertUnsignedWritesOpen();
     await assertSubscriptionKeyWritable(consolidationKey);
   }
   if (connection) {
@@ -540,7 +518,6 @@ export async function updateSubscription(
   tokenId: number,
   subscribed: boolean
 ) {
-  await assertUnsignedWritesOpen();
   await assertSubscriptionKeyWritable(consolidationKey);
   if (subscribed) {
     const balance = await getForConsolidationKey(
@@ -618,7 +595,6 @@ export async function updateSubscriptionCount(
   tokenId: number,
   count: number
 ) {
-  await assertUnsignedWritesOpen();
   await assertSubscriptionKeyWritable(consolidationKey);
   await assertSubscriptionOpen(tokenId);
 

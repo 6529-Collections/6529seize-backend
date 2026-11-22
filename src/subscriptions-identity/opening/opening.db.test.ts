@@ -54,9 +54,9 @@ import {
   fetchFinalSubscription,
   fetchLogsForConsolidationKey,
   fetchRedeemedSubscriptionsForConsolidationKey,
-  fetchTopUpsForConsolidationKey,
-  updateSubscription
+  fetchTopUpsForConsolidationKey
 } from '@/api/subscriptions/api.subscriptions.db';
+import { subscriptionChangeWriter } from '../records/subscription-writes';
 import {
   deferSubscriptionWrites,
   executorSink
@@ -471,7 +471,17 @@ describeWithSeed('subscriptions opening file', [], () => {
         fetchDetailsForConsolidationKey(`${A}-${LONE}`)
       ).rejects.toThrow('more than one identity');
       await expect(
-        updateSubscription(PAIR, MEMES_CONTRACT, 580, false)
+        subscriptionChangeWriter.write({
+          routeKey: PAIR,
+          wallet: A,
+          signedRecords: undefined,
+          change: {
+            type: 'subs.card',
+            contract: MEMES_CONTRACT,
+            tokenId: 580,
+            subscribed: false
+          }
+        })
       ).rejects.toThrow('Subscription changes are signed now');
     } finally {
       subscriptionsIdentitySwitch.invalidate();

@@ -367,7 +367,7 @@ export class SubscriptionIdReportEntity {
   @PrimaryGeneratedColumn({ type: 'bigint' })
   id?: number;
 
-  /** LIST, PHASE or REDEMPTIONS. */
+  /** LIST, PHASE, REDEMPTIONS or RECORD (a signed change in shadow). */
   @Column({ type: 'varchar', length: 40 })
   kind!: string;
 

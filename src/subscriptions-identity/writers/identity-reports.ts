@@ -6,7 +6,7 @@ import { IdentityWriteMode } from '../identity/identity-switch';
 
 const logger = Logger.get('SUBSCRIPTIONS_IDENTITY_REPORTS');
 
-export type ReportKind = 'LIST' | 'PHASE' | 'REDEMPTIONS';
+export type ReportKind = 'LIST' | 'PHASE' | 'REDEMPTIONS' | 'RECORD';
 
 export interface RowDiff {
   readonly key: string;

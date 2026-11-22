@@ -299,7 +299,7 @@ export async function scheduleIdentitySwitch(
 
 /**
  * The marker go-live sets before its cut and clears after the switch: while
- * it is there, the unsigned write routes answer 503, so no change lands
+ * it is there, the subscription write routes answer 503, so no change lands
  * between the cut and the switch. It is a row of subscriptions_id_cursors
  * (block holds the time it was set, in ms); the load replaces only the
  * redemption cursor's row there, so the marker outlasts the load.
@@ -328,17 +328,41 @@ export async function openSubscriptionWrites(): Promise<void> {
   );
 }
 
-export type UnsignedWrites = 'OPEN' | 'PAUSED' | 'SIGNED_ONLY';
+/**
+ * The path a person's subscription change takes (subscription-writes.ts):
+ * - PAUSED while go-live runs: refused with 503;
+ * - IDENTITY once the identity tables are the truth: a signed record is
+ *   applied to them, and the legacy tables get a dual write;
+ * - SHADOW before that, with FEATURE_SUBSCRIPTIONS_SHADOW on and an opening
+ *   loaded and not suspended: today's write, then a signed record that came
+ *   with it goes to the identity tables and is compared;
+ * - LEGACY otherwise: today's write.
+ */
+export type SubscriptionWritePath = 'LEGACY' | 'SHADOW' | 'PAUSED' | 'IDENTITY';
 
 /**
- * Whether the unsigned write routes may write, read uncached at the moment
- * of the write: PAUSED while go-live runs, SIGNED_ONLY once the identity
- * tables are the truth. Throws if the state can't be read, so a write is
- * refused rather than landing only in the legacy tables.
+ * The write path, read uncached at the moment of the write. Throws if the
+ * state can't be read; the caller then refuses the write (PAUSED) rather
+ * than let it land only in the legacy tables.
  */
-export async function unsignedWritesNow(
-  nowMs: number = Date.now()
-): Promise<UnsignedWrites> {
+export async function subscriptionWritePathNow(
+  nowMs: number = Date.now(),
+  shadowFlag: string | undefined = process.env[SHADOW_ENV]
+): Promise<SubscriptionWritePath> {
+  if (await writesClosedAt(nowMs)) {
+    return 'PAUSED';
+  }
+  const state = await readOpeningState();
+  if (switchReason(state, nowMs) === 'IDENTITY_TABLES') {
+    return 'IDENTITY';
+  }
+  return shadowFlag === 'true' && state && state.suspended_at === null
+    ? 'SHADOW'
+    : 'LEGACY';
+}
+
+/** Whether go-live's writes-closed marker is there and inside the window. */
+async function writesClosedAt(nowMs: number): Promise<boolean> {
   let closed: { block: number | string }[];
   try {
     closed = await sqlExecutor.execute<{ block: number | string }>(
@@ -352,14 +376,14 @@ export async function unsignedWritesNow(
     closed = [];
   }
   const closedAtMs = Array.isArray(closed) ? closed[0]?.block : undefined;
-  if (closedAtMs !== undefined) {
-    if (nowMs - Number(closedAtMs) < SWITCH_CUT_WINDOW_MS) {
-      return 'PAUSED';
-    }
-    logger.warn(
-      `[WRITES-CLOSED MARKER IGNORED] set at ${Number(closedAtMs)}, older than the switch window; open-writes deletes it`
-    );
+  if (closedAtMs === undefined) {
+    return false;
   }
-  const reason = switchReason(await readOpeningState(), nowMs);
-  return reason === 'IDENTITY_TABLES' ? 'SIGNED_ONLY' : 'OPEN';
+  if (nowMs - Number(closedAtMs) < SWITCH_CUT_WINDOW_MS) {
+    return true;
+  }
+  logger.warn(
+    `[WRITES-CLOSED MARKER IGNORED] set at ${Number(closedAtMs)}, older than the switch window; open-writes deletes it`
+  );
+  return false;
 }

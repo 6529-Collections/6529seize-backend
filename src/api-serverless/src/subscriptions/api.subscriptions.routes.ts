@@ -59,13 +59,12 @@ import {
   fetchTopUpsForConsolidationKey,
   fetchUpcomingMemeSubscriptionCounts,
   fetchUpcomingMemeSubscriptionStatusForConsolidationKey,
-  fetchUpcomingMemeSubscriptions,
-  updateSubscribeAllEditions,
-  updateSubscription,
-  updateSubscriptionCount,
-  updateSubscriptionMode
+  fetchUpcomingMemeSubscriptions
 } from '@/api/subscriptions/api.subscriptions.db';
+import { SIGNED_RECORDS_HEADER } from '@/signed-records/record-event';
 import { subscriptionReadScope } from '@/subscriptions-identity/identity/subscription-tables';
+import type { SubscriptionChange } from '@/subscriptions-identity/records/subscription-records';
+import { subscriptionChangeWriter } from '@/subscriptions-identity/records/subscription-writes';
 
 const allowlistLogger = Logger.get('SUBSCRIPTIONS_ALLOWLIST');
 const CACHE_EVICTION_TIMEOUT_MS = 1_500;
@@ -248,10 +247,10 @@ router.post(
         automatic: Joi.boolean().required()
       })
     );
-    const response = await updateSubscriptionMode(
-      consolidationKey,
-      requestPayload.automatic
-    );
+    const response = await writeSubscriptionChange(req, consolidationKey, {
+      type: 'subs.mode',
+      automatic: requestPayload.automatic
+    });
     await invalidateSubscriptionCache(consolidationKey);
     res.status(201).send(response);
   }
@@ -291,14 +290,32 @@ router.post(
         subscribe_all_editions: Joi.boolean().required()
       })
     );
-    const response = await updateSubscribeAllEditions(
-      consolidationKey,
-      requestPayload.subscribe_all_editions
-    );
+    const response = await writeSubscriptionChange(req, consolidationKey, {
+      type: 'subs.all-editions',
+      all: requestPayload.subscribe_all_editions
+    });
     await invalidateSubscriptionCache(consolidationKey);
     res.status(201).send(response);
   }
 );
+
+/**
+ * A person's change, after the route's own checks: today's write, or the
+ * signed record in the `x-6529-signed-records` header, by the switch state
+ * (subscription-writes.ts).
+ */
+function writeSubscriptionChange(
+  req: Request<any, any, any, any, any>,
+  consolidationKey: string,
+  change: SubscriptionChange
+) {
+  return subscriptionChangeWriter.write({
+    routeKey: consolidationKey,
+    wallet: getWalletOrThrow(req),
+    signedRecords: req.get(SIGNED_RECORDS_HEADER),
+    change
+  });
+}
 
 async function isAuthenticatedForConsolidationKey(
   req: Request,
@@ -522,12 +539,12 @@ router.post(
     if (nft) {
       throw new BadRequestException('NFT already released');
     }
-    const response = await updateSubscription(
-      consolidationKey,
-      requestPayload.contract,
-      requestPayload.token_id,
-      requestPayload.subscribed
-    );
+    const response = await writeSubscriptionChange(req, consolidationKey, {
+      type: 'subs.card',
+      contract: requestPayload.contract,
+      tokenId: requestPayload.token_id,
+      subscribed: requestPayload.subscribed
+    });
     await invalidateSubscriptionCache(consolidationKey);
     res.status(201).send(response);
   }
@@ -570,12 +587,12 @@ router.post(
     if (nft) {
       throw new BadRequestException('NFT already released');
     }
-    const response = await updateSubscriptionCount(
-      consolidationKey,
-      requestPayload.contract,
-      requestPayload.token_id,
-      requestPayload.count
-    );
+    const response = await writeSubscriptionChange(req, consolidationKey, {
+      type: 'subs.count',
+      contract: requestPayload.contract,
+      tokenId: requestPayload.token_id,
+      count: requestPayload.count
+    });
     await invalidateSubscriptionCache(consolidationKey);
     res.status(201).send(response);
   }
