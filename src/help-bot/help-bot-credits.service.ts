@@ -1,3 +1,4 @@
+import { appFeatures } from '@/app-features';
 import {
   HELP_BOT_CREDIT_EVENTS_TABLE,
   IDENTITIES_TABLE,
@@ -59,12 +60,33 @@ function getHelpBotCreditEventSourceId(sourceId: string): string {
   return `${HELP_BOT_CREDIT_CATEGORY}:${sourceId}`;
 }
 
+const NOTHING_GRANTED: HelpBotCreditGrantResult = {
+  amountGranted: 0,
+  balance: null,
+  alreadyGranted: false,
+  botProfileMissing: false
+};
+
+/**
+ * Help6529 Credits: REP in the reserved category, granted and spent by the
+ * help6529 profile. While the meter is off (`isEnabled`, from
+ * FEATURE_HELP_BOT_CREDITS) nothing here writes: grants grant nothing,
+ * refunds refund nothing, and callers must not charge (see
+ * `chargeQuestionCredit`).
+ */
 export class HelpBotCreditsService extends LazyDbAccessCompatibleService {
   public constructor(
     sqlExecutorGetter: () => SqlExecutor,
-    private readonly profileResolver: HelpBotProfileResolver
+    private readonly profileResolver: HelpBotProfileResolver,
+    private readonly creditsEnabled: () => boolean = () =>
+      appFeatures.isHelpBotCreditsEnabled()
   ) {
     super(sqlExecutorGetter);
+  }
+
+  /** Whether questions are metered: off by default. */
+  public isEnabled(): boolean {
+    return this.creditsEnabled();
   }
 
   public async grantSignupCredits(
@@ -138,6 +160,11 @@ export class HelpBotCreditsService extends LazyDbAccessCompatibleService {
     },
     ctx: RequestContext
   ): Promise<HelpBotCreditChargeResult> {
+    if (!this.isEnabled()) {
+      // Callers check isEnabled() first. Refusing here would turn a question
+      // away for a balance nobody can earn while the meter is off.
+      throw new Error('Help6529 Credits are off: questions are not charged');
+    }
     const botProfileId = await this.resolveBotProfileId(ctx);
     if (!botProfileId) {
       return {
@@ -233,6 +260,9 @@ export class HelpBotCreditsService extends LazyDbAccessCompatibleService {
     },
     ctx: RequestContext
   ): Promise<boolean> {
+    if (!this.isEnabled()) {
+      return false;
+    }
     const botProfileId = await this.resolveBotProfileId(ctx);
     if (!botProfileId) {
       return false;
@@ -297,6 +327,9 @@ export class HelpBotCreditsService extends LazyDbAccessCompatibleService {
     request: AutomaticCreditGrantRequest,
     ctx: RequestContext
   ): Promise<HelpBotCreditGrantResult> {
+    if (!this.isEnabled()) {
+      return NOTHING_GRANTED;
+    }
     const botProfileId = await this.resolveBotProfileId(ctx);
     if (!botProfileId) {
       return {

@@ -1,8 +1,12 @@
 # Help6529 Credits and REP: design note
 
-Status: for a product decision. No behaviour changes with this note.
+Status: decided in November 2026: credits are not REP. The meter is off by
+default (`FEATURE_HELP_BOT_CREDITS`), so help6529 answers without credits and
+nothing grants or charges them. A follow-up deletes the category's REP, puts
+REP and Level back to peer REP only, and removes the meter and the reserved
+category. The rest of this note is the analysis that led there.
 
-## Current behaviour
+## Behaviour before the change
 
 Help6529 Credits are stored as REP. The `help6529` profile is the rater and the
 reserved REP category `Help6529 Credits` holds each profile's balance
