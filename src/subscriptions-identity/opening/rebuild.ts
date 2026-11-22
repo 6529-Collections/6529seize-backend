@@ -272,6 +272,11 @@ export interface RebuildResult {
   readonly switched: boolean;
   /** Set when live's counter is ahead of the posted journal. */
   readonly missing: string | null;
+  /**
+   * The `n` of the journaled suspend, when the opening was suspended: the
+   * rebuilt tables stay suspended, as they were.
+   */
+  readonly suspendedAtN: number | null;
   /** The journal verifier's report (it passed, or the rebuild stops). */
   readonly verify: JournalVerifyReport;
 }
@@ -625,6 +630,16 @@ export async function rebuildIdentityTables(params: {
       bodies,
       opening.openingSha256
     );
+    // A suspended opening took no writes after its suspend; the legacy
+    // tables took them, unjournaled. Its rebuild stays suspended, and only
+    // go-live, which cuts from the legacy tables, switches.
+    const suspendedAtN =
+      writes.find((w) => w.bodies[0].kind === 'suspend')?.n ?? null;
+    if (params.goLive && suspendedAtN !== null) {
+      throw new Error(
+        `The journal shows this opening suspended at n=${suspendedAtN}: the writes since are in the legacy tables only, so only go-live switches`
+      );
+    }
     const complete = partial
       ? bodies.filter(
           (b) => !(b.opening === opening.openingSha256 && b.n === partial.n)
@@ -717,13 +732,16 @@ export async function rebuildIdentityTables(params: {
         skipped,
         switched: false,
         missing,
+        suspendedAtN,
         verify
       };
     }
-    // Verified and back in shadow: the identity writers go on from here.
+    // Verified and back in shadow, so the identity writers go on from
+    // here; or, for a suspended opening, verified and still suspended.
     await sqlExecutor.execute(
       `UPDATE ${SUBSCRIPTIONS_ID_STATE_TABLE}
-          SET verified_at = :nowMs, suspended_at = NULL
+          SET verified_at = :nowMs,
+              suspended_at = ${suspendedAtN === null ? 'NULL' : 'suspended_at'}
         WHERE id = :id`,
       { nowMs: now(), id: OPENING_STATE_ID }
     );
@@ -743,6 +761,7 @@ export async function rebuildIdentityTables(params: {
       skipped,
       switched,
       missing: null,
+      suspendedAtN,
       verify
     };
   } finally {

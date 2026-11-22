@@ -9,9 +9,9 @@ import {
 import {
   claimSubscriptionWrites,
   openSubscriptionWrites,
-  subscriptionsIdentitySwitch,
-  suspendIdentityTables
+  subscriptionsIdentitySwitch
 } from '../identity/identity-switch';
+import { suspendWithJournal } from './suspend';
 import { goLive } from './go-live';
 import {
   boundJournalSource,
@@ -349,7 +349,7 @@ async function openWritesCommand(): Promise<number> {
 }
 
 async function suspendCommand(): Promise<number> {
-  const suspended = await suspendIdentityTables();
+  const suspended = await suspendWithJournal();
   process.stdout.write(
     suspended
       ? 'suspended: every reader is on the legacy tables within 60 s\n'

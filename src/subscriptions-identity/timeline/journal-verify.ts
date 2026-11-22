@@ -77,7 +77,8 @@ const MAY_CHANGE: Readonly<Record<JournalKind, readonly JournalTable[]>> = {
   choice: ['mode', 'choices', 'logs'],
   upload: ['upload'],
   opening: [],
-  checkpoint: []
+  checkpoint: [],
+  suspend: []
 };
 
 function labelOf(body: Pick<JournalBody, 'n' | 'kind'>): string {

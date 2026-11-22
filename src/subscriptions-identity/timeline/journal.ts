@@ -67,7 +67,8 @@ export type JournalKind =
   | 'choice'
   | 'upload'
   | 'opening'
-  | 'checkpoint';
+  | 'checkpoint'
+  | 'suspend';
 
 interface TableSpec {
   readonly table: string;

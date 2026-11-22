@@ -54,6 +54,7 @@ import {
   parseOpeningFiles,
   REDEMPTION_CURSOR_ID
 } from '../opening/opening-load';
+import { suspendWithJournal } from '../opening/suspend';
 import {
   JournalSource,
   rebuildIdentityTables,
@@ -826,6 +827,49 @@ describeWithSeed('identity writers after the switch', [], () => {
       ethereum
     });
     expect(result.switched).toBe(true);
+  });
+
+  it('journals a suspend, and rebuilds the opening suspended where it stopped', async () => {
+    await seedLegacy();
+    expect((await goLiveForTest()).switched).toBe(true);
+    await updateSubscriptions();
+    const ethereum = await ethereumAsRecorded();
+    expect(await suspendWithJournal()).toBe(true);
+    expect(await subscriptionsIdentitySwitch.writeModeOrFail()).toBe('OFF');
+    const bodies = (
+      await sqlExecutor.execute<{ entry: string }>(
+        `SELECT entry FROM ${SIGNED_RECORD_LOG_ENTRIES_TABLE} ORDER BY id`
+      )
+    ).map((row) => JSON.parse(row.entry).body);
+    const suspend = bodies[bodies.length - 1];
+    expect(suspend.kind).toBe('suspend');
+    const tablesBefore = await identityTablesHash({});
+    // Suspended again, nothing more is journaled.
+    expect(await suspendWithJournal()).toBe(true);
+    const [{ entries }] = await sqlExecutor.execute<{ entries: number }>(
+      `SELECT COUNT(*) AS entries FROM ${SIGNED_RECORD_LOG_ENTRIES_TABLE}`
+    );
+    expect(Number(entries)).toBe(bodies.length);
+
+    await loseIdentityTables();
+    await expect(
+      rebuildIdentityTables({
+        source: journalSource,
+        fetch: fetchPublished,
+        goLive: true,
+        lostDatabase: true,
+        ethereum
+      })
+    ).rejects.toThrow('suspended at n=');
+    await loseIdentityTables();
+    const result = await rebuildIdentityTables({
+      source: journalSource,
+      fetch: fetchPublished,
+      ethereum
+    });
+    expect(result.suspendedAtN).toBe(suspend.n);
+    expect(await identityTablesHash({})).toBe(tablesBefore);
+    expect(await subscriptionsIdentitySwitch.writeModeOrFail()).toBe('OFF');
   });
 
   it('rebuilds a top-up with the identity it was credited to, after the wallet leaves', async () => {
