@@ -306,6 +306,16 @@ describe('principalProfileId', () => {
         state()
       ).profile.handle
     ).toBe('BoB');
+    // A new case its owner writes on the chain wins over 6529.io's.
+    expect(
+      planIdentity(
+        chain({
+          handle: 'alice',
+          doc: { ...EMPTY_PROFILE_DOC_FIELDS, displayName: 'ALICE' }
+        }),
+        state()
+      ).profile.handle
+    ).toBe('ALICE');
   });
 
   it('does not take a placeholder another profile holds', () => {
