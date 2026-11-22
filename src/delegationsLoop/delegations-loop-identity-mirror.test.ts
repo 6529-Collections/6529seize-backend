@@ -62,7 +62,10 @@ jest.mock('../identity-tdh-sync', () => ({
   startIdentitySyncBudget: jest.fn()
 }));
 jest.mock('../identity-chain-mirror/identity-chain-mirror.service', () => ({
-  identityChainMirror: { run: jest.fn() }
+  identityChainMirror: {
+    run: jest.fn(),
+    followProfileSites: jest.fn(async () => [])
+  }
 }));
 
 import * as db from '../db';
@@ -150,5 +153,12 @@ describe('delegations loop and the identity mirror', () => {
     expect(getAffectedWalletsForAddresses).toHaveBeenCalledWith([A, C], []);
     expect(updateTDH).toHaveBeenCalledTimes(1);
     expect(consolidateSubscriptions).toHaveBeenCalledWith(new Set([A, C]));
+    // The profile site followers run last, after the re-keying.
+    expect(
+      jest.mocked(identityChainMirror.followProfileSites).mock
+        .invocationCallOrder[0]
+    ).toBeGreaterThan(
+      jest.mocked(consolidateSubscriptions).mock.invocationCallOrder[0]
+    );
   });
 });

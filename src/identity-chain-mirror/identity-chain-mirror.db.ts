@@ -40,6 +40,13 @@ export interface MirrorState {
   readonly sync_phase: string | null;
   readonly sync_after: string | null;
   readonly last_full_sync_at: number | null;
+  /** The next feed height the wallet bindings read (exact before it). */
+  readonly bindings_next_height: number | null;
+}
+
+/** A nullable number column. */
+function numberOrNull(value: unknown): number | null {
+  return value === null || value === undefined ? null : Number(value);
 }
 
 export interface RatingRowWrite {
@@ -164,30 +171,33 @@ export class IdentityChainMirrorDb extends LazyDbAccessCompatibleService {
 
   async getState(conn?: Conn): Promise<MirrorState | null> {
     const row = await this.db.oneOrNull<MirrorState>(
-      `select next_height, sync_from_height, sync_phase, sync_after, last_full_sync_at
+      `select next_height, sync_from_height, sync_phase, sync_after, last_full_sync_at,
+              bindings_next_height
        from ${IDENTITY_CHAIN_MIRROR_STATE_TABLE} where id = :id`,
       { id: STATE_ID },
       conn ? { wrappedConnection: conn } : undefined
     );
     if (!row) return null;
-    const num = (value: unknown) =>
-      value === null || value === undefined ? null : Number(value);
     return {
-      next_height: num(row.next_height),
-      sync_from_height: num(row.sync_from_height),
+      next_height: numberOrNull(row.next_height),
+      sync_from_height: numberOrNull(row.sync_from_height),
       sync_phase: row.sync_phase ?? null,
       sync_after: row.sync_after ?? null,
-      last_full_sync_at: num(row.last_full_sync_at)
+      last_full_sync_at: numberOrNull(row.last_full_sync_at),
+      bindings_next_height: numberOrNull(row.bindings_next_height)
     };
   }
 
   async saveState(state: MirrorState, now: number, conn?: Conn) {
     await this.db.execute(
       `insert into ${IDENTITY_CHAIN_MIRROR_STATE_TABLE}
-         (id, next_height, sync_from_height, sync_phase, sync_after, last_full_sync_at, updated_at)
-       values (:id, :next_height, :sync_from_height, :sync_phase, :sync_after, :last_full_sync_at, :now)
+         (id, next_height, sync_from_height, sync_phase, sync_after, last_full_sync_at,
+          bindings_next_height, updated_at)
+       values (:id, :next_height, :sync_from_height, :sync_phase, :sync_after, :last_full_sync_at,
+          :bindings_next_height, :now)
        on duplicate key update
          next_height = values(next_height),
+         bindings_next_height = values(bindings_next_height),
          sync_from_height = values(sync_from_height),
          sync_phase = values(sync_phase),
          sync_after = values(sync_after),
@@ -930,20 +940,20 @@ export class IdentityChainMirrorDb extends LazyDbAccessCompatibleService {
   }
 
   /**
-   * A wallet's binding and the height the mirror has followed the chain to,
-   * in one read, so the two agree.
+   * A wallet's binding and the next height the bindings read (they are exact
+   * before it), in one read, so the two agree.
    */
   async walletBindingAt(wallet: string): Promise<{
     binding: WalletBindingRow | null;
     nextHeight: number | null;
   }> {
     const row = await this.db.oneOrNull<{
-      next_height: number | string | null;
+      bindings_next_height: number | string | null;
       wallet: string | null;
       principal_id: string | null;
       bound_from_height: number | string | null;
     }>(
-      `select s.next_height, w.wallet, w.principal_id, w.bound_from_height
+      `select s.bindings_next_height, w.wallet, w.principal_id, w.bound_from_height
        from ${IDENTITY_CHAIN_MIRROR_STATE_TABLE} s
        left join ${IDENTITY_CHAIN_WALLETS_TABLE} w on w.wallet = :wallet
        where s.id = :id`,
@@ -957,20 +967,7 @@ export class IdentityChainMirrorDb extends LazyDbAccessCompatibleService {
             bound_from_height: Number(row.bound_from_height)
           }
         : null;
-    return {
-      binding,
-      nextHeight:
-        row?.next_height === null || row?.next_height === undefined
-          ? null
-          : Number(row.next_height)
-    };
-  }
-
-  /** Whether any wallet binding is stored (an empty table is rebuilt). */
-  async hasWalletBindings(): Promise<boolean> {
-    return !!(await this.db.oneOrNull<{ n: number }>(
-      `select 1 as n from ${IDENTITY_CHAIN_WALLETS_TABLE} limit 1`
-    ));
+    return { binding, nextHeight: numberOrNull(row?.bindings_next_height) };
   }
 
   /** Every wallet with a stored binding (a rebuild's reconciliation). */

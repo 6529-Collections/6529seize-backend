@@ -285,6 +285,11 @@ async function mirrorChainIdentities() {
       throw error;
     }
   }
+  // Last, after the re-keying: the profile site index follows the chain.
+  const problems = await identityChainMirror.followProfileSites();
+  if (problems.length) {
+    logger.error(`[PROFILE SITE FOLLOWERS] ${JSON.stringify(problems)}`);
+  }
 }
 
 async function handleENS() {

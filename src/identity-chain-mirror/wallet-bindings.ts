@@ -32,40 +32,62 @@ function text(value: unknown): string {
   return typeof value === 'string' ? value.toLowerCase() : '';
 }
 
+export interface BindingPage {
+  /** In block order. */
+  readonly changes: BindingChange[];
+  /** Records that could not be read (`height:key`). */
+  readonly malformed: string[];
+  /**
+   * The first block with a record whose wallet can't be read: the page's
+   * changes stop before it, and the bindings must not read past it.
+   */
+  readonly stoppedAt: number | null;
+}
+
 /**
- * The AddressBinding writes and deletes of feed blocks at or below
- * `through`, in block order. A record that can't be read is skipped and
- * named in `malformed`.
+ * The AddressBinding writes and deletes of feed blocks, in block order. A
+ * write whose principal can't be read drops the wallet's row (a lookup then
+ * asks the chain), never keeps an old one; a record whose wallet can't be
+ * read stops the page at its block.
  */
 export function bindingChangesOf(
-  blocks: readonly ChainFeedBlock[],
-  through = Number.POSITIVE_INFINITY
-): { changes: BindingChange[]; malformed: string[] } {
+  blocks: readonly ChainFeedBlock[]
+): BindingPage {
   const changes: BindingChange[] = [];
   const malformed: string[] = [];
   for (const block of blocks) {
-    if (block.height > through) continue;
-    for (const record of block.records) {
-      if (record.family.toLowerCase() !== ADDRESS_BINDING_FAMILY) continue;
-      const change = toBindingChange(Number(block.height), record);
-      if (change) changes.push(change);
-      else malformed.push(`${block.height}:${record.key}`);
+    const height = Number(block.height);
+    const records = block.records.filter(
+      (it) => it.family.toLowerCase() === ADDRESS_BINDING_FAMILY
+    );
+    const unreadable = records.filter(
+      (it) => !HEX20.test(text(it.keyFields?.address))
+    );
+    if (unreadable.length) {
+      malformed.push(...unreadable.map((it) => `${height}:${it.key}`));
+      return { changes, malformed, stoppedAt: height };
+    }
+    for (const record of records) {
+      const change = toBindingChange(height, record);
+      if (change.unreadable) malformed.push(`${height}:${record.key}`);
+      changes.push(change.change);
     }
   }
-  return { changes, malformed };
+  return { changes, malformed, stoppedAt: null };
 }
 
 function toBindingChange(
   height: number,
   record: ChainFeedBlock['records'][number]
-): BindingChange | null {
+): { change: BindingChange; unreadable: boolean } {
   const wallet = text(record.keyFields?.address);
-  if (!HEX20.test(wallet)) return null;
   if (record.value === null) {
-    return { wallet, principalId: null, height };
+    return { change: { wallet, principalId: null, height }, unreadable: false };
   }
   const principalId = text(record.valueFields?.principalId);
-  return HEX32.test(principalId) ? { wallet, principalId, height } : null;
+  return HEX32.test(principalId)
+    ? { change: { wallet, principalId, height }, unreadable: false }
+    : { change: { wallet, principalId: null, height }, unreadable: true };
 }
 
 /**

@@ -96,10 +96,11 @@ type Gateway = Pick<
 
 /**
  * The feed's import marker: true for the import, false for an operation;
- * null (a block that completed the import and ran transactions) or absent
- * leaves it to the index, which asks getImportedProfileDocCid.
+ * null (a block that completed the import and also ran transactions) is
+ * settled by comparing the document with the one the import wrote; absent
+ * (an older gateway) leaves it to the index.
  */
-function sourceOf(record: ChainFeedRecord): ProfileSiteChange['source'] {
+function markedSource(record: ChainFeedRecord): ProfileSiteChange['source'] {
   if (record.byImport === true) return 'import';
   if (record.byImport === false) return 'operation';
   return undefined;
@@ -125,7 +126,7 @@ function toChange(
     return null;
   }
   const cid = record.valueFields?.docCid;
-  const source = sourceOf(record);
+  const source = markedSource(record);
   return {
     height: Number(block.height),
     time_ms: Number(block.time),
@@ -161,10 +162,27 @@ export class GatewayProfileSitePort implements ProfileSiteChainPort {
     for (const block of page.blocks) {
       for (const record of block.records) {
         const change = record.name === 'Profile' && toChange(block, record);
-        if (change) changes.push(change);
+        if (!change) continue;
+        changes.push(
+          record.byImport === null ? await this.settleSource(change) : change
+        );
       }
     }
     return { changes, next_height: page.next };
+  }
+
+  /**
+   * A change in the block that completed the import, which also ran
+   * transactions: the import's when its document is the one the import
+   * wrote for that principal, else an operation's.
+   */
+  private async settleSource(
+    change: ProfileSiteChange
+  ): Promise<ProfileSiteChange> {
+    const imported = await this.getImportedProfileDocCid(change.principal);
+    const source =
+      imported !== null && imported === change.doc_cid ? 'import' : 'operation';
+    return { ...change, source };
   }
 
   /**
@@ -260,10 +278,9 @@ export class GatewayProfileSitePort implements ProfileSiteChainPort {
     try {
       bytes = await this.gateway.getDocument(cid);
     } catch (error) {
-      if (
-        error instanceof ChainGatewayError &&
-        (error.code === 'cid_mismatch' || error.code === 'bad_request')
-      ) {
+      // A CID that can't name a checkable document is the document's fault;
+      // bytes that don't match it are the store's, tried again later.
+      if (error instanceof ChainGatewayError && error.code === 'bad_request') {
         return { status: 'malformed', reason: error.message };
       }
       throw error;

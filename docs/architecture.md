@@ -900,17 +900,17 @@ change it applies is written, in the same transaction, to
 value, total after, chain height, FEED or FULL_SYNC) for notifications.
 
 `identity_chain_wallets` holds each bound wallet's principal and the chain
-height it has been bound to that principal since, from the feed's
-AddressBinding records. A full sync first replays them from where the mirror
-last read the feed (from the import when the table is empty); when the feed no
-longer holds those heights it lists the membership and stores every wallet as
-bound since that list's height, later than the truth and never earlier.
-`IdentityChainLookups` (`identity-chain-lookups.ts`) answers "the principal of
-wallet W at height H" from that table when the mirror has followed the chain to
-H, else from the wallet's history on the chain where the history is exact, and
-throws when neither can say; and "the principal of profile id X" from the
-mapping or the import. At the end of each run that is not in the middle of a
-full sync, the mirror runs the profile site followers in
+height it has been bound to that principal since. It follows the feed's
+AddressBinding records with its own cursor (`bindings_next_height`), from the
+import's first block; rows are written before the cursor moves. When the
+gateway no longer holds the cursor's height it lists the membership at one
+pinned height and stores every wallet as bound since then: later than the
+truth, never earlier. `IdentityChainLookups` (`identity-chain-lookups.ts`)
+answers "the principal of wallet W at height H" from that table below its
+cursor, else from the wallet's history on the chain where that history is
+exact, and throws `WalletPrincipalUnknownError` when neither can say; and "the
+principal of profile id X" from the mapping or the import. As its last step
+the delegations loop calls `followProfileSites()`, which runs the followers in
 `PROFILE_SITE_FOLLOWERS` with `GatewayProfileSitePort` (`profile-site-port.ts`),
 the profile site index's chain reads served from the gateway client and the
 mirror's profile ids.

@@ -12,6 +12,7 @@ import {
   RatingEventContext,
   RatingRowWrite
 } from './identity-chain-mirror.db';
+import { IdentityChainLookups } from './identity-chain-lookups';
 import { MembershipChange } from './membership-change';
 import { ProfileSiteFollower } from './profile-site-port';
 import { WalletBindingRow } from './wallet-bindings';
@@ -92,8 +93,11 @@ class FakeDb {
   async boundWallets() {
     return Array.from(this.bindings.keys());
   }
-  async hasWalletBindings() {
-    return this.bindings.size > 0;
+  async walletBindingAt(wallet: string) {
+    return {
+      binding: this.bindings.get(wallet) ?? null,
+      nextHeight: this.state?.bindings_next_height ?? null
+    };
   }
 
   async consolidationKeyWidth() {
@@ -315,12 +319,12 @@ function world(followers: ProfileSiteFollower[] = []) {
         startHeight: chain.importStart
       }
     })),
-    listMembershipWallets: jest.fn(async () => ({
+    listMembershipWallets: jest.fn(async (opts: { height?: number }) => ({
       items: Array.from(chain.identities.values()).flatMap((it) =>
         it.wallets.map((wallet) => ({ wallet, principalId: it.principalId }))
       ),
       next: null,
-      read: { height: chain.finalized + 1 } as never
+      read: { height: opts.height ?? chain.finalized } as never
     })),
     getMembershipWalletHistory: jest.fn(async (wallet: string) => {
       const owner = Array.from(chain.identities.values()).find((it) =>
@@ -407,11 +411,27 @@ function world(followers: ProfileSiteFollower[] = []) {
           : [])
       ];
     }),
-    getChanges: jest.fn(async (from: number) => {
-      const page = chain.feed.shift();
-      if (page) return page;
-      return { from, through: from - 1, blocks: [], next: from };
-    })
+    // The feed's pages by their first height; with a family filter, only
+    // those records (and the blocks that have some).
+    getChanges: jest.fn(
+      async (from: number, opts: { families?: string[] } = {}) => {
+        const page = chain.feed.find((it) => it.from === from);
+        if (!page) return { from, through: from - 1, blocks: [], next: from };
+        if (!opts.families) return page;
+        const families = opts.families;
+        return {
+          ...page,
+          blocks: page.blocks
+            .map((block) => ({
+              ...block,
+              records: block.records.filter((it) =>
+                families.includes(it.family)
+              )
+            }))
+            .filter((block) => block.records.length)
+        };
+      }
+    )
   };
   const db = new FakeDb();
   let now = 1_000;
@@ -564,8 +584,8 @@ describe('IdentityChainMirror', () => {
               name: 'AddressBinding',
               key: '0x',
               value: null,
-              keyFields: { wallet: C },
-              valueFields: { principal: alice.principalId }
+              keyFields: { address: C },
+              valueFields: { principalId: alice.principalId }
             }
           ]
         }
@@ -666,13 +686,14 @@ describe('IdentityChainMirror', () => {
   it('starts a full sync when the feed no longer holds its height', async () => {
     const { mirror, db, gateway } = world();
     await mirror.run({ budgetMs: 60_000 });
-    for (let i = 0; i < 3; i++) {
+    // Three tries each for the bindings, then for the identities.
+    for (let i = 0; i < 6; i++) {
       gateway.getChanges.mockRejectedValueOnce(
         new ChainGatewayError('gone', 410, 'gone', '/v1/feed')
       );
     }
     await mirror.run({ budgetMs: 60_000 });
-    expect(db.state?.sync_phase).toBe('WALLETS');
+    expect(db.state?.sync_phase).toBe('IDENTITIES');
     await mirror.run({ budgetMs: 60_000 });
     expect(db.state?.sync_phase).toBeNull();
   });
@@ -687,7 +708,26 @@ describe('IdentityChainMirror', () => {
     expect(gateway.listIdentities).toHaveBeenCalled();
   });
 
-  it('lists the wallet bindings, bound since the list, when there is no feed to replay', async () => {
+  const bind = (wallet: string, principal: string | null) => ({
+    family: '0x0102',
+    name: 'AddressBinding',
+    key: `0x0102${wallet.slice(2)}`,
+    value: principal ? '0x01' : null,
+    keyFields: { address: wallet },
+    valueFields: principal ? { principalId: principal } : null
+  });
+  const block = (
+    height: number,
+    records: ChainFeedPage['blocks'][0]['records']
+  ) => ({
+    height,
+    slot: 0,
+    root: '0x',
+    time: 0,
+    records
+  });
+
+  it('lists the wallet bindings, bound since the list, without a feed to replay', async () => {
     const { mirror, db, alice, bob, gateway } = world();
     // A row from before, for a wallet no longer bound.
     db.bindings.set(W(7), {
@@ -696,149 +736,66 @@ describe('IdentityChainMirror', () => {
       bound_from_height: 2
     });
     const report = await mirror.run({ budgetMs: 60_000 });
-    expect(gateway.listMembershipWallets).toHaveBeenCalled();
-    expect(gateway.getMembershipWalletHistory).not.toHaveBeenCalled();
+    expect(gateway.listMembershipWallets).toHaveBeenCalledWith({
+      after: null,
+      limit: 5000,
+      height: 100
+    });
     expect(report.walletBindings).toBe(4);
+    expect(report.bindingsNextHeight).toBe(101);
     // Only the list's height is known: later than the truth, never earlier.
     expect(db.bindings.get(B)).toEqual({
       wallet: B,
       principal_id: alice.principalId,
-      bound_from_height: 101
+      bound_from_height: 100
     });
     expect(db.bindings.get(C)?.principal_id).toBe(bob.principalId);
     expect(db.bindings.has(W(7))).toBe(false);
-  });
-
-  it('lists the bindings again when the feed is gone mid-replay', async () => {
-    const { mirror, db, gateway, chain, bob } = world();
-    chain.importStart = 1;
-    gateway.getChanges.mockRejectedValueOnce(
-      new ChainGatewayError('gone', 410, 'gone', '/v1/feed')
+    const lookups = new IdentityChainLookups(
+      db as unknown as IdentityChainMirrorDb,
+      gateway as never
     );
-    gateway.getChanges.mockRejectedValueOnce(
-      new ChainGatewayError('gone', 410, 'gone', '/v1/feed')
+    gateway.getMembershipWalletHistory.mockResolvedValue(null as never);
+    expect(await lookups.walletPrincipalAt(B, 100)).toBe(alice.principalId);
+    // Before the list: the chain's history, here none, so unknown.
+    await expect(lookups.walletPrincipalAt(B, 99)).rejects.toThrow(
+      'is not known'
     );
-    gateway.getChanges.mockRejectedValueOnce(
-      new ChainGatewayError('gone', 410, 'gone', '/v1/feed')
+  });
+
+  it('tries the list again next run when it does not read at one height', async () => {
+    const { mirror, db, gateway } = world();
+    gateway.listMembershipWallets.mockRejectedValueOnce(
+      new ChainGatewayError('gone', 409, 'height_gone', '/v1/membership')
     );
-    await mirror.run({ budgetMs: 60_000 });
-    expect(gateway.listMembershipWallets).toHaveBeenCalled();
-    expect(db.bindings.get(C)).toEqual({
-      wallet: C,
-      principal_id: bob.principalId,
-      bound_from_height: 101
-    });
-    expect(db.state?.sync_phase).toBeNull();
+    const first = await mirror.run({ budgetMs: 60_000 });
+    expect(first.bindingsNextHeight).toBeNull();
+    expect(db.bindings.size).toBe(0);
+    const second = await mirror.run({ budgetMs: 60_000 });
+    expect(second.bindingsNextHeight).toBe(101);
   });
 
-  it('waits when the gateway has no feed yet below the sync height', async () => {
-    const { mirror, db, chain, gateway } = world();
-    chain.importStart = 1;
-    gateway.getChanges.mockResolvedValueOnce({
-      from: 1,
-      through: 0,
-      next: 1,
-      blocks: []
-    });
-    await mirror.run({ budgetMs: 60_000 });
-    expect(db.state).toEqual(
-      expect.objectContaining({ sync_phase: 'WALLETS', sync_after: '1' })
-    );
-    expect(gateway.listIdentities).not.toHaveBeenCalled();
-    chain.feed.push({ from: 1, through: 100, next: 101, blocks: [] });
-    await mirror.run({ budgetMs: 60_000 });
-    expect(db.state?.sync_phase).toBeNull();
-  });
-
-  it('replays from the import when no binding is stored yet', async () => {
-    const { mirror, db, chain, gateway } = world();
-    await mirror.run({ budgetMs: 60_000 });
-    db.bindings.clear();
-    chain.importStart = 1;
-    gateway.getChanges.mockClear();
-    const report = await mirror.run({ budgetMs: 60_000 });
-    expect(report.mode).toBe('feed');
-    // A full sync is due only after six hours; the empty table is replayed
-    // at the next one, from the import's first block.
-    db.state = { ...db.state!, last_full_sync_at: null };
-    await mirror.run({ budgetMs: 60_000 });
-    expect(gateway.getChanges).toHaveBeenCalledWith(1, {
-      limit: 200,
-      families: ['0x0102']
-    });
-  });
-
-  it('reports a binding record it cannot read and goes on', async () => {
-    const { mirror, chain } = world();
-    await mirror.run({ budgetMs: 60_000 });
-    chain.feed.push({
-      from: 101,
-      through: 102,
-      next: 103,
-      blocks: [
-        {
-          height: 102,
-          slot: 0,
-          root: '0x',
-          time: 0,
-          records: [
-            {
-              family: '0x0102',
-              name: 'AddressBinding',
-              key: '0xbad',
-              value: '0x01',
-              keyFields: { address: A },
-              valueFields: { principalId: 'not a principal' }
-            }
-          ]
-        }
-      ]
-    });
-    const report = await mirror.run({ budgetMs: 60_000 });
-    expect(report.bindingProblems).toEqual(['102:0xbad']);
-    expect(report.nextHeight).toBe(103);
-  });
-
-  it('replays the bindings from the feed since the import', async () => {
+  it('follows the bindings on the feed from the import, apart from the identities', async () => {
     const { mirror, db, chain, alice, gateway } = world();
     chain.importStart = 1;
-    const bind = (wallet: string, principal: string | null) => ({
-      family: '0x0102',
-      name: 'AddressBinding',
-      key: '0x',
-      value: principal ? '0x01' : null,
-      keyFields: { address: wallet },
-      valueFields: principal ? { principalId: principal } : null
-    });
     chain.feed.push({
       from: 1,
       through: 120,
       next: 121,
       blocks: [
-        {
-          height: 2,
-          slot: 0,
-          root: '0x',
-          time: 0,
-          records: [bind(A, alice.principalId)]
-        },
-        {
-          height: 4,
-          slot: 0,
-          root: '0x',
-          time: 0,
-          records: [bind(B, alice.principalId)]
-        },
-        // Above the sync's height: the feed brings it later.
-        { height: 110, slot: 0, root: '0x', time: 0, records: [bind(B, null)] }
+        block(2, [bind(A, alice.principalId)]),
+        block(4, [bind(B, alice.principalId)]),
+        block(110, [bind(B, null)]),
+        block(112, [bind(C, alice.principalId)])
       ]
     });
-    await mirror.run({ budgetMs: 60_000 });
+    const report = await mirror.run({ budgetMs: 60_000 });
     expect(gateway.listMembershipWallets).not.toHaveBeenCalled();
     expect(gateway.getChanges).toHaveBeenCalledWith(1, {
       limit: 200,
       families: ['0x0102']
     });
+    expect(report.bindingsNextHeight).toBe(121);
     expect(
       Array.from(db.bindings.values()).map((it) => [
         it.wallet,
@@ -846,34 +803,62 @@ describe('IdentityChainMirror', () => {
       ])
     ).toEqual([
       [A, 2],
-      [B, 4]
+      [C, 112]
     ]);
-    // The feed: B leaves at 110, C joins Alice at 112.
-    chain.feed.push({
-      from: 101,
-      through: 115,
-      next: 116,
-      blocks: [
-        { height: 110, slot: 0, root: '0x', time: 0, records: [bind(B, null)] },
-        {
-          height: 112,
-          slot: 0,
-          root: '0x',
-          time: 0,
-          records: [bind(C, alice.principalId)]
-        }
-      ]
-    });
-    await mirror.run({ budgetMs: 60_000 });
-    expect(db.bindings.has(B)).toBe(false);
-    expect(db.bindings.get(C)).toEqual({
-      wallet: C,
-      principal_id: alice.principalId,
-      bound_from_height: 112
-    });
+    const lookups = new IdentityChainLookups(
+      db as unknown as IdentityChainMirrorDb,
+      gateway as never
+    );
+    expect(await lookups.walletPrincipalAt(A, 120)).toBe(alice.principalId);
+    expect(await lookups.walletPrincipalAt(C, 115)).toBe(alice.principalId);
   });
 
-  it('runs the profile site followers once a run, when not mid full sync', async () => {
+  it('waits for the feed without moving the bindings, while the identities go on', async () => {
+    const { mirror, db, chain, gateway, alice } = world();
+    chain.importStart = 1;
+    const first = await mirror.run({ budgetMs: 60_000 });
+    expect(first.bindingsNextHeight).toBeNull();
+    expect(gateway.listIdentities).toHaveBeenCalled();
+    chain.feed.push({
+      from: 1,
+      through: 5,
+      next: 6,
+      blocks: [block(3, [bind(A, alice.principalId)])]
+    });
+    const second = await mirror.run({ budgetMs: 60_000 });
+    expect(second.bindingsNextHeight).toBe(6);
+    expect(db.bindings.get(A)?.bound_from_height).toBe(3);
+  });
+
+  it('drops a row whose binding it cannot read, and stops at a wallet it cannot read', async () => {
+    const { mirror, db, chain, alice } = world();
+    await mirror.run({ budgetMs: 60_000 });
+    expect(db.bindings.has(A)).toBe(true);
+    chain.feed.push({
+      from: 101,
+      through: 110,
+      next: 111,
+      blocks: [
+        block(102, [
+          { ...bind(A, alice.principalId), valueFields: { principal: 'x' } }
+        ]),
+        block(105, [{ ...bind(B, null), keyFields: {} }]),
+        block(107, [bind(C, alice.principalId)])
+      ]
+    });
+    const report = await mirror.run({ budgetMs: 60_000 });
+    // A falls back to the chain; B's block holds the cursor; C waits.
+    expect(db.bindings.has(A)).toBe(false);
+    expect(report.bindingProblems).toEqual([
+      `102:${bind(A, null).key}`,
+      `105:${bind(B, null).key}`
+    ]);
+    expect(report.bindingsNextHeight).toBe(105);
+    expect(db.bindings.get(C)?.bound_from_height).toBe(100);
+    expect(report.nextHeight).toBe(111);
+  });
+
+  it('runs the profile site followers when asked, after a full sync', async () => {
     const seen: unknown[] = [];
     const ok: ProfileSiteFollower = async (port) => {
       seen.push(port);
@@ -882,14 +867,13 @@ describe('IdentityChainMirror', () => {
       throw new Error('site index down');
     };
     const { mirror, chain } = world([ok, broken]);
-    const first = await mirror.run({ budgetMs: 60_000 });
+    chain.importCompleted = true;
+    expect(await mirror.followProfileSites()).toEqual([]);
+    expect(seen).toHaveLength(0);
+    await mirror.run({ budgetMs: 60_000 });
+    expect(await mirror.followProfileSites()).toEqual(['site index down']);
     expect(seen).toHaveLength(1);
-    expect(first.followerProblems).toEqual(['site index down']);
-    chain.feed.push({ from: 101, through: 103, next: 104, blocks: [] });
-    const second = await mirror.run({ budgetMs: 60_000 });
-    expect(second.mode).toBe('feed');
-    expect(seen).toHaveLength(2);
-    expect(typeof (seen[1] as { getChanges: unknown }).getChanges).toBe(
+    expect(typeof (seen[0] as { getChanges: unknown }).getChanges).toBe(
       'function'
     );
   });
@@ -1053,7 +1037,9 @@ describe('IdentityChainMirror edge cases', () => {
     );
     await mirror.run({ budgetMs: 60_000 });
     expect(db.state?.sync_phase).toBeNull();
-    expect(gateway.getChanges).toHaveBeenCalledTimes(3);
+    // The first run reads the feed once; the second, twice for the bindings
+    // (one refused) and once for the identities.
+    expect(gateway.getChanges).toHaveBeenCalledTimes(4);
   });
 });
 

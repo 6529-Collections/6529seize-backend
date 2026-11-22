@@ -34,7 +34,9 @@ export class WalletPrincipalUnknownError extends Error {
  * or undefined when the history can't say. It can say when the height is
  * within a range the feed holds and the wallet's last change at or below it
  * is in that range too, or when that range starts at the chain's first
- * blocks (no earlier change to miss).
+ * block (height 0 or 1): the chain's genesis binds no wallet (identities
+ * come from the import and from operations), so no earlier change is
+ * missed.
  */
 export function principalInHistory(
   history: ChainWalletHistory,

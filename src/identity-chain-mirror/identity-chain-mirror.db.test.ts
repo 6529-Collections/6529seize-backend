@@ -132,7 +132,8 @@ describeWithSeed(
           sync_from_height: null,
           sync_phase: null,
           sync_after: null,
-          last_full_sync_at: 5
+          last_full_sync_at: 5,
+          bindings_next_height: null
         },
         9
       );
@@ -255,7 +256,6 @@ describeWithSeed(
         db.writeWalletBindings([row(B, 7)], [A, C], 10, conn)
       );
       expect(await db.boundWallets()).toEqual([B]);
-      expect(await db.hasWalletBindings()).toBe(true);
       expect(await db.walletBindings([A, B])).toEqual(
         new Map([[B, row(B, 7)]])
       );
@@ -266,11 +266,12 @@ describeWithSeed(
       });
       await db.saveState(
         {
-          next_height: 12,
+          next_height: 1,
           sync_from_height: null,
           sync_phase: null,
           sync_after: null,
-          last_full_sync_at: 1
+          last_full_sync_at: 1,
+          bindings_next_height: 12
         },
         1
       );

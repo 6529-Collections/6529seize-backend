@@ -101,7 +101,14 @@ describe('GatewayProfileSitePort', () => {
           doc_cid: cidPath(DOC),
           source: 'operation'
         },
-        { height: 15, time_ms: 6_000, principal: P, version: 3, doc_cid: null }
+        {
+          height: 15,
+          time_ms: 6_000,
+          principal: P,
+          version: 3,
+          doc_cid: null,
+          source: 'operation'
+        }
       ],
       next_height: 21
     });
@@ -109,6 +116,45 @@ describe('GatewayProfileSitePort', () => {
       limit: 200,
       families: [PROFILE_FAMILY]
     });
+  });
+
+  it('settles the source in the block that completed the import', async () => {
+    const { gateway, port } = setup();
+    const OTHER = '0x01551220' + '44'.repeat(32);
+    gateway.getChanges.mockResolvedValueOnce({
+      from: 10,
+      through: 10,
+      next: 11,
+      blocks: [
+        {
+          height: 10,
+          slot: 0,
+          root: '0x',
+          time: 1,
+          records: [profileRecord({ version: 1, docCid: DOC }, null)]
+        }
+      ]
+    });
+    gateway.getChanges.mockResolvedValueOnce({
+      from: 10,
+      through: 10,
+      next: 11,
+      blocks: [
+        {
+          height: 10,
+          slot: 0,
+          root: '0x',
+          time: 1,
+          records: [profileRecord({ version: 2, docCid: OTHER }, null)]
+        }
+      ]
+    });
+    gateway.getImportedIdentity.mockResolvedValue({
+      principalId: P,
+      profileDocCid: DOC
+    });
+    expect((await port.getChanges(10)).changes[0].source).toBe('import');
+    expect((await port.getChanges(10)).changes[0].source).toBe('operation');
   });
 
   it('ends at the finalized head', async () => {
@@ -218,10 +264,10 @@ describe('GatewayProfileSitePort', () => {
       .mockResolvedValueOnce(null)
       .mockResolvedValueOnce(Buffer.from('not a document'))
       .mockRejectedValueOnce(
-        new ChainGatewayError('mismatch', 200, 'cid_mismatch', '/v1/docs')
+        new ChainGatewayError('not a CID', null, 'bad_request', '/v1/docs')
       )
       .mockRejectedValueOnce(
-        new ChainGatewayError('down', 503, 'unavailable', '/v1/docs')
+        new ChainGatewayError('mismatch', 200, 'cid_mismatch', '/v1/docs')
       );
     expect(await port.getProfileDoc('b1')).toEqual({
       status: 'found',
@@ -233,10 +279,11 @@ describe('GatewayProfileSitePort', () => {
     });
     expect(await port.getProfileDoc('b1')).toEqual({
       status: 'malformed',
-      reason: 'mismatch'
+      reason: 'not a CID'
     });
+    // Wrong bytes from the store: tried again, never applied as broken.
     await expect(port.getProfileDoc('b1')).rejects.toMatchObject({
-      code: 'unavailable'
+      code: 'cid_mismatch'
     });
   });
 

@@ -27,32 +27,43 @@ function binding(wallet: string, principal: string | null) {
 }
 
 describe('bindingChangesOf', () => {
-  it('reads AddressBinding writes and deletes up to a height, in order', () => {
+  it('reads AddressBinding writes and deletes in block order', () => {
     expect(
-      bindingChangesOf(
-        [
-          block(3, [
-            binding(W(1), P(1)),
-            { family: '0x0104', name: 'Profile', key: '0x', value: '0x' }
-          ]),
-          block(5, [
-            binding(W(1), null),
-            binding('0x12', P(2)),
-            { ...binding(W(3), P(2)), valueFields: { principalId: '0x1' } },
-            { ...binding(W(4), P(2)), name: 'Renamed' }
-          ]),
-          block(9, [binding(W(2), P(2))])
-        ],
-        5
-      )
+      bindingChangesOf([
+        block(3, [
+          binding(W(1), P(1)),
+          { family: '0x0104', name: 'Profile', key: '0x', value: '0x' }
+        ]),
+        block(5, [
+          binding(W(1), null),
+          { ...binding(W(3), P(2)), valueFields: { principalId: '0x1' } },
+          { ...binding(W(4), P(2)), name: 'Renamed' }
+        ])
+      ])
     ).toEqual({
       changes: [
         { wallet: W(1), principalId: P(1), height: 3 },
         { wallet: W(1), principalId: null, height: 5 },
+        // A write whose principal can't be read drops the row.
+        { wallet: W(3), principalId: null, height: 5 },
         { wallet: W(4), principalId: P(2), height: 5 }
       ],
-      // A write that can't be read is reported, never taken as an unbinding.
-      malformed: ['5:0x', '5:0x']
+      malformed: ['5:0x'],
+      stoppedAt: null
+    });
+  });
+
+  it('stops before a block with a wallet it cannot read', () => {
+    expect(
+      bindingChangesOf([
+        block(3, [binding(W(1), P(1))]),
+        block(5, [binding(W(2), P(1)), binding('0x12', P(2))]),
+        block(9, [binding(W(3), P(2))])
+      ])
+    ).toEqual({
+      changes: [{ wallet: W(1), principalId: P(1), height: 3 }],
+      malformed: ['5:0x'],
+      stoppedAt: 5
     });
   });
 });
