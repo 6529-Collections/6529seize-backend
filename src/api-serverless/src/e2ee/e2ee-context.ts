@@ -18,6 +18,7 @@ import {
 } from '@/e2ee/e2ee-blob-stores';
 import { e2eeErrors } from '@/e2ee/e2ee-errors';
 import { isE2eeAttachmentsEnabled } from '@/e2ee/e2ee-flag';
+import { defaultE2eeRecords, E2eeRecords } from '@/e2ee/relay/e2ee-records';
 import { E2eeContractWalletVerifier } from '@/e2ee/e2ee-grant';
 import { getEthereumRpcProvider } from '@/ethereum-rpc/ethereum-rpc-provider';
 import { identitiesDb } from '@/identities/identities.db';
@@ -66,6 +67,11 @@ export interface E2eeServiceDeps {
   readonly loginGrants: E2eeLoginGrantStore;
   /** Attachment chunk storage (E2EE_BLOB_STORE: MySQL or S3). */
   readonly blobStores: E2eeBlobStores;
+  /**
+   * Signed records of every write for the relays (E2EE_RELAY_MODE). Absent
+   * in tests that do not exercise them.
+   */
+  readonly records?: E2eeRecords;
 }
 
 /** Ethereum mainnet EIP-1271 checks (contract section 2.2 step 3). */
@@ -98,7 +104,8 @@ export const defaultE2eeServiceDeps: E2eeServiceDeps = {
   attachmentsEnabled: () => isE2eeAttachmentsEnabled(),
   admission: directMessageAdmissionService,
   loginGrants: deviceGrantsLoginGrantStore,
-  blobStores: createE2eeBlobStores({ rows: e2eeDb })
+  blobStores: createE2eeBlobStores({ rows: e2eeDb }),
+  records: defaultE2eeRecords
 };
 
 export function nowSeconds(deps: E2eeServiceDeps): number {

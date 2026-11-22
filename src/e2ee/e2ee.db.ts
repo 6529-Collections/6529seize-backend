@@ -1283,18 +1283,20 @@ export class E2eeDb extends LazyDbAccessCompatibleService {
     );
   }
 
+  /** Whether a pending delivery was there to delete. */
   async deleteWelcomeDelivery(
     welcomeId: string,
     deviceKey: string,
     connection: Conn
-  ): Promise<void> {
-    await this.write(
+  ): Promise<boolean> {
+    const deleted = await this.write(
       `delete from ${E2EE_WELCOME_DELIVERIES_TABLE}
        where welcome_id = :welcomeId and device_key = :deviceKey`,
       { welcomeId, deviceKey },
       connection
     );
     await this.deleteOrphanWelcomes([welcomeId], connection);
+    return deleted > 0;
   }
 
   async deleteWelcomeDeliveriesOfDevice(

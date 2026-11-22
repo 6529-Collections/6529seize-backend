@@ -335,6 +335,36 @@ export class E2eeRecordWriters {
     });
   }
 
+  /** The groups whose current roster holds the device. */
+  async groupsOfDevice(connection: Conn, deviceKey: string): Promise<string[]> {
+    const rows = await this.reader.rows(
+      E2EE_GROUP_ROSTER_TABLE,
+      { device_key: deviceKey, removed_epoch: null },
+      connection,
+      'id'
+    );
+    return Array.from(new Set(rows.map((row) => String(row.group_handle))));
+  }
+
+  /**
+   * A revoked device: its row, and its roster rows in every group it was
+   * in. Its KeyPackages and pending Welcomes go with the revocation; the
+   * rebuild drops those of revoked devices by the same rule.
+   */
+  async deviceRevoked(
+    batch: E2eeRecordBatch,
+    connection: Conn,
+    input: { readonly deviceKey: string; readonly groups: readonly string[] }
+  ): Promise<void> {
+    await this.deviceChanged(batch, connection, input.deviceKey);
+    for (const group of input.groups) {
+      await this.rosterChanged(batch, connection, {
+        group,
+        devices: [input.deviceKey]
+      });
+    }
+  }
+
   /** A device's last-resort KeyPackages of one suite, as they now are. */
   async lastResortChanged(
     batch: E2eeRecordBatch,
@@ -418,6 +448,22 @@ export class E2eeRecordWriters {
       type: 'blob',
       ops: puts(E2EE_BLOBS_TABLE, [blob])
     });
+  }
+
+  /** A generation's chunk seqs up to `throughSeq` (what a compact deletes). */
+  async backupChunkSeqs(
+    connection: Conn,
+    input: { readonly backupId: string; readonly throughSeq: number }
+  ): Promise<number[]> {
+    const rows = await this.reader.rows(
+      E2EE_BACKUP_CHUNKS_TABLE,
+      { backup_id: input.backupId },
+      connection,
+      'seq'
+    );
+    return rows
+      .map((row) => Number(row.seq))
+      .filter((seq) => seq <= input.throughSeq);
   }
 
   /**

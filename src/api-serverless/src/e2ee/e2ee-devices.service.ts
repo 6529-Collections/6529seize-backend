@@ -64,6 +64,12 @@ import {
 import { e2eeErrors } from '@/e2ee/e2ee-errors';
 import { readE2eeKeyPackageCiphersuite } from '@/e2ee/e2ee-key-package';
 import {
+  e2eeRecordBatchIn,
+  recordE2ee,
+  runE2eeRecordTransaction
+} from '@/e2ee/relay/e2ee-records';
+import { E2eeRecordBatch } from '@/e2ee/relay/e2ee-stream-publisher';
+import {
   E2eeDeviceGrant,
   E2eeGrantVerifiedVia,
   findE2eeGrantProblem,
@@ -242,19 +248,26 @@ export class E2eeDevicesService {
     callerProfileId: string,
     deviceKey: string
   ): Promise<void> {
-    await this.db.executeNativeQueriesInTransaction(async (connection) => {
-      const device = await this.db.lockDevice(deviceKey, connection);
-      if (
-        device?.profile_id !== callerProfileId ||
-        !isActiveDevice(device, nowSeconds(this.deps)) ||
-        device.grant_message !== null
-      ) {
-        throw e2eeErrors.notYourDevice();
+    await runE2eeRecordTransaction(
+      this.deps.records,
+      this.db,
+      async (connection, batch) => {
+        const device = await this.db.lockDevice(deviceKey, connection);
+        if (
+          device?.profile_id !== callerProfileId ||
+          !isActiveDevice(device, nowSeconds(this.deps)) ||
+          device.grant_message !== null
+        ) {
+          throw e2eeErrors.notYourDevice();
+        }
+        if (device.notice_pending) {
+          await this.db.acknowledgeDeviceNotice(deviceKey, connection);
+          await recordE2ee(this.deps.records, batch, (writers, records) =>
+            writers.deviceChanged(records, connection, deviceKey)
+          );
+        }
       }
-      if (device.notice_pending) {
-        await this.db.acknowledgeDeviceNotice(deviceKey, connection);
-      }
-    });
+    );
   }
 
   async renameDevice(
@@ -262,17 +275,29 @@ export class E2eeDevicesService {
     deviceKey: string,
     label: string
   ): Promise<ApiE2eeDevice> {
-    return this.db.executeNativeQueriesInTransaction(async (connection) => {
-      const device = await this.db.lockDevice(deviceKey, connection);
-      if (
-        device?.profile_id !== callerProfileId ||
-        device.revoked_at !== null
-      ) {
-        throw e2eeErrors.notYourDevice();
+    return runE2eeRecordTransaction(
+      this.deps.records,
+      this.db,
+      async (connection, batch) => {
+        const device = await this.db.lockDevice(deviceKey, connection);
+        if (
+          device?.profile_id !== callerProfileId ||
+          device.revoked_at !== null
+        ) {
+          throw e2eeErrors.notYourDevice();
+        }
+        await this.db.renameDevice(
+          callerProfileId,
+          deviceKey,
+          label,
+          connection
+        );
+        await recordE2ee(this.deps.records, batch, (writers, records) =>
+          writers.deviceChanged(records, connection, deviceKey)
+        );
+        return toApiE2eeDevice({ ...device, label });
       }
-      await this.db.renameDevice(callerProfileId, deviceKey, label, connection);
-      return toApiE2eeDevice({ ...device, label });
-    });
+    );
   }
 
   async getDevice(deviceKey: string): Promise<ApiE2eeDevice> {
@@ -500,8 +525,10 @@ export class E2eeDevicesService {
       updated_at: now,
       ...toGrantRegistrationRecord(registration)
     };
-    const device = await this.db.executeNativeQueriesInTransaction(
-      async (connection) => {
+    const device = await runE2eeRecordTransaction(
+      this.deps.records,
+      this.db,
+      async (connection, batch) => {
         await this.db.lockProfile(callerProfileId, connection);
         if (
           verified.grantMessage !== null &&
@@ -557,6 +584,9 @@ export class E2eeDevicesService {
             connection
           );
         }
+        await recordE2ee(this.deps.records, batch, (writers, records) =>
+          writers.deviceChanged(records, connection, grant.device_key)
+        );
         return (await this.db.getDevice(grant.device_key, connection))!;
       }
     );
@@ -639,8 +669,10 @@ export class E2eeDevicesService {
       E2EE_MAX_DEVICE_GROUPS
     );
     const now = this.deps.now();
-    const revoked = await this.db.executeNativeQueriesInTransaction(
-      async (connection) => {
+    const revoked = await runE2eeRecordTransaction(
+      this.deps.records,
+      this.db,
+      async (connection, batch) => {
         const locked = await this.db.lockDevice(deviceKey, connection);
         if (locked?.revocation_signature === null) {
           await this.db.markDeviceRevoked(
@@ -654,7 +686,11 @@ export class E2eeDevicesService {
             connection
           );
           if (locked.revoked_at === null) {
-            await this.stopDelivery(deviceKey, now, connection);
+            await this.stopDelivery(deviceKey, now, connection, batch);
+          } else {
+            await recordE2ee(this.deps.records, batch, (writers, records) =>
+              writers.deviceChanged(records, connection, deviceKey)
+            );
           }
         }
         return (await this.db.getDevice(deviceKey, connection))!;
@@ -671,14 +707,23 @@ export class E2eeDevicesService {
     return toApiE2eeDevice(revoked);
   }
 
+  /** Ends the revoked device's delivery and records the revocation. */
   private async stopDelivery(
     deviceKey: string,
     now: number,
-    connection: ConnectionWrapper<unknown>
+    connection: ConnectionWrapper<unknown>,
+    batch: E2eeRecordBatch | null
   ): Promise<void> {
+    const writers = batch ? this.deps.records?.writers : undefined;
+    const groups = writers
+      ? await writers.groupsOfDevice(connection, deviceKey)
+      : [];
     await this.db.removeDeviceFromAllRosters(deviceKey, now, connection);
     await this.db.deleteKeyPackagesOfDevice(deviceKey, connection);
     await this.db.deleteWelcomeDeliveriesOfDevice(deviceKey, connection);
+    await recordE2ee(this.deps.records, batch, (recordWriters, records) =>
+      recordWriters.deviceRevoked(records, connection, { deviceKey, groups })
+    );
   }
 
   /**
@@ -739,7 +784,9 @@ export class E2eeDevicesService {
       { deviceKey, revokedAtMs: now },
       connection
     );
-    await this.stopDelivery(deviceKey, now, connection);
+    // The caller may own this transaction: its records go out after commit.
+    const batch = await e2eeRecordBatchIn(this.deps.records, connection);
+    await this.stopDelivery(deviceKey, now, connection, batch);
     await afterCommit(connection, () =>
       this.deps.events.deviceRevoked([locked.profile_id, ...recipients], {
         profile_id: locked.profile_id,
@@ -809,42 +856,58 @@ export class E2eeDevicesService {
     await requireOwnActiveDevice(this.deps, callerProfileId, deviceKey);
     const rows = this.decodeKeyPackages(deviceKey, request);
     const atSeconds = nowSeconds(this.deps);
-    await this.db.executeNativeQueriesInTransaction(async (connection) => {
-      const device = await this.db.lockDevice(deviceKey, connection);
-      if (!device || !isActiveDevice(device, atSeconds)) {
-        throw e2eeErrors.notYourDevice();
-      }
-      // A KeyPackage serves only groups of a suite its device may use.
-      const suites = e2eeDeviceSuites(device, this.deps.now());
-      const foreign = rows.find((row) => !suites.includes(row.ciphersuite));
-      if (foreign) {
-        throw e2eeErrors.badRequest(
-          `KeyPackage ciphersuite ${foreign.ciphersuite} is not one this device may use (${suites.join(', ') || 'none'})`
-        );
-      }
-      await this.db.deleteExpiredKeyPackagesOfDevice(
-        deviceKey,
-        atSeconds,
-        connection
-      );
-      const existing = await this.db.countOneTimeKeyPackages(
-        deviceKey,
-        atSeconds,
-        connection
-      );
-      const added = rows.filter((row) => !row.last_resort).length;
-      if (existing + added > E2EE_MAX_ONE_TIME_KEY_PACKAGES) {
-        throw e2eeErrors.keyPackageLimit(E2EE_MAX_ONE_TIME_KEY_PACKAGES);
-      }
-      for (const row of rows.filter((item) => item.last_resort)) {
-        await this.db.deleteLastResortKeyPackages(
+    await runE2eeRecordTransaction(
+      this.deps.records,
+      this.db,
+      async (connection, batch) => {
+        const device = await this.db.lockDevice(deviceKey, connection);
+        if (!device || !isActiveDevice(device, atSeconds)) {
+          throw e2eeErrors.notYourDevice();
+        }
+        // A KeyPackage serves only groups of a suite its device may use.
+        const suites = e2eeDeviceSuites(device, this.deps.now());
+        const foreign = rows.find((row) => !suites.includes(row.ciphersuite));
+        if (foreign) {
+          throw e2eeErrors.badRequest(
+            `KeyPackage ciphersuite ${foreign.ciphersuite} is not one this device may use (${suites.join(', ') || 'none'})`
+          );
+        }
+        await this.db.deleteExpiredKeyPackagesOfDevice(
           deviceKey,
-          row.ciphersuite,
+          atSeconds,
           connection
         );
+        const existing = await this.db.countOneTimeKeyPackages(
+          deviceKey,
+          atSeconds,
+          connection
+        );
+        const added = rows.filter((row) => !row.last_resort).length;
+        if (existing + added > E2EE_MAX_ONE_TIME_KEY_PACKAGES) {
+          throw e2eeErrors.keyPackageLimit(E2EE_MAX_ONE_TIME_KEY_PACKAGES);
+        }
+        for (const row of rows.filter((item) => item.last_resort)) {
+          await this.db.deleteLastResortKeyPackages(
+            deviceKey,
+            row.ciphersuite,
+            connection
+          );
+        }
+        await this.db.insertKeyPackages(rows, connection);
+        // One-time KeyPackages are ephemeral (C1); last-resort ones are kept.
+        const lastResortSuites = new Set(
+          rows.filter((row) => row.last_resort).map((row) => row.ciphersuite)
+        );
+        await recordE2ee(this.deps.records, batch, async (writers, records) => {
+          for (const ciphersuite of Array.from(lastResortSuites)) {
+            await writers.lastResortChanged(records, connection, {
+              deviceKey,
+              ciphersuite
+            });
+          }
+        });
       }
-      await this.db.insertKeyPackages(rows, connection);
-    });
+    );
     await maybePruneE2ee(this.deps);
     await maybeRecordE2eeSuiteCensus(this.deps);
     const [status] = await this.getKeyPackageStatuses([deviceKey]);
