@@ -260,7 +260,7 @@ describe('directMessageAdmissionError', () => {
     );
   });
 
-  it('names a public group but never a private one', () => {
+  it('uses the same message for public and private group refusals', () => {
     const publicError = errorFor(
       groupFacts({ publicGroup: { id: 'group-1', name: 'Meme holders' } })
     );
@@ -270,11 +270,13 @@ describe('directMessageAdmissionError', () => {
       group_id: 'group-1',
       group_name: 'Meme holders'
     });
-    expect(publicError.message).toContain('"Meme holders"');
 
     const privateError = errorFor(groupFacts({ publicGroup: null }));
     expect(privateError.details).toEqual({ handle: 'recipient' });
-    expect(privateError.message).toContain('members of a group they chose');
+    expect(privateError.message).toBe(
+      "You can't start a new direct message with @recipient because they only accept messages from members of a group they chose."
+    );
+    expect(publicError.message).toBe(privateError.message);
   });
 
   it('makes a recipient block indistinguishable from "nobody"', () => {
