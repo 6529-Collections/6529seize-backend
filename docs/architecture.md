@@ -861,6 +861,20 @@ this API support while new clients are deployed; roll back the frontend first.
 
 7. Operational signals flow to Sentry, CloudWatch alarms, Discord, and SNS.
 
+### 6529 chain gateway boundary
+
+Identities (profiles, handles, consolidations, delegations, REP, NIC and
+levels) move to the 6529 chain. `src/chain-gateway/chain-gateway.client.ts`
+(`chainGatewayClient`) is the backend's one client for it: reads through the
+chain gateway's service lane (`CHAIN_GATEWAY_URL`, bearer
+`CHAIN_GATEWAY_SERVICE_KEY`), relays signed operations (`POST /v1/draft`,
+`POST /v1/submit`), and fetches profile documents from the gateway's document
+store by CID, checking each against its CID. Reads are pinned to the latest
+finalized height it knows (refreshed every two seconds) and cached in memory
+by height; network errors, 429 and 5xx are retried. Settings are read at first
+use, so loops that never call it need none. Loops and API code that read
+identity data from the chain add calls to this client, not their own.
+
 ### Ordinary Ethereum RPC boundary
 
 The shared provider in `src/ethereum-rpc/` reads the server-only
