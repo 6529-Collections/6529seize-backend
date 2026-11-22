@@ -712,10 +712,10 @@ describeWithSeed('identity writers after the switch', [], () => {
       'A rebuild goes live only over lost identity tables, and their state row is still there'
     );
     // Nothing moved: still suspended, the tables as they were, the write
-    // routes open.
+    // routes open on the legacy path.
     expect(await subscriptionsIdentitySwitch.writeModeOrFail()).toBe('OFF');
     expect(await identityTablesHash({})).toBe(tablesBefore);
-    expect(await unsignedWritesNow()).toBe('OPEN');
+    expect(await subscriptionWritePathNow()).toBe('LEGACY');
 
     // Identity rows left without their state row are not a lost database
     // either.
