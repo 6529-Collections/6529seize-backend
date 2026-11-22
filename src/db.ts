@@ -49,7 +49,14 @@ import {
   WALLETS_TDH_TABLE
 } from '@/constants';
 import { DbQueryOptions } from './db-query.options';
-import { mysqlSslConnectionOptions } from './db-ssl';
+import {
+  attachDbAuthTokenSource,
+  createDbAuthTokenSource,
+  DbAuthTokenSource,
+  installMysqlIamAuthSupport,
+  resolveDbConnectionTargets,
+  sslOptionsFor
+} from './db-iam-auth';
 import { writeDelegations } from '@/delegation-row';
 import { Artist } from './entities/IArtist';
 import {
@@ -180,16 +187,30 @@ export async function connect(
   schemaSync?: Pick<SchemaSyncOptions, 'acknowledgedDestructivePlanSha256'>
 ) {
   validateDbConnectionSelection(syncEntities, selection);
+  const writeTarget = resolveDbConnectionTargets().write;
+  const port = parseInt(process.env.DB_PORT!);
+  let tokens: DbAuthTokenSource | null = null;
+  if (writeTarget.iam) {
+    installMysqlIamAuthSupport();
+    tokens = createDbAuthTokenSource({
+      host: writeTarget.host,
+      port,
+      user: writeTarget.user
+    });
+    // The first pool connection is opened inside initialize(), before the
+    // token source can be attached, so it uses this token.
+    await tokens.ensureFresh();
+  }
   logger.info(
-    `[DB HOST ${process.env.DB_HOST}] [SYNC ENTITIES ${syncEntities}]`
+    `[DB HOST ${writeTarget.host}] [AUTH ${writeTarget.iam ? 'IAM' : 'PASSWORD'}] [SYNC ENTITIES ${syncEntities}]`
   );
 
   AppDataSource = new DataSource({
     type: 'mysql',
-    host: process.env.DB_HOST,
-    port: parseInt(process.env.DB_PORT!),
-    username: process.env.DB_USER,
-    password: process.env.DB_PASS,
+    host: writeTarget.host,
+    port,
+    username: writeTarget.user,
+    password: tokens ? tokens.current() : writeTarget.password,
     database: selection
       ? (selection.database ?? undefined)
       : process.env.DB_NAME,
@@ -199,11 +220,14 @@ export async function connect(
     logging: false,
     charset: 'utf8mb4',
     timezone: 'Etc/UTC',
-    ...mysqlSslConnectionOptions()
+    ...sslOptionsFor(writeTarget)
   });
 
   try {
     await AppDataSource.initialize();
+    if (tokens) {
+      attachDbAuthTokenSource((AppDataSource.driver as any).pool, tokens);
+    }
   } catch (error) {
     if (selection) {
       // initialize() can fail during driver.connect(), before TypeORM's own cleanup.

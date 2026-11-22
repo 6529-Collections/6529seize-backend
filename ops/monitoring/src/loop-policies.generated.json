@@ -604,6 +604,29 @@
       ]
     },
     {
+      "service": "signedRecordLogArchiver",
+      "reservedConcurrency": 1,
+      "expectedOverlap": false,
+      "delaySeconds": 600,
+      "stallSeconds": 1200,
+      "freshSeconds": 1020,
+      "operations": [
+        "processing"
+      ]
+    },
+    {
+      "service": "signedRecordLogCloser",
+      "intervalSeconds": 300,
+      "reservedConcurrency": 1,
+      "expectedOverlap": true,
+      "delaySeconds": 600,
+      "stallSeconds": 1200,
+      "freshSeconds": 1020,
+      "operations": [
+        "processing"
+      ]
+    },
+    {
       "service": "subscriptionCoverageReconciliationLoop",
       "intervalSeconds": 60,
       "reservedConcurrency": 1,
@@ -1335,6 +1358,29 @@
       "service": "s3Uploader",
       "reservedConcurrency": 2,
       "expectedOverlap": false,
+      "delaySeconds": 600,
+      "stallSeconds": 1200,
+      "freshSeconds": 1020,
+      "operations": [
+        "processing"
+      ]
+    },
+    {
+      "service": "signedRecordLogArchiver",
+      "reservedConcurrency": 1,
+      "expectedOverlap": false,
+      "delaySeconds": 600,
+      "stallSeconds": 1200,
+      "freshSeconds": 1020,
+      "operations": [
+        "processing"
+      ]
+    },
+    {
+      "service": "signedRecordLogCloser",
+      "intervalSeconds": 300,
+      "reservedConcurrency": 1,
+      "expectedOverlap": true,
       "delaySeconds": 600,
       "stallSeconds": 1200,
       "freshSeconds": 1020,
