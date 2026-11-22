@@ -22,3 +22,5 @@ src/*/.serverless-offline
 .staging-db-dump/
 **/.release-coordinator/runs/
 **/.release-coordinator/outbox/
+# Rebuild check: private mysqld data and run reports
+/.rebuild/
