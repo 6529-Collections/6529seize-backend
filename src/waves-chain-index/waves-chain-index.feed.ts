@@ -21,6 +21,7 @@ export const WAVES_FEED_FAMILIES = [
   '0x060b', // Poll
   '0x060c', // PollBallot
   '0x060d', // DecisionPolicy
+  '0x0613', // PollCount (a wave's openPolls)
   '0x0614', // PauseAt
   '0x0701' // Rating (wave REP: target kind 2)
 ] as const;
@@ -46,9 +47,15 @@ export interface FeedEffects {
   readonly decisions: Set<string>;
   readonly entries: Set<string>;
   readonly polls: Set<string>;
-  readonly results: Map<string, { decisionId: string; resultTime: number }>;
+  /**
+   * Result[(id, D)]: a decision's result, or a closed poll's (the chain keeps
+   * both in one family; the index tells them apart by reading).
+   */
+  readonly results: Map<string, { id: string; resultTime: number }>;
   /** Votes as the feed gives them, applied as they are. */
   readonly votes: Map<string, VoteChange>;
+  /** Entries whose vote records the feed could not decode: read whole. */
+  readonly voteEntries: Set<string>;
   /** Decisions whose leaderboard moved (votes, entries). */
   readonly leaderboards: Set<string>;
 }
@@ -64,6 +71,7 @@ export function emptyFeedEffects(): FeedEffects {
     polls: new Set(),
     results: new Map(),
     votes: new Map(),
+    voteEntries: new Set(),
     leaderboards: new Set()
   };
 }
@@ -89,6 +97,7 @@ export function feedEffects(
       const family = String(record.family ?? '').toLowerCase();
       const key = record.keyFields ?? {};
       const value = record.valueFields ?? null;
+      const deleted = record.value === null;
       switch (family) {
         case '0x0401':
         case '0x0402':
@@ -100,6 +109,7 @@ export function feedEffects(
           break;
         case '0x0501':
         case '0x0502':
+        case '0x0613':
           add(into.waves, key.waveId);
           break;
         case '0x0601':
@@ -118,28 +128,36 @@ export function feedEffects(
           const entryId = id(key.entryId);
           const voter = id(key.voter);
           if (!decisionId || !entryId || !voter) break;
-          into.votes.set(`${decisionId}:${entryId}:${voter}`, {
+          into.leaderboards.add(decisionId);
+          const voteKey = `${decisionId}:${entryId}:${voter}`;
+          const set =
+            !deleted &&
+            value?.value !== undefined &&
+            value?.value !== null &&
+            Number.isSafeInteger(Number(value?.updatedHeight));
+          if (!deleted && !set) {
+            // A record the node could not decode: read the entry's votes.
+            into.votes.delete(voteKey);
+            into.voteEntries.add(entryId);
+            break;
+          }
+          into.votes.set(voteKey, {
             decisionId,
             entryId,
             voter,
-            value:
-              value && value.value !== undefined && value.value !== null
-                ? String(value.value)
-                : null,
-            updatedHeight: Number(value?.updatedHeight ?? block.height)
+            value: set ? String(value?.value) : null,
+            updatedHeight: set ? Number(value?.updatedHeight) : block.height
           });
-          into.leaderboards.add(decisionId);
           break;
         }
         case '0x060a': {
-          const decisionId = id(key.id);
+          const resultId = id(key.id);
           const resultTime = Number(key.D);
-          if (!decisionId || !Number.isFinite(resultTime)) break;
-          into.results.set(`${decisionId}:${resultTime}`, {
-            decisionId,
+          if (!resultId || !Number.isSafeInteger(resultTime)) break;
+          into.results.set(`${resultId}:${resultTime}`, {
+            id: resultId,
             resultTime
           });
-          into.decisions.add(decisionId);
           break;
         }
         case '0x060b':

@@ -13,6 +13,7 @@ function block(
     family: string;
     keyFields: Record<string, unknown>;
     valueFields?: Record<string, unknown> | null;
+    undecodable?: boolean;
   }[]
 ): ChainFeedBlock {
   return {
@@ -24,9 +25,13 @@ function block(
       family: record.family,
       name: 'record',
       key: '0x',
-      value: record.valueFields === null ? null : '0x',
+      value: record.valueFields === null && !record.undecodable ? null : '0x01',
       keyFields: record.keyFields,
-      valueFields: record.valueFields === undefined ? {} : record.valueFields
+      valueFields: record.undecodable
+        ? null
+        : record.valueFields === undefined
+          ? {}
+          : record.valueFields
     }))
   };
 }
@@ -115,7 +120,33 @@ describe('feedEffects', () => {
     expect(Array.from(effects.leaderboards)).toEqual([id(1)]);
   });
 
-  it('reads results by decision and result time, and the decision again', () => {
+  it("reads the entry's votes whole for a vote record it cannot decode", () => {
+    const key = { voter: id('A'), decisionId: id(1), entryId: id(2) };
+    const effects = feedEffects({
+      blocks: [
+        block(20, [
+          {
+            family: '0x0607',
+            keyFields: key,
+            valueFields: { value: '5', updatedHeight: 20, index: 0 }
+          }
+        ]),
+        block(21, [{ family: '0x0607', keyFields: key, undecodable: true }])
+      ]
+    });
+    expect(effects.votes.size).toBe(0);
+    expect(Array.from(effects.voteEntries)).toEqual([id(2)]);
+    expect(Array.from(effects.leaderboards)).toEqual([id(1)]);
+  });
+
+  it('reads a wave again when its open poll count moves', () => {
+    const effects = feedEffects({
+      blocks: [block(25, [{ family: '0x0613', keyFields: { waveId: id(5) } }])]
+    });
+    expect(Array.from(effects.waves)).toEqual([id(5)]);
+  });
+
+  it('reads results by id and result time (a decision or a poll)', () => {
     const effects = feedEffects({
       blocks: [
         block(30, [
@@ -125,9 +156,9 @@ describe('feedEffects', () => {
       ]
     });
     expect(Array.from(effects.results.values())).toEqual([
-      { decisionId: id(7), resultTime: 1_764_000_000_000 }
+      { id: id(7), resultTime: 1_764_000_000_000 }
     ]);
-    expect(Array.from(effects.decisions)).toEqual([id(7)]);
+    expect(effects.decisions.size).toBe(0);
   });
 
   it('takes wave REP ratings only (target kind 2)', () => {

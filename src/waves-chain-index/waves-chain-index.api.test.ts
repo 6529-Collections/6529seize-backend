@@ -27,7 +27,10 @@ function aClient(answers: Record<string, (ChainAnswer<unknown> | null)[]>) {
     ),
     getHead: jest.fn(async () => ({
       headHeight: 12,
-      finalizedHeight: 10
+      finalizedHeight: 10,
+      finalizedTime: 1_764_000_000_000,
+      pinnable: null,
+      network: 'net-1'
     })),
     getChanges: jest.fn(async (from: number) => ({
       from,
@@ -83,15 +86,32 @@ describe('GatewayWavesChainApi', () => {
     expect(await api.entryVotes('0xgone', 7)).toBeNull();
   });
 
+  it('refuses a list whose later page is not found at the same height', async () => {
+    const { client } = aClient({
+      '/v1/entries/0xe/votes': [answer([{ voter: '0x1' }], '0x1')]
+    });
+    const api = new GatewayWavesChainApi(client);
+    await expect(api.entryVotes('0xe', 7)).rejects.toThrow(
+      'a later page was not found'
+    );
+  });
+
   it('asks for every entry of a decision, and the largest leaderboard', async () => {
     const { client, reads } = aClient({
-      '/v1/decisions/0xd/entries': [answer([])],
+      '/v1/decisions/0xd/entries': [answer([{ entryId: '0xe' }], '0xe')],
       '/v1/decisions/0xd/leaderboard': [answer({ rows: [] })]
     });
     const api = new GatewayWavesChainApi(client);
-    expect(await api.decisionEntries('0xd', 3)).toEqual([]);
+    expect(await api.decisionEntries('0xd', '0xc', 3)).toEqual({
+      items: [{ entryId: '0xe' }],
+      next: '0xe'
+    });
     expect(await api.decisionLeaderboard('0xd', 3)).toEqual({ rows: [] });
-    expect(reads[0].query).toMatchObject({ status: 'all' });
+    expect(reads[0].query).toEqual({
+      status: 'all',
+      limit: 500,
+      after: '0xc'
+    });
     expect(reads[1].query).toEqual({ limit: LEADERBOARD_LIMIT });
   });
 
@@ -103,15 +123,19 @@ describe('GatewayWavesChainApi', () => {
     expect(await api.waveRoles('0xw', 1)).toEqual([{ role: 'admin' }]);
   });
 
-  it('reads the import state at the head, and the finalized height fresh', async () => {
+  it('reads the import state at the run height, and the head fresh', async () => {
     const { client, reads } = aClient({
       '/v1/waves/import': [answer({ started: true, completed: true })]
     });
     const api = new GatewayWavesChainApi(client);
-    expect(await api.importState()).toEqual({ completed: true });
-    expect(reads[0].opts).toEqual({ at: 'head' });
-    expect(await api.importState()).toBeNull();
-    expect(await api.finalizedHeight()).toBe(10);
+    expect(await api.importState(9)).toEqual({ completed: true });
+    expect(reads[0].opts).toEqual({ height: 9 });
+    expect(await api.importState(9)).toBeNull();
+    expect(await api.head()).toEqual({
+      finalizedHeight: 10,
+      finalizedTime: 1_764_000_000_000,
+      network: 'net-1'
+    });
     expect(client.getHead).toHaveBeenCalledWith(true);
   });
 

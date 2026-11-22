@@ -23,6 +23,12 @@ function num(value: unknown): number {
   return Number.isFinite(number) ? number : 0;
 }
 
+/** A decimal amount as the API writes it, or 0. */
+function decimal(value: unknown): string {
+  const text = String(value ?? '0');
+  return /^-?[0-9]+$/.test(text) ? text : '0';
+}
+
 /** A GroupRef's group, or null for no group (the zero id). */
 function groupOf(ref: unknown): string | null {
   const id = lowerId((ref as ChainObject | null)?.groupId);
@@ -82,14 +88,19 @@ export function decisionRow(decision: ChainObject): IndexRow {
   };
 }
 
-export function entryRow(entry: ChainObject): IndexRow {
+/**
+ * An entry without `score`: the single-entry route adds the live score, the
+ * lists don't, and the leaderboard is where scores are kept.
+ */
+export function entryRow(answer: ChainObject): IndexRow {
+  const { score: _score, ...entry } = answer;
   return {
     entry_id: lowerId(entry.entryId),
     legacy_id: legacyOf(entry),
     decision_id: lowerId(entry.decisionId),
     author: lowerId(entry.author),
     status: str(entry.status) ?? '',
-    total: String(entry.total ?? '0'),
+    total: decimal(entry.total),
     origin: str(entry.origin) ?? 'native',
     data: entry
   };
@@ -100,7 +111,7 @@ export function voteRow(vote: ChainObject): IndexRow {
     decision_id: lowerId(vote.decisionId),
     entry_id: lowerId(vote.entryId),
     voter: lowerId(vote.voter),
-    value: String(vote.value ?? '0'),
+    value: decimal(vote.value),
     updated_height: num(vote.updatedHeight)
   };
 }
@@ -147,15 +158,40 @@ export function waveRepRow(waveId: string, rating: ChainObject): IndexRow {
   };
 }
 
+/**
+ * A leaderboard without its rows (they go to chain_leaderboard_rows). A
+ * board ranked by total has no time in it but `scoredAt`, the read's block
+ * time: it is left out, so the row changes only when the ranking does.
+ */
 export function leaderboardRow(
   decisionId: string,
-  leaderboard: ChainObject
+  answer: ChainObject
 ): IndexRow {
+  const byTotal = answer.by === 'total';
+  const { rows: _rows, scoredAt: _scoredAt, ...rest } = answer;
   return {
     decision_id: decisionId,
-    scored_at: num(leaderboard.scoredAt),
-    data: leaderboard
+    scored_at: byTotal ? 0 : num(answer.scoredAt),
+    data: byTotal ? rest : { ...rest, scoredAt: answer.scoredAt }
   };
+}
+
+/** A leaderboard's rows, ranked. */
+export function leaderboardEntryRows(
+  decisionId: string,
+  answer: ChainObject
+): IndexRow[] {
+  const rows = Array.isArray(answer.rows) ? (answer.rows as ChainObject[]) : [];
+  return rows.map((row) => ({
+    decision_id: decisionId,
+    entry_id: lowerId(row.entryId),
+    rank: num(row.rank),
+    legacy_id: legacyOf(row),
+    author: lowerId(row.author),
+    score: decimal(row.score),
+    total: decimal(row.total),
+    data: row
+  }));
 }
 
 /** A row the index can key: every key column set. */

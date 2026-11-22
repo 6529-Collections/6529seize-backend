@@ -1,12 +1,16 @@
 import 'reflect-metadata';
-import { CHAIN_VOTES_TABLE } from '@/constants/db-tables';
+import {
+  CHAIN_ENTRIES_TABLE,
+  CHAIN_LEADERBOARD_ROWS_TABLE,
+  CHAIN_VOTES_TABLE
+} from '@/constants/db-tables';
 import { sqlExecutor } from '@/sql-executor';
 import { describeWithSeed } from '@/tests/_setup/seed';
 import { EMPTY_INDEX_STATE, WavesChainIndexDb } from './waves-chain-index.db';
 import {
   decisionRow,
   entryRow,
-  pollRow,
+  leaderboardEntryRows,
   roleRow,
   voteRow,
   waveRow
@@ -56,6 +60,8 @@ describeWithSeed('WavesChainIndexDb', [], () => {
       fullFromHeight: 120,
       lastFullAt: 1_764_000_000_000,
       feedNext: 121,
+      readHeight: 130,
+      network: 'net-1',
       lastError: 'x'.repeat(3000)
     };
     await db.saveState(state, 5);
@@ -130,9 +136,29 @@ describeWithSeed('WavesChainIndexDb', [], () => {
       height: 5,
       generation: 1
     });
-    const rows = await db.dump('entries');
-    expect(rows).toHaveLength(450);
-    expect(rows[0].total).toBe('340282366920938463463374607431768211455');
+    expect(await db.dump('entries')).toHaveLength(450);
+    const [{ total }] = await sqlExecutor.execute(
+      `select cast(total as char) as total from ${CHAIN_ENTRIES_TABLE} limit 1`
+    );
+    expect(total).toBe('340282366920938463463374607431768211455');
+  });
+
+  it('keeps leaderboard scores of 60 digits', async () => {
+    const score = '1'.repeat(60);
+    await db.upsert(
+      'leaderboardRows',
+      leaderboardEntryRows(D, {
+        rows: [{ rank: 1, entryId: E1, author: V1, score, total: '-5' }]
+      }),
+      { height: 1, generation: 1 }
+    );
+    const rows = await sqlExecutor.execute(
+      `select decision_id, entry_id, \`rank\`, cast(score as char) as score,
+              cast(total as char) as total from ${CHAIN_LEADERBOARD_ROWS_TABLE}`
+    );
+    expect(rows.map((r) => ({ ...r }))).toEqual([
+      { decision_id: D, entry_id: E1, rank: 1, score, total: '-5' }
+    ]);
   });
 
   it('replaces the rows under one parent only', async () => {
@@ -219,7 +245,8 @@ describeWithSeed('WavesChainIndexDb', [], () => {
       { height: 24, generation: 2 }
     );
     const rows = await sqlExecutor.execute(
-      `select entry_id, voter, value, updated_height, height, generation
+      `select entry_id, voter, cast(value as char) as value, updated_height,
+              height, generation
          from ${CHAIN_VOTES_TABLE} order by entry_id, voter`
     );
     expect(rows.map((r) => ({ ...r }))).toEqual([
@@ -265,36 +292,48 @@ describeWithSeed('WavesChainIndexDb', [], () => {
     expect((await db.dump('votes')).map((v) => v.entry_id)).toEqual([E2]);
   });
 
-  it('finds what moves with time', async () => {
-    const stamp = { height: 1, generation: 1 };
+  it('finds what moves with time, stalest first', async () => {
     await db.upsert(
       'decisions',
       [
-        decisionRow({ decisionId: id('d1'), waveId: W, status: 'published' }),
-        decisionRow({ decisionId: id('d2'), waveId: W, status: 'ended' }),
         decisionRow({
-          decisionId: id('d3'),
+          decisionId: id('d1'),
           waveId: W,
-          status: 'archived',
-          phase: 'settling'
+          status: 'published',
+          counted: true
+        }),
+        // Ranked by total: nothing moves with time.
+        decisionRow({ decisionId: id('d2'), waveId: W, status: 'published' }),
+        decisionRow({
+          decisionId: id('d5'),
+          waveId: W,
+          status: 'ended',
+          counted: true
         }),
         decisionRow({
           decisionId: id('d4'),
           waveId: W,
           status: 'archived',
+          counted: true,
           due: true
         })
       ],
-      stamp
+      { height: 5, generation: 1 }
     );
     await db.upsert(
-      'polls',
+      'decisions',
       [
-        pollRow({ pollId: id('b1'), waveId: W, status: 'open' }),
-        pollRow({ pollId: id('b2'), waveId: W, status: 'closed' })
+        decisionRow({
+          decisionId: id('d3'),
+          waveId: W,
+          status: 'archived',
+          counted: true,
+          phase: 'settling'
+        })
       ],
-      stamp
+      { height: 3, generation: 1 }
     );
+    const stamp = { height: 1, generation: 1 };
     await db.upsert(
       'roles',
       [
@@ -316,9 +355,37 @@ describeWithSeed('WavesChainIndexDb', [], () => {
       stamp
     );
     expect(await db.timeDependent(600)).toEqual({
-      decisionIds: [id('d1'), id('d3'), id('d4')],
-      pollIds: [id('b1')],
+      decisionIds: [id('d3'), id('d1'), id('d4')],
       roleWaveIds: [id('a1'), id('a5')]
     });
+  });
+
+  it('tells decisions by their stored status, and empties every table', async () => {
+    await db.upsert(
+      'decisions',
+      [
+        decisionRow({
+          decisionId: id('d1'),
+          waveId: W,
+          status: 'published',
+          counted: true
+        }),
+        decisionRow({ decisionId: id('d2'), waveId: W, status: 'ended' })
+      ],
+      { height: 1, generation: 1 }
+    );
+    await db.upsert('votes', [aVote(E1, V1, '1', 1)], {
+      height: 1,
+      generation: 1
+    });
+    const statuses = await db.decisionStatuses([id('d1'), id('d2'), id('d9')]);
+    expect(Array.from(statuses.entries())).toEqual([
+      [id('d1'), { status: 'published', counted: true }],
+      [id('d2'), { status: 'ended', counted: false }]
+    ]);
+    expect((await db.decisionStatuses([])).size).toBe(0);
+    await db.clearAll();
+    expect(await db.dump('decisions')).toEqual([]);
+    expect(await db.dump('votes')).toEqual([]);
   });
 });

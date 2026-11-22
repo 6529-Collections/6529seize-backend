@@ -1,6 +1,7 @@
 import {
-  chainGatewayClient,
-  ChainGatewayClient
+  chainGatewayConfigFromEnv,
+  ChainGatewayClient,
+  ChainGatewayError
 } from '@/chain-gateway/chain-gateway.client';
 import { ChainFeedPage } from '@/chain-gateway/chain-gateway.types';
 
@@ -21,14 +22,22 @@ export interface WavesImportState {
   readonly completed: boolean;
 }
 
+export interface WavesChainHead {
+  readonly finalizedHeight: number;
+  /** The finalized block's time (ms): what the reads at it compare with. */
+  readonly finalizedTime: number;
+  /** The chain's network id; another one means a relaunched chain. */
+  readonly network: string | null;
+}
+
 /**
  * What the index reads: the gateway, or a fake in tests. Every read is
  * pinned to the height `at`, so one run's reads agree.
  */
 export interface WavesChainApi {
-  finalizedHeight(): Promise<number>;
+  head(): Promise<WavesChainHead>;
   /** The waves import's cursor; null before the node answers it. */
-  importState(): Promise<WavesImportState | null>;
+  importState(at: number): Promise<WavesImportState | null>;
   listGroups(after: string | null, at: number): Promise<ChainPage<ChainObject>>;
   listWaves(after: string | null, at: number): Promise<ChainPage<ChainObject>>;
   listDecisions(
@@ -53,10 +62,12 @@ export interface WavesChainApi {
   waveRoles(waveId: string, at: number): Promise<ChainObject[] | null>;
   wavePolls(waveId: string, at: number): Promise<ChainObject[] | null>;
   waveRep(waveId: string, at: number): Promise<ChainObject[] | null>;
+  /** A page of a decision's entries, every status, ascending by id. */
   decisionEntries(
     decisionId: string,
+    after: string | null,
     at: number
-  ): Promise<ChainObject[] | null>;
+  ): Promise<ChainPage<ChainObject>>;
   decisionResults(
     decisionId: string,
     at: number
@@ -69,6 +80,19 @@ const LIST_LIMIT = 500;
 /** The leaderboard route's largest page. */
 export const LEADERBOARD_LIMIT = 1024;
 const FEED_LIMIT = 200;
+/**
+ * The index reads each height once, so pinned answers are never read again:
+ * its own client keeps few of them (the shared client keeps 10,000).
+ */
+const INDEX_CLIENT_CACHE_ENTRIES = 64;
+
+/** The gateway client the index uses: the shared settings, a small cache. */
+export function wavesIndexGatewayClient(): ChainGatewayClient {
+  return new ChainGatewayClient(() => ({
+    ...chainGatewayConfigFromEnv(),
+    cacheEntries: INDEX_CLIENT_CACHE_ENTRIES
+  }));
+}
 
 function asArray(data: unknown): ChainObject[] {
   if (Array.isArray(data)) return data as ChainObject[];
@@ -86,18 +110,23 @@ export class GatewayWavesChainApi implements WavesChainApi {
     private readonly client: Pick<
       ChainGatewayClient,
       'read' | 'getHead' | 'getChanges'
-    > = chainGatewayClient
+    > = wavesIndexGatewayClient()
   ) {}
 
-  async finalizedHeight(): Promise<number> {
-    return (await this.client.getHead(true)).finalizedHeight;
+  async head(): Promise<WavesChainHead> {
+    const head = await this.client.getHead(true);
+    return {
+      finalizedHeight: head.finalizedHeight,
+      finalizedTime: head.finalizedTime,
+      network: head.network ?? null
+    };
   }
 
-  async importState(): Promise<WavesImportState | null> {
+  async importState(at: number): Promise<WavesImportState | null> {
     const answer = await this.client.read<ChainObject>(
       '/v1/waves/import',
       {},
-      { at: 'head' }
+      { height: at }
     );
     const data = answer?.data;
     return data ? { completed: data.completed === true } : null;
@@ -106,11 +135,12 @@ export class GatewayWavesChainApi implements WavesChainApi {
   private async page(
     path: string,
     after: string | null,
-    at: number
+    at: number,
+    query: Record<string, string> = {}
   ): Promise<ChainPage<ChainObject>> {
     const answer = await this.client.read<unknown>(
       path,
-      { limit: LIST_LIMIT, after: after ?? undefined },
+      { ...query, limit: LIST_LIMIT, after: after ?? undefined },
       { height: at }
     );
     return {
@@ -144,7 +174,16 @@ export class GatewayWavesChainApi implements WavesChainApi {
           { ...query, limit: LIST_LIMIT, after: after ?? undefined },
           { height: at }
         );
-      if (!answer) return after === null ? null : items;
+      if (!answer) {
+        if (after === null) return null;
+        // The list was there a page ago at this same height.
+        throw new ChainGatewayError(
+          `${path}: a later page was not found`,
+          404,
+          'not_found',
+          path
+        );
+      }
       items.push(...asArray(answer.data));
       if (!answer.next || answer.next === after) return items;
       after = answer.next;
@@ -205,8 +244,8 @@ export class GatewayWavesChainApi implements WavesChainApi {
     return this.all(`/v1/waves/${waveId}/rep/ratings`, at);
   }
 
-  decisionEntries(decisionId: string, at: number) {
-    return this.all(`/v1/decisions/${decisionId}/entries`, at, {
+  decisionEntries(decisionId: string, after: string | null, at: number) {
+    return this.page(`/v1/decisions/${decisionId}/entries`, after, at, {
       status: 'all'
     });
   }

@@ -3,6 +3,7 @@ import {
   entryRow,
   groupRow,
   hasKeys,
+  leaderboardEntryRows,
   leaderboardRow,
   pollRow,
   resultRow,
@@ -11,6 +12,7 @@ import {
   waveRepRow,
   waveRow
 } from './waves-chain-index.rows';
+import { statementChunks } from './waves-chain-index.db';
 
 const id = (n: number | string) => `0x${String(n).padStart(64, '0')}`;
 const ZERO = id(0);
@@ -106,11 +108,58 @@ describe('index rows', () => {
         stage: 'final'
       })
     ).toMatchObject({ decision_id: id(5), result_time: 1764000000000 });
-    expect(leaderboardRow(id(5), { scoredAt: 77, rows: [] })).toEqual({
+  });
+
+  it('keeps a board without its rows, and no time in a board ranked by total', () => {
+    const rows = [
+      {
+        rank: 1,
+        entryId: id('E1'),
+        legacyId: 'AAAA-1',
+        author: id('A'),
+        score: '123456789012345678901234567890123456789012345678901234567890',
+        total: '9',
+        createdMs: 5
+      }
+    ];
+    expect(
+      leaderboardRow(id(5), {
+        by: 'time_weighted_score',
+        scoredAt: 77,
+        count: 1,
+        rows
+      })
+    ).toEqual({
       decision_id: id(5),
       scored_at: 77,
-      data: { scoredAt: 77, rows: [] }
+      data: { by: 'time_weighted_score', scoredAt: 77, count: 1 }
     });
+    expect(
+      leaderboardRow(id(5), { by: 'total', scoredAt: 77, count: 1, rows })
+    ).toEqual({
+      decision_id: id(5),
+      scored_at: 0,
+      data: { by: 'total', count: 1 }
+    });
+    expect(leaderboardEntryRows(id(5), { rows })).toEqual([
+      {
+        decision_id: id(5),
+        entry_id: id('e1'),
+        rank: 1,
+        legacy_id: 'aaaa-1',
+        author: id('a'),
+        score: '123456789012345678901234567890123456789012345678901234567890',
+        total: '9',
+        data: rows[0]
+      }
+    ]);
+    expect(leaderboardEntryRows(id(5), {})).toEqual([]);
+  });
+
+  it('keeps no live score in an entry', () => {
+    const row = entryRow({ entryId: id(1), total: '5', score: '50' });
+    expect(row.data).toEqual({ entryId: id(1), total: '5' });
+    expect(entryRow({ entryId: id(1), total: 'x' }).total).toBe('0');
   });
 
   it('keys a wave REP rating by its category id', () => {
@@ -137,5 +186,21 @@ describe('index rows', () => {
   it('tells a row without its keys', () => {
     expect(hasKeys(waveRow({}), ['wave_id'])).toBe(false);
     expect(hasKeys(waveRow({ waveId: id(1) }), ['wave_id'])).toBe(true);
+  });
+});
+
+describe('statementChunks', () => {
+  it('keeps statements under the row and byte bounds', () => {
+    const sizes = [5000, 5000, 5000, 20000, 1, 1];
+    expect(statementChunks(sizes, (n) => n)).toEqual([
+      [5000, 5000],
+      [5000],
+      [20000],
+      [1, 1]
+    ]);
+    const many = Array.from({ length: 450 }, () => 1);
+    expect(statementChunks(many, (n) => n).map((c) => c.length)).toEqual([
+      200, 200, 50
+    ]);
   });
 });

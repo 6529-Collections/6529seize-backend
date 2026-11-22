@@ -1,4 +1,5 @@
 import { ChainGatewayError } from '@/chain-gateway/chain-gateway.client';
+import { ChainFeedPage } from '@/chain-gateway/chain-gateway.types';
 import { Logger } from '@/logging';
 import { Time } from '@/time';
 import {
@@ -7,6 +8,7 @@ import {
   WavesChainApi
 } from './waves-chain-index.api';
 import {
+  EMPTY_INDEX_STATE,
   IndexTableName,
   RowStamp,
   WavesChainIndexDb,
@@ -14,6 +16,7 @@ import {
   WavesChainIndexState
 } from './waves-chain-index.db';
 import {
+  emptyFeedEffects,
   FeedEffects,
   feedEffects,
   WAVES_FEED_FAMILIES
@@ -23,6 +26,7 @@ import {
   entryRow,
   groupRow,
   IndexRow,
+  leaderboardEntryRows,
   leaderboardRow,
   pollRow,
   resultRow,
@@ -37,18 +41,20 @@ const logger = Logger.get('WAVES_CHAIN_INDEX');
 /**
  * 6529.io's index of the 6529 chain's waves (entities/IWavesChainIndex.ts).
  *
- * Each run pins every read to one finalized height H:
+ * Each run pins every read to one finalized height H, never below the last
+ * run's, and does in order, each to the run's deadline:
  * 1. the change feed from the cursor up to H: every object a record touched
- *    is read again (votes are taken from the record itself);
- * 2. the objects whose answer moves with time (live decisions and their
- *    leaderboards, open polls, role grants past their expiry);
- * 3. a full read in progress continues: groups, then waves (roles, polls,
- *    wave REP), then decisions (entries, results, leaderboard, each entry's
- *    votes), then rows the full read did not see are removed.
+ *    is read again at H (vote records are applied as they are);
+ * 2. what moves with block time alone: live counted decisions (`due`) and
+ *    their leaderboards, role grants past their expiry, stalest first;
+ * 3. a full read in progress: groups, then waves (roles, polls, wave REP),
+ *    then decisions (results, leaderboard, entries, each entry's votes),
+ *    then the rows it did not see are removed.
  * The first full read starts the feed at its first height + 1, so the feed
- * replays whatever changed while the full read went on. A full read runs
- * again every day, and at once when the gateway no longer holds the feed
- * from the cursor. Nothing runs before the chain's waves import completes.
+ * replays what changed while the full read went on. A full read runs again
+ * every day, and at once when the gateway no longer holds the feed from the
+ * cursor. A new network id (a relaunched chain) empties the index first.
+ * Nothing runs before the chain's waves import completes.
  */
 
 export const FULL_READ_EVERY_MS = Time.hours(24).toMillis();
@@ -56,13 +62,20 @@ export const FULL_READ_EVERY_MS = Time.hours(24).toMillis();
 export const FULL_PHASES = ['groups', 'waves', 'decisions', 'sweep'] as const;
 export type FullPhase = (typeof FULL_PHASES)[number];
 
+/** Feed records are applied in batches of about this many reads. */
+const BATCH_READS = 100;
+/** Reads in flight at once. */
+const READ_CONCURRENCY = 8;
+/** A feed read answered `gone` is asked again this many times first. */
+const GONE_RETRIES = 2;
+
 export interface WavesChainIndexReport {
   mode: 'idle' | 'skipped' | 'indexed';
   skipped?: 'import_not_complete' | 'gateway_behind';
   height: number | null;
   feedFrom: number | null;
   feedNext: number | null;
-  feedPages: number;
+  feedBatches: number;
   reread: Record<string, number>;
   votes: number;
   timeDependent: number;
@@ -74,24 +87,76 @@ export interface WavesChainIndexReport {
     completed: boolean;
     swept: Record<string, number> | null;
   };
-  restartedFull: 'feed_gone' | null;
+  restartedFull: 'feed_gone' | 'network_changed' | null;
 }
 
-const ZERO = (): Record<string, number> => ({});
-
-function idOf(object: ChainObject, field: string): string | null {
-  const value = object[field];
+function idOf(object: ChainObject | null, field: string): string | null {
+  const value = object?.[field];
   return typeof value === 'string' && value ? value.toLowerCase() : null;
 }
 
-/** A decision in progress in the full read: `decisionId:entryId`. */
+/** Runs `fn` over `items`, at most `limit` at once. */
+async function eachLimit<T>(
+  items: readonly T[],
+  limit: number,
+  fn: (item: T) => Promise<void>
+): Promise<void> {
+  let next = 0;
+  const worker = async () => {
+    while (next < items.length) {
+      const item = items[next++];
+      await fn(item);
+    }
+  };
+  await Promise.all(
+    Array.from({ length: Math.min(limit, items.length) }, worker)
+  );
+}
+
+function chunks<T>(items: readonly T[], size: number): T[][] {
+  const out: T[][] = [];
+  for (let i = 0; i < items.length; i += size) {
+    out.push(items.slice(i, i + size));
+  }
+  return out;
+}
+
+/** The reads a batch of feed effects costs, roughly. */
+function readsOf(effects: FeedEffects): number {
+  return (
+    effects.groups.size +
+    effects.waves.size +
+    effects.roleWaves.size +
+    effects.repWaves.size +
+    effects.polls.size +
+    effects.decisions.size +
+    effects.entries.size +
+    effects.results.size +
+    effects.voteEntries.size +
+    effects.leaderboards.size
+  );
+}
+
+/**
+ * The full read's decision cursor: `id` when that decision is done,
+ * `id:` once its decision, results and board are, `id:entryId` once its
+ * entries up to entryId are.
+ */
 function splitCursor(after: string | null): {
   decisionId: string | null;
+  inProgress: boolean;
   entryAfter: string | null;
 } {
-  if (!after) return { decisionId: null, entryAfter: null };
-  const [decisionId, entryAfter] = after.split(':');
-  return { decisionId, entryAfter: entryAfter ?? null };
+  if (!after) return { decisionId: null, inProgress: false, entryAfter: null };
+  const colon = after.indexOf(':');
+  if (colon < 0) {
+    return { decisionId: after, inProgress: false, entryAfter: null };
+  }
+  return {
+    decisionId: after.slice(0, colon),
+    inProgress: true,
+    entryAfter: after.slice(colon + 1) || null
+  };
 }
 
 export class WavesChainIndex {
@@ -114,8 +179,8 @@ export class WavesChainIndex {
       height: null,
       feedFrom: state.feedNext,
       feedNext: state.feedNext,
-      feedPages: 0,
-      reread: ZERO(),
+      feedBatches: 0,
+      reread: {},
       votes: 0,
       timeDependent: 0,
       full: {
@@ -128,21 +193,41 @@ export class WavesChainIndex {
       },
       restartedFull: null
     };
-    const imported = await this.api.importState();
+    const head = await this.api.head();
+    const height = head.finalizedHeight;
+    report.height = height;
+    if (head.network && state.network && head.network !== state.network) {
+      // Another chain: none of the rows are its.
+      logger.warn(
+        `[NETWORK ${state.network} -> ${head.network}] emptying the index`
+      );
+      await this.db.clearAll();
+      state = await this.save({
+        ...EMPTY_INDEX_STATE,
+        generation: state.generation,
+        network: head.network
+      });
+      report.restartedFull = 'network_changed';
+    }
+    const imported = await this.api.importState(height);
     if (!imported?.completed) {
       report.mode = 'skipped';
       report.skipped = 'import_not_complete';
       return report;
     }
-    const height = await this.api.finalizedHeight();
-    report.height = height;
-    if (state.feedNext !== null && height < state.feedNext - 1) {
-      // The gateway answered from a node behind the index.
+    if (state.readHeight !== null && height < state.readHeight) {
+      // A node behind the one the last run read from: reading at its
+      // height would take rows back.
       report.mode = 'skipped';
       report.skipped = 'gateway_behind';
       return report;
     }
     report.mode = 'indexed';
+    state = await this.save({
+      ...state,
+      readHeight: height,
+      network: head.network ?? state.network
+    });
     try {
       const fullDue =
         state.lastFullAt !== null &&
@@ -151,7 +236,15 @@ export class WavesChainIndex {
         state = await this.startFull(state, height, false, report);
       }
       state = await this.followFeed(state, height, deadline, report);
-      await this.refreshTimeDependent(state, height, report);
+      // At most half of what is left, so a full read keeps moving.
+      const left = Math.max(0, deadline - this.now());
+      await this.refreshTimeDependent(
+        state,
+        height,
+        head.finalizedTime,
+        this.now() + left / 2,
+        report
+      );
       if (state.fullPhase) {
         state = await this.continueFull(state, height, deadline, report);
       }
@@ -211,7 +304,27 @@ export class WavesChainIndex {
     });
   }
 
+  private count(report: WavesChainIndexReport, table: string, n = 1) {
+    report.reread[table] = (report.reread[table] ?? 0) + n;
+  }
+
   // ---------------------------------------------------------------- feed
+
+  private async readFeed(from: number): Promise<ChainFeedPage> {
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return await this.api.feed(from, WAVES_FEED_FAMILIES);
+      } catch (error) {
+        // One node behind the gateway may hold less than another.
+        if (
+          !(error instanceof ChainGatewayError && error.code === 'gone') ||
+          attempt >= GONE_RETRIES
+        ) {
+          throw error;
+        }
+      }
+    }
+  }
 
   private async followFeed(
     initial: WavesChainIndexState,
@@ -221,32 +334,34 @@ export class WavesChainIndex {
   ): Promise<WavesChainIndexState> {
     let state = initial;
     let next = state.feedNext as number;
+    const stamp = { height, generation: state.generation };
     while (next <= height && this.now() < deadline) {
-      const page = await this.api.feed(next, WAVES_FEED_FAMILIES);
-      // Only what the run's reads can see: heights up to H.
-      const blocks = page.blocks.filter(
-        (block) => block.height >= next && block.height <= height
-      );
-      const effects = feedEffects({ blocks });
-      await this.applyEffects(
-        effects,
-        { height, generation: state.generation },
-        report
-      );
-      report.feedPages++;
-      const pageNext = Number.isFinite(Number(page.next))
+      const page = await this.readFeed(next);
+      const pageNext = Number.isSafeInteger(Number(page.next))
         ? Number(page.next)
         : Number(page.through) + 1;
-      const advanced = Math.min(pageNext, height + 1);
-      if (!(advanced > next)) break;
-      next = advanced;
+      // Only what the run's reads can see: heights up to H.
+      const end = Math.min(pageNext, height + 1);
+      if (!(end > next)) break;
+      const blocks = page.blocks
+        .filter((block) => block.height >= next && block.height < end)
+        .sort((a, b) => a.height - b.height);
+      let batch = emptyFeedEffects();
+      for (const block of blocks) {
+        feedEffects({ blocks: [block] }, batch);
+        if (readsOf(batch) >= BATCH_READS && block.height + 1 < end) {
+          await this.applyEffects(batch, stamp, report);
+          batch = emptyFeedEffects();
+          next = block.height + 1;
+          state = await this.save({ ...state, feedNext: next });
+          if (this.now() >= deadline) return state;
+        }
+      }
+      await this.applyEffects(batch, stamp, report);
+      next = end;
       state = await this.save({ ...state, feedNext: next });
     }
     return state;
-  }
-
-  private count(report: WavesChainIndexReport, table: string, n = 1) {
-    report.reread[table] = (report.reread[table] ?? 0) + n;
   }
 
   /** Reads one object again: its row, or none when the chain has none. */
@@ -272,18 +387,24 @@ export class WavesChainIndex {
     stamp: RowStamp,
     report: WavesChainIndexReport
   ): Promise<void> {
+    if (!readsOf(effects) && !effects.votes.size) return;
+    report.feedBatches++;
     const at = stamp.height;
-    for (const id of Array.from(effects.groups)) {
-      await this.refreshOne(
-        'groups',
-        await this.api.group(id, at),
-        groupRow,
-        { group_id: id },
-        stamp,
-        report
-      );
-    }
-    for (const id of Array.from(effects.waves)) {
+    await eachLimit(
+      Array.from(effects.groups),
+      READ_CONCURRENCY,
+      async (id) => {
+        await this.refreshOne(
+          'groups',
+          await this.api.group(id, at),
+          groupRow,
+          { group_id: id },
+          stamp,
+          report
+        );
+      }
+    );
+    await eachLimit(Array.from(effects.waves), READ_CONCURRENCY, async (id) => {
       await this.refreshOne(
         'waves',
         await this.api.wave(id, at),
@@ -292,16 +413,80 @@ export class WavesChainIndex {
         stamp,
         report
       );
-    }
-    for (const waveId of Array.from(effects.roleWaves)) {
-      await this.replaceRoles(waveId, stamp);
-      this.count(report, 'roles');
-    }
-    for (const waveId of Array.from(effects.repWaves)) {
-      await this.replaceWaveRep(waveId, stamp);
-      this.count(report, 'waveRep');
-    }
-    for (const id of Array.from(effects.polls)) {
+    });
+    await eachLimit(
+      Array.from(effects.roleWaves),
+      READ_CONCURRENCY,
+      async (waveId) => {
+        await this.replaceRoles(waveId, stamp);
+        this.count(report, 'roles');
+      }
+    );
+    await eachLimit(
+      Array.from(effects.repWaves),
+      READ_CONCURRENCY,
+      async (waveId) => {
+        await this.replaceWaveRep(waveId, stamp);
+        this.count(report, 'waveRep');
+      }
+    );
+    const decisions = new Map<string, ChainObject | null>();
+    await eachLimit(
+      Array.from(effects.decisions),
+      READ_CONCURRENCY,
+      async (id) => {
+        decisions.set(
+          id,
+          await this.refreshOne(
+            'decisions',
+            await this.api.decision(id, at),
+            decisionRow,
+            { decision_id: id },
+            stamp,
+            report
+          )
+        );
+      }
+    );
+    const leaderboards = new Set(Array.from(effects.leaderboards));
+    await eachLimit(
+      Array.from(effects.entries),
+      READ_CONCURRENCY,
+      async (id) => {
+        const entry = await this.refreshOne(
+          'entries',
+          await this.api.entry(id, at),
+          entryRow,
+          { entry_id: id },
+          stamp,
+          report
+        );
+        const decisionId = idOf(entry, 'decisionId');
+        if (decisionId) leaderboards.add(decisionId);
+      }
+    );
+    // Results: a decision's, or a closed poll's (one family on the chain).
+    const results = Array.from(effects.results.values());
+    const stored = await this.db.decisionStatuses(results.map((r) => r.id));
+    const polls = new Set(Array.from(effects.polls));
+    await eachLimit(results, READ_CONCURRENCY, async ({ id, resultTime }) => {
+      const isDecision = decisions.has(id)
+        ? decisions.get(id) !== null
+        : stored.has(id) || (await this.api.decision(id, at)) !== null;
+      if (!isDecision) {
+        polls.add(id);
+        return;
+      }
+      await this.refreshOne(
+        'results',
+        await this.api.result(id, resultTime, at),
+        (result) => resultRow(id, result),
+        { decision_id: id, result_time: resultTime },
+        stamp,
+        report
+      );
+    });
+    await eachLimit(Array.from(polls), READ_CONCURRENCY, async (id) => {
       await this.refreshOne(
         'polls',
         await this.api.poll(id, at),
@@ -310,58 +495,66 @@ export class WavesChainIndex {
         stamp,
         report
       );
-    }
-    const leaderboards = new Set(effects.leaderboards);
-    for (const id of Array.from(effects.decisions)) {
-      await this.refreshOne(
-        'decisions',
-        await this.api.decision(id, at),
-        decisionRow,
-        { decision_id: id },
-        stamp,
-        report
-      );
-    }
-    for (const id of Array.from(effects.entries)) {
-      const entry = await this.refreshOne(
-        'entries',
-        await this.api.entry(id, at),
-        entryRow,
-        { entry_id: id },
-        stamp,
-        report
-      );
-      const decisionId = entry ? idOf(entry, 'decisionId') : null;
-      if (decisionId) leaderboards.add(decisionId);
-    }
-    for (const { decisionId, resultTime } of Array.from(
-      effects.results.values()
-    )) {
-      await this.refreshOne(
-        'results',
-        await this.api.result(decisionId, resultTime, at),
-        (result) => resultRow(decisionId, result),
-        { decision_id: decisionId, result_time: resultTime },
-        stamp,
-        report
-      );
-    }
+    });
+    await eachLimit(
+      Array.from(effects.voteEntries),
+      READ_CONCURRENCY,
+      async (entryId) => {
+        const votes = await this.api.entryVotes(entryId, at);
+        await this.db.replaceChildren(
+          'votes',
+          'entry_id',
+          entryId,
+          (votes ?? []).map(voteRow),
+          stamp
+        );
+        this.count(report, 'votes');
+      }
+    );
     const votes = Array.from(effects.votes.values());
     if (votes.length) {
       await this.db.applyVotes(votes, stamp);
       report.votes += votes.length;
     }
-    for (const decisionId of Array.from(leaderboards)) {
-      await this.refreshLeaderboard(decisionId, stamp);
-      this.count(report, 'leaderboards');
-    }
+    await this.refreshLeaderboards(
+      Array.from(leaderboards),
+      decisions,
+      stamp,
+      report
+    );
   }
 
-  private async refreshLeaderboard(decisionId: string, stamp: RowStamp) {
-    const leaderboard = await this.api.decisionLeaderboard(
-      decisionId,
-      stamp.height
+  /**
+   * Boards of published decisions are kept; another decision's board is
+   * removed (its scores, if any, keep moving with time and nothing reads
+   * them).
+   */
+  private async refreshLeaderboards(
+    ids: readonly string[],
+    known: Map<string, ChainObject | null>,
+    stamp: RowStamp,
+    report: WavesChainIndexReport
+  ): Promise<void> {
+    const stored = await this.db.decisionStatuses(
+      ids.filter((id) => !known.has(id))
     );
+    await eachLimit(ids, READ_CONCURRENCY, async (id) => {
+      const status = known.has(id)
+        ? ((known.get(id)?.status as string | undefined) ?? null)
+        : (stored.get(id)?.status ?? null);
+      await this.refreshLeaderboard(id, status === 'published', stamp);
+      this.count(report, 'leaderboards');
+    });
+  }
+
+  private async refreshLeaderboard(
+    decisionId: string,
+    published: boolean,
+    stamp: RowStamp
+  ) {
+    const leaderboard = published
+      ? await this.api.decisionLeaderboard(decisionId, stamp.height)
+      : null;
     if (leaderboard) {
       await this.db.upsert(
         'leaderboards',
@@ -371,6 +564,13 @@ export class WavesChainIndex {
     } else {
       await this.db.remove('leaderboards', [{ decision_id: decisionId }]);
     }
+    await this.db.replaceChildren(
+      'leaderboardRows',
+      'decision_id',
+      decisionId,
+      leaderboard ? leaderboardEntryRows(decisionId, leaderboard) : [],
+      stamp
+    );
   }
 
   private async replaceRoles(waveId: string, stamp: RowStamp) {
@@ -395,48 +595,56 @@ export class WavesChainIndex {
     );
   }
 
+  private async replacePolls(waveId: string, stamp: RowStamp) {
+    const polls = (await this.api.wavePolls(waveId, stamp.height)) ?? [];
+    await this.db.replaceChildren(
+      'polls',
+      'wave_id',
+      waveId,
+      polls.map(pollRow),
+      stamp
+    );
+  }
+
   // ---------------------------------------------------------- time moves
 
   private async refreshTimeDependent(
     state: WavesChainIndexState,
     height: number,
+    blockTime: number,
+    deadline: number,
     report: WavesChainIndexReport
   ): Promise<void> {
     const stamp = { height, generation: state.generation };
-    const { decisionIds, pollIds, roleWaveIds } = await this.db.timeDependent(
-      this.now()
-    );
-    for (const id of decisionIds) {
-      const decision = await this.refreshOne(
-        'decisions',
-        await this.api.decision(id, height),
-        decisionRow,
-        { decision_id: id },
-        stamp,
-        report
-      );
-      // A counted decision's scores move with its block time.
-      if (decision?.counted === true) {
-        await this.refreshLeaderboard(id, stamp);
+    const { decisionIds, roleWaveIds } = await this.db.timeDependent(blockTime);
+    const work: (() => Promise<void>)[] = [
+      ...decisionIds.map((id) => async () => {
+        const decision = await this.refreshOne(
+          'decisions',
+          await this.api.decision(id, height),
+          decisionRow,
+          { decision_id: id },
+          stamp,
+          report
+        );
+        // A live counted decision's scores move with its block time.
+        await this.refreshLeaderboard(
+          id,
+          decision?.status === 'published',
+          stamp
+        );
         this.count(report, 'leaderboards');
-      }
+      }),
+      ...roleWaveIds.map((waveId) => async () => {
+        await this.replaceRoles(waveId, stamp);
+        this.count(report, 'roles');
+      })
+    ];
+    for (const chunk of chunks(work, READ_CONCURRENCY)) {
+      if (this.now() >= deadline) break;
+      await Promise.all(chunk.map((step) => step()));
+      report.timeDependent += chunk.length;
     }
-    for (const id of pollIds) {
-      await this.refreshOne(
-        'polls',
-        await this.api.poll(id, height),
-        pollRow,
-        { poll_id: id },
-        stamp,
-        report
-      );
-    }
-    for (const waveId of roleWaveIds) {
-      await this.replaceRoles(waveId, stamp);
-      this.count(report, 'roles');
-    }
-    report.timeDependent =
-      decisionIds.length + pollIds.length + roleWaveIds.length;
   }
 
   // ---------------------------------------------------------- full read
@@ -448,11 +656,12 @@ export class WavesChainIndex {
     report: WavesChainIndexReport
   ): Promise<WavesChainIndexState> {
     let state = initial;
-    const stamp = { height, generation: state.generation };
-    // At least one step a run, however long the feed took.
+    // One step a run at least (a page, or a few waves or entries), however
+    // long the feed took, so a full read always ends.
     let first = true;
     while (state.fullPhase && (first || this.now() < deadline)) {
       first = false;
+      const stamp = { height, generation: state.generation };
       switch (state.fullPhase as FullPhase) {
         case 'groups':
           state = await this.fullGroups(state, stamp, deadline, report);
@@ -477,8 +686,8 @@ export class WavesChainIndex {
           });
           break;
         default:
-          // A phase this version doesn't know: start again.
-          state = await this.startFull(state, height, false, report);
+          // A phase this version doesn't know: start again, next run.
+          return this.startFull(state, height, false, report);
       }
     }
     return state;
@@ -494,11 +703,12 @@ export class WavesChainIndex {
   }
 
   private async fullGroups(
-    state: WavesChainIndexState,
+    initial: WavesChainIndexState,
     stamp: RowStamp,
     deadline: number,
     report: WavesChainIndexReport
   ): Promise<WavesChainIndexState> {
+    let state = initial;
     let after = state.fullAfter;
     for (;;) {
       const page = await this.api.listGroups(after, stamp.height);
@@ -514,30 +724,31 @@ export class WavesChainIndex {
   }
 
   private async fullWaves(
-    state: WavesChainIndexState,
+    initial: WavesChainIndexState,
     stamp: RowStamp,
     deadline: number,
     report: WavesChainIndexReport
   ): Promise<WavesChainIndexState> {
+    let state = initial;
     let after = state.fullAfter;
     for (;;) {
       const page = await this.api.listWaves(after, stamp.height);
-      for (const wave of page.items) {
-        const waveId = idOf(wave, 'waveId');
-        if (!waveId) continue;
-        await this.db.upsert('waves', [waveRow(wave)], stamp);
-        await this.replaceRoles(waveId, stamp);
-        await this.replaceWaveRep(waveId, stamp);
-        const polls = (await this.api.wavePolls(waveId, stamp.height)) ?? [];
-        await this.db.replaceChildren(
-          'polls',
-          'wave_id',
-          waveId,
-          polls.map(pollRow),
-          stamp
+      const waves = page.items.filter((wave) => idOf(wave, 'waveId'));
+      for (const chunk of chunks(waves, READ_CONCURRENCY)) {
+        await this.db.upsert('waves', chunk.map(waveRow), stamp);
+        await Promise.all(
+          chunk.map(async (wave) => {
+            const waveId = idOf(wave, 'waveId') as string;
+            await this.replaceRoles(waveId, stamp);
+            await this.replaceWaveRep(waveId, stamp);
+            await this.replacePolls(waveId, stamp);
+          })
         );
-        report.full.items++;
-        state = await this.save({ ...state, fullAfter: waveId });
+        report.full.items += chunk.length;
+        state = await this.save({
+          ...state,
+          fullAfter: idOf(chunk[chunk.length - 1], 'waveId')
+        });
         if (this.now() >= deadline) return state;
       }
       if (!page.next || page.next === after) {
@@ -548,29 +759,25 @@ export class WavesChainIndex {
   }
 
   private async fullDecisions(
-    state: WavesChainIndexState,
+    initial: WavesChainIndexState,
     stamp: RowStamp,
     deadline: number,
     report: WavesChainIndexReport
   ): Promise<WavesChainIndexState> {
+    let state = initial;
     const cursor = splitCursor(state.fullAfter);
-    if (cursor.decisionId && cursor.entryAfter !== null) {
-      // A decision the last run stopped in: finish it first.
-      const decision = await this.api.decision(cursor.decisionId, stamp.height);
-      if (decision) {
-        const done = await this.fullDecision(
-          state,
-          decision,
-          cursor.entryAfter,
-          stamp,
-          deadline,
-          report
-        );
-        state = done.state;
-        if (!done.finished) return state;
-      } else {
-        await this.db.remove('decisions', [{ decision_id: cursor.decisionId }]);
-      }
+    if (cursor.decisionId && cursor.inProgress) {
+      // A decision the last run stopped in: its entries from the cursor.
+      const done = await this.fullEntries(
+        state,
+        cursor.decisionId,
+        cursor.entryAfter,
+        stamp,
+        deadline,
+        report
+      );
+      state = done.state;
+      if (!done.finished) return state;
       state = await this.save({ ...state, fullAfter: cursor.decisionId });
       if (this.now() >= deadline) return state;
     }
@@ -580,9 +787,10 @@ export class WavesChainIndex {
       for (const decision of page.items) {
         const decisionId = idOf(decision, 'decisionId');
         if (!decisionId) continue;
-        const done = await this.fullDecision(
+        state = await this.fullDecisionHead(state, decision, stamp, report);
+        const done = await this.fullEntries(
           state,
-          decision,
+          decisionId,
           null,
           stamp,
           deadline,
@@ -600,64 +808,77 @@ export class WavesChainIndex {
     }
   }
 
-  /**
-   * One decision whole: the decision, its entries, results and leaderboard,
-   * then each entry's votes from `entryAfter`. Stops between entries at the
-   * deadline, saving `decisionId:entryId`.
-   */
-  private async fullDecision(
-    initial: WavesChainIndexState,
+  /** A decision, its results and its board; the cursor says so. */
+  private async fullDecisionHead(
+    state: WavesChainIndexState,
     decision: ChainObject,
+    stamp: RowStamp,
+    report: WavesChainIndexReport
+  ): Promise<WavesChainIndexState> {
+    const decisionId = idOf(decision, 'decisionId') as string;
+    await this.db.upsert('decisions', [decisionRow(decision)], stamp);
+    const results =
+      (await this.api.decisionResults(decisionId, stamp.height)) ?? [];
+    await this.db.upsert(
+      'results',
+      results.map((result) => resultRow(decisionId, result)),
+      stamp
+    );
+    await this.refreshLeaderboard(
+      decisionId,
+      decision.status === 'published',
+      stamp
+    );
+    report.full.items++;
+    return this.save({ ...state, fullAfter: `${decisionId}:` });
+  }
+
+  /**
+   * A decision's entries after `entryAfter`, a page at a time, and each
+   * entry's votes. Stops between groups of entries at the deadline, with
+   * the cursor at the last entry done.
+   */
+  private async fullEntries(
+    initial: WavesChainIndexState,
+    decisionId: string,
     entryAfter: string | null,
     stamp: RowStamp,
     deadline: number,
     report: WavesChainIndexReport
   ): Promise<{ state: WavesChainIndexState; finished: boolean }> {
     let state = initial;
-    const decisionId = idOf(decision, 'decisionId') as string;
-    const at = stamp.height;
-    await this.db.upsert('decisions', [decisionRow(decision)], stamp);
-    const entries = (await this.api.decisionEntries(decisionId, at)) ?? [];
-    await this.db.replaceChildren(
-      'entries',
-      'decision_id',
-      decisionId,
-      entries.map(entryRow),
-      stamp
-    );
-    const results = (await this.api.decisionResults(decisionId, at)) ?? [];
-    await this.db.replaceChildren(
-      'results',
-      'decision_id',
-      decisionId,
-      results.map((result) => resultRow(decisionId, result)),
-      stamp
-    );
-    await this.refreshLeaderboard(decisionId, stamp);
-    report.full.items++;
-    const entryIds = entries
-      .map((entry) => idOf(entry, 'entryId'))
-      .filter((id): id is string => !!id)
-      .sort();
-    for (const entryId of entryIds) {
-      if (entryAfter !== null && entryId <= entryAfter) continue;
-      const votes = (await this.api.entryVotes(entryId, at)) ?? [];
-      await this.db.replaceChildren(
-        'votes',
-        'entry_id',
-        entryId,
-        votes.map(voteRow),
-        stamp
+    let after = entryAfter;
+    for (;;) {
+      const page = await this.api.decisionEntries(
+        decisionId,
+        after,
+        stamp.height
       );
-      if (this.now() >= deadline) {
+      const entries = page.items.filter((entry) => idOf(entry, 'entryId'));
+      for (const chunk of chunks(entries, READ_CONCURRENCY)) {
+        await this.db.upsert('entries', chunk.map(entryRow), stamp);
+        await Promise.all(
+          chunk.map(async (entry) => {
+            const votes = await this.api.entryVotes(
+              idOf(entry, 'entryId') as string,
+              stamp.height
+            );
+            await this.db.upsert('votes', (votes ?? []).map(voteRow), stamp);
+          })
+        );
+        report.full.items += chunk.length;
+        const last = idOf(chunk[chunk.length - 1], 'entryId');
         state = await this.save({
           ...state,
-          fullAfter: `${decisionId}:${entryId}`
+          fullAfter: `${decisionId}:${last}`
         });
-        return { state, finished: entryId === entryIds[entryIds.length - 1] };
+        if (this.now() >= deadline) return { state, finished: false };
       }
+      if (!page.next || page.next === after) {
+        return { state, finished: true };
+      }
+      after = page.next;
     }
-    return { state, finished: true };
   }
 }
 

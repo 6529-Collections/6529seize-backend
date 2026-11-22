@@ -3,6 +3,7 @@ import {
   CHAIN_DECISIONS_TABLE,
   CHAIN_ENTRIES_TABLE,
   CHAIN_GROUPS_TABLE,
+  CHAIN_LEADERBOARD_ROWS_TABLE,
   CHAIN_POLLS_TABLE,
   CHAIN_RESULTS_TABLE,
   CHAIN_VOTES_TABLE,
@@ -47,6 +48,10 @@ export const INDEX_TABLES = {
   leaderboards: {
     name: CHAIN_DECISION_LEADERBOARDS_TABLE,
     keys: ['decision_id']
+  },
+  leaderboardRows: {
+    name: CHAIN_LEADERBOARD_ROWS_TABLE,
+    keys: ['decision_id', 'entry_id']
   }
 } as const satisfies Record<string, IndexTable>;
 
@@ -69,6 +74,10 @@ export interface WavesChainIndexState {
   readonly lastFullAt: number | null;
   /** The next height the change feed is read from. */
   readonly feedNext: number | null;
+  /** The highest height a run has read at; no run reads below it. */
+  readonly readHeight: number | null;
+  /** The chain's network id the rows come from. */
+  readonly network: string | null;
   readonly lastError: string | null;
 }
 
@@ -79,11 +88,59 @@ export const EMPTY_INDEX_STATE: WavesChainIndexState = {
   fullFromHeight: null,
   lastFullAt: null,
   feedNext: null,
+  readHeight: null,
+  network: null,
   lastError: null
 };
 
 const STATE_NAME = 'waves';
-const CHUNK = 200;
+/** Rows a statement writes at most. */
+const CHUNK_ROWS = 200;
+/**
+ * Bytes a statement carries at most, about: the RDS proxy pins a client
+ * session after one over 16,384 bytes (db/proxy-session-pinning.ts).
+ */
+const CHUNK_BYTES = 12_000;
+
+/** Groups rows into statements under CHUNK_ROWS and about CHUNK_BYTES. */
+export function statementChunks<T>(
+  rows: readonly T[],
+  bytesOf: (row: T) => number
+): T[][] {
+  const out: T[][] = [];
+  let chunk: T[] = [];
+  let bytes = 0;
+  for (const row of rows) {
+    const size = bytesOf(row);
+    if (
+      chunk.length &&
+      (chunk.length >= CHUNK_ROWS || bytes + size > CHUNK_BYTES)
+    ) {
+      out.push(chunk);
+      chunk = [];
+      bytes = 0;
+    }
+    chunk.push(row);
+    bytes += size;
+  }
+  if (chunk.length) out.push(chunk);
+  return out;
+}
+
+/** About the bytes a row takes in a statement. */
+function rowBytes(row: IndexRow): number {
+  let bytes = 0;
+  for (const value of Object.values(row)) {
+    bytes +=
+      8 +
+      (typeof value === 'string'
+        ? value.length
+        : value !== null && typeof value === 'object'
+          ? JSON.stringify(value).length
+          : 12);
+  }
+  return bytes;
+}
 const GUARD_COLUMNS = ['height', 'generation'];
 
 interface StateRow {
@@ -93,6 +150,8 @@ interface StateRow {
   readonly full_from_height: number | string | null;
   readonly last_full_at: number | string | null;
   readonly feed_next: number | string | null;
+  readonly read_height: number | string | null;
+  readonly network: string | null;
   readonly last_error: string | null;
 }
 
@@ -125,6 +184,8 @@ export class WavesChainIndexDb extends LazyDbAccessCompatibleService {
       fullFromHeight: nullableNumber(row.full_from_height),
       lastFullAt: nullableNumber(row.last_full_at),
       feedNext: nullableNumber(row.feed_next),
+      readHeight: nullableNumber(row.read_height),
+      network: row.network,
       lastError: row.last_error
     };
   }
@@ -133,13 +194,15 @@ export class WavesChainIndexDb extends LazyDbAccessCompatibleService {
     await this.db.execute(
       `insert into ${WAVES_CHAIN_INDEX_STATE_TABLE}
          (name, generation, full_phase, full_after, full_from_height,
-          last_full_at, feed_next, last_error, updated_at)
+          last_full_at, feed_next, read_height, network, last_error,
+          updated_at)
        values (:name, :generation, :fullPhase, :fullAfter, :fullFromHeight,
-          :lastFullAt, :feedNext, :lastError, :now)
+          :lastFullAt, :feedNext, :readHeight, :network, :lastError, :now)
        on duplicate key update
          generation = :generation, full_phase = :fullPhase,
          full_after = :fullAfter, full_from_height = :fullFromHeight,
          last_full_at = :lastFullAt, feed_next = :feedNext,
+         read_height = :readHeight, network = :network,
          last_error = :lastError, updated_at = :now`,
       {
         name: STATE_NAME,
@@ -149,6 +212,8 @@ export class WavesChainIndexDb extends LazyDbAccessCompatibleService {
         fullFromHeight: state.fullFromHeight,
         lastFullAt: state.lastFullAt,
         feedNext: state.feedNext,
+        readHeight: state.readHeight,
+        network: state.network,
         lastError: state.lastError?.slice(0, 2000) ?? null,
         now
       }
@@ -188,8 +253,7 @@ export class WavesChainIndexDb extends LazyDbAccessCompatibleService {
       `generation = greatest(${name}.generation, new.generation)`,
       `height = greatest(${name}.height, new.height)`
     ].join(', ');
-    for (let start = 0; start < complete.length; start += CHUNK) {
-      const chunk = complete.slice(start, start + CHUNK);
+    for (const chunk of statementChunks(complete, rowBytes)) {
       const params: Record<string, unknown> = {};
       const values = chunk.map((row, i) => {
         const placeholders = columns.map((column, j) => {
@@ -267,8 +331,7 @@ export class WavesChainIndexDb extends LazyDbAccessCompatibleService {
   ): Promise<void> {
     const sets = changes.filter((change) => change.value !== null);
     const deletes = changes.filter((change) => change.value === null);
-    for (let start = 0; start < sets.length; start += CHUNK) {
-      const chunk = sets.slice(start, start + CHUNK);
+    for (const chunk of statementChunks(sets, () => 240)) {
       const params: Record<string, unknown> = {
         height: stamp.height,
         generation: stamp.generation
@@ -324,37 +387,65 @@ export class WavesChainIndexDb extends LazyDbAccessCompatibleService {
     return removed;
   }
 
+  /** Removes every row (a relaunched chain). */
+  async clearAll(): Promise<void> {
+    for (const { name } of Object.values(INDEX_TABLES)) {
+      await this.db.execute(`delete from ${name}`);
+    }
+  }
+
+  /** The stored status of these decisions; absent ones are left out. */
+  async decisionStatuses(
+    ids: readonly string[]
+  ): Promise<Map<string, { status: string; counted: boolean }>> {
+    const found = new Map<string, { status: string; counted: boolean }>();
+    if (!ids.length) return found;
+    const rows = await this.db.execute<{
+      decision_id: string;
+      status: string;
+      counted: number | string | null;
+    }>(
+      `select decision_id, status,
+              json_unquote(json_extract(data, '$.counted')) = 'true' as counted
+         from ${CHAIN_DECISIONS_TABLE} where decision_id in (:ids)`,
+      { ids }
+    );
+    for (const row of rows) {
+      found.set(row.decision_id, {
+        status: row.status,
+        counted: Number(row.counted) === 1
+      });
+    }
+    return found;
+  }
+
   /**
-   * Objects whose answer moves with time, not only with a transaction: a
-   * live decision's `due`, `phase` and leaderboard scores, an open poll's
-   * status, a role grant past its expiry.
+   * Objects whose answer moves with block time alone, stalest first: a
+   * counted decision's `due` and its leaderboard's scores while it is live,
+   * a role grant past its expiry (its `live`).
    */
   async timeDependent(now: number): Promise<{
     decisionIds: string[];
-    pollIds: string[];
     roleWaveIds: string[];
   }> {
     const decisions = await this.db.execute<{ decision_id: string }>(
       `select decision_id from ${CHAIN_DECISIONS_TABLE}
-        where status = 'published' or due = 1
-           or json_unquote(json_extract(data, '$.phase')) = 'settling'
-        order by decision_id`
-    );
-    const polls = await this.db.execute<{ poll_id: string }>(
-      `select poll_id from ${CHAIN_POLLS_TABLE} where status = 'open'
-        order by poll_id`
+        where json_unquote(json_extract(data, '$.counted')) = 'true'
+          and (status = 'published' or due = 1
+               or json_unquote(json_extract(data, '$.phase')) = 'settling')
+        order by height, decision_id`
     );
     const roles = await this.db.execute<{ wave_id: string }>(
-      `select distinct wave_id from ${CHAIN_WAVE_ROLES_TABLE}
+      `select wave_id from ${CHAIN_WAVE_ROLES_TABLE}
         where live = 1
           and cast(coalesce(json_unquote(json_extract(data, '$.expiresAt')), '0')
                    as unsigned) between 1 and :now
-        order by wave_id`,
+        group by wave_id
+        order by min(height), wave_id`,
       { now }
     );
     return {
       decisionIds: decisions.map((row) => row.decision_id),
-      pollIds: polls.map((row) => row.poll_id),
       roleWaveIds: roles.map((row) => row.wave_id)
     };
   }

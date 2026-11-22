@@ -4,6 +4,7 @@ import {
   CHAIN_DECISIONS_TABLE,
   CHAIN_ENTRIES_TABLE,
   CHAIN_GROUPS_TABLE,
+  CHAIN_LEADERBOARD_ROWS_TABLE,
   CHAIN_POLLS_TABLE,
   CHAIN_RESULTS_TABLE,
   CHAIN_VOTES_TABLE,
@@ -21,6 +22,9 @@ import {
  * the same rows. `data` holds the API's whole object; the columns beside it
  * are what 6529.io's reads filter and sort by. `generation` is the full
  * read that last saw the row: a full read removes rows it didn't see.
+ * DECIMAL columns are there to sort and compare by; the driver reads them
+ * as JavaScript numbers, so read the exact value as `cast(col as char)` or
+ * from `data`.
  */
 
 @Entity(WAVES_CHAIN_INDEX_STATE_TABLE)
@@ -47,9 +51,17 @@ export class WavesChainIndexStateEntity {
   readonly last_full_at!: number | null;
 
   // The next height the change feed is read from; null before the first
-  // full read completes.
+  // full read starts.
   @Column({ type: 'bigint', nullable: true, default: null })
   readonly feed_next!: number | null;
+
+  // The highest height a run has read at: a run never reads below it.
+  @Column({ type: 'bigint', nullable: true, default: null })
+  readonly read_height!: number | null;
+
+  // The chain's network id; another one means a relaunched chain.
+  @Column({ type: 'varchar', length: 100, nullable: true, default: null })
+  readonly network!: string | null;
 
   @Column({ type: 'text', nullable: true, default: null })
   readonly last_error!: string | null;
@@ -203,8 +215,8 @@ export class ChainEntryEntity {
   @Column({ type: 'varchar', length: 16, nullable: false })
   readonly status!: string;
 
-  // A 128-bit amount, as the API's decimal text.
-  @Column({ type: 'varchar', length: 48, nullable: false })
+  // A 128-bit amount.
+  @Column({ type: 'decimal', precision: 40, scale: 0, nullable: false })
   readonly total!: string;
 
   @Column({ type: 'varchar', length: 16, nullable: false })
@@ -213,6 +225,7 @@ export class ChainEntryEntity {
   @Column({ type: 'bigint', nullable: false })
   readonly height!: number;
 
+  @Index()
   @Column({ type: 'int', nullable: false })
   readonly generation!: number;
 
@@ -233,8 +246,8 @@ export class ChainVoteEntity {
   @PrimaryColumn({ type: 'varchar', length: 66, nullable: false })
   readonly voter!: string;
 
-  // A 64-bit vote, as the API's decimal text.
-  @Column({ type: 'varchar', length: 24, nullable: false })
+  // A 64-bit vote.
+  @Column({ type: 'decimal', precision: 20, scale: 0, nullable: false })
   readonly value!: string;
 
   @Column({ type: 'bigint', nullable: false })
@@ -243,6 +256,7 @@ export class ChainVoteEntity {
   @Column({ type: 'bigint', nullable: false })
   readonly height!: number;
 
+  @Index()
   @Column({ type: 'int', nullable: false })
   readonly generation!: number;
 }
@@ -345,7 +359,46 @@ export class ChainDecisionLeaderboardEntity {
   @Column({ type: 'int', nullable: false })
   readonly generation!: number;
 
-  // The API's leaderboard: its rows ranked by the native count's rules.
+  // The API's leaderboard without its rows (in chain_leaderboard_rows).
+  // Kept for published decisions only; a board ranked by total keeps no
+  // scoredAt (it is only the read's block time).
+  @Column({ type: 'json', nullable: false })
+  readonly data!: unknown;
+}
+
+/** A leaderboard's rows: its ACTIVE entries ranked by the native count. */
+@Entity(CHAIN_LEADERBOARD_ROWS_TABLE)
+@Index(['decision_id', 'rank'])
+export class ChainLeaderboardRowEntity {
+  @PrimaryColumn({ type: 'varchar', length: 66, nullable: false })
+  readonly decision_id!: string;
+
+  @PrimaryColumn({ type: 'varchar', length: 66, nullable: false })
+  readonly entry_id!: string;
+
+  @Column({ type: 'int', nullable: false })
+  readonly rank!: number;
+
+  @Index()
+  @Column({ type: 'varchar', length: 36, nullable: true, default: null })
+  readonly legacy_id!: string | null;
+
+  @Column({ type: 'varchar', length: 66, nullable: true, default: null })
+  readonly author!: string | null;
+
+  // A time-weighted score (a 128-bit total times time) or the total.
+  @Column({ type: 'decimal', precision: 65, scale: 0, nullable: false })
+  readonly score!: string;
+
+  @Column({ type: 'decimal', precision: 40, scale: 0, nullable: false })
+  readonly total!: string;
+
+  @Column({ type: 'bigint', nullable: false })
+  readonly height!: number;
+
+  @Column({ type: 'int', nullable: false })
+  readonly generation!: number;
+
   @Column({ type: 'json', nullable: false })
   readonly data!: unknown;
 }

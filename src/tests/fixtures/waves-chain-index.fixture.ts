@@ -7,6 +7,7 @@ import {
   ChainObject,
   ChainPage,
   WavesChainApi,
+  WavesChainHead,
   WavesImportState
 } from '@/waves-chain-index/waves-chain-index.api';
 import {
@@ -21,9 +22,10 @@ import { VoteChange } from '@/waves-chain-index/waves-chain-index.feed';
 import { hasKeys, IndexRow } from '@/waves-chain-index/waves-chain-index.rows';
 
 /**
- * An in-memory chain and index for the index's tests. The chain answers
- * from its current state (tests move the height with each change), and
- * writes a feed record for every change.
+ * An in-memory chain and index for the index's tests. The chain keeps its
+ * state at every height and answers a read at the height it is pinned to,
+ * with the time of that height's block; every change is a new block with
+ * the feed records the chain would write.
  */
 
 export const id = (n: number | string) =>
@@ -34,36 +36,75 @@ export class FakeClock {
   now = () => this.t;
 }
 
-type Record_ = {
+type FeedRecord = {
   family: string;
   keyFields: Record<string, unknown>;
+  /** null: the record was deleted. */
   valueFields?: Record<string, unknown> | null;
+  /** A record the node could not decode: value set, fields null. */
+  undecodable?: boolean;
 };
+
+interface ChainState {
+  groups: Map<string, ChainObject>;
+  waves: Map<string, ChainObject>;
+  /** waveId -> grants (expiresAt 0: no expiry) */
+  roles: Map<string, ChainObject[]>;
+  rep: Map<string, ChainObject[]>;
+  polls: Map<string, ChainObject>;
+  decisions: Map<string, ChainObject>;
+  entries: Map<string, ChainObject>;
+  /** decision or poll id -> results */
+  results: Map<string, ChainObject[]>;
+  /** entryId -> voter -> vote */
+  votes: Map<string, Map<string, ChainObject>>;
+}
+
+function emptyState(): ChainState {
+  return {
+    groups: new Map(),
+    waves: new Map(),
+    roles: new Map(),
+    rep: new Map(),
+    polls: new Map(),
+    decisions: new Map(),
+    entries: new Map(),
+    results: new Map(),
+    votes: new Map()
+  };
+}
+
+function byId(field: string) {
+  return (a: ChainObject, b: ChainObject) =>
+    String(a[field]).localeCompare(String(b[field]));
+}
 
 export class FakeChain implements WavesChainApi {
   height = 100;
   completed = true;
+  network: string | null = 'net-1';
   /** Feed heights below this answer `gone`. */
   goneBelow = 0;
+  /** `gone` answers left before the feed answers again (a flaky node). */
+  goneTimes = 0;
   /** The finalized height trails the feed's by this much (a newer node). */
   lag = 0;
-  /** Each call moves the clock by this much. */
+  /** Each call moves the wall clock by this much. */
   callMs = 0;
   calls = 0;
   failOn: string | null = null;
+  /** Page size of the lists. */
+  pageSize = 2;
   readonly blocks: ChainFeedBlock[] = [];
-  readonly groups = new Map<string, ChainObject>();
-  readonly waves = new Map<string, ChainObject>();
-  readonly roles = new Map<string, ChainObject[]>();
-  readonly rep = new Map<string, ChainObject[]>();
-  readonly polls = new Map<string, ChainObject>();
-  readonly decisions = new Map<string, ChainObject>();
-  readonly entries = new Map<string, ChainObject>();
-  readonly results = new Map<string, ChainObject[]>();
-  /** entryId -> voter -> vote */
-  readonly votes = new Map<string, Map<string, ChainObject>>();
+  /** The state as of now; `commit` keeps a copy at the new height. */
+  readonly live: ChainState = emptyState();
+  private readonly snapshots = new Map<number, ChainState>();
+  private readonly times = new Map<number, number>();
 
-  constructor(private readonly clock: FakeClock) {}
+  constructor(private readonly clock: FakeClock) {
+    this.snapshots.set(this.height, structuredClone(this.live));
+    this.times.set(this.height, clock.t);
+  }
 
   private call(name: string) {
     this.calls++;
@@ -71,11 +112,31 @@ export class FakeChain implements WavesChainApi {
     if (this.failOn === name) throw new Error(`${name} failed`);
   }
 
+  private stateAt(at: number): ChainState {
+    if (at > this.height) throw new Error(`no height ${at} yet`);
+    for (let h = at; h >= 0; h--) {
+      const state = this.snapshots.get(h);
+      if (state) return state;
+    }
+    return emptyState();
+  }
+
+  private timeAt(at: number): number {
+    for (let h = at; h >= 0; h--) {
+      const time = this.times.get(h);
+      if (time !== undefined) return time;
+    }
+    return 0;
+  }
+
   // ------------------------------------------------------------ changes
 
-  /** A new block holding these records. */
-  commit(records: Record_[]) {
+  /** A new block, a second later than the last, holding these records. */
+  commit(records: FeedRecord[]) {
+    this.clock.t += 1000;
     this.height++;
+    this.snapshots.set(this.height, structuredClone(this.live));
+    this.times.set(this.height, this.clock.t);
     this.blocks.push({
       height: this.height,
       slot: this.height,
@@ -85,25 +146,35 @@ export class FakeChain implements WavesChainApi {
         family: r.family,
         name: 'r',
         key: '0x',
-        value: r.valueFields === null ? null : '0x',
+        value: r.valueFields === null ? null : '0x01',
         keyFields: r.keyFields,
-        valueFields: r.valueFields === undefined ? {} : r.valueFields
+        valueFields: r.undecodable
+          ? null
+          : r.valueFields === undefined
+            ? {}
+            : r.valueFields
       }))
     });
   }
 
-  putGroup(groupId: string, fields: ChainObject = {}, record = true) {
-    this.groups.set(groupId, {
+  /** Time passes: empty blocks up to `ms` later. */
+  tick(ms: number) {
+    this.clock.t += ms - 1000;
+    this.commit([]);
+  }
+
+  putGroup(groupId: string, fields: ChainObject = {}) {
+    this.live.groups.set(groupId, {
       groupId,
       version: 1,
       origin: 'legacy',
       ...fields
     });
-    if (record) this.commit([{ family: '0x0401', keyFields: { groupId } }]);
+    this.commit([{ family: '0x0401', keyFields: { groupId } }]);
   }
 
-  putWave(waveId: string, fields: ChainObject = {}, record = true) {
-    this.waves.set(waveId, {
+  putWave(waveId: string, fields: ChainObject = {}) {
+    this.live.waves.set(waveId, {
       waveId,
       legacyId: null,
       status: 'open',
@@ -111,24 +182,25 @@ export class FakeChain implements WavesChainApi {
       readGroup: { groupId: id(0), version: 0 },
       postGroup: { groupId: id(0), version: 0 },
       adminGroup: { groupId: id(0), version: 0 },
+      decisions: 0,
       origin: 'native',
       ...fields
     });
-    if (record) this.commit([{ family: '0x0501', keyFields: { waveId } }]);
+    this.commit([{ family: '0x0501', keyFields: { waveId } }]);
   }
 
   putRole(waveId: string, principalId: string, fields: ChainObject = {}) {
-    const list = (this.roles.get(waveId) ?? []).filter(
+    const list = (this.live.roles.get(waveId) ?? []).filter(
       (r) => r.principalId !== principalId
     );
     list.push({
       role: 'admin',
       principalId,
       version: 1,
-      live: true,
+      expiresAt: 0,
       ...fields
     });
-    this.roles.set(waveId, list);
+    this.live.roles.set(waveId, list);
     this.commit([
       {
         family: '0x0403',
@@ -138,7 +210,9 @@ export class FakeChain implements WavesChainApi {
   }
 
   rate(waveId: string, rater: string, value: number) {
-    const list = (this.rep.get(waveId) ?? []).filter((r) => r.rater !== rater);
+    const list = (this.live.rep.get(waveId) ?? []).filter(
+      (r) => r.rater !== rater
+    );
     if (value !== 0) {
       list.push({
         rater,
@@ -148,7 +222,7 @@ export class FakeChain implements WavesChainApi {
         updatedHeight: this.height + 1
       });
     }
-    this.rep.set(waveId, list);
+    this.live.rep.set(waveId, list);
     this.commit([
       {
         family: '0x0701',
@@ -164,24 +238,41 @@ export class FakeChain implements WavesChainApi {
   }
 
   putPoll(pollId: string, waveId: string, fields: ChainObject = {}) {
-    this.polls.set(pollId, {
+    this.live.polls.set(pollId, {
       pollId,
       waveId,
       status: 'open',
+      closeTime: 5,
       origin: 'native',
       ...fields
     });
-    this.commit([{ family: '0x060b', keyFields: { pollId } }]);
+    this.commit([
+      { family: '0x060b', keyFields: { pollId } },
+      { family: '0x0613', keyFields: { waveId } }
+    ]);
+  }
+
+  /** A poll closes: Poll, PollCount and its Result (under the poll id). */
+  closePoll(pollId: string) {
+    const poll = this.live.polls.get(pollId) as ChainObject;
+    this.live.polls.set(pollId, { ...poll, status: 'closed' });
+    this.live.results.set(pollId, [
+      { id: pollId, resultTime: poll.closeTime, status: 'decided' }
+    ]);
+    this.commit([
+      { family: '0x060b', keyFields: { pollId } },
+      { family: '0x0613', keyFields: { waveId: poll.waveId } },
+      { family: '0x060a', keyFields: { id: pollId, D: poll.closeTime } }
+    ]);
   }
 
   putDecision(decisionId: string, waveId: string, fields: ChainObject = {}) {
-    this.decisions.set(decisionId, {
+    this.live.decisions.set(decisionId, {
       decisionId,
       waveId,
       status: 'published',
       kind: 'rank',
       counted: false,
-      due: false,
       phase: 'open',
       nextResultTime: 0,
       origin: 'native',
@@ -191,23 +282,25 @@ export class FakeChain implements WavesChainApi {
   }
 
   putEntry(entryId: string, decisionId: string, fields: ChainObject = {}) {
-    this.entries.set(entryId, {
+    this.live.entries.set(entryId, {
       entryId,
       decisionId,
       author: id('a1'),
       status: 'active',
       total: '0',
+      tLast: 0,
       origin: 'native',
-      ...(this.entries.get(entryId) ?? {}),
+      ...(this.live.entries.get(entryId) ?? {}),
       ...fields
     });
     this.commit([{ family: '0x0603', keyFields: { entryId } }]);
   }
 
-  vote(entryId: string, voter: string, value: number) {
-    const entry = this.entries.get(entryId) as ChainObject;
+  vote(entryId: string, voter: string, value: number, undecodable = false) {
+    const entry = this.live.entries.get(entryId) as ChainObject;
     const decisionId = entry.decisionId as string;
-    const votes = this.votes.get(entryId) ?? new Map<string, ChainObject>();
+    const votes =
+      this.live.votes.get(entryId) ?? new Map<string, ChainObject>();
     const updatedHeight = this.height + 1;
     if (value === 0) votes.delete(voter);
     else {
@@ -220,25 +313,32 @@ export class FakeChain implements WavesChainApi {
         index: 0
       });
     }
-    this.votes.set(entryId, votes);
+    this.live.votes.set(entryId, votes);
     const total = Array.from(votes.values()).reduce(
       (sum, v) => sum + Number(v.value),
       0
     );
-    this.entries.set(entryId, { ...entry, total: String(total) });
+    this.live.entries.set(entryId, {
+      ...entry,
+      total: String(total),
+      tLast: this.clock.t + 1000
+    });
     this.commit([
       {
         family: '0x0607',
         keyFields: { voter, decisionId, entryId },
         valueFields:
-          value === 0 ? null : { value: String(value), updatedHeight, index: 0 }
+          value === 0
+            ? null
+            : { value: String(value), updatedHeight, index: 0 },
+        undecodable
       },
       { family: '0x0603', keyFields: { entryId } }
     ]);
   }
 
   putResult(decisionId: string, resultTime: number, fields: ChainObject = {}) {
-    const list = (this.results.get(decisionId) ?? []).filter(
+    const list = (this.live.results.get(decisionId) ?? []).filter(
       (r) => r.resultTime !== resultTime
     );
     list.push({
@@ -250,158 +350,255 @@ export class FakeChain implements WavesChainApi {
       ...fields
     });
     list.sort((a, b) => Number(a.resultTime) - Number(b.resultTime));
-    this.results.set(decisionId, list);
+    this.live.results.set(decisionId, list);
     this.commit([
       { family: '0x060a', keyFields: { id: decisionId, D: resultTime } }
     ]);
   }
 
-  // ------------------------------------------------------------ reads
+  // ------------------------------------------------------------ answers
 
-  async finalizedHeight() {
-    this.call('finalizedHeight');
-    return this.height - this.lag;
+  private waveAnswer(state: ChainState, wave: ChainObject): ChainObject {
+    const openPolls = Array.from(state.polls.values()).filter(
+      (p) => p.waveId === wave.waveId && p.status === 'open'
+    ).length;
+    return { ...wave, openPolls };
   }
 
-  async importState(): Promise<WavesImportState | null> {
+  private decisionAnswer(decision: ChainObject, time: number): ChainObject {
+    const next = Number(decision.nextResultTime);
+    const due =
+      decision.counted === true &&
+      decision.status === 'published' &&
+      next > 0 &&
+      time >= next;
+    return { ...decision, due };
+  }
+
+  private scoreOf(decision: ChainObject, entry: ChainObject, time: number) {
+    if (decision.counted !== true) return String(entry.total);
+    const at =
+      decision.status === 'published'
+        ? Math.min(time, Number(decision.nextResultTime) || time)
+        : time;
+    const held = Math.max(0, at - Number(entry.tLast));
+    return String(Number(entry.total) * Math.floor(held / 1000));
+  }
+
+  private roleAnswer(grant: ChainObject, time: number): ChainObject {
+    const expiresAt = Number(grant.expiresAt);
+    return { ...grant, live: expiresAt === 0 || time < expiresAt };
+  }
+
+  private list(
+    items: ChainObject[],
+    field: string,
+    after: string | null
+  ): ChainPage<ChainObject> {
+    const sorted = items
+      .filter((item) => after === null || String(item[field]) > after)
+      .sort(byId(field));
+    const page = sorted.slice(0, this.pageSize);
+    return {
+      items: page,
+      next:
+        sorted.length > this.pageSize
+          ? String(page[page.length - 1][field])
+          : null
+    };
+  }
+
+  // ------------------------------------------------------------ reads
+
+  async head(): Promise<WavesChainHead> {
+    this.call('head');
+    const finalized = this.height - this.lag;
+    return {
+      finalizedHeight: finalized,
+      finalizedTime: this.timeAt(finalized),
+      network: this.network
+    };
+  }
+
+  async importState(_at: number): Promise<WavesImportState | null> {
     this.call('importState');
     return { completed: this.completed };
   }
 
-  private list(
-    map: Map<string, ChainObject>,
-    after: string | null,
-    size = 2
-  ): ChainPage<ChainObject> {
-    const ids = Array.from(map.keys())
-      .sort()
-      .filter((key) => after === null || key > after);
-    const items = ids.slice(0, size).map((key) => map.get(key)!);
+  async listGroups(after: string | null, at: number) {
+    this.call('listGroups');
+    return this.list(
+      Array.from(this.stateAt(at).groups.values()),
+      'groupId',
+      after
+    );
+  }
+
+  async listWaves(after: string | null, at: number) {
+    this.call('listWaves');
+    const state = this.stateAt(at);
+    const page = this.list(Array.from(state.waves.values()), 'waveId', after);
     return {
-      items,
-      next: ids.length > size ? ids[size - 1] : null
+      ...page,
+      items: page.items.map((w) => this.waveAnswer(state, w))
     };
   }
 
-  async listGroups(after: string | null) {
-    this.call('listGroups');
-    return this.list(this.groups, after);
-  }
-
-  async listWaves(after: string | null) {
-    this.call('listWaves');
-    return this.list(this.waves, after);
-  }
-
-  async listDecisions(after: string | null) {
+  async listDecisions(after: string | null, at: number) {
     this.call('listDecisions');
-    const page = this.list(this.decisions, after);
-    return { ...page, items: page.items.map((d) => this.decisionAnswer(d)) };
+    const page = this.list(
+      Array.from(this.stateAt(at).decisions.values()),
+      'decisionId',
+      after
+    );
+    const time = this.timeAt(at);
+    return {
+      ...page,
+      items: page.items.map((d) => this.decisionAnswer(d, time))
+    };
   }
 
-  /** A live counted decision's answer moves with its block time. */
-  private decisionAnswer(decision: ChainObject): ChainObject {
-    return decision.counted && decision.status === 'published'
-      ? { ...decision, readAt: this.clock.t }
-      : decision;
-  }
-
-  async group(groupId: string) {
+  async group(groupId: string, at: number) {
     this.call('group');
-    return this.groups.get(groupId) ?? null;
+    return this.stateAt(at).groups.get(groupId) ?? null;
   }
 
-  async wave(waveId: string) {
+  async wave(waveId: string, at: number) {
     this.call('wave');
-    return this.waves.get(waveId) ?? null;
+    const state = this.stateAt(at);
+    const wave = state.waves.get(waveId);
+    return wave ? this.waveAnswer(state, wave) : null;
   }
 
-  async decision(decisionId: string) {
+  async decision(decisionId: string, at: number) {
     this.call('decision');
-    const decision = this.decisions.get(decisionId);
-    return decision ? this.decisionAnswer(decision) : null;
+    const decision = this.stateAt(at).decisions.get(decisionId);
+    return decision ? this.decisionAnswer(decision, this.timeAt(at)) : null;
   }
 
-  async entry(entryId: string) {
+  /** The single-entry route adds the live score; the lists don't. */
+  async entry(entryId: string, at: number) {
     this.call('entry');
-    return this.entries.get(entryId) ?? null;
+    const state = this.stateAt(at);
+    const entry = state.entries.get(entryId);
+    if (!entry) return null;
+    const decision = state.decisions.get(entry.decisionId as string)!;
+    return {
+      ...entry,
+      score:
+        entry.status === 'active'
+          ? this.scoreOf(decision, entry, this.timeAt(at))
+          : null
+    };
   }
 
-  async poll(pollId: string) {
+  async poll(pollId: string, at: number) {
     this.call('poll');
-    return this.polls.get(pollId) ?? null;
+    const state = this.stateAt(at);
+    const poll = state.polls.get(pollId);
+    if (!poll) return null;
+    return { ...poll, result: state.results.get(pollId)?.[0] ?? null };
   }
 
-  async result(decisionId: string, resultTime: number) {
+  /** The node doesn't check the id is a decision's: a poll's result too. */
+  async result(id_: string, resultTime: number, at: number) {
     this.call('result');
     return (
-      (this.results.get(decisionId) ?? []).find(
+      (this.stateAt(at).results.get(id_) ?? []).find(
         (r) => r.resultTime === resultTime
       ) ?? null
     );
   }
 
-  async decisionLeaderboard(decisionId: string) {
+  async decisionLeaderboard(decisionId: string, at: number) {
     this.call('decisionLeaderboard');
-    const decision = this.decisions.get(decisionId);
+    const state = this.stateAt(at);
+    const decision = state.decisions.get(decisionId);
     if (!decision) return null;
-    const rows = Array.from(this.entries.values())
+    const time = this.timeAt(at);
+    const counted = decision.counted === true;
+    const rows = Array.from(state.entries.values())
       .filter((e) => e.decisionId === decisionId && e.status === 'active')
+      .map((e) => ({
+        entryId: e.entryId,
+        total: e.total,
+        score: this.scoreOf(decision, e, time)
+      }))
       .sort(
         (a, b) =>
-          Number(b.total) - Number(a.total) ||
+          Number(b.score) - Number(a.score) ||
           String(a.entryId).localeCompare(String(b.entryId))
       )
-      .map((e, i) => ({ rank: i + 1, entryId: e.entryId, total: e.total }));
+      .map((r, i) => ({ rank: i + 1, ...r }));
     return {
       decisionId,
-      scoredAt: decision.counted ? this.clock.t : 0,
+      scoredAt:
+        counted && decision.status === 'published'
+          ? Math.min(time, Number(decision.nextResultTime) || time)
+          : time,
+      by: counted ? 'time_weighted_score' : 'total',
       count: rows.length,
       rows
     };
   }
 
-  async waveRoles(waveId: string) {
+  async waveRoles(waveId: string, at: number) {
     this.call('waveRoles');
-    return this.waves.has(waveId) ? [...(this.roles.get(waveId) ?? [])] : null;
+    const state = this.stateAt(at);
+    if (!state.waves.has(waveId)) return null;
+    const time = this.timeAt(at);
+    return (state.roles.get(waveId) ?? []).map((g) => this.roleAnswer(g, time));
   }
 
-  async wavePolls(waveId: string) {
+  async wavePolls(waveId: string, at: number) {
     this.call('wavePolls');
-    if (!this.waves.has(waveId)) return null;
-    return Array.from(this.polls.values()).filter((p) => p.waveId === waveId);
+    const state = this.stateAt(at);
+    if (!state.waves.has(waveId)) return null;
+    return Array.from(state.polls.values())
+      .filter((p) => p.waveId === waveId)
+      .map((p) => ({
+        ...p,
+        result: state.results.get(String(p.pollId))?.[0] ?? null
+      }));
   }
 
-  async waveRep(waveId: string) {
+  async waveRep(waveId: string, at: number) {
     this.call('waveRep');
-    return this.waves.has(waveId) ? [...(this.rep.get(waveId) ?? [])] : null;
+    const state = this.stateAt(at);
+    return state.waves.has(waveId) ? [...(state.rep.get(waveId) ?? [])] : null;
   }
 
-  async decisionEntries(decisionId: string) {
+  async decisionEntries(decisionId: string, after: string | null, at: number) {
     this.call('decisionEntries');
-    if (!this.decisions.has(decisionId)) return null;
-    return Array.from(this.entries.values())
-      .filter((e) => e.decisionId === decisionId)
-      .sort((a, b) => String(a.entryId).localeCompare(String(b.entryId)));
+    return this.list(
+      Array.from(this.stateAt(at).entries.values()).filter(
+        (e) => e.decisionId === decisionId
+      ),
+      'entryId',
+      after
+    );
   }
 
-  async decisionResults(decisionId: string) {
+  async decisionResults(decisionId: string, at: number) {
     this.call('decisionResults');
-    if (!this.decisions.has(decisionId)) return null;
-    return [...(this.results.get(decisionId) ?? [])];
+    const state = this.stateAt(at);
+    if (!state.decisions.has(decisionId)) return null;
+    return [...(state.results.get(decisionId) ?? [])];
   }
 
-  async entryVotes(entryId: string) {
+  async entryVotes(entryId: string, at: number) {
     this.call('entryVotes');
-    if (!this.entries.has(entryId)) return null;
-    return Array.from(this.votes.get(entryId)?.values() ?? []).sort((a, b) =>
-      String(a.voter).localeCompare(String(b.voter))
+    const state = this.stateAt(at);
+    if (!state.entries.has(entryId)) return null;
+    return Array.from(state.votes.get(entryId)?.values() ?? []).sort(
+      byId('voter')
     );
   }
 
   async feed(from: number): Promise<ChainFeedPage> {
     this.call('feed');
-    if (from < this.goneBelow) {
+    if (from < this.goneBelow || this.goneTimes > 0) {
+      if (this.goneTimes > 0) this.goneTimes--;
       throw new ChainGatewayError('/v1/feed: gone', 410, 'gone', '/v1/feed');
     }
     const through = this.height;
@@ -413,7 +610,7 @@ export class FakeChain implements WavesChainApi {
   }
 }
 
-/** The index tables in memory, with the database's rules. */
+/** The index tables in memory, with the SQL's rules. */
 export class FakeIndexDb {
   state: WavesChainIndexState = EMPTY_INDEX_STATE;
   readonly tables = new Map<IndexTableName, Map<string, IndexRow>>();
@@ -449,23 +646,17 @@ export class FakeIndexDb {
       if (!hasKeys(row, INDEX_TABLES[name].keys)) continue;
       const key = this.key(name, row);
       const stored = table.get(key);
-      const fresh = {
-        ...JSON.parse(JSON.stringify(row)),
-        height: stamp.height,
-        generation: stamp.generation
-      };
+      const generation = Math.max(
+        Number(stored?.generation ?? 0),
+        stamp.generation
+      );
       if (stored && Number(stored.height) > stamp.height) {
-        table.set(key, {
-          ...stored,
-          generation: Math.max(Number(stored.generation), stamp.generation)
-        });
+        table.set(key, { ...stored, generation });
       } else {
         table.set(key, {
-          ...fresh,
-          generation: Math.max(
-            Number(stored?.generation ?? 0),
-            stamp.generation
-          )
+          ...JSON.parse(JSON.stringify(row)),
+          height: stamp.height,
+          generation
         });
       }
     }
@@ -489,6 +680,7 @@ export class FakeIndexDb {
     await this.upsert(name, rows, stamp);
   }
 
+  /** As the SQL: a stale vote keeps its value, its stamps still rise. */
   async applyVotes(changes: readonly VoteChange[], stamp: RowStamp) {
     const table = this.table('votes');
     for (const change of changes) {
@@ -505,13 +697,15 @@ export class FakeIndexDb {
         }
         continue;
       }
-      if (stored && Number(stored.updated_height) > change.updatedHeight) {
-        continue;
-      }
+      const newer =
+        !stored || change.updatedHeight >= Number(stored.updated_height);
       table.set(key, {
         ...row,
-        value: change.value,
-        updated_height: change.updatedHeight,
+        value: newer ? change.value : stored?.value,
+        updated_height: Math.max(
+          Number(stored?.updated_height ?? 0),
+          change.updatedHeight
+        ),
         height: Math.max(Number(stored?.height ?? 0), stamp.height),
         generation: Math.max(Number(stored?.generation ?? 0), stamp.generation)
       });
@@ -533,34 +727,59 @@ export class FakeIndexDb {
     return removed;
   }
 
-  async timeDependent(now: number) {
-    const decisionIds = Array.from(this.table('decisions').values())
-      .filter(
-        (d) =>
-          d.status === 'published' ||
-          d.due === true ||
-          (d.data as ChainObject)?.phase === 'settling'
-      )
-      .map((d) => String(d.decision_id))
-      .sort();
-    const pollIds = Array.from(this.table('polls').values())
-      .filter((p) => p.status === 'open')
-      .map((p) => String(p.poll_id))
-      .sort();
-    const roleWaveIds = Array.from(
-      new Set(
-        Array.from(this.table('roles').values())
-          .filter((r) => {
-            const expiresAt = Number((r.data as ChainObject)?.expiresAt ?? 0);
-            return r.live === true && expiresAt >= 1 && expiresAt <= now;
-          })
-          .map((r) => String(r.wave_id))
-      )
-    ).sort();
-    return { decisionIds, pollIds, roleWaveIds };
+  async clearAll() {
+    this.tables.clear();
   }
 
-  /** A table's rows without the read stamp, in key order. */
+  async decisionStatuses(ids: readonly string[]) {
+    const found = new Map<string, { status: string; counted: boolean }>();
+    for (const decisionId of ids) {
+      const row = this.table('decisions').get(decisionId);
+      if (row) {
+        found.set(decisionId, {
+          status: String(row.status),
+          counted: (row.data as ChainObject)?.counted === true
+        });
+      }
+    }
+    return found;
+  }
+
+  async timeDependent(now: number) {
+    const decisionIds = Array.from(this.table('decisions').values())
+      .filter((d) => {
+        const data = d.data as ChainObject;
+        return (
+          data?.counted === true &&
+          (d.status === 'published' ||
+            d.due === true ||
+            data?.phase === 'settling')
+        );
+      })
+      .sort(
+        (a, b) =>
+          Number(a.height) - Number(b.height) ||
+          String(a.decision_id).localeCompare(String(b.decision_id))
+      )
+      .map((d) => String(d.decision_id));
+    const roleWaves = new Map<string, number>();
+    for (const r of Array.from(this.table('roles').values())) {
+      const expiresAt = Number((r.data as ChainObject)?.expiresAt ?? 0);
+      if (r.live === true && expiresAt >= 1 && expiresAt <= now) {
+        const wave = String(r.wave_id);
+        roleWaves.set(
+          wave,
+          Math.min(roleWaves.get(wave) ?? Infinity, Number(r.height))
+        );
+      }
+    }
+    const roleWaveIds = Array.from(roleWaves.entries())
+      .sort(([a, ha], [b, hb]) => ha - hb || a.localeCompare(b))
+      .map(([wave]) => wave);
+    return { decisionIds, roleWaveIds };
+  }
+
+  /** A table's rows, without the read stamp unless asked, in key order. */
   rows(name: IndexTableName, withStamp = false): IndexRow[] {
     return Array.from(this.table(name).entries())
       .sort(([a], [b]) => a.localeCompare(b))

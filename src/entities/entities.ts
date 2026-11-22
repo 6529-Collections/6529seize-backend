@@ -237,6 +237,7 @@ export { WaveArchiveEntity, WaveEntity } from './IWave';
 export {
   ChainDecisionEntity,
   ChainDecisionLeaderboardEntity,
+  ChainLeaderboardRowEntity,
   ChainEntryEntity,
   ChainGroupEntity,
   ChainPollEntity,
