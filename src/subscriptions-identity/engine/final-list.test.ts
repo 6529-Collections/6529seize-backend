@@ -148,7 +148,11 @@ describe('buildFinalList', () => {
       automaticSubscription: true,
       updatedAtMs: T1
     };
-    const mode = { automatic: true, subscribeAllEditions: true, updatedAtMs: T1 };
+    const mode = {
+      automatic: true,
+      subscribeAllEditions: true,
+      updatedAtMs: T1
+    };
     const auto = build([subscriber({ key: W1, card, mode, eligibility: 3 })]);
     const manual = build([
       subscriber({
@@ -232,7 +236,10 @@ describe('buildFinalList', () => {
     const b = { subscribedAt: '2026-10-01T00:00:00.000Z', balance: 2 };
     expect(compareFinalListRows(a, b)).toBeGreaterThan(0);
     expect(
-      compareFinalListRows(a, { ...b, subscribedAt: '2026-10-02T00:00:00.000Z' })
+      compareFinalListRows(a, {
+        ...b,
+        subscribedAt: '2026-10-02T00:00:00.000Z'
+      })
     ).toBe(-1);
   });
 });

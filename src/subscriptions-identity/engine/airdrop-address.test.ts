@@ -50,26 +50,38 @@ describe('resolveAirdropTarget', () => {
   });
 
   it('uses the highest boosted TDH wallet of a group', () => {
-    const result = resolve(`${W1}-${W2}`, [], [
-      [W1, 10],
-      [W2, 20]
-    ]);
+    const result = resolve(
+      `${W1}-${W2}`,
+      [],
+      [
+        [W1, 10],
+        [W2, 20]
+      ]
+    );
     expect(result.airdropAddress).toBe(W2);
     expect(resolve(`${W1}-${W2}`, []).airdropAddress).toBeNull();
   });
 
   it('reports a TDH tie and takes the lowest address', () => {
-    const result = resolve(`${W1}-${W2}`, [], [
-      [W1, 10],
-      [W2, 10]
-    ]);
+    const result = resolve(
+      `${W1}-${W2}`,
+      [],
+      [
+        [W1, 10],
+        [W2, 10]
+      ]
+    );
     expect(result.airdropAddress).toBe(W1);
     expect(result.ties).toEqual(['TDH']);
   });
 
   it('prefers the most specific record per delegator', () => {
     const result = resolve(W1, [
-      delegation({ collection: DELEGATION_ALL_ADDRESS, toAddress: D2, block: 300 }),
+      delegation({
+        collection: DELEGATION_ALL_ADDRESS,
+        toAddress: D2,
+        block: 300
+      }),
       delegation({ useCase: USE_CASE_ALL, toAddress: D3, block: 200 }),
       delegation({ toAddress: D1, block: 100 })
     ]);
@@ -88,7 +100,12 @@ describe('resolveAirdropTarget', () => {
     const result = resolve(`${W1}-${W2}`, [
       delegation({ fromAddress: W1, toAddress: D1, block: 100 }),
       delegation({ fromAddress: W2, toAddress: D2, block: 200 }),
-      delegation({ fromAddress: W2, toAddress: D3, block: 900, useCase: USE_CASE_MINTING })
+      delegation({
+        fromAddress: W2,
+        toAddress: D3,
+        block: 900,
+        useCase: USE_CASE_MINTING
+      })
     ]);
     expect(result.airdropAddress).toBe(D2);
   });

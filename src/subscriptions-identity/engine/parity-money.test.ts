@@ -11,9 +11,9 @@ describe('parity money', () => {
   it('keeps the legacy floor at exact multiples that undercount', () => {
     const balance = roundSubscriptionBalance(27 * MEMES_MINT_PRICE);
     expect(affordableCardCount(balance)).toBe(26);
-    expect(affordableCardCount(roundSubscriptionBalance(2 * MEMES_MINT_PRICE))).toBe(
-      2
-    );
+    expect(
+      affordableCardCount(roundSubscriptionBalance(2 * MEMES_MINT_PRICE))
+    ).toBe(2);
   });
 
   it('never affords more than the balance pays for', () => {

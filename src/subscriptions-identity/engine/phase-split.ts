@@ -38,9 +38,9 @@ export function toPhasedRow(row: FinalListRow): PhasedFinalRow {
  * (text comparison of the ISO strings). Rows with equal subscribed_at keep
  * the caller's order, which stands in for the database's row order.
  */
-export function orderBySubscribedAt<T extends Pick<FinalListRow, 'subscribedAt'>>(
-  rows: readonly T[]
-): T[] {
+export function orderBySubscribedAt<
+  T extends Pick<FinalListRow, 'subscribedAt'>
+>(rows: readonly T[]): T[] {
   return rows
     .map((row, index) => ({ row, index }))
     .sort((a, b) => {
@@ -135,7 +135,10 @@ export function splitPhase(params: {
         });
       }
     } else {
-      allowlists.push({ wallet: toMintingAddress(wallet), amount: result.amount });
+      allowlists.push({
+        wallet: toMintingAddress(wallet),
+        amount: result.amount
+      });
     }
   }
 

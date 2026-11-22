@@ -4,6 +4,7 @@ import {
   resolveRequestedSubscriptionCount
 } from '@/subscriptionsDaily/subscription-final-count';
 import { affordableCardCount } from './parity-money';
+import { compareText } from './text-order';
 
 export interface SubscriptionModeState {
   readonly automatic: boolean;
@@ -97,13 +98,6 @@ export interface FinalListBuildParams {
   readonly mintPrice?: number;
 }
 
-function compareKeys(a: string, b: string): number {
-  if (a === b) {
-    return 0;
-  }
-  return a < b ? -1 : 1;
-}
-
 function withCardRow(
   subscriber: SubscriberBuildInput,
   buildAtMs: number
@@ -169,7 +163,7 @@ export function buildFinalList(params: FinalListBuildParams): FinalListBuild {
         { ...s, key: s.key.toLowerCase() }
       ])
     ).values()
-  ).sort((a, b) => compareKeys(a.key, b.key));
+  ).sort((a, b) => compareText(a.key, b.key));
 
   const autoPopulated: { key: string; subscribedCount: number }[] = [];
   const rows: FinalListRow[] = [];

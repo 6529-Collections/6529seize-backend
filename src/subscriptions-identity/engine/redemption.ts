@@ -204,7 +204,9 @@ function findRow(
     )
     .sort((a, b) => {
       const byPhase = comparePhase(a.row.phase, b.row.phase);
-      return byPhase === 0 ? a.row.phasePosition - b.row.phasePosition : byPhase;
+      return byPhase === 0
+        ? a.row.phasePosition - b.row.phasePosition
+        : byPhase;
     })[0];
 }
 
@@ -242,7 +244,11 @@ export function matchRedemptions(params: RedemptionParams): RedemptionResult {
   for (const transfer of toProcess) {
     const reason = skipReason(transfer, params, legacyDecimalConcat);
     if (reason) {
-      skipped.push({ transaction: transfer.transaction, to: transfer.to, reason });
+      skipped.push({
+        transaction: transfer.transaction,
+        to: transfer.to,
+        reason
+      });
       continue;
     }
     for (let i = 0; i < transfer.tokenCount; i++) {

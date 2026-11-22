@@ -32,9 +32,7 @@ function finalRow(
   };
 }
 
-function transfer(
-  overrides: Partial<AirdropTransfer> = {}
-): AirdropTransfer {
+function transfer(overrides: Partial<AirdropTransfer> = {}): AirdropTransfer {
   return {
     transaction: '0x' + '1'.repeat(64),
     block: 100,
@@ -69,10 +67,7 @@ describe('matchRedemptions', () => {
     const result = matchRedemptions({
       transfers: [transfer({ tokenCount: 2 })],
       afterBlock: 0,
-      finalRows: [
-        finalRow(K1, 1, 'Phase 1', 1),
-        finalRow(K2, 1, 'Phase 0', 2)
-      ],
+      finalRows: [finalRow(K1, 1, 'Phase 1', 1), finalRow(K2, 1, 'Phase 0', 2)],
       balances: new Map([
         [K1, 1],
         [K2, 1]
@@ -92,7 +87,11 @@ describe('matchRedemptions', () => {
     });
     expect(result.redeemed[0].count).toBe(2);
     expect(result.notices).toEqual([
-      { kind: 'NO_SUBSCRIPTION', airdropAddress: A1, transaction: transfer().transaction }
+      {
+        kind: 'NO_SUBSCRIPTION',
+        airdropAddress: A1,
+        transaction: transfer().transaction
+      }
     ]);
   });
 
@@ -152,7 +151,9 @@ describe('matchRedemptions', () => {
     expect(legacy.skipped).toEqual([]);
     expect(legacy.redeemed).toHaveLength(1);
     const fixed = matchRedemptions({ ...params, legacyDecimalConcat: false });
-    expect(fixed.skipped.map((s) => s.reason)).toEqual(['DISTRIBUTION_AIRDROP']);
+    expect(fixed.skipped.map((s) => s.reason)).toEqual([
+      'DISTRIBUTION_AIRDROP'
+    ]);
   });
 
   it('only processes transfers above the cursor', () => {

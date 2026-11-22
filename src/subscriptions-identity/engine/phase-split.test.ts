@@ -65,12 +65,12 @@ describe('phase split', () => {
     ]);
     expect(first.allowlists).toEqual([{ wallet: MINTER, amount: 2 }]);
     const phased = first.rows.filter((r) => r.phase === 'Phase 0');
-    expect(phased.map((r) => [r.key, r.phasePosition, r.phaseSubscriptions])).toEqual(
-      [
-        [`${W1}-${W2}`, 2, 2],
-        [W3, 1, 2]
-      ]
-    );
+    expect(
+      phased.map((r) => [r.key, r.phasePosition, r.phaseSubscriptions])
+    ).toEqual([
+      [`${W1}-${W2}`, 2, 2],
+      [W3, 1, 2]
+    ]);
 
     const second = splitPhase({
       rows: first.rows,
