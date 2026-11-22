@@ -33,7 +33,9 @@ export class AppFeatures {
 
   /**
    * Mint log, shadow: each write to the minting tables is also logged, while
-   * the tables stay the source of truth. Rollback: set it to false.
+   * the tables stay the source of truth. A logging failure is alerted and the
+   * write goes ahead. Turning it off and on again leaves a gap that needs a
+   * new genesis. Rollback: set it to false.
    */
   public isMintLogShadowEnabled(): boolean {
     return this.isFeatureEnabled('MINT_LOG_SHADOW');
@@ -42,8 +44,12 @@ export class AppFeatures {
   /**
    * Mint log, primary (the switch): admin writes need a signed `mint.admin`
    * record, collaboration invites and replies a `mint.user` record, and a
-   * write fails unless its log entry is queued. Rollback: set it to false;
-   * the shadow log keeps running if MINT_LOG_SHADOW is on.
+   * write fails unless its log entry is queued. Not usable yet: until the
+   * signed-records module binds the principal bindings (and the frontend its
+   * context source), it answers 503 to every admin minting write. The API
+   * logs the state at start ([MINT_LOG] ... [RECORD VERIFIER ...]).
+   * Rollback: set it to false; the shadow log keeps running if
+   * MINT_LOG_SHADOW is on.
    */
   public isMintLogPrimaryEnabled(): boolean {
     return this.isFeatureEnabled('MINT_LOG_PRIMARY');

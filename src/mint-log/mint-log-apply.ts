@@ -31,6 +31,15 @@ const BATCH = 200;
  * and the rebuild both use it, so a rebuild runs the code the check exercises
  * on every write.
  */
+/** The log and the tables disagree: an update found no row, or several. */
+export class MintApplyError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'MintApplyError';
+    Object.setPrototypeOf(this, MintApplyError.prototype);
+  }
+}
+
 export class MintStateWriter {
   constructor(
     private readonly db: () => SqlExecutor = dbSupplier,
@@ -169,12 +178,23 @@ export class MintStateWriter {
         params[`k_${column}`] = row[column] ?? null;
         return `${quoteIdentifier(column)} = :k_${column}`;
       });
-      await this.db().execute(
+      const result = await this.db().execute(
         `update ${quoteIdentifier(spec.table)} set ${sets.join(', ')}
          where ${spec.scope} and ${keys.join(' and ')}`,
         params,
         { wrappedConnection: connection }
       );
+      // The rows belong to another writer; one that is missing means the
+      // tables disagree with the log, and a rebuild must not go on quietly.
+      const matched = this.db().getAffectedRows(result);
+      if (matched !== 1) {
+        const where = spec.key
+          .map((column) => `${column} ${String(row[column])}`)
+          .join(', ');
+        throw new MintApplyError(
+          `${spec.table} row ${where} matched ${matched} rows, not 1`
+        );
+      }
     }
   }
 

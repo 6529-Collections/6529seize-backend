@@ -5,8 +5,9 @@ import { Column, Entity, PrimaryColumn } from 'typeorm';
  * The last entry of the mint log chains that keep one sequence for all their
  * cards (tokens and NextGen; rememes and published files): one row each.
  * Writes lock their chain's row, so they run one at a time and their entries
- * keep write order. Ephemeral: a rebuild sets each row from the chain's last
- * entry.
+ * keep write order. Not ephemeral: a lost row makes the next entry start
+ * again at 0 and a rebuild stops at that gap. A rebuild sets each row from
+ * the chain's last entry.
  */
 @Entity(MINT_LOG_HEAD_TABLE)
 export class MintLogHeadEntity {
@@ -27,7 +28,7 @@ export class MintLogHeadEntity {
 
 /**
  * The last entry of each collaboration's own sequence, keyed by drop id.
- * Ephemeral like the chain heads.
+ * Kept like the chain heads.
  */
 @Entity(MINT_LOG_CARD_HEADS_TABLE)
 export class MintLogCardHeadEntity {

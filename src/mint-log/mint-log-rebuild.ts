@@ -5,6 +5,7 @@ import {
   NFTS_TABLE,
   MEMELAB_CONTRACT,
   NULL_ADDRESS,
+  TRANSACTIONS_PROCESSED_DISTRIBUTION_BLOCKS_TABLE,
   TRANSACTIONS_TABLE
 } from '@/constants';
 import { Logger } from '@/logging';
@@ -78,7 +79,8 @@ function cardKey(card: MintCardRef): string {
  * Then the columns the log leaves out are derived again:
  * - minted counts: paid mints from Manifold or the null address to the wallet
  *   after the block where they last restarted (a normalize, or the genesis,
- *   whose pinned counts they add to), as the distribution loop counts them;
+ *   whose pinned counts they add to), up to the newest transaction, as the
+ *   distribution loop counts them; its cursor is set to that block;
  * - card name and mint date from the NFT index, where a normalize left them
  *   empty, as the NFT loop fills them.
  */
@@ -120,10 +122,14 @@ export class MintLogRebuilder {
       count++;
     }
     await this.db().executeNativeQueriesInTransaction(async (connection) => {
+      const counted = await this.lastTransaction(connection);
       for (const { card, base } of Array.from(bases.values())) {
-        await this.deriveMinted(card, base, connection);
+        await this.deriveMinted(card, base, counted?.block ?? 0, connection);
         await this.deriveCardInfo(card, connection);
       }
+      // The distribution loop counts mints after its cursor; without one it
+      // starts from block 0 and counts every mint again.
+      if (counted) await this.setCursor(counted, connection);
       for (const [key, head] of Array.from(heads.entries())) {
         await this.head.lock(connection, key);
         await this.head.advance(head, connection, key);
@@ -187,9 +193,46 @@ export class MintLogRebuilder {
     }
   }
 
+  /** The newest transaction: minted counts go up to its block. */
+  private async lastTransaction(
+    connection: ConnectionWrapper<any>
+  ): Promise<{ block: number; timestamp: number } | null> {
+    const [row] = await this.db().execute<{
+      block: number;
+      transaction_date: Date | string;
+    }>(
+      `select block, transaction_date from ${TRANSACTIONS_TABLE}
+       where block = (select max(block) from ${TRANSACTIONS_TABLE})
+       limit 1`,
+      undefined,
+      { wrappedConnection: connection }
+    );
+    if (!row) return null;
+    return {
+      block: Number(row.block),
+      timestamp: new Date(row.transaction_date).getTime()
+    };
+  }
+
+  /** As the distribution loop records it after counting up to a block. */
+  private async setCursor(
+    counted: { block: number; timestamp: number },
+    connection: ConnectionWrapper<any>
+  ): Promise<void> {
+    await this.db().execute(
+      `insert into ${TRANSACTIONS_PROCESSED_DISTRIBUTION_BLOCKS_TABLE}
+         (block, timestamp, created_at)
+       values (:block, :timestamp, now())
+       on duplicate key update timestamp = values(timestamp)`,
+      counted,
+      { wrappedConnection: connection }
+    );
+  }
+
   private async deriveMinted(
     card: MintCardRef,
     base: MintedBase,
+    upTo: number,
     connection: ConnectionWrapper<any>
   ): Promise<void> {
     const keep = base.pinned ? 'dn.minted' : '0';
@@ -200,7 +243,7 @@ export class MintLogRebuilder {
          from ${TRANSACTIONS_TABLE}
          where lower(contract) = :contract and token_id = :card_id
            and from_address in (:manifold, :null_address)
-           and value > 0 and block > :block
+           and value > 0 and block > :block and block <= :up_to
          group by lower(to_address)
        ) mints on mints.wallet = lower(dn.wallet)
        set dn.minted = ${keep} + coalesce(mints.minted, 0)
@@ -210,7 +253,8 @@ export class MintLogRebuilder {
         card_id: card.card_id,
         manifold: MANIFOLD,
         null_address: NULL_ADDRESS,
-        block: base.block
+        block: base.block,
+        up_to: upTo
       },
       { wrappedConnection: connection }
     );

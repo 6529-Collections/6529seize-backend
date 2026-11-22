@@ -130,7 +130,10 @@ async function emptyMintTables(): Promise<void> {
     MINTING_CLAIMS_TABLE,
     MINTING_CLAIM_ACTIONS_TABLE,
     MEME_CARD_DROP_MAPPINGS_TABLE,
-    MINT_LOG_HEAD_TABLE
+    MINT_LOG_HEAD_TABLE,
+    // The loop cursor too: the rebuild must set it, or the loop counts
+    // every mint again from block 0.
+    TRANSACTIONS_PROCESSED_DISTRIBUTION_BLOCKS_TABLE
   ]) {
     await sqlExecutor.execute(`delete from ${table}`);
   }
@@ -159,6 +162,12 @@ function memoryContent(): MintContentPort {
 async function capture() {
   return sqlExecutor.executeNativeQueriesInTransaction((connection) =>
     mintStateReader.capture(CARD, connection)
+  );
+}
+
+async function cursor() {
+  return sqlExecutor.executeNativeQueriesInTransaction((connection) =>
+    distributionCursorBlock(connection)
   );
 }
 
@@ -289,6 +298,13 @@ describeWithSeed(
         );
         await populateDistribution(CONTRACT, CARD_ID, 'Phase 1', split);
       });
+      // The daily loop re-keys a subscriber whose wallets consolidated, in
+      // place: the row keeps its id, which the phase entries are keyed by.
+      await sqlExecutor.execute(
+        `update ${SUBSCRIPTIONS_NFTS_FINAL_TABLE} set consolidation_key = :key
+         where consolidation_key = :old`,
+        { key: `${W(1)}-${W(9)}`, old: W(1) }
+      );
       await write('dist.normalize', () =>
         populateDistributionNormalized(CONTRACT, CARD_ID)
       );
@@ -363,6 +379,7 @@ describeWithSeed(
       const result = await new MintLogRebuilder(content).rebuild(entries);
       expect(result.entries).toBe(10);
       expect(differingParts(await capture(), live)).toEqual([]);
+      expect(await cursor()).toBe(140);
     });
 
     it('derives minted counts after the normalize, on top of genesis counts', async () => {
@@ -387,6 +404,7 @@ describeWithSeed(
 
       await emptyMintTables();
       await new MintLogRebuilder(content).rebuild(entries);
+      expect(await cursor()).toBe(140);
       // W1: 7 pinned + 2 minted at block 120; W4: 1 minted at block 121.
       expect(await normalizedCounts()).toEqual([
         { wallet: W(1), minted: 9, total_count: 12 },
@@ -409,6 +427,31 @@ describeWithSeed(
         { wallet: W(1), minted: 0, total_count: 3 },
         { wallet: W(4), minted: 1, total_count: 2 }
       ]);
+    });
+
+    it('stops a rebuild whose phase rows are not there', async () => {
+      const content = memoryContent();
+      await runMintGenesis({ content, log, chains: ['mint'] });
+      await write('dist.phase', async () => {
+        const split = await splitAllowlistResults(
+          CONTRACT,
+          CARD_ID,
+          'Phase 1',
+          [phaseResult(1, 2)]
+        );
+        await populateDistribution(CONTRACT, CARD_ID, 'Phase 1', split);
+      });
+      expect(entries[1].effects.subscription_phases?.upsert).toEqual([
+        expect.objectContaining({ id: expect.any(Number), phase: 'Phase 1' })
+      ]);
+      await emptyMintTables();
+      // The subscriptions rebuild has not made the rows yet.
+      await sqlExecutor.execute(
+        `delete from ${SUBSCRIPTIONS_NFTS_FINAL_TABLE}`
+      );
+      await expect(
+        new MintLogRebuilder(content).rebuild(entries)
+      ).rejects.toThrow('matched 0 rows, not 1');
     });
   }
 );

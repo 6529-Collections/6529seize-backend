@@ -62,22 +62,26 @@ export function parseChainClaimContext(value: unknown): ChainClaimContext {
 }
 
 /**
- * Checks the result on the gateway when one is bound: the result must be
- * final and its rank 1 must be this entry with this manifest. A failed check
- * throws, so the message goes back to the queue rather than building a claim
- * the chain did not pick. Without a gateway the entry says `unverified`.
+ * Checks the result on the gateway: the result must be final and its rank 1
+ * must be this entry with this manifest. A failed check throws, so the
+ * message goes back to the queue rather than building a claim the chain did
+ * not pick. So does a missing gateway: an unchecked result builds nothing.
  */
 export async function verifyChainClaim(
   chain: ChainClaimContext,
   gateway: MintGatewayPort | null,
   mainStage: readonly string[] = mainStageDecisionIds()
-): Promise<'verified' | 'unverified'> {
+): Promise<'verified'> {
   if (!mainStage.includes(chain.decision_id)) {
     throw new Error(
       `Decision ${chain.decision_id} is not in MAIN_STAGE_DECISION_IDS`
     );
   }
-  if (!gateway) return 'unverified';
+  if (!gateway) {
+    throw new Error(
+      `No gateway is bound to check decision ${chain.decision_id}; the claim waits`
+    );
+  }
   const result = await gateway.decisionResult(
     chain.decision_id,
     chain.occurrence

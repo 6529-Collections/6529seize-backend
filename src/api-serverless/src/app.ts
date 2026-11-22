@@ -99,6 +99,7 @@ import { TDHBlock } from '@/entities/ITDH';
 import { Upload } from '@/entities/IUpload';
 import { env, loadLocalConfig, loadSecrets } from '@/env';
 import { Logger } from '@/logging';
+import { describeMintLogReadiness } from '@/mint-log/mint-log-readiness';
 import { getRedisClient, initRedis } from '@/redis';
 import {
   processSentryAlertWebhook,
@@ -540,6 +541,9 @@ async function initializeApp() {
   // D172: the effective suite window. A malformed setting is reported
   // (ERROR log, EMF metric) and treated as not started; nothing else changes.
   logger.info(describeE2eeSuiteTransition());
+  // What the mint log can do as configured; PRIMARY without bound principal
+  // bindings answers 503 to every admin minting write.
+  logger.info(describeMintLogReadiness());
   await initRedis({ failFast: API_REDIS_FAIL_FAST_OPTIONS });
   // Plain-text sign-in challenges issued before this build stay valid for a
   // short transition that starts with the first instance of the build. Not

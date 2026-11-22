@@ -127,23 +127,23 @@ describe('mint log diff', () => {
   });
 
   it('follows only phase changes on subscription rows another module owns', () => {
-    const row = (key: string, phase: string | null): MintRow => ({
-      consolidation_key: key,
+    const row = (id: number, phase: string | null): MintRow => ({
+      id,
       phase,
       phase_subscriptions: phase ? 2 : -1,
       phase_position: phase ? 1 : -1
     });
     const before: MintCardState = {
       ...emptyCardState(),
-      subscription_phases: [row('0x1', null), row('0x2', null)]
+      subscription_phases: [row(1, null), row(2, null)]
     };
     const after: MintCardState = {
       ...emptyCardState(),
-      // 0x1 gets a phase, 0x2 is gone, 0x3 is new without a phase.
-      subscription_phases: [row('0x1', 'Phase 1'), row('0x3', null)]
+      // Row 1 gets a phase, row 2 is gone, row 3 is new without a phase.
+      subscription_phases: [row(1, 'Phase 1'), row(3, null)]
     };
     expect(diffCardState(before, after)).toEqual({
-      subscription_phases: { upsert: [row('0x1', 'Phase 1')], delete: [] }
+      subscription_phases: { upsert: [row(1, 'Phase 1')], delete: [] }
     });
   });
 

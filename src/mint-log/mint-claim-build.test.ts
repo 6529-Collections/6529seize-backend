@@ -55,9 +55,9 @@ describe('chain claim context', () => {
     );
   });
 
-  it('is unverified without a gateway', async () => {
-    await expect(verifyChainClaim(chain, null, listed)).resolves.toBe(
-      'unverified'
+  it('refuses to build without a gateway to check the result', async () => {
+    await expect(verifyChainClaim(chain, null, listed)).rejects.toThrow(
+      'No gateway is bound'
     );
   });
 

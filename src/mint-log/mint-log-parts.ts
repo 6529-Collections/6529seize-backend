@@ -165,14 +165,12 @@ export const MINT_ROW_PART_SPECS: Readonly<
     appliesTo: isToken,
     table: SUBSCRIPTIONS_NFTS_FINAL_TABLE,
     scope: 'contract = :contract and token_id = :card_id',
-    key: ['consolidation_key'],
+    // The row id, not the consolidation key: the daily loop re-keys rows
+    // in place when wallets consolidate, and keeps their ids. The
+    // subscriptions rebuild must keep the ids too.
+    key: ['id'],
     excluded: [],
-    only: [
-      'consolidation_key',
-      'phase',
-      'phase_subscriptions',
-      'phase_position'
-    ],
+    only: ['id', 'phase', 'phase_subscriptions', 'phase_position'],
     mode: 'update-only'
   },
   nextgen_allowlists: {
