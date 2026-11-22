@@ -40,11 +40,28 @@ export interface RecordChange {
 export type ApplyMode = 'live' | 'rebuild';
 
 /**
+ * Thrown by a handler's `apply` when today's rules refuse a live change (a
+ * follow of a profile you block, a missing target). The record's
+ * transaction rolls back and the outcome is `refused` with reason `rule`.
+ * Rebuilds never check these rules: the records were accepted when sent.
+ */
+export class RecordRuleError extends Error {
+  constructor(
+    message: string,
+    readonly code: string
+  ) {
+    super(message);
+    // Keeps instanceof working when compiled to ES5.
+    Object.setPrototypeOf(this, RecordRuleError.prototype);
+  }
+}
+
+/**
  * What a lane registers for each of its types. `validate` throws for a body
  * the type does not accept (the record is then refused, nothing applied);
- * `apply` writes the index and, live, today's side effects. An error from
- * `apply` is an infrastructure error and propagates. Rebuilds apply without
- * side effects.
+ * `apply` writes the index and, live, today's side effects. A
+ * RecordRuleError from `apply` refuses the record; any other error is an
+ * infrastructure error and propagates. Rebuilds apply without side effects.
  */
 export interface RecordTypeHandler {
   readonly family: 'ps' | 'pv';
@@ -227,8 +244,14 @@ export type IngestOutcome =
   // The record's content is bad: nothing of it was applied.
   | {
       readonly kind: 'refused';
-      readonly reason: 'sealed-format' | 'keys-format' | 'invalid-change';
+      readonly reason:
+        | 'sealed-format'
+        | 'keys-format'
+        | 'invalid-change'
+        | 'rule';
       readonly detail: string;
+      // The rule's code, for reason `rule`.
+      readonly code?: string;
     };
 
 type Refused = Extract<IngestOutcome, { kind: 'refused' }>;
@@ -245,7 +268,9 @@ const refused = (reason: Refused['reason'], error: unknown): Refused => ({
  * per record with the heads locked. Handles RECORD in `ps` and
  * PROVIDER-class SEALED items in `pv`; the rest is the lanes'. Bad record
  * content gives `refused`, so one bad record never stops a rebuild; only
- * infrastructure errors (the database, a handler's apply) throw.
+ * infrastructure errors (the database, a handler's apply) throw. When ctx
+ * already holds a transaction, a `rule` refusal leaves that transaction to
+ * the caller, who rolls it back.
  */
 export class RecordIndexer {
   constructor(
@@ -412,29 +437,52 @@ export class RecordIndexer {
     } catch (error) {
       return refused('invalid-change', error);
     }
-    // Lock heads in one order, so two records sharing keys cannot deadlock.
-    handled.sort((a, b) =>
-      headId(a.change) < headId(b.change)
-        ? -1
-        : Number(headId(a.change) > headId(b.change))
-    );
+    try {
+      return await this.applyLocked(handled, unknown, mode, ctx);
+    } catch (error) {
+      if (error instanceof RecordRuleError) {
+        return { ...refused('rule', error), code: error.code };
+      }
+      throw error;
+    }
+  }
+
+  private async applyLocked(
+    handled: readonly { change: RecordChange; handler: RecordTypeHandler }[],
+    unknown: number,
+    mode: ApplyMode,
+    ctx: RequestContext
+  ): Promise<IngestOutcome> {
+    const headKeyOf = (change: RecordChange): RecordHeadKey => ({
+      owner: change.owner,
+      family: change.family,
+      type: change.type,
+      key: change.key
+    });
     return this.deps.heads.inTransaction(ctx, async (txCtx) => {
+      // Lock every head first, in one order, so two records sharing keys
+      // cannot deadlock; then apply in the record's own item order (a
+      // rename's new name before the old name's unset, as the client wrote
+      // them), the same order a rebuild applies.
+      const byLockOrder = [...handled].sort((a, b) =>
+        headId(a.change) < headId(b.change)
+          ? -1
+          : Number(headId(a.change) > headId(b.change))
+      );
+      const isNewer = new Map<RecordChange, boolean>();
+      for (const { change } of byLockOrder) {
+        const head = await this.deps.heads.lock(headKeyOf(change), txCtx);
+        isNewer.set(change, !head || compareOrderKeys(change.order, head) > 0);
+      }
       let applied = 0;
       let stale = 0;
       for (const { change, handler } of handled) {
-        const headKey: RecordHeadKey = {
-          owner: change.owner,
-          family: change.family,
-          type: change.type,
-          key: change.key
-        };
-        const head = await this.deps.heads.lock(headKey, txCtx);
-        if (head && compareOrderKeys(change.order, head) <= 0) {
+        if (!isNewer.get(change)) {
           stale++;
           continue;
         }
         await handler.apply(change, mode, txCtx);
-        await this.deps.heads.put(headKey, change.order, txCtx);
+        await this.deps.heads.put(headKeyOf(change), change.order, txCtx);
         applied++;
       }
       return { kind: 'applied' as const, changes: applied, stale, unknown };
