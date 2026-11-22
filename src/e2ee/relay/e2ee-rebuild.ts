@@ -273,7 +273,8 @@ class RowStore {
 function applyRules(
   store: RowStore,
   now: number,
-  problems: E2eeRebuildProblem[]
+  problems: E2eeRebuildProblem[],
+  revokedElsewhere: ReadonlySet<string> = new Set()
 ) {
   const nowSeconds = Math.floor(now / 1000);
   const devices = store.table(E2EE_DEVICES_TABLE);
@@ -283,11 +284,12 @@ function applyRules(
       row.revoked_at === null ||
       Number(row.revoked_at) >= now - E2EE_RETENTION.revokedDevicesMs
   );
-  const revoked = new Set(
-    Array.from(devices.values())
+  const revoked = new Set([
+    ...Array.from(revokedElsewhere),
+    ...Array.from(devices.values())
       .filter((row) => row.revoked_at !== null)
       .map((row) => String(row.device_key))
-  );
+  ]);
   store.filter(E2EE_LOG_TABLE, (row) => {
     const limit =
       row.item_type === 'message'
@@ -360,23 +362,18 @@ function applyRules(
   }));
 }
 
-/**
- * Rebuilds the delivery service's tables from the orderer's records on the
- * relays: checks every record's orderer signature, follows each stream's
- * hash chain in position order, replays the row operations, and applies the
- * service's own retention rules at `now`. Nothing is written here.
- */
-export async function rebuildE2eeState(
+/** Checks and locates the orderer's records, grouped by stream. */
+async function collect(
+  items: readonly CrpItem[],
   source: E2eeRebuildSource,
-  options: { readonly ordererDeviceKey: string; readonly now: number }
-): Promise<E2eeRebuiltState> {
-  const problems: E2eeRebuildProblem[] = [];
-  const items = await source.events(E2EE_RECORD_FAMILIES);
+  ordererDeviceKey: string,
+  problems: E2eeRebuildProblem[]
+): Promise<Map<string, Located[]>> {
   const byWave = new Map<string, Located[]>();
   for (const item of items) {
     const family = parseE2eeFamilyWave(item.event.wave);
     if (!family || item.event.kind === E2eeRecordKind.DEL) continue;
-    const check = checkE2eeRecord(item.event, options.ordererDeviceKey);
+    const check = checkE2eeRecord(item.event, ordererDeviceKey);
     if (!check.ok) {
       problems.push({
         wave: item.event.wave,
@@ -391,6 +388,27 @@ export async function rebuildE2eeState(
     list.push(located);
     byWave.set(located.wave, list);
   }
+  return byWave;
+}
+
+/**
+ * Rebuilds the delivery service's tables from the orderer's records on the
+ * relays: checks every record's orderer signature, follows each stream's
+ * hash chain in position order, replays the row operations, and applies the
+ * service's own retention rules at `now`. Nothing is written here.
+ */
+export async function rebuildE2eeState(
+  source: E2eeRebuildSource,
+  options: { readonly ordererDeviceKey: string; readonly now: number }
+): Promise<E2eeRebuiltState> {
+  const problems: E2eeRebuildProblem[] = [];
+  const items = await source.events(E2EE_RECORD_FAMILIES);
+  const byWave = await collect(
+    items,
+    source,
+    options.ordererDeviceKey,
+    problems
+  );
   const store = new RowStore(problems);
   const heads: E2eeStreamHead[] = [];
   let records = 0;
@@ -407,5 +425,55 @@ export async function rebuildE2eeState(
     heads,
     problems,
     stats: { events: items.length, records, streams: heads.length }
+  };
+}
+
+/** One stream, rebuilt alone: its rows, its head and its problems. */
+export interface E2eeRebuiltStream {
+  readonly wave: string;
+  readonly tables: Map<string, Map<string, E2eeRow>>;
+  readonly head: E2eeStreamHead | null;
+  readonly problems: E2eeRebuildProblem[];
+  readonly records: number;
+}
+
+/**
+ * Rebuilds one stream from its own records (the per-stream check, which
+ * never holds more than one stream in memory). `revokedDevices` names
+ * devices whose revocation lives in other streams (their `dr` records), so
+ * a device inbox drops a revoked device's Welcomes as the full rebuild does.
+ */
+export async function rebuildE2eeStream(
+  source: E2eeRebuildSource & {
+    stream(wave: string): Promise<CrpItem[]>;
+  },
+  wave: string,
+  options: {
+    readonly ordererDeviceKey: string;
+    readonly now: number;
+    readonly revokedDevices?: ReadonlySet<string>;
+  }
+): Promise<E2eeRebuiltStream> {
+  const problems: E2eeRebuildProblem[] = [];
+  const items = (await source.stream(wave)).filter(
+    (item) => item.event.wave === wave
+  );
+  const byWave = await collect(
+    items,
+    source,
+    options.ordererDeviceKey,
+    problems
+  );
+  const store = new RowStore(problems);
+  const chain = chainOf(wave, byWave.get(wave) ?? [], problems);
+  for (const record of chain) store.apply(record);
+  applyRules(store, options.now, problems, options.revokedDevices);
+  const last = chain[chain.length - 1];
+  return {
+    wave,
+    tables: store.tables,
+    head: last ? { wave, pos: last.content.pos, hash: last.hash } : null,
+    problems,
+    records: chain.length
   };
 }

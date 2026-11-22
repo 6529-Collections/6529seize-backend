@@ -1,4 +1,5 @@
 import {
+  E2EE_BACKUPS_TABLE,
   E2EE_BLOB_CHUNKS_TABLE,
   E2EE_BLOBS_TABLE,
   E2EE_DEVICES_TABLE,
@@ -144,6 +145,63 @@ export class E2eeRebuildDb extends LazyDbAccessCompatibleService {
         return [e2eeRecordKeyString(target, row), row];
       })
     );
+  }
+
+  /** Rows of a table matching every column given (arrays match any). */
+  async rowsWhere(
+    table: string,
+    where: Readonly<Record<string, E2eeRowValue | readonly E2eeRowValue[]>>
+  ): Promise<Map<string, E2eeRow>> {
+    const target = e2eeRecordTable(table);
+    if (Object.values(where).some((v) => Array.isArray(v) && !v.length)) {
+      return new Map();
+    }
+    const params: Record<string, unknown> = {};
+    const clauses = Object.entries(where).map(([column, value], index) => {
+      if (!(column in target.columns)) {
+        throw new Error(`${table} has no column ${column}`);
+      }
+      params[`w${index}`] = value;
+      if (Array.isArray(value)) return `${column} in (:w${index})`;
+      return value === null ? `${column} is null` : `${column} = :w${index}`;
+    });
+    const raw = await this.exec<Record<string, unknown>>(
+      `select ${e2eeRecordSelectList(target)} from ${table}
+       where ${clauses.join(' and ')}`,
+      params
+    );
+    return new Map(
+      raw.map((item) => {
+        const row = e2eeRecordRow(target, item);
+        return [e2eeRecordKeyString(target, row), row];
+      })
+    );
+  }
+
+  /** Stream heads after `afterWave`, in wave order (the check's cursor). */
+  async headsPage(afterWave: string, limit: number): Promise<E2eeStreamHead[]> {
+    const rows = await this.exec<{
+      wave: string;
+      head_pos: number | string;
+      head_hash: string | null;
+    }>(
+      `select wave, head_pos, head_hash from ${E2EE_STREAMS_TABLE}
+       where wave > :afterWave order by wave limit :limit`,
+      { afterWave, limit }
+    );
+    return rows.map((row) => ({
+      wave: row.wave,
+      pos: Number(row.head_pos),
+      hash: row.head_hash
+    }));
+  }
+
+  /** Profiles with backups, for the bk stream owner of each. */
+  async backupProfiles(): Promise<string[]> {
+    const rows = await this.exec<{ profile_id: string }>(
+      `select distinct profile_id from ${E2EE_BACKUPS_TABLE}`
+    );
+    return rows.map((row) => row.profile_id);
   }
 
   async heads(): Promise<E2eeStreamHead[]> {

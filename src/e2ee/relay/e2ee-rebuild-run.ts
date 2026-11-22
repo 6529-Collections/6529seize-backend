@@ -14,45 +14,53 @@ import { E2eeRelaySettings } from '@/e2ee/relay/e2ee-relay-config';
 import { E2eeRelayPool } from '@/e2ee/relay/e2ee-relay-pool';
 import { CrpItem } from '@/e2ee/relay/e2ee-crp';
 import { E2eeStreamHead } from '@/e2ee/relay/e2ee-stream-store';
+import {
+  E2eeStreamVerifyReport,
+  verifyE2eeStreams
+} from '@/e2ee/relay/e2ee-stream-verify';
 import { Logger } from '@/logging';
 
 const logger = Logger.get('E2EE_REBUILD');
 const REPORTED_PROBLEMS = 50;
 
+/** A rebuild source that can also read one stream alone. */
+export type E2eeStreamRebuildSource = E2eeRebuildSource & {
+  stream(wave: string): Promise<CrpItem[]>;
+};
+
 /**
- * Reads the families from every configured relay and keeps one copy of
- * each event; payloads come from the first relay that has them.
+ * Reads from every configured relay and keeps one copy of each event;
+ * payloads come from the first relay that has them. Nothing is cached, so
+ * a long check never holds more than the stream it is on.
  */
-export function relayE2eeRebuildSource(pool: E2eeRelayPool): E2eeRebuildSource {
-  const payloads = new Map<string, Buffer | null>();
-  return {
-    async events(families) {
-      const byId = new Map<string, CrpItem>();
-      let reached = 0;
-      for (const url of pool.urls) {
-        try {
-          for (const item of await pool.replay(url, families)) {
-            if (!byId.has(item.event.id)) byId.set(item.event.id, item);
-          }
-          reached++;
-        } catch (error) {
-          logger.warn(
-            `[REBUILD] ${url} unreadable: ${(error as Error).message}`
-          );
+export function relayE2eeRebuildSource(
+  pool: E2eeRelayPool
+): E2eeStreamRebuildSource {
+  const union = async (read: (url: string) => Promise<CrpItem[]>) => {
+    const byId = new Map<string, CrpItem>();
+    let reached = 0;
+    for (const url of pool.urls) {
+      try {
+        for (const item of await read(url)) {
+          if (!byId.has(item.event.id)) byId.set(item.event.id, item);
         }
+        reached++;
+      } catch (error) {
+        logger.warn(`[REBUILD] ${url} unreadable: ${(error as Error).message}`);
       }
-      if (!reached) throw new Error('No relay could be read');
-      return Array.from(byId.values());
-    },
+    }
+    if (!reached) throw new Error('No relay could be read');
+    return Array.from(byId.values());
+  };
+  return {
+    events: (families) => union((url) => pool.replay(url, families)),
+    stream: (wave) => union((url) => pool.stream(url, wave)),
     async payload(sha256) {
-      if (payloads.has(sha256)) return payloads.get(sha256) ?? null;
-      let found: Buffer | null = null;
       for (const url of pool.urls) {
-        found = await pool.payload(url, sha256).catch(() => null);
-        if (found) break;
+        const found = await pool.payload(url, sha256).catch(() => null);
+        if (found) return found;
       }
-      payloads.set(sha256, found);
-      return found;
+      return null;
     }
   };
 }
@@ -184,6 +192,46 @@ export async function runE2eeRebuild(input: {
       heads.missing + heads.behind + heads.differ === 0 &&
       tables.every((t) => t.missing + t.extra + t.changed === 0);
     return { ...base, heads, tables, written: false, ok };
+  } finally {
+    pool?.close();
+  }
+}
+
+/**
+ * The per-stream side-by-side check against the relays (see
+ * verifyE2eeStreams), with the site-reader's connections.
+ */
+export async function runE2eeStreamVerify(input: {
+  readonly now: number;
+  readonly settings: E2eeRelaySettings;
+  readonly after?: string;
+  readonly limit: number;
+  readonly source?: E2eeStreamRebuildSource;
+  readonly db?: E2eeRebuildDb;
+}): Promise<E2eeStreamVerifyReport> {
+  const ordererDeviceKey = input.settings.ordererPublicKey;
+  if (!ordererDeviceKey) throw new Error('No orderer public key is configured');
+  let source = input.source;
+  let pool: E2eeRelayPool | null = null;
+  if (!source) {
+    const reader = input.settings.siteReader;
+    if (!reader) throw new Error('No site-reader key is configured');
+    pool = new E2eeRelayPool({
+      urls: input.settings.urls,
+      net: input.settings.net,
+      identity: reader
+    });
+    source = relayE2eeRebuildSource(pool);
+  }
+  try {
+    return await verifyE2eeStreams({
+      source,
+      db: input.db ?? e2eeRebuildDb,
+      ordererDeviceKey,
+      now: input.now,
+      after: input.after,
+      limit: input.limit
+    });
   } finally {
     pool?.close();
   }

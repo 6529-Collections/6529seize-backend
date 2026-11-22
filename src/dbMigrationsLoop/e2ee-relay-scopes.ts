@@ -4,8 +4,10 @@ import { e2eeDb } from '@/e2ee/e2ee.db';
 import { e2eeRecordWriters } from '@/e2ee/relay/e2ee-record-writers';
 import {
   E2eeRebuildReport,
-  runE2eeRebuild
+  runE2eeRebuild,
+  runE2eeStreamVerify
 } from '@/e2ee/relay/e2ee-rebuild-run';
+import { E2eeStreamVerifyReport } from '@/e2ee/relay/e2ee-stream-verify';
 import { e2eeRelaySettings } from '@/e2ee/relay/e2ee-relay-config';
 import {
   backfillE2eeRecords,
@@ -25,6 +27,8 @@ import { e2eeStreamPublisher } from '@/e2ee/relay/e2ee-stream-publisher';
  *    "after": "<next>", "limit": 200}                                   copy
  *   {"schema_scope": "e2ee-relay-publish", "waves": 500}                drain
  *   {"schema_scope": "e2ee-relay-rebuild", "mode": "verify"}            check
+ *   {"schema_scope": "e2ee-relay-rebuild", "mode": "verify-streams",
+ *    "after": "<next>", "limit": 200}                                   check, in slices
  *   {"schema_scope": "e2ee-relay-rebuild", "mode": "write"}             rebuild
  *
  * Families run in the order dr, cv, dv, bl, bk. A live backfill needs
@@ -114,10 +118,21 @@ export async function runE2eeRelayPublishScope(
 
 export async function runE2eeRelayRebuildScope(
   event: Record<string, unknown>
-): Promise<E2eeRebuildReport> {
+): Promise<E2eeRebuildReport | E2eeStreamVerifyReport> {
   const mode = event.mode;
+  if (mode === 'verify-streams') {
+    if (event.after !== undefined && typeof event.after !== 'string') {
+      throw new Error('after must be a string');
+    }
+    return runE2eeStreamVerify({
+      now: Date.now(),
+      settings: e2eeRelaySettings(),
+      after: event.after as string | undefined,
+      limit: boundedInteger(event.limit, 'limit', DEFAULT_LIMIT, MAX_LIMIT)
+    });
+  }
   if (mode !== 'verify' && mode !== 'write') {
-    throw new Error('mode must be verify or write');
+    throw new Error('mode must be verify, verify-streams or write');
   }
   return runE2eeRebuild({
     mode,

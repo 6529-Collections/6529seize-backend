@@ -218,7 +218,40 @@ export class E2eeDevicesService {
       })),
       key_packages: statuses,
       max_devices: E2EE_MAX_ACTIVE_DEVICES,
-      attachments_enabled: this.deps.attachmentsEnabled()
+      attachments_enabled: this.deps.attachmentsEnabled(),
+      ...(await this.relaySettingsFor(callerProfileId))
+    };
+  }
+
+  /**
+   * The relays clients may read from, while records are on: their settings,
+   * the pinned orderer key, and the caller's own grant proofs, which the
+   * relays' AUTH needs and the browser does not keep.
+   */
+  private async relaySettingsFor(
+    callerProfileId: string
+  ): Promise<Pick<ApiE2eeMe, 'relay'>> {
+    const reads = this.deps.relayReads;
+    if (!reads) return {};
+    let settings: ReturnType<typeof reads.settings>;
+    try {
+      settings = reads.settings();
+    } catch {
+      // A bad relay setting must not take down the messaging page.
+      return {};
+    }
+    if (settings.mode === 'off') return {};
+    return {
+      relay: {
+        mode: settings.mode,
+        urls: [...settings.urls],
+        net: settings.net,
+        orderer_key: settings.ordererPublicKey,
+        grant_proofs:
+          settings.mode === 'primary'
+            ? await reads.grantProofs(callerProfileId)
+            : []
+      }
     };
   }
 

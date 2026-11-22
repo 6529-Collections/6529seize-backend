@@ -13,6 +13,7 @@ import { E2eeRelayIdentity } from '@/e2ee/relay/e2ee-relay-config';
 import { Logger } from '@/logging';
 
 const logger = Logger.get('E2EE_RELAY_POOL');
+const STREAM_PAGE = 500;
 
 /** A payload: bytes a record names by their sha256. */
 export interface E2eeRelayPayload {
@@ -165,6 +166,22 @@ export class E2eeRelayPool {
     const connection = await this.connection(url);
     const replay = await connection.replay(waves);
     return replay.items;
+  }
+
+  /** Every event of one stream on one relay, paged by its rseq. */
+  async stream(url: string, wave: string): Promise<CrpItem[]> {
+    const connection = await this.connection(url);
+    const items: CrpItem[] = [];
+    // HIST without `after` answers the newest page; 0 starts at the start.
+    let after = 0;
+    for (;;) {
+      const page = await connection.history(wave, after, STREAM_PAGE);
+      items.push(...page.items);
+      const last = page.items[page.items.length - 1];
+      if (!page.more || !last) break;
+      after = last.rseq;
+    }
+    return items;
   }
 
   async payload(url: string, sha256: string): Promise<Buffer> {

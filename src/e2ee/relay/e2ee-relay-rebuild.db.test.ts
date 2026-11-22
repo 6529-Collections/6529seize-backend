@@ -21,7 +21,8 @@ import { E2eeRecordWriters } from '@/e2ee/relay/e2ee-record-writers';
 import { E2eeRebuildDb } from '@/e2ee/relay/e2ee-rebuild.db';
 import {
   relayE2eeRebuildSource,
-  runE2eeRebuild
+  runE2eeRebuild,
+  runE2eeStreamVerify
 } from '@/e2ee/relay/e2ee-rebuild-run';
 import {
   backfillE2eeRecords,
@@ -437,5 +438,46 @@ describeWithSeed('e2ee relay records against MySQL', [], () => {
     await emptyTables();
     expect((await rebuild('write')).ok).toBe(true);
     expect(await answers(ids)).toEqual(before);
+  });
+  it('checks stream by stream against MySQL, and names a changed row', async () => {
+    const ids = await story();
+    const verify = (after?: string) =>
+      runE2eeStreamVerify({
+        now: NOW,
+        settings,
+        after,
+        limit: 2,
+        db: new E2eeRebuildDb(() => sqlExecutor),
+        source: relayE2eeRebuildSource(
+          new E2eeRelayPool({
+            urls: settings.urls,
+            net: NET,
+            identity: READER,
+            open: () => relay.connect()
+          })
+        )
+      });
+    let after: string | undefined;
+    let checked = 0;
+    do {
+      const page = await verify(after);
+      expect(page.failures).toEqual([]);
+      checked += page.checked;
+      after = page.next ?? undefined;
+    } while (after !== undefined);
+    // dr for each device, cv, dv, bl and bk.
+    expect(checked).toBe(6);
+    await sqlExecutor.execute(
+      `update e2ee_log set epoch_fp = 'ffffffffffffffff' where group_handle = :group and seq = 2`,
+      { group: ids.group }
+    );
+    const failures = [];
+    after = undefined;
+    do {
+      const page = await verify(after);
+      failures.push(...page.failures);
+      after = page.next ?? undefined;
+    } while (after !== undefined);
+    expect(failures.map((f) => f.wave)).toEqual([`cv/${ids.group}`]);
   });
 });

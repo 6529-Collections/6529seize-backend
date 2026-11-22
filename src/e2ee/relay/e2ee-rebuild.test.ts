@@ -30,6 +30,10 @@ import {
   E2eeBackfillDeps
 } from '@/e2ee/relay/e2ee-relay-backfill';
 import { E2eeRelaySettings } from '@/e2ee/relay/e2ee-relay-config';
+import {
+  E2eeStreamVerifyDb,
+  verifyE2eeStreams
+} from '@/e2ee/relay/e2ee-stream-verify';
 import { E2eeRelayPool } from '@/e2ee/relay/e2ee-relay-pool';
 import {
   E2eeRecordBatch,
@@ -1028,5 +1032,105 @@ describe('backfillE2eeRecords', () => {
       }
     );
     expectSameTables(s.db, await rebuildFrom(s.relay));
+  });
+});
+
+/** The per-stream check's MySQL reads, over the tables in memory. */
+function verifyDb(
+  db: FakeTables,
+  store: InMemoryE2eeStreamStore
+): E2eeStreamVerifyDb {
+  return {
+    rowsWhere: async (table, where) => {
+      const rows = await db.rows(table, where, null);
+      const target = e2eeRecordTable(table);
+      return new Map(
+        rows.map((row) => [e2eeRecordKeyString(target, row), row])
+      );
+    },
+    headsPage: (after, limit) => store.listHeads(after, limit),
+    backupProfiles: async () =>
+      Array.from(
+        new Set(
+          Array.from(db.tables.get(E2EE_BACKUPS_TABLE)!.values()).map((row) =>
+            String(row.profile_id)
+          )
+        )
+      )
+  };
+}
+
+describe('verifyE2eeStreams', () => {
+  it('checks every stream alone, in slices, and finds none different', async () => {
+    const s = await runScenario();
+    const first = await verifyE2eeStreams({
+      source: readerSource(s.relay),
+      db: verifyDb(s.db, s.store),
+      ordererDeviceKey: ORDERER.deviceKey,
+      now: NOW,
+      limit: 3
+    });
+    expect(first).toMatchObject({ checked: 3, failed: 0, ok: true });
+    expect(first.next).not.toBeNull();
+    let after = first.next;
+    let checked = first.checked;
+    while (after) {
+      const page = await verifyE2eeStreams({
+        source: readerSource(s.relay),
+        db: verifyDb(s.db, s.store),
+        ordererDeviceKey: ORDERER.deviceKey,
+        now: NOW,
+        after,
+        limit: 3
+      });
+      expect(page.failures).toEqual([]);
+      checked += page.checked;
+      after = page.next;
+    }
+    expect(checked).toBe((await s.store.listHeads('', 1000)).length);
+  });
+
+  it('names the stream whose MySQL rows differ from its records', async () => {
+    const s = await runScenario();
+    s.db.update(
+      E2EE_LOG_TABLE,
+      { group_handle: G, seq: 2 },
+      { epoch_fp: '0xother' }
+    );
+    const report = await verifyE2eeStreams({
+      source: readerSource(s.relay),
+      db: verifyDb(s.db, s.store),
+      ordererDeviceKey: ORDERER.deviceKey,
+      now: NOW,
+      limit: 100
+    });
+    expect(report.ok).toBe(false);
+    expect(report.failures).toHaveLength(1);
+    expect(report.failures[0]).toMatchObject({
+      wave: `cv/${G}`,
+      tables: [{ table: E2EE_LOG_TABLE, changed: 1 }]
+    });
+  });
+
+  it('names a stream whose head is ahead of the relays', async () => {
+    const s = await runScenario();
+    s.relay.down = true;
+    await s.write(
+      () =>
+        s.db.update(E2EE_DEVICES_TABLE, { device_key: B }, { label: 'Tablet' }),
+      (batch, c) => s.writers.deviceChanged(batch, c, B)
+    );
+    s.relay.down = false;
+    const report = await verifyE2eeStreams({
+      source: readerSource(s.relay),
+      db: verifyDb(s.db, s.store),
+      ordererDeviceKey: ORDERER.deviceKey,
+      now: NOW,
+      limit: 100
+    });
+    expect(report.failures.map((f) => f.wave)).toEqual([`dr/${B}`]);
+    expect(report.failures[0].head.relays).toBe(
+      (report.failures[0].head.mysql ?? 0) - 1
+    );
   });
 });
