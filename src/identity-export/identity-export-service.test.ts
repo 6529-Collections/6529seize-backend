@@ -11,13 +11,13 @@ import {
   identitySyncProblem,
   readinessProblems,
   tdhBlockTimingProblem,
-  modifiedAfter,
   leaveOutHelpBotCredits,
   repMismatches,
   reservedHandles,
   shownClassification,
   TDH_NOTE,
   toExportIdentity,
+  withFileRep,
   withoutCredits
 } from './identity-export.service';
 import { IdentityExportNotReadyError } from './identity-export.errors';
@@ -169,12 +169,14 @@ function world(): {
       block: 24_000_000,
       timestampMs: FREEZE - 12_000
     }),
-    overCreditRaters: async () => 0,
+    overCreditRaters: async () => ({ withXtdh: 0, tdhOnly: 0 }),
     ratingEditsSince: async () => 0,
+    ratingsChangedSince: async () => 0,
     identitySyncProgress: async () => ({
       pendingGeneration: 5,
       pendingBlock: 24_000_000,
-      syncedGeneration: 5
+      syncedGeneration: 5,
+      fullWriteBlock: 24_000_000
     }),
     helpBotProfileId: async () => BOT,
     delegations: async () => [
@@ -253,11 +255,12 @@ describe('buildIdentityExport', () => {
       ],
       tdh: 1000.5,
       xtdh: 12.75,
-      rep: 30,
+      // The file's REP to Alice (TAGGER's 1, not the stored 30) + TDH: as the
+      // chain counts it; 6529.io's 1043.25 also counts the xTDH.
+      rep: 1,
       cic: 5,
-      // REP + TDH: 6529.io's 1043.25 also counts the xTDH.
       level: 6,
-      level_raw: 30 + 1000.5,
+      level_raw: 1 + 1000.5,
       scope: ['handle', 'rating']
     });
     const pair = doc.identities.find((it) => it.profile_id === null)!;
@@ -384,8 +387,9 @@ describe('buildIdentityExport', () => {
       false
     );
     const alice = doc.identities.find((it) => it.profile_id === ALICE)!;
-    expect(alice.rep).toBe(30 - 7);
-    expect(alice.level_raw).toBe(30 + 1000.5 - 7);
+    // The file's REP: the credits are not in it.
+    expect(alice.rep).toBe(1);
+    expect(alice.level_raw).toBe(1 + 1000.5);
     expect(doc.stats.help_bot_credits_left_out).toBe(2);
     expect(doc.stats.help_bot_credit_profiles).toBe(1);
     expect(doc.notes).toEqual(
@@ -561,7 +565,8 @@ describe('buildIdentityExport', () => {
         identitySyncProgress: async () => ({
           pendingGeneration: 6,
           pendingBlock: 24_000_000,
-          syncedGeneration: 5
+          syncedGeneration: 5,
+          fullWriteBlock: 24_000_000
         })
       },
       options
@@ -583,7 +588,7 @@ describe('buildIdentityExport', () => {
       help_bot_credit_category: 'Help6529 Credits',
       help_bot_credit_match: 'trim_casefold',
       help_bot_credits: 'excluded',
-      rep: 'stored_minus_credits',
+      rep: 'sum_of_file_ratings',
       level: 'rep+tdh',
       tdh: 'boosted',
       xtdh: 'as_stored',
@@ -662,46 +667,76 @@ describe('buildIdentityExport', () => {
     expect(rehearsal.tdh_block).toBe(1);
   });
 
-  it('refuses raters over credit and edits after the freeze unless acknowledged', async () => {
+  it('refuses raters over credit and changes after the freeze unless acknowledged', async () => {
     const { source } = world();
     const ratingEditsSince = jest.fn(async () => 2);
+    const ratingsChangedSince = jest.fn(async () => 4);
     const busy = {
       ...source,
-      overCreditRaters: async () => 3,
-      ratingEditsSince
+      overCreditRaters: async () => ({ withXtdh: 3, tdhOnly: 5 }),
+      ratingEditsSince,
+      ratingsChangedSince
     };
     const atFreeze = { ...options, expectTdhBlock: 24_000_000 };
-    await expect(buildIdentityExport(busy, atFreeze)).rejects.toThrow(
+    const refused = (opts: {
+      acceptOverCredit?: number;
+      acceptEditsAfterFreeze?: number;
+    }) =>
+      buildIdentityExport(busy, { ...atFreeze, ...opts }).then(
+        () => null,
+        (error: IdentityExportNotReadyError) => error
+      );
+    const all = await refused({});
+    expect(all?.causes).toEqual([
+      'over_credit',
+      'after_freeze',
+      'after_freeze'
+    ]);
+    expect(all?.exitCode).toBe(4);
+    expect(all?.message).toContain(
       '3 raters give more REP or CIC than their credit'
     );
-    await expect(
-      buildIdentityExport(busy, { ...atFreeze, acceptOverCredit: 3 })
-    ).rejects.toThrow(
+    const after = await refused({ acceptOverCredit: 3 });
+    expect(after?.exitCode).toBe(5);
+    expect(after?.message).toContain(
       '2 REP and CIC rating edits were logged after the freeze'
     );
-    await expect(
-      buildIdentityExport(busy, {
-        ...atFreeze,
-        acceptOverCredit: 2,
-        acceptEditsAfterFreeze: 2
-      })
-    ).rejects.toThrow('--accept-over-credit 3');
-    const doc = await buildIdentityExport(busy, {
-      ...atFreeze,
+    expect(after?.message).toContain(
+      '4 REP and CIC ratings were changed after the freeze'
+    );
+    const changed = await refused({
       acceptOverCredit: 3,
       acceptEditsAfterFreeze: 2
     });
+    expect(changed?.causes).toEqual(['after_freeze']);
+    expect(changed?.message).toContain(
+      '--accept-ratings-changed-after-freeze 4'
+    );
+    const doc = await buildIdentityExport(busy, {
+      ...atFreeze,
+      acceptOverCredit: 3,
+      acceptEditsAfterFreeze: 2,
+      acceptRatingsChangedAfterFreeze: 4
+    });
     expect(ratingEditsSince).toHaveBeenCalledWith(FREEZE);
+    expect(ratingsChangedSince).toHaveBeenCalledWith(FREEZE);
     expect(doc.stats).toEqual(
       expect.objectContaining({
         over_credit_raters: 3,
-        rating_edits_after_freeze: 2
+        over_credit_raters_tdh_only: 5,
+        rating_edits_after_freeze: 2,
+        ratings_modified_after_freeze: 4
       })
     );
     expect(doc.notes).toEqual(
       expect.arrayContaining([
-        expect.stringContaining('3 raters give more REP or CIC'),
-        expect.stringContaining('2 REP and CIC rating edits were logged')
+        expect.stringContaining(
+          '3 raters give more REP or CIC than their credit as 6529.io counts it (TDH + xTDH), 5 by TDH alone'
+        ),
+        expect.stringContaining('2 REP and CIC rating edits were logged'),
+        expect.stringContaining(
+          '4 REP and CIC ratings were changed after the freeze'
+        )
       ])
     );
     // Without a freeze time (a rehearsal) they are only counted.
@@ -711,19 +746,35 @@ describe('buildIdentityExport', () => {
     });
     expect(counted.stats.over_credit_raters).toBe(3);
     expect(counted.stats.rating_edits_after_freeze).toBe(0);
+    expect(counted.stats.ratings_modified_after_freeze).toBe(0);
     expect(
       readinessProblems(
         {
           tdh: { block: 24_000_000, timestampMs: FREEZE },
           identitySync: null,
-          overCreditRaters: 0,
-          editsAfterFreeze: 0
+          overCredit: { withXtdh: 0, tdhOnly: 0 },
+          editsAfterFreeze: 0,
+          ratingsChangedAfterFreeze: 0
         },
         { freezeMs: FREEZE, expectTdhBlock: 24_000_000 }
       )
     ).toEqual([
-      "the identities sync's state (identity_tdh_sync_state) could not be read"
+      {
+        cause: 'day',
+        message:
+          "the identities sync's state (identity_tdh_sync_state) could not be read"
+      }
     ]);
+  });
+
+  it('exits 3 first: the day before over credit and changes', () => {
+    const error = new IdentityExportNotReadyError([
+      { cause: 'after_freeze', message: 'a' },
+      { cause: 'day', message: 'b' }
+    ]);
+    expect(error.exitCode).toBe(3);
+    expect(error.message).toBe('a; b');
+    expect(new IdentityExportNotReadyError('c').exitCode).toBe(3);
   });
 
   it("counts reps the file's own ratings don't add up to", async () => {
@@ -754,53 +805,38 @@ describe('buildIdentityExport', () => {
     expect(doc.notes).toEqual(
       expect.arrayContaining([
         expect.stringContaining(
-          "1 exported profiles have a rep that is not the sum of the REP ratings to them in this file: the chain counts REP from the file's ratings"
-        ),
-        expect.stringContaining(
-          "the builder should recompute REP and level from the file's ratings where they differ"
+          '1 exported profiles have a stored rep (help-bot credits aside) that is not the sum of the REP ratings to them in this file'
         )
       ])
     );
+    // The file's rep and level: TAGGER's 1, not the stored 5.
+    const alice = doc.identities.find((it) => it.profile_id === ALICE)!;
+    expect([alice.rep, alice.level_raw]).toEqual([1, 1 + 1000.5]);
   });
 
-  it('counts ratings changed after the freeze, credits left out', async () => {
-    const { source } = world();
-    const edges = await source.ratingEdges();
-    const after = options.freezeMs + 1;
-    const doc = await buildIdentityExport(
-      {
-        ...source,
-        ratingEdges: async () => [
-          ...edges,
-          {
-            ...rating(ALICE, TAGGER, 'REP', 'Late', 1),
-            last_modified_ms: after
-          },
-          {
-            ...rating(BOT, ALICE, 'REP', 'Help6529 Credits', 1),
-            last_modified_ms: after
-          }
-        ]
-      },
-      options
+  it("writes each identity's rep and level from the file's REP ratings", () => {
+    const base = toExportIdentity(
+      identity(W(1), { id: ALICE, handle: 'Alice' }, { rep: 900, tdh: 95 }),
+      [W(1)],
+      [],
+      ['handle']
     );
-    expect(doc.stats.ratings_modified_after_freeze).toBe(1);
-    expect(doc.notes).toEqual(
-      expect.arrayContaining([
-        expect.stringContaining(
-          '1 REP and CIC ratings (help-bot credits left out) were changed after the freeze time'
-        )
-      ])
+    const pair = toExportIdentity(
+      identity(`${W(6)}-${W(7)}`, null, { rep: 3, tdh: 10 }),
+      [W(6), W(7)],
+      [],
+      ['wallets']
     );
-    const rehearsal = await buildIdentityExport(source, {
-      ...options,
-      freezeMs: null
-    });
-    expect(rehearsal.stats.ratings_modified_after_freeze).toBe(0);
-    expect(
-      modifiedAfter([{ last_modified_ms: 10 }, { last_modified_ms: null }], 9)
-    ).toBe(1);
-    expect(modifiedAfter([{ last_modified_ms: 10 }], 10)).toBe(0);
+    const [alice, noProfile] = withFileRep(
+      [base, pair],
+      [
+        rating(TAGGER, ALICE, 'REP', 'Holder', 8),
+        rating(P3, ALICE, 'REP', 'Good Person', -3),
+        rating(P3, ALICE, 'CIC', '', 50)
+      ]
+    );
+    expect([alice.rep, alice.level_raw, alice.level]).toEqual([5, 100, 3]);
+    expect([noProfile.rep, noProfile.level_raw]).toEqual([0, 10]);
   });
 
   it('leaves the delegations out when asked', async () => {
@@ -895,7 +931,8 @@ describe('the freeze day check', () => {
   const caughtUp = {
     pendingGeneration: 5,
     pendingBlock: 100,
-    syncedGeneration: 5
+    syncedGeneration: 5,
+    fullWriteBlock: 100
   };
 
   it('passes only a TDH block whose identities sync has finished', () => {
@@ -907,6 +944,13 @@ describe('the freeze day check', () => {
       'the last TDH write is of block 100, not the TDH block 101'
     );
     expect(identitySyncProblem(100, null)).toContain('could not be read');
+    // Only a partial write has reached block 100.
+    expect(identitySyncProblem(100, { ...caughtUp, fullWriteBlock: 99 })).toBe(
+      "the last full TDH write is of block 99, not 100: the day's full TDH run hasn't been written yet"
+    );
+    expect(
+      identitySyncProblem(100, { ...caughtUp, fullWriteBlock: null })
+    ).toContain('of block none');
   });
 
   it('refuses another TDH block, or one not synced yet', () => {

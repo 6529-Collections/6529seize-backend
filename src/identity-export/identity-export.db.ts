@@ -67,6 +67,19 @@ export interface IdentitySyncProgress {
   readonly pendingGeneration: number;
   readonly pendingBlock: number;
   readonly syncedGeneration: number;
+  /**
+   * The block of the last full TDH write (the tdhLoop's daily run; partial
+   * writes don't move it); null when no full write is recorded.
+   */
+  readonly fullWriteBlock?: number | null;
+}
+
+/** Raters over their credit: as 6529.io counts it, and by TDH alone. */
+export interface OverCreditRaters {
+  /** Credit TDH + xTDH: the raters 6529.io's over-rates loop would cut. */
+  readonly withXtdh: number;
+  /** Credit TDH alone: the raters the chain's credit would cut. */
+  readonly tdhOnly: number;
 }
 
 /** The latest TDH block 6529.io computed, and its Ethereum timestamp. */
@@ -89,7 +102,12 @@ export interface IdentityExportSource {
    * Raters whose REP or CIC given is over their credit (TDH + xTDH), as the
    * over-rates loop counts them: the help bot's credits left out.
    */
-  overCreditRaters(): Promise<number>;
+  overCreditRaters(): Promise<OverCreditRaters>;
+  /**
+   * REP and CIC ratings whose last_modified is after `sinceMs`, zeros
+   * included, help-bot credits aside.
+   */
+  ratingsChangedSince(sinceMs: number): Promise<number>;
   /**
    * REP and CIC rating edits logged after `sinceMs`, without the over-rates
    * loop's cuts (LOST_TDH) and the help bot's credits.
@@ -287,9 +305,15 @@ export class SqlIdentityExportSource implements IdentityExportSource {
     };
   }
 
-  /** As ratingsDb.getOverRateMatters, for REP and CIC only. */
-  async overCreditRaters(): Promise<number> {
-    const rows = await this.query<{ n: number | string }>(
+  /**
+   * As ratingsDb.getOverRateMatters, for REP and CIC only, counting each
+   * rater once: by 6529.io's credit and by TDH alone.
+   */
+  async overCreditRaters(): Promise<OverCreditRaters> {
+    const rows = await this.query<{
+      with_xtdh: number | string | null;
+      tdh_only: number | string | null;
+    }>(
       `with rate_tallies as (select r.rater_profile_id,
                                     r.matter,
                                     sum(abs(r.rating)) as tally
@@ -309,13 +333,35 @@ export class SqlIdentityExportSource implements IdentityExportSource {
                                  )
                                )
                              group by 1, 2)
-       select count(*) as n
+       select count(distinct case
+                when floor(coalesce(i.tdh + i.xtdh, 0)) < abs(rt.tally)
+                then rt.rater_profile_id end) as with_xtdh,
+              count(distinct case
+                when floor(coalesce(i.tdh, 0)) < abs(rt.tally)
+                then rt.rater_profile_id end) as tdh_only
        from rate_tallies rt
-                left join ${IDENTITIES_TABLE} i on rt.rater_profile_id = i.profile_id
-       where floor(coalesce(i.tdh + i.xtdh, 0)) < abs(rt.tally)`,
+                left join ${IDENTITIES_TABLE} i on rt.rater_profile_id = i.profile_id`,
       {
         helpBotCreditCategory: HELP_BOT_CREDIT_CATEGORY,
         helpBotHandle: HELP_BOT_HANDLE
+      }
+    );
+    return {
+      withXtdh: Number(rows[0]?.with_xtdh ?? 0),
+      tdhOnly: Number(rows[0]?.tdh_only ?? 0)
+    };
+  }
+
+  async ratingsChangedSince(sinceMs: number): Promise<number> {
+    const rows = await this.query<{ n: number | string }>(
+      `select count(*) as n
+       from ${RATINGS_TABLE}
+       where matter in ('REP', 'CIC')
+         and last_modified > :since
+         and not (matter = 'REP' and lower(trim(matter_category)) = :credit)`,
+      {
+        since: new Date(sinceMs),
+        credit: HELP_BOT_CREDIT_CATEGORY.toLowerCase()
       }
     );
     return Number(rows[0]?.n ?? 0);
@@ -342,15 +388,19 @@ export class SqlIdentityExportSource implements IdentityExportSource {
       block: number | string;
     }>(
       `select id, generation, block from ${IDENTITY_TDH_SYNC_STATE_TABLE}
-       where id in ('pending', 'synced')`
+       where id in ('pending', 'synced', 'full_announce')`
     );
     const pending = rows.find((it) => it.id === 'pending');
     const synced = rows.find((it) => it.id === 'synced');
+    const full = rows.find((it) => it.id === 'full_announce');
     if (!pending || !synced) return null;
+    // The full write's announcement keeps its block once published.
+    const fullBlock = Number(full?.block ?? 0);
     return {
       pendingGeneration: Number(pending.generation),
       pendingBlock: Number(pending.block),
-      syncedGeneration: Number(synced.generation)
+      syncedGeneration: Number(synced.generation),
+      fullWriteBlock: fullBlock > 0 ? fullBlock : null
     };
   }
 

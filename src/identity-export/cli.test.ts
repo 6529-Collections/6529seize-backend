@@ -8,9 +8,18 @@ const buildIdentityExport = jest.fn();
 jest.mock('@/secrets', () => ({
   doInDbContext: (fn: () => Promise<unknown>) => fn()
 }));
+const dbApiCalls: string[] = [];
 jest.mock('@/db-api', () => ({
-  withReadOnlySnapshot: (work: (connection: unknown) => Promise<unknown>) =>
-    work({})
+  connect: async () => {
+    dbApiCalls.push('connect');
+  },
+  disconnect: async () => {
+    dbApiCalls.push('disconnect');
+  },
+  withReadOnlySnapshot: (work: (connection: unknown) => Promise<unknown>) => {
+    dbApiCalls.push('snapshot');
+    return work({});
+  }
 }));
 jest.mock('@/sql-executor', () => ({ sqlExecutor: { execute: jest.fn() } }));
 jest.mock('./identity-export.db', () => ({
@@ -31,6 +40,7 @@ describe('runCli', () => {
     dir = fs.mkdtempSync(path.join(os.tmpdir(), 'identity-export-cli-'));
     stderr = jest.spyOn(process.stderr, 'write').mockImplementation(() => true);
     buildIdentityExport.mockReset();
+    dbApiCalls.length = 0;
   });
   afterEach(() => {
     stderr.mockRestore();
@@ -53,8 +63,21 @@ describe('runCli', () => {
     const out = path.join(dir, 'export.json');
     expect(await runCli(args(out))).toBe(3);
     const written = stderr.mock.calls.map(([text]) => String(text)).join('');
-    expect(written).toContain('the identities sync is behind: wait for');
+    expect(written).toContain(
+      'the identities sync is behind: nothing was written'
+    );
     expect(fs.existsSync(out)).toBe(false);
+  });
+
+  it.each([
+    ['over_credit', 4],
+    ['after_freeze', 5],
+    ['day', 3]
+  ] as const)('exits by its cause: %s', async (cause, code) => {
+    buildIdentityExport.mockRejectedValue(
+      new IdentityExportNotReadyError([{ cause, message: 'not yet' }])
+    );
+    expect(await runCli(args(path.join(dir, 'export.json')))).toBe(code);
   });
 
   it('exits 2 on a usage error, and on an existing file before reading', async () => {
@@ -84,6 +107,8 @@ describe('runCli', () => {
       const written = JSON.parse(fs.readFileSync(out, 'utf8'));
       expect(written.identity_sync).toBeUndefined();
       expect(written.stats).toEqual({ identities: 0 });
+      // db-api's pools are opened for the snapshot and closed after it.
+      expect(dbApiCalls).toEqual(['connect', 'snapshot', 'disconnect']);
     } finally {
       stdout.mockRestore();
     }

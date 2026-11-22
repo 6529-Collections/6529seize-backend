@@ -1,5 +1,7 @@
 import * as fs from 'node:fs';
+import * as path from 'node:path';
 import { once } from 'node:events';
+import { finished } from 'node:stream/promises';
 import { IdentityExportUsageError } from './cli-options';
 
 type Write = (chunk: string) => Promise<void>;
@@ -23,13 +25,18 @@ async function writeArray(write: Write, values: unknown[]): Promise<void> {
  * parses to the same value as JSON.stringify(document).
  */
 export async function writeJsonDocument(
-  path: string,
+  file: string,
   document: Record<string, unknown>
 ): Promise<void> {
-  const out = fs.createWriteStream(path, { encoding: 'utf8' });
+  const out = fs.createWriteStream(file, { encoding: 'utf8' });
+  // Settles on the stream's end or its error (a missing or full disk), and
+  // listens for that error from the start.
+  const done = finished(out);
+  done.catch(() => undefined);
   const write: Write = async (chunk) => {
+    if (out.destroyed) await done;
     if (!out.write(chunk)) {
-      await once(out, 'drain');
+      await Promise.race([once(out, 'drain'), done]);
     }
   };
   try {
@@ -48,17 +55,36 @@ export async function writeJsonDocument(
       await write(i < entries.length - 1 ? ',\n' : '\n');
     }
     await write('}\n');
-  } finally {
     out.end();
-    await once(out, 'close');
+  } catch (error) {
+    out.destroy();
+    throw error;
   }
+  await done;
 }
 
-/** Refuses an out path that exists, unless it may be replaced. */
+/**
+ * Refuses an out path that exists, unless it may be replaced, and one whose
+ * directory is missing or can't be written.
+ */
 export function checkOutPath(out: string, overwrite: boolean): void {
   if (!overwrite && fs.existsSync(out)) {
     throw new IdentityExportUsageError(
       `${out} exists: pass --overwrite to replace it`
+    );
+  }
+  const dir = path.dirname(path.resolve(out));
+  let writable = false;
+  try {
+    writable =
+      fs.statSync(dir).isDirectory() &&
+      (fs.accessSync(dir, fs.constants.W_OK), true);
+  } catch {
+    writable = false;
+  }
+  if (!writable) {
+    throw new IdentityExportUsageError(
+      `${dir} is not a directory that can be written`
     );
   }
 }
@@ -80,5 +106,12 @@ export async function writeExportFile(
   );
   const tmp = `${out}.tmp`;
   await writeJsonDocument(tmp, file);
+  // On disk before it takes the real name.
+  const fd = fs.openSync(tmp, 'r+');
+  try {
+    fs.fsyncSync(fd);
+  } finally {
+    fs.closeSync(fd);
+  }
   fs.renameSync(tmp, out);
 }

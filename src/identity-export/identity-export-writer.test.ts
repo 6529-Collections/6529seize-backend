@@ -73,4 +73,25 @@ describe('writeJsonDocument', () => {
     expect(JSON.parse(fs.readFileSync(file, 'utf8'))).toEqual({ a: 1 });
     expect(() => checkOutPath(path.join(dir, 'new.json'), false)).not.toThrow();
   });
+
+  it('refuses a missing directory, and a write there fails instead of hanging', async () => {
+    const missing = path.join(dir, 'nowhere', 'export.json');
+    expect(() => checkOutPath(missing, false)).toThrow(
+      'is not a directory that can be written'
+    );
+    // Large enough to wait for the stream to drain when the error comes.
+    const big = {
+      identities: Array.from({ length: 5_000 }, (_, i) => ({
+        profile_id: `p-${i}`,
+        wallets: ['0x1', '0x2']
+      }))
+    };
+    await expect(writeJsonDocument(missing, big)).rejects.toThrow();
+    await expect(writeJsonDocument(missing, { a: [1, 2] })).rejects.toThrow();
+    const notDir = path.join(dir, 'file');
+    fs.writeFileSync(notDir, 'x');
+    expect(() => checkOutPath(path.join(notDir, 'export.json'), true)).toThrow(
+      'is not a directory that can be written'
+    );
+  }, 10_000);
 });

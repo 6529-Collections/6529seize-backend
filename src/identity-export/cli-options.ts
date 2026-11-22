@@ -2,7 +2,8 @@ export const IDENTITY_EXPORT_HELP = `Usage: 6529 run identity:export -- --out FI
          (--freeze-at TIME --expect-tdh-block N | --no-freeze)
          (--extra-ids FILE | --no-extra-ids) [--bulk N] [--no-delegations]
          [--cms-fields FILE] [--accept-over-credit N]
-         [--accept-edits-after-freeze N] [--overwrite]
+         [--accept-edits-after-freeze N]
+         [--accept-ratings-changed-after-freeze N] [--overwrite]
 
 Writes 6529.io's identities, profiles, REP and CIC ratings and reserved
 handles as a 6529.identity-export.v1 JSON file, the input of the Identities
@@ -31,6 +32,10 @@ Options:
   --accept-edits-after-freeze N
                          accept up to N REP or CIC edits logged after the
                          freeze (over-rate cuts and help-bot credits aside)
+  --accept-ratings-changed-after-freeze N
+                         accept up to N REP or CIC ratings whose
+                         last_modified is after the freeze (help-bot credits
+                         aside, zeros included)
   --bulk N               a rater's REP category with more than N targets brings
                          no target in by itself (default 2000; 0 turns it off)
   --no-delegations       leave out 6529.io's delegations table
@@ -40,6 +45,12 @@ Options:
   --overwrite            replace FILE if it exists (it is written to FILE.tmp
                          and renamed at the end)
   --help                 this text
+
+Exit codes: 0 written; 1 failed; 2 a usage error (or FILE exists); 3 not
+the freeze day's TDH yet (the TDH block, its time, the day's full TDH write
+or the identities sync); 4 raters over their credit, not acknowledged; 5
+REP or CIC changed after the freeze, not acknowledged. Nothing is written
+on 3, 4 or 5: wait, or acknowledge, and run again.
 `;
 
 export interface IdentityExportCommand {
@@ -57,6 +68,7 @@ export interface IdentityExportCommand {
   readonly cmsFieldsFile: string | null;
   readonly acceptOverCredit: number;
   readonly acceptEditsAfterFreeze: number;
+  readonly acceptRatingsChangedAfterFreeze: number;
   readonly overwrite: boolean;
 }
 
@@ -154,6 +166,7 @@ interface Draft {
   cmsFieldsFile: string | null;
   acceptOverCredit: number;
   acceptEditsAfterFreeze: number;
+  acceptRatingsChangedAfterFreeze: number;
   overwrite: boolean;
 }
 
@@ -215,6 +228,9 @@ function readOption(
     case '--accept-edits-after-freeze':
       draft.acceptEditsAfterFreeze = wholeNumber(arg, value());
       return 2;
+    case '--accept-ratings-changed-after-freeze':
+      draft.acceptRatingsChangedAfterFreeze = wholeNumber(arg, value());
+      return 2;
     case '--overwrite':
       draft.overwrite = true;
       return 1;
@@ -264,6 +280,7 @@ function checkDraft(draft: Draft): IdentityExportCommand {
     cmsFieldsFile: draft.cmsFieldsFile,
     acceptOverCredit: draft.acceptOverCredit,
     acceptEditsAfterFreeze: draft.acceptEditsAfterFreeze,
+    acceptRatingsChangedAfterFreeze: draft.acceptRatingsChangedAfterFreeze,
     overwrite: draft.overwrite
   };
 }
@@ -290,6 +307,7 @@ export function parseIdentityExportCommand(
     cmsFieldsFile: null,
     acceptOverCredit: 0,
     acceptEditsAfterFreeze: 0,
+    acceptRatingsChangedAfterFreeze: 0,
     overwrite: false
   };
   for (let i = 0; i < args.length; ) {

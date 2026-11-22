@@ -10,6 +10,7 @@ import {
   IdentityExportSource,
   IdentityRow,
   IdentitySyncProgress,
+  OverCreditRaters,
   StatementRow,
   TdhBlock,
   toMillis
@@ -26,7 +27,10 @@ import {
   RatingScope,
   selectRatingScope
 } from './identity-export.scope';
-import { IdentityExportNotReadyError } from './identity-export.errors';
+import {
+  IdentityExportNotReadyError,
+  NotReadyProblem
+} from './identity-export.errors';
 import {
   IDENTITY_EXPORT_FORMAT,
   IdentityExportDelegation,
@@ -55,8 +59,10 @@ export interface IdentityExportOptions {
   readonly expectTdhBlock?: number | null;
   /** Raters over their credit acknowledged at the freeze (default 0). */
   readonly acceptOverCredit?: number;
-  /** REP and CIC edits after the freeze acknowledged (default 0). */
+  /** REP and CIC edits logged after the freeze acknowledged (default 0). */
   readonly acceptEditsAfterFreeze?: number;
+  /** REP and CIC ratings changed after the freeze acknowledged (default 0). */
+  readonly acceptRatingsChangedAfterFreeze?: number;
   readonly exporterRevision: string;
   readonly now?: () => number;
   readonly log?: (message: string) => void;
@@ -88,7 +94,7 @@ export function exportRules(bulkThreshold: number) {
     help_bot_credit_category: HELP_BOT_CREDIT_CATEGORY,
     help_bot_credit_match: 'trim_casefold',
     help_bot_credits: 'excluded',
-    rep: 'stored_minus_credits',
+    rep: 'sum_of_file_ratings',
     level: 'rep+tdh',
     tdh: 'boosted',
     xtdh: 'as_stored',
@@ -120,8 +126,9 @@ export function tdhBlockTimingProblem(
 export interface ExportReadiness {
   readonly tdh: TdhBlock | null;
   readonly identitySync: IdentitySyncProgress | null;
-  readonly overCreditRaters: number;
+  readonly overCredit: OverCreditRaters;
   readonly editsAfterFreeze: number;
+  readonly ratingsChangedAfterFreeze: number;
 }
 
 /** Every reason the export is not the freeze day's (empty when it is). */
@@ -133,12 +140,13 @@ export function readinessProblems(
     | 'expectTdhBlock'
     | 'acceptOverCredit'
     | 'acceptEditsAfterFreeze'
+    | 'acceptRatingsChangedAfterFreeze'
   >
-): string[] {
-  const problems: string[] = [];
+): NotReadyProblem[] {
+  const problems: NotReadyProblem[] = [];
   if (options.freezeMs !== null) {
     const timing = tdhBlockTimingProblem(readiness.tdh, options.freezeMs);
-    if (timing) problems.push(timing);
+    if (timing) problems.push({ cause: 'day', message: timing });
   }
   const expected = options.expectTdhBlock ?? null;
   if (expected === null) return problems;
@@ -149,18 +157,27 @@ export function readinessProblems(
     },
     expected
   );
-  if (day) problems.push(day);
-  const acceptOver = options.acceptOverCredit ?? 0;
-  if (readiness.overCreditRaters > acceptOver) {
-    problems.push(
-      `${readiness.overCreditRaters} raters give more REP or CIC than their credit (TDH + xTDH), which the over-rates loop would still cut; acknowledge with --accept-over-credit ${readiness.overCreditRaters} to export them as they are`
-    );
+  if (day) problems.push({ cause: 'day', message: day });
+  const over = readiness.overCredit.withXtdh;
+  if (over > (options.acceptOverCredit ?? 0)) {
+    problems.push({
+      cause: 'over_credit',
+      message: `${over} raters give more REP or CIC than their credit (TDH + xTDH), which the over-rates loop would cut; acknowledge with --accept-over-credit ${over} to export them as they are`
+    });
   }
-  const acceptEdits = options.acceptEditsAfterFreeze ?? 0;
-  if (readiness.editsAfterFreeze > acceptEdits) {
-    problems.push(
-      `${readiness.editsAfterFreeze} REP and CIC rating edits were logged after the freeze (over-rate cuts and help-bot credits aside); acknowledge with --accept-edits-after-freeze ${readiness.editsAfterFreeze}`
-    );
+  const edits = readiness.editsAfterFreeze;
+  if (edits > (options.acceptEditsAfterFreeze ?? 0)) {
+    problems.push({
+      cause: 'after_freeze',
+      message: `${edits} REP and CIC rating edits were logged after the freeze (over-rate cuts and help-bot credits aside); acknowledge with --accept-edits-after-freeze ${edits}`
+    });
+  }
+  const changed = readiness.ratingsChangedAfterFreeze;
+  if (changed > (options.acceptRatingsChangedAfterFreeze ?? 0)) {
+    problems.push({
+      cause: 'after_freeze',
+      message: `${changed} REP and CIC ratings were changed after the freeze (help-bot credits aside); acknowledge with --accept-ratings-changed-after-freeze ${changed}`
+    });
   }
   return problems;
 }
@@ -233,6 +250,11 @@ export function identitySyncProblem(
   if (progress.pendingBlock !== tdhBlock) {
     return `the last TDH write is of block ${progress.pendingBlock}, not the TDH block ${tdhBlock}`;
   }
+  // A partial write (delegations) also records the day's block; only the
+  // daily full write rewrites every identity's TDH.
+  if ((progress.fullWriteBlock ?? null) !== tdhBlock) {
+    return `the last full TDH write is of block ${progress.fullWriteBlock ?? 'none'}, not ${tdhBlock}: the day's full TDH run hasn't been written yet`;
+  }
   return null;
 }
 
@@ -251,17 +273,31 @@ export function freezeDayProblem(
 }
 
 /**
- * The REP and CIC ratings (help-bot credits already left out) last changed
- * after the freeze time; none without one.
+ * Each identity's rep, level_raw and level as the chain will count them: rep
+ * the sum of the file's REP ratings to it, level_raw that plus TDH.
  */
-export function modifiedAfter(
-  edges: readonly { last_modified_ms: number | null }[],
-  freezeMs: number | null
-): number {
-  if (freezeMs === null) return 0;
-  return edges.filter(
-    (it) => it.last_modified_ms !== null && it.last_modified_ms > freezeMs
-  ).length;
+export function withFileRep(
+  identities: readonly IdentityExportIdentity[],
+  ratings: readonly IdentityExportRating[]
+): IdentityExportIdentity[] {
+  const sums = new Map<string, number>();
+  for (const it of ratings) {
+    if (it.matter !== 'REP') continue;
+    sums.set(
+      it.target_profile_id,
+      (sums.get(it.target_profile_id) ?? 0) + it.rating
+    );
+  }
+  return identities.map((it) => {
+    const rep = it.profile_id ? (sums.get(it.profile_id) ?? 0) : 0;
+    const levelRaw = rep + it.tdh;
+    return {
+      ...it,
+      rep,
+      level_raw: levelRaw,
+      level: getLevelFromScore(levelRaw)
+    };
+  });
 }
 
 /**
@@ -684,17 +720,27 @@ export async function buildIdentityExport(
   const tdh = await source.latestTdhBlock();
   const tdhBlock = tdh?.block ?? null;
   const identitySync = await source.identitySyncProgress();
-  const overCreditRaters = await source.overCreditRaters();
+  const overCredit = await source.overCreditRaters();
   const editsAfterFreeze =
     options.freezeMs === null
       ? 0
       : await source.ratingEditsSince(options.freezeMs);
+  const ratingsChangedAfterFreeze =
+    options.freezeMs === null
+      ? 0
+      : await source.ratingsChangedSince(options.freezeMs);
   const problems = readinessProblems(
-    { tdh, identitySync, overCreditRaters, editsAfterFreeze },
+    {
+      tdh,
+      identitySync,
+      overCredit,
+      editsAfterFreeze,
+      ratingsChangedAfterFreeze
+    },
     options
   );
   if (problems.length) {
-    throw new IdentityExportNotReadyError(problems.join('; '));
+    throw new IdentityExportNotReadyError(problems);
   }
 
   const index = new IdentityIndex(source);
@@ -718,11 +764,8 @@ export async function buildIdentityExport(
   const { scope, excluded } = await resolveScope(index, core, edges, bulk);
   const built = await buildIdentities(source, index, core, scope);
   const repMismatch = repMismatches(built.identities, read);
-  const cms = withCmsFields(
-    withoutCredits(built.identities, credits),
-    options.cmsFields
-  );
-  const identities = cms.identities;
+  // Stored rep without the credits: compared below with the file's ratings.
+  const storedMinusCredits = withoutCredits(built.identities, credits);
   const notes = [
     ...(options.wavesListGiven === false
       ? [
@@ -730,7 +773,7 @@ export async function buildIdentityExport(
         ]
       : []),
     ...scopeNotes(core, excluded, bulkCategories, options.bulkThreshold, scope),
-    `level and level_raw are the chain's: REP + TDH, without xTDH (xtdh is written as stored) and without help-bot credits; the public-API exporter must write them the same way`,
+    `rep, level_raw and level are the chain's: rep is the sum of the REP ratings to the profile in this file (help-bot credits are not in it), level_raw is rep + TDH, without xTDH (xtdh is written as stored); the public-API exporter must write them the same way`,
     TDH_NOTE,
     HELP_BOT_CREDIT_RULE_NOTE,
     ...(credits.ratings
@@ -748,11 +791,12 @@ export async function buildIdentityExport(
           `${repMismatch} exported profiles have a stored rep that is not the sum of their REP ratings read (credits included): the builder should trust the ratings, from which the chain counts REP`
         ]
       : []),
-    ...built.notes,
-    ...cms.notes
+    ...built.notes
   ];
   const exportedProfiles = new Set(
-    identities.map((it) => it.profile_id).filter((it): it is string => !!it)
+    storedMinusCredits
+      .map((it) => it.profile_id)
+      .filter((it): it is string => !!it)
   );
   const ratings = scope.ratings
     .filter(
@@ -762,15 +806,22 @@ export async function buildIdentityExport(
     )
     .sort(compareRatings);
 
-  const repFromFile = repMismatches(identities, ratings);
+  // The file's rep and level are the chain's: from the file's ratings.
+  const cms = withCmsFields(
+    withFileRep(storedMinusCredits, ratings),
+    options.cmsFields
+  );
+  const identities = cms.identities;
+  notes.push(...cms.notes);
+  const repFromFile = repMismatches(storedMinusCredits, ratings);
   if (repFromFile) {
     notes.push(
-      `${repFromFile} exported profiles have a rep that is not the sum of the REP ratings to them in this file: the chain counts REP from the file's ratings, so theirs will differ (ratings from raters left out of the export, or a stored rep that drifted). rep is 6529.io's stored rep minus the help-bot credits (rules.rep); the builder should recompute REP and level from the file's ratings where they differ`
+      `${repFromFile} exported profiles have a stored rep (help-bot credits aside) that is not the sum of the REP ratings to them in this file, from raters left out of the export or a stored rep that drifted: their rep and level here are the file's, as the chain will count them, not 6529.io's`
     );
   }
-  if (overCreditRaters) {
+  if (overCredit.withXtdh || overCredit.tdhOnly) {
     notes.push(
-      `${overCreditRaters} raters give more REP or CIC than their credit (TDH + xTDH); their ratings are exported as they are`
+      `${overCredit.withXtdh} raters give more REP or CIC than their credit as 6529.io counts it (TDH + xTDH), ${overCredit.tdhOnly} by TDH alone (the chain's credit); their ratings are exported as they are`
     );
   }
   if (editsAfterFreeze) {
@@ -778,10 +829,9 @@ export async function buildIdentityExport(
       `${editsAfterFreeze} REP and CIC rating edits were logged after the freeze (over-rate cuts and help-bot credits aside)`
     );
   }
-  const afterFreeze = modifiedAfter(edges, options.freezeMs);
-  if (afterFreeze) {
+  if (ratingsChangedAfterFreeze) {
     notes.push(
-      `${afterFreeze} REP and CIC ratings (help-bot credits left out) were changed after the freeze time: the freeze should have stopped them`
+      `${ratingsChangedAfterFreeze} REP and CIC ratings were changed after the freeze (help-bot credits aside, zeros included)`
     );
   }
 
@@ -843,12 +893,14 @@ export async function buildIdentityExport(
       help_bot_credits_from_others: credits.fromOthers ?? 0,
       rep_mismatch: repMismatch,
       rep_differs_from_file_ratings: repFromFile,
-      ratings_modified_after_freeze: afterFreeze,
-      over_credit_raters: overCreditRaters,
+      ratings_modified_after_freeze: ratingsChangedAfterFreeze,
+      over_credit_raters: overCredit.withXtdh,
+      over_credit_raters_tdh_only: overCredit.tdhOnly,
       rating_edits_after_freeze: editsAfterFreeze,
       identity_sync_pending_generation: identitySync?.pendingGeneration ?? -1,
       identity_sync_synced_generation: identitySync?.syncedGeneration ?? -1,
       identity_sync_pending_block: identitySync?.pendingBlock ?? -1,
+      identity_sync_full_write_block: identitySync?.fullWriteBlock ?? -1,
       bulk_categories: bulkCategories.length,
       bulk_ratings_left_out: scope.bulkLeftOut,
       profiles_left_out: excluded.size,

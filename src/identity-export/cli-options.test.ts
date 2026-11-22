@@ -28,6 +28,7 @@ describe('parseIdentityExportCommand', () => {
       cmsFieldsFile: null,
       acceptOverCredit: 0,
       acceptEditsAfterFreeze: 0,
+      acceptRatingsChangedAfterFreeze: 0,
       overwrite: false
     });
   });
@@ -44,6 +45,8 @@ describe('parseIdentityExportCommand', () => {
           '4',
           '--accept-edits-after-freeze',
           '2',
+          '--accept-ratings-changed-after-freeze',
+          '6',
           '--overwrite'
         ],
         {}
@@ -52,6 +55,7 @@ describe('parseIdentityExportCommand', () => {
       expect.objectContaining({
         acceptOverCredit: 4,
         acceptEditsAfterFreeze: 2,
+        acceptRatingsChangedAfterFreeze: 6,
         overwrite: true
       })
     );
@@ -96,6 +100,7 @@ describe('parseIdentityExportCommand', () => {
       cmsFieldsFile: 'cms-fields.json',
       acceptOverCredit: 0,
       acceptEditsAfterFreeze: 0,
+      acceptRatingsChangedAfterFreeze: 0,
       overwrite: false
     });
     expect(

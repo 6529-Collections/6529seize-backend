@@ -214,7 +214,8 @@ describeWithSeed(
       table: IDENTITY_TDH_SYNC_STATE_TABLE,
       rows: [
         { id: 'pending', generation: 3, block: 24_000_000 },
-        { id: 'synced', generation: 3, block: 24_000_000 }
+        { id: 'synced', generation: 3, block: 24_000_000 },
+        { id: 'full_announce', generation: 0, block: 24_000_000 }
       ]
     },
     {
@@ -284,14 +285,22 @@ describeWithSeed(
       // BOB's CIC 9 is over his TDH 0; the help bot's credit counts too here,
       // as the over-rates loop would count it, because its profile has no
       // identity row in this seed.
-      expect(await source.overCreditRaters()).toBe(2);
+      expect(await source.overCreditRaters()).toEqual({
+        withXtdh: 2,
+        tdhOnly: 2
+      });
+      // Every REP and CIC rating but the credit was last changed in 2024,
+      // the zero rating included; none after the freeze.
+      expect(await source.ratingsChangedSince(Date.UTC(2023, 0, 1))).toBe(4);
+      expect(await source.ratingsChangedSince(FREEZE)).toBe(0);
       // A REP and a CIC edit after the freeze; not the over-rate cut, the
       // help bot's grant, the wave REP edit or the edit before.
       expect(await source.ratingEditsSince(FREEZE)).toBe(2);
       expect(await source.identitySyncProgress()).toEqual({
         pendingGeneration: 3,
         pendingBlock: 24_000_000,
-        syncedGeneration: 3
+        syncedGeneration: 3,
+        fullWriteBlock: 24_000_000
       });
       expect(await source.helpBotProfileId()).toBe(HELP_BOT);
       expect(await source.delegations()).toEqual([

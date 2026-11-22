@@ -28,48 +28,61 @@ async function runExport(command: IdentityExportCommand) {
   process.stdout.write = process.stderr.write.bind(process.stderr);
   try {
     const { doInDbContext } = await import('@/secrets');
-    const { withReadOnlySnapshot } = await import('@/db-api');
-    const { sqlExecutor } = await import('@/sql-executor');
+    const dbApi = await import('@/db-api');
+    // The module, not its value: db-api's connect() installs the executor.
+    const executor = await import('@/sql-executor');
     const { SqlIdentityExportSource } = await import('./identity-export.db');
     const { buildIdentityExport } = await import('./identity-export.service');
     const { writeExportFile } = await import('./identity-export.writer');
     return await doInDbContext(
-      () =>
-        withReadOnlySnapshot(async (connection) => {
-          const source = new SqlIdentityExportSource(
-            <T>(sql: string, params?: Record<string, unknown>) =>
-              sqlExecutor.execute<T>(sql, params, {
-                wrappedConnection: connection
-              })
-          );
-          const document = await buildIdentityExport(source, {
-            bulkThreshold: command.bulk,
-            extraProfileIds,
-            wavesListGiven: command.extraIdsFile !== null,
-            includeDelegations: command.includeDelegations,
-            cmsFields,
-            freezeMs: command.freezeMs,
-            expectTdhBlock: command.expectTdhBlock,
-            acceptOverCredit: command.acceptOverCredit,
-            acceptEditsAfterFreeze: command.acceptEditsAfterFreeze,
-            exporterRevision,
-            log: (message) =>
-              process.stderr.write(`[identity-export] ${message}\n`)
+      async () => {
+        // The read pool behind the snapshot is db-api's. Its connect() calls
+        // process.exit() without a code when the DB settings are missing.
+        process.exitCode = 1;
+        await dbApi.connect();
+        process.exitCode = 0;
+        try {
+          return await dbApi.withReadOnlySnapshot(async (connection) => {
+            const source = new SqlIdentityExportSource(
+              <T>(sql: string, params?: Record<string, unknown>) =>
+                executor.sqlExecutor.execute<T>(sql, params, {
+                  wrappedConnection: connection
+                })
+            );
+            const document = await buildIdentityExport(source, {
+              bulkThreshold: command.bulk,
+              extraProfileIds,
+              wavesListGiven: command.extraIdsFile !== null,
+              includeDelegations: command.includeDelegations,
+              cmsFields,
+              freezeMs: command.freezeMs,
+              expectTdhBlock: command.expectTdhBlock,
+              acceptOverCredit: command.acceptOverCredit,
+              acceptEditsAfterFreeze: command.acceptEditsAfterFreeze,
+              acceptRatingsChangedAfterFreeze:
+                command.acceptRatingsChangedAfterFreeze,
+              exporterRevision,
+              log: (message) =>
+                process.stderr.write(`[identity-export] ${message}\n`)
+            });
+            await writeExportFile(
+              command.out,
+              { ...document },
+              command.overwrite
+            );
+            return {
+              out: command.out,
+              format: document.format,
+              tdh_block: document.tdh_block,
+              freeze_ms: document.freeze_ms,
+              stats: document.stats,
+              notes: document.notes
+            };
           });
-          await writeExportFile(
-            command.out,
-            { ...document },
-            command.overwrite
-          );
-          return {
-            out: command.out,
-            format: document.format,
-            tdh_block: document.tdh_block,
-            freeze_ms: document.freeze_ms,
-            stats: document.stats,
-            notes: document.notes
-          };
-        }),
+        } finally {
+          await dbApi.disconnect();
+        }
+      },
       { syncEntities: false, skipRedis: true }
     );
   } finally {
@@ -86,13 +99,13 @@ export async function main(
     return;
   }
   const summary = await runExport(command);
-  process.stdout.write(`${JSON.stringify(summary, null, 2)}
-`);
+  process.stdout.write(`${JSON.stringify(summary, null, 2)}\n`);
 }
 
 /**
- * Runs the export and returns the process exit code: 0 done, 1 failed,
- * 2 a usage error, 3 the database is not at the freeze day asked for.
+ * Runs the export and returns the process exit code: 0 written, 1 failed,
+ * 2 a usage error, 3 not the freeze day's TDH yet, 4 raters over credit,
+ * 5 REP or CIC changed after the freeze (NOT_READY_EXIT_CODES).
  */
 export async function runCli(
   args: string[] = process.argv.slice(2)
@@ -103,19 +116,15 @@ export async function runCli(
   } catch (error) {
     if (error instanceof IdentityExportNotReadyError) {
       process.stderr.write(
-        `${error.message}: wait for the freeze day's TDH run and its identity sync, then export again
-`
+        `${error.message}: nothing was written; wait, or acknowledge, and run again (exit ${error.exitCode}: see --help)\n`
       );
-      return 3;
+      return error.exitCode;
     }
     if (error instanceof IdentityExportUsageError) {
-      process.stderr.write(`${error.message}
-
-${IDENTITY_EXPORT_HELP}`);
+      process.stderr.write(`${error.message}\n\n${IDENTITY_EXPORT_HELP}`);
       return 2;
     }
-    process.stderr.write(`${(error as Error)?.stack ?? error}
-`);
+    process.stderr.write(`${(error as Error)?.stack ?? error}\n`);
     return 1;
   }
 }
