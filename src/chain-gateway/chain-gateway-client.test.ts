@@ -5,8 +5,10 @@ import {
   ChainGatewayConfig,
   chainGatewayConfigFromEnv,
   ChainGatewayError,
+  cidHex,
   cidPath,
-  LruCache
+  LruCache,
+  rawCidHexOf
 } from './chain-gateway.client';
 
 const BASE = 'https://gateway.test';
@@ -15,7 +17,7 @@ interface Call {
   method: string;
   url: string;
   headers: Record<string, string>;
-  body?: string;
+  body?: string | Uint8Array;
 }
 
 type Reply =
@@ -71,7 +73,7 @@ function setup(
     init: {
       method: string;
       headers: Record<string, string>;
-      body?: string;
+      body?: string | Uint8Array;
     }
   ) => {
     const call = {
@@ -474,7 +476,7 @@ describe('ChainGatewayClient writes', () => {
       ['POST', '/v1/draft'],
       ['POST', '/v1/submit']
     ]);
-    expect(JSON.parse(calls[1].body!)).toEqual({
+    expect(JSON.parse(String(calls[1].body))).toEqual({
       unsigned: '0x00',
       signatures: [{ role: 0, keyType: 1, sig: '0x' + 'ee'.repeat(65) }]
     });
@@ -539,6 +541,106 @@ describe('profile documents', () => {
   it('answers null when the store has none', async () => {
     const { client } = setup(() => ({ status: 404 }));
     expect(await client.getProfileDoc(cid)).toBeNull();
+  });
+
+  it('reads a CID in hex or in base32 text', () => {
+    expect(cidHex(cidPath(cid))).toBe(cid);
+    expect(cidHex(cid.toUpperCase().replace('0X', '0x'))).toBe(cid);
+    expect(rawCidHexOf(doc)).toBe(cid);
+    for (const bad of ['', 'b', cidPath(cid).toUpperCase(), 'zabc', 'b1']) {
+      expect(() => cidHex(bad)).toThrow(ChainGatewayError);
+    }
+  });
+
+  it('fetches any document by its base32 CID', async () => {
+    const { client, calls } = setup(() => ({ status: 200, bytes: doc }));
+    expect(await client.getDocument(cidPath(cid))).toEqual(doc);
+    expect(await client.getProfileDoc(cid)).toEqual(doc);
+    expect(calls).toHaveLength(1);
+  });
+
+  it('does not cache a document larger than a profile document', async () => {
+    const big = Buffer.alloc(524_289, 7);
+    const bigCid = rawCidHexOf(big);
+    const { client, calls } = setup(() => ({ status: 200, bytes: big }));
+    await client.getDocument(bigCid);
+    await client.getDocument(bigCid);
+    expect(calls).toHaveLength(2);
+  });
+
+  it('stores a document as bytes and checks the CID the store names', async () => {
+    const { client, calls } = setup(() => ({
+      status: 201,
+      json: { cid: cidPath(cid), cid_hex: cid, codec: 'raw', size: doc.length }
+    }));
+    expect(await client.putDocument(doc)).toBe(cidPath(cid));
+    expect(calls[0].method).toBe('POST');
+    expect(path(calls[0])).toBe('/v1/docs');
+    expect(param(calls[0], 'cid')).toBe(cidPath(cid));
+    expect(calls[0].headers['content-type']).toBe('application/octet-stream');
+    expect(Buffer.from(calls[0].body as Uint8Array)).toEqual(doc);
+  });
+
+  it('refuses an upload the store names differently', async () => {
+    const other = rawCidHexOf(Buffer.from('other'));
+    const { client } = setup(() => ({
+      status: 200,
+      json: { cid: cidPath(other), cid_hex: other, codec: 'raw', size: 5 }
+    }));
+    await expect(client.putDocument(doc)).rejects.toMatchObject({
+      code: 'cid_mismatch'
+    });
+  });
+});
+
+describe('import and membership history', () => {
+  const P = '0x' + 'ab'.repeat(32);
+  const W = '0x' + '01'.repeat(20);
+
+  it('reads the import entry of an identity, and null when none', async () => {
+    const entry = {
+      principalId: P,
+      legacyId: '00000000-0000-4000-8000-000000000001',
+      handle: 'alice',
+      wallets: [W],
+      primary: W,
+      profileDocCid: '0x01551220' + '33'.repeat(32),
+      xtdh: '0'
+    };
+    const { client, calls } = setup((call) => {
+      if (path(call) === '/v1/status') return status(50);
+      return path(call).endsWith(`${P}/imported`)
+        ? { status: 200, json: { read: stamp(50), data: entry, next: null } }
+        : {
+            status: 404,
+            json: {
+              read: stamp(50),
+              error: { code: 'not_found', message: 'none' }
+            }
+          };
+    });
+    expect(
+      await client.getImportedIdentity(P.toUpperCase().replace('0X', '0x'))
+    ).toEqual(entry);
+    expect(await client.getImportedIdentity('0x' + 'cd'.repeat(32))).toBeNull();
+    expect(calls.some((it) => param(it, 'height') === '50')).toBe(true);
+  });
+
+  it("reads a wallet's binding history", async () => {
+    const history = {
+      wallet: W,
+      changes: [
+        { height: 3, principalId: P },
+        { height: 9, principalId: null }
+      ],
+      ranges: [{ from: 1, to: 50 }]
+    };
+    const { client } = setup((call) =>
+      path(call) === '/v1/status'
+        ? status(50)
+        : { status: 200, json: { read: stamp(50), data: history, next: null } }
+    );
+    expect(await client.getMembershipWalletHistory(W)).toEqual(history);
   });
 });
 

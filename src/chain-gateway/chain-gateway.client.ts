@@ -10,6 +10,7 @@ import {
   ChainHandle,
   ChainHead,
   ChainIdentity,
+  ChainImportedIdentity,
   ChainLevel,
   ChainMembershipDay,
   ChainMembershipDayWallets,
@@ -22,11 +23,13 @@ import {
   ChainReadOptions,
   ChainReadStamp,
   ChainStatus,
+  ChainStoredDoc,
   ChainSubmitRequest,
   ChainSubmitResult,
   ChainTdhQuery,
   ChainTx,
-  ChainWalletDelegations
+  ChainWalletDelegations,
+  ChainWalletHistory
 } from './chain-gateway.types';
 
 /**
@@ -57,7 +60,8 @@ type FetchLike = (
   init: {
     method: string;
     headers: Record<string, string>;
-    body?: string;
+    /** JSON text, or bytes for a document upload. */
+    body?: string | Uint8Array;
     signal?: AbortSignal;
   }
 ) => Promise<{
@@ -178,6 +182,8 @@ function trimTrailingSlashes(url: string): string {
   return url.slice(0, end);
 }
 const RFC4648_LOWER = 'abcdefghijklmnopqrstuvwxyz234567';
+/** A profile document's largest size: larger documents are not cached. */
+const MAX_CACHED_DOC_BYTES = 524_288;
 
 function base32(bytes: Uint8Array): string {
   let out = '';
@@ -208,6 +214,46 @@ function hexToBytes(hex: string): Uint8Array {
 /** A CID as the document store names it: multibase base32 (`b...`). */
 export function cidPath(cidHex: string): string {
   return `b${base32(hexToBytes(cidHex))}`;
+}
+
+/**
+ * A CID's bytes as `0x` hex, from hex or from base32 text (`b...`, as the
+ * document store and profile documents write it). Throws on anything else.
+ */
+export function cidHex(cid: string): string {
+  const text = cid.trim();
+  if (/^0x/i.test(text)) {
+    return '0x' + Buffer.from(hexToBytes(text)).toString('hex');
+  }
+  const bytes: number[] = [];
+  let bits = 0;
+  let value = 0;
+  for (const char of text.startsWith('b') ? text.slice(1) : '') {
+    const index = RFC4648_LOWER.indexOf(char);
+    if (index < 0) break;
+    value = ((value << 5) | index) & 0xfff;
+    bits += 5;
+    if (bits >= 8) {
+      bytes.push((value >>> (bits - 8)) & 0xff);
+      bits -= 8;
+    }
+  }
+  const hex = '0x' + Buffer.from(bytes).toString('hex');
+  if (!bytes.length || cidPath(hex) !== text) {
+    throw new ChainGatewayError(`Not a CID: ${cid}`, null, 'bad_request', '');
+  }
+  return hex;
+}
+
+/** The raw sha2-256 CIDv1 of some bytes, as `0x` hex. */
+export function rawCidHexOf(bytes: Uint8Array): string {
+  return (
+    '0x' +
+    Buffer.concat([
+      Buffer.from(RAW_SHA256_CID_PREFIX),
+      createHash('sha256').update(bytes).digest()
+    ]).toString('hex')
+  );
 }
 
 const RAW_SHA256_CID_PREFIX = [0x01, 0x55, 0x12, 0x20];
@@ -297,7 +343,7 @@ export class ChainGatewayClient {
     return `${this.config().baseUrl}${path}${suffix}`;
   }
 
-  private headersFor(binary: boolean, hasBody: boolean) {
+  private headersFor(binary: boolean, body: unknown) {
     const headers: Record<string, string> = {
       accept: binary ? 'application/octet-stream' : 'application/json',
       'user-agent': '6529-backend'
@@ -306,10 +352,20 @@ export class ChainGatewayClient {
     if (key) {
       headers.authorization = `Bearer ${key}`;
     }
-    if (hasBody) {
+    if (Buffer.isBuffer(body)) {
+      headers['content-type'] = 'application/octet-stream';
+    } else if (body !== undefined) {
       headers['content-type'] = 'application/json';
     }
     return headers;
+  }
+
+  /** Bytes go as they are (document uploads); anything else as JSON. */
+  private encodeBody(body: unknown): string | Buffer | undefined {
+    if (body === undefined || Buffer.isBuffer(body)) {
+      return body;
+    }
+    return JSON.stringify(body);
   }
 
   /**
@@ -339,8 +395,8 @@ export class ChainGatewayClient {
     try {
       const response = await fetchImpl(url, {
         method,
-        headers: this.headersFor(binary, body !== undefined),
-        body: body === undefined ? undefined : JSON.stringify(body),
+        headers: this.headersFor(binary, body),
+        body: this.encodeBody(body),
         signal: controller.signal
       });
       if (RETRYABLE.has(response.status)) {
@@ -639,6 +695,19 @@ export class ChainGatewayClient {
   }
 
   /** The identity a 6529.io profile id (UUID) was imported to. */
+  /**
+   * The import file's entry the identity was created from (its legacy id
+   * and the ProfileDoc the import wrote), or null when the import didn't
+   * create it.
+   */
+  getImportedIdentity(principalId: string, opts?: ChainReadOptions) {
+    return this.data<ChainImportedIdentity>(
+      `/v1/identities/${segment(lower(principalId))}/imported`,
+      {},
+      opts
+    );
+  }
+
   getIdentityByLegacyProfileId(profileId: string, opts?: ChainReadOptions) {
     return this.data<ChainIdentity>(
       `/v1/identities/by-legacy/${segment(lower(profileId))}`,
@@ -702,6 +771,15 @@ export class ChainGatewayClient {
   getMembershipWallet(wallet: string, opts?: ChainReadOptions) {
     return this.data<ChainMembershipWallet>(
       `/v1/membership/wallets/${segment(lower(wallet))}`,
+      {},
+      opts
+    );
+  }
+
+  /** Every binding change of a wallet the feed holds (principal at a height). */
+  getMembershipWalletHistory(wallet: string, opts?: ChainReadOptions) {
+    return this.data<ChainWalletHistory>(
+      `/v1/membership/wallets/${segment(lower(wallet))}/history`,
       {},
       opts
     );
@@ -894,14 +972,24 @@ export class ChainGatewayClient {
     return json.data as T;
   }
 
-  // Profile documents (the gateway's document store)
+  // Documents (the gateway's document store)
 
   /**
    * The bytes of the profile document with this CID (hex, as identities
    * carry it), or null when the store has none. Checked against the CID.
    */
   async getProfileDoc(cidHex: string): Promise<Buffer | null> {
-    const key = lower(cidHex);
+    return await this.getDocument(cidHex);
+  }
+
+  /**
+   * The bytes of any raw sha2-256 document in the store (profile documents,
+   * profile site files), by CID in hex or base32 text, or null when the
+   * store has none. Checked against the CID. Documents up to a profile
+   * document's size are cached.
+   */
+  async getDocument(cid: string): Promise<Buffer | null> {
+    const key = cidHex(cid);
     const cached = this.docs.get(key);
     if (cached) {
       return cached;
@@ -928,8 +1016,39 @@ export class ChainGatewayClient {
         path
       );
     }
-    this.docs.set(key, bytes);
+    if (bytes.length <= MAX_CACHED_DOC_BYTES) {
+      this.docs.set(key, bytes);
+    }
     return bytes;
+  }
+
+  /**
+   * Stores bytes in the document store (POST /v1/docs, at most 2 MiB) and
+   * returns their CID as base32 text. The store computes the CID; it must be
+   * the one these bytes have. Storing the same bytes again is harmless.
+   */
+  async putDocument(bytes: Buffer): Promise<string> {
+    const expected = rawCidHexOf(bytes);
+    const path = '/v1/docs';
+    const { status, json } = await this.send(
+      'POST',
+      path,
+      { cid: cidPath(expected) },
+      bytes
+    );
+    const stored = json as unknown as ChainStoredDoc | null;
+    if ((status !== 200 && status !== 201) || !stored?.cid) {
+      throw this.errorOf(path, status, json);
+    }
+    if (lower(stored.cid_hex ?? cidHex(stored.cid)) !== expected) {
+      throw new ChainGatewayError(
+        `${path}: the store named the document ${stored.cid}, not ${cidPath(expected)}`,
+        status,
+        'cid_mismatch',
+        path
+      );
+    }
+    return cidPath(expected);
   }
 }
 
