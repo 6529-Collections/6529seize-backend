@@ -782,15 +782,6 @@
         "lambda-throttles"
       ],
       "deployCode": false
-    },
-    {
-      "name": "rpcProxy",
-      "owner": "external-or-legacy",
-      "coverage": [
-        "lambda-errors",
-        "lambda-throttles"
-      ],
-      "deployCode": false
     }
   ]
 }
