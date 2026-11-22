@@ -132,6 +132,18 @@ export const SUBSCRIPTIONS_LOGS_TABLE = 'subscriptions_logs';
 export const SUBSCRIPTIONS_REDEEMED_TABLE = 'subscriptions_redeemed';
 export const SUBSCRIPTION_DEFERRED_WRITES_TABLE =
   'subscription_deferred_writes';
+/** The identity-keyed subscription tables (src/subscriptions-identity). */
+export const SUBSCRIPTIONS_ID_TOP_UP_TABLE = 'subscriptions_id_top_up';
+export const SUBSCRIPTIONS_ID_BALANCES_TABLE = 'subscriptions_id_balances';
+export const SUBSCRIPTIONS_ID_MODE_TABLE = 'subscriptions_id_mode';
+export const SUBSCRIPTIONS_ID_NFTS_TABLE = 'subscriptions_id_nfts';
+export const SUBSCRIPTIONS_ID_NFTS_FINAL_TABLE = 'subscriptions_id_nfts_final';
+export const SUBSCRIPTIONS_ID_NFTS_FINAL_UPLOAD_TABLE =
+  'subscriptions_id_nfts_final_upload';
+export const SUBSCRIPTIONS_ID_LOGS_TABLE = 'subscriptions_id_logs';
+export const SUBSCRIPTIONS_ID_REDEEMED_TABLE = 'subscriptions_id_redeemed';
+export const SUBSCRIPTIONS_ID_KEY_MAP_TABLE = 'subscriptions_id_key_map';
+export const SUBSCRIPTIONS_ID_STATE_TABLE = 'subscriptions_id_state';
 export const SUBSCRIPTION_COVERAGE_ALERT_STATES_TABLE =
   'subscription_coverage_alert_states';
 export const SUBSCRIPTION_COVERAGE_REFRESH_REQUESTS_TABLE =

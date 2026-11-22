@@ -209,6 +209,18 @@ export { SubscriptionCoverageAlertStateEntity } from './ISubscriptionCoverageAle
 export { SubscriptionCoverageRefreshRequestEntity } from './ISubscriptionCoverageRefreshRequest';
 export { SubscriptionDeferredWriteEntity } from './ISubscriptionDeferredWrite';
 export {
+  SubscriptionIdBalanceEntity,
+  SubscriptionIdChoiceEntity,
+  SubscriptionIdFinalEntity,
+  SubscriptionIdFinalUploadEntity,
+  SubscriptionIdKeyMapEntity,
+  SubscriptionIdLogEntity,
+  SubscriptionIdModeEntity,
+  SubscriptionIdRedeemedEntity,
+  SubscriptionIdStateEntity,
+  SubscriptionIdTopUpEntity
+} from './ISubscriptionIdentity';
+export {
   ConsolidatedTDH,
   ConsolidatedTDHEditions,
   ConsolidatedTDHMemes,

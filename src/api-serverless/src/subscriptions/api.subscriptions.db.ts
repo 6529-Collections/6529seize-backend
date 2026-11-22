@@ -32,7 +32,7 @@ import {
   SubscriptionBalance,
   SubscriptionMode
 } from '@/entities/ISubscription';
-import { BadRequestException } from '@/exceptions';
+import { BadRequestException, CustomApiCompliantException } from '@/exceptions';
 import { getMaxMemeId } from '@/nftsLoop/db.nfts';
 import { sqlExecutor } from '@/sql-executor';
 import { equalIgnoreCase } from '@/strings';
@@ -56,6 +56,13 @@ import {
   hasMinimumBalanceForAutomaticMode,
   InsufficientSubscriptionBalanceException
 } from '@/api/subscriptions/insufficient-subscription-balance.exception';
+import { mirrorIdentityDirectory } from '@/subscriptions-identity/identity/identity-directory';
+import {
+  LEGACY_SUBSCRIPTION_TABLES,
+  subscriptionReadScope,
+  SubscriptionTables,
+  subscriptionTables
+} from '@/subscriptions-identity/identity/subscription-tables';
 
 const SUBSCRIPTIONS_START_ID = 220;
 
@@ -71,10 +78,11 @@ export interface RedeemedMemeSubscriptionCountsDownloadRow {
 async function getForConsolidationKey(
   consolidationKey: string,
   table: string,
-  wrappedConnection?: any
+  wrappedConnection?: any,
+  keyColumn: SubscriptionTables['key'] = 'consolidation_key'
 ) {
   const result = await sqlExecutor.execute(
-    `SELECT * FROM ${table} WHERE consolidation_key = :consolidationKey`,
+    `SELECT * FROM ${table} WHERE ${keyColumn} = :consolidationKey`,
     { consolidationKey },
     { wrappedConnection }
   );
@@ -87,13 +95,18 @@ async function getForConsolidationKey(
 export async function fetchDetailsForConsolidationKey(
   consolidationKey: string
 ): Promise<SubscriptionDetails> {
+  const scope = await subscriptionReadScope(consolidationKey);
   const balance: SubscriptionBalance = await getForConsolidationKey(
-    consolidationKey,
-    SUBSCRIPTIONS_BALANCES_TABLE
+    scope.key,
+    scope.tables.balances,
+    undefined,
+    scope.tables.key
   );
   const mode: SubscriptionMode = await getForConsolidationKey(
-    consolidationKey,
-    SUBSCRIPTIONS_MODE_TABLE
+    scope.key,
+    scope.tables.mode,
+    undefined,
+    scope.tables.key
   );
 
   let lastUpdate = 0;
@@ -101,8 +114,9 @@ export async function fetchDetailsForConsolidationKey(
     lastUpdate = new Date(mode.updated_at.toString()).getTime();
   }
 
-  const subscriptionEligibility =
-    await fetchSubscriptionEligibility(consolidationKey);
+  const subscriptionEligibility = await fetchSubscriptionEligibility(
+    scope.consolidationKey
+  );
 
   return {
     consolidation_key: consolidationKey,
@@ -119,11 +133,15 @@ export async function fetchLogsForConsolidationKey(
   pageSize: number,
   page: number
 ): Promise<PaginatedResponse<SubscriptionTopUp>> {
-  const filters = constructFilters('', `consolidation_key = :consolidationKey`);
-  const params = { consolidationKey };
+  const scope = await subscriptionReadScope(consolidationKey);
+  const filters = constructFilters(
+    '',
+    `${scope.tables.key} = :consolidationKey`
+  );
+  const params = { consolidationKey: scope.key };
 
   return fetchPaginated(
-    SUBSCRIPTIONS_LOGS_TABLE,
+    scope.tables.logs,
     params,
     'id desc',
     pageSize,
@@ -142,6 +160,19 @@ export async function fetchConsolidationAddresses(
       { consolidationKey }
     )
   ).map((address) => address.address);
+}
+
+/**
+ * Once the identity tables are the truth, a change must come as a signed
+ * record; the legacy write path refuses it.
+ */
+async function assertUnsignedWritesOpen(): Promise<void> {
+  if ((await subscriptionTables()).identity) {
+    throw new CustomApiCompliantException(
+      409,
+      'Subscription changes are signed now. Update the app and try again.'
+    );
+  }
 }
 
 /**
@@ -167,6 +198,7 @@ export async function updateSubscriptionMode(
   // A caller with its own transaction (the first top-up) has already
   // checked the key as part of its own write.
   if (!connection) {
+    await assertUnsignedWritesOpen();
     await assertSubscriptionKeyWritable(consolidationKey);
   }
   if (automatic) {
@@ -307,6 +339,7 @@ export async function updateSubscribeAllEditions(
   connection?: any
 ) {
   if (!connection) {
+    await assertUnsignedWritesOpen();
     await assertSubscriptionKeyWritable(consolidationKey);
   }
   if (connection) {
@@ -375,34 +408,40 @@ export async function fetchUpcomingMemeSubscriptions(
 ): Promise<NFTSubscription[]> {
   const maxMemeId = await getMaxMemeId(true);
   const cutoffMemeId = await getSubscriptionCutoffMemeId();
+  const scope = await subscriptionReadScope(consolidationKey);
 
   const mode: SubscriptionMode = await getForConsolidationKey(
-    consolidationKey,
-    SUBSCRIPTIONS_MODE_TABLE
+    scope.key,
+    scope.tables.mode,
+    undefined,
+    scope.tables.key
   );
 
   const results: NFTSubscription[] = await sqlExecutor.execute(
     `SELECT
           *
         FROM
-          ${SUBSCRIPTIONS_NFTS_TABLE}
+          ${scope.tables.nfts}
         WHERE
-          consolidation_key = :consolidationKey
+          ${scope.tables.key} = :consolidationKey
           AND contract = :memesContract
           AND token_id > :maxMemeId
       `,
-    { consolidationKey, memesContract: MEMES_CONTRACT, maxMemeId }
+    { consolidationKey: scope.key, memesContract: MEMES_CONTRACT, maxMemeId }
   );
 
   const subscriptions: NFTSubscription[] = [];
-  const subscriptionEligibility =
-    await fetchSubscriptionEligibility(consolidationKey);
+  const subscriptionEligibility = await fetchSubscriptionEligibility(
+    scope.consolidationKey
+  );
   for (let i = 1; i <= cardCount; i++) {
     const id = maxMemeId + i;
-    const sub = results.find((r) => r.token_id === id);
+    const sub = results.find((r) => Number(r.token_id) === id);
     if (sub) {
       subscriptions.push({
-        consolidation_key: sub.consolidation_key,
+        consolidation_key: scope.tables.identity
+          ? consolidationKey
+          : sub.consolidation_key,
         contract: sub.contract,
         token_id: sub.token_id,
         subscribed: sub.subscribed,
@@ -432,16 +471,20 @@ export async function fetchUpcomingMemeSubscriptionStatusForConsolidationKey(
     throw new BadRequestException(`Meme #${memeId} already dropped.`);
   }
 
+  const scope = await subscriptionReadScope(consolidationKey);
   const [subscriptionEligibility, mode, subscription] = await Promise.all([
-    fetchSubscriptionEligibility(consolidationKey),
+    fetchSubscriptionEligibility(scope.consolidationKey),
     getForConsolidationKey(
-      consolidationKey,
-      SUBSCRIPTIONS_MODE_TABLE
+      scope.key,
+      scope.tables.mode,
+      undefined,
+      scope.tables.key
     ) as Promise<SubscriptionMode | null>,
     fetchSubscriptionForConsolidationKey(
-      consolidationKey,
+      scope.key,
       MEMES_CONTRACT,
-      memeId
+      memeId,
+      scope.tables
     )
   ]);
   if (subscription && !subscription.subscribed) {
@@ -482,6 +525,7 @@ export async function updateSubscription(
   tokenId: number,
   subscribed: boolean
 ) {
+  await assertUnsignedWritesOpen();
   await assertSubscriptionKeyWritable(consolidationKey);
   if (subscribed) {
     const balance = await getForConsolidationKey(
@@ -559,6 +603,7 @@ export async function updateSubscriptionCount(
   tokenId: number,
   count: number
 ) {
+  await assertUnsignedWritesOpen();
   await assertSubscriptionKeyWritable(consolidationKey);
   await assertSubscriptionOpen(tokenId);
 
@@ -638,6 +683,19 @@ export async function fetchTopUpsForConsolidationKey(
   pageSize: number,
   page: number
 ): Promise<PaginatedResponse<SubscriptionTopUp>> {
+  const scope = await subscriptionReadScope(consolidationKey);
+  if (scope.tables.identity) {
+    // Each top-up is credited to the identity it was attributed to.
+    return fetchPaginated(
+      scope.tables.topUp,
+      { identityKey: scope.key },
+      'block desc',
+      pageSize,
+      page,
+      constructFilters('', `identity_key = :identityKey`),
+      ''
+    );
+  }
   let wallets = await fetchConsolidationAddresses(consolidationKey);
   if (wallets.length === 0) {
     wallets = [consolidationKey];
@@ -661,11 +719,15 @@ export async function fetchRedeemedSubscriptionsForConsolidationKey(
   pageSize: number,
   page: number
 ): Promise<PaginatedResponse<RedeemedSubscription>> {
-  const filters = constructFilters('', `consolidation_key = :consolidationKey`);
-  const params = { consolidationKey };
+  const scope = await subscriptionReadScope(consolidationKey);
+  const filters = constructFilters(
+    '',
+    `${scope.tables.key} = :consolidationKey`
+  );
+  const params = { consolidationKey: scope.key };
 
   return fetchPaginated(
-    SUBSCRIPTIONS_REDEEMED_TABLE,
+    scope.tables.redeemed,
     params,
     'transaction_date desc',
     pageSize,
@@ -687,7 +749,7 @@ export async function fetchSubscriptionUploads(
   }
 
   return fetchPaginated(
-    SUBSCRIPTIONS_NFTS_FINAL_UPLOAD_TABLE,
+    (await subscriptionTables()).upload,
     params,
     'token_id desc',
     pageSize,
@@ -701,15 +763,19 @@ export async function fetchFinalSubscription(
   contract: string,
   tokenId: number
 ): Promise<NFTFinalSubscription | null> {
+  const scope = await subscriptionReadScope(consolidationKey);
   const results = await sqlExecutor.execute(
-    `SELECT * FROM ${SUBSCRIPTIONS_NFTS_FINAL_TABLE} 
-    WHERE 
-      consolidation_key = :consolidationKey 
-      AND contract = :contract 
-      AND token_id = :tokenId`,
-    { consolidationKey, contract, tokenId }
+    `SELECT * FROM ${scope.tables.final}
+    WHERE
+      ${scope.tables.key} = :consolidationKey
+      AND contract = :contract
+      AND token_id = :tokenId
+    ORDER BY id ASC`,
+    { consolidationKey: scope.key, contract, tokenId }
   );
-  if (results.length === 1) {
+  // An identity can hold two rows of a past list (people who consolidated
+  // later); its first row answers, as the legacy key's one row did.
+  if (results.length === 1 || (scope.tables.identity && results.length > 1)) {
     return results[0];
   }
   return null;
@@ -722,7 +788,7 @@ export async function fetchFinalSubscriptionsByPhase(
 ): Promise<PhaseAirdrop[]> {
   return sqlExecutor.execute<PhaseAirdrop>(
     `SELECT airdrop_address as wallet, subscribed_count as amount
-     FROM ${SUBSCRIPTIONS_NFTS_FINAL_TABLE}
+     FROM ${(await subscriptionTables()).final}
      WHERE contract = :contract
        AND token_id = :tokenId
        AND phase = :phaseName
@@ -736,9 +802,9 @@ export async function fetchAllNftFinalSubscriptionsForContractAndToken(
   token_id: number
 ): Promise<NFTFinalSubscription[]> {
   return sqlExecutor.execute(
-    `SELECT * FROM ${SUBSCRIPTIONS_NFTS_FINAL_TABLE} 
-    WHERE 
-      contract = :contract 
+    `SELECT * FROM ${(await subscriptionTables()).final}
+    WHERE
+      contract = :contract
       AND token_id = :token_id
     ORDER BY subscribed_at ASC`,
     { contract, token_id }
@@ -750,9 +816,9 @@ export async function fetchAllPublicFinalSubscriptionsForContractAndToken(
   token_id: number
 ): Promise<NFTFinalSubscription[]> {
   return sqlExecutor.execute(
-    `SELECT * FROM ${SUBSCRIPTIONS_NFTS_FINAL_TABLE} 
-    WHERE 
-      contract = :contract 
+    `SELECT * FROM ${(await subscriptionTables()).final}
+    WHERE
+      contract = :contract
       AND token_id = :token_id
       AND phase IS NULL
     ORDER BY subscribed_at ASC`,
@@ -765,7 +831,7 @@ async function fetchFinalMemeSubscriptionCount(
 ): Promise<SubscriptionCounts> {
   const results = await sqlExecutor.execute<{ count: number | string | null }>(
     `SELECT COALESCE(SUM(subscribed_count), 0) AS count
-    FROM ${SUBSCRIPTIONS_NFTS_FINAL_TABLE}
+    FROM ${(await subscriptionTables()).final}
     WHERE contract = :contract
       AND token_id = :tokenId`,
     { contract: MEMES_CONTRACT, tokenId }
@@ -847,18 +913,24 @@ async function fetchEffectiveUpcomingMemeSubscriptionCounts(
   }
 
   const cutoffMemeId = await getSubscriptionCutoffMemeId();
+  const tables = await subscriptionTables();
+  // The rows' key column, read as consolidation_key so the counting below
+  // is the same for both table sets.
+  const keyAs = `${tables.key} AS consolidation_key`;
 
   const autoSubs: SubscriptionMode[] = await sqlExecutor.execute(
-    `SELECT * FROM ${SUBSCRIPTIONS_MODE_TABLE} WHERE automatic = :automatic`,
+    `SELECT *, ${keyAs} FROM ${tables.mode} WHERE automatic = :automatic`,
     { automatic: true }
   );
 
   // Fetch all subscription records (both subscribed = true and false)
   // to check if someone manually unsubscribed from a specific card
-  const subs: NFTSubscription[] = await sqlExecutor.execute(
-    `SELECT * FROM ${SUBSCRIPTIONS_NFTS_TABLE} WHERE token_id IN (:tokenIds)`,
-    { tokenIds }
-  );
+  const subs: NFTSubscription[] = (
+    await sqlExecutor.execute<NFTSubscription>(
+      `SELECT *, ${keyAs} FROM ${tables.nfts} WHERE token_id IN (:tokenIds)`,
+      { tokenIds }
+    )
+  ).map((s) => ({ ...s, token_id: Number(s.token_id) }));
 
   // Get all unique consolidation keys from subscriptions and auto subscriptions
   const allConsolidationKeys = new Set<string>();
@@ -869,7 +941,7 @@ async function fetchEffectiveUpcomingMemeSubscriptionCounts(
   const balances: SubscriptionBalance[] =
     allConsolidationKeys.size > 0
       ? await sqlExecutor.execute(
-          `SELECT * FROM ${SUBSCRIPTIONS_BALANCES_TABLE} WHERE consolidation_key IN (:consolidationKeys)`,
+          `SELECT *, ${keyAs} FROM ${tables.balances} WHERE ${tables.key} IN (:consolidationKeys)`,
           { consolidationKeys: Array.from(allConsolidationKeys) }
         )
       : [];
@@ -881,8 +953,9 @@ async function fetchEffectiveUpcomingMemeSubscriptionCounts(
   });
 
   // Fetch subscription eligibility for auto subscriptions in one batched query
-  const autoSubEligibilityMap = await fetchSubscriptionEligibilityForKeys(
-    autoSubs.map((autoSub) => autoSub.consolidation_key)
+  const autoSubEligibilityMap = await eligibilityByRowKey(
+    autoSubs.map((autoSub) => autoSub.consolidation_key),
+    tables
   );
 
   const counts: SubscriptionCounts[] = [];
@@ -954,24 +1027,54 @@ export async function fetchUpcomingMemeSubscriptionCounts(
   return fetchEffectiveUpcomingMemeSubscriptionCounts(tokenIds);
 }
 
-const REDEEMED_COUNTS_JOINS = `
-    LEFT JOIN ${SUBSCRIPTIONS_REDEEMED_TABLE}
-      ON ${SUBSCRIPTIONS_REDEEMED_TABLE}.contract = ${NFTS_TABLE}.contract
-      AND ${SUBSCRIPTIONS_REDEEMED_TABLE}.token_id = ${NFTS_TABLE}.id
+function redeemedCountsJoins(redeemed: string): string {
+  return `
+    LEFT JOIN ${redeemed}
+      ON ${redeemed}.contract = ${NFTS_TABLE}.contract
+      AND ${redeemed}.token_id = ${NFTS_TABLE}.id
     LEFT JOIN ${MEMES_EXTENDED_DATA_TABLE}
       ON ${MEMES_EXTENDED_DATA_TABLE}.id = ${NFTS_TABLE}.id
   `;
+}
+
+/**
+ * Eligibility for rows keyed by the tables' key column. Identity rows are
+ * read by the consolidation key their identity has now, as eligibility is.
+ */
+async function eligibilityByRowKey(
+  rowKeys: string[],
+  tables: SubscriptionTables
+): Promise<Map<string, number>> {
+  if (!tables.identity) {
+    return fetchSubscriptionEligibilityForKeys(rowKeys);
+  }
+  const consolidationKeys =
+    await mirrorIdentityDirectory.consolidationKeysOf(rowKeys);
+  const eligibility = await fetchSubscriptionEligibilityForKeys(
+    Array.from(new Set(consolidationKeys.values()))
+  );
+  const byRowKey = new Map<string, number>();
+  for (const rowKey of rowKeys) {
+    const key = consolidationKeys.get(rowKey.toLowerCase()) ?? rowKey;
+    const value = eligibility.get(key.toLowerCase());
+    if (value !== undefined) {
+      byRowKey.set(rowKey.toLowerCase(), value);
+    }
+  }
+  return byRowKey;
+}
 
 export async function fetchPastMemeSubscriptionCounts(
   pageSize: number,
   page: number
 ): Promise<PaginatedResponse<RedeemedSubscriptionCounts>> {
-  const joins = REDEEMED_COUNTS_JOINS;
+  const redeemed = (await subscriptionTables()).redeemed;
+  const joins = redeemedCountsJoins(redeemed);
 
   const fields = `
     ${NFTS_TABLE}.contract,
     ${NFTS_TABLE}.id AS token_id,
-    COALESCE(SUM(${SUBSCRIPTIONS_REDEEMED_TABLE}.count), 0) AS count,
+    COALESCE(SUM(${redeemed}.count), 0) AS count,
     ${NFTS_TABLE}.name AS name,
     ${NFTS_TABLE}.thumbnail AS image_url,
     ${NFTS_TABLE}.mint_date AS mint_date,
@@ -1021,17 +1124,19 @@ export async function fetchRedeemedMemeSubscriptionCountsDownload(
     params.szn = szn;
   }
 
+  const tables = await subscriptionTables();
+  const redeemed = tables.redeemed;
   const results =
     await sqlExecutor.execute<RedeemedMemeSubscriptionCountsDownloadRow>(
       `SELECT
       ${NFTS_TABLE}.id AS meme_id,
       ${NFTS_TABLE}.artist AS artist,
       DATE_FORMAT(${NFTS_TABLE}.mint_date, '%Y/%m/%d') AS drop_date,
-      COALESCE(COUNT(DISTINCT ${SUBSCRIPTIONS_REDEEMED_TABLE}.consolidation_key), 0) AS unique_profiles,
-      COALESCE(SUM(${SUBSCRIPTIONS_REDEEMED_TABLE}.count), 0) AS subscriptions_count,
-      COALESCE(SUM(${SUBSCRIPTIONS_REDEEMED_TABLE}.count), 0) * :mintPrice AS proceeds
+      COALESCE(COUNT(DISTINCT ${redeemed}.${tables.key}), 0) AS unique_profiles,
+      COALESCE(SUM(${redeemed}.count), 0) AS subscriptions_count,
+      COALESCE(SUM(${redeemed}.count), 0) * :mintPrice AS proceeds
     FROM ${NFTS_TABLE}
-    ${REDEEMED_COUNTS_JOINS}
+    ${redeemedCountsJoins(redeemed)}
     ${filters}
     GROUP BY ${NFTS_TABLE}.id, ${NFTS_TABLE}.artist, ${NFTS_TABLE}.mint_date
     ORDER BY ${NFTS_TABLE}.id DESC`,
@@ -1061,10 +1166,11 @@ async function fetchSubscriptionModeForConsolidationKey(
 async function fetchSubscriptionForConsolidationKey(
   consolidationKey: string,
   contract: string,
-  tokenId: number
+  tokenId: number,
+  tables: SubscriptionTables = LEGACY_SUBSCRIPTION_TABLES
 ): Promise<NFTSubscription | undefined> {
   const result = await sqlExecutor.execute<NFTSubscription>(
-    `SELECT * FROM ${SUBSCRIPTIONS_NFTS_TABLE} WHERE consolidation_key = :consolidationKey AND contract = :contract AND token_id = :tokenId`,
+    `SELECT * FROM ${tables.nfts} WHERE ${tables.key} = :consolidationKey AND contract = :contract AND token_id = :tokenId`,
     { consolidationKey, contract, tokenId }
   );
   if (result.length === 1) {

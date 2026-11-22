@@ -3010,6 +3010,50 @@ unset the flag; the queue keeps every write.
 A key with a final row fits every table, so a redemption waits only if the
 key columns are narrowed again, or behind an earlier write of the same key.
 
+## Subscriptions by identity: tables and opening file
+
+`src/subscriptions-identity` holds the identity-keyed subscription path. The
+`subscriptions_id_*` tables repeat the legacy `subscriptions_*` tables column
+for column, keyed by `identity_key`: a 6529 chain principal id for a bound
+wallet, else the wallet. History rows (final lists, redemptions, logs) also
+keep the consolidation key they were written under. `IdentityDirectory`
+resolves wallets to identities from the identity mirror's tables
+(`address_consolidation_keys`, `identities`, `identity_chain_principals`).
+
+**Opening file.** `./bin/6529 run subscriptions:opening -- cut` reads every
+legacy table and the wallets' identities in one REPEATABLE READ transaction
+and writes two canonical JSON files named by their sha256: the opening file
+(balances, modes, open choices, top-ups, final lists, uploads, redemptions,
+the key map, totals) and the history file (log lines, choices for dropped
+cards) it names by hash. Current state goes to the identity a key's wallets
+belong to. Keys of one identity (a re-key the key-width guard held back) are
+merged by the legacy merge rules, and top-ups still waiting in the guard's
+queue are credited to the sender's identity with the legacy top-up
+arithmetic; both are listed in the file. A key whose wallets belong to
+several identities (a split, which only the legacy re-key can make) or a
+waiting redemption blocks the cut: the load refuses the file. History rows go
+to the sender (top-ups), the airdrop address's identity (final rows and
+redemptions of a split key) or every spanned identity (logs); each rule-based
+choice is listed in the file. Final rows keep their legacy ids in
+`subscriptions_id_nfts_final`, because the mint log records phase changes by
+final row id.
+
+- `verify` checks the files with no database: canonical form, the history
+  link, totals, one row per identity, and, with fixtures, every top-up and
+  redemption against Ethereum. Balances that top-ups and redemptions don't
+  explain beyond five-decimal rounding are listed as adjustments.
+- `load` empties the identity tables and loads the files in one transaction.
+- `compare` is the opening comparison: the identity tables must hold exactly the files, and the
+  legacy tables, cut again, must give the same files. Only then is the
+  opening state marked verified.
+
+**Switch.** The identity tables are the truth once
+`FEATURE_SUBSCRIPTIONS_IDENTITY_FROM` (an ISO time) has passed and the
+opening state is verified and not suspended. Readers re-read the state at
+least every 60 seconds, so `subscriptions:opening -- suspend` rolls every
+lambda back to the legacy tables in one step. Going forward again takes a new
+cut and load.
+
 ## Cross-wave message search
 
 `GET /v2/drops/search` reuses wave search text matching and accepts text, an

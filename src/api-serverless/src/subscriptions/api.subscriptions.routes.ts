@@ -65,6 +65,7 @@ import {
   updateSubscriptionCount,
   updateSubscriptionMode
 } from '@/api/subscriptions/api.subscriptions.db';
+import { subscriptionReadScope } from '@/subscriptions-identity/identity/subscription-tables';
 
 const allowlistLogger = Logger.get('SUBSCRIPTIONS_ALLOWLIST');
 const CACHE_EVICTION_TIMEOUT_MS = 1_500;
@@ -666,8 +667,12 @@ router.get(
     >
   ) {
     const consolidationKey = req.params.consolidation_key.toLowerCase();
-    const result =
-      await fetchAirdropAddressForConsolidationKey(consolidationKey);
+    // After the identity switch the key may be a principal id; the airdrop
+    // rule still reads the identity's consolidation key.
+    const scope = await subscriptionReadScope(consolidationKey);
+    const result = await fetchAirdropAddressForConsolidationKey(
+      scope.consolidationKey
+    );
     const ensTdhWallet = await fetchEns(result.tdh_wallet);
     const ensAirdrop = await fetchEns(result.airdrop_address);
     return res.json({
