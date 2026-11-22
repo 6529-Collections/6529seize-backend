@@ -22,7 +22,9 @@ functions:
     role: arn:aws:iam::${aws:accountId}:role/lambda-vpc-role
     reservedConcurrency: 1
     events:
-      - schedule: rate(5 minutes)
+      - schedule:
+          rate: rate(5 minutes)
+          name: signedRecordLogLoop-${opt:stage, self:provider.stage}-close
     vpc:
       securityGroupIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):security}
       subnetIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):subnets}
@@ -37,7 +39,9 @@ functions:
     role: arn:aws:iam::${aws:accountId}:role/lambda-vpc-role
     reservedConcurrency: 1
     events:
-      - schedule: cron(7 * * * ? *)
+      - schedule:
+          rate: cron(7 * * * ? *)
+          name: signedRecordLogLoop-${opt:stage, self:provider.stage}-archive
     vpc:
       securityGroupIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):security}
       subnetIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):subnets}
