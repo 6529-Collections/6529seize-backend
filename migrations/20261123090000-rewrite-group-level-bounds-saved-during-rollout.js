@@ -1,10 +1,12 @@
 'use strict';
 
 // The same rewrite as migration 20261122180000, run again just before levels
-// go above 100. That migration and the save-time rewrite shipped together; a group saved by the older API while
-// they were deploying can still hold the old form. This run rewrites those
-// groups, and normally changes no row. It must run before the API that counts
-// levels above 100, which stores bounds as given.
+// go above 100. That migration and the save-time rewrite shipped together;
+// a group saved by the older API while they were deploying can still hold
+// the old form. This run rewrites those groups, and normally changes no row.
+// It must run before the API that counts levels above 100, which stores
+// bounds as given. Run after that API, it would turn a new group's
+// level_max 150 into no level_max.
 //
 // The two rewrites, for groups saved while levels ended at 100:
 //
