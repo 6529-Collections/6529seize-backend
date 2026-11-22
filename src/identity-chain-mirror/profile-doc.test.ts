@@ -1,16 +1,46 @@
+import { createHash } from 'node:crypto';
 import {
   decodeCeProfileDoc,
   decodeProfileDoc,
   PROFILE_DOC_SCHEMA,
+  isCmsCid,
   ProfileDocError,
   profileDocCms,
   toProfileDocFields
 } from './profile-doc';
 
-const CID = (c: string) => `bafkrei${c.repeat(52)}`;
-const CID1 = CID('a');
-const CID2 = CID('b');
-const CID3 = CID('c');
+// The vectors shared with src/profile-cms/chain/profile-doc-cms.test.ts.
+const CID1 = 'bafkreie5cyyazg2mwjwk7foh6qhhev4ize3dkpz5656e6ty6sjn4zyfzjq';
+const CID2 = 'bafkreiej3lbdjacakabv566nmsdidmktb6sxt765d7skg2sakrog2ttsiq';
+const CID3 = 'bafkreiedy57oyhdigsburvrwepydy4i4guk6q3th5b7w42szehbt672tgm';
+// CID2 with a spare bit of its last character set: the same 36 bytes, but
+// not the canonical text.
+const CID2_NONCANONICAL = `${CID2.slice(0, -1)}r`;
+
+const ALPHABET = 'abcdefghijklmnopqrstuvwxyz234567';
+
+/** CID text built bit by bit, independently of the code under test. */
+function cidText(bytes: Buffer): string {
+  const bits = Array.from(bytes)
+    .map((it) => it.toString(2).padStart(8, '0'))
+    .join('');
+  const padded = bits.padEnd(Math.ceil(bits.length / 5) * 5, '0');
+  let text = 'b';
+  for (let i = 0; i < padded.length; i += 5) {
+    text += ALPHABET[Number.parseInt(padded.slice(i, i + 5), 2)];
+  }
+  return text;
+}
+
+/** The same text with each non-zero value of the last character's spare bits. */
+function spareBitVariants(cid: string): string[] {
+  const last = ALPHABET.indexOf(cid[cid.length - 1]);
+  return [1, 2, 3].map((spare) => cid.slice(0, -1) + ALPHABET[last | spare]);
+}
+
+function rawSha256Cid(digest: Buffer): Buffer {
+  return Buffer.concat([Buffer.from([0x01, 0x55, 0x12, 0x20]), digest]);
+}
 
 function u32(n: number): Buffer {
   const b = Buffer.alloc(4);
@@ -143,6 +173,55 @@ describe('profileDocCms', () => {
       primary: null,
       archive: CID3
     });
+  });
+
+  it('reads only canonical raw sha2-256 CIDs', () => {
+    expect([CID1, CID2, CID3].every(isCmsCid)).toBe(true);
+    expect(spareBitVariants(CID2)[0]).toBe(CID2_NONCANONICAL);
+    for (const text of [
+      ...[CID1, CID2, CID3].flatMap(spareBitVariants),
+      `bafybei${CID1.slice(7)}`, // codec dag-pb
+      'bafkrgie5cyyazg2mwjwk7foh6qhhev4ize3dkpz5656e6ty6sjn4zyfzjq', // multihash 0x13
+      'bafkreim5cyyazg2mwjwk7foh6qhhev4ize3dkpz5656e6ty6sjn4zyfzjq', // length 0x21
+      'bajkreie5cyyazg2mwjwk7foh6qhhev4ize3dkpz5656e6ty6sjn4zyfzjq', // version 2
+      CID1.toUpperCase(),
+      CID1.slice(0, -1),
+      `${CID1}a`,
+      `z${CID1.slice(1)}`,
+      ` ${CID1}`,
+      ''
+    ]) {
+      expect([text, isCmsCid(text)]).toEqual([text, false]);
+    }
+  });
+
+  it('agrees with an independent encoder on many digests', () => {
+    for (let i = 0; i < 256; i++) {
+      const digest = createHash('sha256').update(`digest ${i}`).digest();
+      const cid = cidText(rawSha256Cid(digest));
+      expect([cid, isCmsCid(cid)]).toEqual([cid, true]);
+      for (const variant of spareBitVariants(cid)) {
+        expect([variant, isCmsCid(variant)]).toEqual([variant, false]);
+      }
+    }
+  });
+
+  it('serves no site from non-canonical CID text', () => {
+    expect(
+      profileDocCms({
+        'cms.primary.publication': CID1,
+        'cms.primary.package': CID2_NONCANONICAL
+      })
+    ).toBeNull();
+    expect(profileDocCms({ 'cms.archive': CID2_NONCANONICAL })).toBeNull();
+    // A good archive stays beside a refused site.
+    expect(
+      profileDocCms({
+        'cms.primary.publication': CID1,
+        'cms.primary.package': CID2_NONCANONICAL,
+        'cms.archive': CID3
+      })
+    ).toEqual({ primary: null, archive: CID3 });
   });
 
   it('serves no site from a lone or malformed CID', () => {
