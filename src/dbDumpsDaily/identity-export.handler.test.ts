@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import {
   GetBucketPolicyStatusCommand,
   GetObjectCommand,
@@ -21,6 +22,7 @@ jest.mock('@/identity-export/identity-export.service', () => ({
 
 const ARN = 'arn:aws:lambda:eu-west-1:000000000000:function:dbDumpsDaily';
 const BUCKET = '6529-chain-exports-000000000000-eu-west-1';
+const OWNER = '000000000000';
 const T = Date.UTC(2026, 10, 24);
 const REV = 'a'.repeat(40);
 const ALICE = '00000000-0000-4000-8000-0000000a11ce';
@@ -65,12 +67,17 @@ function setup(
     publicBlock?: boolean;
     snapshotAt?: string;
     closeFails?: boolean;
-    credentialsEnd?: Date | null;
+    /** Answer a read of a missing key with 403, as S3 does without ListBucket. */
+    missingAs403?: boolean;
   } = {}
 ) {
   const order: string[] = [];
   const bodies = new Map<string, string>(Object.entries(options.objects ?? {}));
   const send = jest.fn(async (command: any) => {
+    // Every call names the bucket's expected owner: the function's account.
+    if (command.input.ExpectedBucketOwner !== OWNER) {
+      throw new Error(`no ExpectedBucketOwner on ${command.constructor.name}`);
+    }
     if (command instanceof GetPublicAccessBlockCommand) {
       const on = options.publicBlock ?? true;
       return {
@@ -90,6 +97,13 @@ function setup(
       if (options.failPutOf && key.endsWith(options.failPutOf)) {
         throw new Error('upload failed');
       }
+      // S3 refuses an upload whose bytes don't match its checksum.
+      const sum = createHash('sha256')
+        .update(command.input.Body as Buffer)
+        .digest('base64');
+      if (command.input.ChecksumSHA256 !== sum) {
+        throw new Error(`bad checksum for ${key}`);
+      }
       order.push(key);
       bodies.set(key, Buffer.from(command.input.Body as Buffer).toString());
       return {};
@@ -97,7 +111,12 @@ function setup(
     if (command instanceof GetObjectCommand) {
       const body = bodies.get(command.input.Key!);
       if (body === undefined) {
-        throw Object.assign(new Error('NoSuchKey'), { name: 'NoSuchKey' });
+        throw options.missingAs403
+          ? Object.assign(new Error('Access Denied'), {
+              name: 'AccessDenied',
+              $metadata: { httpStatusCode: 403 }
+            })
+          : Object.assign(new Error('NoSuchKey'), { name: 'NoSuchKey' });
       }
       return {
         Body: {
@@ -127,7 +146,7 @@ function setup(
     }),
     s3: { send } as never,
     presign: async (bucket, key, seconds) =>
-      `https://signed/${bucket}/${key}?s=${seconds}`,
+      `https://signed/${bucket.name}/${key}?s=${seconds}&owner=${bucket.owner}`,
     openSnapshot: jest.fn(async (target) => ({
       executor: executor as never,
       evidence: {
@@ -139,7 +158,6 @@ function setup(
       },
       close
     })),
-    credentialsExpiry: async () => options.credentialsEnd ?? null,
     now: (() => {
       let tick = T + 60_000;
       return () => new Date((tick += 1_000));
@@ -304,7 +322,10 @@ describe('runIdentityExportJob', () => {
       frozenAt: '2026-11-24T00:00:00.000Z',
       snapshotAt: '2026-11-24T00:30:00.000Z',
       snapshotGapSeconds: 1800,
-      linksLimitedByCredentials: false,
+      identityFreezeAt: null,
+      linksLastAtMost: expect.any(String),
+      pointerKey:
+        'identity-export/staging/by-freeze/2026-11-24T00-00-00-000Z.json',
       scope: {
         freezeAt: '2026-11-24T00:00:00.000Z',
         expectTdhBlock: 24_000_000,
@@ -313,18 +334,32 @@ describe('runIdentityExportJob', () => {
         extraIds: 'inline',
         cmsFields: null
       },
-      bucketPrivacy: { publicAccessBlocked: true, policyPublic: false }
+      bucketPrivacy: {
+        bucket: BUCKET,
+        owner: OWNER,
+        publicAccessBlocked: true,
+        policyPublic: false
+      }
     });
     expect(result.prefix).toMatch(
       /^identity-export\/staging\/2026-11-24T00-01-01-000Z-abcdef12\/$/
     );
-    const names = order.map((key) => key.slice(result.prefix.length));
-    expect(names).toEqual([
-      'identity-export.json',
-      'summary.json',
-      'links.json',
-      'manifest.json'
+    // The run's objects, the manifest last in its prefix, then the pointer.
+    expect(order).toEqual([
+      `${result.prefix}identity-export.json`,
+      `${result.prefix}summary.json`,
+      `${result.prefix}links.json`,
+      `${result.prefix}manifest.json`,
+      result.pointerKey
     ]);
+    expect(JSON.parse(bodies.get(result.pointerKey!)!)).toEqual({
+      frozen_at: '2026-11-24T00:00:00.000Z',
+      prefix: result.prefix,
+      manifest: result.manifestKey,
+      export: result.exportKey,
+      export_sha256: expect.stringMatching(/^[0-9a-f]{64}$/),
+      finished_at: expect.any(String)
+    });
     const written = JSON.parse(bodies.get(result.exportKey)!);
     expect(written.identity_sync).toBeUndefined();
     expect(written.identities).toEqual([{ profile_id: ALICE }]);
@@ -350,9 +385,15 @@ describe('runIdentityExportJob', () => {
         name: 'summary.json',
         bytes: expect.any(Number),
         sha256: expect.stringMatching(/^[0-9a-f]{64}$/)
+      },
+      {
+        name: 'links.json',
+        bytes: Buffer.byteLength(bodies.get(`${result.prefix}links.json`)!),
+        sha256: expect.stringMatching(/^[0-9a-f]{64}$/)
       }
     ]);
     expect(result.presignedManifestUrl).toContain('manifest.json');
+    expect(result.presignedManifestUrl).toContain(`owner=${OWNER}`);
   });
 
   it('reads its inputs from the bucket, and refuses a bad waves list before reading the database', async () => {
@@ -480,6 +521,7 @@ describe('runIdentityExportJob', () => {
     expect(Object.keys(links.links)).toEqual([
       'identity-export.json',
       'summary.json',
+      'links.json',
       'manifest.json'
     ]);
   });
@@ -590,17 +632,42 @@ describe('runIdentityExportJob', () => {
     ).rejects.toThrow('read failed');
   });
 
-  it('ends the links when the signing credentials end, if that is sooner', async () => {
-    mockBuild.mockResolvedValue(document());
-    const end = new Date(T + 2 * 3600_000);
-    const { deps } = setup({ credentialsEnd: end });
+  it('reads a 403 on the manifest as no manifest, and says why', async () => {
+    const { deps } = setup({ missingAs403: true });
+    await expect(
+      runIdentityExportJob(
+        parseIdentityExportEvent({
+          job: 'identityExportLinks',
+          prefix: 'identity-export/staging/missing/'
+        })!,
+        { invokedFunctionArn: ARN },
+        deps
+      )
+    ).rejects.toThrow(/No manifest under .*S3 refused the read/);
+  });
+
+  it('writes no pointer for a rehearsal, and refuses a links request for a pointer', async () => {
+    mockBuild.mockResolvedValue(document({ freeze_ms: null }));
+    const { deps, order } = setup();
     const result = (await runIdentityExportJob(
-      parseIdentityExportEvent(atFreeze)!,
+      parseIdentityExportEvent({
+        job: 'identityExport',
+        noFreeze: true,
+        revision: REV,
+        noExtraIds: true,
+        noCmsFields: true
+      })!,
       { invokedFunctionArn: ARN },
       deps
     )) as IdentityExportResult;
-    expect(result.linksExpireAt).toBe(end.toISOString());
-    expect(result.linksLimitedByCredentials).toBe(true);
+    expect(result.pointerKey).toBeNull();
+    expect(order.some((key) => key.includes('/by-freeze/'))).toBe(false);
+    expect(() =>
+      parseIdentityExportEvent({
+        job: 'identityExportLinks',
+        prefix: 'identity-export/prod/by-freeze/'
+      })
+    ).toThrow(IdentityExportEventError);
   });
 
   it('says so when a links request names a run with no manifest', async () => {

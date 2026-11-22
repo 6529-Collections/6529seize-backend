@@ -11,16 +11,16 @@ import {
 import { InputFile } from '@/identity-export/identity-export.types';
 import { jsonDocumentBytes } from '@/identity-export/identity-export.writer';
 import {
-  accountIdFromFunctionArn,
   assertBucketPrivate,
   BucketPrivacy,
-  chainExportsBucketName,
-  credentialsExpiry,
+  ExportBucket,
+  exportBucketOf,
   exportStage,
-  linksExpireAt,
+  linksLastAtMost,
   Presigner,
   PRESIGNED_URL_SECONDS,
   PrivateExportWriter,
+  PutResult,
   runPrefix,
   s3Presigner
 } from './chain-exports/private-export-bucket';
@@ -51,6 +51,7 @@ const MANIFEST = 'manifest.json';
  */
 const UNUSABLE_MANIFEST = 'manifest.unusable.json';
 const MANIFEST_SCHEMA = '6529.identity-export.manifest.v1';
+const MANIFEST_NAMES = [MANIFEST, UNUSABLE_MANIFEST] as const;
 /** An input file read from the bucket is never larger than this. */
 const MAX_INPUT_BYTES = 16 * 1024 * 1024;
 /** The snapshot may be at most this long after the freeze, unless acknowledged. */
@@ -283,6 +284,7 @@ export function parseIdentityExportEvent(
       !prefix.startsWith(PREFIX_ROOT) ||
       !prefix.endsWith('/') ||
       prefix.includes('..') ||
+      prefix.includes('/by-freeze/') ||
       !/^[A-Za-z0-9/_.-]+$/.test(prefix)
     ) {
       throw new IdentityExportEventError(
@@ -429,6 +431,8 @@ export interface IdentityExportResult {
   readonly prefix: string;
   /** manifest.json, or manifest.unusable.json when `usable` is false. */
   readonly manifestKey: string;
+  /** by-freeze/<freezeAt>.json, pointing at this run; only for manifest.json. */
+  readonly pointerKey: string | null;
   readonly exportKey: string;
   readonly scope: IdentityExportScope;
   /** Objects written, the manifest and the links file included. */
@@ -457,9 +461,10 @@ export interface IdentityExportResult {
   readonly startedAt: string;
   readonly finishedAt: string;
   readonly seconds: number;
-  /** When the links stop working: 6 hours, or the signing credentials' end. */
-  readonly linksExpireAt: string;
-  readonly linksLimitedByCredentials: boolean;
+  /** IDENTITY_FREEZE_AT as the function read it, or null when unset. */
+  readonly identityFreezeAt: string | null;
+  /** The latest the links last (they end sooner with the signing session). */
+  readonly linksLastAtMost: string;
   readonly presignedManifestUrl: string;
   /** links.json: a presigned link for every object of the run. */
   readonly presignedLinksUrl: string;
@@ -469,10 +474,10 @@ export interface IdentityExportLinksResult {
   readonly job: typeof LINKS_JOB;
   readonly bucket: string;
   readonly prefix: string;
+  readonly manifestKey: string;
   readonly linksKey: string;
   readonly usable: boolean;
-  readonly linksExpireAt: string;
-  readonly linksLimitedByCredentials: boolean;
+  readonly linksLastAtMost: string;
   readonly presignedManifestUrl: string;
   readonly presignedLinksUrl: string;
 }
@@ -490,7 +495,6 @@ export interface IdentityExportDeps {
   readonly presign: Presigner;
   readonly openSnapshot: (target: ReplicaTarget) => Promise<ReadOnlySnapshot>;
   readonly now: () => Date;
-  readonly credentialsExpiry: () => Promise<Date | null>;
 }
 
 interface ManifestFile {
@@ -516,8 +520,7 @@ function defaultDeps(): IdentityExportDeps {
     s3,
     presign: s3Presigner(s3),
     openSnapshot: (target) => openReadOnlySnapshot(target),
-    now: () => new Date(),
-    credentialsExpiry: () => credentialsExpiry(s3)
+    now: () => new Date()
   };
 }
 
@@ -528,14 +531,18 @@ function sha256(bytes: Buffer): string {
 /** An input's bytes: the bucket object's, or the inline content as JSON. */
 async function inputBytes(
   input: IdentityExportInput,
-  bucket: string,
+  bucket: ExportBucket,
   s3: Pick<S3Client, 'send'>
 ): Promise<Buffer> {
   if ('inline' in input) {
     return Buffer.from(JSON.stringify(input.inline), 'utf8');
   }
   const answer: any = await s3.send(
-    new GetObjectCommand({ Bucket: bucket, Key: input.key })
+    new GetObjectCommand({
+      Bucket: bucket.name,
+      ExpectedBucketOwner: bucket.owner,
+      Key: input.key
+    })
   );
   const bytes = Buffer.from(await answer.Body.transformToByteArray());
   if (bytes.length > MAX_INPUT_BYTES) {
@@ -546,23 +553,13 @@ async function inputBytes(
   return bytes;
 }
 
-function bucketOf(
-  context: IdentityExportContext,
-  env: Readonly<Record<string, string | undefined>>
-): string {
-  return chainExportsBucketName(
-    accountIdFromFunctionArn(context.invokedFunctionArn),
-    env.AWS_REGION ?? ''
-  );
-}
-
-/** Presigns every object and writes the links file; returns its key. */
+/** Presigns every object and writes the links file. */
 async function writeLinks(
   writer: PrivateExportWriter,
   presign: Presigner,
   names: readonly string[],
   linksName: string
-): Promise<string> {
+): Promise<PutResult> {
   const links: Record<string, string> = {};
   for (const name of names) {
     links[name] = await presign(
@@ -580,7 +577,7 @@ async function writeLinks(
     ),
     'application/json'
   );
-  return put.key;
+  return put;
 }
 
 /** What a run's summary and its manifest say about the export. */
@@ -607,18 +604,26 @@ export async function runIdentityExportJob(
 ): Promise<IdentityExportResult | IdentityExportLinksResult> {
   await deps.prepareEnvironment();
   const env = deps.env();
-  const bucket = bucketOf(context, env);
+  const bucket = exportBucketOf(
+    context.invokedFunctionArn,
+    env.AWS_REGION ?? ''
+  );
   if (event.job === LINKS_JOB) {
     return await renewLinks(event.prefix, bucket, deps);
   }
   const startedAt = deps.now();
   // The freeze the function runs with (the shared secret's) is the one the
   // export is held to.
-  const envFreeze = env.IDENTITY_FREEZE_AT?.trim();
+  const envFreeze = env.IDENTITY_FREEZE_AT?.trim() || null;
   if (event.freezeMs !== null && envFreeze) {
     const configured = /^\d{13}$/.test(envFreeze)
       ? Number(envFreeze)
       : Date.parse(envFreeze);
+    if (!Number.isFinite(configured)) {
+      throw new IdentityExportEventError(
+        'IDENTITY_FREEZE_AT is set but is not a time: the run cannot tell which freeze it exports'
+      );
+    }
     if (configured !== event.freezeMs) {
       throw new IdentityExportEventError(
         `freezeAt ${new Date(event.freezeMs).toISOString()} is not IDENTITY_FREEZE_AT ${envFreeze}`
@@ -738,14 +743,19 @@ export async function runIdentityExportJob(
   // Only an export held to the freeze is for the import.
   const usable = event.freezeMs !== null;
   const manifestName = usable ? MANIFEST : UNUSABLE_MANIFEST;
-  await writeLinks(
+  const links = await writeLinks(
     writer,
     deps.presign,
     [...written.map((it) => it.name), manifestName],
     'links.json'
   );
+  written.push({
+    name: 'links.json',
+    bytes: links.bytes,
+    sha256: links.sha256
+  });
   const finishedAt = deps.now();
-  const expiry = linksExpireAt(finishedAt, await deps.credentialsExpiry());
+  const lastAtMost = linksLastAtMost(finishedAt);
   const manifest: Manifest = {
     schema: MANIFEST_SCHEMA,
     usable,
@@ -755,6 +765,7 @@ export async function runIdentityExportJob(
     scope,
     format: document.format,
     frozen_at: scope.freezeAt,
+    identity_freeze_at: envFreeze,
     snapshot_at: snapshot.evidence.snapshotAt,
     snapshot_gap_seconds: gapSeconds,
     started_at: startedAt.toISOString(),
@@ -768,11 +779,11 @@ export async function runIdentityExportJob(
     export: EXPORT_FILE,
     summary: SUMMARY_FILE,
     links: 'links.json',
-    links_expire_at: expiry.at.toISOString(),
+    links_last_at_most: lastAtMost.toISOString(),
     files: written
   };
-  // Last: a run that stops early has no manifest, and a rehearsal has only
-  // manifest.unusable.json.
+  // Last in the run's prefix: a run that stops early has no manifest, and a
+  // rehearsal has only manifest.unusable.json.
   const manifestKey = (
     await writer.put(
       manifestName,
@@ -780,6 +791,31 @@ export async function runIdentityExportJob(
       'application/json'
     )
   ).key;
+  // Then, for the one run the import takes, a pointer from its freeze.
+  let pointerKey: string | null = null;
+  if (usable && event.freezeMs !== null) {
+    pointerKey = `${PREFIX_ROOT}${exportStage(env.NODE_ENV)}/by-freeze/${new Date(
+      event.freezeMs
+    )
+      .toISOString()
+      .replace(/[:.]/g, '-')}.json`;
+    await writer.putOutside(
+      pointerKey,
+      JSON.stringify(
+        {
+          frozen_at: new Date(event.freezeMs).toISOString(),
+          prefix,
+          manifest: manifestKey,
+          export: exportPut.key,
+          export_sha256: exportPut.sha256,
+          finished_at: finishedAt.toISOString()
+        },
+        null,
+        2
+      ),
+      'application/json'
+    );
+  }
   const presignedManifestUrl = await deps.presign(
     bucket,
     manifestKey,
@@ -792,13 +828,14 @@ export async function runIdentityExportJob(
   );
   const seconds = (finishedAt.getTime() - startedAt.getTime()) / 1000;
   logger.info(
-    `[EXPORT DONE] [${prefix}] [${writer.files} OBJECTS] [${writer.bytes} BYTES] [${seconds} S] [USABLE ${usable}] [${document.identities.length} IDENTITIES] [${document.ratings.length} RATINGS]`
+    `[EXPORT DONE] [${prefix}] [${manifestName}] [${writer.files} OBJECTS] [${writer.bytes} BYTES] [${seconds} S] [USABLE ${usable}] [${document.identities.length} IDENTITIES] [${document.ratings.length} RATINGS]`
   );
   return {
     job: JOB,
-    bucket,
+    bucket: bucket.name,
     prefix,
     manifestKey,
+    pointerKey,
     exportKey: exportPut.key,
     scope,
     files: writer.files,
@@ -812,86 +849,76 @@ export async function runIdentityExportJob(
     evidence: snapshot.evidence,
     bucketPrivacy: privacy,
     frozenAt: scope.freezeAt,
+    identityFreezeAt: envFreeze,
     snapshotAt: snapshot.evidence.snapshotAt,
     snapshotGapSeconds: gapSeconds,
     startedAt: startedAt.toISOString(),
     finishedAt: finishedAt.toISOString(),
     seconds,
-    linksExpireAt: expiry.at.toISOString(),
-    linksLimitedByCredentials: expiry.limitedByCredentials,
+    linksLastAtMost: lastAtMost.toISOString(),
     presignedManifestUrl,
     presignedLinksUrl
   };
 }
 
-async function readManifest(
-  deps: IdentityExportDeps,
-  bucket: string,
-  key: string
-): Promise<Manifest | null> {
-  let answer: any;
-  try {
-    answer = await deps.s3.send(
-      new GetObjectCommand({ Bucket: bucket, Key: key })
-    );
-  } catch (error) {
-    const name = (error as { name?: string })?.name;
-    if (name === 'NoSuchKey' || name === 'NotFound') return null;
-    throw error;
-  }
-  const manifest = JSON.parse(
-    await answer.Body.transformToString('utf8')
-  ) as Manifest;
-  if (manifest?.schema !== MANIFEST_SCHEMA || !Array.isArray(manifest.files)) {
-    throw new IdentityExportEventError(`${key} is not a manifest`);
-  }
-  return manifest;
-}
-
 /** Fresh links for an earlier run: only a run with a manifest has them. */
 async function renewLinks(
   prefix: string,
-  bucket: string,
+  bucket: ExportBucket,
   deps: IdentityExportDeps
 ): Promise<IdentityExportLinksResult> {
   await assertBucketPrivate(deps.s3, bucket);
   const writer = new PrivateExportWriter(deps.s3, bucket, prefix);
-  let manifestName = MANIFEST;
-  let manifest = await readManifest(deps, bucket, writer.key(MANIFEST));
-  if (!manifest) {
-    manifestName = UNUSABLE_MANIFEST;
-    manifest = await readManifest(deps, bucket, writer.key(UNUSABLE_MANIFEST));
+  let found: { name: string; manifest: Manifest } | null = null;
+  let forbidden = false;
+  for (const name of MANIFEST_NAMES) {
+    const read = await writer.read(name);
+    if (read.found) {
+      const manifest = JSON.parse(read.text) as Manifest;
+      if (
+        manifest?.schema !== MANIFEST_SCHEMA ||
+        !Array.isArray(manifest.files)
+      ) {
+        throw new IdentityExportEventError(
+          `${writer.key(name)} is not a manifest`
+        );
+      }
+      found = { name, manifest };
+      break;
+    }
+    if (read.reason === 'forbidden') forbidden = true;
   }
-  if (!manifest) {
+  if (!found) {
     throw new IdentityExportEventError(
-      `No manifest under ${prefix}: that run didn't finish, or the prefix is wrong`
+      forbidden
+        ? `No manifest under ${prefix}: S3 refused the read, as it does for a key that doesn't exist when the reader may not list the bucket. That run didn't finish, or the prefix is wrong.`
+        : `No manifest under ${prefix}: that run didn't finish, or the prefix is wrong`
     );
   }
   const now = deps.now();
   const linksName = `links-${now.toISOString().replace(/[:.]/g, '-')}.json`;
-  const linksKey = await writeLinks(
+  const links = await writeLinks(
     writer,
     deps.presign,
-    [...manifest.files.map((it) => it.name), manifestName],
+    [...found.manifest.files.map((it) => it.name), found.name],
     linksName
   );
-  const expiry = linksExpireAt(now, await deps.credentialsExpiry());
   return {
     job: LINKS_JOB,
-    bucket,
+    bucket: bucket.name,
     prefix,
-    linksKey,
-    usable: manifestName === MANIFEST,
-    linksExpireAt: expiry.at.toISOString(),
-    linksLimitedByCredentials: expiry.limitedByCredentials,
+    manifestKey: writer.key(found.name),
+    linksKey: links.key,
+    usable: found.name === MANIFEST,
+    linksLastAtMost: linksLastAtMost(now).toISOString(),
     presignedManifestUrl: await deps.presign(
       bucket,
-      writer.key(manifestName),
+      writer.key(found.name),
       PRESIGNED_URL_SECONDS
     ),
     presignedLinksUrl: await deps.presign(
       bucket,
-      linksKey,
+      links.key,
       PRESIGNED_URL_SECONDS
     )
   };
