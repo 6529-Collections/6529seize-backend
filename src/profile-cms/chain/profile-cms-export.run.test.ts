@@ -1,5 +1,9 @@
 import { ProfileCmsExportReport } from '@/profile-cms/chain/profile-cms-export';
-import { reportJson, runProfileCmsExport } from './profile-cms-export.run';
+import {
+  reportJson,
+  runProfileCmsExport,
+  storedPublicationFetcher
+} from './profile-cms-export.run';
 
 function report(): ProfileCmsExportReport {
   return {
@@ -111,5 +115,67 @@ describe('runProfileCmsExport', () => {
       )
     ).rejects.toThrow('fetch failed');
     expect(exportProfile.mock.calls.length).toBeLessThan(IDS.length);
+  });
+});
+
+describe('storedPublicationFetcher', () => {
+  const receipt = { uri: 'ipfs://bafyrecord', content_hash: 'hash' };
+  const FROZEN = Date.UTC(2026, 10, 24);
+
+  it('asks the store for the record as it stood at the freeze, retrying a failure', async () => {
+    const verify = jest
+      .fn()
+      .mockRejectedValueOnce(new Error('gateway timeout'))
+      .mockResolvedValueOnce(Buffer.from('record'));
+    const sleep = jest.fn(async () => undefined);
+    const before = jest.fn();
+    const fetch = storedPublicationFetcher(FROZEN, verify, sleep, before);
+    await expect(fetch(receipt)).resolves.toEqual(Buffer.from('record'));
+    expect(verify).toHaveBeenCalledWith({
+      provider: 'ipfs',
+      uri: 'ipfs://bafyrecord',
+      content_hash: 'hash',
+      recorded_at: '2026-11-24T00:00:00.000Z'
+    });
+    expect(verify).toHaveBeenCalledTimes(2);
+    expect(before).toHaveBeenCalledTimes(2);
+    expect(sleep).toHaveBeenCalledTimes(1);
+  });
+
+  it('gives null after three failed attempts', async () => {
+    const verify = jest.fn(async () => {
+      throw new Error('gone');
+    });
+    const sleep = jest.fn(async () => undefined);
+    await expect(
+      storedPublicationFetcher(FROZEN, verify, sleep)(receipt)
+    ).resolves.toBeNull();
+    expect(verify).toHaveBeenCalledTimes(3);
+  });
+
+  it('lets a throw before an attempt stop the fetch, never retried', async () => {
+    const deadline = new Error('out of time');
+    const verify = jest.fn(async () => Buffer.from('record'));
+    const sleep = jest.fn(async () => undefined);
+    const fetch = storedPublicationFetcher(FROZEN, verify, sleep, () => {
+      throw deadline;
+    });
+    await expect(fetch(receipt)).rejects.toBe(deadline);
+    expect(verify).not.toHaveBeenCalled();
+    expect(sleep).not.toHaveBeenCalled();
+  });
+
+  it('stops before a retry when the throw comes after a failed attempt', async () => {
+    const deadline = new Error('out of time');
+    const verify = jest.fn(async () => {
+      throw new Error('gateway timeout');
+    });
+    const sleep = jest.fn(async () => undefined);
+    let attempts = 0;
+    const fetch = storedPublicationFetcher(FROZEN, verify, sleep, () => {
+      if (++attempts === 2) throw deadline;
+    });
+    await expect(fetch(receipt)).rejects.toBe(deadline);
+    expect(verify).toHaveBeenCalledTimes(1);
   });
 });

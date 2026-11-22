@@ -219,12 +219,21 @@ export class PrivateExportWriter {
    * missing; without list access S3 answers 403 for it, read as forbidden.
    */
   async read(name: string): Promise<ReadResult> {
+    return await this.readKey(this.key(name));
+  }
+
+  /** Reads a key outside the run's prefix (a pointer to a run). */
+  async readOutside(key: string): Promise<ReadResult> {
+    return await this.readKey(key);
+  }
+
+  private async readKey(key: string): Promise<ReadResult> {
     try {
       const answer: any = await this.s3.send(
         new GetObjectCommand({
           Bucket: this.bucket.name,
           ExpectedBucketOwner: this.bucket.owner,
-          Key: this.key(name)
+          Key: key
         })
       );
       return { found: true, text: await answer.Body.transformToString('utf8') };

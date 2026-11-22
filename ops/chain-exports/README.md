@@ -14,9 +14,19 @@ a job the function knows, or it fails. Each export:
   (`snapshot_at`);
 - holds the snapshot to the freeze. It refuses a snapshot taken before
   `frozenAt` or more than 90 minutes after it, unless `acceptSnapshotGapMinutes`
-  allows more. In a real run it also refuses when `frozenAt` differs from
-  `IDENTITY_FREEZE_AT`, or when the snapshot holds a site publication or
-  pointer change after `frozenAt`;
+  allows more. A real run also refuses:
+  - when `IDENTITY_FREEZE_AT` is unset, is not a time, or differs from
+    `frozenAt`. It reads the setting as the site does (`Z` or `+00:00`, with
+    or without milliseconds, or Unix milliseconds);
+  - a snapshot less than 2 minutes after `frozenAt`, so the replica has the
+    writes made before the freeze;
+  - a replica as far behind its writer as that gap, or further. The lag
+    comes from `information_schema.replica_host_status` for this server; if
+    that can't be read, the response says so (`null`) and the 2-minute gap
+    is the only guard;
+  - a snapshot holding a site publication, archive or pointer change after
+    `frozenAt`, unless the switch owner accepted those packages
+    (`acceptWritesAfterFreeze`, below);
 - writes only to the private bucket `6529-chain-exports-<account>-<region>`
   under its own prefix. Every call names the function's own account as the
   bucket's expected owner, and every upload carries a SHA-256 checksum S3
@@ -95,10 +105,17 @@ The team confirms once, before Monday:
   Always pass `--region`.
 - **Event:** write it to a file and pass it as `file://event.json`. Inline
   JSON loses its quotes in PowerShell 5.1.
+- **No CLI retries:** set `AWS_MAX_ATTEMPTS` to 1. Otherwise the CLI calls
+  again after a timeout or a throttle, which can start a second run after
+  the first.
+- **Stage:** the function's `NODE_ENV` names it. `production` is `prod` (in
+  `us-east-1`) and `development` is `staging` (in `eu-west-1`). The response's
+  `stage` and its prefix say which one ran.
 
 PowerShell 5.1:
 
 ```text
+$env:AWS_MAX_ATTEMPTS='1'
 Set-Content -Encoding ascii event.json '{"job":"profileSiteExport","frozenAt":"2026-11-24T00:00:00Z"}'
 aws lambda invoke --region us-east-1 --function-name dbDumpsDaily --cli-read-timeout 960 --cli-binary-format raw-in-base64-out --payload file://event.json out.json
 ```
@@ -107,8 +124,11 @@ bash:
 
 ```text
 printf '%s' '{"job":"profileSiteExport","frozenAt":"2026-11-24T00:00:00Z"}' > event.json
-aws lambda invoke --region us-east-1 --function-name dbDumpsDaily --cli-read-timeout 960 --cli-binary-format raw-in-base64-out --payload file://event.json out.json
+AWS_MAX_ATTEMPTS=1 aws lambda invoke --region us-east-1 --function-name dbDumpsDaily --cli-read-timeout 960 --cli-binary-format raw-in-base64-out --payload file://event.json out.json
 ```
+
+The examples below are PowerShell. In bash, write the event with `printf`
+and put `AWS_MAX_ATTEMPTS=1` before `aws`, as above.
 
 ## Profile site export
 
@@ -118,8 +138,11 @@ Event fields:
   milliseconds. In a real run it must equal `IDENTITY_FREEZE_AT`.
 - `rehearsal` (optional, `true`): a timed rehearsal that is never imported.
   Its prefix ends in `-rehearsal`, and its manifest is
-  `manifest.unusable.json`. It doesn't require `IDENTITY_FREEZE_AT`, and it
-  records site publications after `frozenAt` instead of refusing them.
+  `manifest.unusable.json`. It doesn't require `IDENTITY_FREEZE_AT`, the
+  2-minute gap or the lag check. It reports how it read
+  `IDENTITY_FREEZE_AT` (`identityFreezeAtReading`: `unset`, `not_a_time` or
+  `time`), and it records site writes after `frozenAt` instead of refusing
+  them.
 - `concurrency` (optional, 1 to 4; default 1): profiles exported at once, so
   their stored publication records are fetched in parallel. The output is
   the same at any setting.
@@ -129,6 +152,9 @@ Event fields:
   against, as the CLI's `--public-api`.
 - `acceptSnapshotGapMinutes` (optional): allow a snapshot taken up to this
   many minutes after `frozenAt`. Without it the limit is 90.
+- `acceptWritesAfterFreeze` (optional): package ids whose site writes after
+  `frozenAt` the switch owner accepted, at most 100. Use it only as in
+  "A publish that straddles the freeze", below.
 
 Unknown fields are refused.
 
@@ -137,6 +163,7 @@ Unknown fields are refused.
 This run says whether Tuesday's export fits the function's 15 minutes.
 
 ```text
+$env:AWS_MAX_ATTEMPTS='1'
 Set-Content -Encoding ascii rehearsal.json '{"job":"profileSiteExport","frozenAt":"<UTC time a few minutes ago, e.g. 2026-11-23T15:55:00Z>","rehearsal":true}'
 aws lambda invoke --region us-east-1 --function-name dbDumpsDaily --cli-read-timeout 960 --cli-binary-format raw-in-base64-out --payload file://rehearsal.json out.json
 ```
@@ -149,37 +176,122 @@ Read `seconds` in `out.json`, and send it to the on-call engineer.
   Then the export runs from a checkout on a machine with database access, by
   a person the switch owner arranges. Database access is by named people only.
 
-The staging rehearsal is the same with `--region eu-west-1`.
+Check in `out.json`:
 
-### Tuesday: the real run, ~00:00 UTC
+- `stage` is `prod` in `us-east-1` (`staging` in `eu-west-1`). If it isn't,
+  the function's `NODE_ENV` is wrong. Tell whoever deploys `dbDumpsDaily` before Tuesday.
+- `identityFreezeAtReading` is `unset`, or `time` with `identityFreezeAt`
+  at Tuesday's freeze if 6529.io has set it already. `not_a_time`, or any
+  other time, means the setting is wrong. Tell whoever deploys `dbDumpsDaily`.
+- `evidence.replicaLagMs` is a number. If it is `null`, the lag can't be
+  read, and Tuesday relies on the 2-minute gap alone. Tell the on-call engineer.
+
+Then test the download links: fetch the manifest and `links.json`, then one
+file by its link, and check each against its sha256.
 
 ```text
+[Net.ServicePointManager]::SecurityProtocol = 'Tls12'
+$out = Get-Content out.json -Raw | ConvertFrom-Json
+Invoke-WebRequest -UseBasicParsing $out.presignedManifestUrl -OutFile manifest.json
+Invoke-WebRequest -UseBasicParsing $out.presignedLinksUrl -OutFile links.json
+$manifest = Get-Content manifest.json -Raw | ConvertFrom-Json
+$links = Get-Content links.json -Raw | ConvertFrom-Json
+$file = $manifest.files | Where-Object { $_.name -like 'files/*' } | Select-Object -First 1
+Invoke-WebRequest -UseBasicParsing $links.links.($file.name) -OutFile one-file
+(Get-FileHash manifest.json -Algorithm SHA256).Hash.ToLower() -eq $out.manifestSha256
+(Get-FileHash links.json -Algorithm SHA256).Hash.ToLower() -eq ($manifest.files | Where-Object { $_.name -eq 'links.json' }).sha256
+(Get-FileHash one-file -Algorithm SHA256).Hash.ToLower() -eq $file.sha256
+```
+
+bash, with `curl` and `jq` (`shasum -a 256 -c` instead of `sha256sum -c` on
+macOS):
+
+```text
+curl -fsS -o manifest.json "$(jq -r .presignedManifestUrl out.json)"
+curl -fsS -o links.json "$(jq -r .presignedLinksUrl out.json)"
+name=$(jq -r '[.files[] | select(.name | startswith("files/"))][0].name' manifest.json)
+curl -fsS -o one-file "$(jq -r --arg n "$name" '.links[$n]' links.json)"
+echo "$(jq -r .manifestSha256 out.json)  manifest.json" | sha256sum -c
+echo "$(jq -r '.files[] | select(.name == "links.json") | .sha256' manifest.json)  links.json" | sha256sum -c
+echo "$(jq -r --arg n "$name" '.files[] | select(.name == $n) | .sha256' manifest.json)  one-file" | sha256sum -c
+```
+
+Each line must print `True` (PowerShell) or `OK` (bash). Send the result
+with `seconds`.
+
+The staging rehearsal is the same with `--region eu-west-1`.
+
+### Tuesday: the real run, from 00:05 UTC
+
+```text
+$env:AWS_MAX_ATTEMPTS='1'
 Set-Content -Encoding ascii event.json '{"job":"profileSiteExport","frozenAt":"2026-11-24T00:00:00Z","concurrency":4}'
 aws lambda invoke --region us-east-1 --function-name dbDumpsDaily --cli-read-timeout 960 --cli-binary-format raw-in-base64-out --payload file://event.json out.json
 ```
 
-Drop `"concurrency":4` if Monday's run at 1 was well inside the time. Start
-before 01:30 UTC, or add `"acceptSnapshotGapMinutes":N`.
+Drop `"concurrency":4` if Monday's run at 1 was well inside the time.
+6529.io's `IDENTITY_FREEZE_AT` must be set to the freeze; the run refuses
+otherwise.
+
+Start at least 2 minutes after the freeze; 00:05 UTC leaves room. A run
+before 00:02 is refused. Start before 01:30 UTC, or add
+`"acceptSnapshotGapMinutes":N`. If the run is refused because the replica
+is behind, wait a few minutes and run it again.
+
+### A publish that straddles the freeze
+
+A site published or changed just as the freeze began can leave a write
+after `frozenAt`. The run then refuses, naming each write and its package
+id: `...writes after the freeze that no one has accepted: packages <id> at
+<time>...`.
+
+1. Stop. Don't run it again with the ids yet.
+2. Send the whole error to the on-call engineer and the switch owner.
+3. Only after the switch owner accepts those packages, run again with exactly
+   the ids from the error:
+
+```text
+$env:AWS_MAX_ATTEMPTS='1'
+Set-Content -Encoding ascii event.json '{"job":"profileSiteExport","frozenAt":"2026-11-24T00:00:00Z","concurrency":4,"acceptWritesAfterFreeze":["<id from the error>"]}'
+aws lambda invoke --region us-east-1 --function-name dbDumpsDaily --cli-read-timeout 960 --cli-binary-format raw-in-base64-out --payload file://event.json out.json
+```
+
+A write to a package not on the list is still refused. The manifest and
+the response record the writes (`writes_after_freeze`,
+`writesAfterFreeze`) and the accepted ids (`accepted_writes_after_freeze`,
+`acceptedWritesAfterFreeze`).
 
 ### What to check in the response (`out.json`)
 
-- `prefix` starts with `profile-site-export/prod/` (or `/staging/`) for the
-  stage you meant, and has no `-rehearsal` or `-profile-` part for the real
-  run.
+- `stage` is the one you meant, and `prefix` starts with
+  `profile-site-export/<stage>/`. The real run's prefix has no `-rehearsal`
+  or `-profile-` part.
 - `manifestKey` ends in `manifest.json` and `usable` is true. Otherwise the
   run is not the export:
   - `manifest.unusable.json`: a rehearsal, or a stored publication record
     couldn't be fetched. Run again.
   - `manifest.partial.json`: one profile only.
+- `manifestSha256`: the manifest's sha256. Send it with the prefix, so
+  whoever fetches the manifest can check it.
 - `pointerKey` is set: `profile-site-export/<stage>/by-freeze/<frozenAt>.json`
-  names this run's prefix. A later full run for the same freeze replaces it.
+  names this run's prefix and the manifest's sha256. A later full run for
+  the same freeze replaces it. If `pointerKey` is null and `pointerError` is
+  set, the run is still whole and usable, but nothing points to it. Send the
+  switch owner its `prefix` and `manifestSha256`, and fetch fresh links by
+  `prefix`, not `frozenAt`.
 - `host`, `readOnly: true` and `evidence`: the replica it read.
   `evidence.transactionReadOnly` is true, and `serverReadOnly` or
   `innodbReadOnly` is true.
 - `bucketPrivacy.owner` is the function's own account.
-- `snapshotAt`, `snapshotGapSeconds` and `latestSiteWrites`: the snapshot
-  came after the freeze, and holds no site writes after it.
-- `identityFreezeAt` equals `frozenAt`.
+- `snapshotAt` and `snapshotGapSeconds`: the snapshot came at least 120
+  seconds after the freeze.
+- `evidence.replicaLagMs` is below `snapshotGapSeconds` × 1000, or `null`
+  when it couldn't be read.
+- `latestSiteWrites` (publication, archive and pointer change) and
+  `writesAfterFreeze`: no site writes after the freeze, except packages
+  listed in `acceptedWritesAfterFreeze`.
+- `identityFreezeAtReading` is `time` and `identityFreezeAt` equals
+  `frozenAt`.
 - `seconds`.
 - `presignedManifestUrl`, `presignedLinksUrl` and `linksLastAtMost`.
   `links.json` holds a presigned link for every object of the run:
@@ -199,12 +311,19 @@ the chain, so they have no such limit.
 ### Fresh links for an earlier run
 
 Links last at most 6 hours, and can stop sooner: they last no longer than
-the credentials that signed them. For a fresh set:
+the credentials that signed them. For a fresh set, name the run by its
+freeze (the stage's pointer finds it):
 
 ```text
-Set-Content -Encoding ascii links-event.json '{"job":"profileSiteExportLinks","prefix":"<prefix from out.json>"}'
+$env:AWS_MAX_ATTEMPTS='1'
+Set-Content -Encoding ascii links-event.json '{"job":"profileSiteExportLinks","frozenAt":"2026-11-24T00:00:00Z"}'
 aws lambda invoke --region us-east-1 --function-name dbDumpsDaily --cli-read-timeout 120 --cli-binary-format raw-in-base64-out --payload file://links-event.json links-out.json
 ```
+
+or by its prefix: `{"job":"profileSiteExportLinks","prefix":"<prefix from
+out.json>"}`. Give one or the other. By freeze, it refuses if the manifest's
+sha256 is no longer the one the pointer names. `links-out.json` carries
+`manifestSha256` too.
 
 ## When a run fails
 
@@ -217,9 +336,10 @@ every run has its own prefix.
   when it ends.
 - A run has the function's 15 minutes. It logs the profile count at the
   start, then its progress every 25 profiles. With less than a minute left
-  it stops before the next profile, the next fetch of a stored record, or
-  the public API check, with an error that says how far it got, and writes
-  no manifest. Then see Monday's timing run for what follows.
+  it stops before the next profile, the next attempt at a stored record
+  (a retry included), or the public API check, with an error that says how
+  far it got, and writes no manifest. Then see Monday's timing run for what
+  follows.
 - The export reaches the stored publication records (IPFS and Arweave
   gateways) and an Ethereum RPC for Safe signatures, as the CLI does. So the
   function's VPC subnets need outbound internet access, as the other loops

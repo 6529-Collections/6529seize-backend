@@ -60,10 +60,16 @@ export function storedPublicationFetcher(
     readonly recorded_at: string;
   }) => Promise<Buffer>,
   sleep: (ms: number) => Promise<void> = (ms) =>
-    new Promise((resolve) => setTimeout(resolve, ms))
+    new Promise((resolve) => setTimeout(resolve, ms)),
+  /**
+   * Runs before each attempt, outside its retry: a throw (the job's
+   * deadline) stops the export instead of counting as a failed fetch.
+   */
+  beforeAttempt: () => void = () => undefined
 ): ProfileCmsPublicationFetcher {
   return async (receipt) => {
     for (let attempt = 1; attempt <= 3; attempt++) {
+      beforeAttempt();
       try {
         return await verify({
           provider: receipt.uri.startsWith('ipfs://') ? 'ipfs' : 'arweave',

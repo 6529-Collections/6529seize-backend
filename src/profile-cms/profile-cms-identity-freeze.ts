@@ -20,6 +20,24 @@ export const PROFILE_CMS_FROZEN_CODE = 'IDENTITY_FROZEN';
 const ISO_UTC =
   /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,3})?)?(?:Z|[+-]00:00)$/;
 
+/**
+ * IDENTITY_FREEZE_AT as the profile site reads it: undefined when unset,
+ * null when set to something that is not a time, else Unix milliseconds.
+ */
+export function parseProfileCmsFreezeAt(
+  raw: string | undefined
+): number | null | undefined {
+  const value = raw?.trim();
+  if (!value) {
+    return undefined;
+  }
+  if (/^\d{1,16}$/.test(value)) {
+    return Number(value);
+  }
+  const start = ISO_UTC.test(value) ? Date.parse(value) : Number.NaN;
+  return Number.isFinite(start) ? start : null;
+}
+
 export function isProfileCmsIdentityFreezeOn(
   nowMillis: number = Time.currentMillis(),
   env: Readonly<Record<string, string | undefined>> = process.env
@@ -27,15 +45,11 @@ export function isProfileCmsIdentityFreezeOn(
   if (env.FEATURE_IDENTITY_FROZEN === 'true') {
     return true;
   }
-  const raw = env.IDENTITY_FREEZE_AT?.trim();
-  if (!raw) {
+  const start = parseProfileCmsFreezeAt(env.IDENTITY_FREEZE_AT);
+  if (start === undefined) {
     return false;
   }
-  if (/^\d{1,16}$/.test(raw)) {
-    return nowMillis >= Number(raw);
-  }
-  const start = ISO_UTC.test(raw) ? Date.parse(raw) : Number.NaN;
-  return !Number.isFinite(start) || nowMillis >= start;
+  return start === null || nowMillis >= start;
 }
 
 export function profileCmsFrozenError(

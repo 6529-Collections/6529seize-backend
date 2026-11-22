@@ -1,4 +1,5 @@
 import { S3Client } from '@aws-sdk/client-s3';
+import { createHash } from 'node:crypto';
 import {
   CMS_PUBLISHED_PACKAGES_TABLE,
   PROFILE_CMS_PACKAGES_TABLE,
@@ -7,7 +8,8 @@ import {
 import { Logger } from '@/logging';
 import {
   ProfileCmsExportDb,
-  ProfileCmsExporter
+  ProfileCmsExporter,
+  ProfileCmsPublicationFetcher
 } from '@/profile-cms/chain/profile-cms-export';
 import {
   cmsFieldsJson,
@@ -19,6 +21,7 @@ import {
   runProfileCmsExport,
   storedPublicationFetcher
 } from '@/profile-cms/chain/profile-cms-export.run';
+import { parseProfileCmsFreezeAt } from '@/profile-cms/profile-cms-identity-freeze';
 import { SqlExecutor } from '@/sql-executor';
 import {
   assertBucketPrivate,
@@ -68,6 +71,13 @@ const MANIFEST_SCHEMA = '6529.profile-site-export.manifest.v1';
  * unless the invoker allows more with acceptSnapshotGapMinutes.
  */
 export const SNAPSHOT_GAP_LIMIT_MINUTES = 90;
+/**
+ * A real run's snapshot must be at least this long after frozenAt on the
+ * replica's clock, so writes made before the freeze have reached it.
+ */
+export const MIN_SNAPSHOT_GAP_SECONDS = 120;
+/** More late writes than this can't be acknowledged one by one. */
+const MAX_WRITES_AFTER_FREEZE = 100;
 /** Below this much time left, the run stops with its progress. */
 const DEADLINE_MARGIN_MS = 60_000;
 const PROGRESS_EVERY = 25;
@@ -78,7 +88,8 @@ const PROGRESS_EVERY = 25;
  * - `profileSiteExport`: the profile site export (`6529 run
  *   profile-cms:export`) on the read replica, into the private chain exports
  *   bucket, the manifest written last;
- * - `profileSiteExportLinks`: fresh download links for an earlier run.
+ * - `profileSiteExportLinks`: fresh download links for an earlier run, by
+ *   its prefix or by the freeze it exported.
  */
 export type ProfileSiteExportEvent =
   | {
@@ -95,8 +106,17 @@ export type ProfileSiteExportEvent =
       readonly rehearsal: boolean;
       /** Profiles exported at once, 1 to 4. */
       readonly concurrency: number;
+      /**
+       * Package ids whose site writes after the freeze the switch owner has
+       * looked at and accepted (a publish that straddled the freeze).
+       */
+      readonly acceptWritesAfterFreeze: readonly string[];
     }
-  | { readonly job: typeof LINKS_JOB; readonly prefix: string };
+  | {
+      readonly job: typeof LINKS_JOB;
+      readonly prefix: string | null;
+      readonly frozenAt: number | null;
+    };
 
 export class ProfileSiteExportEventError extends Error {
   constructor(message: string) {
@@ -176,6 +196,22 @@ function only(
   }
 }
 
+function runPrefixOf(value: unknown): string {
+  if (
+    typeof value !== 'string' ||
+    !value.startsWith(PREFIX_ROOT) ||
+    !value.endsWith('/') ||
+    value.includes('..') ||
+    value.includes('/by-freeze/') ||
+    !/^[A-Za-z0-9/_.-]+$/.test(value)
+  ) {
+    throw new ProfileSiteExportEventError(
+      `prefix must be a run's prefix under ${PREFIX_ROOT}, ending in /`
+    );
+  }
+  return value;
+}
+
 /**
  * This module's job for an invocation's event, null when the event isn't
  * one of its jobs. A job it can't read throws: a typo never falls back to
@@ -187,21 +223,19 @@ export function parseProfileSiteExportEvent(
   if (!event || typeof event !== 'object') return null;
   const record = event as Record<string, unknown>;
   if (record.job === LINKS_JOB) {
-    only(record, ['job', 'prefix']);
-    const prefix = record.prefix;
-    if (
-      typeof prefix !== 'string' ||
-      !prefix.startsWith(PREFIX_ROOT) ||
-      !prefix.endsWith('/') ||
-      prefix.includes('..') ||
-      prefix.includes('/by-freeze/') ||
-      !/^[A-Za-z0-9/_.-]+$/.test(prefix)
-    ) {
+    only(record, ['job', 'prefix', 'frozenAt']);
+    const hasPrefix = record.prefix !== undefined;
+    const hasFreeze = record.frozenAt !== undefined;
+    if (hasPrefix === hasFreeze) {
       throw new ProfileSiteExportEventError(
-        `prefix must be a run's prefix under ${PREFIX_ROOT}, ending in /`
+        'Give either prefix (a run) or frozenAt (the run its pointer names)'
       );
     }
-    return { job: LINKS_JOB, prefix };
+    return {
+      job: LINKS_JOB,
+      prefix: hasPrefix ? runPrefixOf(record.prefix) : null,
+      frozenAt: hasFreeze ? frozenAtOf(record.frozenAt) : null
+    };
   }
   if (record.job !== JOB) return null;
   only(record, [
@@ -211,7 +245,8 @@ export function parseProfileSiteExportEvent(
     'publicApi',
     'acceptSnapshotGapMinutes',
     'rehearsal',
-    'concurrency'
+    'concurrency',
+    'acceptWritesAfterFreeze'
   ]);
   const profile = record.profile ?? null;
   if (
@@ -254,6 +289,18 @@ export function parseProfileSiteExportEvent(
       `concurrency must be 1 to ${MAX_EXPORT_CONCURRENCY}`
     );
   }
+  const acceptWrites = record.acceptWritesAfterFreeze ?? [];
+  if (
+    !Array.isArray(acceptWrites) ||
+    acceptWrites.length > MAX_WRITES_AFTER_FREEZE ||
+    acceptWrites.some(
+      (id) => typeof id !== 'string' || !/^[A-Za-z0-9:._-]{1,100}$/.test(id)
+    )
+  ) {
+    throw new ProfileSiteExportEventError(
+      `acceptWritesAfterFreeze must list at most ${MAX_WRITES_AFTER_FREEZE} package ids`
+    );
+  }
   return {
     job: JOB,
     frozenAt: frozenAtOf(record.frozenAt),
@@ -261,18 +308,21 @@ export function parseProfileSiteExportEvent(
     publicApi,
     acceptSnapshotGapMinutes: accept,
     rehearsal,
-    concurrency
+    concurrency,
+    acceptWritesAfterFreeze: acceptWrites as string[]
   };
 }
 
 /**
- * Refuses a snapshot taken before the freeze, or longer after it than the
- * limit (90 minutes) or than the invoker allowed.
+ * Refuses a snapshot taken before the freeze, sooner after it than
+ * `minGapSeconds`, or longer after it than the limit (90 minutes) or than
+ * the invoker allowed.
  */
 export function checkSnapshotTime(
   frozenAt: number,
   snapshotAt: number,
-  acceptGapMinutes: number | null
+  acceptGapMinutes: number | null,
+  minGapSeconds = 0
 ): { readonly gapSeconds: number } {
   if (!Number.isFinite(snapshotAt)) {
     throw new ProfileSiteExportSnapshotError("The snapshot's time is unknown");
@@ -281,6 +331,11 @@ export function checkSnapshotTime(
   if (gapSeconds < 0) {
     throw new ProfileSiteExportSnapshotError(
       `The snapshot (${new Date(snapshotAt).toISOString()}) is before the freeze (${new Date(frozenAt).toISOString()})`
+    );
+  }
+  if (gapSeconds < minGapSeconds) {
+    throw new ProfileSiteExportSnapshotError(
+      `The snapshot is ${gapSeconds} s after the freeze: wait until at least ${minGapSeconds} s after it, so the replica holds every write made before the freeze`
     );
   }
   const limit = Math.max(SNAPSHOT_GAP_LIMIT_MINUTES, acceptGapMinutes ?? 0);
@@ -293,23 +348,55 @@ export function checkSnapshotTime(
 }
 
 /**
- * The freeze the run says it exports must be 6529.io's own: when
- * IDENTITY_FREEZE_AT is set, frozenAt must equal it.
+ * Refuses a replica further behind its writer than the snapshot is after
+ * the freeze: it might not yet hold writes made before the freeze. An
+ * unknown lag leaves the minimum gap as the only guard.
+ */
+export function checkReplicaLag(
+  gapSeconds: number,
+  replicaLagMs: number | null
+): void {
+  if (replicaLagMs !== null && replicaLagMs >= gapSeconds * 1000) {
+    throw new ProfileSiteExportSnapshotError(
+      `The replica is ${replicaLagMs} ms behind its writer, not less than the ${gapSeconds} s since the freeze: it may not hold every write made before the freeze. Try again later.`
+    );
+  }
+}
+
+/** IDENTITY_FREEZE_AT as the profile site itself reads it. */
+export interface FreezeSetting {
+  readonly reading: 'unset' | 'not_a_time' | 'time';
+  readonly at: number | null;
+}
+
+export function readFreezeSetting(raw: string | undefined): FreezeSetting {
+  const parsed = parseProfileCmsFreezeAt(raw);
+  if (parsed === undefined) return { reading: 'unset', at: null };
+  if (parsed === null) return { reading: 'not_a_time', at: null };
+  return { reading: 'time', at: parsed };
+}
+
+/**
+ * A real run exports 6529.io's own freeze: IDENTITY_FREEZE_AT must be set,
+ * be a time, and equal frozenAt.
  */
 export function checkFreezeSetting(
   frozenAt: number,
-  identityFreezeAt: string | undefined
+  setting: FreezeSetting
 ): void {
-  if (identityFreezeAt === undefined || identityFreezeAt.trim() === '') return;
-  const setting = timeOf(identityFreezeAt);
-  if (setting === null) {
+  if (setting.reading === 'unset') {
+    throw new ProfileSiteExportSnapshotError(
+      'IDENTITY_FREEZE_AT is not set: a real run exports 6529.io’s own freeze. Use rehearsal: true before the freeze.'
+    );
+  }
+  if (setting.reading === 'not_a_time') {
     throw new ProfileSiteExportSnapshotError(
       'IDENTITY_FREEZE_AT is set but is not a time: the run cannot tell which freeze it exports'
     );
   }
-  if (setting !== frozenAt) {
+  if (setting.at !== frozenAt) {
     throw new ProfileSiteExportSnapshotError(
-      `frozenAt (${new Date(frozenAt).toISOString()}) is not IDENTITY_FREEZE_AT (${new Date(setting).toISOString()})`
+      `frozenAt (${new Date(frozenAt).toISOString()}) is not IDENTITY_FREEZE_AT (${new Date(setting.at!).toISOString()})`
     );
   }
 }
@@ -317,6 +404,7 @@ export function checkFreezeSetting(
 /** The latest profile site writes in the snapshot (Unix ms, null when none). */
 export interface LatestSiteWrites {
   readonly packages: number | null;
+  readonly archivedPackages: number | null;
   readonly legacyPackages: number | null;
   readonly pointerEvents: number | null;
 }
@@ -325,40 +413,94 @@ function msOrNull(value: unknown): number | null {
   return value === null || value === undefined ? null : Number(value);
 }
 
-/** Reads the latest publication and pointer change in the snapshot. */
+/** Reads the latest publication, archive and pointer change in the snapshot. */
 export async function latestSiteWrites(
   executor: SqlExecutor
 ): Promise<LatestSiteWrites> {
   const row = await executor.oneOrNull<{
     packages: unknown;
+    archived: unknown;
     legacy: unknown;
     events: unknown;
   }>(
     `select
        (select max(published_at) from ${PROFILE_CMS_PACKAGES_TABLE}) as packages,
+       (select max(archived_at) from ${PROFILE_CMS_PACKAGES_TABLE}) as archived,
        (select max(published_at) from ${CMS_PUBLISHED_PACKAGES_TABLE}) as legacy,
        (select max(created_at) from ${PROFILE_CMS_POINTER_EVENTS_TABLE}) as events`
   );
   return {
     packages: msOrNull(row?.packages),
+    archivedPackages: msOrNull(row?.archived),
     legacyPackages: msOrNull(row?.legacy),
     pointerEvents: msOrNull(row?.events)
   };
 }
 
-/** Refuses a snapshot that holds a site publication or pointer change after the freeze. */
-export function checkNoWritesAfterFreeze(
-  frozenAt: number,
-  latest: LatestSiteWrites
-): void {
-  const after = Object.entries(latest).filter(
-    ([, at]) => at !== null && at > frozenAt
+/** One profile site write after the freeze, by the package it concerns. */
+export interface WriteAfterFreeze {
+  readonly source: 'packages' | 'pointer_events' | 'legacy_packages';
+  readonly packageId: string;
+  readonly at: string;
+}
+
+/**
+ * The site writes after the freeze in the snapshot, by package: a
+ * publication or archive of a package, a pointer change naming one, or a
+ * legacy package published. At most one more than can be acknowledged.
+ */
+export async function writesAfterFreeze(
+  executor: SqlExecutor,
+  frozenAt: number
+): Promise<WriteAfterFreeze[]> {
+  const rows = await executor.execute<{
+    source: WriteAfterFreeze['source'];
+    package_id: string;
+    at: unknown;
+  }>(
+    `select 'packages' as source, id as package_id,
+            greatest(coalesce(published_at, 0), coalesce(archived_at, 0)) as at
+       from ${PROFILE_CMS_PACKAGES_TABLE}
+       where published_at > :frozenAt or archived_at > :frozenAt
+     union all
+     select 'pointer_events' as source, package_db_id as package_id, created_at as at
+       from ${PROFILE_CMS_POINTER_EVENTS_TABLE}
+       where created_at > :frozenAt
+     union all
+     select 'legacy_packages' as source, package_hash as package_id, published_at as at
+       from ${CMS_PUBLISHED_PACKAGES_TABLE}
+       where published_at > :frozenAt
+     limit ${MAX_WRITES_AFTER_FREEZE + 1}`,
+    { frozenAt }
   );
-  if (after.length) {
+  return rows.map((row) => ({
+    source: row.source,
+    packageId: String(row.package_id),
+    at: new Date(Number(row.at)).toISOString()
+  }));
+}
+
+/**
+ * Refuses site writes after the freeze, unless each one's package is in
+ * the acknowledged list.
+ */
+export function checkWritesAfterFreeze(
+  writes: readonly WriteAfterFreeze[],
+  accepted: readonly string[]
+): void {
+  if (writes.length > MAX_WRITES_AFTER_FREEZE) {
     throw new ProfileSiteExportSnapshotError(
-      `The snapshot holds profile site writes after the freeze (${after
-        .map(([name, at]) => `${name} at ${new Date(at!).toISOString()}`)
-        .join(', ')}): it is not the state at the freeze`
+      `The snapshot holds more than ${MAX_WRITES_AFTER_FREEZE} profile site writes after the freeze: it is not the state at the freeze`
+    );
+  }
+  const open = writes.filter((write) => !accepted.includes(write.packageId));
+  if (open.length) {
+    throw new ProfileSiteExportSnapshotError(
+      `The snapshot holds profile site writes after the freeze that no one has accepted: ${open
+        .map((write) => `${write.source} ${write.packageId} at ${write.at}`)
+        .join(
+          ', '
+        )}. Send this to the on-call engineer and the switch owner; only with the switch owner's word, list the package ids in acceptWritesAfterFreeze.`
     );
   }
 }
@@ -372,6 +514,8 @@ export interface ProfileSiteExportScope {
 export interface ProfileSiteExportResult {
   readonly job: typeof JOB;
   readonly bucket: string;
+  /** prod or staging, from NODE_ENV (production, development). */
+  readonly stage: string;
   readonly prefix: string;
   /**
    * manifest.json for a whole usable run; manifest.partial.json for one
@@ -379,8 +523,12 @@ export interface ProfileSiteExportResult {
    * stored publication record.
    */
   readonly manifestKey: string;
+  /** The manifest's sha256, as stored. */
+  readonly manifestSha256: string;
   /** by-freeze/<frozenAt>.json, pointing at this run; only for manifest.json. */
   readonly pointerKey: string | null;
+  /** Why the pointer couldn't be written, when it couldn't. */
+  readonly pointerError: string | null;
   readonly rehearsal: boolean;
   readonly scope: ProfileSiteExportScope;
   readonly concurrency: number;
@@ -400,14 +548,18 @@ export interface ProfileSiteExportResult {
   readonly evidence: ReadOnlyEvidence;
   readonly bucketPrivacy: BucketPrivacy;
   readonly frozenAt: string;
-  /** IDENTITY_FREEZE_AT as the function read it, or null when unset. */
+  /** IDENTITY_FREEZE_AT as the site reads it: unset, not_a_time or time. */
+  readonly identityFreezeAtReading: FreezeSetting['reading'];
   readonly identityFreezeAt: string | null;
   /** The server's clock when the snapshot was taken. */
   readonly snapshotAt: string;
   /** Seconds from the freeze to the snapshot. */
   readonly snapshotGapSeconds: number;
-  /** The latest publication and pointer change in the snapshot. */
+  /** The latest publication, archive and pointer change in the snapshot. */
   readonly latestSiteWrites: Record<string, string | null>;
+  /** Site writes after the freeze, and the package ids accepted for them. */
+  readonly writesAfterFreeze: readonly WriteAfterFreeze[];
+  readonly acceptedWritesAfterFreeze: readonly string[];
   readonly startedAt: string;
   readonly finishedAt: string;
   readonly seconds: number;
@@ -423,6 +575,7 @@ export interface ProfileSiteExportLinksResult {
   readonly bucket: string;
   readonly prefix: string;
   readonly manifestKey: string;
+  readonly manifestSha256: string;
   readonly linksKey: string;
   readonly linksLastAtMost: string;
   readonly presignedManifestUrl: string;
@@ -441,7 +594,10 @@ export interface ProfileSiteExportDeps {
   readonly s3: Pick<S3Client, 'send'>;
   readonly presign: Presigner;
   readonly openSnapshot: (target: ReplicaTarget) => Promise<ReadOnlySnapshot>;
-  /** The exporter; `beforeFetch` runs before each fetch of a stored record. */
+  /**
+   * The exporter; `beforeFetch` runs before each attempt at a stored
+   * record, outside the attempt's retry.
+   */
   readonly exporter: (
     frozenAt: number,
     beforeFetch: () => void
@@ -462,6 +618,20 @@ interface Manifest {
   readonly [key: string]: unknown;
 }
 
+/**
+ * The job's stored-record fetcher: the deadline runs before each attempt,
+ * outside the attempt's retry, so running out of time stops the export
+ * instead of reading as a record that couldn't be fetched.
+ */
+export function jobRecordFetcher(
+  frozenAt: number,
+  beforeFetch: () => void,
+  verify: Parameters<typeof storedPublicationFetcher>[1],
+  sleep?: (ms: number) => Promise<void>
+): ProfileCmsPublicationFetcher {
+  return storedPublicationFetcher(frozenAt, verify, sleep, beforeFetch);
+}
+
 function defaultDeps(): ProfileSiteExportDeps {
   const s3 = new S3Client({ region: process.env.AWS_REGION });
   return {
@@ -477,10 +647,9 @@ function defaultDeps(): ProfileSiteExportDeps {
       const { profileCmsPublicationStorage } =
         await import('@/profile-cms/profile-cms-publication-storage');
       return new ProfileCmsExporter(
-        storedPublicationFetcher(frozenAt, (receipt) => {
-          beforeFetch();
-          return profileCmsPublicationStorage.verify(receipt);
-        })
+        jobRecordFetcher(frozenAt, beforeFetch, (receipt) =>
+          profileCmsPublicationStorage.verify(receipt)
+        )
       );
     },
     getJson,
@@ -518,6 +687,13 @@ function iso(ms: number | null): string | null {
   return ms === null ? null : new Date(ms).toISOString();
 }
 
+/** The pointer from a freeze to the whole run that exported it. */
+function pointerKeyOf(stage: string, frozenAt: number): string {
+  return `${JOB_PREFIX}/${stage}/by-freeze/${new Date(frozenAt)
+    .toISOString()
+    .replace(/[:.]/g, '-')}.json`;
+}
+
 export async function runProfileSiteExportJob(
   event: ProfileSiteExportEvent,
   context: ProfileSiteExportContext,
@@ -529,18 +705,19 @@ export async function runProfileSiteExportJob(
     context.invokedFunctionArn,
     env.AWS_REGION ?? ''
   );
+  const stage = exportStage(env.NODE_ENV);
   if (event.job === LINKS_JOB) {
-    return await renewLinks(event.prefix, bucket, deps);
+    return await renewLinks(event, stage, bucket, deps);
   }
   const startedAt = deps.now();
-  const identityFreezeAt = env.IDENTITY_FREEZE_AT?.trim() || null;
-  // A rehearsal runs before the freeze, so it is not held to the setting.
+  const freezeSetting = readFreezeSetting(env.IDENTITY_FREEZE_AT);
+  // A rehearsal runs before the freeze: it reports the setting instead.
   if (!event.rehearsal) {
-    checkFreezeSetting(event.frozenAt, env.IDENTITY_FREEZE_AT);
+    checkFreezeSetting(event.frozenAt, freezeSetting);
   }
   const target = replicaTarget(env);
   logger.info(
-    `[EXPORT START] [READ REPLICA ${target.host}] [REHEARSAL ${event.rehearsal}] [CONCURRENCY ${event.concurrency}]`
+    `[EXPORT START] [READ REPLICA ${target.host}] [STAGE ${stage}] [REHEARSAL ${event.rehearsal}] [CONCURRENCY ${event.concurrency}] [IDENTITY_FREEZE_AT ${freezeSetting.reading} ${iso(freezeSetting.at)}]`
   );
   const privacy = await assertBucketPrivate(deps.s3, bucket);
   const scope: ProfileSiteExportScope = {
@@ -551,7 +728,6 @@ export async function runProfileSiteExportJob(
     event.rehearsal ? 'rehearsal' : null,
     event.profile ? `profile-${event.profile}` : null
   ].filter((it): it is string => !!it);
-  const stage = exportStage(env.NODE_ENV);
   const prefix = runPrefix(
     JOB_PREFIX,
     stage,
@@ -576,22 +752,26 @@ export async function runProfileSiteExportJob(
   );
   const snapshot = await deps.openSnapshot(target);
   logger.info(
-    `[READ ONLY SNAPSHOT] [HOST ${snapshot.evidence.host}] [AT ${snapshot.evidence.snapshotAt}] [TRANSACTION READ ONLY ${snapshot.evidence.transactionReadOnly}] [SERVER READ ONLY ${snapshot.evidence.serverReadOnly}] [INNODB READ ONLY ${snapshot.evidence.innodbReadOnly}]`
+    `[READ ONLY SNAPSHOT] [HOST ${snapshot.evidence.host}] [AT ${snapshot.evidence.snapshotAt}] [REPLICA LAG ${snapshot.evidence.replicaLagMs ?? 'unknown'} MS] [TRANSACTION READ ONLY ${snapshot.evidence.transactionReadOnly}] [SERVER READ ONLY ${snapshot.evidence.serverReadOnly}] [INNODB READ ONLY ${snapshot.evidence.innodbReadOnly}]`
   );
   let run;
   let gapSeconds = 0;
   let latest: LatestSiteWrites;
+  let late: WriteAfterFreeze[];
   try {
     gapSeconds = checkSnapshotTime(
       event.frozenAt,
       Date.parse(snapshot.evidence.snapshotAt),
-      event.acceptSnapshotGapMinutes
+      event.acceptSnapshotGapMinutes,
+      event.rehearsal ? 0 : MIN_SNAPSHOT_GAP_SECONDS
     ).gapSeconds;
     latest = await latestSiteWrites(snapshot.executor);
+    late = await writesAfterFreeze(snapshot.executor, event.frozenAt);
     // Before the freeze, sites are still published: a rehearsal records
     // what it saw instead of refusing.
     if (!event.rehearsal) {
-      checkNoWritesAfterFreeze(event.frozenAt, latest);
+      checkReplicaLag(gapSeconds, snapshot.evidence.replicaLagMs);
+      checkWritesAfterFreeze(late, event.acceptWritesAfterFreeze);
     }
     run = await runProfileCmsExport(
       {
@@ -682,6 +862,7 @@ export async function runProfileSiteExportJob(
   const lastAtMost = linksLastAtMost(finishedAt);
   const latestWrites = {
     packages: iso(latest.packages),
+    archived_packages: iso(latest.archivedPackages),
     legacy_packages: iso(latest.legacyPackages),
     pointer_events: iso(latest.pointerEvents)
   };
@@ -689,13 +870,19 @@ export async function runProfileSiteExportJob(
     schema: MANIFEST_SCHEMA,
     usable: manifestName === MANIFEST,
     rehearsal: event.rehearsal,
+    stage,
     scope,
     concurrency: event.concurrency,
     frozen_at: new Date(event.frozenAt).toISOString(),
-    identity_freeze_at: identityFreezeAt,
+    identity_freeze_at: {
+      reading: freezeSetting.reading,
+      at: iso(freezeSetting.at)
+    },
     snapshot_at: snapshot.evidence.snapshotAt,
     snapshot_gap_seconds: gapSeconds,
     latest_site_writes: latestWrites,
+    writes_after_freeze: late,
+    accepted_writes_after_freeze: event.acceptWritesAfterFreeze,
     started_at: startedAt.toISOString(),
     finished_at: finishedAt.toISOString(),
     seconds: (finishedAt.getTime() - startedAt.getTime()) / 1000,
@@ -711,37 +898,42 @@ export async function runProfileSiteExportJob(
     files: written
   };
   // Last in the run's prefix: a run that stops early has no manifest.
-  const manifestKey = (
-    await writer.put(
-      manifestName,
-      JSON.stringify(manifest, null, 2),
-      'application/json'
-    )
-  ).key;
-  // Then, for the one run the import takes, a pointer from its freeze.
+  const manifestPut = await writer.put(
+    manifestName,
+    JSON.stringify(manifest, null, 2),
+    'application/json'
+  );
+  // Then, for the one run the import takes, a pointer from its freeze. The
+  // run is whole without it: a failed pointer is reported, not fatal.
   let pointerKey: string | null = null;
+  let pointerError: string | null = null;
   if (manifestName === MANIFEST) {
-    pointerKey = `${JOB_PREFIX}/${stage}/by-freeze/${new Date(event.frozenAt)
-      .toISOString()
-      .replace(/[:.]/g, '-')}.json`;
-    await writer.putOutside(
-      pointerKey,
-      JSON.stringify(
-        {
-          frozen_at: new Date(event.frozenAt).toISOString(),
-          prefix,
-          manifest: manifestKey,
-          finished_at: finishedAt.toISOString()
-        },
-        null,
-        2
-      ),
-      'application/json'
-    );
+    const key = pointerKeyOf(stage, event.frozenAt);
+    try {
+      await writer.putOutside(
+        key,
+        JSON.stringify(
+          {
+            frozen_at: new Date(event.frozenAt).toISOString(),
+            prefix,
+            manifest: manifestPut.key,
+            manifest_sha256: manifestPut.sha256,
+            finished_at: finishedAt.toISOString()
+          },
+          null,
+          2
+        ),
+        'application/json'
+      );
+      pointerKey = key;
+    } catch (error) {
+      pointerError = String((error as Error)?.message ?? error);
+      logger.warn(`[POINTER NOT WRITTEN] [${key}] ${pointerError}`);
+    }
   }
   const presignedManifestUrl = await deps.presign(
     bucket,
-    manifestKey,
+    manifestPut.key,
     PRESIGNED_URL_SECONDS
   );
   const presignedLinksUrl = await deps.presign(
@@ -756,9 +948,12 @@ export async function runProfileSiteExportJob(
   return {
     job: JOB,
     bucket: bucket.name,
+    stage,
     prefix,
-    manifestKey,
+    manifestKey: manifestPut.key,
+    manifestSha256: manifestPut.sha256,
     pointerKey,
+    pointerError,
     rehearsal: event.rehearsal,
     scope,
     concurrency: event.concurrency,
@@ -774,10 +969,13 @@ export async function runProfileSiteExportJob(
     evidence: snapshot.evidence,
     bucketPrivacy: privacy,
     frozenAt: new Date(event.frozenAt).toISOString(),
-    identityFreezeAt,
+    identityFreezeAtReading: freezeSetting.reading,
+    identityFreezeAt: iso(freezeSetting.at),
     snapshotAt: snapshot.evidence.snapshotAt,
     snapshotGapSeconds: gapSeconds,
     latestSiteWrites: latestWrites,
+    writesAfterFreeze: late,
+    acceptedWritesAfterFreeze: event.acceptWritesAfterFreeze,
     startedAt: startedAt.toISOString(),
     finishedAt: finishedAt.toISOString(),
     seconds,
@@ -787,15 +985,40 @@ export async function runProfileSiteExportJob(
   };
 }
 
-/** Fresh links for an earlier run: only a run with a manifest has them. */
+/**
+ * Fresh links for an earlier run: given its prefix, or the freeze whose
+ * pointer names it. Only a run with a manifest has them.
+ */
 async function renewLinks(
-  prefix: string,
+  event: Extract<ProfileSiteExportEvent, { job: typeof LINKS_JOB }>,
+  stage: string,
   bucket: ExportBucket,
   deps: ProfileSiteExportDeps
 ): Promise<ProfileSiteExportLinksResult> {
   await assertBucketPrivate(deps.s3, bucket);
+  let prefix = event.prefix;
+  let pointed: { manifest?: unknown; manifest_sha256?: unknown } | null = null;
+  if (prefix === null) {
+    const key = pointerKeyOf(stage, event.frozenAt!);
+    const pointer = await new PrivateExportWriter(
+      deps.s3,
+      bucket,
+      ''
+    ).readOutside(key);
+    if (!pointer.found) {
+      throw new ProfileSiteExportEventError(
+        `No run for that freeze: ${key} isn't there or can't be read. Pass the run's prefix instead.`
+      );
+    }
+    pointed = JSON.parse(pointer.text) as {
+      prefix?: unknown;
+      manifest?: unknown;
+      manifest_sha256?: unknown;
+    };
+    prefix = runPrefixOf((pointed as { prefix?: unknown }).prefix);
+  }
   const writer = new PrivateExportWriter(deps.s3, bucket, prefix);
-  let found: { name: string; manifest: Manifest } | null = null;
+  let found: { name: string; manifest: Manifest; text: string } | null = null;
   let forbidden = false;
   for (const name of MANIFEST_NAMES) {
     const read = await writer.read(name);
@@ -809,7 +1032,7 @@ async function renewLinks(
           `${writer.key(name)} is not a manifest`
         );
       }
-      found = { name, manifest };
+      found = { name, manifest, text: read.text };
       break;
     }
     if (read.reason === 'forbidden') forbidden = true;
@@ -819,6 +1042,20 @@ async function renewLinks(
       forbidden
         ? `No manifest under ${prefix}: S3 refused the read, as it does for a key that doesn't exist when the reader may not list the bucket. That run didn't finish, or the prefix is wrong.`
         : `No manifest under ${prefix}: that run didn't finish, or the prefix is wrong`
+    );
+  }
+  const manifestKey = writer.key(found.name);
+  const manifestSha256 = createHash('sha256')
+    .update(Buffer.from(found.text, 'utf8'))
+    .digest('hex');
+  // The pointer names the one manifest the import takes, by its hash.
+  if (
+    pointed &&
+    (pointed.manifest !== manifestKey ||
+      pointed.manifest_sha256 !== manifestSha256)
+  ) {
+    throw new ProfileSiteExportEventError(
+      `The pointer for that freeze names ${String(pointed.manifest)} (sha256 ${String(pointed.manifest_sha256)}), but ${manifestKey} has sha256 ${manifestSha256}`
     );
   }
   const now = deps.now();
@@ -833,12 +1070,13 @@ async function renewLinks(
     job: LINKS_JOB,
     bucket: bucket.name,
     prefix,
-    manifestKey: writer.key(found.name),
+    manifestKey,
+    manifestSha256,
     linksKey: links.key,
     linksLastAtMost: linksLastAtMost(now).toISOString(),
     presignedManifestUrl: await deps.presign(
       bucket,
-      writer.key(found.name),
+      manifestKey,
       PRESIGNED_URL_SECONDS
     ),
     presignedLinksUrl: await deps.presign(

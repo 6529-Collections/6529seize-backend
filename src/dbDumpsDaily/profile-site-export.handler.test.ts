@@ -8,15 +8,21 @@ import { ProfileCmsExportReport } from '@/profile-cms/chain/profile-cms-export';
 import { createHash } from 'node:crypto';
 import {
   checkFreezeSetting,
-  checkNoWritesAfterFreeze,
+  checkReplicaLag,
   checkSnapshotTime,
+  checkWritesAfterFreeze,
+  jobRecordFetcher,
+  latestSiteWrites,
   parseProfileSiteExportEvent,
   ProfileSiteExportDeadlineError,
   ProfileSiteExportDeps,
   ProfileSiteExportEventError,
   ProfileSiteExportLinksResult,
   ProfileSiteExportResult,
-  runProfileSiteExportJob
+  readFreezeSetting,
+  runProfileSiteExportJob,
+  WriteAfterFreeze,
+  writesAfterFreeze
 } from './profile-site-export.handler';
 
 const OWNER = '000000000000';
@@ -24,6 +30,8 @@ const ARN = `arn:aws:lambda:eu-west-1:${OWNER}:function:dbDumpsDaily`;
 const BUCKET = `6529-chain-exports-${OWNER}-eu-west-1`;
 const T = Date.UTC(2026, 10, 24);
 const FREEZE = '2026-11-24T00:00:00Z';
+const POINTER =
+  'profile-site-export/staging/by-freeze/2026-11-24T00-00-00-000Z.json';
 
 function report(
   over: Partial<ProfileCmsExportReport> = {}
@@ -48,6 +56,10 @@ function report(
   };
 }
 
+function sha256(text: string): string {
+  return createHash('sha256').update(Buffer.from(text)).digest('hex');
+}
+
 function setup(
   options: {
     env?: Record<string, string | undefined>;
@@ -55,9 +67,17 @@ function setup(
     publicBlock?: boolean;
     unavailable?: boolean;
     snapshotAt?: number;
+    replicaLagMs?: number | null;
     closeFails?: boolean;
-    latestWrites?: { packages?: number; legacy?: number; events?: number };
+    latestWrites?: {
+      packages?: number;
+      archived?: number;
+      legacy?: number;
+      events?: number;
+    };
+    late?: { source: string; package_id: string; at: number }[];
     getDenied?: boolean;
+    verifyFails?: number;
   } = {}
 ) {
   const order: string[] = [];
@@ -100,11 +120,12 @@ function setup(
     throw new Error(`unexpected ${command.constructor.name}`);
   });
   const executor = {
-    execute: jest.fn(async (sql: string) => {
+    execute: jest.fn(async (sql: string, _params?: Record<string, any>) => {
       if (/max\(published_at\)/i.test(sql)) {
         return [
           {
             packages: options.latestWrites?.packages ?? T - 60_000,
+            archived: options.latestWrites?.archived ?? null,
             legacy: options.latestWrites?.legacy ?? null,
             events: options.latestWrites?.events ?? T - 120_000
           }
@@ -112,6 +133,9 @@ function setup(
       }
       if (/select distinct profile_id/i.test(sql)) {
         return [{ profile_id: 'profile-a' }, { profile_id: 'profile-b' }];
+      }
+      if (/union all/i.test(sql)) {
+        return options.late ?? [];
       }
       if (/select handle, consolidation_key/i.test(sql)) {
         return [{ handle: 'alice', consolidation_key: '0xaaa' }];
@@ -123,9 +147,20 @@ function setup(
   const close = jest.fn(async () => {
     if (options.closeFails) throw new Error('rollback failed');
   });
-  let beforeFetch: () => void = () => undefined;
+  // The job's own fetcher, retry and all; only the store behind it is fake.
+  let fails = options.verifyFails ?? 0;
+  const verify = jest.fn(async () => {
+    if (fails-- > 0) throw new Error('gateway timeout');
+    return Buffer.from('record');
+  });
+  const sleep = jest.fn(async () => undefined);
+  let fetchRecord: ReturnType<typeof jobRecordFetcher> = async () => null;
   const exportProfile = jest.fn(async (profileId: string) => {
-    beforeFetch();
+    // As the exporter does for a package with a stored record.
+    await fetchRecord({
+      uri: `ipfs://bafyrecord${profileId}`,
+      content_hash: 'h'
+    });
     return {
       profile_id: profileId,
       handle: profileId === 'profile-a' ? 'alice' : null,
@@ -174,17 +209,19 @@ function setup(
         transactionReadOnly: true,
         serverReadOnly: true,
         innodbReadOnly: null,
-        snapshotAt: new Date(options.snapshotAt ?? T + 30_000).toISOString()
+        snapshotAt: new Date(options.snapshotAt ?? T + 150_000).toISOString(),
+        replicaLagMs:
+          options.replicaLagMs === undefined ? 40 : options.replicaLagMs
       },
       close
     })),
-    exporter: async (_frozenAt, guard) => {
-      beforeFetch = guard;
+    exporter: async (frozenAt, guard) => {
+      fetchRecord = jobRecordFetcher(frozenAt, guard, verify, sleep);
       return { exportProfile } as never;
     },
     getJson: jest.fn(),
     now: (() => {
-      let tick = T + 60_000;
+      let tick = T + 180_000;
       return () => new Date((tick += 1_000));
     })()
   };
@@ -196,6 +233,9 @@ function setup(
     bodies,
     close,
     exportProfile,
+    executor,
+    verify,
+    sleep,
     presigned
   };
 }
@@ -207,7 +247,8 @@ const event = {
   publicApi: null,
   acceptSnapshotGapMinutes: null,
   rehearsal: false,
-  concurrency: 1
+  concurrency: 1,
+  acceptWritesAfterFreeze: []
 } as const;
 const context = { invokedFunctionArn: ARN, awsRequestId: 'abcdef12-3456' };
 
@@ -237,15 +278,36 @@ describe('parseProfileSiteExportEvent', () => {
         profile: 'profile-a',
         publicApi: 'https://api.example',
         rehearsal: true,
-        concurrency: 4
+        concurrency: 4,
+        acceptWritesAfterFreeze: ['pkg-1', 'sha256:abc']
       })
     ).toEqual({
       ...event,
       profile: 'profile-a',
       publicApi: 'https://api.example',
       rehearsal: true,
-      concurrency: 4
+      concurrency: 4,
+      acceptWritesAfterFreeze: ['pkg-1', 'sha256:abc']
     });
+  });
+
+  it('finds a run for fresh links by its prefix or by its freeze', () => {
+    expect(
+      parseProfileSiteExportEvent({
+        job: 'profileSiteExportLinks',
+        prefix: 'profile-site-export/prod/run/'
+      })
+    ).toEqual({
+      job: 'profileSiteExportLinks',
+      prefix: 'profile-site-export/prod/run/',
+      frozenAt: null
+    });
+    expect(
+      parseProfileSiteExportEvent({
+        job: 'profileSiteExportLinks',
+        frozenAt: FREEZE
+      })
+    ).toEqual({ job: 'profileSiteExportLinks', prefix: null, frozenAt: T });
   });
 
   it.each([
@@ -263,6 +325,30 @@ describe('parseProfileSiteExportEvent', () => {
     [{ job: 'profileSiteExport', frozenAt: T, rehearsal: 'yes' }],
     [{ job: 'profileSiteExport', frozenAt: T, concurrency: 5 }],
     [{ job: 'profileSiteExport', frozenAt: T, concurrency: 0 }],
+    [{ job: 'profileSiteExport', frozenAt: T, acceptWritesAfterFreeze: 'p' }],
+    [
+      {
+        job: 'profileSiteExport',
+        frozenAt: T,
+        acceptWritesAfterFreeze: ['a b']
+      }
+    ],
+    [
+      {
+        job: 'profileSiteExport',
+        frozenAt: T,
+        acceptWritesAfterFreeze: Array.from({ length: 101 }, (_, i) => `p${i}`)
+      }
+    ],
+    [{ job: 'profileSiteExportLinks' }],
+    [
+      {
+        job: 'profileSiteExportLinks',
+        prefix: 'profile-site-export/prod/run/',
+        frozenAt: T
+      }
+    ],
+    [{ job: 'profileSiteExportLinks', frozenAt: 'Tuesday' }],
     [{ job: 'profileSiteExportLinks', prefix: 'identity-export/x/' }],
     [{ job: 'profileSiteExportLinks', prefix: 'profile-site-export/../x/' }],
     [
@@ -287,33 +373,123 @@ describe('the freeze checks', () => {
     expect(() => checkSnapshotTime(T, Number.NaN, null)).toThrow(/unknown/);
   });
 
-  it('holds frozenAt to IDENTITY_FREEZE_AT when it is set', () => {
-    expect(() => checkFreezeSetting(T, undefined)).not.toThrow();
-    expect(() => checkFreezeSetting(T, FREEZE)).not.toThrow();
-    expect(() => checkFreezeSetting(T, String(T))).not.toThrow();
-    expect(() => checkFreezeSetting(T + 1, FREEZE)).toThrow(
-      /not IDENTITY_FREEZE_AT/
+  it('holds a snapshot to a minimum gap after the freeze', () => {
+    expect(checkSnapshotTime(T, T + 120_000, null, 120)).toEqual({
+      gapSeconds: 120
+    });
+    expect(() => checkSnapshotTime(T, T + 119_000, null, 120)).toThrow(
+      /119 s after the freeze: wait until at least 120 s/
     );
-    expect(() => checkFreezeSetting(T, 'Tuesday')).toThrow(/not a time/);
   });
 
-  it('refuses a snapshot holding site writes after the freeze', () => {
-    expect(() =>
-      checkNoWritesAfterFreeze(T, {
-        packages: T,
-        legacyPackages: null,
-        pointerEvents: T - 1
-      })
-    ).not.toThrow();
-    for (const late of [
-      { packages: T + 1, legacyPackages: null, pointerEvents: null },
-      { packages: null, legacyPackages: T + 1, pointerEvents: null },
-      { packages: null, legacyPackages: null, pointerEvents: T + 1 }
+  it('refuses a replica as far behind its writer as the gap, or further', () => {
+    expect(() => checkReplicaLag(150, null)).not.toThrow();
+    expect(() => checkReplicaLag(150, 149_999)).not.toThrow();
+    expect(() => checkReplicaLag(150, 150_000)).toThrow(/150000 ms behind/);
+    expect(() => checkReplicaLag(150, 3_600_000)).toThrow(/behind its writer/);
+  });
+
+  it('reads IDENTITY_FREEZE_AT as the site does', () => {
+    expect(readFreezeSetting(undefined)).toEqual({
+      reading: 'unset',
+      at: null
+    });
+    expect(readFreezeSetting(' ')).toEqual({ reading: 'unset', at: null });
+    expect(readFreezeSetting('Tuesday')).toEqual({
+      reading: 'not_a_time',
+      at: null
+    });
+    for (const raw of [
+      FREEZE,
+      '2026-11-24T00:00:00+00:00',
+      '2026-11-24T00:00:00.000Z',
+      '2026-11-24T00:00:00.000+00:00',
+      String(T)
     ]) {
-      expect(() => checkNoWritesAfterFreeze(T, late)).toThrow(
-        /writes after the freeze/
-      );
+      expect(readFreezeSetting(raw)).toEqual({ reading: 'time', at: T });
     }
+  });
+
+  it('holds a real run to IDENTITY_FREEZE_AT, which must be set', () => {
+    expect(() =>
+      checkFreezeSetting(T, readFreezeSetting(FREEZE))
+    ).not.toThrow();
+    expect(() => checkFreezeSetting(T, readFreezeSetting(undefined))).toThrow(
+      /IDENTITY_FREEZE_AT is not set/
+    );
+    expect(() => checkFreezeSetting(T, readFreezeSetting(''))).toThrow(
+      /not set/
+    );
+    expect(() => checkFreezeSetting(T + 1, readFreezeSetting(FREEZE))).toThrow(
+      /not IDENTITY_FREEZE_AT/
+    );
+    expect(() => checkFreezeSetting(T, readFreezeSetting('Tuesday'))).toThrow(
+      /not a time/
+    );
+  });
+
+  const late = (packageId: string): WriteAfterFreeze => ({
+    source: 'packages',
+    packageId,
+    at: new Date(T + 5).toISOString()
+  });
+
+  it('refuses site writes after the freeze unless each package was accepted', () => {
+    expect(() => checkWritesAfterFreeze([], [])).not.toThrow();
+    expect(() =>
+      checkWritesAfterFreeze([late('pkg-1'), late('pkg-1')], ['pkg-1'])
+    ).not.toThrow();
+    expect(() => checkWritesAfterFreeze([late('pkg-1')], [])).toThrow(
+      /packages pkg-1 at 2026-11-24T00:00:00.005Z.*switch owner/
+    );
+    expect(() =>
+      checkWritesAfterFreeze([late('pkg-1'), late('pkg-2')], ['pkg-1'])
+    ).toThrow(/no one has accepted: packages pkg-2 at/);
+    const many = Array.from({ length: 101 }, (_, i) => late(`p${i}`));
+    expect(() =>
+      checkWritesAfterFreeze(
+        many,
+        many.map((it) => it.packageId)
+      )
+    ).toThrow(/more than 100/);
+  });
+
+  it('reads the latest publication, archive and pointer change', async () => {
+    const { executor } = setup({ latestWrites: { archived: T + 7 } });
+    await expect(latestSiteWrites(executor as never)).resolves.toEqual({
+      packages: T - 60_000,
+      archivedPackages: T + 7,
+      legacyPackages: null,
+      pointerEvents: T - 120_000
+    });
+    expect(executor.execute.mock.calls[0][0]).toMatch(/max\(archived_at\)/);
+  });
+
+  it('reads site writes after the freeze by package, from all three tables', async () => {
+    const { executor } = setup({
+      late: [
+        { source: 'packages', package_id: 'pkg-1', at: T + 5 },
+        { source: 'pointer_events', package_id: 'pkg-2', at: T + 6 }
+      ]
+    });
+    await expect(writesAfterFreeze(executor as never, T)).resolves.toEqual([
+      {
+        source: 'packages',
+        packageId: 'pkg-1',
+        at: '2026-11-24T00:00:00.005Z'
+      },
+      {
+        source: 'pointer_events',
+        packageId: 'pkg-2',
+        at: '2026-11-24T00:00:00.006Z'
+      }
+    ]);
+    const [sql, params] = executor.execute.mock.calls[0];
+    expect(params).toEqual({ frozenAt: T });
+    expect(sql).toMatch(/archived_at > :frozenAt/);
+    expect(sql).toMatch(/profile_cms_pointer_events/);
+    expect(sql).toMatch(/cms_published_packages/);
+    expect(sql).toMatch(/limit 101/);
   });
 });
 
@@ -334,6 +510,7 @@ describe('runProfileSiteExportJob', () => {
     expect(exportProfile).toHaveBeenCalledTimes(2);
     expect(result).toMatchObject({
       bucket: BUCKET,
+      stage: 'staging',
       host: 'replica-host',
       readOnly: true,
       usable: true,
@@ -346,17 +523,23 @@ describe('runProfileSiteExportJob', () => {
         policyPublic: false
       },
       scope: { profile: null, publicApi: null },
-      identityFreezeAt: FREEZE,
-      snapshotAt: new Date(T + 30_000).toISOString(),
-      snapshotGapSeconds: 30,
+      identityFreezeAtReading: 'time',
+      identityFreezeAt: '2026-11-24T00:00:00.000Z',
+      snapshotAt: new Date(T + 150_000).toISOString(),
+      snapshotGapSeconds: 150,
+      evidence: { replicaLagMs: 40 },
       latestSiteWrites: {
         packages: new Date(T - 60_000).toISOString(),
+        archived_packages: null,
         legacy_packages: null,
         pointer_events: new Date(T - 120_000).toISOString()
-      }
+      },
+      writesAfterFreeze: [],
+      acceptedWritesAfterFreeze: [],
+      pointerError: null
     });
     expect(result.prefix).toMatch(
-      /^profile-site-export\/staging\/2026-11-24T00-01-01-000Z-abcdef12\/$/
+      /^profile-site-export\/staging\/2026-11-24T00-03-01-000Z-abcdef12\/$/
     );
     const names = order.map((key) =>
       key.startsWith(result.prefix) ? key.slice(result.prefix.length) : key
@@ -369,13 +552,15 @@ describe('runProfileSiteExportJob', () => {
       'report.json',
       'links.json',
       'manifest.json',
-      'profile-site-export/staging/by-freeze/2026-11-24T00-00-00-000Z.json'
+      POINTER
     ]);
     expect(result.manifestKey).toBe(`${result.prefix}manifest.json`);
-    expect(result.pointerKey).toBe(names[7]);
-    expect(JSON.parse(bodies.get(result.pointerKey!)!)).toMatchObject({
+    expect(result.manifestSha256).toBe(sha256(bodies.get(result.manifestKey)!));
+    expect(result.pointerKey).toBe(POINTER);
+    expect(JSON.parse(bodies.get(POINTER)!)).toMatchObject({
       prefix: result.prefix,
-      manifest: result.manifestKey
+      manifest: result.manifestKey,
+      manifest_sha256: result.manifestSha256
     });
     const manifest = JSON.parse(bodies.get(result.manifestKey)!);
     expect(manifest.files.map((file: { name: string }) => file.name)).toEqual([
@@ -389,17 +574,21 @@ describe('runProfileSiteExportJob', () => {
     // Every entry carries the digest of exactly what was stored.
     for (const file of manifest.files) {
       const body = bodies.get(result.prefix + file.name)!;
-      expect(file.sha256).toBe(
-        createHash('sha256').update(Buffer.from(body)).digest('hex')
-      );
+      expect(file.sha256).toBe(sha256(body));
       expect(file.bytes).toBe(Buffer.byteLength(body));
     }
     expect(manifest).toMatchObject({
       usable: true,
       rehearsal: false,
+      stage: 'staging',
       scope: { profile: null, publicApi: null },
-      snapshot_at: new Date(T + 30_000).toISOString(),
-      snapshot_gap_seconds: 30
+      identity_freeze_at: { reading: 'time', at: '2026-11-24T00:00:00.000Z' },
+      snapshot_at: new Date(T + 150_000).toISOString(),
+      snapshot_gap_seconds: 150,
+      read: { replicaLagMs: 40, read_only: true },
+      latest_site_writes: { archived_packages: null },
+      writes_after_freeze: [],
+      accepted_writes_after_freeze: []
     });
     // Every S3 call and every link names the function's own account.
     expect(commands.length).toBeGreaterThan(0);
@@ -416,6 +605,21 @@ describe('runProfileSiteExportJob', () => {
     expect(presigned.every((it) => it.owner === OWNER)).toBe(true);
     const links = JSON.parse(bodies.get(`${result.prefix}links.json`)!);
     expect(Object.keys(links.links)).toContain('manifest.json');
+  });
+
+  it('names the stage from NODE_ENV: production is prod', async () => {
+    const { deps, order } = setup({ env: { NODE_ENV: 'production' } });
+    const result = (await runProfileSiteExportJob(
+      event,
+      context,
+      deps
+    )) as ProfileSiteExportResult;
+    expect(result.stage).toBe('prod');
+    expect(result.prefix).toMatch(/^profile-site-export\/prod\//);
+    expect(result.pointerKey).toBe(
+      'profile-site-export/prod/by-freeze/2026-11-24T00-00-00-000Z.json'
+    );
+    expect(order).toContain(result.pointerKey);
   });
 
   it('gives the same files and manifest order when exporting four at once', async () => {
@@ -440,10 +644,19 @@ describe('runProfileSiteExportJob', () => {
   });
 
   it('runs a rehearsal under a -rehearsal prefix, unusable and without a pointer', async () => {
+    const lateWrite = {
+      source: 'packages',
+      package_id: 'pkg-9',
+      at: T + 50_000
+    };
     const { deps, order, bodies } = setup({
       env: { IDENTITY_FREEZE_AT: FREEZE },
       // Sites are still published before the freeze: recorded, not refused.
-      latestWrites: { packages: T + 50_000 }
+      latestWrites: { packages: T + 50_000 },
+      late: [lateWrite],
+      // Neither the minimum gap nor the lag holds a rehearsal.
+      snapshotAt: T + 30_000,
+      replicaLagMs: 60_000
     });
     const result = (await runProfileSiteExportJob(
       { ...event, rehearsal: true, frozenAt: T + 20_000 },
@@ -453,30 +666,155 @@ describe('runProfileSiteExportJob', () => {
     expect(result.prefix).toMatch(/-abcdef12-rehearsal\/$/);
     expect(result.manifestKey).toBe(`${result.prefix}manifest.unusable.json`);
     expect(result.pointerKey).toBeNull();
+    expect(result.snapshotGapSeconds).toBe(10);
+    expect(result.writesAfterFreeze).toEqual([
+      { source: 'packages', packageId: 'pkg-9', at: '2026-11-24T00:00:50.000Z' }
+    ]);
     expect(order.some((key) => key.includes('by-freeze'))).toBe(false);
     expect(JSON.parse(bodies.get(result.manifestKey)!)).toMatchObject({
       usable: false,
-      rehearsal: true
+      rehearsal: true,
+      writes_after_freeze: result.writesAfterFreeze
     });
     expect(typeof result.seconds).toBe('number');
   });
 
-  it('refuses a real run whose frozenAt is not IDENTITY_FREEZE_AT', async () => {
-    const { deps, order } = setup();
-    await expect(
-      runProfileSiteExportJob({ ...event, frozenAt: T + 60_000 }, context, deps)
-    ).rejects.toThrow(/not IDENTITY_FREEZE_AT/);
-    expect(deps.openSnapshot).not.toHaveBeenCalled();
-    expect(order).toEqual([]);
-  });
+  it.each([
+    [undefined, 'unset', null],
+    ['Tuesday', 'not_a_time', null],
+    ['2026-11-24T00:00:00.000+00:00', 'time', '2026-11-24T00:00:00.000Z']
+  ])(
+    'has a rehearsal report IDENTITY_FREEZE_AT %j as the site reads it',
+    async (raw, reading, at) => {
+      const { deps, bodies } = setup({ env: { IDENTITY_FREEZE_AT: raw } });
+      const result = (await runProfileSiteExportJob(
+        { ...event, rehearsal: true },
+        context,
+        deps
+      )) as ProfileSiteExportResult;
+      expect(result).toMatchObject({
+        identityFreezeAtReading: reading,
+        identityFreezeAt: at
+      });
+      expect(
+        JSON.parse(bodies.get(result.manifestKey)!).identity_freeze_at
+      ).toEqual({ reading, at });
+    }
+  );
 
-  it('refuses a real run whose snapshot holds a publication after the freeze', async () => {
-    const { deps, order, close } = setup({ latestWrites: { events: T + 5 } });
+  it.each([
+    [undefined, /IDENTITY_FREEZE_AT is not set/],
+    ['', /IDENTITY_FREEZE_AT is not set/],
+    ['Tuesday', /not a time/],
+    ['2026-11-24T00:01:00Z', /not IDENTITY_FREEZE_AT/]
+  ])(
+    'refuses a real run with IDENTITY_FREEZE_AT %j, before reading anything',
+    async (raw, message) => {
+      const { deps, order } = setup({ env: { IDENTITY_FREEZE_AT: raw } });
+      await expect(
+        runProfileSiteExportJob(event, context, deps)
+      ).rejects.toThrow(message);
+      expect(deps.openSnapshot).not.toHaveBeenCalled();
+      expect(order).toEqual([]);
+    }
+  );
+
+  it.each([['2026-11-24T00:00:00+00:00'], ['2026-11-24T00:00:00.000Z']])(
+    'takes IDENTITY_FREEZE_AT %j for a real run, as the site does',
+    async (raw) => {
+      const { deps } = setup({ env: { IDENTITY_FREEZE_AT: raw } });
+      const result = (await runProfileSiteExportJob(
+        event,
+        context,
+        deps
+      )) as ProfileSiteExportResult;
+      expect(result.identityFreezeAt).toBe('2026-11-24T00:00:00.000Z');
+    }
+  );
+
+  it('refuses a real run whose snapshot holds an unaccepted site write after the freeze', async () => {
+    const { deps, order, close } = setup({
+      late: [{ source: 'pointer_events', package_id: 'pkg-1', at: T + 5 }]
+    });
     await expect(runProfileSiteExportJob(event, context, deps)).rejects.toThrow(
-      /writes after the freeze/
+      /no one has accepted: pointer_events pkg-1 at 2026-11-24T00:00:00.005Z\. Send this to the on-call engineer and the switch owner/
     );
     expect(order).toEqual([]);
     expect(close).toHaveBeenCalledTimes(1);
+  });
+
+  it('exports past site writes the switch owner accepted, and records them', async () => {
+    const late = [
+      { source: 'packages', package_id: 'pkg-1', at: T + 5 },
+      { source: 'pointer_events', package_id: 'pkg-1', at: T + 6 }
+    ];
+    const { deps, bodies } = setup({ late });
+    const result = (await runProfileSiteExportJob(
+      { ...event, acceptWritesAfterFreeze: ['pkg-1'] },
+      context,
+      deps
+    )) as ProfileSiteExportResult;
+    expect(result.usable).toBe(true);
+    expect(result.acceptedWritesAfterFreeze).toEqual(['pkg-1']);
+    expect(result.writesAfterFreeze.map((it) => it.packageId)).toEqual([
+      'pkg-1',
+      'pkg-1'
+    ]);
+    expect(JSON.parse(bodies.get(result.manifestKey)!)).toMatchObject({
+      writes_after_freeze: result.writesAfterFreeze,
+      accepted_writes_after_freeze: ['pkg-1']
+    });
+  });
+
+  it('refuses when only some late packages were accepted', async () => {
+    const { deps, order } = setup({
+      late: [
+        { source: 'packages', package_id: 'pkg-1', at: T + 5 },
+        { source: 'legacy_packages', package_id: 'sha256:abc', at: T + 6 }
+      ]
+    });
+    await expect(
+      runProfileSiteExportJob(
+        { ...event, acceptWritesAfterFreeze: ['pkg-1'] },
+        context,
+        deps
+      )
+    ).rejects.toThrow(/legacy_packages sha256:abc/);
+    expect(order).toEqual([]);
+  });
+
+  it.each([
+    ['60 s after the freeze', T + 60_000, 40, /wait until at least 120 s/],
+    ['with the replica 200 s behind', T + 150_000, 200_000, /200000 ms behind/],
+    [
+      'with the replica as far behind as the gap',
+      T + 150_000,
+      150_000,
+      /behind/
+    ]
+  ])(
+    'refuses a real run %s, and writes nothing',
+    async (_name, snapshotAt, replicaLagMs, message) => {
+      const { deps, order, close } = setup({ snapshotAt, replicaLagMs });
+      await expect(
+        runProfileSiteExportJob(event, context, deps)
+      ).rejects.toThrow(message);
+      expect(order).toEqual([]);
+      expect(close).toHaveBeenCalledTimes(1);
+    }
+  );
+
+  it('relies on the gap when the replica lag cannot be read, and says so', async () => {
+    const { deps, bodies } = setup({ replicaLagMs: null });
+    const result = (await runProfileSiteExportJob(
+      event,
+      context,
+      deps
+    )) as ProfileSiteExportResult;
+    expect(result.evidence.replicaLagMs).toBeNull();
+    expect(JSON.parse(bodies.get(result.manifestKey)!).read.replicaLagMs).toBe(
+      null
+    );
   });
 
   it('writes no manifest when an upload fails, and still closes the snapshot', async () => {
@@ -486,6 +824,34 @@ describe('runProfileSiteExportJob', () => {
     );
     expect(order.some((key) => key.includes('manifest'))).toBe(false);
     expect(close).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps a whole run when only the pointer fails, and says so', async () => {
+    const { deps, order } = setup({ failPutOf: POINTER });
+    const result = (await runProfileSiteExportJob(
+      event,
+      context,
+      deps
+    )) as ProfileSiteExportResult;
+    expect(result.manifestKey).toBe(`${result.prefix}manifest.json`);
+    expect(order).toContain(result.manifestKey);
+    expect(result.pointerKey).toBeNull();
+    expect(result.pointerError).toBe('upload failed');
+    expect(order.some((key) => key.includes('by-freeze'))).toBe(false);
+    // Without the pointer, the run is found by its prefix.
+    const again = (await runProfileSiteExportJob(
+      { job: 'profileSiteExportLinks', prefix: result.prefix, frozenAt: null },
+      context,
+      deps
+    )) as ProfileSiteExportLinksResult;
+    expect(again.manifestSha256).toBe(result.manifestSha256);
+    await expect(
+      runProfileSiteExportJob(
+        { job: 'profileSiteExportLinks', prefix: null, frozenAt: T },
+        context,
+        deps
+      )
+    ).rejects.toThrow(/No run for that freeze/);
   });
 
   it.each([
@@ -524,7 +890,7 @@ describe('runProfileSiteExportJob', () => {
     expect(result.pointerKey).toBeNull();
     expect(JSON.parse(bodies.get(result.manifestKey)!).usable).toBe(false);
     const again = (await runProfileSiteExportJob(
-      { job: 'profileSiteExportLinks', prefix: result.prefix },
+      { job: 'profileSiteExportLinks', prefix: result.prefix, frozenAt: null },
       context,
       deps
     )) as ProfileSiteExportLinksResult;
@@ -595,7 +961,7 @@ describe('runProfileSiteExportJob', () => {
   });
 
   it('stops before fetching a stored record when time runs short', async () => {
-    const { deps, exportProfile } = setup();
+    const { deps, exportProfile, verify, sleep } = setup();
     const left = [120_000, 10_000];
     const error = await runProfileSiteExportJob(
       event,
@@ -605,6 +971,23 @@ describe('runProfileSiteExportJob', () => {
     expect(error).toBeInstanceOf(ProfileSiteExportDeadlineError);
     expect(error.message).toMatch(/before fetching a stored record/);
     expect(exportProfile).toHaveBeenCalledTimes(1);
+    expect(verify).not.toHaveBeenCalled();
+    expect(sleep).not.toHaveBeenCalled();
+  });
+
+  it('stops at a fetch retry when time runs short: the deadline is never retried', async () => {
+    const { deps, verify, order } = setup({ verifyFails: 1 });
+    // The first attempt fails; time runs short before the second.
+    const left = [120_000, 120_000, 10_000];
+    const error = await runProfileSiteExportJob(
+      event,
+      { ...context, getRemainingTimeInMillis: () => left.shift() ?? 0 },
+      deps
+    ).catch((e) => e);
+    expect(error).toBeInstanceOf(ProfileSiteExportDeadlineError);
+    expect(error.message).toMatch(/before fetching a stored record/);
+    expect(verify).toHaveBeenCalledTimes(1);
+    expect(order.some((key) => key.includes('manifest'))).toBe(false);
   });
 
   it('stops before the public API check when time runs short', async () => {
@@ -645,18 +1028,56 @@ describe('runProfileSiteExportJob', () => {
       deps
     )) as ProfileSiteExportResult;
     const again = (await runProfileSiteExportJob(
-      { job: 'profileSiteExportLinks', prefix: first.prefix },
+      { job: 'profileSiteExportLinks', prefix: first.prefix, frozenAt: null },
       context,
       deps
     )) as ProfileSiteExportLinksResult;
     expect(again).toMatchObject({
       job: 'profileSiteExportLinks',
       bucket: BUCKET,
-      manifestKey: first.manifestKey
+      manifestKey: first.manifestKey,
+      manifestSha256: first.manifestSha256
     });
     const links = JSON.parse(bodies.get(again.linksKey)!);
     expect(Object.keys(links.links)).toContain('files/bafyshared');
     expect(Object.keys(links.links)).toContain('manifest.json');
+  });
+
+  it('finds the run for fresh links through its freeze', async () => {
+    const { deps } = setup();
+    const first = (await runProfileSiteExportJob(
+      event,
+      context,
+      deps
+    )) as ProfileSiteExportResult;
+    const again = (await runProfileSiteExportJob(
+      { job: 'profileSiteExportLinks', prefix: null, frozenAt: T },
+      context,
+      deps
+    )) as ProfileSiteExportLinksResult;
+    expect(again).toMatchObject({
+      prefix: first.prefix,
+      manifestKey: first.manifestKey,
+      manifestSha256: first.manifestSha256
+    });
+    expect(again.linksKey.startsWith(first.prefix)).toBe(true);
+  });
+
+  it('refuses fresh links when the manifest no longer matches its pointer', async () => {
+    const { deps, bodies } = setup();
+    const first = (await runProfileSiteExportJob(
+      event,
+      context,
+      deps
+    )) as ProfileSiteExportResult;
+    bodies.set(first.manifestKey, `${bodies.get(first.manifestKey)!}\n`);
+    await expect(
+      runProfileSiteExportJob(
+        { job: 'profileSiteExportLinks', prefix: null, frozenAt: T },
+        context,
+        deps
+      )
+    ).rejects.toThrow(/pointer for that freeze names/);
   });
 
   it.each([
@@ -670,7 +1091,8 @@ describe('runProfileSiteExportJob', () => {
         runProfileSiteExportJob(
           {
             job: 'profileSiteExportLinks',
-            prefix: 'profile-site-export/staging/missing/'
+            prefix: 'profile-site-export/staging/missing/',
+            frozenAt: null
           },
           context,
           deps

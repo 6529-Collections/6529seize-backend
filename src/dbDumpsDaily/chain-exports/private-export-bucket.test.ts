@@ -197,6 +197,28 @@ describe('the chain exports bucket', () => {
     await expect(writer.read('m.json')).rejects.toThrow('slow');
   });
 
+  it('reads a key outside the run, as its owner, with the same answers', async () => {
+    const send = jest
+      .fn()
+      .mockResolvedValueOnce({ Body: { transformToString: async () => '{}' } })
+      .mockRejectedValueOnce(
+        Object.assign(new Error('no'), { name: 'NoSuchKey' })
+      );
+    const writer = new PrivateExportWriter({ send } as never, BUCKET, 'p/');
+    await expect(writer.readOutside('x/by-freeze/t.json')).resolves.toEqual({
+      found: true,
+      text: '{}'
+    });
+    expect((send.mock.calls[0][0] as GetObjectCommand).input).toMatchObject({
+      Key: 'x/by-freeze/t.json',
+      ExpectedBucketOwner: OWNER
+    });
+    await expect(writer.readOutside('x/by-freeze/u.json')).resolves.toEqual({
+      found: false,
+      reason: 'missing'
+    });
+  });
+
   it('presigns links that carry the expected owner in their query', async () => {
     const client = new S3Client({
       region: 'us-east-1',
