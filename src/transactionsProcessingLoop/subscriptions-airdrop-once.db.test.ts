@@ -2,6 +2,7 @@ import 'reflect-metadata';
 import * as db from '@/db';
 import * as Entities from '@/entities/entities';
 import {
+  GRADIENT_CONTRACT,
   MEMES_CONTRACT,
   MEMES_MINT_PRICE,
   NULL_ADDRESS,
@@ -23,9 +24,12 @@ jest.mock('@/subscription-wave-notifier', () => ({
 
 // Obviously fake wallets and hashes.
 const WALLET = '0x00000000000000000000000000000000000000a1';
+const SELLER = '0x00000000000000000000000000000000000000b2';
 const CARD = 600;
 const FIRST = '0x' + '1'.repeat(64);
 const SECOND = '0x' + '2'.repeat(64);
+const MEMES_SALE = '0x' + '5'.repeat(64);
+const GRADIENTS_SALE = '0x' + '6'.repeat(64);
 
 /**
  * Airdrops charged more times than the transaction delivered tokens to
@@ -43,23 +47,32 @@ const DOUBLE_CHARGED_AIRDROPS = `
    GROUP BY r.transaction, r.contract, r.token_id, r.address
   HAVING SUM(r.count) > MAX(t.token_count)`;
 
-function airdrop(hash: string, block: number) {
+function transfer(
+  hash: string,
+  block: number,
+  opts: { from?: string; contract?: string; value?: number } = {}
+) {
   return sqlExecutor.execute(
     `INSERT INTO ${TRANSACTIONS_TABLE}
       (created_at, transaction, block, transaction_date, from_address, to_address,
        contract, token_id, token_count, value, primary_proceeds, royalties,
        gas_gwei, gas_price, gas_price_gwei, gas)
       VALUES (NOW(), :hash, :block, '2026-11-26 15:00:00', :from, :to, :contract,
-       :card, 1, 0, 0, 0, 0, 0, 0, 0)`,
+       :card, 1, :value, 0, 0, 0, 0, 0, 0)`,
     {
       hash,
       block,
-      from: NULL_ADDRESS,
+      from: opts.from ?? NULL_ADDRESS,
       to: WALLET,
-      contract: MEMES_CONTRACT,
-      card: CARD
+      contract: (opts.contract ?? MEMES_CONTRACT).toLowerCase(),
+      card: CARD,
+      value: opts.value ?? 0
     }
   );
+}
+
+function airdrop(hash: string, block: number) {
+  return transfer(hash, block);
 }
 
 async function charges() {
@@ -135,8 +148,8 @@ describeWithSeed(
       const readMax = db.fetchMaxTransactionByBlockNumber;
       jest
         .spyOn(db, 'fetchMaxTransactionByBlockNumber')
-        .mockImplementationOnce(async () => {
-          const max = await readMax();
+        .mockImplementationOnce(async (contract) => {
+          const max = await readMax(contract);
           await airdrop(SECOND, 102);
           return max;
         });
@@ -150,6 +163,26 @@ describeWithSeed(
       ]);
       expect(after.balance).toBeCloseTo(1 - 2 * MEMES_MINT_PRICE, 10);
       expect(await sqlExecutor.execute(DOUBLE_CHARGED_AIRDROPS)).toEqual([]);
+    });
+
+    it('charges a memes airdrop committed after another contract reached a higher block', async () => {
+      // A memes sale at the cursor, and a gradients sale the gradients loop
+      // has already committed in block 105.
+      await transfer(MEMES_SALE, 100, { from: SELLER, value: 0.1 });
+      await transfer(GRADIENTS_SALE, 105, {
+        from: SELLER,
+        contract: GRADIENT_CONTRACT,
+        value: 0.1
+      });
+      await redeemSubscriptions();
+      // The memes loop then commits an airdrop in block 103.
+      await airdrop(FIRST, 103);
+      await redeemSubscriptions();
+      await redeemSubscriptions();
+
+      const after = await charges();
+      expect(after.perTransaction).toEqual([[FIRST, 1]]);
+      expect(after.balance).toBeCloseTo(1 - MEMES_MINT_PRICE, 10);
     });
 
     it('finds an airdrop charged more times than it delivered tokens', async () => {

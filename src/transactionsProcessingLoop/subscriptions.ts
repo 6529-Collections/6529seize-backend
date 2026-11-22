@@ -57,7 +57,14 @@ export const redeemSubscriptions = async (reset?: boolean) => {
     TransactionsProcessedSubscriptionsBlock
   );
   const lastProcessingBlock = await getLastProcessingBlock(blockRepo, reset);
-  const maxBlockTransaction = await fetchMaxTransactionByBlockNumber();
+  // The memes contract's highest block, not the highest of all contracts.
+  // The memes transactions loop commits whole blocks, in block order, so
+  // every memes airdrop up to this block is already in the table. The
+  // gradients and memelab loops keep their own cursors and can be ahead.
+  // Recording their block skipped any memes airdrop the memes loop then
+  // committed in a lower block: it was never charged.
+  const maxBlockTransaction =
+    await fetchMaxTransactionByBlockNumber(MEMES_CONTRACT);
 
   if (!maxBlockTransaction) {
     throw new Error('No max transaction block');
@@ -71,7 +78,7 @@ export const redeemSubscriptions = async (reset?: boolean) => {
     return;
   }
   // Only up to the block this run records as processed: an airdrop the
-  // transactions loop commits in a later block after the read above is left
+  // memes loop commits in a later block after the read above is left
   // to the next run, which starts after that block. Unbounded, it was
   // charged now and again by the next run.
   const airdrops: Transaction[] = await sqlExecutor.execute(
