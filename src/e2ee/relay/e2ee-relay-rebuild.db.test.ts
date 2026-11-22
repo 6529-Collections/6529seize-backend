@@ -869,6 +869,11 @@ describeWithSeed('e2ee relay records against MySQL', SEEDS, () => {
     const [welcome] = await groups.getWelcomes('pb', ids.b);
     await groups.ackWelcome('pb', ids.b, welcome.id);
     await publisher.settled();
+    // The inbox head clients compare the relays with: the ack's record.
+    expect(await db.getStreamHead(`dv/${ids.b}`)).toEqual({
+      pos: expect.any(Number),
+      hash: expect.stringMatching(/^0x[0-9a-f]{64}$/)
+    });
     const queued = await sqlExecutor.execute<{ positions: string }>(
       `select positions from e2ee_relay_deletions where wave = :wave`,
       { wave: `dv/${ids.b}` }
