@@ -740,6 +740,60 @@ describeWithSeed('identity writers after the switch', [], () => {
     expect(result.switched).toBe(true);
   });
 
+  it('rebuilds past a part posted twice with the same contents, and refuses one posted with other contents', async () => {
+    await seedLegacy();
+    expect((await goLiveForTest()).switched).toBe(true);
+    await execute(
+      `INSERT INTO ${SUBSCRIPTIONS_TOP_UP_TABLE} (hash, block, transaction_date, from_wallet, amount)
+        VALUES ('0xa5', 30, '2026-11-26 13:00:00', :lone, 0.05)`,
+      { lone: LONE }
+    );
+    await runIdentityTopUpWriters();
+    await updateSubscriptions();
+    const tablesBefore = await identityTablesHash({});
+    const ethereum = await ethereumAsRecorded();
+    // The top-up's entry posted again, as after a restore from a backup
+    // taken before it was posted.
+    const [topUp] = await sqlExecutor.execute<{ id: number; entry: string }>(
+      `SELECT id, entry FROM ${SIGNED_RECORD_LOG_ENTRIES_TABLE}
+        WHERE entry LIKE '%"kind":"top-up"%' ORDER BY id LIMIT 1`
+    );
+    const repost = (entry: string) =>
+      execute(
+        `INSERT INTO ${SIGNED_RECORD_LOG_ENTRIES_TABLE} (chain, lane, entry, created_at, segment_seq)
+          SELECT chain, lane, :entry, created_at, segment_seq
+            FROM ${SIGNED_RECORD_LOG_ENTRIES_TABLE} WHERE id = :id`,
+        { entry, id: topUp.id }
+      );
+    await repost(topUp.entry);
+
+    await loseIdentityTables();
+    const result = await rebuildIdentityTables({
+      source: journalSource,
+      fetch: fetchPublished,
+      ethereum
+    });
+    expect(result.missing).toBeNull();
+    expect(await identityTablesHash({})).toBe(tablesBefore);
+
+    // The same n and part with other contents: a write that reused a
+    // posted n. Nothing is loaded.
+    const other = JSON.parse(topUp.entry);
+    other.body.at_ms += 1;
+    await repost(JSON.stringify(other));
+    await loseIdentityTables();
+    await expect(
+      rebuildIdentityTables({
+        source: journalSource,
+        fetch: fetchPublished,
+        ethereum
+      })
+    ).rejects.toThrow('posted twice with different contents');
+    expect(
+      await finalIds(SUBSCRIPTIONS_ID_NFTS_FINAL_TABLE, 'identity_key')
+    ).toHaveLength(0);
+  });
+
   it('rebuilds a top-up with the identity it was credited to, after the wallet leaves', async () => {
     await seedLegacy();
     expect((await goLiveForTest()).switched).toBe(true);

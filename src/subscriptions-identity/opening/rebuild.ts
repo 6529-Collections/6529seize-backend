@@ -39,7 +39,7 @@ import {
   verifyJournal
 } from '../timeline/journal-verify';
 import { backendEthereumFacts } from '../timeline/journal-verify-ethereum';
-import { sha256Hex } from './opening-file';
+import { canonicalJson, sha256Hex } from './opening-file';
 import {
   IDENTITY_DATA_TABLES,
   loadOpeningFiles,
@@ -283,12 +283,27 @@ export async function readJournal(source: JournalSource): Promise<{
 }> {
   const bodies: JournalBody[] = [];
   const events = new ReplayedSubscriptionEvents();
+  // Each part once. Entries that were unposted at a restore point are
+  // posted again after the restore: a part seen again with the same
+  // contents is dropped, and one with other contents (a write that reused
+  // a posted n) stops the reading.
+  const seen = new Map<string, string>();
   let verifying = false;
   for await (const { entry, verified } of source.walk('public')) {
     verifying = verifying || verified !== undefined;
     const body = journalBodyOf(entry);
     if (body) {
-      bodies.push(body);
+      const key = `${body.opening} ${body.n} ${body.part}`;
+      const text = canonicalJson(body);
+      const earlier = seen.get(key);
+      if (earlier === undefined) {
+        seen.set(key, text);
+        bodies.push(body);
+      } else if (earlier !== text) {
+        throw new Error(
+          `Journal write n=${body.n} part ${body.part} of opening ${body.opening} was posted twice with different contents`
+        );
+      }
     } else if (entry.t === 'event' && entry.lane === JOURNAL_LANE && verified) {
       events.add(verified);
     }
