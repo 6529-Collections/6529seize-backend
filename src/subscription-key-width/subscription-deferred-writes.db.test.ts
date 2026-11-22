@@ -82,9 +82,11 @@ describeWithSeed('Real MySQL: the pending-write check in a writer', [], () => {
     await inWriterTransaction(async (manager) => {
       await queueWriteForKey('queued-after-the-snapshot');
 
-      // Without FOR SHARE the check reads the snapshot, finds nothing
-      // waiting, and the writer would go ahead of the queued write.
-      expect(await deferralReason(KEY, manager)).toEqual({
+      // Without the locking read the check reads the snapshot, finds
+      // nothing waiting, and the writer would go ahead of the queued write.
+      expect(
+        await deferralReason(KEY, manager, undefined, { locking: true })
+      ).toEqual({
         narrow: [],
         pendingEarlier: true
       });
@@ -95,7 +97,9 @@ describeWithSeed('Real MySQL: the pending-write check in a writer', [], () => {
     let queued = false;
     let queuing: Promise<void> | undefined;
     await inWriterTransaction(async (manager) => {
-      expect(await deferralReason(KEY, manager)).toBeNull();
+      expect(
+        await deferralReason(KEY, manager, undefined, { locking: true })
+      ).toBeNull();
 
       // Another process queues a write for the key while the writer, which
       // found nothing waiting, has not committed its own write yet.
@@ -106,8 +110,9 @@ describeWithSeed('Real MySQL: the pending-write check in a writer', [], () => {
       for (let i = 0; i < 40 && !waiting && !queued; i++) {
         waiting = await someoneIsWaiting();
       }
-      // Without FOR SHARE the entry goes in at once, ahead of the write the
-      // writer is about to make directly, which would then be applied first.
+      // Without the locking read the entry goes in at once, ahead of the
+      // write the writer is about to make directly, which would then be
+      // applied first.
       expect(queued).toBe(false);
       expect(waiting).toBe(true);
     });

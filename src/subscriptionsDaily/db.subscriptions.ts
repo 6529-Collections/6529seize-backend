@@ -91,7 +91,10 @@ async function splitByKey<R extends { consolidation_key: string }>(
   logs: readonly SubscriptionLog[],
   kind: 'AUTO_SUBSCRIPTION' | 'FINAL_ROW',
   dedupeOf: (row: R) => string,
-  sink: DeferredWriteSink = executorSink()
+  sink: DeferredWriteSink = executorSink(),
+  // Inside the caller's transaction, which then writes the split: read the
+  // waiting writes FOR SHARE (see deferralReason).
+  locking = false
 ): Promise<KeySplit<R>> {
   const reasons = new Map<string, DeferralReason | null>();
   const keys = Array.from(
@@ -101,7 +104,7 @@ async function splitByKey<R extends { consolidation_key: string }>(
     ])
   );
   for (const key of keys) {
-    reasons.set(key, await deferralReason(key, sink));
+    reasons.set(key, await deferralReason(key, sink, undefined, { locking }));
   }
   const split: {
     rows: R[];
@@ -168,7 +171,8 @@ export async function persistSubscriptions(
       logs,
       'AUTO_SUBSCRIPTION',
       (r) => `${r.consolidation_key}|${r.contract}|${r.token_id}`,
-      manager
+      manager,
+      true
     );
     if (split.rows.length) {
       await manager

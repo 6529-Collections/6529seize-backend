@@ -97,16 +97,18 @@ function isMissingTable(error: unknown): boolean {
  * the queue table nothing can be waiting, so a missing table reads as none
  * and writes for keys that fit go on as before.
  *
- * FOR SHARE: inside a writer's transaction a plain read returns the
- * snapshot from that transaction's first plain read, which misses a write
- * queued for the key since, and the writer would go ahead of it. The
- * locking read returns the latest committed entries and, until the writer
- * commits, holds back any new entry where this key's would go.
+ * With `locking`, for a writer's transaction, the read is FOR SHARE. A
+ * plain read there returns the snapshot from the transaction's first plain
+ * read, which misses a write queued for the key since, and the writer
+ * would go ahead of it. The locking read returns the latest committed
+ * entries and, until the writer commits, holds back any new entry where
+ * this key's would go.
  */
 async function hasPendingWrite(
   key: string,
   sink: DeferredWriteSink,
-  beforeSequence?: number
+  beforeSequence: number | undefined,
+  locking: boolean
 ): Promise<boolean> {
   let rows: unknown;
   try {
@@ -115,8 +117,7 @@ async function hasPendingWrite(
         WHERE key_hash = ? AND replayed_at IS NULL${
           beforeSequence === undefined ? '' : ' AND sequence < ?'
         }
-        LIMIT 1
-        FOR SHARE`,
+        LIMIT 1${locking ? ' FOR SHARE' : ''}`,
       beforeSequence === undefined
         ? [keyHash(key)]
         : [keyHash(key), beforeSequence]
@@ -135,17 +136,29 @@ async function hasPendingWrite(
  * does not fit every subscription table, or the key has an earlier write
  * still waiting (one key's writes keep their order). A replayed entry passes
  * its own sequence so only writes queued before it count.
+ *
+ * A caller that checks inside its own transaction and then writes passes
+ * `locking`, so the waiting writes are read FOR SHARE. A check outside a
+ * transaction (the API's, the daily final-list split) leaves it off: there
+ * a lock would end with the statement, and the read may go to a read
+ * replica.
  */
 export async function deferralReason(
   key: string,
   sink: DeferredWriteSink,
-  beforeSequence?: number
+  beforeSequence?: number,
+  options: { readonly locking?: boolean } = {}
 ): Promise<DeferralReason | null> {
   const narrow = await subscriptionKeyWidths.narrowFor(
     key,
     SUBSCRIPTION_WRITE_TABLES
   );
-  const pendingEarlier = await hasPendingWrite(key, sink, beforeSequence);
+  const pendingEarlier = await hasPendingWrite(
+    key,
+    sink,
+    beforeSequence,
+    options.locking ?? false
+  );
   return narrow.length || pendingEarlier ? { narrow, pendingEarlier } : null;
 }
 
