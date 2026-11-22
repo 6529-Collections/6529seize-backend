@@ -45,6 +45,19 @@ const auth = (opts: { profileId?: string | null; proxy?: boolean } = {}) => ({
 
 const submit = (body: unknown) => handleSubmitSignedRecords({ body } as never);
 
+/** The status and code a refused submit answers with. */
+async function refusalOf(
+  request: Promise<unknown>
+): Promise<{ status: number; code: string | undefined }> {
+  try {
+    await request;
+  } catch (error) {
+    const refused = error as { getStatusCode(): number; code?: string };
+    return { status: refused.getStatusCode(), code: refused.code };
+  }
+  throw new Error('The submit was not refused');
+}
+
 describe('POST /signed-records', () => {
   const saved = process.env.PERSONAL_RECORDS_MODE;
   beforeEach(() => {
@@ -85,22 +98,30 @@ describe('POST /signed-records', () => {
 
   it('takes only companions in shadow mode, and nothing in legacy', async () => {
     process.env.PERSONAL_RECORDS_MODE = 'shadow';
-    await expect(submit({ events: [{}] })).rejects.toBeDefined();
+    expect(await refusalOf(submit({ events: [{}] }))).toEqual({
+      status: 409,
+      code: 'PERSONAL_RECORDS_SHADOW'
+    });
     await expect(submit({ events: [{}], companion: true })).resolves.toEqual(
       expect.objectContaining({ mode: 'shadow' })
     );
     process.env.PERSONAL_RECORDS_MODE = 'legacy';
-    await expect(
-      submit({ events: [{}], companion: true })
-    ).rejects.toBeDefined();
+    expect(await refusalOf(submit({ events: [{}], companion: true }))).toEqual({
+      status: 409,
+      code: 'PERSONAL_RECORDS_OFF'
+    });
     expect(mockSubmit).toHaveBeenCalledTimes(1);
   });
 
   it('refuses an empty or oversized submit', async () => {
-    await expect(submit({ events: [] })).rejects.toBeDefined();
-    await expect(
-      submit({ events: Array.from({ length: 17 }, () => ({})) })
-    ).rejects.toBeDefined();
+    expect((await refusalOf(submit({ events: [] }))).status).toBe(400);
+    expect(
+      (
+        await refusalOf(
+          submit({ events: Array.from({ length: 17 }, () => ({})) })
+        )
+      ).status
+    ).toBe(400);
     expect(mockSubmit).not.toHaveBeenCalled();
   });
 });
