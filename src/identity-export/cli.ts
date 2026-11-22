@@ -74,6 +74,9 @@ async function runExport(command: IdentityExportCommand) {
           acceptRatingsChangedAfterFreeze:
             command.acceptRatingsChangedAfterFreeze,
           acceptMissingExtraIds: command.acceptMissingExtraIds,
+          acceptProfileWritesAfterFreeze:
+            command.acceptProfileWritesAfterFreeze,
+          acceptUnmatchedCms: command.acceptUnmatchedCms,
           extraIdsFile: extraIdsBytes
             ? { count: extraProfileIds.length, sha256: sha256(extraIdsBytes) }
             : null,

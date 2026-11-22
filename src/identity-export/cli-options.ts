@@ -4,7 +4,9 @@ export const IDENTITY_EXPORT_HELP = `Usage: 6529 run identity:export -- --out FI
          (--cms-fields FILE | --no-cms-fields) [--bulk N] [--no-delegations]
          [--accept-over-credit N] [--accept-edits-after-freeze N]
          [--accept-ratings-changed-after-freeze N]
-         [--accept-missing-extra-ids N] [--overwrite]
+         [--accept-profile-writes-after-freeze N]
+         [--accept-missing-extra-ids N] [--accept-unmatched-cms N]
+         [--overwrite]
 
 Writes 6529.io's identities, profiles, REP and CIC ratings and reserved
 handles as a 6529.identity-export.v1 JSON file, the input of the Identities
@@ -19,16 +21,17 @@ Options:
   --revision HEX         the exporter's 40-hex git commit, such as
                          $(git rev-parse HEAD) (or EXPORTER_REVISION; required)
   --freeze-at TIME       the freeze time T: ISO 8601 UTC or 13-digit Unix
-                         milliseconds (or IDENTITY_FREEZE_AT)
+                         milliseconds (or IDENTITY_FREEZE_AT), at 00:00 UTC;
+                         when IDENTITY_FREEZE_AT is set, the same time
   --no-freeze            a rehearsal export, not at the freeze (freeze_ms null)
-  --extra-ids FILE       profile ids in scope for waves activity: a JSON list
-                         of strings, {"profile_ids": [...]}, or whitespace
-                         separated; not empty. The file's id count and
-                         sha256 go into the export
+  --extra-ids FILE       profile ids (UUIDs) in scope for waves activity: a
+                         JSON list of strings, {"profile_ids": [...]}, or
+                         whitespace separated; not empty. The count of
+                         unique ids and the file's sha256 go into the export
   --no-extra-ids         export without the waves list (noted in the file)
   --expect-tdh-block N   required with a freeze time: write nothing unless
                          6529.io's latest TDH block is N (B_T at the freeze),
-                         taken in the hour before the freeze, its full TDH
+                         taken in the 10 minutes before it, its full TDH
                          write is done and the identities sync has caught up
                          with it, and every count below is 0 or acknowledged.
                          Everything is read first; every reason is reported
@@ -44,9 +47,17 @@ Options:
                          acknowledge exactly N REP or CIC ratings whose
                          last_modified is after the freeze (help-bot credits
                          aside, zeros included; listed in the file)
+  --accept-profile-writes-after-freeze N
+                         acknowledge exactly N profile writes logged after the
+                         freeze (handle, classification, pfp, banners,
+                         statements, archiving) and profiles created after it
   --accept-missing-extra-ids N
                          acknowledge exactly N waves-list ids with no identity
-                         or profile row (left out)
+                         or profile row (left out); none matching is refused
+  --accept-unmatched-cms N
+                         acknowledge exactly N profile site values for
+                         profiles not in the export; none matching is refused
+                         Every --accept-* needs --expect-tdh-block
   --bulk N               a rater's REP category with more than N targets brings
                          no target in by itself (default 2000; 0 turns it off)
   --no-delegations       leave out 6529.io's delegations table
@@ -63,8 +74,8 @@ Options:
 Exit codes: 0 written; 1 failed; 2 a usage error (or FILE exists); 3 not
 the freeze day's TDH yet (the TDH block, its time, the day's full TDH write
 or the identities sync); 4 raters over the chain's cap, not acknowledged;
-5 REP or CIC changed after the freeze, not acknowledged; 6 waves-list ids
-missing, not acknowledged. With several reasons, the lowest code; all are
+5 REP, CIC or a profile changed after the freeze, not acknowledged; 6
+waves-list ids missing; 7 profile site values unmatched. With several reasons, the lowest code; all are
 printed. Nothing is written on 3 to 6: wait, or acknowledge the exact
 counts, and run again.
 `;
@@ -84,6 +95,8 @@ export interface IdentityExportCommand {
   readonly cmsFieldsFile: string | null;
   readonly acceptOverCredit: number;
   readonly acceptMissingExtraIds: number;
+  readonly acceptProfileWritesAfterFreeze: number;
+  readonly acceptUnmatchedCms: number;
   readonly acceptEditsAfterFreeze: number;
   readonly acceptRatingsChangedAfterFreeze: number;
   readonly overwrite: boolean;
@@ -100,6 +113,9 @@ export class IdentityExportUsageError extends Error {
     this.name = 'IdentityExportUsageError';
   }
 }
+
+const DAY_MS = 86_400_000;
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
 const ISO_UTC =
   /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,3})?)?(?:Z|[+-]00:00)$/;
@@ -157,7 +173,14 @@ export function parseExtraIds(text: string): string[] {
   if (!list.length) {
     throw new IdentityExportUsageError('The extra ids list is empty');
   }
-  return list;
+  const bad = list.filter((it) => !UUID.test(it));
+  if (bad.length) {
+    throw new IdentityExportUsageError(
+      `Extra ids must be profile ids (UUIDs): ${bad.slice(0, 5).join(', ')}${bad.length > 5 ? ', ...' : ''}`
+    );
+  }
+  // Each id once: the export counts unique ids.
+  return Array.from(new Set(list));
 }
 
 /**
@@ -176,14 +199,26 @@ export function parseCmsFields(text: string): Record<string, unknown> {
       'The cms fields file must be a JSON object: profile id -> cms value'
     );
   }
+  const entries = Object.entries(doc);
+  if (!entries.length) {
+    throw new IdentityExportUsageError(
+      'The cms fields file is empty: give --no-cms-fields instead'
+    );
+  }
   const fields: Record<string, unknown> = {};
-  for (const [profileId, value] of Object.entries(doc)) {
+  for (const [profileId, value] of entries) {
     if (!value || typeof value !== 'object' || Array.isArray(value)) {
       throw new IdentityExportUsageError(
         `The cms value of ${profileId} is not an object`
       );
     }
-    fields[profileId.trim().toLowerCase()] = value;
+    const key = profileId.trim().toLowerCase();
+    if (key in fields) {
+      throw new IdentityExportUsageError(
+        `The cms fields file names ${key} twice (keys are compared lowercase)`
+      );
+    }
+    fields[key] = value;
   }
   return fields;
 }
@@ -202,6 +237,12 @@ interface Draft {
   noCmsFields: boolean;
   acceptOverCredit: number;
   acceptMissingExtraIds: number;
+  acceptProfileWritesAfterFreeze: number;
+  acceptUnmatchedCms: number;
+  /** The --accept-* flags given: each needs --expect-tdh-block. */
+  acceptsGiven: string[];
+  /** IDENTITY_FREEZE_AT, which a --freeze-at must equal. */
+  envFreezeMs: number | null;
   acceptEditsAfterFreeze: number;
   acceptRatingsChangedAfterFreeze: number;
   overwrite: boolean;
@@ -264,15 +305,27 @@ function readOption(
       return 1;
     case '--accept-missing-extra-ids':
       draft.acceptMissingExtraIds = wholeNumber(arg, value());
+      draft.acceptsGiven.push(arg);
+      return 2;
+    case '--accept-profile-writes-after-freeze':
+      draft.acceptProfileWritesAfterFreeze = wholeNumber(arg, value());
+      draft.acceptsGiven.push(arg);
+      return 2;
+    case '--accept-unmatched-cms':
+      draft.acceptUnmatchedCms = wholeNumber(arg, value());
+      draft.acceptsGiven.push(arg);
       return 2;
     case '--accept-over-credit':
       draft.acceptOverCredit = wholeNumber(arg, value());
+      draft.acceptsGiven.push(arg);
       return 2;
     case '--accept-edits-after-freeze':
       draft.acceptEditsAfterFreeze = wholeNumber(arg, value());
+      draft.acceptsGiven.push(arg);
       return 2;
     case '--accept-ratings-changed-after-freeze':
       draft.acceptRatingsChangedAfterFreeze = wholeNumber(arg, value());
+      draft.acceptsGiven.push(arg);
       return 2;
     case '--overwrite':
       draft.overwrite = true;
@@ -299,6 +352,25 @@ function checkDraft(draft: Draft): IdentityExportCommand {
   if ((draft.freezeMs === null) === !draft.noFreeze) {
     throw new IdentityExportUsageError(
       'Give the freeze time (--freeze-at or IDENTITY_FREEZE_AT) or --no-freeze for a rehearsal, one of the two'
+    );
+  }
+  if (draft.freezeMs !== null && draft.freezeMs % DAY_MS !== 0) {
+    throw new IdentityExportUsageError(
+      `The freeze time must be 00:00 UTC, got ${new Date(draft.freezeMs).toISOString()}`
+    );
+  }
+  if (
+    draft.freezeMs !== null &&
+    draft.envFreezeMs !== null &&
+    draft.freezeMs !== draft.envFreezeMs
+  ) {
+    throw new IdentityExportUsageError(
+      `--freeze-at ${new Date(draft.freezeMs).toISOString()} is not IDENTITY_FREEZE_AT ${new Date(draft.envFreezeMs).toISOString()}`
+    );
+  }
+  if (draft.acceptsGiven.length && draft.expectTdhBlock === null) {
+    throw new IdentityExportUsageError(
+      `${draft.acceptsGiven.join(', ')}: an acknowledgement is only for an export at the freeze, with --expect-tdh-block`
     );
   }
   if (draft.freezeMs !== null && draft.expectTdhBlock === null) {
@@ -328,6 +400,8 @@ function checkDraft(draft: Draft): IdentityExportCommand {
     cmsFieldsFile: draft.cmsFieldsFile,
     acceptOverCredit: draft.acceptOverCredit,
     acceptMissingExtraIds: draft.acceptMissingExtraIds,
+    acceptProfileWritesAfterFreeze: draft.acceptProfileWritesAfterFreeze,
+    acceptUnmatchedCms: draft.acceptUnmatchedCms,
     acceptEditsAfterFreeze: draft.acceptEditsAfterFreeze,
     acceptRatingsChangedAfterFreeze: draft.acceptRatingsChangedAfterFreeze,
     overwrite: draft.overwrite
@@ -341,14 +415,16 @@ export function parseIdentityExportCommand(
   if (args.includes('--help') || args.includes('-h')) {
     return { command: 'help' };
   }
+  const envFreezeMs = env.IDENTITY_FREEZE_AT
+    ? parseFreezeTime(env.IDENTITY_FREEZE_AT)
+    : null;
   const draft: Draft = {
     out: null,
     bulk: 2000,
     extraIdsFile: null,
     noExtraIds: false,
-    freezeMs: env.IDENTITY_FREEZE_AT
-      ? parseFreezeTime(env.IDENTITY_FREEZE_AT)
-      : null,
+    freezeMs: envFreezeMs,
+    envFreezeMs,
     noFreeze: false,
     expectTdhBlock: null,
     revision: env.EXPORTER_REVISION?.trim() || null,
@@ -357,6 +433,9 @@ export function parseIdentityExportCommand(
     noCmsFields: false,
     acceptOverCredit: 0,
     acceptMissingExtraIds: 0,
+    acceptProfileWritesAfterFreeze: 0,
+    acceptUnmatchedCms: 0,
+    acceptsGiven: [],
     acceptEditsAfterFreeze: 0,
     acceptRatingsChangedAfterFreeze: 0,
     overwrite: false

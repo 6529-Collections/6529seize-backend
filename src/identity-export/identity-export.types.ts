@@ -103,7 +103,9 @@ export interface IdentityExportHeader {
     readonly over_credit: number;
     readonly edits_after_freeze: number;
     readonly ratings_changed_after_freeze: number;
+    readonly profile_writes_after_freeze: number;
     readonly missing_extra_ids: number;
+    readonly unmatched_cms: number;
   };
 }
 

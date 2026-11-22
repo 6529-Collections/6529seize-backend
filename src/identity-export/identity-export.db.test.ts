@@ -207,7 +207,18 @@ describeWithSeed(
           FREEZE + 60_000
         ),
         ratingEdit('edit-5', 'WAVE_REP', 'USER_EDIT', FREEZE + 60_000),
-        ratingEdit('edit-6', 'REP', 'USER_EDIT', FREEZE - 60_000)
+        ratingEdit('edit-6', 'REP', 'USER_EDIT', FREEZE - 60_000),
+        // Written in the freeze's own second: after it.
+        ratingEdit('edit-7', 'CIC', 'USER_EDIT', FREEZE),
+        { ...ratingEdit('edit-8', 'REP', '', FREEZE), type: 'HANDLE_EDIT' },
+        {
+          ...ratingEdit('edit-9', 'REP', '', FREEZE + 1_000),
+          type: 'GENERAL_CIC_STATEMENT_EDIT'
+        },
+        {
+          ...ratingEdit('edit-10', 'REP', '', FREEZE - 1_000),
+          type: 'PFP_EDIT'
+        }
       ]
     },
     {
@@ -315,7 +326,18 @@ describeWithSeed(
       expect(await source.ratingsChangedSince(FREEZE)).toEqual([]);
       // A REP and a CIC edit after the freeze; not the over-rate cut, the
       // help bot's grant, the wave REP edit or the edit before.
-      expect(await source.ratingEditsSince(FREEZE)).toBe(2);
+      expect(await source.ratingEditsSince(FREEZE)).toBe(3);
+      // The handle and statement edits at and after the freeze; the pfp
+      // edit before it. No profile was created after it.
+      expect(await source.profileWritesSince(FREEZE)).toEqual({
+        handle: 1,
+        classification: 0,
+        pfp: 0,
+        banner: 0,
+        statements: 1,
+        archived: 0,
+        created: 0
+      });
       expect(await source.identitySyncProgress()).toEqual({
         pendingGeneration: 3,
         pendingBlock: 24_000_000,

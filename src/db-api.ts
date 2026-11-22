@@ -345,10 +345,16 @@ export async function withReadOnlySnapshot<T>(
   work: (connection: ConnectionWrapper<mysql.PoolConnection>) => Promise<T>
 ): Promise<T> {
   const connection = await getDbConnectionByPoolName(DbPoolName.READ);
+  let cleanupFailed = false;
   try {
-    return await inReadOnlySnapshot(connection, work);
+    return await inReadOnlySnapshot(connection, work, () => {
+      cleanupFailed = true;
+    });
   } finally {
-    connection.release();
+    // A connection whose rollback or zone reset failed may still hold the
+    // transaction or the UTC zone: it never goes back to the pool.
+    if (cleanupFailed) connection.destroy();
+    else connection.release();
   }
 }
 
@@ -359,7 +365,8 @@ export async function withReadOnlySnapshot<T>(
  */
 export async function inReadOnlySnapshot<T>(
   connection: Pick<mysql.PoolConnection, 'query'>,
-  work: (connection: ConnectionWrapper<mysql.PoolConnection>) => Promise<T>
+  work: (connection: ConnectionWrapper<mysql.PoolConnection>) => Promise<T>,
+  onCleanupFailed: () => void = () => undefined
 ): Promise<T> {
   const run = (sql: string) =>
     new Promise<void>((resolve, reject) =>
@@ -372,6 +379,7 @@ export async function inReadOnlySnapshot<T>(
       await run(sql);
     } catch (error) {
       logger.error(`[READ-ONLY SNAPSHOT CLEANUP FAILED] [${sql}] ${error}`);
+      onCleanupFailed();
     }
   };
   await run("SET time_zone = '+00:00'");

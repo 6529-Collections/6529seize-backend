@@ -6,20 +6,24 @@
  * - `after_freeze` (5): REP or CIC changed after the freeze, not
  *   acknowledged;
  * - `missing_extra_ids` (6): waves-list ids with no identity, not
- *   acknowledged.
+ *   acknowledged, or none matching;
+ * - `unmatched_cms` (7): profile site values for profiles not in the
+ *   export, not acknowledged, or none matching.
  * An acknowledgement must give the count exactly.
  */
 export type NotReadyCause =
   | 'day'
   | 'over_credit'
   | 'after_freeze'
-  | 'missing_extra_ids';
+  | 'missing_extra_ids'
+  | 'unmatched_cms';
 
 export const NOT_READY_EXIT_CODES: Readonly<Record<NotReadyCause, number>> = {
   day: 3,
   over_credit: 4,
   after_freeze: 5,
-  missing_extra_ids: 6
+  missing_extra_ids: 6,
+  unmatched_cms: 7
 };
 
 export interface NotReadyProblem {
@@ -48,7 +52,8 @@ export class IdentityExportNotReadyError extends Error {
       'day',
       'over_credit',
       'after_freeze',
-      'missing_extra_ids'
+      'missing_extra_ids',
+      'unmatched_cms'
     ] as const) {
       if (this.causes.includes(cause)) return NOT_READY_EXIT_CODES[cause];
     }

@@ -93,6 +93,8 @@ export type IdentityExportEvent =
       readonly acceptEditsAfterFreeze: number;
       readonly acceptRatingsChangedAfterFreeze: number;
       readonly acceptMissingExtraIds: number;
+      readonly acceptProfileWritesAfterFreeze: number;
+      readonly acceptUnmatchedCms: number;
       /** Accepts a snapshot up to this many minutes after the freeze. */
       readonly acceptSnapshotGapMinutes: number | null;
     }
@@ -173,6 +175,8 @@ const EXPORT_FIELDS = [
   'acceptEditsAfterFreeze',
   'acceptRatingsChangedAfterFreeze',
   'acceptMissingExtraIds',
+  'acceptProfileWritesAfterFreeze',
+  'acceptUnmatchedCms',
   'acceptSnapshotGapMinutes'
 ] as const;
 
@@ -303,6 +307,11 @@ export function parseIdentityExportEvent(
     );
   }
   const freezeMs = noFreeze ? null : freezeOf(record.freezeAt);
+  if (freezeMs !== null && freezeMs % 86_400_000 !== 0) {
+    throw new IdentityExportEventError(
+      `freezeAt must be 00:00 UTC, got ${new Date(freezeMs).toISOString()}`
+    );
+  }
   const expectTdhBlock =
     record.expectTdhBlock === undefined
       ? null
@@ -327,6 +336,14 @@ export function parseIdentityExportEvent(
   if (gap !== null && freezeMs === null) {
     throw new IdentityExportEventError(
       'acceptSnapshotGapMinutes is for an export at the freeze'
+    );
+  }
+  const accepts = EXPORT_FIELDS.filter(
+    (field) => field.startsWith('accept') && record[field] !== undefined
+  ).filter((field) => field !== 'acceptSnapshotGapMinutes');
+  if (accepts.length && expectTdhBlock === null) {
+    throw new IdentityExportEventError(
+      `${accepts.join(', ')}: an acknowledgement is only for an export at the freeze, with expectTdhBlock`
     );
   }
   const revision = record.revision;
@@ -362,6 +379,16 @@ export function parseIdentityExportEvent(
     acceptMissingExtraIds: wholeNumber(
       'acceptMissingExtraIds',
       record.acceptMissingExtraIds,
+      0
+    ),
+    acceptProfileWritesAfterFreeze: wholeNumber(
+      'acceptProfileWritesAfterFreeze',
+      record.acceptProfileWritesAfterFreeze,
+      0
+    ),
+    acceptUnmatchedCms: wholeNumber(
+      'acceptUnmatchedCms',
+      record.acceptUnmatchedCms,
       0
     ),
     acceptSnapshotGapMinutes: gap
@@ -585,6 +612,19 @@ export async function runIdentityExportJob(
     return await renewLinks(event.prefix, bucket, deps);
   }
   const startedAt = deps.now();
+  // The freeze the function runs with (the shared secret's) is the one the
+  // export is held to.
+  const envFreeze = env.IDENTITY_FREEZE_AT?.trim();
+  if (event.freezeMs !== null && envFreeze) {
+    const configured = /^\d{13}$/.test(envFreeze)
+      ? Number(envFreeze)
+      : Date.parse(envFreeze);
+    if (configured !== event.freezeMs) {
+      throw new IdentityExportEventError(
+        `freezeAt ${new Date(event.freezeMs).toISOString()} is not IDENTITY_FREEZE_AT ${envFreeze}`
+      );
+    }
+  }
   const target = replicaTarget(env);
   logger.info(`[EXPORT START] [READ REPLICA ${target.host}]`);
   const privacy = await assertBucketPrivate(deps.s3, bucket);
@@ -661,6 +701,8 @@ export async function runIdentityExportJob(
         acceptEditsAfterFreeze: event.acceptEditsAfterFreeze,
         acceptRatingsChangedAfterFreeze: event.acceptRatingsChangedAfterFreeze,
         acceptMissingExtraIds: event.acceptMissingExtraIds,
+        acceptProfileWritesAfterFreeze: event.acceptProfileWritesAfterFreeze,
+        acceptUnmatchedCms: event.acceptUnmatchedCms,
         extraIdsFile,
         cmsFieldsFile,
         exporterRevision: event.revision,

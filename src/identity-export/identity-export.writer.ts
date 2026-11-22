@@ -136,4 +136,16 @@ export async function writeExportFile(
     fs.closeSync(fd);
   }
   fs.renameSync(tmp, out);
+  // The rename itself on disk, where the platform lets a directory be
+  // synced (not Windows).
+  try {
+    const dir = fs.openSync(path.dirname(path.resolve(out)), 'r');
+    try {
+      fs.fsyncSync(dir);
+    } finally {
+      fs.closeSync(dir);
+    }
+  } catch {
+    // A directory can't be opened or synced here: the file itself is synced.
+  }
 }

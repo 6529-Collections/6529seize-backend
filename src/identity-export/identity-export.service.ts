@@ -12,6 +12,7 @@ import {
   IdentityRow,
   IdentitySyncProgress,
   OverCreditRaters,
+  ProfileWrites,
   StatementRow,
   TdhBlock,
   toMillis
@@ -67,6 +68,10 @@ export interface IdentityExportOptions {
   readonly acceptRatingsChangedAfterFreeze?: number;
   /** Waves-list ids with no identity acknowledged (default 0). */
   readonly acceptMissingExtraIds?: number;
+  /** Profile writes and profiles created after the freeze (default 0). */
+  readonly acceptProfileWritesAfterFreeze?: number;
+  /** Profile site values for profiles not exported (default 0). */
+  readonly acceptUnmatchedCms?: number;
   /** The waves list's file (count and sha256); null without one. */
   readonly extraIdsFile?: InputFile | null;
   /** The profile site values' file (count and sha256); null without one. */
@@ -119,12 +124,14 @@ export function exportRules(
 }
 
 /** A TDH block is the freeze day's when taken within this before the freeze. */
-const TDH_BLOCK_WINDOW_MS = 60 * 60 * 1000;
+const TDH_BLOCK_WINDOW_MS = 10 * 60 * 1000;
+const DAY_MS = 86_400_000;
 
 /**
  * Why the TDH block can't be the freeze day's, or null: 6529.io takes the
  * last Ethereum block at or before 00:00 UTC (tdhLoop), so the freeze day's
- * block is at most an hour before the freeze and never after it.
+ * block is a few seconds before the freeze (10 minutes allowed) and never
+ * after it.
  */
 export function tdhBlockTimingProblem(
   tdh: TdhBlock | null,
@@ -133,17 +140,32 @@ export function tdhBlockTimingProblem(
   const at = tdh?.timestampMs ?? null;
   if (at === null) return 'the TDH block has no timestamp';
   if (at > freezeMs || at <= freezeMs - TDH_BLOCK_WINDOW_MS) {
-    return `the TDH block ${tdh!.block} is of ${new Date(at).toISOString()}, not of the hour before the freeze ${new Date(freezeMs).toISOString()}`;
+    return `the TDH block ${tdh!.block} is of ${new Date(at).toISOString()}, not of the 10 minutes before the freeze ${new Date(freezeMs).toISOString()}`;
   }
   return null;
 }
 
-/** What the export checks first, in the same snapshot, before the long reads. */
+/** What the export checks about the day, in the same snapshot as the rest. */
 export interface ExportReadiness {
   readonly tdh: TdhBlock | null;
   readonly identitySync: IdentitySyncProgress | null;
   readonly editsAfterFreeze: number;
   readonly ratingsChangedAfterFreeze: number;
+  /** Profile writes and profiles created after the freeze, in all. */
+  readonly profileWritesAfterFreeze?: number;
+}
+
+/** Every profile write after the freeze, the profiles created included. */
+export function profileWriteTotal(writes: ProfileWrites): number {
+  return (
+    writes.handle +
+    writes.classification +
+    writes.pfp +
+    writes.banner +
+    writes.statements +
+    writes.archived +
+    writes.created
+  );
 }
 
 /**
@@ -171,10 +193,17 @@ export function readinessProblems(
     | 'expectTdhBlock'
     | 'acceptEditsAfterFreeze'
     | 'acceptRatingsChangedAfterFreeze'
+    | 'acceptProfileWritesAfterFreeze'
   >
 ): NotReadyProblem[] {
   // The counts below are gated only at the freeze (--expect-tdh-block).
   const problems: NotReadyProblem[] = [];
+  if (options.freezeMs !== null && options.freezeMs % DAY_MS !== 0) {
+    problems.push({
+      cause: 'day',
+      message: `the freeze time ${new Date(options.freezeMs).toISOString()} is not 00:00 UTC`
+    });
+  }
   if (options.freezeMs !== null) {
     const timing = tdhBlockTimingProblem(readiness.tdh, options.freezeMs);
     if (timing) problems.push({ cause: 'day', message: timing });
@@ -203,6 +232,13 @@ export function readinessProblems(
     'REP and CIC ratings were changed after the freeze (help-bot credits aside; listed in ratings_changed_after_freeze)'
   );
   if (changed) problems.push({ cause: 'after_freeze', message: changed });
+  const profiles = acknowledgementProblem(
+    readiness.profileWritesAfterFreeze ?? 0,
+    options.acceptProfileWritesAfterFreeze ?? 0,
+    '--accept-profile-writes-after-freeze',
+    'profile writes were logged after the freeze or profiles created (by kind in stats)'
+  );
+  if (profiles) problems.push({ cause: 'after_freeze', message: profiles });
   return problems;
 }
 
@@ -214,8 +250,13 @@ export function readinessProblems(
 export function withCmsFields(
   identities: IdentityExportIdentity[],
   cmsFields: Readonly<Record<string, unknown>> | undefined
-): { identities: IdentityExportIdentity[]; notes: string[] } {
-  if (!cmsFields) return { identities, notes: [] };
+): {
+  identities: IdentityExportIdentity[];
+  notes: string[];
+  matched: number;
+  unmatched: number;
+} {
+  if (!cmsFields) return { identities, notes: [], matched: 0, unmatched: 0 };
   const used = new Set<string>();
   const out = identities.map((it) => {
     const value = it.profile_id ? cmsFields[it.profile_id] : undefined;
@@ -228,6 +269,8 @@ export function withCmsFields(
     .sort(compareCodePoints);
   return {
     identities: out,
+    matched: used.size,
+    unmatched: missing.length,
     notes: [
       `cms: ${used.size} identities carry a profile site value`,
       ...(missing.length
@@ -787,8 +830,8 @@ export async function buildIdentityExport(
   const log = options.log ?? (() => undefined);
   const startedAt = now();
 
-  // The day first, in the same snapshot: a wrong one is refused before the
-  // long reads.
+  // The day's checks, in the same snapshot as everything else: their
+  // reasons are reported with the file's own once all is read.
   const tdh = await source.latestTdhBlock();
   const tdhBlock = tdh?.block ?? null;
   const identitySync = await source.identitySyncProgress();
@@ -802,13 +845,21 @@ export async function buildIdentityExport(
       ? []
       : await source.ratingsChangedSince(options.freezeMs);
   const ratingsChangedAfterFreeze = changedAfterFreeze.length;
+  const profileWrites: ProfileWrites | null =
+    options.freezeMs === null
+      ? null
+      : await source.profileWritesSince(options.freezeMs);
+  const profileWritesAfterFreeze = profileWrites
+    ? profileWriteTotal(profileWrites)
+    : 0;
   // Every reason is gathered and reported together once all is read.
   const problems = readinessProblems(
     {
       tdh,
       identitySync,
       editsAfterFreeze,
-      ratingsChangedAfterFreeze
+      ratingsChangedAfterFreeze,
+      profileWritesAfterFreeze
     },
     options
   );
@@ -917,6 +968,31 @@ export async function buildIdentityExport(
     );
     if (missing)
       problems.push({ cause: 'missing_extra_ids', message: missing });
+    if (
+      core.extraIds.length &&
+      core.extraMissing.length === core.extraIds.length
+    ) {
+      problems.push({
+        cause: 'missing_extra_ids',
+        message: `none of the ${core.extraIds.length} waves-list ids has an identity or profile row: the wrong list`
+      });
+    }
+    if (options.cmsFields) {
+      const unmatched = acknowledgementProblem(
+        cms.unmatched,
+        options.acceptUnmatchedCms ?? 0,
+        '--accept-unmatched-cms',
+        'profile site values are for profiles not in the export (not carried)'
+      );
+      if (unmatched)
+        problems.push({ cause: 'unmatched_cms', message: unmatched });
+      if (cms.matched === 0) {
+        problems.push({
+          cause: 'unmatched_cms',
+          message: `none of the ${cms.matched + cms.unmatched} profile site values is for a profile in the export: the wrong file`
+        });
+      }
+    }
   }
   if (problems.length) {
     throw new IdentityExportNotReadyError(problems);
@@ -943,6 +1019,11 @@ export async function buildIdentityExport(
   if (editsAfterFreeze) {
     notes.push(
       `${editsAfterFreeze} REP and CIC rating edits were logged after the freeze (over-rate cuts and help-bot credits aside)`
+    );
+  }
+  if (profileWrites && profileWritesAfterFreeze) {
+    notes.push(
+      `profile writes after the freeze: ${profileWrites.handle} handle, ${profileWrites.classification} classification, ${profileWrites.pfp} pfp, ${profileWrites.banner} banner, ${profileWrites.statements} statement, ${profileWrites.archived} archiving; ${profileWrites.created} profiles created`
     );
   }
   if (ratingsChangedAfterFreeze) {
@@ -989,7 +1070,9 @@ export async function buildIdentityExport(
       edits_after_freeze: options.acceptEditsAfterFreeze ?? 0,
       ratings_changed_after_freeze:
         options.acceptRatingsChangedAfterFreeze ?? 0,
-      missing_extra_ids: options.acceptMissingExtraIds ?? 0
+      profile_writes_after_freeze: options.acceptProfileWritesAfterFreeze ?? 0,
+      missing_extra_ids: options.acceptMissingExtraIds ?? 0,
+      unmatched_cms: options.acceptUnmatchedCms ?? 0
     },
     identities,
     reserved_handles: reservedHandles(),
@@ -1030,6 +1113,16 @@ export async function buildIdentityExport(
       multi_wallet_keys_without_identity: keysWithoutIdentity,
       extra_ids_missing: core.extraMissing.length,
       rating_edits_after_freeze: editsAfterFreeze,
+      profile_writes_after_freeze: profileWritesAfterFreeze,
+      profile_handle_edits_after_freeze: profileWrites?.handle ?? 0,
+      profile_classification_edits_after_freeze:
+        profileWrites?.classification ?? 0,
+      profile_pfp_edits_after_freeze: profileWrites?.pfp ?? 0,
+      profile_banner_edits_after_freeze: profileWrites?.banner ?? 0,
+      profile_statement_edits_after_freeze: profileWrites?.statements ?? 0,
+      profiles_archived_after_freeze: profileWrites?.archived ?? 0,
+      profiles_created_after_freeze: profileWrites?.created ?? 0,
+      cms_unmatched: cms.unmatched,
       identity_sync_pending_generation: identitySync?.pendingGeneration ?? -1,
       identity_sync_synced_generation: identitySync?.syncedGeneration ?? -1,
       identity_sync_pending_block: identitySync?.pendingBlock ?? -1,

@@ -62,4 +62,17 @@ describe('inReadOnlySnapshot', () => {
     ).rejects.toThrow('the work failed');
     expect(bad.sql.slice(-2)).toEqual(['ROLLBACK', 'SET time_zone = DEFAULT']);
   });
+
+  it('reports a failed cleanup, so the connection is destroyed, not reused', async () => {
+    const failed = jest.fn();
+    const conn = {
+      query: (text: string, done: (err: unknown) => void) =>
+        done(text === 'ROLLBACK' ? new Error('gone') : null)
+    };
+    await inReadOnlySnapshot(conn as never, async () => 1, failed);
+    expect(failed).toHaveBeenCalledTimes(1);
+    const fine = jest.fn();
+    await inReadOnlySnapshot(connection() as never, async () => 1, fine);
+    expect(fine).not.toHaveBeenCalled();
+  });
 });

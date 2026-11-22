@@ -36,6 +36,8 @@ describe('parseIdentityExportCommand', () => {
       cmsFieldsFile: null,
       acceptOverCredit: 0,
       acceptMissingExtraIds: 0,
+      acceptProfileWritesAfterFreeze: 0,
+      acceptUnmatchedCms: 0,
       acceptEditsAfterFreeze: 0,
       acceptRatingsChangedAfterFreeze: 0,
       overwrite: false
@@ -46,7 +48,10 @@ describe('parseIdentityExportCommand', () => {
     const rehearsal = [
       '--revision',
       REV,
-      '--no-freeze',
+      '--freeze-at',
+      String(T),
+      '--expect-tdh-block',
+      '24000000',
       '--no-extra-ids',
       '--no-cms-fields'
     ];
@@ -64,6 +69,10 @@ describe('parseIdentityExportCommand', () => {
           '6',
           '--accept-missing-extra-ids',
           '3',
+          '--accept-profile-writes-after-freeze',
+          '5',
+          '--accept-unmatched-cms',
+          '7',
           '--overwrite'
         ],
         {}
@@ -74,6 +83,8 @@ describe('parseIdentityExportCommand', () => {
         acceptEditsAfterFreeze: 2,
         acceptRatingsChangedAfterFreeze: 6,
         acceptMissingExtraIds: 3,
+        acceptProfileWritesAfterFreeze: 5,
+        acceptUnmatchedCms: 7,
         overwrite: true
       })
     );
@@ -118,6 +129,8 @@ describe('parseIdentityExportCommand', () => {
       cmsFieldsFile: 'cms-fields.json',
       acceptOverCredit: 0,
       acceptMissingExtraIds: 0,
+      acceptProfileWritesAfterFreeze: 0,
+      acceptUnmatchedCms: 0,
       acceptEditsAfterFreeze: 0,
       acceptRatingsChangedAfterFreeze: 0,
       overwrite: false
@@ -128,7 +141,7 @@ describe('parseIdentityExportCommand', () => {
           '--out',
           'x',
           '--freeze-at',
-          String(T + 1),
+          String(T),
           '--revision',
           'b'.repeat(40),
           '--no-extra-ids',
@@ -139,7 +152,56 @@ describe('parseIdentityExportCommand', () => {
         { IDENTITY_FREEZE_AT: '2026-11-24T00:00:00Z' }
       )
     ).toEqual(
-      expect.objectContaining({ freezeMs: T + 1, revision: 'b'.repeat(40) })
+      expect.objectContaining({ freezeMs: T, revision: 'b'.repeat(40) })
+    );
+  });
+
+  it('holds the freeze to 00:00 UTC and to IDENTITY_FREEZE_AT', () => {
+    const args = (freeze: string) => [
+      '--out',
+      'x',
+      '--revision',
+      REV,
+      '--freeze-at',
+      freeze,
+      '--expect-tdh-block',
+      '1',
+      '--no-extra-ids',
+      '--no-cms-fields'
+    ];
+    expect(() =>
+      parseIdentityExportCommand(args('2026-11-24T00:00:01Z'), {})
+    ).toThrow('The freeze time must be 00:00 UTC');
+    expect(() =>
+      parseIdentityExportCommand(args('2026-11-25T00:00:00Z'), {
+        IDENTITY_FREEZE_AT: '2026-11-24T00:00:00Z'
+      })
+    ).toThrow('is not IDENTITY_FREEZE_AT');
+    expect(
+      parseIdentityExportCommand(args('2026-11-24T00:00:00Z'), {
+        IDENTITY_FREEZE_AT: String(T)
+      })
+    ).toEqual(expect.objectContaining({ freezeMs: T }));
+  });
+
+  it('refuses an acknowledgement without --expect-tdh-block', () => {
+    expect(() =>
+      parseIdentityExportCommand(
+        [
+          '--out',
+          'x',
+          '--revision',
+          REV,
+          '--no-freeze',
+          '--no-extra-ids',
+          '--no-cms-fields',
+          '--accept-unmatched-cms',
+          '0'
+        ],
+        {}
+      )
+    ).toThrow(
+      '--accept-unmatched-cms: an acknowledgement is only for an export at the freeze'
     );
   });
 
@@ -302,9 +364,30 @@ describe('parseFreezeTime', () => {
 
 describe('parseExtraIds', () => {
   it.each([
-    ['["A-1", "b-2"]', ['a-1', 'b-2']],
-    ['{"profile_ids": ["a-1"]}', ['a-1']],
-    ['a-1\n b-2  c-3', ['a-1', 'b-2', 'c-3']]
+    [
+      '["00000000-0000-4000-8000-000000000001", "00000000-0000-4000-8000-000000000002"]',
+      [
+        '00000000-0000-4000-8000-000000000001',
+        '00000000-0000-4000-8000-000000000002'
+      ]
+    ],
+    [
+      '{"profile_ids": ["00000000-0000-4000-8000-000000000001"]}',
+      ['00000000-0000-4000-8000-000000000001']
+    ],
+    [
+      '00000000-0000-4000-8000-000000000001\n 00000000-0000-4000-8000-000000000002  00000000-0000-4000-8000-000000000003',
+      [
+        '00000000-0000-4000-8000-000000000001',
+        '00000000-0000-4000-8000-000000000002',
+        '00000000-0000-4000-8000-000000000003'
+      ]
+    ],
+    // Each id once.
+    [
+      '["00000000-0000-4000-8000-000000000001", "00000000-0000-4000-8000-000000000001"]',
+      ['00000000-0000-4000-8000-000000000001']
+    ]
   ])('reads %s', (text, ids) => {
     expect(parseExtraIds(text)).toEqual(ids);
   });
@@ -316,6 +399,11 @@ describe('parseExtraIds', () => {
     ['{"profile_ids": []}', 'list is empty'],
     ['["a-1", 3]', 'must be a string'],
     ['[{"id": "a-1"}]', 'must be a string'],
+    ['["a-1"]', 'must be profile ids (UUIDs)'],
+    [
+      '00000000-0000-4000-8000-000000000001 alice',
+      'must be profile ids (UUIDs)'
+    ],
     ['["a-1", "b-2"', 'not valid JSON'],
     ['{profile_ids: a-1}', 'not valid JSON']
   ])('refuses %j', (text, message) => {
@@ -330,6 +418,13 @@ describe('parseExtraIds', () => {
 });
 
 describe('parseCmsFields', () => {
+  it('refuses an empty object, and two keys that are one lowercase', () => {
+    expect(() => parseCmsFields('{}')).toThrow('The cms fields file is empty');
+    expect(() =>
+      parseCmsFields('{"A-1": {"primary": {}}, "a-1 ": {"archive": {}}}')
+    ).toThrow('names a-1 twice');
+  });
+
   it('reads profile id -> cms value, ids lowercase', () => {
     expect(
       parseCmsFields(

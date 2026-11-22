@@ -82,6 +82,15 @@ const WAVER = P('4');
 const GHOST = P('dead');
 const BOT = P('b07');
 const FREEZE = Date.UTC(2026, 10, 24);
+const NO_PROFILE_WRITES = {
+  handle: 0,
+  classification: 0,
+  pfp: 0,
+  banner: 0,
+  statements: 0,
+  archived: 0,
+  created: 0
+};
 
 /** A small world: every kind of identity the scope rules decide on. */
 function world(): {
@@ -175,6 +184,7 @@ function world(): {
     overCreditRaters: async () => ({ withXtdh: 0, tdhOnly: 0 }),
     ratingEditsSince: async () => 0,
     ratingsChangedSince: async () => [],
+    profileWritesSince: async () => NO_PROFILE_WRITES,
     identitySyncProgress: async () => ({
       pendingGeneration: 5,
       pendingBlock: 24_000_000,
@@ -661,9 +671,10 @@ describe('buildIdentityExport', () => {
       tdhBlockTimingProblem({ block: 7, timestampMs }, FREEZE);
     expect(at(FREEZE)).toBeNull();
     expect(at(FREEZE - 12_000)).toBeNull();
-    expect(at(FREEZE - 3_600_000 + 1)).toBeNull();
-    expect(at(FREEZE - 3_600_000)).toContain('not of the hour before');
-    expect(at(FREEZE + 1)).toContain('not of the hour before');
+    expect(at(FREEZE - 600_000 + 1)).toBeNull();
+    expect(at(FREEZE - 600_000)).toContain('not of the 10 minutes before');
+    expect(at(FREEZE - 3_600_000)).toContain('not of the 10 minutes before');
+    expect(at(FREEZE + 1)).toContain('not of the 10 minutes before');
     expect(at(FREEZE - 86_400_000)).toContain('2026-11-23T00:00:00.000Z');
     expect(at(null)).toBe('the TDH block has no timestamp');
     const { source } = world();
@@ -759,7 +770,9 @@ describe('buildIdentityExport', () => {
       over_credit: 2,
       edits_after_freeze: 2,
       ratings_changed_after_freeze: 4,
-      missing_extra_ids: 1
+      profile_writes_after_freeze: 0,
+      missing_extra_ids: 1,
+      unmatched_cms: 0
     });
     expect(doc.ratings_changed_after_freeze).toEqual(changed);
     expect(doc.stats).toEqual(
@@ -796,6 +809,131 @@ describe('buildIdentityExport', () => {
         cause: 'day',
         message:
           "the identities sync's state (identity_tdh_sync_state) could not be read"
+      }
+    ]);
+  });
+
+  it('refuses profile writes after the freeze, by kind, unless acknowledged exactly', async () => {
+    const { source } = world();
+    const profileWritesSince = jest.fn(async () => ({
+      ...NO_PROFILE_WRITES,
+      handle: 1,
+      statements: 2,
+      created: 1
+    }));
+    const busy = { ...source, profileWritesSince };
+    const atFreeze = {
+      ...options,
+      expectTdhBlock: 24_000_000,
+      acceptOverCredit: 2,
+      acceptMissingExtraIds: 1
+    };
+    const refused = await buildIdentityExport(busy, atFreeze).then(
+      () => null,
+      (error: IdentityExportNotReadyError) => error
+    );
+    expect(refused?.causes).toEqual(['after_freeze']);
+    expect(refused?.message).toContain(
+      '4 profile writes were logged after the freeze or profiles created (by kind in stats); acknowledge with --accept-profile-writes-after-freeze 4'
+    );
+    expect(profileWritesSince).toHaveBeenCalledWith(FREEZE);
+    const doc = await buildIdentityExport(busy, {
+      ...atFreeze,
+      acceptProfileWritesAfterFreeze: 4
+    });
+    expect(doc.acknowledged.profile_writes_after_freeze).toBe(4);
+    expect(doc.stats).toEqual(
+      expect.objectContaining({
+        profile_writes_after_freeze: 4,
+        profile_handle_edits_after_freeze: 1,
+        profile_statement_edits_after_freeze: 2,
+        profiles_created_after_freeze: 1,
+        profile_pfp_edits_after_freeze: 0
+      })
+    );
+    expect(doc.notes).toEqual(
+      expect.arrayContaining([
+        'profile writes after the freeze: 1 handle, 0 classification, 0 pfp, 0 banner, 2 statement, 0 archiving; 1 profiles created'
+      ])
+    );
+    // A rehearsal doesn't read them.
+    profileWritesSince.mockClear();
+    await buildIdentityExport(busy, { ...options, freezeMs: null });
+    expect(profileWritesSince).not.toHaveBeenCalled();
+  });
+
+  it('refuses unmatched profile site values unless acknowledged, and none matching outright', async () => {
+    const { source } = world();
+    const atFreeze = {
+      ...options,
+      expectTdhBlock: 24_000_000,
+      acceptOverCredit: 2,
+      acceptMissingExtraIds: 1
+    };
+    const run = (cmsFields: Record<string, unknown>, accept = 0) =>
+      buildIdentityExport(source, {
+        ...atFreeze,
+        cmsFields,
+        acceptUnmatchedCms: accept
+      }).then(
+        (doc) => doc,
+        (error: IdentityExportNotReadyError) => error
+      );
+    const some = { [ALICE]: { primary: {} }, [P('dead')]: { primary: {} } };
+    const refused = (await run(some)) as IdentityExportNotReadyError;
+    expect(refused.causes).toEqual(['unmatched_cms']);
+    expect(refused.exitCode).toBe(7);
+    expect(refused.message).toContain(
+      'acknowledge with --accept-unmatched-cms 1'
+    );
+    const doc = (await run(some, 1)) as Awaited<
+      ReturnType<typeof buildIdentityExport>
+    >;
+    expect(doc.acknowledged.unmatched_cms).toBe(1);
+    expect(doc.stats.cms_unmatched).toBe(1);
+    const none = (await run(
+      { [P('dead')]: { primary: {} } },
+      1
+    )) as IdentityExportNotReadyError;
+    expect(none.causes).toEqual(['unmatched_cms']);
+    expect(none.message).toContain(
+      'none of the 1 profile site values is for a profile in the export'
+    );
+  });
+
+  it('refuses a waves list none of whose ids matches, even acknowledged', async () => {
+    const { source } = world();
+    const error = await buildIdentityExport(source, {
+      ...options,
+      extraProfileIds: [P('dead'), P('beef')],
+      expectTdhBlock: 24_000_000,
+      acceptOverCredit: 2,
+      acceptMissingExtraIds: 2
+    }).then(
+      () => null,
+      (e: IdentityExportNotReadyError) => e
+    );
+    expect(error?.causes).toEqual(['missing_extra_ids']);
+    expect(error?.message).toContain(
+      'none of the 2 waves-list ids has an identity or profile row'
+    );
+  });
+
+  it('refuses a freeze that is not 00:00 UTC', () => {
+    expect(
+      readinessProblems(
+        {
+          tdh: { block: 1, timestampMs: FREEZE + 1_000 - 12_000 },
+          identitySync: null,
+          editsAfterFreeze: 0,
+          ratingsChangedAfterFreeze: 0
+        },
+        { freezeMs: FREEZE + 1_000, expectTdhBlock: null }
+      )
+    ).toEqual([
+      {
+        cause: 'day',
+        message: 'the freeze time 2026-11-24T00:00:01.000Z is not 00:00 UTC'
       }
     ]);
   });

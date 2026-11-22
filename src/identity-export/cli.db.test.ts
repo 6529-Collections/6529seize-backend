@@ -199,7 +199,9 @@ describeWithSeed(
         over_credit: 0,
         edits_after_freeze: 0,
         ratings_changed_after_freeze: 0,
-        missing_extra_ids: 0
+        profile_writes_after_freeze: 0,
+        missing_extra_ids: 0,
+        unmatched_cms: 0
       });
       expect(doc.ratings_changed_after_freeze).toEqual([]);
       expect(doc.tdh_block_timestamp_ms).toBe(FREEZE - 12_000);

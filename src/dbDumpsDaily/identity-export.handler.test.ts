@@ -183,6 +183,8 @@ describe('parseIdentityExportEvent', () => {
       acceptEditsAfterFreeze: 0,
       acceptRatingsChangedAfterFreeze: 0,
       acceptMissingExtraIds: 0,
+      acceptProfileWritesAfterFreeze: 0,
+      acceptUnmatchedCms: 0,
       acceptSnapshotGapMinutes: null
     });
     expect(
@@ -195,8 +197,7 @@ describe('parseIdentityExportEvent', () => {
           key: 'profile-site-export/prod/2026-11-24T00-10-00-000Z-abcd1234/cms-fields.json'
         },
         bulk: 0,
-        noDelegations: true,
-        acceptOverCredit: 3
+        noDelegations: true
       })
     ).toEqual(
       expect.objectContaining({
@@ -208,8 +209,7 @@ describe('parseIdentityExportEvent', () => {
         extraIds: null,
         cmsFields: {
           key: 'profile-site-export/prod/2026-11-24T00-10-00-000Z-abcd1234/cms-fields.json'
-        },
-        acceptOverCredit: 3
+        }
       })
     );
   });
@@ -231,6 +231,18 @@ describe('parseIdentityExportEvent', () => {
     [{ ...atFreeze, acceptOverCredit: '2' }],
     [{ ...atFreeze, freeze_at: T }],
     [{ ...atFreeze, acceptSnapshotGapMinutes: 1.5 }],
+    [{ ...atFreeze, freezeAt: '2026-11-24T00:00:01Z' }],
+    [{ ...atFreeze, freezeAt: T + 1 }],
+    [
+      {
+        job: 'identityExport',
+        noFreeze: true,
+        revision: REV,
+        noExtraIds: true,
+        noCmsFields: true,
+        acceptUnmatchedCms: 0
+      }
+    ],
     [
       {
         job: 'identityExport',
@@ -603,5 +615,29 @@ describe('runIdentityExportJob', () => {
         deps
       )
     ).rejects.toThrow(/No manifest under identity-export\/staging\/missing\//);
+  });
+
+  it('refuses a freeze that is not IDENTITY_FREEZE_AT, before reading', async () => {
+    mockBuild.mockResolvedValue(document());
+    const { deps, order } = setup({
+      env: { IDENTITY_FREEZE_AT: '2026-11-25T00:00:00Z' }
+    });
+    await expect(
+      runIdentityExportJob(
+        parseIdentityExportEvent(atFreeze)!,
+        { invokedFunctionArn: ARN },
+        deps
+      )
+    ).rejects.toThrow('is not IDENTITY_FREEZE_AT');
+    expect(deps.openSnapshot).not.toHaveBeenCalled();
+    expect(order).toEqual([]);
+    const same = setup({ env: { IDENTITY_FREEZE_AT: String(T) } });
+    await expect(
+      runIdentityExportJob(
+        parseIdentityExportEvent(atFreeze)!,
+        { invokedFunctionArn: ARN },
+        same.deps
+      )
+    ).resolves.toMatchObject({ usable: true });
   });
 });

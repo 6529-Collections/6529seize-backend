@@ -92,6 +92,35 @@ export interface ChangedRating {
   readonly last_modified_ms: number | null;
 }
 
+/** Profile writes logged after the freeze, by kind, and profiles created. */
+export interface ProfileWrites {
+  readonly handle: number;
+  readonly classification: number;
+  readonly pfp: number;
+  readonly banner: number;
+  readonly statements: number;
+  readonly archived: number;
+  readonly created: number;
+}
+
+/** profile_activity_logs types for each kind of profile write. */
+export const PROFILE_WRITE_TYPES: Readonly<
+  Record<Exclude<keyof ProfileWrites, 'created'>, readonly string[]>
+> = {
+  handle: ['HANDLE_EDIT'],
+  classification: ['CLASSIFICATION_EDIT'],
+  pfp: ['PFP_EDIT'],
+  banner: ['BANNER_1_EDIT', 'BANNER_2_EDIT'],
+  statements: [
+    'SOCIALS_EDIT',
+    'CONTACTS_EDIT',
+    'SOCIAL_VERIFICATION_POST_EDIT',
+    'NFT_ACCOUNTS_EDIT',
+    'GENERAL_CIC_STATEMENT_EDIT'
+  ],
+  archived: ['PROFILE_ARCHIVED']
+};
+
 /** The latest TDH block 6529.io computed, and its Ethereum timestamp. */
 export interface TdhBlock {
   readonly block: number;
@@ -118,6 +147,8 @@ export interface IdentityExportSource {
    * included, help-bot credits aside.
    */
   ratingsChangedSince(sinceMs: number): Promise<ChangedRating[]>;
+  /** Profile writes logged at or after `sinceMs`, and profiles created. */
+  profileWritesSince(sinceMs: number): Promise<ProfileWrites>;
   /**
    * REP and CIC rating edits logged after `sinceMs`, without the over-rates
    * loop's cuts (LOST_TDH) and the help bot's credits.
@@ -368,7 +399,7 @@ export class SqlIdentityExportSource implements IdentityExportSource {
               rating, last_modified
        from ${RATINGS_TABLE}
        where matter in ('REP', 'CIC')
-         and last_modified > :since
+         and last_modified >= :since
          and not (matter = 'REP' and lower(trim(matter_category)) = :credit)
        order by rater_profile_id, matter_target_id, matter, matter_category`,
       {
@@ -386,13 +417,41 @@ export class SqlIdentityExportSource implements IdentityExportSource {
     }));
   }
 
+  async profileWritesSince(sinceMs: number): Promise<ProfileWrites> {
+    const types = Object.values(PROFILE_WRITE_TYPES).flat();
+    const rows = await this.query<{ type: string; n: number | string }>(
+      `select type, count(*) as n
+       from ${PROFILES_ACTIVITY_LOGS_TABLE}
+       where created_at >= :since and type in (:types)
+       group by type`,
+      { since: new Date(sinceMs), types }
+    );
+    const count = (kind: keyof typeof PROFILE_WRITE_TYPES) =>
+      rows
+        .filter((row) => PROFILE_WRITE_TYPES[kind].includes(row.type))
+        .reduce((sum, row) => sum + Number(row.n), 0);
+    const [created] = await this.query<{ n: number | string }>(
+      `select count(*) as n from ${PROFILES_TABLE} where created_at >= :since`,
+      { since: new Date(sinceMs) }
+    );
+    return {
+      handle: count('handle'),
+      classification: count('classification'),
+      pfp: count('pfp'),
+      banner: count('banner'),
+      statements: count('statements'),
+      archived: count('archived'),
+      created: Number(created?.n ?? 0)
+    };
+  }
+
   async ratingEditsSince(sinceMs: number): Promise<number> {
     const rows = await this.query<{ n: number | string }>(
       `select count(*) as n
        from ${PROFILES_ACTIVITY_LOGS_TABLE}
        where type = 'RATING_EDIT'
          and additional_data_1 in ('REP', 'CIC')
-         and created_at > :since
+         and created_at >= :since
          and coalesce(json_unquote(json_extract(contents, '$.change_reason')), '') <> 'LOST_TDH'
          and left(coalesce(json_unquote(json_extract(contents, '$.change_reason')), ''), 9) <> 'HELP_BOT_'`,
       { since: new Date(sinceMs) }
