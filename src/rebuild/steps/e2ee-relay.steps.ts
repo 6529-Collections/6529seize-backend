@@ -301,7 +301,9 @@ async function seedReports(
       authorProfileId: E2EE_CHECK_PROFILES.a.profileId,
       reason: ContentReportReason.SPAM,
       notes: 'reporter notes',
-      contentSnapshot: { parts: [{ content: 'reported words' }] }
+      contentSnapshot: { parts: [{ content: 'reported words' }] },
+      hideDrop: true,
+      blockAuthor: true
     },
     {}
   );

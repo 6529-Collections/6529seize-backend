@@ -289,7 +289,9 @@ export const E2EE_RECORD_TABLES: Readonly<Record<string, E2eeRecordTable>> = {
       created_at: 'int',
       resolved_by_profile_id: 'text',
       resolution_reason: 'text',
-      resolved_at: 'int'
+      resolved_at: 'int',
+      hide_drop: 'bool',
+      block_author: 'bool'
     },
     PUBLIC_DROP_REPORT
   ),

@@ -795,6 +795,14 @@ records. A message's ciphertext in a group log
 needs none: the relays drop a LOG item's `data` payload at the end of
 retention themselves, and `cv` takes no DEL.
 
+**What a report record keeps for the reporter.** A drop report's row
+carries who reported (`reporter_profile_id`), which drop (`drop_id`) and
+its author, and what the report did for the reporter when filed:
+`hide_drop` (the drop hidden from them) and `block_author`. The rebuild of
+the reporter's hides and blocks reads these from the moderators' inbox, so
+it needs the moderation key. Both are null on reports filed before they
+were kept; the moderators' queue does not show them.
+
 **Known limit: one moderators' inbox stream.** Every report record goes to
 one `md` stream, so its head lock serializes report writes and its replay
 grows with every report and access. Sharding it by month is not cheap: a

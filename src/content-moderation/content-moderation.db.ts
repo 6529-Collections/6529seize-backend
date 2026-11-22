@@ -99,6 +99,9 @@ export interface ModerationReportRow {
 }
 
 type ModerationQueueReportRow = ModerationReportRow & {
+  /** The reporter's own hide and block (`r.*`), dropped before the queue answers. */
+  readonly hide_drop?: boolean | number | null;
+  readonly block_author?: boolean | number | null;
   readonly drop_deleted: number;
   readonly author_handle: string | null;
   readonly author_pfp: string | null;
@@ -914,6 +917,10 @@ export class ContentModerationDb extends LazyDbAccessCompatibleService {
       reason: ContentReportReason;
       notes: string | null;
       contentSnapshot: Record<string, unknown>;
+      /** The drop hidden from the reporter with the report. */
+      hideDrop?: boolean;
+      /** The author blocked by the reporter with the report. */
+      blockAuthor?: boolean;
     },
     ctx: RequestContext
   ): Promise<ModerationReportRow> {
@@ -930,7 +937,9 @@ export class ContentModerationDb extends LazyDbAccessCompatibleService {
           notes,
           content_snapshot,
           status,
-          created_at
+          created_at,
+          hide_drop,
+          block_author
         ) values (
           :id,
           :dropId,
@@ -940,7 +949,9 @@ export class ContentModerationDb extends LazyDbAccessCompatibleService {
           :notes,
           cast(:contentSnapshot as json),
           :status,
-          :createdAt
+          :createdAt,
+          :hideDrop,
+          :blockAuthor
         )
       `,
       {
@@ -948,7 +959,9 @@ export class ContentModerationDb extends LazyDbAccessCompatibleService {
         id,
         contentSnapshot: JSON.stringify(input.contentSnapshot),
         status: ContentReportStatus.OPEN,
-        createdAt: now
+        createdAt: now,
+        hideDrop: input.hideDrop === true,
+        blockAuthor: input.blockAuthor === true
       },
       this.connectionOptions(ctx.connection)
     );
@@ -1258,9 +1271,13 @@ export class ContentModerationDb extends LazyDbAccessCompatibleService {
     );
     return rows.map((row) => {
       const parsed = this.parseReportJson(row);
+      // The reporter's own hide and block stay theirs: the queue does not
+      // show them to moderators.
       const {
         recommendation_rank: recommendationRank,
         sort_timestamp: sortTimestamp,
+        hide_drop: hideDrop,
+        block_author: blockAuthor,
         ...report
       } = parsed;
       return {

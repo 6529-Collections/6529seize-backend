@@ -412,7 +412,7 @@ describeWithSeed('e2ee relay records against MySQL', SEEDS, () => {
       contentSnapshot: { parts: [{ content: 'reported words' }], n: 1 }
     };
     const report = await moderation.createReport(
-      { ...reported, dropId: PUBLIC_DROP },
+      { ...reported, dropId: PUBLIC_DROP, hideDrop: true, blockAuthor: true },
       {}
     );
     await moderation.saveReportAssessment(report.id, {
@@ -584,6 +584,24 @@ describeWithSeed('e2ee relay records against MySQL', SEEDS, () => {
     expect(write.streams).toBe(7);
     expect(await answers(ids)).toEqual(before);
     expect(await reportAnswers(reports)).toEqual(reportsBefore);
+    // What a rebuild of reporters' hides and blocks reads from the
+    // moderators' inbox: who reported which drop, and the hide and block
+    // that came with it.
+    expect(
+      await sqlExecutor.execute(
+        `select reporter_profile_id, drop_id, author_profile_id, hide_drop,
+           block_author from ${CONTENT_MODERATION_REPORTS_TABLE} where id = :id`,
+        { id: reports.reportId }
+      )
+    ).toEqual([
+      {
+        reporter_profile_id: 'pb',
+        drop_id: PUBLIC_DROP,
+        author_profile_id: 'pa',
+        hide_drop: 1,
+        block_author: 1
+      }
+    ]);
     // Reports on legacy DMs, live or deleted, and on a drop whose wave is
     // gone, were never recorded, so they are not rebuilt; the report on a
     // deleted public drop is.
