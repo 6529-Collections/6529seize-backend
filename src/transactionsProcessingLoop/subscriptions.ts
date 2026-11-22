@@ -70,15 +70,21 @@ export const redeemSubscriptions = async (reset?: boolean) => {
     await persistBlock(blockRepo, maxBlockTransaction);
     return;
   }
+  // Only up to the block this run records as processed: an airdrop the
+  // transactions loop commits in a later block after the read above is left
+  // to the next run, which starts after that block. Unbounded, it was
+  // charged now and again by the next run.
   const airdrops: Transaction[] = await sqlExecutor.execute(
     `SELECT * FROM ${TRANSACTIONS_TABLE}
     WHERE block > :lastProcessingBlock
+    AND block <= :maxBlock
     AND from_address = :nullAddress
     AND value = 0
     AND token_count > 0
     ORDER BY block asc;`,
     {
       lastProcessingBlock,
+      maxBlock: maxBlockTransaction.block,
       nullAddress: NULL_ADDRESS
     }
   );
