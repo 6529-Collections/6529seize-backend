@@ -3000,12 +3000,38 @@ keys because the delegations loop re-keys them (`consolidateSubscriptions`)
 when it changes a grouping. Once the identity mirror writes
 `address_consolidation_keys`, a grouping can change with no delegation
 event. With `FEATURE_SUBSCRIPTIONS_REKEY_ON_MIRROR=true` (off by default),
-the `subscriptionsTopUpLoop`, every fifth minute and before its top-up scan,
-finds each balance key with a wallet the table now keys otherwise and calls
+the `subscriptionsTopUpLoop`, before its top-up scan, finds each balance key
+with a wallet the table now keys otherwise and calls
 `consolidateSubscriptions` for those wallets, as the delegations loop would.
+It runs when 4.5 minutes have passed since its last run and no run holds
+the lease (15 minutes, the loop's timeout), both kept in
+`subscription_rekey_fallback_state` (one row, ephemeral). So a late run is
+made up on the next minute, and a slow run never overlaps the next. A
+partial mirror table must not split balances, so:
+
+- a wallet with no row in `address_consolidation_keys` is skipped, not
+  taken as its own key;
+- above 50 stale keys, or above 5% of the keys, the run logs them, alerts
+  (`SUBSCRIPTIONS_REKEY_HALTED`) and changes nothing;
+- a key is re-keyed only when it was stale on the run before too, so each
+  is logged a run before anything changes it;
+- just before the call, a key waits while it, or a key sharing one of its
+  wallets, has a wallet with no row, since `consolidateSubscriptions`
+  re-keys every key sharing a wallet and takes a wallet with no row as its
+  own key.
+
+`SUBSCRIPTIONS_REKEY_MAX_STALE` (a count) and
+`SUBSCRIPTIONS_REKEY_MAX_STALE_PCT` (a percentage of the keys) replace the
+two limits; each run's log line shows the limits in force. Raise them for
+a planned regrouping: when a run halts after the mirror first fills the
+table at the identity switch-on, set them above the stale count its alert
+line gives. Unset them once a run logs `"stale":0`. The two-run rule and
+the alerts hold at any limits.
+
 A key whose re-key the key-width guard already holds back is left to the
-guard's replay. A failure is logged and never stops the scan. Rollback:
-unset the flag.
+guard's replay. A key still stale after three runs that were due to
+re-key it alerts (`SUBSCRIPTIONS_REKEY_STUCK`), and again about hourly. A failure is logged
+and never stops the scan. Rollback: unset the flag.
 
 **Rebuild.** Every entry can be derived again from its source:
 
@@ -3148,8 +3174,10 @@ does.
 
 `subscriptions:opening -- rebuild` rebuilds the identity tables from the
 opening and the journal alone, read through a bound record log source (the
-records wave reader). It pauses the write routes (renewed by time), takes
-the last `opening` entry, fetches and checks both files, loads them
+records wave reader). It pauses the write routes (the marker renewed every
+minute while it reads, verifies and writes back), takes
+the last `opening` entry, fetches and checks both files, verifies that
+opening's journal (below), loads the files
 suspended (no writer writes meanwhile), and writes back every write of that
 opening in `n` order, each with all its parts. A change's captured `before`
 must equal the rebuilt row, and each checkpoint must match once the writes
@@ -3168,6 +3196,45 @@ same pause, and only if at least one checkpoint matched. `--opening
 identity tables through signed records, journaled the same way. After the
 switch a comparison with the legacy dual write that isn't a MATCH alerts
 (`SUBSCRIPTIONS_TRUTH_COMPARISON_DIFF`).
+
+**Journal verifier.** A rebuild proves it repeats what live wrote, not that
+live wrote the right money. `timeline/journal-verify.ts` checks that, and
+`subscriptions:opening -- verify-journal` runs it on its own (exit 2 on a
+failure). For one opening:
+
+- each entry, from its own rows: a change's `before` and `after` are the
+  row its key names (`applyJournalBody` refuses any other); a top-up of a
+  positive amount moves the balance by it, rounded to five decimals, or
+  opens it at the amount; a redemption moves it by the mint price per
+  charge, and the redeemed counts by the charges; a fold sums the two
+  balances and moves only the wallet's history; no other kind changes a
+  balance, and no kind changes a table it may not;
+- across the journal: each balance's `before` is what the opening file or
+  the previous entry left; a choice changes only rows of its owner, of
+  any identity the opening file lists for the owner's key, or of one a
+  later fold moved it to; each top-up hash is credited once, and not
+  again after the opening file; no mint is charged more tokens than it
+  delivered, counting the opening's charges of that mint; a signed event
+  makes one choice; `n` increases in log order and every write has all its
+  parts, which repeat the same inputs except a redemption's charges: those
+  are spread across the parts, and the verifier takes their union in part
+  order;
+- each top-up against its transfer (sender, recipient, block, value) and
+  each mint against its receipt, through the backend's Ethereum client and
+  config, reading each block's top-ups and each receipt once;
+- when the record log source verifies signed records (`replayRecordLog`,
+  `replayedJournalSource`), each choice against its record in lane `subs`:
+  type, key and owner, and a body.
+
+`--no-ethereum` leaves Ethereum out, for rehearsals, and the output says
+what was not checked. A rebuild with `--go-live` refuses it. Without
+`--opening --history`, `verify-journal` fetches the opening file the
+journal names, as a rebuild does. In a rebuild, a failure, or a provider
+error that leaves the journal unchecked, alerts
+(`SUBSCRIPTIONS_JOURNAL_VERIFY_FAILED`) and stops it before it loads
+anything. `verify-journal` alerts on a failure and exits 2; a provider
+error ends it with exit 1. `verifyEntryMoney` is the per-entry part alone,
+and pure.
 
 **Switch.** The switch is one row, `subscriptions_id_state`, so one write
 moves every service. `subscriptions:opening -- go-live --signed-writes-live`

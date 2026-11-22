@@ -4,7 +4,13 @@ import {
 } from '@/constants';
 import { Logger } from '@/logging';
 import type { RecordLogEntry } from '@/signed-records/record-log/record-log-format';
+import {
+  RecordLogReader,
+  RecordReplayContext,
+  replayRecordLog
+} from '@/signed-records/record-log/record-log-reader';
 import { compareOrderKeys } from '@/signed-records/record-order';
+import type { RecordVerifyResult } from '@/signed-records/record-verify';
 import { signedRecordHeadsDb } from '@/signed-records/signed-record-heads.db';
 import { ConnectionWrapper, sqlExecutor } from '@/sql-executor';
 import {
@@ -20,8 +26,17 @@ import {
   journal,
   JournalBody,
   journalBodyOf,
-  JOURNAL_COUNTER_ID
+  JOURNAL_COUNTER_ID,
+  JOURNAL_LANE
 } from '../timeline/journal';
+import {
+  alertOnJournalFailures,
+  EthereumFacts,
+  JournalVerifyReport,
+  ReplayedSubscriptionEvents,
+  SignedEventLookup,
+  verifyJournal
+} from '../timeline/journal-verify';
 import { sha256Hex } from './opening-file';
 import {
   loadOpeningFiles,
@@ -46,17 +61,23 @@ export const publicFetcher: Fetcher = async (uri) => {
 /**
  * What a rebuild reads the journal through: the shared record log's
  * public chain, in log order (the records module's RecordLogReader over
- * the records wave, from the relays). Nothing in MySQL.
+ * the records wave, from the relays). Nothing in MySQL. A source that
+ * replays the log (replayRecordLog) gives each entry's `verified` result,
+ * null for a service entry; the verifier then checks every choice entry
+ * against its signed record. Without it, choice entries go unchecked.
  */
 export interface JournalSource {
-  walk(chain: 'public'): AsyncIterable<{ readonly entry: RecordLogEntry }>;
+  walk(chain: 'public'): AsyncIterable<{
+    readonly entry: RecordLogEntry;
+    readonly verified?: RecordVerifyResult | null;
+  }>;
 }
 
 let boundSource: (() => JournalSource) | null = null;
 
 /**
  * Binds where the CLI's rebuild reads the record log: the records wave
- * reader, once a relay client for the records wave is available. Until
+ * reader over the relays, once a client for them is in the backend. Until
  * then the CLI's rebuild says so and stops.
  */
 export function setJournalSource(source: (() => JournalSource) | null): void {
@@ -72,6 +93,101 @@ export function boundJournalSource(): JournalSource {
   return boundSource();
 }
 
+/**
+ * The source to bind over the records wave reader: the public chain
+ * replayed with replayRecordLog, so each entry comes with its verification
+ * and the verifier checks every choice entry against its signed record.
+ * Each entry is handed on as the replay reaches it, and the replay waits
+ * until it is taken, so a rebuild renews its pause throughout and holds
+ * one entry at a time. A reader that stops partway ends the replay too.
+ */
+export function replayedJournalSource(
+  reader: RecordLogReader,
+  context: RecordReplayContext
+): JournalSource {
+  return {
+    async *walk(chain) {
+      const state: {
+        next: { item: ReplayedEntry; taken: () => void } | null;
+        arrived: (() => void) | null;
+        finished: boolean;
+        stopped: boolean;
+        failure: { error: unknown } | null;
+      } = {
+        next: null,
+        arrived: null,
+        finished: false,
+        stopped: false,
+        failure: null
+      };
+      const wake = () => state.arrived?.();
+      const replay = replayRecordLog(
+        reader,
+        chain,
+        context,
+        ({ entry }, verified) =>
+          state.stopped
+            ? Promise.reject(new Error('The journal walk stopped'))
+            : new Promise<void>((taken) => {
+                state.next = { item: { entry, verified }, taken };
+                wake();
+              })
+      ).then(
+        () => {
+          state.finished = true;
+          wake();
+        },
+        (error: unknown) => {
+          state.failure = { error };
+          state.finished = true;
+          wake();
+        }
+      );
+      const take = () => {
+        const next = state.next;
+        state.next = null;
+        return next;
+      };
+      let handedOn: (() => void) | null = null;
+      try {
+        for (;;) {
+          const next = take();
+          if (next) {
+            handedOn = next.taken;
+            yield next.item;
+            handedOn = null;
+            next.taken();
+          } else if (state.finished) {
+            break;
+          } else {
+            await new Promise<void>((resolve) => {
+              state.arrived = resolve;
+            });
+            state.arrived = null;
+          }
+        }
+        await replay;
+        if (state.failure) {
+          throw state.failure.error;
+        }
+      } finally {
+        if (!state.finished) {
+          // The reader stopped partway: let the replay move on to its next
+          // entry, which ends it, so it does not wait forever.
+          state.stopped = true;
+          (handedOn as (() => void) | null)?.();
+          take()?.taken();
+        }
+      }
+    }
+  };
+}
+
+interface ReplayedEntry {
+  readonly entry: RecordLogEntry;
+  readonly verified: RecordVerifyResult | null;
+}
+
 export interface RebuildResult {
   readonly openingSha256: string;
   readonly entries: number;
@@ -81,20 +197,34 @@ export interface RebuildResult {
   readonly switched: boolean;
   /** Set when live's counter is ahead of the posted journal. */
   readonly missing: string | null;
+  /** The journal verifier's report (it passed, or the rebuild stops). */
+  readonly verify: JournalVerifyReport;
 }
 
-async function journalOf(source: JournalSource): Promise<JournalBody[]> {
+/**
+ * The journal's bodies in log order, and the verified records of lane `subs`
+ * from the same walk when the source verifies them.
+ */
+export async function readJournal(source: JournalSource): Promise<{
+  readonly bodies: JournalBody[];
+  readonly events: SignedEventLookup | null;
+}> {
   const bodies: JournalBody[] = [];
-  for await (const { entry } of source.walk('public')) {
+  const events = new ReplayedSubscriptionEvents();
+  let verifying = false;
+  for await (const { entry, verified } of source.walk('public')) {
+    verifying = verifying || verified !== undefined;
     const body = journalBodyOf(entry);
     if (body) {
       bodies.push(body);
+    } else if (entry.t === 'event' && entry.lane === JOURNAL_LANE && verified) {
+      events.add(verified);
     }
   }
-  return bodies;
+  return { bodies, events: verifying ? events : null };
 }
 
-interface PublishedOpening {
+export interface PublishedOpening {
   readonly parsed: ParsedOpening;
   readonly openingUri: string;
   readonly historyUri: string;
@@ -109,7 +239,15 @@ async function lastSwitchedOpening(
   if (!switched) {
     throw new Error('The journal names no opening that went live');
   }
-  const inputs = switched.inputs as {
+  return fetchNamedOpening(switched, fetch);
+}
+
+/** The two files an `opening` entry names, fetched and checked against their sha256. */
+export async function fetchNamedOpening(
+  entry: JournalBody,
+  fetch: Fetcher
+): Promise<PublishedOpening> {
+  const inputs = entry.inputs as {
     opening_uri: string;
     opening_sha256: string;
     history_uri: string;
@@ -134,8 +272,29 @@ async function lastSwitchedOpening(
   };
 }
 
-/** Writes stay paused through a rebuild; the marker is renewed this often. */
+/**
+ * Writes stay paused through a rebuild: the marker lapses after
+ * SWITCH_CUT_WINDOW_MS, so it is renewed this often while the rebuild
+ * reads, verifies and writes back.
+ */
 const MARKER_RENEW_MS = 60 * 1000;
+
+/** The port, renewing the pause before each call (each is a network read). */
+function renewingEthereum(
+  ethereum: EthereumFacts,
+  renew: () => Promise<void>
+): EthereumFacts {
+  return {
+    topUp: async (hash) => {
+      await renew();
+      return ethereum.topUp(hash);
+    },
+    mintedTo: async (hash, contract, tokenId, to) => {
+      await renew();
+      return ethereum.mintedTo(hash, contract, tokenId, to);
+    }
+  };
+}
 
 /** One journaled write: its parts, in order, all present. */
 interface JournalWriteRecord {
@@ -203,28 +362,35 @@ async function liveCounter(): Promise<number | null> {
 /**
  * Rebuilds the identity tables from the opening file and the journal alone:
  *
- * 1. pause the unsigned write routes (go-live's marker, renewed by time
- *    while the rebuild runs);
+ * 1. pause the unsigned write routes with go-live's marker, renewed
+ *    every minute while the rebuild reads the journal, checks it against
+ *    Ethereum and writes it back, and after the files are fetched and
+ *    loaded;
  * 2. read the journal (lanes `subs` and `subs-shadow` of the record log's
  *    public chain);
  * 3. take the opening of the last `opening` entry (go-live writes it with
  *    the switch), fetch its two files and check their sha256; or take the
  *    files given (a rehearsal);
- * 4. load them into tables that are not the truth, and hold them suspended,
+ * 4. verify that opening's journal (journal-verify.ts): the money rules
+ *    from the opening's balances on, the order and parts of its writes,
+ *    and, through the ports given, Ethereum and the signed records; a
+ *    failure alerts and stops the rebuild before anything is loaded;
+ * 5. load them into tables that are not the truth, and hold them suspended,
  *    so no identity writer writes while the journal is written back;
- * 5. write back every write made against that opening, in `n` order: each
+ * 6. write back every write made against that opening, in `n` order: each
  *    change's captured `before` must equal the rebuilt row, then its
  *    `after` is written;
- * 6. compare each checkpoint's hash once the writes up to its `n` are in;
- * 7. when the live database is there, compare the journal's last `n` with
+ * 7. compare each checkpoint's hash once the writes up to its `n` are in;
+ * 8. when the live database is there, compare the journal's last `n` with
  *    live's counter: a missing tail leaves the tables suspended, saying
  *    what's missing.
  *
  * Otherwise the rebuilt tables end verified and in shadow, not the truth.
  * With `goLive` they become the truth through go-live's own switch, in the
- * same pause, only if at least one checkpoint matched and the opening came
- * from the journal (so its entry can name the files again). On any failure
- * the routes reopen and the tables are left suspended.
+ * same pause, only if at least one checkpoint matched, the opening came
+ * from the journal (so its entry can name the files again) and the journal
+ * was checked against Ethereum. On any failure the routes reopen and the
+ * tables are left suspended.
  */
 export async function rebuildIdentityTables(params: {
   readonly source: JournalSource;
@@ -232,9 +398,16 @@ export async function rebuildIdentityTables(params: {
   /** A rehearsal: these files instead of the last switched opening. */
   readonly opening?: ParsedOpening;
   readonly goLive?: boolean;
+  /** Checks the journal's top-ups and mints against Ethereum (network calls). */
+  readonly ethereum?: EthereumFacts;
   readonly now?: () => number;
 }): Promise<RebuildResult> {
   const now = params.now ?? (() => Date.now());
+  if (params.goLive && !params.ethereum) {
+    throw new Error(
+      'A rebuild goes live only with its journal checked against Ethereum'
+    );
+  }
   await closeSubscriptionWrites(now());
   let renewedAt = now();
   const renewPause = async () => {
@@ -243,8 +416,16 @@ export async function rebuildIdentityTables(params: {
       renewedAt = now();
     }
   };
+  const source = params.source;
   try {
-    const bodies = await journalOf(params.source);
+    const { bodies, events } = await readJournal({
+      async *walk(chain) {
+        for await (const item of source.walk(chain)) {
+          await renewPause();
+          yield item;
+        }
+      }
+    });
     const published = params.opening
       ? null
       : await lastSwitchedOpening(bodies, params.fetch ?? publicFetcher);
@@ -252,6 +433,27 @@ export async function rebuildIdentityTables(params: {
     if (params.goLive && !published) {
       throw new Error(
         'Only a rebuild from the journal goes live: rehearsal files name no published opening'
+      );
+    }
+    await renewPause();
+    // Nothing is loaded from a journal that breaks the money rules, or
+    // that could not be checked.
+    const verify = await verifyJournal(bodies, {
+      openingSha256: opening.openingSha256,
+      opening: opening.opening,
+      ethereum:
+        params.ethereum && renewingEthereum(params.ethereum, renewPause),
+      events: events ?? undefined
+    }).catch((error: unknown) => {
+      logger.errorWithCode(
+        'SUBSCRIPTIONS_JOURNAL_VERIFY_FAILED',
+        `[JOURNAL VERIFY FAILED] opening ${opening.openingSha256} could not be checked: ${error instanceof Error ? error.message : String(error)}`
+      );
+      throw error;
+    });
+    if (!alertOnJournalFailures(verify)) {
+      throw new Error(
+        `The journal fails verification (${verify.failures.length}): ${verify.failures.slice(0, 3).join('; ')}`
       );
     }
     const { writes, skipped, partial } = writesOf(
@@ -262,6 +464,7 @@ export async function rebuildIdentityTables(params: {
     const live = await liveCounter();
     await loadOpeningFiles(opening, now());
     await setSuspended(now());
+    await renewPause();
     const checkpoints = writes
       .flatMap((w) => w.bodies)
       .filter((b) => b.checkpoint !== null)
@@ -316,7 +519,8 @@ export async function rebuildIdentityTables(params: {
         checkpoints: compared,
         skipped,
         switched: false,
-        missing
+        missing,
+        verify
       };
     }
     // Verified and back in shadow: the identity writers go on from here.
@@ -341,7 +545,8 @@ export async function rebuildIdentityTables(params: {
       checkpoints: compared,
       skipped,
       switched,
-      missing: null
+      missing: null,
+      verify
     };
   } finally {
     subscriptionsIdentitySwitch.invalidate();

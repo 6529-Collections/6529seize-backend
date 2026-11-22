@@ -132,6 +132,8 @@ export const SUBSCRIPTIONS_LOGS_TABLE = 'subscriptions_logs';
 export const SUBSCRIPTIONS_REDEEMED_TABLE = 'subscriptions_redeemed';
 export const SUBSCRIPTION_DEFERRED_WRITES_TABLE =
   'subscription_deferred_writes';
+export const SUBSCRIPTION_REKEY_FALLBACK_STATE_TABLE =
+  'subscription_rekey_fallback_state';
 /** The identity-keyed subscription tables (src/subscriptions-identity). */
 export const SUBSCRIPTIONS_ID_TOP_UP_TABLE = 'subscriptions_id_top_up';
 export const SUBSCRIPTIONS_ID_BALANCES_TABLE = 'subscriptions_id_balances';

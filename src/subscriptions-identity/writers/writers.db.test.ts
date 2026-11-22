@@ -4,6 +4,7 @@ import {
   IDENTITIES_TABLE,
   MEMES_CONTRACT,
   NULL_ADDRESS,
+  SUBSCRIPTIONS_ADDRESS,
   SUBSCRIPTIONS_BALANCES_TABLE,
   SUBSCRIPTIONS_ID_BALANCES_TABLE,
   SUBSCRIPTIONS_ID_LOGS_TABLE,
@@ -24,6 +25,7 @@ import {
   TRANSACTIONS_TABLE
 } from '@/constants';
 import { connect, disconnect } from '@/db';
+import { Logger } from '@/logging';
 import * as Entities from '@/entities/entities';
 import { sqlExecutor } from '@/sql-executor';
 import { getPublicSubscriptions } from '@/api/subscriptions/api.subscriptions.allowlist';
@@ -49,13 +51,14 @@ import {
   parseOpeningFiles
 } from '../opening/opening-load';
 import { JournalSource, rebuildIdentityTables } from '../opening/rebuild';
+import type { EthereumFacts } from '../timeline/journal-verify';
 import {
   identityTablesHash,
   journal,
+  journalCheckpoint,
   JOURNAL_PART_MAX_BYTES,
   journalPostingProbe
 } from '../timeline/journal';
-import { Logger } from '@/logging';
 import { creditIdentityTopUps } from './identity-top-ups';
 import {
   fetchDetailsForConsolidationKey,
@@ -209,6 +212,53 @@ const journalSource: JournalSource = {
     }
   }
 };
+
+/** Ethereum as the legacy loops recorded it: their top-up and airdrop rows, read now. */
+async function ethereumAsRecorded(): Promise<EthereumFacts> {
+  const topUps = await sqlExecutor.execute<{
+    hash: string;
+    block: number;
+    from_wallet: string;
+    amount: number;
+  }>(
+    `SELECT hash, block, from_wallet, amount FROM ${SUBSCRIPTIONS_TOP_UP_TABLE}`
+  );
+  const mints = await sqlExecutor.execute<{
+    transaction: string;
+    contract: string;
+    token_id: number;
+    to_address: string;
+    token_count: number;
+  }>(
+    `SELECT \`transaction\`, contract, token_id, to_address, token_count
+       FROM ${TRANSACTIONS_TABLE} WHERE from_address = :nullAddress`,
+    { nullAddress: NULL_ADDRESS }
+  );
+  const same = (a: string, b: string) => a.toLowerCase() === b.toLowerCase();
+  return {
+    topUp: async (hash) => {
+      const row = topUps.find((t) => same(t.hash, hash));
+      return row
+        ? {
+            from: row.from_wallet,
+            to: SUBSCRIPTIONS_ADDRESS,
+            valueEth: Number(row.amount),
+            block: Number(row.block)
+          }
+        : null;
+    },
+    mintedTo: async (hash, contract, tokenId, to) =>
+      mints
+        .filter(
+          (m) =>
+            same(m.transaction, hash) &&
+            same(m.contract, contract) &&
+            Number(m.token_id) === tokenId &&
+            same(m.to_address, to)
+        )
+        .reduce((sum, m) => sum + Number(m.token_count), 0)
+  };
+}
 
 async function fetchPublished(uri: string): Promise<string> {
   const bytes = published.get(uri);
@@ -586,6 +636,7 @@ describeWithSeed('identity writers after the switch', [], () => {
     };
     const before = await answers();
     const tablesBefore = await identityTablesHash({});
+    const ethereum = await ethereumAsRecorded();
 
     // Lose every identity table and the MySQL sources the live writers read
     // (top-ups, transactions, the legacy loop's block), then rebuild.
@@ -600,7 +651,8 @@ describeWithSeed('identity writers after the switch', [], () => {
     const result = await rebuildIdentityTables({
       source: journalSource,
       fetch: fetchPublished,
-      goLive: true
+      goLive: true,
+      ethereum
     });
     expect(result).toEqual(
       expect.objectContaining({ checkpoints: 1, switched: true })
@@ -692,13 +744,23 @@ describeWithSeed('identity writers after the switch', [], () => {
       { lone: LONE }
     );
     await updateSubscriptions();
+    const ethereum = await ethereumAsRecorded();
 
     await loseIdentityTables();
+    // Going live needs the journal checked against Ethereum.
     await expect(
       rebuildIdentityTables({
         source: journalSource,
         fetch: fetchPublished,
         goLive: true
+      })
+    ).rejects.toThrow('checked against Ethereum');
+    await expect(
+      rebuildIdentityTables({
+        source: journalSource,
+        fetch: fetchPublished,
+        goLive: true,
+        ethereum
       })
     ).rejects.toThrow(/differ/);
     // Left suspended and not the truth; the write routes are open again.
@@ -706,36 +768,40 @@ describeWithSeed('identity writers after the switch', [], () => {
     expect(await unsignedWritesNow()).toBe('OPEN');
   });
 
-  it('rebuilds when a top-up commits while a build is under way', async () => {
+  it('rebuilds when a phase pull commits while a build is under way', async () => {
     await seedLegacy();
     expect((await goLiveForTest()).switched).toBe(true);
-    await execute(
-      `INSERT INTO ${SUBSCRIPTIONS_TOP_UP_TABLE} (hash, block, transaction_date, from_wallet, amount)
-        VALUES ('0xa9', 30, '2026-11-26 13:00:00', :a, 0.1)`,
-      { a: A }
-    );
+    // The card's final rows, and the build's checkpoint.
+    await updateSubscriptions();
     await sqlExecutor.executeNativeQueriesInTransaction(async (connection) => {
       const options = { wrappedConnection: connection };
       // The build's first plain read fixes its snapshot.
       await sqlExecutor.execute(
-        `SELECT balance FROM ${SUBSCRIPTIONS_ID_BALANCES_TABLE} WHERE identity_key = :p`,
-        { p: P1 },
+        `SELECT phase FROM ${SUBSCRIPTIONS_ID_NFTS_FINAL_TABLE}
+          WHERE contract = :c AND token_id = :card`,
+        { c: MEMES_CONTRACT, card: CARD },
         options
       );
-      // Meanwhile the top-up loop credits P1 and commits, journaled.
-      await creditIdentityTopUps();
-      // The build journals P1's rows: the latest committed ones, not its
-      // snapshot's.
+      // Meanwhile a phase pull splits the card's rows and commits, journaled.
+      await getPublicSubscriptions(MEMES_CONTRACT, CARD);
+      // The build journals the card's final rows: the latest committed
+      // ones, not its snapshot's. (A build may not journal balances: the
+      // verifier refuses that.)
       await journal(
         {
           kind: 'build',
           inputs: { contract: MEMES_CONTRACT, token_id: CARD },
-          identities: [P1]
+          rows: [
+            {
+              table: 'final',
+              keys: [{ contract: MEMES_CONTRACT, token_id: CARD }]
+            }
+          ]
         },
         options
       );
     });
-    await updateSubscriptions();
+    await journalCheckpoint();
     const tablesBefore = await identityTablesHash({});
 
     await loseIdentityTables();
@@ -744,9 +810,99 @@ describeWithSeed('identity writers after the switch', [], () => {
       fetch: fetchPublished
     });
     expect(result).toEqual(
-      expect.objectContaining({ checkpoints: 1, missing: null })
+      expect.objectContaining({ checkpoints: 2, missing: null })
     );
     expect(await identityTablesHash({})).toBe(tablesBefore);
+  });
+
+  it('stops a rebuild on a journal that breaks the money rules, before loading anything, and alerts', async () => {
+    await seedLegacy();
+    expect((await goLiveForTest()).switched).toBe(true);
+    await execute(
+      `INSERT INTO ${SUBSCRIPTIONS_TOP_UP_TABLE} (hash, block, transaction_date, from_wallet, amount)
+        VALUES ('0xab', 32, '2026-11-26 13:00:00', :lone, 0.3)`,
+      { lone: LONE }
+    );
+    expect(await creditIdentityTopUps()).toBe(1);
+    const posted = (
+      await sqlExecutor.execute<{ entry: string }>(
+        `SELECT entry FROM ${SIGNED_RECORD_LOG_ENTRIES_TABLE} WHERE chain = 'public' ORDER BY id`
+      )
+    ).map((row) => JSON.parse(row.entry));
+    const n = posted.find((e) => e.body?.kind === 'top-up').body.n;
+    await loseIdentityTables();
+    /** Rebuilds from the posted journal with its top-up's balance row changed. */
+    const rebuildWith = (change: (row: Record<string, unknown>) => void) => {
+      const entries = JSON.parse(JSON.stringify(posted));
+      const credited = entries
+        .find((e: { body?: { kind?: string } }) => e.body?.kind === 'top-up')
+        .body.changes.find((c: { table: string }) => c.table === 'balances');
+      expect(Number(credited.after.balance)).toBe(0.5);
+      change(credited.after);
+      return rebuildIdentityTables({
+        source: {
+          async *walk() {
+            for (const entry of entries) {
+              yield { entry };
+            }
+          }
+        },
+        fetch: fetchPublished
+      });
+    };
+    const alert = jest.spyOn(Logger.prototype, 'errorWithCode');
+    try {
+      // 0.01 more than the transfer brought.
+      await expect(
+        rebuildWith((row) => {
+          row.balance = 0.51;
+        })
+      ).rejects.toThrow(
+        `n=${n} top-up: the balance of ${LONE} is 0.51 after a top-up of 0.3 to 0.2; expected 0.5`
+      );
+      expect(alert).toHaveBeenCalledWith(
+        'SUBSCRIPTIONS_JOURNAL_VERIFY_FAILED',
+        expect.stringContaining('is 0.51 after a top-up of 0.3')
+      );
+      // The right amount, written to another identity's row under LONE's
+      // key: the rebuild would check LONE's row and write the other's.
+      const other = `0x${'ee'.padStart(64, '0')}`;
+      await expect(
+        rebuildWith((row) => {
+          row.identity_key = other;
+        })
+      ).rejects.toThrow(
+        `n=${n} top-up: the balances change {"identity_key":"${LONE}"}: its after row is another row`
+      );
+      // Ethereum could not be read: nothing is loaded either, and it alerts.
+      alert.mockClear();
+      await expect(
+        rebuildIdentityTables({
+          source: {
+            async *walk() {
+              for (const entry of posted) {
+                yield { entry };
+              }
+            }
+          },
+          fetch: fetchPublished,
+          ethereum: {
+            topUp: async () => {
+              throw new Error('provider unavailable');
+            },
+            mintedTo: async () => 0
+          }
+        })
+      ).rejects.toThrow('provider unavailable');
+      expect(alert).toHaveBeenCalledWith(
+        'SUBSCRIPTIONS_JOURNAL_VERIFY_FAILED',
+        expect.stringContaining('could not be checked: provider unavailable')
+      );
+    } finally {
+      alert.mockRestore();
+    }
+    // Nothing was loaded.
+    expect(await identityBalances()).toEqual({});
   });
 
   it('says what is missing when the posted journal ends before live, and stays suspended', async () => {
