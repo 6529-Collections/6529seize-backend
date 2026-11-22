@@ -2,9 +2,9 @@ import { CustomApiCompliantException } from '@/exceptions';
 
 /**
  * Where records take their `anchor`: a finalized chain height. The source is
- * the shared chain gateway client (identity lane, `ChainGatewayClient`,
+ * the shared chain gateway client (`ChainGatewayClient`,
  * whose `getHead()` has these fields); this interface names that one call so
- * the swap is one line when the client lands (S5).
+ * the swap is one line when the client lands.
  */
 export interface RecordAnchorSource {
   getHead(): Promise<RecordAnchorHead>;
