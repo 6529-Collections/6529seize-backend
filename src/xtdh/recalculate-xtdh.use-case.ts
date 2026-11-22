@@ -1,3 +1,4 @@
+import { isXTdhFrozen } from '@/xtdh/xtdh-freeze';
 import { RequestContext } from '../request.context';
 import { xTdhRepository, XTdhRepository } from './xtdh.repository';
 import { Logger } from '../logging';
@@ -48,6 +49,12 @@ export class RecalculateXTdhUseCase {
       throw new Error(
         `handleUniversePhase must own the transaction before enqueueing xTDH stats phase`
       );
+    }
+    if (isXTdhFrozen()) {
+      // The 6529 chain imports each identity's xTDH as it stands at the
+      // identity freeze, so xTDH stops moving here from then on.
+      this.logger.info(`xTDH is frozen with identities: no recalculation`);
+      return;
     }
     this.getRequiredXTdhLoopQueueUrl();
     await this.recalculateXTdhUniverse(ctx);

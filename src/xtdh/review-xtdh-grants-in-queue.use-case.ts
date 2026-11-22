@@ -1,3 +1,4 @@
+import { isXTdhFrozen } from '@/xtdh/xtdh-freeze';
 import { RequestContext } from '../request.context';
 import { Time, Timer } from '../time';
 import {
@@ -35,6 +36,10 @@ export class ReviewXTdhGrantsInQueueUseCase {
       ctxWithGuaranteedTimer.timer?.start(`handle`);
       if (!appFeatures.isXTdhEnabled()) {
         this.logger.warn(`XTDH is disabled`);
+        return;
+      }
+      if (isXTdhFrozen()) {
+        this.logger.info(`xTDH is frozen with identities: no grant review`);
         return;
       }
       this.logger.info(

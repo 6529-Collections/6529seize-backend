@@ -276,8 +276,8 @@ describe('RecalculateXTdhUseCase phase handling', () => {
     expect(repository.publishIdentitySnapshot).toHaveBeenCalled();
   });
 
-  it('makes no identities during the identity freeze and still recalculates', async () => {
-    mockIsIdentityFrozen.mockReturnValue(true);
+  it('makes no identities when the identity freeze starts during a recalculation', async () => {
+    mockIsIdentityFrozen.mockReturnValueOnce(false).mockReturnValue(true);
     const { repository, useCase } = makeUseCase();
     repository.getWalletsWithoutIdentities.mockResolvedValueOnce([
       '0x0000000000000000000000000000000000000001'
@@ -286,5 +286,15 @@ describe('RecalculateXTdhUseCase phase handling', () => {
     expect(mockBulkCreateIdentities).not.toHaveBeenCalled();
     expect(repository.updateProducedXTDH).toHaveBeenCalled();
     expect(repository.publishIdentitySnapshot).toHaveBeenCalled();
+  });
+
+  it('leaves xTDH as it stood during the identity freeze', async () => {
+    mockIsIdentityFrozen.mockReturnValue(true);
+    const { repository, useCase } = makeUseCase();
+    await useCase.handleUniversePhase({});
+    expect(repository.executeNativeQueriesInTransaction).not.toHaveBeenCalled();
+    expect(repository.updateProducedXTDH).not.toHaveBeenCalled();
+    expect(mockBulkCreateIdentities).not.toHaveBeenCalled();
+    expect(mockSqsSend).not.toHaveBeenCalled();
   });
 });
