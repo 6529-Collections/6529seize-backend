@@ -1,10 +1,17 @@
-import { SUBSCRIPTION_COVERAGE_REFRESH_REQUESTS_TABLE } from '@/constants';
+import {
+  CONSOLIDATION_KEY_LENGTH,
+  SUBSCRIPTION_COVERAGE_REFRESH_REQUESTS_TABLE
+} from '@/constants';
 import { Column, Entity, Index, PrimaryColumn } from 'typeorm';
 
 @Entity(SUBSCRIPTION_COVERAGE_REFRESH_REQUESTS_TABLE)
 @Index('idx_sc_refresh_dirty_key', ['dirty_at', 'consolidation_key'])
 export class SubscriptionCoverageRefreshRequestEntity {
-  @PrimaryColumn({ type: 'varchar', length: 200, nullable: false })
+  @PrimaryColumn({
+    type: 'varchar',
+    length: CONSOLIDATION_KEY_LENGTH,
+    nullable: false
+  })
   readonly consolidation_key!: string;
 
   @Column({ type: 'varchar', length: 64, nullable: false })
