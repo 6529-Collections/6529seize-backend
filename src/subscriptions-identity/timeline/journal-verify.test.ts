@@ -304,7 +304,7 @@ function ethereumFixture(): EthereumFacts & { calls: number } {
     async topUp(h: string) {
       facts.calls++;
       const n = parseInt(h.slice(2), 16);
-      const amounts: Record<number, number> = { 1: 0.1, 3: 0.2, 10: 0.3 };
+      const amounts: Record<number, number> = { 1: 0.1, 3: 0.2, 6: 0.3 };
       return amounts[n] === undefined
         ? null
         : {
@@ -377,11 +377,11 @@ describe('verifyJournal', () => {
 
   describe('a top-up', () => {
     it('fails when the balance moves by another amount', async () => {
-      const wrong = topUp(3, 0.2, 0.1);
+      const wrong = topUp(2, 0.2, 0.1);
       (wrong.changes[0].after as Row).balance = 0.31;
       const report = await verify([topUp(1, 0.1, null), wrong]);
       expect(report.failures).toEqual([
-        `n=3 top-up: the balance of ${P1} is 0.31 after a top-up of 0.2 to 0.1; expected 0.3`
+        `n=2 top-up: the balance of ${P1} is 0.31 after a top-up of 0.2 to 0.1; expected 0.3`
       ]);
     });
 
@@ -482,13 +482,13 @@ describe('verifyJournal', () => {
 
     it('fails against Ethereum when the transfer is missing or differs', async () => {
       const missing = topUp(5, 0.1, null);
-      const otherValue = topUp(10, 0.25, 0.1);
+      const otherValue = topUp(6, 0.25, 0.1);
       const report = await verify([missing, otherValue], {
         ethereum: ethereumFixture()
       });
       expect(report.failures).toEqual([
         `n=5 top-up: no ETH transfer ${hash(5)} on Ethereum`,
-        `n=10 top-up: the transfer ${hash(10)} on Ethereum differs in value`
+        `n=6 top-up: the transfer ${hash(6)} on Ethereum differs in value`
       ]);
     });
   });
@@ -878,14 +878,14 @@ describe('verifyJournal', () => {
         []
       );
       // But not another identity's rows.
-      const elsewhere = byWallet(6, W2);
+      const elsewhere = byWallet(5, W2);
       elsewhere.changes[0] = {
         ...elsewhere.changes[0],
         key: { identity_key: P2 },
         after: { identity_key: P2, automatic: 1, subscribe_all_editions: 0 }
       };
       expect((await verify([fold(4, 1, 2), elsewhere])).failures).toEqual([
-        `n=6 choice: a choice of ${W2} changes rows of ${P2}`
+        `n=5 choice: a choice of ${W2} changes rows of ${P2}`
       ]);
     });
 
@@ -904,10 +904,10 @@ describe('verifyJournal', () => {
 
   describe('order and parts', () => {
     it('fails when a write misses a part, and checks no money in it', async () => {
-      const [first] = build(5, 2);
+      const [first] = build(2, 2);
       const report = await verify([topUp(1, 0.1, null), first]);
       expect(report.failures).toEqual([
-        'n=5 build: parts 0 of 2 are in the journal'
+        'n=2 build: parts 0 of 2 are in the journal'
       ]);
     });
 
@@ -917,6 +917,21 @@ describe('verifyJournal', () => {
       const report = await verify([a, { ...b, at_ms: b.at_ms + 1 }]);
       expect(report.failures).toEqual([
         'n=5 build: its parts differ in kind, mode, time or inputs'
+      ]);
+    });
+
+    it('fails when an n between two writes is in no entry of the log, and not when another opening has it', async () => {
+      const report = await verify([
+        topUp(1, 0.1, null),
+        { ...topUp(2, 0.5, null, P2), opening: OTHER_OPENING },
+        topUp(5, 0.2, 0.1)
+      ]);
+      expect(report.failures).toEqual([
+        '2 writes, n=3 to n=4, are missing between n=1 and n=5: a write was never posted'
+      ]);
+      const one = await verify([topUp(1, 0.1, null), topUp(3, 0.2, 0.1)]);
+      expect(one.failures).toEqual([
+        'n=2 is missing between n=1 and n=3: a write was never posted'
       ]);
     });
 

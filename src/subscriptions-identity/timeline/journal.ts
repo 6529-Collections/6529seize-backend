@@ -967,14 +967,16 @@ export const JOURNAL_POSTING_MAX_AGE_MS = 10 * 60 * 1000;
  * waited unposted longer than JOURNAL_POSTING_MAX_AGE_MS. Until an entry is
  * posted, losing the database loses it. (The closer's flag lives in its
  * own Lambda; an entry waiting too long is how its being off shows here.)
+ * An entry leaves the table only when its segment's head is posted, so
+ * every row still there counts, sealed into a segment or not: the closer
+ * goes on sealing segments while posting their heads fails.
  */
 export async function journalPosting(
   nowMs: number = Date.now()
 ): Promise<{ readonly ok: boolean; readonly reason: string | null }> {
   const [oldest] = await sqlExecutor.execute<{ created_at: number | string }>(
     `SELECT MIN(created_at) AS created_at FROM ${SIGNED_RECORD_LOG_ENTRIES_TABLE}
-      WHERE chain = 'public' AND segment_seq IS NULL
-        AND lane IN (:lanes)`,
+      WHERE chain = 'public' AND lane IN (:lanes)`,
     { lanes: [JOURNAL_LANE, JOURNAL_SHADOW_LANE] }
   );
   const waitingSince =

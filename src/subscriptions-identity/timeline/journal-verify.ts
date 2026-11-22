@@ -671,11 +671,44 @@ function checkChoiceOwner(
 }
 
 /**
+ * The `n` no journal entry has between two consecutive writes of one
+ * opening, as text, or null. Every write takes the next `n` from one
+ * counter, in its transaction, so from an opening's first write to its
+ * last (any made in shadow before its `opening` entry, the entry, and
+ * every write after it) each `n` is in the log: the opening's own, or
+ * another opening's (a rehearsal's) that the rebuild skips. An `n` with
+ * no entry is a write that was never posted. Its rows may be ones no later
+ * write or checkpoint looks at, so nothing else shows it.
+ */
+export function journalGap(
+  previous: number,
+  next: number,
+  logged: ReadonlySet<number>
+): string | null {
+  const missing: number[] = [];
+  for (let n = previous + 1; n < next; n++) {
+    if (!logged.has(n)) {
+      missing.push(n);
+    }
+  }
+  if (missing.length === 0) {
+    return null;
+  }
+  const which =
+    missing.length === 1
+      ? `n=${missing[0]} is`
+      : `${missing.length} writes, n=${missing[0]} to n=${missing[missing.length - 1]}, are`;
+  return `${which} missing between n=${previous} and n=${next}`;
+}
+
+/**
  * The writes of one opening, in log order: `n` must increase from write to
- * write, and a write's parts sit together.
+ * write with no `n` missing from the log between them (journalGap), and a
+ * write's parts sit together.
  */
 function writesInOrder(
   bodies: readonly JournalBody[],
+  logged: ReadonlySet<number>,
   failures: string[]
 ): JournalBody[][] {
   const writes: JournalBody[][] = [];
@@ -689,6 +722,11 @@ function writesInOrder(
       failures.push(
         `n=${body.n} ${body.kind} comes after n=${current[0].n} in the log`
       );
+    } else if (current) {
+      const gap = journalGap(current[0].n, body.n, logged);
+      if (gap) {
+        failures.push(`${gap}: a write was never posted`);
+      }
     }
     writes.push([body]);
   }
@@ -922,6 +960,7 @@ export async function verifyJournal(
   const failures: string[] = [];
   const writes = writesInOrder(
     bodies.filter((b) => b.opening === options.openingSha256),
+    new Set(bodies.map((b) => b.n)),
     failures
   );
   const complete: JournalBody[][] = [];

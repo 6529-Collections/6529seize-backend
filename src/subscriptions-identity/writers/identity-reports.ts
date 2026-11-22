@@ -1,4 +1,5 @@
 import { SUBSCRIPTIONS_ID_REPORTS_TABLE } from '@/constants';
+import { env } from '@/env';
 import { Logger } from '@/logging';
 import { sqlExecutor } from '@/sql-executor';
 import { compareText } from '../engine/text-order';
@@ -113,15 +114,43 @@ export async function saveReport(report: ComparisonReport): Promise<void> {
   );
 }
 
+/** Settings for the gate's signed records, read when the gate runs. */
+export const GO_LIVE_MIN_SIGNED_MATCHES_ENV =
+  'SUBSCRIPTIONS_GO_LIVE_MIN_SIGNED_MATCHES';
+export const GO_LIVE_MAX_REFUSED_PERCENT_ENV =
+  'SUBSCRIPTIONS_GO_LIVE_MAX_REFUSED_PERCENT';
+
+export interface SignedRecordRules {
+  /** Signed records that must have matched in the window (default 3). */
+  readonly minMatches: number;
+  /** REFUSED must stay under this share of the window's records (default 20). */
+  readonly maxRefusedPercent: number;
+}
+
+export function signedRecordRules(): SignedRecordRules {
+  return {
+    minMatches: env.getIntOrNull(GO_LIVE_MIN_SIGNED_MATCHES_ENV) ?? 3,
+    maxRefusedPercent: env.getIntOrNull(GO_LIVE_MAX_REFUSED_PERCENT_ENV) ?? 20
+  };
+}
+
 /**
  * Whether the shadow comparisons back a switch: an exact match of who gets
- * what on a real mint. For the last minted card it requires a MATCH list
- * from its last build, at least one phase comparison and at least one
- * redemption comparison, all MATCH, and no shadow DIFF of any kind since
- * that card's first list comparison. A REFUSED signed record is counted in
- * `checked`, not as a problem. `checked` says what was looked at.
+ * what on a real mint, and signed changes that work. For the last minted
+ * card it requires a MATCH list from its last build, at least one phase
+ * comparison and at least one redemption comparison, all MATCH, and no
+ * shadow DIFF of any kind since that card's first list comparison. In the
+ * same window at least `minMatches` signed records must have matched, and
+ * the REFUSED ones must stay under `maxRefusedPercent` of all signed
+ * records compared: one person's bad header doesn't hold the switch back,
+ * but a signer that fails for a whole group of people does, since after
+ * the switch they could change nothing. `checked` says what was looked
+ * at, with the refusals counted by reason.
  */
-export async function shadowReportsMatch(mintedCard: number): Promise<{
+export async function shadowReportsMatch(
+  mintedCard: number,
+  rules: SignedRecordRules = signedRecordRules()
+): Promise<{
   readonly ok: boolean;
   readonly checked: string[];
   readonly problems: string[];
@@ -131,8 +160,12 @@ export async function shadowReportsMatch(mintedCard: number): Promise<{
     kind: string;
     verdict: string;
     token_id: number | null;
+    cause: string | null;
   }>(
-    `SELECT id, kind, verdict, token_id FROM ${SUBSCRIPTIONS_ID_REPORTS_TABLE}
+    `SELECT id, kind, verdict, token_id,
+        CASE WHEN kind = 'RECORD' AND verdict = 'REFUSED'
+          THEN JSON_UNQUOTE(JSON_EXTRACT(report, '$.notes[1]')) END AS cause
+      FROM ${SUBSCRIPTIONS_ID_REPORTS_TABLE}
       WHERE mode = 'SHADOW' ORDER BY id ASC`
   );
   const ofCard = (kind: ReportKind) =>
@@ -168,6 +201,35 @@ export async function shadowReportsMatch(mintedCard: number): Promise<{
   for (const diff of diffs) {
     problems.push(
       `${diff.kind} comparison ${diff.id} (card ${diff.token_id ?? '-'}) is a DIFF`
+    );
+  }
+  const records = recent.filter((r) => r.kind === 'RECORD');
+  const matched = records.filter((r) => r.verdict === 'MATCH').length;
+  const refusedRecords = records.filter((r) => r.verdict === 'REFUSED');
+  checked.push(
+    `signed records since card ${mintedCard}'s first list: ${records.length} compared, ${matched} matched, ${refusedRecords.length} refused`
+  );
+  const byReason = new Map<string, number>();
+  for (const record of refusedRecords) {
+    const reason = record.cause ?? 'no reason given';
+    byReason.set(reason, (byReason.get(reason) ?? 0) + 1);
+  }
+  for (const [reason, count] of Array.from(byReason.entries()).sort(
+    ([a, x], [b, y]) => y - x || compareText(a, b)
+  )) {
+    checked.push(`signed records refused: ${count} ${reason}`);
+  }
+  if (matched < rules.minMatches) {
+    problems.push(
+      `${matched} signed records matched since card ${mintedCard}'s first list; the switch needs ${rules.minMatches}`
+    );
+  }
+  if (
+    records.length > 0 &&
+    refusedRecords.length * 100 >= rules.maxRefusedPercent * records.length
+  ) {
+    problems.push(
+      `${refusedRecords.length} of ${records.length} signed records were refused (${Math.round((refusedRecords.length * 100) / records.length)}%); the switch needs under ${rules.maxRefusedPercent}%`
     );
   }
   return { ok: problems.length === 0, checked, problems };

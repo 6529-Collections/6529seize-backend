@@ -78,6 +78,10 @@ const USAGE = `usage:
   load    --opening <json> --history <json>
   compare --opening <json> --history <json> [--identities <json>] --out <json>
   go-live --out-dir <dir> --signed-writes-live [--accept-report-diffs]
+          (--accept-report-diffs overrides every shadow comparison, the signed
+          record counts too: at least SUBSCRIPTIONS_GO_LIVE_MIN_SIGNED_MATCHES
+          matched, default 3, and refused under
+          SUBSCRIPTIONS_GO_LIVE_MAX_REFUSED_PERCENT, default 20)
   rebuild [--opening <json> --history <json>] [--go-live [--lost-database] | --no-ethereum]
   verify-journal [--opening-sha256 <sha256> | --opening <json> --history <json>] [--no-ethereum] [--out <json>]
   status
@@ -206,9 +210,11 @@ async function compareCommand(args: Args): Promise<number> {
 
 /**
  * The switch, in one step. Refuses unless signed subscription writes are
- * live (otherwise every change gets a 409) and the shadow comparisons match;
- * then cuts at the switch, verifies, loads, compares and sets the
- * switch time, so the identity tables are the truth from a cut taken now.
+ * live (otherwise every change gets a 409) and the shadow comparisons
+ * match, signed records included (enough matched, few refused);
+ * --accept-report-diffs overrides the comparisons. Then it cuts at the
+ * switch, verifies, loads, compares and sets the switch time, so the
+ * identity tables are the truth from a cut taken now.
  */
 async function goLiveCommand(args: Args): Promise<number> {
   if (optional(args, 'identities')) {

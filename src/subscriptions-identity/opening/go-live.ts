@@ -36,10 +36,13 @@ export interface GoLiveResult {
 
 /**
  * The switch in one step. It refuses unless signed subscription writes are
- * live and the shadow comparisons match on the last minted card. Then it
- * pauses the unsigned write routes (they answer 503), cuts, verifies,
- * loads, compares, publishes the files and sets the switch time, and
- * reopens the routes, which from then on answer 409 to unsigned writes.
+ * live and the shadow comparisons back the switch on the last minted card
+ * (shadowReportsMatch: who gets what matched, and enough signed records
+ * matched with few refused); `acceptReportDiffs` overrides the
+ * comparisons. Then it pauses the unsigned write routes (they answer 503),
+ * cuts, verifies, loads, compares, publishes the files and sets the switch
+ * time, and reopens the routes, which from then on answer 409 to unsigned
+ * writes.
  * Each step checks that the cut is still within the switch window, so a
  * slow day stops early instead of loading tables that would not count. On
  * any failure the routes reopen and the legacy tables stay the truth.

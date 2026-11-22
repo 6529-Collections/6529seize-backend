@@ -1467,7 +1467,10 @@ describeWithSeed('signed subscription changes', [], () => {
         ['REFUSED', 'refused:ANCHOR_UNAVAILABLE'],
         ['REFUSED', 'refused:BINDING_UNAVAILABLE']
       ]);
-      const passing = await shadowReportsMatch(CARD);
+      // Refusals are not differences. (The share of refusals and the
+      // matches the switch needs have their own tests; here they are off.)
+      const counts = { minMatches: 1, maxRefusedPercent: 100 };
+      const passing = await shadowReportsMatch(CARD, counts);
       expect(passing.problems).toEqual([]);
       expect(passing.ok).toBe(true);
       expect(passing.checked).toContain(
@@ -1481,7 +1484,7 @@ describeWithSeed('signed subscription changes', [], () => {
       await writer({ shadow: true }).write(
         request(card(C3, true), header(record(card(C3, true))))
       );
-      const failing = await shadowReportsMatch(CARD);
+      const failing = await shadowReportsMatch(CARD, counts);
       expect(failing.ok).toBe(false);
       expect(failing.problems).toHaveLength(1);
       expect(failing.problems[0]).toMatch(/^RECORD comparison \d+ /);

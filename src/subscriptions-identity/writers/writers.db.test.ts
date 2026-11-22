@@ -66,10 +66,18 @@ import {
   identityTablesHash,
   journal,
   journalBefore,
+  journalBodyOf,
   journalCheckpoint,
   JOURNAL_PART_MAX_BYTES,
+  journalPosting,
+  JOURNAL_POSTING_MAX_AGE_MS,
   journalPostingProbe
 } from '../timeline/journal';
+import { recordLogDb } from '@/signed-records/record-log/record-log.db';
+import {
+  RecordLogSegmenter,
+  RecordsWavePoster
+} from '@/signed-records/record-log/record-log.service';
 import { creditIdentityTopUps } from './identity-top-ups';
 import {
   fetchDetailsForConsolidationKey,
@@ -83,7 +91,12 @@ import {
   runIdentityRedemptionWriters,
   runIdentityTopUpWriters
 } from './identity-loop-hooks';
-import { saveReport, shadowReportsMatch } from './identity-reports';
+import {
+  GO_LIVE_MAX_REFUSED_PERCENT_ENV,
+  GO_LIVE_MIN_SIGNED_MATCHES_ENV,
+  saveReport,
+  shadowReportsMatch
+} from './identity-reports';
 import { buildIdentityList, SHADOW_ONLY_ID_FROM } from './identity-daily-build';
 import { goLive } from '../opening/go-live';
 import { subscriptionChangeWriter } from '../records/subscription-writes';
@@ -432,7 +445,8 @@ describeWithSeed('identity writers after the switch', [], () => {
       // redemptions must have been compared too.
       expect((await shadowReportsMatch(CARD)).problems).toEqual([
         `no phase comparison for card ${CARD}`,
-        `no redemption comparison for card ${CARD}`
+        `no redemption comparison for card ${CARD}`,
+        `0 signed records matched since card ${CARD}'s first list; the switch needs 3`
       ]);
     } finally {
       delete process.env[SHADOW_ENV];
@@ -1718,6 +1732,236 @@ describeWithSeed('identity writers after the switch', [], () => {
     expect(await identityTablesHash({})).toBe(tablesBefore);
   }, 900000);
 
+  describe('the go-live gate and the signed records compared in shadow', () => {
+    const MINTED = 579;
+    /** A shadow report of the minted card; a refused record carries its cause. */
+    const report = (kind: string, verdict: string, cause?: string) =>
+      execute(
+        `INSERT INTO ${SUBSCRIPTIONS_ID_REPORTS_TABLE} (kind, mode, token_id, verdict, report, created_at)
+          VALUES (:kind, 'SHADOW', :card, :verdict, :report, 0)`,
+        {
+          kind,
+          card: MINTED,
+          verdict,
+          report: JSON.stringify({
+            notes: cause ? [`subs.card e-${cause}`, cause] : []
+          })
+        }
+      );
+    /** The minted card's list, phase and redemption comparisons match. */
+    const mintMatches = async () => {
+      for (const kind of ['LIST', 'PHASE', 'REDEMPTIONS']) {
+        await report(kind, 'MATCH');
+      }
+    };
+    const records = async (verdict: string, count: number, cause?: string) => {
+      for (let i = 0; i < count; i++) {
+        await report('RECORD', verdict, cause);
+      }
+    };
+
+    it('refuses the switch with fewer signed records matched than the setting asks', async () => {
+      await mintMatches();
+      await records('MATCH', 2);
+      expect((await shadowReportsMatch(MINTED)).problems).toEqual([
+        `2 signed records matched since card ${MINTED}'s first list; the switch needs 3`
+      ]);
+      await records('MATCH', 1);
+      expect(await shadowReportsMatch(MINTED)).toEqual(
+        expect.objectContaining({ ok: true, problems: [] })
+      );
+      // The setting moves the bar.
+      process.env[GO_LIVE_MIN_SIGNED_MATCHES_ENV] = '5';
+      try {
+        expect((await shadowReportsMatch(MINTED)).problems).toEqual([
+          `3 signed records matched since card ${MINTED}'s first list; the switch needs 5`
+        ]);
+      } finally {
+        delete process.env[GO_LIVE_MIN_SIGNED_MATCHES_ENV];
+      }
+    });
+
+    it('refuses the switch while refused records reach the set share, and lists them by reason', async () => {
+      await mintMatches();
+      await records('MATCH', 8);
+      await records('REFUSED', 1, 'invalid-record:not-bound');
+      await records('REFUSED', 1, 'refused:STALE_SIGNED_RECORD');
+      const gate = await shadowReportsMatch(MINTED);
+      expect(gate.problems).toEqual([
+        '2 of 10 signed records were refused (20%); the switch needs under 20%'
+      ]);
+      expect(gate.checked).toEqual(
+        expect.arrayContaining([
+          `signed records since card ${MINTED}'s first list: 10 compared, 8 matched, 2 refused`,
+          'signed records refused: 1 invalid-record:not-bound',
+          'signed records refused: 1 refused:STALE_SIGNED_RECORD'
+        ])
+      );
+      // The setting moves the share.
+      process.env[GO_LIVE_MAX_REFUSED_PERCENT_ENV] = '25';
+      try {
+        expect((await shadowReportsMatch(MINTED)).ok).toBe(true);
+      } finally {
+        delete process.env[GO_LIVE_MAX_REFUSED_PERCENT_ENV];
+      }
+    });
+
+    it("passes one person's bad header among many matches", async () => {
+      await mintMatches();
+      await records('MATCH', 9);
+      await records('REFUSED', 1, 'invalid-record:sig');
+      const gate = await shadowReportsMatch(MINTED);
+      expect(gate).toEqual(expect.objectContaining({ ok: true, problems: [] }));
+      expect(gate.checked).toContain(
+        'signed records refused: 1 invalid-record:sig'
+      );
+    });
+
+    it('prints the signed record counts in go-live, refuses on them, and switches when differences are accepted', async () => {
+      await seedLegacy();
+      await mintMatches();
+      await records('MATCH', 1);
+      await records('REFUSED', 2, 'invalid-record:not-bound');
+      const run = (acceptReportDiffs: boolean) =>
+        goLive({
+          signedWritesLive: true,
+          acceptReportDiffs,
+          mintedCard: MINTED,
+          postingProbe
+        });
+      const refused = await run(false);
+      expect(refused.switched).toBe(false);
+      expect(refused.steps).toEqual(
+        expect.arrayContaining([
+          `checked signed records since card ${MINTED}'s first list: 3 compared, 1 matched, 2 refused`,
+          'checked signed records refused: 2 invalid-record:not-bound',
+          `problem: 1 signed records matched since card ${MINTED}'s first list; the switch needs 3`,
+          'problem: 2 of 3 signed records were refused (67%); the switch needs under 20%',
+          'refused: the shadow comparisons do not match'
+        ])
+      );
+      expect(await subscriptionWritePathNow()).toBe('LEGACY');
+      expect((await run(true)).switched).toBe(true);
+    });
+  });
+
+  it('stops a rebuild at a write missing from the journal, though no later write or checkpoint touches its rows', async () => {
+    await seedLegacy();
+    expect((await goLiveForTest()).switched).toBe(true);
+    // Two top-ups after the switch, to two identities.
+    await execute(
+      `INSERT INTO ${SUBSCRIPTIONS_TOP_UP_TABLE} (hash, block, transaction_date, from_wallet, amount)
+        VALUES ('0xa5', 30, '2026-11-26 13:00:00', :lone, 0.05),
+          ('0xa6', 31, '2026-11-26 13:05:00', :a, 0.1)`,
+      { lone: LONE, a: A }
+    );
+    expect(await creditIdentityTopUps()).toBe(2);
+    const rows = await sqlExecutor.execute<{ entry: string }>(
+      `SELECT entry FROM ${SIGNED_RECORD_LOG_ENTRIES_TABLE} WHERE chain = 'public' ORDER BY id`
+    );
+    const bodies = rows.map((row) => journalBodyOf(JSON.parse(row.entry)));
+    const topUps = bodies.filter((body) => body?.kind === 'top-up');
+    expect(topUps).toHaveLength(2);
+    // The first top-up was never posted; nothing after it touches its rows.
+    const lost = topUps[0]!.n;
+    expect(lost).toBeLessThan(topUps[1]!.n);
+    const gapped: JournalSource = {
+      async *walk() {
+        for (const row of rows) {
+          const entry = JSON.parse(row.entry);
+          if (journalBodyOf(entry)?.n !== lost) {
+            yield { entry };
+          }
+        }
+      }
+    };
+    // The daily check of the posted journal finds the gap, and alerts.
+    const alert = jest.spyOn(Logger.prototype, 'errorWithCode');
+    setJournalSource(() => gapped);
+    try {
+      expect(
+        await verifyPostedJournal({
+          ethereum: await ethereumAsRecorded(),
+          fetch: fetchPublished
+        })
+      ).toBe('failed');
+      expect(alert).toHaveBeenCalledWith(
+        'SUBSCRIPTIONS_JOURNAL_VERIFY_FAILED',
+        expect.stringContaining(
+          `n=${lost} is missing between n=${lost - 1} and n=${lost + 1}: a write was never posted`
+        )
+      );
+    } finally {
+      setJournalSource(null);
+      alert.mockRestore();
+    }
+    // A rebuild from it stops before loading anything.
+    const tablesBefore = await identityTablesHash({});
+    await loseIdentityTables();
+    await expect(
+      rebuildIdentityTables({ source: gapped, fetch: fetchPublished })
+    ).rejects.toThrow(
+      `n=${lost} is missing between n=${lost - 1} and n=${lost + 1}, a write that was never posted`
+    );
+    // With the write, the same rebuild holds.
+    const result = await rebuildIdentityTables({
+      source: journalSource,
+      fetch: fetchPublished
+    });
+    expect(result.missing).toBeNull();
+    expect(await identityTablesHash({})).toBe(tablesBefore);
+  });
+
+  it('alerts when journal entries wait in sealed segments whose heads fail to post', async () => {
+    await seedLegacy();
+    expect((await goLiveForTest()).switched).toBe(true);
+    const closer = (post: RecordsWavePoster['post']) =>
+      new RecordLogSegmenter({
+        store: recordLogDb,
+        pinner: {
+          pin: async () => 'bafy-test',
+          fetch: async () => Buffer.alloc(0)
+        },
+        archiver: { upload: async () => 'arweave-test' },
+        poster: { post },
+        wave: { drops: async function* () {} },
+        serviceWallets: [],
+        providers: []
+      });
+    // The closer seals every open entry; posting the head fails.
+    await closer(async () => {
+      throw new Error('the records wave did not answer');
+    }).closeSegments({});
+    const [queue] = await sqlExecutor.execute<{
+      sealed: number | string;
+      open: number | string;
+    }>(
+      `SELECT SUM(segment_seq IS NOT NULL) AS sealed, SUM(segment_seq IS NULL) AS open
+        FROM ${SIGNED_RECORD_LOG_ENTRIES_TABLE} WHERE chain = 'public'`
+    );
+    expect(Number(queue.sealed)).toBeGreaterThan(0);
+    expect(Number(queue.open)).toBe(0);
+    // Within the limit nothing is wrong yet; past it the loop alerts.
+    expect(await journalPosting()).toEqual({ ok: true, reason: null });
+    await execute(
+      `UPDATE ${SIGNED_RECORD_LOG_ENTRIES_TABLE} SET created_at = created_at - :age`,
+      { age: JOURNAL_POSTING_MAX_AGE_MS + 60_000 }
+    );
+    const alert = jest.spyOn(Logger.prototype, 'errorWithCode');
+    try {
+      await runIdentityTopUpWriters();
+      expect(alert).toHaveBeenCalledWith(
+        'SUBSCRIPTIONS_JOURNAL_STALE',
+        expect.stringContaining('unposted')
+      );
+    } finally {
+      alert.mockRestore();
+    }
+    // Once the head posts, its entries leave the table and all is well.
+    expect(await closer(async () => 'head-drop-1').postHeads({})).toBe(1);
+    expect(await journalPosting()).toEqual({ ok: true, reason: null });
+  });
+
   it('backs the switch only with matching list, phase and redemption comparisons of the minted card', async () => {
     const report = (kind: string, token: number | null, verdict: string) =>
       execute(
@@ -1742,6 +1986,10 @@ describeWithSeed('identity writers after the switch', [], () => {
     await report('LIST', 579, 'MATCH');
     await report('PHASE', 579, 'MATCH');
     await report('REDEMPTIONS', 579, 'MATCH');
+    // Signed changes work: three matched.
+    for (let i = 0; i < 3; i++) {
+      await report('RECORD', null, 'MATCH');
+    }
     await report('LIST', 580, 'MATCH');
     expect(await shadowReportsMatch(579)).toEqual(
       expect.objectContaining({ ok: true, problems: [] })

@@ -36,6 +36,7 @@ import {
 import {
   alertOnJournalFailures,
   EthereumFacts,
+  journalGap,
   JournalVerifyReport,
   ReplayedSubscriptionEvents,
   SignedEventLookup,
@@ -399,7 +400,9 @@ interface JournalWriteRecord {
 
 /**
  * The target opening's writes, in `n` order. Every part of a write must be
- * there; a write with a missing part is a gap, and the rebuild stops.
+ * there, and every `n` from the opening's first write to its last must be
+ * in the log (see journalGap): a write with a missing part, or a missing
+ * write, is a gap, and the rebuild stops.
  */
 function writesOf(
   bodies: readonly JournalBody[],
@@ -420,10 +423,17 @@ function writesOf(
     byN.set(body.n, [...(byN.get(body.n) ?? []), body]);
   }
   const ordered = Array.from(byN.entries()).sort(([a], [b]) => a - b);
+  const logged = new Set(bodies.map((body) => body.n));
   const writes: JournalWriteRecord[] = [];
   let partial: { n: number; have: number; parts: number } | null = null;
   for (let index = 0; index < ordered.length; index++) {
     const [n, parts] = ordered[index];
+    const gap = index > 0 ? journalGap(ordered[index - 1][0], n, logged) : null;
+    if (gap) {
+      throw new Error(
+        `The journal of opening ${openingSha256} has a gap: ${gap}, a write that was never posted`
+      );
+    }
     const sorted = [...parts].sort((a, b) => a.part - b.part);
     const expected = sorted[0].parts;
     const complete =
