@@ -20,7 +20,10 @@ import { TdhChainDay, TdhTokenLeaf, TdhWalletLeaf } from './tdh-chain.types';
 /**
  * Compares a TDH day on the 6529 chain with 6529.io's values for the same
  * day, exactly. Every difference is listed by class. The verdict is MATCH
- * only when the chain's day verifies and no class has an entry.
+ * only when the chain's day verifies, no class has an entry, and the wallet
+ * and token roots rebuilt from the site's values equal the chain's. With no
+ * token list on the chain side it is at most MATCH_WITHOUT_TOKENS: per-card
+ * values were not compared.
  *
  * Which site rows must have a leaf follows P28 4.3: a wallet with TDH, a
  * positive balance of a counted token, or in a consolidation of two or more
@@ -76,6 +79,8 @@ export const DIFF_CLASSES: readonly DiffClass[] = [
   'TOKEN_TDH'
 ];
 
+export type CompareVerdict = 'MATCH' | 'MATCH_WITHOUT_TOKENS' | 'MISMATCH';
+
 export interface Difference {
   /** A wallet, a consolidation key, a token as `cid/contract/id`, or the day. */
   readonly subject: string;
@@ -84,7 +89,7 @@ export interface Difference {
 }
 
 export interface CompareReport {
-  readonly verdict: 'MATCH' | 'MISMATCH';
+  readonly verdict: CompareVerdict;
   readonly cycleDay: number;
   readonly date: string;
   readonly chain: {
@@ -462,7 +467,16 @@ export function compareChainDay(
     );
   }
 
-  const verdict = verification.ok && !diffs.any() ? 'MATCH' : 'MISMATCH';
+  const rootsMatch =
+    walletRootFromSite === h.walletRoot &&
+    (tokenRootFromSite === null || tokenRootFromSite === h.tokenRoot);
+  let verdict: CompareVerdict = 'MISMATCH';
+  if (verification.ok && !diffs.any() && rootsMatch) {
+    verdict = day.tokenLeaves ? 'MATCH' : 'MATCH_WITHOUT_TOKENS';
+  }
+  if (verification.ok && !diffs.any() && !rootsMatch) {
+    notes.push('no record differs, yet a root rebuilt from the site differs');
+  }
   if (walletRootFromSite === h.walletRoot && verdict === 'MISMATCH') {
     notes.push('the wallet root rebuilt from the site equals the chain root');
   }

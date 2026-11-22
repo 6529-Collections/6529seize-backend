@@ -53,7 +53,7 @@ describe('compareChainDay', () => {
 
   it('compares wallets without a token list, and says so', () => {
     const r = run(undefined, { ...chainDayFixture(), tokenLeaves: null });
-    expect(r.verdict).toBe('MATCH');
+    expect(r.verdict).toBe('MATCH_WITHOUT_TOKENS');
     expect(r.site.tokenRootFromSite).toBeNull();
     expect(r.notes).toContain(
       'the chain side has no token list: per-card values not compared'

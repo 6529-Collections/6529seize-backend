@@ -125,6 +125,29 @@ describe('runCompare', () => {
     );
   });
 
+  it('exits 3 when the chain side serves no token list', async () => {
+    const d = await fixtureDirs();
+    await fs.unlink(path.join(d.chainDir, tokenDayFileName(20737)));
+    const run = await runCompare(
+      parseCompareArgs([
+        '--cycle-day',
+        '20737',
+        '--chain-dir',
+        d.chainDir,
+        '--site-dir',
+        d.siteDir,
+        '--out',
+        d.out
+      ]) as any
+    );
+    expect(run.exitCode).toBe(3);
+    expect(run.summary).toContain('MATCH_WITHOUT_TOKENS');
+    const report = JSON.parse(
+      await fs.readFile(path.join(d.out, 'report.json'), 'utf8')
+    );
+    expect(report.toolCommit).toMatch(/^([0-9a-f]{40}|unknown)$/);
+  });
+
   it('exits 1 on a difference and 2 when the chain has no such day', async () => {
     const d = await fixtureDirs((s) => {
       s.wallets[fixtureWallet('2')].boostedTdh = 251;
@@ -149,7 +172,7 @@ describe('runCompare', () => {
     const api = 'https://api.example/api';
     const seen: string[] = [];
     const answers: Record<string, () => Response> = {
-      [`${api}/uploads?date=20261011&page_size=50`]: () =>
+      [`${api}/uploads?date=20261011&page_size=5`]: () =>
         Response.json({
           data: [
             {
@@ -159,7 +182,7 @@ describe('runCompare', () => {
             }
           ]
         }),
-      [`${api}/consolidated_uploads?date=20261011&page_size=50`]: () =>
+      [`${api}/consolidated_uploads?date=20261011&page_size=5`]: () =>
         Response.json({
           data: [
             {

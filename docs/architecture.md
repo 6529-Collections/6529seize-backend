@@ -162,6 +162,39 @@ JSON integers within JavaScript's safe integer range. The width migration
 preserves stored values. Deploy `dbMigrationsLoop` with the full schema scope,
 then deploy `api`.
 
+## TDH days from the 6529 chain
+
+`tdhLoop` can read each TDH day from the 6529 chain instead of computing it.
+Two flags, both off by default, choose how. `tdhLoop`, `delegationsLoop` and
+`tdhHistoryLoop` read them, with `TDH_CHAIN_GATEWAY_URL`, from the secret on
+every invocation, so a change takes effect without a redeploy.
+
+- `FEATURE_TDH_CHAIN_SHADOW`: compare only. `tdhLoop`'s `chainPoll` schedule
+  events (every 5 minutes from 00:05 to 07:55 UTC, then every 30 minutes) read
+  the newest final day from the gateway and check its roots, counts, totals,
+  clusters and cutoff block. They compute the site's TDH at the chain's cutoff
+  block, grouped by the chain's clusters, and compare it and the live tables
+  with the chain's values exactly. The result goes to `tdh_chain_days`. No TDH
+  table is written.
+- `FEATURE_TDH_FROM_CHAIN`: the same, then the TDH tables are written with the
+  chain's totals over the site's computation, ranked again. The wallet and
+  consolidated tables, `tdh_blocks`, the identities sync marker and the day's
+  `tdh_chain_days` record commit in one transaction. Follow-up steps then run
+  once each and are marked on the record: NFT totals, history for days N-1 and
+  N, metrics, the two dated uploads, and the day files. A failed step is
+  resumed by the next poll; the tables are never written twice for a day.
+  The 00:01 `tdhLoop` run, `tdhHistoryLoop`'s 00:30 run and the delegations
+  loop's within-day TDH rerun stop. "TDH calculations done" follows the
+  identities sync as for a full `tdhLoop` run.
+
+`tdh_chain_days` is an index of the chain: a rebuild reads the same days from
+the gateway. A consolidation whose key is longer than the `consolidation_key`
+columns is left out of the write and queued on the day's record until the
+columns are wider.
+
+Rollback: turn `FEATURE_TDH_FROM_CHAIN` off. The next 00:01 `tdhLoop` run
+computes the day as before; set `TDH_RESET` to recompute at once.
+
 ## Active TDH voting discovery
 
 `GET /v2/waves/active-votes` is an optional-auth read in the existing API Lambda.
@@ -606,6 +639,8 @@ flowchart TD
     SeizeAPI --> WaveDropMetricsDirtyQueue["SQS: wave-drop-metrics-refresh-dirty.fifo"] --> WaveDropMetricsRefreshLoop
     SeizeAPI --> WaveScoreDirtyQueue["SQS: wave-score-refresh-dirty.fifo"] --> WaveScoreRefreshLoop
     TdhLoop --> TdhDoneTopic["SNS: tdh-calculation-done.fifo"]
+    EventBridge -->|chainPoll| TdhLoop
+    TdhLoop -->|TDH days| ChainGateway["6529 chain gateway"]
     TdhDoneTopic --> XTdhQueue["SQS: xtdh-start.fifo"] --> XTdhLoop["xTdhLoop"]
     DelegationsLoop -->|partial TDH persisted| XTdhQueue
     XTdhLoop --> XTdhQueue

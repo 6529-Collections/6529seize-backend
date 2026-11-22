@@ -22,6 +22,8 @@ import { sqlExecutor } from '@/sql-executor';
 import { parseTdhDataFromDB } from '@/sql_helpers';
 import { Time } from '@/time';
 import { calculateConsolidationChangePlan } from './tdh-history-consolidation-changes';
+import { appFeatures } from '@/app-features';
+import { refreshTdhChainSettings } from '@/tdhChain/tdh-chain-flags';
 
 const csvParser = require('csv-parser');
 
@@ -34,6 +36,14 @@ const fetch = (url: RequestInfo, init?: RequestInit) =>
 export const handler = sentryContext.wrapLambdaHandler(async () => {
   await doInDbContext(
     priorityAlertsContext.wrapAsyncFunction(ALERT_TITLE, async () => {
+      await refreshTdhChainSettings();
+      if (appFeatures.isTdhFromChainEnabled()) {
+        // The chain-day write runs history for its day once the day is in.
+        logger.info(
+          `[TDH FROM THE 6529 CHAIN] [HISTORY RUNS AFTER EACH DAY'S WRITE] [SKIPPING]`
+        );
+        return;
+      }
       const iterations = Number.parseInt(
         process.env.TDH_HISTORY_ITERATIONS ?? '1'
       );
@@ -52,6 +62,25 @@ export const handler = sentryContext.wrapLambdaHandler(async () => {
     }
   );
 });
+
+/**
+ * History for one day: each consolidation's change against the day before,
+ * and the network totals. Reads the day's and the previous day's rows from
+ * historic_tdh_consolidation. With `fallback` off (the chain-day write), a
+ * day missing there is an error; it is never read from 6529.io's own API.
+ */
+export async function runTdhHistoryForDate(
+  date: Date,
+  { fallback }: { fallback: boolean }
+): Promise<void> {
+  const historyResult = await tdhHistory(date, fallback);
+  await calculateGlobalTDHHistory(
+    date,
+    historyResult.block,
+    historyResult.history,
+    historyResult.tdh
+  );
+}
 
 async function tdhHistoryLoop(iterations: number) {
   for (let i = iterations - 1; i >= 0; i--) {
@@ -76,9 +105,24 @@ async function tdhHistoryLoop(iterations: number) {
   }
 }
 
-async function fetchTDHBlock(start: Time): Promise<TDHBlock> {
+/**
+ * Whether history can be computed for `date`: the TDH blocks of that day and
+ * of the day before are both in tdh_blocks. The first day the chain path
+ * writes, or the day after a gap, has no day before it.
+ */
+export async function hasTdhHistoryInputs(date: Date): Promise<boolean> {
+  const day = Time.fromDate(date);
+  const counts = await Promise.all(
+    [day, day.minusDays(1)].map(
+      async (start) => (await selectTdhBlocks(start)).length
+    )
+  );
+  return counts.every((n) => n === 1);
+}
+
+function selectTdhBlocks(start: Time): Promise<TDHBlock[]> {
   const end = start.minusDays(1);
-  const blocks = await sqlExecutor.execute<TDHBlock>(
+  return sqlExecutor.execute<TDHBlock>(
     `SELECT * FROM 
     ${TDH_BLOCKS_TABLE} 
     WHERE timestamp < :start 
@@ -89,6 +133,10 @@ async function fetchTDHBlock(start: Time): Promise<TDHBlock> {
       end: end.toIsoDateString()
     }
   );
+}
+
+async function fetchTDHBlock(start: Time): Promise<TDHBlock> {
+  const blocks = await selectTdhBlocks(start);
   if (blocks.length !== 1) {
     throw new Error(
       `Expected 1 TDH block found ${blocks.length} for date ${start.toIsoDateString()}`
@@ -97,7 +145,10 @@ async function fetchTDHBlock(start: Time): Promise<TDHBlock> {
   return blocks[0];
 }
 
-async function fetchConsolidatedTDH(block: number): Promise<ConsolidatedTDH[]> {
+async function fetchConsolidatedTDH(
+  block: number,
+  fallback = true
+): Promise<ConsolidatedTDH[]> {
   // Primary: Try to get data from historic_tdh_consolidation table
   const results = await sqlExecutor.execute<ConsolidatedTDH>(
     `SELECT * FROM ${HISTORIC_CONSOLIDATED_WALLETS_TDH_TABLE} WHERE block = :block`,
@@ -106,6 +157,9 @@ async function fetchConsolidatedTDH(block: number): Promise<ConsolidatedTDH[]> {
 
   if (results.length > 0) {
     return results.map(parseTdhDataFromDB);
+  }
+  if (!fallback) {
+    throw new Error(`No historic_tdh_consolidation rows for block ${block}`);
   }
 
   // Fallback: If no results in DB, try to fetch from arweave uploads
@@ -237,7 +291,7 @@ async function parseCsvFromText(csvText: string): Promise<any[]> {
   });
 }
 
-async function tdhHistory(date: Date) {
+async function tdhHistory(date: Date, fallback = true) {
   const todayTime = Time.fromDate(date);
   const yesterdayTime = todayTime.minusDays(1);
   const todayBlock = await fetchTDHBlock(todayTime);
@@ -252,10 +306,12 @@ async function tdhHistory(date: Date) {
   );
 
   const todayData: ConsolidatedTDH[] = await fetchConsolidatedTDH(
-    todayBlock.block_number
+    todayBlock.block_number,
+    fallback
   );
   const yesterdayData: ConsolidatedTDH[] = await fetchConsolidatedTDH(
-    yesterdayBlock.block_number
+    yesterdayBlock.block_number,
+    fallback
   );
 
   const tdhHistory: TDHHistory[] = [];

@@ -6,6 +6,7 @@ import { chainClusterSource } from './chain-cluster-source';
 import {
   compareChainDay,
   CompareReport,
+  CompareVerdict,
   DIFF_CLASSES
 } from './chain-day-compare';
 import {
@@ -14,9 +15,11 @@ import {
   verifyChainDay,
   verifyCutoff
 } from './chain-day-verify';
-import { dateOfCycleDay } from './site-day';
+import { dateOfCycleDay, SiteDay } from './site-day';
 import { siteDayFromRows } from './site-day-rows';
 import {
+  CHAIN_DAY_STEPS,
+  ChainDayStep,
   SaveTdhChainDay,
   splitByKeyWidth,
   TdhChainDayMode,
@@ -30,18 +33,27 @@ import { TdhChainDay } from './tdh-chain.types';
  * 1. Verify the day (order, counts, roots, clusters, totals) and its cutoff
  *    block against Ethereum. A failed check records the day as FAILED and
  *    writes nothing else.
- * 2. Compute the site's own TDH at the chain's cutoff block, grouped by the
+ * 2. CHAIN only: if the TDH tables already hold a newer block, record the
+ *    day as SKIPPED and write nothing: an older day never replaces a newer
+ *    one.
+ * 3. Wait (record nothing) until the site's transaction index is past the
+ *    cutoff block, or three hours past the boundary.
+ * 4. Compute the site's own TDH at the chain's cutoff block, grouped by the
  *    chain's clusters, in memory: the breakdowns (base, raw, boost, seasons,
- *    editions) the chain doesn't carry.
- * 3. Compare that computation with the leaves, exactly, and keep the report.
- * 4. Write the chain's values over it (`applyChainValues`) and rank again
+ *    editions) the chain doesn't carry. Compare it with the leaves exactly.
+ * 5. Write the chain's values over it (`applyChainValues`) and rank again
  *    on them.
- * 5. SHADOW: compare the chain's day with the live tables too, and diff the
- *    rows the switch would write against them. Write only tdh_chain_days.
+ * 6. SHADOW: compare the chain's day with the live tables too, and diff the
+ *    rows the switch would write against them. Record the day; write no TDH
+ *    table.
  *    CHAIN: leave out any consolidation whose key is wider than the columns
- *    (queued on the day's row), then write the TDH tables as a full tdhLoop
- *    run does. The identities sync and "TDH calculations done" follow from
- *    that write as they do today.
+ *    (queued on the day's record), then write every TDH table, the
+ *    tdh_blocks row, the identities sync marker and the day's record (as
+ *    WRITTEN) in one transaction. Then run the follow-up steps (NFT totals,
+ *    history for days N-1 and N, metrics, the uploads), each once, marking
+ *    each done; a retry resumes the steps and never rewrites the tables.
+ *    The identities sync and its "TDH calculations done" follow the write
+ *    as they do for a full tdhLoop run.
  */
 
 export interface ComputedWallets {
@@ -61,6 +73,13 @@ export interface ChainTdhRows {
 export interface LiveTdh {
   readonly wallets: TDH[];
   readonly consolidated: ConsolidatedTDH[];
+}
+
+/** The follow-up steps of a CHAIN write. */
+export interface ChainDayStepRunner {
+  run(step: ChainDayStep, cycleDay: number): Promise<void>;
+  /** Marks the step done and returns the steps done so far. */
+  markDone(cycleDay: number, step: ChainDayStep): Promise<ChainDayStep[]>;
 }
 
 export interface ChainTdhIngestDeps {
@@ -83,16 +102,29 @@ export interface ChainTdhIngestDeps {
     consolidatedRows: ConsolidatedTDH[],
     blockTimestamp: Date
   ): Promise<{ wallets: TDH[]; consolidated: ConsolidatedTDH[] }>;
-  readLive(): Promise<LiveTdh>;
-  write(rows: ChainTdhRows): Promise<void>;
+  readLive(block: number): Promise<LiveTdh>;
+  /** Writes the day's TDH tables and its record in one transaction. */
+  writeDay(rows: ChainTdhRows, record: SaveTdhChainDay): Promise<void>;
+  readonly steps: ChainDayStepRunner;
   keyWidth(): Promise<number>;
+  /** The highest block the TDH tables hold, or 0. */
+  latestTdhBlock(): Promise<number>;
+  /** The highest block in the site's transaction index. */
+  transactionsIndexedTo(): Promise<number>;
   saveDay(s: SaveTdhChainDay): Promise<void>;
   now(): number;
 }
 
+/** Blocks past the cutoff the transaction index must reach. */
+export const INDEX_MARGIN_BLOCKS = 64;
+/** After this long past the boundary, the index wait gives way. */
+export const INDEX_WAIT_LIMIT_MS = 3 * 60 * 60 * 1000;
+
+export type IngestStatus = TdhChainDayStatus | 'WAITING';
+
 export interface ChainTdhIngestResult {
-  readonly status: TdhChainDayStatus;
-  readonly verdict: 'MATCH' | 'MISMATCH' | null;
+  readonly status: IngestStatus;
+  readonly verdict: CompareVerdict | null;
   readonly deferredKeys: readonly string[];
   readonly summary: IngestSummary;
 }
@@ -101,8 +133,9 @@ export interface IngestSummary {
   readonly mode: TdhChainDayMode;
   readonly cycleDay: number;
   readonly failures: readonly ChainDayFailure[];
+  readonly note?: string;
   readonly cache?: ReportDigest;
-  readonly live?: ReportDigest;
+  readonly live?: ReportDigest | { readonly error: string };
   readonly rowDiff?: RowDiff;
   readonly overrides?: {
     readonly count: number;
@@ -114,7 +147,7 @@ export interface IngestSummary {
 }
 
 interface ReportDigest {
-  readonly verdict: 'MATCH' | 'MISMATCH';
+  readonly verdict: CompareVerdict;
   readonly siteBlock: number;
   readonly counts: Record<string, number>;
   readonly walletRootFromSite: string;
@@ -205,12 +238,58 @@ function overrideDigest(overrides: readonly ChainOverride[]) {
   return { count: overrides.length, byKind, examples: overrides.slice(0, 20) };
 }
 
+/** The follow-up steps not yet done, run in order, each marked once done. */
+export async function runFollowUpSteps(
+  cycleDay: number,
+  stepsDone: readonly ChainDayStep[],
+  runner: ChainDayStepRunner
+): Promise<ChainDayStep[]> {
+  let done = [...stepsDone];
+  for (const step of CHAIN_DAY_STEPS) {
+    if (done.includes(step)) continue;
+    await runner.run(step, cycleDay);
+    done = await runner.markDone(cycleDay, step);
+  }
+  return done;
+}
+
+function liveSiteDay(
+  day: TdhChainDay,
+  live: LiveTdh
+): SiteDay | { error: string } {
+  try {
+    return siteDayFromRows(
+      day.header.cutoffNumber,
+      dateOfCycleDay(day.header.cycleDay),
+      live.wallets,
+      live.consolidated
+    );
+  } catch (e) {
+    return { error: (e as Error).message };
+  }
+}
+
 export async function ingestChainDay(
   day: TdhChainDay,
   mode: TdhChainDayMode,
   deps: ChainTdhIngestDeps
 ): Promise<ChainTdhIngestResult> {
   const h = day.header;
+  const record = (
+    status: TdhChainDayStatus,
+    verdict: CompareVerdict | null,
+    summary: IngestSummary,
+    deferredKeys: readonly string[] = []
+  ): SaveTdhChainDay => ({
+    day,
+    mode,
+    status,
+    verdict,
+    summary,
+    deferredKeys,
+    now: deps.now()
+  });
+
   const verification = verifyChainDay(day);
   const failures: ChainDayFailure[] = [...verification.failures];
   if (verification.ok) {
@@ -218,16 +297,40 @@ export async function ingestChainDay(
   }
   if (failures.length > 0) {
     const summary: IngestSummary = { mode, cycleDay: h.cycleDay, failures };
-    await deps.saveDay({
-      day,
-      mode,
-      status: 'FAILED',
-      verdict: null,
-      summary,
-      deferredKeys: [],
-      now: deps.now()
-    });
+    await deps.saveDay(record('FAILED', null, summary));
     return { status: 'FAILED', verdict: null, deferredKeys: [], summary };
+  }
+
+  if (mode === 'CHAIN') {
+    const newest = await deps.latestTdhBlock();
+    if (newest > h.cutoffNumber) {
+      const summary: IngestSummary = {
+        mode,
+        cycleDay: h.cycleDay,
+        failures: [],
+        note: `the TDH tables already hold block ${newest}, newer than this day's ${h.cutoffNumber}`
+      };
+      await deps.saveDay(record('SKIPPED', null, summary));
+      return { status: 'SKIPPED', verdict: null, deferredKeys: [], summary };
+    }
+  }
+
+  const indexed = await deps.transactionsIndexedTo();
+  if (
+    indexed < h.cutoffNumber + INDEX_MARGIN_BLOCKS &&
+    deps.now() < h.boundary * 1000 + INDEX_WAIT_LIMIT_MS
+  ) {
+    return {
+      status: 'WAITING',
+      verdict: null,
+      deferredKeys: [],
+      summary: {
+        mode,
+        cycleDay: h.cycleDay,
+        failures: [],
+        note: `the transaction index is at block ${indexed}, the cutoff is ${h.cutoffNumber}`
+      }
+    };
   }
 
   const clusters = chainClusterSource(verification.clusters);
@@ -283,14 +386,12 @@ export async function ingestChainDay(
   };
 
   if (mode === 'SHADOW') {
-    const live = await deps.readLive();
-    const liveReport = compareChainDay(
-      day,
-      siteDayFromRows(h.cutoffNumber, date, live.wallets, live.consolidated)
-    );
+    const live = await deps.readLive(h.cutoffNumber);
+    const site = liveSiteDay(day, live);
+    const liveReport = 'error' in site ? null : compareChainDay(day, site);
     const summary: IngestSummary = {
       ...base,
-      live: digest(liveReport),
+      live: liveReport ? digest(liveReport) : { error: (site as any).error },
       rowDiff: {
         wallets: diffTable(walletRows, live.wallets, (r) =>
           r.wallet.toLowerCase()
@@ -300,45 +401,28 @@ export async function ingestChainDay(
         )
       }
     };
-    await deps.saveDay({
-      day,
-      mode,
-      status: 'INGESTED',
-      verdict: liveReport.verdict,
-      summary,
-      deferredKeys: [],
-      now: deps.now()
-    });
-    return {
-      status: 'INGESTED',
-      verdict: liveReport.verdict,
-      deferredKeys: [],
-      summary
-    };
+    const verdict = liveReport?.verdict ?? 'MISMATCH';
+    await deps.saveDay(record('INGESTED', verdict, summary));
+    return { status: 'INGESTED', verdict, deferredKeys: [], summary };
   }
 
   const width = await deps.keyWidth();
   const { fit, deferred } = splitByKeyWidth(consolidatedRows, width);
-  const status: TdhChainDayStatus =
-    deferred.length > 0 ? 'KEYS_DEFERRED' : 'INGESTED';
   const writeTime = new Date(day.apply.applyTimeMs ?? h.boundary * 1000);
   fit.forEach((row) => (row.date = writeTime));
-  await deps.write({
-    day,
-    blockTimestamp,
-    adjustedSeasons,
-    wallets: { ...wallets, tdh: walletRows },
-    consolidated: fit
-  });
   const summary: IngestSummary = { ...base, deferredKeys: deferred.length };
-  await deps.saveDay({
-    day,
-    mode,
-    status,
-    verdict: cache.verdict,
-    summary,
-    deferredKeys: deferred,
-    now: deps.now()
-  });
+  await deps.writeDay(
+    {
+      day,
+      blockTimestamp,
+      adjustedSeasons,
+      wallets: { ...wallets, tdh: walletRows },
+      consolidated: fit
+    },
+    record('WRITTEN', cache.verdict, summary, deferred)
+  );
+  const done = await runFollowUpSteps(h.cycleDay, [], deps.steps);
+  const status: TdhChainDayStatus =
+    done.length === CHAIN_DAY_STEPS.length ? 'INGESTED' : 'WRITTEN';
   return { status, verdict: cache.verdict, deferredKeys: deferred, summary };
 }

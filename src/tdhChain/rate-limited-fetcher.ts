@@ -33,6 +33,8 @@ export interface RateLimitedFetcherOptions {
   readonly minIntervalMs?: number;
   readonly retries?: number;
   readonly userAgent?: string;
+  /** Each attempt's time limit; the day's CSV files are tens of MB. */
+  readonly timeoutMs?: number;
   readonly fetchFn?: FetchFn;
   readonly now?: () => number;
   readonly sleep?: (ms: number) => Promise<void>;
@@ -52,6 +54,7 @@ export class RateLimitedFetcher {
   private readonly minIntervalMs: number;
   private readonly retries: number;
   private readonly userAgent: string;
+  private readonly timeoutMs: number;
   private readonly fetchFn: FetchFn;
   private readonly now: () => number;
   private readonly sleep: (ms: number) => Promise<void>;
@@ -63,6 +66,7 @@ export class RateLimitedFetcher {
     this.minIntervalMs = options.minIntervalMs ?? 500;
     this.retries = options.retries ?? 3;
     this.userAgent = options.userAgent ?? 'tdh-chain-compare/1';
+    this.timeoutMs = options.timeoutMs ?? 180_000;
     this.fetchFn =
       options.fetchFn ?? ((url, init) => fetch(url, init) as Promise<Response>);
     this.now = options.now ?? (() => Date.now());
@@ -112,8 +116,17 @@ export class RateLimitedFetcher {
       body: jsonBody,
       redirect: 'manual',
       credentials: 'omit',
-      headers
+      headers,
+      signal: AbortSignal.timeout(this.timeoutMs)
     });
+  }
+
+  /**
+   * What the log keeps of a URL. A POST goes to an RPC endpoint whose path
+   * can carry a provider key, so only its origin is kept.
+   */
+  private logged(url: string, jsonBody?: string): string {
+    return jsonBody === undefined ? url : new URL(url).origin;
   }
 
   private async requestOnce(
@@ -129,7 +142,7 @@ export class RateLimitedFetcher {
         attempt < this.retries
       ) {
         this.log.push({
-          url: current,
+          url: this.logged(current, jsonBody),
           status: res.status,
           bytes: 0,
           sha256: null
@@ -141,7 +154,7 @@ export class RateLimitedFetcher {
       if (res.status >= 300 && res.status < 400) {
         const location = res.headers.get('location');
         this.log.push({
-          url: current,
+          url: this.logged(current, jsonBody),
           status: res.status,
           bytes: 0,
           sha256: null
@@ -158,7 +171,7 @@ export class RateLimitedFetcher {
       const body = new Uint8Array(await res.arrayBuffer());
       const sha256 = createHash('sha256').update(body).digest('hex');
       this.log.push({
-        url: current,
+        url: this.logged(current, jsonBody),
         status: res.status,
         bytes: body.length,
         sha256

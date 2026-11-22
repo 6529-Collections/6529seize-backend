@@ -11,9 +11,9 @@ import { siteDayFromUploads } from './site-uploads';
  * 6529.io's values for one day from its public API, unauthenticated, through
  * a RateLimitedFetcher (two requests a second at most). Six GETs:
  *
- * 1. `/uploads?date=` and 2. `/consolidated_uploads?date=`: the newest 50
- *    upload rows (the API ignores `date` today), of which the day's is taken
- *    by its date;
+ * 1. `/uploads?date=` and 2. `/consolidated_uploads?date=`: the API lists
+ *    the uploads whose timestamp is at or before that date's midnight,
+ *    newest first, so the day's upload leads; it is taken by its date;
  * 3, 4. the two CSV files they name, from an Arweave gateway;
  * 5. `/tdh_global_history?page_size=1` and 6. `/blocks?page_size=3`: the
  *    site's newest totals and TDH blocks, kept as evidence.
@@ -71,10 +71,10 @@ export async function readSiteDayPublic(
   const notes: string[] = [];
 
   bodies.uploads = await fetcher.get(
-    `${base}/uploads?date=${date}&page_size=50`
+    `${base}/uploads?date=${date}&page_size=5`
   );
   bodies.consolidatedUploads = await fetcher.get(
-    `${base}/consolidated_uploads?date=${date}&page_size=50`
+    `${base}/consolidated_uploads?date=${date}&page_size=5`
   );
   const walletUrl = uploadUrl(bodyJson(bodies.uploads), date, 'uploads');
   const consolidatedUrl = uploadUrl(

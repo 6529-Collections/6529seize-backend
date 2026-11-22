@@ -35,6 +35,7 @@ import { appFeatures } from '@/app-features';
 import { TdhChainDayEntity } from '@/entities/ITdhChainDay';
 import { sitePollerDeps } from '@/tdhChain/chain-tdh-ingest.deps';
 import { pollChainDays } from '@/tdhChain/tdh-chain-day-poller';
+import { refreshTdhChainSettings } from '@/tdhChain/tdh-chain-flags';
 
 const logger = Logger.get('TDH_LOOP');
 const ALERT_TITLE = 'TDH Loop';
@@ -49,6 +50,7 @@ export const handler = sentryContext.wrapLambdaHandler(
   async (event?: { chainPoll?: boolean }) => {
     await doInDbContext(
       priorityAlertsContext.wrapAsyncFunction(ALERT_TITLE, async () => {
+        await refreshTdhChainSettings();
         if (event?.chainPoll) {
           await pollChainDays(sitePollerDeps());
           return;

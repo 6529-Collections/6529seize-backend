@@ -1313,18 +1313,51 @@ export async function persistTDH(
         }
       );
     } else {
-      logger.info(`[TDH] [DELETING ALL WALLETS FOR BLOCK ${block}]`);
-      await tdhRepo.delete({ block: block });
-      await deleteAll(tdhMemesRepo);
-      await deleteAll(tdhEditionsRepo);
-      logger.info(`[TDH AND TDH_MEMES CLEARED]`);
-      await insertWithoutUpdate(tdhRepo, tdh);
-      await insertWithoutUpdate(tdhMemesRepo, memesTdh);
-      await insertWithoutUpdate(tdhEditionsRepo, tdhEditions);
+      await replaceWalletTdhRows(manager, block, {
+        tdh,
+        memesTdh,
+        tdhEditions
+      });
     }
   });
 
   logger.info(`[TDH] PERSISTED ALL WALLETS TDH [${tdh.length}]`);
+}
+
+export interface WalletTdhRows {
+  readonly tdh: TDH[];
+  readonly memesTdh: TDHMemes[];
+  readonly tdhEditions: TDHEditions[];
+}
+
+/** A full write of the wallet TDH tables, inside the caller's transaction. */
+async function replaceWalletTdhRows(
+  manager: EntityManager,
+  block: number,
+  { tdh, memesTdh, tdhEditions }: WalletTdhRows
+) {
+  const tdhRepo = manager.getRepository(TDH);
+  const tdhMemesRepo = manager.getRepository(TDHMemes);
+  const tdhEditionsRepo = manager.getRepository(TDHEditions);
+  logger.info(`[TDH] [DELETING ALL WALLETS FOR BLOCK ${block}]`);
+  await tdhRepo.delete({ block: block });
+  await deleteAll(tdhMemesRepo);
+  await deleteAll(tdhEditionsRepo);
+  logger.info(`[TDH AND TDH_MEMES CLEARED]`);
+  await insertWithoutUpdate(tdhRepo, tdh);
+  await insertWithoutUpdate(tdhMemesRepo, memesTdh);
+  await insertWithoutUpdate(tdhEditionsRepo, tdhEditions);
+}
+
+/**
+ * What the chain-day write adds to a full consolidated write, in the same
+ * transaction: the wallet tables, and a last step (the day's own record),
+ * so the day's TDH, its tdh_blocks row, the identities sync marker and the
+ * record of the day commit together or not at all.
+ */
+export interface ConsolidatedTdhWriteExtras {
+  readonly walletTdh?: WalletTdhRows;
+  readonly afterWrite?: (connection: ConnectionWrapper<any>) => Promise<void>;
 }
 
 /** With a transaction's manager, the block row commits with its TDH rows. */
@@ -1385,8 +1418,12 @@ export async function persistConsolidatedTDH(
   nftTdh: NftTDH[],
   scope: ConsolidatedTdhPersistenceScope,
   blockTimestamp: Date,
-  { writeAllRows }: Pick<PartialTdhWriteOptions, 'writeAllRows'> = {}
+  { writeAllRows }: Pick<PartialTdhWriteOptions, 'writeAllRows'> = {},
+  extras: ConsolidatedTdhWriteExtras = {}
 ) {
+  if (extras.walletTdh && scope.mode !== 'FULL') {
+    throw new Error('wallet rows ride along with a full write only');
+  }
   logger.info(`[CONSOLIDATED TDH] PERSISTING WALLETS TDH [${tdh.length}]`);
   // Fails before any TDH write if the marker table is missing.
   await identityTdhSyncStateDb.ensureRows();
@@ -1437,6 +1474,9 @@ export async function persistConsolidatedTDH(
         }
       );
     } else {
+      if (extras.walletTdh) {
+        await replaceWalletTdhRows(manager, block, extras.walletTdh);
+      }
       logger.info(`[CONSOLIDATED TDH] [DELETING ALL WALLETS]`);
       await deleteAll(tdhRepo);
       await deleteAll(tdhMemesRepo);
@@ -1489,6 +1529,7 @@ export async function persistConsolidatedTDH(
         qrHolder
       );
     }
+    await extras.afterWrite?.(qrHolder);
   });
 
   logger.info(`[CONSOLIDATED TDH] PERSISTED ALL WALLETS TDH [${tdh.length}]`);

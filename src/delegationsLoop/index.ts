@@ -2,6 +2,7 @@ import { consolidateActivity } from '../aggregatedActivityLoop/aggregated_activi
 import { identitiesService } from '../api-serverless/src/identities/identities.service';
 import { USE_CASE_PRIMARY_ADDRESS } from '@/constants';
 import { appFeatures } from '@/app-features';
+import { refreshTdhChainSettings } from '@/tdhChain/tdh-chain-flags';
 import {
   fetchAllConsolidatedTdh,
   fetchLatestNftDelegationBlock,
@@ -91,6 +92,8 @@ export const handler = sentryContext.wrapLambdaHandler(
     try {
       return await doInDbContext(
         async () => {
+          // The TDH chain flag decides the within-day TDH rerun below.
+          await refreshTdhChainSettings();
           // Every identities sync in this invocation shares one time budget.
           startIdentitySyncBudget();
           const scopeBackfill = readScopeBackfillConfig();

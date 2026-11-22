@@ -209,6 +209,35 @@ export async function loadSecrets() {
   logger.info('[SECRETS LOADED]');
 }
 
+/**
+ * Reads `keys` from the secret again and applies them to the environment:
+ * a key the secret no longer holds is removed. For the few flags that must
+ * take effect without a redeploy, though a warm container loaded the secret
+ * long ago. Outside Lambda (local config) there is nothing to read again.
+ */
+export async function reloadSecretKeys(keys: readonly string[]): Promise<void> {
+  if (!process.env.AWS_LAMBDA_FUNCTION_NAME) {
+    return;
+  }
+  const secretsManager = new SecretsManager({
+    region: process.env.AWS_REGION ?? process.env.AWS_DEFAULT_REGION,
+    maxAttempts: 2,
+    requestHandler: new NodeHttpHandler({
+      connectionTimeout: SECRETS_MANAGER_CONNECTION_TIMEOUT_MS,
+      socketTimeout: SECRETS_MANAGER_SOCKET_TIMEOUT_MS
+    })
+  });
+  const secret = await secretsManager.getSecretValue({ SecretId: SECRET });
+  const values = secret.SecretString ? JSON.parse(secret.SecretString) : {};
+  for (const key of keys) {
+    if (Object.prototype.hasOwnProperty.call(values, key)) {
+      process.env[key] = String(values[key]);
+    } else {
+      delete process.env[key];
+    }
+  }
+}
+
 export async function loadLocalConfig() {
   const logger = Logger.get('ENV_READER');
   if (process.env.NODE_ENV) {

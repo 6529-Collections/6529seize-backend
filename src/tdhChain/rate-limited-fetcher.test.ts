@@ -164,13 +164,14 @@ describe('RateLimitedFetcher', () => {
       allowedHosts: ['rpc.example'],
       ...clock,
       fetchFn: fakeFetch(
-        { 'https://rpc.example/': () => new Response('{}') },
+        { 'https://rpc.example/v2/secret-key': () => new Response('{}') },
         calls,
         clock
       )
     });
-    await f.postJson('https://rpc.example/', { a: 1 });
+    await f.postJson('https://rpc.example/v2/secret-key', { a: 1 });
     expect(calls[0].init.method).toBe('POST');
     expect(calls[0].init.body).toBe('{"a":1}');
+    expect(f.log[0].url).toBe('https://rpc.example');
   });
 });

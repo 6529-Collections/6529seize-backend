@@ -1,3 +1,4 @@
+import { formatConsolidationDisplay } from '@/consolidation-display';
 import { ConsolidatedTDH, NftTDH, TDH } from '@/entities/ITDH';
 import { getConsolidationWallets } from '@/tdhLoop/consolidation-wallets';
 import { ChainCluster } from './chain-day-verify';
@@ -138,7 +139,9 @@ export function applyChainValues(
     consolidatedRows.push({
       ...zeroFields(block, blockTimestamp),
       consolidation_key: c.key,
-      consolidation_display: c.wallets.join(' - '),
+      consolidation_display: formatConsolidationDisplay(
+        c.wallets.map((w) => ({ wallet: w, display: w }))
+      ),
       wallets: c.wallets.slice(),
       boosted_tdh: c.identityTdh,
       boosted_tdh_rate: 0

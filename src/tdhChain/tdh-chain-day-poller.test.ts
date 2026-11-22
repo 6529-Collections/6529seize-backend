@@ -2,10 +2,11 @@ import { chainDayFixture } from '@/tests/fixtures/tdh-chain-day.fixture';
 import { ChainTdhIngestResult } from './chain-tdh-ingest';
 import { splitByKeyWidth, TdhChainDayRow } from './tdh-chain-days.db';
 import {
-  MAX_DAYS_PER_RUN,
-  planDays,
+  isFinal,
+  planDay,
   pollChainDays,
-  PollerDeps
+  PollerDeps,
+  STALE_AFTER_MS
 } from './tdh-chain-day-poller';
 import { TdhChainSource } from './tdh-chain-source';
 import { TdhChainDay } from './tdh-chain.types';
@@ -17,46 +18,60 @@ const row = (
   cycleDay,
   mode: 'SHADOW',
   status: 'INGESTED',
+  verdict: 'MATCH',
   deferredKeys: [],
+  stepsDone: [],
+  boundary: cycleDay * 86400,
+  block: 1,
   ...extra
 });
 
-describe('planDays', () => {
+describe('planDay', () => {
   it('starts at the newest day without backfilling', () => {
-    expect(planDays(null, 20781, 'SHADOW', 0)).toEqual([20781]);
+    expect(planDay(null, 20781, 'SHADOW', 0)).toBe(20781);
   });
 
-  it('takes the days after the last one, oldest first, a few per run', () => {
-    expect(planDays(row(20780), 20781, 'SHADOW', 0)).toEqual([20781]);
-    expect(planDays(row(20781), 20781, 'SHADOW', 0)).toEqual([]);
-    expect(planDays(row(20770), 20781, 'SHADOW', 0)).toHaveLength(
-      MAX_DAYS_PER_RUN
+  it('takes the next day, or jumps to the newest across a gap', () => {
+    expect(planDay(row(20780), 20781, 'SHADOW', 0)).toBe(20781);
+    expect(planDay(row(20781), 20781, 'SHADOW', 0)).toBeNull();
+    expect(planDay(row(20770), 20781, 'CHAIN', 0)).toBe(20781);
+    expect(planDay(row(20782), 20781, 'CHAIN', 0)).toBeNull();
+  });
+
+  it('tries a failed day again only while nothing newer exists', () => {
+    expect(planDay(row(20781, { status: 'FAILED' }), 20781, 'SHADOW', 0)).toBe(
+      20781
     );
-    expect(planDays(row(20770), 20781, 'SHADOW', 0)[0]).toBe(20771);
-  });
-
-  it('tries a failed day again', () => {
-    expect(
-      planDays(row(20781, { status: 'FAILED' }), 20781, 'SHADOW', 0)
-    ).toEqual([20781]);
-  });
-
-  it('writes a shadowed day again once the site reads the chain', () => {
-    expect(planDays(row(20781), 20781, 'CHAIN', 0)).toEqual([20781]);
-    expect(planDays(row(20781, { mode: 'CHAIN' }), 20781, 'CHAIN', 0)).toEqual(
-      []
+    expect(planDay(row(20781, { status: 'FAILED' }), 20782, 'SHADOW', 0)).toBe(
+      20782
     );
+  });
+
+  it('never writes a shadowed day again when chain mode starts', () => {
+    expect(planDay(row(20781), 20781, 'CHAIN', 0)).toBeNull();
   });
 
   it('writes a day with deferred keys again once the columns are wide enough', () => {
     const deferred = row(20783, {
       mode: 'CHAIN',
-      status: 'KEYS_DEFERRED',
       deferredKeys: ['k'.repeat(214)]
     });
-    expect(planDays(deferred, 20783, 'CHAIN', 200)).toEqual([]);
-    expect(planDays(deferred, 20783, 'CHAIN', 700)).toEqual([20783]);
-    expect(planDays(deferred, 20784, 'CHAIN', 200)).toEqual([20784]);
+    expect(planDay(deferred, 20783, 'CHAIN', 200)).toBeNull();
+    expect(planDay(deferred, 20783, 'CHAIN', 700)).toBe(20783);
+    expect(planDay(deferred, 20784, 'CHAIN', 200)).toBe(20784);
+  });
+});
+
+describe('isFinal', () => {
+  it('takes a day whose apply block is at or below the finalized height', () => {
+    const d = chainDayFixture();
+    expect(isFinal(d)).toBe(true);
+    expect(
+      isFinal({ ...d, apply: { ...d.apply, finalizedHeight: 1100 } })
+    ).toBe(false);
+    expect(isFinal({ ...d, apply: { ...d.apply, applyHeight: null } })).toBe(
+      true
+    );
   });
 });
 
@@ -104,98 +119,172 @@ function result(
 
 describe('pollChainDays', () => {
   const day = chainDayFixture();
+  const noon = (cycleDay: number, minute = 30) =>
+    cycleDay * 86_400_000 + 12 * 3_600_000 + minute * 60_000;
 
   function poller(
     over: Partial<PollerDeps>,
-    alerts: string[],
-    ingested: number[]
+    log: { alerts: string[]; ingested: number[]; resumed: string[] }
   ): PollerDeps {
     return {
       mode: 'SHADOW',
       source: source([day]),
       latestRow: async () => null,
+      latestWritten: async () => null,
       keyWidth: async () => 200,
       ingest: async (d) => {
-        ingested.push(d.header.cycleDay);
+        log.ingested.push(d.header.cycleDay);
         return result('INGESTED', 'MATCH');
       },
-      alert: async (title) => {
-        alerts.push(title);
+      steps: {
+        run: async (step) => {
+          log.resumed.push(step);
+        },
+        markDone: async () => []
       },
+      alert: async (title) => {
+        log.alerts.push(title);
+      },
+      now: () => noon(day.header.cycleDay),
       ...over
     };
   }
+  const fresh = () => ({
+    alerts: [] as string[],
+    ingested: [] as number[],
+    resumed: [] as string[]
+  });
 
   it('does nothing while both flags are off', async () => {
-    const alerts: string[] = [];
-    const ingested: number[] = [];
-    const out = await pollChainDays(poller({ mode: null }, alerts, ingested));
-    expect(out.ingested).toEqual([]);
-    expect(ingested).toEqual([]);
+    const log = fresh();
+    expect(await pollChainDays(poller({ mode: null }, log))).toEqual({});
+    expect(log.ingested).toEqual([]);
   });
 
   it('ingests the newest day and raises no alert on a match', async () => {
-    const alerts: string[] = [];
-    const ingested: number[] = [];
-    await pollChainDays(poller({}, alerts, ingested));
-    expect(ingested).toEqual([20737]);
-    expect(alerts).toEqual([]);
+    const log = fresh();
+    await pollChainDays(poller({}, log));
+    expect(log.ingested).toEqual([20737]);
+    expect(log.alerts).toEqual([]);
+  });
+
+  it('resumes the follow-up steps of a WRITTEN day before anything else', async () => {
+    const log = fresh();
+    const out = await pollChainDays(
+      poller(
+        {
+          mode: 'CHAIN',
+          latestRow: async () =>
+            row(20737, {
+              mode: 'CHAIN',
+              status: 'WRITTEN',
+              stepsDone: ['nfts', 'history']
+            }),
+          latestWritten: async () =>
+            row(20737, { mode: 'CHAIN', status: 'WRITTEN' })
+        },
+        log
+      )
+    );
+    expect(out).toEqual({ resumed: 20737 });
+    expect(log.resumed).toEqual(['metrics', 'uploads', 'dayFiles']);
+    expect(log.ingested).toEqual([]);
+  });
+
+  it('waits for a day that is not final yet', async () => {
+    const log = fresh();
+    const notFinal = { ...day, apply: { ...day.apply, finalizedHeight: 1 } };
+    await pollChainDays(poller({ source: source([notFinal]) }, log));
+    expect(log.ingested).toEqual([]);
   });
 
   it('alerts on a mismatch and on a newly failed day, but not again for the same failure', async () => {
-    const alerts: string[] = [];
-    const ingested: number[] = [];
+    let log = fresh();
     await pollChainDays(
-      poller(
-        { ingest: async () => result('INGESTED', 'MISMATCH') },
-        alerts,
-        ingested
-      )
+      poller({ ingest: async () => result('INGESTED', 'MISMATCH') }, log)
     );
-    expect(alerts).toEqual([
+    expect(log.alerts).toEqual([
       'TDH day 20737: the site and the 6529 chain differ (SHADOW)'
     ]);
-    alerts.length = 0;
+    log = fresh();
     await pollChainDays(
-      poller({ ingest: async () => result('FAILED', null) }, alerts, ingested)
+      poller({ ingest: async () => result('FAILED', null) }, log)
     );
-    expect(alerts).toEqual([
+    expect(log.alerts).toEqual([
       'TDH day 20737 from the 6529 chain failed its checks'
     ]);
-    alerts.length = 0;
+    log = fresh();
     await pollChainDays(
       poller(
         {
           latestRow: async () => row(20737, { status: 'FAILED' }),
           ingest: async () => result('FAILED', null)
         },
-        alerts,
-        ingested
+        log
       )
     );
-    expect(alerts).toEqual([]);
+    expect(log.alerts).toEqual([]);
   });
 
-  it('waits quietly when the gateway is unreachable', async () => {
-    const alerts: string[] = [];
-    const ingested: number[] = [];
+  it('in CHAIN alerts once an hour while the newest day written is late, the gateway down included', async () => {
     const broken = {
       ...source([day]),
       latestDay: async () => {
         throw new Error('reset');
       }
     };
-    const out = await pollChainDays(
-      poller({ source: broken }, alerts, ingested)
+    const lateNow = day.header.boundary * 1000 + STALE_AFTER_MS + 3_600_000;
+    const at = (minute: number) => {
+      const d = new Date(lateNow);
+      d.setUTCMinutes(minute);
+      return d.getTime();
+    };
+    const written = async () =>
+      row(20737, { mode: 'CHAIN', boundary: day.header.boundary });
+    let log = fresh();
+    await pollChainDays(
+      poller(
+        {
+          mode: 'CHAIN',
+          source: broken,
+          latestWritten: written,
+          now: () => at(15)
+        },
+        log
+      )
     );
-    expect(out.ingested).toEqual([]);
-    expect(alerts).toEqual([]);
+    expect(log.alerts).toEqual(['TDH from the 6529 chain is late']);
+    log = fresh();
+    await pollChainDays(
+      poller(
+        {
+          mode: 'CHAIN',
+          source: broken,
+          latestWritten: written,
+          now: () => at(35)
+        },
+        log
+      )
+    );
+    expect(log.alerts).toEqual([]);
+    log = fresh();
+    await pollChainDays(
+      poller(
+        {
+          mode: 'SHADOW',
+          source: broken,
+          latestWritten: written,
+          now: () => at(15)
+        },
+        log
+      )
+    );
+    expect(log.alerts).toEqual([]);
   });
 
   it('stops when the gateway serves no day', async () => {
-    const alerts: string[] = [];
-    const ingested: number[] = [];
-    await pollChainDays(poller({ source: source([]) }, alerts, ingested));
-    expect(ingested).toEqual([]);
+    const log = fresh();
+    await pollChainDays(poller({ source: source([]) }, log));
+    expect(log.ingested).toEqual([]);
   });
 });

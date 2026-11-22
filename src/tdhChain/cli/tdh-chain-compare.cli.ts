@@ -1,3 +1,4 @@
+import { execFileSync } from 'child_process';
 import { promises as fs } from 'fs';
 import * as path from 'path';
 import {
@@ -26,7 +27,9 @@ import { jsonRpcBlockReader } from './json-rpc-block-reader';
  * The shadow compare: one TDH day on the 6529 chain against 6529.io's
  * values for the same day, exactly. Writes report.json and summary.txt to
  * --out and prints the summary. Exit 0 on MATCH, 1 on MISMATCH, 2 on bad
- * input or a failed read.
+ * input or a failed read, 3 on MATCH_WITHOUT_TOKENS (everything compared
+ * matched, but the chain side served no token list, so per-card values,
+ * which the switch writes, were not compared).
  */
 export const TDH_CHAIN_COMPARE_HELP = `tdh-chain-compare: a TDH day on the 6529 chain against 6529.io's, exactly
 
@@ -40,6 +43,7 @@ export const TDH_CHAIN_COMPARE_HELP = `tdh-chain-compare: a TDH day on the 6529 
   --out DIR               where report.json, summary.txt and the fetched inputs go
 
 Public reads are unauthenticated GETs, one at a time, at most two a second.
+Exit 0 MATCH, 1 MISMATCH, 2 bad input or a failed read, 3 MATCH_WITHOUT_TOKENS.
 `;
 
 export class CliUsageError extends Error {
@@ -139,10 +143,29 @@ function hostOf(url: string): string {
   return new URL(url).hostname.toLowerCase();
 }
 
+const EXIT_CODES: Record<CompareReport['verdict'], 0 | 1 | 3> = {
+  MATCH: 0,
+  MISMATCH: 1,
+  MATCH_WITHOUT_TOKENS: 3
+};
+
+/** The commit the tool ran from, for the report; 'unknown' outside git. */
+function toolCommit(): string {
+  try {
+    return execFileSync('git', ['rev-parse', 'HEAD'], {
+      cwd: __dirname,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore']
+    }).trim();
+  } catch {
+    return 'unknown';
+  }
+}
+
 export interface CompareRun {
   readonly report: CompareReport | null;
   readonly summary: string;
-  readonly exitCode: 0 | 1 | 2;
+  readonly exitCode: 0 | 1 | 2 | 3;
 }
 
 export async function runCompare(
@@ -200,6 +223,7 @@ export async function runCompare(
     );
   }
   const full: CompareReport & {
+    readonly toolCommit: string;
     readonly ethereumCutoffChecked: boolean;
     readonly requests: typeof fetcher.log;
   } = {
@@ -207,24 +231,18 @@ export async function runCompare(
     verdict:
       ethFailures && ethFailures.length > 0 ? 'MISMATCH' : report.verdict,
     notes: [...report.notes, ...notes],
+    toolCommit: toolCommit(),
     ethereumCutoffChecked: ethFailures !== null,
     requests: fetcher.log
   };
   const ethLine = notes.filter((n) => n.startsWith('Ethereum: '));
-  const summary =
-    summarizeReport(full) +
-    ethLine
-      .map(
-        (n) => `${n}
-`
-      )
-      .join('');
+  const summary = summarizeReport(full) + ethLine.map((n) => `${n}\n`).join('');
   await fs.writeFile(
     path.join(args.out, 'report.json'),
     JSON.stringify(full, null, 2)
   );
   await fs.writeFile(path.join(args.out, 'summary.txt'), summary);
-  return { report: full, summary, exitCode: full.verdict === 'MATCH' ? 0 : 1 };
+  return { report: full, summary, exitCode: EXIT_CODES[full.verdict] };
 }
 
 export async function main(argv: string[] = process.argv.slice(2)) {
