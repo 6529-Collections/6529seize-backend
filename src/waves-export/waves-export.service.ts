@@ -1,0 +1,531 @@
+import { compactDrop } from './waves-export.compact';
+import { groupCriteriaReasons, groupRaterKeys } from './waves-export.groups';
+import { compareCodePoints } from './waves-export.json';
+import {
+  ExportActiveEntry,
+  ExportSignedDrop,
+  ExportWaveRow,
+  Json,
+  WavesExportSource
+} from './waves-export.types';
+import { RawDirectory } from './waves-export.writer';
+
+export const WAVES_EXPORT_STAGES = [
+  'waves',
+  'decisions',
+  'votes',
+  'logs',
+  'groups',
+  'waverep',
+  'polls',
+  'drops'
+] as const;
+
+export type WavesExportStage = (typeof WAVES_EXPORT_STAGES)[number];
+
+export const WAVES_EXPORT_FORMAT = '6529io-waves-export-raw-v1';
+
+/** Drops a batch read of signed events takes (the public batch's size). */
+const SIGNED_BATCH = 50;
+
+export interface WavesExportOptions {
+  /** OUT/raw. */
+  readonly raw: RawDirectory;
+  readonly stages: readonly WavesExportStage[];
+  /** T_w in ms: polls are read open or closed as at this time. */
+  readonly freezeMs: number | null;
+  readonly exporterRevision: string;
+  /** Only these waves (a rehearsal); null for every wave. */
+  readonly waveIds: readonly string[] | null;
+  readonly dropPageSize: number;
+  readonly concurrency: number;
+  /** TDH plus xTDH as a clause metric (the snapshot tooling's --both-metric). */
+  readonly bothMetric: boolean;
+  readonly now?: () => number;
+  readonly log: (message: string) => void;
+}
+
+export interface WavesExportSummary {
+  readonly format: string;
+  readonly freeze_ms: number | null;
+  readonly exporter_revision: string;
+  readonly stages: readonly WavesExportStage[];
+  readonly counts: Record<string, number>;
+}
+
+type WaveV3 = { id: string; configuration?: Json; _error?: string };
+
+function asObject(value: unknown): Json {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Json)
+    : {};
+}
+
+function idOf(value: unknown): string | null {
+  const id = asObject(value).id;
+  return typeof id === 'string' && id ? id : null;
+}
+
+function sortedKeys<T>(record: Record<string, T>): Record<string, T> {
+  const out: Record<string, T> = {};
+  for (const key of Object.keys(record).sort(compareCodePoints)) {
+    out[key] = record[key];
+  }
+  return out;
+}
+
+/** Runs `work` over `items`, at most `limit` at a time, in order of start. */
+export async function forEachLimited<T>(
+  items: readonly T[],
+  limit: number,
+  work: (item: T) => Promise<void>
+): Promise<void> {
+  let next = 0;
+  const workers = Array.from(
+    { length: Math.max(1, Math.min(limit, items.length)) },
+    async () => {
+      while (next < items.length) {
+        const item = items[next++];
+        await work(item);
+      }
+    }
+  );
+  await Promise.all(workers);
+}
+
+/**
+ * The groups a wave's configuration shows, for its `/v3` read: every group
+ * the wave names and its parent's read group, so private ones show their id.
+ */
+export function eligibleGroupsForWave(
+  wave: ExportWaveRow,
+  byId: ReadonlyMap<string, ExportWaveRow>
+): string[] {
+  const parent = wave.parent_wave_id ? byId.get(wave.parent_wave_id) : null;
+  const ids = [
+    wave.visibility_group_id,
+    wave.admin_group_id,
+    wave.chat_group_id,
+    wave.participation_group_id,
+    wave.voting_group_id,
+    parent?.visibility_group_id ?? null
+  ].filter((id): id is string => !!id);
+  return Array.from(new Set(ids)).sort(compareCodePoints);
+}
+
+/**
+ * The groups the import carries and their roles, from the waves' and
+ * decisions' configurations (snapshot tooling, waves_fetch.py named_groups).
+ */
+export function namedGroups(
+  waves: Record<string, WaveV3>,
+  competitions: Record<string, Json>
+): Map<string, Set<string>> {
+  const uses = new Map<string, Set<string>>();
+  const add = (id: string | null, role: string) => {
+    if (!id) return;
+    const roles = uses.get(id) ?? new Set<string>();
+    roles.add(role);
+    uses.set(id, roles);
+  };
+  for (const wave of Object.values(waves)) {
+    const c = wave.configuration;
+    if (!c) continue;
+    add(idOf(asObject(asObject(c.visibility).scope).group), 'read');
+    add(idOf(asObject(asObject(c.chat).scope).group), 'post');
+    add(idOf(asObject(asObject(c.wave).admin_group).group), 'admin');
+  }
+  for (const competition of Object.values(competitions)) {
+    const submit = asObject(competition.participation).group_id;
+    const vote = asObject(competition.voting).group_id;
+    add(typeof submit === 'string' ? submit : null, 'submit');
+    add(typeof vote === 'string' ? vote : null, 'vote');
+  }
+  return uses;
+}
+
+/** ACTIVE entries of PUBLISHED decisions, in decision then entry order. */
+export function activeEntries(
+  competitions: Record<string, Json>,
+  details: Record<string, { entries: Json[] }>
+): ExportActiveEntry[] {
+  const out: ExportActiveEntry[] = [];
+  for (const id of Object.keys(details).sort(compareCodePoints)) {
+    const competition = competitions[id];
+    if (!competition || competition.lifecycle !== 'PUBLISHED') continue;
+    for (const entry of details[id].entries) {
+      if (entry.status !== 'ACTIVE') continue;
+      out.push({
+        competition_id: id,
+        wave_id: String(competition.wave_id),
+        entry_id: String(entry.id),
+        drop_id: String(entry.drop_id)
+      });
+    }
+  }
+  return out;
+}
+
+export class WavesExport {
+  private readonly counts: Record<string, number> = {};
+
+  constructor(
+    private readonly source: WavesExportSource,
+    private readonly options: WavesExportOptions
+  ) {}
+
+  private log(message: string) {
+    this.options.log(message);
+  }
+
+  private count(key: string, value: number) {
+    this.counts[key] = value;
+  }
+
+  async run(): Promise<WavesExportSummary> {
+    const raw = this.options.raw;
+    await raw.ensure();
+    const startedAt = (this.options.now ?? Date.now)();
+    for (const stage of this.options.stages) {
+      const stageStart = Date.now();
+      this.log(`== ${stage}`);
+      await this.runStage(stage);
+      this.log(
+        `== ${stage} done in ${Math.round((Date.now() - stageStart) / 1000)} s`
+      );
+    }
+    const summary: WavesExportSummary = {
+      format: WAVES_EXPORT_FORMAT,
+      freeze_ms: this.options.freezeMs,
+      exporter_revision: this.options.exporterRevision,
+      stages: this.options.stages,
+      counts: sortedKeys(this.counts)
+    };
+    await raw.save('export.json', {
+      ...summary,
+      source: "6529.io's database (a read replica at the waves freeze)",
+      wave_subset: this.options.waveIds,
+      started_at: startedAt,
+      finished_at: (this.options.now ?? Date.now)()
+    });
+    return summary;
+  }
+
+  private async runStage(stage: WavesExportStage): Promise<void> {
+    switch (stage) {
+      case 'waves':
+        return this.stageWaves();
+      case 'decisions':
+        return this.stageDecisions();
+      case 'votes':
+        return this.stageVotes();
+      case 'logs':
+        return this.stageLogs();
+      case 'groups':
+        return this.stageGroups();
+      case 'waverep':
+        return this.stageWaveRep();
+      case 'polls':
+        return this.stagePolls();
+      case 'drops':
+        return this.stageDrops();
+    }
+  }
+
+  private async waveIds(): Promise<string[]> {
+    const waves =
+      await this.options.raw.load<Record<string, WaveV3>>('waves_v3.json');
+    return Object.keys(waves)
+      .filter((id) => !waves[id]._error)
+      .sort(compareCodePoints);
+  }
+
+  private async stageWaves(): Promise<void> {
+    const all = await this.source.listWaves();
+    const byId = new Map(all.map((wave) => [wave.id, wave]));
+    const subset = this.options.waveIds ? new Set(this.options.waveIds) : null;
+    const rows = subset ? all.filter((wave) => subset.has(wave.id)) : all;
+    const waves: Record<string, WaveV3> = {};
+    let failed = 0;
+    await forEachLimited(rows, this.options.concurrency, async (wave) => {
+      try {
+        const configuration = await this.source.waveConfiguration(
+          wave,
+          eligibleGroupsForWave(wave, byId)
+        );
+        waves[wave.id] = {
+          id: wave.id,
+          name: configuration.name,
+          picture: configuration.picture,
+          configuration
+        } as WaveV3;
+      } catch (error) {
+        failed++;
+        waves[wave.id] = { id: wave.id, _error: String(error) };
+      }
+    });
+    const exported = new Set(Object.keys(waves));
+    const parents: Record<string, string> = {};
+    for (const wave of rows) {
+      if (wave.parent_wave_id && exported.has(wave.parent_wave_id)) {
+        parents[wave.id] = wave.parent_wave_id;
+      }
+    }
+    const roots = rows
+      .filter((wave) => !wave.parent_wave_id)
+      .map((wave) => ({ id: wave.id }))
+      .sort((a, b) => compareCodePoints(a.id, b.id));
+    await this.options.raw.save('waves_all.json', roots);
+    await this.options.raw.save('waves_v3.json', sortedKeys(waves));
+    await this.options.raw.save('subwave_parents.json', sortedKeys(parents));
+    this.count('waves', rows.length - failed);
+    this.count('waves_failed', failed);
+    this.count('subwaves', Object.keys(parents).length);
+    this.log(
+      `waves: ${rows.length} (${Object.keys(parents).length} subwaves, ${failed} not read)`
+    );
+  }
+
+  private async stageDecisions(): Promise<void> {
+    const waveIds = await this.waveIds();
+    const exported = new Set(waveIds);
+    const ids = await this.source.listCompetitionIds(waveIds);
+    const competitions: Record<string, Json> = {};
+    const details: Record<string, Json> = {};
+    let entries = 0;
+    await forEachLimited(ids, this.options.concurrency, async (id) => {
+      const read = await this.source.competition(id);
+      if (!read || !exported.has(String(read.competition.wave_id))) return;
+      competitions[id] = read.competition;
+      details[id] = read.details;
+      entries += read.details.entries.length;
+    });
+    await this.options.raw.save('competitions.json', sortedKeys(competitions));
+    await this.options.raw.save(
+      'competition_details.json',
+      sortedKeys(details)
+    );
+    this.count('decisions', Object.keys(competitions).length);
+    this.count('entries', entries);
+    this.log(
+      `decisions: ${Object.keys(competitions).length}, entries ${entries}`
+    );
+  }
+
+  private async loadActiveEntries(): Promise<ExportActiveEntry[]> {
+    const raw = this.options.raw;
+    return activeEntries(
+      await raw.load<Record<string, Json>>('competitions.json'),
+      await raw.load<Record<string, { entries: Json[] }>>(
+        'competition_details.json'
+      )
+    );
+  }
+
+  private async stageVotes(): Promise<void> {
+    const entries = await this.loadActiveEntries();
+    const votes: Record<string, Json[]> = {};
+    let rows = 0;
+    await forEachLimited(entries, this.options.concurrency, async (entry) => {
+      votes[entry.entry_id] = await this.source.entryVotes(entry);
+      rows += votes[entry.entry_id].length;
+    });
+    await this.options.raw.save('entry_votes.json', sortedKeys(votes));
+    this.count('vote_rows', rows);
+    this.log(`votes: ${entries.length} entries, ${rows} rows`);
+  }
+
+  private async stageLogs(): Promise<void> {
+    const entries = await this.loadActiveEntries();
+    const logs: Record<string, Json[]> = {};
+    let rows = 0;
+    await forEachLimited(entries, this.options.concurrency, async (entry) => {
+      const log = await this.source.entryVoteLog(entry);
+      logs[entry.drop_id] = log.map((row) => ({
+        id: row.id,
+        old_vote: row.old_vote,
+        new_vote: row.new_vote,
+        created_at: row.created_at
+      }));
+      rows += log.length;
+    });
+    await this.options.raw.save('entry_logs.json', sortedKeys(logs));
+    this.count('vote_log_rows', rows);
+    this.log(`logs: ${entries.length} entries, ${rows} rows`);
+  }
+
+  private async stageGroups(): Promise<void> {
+    const raw = this.options.raw;
+    const waves = await raw.load<Record<string, WaveV3>>('waves_v3.json');
+    const competitions = await raw.load<Record<string, Json>>(
+      'competitions.json',
+      {}
+    );
+    const uses = namedGroups(waves, competitions);
+    const ids = Array.from(uses.keys()).sort(compareCodePoints);
+    const found = await this.source.groups(ids);
+    const groups: Record<string, Json> = {};
+    for (const id of ids) {
+      groups[id] = found[id] ?? { _error: 404 };
+    }
+    const lists: Record<string, Record<string, string[]>> = {};
+    const users: Record<string, string | null> = {};
+    for (const id of ids) {
+      const group = groups[id];
+      if (group._error) continue;
+      const definition = asObject(group.group);
+      for (const [which, field] of [
+        ['include', 'identity_group_id'],
+        ['exclude', 'excluded_identity_group_id']
+      ] as const) {
+        const identityGroupId = definition[field];
+        if (typeof identityGroupId !== 'string' || !identityGroupId) continue;
+        const wallets = await this.source.identityGroupWallets(identityGroupId);
+        lists[id] = lists[id] ?? {};
+        lists[id][which] = wallets
+          .map((wallet) => wallet.toLowerCase())
+          .sort(compareCodePoints);
+      }
+      for (const rater of groupRaterKeys(definition)) {
+        if (!(rater in users)) {
+          users[rater] = await this.source.profileIdOf(rater);
+        }
+      }
+    }
+    const members: Record<string, Json[]> = {};
+    for (const id of ids) {
+      const group = groups[id];
+      if (group._error) continue;
+      const definition = asObject(group.group);
+      const unresolvedRater = groupRaterKeys(definition).some(
+        (rater) => !users[rater]
+      );
+      const reasons = groupCriteriaReasons(definition, {
+        bothMetric: this.options.bothMetric
+      });
+      if (!reasons.length && !unresolvedRater) continue;
+      members[id] = (await this.source.groupMembers(group)).map((member) => ({
+        wallet: (member.wallet ?? '').toLowerCase(),
+        key: member.key
+      }));
+    }
+    await raw.save('groups.json', sortedKeys(groups));
+    await raw.save('group_lists.json', sortedKeys(lists));
+    await raw.save('group_members.json', sortedKeys(members));
+    await raw.save('group_users.json', sortedKeys(users));
+    const missing = ids.filter((id) => groups[id]._error).length;
+    this.count('groups', ids.length - missing);
+    this.count('groups_missing', missing);
+    this.count('groups_as_members', Object.keys(members).length);
+    this.log(
+      `groups: ${ids.length} (${missing} missing), lists ${Object.keys(lists).length}, as members ${Object.keys(members).length}`
+    );
+  }
+
+  private async stageWaveRep(): Promise<void> {
+    const waveIds = await this.waveIds();
+    const ratings = await this.source.waveRep(waveIds);
+    const categories: Record<string, Json[]> = {};
+    let rows = 0;
+    for (const [waveId, waveRatings] of Object.entries(ratings)) {
+      rows += waveRatings.length;
+      categories[waveId] = Array.from(
+        new Set(waveRatings.map((rating) => rating.category))
+      )
+        .sort(compareCodePoints)
+        .map((category) => ({ category }));
+    }
+    await this.options.raw.save('wave_rep.json', {
+      categories: sortedKeys(categories),
+      ratings: sortedKeys(ratings)
+    });
+    this.count('wave_rep_rows', rows);
+    this.log(`wave REP: ${rows} rows`);
+  }
+
+  private async stagePolls(): Promise<void> {
+    const waveIds = await this.waveIds();
+    const nowMillis = this.options.freezeMs ?? (this.options.now ?? Date.now)();
+    const polls: Record<string, Record<string, Json[]>> = {};
+    let count = 0;
+    await forEachLimited(waveIds, this.options.concurrency, async (waveId) => {
+      for (const state of ['OPEN', 'CLOSED'] as const) {
+        const items = await this.source.wavePolls(waveId, state, nowMillis);
+        if (!items.length) continue;
+        polls[waveId] = polls[waveId] ?? {};
+        polls[waveId][state] = items;
+        count += items.length;
+      }
+    });
+    await this.options.raw.save('polls.json', sortedKeys(polls));
+    this.count('polls', count);
+    this.log(`polls: ${count} in ${Object.keys(polls).length} waves`);
+  }
+
+  private async stageDrops(): Promise<void> {
+    const raw = this.options.raw;
+    const waveIds = await this.waveIds();
+    let drops = 0;
+    let signed = 0;
+    let done = 0;
+    await forEachLimited(waveIds, this.options.concurrency, async (waveId) => {
+      const written = await this.exportWaveDrops(waveId);
+      drops += written.drops;
+      signed += written.signed;
+      done++;
+      if (done % 100 === 0 || written.drops >= 10_000) {
+        this.log(
+          `drops: ${done}/${waveIds.length} waves, ${drops} drops, ${signed} signed`
+        );
+      }
+    });
+    await raw.ensure('drops');
+    this.count('drops', drops);
+    this.count('signed_drops', signed);
+    this.log(`drops: ${drops} in ${waveIds.length} waves, ${signed} signed`);
+  }
+
+  private async exportWaveDrops(
+    waveId: string
+  ): Promise<{ drops: number; signed: number }> {
+    const raw = this.options.raw;
+    const writer = await raw.openJsonLines('drops', `${waveId}.jsonl.gz`);
+    const signed: ExportSignedDrop[] = [];
+    try {
+      for await (const page of this.source.wavePagesOfDrops(
+        waveId,
+        this.options.dropPageSize
+      )) {
+        for (const drop of page) {
+          const row = compactDrop(drop);
+          row.wave_id = row.wave_id || waveId;
+          await writer.write(row);
+        }
+        const authorSigned = page.filter((drop) => !!drop.is_author_signed);
+        for (let i = 0; i < authorSigned.length; i += SIGNED_BATCH) {
+          signed.push(
+            ...(await this.source.signedEvents(
+              authorSigned.slice(i, i + SIGNED_BATCH)
+            ))
+          );
+        }
+      }
+    } finally {
+      await writer.close();
+    }
+    const signedWriter = await raw.openJsonLines(
+      'signed',
+      `${waveId}.jsonl.gz`
+    );
+    try {
+      for (const item of signed.sort((a, b) =>
+        compareCodePoints(a.drop_id, b.drop_id)
+      )) {
+        await signedWriter.write(item);
+      }
+    } finally {
+      await signedWriter.close();
+    }
+    return { drops: writer.count, signed: signed.length };
+  }
+}
