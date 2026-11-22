@@ -13,6 +13,7 @@ import {
   IdentityChainMirrorDb,
   MirrorState,
   RatingEventRow,
+  ratingTotalKey,
   ratingValueKey,
   RatingRowWrite
 } from './identity-chain-mirror.db';
@@ -99,6 +100,48 @@ class FakeDb {
       written++;
     }
     return written;
+  }
+  async ratingTotalsOf(
+    keys: {
+      target_profile_id: string;
+      matter: string;
+      matter_category: string;
+    }[]
+  ) {
+    const result = new Map<string, number>();
+    for (const key of keys) {
+      const rows = (this.ratings.get(key.target_profile_id) ?? []).filter(
+        (it) =>
+          it.matter === key.matter && it.matter_category === key.matter_category
+      );
+      if (rows.length) {
+        result.set(
+          ratingTotalKey(key),
+          rows.reduce((sum, it) => sum + it.rating, 0)
+        );
+      }
+    }
+    return result;
+  }
+  async fillRatingEventProfiles(since: number) {
+    let filled = 0;
+    this.ratingEvents = this.ratingEvents.map((it) => {
+      if (it.block_time_ms < since) return it;
+      const rater =
+        it.rater_profile_id ??
+        this.mapping.get(it.rater_principal)?.profile ??
+        null;
+      const target =
+        it.target_profile_id ??
+        this.mapping.get(it.target_principal)?.profile ??
+        null;
+      if (rater === it.rater_profile_id && target === it.target_profile_id) {
+        return it;
+      }
+      filled++;
+      return { ...it, rater_profile_id: rater, target_profile_id: target };
+    });
+    return filled;
   }
   async ratingsOf(
     keys: {
@@ -1078,6 +1121,8 @@ describe('IdentityChainMirror', () => {
         // 6529.io's value before the page: the full sync's 5.
         old_rating: 5,
         new_rating: 7,
+        // Alice's Kind total: 5 before, 7 after.
+        total_after: 7,
         origin: 'OPERATION',
         by_import: false,
         writer: 'tx:RATING_SET'
@@ -1086,6 +1131,7 @@ describe('IdentityChainMirror', () => {
         height: 102,
         old_rating: 7,
         new_rating: 6,
+        total_after: 6,
         origin: 'CAP_CUT',
         writer: 'system:RATING_SCAN'
       })
@@ -1096,6 +1142,38 @@ describe('IdentityChainMirror', () => {
       `0x0705${'0c'.repeat(32)}`,
       expect.anything()
     );
+  });
+
+  it("fills in the profile ids of a day's rating events once mapped", async () => {
+    const { mirror, db, alice, bob, tick } = world();
+    await mirror.run({ budgetMs: 60_000 });
+    tick(2 * 24 * 60 * 60 * 1000);
+    const now = 1_000 + 2 * 24 * 60 * 60 * 1000;
+    const event = (blockTimeMs: number, height: number): RatingEventRow => ({
+      height,
+      block_time_ms: blockTimeMs,
+      rater_principal: bob.principalId,
+      rater_profile_id: null,
+      target_principal: alice.principalId,
+      target_profile_id: null,
+      matter: 'REP',
+      matter_category: 'Kind',
+      old_rating: 0,
+      new_rating: 1,
+      total_after: 1,
+      origin: 'OPERATION',
+      by_import: false,
+      writer: 'tx:RATING_SET'
+    });
+    db.ratingEvents = [event(now - 1_000, 1), event(1_000, 2)];
+    const report = await mirror.run({ budgetMs: 60_000 });
+    expect(report.ratingEventsFilled).toBe(1);
+    expect(db.ratingEvents[0]).toMatchObject({
+      rater_profile_id: db.mapping.get(bob.principalId)?.profile,
+      target_profile_id: ALICE_PROFILE
+    });
+    // Older than a day: left as it is.
+    expect(db.ratingEvents[1].target_profile_id).toBeNull();
   });
 
   it('writes the rows before the page is saved, and none twice when it is read again', async () => {

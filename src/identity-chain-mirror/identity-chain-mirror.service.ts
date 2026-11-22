@@ -24,6 +24,7 @@ import {
   numberOrNull,
   RatingEventRow,
   RatingRowWrite,
+  ratingTotalKey,
   ratingValueKey
 } from './identity-chain-mirror.db';
 import {
@@ -100,6 +101,8 @@ const PAGE_KEYS = 2_000;
  * before (the rest are tried again).
  */
 const PIN_WINDOW_MS = 8 * 60 * 1000;
+/** Rating events whose profile ids are filled in once mapped: the last day. */
+const RATING_EVENT_FILL_MS = 24 * 60 * 60 * 1000;
 /** Identities waiting to be retried whose ids a fix of rows can leave out. */
 const MAX_WAITING_LEFT_OUT = 500;
 /** As many for the levels off the chain each run (it reads each one). */
@@ -205,6 +208,8 @@ export interface MirrorRunReport {
   deferred: number;
   /** Rating event rows the feed's Rating records gave (new ones written). */
   ratingEvents: number;
+  /** Rating event rows of the last day given a profile id now mapped. */
+  ratingEventsFilled: number;
 }
 
 /** A 32-byte word holding an address: 12 zero bytes, then the address. */
@@ -429,6 +434,7 @@ export class IdentityChainMirror {
       levelSweepDay: null,
       deferred: 0,
       ratingEvents: 0,
+      ratingEventsFilled: 0,
       skippedInactive: [],
       failed: [],
       retryLeft: 0,
@@ -543,6 +549,10 @@ export class IdentityChainMirror {
       report
     );
     state = await this.syncIdentities(state, deadline, report);
+    // Profile ids of rating events whose rater or target is mapped since.
+    report.ratingEventsFilled = await this.db.fillRatingEventProfiles(
+      this.now() - RATING_EVENT_FILL_MS
+    );
     // Once a first full sync has ended: before, every row waits for it.
     if (state.last_full_sync_at !== null) {
       state = await this.stepLevelsOffTheChain(state);
@@ -1596,7 +1606,23 @@ export class IdentityChainMirror {
         : [];
     });
     const before = await this.db.ratingsOf(known);
+    const totalsBefore = await this.db.ratingTotalsOf(
+      changes.flatMap((it) => {
+        const target = mapped.get(it.target);
+        return target
+          ? [
+              {
+                target_profile_id: target,
+                matter: it.matter,
+                matter_category: rowCategory(it)
+              }
+            ]
+          : [];
+      })
+    );
     const last = new Map<string, number>();
+    // The target's total in the matter and category as the page goes on.
+    const totals = new Map<string, number>();
     const rows: RatingEventRow[] = [];
     for (const change of changes) {
       const category = categoryOf(change);
@@ -1624,6 +1650,20 @@ export class IdentityChainMirror {
             ) ?? 0)
           : 0);
       last.set(key, change.value);
+      const totalKey = JSON.stringify([change.target, change.matter, category]);
+      const totalBefore =
+        totals.get(totalKey) ??
+        (targetProfile
+          ? (totalsBefore.get(
+              ratingTotalKey({
+                target_profile_id: targetProfile,
+                matter: change.matter,
+                matter_category: rowCategory(change)
+              })
+            ) ?? 0)
+          : 0);
+      const totalAfter = totalBefore + change.value - old;
+      totals.set(totalKey, totalAfter);
       if (old === change.value) continue;
       rows.push({
         height: change.height,
@@ -1636,6 +1676,7 @@ export class IdentityChainMirror {
         matter_category: category,
         old_rating: old,
         new_rating: change.value,
+        total_after: totalAfter,
         origin: ratingEventOrigin(change.writer, change.byImport),
         by_import: change.byImport,
         writer: writerText(change.writer)

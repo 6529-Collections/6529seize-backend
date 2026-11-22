@@ -533,6 +533,7 @@ describeWithSeed(
         matter_category: 'Kind',
         old_rating: 3,
         new_rating: newRating,
+        total_after: newRating,
         origin: 'OPERATION',
         by_import: false,
         writer: 'tx:RATING_SET'
@@ -582,6 +583,29 @@ describeWithSeed(
         }
       ]);
       expect(Array.from(values.values())).toEqual([3]);
+      // Alice's totals, the help bot's credits left out.
+      const totals = await db.ratingTotalsOf([
+        { target_profile_id: ALICE, matter: 'REP', matter_category: 'Kind' },
+        {
+          target_profile_id: ALICE,
+          matter: 'REP',
+          matter_category: HELP_BOT_CREDIT_CATEGORY
+        }
+      ]);
+      expect(Array.from(totals.values())).toEqual([3]);
+      // The rows without profiles get them once the principals are mapped.
+      await inTx((conn) => db.insertMapping(Q, ALICE, 'LEGACY', 1, conn));
+      expect(await db.fillRatingEventProfiles(0)).toBeGreaterThan(0);
+      const [filled] = await sqlExecutor.execute<any>(
+        `select rater_profile_id, target_profile_id from ${IDENTITY_CHAIN_RATING_EVENTS_TABLE}
+         where height = 93`
+      );
+      expect([filled.rater_profile_id, filled.target_profile_id]).toEqual([
+        null,
+        ALICE
+      ]);
+      // Older than `since`: left alone.
+      expect(await db.fillRatingEventProfiles(Number.MAX_SAFE_INTEGER)).toBe(0);
     });
 
     it('replaces a wallet delegations and all pairs', async () => {

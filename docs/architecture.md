@@ -1014,11 +1014,15 @@ notifications (`src/identity-chain-mirror/rating-events.ts`): one row per
 Rating record (family 0x0701) of each feed block, as the feed gives each key's
 final value in a block with its last writer. A row has the block's height and
 time (`block_time_ms`, the block's slot start), the rater and target
-principals and, when mapped then, their profile ids (none is made here), the
+principals and, when mapped, their profile ids (none is made here; each run
+fills in those of the last day's rows whose principal is mapped since, and a
+principal never mapped, merged or closed, can leave one null), the
 matter (REP, or CIC for NIC), the REP category's name (`''` for CIC; from the
 chain's Category records), the value 6529.io had before (its ratings row, or
 within a page the record before for the same key) and the new one (0 when
-removed), the record's `byImport` and raw `writer` (`tx:<op>` or
+removed), `total_after` (the target's total in that matter and category:
+6529.io's before the page plus the page's changes up to the row), the
+record's `byImport` and raw `writer` (`tx:<op>` or
 `system:<step>`), and `origin`: OPERATION for a RATING_SET transaction,
 CAP_CUT for the daily rating reduction (RATING_SCAN), IMPORT for the import
 (or no writer on a record the import wrote), UNKNOWN otherwise. Only

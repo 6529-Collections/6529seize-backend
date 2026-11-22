@@ -286,14 +286,18 @@ export class IdentityChainRatingEventEntity {
   @Column({ type: 'varchar', length: 66, nullable: false })
   readonly rater_principal!: string;
 
-  /** The rater's 6529.io profile id when mapped then; null when not. */
+  /**
+   * The rater's 6529.io profile id when mapped; null when not (filled in
+   * later when it is mapped within a day; a principal never mapped, merged
+   * or closed, can leave it null).
+   */
   @Column({ type: 'varchar', length: 50, nullable: true, default: null })
   readonly rater_profile_id!: string | null;
 
   @Column({ type: 'varchar', length: 66, nullable: false })
   readonly target_principal!: string;
 
-  /** The target's 6529.io profile id when mapped then; null when not. */
+  /** The target's 6529.io profile id when mapped; filled in as the rater's. */
   @Column({ type: 'varchar', length: 50, nullable: true, default: null })
   readonly target_profile_id!: string | null;
 
@@ -312,6 +316,13 @@ export class IdentityChainRatingEventEntity {
   /** 0: the rating was removed. */
   @Column({ type: 'int', nullable: false })
   readonly new_rating!: number;
+
+  /**
+   * The target's total in this matter and category after the change:
+   * 6529.io's before the page, plus the page's changes up to this one.
+   */
+  @Column({ type: 'bigint', nullable: false })
+  readonly total_after!: number;
 
   /** OPERATION, CAP_CUT, IMPORT or UNKNOWN (ratingEventOrigin). */
   @Column({ type: 'varchar', length: 16, nullable: false })

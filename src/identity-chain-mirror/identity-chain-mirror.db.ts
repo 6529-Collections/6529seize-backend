@@ -152,6 +152,7 @@ export interface RatingEventRow {
   readonly matter_category: string;
   readonly old_rating: number;
   readonly new_rating: number;
+  readonly total_after: number;
   readonly origin: string;
   readonly by_import: boolean;
   readonly writer: string | null;
@@ -163,6 +164,19 @@ function ratingKey(it: {
   matter_category: string;
 }): string {
   return JSON.stringify([it.rater_profile_id, it.matter, it.matter_category]);
+}
+
+/** The key of a 6529.io rating total (target, matter, category). */
+export function ratingTotalKey(it: {
+  readonly target_profile_id: string;
+  readonly matter: string;
+  readonly matter_category: string;
+}): string {
+  return JSON.stringify([
+    it.target_profile_id.toLowerCase(),
+    it.matter,
+    it.matter_category
+  ]);
 }
 
 /** The key of a 6529.io rating value (rater, target, matter, category). */
@@ -1279,6 +1293,77 @@ export class IdentityChainMirrorDb extends LazyDbAccessCompatibleService {
   }
 
   /**
+   * 6529.io's REP and CIC totals of targets by matter and category (profile
+   * ids), keyed by ratingTotalKey; the help bot's credits never count.
+   */
+  async ratingTotalsOf(
+    keys: {
+      readonly target_profile_id: string;
+      readonly matter: string;
+      readonly matter_category: string;
+    }[]
+  ): Promise<Map<string, number>> {
+    const result = new Map<string, number>();
+    const helpBot = HELP_BOT_CREDIT_CATEGORY.toLowerCase();
+    for (let i = 0; i < keys.length; i += 500) {
+      const params: Record<string, unknown> = { helpBot };
+      const tuples = keys
+        .slice(i, i + 500)
+        .map((it, j) => {
+          params[`t${j}`] = it.target_profile_id;
+          params[`m${j}`] = it.matter;
+          params[`c${j}`] = it.matter_category;
+          return `(:t${j}, :m${j}, :c${j})`;
+        })
+        .join(', ');
+      const rows = await this.db.execute<{
+        matter_target_id: string;
+        matter: string;
+        matter_category: string;
+        total: number | string;
+      }>(
+        `select matter_target_id, matter, matter_category, sum(rating) as total
+         from ${RATINGS_TABLE}
+         where (matter_target_id, matter, matter_category) in (${tuples})
+           and not (matter = 'REP' and lower(trim(matter_category)) = :helpBot)
+         group by matter_target_id, matter, matter_category`,
+        params
+      );
+      rows.forEach((it) =>
+        result.set(
+          ratingTotalKey({
+            target_profile_id: it.matter_target_id,
+            matter: it.matter,
+            matter_category: it.matter_category
+          }),
+          Number(it.total)
+        )
+      );
+    }
+    return result;
+  }
+
+  /**
+   * Rating event rows of the last day (`since`, block time) whose rater or
+   * target wasn't mapped get the profile id now mapped, in one statement.
+   * Returns the rows changed.
+   */
+  async fillRatingEventProfiles(since: number): Promise<number> {
+    const result = await this.db.execute(
+      `update ${IDENTITY_CHAIN_RATING_EVENTS_TABLE} e
+       left join ${IDENTITY_CHAIN_PRINCIPALS_TABLE} r on r.principal_id = e.rater_principal
+       left join ${IDENTITY_CHAIN_PRINCIPALS_TABLE} t on t.principal_id = e.target_principal
+       set e.rater_profile_id = coalesce(e.rater_profile_id, r.profile_id),
+           e.target_profile_id = coalesce(e.target_profile_id, t.profile_id)
+       where e.block_time_ms >= :since
+         and ((e.rater_profile_id is null and r.profile_id is not null)
+           or (e.target_profile_id is null and t.profile_id is not null))`,
+      { since }
+    );
+    return this.db.getAffectedRows(result);
+  }
+
+  /**
    * Rating event rows, in their own transaction, 500 a statement; a row
    * already there (the same height, rater, target, matter and category: a
    * page read again) is left as it is. Returns the rows written.
@@ -1305,17 +1390,18 @@ export class IdentityChainMirrorDb extends LazyDbAccessCompatibleService {
             params[`c${j}`] = it.matter_category;
             params[`o${j}`] = it.old_rating;
             params[`n${j}`] = it.new_rating;
+            params[`ta${j}`] = it.total_after;
             params[`or${j}`] = it.origin;
             params[`bi${j}`] = it.by_import ? 1 : 0;
             params[`w${j}`] = it.writer;
-            return `(:h${j}, :bt${j}, :rp${j}, :r${j}, :tp${j}, :t${j}, :m${j}, :c${j}, :o${j}, :n${j}, :or${j}, :bi${j}, :w${j}, 'FEED', :now)`;
+            return `(:h${j}, :bt${j}, :rp${j}, :r${j}, :tp${j}, :t${j}, :m${j}, :c${j}, :o${j}, :n${j}, :ta${j}, :or${j}, :bi${j}, :w${j}, 'FEED', :now)`;
           })
           .join(', ');
         const result = await this.db.execute(
           `insert ignore into ${IDENTITY_CHAIN_RATING_EVENTS_TABLE}
              (height, block_time_ms, rater_principal, rater_profile_id, target_principal,
-              target_profile_id, matter, matter_category, old_rating, new_rating, origin,
-              by_import, writer, source, created_at)
+              target_profile_id, matter, matter_category, old_rating, new_rating, total_after,
+              origin, by_import, writer, source, created_at)
            values ${values}`,
           params,
           { wrappedConnection: conn }
