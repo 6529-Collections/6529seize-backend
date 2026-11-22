@@ -2,7 +2,8 @@ import {
   bodyJson,
   bodyText,
   FetchedBody,
-  RateLimitedFetcher
+  RateLimitedFetcher,
+  withoutTrailingSlashes
 } from './rate-limited-fetcher';
 import { SiteDay } from './site-day';
 import { siteDayFromUploads } from './site-uploads';
@@ -66,7 +67,7 @@ export async function readSiteDayPublic(
   date: string,
   apiBase: string = DEFAULT_SITE_API
 ): Promise<PublicSiteRead> {
-  const base = apiBase.replace(/\/+$/, '');
+  const base = withoutTrailingSlashes(apiBase);
   const bodies: Record<string, FetchedBody> = {};
   const notes: string[] = [];
 

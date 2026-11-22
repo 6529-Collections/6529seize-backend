@@ -193,6 +193,13 @@ describe('delegations loop on-demand reconsolidation', () => {
     });
   });
 
+  it('runs the within-day TDH rerun as before while the chain is only shadowed', async () => {
+    process.env.FEATURE_TDH_CHAIN_SHADOW = 'true';
+    await invoke({ action: 'reconsolidate', wallets: [COLD] });
+    expect(updateTDH).toHaveBeenCalledTimes(1);
+    expect(consolidateAndPersistTDH).toHaveBeenCalledTimes(1);
+  });
+
   it('skips the within-day TDH rerun when TDH comes from the 6529 chain', async () => {
     process.env.FEATURE_TDH_FROM_CHAIN = 'true';
     const result = await invoke({ action: 'reconsolidate', wallets: [COLD] });

@@ -68,6 +68,11 @@ describeWithSeed(
         superseded: false,
         redoFailed: false
       });
+      expect(await db.get(20737)).toMatchObject({
+        cycleDay: 20737,
+        status: 'WRITTEN'
+      });
+      expect(await db.get(20739)).toBeNull();
       expect((await db.pendingDays()).map((r) => r.cycleDay)).toEqual([
         20735, 20737
       ]);
@@ -148,9 +153,10 @@ describeWithSeed(
 
     it('reads the newest TDH block, the uploads and the narrowest key column', async () => {
       expect(await db.latestTdhBlock()).toBe(700);
-      expect(await db.latestTdhBlockTime()).toBe(
-        Date.parse('2026-10-11T23:59:59Z')
-      );
+      expect(await db.latestTdhDay()).toEqual({
+        block: 700,
+        timestampMs: Date.parse('2026-10-11T23:59:59Z')
+      });
       expect(await db.uploadExists(false, '20261011', 500)).toBe(true);
       expect(await db.uploadExists(true, '20261011', 500)).toBe(false);
       expect(await db.uploadExists(false, '20261012', 700)).toBe(false);

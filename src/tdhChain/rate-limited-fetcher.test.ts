@@ -1,3 +1,4 @@
+import { compareText } from './p28';
 import { FetchRefusedError, RateLimitedFetcher } from './rate-limited-fetcher';
 
 interface Call {
@@ -69,7 +70,10 @@ describe('RateLimitedFetcher', () => {
     });
     await f.get('https://api.example/a');
     const headers = calls[0].init.headers as Record<string, string>;
-    expect(Object.keys(headers).sort()).toEqual(['Accept', 'User-Agent']);
+    expect(Object.keys(headers).sort(compareText)).toEqual([
+      'Accept',
+      'User-Agent'
+    ]);
     expect(calls[0].init.credentials).toBe('omit');
     await expect(f.get('https://user:pw@api.example/a')).rejects.toThrow(
       FetchRefusedError

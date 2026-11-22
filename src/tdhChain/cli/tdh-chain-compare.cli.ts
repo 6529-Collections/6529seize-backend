@@ -1,6 +1,5 @@
-import { execFileSync } from 'child_process';
-import { promises as fs } from 'fs';
-import * as path from 'path';
+import { promises as fs } from 'node:fs';
+import * as path from 'node:path';
 import {
   compareChainDay,
   CompareReport,
@@ -41,6 +40,8 @@ export const TDH_CHAIN_COMPARE_HELP = `tdh-chain-compare: a TDH day on the 6529 
   --eth-rpc URL           also check the day's cutoff block against Ethereum
   --http-host HOST        allow plain http to this host (a devnet gateway); repeatable
   --out DIR               where report.json, summary.txt and the fetched inputs go
+  --tool-commit SHA       the commit the tool runs from, kept in report.json
+                          (\`git rev-parse HEAD\` in the checkout); else 'unknown'
 
 Public reads are unauthenticated GETs, one at a time, at most two a second.
 Exit 0 MATCH, 1 MISMATCH, 2 bad input or a failed read, 3 MATCH_WITHOUT_TOKENS.
@@ -63,6 +64,7 @@ export interface CompareArgs {
   readonly ethRpc: string | null;
   readonly httpHosts: string[];
   readonly out: string;
+  readonly toolCommit: string;
 }
 
 export function parseCompareArgs(argv: string[]): CompareArgs | 'help' {
@@ -78,7 +80,7 @@ export function parseCompareArgs(argv: string[]): CompareArgs | 'help' {
     values.set(a, [...(values.get(a) ?? []), v]);
     i++;
   }
-  const known = [
+  const known = new Set([
     '--day',
     '--cycle-day',
     '--chain-gateway',
@@ -87,10 +89,11 @@ export function parseCompareArgs(argv: string[]): CompareArgs | 'help' {
     '--site-dir',
     '--eth-rpc',
     '--http-host',
-    '--out'
-  ];
+    '--out',
+    '--tool-commit'
+  ]);
   for (const k of Array.from(values.keys())) {
-    if (!known.includes(k)) throw new CliUsageError(`unknown option ${k}`);
+    if (!known.has(k)) throw new CliUsageError(`unknown option ${k}`);
   }
   const one = (k: string): string | null => {
     const v = values.get(k);
@@ -127,6 +130,10 @@ export function parseCompareArgs(argv: string[]): CompareArgs | 'help' {
   }
   const out = one('--out');
   if (out === null) throw new CliUsageError('--out is required');
+  const commit = one('--tool-commit');
+  if (commit !== null && !/^[0-9a-f]{7,40}$/i.test(commit)) {
+    throw new CliUsageError('--tool-commit is a commit hash');
+  }
   return {
     cycleDay,
     chainGateway,
@@ -135,7 +142,8 @@ export function parseCompareArgs(argv: string[]): CompareArgs | 'help' {
     siteDir,
     ethRpc: one('--eth-rpc'),
     httpHosts: (values.get('--http-host') ?? []).map((h) => h.toLowerCase()),
-    out
+    out,
+    toolCommit: commit?.toLowerCase() ?? 'unknown'
   };
 }
 
@@ -148,19 +156,6 @@ const EXIT_CODES: Record<CompareReport['verdict'], 0 | 1 | 3> = {
   MISMATCH: 1,
   MATCH_WITHOUT_TOKENS: 3
 };
-
-/** The commit the tool ran from, for the report; 'unknown' outside git. */
-function toolCommit(): string {
-  try {
-    return execFileSync('git', ['rev-parse', 'HEAD'], {
-      cwd: __dirname,
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'ignore']
-    }).trim();
-  } catch {
-    return 'unknown';
-  }
-}
 
 export interface CompareRun {
   readonly report: CompareReport | null;
@@ -231,7 +226,7 @@ export async function runCompare(
     verdict:
       ethFailures && ethFailures.length > 0 ? 'MISMATCH' : report.verdict,
     notes: [...report.notes, ...notes],
-    toolCommit: toolCommit(),
+    toolCommit: args.toolCommit,
     ethereumCutoffChecked: ethFailures !== null,
     requests: fetcher.log
   };

@@ -1,6 +1,6 @@
-import { promises as fs } from 'fs';
-import * as os from 'os';
-import * as path from 'path';
+import { promises as fs } from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
 import {
   chainDayFixture,
   fixtureWallet,
@@ -59,9 +59,22 @@ describe('parseCompareArgs', () => {
       siteDir: null,
       ethRpc: null,
       httpHosts: [],
-      out: 'o'
+      out: 'o',
+      toolCommit: 'unknown'
     });
     expect(parseCompareArgs(['--help'])).toBe('help');
+    expect(
+      parseCompareArgs([
+        '--day',
+        '2026-11-24',
+        '--chain-dir',
+        'c',
+        '--out',
+        'o',
+        '--tool-commit',
+        'ABCDEF0123'
+      ])
+    ).toMatchObject({ toolCommit: 'abcdef0123' });
   });
 
   it('refuses incomplete or conflicting options', () => {
@@ -92,7 +105,17 @@ describe('parseCompareArgs', () => {
         '--site-api',
         'a'
       ],
-      ['--day', '2026-11-24', '--chain-dir', 'c', '--out', 'o', '--token', 'x']
+      ['--day', '2026-11-24', '--chain-dir', 'c', '--out', 'o', '--token', 'x'],
+      [
+        '--day',
+        '2026-11-24',
+        '--chain-dir',
+        'c',
+        '--out',
+        'o',
+        '--tool-commit',
+        'main'
+      ]
     ];
     for (const argv of bad)
       expect(() => parseCompareArgs(argv)).toThrow(CliUsageError);
@@ -145,7 +168,7 @@ describe('runCompare', () => {
     const report = JSON.parse(
       await fs.readFile(path.join(d.out, 'report.json'), 'utf8')
     );
-    expect(report.toolCommit).toMatch(/^([0-9a-f]{40}|unknown)$/);
+    expect(report.toolCommit).toBe('unknown');
   });
 
   it('exits 1 on a difference and 2 when the chain has no such day', async () => {

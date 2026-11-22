@@ -1,5 +1,5 @@
-import { readFileSync, existsSync } from 'fs';
-import * as path from 'path';
+import { readFileSync, existsSync } from 'node:fs';
+import * as path from 'node:path';
 import { siteHeaderTotals } from './chain-day-compare';
 import { siteDayFromUploads } from './site-uploads';
 

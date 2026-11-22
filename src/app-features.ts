@@ -34,9 +34,10 @@ export class AppFeatures {
 
   /**
    * The TDH tables are written from the 6529 chain's days by the chain-day
-   * loop; tdhLoop and the delegations loop no longer compute TDH. Rollback:
-   * off, and tdhLoop computes the next day as before; invoke tdhLoop once to
-   * recompute today's day at once (its config sets TDH_RESET, so it does).
+   * poller, over the day tdhLoop's 00:01 run still computes as the fallback;
+   * the delegations loop's within-day TDH rerun stops. Rollback: off, and
+   * nothing replaces the site's own days; invoke tdhLoop once to recompute
+   * today's day at once (its config sets TDH_RESET, so it does).
    */
   public isTdhFromChainEnabled(): boolean {
     return this.isFeatureEnabled('TDH_FROM_CHAIN');

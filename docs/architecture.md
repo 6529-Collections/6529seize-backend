@@ -164,8 +164,8 @@ then deploy `api`.
 
 ## TDH days from the 6529 chain
 
-`tdhLoop` can read each TDH day from the 6529 chain instead of computing it.
-Two flags, both off by default, choose how. `tdhLoop`, `delegationsLoop` and
+`tdhLoop` can read each TDH day from the 6529 chain over the day it computes
+itself. Two flags, both off by default, choose how. `tdhLoop`, `delegationsLoop` and
 `tdhHistoryLoop` read them, with `TDH_CHAIN_GATEWAY_URL`, from the secret on
 every invocation, so a change takes effect without a redeploy.
 
@@ -185,12 +185,18 @@ every invocation, so a change takes effect without a redeploy.
   day files. A failed step is tried again by the next poll, and given up with
   an alert after 12 failed runs; a retry never writes the tables again. A
   newer day is written even while an older day's steps are due; the older
-  day's steps that read the tables are then given up, with an alert. An
-  alert also fires once an hour while the newest `tdh_blocks` row is more
-  than 30 hours old.
-  The 00:01 `tdhLoop` run, `tdhHistoryLoop`'s 00:30 run and the delegations
-  loop's within-day TDH rerun stop. "TDH calculations done" follows the
-  identities sync as for a full `tdhLoop` run.
+  day's steps that read the tables are then given up, with an alert.
+  The 00:01 `tdhLoop` run and `tdhHistoryLoop`'s 00:30 run go on as before:
+  they are the fallback, so 6529.io has its own day on time whatever the
+  chain does, and the chain's day replaces it at the same midnight block
+  once it can be read and verified. Until then the site shows its own day.
+  "TDH calculations done" follows each write's identities sync, so it can
+  come twice a day. The delegations loop's within-day TDH rerun stops: it
+  would rewrite the chain's block. Alerts fire once an hour while the newest
+  `tdh_blocks` row is more than 30 hours old, and while the site still shows
+  its own day 4 hours past the day's boundary (no usable chain day: the
+  gateway down, the day not served or not final, a list that doesn't
+  rebuild its root, a failed check, a stalled chain).
 
 `tdh_chain_days` is an index of the chain: a rebuild reads the same days from
 the gateway. A consolidation whose key is longer than the `consolidation_key`

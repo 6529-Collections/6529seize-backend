@@ -114,18 +114,28 @@ describe('tdhLoop xTDH completion trigger', () => {
     expect(mockNotifyTdhCalculationsDone).not.toHaveBeenCalled();
   });
 
-  it('computes nothing when TDH comes from the 6529 chain', async () => {
-    process.env.FEATURE_TDH_FROM_CHAIN = 'true';
-    try {
-      await tdhLoop(true);
-    } finally {
-      delete process.env.FEATURE_TDH_FROM_CHAIN;
+  it.each([
+    ['TDH comes from the 6529 chain', 'FEATURE_TDH_FROM_CHAIN'],
+    ['the chain is only shadowed', 'FEATURE_TDH_CHAIN_SHADOW']
+  ])(
+    "computes 6529.io's own day at 00:01 when %s, so the day is never missing",
+    async (_when, flag) => {
+      process.env[flag] = 'true';
+      try {
+        await tdhLoop(true);
+      } finally {
+        delete process.env[flag];
+      }
+      expect(mockUpdateTdh).toHaveBeenCalledTimes(1);
+      expect(mockConsolidateAndPersistTdh).toHaveBeenCalledWith(
+        123,
+        blockTimestamp,
+        { mode: 'FULL' }
+      );
+      expect(mockUploadTdh).toHaveBeenCalledTimes(2);
+      expect(mockFindNftTdh).toHaveBeenCalledTimes(1);
     }
-    expect(mockUpdateTdh).not.toHaveBeenCalled();
-    expect(mockConsolidateAndPersistTdh).not.toHaveBeenCalled();
-    expect(mockFindNftTdh).not.toHaveBeenCalled();
-    expect(mockNotifyTdhCalculationsDone).not.toHaveBeenCalled();
-  });
+  );
 
   it('preserves completion notification on skipped retry attempts', async () => {
     mockNotifyTdhCalculationsDone

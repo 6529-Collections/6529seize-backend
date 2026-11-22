@@ -41,10 +41,13 @@ const logger = Logger.get('TDH_LOOP');
 const ALERT_TITLE = 'TDH Loop';
 
 /**
- * The daily 00:01 event computes TDH as before (unless it comes from the
- * chain). The `chainPoll` events, every few minutes, read the 6529 chain's
- * TDH days when FEATURE_TDH_CHAIN_SHADOW or FEATURE_TDH_FROM_CHAIN is on,
- * and do nothing otherwise. One function, so the two never run at once.
+ * The daily 00:01 event computes 6529.io's own TDH day as before, in every
+ * mode. With FEATURE_TDH_FROM_CHAIN on it is the fallback: the site has its
+ * day on time whatever the chain does, and the chain's day replaces it, at
+ * the same midnight block, once a `chainPoll` event can read and verify it.
+ * The `chainPoll` events, every few minutes, read the 6529 chain's TDH days
+ * when FEATURE_TDH_CHAIN_SHADOW or FEATURE_TDH_FROM_CHAIN is on, and do
+ * nothing otherwise. One function, so the two never run at once.
  */
 export const handler = sentryContext.wrapLambdaHandler(
   async (event?: { chainPoll?: boolean }) => {
@@ -88,9 +91,8 @@ export const handler = sentryContext.wrapLambdaHandler(
 export async function tdhLoop(force?: boolean) {
   if (appFeatures.isTdhFromChainEnabled()) {
     logger.info(
-      `[TDH FROM THE 6529 CHAIN] [the chainPoll events write each day] [SKIPPING]`
+      `[TDH FROM THE 6529 CHAIN] [COMPUTING THE SITE'S OWN DAY UNTIL THE CHAIN'S DAY REPLACES IT]`
     );
-    return;
   }
   const computed = await tdh(force);
   await findNftTDH();

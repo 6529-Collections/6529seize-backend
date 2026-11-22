@@ -1,7 +1,12 @@
-import { promises as fs } from 'fs';
-import * as path from 'path';
+import { promises as fs } from 'node:fs';
+import * as path from 'node:path';
+import { Logger } from '@/logging';
 import { tokenRoot, walletRoot } from './p28';
-import { bodyText, RateLimitedFetcher } from './rate-limited-fetcher';
+import {
+  bodyText,
+  RateLimitedFetcher,
+  withoutTrailingSlashes
+} from './rate-limited-fetcher';
 import { parseDayFiles } from './tdh-day-file';
 import { dateOfCycleDay } from './site-day';
 import {
@@ -47,10 +52,19 @@ export async function readChainDay(
 export class TdhChainSourceError extends Error {
   constructor(message: string) {
     super(message);
-    this.name = 'TdhChainSourceError';
+    this.name = new.target.name;
     Object.setPrototypeOf(this, new.target.prototype);
   }
 }
+
+/** An answer in a shape the client doesn't read, or one its checks refuse. */
+export class TdhChainShapeError extends TdhChainSourceError {}
+
+/**
+ * The gateway has no such route: its URL is wrong, or it runs another
+ * release. A configuration error, never "no day yet".
+ */
+export class TdhGatewayRouteError extends TdhChainSourceError {}
 
 /* ---------- decoding the gateway's answers ---------- */
 
@@ -62,7 +76,7 @@ function jsonUint(obj: any, key: string): number {
   const v = obj?.[key];
   const n = typeof v === 'string' && /^(0|[1-9]\d*)$/.test(v) ? Number(v) : v;
   if (typeof n !== 'number' || !Number.isSafeInteger(n) || n < 0) {
-    throw new TdhChainSourceError(`${key}: ${JSON.stringify(v)} is not a uint`);
+    throw new TdhChainShapeError(`${key}: ${JSON.stringify(v)} is not a uint`);
   }
   return n;
 }
@@ -71,9 +85,7 @@ function jsonHex(obj: any, key: string, bytes: number, what: string): string {
   const v = obj?.[key];
   const pattern = new RegExp(`^0x[0-9a-fA-F]{${bytes * 2}}$`);
   if (typeof v !== 'string' || !pattern.test(v)) {
-    throw new TdhChainSourceError(
-      `${key}: ${JSON.stringify(v)} is not ${what}`
-    );
+    throw new TdhChainShapeError(`${key}: ${JSON.stringify(v)} is not ${what}`);
   }
   return v.toLowerCase();
 }
@@ -85,7 +97,7 @@ const jsonAddress = (obj: any, key: string) =>
 function jsonDecimal(obj: any, key: string): string {
   const v = obj?.[key];
   if (typeof v !== 'string' || !/^(0|[1-9]\d*)$/.test(v)) {
-    throw new TdhChainSourceError(
+    throw new TdhChainShapeError(
       `${key}: ${JSON.stringify(v)} is not a decimal string`
     );
   }
@@ -129,7 +141,7 @@ export function decodeTdhDay(data: any, read?: any): TdhChainDayInfo {
 /** The `rows` of a wallet list chunk. */
 export function decodeWalletRows(rows: unknown): TdhWalletLeaf[] {
   if (!Array.isArray(rows)) {
-    throw new TdhChainSourceError('a wallet list chunk has no rows');
+    throw new TdhChainShapeError('a wallet list chunk has no rows');
   }
   return rows.map((r) => ({
     wallet: jsonAddress(r, 'wallet'),
@@ -141,14 +153,36 @@ export function decodeWalletRows(rows: unknown): TdhWalletLeaf[] {
 }
 
 /** The `rows` of a token list chunk. */
+const MAX_UINT256 = (BigInt(1) << BigInt(256)) - BigInt(1);
+
+/**
+ * A uint256 token id, as decimal text: the gateway sends it in decimal, or
+ * as `0x` hex past 128 bits.
+ */
+function jsonTokenId(obj: any, key: string): string {
+  const v = obj?.[key];
+  if (typeof v === 'string' && /^0x[0-9a-fA-F]{1,64}$/.test(v)) {
+    return BigInt(v).toString();
+  }
+  const decimal = jsonDecimal(obj, key);
+  if (BigInt(decimal) > MAX_UINT256) {
+    throw new TdhChainShapeError(`${key}: ${decimal} is above 2^256 - 1`);
+  }
+  return decimal;
+}
+
+/**
+ * The `rows` of a token list chunk: `{ cid, contract, tokenId, tokenTdh }`,
+ * in the token root's order (cid, contract, tokenId ascending).
+ */
 export function decodeTokenRows(rows: unknown): TdhTokenLeaf[] {
   if (!Array.isArray(rows)) {
-    throw new TdhChainSourceError('a token list chunk has no rows');
+    throw new TdhChainShapeError('a token list chunk has no rows');
   }
   return rows.map((r) => ({
     cid: jsonHash(r, 'cid'),
     contract: jsonAddress(r, 'contract'),
-    tokenId: jsonDecimal(r, 'tokenId'),
+    tokenId: jsonTokenId(r, 'tokenId'),
     tokenTdh: jsonUint(r, 'tokenTdh')
   }));
 }
@@ -159,13 +193,20 @@ export function decodeTokenRows(rows: unknown): TdhTokenLeaf[] {
 export const GATEWAY_PAGE_SIZE = 5000;
 /** Chunks of one list before the read gives up on a looping cursor. */
 const MAX_CHUNKS = 1000;
-/** Pins tried when the gateway no longer holds a pinned height. */
+/** Pins tried when a pinned height or a list is gone. */
 const MAX_PINS = 3;
 
+/** The gateway no longer holds the pinned height. */
 class HeightGoneError extends TdhChainSourceError {}
+/** A list, or a chunk of it, is gone: read the list again at a fresh pin. */
+class ListGoneError extends TdhChainSourceError {}
+
+const logger = Logger.get('TDH_CHAIN_SOURCE');
 
 interface GatewayAnswer {
   readonly status: number;
+  /** A 404 because the gateway has no such route, not no such day. */
+  readonly noSuchRoute?: boolean;
   readonly read?: any;
   readonly data?: any;
   readonly next?: unknown;
@@ -187,16 +228,31 @@ interface KnownDay {
  *   ascending by wallet, `next` the cursor of the next chunk (null at the
  *   end). The node keeps the latest two days' lists;
  * - `GET /v1/tdh/days/{day}/tokens?after=&limit=`: the token list in the
- *   same chunks, with `tokenRoot` and `tokenCount`. Not served yet: a 404
- *   reads as no token list.
+ *   same chunks, `{ day, tokenRoot, tokenCount, rows }`, rows of `{ cid,
+ *   contract, tokenId, tokenTdh }` in the token root's order. A node that
+ *   got the day by handover, or a release without the route, answers 404:
+ *   the list is asked for again at fresh pins (two nodes stand behind one
+ *   URL), and after the last 404, or an answer the client can't read or
+ *   check, the day has no token list (logged), so a compare is
+ *   MATCH_WITHOUT_TOKENS.
  *
- * Every answer is `{ read, data, next }`. A day's lists are read pinned at
- * the finalized height its record was read at (`?height=`), so record and
- * chunks come from one state. If the gateway no longer holds that height
- * (409 `height_gone`), the record and the list are read again from the
- * start at a fresh pin. Each list is checked against its day: every chunk
- * names the day's root and counts, and the root rebuilt from all its rows
- * must equal the day's.
+ * Every answer is `{ read, data, next }`. A 404 whose error says "no such
+ * route" means a wrong base URL or another release, and fails loudly
+ * (`TdhGatewayRouteError`); any other 404 on a day is no such day.
+ *
+ * A day's lists are read pinned (`?height=`) at the finalized height in the
+ * record's answer (`read.finalizedHeight`). It is a height the node held
+ * when it answered, as `/v1/status` would give it, without a request of its
+ * own; a node behind the one that answered refuses it with a 409, and the
+ * read re-pins. The pin keeps the record's read stable, and pinned answers
+ * are cached at the gateway's edge. The gateway serves the lists from what
+ * the node holds, so the pin doesn't make the chunks one read: what rules
+ * out a list put together from two is that every chunk must name the day's
+ * root and counts, and the root rebuilt from all the rows must equal the
+ * day's. If the pinned height is gone (409 `height_gone`), or a list or one
+ * of its chunks is gone (404, as from a second node behind the same URL that
+ * doesn't hold the lists yet), the record and the list are read again from
+ * the start at a fresh pin, three pins at most.
  */
 export class GatewayTdhChainSource implements TdhChainSource {
   private readonly days = new Map<number, KnownDay>();
@@ -216,7 +272,7 @@ export class GatewayTdhChainSource implements TdhChainSource {
       if (v !== null) params.set(k, String(v));
     }
     const qs = params.toString();
-    const base = this.baseUrl.replace(/\/+$/, '');
+    const base = withoutTrailingSlashes(this.baseUrl);
     const res = await this.fetcher.get(`${base}${route}${qs ? `?${qs}` : ''}`);
     let body: any = null;
     try {
@@ -227,7 +283,10 @@ export class GatewayTdhChainSource implements TdhChainSource {
     if (res.status === 409 && body?.error?.code === 'height_gone') {
       throw new HeightGoneError(`${route}: the pinned height is gone`);
     }
-    if (res.status === 404) return { status: 404 };
+    if (res.status === 404) {
+      const message = String(body?.error?.message ?? '').toLowerCase();
+      return { status: 404, noSuchRoute: message.includes('no such route') };
+    }
     if (res.status !== 200) {
       const why = body?.error
         ? `${body.error.code}: ${body.error.message}`
@@ -251,15 +310,14 @@ export class GatewayTdhChainSource implements TdhChainSource {
 
   async latestDay(): Promise<TdhChainDayInfo | null> {
     const answer = await this.get('/v1/tdh');
-    // No day applied yet: a 404, or no data.
-    return answer.status === 404 || answer.data === null
-      ? null
-      : this.remember(answer);
+    // No day applied yet: a 404 for the day, or no data.
+    return noDay('/v1/tdh', answer) ? null : this.remember(answer);
   }
 
   async day(cycleDay: number): Promise<TdhChainDayInfo | null> {
-    const answer = await this.get(`/v1/tdh/days/${cycleDay}`);
-    if (answer.status === 404 || answer.data === null) return null;
+    const route = `/v1/tdh/days/${cycleDay}`;
+    const answer = await this.get(route);
+    if (noDay(route, answer)) return null;
     const info = this.remember(answer);
     if (info.header.cycleDay !== cycleDay) {
       throw new TdhChainSourceError(
@@ -277,9 +335,14 @@ export class GatewayTdhChainSource implements TdhChainSource {
     return this.days.get(cycleDay)!;
   }
 
-  /** Every chunk of a list at one pin, or null on a 404. */
+  /**
+   * Every chunk of a list at one pin. Null when the token list isn't
+   * served; a wallet list, or any list's later chunk, that is gone throws
+   * `ListGoneError` so the list is read again at a fresh pin.
+   */
   private async chunks(
     route: string,
+    kind: 'wallets' | 'tokens',
     pin: number | null
   ): Promise<any[] | null> {
     const out: any[] = [];
@@ -291,8 +354,18 @@ export class GatewayTdhChainSource implements TdhChainSource {
         height: pin
       });
       if (answer.status === 404) {
-        if (n === 0) return null;
-        throw new TdhChainSourceError(`${route}: chunk ${n + 1} is gone`);
+        // A release without the token route: no token list.
+        if (kind === 'tokens' && answer.noSuchRoute) return null;
+        if (answer.noSuchRoute) {
+          throw new TdhGatewayRouteError(
+            `${route}: the gateway has no such route`
+          );
+        }
+        throw new ListGoneError(
+          n === 0
+            ? `${route}: the gateway holds no list for the day`
+            : `${route}: chunk ${n + 1} is gone`
+        );
       }
       if (answer.data === null) {
         throw new TdhChainSourceError(`${route}: a chunk with no data`);
@@ -318,11 +391,26 @@ export class GatewayTdhChainSource implements TdhChainSource {
       try {
         const chunks = await this.chunks(
           `/v1/tdh/days/${cycleDay}/${kind}`,
+          kind,
           pin
         );
+        if (attempt > 1) {
+          logger.info(
+            `[DAY ${cycleDay}] [${kind.toUpperCase()}] [READ ON TRY ${attempt} OF ${MAX_PINS}]`
+          );
+        }
         return chunks === null ? null : check(chunks, header);
       } catch (e) {
-        if (!(e instanceof HeightGoneError) || attempt >= MAX_PINS) throw e;
+        const gone = e instanceof HeightGoneError || e instanceof ListGoneError;
+        if (!gone) throw e;
+        logger.warn(
+          `[DAY ${cycleDay}] [${kind.toUpperCase()}] [TRY ${attempt} OF ${MAX_PINS}] [${(e as Error).message}]`
+        );
+        if (attempt >= MAX_PINS) {
+          // The last answer wins: no token list, or no wallet list (thrown).
+          if (kind === 'tokens' && e instanceof ListGoneError) return null;
+          throw e;
+        }
         this.days.delete(cycleDay);
       }
     }
@@ -341,21 +429,35 @@ export class GatewayTdhChainSource implements TdhChainSource {
       const rows = chunks.flatMap((chunk) => decodeWalletRows(chunk.rows));
       checkRows(cycleDay, 'wallet', rows.length, h.walletCount);
       if (walletRoot(rows) !== h.walletRoot) {
-        throw new TdhChainSourceError(
+        throw new TdhChainShapeError(
           `day ${cycleDay}: the wallet rows don't rebuild the day's walletRoot`
         );
       }
       return rows;
     });
-    if (leaves === null) {
-      throw new TdhChainSourceError(
-        `the gateway holds no wallet list for day ${cycleDay}`
-      );
-    }
-    return leaves;
+    // `chunks` returns null only for tokens.
+    return leaves!;
   }
 
-  tokenLeaves(cycleDay: number): Promise<TdhTokenLeaf[] | null> {
+  /**
+   * The token list, or null: not served, or in an answer the client can't
+   * read or check (logged). Until the route exists its shape is a guess, so
+   * such an answer leaves the day without a token list rather than failing
+   * the day's read.
+   */
+  async tokenLeaves(cycleDay: number): Promise<TdhTokenLeaf[] | null> {
+    try {
+      return await this.readTokenLeaves(cycleDay);
+    } catch (e) {
+      if (!(e instanceof TdhChainShapeError)) throw e;
+      logger.warn(
+        `[DAY ${cycleDay}] [NO TOKEN LIST] [the token answer can't be read: ${e.message}]`
+      );
+      return null;
+    }
+  }
+
+  private readTokenLeaves(cycleDay: number): Promise<TdhTokenLeaf[] | null> {
     return this.list(cycleDay, 'tokens', (chunks, h) => {
       chunks.forEach((chunk) =>
         checkChunk(cycleDay, 'token', chunk, {
@@ -367,7 +469,7 @@ export class GatewayTdhChainSource implements TdhChainSource {
       const rows = chunks.flatMap((chunk) => decodeTokenRows(chunk.rows));
       checkRows(cycleDay, 'token', rows.length, h.tokenCount);
       if (tokenRoot(rows) !== h.tokenRoot) {
-        throw new TdhChainSourceError(
+        throw new TdhChainShapeError(
           `day ${cycleDay}: the token rows don't rebuild the day's tokenRoot`
         );
       }
@@ -387,11 +489,21 @@ function checkChunk(
     const got =
       typeof want === 'number' ? jsonUint(chunk, key) : jsonHash(chunk, key);
     if (got !== want) {
-      throw new TdhChainSourceError(
+      throw new TdhChainShapeError(
         `day ${cycleDay}: a ${kind} chunk says ${key} ${got}, the day ${want}`
       );
     }
   }
+}
+
+/** No day: a 404 for the day, or no data. A missing route throws. */
+function noDay(route: string, answer: GatewayAnswer): boolean {
+  if (answer.status === 404 && answer.noSuchRoute) {
+    throw new TdhGatewayRouteError(
+      `${route}: the gateway has no such route; check TDH_CHAIN_GATEWAY_URL`
+    );
+  }
+  return answer.status === 404 || answer.data === null;
 }
 
 function checkRows(
@@ -401,7 +513,7 @@ function checkRows(
   count: number
 ): void {
   if (rows !== count) {
-    throw new TdhChainSourceError(
+    throw new TdhChainShapeError(
       `day ${cycleDay}: ${rows} ${kind} rows, the day says ${count}`
     );
   }

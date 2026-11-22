@@ -42,6 +42,7 @@ import { dateOfCycleDay } from './site-day';
 import {
   ChainDayStep,
   SaveTdhChainDay,
+  TdhChainDayMode,
   tdhChainDaysDb
 } from './tdh-chain-days.db';
 import { PollerDeps } from './tdh-chain-day-poller';
@@ -54,7 +55,7 @@ import { formatTokenDayFile, formatWalletDayFile } from './tdh-day-file';
 import { verifyChainDay } from './chain-day-verify';
 import { uploadTdhCsvToArweave } from '@/tdhLoop/tdh-arweave-upload';
 import { JWKInterface } from 'arweave/node/lib/wallet';
-import { createHash } from 'crypto';
+import { createHash } from 'node:crypto';
 
 /**
  * The ingest and poller wired to the site: its Ethereum RPC, the TDH loop's
@@ -283,6 +284,29 @@ function tdhChainMode(): 'CHAIN' | 'SHADOW' | null {
   return null;
 }
 
+/** The poller on the site's tables, with a given chain source. */
+export function pollerDepsFor(
+  mode: TdhChainDayMode | null,
+  source: TdhChainSource,
+  ingestDeps: ChainTdhIngestDeps,
+  alert: (title: string, message: string) => Promise<void>,
+  now: () => number = () => Date.now()
+): PollerDeps {
+  return {
+    mode,
+    source,
+    latestRow: () => tdhChainDaysDb.latest(),
+    pendingDays: () => tdhChainDaysDb.pendingDays(),
+    latestTdhDay: () => tdhChainDaysDb.latestTdhDay(),
+    dayRecord: (cycleDay) => tdhChainDaysDb.get(cycleDay),
+    keyWidth: () => tdhChainDaysDb.consolidationKeyWidth(),
+    ingest: (day, m) => ingestChainDay(day, m, ingestDeps),
+    steps: siteStepRunner(source),
+    alert,
+    now
+  };
+}
+
 /** The poller with the gateway named by TDH_CHAIN_GATEWAY_URL. */
 export function sitePollerDeps(): PollerDeps {
   const mode = tdhChainMode();
@@ -297,18 +321,7 @@ export function sitePollerDeps(): PollerDeps {
     userAgent: '6529io-tdh-chain/1'
   });
   const source = new GatewayTdhChainSource(gateway, fetcher);
-  const ingestDeps = siteIngestDeps();
-  return {
-    mode,
-    source,
-    latestRow: () => tdhChainDaysDb.latest(),
-    pendingDays: () => tdhChainDaysDb.pendingDays(),
-    latestTdhBlockTime: () => tdhChainDaysDb.latestTdhBlockTime(),
-    keyWidth: () => tdhChainDaysDb.consolidationKeyWidth(),
-    ingest: (day, m) => ingestChainDay(day, m, ingestDeps),
-    steps: siteStepRunner(source),
-    alert: (title, message) =>
-      priorityAlertsContext.sendPriorityAlert(title, new Error(message)),
-    now: () => Date.now()
-  };
+  return pollerDepsFor(mode, source, siteIngestDeps(), (title, message) =>
+    priorityAlertsContext.sendPriorityAlert(title, new Error(message))
+  );
 }

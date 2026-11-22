@@ -37,13 +37,8 @@ export const handler = sentryContext.wrapLambdaHandler(async () => {
   await doInDbContext(
     priorityAlertsContext.wrapAsyncFunction(ALERT_TITLE, async () => {
       await refreshTdhChainSettings();
-      if (appFeatures.isTdhFromChainEnabled()) {
-        // The chain-day write runs history for its day once the day is in.
-        logger.info(
-          `[TDH FROM THE 6529 CHAIN] [HISTORY RUNS AFTER EACH DAY'S WRITE] [SKIPPING]`
-        );
-        return;
-      }
+      // In every mode: with TDH from the 6529 chain this is the history of
+      // the site's own day, and the chain day's write runs it again.
       const iterations = Number.parseInt(
         process.env.TDH_HISTORY_ITERATIONS ?? '1'
       );

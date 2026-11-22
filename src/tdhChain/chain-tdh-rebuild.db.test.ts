@@ -1,5 +1,5 @@
 import 'reflect-metadata';
-import { createHash } from 'crypto';
+import { createHash } from 'node:crypto';
 import {
   CONSOLIDATIONS_TABLE,
   GRADIENT_CONTRACT,
@@ -37,7 +37,7 @@ import { cidOf, compareText, tokenRoot, walletRoot } from './p28';
 import { COLLECTION_CONTRACTS, SITE_COLLECTIONS } from './site-day';
 import { CHAIN_DAY_STEPS, tdhChainDaysDb } from './tdh-chain-days.db';
 import { pollChainDays } from './tdh-chain-day-poller';
-import { sitePollerDeps } from './chain-tdh-ingest.deps';
+import { pollerDepsFor, sitePollerDeps } from './chain-tdh-ingest.deps';
 import { TdhChainSource } from './tdh-chain-source';
 import { TdhChainDay, TdhTokenLeaf, TdhWalletLeaf } from './tdh-chain.types';
 
@@ -618,5 +618,86 @@ describeWithSeed('rebuilding the TDH tables from the 6529 chain', SEEDS, () => {
     const r = await ingestChainDay(day1, 'CHAIN', deps);
     expect(r.status).toBe('SKIPPED');
     expect(await snapshot()).toEqual(before);
+  }, 180_000);
+
+  it("keeps 6529.io's own day while chain mode has no usable chain day, and shadow changes nothing users see", async () => {
+    await oldPathDay(DAY_1, BLOCK_1);
+    const day1 = chainDayOf(
+      DAY_1,
+      BLOCK_1,
+      (await fetchAllTDH(BLOCK_1)) as TDH[],
+      await fetchAllConsolidatedTdh()
+    );
+    // tdhLoop's 00:01 run writes the site's own day 2 in every mode
+    // (src/tdhLoop/index.test.ts); here it is the old path's write.
+    await oldPathDay(DAY_2, BLOCK_2);
+    const day2 = chainDayOf(
+      DAY_2,
+      BLOCK_2,
+      (await fetchAllTDH(BLOCK_2)) as TDH[],
+      await fetchAllConsolidatedTdh()
+    );
+    const own = await snapshot();
+    const alerts: string[] = [];
+    // 05:15 on day 2: four hours past its boundary, at the hourly check.
+    const now = DAY_2 * 86_400_000 + 5 * 3_600_000 + 15 * 60_000;
+    const poll = (mode: 'CHAIN' | 'SHADOW', source: TdhChainSource) =>
+      pollChainDays(
+        pollerDepsFor(
+          mode,
+          source,
+          chainDeps([day1, day2]),
+          async (title) => {
+            alerts.push(title);
+          },
+          () => now
+        )
+      );
+    const gatewayDown: TdhChainSource = {
+      ...memorySource([day2]),
+      latestDay: async () => {
+        throw new Error('HTTP 502');
+      }
+    };
+    const leaves = day2.walletLeaves.map((l, i) =>
+      i === 0 ? { ...l, walletTdh: l.walletTdh + 1 } : l
+    );
+    const unusable: [string, TdhChainSource][] = [
+      ['the gateway is down', gatewayDown],
+      ['no day is applied', memorySource([])],
+      [
+        'the day is not final',
+        memorySource([
+          { ...day2, apply: { ...day2.apply, finalizedHeight: 1 } }
+        ])
+      ],
+      [
+        "the list doesn't rebuild the day's root",
+        memorySource([{ ...day2, walletLeaves: leaves }])
+      ],
+      ['the chain is stalled on an older day', memorySource([day1])]
+    ];
+    for (const [why, source] of unusable) {
+      await poll('CHAIN', source);
+      expect({ why, tables: await snapshot() }).toEqual({ why, tables: own });
+    }
+    const block2 = async () =>
+      (await fetchBlocks(10, 1)).data.find((b) => b.block_number === BLOCK_2)!;
+    expect((await block2()).chain_cycle_day).toBeNull();
+    expect(alerts).toContain(`TDH day ${DAY_2}: 6529.io shows its own TDH`);
+    expect(await tdhChainDaysDb.get(DAY_2)).toMatchObject({
+      mode: 'CHAIN',
+      status: 'FAILED'
+    });
+
+    // Shadow alone: day 2 is compared, and nothing users see changes.
+    await poll('SHADOW', memorySource([day1, day2]));
+    expect(await snapshot()).toEqual(own);
+    expect((await block2()).chain_cycle_day).toBeNull();
+    expect(await tdhChainDaysDb.get(DAY_2)).toMatchObject({
+      mode: 'SHADOW',
+      status: 'INGESTED',
+      verdict: 'MATCH'
+    });
   }, 180_000);
 });

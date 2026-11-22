@@ -1,4 +1,4 @@
-import { createHash } from 'crypto';
+import { createHash } from 'node:crypto';
 
 /**
  * GETs one at a time, at least `minIntervalMs` apart (500 ms: at most two
@@ -202,6 +202,13 @@ export class RateLimitedFetcher {
   postJson(url: string, body: unknown): Promise<FetchedBody> {
     return this.enqueue(() => this.requestOnce(url, JSON.stringify(body)));
   }
+}
+
+/** A base URL without its trailing slashes. */
+export function withoutTrailingSlashes(url: string): string {
+  let end = url.length;
+  while (end > 0 && url[end - 1] === '/') end--;
+  return url.slice(0, end);
 }
 
 export function bodyText(fetched: FetchedBody): string {

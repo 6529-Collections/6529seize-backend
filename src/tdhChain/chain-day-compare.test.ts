@@ -11,6 +11,7 @@ import {
   DiffClass,
   summarizeReport
 } from './chain-day-compare';
+import { compareText } from './p28';
 import { siteDayFromUploads } from './site-uploads';
 import { TdhChainDay } from './tdh-chain.types';
 
@@ -35,7 +36,9 @@ function nonzero(r: CompareReport): Partial<Record<DiffClass, number>> {
 }
 
 function identity(s: SiteFixture, key: string) {
-  return s.identities.find((i) => i.wallets.slice().sort().join('-') === key)!;
+  return s.identities.find(
+    (i) => i.wallets.slice().sort(compareText).join('-') === key
+  )!;
 }
 
 describe('compareChainDay', () => {

@@ -13,7 +13,7 @@ import {
   PollerDeps,
   STALE_AFTER_MS
 } from './tdh-chain-day-poller';
-import { TdhChainSource } from './tdh-chain-source';
+import { TdhChainSource, TdhGatewayRouteError } from './tdh-chain-source';
 import { TdhChainDay } from './tdh-chain.types';
 
 const row = (
@@ -170,7 +170,8 @@ describe('pollChainDays', () => {
       source: source([day]),
       latestRow: async () => null,
       pendingDays: async () => [],
-      latestTdhBlockTime: async () => null,
+      latestTdhDay: async () => null,
+      dayRecord: async () => null,
       keyWidth: async () => 200,
       ingest: async (d) => {
         log.events.push(`ingest ${d.header.cycleDay}`);
@@ -418,7 +419,7 @@ describe('pollChainDays', () => {
           {
             mode: 'CHAIN',
             source: broken,
-            latestTdhBlockTime: async () => taken,
+            latestTdhDay: async () => ({ block: 1, timestampMs: taken }),
             now: () => at(15),
             ...over
           },
@@ -430,10 +431,87 @@ describe('pollChainDays', () => {
     expect(await run({})).toEqual(['TDH from the 6529 chain is late']);
     expect(await run({ now: () => at(35) })).toEqual([]);
     expect(await run({ mode: 'SHADOW' })).toEqual([]);
-    expect(await run({ latestTdhBlockTime: async () => null })).toEqual([]);
+    expect(await run({ latestTdhDay: async () => null })).toEqual([]);
     expect(
-      await run({ latestTdhBlockTime: async () => at(15) - 3_600_000 })
+      await run({
+        latestTdhDay: async () => ({
+          block: 1,
+          timestampMs: at(15) - 3_600_000
+        })
+      })
     ).toEqual([]);
+  });
+
+  describe('while the site shows its own day', () => {
+    // Day 20738's block, the last before its boundary; the site wrote it at
+    // 00:01 and the chain's day for it is not usable.
+    const boundary = 20738 * 86_400_000;
+    const ownDay = { block: 2000, timestampMs: boundary - 12_000 };
+    const at = (hours: number, minute = 15) =>
+      boundary + hours * 3_600_000 + minute * 60_000;
+    const run = async (
+      record: TdhChainDayRow | null,
+      now: number,
+      over: Partial<PollerDeps> = {}
+    ) => {
+      const log = fresh();
+      await pollChainDays(
+        poller(
+          {
+            mode: 'CHAIN',
+            source: source([]),
+            latestTdhDay: async () => ownDay,
+            dayRecord: async (n) => (n === 20738 ? record : null),
+            now: () => now,
+            ...over
+          },
+          log
+        )
+      );
+      return log.alerts;
+    };
+    const ALERT = 'TDH day 20738: 6529.io shows its own TDH';
+
+    it('alerts from four hours past the boundary when the chain has no usable day', async () => {
+      expect(await run(null, at(3))).toEqual([]);
+      expect(await run(null, at(4))).toEqual([ALERT]);
+      expect(await run(null, at(4, 35))).toEqual([]);
+      for (const record of [
+        row(20738, { mode: 'CHAIN', status: 'FAILED', block: 2000 }),
+        row(20738, { mode: 'CHAIN', status: 'SKIPPED', block: 2000 }),
+        row(20738, { mode: 'CHAIN', block: 2000, superseded: true })
+      ]) {
+        expect(await run(record, at(5))).toEqual([ALERT]);
+      }
+    });
+
+    it('is quiet once the chain wrote the day, for a day compared in shadow, and in SHADOW mode', async () => {
+      const written = row(20738, { mode: 'CHAIN', block: 2000 });
+      expect(await run(written, at(5))).toEqual([]);
+      expect(
+        await run(
+          row(20738, { mode: 'CHAIN', status: 'WRITTEN', block: 2000 }),
+          at(5)
+        )
+      ).toEqual([]);
+      expect(await run(row(20738, { block: 2000 }), at(5))).toEqual([]);
+      expect(await run(null, at(5), { mode: 'SHADOW' })).toEqual([]);
+    });
+  });
+
+  it('fails the run on a route the gateway does not have', async () => {
+    const log = fresh();
+    const wrong = {
+      ...source([day]),
+      latestDay: async () => {
+        throw new TdhGatewayRouteError(
+          '/v1/tdh: the gateway has no such route'
+        );
+      }
+    };
+    await expect(
+      pollChainDays(poller({ mode: 'CHAIN', source: wrong }, log))
+    ).rejects.toThrow(TdhGatewayRouteError);
   });
 
   it('stops when the gateway serves no day', async () => {

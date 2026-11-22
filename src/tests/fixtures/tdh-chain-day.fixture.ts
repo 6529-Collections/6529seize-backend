@@ -1,7 +1,7 @@
 import { keccak256, toUtf8Bytes } from 'ethers';
 import { ConsolidatedTDH, TDH } from '@/entities/ITDH';
 import { csvField } from '@/tdhChain/csv';
-import { cidOf, tokenRoot, walletRoot } from '@/tdhChain/p28';
+import { cidOf, compareText, tokenRoot, walletRoot } from '@/tdhChain/p28';
 import { COLLECTION_CONTRACTS } from '@/tdhChain/site-day';
 import {
   TdhChainDay,
@@ -203,7 +203,7 @@ export function siteUploadsCsv(site: SiteFixture = siteFixture()): {
     ].join(',')
   ];
   for (const identity of site.identities) {
-    const wallets = identity.wallets.slice().sort();
+    const wallets = identity.wallets.slice().sort(compareText);
     consolidatedLines.push(
       [
         wallets.join('-'),
@@ -357,7 +357,7 @@ export function siteFixtureRows(site: SiteFixture = siteFixture()): {
       ([wallet, row]) => ({ ...rowFields(site, row), wallet }) as unknown as TDH
     ),
     consolidated: site.identities.map((identity) => {
-      const wallets = identity.wallets.slice().sort();
+      const wallets = identity.wallets.slice().sort(compareText);
       return {
         ...rowFields(site, identity),
         consolidation_key: wallets.join('-'),

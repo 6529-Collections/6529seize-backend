@@ -11,7 +11,11 @@ import {
   TdhChainDayMode,
   TdhChainDayRow
 } from './tdh-chain-days.db';
-import { readChainDay, TdhChainSource } from './tdh-chain-source';
+import {
+  readChainDay,
+  TdhChainSource,
+  TdhGatewayRouteError
+} from './tdh-chain-source';
 import { TdhChainDay, TdhChainDayInfo } from './tdh-chain.types';
 
 /**
@@ -27,15 +31,23 @@ import { TdhChainDay, TdhChainDayInfo } from './tdh-chain.types';
  * - otherwise, in CHAIN, the follow-up steps still due are run, oldest day
  *   first. A failing step never holds back a later day.
  *
- * In CHAIN mode it also raises an alert, once an hour, while the newest
- * TDH day in the tables (`tdh_blocks`) is more than 30 hours old: the
- * site's TDH is late however the gateway or the chain is failing.
+ * Until the chain's day is written, the site shows its own day: tdhLoop's
+ * 00:01 run computes it in every mode. In CHAIN mode the poller raises an
+ * alert, once an hour, while
+ * - the newest TDH day in the tables (`tdh_blocks`) is more than 30 hours
+ *   old: the site's TDH is late, whatever is failing;
+ * - or that day is still the site's own, more than 4 hours past its
+ *   boundary, and was not compared in shadow before the switch: the chain's
+ *   day is not usable (the gateway down, the day not served or not final,
+ *   a list that doesn't rebuild its root, a failed check, a stalled chain).
  */
 
 const logger = Logger.get('TDH_CHAIN_DAY_POLLER');
 
 /** The newest TDH day may be this old before an alert. */
 export const STALE_AFTER_MS = 30 * 60 * 60 * 1000;
+/** How long past its boundary a day may stay the site's own before an alert. */
+export const OWN_DAY_AFTER_MS = 4 * 60 * 60 * 1000;
 
 export interface PollerDeps {
   readonly mode: TdhChainDayMode | null;
@@ -43,8 +55,10 @@ export interface PollerDeps {
   latestRow(): Promise<TdhChainDayRow | null>;
   /** CHAIN days with follow-up steps still due, oldest first. */
   pendingDays(): Promise<TdhChainDayRow[]>;
-  /** When the newest TDH day in the tables was taken (ms), or null. */
-  latestTdhBlockTime(): Promise<number | null>;
+  /** The newest TDH day in the tables: its block and the block's time. */
+  latestTdhDay(): Promise<{ block: number; timestampMs: number } | null>;
+  /** One day's record, or null. */
+  dayRecord(cycleDay: number): Promise<TdhChainDayRow | null>;
   keyWidth(): Promise<number>;
   ingest(
     day: TdhChainDay,
@@ -106,18 +120,43 @@ export interface PollOutcome {
   readonly stepsRun?: readonly number[];
 }
 
+/** Why a day the site shows is still its own, or null when it isn't. */
+export function ownDayReason(
+  record: TdhChainDayRow | null,
+  block: number
+): string | null {
+  if (!record) return 'the gateway has served no final day for it';
+  if (record.mode === 'SHADOW') return null;
+  if (record.superseded) return '6529.io wrote its block again after the chain';
+  if (record.status === 'FAILED') return "the chain's day failed its checks";
+  if (record.status === 'SKIPPED') return 'the tables held a newer block';
+  if (record.block !== block) return "the chain's day has another cutoff block";
+  return null;
+}
+
 async function alertIfStale(deps: PollerDeps): Promise<void> {
   const now = deps.now();
   const minute = new Date(now).getUTCMinutes();
   // Once an hour: the :15 run is in both schedules.
   if (minute < 15 || minute >= 20) return;
-  const newest = await deps.latestTdhBlockTime();
+  const newest = await deps.latestTdhDay();
   if (newest === null) return;
-  const since = now - newest;
+  const since = now - newest.timestampMs;
   if (since > STALE_AFTER_MS) {
     await deps.alert(
       'TDH from the 6529 chain is late',
       `the newest TDH day in the tables was taken ${Math.floor(since / 3_600_000)} h ago`
+    );
+    return;
+  }
+  // The block is the last one before the day's boundary.
+  const cycleDay = Math.floor(newest.timestampMs / 86_400_000) + 1;
+  if (now < cycleDay * 86_400_000 + OWN_DAY_AFTER_MS) return;
+  const why = ownDayReason(await deps.dayRecord(cycleDay), newest.block);
+  if (why) {
+    await deps.alert(
+      `TDH day ${cycleDay}: 6529.io shows its own TDH`,
+      `the 6529 chain's day is not written: ${why}`
     );
   }
 }
@@ -131,6 +170,8 @@ async function dayToIngest(
   try {
     newest = await deps.source.latestDay();
   } catch (e) {
+    // A wrong gateway URL fails the run, so it is alerted at once.
+    if (e instanceof TdhGatewayRouteError) throw e;
     logger.warn(`[GATEWAY UNREACHABLE] [${(e as Error).message}]`);
     return null;
   }
@@ -156,6 +197,7 @@ async function dayToIngest(
     if (!day) logger.warn(`[DAY ${cycleDay} NOT SERVED]`);
     return day;
   } catch (e) {
+    if (e instanceof TdhGatewayRouteError) throw e;
     logger.warn(`[DAY ${cycleDay} NOT READ] [${(e as Error).message}]`);
     return null;
   }

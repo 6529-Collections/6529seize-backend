@@ -161,6 +161,17 @@ function isChainWrite(mode: string, status: string): boolean {
 }
 
 export class TdhChainDaysDb extends LazyDbAccessCompatibleService {
+  /** One day's record, or null. */
+  async get(cycleDay: number): Promise<TdhChainDayRow | null> {
+    const rows = await this.db.execute<DayRowRecord>(
+      `select ${ROW_COLUMNS} from ${TDH_CHAIN_DAYS_TABLE}
+       where cycle_day = :cycleDay`,
+      { cycleDay },
+      { forcePool: DbPoolName.WRITE }
+    );
+    return rows[0] ? toRow(rows[0]) : null;
+  }
+
   /** The newest day of any status. */
   async latest(): Promise<TdhChainDayRow | null> {
     const rows = await this.db.execute<DayRowRecord>(
@@ -446,10 +457,16 @@ export class TdhChainDaysDb extends LazyDbAccessCompatibleService {
     return width;
   }
 
-  /** When the newest TDH day in the tables was taken (ms), or null. */
-  async latestTdhBlockTime(): Promise<number | null> {
-    const rows = await this.db.execute<{ timestamp: Date | string | null }>(
-      `select timestamp from ${TDH_BLOCKS_TABLE}
+  /**
+   * The newest TDH day in the tables: its block and the block's time (ms),
+   * or null.
+   */
+  async latestTdhDay(): Promise<{ block: number; timestampMs: number } | null> {
+    const rows = await this.db.execute<{
+      block_number: number;
+      timestamp: Date | string | null;
+    }>(
+      `select block_number, timestamp from ${TDH_BLOCKS_TABLE}
        order by block_number desc limit 1`,
       undefined,
       { forcePool: DbPoolName.WRITE }
@@ -457,7 +474,9 @@ export class TdhChainDaysDb extends LazyDbAccessCompatibleService {
     const t = rows[0]?.timestamp;
     if (t === null || t === undefined) return null;
     const ms = new Date(t).getTime();
-    return Number.isFinite(ms) ? ms : null;
+    return Number.isFinite(ms)
+      ? { block: Number(rows[0].block_number), timestampMs: ms }
+      : null;
   }
 
   /** The highest block the TDH tables hold a day of, or 0. */

@@ -178,6 +178,38 @@ describe('P28 TDH commitments', () => {
     );
   });
 
+  it('gives the token leaves and roots computed from the spec text', () => {
+    // Computed with ethers alone from the gateway's spec: leaf =
+    // H("6529.TdhTokenLeaf.v1", bytes32 cid, address contract, uint256
+    // tokenId, uint tokenTDH); root = H("6529.TdhTokenRoot.v1", count, top),
+    // with P28 4.4's tree. The second id is 2^130 + 5, past 128 bits.
+    const A = `0x${'11'.repeat(32)}`;
+    const B = `0x${'22'.repeat(32)}`;
+    const memes = '0x33fd426905f149f8376e227d0c9d3340aad17af1';
+    const gradients = '0x0c58ef43ff3032005e472cb5709f8908acb00205';
+    const tokens = [
+      { cid: A, contract: gradients, tokenId: '7', tokenTdh: 1500 },
+      {
+        cid: A,
+        contract: memes,
+        tokenId: '1361129467683753853853498429727072845829',
+        tokenTdh: 42
+      },
+      { cid: B, contract: memes, tokenId: '1', tokenTdh: 987654321 }
+    ];
+    expect(tokens.map((t) => hexlify(tokenLeafHash(t)))).toEqual([
+      '0x5bffb79d43734409dd22c8272fc1b01e47740d3dd84702ce327c46feaf46c118',
+      '0xb0c34c0ffc82738eff3c0edb9dd49be734d1d78fbdf2c7315b9f8f9725f4b8b0',
+      '0xef5775e393a9629f1c7daf77b5609b80835e1ff1e1777f46b186f9b29393fe0d'
+    ]);
+    expect(tokenRoot(tokens)).toBe(
+      '0x253c94884316737a996053f3fc08f6405eb499082ff42eeeca2a62cc3d80e439'
+    );
+    expect(tokenRoot([tokens[1]])).toBe(
+      '0xcc078d16be27d6068b0611d862e53328c6ba81c8643a25aed7bf0bdd57577a99'
+    );
+  });
+
   it('keys consolidations with the same wallets and order as the cid', () => {
     const mixed = consolidationKeyOf([`0x${'A'.repeat(40)}`, w('1')]);
     expect(mixed).toBe(`${w('1')}-0x${'a'.repeat(40)}`);
