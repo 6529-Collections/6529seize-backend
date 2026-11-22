@@ -3,6 +3,10 @@ import { AuthenticationContext } from '@/auth-context';
 import { ApiCreateDropRequest } from '@/api/generated/models/ApiCreateDropRequest';
 import { ApiDropType } from '@/api/generated/models/ApiDropType';
 import {
+  BotDeviceSigner,
+  botDeviceSigner
+} from '@/api/device-signing/bot-device-signer';
+import {
   DropCreationApiService,
   dropCreationService
 } from '@/api/drops/drop-creation.api.service';
@@ -524,7 +528,8 @@ export class ReleaseNoteGenerationService {
     private readonly publications: Pick<
       ReleaseNotePublicationDb,
       'findPublishedFrontendReleaseRanges'
-    > = releaseNotePublicationDb
+    > = releaseNotePublicationDb,
+    private readonly botSigner: BotDeviceSigner = botDeviceSigner
   ) {}
 
   public async generateAndPost(
@@ -979,17 +984,28 @@ export class ReleaseNoteGenerationService {
     botProfileId: string,
     ctx: RequestContext
   ): Promise<string> {
-    const drop = await this.dropCreationApiService.createDrop(
+    const drop = await this.botSigner.createDrop(
+      botProfileId,
       {
-        createDropRequest,
-        authorId: botProfileId,
-        representativeId: botProfileId,
-        hideLinkPreview: true
+        waveId: createDropRequest.wave_id,
+        replyToDropId: createDropRequest.reply_to?.drop_id ?? null,
+        body: createDropRequest
       },
-      {
-        ...ctx,
-        authenticationContext: AuthenticationContext.fromProfileId(botProfileId)
-      }
+      () =>
+        this.dropCreationApiService.createDrop(
+          {
+            createDropRequest,
+            authorId: botProfileId,
+            representativeId: botProfileId,
+            hideLinkPreview: true
+          },
+          {
+            ...ctx,
+            authenticationContext:
+              AuthenticationContext.fromProfileId(botProfileId)
+          }
+        ),
+      ctx
     );
     if (!drop?.id) {
       throw new Error('Release-note drop creation returned no drop id');

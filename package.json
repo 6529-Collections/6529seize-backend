@@ -42,7 +42,8 @@
     "competition:capability": "node scripts/require-6529-command.cjs && ts-node -r tsconfig-paths/register src/competitions/competition-capability.cli.ts",
     "calendar:check": "node scripts/require-6529-command.cjs && node scripts/memes-calendar.mjs check",
     "ws:delivery-probe": "node scripts/require-6529-command.cjs && ts-node -r tsconfig-paths/register src/ws-delivery/delivery-probe/delivery-probe.cli.ts",
-    "signed-records:service-setup": "node scripts/require-6529-command.cjs && ts-node -r tsconfig-paths/register src/signed-records/record-log/service-setup.cli.ts"
+    "signed-records:service-setup": "node scripts/require-6529-command.cjs && ts-node -r tsconfig-paths/register src/signed-records/record-log/service-setup.cli.ts",
+    "waves:bot-device-grant": "node scripts/require-6529-command.cjs && ts-node -r tsconfig-paths/register src/api-serverless/src/device-signing/bot-device-grant.cli.ts"
   },
   "keywords": [],
   "author": "",

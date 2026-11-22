@@ -4,6 +4,7 @@ jest.mock('./release-digest.db', () => ({
 
 import { AiPrompter } from '@/abusiveness/ai-prompter';
 import { DropCreationApiService } from '@/api/drops/drop-creation.api.service';
+import { signingBot } from '@/tests/fixtures/bot-device-signing.fixture';
 import { IdentitiesDb } from '@/identities/identities.db';
 import { DropsDb } from '@/drops/drops.db';
 import { ReleaseNoteGenerationRequest } from './release-note-generation-queue';
@@ -160,6 +161,51 @@ describe('ReleaseNoteGenerationService', () => {
     } else {
       process.env.CI_PIPELINES_PROD_WAVE_ID = originalDeployWaveId;
     }
+  });
+
+  it('signs the release note when the bot has a device key', async () => {
+    const { signer, store } = await signingBot({ profileId: 'bot-profile' });
+    const createDrop = jest.fn().mockResolvedValue({ id: 'created-drop' });
+    const service = new ReleaseNoteGenerationService(
+      {
+        getReleaseContext: jest.fn().mockResolvedValue(context),
+        getReleasePrompt: jest.fn().mockResolvedValue('Repository prompt.')
+      } as unknown as ReleaseNoteGitHubService,
+      {
+        promptAndGetReply: jest.fn().mockResolvedValue(
+          JSON.stringify({
+            pull_requests: [{ number: 42, summary: 'Faster notifications.' }]
+          })
+        )
+      } as AiPrompter,
+      { createDrop } as unknown as DropCreationApiService,
+      {
+        getIdsByHandles: jest.fn().mockResolvedValue({})
+      } as unknown as IdentitiesDb,
+      {},
+      createDropsRepository(),
+      undefined,
+      undefined,
+      signer
+    );
+
+    await service.generateAndPost(request, {});
+
+    expect(createDrop).toHaveBeenCalledTimes(1);
+    const { createDropRequest } = createDrop.mock.calls[0][0];
+    expect(store.events).toHaveLength(1);
+    const event = store.events[0];
+    expect(event).toMatchObject({
+      kind: 1,
+      wave_id: 'deploy-wave',
+      drop_id: 'created-drop',
+      profile_id: 'bot-profile',
+      refs: '[]'
+    });
+    expect(JSON.parse(event.body!)).toEqual(
+      JSON.parse(JSON.stringify(createDropRequest))
+    );
+    expect(store.authorSignatures.get('created-drop')).toBe(event.id);
   });
 
   it('renders validated summaries, service labels, PR links, and 6529 mentions', async () => {

@@ -11,6 +11,7 @@ jest.mock('@/identities/identities.db', () => ({
 }));
 
 import fc from 'fast-check';
+import { signingBot } from '@/tests/fixtures/bot-device-signing.fixture';
 import { normalizeDropGroupMentions } from '@/drops/create-or-update-drop.use-case';
 import { DropGroupMention } from '@/entities/IWaveGroupNotificationSubscription';
 import {
@@ -86,6 +87,47 @@ describe('CiPipelineAlertService', () => {
         process.env[name] = value;
       }
     }
+  });
+
+  it('signs the alert when the bot has a device key', async () => {
+    const { signer, store } = await signingBot({ profileId: 'bot-profile' });
+    alertTargetStore.resolveDeployTarget.mockResolvedValue({
+      dropId: 'deploy-drop',
+      dropPartId: 1
+    });
+    const service = new CiPipelineAlertService(
+      dropCreationApiService as any,
+      identitiesRepository as any,
+      releaseNotesQueue as any,
+      alertTargetStore as any,
+      signer
+    );
+
+    await service.postAlert(
+      { ...baseRequest, alert_type: 'web_e2e', environment: 'prod' },
+      {} as any
+    );
+
+    expect(dropCreationApiService.createDrop).toHaveBeenCalledTimes(1);
+    const { createDropRequest } =
+      dropCreationApiService.createDrop.mock.calls[0][0];
+    expect(createDropRequest.reply_to).toEqual({
+      drop_id: 'deploy-drop',
+      drop_part_id: 1
+    });
+    expect(store.events).toHaveLength(1);
+    const event = store.events[0];
+    expect(event).toMatchObject({
+      kind: 1,
+      wave_id: 'prod-wave',
+      drop_id: 'drop-1',
+      profile_id: 'bot-profile',
+      refs: JSON.stringify(['deploy-drop'])
+    });
+    expect(JSON.parse(event.body!)).toEqual(
+      JSON.parse(JSON.stringify(createDropRequest))
+    );
+    expect(store.authorSignatures.get('drop-1')).toBe(event.id);
   });
 
   it('keeps truncated arbitrary content within the target length', () => {

@@ -1,3 +1,8 @@
+import {
+  BotDeviceSigner,
+  botDeviceSigner,
+  signedBodyOfDropModel
+} from '@/api/device-signing/bot-device-signer';
 import { inSequence } from '@/db/in-sequence';
 import {
   createOrUpdateDrop,
@@ -15,7 +20,10 @@ import {
 } from '@/api/waves/wave-score.service';
 
 export class DeployerDropper {
-  constructor(private readonly createDrop: CreateOrUpdateDropUseCase) {}
+  constructor(
+    private readonly createDrop: CreateOrUpdateDropUseCase,
+    private readonly botSigner: BotDeviceSigner = botDeviceSigner
+  ) {}
 
   async drop(
     params: {
@@ -25,11 +33,16 @@ export class DeployerDropper {
     },
     ctx: RequestContext
   ): Promise<number[]> {
+    const deployerProfileId =
+      await this.botSigner.profileIdOfWallet(MEMES_DEPLOYER);
     if (!ctx.connection) {
       const pendingPushNotificationIds =
         await sqlExecutor.executeNativeQueriesInTransaction(
           async (connection) => {
-            return await this._drop(params, { ...ctx, connection });
+            return await this._drop(params, deployerProfileId, {
+              ...ctx,
+              connection
+            });
           }
         );
       if (params.waves.length) {
@@ -42,7 +55,7 @@ export class DeployerDropper {
       await sendIdentityPushNotifications(pendingPushNotificationIds);
       return pendingPushNotificationIds;
     } else {
-      return this._drop(params, ctx);
+      return this._drop(params, deployerProfileId, ctx);
     }
   }
 
@@ -56,6 +69,7 @@ export class DeployerDropper {
       mentionedUsers?: string[];
       waves: string[];
     },
+    deployerProfileId: string | null,
     ctx: RequestContext
   ): Promise<number[]> {
     ctx.timer?.start(`${this.constructor.name}->drop`);
@@ -86,13 +100,25 @@ export class DeployerDropper {
             is_additional_action_promised: null
           };
           const { pending_push_notification_ids } =
-            await this.createDrop.execute(model, false, {
-              timer: ctx.timer,
-              connection: ctx.connection!,
-              prePublication: { trustedSystem: true },
-              bypassChatLinkRestrictions: true,
-              bypassChatSlowModeRestrictions: true
-            });
+            await this.botSigner.createDrop(
+              deployerProfileId,
+              {
+                waveId,
+                replyToDropId: null,
+                body: signedBodyOfDropModel(model)
+              },
+              async () => {
+                const created = await this.createDrop.execute(model, false, {
+                  timer: ctx.timer,
+                  connection: ctx.connection!,
+                  prePublication: { trustedSystem: true },
+                  bypassChatLinkRestrictions: true,
+                  bypassChatSlowModeRestrictions: true
+                });
+                return { ...created, id: created.drop_id };
+              },
+              ctx
+            );
           return pending_push_notification_ids;
         })
       )

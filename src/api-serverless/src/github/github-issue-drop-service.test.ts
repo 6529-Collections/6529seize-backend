@@ -1,4 +1,6 @@
 import { AiPrompter } from '@/abusiveness/ai-prompter';
+import { AuthenticationContext } from '@/auth-context';
+import { signingBot } from '@/tests/fixtures/bot-device-signing.fixture';
 import { Wallet, verifyMessage } from 'ethers';
 import fetch from 'node-fetch';
 import { GitHubIssueDropService } from './github-issue-drop.service';
@@ -333,6 +335,88 @@ describe('GitHubIssueDropService', () => {
           content: ISSUE_URL
         }
       ]
+    });
+    expect(getCreateDropBody()).not.toHaveProperty('device_signature');
+  });
+
+  describe('with a device key for the bot', () => {
+    const signingGitHubBot = () =>
+      signingBot({
+        profileId: 'github-bot',
+        otherWallets: { [CLIENT_ADDRESS.toLowerCase()]: 'github-bot' }
+      });
+
+    it('signs the drop so the API stores it as a signed write', async () => {
+      const { signer, store, writes } = await signingGitHubBot();
+
+      await new GitHubIssueDropService(aiPrompter, signer).postGhIssueDrop(
+        ISSUE_URL,
+        'issue',
+        { action: 'opened' }
+      );
+
+      const { device_signature: envelope, ...body } =
+        getCreateDropBody() as CreateDropRequestBody & {
+          device_signature?: unknown;
+        };
+      expect(envelope).toMatchObject({ grant_id: expect.any(String) });
+      // The API's own check of POST /drops, over the body as sent.
+      await expect(
+        writes.createDrop(
+          { envelope, waveId: 'wave-1', replyToDropId: null, body },
+          async () => ({ id: 'github-drop' }),
+          {
+            authenticationContext:
+              AuthenticationContext.fromProfileId('github-bot')
+          }
+        )
+      ).resolves.toEqual({ id: 'github-drop' });
+      expect(store.events[0]).toMatchObject({
+        wave_id: 'wave-1',
+        drop_id: 'github-drop',
+        profile_id: 'github-bot'
+      });
+    });
+
+    it('posts unsigned when the API refuses the device signature', async () => {
+      const { signer } = await signingGitHubBot();
+      fetchMock.mockReset();
+      fetchMock
+        .mockResolvedValueOnce(
+          createJsonResponse({
+            signable_message: SIGNABLE_MESSAGE,
+            server_signature: 'server-signature'
+          }) as never
+        )
+        .mockResolvedValueOnce(
+          createJsonResponse({ token: 'auth-token' }) as never
+        )
+        .mockResolvedValueOnce({
+          ...createJsonResponse({}),
+          ok: false,
+          status: 400,
+          statusText: 'Bad Request',
+          text: jest
+            .fn()
+            .mockResolvedValue(
+              '{"error":"Invalid device signature: unknown grant","code":"INVALID_DEVICE_SIGNATURE"}'
+            )
+        } as never)
+        .mockResolvedValueOnce(createJsonResponse({}) as never);
+
+      await new GitHubIssueDropService(aiPrompter, signer).postGhIssueDrop(
+        ISSUE_URL,
+        'issue',
+        { action: 'opened' }
+      );
+
+      const bodies = fetchMock.mock.calls
+        .slice(2)
+        .map((call) => JSON.parse((call[1] as { body: string }).body));
+      expect(bodies).toHaveLength(2);
+      expect(bodies[0]).toHaveProperty('device_signature');
+      expect(bodies[1]).not.toHaveProperty('device_signature');
+      expect(bodies[1].parts[0].content).toBe(ISSUE_URL);
     });
   });
 });

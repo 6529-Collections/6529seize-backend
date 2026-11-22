@@ -4,8 +4,15 @@ import { Wallet } from 'ethers';
 import fetch from 'node-fetch';
 import { env } from '../../../env';
 import { Logger } from '../../../logging';
+import {
+  BotDeviceSigner,
+  botDeviceSigner
+} from '../device-signing/bot-device-signer';
+import { DeviceEventKind } from '../device-signing/device-event';
 import { parseStructuredWalletSignatureMessage } from '../wallet-signatures/structured-wallet-signatures';
 import { GitHubWebhookAction } from './github-webhook-event';
+
+const INVALID_DEVICE_SIGNATURE_CODE = 'INVALID_DEVICE_SIGNATURE';
 
 type GitHubDropTargetKind = 'issue' | 'pull request';
 type PostGitHubDropOptions = {
@@ -59,7 +66,10 @@ function removeTrailingSlashes(value: string): string {
 export class GitHubIssueDropService {
   private readonly logger = Logger.get(this.constructor.name);
 
-  constructor(private readonly aiPrompter: AiPrompter = openAiPrompter) {}
+  constructor(
+    private readonly aiPrompter: AiPrompter = openAiPrompter,
+    private readonly botSigner: BotDeviceSigner = botDeviceSigner
+  ) {}
 
   async postGhIssueDrop(
     targetUrl: string,
@@ -338,16 +348,38 @@ export class GitHubIssueDropService {
     const API_BASE_URL =
       env.getStringOrNull('API_BASE_URL') ?? 'https://api.6529.io';
     const createDropUrl = this.buildApiUrl(API_BASE_URL, '/api/drops', {});
+    const post = (payload: object) =>
+      fetch(createDropUrl, {
+        method: 'POST',
+        headers: {
+          accept: 'application/json',
+          authorization: `Bearer ${token}`,
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify(payload)
+      });
 
-    const resp = await fetch(createDropUrl, {
-      method: 'POST',
-      headers: {
-        accept: 'application/json',
-        authorization: `Bearer ${token}`,
-        'content-type': 'application/json'
-      },
-      body: JSON.stringify(body)
-    });
+    // Signed with the bot's device key when it has one, so the drop reaches
+    // the 6529 relays.
+    const deviceSignature = await this.botSigner.envelopeFor(
+      await this.botSigner.profileIdOfWallet(signerAddress),
+      { kind: DeviceEventKind.POST, waveId, refs: [], body }
+    );
+    let resp = await post(
+      deviceSignature ? { ...body, device_signature: deviceSignature } : body
+    );
+    if (deviceSignature && resp.status === 400) {
+      const errorText = await resp.text();
+      if (!errorText.includes(INVALID_DEVICE_SIGNATURE_CODE)) {
+        throw new Error(
+          `Create drop failed: ${resp.status} ${resp.statusText} - ${errorText}`
+        );
+      }
+      this.logger.error(
+        `GitHub drop device signature refused, posting it unsigned: ${errorText}`
+      );
+      resp = await post(body);
+    }
 
     if (!resp.ok) {
       const errorText = await resp.text();
