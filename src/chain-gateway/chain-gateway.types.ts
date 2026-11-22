@@ -413,6 +413,10 @@ export interface ChainDraftRequest {
   readonly notBefore?: number;
   readonly expiresAt?: number;
   readonly maxFee?: string;
+  /**
+   * Best left out: the draft then reserves step 9's bound plus 150,000 RU.
+   * A value below the bound is raised to the bound alone.
+   */
   readonly maxWork?: number;
   readonly tipPerRu?: string;
 }

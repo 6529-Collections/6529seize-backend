@@ -649,6 +649,18 @@ function holdsWallet(identity: ChainIdentity, wallet: string): boolean {
   return (identity.wallets ?? []).some((it) => lower(it) === asked);
 }
 
+/**
+ * Whether a draft is of the operation asked for: its code (a number or 0x
+ * hex) or its name, as the node reads `opType`.
+ */
+function draftIsOf(draft: ChainDraft, request: ChainDraftRequest): boolean {
+  const asked = request.opType;
+  if (typeof asked === 'number') return draft.opType === asked;
+  const text = String(asked).trim();
+  if (/^0x[0-9a-f]+$/i.test(text)) return draft.opType === parseInt(text, 16);
+  return (draft.opName ?? '').toLowerCase() === text.toLowerCase();
+}
+
 /** A UUID compared without its dashes, in lower case. */
 function uuidKey(uuid: string): string {
   return uuid.replace(/-/g, '').trim().toLowerCase();
@@ -717,6 +729,8 @@ export class ChainGatewayClient {
    * so a status flipping between two during a relaunch keeps both.
    */
   private readonly pinFloors = new Map<string, number>();
+  /** The highest head height seen on each network, likewise. */
+  private readonly headFloors = new Map<string, number>();
   private caches: {
     /** JSON text of answers (`null` for a 404), parsed afresh on each hit. */
     readonly answers: LruCache<string>;
@@ -766,6 +780,7 @@ export class ChainGatewayClient {
   clearCache(): void {
     this.head = null;
     this.pinFloors.clear();
+    this.headFloors.clear();
     this.caches?.answers.clear();
     this.caches?.docs.clear();
   }
@@ -1112,6 +1127,10 @@ export class ChainGatewayClient {
           // Reads never pin below a finalized height already seen on this
           // network (a node behind the others can answer the status).
           this.raiseFloor(value.network!, value.finalizedHeight);
+          this.headFloors.set(
+            value.network!,
+            Math.max(this.headFloors.get(value.network!) ?? 0, value.headHeight)
+          );
           this.head = { value, at: this.now() };
           return this.steady(value);
         } finally {
@@ -1130,9 +1149,10 @@ export class ChainGatewayClient {
    */
   private steady(node: ChainHead): ChainHead {
     const pin = this.pinOf(node);
+    const headFloor = node.network ? this.headFloors.get(node.network) : 0;
     return {
       ...node,
-      headHeight: Math.max(node.headHeight, pin),
+      headHeight: Math.max(node.headHeight, pin, headFloor ?? 0),
       finalizedHeight: pin,
       // The answering node's block time, for its own height only.
       finalizedTime: pin === node.finalizedHeight ? node.finalizedTime : null,
@@ -1236,10 +1256,19 @@ export class ChainGatewayClient {
         path
       );
     }
-    // A finalized height read is one the next reads don't go below.
-    if (read.at === 'finalized') {
-      this.raiseFloor(lower(read.network), read.height);
+    // Only a finalized answer: one of a node's head can change.
+    if (read.at !== 'finalized') {
+      const notFinal = new ChainGatewayError(
+        `${path}: answered from the node's head, not its finalized state`,
+        409,
+        'height_gone',
+        path
+      );
+      notFinal.read = read;
+      throw notFinal;
     }
+    // A finalized height read is one the next reads don't go below.
+    this.raiseFloor(lower(read.network), read.height);
     return answer;
   }
 
@@ -1299,13 +1328,16 @@ export class ChainGatewayClient {
     if (asked !== undefined && lower(asked) !== network) {
       throw wrongNetwork(path, network ?? '', asked, null);
     }
-    const url = this.url(path, { ...query, height });
+    // The network goes in the query too (the node reads only the keys it
+    // knows): the gateway's caches then keep each chain apart.
+    const pinned = { ...query, height, network: network ?? undefined };
+    const url = this.url(path, pinned);
     const cached = this.answers.get(`${network} ${url}`);
     if (cached !== undefined) {
       // Parsed afresh: a caller that changes an answer can't change the cache.
       return JSON.parse(cached) as ChainAnswer<T> | null;
     }
-    const { status, json } = await this.send('GET', path, { ...query, height });
+    const { status, json } = await this.send('GET', path, pinned);
     const { read, answer } = await this.toAnswer<T>(path, status, json, asked);
     // A node that has the height only as its head answers from there: not
     // the finalized state pinned, so the height is gone for this read.
@@ -1329,7 +1361,10 @@ export class ChainGatewayClient {
     // it was asked; not kept when it is the node's own data rather than the
     // state at that height.
     if (!nodeLocal(path, answer?.data)) {
-      this.answers.set(`${lower(read.network)} ${url}`, JSON.stringify(answer));
+      this.answers.set(
+        `${lower(read.network)} ${this.url(path, { ...pinned, network: lower(read.network) })}`,
+        JSON.stringify(answer)
+      );
     }
     return answer;
   }
@@ -1402,16 +1437,25 @@ export class ChainGatewayClient {
    * An identity answer, which must be of what was asked (its principal,
    * handle, wallet or legacy id): another is bad_answer, not a result.
    */
-  private async identityAnswer(
+  private identityAnswer(
     path: string,
     opts: ChainReadOptions | undefined,
     isAsked: (identity: ChainIdentity) => boolean
   ): Promise<ChainIdentity | null> {
-    const identity = await this.data<ChainIdentity>(path, {}, opts);
-    if (identity && !isAsked(identity)) {
-      throw badAnswer(path, 'an identity other than the one asked for');
+    return this.askedAnswer<ChainIdentity>(path, opts, isAsked);
+  }
+
+  /** An answer that must be of what was asked, else bad_answer. */
+  private async askedAnswer<T>(
+    path: string,
+    opts: ChainReadOptions | undefined,
+    isAsked: (data: T) => boolean
+  ): Promise<T | null> {
+    const data = await this.data<T>(path, {}, opts);
+    if (data && !isAsked(data)) {
+      throw badAnswer(path, 'an answer of something other than was asked');
     }
-    return identity;
+    return data;
   }
 
   /**
@@ -1420,10 +1464,11 @@ export class ChainGatewayClient {
    * create it.
    */
   getImportedIdentity(principalId: string, opts?: ChainReadOptions) {
-    return this.data<ChainImportedIdentity>(
-      `/v1/identities/${segment(lower(principalId))}/imported`,
-      {},
-      opts
+    const asked = lower(principalId);
+    return this.askedAnswer<ChainImportedIdentity>(
+      `/v1/identities/${segment(asked)}/imported`,
+      opts,
+      (it) => lower(it.principalId ?? '') === asked
     );
   }
 
@@ -1455,7 +1500,8 @@ export class ChainGatewayClient {
     }
     try {
       return await this.walletsAt(distinct, {
-        height: this.pinOf(await this.getHead())
+        height: this.pinOf(await this.getHead()),
+        network: opts.network
       });
     } catch (error) {
       if (
@@ -1468,7 +1514,8 @@ export class ChainGatewayClient {
     // A node that doesn't hold that height: every chunk again at a fresh
     // one, once, so that all the chunks are read at one height.
     return await this.walletsAt(distinct, {
-      height: this.pinOf(await this.getHead(true))
+      height: this.pinOf(await this.getHead(true)),
+      network: opts.network
     });
   }
 
@@ -1576,10 +1623,11 @@ export class ChainGatewayClient {
     handle: string,
     opts?: ChainReadOptions
   ): Promise<ChainHandle | null> {
-    const answer = await this.data<ChainHandle>(
-      `/v1/handles/${segment(handle.trim().toLowerCase())}`,
-      {},
-      opts
+    const asked = handle.trim().toLowerCase();
+    const answer = await this.askedAnswer<ChainHandle>(
+      `/v1/handles/${segment(asked)}`,
+      opts,
+      (it) => (it.handle ?? '').toLowerCase() === asked
     );
     if (!answer) return null;
     return {
@@ -1597,10 +1645,11 @@ export class ChainGatewayClient {
   }
 
   getMembershipWallet(wallet: string, opts?: ChainReadOptions) {
-    return this.data<ChainMembershipWallet>(
-      `/v1/membership/wallets/${segment(lower(wallet))}`,
-      {},
-      opts
+    const asked = lower(wallet);
+    return this.askedAnswer<ChainMembershipWallet>(
+      `/v1/membership/wallets/${segment(asked)}`,
+      opts,
+      (it) => lower(it.wallet ?? '') === asked
     );
   }
 
@@ -1912,9 +1961,29 @@ export class ChainGatewayClient {
     return this.data<Record<string, unknown>>('/v1/ops', {}, { at: 'head' });
   }
 
-  /** The typed data to sign for one operation (POST /v1/draft). */
+  /**
+   * The typed data to sign for one operation (POST /v1/draft). Leave
+   * `maxWork` out: the draft then reserves step 9's bound plus 150,000 RU
+   * (the client margin), enough for the records a handler writes. The
+   * node raises a lower one to the bound alone, which can fall short. The
+   * draft must be of the operation asked for, and reserve at least the
+   * `maxWork` given, else bad_answer.
+   */
   async getDraft(request: ChainDraftRequest): Promise<ChainDraft> {
-    return await this.post<ChainDraft>('/v1/draft', request);
+    const path = '/v1/draft';
+    const draft = await this.post<ChainDraft>(path, request);
+    if (!draftIsOf(draft, request)) {
+      throw badAnswer(path, 'a draft of another operation than was asked');
+    }
+    const given = request.maxWork;
+    const reserved = Number((draft.fee as { maxWork?: unknown })?.maxWork);
+    if (given !== undefined && !(reserved >= given)) {
+      throw badAnswer(
+        path,
+        `a draft reserving ${reserved} work, below ${given}`
+      );
+    }
+    return draft;
   }
 
   /**

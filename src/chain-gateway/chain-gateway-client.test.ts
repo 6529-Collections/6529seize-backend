@@ -644,7 +644,11 @@ describe('ChainGatewayClient reads', () => {
           known
             ? {
                 status: 200,
-                json: { read: stamp(10), data: { legacyId: 'p-1' }, next: null }
+                json: {
+                  read: stamp(10),
+                  data: { principalId: '0xab', legacyId: 'p-1' },
+                  next: null
+                }
               }
             : {
                 status: 404,
@@ -662,6 +666,7 @@ describe('ChainGatewayClient reads', () => {
     });
     known = true;
     expect(await client.getImportedIdentity('0xab')).toEqual({
+      principalId: '0xab',
       legacyId: 'p-1'
     });
   });
@@ -944,6 +949,99 @@ describe('ChainGatewayClient reads', () => {
       principalId: null,
       since: null,
       reservedUntil: null
+    });
+  });
+
+  it.each([
+    [
+      'an import entry',
+      (c: ChainGatewayClient) => c.getImportedIdentity('0x01'),
+      { principalId: '0x02', legacyId: null }
+    ],
+    [
+      'a wallet',
+      (c: ChainGatewayClient) => c.getMembershipWallet('0x01'),
+      { wallet: '0x02', principalId: null }
+    ],
+    [
+      'a handle',
+      (c: ChainGatewayClient) => c.getHandle('alice'),
+      { handle: 'bob', valid: true, available: true, status: 'free' }
+    ]
+  ])('refuses %s answered for something else', async (_name, ask, data) => {
+    const { client } = setup(
+      withStatus(
+        () => ({
+          status: 200,
+          json: { read: stamp(10), data, next: null }
+        }),
+        10
+      )
+    );
+    await expect(ask(client)).rejects.toMatchObject({ code: 'bad_answer' });
+  });
+
+  it('keeps the network asked through many wallets, re-pinned included', async () => {
+    const wallet = '0x' + '01'.repeat(20);
+    let network = stamp(1).network;
+    let gone = true;
+    const { client } = setup((call) => {
+      if (path(call) === '/v1/status') {
+        const answer = status(50);
+        answer.json.data.finalized = { ...answer.json.data.finalized, network };
+        return answer;
+      }
+      if (gone) {
+        gone = false;
+        // A node past the pin that no longer holds it; then a relaunch.
+        network = OTHER_NETWORK;
+        return {
+          status: 409,
+          json: {
+            read: stamp(60),
+            error: { code: 'height_gone', message: 'x' }
+          }
+        };
+      }
+      return {
+        status: 200,
+        json: {
+          read: { ...stamp(50), network },
+          data: { [wallet]: null },
+          next: null
+        }
+      };
+    });
+    await expect(
+      client.getIdentitiesByWallets([wallet], { network: stamp(1).network })
+    ).rejects.toMatchObject({ code: 'wrong_network' });
+    // Asked of the new chain on its default path: refused as well.
+    await expect(
+      client.getIdentitiesByWallets([wallet], { network: stamp(1).network })
+    ).rejects.toMatchObject({ code: 'wrong_network' });
+  });
+
+  it("refuses a last-resort unpinned answer from a node's head", async () => {
+    const { client } = setup(
+      withStatus(
+        (call) =>
+          param(call, 'height') !== null
+            ? {
+                status: 409,
+                json: {
+                  read: stamp(60),
+                  error: { code: 'height_gone', message: 'x' }
+                }
+              }
+            : {
+                status: 200,
+                json: { read: stamp(60, 'head'), data: echo(call), next: null }
+              },
+        50
+      )
+    );
+    await expect(client.getIdentityByPrincipal('0xab')).rejects.toMatchObject({
+      code: 'height_gone'
     });
   });
 
@@ -1331,7 +1429,8 @@ describe('ChainGatewayClient reads', () => {
     finalized = 990;
     advance(2_500);
     expect(await client.getHead()).toEqual(
-      expect.objectContaining({ headHeight: 1000, finalizedHeight: 1000 })
+      // The head height seen (1002) holds too: it never goes down.
+      expect.objectContaining({ headHeight: 1002, finalizedHeight: 1000 })
     );
   });
 
@@ -1359,7 +1458,7 @@ describe('ChainGatewayClient reads', () => {
       expect.objectContaining({
         finalizedHeight: 1000,
         nodeFinalizedHeight: 997,
-        headHeight: 1000,
+        headHeight: 1003,
         finalizedTime: null,
         nodeFinalizedTime: stamp(997).time
       })
@@ -1452,7 +1551,8 @@ describe('ChainGatewayClient reads', () => {
       live: '1',
       after: 'cursor-1',
       limit: '10',
-      height: '9'
+      height: '9',
+      network: stamp(9).network
     });
     await client.getDelegations({ holder: '0xAA' });
     await client.getDelegations({ byCollection: '0xBB' });
@@ -2305,6 +2405,45 @@ describe('ChainGatewayClient writes', () => {
     });
     expect(calls[1].headers['content-type']).toBe('application/json');
   });
+
+  it.each([
+    ['another code', { opType: 0x0102 }, true],
+    ['another name', { opType: 'IDENTITY_LEAVE' }, true],
+    ['another hex code', { opType: '0x0102' }, true],
+    ['its code', { opType: 0x0101 }, false],
+    ['its name in another case', { opType: 'identity_join' }, false],
+    ['its hex code', { opType: '0x0101' }, false],
+    [
+      'less work reserved than given',
+      { opType: 0x0101, maxWork: 600000 },
+      true
+    ],
+    ['the work given', { opType: 0x0101, maxWork: 500000 }, false]
+  ])(
+    'checks a draft against the request: %s',
+    async (_name, asked, refused) => {
+      const { client } = setup(
+        withStatus(() => ({
+          status: 200,
+          json: {
+            read: stamp(5, 'head'),
+            data: {
+              txId: '0x' + 'cd'.repeat(32),
+              opType: 0x0101,
+              opName: 'IDENTITY_JOIN',
+              fee: { maxWork: '500000' }
+            }
+          }
+        }))
+      );
+      const draft = client.getDraft({ ...asked, body: {} });
+      if (refused) {
+        await expect(draft).rejects.toMatchObject({ code: 'bad_answer' });
+      } else {
+        expect((await draft).opName).toBe('IDENTITY_JOIN');
+      }
+    }
+  );
 
   it('refuses a draft or submit answer without its read stamp', async () => {
     const { client } = setup(
