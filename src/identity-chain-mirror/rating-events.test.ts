@@ -1,8 +1,14 @@
-import { ChainFeedRecord } from '@/chain-gateway/chain-gateway.types';
+import {
+  ChainFeedRecord,
+  ChainRatingTotal
+} from '@/chain-gateway/chain-gateway.types';
 import {
   categoryKey,
+  ledgerKeyOf,
   ratingChangesOf,
   ratingEventOrigin,
+  totalIn,
+  totalKeyOf,
   writerText
 } from './rating-events';
 
@@ -63,7 +69,9 @@ describe('ratingChangesOf', () => {
     ...extra
   });
 
-  it('reads REP and NIC ratings of identities, removals as 0, and category names', () => {
+  const ZERO = '0x' + '00'.repeat(32);
+
+  it('reads REP and NIC ratings of identities, removals as 0, category names and totals', () => {
     const read = ratingChangesOf([
       {
         height: 7,
@@ -85,34 +93,86 @@ describe('ratingChangesOf', () => {
             { writer: tx('RATING_SET'), byImport: false }
           ),
           rating(
-            {
-              rater: R,
-              matter: 2,
-              targetKind: 1,
-              target: T,
-              category: '0x' + '00'.repeat(32)
-            },
+            { rater: R, matter: 2, targetKind: 1, target: T, category: ZERO },
             null,
             { byImport: true }
           ),
-          // Not an identity's, or not readable: left out.
+          {
+            family: '0x0704',
+            name: 'RatingTotal',
+            key: '0x',
+            value: '0x01',
+            keyFields: { targetKind: 1, target: T, matter: 1, category: CAT },
+            // The sum is an i128: it may come as a string.
+            valueFields: { sum: '-12', raters: 3 }
+          },
+          {
+            family: '0x0704',
+            name: 'RatingTotal',
+            key: '0x',
+            value: null,
+            keyFields: { targetKind: 1, target: T, matter: 2, category: ZERO },
+            valueFields: null
+          },
+          // Not an identity's: left out, not a problem.
           rating(
             { rater: R, matter: 1, targetKind: 2, target: T, category: CAT },
             1
           ),
+          // Not readable: named.
           rating(
             { rater: 'x', matter: 1, targetKind: 1, target: T, category: CAT },
-            1
+            1,
+            { key: '0x01' }
           ),
           rating(
             { rater: R, matter: 9, targetKind: 1, target: T, category: CAT },
-            1
+            1,
+            { key: '0x02' }
+          ),
+          rating(
+            { rater: R, matter: 1, targetKind: 1, target: T, category: ZERO },
+            1,
+            { key: '0x03' }
+          ),
+          // A value without its fields is never a removal.
+          rating(
+            { rater: R, matter: 1, targetKind: 1, target: T, category: CAT },
+            1,
+            { key: '0x04', valueFields: null }
           )
         ]
       }
     ]);
     expect(read.categoryNames).toEqual(new Map([[CAT, 'Kind']]));
-    expect(read.unreadable).toBe(3);
+    expect(read.unreadable).toEqual(['7:0x01', '7:0x02', '7:0x03', '7:0x04']);
+    expect(read.totals).toEqual(
+      new Map([
+        [
+          7,
+          new Map([
+            [
+              totalKeyOf({
+                targetKind: 1,
+                target: T,
+                matterCode: 1,
+                category: CAT
+              }),
+              -12
+            ],
+            [
+              totalKeyOf({
+                targetKind: 1,
+                target: T,
+                matterCode: 2,
+                category: ZERO
+              }),
+              0
+            ]
+          ])
+        ]
+      ])
+    );
     expect(read.changes).toEqual([
       {
         height: 7,
@@ -120,6 +180,9 @@ describe('ratingChangesOf', () => {
         rater: R,
         target: T,
         matter: 'REP',
+        matterCode: 1,
+        targetKind: 1,
+        category: CAT,
         categoryId: CAT,
         value: 5,
         writer: tx('RATING_SET'),
@@ -131,12 +194,67 @@ describe('ratingChangesOf', () => {
         rater: R,
         target: T,
         matter: 'CIC',
+        matterCode: 2,
+        targetKind: 1,
+        category: ZERO,
         categoryId: null,
         value: 0,
         writer: null,
         byImport: true
       }
     ]);
+  });
+
+  it('keys the ledger by the record key and the totals by the target', () => {
+    const it1 = {
+      rater: R,
+      matterCode: 1,
+      targetKind: 1,
+      target: T,
+      category: CAT
+    };
+    expect(ledgerKeyOf(it1)).not.toBe(ledgerKeyOf({ ...it1, rater: T }));
+    expect(totalKeyOf(it1)).toBe(totalKeyOf({ ...it1, rater: T } as never));
+    expect(totalKeyOf(it1)).not.toBe(totalKeyOf({ ...it1, matterCode: 2 }));
+  });
+
+  it("finds a change's total in a target's totals by matter and category", () => {
+    const totals = [
+      {
+        matter: 'REP',
+        category: { id: null, name: null },
+        total: '7',
+        raters: 1
+      },
+      {
+        matter: 'nic',
+        category: { id: null, name: null },
+        total: '3',
+        raters: 1
+      },
+      {
+        matter: 'REP',
+        category: { id: CAT, name: 'Kind' },
+        total: '-4',
+        raters: 2
+      },
+      {
+        matter: 'REP',
+        category: { id: '0x' + 'dd'.repeat(32), name: 'Big' },
+        total: '1' + '0'.repeat(20),
+        raters: 2
+      }
+    ] as unknown as ChainRatingTotal[];
+    expect(totalIn(totals, { matter: 'CIC', category: ZERO })).toBe(3);
+    expect(totalIn(totals, { matter: 'REP', category: CAT })).toBe(-4);
+    // None listed: no rater left.
+    expect(
+      totalIn(totals, { matter: 'REP', category: '0x' + 'ee'.repeat(32) })
+    ).toBe(0);
+    // Too big to hold exactly: not taken.
+    expect(
+      totalIn(totals, { matter: 'REP', category: '0x' + 'dd'.repeat(32) })
+    ).toBeNull();
   });
 
   it("names a category's state key", () => {

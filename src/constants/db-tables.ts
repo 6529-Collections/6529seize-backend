@@ -55,9 +55,12 @@ export const ADDRESS_CONSOLIDATION_KEY = 'address_consolidation_keys';
 export const IDENTITY_CHAIN_PRINCIPALS_TABLE = 'identity_chain_principals';
 /** Where the identity mirror is in the chain gateway's change feed. */
 export const IDENTITY_CHAIN_MIRROR_STATE_TABLE = 'identity_chain_mirror_state';
-/** Each REP and NIC rating change the identity mirror applied (notifications). */
+/** Each REP and NIC rating change on the chain (notifications). */
 export const IDENTITY_CHAIN_RATING_EVENTS_TABLE =
   'identity_chain_rating_events';
+/** Each chain rating's value and height, as the rating events follower saw it. */
+export const IDENTITY_CHAIN_RATING_LEDGER_TABLE =
+  'identity_chain_rating_ledger';
 /** Each bound wallet's principal and the height it has been bound since. */
 export const IDENTITY_CHAIN_WALLETS_TABLE = 'identity_chain_wallets';
 /** 6529.io's placeholder profiles as the identity mirror first found them. */

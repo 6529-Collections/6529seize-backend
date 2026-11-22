@@ -12,6 +12,7 @@ import {
   IDENTITY_CHAIN_PLACEHOLDERS_TABLE,
   IDENTITY_CHAIN_PRINCIPALS_TABLE,
   IDENTITY_CHAIN_RATING_EVENTS_TABLE,
+  IDENTITY_CHAIN_RATING_LEDGER_TABLE,
   IDENTITY_CHAIN_REGROUPS_TABLE,
   IDENTITY_CHAIN_WALLETS_TABLE
 } from '@/constants';
@@ -148,6 +149,44 @@ export class IdentityChainRegroupEntity {
   readonly started_at!: number | null;
 }
 
+/**
+ * Each identity rating on the chain, as the rating events follower read it
+ * from the feed's Rating records (keyed by the record's own key fields):
+ * its value and the height it was set at. The events' old values come from
+ * here, never from 6529.io's ratings.
+ */
+@Entity(IDENTITY_CHAIN_RATING_LEDGER_TABLE)
+@Index('idx_identity_chain_rating_ledger_total', [
+  'target_kind',
+  'target_principal',
+  'matter',
+  'category'
+])
+export class IdentityChainRatingLedgerEntity {
+  @PrimaryColumn({ type: 'varchar', length: 66, nullable: false })
+  readonly rater_principal!: string;
+
+  /** The chain's matter: 1 REP, 2 NIC. */
+  @PrimaryColumn({ type: 'int', nullable: false })
+  readonly matter!: number;
+
+  @PrimaryColumn({ type: 'int', nullable: false })
+  readonly target_kind!: number;
+
+  @PrimaryColumn({ type: 'varchar', length: 66, nullable: false })
+  readonly target_principal!: string;
+
+  /** The category id (zero for NIC). */
+  @PrimaryColumn({ type: 'varchar', length: 66, nullable: false })
+  readonly category!: string;
+
+  @Column({ type: 'bigint', nullable: false })
+  readonly value!: number;
+
+  @Column({ type: 'bigint', nullable: false })
+  readonly height!: number;
+}
+
 /** One row (id 'identity'): the mirror's place in the change feed. */
 @Entity(IDENTITY_CHAIN_MIRROR_STATE_TABLE)
 export class IdentityChainMirrorStateEntity {
@@ -236,6 +275,17 @@ export class IdentityChainMirrorStateEntity {
   @Column({ type: 'bigint', nullable: true, default: null })
   readonly pin_floor!: number | null;
 
+  /** The next feed height the rating events follower reads. */
+  @Column({ type: 'bigint', nullable: true, default: null })
+  readonly events_next_height!: number | null;
+
+  /**
+   * The rating ledger has followed the feed without a break from the
+   * import's start: its totals are exact.
+   */
+  @Column({ type: 'boolean', nullable: false, default: false })
+  readonly events_exact!: boolean;
+
   /**
    * What the mirror could not write, tried again by the next run (JSON:
    * principals, rating targets and wallets). A full sync starts it again.
@@ -250,9 +300,10 @@ export class IdentityChainMirrorStateEntity {
 /**
  * One rating change on the 6529 chain, from the feed's Rating records: a
  * row per record per block (the feed gives each key's final value in a
- * block, with its last writer), written before the mirror applies the
- * block's other effects. From switch-on the source of REP and NIC
- * notifications; only `origin` OPERATION (a rater's RATING_SET) notifies.
+ * block, with its last writer), written by the rating events follower with
+ * its ledger (identity_chain_rating_ledger) from the import's start. From
+ * switch-on the source of REP and NIC notifications; only `origin`
+ * OPERATION (a rater's RATING_SET) notifies.
  */
 @Entity(IDENTITY_CHAIN_RATING_EVENTS_TABLE)
 @Index(
@@ -271,6 +322,7 @@ export class IdentityChainMirrorStateEntity {
   'height'
 ])
 @Index('idx_identity_chain_rating_events_time', ['block_time_ms'])
+@Index('idx_identity_chain_rating_events_created', ['created_at'])
 export class IdentityChainRatingEventEntity {
   @PrimaryGeneratedColumn('increment', { type: 'bigint' })
   readonly id!: number;
@@ -288,8 +340,8 @@ export class IdentityChainRatingEventEntity {
 
   /**
    * The rater's 6529.io profile id when mapped; null when not (filled in
-   * later when it is mapped within a day; a principal never mapped, merged
-   * or closed, can leave it null).
+   * when it is mapped within a day of the row's writing; a principal never
+   * mapped, merged or closed, can leave it null).
    */
   @Column({ type: 'varchar', length: 50, nullable: true, default: null })
   readonly rater_profile_id!: string | null;
@@ -309,7 +361,7 @@ export class IdentityChainRatingEventEntity {
   @Column({ type: 'varchar', length: 100, nullable: false })
   readonly matter_category!: string;
 
-  /** 6529.io's value before (0: none); within a page, the record before. */
+  /** The value before, from the ledger (0: none). */
   @Column({ type: 'int', nullable: false })
   readonly old_rating!: number;
 
@@ -318,8 +370,9 @@ export class IdentityChainRatingEventEntity {
   readonly new_rating!: number;
 
   /**
-   * The target's total in this matter and category after the change:
-   * 6529.io's before the page, plus the page's changes up to this one.
+   * The target's total in this matter and category after the block: its
+   * RatingTotal record; without one, the ledger's total plus the change
+   * while the ledger is exact, else the chain's totals at that height.
    */
   @Column({ type: 'bigint', nullable: false })
   readonly total_after!: number;

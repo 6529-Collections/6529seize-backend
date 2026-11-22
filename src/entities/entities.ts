@@ -324,6 +324,7 @@ export {
   IdentityChainPrincipalEntity,
   IdentityChainPlaceholderEntity,
   IdentityChainRatingEventEntity,
+  IdentityChainRatingLedgerEntity,
   IdentityChainRegroupEntity,
   IdentityChainWalletEntity
 } from './IIdentityChainMirror';

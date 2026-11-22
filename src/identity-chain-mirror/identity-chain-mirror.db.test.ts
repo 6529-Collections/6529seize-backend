@@ -145,6 +145,8 @@ describeWithSeed(
           sync_wallet_after: null,
           pin_floor: null,
           off_chain_after: null,
+          events_next_height: null,
+          events_exact: false,
           retry: NO_RETRY
         },
         9
@@ -312,6 +314,8 @@ describeWithSeed(
           sync_wallet_after: B,
           pin_floor: 812,
           off_chain_after: C,
+          events_next_height: 77,
+          events_exact: true,
           retry: { principals: [P], targets: [], wallets: [B] }
         },
         1
@@ -330,6 +334,8 @@ describeWithSeed(
           sync_wallet_after: B,
           pin_floor: 812,
           off_chain_after: C,
+          events_next_height: 77,
+          events_exact: true,
           retry: { principals: [P], targets: [], wallets: [B] }
         })
       );
@@ -521,7 +527,7 @@ describeWithSeed(
       expect(rows).toHaveLength(3);
     });
 
-    it('writes a rating event once per key and height, and reads 6529.io values', async () => {
+    it('writes a rating event once per key and height, and fills profile ids', async () => {
       const row = (height: number, newRating: number) => ({
         height,
         block_time_ms: 1_764_000_000_000 + height,
@@ -538,64 +544,47 @@ describeWithSeed(
         by_import: false,
         writer: 'tx:RATING_SET'
       });
-      expect(await db.insertRatingEvents([row(90, 4), row(91, 6)], 1)).toBe(2);
+      expect(
+        await inTx((conn) =>
+          db.insertRatingEvents([row(90, 4), row(91, 6)], 1, conn)
+        )
+      ).toBe(2);
       // A page read again: the same key and height are left as they are.
-      expect(await db.insertRatingEvents([row(90, 5), row(92, 7)], 2)).toBe(1);
+      await inTx((conn) =>
+        db.insertRatingEvents([row(90, 5), row(92, 7)], 2, conn)
+      );
       const events = await sqlExecutor.execute<any>(
-        `select height, block_time_ms, new_rating, origin, by_import, writer, source
+        `select height, block_time_ms, new_rating, total_after, origin, by_import, writer, source
          from ${IDENTITY_CHAIN_RATING_EVENTS_TABLE} order by height`
       );
       expect(
         events.map((it: any) => [
           Number(it.height),
           Number(it.new_rating),
+          Number(it.total_after),
           it.origin,
           Number(it.by_import),
           it.writer,
           it.source
         ])
       ).toEqual([
-        [90, 4, 'OPERATION', 0, 'tx:RATING_SET', 'FEED'],
-        [91, 6, 'OPERATION', 0, 'tx:RATING_SET', 'FEED'],
-        [92, 7, 'OPERATION', 0, 'tx:RATING_SET', 'FEED']
+        [90, 4, 4, 'OPERATION', 0, 'tx:RATING_SET', 'FEED'],
+        [91, 6, 6, 'OPERATION', 0, 'tx:RATING_SET', 'FEED'],
+        [92, 7, 7, 'OPERATION', 0, 'tx:RATING_SET', 'FEED']
       ]);
       expect(Number(events[0].block_time_ms)).toBe(1_764_000_000_090);
-      // A row without profiles is kept too.
-      expect(
-        await db.insertRatingEvents(
+      // A row without profiles, filled in once the principal is mapped.
+      await inTx((conn) =>
+        db.insertRatingEvents(
           [{ ...row(93, 1), rater_profile_id: null, target_profile_id: null }],
-          3
+          50,
+          conn
         )
-      ).toBe(1);
-      // The seeded ratings of Alice, by key.
-      const values = await db.ratingsOf([
-        {
-          rater_profile_id: BOB,
-          target_profile_id: ALICE,
-          matter: 'REP',
-          matter_category: 'Kind'
-        },
-        {
-          rater_profile_id: BOB,
-          target_profile_id: ALICE,
-          matter: 'REP',
-          matter_category: 'Nothing'
-        }
-      ]);
-      expect(Array.from(values.values())).toEqual([3]);
-      // Alice's totals, the help bot's credits left out.
-      const totals = await db.ratingTotalsOf([
-        { target_profile_id: ALICE, matter: 'REP', matter_category: 'Kind' },
-        {
-          target_profile_id: ALICE,
-          matter: 'REP',
-          matter_category: HELP_BOT_CREDIT_CATEGORY
-        }
-      ]);
-      expect(Array.from(totals.values())).toEqual([3]);
-      // The rows without profiles get them once the principals are mapped.
+      );
       await inTx((conn) => db.insertMapping(Q, ALICE, 'LEGACY', 1, conn));
-      expect(await db.fillRatingEventProfiles(0)).toBeGreaterThan(0);
+      // Written before the window: left alone.
+      expect(await db.fillRatingEventProfiles(51)).toBe(0);
+      expect(await db.fillRatingEventProfiles(50)).toBe(1);
       const [filled] = await sqlExecutor.execute<any>(
         `select rater_profile_id, target_profile_id from ${IDENTITY_CHAIN_RATING_EVENTS_TABLE}
          where height = 93`
@@ -604,8 +593,45 @@ describeWithSeed(
         null,
         ALICE
       ]);
-      // Older than `since`: left alone.
-      expect(await db.fillRatingEventProfiles(Number.MAX_SAFE_INTEGER)).toBe(0);
+    });
+
+    it('keeps the rating ledger: values set and removed, totals by target', async () => {
+      const key = (rater: string, category: string) => ({
+        rater,
+        matterCode: 1,
+        targetKind: 1,
+        target: Q,
+        category
+      });
+      const kind = '0x' + '0c'.repeat(32);
+      const other = '0x' + '0d'.repeat(32);
+      await inTx((conn) =>
+        db.writeRatingLedger(
+          [
+            { ...key(P, kind), value: 5, height: 10 },
+            { ...key(W(5) + '0'.repeat(24), kind), value: -2, height: 11 },
+            { ...key(P, other), value: 4, height: 12 }
+          ],
+          [],
+          conn
+        )
+      );
+      await inTx((conn) =>
+        db.writeRatingLedger(
+          [{ ...key(P, kind), value: 7, height: 13 }],
+          [key(P, other)],
+          conn
+        )
+      );
+      const ledger = await db.ratingLedgerOf([key(P, kind), key(P, other)]);
+      expect(Array.from(ledger.values())).toEqual([{ value: 7, height: 13 }]);
+      const totals = await db.ratingLedgerTotalsOf([
+        { targetKind: 1, target: Q, matterCode: 1, category: kind },
+        { targetKind: 1, target: Q, matterCode: 1, category: other }
+      ]);
+      expect(Array.from(totals.values())).toEqual([5]);
+      await inTx((conn) => db.clearRatingEvents(conn));
+      expect((await db.ratingLedgerOf([key(P, kind)])).size).toBe(0);
     });
 
     it('replaces a wallet delegations and all pairs', async () => {
