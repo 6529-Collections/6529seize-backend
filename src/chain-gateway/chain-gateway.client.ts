@@ -39,8 +39,9 @@ import {
  * signed operations to it, through 6529's chain gateway (service access).
  *
  * - Reads are pinned to a height. Without `opts.height` the client pins the
- *   latest finalized height it knows (refreshed every `headTtlMs`), so the
- *   reads of one task agree. A pinned answer must be read finalized at that
+ *   latest finalized height it knows (refreshed every `headTtlMs`, and never
+ *   below one already seen on that network, whatever a node behind says),
+ *   so the reads of one task agree. A pinned answer must be read finalized at that
  *   height (a node that has it only as its head: `height_gone`); it never
  *   changes and is cached in memory (copies, by network, path, query and
  *   height, 64 MiB of JSON at most), except answers of the node's own data
@@ -561,15 +562,25 @@ function lacksLevel(value: unknown): boolean {
 /**
  * Whether an answer comes from the node's own data rather than the state at
  * the height read, so it can change at that height: wallet histories and
- * their ranges (written by the feed), the saved membership days, the TDH
- * days' lists, and a level the node can't give until it has copied the TDH
- * lists (null alone or in an identity).
+ * their ranges (written by the feed), the membership summary and its saved
+ * days, every TDH read (its lists are copied after the state), a proof
+ * without its state proof, and a level the node can't give until it has
+ * copied the TDH lists (null alone or in an identity).
  */
 function nodeLocal(path: string, data: unknown): boolean {
   if (
     /\/history$/.test(path) ||
+    path === '/v1/membership' ||
     path.startsWith('/v1/membership/days/') ||
-    path.startsWith('/v1/tdh/days/')
+    path === '/v1/tdh' ||
+    path.startsWith('/v1/tdh/')
+  ) {
+    return true;
+  }
+  // A proof the node can't give yet (no state proof at that height).
+  if (
+    path.startsWith('/v1/proof/') &&
+    (data as { stateProof?: unknown } | null)?.stateProof === null
   ) {
     return true;
   }
@@ -597,6 +608,8 @@ export class ChainGatewayClient {
   private resolved: ChainGatewayConfig | null = null;
   private head: { value: ChainHead; at: number } | null = null;
   private headInFlight: Promise<ChainHead> | null = null;
+  /** The highest finalized height seen on the head's network. */
+  private pinFloor: { network: string; height: number } | null = null;
   private caches: {
     /** JSON text of answers (`null` for a 404), parsed afresh on each hit. */
     readonly answers: LruCache<string>;
@@ -854,11 +867,16 @@ export class ChainGatewayClient {
     json: Envelope<unknown> | null
   ): ChainGatewayError {
     const error = json?.error;
+    // A node with no state answers its status 503 with why, and no error.
+    const notReady = (json?.data as { notReady?: unknown } | undefined)
+      ?.notReady;
+    const starting = status === 503 && typeof notReady === 'string';
     const code =
-      (typeof error === 'string' ? error : error?.code) ?? `http_${status}`;
+      (typeof error === 'string' ? error : error?.code) ??
+      (starting ? 'starting' : `http_${status}`);
     const message =
       (typeof error === 'string' ? json?.message : error?.message) ??
-      `HTTP ${status}`;
+      (starting ? (notReady as string) : `HTTP ${status}`);
     return new ChainGatewayError(
       `${path}: ${code}: ${message}`,
       status,
@@ -967,6 +985,16 @@ export class ChainGatewayClient {
           if (before !== null && before !== value.network) {
             this.caches?.answers.clear();
           }
+          // Reads never pin below a finalized height already seen on this
+          // network (a node behind the others can answer the status).
+          const floor = this.pinFloor;
+          this.pinFloor = {
+            network: value.network!,
+            height:
+              floor?.network === value.network
+                ? Math.max(floor.height, value.finalizedHeight)
+                : value.finalizedHeight
+          };
           this.head = { value, at: this.now() };
           return value;
         } finally {
@@ -1031,7 +1059,7 @@ export class ChainGatewayClient {
     }
     const head = await this.getHead();
     try {
-      return await this.pinnedRead<T>(path, query, head.finalizedHeight);
+      return await this.pinnedRead<T>(path, query, this.pinOf(head));
     } catch (error) {
       if (
         !(error instanceof ChainGatewayError) ||
@@ -1043,8 +1071,9 @@ export class ChainGatewayClient {
     // The gateway answered from a node that doesn't hold that height (yet):
     // re-pin once, then read unpinned.
     const fresh = await this.getHead(true);
+    const pin = this.pinOf(fresh);
     try {
-      return await this.pinnedRead<T>(path, query, fresh.finalizedHeight);
+      return await this.pinnedRead<T>(path, query, pin);
     } catch (error) {
       if (
         !(error instanceof ChainGatewayError) ||
@@ -1054,7 +1083,26 @@ export class ChainGatewayClient {
       }
     }
     const { status, json } = await this.send('GET', path, query);
-    return (await this.toAnswer<T>(path, status, json)).answer;
+    const { read, answer } = await this.toAnswer<T>(path, status, json);
+    // Read unpinned, the answer is of the answering node's head: one behind
+    // the height reads already pinned would take them back.
+    if (read.height < pin) {
+      throw new ChainGatewayError(
+        `${path}: answered at ${read.height}, below the height ${pin} already read`,
+        409,
+        'height_gone',
+        path
+      );
+    }
+    return answer;
+  }
+
+  /** The height a read without one pins: the head's, never going down. */
+  private pinOf(head: ChainHead): number {
+    const floor = this.pinFloor;
+    return floor?.network === head.network
+      ? Math.max(floor.height, head.finalizedHeight)
+      : head.finalizedHeight;
   }
 
   private async pinnedRead<T>(
@@ -1193,7 +1241,7 @@ export class ChainGatewayClient {
     }
     try {
       return await this.walletsAt(distinct, {
-        height: (await this.getHead()).finalizedHeight
+        height: this.pinOf(await this.getHead())
       });
     } catch (error) {
       if (
@@ -1206,7 +1254,7 @@ export class ChainGatewayClient {
     // A node that doesn't hold that height: every chunk again at a fresh
     // one, once, so that all the chunks are read at one height.
     return await this.walletsAt(distinct, {
-      height: (await this.getHead(true)).finalizedHeight
+      height: this.pinOf(await this.getHead(true))
     });
   }
 
@@ -1317,11 +1365,18 @@ export class ChainGatewayClient {
         `the answer is for another wallet or has no read height`
       );
     }
+    // The node reads the history from its feed whatever the height asked:
+    // nothing past the read height is kept.
+    const height = readHeight as number;
     return {
       wallet: lower(wallet),
-      changes: bindingChanges(answer.data.changes, path),
-      ranges: heightRanges(answer.data.ranges, path),
-      readHeight
+      changes: bindingChanges(answer.data.changes, path).filter(
+        (it) => it.height <= height
+      ),
+      ranges: heightRanges(answer.data.ranges, path)
+        .filter(([from]) => from <= height)
+        .map(([from, to]): [number, number] => [from, Math.min(to, height)]),
+      readHeight: height
     };
   }
 
@@ -1466,6 +1521,10 @@ export class ChainGatewayClient {
     }
     const data = answer.data ?? ({} as typeof answer.data);
     const through = data.through;
+    // The feed is cut at the finalized height the answer is stamped with.
+    if (Number.isSafeInteger(through) && through > answer.read.height) {
+      throw badAnswer(path, `a page through ${through}, past its read height`);
+    }
     const blocks = checkFeedPage(
       path,
       cursor,
@@ -1541,11 +1600,15 @@ export class ChainGatewayClient {
 
   private async post<T>(path: string, body: unknown): Promise<T> {
     const { status, json } = await this.send('POST', path, {}, body);
-    if (json?.read && typeof json.read === 'object') {
-      await this.checkNetwork(path, status, json.read);
+    const stamped = !!json?.read && typeof json.read === 'object';
+    if (stamped) {
+      await this.checkNetwork(path, status, json!.read);
     }
-    if (status !== 200 || !json || json.error || json.data === undefined) {
+    if (status !== 200 || !json || json.error) {
       throw this.errorOf(path, status, json);
+    }
+    if (!stamped || json.data === undefined) {
+      throw badAnswer(path, 'an answer without its read stamp or data');
     }
     return json.data as T;
   }

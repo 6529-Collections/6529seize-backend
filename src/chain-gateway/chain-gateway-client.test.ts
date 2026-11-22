@@ -298,7 +298,7 @@ describe('ChainGatewayClient reads', () => {
           status: 200,
           json: {
             read: stamp(
-              height === null ? 48 : 50,
+              height === null ? 51 : 50,
               height ? 'head' : 'finalized'
             ),
             data: IDENTITY,
@@ -438,6 +438,103 @@ describe('ChainGatewayClient reads', () => {
       expect(reads(calls)).toHaveLength(2);
     }
   );
+
+  it.each([
+    ['the TDH of a wallet before the lists arrive', '/v1/tdh/wallets/0x01'],
+    ['the current TDH day', '/v1/tdh'],
+    ['a level the node does not have yet', '/v1/levels/0x01']
+  ])('reads %s again after a null', async (_name, route) => {
+    let ready = false;
+    const { client, calls } = setup(
+      withStatus(() =>
+        ready
+          ? {
+              status: 200,
+              json: { read: stamp(100), data: { listsHeld: 2 }, next: null }
+            }
+          : route === '/v1/levels/0x01'
+            ? {
+                status: 200,
+                json: { read: stamp(100), data: null, next: null }
+              }
+            : {
+                status: 404,
+                json: {
+                  read: stamp(100),
+                  error: { code: 'not_found', message: 'no lists yet' }
+                }
+              }
+      )
+    );
+    expect(await client.read(route, {}, { height: 100 })).toEqual(
+      route === '/v1/levels/0x01'
+        ? expect.objectContaining({ data: null })
+        : null
+    );
+    ready = true;
+    expect((await client.read(route, {}, { height: 100 }))?.data).toEqual({
+      listsHeld: 2
+    });
+    expect(reads(calls)).toHaveLength(2);
+  });
+
+  it("reads a wallet's TDH again once the day's lists arrive", async () => {
+    let ready = false;
+    const { client } = setup(
+      withStatus(() =>
+        ready
+          ? {
+              status: 200,
+              json: { read: stamp(100), data: { tdh: '5' }, next: null }
+            }
+          : {
+              status: 404,
+              json: {
+                read: stamp(100),
+                error: { code: 'not_found', message: 'no lists yet' }
+              }
+            }
+      )
+    );
+    expect(
+      await client.getTdh({ wallet: '0x' + '01'.repeat(20) }, { height: 100 })
+    ).toBeNull();
+    ready = true;
+    expect(
+      (await client.getTdh({ wallet: '0x' + '01'.repeat(20) }, { height: 100 }))
+        ?.data
+    ).toEqual({ tdh: '5' });
+  });
+
+  it('reads the membership summary and a proof without its state proof again', async () => {
+    let n = 1;
+    const { client, calls } = setup(
+      withStatus((call) => ({
+        status: 200,
+        json: {
+          read: stamp(10),
+          data:
+            path(call) === '/v1/membership'
+              ? { daysSaved: n }
+              : { key: '0x01', stateProof: n === 1 ? null : { root: '0x' } },
+          next: null
+        }
+      }))
+    );
+    await client.getMembership({ height: 10 });
+    await client.getProof('0x01', { height: 10 });
+    n = 2;
+    expect(await client.getMembership({ height: 10 })).toEqual({
+      daysSaved: 2
+    });
+    expect(await client.getProof('0x01', { height: 10 })).toEqual({
+      key: '0x01',
+      stateProof: { root: '0x' }
+    });
+    // A proof with its state proof is kept.
+    await client.getProof('0x01', { height: 10 });
+    expect(reads(calls)).toHaveLength(4);
+  });
 
   it('keeps an identity with its level, and a level read, at that height', async () => {
     const { client, calls } = setup(
@@ -666,6 +763,7 @@ describe('ChainGatewayClient reads', () => {
   });
 
   it('re-pins once on height_gone, then reads unpinned', async () => {
+    let unpinnedAt = 50;
     const { client, calls } = setup((call) => {
       if (path(call) === '/v1/status') return status(50);
       if (param(call, 'height') !== null) {
@@ -679,13 +777,48 @@ describe('ChainGatewayClient reads', () => {
       }
       return {
         status: 200,
-        json: { read: stamp(48), data: IDENTITY, next: null }
+        json: { read: stamp(unpinnedAt), data: IDENTITY, next: null }
       };
     });
     expect(await client.getIdentityByPrincipal('0xAB')).toEqual(IDENTITY);
     const reads = calls.filter((c) => path(c) !== '/v1/status');
     expect(reads.map((c) => param(c, 'height'))).toEqual(['50', '50', null]);
     expect(calls.filter((c) => path(c) === '/v1/status')).toHaveLength(2);
+    // Unpinned, a node behind the height already pinned would go back.
+    unpinnedAt = 48;
+    await expect(client.getIdentityByPrincipal('0xAB')).rejects.toMatchObject({
+      code: 'height_gone'
+    });
+  });
+
+  it('never pins a read below a finalized height already seen', async () => {
+    let finalized = 1000;
+    const { client, calls, advance } = setup((call) =>
+      path(call) === '/v1/status'
+        ? status(finalized)
+        : {
+            status: 200,
+            json: {
+              read: stamp(Number(param(call, 'height'))),
+              data: IDENTITY,
+              next: null
+            }
+          }
+    );
+    await client.getIdentityByPrincipal('0x01');
+    // A node behind the others answers the next status.
+    finalized = 997;
+    advance(2_500);
+    expect((await client.getHead()).finalizedHeight).toBe(997);
+    await client.getIdentityByPrincipal('0x02');
+    await client
+      .getIdentitiesByWallets(['0x' + '03'.repeat(20)])
+      .catch(() => undefined);
+    expect(reads(calls).map((it) => param(it, 'height'))).toEqual([
+      '1000',
+      '1000',
+      '1000'
+    ]);
   });
 
   it('throws height_gone for an explicit height', async () => {
@@ -1117,6 +1250,22 @@ describe('ChainGatewayClient reads', () => {
     expect((await client.getChanges(120)).next).toBe('120:2');
   });
 
+  it('refuses a feed page through a height past its read stamp', async () => {
+    const { client } = setup(
+      withStatus(() => ({
+        status: 200,
+        json: {
+          read: stamp(120),
+          data: { through: 125, blocks: [] },
+          next: '126'
+        }
+      }))
+    );
+    await expect(client.getChanges(120)).rejects.toMatchObject({
+      code: 'bad_answer'
+    });
+  });
+
   it('refuses a cursor that is not one before asking', async () => {
     const { client, calls } = setup(withStatus(() => new Error('not asked')));
     await expect(client.getChanges('12:x')).rejects.toMatchObject({
@@ -1210,14 +1359,25 @@ describe('ChainGatewayClient status and unpinned routes', () => {
     expect((await client.getHead(true)).ready).toBe(false);
   });
 
-  it('retries a 503 status without a state, then throws it', async () => {
+  it('retries a 503 status without a state, then throws starting', async () => {
     const { client, calls } = setup(() => ({
       status: 503,
-      json: { error: { code: 'starting', message: 'no state yet' } }
+      json: {
+        data: {
+          api: '1',
+          node: 'rc',
+          ready: false,
+          notReady: 'no chain state yet',
+          head: null,
+          finalized: null,
+          pinnable: null
+        }
+      }
     }));
     await expect(client.getHead()).rejects.toMatchObject({
       code: 'starting',
-      status: 503
+      status: 503,
+      message: expect.stringContaining('no chain state yet')
     });
     expect(calls).toHaveLength(3);
   });
@@ -1420,6 +1580,18 @@ describe('ChainGatewayClient writes', () => {
       signatures: [{ role: 0, keyType: 1, sig: '0x' + 'ee'.repeat(65) }]
     });
     expect(calls[1].headers['content-type']).toBe('application/json');
+  });
+
+  it('refuses a draft or submit answer without its read stamp', async () => {
+    const { client } = setup(
+      withStatus(() => ({
+        status: 200,
+        json: { data: { txId: '0x' + 'cd'.repeat(32), accepted: true } }
+      }))
+    );
+    await expect(client.submit({ signed: '0x00' })).rejects.toMatchObject({
+      code: 'bad_answer'
+    });
   });
 
   it('refuses a draft or submit answered by another chain', async () => {
@@ -1772,17 +1944,18 @@ describe('import and membership history', () => {
     expect(calls.some((it) => param(it, 'height') === '50')).toBe(true);
   });
 
-  it("reads a wallet's binding history with its ranges and read height", async () => {
+  it("reads a wallet's binding history with its ranges, to its read height", async () => {
     const history = {
       wallet: W,
       changes: [
         { height: 3, principalId: P.toUpperCase().replace('0X', '0x') },
-        { height: 9, principalId: null }
+        { height: 9, principalId: null },
+        { height: 60, principalId: P }
       ],
       ranges: [
         [1, 20],
-        [30, 50],
-        [55, 55]
+        [30, 70],
+        [75, 80]
       ]
     };
     const { client } = setup((call) =>
@@ -1790,6 +1963,7 @@ describe('import and membership history', () => {
         ? status(50)
         : { status: 200, json: { read: stamp(50), data: history, next: null } }
     );
+    // The node reads its feed past the height asked: cut at 50.
     expect(await client.getMembershipWalletHistory(W)).toEqual({
       wallet: W,
       changes: [
@@ -1798,8 +1972,7 @@ describe('import and membership history', () => {
       ],
       ranges: [
         [1, 20],
-        [30, 50],
-        [55, 55]
+        [30, 50]
       ],
       readHeight: 50
     });
