@@ -1,7 +1,8 @@
 import { Alchemy, AssetTransfersCategory, SortingOrder } from '@/alchemy-sdk';
 import { ALCHEMY_SETTINGS } from '@/constants';
-import { persistNftHistoryBlock } from '@/db';
+import { fetchLatestNftHistoryBlockNumber, persistNftHistoryBlock } from '@/db';
 import { getEthereumRpcClient } from '@/ethereum-rpc/ethereum-rpc-client';
+import { whileRebuildingEthereumIndexes } from '@/holdings/rebuild-mode';
 import { Logger } from '@/logging';
 import { HISTORY_CREATORS, historyLogFilters } from './history-transactions';
 import { ingestHistorySources } from './source-replay';
@@ -137,8 +138,11 @@ export async function rebuildNftHistory({
 }
 
 /**
- * The rebuild harness's step: rebuilds to the run's Ethereum mark, or to the
- * finalized block when the run names none.
+ * The rebuild harness's step, in rebuild mode: rebuilds to the run's
+ * Ethereum mark, or to the finalized block when the run names none. It
+ * starts after the stored checkpoint, so a step that stopped part way (each
+ * source block moves the checkpoint once it is complete) resumes where it
+ * stopped instead of writing its blocks again.
  */
 export async function rebuildNftHistoryStep(ctx: {
   readonly mark: { readonly ethBlock: number | null };
@@ -146,5 +150,14 @@ export async function rebuildNftHistoryStep(ctx: {
   const toBlock =
     ctx.mark.ethBlock ??
     (await getEthereumRpcClient().getBlock('finalized')).number;
-  await rebuildNftHistory({ toBlock });
+  const stored = await fetchLatestNftHistoryBlockNumber();
+  const fromBlock =
+    stored === null || stored === undefined ? 0 : Number(stored) + 1;
+  if (fromBlock > toBlock) {
+    logger.info(`[REBUILD] [ALREADY AT BLOCK ${stored}] [MARK ${toBlock}]`);
+    return;
+  }
+  await whileRebuildingEthereumIndexes(() =>
+    rebuildNftHistory({ fromBlock, toBlock })
+  );
 }

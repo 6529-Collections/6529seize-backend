@@ -88,4 +88,29 @@ describe('Ethereum index rebuild mode in the NFT loop', () => {
     ).rejects.toThrow('metadata gone');
     expect(isRebuildingEthereumIndexes()).toBe(false);
   });
+
+  it('stays in rebuild mode through a nested rebuild until the outer one ends', async () => {
+    await whileRebuildingEthereumIndexes(async () => {
+      await whileRebuildingEthereumIndexes(async () => undefined);
+      expect(isRebuildingEthereumIndexes()).toBe(true);
+    });
+    expect(isRebuildingEthereumIndexes()).toBe(false);
+  });
+
+  it('leaves work running beside a rebuild outside rebuild mode', async () => {
+    let release!: () => void;
+    const paused = new Promise<void>((resolve) => (release = resolve));
+    const seen: boolean[] = [];
+    const rebuild = whileRebuildingEthereumIndexes(async () => {
+      await paused;
+      seen.push(isRebuildingEthereumIndexes());
+    });
+    // A live loop's call while the rebuild waits.
+    await Promise.resolve().then(() =>
+      seen.push(isRebuildingEthereumIndexes())
+    );
+    release();
+    await rebuild;
+    expect(seen).toEqual([false, true]);
+  });
 });

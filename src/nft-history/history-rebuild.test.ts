@@ -1,5 +1,5 @@
 import { Alchemy } from '@/alchemy-sdk';
-import { persistNftHistoryBlock } from '@/db';
+import { fetchLatestNftHistoryBlockNumber, persistNftHistoryBlock } from '@/db';
 import { getEthereumRpcClient } from '@/ethereum-rpc/ethereum-rpc-client';
 import {
   findHistoryBlocks,
@@ -8,6 +8,7 @@ import {
 } from './history-rebuild';
 import { historyLogFilters } from './history-transactions';
 import { ingestHistorySources } from './source-replay';
+import { isRebuildingEthereumIndexes } from '@/holdings/rebuild-mode';
 
 jest.mock('@/ethereum-rpc/ethereum-rpc-client', () => ({
   getEthereumRpcClient: jest.fn()
@@ -16,7 +17,10 @@ jest.mock('@/alchemy-sdk', () => ({
   ...jest.requireActual('@/alchemy-sdk'),
   Alchemy: jest.fn()
 }));
-jest.mock('@/db', () => ({ persistNftHistoryBlock: jest.fn() }));
+jest.mock('@/db', () => ({
+  fetchLatestNftHistoryBlockNumber: jest.fn(),
+  persistNftHistoryBlock: jest.fn()
+}));
 jest.mock('./source-replay', () => ({ ingestHistorySources: jest.fn() }));
 
 const getLogs = jest.fn();
@@ -51,6 +55,7 @@ describe('NFT history rebuild', () => {
       .mocked(Alchemy)
       .mockImplementation(() => ({ core: { getAssetTransfers } }) as never);
     getAssetTransfers.mockResolvedValue({ transfers: [] });
+    jest.mocked(fetchLatestNftHistoryBlockNumber).mockResolvedValue(null);
   });
 
   it('finds every block with a source, in wide ranges, sorted and once each', async () => {
@@ -117,5 +122,42 @@ describe('NFT history rebuild', () => {
     await rebuildNftHistoryStep({ mark: { ethBlock: null } });
     expect(getBlock).toHaveBeenCalledWith('finalized');
     expect(persistNftHistoryBlock).toHaveBeenLastCalledWith(77);
+  });
+
+  it('resumes after the stored checkpoint', async () => {
+    logsAt([[20, 31, 50], [], []]);
+    jest.mocked(fetchLatestNftHistoryBlockNumber).mockResolvedValue(30);
+
+    await rebuildNftHistoryStep({ mark: { ethBlock: 55 } });
+
+    expect(
+      jest.mocked(ingestHistorySources).mock.calls.map(([from]) => from)
+    ).toEqual([31, 50]);
+    expect(
+      getLogs.mock.calls.every(([query]) => query.fromBlock === '0x1f')
+    ).toBe(true);
+    expect(persistNftHistoryBlock).toHaveBeenLastCalledWith(55);
+  });
+
+  it('does nothing when the checkpoint is already at the mark', async () => {
+    jest.mocked(fetchLatestNftHistoryBlockNumber).mockResolvedValue('55');
+
+    await rebuildNftHistoryStep({ mark: { ethBlock: 55 } });
+
+    expect(getLogs).not.toHaveBeenCalled();
+    expect(persistNftHistoryBlock).not.toHaveBeenCalled();
+  });
+
+  it('runs the ingestion in rebuild mode, and leaves it after', async () => {
+    logsAt([[10, 20], [], []]);
+    const modes: boolean[] = [];
+    jest.mocked(ingestHistorySources).mockImplementation(async () => {
+      modes.push(isRebuildingEthereumIndexes());
+    });
+
+    await rebuildNftHistoryStep({ mark: { ethBlock: 40 } });
+
+    expect(modes).toEqual([true, true]);
+    expect(isRebuildingEthereumIndexes()).toBe(false);
   });
 });
