@@ -9,13 +9,14 @@ import {
   ChainIdentity
 } from '@/chain-gateway/chain-gateway.types';
 import { RequestContext } from '@/request.context';
+import { WalletPrincipalUnknownError } from './identity-chain-lookups';
 import { decodeProfileDoc } from './profile-doc';
 
 /**
- * What the profile site index (src/profile-cms/chain) reads from the 6529
- * chain, served from the shared gateway client and the identity mirror's
- * profile ids. The shapes are the index's `ProfileCmsChainPort`, written out
- * here so this module stands on its own; TypeScript matches them by shape.
+ * What the profile site index reads from the 6529 chain, served from the
+ * shared gateway client and the identity mirror's profile ids. The shapes
+ * are the index's chain port, written out here so this module stands on its
+ * own; TypeScript matches them by shape.
  */
 
 /** Profile[principalId] = (version, docCid, updatedHeight). */
@@ -74,9 +75,9 @@ export interface ProfileSiteChainPort {
 }
 
 /**
- * Runs after the mirror follows a page of the change feed: the profile site
- * index's `followProfileCmsChanges(port, ctx)` goes in
- * `PROFILE_SITE_FOLLOWERS` (identity-chain-mirror.service.ts).
+ * Runs at the end of a mirror run: the profile site index's
+ * `followProfileCmsChanges(port, ctx)` goes in `PROFILE_SITE_FOLLOWERS`
+ * (identity-chain-mirror.service.ts).
  */
 export type ProfileSiteFollower = (
   port: ProfileSiteChainPort,
@@ -104,19 +105,32 @@ function sourceOf(record: ChainFeedRecord): ProfileSiteChange['source'] {
   return undefined;
 }
 
+/**
+ * A write of Profile[p] as a change. A deleted record (an identity merged
+ * away) or a write without a version is not a change of the person's
+ * document and is left out.
+ */
 function toChange(
   block: ChainFeedBlock,
   record: ChainFeedRecord
 ): ProfileSiteChange | null {
   const principal = record.keyFields?.principalId;
-  if (typeof principal !== 'string') return null;
-  const cid = record.value === null ? null : record.valueFields?.docCid;
+  const version = Number(record.valueFields?.version);
+  if (
+    typeof principal !== 'string' ||
+    record.value === null ||
+    !Number.isSafeInteger(version) ||
+    version < 1
+  ) {
+    return null;
+  }
+  const cid = record.valueFields?.docCid;
   const source = sourceOf(record);
   return {
     height: Number(block.height),
     time_ms: Number(block.time),
     principal: principal.toLowerCase(),
-    version: Number(record.valueFields?.version ?? 0),
+    version,
     doc_cid: typeof cid === 'string' && cid.length > 2 ? cidPath(cid) : null,
     ...(source ? { source } : {})
   };
@@ -127,7 +141,12 @@ export class GatewayProfileSitePort implements ProfileSiteChainPort {
   constructor(
     private readonly gateway: Gateway,
     /** The mirror's profile id for an identity (it maps one if needed). */
-    private readonly profileIdOf: (identity: ChainIdentity) => Promise<string>
+    private readonly profileIdOf: (identity: ChainIdentity) => Promise<string>,
+    /** A wallet's principal at a height (throws when unknown). */
+    private readonly walletPrincipalAt: (
+      wallet: string,
+      height: number
+    ) => Promise<string | null>
   ) {}
 
   async getChanges(fromHeight: number): Promise<ProfileSiteChangesPage> {
@@ -148,14 +167,20 @@ export class GatewayProfileSitePort implements ProfileSiteChainPort {
     return { changes, next_height: page.next };
   }
 
+  /**
+   * The import's heights; null when no import ran, or when this gateway
+   * doesn't hold the import's first block (its feed starts later).
+   */
   async getIdentityImport() {
     const membership = await this.gateway.getMembership();
     const state = membership?.import as
       | { startHeight?: number | null; doneHeight?: number | null }
       | undefined;
-    if (!state) return null;
+    if (state?.startHeight === null || state?.startHeight === undefined) {
+      return null;
+    }
     return {
-      start_height: Number(state.startHeight ?? 0),
+      start_height: Number(state.startHeight),
       done_height:
         state.doneHeight === null || state.doneHeight === undefined
           ? null
@@ -163,22 +188,71 @@ export class GatewayProfileSitePort implements ProfileSiteChainPort {
     };
   }
 
+  /**
+   * An identity now, or at a height: its wallets and handle then, its
+   * profile id as the mirror files it now. The gateway keeps only recent
+   * heights; for an older one the wallets are those of its wallets now that
+   * were bound to it at that height (a wallet that has left since is not
+   * listed: a signer check then refuses rather than accepts).
+   */
   async getIdentityByPrincipal(
     principal: string,
     opts?: { readonly height?: number }
   ): Promise<ProfileSiteIdentity | null> {
-    const identity = await this.gateway.getIdentityByPrincipal(
-      principal,
-      opts?.height === undefined ? undefined : { height: opts.height }
-    );
-    if (!identity) return null;
+    const current = await this.gateway.getIdentityByPrincipal(principal);
+    if (opts?.height === undefined) {
+      return current ? await this.toIdentity(current, current) : null;
+    }
+    try {
+      const then = await this.gateway.getIdentityByPrincipal(principal, {
+        height: opts.height
+      });
+      return then ? await this.toIdentity(current ?? then, then) : null;
+    } catch (error) {
+      if (
+        !(error instanceof ChainGatewayError && error.code === 'height_gone')
+      ) {
+        throw error;
+      }
+    }
+    if (!current) return null;
+    return await this.toIdentity(current, {
+      handle: current.handle,
+      wallets: await this.walletsAt(current, opts.height)
+    });
+  }
+
+  private async toIdentity(
+    current: ChainIdentity,
+    then: Pick<ChainIdentity, 'handle' | 'wallets'>
+  ): Promise<ProfileSiteIdentity> {
     return {
-      principal: identity.principalId.toLowerCase(),
-      profile_id: await this.profileIdOf(identity),
-      handle: identity.handle,
-      wallets: identity.wallets.map((it) => it.toLowerCase()),
-      imported: !!identity.legacyId
+      principal: current.principalId.toLowerCase(),
+      profile_id: await this.profileIdOf(current),
+      handle: then.handle,
+      wallets: then.wallets.map((it) => it.toLowerCase()),
+      imported: !!current.legacyId
     };
+  }
+
+  /** Of the identity's wallets now, those bound to it at `height`. */
+  private async walletsAt(
+    identity: ChainIdentity,
+    height: number
+  ): Promise<string[]> {
+    const principal = identity.principalId.toLowerCase();
+    const wallets: string[] = [];
+    for (const wallet of identity.wallets) {
+      try {
+        if ((await this.walletPrincipalAt(wallet, height)) === principal) {
+          wallets.push(wallet.toLowerCase());
+        }
+      } catch (error) {
+        // Unknown at that height: not listed.
+        if (!(error instanceof WalletPrincipalUnknownError)) throw error;
+      }
+    }
+    return wallets;
   }
 
   async getProfileDoc(cid: string): Promise<ProfileSiteDocRead> {

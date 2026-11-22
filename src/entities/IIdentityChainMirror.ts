@@ -69,11 +69,17 @@ export class IdentityChainMirrorStateEntity {
   @Column({ type: 'bigint', nullable: true, default: null })
   readonly sync_from_height!: number | null;
 
-  /** IDENTITIES, DELEGATIONS or CONSOLIDATIONS while a full sync runs. */
+  /**
+   * WALLETS, IDENTITIES, DELEGATIONS or CONSOLIDATIONS while a full sync
+   * runs.
+   */
   @Column({ type: 'varchar', length: 20, nullable: true, default: null })
   readonly sync_phase!: string | null;
 
-  /** The phase's list cursor (principal id, use case). */
+  /**
+   * The phase's cursor: WALLETS, the next feed height to replay (or REBUILD
+   * to list the membership); IDENTITIES, the last principal id.
+   */
   @Column({ type: 'varchar', length: 100, nullable: true, default: null })
   readonly sync_after!: string | null;
 

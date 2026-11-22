@@ -1,7 +1,6 @@
 import { ChainFeedBlock } from '@/chain-gateway/chain-gateway.types';
 import {
   bindingChangesOf,
-  boundFromInHistory,
   foldBindings,
   WalletBindingRow
 } from './wallet-bindings';
@@ -36,15 +35,25 @@ describe('bindingChangesOf', () => {
             binding(W(1), P(1)),
             { family: '0x0104', name: 'Profile', key: '0x', value: '0x' }
           ]),
-          block(5, [binding(W(1), null), binding('0x12', P(2))]),
+          block(5, [
+            binding(W(1), null),
+            binding('0x12', P(2)),
+            { ...binding(W(3), P(2)), valueFields: { principalId: '0x1' } },
+            { ...binding(W(4), P(2)), name: 'Renamed' }
+          ]),
           block(9, [binding(W(2), P(2))])
         ],
         5
       )
-    ).toEqual([
-      { wallet: W(1), principalId: P(1), height: 3 },
-      { wallet: W(1), principalId: null, height: 5 }
-    ]);
+    ).toEqual({
+      changes: [
+        { wallet: W(1), principalId: P(1), height: 3 },
+        { wallet: W(1), principalId: null, height: 5 },
+        { wallet: W(4), principalId: P(2), height: 5 }
+      ],
+      // A write that can't be read is reported, never taken as an unbinding.
+      malformed: ['5:0x', '5:0x']
+    });
   });
 });
 
@@ -81,22 +90,5 @@ describe('foldBindings', () => {
         { wallet: W(4), principalId: null, height: 12 }
       ])
     ).toEqual({ upserts: [row(W(2), P(1), 12)], deletes: [W(1)] });
-  });
-});
-
-describe('boundFromInHistory', () => {
-  const changes = [
-    { height: 3, principalId: P(1) },
-    { height: 7, principalId: null },
-    { height: 9, principalId: P(1).toUpperCase().replace('0X', '0x') },
-    { height: 15, principalId: P(2) }
-  ];
-
-  it('gives the start of the latest unbroken binding at a height', () => {
-    expect(boundFromInHistory(changes, P(1), 5)).toBe(3);
-    expect(boundFromInHistory(changes, P(1), 12)).toBe(9);
-    expect(boundFromInHistory(changes, P(1), 20)).toBeNull();
-    expect(boundFromInHistory(changes, P(2), 20)).toBe(15);
-    expect(boundFromInHistory([], P(1), 20)).toBeNull();
   });
 });

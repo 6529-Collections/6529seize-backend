@@ -929,6 +929,50 @@ export class IdentityChainMirrorDb extends LazyDbAccessCompatibleService {
     }
   }
 
+  /**
+   * A wallet's binding and the height the mirror has followed the chain to,
+   * in one read, so the two agree.
+   */
+  async walletBindingAt(wallet: string): Promise<{
+    binding: WalletBindingRow | null;
+    nextHeight: number | null;
+  }> {
+    const row = await this.db.oneOrNull<{
+      next_height: number | string | null;
+      wallet: string | null;
+      principal_id: string | null;
+      bound_from_height: number | string | null;
+    }>(
+      `select s.next_height, w.wallet, w.principal_id, w.bound_from_height
+       from ${IDENTITY_CHAIN_MIRROR_STATE_TABLE} s
+       left join ${IDENTITY_CHAIN_WALLETS_TABLE} w on w.wallet = :wallet
+       where s.id = :id`,
+      { wallet, id: STATE_ID }
+    );
+    const binding =
+      row?.wallet && row.principal_id
+        ? {
+            wallet: row.wallet,
+            principal_id: row.principal_id,
+            bound_from_height: Number(row.bound_from_height)
+          }
+        : null;
+    return {
+      binding,
+      nextHeight:
+        row?.next_height === null || row?.next_height === undefined
+          ? null
+          : Number(row.next_height)
+    };
+  }
+
+  /** Whether any wallet binding is stored (an empty table is rebuilt). */
+  async hasWalletBindings(): Promise<boolean> {
+    return !!(await this.db.oneOrNull<{ n: number }>(
+      `select 1 as n from ${IDENTITY_CHAIN_WALLETS_TABLE} limit 1`
+    ));
+  }
+
   /** Every wallet with a stored binding (a rebuild's reconciliation). */
   async boundWallets(conn?: Conn): Promise<string[]> {
     const rows = await this.db.execute<{ wallet: string }>(

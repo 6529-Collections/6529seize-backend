@@ -2,6 +2,7 @@ import {
   ChainGatewayClient,
   chainGatewayClient
 } from '@/chain-gateway/chain-gateway.client';
+import { ChainWalletHistory } from '@/chain-gateway/chain-gateway.types';
 import {
   identityChainMirrorDb,
   IdentityChainMirrorDb
@@ -11,6 +12,47 @@ type Gateway = Pick<
   ChainGatewayClient,
   'getIdentityByLegacyProfileId' | 'getMembershipWalletHistory'
 >;
+
+/**
+ * Neither the mirror nor the chain's history can say which principal a
+ * wallet was bound to at that height (not finalized yet, or in a gap of the
+ * gateway's feed). A caller must treat it as unknown: not as "bound to none".
+ */
+export class WalletPrincipalUnknownError extends Error {
+  constructor(
+    readonly wallet: string,
+    readonly height: number
+  ) {
+    super(`The principal of ${wallet} at height ${height} is not known`);
+    Object.setPrototypeOf(this, new.target.prototype);
+    this.name = 'WalletPrincipalUnknownError';
+  }
+}
+
+/**
+ * From a wallet's history: its principal at `height` (null: bound to none),
+ * or undefined when the history can't say. It can say when the height is
+ * within a range the feed holds and the wallet's last change at or below it
+ * is in that range too, or when that range starts at the chain's first
+ * blocks (no earlier change to miss).
+ */
+export function principalInHistory(
+  history: ChainWalletHistory,
+  height: number
+): string | null | undefined {
+  if (height > history.readHeight) return undefined;
+  const range = history.ranges.find(
+    ([from, to]) => from <= height && height <= to
+  );
+  if (!range) return undefined;
+  let last: ChainWalletHistory['changes'][number] | null = null;
+  for (const change of history.changes) {
+    if (change.height > height) break;
+    last = change;
+  }
+  if (last && last.height >= range[0]) return last.principalId;
+  return range[0] <= 1 ? (last?.principalId ?? null) : undefined;
+}
 
 /**
  * Lookups other 6529.io code makes against the identity mirror's tables,
@@ -36,39 +78,33 @@ export class IdentityChainLookups {
   }
 
   /**
-   * The principal wallet `wallet` was bound to at chain height `height`,
-   * or null when it was bound to none. From the mirror's bindings when the
-   * mirror has followed the chain past `height` and the wallet has been
-   * bound to the same principal since at or before it; else from the
-   * wallet's binding history on the chain.
+   * The principal `wallet` was bound to at chain height `height`, or null
+   * when it was bound to none. From the mirror's bindings when the mirror
+   * has followed the chain to `height` and the wallet has been bound to the
+   * same principal since at or before it; else from the wallet's history on
+   * the chain. Throws WalletPrincipalUnknownError when neither can say.
    */
   async walletPrincipalAt(
     wallet: string,
     height: number
   ): Promise<string | null> {
+    if (!Number.isSafeInteger(height) || height < 0) {
+      throw new Error(`Not a chain height: ${height}`);
+    }
     const address = wallet.toLowerCase();
-    const [state, bindings] = await Promise.all([
-      this.db.getState(),
-      this.db.walletBindings([address])
-    ]);
-    const mirrored =
-      state?.next_height === null || state?.next_height === undefined
-        ? null
-        : Number(state.next_height) - 1;
-    const row = bindings.get(address);
+    const { binding, nextHeight } = await this.db.walletBindingAt(address);
     if (
-      row &&
-      mirrored !== null &&
-      height <= mirrored &&
-      height >= Number(row.bound_from_height)
+      binding &&
+      nextHeight !== null &&
+      height < nextHeight &&
+      height >= binding.bound_from_height
     ) {
-      return row.principal_id.toLowerCase();
+      return binding.principal_id.toLowerCase();
     }
     const history = await this.gateway.getMembershipWalletHistory(address);
-    let principal: string | null = null;
-    for (const change of history?.changes ?? []) {
-      if (Number(change.height) > height) break;
-      principal = change.principalId?.toLowerCase() ?? null;
+    const principal = history ? principalInHistory(history, height) : undefined;
+    if (principal === undefined) {
+      throw new WalletPrincipalUnknownError(address, height);
     }
     return principal;
   }

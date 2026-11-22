@@ -1,32 +1,46 @@
+import { ChainWalletHistory } from '@/chain-gateway/chain-gateway.types';
 import { IdentityChainMirrorDb } from './identity-chain-mirror.db';
-import { IdentityChainLookups } from './identity-chain-lookups';
+import {
+  IdentityChainLookups,
+  principalInHistory,
+  WalletPrincipalUnknownError
+} from './identity-chain-lookups';
 
 const W = '0x' + '01'.repeat(20);
 const P1 = '0x' + 'aa'.repeat(32);
 const P2 = '0x' + 'bb'.repeat(32);
 const PROFILE = '00000000-0000-4000-8000-000000000001';
 
-function setup(nextHeight: number | null) {
+function history(
+  ranges: [number, number][],
+  readHeight = 200
+): ChainWalletHistory {
+  return {
+    wallet: W,
+    changes: [
+      { height: 10, principalId: P1 },
+      { height: 30, principalId: null },
+      { height: 50, principalId: P2 }
+    ],
+    ranges,
+    readHeight
+  };
+}
+
+function setup(
+  nextHeight: number | null,
+  ranges: [number, number][] = [[1, 200]]
+) {
   const db = {
-    getState: jest.fn(async () =>
-      nextHeight === null ? null : { next_height: nextHeight }
-    ),
-    walletBindings: jest.fn(
-      async () =>
-        new Map([[W, { wallet: W, principal_id: P2, bound_from_height: 50 }]])
-    ),
+    walletBindingAt: jest.fn(async () => ({
+      binding: { wallet: W, principal_id: P2, bound_from_height: 50 },
+      nextHeight
+    })),
     principalOfProfile: jest.fn(async () => null as string | null)
   };
   const gateway = {
     getIdentityByLegacyProfileId: jest.fn(async () => null as unknown),
-    getMembershipWalletHistory: jest.fn(async () => ({
-      wallet: W,
-      changes: [
-        { height: 10, principalId: P1 },
-        { height: 30, principalId: null },
-        { height: 50, principalId: P2 }
-      ]
-    }))
+    getMembershipWalletHistory: jest.fn(async () => history(ranges))
   };
   const lookups = new IdentityChainLookups(
     db as unknown as IdentityChainMirrorDb,
@@ -34,6 +48,33 @@ function setup(nextHeight: number | null) {
   );
   return { db, gateway, lookups };
 }
+
+describe('principalInHistory', () => {
+  it('answers within a range the feed holds from the first blocks', () => {
+    const full = history([[1, 200]]);
+    expect(principalInHistory(full, 5)).toBeNull();
+    expect(principalInHistory(full, 20)).toBe(P1);
+    expect(principalInHistory(full, 35)).toBeNull();
+    expect(principalInHistory(full, 60)).toBe(P2);
+  });
+
+  it('does not answer past the read, outside the ranges, or across a gap', () => {
+    expect(principalInHistory(history([[1, 200]], 100), 150)).toBeUndefined();
+    expect(principalInHistory(history([[1, 40]]), 60)).toBeUndefined();
+    // Held from 40: a change before it may be missing, so 45 is unknown;
+    // from 50 on the change is inside the range.
+    const later = history([[40, 200]]);
+    expect(principalInHistory(later, 45)).toBeUndefined();
+    expect(principalInHistory(later, 60)).toBe(P2);
+    // A gap between 20 and 60: 70 has no change in its range.
+    const gap = history([
+      [1, 20],
+      [60, 200]
+    ]);
+    expect(principalInHistory(gap, 15)).toBe(P1);
+    expect(principalInHistory(gap, 70)).toBeUndefined();
+  });
+});
 
 describe('walletPrincipalAt', () => {
   it("answers from the mirror's bindings within what it has followed", async () => {
@@ -47,15 +88,33 @@ describe('walletPrincipalAt', () => {
     const { gateway, lookups } = setup(101);
     expect(await lookups.walletPrincipalAt(W, 20)).toBe(P1);
     expect(await lookups.walletPrincipalAt(W, 35)).toBeNull();
-    expect(await lookups.walletPrincipalAt(W, 5)).toBeNull();
     expect(await lookups.walletPrincipalAt(W, 101)).toBe(P2);
-    expect(gateway.getMembershipWalletHistory).toHaveBeenCalledTimes(4);
+    expect(gateway.getMembershipWalletHistory).toHaveBeenCalledTimes(3);
   });
 
   it('asks the chain before the first full sync', async () => {
     const { gateway, lookups } = setup(null);
     expect(await lookups.walletPrincipalAt(W, 60)).toBe(P2);
     expect(gateway.getMembershipWalletHistory).toHaveBeenCalledTimes(1);
+  });
+
+  it('throws when neither can say, never answering "bound to none"', async () => {
+    const { lookups } = setup(101, [[40, 200]]);
+    await expect(lookups.walletPrincipalAt(W, 45)).rejects.toBeInstanceOf(
+      WalletPrincipalUnknownError
+    );
+    await expect(lookups.walletPrincipalAt(W, 250)).rejects.toBeInstanceOf(
+      WalletPrincipalUnknownError
+    );
+  });
+
+  it('refuses a height that is not one', async () => {
+    const { lookups } = setup(101);
+    for (const height of [Number.NaN, -1, 1.5]) {
+      await expect(lookups.walletPrincipalAt(W, height)).rejects.toThrow(
+        'Not a chain height'
+      );
+    }
   });
 });
 

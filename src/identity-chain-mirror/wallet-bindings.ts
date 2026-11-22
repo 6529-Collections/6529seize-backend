@@ -34,31 +34,38 @@ function text(value: unknown): string {
 
 /**
  * The AddressBinding writes and deletes of feed blocks at or below
- * `through`, in block order.
+ * `through`, in block order. A record that can't be read is skipped and
+ * named in `malformed`.
  */
 export function bindingChangesOf(
   blocks: readonly ChainFeedBlock[],
   through = Number.POSITIVE_INFINITY
-): BindingChange[] {
+): { changes: BindingChange[]; malformed: string[] } {
   const changes: BindingChange[] = [];
+  const malformed: string[] = [];
   for (const block of blocks) {
     if (block.height > through) continue;
     for (const record of block.records) {
-      if (record.name !== 'AddressBinding') continue;
-      const wallet = text(record.keyFields?.address);
-      if (!HEX20.test(wallet)) continue;
-      const principalId = text(record.valueFields?.principalId);
-      changes.push({
-        wallet,
-        principalId:
-          record.value === null || !HEX32.test(principalId)
-            ? null
-            : principalId,
-        height: Number(block.height)
-      });
+      if (record.family.toLowerCase() !== ADDRESS_BINDING_FAMILY) continue;
+      const change = toBindingChange(Number(block.height), record);
+      if (change) changes.push(change);
+      else malformed.push(`${block.height}:${record.key}`);
     }
   }
-  return changes;
+  return { changes, malformed };
+}
+
+function toBindingChange(
+  height: number,
+  record: ChainFeedBlock['records'][number]
+): BindingChange | null {
+  const wallet = text(record.keyFields?.address);
+  if (!HEX20.test(wallet)) return null;
+  if (record.value === null) {
+    return { wallet, principalId: null, height };
+  }
+  const principalId = text(record.valueFields?.principalId);
+  return HEX32.test(principalId) ? { wallet, principalId, height } : null;
 }
 
 /**
@@ -100,27 +107,4 @@ export function foldBindings(
     }
   });
   return { upserts, deletes };
-}
-
-/**
- * From a wallet's binding history (ascending changes): the height it has
- * been bound to `principalId` since, at or below `through`; null when the
- * history doesn't show it bound to that principal then.
- */
-export function boundFromInHistory(
-  changes: readonly { height: number; principalId: string | null }[],
-  principalId: string,
-  through: number
-): number | null {
-  let since: number | null = null;
-  for (const change of changes) {
-    if (Number(change.height) > through) break;
-    const same = change.principalId?.toLowerCase() === principalId;
-    if (!same) {
-      since = null;
-    } else if (since === null) {
-      since = Number(change.height);
-    }
-  }
-  return since;
 }

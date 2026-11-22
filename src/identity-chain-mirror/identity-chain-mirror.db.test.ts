@@ -255,9 +255,33 @@ describeWithSeed(
         db.writeWalletBindings([row(B, 7)], [A, C], 10, conn)
       );
       expect(await db.boundWallets()).toEqual([B]);
+      expect(await db.hasWalletBindings()).toBe(true);
       expect(await db.walletBindings([A, B])).toEqual(
         new Map([[B, row(B, 7)]])
       );
+      // One read: no state row yet, then the binding with the followed height.
+      expect(await db.walletBindingAt(B)).toEqual({
+        binding: null,
+        nextHeight: null
+      });
+      await db.saveState(
+        {
+          next_height: 12,
+          sync_from_height: null,
+          sync_phase: null,
+          sync_after: null,
+          last_full_sync_at: 1
+        },
+        1
+      );
+      expect(await db.walletBindingAt(B)).toEqual({
+        binding: row(B, 7),
+        nextHeight: 12
+      });
+      expect(await db.walletBindingAt(A)).toEqual({
+        binding: null,
+        nextHeight: 12
+      });
     });
 
     it('never updates tdh, basetdh_rate or xTDH in a row that exists', async () => {

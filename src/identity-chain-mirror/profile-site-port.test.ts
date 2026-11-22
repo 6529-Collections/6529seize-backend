@@ -3,6 +3,7 @@ import {
   cidPath
 } from '@/chain-gateway/chain-gateway.client';
 import { ChainIdentity } from '@/chain-gateway/chain-gateway.types';
+import { WalletPrincipalUnknownError } from './identity-chain-lookups';
 import { GatewayProfileSitePort, PROFILE_FAMILY } from './profile-site-port';
 
 const P = '0x' + 'ab'.repeat(32);
@@ -37,8 +38,16 @@ function setup() {
   const profileIdOf = jest.fn(async (identity: ChainIdentity) =>
     identity.legacyId ? identity.legacyId : 'derived-id'
   );
-  const port = new GatewayProfileSitePort(gateway as never, profileIdOf);
-  return { gateway, port, profileIdOf };
+  const walletPrincipalAt = jest.fn(
+    async (wallet: string, _height: number): Promise<string | null> =>
+      wallet === W ? P : null
+  );
+  const port = new GatewayProfileSitePort(
+    gateway as never,
+    profileIdOf,
+    walletPrincipalAt
+  );
+  return { gateway, port, profileIdOf, walletPrincipalAt };
 }
 
 describe('GatewayProfileSitePort', () => {
@@ -66,7 +75,10 @@ describe('GatewayProfileSitePort', () => {
           time: 6_000,
           records: [
             profileRecord({ version: 2, docCid: DOC }, false),
-            profileRecord(null, null)
+            profileRecord({ version: 3, docCid: '0x' }, null),
+            // Deleted (merged away) or without a version: not a change.
+            profileRecord(null, null),
+            profileRecord({ version: 0, docCid: DOC }, false)
           ]
         }
       ]
@@ -89,7 +101,7 @@ describe('GatewayProfileSitePort', () => {
           doc_cid: cidPath(DOC),
           source: 'operation'
         },
-        { height: 15, time_ms: 6_000, principal: P, version: 0, doc_cid: null }
+        { height: 15, time_ms: 6_000, principal: P, version: 3, doc_cid: null }
       ],
       next_height: 21
     });
@@ -113,27 +125,71 @@ describe('GatewayProfileSitePort', () => {
     });
   });
 
-  it("reads an identity at a height with the mirror's profile id", async () => {
+  const W2 = '0x' + '02'.repeat(20);
+  const now = {
+    principalId: P,
+    handle: 'alice',
+    wallets: [W.toUpperCase().replace('0X', '0x'), W2],
+    legacyId: LEGACY
+  };
+
+  it("reads an identity at a height with the mirror's profile id now", async () => {
     const { gateway, port, profileIdOf } = setup();
-    gateway.getIdentityByPrincipal.mockResolvedValueOnce({
-      principalId: P,
-      handle: 'alice',
-      wallets: [W.toUpperCase().replace('0X', '0x')],
-      legacyId: LEGACY
-    });
-    gateway.getIdentityByPrincipal.mockResolvedValueOnce(null);
+    gateway.getIdentityByPrincipal
+      .mockResolvedValueOnce(now)
+      .mockResolvedValueOnce({ ...now, handle: 'old', wallets: [W] })
+      .mockResolvedValueOnce(null);
     expect(await port.getIdentityByPrincipal(P, { height: 40 })).toEqual({
+      principal: P,
+      profile_id: LEGACY,
+      handle: 'old',
+      wallets: [W],
+      imported: true
+    });
+    expect(gateway.getIdentityByPrincipal).toHaveBeenNthCalledWith(1, P);
+    expect(gateway.getIdentityByPrincipal).toHaveBeenNthCalledWith(2, P, {
+      height: 40
+    });
+    expect(profileIdOf).toHaveBeenCalledWith(now);
+    expect(await port.getIdentityByPrincipal(P)).toBeNull();
+  });
+
+  it('lists the wallets bound then when the gateway no longer holds the height', async () => {
+    const { gateway, port, walletPrincipalAt } = setup();
+    gateway.getIdentityByPrincipal
+      .mockResolvedValueOnce(now)
+      .mockRejectedValueOnce(
+        new ChainGatewayError('gone', 409, 'height_gone', '/v1/identities')
+      );
+    expect(await port.getIdentityByPrincipal(P, { height: 7 })).toEqual({
       principal: P,
       profile_id: LEGACY,
       handle: 'alice',
       wallets: [W],
       imported: true
     });
-    expect(gateway.getIdentityByPrincipal).toHaveBeenCalledWith(P, {
-      height: 40
-    });
-    expect(profileIdOf).toHaveBeenCalledTimes(1);
-    expect(await port.getIdentityByPrincipal(P)).toBeNull();
+    expect(walletPrincipalAt).toHaveBeenCalledWith(W2, 7);
+  });
+
+  it('leaves out a wallet whose principal then is unknown, and fails on others', async () => {
+    const { gateway, port, walletPrincipalAt } = setup();
+    const gone = () =>
+      new ChainGatewayError('gone', 409, 'height_gone', '/v1/identities');
+    gateway.getIdentityByPrincipal
+      .mockResolvedValueOnce(now)
+      .mockRejectedValueOnce(gone())
+      .mockResolvedValueOnce(now)
+      .mockRejectedValueOnce(gone());
+    walletPrincipalAt
+      .mockRejectedValueOnce(new WalletPrincipalUnknownError(W, 7))
+      .mockResolvedValueOnce(P)
+      .mockRejectedValueOnce(new Error('database down'));
+    expect(
+      (await port.getIdentityByPrincipal(P, { height: 7 }))?.wallets
+    ).toEqual([W2]);
+    await expect(port.getIdentityByPrincipal(P, { height: 7 })).rejects.toThrow(
+      'database down'
+    );
   });
 
   it('reads the import heights', async () => {
@@ -142,10 +198,14 @@ describe('GatewayProfileSitePort', () => {
       import: { startHeight: 5, doneHeight: 9, completed: true }
     });
     gateway.getMembership.mockResolvedValueOnce({});
+    gateway.getMembership.mockResolvedValueOnce({
+      import: { startHeight: null, doneHeight: 9, completed: true }
+    });
     expect(await port.getIdentityImport()).toEqual({
       start_height: 5,
       done_height: 9
     });
+    expect(await port.getIdentityImport()).toBeNull();
     expect(await port.getIdentityImport()).toBeNull();
   });
 
