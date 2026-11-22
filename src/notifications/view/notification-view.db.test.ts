@@ -4,6 +4,7 @@ import {
   IDENTITIES_TABLE,
   IDENTITY_MUTES_TABLE,
   IDENTITY_NOTIFICATIONS_TABLE,
+  NOTIFICATION_VIEW_PUSH_OUTBOX_TABLE,
   NOTIFICATION_VIEW_TABLE,
   PUSH_NOTIFICATION_CANCELLATIONS_TABLE,
   PUSH_NOTIFICATION_OUTBOX_TABLE,
@@ -43,6 +44,7 @@ const FLAGS = [
 const TABLES = [
   IDENTITY_NOTIFICATIONS_TABLE,
   NOTIFICATION_VIEW_TABLE,
+  NOTIFICATION_VIEW_PUSH_OUTBOX_TABLE,
   PUSH_NOTIFICATION_OUTBOX_TABLE,
   PUSH_NOTIFICATION_CANCELLATIONS_TABLE,
   IDENTITIES_TABLE,
@@ -144,6 +146,10 @@ const outbox = () =>
       `select notification_id from ${PUSH_NOTIFICATION_OUTBOX_TABLE} order by notification_id`
     )
     .then((rows) => rows.map((row) => Number(row.notification_id)));
+const viewOutbox = () =>
+  sqlExecutor.execute<{ identity_id: string; source_key: string }>(
+    `select identity_id, source_key from ${NOTIFICATION_VIEW_PUSH_OUTBOX_TABLE} order by identity_id, source_key`
+  );
 const comparable = (row: Record<string, any>) => {
   const { id: _id, created_at: _createdAt, read_at: _readAt, ...rest } = row;
   return {
@@ -192,7 +198,8 @@ describe('notification_view', () => {
       written: 0,
       removed: 0,
       legacyCopies: 0,
-      pushed: 0
+      pushed: 0,
+      changedIdentityIds: []
     });
     await userNotifier.notifyOfIdentityRep({
       rater_id: raterId,
@@ -226,7 +233,8 @@ describe('notification_view', () => {
       written: 1,
       removed: 0,
       legacyCopies: 1,
-      pushed: 1
+      pushed: 1,
+      changedIdentityIds: [targetId]
     });
     const [view] = await viewRows();
     const [copy] = await oldRows();
@@ -245,10 +253,12 @@ describe('notification_view', () => {
       written: 0,
       removed: 0,
       legacyCopies: 0,
-      pushed: 0
+      pushed: 0,
+      changedIdentityIds: []
     });
     expect(await oldRows()).toHaveLength(1);
     expect(await outbox()).toHaveLength(1);
+    expect(await viewOutbox()).toEqual([]);
   });
 
   it('writes the same row the old writer wrote (parity)', async () => {
@@ -295,7 +305,8 @@ describe('notification_view', () => {
       written: 1,
       removed: 0,
       legacyCopies: 0,
-      pushed: 0
+      pushed: 0,
+      changedIdentityIds: [targetId]
     });
     expect(await viewRows()).toEqual([
       expect.objectContaining({ legacy_id: null, cause: 'DROP_VOTED' })
@@ -570,6 +581,43 @@ describe('notification_view', () => {
       expect((await apply([follow(voterId, NOW + 1)])).written).toBe(1);
       expect(await page()).toHaveLength(2);
       expect(await unread()).toBe(2);
+    });
+
+    it('pushes a new live row from the view, by its key; old writers queue their old ids', async () => {
+      expect(await apply([deriveRating(rating())])).toMatchObject({
+        written: 1,
+        legacyCopies: 1,
+        pushed: 1
+      });
+      const view = await sqlExecutor.oneOrNull<{ source_key: string }>(
+        `select source_key from ${NOTIFICATION_VIEW_TABLE} where identity_id = :targetId`,
+        { targetId }
+      );
+      expect(await viewOutbox()).toEqual([
+        { identity_id: targetId, source_key: view!.source_key }
+      ]);
+      // Its copy in identity_notifications is not pushed as well.
+      expect(await outbox()).toEqual([]);
+
+      // Nothing more: the same row again, a replay, a stale event.
+      await apply([deriveRating(rating())]);
+      await apply([deriveRating(rating({ txId: '0xreplayed' }))], 'replay');
+      await apply([
+        deriveRating(
+          rating({
+            txId: '0xstale',
+            blockTimeMs: NOW - PUSH_LIVE_WINDOW_MS - 1
+          })
+        )
+      ]);
+      expect(await viewOutbox()).toHaveLength(1);
+
+      await userNotifier.notifyOfIdentitySubscription({
+        subscriber_id: otherId,
+        subscribed_to: targetId
+      });
+      expect(await outbox()).toHaveLength(1);
+      expect(await viewOutbox()).toHaveLength(1);
     });
 
     it('writes no view row for a cause the deriver does not own yet', async () => {

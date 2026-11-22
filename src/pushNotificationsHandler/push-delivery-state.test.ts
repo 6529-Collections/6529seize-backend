@@ -5,6 +5,7 @@ import {
   isSenderMismatch,
   quarantinePushTarget
 } from '@/pushNotificationsHandler/push-delivery-state';
+import { createHash } from 'node:crypto';
 
 const values = new Map<string, string>();
 const set = jest.fn(async (key: string, value: string) => {
@@ -64,6 +65,22 @@ it('keeps successes separate by device and notification for the full retry horiz
   expect(await deliveredPushIds('phone', [1, 2])).toEqual(new Set([1]));
   expect(await deliveredPushIds('other', [1])).toEqual(new Set());
   expect(set).toHaveBeenCalledWith(expect.any(String), '1', { EX: 8 * 86400 });
+});
+
+it('keeps an old id under its existing key and a view row under its own', async () => {
+  await recordDeliveredPush('phone', 1);
+  // Receipts written before view keys existed still match.
+  expect(set).toHaveBeenLastCalledWith(
+    `push-delivered:v1:${createHash('sha256')
+      .update(JSON.stringify(['test-project', 'phone', 1]))
+      .digest('hex')}`,
+    '1',
+    { EX: 8 * 86400 }
+  );
+  await recordDeliveredPush('phone', 'view:alice:key');
+  expect(
+    await deliveredPushIds('phone', [1, '1', 'view:alice:key', 'view:bob:key'])
+  ).toEqual(new Set([1, 'view:alice:key']));
 });
 
 it('does not acknowledge work or send when coordination is unavailable', async () => {

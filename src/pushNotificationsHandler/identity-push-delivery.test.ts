@@ -23,6 +23,7 @@ import {
 } from './identity-push-delivery';
 import { getDeviceBadgeState, withDeviceBadgeLock } from './device-badge';
 import { sendMessages } from './sendPushNotifications';
+import type { PushKey } from './push-key';
 
 jest.mock('./device-badge', () => ({
   deviceBadgeKey: (device: { token: string }) => device.token,
@@ -40,6 +41,7 @@ function message(
   platform = 'ios'
 ): IdentityPushNotificationMessage {
   return {
+    pushKey: id,
     identityId: profile,
     device: {
       device_id: 'phone',
@@ -181,7 +183,7 @@ it('retries only failed targets after another device accepted the same notificat
     device: { ...first.device, device_id: 'second-phone', token: 'other' },
     input: { ...first.input, token: 'other' }
   };
-  const delivered = new Map<string, Set<number>>();
+  const delivered = new Map<string, Set<PushKey>>();
   jest
     .mocked(deliveredPushIds)
     .mockImplementation(async (device) => delivered.get(device) ?? new Set());
@@ -348,6 +350,38 @@ it('delivers both profiles on one device with real receipt logic and skips them 
     ).toEqual([8330, 8331]);
     expect(await sendIdentityPushGroups(messages, results)).toEqual([]);
     expect(sendMessages).toHaveBeenCalledTimes(1);
+  } finally {
+    if (originalProject === undefined) delete process.env.FIREBASE_PROJECT_ID;
+    else process.env.FIREBASE_PROJECT_ID = originalProject;
+  }
+});
+
+it('remembers delivery per row key, since view ids repeat across people', async () => {
+  const originalProject = process.env.FIREBASE_PROJECT_ID;
+  process.env.FIREBASE_PROJECT_ID = 'test-project';
+  receiptValues.clear();
+  const actual = jest.requireActual<typeof import('./push-delivery-state')>(
+    './push-delivery-state'
+  );
+  jest.mocked(deliveredPushIds).mockImplementation(actual.deliveredPushIds);
+  jest
+    .mocked(recordDeliveredPush)
+    .mockImplementation(actual.recordDeliveredPush);
+  // Two people on one phone, each with a view row of the same id.
+  const shared = [
+    { ...message(8330, 'a'), pushKey: 'view:a:key-a' },
+    { ...message(8330, 'b'), pushKey: 'view:b:key-b' }
+  ];
+  try {
+    expect(await sendIdentityPushGroups(shared, results)).toEqual([]);
+    expect(jest.mocked(sendMessages).mock.calls[0][0]).toHaveLength(2);
+    expect(await sendIdentityPushGroups(shared, results)).toEqual([]);
+    expect(sendMessages).toHaveBeenCalledTimes(1);
+    // An old id with the same number is another row.
+    expect(await sendIdentityPushGroups([message(8330, 'a')], results)).toEqual(
+      []
+    );
+    expect(sendMessages).toHaveBeenCalledTimes(2);
   } finally {
     if (originalProject === undefined) delete process.env.FIREBASE_PROJECT_ID;
     else process.env.FIREBASE_PROJECT_ID = originalProject;

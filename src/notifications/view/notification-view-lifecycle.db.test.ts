@@ -4,6 +4,7 @@ import {
   IDENTITIES_TABLE,
   IDENTITY_NOTIFICATIONS_TABLE,
   NOTIFICATION_VIEW_CURSORS_TABLE,
+  NOTIFICATION_VIEW_PUSH_OUTBOX_TABLE,
   NOTIFICATION_VIEW_TABLE,
   PUSH_NOTIFICATION_CANCELLATIONS_TABLE,
   PUSH_NOTIFICATION_OUTBOX_TABLE,
@@ -14,6 +15,7 @@ import { anIdentity } from '@/tests/fixtures/identity.fixture';
 import { aWave, withWaves } from '@/tests/fixtures/wave.fixture';
 import { identityNotificationsDb } from '@/notifications/identity-notifications.db';
 import { userNotifier } from '@/notifications/user.notifier';
+import { wsListenersNotifier } from '@/api/ws/ws-listeners-notifier';
 import type { RecordLogEntry } from '@/signed-records/record-log/record-log-format';
 import { notificationDeriver } from './notification-deriver';
 import {
@@ -44,6 +46,7 @@ const TABLES = [
   IDENTITY_NOTIFICATIONS_TABLE,
   NOTIFICATION_VIEW_TABLE,
   NOTIFICATION_VIEW_CURSORS_TABLE,
+  NOTIFICATION_VIEW_PUSH_OUTBOX_TABLE,
   PUSH_NOTIFICATION_OUTBOX_TABLE,
   PUSH_NOTIFICATION_CANCELLATIONS_TABLE,
   IDENTITIES_TABLE,
@@ -253,9 +256,19 @@ describe('notification view lifecycle', () => {
       NOTIFY_VIEW_MODE: 'shadow',
       NOTIFY_DERIVED_CAUSES: 'DROP_VOTED@0'
     });
+    const announced = jest
+      .spyOn(wsListenersNotifier, 'notifyAboutIdentityNotificationsChanged')
+      .mockResolvedValue(undefined);
     const before = [vote(0, T - 2000), vote(1, T - 1000)];
     const feed = new ListFeed(before);
     await notificationFeedRunner.run(feed, { mode: 'live', now: T });
+    // In shadow the copies are pushed by id and the push worker announces them.
+    expect(
+      await sqlExecutor.execute(
+        `select notification_id from ${PUSH_NOTIFICATION_OUTBOX_TABLE}`
+      )
+    ).toHaveLength(2);
+    expect(announced).not.toHaveBeenCalled();
     await userNotifier.notifyOfIdentitySubscription({
       subscriber_id: fanId,
       subscribed_to: authorId
@@ -306,9 +319,28 @@ describe('notification view lifecycle', () => {
 
     // After the switch: a new vote is derived; old writers keep writing
     // follows, copied as they go; marks are made through the routes.
+    const queuedOldIds = await sqlExecutor.execute(
+      `select notification_id from ${PUSH_NOTIFICATION_OUTBOX_TABLE}`
+    );
     feed.events.push(vote(2, T + 1000));
     await notificationFeedRunner.run(feed, { mode: 'live', now: T + 1000 });
     expect((await notificationViewSwitch.copyOldRows()).rows).toBe(0);
+    // In on the new row is pushed from the view, by key, and announced once
+    // its batch commits.
+    const queued = await sqlExecutor.execute<{ cause: string; id: number }>(
+      `select v.cause, v.id from ${NOTIFICATION_VIEW_PUSH_OUTBOX_TABLE} o
+       join ${NOTIFICATION_VIEW_TABLE} v
+         on v.identity_id = o.identity_id and v.source_key = o.source_key`
+    );
+    expect(queued).toEqual([expect.objectContaining({ cause: 'DROP_VOTED' })]);
+    expect(Number(queued[0].id)).toBeGreaterThan(2 ** 52);
+    // Its identity_notifications copy is not queued by id.
+    expect(
+      await sqlExecutor.execute(
+        `select notification_id from ${PUSH_NOTIFICATION_OUTBOX_TABLE}`
+      )
+    ).toEqual(queuedOldIds);
+    expect(announced.mock.calls).toEqual([[[authorId]]]);
     await userNotifier.notifyOfIdentitySubscription({
       subscriber_id: voters[0].profile_id!,
       subscribed_to: authorId
@@ -346,6 +378,14 @@ describe('notification view lifecycle', () => {
     expect(result.archivedRows).toBe(4);
     expect(result.receipts).toBe(2);
     expect(await answers()).toEqual(live);
+    // A rebuild queues no push and announces nothing.
+    expect(
+      await sqlExecutor.execute(
+        `select identity_id from ${NOTIFICATION_VIEW_PUSH_OUTBOX_TABLE}`
+      )
+    ).toHaveLength(1);
+    expect(announced).toHaveBeenCalledTimes(1);
+    announced.mockRestore();
   });
 
   it('refuses a rebuild whose logged cuts differ from the flags', async () => {

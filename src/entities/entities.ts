@@ -106,7 +106,8 @@ export {
 export { IdentityNotificationEntity } from './IIdentityNotification';
 export {
   NotificationViewCursorEntity,
-  NotificationViewEntity
+  NotificationViewEntity,
+  NotificationViewPushOutboxEntity
 } from './INotificationView';
 export { IdentitySubscriptionEntity } from './IIdentitySubscription';
 export { ProfilePreferencesEntity } from './IProfilePreferences';

@@ -1,8 +1,9 @@
+import { wsListenersNotifier } from '@/api/ws/ws-listeners-notifier';
 import { Logger } from '@/logging';
 import { dbSupplier, SqlExecutor } from '@/sql-executor';
 import type { DerivedGroup } from '@/notifications/view/derived-notification';
 import {
-  DeriveResult,
+  DeriveCounts,
   notificationDeriver,
   NotificationDeriver
 } from '@/notifications/view/notification-deriver';
@@ -33,7 +34,7 @@ export interface NotificationFeed<E> {
 }
 
 export interface FeedRunOptions {
-  /** `live` for the scheduled run; `replay` for a rebuild (never pushes). */
+  /** `live` for the scheduled run; `replay` for a rebuild (never pushes or announces). */
   readonly mode: 'live' | 'replay';
   /** Events per batch; each batch commits with its cursor. */
   readonly batchSize?: number;
@@ -47,8 +48,13 @@ export interface FeedRunResult {
   readonly feed: string;
   readonly events: number;
   readonly batches: number;
-  readonly derived: DeriveResult;
+  readonly derived: DeriveCounts;
 }
+
+/** Sends IDENTITY_NOTIFICATIONS_CHANGED to these people's open sockets. */
+export type AnnounceNotificationChanges = (
+  identityIds: string[]
+) => Promise<void>;
 
 const DEFAULT_BATCH_SIZE = 200;
 const DEFAULT_MAX_BATCHES = 50;
@@ -56,7 +62,9 @@ const DEFAULT_MAX_BATCHES = 50;
 /**
  * Reads each feed from its cursor, derives, and writes. A batch's rows and
  * the cursor after it commit in one transaction, so a crash repeats at most
- * that batch, and repeating it writes the same rows.
+ * that batch, and repeating it writes the same rows. In `on` mode, after a
+ * live batch commits, everyone whose rows it wrote or removed is told once
+ * (IDENTITY_NOTIFICATIONS_CHANGED), whether or not a push follows.
  */
 export class NotificationFeedRunner {
   private readonly logger = Logger.get(NotificationFeedRunner.name);
@@ -64,7 +72,9 @@ export class NotificationFeedRunner {
   constructor(
     private readonly db: () => SqlExecutor,
     private readonly cursors: NotificationViewCursorsDb,
-    private readonly deriver: NotificationDeriver
+    private readonly deriver: NotificationDeriver,
+    private readonly announce: AnnounceNotificationChanges = (identityIds) =>
+      wsListenersNotifier.notifyAboutIdentityNotificationsChanged(identityIds)
   ) {}
 
   async runAll(
@@ -119,6 +129,9 @@ export class NotificationFeedRunner {
         this.logger.warn(`[NOTIFY_FEED_CURSOR_MOVED] [FEED ${feed.name}]`);
         break;
       }
+      if (options.mode === 'live' && notifyViewMode() === 'on') {
+        await this.announceChanges(feed.name, result.changedIdentityIds);
+      }
       totals.written += result.written;
       totals.removed += result.removed;
       totals.legacyCopies += result.legacyCopies;
@@ -127,6 +140,21 @@ export class NotificationFeedRunner {
       batches++;
     }
     return { feed: feed.name, events, batches, derived: totals };
+  }
+
+  /** The batch is committed; a lost announcement costs only freshness. */
+  private async announceChanges(
+    feedName: string,
+    identityIds: readonly string[]
+  ): Promise<void> {
+    if (!identityIds.length) return;
+    try {
+      await this.announce([...identityIds]);
+    } catch (error) {
+      this.logger.warn(
+        `[NOTIFY_FEED_ANNOUNCE_FAILED] [FEED ${feedName}] ${error}`
+      );
+    }
   }
 }
 

@@ -24,6 +24,10 @@ import {
   StoredViewRow
 } from '@/notifications/view/notification-view.db';
 import {
+  notificationViewPushDb,
+  NotificationViewPushDb
+} from '@/notifications/view/notification-view-push.db';
+import {
   notifyViewMode,
   writesLegacyCopy,
   writesViewRow
@@ -42,11 +46,16 @@ export interface DeriveOptions {
   readonly now?: number;
 }
 
-export interface DeriveResult {
+export interface DeriveCounts {
   readonly written: number;
   readonly removed: number;
   readonly legacyCopies: number;
   readonly pushed: number;
+}
+
+export interface DeriveResult extends DeriveCounts {
+  /** Everyone whose rows were written or removed, once each. */
+  readonly changedIdentityIds: readonly string[];
 }
 
 interface KeyedRow {
@@ -95,6 +104,7 @@ export class NotificationDeriver {
     private readonly viewDb: NotificationViewDb,
     private readonly notificationsDb: IdentityNotificationsDb,
     private readonly outbox: PushNotificationOutboxDb,
+    private readonly viewPushes: NotificationViewPushDb,
     private readonly pushActivated: () => boolean = isActivated
   ) {}
 
@@ -103,22 +113,25 @@ export class NotificationDeriver {
     options: DeriveOptions,
     ctx: RequestContext
   ): Promise<DeriveResult> {
-    const empty = { written: 0, removed: 0, legacyCopies: 0, pushed: 0 };
-    if (notifyViewMode() === 'off' || !groups.length) return empty;
+    const totals = { written: 0, removed: 0, legacyCopies: 0, pushed: 0 };
+    if (notifyViewMode() === 'off' || !groups.length) {
+      return { ...totals, changedIdentityIds: [] };
+    }
     if (!ctx.connection) {
       return this.db().executeNativeQueriesInTransaction((connection) =>
         this.apply(groups, options, { ...ctx, connection })
       );
     }
-    const totals = { ...empty };
+    const changed = new Set<string>();
     for (const group of groups) {
       const result = await this.applyGroup(group, options, ctx.connection);
       totals.written += result.written;
       totals.removed += result.removed;
       totals.legacyCopies += result.legacyCopies;
       totals.pushed += result.pushed;
+      result.changedIdentityIds.forEach((id) => changed.add(id));
     }
-    return totals;
+    return { ...totals, changedIdentityIds: Array.from(changed) };
   }
 
   private async applyGroup(
@@ -157,6 +170,11 @@ export class NotificationDeriver {
       toWrite.map(({ view }) => view),
       connection
     );
+    const viewPushes = await this.queueViewPushes(
+      keyed.filter(({ view }) => !stored.has(rowKey(view))),
+      options,
+      connection
+    );
     const copies = await this.writeLegacyCopies(
       keyed,
       stored,
@@ -167,8 +185,42 @@ export class NotificationDeriver {
       written: toWrite.length,
       removed: removed.length,
       legacyCopies: copies.written,
-      pushed: copies.pushed
+      pushed: copies.pushed + viewPushes,
+      changedIdentityIds: [
+        ...toWrite.map(({ view }) => view.identity_id),
+        ...removed.map((row) => row.identity_id)
+      ]
     };
+  }
+
+  /** A row of a live event young enough to push, while pushes are on. */
+  private isPushable(createdAt: number, options: DeriveOptions): boolean {
+    const now = options.now ?? Time.currentMillis();
+    return (
+      options.mode === 'live' &&
+      this.pushActivated() &&
+      createdAt >= now - PUSH_LIVE_WINDOW_MS
+    );
+  }
+
+  /**
+   * In `on` mode a new row is pushed from the view: its key is queued in
+   * this transaction, and its copy in identity_notifications is not pushed.
+   */
+  private async queueViewPushes(
+    rows: readonly KeyedRow[],
+    options: DeriveOptions,
+    connection: ConnectionWrapper<any>
+  ): Promise<number> {
+    if (notifyViewMode() !== 'on') return 0;
+    const keys = rows
+      .filter(({ view }) => this.isPushable(view.created_at, options))
+      .map(({ view }) => ({
+        identity_id: view.identity_id,
+        source_key: view.source_key
+      }));
+    await this.viewPushes.enqueue(keys, connection);
+    return keys.length;
   }
 
   private keyRows(
@@ -221,7 +273,7 @@ export class NotificationDeriver {
   /**
    * identity_notifications copies of derived causes: written once per row
    * (the view row remembers the copy's id), updated when a re-derivation
-   * changes the row, pushed only when new, live and fresh.
+   * changes the row, and in `shadow` pushed when new, live and fresh.
    */
   private async writeLegacyCopies(
     keyed: readonly KeyedRow[],
@@ -258,14 +310,12 @@ export class NotificationDeriver {
       })),
       connection
     );
-    const now = options.now ?? Time.currentMillis();
     const pushIds =
-      options.mode === 'live' && this.pushActivated()
-        ? ids.filter(
-            (_, index) =>
-              fresh[index].derived.created_at >= now - PUSH_LIVE_WINDOW_MS
-          )
-        : [];
+      notifyViewMode() === 'on'
+        ? []
+        : ids.filter((_, index) =>
+            this.isPushable(fresh[index].derived.created_at, options)
+          );
     await this.outbox.enqueueMany(pushIds, { connection });
     return { written: ids.length, pushed: pushIds.length };
   }
@@ -275,5 +325,6 @@ export const notificationDeriver = new NotificationDeriver(
   dbSupplier,
   notificationViewDb,
   identityNotificationsDb,
-  new PushNotificationOutboxDb(dbSupplier)
+  new PushNotificationOutboxDb(dbSupplier),
+  notificationViewPushDb
 );

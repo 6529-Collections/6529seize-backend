@@ -5,7 +5,10 @@ import {
   refreshProfileBadges,
   refreshInstallationBadge
 } from './badge-refresh';
-import { sendIdentityNotificationsBatch } from './identityPushNotifications';
+import {
+  sendIdentityNotificationsBatch,
+  sendViewNotificationsBatch
+} from './identityPushNotifications';
 
 jest.mock('@/secrets', () => ({
   doInDbContext: (action: () => Promise<unknown>) => action()
@@ -18,7 +21,8 @@ jest.mock('./badge-refresh', () => ({
   refreshInstallationBadge: jest.fn()
 }));
 jest.mock('./identityPushNotifications', () => ({
-  sendIdentityNotificationsBatch: jest.fn()
+  sendIdentityNotificationsBatch: jest.fn(),
+  sendViewNotificationsBatch: jest.fn()
 }));
 
 const getRemainingTimeInMillis = jest.fn();
@@ -54,6 +58,7 @@ beforeEach(() => {
     .mockResolvedValue(undefined);
   jest.mocked(refreshProfileBadges).mockReset().mockResolvedValue([]);
   jest.mocked(sendIdentityNotificationsBatch).mockReset().mockResolvedValue([]);
+  jest.mocked(sendViewNotificationsBatch).mockReset().mockResolvedValue([]);
 });
 
 it('processes mixed normal pushes and refreshes with independent retry results', async () => {
@@ -95,6 +100,26 @@ it('retries all refresh records if device lookup fails without retrying delivere
       jest.fn()
     )
   ).toEqual({ batchItemFailures: [{ itemIdentifier: '1' }] });
+});
+
+it('routes queued view rows by key and retries only the failed ones', async () => {
+  const alice = { identity_id: 'alice', source_key: 'a'.repeat(64) };
+  const bob = { identity_id: 'bob', source_key: 'b'.repeat(64) };
+  jest.mocked(sendViewNotificationsBatch).mockResolvedValue([bob]);
+  expect(
+    await handler(
+      event(
+        { view_notification: alice },
+        { view_notification: bob },
+        { view_notification: { identity_id: 'carol', source_key: 'short' } },
+        { identity_notification_id: 12 }
+      ),
+      context,
+      jest.fn()
+    )
+  ).toEqual({ batchItemFailures: [{ itemIdentifier: '1' }] });
+  expect(sendViewNotificationsBatch).toHaveBeenCalledWith([alice, bob]);
+  expect(sendIdentityNotificationsBatch).toHaveBeenCalledWith([12]);
 });
 
 it('keeps existing notification-only messages compatible', async () => {

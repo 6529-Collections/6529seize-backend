@@ -16,13 +16,15 @@ The pieces: the table, the per-cause switch, the deriver, the rules, the feed ru
 
 `notification_view_cursors` holds each feed's cursor and the switch's copy cursor. It is ephemeral: a lost cursor replays from the start, and a replay writes the same rows.
 
+`notification_view_push_outbox` queues pushes of view rows by `(identity_id, source_key)` (see Pushes and frames). It is ephemeral like `push_notification_outbox_entries`.
+
 ## Flags
 
 All are read on every call from the process environment, which each service loads from its configuration when an instance starts. Set them the same for every service that writes or reads notifications (the API and the loops that notify), and redeploy those services to apply a change everywhere at once.
 
 | Flag                    | Values                          | Effect                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
 | ----------------------- | ------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `NOTIFY_VIEW_MODE`      | `off` (default), `shadow`, `on` | `off`: today; nothing reads or writes the view. `shadow`: the deriver writes the view; readers, badges and pushes use `identity_notifications`. `on`: readers and badges use the view                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| `NOTIFY_VIEW_MODE`      | `off` (default), `shadow`, `on` | `off`: today; nothing reads or writes the view. `shadow`: the deriver writes the view; readers, badges and pushes use `identity_notifications`. `on`: readers, badges, pushes and notification frames use the view                                                                                                                                                                                                                                                                                                                                                                                              |
 | `NOTIFY_DERIVED_CAUSES` | `CAUSE@cutMs`, comma-separated  | From its cut a cause comes from the deriver and its old writers are skipped (one check in `identity-notifications.db.ts` covers every writer). Old writers compare the cut with the time they write, the deriver with the event's time, so each event is written once. Choose the cut no earlier than the moment the cause's old write path stopped being its source, and later than the deploy that sets it. An item without a valid cut is ignored, so its old writer keeps writing, and logged (`NOTIFY_DERIVED_CAUSES_IGNORED`). Ignored while the mode is `off`, so `off` always restores every old writer |
 | `NOTIFY_LEGACY_OUTPUT`  | `true` (default), `false`       | The deriver also writes derived causes into `identity_notifications`, so that table stays complete in `shadow` and for a rollback from `on`. Turn it off only after the rebuild check passes                                                                                                                                                                                                                                                                                                                                                                                                                    |
 
@@ -32,7 +34,8 @@ A rule turns one source event into a group: every row for `(family, ref)`. The d
 
 1. applies today's write filters (mutes, blocks, hidden drops, notification preferences) as they stand when the group is applied;
 2. replaces the group's rows in the view: rows the new group lacks are deleted, changed rows are updated, and read state is kept;
-3. for a derived cause, writes a copy into `identity_notifications` once per row (the view remembers its id), updates it when the row changes and deletes it, with a push cancellation, when the row goes. A new copy is pushed only for a live event less than 15 minutes old: a replay or a rebuild never pushes.
+3. for a derived cause, writes a copy into `identity_notifications` once per row (the view remembers its id), updates it when the row changes and deletes it, with a push cancellation, when the row goes;
+4. queues a push for a new row of a live event less than 15 minutes old: the copy's id in `shadow`, the view row in `on`. A replay or a rebuild never pushes.
 
 Applying the same group twice, with the same flags and filter state, changes nothing.
 
@@ -46,9 +49,20 @@ A feed reads one index's events after a cursor and names the rule for each (`Not
 - The deriver writes view rows only for the causes it owns, from their cut; the CARRIED copies stand for the rest.
 - Mark-read by id accepts the view id or the `identity_notifications` id a client got earlier, for example from a push. Mark-read, mark-all-read and mark-wave-read also update `identity_notifications` while `NOTIFY_LEGACY_OUTPUT` is on.
 - A row an old writer adds for a cause not derived yet is copied into the view as `CARRIED`, with a time-ordered id.
-- Pushes still come from `identity_notifications` rows; push and WebSocket delivery from the view come in a later change.
+- Pushes and `IDENTITY_NOTIFICATIONS_CHANGED` frames follow the view (next section).
 
 Deleting a drop or a wave, a wave's visibility change and a profile merge update the view as they update `identity_notifications`, in every mode but `off`.
+
+## Pushes and frames
+
+- `off` and `shadow`: as before. Old writers queue `identity_notifications` ids in `push_notification_outbox_entries`; in `shadow` the deriver queues the copies it writes.
+- `on`: the deriver queues each new row in `notification_view_push_outbox`, in the transaction that writes it, when the run is live, pushes are on and the row is less than 15 minutes old. The queue names rows by `(identity_id, source_key)`, since view ids repeat across people. The deriver's copies in `identity_notifications` are not queued. Old writers still queue their rows' old ids.
+- The scheduled publisher moves both queues to SQS, as `{identity_notification_id}` and as `{view_notification: {identity_id, source_key}}`. A key leaves its queue only after SQS accepts it.
+- The push worker reads a queued view row back from the view, on the writer. A row missing there was removed after it was queued (a tombstone, a moderation hide, a re-derivation), and is acknowledged without a push. In `on` mode a queued old id is read from the view by `legacy_id` when the view has the row, and from `identity_notifications` otherwise.
+- Either way the push carries the view id, the id the feed shows, and is skipped if the view row is read. The receipts that stop a second send to the same device are kept per row: by the old id for a queued old id, as before, and by `view:<identity_id>:<source_key>` for a queued view row.
+- `IDENTITY_NOTIFICATIONS_CHANGED`: in `on` mode the feed runner sends it after each live batch commits, once to each person whose rows the batch wrote or removed, whether or not a push follows. Queued old ids still announce from the push worker. A replay or a rebuild sends nothing.
+
+Drop frames (`DROP_UPDATE`, `DROP_DELETE`, reactions and ratings) and `COMPETITION_UPDATE` keep their senders until the drop index and the chain index have applied hooks to send them from.
 
 ## Rules
 
@@ -81,7 +95,7 @@ Rows created before the switch keep their `identity_notifications` ids, so clien
 
 A cause that joins later gets its own cut when it is added to `NOTIFY_DERIVED_CAUSES`; in `on` mode nothing needs pruning.
 
-Not ready in this change, so the mode stays at `shadow`: pushes still carry `identity_notifications` ids, which a row an old writer adds in `on` mode does not keep, and read marks made during `shadow` do not reach the deriver's rows in the view.
+Not ready in this change, so the mode stays at `shadow`: read marks made during `shadow` do not reach the deriver's rows in the view.
 
 ## Archive and rebuild
 
@@ -101,4 +115,4 @@ What does not rebuild yet:
 
 ## Rollback
 
-`on` → `shadow` moves readers back to `identity_notifications`, which the deriver and the read marks kept current while `NOTIFY_LEGACY_OUTPUT` is on. `shadow` → `off` stops the deriver and restores every old writer.
+`on` → `shadow` moves readers back to `identity_notifications`, which the deriver and the read marks kept current while `NOTIFY_LEGACY_OUTPUT` is on. Pushes already queued by view key still go out: the publisher drains that queue in every mode but `off`, and the deriver keeps the view current in `shadow`. `shadow` → `off` stops the deriver and restores every old writer; go through `shadow` so the view's queue empties first.

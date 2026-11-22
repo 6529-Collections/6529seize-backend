@@ -1818,7 +1818,8 @@ Wave poll listing is exposed through `/v2/waves/{id}/polls`, returning paginated
 
 `notification_view` is notifications derived from source events, behind
 `NOTIFY_VIEW_MODE` (default `off`). In `on` mode the notification readers,
-counts and badges read it instead of `identity_notifications`; see
+counts, badges, pushes and notification frames use it instead of
+`identity_notifications`; see
 [notification-view.md](notification-view.md) for its flags, deriver and
 rollback.
 

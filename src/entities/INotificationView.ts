@@ -1,6 +1,7 @@
 import { Column, Entity, Index, PrimaryColumn } from 'typeorm';
 import {
   NOTIFICATION_VIEW_CURSORS_TABLE,
+  NOTIFICATION_VIEW_PUSH_OUTBOX_TABLE,
   NOTIFICATION_VIEW_TABLE
 } from '@/constants';
 import { IdentityNotificationCause } from './IIdentityNotification';
@@ -105,4 +106,22 @@ export class NotificationViewCursorEntity {
 
   @Column({ type: 'bigint', nullable: false })
   readonly updated_at!: number;
+}
+
+/**
+ * Pushes of notification_view rows queued in `on` mode, until the scheduled
+ * publisher hands them to SQS. Keyed by row, since view ids repeat across
+ * people. Ephemeral, like push_notification_outbox_entries.
+ */
+@Entity(NOTIFICATION_VIEW_PUSH_OUTBOX_TABLE)
+export class NotificationViewPushOutboxEntity {
+  @PrimaryColumn({ type: 'varchar', length: 50 })
+  readonly identity_id!: string;
+
+  @PrimaryColumn({ type: 'char', length: 64 })
+  readonly source_key!: string;
+
+  @Index()
+  @Column({ type: 'bigint', nullable: false })
+  readonly created_at!: number;
 }
