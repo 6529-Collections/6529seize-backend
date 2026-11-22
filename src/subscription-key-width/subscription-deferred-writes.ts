@@ -96,6 +96,12 @@ function isMissingTable(error: unknown): boolean {
  * Whether the key has a write waiting. Before dbMigrationsLoop has created
  * the queue table nothing can be waiting, so a missing table reads as none
  * and writes for keys that fit go on as before.
+ *
+ * FOR SHARE: inside a writer's transaction a plain read returns the
+ * snapshot from that transaction's first plain read, which misses a write
+ * queued for the key since, and the writer would go ahead of it. The
+ * locking read returns the latest committed entries and, until the writer
+ * commits, holds back any new entry where this key's would go.
  */
 async function hasPendingWrite(
   key: string,
@@ -109,7 +115,8 @@ async function hasPendingWrite(
         WHERE key_hash = ? AND replayed_at IS NULL${
           beforeSequence === undefined ? '' : ' AND sequence < ?'
         }
-        LIMIT 1`,
+        LIMIT 1
+        FOR SHARE`,
       beforeSequence === undefined
         ? [keyHash(key)]
         : [keyHash(key), beforeSequence]
